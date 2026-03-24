@@ -1,0 +1,77 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": true,
+    "lib": [
+      "ESNext"
+    ],
+    "allowJs": false,
+    "module": "ESNext",
+    "moduleDetection": "force",
+    "moduleResolution": "bundler",
+    "composite": true,
+    "incremental": true,
+    "noFallthroughCasesInSwitch": false,
+    "allowSyntheticDefaultImports": true,
+    "noImplicitAny": false,
+    "disableSizeLimit": false,
+    "preserveConstEnums": true,
+    "resolveJsonModule": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "inlineSourceMap": true,
+    "inlineSources": true,
+    "sourceMap": false,
+    "skipLibCheck": true,
+    "skipDefaultLibCheck": true,
+    "strictNullChecks": false,
+    "strict": false,
+    "preserveWatchOutput": true,
+    "target": "ES2022",
+    "types": ["node", "jest"],
+    "paths": {
+      "@wire-e2e-tests/harness": [
+        "./packages/harness/src"
+      ],
+      "@wire-e2e-tests/harness/*": [
+        "./packages/harness/src/*"
+      ],
+      "@wire-e2e-tests/flow-a": [
+        "./packages/flow-a/src"
+      ],
+      "@wire-e2e-tests/flow-a/*": [
+        "./packages/flow-a/src/*"
+      ],
+      "@wire-e2e-tests/flow-b": [
+        "./packages/flow-b/src"
+      ],
+      "@wire-e2e-tests/flow-b/*": [
+        "./packages/flow-b/src/*"
+      ],
+      "@wire-e2e-tests/flow-c": [
+        "./packages/flow-c/src"
+      ],
+      "@wire-e2e-tests/flow-c/*": [
+        "./packages/flow-c/src/*"
+      ]
+    }
+  },
+  "include": [
+    "src",
+    "types"
+  ],
+  "exclude": [
+    "lib",
+    "dist",
+    "target",
+    "node_modules",
+    "**/*.js",
+    "**/lib/**",
+    "**/dist/**",
+    "**/target/**",
+    "**/node_modules/**"
+  ]
+}

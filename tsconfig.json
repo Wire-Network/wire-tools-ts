@@ -1,0 +1,18 @@
+{
+  "extends": "./etc/tsconfig/tsconfig.base.json",
+  "files": [],
+  "exclude": [
+    "**/node_modules/**",
+    "**/lib/**",
+    "**/dist/**",
+    "node_modules",
+    "lib",
+    "dist"
+  ],
+  "references": [
+    { "path": "./packages/harness/tsconfig.json" },
+    { "path": "./packages/flow-a/tsconfig.json" },
+    { "path": "./packages/flow-b/tsconfig.json" },
+    { "path": "./packages/flow-c/tsconfig.json" }
+  ]
+}

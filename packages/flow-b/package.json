@@ -1,0 +1,17 @@
+{
+  "name": "@wire-e2e-tests/flow-b",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Flow B: Node Operator Collateral Deposit",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "jest --runInBand",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@wire-e2e-tests/harness": "workspace:*",
+    "@wireio/opp-solidity-models": "*",
+    "ethers": "^6.14.0"
+  }
+}

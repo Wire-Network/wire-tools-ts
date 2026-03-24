@@ -1,0 +1,27 @@
+{
+  "name": "@wire-e2e-tests/harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "types": "lib/index.d.ts",
+  "main": "lib/index.js",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "build:dev": "tsc -b tsconfig.json -w",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\"",
+    "test": "jest",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@wireio/sdk-core": "*",
+    "@wireio/opp-solidity-models": "*",
+    "@coral-xyz/anchor": "^0.31.0",
+    "@solana/web3.js": "^1.98.0",
+    "ethers": "^6.14.0",
+    "tracer": "^1.3.0",
+    "tree-kill": "^1.2.2"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0"
+  }
+}
