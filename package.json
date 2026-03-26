@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "tsc -b tsconfig.json",
-    "build:dev": "tsc -b tsconfig.json -w",
+    "build:dev": "tsc -b tsconfig.json -w  --preserveWatchOutput",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "test": "pnpm run build && jest",
     "test:flow-a": "pnpm --filter @wire-e2e-tests/flow-a run test",
@@ -14,7 +14,12 @@
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/node": "25.5.0",
+    "@wireio/opp-solidity-models": "^1.0.14",
+    "@wireio/sdk-core": "^1.0.17",
+    "@wireio/shared": "^1.0.17",
+    "@wireio/shared-node": "^1.0.17",
     "jest": "^30.3.0",
+    "pm2": "^6.0.14",
     "prettier": "^3.8.1",
     "ts-jest": "^29.4.6",
     "ts-node": "^10.9.2",
@@ -23,5 +28,11 @@
   "packageManager": "pnpm@10.32.1",
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "@wireio/opp-solidity-models": "^1.0.14",
+    "@wireio/shared": "^1.0.17",
+    "@wireio/shared-node": "^1.0.17",
+    "@wireio/sdk-core": "^1.0.17"
   }
 }

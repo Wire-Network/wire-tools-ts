@@ -1,13 +1,32 @@
-export { WireChainManager } from "./processes/wire-chain.js"
-export { AnvilManager } from "./processes/anvil.js"
-export { SolanaValidatorManager } from "./processes/solana-validator.js"
-export { ProcessManager, type ProcessConfig, type ProcessHandle } from "./processes/process-manager.js"
-export { TestEnvironment, type TestEnvironmentConfig } from "./environment.js"
-export { WireClient, type WireClientConfig } from "./clients/wire-client.js"
-export { EthClient } from "./clients/eth-client.js"
-export { SolClient } from "./clients/sol-client.js"
-export { Clio, type ClioConfig } from "./clients/clio.js"
-export { WireBootstrap, type WireBootstrapConfig } from "./bootstrap/wire-bootstrap.js"
-export { EthBootstrap, type EthBootstrapConfig } from "./bootstrap/eth-bootstrap.js"
-export { SolBootstrap, type SolBootstrapConfig } from "./bootstrap/sol-bootstrap.js"
+export { WIREChainManager } from "./processes/WIREChainManager"
+export { AnvilManager } from "./processes/AnvilManager.js"
+export { SolanaValidatorManager } from "./processes/SolanaValidatorManager.js"
+export {
+  ProcessManager,
+  type ProcessConfig,
+  type ProcessHandle
+} from "./processes/ProcessManager.js"
+export {
+  TestEnvironment,
+  type TestEnvironmentConfig
+} from "./TestEnvironment.js"
+export { WIREClient, type WIREClientConfig } from "./clients/WIREClient"
+export { ETHClient } from "./clients/ETHClient.js"
+export { SOLClient } from "./clients/SOLClient.js"
+export { Clio, type ClioConfig } from "./clients/Clio.js"
+export {
+  WIREBootstrap,
+  type WIREBootstrapConfig
+} from "./bootstrap/WIREBootstrap"
+export {
+  ETHBootstrap,
+  type ETHBootstrapConfig
+} from "./bootstrap/ETHBootstrap.js"
+export {
+  SOLBootstrap,
+  type SOLBootstrapConfig
+} from "./bootstrap/SOLBootstrap.js"
 export { waitForEndpoint, retry, sleep } from "./util.js"
+export { ClusterManager, type ClusterConfig } from "./cluster/ClusterManager.js"
+export { generateGenesis, type GenesisJson } from "./cluster/genesis.js"
+export { generateConfigFileContent, type ConfigOptions } from "./cluster/Config"

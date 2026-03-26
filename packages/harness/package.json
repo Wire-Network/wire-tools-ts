@@ -5,6 +5,9 @@
   "type": "commonjs",
   "types": "lib/index.d.ts",
   "main": "lib/index.js",
+  "bin": {
+    "wire-test-cluster": "lib/cli.js"
+  },
   "scripts": {
     "build": "tsc -b tsconfig.json",
     "build:dev": "tsc -b tsconfig.json -w",
@@ -13,15 +16,27 @@
     "clean": "rm -rf lib"
   },
   "dependencies": {
-    "@wireio/sdk-core": "*",
-    "@wireio/opp-solidity-models": "*",
+    "@3fv/prelude-ts":"^0.8.37",
+    "@3fv/guard":"^1.4.39",
     "@coral-xyz/anchor": "^0.31.0",
     "@solana/web3.js": "^1.98.0",
+    "@wireio/opp-solidity-models": "^1.0.14",
+    "@wireio/sdk-core": "^1.0.17",
+    "@wireio/shared": "^1.0.17",
+    "@wireio/shared-node": "^1.0.17",
     "ethers": "^6.14.0",
+    "get-port": "^7.2.0",
+    "lodash": "^4.17.23",
+    "pm2": "^6.0.14",
     "tracer": "^1.3.0",
-    "tree-kill": "^1.2.2"
+    "tree-kill": "^1.2.2",
+    "yargs": "^18.0.0"
   },
   "devDependencies": {
-    "@types/node": "25.5.0"
+    "@types/jest": "^30.0.0",
+    "@types/lodash": "^4.17.24",
+    "@types/node": "25.5.0",
+    "@types/yargs": "^17.0.35",
+    "source-map-support": "^0.5.21"
   }
 }

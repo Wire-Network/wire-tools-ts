@@ -11,8 +11,16 @@
   },
   "dependencies": {
     "@wire-e2e-tests/harness": "workspace:*",
-    "@wireio/opp-solidity-models": "*",
+    "@wireio/opp-solidity-models": "^1.0.14",
+    "@wireio/sdk-core": "^1.0.17",
+    "@wireio/shared": "^1.0.17",
+    "@wireio/shared-node": "^1.0.17",
+    "pm2": "^6.0.14",
     "@solana/web3.js": "^1.98.0",
     "ethers": "^6.14.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "25.5.0"
   }
 }

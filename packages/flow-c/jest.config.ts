@@ -19,6 +19,9 @@ const config: Config = {
     "^@wire-e2e-tests/harness$": "<rootDir>/../harness/src/index",
     "^@wire-e2e-tests/harness/(.*)$": "<rootDir>/../harness/src/$1",
   },
+  modulePaths: [
+    "<rootDir>/../harness/node_modules",
+  ],
 }
 
 export default config

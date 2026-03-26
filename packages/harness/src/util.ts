@@ -1,3 +1,4 @@
+import { isEmpty, negate } from "lodash"
 import { log } from "./logger.js"
 
 /** Sleep for `ms` milliseconds. */
@@ -17,7 +18,10 @@ export async function waitForEndpoint(
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
-      const resp = await fetch(url, { method: "GET", signal: AbortSignal.timeout(2000) })
+      const resp = await fetch(url, {
+        method: "GET",
+        signal: AbortSignal.timeout(2000)
+      })
       if (resp.ok || resp.status === 404 || resp.status === 405) {
         log.info(`${label} is ready`)
         return
@@ -50,3 +54,5 @@ export async function retry<T>(
   }
   throw lastErr
 }
+
+export const isNotEmpty = negate(isEmpty)
