@@ -5,17 +5,34 @@
  * identical cluster configurations.
  */
 
+import { Option } from "@3fv/prelude-ts"
+import { Hash, KeyType, PrivateKey } from "@wireio/sdk-core"
+
 // ---------------------------------------------------------------------------
 // Development key pair (matches genesis bios key)
 // ---------------------------------------------------------------------------
+const DefaultKeyPairSeed = "nathan"
+
+export const DefaultKeyPair = Option.try(() => {
+  const privKeyDigest = Hash.sha256().update(DefaultKeyPairSeed).digest(),
+    privateKey = PrivateKey.regenerate(KeyType.K1, privKeyDigest),
+    publicKey = privateKey.toPublic()
+
+  return {
+    privateKey,
+    publicKey,
+    privateKeyWIF: privateKey.toWif(),
+    publicKeyWIF: publicKey.toLegacyString()
+  }
+}).getOrThrow(`Failed to create default key pair: ${DefaultKeyPairSeed}`)
+
+export type DefinedKeyPair = typeof DefaultKeyPair
 
 /** Default sysio development private key (WIF format). */
-export const DEV_PRIVATE_KEY =
-  "5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3"
+export const DEV_PRIVATE_KEY = DefaultKeyPair.privateKeyWIF
 
 /** Default sysio development public key (SYS prefix). */
-export const DEV_PUBLIC_KEY =
-  "SYS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV"
+export const DEV_PUBLIC_KEY = DefaultKeyPair.publicKeyWIF
 
 /**
  * Formats a signature-provider config value matching the Wire nodeop format:
@@ -33,7 +50,7 @@ export function formatSignatureProvider(
   chainKind: string,
   keyType: string,
   publicKey: string,
-  privateKey: string,
+  privateKey: string
 ): string {
   return `${name},${chainKind},${keyType},${publicKey},KEY:${privateKey}`
 }
@@ -48,7 +65,7 @@ export function devSignatureProvider(): string {
     "wire",
     "wire",
     DEV_PUBLIC_KEY,
-    DEV_PRIVATE_KEY,
+    DEV_PRIVATE_KEY
   )
 }
 
@@ -71,7 +88,7 @@ export const SYSTEM_ACCOUNTS = [
   "sysio.msgch",
   "sysio.uwrit",
   "sysio.chalg",
-  "dev.owner1",
+  "dev.owner1"
 ] as const
 
 export type SystemAccountName = (typeof SYSTEM_ACCOUNTS)[number]
@@ -157,7 +174,7 @@ export const NODEOP_EXTRA_ARGS = {
   abiSerializerMaxTimeMs: 990000,
   maxClients: 25,
   connectionCleanupPeriod: 15,
-  httpMaxResponseTimeMs: 990000,
+  httpMaxResponseTimeMs: 990000
 } as const
 
 // ---------------------------------------------------------------------------
@@ -166,13 +183,13 @@ export const NODEOP_EXTRA_ARGS = {
 
 export const BASE_PLUGINS = [
   "sysio::net_plugin",
-  "sysio::chain_api_plugin",
+  "sysio::chain_api_plugin"
 ] as const
 
 export const PRODUCER_PLUGINS = [
   "sysio::producer_plugin",
   "sysio::producer_api_plugin",
-  "sysio::trace_api_plugin",
+  "sysio::trace_api_plugin"
 ] as const
 
 // ---------------------------------------------------------------------------
@@ -193,7 +210,7 @@ export const CONTRACT_PATHS = {
   /** contracts/sysio.wrap */
   "sysio.wrap": "contracts/sysio.wrap",
   /** unittests/test-contracts (noop, optional) */
-  noop: "unittests/test-contracts",
+  noop: "unittests/test-contracts"
 } as const
 
 export type ContractName = keyof typeof CONTRACT_PATHS
@@ -206,7 +223,7 @@ export const OPP_CONTRACT_PATHS = {
   "sysio.epoch": "contracts/sysio.epoch",
   "sysio.msgch": "contracts/sysio.msgch",
   "sysio.uwrit": "contracts/sysio.uwrit",
-  "sysio.chalg": "contracts/sysio.chalg",
+  "sysio.chalg": "contracts/sysio.chalg"
 } as const
 
 export type OppContractName = keyof typeof OPP_CONTRACT_PATHS
@@ -219,7 +236,7 @@ export const OPP_SYSTEM_ACCOUNTS = [
   "sysio.epoch",
   "sysio.msgch",
   "sysio.uwrit",
-  "sysio.chalg",
+  "sysio.chalg"
 ] as const
 
 // ---------------------------------------------------------------------------
@@ -229,13 +246,13 @@ export const OPP_SYSTEM_ACCOUNTS = [
 export const BATCH_OPERATOR_PLUGINS = [
   "sysio::batch_operator_plugin",
   "sysio::outpost_eth_plugin",
-  "sysio::outpost_sol_plugin",
+  "sysio::outpost_sol_plugin"
 ] as const
 
 export const UNDERWRITER_PLUGINS = [
   "sysio::underwriter_plugin",
   "sysio::outpost_eth_plugin",
-  "sysio::outpost_sol_plugin",
+  "sysio::outpost_sol_plugin"
 ] as const
 
 // ---------------------------------------------------------------------------

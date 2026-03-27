@@ -11,20 +11,21 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { log } from "../logger.js"
+import { DefaultKeyPair } from "./constants"
 
 const execFileAsync = promisify(execFile)
 
 /** A K1 (secp256k1) key pair. */
 export interface K1KeyPair {
-  publicKey: string   // PUB_K1_...
-  privateKey: string  // PVT_K1_...
+  publicKey: string // PUB_K1_...
+  privateKey: string // PVT_K1_...
 }
 
 /** A BLS key pair with proof of possession. */
 export interface BLSKeyPair {
-  publicKey: string   // PUB_BLS_...
-  privateKey: string  // PVT_BLS_...
-  proofOfPossession: string  // SIG_BLS_...
+  publicKey: string // PUB_BLS_...
+  privateKey: string // PVT_BLS_...
+  proofOfPossession: string // SIG_BLS_...
 }
 
 /** Full key set for a node (K1 + BLS). */
@@ -40,9 +41,11 @@ export interface NodeKeySet {
  * @returns K1KeyPair with PVT_K1_ and PUB_K1_ formatted keys
  */
 export async function generateK1Key(clioBinary: string): Promise<K1KeyPair> {
-  const { stdout } = await execFileAsync(clioBinary, [
-    "create", "key", "--k1", "--to-console",
-  ], { timeout: 10_000 })
+  const { stdout } = await execFileAsync(
+    clioBinary,
+    ["create", "key", "--k1", "--to-console"],
+    { timeout: 10_000 }
+  )
 
   const privMatch = stdout.match(/Private key:\s+(PVT_K1_\S+)/)
   const pubMatch = stdout.match(/Public key:\s+(PUB_K1_\S+)/)
@@ -53,7 +56,7 @@ export async function generateK1Key(clioBinary: string): Promise<K1KeyPair> {
 
   return {
     privateKey: privMatch[1],
-    publicKey: pubMatch[1],
+    publicKey: pubMatch[1]
   }
 }
 
@@ -63,10 +66,14 @@ export async function generateK1Key(clioBinary: string): Promise<K1KeyPair> {
  * @param sysUtilBinary - Path to the sys-util binary
  * @returns BLSKeyPair with PVT_BLS_, PUB_BLS_, and SIG_BLS_ formatted keys
  */
-export async function generateBLSKey(sysUtilBinary: string): Promise<BLSKeyPair> {
-  const { stdout } = await execFileAsync(sysUtilBinary, [
-    "bls", "create", "key", "--to-console",
-  ], { timeout: 10_000 })
+export async function generateBLSKey(
+  sysUtilBinary: string
+): Promise<BLSKeyPair> {
+  const { stdout } = await execFileAsync(
+    sysUtilBinary,
+    ["bls", "create", "key", "--to-console"],
+    { timeout: 10_000 }
+  )
 
   const privMatch = stdout.match(/Private key:\s+(PVT_BLS_\S+)/)
   const pubMatch = stdout.match(/Public key:\s+(PUB_BLS_\S+)/)
@@ -79,7 +86,7 @@ export async function generateBLSKey(sysUtilBinary: string): Promise<BLSKeyPair>
   return {
     privateKey: privMatch[1],
     publicKey: pubMatch[1],
-    proofOfPossession: popMatch[1],
+    proofOfPossession: popMatch[1]
   }
 }
 
@@ -89,13 +96,15 @@ export async function generateBLSKey(sysUtilBinary: string): Promise<BLSKeyPair>
  * @param buildDir - Path to the wire-sysio build directory
  * @returns NodeKeySet containing both K1 and BLS key pairs
  */
-export async function generateNodeKeySet(buildDir: string): Promise<NodeKeySet> {
+export async function generateNodeKeySet(
+  buildDir: string
+): Promise<NodeKeySet> {
   const clioBinary = `${buildDir}/bin/clio`
   const sysUtilBinary = `${buildDir}/bin/sys-util`
 
   const [k1, bls] = await Promise.all([
     generateK1Key(clioBinary),
-    generateBLSKey(sysUtilBinary),
+    generateBLSKey(sysUtilBinary)
   ])
 
   return { k1, bls }
@@ -119,13 +128,15 @@ export function formatBLSSignatureProvider(keys: BLSKeyPair): string {
 
 /** Hardcoded bios BLS key (matches TestHarness launcher.py). */
 export const BIOS_BLS_KEY: BLSKeyPair = {
-  publicKey: "PUB_BLS_3igm9y-m3poDQL9IU-oE2E3rjKVD025aN5_Kpod8aVKjqtg4xOrP-jGtz4wLg_IFzc7gay9YghYwVgNafpxphE2xOY5gzEPa8li1rmtFfdpXguDFhNw2FpuLWSWami8WXgUo3A",
+  publicKey:
+    "PUB_BLS_3igm9y-m3poDQL9IU-oE2E3rjKVD025aN5_Kpod8aVKjqtg4xOrP-jGtz4wLg_IFzc7gay9YghYwVgNafpxphE2xOY5gzEPa8li1rmtFfdpXguDFhNw2FpuLWSWami8WXgUo3A",
   privateKey: "PVT_BLS_3VUaSS7tIjSgYU6c8rggjQw3holItXxPbVB-ijnnKV3XTPWC",
-  proofOfPossession: "SIG_BLS_qdQ36ASsBk_pJ9efSCZmSN5OcqNX7GIxjzpREX8TBOBVpUOheRfZmCGO7jay2lIZiD2vkrODGQDCsa3lfkB2FjhmoTce1TYpMOWv-PoPO4D36Y4yjItfa0iMgouirmcG_rubUJDtgn0bHdvtroCc3HDoBHVeI994Ycs62RVJEROyTjIlTVGk3iXoAK9skkQKz3DM3wT0yevxP_O47Ul85rJWnEVAlAjCUOsirAdu0yO1362pdnnl8kjXaPqEj_EYPvrRXw",
+  proofOfPossession:
+    "SIG_BLS_qdQ36ASsBk_pJ9efSCZmSN5OcqNX7GIxjzpREX8TBOBVpUOheRfZmCGO7jay2lIZiD2vkrODGQDCsa3lfkB2FjhmoTce1TYpMOWv-PoPO4D36Y4yjItfa0iMgouirmcG_rubUJDtgn0bHdvtroCc3HDoBHVeI994Ycs62RVJEROyTjIlTVGk3iXoAK9skkQKz3DM3wT0yevxP_O47Ul85rJWnEVAlAjCUOsirAdu0yO1362pdnnl8kjXaPqEj_EYPvrRXw"
 }
 
 /** Hardcoded bios K1 key (the standard dev key). */
 export const BIOS_K1_KEY: K1KeyPair = {
-  publicKey: "SYS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV",
-  privateKey: "5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3",
+  publicKey: DefaultKeyPair.publicKeyWIF,
+  privateKey: DefaultKeyPair.privateKeyWIF
 }
