@@ -1,3 +1,4 @@
+import Fs from "fs"
 import { ProcessManager, type ProcessConfig } from "./ProcessManager.js"
 import { waitForEndpoint } from "../util.js"
 import { log } from "../logger.js"
@@ -48,7 +49,11 @@ export class AnvilManager {
       "--chain-id", String(this.config.chainId),
     ]
     if (this.config.stateFile) {
-      args.push("--state", this.config.stateFile)
+      args.push("--dump-state", this.config.stateFile)
+      // Only load state if the file already exists (not first run)
+      if (Fs.existsSync(this.config.stateFile)) {
+        args.push("--load-state", this.config.stateFile)
+      }
     }
     if (this.config.extraArgs) {
       args.push(...this.config.extraArgs)

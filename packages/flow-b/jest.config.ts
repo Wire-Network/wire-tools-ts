@@ -1,6 +1,6 @@
-import type { Config } from "jest"
 
-const config: Config = {
+
+const config = {
   displayName: "flow-b",
   testEnvironment: "node",
   roots: ["<rootDir>/tests"],

@@ -22,7 +22,7 @@ export async function waitForEndpoint(
         method: "GET",
         signal: AbortSignal.timeout(2000)
       })
-      if (resp.ok || resp.status === 404 || resp.status === 405) {
+      if (resp.ok || resp.status === 400 || resp.status === 404 || resp.status === 405) {
         log.info(`${label} is ready`)
         return
       }

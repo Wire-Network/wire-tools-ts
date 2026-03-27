@@ -1,62 +1,122 @@
-# context-mode — MANDATORY routing rules
+# Wire E2E Tests
 
-You have context-mode MCP tools available. These rules are NOT optional — they protect your context window from flooding. A single unrouted command can dump 56 KB into context and waste the entire session.
+End-to-end test harness and test suites for the WIRE blockchain (OPP flows across WIRE, ETH, and SOL chains).
 
-## BLOCKED commands — do NOT attempt these
+## Package Manager
 
-### curl / wget — BLOCKED
-Any Bash command containing `curl` or `wget` is intercepted and replaced with an error message. Do NOT retry.
-Instead use:
-- `ctx_fetch_and_index(url, source)` to fetch and index web pages
-- `ctx_execute(language: "javascript", code: "const r = await fetch(...)")` to run HTTP calls in sandbox
+**pnpm** (`pnpm@10.32.1`, specified in `packageManager` field). Node `>=22` required.
 
-### Inline HTTP — BLOCKED
-Any Bash command containing `fetch('http`, `requests.get(`, `requests.post(`, `http.get(`, or `http.request(` is intercepted and replaced with an error message. Do NOT retry with Bash.
-Instead use:
-- `ctx_execute(language, code)` to run HTTP calls in sandbox — only stdout enters context
+Never use `npm` or `yarn`.
 
-### WebFetch — BLOCKED
-WebFetch calls are denied entirely. The URL is extracted and you are told to use `ctx_fetch_and_index` instead.
-Instead use:
-- `ctx_fetch_and_index(url, source)` then `ctx_search(queries)` to query the indexed content
+## Build & Test
 
-## REDIRECTED tools — use sandbox equivalents
+```bash
+# Install dependencies
+pnpm install
 
-### Bash (>20 lines output)
-Bash is ONLY for: `git`, `mkdir`, `rm`, `mv`, `cd`, `ls`, `npm install`, `pip install`, and other short-output commands.
-For everything else, use:
-- `ctx_batch_execute(commands, queries)` — run multiple commands + search in ONE call
-- `ctx_execute(language: "shell", code: "...")` — run in sandbox, only stdout enters context
+# Build all packages (uses TypeScript project references)
+pnpm build
 
-### Read (for analysis)
-If you are reading a file to **Edit** it → Read is correct (Edit needs content in context).
-If you are reading to **analyze, explore, or summarize** → use `ctx_execute_file(path, language, code)` instead. Only your printed summary enters context. The raw file content stays in the sandbox.
+# Build in watch mode
+pnpm build:dev
 
-### Grep (large results)
-Grep results can flood context. Use `ctx_execute(language: "shell", code: "grep ...")` to run searches in sandbox. Only your printed summary enters context.
+# Run all tests (builds first)
+pnpm test
 
-## Tool selection hierarchy
+# Run a specific flow's tests
+pnpm test:flow-a
+pnpm test:flow-b
+pnpm test:flow-c
 
-1. **GATHER**: `ctx_batch_execute(commands, queries)` — Primary tool. Runs all commands, auto-indexes output, returns search results. ONE call replaces 30+ individual calls.
-2. **FOLLOW-UP**: `ctx_search(queries: ["q1", "q2", ...])` — Query indexed content. Pass ALL questions as array in ONE call.
-3. **PROCESSING**: `ctx_execute(language, code)` | `ctx_execute_file(path, language, code)` — Sandbox execution. Only stdout enters context.
-4. **WEB**: `ctx_fetch_and_index(url, source)` then `ctx_search(queries)` — Fetch, chunk, index, query. Raw HTML never enters context.
-5. **INDEX**: `ctx_index(content, source)` — Store content in FTS5 knowledge base for later search.
+# Run only harness unit tests
+pnpm --filter @wire-e2e-tests/harness test
 
-## Subagent routing
+# Format code
+pnpm format
 
-When spawning subagents (Agent/Task tool), the routing block is automatically injected into their prompt. Bash-type subagents are upgraded to general-purpose so they have access to MCP tools. You do NOT need to manually instruct subagents about context-mode.
+# Clean all build artifacts
+pnpm clean
+```
 
-## Output constraints
+## Monorepo Structure
 
-- Keep responses under 500 words.
-- Write artifacts (code, configs, PRDs) to FILES — never return them as inline text. Return only: file path + 1-line description.
-- When indexing content, use descriptive source labels so others can `ctx_search(source: "label")` later.
+pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 
-## ctx commands
+| Package | Name | Purpose |
+|---------|------|---------|
+| `harness` | `@wire-e2e-tests/harness` | Core library: process managers, chain clients, bootstrap, CLI |
+| `flow-a` | `@wire-e2e-tests/flow-a` | Test: Empty Epoch (balance sheet only) |
+| `flow-b` | `@wire-e2e-tests/flow-b` | Test: Node Operator Collateral Deposit |
+| `flow-c` | `@wire-e2e-tests/flow-c` | Test: SWAP 50 ETH → 1042 SOL (with underwriting) |
 
-| Command | Action |
-|---------|--------|
-| `ctx stats` | Call the `ctx_stats` MCP tool and display the full output verbatim |
-| `ctx doctor` | Call the `ctx_doctor` MCP tool, run the returned shell command, display as checklist |
-| `ctx upgrade` | Call the `ctx_upgrade` MCP tool, run the returned shell command, display as checklist |
+Flow packages depend on `harness` via `workspace:*`.
+
+## TypeScript
+
+- **Build**: `tsc -b` with project references (incremental, composite)
+- **Module system**: CommonJS output (`"type": "commonjs"` in all packages)
+- **Base config**: `etc/tsconfig/tsconfig.base.cjs.json` (module=nodenext, target=esnext)
+- **Source**: `src/` → **Output**: `lib/`
+- **Import paths**: Always use `.js` extensions (nodenext module resolution)
+- **Path mappings**: `@wire-e2e-tests/*` → `packages/*/src` (in base tsconfig)
+- **Jest tsconfig**: `etc/tsconfig/tsconfig.jest.cjs.json` (disables composite/incremental)
+
+## Testing
+
+- **Framework**: Jest with `ts-jest`
+- **Test location**: `packages/*/tests/*.test.ts`
+- **Timeout**: 120s for flow tests (long-running chain operations)
+- **Run mode**: `--runInBand` (no parallelization — tests manage shared processes)
+- **Config**: Root `jest.config.ts` is multi-project, each package has its own `jest.config.ts`
+
+## CLI Tool
+
+`wire-test-cluster` (bin from harness package):
+
+```bash
+wire-test-cluster --chain-dir=<path> create --build-dir=<wire-sysio-build> [options]
+wire-test-cluster --chain-dir=<path> run      # start cluster, Ctrl+C to stop
+wire-test-cluster --chain-dir=<path> destroy   # stop + delete data
+```
+
+## Key Architecture
+
+### Process Management (`harness/src/processes/`)
+- **ProcessManager**: Core pm2-backed process lifecycle manager. On startup, kills existing `nodeop`/`kiod`/`anvil`/`solana-test-validator` via OS-level `pkill`. Registers exit handlers to clean up on tool exit. Supports per-process and combined cluster file logging when `clusterDir` is set.
+- **WIREChainManager**: Manages `nodeop` + `kiod` processes
+- **AnvilManager**: Manages local Ethereum node (`anvil`)
+- **SolanaValidatorManager**: Manages `solana-test-validator`
+
+### Cluster Management (`harness/src/cluster/`)
+- **ClusterManager**: Orchestrates full WIRE cluster lifecycle — creates directory structure, generates genesis + config, runs bootstrap sequence, manages node state persistence
+- Cluster data lives under `<chainDir>/data/node_<id>/` with per-node config, blocks, and logs
+
+### Clients (`harness/src/clients/`)
+- **Clio**: WIRE CLI wrapper (wallet, contract deployment, account management)
+- **WIREClient**: HTTP client for WIRE chain RPC
+- **ETHClient**: Ethereum client (ethers.js)
+- **SOLClient**: Solana client (@solana/web3.js)
+
+### Bootstrap (`harness/src/bootstrap/`)
+- **WIREBootstrap**: Chain initialization (system contracts, accounts, producers)
+- **ETHBootstrap**: Anvil setup + OPP contract deployment
+- **SOLBootstrap**: Solana validator + Anchor program deployment
+
+## Local Package Linking
+
+`.pnpmfile.cjs` hooks resolve `@wireio/*` packages from sibling repos:
+- `../wire-libraries-ts/packages/` → `@wireio/sdk-core`, `@wireio/shared`, `@wireio/shared-node`
+- `../wire-opp/solidity/` → `@wireio/opp-solidity-models`
+
+These link automatically on `pnpm install` if the sibling directories exist.
+
+## Environment Variables
+
+- `WIRE_BUILD_DIR`: Path to wire-sysio build directory (used by flow tests)
+- `WIRE_CHAIN_DIR`: Override default chain data directory
+- `LOG_LEVEL`: Logging verbosity (default: `info`)
+
+## Code Style
+
+- Prettier: no semicolons, no trailing commas, double quotes, 2-space indent, arrow parens `avoid`
+- Formatting utility wrappers (e.g., `Deferred` + `asOption` pattern) preferred over raw `new Promise` for pm2 callback APIs

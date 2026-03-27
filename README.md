@@ -64,3 +64,8 @@ The harness manages child processes with PID tracking, signal handling, and tree
 3. Executes the OPP epoch cycle
 4. Verifies attestation propagation and state consistency
 5. Tears down all processes
+
+## Code Style
+
+- Prettier: no semicolons, no trailing commas, double quotes, 2-space indent, arrow parens `avoid`
+- Formatting utility wrappers (e.g., `Deferred` + `asOption` pattern) preferred over raw `new Promise` for pm2 callback APIs

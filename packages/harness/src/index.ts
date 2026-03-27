@@ -4,7 +4,8 @@ export { SolanaValidatorManager } from "./processes/SolanaValidatorManager.js"
 export {
   ProcessManager,
   type ProcessConfig,
-  type ProcessHandle
+  type ProcessHandle,
+  type ProcessManagerOptions
 } from "./processes/ProcessManager.js"
 export {
   TestEnvironment,
@@ -29,4 +30,5 @@ export {
 export { waitForEndpoint, retry, sleep } from "./util.js"
 export { ClusterManager, type ClusterConfig } from "./cluster/ClusterManager.js"
 export { generateGenesis, type GenesisJson } from "./cluster/genesis.js"
-export { generateConfigFileContent, type ConfigOptions } from "./cluster/Config"
+export { generateLoggingConfig } from "./cluster/loggingConfig.js"
+export { generateConfigFileContent, type ConfigOptions } from "./cluster/Config.js"

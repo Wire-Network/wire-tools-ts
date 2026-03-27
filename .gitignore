@@ -21,6 +21,9 @@ node*compile*cache/
 .env.test.local
 .env.production.local
 
+
+.claude*
+
 # Testing
 coverage
 

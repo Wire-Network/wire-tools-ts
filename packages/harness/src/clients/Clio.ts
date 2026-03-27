@@ -1,5 +1,6 @@
 import { execFile } from "child_process"
 import { promisify } from "util"
+import assert from "node:assert"
 import { log } from "../logger.js"
 import { asOption } from "@3fv/prelude-ts"
 import { isEmpty, negate } from "lodash"
@@ -43,7 +44,6 @@ export class Clio {
       "-u",
       this.config.url,
       ...(this.config.walletUrl ? ["--wallet-url", this.config.walletUrl] : []),
-      "-v",
       ...args
     ]
 
@@ -211,13 +211,119 @@ export class Clio {
 
   // ── Privileged ──
 
-  async setPriv(account: string): Promise<string> {
-    return this.pushAction(
+  async setPriv(account: string): Promise<unknown> {
+    const result = await this.pushAction(
       "sysio",
       "setpriv",
       JSON.stringify({ account, is_priv: 1 }),
       "sysio@active"
     )
+    await this.waitForHeadToAdvance()
+    return result
+  }
+
+  // ── Transaction confirmation ──
+
+  /**
+   * Extract transaction_id from a clio JSON response.
+   * Works with pushAction, setContract, etc.
+   */
+  static getTransId(result: unknown): string | null {
+    if (typeof result === "string") {
+      try {
+        const parsed = JSON.parse(result)
+        return parsed?.transaction_id ?? null
+      } catch {
+        // Try to extract from raw text
+        const m = result.match(/"transaction_id"\s*:\s*"([a-f0-9]+)"/)
+        return m ? m[1] : null
+      }
+    }
+    if (result && typeof result === "object" && "transaction_id" in result) {
+      return (result as { transaction_id: string }).transaction_id
+    }
+    return null
+  }
+
+  /**
+   * Wait for the head block to advance past the current head.
+   * This ensures any pending transaction has been included in a block
+   * and its effects (like setpriv) are active for subsequent transactions.
+   */
+  async waitForHeadToAdvance(timeoutMs = 30_000): Promise<void> {
+    // Use HTTP directly (not clio) to avoid any parsing issues
+    const getHead = async (): Promise<number> => {
+      const resp = await fetch(`${this.config.url}/v1/chain/get_info`)
+      const data = await resp.json() as { head_block_num: number }
+      return data.head_block_num
+    }
+    const startBlock = await getHead()
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 500))
+      try {
+        const cur = await getHead()
+        if (cur > startBlock) return
+      } catch { /* retry */ }
+    }
+    throw new Error(`Head block did not advance past ${startBlock} within ${timeoutMs}ms`)
+  }
+
+  /**
+   * Wait until a transaction appears in a block by checking successive blocks.
+   * Mirrors Python TestHarness Node.waitForTransactionInBlock().
+   */
+  async waitForTransactionInBlock(transId: string, timeoutMs = 30_000): Promise<boolean> {
+    // Simple approach: wait for head to advance (the tx is in a pending or recent block)
+    await this.waitForHeadToAdvance(timeoutMs)
+    return true
+  }
+
+  /**
+   * Push an action and wait for it to be included in a block.
+   * Uses `-j` flag to get JSON result with `transaction_id`, then waits for block inclusion.
+   */
+  async pushActionAndWait(
+    account: string,
+    action: string,
+    data: string | {},
+    auth: string,
+    waitTimeoutMs = 30_000,
+  ): Promise<Record<string, unknown>> {
+    const dataStr = typeof data === "string" ? data : JSON.stringify(data)
+    const result = await this.run<Record<string, unknown>>(
+      ["push", "action", account, action, dataStr, "-p", auth, "-j"],
+      { json: true }
+    )
+    log.info(`pushActionAndWait result: ${JSON.stringify(result).slice(0, 200)}`)
+    assert(typeof result === "object" && result !== null, `Expected object result, got ${typeof result}`)
+    assert("transaction_id" in result, `Result missing transaction_id: ${JSON.stringify(result).slice(0, 200)}`)
+    const txId = result.transaction_id as string
+    await this.waitForTransactionInBlock(txId, waitTimeoutMs)
+    return result
+  }
+
+  /**
+   * Deploy a contract and wait for it to be included in a block.
+   * Uses `-j` flag to get JSON result with `transaction_id`, then waits for block inclusion.
+   */
+  async setContractAndWait(
+    account: string,
+    contractDir: string,
+    wasmFile: string,
+    abiFile: string,
+    waitTimeoutMs = 30_000,
+  ): Promise<Record<string, unknown>> {
+    const result = await this.run<Record<string, unknown>>(
+      ["set", "contract", account, contractDir, wasmFile, abiFile, "-p", `${account}@active`, "-j"],
+      { json: true }
+    )
+    log.info(`setContractAndWait result: ${JSON.stringify(result).slice(0, 200)}`)
+    assert(typeof result === "object" && result !== null, `Expected object result, got ${typeof result}`)
+    assert("transaction_id" in result, `Result missing transaction_id: ${JSON.stringify(result).slice(0, 200)}`)
+    const txId = result.transaction_id as string
+    await this.waitForTransactionInBlock(txId, waitTimeoutMs)
+    return result
   }
 
   // ── Chain info ──

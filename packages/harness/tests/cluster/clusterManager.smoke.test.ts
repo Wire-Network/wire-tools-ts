@@ -1,263 +1,114 @@
-import Fs from "fs"
-import Path from "path"
-import os from "os"
-import { ClusterManager } from "@wire-e2e-tests/harness/cluster/ClusterManager"
+import { generateGenesis } from "@wire-e2e-tests/harness/cluster/genesis"
+import { generateLoggingConfig } from "@wire-e2e-tests/harness/cluster/loggingConfig"
+import { buildStartCmd } from "@wire-e2e-tests/harness/cluster/startCmd"
+import { BIOS_K1_KEY, BIOS_BLS_KEY, formatK1SignatureProvider, formatBLSSignatureProvider } from "@wire-e2e-tests/harness/cluster/keyGen"
+import { DEV_PUBLIC_KEY, DEV_PRIVATE_KEY, BIOS_P2P_PORT, BIOS_HTTP_PORT } from "@wire-e2e-tests/harness/cluster/constants"
 
-/**
- * Smoke test for ClusterManager file-generation logic.
- *
- * This test exercises the directory structure creation, genesis.json writing,
- * config.ini generation, and cluster-config.json output WITHOUT actually
- * starting nodeop processes.  We achieve this by:
- *   1. Calling create() with a fake buildDir (it never actually spawns nodeop
- *      because we mock ProcessManager.spawn and the bootstrap helpers).
- *   2. Verifying the generated files on disk.
- */
+describe("ClusterManager smoke tests", () => {
+  describe("genesis.ts", () => {
+    test("generates valid genesis with initial_key and initial_configuration", () => {
+      const genesis = generateGenesis()
+      expect(genesis.initial_key).toBe(DEV_PUBLIC_KEY)
+      expect(genesis.initial_timestamp).toBeDefined()
+      expect(genesis.initial_configuration.max_block_cpu_usage).toBe(400000)
+      expect(genesis.initial_configuration.max_transaction_cpu_usage).toBe(375000)
+    })
 
-describe("ClusterManager smoke test (file generation only)", () => {
-  let tmpDir: string
-
-  beforeEach(() => {
-    tmpDir = Fs.mkdtempSync(Path.join(os.tmpdir(), "cluster-smoke-"))
+    test("includes initial_finalizer_key when provided", () => {
+      const genesis = generateGenesis({ initialFinalizerKey: BIOS_BLS_KEY.publicKey })
+      expect(genesis.initial_finalizer_key).toBe(BIOS_BLS_KEY.publicKey)
+    })
   })
 
-  afterEach(() => {
-    Fs.rmSync(tmpDir, { recursive: true, force: true })
+  describe("loggingConfig.ts", () => {
+    test("generates JSON with stderr_color sink and standard loggers", () => {
+      const config = generateLoggingConfig() as { sinks: Array<{ name: string }>; loggers: Array<{ name: string }> }
+      expect(config.sinks[0].name).toBe("stderr_color")
+      expect(config.loggers.length).toBeGreaterThan(5)
+      const names = config.loggers.map(l => l.name)
+      expect(names).toContain("default")
+      expect(names).toContain("producer_plugin")
+      expect(names).toContain("net_plugin_impl")
+      expect(names).toContain("vote")
+    })
   })
 
-  /**
-   * Helper: call the private methods on ClusterManager that handle
-   * file generation (directory structure, configs, cluster-config.json)
-   * without going through the full create() which tries to start nodes.
-   */
-  function generateClusterFiles(opts?: {
-    nodeCount?: number
-    producerCount?: number
-    batchOperatorCount?: number
-    underwriterCount?: number
-  }) {
-    const cm = new ClusterManager()
-    const cfg = {
-      buildDir: "/fake/build",
-      chainDir: tmpDir,
-      producerCount: opts?.producerCount ?? 4,
-      nodeCount: opts?.nodeCount ?? 2,
-      httpSecure: false,
-      batchOperatorCount: opts?.batchOperatorCount ?? 1,
-      underwriterCount: opts?.underwriterCount ?? 1,
-    }
+  describe("startCmd.ts", () => {
+    test("builds bios start.cmd with both K1 and BLS signature-providers", () => {
+      const cmd = buildStartCmd({
+        nodeopBinary: "/opt/bin/nodeop",
+        p2pListenEndpoint: `0.0.0.0:${BIOS_P2P_PORT}`,
+        p2pServerAddress: `localhost:${BIOS_P2P_PORT}`,
+        p2pPeerAddresses: [],
+        httpServerAddress: `localhost:${BIOS_HTTP_PORT}`,
+        enableStaleProduction: true,
+        producerNames: ["sysio"],
+        k1Keys: [BIOS_K1_KEY],
+        blsKeys: [BIOS_BLS_KEY],
+        configDir: "/tmp/test/node_bios",
+        dataDir: "/tmp/test/node_bios",
+        genesisJson: "/tmp/test/node_bios/genesis.json",
+        genesisTimestamp: "2026-03-27T00:00:00.000",
+      })
+      const s = cmd.join(" ")
+      expect(cmd[0]).toBe("/opt/bin/nodeop")
+      expect(s).toContain(formatK1SignatureProvider(BIOS_K1_KEY))
+      expect(s).toContain(formatBLSSignatureProvider(BIOS_BLS_KEY))
+      expect(s).toContain("sysio::producer_plugin")
+      expect(s).toContain("--enable-stale-production")
+      expect(s).toContain("--producer-name sysio")
+      expect(s).toContain("--trace-no-abis")
+      expect(s).toContain("--genesis-json /tmp/test/node_bios/genesis.json")
+      expect(s).toContain("--genesis-timestamp 2026-03-27T00:00:00.000")
+    })
 
-    // Access private methods via cast — these are the file-only methods
-    const cmAny = cm as any
-
-    // 1. Create directory structure
-    cmAny.ensureDirectoryStructure(cfg)
-
-    // 2. Write genesis.json (mirroring what create() does)
-    const { generateGenesis } = require("../../src/cluster/genesis")
-    const genesisContent = generateGenesis()
-    Fs.writeFileSync(
-      Path.join(tmpDir, "genesis.json"),
-      JSON.stringify(genesisContent, null, 2),
-      "utf-8"
-    )
-
-    // 3. Generate all config.ini files
-    cmAny.generateAllConfigs(cfg)
-
-    // 4. Write cluster-config.json
-    const producerNodes = cmAny.buildProducerNodeStates(cfg)
-    const batchOpNodes = cmAny.buildBatchOperatorNodeStates(cfg)
-    const underwriterNodes = cmAny.buildUnderwriterNodeStates(cfg)
-    cmAny.writeClusterConfigJson(cfg, producerNodes, batchOpNodes, underwriterNodes)
-
-    return { cfg, producerNodes, batchOpNodes, underwriterNodes }
-  }
-
-  it("creates genesis.json with expected structure", () => {
-    generateClusterFiles()
-
-    const genesisPath = Path.join(tmpDir, "genesis.json")
-    expect(Fs.existsSync(genesisPath)).toBe(true)
-
-    const genesis = JSON.parse(Fs.readFileSync(genesisPath, "utf-8"))
-    expect(genesis).toHaveProperty("initial_timestamp")
-    expect(genesis).toHaveProperty("initial_key")
-    expect(genesis).toHaveProperty("initial_configuration")
-    expect(genesis.initial_configuration).toHaveProperty("max_block_cpu_usage")
+    test("builds producer node start.cmd with peer addresses and no stale production", () => {
+      const k1 = { publicKey: "PUB_K1_test123", privateKey: "PVT_K1_test456" }
+      const bls = { publicKey: "PUB_BLS_test789", privateKey: "PVT_BLS_test012", proofOfPossession: "SIG_BLS_test" }
+      const cmd = buildStartCmd({
+        nodeopBinary: "/opt/bin/nodeop",
+        p2pListenEndpoint: "0.0.0.0:9876",
+        p2pServerAddress: "localhost:9876",
+        p2pPeerAddresses: ["localhost:9776"],
+        httpServerAddress: "localhost:8888",
+        producerNames: ["defproducera", "defproducerb"],
+        k1Keys: [k1],
+        blsKeys: [bls],
+        configDir: "/tmp/test/node_00",
+        dataDir: "/tmp/test/node_00",
+        genesisJson: "/tmp/test/node_00/genesis.json",
+        genesisTimestamp: "2026-03-27T00:00:00.000",
+      })
+      const s = cmd.join(" ")
+      expect(s).toContain("wire-PUB_K1_test123,wire,wire,PUB_K1_test123,KEY:PVT_K1_test456")
+      expect(s).toContain("wire-bls-PUB_BLS_test789,wire,wire_bls,PUB_BLS_test789,KEY:PVT_BLS_test012")
+      expect(s).toContain("--producer-name defproducera")
+      expect(s).toContain("--producer-name defproducerb")
+      expect(s).toContain("--p2p-peer-address localhost:9776")
+      expect(s).not.toContain("--enable-stale-production")
+    })
   })
 
-  it("creates bios node directory and config.ini", () => {
-    generateClusterFiles()
+  describe("keyGen.ts constants", () => {
+    test("BIOS_K1_KEY matches the standard dev key", () => {
+      expect(BIOS_K1_KEY.publicKey).toBe(DEV_PUBLIC_KEY)
+      expect(BIOS_K1_KEY.privateKey).toBe(DEV_PRIVATE_KEY)
+    })
 
-    const biosDir = Path.join(tmpDir, "data", "node_bios")
-    expect(Fs.existsSync(biosDir)).toBe(true)
-    expect(Fs.existsSync(Path.join(biosDir, "blocks"))).toBe(true)
+    test("BIOS_BLS_KEY has correct prefixes", () => {
+      expect(BIOS_BLS_KEY.publicKey).toMatch(/^PUB_BLS_/)
+      expect(BIOS_BLS_KEY.privateKey).toMatch(/^PVT_BLS_/)
+      expect(BIOS_BLS_KEY.proofOfPossession).toMatch(/^SIG_BLS_/)
+    })
 
-    const configPath = Path.join(biosDir, "config.ini")
-    expect(Fs.existsSync(configPath)).toBe(true)
+    test("formatK1SignatureProvider produces correct wire,wire,<key>,KEY:<priv> format", () => {
+      const sp = formatK1SignatureProvider(BIOS_K1_KEY)
+      expect(sp).toBe(`wire-${BIOS_K1_KEY.publicKey},wire,wire,${BIOS_K1_KEY.publicKey},KEY:${BIOS_K1_KEY.privateKey}`)
+    })
 
-    const ini = Fs.readFileSync(configPath, "utf-8")
-    expect(ini).toContain("plugin = sysio::net_plugin")
-    expect(ini).toContain("enable-stale-production = true")
-    expect(ini).toContain("producer-name = sysio")
-  })
-
-  it("creates producer node directories with config.ini files", () => {
-    const { cfg } = generateClusterFiles({ nodeCount: 3 })
-
-    for (let i = 0; i < cfg.nodeCount; i++) {
-      const nodeDir = Path.join(
-        tmpDir,
-        "data",
-        `node_${String(i).padStart(2, "0")}`
-      )
-      expect(Fs.existsSync(nodeDir)).toBe(true)
-      expect(Fs.existsSync(Path.join(nodeDir, "blocks"))).toBe(true)
-
-      const configPath = Path.join(nodeDir, "config.ini")
-      expect(Fs.existsSync(configPath)).toBe(true)
-
-      const ini = Fs.readFileSync(configPath, "utf-8")
-      expect(ini).toContain("plugin = sysio::net_plugin")
-      expect(ini).toContain("http-server-address")
-      expect(ini).toContain("p2p-listen-endpoint")
-    }
-  })
-
-  it("creates batch operator node directories with config.ini files", () => {
-    const { cfg } = generateClusterFiles({ batchOperatorCount: 2 })
-
-    for (let i = 0; i < cfg.batchOperatorCount; i++) {
-      const nodeDir = Path.join(
-        tmpDir,
-        "data",
-        `node_batchop_${String(i).padStart(2, "0")}`
-      )
-      expect(Fs.existsSync(nodeDir)).toBe(true)
-
-      const configPath = Path.join(nodeDir, "config.ini")
-      expect(Fs.existsSync(configPath)).toBe(true)
-
-      const ini = Fs.readFileSync(configPath, "utf-8")
-      expect(ini).toContain("batch-enabled = true")
-      expect(ini).toContain("batch-operator-account = batchop.")
-      expect(ini).toContain("read-mode = irreversible")
-      expect(ini).toContain("plugin = sysio::batch_operator_plugin")
-    }
-  })
-
-  it("creates underwriter node directories with config.ini files", () => {
-    const { cfg } = generateClusterFiles({ underwriterCount: 2 })
-
-    for (let i = 0; i < cfg.underwriterCount; i++) {
-      const nodeDir = Path.join(
-        tmpDir,
-        "data",
-        `node_uwrit_${String(i).padStart(2, "0")}`
-      )
-      expect(Fs.existsSync(nodeDir)).toBe(true)
-
-      const configPath = Path.join(nodeDir, "config.ini")
-      expect(Fs.existsSync(configPath)).toBe(true)
-
-      const ini = Fs.readFileSync(configPath, "utf-8")
-      expect(ini).toContain("underwriter-enabled = true")
-      expect(ini).toContain("underwriter-account = uwrit.")
-      expect(ini).toContain("read-mode = irreversible")
-      expect(ini).toContain("plugin = sysio::underwriter_plugin")
-    }
-  })
-
-  it("creates a wallet directory", () => {
-    generateClusterFiles()
-    expect(Fs.existsSync(Path.join(tmpDir, "wallet"))).toBe(true)
-  })
-
-  it("writes cluster-config.json with expected structure", () => {
-    generateClusterFiles({ nodeCount: 2, producerCount: 4, batchOperatorCount: 1, underwriterCount: 1 })
-
-    const ccPath = Path.join(tmpDir, "cluster-config.json")
-    expect(Fs.existsSync(ccPath)).toBe(true)
-
-    const cc = JSON.parse(Fs.readFileSync(ccPath, "utf-8"))
-    expect(cc).toHaveProperty("config")
-    expect(cc).toHaveProperty("keys")
-
-    // Config section
-    expect(cc.config.producerCount).toBe(4)
-    expect(cc.config.nodeCount).toBe(2)
-    expect(cc.config.batchOperatorCount).toBe(1)
-    expect(cc.config.underwriterCount).toBe(1)
-
-    // Producers array
-    expect(Array.isArray(cc.config.producers)).toBe(true)
-    expect(cc.config.producers.length).toBe(4)
-    expect(cc.config.producers[0]).toHaveProperty("name")
-    expect(cc.config.producers[0]).toHaveProperty("httpPort")
-    expect(cc.config.producers[0]).toHaveProperty("p2pPort")
-
-    // Nodes array
-    expect(Array.isArray(cc.config.nodes)).toBe(true)
-    expect(cc.config.nodes.length).toBe(2)
-
-    // Batch operators
-    expect(Array.isArray(cc.config.batchOperators)).toBe(true)
-    expect(cc.config.batchOperators.length).toBe(1)
-    expect(cc.config.batchOperators[0]).toHaveProperty("account")
-
-    // Underwriters
-    expect(Array.isArray(cc.config.underwriters)).toBe(true)
-    expect(cc.config.underwriters.length).toBe(1)
-    expect(cc.config.underwriters[0]).toHaveProperty("account")
-  })
-
-  it("cluster-config.json keys section includes sysio and producer accounts", () => {
-    generateClusterFiles({ producerCount: 4 })
-
-    const cc = JSON.parse(
-      Fs.readFileSync(Path.join(tmpDir, "cluster-config.json"), "utf-8")
-    )
-
-    expect(cc.keys).toHaveProperty("sysio")
-    expect(cc.keys.sysio.keys[0]).toHaveProperty("private")
-    expect(cc.keys.sysio.keys[0]).toHaveProperty("public")
-
-    // All 4 defproducers should have keys
-    expect(cc.keys).toHaveProperty("defproducera")
-    expect(cc.keys).toHaveProperty("defproducerb")
-    expect(cc.keys).toHaveProperty("defproducerc")
-    expect(cc.keys).toHaveProperty("defproducerd")
-  })
-
-  it("config.ini files contain correct port assignments", () => {
-    generateClusterFiles({ nodeCount: 2 })
-
-    // node_00 should use BASE ports + 0
-    const ini0 = Fs.readFileSync(
-      Path.join(tmpDir, "data", "node_00", "config.ini"),
-      "utf-8"
-    )
-    expect(ini0).toContain("http-server-address = 0.0.0.0:8888")
-    expect(ini0).toContain("p2p-listen-endpoint = 0.0.0.0:9876")
-
-    // node_01 should use BASE ports + 1
-    const ini1 = Fs.readFileSync(
-      Path.join(tmpDir, "data", "node_01", "config.ini"),
-      "utf-8"
-    )
-    expect(ini1).toContain("http-server-address = 0.0.0.0:8889")
-    expect(ini1).toContain("p2p-listen-endpoint = 0.0.0.0:9877")
-  })
-
-  it("bios config.ini includes bios-specific ports", () => {
-    generateClusterFiles()
-
-    const biosIni = Fs.readFileSync(
-      Path.join(tmpDir, "data", "node_bios", "config.ini"),
-      "utf-8"
-    )
-    expect(biosIni).toContain("http-server-address = 0.0.0.0:8788")
-    expect(biosIni).toContain("p2p-listen-endpoint = 0.0.0.0:9776")
+    test("formatBLSSignatureProvider produces correct wire-bls,wire,wire_bls format", () => {
+      const sp = formatBLSSignatureProvider(BIOS_BLS_KEY)
+      expect(sp).toBe(`wire-bls-${BIOS_BLS_KEY.publicKey},wire,wire_bls,${BIOS_BLS_KEY.publicKey},KEY:${BIOS_BLS_KEY.privateKey}`)
+    })
   })
 })

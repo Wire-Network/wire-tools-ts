@@ -1,6 +1,10 @@
-import { ChildProcess, spawn, SpawnOptions } from "child_process"
+import pm2 from "pm2"
+import Path from "path"
+import Fs from "fs"
+import { execFileSync } from "child_process"
 import { log } from "../logger.js"
-import treeKill from "tree-kill"
+import { Deferred } from "@wireio/shared"
+import { asOption } from "@3fv/prelude-ts"
 
 export interface ProcessConfig {
   /** Human-readable label for logging */
@@ -18,98 +22,395 @@ export interface ProcessConfig {
 }
 
 export interface ProcessHandle {
-  /** The underlying ChildProcess */
-  process: ChildProcess
-  /** PID */
+  /** pm2 process id */
+  pmId: number
+  /** OS-level PID (if available) */
   pid: number
-  /** Kill the process tree */
+  /** Kill the process and remove it from pm2 */
   kill(): Promise<void>
-  /** Wait for process to exit */
+  /** Wait for the process to stop */
   wait(): Promise<number>
   /** Collected stderr lines (last N) */
   recentStderr: string[]
 }
 
+export interface ProcessManagerOptions {
+  /** Cluster directory root — enables file logging when set */
+  clusterDir?: string
+}
+
+/** Process names to kill at startup and on exit */
+const MANAGED_PROCESS_NAMES = [
+  "nodeop",
+  "kiod",
+  "anvil",
+  "solana-test-validator"
+]
+
+function pm2Connect(): Promise<void> {
+  return asOption(new Deferred<void>())
+    .tap(d =>
+      pm2.connect(true, err => {
+        return err ? d.reject(err) : d.resolve()
+      })
+    )
+    .map(d => d.promise)
+    .get()
+}
+
+function pm2Start(opts: pm2.StartOptions): Promise<pm2.Proc> {
+  return asOption(new Deferred<pm2.Proc>())
+    .tap(d =>
+      pm2.start(opts, (err, proc) => {
+        return err ? d.reject(err) : d.resolve(proc)
+      })
+    )
+    .map(d => d.promise)
+    .get()
+}
+
+function pm2Delete(name: string): Promise<void> {
+  return asOption(new Deferred<void>())
+    .tap(d =>
+      pm2.delete(name, err => {
+        return err ? d.reject(err) : d.resolve()
+      })
+    )
+    .map(d => d.promise)
+    .get()
+}
+
+function pm2Describe(name: string): Promise<pm2.ProcessDescription[]> {
+  return asOption(new Deferred<pm2.ProcessDescription[]>())
+    .tap(d =>
+      pm2.describe(name, (err, descs) => {
+        return err ? d.reject(err) : d.resolve(descs)
+      })
+    )
+    .map(d => d.promise)
+    .get()
+}
+
+function pm2List(): Promise<pm2.ProcessDescription[]> {
+  return asOption(new Deferred<pm2.ProcessDescription[]>())
+    .tap(d =>
+      pm2.list((err, list) => {
+        return err ? d.reject(err) : d.resolve(list)
+      })
+    )
+    .map(d => d.promise)
+    .get()
+}
+
+function pm2SendSignal(signal: string, name: string): Promise<void> {
+  return asOption(new Deferred<void>())
+    .tap(d =>
+      pm2.sendSignalToProcessName(signal, name, err => {
+        return err ? d.reject(err) : d.resolve()
+      })
+    )
+    .map(d => d.promise)
+    .get()
+}
+
+function pm2LaunchBus(): Promise<any> {
+  return asOption(new Deferred<any>())
+    .tap(d =>
+      pm2.launchBus((err, bus) => {
+        return err ? d.reject(err) : d.resolve(bus)
+      })
+    )
+    .map(d => d.promise)
+    .get()
+}
+
+function currentDateStamp(): string {
+  return asOption(new Date())
+    .map(
+      d =>
+        `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`
+    )
+    .get()
+}
+
+/** Check if a process with the given name is running via pgrep. */
+function isProcessRunning(name: string): boolean {
+  try {
+    execFileSync("pgrep", ["-x", name], { stdio: "ignore" })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Send a signal to all processes matching name via pkill. */
+function pkill(name: string, signal?: string): void {
+  try {
+    const args = signal ? [signal, "-x", name] : ["-x", name]
+    execFileSync("pkill", args, { stdio: "ignore" })
+  } catch {
+    // process not found or already dead
+  }
+}
+
 /**
- * Generic child process manager with PID tracking, signal handling,
- * and tree-kill support. Inspired by cluster_manager.py's approach.
+ * Kill any existing instances of managed processes (nodeop, kiod, anvil, etc.).
+ * Sends SIGTERM first, waits 2s, then SIGKILL for any stragglers.
+ */
+function killExistingProcesses(): void {
+  const running = MANAGED_PROCESS_NAMES.filter(isProcessRunning)
+  if (running.length === 0) return
+
+  log.info(`Killing existing processes: ${running.join(", ")}`)
+  for (const name of running) {
+    pkill(name)
+  }
+
+  // Wait 2s for graceful shutdown
+  execFileSync("sleep", ["2"])
+
+  // SIGKILL any stragglers
+  const stragglers = running.filter(isProcessRunning)
+  if (stragglers.length > 0) {
+    log.warn(`Force-killing stragglers: ${stragglers.join(", ")}`)
+    for (const name of stragglers) {
+      pkill(name, "-9")
+    }
+  }
+}
+
+/**
+ * Map a process label to its per-process log directory under clusterDir.
+ *
+ * Labels like `node-bios`, `node-00`, `node-batchop_00` map to
+ * `<clusterDir>/data/node_bios/logs/`, `<clusterDir>/data/node_00/logs/`, etc.
+ *
+ * `anvil` → `<clusterDir>/data/anvil/logs/`
+ * `solana-test-validator` → `<clusterDir>/data/solana_validator/logs/`
+ * `kiod` → `<clusterDir>/data/kiod/logs/`
+ */
+function processLogDir(clusterDir: string, label: string): string {
+  let dirName: string
+  if (label.startsWith("node-")) {
+    // node-bios → node_bios, node-00 → node_00, node-batchop_00 → node_batchop_00
+    dirName = label.replace("node-", "node_")
+  } else if (label === "solana-test-validator") {
+    dirName = "solana_validator"
+  } else {
+    dirName = label
+  }
+  return Path.join(clusterDir, "data", dirName, "logs")
+}
+
+/**
+ * Generic process manager backed by pm2's programmatic API.
+ *
+ * On first connection, kills any existing nodeop/kiod/anvil/solana-test-validator
+ * processes at the OS level (pkill). Registers exit handlers so that all managed
+ * processes are stopped gracefully when the tool exits.
  */
 export class ProcessManager {
   private handles: Map<string, ProcessHandle> = new Map()
+  private connected = false
+  private bus: any = null
+  private clusterDir: string | undefined
+  private clusterLogStream: Fs.WriteStream | null = null
+  private processLogStreams: Map<string, Fs.WriteStream> = new Map()
+  private exitHandlerRegistered = false
 
-  /** Spawn a labeled child process and track it. */
+  constructor(options?: ProcessManagerOptions) {
+    this.clusterDir = options?.clusterDir
+  }
+
+  /** Set the cluster directory (enables file logging). Can be called before first spawn. */
+  setClusterDir(clusterDir: string): void {
+    this.clusterDir = clusterDir
+  }
+
+  /** Ensure we have a pm2 daemon connection. */
+  private async ensureConnected(): Promise<void> {
+    if (this.connected) return
+
+    // Kill any leftover processes from a previous run before connecting
+    killExistingProcesses()
+
+    await pm2Connect()
+    this.connected = true
+    this.bus = await pm2LaunchBus()
+
+    this.registerExitHandler()
+  }
+
+  /** Register process exit handlers to clean up managed processes. */
+  private registerExitHandler(): void {
+    if (this.exitHandlerRegistered) return
+    this.exitHandlerRegistered = true
+
+    const cleanup = () => {
+      log.info("ProcessManager: cleaning up on exit...")
+      // Synchronous kill — we're in an exit handler
+      for (const name of MANAGED_PROCESS_NAMES) {
+        pkill(name)
+      }
+      this.closeAllLogStreams()
+      if (this.connected) {
+        pm2.disconnect()
+        this.connected = false
+      }
+    }
+
+    process.on("exit", cleanup)
+    process.on("SIGINT", () => {
+      cleanup()
+      process.exit(130)
+    })
+    process.on("SIGTERM", () => {
+      cleanup()
+      process.exit(143)
+    })
+  }
+
+  private ensureLogStreams(label: string): void {
+    if (!this.clusterDir) return
+    const stamp = currentDateStamp()
+
+    // Combined cluster log
+    if (!this.clusterLogStream) {
+      const clusterLogDir = Path.join(this.clusterDir, "logs")
+      Fs.mkdirSync(clusterLogDir, { recursive: true })
+      const clusterLogPath = Path.join(clusterLogDir, `cluster_${stamp}.log`)
+      this.clusterLogStream = Fs.createWriteStream(clusterLogPath, {
+        flags: "a"
+      })
+      log.info(`Cluster log: ${clusterLogPath}`)
+    }
+
+    // Per-process log
+    if (!this.processLogStreams.has(label)) {
+      const logDir = processLogDir(this.clusterDir, label)
+      Fs.mkdirSync(logDir, { recursive: true })
+      const logPath = Path.join(logDir, `log_${stamp}.log`)
+      this.processLogStreams.set(
+        label,
+        Fs.createWriteStream(logPath, { flags: "a" })
+      )
+      log.info(`Process log for ${label}: ${logPath}`)
+    }
+  }
+
+  private writeToLogs(label: string, stream: string, data: string): void {
+    const ts = new Date().toISOString()
+    const line = `${ts} [${label}:${stream}] ${data}\n`
+    this.clusterLogStream?.write(line)
+    this.processLogStreams.get(label)?.write(line)
+  }
+
+  /** Spawn a labeled process via pm2 and track it. */
   async spawn(config: ProcessConfig): Promise<ProcessHandle> {
     if (this.handles.has(config.label)) {
       throw new Error(`Process "${config.label}" is already running`)
     }
 
-    const spawnOpts: SpawnOptions = {
-      cwd: config.cwd,
-      env: { ...process.env, ...(config.env || {}) },
-      stdio: ["ignore", "pipe", "pipe"],
-    }
-
-    log.info(`Spawning ${config.label}: ${config.command} ${config.args.join(" ")}`)
-    const child = spawn(config.command, config.args, spawnOpts)
-
-    if (!child.pid) {
-      throw new Error(`Failed to spawn ${config.label}`)
-    }
+    await this.ensureConnected()
+    this.ensureLogStreams(config.label)
 
     const recentStderr: string[] = []
     const MAX_STDERR_LINES = 100
 
-    child.stdout?.on("data", (data: Buffer) => {
-      const lines = data.toString().split("\n").filter(Boolean)
-      for (const line of lines) {
-        log.debug(`[${config.label}:stdout] ${line}`)
-      }
-    })
+    log.info(
+      `Spawning ${config.label}: ${config.command} ${config.args.join(" ")}`
+    )
 
-    child.stderr?.on("data", (data: Buffer) => {
-      const lines = data.toString().split("\n").filter(Boolean)
+    const startOpts: pm2.StartOptions = {
+      name: config.label,
+      script: config.command,
+      args: config.args,
+      cwd: config.cwd,
+      interpreter: "none",
+      autorestart: false,
+      env: { ...process.env, ...(config.env || {}) } as Record<string, string>,
+      ...(config.logFile
+        ? { output: config.logFile, error: config.logFile }
+        : {})
+    }
+
+    await pm2Start(startOpts)
+
+    // Retrieve process description to get pm_id and pid
+    const descs = await pm2Describe(config.label)
+    if (!descs || descs.length === 0) {
+      throw new Error(
+        `Failed to spawn ${config.label}: no process description returned`
+      )
+    }
+
+    const desc = descs[0],
+      pmId = desc.pm_id ?? -1,
+      pid = desc.pid ?? 0
+
+    if (pid === 0) {
+      throw new Error(`Failed to spawn ${config.label}: no pid assigned`)
+    }
+
+    // Listen for log events on the bus
+    this.bus.on("log:err", (packet: any) => {
+      if (packet.process?.name !== config.label) return
+      const lines = String(packet.data).split("\n").filter(Boolean)
       for (const line of lines) {
         log.debug(`[${config.label}:stderr] ${line}`)
         recentStderr.push(line)
         if (recentStderr.length > MAX_STDERR_LINES) recentStderr.shift()
+        this.writeToLogs(config.label, "stderr", line)
       }
     })
 
-    const handle: ProcessHandle = {
-      process: child,
-      pid: child.pid,
-      recentStderr,
+    this.bus.on("log:out", (packet: any) => {
+      if (packet.process?.name !== config.label) return
+      const lines = String(packet.data).split("\n").filter(Boolean)
+      for (const line of lines) {
+        log.debug(`[${config.label}:stdout] ${line}`)
+        this.writeToLogs(config.label, "stdout", line)
+      }
+    })
 
-      kill: () =>
-        new Promise<void>((resolve, reject) => {
-          if (!child.pid) return resolve()
-          log.info(`Killing ${config.label} (pid ${child.pid})`)
-          treeKill(child.pid, "SIGTERM", err => {
-            if (err) {
-              log.warn(`tree-kill failed for ${config.label}, trying SIGKILL: ${err.message}`)
-              treeKill(child.pid!, "SIGKILL", () => resolve())
-            } else {
-              resolve()
-            }
-          })
-        }),
-
-      wait: () =>
-        new Promise<number>(resolve => {
-          child.on("exit", (code) => resolve(code ?? 1))
-        }),
-    }
-
-    child.on("exit", (code, signal) => {
+    // Track exit via bus event
+    const exitDeferred = new Deferred<number>()
+    const onExit = (packet: any) => {
+      if (packet.process?.name !== config.label) return
+      const code = packet.process?.exit_code ?? 1
+      const signal = packet.process?.signal
       log.info(`${config.label} exited (code=${code}, signal=${signal})`)
-      if (code !== 0 && code !== null && recentStderr.length > 0) {
+      if (code !== 0 && recentStderr.length > 0) {
         log.error(`${config.label} stderr (last ${recentStderr.length} lines):`)
         for (const line of recentStderr) {
           log.error(`  ${line}`)
         }
       }
       this.handles.delete(config.label)
-    })
+      this.closeProcessLogStream(config.label)
+      this.bus.off?.("process:exit", onExit)
+      exitDeferred.resolve(code)
+    }
+    this.bus.on("process:exit", onExit)
+
+    const handle: ProcessHandle = {
+      pmId,
+      pid,
+      recentStderr,
+
+      kill: async () => {
+        log.info(`Killing ${config.label} (pm_id=${pmId}, pid=${pid})`)
+        try {
+          await pm2Delete(config.label)
+        } catch (err: any) {
+          log.warn(`pm2 delete failed for ${config.label}: ${err.message}`)
+        }
+        this.handles.delete(config.label)
+        this.closeProcessLogStream(config.label)
+      },
+
+      wait: () => exitDeferred.promise
+    }
 
     this.handles.set(config.label, handle)
     return handle
@@ -127,8 +428,37 @@ export class ProcessManager {
     await Promise.all(labels.map(label => this.handles.get(label)?.kill()))
   }
 
+  /** Disconnect from the pm2 daemon. Call when done. */
+  async disconnect(): Promise<void> {
+    if (this.connected) {
+      pm2.disconnect()
+      this.connected = false
+      this.bus = null
+    }
+    this.closeAllLogStreams()
+  }
+
   /** Number of tracked running processes. */
   get count(): number {
     return this.handles.size
+  }
+
+  private closeProcessLogStream(label: string): void {
+    const stream = this.processLogStreams.get(label)
+    if (stream) {
+      stream.end()
+      this.processLogStreams.delete(label)
+    }
+  }
+
+  private closeAllLogStreams(): void {
+    if (this.clusterLogStream) {
+      this.clusterLogStream.end()
+      this.clusterLogStream = null
+    }
+    for (const [, stream] of this.processLogStreams) {
+      stream.end()
+    }
+    this.processLogStreams.clear()
   }
 }

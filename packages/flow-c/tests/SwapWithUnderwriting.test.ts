@@ -1,8 +1,9 @@
+import "jest"
 import {
   TestEnvironment,
   type TestEnvironmentConfig,
   retry,
-  sleep,
+  sleep
 } from "@wire-e2e-tests/harness"
 import { createHash } from "crypto"
 
@@ -71,24 +72,23 @@ const SOL_OUTPOST_ID = 1
 // Environment config
 // ---------------------------------------------------------------------------
 
-const WIRE_BUILD_DIR = process.env.WIRE_BUILD_DIR || "/data/shared/code/wire/wire-sysio/build/claude"
+const WIRE_BUILD_DIR =
+  process.env.WIRE_BUILD_DIR || "/data/shared/code/wire/wire-sysio/build/claude"
 const WIRE_CHAIN_DIR = process.env.WIRE_CHAIN_DIR || "/tmp/wire-e2e-flow-c"
 
 const config: TestEnvironmentConfig = {
   wire: {
     buildDir: WIRE_BUILD_DIR,
     chainDir: WIRE_CHAIN_DIR,
-    plugins: [
-      "sysio::batch_operator_plugin",
-    ],
+    plugins: ["sysio::batch_operator_plugin"]
   },
   ethereum: {
     port: 38545,
-    chainId: 31337,
+    chainId: 31337
   },
   solana: {
-    rpcPort: 38899,
-  },
+    rpcPort: 38899
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +104,11 @@ function sha256Hex(seed: string): string {
 const ZERO_HASH = "0".repeat(64)
 
 /** Build a minimal raw_messages payload for deliver (msg_count messages encoded as raw bytes). */
-function buildRawMessages(msgCount: number, attestType: number, payload: string): string {
+function buildRawMessages(
+  msgCount: number,
+  attestType: number,
+  payload: string
+): string {
   // Encode as hex string of packed bytes; the contract unpacks from raw_messages.
   // For e2e testing we build a minimal valid payload that the contract can iterate.
   const entry = Buffer.alloc(36)
@@ -168,7 +172,6 @@ describe("Flow C: SWAP with Underwriting", () => {
   // ========================================================================
 
   describe("Epoch N: Swap initiation + underwriter intent", () => {
-
     test("User submits SWAP attestation via queueout", async () => {
       // Queue a SWAP message destined for the ETH outpost.
       // The queueout action creates an outbound->inbound flow:
@@ -179,7 +182,7 @@ describe("Flow C: SWAP with Underwriting", () => {
         source_amount: "50.0000 ETH",
         target_amount: "1042.0000 SOL",
         sender: "0xUserEthAddress000000000000000001",
-        recipient: "SoLRecipientPubkey11111111111111111111",
+        recipient: "SoLRecipientPubkey11111111111111111111"
       })
       const swapDataHex = Buffer.from(swapData).toString("hex")
 
@@ -189,7 +192,7 @@ describe("Flow C: SWAP with Underwriting", () => {
         JSON.stringify({
           outpost_id: ETH_OUTPOST_ID,
           attest_type: ATTESTATION_TYPE_SWAP,
-          data: swapDataHex,
+          data: swapDataHex
         }),
         "sysio.msgch@active"
       )
@@ -234,7 +237,7 @@ describe("Flow C: SWAP with Underwriting", () => {
           underwriter: underwriterAccount,
           msg_id: swapMsgId,
           source_sig: sourceSig,
-          target_sig: targetSig,
+          target_sig: targetSig
         }),
         `${underwriterAccount}@active`
       )
@@ -245,7 +248,8 @@ describe("Flow C: SWAP with Underwriting", () => {
       expect(uwRows.length).toBeGreaterThanOrEqual(1)
 
       const uwEntry = uwRows.find(
-        (r: any) => r.message_id === swapMsgId && r.underwriter === underwriterAccount
+        (r: any) =>
+          r.message_id === swapMsgId && r.underwriter === underwriterAccount
       )
       expect(uwEntry).toBeDefined()
       uwEntryId = uwEntry.id
@@ -297,7 +301,6 @@ describe("Flow C: SWAP with Underwriting", () => {
   // ========================================================================
 
   describe("Epoch N+1: Dual-outpost confirmation", () => {
-
     test("Outbound envelope contains UNDERWRITE_INTENT attestation", async () => {
       // Build the outbound envelope for each outpost.
       // After submituw, the contract should have queued UNDERWRITE_INTENT
@@ -320,7 +323,7 @@ describe("Flow C: SWAP with Underwriting", () => {
       const envelopesResult = await env.wireClient!.getTableRows({
         code: "sysio.msgch",
         scope: "sysio.msgch",
-        table: "outenvelopes",
+        table: "outenvelopes"
       })
       const envRows = envelopesResult.rows ?? []
 
@@ -343,7 +346,7 @@ describe("Flow C: SWAP with Underwriting", () => {
 
       const confirmData = JSON.stringify({
         uw_entry_id: uwEntryId,
-        confirmed: true,
+        confirmed: true
       })
       const confirmDataHex = Buffer.from(confirmData).toString("hex")
 
@@ -367,17 +370,17 @@ describe("Flow C: SWAP with Underwriting", () => {
       const reqRows = chainReqs.rows ?? []
       expect(reqRows.length).toBeGreaterThanOrEqual(2)
 
-      const ethReq = reqRows.find(
-        (r: any) => r.outpost_id === ETH_OUTPOST_ID
-      )
-      const solReq = reqRows.find(
-        (r: any) => r.outpost_id === SOL_OUTPOST_ID
-      )
+      const ethReq = reqRows.find((r: any) => r.outpost_id === ETH_OUTPOST_ID)
+      const solReq = reqRows.find((r: any) => r.outpost_id === SOL_OUTPOST_ID)
       expect(ethReq).toBeDefined()
       expect(solReq).toBeDefined()
 
       // Build raw messages containing UNDERWRITE_CONFIRM attestation
-      const rawMsgs = buildRawMessages(1, ATTESTATION_TYPE_UNDERWRITE_CONFIRM, confirmData)
+      const rawMsgs = buildRawMessages(
+        1,
+        ATTESTATION_TYPE_UNDERWRITE_CONFIRM,
+        confirmData
+      )
       const chainHash = sha256Hex(`confirm-chain-${Date.now()}`)
       const merkleRoot = sha256Hex(`confirm-merkle-${Date.now()}`)
 
@@ -391,7 +394,7 @@ describe("Flow C: SWAP with Underwriting", () => {
           chain_hash: chainHash,
           merkle_root: merkleRoot,
           msg_count: 1,
-          raw_messages: rawMsgs,
+          raw_messages: rawMsgs
         }),
         `${batchOpAccount}@active`
       )
@@ -409,7 +412,7 @@ describe("Flow C: SWAP with Underwriting", () => {
           chain_hash: solChainHash,
           merkle_root: solMerkleRoot,
           msg_count: 1,
-          raw_messages: rawMsgs,
+          raw_messages: rawMsgs
         }),
         `${batchOpAccount}@active`
       )
@@ -452,7 +455,6 @@ describe("Flow C: SWAP with Underwriting", () => {
   // ========================================================================
 
   describe("Epoch N+2: Remit + fee distribution", () => {
-
     test("REMIT attestation queued for target outpost", async () => {
       // After INTENT_CONFIRMED, the depot queues a REMIT message for the
       // target outpost (SOL) to release funds to the recipient.
@@ -460,7 +462,7 @@ describe("Flow C: SWAP with Underwriting", () => {
         uw_entry_id: uwEntryId,
         recipient: "SoLRecipientPubkey11111111111111111111",
         target_amount: "1042.0000 SOL",
-        target_chain: CHAIN_KIND_SOLANA,
+        target_chain: CHAIN_KIND_SOLANA
       })
       const remitDataHex = Buffer.from(remitData).toString("hex")
 
@@ -470,7 +472,7 @@ describe("Flow C: SWAP with Underwriting", () => {
         JSON.stringify({
           outpost_id: SOL_OUTPOST_ID,
           attest_type: ATTESTATION_TYPE_REMIT,
-          data: remitDataHex,
+          data: remitDataHex
         }),
         "sysio.msgch@active"
       )
@@ -493,7 +495,7 @@ describe("Flow C: SWAP with Underwriting", () => {
         remit_msg_id: remitMsgId,
         recipient: "SoLRecipientPubkey11111111111111111111",
         amount_remitted: "1042.0000 SOL",
-        success: true,
+        success: true
       })
       const remitConfirmHex = Buffer.from(remitConfirmData).toString("hex")
 
@@ -533,7 +535,7 @@ describe("Flow C: SWAP with Underwriting", () => {
           chain_hash: chainHash,
           merkle_root: merkleRoot,
           msg_count: 1,
-          raw_messages: rawMsgs,
+          raw_messages: rawMsgs
         }),
         `${batchOpAccount}@active`
       )

@@ -127,10 +127,11 @@ async function main(): Promise<void> {
 
       await manager.create(config)
       log.info("wire-test-cluster: cluster created successfully")
-      break
+      process.exit(0)
     }
 
     case "run": {
+      manager.loadState(chainDir)
       await manager.start()
       log.info("wire-test-cluster: cluster started, press Ctrl+C to stop")
 

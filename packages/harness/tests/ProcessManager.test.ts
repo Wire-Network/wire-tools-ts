@@ -9,6 +9,7 @@ describe("ProcessManager", () => {
 
   afterEach(async () => {
     await pm.killAll()
+    await pm.disconnect()
   })
 
   it("spawns and tracks a process", async () => {
@@ -18,6 +19,7 @@ describe("ProcessManager", () => {
       args: ["60"],
     })
     expect(handle.pid).toBeGreaterThan(0)
+    expect(handle.pmId).toBeGreaterThanOrEqual(0)
     expect(pm.count).toBe(1)
     expect(pm.get("echo-test")).toBeDefined()
   })
@@ -34,8 +36,6 @@ describe("ProcessManager", () => {
     expect(pm.count).toBe(1)
     const handle = pm.get("killme")!
     await handle.kill()
-    // Give a moment for cleanup
-    await new Promise(r => setTimeout(r, 200))
     expect(pm.count).toBe(0)
   })
 
@@ -44,7 +44,6 @@ describe("ProcessManager", () => {
     await pm.spawn({ label: "b", command: "sleep", args: ["60"] })
     expect(pm.count).toBe(2)
     await pm.killAll()
-    await new Promise(r => setTimeout(r, 200))
     expect(pm.count).toBe(0)
   })
 })
