@@ -1,9 +1,31 @@
 import { isEmpty, negate } from "lodash"
 import { log } from "./logger.js"
+import { Deferred } from "@wireio/shared"
+import Fs from "fs"
+import { Future } from "@3fv/prelude-ts"
 
 /** Sleep for `ms` milliseconds. */
 export function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
+  return Deferred.delay(ms)
+}
+
+/**
+ * Check if a file or directory exists at the given path.
+ *
+ * @param path - The path to check for existence.
+ * @returns A promise that resolves to true if the path exists, false otherwise.
+ */
+export function existsAsync(path: string): Promise<boolean> {
+  return Future.of(Fs.promises.lstat(path))
+    .map(
+      stats => stats.isFile() || stats.isDirectory() || stats.isSymbolicLink()
+    )
+    .toPromise()
+}
+
+export function mkdirs(path: string): string {
+  Fs.mkdirSync(path, { recursive: true })
+  return path
 }
 
 /**
@@ -22,7 +44,12 @@ export async function waitForEndpoint(
         method: "GET",
         signal: AbortSignal.timeout(2000)
       })
-      if (resp.ok || resp.status === 400 || resp.status === 404 || resp.status === 405) {
+      if (
+        resp.ok ||
+        resp.status === 400 ||
+        resp.status === 404 ||
+        resp.status === 405
+      ) {
         log.info(`${label} is ready`)
         return
       }

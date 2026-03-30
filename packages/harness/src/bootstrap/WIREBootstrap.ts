@@ -1,8 +1,22 @@
+// noinspection SpellCheckingInspection
+
 import Path from "path"
 import Fs from "fs"
 import { Clio } from "../clients/Clio.js"
 import { log } from "../logger.js"
-import { sleep, waitForEndpoint, retry } from "../util.js"
+import { sleep, waitForEndpoint, retry, existsAsync } from "../util.js"
+import {
+  DEV_BLS_PRIVATE_KEY,
+  DEV_BLS_PROOF_OF_POSSESSION,
+  DEV_BLS_PUBLIC_KEY,
+  DEV_K1_PRIVATE_KEY,
+  DEV_K1_PUBLIC_KEY
+} from "../cluster/constants"
+import { SystemContracts } from "@wireio/sdk-core"
+import { asOption, Future } from "@3fv/prelude-ts"
+import { which } from "zx"
+import { defaults } from "lodash"
+import { assert } from "@wireio/shared"
 
 /**
  * WIRE chain bootstrap sequence.
@@ -16,27 +30,52 @@ import { sleep, waitForEndpoint, retry } from "../util.js"
  *   6. Configure OPP (epoch config, outpost registration)
  */
 
-export interface WIREBootstrapConfig {
+export interface WIREBootstrapOptions {
   /** Path to wire-sysio build directory */
   buildDir: string
+
   /** nodeop HTTP URL */
   httpUrl: string
-  /** Path to clio binary */
-  clioBinary: string
+
   /** kiod wallet URL */
   walletUrl?: string
-  /** sysio private key (default: development key) */
-  sysioPrivateKey?: string
-  /** sysio public key (default: development key) */
-  sysioPublicKey?: string
+  /** sysio K1 private key (default: development key) */
+  k1PrivateKey?: string
+  /** sysio K1 public key (default: development key) */
+  k1PublicKey?: string
+
+  /** sysio BLS private key (default: development key) */
+  blsPrivateKey?: string
+  /** sysio BLS public key (default: development key) */
+  blsPublicKey?: string
+  /** sysio BLS proof of possession (default: development key) */
+  blsProofOfPossession?: string
+
+  /** Path to clio binary */
+  clioBinary?: string
 }
 
-// Default development keypair (matches genesis)
-const DEV_PRIVATE_KEY = "5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3"
-const DEV_PUBLIC_KEY = "SYS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV"
+export async function createWIREBootstrapDefaultOptions(): Promise<
+  Partial<WIREBootstrapOptions>
+> {
+  return {
+    clioBinary: asOption(await which("clio")).getOrUndefined(),
+
+    k1PrivateKey: DEV_K1_PRIVATE_KEY,
+    k1PublicKey: DEV_K1_PUBLIC_KEY,
+    blsPrivateKey: DEV_BLS_PRIVATE_KEY,
+    blsPublicKey: DEV_BLS_PUBLIC_KEY,
+    blsProofOfPossession: DEV_BLS_PROOF_OF_POSSESSION
+  }
+}
+
+export interface WIREBootstrapConfig extends Required<WIREBootstrapOptions> {}
 
 // System accounts that need to be created
-const SYSTEM_ACCOUNTS = [
+
+export const SYSTEM_ACCOUNTS = [
+  "sysio.bios",
+  "sysio.system",
   "sysio.bpay",
   "sysio.msig",
   "sysio.names",
@@ -54,45 +93,59 @@ const SYSTEM_ACCOUNTS = [
   "sysio.msgch",
   "sysio.uwrit",
   "sysio.chalg"
-]
+] as const
+
+export type SystemAccountName = (typeof SYSTEM_ACCOUNTS)[number]
 
 export class WIREBootstrap {
+  /**
+   * Creates a new WIREBootstrap instance with validated configuration.
+   * Applies default values for optional parameters and validates that required
+   * dependencies (like clio binary) are available.
+   *
+   * @param options - Bootstrap configuration options
+   * @returns A configured WIREBootstrap instance ready to execute the bootstrap sequence
+   * @throws Error if clio binary path is invalid or not found
+   */
+  static async create(options: WIREBootstrapOptions) {
+    // APPLY DEFAULTS IF NEEDED
+    const config = defaults(
+      { ...options },
+      await createWIREBootstrapDefaultOptions()
+    ) as WIREBootstrapConfig
+
+    // DOUBLE CHECK CONFIG
+    assert(await existsAsync(config.clioBinary), "clio binary path is required")
+
+    return new WIREBootstrap(config)
+  }
+
   private clio: Clio
-  private config: Required<WIREBootstrapConfig>
+
   private walletPassword?: string
 
-  constructor(config: WIREBootstrapConfig) {
-    this.config = {
-      ...config,
-      sysioPrivateKey: config.sysioPrivateKey || DEV_PRIVATE_KEY,
-      sysioPublicKey: config.sysioPublicKey || DEV_PUBLIC_KEY,
-      walletUrl: config.walletUrl || ""
-    }
+  private constructor(readonly config: WIREBootstrapConfig) {
     this.clio = new Clio({
-      binary: this.config.clioBinary,
-      url: this.config.httpUrl,
-      walletUrl: this.config.walletUrl || undefined
+      binary: config.clioBinary,
+      url: config.httpUrl,
+      walletUrl: config.walletUrl ?? undefined
     })
   }
 
-  /** Contract directory within the build tree */
-  private contractDir(name: string): string {
-    // Check build dir first, then source contracts dir
-    const buildContracts = Path.join(this.config.buildDir, "contracts", name)
-    if (Fs.existsSync(Path.join(buildContracts, `${name}.wasm`))) {
-      return buildContracts
-    }
-    // Fall back to source contracts (pre-built wasm/abi)
-    const srcContracts = Path.resolve(
-      this.config.buildDir,
-      "..",
-      "contracts",
-      name
+  /**
+   * Convert contract name to contract path
+   *
+   * @param name contract name
+   */
+  private toContractPath(name: SystemAccountName) {
+    const contractPath = Path.resolve(this.config.buildDir, "contracts", name),
+      contractFile = Path.join(contractPath, `${name}.wasm`)
+    assert(
+      Fs.existsSync(contractFile),
+      () => new Error(`Contract file ${contractFile} not found`)
     )
-    if (Fs.existsSync(Path.join(srcContracts, `${name}.wasm`))) {
-      return srcContracts
-    }
-    throw new Error(`Contract ${name} not found in build or source dir`)
+
+    return contractPath
   }
 
   /** Run the full bootstrap sequence */
@@ -122,13 +175,13 @@ export class WIREBootstrap {
   private async setupWallet(): Promise<void> {
     log.info("Creating wallet and importing keys...")
     this.walletPassword = await this.clio.walletCreate("default")
-    await this.clio.walletImportKey("default", this.config.sysioPrivateKey)
+    await this.clio.walletImportKey("default", this.config.k1PrivateKey)
     log.info("Wallet created and sysio key imported")
   }
 
   private async deployBios(): Promise<void> {
     log.info("Deploying sysio.bios contract...")
-    const dir = this.contractDir("sysio.bios")
+    const dir = this.toContractPath("sysio.bios")
     await retry(
       () =>
         this.clio.setContract(
@@ -188,7 +241,7 @@ export class WIREBootstrap {
     log.info("Creating system accounts...")
     for (const account of SYSTEM_ACCOUNTS) {
       try {
-        await this.clio.createSystemAccount(account, this.config.sysioPublicKey)
+        await this.clio.createSystemAccount(account, this.config.k1PublicKey)
         log.debug(`Created account: ${account}`)
       } catch (err: any) {
         if (
@@ -207,7 +260,7 @@ export class WIREBootstrap {
   private async deploySystemContracts(): Promise<void> {
     // Deploy sysio.system
     log.info("Deploying sysio.system...")
-    const systemDir = this.contractDir("sysio.system")
+    const systemDir = this.toContractPath("sysio.system")
     await retry(
       () =>
         this.clio.setContract(
@@ -221,7 +274,7 @@ export class WIREBootstrap {
 
     // Deploy sysio.token
     log.info("Deploying sysio.token...")
-    const tokenDir = this.contractDir("sysio.token")
+    const tokenDir = this.toContractPath("sysio.token")
     await retry(
       () =>
         this.clio.setContract(
@@ -235,7 +288,7 @@ export class WIREBootstrap {
 
     // Deploy sysio.msig
     log.info("Deploying sysio.msig...")
-    const msigDir = this.contractDir("sysio.msig")
+    const msigDir = this.toContractPath("sysio.msig")
     await retry(
       () =>
         this.clio.setContract(
@@ -253,8 +306,15 @@ export class WIREBootstrap {
     log.info("System contracts deployed")
   }
 
+  /**
+   * Deploy OPP contracts
+   */
   private async deployOPPContracts(): Promise<void> {
-    const oppContracts = [
+    // CREATE AN ARRAY OF OPP CONTRACTS TO ITERATE
+    const oppContracts: {
+      account: SystemAccountName
+      name: SystemAccountName
+    }[] = [
       { account: "sysio.epoch", name: "sysio.epoch" },
       { account: "sysio.msgch", name: "sysio.msgch" },
       { account: "sysio.uwrit", name: "sysio.uwrit" },
@@ -263,21 +323,28 @@ export class WIREBootstrap {
 
     for (const { account, name } of oppContracts) {
       log.info(`Deploying ${name}...`)
-      try {
-        const dir = this.contractDir(name)
-        await retry(
-          () =>
-            this.clio.setContract(account, dir, `${name}.wasm`, `${name}.abi`),
-          { label: `deploy ${name}`, maxAttempts: 3, delayMs: 2000 }
-        )
-        // Set privileged
-        await this.clio.setPriv(account)
-        log.info(`${name} deployed and set privileged`)
-      } catch (err: any) {
-        log.warn(
-          `Failed to deploy ${name} (may not be built yet): ${err.message}`
-        )
-      }
+
+      // GET THE CONTRACT PATH
+      const contractPath = this.toContractPath(name)
+
+      // SET CONTRACT
+      log.info(`Setting ${name} from ${contractPath}`)
+      await retry(
+        () =>
+          this.clio.setContract(
+            account,
+            contractPath,
+            `${name}.wasm`,
+            `${name}.abi`
+          ),
+        { label: `deploy ${name}`, maxAttempts: 3, delayMs: 2000 }
+      )
+
+      // SET PRIVILEGED
+      log.info(`Setting ${name} privileged`)
+      await this.clio.setPriv(account)
+
+      log.info(`Deployed ${name} from ${contractPath}`)
     }
   }
 
@@ -286,17 +353,17 @@ export class WIREBootstrap {
 
     // sysio.epoch::setconfig
     try {
-      await this.clio.pushAction(
+      await this.clio.pushActionAndWait<SystemContracts.SysioEpochSetconfigAction>(
         "sysio.epoch",
         "setconfig",
-        JSON.stringify({
+        {
           epoch_duration_sec: 360,
           operators_per_epoch: 7,
-          total_operators: 21,
-          groups: 3,
+          batch_operator_minimum_active: 21,
+          batch_op_groups: 3,
           warmup_epochs: 1,
           cooldown_epochs: 1
-        }),
+        },
         "sysio.epoch@active"
       )
       log.info("Epoch config set (360s epochs, 7 per epoch, 3 groups)")
@@ -306,10 +373,10 @@ export class WIREBootstrap {
 
     // Register outposts: ETHEREUM (chain_kind=2, chain_id=31337) and SOLANA (chain_kind=3, chain_id=1)
     try {
-      await this.clio.pushAction(
+      await this.clio.pushAction<SystemContracts.SysioEpochRegoutpostAction>(
         "sysio.epoch",
         "regoutpost",
-        JSON.stringify({ chain_kind: 2, chain_id: 31337 }),
+        { chain_kind: 2, chain_id: 31337 },
         "sysio.epoch@active"
       )
       log.info("Registered ETH outpost (chain_kind=2, chain_id=31337)")
@@ -318,10 +385,10 @@ export class WIREBootstrap {
     }
 
     try {
-      await this.clio.pushAction(
+      await this.clio.pushAction<SystemContracts.SysioEpochRegoutpostAction>(
         "sysio.epoch",
         "regoutpost",
-        JSON.stringify({ chain_kind: 3, chain_id: 1 }),
+        { chain_kind: 3, chain_id: 1 },
         "sysio.epoch@active"
       )
       log.info("Registered SOL outpost (chain_kind=3, chain_id=1)")
@@ -331,16 +398,16 @@ export class WIREBootstrap {
 
     // sysio.uwrit::setconfig
     try {
-      await this.clio.pushAction(
+      await this.clio.pushAction<SystemContracts.SysioUwritSetconfigAction>(
         "sysio.uwrit",
         "setconfig",
-        JSON.stringify({
+        {
           fee_bps: 10,
           confirm_lock_sec: 86400,
           uw_fee_share_pct: 50,
           other_uw_share_pct: 25,
           batch_op_share_pct: 25
-        }),
+        },
         "sysio.uwrit@active"
       )
       log.info("Underwriting config set (10bps fee, 24hr lock)")

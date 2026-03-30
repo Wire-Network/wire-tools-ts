@@ -5,6 +5,8 @@ import { execFileSync } from "child_process"
 import { log } from "../logger.js"
 import { Deferred } from "@wireio/shared"
 import { asOption } from "@3fv/prelude-ts"
+import * as Assert from "node:assert"
+import { mkdirs } from "../util"
 
 export interface ProcessConfig {
   /** Human-readable label for logging */
@@ -32,11 +34,6 @@ export interface ProcessHandle {
   wait(): Promise<number>
   /** Collected stderr lines (last N) */
   recentStderr: string[]
-}
-
-export interface ProcessManagerOptions {
-  /** Cluster directory root — enables file logging when set */
-  clusterDir?: string
 }
 
 /** Process names to kill at startup and on exit */
@@ -180,29 +177,6 @@ function killExistingProcesses(): void {
 }
 
 /**
- * Map a process label to its per-process log directory under clusterDir.
- *
- * Labels like `node-bios`, `node-00`, `node-batchop_00` map to
- * `<clusterDir>/data/node_bios/logs/`, `<clusterDir>/data/node_00/logs/`, etc.
- *
- * `anvil` → `<clusterDir>/data/anvil/logs/`
- * `solana-test-validator` → `<clusterDir>/data/solana_validator/logs/`
- * `kiod` → `<clusterDir>/data/kiod/logs/`
- */
-function processLogDir(clusterDir: string, label: string): string {
-  let dirName: string
-  if (label.startsWith("node-")) {
-    // node-bios → node_bios, node-00 → node_00, node-batchop_00 → node_batchop_00
-    dirName = label.replace("node-", "node_")
-  } else if (label === "solana-test-validator") {
-    dirName = "solana_validator"
-  } else {
-    dirName = label
-  }
-  return Path.join(clusterDir, "data", dirName, "logs")
-}
-
-/**
  * Generic process manager backed by pm2's programmatic API.
  *
  * On first connection, kills any existing nodeop/kiod/anvil/solana-test-validator
@@ -210,21 +184,43 @@ function processLogDir(clusterDir: string, label: string): string {
  * processes are stopped gracefully when the tool exits.
  */
 export class ProcessManager {
+  private static clusterPath: string
+
+  private static instance: ProcessManager
+
+  static setClusterPath(clusterPath: string): typeof ProcessManager {
+    Assert.ok(
+      !this.clusterPath || this.clusterPath === clusterPath,
+      `Cluster Path can only be set once (currentValue=${this.clusterPath},newValue=${clusterPath}`
+    )
+    this.clusterPath = clusterPath
+    return this
+  }
+
+  static get(): ProcessManager {
+    Assert.ok(
+      !!this.clusterPath,
+      `Cluster Path must be set before getting the process manager`
+    )
+    if (!this.instance) {
+      this.instance = new ProcessManager()
+    }
+
+    return this.instance
+  }
+
   private handles: Map<string, ProcessHandle> = new Map()
   private connected = false
   private bus: any = null
-  private clusterDir: string | undefined
+
   private clusterLogStream: Fs.WriteStream | null = null
   private processLogStreams: Map<string, Fs.WriteStream> = new Map()
   private exitHandlerRegistered = false
 
-  constructor(options?: ProcessManagerOptions) {
-    this.clusterDir = options?.clusterDir
-  }
+  private constructor() {}
 
-  /** Set the cluster directory (enables file logging). Can be called before first spawn. */
-  setClusterDir(clusterDir: string): void {
-    this.clusterDir = clusterDir
+  static toClusterPath(...children: string[]): string {
+    return Path.join(ProcessManager.clusterPath, ...children)
   }
 
   /** Ensure we have a pm2 daemon connection. */
@@ -270,31 +266,51 @@ export class ProcessManager {
     })
   }
 
+  /**
+   * Map a process label to its per-process log directory under clusterPath.
+   *
+   * Labels like `node-bios`, `node-00`, `node-batchop_00` map to
+   * `<clusterPath>/data/node_bios/logs/`, `<clusterPath>/data/node_00/logs/`, etc.
+   *
+   * `anvil` → `<clusterPath>/data/anvil/logs/`
+   * `solana-test-validator` → `<clusterPath>/data/solana_validator/logs/`
+   * `kiod` → `<clusterPath>/data/kiod/logs/`
+   */
+  private toProcessLogPath(label: string): string {
+    let logPath: string
+    if (label.startsWith("node-")) {
+      // node-bios → node_bios, node-00 → node_00, node-batchop_00 → node_batchop_00
+      logPath = label.replace("node-", "node_")
+    } else if (label === "solana-test-validator") {
+      logPath = "solana_validator"
+    } else {
+      logPath = label
+    }
+    return ProcessManager.toClusterPath("data", logPath, "logs")
+  }
+
   private ensureLogStreams(label: string): void {
-    if (!this.clusterDir) return
     const stamp = currentDateStamp()
 
     // Combined cluster log
     if (!this.clusterLogStream) {
-      const clusterLogDir = Path.join(this.clusterDir, "logs")
-      Fs.mkdirSync(clusterLogDir, { recursive: true })
-      const clusterLogPath = Path.join(clusterLogDir, `cluster_${stamp}.log`)
-      this.clusterLogStream = Fs.createWriteStream(clusterLogPath, {
+      const clusterLogPath = mkdirs(ProcessManager.toClusterPath("logs")),
+        clusterLogFile = Path.join(clusterLogPath, `cluster_${stamp}.log`)
+      this.clusterLogStream = Fs.createWriteStream(clusterLogFile, {
         flags: "a"
       })
-      log.info(`Cluster log: ${clusterLogPath}`)
+      log.info(`Cluster log: ${clusterLogFile}`)
     }
 
     // Per-process log
     if (!this.processLogStreams.has(label)) {
-      const logDir = processLogDir(this.clusterDir, label)
-      Fs.mkdirSync(logDir, { recursive: true })
-      const logPath = Path.join(logDir, `log_${stamp}.log`)
+      const logPath = mkdirs(this.toProcessLogPath(label)),
+        logFile = Path.join(logPath, `log_${stamp}.log`)
       this.processLogStreams.set(
         label,
-        Fs.createWriteStream(logPath, { flags: "a" })
+        Fs.createWriteStream(logFile, { flags: "a" })
       )
-      log.info(`Process log for ${label}: ${logPath}`)
+      log.info(`Process log for ${label}: ${logFile}`)
     }
   }
 

@@ -7,15 +7,15 @@ const config = {
     "^.+\\.ts$": [
       "ts-jest",
       {
-        tsconfig: "<rootDir>/../../etc/tsconfig/tsconfig.jest.cjs.json",
-      },
-    ],
+        tsconfig: "<rootDir>/../../etc/tsconfig/tsconfig.base.jest.json"
+      }
+    ]
   },
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",
     "^@wire-e2e-tests/harness$": "<rootDir>/src/index",
-    "^@wire-e2e-tests/harness/(.*)$": "<rootDir>/src/$1",
-  },
+    "^@wire-e2e-tests/harness/(.*)$": "<rootDir>/src/$1"
+  }
 }
 
 export default config

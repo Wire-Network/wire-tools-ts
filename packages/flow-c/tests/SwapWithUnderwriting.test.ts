@@ -5,6 +5,7 @@ import {
   retry,
   sleep
 } from "@wire-e2e-tests/harness"
+import { SystemContracts } from "@wireio/sdk-core"
 import { createHash } from "crypto"
 
 /**
@@ -176,24 +177,24 @@ describe("Flow C: SWAP with Underwriting", () => {
       // Queue a SWAP message destined for the ETH outpost.
       // The queueout action creates an outbound->inbound flow:
       //   The SWAP attestation is recorded in the messages table.
-      const swapData = JSON.stringify({
+      const swapPayload = {
         source_chain: CHAIN_KIND_ETHEREUM,
         target_chain: CHAIN_KIND_SOLANA,
         source_amount: "50.0000 ETH",
         target_amount: "1042.0000 SOL",
         sender: "0xUserEthAddress000000000000000001",
         recipient: "SoLRecipientPubkey11111111111111111111"
-      })
-      const swapDataHex = Buffer.from(swapData).toString("hex")
+      }
+      const swapDataHex = Buffer.from(JSON.stringify(swapPayload)).toString("hex")
 
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchQueueoutAction>(
         "sysio.msgch",
         "queueout",
-        JSON.stringify({
-          outpost_id: ETH_OUTPOST_ID,
+        {
+          outpost_id: String(ETH_OUTPOST_ID),
           attest_type: ATTESTATION_TYPE_SWAP,
           data: swapDataHex
-        }),
+        },
         "sysio.msgch@active"
       )
 
@@ -230,15 +231,15 @@ describe("Flow C: SWAP with Underwriting", () => {
       const sourceSig = sha256Hex(`uw-source-sig-${swapMsgId}`)
       const targetSig = sha256Hex(`uw-target-sig-${swapMsgId}`)
 
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioUwritSubmituwAction>(
         "sysio.uwrit",
         "submituw",
-        JSON.stringify({
+        {
           underwriter: underwriterAccount,
-          msg_id: swapMsgId,
+          msg_id: String(swapMsgId),
           source_sig: sourceSig,
           target_sig: targetSig
-        }),
+        },
         `${underwriterAccount}@active`
       )
 
@@ -305,17 +306,17 @@ describe("Flow C: SWAP with Underwriting", () => {
       // Build the outbound envelope for each outpost.
       // After submituw, the contract should have queued UNDERWRITE_INTENT
       // messages for both source and target outposts.
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchBuildenvAction>(
         "sysio.msgch",
         "buildenv",
-        JSON.stringify({ outpost_id: ETH_OUTPOST_ID }),
+        { outpost_id: String(ETH_OUTPOST_ID) },
         "sysio.msgch@active"
       )
 
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchBuildenvAction>(
         "sysio.msgch",
         "buildenv",
-        JSON.stringify({ outpost_id: SOL_OUTPOST_ID }),
+        { outpost_id: String(SOL_OUTPOST_ID) },
         "sysio.msgch@active"
       )
 
@@ -344,24 +345,24 @@ describe("Flow C: SWAP with Underwriting", () => {
       // deliver them to the outposts, and the outposts would respond.
       // Here we simulate by pushing inbound messages via sysio.msgch::deliver.
 
-      const confirmData = JSON.stringify({
+      const confirmPayload = {
         uw_entry_id: uwEntryId,
         confirmed: true
-      })
-      const confirmDataHex = Buffer.from(confirmData).toString("hex")
+      }
+      const confirmDataHex = Buffer.from(JSON.stringify(confirmPayload)).toString("hex")
 
       // Create inbound chain requests for both outposts
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchCreatereqAction>(
         "sysio.msgch",
         "createreq",
-        JSON.stringify({ outpost_id: ETH_OUTPOST_ID }),
+        { outpost_id: String(ETH_OUTPOST_ID) },
         "sysio.msgch@active"
       )
 
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchCreatereqAction>(
         "sysio.msgch",
         "createreq",
-        JSON.stringify({ outpost_id: SOL_OUTPOST_ID }),
+        { outpost_id: String(SOL_OUTPOST_ID) },
         "sysio.msgch@active"
       )
 
@@ -385,17 +386,17 @@ describe("Flow C: SWAP with Underwriting", () => {
       const merkleRoot = sha256Hex(`confirm-merkle-${Date.now()}`)
 
       // ETH outpost delivers confirmation via batch operator
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchDeliverAction>(
         "sysio.msgch",
         "deliver",
-        JSON.stringify({
+        {
           operator_acct: batchOpAccount,
           req_id: ethReq.id,
           chain_hash: chainHash,
           merkle_root: merkleRoot,
           msg_count: 1,
           raw_messages: rawMsgs
-        }),
+        },
         `${batchOpAccount}@active`
       )
 
@@ -403,42 +404,42 @@ describe("Flow C: SWAP with Underwriting", () => {
       const solChainHash = sha256Hex(`sol-confirm-chain-${Date.now()}`)
       const solMerkleRoot = sha256Hex(`sol-confirm-merkle-${Date.now()}`)
 
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchDeliverAction>(
         "sysio.msgch",
         "deliver",
-        JSON.stringify({
+        {
           operator_acct: batchOpAccount,
           req_id: solReq.id,
           chain_hash: solChainHash,
           merkle_root: solMerkleRoot,
           msg_count: 1,
           raw_messages: rawMsgs
-        }),
+        },
         `${batchOpAccount}@active`
       )
 
       // Evaluate consensus on both chain requests
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchEvalconsAction>(
         "sysio.msgch",
         "evalcons",
-        JSON.stringify({ req_id: ethReq.id }),
+        { req_id: ethReq.id },
         "sysio.msgch@active"
       )
 
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchEvalconsAction>(
         "sysio.msgch",
         "evalcons",
-        JSON.stringify({ req_id: solReq.id }),
+        { req_id: solReq.id },
         "sysio.msgch@active"
       )
     }, 60_000)
 
     test("Underwriting entry transitions to INTENT_CONFIRMED", async () => {
       // After both outpost confirmations are processed, call confirmuw
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioUwritConfirmuwAction>(
         "sysio.uwrit",
         "confirmuw",
-        JSON.stringify({ uw_entry_id: uwEntryId }),
+        { uw_entry_id: String(uwEntryId) },
         "sysio.uwrit@active"
       )
 
@@ -458,22 +459,22 @@ describe("Flow C: SWAP with Underwriting", () => {
     test("REMIT attestation queued for target outpost", async () => {
       // After INTENT_CONFIRMED, the depot queues a REMIT message for the
       // target outpost (SOL) to release funds to the recipient.
-      const remitData = JSON.stringify({
+      const remitPayload = {
         uw_entry_id: uwEntryId,
         recipient: "SoLRecipientPubkey11111111111111111111",
         target_amount: "1042.0000 SOL",
         target_chain: CHAIN_KIND_SOLANA
-      })
-      const remitDataHex = Buffer.from(remitData).toString("hex")
+      }
+      const remitDataHex = Buffer.from(JSON.stringify(remitPayload)).toString("hex")
 
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchQueueoutAction>(
         "sysio.msgch",
         "queueout",
-        JSON.stringify({
-          outpost_id: SOL_OUTPOST_ID,
+        {
+          outpost_id: String(SOL_OUTPOST_ID),
           attest_type: ATTESTATION_TYPE_REMIT,
           data: remitDataHex
-        }),
+        },
         "sysio.msgch@active"
       )
 
@@ -500,10 +501,10 @@ describe("Flow C: SWAP with Underwriting", () => {
       const remitConfirmHex = Buffer.from(remitConfirmData).toString("hex")
 
       // Create a new inbound chain request for SOL
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchCreatereqAction>(
         "sysio.msgch",
         "createreq",
-        JSON.stringify({ outpost_id: SOL_OUTPOST_ID }),
+        { outpost_id: String(SOL_OUTPOST_ID) },
         "sysio.msgch@active"
       )
 
@@ -526,25 +527,25 @@ describe("Flow C: SWAP with Underwriting", () => {
       const merkleRoot = sha256Hex(`remit-confirm-merkle-${Date.now()}`)
 
       // Deliver REMIT_CONFIRM from SOL outpost
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchDeliverAction>(
         "sysio.msgch",
         "deliver",
-        JSON.stringify({
+        {
           operator_acct: batchOpAccount,
           req_id: latestSolReq.id,
           chain_hash: chainHash,
           merkle_root: merkleRoot,
           msg_count: 1,
           raw_messages: rawMsgs
-        }),
+        },
         `${batchOpAccount}@active`
       )
 
       // Evaluate consensus
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchEvalconsAction>(
         "sysio.msgch",
         "evalcons",
-        JSON.stringify({ req_id: latestSolReq.id }),
+        { req_id: latestSolReq.id },
         "sysio.msgch@active"
       )
 
@@ -561,10 +562,10 @@ describe("Flow C: SWAP with Underwriting", () => {
       // Distribute fees for the completed underwriting.
       // The distfee action splits fees between the underwriter,
       // other underwriters pool, and batch operators.
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioUwritDistfeeAction>(
         "sysio.uwrit",
         "distfee",
-        JSON.stringify({ uw_entry_id: uwEntryId }),
+        { uw_entry_id: String(uwEntryId) },
         "sysio.uwrit@active"
       )
 
@@ -594,10 +595,10 @@ describe("Flow C: SWAP with Underwriting", () => {
       await sleep(3000)
 
       // Call expirelock to release the collateral
-      await env.wireClient!.clio.pushAction(
+      await env.wireClient!.clio.pushAction<SystemContracts.SysioUwritExpirelockAction>(
         "sysio.uwrit",
         "expirelock",
-        JSON.stringify({ uw_entry_id: uwEntryId }),
+        { uw_entry_id: String(uwEntryId) },
         "sysio.uwrit@active"
       )
 

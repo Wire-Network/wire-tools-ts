@@ -5,7 +5,7 @@
  */
 
 import {
-  DEV_PUBLIC_KEY,
+  DEV_K1_PUBLIC_KEY,
   MAX_BLOCK_CPU_USAGE,
   MAX_TRANSACTION_CPU_USAGE
 } from "./constants.js"
@@ -42,7 +42,7 @@ export interface GenesisJson {
 }
 
 export interface GenerateGenesisOptions {
-  /** Override the initial public key (defaults to DEV_PUBLIC_KEY). */
+  /** Override the initial public key (defaults to DEV_K1_PUBLIC_KEY). */
   initialKey?: string
   /** Override the initial BLS finalizer public key. */
   initialFinalizerKey?: string
@@ -97,7 +97,7 @@ function defaultInitialConfiguration(
  *
  * When called without arguments the result uses:
  *  - `initial_timestamp`  = current UTC ISO-8601 string
- *  - `initial_key`        = DEV_PUBLIC_KEY
+ *  - `initial_key`        = DEV_K1_PUBLIC_KEY
  *  - `initial_configuration` with cluster_manager overrides (400k / 375k CPU)
  */
 export function generateGenesis(opts?: GenerateGenesisOptions): GenesisJson {
@@ -109,7 +109,7 @@ export function generateGenesis(opts?: GenerateGenesisOptions): GenesisJson {
 
   const genesis: GenesisJson = {
     initial_timestamp: initialTimestamp,
-    initial_key: opts?.initialKey ?? DEV_PUBLIC_KEY,
+    initial_key: opts?.initialKey ?? DEV_K1_PUBLIC_KEY,
     initial_configuration: defaultInitialConfiguration(maxBlockCpu, maxTxCpu)
   }
 

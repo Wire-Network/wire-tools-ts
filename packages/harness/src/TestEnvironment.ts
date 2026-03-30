@@ -2,32 +2,20 @@ import os from "os"
 import Path from "path"
 import Fs from "fs"
 import { ProcessManager } from "./processes/ProcessManager.js"
-import { AnvilManager, type AnvilConfig } from "./processes/AnvilManager.js"
+import { AnvilManager, type AnvilOptions } from "./processes/AnvilManager.js"
 import {
   SolanaValidatorManager,
-  type SolanaValidatorConfig
+  type SolanaValidatorOptions
 } from "./processes/SolanaValidatorManager.js"
-import {
-  WIREChainManager,
-  type WIREChainConfig
-} from "./processes/WIREChainManager"
-import { ClusterManager, type ClusterConfig } from "./cluster/ClusterManager.js"
+import { type WIREChainConfig } from "./processes/WIREChainManager"
+import { type ClusterConfig, ClusterManager } from "./cluster/ClusterManager.js"
 import { WIREClient } from "./clients/WIREClient"
 import { ETHClient } from "./clients/ETHClient.js"
 import { SOLClient } from "./clients/SOLClient.js"
-import {
-  WIREBootstrap,
-  type WIREBootstrapConfig
-} from "./bootstrap/WIREBootstrap"
-import {
-  ETHBootstrap,
-  type ETHBootstrapConfig
-} from "./bootstrap/ETHBootstrap.js"
-import {
-  SOLBootstrap,
-  type SOLBootstrapConfig
-} from "./bootstrap/SOLBootstrap.js"
+import { ETHBootstrap } from "./bootstrap/ETHBootstrap.js"
+import { SOLBootstrap } from "./bootstrap/SOLBootstrap.js"
 import { log } from "./logger.js"
+import { mkdirs } from "./util"
 
 export interface TestEnvironmentConfig {
   /** WIRE chain configuration (required) */
@@ -42,9 +30,9 @@ export interface TestEnvironmentConfig {
     underwriterCount?: number
   }
   /** Ethereum/anvil configuration */
-  ethereum?: AnvilConfig
+  ethereum?: AnvilOptions
   /** Solana validator configuration */
-  solana?: SolanaValidatorConfig
+  solana?: SolanaValidatorOptions
   /** Auto-bootstrap WIRE chain after starting (deploy contracts, configure OPP) */
   bootstrapWire?: boolean
   /** Path to wire-ethereum repo for ETH deployment */
@@ -75,7 +63,6 @@ export interface TestEnvironmentConfig {
  *   await env.stop()
  */
 export class TestEnvironment {
-  public pm: ProcessManager
   public cluster?: ClusterManager
   public anvil?: AnvilManager
   public solanaValidator?: SolanaValidatorManager
@@ -87,15 +74,14 @@ export class TestEnvironment {
   public ethBootstrap?: ETHBootstrap
   public solBootstrap?: SOLBootstrap
 
-  private config: TestEnvironmentConfig
-  private tempDir: string
+  private readonly tempDir: string
 
-  constructor(config: TestEnvironmentConfig) {
-    this.config = config
-    this.pm = new ProcessManager()
-    this.tempDir =
+  constructor(readonly config: TestEnvironmentConfig) {
+    ProcessManager.setClusterPath(config.wire.chainDir).get()
+
+    this.tempDir = mkdirs(
       config.tempDir || Path.join(os.tmpdir(), `wire-e2e-${Date.now()}`)
-    Fs.mkdirSync(this.tempDir, { recursive: true })
+    )
   }
 
   /** Start all configured chain processes, create clients, and optionally bootstrap. */
@@ -120,7 +106,6 @@ export class TestEnvironment {
       Path.resolve(this.config.wire.buildDir, "..", "..")
 
     // Start WIRE chain via ClusterManager (creates genesis, config, bootstraps)
-    this.cluster = new ClusterManager()
     const clusterConfig: ClusterConfig = {
       buildDir: this.config.wire.buildDir,
       chainDir,
@@ -132,25 +117,21 @@ export class TestEnvironment {
       underwriterCount: this.config.wire.underwriterCount ?? 1
     }
 
+    this.cluster = new ClusterManager(clusterConfig)
+
     // Remove old chain dir if exists (test isolation)
     if (Fs.existsSync(chainDir)) {
       Fs.rmSync(chainDir, { recursive: true, force: true })
     }
 
     // create() generates genesis, configs, starts bios, runs full bootstrap, saves state
-    await this.cluster.create(clusterConfig)
+    await this.cluster.create()
 
     // start() launches all nodes from saved state
     await this.cluster.start()
-
     // Create WIRE client pointing at first producer node (port 8888)
-    const wireHttpUrl = "http://127.0.0.1:8888"
-    const clioBinary = Path.join(
-      this.config.wire.buildDir,
-      "programs",
-      "clio",
-      "clio"
-    )
+    const wireHttpUrl = "http://127.0.0.1:8888",
+      clioBinary = Path.join(this.config.wire.buildDir, "bin", "clio")
     this.wireClient = new WIREClient({
       httpUrl: wireHttpUrl,
       clio: {
@@ -161,15 +142,14 @@ export class TestEnvironment {
 
     // Start Ethereum (anvil)
     if (this.config.ethereum !== undefined) {
-      this.anvil = new AnvilManager(this.pm, this.config.ethereum)
+      this.anvil = await AnvilManager.create(this.config.ethereum)
       await this.anvil.start()
       this.ethClient = new ETHClient(this.anvil.rpcUrl)
     }
 
     // Start Solana
     if (this.config.solana !== undefined) {
-      this.solanaValidator = new SolanaValidatorManager(
-        this.pm,
+      this.solanaValidator = await SolanaValidatorManager.create(
         this.config.solana
       )
       await this.solanaValidator.start()

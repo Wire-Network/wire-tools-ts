@@ -1,28 +1,46 @@
+import "jest"
 import { generateGenesis } from "@wire-e2e-tests/harness/cluster/genesis"
 import { generateLoggingConfig } from "@wire-e2e-tests/harness/cluster/loggingConfig"
 import { buildStartCmd } from "@wire-e2e-tests/harness/cluster/startCmd"
-import { BIOS_K1_KEY, BIOS_BLS_KEY, formatK1SignatureProvider, formatBLSSignatureProvider } from "@wire-e2e-tests/harness/cluster/keyGen"
-import { DEV_PUBLIC_KEY, DEV_PRIVATE_KEY, BIOS_P2P_PORT, BIOS_HTTP_PORT } from "@wire-e2e-tests/harness/cluster/constants"
+import {
+  BIOS_K1_KEY,
+  BIOS_BLS_KEY,
+  formatK1SignatureProvider,
+  formatBLSSignatureProvider
+} from "@wire-e2e-tests/harness/cluster/keyGen"
+import {
+  DEV_K1_PUBLIC_KEY,
+  DEV_K1_PRIVATE_KEY,
+  BIOS_P2P_PORT,
+  BIOS_HTTP_PORT
+} from "@wire-e2e-tests/harness/cluster/constants"
 
 describe("ClusterManager smoke tests", () => {
   describe("genesis.ts", () => {
     test("generates valid genesis with initial_key and initial_configuration", () => {
       const genesis = generateGenesis()
-      expect(genesis.initial_key).toBe(DEV_PUBLIC_KEY)
+      expect(genesis.initial_key).toBe(DEV_K1_PUBLIC_KEY)
       expect(genesis.initial_timestamp).toBeDefined()
       expect(genesis.initial_configuration.max_block_cpu_usage).toBe(400000)
-      expect(genesis.initial_configuration.max_transaction_cpu_usage).toBe(375000)
+      expect(genesis.initial_configuration.max_transaction_cpu_usage).toBe(
+        375000
+      )
     })
 
     test("includes initial_finalizer_key when provided", () => {
-      const genesis = generateGenesis({ initialFinalizerKey: BIOS_BLS_KEY.publicKey })
+      const genesis = generateGenesis({
+        initialFinalizerKey: BIOS_BLS_KEY.publicKey
+      })
       expect(genesis.initial_finalizer_key).toBe(BIOS_BLS_KEY.publicKey)
     })
   })
 
   describe("loggingConfig.ts", () => {
     test("generates JSON with stderr_color sink and standard loggers", () => {
-      const config = generateLoggingConfig() as { sinks: Array<{ name: string }>; loggers: Array<{ name: string }> }
+      const config = generateLoggingConfig() as {
+        sinks: Array<{ name: string }>
+        loggers: Array<{ name: string }>
+      }
       expect(config.sinks[0].name).toBe("stderr_color")
       expect(config.loggers.length).toBeGreaterThan(5)
       const names = config.loggers.map(l => l.name)
@@ -48,7 +66,7 @@ describe("ClusterManager smoke tests", () => {
         configDir: "/tmp/test/node_bios",
         dataDir: "/tmp/test/node_bios",
         genesisJson: "/tmp/test/node_bios/genesis.json",
-        genesisTimestamp: "2026-03-27T00:00:00.000",
+        genesisTimestamp: "2026-03-27T00:00:00.000"
       })
       const s = cmd.join(" ")
       expect(cmd[0]).toBe("/opt/bin/nodeop")
@@ -64,7 +82,11 @@ describe("ClusterManager smoke tests", () => {
 
     test("builds producer node start.cmd with peer addresses and no stale production", () => {
       const k1 = { publicKey: "PUB_K1_test123", privateKey: "PVT_K1_test456" }
-      const bls = { publicKey: "PUB_BLS_test789", privateKey: "PVT_BLS_test012", proofOfPossession: "SIG_BLS_test" }
+      const bls = {
+        publicKey: "PUB_BLS_test789",
+        privateKey: "PVT_BLS_test012",
+        proofOfPossession: "SIG_BLS_test"
+      }
       const cmd = buildStartCmd({
         nodeopBinary: "/opt/bin/nodeop",
         p2pListenEndpoint: "0.0.0.0:9876",
@@ -77,11 +99,15 @@ describe("ClusterManager smoke tests", () => {
         configDir: "/tmp/test/node_00",
         dataDir: "/tmp/test/node_00",
         genesisJson: "/tmp/test/node_00/genesis.json",
-        genesisTimestamp: "2026-03-27T00:00:00.000",
+        genesisTimestamp: "2026-03-27T00:00:00.000"
       })
       const s = cmd.join(" ")
-      expect(s).toContain("wire-PUB_K1_test123,wire,wire,PUB_K1_test123,KEY:PVT_K1_test456")
-      expect(s).toContain("wire-bls-PUB_BLS_test789,wire,wire_bls,PUB_BLS_test789,KEY:PVT_BLS_test012")
+      expect(s).toContain(
+        "wire-PUB_K1_test123,wire,wire,PUB_K1_test123,KEY:PVT_K1_test456"
+      )
+      expect(s).toContain(
+        "wire-bls-PUB_BLS_test789,wire,wire_bls,PUB_BLS_test789,KEY:PVT_BLS_test012"
+      )
       expect(s).toContain("--producer-name defproducera")
       expect(s).toContain("--producer-name defproducerb")
       expect(s).toContain("--p2p-peer-address localhost:9776")
@@ -91,8 +117,8 @@ describe("ClusterManager smoke tests", () => {
 
   describe("keyGen.ts constants", () => {
     test("BIOS_K1_KEY matches the standard dev key", () => {
-      expect(BIOS_K1_KEY.publicKey).toBe(DEV_PUBLIC_KEY)
-      expect(BIOS_K1_KEY.privateKey).toBe(DEV_PRIVATE_KEY)
+      expect(BIOS_K1_KEY.publicKey).toBe(DEV_K1_PUBLIC_KEY)
+      expect(BIOS_K1_KEY.privateKey).toBe(DEV_K1_PRIVATE_KEY)
     })
 
     test("BIOS_BLS_KEY has correct prefixes", () => {
@@ -103,12 +129,16 @@ describe("ClusterManager smoke tests", () => {
 
     test("formatK1SignatureProvider produces correct wire,wire,<key>,KEY:<priv> format", () => {
       const sp = formatK1SignatureProvider(BIOS_K1_KEY)
-      expect(sp).toBe(`wire-${BIOS_K1_KEY.publicKey},wire,wire,${BIOS_K1_KEY.publicKey},KEY:${BIOS_K1_KEY.privateKey}`)
+      expect(sp).toBe(
+        `wire-${BIOS_K1_KEY.publicKey},wire,wire,${BIOS_K1_KEY.publicKey},KEY:${BIOS_K1_KEY.privateKey}`
+      )
     })
 
     test("formatBLSSignatureProvider produces correct wire-bls,wire,wire_bls format", () => {
       const sp = formatBLSSignatureProvider(BIOS_BLS_KEY)
-      expect(sp).toBe(`wire-bls-${BIOS_BLS_KEY.publicKey},wire,wire_bls,${BIOS_BLS_KEY.publicKey},KEY:${BIOS_BLS_KEY.privateKey}`)
+      expect(sp).toBe(
+        `wire-bls-${BIOS_BLS_KEY.publicKey},wire,wire_bls,${BIOS_BLS_KEY.publicKey},KEY:${BIOS_BLS_KEY.privateKey}`
+      )
     })
   })
 })

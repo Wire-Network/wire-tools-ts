@@ -1,5 +1,9 @@
 import { generateGenesis } from "@wire-e2e-tests/harness/cluster/genesis"
-import { DEV_PUBLIC_KEY, MAX_BLOCK_CPU_USAGE, MAX_TRANSACTION_CPU_USAGE } from "@wire-e2e-tests/harness/cluster/constants"
+import {
+  DEV_K1_PUBLIC_KEY,
+  MAX_BLOCK_CPU_USAGE,
+  MAX_TRANSACTION_CPU_USAGE
+} from "@wire-e2e-tests/harness/cluster/constants"
 
 describe("generateGenesis", () => {
   it("returns an object with initial_timestamp, initial_key, and initial_configuration", () => {
@@ -9,9 +13,9 @@ describe("generateGenesis", () => {
     expect(genesis).toHaveProperty("initial_configuration")
   })
 
-  it("uses DEV_PUBLIC_KEY as the default initial_key", () => {
+  it("uses DEV_K1_PUBLIC_KEY as the default initial_key", () => {
     const genesis = generateGenesis()
-    expect(genesis.initial_key).toBe(DEV_PUBLIC_KEY)
+    expect(genesis.initial_key).toBe(DEV_K1_PUBLIC_KEY)
   })
 
   it("produces a valid ISO-like timestamp (without trailing Z)", () => {
@@ -44,7 +48,7 @@ describe("generateGenesis", () => {
       "max_transaction_delay",
       "max_inline_action_size",
       "max_inline_action_depth",
-      "max_authority_depth",
+      "max_authority_depth"
     ] as const
 
     for (const field of requiredFields) {
@@ -55,8 +59,12 @@ describe("generateGenesis", () => {
 
   it("uses cluster_manager CPU overrides by default (400k / 375k)", () => {
     const genesis = generateGenesis()
-    expect(genesis.initial_configuration.max_block_cpu_usage).toBe(MAX_BLOCK_CPU_USAGE)
-    expect(genesis.initial_configuration.max_transaction_cpu_usage).toBe(MAX_TRANSACTION_CPU_USAGE)
+    expect(genesis.initial_configuration.max_block_cpu_usage).toBe(
+      MAX_BLOCK_CPU_USAGE
+    )
+    expect(genesis.initial_configuration.max_transaction_cpu_usage).toBe(
+      MAX_TRANSACTION_CPU_USAGE
+    )
   })
 
   it("allows overriding the initial key", () => {
@@ -68,7 +76,7 @@ describe("generateGenesis", () => {
   it("allows overriding CPU limits", () => {
     const genesis = generateGenesis({
       maxBlockCpuUsage: 999999,
-      maxTransactionCpuUsage: 888888,
+      maxTransactionCpuUsage: 888888
     })
     expect(genesis.initial_configuration.max_block_cpu_usage).toBe(999999)
     expect(genesis.initial_configuration.max_transaction_cpu_usage).toBe(888888)

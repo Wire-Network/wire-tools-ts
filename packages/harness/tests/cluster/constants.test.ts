@@ -1,6 +1,6 @@
 import {
-  DEV_PRIVATE_KEY,
-  DEV_PUBLIC_KEY,
+  DEV_K1_PRIVATE_KEY,
+  DEV_K1_PUBLIC_KEY,
   SYSTEM_ACCOUNTS,
   BASE_P2P_PORT,
   BASE_HTTP_PORT,
@@ -19,23 +19,23 @@ import {
   BATCH_OPERATOR_PLUGINS,
   UNDERWRITER_PLUGINS,
   batchOperatorAccountName,
-  underwriterAccountName,
+  underwriterAccountName
 } from "@wire-e2e-tests/harness/cluster/constants"
 
 describe("constants", () => {
   describe("development keys", () => {
-    it("DEV_PRIVATE_KEY is a non-empty string", () => {
-      expect(typeof DEV_PRIVATE_KEY).toBe("string")
-      expect(DEV_PRIVATE_KEY.length).toBeGreaterThan(0)
+    it("DEV_K1_PRIVATE_KEY is a non-empty string", () => {
+      expect(typeof DEV_K1_PRIVATE_KEY).toBe("string")
+      expect(DEV_K1_PRIVATE_KEY.length).toBeGreaterThan(0)
     })
 
-    it("DEV_PUBLIC_KEY is a non-empty string", () => {
-      expect(typeof DEV_PUBLIC_KEY).toBe("string")
-      expect(DEV_PUBLIC_KEY.length).toBeGreaterThan(0)
+    it("DEV_K1_PUBLIC_KEY is a non-empty string", () => {
+      expect(typeof DEV_K1_PUBLIC_KEY).toBe("string")
+      expect(DEV_K1_PUBLIC_KEY.length).toBeGreaterThan(0)
     })
 
-    it("DEV_PUBLIC_KEY starts with SYS", () => {
-      expect(DEV_PUBLIC_KEY).toMatch(/^SYS/)
+    it("DEV_K1_PUBLIC_KEY starts with SYS", () => {
+      expect(DEV_K1_PUBLIC_KEY).toMatch(/^SYS/)
     })
   })
 

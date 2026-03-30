@@ -14,8 +14,8 @@ import {
   BASE_PLUGINS,
   PRODUCER_PLUGINS,
   NODEOP_EXTRA_ARGS,
-  DEV_PRIVATE_KEY,
-  DEV_PUBLIC_KEY
+  DEV_K1_PRIVATE_KEY,
+  DEV_K1_PUBLIC_KEY
 } from "./constants.js"
 import { type ConfigOptions } from "./Config"
 
@@ -288,7 +288,7 @@ export function nodeConfigToIniOptions(
   const signatureProviders: string[] = []
   if (isBios) {
     signatureProviders.push(
-      `wire-${DEV_PUBLIC_KEY},wire,wire,${DEV_PUBLIC_KEY},KEY:${DEV_PRIVATE_KEY}`
+      `wire-${DEV_K1_PUBLIC_KEY},wire,wire,${DEV_K1_PUBLIC_KEY},KEY:${DEV_K1_PRIVATE_KEY}`
     )
   }
 

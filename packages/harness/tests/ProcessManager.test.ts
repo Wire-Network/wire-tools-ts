@@ -1,10 +1,11 @@
 import { ProcessManager } from "@wire-e2e-tests/harness"
+import * as OS from "node:os"
 
 describe("ProcessManager", () => {
   let pm: ProcessManager
 
   beforeEach(() => {
-    pm = new ProcessManager()
+    pm = ProcessManager.setClusterPath(OS.tmpdir()).get()
   })
 
   afterEach(async () => {
@@ -16,7 +17,7 @@ describe("ProcessManager", () => {
     const handle = await pm.spawn({
       label: "echo-test",
       command: "sleep",
-      args: ["60"],
+      args: ["60"]
     })
     expect(handle.pid).toBeGreaterThan(0)
     expect(handle.pmId).toBeGreaterThanOrEqual(0)

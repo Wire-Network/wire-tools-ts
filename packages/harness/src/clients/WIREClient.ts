@@ -1,6 +1,11 @@
-import { APIClient } from "@wireio/sdk-core"
+import { APIClient, SystemContracts } from "@wireio/sdk-core"
+
 import { Clio, type ClioConfig } from "./Clio.js"
 import { log } from "../logger.js"
+import {
+  GetTableRowsResponse,
+  TableIndexType
+} from "@wireio/sdk-core/api/v1/Types"
 
 export interface WIREChainInfo {
   server_version: string
@@ -52,14 +57,14 @@ export class WIREClient {
   }
 
   /** GET table rows via sdk-core */
-  async getTableRows(params: {
+  async getTableRows<T = any>(params: {
     code: string
     scope: string
     table: string
     limit?: number
     lower_bound?: string
     upper_bound?: string
-  }): Promise<any> {
+  }): Promise<GetTableRowsResponse<TableIndexType, T>> {
     const opts: Record<string, unknown> = {
       code: params.code,
       scope: params.scope,
@@ -69,7 +74,7 @@ export class WIREClient {
     }
     if (params.lower_bound !== undefined) opts.lower_bound = params.lower_bound
     if (params.upper_bound !== undefined) opts.upper_bound = params.upper_bound
-    return this.api.v1.chain.get_table_rows(opts as any)
+    return await this.api.v1.chain.get_table_rows(opts as any)
   }
 
   /** Read epoch state from sysio.epoch contract */
@@ -91,8 +96,8 @@ export class WIREClient {
   }
 
   /** Read operator roster from sysio.epoch contract */
-  async getOperators(): Promise<any> {
-    return this.getTableRows({
+  async getOperators() {
+    return this.getTableRows<SystemContracts.SysioEpochOperatorInfoType>({
       code: "sysio.epoch",
       scope: "sysio.epoch",
       table: "operators"
@@ -100,8 +105,8 @@ export class WIREClient {
   }
 
   /** Read messages from sysio.msgch contract */
-  async getMessages(): Promise<any> {
-    return this.getTableRows({
+  async getMessages() {
+    return this.getTableRows<SystemContracts.SysioMsgchMessageEntryType>({
       code: "sysio.msgch",
       scope: "sysio.msgch",
       table: "messages"

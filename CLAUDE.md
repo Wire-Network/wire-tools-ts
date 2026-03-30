@@ -59,7 +59,7 @@ Flow packages depend on `harness` via `workspace:*`.
 - **Source**: `src/` → **Output**: `lib/`
 - **Import paths**: Always use `.js` extensions (nodenext module resolution)
 - **Path mappings**: `@wire-e2e-tests/*` → `packages/*/src` (in base tsconfig)
-- **Jest tsconfig**: `etc/tsconfig/tsconfig.jest.cjs.json` (disables composite/incremental)
+- **Jest tsconfig**: `etc/tsconfig/tsconfig.base.jest.json` (disables composite/incremental)
 
 ## Testing
 

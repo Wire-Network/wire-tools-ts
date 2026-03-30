@@ -4,6 +4,7 @@ import {
   retry,
   sleep,
 } from "@wire-e2e-tests/harness"
+import { SystemContracts } from "@wireio/sdk-core"
 
 /**
  * Flow B: Node Operator Collateral Deposit
@@ -143,10 +144,10 @@ describe("Flow B: Collateral Deposit", () => {
 
     // Register the batch operator via sysio.epoch::regoperator
     await retry(
-      () => clio.pushAction(
+      () => clio.pushAction<SystemContracts.SysioEpochRegoperatorAction>(
         "sysio.epoch",
         "regoperator",
-        JSON.stringify({ account: BATCH_OP_ACCOUNT, type: OP_TYPE_BATCH }),
+        { account: BATCH_OP_ACCOUNT, type: OP_TYPE_BATCH },
         "sysio.epoch@active"
       ),
       { label: "regoperator", maxAttempts: 3, delayMs: 2000 }
@@ -187,10 +188,10 @@ describe("Flow B: Collateral Deposit", () => {
 
     // Create an inbound chain request for the ETH outpost
     await retry(
-      () => clio.pushAction(
+      () => clio.pushAction<SystemContracts.SysioMsgchCreatereqAction>(
         "sysio.msgch",
         "createreq",
-        JSON.stringify({ outpost_id: outpostId }),
+        { outpost_id: outpostId },
         "sysio.msgch@active"
       ),
       { label: "createreq", maxAttempts: 3, delayMs: 2000 }
@@ -224,10 +225,10 @@ describe("Flow B: Collateral Deposit", () => {
     // First, register all 7 operators so they can deliver
     for (let i = 1; i < operators.length; i++) {
       try {
-        await clio.pushAction(
+        await clio.pushAction<SystemContracts.SysioEpochRegoperatorAction>(
           "sysio.epoch",
           "regoperator",
-          JSON.stringify({ account: operators[i], type: OP_TYPE_BATCH }),
+          { account: operators[i], type: OP_TYPE_BATCH },
           "sysio.epoch@active"
         )
       } catch (err: any) {
@@ -241,17 +242,17 @@ describe("Flow B: Collateral Deposit", () => {
     // Each operator delivers the same chain hash
     for (const operatorAcct of operators) {
       await retry(
-        () => clio.pushAction(
+        () => clio.pushAction<SystemContracts.SysioMsgchDeliverAction>(
           "sysio.msgch",
           "deliver",
-          JSON.stringify({
+          {
             operator_acct: operatorAcct,
             req_id: reqId,
             chain_hash: FAKE_CHAIN_HASH,
             merkle_root: FAKE_MERKLE_ROOT,
             msg_count: 1,
-            raw_messages: [],
-          }),
+            raw_messages: "",
+          },
           `${operatorAcct}@active`
         ),
         { label: `deliver from ${operatorAcct}`, maxAttempts: 3, delayMs: 1000 }
@@ -260,10 +261,10 @@ describe("Flow B: Collateral Deposit", () => {
 
     // Evaluate consensus
     await retry(
-      () => clio.pushAction(
+      () => clio.pushAction<SystemContracts.SysioMsgchEvalconsAction>(
         "sysio.msgch",
         "evalcons",
-        JSON.stringify({ req_id: reqId }),
+        { req_id: reqId },
         "sysio.msgch@active"
       ),
       { label: "evalcons", maxAttempts: 3, delayMs: 2000 }
@@ -284,15 +285,15 @@ describe("Flow B: Collateral Deposit", () => {
 
     // Update collateral tracking for the batch operator via sysio.uwrit::updcltrl
     await retry(
-      () => clio.pushAction(
+      () => clio.pushAction<SystemContracts.SysioUwritUpdcltrlAction>(
         "sysio.uwrit",
         "updcltrl",
-        JSON.stringify({
+        {
           underwriter: BATCH_OP_ACCOUNT,
           chain_kind: CHAIN_KIND_ETHEREUM,
           amount: "5.0000 SYS",
           is_increase: true,
-        }),
+        },
         "sysio.uwrit@active"
       ),
       { label: "updcltrl", maxAttempts: 3, delayMs: 2000 }
@@ -323,10 +324,10 @@ describe("Flow B: Collateral Deposit", () => {
     // Advance epoch(s) past the warmup period
     for (let i = 0; i <= warmupEpochs; i++) {
       await retry(
-        () => clio.pushAction(
+        () => clio.pushAction<SystemContracts.SysioEpochAdvanceAction>(
           "sysio.epoch",
           "advance",
-          JSON.stringify({}),
+          {},
           "sysio.epoch@active"
         ),
         { label: `advance epoch ${i}`, maxAttempts: 5, delayMs: 3000 }

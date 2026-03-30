@@ -1,0 +1,22 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {
+    "rootDir": "tests",
+    "outDir": "lib/test-cjs",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "ignoreDeprecations": "6.0",
+    "paths": {
+      "@wire-e2e-tests/harness": [
+        "./src"
+      ],
+      "@wire-e2e-tests/harness/*": [
+        "./src/*"
+      ]
+    }
+  },
+  "references": [
+    { "path": "./tsconfig.cjs.json" },
+  ],
+  "include": ["tests"]
+}

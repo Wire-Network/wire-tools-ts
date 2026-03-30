@@ -1,6 +1,6 @@
 .idea
 .vscode
-.claude
+.claude*
 .remember
 .env
 .envrc

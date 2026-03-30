@@ -18,6 +18,10 @@ import { hideBin } from "yargs/helpers"
 import ClusterManager, { type ClusterConfig } from "./cluster/ClusterManager"
 import { log } from "./logger"
 import { last } from "lodash"
+import { match } from "ts-pattern"
+import * as Assert from "node:assert"
+import { ProcessManager } from "./processes/ProcessManager"
+import { mkdirs } from "./util"
 
 const scriptName = last(process.argv[1].split("/")),
   cleanArgs = process.argv.slice(2).filter(arg => !arg.startsWith("--inspect")),
@@ -90,48 +94,77 @@ const scriptName = last(process.argv[1].split("/")),
     .strict()
     .help()
 
-async function main(): Promise<void> {
-  const argv = await parser.parse()
-  const command = argv._[0] as string
-  const chainDir = Path.resolve(argv.chainDir as string)
-  const force = argv.force as boolean
+enum ClusterCommand {
+  create = "create",
+  run = "run",
+  destroy = "destroy"
+}
 
+async function main(): Promise<void> {
+  const argv = await parser.parse(),
+    command = argv._[0] as ClusterCommand,
+    chainDir = Path.resolve(argv.chainDir as string),
+    configFile = Path.join(chainDir, "cluster-config.json"),
+    force = argv.force as boolean
+
+  ProcessManager.setClusterPath(chainDir)
   log.info(`wire-test-cluster: command=${command} chain-dir=${chainDir}`)
 
-  const manager = new ClusterManager()
+  const config = match(command)
+      .with(ClusterCommand.create, () => {
+        const buildDir = Path.resolve(argv.buildDir as string)
+        const pnodes = argv.pnodes as number
+        const nodes = argv.nodes as number
+        const prodCount = argv.prodCount as number
+        const httpSecure = argv.httpSecure as boolean
+        const batchOperators = argv.batchOperators as number
+        const underwriters = argv.underwriters as number
+
+        if (Fs.existsSync(chainDir)) {
+          Assert.ok(
+            force,
+            `wire-test-cluster: --force required to overwrite existing directory ${chainDir}`
+          )
+          log.info(`wire-test-cluster: --force specified, removing ${chainDir}`)
+          Fs.rmSync(chainDir, { recursive: true, force: true })
+        }
+
+        mkdirs(chainDir)
+
+        const config: ClusterConfig = {
+          buildDir,
+          chainDir,
+          producerCount: prodCount,
+          nodeCount: pnodes + nodes,
+          httpSecure,
+          batchOperatorCount: batchOperators,
+          underwriterCount: underwriters
+        }
+
+        log.info(`wire-test-cluster: writing config to ${configFile}`)
+        Fs.writeFileSync(configFile, JSON.stringify(config, null, 2))
+
+        return config
+      })
+      .otherwise(() => {
+        log.info(`wire-test-cluster: loading config from ${configFile}`)
+        Assert.ok(
+          Fs.existsSync(configFile),
+          `config file not found: ${configFile}`
+        )
+        return JSON.parse(Fs.readFileSync(configFile, "utf-8"))
+      }),
+    manager = new ClusterManager(config)
 
   switch (command) {
     case "create": {
-      const buildDir = Path.resolve(argv.buildDir as string)
-      const pnodes = argv.pnodes as number
-      const nodes = argv.nodes as number
-      const prodCount = argv.prodCount as number
-      const httpSecure = argv.httpSecure as boolean
-      const batchOperators = argv.batchOperators as number
-      const underwriters = argv.underwriters as number
-
-      if (force && Fs.existsSync(chainDir)) {
-        log.info(`wire-test-cluster: --force specified, removing ${chainDir}`)
-        Fs.rmSync(chainDir, { recursive: true, force: true })
-      }
-
-      const config: ClusterConfig = {
-        buildDir,
-        chainDir,
-        producerCount: prodCount,
-        nodeCount: pnodes + nodes,
-        httpSecure,
-        batchOperatorCount: batchOperators,
-        underwriterCount: underwriters
-      }
-
-      await manager.create(config)
+      await manager.create()
       log.info("wire-test-cluster: cluster created successfully")
       process.exit(0)
     }
 
     case "run": {
-      manager.loadState(chainDir)
+      manager.loadState()
       await manager.start()
       log.info("wire-test-cluster: cluster started, press Ctrl+C to stop")
 

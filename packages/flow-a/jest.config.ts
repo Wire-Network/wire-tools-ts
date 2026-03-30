@@ -1,5 +1,3 @@
-
-
 const config = {
   displayName: "flow-a",
   testEnvironment: "node",
@@ -10,18 +8,16 @@ const config = {
     "^.+\\.ts$": [
       "ts-jest",
       {
-        tsconfig: "<rootDir>/../../etc/tsconfig/tsconfig.jest.cjs.json",
-      },
-    ],
+        tsconfig: "<rootDir>/../../etc/tsconfig/tsconfig.base.jest.json"
+      }
+    ]
   },
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",
     "^@wire-e2e-tests/harness$": "<rootDir>/../harness/src/index",
-    "^@wire-e2e-tests/harness/(.*)$": "<rootDir>/../harness/src/$1",
+    "^@wire-e2e-tests/harness/(.*)$": "<rootDir>/../harness/src/$1"
   },
-  modulePaths: [
-    "<rootDir>/../harness/node_modules",
-  ],
+  modulePaths: ["<rootDir>/../harness/node_modules"]
 }
 
 export default config

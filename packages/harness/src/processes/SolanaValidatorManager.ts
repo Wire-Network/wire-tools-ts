@@ -1,14 +1,18 @@
 import Path from "path"
 import { ProcessManager, type ProcessConfig } from "./ProcessManager.js"
-import { waitForEndpoint } from "../util.js"
+import { existsAsync, waitForEndpoint } from "../util.js"
 import { log } from "../logger.js"
+import { defaults } from "lodash"
+import { which } from "zx"
+import { asOption } from "@3fv/prelude-ts"
+import { assert } from "@wireio/shared"
 
-export interface SolanaValidatorConfig {
+export interface SolanaValidatorOptions {
   /** RPC port (default: 8899) */
   rpcPort?: number
   /** Faucet port (default: 9900) */
   faucetPort?: number
-  /** Ledger directory (default: temp dir) */
+  /** Ledger directory (optional) */
   ledgerDir?: string
   /** Path to solana-test-validator binary */
   binary?: string
@@ -18,29 +22,35 @@ export interface SolanaValidatorConfig {
   extraArgs?: string[]
 }
 
+export async function createSolanaValidatorDefaultOptions(): Promise<
+  Partial<SolanaValidatorOptions>
+> {
+  return {
+    rpcPort: SolanaValidatorManager.DefaultRpcPort,
+    faucetPort: SolanaValidatorManager.DefaultFaucetPort,
+    binary: asOption(await which("solana-test-validator")).getOrUndefined()
+  }
+}
+
+export interface SolanaValidatorConfig extends Required<SolanaValidatorOptions> {}
+
 /**
  * Manages a solana-test-validator (Agave) process.
  */
 export class SolanaValidatorManager {
-  private pm: ProcessManager
-  private config: Required<Omit<SolanaValidatorConfig, "programs" | "extraArgs" | "ledgerDir">> &
-    Pick<SolanaValidatorConfig, "programs" | "extraArgs" | "ledgerDir">
-
-  constructor(pm: ProcessManager, config: SolanaValidatorConfig = {}) {
-    this.pm = pm
-    this.config = {
-      rpcPort: config.rpcPort ?? 8899,
-      faucetPort: config.faucetPort ?? 9900,
-      binary: config.binary ??
-        Path.join(
-          process.env.HOME || "~",
-          ".local/share/solana/install/active_release/bin/solana-test-validator"
-        ),
-      ledgerDir: config.ledgerDir,
-      programs: config.programs,
-      extraArgs: config.extraArgs,
-    }
+  static async create(options: SolanaValidatorOptions = {}) {
+    const config = defaults(
+      { ...options },
+      await createSolanaValidatorDefaultOptions()
+    ) as SolanaValidatorConfig
+    assert(
+      await existsAsync(config.binary),
+      "solana-test-validator binary path is required"
+    )
+    return new SolanaValidatorManager(config)
   }
+
+  private constructor(readonly config: SolanaValidatorConfig) {}
 
   get rpcUrl(): string {
     return `http://127.0.0.1:${this.config.rpcPort}`
@@ -51,38 +61,52 @@ export class SolanaValidatorManager {
   }
 
   async start(): Promise<void> {
+    const { config } = this
     const args = [
-      "--rpc-port", String(this.config.rpcPort),
-      "--faucet-port", String(this.config.faucetPort),
+      "--rpc-port",
+      String(config.rpcPort),
+      "--faucet-port",
+      String(config.faucetPort),
       "--quiet",
-      "--reset",
+      "--reset"
     ]
 
-    if (this.config.ledgerDir) {
-      args.push("--ledger", this.config.ledgerDir)
+    if (config.ledgerDir) {
+      args.push("--ledger", config.ledgerDir)
     }
 
-    for (const prog of this.config.programs || []) {
+    for (const prog of config.programs || []) {
       args.push("--bpf-program", prog.programId, prog.soFile)
     }
 
-    if (this.config.extraArgs) {
-      args.push(...this.config.extraArgs)
+    if (config.extraArgs) {
+      args.push(...config.extraArgs)
     }
 
     const procConfig: ProcessConfig = {
       label: "solana-test-validator",
-      command: this.config.binary,
-      args,
+      command: config.binary,
+      args
     }
 
-    await this.pm.spawn(procConfig)
-    await waitForEndpoint(this.rpcUrl, { label: "solana-test-validator", timeoutMs: 30_000 })
+    await ProcessManager.get().spawn(procConfig)
+    await waitForEndpoint(this.rpcUrl, {
+      label: "solana-test-validator",
+      timeoutMs: SolanaValidatorManager.StartupTimeoutMs
+    })
     log.info(`Solana validator ready at ${this.rpcUrl}`)
   }
 
   async stop(): Promise<void> {
-    const handle = this.pm.get("solana-test-validator")
+    const handle = ProcessManager.get().get("solana-test-validator")
     if (handle) await handle.kill()
   }
+}
+
+export namespace SolanaValidatorManager {
+  export const DefaultRpcPort = 8899
+  export const DefaultFaucetPort = 9900
+
+  /** Timeout for waiting on solana-test-validator startup (ms). */
+  export const StartupTimeoutMs = 30_000
 }

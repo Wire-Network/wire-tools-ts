@@ -4,10 +4,8 @@
     "module": "CommonJS",
     "moduleResolution": "nodenext",
     "ignoreDeprecations": "6.0",
-    "composite": false,
-    "incremental": false,
-    "declaration": false,
-    "declarationMap": false,
-    "sourceMap": false
+    "composite": true,
+    "sourceMap": true,
+    "inlineSourceMap": false
   }
 }

@@ -6,15 +6,16 @@
  */
 
 import { Option } from "@3fv/prelude-ts"
-import { Hash, KeyType, PrivateKey } from "@wireio/sdk-core"
+
+import { Hash, KeyType, PrivateKey, Crypto } from "@wireio/sdk-core"
 
 // ---------------------------------------------------------------------------
 // Development key pair (matches genesis bios key)
 // ---------------------------------------------------------------------------
-const DefaultKeyPairSeed = "nathan"
+const DefaultK1KeyPairSeed = "nathan"
 
-export const DefaultKeyPair = Option.try(() => {
-  const privKeyDigest = Hash.sha256().update(DefaultKeyPairSeed).digest(),
+export const DefaultK1KeyPair = Option.try(() => {
+  const privKeyDigest = Hash.sha256().update(DefaultK1KeyPairSeed).digest(),
     privateKey = PrivateKey.regenerate(KeyType.K1, privKeyDigest),
     publicKey = privateKey.toPublic()
 
@@ -24,15 +25,46 @@ export const DefaultKeyPair = Option.try(() => {
     privateKeyWIF: privateKey.toWif(),
     publicKeyWIF: publicKey.toLegacyString()
   }
-}).getOrThrow(`Failed to create default key pair: ${DefaultKeyPairSeed}`)
+}).getOrThrow(`Failed to create default key pair: ${DefaultK1KeyPairSeed}`)
 
-export type DefinedKeyPair = typeof DefaultKeyPair
+export type DefaultK1KeyPairType = typeof DefaultK1KeyPair
 
 /** Default sysio development private key (WIF format). */
-export const DEV_PRIVATE_KEY = DefaultKeyPair.privateKeyWIF
+export const DEV_K1_PRIVATE_KEY = DefaultK1KeyPair.privateKeyWIF
 
 /** Default sysio development public key (SYS prefix). */
-export const DEV_PUBLIC_KEY = DefaultKeyPair.publicKeyWIF
+export const DEV_K1_PUBLIC_KEY = DefaultK1KeyPair.publicKeyWIF
+
+const DefaultBLSKeyPairSeed = "wire"
+
+export const DefaultBLSKeyPair = Option.try(() => {
+  const privKeyDigest = Hash.sha256().update(DefaultBLSKeyPairSeed).digest(),
+    privateKey = PrivateKey.regenerate(KeyType.BLS, privKeyDigest),
+    publicKey = privateKey.toPublic(),
+    proofOfPossession = privateKey.proofOfPossessionSignature,
+    proofOfPossessionStr = privateKey.proofOfPossessionString
+
+  return {
+    privateKey,
+    publicKey,
+    proofOfPossession,
+    privateKeyStr: privateKey.toString(),
+    publicKeyStr: publicKey.toString(),
+    proofOfPossessionStr
+  }
+}).getOrThrow(`Failed to create default BLS key pair: ${DefaultBLSKeyPairSeed}`)
+
+export type DefaultBLSKeyPairType = typeof DefaultBLSKeyPair
+
+/** Default sysio development BLS private key. */
+export const DEV_BLS_PRIVATE_KEY = DefaultBLSKeyPair.privateKeyStr
+
+/** Default sysio development BLS public key. */
+export const DEV_BLS_PUBLIC_KEY = DefaultBLSKeyPair.publicKeyStr
+
+/** Default sysio development BLS proof of possession. */
+export const DEV_BLS_PROOF_OF_POSSESSION =
+  DefaultBLSKeyPair.proofOfPossessionStr
 
 /**
  * Formats a signature-provider config value matching the Wire nodeop format:
@@ -61,11 +93,11 @@ export function formatSignatureProvider(
  */
 export function devSignatureProvider(): string {
   return formatSignatureProvider(
-    `wire-${DEV_PUBLIC_KEY}`,
+    `wire-${DEV_K1_PUBLIC_KEY}`,
     "wire",
     "wire",
-    DEV_PUBLIC_KEY,
-    DEV_PRIVATE_KEY
+    DEV_K1_PUBLIC_KEY,
+    DEV_K1_PRIVATE_KEY
   )
 }
 
@@ -129,14 +161,8 @@ export const ROA_BYTES_PER_UNIT = 104
 /** Base P2P port for producer/API nodes. */
 export const BASE_P2P_PORT = 9876
 
-/** @deprecated Use BASE_P2P_PORT instead. */
-export const P2P_PORT_BASE = BASE_P2P_PORT
-
 /** Base HTTP port for producer/API nodes. */
 export const BASE_HTTP_PORT = 8888
-
-/** @deprecated Use BASE_HTTP_PORT instead. */
-export const HTTP_PORT_BASE = BASE_HTTP_PORT
 
 /** Bios node P2P port (base - 100). */
 export const BIOS_P2P_PORT = BASE_P2P_PORT - 100 // 9776

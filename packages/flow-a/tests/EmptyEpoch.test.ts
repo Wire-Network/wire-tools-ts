@@ -6,6 +6,8 @@ import {
   sleep
 } from "@wire-e2e-tests/harness"
 
+import { SystemContracts } from "@wireio/sdk-core"
+
 /**
  * Flow A: Empty Epoch (Balance Sheet Only)
  *
@@ -20,9 +22,8 @@ import {
  *   7. No state mutations beyond reserve snapshots
  */
 
-const WIRE_BUILD_DIR =
-  process.env.WIRE_BUILD_DIR || "/data/shared/code/wire/wire-sysio/build/claude"
-const WIRE_CHAIN_DIR = process.env.WIRE_CHAIN_DIR || "/tmp/wire-e2e-flow-a"
+const WIRE_BUILD_DIR = process.env.WIRE_BUILD_DIR
+const WIRE_CHAIN_DIR = process.env.WIRE_CHAIN_DIR
 
 const config: TestEnvironmentConfig = {
   wire: {
@@ -114,7 +115,12 @@ describe("Flow A: Empty Epoch", () => {
 
     // Push crank action -- in an empty epoch there are no pending messages
     try {
-      await clio.pushAction("sysio.msgch", "crank", "{}", "sysio@active")
+      await clio.pushAction<SystemContracts.SysioMsgchCrankAction>(
+        "sysio.msgch",
+        "crank",
+        {},
+        "sysio@active"
+      )
     } catch (err: any) {
       // crank with no pending work may return an assertion error, which is
       // acceptable in an empty epoch scenario
@@ -138,10 +144,10 @@ describe("Flow A: Empty Epoch", () => {
 
     // In an empty epoch, attempt createreq for ETH outpost (outpost_id=0)
     try {
-      await clio.pushAction(
+      await clio.pushAction<SystemContracts.SysioMsgchCreatereqAction>(
         "sysio.msgch",
         "createreq",
-        JSON.stringify({ outpost_id: 0 }),
+        { outpost_id: "0" },
         "sysio@active"
       )
     } catch (err: any) {

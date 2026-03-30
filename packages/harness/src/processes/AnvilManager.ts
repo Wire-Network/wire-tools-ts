@@ -1,9 +1,13 @@
 import Fs from "fs"
 import { ProcessManager, type ProcessConfig } from "./ProcessManager.js"
-import { waitForEndpoint } from "../util.js"
+import { existsAsync, waitForEndpoint } from "../util.js"
 import { log } from "../logger.js"
+import { defaults } from "lodash"
+import { which } from "zx"
+import { asOption } from "@3fv/prelude-ts"
+import { assert } from "@wireio/shared"
 
-export interface AnvilConfig {
+export interface AnvilOptions {
   /** Host to bind (default: 127.0.0.1) */
   host?: string
   /** Port (default: 8545) */
@@ -18,60 +22,86 @@ export interface AnvilConfig {
   extraArgs?: string[]
 }
 
+export async function createAnvilDefaultOptions(): Promise<
+  Partial<AnvilOptions>
+> {
+  return {
+    host: AnvilManager.DefaultHost,
+    port: AnvilManager.DefaultPort,
+    chainId: AnvilManager.DefaultChainId,
+    binary: asOption(await which("anvil")).getOrUndefined()
+  }
+}
+
+export interface AnvilConfig extends Required<AnvilOptions> {}
+
 /**
  * Manages an anvil (Foundry) local Ethereum node process.
  */
 export class AnvilManager {
-  private pm: ProcessManager
-  private config: Required<Omit<AnvilConfig, "stateFile" | "extraArgs">> & Pick<AnvilConfig, "stateFile" | "extraArgs">
-
-  constructor(pm: ProcessManager, config: AnvilConfig = {}) {
-    this.pm = pm
-    this.config = {
-      host: config.host ?? "127.0.0.1",
-      port: config.port ?? 8545,
-      chainId: config.chainId ?? 31337,
-      binary: config.binary ?? "anvil",
-      stateFile: config.stateFile,
-      extraArgs: config.extraArgs,
-    }
+  static async create(options: AnvilOptions = {}) {
+    const config = defaults(
+      { ...options },
+      await createAnvilDefaultOptions()
+    ) as AnvilConfig
+    // DOUBLE CHECK CONFIG
+    assert(await existsAsync(config.binary), "anvil binary path is required")
+    return new AnvilManager(config)
   }
+
+  private constructor(readonly config: AnvilConfig) {}
 
   get rpcUrl(): string {
     return `http://${this.config.host}:${this.config.port}`
   }
 
   async start(): Promise<void> {
+    const { config } = this
     const args = [
       "-vvv",
-      "--host", this.config.host,
-      "--port", String(this.config.port),
-      "--chain-id", String(this.config.chainId),
+      "--host",
+      config.host,
+      "--port",
+      String(config.port),
+      "--chain-id",
+      String(config.chainId)
     ]
-    if (this.config.stateFile) {
-      args.push("--dump-state", this.config.stateFile)
+    if (config.stateFile) {
+      args.push("--dump-state", config.stateFile)
       // Only load state if the file already exists (not first run)
-      if (Fs.existsSync(this.config.stateFile)) {
-        args.push("--load-state", this.config.stateFile)
+      if (Fs.existsSync(config.stateFile)) {
+        args.push("--load-state", config.stateFile)
       }
     }
-    if (this.config.extraArgs) {
-      args.push(...this.config.extraArgs)
+    if (config.extraArgs) {
+      args.push(...config.extraArgs)
     }
 
     const procConfig: ProcessConfig = {
       label: "anvil",
-      command: this.config.binary,
-      args,
+      command: config.binary,
+      args
     }
 
-    await this.pm.spawn(procConfig)
-    await waitForEndpoint(this.rpcUrl, { label: "anvil", timeoutMs: 15_000 })
-    log.info(`Anvil ready at ${this.rpcUrl} (chainId=${this.config.chainId})`)
+    await ProcessManager.get().spawn(procConfig)
+    await waitForEndpoint(this.rpcUrl, {
+      label: "anvil",
+      timeoutMs: AnvilManager.StartupTimeoutMs
+    })
+    log.info(`Anvil ready at ${this.rpcUrl} (chainId=${config.chainId})`)
   }
 
   async stop(): Promise<void> {
-    const handle = this.pm.get("anvil")
+    const handle = ProcessManager.get().get("anvil")
     if (handle) await handle.kill()
   }
+}
+
+export namespace AnvilManager {
+  export const DefaultHost = "127.0.0.1"
+  export const DefaultPort = 8545
+  export const DefaultChainId = 31337
+
+  /** Timeout for waiting on anvil startup (ms). */
+  export const StartupTimeoutMs = 15_000
 }

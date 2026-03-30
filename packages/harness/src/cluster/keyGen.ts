@@ -11,7 +11,7 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { log } from "../logger.js"
-import { DefaultKeyPair } from "./constants"
+import { DefaultBLSKeyPair, DefaultK1KeyPair } from "./constants"
 
 const execFileAsync = promisify(execFile)
 
@@ -128,15 +128,17 @@ export function formatBLSSignatureProvider(keys: BLSKeyPair): string {
 
 /** Hardcoded bios BLS key (matches TestHarness launcher.py). */
 export const BIOS_BLS_KEY: BLSKeyPair = {
-  publicKey:
-    "PUB_BLS_3igm9y-m3poDQL9IU-oE2E3rjKVD025aN5_Kpod8aVKjqtg4xOrP-jGtz4wLg_IFzc7gay9YghYwVgNafpxphE2xOY5gzEPa8li1rmtFfdpXguDFhNw2FpuLWSWami8WXgUo3A",
-  privateKey: "PVT_BLS_3VUaSS7tIjSgYU6c8rggjQw3holItXxPbVB-ijnnKV3XTPWC",
-  proofOfPossession:
-    "SIG_BLS_qdQ36ASsBk_pJ9efSCZmSN5OcqNX7GIxjzpREX8TBOBVpUOheRfZmCGO7jay2lIZiD2vkrODGQDCsa3lfkB2FjhmoTce1TYpMOWv-PoPO4D36Y4yjItfa0iMgouirmcG_rubUJDtgn0bHdvtroCc3HDoBHVeI994Ycs62RVJEROyTjIlTVGk3iXoAK9skkQKz3DM3wT0yevxP_O47Ul85rJWnEVAlAjCUOsirAdu0yO1362pdnnl8kjXaPqEj_EYPvrRXw"
+  publicKey: DefaultBLSKeyPair.publicKeyStr,
+  privateKey: DefaultBLSKeyPair.privateKeyStr,
+  proofOfPossession: DefaultBLSKeyPair.proofOfPossessionStr
+  // TODO: Remove
+  //"PUB_BLS_3igm9y-m3poDQL9IU-oE2E3rjKVD025aN5_Kpod8aVKjqtg4xOrP-jGtz4wLg_IFzc7gay9YghYwVgNafpxphE2xOY5gzEPa8li1rmtFfdpXguDFhNw2FpuLWSWami8WXgUo3A",
+  //"PVT_BLS_3VUaSS7tIjSgYU6c8rggjQw3holItXxPbVB-ijnnKV3XTPWC",
+  // "SIG_BLS_qdQ36ASsBk_pJ9efSCZmSN5OcqNX7GIxjzpREX8TBOBVpUOheRfZmCGO7jay2lIZiD2vkrODGQDCsa3lfkB2FjhmoTce1TYpMOWv-PoPO4D36Y4yjItfa0iMgouirmcG_rubUJDtgn0bHdvtroCc3HDoBHVeI994Ycs62RVJEROyTjIlTVGk3iXoAK9skkQKz3DM3wT0yevxP_O47Ul85rJWnEVAlAjCUOsirAdu0yO1362pdnnl8kjXaPqEj_EYPvrRXw"
 }
 
 /** Hardcoded bios K1 key (the standard dev key). */
 export const BIOS_K1_KEY: K1KeyPair = {
-  publicKey: DefaultKeyPair.publicKeyWIF,
-  privateKey: DefaultKeyPair.privateKeyWIF
+  publicKey: DefaultK1KeyPair.publicKeyWIF,
+  privateKey: DefaultK1KeyPair.privateKeyWIF
 }

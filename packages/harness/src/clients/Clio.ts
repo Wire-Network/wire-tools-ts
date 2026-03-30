@@ -2,11 +2,27 @@ import { execFile } from "child_process"
 import { promisify } from "util"
 import assert from "node:assert"
 import { log } from "../logger.js"
-import { asOption } from "@3fv/prelude-ts"
-import { isEmpty, negate } from "lodash"
+import { asOption, Future } from "@3fv/prelude-ts"
+import { flatten, isEmpty, negate } from "lodash"
 import { isNotEmpty } from "../util"
+import {
+  Deferred,
+  isDefined,
+  isNumber,
+  isObject,
+  isString
+} from "@wireio/shared"
+import {
+  ABISerializableObject,
+  AnyAction,
+  API,
+  BytesType,
+  NameType,
+  PermissionLevelType,
+  SystemContracts
+} from "@wireio/sdk-core"
 import { WIREChainInfo } from "./WIREClient"
-import { isString } from "@wireio/shared"
+import { match } from "ts-pattern"
 
 const execFileAsync = promisify(execFile)
 
@@ -19,8 +35,12 @@ export interface ClioConfig {
   walletUrl?: string
 }
 
-export interface ClioRunOptions {
-  json?: boolean
+export interface ClioRunOptions<UseJson extends boolean = false> {
+  json?: UseJson
+}
+
+export interface ClioRunOptionsJson<T extends {}> extends ClioRunOptions<true> {
+  ctor?: new (data: any) => T
 }
 
 /**
@@ -28,17 +48,17 @@ export interface ClioRunOptions {
  * Mirrors the patterns used by cluster_manager.py's Node.publishContract().
  */
 export class Clio {
-  constructor(private config: ClioConfig) {}
+  constructor(readonly config: ClioConfig) {}
 
   /** Run a clio command and return parsed JSON (or raw stdout). */
   private async run<T extends {}>(
     args: string[],
-    opts: { json: true }
+    opts: ClioRunOptionsJson<T>
   ): Promise<T>
   private async run(args: string[], opts?: { json?: false }): Promise<string>
   private async run(
     args: string[],
-    opts: ClioRunOptions = { json: false }
+    opts: ClioRunOptions | ClioRunOptionsJson<any> = { json: false }
   ): Promise<any> {
     const fullArgs = [
       "-u",
@@ -54,13 +74,13 @@ export class Clio {
         this.config.binary,
         fullArgs,
         {
-          maxBuffer: 10 * 1024 * 1024,
-          timeout: 30_000
+          maxBuffer: Clio.MaxBuffer,
+          timeout: Clio.CommandTimeoutMs
         }
       )
       asOption(stderr)
         .filter(isNotEmpty)
-        .ifSome(stderr => log.debug(`clio stderr:`, stderr))
+        .ifSome(stderr => log.warn(`clio stderr:`, stderr))
 
       if (!!opts.json) {
         try {
@@ -73,9 +93,11 @@ export class Clio {
     } catch (err: any) {
       const stderr = err.stderr?.toString() ?? "",
         stdout = err.stdout?.toString() ?? ""
+
       asOption(stdout)
         .filter(isNotEmpty)
         .ifSome(out => log.error(`clio stdout: `, out))
+
       log.error(`clio failed: ${stderr}`, err)
 
       throw err
@@ -173,16 +195,26 @@ export class Clio {
   }
 
   // ── Actions ──
-  async pushAction<T extends {}, R extends {}>(
+
+  /**
+   * Push an action to the WIRE chain.
+   *
+   * When `data` is an object, it is JSON-stringified internally and the
+   * response is parsed as JSON (`API.v1.SendTransactionResponse`).
+   *
+   * When `data` is a string, it is passed through as-is and raw stdout
+   * is returned.
+   */
+  async pushAction<T extends {}>(
     account: string,
     action: string,
     data: T,
     auth: string
-  ): Promise<R>
+  ): Promise<API.v1.SendTransactionResponse>
   async pushAction(
     account: string,
     action: string,
-    data: string | {},
+    data: string,
     auth: string
   ): Promise<string>
   async pushAction(
@@ -190,32 +222,37 @@ export class Clio {
     action: string,
     data: string | {},
     auth: string
-  ): Promise<string> {
-    const jsonFlag = !isString(data),
-      dataStr = jsonFlag ? JSON.stringify(data) : data
-    return this.run(
-      [
-        "push",
-        "action",
-        account,
-        action,
-        dataStr,
-        "-p",
-        auth,
-        jsonFlag && "--json"
-      ]
-        .filter(isString)
-        .filter(isNotEmpty)
-    )
+  ): Promise<API.v1.SendTransactionResponse | string> {
+    const isJson = !isString(data),
+      dataStr = isJson ? JSON.stringify(data) : data,
+      args = ["push", "action", account, action, dataStr, "-p", auth]
+
+    if (isJson) {
+      args.push("-j")
+      return this.run<API.v1.SendTransactionResponse>(args, { json: true })
+    }
+
+    return this.run(args)
+  }
+
+  async pushTransaction(
+    ...actionArgs: Clio.IAnyAction[] | Array<Clio.IAnyAction[]>
+  ) {
+    const actions = flatten(actionArgs),
+      body = { actions },
+      bodyStr = JSON.stringify(body),
+      args = ["push", "transaction", "-j", bodyStr]
+
+    return this.run<API.v1.SendTransactionResponse>(args, { json: true })
   }
 
   // ── Privileged ──
 
-  async setPriv(account: string): Promise<unknown> {
+  async setPriv(account: string): Promise<API.v1.SendTransactionResponse> {
     const result = await this.pushAction(
       "sysio",
       "setpriv",
-      JSON.stringify({ account, is_priv: 1 }),
+      { account, is_priv: 1 } satisfies SystemContracts.SysioBiosSetprivAction,
       "sysio@active"
     )
     await this.waitForHeadToAdvance()
@@ -245,60 +282,221 @@ export class Clio {
     return null
   }
 
+  // ── HTTP API (direct fetch, bypasses clio CLI) ──
+
+  /** Fetch chain info via /v1/chain/get_info. */
+  async getInfo(): Promise<Clio.IGetInfoResponse> {
+    const resp = await fetch(`${this.config.url}/v1/chain/get_info`)
+    return (await resp.json()) as Clio.IGetInfoResponse
+  }
+
+  /** Fetch a block by number or ID via /v1/chain/get_block. */
+  async getBlock(
+    blockNumOrId: number | string
+  ): Promise<Clio.IGetBlockResponse> {
+    const resp = await fetch(`${this.config.url}/v1/chain/get_block`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ block_num_or_id: blockNumOrId })
+    })
+    if (!resp.ok) {
+      throw new Error(`get_block(${blockNumOrId}) failed: HTTP ${resp.status}`)
+    }
+    return (await resp.json()) as Clio.IGetBlockResponse
+  }
+
+  /** Fetch a transaction trace via /v1/history/get_transaction. */
+  async getTransaction(id: string): Promise<Clio.IGetTransactionResponse> {
+    // const resp = await fetch(`${this.config.url}/v1/history/get_transaction`, {
+    const resp = await fetch(
+      `${this.config.url}/v1/trace_api/get_transaction_trace`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id })
+      }
+    )
+    return (await match(resp)
+      .with({ ok: true }, resp => resp.json())
+      .with({ status: 404 }, () => Promise.resolve(null))
+      .otherwise(() => {
+        throw new Error(`get_transaction(${id}) failed: HTTP ${resp.status}`, {
+          cause: resp.statusText
+        })
+      })) as Promise<Clio.IGetTransactionResponse>
+  }
+
+  /** Fetch transaction status via /v1/chain/get_transaction_status. */
+  async getTransactionStatus(
+    id: string
+  ): Promise<Clio.IGetTransactionStatusResponse> {
+    const resp = await fetch(
+      `${this.config.url}/v1/chain/get_transaction_status`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id })
+      }
+    )
+
+    return (await match(resp)
+      .with({ ok: true }, resp => resp.json())
+      .with({ status: 404 }, () => Promise.resolve(null))
+      .otherwise(() => {
+        throw new Error(
+          `get_transaction_status(${id}) failed: HTTP ${resp.status}`,
+          {
+            cause: resp.statusText
+          }
+        )
+      })) as Promise<Clio.IGetTransactionStatusResponse>
+  }
+
+  /** Shorthand: get current head block number. */
+  async getHead(): Promise<number> {
+    const info = await this.getInfo()
+    return info.head_block_num
+  }
+
+  // ── Waiters ──
+
   /**
    * Wait for the head block to advance past the current head.
-   * This ensures any pending transaction has been included in a block
+   * Ensures any pending transaction has been included in a block
    * and its effects (like setpriv) are active for subsequent transactions.
    */
-  async waitForHeadToAdvance(timeoutMs = 30_000): Promise<void> {
-    // Use HTTP directly (not clio) to avoid any parsing issues
-    const getHead = async (): Promise<number> => {
-      const resp = await fetch(`${this.config.url}/v1/chain/get_info`)
-      const data = await resp.json() as { head_block_num: number }
-      return data.head_block_num
-    }
-    const startBlock = await getHead()
+  async waitForHeadToAdvance(timeoutMs = Clio.DefaultTimeoutMs): Promise<void> {
+    const startBlock = await this.getHead()
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 500))
+      await Deferred.delay(Clio.PollIntervalMs)
       try {
-        const cur = await getHead()
+        const cur = await this.getHead()
         if (cur > startBlock) return
-      } catch { /* retry */ }
+      } catch {
+        /* retry */
+      }
     }
-    throw new Error(`Head block did not advance past ${startBlock} within ${timeoutMs}ms`)
+    throw new Error(
+      `Head block did not advance past ${startBlock} within ${timeoutMs}ms`
+    )
   }
 
   /**
-   * Wait until a transaction appears in a block by checking successive blocks.
-   * Mirrors Python TestHarness Node.waitForTransactionInBlock().
+   * Wait until a transaction appears in a block.
+   * Mirrors Python TestHarness `getBlockNumByTransId` in queries.py.
+   *
+   * 1. Polls /v1/history/get_transaction to find the block_num from the trace.
+   * 2. Falls back to /v1/chain/get_transaction_status if history is unavailable.
+   * 3. Scans blocks forward to verify the transaction is present.
    */
-  async waitForTransactionInBlock(transId: string, timeoutMs = 30_000): Promise<boolean> {
-    // Simple approach: wait for head to advance (the tx is in a pending or recent block)
-    await this.waitForHeadToAdvance(timeoutMs)
-    return true
+  async waitForTransactionInBlock(
+    transId: string,
+    timeoutMs = Clio.DefaultTimeoutMs,
+    blocksAhead = Clio.BlocksAhead
+  ): Promise<number> {
+    const deadline = Date.now() + timeoutMs,
+      isDeadlinePast = (afterMs: number = 0) => Date.now() + afterMs > deadline
+
+    // Step 1: Poll for the transaction trace to get its block_num
+    let refBlockNum: number | null = null
+    while (!isDeadlinePast()) {
+      try {
+        const trace = await this.getTransaction(transId)
+        if (isObject(trace) && trace.block_num != null) {
+          refBlockNum = trace.block_num
+          break
+        }
+      } catch (err) {
+        log.debug("ERROR: get_transaction", err)
+      }
+
+      // trace_api may not be available, fall back to transaction status
+      // try {
+      //   const status = await this.getTransactionStatus(transId)
+      //   if (
+      //     isString(status?.state) &&
+      //     ["IRREVERSIBLE", "IN_BLOCK", "LOCALLY_APPLIED"].includes(status.state)
+      //   ) {
+      //     break
+      //   }
+      // } catch (err) {
+      //   match(isDeadlinePast(Clio.PollIntervalMs))
+      //     .with(false, () => {
+      //       log.debug("ERROR: get_transaction_status", err)
+      //     })
+      //     .otherwise(() => {
+      //       log.error("ERROR: get_transaction_status", err)
+      //       throw err
+      //     })
+      // }
+
+      if (!isDeadlinePast(Clio.PollIntervalMs)) {
+        await Deferred.delay(Clio.PollIntervalMs)
+      }
+    }
+
+    // Step 2: Determine scan range
+    const headBlock = await this.getHead(),
+      startBlock = asOption(refBlockNum)
+        .filter(isNumber)
+        .filter(num => num > 0)
+        .match({
+          None: () => headBlock,
+          Some: () => refBlockNum
+        }),
+      endBlock = headBlock + blocksAhead
+
+    // Step 3: Scan blocks to find the transaction
+    for (let blockNum = startBlock; blockNum <= endBlock; blockNum++) {
+      if (isDeadlinePast()) break
+
+      // Wait for the block to exist
+      while ((await this.getHead()) < blockNum) {
+        if (isDeadlinePast()) break
+        await Deferred.delay(Clio.PollIntervalMs)
+      }
+
+      try {
+        const block = await this.getBlock(blockNum)
+        for (const tx of block.transactions ?? []) {
+          const txId = typeof tx.trx === "string" ? tx.trx : tx.trx?.id
+          if (txId === transId) {
+            log.info(`Transaction ${transId} found in block ${blockNum}`)
+            return blockNum
+          }
+        }
+      } catch (err) {
+        log.error(`Failed to fetch block ${blockNum}:`, err)
+        throw err
+      }
+    }
+
+    throw new Error(
+      `Transaction ${transId} not found in blocks ${startBlock}–${endBlock} within ${timeoutMs}ms`
+    )
   }
 
   /**
    * Push an action and wait for it to be included in a block.
    * Uses `-j` flag to get JSON result with `transaction_id`, then waits for block inclusion.
    */
-  async pushActionAndWait(
+  async pushActionAndWait<T extends {}>(
     account: string,
     action: string,
-    data: string | {},
+    data: T,
     auth: string,
-    waitTimeoutMs = 30_000,
-  ): Promise<Record<string, unknown>> {
-    const dataStr = typeof data === "string" ? data : JSON.stringify(data)
-    const result = await this.run<Record<string, unknown>>(
-      ["push", "action", account, action, dataStr, "-p", auth, "-j"],
-      { json: true }
-    )
-    log.info(`pushActionAndWait result: ${JSON.stringify(result).slice(0, 200)}`)
-    assert(typeof result === "object" && result !== null, `Expected object result, got ${typeof result}`)
-    assert("transaction_id" in result, `Result missing transaction_id: ${JSON.stringify(result).slice(0, 200)}`)
-    const txId = result.transaction_id as string
+    waitTimeoutMs = Clio.DefaultTimeoutMs
+  ): Promise<API.v1.SendTransactionResponse> {
+    const result = await this.pushAction(account, action, data, auth)
+
+    log.info(`pushActionAndWait result:`, result)
+
+    const txId = asOption(result?.transaction_id)
+      .filter(isString)
+      .filter(isNotEmpty)
+      .getOrThrow(`Result missing transaction_id: ${JSON.stringify(result)}`)
+
     await this.waitForTransactionInBlock(txId, waitTimeoutMs)
     return result
   }
@@ -312,15 +510,38 @@ export class Clio {
     contractDir: string,
     wasmFile: string,
     abiFile: string,
-    waitTimeoutMs = 30_000,
+    waitTimeoutMs = Clio.DefaultTimeoutMs
   ): Promise<Record<string, unknown>> {
     const result = await this.run<Record<string, unknown>>(
-      ["set", "contract", account, contractDir, wasmFile, abiFile, "-p", `${account}@active`, "-j"],
+      [
+        "set",
+        "contract",
+        account,
+        contractDir,
+        wasmFile,
+        abiFile,
+        "-p",
+        `${account}@active`,
+        "-j"
+      ],
       { json: true }
     )
-    log.info(`setContractAndWait result: ${JSON.stringify(result).slice(0, 200)}`)
-    assert(typeof result === "object" && result !== null, `Expected object result, got ${typeof result}`)
-    assert("transaction_id" in result, `Result missing transaction_id: ${JSON.stringify(result).slice(0, 200)}`)
+    log.info(
+      `setContractAndWait result: ${JSON.stringify(result).slice(0, 200)}`
+    )
+
+    // THIS OCCURS WHEN THE CODE IS IDENTICAL TO EXISTING CODE.
+    if (isString(result) && result.includes(Clio.NoTransactionSent)) {
+      return { transaction_id: "no_transaction_sent" }
+    }
+    assert(
+      typeof result === "object" && result !== null,
+      `Expected object result, got ${typeof result}`
+    )
+    assert(
+      "transaction_id" in result,
+      `Result missing transaction_id: ${JSON.stringify(result).slice(0, 200)}`
+    )
     const txId = result.transaction_id as string
     await this.waitForTransactionInBlock(txId, waitTimeoutMs)
     return result
@@ -328,9 +549,11 @@ export class Clio {
 
   // ── Chain info ──
 
-  async getInfo(): Promise<WIREChainInfo> {
-    return this.run<WIREChainInfo>(["get", "info"], { json: true })
-  }
+  // async getInfo(): Promise<WIREChainInfo> {
+  //   return this.run<WIREChainInfo>(["get", "info"], {
+  //     json: true
+  //   })
+  // }
 
   async getTable(code: string, scope: string, table: string): Promise<string> {
     return this.run(["get", "table", code, scope, table])
@@ -338,14 +561,96 @@ export class Clio {
 
   // ── Protocol features ──
 
-  async activateFeature(featureDigest: string): Promise<string> {
+  async activateFeature(
+    featureDigest: string
+  ): Promise<API.v1.SendTransactionResponse> {
     return this.pushAction(
       "sysio",
       "activate",
-      JSON.stringify({ feature_digest: featureDigest }),
+      {
+        feature_digest: featureDigest
+      } satisfies SystemContracts.SysioBiosActivateAction,
       "sysio@active"
     )
   }
+}
+
+export namespace Clio {
+  /** Plain JSON shape returned by /v1/chain/get_info. */
+  export interface IGetInfoResponse {
+    server_version: string
+    chain_id: string
+    head_block_num: number
+    last_irreversible_block_num: number
+    last_irreversible_block_id: string
+    head_block_id: string
+    head_block_time: string
+    head_block_producer: string
+  }
+
+  /** Plain JSON shape returned by /v1/chain/get_block. */
+  export interface IGetBlockResponse {
+    block_num: number
+    id: string
+    timestamp: string
+    producer: string
+    transactions: IBlockTransaction[]
+  }
+
+  /** A transaction entry within a block response. */
+  export interface IBlockTransaction {
+    status: string
+    trx: { id: string; [key: string]: any } | string
+  }
+
+  /** Plain JSON shape returned by /v1/history/get_transaction. */
+  export interface IGetTransactionResponse {
+    id: string
+    block_num: number
+    block_time: string
+    traces?: any[]
+  }
+
+  /** Plain JSON shape returned by /v1/chain/get_transaction_status. */
+  export interface IGetTransactionStatusResponse {
+    state: string
+    head_number: number
+    head_id: string
+    head_timestamp: string
+    irreversible_number: number
+    irreversible_id: string
+    irreversible_timestamp: string
+  }
+
+  export interface IPermissionLevelType {
+    actor: string
+    permission: string
+  }
+
+  /** Action type that may or may not have its data encoded */
+  export interface IAnyAction {
+    account: string
+    name: string
+    authorization: IPermissionLevelType[]
+    data: string | Uint8Array | ArrayBuffer | Record<string, any> | any
+  }
+
+  /** Maximum stdout buffer size for clio subprocess (bytes). */
+  export const MaxBuffer = 10 * 1024 * 1024
+
+  /** Timeout for a single clio command execution (ms). */
+  export const CommandTimeoutMs = 30_000
+
+  /** Default timeout for waiting on transaction inclusion / head advance (ms). */
+  export const DefaultTimeoutMs = 30_000
+
+  /** How many blocks ahead of head to scan when searching for a transaction. */
+  export const BlocksAhead = 5
+
+  /** Interval between poll attempts when waiting for blocks/transactions (ms). */
+  export const PollIntervalMs = 500
+
+  export const NoTransactionSent = "no transaction is sent"
 }
 
 export default Clio
