@@ -93,18 +93,16 @@ export async function generateBLSKey(
 /**
  * Generate a full node key set (K1 + BLS).
  *
- * @param buildDir - Path to the wire-sysio build directory
+ * @param exe - Object with `clio` and `sysUtil` binary paths
  * @returns NodeKeySet containing both K1 and BLS key pairs
  */
-export async function generateNodeKeySet(
-  buildDir: string
-): Promise<NodeKeySet> {
-  const clioBinary = `${buildDir}/bin/clio`
-  const sysUtilBinary = `${buildDir}/bin/sys-util`
-
+export async function generateNodeKeySet(exe: {
+  clio: string
+  sysUtil: string
+}): Promise<NodeKeySet> {
   const [k1, bls] = await Promise.all([
-    generateK1Key(clioBinary),
-    generateBLSKey(sysUtilBinary)
+    generateK1Key(exe.clio),
+    generateBLSKey(exe.sysUtil)
   ])
 
   return { k1, bls }

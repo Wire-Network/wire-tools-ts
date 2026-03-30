@@ -14,7 +14,7 @@ import { retry } from "../util.js"
 
 export interface ETHBootstrapConfig {
   /** Path to wire-ethereum repo root */
-  wireEthDir: string
+  wireEthPath: string
   /** RPC URL of the anvil instance */
   rpcUrl: string
   /** Private key for deployer (default: anvil key 0) */
@@ -48,14 +48,14 @@ export class ETHBootstrap {
 
   /** Load contract ABI + bytecode from hardhat artifacts */
   private loadArtifact(name: string): { abi: any[]; bytecode: string } {
-    const artifactPath = Path.join(
-      this.config.wireEthDir,
+    const artifactFile = Path.join(
+      this.config.wireEthPath,
       "artifacts", "contracts", "outpost", `${name}.sol`, `${name}.json`
     )
-    if (!Fs.existsSync(artifactPath)) {
-      throw new Error(`Artifact not found: ${artifactPath}`)
+    if (!Fs.existsSync(artifactFile)) {
+      throw new Error(`Artifact not found: ${artifactFile}`)
     }
-    const artifact = JSON.parse(Fs.readFileSync(artifactPath, "utf8"))
+    const artifact = JSON.parse(Fs.readFileSync(artifactFile, "utf8"))
     return { abi: artifact.abi, bytecode: artifact.bytecode }
   }
 

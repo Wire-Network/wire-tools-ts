@@ -63,8 +63,8 @@ describe("ClusterManager smoke tests", () => {
         producerNames: ["sysio"],
         k1Keys: [BIOS_K1_KEY],
         blsKeys: [BIOS_BLS_KEY],
-        configDir: "/tmp/test/node_bios",
-        dataDir: "/tmp/test/node_bios",
+        configPath: "/tmp/test/node_bios",
+        dataPath: "/tmp/test/node_bios",
         genesisJson: "/tmp/test/node_bios/genesis.json",
         genesisTimestamp: "2026-03-27T00:00:00.000"
       })
@@ -96,8 +96,8 @@ describe("ClusterManager smoke tests", () => {
         producerNames: ["defproducera", "defproducerb"],
         k1Keys: [k1],
         blsKeys: [bls],
-        configDir: "/tmp/test/node_00",
-        dataDir: "/tmp/test/node_00",
+        configPath: "/tmp/test/node_00",
+        dataPath: "/tmp/test/node_00",
         genesisJson: "/tmp/test/node_00/genesis.json",
         genesisTimestamp: "2026-03-27T00:00:00.000"
       })

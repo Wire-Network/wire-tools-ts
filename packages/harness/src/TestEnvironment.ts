@@ -20,8 +20,6 @@ import { mkdirs } from "./util"
 export interface TestEnvironmentConfig {
   /** WIRE chain configuration (required) */
   wire: WIREChainConfig & {
-    /** Path to wire-sysio source dir (for pre-built contract artifacts) */
-    sourceDir?: string
     /** Number of producer nodes (default: 1) */
     producerCount?: number
     /** Number of batch operator nodes (default: 1) */
@@ -36,11 +34,11 @@ export interface TestEnvironmentConfig {
   /** Auto-bootstrap WIRE chain after starting (deploy contracts, configure OPP) */
   bootstrapWire?: boolean
   /** Path to wire-ethereum repo for ETH deployment */
-  wireEthDir?: string
+  wireEthPath?: string
   /** Path to wire-solana repo for SOL deployment */
-  wireSolDir?: string
+  wireSolPath?: string
   /** Temp directory for test artifacts (default: os.tmpdir()) */
-  tempDir?: string
+  tempPath?: string
 }
 
 /**
@@ -74,19 +72,19 @@ export class TestEnvironment {
   public ethBootstrap?: ETHBootstrap
   public solBootstrap?: SOLBootstrap
 
-  private readonly tempDir: string
+  private readonly tempPath: string
 
   constructor(readonly config: TestEnvironmentConfig) {
-    ProcessManager.setClusterPath(config.wire.chainDir).get()
+    ProcessManager.setClusterPath(config.wire.clusterPath).get()
 
-    this.tempDir = mkdirs(
-      config.tempDir || Path.join(os.tmpdir(), `wire-e2e-${Date.now()}`)
+    this.tempPath = mkdirs(
+      config.tempPath || Path.join(os.tmpdir(), `wire-e2e-${Date.now()}`)
     )
   }
 
   /** Start all configured chain processes, create clients, and optionally bootstrap. */
   async start(): Promise<void> {
-    log.info("Starting test environment in {}", this.tempDir)
+    log.info("Starting test environment in {}", this.tempPath)
 
     // Register shutdown handler for clean teardown
     const cleanup = () => {
@@ -97,31 +95,30 @@ export class TestEnvironment {
     process.on("SIGTERM", cleanup)
 
     // Determine chain directory
-    const chainDir =
-      this.config.wire.chainDir || Path.join(this.tempDir, "wire-chain")
-
-    // Infer source dir from build dir (go up from build/<variant> to repo root)
-    const sourceDir =
-      this.config.wire.sourceDir ||
-      Path.resolve(this.config.wire.buildDir, "..", "..")
+    const clusterPath =
+      this.config.wire.clusterPath ?? Path.join(this.tempPath, "wire-chain")
 
     // Start WIRE chain via ClusterManager (creates genesis, config, bootstraps)
     const clusterConfig: ClusterConfig = {
-      buildDir: this.config.wire.buildDir,
-      chainDir,
-      sourceDir,
+      buildPath: this.config.wire.buildPath,
+      clusterPath,
+      dataPath: Path.join(clusterPath, "data"),
+      walletPath: Path.join(clusterPath, "wallet"),
       producerCount: this.config.wire.producerCount ?? 1,
       nodeCount: 1,
       httpSecure: false,
       batchOperatorCount: this.config.wire.batchOperatorCount ?? 1,
-      underwriterCount: this.config.wire.underwriterCount ?? 1
+      underwriterCount: this.config.wire.underwriterCount ?? 1,
+      executables: await ClusterManager.resolveExePaths(
+        this.config.wire.buildPath
+      )
     }
 
     this.cluster = new ClusterManager(clusterConfig)
 
     // Remove old chain dir if exists (test isolation)
-    if (Fs.existsSync(chainDir)) {
-      Fs.rmSync(chainDir, { recursive: true, force: true })
+    if (Fs.existsSync(clusterPath)) {
+      Fs.rmSync(clusterPath, { recursive: true, force: true })
     }
 
     // create() generates genesis, configs, starts bios, runs full bootstrap, saves state
@@ -130,12 +127,11 @@ export class TestEnvironment {
     // start() launches all nodes from saved state
     await this.cluster.start()
     // Create WIRE client pointing at first producer node (port 8888)
-    const wireHttpUrl = "http://127.0.0.1:8888",
-      clioBinary = Path.join(this.config.wire.buildDir, "bin", "clio")
+    const wireHttpUrl = "http://127.0.0.1:8888"
     this.wireClient = new WIREClient({
       httpUrl: wireHttpUrl,
       clio: {
-        binary: clioBinary,
+        binary: clusterConfig.executables.clio,
         url: wireHttpUrl
       }
     })
@@ -159,18 +155,18 @@ export class TestEnvironment {
     log.info("Test environment ready")
 
     // Bootstrap Ethereum outpost
-    if (this.config.ethereum && this.config.wireEthDir) {
+    if (this.config.ethereum && this.config.wireEthPath) {
       this.ethBootstrap = new ETHBootstrap({
-        wireEthDir: this.config.wireEthDir,
+        wireEthPath: this.config.wireEthPath,
         rpcUrl: this.anvil!.rpcUrl
       })
       await this.ethBootstrap.bootstrap()
     }
 
     // Bootstrap Solana outpost
-    if (this.config.solana && this.config.wireSolDir) {
+    if (this.config.solana && this.config.wireSolPath) {
       this.solBootstrap = new SOLBootstrap({
-        wireSolDir: this.config.wireSolDir,
+        wireSolPath: this.config.wireSolPath,
         rpcUrl: this.solanaValidator!.rpcUrl
       })
       await this.solBootstrap.bootstrap()

@@ -17,82 +17,19 @@ import Yargs from "yargs"
 import { hideBin } from "yargs/helpers"
 import ClusterManager, { type ClusterConfig } from "./cluster/ClusterManager"
 import { log } from "./logger"
-import { last } from "lodash"
+import { identity, last } from "lodash"
 import { match } from "ts-pattern"
 import * as Assert from "node:assert"
 import { ProcessManager } from "./processes/ProcessManager"
-import { mkdirs } from "./util"
+import { isNotEmpty, mkdirs } from "./util"
+import { Future } from "@3fv/prelude-ts"
+import { isPromise } from "@wireio/shared"
 
-const scriptName = last(process.argv[1].split("/")),
-  cleanArgs = process.argv.slice(2).filter(arg => !arg.startsWith("--inspect")),
-  parser = Yargs(cleanArgs)
-    .scriptName(scriptName)
-    .usage("$0 [global-options] <command> [command-options]")
-    .option("chain-dir", {
-      alias: "d",
-      type: "string",
-      demandOption: true,
-      describe: "Directory for cluster data"
-    })
-    .option("force", {
-      type: "boolean",
-      default: false,
-      describe: "Remove existing chain-dir before create"
-    })
-    .command("create", "Create and bootstrap a new cluster", y =>
-      y
-        .option("build-dir", {
-          type: "string",
-          demandOption: true,
-          describe: "Path to wire-sysio build directory"
-        })
-        .option("pnodes", {
-          alias: "p",
-          type: "number",
-          default: 1,
-          describe: "Number of producer nodes"
-        })
-        .option("nodes", {
-          alias: "n",
-          type: "number",
-          default: 0,
-          describe: "Number of non-producer nodes"
-        })
-        .option("prod-count", {
-          type: "number",
-          default: 21,
-          describe: "Number of producers to register"
-        })
-        .option("topology", {
-          alias: "s",
-          type: "string",
-          default: "mesh",
-          choices: ["mesh", "ring", "star"] as const,
-          describe: "Network topology"
-        })
-        .option("http-secure", {
-          type: "boolean",
-          default: false,
-          describe: "Use HTTPS for RPC endpoints"
-        })
-        .option("batch-operators", {
-          alias: "b",
-          type: "number",
-          default: 1,
-          describe: "Number of batch operator nodes"
-        })
-        .option("underwriters", {
-          alias: "u",
-          type: "number",
-          default: 1,
-          describe: "Number of underwriter nodes"
-        })
-    )
-    .command("run", "Start an existing cluster from saved state")
-    .command("destroy", "Stop and remove a cluster")
-    .demandCommand(1, "A command is required: create, run, or destroy")
-    .strict()
-    .help()
+const GlobalArgs = {
+  clusterPath: "",
+  configFile: "",
+  force: false
+}
 
 enum ClusterCommand {
   create = "create",
@@ -100,103 +37,210 @@ enum ClusterCommand {
   destroy = "destroy"
 }
 
+// Ref to cluster manager
+let clusterManager: ClusterManager
+
+/**
+ * Get the cluster manager instance
+ *
+ * @param config
+ */
+function createClusterManager(config: ClusterConfig): ClusterManager {
+  Assert.ok(!clusterManager, "Cluster manager already exists")
+  Assert.ok(config, "Cluster config is required")
+
+  clusterManager = new ClusterManager(config)
+  return clusterManager
+}
+
+function loadClusterConfig(): ClusterConfig {
+  const { configFile } = GlobalArgs
+  Assert.ok(
+    isNotEmpty(configFile),
+    `Config file path is required: ${configFile}`
+  )
+  log.info(`wire-test-cluster: loading config from ${configFile}`)
+  Assert.ok(Fs.existsSync(configFile), `config file not found: ${configFile}`)
+  return JSON.parse(Fs.readFileSync(configFile, "utf-8"))
+}
+
+/**
+ * SIGNAL HANDLER
+ */
+const shutdown = async () => {
+  log.info("wire-test-cluster: shutting down...")
+  await clusterManager?.stop()
+}
+process.on("SIGINT", () => void shutdown())
+process.on("SIGTERM", () => void shutdown())
+
 async function main(): Promise<void> {
-  const argv = await parser.parse(),
-    command = argv._[0] as ClusterCommand,
-    chainDir = Path.resolve(argv.chainDir as string),
-    configFile = Path.join(chainDir, "cluster-config.json"),
-    force = argv.force as boolean
-
-  ProcessManager.setClusterPath(chainDir)
-  log.info(`wire-test-cluster: command=${command} chain-dir=${chainDir}`)
-
-  const config = match(command)
-      .with(ClusterCommand.create, () => {
-        const buildDir = Path.resolve(argv.buildDir as string)
-        const pnodes = argv.pnodes as number
-        const nodes = argv.nodes as number
-        const prodCount = argv.prodCount as number
-        const httpSecure = argv.httpSecure as boolean
-        const batchOperators = argv.batchOperators as number
-        const underwriters = argv.underwriters as number
-
-        if (Fs.existsSync(chainDir)) {
-          Assert.ok(
-            force,
-            `wire-test-cluster: --force required to overwrite existing directory ${chainDir}`
-          )
-          log.info(`wire-test-cluster: --force specified, removing ${chainDir}`)
-          Fs.rmSync(chainDir, { recursive: true, force: true })
-        }
-
-        mkdirs(chainDir)
-
-        const config: ClusterConfig = {
-          buildDir,
-          chainDir,
-          producerCount: prodCount,
-          nodeCount: pnodes + nodes,
-          httpSecure,
-          batchOperatorCount: batchOperators,
-          underwriterCount: underwriters
-        }
-
-        log.info(`wire-test-cluster: writing config to ${configFile}`)
-        Fs.writeFileSync(configFile, JSON.stringify(config, null, 2))
-
-        return config
+  // CREATE ARG PARSER & COMMAND HANDLERS
+  const scriptName = last(process.argv[1].split("/")),
+    cleanArgs = process.argv
+      .slice(2)
+      .filter(arg => !arg.startsWith("--inspect")),
+    result = Yargs(cleanArgs)
+      .scriptName(scriptName)
+      .usage("$0 [global-options] <command> [command-options]")
+      .option("cluster-path", {
+        alias: "d",
+        type: "string",
+        demandOption: true,
+        describe: "Directory for cluster data"
       })
-      .otherwise(() => {
-        log.info(`wire-test-cluster: loading config from ${configFile}`)
-        Assert.ok(
-          Fs.existsSync(configFile),
-          `config file not found: ${configFile}`
-        )
-        return JSON.parse(Fs.readFileSync(configFile, "utf-8"))
-      }),
-    manager = new ClusterManager(config)
 
-  switch (command) {
-    case "create": {
-      await manager.create()
-      log.info("wire-test-cluster: cluster created successfully")
-      process.exit(0)
-    }
-
-    case "run": {
-      manager.loadState()
-      await manager.start()
-      log.info("wire-test-cluster: cluster started, press Ctrl+C to stop")
-
-      await new Promise<void>(resolve => {
-        const shutdown = async () => {
-          log.info("wire-test-cluster: shutting down...")
-          await manager.stop()
-          resolve()
-        }
-        process.on("SIGINT", () => void shutdown())
-        process.on("SIGTERM", () => void shutdown())
+      .option("force", {
+        type: "boolean",
+        default: false,
+        describe: "Remove existing chain-dir before create"
       })
-      break
-    }
+      .middleware(({ clusterPath, force }) => {
+        const configFile = Path.join(clusterPath, "cluster-config.json")
+        Object.assign(GlobalArgs, { clusterPath, configFile, force })
 
-    case "destroy": {
-      if (!Fs.existsSync(chainDir)) {
-        console.error(`Error: chain-dir does not exist: ${chainDir}`)
-        process.exit(1)
-      }
+        ProcessManager.setClusterPath(clusterPath)
+      })
+      .command(
+        ClusterCommand.create,
+        "Create and bootstrap a new cluster",
+        builder =>
+          builder
+            .option("build-path", {
+              type: "string",
+              demandOption: true,
+              describe: "Path to wire-sysio build directory"
+            })
+            .option("pnodes", {
+              alias: "p",
+              type: "number",
+              default: 1,
+              describe: "Number of producer nodes"
+            })
+            .option("nodes", {
+              alias: "n",
+              type: "number",
+              default: 0,
+              describe: "Number of non-producer nodes"
+            })
+            .option("prod-count", {
+              type: "number",
+              default: 21,
+              describe: "Number of producers to register"
+            })
+            .option("topology", {
+              alias: "s",
+              type: "string",
+              default: "mesh",
+              choices: ["mesh", "ring", "star"] as const,
+              describe: "Network topology"
+            })
+            .option("http-secure", {
+              type: "boolean",
+              default: false,
+              describe: "Use HTTPS for RPC endpoints"
+            })
+            .option("batch-operators", {
+              alias: "b",
+              type: "number",
+              default: 1,
+              describe: "Number of batch operator nodes"
+            })
+            .option("underwriters", {
+              alias: "u",
+              type: "number",
+              default: 1,
+              describe: "Number of underwriter nodes"
+            }),
+        async argv => {
+          const { clusterPath, force, configFile } = GlobalArgs,
+            buildPath = Path.resolve(argv.buildPath as string),
+            {
+              pnodes,
+              nodes,
+              prodCount,
+              httpSecure,
+              batchOperators,
+              underwriters
+            } = argv
 
-      try {
-        await manager.stop()
-      } catch {
-        // May not be running
-      }
+          if (Fs.existsSync(clusterPath)) {
+            Assert.ok(
+              force,
+              `wire-test-cluster: --force required to overwrite existing directory ${clusterPath}`
+            )
+            log.info(
+              `wire-test-cluster: --force specified, removing ${clusterPath}`
+            )
+            Fs.rmSync(clusterPath, { recursive: true, force: true })
+          }
 
-      Fs.rmSync(chainDir, { recursive: true, force: true })
-      log.info(`wire-test-cluster: destroyed ${chainDir}`)
-      break
-    }
-  }
+          mkdirs(clusterPath)
+
+          // CREATE THE CONFIG
+          const config: ClusterConfig = {
+            buildPath,
+            clusterPath,
+            dataPath: mkdirs(Path.join(clusterPath, "data")),
+            walletPath: mkdirs(Path.join(clusterPath, "wallet")),
+            producerCount: prodCount,
+            nodeCount: pnodes + nodes,
+            httpSecure,
+            batchOperatorCount: batchOperators,
+            underwriterCount: underwriters,
+            executables: await ClusterManager.resolveExePaths(buildPath)
+          }
+          log.info(`wire-test-cluster: writing config to ${configFile}`)
+          Fs.writeFileSync(configFile, JSON.stringify(config, null, 2))
+
+          await createClusterManager(config).create()
+
+          log.info("wire-test-cluster: cluster created successfully")
+          process.exit(0)
+        }
+      )
+      .command(
+        ClusterCommand.run,
+        "Start an existing cluster from saved state",
+        identity,
+        async _argv => {
+          // THIS WILL START THE CLUSTER & WAIT ON A STOP SIGNAL
+          // BEFORE RETURNING.
+          await createClusterManager(loadClusterConfig())
+            .loadState()
+            .startAndWait()
+        }
+      )
+      .command(
+        ClusterCommand.destroy,
+        "Stop and remove a cluster",
+        identity,
+        async _argv => {
+          const { clusterPath } = GlobalArgs,
+            manager = createClusterManager(loadClusterConfig()).loadState()
+
+          if (!Fs.existsSync(clusterPath)) {
+            console.error(`Error: chain-dir does not exist: ${clusterPath}`)
+            process.exit(1)
+          }
+
+          try {
+            await manager.stop()
+          } catch (err) {
+            log.error(`wire-test-cluster: failed to stop cluster: ${err}`)
+          }
+
+          Fs.rmSync(clusterPath, { recursive: true, force: true })
+          log.info(`wire-test-cluster: destroyed ${clusterPath}`)
+        }
+      )
+      .demandCommand(1, "A command is required: create, run, or destroy")
+      .strict()
+      .help()
+      .parse()
+
+  // IF A PROMISE WAS RETURNED, AWAIT IT
+  await (isPromise(result) ? result : Promise.resolve(result))
 }
 
 main().catch(err => {

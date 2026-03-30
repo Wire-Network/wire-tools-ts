@@ -41,7 +41,7 @@ export interface ConfigOptions {
   chainStateDbSizeMb?: number
 
   /** Blocks directory name (relative to data-dir). */
-  blocksDir?: string
+  blocksPath?: string
 
   /** Enable stale production (bios node). */
   enableStaleProduction?: boolean
@@ -168,7 +168,7 @@ export function generateConfigFileContent(opts: ConfigOptions): string {
     "",
 
     // Blocks
-    opts.blocksDir && kv("blocks-dir", opts.blocksDir),
+    opts.blocksPath && kv("blocks-dir", opts.blocksPath),
 
     // Producer
     opts.enableStaleProduction && kv("enable-stale-production", "true"),

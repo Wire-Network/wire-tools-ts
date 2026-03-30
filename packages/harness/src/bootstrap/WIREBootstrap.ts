@@ -32,7 +32,7 @@ import { assert } from "@wireio/shared"
 
 export interface WIREBootstrapOptions {
   /** Path to wire-sysio build directory */
-  buildDir: string
+  buildPath: string
 
   /** nodeop HTTP URL */
   httpUrl: string
@@ -138,7 +138,7 @@ export class WIREBootstrap {
    * @param name contract name
    */
   private toContractPath(name: SystemAccountName) {
-    const contractPath = Path.resolve(this.config.buildDir, "contracts", name),
+    const contractPath = Path.resolve(this.config.buildPath, "contracts", name),
       contractFile = Path.join(contractPath, `${name}.wasm`)
     assert(
       Fs.existsSync(contractFile),

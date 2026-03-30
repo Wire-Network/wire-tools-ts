@@ -298,7 +298,7 @@ export function nodeConfigToIniOptions(
     p2pServerAddress: `${hostname}:${node.p2pPort}`,
     httpServerAddress: `${listenAddr}:${node.httpPort}`,
     p2pPeerAddresses: peerAddresses,
-    blocksDir: "blocks",
+    blocksPath: "blocks",
 
     // nodeop extra args from cluster_manager
     contractsConsole: true,

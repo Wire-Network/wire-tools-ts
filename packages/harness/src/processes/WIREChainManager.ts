@@ -6,9 +6,9 @@ import { log } from "../logger.js"
 
 export interface WIREChainConfig {
   /** Path to wire-sysio build directory */
-  buildDir: string
+  buildPath: string
   /** Chain data directory (created if absent) */
-  chainDir: string
+  clusterPath: string
   /** HTTP API port (default: 8888) */
   httpPort?: number
   /** P2P port (default: 9876) */
@@ -37,15 +37,15 @@ export class WIREChainManager {
   }
 
   get nodeop(): string {
-    return Path.join(this.config.buildDir, "bin", "nodeop")
+    return Path.join(this.config.buildPath, "bin", "nodeop")
   }
 
   get kiod(): string {
-    return Path.join(this.config.buildDir, "bin", "kiod")
+    return Path.join(this.config.buildPath, "bin", "kiod")
   }
 
   get clio(): string {
-    return Path.join(this.config.buildDir, "bin", "clio")
+    return Path.join(this.config.buildPath, "bin", "clio")
   }
 
   get httpUrl(): string {
@@ -54,7 +54,7 @@ export class WIREChainManager {
 
   async start(): Promise<void> {
     // Ensure chain dir exists
-    Fs.mkdirSync(this.config.chainDir, { recursive: true })
+    Fs.mkdirSync(this.config.clusterPath, { recursive: true })
 
     // Start kiod first
     await this.pm.spawn({
@@ -62,20 +62,20 @@ export class WIREChainManager {
       command: this.kiod,
       args: [
         "--wallet-dir",
-        Path.join(this.config.chainDir, "wallets"),
+        Path.join(this.config.clusterPath, "wallets"),
         "--unlock-timeout",
         "999999999"
       ],
-      cwd: this.config.chainDir
+      cwd: this.config.clusterPath
     })
     await sleep(1000)
 
     // Build nodeop args
     const args = [
       "--data-dir",
-      Path.join(this.config.chainDir, "data"),
+      Path.join(this.config.clusterPath, "data"),
       "--config-dir",
-      Path.join(this.config.chainDir, "config"),
+      Path.join(this.config.clusterPath, "config"),
       "--http-server-address",
       `0.0.0.0:${this.config.httpPort}`,
       "--p2p-listen-endpoint",
@@ -105,7 +105,7 @@ export class WIREChainManager {
       label: "nodeop",
       command: this.nodeop,
       args,
-      cwd: this.config.chainDir
+      cwd: this.config.clusterPath
     })
 
     await waitForEndpoint(`${this.httpUrl}/v1/chain/get_info`, {

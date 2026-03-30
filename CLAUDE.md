@@ -118,5 +118,19 @@ These link automatically on `pnpm install` if the sibling directories exist.
 
 ## Code Style
 
+See `STYLE.md` for full patterns and examples.
+
 - Prettier: no semicolons, no trailing commas, double quotes, 2-space indent, arrow parens `avoid`
-- Formatting utility wrappers (e.g., `Deferred` + `asOption` pattern) preferred over raw `new Promise` for pm2 callback APIs
+
+### Critical rules
+
+- **No string/number literals for known values.** If a value exists in an enum, constant, or namespace, use the identifier. `ClusterCommand.create`, not `"create"`. `AnvilManager.DefaultPort`, not `8545`.
+- **No redundant dispatch.** If the framework routes commands (Yargs `.command()` handlers), do not add a `match()`/`switch` on top. Collocate handler logic with the command definition.
+- **Enum members as identifiers everywhere.** Command names, config keys, comparisons — always the enum member, never the raw string.
+- **Fluent chains over intermediate variables.** Methods that configure state return `this`. Write `createClusterManager(config).loadState().startAndWait()`, not three separate statements.
+- **Extract focused helpers.** Any logically distinct operation (load config, create manager, resolve paths) becomes a named module-level function with assertions at entry.
+- **`identity` for no-op params.** When a framework callback is required but unneeded, pass `identity` from lodash.
+- **Signal handlers at module scope.** Register `SIGINT`/`SIGTERM` once at the top level referencing a module-level manager variable, not inside a command handler.
+- **Module-level shared state via middleware.** Cross-cutting values (global args, derived paths) go in a module-level object populated by Yargs `.middleware()`, destructured in handlers.
+- **`Deferred` + `asOption` pipeline** preferred over raw `new Promise` for callback-to-promise conversion.
+- **`asOption` for construct-validate-unwrap** — build an object, `.tap()` to assert/log, `.get()` to unwrap. Single expression, no mutable intermediates.

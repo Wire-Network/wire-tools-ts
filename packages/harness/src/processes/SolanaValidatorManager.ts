@@ -13,7 +13,7 @@ export interface SolanaValidatorOptions {
   /** Faucet port (default: 9900) */
   faucetPort?: number
   /** Ledger directory (optional) */
-  ledgerDir?: string
+  ledgerPath?: string
   /** Path to solana-test-validator binary */
   binary?: string
   /** Programs to deploy on startup: [{name, programId, soFile}] */
@@ -71,8 +71,8 @@ export class SolanaValidatorManager {
       "--reset"
     ]
 
-    if (config.ledgerDir) {
-      args.push("--ledger", config.ledgerDir)
+    if (config.ledgerPath) {
+      args.push("--ledger", config.ledgerPath)
     }
 
     for (const prog of config.programs || []) {

@@ -161,24 +161,24 @@ export class Clio {
 
   // ── Contract deployment ──
 
-  async setCode(account: string, wasmPath: string): Promise<string> {
+  async setCode(account: string, wasmFile: string): Promise<string> {
     return this.run([
       "set",
       "code",
       account,
-      wasmPath,
+      wasmFile,
       "-p",
       `${account}@active`
     ])
   }
 
-  async setAbi(account: string, abiPath: string): Promise<string> {
-    return this.run(["set", "abi", account, abiPath, "-p", `${account}@active`])
+  async setAbi(account: string, abiFile: string): Promise<string> {
+    return this.run(["set", "abi", account, abiFile, "-p", `${account}@active`])
   }
 
   async setContract(
     account: string,
-    contractDir: string,
+    contractPath: string,
     wasmFile: string,
     abiFile: string
   ): Promise<string> {
@@ -186,7 +186,7 @@ export class Clio {
       "set",
       "contract",
       account,
-      contractDir,
+      contractPath,
       wasmFile,
       abiFile,
       "-p",
@@ -507,7 +507,7 @@ export class Clio {
    */
   async setContractAndWait(
     account: string,
-    contractDir: string,
+    contractPath: string,
     wasmFile: string,
     abiFile: string,
     waitTimeoutMs = Clio.DefaultTimeoutMs
@@ -517,7 +517,7 @@ export class Clio {
         "set",
         "contract",
         account,
-        contractDir,
+        contractPath,
         wasmFile,
         abiFile,
         "-p",

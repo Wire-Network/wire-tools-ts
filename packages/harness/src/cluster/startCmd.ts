@@ -20,7 +20,7 @@ export interface StartCmdOptions {
   /** Path to nodeop binary */
   nodeopBinary: string
   /** Blocks directory (relative, usually "blocks") */
-  blocksDir?: string
+  blocksPath?: string
   /** P2P listen endpoint (e.g. "0.0.0.0:9876") */
   p2pListenEndpoint: string
   /** P2P server address advertised to peers (e.g. "localhost:9876") */
@@ -38,9 +38,9 @@ export interface StartCmdOptions {
   /** BLS key pairs for this node */
   blsKeys: BLSKeyPair[]
   /** Config directory */
-  configDir: string
+  configPath: string
   /** Data directory */
-  dataDir: string
+  dataPath: string
   /** Path to genesis.json */
   genesisJson: string
   /** Genesis timestamp (ISO format) */
@@ -72,7 +72,7 @@ export interface StartCmdOptions {
 export function buildStartCmd(opts: StartCmdOptions): string[] {
   const args: string[] = [opts.nodeopBinary]
 
-  args.push("--blocks-dir", opts.blocksDir ?? "blocks")
+  args.push("--blocks-dir", opts.blocksPath ?? "blocks")
   args.push("--p2p-listen-endpoint", opts.p2pListenEndpoint)
   args.push("--p2p-server-address", opts.p2pServerAddress)
 
@@ -125,8 +125,8 @@ export function buildStartCmd(opts: StartCmdOptions): string[] {
   args.push("--http-max-response-time-ms", String(opts.httpMaxResponseTimeMs ?? 990000))
 
   // Directories
-  args.push("--config-dir", opts.configDir)
-  args.push("--data-dir", opts.dataDir)
+  args.push("--config-dir", opts.configPath)
+  args.push("--data-dir", opts.dataPath)
   args.push("--genesis-json", opts.genesisJson)
   args.push("--genesis-timestamp", opts.genesisTimestamp)
 

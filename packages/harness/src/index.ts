@@ -1,6 +1,7 @@
 export * from "./processes/WIREChainManager"
 export * from "./processes/AnvilManager.js"
 export * from "./processes/SolanaValidatorManager.js"
+export * from "./processes/KiodManager.js"
 export * from "./processes/ProcessManager.js"
 export * from "./TestEnvironment.js"
 export * from "./clients/WIREClient"

@@ -15,13 +15,13 @@ import { retry, sleep } from "../util.js"
 
 export interface SOLBootstrapConfig {
   /** Path to wire-solana repo root */
-  wireSolDir: string
+  wireSolPath: string
   /** RPC URL of the test validator */
   rpcUrl: string
   /** Path to deployer keypair (default: ~/.config/solana/id.json) */
   deployerKeypair?: string
   /** Program keypair for OPP outpost */
-  programKeypairPath?: string
+  programKeypairFile?: string
 }
 
 export class SOLBootstrap {
@@ -45,16 +45,16 @@ export class SOLBootstrap {
     log.info("=== Solana Outpost Bootstrap ===")
 
     // 1. Load program keypair to get program ID
-    const programKeypairPath = this.config.programKeypairPath ||
-      Path.join(this.config.wireSolDir, "wallets", "opp-outpost-keypair.json")
+    const programKeypairFile = this.config.programKeypairFile ||
+      Path.join(this.config.wireSolPath, "wallets", "opp-outpost-keypair.json")
 
-    if (Fs.existsSync(programKeypairPath)) {
-      const keypairData = JSON.parse(Fs.readFileSync(programKeypairPath, "utf8"))
+    if (Fs.existsSync(programKeypairFile)) {
+      const keypairData = JSON.parse(Fs.readFileSync(programKeypairFile, "utf8"))
       const programKeypair = Keypair.fromSecretKey(Uint8Array.from(keypairData))
       this.programId = programKeypair.publicKey
       log.info(`OPP Outpost program ID: ${this.programId.toBase58()}`)
     } else {
-      log.warn(`Program keypair not found at ${programKeypairPath}`)
+      log.warn(`Program keypair not found at ${programKeypairFile}`)
     }
 
     // 2. Check if program is already deployed (via --bpf-program on validator start)
@@ -68,12 +68,12 @@ export class SOLBootstrap {
     }
 
     // 3. Airdrop to deployer for transactions
-    const deployerKeypairPath = this.config.deployerKeypair ||
+    const deployerKeypairFile = this.config.deployerKeypair ||
       Path.join(process.env.HOME || "~", ".config", "solana", "id.json")
 
     let deployer: Keypair
-    if (Fs.existsSync(deployerKeypairPath)) {
-      const data = JSON.parse(Fs.readFileSync(deployerKeypairPath, "utf8"))
+    if (Fs.existsSync(deployerKeypairFile)) {
+      const data = JSON.parse(Fs.readFileSync(deployerKeypairFile, "utf8"))
       deployer = Keypair.fromSecretKey(Uint8Array.from(data))
     } else {
       deployer = Keypair.generate()
@@ -132,15 +132,15 @@ export class SOLBootstrap {
       })
 
       // Load IDL from build artifacts
-      const idlPath = Path.join(
-        this.config.wireSolDir, "target", "idl", "opp_solana_outpost.json"
+      const idlFile = Path.join(
+        this.config.wireSolPath, "target", "idl", "opp_solana_outpost.json"
       )
-      if (!Fs.existsSync(idlPath)) {
-        log.warn(`IDL not found at ${idlPath} — skipping PDA initialization`)
+      if (!Fs.existsSync(idlFile)) {
+        log.warn(`IDL not found at ${idlFile} — skipping PDA initialization`)
         return
       }
 
-      const idl = JSON.parse(Fs.readFileSync(idlPath, "utf8"))
+      const idl = JSON.parse(Fs.readFileSync(idlFile, "utf8"))
       const program = new anchor.Program(idl, provider)
 
       const epochSecs = new anchor.BN(360) // 6 minutes

@@ -79,8 +79,8 @@ const WIRE_CHAIN_DIR = process.env.WIRE_CHAIN_DIR || "/tmp/wire-e2e-flow-c"
 
 const config: TestEnvironmentConfig = {
   wire: {
-    buildDir: WIRE_BUILD_DIR,
-    chainDir: WIRE_CHAIN_DIR,
+    buildPath: WIRE_BUILD_DIR,
+    chainPath: WIRE_CHAIN_DIR,
     plugins: ["sysio::batch_operator_plugin"]
   },
   ethereum: {
