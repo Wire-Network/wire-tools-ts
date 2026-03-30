@@ -151,6 +151,11 @@ async function main(): Promise<void> {
               type: "number",
               default: 1,
               describe: "Number of underwriter nodes"
+            })
+            .option("ethereum-path", {
+              type: "string",
+              describe:
+                "Path to wire-ethereum repo root. If provided, anvil is bootstrapped with contract deployment."
             }),
         async argv => {
           const { clusterPath, force, configFile } = GlobalArgs,
@@ -178,6 +183,10 @@ async function main(): Promise<void> {
           mkdirs(clusterPath)
 
           // CREATE THE CONFIG
+          const ethereumPath = (argv.ethereumPath as string | undefined)
+            ? Path.resolve(argv.ethereumPath as string)
+            : undefined
+
           const config: ClusterConfig = {
             buildPath,
             clusterPath,
@@ -188,6 +197,7 @@ async function main(): Promise<void> {
             httpSecure,
             batchOperatorCount: batchOperators,
             underwriterCount: underwriters,
+            ethereumPath,
             executables: await ClusterManager.resolveExePaths(buildPath)
           }
           log.info(`wire-test-cluster: writing config to ${configFile}`)

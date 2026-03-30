@@ -567,7 +567,7 @@ switch (command) {
 Pass the handler directly to `.command()`. The framework dispatches; you don't.
 
 ```ts
-.command(
+Yargs.command(
   ClusterCommand.create,             // enum member, not string literal
   "Create and bootstrap a new cluster",
   builder => builder
@@ -670,9 +670,11 @@ await createClusterManager(loadClusterConfig()).loadState().startAndWait()
 Methods that configure or mutate an instance should return `this` to enable chaining:
 
 ```ts
-loadState(): this {
-  // load state from disk...
-  return this
+class ClusterManager {
+	loadState():this {
+		// load state from disk...
+		return this
+	}
 }
 
 // Enables:

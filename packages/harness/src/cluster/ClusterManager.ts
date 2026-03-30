@@ -74,6 +74,9 @@ export interface ClusterConfig {
   batchOperatorCount: number
   underwriterCount: number
 
+  /** Path to wire-ethereum repo root. If omitted, anvil is not configured. */
+  ethereumPath?: string
+
   executables: ClusterExePaths
 }
 
@@ -478,7 +481,19 @@ export class ClusterManager {
         underwriterStates
       )
 
-      // ── 10. Kill bios node (not needed after bootstrap) ──
+      // ── 10. ETH bootstrap (if ethereum-dir provided) ──
+      if (cfg.ethereumPath) {
+        const { ETHBootstrapper } = await import("./ETHBootstrapper.js")
+        const ethBootstrapper = new ETHBootstrapper({
+          ethereumPath: cfg.ethereumPath,
+          anvilDataPath: Path.join(dataPath, "anvil"),
+          anvilPort: AnvilManager.DefaultPort,
+          chainId: AnvilManager.DefaultChainId,
+        })
+        await ethBootstrapper.bootstrap()
+      }
+
+      // ── 11. Kill bios node (not needed after bootstrap) ──
       log.info("Killing bios node (not needed after bootstrap)...")
       const biosHandle = ProcessManager.get().get("node-bios")
       if (biosHandle) await biosHandle.kill()
@@ -574,30 +589,40 @@ export class ClusterManager {
     }
     log.info(`Producer nodes started (${this.state.nodes.length})`)
 
-    // Start batch operator nodes
+    // Start batch operator nodes (read-mode=irreversible — sync from P2P)
+    // Clear stale state + blocks on each launch so they re-sync cleanly
     for (const ns of this.state.batchOperatorNodes ?? []) {
-      const relaunchCmd = buildRelaunchCmd(ns.cmd)
+      for (const sub of ["state", "blocks", "finalizers"]) {
+        const p = Path.join(ns.dataPath, sub)
+        if (Fs.existsSync(p)) Fs.rmSync(p, { recursive: true, force: true })
+      }
+      log.info(`  Cleared stale data for ${ns.nodeId}`)
+      // Keep --genesis-json for irreversible nodes (they need it to init fresh)
       log.info(
         `  Starting batch op ${ns.nodeId} (port ${ns.port}): ${ns.operatorAccount}`
       )
       await ProcessManager.get().spawn({
         label: `node-${ns.nodeId}`,
-        command: relaunchCmd[0],
-        args: relaunchCmd.slice(1),
+        command: ns.cmd[0],
+        args: [...ns.cmd.slice(1), "--enable-stale-production"],
         cwd: ns.dataPath
       })
     }
 
-    // Start underwriter nodes
+    // Start underwriter nodes (same pattern)
     for (const ns of this.state.underwriterNodes ?? []) {
-      const relaunchCmd = buildRelaunchCmd(ns.cmd)
+      for (const sub of ["state", "blocks", "finalizers"]) {
+        const p = Path.join(ns.dataPath, sub)
+        if (Fs.existsSync(p)) Fs.rmSync(p, { recursive: true, force: true })
+      }
+      log.info(`  Cleared stale data for ${ns.nodeId}`)
       log.info(
         `  Starting underwriter ${ns.nodeId} (port ${ns.port}): ${ns.operatorAccount}`
       )
       await ProcessManager.get().spawn({
         label: `node-${ns.nodeId}`,
-        command: relaunchCmd[0],
-        args: relaunchCmd.slice(1),
+        command: ns.cmd[0],
+        args: [...ns.cmd.slice(1), "--enable-stale-production"],
         cwd: ns.dataPath
       })
     }
