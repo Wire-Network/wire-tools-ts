@@ -143,19 +143,43 @@ async function main(): Promise<void> {
             .option("batch-operators", {
               alias: "b",
               type: "number",
-              default: 1,
-              describe: "Number of batch operator nodes"
+              default: 3,
+              describe: "Number of batch operator nodes (3–21)"
             })
             .option("underwriters", {
               alias: "u",
               type: "number",
               default: 1,
-              describe: "Number of underwriter nodes"
+              describe: "Number of underwriter nodes (1–100)"
+            })
+            .option("epoch-duration", {
+              type: "number",
+              default: 360,
+              describe: "Epoch duration in seconds"
+            })
+            .option("warmup-epochs", {
+              type: "number",
+              default: 1,
+              describe: "Epochs before an operator transitions from WARMUP to ACTIVE"
+            })
+            .option("cooldown-epochs", {
+              type: "number",
+              default: 1,
+              describe: "Epochs before an operator can deregister after entering COOLDOWN"
             })
             .option("ethereum-path", {
               type: "string",
               describe:
                 "Path to wire-ethereum repo root. If provided, anvil is bootstrapped with contract deployment."
+            })
+            .check(argv => {
+              const b = argv.batchOperators as number
+              if (b < 3 || b > 21) throw new Error("--batch-operators must be between 3 and 21")
+              const u = argv.underwriters as number
+              if (u < 1 || u > 100) throw new Error("--underwriters must be between 1 and 100")
+              const e = argv.epochDuration as number
+              if (e < 1) throw new Error("--epoch-duration must be at least 1")
+              return true
             }),
         async argv => {
           const { clusterPath, force, configFile } = GlobalArgs,
@@ -166,7 +190,10 @@ async function main(): Promise<void> {
               prodCount,
               httpSecure,
               batchOperators,
-              underwriters
+              underwriters,
+              epochDuration,
+              warmupEpochs,
+              cooldownEpochs
             } = argv
 
           if (Fs.existsSync(clusterPath)) {
@@ -198,6 +225,9 @@ async function main(): Promise<void> {
             batchOperatorCount: batchOperators,
             underwriterCount: underwriters,
             ethereumPath,
+            epochDurationSec: epochDuration as number,
+            warmupEpochs: warmupEpochs as number,
+            cooldownEpochs: cooldownEpochs as number,
             executables: await ClusterManager.resolveExePaths(buildPath)
           }
           log.info(`wire-test-cluster: writing config to ${configFile}`)

@@ -77,6 +77,13 @@ export interface ClusterConfig {
   /** Path to wire-ethereum repo root. If omitted, anvil is not configured. */
   ethereumPath?: string
 
+  /** Epoch duration in seconds (default: 360). */
+  epochDurationSec: number
+  /** Number of epochs an operator must wait in WARMUP before becoming ACTIVE (default: 1). */
+  warmupEpochs: number
+  /** Number of epochs an operator must wait in COOLDOWN before deregistering (default: 1). */
+  cooldownEpochs: number
+
   executables: ClusterExePaths
 }
 
@@ -573,10 +580,14 @@ export class ClusterManager {
       // Create stderr symlink
       try {
         Fs.unlinkSync(errLink)
-      } catch {}
+      } catch (err: any) {
+        if (err.code !== "ENOENT") log.warn(`Failed to remove stderr symlink: ${err.message}`)
+      }
       try {
         Fs.symlinkSync(Path.basename(errFile), errLink)
-      } catch {}
+      } catch (err: any) {
+        log.warn(`Failed to create stderr symlink: ${err.message}`)
+      }
     }
 
     // Wait for nodes
@@ -971,7 +982,10 @@ async function bootstrapChain(
         handoffComplete = true
         break
       }
-    } catch {}
+    } catch (err: any) {
+      // getInfo may fail transiently during handoff — retry
+      log.debug(`[Phase 8] Handoff poll error (retrying): ${err.message?.slice(0, 100)}`)
+    }
     await sleep(1000)
   }
   Assert.ok(handoffComplete, "Producer handoff failed within 90s")
@@ -1132,12 +1146,12 @@ async function bootstrapChain(
     "sysio.epoch",
     "setconfig",
     {
-      epoch_duration_sec: 360,
+      epoch_duration_sec: cfg.epochDurationSec,
       operators_per_epoch: opsPerEpoch,
       batch_operator_minimum_active: adjustedMin,
       batch_op_groups: batchOpGroups,
-      warmup_epochs: 1,
-      cooldown_epochs: 1
+      warmup_epochs: cfg.warmupEpochs,
+      cooldown_epochs: cfg.cooldownEpochs
     },
     "sysio.epoch@active"
   )
@@ -1186,8 +1200,14 @@ async function bootstrapChain(
         DEV_K1_PUBLIC_KEY,
         DEV_K1_PUBLIC_KEY
       )
-    } catch {}
-    await clio.pushAction<SystemContracts.SysioEpochRegoperatorAction>(
+    } catch (err: any) {
+      // Only tolerate "already exists" — anything else is a real failure
+      if (!err.message?.includes("already exists") && !err.stderr?.includes("already exists")) {
+        throw new Error(`Failed to create account ${account}: ${err.message ?? err.stderr}`)
+      }
+      log.debug(`Account ${account} already exists, continuing`)
+    }
+    await clio.pushActionAndWait<SystemContracts.SysioEpochRegoperatorAction>(
       "sysio.epoch",
       "regoperator",
       { account, type: 2 },
@@ -1207,8 +1227,14 @@ async function bootstrapChain(
         DEV_K1_PUBLIC_KEY,
         DEV_K1_PUBLIC_KEY
       )
-    } catch {}
-    await clio.pushAction<SystemContracts.SysioEpochRegoperatorAction>(
+    } catch (err: any) {
+      // Only tolerate "already exists" — anything else is a real failure
+      if (!err.message?.includes("already exists") && !err.stderr?.includes("already exists")) {
+        throw new Error(`Failed to create account ${account}: ${err.message ?? err.stderr}`)
+      }
+      log.debug(`Account ${account} already exists, continuing`)
+    }
+    await clio.pushActionAndWait<SystemContracts.SysioEpochRegoperatorAction>(
       "sysio.epoch",
       "regoperator",
       { account, type: 3 },
@@ -1216,6 +1242,39 @@ async function bootstrapChain(
     )
   }
   log.info(`[Phase 19] Registered ${underwriterStates.length} underwriter(s)`)
+
+  // ── Phase 20: Initialize epoch state + activate operators ──
+  log.info("[Phase 20] Initializing epoch state...")
+
+  // Force-activate all batch operators (bypasses warmup for bootstrap)
+  for (const bo of batchOpStates) {
+    await clio.pushActionAndWait(
+      "sysio.epoch",
+      "activateop",
+      { account: bo.operatorAccount! } satisfies SystemContracts.SysioEpochActivateopAction,
+      "sysio.epoch@active"
+    )
+  }
+  log.info(`[Phase 20] Activated ${batchOpStates.length} batch operator(s)`)
+
+  // Advance epoch to initialize the epoch state singleton
+  // (first call always succeeds: default next_epoch_start=0 is always <= now)
+  await clio.pushAction<SystemContracts.SysioEpochAdvanceAction>(
+    "sysio.epoch",
+    "advance",
+    {},
+    "sysio@active"
+  )
+  log.info("[Phase 20] Epoch advanced (state initialized)")
+
+  // Assign batch operators to rotation groups
+  await clio.pushAction<SystemContracts.SysioEpochInitgroupsAction>(
+    "sysio.epoch",
+    "initgroups",
+    {},
+    "sysio.epoch@active"
+  )
+  log.info("[Phase 20] Batch operator groups initialized")
 
   log.info("=== Bootstrap sequence complete ===")
 }

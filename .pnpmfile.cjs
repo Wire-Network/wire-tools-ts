@@ -29,10 +29,24 @@ const wireOPPSolidityPath = Path.resolve(
 )
 
 /**
+ * Checks whether a path exists and is a directory, without throwing.
+ *
+ * @param {string} dirPath
+ * @returns {boolean}
+ */
+function isDirectory(dirPath) {
+  try {
+    return Fs.lstatSync(dirPath).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/**
  * Map of package names to their local directory in wire-libraries-ts.
  * Uncomment the entries you want to link locally.
  */
-const localOverrides = Fs.lstatSync(wireLibPackagesPath).isDirectory()
+const localOverrides = isDirectory(wireLibPackagesPath)
   ? {
       "@wireio/sdk-core": `${wireLibPackagesPath}/sdk-core`,
       "@wireio/shared": `${wireLibPackagesPath}/shared`,
@@ -40,8 +54,8 @@ const localOverrides = Fs.lstatSync(wireLibPackagesPath).isDirectory()
     }
   : {}
 
-if (Fs.lstatSync(wireOPPSolidityPath).isDirectory()) {
-  localOverrides["@wireio/opp-solidity-models"] = wireLibPackagesPath
+if (isDirectory(wireOPPSolidityPath)) {
+  localOverrides["@wireio/opp-solidity-models"] = wireOPPSolidityPath
 }
 
 /**

@@ -107,8 +107,11 @@ export class TestEnvironment {
       producerCount: this.config.wire.producerCount ?? 1,
       nodeCount: 1,
       httpSecure: false,
-      batchOperatorCount: this.config.wire.batchOperatorCount ?? 1,
+      batchOperatorCount: this.config.wire.batchOperatorCount ?? 3,
       underwriterCount: this.config.wire.underwriterCount ?? 1,
+      epochDurationSec: 360,
+      warmupEpochs: 1,
+      cooldownEpochs: 1,
       executables: await ClusterManager.resolveExePaths(
         this.config.wire.buildPath
       )
