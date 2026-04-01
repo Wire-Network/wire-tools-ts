@@ -100,25 +100,19 @@ function pm2List(): Promise<pm2.ProcessDescription[]> {
 }
 
 function pm2SendSignal(signal: string, name: string): Promise<void> {
-  return asOption(new Deferred<void>())
-    .tap(d =>
-      pm2.sendSignalToProcessName(signal, name, err => {
-        return err ? d.reject(err) : d.resolve()
-      })
-    )
-    .map(d => d.promise)
-    .get()
+  return Deferred.useCallback<void>(d =>
+    pm2.sendSignalToProcessName(signal, name, err => {
+      err ? d.reject(err) : d.resolve()
+    })
+  ).promise
 }
 
 function pm2LaunchBus(): Promise<any> {
-  return asOption(new Deferred<any>())
-    .tap(d =>
-      pm2.launchBus((err, bus) => {
-        return err ? d.reject(err) : d.resolve(bus)
-      })
-    )
-    .map(d => d.promise)
-    .get()
+  return Deferred.useCallback(d =>
+    pm2.launchBus((err, bus) => {
+      return err ? d.reject(err) : d.resolve(bus)
+    })
+  ).promise
 }
 
 function currentDateStamp(): string {
