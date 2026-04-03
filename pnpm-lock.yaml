@@ -4,11 +4,24 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-pnpmfileChecksum: sha256-7BwnlSmx0WbWWkULEl6xY1wGuqFMTits1Z9fMH9CPVo=
+pnpmfileChecksum: sha256-C2npi08K3srhZ0GkxOoAdoSYrlRQXUw3cQcxhMW8MPY=
 
 importers:
 
   .:
+    dependencies:
+      '@wireio/opp-solidity-models':
+        specifier: link:/data/shared/code/wire/wire-opp/solidity
+        version: link:../wire-opp/solidity
+      '@wireio/sdk-core':
+        specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
+        version: link:../wire-libraries-ts/packages/sdk-core
+      '@wireio/shared':
+        specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/shared
+        version: link:../wire-libraries-ts/packages/shared
+      '@wireio/shared-node':
+        specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/shared-node
+        version: link:../wire-libraries-ts/packages/shared-node
     devDependencies:
       '@types/jest':
         specifier: ^30.0.0
@@ -41,8 +54,8 @@ importers:
         specifier: workspace:*
         version: link:../harness
       '@wireio/opp-solidity-models':
-        specifier: link:/data/shared/code/wire/wire-libraries-ts/packages
-        version: link:../../../wire-libraries-ts/packages
+        specifier: link:/data/shared/code/wire/wire-opp/solidity
+        version: link:../../../wire-opp/solidity
       '@wireio/sdk-core':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
         version: link:../../../wire-libraries-ts/packages/sdk-core
@@ -72,8 +85,8 @@ importers:
         specifier: workspace:*
         version: link:../harness
       '@wireio/opp-solidity-models':
-        specifier: link:/data/shared/code/wire/wire-libraries-ts/packages
-        version: link:../../../wire-libraries-ts/packages
+        specifier: link:/data/shared/code/wire/wire-opp/solidity
+        version: link:../../../wire-opp/solidity
       '@wireio/sdk-core':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
         version: link:../../../wire-libraries-ts/packages/sdk-core
@@ -106,8 +119,39 @@ importers:
         specifier: workspace:*
         version: link:../harness
       '@wireio/opp-solidity-models':
-        specifier: link:/data/shared/code/wire/wire-libraries-ts/packages
-        version: link:../../../wire-libraries-ts/packages
+        specifier: link:/data/shared/code/wire/wire-opp/solidity
+        version: link:../../../wire-opp/solidity
+      '@wireio/sdk-core':
+        specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
+        version: link:../../../wire-libraries-ts/packages/sdk-core
+      '@wireio/shared':
+        specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/shared
+        version: link:../../../wire-libraries-ts/packages/shared
+      '@wireio/shared-node':
+        specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/shared-node
+        version: link:../../../wire-libraries-ts/packages/shared-node
+      ethers:
+        specifier: ^6.14.0
+        version: 6.16.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      pm2:
+        specifier: ^6.0.14
+        version: 6.0.14(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+    devDependencies:
+      '@types/jest':
+        specifier: ^30.0.0
+        version: 30.0.0
+      '@types/node':
+        specifier: 25.5.0
+        version: 25.5.0
+
+  packages/flow-d:
+    dependencies:
+      '@wire-e2e-tests/harness':
+        specifier: workspace:*
+        version: link:../harness
+      '@wireio/opp-solidity-models':
+        specifier: link:/data/shared/code/wire/wire-opp/solidity
+        version: link:../../../wire-opp/solidity
       '@wireio/sdk-core':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
         version: link:../../../wire-libraries-ts/packages/sdk-core
@@ -141,13 +185,13 @@ importers:
         version: 0.8.37
       '@coral-xyz/anchor':
         specifier: ^0.31.0
-        version: 0.31.1(bufferutil@4.1.0)(typescript@6.0.2)
+        version: 0.31.1(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
       '@solana/web3.js':
         specifier: ^1.98.0
         version: 1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
       '@wireio/opp-solidity-models':
-        specifier: link:/data/shared/code/wire/wire-libraries-ts/packages
-        version: link:../../../wire-libraries-ts/packages
+        specifier: link:/data/shared/code/wire/wire-opp/solidity
+        version: link:../../../wire-opp/solidity
       '@wireio/sdk-core':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
         version: link:../../../wire-libraries-ts/packages/sdk-core
@@ -157,6 +201,9 @@ importers:
       '@wireio/shared-node':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/shared-node
         version: link:../../../wire-libraries-ts/packages/shared-node
+      bluebird:
+        specifier: ^3.7.2
+        version: 3.7.2
       ethers:
         specifier: ^6.14.0
         version: 6.16.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
@@ -169,6 +216,9 @@ importers:
       pm2:
         specifier: ^6.0.14
         version: 6.0.14(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      shelljs:
+        specifier: ^0.10.0
+        version: 0.10.0
       tracer:
         specifier: ^1.3.0
         version: 1.3.0
@@ -178,7 +228,13 @@ importers:
       yargs:
         specifier: ^18.0.0
         version: 18.0.0
+      zx:
+        specifier: ^8.8.5
+        version: 8.8.5
     devDependencies:
+      '@types/bluebird':
+        specifier: ^3.5.42
+        version: 3.5.42
       '@types/jest':
         specifier: ^30.0.0
         version: 30.0.0
@@ -188,12 +244,18 @@ importers:
       '@types/node':
         specifier: 25.5.0
         version: 25.5.0
+      '@types/shelljs':
+        specifier: ^0.10.0
+        version: 0.10.0
       '@types/yargs':
         specifier: ^17.0.35
         version: 17.0.35
       source-map-support:
         specifier: ^0.5.21
         version: 0.5.21
+      ts-pattern:
+        specifier: ^5.9.0
+        version: 5.9.0
 
 packages:
 
@@ -533,6 +595,18 @@ packages:
     resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
     engines: {node: ^14.21.3 || >=16}
 
+  '@nodelib/fs.scandir@2.1.5':
+    resolution: {integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==}
+    engines: {node: '>= 8'}
+
+  '@nodelib/fs.stat@2.0.5':
+    resolution: {integrity: sha512-RkhPPp2zrqDAQA/2jNhnztcPAlv64XdhIp7a7454A5ovI7Bukxgt7MX7udwAu3zg1DcpPU0rz3VV1SeaqvY4+A==}
+    engines: {node: '>= 8'}
+
+  '@nodelib/fs.walk@1.2.8':
+    resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
+    engines: {node: '>= 8'}
+
   '@pkgjs/parseargs@0.11.0':
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
     engines: {node: '>=14'}
@@ -628,6 +702,9 @@ packages:
   '@types/babel__traverse@7.28.0':
     resolution: {integrity: sha512-8PvcXf70gTDZBgt9ptxJ8elBeBjcLOAcOtoO/mPJjtji1+CdGbHgm77om1GrsPxsiE+uXIpNSK64UYaIwQXd4Q==}
 
+  '@types/bluebird@3.5.42':
+    resolution: {integrity: sha512-Jhy+MWRlro6UjVi578V/4ZGNfeCOcNCp0YaFNIUGFKlImowqwb1O/22wDVk3FDGMLqxdpOV3qQHD5fPEH4hK6A==}
+
   '@types/connect@3.4.38':
     resolution: {integrity: sha512-K6uROf1LD88uDQqJCktA4yzL1YYAK6NgfsI0v/mTgyPKWsX1CnJ0XPSDhViejru1GcRkLWb8RlzFYJRqGUbaug==}
 
@@ -654,6 +731,9 @@ packages:
 
   '@types/node@25.5.0':
     resolution: {integrity: sha512-jp2P3tQMSxWugkCUKLRPVUpGaL5MVFwF8RDuSRztfwgN1wmqJeMSbKlnEtQqU8UrhTmzEmZdu2I6v2dpp7XIxw==}
+
+  '@types/shelljs@0.10.0':
+    resolution: {integrity: sha512-OEfyhE5Ox+FeoHbhrEDwm0kXxntO6nsyMRCFvNsIBHPZu5rV1w2OjPcLclaC/IZ1TlzZPgbeMfwAZEi5N238yQ==}
 
   '@types/stack-utils@2.0.3':
     resolution: {integrity: sha512-9aEbYZ3TbYMznPdcdr3SmIrLXwC/AKZXQeCf9Pgao5CKb8CyHuEX5jzWPTkvregvhRJHcpRO6BFoGW9ycaOkYw==}
@@ -906,6 +986,9 @@ packages:
   binary-extensions@2.3.0:
     resolution: {integrity: sha512-Ceh+7ox5qe7LJuLHoY0feh3pHuUDHAcRUeyL2VYghZwfpkNIy/+8Ocg0a3UuSoYzavmylwuLWQOf3hl0jjMMIw==}
     engines: {node: '>=8'}
+
+  bluebird@3.7.2:
+    resolution: {integrity: sha512-XpNj6GDQzdfW+r2Wnn7xiSAd7TM3jzkxGXBGTtWKuSXv1xUV+azxAm8jdWZN06QTQk+2N2XB9jRDkvbmQmcRtg==}
 
   bn.js@5.2.3:
     resolution: {integrity: sha512-EAcmnPkxpntVL+DS7bO1zhcZNvCkxqtkd0ZY53h06GNQ3DEkkGZ/gKgmDv6DdZQGj9BgfSPKtJJ7Dp1GPP8f7w==}
@@ -1226,6 +1309,10 @@ packages:
     resolution: {integrity: sha512-GipyPsXO1anza0AOZdy69Im7hGFCNB7Y/NGjDlZGJ3GJJLtwNSb2vrzYrTYJRrRloVx7pl+bhUaTB8yiccPvFQ==}
     engines: {node: '> 0.1.90'}
 
+  fast-glob@3.3.3:
+    resolution: {integrity: sha512-7MptL8U0cqcFdzIzwOTHoilX9x5BrNqye7Z/LuC7kCMRio1EMSyqRK3BEAUD7sXRq4iT4AzTVuZdhgQ2TCvYLg==}
+    engines: {node: '>=8.6.0'}
+
   fast-json-patch@3.1.1:
     resolution: {integrity: sha512-vf6IHUX2SBcA+5/+4883dsIjpBTqmfBjmYiWK1savxQmFk4JfBMLa7ynTYOs1Rolp/T1betJxHiGD3g1Mn8lUQ==}
 
@@ -1234,6 +1321,9 @@ packages:
 
   fast-stable-stringify@1.0.0:
     resolution: {integrity: sha512-wpYMUmFu5f00Sm0cj2pfivpmawLZ0NKdviQ4w9zJeR8JVtOpOxHmLaJuj0vxvGqMJQWyP/COUkF75/57OKyRag==}
+
+  fastq@1.20.1:
+    resolution: {integrity: sha512-GGToxJ/w1x32s/D2EKND7kTil4n8OVk/9mycTc4VDza13lOvpUZTGX3mFSCtV9ksdGBVzvsyAVLM6mHFThxXxw==}
 
   fb-watchman@2.0.2:
     resolution: {integrity: sha512-p5161BqbuCaSnB8jIbzQHOlpgsPmK5rJVDfDKO91Axs5NC1uu3HRQm6wt9cd9/+GtQQIO53JdGXXoyDpTAsgYA==}
@@ -1668,6 +1758,14 @@ packages:
   merge-stream@2.0.0:
     resolution: {integrity: sha512-abv/qOcuPfk3URPfDzmZU1LKmuw8kT+0nIHvKrKgFrwifol/doWcdA4ZqsWQ8ENrFKkd67Mfpo/LovbIUsbt3w==}
 
+  merge2@1.4.1:
+    resolution: {integrity: sha512-8q7VEgMJW4J8tcfVPy8g09NcQwZdbwFEqhe/WZkoIzjn/3TGDwtOCYtXGxA3O8tPzpczCCDgv+P2P5y00ZJOOg==}
+    engines: {node: '>= 8'}
+
+  micromatch@4.0.8:
+    resolution: {integrity: sha512-PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA==}
+    engines: {node: '>=8.6'}
+
   mimic-fn@2.1.0:
     resolution: {integrity: sha512-OqbOk5oEQeAZ8WXWydlu9HJjz9WVdEIvamMCcXmuqUYjTknH/sqsWvhQ3vgwKFRR1HpjvNBKQ37nbJgYzGqGcg==}
     engines: {node: '>=6'}
@@ -1882,6 +1980,9 @@ packages:
   pure-rand@7.0.1:
     resolution: {integrity: sha512-oTUZM/NAZS8p7ANR3SHh30kXB+zK2r2BPcEn/awJIbOvq82WoMN4p62AWWp3Hhw50G0xMsw1mhIBLqHw64EcNQ==}
 
+  queue-microtask@1.2.3:
+    resolution: {integrity: sha512-NuaNSa6flKT5JaSYQzJok04JzTL1CA6aGhv5rfLW3PgqA+M2ChpZQnAC8h8i4ZFkBS8X5RqkDBHA7r4hej3K9A==}
+
   react-is@18.3.1:
     resolution: {integrity: sha512-/LLMVyas0ljjAtoYiPqYiL8VWXzUUdThrmU5+n20DZv+a+ClRoevUzw5JxU+Ieh5/c87ytoTBV9G1FiKfNJdmg==}
 
@@ -1914,8 +2015,15 @@ packages:
     engines: {node: '>= 0.4'}
     hasBin: true
 
+  reusify@1.1.0:
+    resolution: {integrity: sha512-g6QUff04oZpHs0eG5p83rFLhHeV00ug/Yf9nZM6fLeUrPguBTkTQOdpAWWspMh55TZfVQDPaN3NQJfbVRAxdIw==}
+    engines: {iojs: '>=1.0.0', node: '>=0.10.0'}
+
   rpc-websockets@9.3.6:
     resolution: {integrity: sha512-RzuOQDGd+EtR/cBYQAH/0jjaBzhyvXXGROhxigGJPf+q3XKyvtelZCucylzxiq5MaGlfBx1075djTsxFsFDgrA==}
+
+  run-parallel@1.2.0:
+    resolution: {integrity: sha512-5l4VyZR86LZ/lDxZTR6jqL8AFE2S0IFLMP26AbjsLVADxHdhB/c0GUsH+y39UfCi3dzz8OlQuPmnaJOMoDHQBA==}
 
   run-series@1.1.9:
     resolution: {integrity: sha512-Arc4hUN896vjkqCYrUXquBFtRZdv1PfLbTYP71efP6butxyQ0kWpiNJyAgsxscmQg1cqvHY32/UCBzXedTpU2g==}
@@ -1956,6 +2064,10 @@ packages:
   shebang-regex@3.0.0:
     resolution: {integrity: sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==}
     engines: {node: '>=8'}
+
+  shelljs@0.10.0:
+    resolution: {integrity: sha512-Jex+xw5Mg2qMZL3qnzXIfaxEtBaC4n7xifqaqtrZDdlheR70OGkydrPJWT0V1cA1k3nanC86x9FwAmQl6w3Klw==}
+    engines: {node: '>=18'}
 
   shimmer@1.2.1:
     resolution: {integrity: sha512-sQTKC1Re/rM6XyFM6fIAGHRPVGvyXfgzIDvzoq608vM+jeyVD0Tu1E6Np0Kc2zAIFWIj963V2800iF/9LPieQw==}
@@ -2147,6 +2259,9 @@ packages:
       '@swc/wasm':
         optional: true
 
+  ts-pattern@5.9.0:
+    resolution: {integrity: sha512-6s5V71mX8qBUmlgbrfL33xDUwO0fq48rxAu2LBE11WBeGdpCPOsXksQbZJHvHwhrd3QjUusd3mAOM5Gg0mFBLg==}
+
   tslib@1.9.3:
     resolution: {integrity: sha512-4krF8scpejhaOgqzBEcGM7yDIEfi0/8+8zDRZhNZZ2kjmHJ4hv3zCbQWxoJGz1iw5U0Jl0nma13xzHXcncMavQ==}
 
@@ -2328,6 +2443,11 @@ packages:
   yocto-queue@0.1.0:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
+
+  zx@8.8.5:
+    resolution: {integrity: sha512-SNgDF5L0gfN7FwVOdEFguY3orU5AkfFZm9B5YSHog/UDHv+lvmd82ZAsOenOkQixigwH2+yyH198AwNdKhj+RA==}
+    engines: {node: '>= 12.17.0'}
+    hasBin: true
 
 snapshots:
 
@@ -2536,10 +2656,10 @@ snapshots:
 
   '@coral-xyz/anchor-errors@0.31.1': {}
 
-  '@coral-xyz/anchor@0.31.1(bufferutil@4.1.0)(typescript@6.0.2)':
+  '@coral-xyz/anchor@0.31.1(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)':
     dependencies:
       '@coral-xyz/anchor-errors': 0.31.1
-      '@coral-xyz/borsh': 0.31.1(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2))
+      '@coral-xyz/borsh': 0.31.1(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6))
       '@noble/hashes': 1.8.0
       '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
       bn.js: 5.2.3
@@ -2557,7 +2677,7 @@ snapshots:
       - typescript
       - utf-8-validate
 
-  '@coral-xyz/borsh@0.31.1(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2))':
+  '@coral-xyz/borsh@0.31.1(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6))':
     dependencies:
       '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
       bn.js: 5.2.3
@@ -2822,6 +2942,18 @@ snapshots:
 
   '@noble/hashes@1.8.0': {}
 
+  '@nodelib/fs.scandir@2.1.5':
+    dependencies:
+      '@nodelib/fs.stat': 2.0.5
+      run-parallel: 1.2.0
+
+  '@nodelib/fs.stat@2.0.5': {}
+
+  '@nodelib/fs.walk@1.2.8':
+    dependencies:
+      '@nodelib/fs.scandir': 2.1.5
+      fastq: 1.20.1
+
   '@pkgjs/parseargs@0.11.0':
     optional: true
 
@@ -2973,6 +3105,8 @@ snapshots:
     dependencies:
       '@babel/types': 7.29.0
 
+  '@types/bluebird@3.5.42': {}
+
   '@types/connect@3.4.38':
     dependencies:
       '@types/node': 25.5.0
@@ -3003,6 +3137,11 @@ snapshots:
   '@types/node@25.5.0':
     dependencies:
       undici-types: 7.18.2
+
+  '@types/shelljs@0.10.0':
+    dependencies:
+      '@types/node': 25.5.0
+      fast-glob: 3.3.3
 
   '@types/stack-utils@2.0.3': {}
 
@@ -3211,6 +3350,8 @@ snapshots:
   basic-ftp@5.2.0: {}
 
   binary-extensions@2.3.0: {}
+
+  bluebird@3.7.2: {}
 
   bn.js@5.2.3: {}
 
@@ -3499,11 +3640,23 @@ snapshots:
 
   eyes@0.1.8: {}
 
+  fast-glob@3.3.3:
+    dependencies:
+      '@nodelib/fs.stat': 2.0.5
+      '@nodelib/fs.walk': 1.2.8
+      glob-parent: 5.1.2
+      merge2: 1.4.1
+      micromatch: 4.0.8
+
   fast-json-patch@3.1.1: {}
 
   fast-json-stable-stringify@2.1.0: {}
 
   fast-stable-stringify@1.0.0: {}
+
+  fastq@1.20.1:
+    dependencies:
+      reusify: 1.1.0
 
   fb-watchman@2.0.2:
     dependencies:
@@ -4109,6 +4262,13 @@ snapshots:
 
   merge-stream@2.0.0: {}
 
+  merge2@1.4.1: {}
+
+  micromatch@4.0.8:
+    dependencies:
+      braces: 3.0.3
+      picomatch: 2.3.2
+
   mimic-fn@2.1.0: {}
 
   minimatch@3.1.5:
@@ -4353,6 +4513,8 @@ snapshots:
 
   pure-rand@7.0.1: {}
 
+  queue-microtask@1.2.3: {}
+
   react-is@18.3.1: {}
 
   read@1.0.7:
@@ -4385,6 +4547,8 @@ snapshots:
       path-parse: 1.0.7
       supports-preserve-symlinks-flag: 1.0.0
 
+  reusify@1.1.0: {}
+
   rpc-websockets@9.3.6:
     dependencies:
       '@swc/helpers': 0.5.19
@@ -4397,6 +4561,10 @@ snapshots:
     optionalDependencies:
       bufferutil: 4.1.0
       utf-8-validate: 6.0.6
+
+  run-parallel@1.2.0:
+    dependencies:
+      queue-microtask: 1.2.3
 
   run-series@1.1.9: {}
 
@@ -4421,6 +4589,11 @@ snapshots:
       shebang-regex: 3.0.0
 
   shebang-regex@3.0.0: {}
+
+  shelljs@0.10.0:
+    dependencies:
+      execa: 5.1.1
+      fast-glob: 3.3.3
 
   shimmer@1.2.1: {}
 
@@ -4596,6 +4769,8 @@ snapshots:
       v8-compile-cache-lib: 3.0.1
       yn: 3.1.1
 
+  ts-pattern@5.9.0: {}
+
   tslib@1.9.3: {}
 
   tslib@2.7.0: {}
@@ -4767,3 +4942,5 @@ snapshots:
   yn@3.1.1: {}
 
   yocto-queue@0.1.0: {}
+
+  zx@8.8.5: {}

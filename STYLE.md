@@ -8,7 +8,7 @@ Conventions and patterns extracted from a process-orchestration and CLI harness 
 
 Use [`ts-pattern`](https://github.com/gvergnaud/ts-pattern) for exhaustive, expression-oriented branching — especially when mapping a discriminated value to a result.
 
-### Prefer `match()` over `if`/`switch` for value-producing branches
+### Prefer `match()` over `switch` always
 
 When a block of logic selects one of several paths and returns a value, use `match()` as an expression:
 
@@ -31,17 +31,16 @@ const config = await match(command)
 - **Expression position.** Assign the result of `match()` directly to a `const`. This makes it clear the match is producing a value, not performing side effects across scattered branches.
 - **`.with()` for known variants.** Each `.with()` arm handles one known case (enum member, literal, or structural pattern). Keep each arm focused — if it grows beyond ~15 lines, extract a helper function.
 - **`.otherwise()` as default.** Use `.otherwise()` for the fallback path. This replaces `default:` in a `switch` and guarantees every case is handled at the type level if using exhaustive matching (`.exhaustive()`).
-- **`switch` is still fine for side-effect-only control flow.** If you're not producing a value (e.g., dispatching to `await manager.create()` vs. `await manager.start()`), a plain `switch` statement is acceptable. Reserve `match()` for when the branching *computes something*.
 - **Async arms.** `match(...).with(X, async () => ...)` returns a `Promise` — `await` the whole expression.
 
-### When to reach for `match()` vs. `switch`
+###  `match()` over `switch` always 
 
 | Situation | Use |
 |---|---|
 | Branching produces a value | `match().with().otherwise()` |
 | Exhaustive check on a union/enum | `match().with().exhaustive()` |
-| Side-effect dispatch (start, stop, destroy) | `switch` / `if-else` |
-| Single boolean check | `if` |
+| Side-effect dispatch (start, stop, destroy) | `match().with().exhaustive()`          |
+| Single boolean check | `asOption(),filter()`           |
 
 ---
 
@@ -56,22 +55,16 @@ The core pattern: wrap a value in `Option`, chain operations with `.map()` and `
 **Promisifying callback APIs:**
 
 ```ts
-import { asOption } from "@3fv/prelude-ts"
 import { Deferred } from "@wireio/shared"
 
 function pm2Connect(): Promise<void> {
-  return asOption(new Deferred<void>())
-    .tap(d =>
-      pm2.connect(true, err => (err ? d.reject(err) : d.resolve()))
-    )
-    .map(d => d.promise)
-    .get()
+  return Deferred.useCallback<void>(d =>
+    pm2.connect(true, err => (err ? d.reject(err) : d.resolve()))
+  ).promise
 }
 ```
 
-This pattern wraps a `Deferred` in `Option`, uses `.tap()` to trigger the side effect (the callback-based API call), then `.map()` to extract the promise, and `.get()` to unwrap. It avoids a standalone `new Promise()` constructor and keeps the pipeline linear.
-
-The idiom is always: `asOption(new Deferred<T>())` → `.tap(register callback)` → `.map(d => d.promise)` → `.get()`.
+This pattern wraps a `Deferred.useCallback<T>`, It avoids a standalone `new Promise()` constructor and keeps the pipeline linear.
 
 **Construct-validate-unwrap:**
 
@@ -91,21 +84,6 @@ const exePaths: ExePaths = asOption({
   )
   .get()
 ```
-
-**Safely extracting optional results:**
-
-```ts
-binary: asOption(await which("anvil")).getOrUndefined()
-```
-
-Use `.getOrUndefined()` when the value feeds into an options interface where `undefined` means "use the default." Use `.getOrElse(fallback)` when you need a concrete fallback.
-
-### Conventions
-
-- **Don't nest Options.** If you find yourself calling `asOption()` inside a `.map()`, flatten the logic or use a plain `if`.
-- **`.tap()` for side effects, `.map()` for transforms.** Keep them separate. A `.tap()` should not change the wrapped value.
-- **`.get()` is a conscious unwrap.** It throws if the Option is `None`. Use it when you *know* the value is present (e.g., you just constructed it). Use `.getOrElse()` / `.getOrUndefined()` when absence is possible.
-- **Keep chains short.** Two to three steps (`.tap().map().get()`) is the sweet spot. If a chain exceeds four steps, break it into named intermediate values.
 
 ---
 
@@ -144,7 +122,7 @@ Merge caller options over defaults using `defaults()` from lodash. The caller's 
 ```ts
 import { defaults } from "lodash"
 
-static async create(options: FooOptions = {}) {
+async function create(options: FooOptions = {}) {
   const config = defaults(
     { ...options },          // spread to avoid mutating the input
     await createFooDefaultOptions()
@@ -385,7 +363,6 @@ Use joined declarations when:
 - They share a lifecycle and will be used together.
 - The group reads as "set up these related values."
 
-Use separate `const` statements when the bindings are independent or when a later binding requires a comment or complex expression that would make the joined form hard to read.
 
 ### Module-level joined declarations
 
@@ -447,6 +424,9 @@ Use this pattern for:
 ## No Inline Literals
 
 All meaningful string and number literals must be extracted into the companion `namespace` of the relevant class. No magic numbers or strings in method bodies.
+
+> **Note:** For global constants, a `namespace` declaration is not required.
+> **Note:** For `const` arrays which contain only literal values, that will not mutate, use `as const`.
 
 ### Constants in namespaces
 
@@ -687,8 +667,15 @@ Prefer chains over intermediate variables when the sequence reads as a pipeline 
 
 ## General Conventions
 
-- **`assert()` liberally.** Validate preconditions at the top of public methods and factory functions. Fail fast with a clear message rather than propagating `undefined` through the call stack.
-- **JSDoc on interface fields.** Every field in an `Options` or `Config` interface gets a one-line JSDoc comment documenting its purpose and default (if any).
+- **`Assert.ook()` liberally.** Validate preconditions at the top of public methods and factory functions. Fail fast with a clear message rather than propagating `undefined` through the call stack.
+- **JSDoc everywhere** EVERY FUNCTION, CLASS, TYPE, INTERFACE, VARIABLE, ENUM, CONSTANT, ... EVERYTHING.
 - **Lodash for focused utilities.** Use `defaults`, `range`, `last`, `identity` — the small, composable functions. Don't import lodash for things TypeScript or `Array` methods handle natively.
 - **`source-map-support/register`** at the CLI entry point. Stack traces should point to `.ts` lines, not compiled `.js`.
 - **No string literals for known values.** If a value is defined in an enum, constant, or namespace, reference the identifier — never the raw string or number.
+- **modern code** Use forEach, ... (spreads), map, filter, and reduce modern paradigms instead of for loops and other legacy style code
+- **OPP & FP (functional programming)** is preferred over old-school if/else/switch and generally branching code.
+    - Use `Future` from `@3fv/prelude-ts` for async flows.
+    - Use `Option`/`asOption` from `@3fv/prelude-ts` for optional values and chained flows.
+    - Use `Either` from `@3fv/prelude-ts` for error handling.
+    - Use `match` from `ts-pattern` for pattern matching.
+    

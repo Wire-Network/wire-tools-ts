@@ -12,7 +12,10 @@
 
 import Path from "path"
 import Fs from "fs"
-import { ProcessManager } from "../processes/ProcessManager.js"
+import {
+  ProcessManager,
+  type ProcessHandle
+} from "../processes/ProcessManager.js"
 import { AnvilManager } from "../processes/AnvilManager.js"
 import { SolanaValidatorManager } from "../processes/SolanaValidatorManager.js"
 import { KiodManager } from "../processes/KiodManager.js"
@@ -33,21 +36,29 @@ import { generateLoggingConfig } from "./loggingConfig.js"
 import {
   DEV_K1_PRIVATE_KEY,
   DEV_K1_PUBLIC_KEY,
-  BIOS_P2P_PORT,
-  BIOS_HTTP_PORT,
-  BASE_HTTP_PORT,
-  BASE_P2P_PORT,
   SYSTEM_ACCOUNTS,
   OPP_CONTRACT_PATHS,
+  BATCH_OPERATOR_PLUGINS,
   batchOperatorAccountName,
   underwriterAccountName
 } from "./constants.js"
+import { ethers } from "ethers"
 import * as Assert from "node:assert"
-import { SystemContracts } from "@wireio/sdk-core"
+import {
+  SystemContracts,
+  PrivateKey,
+  KeyType,
+  Bytes,
+  PublicKey
+} from "@wireio/sdk-core"
 import { which } from "zx"
 import { asOption } from "@3fv/prelude-ts"
 import { range } from "lodash"
-import { Deferred, getValue } from "@wireio/shared"
+import { Deferred, getValue, isNumber, isString } from "@wireio/shared"
+import { ETHBootstrapper } from "./ETHBootstrapper.js"
+import { ClusterPorts } from "./ClusterPorts.js"
+import Bluebird from "bluebird"
+import { P } from "ts-pattern"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -83,6 +94,9 @@ export interface ClusterConfig {
   warmupEpochs: number
   /** Number of epochs an operator must wait in COOLDOWN before deregistering (default: 1). */
   cooldownEpochs: number
+
+  /** All port assignments for the cluster. Resolved during create, persisted for run. */
+  ports: ClusterPorts
 
   executables: ClusterExePaths
 }
@@ -141,6 +155,10 @@ function toProducerName(index: number): string {
 // ClusterManager
 // ---------------------------------------------------------------------------
 
+export function toNodeLabel(nodeId: string | number) {
+  return `node-${isString(nodeId) && /^\d+$/.test(nodeId) ? nodeId.padStart(2, "0") : isNumber(nodeId) ? nodeId.toString().padStart(2, "0") : nodeId}`
+}
+
 export class ClusterManager {
   private readonly onStopDeferred = new Deferred<void>()
   private state: ClusterState | null = null
@@ -191,7 +209,8 @@ export class ClusterManager {
 
       const kiod = await KiodManager.create({
         binary: executables.kiod,
-        walletPath: walletPath
+        walletPath: walletPath,
+        port: cfg.ports.kiod
       })
       await kiod.start()
 
@@ -203,35 +222,42 @@ export class ClusterManager {
       await clioWallet.walletCreate("default")
 
       // Import bios keys immediately
-      await clioWallet.walletImportKey("default", BIOS_K1_KEY.privateKey)
-      await clioWallet.walletImportKey("default", BIOS_BLS_KEY.privateKey)
+      await Bluebird.each(
+        [BIOS_K1_KEY.privateKey, BIOS_BLS_KEY.privateKey],
+        key => clioWallet.walletImportKey("default", key)
+      )
       log.info("kiod ready, wallet created, bios keys imported")
 
       // ── 3. Generate keys (each imported into wallet immediately) ──
       log.info("Generating node keys (K1 + BLS)...")
       const nodeKeys: NodeKeySet[] = []
-      for (let i = 0; i < cfg.nodeCount; i++) {
+      await Bluebird.each(range(cfg.nodeCount), async _i => {
         const keys = await generateNodeKeySet(executables)
-        await clioWallet.walletImportKey("default", keys.k1.privateKey)
-        await clioWallet.walletImportKey("default", keys.bls.privateKey)
+        await Bluebird.each([keys.k1.privateKey, keys.bls.privateKey], key =>
+          clioWallet.walletImportKey("default", key)
+        )
         nodeKeys.push(keys)
-      }
+      })
       // Generate keys for batch operator nodes
       const batchOpKeys: NodeKeySet[] = []
-      for (let i = 0; i < cfg.batchOperatorCount; i++) {
+      await Bluebird.each(range(cfg.batchOperatorCount), async _i => {
         const keys = await generateNodeKeySet(executables)
-        await clioWallet.walletImportKey("default", keys.k1.privateKey)
-        await clioWallet.walletImportKey("default", keys.bls.privateKey)
+        await Bluebird.each([keys.k1.privateKey, keys.bls.privateKey], key =>
+          clioWallet.walletImportKey("default", key)
+        )
         batchOpKeys.push(keys)
-      }
+      })
+
       // Generate keys for underwriter nodes
       const uwKeys: NodeKeySet[] = []
-      for (let i = 0; i < cfg.underwriterCount; i++) {
+      await Bluebird.each(range(cfg.underwriterCount), async _i => {
         const keys = await generateNodeKeySet(executables)
-        await clioWallet.walletImportKey("default", keys.k1.privateKey)
-        await clioWallet.walletImportKey("default", keys.bls.privateKey)
+        await Bluebird.each([keys.k1.privateKey, keys.bls.privateKey], key =>
+          clioWallet.walletImportKey("default", key)
+        )
         uwKeys.push(keys)
-      }
+      })
+
       log.info(
         `Generated and imported keys for ${cfg.nodeCount} producer(s), ${cfg.batchOperatorCount} batch op(s), ${cfg.underwriterCount} underwriter(s)`
       )
@@ -246,94 +272,98 @@ export class ClusterManager {
         { length: cfg.nodeCount },
         () => []
       )
-      for (let i = 0; i < allProducerNames.length; i++) {
-        nodeProducers[i % cfg.nodeCount].push(allProducerNames[i])
-      }
-
+      allProducerNames.forEach((name, i) =>
+        nodeProducers[i % cfg.nodeCount].push(name)
+      )
       // ── 4. Peer addresses ──
-      const biosP2P = `localhost:${BIOS_P2P_PORT}`
-      const allPeerAddresses: string[] = [biosP2P]
-      for (let i = 0; i < cfg.nodeCount; i++) {
-        allPeerAddresses.push(`localhost:${BASE_P2P_PORT + i}`)
-      }
-
+      // allPeerAddresses includes bios (for bios + producer nodes during bootstrap).
+      // producerPeerAddresses excludes bios (for batch op + underwriter nodes
+      // that start after bios is killed).
+      const { ports } = cfg,
+        biosP2P = `localhost:${ports.biosP2p}`,
+        producerPeerAddresses: string[] = [],
+        allPeerAddresses: string[] = [biosP2P]
+      ports.producerP2p.forEach(p2p => {
+        const addr = `localhost:${p2p}`
+        allPeerAddresses.push(addr)
+        producerPeerAddresses.push(addr)
+      })
       // ── 5. Write per-node files (genesis, logging, start.cmd, config.ini) ──
-      const genesis = generateGenesis({
-        initialFinalizerKey: BIOS_BLS_KEY.publicKey
-      })
-      const loggingJson = JSON.stringify(generateLoggingConfig(), null, 2)
-
       // Helper: write node files
-      const writeNodeFiles = (nodePath: string, cmd: string[]) => {
-        const genesisFile = Path.join(nodePath, "genesis.json")
-        Fs.writeFileSync(genesisFile, JSON.stringify(genesis, null, 2))
-        Fs.writeFileSync(Path.join(nodePath, "logging.json"), loggingJson)
-        Fs.writeFileSync(Path.join(nodePath, "start.cmd"), cmd.join(" "))
-        // Write default config.ini with HTTP insecure patch (matches Python _patch_configs_http_insecure)
-        const defaultIniFile = Path.join(
-          buildPath,
-          "etc",
-          "sysio",
-          ClusterManager.BiosNodePath,
-          "config.ini"
-        )
-        let configIni = ""
-        if (Fs.existsSync(defaultIniFile)) {
-          configIni = Fs.readFileSync(defaultIniFile, "utf-8")
-        }
-        configIni += HTTP_INSECURE_INI
-        Fs.writeFileSync(Path.join(nodePath, "config.ini"), configIni)
-      }
-
       // ── 5a. Bios node ──
-      const biosPath = Path.join(dataPath, ClusterManager.BiosNodePath)
-      const biosGenesisFile = Path.join(biosPath, "genesis.json")
-      const biosCmd = buildStartCmd({
-        nodeopBinary: executables.nodeop,
-        p2pListenEndpoint: `0.0.0.0:${BIOS_P2P_PORT}`,
-        p2pServerAddress: `localhost:${BIOS_P2P_PORT}`,
-        p2pPeerAddresses: [],
-        httpServerAddress: `localhost:${BIOS_HTTP_PORT}`,
-        enableStaleProduction: true,
-        producerNames: ["sysio"],
-        k1Keys: [BIOS_K1_KEY],
-        blsKeys: [BIOS_BLS_KEY],
-        configPath: biosPath,
-        dataPath: biosPath,
-        genesisJson: biosGenesisFile,
-        genesisTimestamp: launchTime,
-        p2pMaxNodesPerHost: cfg.nodeCount + 1
-      })
+      const genesis = generateGenesis({
+          initialFinalizerKey: BIOS_BLS_KEY.publicKey
+        }),
+        loggingJson = JSON.stringify(generateLoggingConfig(), null, 2),
+        writeNodeFiles = (nodePath: string, cmd: string[]) => {
+          const genesisFile = Path.join(nodePath, "genesis.json")
+          Fs.writeFileSync(genesisFile, JSON.stringify(genesis, null, 2))
+          Fs.writeFileSync(Path.join(nodePath, "logging.json"), loggingJson)
+          Fs.writeFileSync(Path.join(nodePath, "start.cmd"), cmd.join(" "))
+          // Write default config.ini with HTTP insecure patch (matches Python _patch_configs_http_insecure)
+          const defaultIniFile = Path.join(
+            buildPath,
+            "etc",
+            "sysio",
+            ClusterManager.BiosNodePath,
+            "config.ini"
+          )
+          let configIni = ""
+          if (Fs.existsSync(defaultIniFile)) {
+            configIni = Fs.readFileSync(defaultIniFile, "utf-8")
+          }
+          configIni += HTTP_INSECURE_INI
+          Fs.writeFileSync(Path.join(nodePath, "config.ini"), configIni)
+        },
+        biosPath = Path.join(dataPath, ClusterManager.BiosNodePath),
+        biosGenesisFile = Path.join(biosPath, "genesis.json"),
+        biosCmd = buildStartCmd({
+          nodeopBinary: executables.nodeop,
+          p2pListenEndpoint: `0.0.0.0:${ports.biosP2p}`,
+          p2pServerAddress: `localhost:${ports.biosP2p}`,
+          p2pPeerAddresses: [],
+          httpServerAddress: `localhost:${ports.biosHttp}`,
+          enableStaleProduction: true,
+          producerNames: ["sysio"],
+          k1Keys: [BIOS_K1_KEY],
+          blsKeys: [BIOS_BLS_KEY],
+          configPath: biosPath,
+          dataPath: biosPath,
+          genesisJson: biosGenesisFile,
+          genesisTimestamp: launchTime,
+          p2pMaxNodesPerHost:
+            cfg.nodeCount + cfg.batchOperatorCount + cfg.underwriterCount + 1
+        })
       writeNodeFiles(biosPath, biosCmd)
 
       // ── 5b. Producer nodes ──
       const nodeStates: NodeState[] = []
       for (let i = 0; i < cfg.nodeCount; i++) {
         const nodePath = Path.join(
-          dataPath,
-          ClusterManager.toProducerNodePath(i)
-        )
-        const nodeGenesisFile = Path.join(nodePath, "genesis.json")
-        const httpPort = BASE_HTTP_PORT + i
-        const p2pPort = BASE_P2P_PORT + i
-        const peers = allPeerAddresses.filter(a => a !== `localhost:${p2pPort}`)
-        const keys = nodeKeys[i]
-
-        const cmd = buildStartCmd({
-          nodeopBinary: executables.nodeop,
-          p2pListenEndpoint: `0.0.0.0:${p2pPort}`,
-          p2pServerAddress: `localhost:${p2pPort}`,
-          p2pPeerAddresses: peers,
-          httpServerAddress: `localhost:${httpPort}`,
-          producerNames: nodeProducers[i],
-          k1Keys: [keys.k1],
-          blsKeys: [keys.bls],
-          configPath: nodePath,
-          dataPath: nodePath,
-          genesisJson: nodeGenesisFile,
-          genesisTimestamp: launchTime,
-          p2pMaxNodesPerHost: cfg.nodeCount + 1
-        })
+            dataPath,
+            ClusterManager.toProducerNodePath(i)
+          ),
+          nodeGenesisFile = Path.join(nodePath, "genesis.json"),
+          httpPort = ports.producerHttp[i],
+          p2pPort = ports.producerP2p[i],
+          peers = allPeerAddresses.filter(a => a !== `localhost:${p2pPort}`),
+          keys = nodeKeys[i],
+          cmd = buildStartCmd({
+            nodeopBinary: executables.nodeop,
+            p2pListenEndpoint: `0.0.0.0:${p2pPort}`,
+            p2pServerAddress: `localhost:${p2pPort}`,
+            p2pPeerAddresses: peers,
+            httpServerAddress: `localhost:${httpPort}`,
+            producerNames: nodeProducers[i],
+            k1Keys: [keys.k1],
+            blsKeys: [keys.bls],
+            configPath: nodePath,
+            dataPath: nodePath,
+            genesisJson: nodeGenesisFile,
+            genesisTimestamp: launchTime,
+            p2pMaxNodesPerHost:
+              cfg.nodeCount + cfg.batchOperatorCount + cfg.underwriterCount + 1
+          })
         writeNodeFiles(nodePath, cmd)
 
         nodeStates.push({
@@ -348,38 +378,63 @@ export class ClusterManager {
         })
       }
 
-      // ── 5c. Batch operator nodes (read-mode=irreversible, no producer_plugin) ──
+      // ── 5c. Batch operator nodes (read-mode=head, no producer_plugin) ──
+      // Plugin args for batch_operator_plugin, outpost_ethereum_client_plugin,
+      // outpost_solana_client_plugin, cron_plugin are appended here as base args.
+      // ETH/SOL-specific args (contract addresses, signing keys) are injected
+      // after step 10 (ETH bootstrap) once deployed addresses are known.
       const batchOpStates: NodeState[] = []
       for (let i = 0; i < cfg.batchOperatorCount; i++) {
-        const portOffset = cfg.nodeCount + i
+        // Base batch operator extra args (plugins + batch-operator config).
+        // The WIRE K1 signature provider uses the dev key matching the
+        // account's active permission (set during bootstrap account creation).
         const nodePath = Path.join(
-          dataPath,
-          ClusterManager.toBatchOpNodePath(i)
-        )
-        const nodeGenesisFile = Path.join(nodePath, "genesis.json")
-        const httpPort = BASE_HTTP_PORT + portOffset
-        const p2pPort = BASE_P2P_PORT + portOffset
-        const peers = allPeerAddresses.filter(a => a !== `localhost:${p2pPort}`)
-        const keys = batchOpKeys[i]
-        const account = batchOperatorAccountName(i)
+            dataPath,
+            ClusterManager.toBatchOpNodePath(i)
+          ),
+          nodeGenesisFile = Path.join(nodePath, "genesis.json"),
+          httpPort = ports.batchOperatorHttp[i],
+          p2pPort = ports.batchOperatorP2p[i],
+          peers = producerPeerAddresses.filter(a => a !== `localhost:${p2pPort}`),
+          keys = batchOpKeys[i],
+          account = batchOperatorAccountName(i),
+          wireK1SigProvider = formatK1SignatureProvider({
+            publicKey: DEV_K1_PUBLIC_KEY,
+            privateKey: DEV_K1_PRIVATE_KEY
+          }),
+          batchOpExtraArgs: string[] = [
+            "--read-mode",
+            "head",
+            ...BATCH_OPERATOR_PLUGINS.flatMap(p => ["--plugin", p]),
+            "--signature-provider",
+            wireK1SigProvider,
+            "--batch-enabled",
+            "true",
+            "--batch-operator-account",
+            account,
+            "--batch-epoch-poll-ms",
+            "5000",
+            "--batch-delivery-timeout-ms",
+            "30000"
+          ],
+          cmd = buildStartCmd({
+            nodeopBinary: executables.nodeop,
+            p2pListenEndpoint: `0.0.0.0:${p2pPort}`,
+            p2pServerAddress: `localhost:${p2pPort}`,
+            p2pPeerAddresses: peers,
+            httpServerAddress: `localhost:${httpPort}`,
+            producerNames: [], // no producer plugin
+            k1Keys: [keys.k1],
+            blsKeys: [keys.bls],
+            configPath: nodePath,
+            dataPath: nodePath,
+            genesisJson: nodeGenesisFile,
+            genesisTimestamp: launchTime,
+            p2pMaxNodesPerHost:
+              cfg.nodeCount + cfg.batchOperatorCount + cfg.underwriterCount + 1,
+            extraArgs: batchOpExtraArgs
+          })
 
-        const cmd = buildStartCmd({
-          nodeopBinary: executables.nodeop,
-          p2pListenEndpoint: `0.0.0.0:${p2pPort}`,
-          p2pServerAddress: `localhost:${p2pPort}`,
-          p2pPeerAddresses: peers,
-          httpServerAddress: `localhost:${httpPort}`,
-          producerNames: [], // no producer plugin
-          k1Keys: [keys.k1],
-          blsKeys: [keys.bls],
-          configPath: nodePath,
-          dataPath: nodePath,
-          genesisJson: nodeGenesisFile,
-          genesisTimestamp: launchTime,
-          p2pMaxNodesPerHost:
-            cfg.nodeCount + cfg.batchOperatorCount + cfg.underwriterCount + 1,
-          extraArgs: ["--read-mode", "irreversible"]
-        })
         writeNodeFiles(nodePath, cmd)
 
         batchOpStates.push({
@@ -396,18 +451,17 @@ export class ClusterManager {
         })
       }
 
-      // ── 5d. Underwriter nodes (read-mode=irreversible, no producer_plugin) ──
+      // ── 5d. Underwriter nodes (read-mode=head, no producer_plugin) ──
       const underwriterStates: NodeState[] = []
       for (let i = 0; i < cfg.underwriterCount; i++) {
-        const portOffset = cfg.nodeCount + cfg.batchOperatorCount + i
         const nodePath = Path.join(
           dataPath,
           ClusterManager.toUnderwriterNodePath(i)
         )
         const nodeGenesisFile = Path.join(nodePath, "genesis.json")
-        const httpPort = BASE_HTTP_PORT + portOffset
-        const p2pPort = BASE_P2P_PORT + portOffset
-        const peers = allPeerAddresses.filter(a => a !== `localhost:${p2pPort}`)
+        const httpPort = ports.underwriterHttp[i]
+        const p2pPort = ports.underwriterP2p[i]
+        const peers = producerPeerAddresses.filter(a => a !== `localhost:${p2pPort}`)
         const keys = uwKeys[i]
         const account = underwriterAccountName(i)
 
@@ -426,7 +480,7 @@ export class ClusterManager {
           genesisTimestamp: launchTime,
           p2pMaxNodesPerHost:
             cfg.nodeCount + cfg.batchOperatorCount + cfg.underwriterCount + 1,
-          extraArgs: ["--read-mode", "irreversible"]
+          extraArgs: ["--read-mode", "head"]
         })
         writeNodeFiles(nodePath, cmd)
 
@@ -450,7 +504,7 @@ export class ClusterManager {
 
       // ── 6. Start bios node ──
       await this.launchFromCmd("node-bios", biosCmd, biosPath)
-      const biosHttpUrl = `http://127.0.0.1:${BIOS_HTTP_PORT}`
+      const biosHttpUrl = `http://127.0.0.1:${ports.biosHttp}`
       await waitForEndpoint(`${biosHttpUrl}/v1/chain/get_info`, {
         label: "bios-node",
         timeoutMs: ClusterManager.NodeStartupTimeoutMs
@@ -458,18 +512,23 @@ export class ClusterManager {
       log.info("Bios node is ready")
 
       // ── 8. Start producer nodes ──
-      for (const ns of nodeStates) {
-        await this.launchFromCmd(`node-${ns.nodeId}`, ns.cmd, ns.dataPath)
-        await sleep(ClusterManager.NodeStartDelayMs) // stagger starts (matches Python delay=2)
-      }
+      await Promise.all(
+        nodeStates.map(ns =>
+          this.launchFromCmd(toNodeLabel(ns.nodeId), ns.cmd, ns.dataPath)
+        )
+      )
+
+      await sleep(ClusterManager.NodeStartDelayMs)
+
       // Wait for all to sync to block 1
-      for (const ns of nodeStates) {
-        const nodeUrl = `http://127.0.0.1:${ns.port}`
-        await waitForEndpoint(`${nodeUrl}/v1/chain/get_info`, {
-          label: `node-${ns.nodeId}`,
-          timeoutMs: ClusterManager.NodeStartupTimeoutMs
-        })
-      }
+      await Promise.all(
+        nodeStates.map(ns =>
+          waitForEndpoint(`http://127.0.0.1:${ns.port}/v1/chain/get_info`, {
+            label: toNodeLabel(ns.nodeId),
+            timeoutMs: ClusterManager.NodeStartupTimeoutMs
+          })
+        )
+      )
       log.info(`All ${cfg.nodeCount} producer node(s) are ready`)
 
       // ── 9. Bootstrap ──
@@ -484,20 +543,149 @@ export class ClusterManager {
         cfg,
         biosHttpUrl,
         nodeStates,
+        nodeKeys,
         batchOpStates,
         underwriterStates
       )
 
       // ── 10. ETH bootstrap (if ethereum-dir provided) ──
       if (cfg.ethereumPath) {
-        const { ETHBootstrapper } = await import("./ETHBootstrapper.js")
         const ethBootstrapper = new ETHBootstrapper({
           ethereumPath: cfg.ethereumPath,
           anvilDataPath: Path.join(dataPath, "anvil"),
-          anvilPort: AnvilManager.DefaultPort,
-          chainId: AnvilManager.DefaultChainId,
+          anvilPort: cfg.ports.anvil,
+          chainId: AnvilManager.DefaultChainId
         })
         await ethBootstrapper.bootstrap()
+
+        // ── 10a. Inject ETH + SOL outpost client args into batch operator cmds ──
+        // Now that ETH contracts are deployed, read addresses and configure
+        // the outpost client plugins with signing keys and contract addresses.
+        const outpostAddrsPath = Path.join(
+          cfg.ethereumPath,
+          ".local",
+          "deployments",
+          "outpost-addrs.json"
+        )
+        Assert.ok(
+          Fs.existsSync(outpostAddrsPath),
+          `ETH outpost addresses not found at ${outpostAddrsPath}`
+        )
+        const ethAddrs: Record<string, string> = JSON.parse(
+          Fs.readFileSync(outpostAddrsPath, "utf-8")
+        )
+        const ethOppAddr = ethAddrs.OPP
+        const ethOppInboundAddr = ethAddrs.OPPInbound
+        Assert.ok(ethOppAddr, "OPP address missing from outpost-addrs.json")
+        Assert.ok(
+          ethOppInboundAddr,
+          "OPPInbound address missing from outpost-addrs.json"
+        )
+
+        // ABI files for OPP contracts (Hardhat artifact format, parser handles it)
+        const ethAbiFiles = ["OPP", "OPPInbound", "BAR"]
+          .map(name =>
+            Path.join(
+              cfg.ethereumPath,
+              "artifacts",
+              "contracts",
+              "outpost",
+              `${name}.sol`,
+              `${name}.json`
+            )
+          )
+          .filter(p => Fs.existsSync(p))
+
+        // Derive ETH signing accounts from anvil's deterministic mnemonic.
+        // Account 0 is the deployer; accounts 1..N are for batch operators.
+        const anvilMnemonic = ethers.Mnemonic.fromPhrase(
+          ETHBootstrapper.AnvilMnemonic
+        )
+        const anvilRpcUrl = `http://127.0.0.1:${cfg.ports.anvil}`
+        const solanaRpcUrl = `http://127.0.0.1:${cfg.ports.solanaRpc}`
+
+        batchOpStates.forEach((ns, i) => {
+          const ethWallet = ethers.HDNodeWallet.fromMnemonic(
+            anvilMnemonic,
+            `${ETHBootstrapper.DerivationPath}${i + 1}`
+          )
+          const sigProviderName = `eth-${ns.operatorAccount}`
+
+          const ethPrivKeyStr = ethWallet.signingKey.privateKey.startsWith("0x")
+              ? ethWallet.privateKey.slice(2)
+              : ethWallet.privateKey,
+            ethPrivKeyData = Bytes.fromString(ethPrivKeyStr, "hex"),
+            ethPrivKey = PrivateKey.regenerate(KeyType.EM, ethPrivKeyData)
+          // ethPubKeyStr = ethWallet.publicKey.startsWith("0x")
+          //   ? ethWallet.publicKey.slice(2)
+          //   : ethWallet.publicKey,
+          // ethPubKey = ethPrivKey.toPublic()
+
+          // Signature provider: <name>,<chain-kind>,<key-type>,<public-key>,KEY:<private-key>
+          // Public key must be the full 64-byte uncompressed key (0x + 128 hex),
+          // NOT the 20-byte address. ethers signingKey.publicKey is 0x04 + 128 hex;
+          // strip the 04 prefix to match the C++ fixture format.
+          const ethPubKey = "0x" + ethWallet.signingKey.publicKey.slice(4)
+          const ethSigProvider = [
+            sigProviderName,
+            "ethereum",
+            "ethereum",
+            ethPubKey,
+            `KEY:${ethPrivKey.toNativeString()}`
+          ].join(",")
+
+          // Outpost ethereum client: <id>,<sig-provider-name>,<rpc-url>,<chain-id>
+          const ethClientSpec = [
+            "eth-default",
+            sigProviderName,
+            anvilRpcUrl,
+            String(AnvilManager.DefaultChainId)
+          ].join(",")
+
+          // Solana client spec (required by plugin dependency — generates a real
+          // ED25519 keypair even though no SOL outpost is registered for this test)
+          const solKey = PrivateKey.generate(KeyType.ED)
+          const solPub = solKey.toPublic()
+          const solSigProvider = [
+            `sol-${ns.operatorAccount}`,
+            "solana",
+            "solana",
+            solPub.toNativeString(),
+            `KEY:${solKey.toNativeString()}`
+          ].join(",")
+          const solClientSpec = `sol-default,sol-${ns.operatorAccount},${solanaRpcUrl}`
+
+          const outpostArgs = [
+            "--signature-provider",
+            ethSigProvider,
+            "--outpost-ethereum-client",
+            ethClientSpec,
+            ...ethAbiFiles.flatMap(f => ["--ethereum-abi-file", f]),
+            "--batch-eth-opp-addr",
+            ethOppAddr,
+            "--batch-eth-opp-inbound-addr",
+            ethOppInboundAddr,
+            "--batch-eth-client-id",
+            "eth-default",
+            "--signature-provider",
+            solSigProvider,
+            "--outpost-solana-client",
+            solClientSpec,
+            "--batch-sol-client-id",
+            "sol-default"
+          ]
+
+          ns.cmd.push(...outpostArgs)
+
+          // Re-write start.cmd to include the injected outpost args
+          Fs.writeFileSync(
+            Path.join(ns.dataPath, "start.cmd"),
+            ns.cmd.join(" ")
+          )
+          log.info(
+            `[Phase 10a] Injected ETH/SOL outpost args for ${ns.operatorAccount}`
+          )
+        })
       }
 
       // ── 11. Kill bios node (not needed after bootstrap) ──
@@ -505,7 +693,26 @@ export class ClusterManager {
       const biosHandle = ProcessManager.get().get("node-bios")
       if (biosHandle) await biosHandle.kill()
 
-      // ── 11. Persist state (bios excluded, matching Python _save_state) ──
+      // ── 11a. Start batch op + underwriter nodes for initial sync ──
+      // All contracts are deployed (WIRE + ETH), addresses injected. Start
+      // the operator nodes so they sync chain state from the producer via P2P.
+      // The verifyCallback ensures each node is synced before spawn() returns.
+      log.info("Starting batch op + underwriter nodes for initial sync...")
+      await Promise.all([
+        ...batchOpStates.map(ns =>
+          this.launchFromCmd(toNodeLabel(ns.nodeId), ns.cmd, ns.dataPath, {
+            verifyPort: ns.port
+          })
+        ),
+        ...underwriterStates.map(ns =>
+          this.launchFromCmd(toNodeLabel(ns.nodeId), ns.cmd, ns.dataPath, {
+            verifyPort: ns.port
+          })
+        )
+      ])
+      log.info("Batch op + underwriter nodes synced")
+
+      // ── 12. Persist state (bios excluded, matching Python _save_state) ──
       const clusterState: ClusterState = {
         pnodes: cfg.nodeCount,
         totalNodes: cfg.nodeCount,
@@ -550,98 +757,71 @@ export class ClusterManager {
     // Start kiod wallet daemon
     const kiod = await KiodManager.create({
       binary: this.config.executables.kiod,
-      walletPath: this.state.walletPath
+      walletPath: this.state.walletPath,
+      port: this.config.ports.kiod
     })
     await kiod.start()
 
-    log.info(`Starting ${this.state.nodes.length} nodes...`)
+    log.info(`Starting ${this.state.nodes.length} producer node(s)...`)
 
-    for (const ns of this.state.nodes) {
-      // Set up log files (matches Python _run_cluster)
-      const relaunchCmd = buildRelaunchCmd(ns.cmd),
-        launchTime = new Date()
-          .toISOString()
-          .replace(/[:.]/g, "_")
-          .slice(0, 19),
-        outFile = Path.join(ns.dataPath, "stdout.txt"),
-        errFile = Path.join(ns.dataPath, `stderr.${launchTime}.txt`),
-        errLink = Path.join(ns.dataPath, "stderr.txt")
-
-      log.info(
-        `  Starting node ${ns.nodeId} (port ${ns.port}): ${ns.producerName ?? "non-producer"}`
-      )
-      await ProcessManager.get().spawn({
-        label: `node-${ns.nodeId}`,
-        command: relaunchCmd[0],
-        args: relaunchCmd.slice(1),
-        cwd: ns.dataPath
+    // Start producer nodes with sync verification
+    await Promise.all(
+      this.state.nodes.map(ns => {
+        const relaunchCmd = buildRelaunchCmd(ns.cmd)
+        log.info(
+          `  Starting node ${ns.nodeId} (port ${ns.port}): ${ns.producerName ?? "non-producer"}`
+        )
+        return this.launchFromCmd(
+          toNodeLabel(ns.nodeId),
+          relaunchCmd,
+          ns.dataPath,
+          {
+            verifyPort: ns.port
+          }
+        )
       })
-
-      // Create stderr symlink
-      try {
-        Fs.unlinkSync(errLink)
-      } catch (err: any) {
-        if (err.code !== "ENOENT") log.warn(`Failed to remove stderr symlink: ${err.message}`)
-      }
-      try {
-        Fs.symlinkSync(Path.basename(errFile), errLink)
-      } catch (err: any) {
-        log.warn(`Failed to create stderr symlink: ${err.message}`)
-      }
-    }
-
-    // Wait for nodes
-    for (const ns of this.state.nodes) {
-      const url = `http://127.0.0.1:${ns.port}`
-      await waitForEndpoint(`${url}/v1/chain/get_info`, {
-        label: `node-${ns.nodeId}`,
-        timeoutMs: ClusterManager.NodeStartupTimeoutMs
-      })
-    }
+    )
     log.info(`Producer nodes started (${this.state.nodes.length})`)
 
-    // Start batch operator nodes (read-mode=irreversible — sync from P2P)
-    // Clear stale state + blocks on each launch so they re-sync cleanly
-    for (const ns of this.state.batchOperatorNodes ?? []) {
-      for (const sub of ["state", "blocks", "finalizers"]) {
-        const p = Path.join(ns.dataPath, sub)
-        if (Fs.existsSync(p)) Fs.rmSync(p, { recursive: true, force: true })
-      }
-      log.info(`  Cleared stale data for ${ns.nodeId}`)
-      // Keep --genesis-json for irreversible nodes (they need it to init fresh)
-      log.info(
-        `  Starting batch op ${ns.nodeId} (port ${ns.port}): ${ns.operatorAccount}`
-      )
-      await ProcessManager.get().spawn({
-        label: `node-${ns.nodeId}`,
-        command: ns.cmd[0],
-        args: [...ns.cmd.slice(1), "--enable-stale-production"],
-        cwd: ns.dataPath
+    // Start batch operator nodes (read-mode=head — sync from P2P)
+    log.info(
+      `Starting ${(this.state.batchOperatorNodes ?? []).length} batch op node(s)...`
+    )
+    await Promise.all(
+      (this.state.batchOperatorNodes ?? []).map(ns => {
+        log.info(
+          `  Starting batch op ${ns.nodeId} (port ${ns.port}): ${ns.operatorAccount}`
+        )
+        return this.launchFromCmd(toNodeLabel(ns.nodeId), ns.cmd, ns.dataPath, {
+          verifyPort: ns.port,
+          extraArgs: ["--enable-stale-production"]
+        })
       })
-    }
+    )
+    log.info("Batch op nodes started and synced")
 
-    // Start underwriter nodes (same pattern)
-    for (const ns of this.state.underwriterNodes ?? []) {
-      for (const sub of ["state", "blocks", "finalizers"]) {
-        const p = Path.join(ns.dataPath, sub)
-        if (Fs.existsSync(p)) Fs.rmSync(p, { recursive: true, force: true })
-      }
-      log.info(`  Cleared stale data for ${ns.nodeId}`)
-      log.info(
-        `  Starting underwriter ${ns.nodeId} (port ${ns.port}): ${ns.operatorAccount}`
-      )
-      await ProcessManager.get().spawn({
-        label: `node-${ns.nodeId}`,
-        command: ns.cmd[0],
-        args: [...ns.cmd.slice(1), "--enable-stale-production"],
-        cwd: ns.dataPath
+    // Start underwriter nodes
+    log.info(
+      `Starting ${(this.state.underwriterNodes ?? []).length} underwriter node(s)...`
+    )
+    await Promise.all(
+      (this.state.underwriterNodes ?? []).map(ns => {
+        log.info(
+          `  Starting underwriter ${ns.nodeId} (port ${ns.port}): ${ns.operatorAccount}`
+        )
+        return this.launchFromCmd(toNodeLabel(ns.nodeId), ns.cmd, ns.dataPath, {
+          verifyPort: ns.port,
+          extraArgs: ["--enable-stale-production"]
+        })
       })
-    }
+    )
+    log.info("Underwriter nodes started and synced")
 
     // Start anvil (ETH local node)
     if (this.state.anvilStatePath) {
       const anvilManager = await AnvilManager.create({
         binary: this.config.executables.anvil,
+        port: this.config.ports.anvil,
         stateFile: Path.join(this.state.anvilStatePath, "anvil.json")
       })
       await anvilManager.start()
@@ -651,6 +831,8 @@ export class ClusterManager {
     if (this.state.solanaLedgerPath) {
       const solManager = await SolanaValidatorManager.create({
         binary: this.config.executables.solanaTestValidator,
+        rpcPort: this.config.ports.solanaRpc,
+        faucetPort: this.config.ports.solanaFaucet,
         ledgerPath: this.state.solanaLedgerPath
       })
       await solManager.start()
@@ -698,17 +880,68 @@ export class ClusterManager {
 
   // ── Private helpers ──
 
-  /** Launch a nodeop process from a start.cmd args array. */
+  /**
+   * Creates a verifyCallback for nodeop processes that polls get_info
+   * until the node reports a synced head block.
+   */
+  /**
+   * Creates a verifyCallback that polls a nodeop instance until it has
+   * synced enough of the chain to query the sysio.epoch contract.
+   * This confirms the node is past the full bootstrap sequence.
+   */
+  static nodeopSyncVerify(
+    httpPort: number
+  ): (handle: ProcessHandle) => Promise<boolean> {
+    const baseUrl = `http://127.0.0.1:${httpPort}`
+    return async () => {
+      try {
+        // First check the node is responding at all
+        const infoResp = await fetch(`${baseUrl}/v1/chain/get_info`, {
+          signal: AbortSignal.timeout(3000)
+        })
+        if (!infoResp.ok) return false
+
+        // Then verify it has synced far enough to read sysio.epoch state
+        const tableResp = await fetch(`${baseUrl}/v1/chain/get_table_rows`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            json: true,
+            code: "sysio.epoch",
+            scope: "sysio.epoch",
+            table: "epochstate",
+            limit: 1
+          }),
+          signal: AbortSignal.timeout(3000)
+        })
+        if (!tableResp.ok) return false
+        const result = (await tableResp.json()) as { rows: unknown[] }
+        return result.rows.length > 0
+      } catch {
+        return false
+      }
+    }
+  }
+
+  /** Launch a nodeop process from a start.cmd args array, optionally verifying sync. */
   private async launchFromCmd(
     label: string,
     cmd: string[],
-    cwd: string
-  ): Promise<void> {
-    await ProcessManager.get().spawn({
+    cwd: string,
+    opts?: { verifyPort?: number; extraArgs?: string[] }
+  ): Promise<ProcessHandle> {
+    return ProcessManager.get().spawn({
       label,
       command: cmd[0],
-      args: cmd.slice(1),
-      cwd
+      args: [...cmd.slice(1), ...(opts?.extraArgs ?? [])],
+      cwd,
+      ...(opts?.verifyPort
+        ? {
+            verifyCallback: ClusterManager.nodeopSyncVerify(opts.verifyPort),
+            verifyTimeoutMs: ClusterManager.NodeSyncTimeoutMs,
+            verifyIntervalMs: ClusterManager.NodeSyncPollIntervalMs
+          }
+        : {})
     })
   }
 
@@ -729,6 +962,7 @@ async function bootstrapChain(
   cfg: ClusterConfig,
   biosHttpUrl: string,
   nodeStates: NodeState[],
+  nodeKeys: NodeKeySet[],
   batchOpStates: NodeState[],
   underwriterStates: NodeState[]
 ): Promise<void> {
@@ -825,63 +1059,35 @@ async function bootstrapChain(
   log.info("[Phase 3] Activated {} protocol features", activatedCount)
 
   // ── Phase 4: BLS instant finality setup ──
+  // Build finalizer list from producer node BLS keys (matching Python _set_finalizers)
   log.info("[Phase 4] BLS instant finality setup...")
   try {
-    const finalizerNodes: Array<{
-      description: string
-      weight: number
-      public_key: string
-      pop: string
-    }> = []
-    for (const ns of nodeStates) {
-      if (!ns.isProducer) continue
-      try {
-        const nodeUrl = `http://127.0.0.1:${ns.port}`
-        const resp = await fetch(`${nodeUrl}/v1/producer/get_finalizer_info`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-          signal: AbortSignal.timeout(5000)
-        })
-        if (resp.ok) {
-          const info = (await resp.json()) as {
-            finalizer_keys?: Array<{
-              public_key: string
-              proof_of_possession: string
-            }>
-          }
-          if (info.finalizer_keys?.[0]) {
-            finalizerNodes.push({
-              description: `finalizer-${ns.nodeId}`,
-              weight: 1,
-              public_key: info.finalizer_keys[0].public_key,
-              pop: info.finalizer_keys[0].proof_of_possession
-            })
-          }
-        }
-      } catch {
-        /* node may not support this endpoint */
-      }
-    }
-    if (finalizerNodes.length > 0) {
-      const threshold = Math.floor((finalizerNodes.length * 2) / 3) + 1
-      await clio.pushAction<SystemContracts.SysioBiosSetfinalizerAction>(
-        "sysio",
-        "setfinalizer",
-        { finalizer_policy: { threshold, finalizers: finalizerNodes } },
-        "sysio@active"
-      )
-      log.info(
-        `[Phase 4] Set ${finalizerNodes.length} finalizers (threshold=${threshold})`
-      )
-    } else {
-      log.info(
-        "[Phase 4] No finalizer keys available, skipping instant finality"
-      )
-    }
+    const finalizerNodes = nodeStates
+      .filter(ns => ns.isProducer)
+      .map((ns, i) => ({
+        description: `finalizer-${ns.nodeId}`,
+        weight: 1,
+        public_key: nodeKeys[i].bls.publicKey,
+        pop: nodeKeys[i].bls.proofOfPossession
+      }))
+
+    Assert.ok(
+      finalizerNodes.length > 0,
+      "No producer nodes with BLS keys — instant finality requires at least one finalizer"
+    )
+    const threshold = Math.floor((finalizerNodes.length * 2) / 3) + 1
+    await clio.pushActionAndWait<SystemContracts.SysioBiosSetfinalizerAction>(
+      "sysio",
+      "setfinalizer",
+      { finalizer_policy: { threshold, finalizers: finalizerNodes } },
+      "sysio@active"
+    )
+    log.info(
+      `[Phase 4] Activated instant finality: ${finalizerNodes.length} finalizer(s), threshold=${threshold}`
+    )
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    log.warn(`[Phase 4] Instant finality setup failed (non-fatal): ${msg}`)
+    throw new Error(`[Phase 4] Instant finality activation FAILED: ${msg}`)
   }
 
   // ── Phase 5: Create producer accounts ──
@@ -984,7 +1190,9 @@ async function bootstrapChain(
       }
     } catch (err: any) {
       // getInfo may fail transiently during handoff — retry
-      log.debug(`[Phase 8] Handoff poll error (retrying): ${err.message?.slice(0, 100)}`)
+      log.debug(
+        `[Phase 8] Handoff poll error (retrying): ${err.message?.slice(0, 100)}`
+      )
     }
     await sleep(1000)
   }
@@ -1202,8 +1410,13 @@ async function bootstrapChain(
       )
     } catch (err: any) {
       // Only tolerate "already exists" — anything else is a real failure
-      if (!err.message?.includes("already exists") && !err.stderr?.includes("already exists")) {
-        throw new Error(`Failed to create account ${account}: ${err.message ?? err.stderr}`)
+      if (
+        !err.message?.includes("already exists") &&
+        !err.stderr?.includes("already exists")
+      ) {
+        throw new Error(
+          `Failed to create account ${account}: ${err.message ?? err.stderr}`
+        )
       }
       log.debug(`Account ${account} already exists, continuing`)
     }
@@ -1229,8 +1442,13 @@ async function bootstrapChain(
       )
     } catch (err: any) {
       // Only tolerate "already exists" — anything else is a real failure
-      if (!err.message?.includes("already exists") && !err.stderr?.includes("already exists")) {
-        throw new Error(`Failed to create account ${account}: ${err.message ?? err.stderr}`)
+      if (
+        !err.message?.includes("already exists") &&
+        !err.stderr?.includes("already exists")
+      ) {
+        throw new Error(
+          `Failed to create account ${account}: ${err.message ?? err.stderr}`
+        )
       }
       log.debug(`Account ${account} already exists, continuing`)
     }
@@ -1251,23 +1469,16 @@ async function bootstrapChain(
     await clio.pushActionAndWait(
       "sysio.epoch",
       "activateop",
-      { account: bo.operatorAccount! } satisfies SystemContracts.SysioEpochActivateopAction,
+      {
+        account: bo.operatorAccount!
+      } satisfies SystemContracts.SysioEpochActivateopAction,
       "sysio.epoch@active"
     )
   }
   log.info(`[Phase 20] Activated ${batchOpStates.length} batch operator(s)`)
 
-  // Advance epoch to initialize the epoch state singleton
-  // (first call always succeeds: default next_epoch_start=0 is always <= now)
-  await clio.pushAction<SystemContracts.SysioEpochAdvanceAction>(
-    "sysio.epoch",
-    "advance",
-    {},
-    "sysio@active"
-  )
-  log.info("[Phase 20] Epoch advanced (state initialized)")
-
   // Assign batch operators to rotation groups
+  // (advance is NOT called here — batch operators call it autonomously)
   await clio.pushAction<SystemContracts.SysioEpochInitgroupsAction>(
     "sysio.epoch",
     "initgroups",
@@ -1331,6 +1542,12 @@ export namespace ClusterManager {
   /** Delay after node shutdown before proceeding (ms). */
   export const ShutdownDelayMs = 2000
 
+  /** Timeout for nodeop sync verification via verifyCallback (ms). */
+  export const NodeSyncTimeoutMs = 60_000
+
+  /** Poll interval for nodeop sync verification (ms). */
+  export const NodeSyncPollIntervalMs = 5_000
+
   // ── Anvil / Solana subdirectories ──
 
   /** Anvil state subdirectory within clusterPath/data. */
@@ -1367,6 +1584,76 @@ export namespace ClusterManager {
         .get()
 
     return exePaths
+  }
+
+  /**
+   * Convenience factory for tests and scripts — resolves ports + exe paths,
+   * assembles a full ClusterConfig, runs create(), and returns the manager.
+   */
+  export async function createFromCLIArgs(opts: {
+    buildPath: string
+    clusterPath: string
+    ethereumPath?: string
+    producerCount?: number
+    nodeCount?: number
+    batchOperatorCount?: number
+    underwriterCount?: number
+    epochDurationSec?: number
+    warmupEpochs?: number
+    cooldownEpochs?: number
+    force?: boolean
+  }): Promise<ClusterManager> {
+    const {
+      buildPath,
+      clusterPath,
+      ethereumPath,
+      producerCount = 21,
+      nodeCount = 1,
+      batchOperatorCount = 3,
+      underwriterCount = 1,
+      epochDurationSec = 360,
+      warmupEpochs = 1,
+      cooldownEpochs = 1,
+      force = false
+    } = opts
+
+    if (force && Fs.existsSync(clusterPath)) {
+      Fs.rmSync(clusterPath, { recursive: true, force: true })
+    }
+    mkdirs(clusterPath)
+
+    ProcessManager.setClusterPath(clusterPath)
+
+    const config: ClusterConfig = {
+      buildPath,
+      clusterPath,
+      dataPath: mkdirs(Path.join(clusterPath, "data")),
+      walletPath: mkdirs(Path.join(clusterPath, "wallet")),
+      producerCount,
+      nodeCount,
+      httpSecure: false,
+      batchOperatorCount,
+      underwriterCount,
+      ethereumPath,
+      epochDurationSec,
+      warmupEpochs,
+      cooldownEpochs,
+      ports: await ClusterPorts.resolve({
+        nodeCount,
+        batchOperatorCount,
+        underwriterCount
+      }),
+      executables: await resolveExePaths(buildPath)
+    }
+
+    Fs.writeFileSync(
+      Path.join(clusterPath, "cluster-config.json"),
+      JSON.stringify(config, null, 2)
+    )
+
+    const manager = new ClusterManager(config)
+    await manager.create()
+    return manager
   }
 }
 

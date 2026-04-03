@@ -4,7 +4,7 @@ import assert from "node:assert"
 import { log } from "../logger.js"
 import { asOption, Future } from "@3fv/prelude-ts"
 import { flatten, isEmpty, negate } from "lodash"
-import { isNotEmpty } from "../util"
+import { isNotEmpty } from "../util.js"
 import {
   Deferred,
   isDefined,
@@ -21,7 +21,6 @@ import {
   PermissionLevelType,
   SystemContracts
 } from "@wireio/sdk-core"
-import { WIREChainInfo } from "./WIREClient"
 import { match } from "ts-pattern"
 
 const execFileAsync = promisify(execFile)

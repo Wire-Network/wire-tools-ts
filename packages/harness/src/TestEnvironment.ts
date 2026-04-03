@@ -7,25 +7,34 @@ import {
   SolanaValidatorManager,
   type SolanaValidatorOptions
 } from "./processes/SolanaValidatorManager.js"
-import { type WIREChainConfig } from "./processes/WIREChainManager"
+import { type WIREChainConfig } from "./processes/WIREChainManager.js"
 import { type ClusterConfig, ClusterManager } from "./cluster/ClusterManager.js"
-import { WIREClient } from "./clients/WIREClient"
+import { WIREClient } from "./clients/WIREClient.js"
 import { ETHClient } from "./clients/ETHClient.js"
 import { SOLClient } from "./clients/SOLClient.js"
 import { ETHBootstrap } from "./bootstrap/ETHBootstrap.js"
 import { SOLBootstrap } from "./bootstrap/SOLBootstrap.js"
 import { log } from "./logger.js"
-import { mkdirs } from "./util"
+import { mkdirs } from "./util.js"
+import { ClusterPorts } from "./cluster/ClusterPorts.js"
 
 export interface TestEnvironmentConfig {
   /** WIRE chain configuration (required) */
   wire: WIREChainConfig & {
     /** Number of producer nodes (default: 1) */
     producerCount?: number
-    /** Number of batch operator nodes (default: 1) */
+    /** Number of non-producer nodes (default: 0) */
+    nodeCount?: number
+    /** Number of batch operator nodes (default: 3) */
     batchOperatorCount?: number
     /** Number of underwriter nodes (default: 1) */
     underwriterCount?: number
+    /** Epoch duration in seconds (default: 360) */
+    epochDurationSec?: number
+    /** Warmup epochs (default: 1) */
+    warmupEpochs?: number
+    /** Cooldown epochs (default: 1) */
+    cooldownEpochs?: number
   }
   /** Ethereum/anvil configuration */
   ethereum?: AnvilOptions
@@ -61,16 +70,16 @@ export interface TestEnvironmentConfig {
  *   await env.stop()
  */
 export class TestEnvironment {
-  public cluster?: ClusterManager
-  public anvil?: AnvilManager
-  public solanaValidator?: SolanaValidatorManager
+  public cluster: ClusterManager
+  public anvil: AnvilManager
+  public solanaValidator: SolanaValidatorManager
 
-  public wireClient?: WIREClient
-  public ethClient?: ETHClient
-  public solClient?: SOLClient
+  public wireClient: WIREClient
+  public ethClient: ETHClient
+  public solClient: SOLClient
 
-  public ethBootstrap?: ETHBootstrap
-  public solBootstrap?: SOLBootstrap
+  public ethBootstrap: ETHBootstrap
+  public solBootstrap: SOLBootstrap
 
   private readonly tempPath: string
 
@@ -99,19 +108,34 @@ export class TestEnvironment {
       this.config.wire.clusterPath ?? Path.join(this.tempPath, "wire-chain")
 
     // Start WIRE chain via ClusterManager (creates genesis, config, bootstraps)
+    const {
+      producerCount = 1,
+      nodeCount = 1,
+      batchOperatorCount = 3,
+      underwriterCount = 1,
+      epochDurationSec = 360,
+      warmupEpochs = 1,
+      cooldownEpochs = 1
+    } = this.config.wire
+
     const clusterConfig: ClusterConfig = {
       buildPath: this.config.wire.buildPath,
       clusterPath,
       dataPath: Path.join(clusterPath, "data"),
       walletPath: Path.join(clusterPath, "wallet"),
-      producerCount: this.config.wire.producerCount ?? 1,
-      nodeCount: 1,
+      producerCount,
+      nodeCount,
       httpSecure: false,
-      batchOperatorCount: this.config.wire.batchOperatorCount ?? 3,
-      underwriterCount: this.config.wire.underwriterCount ?? 1,
-      epochDurationSec: 360,
-      warmupEpochs: 1,
-      cooldownEpochs: 1,
+      batchOperatorCount,
+      underwriterCount,
+      epochDurationSec,
+      warmupEpochs,
+      cooldownEpochs,
+      ports: await ClusterPorts.resolve({
+        nodeCount,
+        batchOperatorCount,
+        underwriterCount
+      }),
       executables: await ClusterManager.resolveExePaths(
         this.config.wire.buildPath
       )

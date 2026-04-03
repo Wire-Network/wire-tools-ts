@@ -17,7 +17,7 @@ import {
   DEV_K1_PRIVATE_KEY,
   DEV_K1_PUBLIC_KEY
 } from "./constants.js"
-import { type ConfigOptions } from "./Config"
+import { type ConfigOptions } from "./Config.js"
 
 // ---------------------------------------------------------------------------
 // Node role types

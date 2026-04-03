@@ -1,12 +1,14 @@
-import pm2 from "pm2"
+import PM2Service from "pm2"
 import Path from "path"
 import Fs from "fs"
 import { execFileSync } from "child_process"
 import { log } from "../logger.js"
-import { Deferred } from "@wireio/shared"
+import { Deferred, isObject } from "@wireio/shared"
 import { asOption } from "@3fv/prelude-ts"
 import * as Assert from "node:assert"
-import { mkdirs } from "../util"
+import { mkdirs } from "../util.js"
+
+const MAX_STDERR_LINES = 100
 
 export interface ProcessConfig {
   /** Human-readable label for logging */
@@ -21,6 +23,16 @@ export interface ProcessConfig {
   env?: Record<string, string>
   /** Path for stdout/stderr log file */
   logFile?: string
+  /**
+   * Optional verification callback invoked after spawn.
+   * Called repeatedly until it returns true or the timeout expires.
+   * Use this to wait for a process to reach a ready/synced state.
+   */
+  verifyCallback?: (handle: ProcessHandle) => Promise<boolean>
+  /** Timeout for verifyCallback polling (default: 60_000ms) */
+  verifyTimeoutMs?: number
+  /** Interval between verifyCallback polls (default: 15_000ms) */
+  verifyIntervalMs?: number
 }
 
 export interface ProcessHandle {
@@ -37,95 +49,83 @@ export interface ProcessHandle {
 }
 
 /** Process names to kill at startup and on exit */
-const MANAGED_PROCESS_NAMES = [
+const ManagedProcessNames = [
   "nodeop",
   "kiod",
   "anvil",
   "solana-test-validator"
-]
+] as const
 
-function pm2Connect(): Promise<void> {
-  return asOption(new Deferred<void>())
-    .tap(d =>
-      pm2.connect(true, err => {
+type ManagedProcessName = (typeof ManagedProcessNames)[number]
+
+namespace pm2 {
+  export function connect(): Promise<void> {
+    return Deferred.useCallback<void>(d =>
+      PM2Service.connect(true, err => {
         return err ? d.reject(err) : d.resolve()
       })
-    )
-    .map(d => d.promise)
-    .get()
-}
+    ).promise
+  }
 
-function pm2Start(opts: pm2.StartOptions): Promise<pm2.Proc> {
-  return asOption(new Deferred<pm2.Proc>())
-    .tap(d =>
-      pm2.start(opts, (err, proc) => {
+  export function start(
+    opts: PM2Service.StartOptions
+  ): Promise<PM2Service.Proc> {
+    return Deferred.useCallback<PM2Service.Proc>(d =>
+      PM2Service.start(opts, (err, proc) => {
         return err ? d.reject(err) : d.resolve(proc)
       })
-    )
-    .map(d => d.promise)
-    .get()
-}
+    ).promise
+  }
 
-function pm2Delete(name: string): Promise<void> {
-  return asOption(new Deferred<void>())
-    .tap(d =>
-      pm2.delete(name, err => {
+  export function destroy(name: string): Promise<void> {
+    return Deferred.useCallback<void>(d =>
+      PM2Service.delete(name, err => {
         return err ? d.reject(err) : d.resolve()
       })
-    )
-    .map(d => d.promise)
-    .get()
-}
+    ).promise
+  }
 
-function pm2Describe(name: string): Promise<pm2.ProcessDescription[]> {
-  return asOption(new Deferred<pm2.ProcessDescription[]>())
-    .tap(d =>
-      pm2.describe(name, (err, descs) => {
+  export function describe(
+    name: string
+  ): Promise<PM2Service.ProcessDescription[]> {
+    return Deferred.useCallback<PM2Service.ProcessDescription[]>(d =>
+      PM2Service.describe(name, (err, descs) => {
         return err ? d.reject(err) : d.resolve(descs)
       })
-    )
-    .map(d => d.promise)
-    .get()
-}
+    ).promise
+  }
 
-function pm2List(): Promise<pm2.ProcessDescription[]> {
-  return asOption(new Deferred<pm2.ProcessDescription[]>())
-    .tap(d =>
-      pm2.list((err, list) => {
+  export function list(): Promise<PM2Service.ProcessDescription[]> {
+    return Deferred.useCallback<PM2Service.ProcessDescription[]>(d =>
+      PM2Service.list((err, list) => {
         return err ? d.reject(err) : d.resolve(list)
       })
-    )
-    .map(d => d.promise)
-    .get()
+    ).promise
+  }
+
+  export function sendSignal(signal: string, name: string): Promise<void> {
+    return Deferred.useCallback<void>(d =>
+      PM2Service.sendSignalToProcessName(signal, name, err => {
+        err ? d.reject(err) : d.resolve()
+      })
+    ).promise
+  }
+
+  export function launchBus(): Promise<any> {
+    return Deferred.useCallback(d =>
+      PM2Service.launchBus((err, bus) => {
+        return err ? d.reject(err) : d.resolve(bus)
+      })
+    ).promise
+  }
 }
 
-function pm2SendSignal(signal: string, name: string): Promise<void> {
-  return Deferred.useCallback<void>(d =>
-    pm2.sendSignalToProcessName(signal, name, err => {
-      err ? d.reject(err) : d.resolve()
-    })
-  ).promise
-}
-
-function pm2LaunchBus(): Promise<any> {
-  return Deferred.useCallback(d =>
-    pm2.launchBus((err, bus) => {
-      return err ? d.reject(err) : d.resolve(bus)
-    })
-  ).promise
-}
-
-function currentDateStamp(): string {
-  return asOption(new Date())
-    .map(
-      d =>
-        `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`
-    )
-    .get()
+function currentDateStamp(date: Date = new Date()): string {
+  return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`
 }
 
 /** Check if a process with the given name is running via pgrep. */
-function isProcessRunning(name: string): boolean {
+function isProcessRunning(name: ManagedProcessName): boolean {
   try {
     execFileSync("pgrep", ["-x", name], { stdio: "ignore" })
     return true
@@ -135,7 +135,7 @@ function isProcessRunning(name: string): boolean {
 }
 
 /** Send a signal to all processes matching name via pkill. */
-function pkill(name: string, signal?: string): void {
+function pkill(name: ManagedProcessName, signal?: string): void {
   try {
     const args = signal ? [signal, "-x", name] : ["-x", name]
     execFileSync("pkill", args, { stdio: "ignore" })
@@ -149,7 +149,7 @@ function pkill(name: string, signal?: string): void {
  * Sends SIGTERM first, waits 2s, then SIGKILL for any stragglers.
  */
 function killExistingProcesses(): void {
-  const running = MANAGED_PROCESS_NAMES.filter(isProcessRunning)
+  const running = ManagedProcessNames.filter(isProcessRunning)
   if (running.length === 0) return
 
   log.info(`Killing existing processes: ${running.join(", ")}`)
@@ -224,9 +224,9 @@ export class ProcessManager {
     // Kill any leftover processes from a previous run before connecting
     killExistingProcesses()
 
-    await pm2Connect()
+    await pm2.connect()
     this.connected = true
-    this.bus = await pm2LaunchBus()
+    this.bus = await pm2.launchBus()
 
     this.registerExitHandler()
   }
@@ -239,12 +239,12 @@ export class ProcessManager {
     const cleanup = () => {
       log.info("ProcessManager: cleaning up on exit...")
       // Synchronous kill — we're in an exit handler
-      for (const name of MANAGED_PROCESS_NAMES) {
+      for (const name of ManagedProcessNames) {
         pkill(name)
       }
       this.closeAllLogStreams()
       if (this.connected) {
-        pm2.disconnect()
+        PM2Service.disconnect()
         this.connected = false
       }
     }
@@ -325,13 +325,65 @@ export class ProcessManager {
     this.ensureLogStreams(config.label)
 
     const recentStderr: string[] = []
-    const MAX_STDERR_LINES = 100
 
     log.info(
       `Spawning ${config.label}: ${config.command} ${config.args.join(" ")}`
     )
 
-    const startOpts: pm2.StartOptions = {
+    // Register bus listeners BEFORE start so early exits are captured
+    const exitDeferred = new Deferred<number>()
+
+    this.bus.on("log:err", (packet: any) => {
+      if (packet.process?.name !== config.label) return
+
+      String(packet.data)
+        .split("\n")
+        .filter(Boolean)
+        .forEach(line => {
+          log.debug(`[${config.label}:stderr] ${line}`)
+          recentStderr.push(line)
+          if (recentStderr.length > MAX_STDERR_LINES) recentStderr.shift()
+          this.writeToLogs(config.label, "stderr", line)
+        })
+    })
+
+    this.bus.on("log:out", (packet: any) => {
+      if (packet.process?.name !== config.label) return
+      String(packet.data)
+        .split("\n")
+        .filter(Boolean)
+        .forEach(line => {
+          log.debug(`[${config.label}:stdout] ${line}`)
+          this.writeToLogs(config.label, "stdout", line)
+        })
+    })
+
+    // Track exit via bus event
+    const onExit = (packet: any) => {
+      asOption(packet.process)
+        .filter(isObject)
+        .filter(({ name }: any) => name === config.label)
+        .ifSome(({ exit_code: code = 1, signal }: any) => {
+          log.info(`${config.label} exited (code=${code}, signal=${signal})`)
+          if (code !== 0 && recentStderr.length > 0) {
+            log.error(
+              `${config.label} stderr (last ${recentStderr.length} lines):`
+            )
+            recentStderr.forEach(line => {
+              log.error(`  ${line}`)
+            })
+          }
+          this.handles.delete(config.label)
+          this.closeProcessLogStream(config.label)
+          this.bus.off?.("process:exit", onExit)
+          exitDeferred.resolve(code)
+        })
+    }
+
+    this.bus.on("process:exit", onExit)
+
+    // Start the process (bus listeners are already attached to capture early output)
+    await pm2.start({
       name: config.label,
       script: config.command,
       args: config.args,
@@ -342,66 +394,24 @@ export class ProcessManager {
       ...(config.logFile
         ? { output: config.logFile, error: config.logFile }
         : {})
-    }
-
-    await pm2Start(startOpts)
+    } satisfies PM2Service.StartOptions)
 
     // Retrieve process description to get pm_id and pid
-    const descs = await pm2Describe(config.label)
-    if (!descs || descs.length === 0) {
-      throw new Error(
-        `Failed to spawn ${config.label}: no process description returned`
-      )
-    }
+    const descs = await pm2.describe(config.label)
+    Assert.ok(
+      descs?.length > 0,
+      `Failed to spawn ${config.label}: no process description returned`
+    )
 
     const desc = descs[0],
       pmId = desc.pm_id ?? -1,
       pid = desc.pid ?? 0
 
-    if (pid === 0) {
-      throw new Error(`Failed to spawn ${config.label}: no pid assigned`)
+    if (pid <= 0 && recentStderr.length > 0) {
+      log.error(`${config.label} exited immediately, stderr:`)
+      recentStderr.forEach(line => log.error(`  ${line}`))
     }
-
-    // Listen for log events on the bus
-    this.bus.on("log:err", (packet: any) => {
-      if (packet.process?.name !== config.label) return
-      const lines = String(packet.data).split("\n").filter(Boolean)
-      for (const line of lines) {
-        log.debug(`[${config.label}:stderr] ${line}`)
-        recentStderr.push(line)
-        if (recentStderr.length > MAX_STDERR_LINES) recentStderr.shift()
-        this.writeToLogs(config.label, "stderr", line)
-      }
-    })
-
-    this.bus.on("log:out", (packet: any) => {
-      if (packet.process?.name !== config.label) return
-      const lines = String(packet.data).split("\n").filter(Boolean)
-      for (const line of lines) {
-        log.debug(`[${config.label}:stdout] ${line}`)
-        this.writeToLogs(config.label, "stdout", line)
-      }
-    })
-
-    // Track exit via bus event
-    const exitDeferred = new Deferred<number>()
-    const onExit = (packet: any) => {
-      if (packet.process?.name !== config.label) return
-      const code = packet.process?.exit_code ?? 1
-      const signal = packet.process?.signal
-      log.info(`${config.label} exited (code=${code}, signal=${signal})`)
-      if (code !== 0 && recentStderr.length > 0) {
-        log.error(`${config.label} stderr (last ${recentStderr.length} lines):`)
-        for (const line of recentStderr) {
-          log.error(`  ${line}`)
-        }
-      }
-      this.handles.delete(config.label)
-      this.closeProcessLogStream(config.label)
-      this.bus.off?.("process:exit", onExit)
-      exitDeferred.resolve(code)
-    }
-    this.bus.on("process:exit", onExit)
+    Assert.ok(pid > 0, `Failed to spawn ${config.label}: no pid assigned`)
 
     const handle: ProcessHandle = {
       pmId,
@@ -411,7 +421,7 @@ export class ProcessManager {
       kill: async () => {
         log.info(`Killing ${config.label} (pm_id=${pmId}, pid=${pid})`)
         try {
-          await pm2Delete(config.label)
+          await pm2.destroy(config.label)
         } catch (err: any) {
           log.warn(`pm2 delete failed for ${config.label}: ${err.message}`)
         }
@@ -423,11 +433,36 @@ export class ProcessManager {
     }
 
     this.handles.set(config.label, handle)
+
+    // Run verify callback if provided — poll until ready or timeout
+    if (config.verifyCallback) {
+      const timeoutMs = config.verifyTimeoutMs ?? 60_000,
+        intervalMs = config.verifyIntervalMs ?? 15_000,
+        deadline = Date.now() + timeoutMs
+
+      let verified = false
+      while (Date.now() < deadline) {
+        try {
+          verified = await config.verifyCallback(handle)
+          if (verified) break
+        } catch {
+          // not ready yet
+        }
+        await new Promise(r => setTimeout(r, intervalMs))
+      }
+      if (!verified) {
+        throw new Error(
+          `${config.label} did not pass verification within ${timeoutMs}ms`
+        )
+      }
+      log.info(`${config.label} verified and ready`)
+    }
+
     return handle
   }
 
   /** Get a running process by label. */
-  get(label: string): ProcessHandle | undefined {
+  get(label: string): ProcessHandle {
     return this.handles.get(label)
   }
 
@@ -441,7 +476,7 @@ export class ProcessManager {
   /** Disconnect from the pm2 daemon. Call when done. */
   async disconnect(): Promise<void> {
     if (this.connected) {
-      pm2.disconnect()
+      PM2Service.disconnect()
       this.connected = false
       this.bus = null
     }

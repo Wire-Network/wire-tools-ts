@@ -24,6 +24,7 @@
     "@wireio/sdk-core": "^1.0.17",
     "@wireio/shared": "^1.0.17",
     "@wireio/shared-node": "^1.0.17",
+    "bluebird": "^3.7.2",
     "ethers": "^6.14.0",
     "get-port": "^7.2.0",
     "lodash": "^4.17.23",
@@ -35,6 +36,7 @@
     "zx": "^8.8.5"
   },
   "devDependencies": {
+    "@types/bluebird": "^3.5.42",
     "@types/jest": "^30.0.0",
     "@types/lodash": "^4.17.24",
     "@types/node": "25.5.0",

@@ -1,0 +1,25 @@
+{
+  "name": "@wire-e2e-tests/flow-d",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Flow D: Collateral Deposit via BAR (OperatorAction ETH → WIRE)",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "jest --runInBand",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@wire-e2e-tests/harness": "workspace:*",
+    "@wireio/sdk-core": "^1.0.17",
+    "@wireio/opp-solidity-models": "^1.0.14",
+    "@wireio/shared": "^1.0.17",
+    "@wireio/shared-node": "^1.0.17",
+    "pm2": "^6.0.14",
+    "ethers": "^6.14.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "25.5.0"
+  }
+}

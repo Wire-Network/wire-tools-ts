@@ -2,33 +2,6 @@ import { APIClient, SystemContracts } from "@wireio/sdk-core"
 
 import { Clio, type ClioConfig } from "./Clio.js"
 import { log } from "../logger.js"
-import {
-  GetTableRowsResponse,
-  TableIndexType
-} from "@wireio/sdk-core/api/v1/Types"
-
-export interface WIREChainInfo {
-  server_version: string
-  chain_id: string
-  head_block_num: number
-  last_irreversible_block_num: number
-  last_irreversible_block_id: string
-  head_block_id: string
-  head_block_time: string
-  head_block_producer: string
-  virtual_block_cpu_limit: number
-  virtual_block_net_limit: number
-  block_cpu_limit: number
-  block_net_limit: number
-  server_version_string: string
-  fork_db_head_block_num: number
-  fork_db_head_block_id: string
-  server_full_version_string: string
-  total_cpu_weight: number
-  total_net_weight: number
-  earliest_available_block_num: number
-  last_irreversible_block_time: string
-}
 
 export interface WIREClientConfig {
   /** nodeop HTTP URL */
@@ -52,34 +25,35 @@ export class WIREClient {
   }
 
   /** GET /v1/chain/get_info via sdk-core */
-  async getInfo(): Promise<any> {
+  async getInfo() {
     return this.api.v1.chain.get_info()
   }
 
   /** GET table rows via sdk-core */
-  async getTableRows<T = any>(params: {
+  async getTableRows<T = unknown>(params: {
     code: string
     scope: string
     table: string
     limit?: number
     lower_bound?: string
     upper_bound?: string
-  }): Promise<GetTableRowsResponse<TableIndexType, T>> {
-    const opts: Record<string, unknown> = {
+  }) {
+    const opts = {
       code: params.code,
       scope: params.scope,
       table: params.table,
       limit: params.limit || 100,
-      json: true
+      json: true,
+      lower_bound: params.lower_bound,
+      upper_bound: params.upper_bound
     }
-    if (params.lower_bound !== undefined) opts.lower_bound = params.lower_bound
-    if (params.upper_bound !== undefined) opts.upper_bound = params.upper_bound
-    return await this.api.v1.chain.get_table_rows(opts as any)
+    const result = await this.api.v1.chain.get_table_rows(opts as any)
+    return result as { rows: T[]; more: boolean }
   }
 
   /** Read epoch state from sysio.epoch contract */
-  async getEpochState(): Promise<any> {
-    return this.getTableRows({
+  async getEpochState() {
+    return this.getTableRows<SystemContracts.SysioEpochEpochStateType>({
       code: "sysio.epoch",
       scope: "sysio.epoch",
       table: "epochstate"
@@ -87,8 +61,8 @@ export class WIREClient {
   }
 
   /** Read epoch config from sysio.epoch contract */
-  async getEpochConfig(): Promise<any> {
-    return this.getTableRows({
+  async getEpochConfig() {
+    return this.getTableRows<SystemContracts.SysioEpochEpochConfigType>({
       code: "sysio.epoch",
       scope: "sysio.epoch",
       table: "epochcfg"
@@ -104,6 +78,15 @@ export class WIREClient {
     })
   }
 
+  /** Read outpost registry from sysio.epoch */
+  async getOutposts() {
+    return this.getTableRows<SystemContracts.SysioEpochOutpostInfoType>({
+      code: "sysio.epoch",
+      scope: "sysio.epoch",
+      table: "outposts"
+    })
+  }
+
   /** Read messages from sysio.msgch contract */
   async getMessages() {
     return this.getTableRows<SystemContracts.SysioMsgchMessageEntryType>({
@@ -114,17 +97,35 @@ export class WIREClient {
   }
 
   /** Read inbound chain requests from sysio.msgch */
-  async getChainRequests(): Promise<any> {
-    return this.getTableRows({
+  async getChainRequests() {
+    return this.getTableRows<SystemContracts.SysioMsgchInboundChainRequestType>({
       code: "sysio.msgch",
       scope: "sysio.msgch",
       table: "inchainreq"
     })
   }
 
+  /** Read chain deliveries from sysio.msgch */
+  async getDeliveries() {
+    return this.getTableRows<SystemContracts.SysioMsgchChainDeliveryType>({
+      code: "sysio.msgch",
+      scope: "sysio.msgch",
+      table: "deliveries"
+    })
+  }
+
+  /** Read outbound envelopes from sysio.msgch */
+  async getOutboundEnvelopes() {
+    return this.getTableRows<SystemContracts.SysioMsgchOutboundEnvelopeType>({
+      code: "sysio.msgch",
+      scope: "sysio.msgch",
+      table: "outenvelopes"
+    })
+  }
+
   /** Read underwriting ledger from sysio.uwrit */
-  async getUnderwritingLedger(): Promise<any> {
-    return this.getTableRows({
+  async getUnderwritingLedger() {
+    return this.getTableRows<SystemContracts.SysioUwritUnderwritingEntryType>({
       code: "sysio.uwrit",
       scope: "sysio.uwrit",
       table: "uwledger"
@@ -132,20 +133,11 @@ export class WIREClient {
   }
 
   /** Read collateral from sysio.uwrit */
-  async getCollateral(): Promise<any> {
-    return this.getTableRows({
+  async getCollateral() {
+    return this.getTableRows<SystemContracts.SysioUwritCollateralEntryType>({
       code: "sysio.uwrit",
       scope: "sysio.uwrit",
       table: "collateral"
-    })
-  }
-
-  /** Read outpost registry from sysio.epoch */
-  async getOutposts(): Promise<any> {
-    return this.getTableRows({
-      code: "sysio.epoch",
-      scope: "sysio.epoch",
-      table: "outposts"
     })
   }
 }

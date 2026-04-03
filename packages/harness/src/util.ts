@@ -83,3 +83,11 @@ export async function retry<T>(
 }
 
 export const isNotEmpty = negate(isEmpty)
+
+export function inRange(
+  value: number,
+  min: number,
+  max: number = Number.MAX_SAFE_INTEGER
+): boolean {
+  return value >= min && value <= max
+}

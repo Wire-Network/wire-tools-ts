@@ -271,14 +271,15 @@ export const OPP_SYSTEM_ACCOUNTS = [
 
 export const BATCH_OPERATOR_PLUGINS = [
   "sysio::batch_operator_plugin",
-  "sysio::outpost_eth_plugin",
-  "sysio::outpost_sol_plugin"
+  "sysio::outpost_ethereum_client_plugin",
+  "sysio::outpost_solana_client_plugin",
+  "sysio::cron_plugin"
 ] as const
 
 export const UNDERWRITER_PLUGINS = [
   "sysio::underwriter_plugin",
-  "sysio::outpost_eth_plugin",
-  "sysio::outpost_sol_plugin"
+  "sysio::outpost_ethereum_client_plugin",
+  "sysio::outpost_solana_client_plugin"
 ] as const
 
 // ---------------------------------------------------------------------------

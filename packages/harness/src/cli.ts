@@ -15,14 +15,15 @@ import Path from "path"
 import Fs from "fs"
 import Yargs from "yargs"
 import { hideBin } from "yargs/helpers"
-import ClusterManager, { type ClusterConfig } from "./cluster/ClusterManager"
-import { log } from "./logger"
+import ClusterManager, { type ClusterConfig } from "./cluster/ClusterManager.js"
+import { ClusterPorts } from "./cluster/ClusterPorts.js"
+import { log } from "./logger.js"
 import { identity, last } from "lodash"
 import { match } from "ts-pattern"
 import * as Assert from "node:assert"
-import { ProcessManager } from "./processes/ProcessManager"
-import { isNotEmpty, mkdirs } from "./util"
-import { Future } from "@3fv/prelude-ts"
+import { ProcessManager } from "./processes/ProcessManager.js"
+import { inRange, isNotEmpty, mkdirs } from "./util.js"
+import { asOption, Future } from "@3fv/prelude-ts"
 import { isPromise } from "@wireio/shared"
 
 const GlobalArgs = {
@@ -140,19 +141,20 @@ async function main(): Promise<void> {
               default: false,
               describe: "Use HTTPS for RPC endpoints"
             })
-            .option("batch-operators", {
-              alias: "b",
+            .option("batch-operator-count", {
+              alias: ["b", "batch-operators"],
               type: "number",
               default: 3,
               describe: "Number of batch operator nodes (3–21)"
             })
-            .option("underwriters", {
-              alias: "u",
+            .option("underwriter-count", {
+              alias: ["u", "underwriters"],
               type: "number",
               default: 1,
               describe: "Number of underwriter nodes (1–100)"
             })
-            .option("epoch-duration", {
+            .option("epoch-duration-sec", {
+              alias: ["epoch-duration"],
               type: "number",
               default: 360,
               describe: "Epoch duration in seconds"
@@ -160,12 +162,14 @@ async function main(): Promise<void> {
             .option("warmup-epochs", {
               type: "number",
               default: 1,
-              describe: "Epochs before an operator transitions from WARMUP to ACTIVE"
+              describe:
+                "Epochs before an operator transitions from WARMUP to ACTIVE"
             })
             .option("cooldown-epochs", {
               type: "number",
               default: 1,
-              describe: "Epochs before an operator can deregister after entering COOLDOWN"
+              describe:
+                "Epochs before an operator can deregister after entering COOLDOWN"
             })
             .option("ethereum-path", {
               type: "string",
@@ -173,12 +177,20 @@ async function main(): Promise<void> {
                 "Path to wire-ethereum repo root. If provided, anvil is bootstrapped with contract deployment."
             })
             .check(argv => {
-              const b = argv.batchOperators as number
-              if (b < 3 || b > 21) throw new Error("--batch-operators must be between 3 and 21")
-              const u = argv.underwriters as number
-              if (u < 1 || u > 100) throw new Error("--underwriters must be between 1 and 100")
-              const e = argv.epochDuration as number
-              if (e < 1) throw new Error("--epoch-duration must be at least 1")
+              Assert.ok(
+                inRange(argv["batch-operator-count"], 3, 21),
+                "--batch-operators must be between 3 and 21"
+              )
+
+              Assert.ok(
+                inRange(argv["underwriter-count"], 1, 100),
+                "--underwriters must be between 1 and 100"
+              )
+
+              Assert.ok(
+                inRange(argv["epoch-duration-sec"], 1),
+                "--epoch-duration must be at least 1"
+              )
               return true
             }),
         async argv => {
@@ -189,14 +201,14 @@ async function main(): Promise<void> {
               nodes,
               prodCount,
               httpSecure,
-              batchOperators,
-              underwriters,
-              epochDuration,
+              batchOperatorCount,
+              underwriterCount,
+              epochDurationSec,
               warmupEpochs,
               cooldownEpochs
             } = argv
 
-          if (Fs.existsSync(clusterPath)) {
+          asOption(Fs.existsSync(clusterPath)).ifSome(() => {
             Assert.ok(
               force,
               `wire-test-cluster: --force required to overwrite existing directory ${clusterPath}`
@@ -205,31 +217,36 @@ async function main(): Promise<void> {
               `wire-test-cluster: --force specified, removing ${clusterPath}`
             )
             Fs.rmSync(clusterPath, { recursive: true, force: true })
-          }
+          })
 
           mkdirs(clusterPath)
 
           // CREATE THE CONFIG
-          const ethereumPath = (argv.ethereumPath as string | undefined)
-            ? Path.resolve(argv.ethereumPath as string)
-            : undefined
+          const ethereumPath = Path.resolve(argv.ethereumPath),
+            nodeCount = pnodes + nodes,
+            ports = await ClusterPorts.resolve({
+              nodeCount,
+              batchOperatorCount,
+              underwriterCount
+            }),
+            config: ClusterConfig = {
+              buildPath,
+              clusterPath,
+              dataPath: mkdirs(Path.join(clusterPath, "data")),
+              walletPath: mkdirs(Path.join(clusterPath, "wallet")),
+              producerCount: prodCount,
+              nodeCount,
+              httpSecure,
+              batchOperatorCount,
+              underwriterCount,
+              ethereumPath,
+              epochDurationSec,
+              warmupEpochs,
+              cooldownEpochs,
+              ports,
+              executables: await ClusterManager.resolveExePaths(buildPath)
+            }
 
-          const config: ClusterConfig = {
-            buildPath,
-            clusterPath,
-            dataPath: mkdirs(Path.join(clusterPath, "data")),
-            walletPath: mkdirs(Path.join(clusterPath, "wallet")),
-            producerCount: prodCount,
-            nodeCount: pnodes + nodes,
-            httpSecure,
-            batchOperatorCount: batchOperators,
-            underwriterCount: underwriters,
-            ethereumPath,
-            epochDurationSec: epochDuration as number,
-            warmupEpochs: warmupEpochs as number,
-            cooldownEpochs: cooldownEpochs as number,
-            executables: await ClusterManager.resolveExePaths(buildPath)
-          }
           log.info(`wire-test-cluster: writing config to ${configFile}`)
           Fs.writeFileSync(configFile, JSON.stringify(config, null, 2))
 
@@ -246,9 +263,9 @@ async function main(): Promise<void> {
         async _argv => {
           // THIS WILL START THE CLUSTER & WAIT ON A STOP SIGNAL
           // BEFORE RETURNING.
-          await createClusterManager(loadClusterConfig())
-            .loadState()
-            .startAndWait()
+          const config = loadClusterConfig()
+          await ClusterPorts.verifyAvailable(config.ports)
+          await createClusterManager(config).loadState().startAndWait()
         }
       )
       .command(

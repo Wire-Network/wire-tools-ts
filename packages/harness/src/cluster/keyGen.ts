@@ -11,7 +11,7 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { log } from "../logger.js"
-import { DefaultBLSKeyPair, DefaultK1KeyPair } from "./constants"
+import { DefaultBLSKeyPair, DefaultK1KeyPair } from "./constants.js"
 
 const execFileAsync = promisify(execFile)
 

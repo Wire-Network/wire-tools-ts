@@ -11,7 +11,7 @@ import {
   DEV_BLS_PUBLIC_KEY,
   DEV_K1_PRIVATE_KEY,
   DEV_K1_PUBLIC_KEY
-} from "../cluster/constants"
+} from "../cluster/constants.js"
 import { SystemContracts } from "@wireio/sdk-core"
 import { asOption, Future } from "@3fv/prelude-ts"
 import { which } from "zx"

@@ -13,9 +13,8 @@ import Path from "path"
 import { execFile } from "child_process"
 import { promisify } from "util"
 import { log } from "../logger.js"
-import { ProcessManager } from "../processes/ProcessManager.js"
 import { AnvilManager, type AnvilOptions } from "../processes/AnvilManager.js"
-import { waitForEndpoint, mkdirs } from "../util.js"
+import { mkdirs } from "../util.js"
 import { ethers } from "ethers"
 
 const execFileAsync = promisify(execFile)
@@ -77,7 +76,7 @@ export class ETHBootstrapper {
       anvilPort = ETHBootstrapper.DefaultPort,
       chainId = ETHBootstrapper.DefaultChainId,
       accountCount = ETHBootstrapper.DefaultAccountCount,
-      balancePerAccount = ETHBootstrapper.DefaultBalancePerAccount,
+      balancePerAccount = ETHBootstrapper.DefaultBalancePerAccount
     } = this.opts
 
     // ── 1. Generate accounts from mnemonic ──
@@ -87,7 +86,9 @@ export class ETHBootstrapper {
     this.accounts = this.generateAccounts(accountCount)
 
     // ── 2. Start anvil ──
-    const statePath = mkdirs(Path.join(anvilDataPath, ETHBootstrapper.AnvilStateSubpath)),
+    const statePath = mkdirs(
+        Path.join(anvilDataPath, ETHBootstrapper.AnvilStateSubpath)
+      ),
       stateFile = Path.join(statePath, "anvil.json")
 
     const anvil = await AnvilManager.create({
@@ -98,8 +99,8 @@ export class ETHBootstrapper {
         "--accounts",
         String(accountCount),
         "--balance",
-        String(balancePerAccount),
-      ],
+        String(balancePerAccount)
+      ]
     })
     await anvil.start()
 
@@ -111,9 +112,14 @@ export class ETHBootstrapper {
       await this.deployContracts(ethereumPath, rpcUrl)
 
       // ── 4. Write accounts.json ──
-      const accountsFile = Path.join(anvilDataPath, ETHBootstrapper.AccountsFile)
+      const accountsFile = Path.join(
+        anvilDataPath,
+        ETHBootstrapper.AccountsFile
+      )
       Fs.writeFileSync(accountsFile, JSON.stringify(this.accounts, null, 2))
-      log.info(`[ETH] Wrote ${this.accounts.length} accounts to ${accountsFile}`)
+      log.info(
+        `[ETH] Wrote ${this.accounts.length} accounts to ${accountsFile}`
+      )
     } finally {
       // Stop anvil (state is dumped to stateFile on exit)
       await anvil.stop()
@@ -139,7 +145,7 @@ export class ETHBootstrapper {
         privateKey: wallet.privateKey,
         publicKey: wallet.publicKey,
         usedInBootstrap: false,
-        usedFor: "",
+        usedFor: ""
       })
     }
 
@@ -191,7 +197,7 @@ export class ETHBootstrapper {
       entryQueue: 47,
       dailyRateBPS: 283,
       rewardCooldown: 100,
-      withdrawalDelay: 50,
+      withdrawalDelay: 50
     }
 
     const outpostConfig = {
@@ -199,7 +205,7 @@ export class ETHBootstrapper {
       key: deployerKey,
       addressFile: Path.join(localDir, "outpost-addrs.json"),
       gasLimitFile: Path.join(localDir, "outpost-gas-limits.json"),
-      useMockAggregator: true,
+      useMockAggregator: true
     }
 
     Fs.writeFileSync(
@@ -216,7 +222,13 @@ export class ETHBootstrapper {
     const npxPath = process.execPath.replace(/node$/, "npx")
     const { stdout, stderr } = await execFileAsync(
       "npx",
-      ["hardhat", "run", "src/scripts/deployLocal.ts", "--network", "localhost"],
+      [
+        "hardhat",
+        "run",
+        "src/scripts/deployLocal.ts",
+        "--network",
+        "localhost"
+      ],
       {
         cwd: ethereumPath,
         timeout: 120_000,
@@ -224,8 +236,8 @@ export class ETHBootstrapper {
         env: {
           ...process.env,
           // Ensure hardhat uses the right network config
-          HARDHAT_NETWORK: "localhost",
-        },
+          HARDHAT_NETWORK: "localhost"
+        }
       }
     )
 

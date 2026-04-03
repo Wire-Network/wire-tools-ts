@@ -27,6 +27,7 @@ pnpm test
 pnpm test:flow-a
 pnpm test:flow-b
 pnpm test:flow-c
+pnpm test:flow-d
 
 # Run only harness unit tests
 pnpm --filter @wire-e2e-tests/harness test
@@ -48,6 +49,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 | `flow-a` | `@wire-e2e-tests/flow-a` | Test: Empty Epoch (balance sheet only) |
 | `flow-b` | `@wire-e2e-tests/flow-b` | Test: Node Operator Collateral Deposit |
 | `flow-c` | `@wire-e2e-tests/flow-c` | Test: SWAP 50 ETH → 1042 SOL (with underwriting) |
+| `flow-d` | `@wire-e2e-tests/flow-d` | Test: Collateral Deposit via BAR (OperatorAction ETH → WIRE) |
 
 Flow packages depend on `harness` via `workspace:*`.
 
@@ -126,11 +128,17 @@ See `STYLE.md` for full patterns and examples.
 
 - **No string/number literals for known values.** If a value exists in an enum, constant, or namespace, use the identifier. `ClusterCommand.create`, not `"create"`. `AnvilManager.DefaultPort`, not `8545`.
 - **No redundant dispatch.** If the framework routes commands (Yargs `.command()` handlers), do not add a `match()`/`switch` on top. Collocate handler logic with the command definition.
+- **modern code** Use forEach, ... (spreads), map, filter, and reduce modern paradigms instead of for loops and other legacy style code
+- **OPP & FP (functional programming)** is preferred over old-school if/else/switch and generally branching code.
+  - Use `Future` from `@3fv/prelude-ts` for async flows.
+  - Use `Option`/`asOption` from `@3fv/prelude-ts` for optional values and chained flows.
+  - Use `Either` from `@3fv/prelude-ts` for error handling.
+  - Use `match` from `ts-pattern` for pattern matching.
+- **PM2 runs in NON-DAEMON mode.** It will never run in STANDALONE mode and therefore is never the culprit of hung processes or orphaned processes.  
 - **Enum members as identifiers everywhere.** Command names, config keys, comparisons — always the enum member, never the raw string.
 - **Fluent chains over intermediate variables.** Methods that configure state return `this`. Write `createClusterManager(config).loadState().startAndWait()`, not three separate statements.
 - **Extract focused helpers.** Any logically distinct operation (load config, create manager, resolve paths) becomes a named module-level function with assertions at entry.
 - **`identity` for no-op params.** When a framework callback is required but unneeded, pass `identity` from lodash.
-- **Signal handlers at module scope.** Register `SIGINT`/`SIGTERM` once at the top level referencing a module-level manager variable, not inside a command handler.
 - **Module-level shared state via middleware.** Cross-cutting values (global args, derived paths) go in a module-level object populated by Yargs `.middleware()`, destructured in handlers.
-- **`Deferred` + `asOption` pipeline** preferred over raw `new Promise` for callback-to-promise conversion.
-- **`asOption` for construct-validate-unwrap** — build an object, `.tap()` to assert/log, `.get()` to unwrap. Single expression, no mutable intermediates.
+- **`Deferred.useCallback`** from promisification
+

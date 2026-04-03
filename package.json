@@ -9,6 +9,7 @@
     "test:flow-a": "pnpm --filter @wire-e2e-tests/flow-a run test",
     "test:flow-b": "pnpm --filter @wire-e2e-tests/flow-b run test",
     "test:flow-c": "pnpm --filter @wire-e2e-tests/flow-c run test",
+    "test:flow-d": "pnpm --filter @wire-e2e-tests/flow-d run test",
     "clean": "pnpm -r run clean"
   },
   "devDependencies": {

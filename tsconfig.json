@@ -16,6 +16,7 @@
     { "path": "./packages/harness/tsconfig.json" },
     { "path": "./packages/flow-a/tsconfig.json" },
     { "path": "./packages/flow-b/tsconfig.json" },
-    { "path": "./packages/flow-c/tsconfig.json" }
+    { "path": "./packages/flow-c/tsconfig.json" },
+    { "path": "./packages/flow-d/tsconfig.json" }
   ]
 }
