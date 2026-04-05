@@ -158,6 +158,7 @@ export class TestEnvironment {
     this.wireClient = new WIREClient({
       httpUrl: wireHttpUrl,
       clio: {
+        clusterPath: clusterConfig.clusterPath,
         binary: clusterConfig.executables.clio,
         url: wireHttpUrl
       }

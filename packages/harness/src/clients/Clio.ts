@@ -22,10 +22,18 @@ import {
   SystemContracts
 } from "@wireio/sdk-core"
 import { match } from "ts-pattern"
+import Path from "path"
+import Fs from "fs"
+import { DEV_K1_PRIVATE_KEY, DEV_K1_PUBLIC_KEY } from "../cluster/constants"
 
 const execFileAsync = promisify(execFile)
 
 export interface ClioConfig {
+  /**
+   * Path to cluster path root
+   */
+  clusterPath: string
+
   /** Path to clio binary */
   binary: string
   /** nodeop URL (default: http://127.0.0.1:8888) */
@@ -47,7 +55,30 @@ export interface ClioRunOptionsJson<T extends {}> extends ClioRunOptions<true> {
  * Mirrors the patterns used by cluster_manager.py's Node.publishContract().
  */
 export class Clio {
-  constructor(readonly config: ClioConfig) {}
+  private walletPasswordInternal: string = null
+
+  get walletPassword(): string {
+    return this.walletPasswordInternal
+  }
+
+  set walletPassword(value: string) {
+    Fs.writeFileSync(this.walletPasswordFile, value, "utf8")
+    this.walletPasswordInternal = value
+  }
+
+  constructor(
+    readonly config: ClioConfig,
+    readonly walletPath: string = Path.join(config.clusterPath, "wallet"),
+    readonly walletPasswordFile: string = Path.join(walletPath, "wallet.pw")
+  ) {
+    if (Fs.existsSync(this.walletPasswordFile)) {
+      log.info(`Reading wallet password from ${this.walletPasswordFile}`)
+      this.walletPasswordInternal = Fs.readFileSync(
+        this.walletPasswordFile,
+        "utf8"
+      ).trim()
+    }
+  }
 
   /** Run a clio command and return parsed JSON (or raw stdout). */
   private async run<T extends {}>(
@@ -111,8 +142,12 @@ export class Clio {
       { json: false }
     )
     // Extract the password from stdout
-    const match = result.match(/"(PW[A-Za-z0-9]+)"/)
-    return match ? match[1] : result
+    return asOption(result.match(/"(PW[A-Za-z0-9]+)"/))
+      .map(expMatch => {
+        this.walletPassword = expMatch[1]
+        return this.walletPassword
+      })
+      .getOrElse(result)
   }
 
   async walletImportKey(walletName: string, privateKey: string): Promise<void> {
@@ -122,7 +157,10 @@ export class Clio {
     )
   }
 
-  async walletUnlock(walletName: string, password: string): Promise<void> {
+  async walletUnlock(
+    walletName: string,
+    password: string = this.walletPassword
+  ): Promise<void> {
     await this.run(
       ["wallet", "unlock", "-n", walletName, "--password", password],
       { json: false }
@@ -155,7 +193,7 @@ export class Clio {
   }
 
   async createSystemAccount(name: string, ownerKey: string): Promise<string> {
-    return this.createAccount("sysio", name, ownerKey)
+    return await this.createAccount("sysio", name, ownerKey)
   }
 
   // ── Contract deployment ──

@@ -76,228 +76,233 @@ process.on("SIGINT", () => void shutdown())
 process.on("SIGTERM", () => void shutdown())
 
 async function main(): Promise<void> {
-  // CREATE ARG PARSER & COMMAND HANDLERS
-  const scriptName = last(process.argv[1].split("/")),
-    cleanArgs = process.argv
-      .slice(2)
-      .filter(arg => !arg.startsWith("--inspect")),
-    result = Yargs(cleanArgs)
-      .scriptName(scriptName)
-      .usage("$0 [global-options] <command> [command-options]")
-      .option("cluster-path", {
-        alias: "d",
-        type: "string",
-        demandOption: true,
-        describe: "Directory for cluster data"
-      })
+  try {
+    // CREATE ARG PARSER & COMMAND HANDLERS
+    const scriptName = last(process.argv[1].split("/")),
+      cleanArgs = process.argv
+        .slice(2)
+        .filter(arg => !arg.startsWith("--inspect")),
+      result = Yargs(cleanArgs)
+        .scriptName(scriptName)
+        .usage("$0 [global-options] <command> [command-options]")
+        .option("cluster-path", {
+          alias: "d",
+          type: "string",
+          demandOption: true,
+          describe: "Directory for cluster data"
+        })
 
-      .option("force", {
-        type: "boolean",
-        default: false,
-        describe: "Remove existing chain-dir before create"
-      })
-      .middleware(({ clusterPath, force }) => {
-        const configFile = Path.join(clusterPath, "cluster-config.json")
-        Object.assign(GlobalArgs, { clusterPath, configFile, force })
+        .option("force", {
+          type: "boolean",
+          default: false,
+          describe: "Remove existing chain-dir before create"
+        })
+        .middleware(({ clusterPath, force }) => {
+          const configFile = Path.join(clusterPath, "cluster-config.json")
+          Object.assign(GlobalArgs, { clusterPath, configFile, force })
 
-        ProcessManager.setClusterPath(clusterPath)
-      })
-      .command(
-        ClusterCommand.create,
-        "Create and bootstrap a new cluster",
-        builder =>
-          builder
-            .option("build-path", {
-              type: "string",
-              demandOption: true,
-              describe: "Path to wire-sysio build directory"
-            })
-            .option("pnodes", {
-              alias: "p",
-              type: "number",
-              default: 1,
-              describe: "Number of producer nodes"
-            })
-            .option("nodes", {
-              alias: "n",
-              type: "number",
-              default: 0,
-              describe: "Number of non-producer nodes"
-            })
-            .option("prod-count", {
-              type: "number",
-              default: 21,
-              describe: "Number of producers to register"
-            })
-            .option("topology", {
-              alias: "s",
-              type: "string",
-              default: "mesh",
-              choices: ["mesh", "ring", "star"] as const,
-              describe: "Network topology"
-            })
-            .option("http-secure", {
-              type: "boolean",
-              default: false,
-              describe: "Use HTTPS for RPC endpoints"
-            })
-            .option("batch-operator-count", {
-              alias: ["b", "batch-operators"],
-              type: "number",
-              default: 3,
-              describe: "Number of batch operator nodes (3–21)"
-            })
-            .option("underwriter-count", {
-              alias: ["u", "underwriters"],
-              type: "number",
-              default: 1,
-              describe: "Number of underwriter nodes (1–100)"
-            })
-            .option("epoch-duration-sec", {
-              alias: ["epoch-duration"],
-              type: "number",
-              default: 360,
-              describe: "Epoch duration in seconds"
-            })
-            .option("warmup-epochs", {
-              type: "number",
-              default: 1,
-              describe:
-                "Epochs before an operator transitions from WARMUP to ACTIVE"
-            })
-            .option("cooldown-epochs", {
-              type: "number",
-              default: 1,
-              describe:
-                "Epochs before an operator can deregister after entering COOLDOWN"
-            })
-            .option("ethereum-path", {
-              type: "string",
-              describe:
-                "Path to wire-ethereum repo root. If provided, anvil is bootstrapped with contract deployment."
-            })
-            .check(argv => {
+          ProcessManager.setClusterPath(clusterPath)
+        })
+        .command(
+          ClusterCommand.create,
+          "Create and bootstrap a new cluster",
+          builder =>
+            builder
+              .option("build-path", {
+                type: "string",
+                demandOption: true,
+                describe: "Path to wire-sysio build directory"
+              })
+              .option("pnodes", {
+                alias: "p",
+                type: "number",
+                default: 1,
+                describe: "Number of producer nodes"
+              })
+              .option("nodes", {
+                alias: "n",
+                type: "number",
+                default: 0,
+                describe: "Number of non-producer nodes"
+              })
+              .option("prod-count", {
+                type: "number",
+                default: 21,
+                describe: "Number of producers to register"
+              })
+              .option("topology", {
+                alias: "s",
+                type: "string",
+                default: "mesh",
+                choices: ["mesh", "ring", "star"] as const,
+                describe: "Network topology"
+              })
+              .option("http-secure", {
+                type: "boolean",
+                default: false,
+                describe: "Use HTTPS for RPC endpoints"
+              })
+              .option("batch-operator-count", {
+                alias: ["b", "batch-operators"],
+                type: "number",
+                default: 3,
+                describe: "Number of batch operator nodes (3–21)"
+              })
+              .option("underwriter-count", {
+                alias: ["u", "underwriters"],
+                type: "number",
+                default: 1,
+                describe: "Number of underwriter nodes (1–100)"
+              })
+              .option("epoch-duration-sec", {
+                alias: ["epoch-duration"],
+                type: "number",
+                default: 360,
+                describe: "Epoch duration in seconds"
+              })
+              .option("warmup-epochs", {
+                type: "number",
+                default: 1,
+                describe:
+                  "Epochs before an operator transitions from WARMUP to ACTIVE"
+              })
+              .option("cooldown-epochs", {
+                type: "number",
+                default: 1,
+                describe:
+                  "Epochs before an operator can deregister after entering COOLDOWN"
+              })
+              .option("ethereum-path", {
+                type: "string",
+                describe:
+                  "Path to wire-ethereum repo root. If provided, anvil is bootstrapped with contract deployment."
+              })
+              .check(argv => {
+                Assert.ok(
+                  inRange(argv["batch-operator-count"], 3, 21),
+                  "--batch-operators must be between 3 and 21"
+                )
+
+                Assert.ok(
+                  inRange(argv["underwriter-count"], 1, 100),
+                  "--underwriters must be between 1 and 100"
+                )
+
+                Assert.ok(
+                  inRange(argv["epoch-duration-sec"], 1),
+                  "--epoch-duration must be at least 1"
+                )
+                return true
+              }),
+          async argv => {
+            const { clusterPath, force, configFile } = GlobalArgs,
+              buildPath = Path.resolve(argv.buildPath as string),
+              {
+                pnodes,
+                nodes,
+                prodCount,
+                httpSecure,
+                batchOperatorCount,
+                underwriterCount,
+                epochDurationSec,
+                warmupEpochs,
+                cooldownEpochs
+              } = argv
+
+            asOption(Fs.existsSync(clusterPath)).ifSome(() => {
               Assert.ok(
-                inRange(argv["batch-operator-count"], 3, 21),
-                "--batch-operators must be between 3 and 21"
+                force,
+                `wire-test-cluster: --force required to overwrite existing directory ${clusterPath}`
               )
-
-              Assert.ok(
-                inRange(argv["underwriter-count"], 1, 100),
-                "--underwriters must be between 1 and 100"
+              log.info(
+                `wire-test-cluster: --force specified, removing ${clusterPath}`
               )
+              Fs.rmSync(clusterPath, { recursive: true, force: true })
+            })
 
-              Assert.ok(
-                inRange(argv["epoch-duration-sec"], 1),
-                "--epoch-duration must be at least 1"
-              )
-              return true
-            }),
-        async argv => {
-          const { clusterPath, force, configFile } = GlobalArgs,
-            buildPath = Path.resolve(argv.buildPath as string),
-            {
-              pnodes,
-              nodes,
-              prodCount,
-              httpSecure,
-              batchOperatorCount,
-              underwriterCount,
-              epochDurationSec,
-              warmupEpochs,
-              cooldownEpochs
-            } = argv
+            mkdirs(clusterPath)
 
-          asOption(Fs.existsSync(clusterPath)).ifSome(() => {
-            Assert.ok(
-              force,
-              `wire-test-cluster: --force required to overwrite existing directory ${clusterPath}`
-            )
-            log.info(
-              `wire-test-cluster: --force specified, removing ${clusterPath}`
-            )
-            Fs.rmSync(clusterPath, { recursive: true, force: true })
-          })
+            // CREATE THE CONFIG
+            const ethereumPath = Path.resolve(argv.ethereumPath),
+              nodeCount = pnodes + nodes,
+              ports = await ClusterPorts.resolve({
+                nodeCount,
+                batchOperatorCount,
+                underwriterCount
+              }),
+              config: ClusterConfig = {
+                buildPath,
+                clusterPath,
+                dataPath: mkdirs(Path.join(clusterPath, "data")),
+                walletPath: mkdirs(Path.join(clusterPath, "wallet")),
+                producerCount: prodCount,
+                nodeCount,
+                httpSecure,
+                batchOperatorCount,
+                underwriterCount,
+                ethereumPath,
+                epochDurationSec,
+                warmupEpochs,
+                cooldownEpochs,
+                ports,
+                executables: await ClusterManager.resolveExePaths(buildPath)
+              }
 
-          mkdirs(clusterPath)
+            log.info(`wire-test-cluster: writing config to ${configFile}`)
+            Fs.writeFileSync(configFile, JSON.stringify(config, null, 2))
 
-          // CREATE THE CONFIG
-          const ethereumPath = Path.resolve(argv.ethereumPath),
-            nodeCount = pnodes + nodes,
-            ports = await ClusterPorts.resolve({
-              nodeCount,
-              batchOperatorCount,
-              underwriterCount
-            }),
-            config: ClusterConfig = {
-              buildPath,
-              clusterPath,
-              dataPath: mkdirs(Path.join(clusterPath, "data")),
-              walletPath: mkdirs(Path.join(clusterPath, "wallet")),
-              producerCount: prodCount,
-              nodeCount,
-              httpSecure,
-              batchOperatorCount,
-              underwriterCount,
-              ethereumPath,
-              epochDurationSec,
-              warmupEpochs,
-              cooldownEpochs,
-              ports,
-              executables: await ClusterManager.resolveExePaths(buildPath)
+            await createClusterManager(config).create()
+
+            log.info("wire-test-cluster: cluster created successfully")
+            process.exit(0)
+          }
+        )
+        .command(
+          ClusterCommand.run,
+          "Start an existing cluster from saved state",
+          identity,
+          async _argv => {
+            // THIS WILL START THE CLUSTER & WAIT ON A STOP SIGNAL
+            // BEFORE RETURNING.
+            const config = loadClusterConfig()
+            await ClusterPorts.verifyAvailable(config.ports)
+            await createClusterManager(config).loadState().startAndWait()
+          }
+        )
+        .command(
+          ClusterCommand.destroy,
+          "Stop and remove a cluster",
+          identity,
+          async _argv => {
+            const { clusterPath } = GlobalArgs,
+              manager = createClusterManager(loadClusterConfig()).loadState()
+
+            if (!Fs.existsSync(clusterPath)) {
+              console.error(`Error: chain-dir does not exist: ${clusterPath}`)
+              process.exit(1)
             }
 
-          log.info(`wire-test-cluster: writing config to ${configFile}`)
-          Fs.writeFileSync(configFile, JSON.stringify(config, null, 2))
+            try {
+              await manager.stop()
+            } catch (err) {
+              log.error(`wire-test-cluster: failed to stop cluster: ${err}`)
+            }
 
-          await createClusterManager(config).create()
-
-          log.info("wire-test-cluster: cluster created successfully")
-          process.exit(0)
-        }
-      )
-      .command(
-        ClusterCommand.run,
-        "Start an existing cluster from saved state",
-        identity,
-        async _argv => {
-          // THIS WILL START THE CLUSTER & WAIT ON A STOP SIGNAL
-          // BEFORE RETURNING.
-          const config = loadClusterConfig()
-          await ClusterPorts.verifyAvailable(config.ports)
-          await createClusterManager(config).loadState().startAndWait()
-        }
-      )
-      .command(
-        ClusterCommand.destroy,
-        "Stop and remove a cluster",
-        identity,
-        async _argv => {
-          const { clusterPath } = GlobalArgs,
-            manager = createClusterManager(loadClusterConfig()).loadState()
-
-          if (!Fs.existsSync(clusterPath)) {
-            console.error(`Error: chain-dir does not exist: ${clusterPath}`)
-            process.exit(1)
+            Fs.rmSync(clusterPath, { recursive: true, force: true })
+            log.info(`wire-test-cluster: destroyed ${clusterPath}`)
           }
+        )
+        .demandCommand(1, "A command is required: create, run, or destroy")
+        .strict()
+        .help()
+        .parse()
 
-          try {
-            await manager.stop()
-          } catch (err) {
-            log.error(`wire-test-cluster: failed to stop cluster: ${err}`)
-          }
-
-          Fs.rmSync(clusterPath, { recursive: true, force: true })
-          log.info(`wire-test-cluster: destroyed ${clusterPath}`)
-        }
-      )
-      .demandCommand(1, "A command is required: create, run, or destroy")
-      .strict()
-      .help()
-      .parse()
-
-  // IF A PROMISE WAS RETURNED, AWAIT IT
-  await (isPromise(result) ? result : Promise.resolve(result))
+    // IF A PROMISE WAS RETURNED, AWAIT IT
+    await (isPromise(result) ? result : Promise.resolve(result))
+  } catch (err) {
+    console.error("wire-test-cluster fatal error:", err)
+    process.exit(1)
+  }
 }
 
 main().catch(err => {

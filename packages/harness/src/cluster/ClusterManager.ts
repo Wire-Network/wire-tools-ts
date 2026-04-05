@@ -59,6 +59,7 @@ import { ETHBootstrapper } from "./ETHBootstrapper.js"
 import { ClusterPorts } from "./ClusterPorts.js"
 import Bluebird from "bluebird"
 import { P } from "ts-pattern"
+import { string } from "yargs"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -215,6 +216,7 @@ export class ClusterManager {
       await kiod.start()
 
       const clioWallet = new Clio({
+        clusterPath,
         binary: executables.clio,
         url: ClusterManager.ClioFallbackUrl,
         walletUrl: kiod.httpUrl
@@ -395,7 +397,9 @@ export class ClusterManager {
           nodeGenesisFile = Path.join(nodePath, "genesis.json"),
           httpPort = ports.batchOperatorHttp[i],
           p2pPort = ports.batchOperatorP2p[i],
-          peers = producerPeerAddresses.filter(a => a !== `localhost:${p2pPort}`),
+          peers = producerPeerAddresses.filter(
+            a => a !== `localhost:${p2pPort}`
+          ),
           keys = batchOpKeys[i],
           account = batchOperatorAccountName(i),
           wireK1SigProvider = formatK1SignatureProvider({
@@ -461,7 +465,9 @@ export class ClusterManager {
         const nodeGenesisFile = Path.join(nodePath, "genesis.json")
         const httpPort = ports.underwriterHttp[i]
         const p2pPort = ports.underwriterP2p[i]
-        const peers = producerPeerAddresses.filter(a => a !== `localhost:${p2pPort}`)
+        const peers = producerPeerAddresses.filter(
+          a => a !== `localhost:${p2pPort}`
+        )
         const keys = uwKeys[i]
         const account = underwriterAccountName(i)
 
@@ -533,6 +539,7 @@ export class ClusterManager {
 
       // ── 9. Bootstrap ──
       const clio = new Clio({
+        clusterPath,
         binary: executables.clio,
         url: biosHttpUrl,
         walletUrl: kiod.httpUrl
@@ -583,18 +590,33 @@ export class ClusterManager {
         )
 
         // ABI files for OPP contracts (Hardhat artifact format, parser handles it)
+        // Generate ABI files with embedded deployed addresses for the
+        // outpost_ethereum_client_plugin. Each file is a JSON object with
+        // { address, abi } so get_events can filter by contract address.
+        const ethAbiDir = mkdirs(Path.join(dataPath, "eth-abis"))
         const ethAbiFiles = ["OPP", "OPPInbound", "BAR"]
-          .map(name =>
-            Path.join(
-              cfg.ethereumPath,
+          .map(name => {
+            const artifactPath = Path.join(
+              cfg.ethereumPath!,
               "artifacts",
               "contracts",
               "outpost",
               `${name}.sol`,
               `${name}.json`
             )
-          )
-          .filter(p => Fs.existsSync(p))
+            if (!Fs.existsSync(artifactPath)) return null
+            const artifact = JSON.parse(Fs.readFileSync(artifactPath, "utf-8"))
+            const addr = ethAddrs[name]
+            const abiWithAddr = {
+              contractName: name,
+              address: addr,
+              abi: artifact.abi
+            }
+            const outPath = Path.join(ethAbiDir, `${name}.json`)
+            Fs.writeFileSync(outPath, JSON.stringify(abiWithAddr, null, 2))
+            return outPath
+          })
+          .filter((p): p is string => p !== null)
 
         // Derive ETH signing accounts from anvil's deterministic mnemonic.
         // Account 0 is the deployer; accounts 1..N are for batch operators.
@@ -1301,13 +1323,43 @@ async function bootstrapChain(
       {
         actor: "sysio.authex",
         permission: "owner"
-      },
+      }
+    ]
+  })
+  await clio.pushTransaction({
+    account: "sysio",
+    name: "updateauth",
+    data: {
+      account: "sysio.authex",
+      permission: "owner",
+      parent: "",
+      auth: {
+        threshold: 1,
+        keys: [
+          {
+            key: DEV_K1_PUBLIC_KEY,
+            weight: 1
+          }
+        ],
+        accounts: [
+          {
+            permission: {
+              actor: "sysio.authex",
+              permission: "sysio.code"
+            },
+            weight: 1
+          }
+        ]
+      }
+    },
+    authorization: [
       {
         actor: "sysio",
         permission: "active"
       }
     ]
   })
+
   log.info("[Phase 12] sysio.authex deployed")
 
   // ── Phase 13: System init ──
@@ -1329,17 +1381,43 @@ async function bootstrapChain(
       continue
     }
     await retry(
-      () =>
-        clio.setContractAndWait(
+      async () => {
+        await clio.setContractAndWait(
           contractName,
           contractPath,
           `${contractName}.wasm`,
           `${contractName}.abi`
-        ),
+        )
+        await clio.setPriv(contractName)
+      },
       { label: `deploy ${contractName}`, maxAttempts: 3, delayMs: 2000 }
     )
   }
   log.info("[Phase 14] OPP contracts deployed")
+
+  // ── Phase 14a: Grant sysio.epoch@sysio.code on active authority ──
+  // Required for inline actions (e.g., queueout to sysio.msgch during advance)
+
+  await clio.pushTransaction({
+    account: "sysio",
+    name: "updateauth",
+    data: {
+      account: "sysio.epoch",
+      permission: "owner",
+      parent: "",
+      auth: {
+        threshold: 1,
+        keys: [{ key: DEV_K1_PUBLIC_KEY, weight: 1 }],
+        accounts: [
+          {
+            permission: { actor: "sysio.epoch", permission: "sysio.code" },
+            weight: 1
+          }
+        ]
+      }
+    },
+    authorization: [{ actor: "sysio.epoch", permission: "owner" }]
+  })
 
   // ── Phase 15: Configure sysio.epoch ──
   log.info("[Phase 15] Configuring sysio.epoch...")

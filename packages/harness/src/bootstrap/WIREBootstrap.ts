@@ -10,7 +10,8 @@ import {
   DEV_BLS_PROOF_OF_POSSESSION,
   DEV_BLS_PUBLIC_KEY,
   DEV_K1_PRIVATE_KEY,
-  DEV_K1_PUBLIC_KEY
+  DEV_K1_PUBLIC_KEY,
+  OPP_SYSTEM_ACCOUNTS
 } from "../cluster/constants.js"
 import { SystemContracts } from "@wireio/sdk-core"
 import { asOption, Future } from "@3fv/prelude-ts"
@@ -31,6 +32,11 @@ import { assert } from "@wireio/shared"
  */
 
 export interface WIREBootstrapOptions {
+  /**
+   * Path to cluster path root
+   */
+  clusterPath: string
+
   /** Path to wire-sysio build directory */
   buildPath: string
 
@@ -89,10 +95,7 @@ export const SYSTEM_ACCOUNTS = [
   "sysio.roa",
   "sysio.authex",
   // OPP contracts
-  "sysio.epoch",
-  "sysio.msgch",
-  "sysio.uwrit",
-  "sysio.chalg"
+  ...OPP_SYSTEM_ACCOUNTS
 ] as const
 
 export type SystemAccountName = (typeof SYSTEM_ACCOUNTS)[number]
@@ -126,6 +129,7 @@ export class WIREBootstrap {
 
   private constructor(readonly config: WIREBootstrapConfig) {
     this.clio = new Clio({
+      clusterPath: config.clusterPath,
       binary: config.clioBinary,
       url: config.httpUrl,
       walletUrl: config.walletUrl ?? undefined

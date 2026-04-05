@@ -214,7 +214,7 @@ describe("Flow D: Collateral Deposit via BAR (ETH → WIRE)", () => {
   test("ETH outpost is registered", async () => {
     const { rows } = await wireClient.getOutposts()
     const ethOutpost = rows.find(r =>
-      (r.chain_kind === "chain_kind_ethereum" || r.chain_kind === 2 as any) &&
+      r.chain_kind === 2 &&
       r.chain_id === 31337
     )
     expect(ethOutpost).toBeDefined()
@@ -222,10 +222,10 @@ describe("Flow D: Collateral Deposit via BAR (ETH → WIRE)", () => {
 
   test("Batch operators are ACTIVE and in groups", async () => {
     const { rows } = await wireClient.getOperators()
-    const batchOps = rows.filter(r => r.type === "OPERATOR_TYPE_BATCH")
+    const batchOps = rows.filter(r => r.type === OPERATOR_TYPE_BATCH)
     expect(batchOps.length).toBe(3)
     batchOps.forEach(op => {
-      expect(op.status).toBe("OPERATOR_STATUS_ACTIVE")
+      expect(op.status).toBe(3) // OPERATOR_STATUS_ACTIVE
       expect(Number(op.assigned_batch_op_group)).not.toBe(255)
     })
   })

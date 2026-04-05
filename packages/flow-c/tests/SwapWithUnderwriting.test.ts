@@ -185,7 +185,9 @@ describe("Flow C: SWAP with Underwriting", () => {
         sender: "0xUserEthAddress000000000000000001",
         recipient: "SoLRecipientPubkey11111111111111111111"
       }
-      const swapDataHex = Buffer.from(JSON.stringify(swapPayload)).toString("hex")
+      const swapDataHex = Buffer.from(JSON.stringify(swapPayload)).toString(
+        "hex"
+      )
 
       await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchQueueoutAction>(
         "sysio.msgch",
@@ -349,7 +351,9 @@ describe("Flow C: SWAP with Underwriting", () => {
         uw_entry_id: uwEntryId,
         confirmed: true
       }
-      const confirmDataHex = Buffer.from(JSON.stringify(confirmPayload)).toString("hex")
+      const confirmData = Buffer.from(JSON.stringify(confirmPayload)).toString(
+        "hex"
+      )
 
       // Create inbound chain requests for both outposts
       await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchCreatereqAction>(
@@ -465,7 +469,9 @@ describe("Flow C: SWAP with Underwriting", () => {
         target_amount: "1042.0000 SOL",
         target_chain: CHAIN_KIND_SOLANA
       }
-      const remitDataHex = Buffer.from(JSON.stringify(remitPayload)).toString("hex")
+      const remitDataHex = Buffer.from(JSON.stringify(remitPayload)).toString(
+        "hex"
+      )
 
       await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchQueueoutAction>(
         "sysio.msgch",
