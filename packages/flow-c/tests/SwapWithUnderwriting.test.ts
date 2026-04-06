@@ -6,6 +6,15 @@ import {
   sleep
 } from "@wire-e2e-tests/harness"
 import { SystemContracts } from "@wireio/sdk-core"
+import {
+  ChainKind,
+  AttestationType,
+  ChainRequestStatus,
+  MessageDirection,
+  MessageStatus,
+  EnvelopeStatus,
+  UnderwriteStatus
+} from "@wireio/opp-solidity-models"
 import { createHash } from "crypto"
 
 /**
@@ -32,38 +41,26 @@ import { createHash } from "crypto"
 // Constants matching contract header enums
 // ---------------------------------------------------------------------------
 
-/** sysio.msgch MessageStatus */
-const MSG_PENDING = 0
-const MSG_READY = 1
-const MSG_PROCESSED = 2
-
-/** sysio.msgch MessageDirection */
-const DIR_INBOUND = 0
-const DIR_OUTBOUND = 1
-
-/** sysio.msgch ChainRequestStatus */
-const REQ_PENDING = 0
-const REQ_COLLECTING = 1
-const REQ_CONSENSUS_OK = 2
-
-/** sysio.msgch EnvelopeStatus */
-const ENV_PENDING_DELIVERY = 0
-
-/** sysio.uwrit UnderwriteStatus */
-const UW_INTENT_SUBMITTED = 0
-const UW_INTENT_CONFIRMED = 1
-const UW_COMPLETED = 2
-
-/** AttestationType protobuf values */
-const ATTESTATION_TYPE_SWAP = 60934
-const ATTESTATION_TYPE_UNDERWRITE_INTENT = 60935
-const ATTESTATION_TYPE_UNDERWRITE_CONFIRM = 60936
-const ATTESTATION_TYPE_REMIT = 60937
-const ATTESTATION_TYPE_REMIT_CONFIRM = 60938
-
-/** ChainKind protobuf values */
-const CHAIN_KIND_ETHEREUM = 2
-const CHAIN_KIND_SOLANA = 3
+// ── Protobuf enum aliases from @wireio/opp-solidity-models ──
+const MSG_PENDING = MessageStatus.PENDING
+const MSG_READY = MessageStatus.READY
+const MSG_PROCESSED = MessageStatus.PROCESSED
+const DIR_INBOUND = MessageDirection.INBOUND
+const DIR_OUTBOUND = MessageDirection.OUTBOUND
+const REQ_PENDING = ChainRequestStatus.PENDING
+const REQ_COLLECTING = ChainRequestStatus.COLLECTING
+const REQ_CONSENSUS_OK = ChainRequestStatus.CONSENSUS_OK
+const ENV_PENDING_DELIVERY = EnvelopeStatus.PENDING_DELIVERY
+const UW_INTENT_SUBMITTED = UnderwriteStatus.INTENT_SUBMITTED
+const UW_INTENT_CONFIRMED = UnderwriteStatus.INTENT_CONFIRMED
+const UW_COMPLETED = UnderwriteStatus.COMPLETED
+const ATTESTATION_TYPE_SWAP = AttestationType.SWAP
+const ATTESTATION_TYPE_UNDERWRITE_INTENT = AttestationType.UNDERWRITE_INTENT
+const ATTESTATION_TYPE_UNDERWRITE_CONFIRM = AttestationType.UNDERWRITE_CONFIRM
+const ATTESTATION_TYPE_REMIT = AttestationType.REMIT
+const ATTESTATION_TYPE_REMIT_CONFIRM = AttestationType.REMIT_CONFIRM
+const CHAIN_KIND_ETHEREUM = ChainKind.ETHEREUM
+const CHAIN_KIND_SOLANA = ChainKind.SOLANA
 
 /** Outpost IDs (assigned during bootstrap registration order) */
 const ETH_OUTPOST_ID = 0
@@ -73,9 +70,17 @@ const SOL_OUTPOST_ID = 1
 // Environment config
 // ---------------------------------------------------------------------------
 
-const WIRE_BUILD_DIR =
-  process.env.WIRE_BUILD_DIR || "/data/shared/code/wire/wire-sysio/build/claude"
-const WIRE_CHAIN_DIR = process.env.WIRE_CHAIN_DIR || "/tmp/wire-e2e-flow-c"
+import Assert from "node:assert"
+Assert.ok(
+  process.env.WIRE_BUILD_DIR,
+  "WIRE_BUILD_DIR environment variable is required"
+)
+Assert.ok(
+  process.env.WIRE_CHAIN_DIR,
+  "WIRE_CHAIN_DIR environment variable is required"
+)
+const WIRE_BUILD_DIR = process.env.WIRE_BUILD_DIR
+const WIRE_CHAIN_DIR = process.env.WIRE_CHAIN_DIR
 
 const config: TestEnvironmentConfig = {
   wire: {
@@ -355,21 +360,6 @@ describe("Flow C: SWAP with Underwriting", () => {
         "hex"
       )
 
-      // Create inbound chain requests for both outposts
-      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchCreatereqAction>(
-        "sysio.msgch",
-        "createreq",
-        { outpost_id: String(ETH_OUTPOST_ID) },
-        "sysio.msgch@active"
-      )
-
-      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchCreatereqAction>(
-        "sysio.msgch",
-        "createreq",
-        { outpost_id: String(SOL_OUTPOST_ID) },
-        "sysio.msgch@active"
-      )
-
       // Read the chain requests to get their IDs
       const chainReqs = await env.wireClient!.getChainRequests()
       const reqRows = chainReqs.rows ?? []
@@ -505,14 +495,6 @@ describe("Flow C: SWAP with Underwriting", () => {
         success: true
       })
       const remitConfirmHex = Buffer.from(remitConfirmData).toString("hex")
-
-      // Create a new inbound chain request for SOL
-      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchCreatereqAction>(
-        "sysio.msgch",
-        "createreq",
-        { outpost_id: String(SOL_OUTPOST_ID) },
-        "sysio.msgch@active"
-      )
 
       // Get the latest SOL chain request
       const chainReqs = await env.wireClient!.getChainRequests()

@@ -33,7 +33,7 @@
     "types": ["node", "jest"],
     "paths": {
       "@wire-e2e-tests/harness": [
-        "./packages/harness/src"
+        "./packages/harness/src/index.ts"
       ],
       "@wire-e2e-tests/harness/*": [
         "./packages/harness/src/*"

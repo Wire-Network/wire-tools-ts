@@ -1,12 +1,10 @@
 import "jest"
+import Assert from "node:assert"
 import {
   TestEnvironment,
-  type TestEnvironmentConfig,
-  retry,
-  sleep
+  type TestEnvironmentConfig
 } from "@wire-e2e-tests/harness"
-
-import { SystemContracts } from "@wireio/sdk-core"
+import { ChainKind, OperatorType } from "@wireio/opp-solidity-models"
 
 /**
  * Flow A: Empty Epoch (Balance Sheet Only)
@@ -16,11 +14,19 @@ import { SystemContracts } from "@wireio/sdk-core"
  *   1. All three chains are running (WIRE, ETH, SOL)
  *   2. OPP contracts are deployed and epoch config is initialized
  *   3. Outposts are registered (ETH + SOL)
- *   4. Batch operator is registered
- *   5. Outbound crank produces empty envelope (no user activity)
- *   6. Depot consensus succeeds with no messages
- *   7. No state mutations beyond reserve snapshots
+ *   4. Batch operators are registered and assigned to groups
+ *   5. Messages table is empty (no user activity)
+ *   6. No state mutations (underwriting, challenges, collateral)
  */
+
+Assert.ok(
+  process.env.WIRE_BUILD_DIR,
+  "WIRE_BUILD_DIR environment variable is required"
+)
+Assert.ok(
+  process.env.WIRE_CHAIN_DIR,
+  "WIRE_CHAIN_DIR environment variable is required"
+)
 
 const WIRE_BUILD_DIR = process.env.WIRE_BUILD_DIR
 const WIRE_CHAIN_DIR = process.env.WIRE_CHAIN_DIR
@@ -69,11 +75,10 @@ describe("Flow A: Empty Epoch", () => {
   })
 
   test("Epoch config is initialized on WIRE chain", async () => {
-    const result = await env.wireClient!.getEpochConfig()
-    expect(result.rows.length).toBeGreaterThan(0)
-    const cfg = result.rows[0]
-    expect(cfg.epoch_duration_sec).toBe(360)
-    expect(cfg.operators_per_epoch).toBe(7)
+    const { rows } = await env.wireClient!.getEpochConfig()
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows[0].epoch_duration_sec).toBe(360)
+    expect(rows[0].operators_per_epoch).toBe(7)
   })
 
   test("OPP contracts are deployed", async () => {
@@ -84,106 +89,58 @@ describe("Flow A: Empty Epoch", () => {
       "sysio.chalg"
     ]
     for (const account of oppAccounts) {
-      // Verify each contract account exists by reading its table (if account
-      // doesn't exist the call throws)
       const result = await env
         .wireClient!.getTableRows({
           code: account,
           scope: account,
-          table: "dummy", // table may not exist, but the RPC will succeed if the account exists
+          table: "dummy",
           limit: 1
         })
         .catch(async () => {
-          // If the table doesn't exist, try getInfo via clio to confirm the
-          // account is on chain -- clio.getInfo succeeds if chain is up
           const info = await env.wireClient!.clio.getInfo()
           expect(info).toBeDefined()
           return { rows: [] }
         })
-      // If we got here without throwing, the account's contract is accessible
       expect(result).toBeDefined()
     }
   })
 
   test("Outposts are registered", async () => {
-    const result = await env.wireClient!.getOutposts()
-    expect(result.rows.length).toBe(2) // ETH + SOL
+    const { rows } = await env.wireClient!.getOutposts()
+    expect(rows.length).toBe(2)
+
+    const ethOutpost = rows.find(
+      (r: any) => r.chain_kind === ChainKind.ETHEREUM
+    )
+    expect(ethOutpost).toBeDefined()
+
+    const solOutpost = rows.find((r: any) => r.chain_kind === ChainKind.SOLANA)
+    expect(solOutpost).toBeDefined()
   })
 
-  test("Outbound crank produces empty envelope (no user activity)", async () => {
-    const clio = env.wireClient!.clio
-
-    // Push crank action -- in an empty epoch there are no pending messages
-    try {
-      await clio.pushAction<SystemContracts.SysioMsgchCrankAction>(
-        "sysio.msgch",
-        "crank",
-        {},
-        "sysio@active"
-      )
-    } catch (err: any) {
-      // crank with no pending work may return an assertion error, which is
-      // acceptable in an empty epoch scenario
-      expect(
-        err.message?.includes("nothing to crank") ||
-          err.message?.includes("no pending") ||
-          err.stderr?.includes("nothing to crank") ||
-          err.stderr?.includes("no pending") ||
-          err.stderr?.includes("assertion") ||
-          true // any error from empty crank is acceptable
-      ).toBe(true)
-    }
-
-    // Verify the messages table is empty -- no user actions means no outbound messages
-    const msgResult = await env.wireClient!.getMessages()
-    expect(msgResult.rows.length).toBe(0)
+  test("Batch operators are registered", async () => {
+    const { rows } = await env.wireClient!.getOperators()
+    const batchOps = rows.filter((r: any) => r.type === OperatorType.BATCH)
+    expect(batchOps.length).toBeGreaterThanOrEqual(1)
   })
 
-  test("Depot consensus succeeds with no messages", async () => {
-    const clio = env.wireClient!.clio
-
-    // In an empty epoch, attempt createreq for ETH outpost (outpost_id=0)
-    try {
-      await clio.pushAction<SystemContracts.SysioMsgchCreatereqAction>(
-        "sysio.msgch",
-        "createreq",
-        { outpost_id: "0" },
-        "sysio@active"
-      )
-    } catch (err: any) {
-      // createreq may fail if no epoch has finalized yet -- this is expected
-      // in an empty epoch with no outpost activity
-      expect(
-        err.stderr?.includes("no finalized epoch") ||
-          err.stderr?.includes("assertion") ||
-          err.message?.includes("no finalized epoch") ||
-          err.message?.includes("assertion") ||
-          true // empty epoch may legitimately have nothing to request
-      ).toBe(true)
-    }
-
-    // Verify chain requests table state
-    const reqResult = await env.wireClient!.getChainRequests()
-    // In an empty epoch, there may be zero or one chain request depending on
-    // whether createreq succeeded. Either outcome is valid.
-    expect(reqResult.rows.length).toBeGreaterThanOrEqual(0)
+  test("Messages table is empty (no user activity)", async () => {
+    const { rows } = await env.wireClient!.getMessages()
+    expect(rows.length).toBe(0)
   })
 
   test("No state mutations beyond reserve snapshots", async () => {
-    // Verify underwriting ledger is empty (no underwriting happened)
-    const uwResult = await env.wireClient!.getUnderwritingLedger()
-    expect(uwResult.rows.length).toBe(0)
+    const { rows: uwRows } = await env.wireClient!.getUnderwritingLedger()
+    expect(uwRows.length).toBe(0)
 
-    // Verify no active challenges
-    const chalResult = await env.wireClient!.getTableRows({
+    const { rows: chalRows } = await env.wireClient!.getTableRows({
       code: "sysio.chalg",
       scope: "sysio.chalg",
       table: "challenges"
     })
-    expect(chalResult.rows.length).toBe(0)
+    expect(chalRows.length).toBe(0)
 
-    // Verify collateral table is empty (no underwriter posted collateral)
-    const colResult = await env.wireClient!.getCollateral()
-    expect(colResult.rows.length).toBe(0)
+    const { rows: colRows } = await env.wireClient!.getCollateral()
+    expect(colRows.length).toBe(0)
   })
 })

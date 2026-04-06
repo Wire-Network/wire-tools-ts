@@ -1,10 +1,21 @@
+import "jest"
 import {
   TestEnvironment,
   type TestEnvironmentConfig,
   retry,
-  sleep,
+  sleep
 } from "@wire-e2e-tests/harness"
+import Assert from "node:assert"
 import { SystemContracts } from "@wireio/sdk-core"
+import {
+  ChainKind,
+  OperatorType,
+  OperatorStatus,
+  AttestationType,
+  ChainRequestStatus,
+  MessageDirection,
+  MessageStatus
+} from "@wireio/opp-solidity-models"
 
 /**
  * Flow B: Node Operator Collateral Deposit
@@ -27,53 +38,44 @@ import { SystemContracts } from "@wireio/sdk-core"
  *   EPOCH N+warmup — Operator becomes ACTIVE
  */
 
-const WIRE_BUILD_DIR = process.env.WIRE_BUILD_DIR || "/data/shared/code/wire/wire-sysio/build/claude"
-const WIRE_CHAIN_DIR = process.env.WIRE_CHAIN_DIR || "/tmp/wire-e2e-flow-b"
+Assert.ok(
+  process.env.WIRE_BUILD_DIR,
+  "WIRE_BUILD_DIR environment variable is required"
+)
+Assert.ok(
+  process.env.WIRE_CHAIN_DIR,
+  "WIRE_CHAIN_DIR environment variable is required"
+)
+const WIRE_BUILD_DIR = process.env.WIRE_BUILD_DIR
+const WIRE_CHAIN_DIR = process.env.WIRE_CHAIN_DIR
 
 const config: TestEnvironmentConfig = {
   wire: {
     buildPath: WIRE_BUILD_DIR,
     chainPath: WIRE_CHAIN_DIR,
-    plugins: [
-      "sysio::batch_operator_plugin",
-    ],
+    plugins: ["sysio::batch_operator_plugin"]
   },
   ethereum: {
     port: 28545,
-    chainId: 31337,
-  },
+    chainId: 31337
+  }
 }
 
-// ── Protobuf enum constants (match C++ contract headers) ──
-
-/** OperatorType from sysio.epoch */
-const OP_TYPE_BATCH = 2
-const OP_TYPE_UNDERWRITER = 3
-
-/** OperatorStatus from sysio.epoch */
-const OP_STATUS_WARMUP = 1
-const OP_STATUS_ACTIVE = 3
-
-/** ChainRequestStatus from sysio.msgch */
-const REQ_PENDING = 0
-const REQ_COLLECTING = 1
-const REQ_CONSENSUS_OK = 2
-
-/** MessageDirection from sysio.msgch */
-const DIR_INBOUND = 0
-
-/** MessageStatus from sysio.msgch */
-const MSG_PENDING = 0
-const MSG_READY = 1
-const MSG_PROCESSED = 2
-
-/** AttestationType: OPERATOR_ACTION */
-const ATTEST_OPERATOR_ACTION = 3
-/** AttestationType: RESERVE_BALANCE_SHEET */
-const ATTEST_RESERVE_BALANCE_SHEET = 4
-
-/** ChainKind: ETHEREUM */
-const CHAIN_KIND_ETHEREUM = 2
+// ── Protobuf enum aliases from @wireio/opp-solidity-models ──
+const OP_TYPE_BATCH = OperatorType.BATCH
+const OP_TYPE_UNDERWRITER = OperatorType.UNDERWRITER
+const OP_STATUS_WARMUP = OperatorStatus.WARMUP
+const OP_STATUS_ACTIVE = OperatorStatus.ACTIVE
+const REQ_PENDING = ChainRequestStatus.PENDING
+const REQ_COLLECTING = ChainRequestStatus.COLLECTING
+const REQ_CONSENSUS_OK = ChainRequestStatus.CONSENSUS_OK
+const DIR_INBOUND = MessageDirection.INBOUND
+const MSG_PENDING = MessageStatus.PENDING
+const MSG_READY = MessageStatus.READY
+const MSG_PROCESSED = MessageStatus.PROCESSED
+const ATTEST_OPERATOR_ACTION = AttestationType.OPERATOR_ACTION
+const ATTEST_RESERVE_BALANCE_SHEET = AttestationType.RESERVE_BALANCE_SHEET
+const CHAIN_KIND_ETHEREUM = ChainKind.ETHEREUM
 
 /** Batch operator account name (index 0 = "batchop.a") */
 const BATCH_OP_ACCOUNT = "batchop.a"
@@ -85,8 +87,10 @@ const OPERATOR_COUNT = 7
 const DEPOSIT_AMOUNT_WEI = "5000000000000000000"
 
 /** A deterministic fake chain hash for test deliveries */
-const FAKE_CHAIN_HASH = "0000000000000000000000000000000000000000000000000000000000000001"
-const FAKE_MERKLE_ROOT = "0000000000000000000000000000000000000000000000000000000000000002"
+const FAKE_CHAIN_HASH =
+  "0000000000000000000000000000000000000000000000000000000000000001"
+const FAKE_MERKLE_ROOT =
+  "0000000000000000000000000000000000000000000000000000000000000002"
 
 /**
  * Generate batch operator account names: batchop.a through batchop.g
@@ -126,7 +130,11 @@ describe("Flow B: Collateral Deposit", () => {
     const clio = env.wireClient!.clio
     const result = await retry(
       async () => {
-        const table = await clio.getTable("sysio.epoch", "sysio.epoch", "operators")
+        const table = await clio.getTable(
+          "sysio.epoch",
+          "sysio.epoch",
+          "operators"
+        )
         return table
       },
       { label: "read operators table", maxAttempts: 5, delayMs: 2000 }
@@ -144,12 +152,13 @@ describe("Flow B: Collateral Deposit", () => {
 
     // Register the batch operator via sysio.epoch::regoperator
     await retry(
-      () => clio.pushAction<SystemContracts.SysioEpochRegoperatorAction>(
-        "sysio.epoch",
-        "regoperator",
-        { account: BATCH_OP_ACCOUNT, type: OP_TYPE_BATCH },
-        "sysio.epoch@active"
-      ),
+      () =>
+        clio.pushAction<SystemContracts.SysioEpochRegoperatorAction>(
+          "sysio.epoch",
+          "regoperator",
+          { account: BATCH_OP_ACCOUNT, type: OP_TYPE_BATCH },
+          "sysio.epoch@active"
+        ),
       { label: "regoperator", maxAttempts: 3, delayMs: 2000 }
     )
 
@@ -185,17 +194,6 @@ describe("Flow B: Collateral Deposit", () => {
     )
     expect(ethOutpost).toBeDefined()
     const outpostId = ethOutpost.id
-
-    // Create an inbound chain request for the ETH outpost
-    await retry(
-      () => clio.pushAction<SystemContracts.SysioMsgchCreatereqAction>(
-        "sysio.msgch",
-        "createreq",
-        { outpost_id: outpostId },
-        "sysio.msgch@active"
-      ),
-      { label: "createreq", maxAttempts: 3, delayMs: 2000 }
-    )
 
     // Read the chain request to get its ID
     const reqResult = await env.wireClient!.getChainRequests()
@@ -233,7 +231,10 @@ describe("Flow B: Collateral Deposit", () => {
         )
       } catch (err: any) {
         // Operator may already be registered
-        if (!err.message?.includes("already") && !err.stderr?.includes("already")) {
+        if (
+          !err.message?.includes("already") &&
+          !err.stderr?.includes("already")
+        ) {
           throw err
         }
       }
@@ -242,31 +243,33 @@ describe("Flow B: Collateral Deposit", () => {
     // Each operator delivers the same chain hash
     for (const operatorAcct of operators) {
       await retry(
-        () => clio.pushAction<SystemContracts.SysioMsgchDeliverAction>(
-          "sysio.msgch",
-          "deliver",
-          {
-            operator_acct: operatorAcct,
-            req_id: reqId,
-            chain_hash: FAKE_CHAIN_HASH,
-            merkle_root: FAKE_MERKLE_ROOT,
-            msg_count: 1,
-            raw_messages: "",
-          },
-          `${operatorAcct}@active`
-        ),
+        () =>
+          clio.pushAction<SystemContracts.SysioMsgchDeliverAction>(
+            "sysio.msgch",
+            "deliver",
+            {
+              operator_acct: operatorAcct,
+              req_id: reqId,
+              chain_hash: FAKE_CHAIN_HASH,
+              merkle_root: FAKE_MERKLE_ROOT,
+              msg_count: 1,
+              raw_messages: ""
+            },
+            `${operatorAcct}@active`
+          ),
         { label: `deliver from ${operatorAcct}`, maxAttempts: 3, delayMs: 1000 }
       )
     }
 
     // Evaluate consensus
     await retry(
-      () => clio.pushAction<SystemContracts.SysioMsgchEvalconsAction>(
-        "sysio.msgch",
-        "evalcons",
-        { req_id: reqId },
-        "sysio.msgch@active"
-      ),
+      () =>
+        clio.pushAction<SystemContracts.SysioMsgchEvalconsAction>(
+          "sysio.msgch",
+          "evalcons",
+          { req_id: reqId },
+          "sysio.msgch@active"
+        ),
       { label: "evalcons", maxAttempts: 3, delayMs: 2000 }
     )
 
@@ -285,17 +288,18 @@ describe("Flow B: Collateral Deposit", () => {
 
     // Update collateral tracking for the batch operator via sysio.uwrit::updcltrl
     await retry(
-      () => clio.pushAction<SystemContracts.SysioUwritUpdcltrlAction>(
-        "sysio.uwrit",
-        "updcltrl",
-        {
-          underwriter: BATCH_OP_ACCOUNT,
-          chain_kind: CHAIN_KIND_ETHEREUM,
-          amount: "5.0000 SYS",
-          is_increase: true,
-        },
-        "sysio.uwrit@active"
-      ),
+      () =>
+        clio.pushAction<SystemContracts.SysioUwritUpdcltrlAction>(
+          "sysio.uwrit",
+          "updcltrl",
+          {
+            underwriter: BATCH_OP_ACCOUNT,
+            chain_kind: CHAIN_KIND_ETHEREUM,
+            amount: "5.0000 SYS",
+            is_increase: true
+          },
+          "sysio.uwrit@active"
+        ),
       { label: "updcltrl", maxAttempts: 3, delayMs: 2000 }
     )
 
@@ -305,7 +309,9 @@ describe("Flow B: Collateral Deposit", () => {
     expect(rows.length).toBeGreaterThan(0)
 
     const entry = rows.find(
-      (r: any) => r.underwriter === BATCH_OP_ACCOUNT && r.chain_kind === CHAIN_KIND_ETHEREUM
+      (r: any) =>
+        r.underwriter === BATCH_OP_ACCOUNT &&
+        r.chain_kind === CHAIN_KIND_ETHEREUM
     )
     expect(entry).toBeDefined()
     expect(entry.staked_amount).toBeDefined()
@@ -324,12 +330,13 @@ describe("Flow B: Collateral Deposit", () => {
     // Advance epoch(s) past the warmup period
     for (let i = 0; i <= warmupEpochs; i++) {
       await retry(
-        () => clio.pushAction<SystemContracts.SysioEpochAdvanceAction>(
-          "sysio.epoch",
-          "advance",
-          {},
-          "sysio.epoch@active"
-        ),
+        () =>
+          clio.pushAction<SystemContracts.SysioEpochAdvanceAction>(
+            "sysio.epoch",
+            "advance",
+            {},
+            "sysio.epoch@active"
+          ),
         { label: `advance epoch ${i}`, maxAttempts: 5, delayMs: 3000 }
       )
       // Wait a bit between advances to allow blocks to process
@@ -343,7 +350,9 @@ describe("Flow B: Collateral Deposit", () => {
         const rows: any[] = result.rows
         const op = rows.find((r: any) => r.account === BATCH_OP_ACCOUNT)
         if (op && op.status === OP_STATUS_ACTIVE) return result
-        throw new Error(`Operator status is ${op?.status}, expected ${OP_STATUS_ACTIVE}`)
+        throw new Error(
+          `Operator status is ${op?.status}, expected ${OP_STATUS_ACTIVE}`
+        )
       },
       { label: "wait for ACTIVE status", maxAttempts: 10, delayMs: 3000 }
     )
@@ -361,7 +370,9 @@ describe("Flow B: Collateral Deposit", () => {
     const collateralResult = await env.wireClient!.getCollateral()
     const rows: any[] = collateralResult.rows
     const entry = rows.find(
-      (r: any) => r.underwriter === BATCH_OP_ACCOUNT && r.chain_kind === CHAIN_KIND_ETHEREUM
+      (r: any) =>
+        r.underwriter === BATCH_OP_ACCOUNT &&
+        r.chain_kind === CHAIN_KIND_ETHEREUM
     )
     expect(entry).toBeDefined()
     expect(entry.staked_amount).toBeDefined()

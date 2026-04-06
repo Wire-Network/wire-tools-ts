@@ -1,5 +1,5 @@
 {
-  "extends": "../../etc/tsconfig/tsconfig.base.cjs.json",
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "lib"

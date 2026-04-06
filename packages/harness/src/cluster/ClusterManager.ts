@@ -417,9 +417,9 @@ export class ClusterManager {
             "--batch-operator-account",
             account,
             "--batch-epoch-poll-ms",
-            "5000",
+            "15000",
             "--batch-delivery-timeout-ms",
-            "30000"
+            "15000"
           ],
           cmd = buildStartCmd({
             nodeopBinary: executables.nodeop,
@@ -1330,9 +1330,9 @@ async function bootstrapChain(
     account: "sysio",
     name: "updateauth",
     data: {
-      account: "sysio.authex",
-      permission: "owner",
-      parent: "",
+      account: "sysio",
+      permission: "active",
+      parent: "owner",
       auth: {
         threshold: 1,
         keys: [
