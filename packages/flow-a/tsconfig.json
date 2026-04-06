@@ -1,11 +1,12 @@
 {
   "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
   "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "lib"
+  
   },
-  "include": ["src"],
+  "include": [],
   "references": [
-    { "path": "../harness/tsconfig.json" }
+    { "path": "../harness/tsconfig.json" },
+    { "path": "./tsconfig.src.json" },
+    { "path": "./tsconfig.tests.json" }
   ]
 }

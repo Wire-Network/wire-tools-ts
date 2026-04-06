@@ -1,7 +1,7 @@
 {
   "extends": "./tsconfig.base.cjs.json",
   "compilerOptions": {
-    "module": "CommonJS",
+    "module": "nodenext",
     "moduleResolution": "nodenext",
     "ignoreDeprecations": "6.0",
     "composite": true,

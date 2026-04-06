@@ -71,6 +71,7 @@ const SOL_OUTPOST_ID = 1
 // ---------------------------------------------------------------------------
 
 import Assert from "node:assert"
+import { SysioMsgchAttestationtype } from "@wireio/sdk-core/types/SystemContractTypes"
 Assert.ok(
   process.env.WIRE_BUILD_DIR,
   "WIRE_BUILD_DIR environment variable is required"
@@ -85,7 +86,7 @@ const WIRE_CHAIN_DIR = process.env.WIRE_CHAIN_DIR
 const config: TestEnvironmentConfig = {
   wire: {
     buildPath: WIRE_BUILD_DIR,
-    chainPath: WIRE_CHAIN_DIR,
+    clusterPath: WIRE_CHAIN_DIR,
     plugins: ["sysio::batch_operator_plugin"]
   },
   ethereum: {
@@ -161,7 +162,7 @@ describe("Flow C: SWAP with Underwriting", () => {
     await retry(
       async () => {
         const info = await env.wireClient!.getInfo()
-        if (info.head_block_num < 4) {
+        if (info.head_block_num.toNumber() < 4) {
           throw new Error(`Chain not ready yet: block ${info.head_block_num}`)
         }
       },
@@ -198,8 +199,8 @@ describe("Flow C: SWAP with Underwriting", () => {
         "sysio.msgch",
         "queueout",
         {
-          outpost_id: String(ETH_OUTPOST_ID),
-          attest_type: ATTESTATION_TYPE_SWAP,
+          outpost_id: ETH_OUTPOST_ID,
+          attest_type: SysioMsgchAttestationtype.ATTESTATION_TYPE_SWAP,
           data: swapDataHex
         },
         "sysio.msgch@active"
@@ -243,7 +244,7 @@ describe("Flow C: SWAP with Underwriting", () => {
         "submituw",
         {
           underwriter: underwriterAccount,
-          msg_id: String(swapMsgId),
+          msg_id: swapMsgId,
           source_sig: sourceSig,
           target_sig: targetSig
         },
@@ -316,14 +317,14 @@ describe("Flow C: SWAP with Underwriting", () => {
       await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchBuildenvAction>(
         "sysio.msgch",
         "buildenv",
-        { outpost_id: String(ETH_OUTPOST_ID) },
+        { outpost_id: ETH_OUTPOST_ID },
         "sysio.msgch@active"
       )
 
       await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchBuildenvAction>(
         "sysio.msgch",
         "buildenv",
-        { outpost_id: String(SOL_OUTPOST_ID) },
+        { outpost_id: SOL_OUTPOST_ID },
         "sysio.msgch@active"
       )
 
@@ -347,6 +348,8 @@ describe("Flow C: SWAP with Underwriting", () => {
     }, 60_000)
 
     test("Both outposts confirm underwriting (UNDERWRITE_CONFIRM)", async () => {
+      // CLAUDE: This is entirely wrong
+
       // Simulate both outposts responding with UNDERWRITE_CONFIRM.
       // In a real scenario, the batch operators would read the outbound envelopes,
       // deliver them to the outposts, and the outposts would respond.
@@ -384,12 +387,8 @@ describe("Flow C: SWAP with Underwriting", () => {
         "sysio.msgch",
         "deliver",
         {
-          operator_acct: batchOpAccount,
-          req_id: ethReq.id,
-          chain_hash: chainHash,
-          merkle_root: merkleRoot,
-          msg_count: 1,
-          raw_messages: rawMsgs
+          batch_op_name: batchOpAccount,
+          data: rawMsgs
         },
         `${batchOpAccount}@active`
       )
@@ -402,29 +401,10 @@ describe("Flow C: SWAP with Underwriting", () => {
         "sysio.msgch",
         "deliver",
         {
-          operator_acct: batchOpAccount,
-          req_id: solReq.id,
-          chain_hash: solChainHash,
-          merkle_root: solMerkleRoot,
-          msg_count: 1,
-          raw_messages: rawMsgs
+          batch_op_name: batchOpAccount,
+          data: rawMsgs
         },
         `${batchOpAccount}@active`
-      )
-
-      // Evaluate consensus on both chain requests
-      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchEvalconsAction>(
-        "sysio.msgch",
-        "evalcons",
-        { req_id: ethReq.id },
-        "sysio.msgch@active"
-      )
-
-      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchEvalconsAction>(
-        "sysio.msgch",
-        "evalcons",
-        { req_id: solReq.id },
-        "sysio.msgch@active"
       )
     }, 60_000)
 
@@ -433,7 +413,7 @@ describe("Flow C: SWAP with Underwriting", () => {
       await env.wireClient!.clio.pushAction<SystemContracts.SysioUwritConfirmuwAction>(
         "sysio.uwrit",
         "confirmuw",
-        { uw_entry_id: String(uwEntryId) },
+        { uw_entry_id: uwEntryId },
         "sysio.uwrit@active"
       )
 
@@ -467,8 +447,8 @@ describe("Flow C: SWAP with Underwriting", () => {
         "sysio.msgch",
         "queueout",
         {
-          outpost_id: String(SOL_OUTPOST_ID),
-          attest_type: ATTESTATION_TYPE_REMIT,
+          outpost_id: SOL_OUTPOST_ID,
+          attest_type: SysioMsgchAttestationtype.ATTESTATION_TYPE_REMIT,
           data: remitDataHex
         },
         "sysio.msgch@active"
@@ -519,23 +499,19 @@ describe("Flow C: SWAP with Underwriting", () => {
         "sysio.msgch",
         "deliver",
         {
-          operator_acct: batchOpAccount,
-          req_id: latestSolReq.id,
-          chain_hash: chainHash,
-          merkle_root: merkleRoot,
-          msg_count: 1,
-          raw_messages: rawMsgs
+          batch_op_name: batchOpAccount,
+          data: rawMsgs
         },
         `${batchOpAccount}@active`
       )
 
       // Evaluate consensus
-      await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchEvalconsAction>(
-        "sysio.msgch",
-        "evalcons",
-        { req_id: latestSolReq.id },
-        "sysio.msgch@active"
-      )
+      // await env.wireClient!.clio.pushAction<SystemContracts.SysioMsgchEvalconsAction>(
+      //   "sysio.msgch",
+      //   "evalcons",
+      //   { req_id: latestSolReq.id },
+      //   "sysio.msgch@active"
+      // )
 
       // Verify REMIT_CONFIRM message received
       const messagesResult = await env.wireClient!.getMessages()
@@ -553,7 +529,7 @@ describe("Flow C: SWAP with Underwriting", () => {
       await env.wireClient!.clio.pushAction<SystemContracts.SysioUwritDistfeeAction>(
         "sysio.uwrit",
         "distfee",
-        { uw_entry_id: String(uwEntryId) },
+        { uw_entry_id: uwEntryId },
         "sysio.uwrit@active"
       )
 
@@ -586,7 +562,7 @@ describe("Flow C: SWAP with Underwriting", () => {
       await env.wireClient!.clio.pushAction<SystemContracts.SysioUwritExpirelockAction>(
         "sysio.uwrit",
         "expirelock",
-        { uw_entry_id: String(uwEntryId) },
+        { uw_entry_id: uwEntryId },
         "sysio.uwrit@active"
       )
 

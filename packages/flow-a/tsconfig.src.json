@@ -1,0 +1,14 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/out",
+    "paths": {
+      "@wire-e2e-tests/harness": ["../harness/src"]
+    }
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../harness/tsconfig.json" }
+  ]
+}

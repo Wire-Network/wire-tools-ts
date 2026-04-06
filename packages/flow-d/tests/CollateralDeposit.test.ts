@@ -349,54 +349,48 @@ describe("Flow D: Collateral Deposit via BAR (ETH → WIRE)", () => {
   test(
     "Batch operators relay OPPMessage to WIRE",
     async () => {
-      // Wait for the WIRE epoch to advance (TEST_EPOCH_DURATION_SEC seconds)
-      // and batch operators to complete their epoch cycle.
-      // The batch_operator_plugin polls every 5s; after epoch advances,
+      // The batch_operator_plugin polls every 15s; after epoch advances,
       // elected operators read ETH OPPMessage events and deliver to sysio.msgch.
+      // The deliver action inserts directly into the messages table.
       await pollUntil(
-        "inbound chain request created on WIRE",
+        "inbound messages appear in sysio.msgch",
         async () => {
-          const { rows } = await wireClient.getChainRequests()
-          return rows.length > 0
+          const { rows } = await wireClient.getMessages()
+          // Inbound messages from ETH have direction=0
+          return rows.some((r: any) => r.direction === 0)
         },
         TEST_EPOCH_DURATION_SEC * 9 * 1000,
         3000
       )
 
-      const { rows: chainReqs } = await wireClient.getChainRequests()
-      expect(chainReqs.length).toBeGreaterThanOrEqual(1)
+      const { rows: messages } = await wireClient.getMessages()
+      const inbound = messages.filter((r: any) => r.direction === 0)
+      expect(inbound.length).toBeGreaterThanOrEqual(1)
     },
     TEST_EPOCH_DURATION_SEC * 9 * 1000 + 30_000
   )
 
-  test("Deliveries are recorded on WIRE", async () => {
-    const { rows: deliveries } = await wireClient.getDeliveries()
-    expect(deliveries.length).toBeGreaterThanOrEqual(1)
+  test("Inbound messages have valid payload", async () => {
+    const { rows: messages } = await wireClient.getMessages()
+    const inbound = messages.filter((r: any) => r.direction === 0)
+    expect(inbound.length).toBeGreaterThanOrEqual(1)
 
-    // At least one delivery should have a non-zero message count
-    const withMessages = deliveries.filter((d: any) => d.message_count > 0)
-    expect(withMessages.length).toBeGreaterThanOrEqual(1)
+    // Each inbound message should have a non-empty raw payload
+    inbound.forEach((msg: any) => {
+      expect(msg.raw_payload.length).toBeGreaterThan(0)
+      expect(msg.outpost_id).toBeGreaterThanOrEqual(0)
+    })
   })
 
-  test("OPPMessage relayed to WIRE messages table", async () => {
-    // Wait for messages to appear (consensus eval + processmsg may take a moment)
-    await pollUntil(
-      "messages appear in sysio.msgch",
-      async () => {
-        const { rows } = await wireClient.getMessages()
-        return rows.length > 0
-      },
-      60_000,
-      3000
-    )
-
+  test("Outbound BATCH_OPERATOR_NEXT_GROUP attestations exist", async () => {
     const { rows: messages } = await wireClient.getMessages()
-    expect(messages.length).toBeGreaterThanOrEqual(1)
-
-    // The message should be inbound (ETH → WIRE) with OperatorAction attestation type
-    const inboundMsg = messages[0]
-    expect(inboundMsg.outpost_id).toBeGreaterThanOrEqual(0)
-    expect(inboundMsg.raw_payload.length).toBeGreaterThan(0)
+    // Outbound messages (direction=1) with BATCH_OPERATOR_NEXT_GROUP attestation
+    const outbound = messages.filter(
+      (r: any) =>
+        r.direction === 1 &&
+        r.attestation_type === AttestationType.BATCH_OPERATOR_NEXT_GROUP
+    )
+    expect(outbound.length).toBeGreaterThanOrEqual(1)
   })
 
   // ── WIRE-side state after relay ──

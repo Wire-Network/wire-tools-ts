@@ -16,6 +16,10 @@ import {
   MessageDirection,
   MessageStatus
 } from "@wireio/opp-solidity-models"
+import {
+  SysioEpochOperatortype,
+  SysioUwritChainKindType
+} from "@wireio/sdk-core/types/SystemContractTypes"
 
 /**
  * Flow B: Node Operator Collateral Deposit
@@ -52,7 +56,7 @@ const WIRE_CHAIN_DIR = process.env.WIRE_CHAIN_DIR
 const config: TestEnvironmentConfig = {
   wire: {
     buildPath: WIRE_BUILD_DIR,
-    chainPath: WIRE_CHAIN_DIR,
+    clusterPath: WIRE_CHAIN_DIR,
     plugins: ["sysio::batch_operator_plugin"]
   },
   ethereum: {
@@ -156,7 +160,10 @@ describe("Flow B: Collateral Deposit", () => {
         clio.pushAction<SystemContracts.SysioEpochRegoperatorAction>(
           "sysio.epoch",
           "regoperator",
-          { account: BATCH_OP_ACCOUNT, type: OP_TYPE_BATCH },
+          {
+            account: BATCH_OP_ACCOUNT,
+            type: SysioEpochOperatortype.OPERATOR_TYPE_BATCH
+          },
           "sysio.epoch@active"
         ),
       { label: "regoperator", maxAttempts: 3, delayMs: 2000 }
@@ -226,7 +233,10 @@ describe("Flow B: Collateral Deposit", () => {
         await clio.pushAction<SystemContracts.SysioEpochRegoperatorAction>(
           "sysio.epoch",
           "regoperator",
-          { account: operators[i], type: OP_TYPE_BATCH },
+          {
+            account: operators[i],
+            type: SysioEpochOperatortype.OPERATOR_TYPE_BATCH
+          },
           "sysio.epoch@active"
         )
       } catch (err: any) {
@@ -248,12 +258,8 @@ describe("Flow B: Collateral Deposit", () => {
             "sysio.msgch",
             "deliver",
             {
-              operator_acct: operatorAcct,
-              req_id: reqId,
-              chain_hash: FAKE_CHAIN_HASH,
-              merkle_root: FAKE_MERKLE_ROOT,
-              msg_count: 1,
-              raw_messages: ""
+              batch_op_name: operatorAcct,
+              data: ""
             },
             `${operatorAcct}@active`
           ),
@@ -262,16 +268,16 @@ describe("Flow B: Collateral Deposit", () => {
     }
 
     // Evaluate consensus
-    await retry(
-      () =>
-        clio.pushAction<SystemContracts.SysioMsgchEvalconsAction>(
-          "sysio.msgch",
-          "evalcons",
-          { req_id: reqId },
-          "sysio.msgch@active"
-        ),
-      { label: "evalcons", maxAttempts: 3, delayMs: 2000 }
-    )
+    // await retry(
+    //   () =>
+    //     clio.pushAction<SystemContracts.SysioMsgchEvalconsAction>(
+    //       "sysio.msgch",
+    //       "evalcons",
+    //       { req_id: reqId },
+    //       "sysio.msgch@active"
+    //     ),
+    //   { label: "evalcons", maxAttempts: 3, delayMs: 2000 }
+    // )
 
     // Verify consensus succeeded
     const updatedReqResult = await env.wireClient!.getChainRequests()
@@ -294,7 +300,7 @@ describe("Flow B: Collateral Deposit", () => {
           "updcltrl",
           {
             underwriter: BATCH_OP_ACCOUNT,
-            chain_kind: CHAIN_KIND_ETHEREUM,
+            chain_kind: SysioUwritChainKindType.ethereum,
             amount: "5.0000 SYS",
             is_increase: true
           },
