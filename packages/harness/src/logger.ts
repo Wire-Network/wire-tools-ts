@@ -7,11 +7,17 @@
 // })
 
 import { getLogger as getLoggerInternal, LoggingManager } from "@wireio/shared"
+import { Console } from "node:console"
 
-export const log = getLoggerInternal("global")
+// const realConsole = new Console(process.stdout, process.stderr)
+// realConsole.log("always prints, unbuffered")
+// export const log = getLoggerInternal("global")
 
-export function getLogger(category: string) {
-  return getLoggerInternal(category, {})
-}
+export const log = new Console(process.stdout, process.stderr)
+
+// export function getLogger(category: string) {
+//
+//   return getLoggerInternal(category, {})
+// }
 
 export default log

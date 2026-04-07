@@ -246,17 +246,21 @@ describe("Flow D: Collateral Deposit via BAR (ETH → WIRE)", () => {
   test("ETH outpost is registered", async () => {
     const { rows } = await wireClient.getOutposts()
     const ethOutpost = rows.find(
-      (r: any) => r.chain_kind === ChainKind.ETHEREUM && r.chain_id === 31337
+      (r: any) =>
+        (r.chain_kind === ChainKind.ETHEREUM || r.chain_kind === "CHAIN_KIND_ETHEREUM") &&
+        r.chain_id === 31337
     )
     expect(ethOutpost).toBeDefined()
   })
 
   test("Batch operators are ACTIVE and in groups", async () => {
     const { rows } = await wireClient.getOperators()
-    const batchOps = rows.filter((r: any) => r.type === OPERATOR_TYPE_BATCH)
+    const batchOps = rows.filter((r: any) =>
+      r.type === OPERATOR_TYPE_BATCH || r.type === "OPERATOR_TYPE_BATCH"
+    )
     expect(batchOps.length).toBe(3)
     batchOps.forEach((op: any) => {
-      expect(op.status).toBe(OperatorStatus.ACTIVE)
+      expect([OperatorStatus.ACTIVE, "OPERATOR_STATUS_ACTIVE"]).toContain(op.status)
       expect(Number(op.assigned_batch_op_group)).not.toBe(255)
     })
   })
@@ -381,14 +385,18 @@ describe("Flow D: Collateral Deposit via BAR (ETH → WIRE)", () => {
       "inbound messages appear after consensus",
       async () => {
         const { rows } = await wireClient.getMessages()
-        return rows.some((r: any) => r.direction === 0)
+        return rows.some((r: any) =>
+          r.direction === 0 || r.direction === "MESSAGE_DIRECTION_INBOUND"
+        )
       },
       60_000,
       3000
     )
 
     const { rows: messages } = await wireClient.getMessages()
-    const inbound = messages.filter((r: any) => r.direction === 0)
+    const inbound = messages.filter((r: any) =>
+      r.direction === 0 || r.direction === "MESSAGE_DIRECTION_INBOUND"
+    )
     expect(inbound.length).toBeGreaterThanOrEqual(1)
     inbound.forEach((msg: any) => {
       expect(msg.raw_payload.length).toBeGreaterThan(0)
@@ -401,8 +409,11 @@ describe("Flow D: Collateral Deposit via BAR (ETH → WIRE)", () => {
     expect(attestations.length).toBeGreaterThanOrEqual(1)
 
     // BATCH_OPERATOR_NEXT_GROUP attestations from queueout (outbound)
+    // ABI serializer returns enum names as strings
     const nextGroupAtts = attestations.filter(
-      (a: any) => a.type === AttestationType.BATCH_OPERATOR_NEXT_GROUP
+      (a: any) =>
+        a.type === "ATTESTATION_TYPE_BATCH_OPERATOR_NEXT_GROUP" ||
+        a.type === AttestationType.BATCH_OPERATOR_NEXT_GROUP
     )
     expect(nextGroupAtts.length).toBeGreaterThanOrEqual(1)
   })
