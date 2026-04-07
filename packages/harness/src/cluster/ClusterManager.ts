@@ -1419,6 +1419,29 @@ async function bootstrapChain(
     authorization: [{ actor: "sysio.epoch", permission: "owner" }]
   })
 
+  // ── Phase 14b: Grant sysio.msgch@sysio.code ──
+  // Required for evalcons inline action (self-call) and createuwreq on sysio.uwrit
+  await clio.pushTransaction({
+    account: "sysio",
+    name: "updateauth",
+    data: {
+      account: "sysio.msgch",
+      permission: "owner",
+      parent: "",
+      auth: {
+        threshold: 1,
+        keys: [{ key: DEV_K1_PUBLIC_KEY, weight: 1 }],
+        accounts: [
+          {
+            permission: { actor: "sysio.msgch", permission: "sysio.code" },
+            weight: 1
+          }
+        ]
+      }
+    },
+    authorization: [{ actor: "sysio.msgch", permission: "owner" }]
+  })
+
   // ── Phase 15: Configure sysio.epoch ──
   log.info("[Phase 15] Configuring sysio.epoch...")
   // batch_operator_minimum_active must equal operators_per_epoch * batch_op_groups
@@ -1437,7 +1460,8 @@ async function bootstrapChain(
       batch_operator_minimum_active: adjustedMin,
       batch_op_groups: batchOpGroups,
       warmup_epochs: cfg.warmupEpochs,
-      cooldown_epochs: cfg.cooldownEpochs
+      cooldown_epochs: cfg.cooldownEpochs,
+      attestation_retention_epoch_count: 1000
     },
     "sysio.epoch@active"
   )

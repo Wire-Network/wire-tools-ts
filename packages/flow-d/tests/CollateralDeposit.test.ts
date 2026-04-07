@@ -347,50 +347,64 @@ describe("Flow D: Collateral Deposit via BAR (ETH → WIRE)", () => {
   // ── E2E relay: batch operators deliver OPPMessage to WIRE ──
 
   test(
-    "Batch operators relay OPPMessage to WIRE",
+    "Batch operators deliver envelopes to WIRE",
     async () => {
       // The batch_operator_plugin polls every 15s; after epoch advances,
       // elected operators read ETH OPPMessage events and deliver to sysio.msgch.
-      // The deliver action inserts directly into the messages table.
+      // Each delivery stores an envelope with sha256 checksum for consensus.
       await pollUntil(
-        "inbound messages appear in sysio.msgch",
+        "envelopes appear in sysio.msgch",
         async () => {
-          const { rows } = await wireClient.getMessages()
-          // Inbound messages from ETH have direction=0
-          return rows.some((r: any) => r.direction === 0)
+          const { rows } = await wireClient.getEnvelopes()
+          return rows.length > 0
         },
         TEST_EPOCH_DURATION_SEC * 9 * 1000,
         3000
       )
 
-      const { rows: messages } = await wireClient.getMessages()
-      const inbound = messages.filter((r: any) => r.direction === 0)
-      expect(inbound.length).toBeGreaterThanOrEqual(1)
+      const { rows: envelopes } = await wireClient.getEnvelopes()
+      expect(envelopes.length).toBeGreaterThanOrEqual(1)
+
+      // Each envelope should have a valid checksum and raw data
+      envelopes.forEach((env: any) => {
+        expect(env.batch_op_name).toBeDefined()
+        expect(env.checksum).toBeDefined()
+        expect(env.raw_data.length).toBeGreaterThan(0)
+      })
     },
     TEST_EPOCH_DURATION_SEC * 9 * 1000 + 30_000
   )
 
-  test("Inbound messages have valid payload", async () => {
+  test("Consensus produces inbound messages", async () => {
+    // After consensus, evalcons unpacks envelopes into the messages table
+    await pollUntil(
+      "inbound messages appear after consensus",
+      async () => {
+        const { rows } = await wireClient.getMessages()
+        return rows.some((r: any) => r.direction === 0)
+      },
+      60_000,
+      3000
+    )
+
     const { rows: messages } = await wireClient.getMessages()
     const inbound = messages.filter((r: any) => r.direction === 0)
     expect(inbound.length).toBeGreaterThanOrEqual(1)
-
-    // Each inbound message should have a non-empty raw payload
     inbound.forEach((msg: any) => {
       expect(msg.raw_payload.length).toBeGreaterThan(0)
       expect(msg.outpost_id).toBeGreaterThanOrEqual(0)
     })
   })
 
-  test("Outbound BATCH_OPERATOR_NEXT_GROUP attestations exist", async () => {
-    const { rows: messages } = await wireClient.getMessages()
-    // Outbound messages (direction=1) with BATCH_OPERATOR_NEXT_GROUP attestation
-    const outbound = messages.filter(
-      (r: any) =>
-        r.direction === 1 &&
-        r.attestation_type === AttestationType.BATCH_OPERATOR_NEXT_GROUP
+  test("Attestations table has entries", async () => {
+    const { rows: attestations } = await wireClient.getAttestations()
+    expect(attestations.length).toBeGreaterThanOrEqual(1)
+
+    // BATCH_OPERATOR_NEXT_GROUP attestations from queueout (outbound)
+    const nextGroupAtts = attestations.filter(
+      (a: any) => a.type === AttestationType.BATCH_OPERATOR_NEXT_GROUP
     )
-    expect(outbound.length).toBeGreaterThanOrEqual(1)
+    expect(nextGroupAtts.length).toBeGreaterThanOrEqual(1)
   })
 
   // ── WIRE-side state after relay ──

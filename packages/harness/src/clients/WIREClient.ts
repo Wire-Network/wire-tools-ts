@@ -96,21 +96,21 @@ export class WIREClient {
     })
   }
 
-  /** Read inbound chain requests from sysio.msgch */
-  async getChainRequests() {
-    return this.getTableRows<SystemContracts.SysioMsgchInboundChainRequestType>({
+  /** Read inbound envelopes from sysio.msgch (consensus tracking) */
+  async getEnvelopes() {
+    return this.getTableRows<any>({
       code: "sysio.msgch",
       scope: "sysio.msgch",
-      table: "inchainreq"
+      table: "envelopes"
     })
   }
 
-  /** Read chain deliveries from sysio.msgch */
-  async getDeliveries() {
-    return this.getTableRows<SystemContracts.SysioMsgchChainDeliveryType>({
+  /** Read attestations from sysio.msgch */
+  async getAttestations() {
+    return this.getTableRows<any>({
       code: "sysio.msgch",
       scope: "sysio.msgch",
-      table: "deliveries"
+      table: "attestations"
     })
   }
 
@@ -129,6 +129,15 @@ export class WIREClient {
       code: "sysio.uwrit",
       scope: "sysio.uwrit",
       table: "uwledger"
+    })
+  }
+
+  /** Read underwrite requests from sysio.uwrit */
+  async getUwRequests() {
+    return this.getTableRows<any>({
+      code: "sysio.uwrit",
+      scope: "sysio.uwrit",
+      table: "uwreqs"
     })
   }
 
