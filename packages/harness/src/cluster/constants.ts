@@ -117,6 +117,7 @@ export const SYSTEM_ACCOUNTS = [
   "sysio.acct",
   "sysio.authex",
   "sysio.epoch",
+  "sysio.opreg",
   "sysio.msgch",
   "sysio.uwrit",
   "sysio.chalg",
@@ -247,6 +248,7 @@ export type ContractName = keyof typeof CONTRACT_PATHS
 
 export const OPP_CONTRACT_PATHS = {
   "sysio.epoch": "contracts/sysio.epoch",
+  "sysio.opreg": "contracts/sysio.opreg",
   "sysio.msgch": "contracts/sysio.msgch",
   "sysio.uwrit": "contracts/sysio.uwrit",
   "sysio.chalg": "contracts/sysio.chalg"
@@ -260,6 +262,7 @@ export type OppContractName = keyof typeof OPP_CONTRACT_PATHS
 
 export const OPP_SYSTEM_ACCOUNTS = [
   "sysio.epoch",
+  "sysio.opreg",
   "sysio.msgch",
   "sysio.uwrit",
   "sysio.chalg"

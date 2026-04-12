@@ -1442,6 +1442,29 @@ async function bootstrapChain(
     authorization: [{ actor: "sysio.msgch", permission: "owner" }]
   })
 
+  // ── Phase 14c: Grant sysio.opreg@sysio.code ──
+  // Required for processprod/processbatch/processuw inline, sysio.token::transfer, sysio.msgch::queueout
+  await clio.pushTransaction({
+    account: "sysio",
+    name: "updateauth",
+    data: {
+      account: "sysio.opreg",
+      permission: "owner",
+      parent: "",
+      auth: {
+        threshold: 1,
+        keys: [{ key: DEV_K1_PUBLIC_KEY, weight: 1 }],
+        accounts: [
+          {
+            permission: { actor: "sysio.opreg", permission: "sysio.code" },
+            weight: 1
+          }
+        ]
+      }
+    },
+    authorization: [{ actor: "sysio.opreg", permission: "owner" }]
+  })
+
   // ── Phase 15: Configure sysio.epoch ──
   log.info("[Phase 15] Configuring sysio.epoch...")
   // batch_operator_minimum_active must equal operators_per_epoch * batch_op_groups
@@ -1459,13 +1482,26 @@ async function bootstrapChain(
       operators_per_epoch: opsPerEpoch,
       batch_operator_minimum_active: adjustedMin,
       batch_op_groups: batchOpGroups,
-      warmup_epochs: cfg.warmupEpochs,
-      cooldown_epochs: cfg.cooldownEpochs,
       attestation_retention_epoch_count: 1000
     },
     "sysio.epoch@active"
   )
   log.info("[Phase 15] sysio.epoch configured")
+
+  // ── Phase 15a: Configure sysio.opreg ──
+  log.info("[Phase 15a] Configuring sysio.opreg...")
+  await clio.pushAction(
+    "sysio.opreg",
+    "setconfig",
+    {
+      max_available_producers: 21,
+      max_available_batch_ops: 63,
+      max_available_underwriters: 21,
+      terminate_prune_delay_ms: 600000 // 10 min for dev
+    },
+    "sysio.opreg@active"
+  )
+  log.info("[Phase 15a] sysio.opreg configured")
 
   // ── Phase 16: Register outposts ──
   log.info("[Phase 16] Registering outposts...")
@@ -1499,7 +1535,7 @@ async function bootstrapChain(
   )
   log.info("[Phase 17] sysio.uwrit configured")
 
-  // ── Phase 18: Register batch operators ──
+  // ── Phase 18: Register batch operators via sysio.opreg (bootstrapped) ──
   log.info("[Phase 18] Registering batch operators...")
   for (const bo of batchOpStates) {
     const account = bo.operatorAccount!
@@ -1511,7 +1547,6 @@ async function bootstrapChain(
         DEV_K1_PUBLIC_KEY
       )
     } catch (err: any) {
-      // Only tolerate "already exists" — anything else is a real failure
       if (
         !err.message?.includes("already exists") &&
         !err.stderr?.includes("already exists")
@@ -1522,16 +1557,17 @@ async function bootstrapChain(
       }
       log.debug(`Account ${account} already exists, continuing`)
     }
-    await clio.pushActionAndWait<SystemContracts.SysioEpochRegoperatorAction>(
-      "sysio.epoch",
+    // Bootstrapped batch operators — skip staking, immediate AVAILABLE
+    await clio.pushActionAndWait(
+      "sysio.opreg",
       "regoperator",
-      { account, type: 2 },
-      "sysio.epoch@active"
+      { account, type: 2, is_bootstrapped: true },
+      "sysio.opreg@active"
     )
   }
   log.info(`[Phase 18] Registered ${batchOpStates.length} batch operator(s)`)
 
-  // ── Phase 19: Register underwriters ──
+  // ── Phase 19: Register underwriters via sysio.opreg ──
   log.info("[Phase 19] Registering underwriters...")
   for (const uw of underwriterStates) {
     const account = uw.operatorAccount!
@@ -1543,7 +1579,6 @@ async function bootstrapChain(
         DEV_K1_PUBLIC_KEY
       )
     } catch (err: any) {
-      // Only tolerate "already exists" — anything else is a real failure
       if (
         !err.message?.includes("already exists") &&
         !err.stderr?.includes("already exists")
@@ -1554,34 +1589,23 @@ async function bootstrapChain(
       }
       log.debug(`Account ${account} already exists, continuing`)
     }
-    await clio.pushActionAndWait<SystemContracts.SysioEpochRegoperatorAction>(
-      "sysio.epoch",
+    // Underwriters cannot be bootstrapped — register as PENDING
+    // They will need staking to become AVAILABLE (not done during bootstrap)
+    await clio.pushActionAndWait(
+      "sysio.opreg",
       "regoperator",
-      { account, type: 3 },
-      "sysio.epoch@active"
+      { account, type: 3, is_bootstrapped: false },
+      "sysio.opreg@active"
     )
   }
   log.info(`[Phase 19] Registered ${underwriterStates.length} underwriter(s)`)
 
-  // ── Phase 20: Initialize epoch state + activate operators ──
+  // ── Phase 20: Initialize batch operator groups ──
   log.info("[Phase 20] Initializing epoch state...")
 
-  // Force-activate all batch operators (bypasses warmup for bootstrap)
-  for (const bo of batchOpStates) {
-    await clio.pushActionAndWait(
-      "sysio.epoch",
-      "activateop",
-      {
-        account: bo.operatorAccount!
-      } satisfies SystemContracts.SysioEpochActivateopAction,
-      "sysio.epoch@active"
-    )
-  }
-  log.info(`[Phase 20] Activated ${batchOpStates.length} batch operator(s)`)
-
-  // Assign batch operators to rotation groups
-  // (advance is NOT called here — batch operators call it autonomously)
-  await clio.pushAction<SystemContracts.SysioEpochInitgroupsAction>(
+  // No activation needed — bootstrapped batch ops are already AVAILABLE
+  // initgroups reads AVAILABLE batch ops from sysio.opreg
+  await clio.pushAction(
     "sysio.epoch",
     "initgroups",
     {},

@@ -1,13 +1,12 @@
-import os from "os"
-import Path from "path"
-import Fs from "fs"
+import OS from "node:os"
+import Path from "node:path"
+import Fs from "node:fs"
 import { ProcessManager } from "./processes/ProcessManager.js"
 import { AnvilManager, type AnvilOptions } from "./processes/AnvilManager.js"
 import {
   SolanaValidatorManager,
   type SolanaValidatorOptions
 } from "./processes/SolanaValidatorManager.js"
-import { type WIREChainConfig } from "./processes/WIREChainManager.js"
 import { type ClusterConfig, ClusterManager } from "./cluster/ClusterManager.js"
 import { WIREClient } from "./clients/WIREClient.js"
 import { ETHClient } from "./clients/ETHClient.js"
@@ -20,7 +19,20 @@ import { ClusterPorts } from "./cluster/ClusterPorts.js"
 
 export interface TestEnvironmentConfig {
   /** WIRE chain configuration (required) */
-  wire: WIREChainConfig & {
+  wire: {
+    /** Path to wire-sysio build directory */
+    buildPath: string
+    /** Chain data directory (created if absent) */
+    clusterPath: string
+    /** HTTP API port (default: 8888) */
+    httpPort?: number
+    /** P2P port (default: 9876) */
+    p2pPort?: number
+    /** Additional nodeop plugins to enable */
+    plugins?: string[]
+    /** Additional nodeop CLI flags */
+    extraArgs?: string[]
+
     /** Number of producer nodes (default: 1) */
     producerCount?: number
     /** Number of non-producer nodes (default: 0) */
@@ -87,7 +99,7 @@ export class TestEnvironment {
     ProcessManager.setClusterPath(config.wire.clusterPath).get()
 
     this.tempPath = mkdirs(
-      config.tempPath || Path.join(os.tmpdir(), `wire-e2e-${Date.now()}`)
+      config.tempPath || Path.join(OS.tmpdir(), `wire-e2e-${Date.now()}`)
     )
   }
 

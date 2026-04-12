@@ -57,11 +57,11 @@ export class ETHClient {
   }
 
   /** Query OPP message events from a contract. */
-  async getOPPMessages(
+  async getOPPEnvelopes(
     oppContract: ethers.Contract,
     fromBlock = 0
   ): Promise<ethers.EventLog[]> {
-    const filter = oppContract.filters.OPPMessage()
+    const filter = oppContract.filters.OPPEnvelope()
     const events = await oppContract.queryFilter(filter, fromBlock)
     return events.filter((e): e is ethers.EventLog => e instanceof ethers.EventLog)
   }

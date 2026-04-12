@@ -17,24 +17,24 @@ import {
   OperatorStatus,
   TokenKind,
   AttestationType
-} from "@wireio/opp-solidity-models"
+} from "@wireio/opp-typescript-models"
 
 /**
  * Flow D: Collateral Deposit via BAR — full e2e ETH → WIRE relay.
  *
  * Creates a fresh cluster with ETH bootstrap, calls BAR.bond() to deposit
- * collateral, then waits for batch operators to relay the OPPMessage from
+ * collateral, then waits for batch operators to relay the OPPEnvelope from
  * ETH to WIRE via the epoch cycle.
  *
  * Flow:
- *   1. BAR.bond() on ETH → OPPMessage event emitted immediately
+ *   1. BAR.bond() on ETH → OPPEnvelope event emitted immediately
  *   2. WIRE epoch advances → elected batch operators run epoch cycle
- *   3. Batch operators read OPPMessage events from ETH, deliver to sysio.msgch
+ *   3. Batch operators read OPPEnvelope events from ETH, deliver to sysio.msgch
  *   4. Message appears in WIRE's inchainreq / deliveries / messages tables
  *
  * Verifies:
  *   - WIRE + ETH chains healthy, OPP contracts accessible
- *   - BAR.bond() emits ActorBonded, records bond, triggers OPPMessage
+ *   - BAR.bond() emits ActorBonded, records bond, triggers OPPEnvelope
  *   - Batch operators relay: inbound chain request created, deliveries recorded
  *   - Message relayed to WIRE messages table with correct attestation type
  *
@@ -125,7 +125,7 @@ async function pollUntil(
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("Flow D: Collateral Deposit via BAR (ETH → WIRE)", () => {
+describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () => {
   let manager: ClusterManager
   let wireClient: WIREClient
   let ethProvider: ethers.JsonRpcProvider
@@ -133,6 +133,7 @@ describe("Flow D: Collateral Deposit via BAR (ETH → WIRE)", () => {
   let oppContract: ethers.Contract
   let oppInboundContract: ethers.Contract
   let barContract: ethers.Contract
+  let opRegContract: ethers.Contract
   let ports: ClusterPorts
 
   // ── Setup: create + start a fresh cluster with ETH ──
@@ -189,6 +190,11 @@ describe("Flow D: Collateral Deposit via BAR (ETH → WIRE)", () => {
       loadETHABI("BAR"),
       ethSigner
     )
+    opRegContract = new ethers.Contract(
+      ethAddrs.OperatorRegistry,
+      loadETHABI("OperatorRegistry"),
+      ethSigner
+    )
   }, 300_000)
 
   afterAll(async () => {
@@ -223,7 +229,12 @@ describe("Flow D: Collateral Deposit via BAR (ETH → WIRE)", () => {
   })
 
   test("BAR contract is accessible on ETH", async () => {
-    const attestationType = await barContract.OPERATOR_ACTION_ATTESTATION()
+    const attestationType = await barContract.NODE_OWNER_REG_ATTESTATION()
+    expect(Number(attestationType)).toBe(AttestationType.NODE_OWNER_REG)
+  })
+
+  test("OperatorRegistry contract is accessible on ETH", async () => {
+    const attestationType = await opRegContract.OPERATOR_ACTION_ATTESTATION()
     expect(Number(attestationType)).toBe(AttestationType.OPERATOR_ACTION)
   })
 
@@ -247,21 +258,26 @@ describe("Flow D: Collateral Deposit via BAR (ETH → WIRE)", () => {
     const { rows } = await wireClient.getOutposts()
     const ethOutpost = rows.find(
       (r: any) =>
-        (r.chain_kind === ChainKind.ETHEREUM || r.chain_kind === "CHAIN_KIND_ETHEREUM") &&
+        (r.chain_kind === ChainKind.ETHEREUM ||
+          r.chain_kind === "CHAIN_KIND_ETHEREUM") &&
         r.chain_id === 31337
     )
     expect(ethOutpost).toBeDefined()
   })
 
-  test("Batch operators are ACTIVE and in groups", async () => {
+  test("Batch operators are AVAILABLE in opreg", async () => {
     const { rows } = await wireClient.getOperators()
-    const batchOps = rows.filter((r: any) =>
-      r.type === OPERATOR_TYPE_BATCH || r.type === "OPERATOR_TYPE_BATCH"
+    const batchOps = rows.filter(
+      (r: any) =>
+        r.type === OPERATOR_TYPE_BATCH || r.type === "OPERATOR_TYPE_BATCH"
     )
     expect(batchOps.length).toBe(3)
     batchOps.forEach((op: any) => {
-      expect([OperatorStatus.ACTIVE, "OPERATOR_STATUS_ACTIVE"]).toContain(op.status)
-      expect(Number(op.assigned_batch_op_group)).not.toBe(255)
+      // Bootstrapped operators are immediately AVAILABLE (ACTIVE enum value = 3)
+      expect([OperatorStatus.ACTIVE, "OPERATOR_STATUS_ACTIVE"]).toContain(
+        op.status
+      )
+      expect(op.is_bootstrapped).toBe(1) // bootstrapped in dev
     })
   })
 
@@ -274,87 +290,91 @@ describe("Flow D: Collateral Deposit via BAR (ETH → WIRE)", () => {
     )
   })
 
-  test("BAR has no bonds before deposit", async () => {
+  test("OperatorRegistry has no deposits before test", async () => {
     const signerAddr = await ethSigner.getAddress()
-    const count = await barContract.bondCount(signerAddr, OPERATOR_TYPE_BATCH)
-    expect(Number(count)).toBe(0)
+    const info = await opRegContract.operators(signerAddr)
+    expect(Number(info.deposited)).toBe(0)
   })
 
-  // ── Collateral deposit via BAR.bond() ──
+  // ── Collateral deposit via OperatorRegistry.deposit() ──
 
-  test("BAR.bond() succeeds and emits ActorBonded event", async () => {
+  test("OperatorRegistry.deposit() succeeds and emits OperatorDeposited + OPPEnvelope", async () => {
     const signerAddr = await ethSigner.getAddress()
-    const tx = await barContract.bond(signerAddr, OPERATOR_TYPE_BATCH, [
-      TOKEN_KIND_ETH,
-      BOND_AMOUNT
-    ])
+    const tx = await opRegContract.deposit(OPERATOR_TYPE_BATCH, {
+      value: BOND_AMOUNT
+    })
     const receipt = await tx.wait()
     expect(receipt.status).toBe(1)
 
-    const barAddr = await barContract.getAddress()
-    const actorBondedTopic =
-      barContract.interface.getEvent("ActorBonded")!.topicHash
-    const bondEvent = receipt.logs.find(
+    const opRegAddr = await opRegContract.getAddress()
+    const depositedTopic =
+      opRegContract.interface.getEvent("OperatorDeposited")!.topicHash
+    const depositEvent = receipt.logs.find(
       (l: ethers.Log) =>
-        l.address.toLowerCase() === barAddr.toLowerCase() &&
-        l.topics[0] === actorBondedTopic
+        l.address.toLowerCase() === opRegAddr.toLowerCase() &&
+        l.topics[0] === depositedTopic
     )
-    expect(bondEvent).toBeDefined()
+    expect(depositEvent).toBeDefined()
 
-    const decoded = barContract.interface.parseLog({
-      topics: bondEvent!.topics as string[],
-      data: bondEvent!.data
+    const decoded = opRegContract.interface.parseLog({
+      topics: depositEvent!.topics as string[],
+      data: depositEvent!.data
     })
-    expect(decoded!.name).toBe("ActorBonded")
-    expect(decoded!.args.actor.toLowerCase()).toBe(signerAddr.toLowerCase())
+    expect(decoded!.name).toBe("OperatorDeposited")
+    expect(decoded!.args.operator.toLowerCase()).toBe(signerAddr.toLowerCase())
     expect(Number(decoded!.args.operatorType)).toBe(OPERATOR_TYPE_BATCH)
-    expect(Number(decoded!.args.tokenKind)).toBe(TOKEN_KIND_ETH)
     expect(decoded!.args.amount).toBe(BOND_AMOUNT)
   })
 
-  test("Bond is recorded in BAR contract", async () => {
+  test("Deposit is recorded in OperatorRegistry", async () => {
     const signerAddr = await ethSigner.getAddress()
-    const count = await barContract.bondCount(signerAddr, OPERATOR_TYPE_BATCH)
-    expect(Number(count)).toBe(1)
-
-    const bonds = await barContract.getBonds(signerAddr, OPERATOR_TYPE_BATCH)
-    expect(bonds.length).toBe(1)
-
-    const bond = bonds[0]
-    expect(Number(bond.actionType)).toBe(1) // ACTION_TYPE_DEPOSIT
-    expect(Number(bond.type_)).toBe(OPERATOR_TYPE_BATCH)
-    expect(Number(bond.status)).toBe(OperatorStatus.ACTIVE)
-    expect(Number(bond.amount.kind)).toBe(TOKEN_KIND_ETH)
-    expect(bond.amount.amount).toBe(BOND_AMOUNT)
+    const info = await opRegContract.operators(signerAddr)
+    expect(info.deposited).toBe(BOND_AMOUNT)
+    expect(Number(info.operatorType)).toBe(OPERATOR_TYPE_BATCH)
+    expect(Number(info.status)).toBe(OperatorStatus.ACTIVE)
   })
 
   // ── OPP message emitted on ETH ──
 
-  test("OPP emits OPPMessage event after bond", async () => {
-    const events = await oppContract.queryFilter(
-      oppContract.filters.OPPMessage(),
-      0
-    )
-    const messageEvents = events.filter(
-      (e): e is ethers.EventLog => e instanceof ethers.EventLog
-    )
-    expect(messageEvents.length).toBeGreaterThanOrEqual(1)
-  })
+  test(
+    "OPP emits OPPEnvelope event after crank drains queued messages",
+    async () => {
+      // The OPPEnvelope event is emitted when the batch operator cranks
+      // emitOutboundEnvelope(), not immediately on deposit.
+      await pollUntil(
+        "OPPEnvelope event emitted",
+        async () => {
+          const events = await oppContract.queryFilter(
+            oppContract.filters.OPPEnvelope(),
+            0
+          )
+          return (
+            events.filter(
+              (e): e is ethers.EventLog => e instanceof ethers.EventLog
+            ).length > 0
+          )
+        },
+        TEST_EPOCH_DURATION_SEC * 3 * 1000,
+        3000
+      )
+    },
+    TEST_EPOCH_DURATION_SEC * 3 * 1000 + 30_000
+  )
 
-  test("OPP lastMessageID is non-zero after bond", async () => {
+  test("OPP lastMessageID is non-zero after deposit", async () => {
     const lastMsgId = await oppContract.lastMessageID()
     expect(lastMsgId).not.toBe(
       "0x0000000000000000000000000000000000000000000000000000000000000000"
     )
   })
 
-  // ── E2E relay: batch operators deliver OPPMessage to WIRE ──
+  // ── E2E relay: batch operators deliver OPPEnvelope to WIRE ──
 
   test(
     "Batch operators deliver envelopes to WIRE",
     async () => {
       // The batch_operator_plugin polls every 15s; after epoch advances,
-      // elected operators read ETH OPPMessage events and deliver to sysio.msgch.
+      // elected operators read ETH OPPEnvelope events and deliver to sysio.msgch.
       // Each delivery stores an envelope with sha256 checksum for consensus.
       await pollUntil(
         "envelopes appear in sysio.msgch",
@@ -385,8 +405,9 @@ describe("Flow D: Collateral Deposit via BAR (ETH → WIRE)", () => {
       "inbound messages appear after consensus",
       async () => {
         const { rows } = await wireClient.getMessages()
-        return rows.some((r: any) =>
-          r.direction === 0 || r.direction === "MESSAGE_DIRECTION_INBOUND"
+        return rows.some(
+          (r: any) =>
+            r.direction === 0 || r.direction === "MESSAGE_DIRECTION_INBOUND"
         )
       },
       60_000,
@@ -394,8 +415,9 @@ describe("Flow D: Collateral Deposit via BAR (ETH → WIRE)", () => {
     )
 
     const { rows: messages } = await wireClient.getMessages()
-    const inbound = messages.filter((r: any) =>
-      r.direction === 0 || r.direction === "MESSAGE_DIRECTION_INBOUND"
+    const inbound = messages.filter(
+      (r: any) =>
+        r.direction === 0 || r.direction === "MESSAGE_DIRECTION_INBOUND"
     )
     expect(inbound.length).toBeGreaterThanOrEqual(1)
     inbound.forEach((msg: any) => {

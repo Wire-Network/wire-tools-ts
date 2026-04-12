@@ -15,7 +15,8 @@
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/node": "25.5.0",
-    "@wireio/opp-solidity-models": "^1.0.14",
+    "@wireio/opp-solidity-models": "^1.0.23",
+    "@wireio/opp-typescript-models": "^1.0.23",
     "@wireio/sdk-core": "^1.0.17",
     "@wireio/shared": "^1.0.17",
     "@wireio/shared-node": "^1.0.17",
@@ -31,7 +32,8 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@wireio/opp-solidity-models": "^1.0.14",
+    "@wireio/opp-solidity-models": "^1.0.23",
+    "@wireio/opp-typescript-models": "^1.0.23",
     "@wireio/shared": "^1.0.17",
     "@wireio/shared-node": "^1.0.17",
     "@wireio/sdk-core": "^1.0.17"

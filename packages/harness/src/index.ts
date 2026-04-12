@@ -1,4 +1,3 @@
-export * from "./processes/WIREChainManager.js"
 export * from "./processes/AnvilManager.js"
 export * from "./processes/SolanaValidatorManager.js"
 export * from "./processes/KiodManager.js"

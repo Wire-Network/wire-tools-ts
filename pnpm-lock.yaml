@@ -4,7 +4,7 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-pnpmfileChecksum: sha256-C2npi08K3srhZ0GkxOoAdoSYrlRQXUw3cQcxhMW8MPY=
+pnpmfileChecksum: sha256-lJN1KnjFvevqx5Vp6WdRBKPc9sS/8BXekwhiJziYie0=
 
 importers:
 
@@ -13,6 +13,9 @@ importers:
       '@wireio/opp-solidity-models':
         specifier: link:/data/shared/code/wire/wire-opp/solidity
         version: link:../wire-opp/solidity
+      '@wireio/opp-typescript-models':
+        specifier: link:/data/shared/code/wire/wire-opp/typescript
+        version: link:../wire-opp/typescript
       '@wireio/sdk-core':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
         version: link:../wire-libraries-ts/packages/sdk-core
@@ -56,6 +59,9 @@ importers:
       '@wireio/opp-solidity-models':
         specifier: link:/data/shared/code/wire/wire-opp/solidity
         version: link:../../../wire-opp/solidity
+      '@wireio/opp-typescript-models':
+        specifier: link:/data/shared/code/wire/wire-opp/typescript
+        version: link:../../../wire-opp/typescript
       '@wireio/sdk-core':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
         version: link:../../../wire-libraries-ts/packages/sdk-core
@@ -87,6 +93,9 @@ importers:
       '@wireio/opp-solidity-models':
         specifier: link:/data/shared/code/wire/wire-opp/solidity
         version: link:../../../wire-opp/solidity
+      '@wireio/opp-typescript-models':
+        specifier: link:/data/shared/code/wire/wire-opp/typescript
+        version: link:../../../wire-opp/typescript
       '@wireio/sdk-core':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
         version: link:../../../wire-libraries-ts/packages/sdk-core
@@ -121,6 +130,9 @@ importers:
       '@wireio/opp-solidity-models':
         specifier: link:/data/shared/code/wire/wire-opp/solidity
         version: link:../../../wire-opp/solidity
+      '@wireio/opp-typescript-models':
+        specifier: link:/data/shared/code/wire/wire-opp/typescript
+        version: link:../../../wire-opp/typescript
       '@wireio/sdk-core':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
         version: link:../../../wire-libraries-ts/packages/sdk-core
@@ -152,6 +164,9 @@ importers:
       '@wireio/opp-solidity-models':
         specifier: link:/data/shared/code/wire/wire-opp/solidity
         version: link:../../../wire-opp/solidity
+      '@wireio/opp-typescript-models':
+        specifier: link:/data/shared/code/wire/wire-opp/typescript
+        version: link:../../../wire-opp/typescript
       '@wireio/sdk-core':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
         version: link:../../../wire-libraries-ts/packages/sdk-core
@@ -185,13 +200,16 @@ importers:
         version: 0.8.37
       '@coral-xyz/anchor':
         specifier: ^0.31.0
-        version: 0.31.1(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
+        version: 0.31.1(bufferutil@4.1.0)(typescript@6.0.2)
       '@solana/web3.js':
         specifier: ^1.98.0
         version: 1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
       '@wireio/opp-solidity-models':
         specifier: link:/data/shared/code/wire/wire-opp/solidity
         version: link:../../../wire-opp/solidity
+      '@wireio/opp-typescript-models':
+        specifier: link:/data/shared/code/wire/wire-opp/typescript
+        version: link:../../../wire-opp/typescript
       '@wireio/sdk-core':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
         version: link:../../../wire-libraries-ts/packages/sdk-core
@@ -2656,10 +2674,10 @@ snapshots:
 
   '@coral-xyz/anchor-errors@0.31.1': {}
 
-  '@coral-xyz/anchor@0.31.1(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)':
+  '@coral-xyz/anchor@0.31.1(bufferutil@4.1.0)(typescript@6.0.2)':
     dependencies:
       '@coral-xyz/anchor-errors': 0.31.1
-      '@coral-xyz/borsh': 0.31.1(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6))
+      '@coral-xyz/borsh': 0.31.1(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2))
       '@noble/hashes': 1.8.0
       '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
       bn.js: 5.2.3
@@ -2677,7 +2695,7 @@ snapshots:
       - typescript
       - utf-8-validate
 
-  '@coral-xyz/borsh@0.31.1(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6))':
+  '@coral-xyz/borsh@0.31.1(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2))':
     dependencies:
       '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
       bn.js: 5.2.3

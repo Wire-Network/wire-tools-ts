@@ -29,7 +29,6 @@ Exercises the full OPP message flow across three blockchains:
 
 ```bash
 pnpm install
-pnpm link --global @wireio/sdk-core @wireio/opp-solidity-models
 ```
 
 ## Running Tests
@@ -68,4 +67,4 @@ The harness manages child processes with PID tracking, signal handling, and tree
 ## Code Style
 
 - Prettier: no semicolons, no trailing commas, double quotes, 2-space indent, arrow parens `avoid`
-- Formatting utility wrappers (e.g., `Deferred` + `asOption` pattern) preferred over raw `new Promise` for pm2 callback APIs
+

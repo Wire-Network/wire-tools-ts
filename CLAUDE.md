@@ -109,6 +109,7 @@ wire-test-cluster --chain-dir=<path> destroy   # stop + delete data
 `.pnpmfile.cjs` hooks resolve `@wireio/*` packages from sibling repos:
 - `../wire-libraries-ts/packages/` → `@wireio/sdk-core`, `@wireio/shared`, `@wireio/shared-node`
 - `../wire-opp/solidity/` → `@wireio/opp-solidity-models`
+- `../wire-opp/typescript/` → `@wireio/opp-typescript-models`
 
 These link automatically on `pnpm install` if the sibling directories exist.
 

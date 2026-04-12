@@ -69,11 +69,11 @@ export class WIREClient {
     })
   }
 
-  /** Read operator roster from sysio.epoch contract */
+  /** Read operator roster from sysio.opreg contract */
   async getOperators() {
-    return this.getTableRows<SystemContracts.SysioEpochOperatorInfoType>({
-      code: "sysio.epoch",
-      scope: "sysio.epoch",
+    return this.getTableRows<any>({
+      code: "sysio.opreg",
+      scope: "sysio.opreg",
       table: "operators"
     })
   }

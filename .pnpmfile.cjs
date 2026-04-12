@@ -21,12 +21,10 @@ const wireLibPackagesPath = Path.resolve(
   "wire-libraries-ts",
   "packages"
 )
-const wireOPPSolidityPath = Path.resolve(
-  __dirname,
-  "..",
-  "wire-opp",
-  "solidity"
-)
+const wireOPPPkgPaths = ["typescript", "solidity"].map(target => [
+  `@wireio/opp-${target}-models`,
+  Path.resolve(__dirname, "..", "wire-opp", target)
+])
 
 /**
  * Checks whether a path exists and is a directory, without throwing.
@@ -54,9 +52,11 @@ const localOverrides = isDirectory(wireLibPackagesPath)
     }
   : {}
 
-if (isDirectory(wireOPPSolidityPath)) {
-  localOverrides["@wireio/opp-solidity-models"] = wireOPPSolidityPath
-}
+wireOPPPkgPaths
+  .filter(([, path]) => isDirectory(path))
+  .forEach(([pkgName, path]) => {
+    localOverrides[pkgName] = path
+  })
 
 /**
  * `readPackage` hook, which links locally available versions of

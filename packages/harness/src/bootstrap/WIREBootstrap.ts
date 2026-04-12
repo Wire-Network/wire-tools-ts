@@ -365,8 +365,6 @@ export class WIREBootstrap {
           operators_per_epoch: 7,
           batch_operator_minimum_active: 21,
           batch_op_groups: 3,
-          warmup_epochs: 1,
-          cooldown_epochs: 1,
           attestation_retention_epoch_count: 1000
         },
         "sysio.epoch@active"
