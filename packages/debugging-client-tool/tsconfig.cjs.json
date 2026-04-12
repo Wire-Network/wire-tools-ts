@@ -1,0 +1,12 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.cjs.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/cjs"
+  },
+  "references": [
+    { "path": "../debugging-shared/tsconfig.json" },
+    { "path": "../debugging-client-shared/tsconfig.json" }
+  ],
+  "include": ["src"]
+}

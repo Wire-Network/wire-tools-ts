@@ -1,0 +1,37 @@
+{
+  "name": "@wire-e2e-tests/debugging-client-tool",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "types": "lib/cjs/index.d.ts",
+  "main": "dist/bundle/wire-debugging-client-tool.cjs",
+  "bin": {
+    "wire-debugging-client-tool": "dist/bundle/wire-debugging-client-tool.cjs"
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "build:dev": "tsc -b tsconfig.json -w",
+    "bundle": "node esbuild.config.js",
+    "dist": "pnpm build && pnpm bundle",
+    "test": "jest",
+    "clean": "rm -rf lib dist"
+  },
+  "dependencies": {
+    "@wire-e2e-tests/debugging-shared": "workspace:*",
+    "@wire-e2e-tests/debugging-client-shared": "workspace:*",
+    "@wireio/opp-typescript-models": "^1.0.23",
+    "lodash": "^4.17.21",
+    "tracer": "^1.3.0",
+    "ts-pattern": "^5.9.0",
+    "yargs": "^18.0.0"
+  },
+  "devDependencies": {
+    "@types/lodash": "^4.17.24",
+    "@types/node": "25.5.0",
+    "@types/yargs": "^17.0.35",
+    "esbuild": "^0.27.3",
+    "source-map-support": "^0.5.21",
+    "ts-jest": "^29.4.6",
+    "typescript": "^6.0.2"
+  }
+}

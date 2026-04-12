@@ -6,6 +6,10 @@ const config: Config = {
     "packages/flow-a",
     "packages/flow-b",
     "packages/flow-c",
+    "packages/debugging-shared",
+    "packages/debugging-server",
+    "packages/debugging-client-shared",
+    "packages/debugging-client-tool",
   ],
 }
 

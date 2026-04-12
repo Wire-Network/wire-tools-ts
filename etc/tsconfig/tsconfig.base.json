@@ -55,6 +55,30 @@
       ],
       "@wire-e2e-tests/flow-c/*": [
         "./packages/flow-c/src/*"
+      ],
+      "@wire-e2e-tests/debugging-shared": [
+        "./packages/debugging-shared/src"
+      ],
+      "@wire-e2e-tests/debugging-shared/*": [
+        "./packages/debugging-shared/src/*"
+      ],
+      "@wire-e2e-tests/debugging-server": [
+        "./packages/debugging-server/src"
+      ],
+      "@wire-e2e-tests/debugging-server/*": [
+        "./packages/debugging-server/src/*"
+      ],
+      "@wire-e2e-tests/debugging-client-shared": [
+        "./packages/debugging-client-shared/src"
+      ],
+      "@wire-e2e-tests/debugging-client-shared/*": [
+        "./packages/debugging-client-shared/src/*"
+      ],
+      "@wire-e2e-tests/debugging-client-tool": [
+        "./packages/debugging-client-tool/src"
+      ],
+      "@wire-e2e-tests/debugging-client-tool/*": [
+        "./packages/debugging-client-tool/src/*"
       ]
     }
   },

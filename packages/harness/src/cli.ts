@@ -278,7 +278,7 @@ async function main(): Promise<void> {
               manager = createClusterManager(loadClusterConfig()).loadState()
 
             if (!Fs.existsSync(clusterPath)) {
-              console.error(`Error: chain-dir does not exist: ${clusterPath}`)
+              log.error(`Error: chain-dir does not exist: ${clusterPath}`)
               process.exit(1)
             }
 
@@ -300,12 +300,12 @@ async function main(): Promise<void> {
     // IF A PROMISE WAS RETURNED, AWAIT IT
     await (isPromise(result) ? result : Promise.resolve(result))
   } catch (err) {
-    console.error("wire-test-cluster fatal error:", err)
+    log.error("wire-test-cluster fatal error:", err)
     process.exit(1)
   }
 }
 
 main().catch(err => {
-  console.error("wire-test-cluster fatal error:", err)
+  log.error("wire-test-cluster fatal error:", err)
   process.exit(1)
 })

@@ -1,0 +1,43 @@
+{
+  "name": "@wire-e2e-tests/debugging-client-shared",
+  "version": "0.1.0",
+  "private": true,
+  "types": "lib/esm/index.d.ts",
+  "main": "lib/cjs/index.js",
+  "module": "lib/esm/index.js",
+  "exports": {
+    ".": {
+      "import": "./lib/esm/index.js",
+      "require": "./lib/cjs/index.js",
+      "types": "./lib/esm/index.d.ts"
+    },
+    "./*": {
+      "import": "./lib/esm/*.js",
+      "require": "./lib/cjs/*.js",
+      "types": "./lib/esm/*.d.ts"
+    }
+  },
+  "files": [
+    "lib",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.json && node ../../scripts/fix-hybrid-output.mjs .",
+    "build:dev": "tsc -b tsconfig.json -w",
+    "test": "jest",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@wire-e2e-tests/debugging-shared": "workspace:*",
+    "@3fv/prelude-ts": "^0.8.37",
+    "lodash": "^4.17.21"
+  },
+  "devDependencies": {
+    "@wire-e2e-tests/debugging-server": "workspace:*",
+    "@wireio/opp-typescript-models": "^1.0.23",
+    "@types/lodash": "^4.17.24",
+    "@types/node": "25.5.0",
+    "ts-jest": "^29.4.6",
+    "typescript": "^6.0.2"
+  }
+}

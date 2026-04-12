@@ -1,0 +1,21 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {
+    "rootDir": "tests",
+    "outDir": "lib/test-cjs",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "ignoreDeprecations": "6.0",
+    "paths": {
+      "@wire-e2e-tests/debugging-server": ["./src"],
+      "@wire-e2e-tests/debugging-server/*": ["./src/*"],
+      "@wire-e2e-tests/debugging-shared": ["../debugging-shared/src"],
+      "@wire-e2e-tests/debugging-shared/*": ["../debugging-shared/src/*"]
+    }
+  },
+  "references": [
+    { "path": "./tsconfig.cjs.json" },
+    { "path": "../debugging-shared/tsconfig.cjs.json" }
+  ],
+  "include": ["tests"]
+}
