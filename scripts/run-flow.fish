@@ -87,5 +87,5 @@ end
 set -x WIRE_BUILD_PATH "$sysio_build_path"
 set -x WIRE_ETH_PATH "$ethereum_path"
 set -x WIRE_CLUSTER_PATH "$cluster_path"
-
-npx jest --runInBand --forceExit --verbose --detectOpenHandles
+# --detectOpenHandles
+npx jest --runInBand --forceExit --verbose

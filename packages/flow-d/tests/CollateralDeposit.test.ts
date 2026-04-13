@@ -8,9 +8,10 @@ import {
   WIREClient,
   type ClusterPorts,
   retry,
-  sleep
+  sleep,
+  log,
+  ProcessManager
 } from "@wire-e2e-tests/harness"
-import { SystemContracts } from "@wireio/sdk-core"
 import {
   ChainKind,
   OperatorType,
@@ -198,7 +199,19 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   }, 300_000)
 
   afterAll(async () => {
-    await manager?.stop()
+    try {
+      await manager?.stop()
+    } catch (err) {
+      log.error("Error stopping manager:", err)
+    }
+
+    await ProcessManager.get().killAll()
+    // try {
+    //   await ProcessManager.get().disconnect()
+    // } catch (err) {
+    //   log.error("Error disconnecting process manager:", err)
+    // }
+    // process.exit(exitCode)
   }, 30_000)
 
   // ── WIRE chain health ──

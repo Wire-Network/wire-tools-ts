@@ -274,6 +274,7 @@ export const OPP_SYSTEM_ACCOUNTS = [
 
 export const BATCH_OPERATOR_PLUGINS = [
   "sysio::batch_operator_plugin",
+  "sysio::external_debugging_plugin",
   "sysio::outpost_ethereum_client_plugin",
   "sysio::outpost_solana_client_plugin",
   "sysio::cron_plugin"

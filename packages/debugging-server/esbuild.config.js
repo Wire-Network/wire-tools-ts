@@ -69,7 +69,7 @@ async function main() {
   }
 
   const ctx = await esbuild.context({
-    entryPoints: ["src/index.ts"],
+    entryPoints: ["src/cli.ts"],
     bundle: true,
     platform: "node",
     target: "node24",

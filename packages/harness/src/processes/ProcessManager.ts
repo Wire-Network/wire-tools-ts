@@ -471,6 +471,7 @@ export class ProcessManager {
     const labels = [...this.handles.keys()]
     log.info(`Killing all processes: ${labels.join(", ")}`)
     await Promise.all(labels.map(label => this.handles.get(label)?.kill()))
+    this.closeAllLogStreams()
   }
 
   /** Disconnect from the pm2 daemon. Call when done. */
@@ -480,7 +481,18 @@ export class ProcessManager {
       this.connected = false
       this.bus = null
     }
+
     this.closeAllLogStreams()
+
+    await Deferred.useCallback(d =>
+      PM2Service.killDaemon(err => {
+        if (err) {
+          d.reject(err)
+        } else {
+          d.resolve()
+        }
+      })
+    ).promise
   }
 
   /** Number of tracked running processes. */

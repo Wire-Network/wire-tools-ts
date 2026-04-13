@@ -4,7 +4,7 @@
   "private": true,
   "type": "commonjs",
   "types": "lib/cjs/index.d.ts",
-  "main": "dist/bundle/wire-debugging-server.cjs",
+  "main": "lib/cjs/index.js",
   "bin": {
     "wire-debugging-server": "dist/bundle/wire-debugging-server.cjs"
   },

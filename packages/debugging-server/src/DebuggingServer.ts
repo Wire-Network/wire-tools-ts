@@ -14,6 +14,7 @@ import type { HandlerRegistry } from "./JsonRPC"
 import OPPRoutes from "./routes/opp/OPPRoutes"
 import * as Path from "node:path"
 import { Future } from "@3fv/prelude-ts"
+import { Deferred } from "@wireio/shared"
 
 export interface DebuggingServerOptions {
   /** Server port. Default: DebuggingServer.DefaultPort */
@@ -90,12 +91,17 @@ export class DebuggingServer {
   }
 
   async start(): Promise<AddressInfo> {
-    return new Promise(resolve => {
-      this.server = this.app.listen(this.config.port, this.config.host, () => {
-        const addr = this.server!.address() as AddressInfo
-        resolve(addr)
-      })
-    })
+    return Deferred.useCallback<AddressInfo>(d => {
+      const server = (this.server = this.app.listen(
+        this.config.port,
+        this.config.host,
+        err => {
+          if (err) return d.reject(err)
+
+          d.resolve(server.address() as AddressInfo)
+        }
+      ))
+    }).promise
   }
 
   async stop(): Promise<void> {

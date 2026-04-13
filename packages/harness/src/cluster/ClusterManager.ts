@@ -178,16 +178,14 @@ export class ClusterManager {
   /** Start the in-process OPP debugging server. */
   private async startDebuggingServer(): Promise<void> {
     const oppStoragePath = mkdirs(
-      Path.join(this.config.dataPath, ClusterManager.OppDebuggingSubpath)
+      Path.join(this.config.dataPath, ClusterManager.OPPDebuggingSubpath)
     )
     this.debuggingServer = await DebuggingServer.create({
       port: this.config.ports.debuggingServer,
       oppStoragePath
     })
     const addr = await this.debuggingServer.start()
-    log.info(
-      `Debugging server listening on ${addr.address}:${addr.port}`
-    )
+    log.info(`Debugging server listening on ${addr.address}:${addr.port}`)
   }
 
   /** Stop the in-process OPP debugging server if running. */
@@ -232,6 +230,9 @@ export class ClusterManager {
         .forEach(mkdirs)
 
       mkdirs(walletPath)
+
+      // Start debugging server first so that its URL can be passed into node start.cmd args
+      await this.startDebuggingServer()
 
       // ── 2. Start kiod + create wallet FIRST (keys go in as they're generated) ──
 
@@ -744,9 +745,6 @@ export class ClusterManager {
       log.info("Killing bios node (not needed after bootstrap)...")
       const biosHandle = ProcessManager.get().get("node-bios")
       if (biosHandle) await biosHandle.kill()
-
-      // ── 11a. Start debugging server (batch ops pass its URL via --ext-debugging-server) ──
-      await this.startDebuggingServer()
 
       // ── 11b. Start batch op + underwriter nodes for initial sync ──
       // All contracts are deployed (WIRE + ETH), addresses injected. Start
@@ -1643,12 +1641,7 @@ async function bootstrapChain(
 
   // No activation needed — bootstrapped batch ops are already AVAILABLE
   // initgroups reads AVAILABLE batch ops from sysio.opreg
-  await clio.pushAction(
-    "sysio.epoch",
-    "initgroups",
-    {},
-    "sysio.epoch@active"
-  )
+  await clio.pushAction("sysio.epoch", "initgroups", {}, "sysio.epoch@active")
   log.info("[Phase 20] Batch operator groups initialized")
 
   log.info("=== Bootstrap sequence complete ===")
@@ -1721,7 +1714,7 @@ export namespace ClusterManager {
   export const SolanaLedgerSubpath = "solana_validator"
 
   /** OPP debugging storage subdirectory within clusterPath/data. */
-  export const OppDebuggingSubpath = "opp-debugging"
+  export const OPPDebuggingSubpath = "opp-debugging"
 
   /**
    * Resolve all executable paths from a build directory.
