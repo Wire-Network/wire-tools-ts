@@ -55,6 +55,7 @@ import { which } from "zx"
 import { asOption } from "@3fv/prelude-ts"
 import { range } from "lodash"
 import { Deferred, getValue, isNumber, isString } from "@wireio/shared"
+import { DebuggingServer } from "@wire-e2e-tests/debugging-server"
 import { ETHBootstrapper } from "./ETHBootstrapper.js"
 import { ClusterPorts } from "./ClusterPorts.js"
 import Bluebird from "bluebird"
@@ -163,6 +164,7 @@ export function toNodeLabel(nodeId: string | number) {
 export class ClusterManager {
   private readonly onStopDeferred = new Deferred<void>()
   private state: ClusterState | null = null
+  private debuggingServer: DebuggingServer | null = null
   get clusterPath() {
     return this.config.clusterPath
   }
@@ -172,6 +174,31 @@ export class ClusterManager {
   }
 
   constructor(readonly config: ClusterConfig) {}
+
+  /** Start the in-process OPP debugging server. */
+  private async startDebuggingServer(): Promise<void> {
+    const oppStoragePath = mkdirs(
+      Path.join(this.config.dataPath, ClusterManager.OppDebuggingSubpath)
+    )
+    this.debuggingServer = await DebuggingServer.create({
+      port: this.config.ports.debuggingServer,
+      oppStoragePath
+    })
+    const addr = await this.debuggingServer.start()
+    log.info(
+      `Debugging server listening on ${addr.address}:${addr.port}`
+    )
+  }
+
+  /** Stop the in-process OPP debugging server if running. */
+  private async stopDebuggingServer(): Promise<void> {
+    if (this.debuggingServer) {
+      await this.debuggingServer.stop()
+      this.debuggingServer = null
+      log.info("Debugging server stopped")
+    }
+  }
+
   /**
    * Create a new cluster: generate keys, write start.cmd / logging.json /
    * genesis.json per node, start all nodes, run the full bootstrap sequence,
@@ -406,6 +433,7 @@ export class ClusterManager {
             publicKey: DEV_K1_PUBLIC_KEY,
             privateKey: DEV_K1_PRIVATE_KEY
           }),
+          debuggingServerUrl = `http://localhost:${ports.debuggingServer}`,
           batchOpExtraArgs: string[] = [
             "--read-mode",
             "head",
@@ -419,7 +447,9 @@ export class ClusterManager {
             "--batch-epoch-poll-ms",
             "15000",
             "--batch-delivery-timeout-ms",
-            "15000"
+            "15000",
+            "--ext-debugging-server",
+            debuggingServerUrl
           ],
           cmd = buildStartCmd({
             nodeopBinary: executables.nodeop,
@@ -715,7 +745,10 @@ export class ClusterManager {
       const biosHandle = ProcessManager.get().get("node-bios")
       if (biosHandle) await biosHandle.kill()
 
-      // ── 11a. Start batch op + underwriter nodes for initial sync ──
+      // ── 11a. Start debugging server (batch ops pass its URL via --ext-debugging-server) ──
+      await this.startDebuggingServer()
+
+      // ── 11b. Start batch op + underwriter nodes for initial sync ──
       // All contracts are deployed (WIRE + ETH), addresses injected. Start
       // the operator nodes so they sync chain state from the producer via P2P.
       // The verifyCallback ensures each node is synced before spawn() returns.
@@ -755,6 +788,7 @@ export class ClusterManager {
 
       // ── 12. Shut everything down ──
       log.info("Shutting down remaining nodes...")
+      await this.stopDebuggingServer()
       await ProcessManager.get().killAll()
       await sleep(ClusterManager.ShutdownDelayMs)
 
@@ -804,6 +838,9 @@ export class ClusterManager {
       })
     )
     log.info(`Producer nodes started (${this.state.nodes.length})`)
+
+    // Start debugging server (batch ops connect to it via --ext-debugging-server)
+    await this.startDebuggingServer()
 
     // Start batch operator nodes (read-mode=head — sync from P2P)
     log.info(
@@ -878,9 +915,10 @@ export class ClusterManager {
       getValue(() => this.onStopDeferred.resolve())
     }
   }
-  /** Stop all running nodes. */
+  /** Stop all running nodes and the debugging server. */
   async stop(): Promise<void> {
     log.info("Stopping cluster...")
+    await this.stopDebuggingServer()
     await ProcessManager.get()
       .killAll()
       .finally(() => {
@@ -1681,6 +1719,9 @@ export namespace ClusterManager {
 
   /** Solana validator ledger subdirectory within clusterPath/data. */
   export const SolanaLedgerSubpath = "solana_validator"
+
+  /** OPP debugging storage subdirectory within clusterPath/data. */
+  export const OppDebuggingSubpath = "opp-debugging"
 
   /**
    * Resolve all executable paths from a build directory.

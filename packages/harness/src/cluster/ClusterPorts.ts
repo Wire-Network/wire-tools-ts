@@ -35,6 +35,8 @@ export interface ClusterPorts {
   solanaRpc: number
   /** Solana faucet */
   solanaFaucet: number
+  /** Debugging server HTTP */
+  debuggingServer: number
 }
 
 export namespace ClusterPorts {
@@ -46,6 +48,7 @@ export namespace ClusterPorts {
   export const DefaultAnvil = 8545
   export const DefaultSolanaRpc = 8899
   export const DefaultSolanaFaucet = 9900
+  export const DefaultDebuggingServer = 9901
 
   /** Check if a port is available using raw net.createServer. */
   function isPortAvailable(port: number): Promise<boolean> {
@@ -134,6 +137,7 @@ export namespace ClusterPorts {
     const anvil = await claim(DefaultAnvil)
     const solanaRpc = await claim(DefaultSolanaRpc)
     const solanaFaucet = await claim(DefaultSolanaFaucet)
+    const debuggingServer = await claim(DefaultDebuggingServer)
 
     return {
       kiod,
@@ -147,7 +151,8 @@ export namespace ClusterPorts {
       underwriterP2p,
       anvil,
       solanaRpc,
-      solanaFaucet
+      solanaFaucet,
+      debuggingServer
     }
   }
 
@@ -168,7 +173,8 @@ export namespace ClusterPorts {
       ...ports.underwriterP2p,
       ports.anvil,
       ports.solanaRpc,
-      ports.solanaFaucet
+      ports.solanaFaucet,
+      ports.debuggingServer
     ]
 
     const unavailable: number[] = []
