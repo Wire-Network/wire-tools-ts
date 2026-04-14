@@ -5,6 +5,7 @@ import { execFileSync } from "child_process"
 import { log } from "../logger.js"
 import { Deferred, isObject } from "@wireio/shared"
 import { asOption } from "@3fv/prelude-ts"
+import { ProcessSignalName } from "./ProcessSignals.js"
 import * as Assert from "node:assert"
 import { mkdirs } from "../util.js"
 
@@ -103,7 +104,10 @@ namespace pm2 {
     ).promise
   }
 
-  export function sendSignal(signal: string, name: string): Promise<void> {
+  export function sendSignal(
+    signal: ProcessSignalName,
+    name: string
+  ): Promise<void> {
     return Deferred.useCallback<void>(d =>
       PM2Service.sendSignalToProcessName(signal, name, err => {
         err ? d.reject(err) : d.resolve()
@@ -135,12 +139,17 @@ function isProcessRunning(name: ManagedProcessName): boolean {
 }
 
 /** Send a signal to all processes matching name via pkill. */
-function pkill(name: ManagedProcessName, signal?: string): void {
+function pkill(
+  name: ManagedProcessName,
+  signal: ProcessSignalName = ProcessSignalName.SIGTERM
+): boolean {
   try {
-    const args = signal ? [signal, "-x", name] : ["-x", name]
+    const args = [`-${signal}`, "-x", name]
     execFileSync("pkill", args, { stdio: "ignore" })
+    return true
   } catch {
-    // process not found or already dead
+    log.debug(`Failed to kill process ${name} with signal ${signal}`)
+    return false
   }
 }
 
@@ -165,7 +174,7 @@ function killExistingProcesses(): void {
   if (stragglers.length > 0) {
     log.warn(`Force-killing stragglers: ${stragglers.join(", ")}`)
     for (const name of stragglers) {
-      pkill(name, "-9")
+      pkill(name, ProcessSignalName.SIGKILL)
     }
   }
 }
@@ -250,11 +259,11 @@ export class ProcessManager {
     }
 
     process.on("exit", cleanup)
-    process.on("SIGINT", () => {
+    process.on(ProcessSignalName.SIGINT, () => {
       cleanup()
       process.exit(130)
     })
-    process.on("SIGTERM", () => {
+    process.on(ProcessSignalName.SIGTERM, () => {
       cleanup()
       process.exit(143)
     })
@@ -308,9 +317,9 @@ export class ProcessManager {
     }
   }
 
-  private writeToLogs(label: string, stream: string, data: string): void {
+  private writeToLogs(label: string, data: string): void {
     const ts = new Date().toISOString()
-    const line = `${ts} [${label}:${stream}] ${data}\n`
+    const line = `${ts} [${label}] ${data}\n`
     this.clusterLogStream?.write(line)
     this.processLogStreams.get(label)?.write(line)
   }
@@ -331,32 +340,21 @@ export class ProcessManager {
     )
 
     // Register bus listeners BEFORE start so early exits are captured
-    const exitDeferred = new Deferred<number>()
+    const exitDeferred = new Deferred<number>(),
+      onLogHandler = (packet: any) => {
+        if (packet.process?.name !== config.label) return
+        String(packet.data)
+          .split("\n")
+          .filter(Boolean)
+          .forEach(line => {
+            //log.debug(`[${config.label}] ${line}`)
+            this.writeToLogs(config.label, line)
+          })
+      }
 
-    this.bus.on("log:err", (packet: any) => {
-      if (packet.process?.name !== config.label) return
+    this.bus.on("log:err", onLogHandler)
 
-      String(packet.data)
-        .split("\n")
-        .filter(Boolean)
-        .forEach(line => {
-          log.debug(`[${config.label}:stderr] ${line}`)
-          recentStderr.push(line)
-          if (recentStderr.length > MAX_STDERR_LINES) recentStderr.shift()
-          this.writeToLogs(config.label, "stderr", line)
-        })
-    })
-
-    this.bus.on("log:out", (packet: any) => {
-      if (packet.process?.name !== config.label) return
-      String(packet.data)
-        .split("\n")
-        .filter(Boolean)
-        .forEach(line => {
-          log.debug(`[${config.label}:stdout] ${line}`)
-          this.writeToLogs(config.label, "stdout", line)
-        })
-    })
+    this.bus.on("log:out", onLogHandler)
 
     // Track exit via bus event
     const onExit = (packet: any) => {

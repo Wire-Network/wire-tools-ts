@@ -2,6 +2,7 @@ import OS from "node:os"
 import Path from "node:path"
 import Fs from "node:fs"
 import { ProcessManager } from "./processes/ProcessManager.js"
+import { ProcessSignalName } from "./processes/ProcessSignals.js"
 import { AnvilManager, type AnvilOptions } from "./processes/AnvilManager.js"
 import {
   SolanaValidatorManager,
@@ -112,8 +113,8 @@ export class TestEnvironment {
       log.warn("Received signal, stopping test environment...")
       this.stop().then(() => process.exit(0))
     }
-    process.on("SIGINT", cleanup)
-    process.on("SIGTERM", cleanup)
+    process.on(ProcessSignalName.SIGINT, cleanup)
+    process.on(ProcessSignalName.SIGTERM, cleanup)
 
     // Determine chain directory
     const clusterPath =

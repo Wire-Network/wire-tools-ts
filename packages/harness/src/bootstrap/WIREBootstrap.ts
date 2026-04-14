@@ -18,6 +18,7 @@ import { asOption, Future } from "@3fv/prelude-ts"
 import { which } from "zx"
 import { defaults } from "lodash"
 import { assert } from "@wireio/shared"
+import { SysioEpochChainkind } from "@wireio/sdk-core/types/SystemContractTypes"
 
 /**
  * WIRE chain bootstrap sequence.
@@ -374,30 +375,37 @@ export class WIREBootstrap {
       log.warn(`Failed to configure epoch: ${err.message}`)
     }
 
-    // Register outposts: ETHEREUM (chain_kind=2, chain_id=31337) and SOLANA (chain_kind=3, chain_id=1)
+    // Register outposts: ETHEREUM (chain_kind=SysioEpochChainkind.CHAIN_KIND_ETHEREUM, chain_id=31337) and SOLANA (chain_kind=3, chain_id=1)
     try {
       await this.clio.pushAction<SystemContracts.SysioEpochRegoutpostAction>(
         "sysio.epoch",
         "regoutpost",
-        { chain_kind: 2, chain_id: 31337 },
+        {
+          chain_kind: SysioEpochChainkind.CHAIN_KIND_ETHEREUM,
+          chain_id: 31337
+        },
         "sysio.epoch@active"
       )
-      log.info("Registered ETH outpost (chain_kind=2, chain_id=31337)")
+      log.info(
+        "Registered ETH outpost (chain_kind=SysioEpochChainkind.CHAIN_KIND_ETHEREUM, chain_id=31337)"
+      )
     } catch (err: any) {
-      log.warn(`Failed to register ETH outpost: ${err.message}`)
+      log.error(`Failed to register ETH outpost: ${err.message}`, err)
     }
 
-    try {
-      await this.clio.pushAction<SystemContracts.SysioEpochRegoutpostAction>(
-        "sysio.epoch",
-        "regoutpost",
-        { chain_kind: 3, chain_id: 1 },
-        "sysio.epoch@active"
-      )
-      log.info("Registered SOL outpost (chain_kind=3, chain_id=1)")
-    } catch (err: any) {
-      log.warn(`Failed to register SOL outpost: ${err.message}`)
-    }
+    // try {
+    //   await this.clio.pushAction<SystemContracts.SysioEpochRegoutpostAction>(
+    //     "sysio.epoch",
+    //     "regoutpost",
+    //     { chain_kind: SysioEpochChainkind.CHAIN_KIND_SOLANA, chain_id: 1 },
+    //     "sysio.epoch@active"
+    //   )
+    //   log.info(
+    //     "Registered SOL outpost (chain_kind=CHAIN_KIND_SOLANA, chain_id=1)"
+    //   )
+    // } catch (err: any) {
+    //   log.warn(`Failed to register SOL outpost: ${err.message}`)
+    // }
 
     // sysio.uwrit::setconfig
     try {

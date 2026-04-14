@@ -99,7 +99,9 @@ export class ETHBootstrapper {
         "--accounts",
         String(accountCount),
         "--balance",
-        String(balancePerAccount)
+        String(balancePerAccount),
+        "--code-size-limit",
+        "99999"
       ]
     })
     await anvil.start()

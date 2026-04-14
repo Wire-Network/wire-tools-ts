@@ -1,14 +1,8 @@
 import "jest"
-import Assert from "node:assert"
-import Path from "path"
-import Fs from "fs"
 import { ethers } from "ethers"
 import {
-  ClusterManager,
-  WIREClient,
-  type ClusterPorts,
-  retry,
-  sleep,
+  FlowTestContext,
+  pollUntil,
   log,
   ProcessManager
 } from "@wire-e2e-tests/harness"
@@ -16,16 +10,15 @@ import {
   ChainKind,
   OperatorType,
   OperatorStatus,
-  TokenKind,
   AttestationType
 } from "@wireio/opp-typescript-models"
 
 /**
  * Flow D: Collateral Deposit via BAR — full e2e ETH → WIRE relay.
  *
- * Creates a fresh cluster with ETH bootstrap, calls BAR.bond() to deposit
- * collateral, then waits for batch operators to relay the OPPEnvelope from
- * ETH to WIRE via the epoch cycle.
+ * Supports two modes:
+ *   - **Fresh** (CI/CD): creates a cluster from scratch, bootstraps, runs tests, tears down
+ *   - **Attach**: connects to an already-running cluster via WIRE_CLUSTER_CONFIG
  *
  * Flow:
  *   1. BAR.bond() on ETH → OPPEnvelope event emitted immediately
@@ -33,191 +26,67 @@ import {
  *   3. Batch operators read OPPEnvelope events from ETH, deliver to sysio.msgch
  *   4. Message appears in WIRE's inchainreq / deliveries / messages tables
  *
- * Verifies:
- *   - WIRE + ETH chains healthy, OPP contracts accessible
- *   - BAR.bond() emits ActorBonded, records bond, triggers OPPEnvelope
- *   - Batch operators relay: inbound chain request created, deliveries recorded
- *   - Message relayed to WIRE messages table with correct attestation type
- *
  * Environment:
- *   WIRE_BUILD_PATH   — path to wire-sysio build dir (required)
- *   WIRE_ETH_PATH     — path to wire-ethereum repo root (required for ETH)
- *   WIRE_CLUSTER_PATH — override cluster location (default: temp dir)
+ *   WIRE_CLUSTER_CONFIG — path to cluster-config.json (attach mode)
+ *   WIRE_BUILD_PATH     — wire-sysio build dir (fresh mode)
+ *   WIRE_ETH_PATH       — wire-ethereum repo root (fresh mode / ETH ABIs)
+ *   WIRE_CLUSTER_PATH   — cluster data dir (fresh mode)
  */
 
 // ---------------------------------------------------------------------------
-// Config from environment
+// Config
 // ---------------------------------------------------------------------------
 
-Assert.ok(
-  process.env.WIRE_BUILD_PATH,
-  "WIRE_BUILD_PATH environment variable is required"
-)
-Assert.ok(
-  process.env.WIRE_ETH_PATH,
-  "WIRE_ETH_PATH environment variable is required"
-)
-Assert.ok(
-  process.env.WIRE_CLUSTER_PATH,
-  "WIRE_CLUSTER_PATH environment variable is required"
-)
-
-const WIRE_BUILD_PATH = process.env.WIRE_BUILD_PATH
-const WIRE_ETH_PATH = process.env.WIRE_ETH_PATH
-const CLUSTER_PATH = process.env.WIRE_CLUSTER_PATH
-
-// Short epoch for test — batch operators poll every 5s, so 15s epoch
-// gives enough time for the cycle to trigger after advance
 const TEST_EPOCH_DURATION_SEC = 90
 
-// ---------------------------------------------------------------------------
-// OPP type constants (match Solidity user-defined value types)
-// ---------------------------------------------------------------------------
-
-/** Use protobuf enum values from @wireio/opp-solidity-models */
+/** Use protobuf enum values from @wireio/opp-typescript-models */
 const OPERATOR_TYPE_BATCH = OperatorType.BATCH
-const TOKEN_KIND_ETH = TokenKind.ETH
 
 /** Bond amount (1M base units) */
 const BOND_AMOUNT = 1_000_000n
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function loadETHAddresses(): Record<string, string> {
-  const addrsPath = Path.join(
-    WIRE_ETH_PATH,
-    ".local/deployments/outpost-addrs.json"
-  )
-  if (!Fs.existsSync(addrsPath))
-    throw new Error("ETH outpost addresses not found after bootstrap")
-  return JSON.parse(Fs.readFileSync(addrsPath, "utf-8"))
-}
-
-function loadETHABI(contractName: string): ethers.InterfaceAbi {
-  const artifactPath = Path.join(
-    WIRE_ETH_PATH,
-    "artifacts/contracts/outpost",
-    `${contractName}.sol`,
-    `${contractName}.json`
-  )
-  return JSON.parse(Fs.readFileSync(artifactPath, "utf-8")).abi
-}
-
-/**
- * Poll a condition until it returns true or timeout expires.
- */
-async function pollUntil(
-  label: string,
-  condition: () => Promise<boolean>,
-  timeoutMs: number,
-  intervalMs = 2000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (await condition()) return
-    await sleep(intervalMs)
-  }
-  throw new Error(`Timed out waiting for: ${label} (${timeoutMs}ms)`)
-}
 
 // ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
 
 describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () => {
-  let manager: ClusterManager
-  let wireClient: WIREClient
-  let ethProvider: ethers.JsonRpcProvider
-  let ethSigner: ethers.Wallet
+  let ctx: FlowTestContext
   let oppContract: ethers.Contract
   let oppInboundContract: ethers.Contract
   let barContract: ethers.Contract
   let opRegContract: ethers.Contract
-  let ports: ClusterPorts
 
-  // ── Setup: create + start a fresh cluster with ETH ──
+  // ── Setup ──
 
   beforeAll(async () => {
-    manager = await ClusterManager.createFromCLIArgs({
-      buildPath: WIRE_BUILD_PATH,
-      clusterPath: CLUSTER_PATH,
-      ethereumPath: WIRE_ETH_PATH,
-      producerCount: 21,
-      nodeCount: 1,
-      batchOperatorCount: 3,
-      underwriterCount: 1,
-      epochDurationSec: TEST_EPOCH_DURATION_SEC,
-      warmupEpochs: 1,
-      cooldownEpochs: 1,
-      force: true
+    ctx = await FlowTestContext.create({
+      epochDurationSec: TEST_EPOCH_DURATION_SEC
     })
 
-    manager.loadState()
-    await manager.start()
-
-    ports = manager.config.ports
-
-    wireClient = new WIREClient({
-      httpUrl: `http://127.0.0.1:${ports.producerHttp[0]}`,
-      clio: {
-        clusterPath: manager.config.clusterPath,
-        binary: manager.config.executables.clio,
-        url: `http://127.0.0.1:${ports.producerHttp[0]}`,
-        walletUrl: `http://127.0.0.1:${ports.kiod}`
-      }
-    })
-
-    ethProvider = new ethers.JsonRpcProvider(`http://127.0.0.1:${ports.anvil}`)
-    ethSigner = new ethers.Wallet(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-      ethProvider
-    )
-
-    const ethAddrs = loadETHAddresses()
-    oppContract = new ethers.Contract(
-      ethAddrs.OPP,
-      loadETHABI("OPP"),
-      ethSigner
-    )
-    oppInboundContract = new ethers.Contract(
-      ethAddrs.OPPInbound,
-      loadETHABI("OPPInbound"),
-      ethSigner
-    )
-    barContract = new ethers.Contract(
-      ethAddrs.BAR,
-      loadETHABI("BAR"),
-      ethSigner
-    )
-    opRegContract = new ethers.Contract(
-      ethAddrs.OperatorRegistry,
-      loadETHABI("OperatorRegistry"),
-      ethSigner
+    const ethAddrs = ctx.loadETHAddresses()
+    oppContract = ctx.loadETHContract("OPP", ethAddrs.OPP)
+    oppInboundContract = ctx.loadETHContract("OPPInbound", ethAddrs.OPPInbound)
+    barContract = ctx.loadETHContract("BAR", ethAddrs.BAR)
+    opRegContract = ctx.loadETHContract(
+      "OperatorRegistry",
+      ethAddrs.OperatorRegistry
     )
   }, 300_000)
 
   afterAll(async () => {
     try {
-      await manager?.stop()
+      await ctx?.teardown()
     } catch (err) {
-      log.error("Error stopping manager:", err)
+      log.error("Error during teardown:", err)
     }
 
     await ProcessManager.get().killAll()
-    // try {
-    //   await ProcessManager.get().disconnect()
-    // } catch (err) {
-    //   log.error("Error disconnecting process manager:", err)
-    // }
-    // process.exit(exitCode)
   }, 30_000)
 
   // ── WIRE chain health ──
 
   test("WIRE chain is producing blocks", async () => {
-    const info = await wireClient.getInfo()
+    const info = await ctx.wireClient.getInfo()
     expect(Number(info.head_block_num)).toBeGreaterThan(0)
     expect(info.head_block_producer).toBeDefined()
   })
@@ -225,12 +94,12 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   // ── ETH health ──
 
   test("Anvil is running with deployed contracts", async () => {
-    const blockNum = await ethProvider.getBlockNumber()
+    const blockNum = await ctx.ethProvider.getBlockNumber()
     expect(blockNum).toBeGreaterThan(0)
 
     const [oppCode, barCode] = await Promise.all([
-      ethProvider.getCode(await oppContract.getAddress()),
-      ethProvider.getCode(await barContract.getAddress())
+      ctx.ethProvider.getCode(await oppContract.getAddress()),
+      ctx.ethProvider.getCode(await barContract.getAddress())
     ])
     expect(oppCode.length).toBeGreaterThan(4)
     expect(barCode.length).toBeGreaterThan(4)
@@ -254,21 +123,21 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   // ── WIRE OPP state ──
 
   test("Epoch config is set on WIRE", async () => {
-    const { rows } = await wireClient.getEpochConfig()
+    const { rows } = await ctx.wireClient.getEpochConfig()
     expect(rows.length).toBe(1)
     expect(rows[0].epoch_duration_sec).toBe(TEST_EPOCH_DURATION_SEC)
     expect(rows[0].batch_operator_minimum_active).toBeGreaterThanOrEqual(3)
   })
 
   test("Epoch state is initialized", async () => {
-    const { rows } = await wireClient.getEpochState()
+    const { rows } = await ctx.wireClient.getEpochState()
     expect(rows.length).toBe(1)
     expect(rows[0].current_epoch_index).toBeGreaterThanOrEqual(0)
     expect(rows[0].batch_op_groups.length).toBe(3)
   })
 
   test("ETH outpost is registered", async () => {
-    const { rows } = await wireClient.getOutposts()
+    const { rows } = await ctx.wireClient.getOutposts()
     const ethOutpost = rows.find(
       (r: any) =>
         (r.chain_kind === ChainKind.ETHEREUM ||
@@ -279,18 +148,17 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   })
 
   test("Batch operators are AVAILABLE in opreg", async () => {
-    const { rows } = await wireClient.getOperators()
+    const { rows } = await ctx.wireClient.getOperators()
     const batchOps = rows.filter(
       (r: any) =>
         r.type === OPERATOR_TYPE_BATCH || r.type === "OPERATOR_TYPE_BATCH"
     )
     expect(batchOps.length).toBe(3)
     batchOps.forEach((op: any) => {
-      // Bootstrapped operators are immediately AVAILABLE (ACTIVE enum value = 3)
       expect([OperatorStatus.ACTIVE, "OPERATOR_STATUS_ACTIVE"]).toContain(
         op.status
       )
-      expect(op.is_bootstrapped).toBe(1) // bootstrapped in dev
+      expect(op.is_bootstrapped).toBe(1)
     })
   })
 
@@ -304,7 +172,7 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   })
 
   test("OperatorRegistry has no deposits before test", async () => {
-    const signerAddr = await ethSigner.getAddress()
+    const signerAddr = await ctx.ethSigner.getAddress()
     const info = await opRegContract.operators(signerAddr)
     expect(Number(info.deposited)).toBe(0)
   })
@@ -312,7 +180,7 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   // ── Collateral deposit via OperatorRegistry.deposit() ──
 
   test("OperatorRegistry.deposit() succeeds and emits OperatorDeposited + OPPEnvelope", async () => {
-    const signerAddr = await ethSigner.getAddress()
+    const signerAddr = await ctx.ethSigner.getAddress()
     const tx = await opRegContract.deposit(OPERATOR_TYPE_BATCH, {
       value: BOND_AMOUNT
     })
@@ -334,13 +202,15 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
       data: depositEvent!.data
     })
     expect(decoded!.name).toBe("OperatorDeposited")
-    expect(decoded!.args.operator.toLowerCase()).toBe(signerAddr.toLowerCase())
+    expect(decoded!.args.operator.toLowerCase()).toBe(
+      signerAddr.toLowerCase()
+    )
     expect(Number(decoded!.args.operatorType)).toBe(OPERATOR_TYPE_BATCH)
     expect(decoded!.args.amount).toBe(BOND_AMOUNT)
   })
 
   test("Deposit is recorded in OperatorRegistry", async () => {
-    const signerAddr = await ethSigner.getAddress()
+    const signerAddr = await ctx.ethSigner.getAddress()
     const info = await opRegContract.operators(signerAddr)
     expect(info.deposited).toBe(BOND_AMOUNT)
     expect(Number(info.operatorType)).toBe(OPERATOR_TYPE_BATCH)
@@ -352,8 +222,6 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   test(
     "OPP emits OPPEnvelope event after crank drains queued messages",
     async () => {
-      // The OPPEnvelope event is emitted when the batch operator cranks
-      // emitOutboundEnvelope(), not immediately on deposit.
       await pollUntil(
         "OPPEnvelope event emitted",
         async () => {
@@ -368,7 +236,7 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
           )
         },
         TEST_EPOCH_DURATION_SEC * 3 * 1000,
-        3000
+        3_000
       )
     },
     TEST_EPOCH_DURATION_SEC * 3 * 1000 + 30_000
@@ -386,23 +254,19 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   test(
     "Batch operators deliver envelopes to WIRE",
     async () => {
-      // The batch_operator_plugin polls every 15s; after epoch advances,
-      // elected operators read ETH OPPEnvelope events and deliver to sysio.msgch.
-      // Each delivery stores an envelope with sha256 checksum for consensus.
       await pollUntil(
         "envelopes appear in sysio.msgch",
         async () => {
-          const { rows } = await wireClient.getEnvelopes()
+          const { rows } = await ctx.wireClient.getEnvelopes()
           return rows.length > 0
         },
         TEST_EPOCH_DURATION_SEC * 9 * 1000,
-        3000
+        3_000
       )
 
-      const { rows: envelopes } = await wireClient.getEnvelopes()
+      const { rows: envelopes } = await ctx.wireClient.getEnvelopes()
       expect(envelopes.length).toBeGreaterThanOrEqual(1)
 
-      // Each envelope should have a valid checksum and raw data
       envelopes.forEach((env: any) => {
         expect(env.batch_op_name).toBeDefined()
         expect(env.checksum).toBeDefined()
@@ -413,21 +277,20 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   )
 
   test("Consensus produces inbound messages", async () => {
-    // After consensus, evalcons unpacks envelopes into the messages table
     await pollUntil(
       "inbound messages appear after consensus",
       async () => {
-        const { rows } = await wireClient.getMessages()
+        const { rows } = await ctx.wireClient.getMessages()
         return rows.some(
           (r: any) =>
             r.direction === 0 || r.direction === "MESSAGE_DIRECTION_INBOUND"
         )
       },
       60_000,
-      3000
+      3_000
     )
 
-    const { rows: messages } = await wireClient.getMessages()
+    const { rows: messages } = await ctx.wireClient.getMessages()
     const inbound = messages.filter(
       (r: any) =>
         r.direction === 0 || r.direction === "MESSAGE_DIRECTION_INBOUND"
@@ -440,23 +303,21 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   })
 
   test("Attestations table has entries", async () => {
-    const { rows: attestations } = await wireClient.getAttestations()
+    const { rows: attestations } = await ctx.wireClient.getAttestations()
     expect(attestations.length).toBeGreaterThanOrEqual(1)
 
-    // BATCH_OPERATOR_NEXT_GROUP attestations from queueout (outbound)
-    // ABI serializer returns enum names as strings
-    const nextGroupAtts = attestations.filter(
+    const groupAtts = attestations.filter(
       (a: any) =>
-        a.type === "ATTESTATION_TYPE_BATCH_OPERATOR_NEXT_GROUP" ||
-        a.type === AttestationType.BATCH_OPERATOR_NEXT_GROUP
+        a.type === "ATTESTATION_TYPE_BATCH_OPERATOR_GROUPS" ||
+        a.type === AttestationType.BATCH_OPERATOR_GROUPS
     )
-    expect(nextGroupAtts.length).toBeGreaterThanOrEqual(1)
+    expect(groupAtts.length).toBeGreaterThanOrEqual(1)
   })
 
   // ── WIRE-side state after relay ──
 
   test("No underwriting entries on WIRE (collateral deposit, not underwriting)", async () => {
-    const { rows } = await wireClient.getUnderwritingLedger()
+    const { rows } = await ctx.wireClient.getUnderwritingLedger()
     expect(rows.length).toBe(0)
   })
 })

@@ -1547,12 +1547,12 @@ async function bootstrapChain(
     { chain_kind: 2, chain_id: 31337 },
     "sysio.epoch@active"
   )
-  await clio.pushAction<SystemContracts.SysioEpochRegoutpostAction>(
-    "sysio.epoch",
-    "regoutpost",
-    { chain_kind: 3, chain_id: 0 },
-    "sysio.epoch@active"
-  )
+  // await clio.pushAction<SystemContracts.SysioEpochRegoutpostAction>(
+  //   "sysio.epoch",
+  //   "regoutpost",
+  //   { chain_kind: 3, chain_id: 0 },
+  //   "sysio.epoch@active"
+  // )
   log.info("[Phase 16] Outposts registered")
 
   // ── Phase 17: Configure sysio.uwrit ──
@@ -1643,6 +1643,11 @@ async function bootstrapChain(
   // initgroups reads AVAILABLE batch ops from sysio.opreg
   await clio.pushAction("sysio.epoch", "initgroups", {}, "sysio.epoch@active")
   log.info("[Phase 20] Batch operator groups initialized")
+
+  // ── Phase 21: Bootstrap first epoch (epoch 0 → 1) ──
+  log.info("[Phase 21] Bootstrapping first epoch...")
+  await clio.pushAction("sysio.msgch", "bootstrap", {}, "sysio.msgch@active")
+  log.info("[Phase 21] First epoch bootstrapped (epoch_index=1)")
 
   log.info("=== Bootstrap sequence complete ===")
 }

@@ -22,6 +22,7 @@ import { identity, last } from "lodash"
 import { match } from "ts-pattern"
 import * as Assert from "node:assert"
 import { ProcessManager } from "./processes/ProcessManager.js"
+import { ProcessSignalName } from "./processes/ProcessSignals.js"
 import { inRange, isNotEmpty, mkdirs } from "./util.js"
 import { asOption, Future } from "@3fv/prelude-ts"
 import { isPromise } from "@wireio/shared"
@@ -72,8 +73,8 @@ const shutdown = async () => {
   log.info("wire-test-cluster: shutting down...")
   await clusterManager?.stop()
 }
-process.on("SIGINT", () => void shutdown())
-process.on("SIGTERM", () => void shutdown())
+process.on(ProcessSignalName.SIGINT, () => void shutdown())
+process.on(ProcessSignalName.SIGTERM, () => void shutdown())
 
 async function main(): Promise<void> {
   try {
