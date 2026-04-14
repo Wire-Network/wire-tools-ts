@@ -1,2 +1,1 @@
-export { DebuggingToolClient } from "./DebuggingToolClient"
-export type { DebuggingToolClientOptions, DebuggingToolClientConfig } from "./DebuggingToolClient"
+export * from "./DebuggingServerClient"

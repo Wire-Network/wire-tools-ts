@@ -10,13 +10,13 @@ describe("ApiPaths", () => {
   })
 
   it("Opp.Envelope is /api/opp/envelope", () => {
-    expect(ApiPaths.OPP.Envelope).toBe("/api/opp/envelope")
+    expect(ApiPaths.OPP.Methods.Envelope).toBe("/api/opp/envelope")
   })
 })
 
 describe("InferredRequestType", () => {
   it("infers PutEnvelopeRequest for Opp.Envelope path", () => {
-    const sample: InferredRequestType<typeof ApiPaths.OPP.Envelope> = {
+    const sample: InferredRequestType<typeof ApiPaths.OPP.Methods.Envelope> = {
       batchOpName: "batchop.a",
       endpointsType: 1,
       envelopeData: new Uint8Array(0)
@@ -29,7 +29,7 @@ describe("InferredRequestType", () => {
 
 describe("InferredResponseType", () => {
   it("infers PutEnvelopeResponse for Opp.Envelope path", () => {
-    const sample: InferredResponseType<typeof ApiPaths.OPP.Envelope> = {
+    const sample: InferredResponseType<typeof ApiPaths.OPP.Methods.Envelope> = {
       key: "00000001-TEST-abc123",
       dataExisted: false,
       batchOpNames: ["batchop.a"]

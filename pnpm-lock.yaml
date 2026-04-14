@@ -133,6 +133,9 @@ importers:
       '@3fv/prelude-ts':
         specifier: ^0.8.37
         version: 0.8.37
+      '@protobuf-ts/runtime':
+        specifier: ^2.11.1
+        version: 2.11.1
       '@wire-e2e-tests/debugging-shared':
         specifier: workspace:*
         version: link:../debugging-shared
@@ -188,6 +191,9 @@ importers:
       '@3fv/prelude-ts':
         specifier: ^0.8.37
         version: 0.8.37
+      '@protobuf-ts/runtime':
+        specifier: ^2.11.1
+        version: 2.11.1
       '@wireio/opp-typescript-models':
         specifier: link:/data/shared/code/wire/wire-opp/typescript
         version: link:../../../wire-opp/typescript
@@ -970,6 +976,9 @@ packages:
 
   '@pm2/pm2-version-check@1.0.4':
     resolution: {integrity: sha512-SXsM27SGH3yTWKc2fKR4SYNxsmnvuBQ9dd6QHtEWmiZ/VqaOYPAIlS8+vMcn27YLtAEBGvNRSh3TPNvtjZgfqA==}
+
+  '@protobuf-ts/runtime@2.11.1':
+    resolution: {integrity: sha512-KuDaT1IfHkugM2pyz+FwiY80ejWrkH1pAtOBOZFuR6SXEFTsnb/jiQWQ1rCIrcKx2BtyxnxW6BWwsVSA/Ie+WQ==}
 
   '@sinclair/typebox@0.34.48':
     resolution: {integrity: sha512-kKJTNuK3AQOrgjjotVxMrCn1sUJwM76wMszfq1kdU4uYVJjvEWuFQ6HgvLt4Xz3fSmZlTOxJ/Ie13KnIcWQXFA==}
@@ -3689,6 +3698,8 @@ snapshots:
       debug: 4.4.3
     transitivePeerDependencies:
       - supports-color
+
+  '@protobuf-ts/runtime@2.11.1': {}
 
   '@sinclair/typebox@0.34.48': {}
 

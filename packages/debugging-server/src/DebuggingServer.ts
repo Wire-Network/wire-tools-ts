@@ -72,7 +72,7 @@ export class DebuggingServer {
     // OPP handlers — mounted under /api/opp, auto-detects JSON-RPC 2.0 vs plain JSON
     const registry: HandlerRegistry = new Map()
     OPPRoutes.register(registry, config.oppStoragePath)
-    mountJsonRPC(this.app, ApiPaths.OPP.Base, registry)
+    mountJsonRPC(this.app, ApiPaths.OPP.Endpoint, registry)
 
     // JSON error handler — prevents Express from returning HTML error pages
     this.app.use(

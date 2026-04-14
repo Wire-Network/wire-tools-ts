@@ -20,9 +20,10 @@
     "clean": "rm -rf lib dist"
   },
   "dependencies": {
+    "@3fv/prelude-ts": "^0.8.37",
+    "@protobuf-ts/runtime": "^2.11.1",
     "@wire-e2e-tests/debugging-shared": "workspace:*",
     "@wireio/opp-typescript-models": "^1.0.23",
-    "@3fv/prelude-ts": "^0.8.37",
     "express": "^5.1.0",
     "lodash": "^4.17.21",
     "tracer": "^1.3.0",

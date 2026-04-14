@@ -1,9 +1,17 @@
+import { IMessageType } from "@protobuf-ts/runtime"
 import type { Router, Request, Response, NextFunction } from "express"
 
-import type {
+import {
+  FROM_JSON_OPTIONS,
   HandlerURIType,
-  InferredHandlerType
+  InferredHandlerType,
+  TO_JSON_OPTIONS
 } from "@wire-e2e-tests/debugging-shared"
+import { HandlerTypeMappings } from "@wire-e2e-tests/debugging-shared/api/types"
+import { getLogger, isObject } from "@wireio/shared"
+import { Future } from "@3fv/prelude-ts"
+
+const log = getLogger("debugging-server")
 
 /** JSON-RPC 2.0 version constant */
 const JSONRPC_VERSION = "2.0" as const
@@ -21,10 +29,10 @@ export enum JsonRPCErrorCode {
  * Handler registry — maps method names (the API path strings from
  * HandlerMap, e.g. "/api/opp/envelope") to their handler functions.
  */
-type HandlerRegistry = Map<
-  string,
-  (params: any, req: Request, res: Response) => Promise<any>
->
+type HandlerRegistry<
+  Req extends IMessageType<any> = IMessageType<any>,
+  Res extends IMessageType<any> = IMessageType<any>
+> = Map<string, (reqMessage: Req, req: Request, res: Response) => Promise<Res>>
 
 /**
  * Register a strongly-typed handler in the registry.
@@ -49,9 +57,10 @@ function isJsonRPC(body: any): boolean {
  * BigInt values are converted to Number for JSON serialization.
  */
 function sendJson(res: Response, status: number, data: any): void {
-  res.status(status).setHeader("Content-Type", "application/json").end(
-    JSON.stringify(prepareForJson(data))
-  )
+  res
+    .status(status)
+    .setHeader("Content-Type", "application/json")
+    .end(JSON.stringify(prepareForJson(data)))
 }
 
 /** Deep-convert BigInts to Numbers and Buffers/Uint8Arrays to base64 strings */
@@ -155,6 +164,18 @@ async function dispatchJsonRPC(
     return
   }
 
+  if (!isObject(body.params)) {
+    sendJson(res, 200, {
+      jsonrpc: JSONRPC_VERSION,
+      error: {
+        code: JsonRPCErrorCode.INVALID_REQUEST,
+        message: `Invalid request: ${body.params}`
+      },
+      id
+    })
+    return
+  }
+
   const handler = registry.get(body.method)
   if (!handler) {
     sendJson(res, 200, {
@@ -169,7 +190,17 @@ async function dispatchJsonRPC(
   }
 
   try {
-    const result = await handler(body.params ?? {}, req, res)
+    const [reqMessageType, resMessageType] =
+        HandlerTypeMappings[body.method as HandlerURIType],
+      reqMessage = reqMessageType.fromJson(
+        body.params,
+        FROM_JSON_OPTIONS
+      ) as IMessageType<any>
+
+    // const result = await Future.of(handler(body.params, req, res))
+    const result = await Future.of(handler(reqMessage, req, res))
+      .map(resMessage => resMessageType.toJson(resMessage, TO_JSON_OPTIONS))
+      .toPromise()
     if (!res.headersSent) {
       sendJson(res, 200, {
         jsonrpc: JSONRPC_VERSION,
@@ -178,6 +209,11 @@ async function dispatchJsonRPC(
       })
     }
   } catch (err: any) {
+    log.error(`Error handling RPC request: ${err.message}`, {
+      method: body.method,
+      params: body.params,
+      error: err
+    })
     if (!res.headersSent) {
       sendJson(res, 200, {
         jsonrpc: JSONRPC_VERSION,

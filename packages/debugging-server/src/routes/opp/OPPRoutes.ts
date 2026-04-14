@@ -17,87 +17,95 @@ import {
 
 import { addRoute } from "../../JsonRPC"
 import type { HandlerRegistry } from "../../JsonRPC"
+import type express from "express"
 
 export namespace OPPRoutes {
   export function register(
     registry: HandlerRegistry,
     oppStoragePath: string
   ): void {
-    addRoute(registry, ApiPaths.OPP.Envelope, async params => {
-      const { batchOpName, endpointsType, envelopeData } = params
+    addRoute(
+      registry,
+      ApiPaths.OPP.Methods.Envelope,
+      async (reqMessage, req: express.Request) => {
+        const { envelopeData } = req.body.params as any,
+          { batchOpName, endpointsType } = reqMessage
 
-      // 1. protobuf bytes fields serialize as base64 in JSON encoding
-      const envelopeBytes = Buffer.from(
-        envelopeData as unknown as string,
-        "base64"
-      )
+        // 1. protobuf bytes fields serialize as base64 in JSON encoding
+        const envelopeBytes = Buffer.from(
+          envelopeData as unknown as string,
+          "base64"
+        )
 
-      // 2. Calculate data checksum (sha256 of the raw envelope bytes)
-      const checksum = createHash("sha256")
-        .update(envelopeBytes)
-        .digest("hex")
-        .substring(0, 16) // truncate for filename readability
+        // 2. Calculate data checksum (sha256 of the raw envelope bytes)
+        const checksum = createHash("sha256")
+          .update(envelopeBytes)
+          .digest("hex")
+          .substring(0, 16) // truncate for filename readability
 
-      // 3. Parse the envelope to extract epoch_index for the filename key
-      const envelope = Envelope.fromBinary(envelopeBytes)
-      const epochIndex = String(envelope.epochIndex).padStart(8, "0")
+        // 3. Parse the envelope to extract epoch_index for the filename key
+        const envelope = Envelope.fromBinary(envelopeBytes)
+        // const envelope2 = Envelope.fromBinary(envelopeData)
+        // const envelope3 = Envelope.fromBinary(req.body.params?.envelopeData)
+        const epochIndex = String(envelope.epochIndex).padStart(8, "0")
 
-      // 4. Generate the storage key
-      const endpointsKey = endpointsTypeToKey(endpointsType)
-      const baseKey = `${epochIndex}-${endpointsKey}-${checksum}`
-      const dataFile = Path.join(oppStoragePath, `${baseKey}.data`)
-      const metadataFile = Path.join(oppStoragePath, `${baseKey}.metadata`)
+        // 4. Generate the storage key
+        const endpointsKey = endpointsTypeToKey(endpointsType)
+        const baseKey = `${epochIndex}-${endpointsKey}-${checksum}`
+        const dataFile = Path.join(oppStoragePath, `${baseKey}.data`)
+        const metadataFile = Path.join(oppStoragePath, `${baseKey}.metadata`)
 
-      // 5. Atomic data file write (skip if already exists — dedup)
-      let dataExisted = false
-      try {
-        await Fs.promises.writeFile(dataFile, envelopeBytes, { flag: "wx" })
-      } catch (err: any) {
-        if (err.code === "EEXIST") {
-          dataExisted = true
-        } else {
-          throw err
+        // 5. Atomic data file write (skip if already exists — dedup)
+        let dataExisted = false
+        try {
+          await Fs.promises.writeFile(dataFile, envelopeBytes, { flag: "wx" })
+        } catch (err: any) {
+          if (err.code === "EEXIST") {
+            dataExisted = true
+          } else {
+            throw err
+          }
         }
-      }
 
-      // 6. Create or update metadata file
-      let metadata: { checksum: bigint; batchOpNames: string[] }
-      try {
-        const existingBytes = await Fs.promises.readFile(metadataFile)
-        const decoded = DebugEnvelopeMetadataRecord.fromBinary(existingBytes)
-        metadata = {
-          checksum: decoded.checksum,
-          batchOpNames: [...decoded.batchOpNames]
+        // 6. Create or update metadata file
+        let metadata: { checksum: bigint; batchOpNames: string[] }
+        try {
+          const existingBytes = await Fs.promises.readFile(metadataFile)
+          const decoded = DebugEnvelopeMetadataRecord.fromBinary(existingBytes)
+          metadata = {
+            checksum: decoded.checksum,
+            batchOpNames: [...decoded.batchOpNames]
+          }
+          if (!metadata.batchOpNames.includes(batchOpName)) {
+            metadata.batchOpNames.push(batchOpName)
+          }
+        } catch {
+          metadata = {
+            checksum: BigInt(`0x${checksum.substring(0, 12)}`),
+            batchOpNames: [batchOpName]
+          }
         }
-        if (!metadata.batchOpNames.includes(batchOpName)) {
-          metadata.batchOpNames.push(batchOpName)
-        }
-      } catch {
-        metadata = {
-          checksum: BigInt(`0x${checksum.substring(0, 12)}`),
-          batchOpNames: [batchOpName]
-        }
-      }
-      await Fs.promises.writeFile(
-        metadataFile,
-        DebugEnvelopeMetadataRecord.toBinary({
-          checksum: metadata.checksum,
+        await Fs.promises.writeFile(
+          metadataFile,
+          DebugEnvelopeMetadataRecord.toBinary({
+            checksum: metadata.checksum,
+            batchOpNames: metadata.batchOpNames
+          })
+        )
+
+        // 7. Return PutEnvelopeResponse
+        return PutEnvelopeResponse.create({
+          key: baseKey,
+          dataExisted,
           batchOpNames: metadata.batchOpNames
         })
-      )
-
-      // 7. Return PutEnvelopeResponse
-      return PutEnvelopeResponse.create({
-        key: baseKey,
-        dataExisted,
-        batchOpNames: metadata.batchOpNames
-      })
-    })
+      }
+    )
 
     // -----------------------------------------------------------------
     //  LIST — query stored envelopes with optional filters
     // -----------------------------------------------------------------
-    addRoute(registry, ApiPaths.OPP.EnvelopeList, async params => {
+    addRoute(registry, ApiPaths.OPP.Methods.EnvelopeList, async params => {
       const {
         epochStart = 0,
         epochEnd = 0,
@@ -127,7 +135,10 @@ export namespace OPPRoutes {
 
         // Get file stats for timestamp + size
         const dataPath = Path.join(oppStoragePath, dataFile)
-        const metadataPath = Path.join(oppStoragePath, dataFile.replace(".data", ".metadata"))
+        const metadataPath = Path.join(
+          oppStoragePath,
+          dataFile.replace(".data", ".metadata")
+        )
         const stat = await Fs.promises.stat(dataPath)
         const timestampMs = stat.mtimeMs
 
@@ -141,20 +152,24 @@ export namespace OPPRoutes {
           const metaBytes = await Fs.promises.readFile(metadataPath)
           const meta = DebugEnvelopeMetadataRecord.fromBinary(metaBytes)
           batchOpNames = [...meta.batchOpNames]
-        } catch { /* metadata may not exist yet */ }
+        } catch {
+          /* metadata may not exist yet */
+        }
 
         // Resolve endpoints enum from the key string
         const resolvedEndpoints = resolveEndpointsType(parsed.endpointsKey)
 
-        entries.push(EnvelopeListEntry.create({
-          key: parsed.key,
-          epochIndex: parsed.epochIndex,
-          endpointsType: resolvedEndpoints,
-          checksum: parsed.checksum,
-          batchOpNames,
-          timestamp: BigInt(Math.floor(timestampMs)),
-          dataSize: stat.size
-        }))
+        entries.push(
+          EnvelopeListEntry.create({
+            key: parsed.key,
+            epochIndex: parsed.epochIndex,
+            endpointsType: resolvedEndpoints,
+            checksum: parsed.checksum,
+            batchOpNames,
+            timestamp: BigInt(Math.floor(timestampMs)),
+            dataSize: stat.size
+          })
+        )
       }
 
       return ListEnvelopesResponse.create({
@@ -166,7 +181,7 @@ export namespace OPPRoutes {
     // -----------------------------------------------------------------
     //  GET — retrieve a specific stored envelope by key
     // -----------------------------------------------------------------
-    addRoute(registry, ApiPaths.OPP.EnvelopeGet, async params => {
+    addRoute(registry, ApiPaths.OPP.Methods.EnvelopeGet, async params => {
       const { key } = params
 
       const dataPath = Path.join(oppStoragePath, `${key}.data`)
@@ -191,7 +206,9 @@ export namespace OPPRoutes {
         const meta = DebugEnvelopeMetadataRecord.fromBinary(metaBytes)
         batchOpNames = [...meta.batchOpNames]
         checksum = meta.checksum.toString(16)
-      } catch { /* metadata may not exist */ }
+      } catch {
+        /* metadata may not exist */
+      }
 
       const parsed = parseStorageKey(key)
       const stat = await Fs.promises.stat(dataPath)
@@ -199,7 +216,9 @@ export namespace OPPRoutes {
       return {
         key,
         epochIndex: parsed?.epochIndex ?? 0,
-        endpointsType: parsed ? resolveEndpointsType(parsed.endpointsKey) : DebugOutpostEndpointsType.UNKNOWN,
+        endpointsType: parsed
+          ? resolveEndpointsType(parsed.endpointsKey)
+          : DebugOutpostEndpointsType.UNKNOWN,
         checksum,
         batchOpNames,
         timestamp: BigInt(Math.floor(stat.mtimeMs)),
@@ -240,8 +259,9 @@ function parseStorageKey(key: string): ParsedStorageKey | null {
 
 /** Reverse-map an endpoints key string back to the enum value */
 function resolveEndpointsType(endpointsKey: string): DebugOutpostEndpointsType {
-  const entries = Object.entries(DebugOutpostEndpointsType)
-    .filter(([, v]) => typeof v === "number") as [string, number][]
+  const entries = Object.entries(DebugOutpostEndpointsType).filter(
+    ([, v]) => typeof v === "number"
+  ) as [string, number][]
 
   for (const [name, value] of entries) {
     if (name === endpointsKey) {

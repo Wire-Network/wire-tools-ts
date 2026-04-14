@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 import "source-map-support/register"
-
 import Yargs from "yargs"
-
-import { DebuggingToolClient } from "@wire-e2e-tests/debugging-client-shared"
+import { DebuggingServerClient } from "@wire-e2e-tests/debugging-client-shared"
 
 import { handleList } from "./commands/list"
 import { handleInspect } from "./commands/inspect"
@@ -20,7 +18,7 @@ enum Command {
 Yargs(process.argv.slice(2))
   .option("server", {
     type: "string",
-    default: `http://${DebuggingToolClient.DefaultHost}:${DebuggingToolClient.DefaultPort}`,
+    default: DebuggingServerClient.DefaultURL,
     describe: "Debugging server URL"
   })
   .option("format", {

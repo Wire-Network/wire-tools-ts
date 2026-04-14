@@ -1,4 +1,5 @@
-import type {
+import { MessageType } from "@protobuf-ts/runtime"
+import {
   PutEnvelopeRequest,
   PutEnvelopeResponse,
   ListEnvelopesRequest,
@@ -11,14 +12,22 @@ import type {
 //  API path constants — single source of truth for all URI strings
 // ---------------------------------------------------------------------------
 
+export const FROM_JSON_OPTIONS = {
+    ignoreUnknownFields: true
+  } as const,
+  TO_JSON_OPTIONS = { enumAsInteger: true, emitDefaultValues: true } as const
+
 export namespace ApiPaths {
   export const Ping = "/api/ping" as const
 
   export namespace OPP {
-    export const Base = "/api/opp" as const
-    export const Envelope = "/api/opp/envelope" as const
-    export const EnvelopeList = "/api/opp/envelope/list" as const
-    export const EnvelopeGet = "/api/opp/envelope/get" as const
+    export const Endpoint = "/api/opp" as const
+    export const Methods = {
+      Envelope: "Envelope",
+      EnvelopeList: "EnvelopeList",
+      EnvelopeGet: "EnvelopeGet"
+    } as const
+    export type MethodKey = keyof typeof Methods
   }
 }
 
@@ -41,10 +50,30 @@ export type Handler<R = unknown, T = unknown> = (
 // ---------------------------------------------------------------------------
 
 export interface HandlerMap {
-  [ApiPaths.OPP.Envelope]: Handler<PutEnvelopeRequest, PutEnvelopeResponse>
-  [ApiPaths.OPP.EnvelopeList]: Handler<ListEnvelopesRequest, ListEnvelopesResponse>
-  [ApiPaths.OPP.EnvelopeGet]: Handler<GetEnvelopeRequest, GetEnvelopeResponse>
+  [ApiPaths.OPP.Methods.Envelope]: Handler<
+    PutEnvelopeRequest,
+    PutEnvelopeResponse
+  >
+  [ApiPaths.OPP.Methods.EnvelopeList]: Handler<
+    ListEnvelopesRequest,
+    ListEnvelopesResponse
+  >
+  [ApiPaths.OPP.Methods.EnvelopeGet]: Handler<
+    GetEnvelopeRequest,
+    GetEnvelopeResponse
+  >
 }
+export type MessageTypeCtor<T extends object = any> = { new (): MessageType<T> }
+export const HandlerTypeMappings: {
+  [URI in ApiPaths.OPP.MethodKey]: [MessageType<any>, MessageType<any>]
+} = {
+  [ApiPaths.OPP.Methods.Envelope]: [PutEnvelopeRequest, PutEnvelopeResponse],
+  [ApiPaths.OPP.Methods.EnvelopeList]: [
+    ListEnvelopesRequest,
+    ListEnvelopesResponse
+  ],
+  [ApiPaths.OPP.Methods.EnvelopeGet]: [GetEnvelopeRequest, GetEnvelopeResponse]
+} as const
 
 // ---------------------------------------------------------------------------
 //  Inferred utility types — used by server addRoute(), client, and tests
@@ -62,3 +91,9 @@ export type InferredRequestType<U extends HandlerURIType> =
 /** Extract the response type for a given URI */
 export type InferredResponseType<U extends HandlerURIType> =
   HandlerMap[U] extends Handler<unknown, infer T> ? T : never
+
+export type JsonRPCResult<T extends {} = any> = {
+  status: number
+  body: T
+  id: number
+}

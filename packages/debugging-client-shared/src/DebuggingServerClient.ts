@@ -19,16 +19,16 @@ export interface DebuggingToolClientOptions {
 
 export interface DebuggingToolClientConfig extends Required<DebuggingToolClientOptions> {}
 
-export class DebuggingToolClient {
+export class DebuggingServerClient {
   private nextId = 1
 
   static async create(
     options: DebuggingToolClientOptions = {}
-  ): Promise<DebuggingToolClient> {
+  ): Promise<DebuggingServerClient> {
     const config = defaults(
       { ...options },
       {
-        baseUrl: `http://${DebuggingToolClient.DefaultHost}:${DebuggingToolClient.DefaultPort}`
+        baseUrl: `http://${DebuggingServerClient.DefaultHost}:${DebuggingServerClient.DefaultPort}`
       }
     ) as DebuggingToolClientConfig
 
@@ -40,14 +40,14 @@ export class DebuggingToolClient {
       `Debugging server not reachable at ${pingUrl}`
     )
 
-    return new DebuggingToolClient(config)
+    return new DebuggingServerClient(config)
   }
 
   private constructor(readonly config: DebuggingToolClientConfig) {}
 
   /**
    * Typed JSON-RPC 2.0 call. The method name is the HandlerMap key
-   * (e.g. ApiPaths.Opp.Envelope). Params and result types are inferred.
+   * (e.g. ApiPaths.OPP.Routes.Envelope). Params and result types are inferred.
    *
    * POSTs to the OPP base path with JSON-RPC 2.0 envelope.
    * The server auto-detects JSON-RPC by checking for `"jsonrpc":"2.0"`.
@@ -57,7 +57,7 @@ export class DebuggingToolClient {
     params: InferredRequestType<U>
   ): Promise<InferredResponseType<U>> {
     const id = this.nextId++
-    const url = `${this.config.baseUrl}${ApiPaths.OPP.Base}`
+    const url = `${this.config.baseUrl}${ApiPaths.OPP.Endpoint}`
 
     const resp = await fetch(url, {
       method: "POST",
@@ -100,7 +100,9 @@ export class DebuggingToolClient {
   }
 }
 
-export namespace DebuggingToolClient {
+export namespace DebuggingServerClient {
   export const DefaultHost = "127.0.0.1"
   export const DefaultPort = 9876
+  export const DefaultScheme = "http"
+  export const DefaultURL = `${DefaultScheme}://${DebuggingServerClient.DefaultHost}:${DebuggingServerClient.DefaultPort}`
 }
