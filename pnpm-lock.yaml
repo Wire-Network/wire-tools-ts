@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@wireio/opp-typescript-models': link:../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
+
 pnpmfileChecksum: sha256-lJN1KnjFvevqx5Vp6WdRBKPc9sS/8BXekwhiJziYie0=
 
 importers:
@@ -14,8 +17,8 @@ importers:
         specifier: link:/data/shared/code/wire/wire-opp/solidity
         version: link:../wire-opp/solidity
       '@wireio/opp-typescript-models':
-        specifier: link:/data/shared/code/wire/wire-opp/typescript
-        version: link:../wire-opp/typescript
+        specifier: link:../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
+        version: link:../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
       '@wireio/sdk-core':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
         version: link:../wire-libraries-ts/packages/sdk-core
@@ -73,8 +76,8 @@ importers:
         specifier: workspace:*
         version: link:../debugging-server
       '@wireio/opp-typescript-models':
-        specifier: link:/data/shared/code/wire/wire-opp/typescript
-        version: link:../../../wire-opp/typescript
+        specifier: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
+        version: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
       ts-jest:
         specifier: ^29.4.6
         version: 29.4.6(@babel/core@7.29.0)(@jest/transform@30.3.0)(@jest/types@30.3.0)(babel-jest@30.3.0(@babel/core@7.29.0))(esbuild@0.27.7)(jest-util@30.3.0)(jest@30.3.0(@types/node@25.5.0)(ts-node@10.9.2(@types/node@25.5.0)(typescript@6.0.2)))(typescript@6.0.2)
@@ -91,8 +94,8 @@ importers:
         specifier: workspace:*
         version: link:../debugging-shared
       '@wireio/opp-typescript-models':
-        specifier: link:/data/shared/code/wire/wire-opp/typescript
-        version: link:../../../wire-opp/typescript
+        specifier: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
+        version: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
       lodash:
         specifier: ^4.17.21
         version: 4.17.23
@@ -140,8 +143,8 @@ importers:
         specifier: workspace:*
         version: link:../debugging-shared
       '@wireio/opp-typescript-models':
-        specifier: link:/data/shared/code/wire/wire-opp/typescript
-        version: link:../../../wire-opp/typescript
+        specifier: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
+        version: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
       express:
         specifier: ^5.1.0
         version: 5.2.1
@@ -195,8 +198,8 @@ importers:
         specifier: ^2.11.1
         version: 2.11.1
       '@wireio/opp-typescript-models':
-        specifier: link:/data/shared/code/wire/wire-opp/typescript
-        version: link:../../../wire-opp/typescript
+        specifier: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
+        version: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
       lodash:
         specifier: ^4.17.21
         version: 4.17.23
@@ -226,8 +229,8 @@ importers:
         specifier: link:/data/shared/code/wire/wire-opp/solidity
         version: link:../../../wire-opp/solidity
       '@wireio/opp-typescript-models':
-        specifier: link:/data/shared/code/wire/wire-opp/typescript
-        version: link:../../../wire-opp/typescript
+        specifier: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
+        version: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
       '@wireio/sdk-core':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
         version: link:../../../wire-libraries-ts/packages/sdk-core
@@ -260,8 +263,8 @@ importers:
         specifier: link:/data/shared/code/wire/wire-opp/solidity
         version: link:../../../wire-opp/solidity
       '@wireio/opp-typescript-models':
-        specifier: link:/data/shared/code/wire/wire-opp/typescript
-        version: link:../../../wire-opp/typescript
+        specifier: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
+        version: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
       '@wireio/sdk-core':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
         version: link:../../../wire-libraries-ts/packages/sdk-core
@@ -297,8 +300,8 @@ importers:
         specifier: link:/data/shared/code/wire/wire-opp/solidity
         version: link:../../../wire-opp/solidity
       '@wireio/opp-typescript-models':
-        specifier: link:/data/shared/code/wire/wire-opp/typescript
-        version: link:../../../wire-opp/typescript
+        specifier: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
+        version: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
       '@wireio/sdk-core':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
         version: link:../../../wire-libraries-ts/packages/sdk-core
@@ -331,8 +334,8 @@ importers:
         specifier: link:/data/shared/code/wire/wire-opp/solidity
         version: link:../../../wire-opp/solidity
       '@wireio/opp-typescript-models':
-        specifier: link:/data/shared/code/wire/wire-opp/typescript
-        version: link:../../../wire-opp/typescript
+        specifier: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
+        version: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
       '@wireio/sdk-core':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
         version: link:../../../wire-libraries-ts/packages/sdk-core
@@ -366,7 +369,7 @@ importers:
         version: 0.8.37
       '@coral-xyz/anchor':
         specifier: ^0.31.0
-        version: 0.31.1(bufferutil@4.1.0)(typescript@6.0.2)
+        version: 0.31.1(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
       '@solana/web3.js':
         specifier: ^1.98.0
         version: 1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
@@ -377,8 +380,8 @@ importers:
         specifier: link:/data/shared/code/wire/wire-opp/solidity
         version: link:../../../wire-opp/solidity
       '@wireio/opp-typescript-models':
-        specifier: link:/data/shared/code/wire/wire-opp/typescript
-        version: link:../../../wire-opp/typescript
+        specifier: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
+        version: link:../../../../../../../home/jglanz/.local/share/pnpm/global/5/node_modules/@wireio/opp-typescript-models
       '@wireio/sdk-core':
         specifier: link:/data/shared/code/wire/wire-libraries-ts/packages/sdk-core
         version: link:../../../wire-libraries-ts/packages/sdk-core
@@ -3266,10 +3269,10 @@ snapshots:
 
   '@coral-xyz/anchor-errors@0.31.1': {}
 
-  '@coral-xyz/anchor@0.31.1(bufferutil@4.1.0)(typescript@6.0.2)':
+  '@coral-xyz/anchor@0.31.1(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)':
     dependencies:
       '@coral-xyz/anchor-errors': 0.31.1
-      '@coral-xyz/borsh': 0.31.1(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2))
+      '@coral-xyz/borsh': 0.31.1(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6))
       '@noble/hashes': 1.8.0
       '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
       bn.js: 5.2.3
@@ -3287,7 +3290,7 @@ snapshots:
       - typescript
       - utf-8-validate
 
-  '@coral-xyz/borsh@0.31.1(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2))':
+  '@coral-xyz/borsh@0.31.1(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6))':
     dependencies:
       '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
       bn.js: 5.2.3

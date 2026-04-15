@@ -13,54 +13,50 @@
 import Path from "path"
 import Fs from "fs"
 import {
-  ProcessManager,
-  type ProcessHandle
+  type ProcessHandle,
+  ProcessManager
 } from "../processes/ProcessManager.js"
 import { AnvilManager } from "../processes/AnvilManager.js"
 import { SolanaValidatorManager } from "../processes/SolanaValidatorManager.js"
 import { KiodManager } from "../processes/KiodManager.js"
 import { Clio } from "../clients/Clio.js"
 import { log } from "../logger.js"
-import { existsAsync, sleep, waitForEndpoint, retry, mkdirs } from "../util.js"
+import { mkdirs, retry, sleep, waitForEndpoint } from "../util.js"
 import { generateGenesis } from "./genesis.js"
 import {
-  generateNodeKeySet,
-  BIOS_K1_KEY,
   BIOS_BLS_KEY,
+  BIOS_K1_KEY,
   formatK1SignatureProvider,
-  formatBLSSignatureProvider,
+  generateNodeKeySet,
   type NodeKeySet
 } from "./keyGen.js"
-import { buildStartCmd, buildRelaunchCmd } from "./startCmd.js"
+import { buildRelaunchCmd, buildStartCmd } from "./startCmd.js"
 import { generateLoggingConfig } from "./loggingConfig.js"
 import {
-  DEV_K1_PRIVATE_KEY,
-  DEV_K1_PUBLIC_KEY,
-  SYSTEM_ACCOUNTS,
-  OPP_CONTRACT_PATHS,
   BATCH_OPERATOR_PLUGINS,
   batchOperatorAccountName,
+  DEV_K1_PRIVATE_KEY,
+  DEV_K1_PUBLIC_KEY,
+  OPP_CONTRACT_PATHS,
+  SYSTEM_ACCOUNTS,
   underwriterAccountName
 } from "./constants.js"
 import { ethers } from "ethers"
 import * as Assert from "node:assert"
-import {
-  SystemContracts,
-  PrivateKey,
-  KeyType,
-  Bytes,
-  PublicKey
-} from "@wireio/sdk-core"
+import { Bytes, KeyType, PrivateKey, SystemContracts } from "@wireio/sdk-core"
 import { which } from "zx"
 import { asOption } from "@3fv/prelude-ts"
 import { range } from "lodash"
 import { Deferred, getValue, isNumber, isString } from "@wireio/shared"
 import { DebuggingServer } from "@wire-e2e-tests/debugging-server"
 import { ETHBootstrapper } from "./ETHBootstrapper.js"
+import {
+  createAuthExLink,
+  emPrivateKeyFromEthWallet
+} from "../tools/AuthExLinkTool.js"
 import { ClusterPorts } from "./ClusterPorts.js"
 import Bluebird from "bluebird"
-import { P } from "ts-pattern"
-import { string } from "yargs"
+import { ChainKind, OperatorType } from "@wireio/opp-typescript-models"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -664,15 +660,7 @@ export class ClusterManager {
           )
           const sigProviderName = `eth-${ns.operatorAccount}`
 
-          const ethPrivKeyStr = ethWallet.signingKey.privateKey.startsWith("0x")
-              ? ethWallet.privateKey.slice(2)
-              : ethWallet.privateKey,
-            ethPrivKeyData = Bytes.fromString(ethPrivKeyStr, "hex"),
-            ethPrivKey = PrivateKey.regenerate(KeyType.EM, ethPrivKeyData)
-          // ethPubKeyStr = ethWallet.publicKey.startsWith("0x")
-          //   ? ethWallet.publicKey.slice(2)
-          //   : ethWallet.publicKey,
-          // ethPubKey = ethPrivKey.toPublic()
+          const ethPrivKey = emPrivateKeyFromEthWallet(ethWallet)
 
           // Signature provider: <name>,<chain-kind>,<key-type>,<public-key>,KEY:<private-key>
           // Public key must be the full 64-byte uncompressed key (0x + 128 hex),
@@ -1015,6 +1003,75 @@ export class ClusterManager {
 // Bootstrap sequence
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+//  Bootstrap helpers
+// ---------------------------------------------------------------------------
+
+const DEFAULT_RESOURCE_WEIGHT = "200.0000 SYS"
+const DEFAULT_RAM_WEIGHT = "20.0000 SYS"
+
+/** Register a node owner via sysio.roa (required before addpolicy) */
+async function ensureNodeOwner(clio: Clio, nodeAccount: string): Promise<void> {
+  await clio.pushAction(
+    "sysio.roa",
+    "forcereg",
+    { owner: nodeAccount, tier: 1 },
+    "sysio.roa@active"
+  )
+}
+
+/** Assign a resource allocation policy to an account via sysio.roa */
+async function addResourcePolicy(
+  clio: Clio,
+  owner: string,
+  issuer: string,
+  net_weight = DEFAULT_RESOURCE_WEIGHT,
+  ram_weight = DEFAULT_RAM_WEIGHT,
+  cpu_weight = DEFAULT_RESOURCE_WEIGHT
+): Promise<void> {
+  await clio.pushAction(
+    "sysio.roa",
+    "addpolicy",
+    { owner, issuer, net_weight, ram_weight, cpu_weight, time_block: 0, network_gen: 0 },
+    `${issuer}@active`
+  )
+}
+
+/** Create an account with resource policy, ignoring "already exists" errors */
+async function createAccountWithRam(
+  clio: Clio,
+  account: string,
+  ownerKey: string
+): Promise<void> {
+  try {
+    await clio.createAccount("sysio", account, ownerKey, ownerKey)
+  } catch (err: any) {
+    const msg = err.message ?? err.stderr ?? ""
+    if (!msg.includes("already exists")) {
+      throw new Error(`Failed to create account ${account}: ${msg}`)
+    }
+    log.debug(`Account ${account} already exists, continuing`)
+  }
+}
+
+/** Use defproducera as the bootstrap node owner — it already has resources */
+const BOOTSTRAP_NODE_OWNER = "defproducera"
+
+/** One-time setup: register an existing producer as a node owner */
+async function setupNodeOwner(clio: Clio): Promise<void> {
+  await ensureNodeOwner(clio, BOOTSTRAP_NODE_OWNER)
+}
+
+/** Create account + assign resource policy from the bootstrap node owner */
+async function createAccountWithResources(
+  clio: Clio,
+  account: string,
+  ownerKey: string
+): Promise<void> {
+  await createAccountWithRam(clio, account, ownerKey)
+  await addResourcePolicy(clio, account, BOOTSTRAP_NODE_OWNER)
+}
+
 async function bootstrapChain(
   clio: Clio,
   cfg: ClusterConfig,
@@ -1308,13 +1365,17 @@ async function bootstrapChain(
     { label: "deploy sysio.roa", maxAttempts: 3, delayMs: 2000 }
   )
   await clio.setPriv("sysio.roa")
-  await clio.pushAction<SystemContracts.SysioRoaActivateroaAction>(
+  await clio.pushActionAndWait(
     "sysio.roa",
     "activateroa",
     { total_sys: "75496.0000 SYS", bytes_per_unit: 104 },
     "sysio.roa@active"
   )
   log.info("[Phase 11] sysio.roa deployed")
+
+  // ── Phase 11b: Create bootstrap node owner for resource policies ──
+  await setupNodeOwner(clio)
+  log.info("[Phase 11b] Bootstrap node owner ready")
 
   // ── Phase 12: Deploy sysio.authex ──
   log.info("[Phase 12] Deploying sysio.authex...")
@@ -1572,69 +1633,110 @@ async function bootstrapChain(
   log.info("[Phase 17] sysio.uwrit configured")
 
   // ── Phase 18: Register batch operators via sysio.opreg (bootstrapped) ──
-  log.info("[Phase 18] Registering batch operators...")
+  // ── Phase 18: Create operator accounts ──
+  log.info("[Phase 18] Creating operator accounts...")
+  const allOperatorAccounts = [
+    ...batchOpStates.map(bo => bo.operatorAccount!),
+    ...underwriterStates.map(uw => uw.operatorAccount!)
+  ]
+  for (const account of allOperatorAccounts) {
+    await createAccountWithRam(clio, account, DEV_K1_PUBLIC_KEY)
+  }
+
+  // Wait for accounts to be finalized before assigning resource policies
+  await sleep(1000)
+
+  // Assign resource policies
+  for (const account of allOperatorAccounts) {
+    await addResourcePolicy(clio, account, BOOTSTRAP_NODE_OWNER)
+  }
+  log.info(`[Phase 18] Created ${allOperatorAccounts.length} operator account(s) with resources`)
+
+  // ── Phase 18a: Register operators via sysio.opreg ──
+  log.info("[Phase 18a] Registering batch operators...")
   for (const bo of batchOpStates) {
-    const account = bo.operatorAccount!
-    try {
-      await clio.createAccount(
-        "sysio",
-        account,
-        DEV_K1_PUBLIC_KEY,
-        DEV_K1_PUBLIC_KEY
-      )
-    } catch (err: any) {
-      if (
-        !err.message?.includes("already exists") &&
-        !err.stderr?.includes("already exists")
-      ) {
-        throw new Error(
-          `Failed to create account ${account}: ${err.message ?? err.stderr}`
-        )
-      }
-      log.debug(`Account ${account} already exists, continuing`)
-    }
-    // Bootstrapped batch operators — skip staking, immediate AVAILABLE
     await clio.pushActionAndWait(
       "sysio.opreg",
       "regoperator",
-      { account, type: 2, is_bootstrapped: true },
+      { account: bo.operatorAccount!, type: OperatorType.BATCH, is_bootstrapped: true },
       "sysio.opreg@active"
     )
   }
-  log.info(`[Phase 18] Registered ${batchOpStates.length} batch operator(s)`)
+  log.info(`[Phase 18a] Registered ${batchOpStates.length} batch operator(s)`)
 
   // ── Phase 19: Register underwriters via sysio.opreg ──
   log.info("[Phase 19] Registering underwriters...")
   for (const uw of underwriterStates) {
-    const account = uw.operatorAccount!
-    try {
-      await clio.createAccount(
-        "sysio",
-        account,
-        DEV_K1_PUBLIC_KEY,
-        DEV_K1_PUBLIC_KEY
-      )
-    } catch (err: any) {
-      if (
-        !err.message?.includes("already exists") &&
-        !err.stderr?.includes("already exists")
-      ) {
-        throw new Error(
-          `Failed to create account ${account}: ${err.message ?? err.stderr}`
-        )
-      }
-      log.debug(`Account ${account} already exists, continuing`)
-    }
-    // Underwriters cannot be bootstrapped — register as PENDING
-    // They will need staking to become AVAILABLE (not done during bootstrap)
     await clio.pushActionAndWait(
       "sysio.opreg",
       "regoperator",
-      { account, type: 3, is_bootstrapped: false },
+      { account: uw.operatorAccount!, type: OperatorType.UNDERWRITER, is_bootstrapped: false },
       "sysio.opreg@active"
     )
   }
   log.info(`[Phase 19] Registered ${underwriterStates.length} underwriter(s)`)
+
+  // ── Phase 19a: Link operator chain accounts via authex ──
+  // Each operator needs authex links for all active outpost chains so that
+  // advance() can include their chain addresses in the OPERATORS attestation.
+  if (cfg.ethereumPath) {
+    log.info("[Phase 19a] Linking operator chain accounts via authex...")
+    const anvilMnemonic = ethers.Mnemonic.fromPhrase(
+      ETHBootstrapper.AnvilMnemonic
+    )
+
+    // Batch operators: ETH + SOL links
+    for (const [i, bo] of batchOpStates.entries()) {
+      const account = bo.operatorAccount!
+
+      const ethWallet = ethers.HDNodeWallet.fromMnemonic(
+        anvilMnemonic,
+        `${ETHBootstrapper.DerivationPath}${i + 1}`
+      )
+
+      await createAuthExLink(clio, {
+        chainKind: ChainKind.ETHEREUM,
+        account,
+        privateKey: emPrivateKeyFromEthWallet(ethWallet),
+        ethWallet
+      })
+
+      const solPrivKey = PrivateKey.generate(KeyType.ED)
+      await createAuthExLink(clio, {
+        chainKind: ChainKind.SOLANA,
+        account,
+        privateKey: solPrivKey
+      })
+
+      log.info(`[Phase 19a] Linked ETH+SOL keys for ${account}`)
+    }
+
+    // Underwriters: ETH + SOL links
+    for (const [i, uw] of underwriterStates.entries()) {
+      const account = uw.operatorAccount!
+
+      const ethWallet = ethers.HDNodeWallet.fromMnemonic(
+        anvilMnemonic,
+        `${ETHBootstrapper.DerivationPath}${batchOpStates.length + i + 1}`
+      )
+      await createAuthExLink(clio, {
+        chainKind: ChainKind.ETHEREUM,
+        account,
+        privateKey: emPrivateKeyFromEthWallet(ethWallet),
+        ethWallet
+      })
+
+      await createAuthExLink(clio, {
+        chainKind: ChainKind.SOLANA,
+        account,
+        privateKey: PrivateKey.generate(KeyType.ED)
+      })
+
+      log.info(`[Phase 19a] Linked ETH+SOL keys for ${account}`)
+    }
+
+    log.info("[Phase 19a] All authex links created")
+  }
 
   // ── Phase 20: Initialize batch operator groups ──
   log.info("[Phase 20] Initializing epoch state...")
