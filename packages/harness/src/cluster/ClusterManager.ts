@@ -131,6 +131,81 @@ interface ClusterState {
 
 const STATE_FILENAME = ".cluster_state.json"
 
+/**
+ * Generate `count` node key sets and import each K1 + BLS private key into the wallet.
+ */
+async function generateAndImportKeys(
+  executables: ClusterExePaths,
+  clio: Clio,
+  count: number
+): Promise<NodeKeySet[]> {
+  const keys: NodeKeySet[] = []
+  await Bluebird.each(range(count), async () => {
+    const keySet = await generateNodeKeySet(executables)
+    await Bluebird.each([keySet.k1.privateKey, keySet.bls.privateKey], key =>
+      clio.walletImportKey("default", key)
+    )
+    keys.push(keySet)
+  })
+  return keys
+}
+
+/**
+ * Grant `sysio.code` permission on the owner authority of an account.
+ * Used by OPP contracts that need inline action capabilities.
+ */
+async function grantSysioCode(clio: Clio, account: string): Promise<void> {
+  await clio.pushTransaction({
+    account: "sysio",
+    name: "updateauth",
+    data: {
+      account,
+      permission: "owner",
+      parent: "",
+      auth: {
+        threshold: 1,
+        keys: [{ key: DEV_K1_PUBLIC_KEY, weight: 1 }],
+        accounts: [
+          {
+            permission: { actor: account, permission: "sysio.code" },
+            weight: 1
+          }
+        ]
+      }
+    },
+    authorization: [{ actor: account, permission: "owner" }]
+  })
+}
+
+/**
+ * Link ETH + SOL chain accounts via authex for an operator.
+ * Derives an ETH wallet from the anvil mnemonic at the given HD index.
+ */
+async function linkOperatorChainAccounts(
+  clio: Clio,
+  anvilMnemonic: ethers.Mnemonic,
+  account: string,
+  hdIndex: number
+): Promise<void> {
+  const ethWallet = ethers.HDNodeWallet.fromMnemonic(
+    anvilMnemonic,
+    `${ETHBootstrapper.DerivationPath}${hdIndex}`
+  )
+
+  await createAuthExLink(clio, {
+    chainKind: ChainKind.ETHEREUM,
+    account,
+    privateKey: emPrivateKeyFromEthWallet(ethWallet),
+    ethWallet
+  })
+
+  await createAuthExLink(clio, {
+    chainKind: ChainKind.SOLANA,
+    account,
+    privateKey: PrivateKey.generate(KeyType.ED)
+  })
+}
+
 /** Default config.ini content (the full default template) + HTTP insecure patch. */
 const HTTP_INSECURE_INI = `
 # -- http-insecure settings (cluster_manager) --
@@ -256,43 +331,28 @@ export class ClusterManager {
 
       // ── 3. Generate keys (each imported into wallet immediately) ──
       log.info("Generating node keys (K1 + BLS)...")
-      const nodeKeys: NodeKeySet[] = []
-      await Bluebird.each(range(cfg.nodeCount), async _i => {
-        const keys = await generateNodeKeySet(executables)
-        await Bluebird.each([keys.k1.privateKey, keys.bls.privateKey], key =>
-          clioWallet.walletImportKey("default", key)
-        )
-        nodeKeys.push(keys)
-      })
-      // Generate keys for batch operator nodes
-      const batchOpKeys: NodeKeySet[] = []
-      await Bluebird.each(range(cfg.batchOperatorCount), async _i => {
-        const keys = await generateNodeKeySet(executables)
-        await Bluebird.each([keys.k1.privateKey, keys.bls.privateKey], key =>
-          clioWallet.walletImportKey("default", key)
-        )
-        batchOpKeys.push(keys)
-      })
-
-      // Generate keys for underwriter nodes
-      const uwKeys: NodeKeySet[] = []
-      await Bluebird.each(range(cfg.underwriterCount), async _i => {
-        const keys = await generateNodeKeySet(executables)
-        await Bluebird.each([keys.k1.privateKey, keys.bls.privateKey], key =>
-          clioWallet.walletImportKey("default", key)
-        )
-        uwKeys.push(keys)
-      })
+      const nodeKeys = await generateAndImportKeys(
+        executables,
+        clioWallet,
+        cfg.nodeCount
+      )
+      const batchOpKeys = await generateAndImportKeys(
+        executables,
+        clioWallet,
+        cfg.batchOperatorCount
+      )
+      const uwKeys = await generateAndImportKeys(
+        executables,
+        clioWallet,
+        cfg.underwriterCount
+      )
 
       log.info(
         `Generated and imported keys for ${cfg.nodeCount} producer(s), ${cfg.batchOperatorCount} batch op(s), ${cfg.underwriterCount} underwriter(s)`
       )
 
       // ── 3. Build producer name assignments (mirrors Python bind_nodes) ──
-      const allProducerNames: string[] = []
-      for (let i = 0; i < cfg.producerCount; i++) {
-        allProducerNames.push(toProducerName(i))
-      }
+      const allProducerNames = range(cfg.producerCount).map(toProducerName)
       // Assign producers round-robin across nodes (non-consecutive, matching Python)
       const nodeProducers: string[][] = Array.from(
         { length: cfg.nodeCount },
@@ -1032,7 +1092,15 @@ async function addResourcePolicy(
   await clio.pushAction(
     "sysio.roa",
     "addpolicy",
-    { owner, issuer, net_weight, ram_weight, cpu_weight, time_block: 0, network_gen: 0 },
+    {
+      owner,
+      issuer,
+      net_weight,
+      ram_weight,
+      cpu_weight,
+      time_block: 0,
+      network_gen: 0
+    },
     `${issuer}@active`
   )
 }
@@ -1103,10 +1171,7 @@ async function bootstrapChain(
     )
   }
 
-  const producerNames: string[] = []
-  for (let i = 0; i < cfg.producerCount; i++) {
-    producerNames.push(toProducerName(i))
-  }
+  const producerNames = range(cfg.producerCount).map(toProducerName)
 
   // ── Phase 1: Wallet already created with all keys imported (before nodeop launch) ──
   log.info("[Phase 1] Wallet ready (keys already imported)")
@@ -1390,39 +1455,7 @@ async function bootstrapChain(
     { label: "deploy sysio.authex", maxAttempts: 3, delayMs: 2000 }
   )
   await clio.setPriv("sysio.authex")
-  await clio.pushTransaction({
-    account: "sysio",
-    name: "updateauth",
-    data: {
-      account: "sysio.authex",
-      permission: "owner",
-      parent: "",
-      auth: {
-        threshold: 1,
-        keys: [
-          {
-            key: DEV_K1_PUBLIC_KEY,
-            weight: 1
-          }
-        ],
-        accounts: [
-          {
-            permission: {
-              actor: "sysio.authex",
-              permission: "sysio.code"
-            },
-            weight: 1
-          }
-        ]
-      }
-    },
-    authorization: [
-      {
-        actor: "sysio.authex",
-        permission: "owner"
-      }
-    ]
-  })
+  await grantSysioCode(clio, "sysio.authex")
   await clio.pushTransaction({
     account: "sysio",
     name: "updateauth",
@@ -1492,75 +1525,11 @@ async function bootstrapChain(
   }
   log.info("[Phase 14] OPP contracts deployed")
 
-  // ── Phase 14a: Grant sysio.epoch@sysio.code on active authority ──
-  // Required for inline actions (e.g., queueout to sysio.msgch during advance)
-
-  await clio.pushTransaction({
-    account: "sysio",
-    name: "updateauth",
-    data: {
-      account: "sysio.epoch",
-      permission: "owner",
-      parent: "",
-      auth: {
-        threshold: 1,
-        keys: [{ key: DEV_K1_PUBLIC_KEY, weight: 1 }],
-        accounts: [
-          {
-            permission: { actor: "sysio.epoch", permission: "sysio.code" },
-            weight: 1
-          }
-        ]
-      }
-    },
-    authorization: [{ actor: "sysio.epoch", permission: "owner" }]
-  })
-
-  // ── Phase 14b: Grant sysio.msgch@sysio.code ──
-  // Required for evalcons inline action (self-call) and createuwreq on sysio.uwrit
-  await clio.pushTransaction({
-    account: "sysio",
-    name: "updateauth",
-    data: {
-      account: "sysio.msgch",
-      permission: "owner",
-      parent: "",
-      auth: {
-        threshold: 1,
-        keys: [{ key: DEV_K1_PUBLIC_KEY, weight: 1 }],
-        accounts: [
-          {
-            permission: { actor: "sysio.msgch", permission: "sysio.code" },
-            weight: 1
-          }
-        ]
-      }
-    },
-    authorization: [{ actor: "sysio.msgch", permission: "owner" }]
-  })
-
-  // ── Phase 14c: Grant sysio.opreg@sysio.code ──
-  // Required for processprod/processbatch/processuw inline, sysio.token::transfer, sysio.msgch::queueout
-  await clio.pushTransaction({
-    account: "sysio",
-    name: "updateauth",
-    data: {
-      account: "sysio.opreg",
-      permission: "owner",
-      parent: "",
-      auth: {
-        threshold: 1,
-        keys: [{ key: DEV_K1_PUBLIC_KEY, weight: 1 }],
-        accounts: [
-          {
-            permission: { actor: "sysio.opreg", permission: "sysio.code" },
-            weight: 1
-          }
-        ]
-      }
-    },
-    authorization: [{ actor: "sysio.opreg", permission: "owner" }]
-  })
+  // ── Phase 14a–c: Grant sysio.code on OPP contract authorities ──
+  // Required for inline actions (epoch advance, evalcons, processprod, etc.)
+  await Bluebird.each(["sysio.epoch", "sysio.msgch", "sysio.opreg"], account =>
+    grantSysioCode(clio, account)
+  )
 
   // ── Phase 15: Configure sysio.epoch ──
   log.info("[Phase 15] Configuring sysio.epoch...")
@@ -1639,18 +1608,26 @@ async function bootstrapChain(
     ...batchOpStates.map(bo => bo.operatorAccount!),
     ...underwriterStates.map(uw => uw.operatorAccount!)
   ]
-  for (const account of allOperatorAccounts) {
-    await createAccountWithRam(clio, account, DEV_K1_PUBLIC_KEY)
-  }
+
+  await Promise.all(
+    allOperatorAccounts.map(account =>
+      createAccountWithRam(clio, account, DEV_K1_PUBLIC_KEY)
+    )
+  )
 
   // Wait for accounts to be finalized before assigning resource policies
   await sleep(1000)
 
   // Assign resource policies
-  for (const account of allOperatorAccounts) {
-    await addResourcePolicy(clio, account, BOOTSTRAP_NODE_OWNER)
-  }
-  log.info(`[Phase 18] Created ${allOperatorAccounts.length} operator account(s) with resources`)
+  await Promise.all(
+    allOperatorAccounts.map(account =>
+      addResourcePolicy(clio, account, BOOTSTRAP_NODE_OWNER)
+    )
+  )
+
+  log.info(
+    `[Phase 18] Created ${allOperatorAccounts.length} operator account(s) with resources`
+  )
 
   // ── Phase 18a: Register operators via sysio.opreg ──
   log.info("[Phase 18a] Registering batch operators...")
@@ -1658,7 +1635,11 @@ async function bootstrapChain(
     await clio.pushActionAndWait(
       "sysio.opreg",
       "regoperator",
-      { account: bo.operatorAccount!, type: OperatorType.BATCH, is_bootstrapped: true },
+      {
+        account: bo.operatorAccount!,
+        type: OperatorType.BATCH,
+        is_bootstrapped: true
+      },
       "sysio.opreg@active"
     )
   }
@@ -1670,7 +1651,11 @@ async function bootstrapChain(
     await clio.pushActionAndWait(
       "sysio.opreg",
       "regoperator",
-      { account: uw.operatorAccount!, type: OperatorType.UNDERWRITER, is_bootstrapped: false },
+      {
+        account: uw.operatorAccount!,
+        type: OperatorType.UNDERWRITER,
+        is_bootstrapped: false
+      },
       "sysio.opreg@active"
     )
   }
@@ -1679,76 +1664,47 @@ async function bootstrapChain(
   // ── Phase 19a: Link operator chain accounts via authex ──
   // Each operator needs authex links for all active outpost chains so that
   // advance() can include their chain addresses in the OPERATORS attestation.
-  if (cfg.ethereumPath) {
-    log.info("[Phase 19a] Linking operator chain accounts via authex...")
-    const anvilMnemonic = ethers.Mnemonic.fromPhrase(
-      ETHBootstrapper.AnvilMnemonic
-    )
+  Assert.ok(cfg.ethereumPath, `ethereumPath is invalid: ${cfg.ethereumPath}`)
+  log.info("[Phase 19a] Linking operator chain accounts via authex...")
+  const anvilMnemonic = ethers.Mnemonic.fromPhrase(
+    ETHBootstrapper.AnvilMnemonic
+  )
 
-    // Batch operators: ETH + SOL links
-    for (const [i, bo] of batchOpStates.entries()) {
-      const account = bo.operatorAccount!
+  // Link all operators (batch ops then underwriters) with sequential HD indices
+  const allOperatorStates = [...batchOpStates, ...underwriterStates]
 
-      const ethWallet = ethers.HDNodeWallet.fromMnemonic(
-        anvilMnemonic,
-        `${ETHBootstrapper.DerivationPath}${i + 1}`
-      )
-
-      await createAuthExLink(clio, {
-        chainKind: ChainKind.ETHEREUM,
-        account,
-        privateKey: emPrivateKeyFromEthWallet(ethWallet),
-        ethWallet
-      })
-
-      const solPrivKey = PrivateKey.generate(KeyType.ED)
-      await createAuthExLink(clio, {
-        chainKind: ChainKind.SOLANA,
-        account,
-        privateKey: solPrivKey
-      })
-
+  await Bluebird.mapSeries(
+    allOperatorStates.entries(),
+    async ([i, nodeState]) => {
+      const account = nodeState.operatorAccount
+      await linkOperatorChainAccounts(clio, anvilMnemonic, account, i + 1)
       log.info(`[Phase 19a] Linked ETH+SOL keys for ${account}`)
     }
+  )
 
-    // Underwriters: ETH + SOL links
-    for (const [i, uw] of underwriterStates.entries()) {
-      const account = uw.operatorAccount!
-
-      const ethWallet = ethers.HDNodeWallet.fromMnemonic(
-        anvilMnemonic,
-        `${ETHBootstrapper.DerivationPath}${batchOpStates.length + i + 1}`
-      )
-      await createAuthExLink(clio, {
-        chainKind: ChainKind.ETHEREUM,
-        account,
-        privateKey: emPrivateKeyFromEthWallet(ethWallet),
-        ethWallet
-      })
-
-      await createAuthExLink(clio, {
-        chainKind: ChainKind.SOLANA,
-        account,
-        privateKey: PrivateKey.generate(KeyType.ED)
-      })
-
-      log.info(`[Phase 19a] Linked ETH+SOL keys for ${account}`)
-    }
-
-    log.info("[Phase 19a] All authex links created")
-  }
+  log.info("[Phase 19a] All authex links created")
 
   // ── Phase 20: Initialize batch operator groups ──
   log.info("[Phase 20] Initializing epoch state...")
 
   // No activation needed — bootstrapped batch ops are already AVAILABLE
   // initgroups reads AVAILABLE batch ops from sysio.opreg
-  await clio.pushAction("sysio.epoch", "initgroups", {}, "sysio.epoch@active")
+  await clio.pushActionAndWait<SystemContracts.SysioEpochInitgroupsAction>(
+    "sysio.epoch",
+    "initgroups",
+    {},
+    "sysio.epoch@active"
+  )
   log.info("[Phase 20] Batch operator groups initialized")
 
   // ── Phase 21: Bootstrap first epoch (epoch 0 → 1) ──
   log.info("[Phase 21] Bootstrapping first epoch...")
-  await clio.pushAction("sysio.msgch", "bootstrap", {}, "sysio.msgch@active")
+  await clio.pushActionAndWait<SystemContracts.SysioMsgchBootstrapAction>(
+    "sysio.msgch",
+    "bootstrap",
+    {},
+    "sysio.msgch@active"
+  )
   log.info("[Phase 21] First epoch bootstrapped (epoch_index=1)")
 
   log.info("=== Bootstrap sequence complete ===")

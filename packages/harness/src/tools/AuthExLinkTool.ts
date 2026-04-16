@@ -107,7 +107,6 @@ export async function createAuthExLink(
     ? signEthereumMessage(privateKey, message, ethWallet)
     : signSolanaMessage(privateKey, message))
 
-
   await clio.pushAction(
     "sysio.authex",
     "createlink",
@@ -143,16 +142,17 @@ export function emPrivateKeyFromEthWallet(
 export function emPublicKeyFromEthWallet(
   wallet: ethers.HDNodeWallet
 ): PublicKey {
-  const uncompressedWithPrefix = wallet.signingKey.publicKey
-  const compressed = getCompressedPublicKey(uncompressedWithPrefix)
-  const compressedHex = compressed.startsWith("0x")
-    ? compressed.slice(2)
-    : compressed
-  const compressedBytes = ethers.getBytes("0x" + compressedHex)
-  // CDT normalizes compressed secp256k1 keys to 0x02 prefix during ABI
-  // deserialization. Force 0x02 so the JS message string matches the
-  // contract's pubkey_to_string output. The authex contract stores the
-  // recovered key (with real prefix) for correct downstream address derivation.
+  const uncompressedWithPrefix = wallet.signingKey.publicKey,
+    compressed = getCompressedPublicKey(uncompressedWithPrefix),
+    compressedHex = compressed.startsWith("0x")
+      ? compressed.slice(2)
+      : compressed,
+    compressedBytes = ethers.getBytes("0x" + compressedHex)
+  // TODO: Remove once wire-sysio PR #296
+  //   CDT normalizes compressed secp256k1 keys to 0x02 prefix during ABI
+  //   deserialization. Force 0x02 so the JS message string matches the
+  //   contract's pubkey_to_string output. The authex contract stores the
+  //   recovered key (with real prefix) for correct downstream address derivation.
   compressedBytes[0] = 0x02
   return PublicKey.from({
     type: "EM",
