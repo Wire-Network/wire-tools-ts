@@ -10,7 +10,7 @@
     "test:flow-b": "pnpm --filter @wire-e2e-tests/flow-b run test",
     "test:flow-c": "pnpm --filter @wire-e2e-tests/flow-c run test",
     "test:flow-d": "pnpm --filter @wire-e2e-tests/flow-d run test",
-    "clean": "pnpm -r run clean"
+    "clean": "./scripts/clean.sh && pnpm -r run clean"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
