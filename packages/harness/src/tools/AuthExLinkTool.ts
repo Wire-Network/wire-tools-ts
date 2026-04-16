@@ -9,7 +9,6 @@
 import { ethers } from "ethers"
 import {
   Bytes,
-  Checksum256,
   getCompressedPublicKey,
   KeyType,
   PrivateKey,
@@ -18,7 +17,6 @@ import {
 } from "@wireio/sdk-core"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import type { Clio } from "../clients/Clio.js"
-import Assert from "node:assert"
 
 export interface LinkParams {
   chainKind: ChainKind
@@ -47,7 +45,7 @@ function buildLinkMessage(
  * (no EIP-191 prefix — the default behavior after the Sign.ts fix).
  */
 async function signEthereumMessage(
-  privateKey: PrivateKey,
+  _privateKey: PrivateKey,
   message: string,
   wallet: ethers.HDNodeWallet
 ): Promise<Signature> {
@@ -144,16 +142,10 @@ export function emPublicKeyFromEthWallet(
 ): PublicKey {
   const uncompressedWithPrefix = wallet.signingKey.publicKey,
     compressed = getCompressedPublicKey(uncompressedWithPrefix),
-    compressedHex = compressed.startsWith("0x")
-      ? compressed.slice(2)
-      : compressed,
-    compressedBytes = ethers.getBytes("0x" + compressedHex)
-  // TODO: Remove once wire-sysio PR #296
-  //   CDT normalizes compressed secp256k1 keys to 0x02 prefix during ABI
-  //   deserialization. Force 0x02 so the JS message string matches the
-  //   contract's pubkey_to_string output. The authex contract stores the
-  //   recovered key (with real prefix) for correct downstream address derivation.
-  compressedBytes[0] = 0x02
+    compressedBytes = ethers.getBytes(
+      compressed.startsWith("0x") ? compressed : `0x${compressed}`
+    )
+
   return PublicKey.from({
     type: "EM",
     compressed: compressedBytes
