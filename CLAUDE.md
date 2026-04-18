@@ -119,6 +119,10 @@ These link automatically on `pnpm install` if the sibling directories exist.
 - `WIRE_CHAIN_DIR`: Override default chain data directory
 - `LOG_LEVEL`: Logging verbosity (default: `info`)
 
+## Documentation Comments
+
+All generated or modified TypeScript code **must** include JSDoc comments (`/** ... */`), compatible with Docusaurus.
+
 ## Code Style
 
 See `STYLE.md` for full patterns and examples.

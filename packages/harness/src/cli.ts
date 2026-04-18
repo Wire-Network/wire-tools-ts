@@ -178,6 +178,11 @@ async function main(): Promise<void> {
                 describe:
                   "Path to wire-ethereum repo root. If provided, anvil is bootstrapped with contract deployment."
               })
+              .option("solana-path", {
+                type: "string",
+                describe:
+                  "Path to wire-solana repo root. If provided, solana-test-validator is bootstrapped with the opp-outpost program."
+              })
               .check(argv => {
                 Assert.ok(
                   inRange(argv["batch-operator-count"], 3, 21),
@@ -225,6 +230,7 @@ async function main(): Promise<void> {
 
             // CREATE THE CONFIG
             const ethereumPath = Path.resolve(argv.ethereumPath),
+              solanaPath = Path.resolve(argv.solanaPath),
               nodeCount = pnodes + nodes,
               ports = await ClusterPorts.resolve({
                 nodeCount,
@@ -242,6 +248,7 @@ async function main(): Promise<void> {
                 batchOperatorCount,
                 underwriterCount,
                 ethereumPath,
+                solanaPath,
                 epochDurationSec,
                 warmupEpochs,
                 cooldownEpochs,

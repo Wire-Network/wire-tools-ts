@@ -34,8 +34,9 @@
   "dependencies": {
     "@wireio/opp-solidity-models": "^1.0.23",
     "@wireio/opp-typescript-models": "^1.0.23",
+    "@wireio/sdk-core": "^1.0.17",
     "@wireio/shared": "^1.0.17",
     "@wireio/shared-node": "^1.0.17",
-    "@wireio/sdk-core": "^1.0.17"
+    "@wireio/shared-web": "link:../../cache/pnpm/global/5/node_modules/@wireio/shared-web"
   }
 }

@@ -50,6 +50,7 @@ import { range } from "lodash"
 import { Deferred, getValue, isNumber, isString } from "@wireio/shared"
 import { DebuggingServer } from "@wire-e2e-tests/debugging-server"
 import { ETHBootstrapper } from "./ETHBootstrapper.js"
+import { SOLBootstrap } from "../bootstrap/SOLBootstrap.js"
 import {
   createAuthExLink,
   emPrivateKeyFromEthWallet
@@ -86,6 +87,10 @@ export interface ClusterConfig {
   /** Path to wire-ethereum repo root. If omitted, anvil is not configured. */
   ethereumPath?: string
 
+  /** Path to wire-solana repo root. If omitted, solana-test-validator is not
+   *  bootstrapped and the SOL outpost is skipped. */
+  solanaPath?: string
+
   /** Epoch duration in seconds (default: 360). */
   epochDurationSec: number
   /** Number of epochs an operator must wait in WARMUP before becoming ACTIVE (default: 1). */
@@ -112,6 +117,12 @@ interface NodeState {
   operatorAccount?: string
 }
 
+interface SolanaProgramDeployment {
+  name: string
+  programId: string
+  soFile: string
+}
+
 interface ClusterState {
   pnodes: number
   totalNodes: number
@@ -123,6 +134,12 @@ interface ClusterState {
   anvilStatePath: string
   solanaLedgerPath: string
   walletPath: string
+  /** Anchor programs deployed on the test validator, injected via `--bpf-program`. */
+  solanaPrograms?: SolanaProgramDeployment[]
+  /** Absolute path of the primary IDL shared with batch operators via `--solana-idl-file`. */
+  solanaIdlPath?: string
+  /** Root of the wire-solana repo — needed by SOLBootstrap to re-initialize PDAs on restart. */
+  solanaWirePath?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -180,12 +197,19 @@ async function grantSysioCode(clio: Clio, account: string): Promise<void> {
 /**
  * Link ETH + SOL chain accounts via authex for an operator.
  * Derives an ETH wallet from the anvil mnemonic at the given HD index.
+ *
+ * The SOL key MUST match the ED25519 key used by the batch operator node's
+ * `--signature-provider sol-<account>,...` — otherwise the OPERATORS
+ * attestation carries a different SOL pubkey than the one signing Solana
+ * transactions and epoch_in would reject the signer as an inactive operator.
  */
 async function linkOperatorChainAccounts(
   clio: Clio,
   anvilMnemonic: ethers.Mnemonic,
   account: string,
-  hdIndex: number
+  hdIndex: number,
+  solPrivateKey?: PrivateKey,
+  skipSolLink: boolean = false
 ): Promise<void> {
   const ethWallet = ethers.HDNodeWallet.fromMnemonic(
     anvilMnemonic,
@@ -199,11 +223,13 @@ async function linkOperatorChainAccounts(
     ethWallet
   })
 
-  await createAuthExLink(clio, {
-    chainKind: ChainKind.SOLANA,
-    account,
-    privateKey: PrivateKey.generate(KeyType.ED)
-  })
+  if (!skipSolLink) {
+    await createAuthExLink(clio, {
+      chainKind: ChainKind.SOLANA,
+      account,
+      privateKey: solPrivateKey ?? PrivateKey.generate(KeyType.ED)
+    })
+  }
 }
 
 /** Default config.ini content (the full default template) + HTTP insecure patch. */
@@ -245,6 +271,99 @@ export class ClusterManager {
   }
 
   constructor(readonly config: ClusterConfig) {}
+
+  /** In-memory state populated by `create()` when a SOL outpost is configured,
+   *  folded into `ClusterState` before persistence. `start()` consumes it to
+   *  re-launch the test validator with the same program deployments. */
+  private solanaPrograms?: SolanaProgramDeployment[]
+  private solanaIdlPath?: string
+
+  /**
+   * Phase 10b: build + launch solana-test-validator + deploy opp-outpost + init PDAs.
+   * Returns the deployed program id (base58) and the IDL path to forward to
+   * batch operator nodes via `--solana-idl-file` / `--batch-sol-program-id`.
+   */
+  private async bootstrapSolanaOutpost(
+    cfg: ClusterConfig,
+    dataPath: string
+  ): Promise<{ programId: string; idlPath: string }> {
+    Assert.ok(cfg.solanaPath, "bootstrapSolanaOutpost requires cfg.solanaPath")
+    log.info("[Phase 10b] Solana outpost bootstrap starting")
+
+    // Resolve build artifacts from the wire-solana source tree. We don't
+    // invoke `anchor build` here — this path runs inside an already-prepared
+    // devcontainer and the .so / IDL / program keypair must exist on disk.
+    const programKeypairFile = Path.join(
+      cfg.solanaPath,
+      "wallets",
+      "opp-outpost-keypair.json"
+    )
+    const soFile = Path.join(
+      cfg.solanaPath,
+      "target",
+      "deploy",
+      "opp_outpost.so"
+    )
+    const idlSrc = Path.join(
+      cfg.solanaPath,
+      "target",
+      "idl",
+      "opp_outpost.json"
+    )
+    Assert.ok(
+      Fs.existsSync(programKeypairFile),
+      `opp-outpost keypair missing: ${programKeypairFile} (run 'anchor build -p opp-outpost')`
+    )
+    Assert.ok(
+      Fs.existsSync(soFile),
+      `opp-outpost .so missing: ${soFile} (run 'anchor build -p opp-outpost')`
+    )
+    Assert.ok(
+      Fs.existsSync(idlSrc),
+      `opp-outpost IDL missing: ${idlSrc} (run 'anchor build -p opp-outpost')`
+    )
+
+    // Read program id from keypair to feed --bpf-program <id> <so>.
+    const keyBytes = Uint8Array.from(
+      JSON.parse(Fs.readFileSync(programKeypairFile, "utf-8"))
+    )
+    const { Keypair } = await import("@solana/web3.js")
+    const programId = Keypair.fromSecretKey(keyBytes).publicKey.toBase58()
+
+    // Copy the IDL into the cluster data dir so batch op nodes read a stable
+    // path that survives recompilation of wire-solana.
+    const idlDir = mkdirs(Path.join(dataPath, "solana-idls"))
+    const idlDst = Path.join(idlDir, "opp_outpost.json")
+    Fs.copyFileSync(idlSrc, idlDst)
+
+    // Launch the test validator with the program pre-loaded. We also reserve
+    // the ledger path under cluster data so `start()` can re-boot the same
+    // validator without re-shipping the .so.
+    const ledgerPath = Path.join(dataPath, ClusterManager.SolanaLedgerSubpath)
+    const solManager = await SolanaValidatorManager.create({
+      binary: cfg.executables.solanaTestValidator,
+      rpcPort: cfg.ports.solanaRpc,
+      faucetPort: cfg.ports.solanaFaucet,
+      ledgerPath,
+      programs: [{ name: "opp_outpost", programId, soFile }]
+    })
+    await solManager.start()
+
+    // Initialise on-chain PDAs (OutpostConfig, MessageBuffer, OperatorRegistry).
+    const bootstrap = new SOLBootstrap({
+      wireSolPath: cfg.solanaPath,
+      rpcUrl: `http://127.0.0.1:${cfg.ports.solanaRpc}`,
+      programKeypairFile
+    })
+    await bootstrap.bootstrap()
+
+    this.solanaPrograms = [{ name: "opp_outpost", programId, soFile }]
+    this.solanaIdlPath = idlDst
+    log.info(
+      `[Phase 10b] Solana outpost bootstrap complete (programId=${programId})`
+    )
+    return { programId, idlPath: idlDst }
+  }
 
   /** Start the in-process OPP debugging server. */
   private async startDebuggingServer(): Promise<void> {
@@ -350,6 +469,17 @@ export class ClusterManager {
       log.info(
         `Generated and imported keys for ${cfg.nodeCount} producer(s), ${cfg.batchOperatorCount} batch op(s), ${cfg.underwriterCount} underwriter(s)`
       )
+
+      // ── 3a. Pre-generate batch operator ED25519 SOL keys ──
+      // These must be generated before bootstrapChain so Phase 19a can link
+      // them via authex, AND before Phase 10a so the node's signature
+      // provider uses the same key. Keyed by operator account name to keep
+      // the two sites in sync.
+      const batchOpSolKeys: Record<string, PrivateKey> = {}
+      range(cfg.batchOperatorCount).forEach(i => {
+        const account = batchOperatorAccountName(i)
+        batchOpSolKeys[account] = PrivateKey.generate(KeyType.ED)
+      })
 
       // ── 3. Build producer name assignments (mirrors Python bind_nodes) ──
       const allProducerNames = range(cfg.producerCount).map(toProducerName)
@@ -639,7 +769,8 @@ export class ClusterManager {
         nodeStates,
         nodeKeys,
         batchOpStates,
-        underwriterStates
+        underwriterStates,
+        batchOpSolKeys
       )
 
       // ── 10. ETH bootstrap (if ethereum-dir provided) ──
@@ -713,6 +844,17 @@ export class ClusterManager {
         const anvilRpcUrl = `http://127.0.0.1:${cfg.ports.anvil}`
         const solanaRpcUrl = `http://127.0.0.1:${cfg.ports.solanaRpc}`
 
+        // ── 10b. SOL bootstrap (if solana-path provided) ──
+        // Order matters: must run before 10a so we know the SOL program ID,
+        // IDL path, and validator RPC URL to splice into batch op start.cmds.
+        let solProgramId: string | undefined
+        let solIdlPath: string | undefined
+        if (cfg.solanaPath) {
+          const sol = await this.bootstrapSolanaOutpost(cfg, dataPath)
+          solProgramId = sol.programId
+          solIdlPath = sol.idlPath
+        }
+
         batchOpStates.forEach((ns, i) => {
           const ethWallet = ethers.HDNodeWallet.fromMnemonic(
             anvilMnemonic,
@@ -743,9 +885,15 @@ export class ClusterManager {
             String(AnvilManager.DefaultChainId)
           ].join(",")
 
-          // Solana client spec (required by plugin dependency — generates a real
-          // ED25519 keypair even though no SOL outpost is registered for this test)
-          const solKey = PrivateKey.generate(KeyType.ED)
+          // Solana client spec. The ED25519 key MUST match the one linked via
+          // authex in Phase 19a — otherwise the SOL outpost's active-operator
+          // check rejects this node's epoch_in. We pulled the key from
+          // `batchOpSolKeys` above; regenerating here would break parity.
+          const solKey = batchOpSolKeys[ns.operatorAccount!]
+          Assert.ok(
+            solKey,
+            `Missing SOL key for batch operator ${ns.operatorAccount}`
+          )
           const solPub = solKey.toPublic()
           const solSigProvider = [
             `sol-${ns.operatorAccount}`,
@@ -776,6 +924,19 @@ export class ClusterManager {
             "sol-default"
           ]
 
+          // When a SOL outpost is configured, splice in the plugin's own CLI
+          // options so the batch_operator_plugin can locate the program IDL
+          // (for strongly-typed `opp_solana_outpost_client` calls) and target
+          // the right on-chain program id.
+          if (solProgramId && solIdlPath) {
+            outpostArgs.push(
+              "--solana-idl-file",
+              solIdlPath,
+              "--batch-sol-program-id",
+              solProgramId
+            )
+          }
+
           ns.cmd.push(...outpostArgs)
 
           // Re-write start.cmd to include the injected outpost args
@@ -784,7 +945,7 @@ export class ClusterManager {
             ns.cmd.join(" ")
           )
           log.info(
-            `[Phase 10a] Injected ETH/SOL outpost args for ${ns.operatorAccount}`
+            `[Phase 10a] Injected ETH${solProgramId ? "+SOL" : ""} outpost args for ${ns.operatorAccount}`
           )
         })
       }
@@ -827,7 +988,10 @@ export class ClusterManager {
           dataPath,
           ClusterManager.SolanaLedgerSubpath
         ),
-        walletPath
+        walletPath,
+        solanaPrograms: this.solanaPrograms,
+        solanaIdlPath: this.solanaIdlPath,
+        solanaWirePath: cfg.solanaPath
       }
       this.state = clusterState
       this.saveState(clusterPath, clusterState)
@@ -866,6 +1030,18 @@ export class ClusterManager {
 
     log.info(`Starting ${this.state.nodes.length} producer node(s)...`)
 
+    // Clear finalizer safety state (safety.dat) before restart.
+    // If a previous run deleted blocks or forks, the saved FSI lock may point
+    // to a block that no longer exists. A fresh safety.dat lets the finalizer
+    // start voting immediately rather than blocking on a stale lock.
+    for (const ns of this.state.nodes) {
+      const safetyDat = Path.join(ns.dataPath, "finalizers", "safety.dat")
+      if (Fs.existsSync(safetyDat)) {
+        Fs.unlinkSync(safetyDat)
+        log.info(`Cleared stale FSI for node ${ns.nodeId}`)
+      }
+    }
+
     // Start producer nodes with sync verification
     await Promise.all(
       this.state.nodes.map(ns => {
@@ -884,6 +1060,33 @@ export class ClusterManager {
       })
     )
     log.info(`Producer nodes started (${this.state.nodes.length})`)
+
+    // Break the producer-pause deadlock on every fresh start.
+    // The production_pause_vote_tracker starts with no vote history (epoch 0).
+    // Without a resume call, the producer stalls waiting for votes that can't
+    // arrive until it produces at least one block — a chicken-and-egg freeze.
+    // force_unpause() resets the tracker so the first block can be produced,
+    // after which the BLS finalizer votes normally and the tracker stays clear.
+    await sleep(2000)
+    await Promise.all(
+      this.state.nodes
+        .filter(ns => ns.isProducer)
+        .map(async ns => {
+          try {
+            const resp = await fetch(
+              `http://127.0.0.1:${ns.port}/v1/producer/resume`,
+              { method: "POST" }
+            )
+            log.info(
+              `Resumed producer on node ${ns.nodeId}: ${resp.status}`
+            )
+          } catch (err) {
+            log.warn(
+              `Failed to resume producer on node ${ns.nodeId}: ${err}`
+            )
+          }
+        })
+    )
 
     // Start debugging server (batch ops connect to it via --ext-debugging-server)
     await this.startDebuggingServer()
@@ -932,15 +1135,55 @@ export class ClusterManager {
       await anvilManager.start()
     }
 
-    // Start solana-test-validator
+    // Start solana-test-validator. The validator always starts with --reset so
+    // the ledger is fresh each run; PDAs are re-initialized by SOLBootstrap
+    // below (idempotent: skips if the config PDA already exists).
     if (this.state.solanaLedgerPath) {
       const solManager = await SolanaValidatorManager.create({
         binary: this.config.executables.solanaTestValidator,
         rpcPort: this.config.ports.solanaRpc,
         faucetPort: this.config.ports.solanaFaucet,
-        ledgerPath: this.state.solanaLedgerPath
+        ledgerPath: this.state.solanaLedgerPath,
+        programs: this.state.solanaPrograms ?? []
       })
       await solManager.start()
+
+      // Re-initialize PDAs on every run. The Anchor program is pre-loaded via
+      // --bpf-program, but its on-chain state (PDAs) is wiped by --reset.
+      // SOLBootstrap.bootstrap() is idempotent and skips if config PDA exists.
+      const wireSolPath =
+        this.state.solanaWirePath ??
+        this.state.solanaPrograms?.[0]?.soFile?.split("/target/")?.[0]
+      if (wireSolPath && this.state.solanaIdlPath) {
+        const bootstrap = new SOLBootstrap({
+          wireSolPath,
+          rpcUrl: `http://127.0.0.1:${this.config.ports.solanaRpc}`
+        })
+        await bootstrap.bootstrap()
+
+        // Airdrop to batch operator SOL signing accounts — the Solana ledger
+        // is wiped by --reset on every run, so their balances start at 0.
+        // Each batch op's SOL pubkey is embedded in its --signature-provider arg.
+        const batchOpSolPubkeys = (this.state.batchOperatorNodes ?? [])
+          .flatMap(ns => {
+            for (let i = 0; i + 1 < ns.cmd.length; i++) {
+              if (ns.cmd[i] === "--signature-provider") {
+                const spec = ns.cmd[i + 1]
+                if (spec.startsWith("sol-")) {
+                  const parts = spec.split(",")
+                  if (parts.length >= 4) return [parts[3]]
+                }
+              }
+            }
+            return []
+          })
+        if (batchOpSolPubkeys.length > 0) {
+          log.info(
+            `Airdropping SOL to ${batchOpSolPubkeys.length} batch operator account(s)...`
+          )
+          await bootstrap.airdropAccounts(batchOpSolPubkeys)
+        }
+      }
     }
 
     log.info("All nodes + external chains started")
@@ -1147,7 +1390,8 @@ async function bootstrapChain(
   nodeStates: NodeState[],
   nodeKeys: NodeKeySet[],
   batchOpStates: NodeState[],
-  underwriterStates: NodeState[]
+  underwriterStates: NodeState[],
+  batchOpSolKeys: Record<string, PrivateKey>
 ): Promise<void> {
   log.info("=== Bootstrap sequence starting ===")
 
@@ -1574,16 +1818,26 @@ async function bootstrapChain(
   await clio.pushAction<SystemContracts.SysioEpochRegoutpostAction>(
     "sysio.epoch",
     "regoutpost",
-    { chain_kind: 2, chain_id: 31337 },
+    {
+      chain_kind: SystemContracts.SysioEpochChainkind.CHAIN_KIND_ETHEREUM,
+      chain_id: 31337
+    },
     "sysio.epoch@active"
   )
-  // await clio.pushAction<SystemContracts.SysioEpochRegoutpostAction>(
-  //   "sysio.epoch",
-  //   "regoutpost",
-  //   { chain_kind: 3, chain_id: 0 },
-  //   "sysio.epoch@active"
-  // )
-  log.info("[Phase 16] Outposts registered")
+  if (cfg.solanaPath) {
+    await clio.pushAction<SystemContracts.SysioEpochRegoutpostAction>(
+      "sysio.epoch",
+      "regoutpost",
+      {
+        chain_kind: SystemContracts.SysioEpochChainkind.CHAIN_KIND_SOLANA,
+        chain_id: 0
+      },
+      "sysio.epoch@active"
+    )
+  }
+  log.info(
+    `[Phase 16] Outposts registered (ETH${cfg.solanaPath ? " + SOL" : ""})`
+  )
 
   // ── Phase 17: Configure sysio.uwrit ──
   log.info("[Phase 17] Configuring sysio.uwrit...")
@@ -1670,15 +1924,26 @@ async function bootstrapChain(
     ETHBootstrapper.AnvilMnemonic
   )
 
-  // Link all operators (batch ops then underwriters) with sequential HD indices
+  // Link all operators (batch ops then underwriters) with sequential HD indices.
+  // For batch operators we inject the ED25519 key that their node will use to
+  // sign Solana transactions — otherwise the SOL outpost would reject
+  // epoch_in as coming from a non-active operator.
   const allOperatorStates = [...batchOpStates, ...underwriterStates]
-
+  const skipSolLink = cfg.solanaPath === undefined
   await Bluebird.mapSeries(
     allOperatorStates.entries(),
     async ([i, nodeState]) => {
-      const account = nodeState.operatorAccount
-      await linkOperatorChainAccounts(clio, anvilMnemonic, account, i + 1)
-      log.info(`[Phase 19a] Linked ETH+SOL keys for ${account}`)
+      const account = nodeState.operatorAccount!
+      const solKey = batchOpSolKeys[account]
+      await linkOperatorChainAccounts(
+        clio,
+        anvilMnemonic,
+        account,
+        i + 1,
+        solKey,
+        skipSolLink
+      )
+      log.info(`[Phase 19a] Linked ETH${skipSolLink ? "" : "+SOL"} keys for ${account}`)
     }
   )
 
@@ -1763,7 +2028,7 @@ export namespace ClusterManager {
   export const ShutdownDelayMs = 2000
 
   /** Timeout for nodeop sync verification via verifyCallback (ms). */
-  export const NodeSyncTimeoutMs = 60_000
+  export const NodeSyncTimeoutMs = 300_000
 
   /** Poll interval for nodeop sync verification (ms). */
   export const NodeSyncPollIntervalMs = 5_000

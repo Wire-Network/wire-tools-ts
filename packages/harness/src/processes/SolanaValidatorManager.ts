@@ -1,6 +1,7 @@
 import Path from "path"
+import { Connection } from "@solana/web3.js"
 import { ProcessManager, type ProcessConfig } from "./ProcessManager.js"
-import { existsAsync, waitForEndpoint } from "../util.js"
+import { existsAsync, waitForEndpoint, sleep } from "../util.js"
 import { log } from "../logger.js"
 import { defaults } from "lodash"
 import { which } from "zx"
@@ -94,6 +95,24 @@ export class SolanaValidatorManager {
       label: "solana-test-validator",
       timeoutMs: SolanaValidatorManager.StartupTimeoutMs
     })
+
+    // Wait for the validator to produce at least one slot. The RPC endpoint
+    // answers GET with 404 immediately at startup, before the first block is
+    // processed. Attempting an airdrop before any slots are produced causes
+    // TransactionExpiredTimeoutError because the faucet's submitted txn never
+    // lands in a confirmed block.
+    const conn = new Connection(this.rpcUrl, "confirmed")
+    const slotDeadline = Date.now() + SolanaValidatorManager.StartupTimeoutMs
+    while (Date.now() < slotDeadline) {
+      try {
+        const slot = await conn.getSlot()
+        if (slot > 0) break
+      } catch {
+        // RPC not fully up yet
+      }
+      await sleep(500)
+    }
+
     log.info(`Solana validator ready at ${this.rpcUrl}`)
   }
 
