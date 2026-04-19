@@ -2,8 +2,8 @@ import * as OS from "node:os"
 import * as Path from "node:path"
 import * as Fs from "node:fs"
 
-import { DebuggingServer } from "@wire-e2e-tests/debugging-server/DebuggingServer"
-import { JsonRPCErrorCode } from "@wire-e2e-tests/debugging-server/JsonRPC"
+import { DebuggingServer } from "@wire-e2e-tests/debugging-server"
+import { JsonRPCErrorCode } from "@wire-e2e-tests/debugging-server"
 import {
   ApiPaths,
   DebugOutpostEndpointsType,

@@ -147,3 +147,20 @@ See `STYLE.md` for full patterns and examples.
 - **Module-level shared state via middleware.** Cross-cutting values (global args, derived paths) go in a module-level object populated by Yargs `.middleware()`, destructured in handlers.
 - **`Deferred.useCallback`** from promisification
 
+## Code Quality Invariants
+
+The rules above are enforced on every change. Before declaring a task complete, scan the diff for:
+
+1. **Duplicated helpers.** If the same function / guard / computation appears in two files, extract it:
+   - **Package-internal:** a `src/util/` module exported for in-package use.
+   - **Shared across packages in this repo:** `harness/src/util/` so all flows can import.
+   - **Usable outside this repo:** promote into `@wireio/shared` / `@wireio/sdk-core` over in `wire-libraries-ts`, then depend on it from here. Never copy-paste between flows or between harness and a flow.
+   - **Subclass-common behaviour:** `protected` method on the base class, not repeated in every subclass.
+
+2. **Magic literals.** Every string or numeric value that isn't a trivial index / bound gets a named constant. Grouping options:
+   - **File-local:** `const X = ...` at module top, or `as const` tuples / objects for literal-narrowed types.
+   - **Cross-file within a package:** `export const` from a `constants.ts`.
+   - **Protocol identifiers (command names, RPC method names, event names, endpoint paths):** an `enum` or `as const` object so IDE rename works.
+
+3. **Enums over raw values.** Command names, statuses, chain kinds, attestation types — always the enum member. `ClusterCommand.create` not `"create"`; `ChainKind.Ethereum` not `2`. Rename propagates through the compiler; raw strings do not.
+

@@ -20,7 +20,8 @@ const config = {
   },
   modulePaths: ["<rootDir>/../harness/node_modules"],
   transformIgnorePatterns: [
-    "node_modules/(?!@wireio/opp-solidity-models)"
+    "node_modules/(?!@wireio/opp-solidity-models)",
+    "node_modules/(?!@wireio/opp-typescript-models)"
   ]
 }
 

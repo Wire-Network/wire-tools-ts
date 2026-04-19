@@ -7,7 +7,7 @@ import {
   InferredHandlerType,
   TO_JSON_OPTIONS
 } from "@wire-e2e-tests/debugging-shared"
-import { HandlerTypeMappings } from "@wire-e2e-tests/debugging-shared/api/types"
+import { HandlerTypeMappings } from "@wire-e2e-tests/debugging-shared"
 import { getLogger, isObject } from "@wireio/shared"
 import { Future } from "@3fv/prelude-ts"
 

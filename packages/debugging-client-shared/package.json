@@ -29,12 +29,11 @@
   },
   "dependencies": {
     "@wire-e2e-tests/debugging-shared": "workspace:*",
+    "@wireio/opp-typescript-models": "^1.0.23",
     "@3fv/prelude-ts": "^0.8.37",
     "lodash": "^4.17.21"
   },
   "devDependencies": {
-    "@wire-e2e-tests/debugging-server": "workspace:*",
-    "@wireio/opp-typescript-models": "^1.0.23",
     "@types/lodash": "^4.17.24",
     "@types/node": "25.5.0",
     "ts-jest": "^29.4.6",

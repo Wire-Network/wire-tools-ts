@@ -12,6 +12,7 @@
 
 import Path from "path"
 import Fs from "fs"
+import * as Sh from "shelljs"
 import {
   type ProcessHandle,
   ProcessManager
@@ -304,6 +305,15 @@ export class ClusterManager {
       "deploy",
       "opp_outpost.so"
     )
+
+    if (!Fs.existsSync(soFile)) {
+      log.info(
+        `File (${soFile}) not found, attempting to build opp-outpost program artifacts...`
+      )
+      Sh.exec("cargo build", { cwd: cfg.solanaPath })
+      Sh.exec("anchor build -p opp-outpost", { cwd: cfg.solanaPath })
+    }
+
     const idlSrc = Path.join(
       cfg.solanaPath,
       "target",
@@ -1077,13 +1087,9 @@ export class ClusterManager {
               `http://127.0.0.1:${ns.port}/v1/producer/resume`,
               { method: "POST" }
             )
-            log.info(
-              `Resumed producer on node ${ns.nodeId}: ${resp.status}`
-            )
+            log.info(`Resumed producer on node ${ns.nodeId}: ${resp.status}`)
           } catch (err) {
-            log.warn(
-              `Failed to resume producer on node ${ns.nodeId}: ${err}`
-            )
+            log.warn(`Failed to resume producer on node ${ns.nodeId}: ${err}`)
           }
         })
     )
@@ -1164,8 +1170,8 @@ export class ClusterManager {
         // Airdrop to batch operator SOL signing accounts — the Solana ledger
         // is wiped by --reset on every run, so their balances start at 0.
         // Each batch op's SOL pubkey is embedded in its --signature-provider arg.
-        const batchOpSolPubkeys = (this.state.batchOperatorNodes ?? [])
-          .flatMap(ns => {
+        const batchOpSolPubkeys = (this.state.batchOperatorNodes ?? []).flatMap(
+          ns => {
             for (let i = 0; i + 1 < ns.cmd.length; i++) {
               if (ns.cmd[i] === "--signature-provider") {
                 const spec = ns.cmd[i + 1]
@@ -1176,7 +1182,8 @@ export class ClusterManager {
               }
             }
             return []
-          })
+          }
+        )
         if (batchOpSolPubkeys.length > 0) {
           log.info(
             `Airdropping SOL to ${batchOpSolPubkeys.length} batch operator account(s)...`
@@ -1943,7 +1950,9 @@ async function bootstrapChain(
         solKey,
         skipSolLink
       )
-      log.info(`[Phase 19a] Linked ETH${skipSolLink ? "" : "+SOL"} keys for ${account}`)
+      log.info(
+        `[Phase 19a] Linked ETH${skipSolLink ? "" : "+SOL"} keys for ${account}`
+      )
     }
   )
 

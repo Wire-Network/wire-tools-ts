@@ -38,6 +38,8 @@ out/
 build
 dist
 
+# Package manager
+pnpm-lock.yaml
 
 # Debug
 npm-debug.log*
