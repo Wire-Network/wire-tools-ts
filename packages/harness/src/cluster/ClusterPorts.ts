@@ -2,6 +2,7 @@
 // Cluster port management
 // ---------------------------------------------------------------------------
 
+import type { ClusterPorts as SharedClusterPorts } from "@wire-e2e-tests/debugging-shared"
 import {
   BASE_HTTP_PORT,
   BASE_P2P_PORT,
@@ -9,35 +10,12 @@ import {
   BIOS_P2P_PORT
 } from "./constants.js"
 
-/** All ports used by a cluster. Serialized into cluster-config.json. */
-export interface ClusterPorts {
-  /** kiod wallet daemon HTTP */
-  kiod: number
-  /** Bios node HTTP (only used during create bootstrap) */
-  biosHttp: number
-  /** Bios node P2P */
-  biosP2p: number
-  /** Producer node HTTP ports (one per node) */
-  producerHttp: number[]
-  /** Producer node P2P ports (one per node) */
-  producerP2p: number[]
-  /** Batch operator HTTP ports (one per node) */
-  batchOperatorHttp: number[]
-  /** Batch operator P2P ports (one per node) */
-  batchOperatorP2p: number[]
-  /** Underwriter HTTP ports (one per node) */
-  underwriterHttp: number[]
-  /** Underwriter P2P ports (one per node) */
-  underwriterP2p: number[]
-  /** Anvil (ETH) RPC */
-  anvil: number
-  /** Solana test validator RPC */
-  solanaRpc: number
-  /** Solana faucet */
-  solanaFaucet: number
-  /** Debugging server HTTP */
-  debuggingServer: number
-}
+/**
+ * All ports used by a cluster. Shape lives in debugging-shared; re-declared
+ * here via `extends` so the companion namespace below (port resolvers,
+ * default constants) can merge with the type locally.
+ */
+export interface ClusterPorts extends SharedClusterPorts {}
 
 export namespace ClusterPorts {
   export const DefaultKiod = 8900

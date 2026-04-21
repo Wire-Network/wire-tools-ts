@@ -40,25 +40,24 @@ describe("AuthExLinkTool", () => {
   })
 
   describe("emPublicKeyFromEthWallet", () => {
-    it("forces 0x02 prefix for 0x02 key (no-op)", () => {
+    it("preserves 0x02 prefix for 0x02 key", () => {
       const pubKey = emPublicKeyFromEthWallet(wallet02)
       const str = pubKey.toString()
       expect(str).toMatch(/^PUB_EM_02/)
     })
 
-    it("forces 0x02 prefix for 0x03 key", () => {
+    it("preserves 0x03 prefix for 0x03 key", () => {
       const pubKey = emPublicKeyFromEthWallet(wallet03)
       const str = pubKey.toString()
-      expect(str).toMatch(/^PUB_EM_02/)
+      expect(str).toMatch(/^PUB_EM_03/)
     })
 
-    it("preserves x-coordinate regardless of prefix", () => {
+    it("preserves x-coordinate and real prefix", () => {
       const pub02 = emPublicKeyFromEthWallet(wallet02).toString()
       const pub03 = emPublicKeyFromEthWallet(wallet03).toString()
 
-      // Both have PUB_EM_02 prefix, but different x-coordinates (different keys)
       expect(pub02.slice(0, 9)).toBe("PUB_EM_02")
-      expect(pub03.slice(0, 9)).toBe("PUB_EM_02")
+      expect(pub03.slice(0, 9)).toBe("PUB_EM_03")
       // x-coordinates differ (different wallets)
       expect(pub02.slice(9)).not.toBe(pub03.slice(9))
     })

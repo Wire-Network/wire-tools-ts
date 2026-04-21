@@ -1,4 +1,9 @@
-import { Connection, PublicKey, Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js"
+import {
+  Connection,
+  PublicKey,
+  Keypair,
+  LAMPORTS_PER_SOL
+} from "@solana/web3.js"
 import { log } from "../logger.js"
 
 /**
@@ -19,7 +24,10 @@ export class SOLClient {
 
   /** Airdrop SOL to a pubkey (test-validator only). */
   async airdrop(pubkey: PublicKey, solAmount: number): Promise<string> {
-    const sig = await this.connection.requestAirdrop(pubkey, solAmount * LAMPORTS_PER_SOL)
+    const sig = await this.connection.requestAirdrop(
+      pubkey,
+      solAmount * LAMPORTS_PER_SOL
+    )
     await this.connection.confirmTransaction(sig)
     return sig
   }
@@ -36,15 +44,14 @@ export class SOLClient {
   }
 
   /** Get recent transaction logs for a program. */
-  async getProgramLogs(
-    programId: PublicKey,
-    limit = 10
-  ): Promise<string[][]> {
-    const sigs = await this.connection.getSignaturesForAddress(programId, { limit })
+  async getProgramLogs(programId: PublicKey, limit = 10): Promise<string[][]> {
+    const sigs = await this.connection.getSignaturesForAddress(programId, {
+      limit
+    })
     const logs: string[][] = []
     for (const sig of sigs) {
       const tx = await this.connection.getTransaction(sig.signature, {
-        maxSupportedTransactionVersion: 0,
+        maxSupportedTransactionVersion: 0
       })
       if (tx?.meta?.logMessages) {
         logs.push(tx.meta.logMessages)

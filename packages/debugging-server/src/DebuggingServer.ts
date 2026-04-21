@@ -8,8 +8,7 @@ import { defaults } from "lodash"
 
 import { ApiPaths } from "@wire-e2e-tests/debugging-shared"
 
-import { mountJsonRPC } from "./JsonRPC"
-import type { HandlerRegistry } from "./JsonRPC"
+import { JsonRPC } from "./JsonRPC"
 
 import OPPRoutes from "./routes/opp/OPPRoutes"
 import * as Path from "node:path"
@@ -65,29 +64,15 @@ export class DebuggingServer {
     this.app.use(express.json({ limit: "10mb" }))
 
     // Health check
-    this.app.get(ApiPaths.Ping, (_req, res) => {
-      res.status(200).json({ status: "ok" })
-    })
+    this.app.get(ApiPaths.Ping, this.handlePing.bind(this))
 
     // OPP handlers — mounted under /api/opp, auto-detects JSON-RPC 2.0 vs plain JSON
-    const registry: HandlerRegistry = new Map()
-    OPPRoutes.register(registry, config.oppStoragePath)
-    mountJsonRPC(this.app, ApiPaths.OPP.Endpoint, registry)
+    const registry = OPPRoutes.register(new Map(), config.oppStoragePath)
+
+    JsonRPC.mount(this.app, ApiPaths.OPP.Endpoint, registry)
 
     // JSON error handler — prevents Express from returning HTML error pages
-    this.app.use(
-      (
-        err: any,
-        _req: express.Request,
-        res: express.Response,
-        _next: express.NextFunction
-      ) => {
-        const status = err.status || 500
-        res.status(status).json({
-          error: err.message || "Internal Server Error"
-        })
-      }
-    )
+    this.app.use(this.handleError.bind(this))
   }
 
   async start(): Promise<AddressInfo> {
@@ -104,14 +89,34 @@ export class DebuggingServer {
     }).promise
   }
 
+  /**
+   * Stops the server and resolves when the server is stopped.
+   */
   async stop(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (!this.server) return resolve()
+    return Deferred.useCallback<void>(d => {
+      if (!this.server) return d.resolve()
       this.server.close(err => {
-        if (err) return reject(err)
+        if (err) return d.reject(err)
         this.server = null
-        resolve()
+        d.resolve()
       })
+    }).promise
+  }
+
+  protected handlePing(_req: express.Request, res: express.Response) {
+    res.status(200).json({ status: "ok" })
+  }
+
+  protected handleError(
+    err: any,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction
+  ) {
+    const status = err.status || 500
+    res.status(status).json({
+      error: err.message ?? "Unknown error",
+      stack: err?.stack ?? "Stack not available"
     })
   }
 }

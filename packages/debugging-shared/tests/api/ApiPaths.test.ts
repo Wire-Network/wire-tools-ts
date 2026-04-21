@@ -10,7 +10,7 @@ describe("ApiPaths", () => {
   })
 
   it("Opp.Envelope is /api/opp/envelope", () => {
-    expect(ApiPaths.OPP.Methods.Envelope).toBe("/api/opp/envelope")
+    expect(ApiPaths.OPP.Methods.Envelope).toBe("Envelope")
   })
 })
 

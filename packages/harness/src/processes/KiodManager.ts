@@ -39,10 +39,7 @@ export class KiodManager {
       createKiodDefaultOptions()
     ) as KiodConfig
     assert(await existsAsync(config.binary), "kiod binary path is required")
-    assert(
-      await existsAsync(config.walletPath),
-      "kiod walletPath is required"
-    )
+    assert(await existsAsync(config.walletPath), "kiod walletPath is required")
     return new KiodManager(config)
   }
 

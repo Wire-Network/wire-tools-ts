@@ -79,6 +79,12 @@
       ],
       "@wire-e2e-tests/debugging-client-tool/*": [
         "./packages/debugging-client-tool/src/*"
+      ],
+      "@wire-e2e-tests/debugging-client-tool-tui": [
+        "./packages/debugging-client-tool-tui/src"
+      ],
+      "@wire-e2e-tests/debugging-client-tool-tui/*": [
+        "./packages/debugging-client-tool-tui/src/*"
       ]
     }
   },

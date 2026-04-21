@@ -155,6 +155,9 @@ export const ROA_TOTAL_SYS = "75496.0000 SYS"
 /** Bytes per resource unit for ROA. */
 export const ROA_BYTES_PER_UNIT = 104
 
+export const DEFAULT_RESOURCE_WEIGHT = "200.0000 SYS"
+export const DEFAULT_RAM_WEIGHT = "20.0000 SYS"
+
 // ---------------------------------------------------------------------------
 // Port bases
 // ---------------------------------------------------------------------------
@@ -224,10 +227,10 @@ export const PRODUCER_PLUGINS = [
 // ---------------------------------------------------------------------------
 
 export const CONTRACT_PATHS = {
-  /** libraries/testing/contracts/sysio.bios */
-  "sysio.bios": "libraries/testing/contracts/sysio.bios",
-  /** libraries/testing/contracts/sysio.roa */
-  "sysio.roa": "libraries/testing/contracts/sysio.roa",
+  /** contracts/sysio.bios */
+  "sysio.bios": "contracts/sysio.bios",
+  /** contracts/sysio.roa */
+  "sysio.roa": "contracts/sysio.roa",
   /** contracts/sysio.system */
   "sysio.system": "contracts/sysio.system",
   /** contracts/sysio.token */

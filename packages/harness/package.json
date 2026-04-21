@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@wire-e2e-tests/debugging-server": "workspace:*",
+    "@wire-e2e-tests/debugging-shared": "workspace:*",
     "@3fv/guard": "^1.4.39",
     "@3fv/prelude-ts": "^0.8.37",
     "@coral-xyz/anchor": "^0.31.0",
@@ -30,7 +31,6 @@
     "ethers": "^6.14.0",
     "get-port": "^7.2.0",
     "lodash": "^4.17.23",
-    "pm2": "^6.0.14",
     "shelljs": "^0.10.0",
     "tracer": "^1.3.0",
     "tree-kill": "^1.2.2",

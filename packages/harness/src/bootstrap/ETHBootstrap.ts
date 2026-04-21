@@ -50,7 +50,11 @@ export class ETHBootstrap {
   private loadArtifact(name: string): { abi: any[]; bytecode: string } {
     const artifactFile = Path.join(
       this.config.wireEthPath,
-      "artifacts", "contracts", "outpost", `${name}.sol`, `${name}.json`
+      "artifacts",
+      "contracts",
+      "outpost",
+      `${name}.sol`,
+      `${name}.json`
     )
     if (!Fs.existsSync(artifactFile)) {
       throw new Error(`Artifact not found: ${artifactFile}`)
@@ -60,10 +64,17 @@ export class ETHBootstrap {
   }
 
   /** Deploy a single contract (upgradeable proxy pattern or direct) */
-  private async deployDirect(name: string, args: any[] = []): Promise<ethers.Contract> {
+  private async deployDirect(
+    name: string,
+    args: any[] = []
+  ): Promise<ethers.Contract> {
     log.info(`Deploying ${name}...`)
     const { abi, bytecode } = this.loadArtifact(name)
-    const factory = new ethers.ContractFactory(abi, bytecode, this.client.signer)
+    const factory = new ethers.ContractFactory(
+      abi,
+      bytecode,
+      this.client.signer
+    )
     const deployed = await factory.deploy(...args)
     await deployed.waitForDeployment()
     const addr = await deployed.getAddress()
@@ -86,34 +97,53 @@ export class ETHBootstrap {
 
     // 1. Deploy authority
     const authority = await this.deployDirect("OutpostManagerAuthority", [
-      await this.client.signer.getAddress(),
+      await this.client.signer.getAddress()
     ])
 
     // 2. Deploy OutpostManager (proxied via authority)
-    const manager = await this.deployDirect("OutpostManager", [this.addr("OutpostManagerAuthority")])
+    const manager = await this.deployDirect("OutpostManager", [
+      this.addr("OutpostManagerAuthority")
+    ])
 
     // 3. Deploy OPP core
-    const opp = await this.deployDirect("OPP", [this.addr("OutpostManagerAuthority"), 360])
-    const oppInbound = await this.deployDirect("OPPInbound", [this.addr("OutpostManagerAuthority")])
+    const opp = await this.deployDirect("OPP", [
+      this.addr("OutpostManagerAuthority"),
+      360
+    ])
+    const oppInbound = await this.deployDirect("OPPInbound", [
+      this.addr("OutpostManagerAuthority")
+    ])
 
     // 4. Deploy OPP endpoints
-    const operatorRegistry = await this.deployDirect("OperatorRegistry", [this.addr("OutpostManagerAuthority")])
-    const outpostReserve = await this.deployDirect("OutpostReserve", [this.addr("OutpostManagerAuthority")])
-    const bar = await this.deployDirect("BAR", [this.addr("OutpostManagerAuthority")])
+    const operatorRegistry = await this.deployDirect("OperatorRegistry", [
+      this.addr("OutpostManagerAuthority")
+    ])
+    const outpostReserve = await this.deployDirect("OutpostReserve", [
+      this.addr("OutpostManagerAuthority")
+    ])
+    const bar = await this.deployDirect("BAR", [
+      this.addr("OutpostManagerAuthority")
+    ])
 
     // 5. Set up OPP roles via manager
     log.info("Configuring OPP roles...")
     const ownerAddr = await this.client.signer.getAddress()
     const authorityContract = authority.connect(this.client.signer) as any
 
-    await retry(async () => {
-      await authorityContract.managerHandoff(this.addr("OutpostManager"))
-    }, { label: "managerHandoff" })
+    await retry(
+      async () => {
+        await authorityContract.managerHandoff(this.addr("OutpostManager"))
+      },
+      { label: "managerHandoff" }
+    )
 
     const mgr = manager.connect(this.client.signer) as any
-    await retry(async () => {
-      await mgr.setupOPPRoles(this.addr("OPP"), this.addr("OPPInbound"))
-    }, { label: "setupOPPRoles" })
+    await retry(
+      async () => {
+        await mgr.setupOPPRoles(this.addr("OPP"), this.addr("OPPInbound"))
+      },
+      { label: "setupOPPRoles" }
+    )
 
     // 6. Configure OPP endpoints with attestation types
     // AttestationType enum values (from protobuf)
@@ -127,43 +157,55 @@ export class ETHBootstrap {
     const REMIT_CONFIRM = 60942
 
     log.info("Configuring OperatorRegistry endpoint...")
-    await retry(async () => {
-      await mgr.configureOPPEndpoint(
-        this.addr("OperatorRegistry"),
-        [OPERATOR_ACTION, UNDERWRITE_CONFIRM],         // sends
-        [UNDERWRITE_INTENT, SLASH_OPERATOR, ROSTER_UPDATE] // receives
-      )
-    }, { label: "configure OperatorRegistry" })
+    await retry(
+      async () => {
+        await mgr.configureOPPEndpoint(
+          this.addr("OperatorRegistry"),
+          [OPERATOR_ACTION, UNDERWRITE_CONFIRM], // sends
+          [UNDERWRITE_INTENT, SLASH_OPERATOR, ROSTER_UPDATE] // receives
+        )
+      },
+      { label: "configure OperatorRegistry" }
+    )
 
     log.info("Configuring OutpostReserve endpoint...")
-    await retry(async () => {
-      await mgr.configureOPPEndpoint(
-        this.addr("OutpostReserve"),
-        [RESERVE_BALANCE_SHEET, REMIT_CONFIRM],  // sends
-        [REMIT]                                   // receives
-      )
-    }, { label: "configure OutpostReserve" })
+    await retry(
+      async () => {
+        await mgr.configureOPPEndpoint(
+          this.addr("OutpostReserve"),
+          [RESERVE_BALANCE_SHEET, REMIT_CONFIRM], // sends
+          [REMIT] // receives
+        )
+      },
+      { label: "configure OutpostReserve" }
+    )
 
     log.info("Configuring BAR endpoint...")
-    await retry(async () => {
-      await mgr.configureOPPEndpoint(
-        this.addr("BAR"),
-        [OPERATOR_ACTION],  // sends
-        []                  // receives nothing
-      )
-    }, { label: "configure BAR" })
+    await retry(
+      async () => {
+        await mgr.configureOPPEndpoint(
+          this.addr("BAR"),
+          [OPERATOR_ACTION], // sends
+          [] // receives nothing
+        )
+      },
+      { label: "configure BAR" }
+    )
 
     // 7. Set OperatorRegistry on OPPInbound for queryBond
     log.info("Setting OperatorRegistry on OPPInbound...")
-    await retry(async () => {
-      await mgr.grantRole(await mgr.CONFIGURATION_ROLE(), ownerAddr)
-    }, { label: "grant CONFIGURATION_ROLE" })
+    await retry(
+      async () => {
+        await mgr.grantRole(await mgr.CONFIGURATION_ROLE(), ownerAddr)
+      },
+      { label: "grant CONFIGURATION_ROLE" }
+    )
 
     // Fund the reserve with some ETH for testing
     log.info("Funding OutpostReserve with 100 ETH...")
     await this.client.signer.sendTransaction({
       to: this.addr("OutpostReserve"),
-      value: ethers.parseEther("100"),
+      value: ethers.parseEther("100")
     })
 
     log.info("=== Ethereum Outpost Bootstrap Complete ===")

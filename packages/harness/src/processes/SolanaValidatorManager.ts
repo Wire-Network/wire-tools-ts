@@ -68,8 +68,7 @@ export class SolanaValidatorManager {
       String(config.rpcPort),
       "--faucet-port",
       String(config.faucetPort),
-      "--quiet",
-      "--reset"
+      "--quiet"
     ]
 
     if (config.ledgerPath) {

@@ -16,7 +16,8 @@ export class ETHClient {
   ) {
     this.provider = new ethers.JsonRpcProvider(rpcUrl)
     this.signer = new ethers.Wallet(
-      privateKey || "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80", // anvil default key 0
+      privateKey ||
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80", // anvil default key 0
       this.provider
     )
   }
@@ -63,7 +64,9 @@ export class ETHClient {
   ): Promise<ethers.EventLog[]> {
     const filter = oppContract.filters.OPPEnvelope()
     const events = await oppContract.queryFilter(filter, fromBlock)
-    return events.filter((e): e is ethers.EventLog => e instanceof ethers.EventLog)
+    return events.filter(
+      (e): e is ethers.EventLog => e instanceof ethers.EventLog
+    )
   }
 
   /** Query OPP epoch events from a contract. */
@@ -73,6 +76,8 @@ export class ETHClient {
   ): Promise<ethers.EventLog[]> {
     const filter = oppContract.filters.OPPEpoch()
     const events = await oppContract.queryFilter(filter, fromBlock)
-    return events.filter((e): e is ethers.EventLog => e instanceof ethers.EventLog)
+    return events.filter(
+      (e): e is ethers.EventLog => e instanceof ethers.EventLog
+    )
   }
 }

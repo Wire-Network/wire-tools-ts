@@ -7,7 +7,7 @@
  *   - Writes default `config.ini` with HTTP insecure settings appended
  *   - Launches nodes by executing the start.cmd args
  *   - Runs the full bootstrap sequence (contract deployment, accounts, tokens)
- *   - Persists state to `.cluster_state.json` for relaunch via `run`
+ *   - Persists state to `cluster-state.json` for relaunch via `run`
  */
 
 import Path from "path"
@@ -36,6 +36,8 @@ import { generateLoggingConfig } from "./loggingConfig.js"
 import {
   BATCH_OPERATOR_PLUGINS,
   batchOperatorAccountName,
+  DEFAULT_RAM_WEIGHT,
+  DEFAULT_RESOURCE_WEIGHT,
   DEV_K1_PRIVATE_KEY,
   DEV_K1_PUBLIC_KEY,
   OPP_CONTRACT_PATHS,
@@ -59,95 +61,36 @@ import {
 import { ClusterPorts } from "./ClusterPorts.js"
 import Bluebird from "bluebird"
 import { ChainKind, OperatorType } from "@wireio/opp-typescript-models"
+import {
+  ClusterFiles,
+  NodeRole,
+  type ClusterConfig,
+  type ClusterExePaths,
+  type ClusterState,
+  type NodeState,
+  type SolanaProgramDeployment
+} from "@wire-e2e-tests/debugging-shared"
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export interface ClusterExePaths {
-  nodeop: string
-  kiod: string
-  clio: string
-  sysUtil: string
-  anvil: string
-  solanaTestValidator: string
-}
-
-export interface ClusterConfig {
-  buildPath: string
-  clusterPath: string
-  walletPath: string
-  dataPath: string
-  producerCount: number
-  nodeCount: number
-  httpSecure: boolean
-  extraPlugins?: string[]
-  batchOperatorCount: number
-  underwriterCount: number
-
-  /** Path to wire-ethereum repo root. If omitted, anvil is not configured. */
-  ethereumPath?: string
-
-  /** Path to wire-solana repo root. If omitted, solana-test-validator is not
-   *  bootstrapped and the SOL outpost is skipped. */
-  solanaPath?: string
-
-  /** Epoch duration in seconds (default: 360). */
-  epochDurationSec: number
-  /** Number of epochs an operator must wait in WARMUP before becoming ACTIVE (default: 1). */
-  warmupEpochs: number
-  /** Number of epochs an operator must wait in COOLDOWN before deregistering (default: 1). */
-  cooldownEpochs: number
-
-  /** All port assignments for the cluster. Resolved during create, persisted for run. */
-  ports: ClusterPorts
-
-  executables: ClusterExePaths
-}
-
-interface NodeState {
-  nodeId: string | number
-  host: string
-  port: number
-  dataPath: string
-  configPath: string
-  cmd: string[]
-  isProducer: boolean
-  producerName: string | null
-  role?: "producer" | "batch_operator" | "underwriter"
-  operatorAccount?: string
-}
-
-interface SolanaProgramDeployment {
-  name: string
-  programId: string
-  soFile: string
-}
-
-interface ClusterState {
-  pnodes: number
-  totalNodes: number
-  prodCount: number
-  topo: string
-  nodes: NodeState[]
-  batchOperatorNodes: NodeState[]
-  underwriterNodes: NodeState[]
-  anvilStatePath: string
-  solanaLedgerPath: string
-  walletPath: string
-  /** Anchor programs deployed on the test validator, injected via `--bpf-program`. */
-  solanaPrograms?: SolanaProgramDeployment[]
-  /** Absolute path of the primary IDL shared with batch operators via `--solana-idl-file`. */
-  solanaIdlPath?: string
-  /** Root of the wire-solana repo — needed by SOLBootstrap to re-initialize PDAs on restart. */
-  solanaWirePath?: string
-}
+// Cluster shapes now live in `@wire-e2e-tests/debugging-shared/cluster/Types`
+// so out-of-process tooling (TUI, debugging server) can consume them without
+// pulling in the full harness runtime. Re-exported here for backward compat
+// with existing consumers (flow-*, TestEnvironment, FlowTestContext).
+export type {
+  ClusterConfig,
+  ClusterExePaths,
+  ClusterState,
+  ClusterFiles,
+  NodeState,
+  SolanaProgramDeployment
+} from "@wire-e2e-tests/debugging-shared"
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-const STATE_FILENAME = ".cluster_state.json"
 
 /**
  * Generate `count` node key sets and import each K1 + BLS private key into the wallet.
@@ -286,7 +229,8 @@ export class ClusterManager {
    */
   private async bootstrapSolanaOutpost(
     cfg: ClusterConfig,
-    dataPath: string
+    dataPath: string,
+    batchOpSolKeys: Record<string, PrivateKey>
   ): Promise<{ programId: string; idlPath: string }> {
     Assert.ok(cfg.solanaPath, "bootstrapSolanaOutpost requires cfg.solanaPath")
     log.info("[Phase 10b] Solana outpost bootstrap starting")
@@ -366,6 +310,18 @@ export class ClusterManager {
       programKeypairFile
     })
     await bootstrap.bootstrap()
+
+    // Airdrop batch operator SOL signing accounts. The ledger persists across
+    // restarts, so these balances only need to be seeded once during `create`.
+    const batchOpSolPubkeys = Object.values(batchOpSolKeys).map(k =>
+      k.toPublic().toNativeString()
+    )
+    if (batchOpSolPubkeys.length > 0) {
+      log.info(
+        `Airdropping SOL to ${batchOpSolPubkeys.length} batch operator account(s)...`
+      )
+      await bootstrap.airdropAccounts(batchOpSolPubkeys)
+    }
 
     this.solanaPrograms = [{ name: "opp_outpost", programId, soFile }]
     this.solanaIdlPath = idlDst
@@ -677,7 +633,7 @@ export class ClusterManager {
           cmd,
           isProducer: false,
           producerName: null,
-          role: "batch_operator",
+          role: NodeRole.BatchOperator,
           operatorAccount: account
         })
       }
@@ -726,7 +682,7 @@ export class ClusterManager {
           cmd,
           isProducer: false,
           producerName: null,
-          role: "underwriter",
+          role: NodeRole.Underwriter,
           operatorAccount: account
         })
       }
@@ -860,7 +816,11 @@ export class ClusterManager {
         let solProgramId: string | undefined
         let solIdlPath: string | undefined
         if (cfg.solanaPath) {
-          const sol = await this.bootstrapSolanaOutpost(cfg, dataPath)
+          const sol = await this.bootstrapSolanaOutpost(
+            cfg,
+            dataPath,
+            batchOpSolKeys
+          )
           solProgramId = sol.programId
           solIdlPath = sol.idlPath
         }
@@ -1000,8 +960,7 @@ export class ClusterManager {
         ),
         walletPath,
         solanaPrograms: this.solanaPrograms,
-        solanaIdlPath: this.solanaIdlPath,
-        solanaWirePath: cfg.solanaPath
+        solanaIdlPath: this.solanaIdlPath
       }
       this.state = clusterState
       this.saveState(clusterPath, clusterState)
@@ -1141,9 +1100,8 @@ export class ClusterManager {
       await anvilManager.start()
     }
 
-    // Start solana-test-validator. The validator always starts with --reset so
-    // the ledger is fresh each run; PDAs are re-initialized by SOLBootstrap
-    // below (idempotent: skips if the config PDA already exists).
+    // Start solana-test-validator from the persisted ledger. Bootstrap ran
+    // during `create`, so PDAs and batch operator balances survive restarts.
     if (this.state.solanaLedgerPath) {
       const solManager = await SolanaValidatorManager.create({
         binary: this.config.executables.solanaTestValidator,
@@ -1153,44 +1111,6 @@ export class ClusterManager {
         programs: this.state.solanaPrograms ?? []
       })
       await solManager.start()
-
-      // Re-initialize PDAs on every run. The Anchor program is pre-loaded via
-      // --bpf-program, but its on-chain state (PDAs) is wiped by --reset.
-      // SOLBootstrap.bootstrap() is idempotent and skips if config PDA exists.
-      const wireSolPath =
-        this.state.solanaWirePath ??
-        this.state.solanaPrograms?.[0]?.soFile?.split("/target/")?.[0]
-      if (wireSolPath && this.state.solanaIdlPath) {
-        const bootstrap = new SOLBootstrap({
-          wireSolPath,
-          rpcUrl: `http://127.0.0.1:${this.config.ports.solanaRpc}`
-        })
-        await bootstrap.bootstrap()
-
-        // Airdrop to batch operator SOL signing accounts — the Solana ledger
-        // is wiped by --reset on every run, so their balances start at 0.
-        // Each batch op's SOL pubkey is embedded in its --signature-provider arg.
-        const batchOpSolPubkeys = (this.state.batchOperatorNodes ?? []).flatMap(
-          ns => {
-            for (let i = 0; i + 1 < ns.cmd.length; i++) {
-              if (ns.cmd[i] === "--signature-provider") {
-                const spec = ns.cmd[i + 1]
-                if (spec.startsWith("sol-")) {
-                  const parts = spec.split(",")
-                  if (parts.length >= 4) return [parts[3]]
-                }
-              }
-            }
-            return []
-          }
-        )
-        if (batchOpSolPubkeys.length > 0) {
-          log.info(
-            `Airdropping SOL to ${batchOpSolPubkeys.length} batch operator account(s)...`
-          )
-          await bootstrap.airdropAccounts(batchOpSolPubkeys)
-        }
-      }
     }
 
     log.info("All nodes + external chains started")
@@ -1223,9 +1143,9 @@ export class ClusterManager {
     log.info("Cluster stopped")
   }
 
-  /** Load cluster state from a chain directory's .cluster_state.json. */
+  /** Load cluster state from a chain directory's cluster-state.json. */
   loadState(): ClusterManager {
-    const stateFile = Path.join(this.clusterPath, STATE_FILENAME)
+    const stateFile = Path.join(this.clusterPath, ClusterFiles.StateFilename)
     if (!Fs.existsSync(stateFile)) {
       throw new Error(`No cluster state at ${stateFile}`)
     }
@@ -1301,9 +1221,9 @@ export class ClusterManager {
     })
   }
 
-  /** Persist cluster state to .cluster_state.json. */
+  /** Persist cluster state to cluster-state.json. */
   private saveState(clusterPath: string, state: ClusterState): void {
-    const stateFile = Path.join(clusterPath, STATE_FILENAME)
+    const stateFile = Path.join(clusterPath, ClusterFiles.StateFilename)
     Fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf-8")
     log.info(`Cluster state saved to ${stateFile}`)
   }
@@ -1317,12 +1237,9 @@ export class ClusterManager {
 //  Bootstrap helpers
 // ---------------------------------------------------------------------------
 
-const DEFAULT_RESOURCE_WEIGHT = "200.0000 SYS"
-const DEFAULT_RAM_WEIGHT = "20.0000 SYS"
-
 /** Register a node owner via sysio.roa (required before addpolicy) */
 async function ensureNodeOwner(clio: Clio, nodeAccount: string): Promise<void> {
-  await clio.pushAction(
+  await clio.pushActionAndWait<SystemContracts.SysioRoaForceregAction>(
     "sysio.roa",
     "forcereg",
     { owner: nodeAccount, tier: 1 },
@@ -1339,7 +1256,7 @@ async function addResourcePolicy(
   ram_weight = DEFAULT_RAM_WEIGHT,
   cpu_weight = DEFAULT_RESOURCE_WEIGHT
 ): Promise<void> {
-  await clio.pushAction(
+  await clio.pushActionAndWait<SystemContracts.SysioRoaAddpolicyAction>(
     "sysio.roa",
     "addpolicy",
     {

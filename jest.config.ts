@@ -10,6 +10,7 @@ const config: Config = {
     "packages/debugging-server",
     "packages/debugging-client-shared",
     "packages/debugging-client-tool",
+    "packages/debugging-client-tool-tui",
   ],
 }
 

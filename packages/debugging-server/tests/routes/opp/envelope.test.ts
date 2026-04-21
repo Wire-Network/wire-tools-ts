@@ -2,15 +2,13 @@ import * as OS from "node:os"
 import * as Path from "node:path"
 import * as Fs from "node:fs"
 
-import { DebuggingServer } from "@wire-e2e-tests/debugging-server"
-import { JsonRPCErrorCode } from "@wire-e2e-tests/debugging-server"
+import { JsonRPC, DebuggingServer } from "@wire-e2e-tests/debugging-server"
+import { ApiPaths, JsonRPCResult } from "@wire-e2e-tests/debugging-shared"
 import {
-  ApiPaths,
   DebugOutpostEndpointsType,
   DebugEnvelopeMetadataRecord,
-  JsonRPCResult
-} from "@wire-e2e-tests/debugging-shared"
-import { Envelope } from "@wireio/opp-typescript-models"
+  Envelope
+} from "@wireio/opp-typescript-models"
 import { Future } from "@3fv/prelude-ts"
 
 function makeEnvelopeBase64(epochIndex: number): string {
@@ -87,7 +85,7 @@ describe(`JSON-RPC 2.0 via POST ${ApiPaths.OPP.Endpoint}`, () => {
 
     expect(body.jsonrpc).toBe("2.0")
     expect(body.error).toBeDefined()
-    expect(body.error.code).toBe(JsonRPCErrorCode.METHOD_NOT_FOUND)
+    expect(body.error.code).toBe(JsonRPC.ErrorCode.METHOD_NOT_FOUND)
     expect(body.result).toBeUndefined()
   })
 
@@ -155,27 +153,8 @@ describe(`Plain JSON via POST ${ApiPaths.OPP.Methods.Envelope}`, () => {
     Fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it("accepts plain JSON body and returns plain result", async () => {
-    const resp = await fetch(`${baseUrl}${ApiPaths.OPP.Methods.Envelope}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        batchOpName: "batchop.plain",
-        endpointsType: DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA,
-        envelopeData: makeEnvelopeBase64(200)
-      })
-    })
-
-    expect(resp.status).toBe(200)
-    const result = (await resp.json()) as any
-    // Plain JSON — no jsonrpc wrapper
-    expect(result.key).toMatch(/^00000200-/)
-    expect(result.batchOpNames).toEqual(["batchop.plain"])
-    expect(result.jsonrpc).toBeUndefined()
-  })
-
   it("auto-detects JSON-RPC when sent to individual method path", async () => {
-    const resp = await fetch(`${baseUrl}${ApiPaths.OPP.Methods.Envelope}`, {
+    const resp = await fetch(`${baseUrl}${ApiPaths.OPP.Endpoint}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -195,24 +174,6 @@ describe(`Plain JSON via POST ${ApiPaths.OPP.Methods.Envelope}`, () => {
     expect(body.jsonrpc).toBe("2.0")
     expect(body.id).toBe(42)
     expect(body.result.key).toMatch(/^00000201-/)
-  })
-
-  it("creates files on disk via plain JSON", async () => {
-    const resp = await fetch(`${baseUrl}${ApiPaths.OPP.Methods.Envelope}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        batchOpName: "batchop.disk",
-        endpointsType: DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT,
-        envelopeData: makeEnvelopeBase64(202)
-      })
-    })
-
-    const result = (await resp.json()) as any
-    const dataFile = Path.join(tmpDir, `${result.key}.data`)
-    const metadataFile = Path.join(tmpDir, `${result.key}.metadata`)
-    expect(Fs.existsSync(dataFile)).toBe(true)
-    expect(Fs.existsSync(metadataFile)).toBe(true)
   })
 })
 

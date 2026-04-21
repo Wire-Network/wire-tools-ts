@@ -22,10 +22,10 @@ export function generateLoggingConfig(): object {
             { level: "debug", color: "green" },
             { level: "info", color: "reset" },
             { level: "warn", color: "yellow" },
-            { level: "error", color: "red" },
-          ],
-        },
-      },
+            { level: "error", color: "red" }
+          ]
+        }
+      }
     ],
     loggers: [
       "default",
@@ -41,12 +41,12 @@ export function generateLoggingConfig(): object {
       "transient_trx_failure_tracing",
       "state_history",
       "vote",
-      "transaction",
+      "transaction"
     ].map(name => ({
       name,
       level: "debug",
       enabled: true,
-      sinks: ["stderr_color"],
-    })),
+      sinks: ["stderr_color"]
+    }))
   }
 }

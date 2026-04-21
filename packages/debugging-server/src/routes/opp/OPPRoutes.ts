@@ -2,29 +2,28 @@ import * as Path from "node:path"
 import * as Fs from "node:fs"
 import { createHash } from "node:crypto"
 
-import { Envelope } from "@wireio/opp-typescript-models"
-
 import {
-  ApiPaths,
   PutEnvelopeResponse,
   ListEnvelopesResponse,
   EnvelopeListEntry,
   GetEnvelopeResponse,
   DebugOutpostEndpointsType,
-  endpointsTypeToKey,
-  DebugEnvelopeMetadataRecord
-} from "@wire-e2e-tests/debugging-shared"
+  DebugEnvelopeMetadataRecord,
+  Envelope
+} from "@wireio/opp-typescript-models"
 
-import { addRoute } from "../../JsonRPC"
-import type { HandlerRegistry } from "../../JsonRPC"
+import { ApiPaths, endpointsTypeToKey } from "@wire-e2e-tests/debugging-shared"
+
+import { JsonRPC } from "../../JsonRPC"
+
 import type express from "express"
 
 export namespace OPPRoutes {
   export function register(
-    registry: HandlerRegistry,
+    registry: JsonRPC.HandlerRegistry,
     oppStoragePath: string
-  ): void {
-    addRoute(
+  ): JsonRPC.HandlerRegistry {
+    JsonRPC.addRoute(
       registry,
       ApiPaths.OPP.Methods.Envelope,
       async (reqMessage, req: express.Request) => {
@@ -105,127 +104,138 @@ export namespace OPPRoutes {
     // -----------------------------------------------------------------
     //  LIST — query stored envelopes with optional filters
     // -----------------------------------------------------------------
-    addRoute(registry, ApiPaths.OPP.Methods.EnvelopeList, async params => {
-      const {
-        epochStart = 0,
-        epochEnd = 0,
-        endpointsType = DebugOutpostEndpointsType.UNKNOWN,
-        timestampStart = 0,
-        timestampEnd = 0
-      } = params
+    JsonRPC.addRoute(
+      registry,
+      ApiPaths.OPP.Methods.EnvelopeList,
+      async params => {
+        const {
+          epochStart = 0,
+          epochEnd = 0,
+          endpointsType = DebugOutpostEndpointsType.UNKNOWN,
+          timestampStart = 0,
+          timestampEnd = 0
+        } = params
 
-      const files = await Fs.promises.readdir(oppStoragePath)
-      const dataFiles = files.filter(f => f.endsWith(".data")).sort()
+        const files = await Fs.promises.readdir(oppStoragePath)
+        const dataFiles = files.filter(f => f.endsWith(".data")).sort()
 
-      const entries: EnvelopeListEntry[] = []
+        const entries: EnvelopeListEntry[] = []
 
-      for (const dataFile of dataFiles) {
-        const parsed = parseStorageKey(dataFile.replace(".data", ""))
-        if (!parsed) continue
+        for (const dataFile of dataFiles) {
+          const parsed = parseStorageKey(dataFile.replace(".data", ""))
+          if (!parsed) continue
 
-        // Epoch range filter
-        if (epochStart > 0 && parsed.epochIndex < epochStart) continue
-        if (epochEnd > 0 && parsed.epochIndex > epochEnd) continue
+          // Epoch range filter
+          if (epochStart > 0 && parsed.epochIndex < epochStart) continue
+          if (epochEnd > 0 && parsed.epochIndex > epochEnd) continue
 
-        // Endpoints type filter
-        if (endpointsType !== DebugOutpostEndpointsType.UNKNOWN) {
-          const filterKey = endpointsTypeToKey(endpointsType)
-          if (filterKey && parsed.endpointsKey !== filterKey) continue
+          // Endpoints type filter
+          if (endpointsType !== DebugOutpostEndpointsType.UNKNOWN) {
+            const filterKey = endpointsTypeToKey(endpointsType)
+            if (filterKey && parsed.endpointsKey !== filterKey) continue
+          }
+
+          // Get file stats for timestamp + size
+          const dataPath = Path.join(oppStoragePath, dataFile)
+          const metadataPath = Path.join(
+            oppStoragePath,
+            dataFile.replace(".data", ".metadata")
+          )
+          const stat = await Fs.promises.stat(dataPath)
+          const timestampMs = stat.mtimeMs
+
+          // Timestamp range filter
+          if (timestampStart > 0 && timestampMs < Number(timestampStart))
+            continue
+          if (timestampEnd > 0 && timestampMs > Number(timestampEnd)) continue
+
+          // Read metadata for batch_op_names
+          let batchOpNames: string[] = []
+          try {
+            const metaBytes = await Fs.promises.readFile(metadataPath)
+            const meta = DebugEnvelopeMetadataRecord.fromBinary(metaBytes)
+            batchOpNames = [...meta.batchOpNames]
+          } catch {
+            /* metadata may not exist yet */
+          }
+
+          // Resolve endpoints enum from the key string
+          const resolvedEndpoints = resolveEndpointsType(parsed.endpointsKey)
+
+          entries.push(
+            EnvelopeListEntry.create({
+              key: parsed.key,
+              epochIndex: parsed.epochIndex,
+              endpointsType: resolvedEndpoints,
+              checksum: parsed.checksum,
+              batchOpNames,
+              timestamp: BigInt(Math.floor(timestampMs)),
+              dataSize: stat.size
+            })
+          )
         }
 
-        // Get file stats for timestamp + size
-        const dataPath = Path.join(oppStoragePath, dataFile)
-        const metadataPath = Path.join(
-          oppStoragePath,
-          dataFile.replace(".data", ".metadata")
-        )
-        const stat = await Fs.promises.stat(dataPath)
-        const timestampMs = stat.mtimeMs
-
-        // Timestamp range filter
-        if (timestampStart > 0 && timestampMs < Number(timestampStart)) continue
-        if (timestampEnd > 0 && timestampMs > Number(timestampEnd)) continue
-
-        // Read metadata for batch_op_names
-        let batchOpNames: string[] = []
-        try {
-          const metaBytes = await Fs.promises.readFile(metadataPath)
-          const meta = DebugEnvelopeMetadataRecord.fromBinary(metaBytes)
-          batchOpNames = [...meta.batchOpNames]
-        } catch {
-          /* metadata may not exist yet */
-        }
-
-        // Resolve endpoints enum from the key string
-        const resolvedEndpoints = resolveEndpointsType(parsed.endpointsKey)
-
-        entries.push(
-          EnvelopeListEntry.create({
-            key: parsed.key,
-            epochIndex: parsed.epochIndex,
-            endpointsType: resolvedEndpoints,
-            checksum: parsed.checksum,
-            batchOpNames,
-            timestamp: BigInt(Math.floor(timestampMs)),
-            dataSize: stat.size
-          })
-        )
+        return ListEnvelopesResponse.create({
+          entries,
+          total: entries.length
+        })
       }
-
-      return ListEnvelopesResponse.create({
-        entries,
-        total: entries.length
-      })
-    })
+    )
 
     // -----------------------------------------------------------------
     //  GET — retrieve a specific stored envelope by key
     // -----------------------------------------------------------------
-    addRoute(registry, ApiPaths.OPP.Methods.EnvelopeGet, async params => {
-      const { key } = params
+    JsonRPC.addRoute(
+      registry,
+      ApiPaths.OPP.Methods.EnvelopeGet,
+      async params => {
+        const { key } = params
 
-      const dataPath = Path.join(oppStoragePath, `${key}.data`)
-      const metadataPath = Path.join(oppStoragePath, `${key}.metadata`)
+        const dataPath = Path.join(oppStoragePath, `${key}.data`)
+        const metadataPath = Path.join(oppStoragePath, `${key}.metadata`)
 
-      // Read envelope data
-      let envelopeData: Uint8Array
-      try {
-        envelopeData = await Fs.promises.readFile(dataPath)
-      } catch (err: any) {
-        if (err.code === "ENOENT") {
-          throw new Error(`Envelope not found: ${key}`)
+        // Read envelope data
+        let envelopeData: Uint8Array
+        try {
+          envelopeData = await Fs.promises.readFile(dataPath)
+        } catch (err: any) {
+          if (err.code === "ENOENT") {
+            throw new Error(`Envelope not found: ${key}`)
+          }
+          throw err
         }
-        throw err
-      }
 
-      // Read metadata
-      let batchOpNames: string[] = []
-      let checksum = ""
-      try {
-        const metaBytes = await Fs.promises.readFile(metadataPath)
-        const meta = DebugEnvelopeMetadataRecord.fromBinary(metaBytes)
-        batchOpNames = [...meta.batchOpNames]
-        checksum = meta.checksum.toString(16)
-      } catch {
-        /* metadata may not exist */
-      }
+        // Read metadata
+        let batchOpNames: string[] = []
+        let checksum = ""
+        try {
+          const metaBytes = await Fs.promises.readFile(metadataPath)
+          const meta = DebugEnvelopeMetadataRecord.fromBinary(metaBytes)
+          batchOpNames = [...meta.batchOpNames]
+          checksum = meta.checksum.toString(16)
+        } catch {
+          /* metadata may not exist */
+        }
 
-      const parsed = parseStorageKey(key)
-      const stat = await Fs.promises.stat(dataPath)
+        const parsed = parseStorageKey(key)
+        const stat = await Fs.promises.stat(dataPath)
 
-      return {
-        key,
-        epochIndex: parsed?.epochIndex ?? 0,
-        endpointsType: parsed
-          ? resolveEndpointsType(parsed.endpointsKey)
-          : DebugOutpostEndpointsType.UNKNOWN,
-        checksum,
-        batchOpNames,
-        timestamp: BigInt(Math.floor(stat.mtimeMs)),
-        dataSize: envelopeData.length,
-        envelopeData: Buffer.from(envelopeData)
+        return {
+          key,
+          epochIndex: parsed?.epochIndex ?? 0,
+          endpointsType: parsed
+            ? resolveEndpointsType(parsed.endpointsKey)
+            : DebugOutpostEndpointsType.UNKNOWN,
+          checksum,
+          batchOpNames,
+          timestamp: BigInt(Math.floor(stat.mtimeMs)),
+          dataSize: envelopeData.length,
+          envelopeData: Buffer.from(envelopeData)
+        }
       }
-    })
+    )
+
+    return registry
   }
 }
 

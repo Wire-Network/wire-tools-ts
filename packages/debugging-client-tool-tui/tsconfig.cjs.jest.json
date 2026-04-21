@@ -1,0 +1,19 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {
+    "rootDir": "tests",
+    "outDir": "lib/test-cjs",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "ignoreDeprecations": "6.0",
+    "jsx": "react-jsx",
+    "paths": {
+      "@wire-e2e-tests/debugging-client-tool-tui": ["./src"],
+      "@wire-e2e-tests/debugging-client-tool-tui/*": ["./src/*"]
+    }
+  },
+  "references": [
+    { "path": "./tsconfig.cjs.json" }
+  ],
+  "include": ["tests"]
+}

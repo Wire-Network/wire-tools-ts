@@ -1,9 +1,9 @@
 import { DebuggingServerClient } from "@wire-e2e-tests/debugging-client-shared"
+import { ApiPaths } from "@wire-e2e-tests/debugging-shared"
 import {
-  ApiPaths,
-  DebugOutpostEndpointsType
-} from "@wire-e2e-tests/debugging-shared"
-import type { EnvelopeListEntry } from "@wire-e2e-tests/debugging-shared"
+  DebugOutpostEndpointsType,
+  EnvelopeListEntry
+} from "@wireio/opp-typescript-models"
 
 import { formatList, OutputFormat } from "../formatter"
 

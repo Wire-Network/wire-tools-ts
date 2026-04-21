@@ -32,5 +32,4 @@ export const ProcessSignals = {
   [ProcessSignalName.SIGTSTP]: 20
 } as const
 
-export type ProcessSignalNumber =
-  (typeof ProcessSignals)[ProcessSignalName]
+export type ProcessSignalNumber = (typeof ProcessSignals)[ProcessSignalName]

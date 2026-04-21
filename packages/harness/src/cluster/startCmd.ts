@@ -12,7 +12,7 @@ import {
   type K1KeyPair,
   type BLSKeyPair,
   formatK1SignatureProvider,
-  formatBLSSignatureProvider,
+  formatBLSSignatureProvider
 } from "./keyGen.js"
 
 /** Options for building a start.cmd command. */
@@ -110,10 +110,16 @@ export function buildStartCmd(opts: StartCmdOptions): string[] {
   // Standard nodeop args (matches Python cluster_manager.py nodeop_args)
   args.push("--vote-threads", String(opts.voteThreads ?? 4))
   args.push("--max-transaction-time", String(opts.maxTransactionTime ?? -1))
-  args.push("--abi-serializer-max-time-ms", String(opts.abiSerializerMaxTimeMs ?? 990000))
+  args.push(
+    "--abi-serializer-max-time-ms",
+    String(opts.abiSerializerMaxTimeMs ?? 990000)
+  )
   args.push("--p2p-max-nodes-per-host", String(opts.p2pMaxNodesPerHost ?? 1))
   args.push("--max-clients", String(opts.maxClients ?? 25))
-  args.push("--connection-cleanup-period", String(opts.connectionCleanupPeriod ?? 15))
+  args.push(
+    "--connection-cleanup-period",
+    String(opts.connectionCleanupPeriod ?? 15)
+  )
 
   if (opts.contractsConsole !== false) {
     args.push("--contracts-console")
@@ -122,7 +128,10 @@ export function buildStartCmd(opts: StartCmdOptions): string[] {
   args.push("--plugin", "sysio::producer_api_plugin")
   args.push("--plugin", "sysio::trace_api_plugin")
   args.push("--trace-no-abis")
-  args.push("--http-max-response-time-ms", String(opts.httpMaxResponseTimeMs ?? 990000))
+  args.push(
+    "--http-max-response-time-ms",
+    String(opts.httpMaxResponseTimeMs ?? 990000)
+  )
 
   // Directories
   args.push("--config-dir", opts.configPath)

@@ -58,10 +58,7 @@ export class SOLBootstrap {
    * Airdrop SOL to a list of accounts (base58 public keys).
    * Called on every `run` to refund batch operator signing accounts after --reset wipes the ledger.
    */
-  async airdropAccounts(
-    pubkeys: string[],
-    amountSol = 100
-  ): Promise<void> {
+  async airdropAccounts(pubkeys: string[], amountSol = 100): Promise<void> {
     const lamports = amountSol * LAMPORTS_PER_SOL
     await Promise.all(
       pubkeys.map(async pk => {
@@ -100,7 +97,9 @@ export class SOLBootstrap {
       Path.join(this.config.wireSolPath, "wallets", "opp-outpost-keypair.json")
 
     if (Fs.existsSync(programKeypairFile)) {
-      const keypairData = JSON.parse(Fs.readFileSync(programKeypairFile, "utf8"))
+      const keypairData = JSON.parse(
+        Fs.readFileSync(programKeypairFile, "utf8")
+      )
       const programKeypair = Keypair.fromSecretKey(Uint8Array.from(keypairData))
       this.programId = programKeypair.publicKey
       log.info(`OPP Outpost program ID: ${this.programId.toBase58()}`)
@@ -151,10 +150,14 @@ export class SOLBootstrap {
           const status = await this.connection.getSignatureStatus(sig)
           const conf = status?.value?.confirmationStatus
           if (conf === "confirmed" || conf === "finalized") break
-          if (status?.value?.err) throw new Error(`Airdrop tx failed: ${JSON.stringify(status.value.err)}`)
+          if (status?.value?.err)
+            throw new Error(
+              `Airdrop tx failed: ${JSON.stringify(status.value.err)}`
+            )
           await sleep(500)
         }
-        if (Date.now() >= deadline) throw new Error("Airdrop not confirmed within 60s")
+        if (Date.now() >= deadline)
+          throw new Error("Airdrop not confirmed within 60s")
       },
       { label: "airdrop to deployer", maxAttempts: 3, delayMs: 2000 }
     )
@@ -243,10 +246,13 @@ export class SOLBootstrap {
       const conf = status?.value?.confirmationStatus
       if (conf === "confirmed" || conf === "finalized") break
       if (status?.value?.err)
-        throw new Error(`Initialize tx failed: ${JSON.stringify(status.value.err)}`)
+        throw new Error(
+          `Initialize tx failed: ${JSON.stringify(status.value.err)}`
+        )
       await sleep(500)
     }
-    if (Date.now() >= initDeadline) throw new Error("Initialize not confirmed within 60s")
+    if (Date.now() >= initDeadline)
+      throw new Error("Initialize not confirmed within 60s")
 
     log.info("PDAs initialized successfully")
   }

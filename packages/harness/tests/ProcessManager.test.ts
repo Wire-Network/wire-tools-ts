@@ -20,7 +20,7 @@ describe("ProcessManager", () => {
       args: ["60"]
     })
     expect(handle.pid).toBeGreaterThan(0)
-    expect(handle.pmId).toBeGreaterThanOrEqual(0)
+    expect(handle.id).toBeGreaterThanOrEqual(0)
     expect(pm.count).toBe(1)
     expect(pm.get("echo-test")).toBeDefined()
   })

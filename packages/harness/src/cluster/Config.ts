@@ -174,12 +174,17 @@ export function generateConfigFileContent(opts: ConfigOptions): string {
     opts.enableStaleProduction && kv("enable-stale-production", "true"),
     ...(opts.producerNames?.map(n => kv("producer-name", n)) ?? []),
     ...(opts.signatureProviders?.map(sp => kv("signature-provider", sp)) ?? []),
-    opts.transactionRetryMaxStorageSizeGb && kv("transaction-retry-max-storage-size-gb", opts.transactionRetryMaxStorageSizeGb),
+    opts.transactionRetryMaxStorageSizeGb &&
+      kv(
+        "transaction-retry-max-storage-size-gb",
+        opts.transactionRetryMaxStorageSizeGb
+      ),
     "",
 
     // Agent & chain state
     opts.agentName && kv("agent-name", `"${opts.agentName}"`),
-    opts.chainStateDbSizeMb && kv("chain-state-db-size-mb", opts.chainStateDbSizeMb),
+    opts.chainStateDbSizeMb &&
+      kv("chain-state-db-size-mb", opts.chainStateDbSizeMb),
 
     // Misc flags
     opts.skipTransactionSignatures && kv("skip-transaction-signatures", "true"),
@@ -187,27 +192,37 @@ export function generateConfigFileContent(opts: ConfigOptions): string {
     opts.traceNoAbis && kv("trace-no-abis", ""),
 
     // Limits
-    opts.p2pMaxNodesPerHost && kv("p2p-max-nodes-per-host", opts.p2pMaxNodesPerHost),
+    opts.p2pMaxNodesPerHost &&
+      kv("p2p-max-nodes-per-host", opts.p2pMaxNodesPerHost),
     opts.maxClients && kv("max-clients", opts.maxClients),
-    opts.connectionCleanupPeriod && kv("connection-cleanup-period", opts.connectionCleanupPeriod),
-    opts.httpMaxResponseTimeMs && kv("http-max-response-time-ms", opts.httpMaxResponseTimeMs),
-    opts.abiSerializerMaxTimeMs && kv("abi-serializer-max-time-ms", opts.abiSerializerMaxTimeMs),
-    opts.maxTransactionTime && kv("max-transaction-time", opts.maxTransactionTime),
+    opts.connectionCleanupPeriod &&
+      kv("connection-cleanup-period", opts.connectionCleanupPeriod),
+    opts.httpMaxResponseTimeMs &&
+      kv("http-max-response-time-ms", opts.httpMaxResponseTimeMs),
+    opts.abiSerializerMaxTimeMs &&
+      kv("abi-serializer-max-time-ms", opts.abiSerializerMaxTimeMs),
+    opts.maxTransactionTime &&
+      kv("max-transaction-time", opts.maxTransactionTime),
     opts.voteThreads && kv("vote-threads", opts.voteThreads),
 
     // Read mode
     opts.readMode && kv("read-mode", opts.readMode),
 
     // OPP batch operator
-    opts.batchOperatorAccount && kv("batch-operator-account", opts.batchOperatorAccount),
+    opts.batchOperatorAccount &&
+      kv("batch-operator-account", opts.batchOperatorAccount),
     opts.batchEpochPollMs && kv("batch-epoch-poll-ms", opts.batchEpochPollMs),
-    opts.batchOutpostPollMs && kv("batch-outpost-poll-ms", opts.batchOutpostPollMs),
-    opts.batchDeliveryTimeoutMs && kv("batch-delivery-timeout-ms", opts.batchDeliveryTimeoutMs),
+    opts.batchOutpostPollMs &&
+      kv("batch-outpost-poll-ms", opts.batchOutpostPollMs),
+    opts.batchDeliveryTimeoutMs &&
+      kv("batch-delivery-timeout-ms", opts.batchDeliveryTimeoutMs),
     opts.batchEnabled && kv("batch-enabled", opts.batchEnabled),
 
     // OPP underwriter
-    opts.underwriterEnabled && kv("underwriter-enabled", opts.underwriterEnabled),
-    opts.underwriterAccount && kv("underwriter-account", opts.underwriterAccount),
+    opts.underwriterEnabled &&
+      kv("underwriter-enabled", opts.underwriterEnabled),
+    opts.underwriterAccount &&
+      kv("underwriter-account", opts.underwriterAccount),
 
     // HTTP insecure block
     ...(opts.httpInsecure ? HTTP_INSECURE_LINES : []),
