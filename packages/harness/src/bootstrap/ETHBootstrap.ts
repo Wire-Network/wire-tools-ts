@@ -210,8 +210,8 @@ export class ETHBootstrap {
 
     log.info("=== Ethereum Outpost Bootstrap Complete ===")
     log.info("Deployed contracts:")
-    for (const [name, { address }] of Object.entries(this.deployed)) {
+    Object.entries(this.deployed).forEach(([name, { address }]) =>
       log.info(`  ${name}: ${address}`)
-    }
+    )
   }
 }

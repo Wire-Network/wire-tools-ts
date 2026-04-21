@@ -3,6 +3,11 @@ import {
   createSlice,
   type PayloadAction
 } from "@reduxjs/toolkit"
+import {
+  useDispatch,
+  useSelector,
+  type TypedUseSelectorHook
+} from "react-redux"
 
 import type {
   ClusterConfig,
@@ -138,6 +143,18 @@ export const store = configureStore({
 
 export type RootState = ReturnType<typeof store.getState>
 export type AppDispatch = typeof store.dispatch
+
+/**
+ * Typed `useDispatch` bound to the TUI store. Always prefer this over the
+ * raw `useDispatch` so thunks and action payloads are fully inferred.
+ */
+export const useAppDispatch = (): AppDispatch => useDispatch<AppDispatch>()
+
+/**
+ * Typed `useSelector` bound to the TUI `RootState`. Always prefer this over
+ * the raw `useSelector` so selectors know what slices exist.
+ */
+export const useAppSelector: TypedUseSelectorHook<RootState> = useSelector
 
 /** Selector: UI ephemera. */
 export const selectUI = (state: RootState): UIState => state[Store.UISliceName]

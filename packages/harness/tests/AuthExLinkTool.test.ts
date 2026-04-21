@@ -8,7 +8,7 @@ import {
 import {
   emPrivateKeyFromEthWallet,
   emPublicKeyFromEthWallet
-} from "../src/tools/AuthExLinkTool.js"
+} from "@wire-e2e-tests/harness"
 
 const ANVIL_MNEMONIC = "test test test test test test test test test test test junk"
 const DERIVATION_PATH = "m/44'/60'/0'/0/"

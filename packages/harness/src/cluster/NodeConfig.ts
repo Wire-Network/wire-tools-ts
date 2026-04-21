@@ -18,6 +18,7 @@ import {
   DEV_K1_PUBLIC_KEY
 } from "./constants.js"
 import { type ConfigOptions } from "./Config.js"
+import { range } from "lodash"
 
 // ---------------------------------------------------------------------------
 // Node role types
@@ -183,63 +184,57 @@ export function generateNodeConfigs(
   )
 
   // --- Producer nodes (non-consecutive assignment, mirrors launcher.py) ---
-  for (let nodeIdx = 0; nodeIdx < pnodes; nodeIdx++) {
-    const assigned: string[] = []
-    // Calculate how many producers this node gets
+  const producersPerNode = (nodeIdx: number): number => {
     const base = Math.floor(producerCount / pnodes)
     const extra = nodeIdx < producerCount % pnodes ? 1 : 0
-    const count = base + extra
+    return base + extra
+  }
 
-    // Assign non-consecutive producers (stride by pnodes)
-    let producerIdx = nodeIdx
-    let assignedCount = 0
-    while (assignedCount < count && producerIdx < defProducerNames.length) {
-      assigned.push(defProducerNames[producerIdx])
-      producerIdx += pnodes
-      assignedCount++
-    }
+  const producerNodes: ProducerNode[] = range(pnodes).map(nodeIdx => {
+    const count = producersPerNode(nodeIdx)
+    const assigned = range(count)
+      .map(k => defProducerNames[nodeIdx + k * pnodes])
+      .filter((n): n is string => typeof n === "string")
 
-    const nodeNum = nodeIdx
-    const pNode: ProducerNode = {
+    return {
       role: "producer",
-      index: nodeNum,
-      name: `node_${String(nodeNum).padStart(2, "0")}`,
+      index: nodeIdx,
+      name: toNodeName(nodeIdx),
       p2pPort: allocator.nextP2p(),
       httpPort: allocator.nextHttp(),
       producers: assigned
     }
-    configs.push(pNode)
-  }
+  })
 
   // --- Non-producer API nodes ---
-  for (let i = pnodes; i < totalNonBios; i++) {
-    const nodeNum = i
-    const apiNode: ProducerNode = {
-      role: "producer",
-      index: nodeNum,
-      name: `node_${String(nodeNum).padStart(2, "0")}`,
-      p2pPort: allocator.nextP2p(),
-      httpPort: allocator.nextHttp(),
-      producers: []
-    }
-    configs.push(apiNode)
-  }
+  const apiNodes: ProducerNode[] = range(pnodes, totalNonBios).map(i => ({
+    role: "producer",
+    index: i,
+    name: toNodeName(i),
+    p2pPort: allocator.nextP2p(),
+    httpPort: allocator.nextHttp(),
+    producers: []
+  }))
 
   // --- OPP operator nodes ---
-  for (let i = 0; i < operatorCount; i++) {
-    const nodeNum = totalNonBios + i
-    const opNode: OperatorNode = {
-      role: "operator",
-      index: nodeNum,
-      name: `node_${String(nodeNum).padStart(2, "0")}`,
-      p2pPort: allocator.nextP2p(),
-      httpPort: allocator.nextHttp(),
-      readMode: "irreversible"
-    }
-    configs.push(opNode)
-  }
+  const operatorNodes: OperatorNode[] = range(operatorCount).map(i => ({
+    role: "operator",
+    index: totalNonBios + i,
+    name: toNodeName(totalNonBios + i),
+    p2pPort: allocator.nextP2p(),
+    httpPort: allocator.nextHttp(),
+    readMode: "irreversible"
+  }))
 
-  return configs
+  return [...configs, ...producerNodes, ...apiNodes, ...operatorNodes]
+}
+
+/** Index width used when padding a node index into its `node_NN` name. */
+const NodeNamePadWidth = 2
+
+/** Format a node index as its canonical `node_NN` name (zero-padded to two digits). */
+function toNodeName(index: number): string {
+  return `node_${String(index).padStart(NodeNamePadWidth, "0")}`
 }
 
 // ---------------------------------------------------------------------------
@@ -274,15 +269,10 @@ export function nodeConfigToIniOptions(
 
   // Collect peer addresses (exclude self)
   const selfEndpoint = `${hostname}:${node.p2pPort}`
-  const peerAddresses: string[] = []
-  if (!isBios) {
-    peerAddresses.push(opts.biosP2pEndpoint)
-  }
-  for (const ep of opts.allPeerEndpoints) {
-    if (ep !== selfEndpoint) {
-      peerAddresses.push(ep)
-    }
-  }
+  const peerAddresses = [
+    ...(isBios ? [] : [opts.biosP2pEndpoint]),
+    ...opts.allPeerEndpoints.filter(ep => ep !== selfEndpoint)
+  ]
 
   // Signature providers for producer/bios
   const signatureProviders: string[] = []
@@ -341,5 +331,3 @@ export function nodeConfigToIniOptions(
 
   return iniOpts
 }
-
-export default NodeConfig

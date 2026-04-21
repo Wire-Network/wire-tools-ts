@@ -5,6 +5,7 @@ import {
   LAMPORTS_PER_SOL
 } from "@solana/web3.js"
 import { log } from "../logger.js"
+import Bluebird from "bluebird"
 
 /**
  * Client for interacting with a Solana outpost on solana-test-validator.
@@ -43,20 +44,28 @@ export class SOLClient {
     return info?.data ? Buffer.from(info.data) : null
   }
 
-  /** Get recent transaction logs for a program. */
+  /**
+   * Fetch recent transaction logs for a Solana program.
+   *
+   * Signatures are fetched in one batch and then resolved serially — parallel
+   * `getTransaction` calls regularly trip the test validator's rate limiter
+   * and cause flakes, so we keep concurrency at 1.
+   *
+   * @param programId - Program whose signatures to resolve.
+   * @param limit     - Maximum number of recent signatures to inspect (default: 10).
+   * @returns One `logMessages` array per transaction that emitted logs; transactions
+   *          without logs are skipped entirely.
+   */
   async getProgramLogs(programId: PublicKey, limit = 10): Promise<string[][]> {
     const sigs = await this.connection.getSignaturesForAddress(programId, {
       limit
     })
-    const logs: string[][] = []
-    for (const sig of sigs) {
+    const logArrays = await Bluebird.mapSeries(sigs, async sig => {
       const tx = await this.connection.getTransaction(sig.signature, {
         maxSupportedTransactionVersion: 0
       })
-      if (tx?.meta?.logMessages) {
-        logs.push(tx.meta.logMessages)
-      }
-    }
-    return logs
+      return tx?.meta?.logMessages
+    })
+    return logArrays.filter((arr): arr is string[] => Array.isArray(arr))
   }
 }

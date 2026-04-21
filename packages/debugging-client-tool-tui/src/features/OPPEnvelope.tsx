@@ -1,35 +1,46 @@
 import React from "react"
 import { Box, Text } from "ink"
-import { useSelector } from "react-redux"
 
 import { Panel } from "../components/Panel.js"
 import { StatusWidget } from "../components/StatusWidget.js"
 import type { ComponentProviders } from "../providers/ComponentProviders.js"
 import { FeatureDebugger } from "./FeatureDebugger.js"
-import { selectCluster } from "../store.js"
+import { selectCluster, useAppSelector } from "../store.js"
 
 // ---------------------------------------------------------------------------
 //  Envelope exchanges — one per outpost endpoint participating in an epoch.
 // ---------------------------------------------------------------------------
 
 /**
- * The four OPP envelope exchanges sampled per epoch. The stub tracker
- * renders one row per entry — real data lands when we wire up the
- * DebuggingServer client.
+ * The four OPP envelope exchanges sampled per epoch, paired with rendering
+ * constants. Real data lands when the DebuggingServer client is wired up.
  */
 export namespace OPPEnvelope {
   export const Id = "opp-envelope" as const
   export const Name = "OPP Envelope" as const
 
-  /** Canonical order of the four per-epoch envelope exchanges. */
-  export const ExchangeSlots = [
-    "outpost_ethereum_depot",
-    "outpost_ethereum_reserve",
-    "outpost_solana_depot",
-    "outpost_solana_reserve"
-  ] as const
+  /**
+   * Outpost endpoint name exchanged per epoch. Values are the on-wire
+   * protocol strings — renaming breaks cross-component correlation with the
+   * DebuggingServer's `endpointsType` enum.
+   */
+  export enum ExchangeSlot {
+    EthereumDepot = "outpost_ethereum_depot",
+    EthereumReserve = "outpost_ethereum_reserve",
+    SolanaDepot = "outpost_solana_depot",
+    SolanaReserve = "outpost_solana_reserve"
+  }
 
-  export type ExchangeSlot = (typeof ExchangeSlots)[number]
+  /** Iteration order for {@link ExchangeSlot}. Controls UI row ordering. */
+  export const ExchangeSlots: readonly ExchangeSlot[] = [
+    ExchangeSlot.EthereumDepot,
+    ExchangeSlot.EthereumReserve,
+    ExchangeSlot.SolanaDepot,
+    ExchangeSlot.SolanaReserve
+  ]
+
+  /** Column width used for the slot-name column in the epoch tracker. */
+  export const SlotColumnWidth = 32
 }
 
 // ---------------------------------------------------------------------------
@@ -37,7 +48,7 @@ export namespace OPPEnvelope {
 // ---------------------------------------------------------------------------
 
 function EpochTrackerBody(): React.ReactElement {
-  const cluster = useSelector(selectCluster)
+  const cluster = useAppSelector(selectCluster)
   const epochDurationSec = cluster.config?.epochDurationSec ?? 0
 
   return (
@@ -49,7 +60,7 @@ function EpochTrackerBody(): React.ReactElement {
       <Box flexDirection="column" marginTop={1}>
         {OPPEnvelope.ExchangeSlots.map(slot => (
           <Box key={slot}>
-            <Box width={32}>
+            <Box width={OPPEnvelope.SlotColumnWidth}>
               <Text>{slot}</Text>
             </Box>
             <Text dimColor>envelope: — attestations: —</Text>

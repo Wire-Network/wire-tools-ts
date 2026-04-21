@@ -16,8 +16,19 @@ import { log } from "../logger.js"
 import { AnvilManager, type AnvilOptions } from "../processes/AnvilManager.js"
 import { mkdirs } from "../util.js"
 import { ethers } from "ethers"
+import { range } from "lodash"
 
 const execFileAsync = promisify(execFile)
+
+/**
+ * Filenames written by the wire-ethereum Hardhat deploy scripts. Cleared at
+ * the start of every bootstrap so stale addresses from a previous anvil
+ * instance can't be picked up by mistake.
+ */
+const StaleDeployArtifactFiles = [
+  "liqeth-addrs.json",
+  "outpost-addrs.json"
+] as const
 
 // ---------------------------------------------------------------------------
 // Types
@@ -135,23 +146,20 @@ export class ETHBootstrapper {
    * These match exactly what anvil generates internally.
    */
   private generateAccounts(count: number): ETHAccount[] {
-    const mnemonic = ethers.Mnemonic.fromPhrase(ETHBootstrapper.AnvilMnemonic),
-      accounts: ETHAccount[] = []
-
-    for (let i = 0; i < count; i++) {
-      const path = `${ETHBootstrapper.DerivationPath}${i}`,
-        wallet = ethers.HDNodeWallet.fromMnemonic(mnemonic, path)
-
-      accounts.push({
+    const mnemonic = ethers.Mnemonic.fromPhrase(ETHBootstrapper.AnvilMnemonic)
+    return range(count).map(i => {
+      const wallet = ethers.HDNodeWallet.fromMnemonic(
+        mnemonic,
+        `${ETHBootstrapper.DerivationPath}${i}`
+      )
+      return {
         address: wallet.address,
         privateKey: wallet.privateKey,
         publicKey: wallet.publicKey,
         usedInBootstrap: false,
         usedFor: ""
-      })
-    }
-
-    return accounts
+      }
+    })
   }
 
   /**
@@ -186,10 +194,10 @@ export class ETHBootstrapper {
     mkdirs(localDir)
 
     // Clear stale address files (fresh deploy)
-    for (const f of ["liqeth-addrs.json", "outpost-addrs.json"]) {
-      const p = Path.join(localDir, f)
+    StaleDeployArtifactFiles.forEach(name => {
+      const p = Path.join(localDir, name)
       if (Fs.existsSync(p)) Fs.unlinkSync(p)
-    }
+    })
 
     const liqethConfig = {
       url: rpcUrl,
@@ -278,5 +286,3 @@ export namespace ETHBootstrapper {
     "test test test test test test test test test test test junk"
   export const DerivationPath = "m/44'/60'/0'/0/"
 }
-
-export default ETHBootstrapper

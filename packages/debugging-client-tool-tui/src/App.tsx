@@ -1,6 +1,5 @@
 import React, { useEffect } from "react"
 import { Box, Text, useApp, useInput, useWindowSize } from "ink"
-import { useDispatch, useSelector } from "react-redux"
 
 import {
   ComponentProviders,
@@ -13,7 +12,8 @@ import {
   selectUI,
   setActiveFeature,
   setStatus,
-  type AppDispatch
+  useAppDispatch,
+  useAppSelector
 } from "./store.js"
 
 /**
@@ -24,10 +24,10 @@ import {
  */
 export function App(): React.ReactElement {
   const { columns, rows } = useWindowSize()
-  const { status } = useSelector(selectUI)
-  const cluster = useSelector(selectCluster)
-  const features = useSelector(selectFeatures)
-  const dispatch = useDispatch<AppDispatch>()
+  const { status } = useAppSelector(selectUI)
+  const cluster = useAppSelector(selectCluster)
+  const features = useAppSelector(selectFeatures)
+  const dispatch = useAppDispatch()
   const { exit } = useApp()
 
   const panels = ComponentProviders.get(Panel)
@@ -120,6 +120,3 @@ export namespace App {
   /** Status string written on mount to signal the app is alive. */
   export const ReadyStatus = "ready" as const
 }
-
-// noinspection JSUnusedGlobalSymbols
-export default App

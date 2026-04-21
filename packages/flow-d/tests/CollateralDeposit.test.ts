@@ -1,6 +1,7 @@
 import "jest"
 import { ethers } from "ethers"
 import {
+  AnvilManager,
   FlowTestContext,
   pollUntil,
   log,
@@ -10,7 +11,8 @@ import {
   ChainKind,
   OperatorType,
   OperatorStatus,
-  AttestationType
+  AttestationType,
+  MessageDirection
 } from "@wireio/opp-typescript-models"
 
 /**
@@ -37,13 +39,75 @@ import {
 // Config
 // ---------------------------------------------------------------------------
 
+/**
+ * Epoch duration for this flow. Short-enough to avoid dragging out the suite,
+ * long-enough that producers actually run through warmup → active.
+ */
 const TEST_EPOCH_DURATION_SEC = 90
 
-/** Use protobuf enum values from @wireio/opp-typescript-models */
+/** Convenience alias — flow-d exclusively registers batch operators. */
 const OPERATOR_TYPE_BATCH = OperatorType.BATCH
 
-/** Bond amount (1M base units) */
+/**
+ * Collateral deposit sent to `OperatorRegistry.deposit()`. 1M base units.
+ * Changing this must stay ≥ `OperatorRegistry.minimumDeposit()` — otherwise
+ * the deposit transaction reverts.
+ */
 const BOND_AMOUNT = 1_000_000n
+
+/** 1 s in ms — used to multiply epoch counts into poll deadlines. */
+const MsPerSecond = 1_000
+
+/** Scheduling buffer added to each `pollUntil` deadline before the jest timeout. */
+const PollDeadlineBufferMs = 30_000
+
+/** Interval used for long-running chain-state polls. */
+const LongPollIntervalMs = 3_000
+
+/** Hard cap for `beforeAll` cluster bootstrap (5 min). */
+const BootstrapTimeoutMs = 300_000
+
+/** Short-horizon `pollUntil` deadline for consensus propagation. */
+const ConsensusPropagationTimeoutMs = 60_000
+
+/** Wait budget expressed in epochs — converted to ms at use site. */
+const CrankEpochBudget = 3
+const RelayEpochBudget = 9
+
+/** Zero-valued 32-byte hash used as the "no last message" sentinel. */
+const ZeroMessageId =
+  "0x0000000000000000000000000000000000000000000000000000000000000000"
+
+/**
+ * True when a chain-RPC value matches an enum member in any of the three
+ * forms we've seen it appear in the wild.
+ *
+ * @param enumObj         - The protobuf enum (the runtime object).
+ * @param expected        - The enum member to compare against.
+ * @param actual          - The value returned by the chain RPC.
+ * @param protoNamePrefix - Optional protobuf `ENUM_NAME` prefix (e.g.
+ *                          `"CHAIN_KIND"`). When supplied, proto-style
+ *                          upper-snake names are ALSO considered a match.
+ *
+ * @example
+ * enumValueMatches(ChainKind, ChainKind.ETHEREUM, r.chain_kind, "CHAIN_KIND")
+ * // matches 2  | "ETHEREUM"  | "CHAIN_KIND_ETHEREUM"
+ */
+const enumValueMatches = <E extends object>(
+  enumObj: E,
+  expected: E[keyof E],
+  actual: unknown,
+  protoNamePrefix?: string
+): boolean => {
+  if (actual === expected) return true
+  const tsName = (enumObj as any)[expected as any]
+  if (actual === tsName) return true
+  return (
+    typeof tsName === "string" &&
+    protoNamePrefix !== undefined &&
+    actual === `${protoNamePrefix}_${tsName}`
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Test suite
@@ -71,7 +135,7 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
       "OperatorRegistry",
       ethAddrs.OperatorRegistry
     )
-  }, 300_000)
+  }, BootstrapTimeoutMs)
 
   afterAll(async () => {
     try {
@@ -140,24 +204,31 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
     const { rows } = await ctx.wireClient.getOutposts()
     const ethOutpost = rows.find(
       (r: any) =>
-        (r.chain_kind === ChainKind.ETHEREUM ||
-          r.chain_kind === "CHAIN_KIND_ETHEREUM") &&
-        r.chain_id === 31337
+        enumValueMatches(
+          ChainKind,
+          ChainKind.ETHEREUM,
+          r.chain_kind,
+          "CHAIN_KIND"
+        ) && r.chain_id === AnvilManager.DefaultChainId
     )
     expect(ethOutpost).toBeDefined()
   })
 
   test("Batch operators are AVAILABLE in opreg", async () => {
     const { rows } = await ctx.wireClient.getOperators()
-    const batchOps = rows.filter(
-      (r: any) =>
-        r.type === OPERATOR_TYPE_BATCH || r.type === "OPERATOR_TYPE_BATCH"
+    const batchOps = rows.filter((r: any) =>
+      enumValueMatches(OperatorType, OperatorType.BATCH, r.type, "OPERATOR_TYPE")
     )
     expect(batchOps.length).toBe(3)
     batchOps.forEach((op: any) => {
-      expect([OperatorStatus.ACTIVE, "OPERATOR_STATUS_ACTIVE"]).toContain(
-        op.status
-      )
+      expect(
+        enumValueMatches(
+          OperatorStatus,
+          OperatorStatus.ACTIVE,
+          op.status,
+          "OPERATOR_STATUS"
+        )
+      ).toBe(true)
       expect(op.is_bootstrapped).toBe(1)
     })
   })
@@ -166,9 +237,7 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
 
   test("OPP has no messages before bond", async () => {
     const lastMsgId = await oppContract.lastMessageID()
-    expect(lastMsgId).toBe(
-      "0x0000000000000000000000000000000000000000000000000000000000000000"
-    )
+    expect(lastMsgId).toBe(ZeroMessageId)
   })
 
   test("OperatorRegistry has no deposits before test", async () => {
@@ -222,6 +291,8 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   test(
     "OPP emits OPPEnvelope event after crank drains queued messages",
     async () => {
+      const crankDeadlineMs =
+        TEST_EPOCH_DURATION_SEC * CrankEpochBudget * MsPerSecond
       await pollUntil(
         "OPPEnvelope event emitted",
         async () => {
@@ -235,18 +306,17 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
             ).length > 0
           )
         },
-        TEST_EPOCH_DURATION_SEC * 3 * 1000,
-        3_000
+        crankDeadlineMs,
+        LongPollIntervalMs
       )
     },
-    TEST_EPOCH_DURATION_SEC * 3 * 1000 + 30_000
+    TEST_EPOCH_DURATION_SEC * CrankEpochBudget * MsPerSecond +
+      PollDeadlineBufferMs
   )
 
   test("OPP lastMessageID is non-zero after deposit", async () => {
     const lastMsgId = await oppContract.lastMessageID()
-    expect(lastMsgId).not.toBe(
-      "0x0000000000000000000000000000000000000000000000000000000000000000"
-    )
+    expect(lastMsgId).not.toBe(ZeroMessageId)
   })
 
   // ── E2E relay: batch operators deliver OPPEnvelope to WIRE ──
@@ -254,14 +324,16 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   test(
     "Batch operators deliver envelopes to WIRE",
     async () => {
+      const relayDeadlineMs =
+        TEST_EPOCH_DURATION_SEC * RelayEpochBudget * MsPerSecond
       await pollUntil(
         "envelopes appear in sysio.msgch",
         async () => {
           const { rows } = await ctx.wireClient.getEnvelopes()
           return rows.length > 0
         },
-        TEST_EPOCH_DURATION_SEC * 9 * 1000,
-        3_000
+        relayDeadlineMs,
+        LongPollIntervalMs
       )
 
       const { rows: envelopes } = await ctx.wireClient.getEnvelopes()
@@ -273,28 +345,31 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
         expect(env.raw_data.length).toBeGreaterThan(0)
       })
     },
-    TEST_EPOCH_DURATION_SEC * 9 * 1000 + 30_000
+    TEST_EPOCH_DURATION_SEC * RelayEpochBudget * MsPerSecond +
+      PollDeadlineBufferMs
   )
 
   test("Consensus produces inbound messages", async () => {
+    const isInbound = (r: any): boolean =>
+      enumValueMatches(
+        MessageDirection,
+        MessageDirection.INBOUND,
+        r.direction,
+        "MESSAGE_DIRECTION"
+      )
+
     await pollUntil(
       "inbound messages appear after consensus",
       async () => {
         const { rows } = await ctx.wireClient.getMessages()
-        return rows.some(
-          (r: any) =>
-            r.direction === 0 || r.direction === "MESSAGE_DIRECTION_INBOUND"
-        )
+        return rows.some(isInbound)
       },
-      60_000,
-      3_000
+      ConsensusPropagationTimeoutMs,
+      LongPollIntervalMs
     )
 
     const { rows: messages } = await ctx.wireClient.getMessages()
-    const inbound = messages.filter(
-      (r: any) =>
-        r.direction === 0 || r.direction === "MESSAGE_DIRECTION_INBOUND"
-    )
+    const inbound = messages.filter(isInbound)
     expect(inbound.length).toBeGreaterThanOrEqual(1)
     inbound.forEach((msg: any) => {
       expect(msg.raw_payload.length).toBeGreaterThan(0)
@@ -306,10 +381,13 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
     const { rows: attestations } = await ctx.wireClient.getAttestations()
     expect(attestations.length).toBeGreaterThanOrEqual(1)
 
-    const groupAtts = attestations.filter(
-      (a: any) =>
-        a.type === "ATTESTATION_TYPE_BATCH_OPERATOR_GROUPS" ||
-        a.type === AttestationType.BATCH_OPERATOR_GROUPS
+    const groupAtts = attestations.filter((a: any) =>
+      enumValueMatches(
+        AttestationType,
+        AttestationType.BATCH_OPERATOR_GROUPS,
+        a.type,
+        "ATTESTATION_TYPE"
+      )
     )
     expect(groupAtts.length).toBeGreaterThanOrEqual(1)
   })

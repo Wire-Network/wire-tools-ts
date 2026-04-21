@@ -40,6 +40,7 @@ import {
   DEFAULT_RESOURCE_WEIGHT,
   DEV_K1_PRIVATE_KEY,
   DEV_K1_PUBLIC_KEY,
+  MAX_PRODUCERS,
   OPP_CONTRACT_PATHS,
   SYSTEM_ACCOUNTS,
   underwriterAccountName
@@ -176,7 +177,15 @@ async function linkOperatorChainAccounts(
   }
 }
 
-/** Default config.ini content (the full default template) + HTTP insecure patch. */
+/**
+ * INI fragment appended to every node's `config.ini` to loosen HTTP
+ * restrictions so local tooling and tests can hit the nodeop RPC without
+ * preflight or host-header wrangling.
+ *
+ * Mirrors the Python `cluster_manager._patch_configs_http_insecure`.
+ * Removing any of these settings will break the harness and flow tests
+ * that hit `http://127.0.0.1:...` endpoints directly.
+ */
 const HTTP_INSECURE_INI = `
 # -- http-insecure settings (cluster_manager) --
 # Specify the Access-Control-Allow-Origin to be returned on each request (sysio::http_plugin)
@@ -198,8 +207,34 @@ function toProducerName(index: number): string {
 // ClusterManager
 // ---------------------------------------------------------------------------
 
-export function toNodeLabel(nodeId: string | number) {
-  return `node-${isString(nodeId) && /^\d+$/.test(nodeId) ? nodeId.padStart(2, "0") : isNumber(nodeId) ? nodeId.toString().padStart(2, "0") : nodeId}`
+/** Zero-pad width used when `toNodeLabel` prefixes its input. */
+const NodeLabelPadWidth = 2
+
+/**
+ * Derive the log / process label for a cluster node.
+ *
+ * Numeric ids and numeric-string ids are zero-padded to
+ * {@link NodeLabelPadWidth} digits; non-numeric ids (e.g. `batchop_00`) are
+ * passed through unchanged. The returned string is what `ProcessManager`
+ * and `pm2` / log directory structures key on.
+ *
+ * @param nodeId - Either a numeric producer index or an already-formatted
+ *                 operator node id.
+ * @returns A `node-XX` / `node-<id>` label suitable for process logs.
+ *
+ * @example
+ * toNodeLabel(3)              // "node-03"
+ * toNodeLabel("7")            // "node-07"
+ * toNodeLabel("batchop_00")   // "node-batchop_00"
+ */
+export function toNodeLabel(nodeId: string | number): string {
+  const padded =
+    isString(nodeId) && /^\d+$/.test(nodeId)
+      ? nodeId.padStart(NodeLabelPadWidth, "0")
+      : isNumber(nodeId)
+        ? nodeId.toString().padStart(NodeLabelPadWidth, "0")
+        : nodeId
+  return `node-${padded}`
 }
 
 export class ClusterManager {
@@ -518,76 +553,80 @@ export class ClusterManager {
         })
       writeNodeFiles(biosPath, biosCmd)
 
+      const { LocalHost, ListenAllAddress } = ClusterManager
+      const p2pMaxNodesPerHost =
+        cfg.nodeCount + cfg.batchOperatorCount + cfg.underwriterCount + 1
+
       // ── 5b. Producer nodes ──
-      const nodeStates: NodeState[] = []
-      for (let i = 0; i < cfg.nodeCount; i++) {
+      const nodeStates: NodeState[] = range(cfg.nodeCount).map(i => {
         const nodePath = Path.join(
-            dataPath,
-            ClusterManager.toProducerNodePath(i)
-          ),
-          nodeGenesisFile = Path.join(nodePath, "genesis.json"),
-          httpPort = ports.producerHttp[i],
-          p2pPort = ports.producerP2p[i],
-          peers = allPeerAddresses.filter(a => a !== `localhost:${p2pPort}`),
-          keys = nodeKeys[i],
-          cmd = buildStartCmd({
-            nodeopBinary: executables.nodeop,
-            p2pListenEndpoint: `0.0.0.0:${p2pPort}`,
-            p2pServerAddress: `localhost:${p2pPort}`,
-            p2pPeerAddresses: peers,
-            httpServerAddress: `localhost:${httpPort}`,
-            producerNames: nodeProducers[i],
-            k1Keys: [keys.k1],
-            blsKeys: [keys.bls],
-            configPath: nodePath,
-            dataPath: nodePath,
-            genesisJson: nodeGenesisFile,
-            genesisTimestamp: launchTime,
-            p2pMaxNodesPerHost:
-              cfg.nodeCount + cfg.batchOperatorCount + cfg.underwriterCount + 1
-          })
+          dataPath,
+          ClusterManager.toProducerNodePath(i)
+        )
+        const nodeGenesisFile = Path.join(nodePath, "genesis.json")
+        const httpPort = ports.producerHttp[i]
+        const p2pPort = ports.producerP2p[i]
+        const peers = allPeerAddresses.filter(
+          a => a !== `${LocalHost}:${p2pPort}`
+        )
+        const keys = nodeKeys[i]
+        const cmd = buildStartCmd({
+          nodeopBinary: executables.nodeop,
+          p2pListenEndpoint: `${ListenAllAddress}:${p2pPort}`,
+          p2pServerAddress: `${LocalHost}:${p2pPort}`,
+          p2pPeerAddresses: peers,
+          httpServerAddress: `${LocalHost}:${httpPort}`,
+          producerNames: nodeProducers[i],
+          k1Keys: [keys.k1],
+          blsKeys: [keys.bls],
+          configPath: nodePath,
+          dataPath: nodePath,
+          genesisJson: nodeGenesisFile,
+          genesisTimestamp: launchTime,
+          p2pMaxNodesPerHost
+        })
         writeNodeFiles(nodePath, cmd)
 
-        nodeStates.push({
+        return {
           nodeId: i,
-          host: "localhost",
+          host: LocalHost,
           port: httpPort,
           dataPath: nodePath,
           configPath: nodePath,
           cmd,
           isProducer: nodeProducers[i].length > 0,
           producerName: nodeProducers[i][0] ?? null
-        })
-      }
+        }
+      })
 
       // ── 5c. Batch operator nodes (read-mode=head, no producer_plugin) ──
       // Plugin args for batch_operator_plugin, outpost_ethereum_client_plugin,
       // outpost_solana_client_plugin, cron_plugin are appended here as base args.
       // ETH/SOL-specific args (contract addresses, signing keys) are injected
       // after step 10 (ETH bootstrap) once deployed addresses are known.
-      const batchOpStates: NodeState[] = []
-      for (let i = 0; i < cfg.batchOperatorCount; i++) {
-        // Base batch operator extra args (plugins + batch-operator config).
-        // The WIRE K1 signature provider uses the dev key matching the
-        // account's active permission (set during bootstrap account creation).
-        const nodePath = Path.join(
+      // Base batch operator extra args (plugins + batch-operator config).
+      // The WIRE K1 signature provider uses the dev key matching the
+      // account's active permission (set during bootstrap account creation).
+      const batchOpStates: NodeState[] = range(cfg.batchOperatorCount).map(
+        i => {
+          const nodePath = Path.join(
             dataPath,
             ClusterManager.toBatchOpNodePath(i)
-          ),
-          nodeGenesisFile = Path.join(nodePath, "genesis.json"),
-          httpPort = ports.batchOperatorHttp[i],
-          p2pPort = ports.batchOperatorP2p[i],
-          peers = producerPeerAddresses.filter(
-            a => a !== `localhost:${p2pPort}`
-          ),
-          keys = batchOpKeys[i],
-          account = batchOperatorAccountName(i),
-          wireK1SigProvider = formatK1SignatureProvider({
+          )
+          const nodeGenesisFile = Path.join(nodePath, "genesis.json")
+          const httpPort = ports.batchOperatorHttp[i]
+          const p2pPort = ports.batchOperatorP2p[i]
+          const peers = producerPeerAddresses.filter(
+            a => a !== `${LocalHost}:${p2pPort}`
+          )
+          const keys = batchOpKeys[i]
+          const account = batchOperatorAccountName(i)
+          const wireK1SigProvider = formatK1SignatureProvider({
             publicKey: DEV_K1_PUBLIC_KEY,
             privateKey: DEV_K1_PRIVATE_KEY
-          }),
-          debuggingServerUrl = `http://localhost:${ports.debuggingServer}`,
-          batchOpExtraArgs: string[] = [
+          })
+          const debuggingServerUrl = `http://${LocalHost}:${ports.debuggingServer}`
+          const batchOpExtraArgs: string[] = [
             "--read-mode",
             "head",
             ...BATCH_OPERATOR_PLUGINS.flatMap(p => ["--plugin", p]),
@@ -598,18 +637,18 @@ export class ClusterManager {
             "--batch-operator-account",
             account,
             "--batch-epoch-poll-ms",
-            "15000",
+            String(ClusterManager.BatchEpochPollMs),
             "--batch-delivery-timeout-ms",
-            "15000",
+            String(ClusterManager.BatchDeliveryTimeoutMs),
             "--ext-debugging-server",
             debuggingServerUrl
-          ],
-          cmd = buildStartCmd({
+          ]
+          const cmd = buildStartCmd({
             nodeopBinary: executables.nodeop,
-            p2pListenEndpoint: `0.0.0.0:${p2pPort}`,
-            p2pServerAddress: `localhost:${p2pPort}`,
+            p2pListenEndpoint: `${ListenAllAddress}:${p2pPort}`,
+            p2pServerAddress: `${LocalHost}:${p2pPort}`,
             p2pPeerAddresses: peers,
-            httpServerAddress: `localhost:${httpPort}`,
+            httpServerAddress: `${LocalHost}:${httpPort}`,
             producerNames: [], // no producer plugin
             k1Keys: [keys.k1],
             blsKeys: [keys.bls],
@@ -617,75 +656,75 @@ export class ClusterManager {
             dataPath: nodePath,
             genesisJson: nodeGenesisFile,
             genesisTimestamp: launchTime,
-            p2pMaxNodesPerHost:
-              cfg.nodeCount + cfg.batchOperatorCount + cfg.underwriterCount + 1,
+            p2pMaxNodesPerHost,
             extraArgs: batchOpExtraArgs
           })
 
-        writeNodeFiles(nodePath, cmd)
+          writeNodeFiles(nodePath, cmd)
 
-        batchOpStates.push({
-          nodeId: `batchop_${ClusterManager.padIndex(i)}`,
-          host: "localhost",
-          port: httpPort,
-          dataPath: nodePath,
-          configPath: nodePath,
-          cmd,
-          isProducer: false,
-          producerName: null,
-          role: NodeRole.BatchOperator,
-          operatorAccount: account
-        })
-      }
+          return {
+            nodeId: `batchop_${ClusterManager.padIndex(i)}`,
+            host: LocalHost,
+            port: httpPort,
+            dataPath: nodePath,
+            configPath: nodePath,
+            cmd,
+            isProducer: false,
+            producerName: null,
+            role: NodeRole.BatchOperator,
+            operatorAccount: account
+          }
+        }
+      )
 
       // ── 5d. Underwriter nodes (read-mode=head, no producer_plugin) ──
-      const underwriterStates: NodeState[] = []
-      for (let i = 0; i < cfg.underwriterCount; i++) {
-        const nodePath = Path.join(
-          dataPath,
-          ClusterManager.toUnderwriterNodePath(i)
-        )
-        const nodeGenesisFile = Path.join(nodePath, "genesis.json")
-        const httpPort = ports.underwriterHttp[i]
-        const p2pPort = ports.underwriterP2p[i]
-        const peers = producerPeerAddresses.filter(
-          a => a !== `localhost:${p2pPort}`
-        )
-        const keys = uwKeys[i]
-        const account = underwriterAccountName(i)
+      const underwriterStates: NodeState[] = range(cfg.underwriterCount).map(
+        i => {
+          const nodePath = Path.join(
+            dataPath,
+            ClusterManager.toUnderwriterNodePath(i)
+          )
+          const nodeGenesisFile = Path.join(nodePath, "genesis.json")
+          const httpPort = ports.underwriterHttp[i]
+          const p2pPort = ports.underwriterP2p[i]
+          const peers = producerPeerAddresses.filter(
+            a => a !== `${LocalHost}:${p2pPort}`
+          )
+          const keys = uwKeys[i]
+          const account = underwriterAccountName(i)
 
-        const cmd = buildStartCmd({
-          nodeopBinary: executables.nodeop,
-          p2pListenEndpoint: `0.0.0.0:${p2pPort}`,
-          p2pServerAddress: `localhost:${p2pPort}`,
-          p2pPeerAddresses: peers,
-          httpServerAddress: `localhost:${httpPort}`,
-          producerNames: [], // no producer plugin
-          k1Keys: [keys.k1],
-          blsKeys: [keys.bls],
-          configPath: nodePath,
-          dataPath: nodePath,
-          genesisJson: nodeGenesisFile,
-          genesisTimestamp: launchTime,
-          p2pMaxNodesPerHost:
-            cfg.nodeCount + cfg.batchOperatorCount + cfg.underwriterCount + 1,
-          extraArgs: ["--read-mode", "head"]
-        })
-        writeNodeFiles(nodePath, cmd)
+          const cmd = buildStartCmd({
+            nodeopBinary: executables.nodeop,
+            p2pListenEndpoint: `${ListenAllAddress}:${p2pPort}`,
+            p2pServerAddress: `${LocalHost}:${p2pPort}`,
+            p2pPeerAddresses: peers,
+            httpServerAddress: `${LocalHost}:${httpPort}`,
+            producerNames: [], // no producer plugin
+            k1Keys: [keys.k1],
+            blsKeys: [keys.bls],
+            configPath: nodePath,
+            dataPath: nodePath,
+            genesisJson: nodeGenesisFile,
+            genesisTimestamp: launchTime,
+            p2pMaxNodesPerHost,
+            extraArgs: ["--read-mode", "head"]
+          })
+          writeNodeFiles(nodePath, cmd)
 
-        underwriterStates.push({
-          nodeId: `uwrit_${ClusterManager.padIndex(i)}`,
-          host: "localhost",
-          port: httpPort,
-          dataPath: nodePath,
-          configPath: nodePath,
-          cmd,
-          isProducer: false,
-          producerName: null,
-          role: NodeRole.Underwriter,
-          operatorAccount: account
-        })
-      }
+          return {
+            nodeId: `uwrit_${ClusterManager.padIndex(i)}`,
+            host: LocalHost,
+            port: httpPort,
+            dataPath: nodePath,
+            configPath: nodePath,
+            cmd,
+            isProducer: false,
+            producerName: null,
+            role: NodeRole.Underwriter,
+            operatorAccount: account
+          }
+        }
+      )
 
       log.info(
         `Generated files for bios + ${cfg.nodeCount} producer(s) + ${cfg.batchOperatorCount} batch op(s) + ${cfg.underwriterCount} underwriter(s)`
@@ -1003,13 +1042,17 @@ export class ClusterManager {
     // If a previous run deleted blocks or forks, the saved FSI lock may point
     // to a block that no longer exists. A fresh safety.dat lets the finalizer
     // start voting immediately rather than blocking on a stale lock.
-    for (const ns of this.state.nodes) {
-      const safetyDat = Path.join(ns.dataPath, "finalizers", "safety.dat")
+    this.state.nodes.forEach(ns => {
+      const safetyDat = Path.join(
+        ns.dataPath,
+        ClusterManager.FinalizersSubpath,
+        ClusterManager.SafetyDatFile
+      )
       if (Fs.existsSync(safetyDat)) {
         Fs.unlinkSync(safetyDat)
         log.info(`Cleared stale FSI for node ${ns.nodeId}`)
       }
-    }
+    })
 
     // Start producer nodes with sync verification
     await Promise.all(
@@ -1379,13 +1422,13 @@ async function bootstrapChain(
   }>
   const featureList = Array.isArray(rawFeatures) ? rawFeatures : []
   let activatedCount = 0
-  for (const feature of featureList) {
+  await Bluebird.each(featureList, async feature => {
     const digest = feature.feature_digest
-    if (!digest) continue
+    if (!digest) return
     const codename = feature.specification?.find(
       s => s.name === "builtin_feature_codename"
     )?.value
-    if (codename === "PREACTIVATE_FEATURE") continue
+    if (codename === "PREACTIVATE_FEATURE") return
     try {
       await clio.activateFeature(digest)
       activatedCount++
@@ -1402,8 +1445,8 @@ async function bootstrapChain(
         )
       }
     }
-  }
-  await sleep(1000)
+  })
+  await sleep(ClusterManager.ClioRetryLightDelayMs)
   log.info("[Phase 3] Activated {} protocol features", activatedCount)
 
   // ── Phase 4: BLS instant finality setup ──
@@ -1440,18 +1483,22 @@ async function bootstrapChain(
 
   // ── Phase 5: Create producer accounts ──
   log.info("[Phase 5] Creating producer accounts...")
-  for (const name of producerNames) {
-    await retry(
+  await Bluebird.each(producerNames, name =>
+    retry(
       () =>
         clio.createAccount("sysio", name, DEV_K1_PUBLIC_KEY, DEV_K1_PUBLIC_KEY),
-      { label: `create account ${name}`, maxAttempts: 3, delayMs: 1000 }
+      {
+        label: `create account ${name}`,
+        maxAttempts: ClusterManager.ClioRetryAttempts,
+        delayMs: ClusterManager.ClioRetryLightDelayMs
+      }
     )
-  }
+  )
   log.info(`[Phase 5] Created ${producerNames.length} producer accounts`)
 
   // ── Phase 6: Create system accounts ──
   log.info("[Phase 6] Creating system accounts...")
-  for (const acctName of SYSTEM_ACCOUNTS) {
+  await Bluebird.each(SYSTEM_ACCOUNTS, async acctName => {
     try {
       await clio.createSystemAccount(acctName, DEV_K1_PUBLIC_KEY)
     } catch (err: unknown) {
@@ -1459,7 +1506,7 @@ async function bootstrapChain(
       if (!msg.includes("already exists"))
         throw new Error(`Failed to create ${acctName}: ${msg}`)
     }
-  }
+  })
   log.info(`[Phase 6] Created ${SYSTEM_ACCOUNTS.length} system accounts`)
 
   // ── Phase 7: Deploy sysio.system ──
@@ -1472,7 +1519,11 @@ async function bootstrapChain(
         "sysio.system.wasm",
         "sysio.system.abi"
       ),
-    { label: "deploy sysio.system", maxAttempts: 3, delayMs: 2000 }
+    {
+      label: "deploy sysio.system",
+      maxAttempts: ClusterManager.ClioRetryAttempts,
+      delayMs: ClusterManager.ClioRetryHeavyDelayMs
+    }
   )
   log.info("[Phase 7] sysio.system deployed")
 
@@ -1481,41 +1532,32 @@ async function bootstrapChain(
 
   // Extract each node's K1 public key from its start.cmd signature-provider arg
   // to use as block_signing_key (matches Python: keys["public"])
-  function extractNodeK1PubKey(ns: NodeState): string {
-    for (const arg of ns.cmd) {
-      const m = arg.match(/^wire-(PUB_K1_\S+),wire,wire,/)
-      if (m) return m[1]
-      // Also match legacy SYS prefix
-      const m2 = arg.match(/^wire-(SYS\S+),wire,wire,/)
-      if (m2) return m2[1]
-    }
-    return DEV_K1_PUBLIC_KEY // fallback
+  const K1PubKeyPattern = /^wire-(PUB_K1_\S+),wire,wire,/
+  const LegacySysPubKeyPattern = /^wire-(SYS\S+),wire,wire,/
+
+  const extractNodeK1PubKey = (ns: NodeState): string => {
+    const match = ns.cmd
+      .map(
+        arg => arg.match(K1PubKeyPattern) ?? arg.match(LegacySysPubKeyPattern)
+      )
+      .find((m): m is RegExpMatchArray => m !== null)
+    return match ? match[1] : DEV_K1_PUBLIC_KEY
   }
 
   // Build producer schedule: map each producer name to the signing key of the node that hosts it
-  const prodSchedule: Array<{
-    producer_name: string
-    block_signing_key: string
-  }> = []
-  for (const name of producerNames.slice(0, 21)) {
-    // Find the node that produces this name
+  const prodSchedule = producerNames.slice(0, MAX_PRODUCERS).map(name => {
     const hostNode =
       nodeStates.find(ns =>
         ns.cmd.some(a => a === name && ns.cmd.includes("--producer-name"))
       ) ??
-      nodeStates.find(ns => {
-        const prodIdx = ns.cmd.indexOf("--producer-name")
-        if (prodIdx === -1) return false
-        // Check all --producer-name args
-        for (let i = 0; i < ns.cmd.length; i++) {
-          if (ns.cmd[i] === "--producer-name" && ns.cmd[i + 1] === name)
-            return true
-        }
-        return false
-      })
+      nodeStates.find(ns =>
+        ns.cmd.some(
+          (arg, i) => arg === "--producer-name" && ns.cmd[i + 1] === name
+        )
+      )
     const sigKey = hostNode ? extractNodeK1PubKey(hostNode) : DEV_K1_PUBLIC_KEY
-    prodSchedule.push({ producer_name: name, block_signing_key: sigKey })
-  }
+    return { producer_name: name, block_signing_key: sigKey }
+  })
 
   await clio.pushActionAndWait<SystemContracts.SysioSystemSetprodkeysAction>(
     "sysio",
@@ -1542,9 +1584,12 @@ async function bootstrapChain(
         `[Phase 8] Handoff poll error (retrying): ${err.message?.slice(0, 100)}`
       )
     }
-    await sleep(1000)
+    await sleep(ClusterManager.HandoffPollIntervalMs)
   }
-  Assert.ok(handoffComplete, "Producer handoff failed within 90s")
+  Assert.ok(
+    handoffComplete,
+    `Producer handoff failed within ${ClusterManager.HandoffTimeoutMs}ms`
+  )
 
   // ── Phase 9: Deploy sysio.token + setpriv ──
   log.info("[Phase 9] Deploying sysio.token...")
@@ -1556,7 +1601,11 @@ async function bootstrapChain(
         "sysio.token.wasm",
         "sysio.token.abi"
       ),
-    { label: "deploy sysio.token", maxAttempts: 3, delayMs: 2000 }
+    {
+      label: "deploy sysio.token",
+      maxAttempts: ClusterManager.ClioRetryAttempts,
+      delayMs: ClusterManager.ClioRetryHeavyDelayMs
+    }
   )
   await clio.setPriv("sysio.token")
   log.info("[Phase 9] sysio.token deployed")
@@ -1566,23 +1615,32 @@ async function bootstrapChain(
   await clio.pushActionAndWait<SystemContracts.SysioTokenCreateAction>(
     "sysio.token",
     "create",
-    { issuer: "sysio", maximum_supply: "1000000000.0000 SYS" },
+    { issuer: "sysio", maximum_supply: ClusterManager.InitialTokenSupply },
     "sysio.token@active"
   )
   await clio.pushActionAndWait<SystemContracts.SysioTokenIssueAction>(
     "sysio.token",
     "issue",
-    { to: "sysio", quantity: "1000000000.0000 SYS", memo: "initial issue" },
+    {
+      to: "sysio",
+      quantity: ClusterManager.InitialTokenSupply,
+      memo: "initial issue"
+    },
     "sysio@active"
   )
-  for (const name of producerNames) {
-    await clio.pushAction<SystemContracts.SysioTokenTransferAction>(
+  await Bluebird.each(producerNames, name =>
+    clio.pushAction<SystemContracts.SysioTokenTransferAction>(
       "sysio.token",
       "transfer",
-      { from: "sysio", to: name, quantity: "1000000.0000 SYS", memo: "init" },
+      {
+        from: "sysio",
+        to: name,
+        quantity: ClusterManager.ProducerInitialGrant,
+        memo: "init"
+      },
       "sysio@active"
     )
-  }
+  )
   log.info("[Phase 10] Tokens distributed")
 
   // ── Phase 11: Deploy sysio.roa ──
@@ -1672,25 +1730,32 @@ async function bootstrapChain(
 
   // ── Phase 14: Deploy OPP contracts ──
   log.info("[Phase 14] Deploying OPP contracts...")
-  for (const [contractName, relPath] of Object.entries(OPP_CONTRACT_PATHS)) {
-    const contractPath = Path.join(cfg.buildPath, relPath)
-    if (!Fs.existsSync(Path.join(contractPath, `${contractName}.wasm`))) {
-      log.warn(`[Phase 14] ${contractName} not found, skipping`)
-      continue
+  await Bluebird.each(
+    Object.entries(OPP_CONTRACT_PATHS),
+    async ([contractName, relPath]) => {
+      const contractPath = Path.join(cfg.buildPath, relPath)
+      if (!Fs.existsSync(Path.join(contractPath, `${contractName}.wasm`))) {
+        log.warn(`[Phase 14] ${contractName} not found, skipping`)
+        return
+      }
+      await retry(
+        async () => {
+          await clio.setContractAndWait(
+            contractName,
+            contractPath,
+            `${contractName}.wasm`,
+            `${contractName}.abi`
+          )
+          await clio.setPriv(contractName)
+        },
+        {
+          label: `deploy ${contractName}`,
+          maxAttempts: ClusterManager.ClioRetryAttempts,
+          delayMs: ClusterManager.ClioRetryHeavyDelayMs
+        }
+      )
     }
-    await retry(
-      async () => {
-        await clio.setContractAndWait(
-          contractName,
-          contractPath,
-          `${contractName}.wasm`,
-          `${contractName}.abi`
-        )
-        await clio.setPriv(contractName)
-      },
-      { label: `deploy ${contractName}`, maxAttempts: 3, delayMs: 2000 }
-    )
-  }
+  )
   log.info("[Phase 14] OPP contracts deployed")
 
   // ── Phase 14a–c: Grant sysio.code on OPP contract authorities ──
@@ -1716,7 +1781,8 @@ async function bootstrapChain(
       operators_per_epoch: opsPerEpoch,
       batch_operator_minimum_active: adjustedMin,
       batch_op_groups: batchOpGroups,
-      attestation_retention_epoch_count: 1000
+      attestation_retention_epoch_count:
+        ClusterManager.AttestationRetentionEpochs
     },
     "sysio.epoch@active"
   )
@@ -1744,7 +1810,7 @@ async function bootstrapChain(
     "regoutpost",
     {
       chain_kind: SystemContracts.SysioEpochChainkind.CHAIN_KIND_ETHEREUM,
-      chain_id: 31337
+      chain_id: AnvilManager.DefaultChainId
     },
     "sysio.epoch@active"
   )
@@ -1809,8 +1875,8 @@ async function bootstrapChain(
 
   // ── Phase 18a: Register operators via sysio.opreg ──
   log.info("[Phase 18a] Registering batch operators...")
-  for (const bo of batchOpStates) {
-    await clio.pushActionAndWait(
+  await Bluebird.each(batchOpStates, bo =>
+    clio.pushActionAndWait(
       "sysio.opreg",
       "regoperator",
       {
@@ -1820,13 +1886,13 @@ async function bootstrapChain(
       },
       "sysio.opreg@active"
     )
-  }
+  )
   log.info(`[Phase 18a] Registered ${batchOpStates.length} batch operator(s)`)
 
   // ── Phase 19: Register underwriters via sysio.opreg ──
   log.info("[Phase 19] Registering underwriters...")
-  for (const uw of underwriterStates) {
-    await clio.pushActionAndWait(
+  await Bluebird.each(underwriterStates, uw =>
+    clio.pushActionAndWait(
       "sysio.opreg",
       "regoperator",
       {
@@ -1836,7 +1902,7 @@ async function bootstrapChain(
       },
       "sysio.opreg@active"
     )
-  }
+  )
   log.info(`[Phase 19] Registered ${underwriterStates.length} underwriter(s)`)
 
   // ── Phase 19a: Link operator chain accounts via authex ──
@@ -1948,10 +2014,29 @@ export namespace ClusterManager {
   export const HandoffTimeoutMs = 90_000
 
   /** Delay between staggered node starts (ms). */
-  export const NodeStartDelayMs = 2000
+  export const NodeStartDelayMs = 2_000
 
   /** Delay after node shutdown before proceeding (ms). */
-  export const ShutdownDelayMs = 2000
+  export const ShutdownDelayMs = 2_000
+
+  /** Hostname used for every local endpoint in a cluster. */
+  export const LocalHost = "localhost"
+
+  /** Bind-all address for p2p listen sockets. */
+  export const ListenAllAddress = "0.0.0.0"
+
+  /**
+   * How often batch operators poll the chain for new epochs. Setting this
+   * too high delays epoch promotion; too low increases nodeop load on a
+   * single-producer test cluster.
+   */
+  export const BatchEpochPollMs = 15_000
+
+  /**
+   * Per-epoch delivery deadline for batch operators. Tx submission beyond
+   * this window is treated as failed — the next epoch takes over.
+   */
+  export const BatchDeliveryTimeoutMs = 15_000
 
   /** Timeout for nodeop sync verification via verifyCallback (ms). */
   export const NodeSyncTimeoutMs = 300_000
@@ -1969,6 +2054,44 @@ export namespace ClusterManager {
 
   /** OPP debugging storage subdirectory within clusterPath/data. */
   export const OPPDebuggingSubpath = "opp-debugging"
+
+  /** Finalizer state subdirectory within a node's data dir. */
+  export const FinalizersSubpath = "finalizers"
+
+  /**
+   * FSI lock file written by the finalizer. Deleted on relaunch so a stale
+   * lock from a pruned fork can't stall the restart vote loop.
+   */
+  export const SafetyDatFile = "safety.dat"
+
+  /**
+   * Standard retry policy for `clio` contract / account operations. The
+   * WIRE producer regularly drops transient errors during block production;
+   * three attempts smooth those out without masking a real failure.
+   */
+  export const ClioRetryAttempts = 3
+
+  /** Delay between {@link ClioRetryAttempts} retries when the op is heavy. */
+  export const ClioRetryHeavyDelayMs = 2_000
+
+  /** Delay between {@link ClioRetryAttempts} retries when the op is light. */
+  export const ClioRetryLightDelayMs = 1_000
+
+  /** Poll interval between `get_info` checks during producer handoff. */
+  export const HandoffPollIntervalMs = 1_000
+
+  /**
+   * How many past epochs sysio.epoch retains attestations for. Setting this
+   * too low loses historical attestations that downstream tooling reads;
+   * too high bloats on-chain state.
+   */
+  export const AttestationRetentionEpochs = 1_000
+
+  /** Initial token supply for `sysio.token.create`. */
+  export const InitialTokenSupply = "1000000000.0000 SYS"
+
+  /** Per-producer token grant issued during bootstrap. */
+  export const ProducerInitialGrant = "1000000.0000 SYS"
 
   /**
    * Resolve all executable paths from a build directory.
@@ -2061,7 +2184,7 @@ export namespace ClusterManager {
     }
 
     Fs.writeFileSync(
-      Path.join(clusterPath, "cluster-config.json"),
+      Path.join(clusterPath, ClusterFiles.ConfigFilename),
       JSON.stringify(config, null, 2)
     )
 
@@ -2070,5 +2193,3 @@ export namespace ClusterManager {
     return manager
   }
 }
-
-export default ClusterManager

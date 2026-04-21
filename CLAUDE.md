@@ -84,7 +84,7 @@ wire-test-cluster --chain-dir=<path> destroy   # stop + delete data
 ## Key Architecture
 
 ### Process Management (`harness/src/processes/`)
-- **ProcessManager**: Core pm2-backed process lifecycle manager. On startup, kills existing `nodeop`/`kiod`/`anvil`/`solana-test-validator` via OS-level `pkill`. Registers exit handlers to clean up on tool exit. Supports per-process and combined cluster file logging when `clusterDir` is set.
+- **ProcessManager**: Core process lifecycle manager built on `child_process.spawn` + `tree-kill` (NOT pm2). On startup, kills existing `nodeop`/`kiod`/`anvil`/`solana-test-validator` via OS-level `pkill`. Registers exit handlers to clean up on tool exit. Supports per-process and combined cluster file logging when `clusterDir` is set.
 - **WIREChainManager**: Manages `nodeop` + `kiod` processes
 - **AnvilManager**: Manages local Ethereum node (`anvil`)
 - **SolanaValidatorManager**: Manages `solana-test-validator`
@@ -131,21 +131,23 @@ See `STYLE.md` for full patterns and examples.
 
 ### Critical rules
 
-- **No string/number literals for known values.** If a value exists in an enum, constant, or namespace, use the identifier. `ClusterCommand.create`, not `"create"`. `AnvilManager.DefaultPort`, not `8545`.
+- **No string/number literals for known values.** If a value exists in an enum, constant, or namespace, use the identifier. `ClusterCommand.create`, not `"create"`. `AnvilManager.DefaultChainId`, not `31337`. `ClusterFiles.StateFilename`, not `".cluster_state.json"`.
 - **No redundant dispatch.** If the framework routes commands (Yargs `.command()` handlers), do not add a `match()`/`switch` on top. Collocate handler logic with the command definition.
-- **modern code** Use forEach, ... (spreads), map, filter, and reduce modern paradigms instead of for loops and other legacy style code
-- **OPP & FP (functional programming)** is preferred over old-school if/else/switch and generally branching code.
-  - Use `Future` from `@3fv/prelude-ts` for async flows.
-  - Use `Option`/`asOption` from `@3fv/prelude-ts` for optional values and chained flows.
-  - Use `Either` from `@3fv/prelude-ts` for error handling.
-  - Use `match` from `ts-pattern` for pattern matching.
-- **PM2 runs in NON-DAEMON mode.** It will never run in STANDALONE mode and therefore is never the culprit of hung processes or orphaned processes.  
-- **Enum members as identifiers everywhere.** Command names, config keys, comparisons — always the enum member, never the raw string.
+- **Modern JS iteration only.** `.forEach` / `.map` / `.filter` / `.reduce` / spread — never `for`, `for...of`, `for...in` for iteration. `while` is acceptable ONLY for deadline polling with an explicit timeout. For sequential async, use `Bluebird.each` / `Bluebird.mapSeries` / `Bluebird.reduce` (already in the harness tree).
+- **FP branching**. Prefer `match` (from `ts-pattern`) for multi-branch value-producing dispatch or exhaustive enum checks. Single-guard `if` is fine — don't `match` two branches.
+  - `Future` from `@3fv/prelude-ts` for async flows.
+  - `Option`/`asOption` from `@3fv/prelude-ts` for optional values and chained flows.
+  - `Either` from `@3fv/prelude-ts` for error handling.
+  - `Deferred.useCallback` from `@wireio/shared` for promisifying callback APIs.
+- **Enum over `as const` for string-literal maps.** `as const` is fine for complex / polymorphic value maps. For pure `{ Key: "key-string" }` tables, use an `enum` — it gives reverse mapping and survives rename refactoring.
+- **Enum members as identifiers everywhere.** Command names, config keys, roles, chain kinds — always the enum member, never the raw string. Use enum reverse mapping (`SomeEnum[value]`) instead of hand-rolled lookup tables.
 - **Fluent chains over intermediate variables.** Methods that configure state return `this`. Write `createClusterManager(config).loadState().startAndWait()`, not three separate statements.
 - **Extract focused helpers.** Any logically distinct operation (load config, create manager, resolve paths) becomes a named module-level function with assertions at entry.
 - **`identity` for no-op params.** When a framework callback is required but unneeded, pass `identity` from lodash.
 - **Module-level shared state via middleware.** Cross-cutting values (global args, derived paths) go in a module-level object populated by Yargs `.middleware()`, destructured in handlers.
-- **`Deferred.useCallback`** from promisification
+- **Named exports only.** No `export default` — in source OR in `index.ts` barrels. Exception: `jest.config.ts` needs a default export for Jest itself.
+- **Typed Redux hooks.** Use `useAppDispatch` / `useAppSelector` (or equivalent typed wrappers exported from the slice's store file), never bare `useDispatch` / `useSelector`. Exception: cross-process extension packages (e.g. `wallet-browser-ext` in `wire-libraries-ts`) keep raw hooks by design — don't "fix" them.
+- **Process management uses `child_process.spawn` + `tree-kill`.** Never reintroduce pm2 or other orchestration libraries without a concrete justification.
 
 ## Code Quality Invariants
 
@@ -162,5 +164,29 @@ The rules above are enforced on every change. Before declaring a task complete, 
    - **Cross-file within a package:** `export const` from a `constants.ts`.
    - **Protocol identifiers (command names, RPC method names, event names, endpoint paths):** an `enum` or `as const` object so IDE rename works.
 
-3. **Enums over raw values.** Command names, statuses, chain kinds, attestation types — always the enum member. `ClusterCommand.create` not `"create"`; `ChainKind.Ethereum` not `2`. Rename propagates through the compiler; raw strings do not.
+3. **Enums over raw values.** Command names, statuses, chain kinds, attestation types — always the enum member. `ClusterCommand.create` not `"create"`; `ChainKind.ETHEREUM` not `2`. Rename propagates through the compiler; raw strings do not.
+
+4. **Import hygiene.**
+   - **No cross-package `../src/...` / `../../../lib/...` paths.** Cross-package imports use the package alias (`@wire-e2e-tests/harness`, `@wireio/shared`, etc.). In-package relative imports are fine.
+   - **Do not re-export third-party surface from local barrels.** If a consumer needs a type from `@wireio/opp-typescript-models`, they import it from there directly — don't list 9 of its types in a `debugging-shared` barrel.
+   - **Import order:** Node built-ins → external packages → internal monorepo packages → relative imports. Blank line between groups.
+
+5. **Filename shape.** Class-primary files → PascalCase (`AnvilManager.ts`, `ClusterManager.ts`). Function/const/utility files → camelCase (`logger.ts`, `keyGen.ts`, `startCmd.ts`). If the primary export changes shape (class → utility fns), rename the file to match.
+
+6. **Full JSDoc on exported items.**
+   - Functions / methods: description, `@param` for each arg, `@return` (unless `void`), `@example` when non-obvious.
+   - Exported constants: description + **what changing the value affects** (one line is enough, but it has to answer "why would I touch this").
+   - NodeJS typed literals like `"pipe"`, `"inherit"`, `"ignore"` in `StdioOptions` stay inline — they're typed, not magic.
+
+## Cross-repo rules
+
+- **`@wireio/opp-typescript-models` and `@wireio/opp-solidity-models` MUST NOT appear in any `wire-libraries-ts` package.json.** The code generators that produce those packages live in `wire-libraries-ts` — depending on them there creates a tool/output cycle. These packages are consumed by **`wire-e2e-tests` and `wire-ethereum` only**. If you see them resolved under `wire-libraries-ts/node_modules/.pnpm/`, treat it as a red flag and verify the dep graph before continuing.
+- **Shared types consumed by both a server and its client live in the shared package** (`debugging-shared` for the debugging server/client/TUI; don't duplicate host/port/version strings across two `package.json`s).
+
+## Classes of mistakes to avoid (learned the hard way)
+
+- **"The package.json is clean" is not proof the dep edge is absent.** If `node_modules/.pnpm/<forbidden>/` exists, investigate the lockfile, the `.pnpmfile.cjs` hooks, and any transitive chain before declaring victory.
+- **Before writing a new helper or type, grep.** `sleep`, `pollUntil`, cluster state filenames, default host/port — these already exist somewhere. Reusing beats re-inventing.
+- **Don't bulk re-export a generated-types package.** Import what you need at the call site.
+- **Stale commented-out code is dead weight.** If `match()` replaces an `if/else` chain, delete the commented original. Leaving "for reference" is how slop accumulates.
 

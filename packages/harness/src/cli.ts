@@ -14,18 +14,18 @@ import "source-map-support/register.js"
 import Path from "path"
 import Fs from "fs"
 import Yargs from "yargs"
-import { hideBin } from "yargs/helpers"
-import ClusterManager, { type ClusterConfig } from "./cluster/ClusterManager.js"
+
+import { ClusterManager, type ClusterConfig } from "./cluster/ClusterManager.js"
 import { ClusterPorts } from "./cluster/ClusterPorts.js"
 import { log } from "./logger.js"
 import { identity, last } from "lodash"
-import { match } from "ts-pattern"
 import * as Assert from "node:assert"
 import { ProcessManager } from "./processes/ProcessManager.js"
 import { ProcessSignalName } from "./processes/ProcessSignals.js"
 import { inRange, isNotEmpty, mkdirs } from "./util.js"
 import { asOption, Future } from "@3fv/prelude-ts"
 import { isPromise } from "@wireio/shared"
+import { ClusterFiles } from "@wire-e2e-tests/debugging-shared"
 
 const GlobalArgs = {
   clusterPath: "",
@@ -99,7 +99,7 @@ async function main(): Promise<void> {
           describe: "Remove existing chain-dir before create"
         })
         .middleware(({ clusterPath, force }) => {
-          const configFile = Path.join(clusterPath, "cluster-config.json")
+          const configFile = Path.join(clusterPath, ClusterFiles.ConfigFilename)
           Object.assign(GlobalArgs, { clusterPath, configFile, force })
 
           ProcessManager.setClusterPath(clusterPath)

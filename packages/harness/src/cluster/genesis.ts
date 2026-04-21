@@ -119,5 +119,3 @@ export function generateGenesis(opts?: GenerateGenesisOptions): GenesisJson {
 
   return genesis
 }
-
-export default generateGenesis

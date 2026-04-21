@@ -6,11 +6,11 @@ import { Server } from "node:http"
 import express, { Express } from "express"
 import { defaults } from "lodash"
 
-import { ApiPaths } from "@wire-e2e-tests/debugging-shared"
+import { ApiPaths, DebuggingDefaults } from "@wire-e2e-tests/debugging-shared"
 
 import { JsonRPC } from "./JsonRPC"
 
-import OPPRoutes from "./routes/opp/OPPRoutes"
+import { OPPRoutes } from "./routes/opp/OPPRoutes"
 import * as Path from "node:path"
 import { Future } from "@3fv/prelude-ts"
 import { Deferred } from "@wireio/shared"
@@ -61,7 +61,7 @@ export class DebuggingServer {
 
   private constructor(readonly config: DebuggingServerConfig) {
     this.app = express()
-    this.app.use(express.json({ limit: "10mb" }))
+    this.app.use(express.json({ limit: DebuggingDefaults.BodyLimit }))
 
     // Health check
     this.app.get(ApiPaths.Ping, this.handlePing.bind(this))
@@ -122,14 +122,18 @@ export class DebuggingServer {
 }
 
 export namespace DebuggingServer {
-  export const DefaultPort = 9876
-  export const DefaultHost = "127.0.0.1"
+  /** Network defaults re-surfaced from {@link DebuggingDefaults} for factory ergonomics. */
+  export const DefaultPort = DebuggingDefaults.Port
+  export const DefaultHost = DebuggingDefaults.Host
+
+  /**
+   * Default root for persisted OPP envelope data. Resolved from the user's
+   * `$HOME` plus the shared storage subpath — overriding via
+   * `oppStoragePath` bypasses this entirely.
+   */
   export const DefaultOPPStoragePath = Path.resolve(
     process.env.HOME,
-    ".config",
-    "wire",
-    "debugging",
-    "opp",
-    "data"
+    DebuggingDefaults.StorageSubpath.ConfigDir,
+    DebuggingDefaults.StorageSubpath.OppData
   )
 }

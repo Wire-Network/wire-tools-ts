@@ -4,13 +4,11 @@ import { defaults } from "lodash"
 
 import {
   ApiPaths,
+  DebuggingDefaults,
   type HandlerURIType,
   type InferredRequestType,
   type InferredResponseType
 } from "@wire-e2e-tests/debugging-shared"
-
-/** JSON-RPC 2.0 version constant */
-const JSONRPC_VERSION = "2.0" as const
 
 export interface DebuggingToolClientOptions {
   /** Server base URL, e.g. "http://localhost:9876" */
@@ -66,7 +64,7 @@ export class DebuggingServerClient {
         Accept: "application/json"
       },
       body: JSON.stringify({
-        jsonrpc: JSONRPC_VERSION,
+        jsonrpc: DebuggingDefaults.JsonrpcVersion,
         method,
         params,
         id
@@ -81,7 +79,7 @@ export class DebuggingServerClient {
     const body = (await resp.json()) as any
 
     Assert.ok(
-      body.jsonrpc === JSONRPC_VERSION,
+      body.jsonrpc === DebuggingDefaults.JsonrpcVersion,
       "Invalid JSON-RPC version in response"
     )
     Assert.ok(
@@ -101,8 +99,9 @@ export class DebuggingServerClient {
 }
 
 export namespace DebuggingServerClient {
-  export const DefaultHost = "127.0.0.1"
-  export const DefaultPort = 9876
-  export const DefaultScheme = "http"
-  export const DefaultURL = `${DefaultScheme}://${DebuggingServerClient.DefaultHost}:${DebuggingServerClient.DefaultPort}`
+  /** Network defaults re-surfaced from {@link DebuggingDefaults} for factory ergonomics. */
+  export const DefaultHost = DebuggingDefaults.Host
+  export const DefaultPort = DebuggingDefaults.Port
+  export const DefaultScheme = DebuggingDefaults.Scheme
+  export const DefaultURL = DebuggingDefaults.URL
 }

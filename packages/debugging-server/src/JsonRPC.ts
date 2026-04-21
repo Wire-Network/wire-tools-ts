@@ -2,20 +2,18 @@ import { IMessageType } from "@protobuf-ts/runtime"
 import type { Router, Request, Response, NextFunction } from "express"
 
 import {
+  DebuggingDefaults,
   FROM_JSON_OPTIONS,
   HandlerURIType,
+  HandlerTypeMappings,
   InferredHandlerType,
   TO_JSON_OPTIONS
 } from "@wire-e2e-tests/debugging-shared"
-import { HandlerTypeMappings } from "@wire-e2e-tests/debugging-shared"
 import { isObject } from "@wireio/shared"
 import { log } from "./logging"
 import { Future } from "@3fv/prelude-ts"
 import { match, P } from "ts-pattern"
 import { identity } from "lodash"
-
-/** JSON-RPC 2.0 version constant */
-export const JSONRPC_VERSION = "2.0" as const
 
 export namespace JsonRPC {
   /** JSON-RPC 2.0 error codes */
@@ -54,7 +52,11 @@ export namespace JsonRPC {
    * Check if a parsed JSON body is a JSON-RPC 2.0 request.
    */
   function isJsonRPC(body: any): boolean {
-    return body && typeof body === "object" && body.jsonrpc === JSONRPC_VERSION
+    return (
+      body &&
+      typeof body === "object" &&
+      body.jsonrpc === DebuggingDefaults.JsonrpcVersion
+    )
   }
 
   /**
@@ -75,28 +77,12 @@ export namespace JsonRPC {
       .with(P.bigint, v => Number(v))
       .with(P.instanceOf(Buffer), v => Buffer.from(v).toString("base64"))
       .when(Array.isArray, v => v.map(prepareForJson))
-      .when(isObject, value => {
-        const out: Record<string, any> = {}
-        for (const [k, v] of Object.entries(value)) {
-          out[k] = prepareForJson(v)
-        }
-        return out
-      })
+      .when(isObject, value =>
+        Object.fromEntries(
+          Object.entries(value).map(([k, v]) => [k, prepareForJson(v)])
+        )
+      )
       .otherwise(identity)
-    // if (value === null || value === undefined) return value
-    // if (typeof value === "bigint") return Number(value)
-    // if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
-    //   return Buffer.from(value).toString("base64")
-    // }
-    // if (Array.isArray(value)) return value.map(prepareForJson)
-    // if (typeof value === "object") {
-    //   const out: Record<string, any> = {}
-    //   for (const [k, v] of Object.entries(value)) {
-    //     out[k] = prepareForJson(v)
-    //   }
-    //   return out
-    // }
-    // return value
   }
 
   /**
@@ -134,7 +120,7 @@ export namespace JsonRPC {
     )
 
     // Individual plain-JSON routes for each registered handler
-    for (const [method, handler] of registry) {
+    registry.forEach((handler, method) => {
       router.post(
         method,
         async (req: Request, res: Response, _next: NextFunction) => {
@@ -162,7 +148,7 @@ export namespace JsonRPC {
           }
         }
       )
-    }
+    })
   }
 
   async function dispatchJsonRPC(
@@ -175,7 +161,7 @@ export namespace JsonRPC {
 
     if (typeof body.method !== "string") {
       sendJson(res, 200, {
-        jsonrpc: JSONRPC_VERSION,
+        jsonrpc: DebuggingDefaults.JsonrpcVersion,
         error: {
           code: JsonRPC.ErrorCode.INVALID_REQUEST,
           message: "Missing 'method'"
@@ -187,7 +173,7 @@ export namespace JsonRPC {
 
     if (!isObject(body.params)) {
       sendJson(res, 200, {
-        jsonrpc: JSONRPC_VERSION,
+        jsonrpc: DebuggingDefaults.JsonrpcVersion,
         error: {
           code: JsonRPC.ErrorCode.INVALID_REQUEST,
           message: `Invalid request: ${body.params}`
@@ -200,7 +186,7 @@ export namespace JsonRPC {
     const handler = registry.get(body.method)
     if (!handler) {
       sendJson(res, 200, {
-        jsonrpc: JSONRPC_VERSION,
+        jsonrpc: DebuggingDefaults.JsonrpcVersion,
         error: {
           code: JsonRPC.ErrorCode.METHOD_NOT_FOUND,
           message: `Method not found: ${body.method}`
@@ -224,7 +210,7 @@ export namespace JsonRPC {
         .toPromise()
       if (!res.headersSent) {
         sendJson(res, 200, {
-          jsonrpc: JSONRPC_VERSION,
+          jsonrpc: DebuggingDefaults.JsonrpcVersion,
           result,
           id
         })
@@ -237,7 +223,7 @@ export namespace JsonRPC {
       })
       if (!res.headersSent) {
         sendJson(res, 200, {
-          jsonrpc: JSONRPC_VERSION,
+          jsonrpc: DebuggingDefaults.JsonrpcVersion,
           error: {
             code: JsonRPC.ErrorCode.INTERNAL_ERROR,
             message: err.message || "Internal error"
@@ -248,4 +234,3 @@ export namespace JsonRPC {
     }
   }
 }
-export default JsonRPC

@@ -484,34 +484,43 @@ export class Clio {
         }),
       endBlock = headBlock + blocksAhead
 
-    // Step 3: Scan blocks to find the transaction
-    for (let blockNum = startBlock; blockNum <= endBlock; blockNum++) {
-      if (isDeadlinePast()) break
+    // Step 3: Scan blocks in order, returning the first one that contains the tx.
+    const scanBlock = async (blockNum: number): Promise<number> => {
+      if (blockNum > endBlock || isDeadlinePast()) {
+        throw new Error(
+          `Transaction ${transId} not found in blocks ${startBlock}–${endBlock} within ${timeoutMs}ms`
+        )
+      }
 
-      // Wait for the block to exist
+      // Wait for the producer to reach this height
       while ((await this.getHead()) < blockNum) {
-        if (isDeadlinePast()) break
+        if (isDeadlinePast()) {
+          throw new Error(
+            `Timed out waiting for block ${blockNum} while searching for tx ${transId}`
+          )
+        }
         await Deferred.delay(Clio.PollIntervalMs)
       }
 
       try {
         const block = await this.getBlock(blockNum)
-        for (const tx of block.transactions ?? []) {
+        const match = (block.transactions ?? []).find(tx => {
           const txId = typeof tx.trx === "string" ? tx.trx : tx.trx?.id
-          if (txId === transId) {
-            log.info(`Transaction ${transId} found in block ${blockNum}`)
-            return blockNum
-          }
+          return txId === transId
+        })
+        if (match) {
+          log.info(`Transaction ${transId} found in block ${blockNum}`)
+          return blockNum
         }
       } catch (err) {
         log.error(`Failed to fetch block ${blockNum}:`, err)
         throw err
       }
+
+      return scanBlock(blockNum + 1)
     }
 
-    throw new Error(
-      `Transaction ${transId} not found in blocks ${startBlock}–${endBlock} within ${timeoutMs}ms`
-    )
+    return scanBlock(startBlock)
   }
 
   /**
@@ -689,5 +698,3 @@ export namespace Clio {
 
   export const NoTransactionSent = "no transaction is sent"
 }
-
-export default Clio

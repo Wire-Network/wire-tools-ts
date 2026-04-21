@@ -3,6 +3,8 @@
 // ---------------------------------------------------------------------------
 
 import type { ClusterPorts as SharedClusterPorts } from "@wire-e2e-tests/debugging-shared"
+import Bluebird from "bluebird"
+import { range } from "lodash"
 import {
   BASE_HTTP_PORT,
   BASE_P2P_PORT,
@@ -16,6 +18,9 @@ import {
  * default constants) can merge with the type locally.
  */
 export interface ClusterPorts extends SharedClusterPorts {}
+
+/** Loopback address used for every port probe and OS-assigned bind. */
+const LoopbackAddress = "127.0.0.1"
 
 export namespace ClusterPorts {
   export const DefaultKiod = 8900
@@ -36,18 +41,23 @@ export namespace ClusterPorts {
       server.once("listening", () => {
         server.close(() => resolve(true))
       })
-      server.listen(port, "127.0.0.1")
+      server.listen(port, LoopbackAddress)
     })
   }
 
-  /** Find an available port, starting from preferred. */
+  /**
+   * Find an available port. If `options.port` is supplied, try each preferred
+   * value in order and return the first one that binds; otherwise (or when
+   * all preferred ports are occupied) let the OS assign an ephemeral port.
+   */
   async function getPort(options?: { port?: number[] }): Promise<number> {
-    if (options?.port) {
-      for (const p of options.port) {
-        if (await isPortAvailable(p)) return p
-      }
-    }
-    // Fallback: let OS assign
+    const preferred = await Bluebird.reduce<number, number | null>(
+      options?.port ?? [],
+      async (acc, p) => acc ?? ((await isPortAvailable(p)) ? p : null),
+      null
+    )
+    if (preferred !== null) return preferred
+
     return new Promise((resolve, reject) => {
       const server = require("net").createServer()
       server.once("error", reject)
@@ -55,7 +65,7 @@ export namespace ClusterPorts {
         const port = server.address().port
         server.close(() => resolve(port))
       })
-      server.listen(0, "127.0.0.1")
+      server.listen(0, LoopbackAddress)
     })
   }
 
@@ -79,13 +89,8 @@ export namespace ClusterPorts {
       return port
     }
 
-    async function claimRange(base: number, count: number): Promise<number[]> {
-      const ports: number[] = []
-      for (let i = 0; i < count; i++) {
-        ports.push(await claim(base + i))
-      }
-      return ports
-    }
+    const claimRange = (base: number, count: number): Promise<number[]> =>
+      Bluebird.mapSeries(range(count), i => claim(base + i))
 
     const kiod = await claim(DefaultKiod)
     const biosHttp = await claim(DefaultBiosHttp)
@@ -155,11 +160,11 @@ export namespace ClusterPorts {
       ports.debuggingServer
     ]
 
-    const unavailable: number[] = []
-    for (const port of all) {
-      const actual = await getPort({ port: [port] })
-      if (actual !== port) unavailable.push(port)
-    }
+    const unavailable = await Bluebird.filter(
+      all,
+      async port => (await getPort({ port: [port] })) !== port,
+      { concurrency: 1 }
+    )
 
     if (unavailable.length > 0) {
       throw new Error(

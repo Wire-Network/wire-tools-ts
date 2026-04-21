@@ -83,19 +83,38 @@ export interface TestEnvironmentConfig {
  *   await env.stop()
  */
 export class TestEnvironment {
+  /** Live WIRE cluster orchestrator (nodeop + kiod lifecycle). */
   public cluster: ClusterManager
+  /** Local Ethereum devnet (anvil) manager. */
   public anvil: AnvilManager
+  /** Local Solana test validator manager. */
   public solanaValidator: SolanaValidatorManager
 
+  /** HTTP/RPC client for the bootstrapped WIRE chain. */
   public wireClient: WIREClient
+  /** ethers.js-backed client targeting {@link anvil}. */
   public ethClient: ETHClient
+  /** @solana/web3.js client targeting {@link solanaValidator}. */
   public solClient: SOLClient
 
+  /** Deploys the OPP outpost contract stack onto Ethereum. */
   public ethBootstrap: ETHBootstrap
+  /** Initializes the OPP outpost program / PDAs on Solana. */
   public solBootstrap: SOLBootstrap
 
+  /** Scratch directory used for per-run keypairs, logs, and cluster data. */
   private readonly tempPath: string
 
+  /**
+   * Construct a {@link TestEnvironment}. Does NOT start any processes —
+   * call {@link start} to launch the cluster, chains, and bootstrap steps.
+   *
+   * @param config - Fully-resolved environment configuration. The wire
+   *                 cluster path is bound to the singleton
+   *                 {@link ProcessManager} immediately, so callers must not
+   *                 construct two environments against different paths in
+   *                 the same process.
+   */
   constructor(readonly config: TestEnvironmentConfig) {
     ProcessManager.setClusterPath(config.wire.clusterPath).get()
 
@@ -225,5 +244,3 @@ export class TestEnvironment {
     log.info("Test environment stopped")
   }
 }
-
-export default TestEnvironment

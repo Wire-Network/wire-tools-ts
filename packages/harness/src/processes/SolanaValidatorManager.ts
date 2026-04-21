@@ -68,20 +68,15 @@ export class SolanaValidatorManager {
       String(config.rpcPort),
       "--faucet-port",
       String(config.faucetPort),
-      "--quiet"
+      "--quiet",
+      ...(config.ledgerPath ? ["--ledger", config.ledgerPath] : []),
+      ...(config.programs ?? []).flatMap(prog => [
+        "--bpf-program",
+        prog.programId,
+        prog.soFile
+      ]),
+      ...(config.extraArgs ?? [])
     ]
-
-    if (config.ledgerPath) {
-      args.push("--ledger", config.ledgerPath)
-    }
-
-    for (const prog of config.programs || []) {
-      args.push("--bpf-program", prog.programId, prog.soFile)
-    }
-
-    if (config.extraArgs) {
-      args.push(...config.extraArgs)
-    }
 
     const procConfig: ProcessConfig = {
       label: "solana-test-validator",

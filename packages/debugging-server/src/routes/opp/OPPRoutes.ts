@@ -17,8 +17,51 @@ import { ApiPaths, endpointsTypeToKey } from "@wire-e2e-tests/debugging-shared"
 import { JsonRPC } from "../../JsonRPC"
 
 import type express from "express"
+import { asOption } from "@3fv/prelude-ts"
+
+// ---------------------------------------------------------------------------
+//  Storage-key geometry
+// ---------------------------------------------------------------------------
+
+/**
+ * Number of hex characters retained from the sha256 checksum when forming the
+ * envelope filename. A shorter value makes filenames readable; widening it
+ * lowers the chance of accidental collision at the cost of longer keys.
+ * The same truncation is used for the `checksum` field echoed back in
+ * `EnvelopeListEntry` — keep the two in lockstep.
+ */
+const ChecksumHexChars = 16
+
+/**
+ * Number of checksum hex chars fed into the BigInt metadata field. Must stay
+ * ≤ 15 to fit in a `uint64` after the `0x` prefix — the protobuf field is
+ * `uint64`, so widening this will produce serialization failures.
+ */
+const MetadataChecksumHexChars = 12
+
+/** Zero-pad width applied to `epoch_index` when forming storage keys. */
+const EpochIndexPadWidth = 8
+
+/** Extensions used by the on-disk envelope storage layout. */
+namespace StorageFile {
+  export const Data = ".data" as const
+  export const Metadata = ".metadata" as const
+}
+
+// ---------------------------------------------------------------------------
+//  JSON-RPC route registration
+// ---------------------------------------------------------------------------
 
 export namespace OPPRoutes {
+  /**
+   * Register the three OPP JSON-RPC handlers (`Envelope`, `EnvelopeList`,
+   * `EnvelopeGet`) on the given {@link JsonRPC.HandlerRegistry}.
+   *
+   * @param registry       - Mutable registry to populate.
+   * @param oppStoragePath - Directory where envelope `.data`/`.metadata`
+   *                         files are persisted.
+   * @returns The same `registry` instance for fluent chaining.
+   */
   export function register(
     registry: JsonRPC.HandlerRegistry,
     oppStoragePath: string
@@ -27,34 +70,41 @@ export namespace OPPRoutes {
       registry,
       ApiPaths.OPP.Methods.Envelope,
       async (reqMessage, req: express.Request) => {
-        const { envelopeData } = req.body.params as any,
-          { batchOpName, endpointsType } = reqMessage
+        const { envelopeData } = req.body.params as any
+        const { batchOpName, endpointsType } = reqMessage
 
-        // 1. protobuf bytes fields serialize as base64 in JSON encoding
+        // 1. protobuf `bytes` fields serialize as base64 in JSON encoding
         const envelopeBytes = Buffer.from(
           envelopeData as unknown as string,
           "base64"
         )
 
-        // 2. Calculate data checksum (sha256 of the raw envelope bytes)
+        // 2. Data checksum (sha256 of the raw envelope bytes, truncated)
         const checksum = createHash("sha256")
           .update(envelopeBytes)
           .digest("hex")
-          .substring(0, 16) // truncate for filename readability
+          .substring(0, ChecksumHexChars)
 
-        // 3. Parse the envelope to extract epoch_index for the filename key
+        // 3. Parse epoch index from the envelope for the filename prefix
         const envelope = Envelope.fromBinary(envelopeBytes)
-        // const envelope2 = Envelope.fromBinary(envelopeData)
-        // const envelope3 = Envelope.fromBinary(req.body.params?.envelopeData)
-        const epochIndex = String(envelope.epochIndex).padStart(8, "0")
+        const epochIndex = String(envelope.epochIndex).padStart(
+          EpochIndexPadWidth,
+          "0"
+        )
 
-        // 4. Generate the storage key
+        // 4. Compose the canonical storage key
         const endpointsKey = endpointsTypeToKey(endpointsType)
         const baseKey = `${epochIndex}-${endpointsKey}-${checksum}`
-        const dataFile = Path.join(oppStoragePath, `${baseKey}.data`)
-        const metadataFile = Path.join(oppStoragePath, `${baseKey}.metadata`)
+        const dataFile = Path.join(
+          oppStoragePath,
+          `${baseKey}${StorageFile.Data}`
+        )
+        const metadataFile = Path.join(
+          oppStoragePath,
+          `${baseKey}${StorageFile.Metadata}`
+        )
 
-        // 5. Atomic data file write (skip if already exists — dedup)
+        // 5. Atomic data-file write (skip-if-exists for dedup)
         let dataExisted = false
         try {
           await Fs.promises.writeFile(dataFile, envelopeBytes, { flag: "wx" })
@@ -66,33 +116,17 @@ export namespace OPPRoutes {
           }
         }
 
-        // 6. Create or update metadata file
-        let metadata: { checksum: bigint; batchOpNames: string[] }
-        try {
-          const existingBytes = await Fs.promises.readFile(metadataFile)
-          const decoded = DebugEnvelopeMetadataRecord.fromBinary(existingBytes)
-          metadata = {
-            checksum: decoded.checksum,
-            batchOpNames: [...decoded.batchOpNames]
-          }
-          if (!metadata.batchOpNames.includes(batchOpName)) {
-            metadata.batchOpNames.push(batchOpName)
-          }
-        } catch {
-          metadata = {
-            checksum: BigInt(`0x${checksum.substring(0, 12)}`),
-            batchOpNames: [batchOpName]
-          }
-        }
+        // 6. Create or merge metadata (batch-op names accumulate per envelope)
+        const metadata = await readOrInitMetadata(
+          metadataFile,
+          checksum,
+          batchOpName
+        )
         await Fs.promises.writeFile(
           metadataFile,
-          DebugEnvelopeMetadataRecord.toBinary({
-            checksum: metadata.checksum,
-            batchOpNames: metadata.batchOpNames
-          })
+          DebugEnvelopeMetadataRecord.toBinary(metadata)
         )
 
-        // 7. Return PutEnvelopeResponse
         return PutEnvelopeResponse.create({
           key: baseKey,
           dataExisted,
@@ -116,64 +150,36 @@ export namespace OPPRoutes {
           timestampEnd = 0
         } = params
 
-        const files = await Fs.promises.readdir(oppStoragePath)
-        const dataFiles = files.filter(f => f.endsWith(".data")).sort()
+        const allFiles = await Fs.promises.readdir(oppStoragePath)
+        const dataFiles = allFiles
+          .filter(f => f.endsWith(StorageFile.Data))
+          .sort()
 
-        const entries: EnvelopeListEntry[] = []
-
-        for (const dataFile of dataFiles) {
-          const parsed = parseStorageKey(dataFile.replace(".data", ""))
-          if (!parsed) continue
-
-          // Epoch range filter
-          if (epochStart > 0 && parsed.epochIndex < epochStart) continue
-          if (epochEnd > 0 && parsed.epochIndex > epochEnd) continue
-
-          // Endpoints type filter
-          if (endpointsType !== DebugOutpostEndpointsType.UNKNOWN) {
-            const filterKey = endpointsTypeToKey(endpointsType)
-            if (filterKey && parsed.endpointsKey !== filterKey) continue
-          }
-
-          // Get file stats for timestamp + size
-          const dataPath = Path.join(oppStoragePath, dataFile)
-          const metadataPath = Path.join(
-            oppStoragePath,
-            dataFile.replace(".data", ".metadata")
+        const resolved = await Promise.all(
+          dataFiles.map(dataFile =>
+            resolveListEntry(
+              dataFile,
+              oppStoragePath,
+              parsed => {
+                if (!parsed) return false
+                if (epochStart > 0 && parsed.epochIndex < epochStart)
+                  return false
+                if (epochEnd > 0 && parsed.epochIndex > epochEnd) return false
+                if (endpointsType !== DebugOutpostEndpointsType.UNKNOWN) {
+                  const filterKey = endpointsTypeToKey(endpointsType)
+                  if (filterKey && parsed.endpointsKey !== filterKey)
+                    return false
+                }
+                return true
+              },
+              timestampStart,
+              timestampEnd
+            )
           )
-          const stat = await Fs.promises.stat(dataPath)
-          const timestampMs = stat.mtimeMs
-
-          // Timestamp range filter
-          if (timestampStart > 0 && timestampMs < Number(timestampStart))
-            continue
-          if (timestampEnd > 0 && timestampMs > Number(timestampEnd)) continue
-
-          // Read metadata for batch_op_names
-          let batchOpNames: string[] = []
-          try {
-            const metaBytes = await Fs.promises.readFile(metadataPath)
-            const meta = DebugEnvelopeMetadataRecord.fromBinary(metaBytes)
-            batchOpNames = [...meta.batchOpNames]
-          } catch {
-            /* metadata may not exist yet */
-          }
-
-          // Resolve endpoints enum from the key string
-          const resolvedEndpoints = resolveEndpointsType(parsed.endpointsKey)
-
-          entries.push(
-            EnvelopeListEntry.create({
-              key: parsed.key,
-              epochIndex: parsed.epochIndex,
-              endpointsType: resolvedEndpoints,
-              checksum: parsed.checksum,
-              batchOpNames,
-              timestamp: BigInt(Math.floor(timestampMs)),
-              dataSize: stat.size
-            })
-          )
-        }
+        )
+        const entries = resolved.filter(
+          (e): e is EnvelopeListEntry => e !== null
+        )
 
         return ListEnvelopesResponse.create({
           entries,
@@ -191,10 +197,12 @@ export namespace OPPRoutes {
       async params => {
         const { key } = params
 
-        const dataPath = Path.join(oppStoragePath, `${key}.data`)
-        const metadataPath = Path.join(oppStoragePath, `${key}.metadata`)
+        const dataPath = Path.join(oppStoragePath, `${key}${StorageFile.Data}`)
+        const metadataPath = Path.join(
+          oppStoragePath,
+          `${key}${StorageFile.Metadata}`
+        )
 
-        // Read envelope data
         let envelopeData: Uint8Array
         try {
           envelopeData = await Fs.promises.readFile(dataPath)
@@ -205,17 +213,8 @@ export namespace OPPRoutes {
           throw err
         }
 
-        // Read metadata
-        let batchOpNames: string[] = []
-        let checksum = ""
-        try {
-          const metaBytes = await Fs.promises.readFile(metadataPath)
-          const meta = DebugEnvelopeMetadataRecord.fromBinary(metaBytes)
-          batchOpNames = [...meta.batchOpNames]
-          checksum = meta.checksum.toString(16)
-        } catch {
-          /* metadata may not exist */
-        }
+        const { batchOpNames, checksum } =
+          await readMetadataSummary(metadataPath)
 
         const parsed = parseStorageKey(key)
         const stat = await Fs.promises.stat(dataPath)
@@ -240,17 +239,29 @@ export namespace OPPRoutes {
 }
 
 // ---------------------------------------------------------------------------
-//  Storage key parsing utilities
+//  Storage-key parsing utilities
 // ---------------------------------------------------------------------------
 
+/** Decomposed form of a canonical envelope storage key. */
 interface ParsedStorageKey {
+  /** The original, fully-formed key (round-trips back to the filename). */
   key: string
+  /** Numeric epoch index extracted from the zero-padded prefix. */
   epochIndex: number
+  /** Endpoints enum variant name as stored in the filename. */
   endpointsKey: string
+  /** Truncated sha256 checksum suffix. */
   checksum: string
 }
 
-/** Parse a storage key like "00000042-OUTPOST_ETHEREUM_DEPOT-abc123def456" */
+/**
+ * Parse a storage key of the form `"<epochIndex>-<endpointsKey>-<checksum>"`.
+ *
+ * @param key - Filename-style storage key without its extension.
+ * @returns The parsed components, or `null` if the key is malformed.
+ *
+ * @example parseStorageKey("00000042-OUTPOST_ETHEREUM_DEPOT-abc123def4567890")
+ */
 function parseStorageKey(key: string): ParsedStorageKey | null {
   const firstDash = key.indexOf("-")
   if (firstDash < 0) return null
@@ -267,18 +278,111 @@ function parseStorageKey(key: string): ParsedStorageKey | null {
   return { key, epochIndex, endpointsKey, checksum }
 }
 
-/** Reverse-map an endpoints key string back to the enum value */
+/**
+ * Reverse-map an endpoints enum name back to its numeric value. Falls back
+ * to `UNKNOWN` if no matching member exists — e.g. a client on an older
+ * protobuf schema wrote a name we no longer recognize.
+ */
 function resolveEndpointsType(endpointsKey: string): DebugOutpostEndpointsType {
-  const entries = Object.entries(DebugOutpostEndpointsType).filter(
-    ([, v]) => typeof v === "number"
-  ) as [string, number][]
-
-  for (const [name, value] of entries) {
-    if (name === endpointsKey) {
-      return value as DebugOutpostEndpointsType
-    }
-  }
-  return DebugOutpostEndpointsType.UNKNOWN
+  const raw = (DebugOutpostEndpointsType as Record<string, unknown>)[
+    endpointsKey
+  ]
+  return asOption(raw)
+    .filter((v): v is number => typeof v === "number")
+    .map(v => v as DebugOutpostEndpointsType)
+    .getOrElse(DebugOutpostEndpointsType.UNKNOWN)
 }
 
-export default OPPRoutes
+/**
+ * Resolve a single `.data` filename into a populated `EnvelopeListEntry`,
+ * or `null` if the key is malformed or fails the filter predicate.
+ */
+async function resolveListEntry(
+  dataFile: string,
+  oppStoragePath: string,
+  filterParsed: (parsed: ParsedStorageKey | null) => boolean,
+  timestampStart: number | bigint,
+  timestampEnd: number | bigint
+): Promise<EnvelopeListEntry | null> {
+  const parsed = parseStorageKey(dataFile.replace(StorageFile.Data, ""))
+  if (!filterParsed(parsed) || !parsed) return null
+
+  const dataPath = Path.join(oppStoragePath, dataFile)
+  const metadataPath = Path.join(
+    oppStoragePath,
+    dataFile.replace(StorageFile.Data, StorageFile.Metadata)
+  )
+  const stat = await Fs.promises.stat(dataPath)
+  const timestampMs = stat.mtimeMs
+
+  if (Number(timestampStart) > 0 && timestampMs < Number(timestampStart))
+    return null
+  if (Number(timestampEnd) > 0 && timestampMs > Number(timestampEnd))
+    return null
+
+  const batchOpNames = await readMetadataBatchOpNames(metadataPath)
+  return EnvelopeListEntry.create({
+    key: parsed.key,
+    epochIndex: parsed.epochIndex,
+    endpointsType: resolveEndpointsType(parsed.endpointsKey),
+    checksum: parsed.checksum,
+    batchOpNames,
+    timestamp: BigInt(Math.floor(timestampMs)),
+    dataSize: stat.size
+  })
+}
+
+// ---------------------------------------------------------------------------
+//  Metadata file helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Load an existing metadata record and append `batchOpName` if missing;
+ * otherwise initialize a fresh record with a BigInt-packed checksum.
+ */
+async function readOrInitMetadata(
+  metadataFile: string,
+  checksum: string,
+  batchOpName: string
+): Promise<{ checksum: bigint; batchOpNames: string[] }> {
+  try {
+    const existingBytes = await Fs.promises.readFile(metadataFile)
+    const decoded = DebugEnvelopeMetadataRecord.fromBinary(existingBytes)
+    const batchOpNames = [...decoded.batchOpNames]
+    if (!batchOpNames.includes(batchOpName)) batchOpNames.push(batchOpName)
+    return { checksum: decoded.checksum, batchOpNames }
+  } catch {
+    return {
+      checksum: BigInt(`0x${checksum.substring(0, MetadataChecksumHexChars)}`),
+      batchOpNames: [batchOpName]
+    }
+  }
+}
+
+/** Read the `batchOpNames` list, tolerating missing metadata files. */
+async function readMetadataBatchOpNames(
+  metadataPath: string
+): Promise<string[]> {
+  try {
+    const metaBytes = await Fs.promises.readFile(metadataPath)
+    return [...DebugEnvelopeMetadataRecord.fromBinary(metaBytes).batchOpNames]
+  } catch {
+    return []
+  }
+}
+
+/** Read both batchOp names and checksum in one pass. */
+async function readMetadataSummary(
+  metadataPath: string
+): Promise<{ batchOpNames: string[]; checksum: string }> {
+  try {
+    const metaBytes = await Fs.promises.readFile(metadataPath)
+    const meta = DebugEnvelopeMetadataRecord.fromBinary(metaBytes)
+    return {
+      batchOpNames: [...meta.batchOpNames],
+      checksum: meta.checksum.toString(16)
+    }
+  } catch {
+    return { batchOpNames: [], checksum: "" }
+  }
+}

@@ -22,12 +22,19 @@ export namespace ApiPaths {
 
   export namespace OPP {
     export const Endpoint = "/api/opp" as const
-    export const Methods = {
-      Envelope: "Envelope",
-      EnvelopeList: "EnvelopeList",
-      EnvelopeGet: "EnvelopeGet"
-    } as const
-    export type MethodKey = keyof typeof Methods
+
+    /**
+     * RPC method names exposed under the OPP feature section.
+     *
+     * Values double as JSON-RPC `method` strings on the wire and as keys in
+     * `HandlerMap` / `HandlerTypeMappings`. Renaming a member is a breaking
+     * wire-protocol change — bump the server version and update every client.
+     */
+    export enum Methods {
+      Envelope = "Envelope",
+      EnvelopeList = "EnvelopeList",
+      EnvelopeGet = "EnvelopeGet"
+    }
   }
 }
 
@@ -65,7 +72,7 @@ export interface HandlerMap {
 }
 export type MessageTypeCtor<T extends object = any> = { new (): MessageType<T> }
 export const HandlerTypeMappings: {
-  [URI in ApiPaths.OPP.MethodKey]: [MessageType<any>, MessageType<any>]
+  [URI in ApiPaths.OPP.Methods]: [MessageType<any>, MessageType<any>]
 } = {
   [ApiPaths.OPP.Methods.Envelope]: [PutEnvelopeRequest, PutEnvelopeResponse],
   [ApiPaths.OPP.Methods.EnvelopeList]: [

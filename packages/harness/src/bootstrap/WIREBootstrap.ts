@@ -3,8 +3,10 @@
 import Path from "path"
 import Fs from "fs"
 import { Clio } from "../clients/Clio.js"
+import { AnvilManager } from "../processes/AnvilManager.js"
 import { log } from "../logger.js"
 import { sleep, waitForEndpoint, retry, existsAsync } from "../util.js"
+import Bluebird from "bluebird"
 import {
   DEV_BLS_PRIVATE_KEY,
   DEV_BLS_PROOF_OF_POSSESSION,
@@ -100,6 +102,24 @@ export const SYSTEM_ACCOUNTS = [
 ] as const
 
 export type SystemAccountName = (typeof SYSTEM_ACCOUNTS)[number]
+
+/**
+ * Pause between feature-activation `clio` calls. Chain head has to advance
+ * before the next activation observes the previous one — dropping this
+ * below ~500ms starts producing "already activated" warnings that mask
+ * real failures.
+ */
+const FeatureActivationDelayMs = 500
+
+/**
+ * Total attempts allowed for each OPP contract deployment. Set-contract
+ * occasionally fails while the producer is mid-block; retrying absorbs
+ * that jitter. Raising this tolerates a slower machine but masks real bugs.
+ */
+const ContractDeployRetryAttempts = 3
+
+/** Delay between contract-deploy retry attempts. */
+const ContractDeployRetryDelayMs = 2_000
 
 export class WIREBootstrap {
   /**
@@ -217,9 +237,9 @@ export class WIREBootstrap {
       const features = (await resp.json()) as any[]
 
       // Activate each feature
-      for (const feature of features) {
+      await Bluebird.each(features, async feature => {
         const digest = feature.feature_digest
-        if (!digest) continue
+        if (!digest) return
         try {
           await this.clio.activateFeature(digest)
           log.debug(
@@ -231,8 +251,8 @@ export class WIREBootstrap {
             log.debug(`Feature activation skipped: ${digest} — ${err.message}`)
           }
         }
-        await sleep(500)
-      }
+        await sleep(FeatureActivationDelayMs)
+      })
     } catch (err: any) {
       log.warn(
         `Protocol feature activation via API failed, trying individual activation: ${err.message}`
@@ -244,21 +264,21 @@ export class WIREBootstrap {
 
   private async createSystemAccounts(): Promise<void> {
     log.info("Creating system accounts...")
-    for (const account of SYSTEM_ACCOUNTS) {
+    await Bluebird.each(SYSTEM_ACCOUNTS, async account => {
       try {
         await this.clio.createSystemAccount(account, this.config.k1PublicKey)
         log.debug(`Created account: ${account}`)
       } catch (err: any) {
-        if (
+        const alreadyExists =
           err.message?.includes("already exists") ||
           err.stderr?.includes("already exists")
-        ) {
+        if (alreadyExists) {
           log.debug(`Account ${account} already exists`)
         } else {
           throw err
         }
       }
-    }
+    })
     log.info(`Created ${SYSTEM_ACCOUNTS.length} system accounts`)
   }
 
@@ -326,13 +346,11 @@ export class WIREBootstrap {
       { account: "sysio.chalg", name: "sysio.chalg" }
     ]
 
-    for (const { account, name } of oppContracts) {
+    await Bluebird.each(oppContracts, async ({ account, name }) => {
       log.info(`Deploying ${name}...`)
 
-      // GET THE CONTRACT PATH
       const contractPath = this.toContractPath(name)
 
-      // SET CONTRACT
       log.info(`Setting ${name} from ${contractPath}`)
       await retry(
         () =>
@@ -342,15 +360,18 @@ export class WIREBootstrap {
             `${name}.wasm`,
             `${name}.abi`
           ),
-        { label: `deploy ${name}`, maxAttempts: 3, delayMs: 2000 }
+        {
+          label: `deploy ${name}`,
+          maxAttempts: ContractDeployRetryAttempts,
+          delayMs: ContractDeployRetryDelayMs
+        }
       )
 
-      // SET PRIVILEGED
       log.info(`Setting ${name} privileged`)
       await this.clio.setPriv(account)
 
       log.info(`Deployed ${name} from ${contractPath}`)
-    }
+    })
   }
 
   private async configureOPP(): Promise<void> {
@@ -375,19 +396,19 @@ export class WIREBootstrap {
       log.warn(`Failed to configure epoch: ${err.message}`)
     }
 
-    // Register outposts: ETHEREUM (chain_kind=SysioEpochChainkind.CHAIN_KIND_ETHEREUM, chain_id=31337) and SOLANA (chain_kind=3, chain_id=1)
+    // Register outposts: ETHEREUM (anvil local chain) and SOLANA (disabled below).
     try {
       await this.clio.pushAction<SystemContracts.SysioEpochRegoutpostAction>(
         "sysio.epoch",
         "regoutpost",
         {
           chain_kind: SysioEpochChainkind.CHAIN_KIND_ETHEREUM,
-          chain_id: 31337
+          chain_id: AnvilManager.DefaultChainId
         },
         "sysio.epoch@active"
       )
       log.info(
-        "Registered ETH outpost (chain_kind=SysioEpochChainkind.CHAIN_KIND_ETHEREUM, chain_id=31337)"
+        `Registered ETH outpost (chain_kind=CHAIN_KIND_ETHEREUM, chain_id=${AnvilManager.DefaultChainId})`
       )
     } catch (err: any) {
       log.error(`Failed to register ETH outpost: ${err.message}`, err)

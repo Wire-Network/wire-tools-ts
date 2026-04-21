@@ -65,89 +65,103 @@ export interface StartCmdOptions {
   extraArgs?: string[]
 }
 
+/** Nodeop plugins loaded on every node regardless of role. */
+const AlwaysOnPlugins = [
+  "sysio::net_plugin",
+  "sysio::chain_api_plugin"
+] as const
+
+/** Nodeop plugins loaded only when the node has producers assigned. */
+const ProducerPlugins = ["sysio::producer_plugin"] as const
+
+/** Nodeop plugins loaded after the standard argument block. */
+const TrailingPlugins = [
+  "sysio::producer_api_plugin",
+  "sysio::trace_api_plugin"
+] as const
+
+/** `[flag, value]` pair expansion helper. */
+const pair = (flag: string, value: string): [string, string] => [flag, value]
+
+/** `--plugin` expansion helper (readonly-array friendly). */
+const pluginArgs = (plugins: readonly string[]): string[] =>
+  plugins.flatMap(p => pair("--plugin", p))
+
 /**
- * Build the full nodeop command-line arguments matching the Python launcher's
- * `construct_command_line()` output.
+ * Build the full nodeop command-line arguments matching the Python
+ * launcher's `construct_command_line()` output.
+ *
+ * @param opts - Fully-materialized node config; missing fields take
+ *               defaults from {@link buildStartCmd}.
+ * @returns Argv array suitable for `spawn(argv[0], argv.slice(1))` or
+ *          for joining into a `start.cmd` file.
  */
 export function buildStartCmd(opts: StartCmdOptions): string[] {
-  const args: string[] = [opts.nodeopBinary]
+  const {
+    DefaultBlocksPath,
+    DefaultVoteThreads,
+    DefaultMaxTransactionTime,
+    DefaultAbiSerializerMaxTimeMs,
+    DefaultP2PMaxNodesPerHost,
+    DefaultMaxClients,
+    DefaultConnectionCleanupPeriodSec,
+    DefaultHttpMaxResponseTimeMs
+  } = buildStartCmd
 
-  args.push("--blocks-dir", opts.blocksPath ?? "blocks")
-  args.push("--p2p-listen-endpoint", opts.p2pListenEndpoint)
-  args.push("--p2p-server-address", opts.p2pServerAddress)
+  const hasProducers = opts.producerNames.length > 0
 
-  for (const peer of opts.p2pPeerAddresses) {
-    args.push("--p2p-peer-address", peer)
-  }
-
-  if (opts.enableStaleProduction) {
-    args.push("--enable-stale-production")
-  }
-
-  // Plugins — net and chain_api are always loaded
-  args.push("--plugin", "sysio::net_plugin")
-  args.push("--plugin", "sysio::chain_api_plugin")
-
-  // Producer plugin if there are producers assigned
-  if (opts.producerNames.length > 0) {
-    args.push("--plugin", "sysio::producer_plugin")
-
-    // Signature providers — K1
-    for (const k1 of opts.k1Keys) {
-      args.push("--signature-provider", formatK1SignatureProvider(k1))
-    }
-    // Signature providers — BLS
-    for (const bls of opts.blsKeys) {
-      args.push("--signature-provider", formatBLSSignatureProvider(bls))
-    }
-
-    // Producer names
-    for (const name of opts.producerNames) {
-      args.push("--producer-name", name)
-    }
-  }
-
-  // Standard nodeop args (matches Python cluster_manager.py nodeop_args)
-  args.push("--vote-threads", String(opts.voteThreads ?? 4))
-  args.push("--max-transaction-time", String(opts.maxTransactionTime ?? -1))
-  args.push(
-    "--abi-serializer-max-time-ms",
-    String(opts.abiSerializerMaxTimeMs ?? 990000)
-  )
-  args.push("--p2p-max-nodes-per-host", String(opts.p2pMaxNodesPerHost ?? 1))
-  args.push("--max-clients", String(opts.maxClients ?? 25))
-  args.push(
-    "--connection-cleanup-period",
-    String(opts.connectionCleanupPeriod ?? 15)
-  )
-
-  if (opts.contractsConsole !== false) {
-    args.push("--contracts-console")
-  }
-
-  args.push("--plugin", "sysio::producer_api_plugin")
-  args.push("--plugin", "sysio::trace_api_plugin")
-  args.push("--trace-no-abis")
-  args.push(
-    "--http-max-response-time-ms",
-    String(opts.httpMaxResponseTimeMs ?? 990000)
-  )
-
-  // Directories
-  args.push("--config-dir", opts.configPath)
-  args.push("--data-dir", opts.dataPath)
-  args.push("--genesis-json", opts.genesisJson)
-  args.push("--genesis-timestamp", opts.genesisTimestamp)
-
-  // HTTP
-  args.push("--http-server-address", opts.httpServerAddress)
-
-  // Extra args
-  if (opts.extraArgs) {
-    args.push(...opts.extraArgs)
-  }
-
-  return args
+  return [
+    opts.nodeopBinary,
+    ...pair("--blocks-dir", opts.blocksPath ?? DefaultBlocksPath),
+    ...pair("--p2p-listen-endpoint", opts.p2pListenEndpoint),
+    ...pair("--p2p-server-address", opts.p2pServerAddress),
+    ...opts.p2pPeerAddresses.flatMap(peer => pair("--p2p-peer-address", peer)),
+    ...(opts.enableStaleProduction ? ["--enable-stale-production"] : []),
+    ...pluginArgs(AlwaysOnPlugins),
+    ...(hasProducers
+      ? [
+          ...pluginArgs(ProducerPlugins),
+          ...opts.k1Keys.flatMap(k1 =>
+            pair("--signature-provider", formatK1SignatureProvider(k1))
+          ),
+          ...opts.blsKeys.flatMap(bls =>
+            pair("--signature-provider", formatBLSSignatureProvider(bls))
+          ),
+          ...opts.producerNames.flatMap(name => pair("--producer-name", name))
+        ]
+      : []),
+    ...pair("--vote-threads", String(opts.voteThreads ?? DefaultVoteThreads)),
+    ...pair(
+      "--max-transaction-time",
+      String(opts.maxTransactionTime ?? DefaultMaxTransactionTime)
+    ),
+    ...pair(
+      "--abi-serializer-max-time-ms",
+      String(opts.abiSerializerMaxTimeMs ?? DefaultAbiSerializerMaxTimeMs)
+    ),
+    ...pair(
+      "--p2p-max-nodes-per-host",
+      String(opts.p2pMaxNodesPerHost ?? DefaultP2PMaxNodesPerHost)
+    ),
+    ...pair("--max-clients", String(opts.maxClients ?? DefaultMaxClients)),
+    ...pair(
+      "--connection-cleanup-period",
+      String(opts.connectionCleanupPeriod ?? DefaultConnectionCleanupPeriodSec)
+    ),
+    ...(opts.contractsConsole !== false ? ["--contracts-console"] : []),
+    ...pluginArgs(TrailingPlugins),
+    "--trace-no-abis",
+    ...pair(
+      "--http-max-response-time-ms",
+      String(opts.httpMaxResponseTimeMs ?? DefaultHttpMaxResponseTimeMs)
+    ),
+    ...pair("--config-dir", opts.configPath),
+    ...pair("--data-dir", opts.dataPath),
+    ...pair("--genesis-json", opts.genesisJson),
+    ...pair("--genesis-timestamp", opts.genesisTimestamp),
+    ...pair("--http-server-address", opts.httpServerAddress),
+    ...(opts.extraArgs ?? [])
+  ]
 }
 
 /**
@@ -158,28 +172,53 @@ export function buildStartCmdString(opts: StartCmdOptions): string {
 }
 
 /**
+ * Flags whose `[flag, value]` pair gets stripped by {@link buildRelaunchCmd}.
+ * Genesis settings are one-shot: applying them on every relaunch would
+ * re-stamp the chain with a new genesis timestamp.
+ */
+const RelaunchStripFlags: ReadonlySet<string> = new Set([
+  "--genesis-json",
+  "--genesis-timestamp"
+])
+
+/** Flag appended to relaunches so the restarted producer can resume. */
+const EnableStaleProductionFlag = "--enable-stale-production"
+
+/**
  * Build a relaunch command from a saved start.cmd.
- * Strips --genesis-json and --genesis-timestamp, adds --enable-stale-production.
+ *
+ * Strips every `[flag, value]` pair whose flag is in
+ * {@link RelaunchStripFlags} and idempotently appends
+ * {@link EnableStaleProductionFlag}.
+ *
+ * @param originalCmd - Argv captured at cluster-create time.
+ * @returns Argv suitable for relaunch on `wire-test-cluster run`.
  */
 export function buildRelaunchCmd(originalCmd: string[]): string[] {
-  const cmd: string[] = []
-  let skipNext = false
+  const stripped = originalCmd.flatMap((arg, i, all) => {
+    if (RelaunchStripFlags.has(all[i - 1])) return []
+    if (RelaunchStripFlags.has(arg)) return []
+    return [arg]
+  })
 
-  for (const arg of originalCmd) {
-    if (skipNext) {
-      skipNext = false
-      continue
-    }
-    if (arg === "--genesis-json" || arg === "--genesis-timestamp") {
-      skipNext = true
-      continue
-    }
-    cmd.push(arg)
-  }
+  return stripped.includes(EnableStaleProductionFlag)
+    ? stripped
+    : [...stripped, EnableStaleProductionFlag]
+}
 
-  if (!cmd.includes("--enable-stale-production")) {
-    cmd.push("--enable-stale-production")
-  }
-
-  return cmd
+/**
+ * Defaults applied when a {@link StartCmdOptions} field is omitted. These
+ * mirror the values produced by the Python launcher's
+ * `construct_command_line()` — changing one here silently changes the
+ * nodeop configuration for every cluster that doesn't override it.
+ */
+export namespace buildStartCmd {
+  export const DefaultBlocksPath = "blocks"
+  export const DefaultVoteThreads = 4
+  export const DefaultMaxTransactionTime = -1
+  export const DefaultAbiSerializerMaxTimeMs = 990_000
+  export const DefaultP2PMaxNodesPerHost = 1
+  export const DefaultMaxClients = 25
+  export const DefaultConnectionCleanupPeriodSec = 15
+  export const DefaultHttpMaxResponseTimeMs = 990_000
 }

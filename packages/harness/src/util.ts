@@ -29,8 +29,22 @@ export function mkdirs(path: string): string {
 }
 
 /**
- * Poll an HTTP endpoint until it responds (or timeout).
- * Used to wait for anvil, solana-test-validator, nodeop to be ready.
+ * Poll an HTTP endpoint until it responds with a "server is up" status.
+ *
+ * Returns successfully on 2xx **or** on 400/404/405 — these indicate the
+ * server is answering HTTP but this particular URL is not a valid GET;
+ * they still prove liveness, which is what the caller actually wants.
+ *
+ * @param url      - Fully-qualified URL to poll.
+ * @param opts.timeoutMs  - Give up after this many ms. Default: 30_000.
+ * @param opts.intervalMs - Gap between polls. Default: 500.
+ * @param opts.label      - Human-readable label for log lines. Default: `url`.
+ *
+ * @example
+ * await waitForEndpoint(`http://127.0.0.1:${port}/v1/chain/get_info`, {
+ *   label: "nodeop",
+ *   timeoutMs: 15_000
+ * })
  */
 export async function waitForEndpoint(
   url: string,
@@ -42,14 +56,9 @@ export async function waitForEndpoint(
     try {
       const resp = await fetch(url, {
         method: "GET",
-        signal: AbortSignal.timeout(2000)
+        signal: AbortSignal.timeout(FetchProbeTimeoutMs)
       })
-      if (
-        resp.ok ||
-        resp.status === 400 ||
-        resp.status === 404 ||
-        resp.status === 405
-      ) {
+      if (isLivenessStatus(resp.status) || resp.ok) {
         log.info(`${label} is ready`)
         return
       }
@@ -61,25 +70,53 @@ export async function waitForEndpoint(
   throw new Error(`${label} did not become ready within ${timeoutMs}ms`)
 }
 
+/** Per-probe HTTP fetch timeout used by {@link waitForEndpoint}. */
+const FetchProbeTimeoutMs = 2_000
+
 /**
- * Retry a function up to `maxAttempts` times with delay between attempts.
+ * HTTP status codes that prove the server is answering — regardless of
+ * whether THIS path+method is handled. Used by {@link waitForEndpoint}.
+ * Changing the set affects liveness detection: removing a code may cause
+ * false-negatives, adding one may cause premature "ready" signals.
+ */
+const LivenessStatusCodes = new Set<number>([400, 404, 405])
+
+/** True if `status` is in {@link LivenessStatusCodes}. */
+function isLivenessStatus(status: number): boolean {
+  return LivenessStatusCodes.has(status)
+}
+
+/**
+ * Retry an async operation with fixed-interval backoff.
+ *
+ * @param fn                - The async operation to attempt.
+ * @param opts.maxAttempts  - Total attempts (includes the first try). Default: 3.
+ * @param opts.delayMs      - Delay between attempts. Default: 1_000.
+ * @param opts.label        - Human-readable label used in warn logs. Default: "operation".
+ * @returns The resolved value of `fn` on the first successful attempt.
+ * @throws The last error raised by `fn` when every attempt fails.
+ *
+ * @example
+ * await retry(() => client.call(method, params), { maxAttempts: 5, label: method })
  */
 export async function retry<T>(
   fn: () => Promise<T>,
   opts: { maxAttempts?: number; delayMs?: number; label?: string } = {}
 ): Promise<T> {
-  const { maxAttempts = 3, delayMs = 1000, label = "operation" } = opts
-  let lastErr: Error | undefined
-  for (let i = 1; i <= maxAttempts; i++) {
+  const { maxAttempts = 3, delayMs = 1_000, label = "operation" } = opts
+
+  const attempt = async (n: number): Promise<T> => {
     try {
       return await fn()
     } catch (err: any) {
-      lastErr = err
-      log.warn(`${label} attempt ${i}/${maxAttempts} failed: ${err.message}`)
-      if (i < maxAttempts) await sleep(delayMs)
+      log.warn(`${label} attempt ${n}/${maxAttempts} failed: ${err.message}`)
+      if (n >= maxAttempts) throw err
+      await sleep(delayMs)
+      return attempt(n + 1)
     }
   }
-  throw lastErr
+
+  return attempt(1)
 }
 
 export const isNotEmpty = negate(isEmpty)

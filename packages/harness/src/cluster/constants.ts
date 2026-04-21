@@ -293,20 +293,32 @@ export const UNDERWRITER_PLUGINS = [
 // Account name generators for batch operators and underwriters
 // ---------------------------------------------------------------------------
 
-const ASCII_LOWER_CONST = "abcdefghijklmnopqrstuvwxyz"
+/**
+ * The 26 lowercase ASCII letters, used as single-character suffixes for
+ * operator account names. Indexing wraps via modulo, so clusters with more
+ * than 26 operators will reuse letters — raise this only if you're also
+ * changing the on-chain account naming scheme.
+ */
+const LowercaseAlphabet = "abcdefghijklmnopqrstuvwxyz"
 
 /**
  * Generate a batch operator account name from its index.
- * e.g., index 0 -> "batchop.a", index 1 -> "batchop.b"
+ *
+ * @param index - Zero-based operator index within the cluster.
+ * @returns Account name of the form `batchop.<letter>`.
+ * @example batchOperatorAccountName(0) // "batchop.a"
  */
 export function batchOperatorAccountName(index: number): string {
-  return `batchop.${ASCII_LOWER_CONST[index % ASCII_LOWER_CONST.length]}`
+  return `batchop.${LowercaseAlphabet[index % LowercaseAlphabet.length]}`
 }
 
 /**
  * Generate an underwriter account name from its index.
- * e.g., index 0 -> "uwrit.a", index 1 -> "uwrit.b"
+ *
+ * @param index - Zero-based underwriter index within the cluster.
+ * @returns Account name of the form `uwrit.<letter>`.
+ * @example underwriterAccountName(1) // "uwrit.b"
  */
 export function underwriterAccountName(index: number): string {
-  return `uwrit.${ASCII_LOWER_CONST[index % ASCII_LOWER_CONST.length]}`
+  return `uwrit.${LowercaseAlphabet[index % LowercaseAlphabet.length]}`
 }

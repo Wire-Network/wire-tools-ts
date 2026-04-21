@@ -1,14 +1,17 @@
 import React from "react"
 import { Box, Text } from "ink"
-import { useSelector } from "react-redux"
 
-import { type NodeState } from "@wire-e2e-tests/debugging-shared"
+import {
+  ClusterFiles,
+  NodeRole,
+  type NodeState
+} from "@wire-e2e-tests/debugging-shared"
 
 import { Panel } from "../components/Panel.js"
 import { StatusWidget } from "../components/StatusWidget.js"
 import type { ComponentProviders } from "../providers/ComponentProviders.js"
 import { FeatureDebugger } from "./FeatureDebugger.js"
-import { selectCluster } from "../store.js"
+import { selectCluster, useAppSelector } from "../store.js"
 
 // ---------------------------------------------------------------------------
 //  Panel body
@@ -20,13 +23,13 @@ import { selectCluster } from "../store.js"
  * discovery lands once the harness writes them.
  */
 function ProcessMonitorBody(): React.ReactElement {
-  const cluster = useSelector(selectCluster)
+  const cluster = useAppSelector(selectCluster)
 
   if (!cluster.state) {
     return (
       <Text dimColor>
-        No {ProcessMonitor.StateFilename} found in {cluster.path ?? "(unknown)"}{" "}
-        — has the cluster been bootstrapped yet?
+        No {ClusterFiles.StateFilename} found in {cluster.path ?? "(unknown)"} —
+        has the cluster been bootstrapped yet?
       </Text>
     )
   }
@@ -44,8 +47,8 @@ function ProcessMonitorBody(): React.ReactElement {
       </Text>
       {rows.map(n => (
         <Text key={String(n.nodeId)}>
-          [{n.role ?? "producer"}] {n.producerName ?? n.nodeId} @ {n.host}:
-          {n.port}
+          [{n.role ?? NodeRole.Producer}] {n.producerName ?? n.nodeId} @{" "}
+          {n.host}:{n.port}
         </Text>
       ))}
     </Box>
@@ -73,7 +76,7 @@ namespace ProcessMonitorPanel {
 // ---------------------------------------------------------------------------
 
 function NodeCountBody(): React.ReactElement {
-  const cluster = useSelector(selectCluster)
+  const cluster = useAppSelector(selectCluster)
 
   if (!cluster.state) {
     return <Text dimColor>nodes: ?</Text>
@@ -128,6 +131,4 @@ export class ProcessMonitor extends FeatureDebugger {
 export namespace ProcessMonitor {
   export const Id = "process-monitor" as const
   export const Name = "Process Monitor" as const
-  /** Filename of the on-disk cluster state, used in the no-state message. */
-  export const StateFilename = ".cluster_state.json" as const
 }

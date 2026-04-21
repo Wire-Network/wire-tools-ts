@@ -23,23 +23,46 @@ export const ANVIL_DEFAULT_PRIVATE_KEY =
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * How a flow test obtains the cluster it talks to.
+ *
+ * - `Fresh`  — create a new cluster for this test run and tear it down after.
+ * - `Attach` — connect to a long-running cluster whose `cluster-config.json`
+ *              is already on disk. Flow tests invoked via
+ *              `wire-test-cluster run` typically use this.
+ */
 export enum FlowMode {
   Fresh = "fresh",
   Attach = "attach"
 }
 
+/**
+ * Caller-supplied config for {@link FlowTestContext}. Field requirements
+ * depend on the {@link FlowMode} resolved at construction time.
+ */
 export interface FlowTestContextOptions {
-  /** Path to cluster-config.json (attach mode). Defaults to WIRE_CLUSTER_CONFIG env. */
+  /**
+   * Path to the `cluster-config.json` written by `wire-test-cluster create`.
+   * Required (implicitly or via `WIRE_CLUSTER_CONFIG`) when running in
+   * `Attach` mode; ignored in `Fresh` mode.
+   */
   clusterConfigPath?: string
 
-  /** Fresh mode options (ignored in attach mode) */
+  /** Path to the wire-sysio build directory. Required in `Fresh` mode. */
   buildPath?: string
+  /** Where to materialize the cluster. Required in `Fresh` mode. */
   clusterPath?: string
+  /** Path to wire-ethereum repo root (enables Anvil + ETH outpost). */
   ethereumPath?: string
+  /** Number of producers to bake into genesis. Default: 21. */
   producerCount?: number
+  /** Total nodeop nodes. Default: `producerCount`. */
   nodeCount?: number
+  /** Batch operator nodes to create. Default: 3. */
   batchOperatorCount?: number
+  /** Underwriter nodes to create. Default: 1. */
   underwriterCount?: number
+  /** Epoch duration in seconds. Default: 360. */
   epochDurationSec?: number
 }
 

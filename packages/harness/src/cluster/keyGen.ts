@@ -124,18 +124,26 @@ export function formatBLSSignatureProvider(keys: BLSKeyPair): string {
   return `wire-bls-${keys.publicKey},wire,wire_bls,${keys.publicKey},KEY:${keys.privateKey}`
 }
 
-/** Hardcoded bios BLS key (matches TestHarness launcher.py). */
+/**
+ * Hardcoded BLS key pair for the bios node.
+ *
+ * These values mirror the `DefaultBLSKeyPair` constants in `@wireio/sdk-core`
+ * and are the same keys baked into the Python TestHarness launcher. They're
+ * used ONLY during cluster bootstrap — real producers generate their own
+ * keys via `generateAndImportKeys`. Changing the source of these values
+ * without also updating the Python launcher breaks cross-tool parity.
+ */
 export const BIOS_BLS_KEY: BLSKeyPair = {
   publicKey: DefaultBLSKeyPair.publicKeyStr,
   privateKey: DefaultBLSKeyPair.privateKeyStr,
   proofOfPossession: DefaultBLSKeyPair.proofOfPossessionStr
-  // TODO: Remove
-  //"PUB_BLS_3igm9y-m3poDQL9IU-oE2E3rjKVD025aN5_Kpod8aVKjqtg4xOrP-jGtz4wLg_IFzc7gay9YghYwVgNafpxphE2xOY5gzEPa8li1rmtFfdpXguDFhNw2FpuLWSWami8WXgUo3A",
-  //"PVT_BLS_3VUaSS7tIjSgYU6c8rggjQw3holItXxPbVB-ijnnKV3XTPWC",
-  // "SIG_BLS_qdQ36ASsBk_pJ9efSCZmSN5OcqNX7GIxjzpREX8TBOBVpUOheRfZmCGO7jay2lIZiD2vkrODGQDCsa3lfkB2FjhmoTce1TYpMOWv-PoPO4D36Y4yjItfa0iMgouirmcG_rubUJDtgn0bHdvtroCc3HDoBHVeI994Ycs62RVJEROyTjIlTVGk3iXoAK9skkQKz3DM3wT0yevxP_O47Ul85rJWnEVAlAjCUOsirAdu0yO1362pdnnl8kjXaPqEj_EYPvrRXw"
 }
 
-/** Hardcoded bios K1 key (the standard dev key). */
+/**
+ * Hardcoded K1 key pair for the bios node. Same ownership semantics as
+ * {@link BIOS_BLS_KEY} — dev-only, bootstrap-only. Never treat this key as
+ * authoritative outside a test cluster.
+ */
 export const BIOS_K1_KEY: K1KeyPair = {
   publicKey: DefaultK1KeyPair.publicKeyWIF,
   privateKey: DefaultK1KeyPair.privateKeyWIF
