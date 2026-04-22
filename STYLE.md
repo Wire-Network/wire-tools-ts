@@ -338,6 +338,41 @@ Use numeric separators for timeouts and large values. `15_000` reads as "15 seco
 
 ---
 
+## Barrel Exports (`index.ts`)
+
+Every subdirectory with one or more publicly-consumed files gets an `index.ts` barrel that re-exports those files. The barrel is the public face of the subdirectory — consumers import from the directory path, never from a specific `.ts` file inside it.
+
+### Rules
+
+- **One barrel per directory with public exports.** Empty / internal-only directories don't need one.
+- **Barrel contents are `export * from "./<file>"` lines only.** No logic, no types, no constants.
+- **Parent barrels re-export child subdirectories** via `export * from "./<subdir>/index.js"` — NOT `./<subdir>`. The resolver finds `index.ts` automatically.
+- **Barrel paths INCLUDE extensions and DO reference `.js`/`.ts`.** `export * from "./rpc/index.js"`, not `"./rpc"`.
+- **No wildcard re-exports of third-party surface.** Never `export * from "@wireio/opp-typescript-models"` or similar — consumers import generated-model types from their source package.
+
+### Example
+
+```
+src/
+├── index.ts                 # export * from "./rpc"; export * from "./cluster"
+├── rpc/
+│   ├── index.ts             # export * from "./Paths"
+│   └── Paths.ts             # export namespace ApiPaths { ... }; export type Handler<...>
+└── cluster/
+    ├── index.ts             # export * from "./ClusterTypes"
+    └── ClusterTypes.ts      # export interface ClusterConfig { ... }
+```
+
+Consumers write `import { ApiPaths, type Handler } from "@scope/package"` — they don't need to know whether `ApiPaths` lives under `rpc/` or `cluster/`. Reorganizing the internal layout stays transparent to consumers as long as the barrel keeps re-exporting the same names.
+
+### Why
+
+- **Refactor locality.** Moving `ApiPaths` from `src/api/` to `src/rpc/` should not break a single downstream import.
+- **Single source of truth for the surface area.** Reviewing the root `index.ts` answers "what does this package expose" in one read.
+- **Prevents deep-path coupling.** `import { X } from "@scope/package/internal/deep/file"` is an anti-pattern — it defeats the barrel and locks the layout.
+
+---
+
 ## Variable Declarations
 
 ### Joined `const` declarations

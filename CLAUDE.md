@@ -171,9 +171,17 @@ The rules above are enforced on every change. Before declaring a task complete, 
    - **Do not re-export third-party surface from local barrels.** If a consumer needs a type from `@wireio/opp-typescript-models`, they import it from there directly — don't list 9 of its types in a `debugging-shared` barrel.
    - **Import order:** Node built-ins → external packages → internal monorepo packages → relative imports. Blank line between groups.
 
-5. **Filename shape.** Class-primary files → PascalCase (`AnvilManager.ts`, `ClusterManager.ts`). Function/const/utility files → camelCase (`logger.ts`, `keyGen.ts`, `startCmd.ts`). If the primary export changes shape (class → utility fns), rename the file to match.
+5. **Barrel-export discipline.**
+   - Every subdirectory with public exports has an `index.ts` barrel of `export * from "./<file>.js"` lines only — no logic, types, or constants live in the barrel itself.
+   - **Barrel file re-exports INCLUDE the `.js` extension.** `export * from "./Paths.js"`, never `"./Paths"`.
+   - **Parent barrels re-export child subdirectories via `export * from "./<subdir>/index.js"`** — NOT `"./<subdir>"`. Always spell out `index.js`.
+   - **All relative imports in `.ts` files include the `.js` extension.** `import { X } from "./foo.js"`, never `"./foo"`. Same applies to directory references — always `"./dir/index.js"`, never `"./dir"`.
+   - Consumers import from the package root or from a directory path (`import { Foo } from "@scope/pkg"` or `"@scope/pkg/rpc"`) — never from a specific file. Moving `Foo.ts` between subdirectories should not ripple through callers.
+   - Never `export *` a third-party package from a local barrel. See STYLE.md "Barrel Exports" for the full pattern.
 
-6. **Full JSDoc on exported items.**
+6. **Filename shape.** Class-primary files → PascalCase (`AnvilManager.ts`, `ClusterManager.ts`). Function/const/utility files → camelCase (`logger.ts`, `keyGen.ts`, `startCmd.ts`). If the primary export changes shape (class → utility fns), rename the file to match.
+
+7. **Full JSDoc on exported items.**
    - Functions / methods: description, `@param` for each arg, `@return` (unless `void`), `@example` when non-obvious.
    - Exported constants: description + **what changing the value affects** (one line is enough, but it has to answer "why would I touch this").
    - NodeJS typed literals like `"pipe"`, `"inherit"`, `"ignore"` in `StdioOptions` stay inline — they're typed, not magic.

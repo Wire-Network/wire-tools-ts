@@ -1,7 +1,7 @@
-export * from "./api"
+export * from "./rpc/index.js"
 
-export * from "./utils"
+export * from "./utils/index.js"
 
-export * from "./cluster"
+export * from "./cluster/index.js"
 
-export * from "./DebuggingDefaults"
+export * from "./DebuggingDefaults.js"

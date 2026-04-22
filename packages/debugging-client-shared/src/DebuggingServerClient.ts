@@ -10,27 +10,50 @@ import {
   type InferredResponseType
 } from "@wire-e2e-tests/debugging-shared"
 
+import { JsonRPCClient } from "./rpc/JsonRPCClient.js"
+
+/**
+ * Caller-facing knobs for {@link DebuggingServerClient.create}. Everything
+ * is optional — omitted fields take defaults from {@link DebuggingDefaults}.
+ */
 export interface DebuggingToolClientOptions {
-  /** Server base URL, e.g. "http://localhost:9876" */
+  /** Server base URL, e.g. `"http://localhost:9876"`. */
   baseUrl?: string
 }
 
-export interface DebuggingToolClientConfig extends Required<DebuggingToolClientOptions> {}
+/** Fully-resolved runtime config derived from {@link DebuggingToolClientOptions}. */
+export interface DebuggingToolClientConfig
+  extends Required<DebuggingToolClientOptions> {}
 
+/**
+ * High-level client for the debugging server.
+ *
+ * Wraps {@link JsonRPCClient} for OPP RPC calls and adds:
+ *   - a ping health check so constructor failure surfaces before any RPC,
+ *   - default host/port resolution via {@link DebuggingDefaults}.
+ *
+ * Prefer this class for end-user tooling. If you only need the transport
+ * (e.g. you already have a validated URL), construct {@link JsonRPCClient}
+ * directly.
+ */
 export class DebuggingServerClient {
-  private nextId = 1
-
+  /**
+   * Create a client, verifying connectivity with a `GET /api/ping` round-trip.
+   *
+   * @param options - Optional overrides; omitted fields take defaults.
+   * @returns A ready-to-use client. The underlying transport is constructed
+   *          lazily in the private constructor — no connections are held
+   *          open.
+   * @throws When the health check does not return HTTP 200.
+   */
   static async create(
     options: DebuggingToolClientOptions = {}
   ): Promise<DebuggingServerClient> {
     const config = defaults(
       { ...options },
-      {
-        baseUrl: `http://${DebuggingServerClient.DefaultHost}:${DebuggingServerClient.DefaultPort}`
-      }
+      { baseUrl: DebuggingServerClient.DefaultURL }
     ) as DebuggingToolClientConfig
 
-    // Validate connectivity via health check (plain HTTP GET, not JSON-RPC)
     const pingUrl = `${config.baseUrl}${ApiPaths.Ping}`
     const resp = await fetch(pingUrl)
     Assert.ok(
@@ -38,63 +61,29 @@ export class DebuggingServerClient {
       `Debugging server not reachable at ${pingUrl}`
     )
 
-    return new DebuggingServerClient(config)
+    const rpc = new JsonRPCClient(
+      `${config.baseUrl}${ApiPaths.OPP.Endpoint}`
+    )
+    return new DebuggingServerClient(config, rpc)
   }
 
-  private constructor(readonly config: DebuggingToolClientConfig) {}
+  private constructor(
+    readonly config: DebuggingToolClientConfig,
+    private readonly rpc: JsonRPCClient
+  ) {}
 
   /**
-   * Typed JSON-RPC 2.0 call. The method name is the HandlerMap key
-   * (e.g. ApiPaths.OPP.Routes.Envelope). Params and result types are inferred.
+   * Typed JSON-RPC 2.0 call. Delegates to {@link JsonRPCClient.invoke}.
    *
-   * POSTs to the OPP base path with JSON-RPC 2.0 envelope.
-   * The server auto-detects JSON-RPC by checking for `"jsonrpc":"2.0"`.
+   * @param method - `HandlerMap` key (e.g. `ApiPaths.OPP.Methods.Envelope`).
+   * @param params - Request body; type inferred from the handler entry.
+   * @returns The decoded response body, typed from the handler entry.
    */
-  async call<U extends HandlerURIType>(
+  call<U extends HandlerURIType>(
     method: U,
     params: InferredRequestType<U>
   ): Promise<InferredResponseType<U>> {
-    const id = this.nextId++
-    const url = `${this.config.baseUrl}${ApiPaths.OPP.Endpoint}`
-
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json"
-      },
-      body: JSON.stringify({
-        jsonrpc: DebuggingDefaults.JsonrpcVersion,
-        method,
-        params,
-        id
-      })
-    })
-
-    Assert.ok(
-      resp.ok,
-      `JSON-RPC POST failed: ${resp.status} ${resp.statusText}`
-    )
-
-    const body = (await resp.json()) as any
-
-    Assert.ok(
-      body.jsonrpc === DebuggingDefaults.JsonrpcVersion,
-      "Invalid JSON-RPC version in response"
-    )
-    Assert.ok(
-      body.id === id,
-      `JSON-RPC id mismatch: expected ${id}, got ${body.id}`
-    )
-
-    if (body.error) {
-      throw new Error(
-        `JSON-RPC error ${body.error.code}: ${body.error.message}`
-      )
-    }
-
-    Assert.ok("result" in body, "JSON-RPC response missing 'result'")
-    return body.result as InferredResponseType<U>
+    return this.rpc.invoke(method, params)
   }
 }
 

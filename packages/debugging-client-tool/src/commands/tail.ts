@@ -5,7 +5,7 @@ import {
   EnvelopeListEntry
 } from "@wireio/opp-typescript-models"
 
-import { formatList, OutputFormat } from "../formatter"
+import { formatList, OutputFormat } from "../formatter.js"
 
 export interface TailArgs {
   server: string

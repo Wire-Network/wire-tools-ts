@@ -24,7 +24,7 @@ import {
 import { match } from "ts-pattern"
 import Path from "path"
 import Fs from "fs"
-import { DEV_K1_PRIVATE_KEY, DEV_K1_PUBLIC_KEY } from "../cluster/constants"
+import { DEV_K1_PRIVATE_KEY, DEV_K1_PUBLIC_KEY } from "../cluster/constants.js"
 
 const execFileAsync = promisify(execFile)
 

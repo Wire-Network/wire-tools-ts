@@ -8,9 +8,9 @@ import { defaults } from "lodash"
 
 import { ApiPaths, DebuggingDefaults } from "@wire-e2e-tests/debugging-shared"
 
-import { JsonRPC } from "./JsonRPC"
+import { JsonRPC } from "./JsonRPC.js"
 
-import { OPPRoutes } from "./routes/opp/OPPRoutes"
+import { OPPRoutes } from "./routes/opp/OPPRoutes.js"
 import * as Path from "node:path"
 import { Future } from "@3fv/prelude-ts"
 import { Deferred } from "@wireio/shared"

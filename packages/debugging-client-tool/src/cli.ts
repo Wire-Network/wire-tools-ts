@@ -3,10 +3,10 @@ import "source-map-support/register"
 import Yargs from "yargs"
 import { DebuggingServerClient } from "@wire-e2e-tests/debugging-client-shared"
 
-import { handleList } from "./commands/list"
-import { handleInspect } from "./commands/inspect"
-import { handleTail } from "./commands/tail"
-import { OutputFormat } from "./formatter"
+import { handleList } from "./commands/list.js"
+import { handleInspect } from "./commands/inspect.js"
+import { handleTail } from "./commands/tail.js"
+import { OutputFormat } from "./formatter.js"
 import { pick } from "lodash"
 
 enum Command {

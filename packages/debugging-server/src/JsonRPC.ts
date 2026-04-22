@@ -10,7 +10,7 @@ import {
   TO_JSON_OPTIONS
 } from "@wire-e2e-tests/debugging-shared"
 import { isObject } from "@wireio/shared"
-import { log } from "./logging"
+import { log } from "./logging/index.js"
 import { Future } from "@3fv/prelude-ts"
 import { match, P } from "ts-pattern"
 import { identity } from "lodash"

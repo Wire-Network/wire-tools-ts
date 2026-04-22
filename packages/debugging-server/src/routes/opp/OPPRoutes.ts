@@ -14,7 +14,7 @@ import {
 
 import { ApiPaths, endpointsTypeToKey } from "@wire-e2e-tests/debugging-shared"
 
-import { JsonRPC } from "../../JsonRPC"
+import { JsonRPC } from "../../JsonRPC.js"
 
 import type express from "express"
 import { asOption } from "@3fv/prelude-ts"

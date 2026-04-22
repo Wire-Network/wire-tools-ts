@@ -1,4 +1,4 @@
 import "source-map-support/register"
 
-export * from "./JsonRPC"
-export * from "./DebuggingServer"
+export * from "./JsonRPC.js"
+export * from "./DebuggingServer.js"

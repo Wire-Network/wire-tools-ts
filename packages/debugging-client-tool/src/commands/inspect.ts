@@ -1,7 +1,7 @@
 import { DebuggingServerClient } from "@wire-e2e-tests/debugging-client-shared"
 import { ApiPaths } from "@wire-e2e-tests/debugging-shared"
 
-import { formatInspect, OutputFormat } from "../formatter"
+import { formatInspect, OutputFormat } from "../formatter.js"
 
 export interface InspectArgs {
   server: string

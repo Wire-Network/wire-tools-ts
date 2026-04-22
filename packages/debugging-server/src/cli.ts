@@ -3,7 +3,7 @@ import "source-map-support/register"
 
 import Yargs from "yargs"
 
-import { DebuggingServer } from "./DebuggingServer"
+import { DebuggingServer } from "./DebuggingServer.js"
 import { getLogger } from "@wireio/shared"
 
 enum Command {
