@@ -71,6 +71,32 @@ Flow packages depend on `harness` via `workspace:*`.
 - **Run mode**: `--runInBand` (no parallelization — tests manage shared processes)
 - **Config**: Root `jest.config.ts` is multi-project, each package has its own `jest.config.ts`
 
+### Unit tests are mandatory for every new or modified symbol
+
+Every TypeScript function, class, type, interface, module, or exported constant that is **created or edited** in the course of a task MUST ship with unit tests in the same PR/commit.
+
+- **Coverage**: every exported symbol has at least one behavior-verifying test — happy path plus one failure / edge case minimum. `beforeEach` state resets, mocks, and temp-dir fixtures are allowed.
+- **Location**: mirror the `src/` tree under `tests/` — a test file for `src/services/ServiceManager.ts` lives at `tests/services/ServiceManager.test.ts`. Sub-utility files get their own tests; don't fold five utilities into one test file.
+- **No exceptions for "trivial" code**: a one-line helper still warrants a one-line test. Trivial-looking code is where regressions hide.
+- **Tests must run green locally** before declaring a task complete — `pnpm --filter <package> test` must pass with non-zero tests executed.
+- This rule applies equally to production code and test tooling (fixtures, mocks).
+
+### No `src/` traversal in `import` / `export` — **EVER**
+
+**No `import` or `export` statement in this repo may contain `src/` anywhere in its specifier.** This applies to every file — production code, test files, tooling scripts, barrels, examples. Period.
+
+Reaching into `src/` (via `./src/...`, `../src/...`, or `../../src/...`) couples the consumer to internal file layout and defeats the barrel-export + package-alias contract.
+
+- **Correct (external / alias import)**: `import { ServiceManager } from "@wire-e2e-tests/debugging-client-tool-tui/services/ServiceManager.js"`
+- **Correct (in-package relative)**: `import { ServiceManager } from "./ServiceManager.js"` (inside `src/services/`)
+- **Wrong**: `import { ServiceManager } from "../../src/services/ServiceManager.js"`
+- **Wrong**: `export * from "./src/services/index.js"`
+- **Wrong**: `import { ServiceManager } from "@wire-e2e-tests/debugging-client-tool-tui/src/services/ServiceManager.js"`
+
+The `moduleNameMapper` in every package's `jest.config.cjs` maps `@wire-e2e-tests/<pkg>/(.*)` → `<rootDir>/src/$1`; the `tsconfig.base.cjs.json` paths mapping does the equivalent for `tsc`. Both resolve the alias to the source file — the alias form works identically in tests and at runtime. If a module isn't reachable via its barrel yet, add the barrel entry first; never bypass the barrel by traversing `src/`.
+
+If you find yourself tempted to write a `src/`-containing specifier to "just make it compile", stop — the barrel or the tsconfig path mapping is broken and needs fixing there, not worked around here.
+
 ## CLI Tool
 
 `wire-test-cluster` (bin from harness package):
@@ -145,7 +171,6 @@ See `STYLE.md` for full patterns and examples.
 - **Extract focused helpers.** Any logically distinct operation (load config, create manager, resolve paths) becomes a named module-level function with assertions at entry.
 - **`identity` for no-op params.** When a framework callback is required but unneeded, pass `identity` from lodash.
 - **Module-level shared state via middleware.** Cross-cutting values (global args, derived paths) go in a module-level object populated by Yargs `.middleware()`, destructured in handlers.
-- **Named exports only.** No `export default` — in source OR in `index.ts` barrels. Exception: `jest.config.ts` needs a default export for Jest itself.
 - **Typed Redux hooks.** Use `useAppDispatch` / `useAppSelector` (or equivalent typed wrappers exported from the slice's store file), never bare `useDispatch` / `useSelector`. Exception: cross-process extension packages (e.g. `wallet-browser-ext` in `wire-libraries-ts`) keep raw hooks by design — don't "fix" them.
 - **Process management uses `child_process.spawn` + `tree-kill`.** Never reintroduce pm2 or other orchestration libraries without a concrete justification.
 

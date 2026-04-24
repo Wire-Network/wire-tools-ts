@@ -371,6 +371,19 @@ Consumers write `import { ApiPaths, type Handler } from "@scope/package"` — th
 - **Single source of truth for the surface area.** Reviewing the root `index.ts` answers "what does this package expose" in one read.
 - **Prevents deep-path coupling.** `import { X } from "@scope/package/internal/deep/file"` is an anti-pattern — it defeats the barrel and locks the layout.
 
+### No `src/` traversal in `import` / `export` — EVER
+
+**No `import` or `export` statement anywhere in this repo may contain `src/` in its specifier.** Applies to every file: production code, tests, tooling scripts, barrels, examples. No exceptions.
+
+- **Correct**: `import { X } from "@scope/package"` or `"@scope/package/sub"` for cross-package, `"./Foo.js"` / `"../bar/index.js"` for in-package.
+- **Wrong**: any specifier containing `/src/` (e.g. `"../src/X.js"`, `"../../src/services/Y.js"`, `"@scope/package/src/Z.js"`).
+
+Every package exposes its surface through the `@scope/package` root alias (and subpath exports) resolved by the tsconfig `paths` map and by each jest's `moduleNameMapper`. Reaching into `src/` bypasses the barrel, couples the consumer to the physical layout, and breaks when folders are renamed. If an import path tempts you to include `src/`, the barrel or path map is wrong — fix it there.
+
+### Unit tests required for every symbol
+
+See CLAUDE.md "Unit tests are mandatory" — every created or modified function, class, interface, module, or constant ships with tests in the same commit. Coverage is not optional, even for one-line helpers.
+
 ---
 
 ## Variable Declarations

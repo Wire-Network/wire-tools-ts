@@ -56,11 +56,13 @@ const devTuiPlugin = {
         .slice(process.argv.indexOf("--dev") + 1)
         .filter(arg => arg !== "--dev")
 
-      tuiProcess = spawn(
-        "node",
-        [build.initialOptions.outfile, ...tuiArgs],
-        { stdio: "inherit" }
-      )
+      tuiProcess = spawn("node", [build.initialOptions.outfile, ...tuiArgs], {
+        env: {
+          ...process.env,
+          DEV: "true"
+        },
+        stdio: "inherit"
+      })
 
       tuiProcess.on("exit", (code, signal) => {
         if (signal !== "SIGTERM") {
@@ -73,35 +75,32 @@ const devTuiPlugin = {
 }
 
 async function main() {
-  const plugins = [chmodPlugin]
-  if (shouldDev) {
-    plugins.push(devTuiPlugin)
-  }
-
-  const ctx = await esbuild.context({
-    entryPoints: ["src/tui.ts"],
-    bundle: true,
-    platform: "node",
-    target: "node24",
-    format: "esm",
-    outfile,
-    sourcemap: true,
-    minify: false,
-    jsx: "automatic",
-    loader: {
-      ".ts": "ts",
-      ".tsx": "tsx"
-    },
-    banner: {
-      js: "#!/usr/bin/env node"
-    },
-    // Keep all node_modules external — ink and yoga-layout use top-level
-    // await and dynamic imports that require native ESM resolution at
-    // runtime rather than being pre-bundled into a single file.
-    packages: "external",
-    logLevel: "info",
-    plugins
-  })
+  const plugins = [chmodPlugin, shouldDev && devTuiPlugin].filter(Boolean),
+    ctx = await esbuild.context({
+      entryPoints: ["src/tui.ts"],
+      bundle: true,
+      platform: "node",
+      target: "node24",
+      format: "esm",
+      outfile,
+      sourcemap: true,
+      minify: false,
+      jsx: "transform",
+      loader: {
+        ".ts": "ts",
+        ".tsx": "tsx"
+      },
+      banner: {
+        js: [
+          "#!/usr/bin/env node",
+          "import { createRequire as __createRequire } from 'node:module'",
+          "const require = __createRequire(import.meta.url)"
+        ].join("\n")
+      },
+      packages: "bundle",
+      logLevel: "info",
+      plugins
+    })
 
   if (shouldWatch || shouldDev) {
     await ctx.watch()

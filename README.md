@@ -20,10 +20,30 @@ Exercises the full OPP message flow across three blockchains:
 
 ## Prerequisites
 
-- `nodeop` + `kiod` built in `wire-sysio` (set `WIRE_BUILD_DIR`)
+- `nodeop` + `kiod` built in `wire-sysio` 
 - `anvil` (Foundry) installed
 - `solana-test-validator` (Agave) installed
 - Node.js >= 22, pnpm
+
+### Installing Anvil, Foundry, and Solana CLI
+
+```bash
+
+# -- Rust --
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+PATH="${CARGO_HOME}/bin:${PATH}"
+
+# -- Foundry (Anvil) --
+curl -L https://foundry.paradigm.xyz | bash \
+    && ${HOME}/.foundry/bin/foundryup
+PATH="${HOME}/.foundry/bin:${PATH}"
+
+# -- Solana CLI (solana-test-validator) --
+sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)" 
+PATH="${HOME}/.local/share/solana/install/active_release/bin:${PATH}"
+
+````
+
 
 ## Setup
 

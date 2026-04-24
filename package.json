@@ -2,8 +2,9 @@
   "name": "@wire-e2e-tests/root",
   "private": true,
   "scripts": {
+    "compile": "tsc -b tsconfig.json",
+    "compile:watch": "tsc -b tsconfig.json -w  --preserveWatchOutput",
     "build": "tsc -b tsconfig.json",
-    "build:dev": "tsc -b tsconfig.json -w  --preserveWatchOutput",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "test": "pnpm run build && jest",
     "test:flow-a": "pnpm --filter @wire-e2e-tests/flow-a run test",

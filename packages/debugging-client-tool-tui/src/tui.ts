@@ -1,30 +1,53 @@
 import "source-map-support/register.js"
-
 import React from "react"
 import { render } from "ink"
 import { Provider } from "react-redux"
-
 import { App } from "./App.js"
 import { loadCluster, parseArgs } from "./cli.js"
-import { FeatureDebugger } from "./features/FeatureDebugger.js"
-import { OPPEnvelopeDebugger } from "./features/OPPEnvelope.js"
-import { ProcessMonitor } from "./features/ProcessMonitor.js"
+import {
+  LoggingManager,
+  getGlobalLogger
+} from "./logging/LoggingManager.js"
+import {
+  ReduxService,
+  ServiceManager,
+  ServiceManagerProvider
+} from "./services/index.js"
+import { RouterProvider } from "./router/RouterContext.js"
+import { FeatureProviderRegistry } from "./features/FeatureProviderRegistry.js"
+import OPPFeatureProvider from "./features/opp/OPPFeatureProvider.js"
+import ProcessMonitorFeatureProvider from "./features/processMonitor/ProcessMonitorFeatureProvider.js"
+import type { FeatureProvider } from "./features/FeatureProvider.js"
 import {
   registerFeature,
+  setActiveFeatures,
   setCluster,
-  store,
-  type RegisteredFeature
-} from "./store.js"
+  store
+} from "./store/index.js"
 
 /**
- * TUI entry point. Parses CLI args, loads the cluster's on-disk files,
- * bootstraps core + feature debuggers (each of which contributes Panels
- * and StatusWidgets into `ComponentProviders`), and mounts the Ink tree
- * under the Redux provider.
+ * Every provider known to the binary. The active subset is derived from
+ * `--features` plus any provider with `isRequiredProvider: true`.
  */
-function main(): void {
-  const args = parseArgs()
-  const loaded = loadCluster(args.clusterPath)
+const KnownProviders: readonly FeatureProvider[] = [
+  ProcessMonitorFeatureProvider,
+  OPPFeatureProvider
+] as const
+
+import {
+  selectActiveProviders,
+  warnUnknownFeatureIds
+} from "./bootstrap/selectActiveProviders.js"
+
+async function main(): Promise<void> {
+  const args = parseArgs(),
+    loaded = loadCluster(args.clusterPath)
+  LoggingManager.configure({
+    clusterPath: loaded.path,
+    level: args.logLevel
+  })
+  const log = getGlobalLogger()
+  log.info(`TUI starting — cluster: ${loaded.path}`)
 
   store.dispatch(
     setCluster({
@@ -34,23 +57,70 @@ function main(): void {
     })
   )
 
-  const debuggers = [new ProcessMonitor(), new OPPEnvelopeDebugger()]
-  debuggers.forEach(dbg => {
-    FeatureDebugger.add(dbg)
-    const meta: RegisteredFeature = {
-      id: dbg.id,
-      name: dbg.name,
-      core: dbg.core
-    }
-    store.dispatch(registerFeature(meta))
+  ServiceManager.register(ReduxService)
+
+  const active = selectActiveProviders(KnownProviders, args.activeFeatureIds),
+    activeIds = active.map(p => p.id)
+  if (args.activeFeatureIds) warnUnknownFeatureIds(args.activeFeatureIds, activeIds)
+  store.dispatch(setActiveFeatures(activeIds))
+  log.info(`Active features: ${activeIds.join(", ")}`)
+
+  active.forEach(provider => {
+    FeatureProviderRegistry.add(provider)
+    store.dispatch(
+      registerFeature({
+        id: provider.id,
+        name: provider.name,
+        core: provider.isRequiredProvider
+      })
+    )
   })
 
-  render(
-    React.createElement(Provider, {
-      store,
-      children: React.createElement(App)
+  await ServiceManager.get().boot()
+
+  // Home route: the required ProcessMonitor feature. Always registered because
+  // `isRequiredProvider: true`, so its route is always in the registry.
+  const homePath = ProcessMonitorFeatureProvider.RoutePath
+
+  const app = render(
+    React.createElement(ServiceManagerProvider, {
+      manager: ServiceManager.get(),
+      children: React.createElement(Provider, {
+        store,
+        children: React.createElement(RouterProvider, {
+          initialPath: homePath,
+          children: React.createElement(App)
+        })
+      })
     })
   )
+
+  /**
+   * Normal exit: Ink's `q` → `useApp().exit()` → `waitUntilExit()` resolves
+   * → we destroy services. Abnormal: signal handlers below.
+   */
+  const shutdown = async (sig?: NodeJS.Signals): Promise<void> => {
+    try {
+      await ServiceManager.get().destroy()
+    } catch (e) {
+      log.error("destroy failed", e)
+    }
+    if (sig) process.exit(sig === "SIGINT" ? 130 : 0)
+  }
+  process.once("SIGINT", () => void shutdown("SIGINT"))
+  process.once("SIGTERM", () => void shutdown("SIGTERM"))
+
+  await app.waitUntilExit()
+  await shutdown()
 }
 
-main()
+main().catch(err => {
+  try {
+    getGlobalLogger().fatal("TUI main() crashed", err)
+  } catch {
+    /* logger not yet configured */
+  }
+  // Safe ONLY before `render()` mounts — Ink is not holding stdout yet.
+  console.error(err)
+  process.exit(1)
+})

@@ -51,10 +51,12 @@ function createClusterManager(config: ClusterConfig): ClusterManager {
   Assert.ok(!clusterManager, "Cluster manager already exists")
   Assert.ok(config, "Cluster config is required")
 
-  clusterManager = new ClusterManager(config)
-  return clusterManager
+  return (clusterManager = new ClusterManager(config))
 }
 
+/**
+ * Load cluster configuration from file
+ */
 function loadClusterConfig(): ClusterConfig {
   const { configFile } = GlobalArgs
   Assert.ok(

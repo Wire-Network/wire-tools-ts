@@ -5,7 +5,9 @@
   "type": "commonjs",
   "description": "Flow A: Empty Epoch (Balance Sheet Only)",
   "scripts": {
-    "build": "tsc -b tsconfig.json",
+    "compile": "tsc -b tsconfig.json",
+    "compile:watch": "tsc -b tsconfig.json -w",
+    "build": "pnpm run compile",
     "test": "jest --runInBand",
     "clean": "rm -rf lib"
   },

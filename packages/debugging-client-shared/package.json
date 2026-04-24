@@ -22,14 +22,17 @@
     "README.md"
   ],
   "scripts": {
+    "compile": "tsc -b tsconfig.json",
+    "compile:watch": "tsc -b tsconfig.json -w",
     "build": "tsc -b tsconfig.json && node ../../scripts/fix-hybrid-output.mjs .",
-    "build:dev": "tsc -b tsconfig.json -w",
     "test": "jest",
     "clean": "rm -rf lib"
   },
   "dependencies": {
     "@wire-e2e-tests/debugging-shared": "workspace:*",
     "@wireio/opp-typescript-models": "^1.0.23",
+    "@wireio/shared": "^1.0.21",
+    "@wireio/sdk-core": "^1.0.21",
     "@3fv/prelude-ts": "^0.8.37",
     "lodash": "^4.17.21"
   },
