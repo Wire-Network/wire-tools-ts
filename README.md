@@ -20,10 +20,16 @@ Exercises the full OPP message flow across three blockchains:
 
 ## Prerequisites
 
-- `nodeop` + `kiod` built in `wire-sysio` 
+- `nodeop` + `kiod` built in `wire-sysio`
 - `anvil` (Foundry) installed
 - `solana-test-validator` (Agave) installed
 - Node.js >= 22, pnpm
+
+See [`docs/local-setup.md`](docs/local-setup.md) for a full end-to-end guide
+to building and running `wire-test-cluster` from scratch across all five
+sibling repos (`wire-cdt`, `wire-sysio`, `wire-libraries-ts`, `wire-ethereum`,
+`wire-solana`), including the branches required for the OPP cross-chain
+integration and gotchas encountered.
 
 ### Installing Anvil, Foundry, and Solana CLI
 
