@@ -3,13 +3,14 @@ import Path from "node:path"
 import Fs from "node:fs"
 import { ethers } from "ethers"
 import { match } from "ts-pattern"
-import { log } from "./logger.js"
-import { sleep } from "./util.js"
-import { ClusterManager, type ClusterConfig } from "./cluster/ClusterManager.js"
+import { asOption } from "@3fv/prelude-ts"
+import { type ClusterConfig, ClusterManager } from "./cluster/ClusterManager.js"
 import { type ClusterPorts } from "./cluster/ClusterPorts.js"
 import { WIREClient } from "./clients/WIREClient.js"
+import { ClusterOptions } from "./HarnessTypes.js"
+import { log } from "./logger.js"
 import { ProcessManager } from "./processes/ProcessManager.js"
-import { asOption } from "@3fv/prelude-ts"
+import { sleep } from "./util.js"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -36,48 +37,23 @@ export enum FlowMode {
   Attach = "attach"
 }
 
-/**
- * Caller-supplied config for {@link FlowTestContext}. Field requirements
- * depend on the {@link FlowMode} resolved at construction time.
- */
-export interface FlowTestContextOptions {
-  /**
-   * Path to the `cluster-config.json` written by `wire-test-cluster create`.
-   * Required (implicitly or via `WIRE_CLUSTER_CONFIG`) when running in
-   * `Attach` mode; ignored in `Fresh` mode.
-   */
-  clusterConfigPath?: string
-
-  /** Path to the wire-sysio build directory. Required in `Fresh` mode. */
-  buildPath?: string
-  /** Where to materialize the cluster. Required in `Fresh` mode. */
-  clusterPath?: string
-  /** Path to wire-ethereum repo root (enables Anvil + ETH outpost). */
-  ethereumPath?: string
-  /** Number of producers to bake into genesis. Default: 21. */
-  producerCount?: number
-  /** Total nodeop nodes. Default: `producerCount`. */
-  nodeCount?: number
-  /** Batch operator nodes to create. Default: 3. */
-  batchOperatorCount?: number
-  /** Underwriter nodes to create. Default: 1. */
-  underwriterCount?: number
-  /** Epoch duration in seconds. Default: 360. */
-  epochDurationSec?: number
-}
-
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
 
 /**
- * Poll a condition until it returns true or timeout expires.
+ * Poll a condition until it returns true or the deadline expires.
+ *
+ * @param label Description used in the timeout error message.
+ * @param condition Async predicate; resolved truthy stops polling.
+ * @param timeoutMs Total time budget before throwing.
+ * @param intervalMs Sleep between probes (default {@link FlowTestContext.DefaultPollIntervalMs}).
  */
 export async function pollUntil(
   label: string,
   condition: () => Promise<boolean>,
   timeoutMs: number,
-  intervalMs = 2_000
+  intervalMs: number = FlowTestContext.DefaultPollIntervalMs
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -104,7 +80,10 @@ export class FlowTestContext {
 
   /** Resolved ethereum repo path (from config or env). */
   get ethereumPath(): string | undefined {
-    return this.config.ethereumPath ?? process.env.WIRE_ETH_PATH
+    return (
+      this.config.ethereumPath ??
+      process.env[FlowTestContext.EnvVar.EthereumPath]
+    )
   }
 
   /** Cluster data path. */
@@ -114,11 +93,16 @@ export class FlowTestContext {
 
   // ── Factory ─────────────────────────────────────────────────────────────
 
-  /** Create a FlowTestContext — attach to running cluster or create fresh. */
-  static async create(
-    opts: FlowTestContextOptions = {}
-  ): Promise<FlowTestContext> {
-    return asOption(opts.clusterConfigPath ?? process.env.WIRE_CLUSTER_CONFIG)
+  /**
+   * Create a FlowTestContext — attach to a running cluster (when a config path
+   * is provided or `WIRE_CLUSTER_CONFIG` is set and points at a real file) or
+   * create a fresh one.
+   */
+  static async create(opts: ClusterOptions = {}): Promise<FlowTestContext> {
+    return asOption(
+      opts.clusterConfigPath ??
+        process.env[FlowTestContext.EnvVar.ClusterConfig]
+    )
       .filter(Fs.existsSync)
       .match({
         Some: configPath => FlowTestContext.attach(configPath),
@@ -126,7 +110,7 @@ export class FlowTestContext {
       })
   }
 
-  /** Connect to an already-running cluster from its cluster-config.json. */
+  /** Connect to an already-running cluster from its `cluster-config.json`. */
   static async attach(configPath: string): Promise<FlowTestContext> {
     Assert.ok(
       Fs.existsSync(configPath),
@@ -149,25 +133,49 @@ export class FlowTestContext {
   }
 
   /** Create a fresh cluster from scratch — full create + bootstrap + start. */
-  static async fresh(opts: FlowTestContextOptions): Promise<FlowTestContext> {
-    const buildPath = opts.buildPath ?? process.env.WIRE_BUILD_PATH,
-      clusterPath = opts.clusterPath ?? process.env.WIRE_CLUSTER_PATH,
-      ethereumPath = opts.ethereumPath ?? process.env.WIRE_ETH_PATH
+  static async fresh(opts: ClusterOptions): Promise<FlowTestContext> {
+    const buildPath =
+        opts.buildPath ?? process.env[FlowTestContext.EnvVar.BuildPath],
+      clusterPath =
+        opts.clusterPath ?? process.env[FlowTestContext.EnvVar.ClusterPath],
+      ethereumPath =
+        opts.ethereumPath ?? process.env[FlowTestContext.EnvVar.EthereumPath],
+      solanaPath =
+        opts.solanaPath ?? process.env[FlowTestContext.EnvVar.SolanaPath]
 
-    Assert.ok(buildPath, "WIRE_BUILD_PATH required for fresh mode")
-    Assert.ok(clusterPath, "WIRE_CLUSTER_PATH required for fresh mode")
-
+    Assert.ok(
+      buildPath,
+      `${FlowTestContext.EnvVar.BuildPath} required for fresh mode`
+    )
+    Assert.ok(
+      clusterPath,
+      `${FlowTestContext.EnvVar.ClusterPath} required for fresh mode`
+    )
+    Assert.ok(
+      ethereumPath,
+      `${FlowTestContext.EnvVar.EthereumPath} required for fresh mode`
+    )
+    Assert.ok(
+      solanaPath,
+      `${FlowTestContext.EnvVar.SolanaPath} required for fresh mode`
+    )
     log.info("[FlowTestContext] Creating fresh cluster at %s", clusterPath)
 
     const manager = await ClusterManager.createFromCLIArgs({
       buildPath,
       clusterPath,
       ethereumPath,
-      producerCount: opts.producerCount ?? 21,
-      nodeCount: opts.nodeCount ?? 1,
-      batchOperatorCount: opts.batchOperatorCount ?? 3,
-      underwriterCount: opts.underwriterCount ?? 1,
-      epochDurationSec: opts.epochDurationSec ?? 90,
+      solanaPath,
+      producerCount:
+        opts.producerCount ?? FlowTestContext.DefaultProducerCount,
+      nodeCount: opts.nodeCount ?? FlowTestContext.DefaultNodeCount,
+      batchOperatorCount:
+        opts.batchOperatorCount ??
+        FlowTestContext.DefaultBatchOperatorCount,
+      underwriterCount:
+        opts.underwriterCount ?? FlowTestContext.DefaultUnderwriterCount,
+      epochDurationSec:
+        opts.epochDurationSec ?? FlowTestContext.DefaultEpochDurationSec,
       force: true
     })
 
@@ -187,21 +195,22 @@ export class FlowTestContext {
     manager: ClusterManager,
     config: ClusterConfig
   ): FlowTestContext {
-    const ports = config.ports
+    const ports = config.ports,
+      producerUrl = FlowTestContext.toLocalHttpUrl(ports.producerHttp[0]),
+      kiodUrl = FlowTestContext.toLocalHttpUrl(ports.kiod),
+      anvilUrl = FlowTestContext.toLocalHttpUrl(ports.anvil)
 
     const wireClient = new WIREClient({
-      httpUrl: `http://127.0.0.1:${ports.producerHttp[0]}`,
+      httpUrl: producerUrl,
       clio: {
         clusterPath: config.clusterPath,
         binary: config.executables.clio,
-        url: `http://127.0.0.1:${ports.producerHttp[0]}`,
-        walletUrl: `http://127.0.0.1:${ports.kiod}`
+        url: producerUrl,
+        walletUrl: kiodUrl
       }
     })
 
-    const ethProvider = new ethers.JsonRpcProvider(
-      `http://127.0.0.1:${ports.anvil}`
-    )
+    const ethProvider = new ethers.JsonRpcProvider(anvilUrl)
     const ethSigner = new ethers.Wallet(ANVIL_DEFAULT_PRIVATE_KEY, ethProvider)
 
     return new FlowTestContext(
@@ -222,7 +231,7 @@ export class FlowTestContext {
     Assert.ok(this.ethereumPath, "ethereumPath required for ETH addresses")
     const addrsPath = Path.join(
       this.ethereumPath,
-      ".local/deployments/outpost-addrs.json"
+      FlowTestContext.EthAddressesRelPath
     )
     Assert.ok(Fs.existsSync(addrsPath), `ETH addresses not found: ${addrsPath}`)
     return JSON.parse(Fs.readFileSync(addrsPath, "utf-8"))
@@ -233,7 +242,7 @@ export class FlowTestContext {
     Assert.ok(this.ethereumPath, "ethereumPath required for ETH ABIs")
     const artifactPath = Path.join(
       this.ethereumPath,
-      "artifacts/contracts/outpost",
+      FlowTestContext.EthArtifactsRelPath,
       `${contractName}.sol`,
       `${contractName}.json`
     )
@@ -258,5 +267,45 @@ export class FlowTestContext {
         log.info("[FlowTestContext] Attach mode — skipping teardown")
       })
       .exhaustive()
+  }
+}
+
+export namespace FlowTestContext {
+  /** Loopback host used when constructing local RPC URLs. */
+  export const LocalHost = "127.0.0.1" as const
+  /** Default poll interval for {@link pollUntil}. */
+  export const DefaultPollIntervalMs = 2_000
+
+  // ── `fresh` mode defaults ─────────────────────────────────────────────────
+  /** Default registered-producer count (matches harness CLI default). */
+  export const DefaultProducerCount = 21
+  /** Default non-producer node count. */
+  export const DefaultNodeCount = 1
+  /** Default batch-operator count. */
+  export const DefaultBatchOperatorCount = 3
+  /** Default underwriter count. */
+  export const DefaultUnderwriterCount = 1
+  /** Default epoch duration (seconds) for fresh-mode clusters. */
+  export const DefaultEpochDurationSec = 90
+
+  // ── External wire-ethereum layout ────────────────────────────────────────
+  /** Subpath beneath the wire-ethereum repo where deployment addresses live. */
+  export const EthAddressesRelPath =
+    ".local/deployments/outpost-addrs.json" as const
+  /** Subpath beneath the wire-ethereum repo where Hardhat artifacts live. */
+  export const EthArtifactsRelPath = "artifacts/contracts/outpost" as const
+
+  /** Environment-variable names checked by `attach`/`fresh`. */
+  export enum EnvVar {
+    BuildPath = "WIRE_BUILD_PATH",
+    ClusterPath = "WIRE_CLUSTER_PATH",
+    EthereumPath = "WIRE_ETH_PATH",
+    SolanaPath = "WIRE_SOLANA_PATH",
+    ClusterConfig = "WIRE_CLUSTER_CONFIG"
+  }
+
+  /** Build a `http://127.0.0.1:<port>` URL using the loopback host constant. */
+  export function toLocalHttpUrl(port: number): string {
+    return `http://${LocalHost}:${port}`
   }
 }

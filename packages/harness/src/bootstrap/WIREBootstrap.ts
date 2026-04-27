@@ -215,7 +215,7 @@ export class WIREBootstrap {
           "sysio.bios.wasm",
           "sysio.bios.abi"
         ),
-      { label: "deploy sysio.bios", maxAttempts: 3, delayMs: 2000 }
+      { label: "deploy sysio.bios", maxAttempts: ContractDeployRetryAttempts, delayMs: ContractDeployRetryDelayMs }
     )
     log.info("sysio.bios deployed")
   }
@@ -294,7 +294,7 @@ export class WIREBootstrap {
           "sysio.system.wasm",
           "sysio.system.abi"
         ),
-      { label: "deploy sysio.system", maxAttempts: 3, delayMs: 2000 }
+      { label: "deploy sysio.system", maxAttempts: ContractDeployRetryAttempts, delayMs: ContractDeployRetryDelayMs }
     )
 
     // Deploy sysio.token
@@ -308,7 +308,7 @@ export class WIREBootstrap {
           "sysio.token.wasm",
           "sysio.token.abi"
         ),
-      { label: "deploy sysio.token", maxAttempts: 3, delayMs: 2000 }
+      { label: "deploy sysio.token", maxAttempts: ContractDeployRetryAttempts, delayMs: ContractDeployRetryDelayMs }
     )
 
     // Deploy sysio.msig
@@ -322,7 +322,7 @@ export class WIREBootstrap {
           "sysio.msig.wasm",
           "sysio.msig.abi"
         ),
-      { label: "deploy sysio.msig", maxAttempts: 3, delayMs: 2000 }
+      { label: "deploy sysio.msig", maxAttempts: ContractDeployRetryAttempts, delayMs: ContractDeployRetryDelayMs }
     )
 
     // Set privileged accounts
@@ -387,7 +387,7 @@ export class WIREBootstrap {
           operators_per_epoch: 7,
           batch_operator_minimum_active: 21,
           batch_op_groups: 3,
-          attestation_retention_epoch_count: 1000
+          epoch_retention_envelope_log_count: 128
         },
         "sysio.epoch@active"
       )

@@ -20,12 +20,34 @@ import {
 import { type ConfigOptions } from "./Config.js"
 import { range } from "lodash"
 
+/** Default hostname used when constructing node peer / listen addresses. */
+const DefaultHostname = "localhost"
+/** Default listener bind address — `0.0.0.0` for all interfaces. */
+const DefaultListenAddr = "0.0.0.0"
+/** Default registered-producer count, mirroring the harness CLI default. */
+const DefaultProducerCount = 21
+
 // ---------------------------------------------------------------------------
 // Node role types
 // ---------------------------------------------------------------------------
 
+/**
+ * The role a `nodeop` instance plays at spawn time. Discriminator on the
+ * `NodeConfig` union — every interface in that union pins `role` to one
+ * member of this enum. Identity mapping (key === value) so `match`'s literal
+ * patterns work without casting and JSON serialisation round-trips cleanly.
+ */
+export enum NodeRole {
+  /** The genesis-bootstrap node; deployed once during `create`, killed before `run`. */
+  bios = "bios",
+  /** A regular producer or non-producer API node on the WIRE chain. */
+  producer = "producer",
+  /** An OPP operator node (batch-operator and/or underwriter). */
+  operator = "operator"
+}
+
 export interface BiosNode {
-  role: "bios"
+  role: NodeRole.bios
   /** Always node index -100 (matching Python launcher). */
   index: -100
   name: "node_bios"
@@ -36,7 +58,7 @@ export interface BiosNode {
 }
 
 export interface ProducerNode {
-  role: "producer"
+  role: NodeRole.producer
   index: number
   name: string
   p2pPort: number
@@ -45,7 +67,7 @@ export interface ProducerNode {
 }
 
 export interface OperatorNode {
-  role: "operator"
+  role: NodeRole.operator
   index: number
   name: string
   p2pPort: number
@@ -157,9 +179,9 @@ export function generateNodeConfigs(
   const pnodes = opts.pnodes
   const totalNonBios =
     opts.totalNodes && opts.totalNodes > 0 ? opts.totalNodes : pnodes
-  const producerCount = opts.producerCount ?? 21
+  const producerCount = opts.producerCount ?? DefaultProducerCount
   const operatorCount = opts.operatorNodes ?? 0
-  const hostname = opts.hostname ?? "localhost"
+  const hostname = opts.hostname ?? DefaultHostname
   const baseP2p = opts.baseP2pPort ?? BASE_P2P_PORT
   const baseHttp = opts.baseHttpPort ?? BASE_HTTP_PORT
 
@@ -168,7 +190,7 @@ export function generateNodeConfigs(
 
   // --- Bios node ---
   const biosNode: BiosNode = {
-    role: "bios",
+    role: NodeRole.bios,
     index: -100,
     name: "node_bios",
     p2pPort: BIOS_P2P_PORT,
@@ -197,7 +219,7 @@ export function generateNodeConfigs(
       .filter((n): n is string => typeof n === "string")
 
     return {
-      role: "producer",
+      role: NodeRole.producer,
       index: nodeIdx,
       name: toNodeName(nodeIdx),
       p2pPort: allocator.nextP2p(),
@@ -208,7 +230,7 @@ export function generateNodeConfigs(
 
   // --- Non-producer API nodes ---
   const apiNodes: ProducerNode[] = range(pnodes, totalNonBios).map(i => ({
-    role: "producer",
+    role: NodeRole.producer,
     index: i,
     name: toNodeName(i),
     p2pPort: allocator.nextP2p(),
@@ -218,7 +240,7 @@ export function generateNodeConfigs(
 
   // --- OPP operator nodes ---
   const operatorNodes: OperatorNode[] = range(operatorCount).map(i => ({
-    role: "operator",
+    role: NodeRole.operator,
     index: totalNonBios + i,
     name: toNodeName(totalNonBios + i),
     p2pPort: allocator.nextP2p(),
@@ -255,11 +277,11 @@ export function nodeConfigToIniOptions(
     httpInsecure?: boolean
   }
 ): ConfigOptions {
-  const hostname = opts.hostname ?? "localhost"
-  const listenAddr = opts.listenAddr ?? "0.0.0.0"
-  const isBios = node.role === "bios"
-  const isProducer = node.role === "producer" && node.producers.length > 0
-  const isOperator = node.role === "operator"
+  const hostname = opts.hostname ?? DefaultHostname
+  const listenAddr = opts.listenAddr ?? DefaultListenAddr
+  const isBios = node.role === NodeRole.bios
+  const isProducer = node.role === NodeRole.producer && node.producers.length > 0
+  const isOperator = node.role === NodeRole.operator
 
   // Collect plugins
   const plugins: string[] = [...BASE_PLUGINS]

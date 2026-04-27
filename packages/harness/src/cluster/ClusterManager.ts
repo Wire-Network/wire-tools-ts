@@ -72,6 +72,8 @@ import {
   type SolanaProgramDeployment
 } from "@wire-e2e-tests/debugging-shared"
 
+import { ClusterOptions } from "../HarnessTypes"
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -246,7 +248,7 @@ export class ClusterManager {
   }
 
   toDataPath(...paths: string[]): string {
-    return Path.join(this.clusterPath, "data", ...paths)
+    return Path.join(this.clusterPath, ClusterManager.DataSubpath, ...paths)
   }
 
   constructor(readonly config: ClusterConfig) {}
@@ -338,7 +340,7 @@ export class ClusterManager {
     })
     await solManager.start()
 
-    // Initialise on-chain PDAs (OutpostConfig, MessageBuffer, OperatorRegistry).
+    // Initialise on-chain PDAs (OutpostConfig, OutboundMessageBuffer, OperatorRegistry).
     const bootstrap = new SOLBootstrap({
       wireSolPath: cfg.solanaPath,
       rpcUrl: `http://127.0.0.1:${cfg.ports.solanaRpc}`,
@@ -497,11 +499,11 @@ export class ClusterManager {
       // producerPeerAddresses excludes bios (for batch op + underwriter nodes
       // that start after bios is killed).
       const { ports } = cfg,
-        biosP2P = `localhost:${ports.biosP2p}`,
+        biosP2P = `${ClusterManager.LocalHost}:${ports.biosP2p}`,
         producerPeerAddresses: string[] = [],
         allPeerAddresses: string[] = [biosP2P]
       ports.producerP2p.forEach(p2p => {
-        const addr = `localhost:${p2p}`
+        const addr = `${ClusterManager.LocalHost}:${p2p}`
         allPeerAddresses.push(addr)
         producerPeerAddresses.push(addr)
       })
@@ -537,9 +539,9 @@ export class ClusterManager {
         biosCmd = buildStartCmd({
           nodeopBinary: executables.nodeop,
           p2pListenEndpoint: `0.0.0.0:${ports.biosP2p}`,
-          p2pServerAddress: `localhost:${ports.biosP2p}`,
+          p2pServerAddress: `${ClusterManager.LocalHost}:${ports.biosP2p}`,
           p2pPeerAddresses: [],
-          httpServerAddress: `localhost:${ports.biosHttp}`,
+          httpServerAddress: `${ClusterManager.LocalHost}:${ports.biosHttp}`,
           enableStaleProduction: true,
           producerNames: ["sysio"],
           k1Keys: [BIOS_K1_KEY],
@@ -1079,7 +1081,7 @@ export class ClusterManager {
     // arrive until it produces at least one block — a chicken-and-egg freeze.
     // force_unpause() resets the tracker so the first block can be produced,
     // after which the BLS finalizer votes normally and the tracker stays clear.
-    await sleep(2000)
+    await sleep(ClusterManager.PreResumeSettleMs)
     await Promise.all(
       this.state.nodes
         .filter(ns => ns.isProducer)
@@ -1216,7 +1218,7 @@ export class ClusterManager {
       try {
         // First check the node is responding at all
         const infoResp = await fetch(`${baseUrl}/v1/chain/get_info`, {
-          signal: AbortSignal.timeout(3000)
+          signal: AbortSignal.timeout(ClusterManager.NodeReadinessFetchTimeoutMs)
         })
         if (!infoResp.ok) return false
 
@@ -1231,7 +1233,7 @@ export class ClusterManager {
             table: "epochstate",
             limit: 1
           }),
-          signal: AbortSignal.timeout(3000)
+          signal: AbortSignal.timeout(ClusterManager.NodeReadinessFetchTimeoutMs)
         })
         if (!tableResp.ok) return false
         const result = (await tableResp.json()) as { rows: unknown[] }
@@ -1398,7 +1400,7 @@ async function bootstrapChain(
         "sysio.bios.wasm",
         "sysio.bios.abi"
       ),
-    { label: "deploy sysio.bios", maxAttempts: 3, delayMs: 2000 }
+    { label: "deploy sysio.bios", maxAttempts: ClusterManager.ClioRetryAttempts, delayMs: ClusterManager.ClioRetryHeavyDelayMs }
   )
   log.info("[Phase 2] sysio.bios deployed")
 
@@ -1653,7 +1655,7 @@ async function bootstrapChain(
         "sysio.roa.wasm",
         "sysio.roa.abi"
       ),
-    { label: "deploy sysio.roa", maxAttempts: 3, delayMs: 2000 }
+    { label: "deploy sysio.roa", maxAttempts: ClusterManager.ClioRetryAttempts, delayMs: ClusterManager.ClioRetryHeavyDelayMs }
   )
   await clio.setPriv("sysio.roa")
   await clio.pushActionAndWait(
@@ -1678,7 +1680,7 @@ async function bootstrapChain(
         "sysio.authex.wasm",
         "sysio.authex.abi"
       ),
-    { label: "deploy sysio.authex", maxAttempts: 3, delayMs: 2000 }
+    { label: "deploy sysio.authex", maxAttempts: ClusterManager.ClioRetryAttempts, delayMs: ClusterManager.ClioRetryHeavyDelayMs }
   )
   await clio.setPriv("sysio.authex")
   await grantSysioCode(clio, "sysio.authex")
@@ -1781,8 +1783,8 @@ async function bootstrapChain(
       operators_per_epoch: opsPerEpoch,
       batch_operator_minimum_active: adjustedMin,
       batch_op_groups: batchOpGroups,
-      attestation_retention_epoch_count:
-        ClusterManager.AttestationRetentionEpochs
+      epoch_retention_envelope_log_count:
+        ClusterManager.EnvelopeLogRetentionEpochs
     },
     "sysio.epoch@active"
   )
@@ -1790,14 +1792,14 @@ async function bootstrapChain(
 
   // ── Phase 15a: Configure sysio.opreg ──
   log.info("[Phase 15a] Configuring sysio.opreg...")
-  await clio.pushAction(
+  await clio.pushAction<SystemContracts.SysioOpregSetconfigAction>(
     "sysio.opreg",
     "setconfig",
     {
       max_available_producers: 21,
       max_available_batch_ops: 63,
       max_available_underwriters: 21,
-      terminate_prune_delay_ms: 600000 // 10 min for dev
+      terminate_prune_delay_ms: 600_000 // 10 min for dev
     },
     "sysio.opreg@active"
   )
@@ -1805,7 +1807,7 @@ async function bootstrapChain(
 
   // ── Phase 16: Register outposts ──
   log.info("[Phase 16] Registering outposts...")
-  await clio.pushAction<SystemContracts.SysioEpochRegoutpostAction>(
+  await clio.pushActionAndWait<SystemContracts.SysioEpochRegoutpostAction>(
     "sysio.epoch",
     "regoutpost",
     {
@@ -1815,7 +1817,7 @@ async function bootstrapChain(
     "sysio.epoch@active"
   )
   if (cfg.solanaPath) {
-    await clio.pushAction<SystemContracts.SysioEpochRegoutpostAction>(
+    await clio.pushActionAndWait<SystemContracts.SysioEpochRegoutpostAction>(
       "sysio.epoch",
       "regoutpost",
       {
@@ -1860,7 +1862,7 @@ async function bootstrapChain(
   )
 
   // Wait for accounts to be finalized before assigning resource policies
-  await sleep(1000)
+  await sleep(ClusterManager.PostAccountCreateSettleMs)
 
   // Assign resource policies
   await Promise.all(
@@ -2046,6 +2048,12 @@ export namespace ClusterManager {
 
   // ── Anvil / Solana subdirectories ──
 
+  /** Subdirectory under clusterPath that holds chain data (per-node + outposts). */
+  export const DataSubpath = "data"
+
+  /** Subdirectory under clusterPath that holds wallet keys (kiod vault + kiod logs). */
+  export const WalletSubpath = "wallet"
+
   /** Anvil state subdirectory within clusterPath/data. */
   export const AnvilStateSubpath = "anvil/state"
 
@@ -2080,12 +2088,29 @@ export namespace ClusterManager {
   /** Poll interval between `get_info` checks during producer handoff. */
   export const HandoffPollIntervalMs = 1_000
 
+  /** Timeout applied to `fetch` calls made during node-readiness polling. */
+  export const NodeReadinessFetchTimeoutMs = 3_000
+
   /**
-   * How many past epochs sysio.epoch retains attestations for. Setting this
-   * too low loses historical attestations that downstream tooling reads;
-   * too high bloats on-chain state.
+   * Pre-resume settle delay — gives every producer node a couple of seconds
+   * to register their finalizer state before {@link force_unpause} fires.
    */
-  export const AttestationRetentionEpochs = 1_000
+  export const PreResumeSettleMs = 2_000
+
+  /**
+   * Settle delay after batch creating system accounts before applying
+   * resource policies on each one.
+   */
+  export const PostAccountCreateSettleMs = 1_000
+
+  /**
+   * Cap multiplier for the metadata-only `envelope_log` table on
+   * `sysio.msgch`. Effective row cap is
+   * `active_outposts * 2 * EnvelopeLogRetentionEpochs`. Default 128 —
+   * matches `MAX_TRACKED_ENVELOPES` on the Solana opp-outpost program
+   * so the on-chain audit window is symmetric across chains.
+   */
+  export const EnvelopeLogRetentionEpochs = 128
 
   /** Initial token supply for `sysio.token.create`. */
   export const InitialTokenSupply = "1000000000.0000 SYS"
@@ -2127,23 +2152,14 @@ export namespace ClusterManager {
    * Convenience factory for tests and scripts — resolves ports + exe paths,
    * assembles a full ClusterConfig, runs create(), and returns the manager.
    */
-  export async function createFromCLIArgs(opts: {
-    buildPath: string
-    clusterPath: string
-    ethereumPath?: string
-    producerCount?: number
-    nodeCount?: number
-    batchOperatorCount?: number
-    underwriterCount?: number
-    epochDurationSec?: number
-    warmupEpochs?: number
-    cooldownEpochs?: number
-    force?: boolean
-  }): Promise<ClusterManager> {
+  export async function createFromCLIArgs(
+    opts: ClusterOptions
+  ): Promise<ClusterManager> {
     const {
       buildPath,
       clusterPath,
       ethereumPath,
+      solanaPath,
       producerCount = 21,
       nodeCount = 1,
       batchOperatorCount = 3,
@@ -2164,14 +2180,19 @@ export namespace ClusterManager {
     const config: ClusterConfig = {
       buildPath,
       clusterPath,
-      dataPath: mkdirs(Path.join(clusterPath, "data")),
-      walletPath: mkdirs(Path.join(clusterPath, "wallet")),
+      dataPath: mkdirs(
+        Path.join(clusterPath, ClusterManager.DataSubpath)
+      ),
+      walletPath: mkdirs(
+        Path.join(clusterPath, ClusterManager.WalletSubpath)
+      ),
       producerCount,
       nodeCount,
       httpSecure: false,
       batchOperatorCount,
       underwriterCount,
       ethereumPath,
+      solanaPath,
       epochDurationSec,
       warmupEpochs,
       cooldownEpochs,

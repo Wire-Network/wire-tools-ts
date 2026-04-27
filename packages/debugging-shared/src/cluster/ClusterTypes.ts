@@ -128,13 +128,13 @@ export interface ClusterConfig {
   underwriterCount: number
 
   /** Path to wire-ethereum repo root. If omitted, anvil is not configured. */
-  ethereumPath?: string
+  ethereumPath: string
 
   /**
    * Path to wire-solana repo root. If omitted, solana-test-validator is not
    * bootstrapped and the SOL outpost is skipped.
    */
-  solanaPath?: string
+  solanaPath: string
 
   /** Epoch duration in seconds (default: 360). */
   epochDurationSec: number

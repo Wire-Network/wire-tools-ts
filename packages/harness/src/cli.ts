@@ -242,8 +242,12 @@ async function main(): Promise<void> {
               config: ClusterConfig = {
                 buildPath,
                 clusterPath,
-                dataPath: mkdirs(Path.join(clusterPath, "data")),
-                walletPath: mkdirs(Path.join(clusterPath, "wallet")),
+                dataPath: mkdirs(
+                  Path.join(clusterPath, ClusterManager.DataSubpath)
+                ),
+                walletPath: mkdirs(
+                  Path.join(clusterPath, ClusterManager.WalletSubpath)
+                ),
                 producerCount: prodCount,
                 nodeCount,
                 httpSecure,

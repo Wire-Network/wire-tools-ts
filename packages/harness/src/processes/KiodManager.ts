@@ -46,7 +46,7 @@ export class KiodManager {
   private constructor(readonly config: KiodConfig) {}
 
   get httpUrl(): string {
-    return `http://127.0.0.1:${this.config.port}`
+    return `http://${KiodManager.DefaultHost}:${this.config.port}`
   }
 
   async start(): Promise<void> {
@@ -59,7 +59,7 @@ export class KiodManager {
       "--config-dir",
       config.walletPath,
       `--unlock-timeout=${config.unlockTimeout}`,
-      `--http-server-address=127.0.0.1:${config.port}`,
+      `--http-server-address=${KiodManager.DefaultHost}:${config.port}`,
       "--http-max-response-time-ms",
       String(config.httpMaxResponseTimeMs),
       "--verbose-http-errors"
@@ -69,31 +69,42 @@ export class KiodManager {
     }
 
     const procConfig: ProcessConfig = {
-      label: "kiod",
+      label: KiodManager.ProcessLabel,
       command: config.binary,
       args,
       cwd: config.walletPath
     }
 
     await ProcessManager.get().spawn(procConfig)
-    await waitForEndpoint(`${this.httpUrl}/v1/wallet/list_wallets`, {
-      label: "kiod",
-      timeoutMs: KiodManager.StartupTimeoutMs
-    })
+    await waitForEndpoint(
+      `${this.httpUrl}${KiodManager.HealthCheckPath}`,
+      {
+        label: KiodManager.ProcessLabel,
+        timeoutMs: KiodManager.StartupTimeoutMs
+      }
+    )
     log.info(`kiod ready at ${this.httpUrl}`)
   }
 
   async stop(): Promise<void> {
-    const handle = ProcessManager.get().get("kiod")
+    const handle = ProcessManager.get().get(KiodManager.ProcessLabel)
     if (handle) await handle.kill()
   }
 }
 
 export namespace KiodManager {
+  /** Loopback host kiod binds to. */
+  export const DefaultHost = "127.0.0.1"
+  /** Default HTTP API port. */
   export const DefaultPort = 8900
-  export const DefaultUnlockTimeout = 999999
-  export const DefaultHttpMaxResponseTimeMs = 99999
-
+  /** Default unlock timeout (seconds). Effectively "until process exits". */
+  export const DefaultUnlockTimeout = 999_999
+  /** Default `--http-max-response-time-ms`. */
+  export const DefaultHttpMaxResponseTimeMs = 99_999
+  /** Process-manager label — pid file basename + log prefix. */
+  export const ProcessLabel = "kiod" as const
+  /** Endpoint polled to confirm kiod is up. */
+  export const HealthCheckPath = "/v1/wallet/list_wallets" as const
   /** Timeout for waiting on kiod startup (ms). */
   export const StartupTimeoutMs = 10_000
 }

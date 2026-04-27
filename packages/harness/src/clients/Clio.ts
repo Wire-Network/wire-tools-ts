@@ -682,7 +682,7 @@ export namespace Clio {
   }
 
   /** Maximum stdout buffer size for clio subprocess (bytes). */
-  export const MaxBuffer = 10 * 1024 * 1024
+  export const MaxBuffer = 10 * 1_024 * 1_024
 
   /** Timeout for a single clio command execution (ms). */
   export const CommandTimeoutMs = 30_000

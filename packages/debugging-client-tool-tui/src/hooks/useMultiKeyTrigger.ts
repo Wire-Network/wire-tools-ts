@@ -100,7 +100,7 @@ export function useMultiKeyTrigger(
 ): void {
   const handlersRef = useRef(handlers)
   handlersRef.current = handlers
-  const machineRef = useRef<MultiKeyMachine | null>(null)
+  const machineRef = useRef<MultiKeyMachine>(null)
   if (machineRef.current === null) {
     machineRef.current = createMultiKeyMachine(
       // Indirect through ref so React-identity changes to `handlers` take effect

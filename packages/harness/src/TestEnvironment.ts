@@ -1,22 +1,22 @@
 import OS from "node:os"
 import Path from "node:path"
 import Fs from "node:fs"
+import { ETHBootstrap } from "./bootstrap/ETHBootstrap.js"
+import { SOLBootstrap } from "./bootstrap/SOLBootstrap.js"
+import { ETHClient } from "./clients/ETHClient.js"
+import { SOLClient } from "./clients/SOLClient.js"
+import { WIREClient } from "./clients/WIREClient.js"
+import { type ClusterConfig, ClusterManager } from "./cluster/ClusterManager.js"
+import { ClusterPorts } from "./cluster/ClusterPorts.js"
+import { log } from "./logger.js"
+import { AnvilManager, type AnvilOptions } from "./processes/AnvilManager.js"
 import { ProcessManager } from "./processes/ProcessManager.js"
 import { ProcessSignalName } from "./processes/ProcessSignals.js"
-import { AnvilManager, type AnvilOptions } from "./processes/AnvilManager.js"
 import {
   SolanaValidatorManager,
   type SolanaValidatorOptions
 } from "./processes/SolanaValidatorManager.js"
-import { type ClusterConfig, ClusterManager } from "./cluster/ClusterManager.js"
-import { WIREClient } from "./clients/WIREClient.js"
-import { ETHClient } from "./clients/ETHClient.js"
-import { SOLClient } from "./clients/SOLClient.js"
-import { ETHBootstrap } from "./bootstrap/ETHBootstrap.js"
-import { SOLBootstrap } from "./bootstrap/SOLBootstrap.js"
-import { log } from "./logger.js"
 import { mkdirs } from "./util.js"
-import { ClusterPorts } from "./cluster/ClusterPorts.js"
 
 export interface TestEnvironmentConfig {
   /** WIRE chain configuration (required) */
@@ -34,19 +34,19 @@ export interface TestEnvironmentConfig {
     /** Additional nodeop CLI flags */
     extraArgs?: string[]
 
-    /** Number of producer nodes (default: 1) */
+    /** Number of producer nodes (default: {@link TestEnvironment.DefaultProducerCount}) */
     producerCount?: number
-    /** Number of non-producer nodes (default: 0) */
+    /** Number of non-producer nodes (default: {@link TestEnvironment.DefaultNodeCount}) */
     nodeCount?: number
-    /** Number of batch operator nodes (default: 3) */
+    /** Number of batch operator nodes (default: {@link TestEnvironment.DefaultBatchOperatorCount}) */
     batchOperatorCount?: number
-    /** Number of underwriter nodes (default: 1) */
+    /** Number of underwriter nodes (default: {@link TestEnvironment.DefaultUnderwriterCount}) */
     underwriterCount?: number
-    /** Epoch duration in seconds (default: 360) */
+    /** Epoch duration in seconds (default: {@link TestEnvironment.DefaultEpochDurationSec}) */
     epochDurationSec?: number
-    /** Warmup epochs (default: 1) */
+    /** Warmup epochs (default: {@link TestEnvironment.DefaultWarmupEpochs}) */
     warmupEpochs?: number
-    /** Cooldown epochs (default: 1) */
+    /** Cooldown epochs (default: {@link TestEnvironment.DefaultCooldownEpochs}) */
     cooldownEpochs?: number
   }
   /** Ethereum/anvil configuration */
@@ -56,9 +56,9 @@ export interface TestEnvironmentConfig {
   /** Auto-bootstrap WIRE chain after starting (deploy contracts, configure OPP) */
   bootstrapWire?: boolean
   /** Path to wire-ethereum repo for ETH deployment */
-  wireEthPath?: string
+  ethereumPath?: string
   /** Path to wire-solana repo for SOL deployment */
-  wireSolPath?: string
+  solanaPath?: string
   /** Temp directory for test artifacts (default: os.tmpdir()) */
   tempPath?: string
 }
@@ -119,7 +119,11 @@ export class TestEnvironment {
     ProcessManager.setClusterPath(config.wire.clusterPath).get()
 
     this.tempPath = mkdirs(
-      config.tempPath || Path.join(OS.tmpdir(), `wire-e2e-${Date.now()}`)
+      config.tempPath ||
+        Path.join(
+          OS.tmpdir(),
+          `${TestEnvironment.TempPathPrefix}${Date.now()}`
+        )
     )
   }
 
@@ -135,26 +139,30 @@ export class TestEnvironment {
     process.on(ProcessSignalName.SIGINT, cleanup)
     process.on(ProcessSignalName.SIGTERM, cleanup)
 
-    // Determine chain directory
+    // Resolve cluster directory — fall back to a per-run temp subpath when the
+    // caller didn't provide one.
     const clusterPath =
-      this.config.wire.clusterPath ?? Path.join(this.tempPath, "wire-chain")
+      this.config.wire.clusterPath ??
+      Path.join(this.tempPath, TestEnvironment.DefaultChainSubdir)
 
-    // Start WIRE chain via ClusterManager (creates genesis, config, bootstraps)
+    // Pull caller-provided counts; fill in defaults from the namespace.
     const {
-      producerCount = 1,
-      nodeCount = 1,
-      batchOperatorCount = 3,
-      underwriterCount = 1,
-      epochDurationSec = 360,
-      warmupEpochs = 1,
-      cooldownEpochs = 1
+      producerCount = TestEnvironment.DefaultProducerCount,
+      nodeCount = TestEnvironment.DefaultNodeCount,
+      batchOperatorCount = TestEnvironment.DefaultBatchOperatorCount,
+      underwriterCount = TestEnvironment.DefaultUnderwriterCount,
+      epochDurationSec = TestEnvironment.DefaultEpochDurationSec,
+      warmupEpochs = TestEnvironment.DefaultWarmupEpochs,
+      cooldownEpochs = TestEnvironment.DefaultCooldownEpochs
     } = this.config.wire
 
     const clusterConfig: ClusterConfig = {
       buildPath: this.config.wire.buildPath,
       clusterPath,
-      dataPath: Path.join(clusterPath, "data"),
-      walletPath: Path.join(clusterPath, "wallet"),
+      dataPath: Path.join(clusterPath, ClusterManager.DataSubpath),
+      walletPath: Path.join(clusterPath, ClusterManager.WalletSubpath),
+      ethereumPath: this.config.ethereumPath,
+      solanaPath: this.config.solanaPath,
       producerCount,
       nodeCount,
       httpSecure: false,
@@ -185,8 +193,11 @@ export class TestEnvironment {
 
     // start() launches all nodes from saved state
     await this.cluster.start()
-    // Create WIRE client pointing at first producer node (port 8888)
-    const wireHttpUrl = "http://127.0.0.1:8888"
+
+    // WIRE client points at the first producer node, using the resolved port.
+    const wireHttpUrl = TestEnvironment.toLocalHttpUrl(
+      clusterConfig.ports.producerHttp[0]
+    )
     this.wireClient = new WIREClient({
       httpUrl: wireHttpUrl,
       clio: {
@@ -215,24 +226,24 @@ export class TestEnvironment {
     log.info("Test environment ready")
 
     // Bootstrap Ethereum outpost
-    if (this.config.ethereum && this.config.wireEthPath) {
+    if (this.config.ethereum && this.config.ethereumPath) {
       this.ethBootstrap = new ETHBootstrap({
-        wireEthPath: this.config.wireEthPath,
+        wireEthPath: this.config.ethereumPath,
         rpcUrl: this.anvil!.rpcUrl
       })
       await this.ethBootstrap.bootstrap()
     }
 
     // Bootstrap Solana outpost
-    if (this.config.solana && this.config.wireSolPath) {
+    if (this.config.solana && this.config.solanaPath) {
       this.solBootstrap = new SOLBootstrap({
-        wireSolPath: this.config.wireSolPath,
+        wireSolPath: this.config.solanaPath,
         rpcUrl: this.solanaValidator!.rpcUrl
       })
       await this.solBootstrap.bootstrap()
     }
 
-    log.info("=== Full environment bootstrapped ===")
+    log.info(TestEnvironment.BootstrapDoneBanner)
   }
 
   /** Stop all processes in reverse order. */
@@ -242,5 +253,38 @@ export class TestEnvironment {
     if (this.anvil) await this.anvil.stop()
     if (this.cluster) await this.cluster.stop()
     log.info("Test environment stopped")
+  }
+}
+
+export namespace TestEnvironment {
+  /** Loopback host used when constructing local RPC URLs. */
+  export const LocalHost = "127.0.0.1" as const
+  /** Prefix used when synthesising a per-run temp directory under `os.tmpdir()`. */
+  export const TempPathPrefix = "wire-e2e-" as const
+  /** Subdirectory under the temp path used as the cluster root when none is supplied. */
+  export const DefaultChainSubdir = "wire-chain" as const
+
+  /** Banner logged once the full multi-chain bootstrap finishes. */
+  export const BootstrapDoneBanner = "=== Full environment bootstrapped ===" as const
+
+  // ── Cluster-shape defaults ────────────────────────────────────────────────
+  /** Default number of WIRE producer nodes when none is specified. */
+  export const DefaultProducerCount = 1
+  /** Default number of WIRE non-producer nodes when none is specified. */
+  export const DefaultNodeCount = 1
+  /** Default number of batch-operator nodes when none is specified. */
+  export const DefaultBatchOperatorCount = 3
+  /** Default number of underwriter nodes when none is specified. */
+  export const DefaultUnderwriterCount = 1
+  /** Default epoch duration (seconds). */
+  export const DefaultEpochDurationSec = 360
+  /** Default WARMUP→ACTIVE delay (epochs). */
+  export const DefaultWarmupEpochs = 1
+  /** Default COOLDOWN→deregister delay (epochs). */
+  export const DefaultCooldownEpochs = 1
+
+  /** Build a `http://127.0.0.1:<port>` URL using the loopback host constant. */
+  export function toLocalHttpUrl(port: number): string {
+    return `http://${LocalHost}:${port}`
   }
 }

@@ -30,6 +30,15 @@ const StaleDeployArtifactFiles = [
   "outpost-addrs.json"
 ] as const
 
+/** Hardhat deploy subprocess timeout. Raise if your hardware is genuinely slower. */
+const HardhatDeployTimeoutMs = 120_000
+/** Subprocess stdout/stderr buffer cap. */
+const HardhatDeployBufferBytes = 10 * 1_024 * 1_024
+/** Length of the stderr tail logged after a Hardhat run. */
+const HardhatStderrTailChars = 1_000
+/** Length of the stdout tail logged after a Hardhat run. */
+const HardhatStdoutTailChars = 500
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -241,8 +250,8 @@ export class ETHBootstrapper {
       ],
       {
         cwd: ethereumPath,
-        timeout: 120_000,
-        maxBuffer: 10 * 1024 * 1024,
+        timeout: HardhatDeployTimeoutMs,
+        maxBuffer: HardhatDeployBufferBytes,
         env: {
           ...process.env,
           // Ensure hardhat uses the right network config
@@ -253,10 +262,10 @@ export class ETHBootstrapper {
 
     if (stderr) {
       // Hardhat often writes warnings to stderr (compiler warnings, etc.)
-      log.debug(`[ETH] hardhat stderr:\n${stderr.slice(0, 1000)}`)
+      log.debug(`[ETH] hardhat stderr:\n${stderr.slice(0, HardhatStderrTailChars)}`)
     }
 
-    log.info(`[ETH] Deploy output:\n${stdout.slice(-500)}`)
+    log.info(`[ETH] Deploy output:\n${stdout.slice(-HardhatStdoutTailChars)}`)
 
     // Read deployed addresses and annotate accounts
     const liqethAddrsFile = Path.join(localDir, "liqeth-addrs.json")

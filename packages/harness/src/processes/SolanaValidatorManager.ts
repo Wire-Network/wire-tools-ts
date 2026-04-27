@@ -54,11 +54,11 @@ export class SolanaValidatorManager {
   private constructor(readonly config: SolanaValidatorConfig) {}
 
   get rpcUrl(): string {
-    return `http://127.0.0.1:${this.config.rpcPort}`
+    return `http://${SolanaValidatorManager.DefaultHost}:${this.config.rpcPort}`
   }
 
   get wsUrl(): string {
-    return `ws://127.0.0.1:${this.config.rpcPort + 1}`
+    return `ws://${SolanaValidatorManager.DefaultHost}:${this.config.rpcPort + SolanaValidatorManager.WsPortOffset}`
   }
 
   async start(): Promise<void> {
@@ -79,14 +79,14 @@ export class SolanaValidatorManager {
     ]
 
     const procConfig: ProcessConfig = {
-      label: "solana-test-validator",
+      label: SolanaValidatorManager.ProcessLabel,
       command: config.binary,
       args
     }
 
     await ProcessManager.get().spawn(procConfig)
     await waitForEndpoint(this.rpcUrl, {
-      label: "solana-test-validator",
+      label: SolanaValidatorManager.ProcessLabel,
       timeoutMs: SolanaValidatorManager.StartupTimeoutMs
     })
 
@@ -104,22 +104,31 @@ export class SolanaValidatorManager {
       } catch {
         // RPC not fully up yet
       }
-      await sleep(500)
+      await sleep(SolanaValidatorManager.SlotPollIntervalMs)
     }
 
     log.info(`Solana validator ready at ${this.rpcUrl}`)
   }
 
   async stop(): Promise<void> {
-    const handle = ProcessManager.get().get("solana-test-validator")
+    const handle = ProcessManager.get().get(SolanaValidatorManager.ProcessLabel)
     if (handle) await handle.kill()
   }
 }
 
 export namespace SolanaValidatorManager {
+  /** Loopback host the validator binds to. */
+  export const DefaultHost = "127.0.0.1"
+  /** Default JSON-RPC HTTP port. */
   export const DefaultRpcPort = 8899
+  /** Default faucet port. */
   export const DefaultFaucetPort = 9900
-
+  /** Offset added to `rpcPort` to derive the WebSocket port (Solana convention). */
+  export const WsPortOffset = 1
+  /** Process-manager label — pid file basename + log prefix. */
+  export const ProcessLabel = "solana-test-validator" as const
+  /** Polling interval while waiting for the validator's first slot. */
+  export const SlotPollIntervalMs = 500
   /** Timeout for waiting on solana-test-validator startup (ms). */
   export const StartupTimeoutMs = 30_000
 }

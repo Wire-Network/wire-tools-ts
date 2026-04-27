@@ -201,10 +201,10 @@ export const MAX_PRODUCERS = 21
 export const NODEOP_EXTRA_ARGS = {
   voteThreads: 4,
   maxTransactionTime: -1,
-  abiSerializerMaxTimeMs: 990000,
+  abiSerializerMaxTimeMs: 990_000,
   maxClients: 25,
   connectionCleanupPeriod: 15,
-  httpMaxResponseTimeMs: 990000
+  httpMaxResponseTimeMs: 990_000
 } as const
 
 // ---------------------------------------------------------------------------

@@ -11,13 +11,22 @@ import { SOLClient } from "../clients/SOLClient.js"
 import { log } from "../logger.js"
 import { retry, sleep } from "../util.js"
 
+/** Total attempts allowed for each Solana airdrop / RPC retry block. */
+const SolAirdropRetryAttempts = 3
+/** Delay between airdrop / RPC retries. */
+const SolAirdropRetryDelayMs = 2_000
+/** Confirmation polling interval for airdrops. */
+const SolAirdropConfirmIntervalMs = 500
+/** Hard deadline for an individual airdrop confirmation. */
+const SolAirdropConfirmTimeoutMs = 60_000
+
 /**
  * Solana outpost bootstrap.
  *
  * Runs against a test validator that already has the `opp_outpost` program
  * loaded (via `--bpf-program` at validator launch). Responsibilities:
  *   - Airdrop SOL to a deployer keypair
- *   - Initialize the `OutpostConfig` / `MessageBuffer` / `OperatorRegistry` PDAs
+ *   - Initialize the `OutpostConfig` / `OutboundMessageBuffer` / `OperatorRegistry` PDAs
  *
  * Per-epoch `EpochDeliveries` PDAs are allocated lazily on first delivery by
  * the batch operator — nothing to do here.
@@ -66,7 +75,7 @@ export class SOLBootstrap {
         await retry(
           async () => {
             const sig = await this.connection.requestAirdrop(pub, lamports)
-            const deadline = Date.now() + 60_000
+            const deadline = Date.now() + SolAirdropConfirmTimeoutMs
             while (Date.now() < deadline) {
               const status = await this.connection.getSignatureStatus(sig)
               const conf = status?.value?.confirmationStatus
@@ -75,12 +84,14 @@ export class SOLBootstrap {
                 throw new Error(
                   `Airdrop tx failed: ${JSON.stringify(status.value.err)}`
                 )
-              await sleep(500)
+              await sleep(SolAirdropConfirmIntervalMs)
             }
             if (Date.now() >= deadline)
-              throw new Error("Airdrop not confirmed within 60s")
+              throw new Error(
+                `Airdrop not confirmed within ${SolAirdropConfirmTimeoutMs}ms`
+              )
           },
-          { label: `airdrop to ${pk}`, maxAttempts: 3, delayMs: 2000 }
+          { label: `airdrop to ${pk}`, maxAttempts: SolAirdropRetryAttempts, delayMs: SolAirdropRetryDelayMs }
         )
         log.info(`Airdropped ${amountSol} SOL to ${pk}`)
       })
@@ -159,7 +170,7 @@ export class SOLBootstrap {
         if (Date.now() >= deadline)
           throw new Error("Airdrop not confirmed within 60s")
       },
-      { label: "airdrop to deployer", maxAttempts: 3, delayMs: 2000 }
+      { label: "airdrop to deployer", maxAttempts: SolAirdropRetryAttempts, delayMs: SolAirdropRetryDelayMs }
     )
 
     // 4. Initialize PDAs if program is deployed
@@ -179,18 +190,36 @@ export class SOLBootstrap {
       [Buffer.from("outpost_config")],
       this.programId!
     )
-    const [messageBufferPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("message_buffer")],
+    const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("outbound_message_buffer")],
       this.programId!
     )
     const [operatorRegistryPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("operator_registry")],
       this.programId!
     )
+    // Singleton envelope log PDAs — new in the durability-v2 program.
+    // `epoch_in` appends to `inbound_envelopes`; `emit_outbound_envelope`
+    // appends to `outbound_envelopes`. Both are created during `initialize`.
+    const [inboundEnvelopesPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("inbound_envelopes")],
+      this.programId!
+    )
+    const [outboundEnvelopesPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("outbound_envelopes")],
+      this.programId!
+    )
+    const [latestOutboundEnvelopePda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("latest_outbound_envelope")],
+      this.programId!
+    )
 
-    log.info(`  Config PDA:    ${configPda.toBase58()}`)
-    log.info(`  MsgBuffer PDA: ${messageBufferPda.toBase58()}`)
-    log.info(`  Registry PDA:  ${operatorRegistryPda.toBase58()}`)
+    log.info(`  Config PDA:                   ${configPda.toBase58()}`)
+    log.info(`  OutMsgBuffer PDA:             ${outboundMessageBufferPda.toBase58()}`)
+    log.info(`  Registry PDA:                 ${operatorRegistryPda.toBase58()}`)
+    log.info(`  InboundEnvelopes PDA:         ${inboundEnvelopesPda.toBase58()}`)
+    log.info(`  OutboundEnvelopes PDA:        ${outboundEnvelopesPda.toBase58()}`)
+    log.info(`  LatestOutboundEnvelope PDA:   ${latestOutboundEnvelopePda.toBase58()}`)
 
     // If the config PDA already exists, assume a prior bootstrap finished.
     const configAccount = await this.connection.getAccountInfo(configPda)
@@ -229,8 +258,11 @@ export class SOLBootstrap {
       .accounts({
         authority: deployer.publicKey,
         config: configPda,
-        messageBuffer: messageBufferPda,
+        outboundMessageBuffer: outboundMessageBufferPda,
         operatorRegistry: operatorRegistryPda,
+        inboundEnvelopes: inboundEnvelopesPda,
+        outboundEnvelopes: outboundEnvelopesPda,
+        latestOutboundEnvelope: latestOutboundEnvelopePda,
         systemProgram: anchor.web3.SystemProgram.programId
       })
       .signers([deployer])

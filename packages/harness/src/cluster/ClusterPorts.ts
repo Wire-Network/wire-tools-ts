@@ -80,11 +80,23 @@ export namespace ClusterPorts {
   }): Promise<ClusterPorts> {
     const claimed = new Set<number>()
 
+    /**
+     * Claim a port — prefers `preferred`, falling back to ephemeral allocation
+     * if the preferred port has already been claimed in this resolve cycle.
+     */
     async function claim(preferred: number): Promise<number> {
-      let port = await getPort({ port: [preferred] })
-      while (claimed.has(port)) {
-        port = await getPort()
+      const port = await getPort({ port: [preferred] })
+      if (!claimed.has(port)) {
+        claimed.add(port)
+        return port
       }
+      return claimAnother()
+    }
+
+    /** Recursive helper — pulls a fresh ephemeral port until uniqueness holds. */
+    async function claimAnother(): Promise<number> {
+      const port = await getPort()
+      if (claimed.has(port)) return claimAnother()
       claimed.add(port)
       return port
     }

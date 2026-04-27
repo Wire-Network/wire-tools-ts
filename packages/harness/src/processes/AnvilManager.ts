@@ -78,30 +78,34 @@ export class AnvilManager {
     }
 
     const procConfig: ProcessConfig = {
-      label: "anvil",
+      label: AnvilManager.ProcessLabel,
       command: config.binary,
       args
     }
 
     await ProcessManager.get().spawn(procConfig)
     await waitForEndpoint(this.rpcUrl, {
-      label: "anvil",
+      label: AnvilManager.ProcessLabel,
       timeoutMs: AnvilManager.StartupTimeoutMs
     })
     log.info(`Anvil ready at ${this.rpcUrl} (chainId=${config.chainId})`)
   }
 
   async stop(): Promise<void> {
-    const handle = ProcessManager.get().get("anvil")
+    const handle = ProcessManager.get().get(AnvilManager.ProcessLabel)
     if (handle) await handle.kill()
   }
 }
 
 export namespace AnvilManager {
+  /** Default loopback host for the anvil HTTP RPC. */
   export const DefaultHost = "127.0.0.1"
+  /** Default JSON-RPC port. */
   export const DefaultPort = 8545
-  export const DefaultChainId = 31337
-
+  /** Default EVM chain id (Foundry's standard). */
+  export const DefaultChainId = 31_337
+  /** Process-manager label — used as the pid file basename and log prefix. */
+  export const ProcessLabel = "anvil" as const
   /** Timeout for waiting on anvil startup (ms). */
   export const StartupTimeoutMs = 15_000
 }
