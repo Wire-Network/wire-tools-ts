@@ -46,11 +46,13 @@ export PATH="$HOME/.foundry/bin:$PATH"
 sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
 export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
 
-# -- Node.js 22+ --
-# wire-libraries-ts and wire-e2e-tests both gate on engines.node >=22.
-# CI uses v24. Use nvm, NodeSource apt, or the official binary tarball.
+# -- Node.js 24+ --
+# wire-libraries-ts and wire-e2e-tests roots declare engines.node >=22,
+# but the bundled CLI packages (protoc-gen-solidity, protoc-gen-solana,
+# protobuf-bundler) declare engines.node >=24 and `@yao-pkg/pkg` fetches
+# a v24 runtime to bundle into their binaries. Use 24. CI also runs 24.
 # (Verified: Node 20.x does NOT satisfy the engine check.)
-nvm install 22 && nvm alias default 22
+nvm install 24 && nvm alias default 24
 
 # -- pnpm (corepack) --
 corepack enable
@@ -63,7 +65,7 @@ Verify:
 rustc --version; cargo --version
 anvil --version
 solana --version
-node --version     # must be >= 22
+node --version     # must be >= 24
 pnpm --version     # must be 10.x
 clang-18 --version
 cmake --version
@@ -88,6 +90,12 @@ package resolution (`.pnpmfile.cjs`, `generate-opp-bundles.fish`) works:
 ```
 
 Clone each (`git clone --recursive`) if not already present.
+
+The `wire-opp/` directory **must exist** before the wire-sysio build runs — `generate-opp-bundles.fish` only writes there when the directory is already present (it's the local-dev hand-off path detected by `.pnpmfile.cjs` in `wire-ethereum`/`wire-e2e-tests`). It can start empty:
+
+```bash
+mkdir -p "$WIRE_ROOT/wire-opp"
+```
 
 ### 1.4 Branches required for the OPP cross-chain integration
 
@@ -201,23 +209,23 @@ cmake -S . -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_INSTALL_PREFIX="$WIRE_ROOT/wire-install" \
     -DCMAKE_PREFIX_PATH="$WIRE_ROOT/wire-install/cdt"
 
-ninja -C "$BUILD_DIR" opp_cdt_models.protos   # see GOTCHA #1 below
 # Make sure the protoc CLIs are on PATH — there's a POST_BUILD step on
-# libopp.a that invokes generate-opp-bundles.fish (GOTCHA #2 below).
+# libopp.a that invokes generate-opp-bundles.fish (see §6.5 below).
 export PATH="$HOME/.local/share/pnpm:$PATH"
 cmake --build "$BUILD_DIR" -j"$NUM_JOBS"
 # Some compilation units need ~4GB RAM; reduce -j if you see OOMs.
 ```
 
-> **GOTCHA — first-build race on the zpp-generated contract headers.** The
-> `contracts_project` external target depends on `opp_cdt_models.protos`
-> (which runs `cdt::protoc-gen-zpp` to generate `sysio/opp/**/*.pb.hpp` in
-> `build/debug/libraries/opp/generated-cdt/`). With Ninja, that dependency
-> doesn't reliably fire on a cold build — the contracts build runs before
-> the `.pb.hpp` files exist and blows up with
-> `fatal error: 'sysio/opp/types/types.pb.hpp' file not found`. Running
-> `ninja opp_cdt_models.protos` explicitly before the full build generates
-> the headers, after which the main `cmake --build` proceeds cleanly.
+> **Note on the zpp-generated contract headers.** The `contracts_project`
+> ExternalProject depends on `opp_cdt_models.protos` (which runs
+> `cdt::protoc-gen-zpp` to produce `sysio/opp/**/*.pb.hpp` under
+> `build/<dir>/libraries/opp/generated-cdt/`). wire-sysio commit
+> `1015c98d3` (Apr 2026) wired `add_dependencies(contracts_project
+> opp_cdt_models.protos)` so a single `cmake --build` should now produce
+> the headers before the contracts compile. If you still hit
+> `fatal error: 'sysio/opp/types/types.pb.hpp' file not found` on a cold
+> build, run `ninja -C "$BUILD_DIR" opp_cdt_models.protos` once and
+> resume the full build.
 
 ### 3.4 Generate the `wire-opp/` sibling directory
 
@@ -241,9 +249,12 @@ not apply here. Link the generated `@wireio/opp-*` packages globally into
 npm's global bin first, then link them into the project:
 
 ```bash
-# One-time: register the wire-opp/* packages as globally-linkable via npm.
-(cd "$WIRE_ROOT/wire-opp/solidity"   && npm link)
-(cd "$WIRE_ROOT/wire-opp/typescript" && npm link)
+# One-time: register the wire-opp/* packages as globally-linkable.
+# Both npm and pnpm globals are needed — npm for wire-ethereum below,
+# pnpm so any pnpm-based consumer (or sibling wire-e2e-tests workspace
+# falling back to a global resolve) finds them.
+(cd "$WIRE_ROOT/wire-opp/solidity"   && npm link && pnpm link --global)
+(cd "$WIRE_ROOT/wire-opp/typescript" && npm link && pnpm link --global)
 
 cd "$WIRE_ROOT/wire-ethereum"
 git checkout feature/protobufs-for-opp      # see §1.4
@@ -347,10 +358,11 @@ Noted because the Dockerfile in circulation is partly stale:
 - **`pnpm link --global` for shared/sdk-core.** Dockerfile globally-links
   `shared`, `shared-node`, `shared-web`, `sdk-core`. Not needed locally —
   `wire-e2e-tests/.pnpmfile.cjs` hooks resolve them from
-  `../wire-libraries-ts/packages/` automatically. The only packages that
-  still need a global link are the three CLI binaries (so `.fish` finds them).
-- **Node 24 vs Node 22.** Dockerfile pins 24.14.1; the monorepos' `engines`
-  only require `>=22`, and v22 works fine.
+  `../wire-libraries-ts/packages/` automatically. The packages that still
+  need a global link are the three CLI binaries (so `.fish` finds them on
+  PATH) and the generated `wire-opp/{solidity,typescript}` packages (so
+  `wire-ethereum`'s npm install and any pnpm-based consumer can `link`
+  them — see §3.5).
 - **wire-ethereum `npm i` of pinned opp-models.** Dockerfile does
   `npm i && npm link @wireio/opp-solidity-models @wireio/opp-typescript-models`
   to work around a `package-lock.json` that pins 1.0.9 (missing types). Still
@@ -368,23 +380,24 @@ Noted because the Dockerfile in circulation is partly stale:
 
 Two `protoc-gen-*` postinstall scripts run `pnpm dist` in parallel, both
 calling `pkg-fetch` which writes to the same `~/.pkg-cache/v3.5/` — one wins,
-the other fails with `ENOENT: ... fetched-v22.22.0-linux-x64.downloading`.
+the other fails with `ENOENT: ... fetched-v24.<x>-linux-x64.downloading`.
 **Fix:** pre-populate the cache once before `pnpm install`:
 
 ```bash
-npx --yes @yao-pkg/pkg-fetch node22 linux x64     # fills ~/.pkg-cache/v3.5/
+npx --yes @yao-pkg/pkg-fetch node24 linux x64     # fills ~/.pkg-cache/v3.5/
 ```
 
 ### 6.2 `pnpm link --global` errors with `ERR_PNPM_NO_GLOBAL_BIN_DIR`
 
-Fresh pnpm installs don't pick up a global bin dir. Set it once:
+Fresh pnpm installs don't have a global bin dir wired. Run `pnpm setup`
+once — it picks `$HOME/.local/share/pnpm`, writes `PNPM_HOME` and the
+PATH export into your shell rc, and configures `global-bin-dir` /
+`global-dir`:
 
 ```bash
-pnpm config set global-bin-dir /home/<you>/.local/share/pnpm
-pnpm config set global-dir     /home/<you>/.local/share/pnpm/global
-# and add PNPM_HOME to your shell rc:
-export PNPM_HOME="$HOME/.local/share/pnpm"
-export PATH="$PNPM_HOME:$PATH"
+pnpm setup
+# Then start a new shell (or `source ~/.zshrc` / `source ~/.bashrc`)
+# so PNPM_HOME and PATH pick up.
 ```
 
 ### 6.3 `protoc-gen-ts not found` during `generate-opp-bundles.fish`
@@ -396,33 +409,25 @@ export PATH="$PNPM_HOME:$PATH"
 pnpm add -g @protobuf-ts/plugin     # provides protoc-gen-ts on PATH
 ```
 
-### 6.4 GOTCHA #1 — `opp_cdt_models.protos` not generated before `contracts_project` build
+### 6.4 Cold-build error: `'sysio/opp/types/types.pb.hpp' file not found`
 
-`cmake --build build/debug` on a fresh build fails:
-
-```
-fatal error: 'sysio/opp/types/types.pb.hpp' file not found
-```
-
-The `contracts_project` ExternalProject kicks off before Ninja generates the
-zpp `.pb.hpp` headers, despite `add_dependencies(contracts_project
-opp_cdt_models.protos)`. Work around by explicitly generating first:
+The `contracts_project` ExternalProject needs the zpp-generated `.pb.hpp`
+headers before it compiles. wire-sysio commit `1015c98d3` (Apr 2026) wired
+`add_dependencies(contracts_project opp_cdt_models.protos)`, so a single
+`cmake --build` should now produce the headers in order. If you still see
+the error on a cold build, run the protos target explicitly first:
 
 ```bash
 ninja -C build/debug opp_cdt_models.protos
 cmake --build build/debug -j${NUM_JOBS}
 ```
 
-### 6.5 GOTCHA #2 — POST_BUILD step on libopp.a always fires, even when CLIs aren't on PATH
+### 6.5 Build fails at `libopp.a` with `required tools are not found on PATH`
 
-`libraries/opp/CMakeLists.txt` checks for the required CLIs via a
-`find_program` loop, but reuses the same cache variable (`_found_prog`) for
-every iteration — after the first `find_program` populates it, the
-subsequent calls are no-ops. The "tools missing" warning branch therefore
-never fires and the `fish generate-opp-bundles.fish` POST_BUILD step is
-attached to `libopp.a` unconditionally. If `wire-protobuf-bundler` /
-`protoc-gen-solidity` / `protoc-gen-solana` aren't on `PATH` during the
-build, the link step fails with:
+`libraries/opp/CMakeLists.txt` runs `generate-opp-bundles.fish` as a
+POST_BUILD step on `libopp.a`. If `wire-protobuf-bundler`,
+`protoc-gen-solidity`, or `protoc-gen-solana` aren't on `PATH` when ninja
+runs that step, the link fails with:
 
 ```
 Error: The following required tools are not found on PATH:
@@ -431,11 +436,16 @@ Error: The following required tools are not found on PATH:
   - protoc-gen-solana
 ```
 
-Fix: ensure `PNPM_HOME/bin` is on `PATH` during `cmake --build`. Long-term,
-the CMakeLists.txt should pass a fresh output variable per iteration (or
-use `find_program(... REQUIRED)`).
+(wire-sysio commit `b66eea7243` fixed an earlier bug where the CMake
+"tools missing → skip" branch never fired due to `find_program` cache
+reuse — now that branch works, and CMake will warn-and-skip when the CLIs
+are absent. Older builds without that fix attached the POST_BUILD step
+unconditionally.)
 
-### 6.5 `wire-test-cluster create` crashes with `paths[0] must be string` when `--solana-path` is omitted
+Fix: install the three CLIs via §3.1 and ensure `$PNPM_HOME` (typically
+`$HOME/.local/share/pnpm`) is on `PATH` before `cmake --build`.
+
+### 6.6 `wire-test-cluster create` crashes with `paths[0] must be string` when `--solana-path` is omitted
 
 Harness `cli.ts:233` calls `Path.resolve(argv.solanaPath)` unconditionally.
 Until fixed in harness, always pass `--solana-path=<wire-solana-root>` even
@@ -443,7 +453,7 @@ if the Solana program isn't deployed — `SOLBootstrap` will warn and skip
 program init when the expected `<wire-solana>/wallets/opp-outpost-keypair.json`
 is absent.
 
-### 6.6 `wire-solana` master is the liqSol repo — use the OPP branch
+### 6.7 `wire-solana` master is the liqSol repo — use the OPP branch
 
 `wire-solana` on `master` is the Capital Staking / liqSol program and does
 not contain `opp-outpost`. Checkout
@@ -451,7 +461,7 @@ not contain `opp-outpost`. Checkout
 `wallets/opp-outpost-keypair.json`, and the Anchor.toml entry. Then
 `anchor build -p opp-outpost` produces the `.so` + IDL the harness expects.
 
-### 6.7 `pkill -f "<regex>"` self-terminates your session
+### 6.8 `pkill -f "<regex>"` self-terminates your session
 
 The Dockerfile's run instructions suggest
 `pkill -f "solana-test-validator|anvil|kiod|nodeop"`. Because that regex is
