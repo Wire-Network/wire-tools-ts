@@ -1,14 +1,10 @@
-/**
- * Generates logging.json for nodeop instances.
- *
- * Mirrors the Python TestHarness/launcher.py `write_logging_config_file()` method.
- */
+import Path from "path"
 
 /**
  * Standard logging.json content matching the Python launcher output.
  * All loggers at "debug" level writing to stderr with color.
  */
-export function generateLoggingConfig(): object {
+export function generateLoggingConfig(nodePath: string): object {
   return {
     includes: [],
     sinks: [
@@ -25,6 +21,25 @@ export function generateLoggingConfig(): object {
             { level: "error", color: "red" }
           ]
         }
+      },
+      {
+        name: "json_daily_file",
+        type: "daily_file_sink",
+        args: {
+          base_filename: Path.join(nodePath, "logs", "logs.jsonl"),
+          rotation_hour: 0,
+          rotation_minute: 0,
+          truncate: false,
+          max_files: 5
+        },
+        format: {
+          type: "json",
+          args: {
+            extra_fields: {}
+          }
+        },
+        _comment:
+          'JSONL output; rotates daily. Attach "json_daily_file" to any logger\'s sinks[] to enable.'
       }
     ],
     loggers: [
@@ -46,7 +61,7 @@ export function generateLoggingConfig(): object {
       name,
       level: "debug",
       enabled: true,
-      sinks: ["stderr_color"]
+      sinks: ["stderr_color", "json_daily_file"]
     }))
   }
 }

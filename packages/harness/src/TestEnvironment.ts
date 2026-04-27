@@ -120,10 +120,7 @@ export class TestEnvironment {
 
     this.tempPath = mkdirs(
       config.tempPath ||
-        Path.join(
-          OS.tmpdir(),
-          `${TestEnvironment.TempPathPrefix}${Date.now()}`
-        )
+        Path.join(OS.tmpdir(), `${TestEnvironment.TempPathPrefix}${Date.now()}`)
     )
   }
 
@@ -142,44 +139,42 @@ export class TestEnvironment {
     // Resolve cluster directory — fall back to a per-run temp subpath when the
     // caller didn't provide one.
     const clusterPath =
-      this.config.wire.clusterPath ??
-      Path.join(this.tempPath, TestEnvironment.DefaultChainSubdir)
-
-    // Pull caller-provided counts; fill in defaults from the namespace.
-    const {
-      producerCount = TestEnvironment.DefaultProducerCount,
-      nodeCount = TestEnvironment.DefaultNodeCount,
-      batchOperatorCount = TestEnvironment.DefaultBatchOperatorCount,
-      underwriterCount = TestEnvironment.DefaultUnderwriterCount,
-      epochDurationSec = TestEnvironment.DefaultEpochDurationSec,
-      warmupEpochs = TestEnvironment.DefaultWarmupEpochs,
-      cooldownEpochs = TestEnvironment.DefaultCooldownEpochs
-    } = this.config.wire
-
-    const clusterConfig: ClusterConfig = {
-      buildPath: this.config.wire.buildPath,
-      clusterPath,
-      dataPath: Path.join(clusterPath, ClusterManager.DataSubpath),
-      walletPath: Path.join(clusterPath, ClusterManager.WalletSubpath),
-      ethereumPath: this.config.ethereumPath,
-      solanaPath: this.config.solanaPath,
-      producerCount,
-      nodeCount,
-      httpSecure: false,
-      batchOperatorCount,
-      underwriterCount,
-      epochDurationSec,
-      warmupEpochs,
-      cooldownEpochs,
-      ports: await ClusterPorts.resolve({
+        this.config.wire.clusterPath ??
+        Path.join(this.tempPath, TestEnvironment.DefaultChainSubdir),
+      // Pull caller-provided counts; fill in defaults from the namespace.
+      {
+        producerCount = TestEnvironment.DefaultProducerCount,
+        nodeCount = TestEnvironment.DefaultNodeCount,
+        batchOperatorCount = TestEnvironment.DefaultBatchOperatorCount,
+        underwriterCount = TestEnvironment.DefaultUnderwriterCount,
+        epochDurationSec = TestEnvironment.DefaultEpochDurationSec,
+        warmupEpochs = TestEnvironment.DefaultWarmupEpochs,
+        cooldownEpochs = TestEnvironment.DefaultCooldownEpochs
+      } = this.config.wire,
+      clusterConfig: ClusterConfig = {
+        buildPath: this.config.wire.buildPath,
+        clusterPath,
+        dataPath: Path.join(clusterPath, ClusterManager.DataSubpath),
+        walletPath: Path.join(clusterPath, ClusterManager.WalletSubpath),
+        ethereumPath: this.config.ethereumPath,
+        solanaPath: this.config.solanaPath,
+        producerCount,
         nodeCount,
+        httpSecure: false,
         batchOperatorCount,
-        underwriterCount
-      }),
-      executables: await ClusterManager.resolveExePaths(
-        this.config.wire.buildPath
-      )
-    }
+        underwriterCount,
+        epochDurationSec,
+        warmupEpochs,
+        cooldownEpochs,
+        ports: await ClusterPorts.resolve({
+          nodeCount,
+          batchOperatorCount,
+          underwriterCount
+        }),
+        executables: await ClusterManager.resolveExePaths(
+          this.config.wire.buildPath
+        )
+      }
 
     this.cluster = new ClusterManager(clusterConfig)
 
@@ -265,7 +260,8 @@ export namespace TestEnvironment {
   export const DefaultChainSubdir = "wire-chain" as const
 
   /** Banner logged once the full multi-chain bootstrap finishes. */
-  export const BootstrapDoneBanner = "=== Full environment bootstrapped ===" as const
+  export const BootstrapDoneBanner =
+    "=== Full environment bootstrapped ===" as const
 
   // ── Cluster-shape defaults ────────────────────────────────────────────────
   /** Default number of WIRE producer nodes when none is specified. */

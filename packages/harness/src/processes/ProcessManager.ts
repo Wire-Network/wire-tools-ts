@@ -8,13 +8,13 @@ import {
 } from "child_process"
 import treeKill from "tree-kill"
 import { log } from "../logger.js"
-import { Deferred } from "@wireio/shared"
+import { Deferred, isDefined } from "@wireio/shared"
 import { asOption } from "@3fv/prelude-ts"
 import { ProcessSignalName } from "./ProcessSignals.js"
 import * as Assert from "node:assert"
 import { mkdirs } from "../util.js"
+import { identity } from "lodash"
 
-const MAX_STDERR_LINES = 100
 const GracefulKillMs = 2_000
 const ChildStdio: StdioOptions = ["ignore", "pipe", "pipe"]
 
@@ -60,8 +60,6 @@ export interface ProcessHandle {
   kill(): Promise<void>
   /** Resolve with the exit code once the process has exited. */
   wait(): Promise<number>
-  /** Ring buffer of the most recent stderr lines (capped at {@link MAX_STDERR_LINES}). */
-  recentStderr: string[]
 }
 
 /** Process names to sweep at startup and on exit. */
@@ -178,7 +176,7 @@ export class ProcessManager {
   private initialized = false
   private nextId = 0
 
-  private clusterLogStream: Fs.WriteStream | null = null
+  private clusterLogStream: Fs.WriteStream = null
   private processLogStreams: Map<string, Fs.WriteStream> = new Map()
   private exitHandlerRegistered = false
 
@@ -221,47 +219,50 @@ export class ProcessManager {
     })
   }
 
+  private toProcessPath(label: string, ...children: string[]): string {
+    return ProcessManager.toClusterPath(
+      "data",
+      label.replaceAll("-", "_"),
+      ...children
+    )
+  }
   /**
    * Map a process label to its per-process log directory under clusterPath.
    *
-   * Labels like `node-bios`, `node-00`, `node-batchop_00` map to
-   * `<clusterPath>/data/node_bios/logs/`, `<clusterPath>/data/node_00/logs/`, etc.
+   * Replaces hyphens with underscores in the label and constructs the log path.
    *
    * `anvil` → `<clusterPath>/data/anvil/logs/`
    * `solana-test-validator` → `<clusterPath>/data/solana_validator/logs/`
    * `kiod` → `<clusterPath>/data/kiod/logs/`
    */
   private toProcessLogPath(label: string): string {
-    const logPath = asOption(label)
-      .map(l =>
-        l.startsWith("node-")
-          ? l.replace("node-", "node_")
-          : l === "solana-test-validator"
-            ? "solana_validator"
-            : l
-      )
-      .getOrThrow()
-    return ProcessManager.toClusterPath("data", logPath, "logs")
+    return this.toProcessPath(label, "logs")
   }
 
   /** Pid file path for a label: `<clusterPath>/data/<processDir>/<label>.pid`. */
   private toProcessPidPath(label: string): string {
-    return Path.join(Path.dirname(this.toProcessLogPath(label)), `${label}.pid`)
+    return this.toProcessPath(label, `${label}.pid`)
   }
 
-  /** Ensure cluster and per-process log file streams are open. */
+  /**
+   * Ensure cluster and per-process log file streams are open.
+   */
   private ensureLogStreams(label: string): void {
     const stamp = currentDateStamp()
 
-    if (!this.clusterLogStream) {
-      const clusterLogPath = mkdirs(ProcessManager.toClusterPath("logs")),
-        clusterLogFile = Path.join(clusterLogPath, `cluster_${stamp}.log`)
-      this.clusterLogStream = Fs.createWriteStream(clusterLogFile, {
-        flags: "a"
-      })
-      log.info(`Cluster log: ${clusterLogFile}`)
-    }
+    this.clusterLogStream = asOption(this.clusterLogStream).match({
+      None: () => {
+        const clusterLogPath = mkdirs(ProcessManager.toClusterPath("logs")),
+          clusterLogFile = Path.join(clusterLogPath, `cluster_${stamp}.log`)
+        log.info(`Cluster log: ${clusterLogFile}`)
+        return Fs.createWriteStream(clusterLogFile, {
+          flags: "a"
+        })
+      },
+      Some: identity
+    })
 
+    // NOW GET THE PROCESS LOG STREAM
     if (!this.processLogStreams.has(label)) {
       const logPath = mkdirs(this.toProcessLogPath(label)),
         logFile = Path.join(logPath, `log_${stamp}.log`)
@@ -273,9 +274,11 @@ export class ProcessManager {
     }
   }
 
-  /** Write a labeled line to both the cluster log and the per-process log. */
+  /**
+   * Write a labeled line to both the cluster log and the per-process log.
+   */
   private writeToLogs(label: string, data: string): void {
-    const line = `${new Date().toISOString()} [${label}] ${data}\n`
+    const line = data + "\n"
     this.clusterLogStream?.write(line)
     this.processLogStreams.get(label)?.write(line)
   }
@@ -293,8 +296,7 @@ export class ProcessManager {
       `Spawning ${config.label}: ${config.command} ${config.args.join(" ")}`
     )
 
-    const recentStderr: string[] = [],
-      exitDeferred = new Deferred<number>(),
+    const exitDeferred = new Deferred<number>(),
       pidFile = this.toProcessPidPath(config.label),
       child = spawn(config.command, config.args, {
         cwd: config.cwd,
@@ -306,27 +308,21 @@ export class ProcessManager {
         detached: false
       })
 
-    const ingestStream = (
-      stream: NodeJS.ReadableStream | null,
-      isStderr: boolean
-    ) => {
-      if (!stream) return
-      stream.setEncoding("utf8")
-      stream.on("data", (chunk: string) => {
-        chunk
-          .split("\n")
-          .filter(Boolean)
-          .forEach(line => {
-            this.writeToLogs(config.label, line)
-            if (!isStderr) return
-            recentStderr.push(line)
-            if (recentStderr.length > MAX_STDERR_LINES) recentStderr.shift()
-          })
+    const ingestStream = (...streams: NodeJS.ReadableStream[]) => {
+      streams.filter(isDefined).forEach(stream => {
+        stream.setEncoding("utf8")
+        stream.on("data", (chunk: string) => {
+          chunk
+            .split("\n")
+            .filter(Boolean)
+            .forEach(line => {
+              this.writeToLogs(config.label, line)
+            })
+        })
       })
     }
 
-    ingestStream(child.stdout, false)
-    ingestStream(child.stderr, true)
+    ingestStream(child.stdout, child.stderr)
 
     child.on("error", err => {
       log.error(`${config.label} spawn error: ${err.message}`)
@@ -336,10 +332,6 @@ export class ProcessManager {
     child.on("exit", (code, signal) => {
       const exitCode = code ?? (signal ? 1 : 0)
       log.info(`${config.label} exited (code=${code}, signal=${signal})`)
-      if (exitCode !== 0 && recentStderr.length > 0) {
-        log.error(`${config.label} stderr (last ${recentStderr.length} lines):`)
-        recentStderr.forEach(line => log.error(`  ${line}`))
-      }
       try {
         Fs.rmSync(pidFile, { force: true })
       } catch {
@@ -352,11 +344,11 @@ export class ProcessManager {
     })
 
     const pid = child.pid ?? 0
-    if (pid <= 0 && recentStderr.length > 0) {
-      log.error(`${config.label} exited immediately, stderr:`)
-      recentStderr.forEach(line => log.error(`  ${line}`))
+    if (pid < 1) {
+      log.error(`${config.label} exited immediately`)
+      exitDeferred.resolveIfUnsettled(0)
+      Assert.ok(pid > 0, `Failed to spawn ${config.label}: no pid assigned`)
     }
-    Assert.ok(pid > 0, `Failed to spawn ${config.label}: no pid assigned`)
 
     mkdirs(Path.dirname(pidFile))
     Fs.writeFileSync(pidFile, String(pid))
@@ -367,7 +359,6 @@ export class ProcessManager {
       id,
       pid,
       pidFile,
-      recentStderr,
 
       kill: async () => {
         if (exitDeferred.isSettled()) return
@@ -441,9 +432,9 @@ export class ProcessManager {
     log.info(`Killing all processes: ${labels.join(", ")}`)
     await Promise.all(
       labels.map(label =>
-        asOption(this.handles.get(label))
-          .map(h => h.kill())
-          .getOrElse(Promise.resolve())
+        this.handles.has(label)
+          ? this.handles.get(label).kill()
+          : Promise.resolve()
       )
     )
     this.closeAllLogStreams()

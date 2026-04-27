@@ -43,10 +43,10 @@ function manualTimer() {
   let now = 0
   let nextId = 1
   return {
-    setTimer(cb: () => void, ms: number): number {
+    setTimer(cb: () => void, ms: number): NodeJS.Timeout {
       const id = nextId++
       queue.set(id, { cb, dueAt: now + ms })
-      return id
+      return id as any
     },
     clearTimer(t: unknown): void {
       queue.delete(t as number)
@@ -67,7 +67,12 @@ describe("createMultiKeyMachine — single-count handler", () => {
   it("fires after the debounce window elapses", () => {
     const onSingle = jest.fn()
     const t = manualTimer()
-    const m = createMultiKeyMachine({ 1: onSingle }, 300, t.setTimer, t.clearTimer)
+    const m = createMultiKeyMachine(
+      { 1: onSingle },
+      300,
+      t.setTimer,
+      t.clearTimer
+    )
     m.press(mkKey({ escape: true }))
     t.advance(299)
     expect(onSingle).not.toHaveBeenCalled()
@@ -116,7 +121,12 @@ describe("createMultiKeyMachine — 2-handler only, with 3 presses", () => {
   it("falls through to the 2-handler (highest registered <= hit)", () => {
     const onDouble = jest.fn()
     const t = manualTimer()
-    const m = createMultiKeyMachine({ 2: onDouble }, 300, t.setTimer, t.clearTimer)
+    const m = createMultiKeyMachine(
+      { 2: onDouble },
+      300,
+      t.setTimer,
+      t.clearTimer
+    )
     m.press(mkKey({ escape: true }))
     t.advance(50)
     m.press(mkKey({ escape: true }))
@@ -129,7 +139,12 @@ describe("createMultiKeyMachine — 2-handler only, with 3 presses", () => {
   it("a single press with no 1-handler is ignored", () => {
     const onDouble = jest.fn()
     const t = manualTimer()
-    const m = createMultiKeyMachine({ 2: onDouble }, 300, t.setTimer, t.clearTimer)
+    const m = createMultiKeyMachine(
+      { 2: onDouble },
+      300,
+      t.setTimer,
+      t.clearTimer
+    )
     m.press(mkKey({ escape: true }))
     t.advance(300)
     expect(onDouble).not.toHaveBeenCalled()
@@ -140,7 +155,12 @@ describe("createMultiKeyMachine — cleanup", () => {
   it("prevents a pending handler from firing after cleanup", () => {
     const onSingle = jest.fn()
     const t = manualTimer()
-    const m = createMultiKeyMachine({ 1: onSingle }, 300, t.setTimer, t.clearTimer)
+    const m = createMultiKeyMachine(
+      { 1: onSingle },
+      300,
+      t.setTimer,
+      t.clearTimer
+    )
     m.press(mkKey({ escape: true }))
     m.cleanup()
     t.advance(500)

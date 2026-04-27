@@ -1,6 +1,6 @@
 import "jest"
 import { generateGenesis } from "@wire-e2e-tests/harness/cluster/genesis"
-import { generateLoggingConfig } from "@wire-e2e-tests/harness/cluster/loggingConfig"
+import { generateLoggingConfig } from "../../src/cluster/generateLoggingConfig"
 import { buildStartCmd } from "@wire-e2e-tests/harness/cluster/startCmd"
 import {
   BIOS_K1_KEY,
@@ -14,6 +14,8 @@ import {
   BIOS_P2P_PORT,
   BIOS_HTTP_PORT
 } from "@wire-e2e-tests/harness/cluster/constants"
+import OS from "node:os"
+import { ClusterManager } from "@wire-e2e-tests/harness"
 
 describe("ClusterManager smoke tests", () => {
   describe("genesis.ts", () => {
@@ -35,9 +37,9 @@ describe("ClusterManager smoke tests", () => {
     })
   })
 
-  describe("loggingConfig.ts", () => {
+  describe("generateLoggingConfig.ts", () => {
     test("generates JSON with stderr_color sink and standard loggers", () => {
-      const config = generateLoggingConfig() as {
+      const config = generateLoggingConfig(OS.tmpdir()) as {
         sinks: Array<{ name: string }>
         loggers: Array<{ name: string }>
       }
@@ -56,9 +58,9 @@ describe("ClusterManager smoke tests", () => {
       const cmd = buildStartCmd({
         nodeopBinary: "/opt/bin/nodeop",
         p2pListenEndpoint: `0.0.0.0:${BIOS_P2P_PORT}`,
-        p2pServerAddress: `localhost:${BIOS_P2P_PORT}`,
+        p2pServerAddress: `${ClusterManager.LocalHost}:${BIOS_P2P_PORT}`,
         p2pPeerAddresses: [],
-        httpServerAddress: `localhost:${BIOS_HTTP_PORT}`,
+        httpServerAddress: `${ClusterManager.LocalHost}${BIOS_HTTP_PORT}`,
         enableStaleProduction: true,
         producerNames: ["sysio"],
         k1Keys: [BIOS_K1_KEY],

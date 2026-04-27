@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react"
 import { useInput, type Key } from "ink"
+import { asOption } from "@3fv/prelude-ts"
 
 /** Callback invoked when a press-count threshold is reached. */
 export type MultiKeyHandler = (key: Key) => void
@@ -36,34 +37,43 @@ export interface MultiKeyMachine {
  *
  * @param handlers threshold → callback map
  * @param windowMs debounce window (ms); default {@link MultiKeyTrigger.DefaultWindowMs}
- * @param setTimer / `clearTimer` — seams for tests (defaults to `setTimeout` / `clearTimeout`)
+ * @param setTimer
+ * @param clearTimer
  */
 export function createMultiKeyMachine(
   handlers: MultiKeyHandlers,
   windowMs: number = MultiKeyTrigger.DefaultWindowMs,
-  setTimer: (cb: () => void, ms: number) => unknown = setTimeout,
-  clearTimer: (timer: unknown) => void = clearTimeout as (t: unknown) => void
+  setTimer: (cb: () => void, ms: number) => NodeJS.Timeout = setTimeout,
+  clearTimer: (timer: NodeJS.Timeout) => void = clearTimeout
 ): MultiKeyMachine {
-  let count = 0
-  let timer: unknown = null
-  let lastKey: Key | null = null
+  let count = 0,
+    timer: NodeJS.Timeout = null,
+    lastKey: Key = null
   return {
     press(key: Key): void {
       count += 1
       lastKey = key
-      if (timer !== null) clearTimer(timer)
+
+      clearTimer(timer)
+
       timer = setTimer(() => {
-        const hit = count
+        const hit = count,
+          latest = lastKey
+
         count = 0
-        const latest = lastKey
         lastKey = null
         timer = null
-        if (!latest) return
-        const threshold = Object.keys(handlers)
-          .map(Number)
-          .filter(n => n <= hit)
-          .sort((a, b) => b - a)[0]
-        if (threshold !== undefined) handlers[threshold](latest)
+
+        asOption(latest).map(latest =>
+          asOption(
+            Object.keys(handlers)
+              .map(Number)
+              .filter(n => n <= hit)
+              .sort((a, b) => b - a)[0]
+          ).ifSome(threshold => {
+            handlers[threshold](latest)
+          })
+        )
       }, windowMs)
     },
     cleanup(): void {

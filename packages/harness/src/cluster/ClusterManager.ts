@@ -32,7 +32,7 @@ import {
   type NodeKeySet
 } from "./keyGen.js"
 import { buildRelaunchCmd, buildStartCmd } from "./startCmd.js"
-import { generateLoggingConfig } from "./loggingConfig.js"
+import { generateLoggingConfig } from "./generateLoggingConfig"
 import {
   BATCH_OPERATOR_PLUGINS,
   batchOperatorAccountName,
@@ -513,11 +513,14 @@ export class ClusterManager {
       const genesis = generateGenesis({
           initialFinalizerKey: BIOS_BLS_KEY.publicKey
         }),
-        loggingJson = JSON.stringify(generateLoggingConfig(), null, 2),
         writeNodeFiles = (nodePath: string, cmd: string[]) => {
           const genesisFile = Path.join(nodePath, "genesis.json")
+
           Fs.writeFileSync(genesisFile, JSON.stringify(genesis, null, 2))
-          Fs.writeFileSync(Path.join(nodePath, "logging.json"), loggingJson)
+          Fs.writeFileSync(
+            Path.join(nodePath, "logging.json"),
+            JSON.stringify(generateLoggingConfig(nodePath), null, 2)
+          )
           Fs.writeFileSync(Path.join(nodePath, "start.cmd"), cmd.join(" "))
           // Write default config.ini with HTTP insecure patch (matches Python _patch_configs_http_insecure)
           const defaultIniFile = Path.join(
@@ -1218,7 +1221,9 @@ export class ClusterManager {
       try {
         // First check the node is responding at all
         const infoResp = await fetch(`${baseUrl}/v1/chain/get_info`, {
-          signal: AbortSignal.timeout(ClusterManager.NodeReadinessFetchTimeoutMs)
+          signal: AbortSignal.timeout(
+            ClusterManager.NodeReadinessFetchTimeoutMs
+          )
         })
         if (!infoResp.ok) return false
 
@@ -1233,7 +1238,9 @@ export class ClusterManager {
             table: "epochstate",
             limit: 1
           }),
-          signal: AbortSignal.timeout(ClusterManager.NodeReadinessFetchTimeoutMs)
+          signal: AbortSignal.timeout(
+            ClusterManager.NodeReadinessFetchTimeoutMs
+          )
         })
         if (!tableResp.ok) return false
         const result = (await tableResp.json()) as { rows: unknown[] }
@@ -1400,7 +1407,11 @@ async function bootstrapChain(
         "sysio.bios.wasm",
         "sysio.bios.abi"
       ),
-    { label: "deploy sysio.bios", maxAttempts: ClusterManager.ClioRetryAttempts, delayMs: ClusterManager.ClioRetryHeavyDelayMs }
+    {
+      label: "deploy sysio.bios",
+      maxAttempts: ClusterManager.ClioRetryAttempts,
+      delayMs: ClusterManager.ClioRetryHeavyDelayMs
+    }
   )
   log.info("[Phase 2] sysio.bios deployed")
 
@@ -1655,7 +1666,11 @@ async function bootstrapChain(
         "sysio.roa.wasm",
         "sysio.roa.abi"
       ),
-    { label: "deploy sysio.roa", maxAttempts: ClusterManager.ClioRetryAttempts, delayMs: ClusterManager.ClioRetryHeavyDelayMs }
+    {
+      label: "deploy sysio.roa",
+      maxAttempts: ClusterManager.ClioRetryAttempts,
+      delayMs: ClusterManager.ClioRetryHeavyDelayMs
+    }
   )
   await clio.setPriv("sysio.roa")
   await clio.pushActionAndWait(
@@ -1680,7 +1695,11 @@ async function bootstrapChain(
         "sysio.authex.wasm",
         "sysio.authex.abi"
       ),
-    { label: "deploy sysio.authex", maxAttempts: ClusterManager.ClioRetryAttempts, delayMs: ClusterManager.ClioRetryHeavyDelayMs }
+    {
+      label: "deploy sysio.authex",
+      maxAttempts: ClusterManager.ClioRetryAttempts,
+      delayMs: ClusterManager.ClioRetryHeavyDelayMs
+    }
   )
   await clio.setPriv("sysio.authex")
   await grantSysioCode(clio, "sysio.authex")
@@ -2180,12 +2199,8 @@ export namespace ClusterManager {
     const config: ClusterConfig = {
       buildPath,
       clusterPath,
-      dataPath: mkdirs(
-        Path.join(clusterPath, ClusterManager.DataSubpath)
-      ),
-      walletPath: mkdirs(
-        Path.join(clusterPath, ClusterManager.WalletSubpath)
-      ),
+      dataPath: mkdirs(Path.join(clusterPath, ClusterManager.DataSubpath)),
+      walletPath: mkdirs(Path.join(clusterPath, ClusterManager.WalletSubpath)),
       producerCount,
       nodeCount,
       httpSecure: false,
