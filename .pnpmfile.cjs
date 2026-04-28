@@ -21,9 +21,10 @@ const wireLibPackagesPath = Path.resolve(
   "wire-libraries-ts",
   "packages"
 )
+
 const wireOPPPkgPaths = ["typescript", "solidity"].map(target => [
   `@wireio/opp-${target}-models`,
-  Path.resolve(__dirname, "..", "wire-opp", target)
+  Path.resolve(__dirname, "..", "wire-sysio", "build", "opp", target)
 ])
 
 /**

@@ -18,6 +18,13 @@ export interface DebugOPPEnvelopeRecord {
   envelope: Envelope
   /** Decoded metadata record — includes `batchOpNames`. */
   metadata: DebugEnvelopeMetadataRecord
+  /**
+   * Unix-ms timestamp the tracking service decoded this envelope. Drives
+   * the `updated_timestamp` column in `EpochTrackerPanel` — the most-recent
+   * `receivedAt` across an epoch's envelopes is "when this epoch last
+   * changed".
+   */
+  receivedAt: number
 }
 
 /** Per-epoch cache entry. Multiple envelopes per epoch under fraud scenarios. */

@@ -16,7 +16,7 @@ import {
 import { RouterProvider } from "./router/RouterContext.js"
 import { FeatureProviderRegistry } from "./features/FeatureProviderRegistry.js"
 import OPPFeatureProvider from "./features/opp/OPPFeatureProvider.js"
-import ProcessMonitorFeatureProvider from "./features/processMonitor/ProcessMonitorFeatureProvider.js"
+import ProcessMonitorFeatureProvider from "./features/process-monitor/ProcessMonitorFeatureProvider.js"
 import type { FeatureProvider } from "./features/FeatureProvider.js"
 import {
   registerFeature,

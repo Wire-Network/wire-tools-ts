@@ -61,6 +61,7 @@ const devTuiPlugin = {
           ...process.env,
           DEV: "true"
         },
+        cwd: __dirname,
         stdio: "inherit"
       })
 

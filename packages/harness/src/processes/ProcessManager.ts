@@ -9,7 +9,7 @@ import {
 import treeKill from "tree-kill"
 import { log } from "../logger.js"
 import { Deferred, isDefined } from "@wireio/shared"
-import { asOption } from "@3fv/prelude-ts"
+import { asOption, Either } from "@3fv/prelude-ts"
 import { ProcessSignalName } from "./ProcessSignals.js"
 import * as Assert from "node:assert"
 import { mkdirs } from "../util.js"
@@ -79,12 +79,12 @@ function currentDateStamp(date: Date = new Date()): string {
 
 /** Check if a process with the given name is running via `pgrep`. */
 function isProcessRunning(name: ManagedProcessName): boolean {
-  try {
+  return Either.try(() =>
     execFileSync("pgrep", ["-x", name], { stdio: "ignore" })
-    return true
-  } catch {
-    return false
-  }
+  ).match({
+    Left: () => false,
+    Right: () => true
+  })
 }
 
 /** Send a signal to all processes matching `name` via `pkill`. */
@@ -92,13 +92,15 @@ function pkill(
   name: ManagedProcessName,
   signal: ProcessSignalName = ProcessSignalName.SIGTERM
 ): boolean {
-  try {
-    execFileSync("pkill", [`-${signal}`, "-x", name], { stdio: "ignore" })
-    return true
-  } catch {
-    log.debug(`Failed to kill process ${name} with signal ${signal}`)
-    return false
-  }
+  return Either.try(() =>
+    execFileSync("pkill", ["-x", name], { stdio: "ignore" })
+  ).match({
+    Left: err => {
+      log.debug(`Failed to kill process ${name} with signal ${signal}`, err)
+      return false
+    },
+    Right: () => true
+  })
 }
 
 /** Kill an individual pid (and its subtree) asynchronously via `tree-kill`. */

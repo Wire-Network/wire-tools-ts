@@ -10,7 +10,9 @@ import {
   type DebugOPPEnvelopeRecord
 } from "@wire-e2e-tests/debugging-client-tool-tui/store/opp/OPPTypes.js"
 import {
+  selectAllEpochsDescending,
   selectCurrentEpochIndex,
+  selectEpochByNumber,
   selectLatestEpoch,
   selectOPP
 } from "@wire-e2e-tests/debugging-client-tool-tui/store/opp/OPPSelectors.js"
@@ -19,13 +21,15 @@ import { SliceName } from "@wire-e2e-tests/debugging-client-tool-tui/store/Store
 /** Build a plain envelope record for test dispatches. */
 function makeRecord(
   checksum: string,
-  endpointsType: DebugOutpostEndpointsType = DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT
+  endpointsType: DebugOutpostEndpointsType = DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT,
+  receivedAt: number = 0
 ): DebugOPPEnvelopeRecord {
   return {
     checksum,
     endpointsType,
     envelope: { epochIndex: 0 } as any,
-    metadata: { batchOpNames: ["op-a"] } as any
+    metadata: { batchOpNames: ["op-a"] } as any,
+    receivedAt
   }
 }
 
@@ -154,6 +158,32 @@ describe("OPPSelectors", () => {
     const empty = oppSlice.reducer(undefined, { type: "@@init" })
     expect(
       selectLatestEpoch({ [SliceName.OPP]: empty } as any)
+    ).toBeUndefined()
+  })
+
+  it("selectAllEpochsDescending returns epochs newest-first", () => {
+    let state = oppSlice.reducer(
+      undefined,
+      appendEnvelope({ epoch: 5, record: makeRecord("a") })
+    )
+    state = oppSlice.reducer(
+      state,
+      appendEnvelope({ epoch: 7, record: makeRecord("b") })
+    )
+    state = oppSlice.reducer(
+      state,
+      appendEnvelope({ epoch: 3, record: makeRecord("c") })
+    )
+    const all = selectAllEpochsDescending({ [SliceName.OPP]: state } as any)
+    expect(all.map(r => r.epoch)).toEqual([7, 5, 3])
+  })
+
+  it("selectEpochByNumber returns the cached record or undefined", () => {
+    expect(
+      selectEpochByNumber(42)({ [SliceName.OPP]: populated } as any)?.epoch
+    ).toBe(42)
+    expect(
+      selectEpochByNumber(99)({ [SliceName.OPP]: populated } as any)
     ).toBeUndefined()
   })
 })

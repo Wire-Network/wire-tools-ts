@@ -26,3 +26,25 @@ export const selectLatestEpoch = (
     .map(i => opp.epochs[i])
     .getOrUndefined()
 }
+
+/**
+ * All cached epoch records, newest first (drives the EpochTrackerPanel
+ * virtual list ordering). The tail of `epochOrder` is the latest epoch, so
+ * we read it back-to-front.
+ */
+export const selectAllEpochsDescending = (
+  state: RootState
+): DebugOPPEpochRecord[] => {
+  const opp = state[SliceName.OPP]
+  return opp.epochOrder
+    .slice()
+    .reverse()
+    .map(i => opp.epochs[i])
+    .filter((r): r is DebugOPPEpochRecord => !!r)
+}
+
+/** Lookup an epoch by its absolute number. Returns undefined when not cached. */
+export const selectEpochByNumber =
+  (epoch: number) =>
+  (state: RootState): DebugOPPEpochRecord | undefined =>
+    state[SliceName.OPP].epochs[epoch]

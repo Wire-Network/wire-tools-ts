@@ -26,6 +26,14 @@ export interface VirtualListProps<T> {
  * Virtual-scroll list based on `ink-virtual-list`'s offset model. Re-fetches
  * the window via `fetchRange` when `offset`, `viewportHeight`, or the
  * `fetchRange` identity changes.
+ *
+ * Items are stored alongside the offset they were fetched FOR. Until the new
+ * fetch resolves, the previous snapshot keeps rendering — so a fast key
+ * sequence can't blank the viewport mid-flight (any cancellation merely
+ * leaves the prior, fully-fetched snapshot on screen until the latest fetch
+ * lands). Callers should memoize `fetchRange` (e.g. with `useCallback`) so
+ * its identity stays stable across re-renders that don't touch the data
+ * source.
  */
 export function VirtualList<T>(props: VirtualListProps<T>): React.ReactElement {
   const {
@@ -39,13 +47,16 @@ export function VirtualList<T>(props: VirtualListProps<T>): React.ReactElement {
       0,
       Math.min(offset, Math.max(0, totalItems - viewportHeight))
     ),
-    [items, setItems] = useState<T[]>([])
+    [snapshot, setSnapshot] = useState<{ items: T[]; offset: number }>({
+      items: [],
+      offset: 0
+    })
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
       const fetched = await fetchRange(clampedOffset, viewportHeight)
-      if (!cancelled) setItems(fetched)
+      if (!cancelled) setSnapshot({ items: fetched, offset: clampedOffset })
     })()
     return () => {
       cancelled = true
@@ -54,7 +65,7 @@ export function VirtualList<T>(props: VirtualListProps<T>): React.ReactElement {
 
   return (
     <Box flexDirection="column">
-      {items.map((it, i) => renderItem(it, clampedOffset + i))}
+      {snapshot.items.map((it, i) => renderItem(it, snapshot.offset + i))}
     </Box>
   )
 }

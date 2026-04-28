@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import { Box, Text, useApp, useInput, useWindowSize } from "ink"
 import { ExitConfirmModal } from "./components/modals/ExitConfirmModal.js"
+import { ProcessMonitorFeatureProvider } from "./features/process-monitor/ProcessMonitorFeatureProvider.js"
 import { useMultiKeyTrigger } from "./hooks/useMultiKeyTrigger.js"
 import {
   ComponentProviders,
@@ -10,6 +11,7 @@ import { RouterOutlet, useRouter } from "./router/index.js"
 import { RouteRegistry } from "./router/RouteRegistry.js"
 import {
   selectCluster,
+  selectLogViewer,
   selectUI,
   setStatus,
   useAppDispatch,
@@ -29,6 +31,7 @@ export function App(): React.ReactElement {
   const { columns, rows } = useWindowSize(),
     { status } = useAppSelector(selectUI),
     cluster = useAppSelector(selectCluster),
+    logViewer = useAppSelector(selectLogViewer),
     dispatch = useAppDispatch(),
     { exit } = useApp(),
     router = useRouter()
@@ -47,22 +50,44 @@ export function App(): React.ReactElement {
 
   // ---- Global hotkeys ----
 
-  // Shift+Tab → cycle through cyclable routes. Not gated by the modal — switching
-  // screens with the modal open would lose the exit-intent context.
+  // Shift+Tab → cycle through cyclable routes. Predicate requires BOTH
+  // `key.shift` AND `key.tab`; plain arrows, Enter, and Shift+arrow all fail
+  // it. Plus a 300 ms debounce so OS keyboard auto-repeat (typically ~30 Hz
+  // when held) can't fire two-or-more cycles from a single perceived press —
+  // with two cyclable routes an even number of fires would silently land you
+  // back where you started, which reads as "↓ jumped me to the other panel".
+  // Not gated by the modal — switching screens with the modal open would
+  // lose the exit-intent context.
+  const lastShiftTabAtRef = useRef(0)
   useInput((_input, key) => {
     if (exitModalOpen) return
-    if (!(key.shift && key.tab)) return
+    if (!key.shift || !key.tab) return
+    const now = Date.now()
+    if (now - lastShiftTabAtRef.current < App.ShiftTabDebounceMs) return
+    lastShiftTabAtRef.current = now
     const cyclable = RouteRegistry.cyclable()
     if (cyclable.length === 0) return
-    const currentPath = router.current?.route.path,
-      currentIdx = cyclable.findIndex(r => r.path === currentPath),
+    const currentFeatureId = router.current?.route.featureId,
+      currentIdx = cyclable.findIndex(r => r.featureId === currentFeatureId),
       nextIdx = (currentIdx + 1) % cyclable.length
     router.reset(cyclable[nextIdx].path)
   })
 
+  // While viewing a log, the panel's own Esc handler dismisses the viewer
+  // (clears `logViewer.path`). The route-pop must skip in that exact case
+  // so the user can press Esc once to close the log without ALSO popping
+  // out of /process-monitor. Critically, this gate only applies when the
+  // CURRENT route is the Process Monitor route — otherwise a stale path
+  // from a previous visit would silently disable Esc-to-pop on /opp routes
+  // too.
+  const onProcessMonitorRoute =
+    router.current?.route.path === ProcessMonitorFeatureProvider.RoutePath
+  const escEatenByLogViewer =
+    onProcessMonitorRoute && !!logViewer.path
   // Esc — single: pop; double: open exit modal.
   useMultiKeyTrigger(
-    (_input, key) => key.escape && !exitModalOpen,
+    (_input, key) =>
+      key.escape && !exitModalOpen && !escEatenByLogViewer,
     {
       1: () => router.pop(),
       2: () => setExitModalOpen(true)
@@ -80,10 +105,13 @@ export function App(): React.ReactElement {
 
   // ---- Header helpers ----
 
+  // Bracket the cyclable badge whose `featureId` matches the active route's
+  // feature, NOT only the exact path — so detail routes (e.g. /opp/epoch)
+  // still highlight the OPP badge instead of leaving every badge unbracketed.
   const cyclableRoutes = RouteRegistry.cyclable(),
-    activeRoutePath = router.current?.route.path,
+    activeFeatureId = router.current?.route.featureId,
     routeBadges = cyclableRoutes.map(r =>
-      r.path === activeRoutePath ? `[${r.name}]` : r.name
+      r.featureId === activeFeatureId ? `[${r.name}]` : r.name
     ),
     routeList = routeBadges.length > 0 ? routeBadges.join("  ") : "none"
 
@@ -140,4 +168,10 @@ export function App(): React.ReactElement {
 export namespace App {
   /** Status string written on mount to signal the app is alive. */
   export const ReadyStatus = "ready" as const
+  /**
+   * Suppression window for repeat Shift+Tab events. Long enough to swallow
+   * OS-level keyboard auto-repeat (~30 Hz) but short enough that a deliberate
+   * two-tap-cycle still feels responsive.
+   */
+  export const ShiftTabDebounceMs = 300
 }

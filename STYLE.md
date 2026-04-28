@@ -329,12 +329,24 @@ Use numeric separators for timeouts and large values. `15_000` reads as "15 seco
 
 ---
 
-## File Naming
+## File & Directory Naming
 
-- **PascalCase** for files that export a class or a class + companion namespace as their primary export: `AnvilManager.ts`, `ClusterManager.ts`, `ProcessManager.ts`, `TestEnvironment.ts`, `ETHClient.ts`, `Clio.ts`, `NodeConfig.ts`.
-- **camelCase** for files that export functions, constants, or utility collections with no primary class: `cli.ts`, `constants.ts`, `genesis.ts`, `keyGen.ts`, `loggingConfig.ts`, `startCmd.ts`, `logger.ts`, `util.ts`.
-- **`index.ts`** is the barrel re-export file. Always camelCase.
-- The filename should match the primary export name exactly: `AnvilManager.ts` exports `class AnvilManager`, `keyGen.ts` exports `function generateNodeKeySet`.
+### Directories — always `kebab-case`
+
+Every directory in `src/` and `tests/` uses `kebab-case`. No camelCase, no PascalCase, no underscores. Multi-word directory names are hyphen-separated.
+
+- **Correct**: `src/process-monitor/`, `src/log-tailing/`, `tests/features/process-monitor/`, `packages/debugging-client-tool-tui/`.
+- **Wrong**: `src/processMonitor/`, `src/ProcessMonitor/`, `src/process_monitor/`.
+
+This applies even when the directory mirrors a class or feature whose source file is PascalCase — the file is `ProcessMonitorService.ts`, the directory holding it is `process-monitor/`. Slice keys, Redux state shape, runtime identifiers, and other in-memory values are independent of directory casing — those follow their own rules (camelCase for slice keys, identity-mapped string enums for protocol identifiers).
+
+### File names — case follows primary export
+
+- **PascalCase** for files whose primary export is a class, interface, type alias, or class + companion namespace: `AnvilManager.ts`, `ClusterManager.ts`, `ProcessManager.ts`, `TestEnvironment.ts`, `ETHClient.ts`, `Clio.ts`, `NodeConfig.ts`, `JsonLogRecord.ts`.
+- **camelCase** for files that export functions, constants, or utility collections with no primary class/type: `cli.ts`, `constants.ts`, `genesis.ts`, `keyGen.ts`, `loggingConfig.ts`, `startCmd.ts`, `logger.ts`, `util.ts`, `lineRender.tsx`.
+- **`index.ts`** is the barrel re-export file. Always lowercase.
+- The filename matches the primary export name exactly: `AnvilManager.ts` exports `class AnvilManager`; `keyGen.ts` exports `function generateNodeKeySet`; `JsonLogRecord.ts` exports `interface JsonLogRecord`.
+- When a file has both a primary type AND helper functions, the type wins — file is PascalCase, functions live alongside the type with no rename pressure.
 
 ---
 

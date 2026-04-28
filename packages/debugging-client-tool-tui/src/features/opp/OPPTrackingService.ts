@@ -156,7 +156,8 @@ export class OPPTrackingService implements Service {
           checksum: parsed.checksum,
           endpointsType: resolveEndpointsType(parsed.endpointsKey),
           envelope: plainify(Envelope.fromBinary(dataBytes)),
-          metadata: plainify(DebugEnvelopeMetadataRecord.fromBinary(metaBytes))
+          metadata: plainify(DebugEnvelopeMetadataRecord.fromBinary(metaBytes)),
+          receivedAt: Date.now()
         }
       }
     } catch (err) {
@@ -208,15 +209,31 @@ function resolveEndpointsType(endpointsKey: string): DebugOutpostEndpointsType {
     .getOrElse(DebugOutpostEndpointsType.UNKNOWN)
 }
 
-/** JSON-roundtrip BigInts → strings, Uint8Arrays → base64. Keeps Redux state serializable. */
+/**
+ * Convert a freshly-decoded protobuf message into Redux-serializable shape:
+ * BigInts become decimal strings; Uint8Arrays become base64. Recursive walk
+ * rather than a `JSON.stringify` replacer because `Buffer.prototype.toJSON`
+ * fires BEFORE the replacer and converts a `Buffer` into
+ * `{ type: "Buffer", data: number[] }` — which would then never match the
+ * Uint8Array check. Walking the tree directly catches every Uint8Array
+ * (including any `Buffer` subclass instances protobuf-ts may surface).
+ */
 function plainify<T>(value: T): T {
-  return JSON.parse(
-    JSON.stringify(value, (_k, v) =>
-      typeof v === "bigint"
-        ? v.toString()
-        : v instanceof Uint8Array
-          ? Buffer.from(v).toString("base64")
-          : v
+  return walk(value) as T
+}
+
+function walk(value: unknown): unknown {
+  if (value === null || value === undefined) return value
+  if (typeof value === "bigint") return value.toString()
+  if (value instanceof Uint8Array) return Buffer.from(value).toString("base64")
+  if (Array.isArray(value)) return value.map(walk)
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+        k,
+        walk(v)
+      ])
     )
-  )
+  }
+  return value
 }

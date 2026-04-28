@@ -5,11 +5,12 @@ import {
   type TypedUseSelectorHook
 } from "react-redux"
 import { SliceName } from "./StoreTypes.js"
+import { createReduxFileLogger } from "./middleware/createReduxFileLogger.js"
 import { uiSlice } from "./ui/UISlice.js"
 import { clusterSlice } from "./cluster/ClusterSlice.js"
 import { featuresSlice } from "./features/FeaturesSlice.js"
 import { oppSlice } from "./opp/OPPSlice.js"
-import { processMonitorSlice } from "./processMonitor/ProcessMonitorSlice.js"
+import { processMonitorSlice } from "./process-monitor/ProcessMonitorSlice.js"
 
 /**
  * Action types that carry protobuf-decoded payloads. RTK's serializableCheck
@@ -22,7 +23,12 @@ const IgnoredSerializableActions = [
   "opp/hydrate"
 ] as const
 
-/** TUI Redux store. Single source of truth for every slice. */
+/**
+ * TUI Redux store. Single source of truth for every slice. The
+ * `createReduxFileLogger()` middleware is always installed; it gates itself
+ * on `LoggingManager`'s root level via its `predicate`, so it's a one-boolean
+ * no-op until the user passes `--log-level debug`.
+ */
 export const store = configureStore({
   reducer: {
     [SliceName.UI]: uiSlice.reducer,
@@ -34,7 +40,7 @@ export const store = configureStore({
   middleware: getDefault =>
     getDefault({
       serializableCheck: { ignoredActions: [...IgnoredSerializableActions] }
-    })
+    }).concat(createReduxFileLogger())
 })
 
 /** RootState inferred from the store — avoids repeating the shape. */

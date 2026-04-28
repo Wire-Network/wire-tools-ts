@@ -6,6 +6,7 @@ import { LoggingManager } from "@wire-e2e-tests/debugging-client-tool-tui/loggin
 import OPPFeatureProvider from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/OPPFeatureProvider.js"
 import { OPPTrackingService } from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/OPPTrackingService.js"
 import { EpochTrackerPanel } from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/panels/EpochTrackerPanel.js"
+import { EpochDetailRoute } from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/routes/EpochDetailRoute.js"
 import { EpochStatusBarWidget } from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/widgets/EpochStatusBarWidget.js"
 import { FeatureComponentToken } from "@wire-e2e-tests/debugging-client-tool-tui/providers/ComponentProviders.js"
 import { ReduxService } from "@wire-e2e-tests/debugging-client-tool-tui/services/ReduxService.js"
@@ -48,6 +49,26 @@ describe("OPPFeatureProvider.registerServices", () => {
     OPPFeatureProvider.registerServices(manager)
     expect(manager.find(OPPTrackingService.id)?.serviceType).toBe(
       OPPTrackingService
+    )
+  })
+})
+
+describe("OPPFeatureProvider.registerRoutes", () => {
+  it("registers both the cyclable tracker route and the non-cyclable detail route", () => {
+    const register = jest.fn()
+    OPPFeatureProvider.registerRoutes({ register } as any)
+    const calls = register.mock.calls.map(c => c[0])
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: OPPFeatureProvider.RoutePath,
+          cyclable: true
+        }),
+        expect.objectContaining({
+          path: EpochDetailRoute.RoutePath,
+          cyclable: false
+        })
+      ])
     )
   })
 })

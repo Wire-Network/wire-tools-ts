@@ -204,7 +204,7 @@ The rules above are enforced on every change. Before declaring a task complete, 
    - Consumers import from the package root or from a directory path (`import { Foo } from "@scope/pkg"` or `"@scope/pkg/rpc"`) — never from a specific file. Moving `Foo.ts` between subdirectories should not ripple through callers.
    - Never `export *` a third-party package from a local barrel. See STYLE.md "Barrel Exports" for the full pattern.
 
-6. **Filename shape.** Class-primary files → PascalCase (`AnvilManager.ts`, `ClusterManager.ts`). Function/const/utility files → camelCase (`logger.ts`, `keyGen.ts`, `startCmd.ts`). If the primary export changes shape (class → utility fns), rename the file to match.
+6. **Filename shape.** Class- or type-primary files → PascalCase (`AnvilManager.ts`, `ClusterManager.ts`, `JsonLogRecord.ts`). Function/const/utility files → camelCase (`logger.ts`, `keyGen.ts`, `startCmd.ts`, `lineRender.tsx`). If the primary export changes shape (class → utility fns, or fns → type), rename the file to match. **Directories are always `kebab-case`** — `process-monitor/`, `log-tailing/`, never `processMonitor/` or `ProcessMonitor/`. See STYLE.md "File & Directory Naming" for the full rule.
 
 7. **Full JSDoc on exported items.**
    - Functions / methods: description, `@param` for each arg, `@return` (unless `void`), `@example` when non-obvious.

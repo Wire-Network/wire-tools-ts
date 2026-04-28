@@ -138,7 +138,7 @@ packages/debugging-client-tool-tui/src/
 ├── store/                               # Redux slices — one subdir per slice
 │   ├── StoreTypes.ts                    # enum SliceName + DefaultStatus (leaf, zero imports)
 │   ├── Store.ts                         # configureStore + typed hooks
-│   ├── ui/ cluster/ features/ opp/ processMonitor/
+│   ├── ui/ cluster/ features/ opp/ process-monitor/
 ├── features/
 │   ├── FeatureProvider.ts               # interface: id, name, isRequiredProvider, registerComponents, registerServices?
 │   ├── FeatureProviderRegistry.ts       # add / all / find
@@ -147,12 +147,12 @@ packages/debugging-client-tool-tui/src/
 │   │   ├── OPPTrackingService.ts        # fs.watch + protobuf decode → Redux
 │   │   ├── panels/EpochTrackerPanel.tsx
 │   │   └── widgets/EpochStatusBarWidget.tsx
-│   └── processMonitor/
+│   └── process-monitor/
 │       ├── ProcessMonitorFeatureProvider.tsx
 │       ├── ProcessMonitorService.ts     # 5s pid-file scan + liveness probe
 │       ├── LogTailingService.ts         # line-offset index + readWindow
-│       ├── util/                        # PidSources, lineIndex, dateStamp
-│       ├── panels/{ProcessMonitorPanel,LogViewerPanel}.tsx
+│       ├── util/                        # PidSources, JsonLogRecord, lineIndex, lineRender, dateStamp
+│       ├── panels/{ProcessMonitorPanel,LogViewerPanel,LogViewerJSONLine,LogViewerTextLine,LogViewerSearchInput}.tsx
 │       └── widgets/NodeCountWidget.tsx
 ├── components/
 │   ├── VirtualList.tsx                  # generic offset-scroll list (Ink 7 + React 19)

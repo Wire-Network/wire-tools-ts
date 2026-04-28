@@ -10,7 +10,7 @@ import * as uiBarrel from "@wire-e2e-tests/debugging-client-tool-tui/store/ui/in
 import * as clusterBarrel from "@wire-e2e-tests/debugging-client-tool-tui/store/cluster/index.js"
 import * as featuresBarrel from "@wire-e2e-tests/debugging-client-tool-tui/store/features/index.js"
 import * as oppBarrel from "@wire-e2e-tests/debugging-client-tool-tui/store/opp/index.js"
-import * as pmBarrel from "@wire-e2e-tests/debugging-client-tool-tui/store/processMonitor/index.js"
+import * as pmBarrel from "@wire-e2e-tests/debugging-client-tool-tui/store/process-monitor/index.js"
 
 describe("services/index.ts", () => {
   it("re-exports ServiceManager, ReduxService, ServiceId, and the React context", () => {
@@ -87,12 +87,14 @@ describe("store sub-barrels", () => {
         clear: expect.any(Function),
         selectOPP: expect.any(Function),
         selectCurrentEpochIndex: expect.any(Function),
-        selectLatestEpoch: expect.any(Function)
+        selectLatestEpoch: expect.any(Function),
+        selectAllEpochsDescending: expect.any(Function),
+        selectEpochByNumber: expect.any(Function)
       })
     )
   })
 
-  it("processMonitor/ exposes processMonitorSlice + all actions + all selectors", () => {
+  it("process-monitor/ exposes processMonitorSlice + all actions + all selectors", () => {
     expect(pmBarrel).toEqual(
       expect.objectContaining({
         processMonitorSlice: expect.any(Object),
@@ -101,9 +103,11 @@ describe("store sub-barrels", () => {
         setLogViewerPath: expect.any(Function),
         setLogViewerOffset: expect.any(Function),
         setLogViewerFollow: expect.any(Function),
+        toggleLocationColumn: expect.any(Function),
         selectProcessMonitor: expect.any(Function),
         selectProcessMap: expect.any(Function),
         selectAliveCount: expect.any(Function),
+        selectTotalCount: expect.any(Function),
         selectLogViewer: expect.any(Function)
       })
     )
