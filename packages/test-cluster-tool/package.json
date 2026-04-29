@@ -3,11 +3,12 @@
   "version": "0.1.1",
   "private": false,
   "type": "commonjs",
-  "types": "lib/index.d.ts",
-  "main": "lib/index.js",
+  "types": "lib/cjs/index.d.ts",
+  "main": "lib/cjs/index.js",
   "publishConfig": {
     "access": "public"
   },
+  "files": ["lib", "README.md"],
   "bin": {
     "wire-test-cluster": "lib/cjs/cli.js"
   },
@@ -15,7 +16,7 @@
     "compile": "tsc -b tsconfig.json",
     "compile:watch": "tsc -b tsconfig.json -w",
     "build": "pnpm run compile",
-    "postinstall": "pnpm run build",
+    "prepublishOnly": "pnpm run build",
     "prepare": "pnpm run build",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "test": "jest",
@@ -38,7 +39,9 @@
     "get-port": "^7.2.0",
     "lodash": "^4.17.23",
     "shelljs": "^0.10.0",
+    "source-map-support": "^0.5.21",
     "tree-kill": "^1.2.2",
+    "ts-pattern": "^5.9.0",
     "yargs": "^18.0.0",
     "zx": "^8.8.5"
   },

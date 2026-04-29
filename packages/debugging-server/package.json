@@ -17,7 +17,7 @@
     "bundle": "node esbuild.config.js",
     "bundle:watch": "node esbuild.config.js --watch",
     "build": "pnpm run compile && pnpm run bundle",
-    "postinstall": "pnpm run build",
+    "prepublishOnly": "pnpm run build",
     "prepare": "pnpm run build",
     "dev": "node esbuild.config.js --dev",
     "dist": "pnpm build && pnpm bundle",
