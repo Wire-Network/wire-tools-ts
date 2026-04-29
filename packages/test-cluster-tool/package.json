@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-cluster-tool",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": false,
   "type": "commonjs",
   "types": "lib/cjs/index.d.ts",
@@ -8,7 +8,10 @@
   "publishConfig": {
     "access": "public"
   },
-  "files": ["lib", "README.md"],
+  "files": [
+    "lib",
+    "README.md"
+  ],
   "bin": {
     "wire-test-cluster": "lib/cjs/cli.js"
   },
