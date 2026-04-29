@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-cluster-tool",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "type": "commonjs",
   "types": "lib/index.d.ts",
@@ -38,7 +38,6 @@
     "get-port": "^7.2.0",
     "lodash": "^4.17.23",
     "shelljs": "^0.10.0",
-    
     "tree-kill": "^1.2.2",
     "yargs": "^18.0.0",
     "zx": "^8.8.5"
