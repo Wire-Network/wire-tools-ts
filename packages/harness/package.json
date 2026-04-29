@@ -1,10 +1,13 @@
 {
   "name": "@wire-e2e-tests/harness",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "type": "commonjs",
   "types": "lib/index.d.ts",
   "main": "lib/index.js",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "wire-test-cluster": "lib/cjs/cli.js"
   },
@@ -22,11 +25,11 @@
     "@3fv/prelude-ts": "^0.8.37",
     "@coral-xyz/anchor": "^0.31.0",
     "@solana/web3.js": "^1.98.0",
-    "@wireio/opp-solidity-models": "^1.0.23",
-    "@wireio/opp-typescript-models": "^1.0.23",
-    "@wireio/sdk-core": "^1.0.17",
-    "@wireio/shared": "^1.0.17",
-    "@wireio/shared-node": "^1.0.17",
+    "@wireio/opp-solidity-models": "^1.0.26",
+    "@wireio/opp-typescript-models": "^1.0.26",
+    "@wireio/sdk-core": "^1.0.21",
+    "@wireio/shared": "^1.0.21",
+    "@wireio/shared-node": "^1.0.21",
     "bluebird": "^3.7.2",
     "ethers": "^6.14.0",
     "get-port": "^7.2.0",

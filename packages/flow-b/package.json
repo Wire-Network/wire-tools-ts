@@ -13,7 +13,7 @@
     "@wire-e2e-tests/harness": "workspace:*",
     "@wireio/sdk-core": "^1.0.17",
     "@wireio/opp-solidity-models": "^1.0.23",
-    "@wireio/opp-typescript-models": "^1.0.23",
+    "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/shared": "^1.0.17",
     "@wireio/shared-node": "^1.0.17",
     "pm2": "^6.0.14",

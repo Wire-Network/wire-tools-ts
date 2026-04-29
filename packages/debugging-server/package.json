@@ -1,7 +1,10 @@
 {
   "name": "@wire-e2e-tests/debugging-server",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "commonjs",
   "types": "lib/cjs/index.d.ts",
   "main": "lib/cjs/index.js",
@@ -23,7 +26,7 @@
     "@3fv/prelude-ts": "^0.8.37",
     "@protobuf-ts/runtime": "^2.11.1",
     "@wire-e2e-tests/debugging-shared": "workspace:*",
-    "@wireio/opp-typescript-models": "^1.0.23",
+    "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/shared": "^1.0.21",
     "@wireio/sdk-core": "^1.0.21",
     "express": "^5.2.1",

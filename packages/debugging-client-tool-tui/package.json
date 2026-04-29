@@ -1,7 +1,10 @@
 {
   "name": "@wire-e2e-tests/debugging-client-tool-tui",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "types": "lib/cjs/tui.d.ts",
   "main": "dist/bundle/wire-debugging-client-tool-tui.mjs",
@@ -12,10 +15,11 @@
     "compile": "tsc -b tsconfig.json",
     "compile:watch": "tsc -b tsconfig.json -w",
     "build": "pnpm compile && pnpm bundle",
-    "dev": "node esbuild.config.cjs --dev",
     "bundle": "node esbuild.config.cjs",
     "bundle:watch": "node esbuild.config.cjs --watch",
-    "dist": "pnpm build && pnpm bundle",
+    "dev": "node esbuild.config.cjs --dev",
+    "start": "pnpm run build && node dist/bundle/wire-debugging-client-tool-tui.mjs",
+    "dist": "pnpm build",
     "test": "jest",
     "clean": "rm -rf lib dist"
   },
@@ -24,7 +28,7 @@
     "@reduxjs/toolkit": "^2.11.2",
     "@wire-e2e-tests/debugging-client-shared": "workspace:*",
     "@wire-e2e-tests/debugging-shared": "workspace:*",
-    "@wireio/opp-typescript-models": "^1.0.23",
+    "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/sdk-core": "^1.0.21",
     "@wireio/shared": "^1.0.21",
     "bluebird": "^3.7.2",

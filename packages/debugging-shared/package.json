@@ -1,7 +1,10 @@
 {
   "name": "@wire-e2e-tests/debugging-shared",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "types": "lib/esm/index.d.ts",
   "main": "lib/cjs/index.js",
   "module": "lib/esm/index.js",
@@ -30,7 +33,7 @@
   "dependencies": {
     "@3fv/prelude-ts": "^0.8.37",
     "@protobuf-ts/runtime": "^2.11.1",
-    "@wireio/opp-typescript-models": "^1.0.23",
+    "@wireio/opp-typescript-models": "^1.0.26",
     "lodash": "^4.17.21",
     "ts-pattern": "^5.9.0"
   },

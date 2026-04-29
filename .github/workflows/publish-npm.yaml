@@ -1,0 +1,88 @@
+# .github/workflows/release-patch-publish.yml
+name: Release (patch) + Publish (pnpm)
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # needed to push the version-bump commit
+  id-token: none
+
+concurrency:
+  group: release-master
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Prevent the workflow from running on its own bump commit
+    if: >
+      github.actor != 'github-actions[bot]' &&
+      !contains(github.event.head_commit.message, '[skip release]')
+
+    runs-on: ubuntu-latest
+
+    env:
+      # npm/pnpm will read this for auth when publishing
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        # with:
+        #   version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Install deps
+        run: pnpm install
+
+      - name: Build
+        run: pnpm run build
+
+      # Optional but recommended: ensure tests/build pass before publishing.
+      # Replace with your actual scripts or delete these steps.
+      # - name: Test
+      #   run: pnpm -r test
+      # - name: Build
+      #   run: pnpm -r build
+
+      - name: Configure git author
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump patch versions (workspace)
+        run: |
+          # Bumps every workspace package; updates internal dependency ranges.
+          # Does NOT create git tags/commits (we do that manually).
+          pnpm -r exec -- pnpm version patch --no-git-tag-version
+
+      - name: Commit version bump (skip re-run)
+        run: |
+          # If nothing changed (e.g., no publishable packages), don't fail.
+          if git diff --quiet; then
+            echo "No version changes to commit."
+            exit 0
+          fi
+
+          git add -A
+          git commit -m "chore(release): bump patch [skip release]"
+          git push
+
+      - name: Publish to npm (all workspace packages)
+        run: |
+          # Publishes all non-private packages in dependency order.
+          # --no-git-checks avoids failure in CI environments.
+          pnpm -r publish --access public --no-git-checks

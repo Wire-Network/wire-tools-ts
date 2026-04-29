@@ -1,7 +1,10 @@
 {
   "name": "@wire-e2e-tests/debugging-client-tool",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "commonjs",
   "types": "lib/cjs/index.d.ts",
   "main": "dist/bundle/wire-debugging-client-tool.cjs",
@@ -19,7 +22,7 @@
   "dependencies": {
     "@wire-e2e-tests/debugging-shared": "workspace:*",
     "@wire-e2e-tests/debugging-client-shared": "workspace:*",
-    "@wireio/opp-typescript-models": "^1.0.23",
+    "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/shared": "^1.0.21",
     "@wireio/sdk-core": "^1.0.21",
     "lodash": "^4.17.21",

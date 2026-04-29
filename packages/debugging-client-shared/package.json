@@ -1,7 +1,10 @@
 {
   "name": "@wire-e2e-tests/debugging-client-shared",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "types": "lib/esm/index.d.ts",
   "main": "lib/cjs/index.js",
   "module": "lib/esm/index.js",
@@ -30,7 +33,7 @@
   },
   "dependencies": {
     "@wire-e2e-tests/debugging-shared": "workspace:*",
-    "@wireio/opp-typescript-models": "^1.0.23",
+    "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/shared": "^1.0.21",
     "@wireio/sdk-core": "^1.0.21",
     "@3fv/prelude-ts": "^0.8.37",
