@@ -1,5 +1,5 @@
 const config = {
-  displayName: "harness",
+  displayName: "test-cluster-tool",
   testEnvironment: "node",
   roots: ["<rootDir>/tests"],
   testMatch: ["**/*.test.ts"],

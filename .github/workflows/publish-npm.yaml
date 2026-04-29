@@ -46,7 +46,7 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Install deps
-        run:
+        run: |          
           pnpm install
           pnpm build
           pnpm install
