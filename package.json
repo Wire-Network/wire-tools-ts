@@ -18,7 +18,7 @@
     "@wireio/shared": "^1.0.22",
     "@wireio/shared-node": "^1.0.22",
     "jest": "^30.3.0",
-    "pm2": "^6.0.14",
+    
     "prettier": "^3.8.1",
     "ts-jest": "^29.4.6",
     "ts-node": "^10.9.2",
@@ -36,6 +36,7 @@
     "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/sdk-core": "^1.0.22",
     "@wireio/shared": "^1.0.22",
-    "@wireio/shared-node": "^1.0.22"
+    "@wireio/shared-node": "^1.0.22",
+    "uuid": "11"
   }
 }

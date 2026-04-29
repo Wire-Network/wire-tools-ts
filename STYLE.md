@@ -59,9 +59,9 @@ The core pattern: wrap a value in `Option`, chain operations with `.map()` and `
 ```ts
 import { Deferred } from "@wireio/shared"
 
-function pm2Connect(): Promise<void> {
+function example(): Promise<void> {
   return Deferred.useCallback<void>(d =>
-    pm2.connect(true, err => (err ? d.reject(err) : d.resolve()))
+    randomNodeCallback(true, err => (err ? d.reject(err) : d.resolve()))
   ).promise
 }
 ```

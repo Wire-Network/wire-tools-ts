@@ -54,8 +54,9 @@
     "@types/lodash": "^4.17.24",
     "@types/node": "25.5.0",
     "@types/shelljs": "^0.10.0",
-    "@types/yargs": "^17.0.35",
-    "source-map-support": "^0.5.21",
-    "ts-pattern": "^5.9.0"
+    "@types/yargs": "^17.0.35"
+  },
+  "resolutions": {
+    "uuid": "11"
   }
 }

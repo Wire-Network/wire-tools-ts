@@ -18,7 +18,6 @@
     "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/shared": "^1.0.17",
     "@wireio/shared-node": "^1.0.17",
-    "pm2": "^6.0.14",
     "ethers": "^6.14.0"
   },
   "devDependencies": {

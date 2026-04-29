@@ -33,6 +33,7 @@
     "@wireio/sdk-core": "^1.0.21",
     "express": "^5.2.1",
     "lodash": "^4.17.21",
+    "source-map-support": "^0.5.21",
     "ts-pattern": "^5.9.0",
     "yargs": "^18.0.0"
   },
@@ -43,8 +44,10 @@
     "@types/yargs": "^17.0.35",
     "concurrently": "^9.2.1",
     "esbuild": "^0.27.3",
-    "source-map-support": "^0.5.21",
     "ts-jest": "^29.4.6",
     "typescript": "^6.0.2"
+  },
+  "resolutions": {
+    "uuid": "11"
   }
 }
