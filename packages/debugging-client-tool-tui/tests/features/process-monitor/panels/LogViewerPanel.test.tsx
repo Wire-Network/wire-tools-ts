@@ -1,4 +1,4 @@
-import { LogViewerPanel } from "@wire-e2e-tests/debugging-client-tool-tui/features/process-monitor/panels/LogViewerPanel.js"
+import { LogViewerPanel } from "@wireio/debugging-client-tool-tui/features/process-monitor/panels/LogViewerPanel.js"
 
 describe("LogViewerPanel", () => {
   it("has stable id/title metadata", () => {

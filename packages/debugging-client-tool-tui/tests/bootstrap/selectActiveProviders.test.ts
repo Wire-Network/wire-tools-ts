@@ -2,12 +2,12 @@ import Os from "node:os"
 import Path from "node:path"
 import Fs from "node:fs"
 import { Level } from "@wireio/shared"
-import { LoggingManager } from "@wire-e2e-tests/debugging-client-tool-tui/logging/LoggingManager.js"
+import { LoggingManager } from "@wireio/debugging-client-tool-tui/logging/LoggingManager.js"
 import {
   selectActiveProviders,
   warnUnknownFeatureIds
-} from "@wire-e2e-tests/debugging-client-tool-tui/bootstrap/selectActiveProviders.js"
-import type { FeatureProvider } from "@wire-e2e-tests/debugging-client-tool-tui/features/FeatureProvider.js"
+} from "@wireio/debugging-client-tool-tui/bootstrap/selectActiveProviders.js"
+import type { FeatureProvider } from "@wireio/debugging-client-tool-tui/features/FeatureProvider.js"
 
 const logDir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "boot-"))
 

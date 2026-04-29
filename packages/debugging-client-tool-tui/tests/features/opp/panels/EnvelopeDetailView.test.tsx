@@ -1,7 +1,7 @@
 import {
   EnvelopeDetailView,
   flattenAttestations
-} from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/panels/EnvelopeDetailView.js"
+} from "@wireio/debugging-client-tool-tui/features/opp/panels/EnvelopeDetailView.js"
 
 describe("flattenAttestations", () => {
   it("returns [] for an undefined envelope", () => {

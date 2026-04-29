@@ -13,8 +13,8 @@ const config = {
   },
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",
-    "^@wire-e2e-tests/harness$": "<rootDir>/src/index",
-    "^@wire-e2e-tests/harness/(.*)$": "<rootDir>/src/$1"
+    "^@wireio/test-cluster-tool$": "<rootDir>/src/index",
+    "^@wireio/test-cluster-tool/(.*)$": "<rootDir>/src/$1"
   }
 }
 

@@ -3,9 +3,9 @@ import {
   RouterContext,
   RouterProvider,
   useRouter
-} from "@wire-e2e-tests/debugging-client-tool-tui/router/RouterContext.js"
-import { RouteRegistry } from "@wire-e2e-tests/debugging-client-tool-tui/router/RouteRegistry.js"
-import type { Route } from "@wire-e2e-tests/debugging-client-tool-tui/router/RouteTypes.js"
+} from "@wireio/debugging-client-tool-tui/router/RouterContext.js"
+import { RouteRegistry } from "@wireio/debugging-client-tool-tui/router/RouteRegistry.js"
+import type { Route } from "@wireio/debugging-client-tool-tui/router/RouteTypes.js"
 
 function mkRoute(path: string): Route {
   return {
@@ -56,7 +56,9 @@ describe("useRouter", () => {
       pop: jest.fn(),
       reset: jest.fn()
     }
-    const spy = jest.spyOn(React, "useContext").mockImplementation(() => fakeApi)
+    const spy = jest
+      .spyOn(React, "useContext")
+      .mockImplementation(() => fakeApi)
     try {
       expect(useRouter()).toBe(fakeApi)
     } finally {

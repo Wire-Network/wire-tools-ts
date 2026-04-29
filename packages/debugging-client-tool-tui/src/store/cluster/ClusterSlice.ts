@@ -1,8 +1,5 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
-import type {
-  ClusterConfig,
-  ClusterState
-} from "@wire-e2e-tests/debugging-shared"
+import type { ClusterConfig, ClusterState } from "@wireio/debugging-shared"
 import { SliceName } from "../StoreTypes.js"
 
 /** Snapshot of the loaded cluster directory. */

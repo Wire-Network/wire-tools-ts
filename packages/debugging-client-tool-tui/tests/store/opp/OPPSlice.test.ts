@@ -4,19 +4,19 @@ import {
   clear,
   hydrate,
   oppSlice
-} from "@wire-e2e-tests/debugging-client-tool-tui/store/opp/OPPSlice.js"
+} from "@wireio/debugging-client-tool-tui/store/opp/OPPSlice.js"
 import {
   OPPState,
   type DebugOPPEnvelopeRecord
-} from "@wire-e2e-tests/debugging-client-tool-tui/store/opp/OPPTypes.js"
+} from "@wireio/debugging-client-tool-tui/store/opp/OPPTypes.js"
 import {
   selectAllEpochsDescending,
   selectCurrentEpochIndex,
   selectEpochByNumber,
   selectLatestEpoch,
   selectOPP
-} from "@wire-e2e-tests/debugging-client-tool-tui/store/opp/OPPSelectors.js"
-import { SliceName } from "@wire-e2e-tests/debugging-client-tool-tui/store/StoreTypes.js"
+} from "@wireio/debugging-client-tool-tui/store/opp/OPPSelectors.js"
+import { SliceName } from "@wireio/debugging-client-tool-tui/store/StoreTypes.js"
 
 /** Build a plain envelope record for test dispatches. */
 function makeRecord(
@@ -106,22 +106,19 @@ describe("oppSlice", () => {
   })
 
   it("hydrate bulk-loads and sorts + evicts in one pass", () => {
-    const records = Array.from(
-      { length: OPPState.MaxEpochs + 5 },
-      (_, i) => ({
-        epoch: OPPState.MaxEpochs + 5 - i - 1, // reverse order
-        envelopes: [makeRecord(`cs-${i}`)]
-      })
-    )
+    const records = Array.from({ length: OPPState.MaxEpochs + 5 }, (_, i) => ({
+      epoch: OPPState.MaxEpochs + 5 - i - 1, // reverse order
+      envelopes: [makeRecord(`cs-${i}`)]
+    }))
     const state = oppSlice.reducer(undefined, hydrate(records))
     expect(state.epochOrder).toHaveLength(OPPState.MaxEpochs)
     expect(state.epochOrder[0]).toBeLessThan(
       state.epochOrder[state.epochOrder.length - 1]
     )
     // The newest epoch (MaxEpochs + 4) must survive
-    expect(
-      state.epochOrder[state.epochOrder.length - 1]
-    ).toBe(OPPState.MaxEpochs + 4)
+    expect(state.epochOrder[state.epochOrder.length - 1]).toBe(
+      OPPState.MaxEpochs + 4
+    )
   })
 
   it("clear resets everything", () => {
@@ -146,7 +143,9 @@ describe("OPPSelectors", () => {
   })
 
   it("selectCurrentEpochIndex returns the tracked max", () => {
-    expect(selectCurrentEpochIndex({ [SliceName.OPP]: populated } as any)).toBe(42)
+    expect(selectCurrentEpochIndex({ [SliceName.OPP]: populated } as any)).toBe(
+      42
+    )
   })
 
   it("selectLatestEpoch returns the tail of epochOrder", () => {
@@ -156,9 +155,7 @@ describe("OPPSelectors", () => {
 
   it("selectLatestEpoch is undefined when cache empty", () => {
     const empty = oppSlice.reducer(undefined, { type: "@@init" })
-    expect(
-      selectLatestEpoch({ [SliceName.OPP]: empty } as any)
-    ).toBeUndefined()
+    expect(selectLatestEpoch({ [SliceName.OPP]: empty } as any)).toBeUndefined()
   })
 
   it("selectAllEpochsDescending returns epochs newest-first", () => {

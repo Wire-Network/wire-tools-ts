@@ -1,5 +1,5 @@
-import { asServiceType } from "@wire-e2e-tests/debugging-client-tool-tui/services/ServiceType.js"
-import type { Service } from "@wire-e2e-tests/debugging-client-tool-tui/services/Service.js"
+import { asServiceType } from "@wireio/debugging-client-tool-tui/services/ServiceType.js"
+import type { Service } from "@wireio/debugging-client-tool-tui/services/Service.js"
 
 class Stub implements Service {
   static readonly id = "stub"

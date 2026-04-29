@@ -1,7 +1,7 @@
 import React from "react"
-import { RouteRegistry } from "@wire-e2e-tests/debugging-client-tool-tui/router/RouteRegistry.js"
-import { RouterStack } from "@wire-e2e-tests/debugging-client-tool-tui/router/RouterStack.js"
-import type { Route } from "@wire-e2e-tests/debugging-client-tool-tui/router/RouteTypes.js"
+import { RouteRegistry } from "@wireio/debugging-client-tool-tui/router/RouteRegistry.js"
+import { RouterStack } from "@wireio/debugging-client-tool-tui/router/RouterStack.js"
+import type { Route } from "@wireio/debugging-client-tool-tui/router/RouteTypes.js"
 
 function mkRoute(path: string, featureId = "test"): Route {
   return {

@@ -2,10 +2,10 @@ import Os from "node:os"
 import Path from "node:path"
 import Fs from "node:fs"
 import { Level } from "@wireio/shared"
-import { LoggingManager } from "@wire-e2e-tests/debugging-client-tool-tui/logging/LoggingManager.js"
-import { ServiceManager } from "@wire-e2e-tests/debugging-client-tool-tui/services/ServiceManager.js"
-import type { Service } from "@wire-e2e-tests/debugging-client-tool-tui/services/Service.js"
-import type { ServiceManager as ServiceManagerType } from "@wire-e2e-tests/debugging-client-tool-tui/services/ServiceManager.js"
+import { LoggingManager } from "@wireio/debugging-client-tool-tui/logging/LoggingManager.js"
+import { ServiceManager } from "@wireio/debugging-client-tool-tui/services/ServiceManager.js"
+import type { Service } from "@wireio/debugging-client-tool-tui/services/Service.js"
+import type { ServiceManager as ServiceManagerType } from "@wireio/debugging-client-tool-tui/services/ServiceManager.js"
 
 const logDir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "tui-sm-test-"))
 
@@ -185,8 +185,18 @@ describe("ServiceManager cycle detection", () => {
     // the internal map through destroy-reset cycles — simplest reliable test:
     // manually build a map then call serviceRecordsByBootOrder.
     const sm = ServiceManager.get() as any
-    const recA: any = { id: "a", serviceType: { id: "a" }, service: null, dependsOn: [] }
-    const recB: any = { id: "b", serviceType: { id: "b" }, service: null, dependsOn: [] }
+    const recA: any = {
+      id: "a",
+      serviceType: { id: "a" },
+      service: null,
+      dependsOn: []
+    }
+    const recB: any = {
+      id: "b",
+      serviceType: { id: "b" },
+      service: null,
+      dependsOn: []
+    }
     recA.dependsOn = [recB]
     recB.dependsOn = [recA]
     sm.serviceRecordMap.set("a", recA)

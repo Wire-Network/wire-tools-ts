@@ -3,8 +3,8 @@ import Os from "node:os"
 import Path from "node:path"
 import Fs from "node:fs"
 import { Level } from "@wireio/shared"
-import { LoggingManager } from "@wire-e2e-tests/debugging-client-tool-tui/logging/LoggingManager.js"
-import { App } from "@wire-e2e-tests/debugging-client-tool-tui/App.js"
+import { LoggingManager } from "@wireio/debugging-client-tool-tui/logging/LoggingManager.js"
+import { App } from "@wireio/debugging-client-tool-tui/App.js"
 
 const logDir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "app-test-"))
 

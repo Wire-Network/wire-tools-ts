@@ -13,12 +13,14 @@ const config = {
   },
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",
-    "^@wire-e2e-tests/debugging-client-tool$": "<rootDir>/src/index",
-    "^@wire-e2e-tests/debugging-client-tool/(.*)$": "<rootDir>/src/$1",
-    "^@wire-e2e-tests/debugging-shared$": "<rootDir>/../debugging-shared/src/index",
-    "^@wire-e2e-tests/debugging-shared/(.*)$": "<rootDir>/../debugging-shared/src/$1",
-    "^@wire-e2e-tests/debugging-client-shared$": "<rootDir>/../debugging-client-shared/src/index",
-    "^@wire-e2e-tests/debugging-client-shared/(.*)$": "<rootDir>/../debugging-client-shared/src/$1"
+    "^@wireio/debugging-client-tool$": "<rootDir>/src/index",
+    "^@wireio/debugging-client-tool/(.*)$": "<rootDir>/src/$1",
+    "^@wireio/debugging-shared$": "<rootDir>/../debugging-shared/src/index",
+    "^@wireio/debugging-shared/(.*)$": "<rootDir>/../debugging-shared/src/$1",
+    "^@wireio/debugging-client-shared$":
+      "<rootDir>/../debugging-client-shared/src/index",
+    "^@wireio/debugging-client-shared/(.*)$":
+      "<rootDir>/../debugging-client-shared/src/$1"
   }
 }
 

@@ -1,4 +1,4 @@
-import type { ClusterConfig } from "@wire-e2e-tests/debugging-shared"
+import type { ClusterConfig } from "@wireio/debugging-shared"
 
 /**
  * Caller-supplied config for {@link FlowTestContext}. Field requirements

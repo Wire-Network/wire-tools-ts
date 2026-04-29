@@ -1,4 +1,4 @@
-import { EpochDetailOverview } from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/panels/EpochDetailOverview.js"
+import { EpochDetailOverview } from "@wireio/debugging-client-tool-tui/features/opp/panels/EpochDetailOverview.js"
 
 describe("EpochDetailOverview", () => {
   it("declares its layout + label constants", () => {

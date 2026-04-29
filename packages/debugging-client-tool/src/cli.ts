@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import "source-map-support/register"
 import Yargs from "yargs"
-import { DebuggingServerClient } from "@wire-e2e-tests/debugging-client-shared"
+import { DebuggingServerClient } from "@wireio/debugging-client-shared"
 
 import { handleList } from "./commands/list.js"
 import { handleInspect } from "./commands/inspect.js"

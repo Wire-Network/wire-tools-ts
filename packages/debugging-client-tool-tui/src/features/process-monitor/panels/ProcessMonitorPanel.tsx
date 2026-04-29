@@ -1,15 +1,12 @@
 import React, { useEffect, useState } from "react"
 import { Box, Text, useFocus, useFocusManager, useInput } from "ink"
 import { match } from "ts-pattern"
-import { ClusterFiles } from "@wire-e2e-tests/debugging-shared"
+import { ClusterFiles } from "@wireio/debugging-shared"
 import type { PanelComponentProps } from "../../../components/PanelComponent.js"
 import { adjustStickyWindow } from "../../../components/stickyWindow.js"
 import { useService } from "../../../services/ServiceContext.js"
 import { ServiceId } from "../../../services/ServiceId.js"
-import {
-  useAppDispatch,
-  useAppSelector
-} from "../../../store/Store.js"
+import { useAppDispatch, useAppSelector } from "../../../store/Store.js"
 import { selectCluster } from "../../../store/cluster/ClusterSelectors.js"
 import {
   selectLogViewer,
@@ -108,10 +105,7 @@ function ProcessMonitorBody(_: PanelComponentProps): React.ReactElement {
   const move = React.useCallback(
     (delta: number) => {
       if (sources.length === 0) return
-      const nextIdx = Math.max(
-        0,
-        Math.min(sources.length - 1, cursor + delta)
-      )
+      const nextIdx = Math.max(0, Math.min(sources.length - 1, cursor + delta))
       setSelectedLabel(sources[nextIdx].label)
     },
     [sources, cursor]

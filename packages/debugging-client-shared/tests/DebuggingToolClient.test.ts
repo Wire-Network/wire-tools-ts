@@ -1,4 +1,4 @@
-import { DebuggingServerClient } from "@wire-e2e-tests/debugging-client-shared"
+import { DebuggingServerClient } from "@wireio/debugging-client-shared"
 
 describe("DebuggingServerClient", () => {
   it("exposes DefaultHost and DefaultPort namespace constants", () => {

@@ -1,4 +1,4 @@
-import { ProcessManager } from "@wire-e2e-tests/harness"
+import { ProcessManager } from "@wireio/test-cluster-tool"
 import * as OS from "node:os"
 
 describe("ProcessManager", () => {

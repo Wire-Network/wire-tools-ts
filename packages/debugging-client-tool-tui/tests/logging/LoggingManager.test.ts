@@ -2,7 +2,7 @@ import Os from "node:os"
 import Fs from "node:fs"
 import Path from "node:path"
 import { Level } from "@wireio/shared"
-import { LoggingManager } from "@wire-e2e-tests/debugging-client-tool-tui/logging/LoggingManager.js"
+import { LoggingManager } from "@wireio/debugging-client-tool-tui/logging/LoggingManager.js"
 
 /** Override the module-private `configured` flag via a getter hack per test. */
 function resetConfiguredFlag(): void {

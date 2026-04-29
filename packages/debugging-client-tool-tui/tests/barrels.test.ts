@@ -4,13 +4,13 @@
  * file that never got wired into the barrel). One assertion per barrel to keep
  * this fast.
  */
-import * as servicesBarrel from "@wire-e2e-tests/debugging-client-tool-tui/services/index.js"
-import * as storeBarrel from "@wire-e2e-tests/debugging-client-tool-tui/store/index.js"
-import * as uiBarrel from "@wire-e2e-tests/debugging-client-tool-tui/store/ui/index.js"
-import * as clusterBarrel from "@wire-e2e-tests/debugging-client-tool-tui/store/cluster/index.js"
-import * as featuresBarrel from "@wire-e2e-tests/debugging-client-tool-tui/store/features/index.js"
-import * as oppBarrel from "@wire-e2e-tests/debugging-client-tool-tui/store/opp/index.js"
-import * as pmBarrel from "@wire-e2e-tests/debugging-client-tool-tui/store/process-monitor/index.js"
+import * as servicesBarrel from "@wireio/debugging-client-tool-tui/services/index.js"
+import * as storeBarrel from "@wireio/debugging-client-tool-tui/store/index.js"
+import * as uiBarrel from "@wireio/debugging-client-tool-tui/store/ui/index.js"
+import * as clusterBarrel from "@wireio/debugging-client-tool-tui/store/cluster/index.js"
+import * as featuresBarrel from "@wireio/debugging-client-tool-tui/store/features/index.js"
+import * as oppBarrel from "@wireio/debugging-client-tool-tui/store/opp/index.js"
+import * as pmBarrel from "@wireio/debugging-client-tool-tui/store/process-monitor/index.js"
 
 describe("services/index.ts", () => {
   it("re-exports ServiceManager, ReduxService, ServiceId, and the React context", () => {

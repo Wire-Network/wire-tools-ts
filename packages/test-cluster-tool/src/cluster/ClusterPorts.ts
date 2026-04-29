@@ -2,7 +2,7 @@
 // Cluster port management
 // ---------------------------------------------------------------------------
 
-import type { ClusterPorts as SharedClusterPorts } from "@wire-e2e-tests/debugging-shared"
+import type { ClusterPorts as SharedClusterPorts } from "@wireio/debugging-shared"
 import Bluebird from "bluebird"
 import { range } from "lodash"
 import {

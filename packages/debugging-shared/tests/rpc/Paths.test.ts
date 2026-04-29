@@ -1,8 +1,8 @@
 import type {
   InferredRequestType,
   InferredResponseType
-} from "@wire-e2e-tests/debugging-shared"
-import { ApiPaths } from "@wire-e2e-tests/debugging-shared"
+} from "@wireio/debugging-shared"
+import { ApiPaths } from "@wireio/debugging-shared"
 
 describe("ApiPaths", () => {
   it("Ping is /api/ping", () => {

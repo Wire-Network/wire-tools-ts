@@ -4,8 +4,8 @@
  * tests verify a concrete conformer compiles and reports the statics correctly.
  */
 import React from "react"
-import type { PanelComponentType } from "@wire-e2e-tests/debugging-client-tool-tui/components/PanelComponent.js"
-import type { StatusBarComponentType } from "@wire-e2e-tests/debugging-client-tool-tui/components/StatusBarComponent.js"
+import type { PanelComponentType } from "@wireio/debugging-client-tool-tui/components/PanelComponent.js"
+import type { StatusBarComponentType } from "@wireio/debugging-client-tool-tui/components/StatusBarComponent.js"
 
 describe("PanelComponentType", () => {
   it("a concrete conformer exposes the statics", () => {

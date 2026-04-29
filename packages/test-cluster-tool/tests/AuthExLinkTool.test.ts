@@ -8,14 +8,18 @@ import {
 import {
   emPrivateKeyFromEthWallet,
   emPublicKeyFromEthWallet
-} from "@wire-e2e-tests/harness"
+} from "@wireio/test-cluster-tool"
 
-const ANVIL_MNEMONIC = "test test test test test test test test test test test junk"
+const ANVIL_MNEMONIC =
+  "test test test test test test test test test test test junk"
 const DERIVATION_PATH = "m/44'/60'/0'/0/"
 
 function walletAtIndex(index: number): ethers.HDNodeWallet {
   const mnemonic = ethers.Mnemonic.fromPhrase(ANVIL_MNEMONIC)
-  return ethers.HDNodeWallet.fromMnemonic(mnemonic, `${DERIVATION_PATH}${index}`)
+  return ethers.HDNodeWallet.fromMnemonic(
+    mnemonic,
+    `${DERIVATION_PATH}${index}`
+  )
 }
 
 function rawCompressedPrefix(wallet: ethers.HDNodeWallet): number {
@@ -84,7 +88,7 @@ describe("AuthExLinkTool", () => {
     })
 
     it("private key round-trips to public key for both prefixes", () => {
-      [wallet02, wallet03].forEach(wallet => {
+      ;[wallet02, wallet03].forEach(wallet => {
         const privKey = emPrivateKeyFromEthWallet(wallet)
         const pubKey = privKey.toPublic()
         expect(pubKey.toString()).toMatch(/^PUB_EM_/)
@@ -108,7 +112,9 @@ describe("AuthExLinkTool", () => {
       const nonce = 1234567890
       const msg = `${pubKey.toString()}|${account}|${chainKind}|${nonce}|createlink auth`
 
-      expect(msg).toMatch(/^PUB_EM_02[0-9a-f]{64}\|batchop\.a\|2\|1234567890\|createlink auth$/)
+      expect(msg).toMatch(
+        /^PUB_EM_02[0-9a-f]{64}\|batchop\.a\|2\|1234567890\|createlink auth$/
+      )
     })
   })
 })

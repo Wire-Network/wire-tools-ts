@@ -1,5 +1,5 @@
 import React from "react"
-import { VirtualList } from "@wire-e2e-tests/debugging-client-tool-tui/components/VirtualList.js"
+import { VirtualList } from "@wireio/debugging-client-tool-tui/components/VirtualList.js"
 
 describe("VirtualList props shape", () => {
   it("is a functional component that accepts generic item props", () => {

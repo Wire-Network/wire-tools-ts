@@ -32,58 +32,58 @@
     "target": "ES2022",
     "types": ["node", "jest"],
     "paths": {
-      "@wire-e2e-tests/harness": [
-        "./packages/harness/src/"
+      "@wireio/test-cluster-tool": [
+        "./packages/test-cluster-tool/src/"
       ],
-      "@wire-e2e-tests/harness/*": [
-        "./packages/harness/src/*"
+      "@wireio/test-cluster-tool/*": [
+        "./packages/test-cluster-tool/src/*"
       ],
-      "@wire-e2e-tests/flow-a": [
+      "@wireio/test-flow-a": [
         "./packages/flow-a/src"
       ],
-      "@wire-e2e-tests/flow-a/*": [
+      "@wireio/test-flow-a/*": [
         "./packages/flow-a/src/*"
       ],
-      "@wire-e2e-tests/flow-b": [
+      "@wireio/test-flow-b": [
         "./packages/flow-b/src"
       ],
-      "@wire-e2e-tests/flow-b/*": [
+      "@wireio/test-flow-b/*": [
         "./packages/flow-b/src/*"
       ],
-      "@wire-e2e-tests/flow-c": [
+      "@wireio/test-flow-c": [
         "./packages/flow-c/src"
       ],
-      "@wire-e2e-tests/flow-c/*": [
+      "@wireio/test-flow-c/*": [
         "./packages/flow-c/src/*"
       ],
-      "@wire-e2e-tests/debugging-shared": [
+      "@wireio/debugging-shared": [
         "./packages/debugging-shared/src"
       ],
-      "@wire-e2e-tests/debugging-shared/*": [
+      "@wireio/debugging-shared/*": [
         "./packages/debugging-shared/src/*"
       ],
-      "@wire-e2e-tests/debugging-server": [
+      "@wireio/debugging-server": [
         "./packages/debugging-server/src"
       ],
-      "@wire-e2e-tests/debugging-server/*": [
+      "@wireio/debugging-server/*": [
         "./packages/debugging-server/src/*"
       ],
-      "@wire-e2e-tests/debugging-client-shared": [
+      "@wireio/debugging-client-shared": [
         "./packages/debugging-client-shared/src"
       ],
-      "@wire-e2e-tests/debugging-client-shared/*": [
+      "@wireio/debugging-client-shared/*": [
         "./packages/debugging-client-shared/src/*"
       ],
-      "@wire-e2e-tests/debugging-client-tool": [
+      "@wireio/debugging-client-tool": [
         "./packages/debugging-client-tool/src"
       ],
-      "@wire-e2e-tests/debugging-client-tool/*": [
+      "@wireio/debugging-client-tool/*": [
         "./packages/debugging-client-tool/src/*"
       ],
-      "@wire-e2e-tests/debugging-client-tool-tui": [
+      "@wireio/debugging-client-tool-tui": [
         "./packages/debugging-client-tool-tui/src"
       ],
-      "@wire-e2e-tests/debugging-client-tool-tui/*": [
+      "@wireio/debugging-client-tool-tui/*": [
         "./packages/debugging-client-tool-tui/src/*"
       ]
     }

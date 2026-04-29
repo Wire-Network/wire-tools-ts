@@ -1,5 +1,5 @@
 {
-  "name": "@wire-e2e-tests/debugging-client-tool",
+  "name": "@wireio/debugging-client-tool",
   "version": "0.1.0",
   "private": false,
   "publishConfig": {
@@ -20,8 +20,8 @@
     "clean": "rm -rf lib dist"
   },
   "dependencies": {
-    "@wire-e2e-tests/debugging-shared": "workspace:*",
-    "@wire-e2e-tests/debugging-client-shared": "workspace:*",
+    "@wireio/debugging-shared": "workspace:*",
+    "@wireio/debugging-client-shared": "workspace:*",
     "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/shared": "^1.0.21",
     "@wireio/sdk-core": "^1.0.21",

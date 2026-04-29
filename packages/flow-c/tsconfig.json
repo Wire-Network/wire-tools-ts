@@ -5,7 +5,7 @@
   },
   "include": [],
   "references": [
-    { "path": "../harness/tsconfig.json" },
+    { "path": "../test-cluster-tool/tsconfig.json" },
     { "path": "./tsconfig.src.json" },
     { "path": "./tsconfig.tests.json" }
   ]

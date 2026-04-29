@@ -8,7 +8,7 @@ import {
   formatList,
   formatInspect,
   OutputFormat
-} from "@wire-e2e-tests/debugging-client-tool"
+} from "@wireio/debugging-client-tool"
 
 describe("formatList", () => {
   const entries: EnvelopeListEntry[] = [

@@ -7,10 +7,10 @@
     "moduleResolution": "node",
     "ignoreDeprecations": "6.0",
     "paths": {
-      "@wire-e2e-tests/debugging-server": ["./src"],
-      "@wire-e2e-tests/debugging-server/*": ["./src/*"],
-      "@wire-e2e-tests/debugging-shared": ["../debugging-shared/src"],
-      "@wire-e2e-tests/debugging-shared/*": ["../debugging-shared/src/*"]
+      "@wireio/debugging-server": ["./src"],
+      "@wireio/debugging-server/*": ["./src/*"],
+      "@wireio/debugging-shared": ["../debugging-shared/src"],
+      "@wireio/debugging-shared/*": ["../debugging-shared/src/*"]
     }
   },
   "references": [

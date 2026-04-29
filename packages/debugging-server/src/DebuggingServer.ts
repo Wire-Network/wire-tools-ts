@@ -6,7 +6,7 @@ import { Server } from "node:http"
 import express, { Express } from "express"
 import { defaults } from "lodash"
 
-import { ApiPaths, DebuggingDefaults } from "@wire-e2e-tests/debugging-shared"
+import { ApiPaths, DebuggingDefaults } from "@wireio/debugging-shared"
 
 import { JsonRPC } from "./JsonRPC.js"
 

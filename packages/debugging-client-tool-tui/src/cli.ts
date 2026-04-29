@@ -8,7 +8,7 @@ import {
   ClusterFiles,
   type ClusterConfig,
   type ClusterState
-} from "@wire-e2e-tests/debugging-shared"
+} from "@wireio/debugging-shared"
 import { type Level } from "@wireio/shared"
 
 /** Result of loading a cluster directory's on-disk files. */
@@ -64,7 +64,12 @@ export namespace CLI {
 /** Coerce raw `--features` input to a lowercased id set (or null when omitted). */
 export function coerceFeatures(raw?: string): Set<string> | null {
   return asOption(raw)
-    .map(s => s.split(",").map(x => x.trim().toLowerCase()).filter(Boolean))
+    .map(s =>
+      s
+        .split(",")
+        .map(x => x.trim().toLowerCase())
+        .filter(Boolean)
+    )
     .filter(list => list.length > 0)
     .map(list => new Set(list))
     .getOrNull()
@@ -92,9 +97,7 @@ export function parseArgs(
         "Path to a cluster directory. Defaults to the current directory.",
       coerce: (clusterPath: string) =>
         asOption(Path.resolve(clusterPath))
-          .filter(p =>
-            Fs.existsSync(Path.join(p, ClusterFiles.ConfigFilename))
-          )
+          .filter(p => Fs.existsSync(Path.join(p, ClusterFiles.ConfigFilename)))
           .getOrThrow(
             `${ClusterFiles.ConfigFilename} not found in ${clusterPath} — is this a cluster directory?`
           )
@@ -143,7 +146,9 @@ export function loadCluster(clusterPath: string): ToolClusterConfig {
     ) as ClusterConfig,
     state = asOption(Fs.existsSync(stateFile))
       .filter(Boolean)
-      .map(() => JSON.parse(Fs.readFileSync(stateFile, "utf-8")) as ClusterState)
+      .map(
+        () => JSON.parse(Fs.readFileSync(stateFile, "utf-8")) as ClusterState
+      )
       .getOrNull()
   return { path: clusterPath, config, state }
 }

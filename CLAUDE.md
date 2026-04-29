@@ -30,7 +30,7 @@ pnpm test:flow-c
 pnpm test:flow-d
 
 # Run only harness unit tests
-pnpm --filter @wire-e2e-tests/harness test
+pnpm --filter @wireio/test-cluster-tool test
 
 # Format code
 pnpm format
@@ -45,11 +45,11 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 
 | Package | Name | Purpose |
 |---------|------|---------|
-| `harness` | `@wire-e2e-tests/harness` | Core library: process managers, chain clients, bootstrap, CLI |
-| `flow-a` | `@wire-e2e-tests/flow-a` | Test: Empty Epoch (balance sheet only) |
-| `flow-b` | `@wire-e2e-tests/flow-b` | Test: Node Operator Collateral Deposit |
-| `flow-c` | `@wire-e2e-tests/flow-c` | Test: SWAP 50 ETH → 1042 SOL (with underwriting) |
-| `flow-d` | `@wire-e2e-tests/flow-d` | Test: Collateral Deposit via BAR (OperatorAction ETH → WIRE) |
+| `harness` | `@wireio/test-cluster-tool` | Core library: process managers, chain clients, bootstrap, CLI |
+| `flow-a` | `@wireio/flow-a` | Test: Empty Epoch (balance sheet only) |
+| `flow-b` | `@wireio/flow-b` | Test: Node Operator Collateral Deposit |
+| `flow-c` | `@wireio/flow-c` | Test: SWAP 50 ETH → 1042 SOL (with underwriting) |
+| `flow-d` | `@wireio/flow-d` | Test: Collateral Deposit via BAR (OperatorAction ETH → WIRE) |
 
 Flow packages depend on `harness` via `workspace:*`.
 
@@ -60,7 +60,7 @@ Flow packages depend on `harness` via `workspace:*`.
 - **Base config**: `etc/tsconfig/tsconfig.base.cjs.json` (module=nodenext, target=esnext)
 - **Source**: `src/` → **Output**: `lib/`
 - **Import paths**: Always use `.js` extensions (nodenext module resolution)
-- **Path mappings**: `@wire-e2e-tests/*` → `packages/*/src` (in base tsconfig)
+- **Path mappings**: `@wireio/*` → `packages/*/src` (in base tsconfig)
 - **Jest tsconfig**: `etc/tsconfig/tsconfig.base.jest.json` (disables composite/incremental)
 
 ## Testing
@@ -87,13 +87,13 @@ Every TypeScript function, class, type, interface, module, or exported constant 
 
 Reaching into `src/` (via `./src/...`, `../src/...`, or `../../src/...`) couples the consumer to internal file layout and defeats the barrel-export + package-alias contract.
 
-- **Correct (external / alias import)**: `import { ServiceManager } from "@wire-e2e-tests/debugging-client-tool-tui/services/ServiceManager.js"`
+- **Correct (external / alias import)**: `import { ServiceManager } from "@wireio/debugging-client-tool-tui/services/ServiceManager.js"`
 - **Correct (in-package relative)**: `import { ServiceManager } from "./ServiceManager.js"` (inside `src/services/`)
 - **Wrong**: `import { ServiceManager } from "../../src/services/ServiceManager.js"`
 - **Wrong**: `export * from "./src/services/index.js"`
-- **Wrong**: `import { ServiceManager } from "@wire-e2e-tests/debugging-client-tool-tui/src/services/ServiceManager.js"`
+- **Wrong**: `import { ServiceManager } from "@wireio/debugging-client-tool-tui/src/services/ServiceManager.js"`
 
-The `moduleNameMapper` in every package's `jest.config.cjs` maps `@wire-e2e-tests/<pkg>/(.*)` → `<rootDir>/src/$1`; the `tsconfig.base.cjs.json` paths mapping does the equivalent for `tsc`. Both resolve the alias to the source file — the alias form works identically in tests and at runtime. If a module isn't reachable via its barrel yet, add the barrel entry first; never bypass the barrel by traversing `src/`.
+The `moduleNameMapper` in every package's `jest.config.cjs` maps `@wireio/<pkg>/(.*)` → `<rootDir>/src/$1`; the `tsconfig.base.cjs.json` paths mapping does the equivalent for `tsc`. Both resolve the alias to the source file — the alias form works identically in tests and at runtime. If a module isn't reachable via its barrel yet, add the barrel entry first; never bypass the barrel by traversing `src/`.
 
 If you find yourself tempted to write a `src/`-containing specifier to "just make it compile", stop — the barrel or the tsconfig path mapping is broken and needs fixing there, not worked around here.
 
@@ -192,7 +192,7 @@ The rules above are enforced on every change. Before declaring a task complete, 
 3. **Enums over raw values.** Command names, statuses, chain kinds, attestation types — always the enum member. `ClusterCommand.create` not `"create"`; `ChainKind.ETHEREUM` not `2`. Rename propagates through the compiler; raw strings do not.
 
 4. **Import hygiene.**
-   - **No cross-package `../src/...` / `../../../lib/...` paths.** Cross-package imports use the package alias (`@wire-e2e-tests/harness`, `@wireio/shared`, etc.). In-package relative imports are fine.
+   - **No cross-package `../src/...` / `../../../lib/...` paths.** Cross-package imports use the package alias (`@wireio/test-cluster-tool`, `@wireio/shared`, etc.). In-package relative imports are fine.
    - **Do not re-export third-party surface from local barrels.** If a consumer needs a type from `@wireio/opp-typescript-models`, they import it from there directly — don't list 9 of its types in a `debugging-shared` barrel.
    - **Import order:** Node built-ins → external packages → internal monorepo packages → relative imports. Blank line between groups.
 

@@ -1,5 +1,5 @@
 import React from "react"
-import { RouterOutlet } from "@wire-e2e-tests/debugging-client-tool-tui/router/RouterOutlet.js"
+import { RouterOutlet } from "@wireio/debugging-client-tool-tui/router/RouterOutlet.js"
 
 describe("RouterOutlet", () => {
   it("is a function component", () => {
@@ -26,7 +26,9 @@ describe("RouterOutlet", () => {
       pop: jest.fn(),
       reset: jest.fn()
     }
-    const spy = jest.spyOn(React, "useContext").mockImplementation(() => fakeRouter)
+    const spy = jest
+      .spyOn(React, "useContext")
+      .mockImplementation(() => fakeRouter)
     try {
       const element = RouterOutlet()
       expect(React.isValidElement(element)).toBe(true)
@@ -47,7 +49,9 @@ describe("RouterOutlet", () => {
       pop: jest.fn(),
       reset: jest.fn()
     }
-    const spy = jest.spyOn(React, "useContext").mockImplementation(() => fakeRouter)
+    const spy = jest
+      .spyOn(React, "useContext")
+      .mockImplementation(() => fakeRouter)
     try {
       const element = RouterOutlet()
       expect(React.isValidElement(element)).toBe(true)

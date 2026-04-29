@@ -1,4 +1,4 @@
-import { NodeCountWidget } from "@wire-e2e-tests/debugging-client-tool-tui/features/process-monitor/widgets/NodeCountWidget.js"
+import { NodeCountWidget } from "@wireio/debugging-client-tool-tui/features/process-monitor/widgets/NodeCountWidget.js"
 
 describe("NodeCountWidget", () => {
   it("has stable id metadata", () => {

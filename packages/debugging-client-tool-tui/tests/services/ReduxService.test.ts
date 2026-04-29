@@ -2,10 +2,10 @@ import Os from "node:os"
 import Path from "node:path"
 import Fs from "node:fs"
 import { Level } from "@wireio/shared"
-import { LoggingManager } from "@wire-e2e-tests/debugging-client-tool-tui/logging/LoggingManager.js"
-import { ReduxService } from "@wire-e2e-tests/debugging-client-tool-tui/services/ReduxService.js"
-import { ServiceId } from "@wire-e2e-tests/debugging-client-tool-tui/services/ServiceId.js"
-import { store } from "@wire-e2e-tests/debugging-client-tool-tui/store/Store.js"
+import { LoggingManager } from "@wireio/debugging-client-tool-tui/logging/LoggingManager.js"
+import { ReduxService } from "@wireio/debugging-client-tool-tui/services/ReduxService.js"
+import { ServiceId } from "@wireio/debugging-client-tool-tui/services/ServiceId.js"
+import { store } from "@wireio/debugging-client-tool-tui/store/Store.js"
 
 const dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "redux-svc-"))
 

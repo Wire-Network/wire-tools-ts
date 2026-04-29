@@ -1,7 +1,7 @@
 import {
   DefaultStatus,
   SliceName
-} from "@wire-e2e-tests/debugging-client-tool-tui/store/StoreTypes.js"
+} from "@wireio/debugging-client-tool-tui/store/StoreTypes.js"
 
 describe("SliceName", () => {
   it("exposes a stable identity-mapped enum for every slice", () => {

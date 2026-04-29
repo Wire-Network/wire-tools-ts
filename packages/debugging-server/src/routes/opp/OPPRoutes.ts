@@ -12,7 +12,7 @@ import {
   Envelope
 } from "@wireio/opp-typescript-models"
 
-import { ApiPaths, endpointsTypeToKey } from "@wire-e2e-tests/debugging-shared"
+import { ApiPaths, endpointsTypeToKey } from "@wireio/debugging-shared"
 
 import { JsonRPC } from "../../JsonRPC.js"
 

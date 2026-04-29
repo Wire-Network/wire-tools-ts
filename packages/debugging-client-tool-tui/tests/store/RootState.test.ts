@@ -4,8 +4,8 @@
  * Store module (and thereby breaking the slice→Store→slice cycle). The
  * presence of the file is the invariant; verify the alias resolves.
  */
-import type { RootState } from "@wire-e2e-tests/debugging-client-tool-tui/store/RootState.js"
-import { store } from "@wire-e2e-tests/debugging-client-tool-tui/store/Store.js"
+import type { RootState } from "@wireio/debugging-client-tool-tui/store/RootState.js"
+import { store } from "@wireio/debugging-client-tool-tui/store/Store.js"
 
 describe("RootState type re-export", () => {
   it("matches the runtime state shape produced by store.getState()", () => {

@@ -2,7 +2,7 @@ import {
   createMultiKeyMachine,
   MultiKeyTrigger,
   useMultiKeyTrigger
-} from "@wire-e2e-tests/debugging-client-tool-tui/hooks/useMultiKeyTrigger.js"
+} from "@wireio/debugging-client-tool-tui/hooks/useMultiKeyTrigger.js"
 
 // Minimal Key shape — ink's type is not resolvable under `module: commonjs`.
 // We stub any necessary flag + cast at call-sites.

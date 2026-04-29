@@ -1,5 +1,5 @@
 {
-  "name": "@wire-e2e-tests/debugging-client-tool-tui",
+  "name": "@wireio/debugging-client-tool-tui",
   "version": "0.1.0",
   "private": false,
   "publishConfig": {
@@ -26,8 +26,8 @@
   "dependencies": {
     "@3fv/prelude-ts": "^0.8.37",
     "@reduxjs/toolkit": "^2.11.2",
-    "@wire-e2e-tests/debugging-client-shared": "workspace:*",
-    "@wire-e2e-tests/debugging-shared": "workspace:*",
+    "@wireio/debugging-client-shared": "workspace:*",
+    "@wireio/debugging-shared": "workspace:*",
     "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/sdk-core": "^1.0.21",
     "@wireio/shared": "^1.0.21",

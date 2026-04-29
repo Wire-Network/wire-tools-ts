@@ -1,17 +1,20 @@
-import type {
-  ClusterConfig,
-  ClusterState
-} from "@wire-e2e-tests/debugging-shared"
+import type { ClusterConfig, ClusterState } from "@wireio/debugging-shared"
 import {
   clusterSlice,
   setCluster,
   type ClusterSliceState
-} from "@wire-e2e-tests/debugging-client-tool-tui/store/cluster/ClusterSlice.js"
-import { selectCluster } from "@wire-e2e-tests/debugging-client-tool-tui/store/cluster/ClusterSelectors.js"
-import { SliceName } from "@wire-e2e-tests/debugging-client-tool-tui/store/StoreTypes.js"
+} from "@wireio/debugging-client-tool-tui/store/cluster/ClusterSlice.js"
+import { selectCluster } from "@wireio/debugging-client-tool-tui/store/cluster/ClusterSelectors.js"
+import { SliceName } from "@wireio/debugging-client-tool-tui/store/StoreTypes.js"
 
-const stubConfig = { ports: { debuggingServer: 9901 } } as unknown as ClusterConfig
-const stubState = { nodes: [], batchOperatorNodes: [], underwriterNodes: [] } as unknown as ClusterState
+const stubConfig = {
+  ports: { debuggingServer: 9901 }
+} as unknown as ClusterConfig
+const stubState = {
+  nodes: [],
+  batchOperatorNodes: [],
+  underwriterNodes: []
+} as unknown as ClusterState
 
 describe("clusterSlice", () => {
   it("initial state has all three fields null", () => {
@@ -42,7 +45,11 @@ describe("clusterSlice", () => {
 
 describe("selectCluster", () => {
   it("returns the cluster sub-state keyed by SliceName.Cluster", () => {
-    const value: ClusterSliceState = { path: "/x", config: stubConfig, state: null }
+    const value: ClusterSliceState = {
+      path: "/x",
+      config: stubConfig,
+      state: null
+    }
     expect(selectCluster({ [SliceName.Cluster]: value } as any)).toEqual(value)
   })
 })

@@ -1,5 +1,5 @@
 import React from "react"
-import { Modal } from "@wire-e2e-tests/debugging-client-tool-tui/components/modals/Modal.js"
+import { Modal } from "@wireio/debugging-client-tool-tui/components/modals/Modal.js"
 
 describe("Modal", () => {
   it("is a function component", () => {

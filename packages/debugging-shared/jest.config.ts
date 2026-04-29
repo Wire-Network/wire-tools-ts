@@ -13,8 +13,8 @@ const config = {
   },
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",
-    "^@wire-e2e-tests/debugging-shared$": "<rootDir>/src/index",
-    "^@wire-e2e-tests/debugging-shared/(.*)$": "<rootDir>/src/$1"
+    "^@wireio/debugging-shared$": "<rootDir>/src/index",
+    "^@wireio/debugging-shared/(.*)$": "<rootDir>/src/$1"
   }
 }
 

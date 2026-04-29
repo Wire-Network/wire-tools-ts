@@ -4,7 +4,7 @@ import {
   jsonColumnBoundaries,
   nextColumnOffset,
   prevColumnOffset
-} from "@wire-e2e-tests/debugging-client-tool-tui/features/process-monitor/panels/LogViewerJSONLine.js"
+} from "@wireio/debugging-client-tool-tui/features/process-monitor/panels/LogViewerJSONLine.js"
 
 const SampleLine =
   '{"ts":"2026-04-27T19:58:15.417594Z","lvl":"debug","thread":"nodeop","logger":"default","file":"/.../x.cpp","line":426,"func":"plugin_initialize","msg":"Registering signature provider"}'
@@ -61,9 +61,9 @@ describe("LogViewerJSONLine", () => {
   })
 
   it("renders the malformed-line fallback with truncate-end wrap mode", () => {
-    expect(
-      (render({ line: "not json" }).props as { wrap?: string }).wrap
-    ).toBe("truncate-end")
+    expect((render({ line: "not json" }).props as { wrap?: string }).wrap).toBe(
+      "truncate-end"
+    )
   })
 
   it("hides the source-location column when locationVisible=false", () => {

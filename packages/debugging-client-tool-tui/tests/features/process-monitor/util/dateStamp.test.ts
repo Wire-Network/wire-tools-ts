@@ -1,4 +1,4 @@
-import { currentDateStamp } from "@wire-e2e-tests/debugging-client-tool-tui/features/process-monitor/util/dateStamp.js"
+import { currentDateStamp } from "@wireio/debugging-client-tool-tui/features/process-monitor/util/dateStamp.js"
 
 describe("currentDateStamp", () => {
   it("renders YYYYMMDD, zero-padding month and day", () => {

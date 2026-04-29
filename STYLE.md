@@ -1,6 +1,8 @@
-# TypeScript Style Guide
+# TypeScript Style Guide — wire-e2e-tests
 
-Conventions and patterns extracted from a process-orchestration and CLI harness codebase. Written generically but grounded in real usage — apply these patterns when building TypeScript services that manage external processes, configuration, and lifecycle.
+Project-specific conventions for the `wire-e2e-tests` repo (test harness, flow tests, debugging tooling). Examples are drawn from real classes in this repo: `AnvilManager`, `KiodManager`, `ClusterManager`, `Clio`, etc.
+
+> **Org-wide baseline**: the canonical style guide lives at `wire-libraries-ts/STYLE.md`. It covers general TypeScript idioms, tsconfig hierarchy, hybrid CJS+ESM packaging, and the React/Redux Toolkit stack. Rules in this file extend or specialize that baseline for the process-orchestration / CLI harness work in this repo. When the two conflict, the more specific guidance in this file wins for code under `wire-e2e-tests/`.
 
 ---
 

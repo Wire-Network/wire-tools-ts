@@ -2,15 +2,15 @@ import Os from "node:os"
 import Path from "node:path"
 import Fs from "node:fs"
 import { Level } from "@wireio/shared"
-import { LoggingManager } from "@wire-e2e-tests/debugging-client-tool-tui/logging/LoggingManager.js"
-import OPPFeatureProvider from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/OPPFeatureProvider.js"
-import { OPPTrackingService } from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/OPPTrackingService.js"
-import { EpochTrackerPanel } from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/panels/EpochTrackerPanel.js"
-import { EpochDetailRoute } from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/routes/EpochDetailRoute.js"
-import { EpochStatusBarWidget } from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/widgets/EpochStatusBarWidget.js"
-import { FeatureComponentToken } from "@wire-e2e-tests/debugging-client-tool-tui/providers/ComponentProviders.js"
-import { ReduxService } from "@wire-e2e-tests/debugging-client-tool-tui/services/ReduxService.js"
-import { ServiceManager } from "@wire-e2e-tests/debugging-client-tool-tui/services/ServiceManager.js"
+import { LoggingManager } from "@wireio/debugging-client-tool-tui/logging/LoggingManager.js"
+import OPPFeatureProvider from "@wireio/debugging-client-tool-tui/features/opp/OPPFeatureProvider.js"
+import { OPPTrackingService } from "@wireio/debugging-client-tool-tui/features/opp/OPPTrackingService.js"
+import { EpochTrackerPanel } from "@wireio/debugging-client-tool-tui/features/opp/panels/EpochTrackerPanel.js"
+import { EpochDetailRoute } from "@wireio/debugging-client-tool-tui/features/opp/routes/EpochDetailRoute.js"
+import { EpochStatusBarWidget } from "@wireio/debugging-client-tool-tui/features/opp/widgets/EpochStatusBarWidget.js"
+import { FeatureComponentToken } from "@wireio/debugging-client-tool-tui/providers/ComponentProviders.js"
+import { ReduxService } from "@wireio/debugging-client-tool-tui/services/ReduxService.js"
+import { ServiceManager } from "@wireio/debugging-client-tool-tui/services/ServiceManager.js"
 
 const logDir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "opp-fp-"))
 
@@ -34,7 +34,10 @@ describe("OPPFeatureProvider.registerComponents", () => {
   it("registers the epoch-tracker panel and epoch status-bar widget", () => {
     const register = jest.fn()
     OPPFeatureProvider.registerComponents({ register } as any)
-    expect(register).toHaveBeenCalledWith(FeatureComponentToken.Panel, EpochTrackerPanel)
+    expect(register).toHaveBeenCalledWith(
+      FeatureComponentToken.Panel,
+      EpochTrackerPanel
+    )
     expect(register).toHaveBeenCalledWith(
       FeatureComponentToken.StatusBar,
       EpochStatusBarWidget

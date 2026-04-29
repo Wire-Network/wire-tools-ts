@@ -2,8 +2,8 @@ import * as OS from "node:os"
 import * as Path from "node:path"
 import * as Fs from "node:fs"
 
-import { JsonRPC, DebuggingServer } from "@wire-e2e-tests/debugging-server"
-import { ApiPaths, JsonRPCResult } from "@wire-e2e-tests/debugging-shared"
+import { JsonRPC, DebuggingServer } from "@wireio/debugging-server"
+import { ApiPaths, JsonRPCResult } from "@wireio/debugging-shared"
 import {
   DebugOutpostEndpointsType,
   DebugEnvelopeMetadataRecord,

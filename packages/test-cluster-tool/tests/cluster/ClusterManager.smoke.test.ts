@@ -1,21 +1,21 @@
 import "jest"
-import { generateGenesis } from "@wire-e2e-tests/harness/cluster/genesis"
+import { generateGenesis } from "@wireio/test-cluster-tool/cluster/genesis"
 import { generateLoggingConfig } from "../../src/cluster/generateLoggingConfig"
-import { buildStartCmd } from "@wire-e2e-tests/harness/cluster/startCmd"
+import { buildStartCmd } from "@wireio/test-cluster-tool/cluster/startCmd"
 import {
   BIOS_K1_KEY,
   BIOS_BLS_KEY,
   formatK1SignatureProvider,
   formatBLSSignatureProvider
-} from "@wire-e2e-tests/harness/cluster/keyGen"
+} from "@wireio/test-cluster-tool/cluster/keyGen"
 import {
   DEV_K1_PUBLIC_KEY,
   DEV_K1_PRIVATE_KEY,
   BIOS_P2P_PORT,
   BIOS_HTTP_PORT
-} from "@wire-e2e-tests/harness/cluster/constants"
+} from "@wireio/test-cluster-tool/cluster/constants"
 import OS from "node:os"
-import { ClusterManager } from "@wire-e2e-tests/harness"
+import { ClusterManager } from "@wireio/test-cluster-tool"
 
 describe("ClusterManager smoke tests", () => {
   describe("genesis.ts", () => {

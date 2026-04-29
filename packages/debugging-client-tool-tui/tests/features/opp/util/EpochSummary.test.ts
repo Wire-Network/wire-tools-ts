@@ -6,11 +6,11 @@ import {
   indexEnvelopesByEndpoint,
   isEpochComplete,
   totalAttestationsFor
-} from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/util/EpochSummary.js"
+} from "@wireio/debugging-client-tool-tui/features/opp/util/EpochSummary.js"
 import type {
   DebugOPPEnvelopeRecord,
   DebugOPPEpochRecord
-} from "@wire-e2e-tests/debugging-client-tool-tui/store/opp/OPPTypes.js"
+} from "@wireio/debugging-client-tool-tui/store/opp/OPPTypes.js"
 
 function envelope(
   endpointsType: DebugOutpostEndpointsType,
@@ -112,9 +112,7 @@ describe("isEpochComplete", () => {
   it("requires every endpoint type to be present", () => {
     const partial: DebugOPPEpochRecord = {
       epoch: 1,
-      envelopes: [
-        envelope(DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT, 0)
-      ]
+      envelopes: [envelope(DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT, 0)]
     }
     expect(isEpochComplete(partial)).toBe(false)
   })

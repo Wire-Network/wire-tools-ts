@@ -5,13 +5,13 @@ import {
   NodeRole,
   type ClusterState,
   type NodeState
-} from "@wire-e2e-tests/debugging-shared"
+} from "@wireio/debugging-shared"
 import {
   collectPidSources,
   logPathForSource,
   PidSourceKind,
   PidSources
-} from "@wire-e2e-tests/debugging-client-tool-tui/features/process-monitor/util/PidSources.js"
+} from "@wireio/debugging-client-tool-tui/features/process-monitor/util/PidSources.js"
 
 /** Build a minimal NodeState for a given role + nodeId, pointing at a real temp dir. */
 function makeNode(
@@ -104,10 +104,7 @@ describe("collectPidSources", () => {
 
   it("picks up anvil + solana-test-validator pid files from their subpaths", () => {
     writePid(Path.join(root, PidSources.AnvilSubpath), "anvil")
-    writePid(
-      Path.join(root, PidSources.SolanaSubpath),
-      "solana-test-validator"
-    )
+    writePid(Path.join(root, PidSources.SolanaSubpath), "solana-test-validator")
     const state = {
       nodes: [],
       batchOperatorNodes: [],
@@ -135,10 +132,7 @@ describe("collectPidSources", () => {
     writePid(a.dataPath, "node-00")
     writePid(b.dataPath, "node-batchop_00")
     writePid(Path.join(root, PidSources.AnvilSubpath), "anvil")
-    writePid(
-      Path.join(root, PidSources.SolanaSubpath),
-      "solana-test-validator"
-    )
+    writePid(Path.join(root, PidSources.SolanaSubpath), "solana-test-validator")
     const state = {
       nodes: [a],
       batchOperatorNodes: [b],

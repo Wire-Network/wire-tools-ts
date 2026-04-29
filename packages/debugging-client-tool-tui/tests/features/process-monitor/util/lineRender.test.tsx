@@ -2,7 +2,7 @@ import {
   compileSearchRegex,
   renderWithHighlight,
   sliceForHorizontalOffset
-} from "@wire-e2e-tests/debugging-client-tool-tui/features/process-monitor/util/lineRender.js"
+} from "@wireio/debugging-client-tool-tui/features/process-monitor/util/lineRender.js"
 
 describe("sliceForHorizontalOffset", () => {
   it("returns the original string when offset is 0 or out of range", () => {
@@ -85,9 +85,7 @@ describe("renderWithHighlight", () => {
   })
 
   it("falls through to a plain Text node when the regex is invalid", () => {
-    const serialized = JSON.stringify(
-      renderWithHighlight("hello", "/[broken/")
-    )
+    const serialized = JSON.stringify(renderWithHighlight("hello", "/[broken/"))
     expect(serialized).not.toContain('"inverse":true')
     expect(serialized).toContain("hello")
   })

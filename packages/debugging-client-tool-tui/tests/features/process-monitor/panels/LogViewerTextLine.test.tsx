@@ -1,5 +1,5 @@
 import React from "react"
-import { LogViewerTextLine } from "@wire-e2e-tests/debugging-client-tool-tui/features/process-monitor/panels/LogViewerTextLine.js"
+import { LogViewerTextLine } from "@wireio/debugging-client-tool-tui/features/process-monitor/panels/LogViewerTextLine.js"
 
 describe("LogViewerTextLine", () => {
   it("is a React function component", () => {

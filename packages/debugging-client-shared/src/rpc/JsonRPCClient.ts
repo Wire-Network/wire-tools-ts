@@ -5,7 +5,7 @@ import {
   type HandlerURIType,
   type InferredRequestType,
   type InferredResponseType
-} from "@wire-e2e-tests/debugging-shared"
+} from "@wireio/debugging-shared"
 
 /**
  * Strongly-typed JSON-RPC 2.0 client bound to a fully-qualified endpoint URL.

@@ -1,4 +1,4 @@
-import { EpochStatusBarWidget } from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/widgets/EpochStatusBarWidget.js"
+import { EpochStatusBarWidget } from "@wireio/debugging-client-tool-tui/features/opp/widgets/EpochStatusBarWidget.js"
 
 describe("EpochStatusBarWidget", () => {
   it("has stable id metadata", () => {

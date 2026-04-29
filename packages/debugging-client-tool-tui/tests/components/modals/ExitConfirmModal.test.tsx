@@ -1,5 +1,5 @@
 import React from "react"
-import { ExitConfirmModal } from "@wire-e2e-tests/debugging-client-tool-tui/components/modals/ExitConfirmModal.js"
+import { ExitConfirmModal } from "@wireio/debugging-client-tool-tui/components/modals/ExitConfirmModal.js"
 
 type Key = {
   upArrow: boolean

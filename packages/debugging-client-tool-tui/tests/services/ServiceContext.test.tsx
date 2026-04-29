@@ -3,16 +3,16 @@ import Os from "node:os"
 import Path from "node:path"
 import Fs from "node:fs"
 import { Level } from "@wireio/shared"
-import { LoggingManager } from "@wire-e2e-tests/debugging-client-tool-tui/logging/LoggingManager.js"
+import { LoggingManager } from "@wireio/debugging-client-tool-tui/logging/LoggingManager.js"
 import {
   ServiceManagerContext,
   ServiceManagerProvider,
   useService,
   useServiceManager,
   useServices
-} from "@wire-e2e-tests/debugging-client-tool-tui/services/ServiceContext.js"
-import { ServiceManager } from "@wire-e2e-tests/debugging-client-tool-tui/services/ServiceManager.js"
-import type { Service } from "@wire-e2e-tests/debugging-client-tool-tui/services/Service.js"
+} from "@wireio/debugging-client-tool-tui/services/ServiceContext.js"
+import { ServiceManager } from "@wireio/debugging-client-tool-tui/services/ServiceManager.js"
+import type { Service } from "@wireio/debugging-client-tool-tui/services/Service.js"
 
 const logDir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "svc-ctx-"))
 
@@ -20,18 +20,30 @@ class StubA implements Service {
   static readonly id = "a"
   static readonly dependsOn: readonly string[] = []
   tag = "a"
-  async init(): Promise<Service> { return this }
-  async start(): Promise<Service> { return this }
-  async stop(): Promise<Service> { return this }
+  async init(): Promise<Service> {
+    return this
+  }
+  async start(): Promise<Service> {
+    return this
+  }
+  async stop(): Promise<Service> {
+    return this
+  }
 }
 
 class StubB implements Service {
   static readonly id = "b"
   static readonly dependsOn: readonly string[] = []
   tag = "b"
-  async init(): Promise<Service> { return this }
-  async start(): Promise<Service> { return this }
-  async stop(): Promise<Service> { return this }
+  async init(): Promise<Service> {
+    return this
+  }
+  async start(): Promise<Service> {
+    return this
+  }
+  async stop(): Promise<Service> {
+    return this
+  }
 }
 
 beforeAll(() => {

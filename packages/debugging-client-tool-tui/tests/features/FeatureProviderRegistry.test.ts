@@ -2,11 +2,11 @@ import Os from "node:os"
 import Path from "node:path"
 import Fs from "node:fs"
 import { Level } from "@wireio/shared"
-import { LoggingManager } from "@wire-e2e-tests/debugging-client-tool-tui/logging/LoggingManager.js"
-import { FeatureProviderRegistry } from "@wire-e2e-tests/debugging-client-tool-tui/features/FeatureProviderRegistry.js"
-import type { FeatureProvider } from "@wire-e2e-tests/debugging-client-tool-tui/features/FeatureProvider.js"
-import { ServiceManager } from "@wire-e2e-tests/debugging-client-tool-tui/services/ServiceManager.js"
-import { ComponentProviders } from "@wire-e2e-tests/debugging-client-tool-tui/providers/ComponentProviders.js"
+import { LoggingManager } from "@wireio/debugging-client-tool-tui/logging/LoggingManager.js"
+import { FeatureProviderRegistry } from "@wireio/debugging-client-tool-tui/features/FeatureProviderRegistry.js"
+import type { FeatureProvider } from "@wireio/debugging-client-tool-tui/features/FeatureProvider.js"
+import { ServiceManager } from "@wireio/debugging-client-tool-tui/services/ServiceManager.js"
+import { ComponentProviders } from "@wireio/debugging-client-tool-tui/providers/ComponentProviders.js"
 
 const logDir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "fpr-"))
 
@@ -22,7 +22,9 @@ beforeEach(async () => {
 
 /** Fake FeatureProvider with spies on the two hooks. */
 function makeProvider(id: string) {
-  const registerComponents = jest.fn((_providers: typeof ComponentProviders) => undefined)
+  const registerComponents = jest.fn(
+    (_providers: typeof ComponentProviders) => undefined
+  )
   const registerServices = jest.fn((_m: ServiceManager) => undefined)
   const provider: FeatureProvider = {
     id,

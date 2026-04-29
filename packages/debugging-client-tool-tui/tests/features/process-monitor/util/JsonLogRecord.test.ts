@@ -3,7 +3,7 @@ import {
   formatLocation,
   formatTimestamp,
   parseJsonLogLine
-} from "@wire-e2e-tests/debugging-client-tool-tui/features/process-monitor/util/JsonLogRecord.js"
+} from "@wireio/debugging-client-tool-tui/features/process-monitor/util/JsonLogRecord.js"
 
 const SampleLine =
   '{"ts":"2026-04-27T19:58:15.417594Z","lvl":"debug","thread":"nodeop","logger":"default","file":"/.../signature_provider_manager_plugin.cpp","line":426,"func":"plugin_initialize","msg":"Registering signature provider"}'
@@ -62,9 +62,7 @@ describe("colorForLevel", () => {
 
 describe("formatTimestamp", () => {
   it("slices the time-of-day component out of an ISO-8601 string", () => {
-    expect(formatTimestamp("2026-04-27T19:58:15.417594Z")).toBe(
-      "19:58:15.417"
-    )
+    expect(formatTimestamp("2026-04-27T19:58:15.417594Z")).toBe("19:58:15.417")
   })
 
   it("returns the input unchanged when too short to slice", () => {

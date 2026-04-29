@@ -20,7 +20,7 @@ import {
   UNDERWRITER_PLUGINS,
   batchOperatorAccountName,
   underwriterAccountName
-} from "@wire-e2e-tests/harness/cluster/constants"
+} from "@wireio/test-cluster-tool/cluster/constants"
 
 describe("constants", () => {
   describe("development keys", () => {

@@ -1,10 +1,10 @@
-# @wire-e2e-tests/harness
+# @wireio/test-cluster-tool
 
 Core library and CLI for creating, running, and tearing down multi-chain WIRE test clusters. Ships the `wire-test-cluster` binary, process managers for every cluster component, and typed clients for WIRE / Ethereum / Solana.
 
 - **Binary:** `wire-test-cluster`
 - **Stack:** Node ≥22, `child_process.spawn` + `tree-kill` (no pm2), `ethers`, `@solana/web3.js`, `@coral-xyz/anchor`
-- **Companion UI:** `@wire-e2e-tests/debugging-client-tool-tui` (`wire-debugging-client-tool-tui` bin) — non-destructive live debugger, see ["Debugging a running cluster"](#debugging-a-running-cluster) below.
+- **Companion UI:** `@wireio/debugging-client-tool-tui` (`wire-debugging-client-tool-tui` bin) — non-destructive live debugger, see ["Debugging a running cluster"](#debugging-a-running-cluster) below.
 
 ---
 
@@ -40,7 +40,7 @@ From the repo root:
 
 ```bash
 pnpm install
-pnpm --filter @wire-e2e-tests/harness build
+pnpm --filter @wireio/test-cluster-tool build
 ```
 
 After this the `wire-test-cluster` bin is linked into `node_modules/.bin/`. Invoke via `pnpm exec wire-test-cluster …` or the workspace-wide `pnpm wire-test-cluster …`.
@@ -255,7 +255,7 @@ import {
   ETHClient,
   SOLClient,
   Clio
-} from "@wire-e2e-tests/harness"
+} from "@wireio/test-cluster-tool"
 
 const config = await ClusterManager.resolveExePaths("/path/to/wire-sysio/build")
 // …build ClusterConfig, then:
@@ -271,13 +271,13 @@ See the `flow-a` / `flow-b` / `flow-c` / `flow-d` packages for end-to-end test e
 
 ```bash
 # Incremental type-check
-pnpm --filter @wire-e2e-tests/harness compile:watch
+pnpm --filter @wireio/test-cluster-tool compile:watch
 
 # Unit tests
-pnpm --filter @wire-e2e-tests/harness test
+pnpm --filter @wireio/test-cluster-tool test
 
 # Prettier
-pnpm --filter @wire-e2e-tests/harness format
+pnpm --filter @wireio/test-cluster-tool format
 ```
 
 Any new or modified function / class / module ships with unit tests in the same commit — see CLAUDE.md "Unit tests are mandatory for every new or modified symbol".
@@ -296,7 +296,7 @@ Any new or modified function / class / module ships with unit tests in the same 
 
 ## Related packages
 
-- **`@wire-e2e-tests/debugging-client-tool-tui`** — live debugging UI for the cluster this harness builds. `cd` into any cluster directory and run `wire-debugging-client-tool-tui`.
-- **`@wire-e2e-tests/debugging-server`** — HTTP / JSON-RPC 2.0 server embedded inside `ClusterManager` that persists OPP envelopes.
-- **`@wire-e2e-tests/debugging-shared`** — shared types (ports, cluster config/state, endpoint enums) consumed by both the harness and its clients.
-- **`@wire-e2e-tests/flow-{a,b,c,d}`** — end-to-end test flows that drive the harness-built cluster through specific scenarios.
+- **`@wireio/debugging-client-tool-tui`** — live debugging UI for the cluster this harness builds. `cd` into any cluster directory and run `wire-debugging-client-tool-tui`.
+- **`@wireio/debugging-server`** — HTTP / JSON-RPC 2.0 server embedded inside `ClusterManager` that persists OPP envelopes.
+- **`@wireio/debugging-shared`** — shared types (ports, cluster config/state, endpoint enums) consumed by both the harness and its clients.
+- **`@wireio/flow-{a,b,c,d}`** — end-to-end test flows that drive the harness-built cluster through specific scenarios.

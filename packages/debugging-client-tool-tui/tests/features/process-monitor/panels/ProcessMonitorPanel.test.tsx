@@ -1,4 +1,4 @@
-import { ProcessMonitorPanel } from "@wire-e2e-tests/debugging-client-tool-tui/features/process-monitor/panels/ProcessMonitorPanel.js"
+import { ProcessMonitorPanel } from "@wireio/debugging-client-tool-tui/features/process-monitor/panels/ProcessMonitorPanel.js"
 
 describe("ProcessMonitorPanel", () => {
   it("has stable id/title metadata", () => {

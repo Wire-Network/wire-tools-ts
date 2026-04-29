@@ -8,14 +8,14 @@ import {
   DebugOutpostEndpointsType,
   Envelope
 } from "@wireio/opp-typescript-models"
-import { LoggingManager } from "@wire-e2e-tests/debugging-client-tool-tui/logging/LoggingManager.js"
-import { OPPTrackingService } from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/OPPTrackingService.js"
-import { ReduxService } from "@wire-e2e-tests/debugging-client-tool-tui/services/ReduxService.js"
-import { ServiceId } from "@wire-e2e-tests/debugging-client-tool-tui/services/ServiceId.js"
-import { ServiceManager } from "@wire-e2e-tests/debugging-client-tool-tui/services/ServiceManager.js"
-import { clear } from "@wire-e2e-tests/debugging-client-tool-tui/store/opp/OPPSlice.js"
-import { setCluster } from "@wire-e2e-tests/debugging-client-tool-tui/store/cluster/ClusterSlice.js"
-import { store } from "@wire-e2e-tests/debugging-client-tool-tui/store/Store.js"
+import { LoggingManager } from "@wireio/debugging-client-tool-tui/logging/LoggingManager.js"
+import { OPPTrackingService } from "@wireio/debugging-client-tool-tui/features/opp/OPPTrackingService.js"
+import { ReduxService } from "@wireio/debugging-client-tool-tui/services/ReduxService.js"
+import { ServiceId } from "@wireio/debugging-client-tool-tui/services/ServiceId.js"
+import { ServiceManager } from "@wireio/debugging-client-tool-tui/services/ServiceManager.js"
+import { clear } from "@wireio/debugging-client-tool-tui/store/opp/OPPSlice.js"
+import { setCluster } from "@wireio/debugging-client-tool-tui/store/cluster/ClusterSlice.js"
+import { store } from "@wireio/debugging-client-tool-tui/store/Store.js"
 
 const logDir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "opp-svc-"))
 
@@ -37,7 +37,10 @@ function writeEnvelope(
     batchOpNames: [batchOpName]
   } as any)
   const key = `${padEpoch(epoch)}-${DebugOutpostEndpointsType[endpointsType]}-${checksum}`
-  Fs.writeFileSync(Path.join(dir, `${key}.data`), Buffer.from(Envelope.toBinary(envelope)))
+  Fs.writeFileSync(
+    Path.join(dir, `${key}.data`),
+    Buffer.from(Envelope.toBinary(envelope))
+  )
   Fs.writeFileSync(
     Path.join(dir, `${key}.metadata`),
     Buffer.from(DebugEnvelopeMetadataRecord.toBinary(metadata))
@@ -70,11 +73,27 @@ describe("OPPTrackingService hydrate on start", () => {
     const clusterPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "opp-cluster-"))
     const storage = Path.join(clusterPath, OPPTrackingService.StorageSubpath)
     Fs.mkdirSync(storage, { recursive: true })
-    writeEnvelope(storage, 1, DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT, "aaaaaaaaaaaaaaaa", "op-a")
-    writeEnvelope(storage, 2, DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT, "bbbbbbbbbbbbbbbb", "op-b")
+    writeEnvelope(
+      storage,
+      1,
+      DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT,
+      "aaaaaaaaaaaaaaaa",
+      "op-a"
+    )
+    writeEnvelope(
+      storage,
+      2,
+      DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
+      "bbbbbbbbbbbbbbbb",
+      "op-b"
+    )
 
-    const sm = ServiceManager.get().register(ReduxService).register(OPPTrackingService)
-    store.dispatch(setCluster({ path: clusterPath, config: {} as any, state: null }))
+    const sm = ServiceManager.get()
+      .register(ReduxService)
+      .register(OPPTrackingService)
+    store.dispatch(
+      setCluster({ path: clusterPath, config: {} as any, state: null })
+    )
     await sm.boot()
 
     // Give the async start() a moment to dispatch hydrate.

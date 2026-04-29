@@ -1,4 +1,4 @@
-import { ServiceId } from "@wire-e2e-tests/debugging-client-tool-tui/services/ServiceId.js"
+import { ServiceId } from "@wireio/debugging-client-tool-tui/services/ServiceId.js"
 
 describe("ServiceId", () => {
   it("exposes stable string-valued identifiers for every service class", () => {

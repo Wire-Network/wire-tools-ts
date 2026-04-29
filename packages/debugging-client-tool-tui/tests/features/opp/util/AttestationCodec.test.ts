@@ -7,7 +7,7 @@ import {
   AttestationDecoders,
   decodeAttestation,
   jsonSafe
-} from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/util/AttestationCodec.js"
+} from "@wireio/debugging-client-tool-tui/features/opp/util/AttestationCodec.js"
 
 /**
  * Encode a small `BatchOperatorGroups` as protobuf bytes — used to drive a

@@ -1,4 +1,4 @@
-import { endpointsTypeToKey } from "@wire-e2e-tests/debugging-shared"
+import { endpointsTypeToKey } from "@wireio/debugging-shared"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 
 describe("DebugOutpostEndpointsType", () => {

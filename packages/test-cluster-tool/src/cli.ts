@@ -25,7 +25,7 @@ import { ProcessSignalName } from "./processes/ProcessSignals.js"
 import { inRange, isNotEmpty, mkdirs } from "./util.js"
 import { asOption, Future } from "@3fv/prelude-ts"
 import { isPromise } from "@wireio/shared"
-import { ClusterFiles } from "@wire-e2e-tests/debugging-shared"
+import { ClusterFiles } from "@wireio/debugging-shared"
 
 const GlobalArgs = {
   clusterPath: "",

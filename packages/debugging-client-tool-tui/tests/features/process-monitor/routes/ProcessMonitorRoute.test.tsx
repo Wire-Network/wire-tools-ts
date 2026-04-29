@@ -1,5 +1,5 @@
 import React from "react"
-import { ProcessMonitorRoute } from "@wire-e2e-tests/debugging-client-tool-tui/features/process-monitor/routes/ProcessMonitorRoute.js"
+import { ProcessMonitorRoute } from "@wireio/debugging-client-tool-tui/features/process-monitor/routes/ProcessMonitorRoute.js"
 
 describe("ProcessMonitorRoute", () => {
   it("is a function component", () => {

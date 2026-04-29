@@ -1,4 +1,4 @@
-import { EpochDetailRoute } from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/routes/EpochDetailRoute.js"
+import { EpochDetailRoute } from "@wireio/debugging-client-tool-tui/features/opp/routes/EpochDetailRoute.js"
 
 describe("EpochDetailRoute", () => {
   it("declares stable id / Name / route path", () => {

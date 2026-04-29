@@ -9,18 +9,22 @@ import {
   setSearchActive,
   setSearchQuery,
   toggleLocationColumn
-} from "@wire-e2e-tests/debugging-client-tool-tui/store/process-monitor/ProcessMonitorSlice.js"
-import type { ProcessLiveness } from "@wire-e2e-tests/debugging-client-tool-tui/store/process-monitor/ProcessMonitorTypes.js"
+} from "@wireio/debugging-client-tool-tui/store/process-monitor/ProcessMonitorSlice.js"
+import type { ProcessLiveness } from "@wireio/debugging-client-tool-tui/store/process-monitor/ProcessMonitorTypes.js"
 import {
   selectAliveCount,
   selectLogViewer,
   selectProcessMap,
   selectProcessMonitor,
   selectTotalCount
-} from "@wire-e2e-tests/debugging-client-tool-tui/store/process-monitor/ProcessMonitorSelectors.js"
-import { SliceName } from "@wire-e2e-tests/debugging-client-tool-tui/store/StoreTypes.js"
+} from "@wireio/debugging-client-tool-tui/store/process-monitor/ProcessMonitorSelectors.js"
+import { SliceName } from "@wireio/debugging-client-tool-tui/store/StoreTypes.js"
 
-function mkLiveness(label: string, alive: boolean, pid: number | null = 1): ProcessLiveness {
+function mkLiveness(
+  label: string,
+  alive: boolean,
+  pid: number | null = 1
+): ProcessLiveness {
   return { label, pid, alive, lastCheckedAt: 0, exitedAt: alive ? null : 0 }
 }
 
@@ -53,14 +57,8 @@ describe("processMonitorSlice", () => {
   })
 
   it("setLogViewerPath resets per-file viewer fields but keeps locationVisible sticky", () => {
-    let state = processMonitorSlice.reducer(
-      undefined,
-      setLogViewerOffset(100)
-    )
-    state = processMonitorSlice.reducer(
-      state,
-      setLogViewerHorizontalOffset(40)
-    )
+    let state = processMonitorSlice.reducer(undefined, setLogViewerOffset(100))
+    state = processMonitorSlice.reducer(state, setLogViewerHorizontalOffset(40))
     state = processMonitorSlice.reducer(state, setSearchActive(true))
     state = processMonitorSlice.reducer(state, setSearchQuery("foo"))
     state = processMonitorSlice.reducer(state, toggleLocationColumn())
@@ -132,10 +130,7 @@ describe("processMonitorSlice", () => {
   })
 
   it("setSearchQuery updates the term", () => {
-    const state = processMonitorSlice.reducer(
-      undefined,
-      setSearchQuery("term")
-    )
+    const state = processMonitorSlice.reducer(undefined, setSearchQuery("term"))
     expect(state.logViewer.searchQuery).toBe("term")
   })
 

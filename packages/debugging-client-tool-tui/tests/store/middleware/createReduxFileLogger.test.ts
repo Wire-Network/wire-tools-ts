@@ -4,11 +4,11 @@ import Fs from "node:fs"
 import { configureStore } from "@reduxjs/toolkit"
 import Bluebird from "bluebird"
 import { Level, getLoggingManager, type LevelKind } from "@wireio/shared"
-import { LoggingManager } from "@wire-e2e-tests/debugging-client-tool-tui/logging/LoggingManager.js"
+import { LoggingManager } from "@wireio/debugging-client-tool-tui/logging/LoggingManager.js"
 import {
   ReduxFileLogger,
   createReduxFileLogger
-} from "@wire-e2e-tests/debugging-client-tool-tui/store/middleware/createReduxFileLogger.js"
+} from "@wireio/debugging-client-tool-tui/store/middleware/createReduxFileLogger.js"
 
 const tmpRoot = Fs.mkdtempSync(Path.join(Os.tmpdir(), "redux-fl-")),
   logFile = Path.join(tmpRoot, "tui.log")

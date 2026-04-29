@@ -7,10 +7,10 @@
     "moduleResolution": "node",
     "ignoreDeprecations": "6.0",
     "paths": {
-      "@wire-e2e-tests/harness": [
+      "@wireio/test-cluster-tool": [
         "./src"
       ],
-      "@wire-e2e-tests/harness/*": [
+      "@wireio/test-cluster-tool/*": [
         "./src/*"
       ]
     }

@@ -7,8 +7,8 @@
     "composite": true,
     "incremental": true,
     "paths": {
-      "@wire-e2e-tests/debugging-shared": ["./src"],
-      "@wire-e2e-tests/debugging-shared/*": ["./src/*"]
+      "@wireio/debugging-shared": ["./src"],
+      "@wireio/debugging-shared/*": ["./src/*"]
     }
   },
   "references": [

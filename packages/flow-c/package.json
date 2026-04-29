@@ -1,5 +1,5 @@
 {
-  "name": "@wire-e2e-tests/flow-c",
+  "name": "@wireio/test-flow-c",
   "version": "0.1.0",
   "private": true,
   "type": "commonjs",
@@ -12,7 +12,7 @@
     "clean": "rm -rf lib"
   },
   "dependencies": {
-    "@wire-e2e-tests/harness": "workspace:*",
+    "@wireio/test-cluster-tool": "workspace:*",
     "@wireio/opp-solidity-models": "^1.0.23",
     "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/sdk-core": "^1.0.17",

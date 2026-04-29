@@ -1,4 +1,4 @@
-import { adjustStickyWindow } from "@wire-e2e-tests/debugging-client-tool-tui/components/stickyWindow.js"
+import { adjustStickyWindow } from "@wireio/debugging-client-tool-tui/components/stickyWindow.js"
 
 describe("adjustStickyWindow", () => {
   /** total=20, viewport=5; cursor moves through the list. */

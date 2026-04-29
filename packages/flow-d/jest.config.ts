@@ -15,10 +15,10 @@ const config = {
   },
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",
-    "^@wire-e2e-tests/harness$": "<rootDir>/../harness/src/index",
-    "^@wire-e2e-tests/harness/(.*)$": "<rootDir>/../harness/src/$1"
+    "^@wireio/test-cluster-tool$": "<rootDir>/../test-cluster-tool/src/index",
+    "^@wireio/test-cluster-tool/(.*)$": "<rootDir>/../test-cluster-tool/src/$1"
   },
-  modulePaths: ["<rootDir>/../harness/node_modules"],
+  modulePaths: ["<rootDir>/../test-cluster-tool/node_modules"],
   transformIgnorePatterns: [
     "node_modules/(?!@wireio/opp-solidity-models)",
     "node_modules/(?!@wireio/opp-typescript-models)"

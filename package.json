@@ -1,5 +1,5 @@
 {
-  "name": "@wire-e2e-tests/root",
+  "name": "@wireio/wire-tools-project-root",
   "private": true,
   "scripts": {
     "compile": "tsc -b tsconfig.json",
@@ -7,20 +7,16 @@
     "build": "tsc -b tsconfig.json",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "test": "pnpm run build && jest",
-    "test:flow-a": "pnpm --filter @wire-e2e-tests/flow-a run test",
-    "test:flow-b": "pnpm --filter @wire-e2e-tests/flow-b run test",
-    "test:flow-c": "pnpm --filter @wire-e2e-tests/flow-c run test",
-    "test:flow-d": "pnpm --filter @wire-e2e-tests/flow-d run test",
     "clean": "./scripts/clean.sh && pnpm -r run clean"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/node": "25.5.0",
-    "@wireio/opp-solidity-models": "^1.0.23",
+    "@wireio/opp-solidity-models": "^1.0.26",
     "@wireio/opp-typescript-models": "^1.0.26",
-    "@wireio/sdk-core": "^1.0.17",
-    "@wireio/shared": "^1.0.17",
-    "@wireio/shared-node": "^1.0.17",
+    "@wireio/sdk-core": "^1.0.22",
+    "@wireio/shared": "^1.0.22",
+    "@wireio/shared-node": "^1.0.22",
     "jest": "^30.3.0",
     "pm2": "^6.0.14",
     "prettier": "^3.8.1",
@@ -33,18 +29,13 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@wireio/opp-solidity-models": "^1.0.23",
-    "@wireio/opp-typescript-models": "^1.0.26",
-    "@wireio/sdk-core": "^1.0.17",
-    "@wireio/shared": "^1.0.17",
-    "@wireio/shared-node": "^1.0.17",
-    "@wireio/shared-web": "^1.0.17"
+  
   },
   "resolutions": {
     "@wireio/opp-solidity-models": "^1.0.26",
     "@wireio/opp-typescript-models": "^1.0.26",
-    "@wireio/sdk-core": "^1.0.21",
-    "@wireio/shared": "^1.0.21",
-    "@wireio/shared-node": "^1.0.21"
+    "@wireio/sdk-core": "^1.0.22",
+    "@wireio/shared": "^1.0.22",
+    "@wireio/shared-node": "^1.0.22"
   }
 }

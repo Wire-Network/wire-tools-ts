@@ -5,7 +5,7 @@ import {
   NodeRole,
   type ClusterState,
   type NodeState
-} from "@wire-e2e-tests/debugging-shared"
+} from "@wireio/debugging-shared"
 import { currentDateStamp } from "./dateStamp.js"
 
 /** Classifies a monitored process for display grouping and fallback handling. */

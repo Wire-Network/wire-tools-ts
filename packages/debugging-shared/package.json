@@ -1,5 +1,5 @@
 {
-  "name": "@wire-e2e-tests/debugging-shared",
+  "name": "@wireio/debugging-shared",
   "version": "0.1.0",
   "private": false,
   "publishConfig": {

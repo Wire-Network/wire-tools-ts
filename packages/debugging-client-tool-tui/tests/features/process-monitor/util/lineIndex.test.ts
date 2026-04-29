@@ -5,7 +5,7 @@ import {
   buildLineIndex,
   extendLineIndex,
   readLines
-} from "@wire-e2e-tests/debugging-client-tool-tui/features/process-monitor/util/lineIndex.js"
+} from "@wireio/debugging-client-tool-tui/features/process-monitor/util/lineIndex.js"
 
 function writeFixture(root: string, name: string, contents: string): string {
   const file = Path.join(root, name)

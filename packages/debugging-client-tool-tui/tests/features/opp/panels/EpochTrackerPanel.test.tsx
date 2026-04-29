@@ -2,7 +2,7 @@ import React from "react"
 import {
   EpochTrackerPanel,
   computeMarginTop
-} from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/panels/EpochTrackerPanel.js"
+} from "@wireio/debugging-client-tool-tui/features/opp/panels/EpochTrackerPanel.js"
 
 describe("EpochTrackerPanel", () => {
   it("has stable id/title metadata", () => {

@@ -1,5 +1,5 @@
-import { DebuggingServerClient } from "@wire-e2e-tests/debugging-client-shared"
-import { ApiPaths } from "@wire-e2e-tests/debugging-shared"
+import { DebuggingServerClient } from "@wireio/debugging-client-shared"
+import { ApiPaths } from "@wireio/debugging-shared"
 import {
   DebugOutpostEndpointsType,
   EnvelopeListEntry

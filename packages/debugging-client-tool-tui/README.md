@@ -1,10 +1,10 @@
-# @wire-e2e-tests/debugging-client-tool-tui
+# @wireio/debugging-client-tool-tui
 
 A React + Ink terminal UI for observing a running WIRE test cluster. Tails OPP envelope writes, monitors every cluster-spawned process (including Anvil and `solana-test-validator`), and lets you scroll through per-node logs — all from a single terminal pane.
 
 - **Binary:** `wire-debugging-client-tool-tui`
 - **Stack:** Node ≥22, React 19, Ink 7, Redux Toolkit, `ts-pattern`, `@3fv/prelude-ts`
-- **Targets:** clusters built with the sibling `@wire-e2e-tests/harness` package (`wire-test-cluster` CLI).
+- **Targets:** clusters built with the sibling `@wireio/test-cluster-tool` package (`wire-test-cluster` CLI).
 
 ---
 
@@ -29,7 +29,7 @@ From the repo root:
 
 ```bash
 pnpm install
-pnpm --filter @wire-e2e-tests/debugging-client-tool-tui build
+pnpm --filter @wireio/debugging-client-tool-tui build
 ```
 
 The `build` script runs `tsc -b` (type-check) then `node esbuild.config.cjs` (bundle). Output lands at:
@@ -181,13 +181,13 @@ packages/debugging-client-tool-tui/src/
 
 ```bash
 # Incremental TypeScript compile
-pnpm --filter @wire-e2e-tests/debugging-client-tool-tui compile:watch
+pnpm --filter @wireio/debugging-client-tool-tui compile:watch
 
 # Dev bundle + auto-restart on rebuild
-pnpm --filter @wire-e2e-tests/debugging-client-tool-tui dev
+pnpm --filter @wireio/debugging-client-tool-tui dev
 
 # Unit tests (152 tests, ts-jest)
-pnpm --filter @wire-e2e-tests/debugging-client-tool-tui test
+pnpm --filter @wireio/debugging-client-tool-tui test
 ```
 
 Tests live at `tests/` mirroring the `src/` tree (e.g. `src/services/ServiceManager.ts` → `tests/services/ServiceManager.test.ts`). Every exported symbol has at least one behavior test — see CLAUDE.md "Unit tests are mandatory" for the policy.
@@ -197,7 +197,7 @@ Tests live at `tests/` mirroring the `src/` tree (e.g. `src/services/ServiceMana
 ## Troubleshooting
 
 - **"Raw mode is not supported on the current process.stdin"** — Ink requires a TTY. Running the binary with piped stdin/stdout/stderr (e.g. in CI without a pseudo-TTY) will fail with this message. Use a real terminal, or `script -q -c wire-debugging-client-tool-tui …` for CI shell captures.
-- **"cluster-config.json not found"** — the `--cluster-path` (or cwd) doesn't contain a valid cluster directory. Run `wire-test-cluster … create` first (see `../harness/README.md`).
+- **"cluster-config.json not found"** — the `--cluster-path` (or cwd) doesn't contain a valid cluster directory. Run `wire-test-cluster … create` first (see `../test-cluster-tool/README.md`).
 - **Empty Process Monitor panel** — `cluster-state.json` isn't written until bootstrap completes. If the cluster is mid-`create`, wait for it to finish.
 - **No OPP data appears** — confirm `--features` includes `opp` (or is omitted entirely), and that envelope `.data`/`.metadata` files are appearing under `<cluster-path>/data/opp-debugging/`. The tracker logs each hydrate/append at `debug` level.
 - **Follow mode stuck at a stale position** — press `F` to toggle off and on, or `G` to jump to bottom. Rotation (inode change) is detected automatically; a stale cache would be a bug worth reporting.
@@ -206,7 +206,7 @@ Tests live at `tests/` mirroring the `src/` tree (e.g. `src/services/ServiceMana
 
 ## Related packages
 
-- **`@wire-e2e-tests/harness`** (`wire-test-cluster` CLI) — builds and runs the clusters this TUI debugs. See its README for cluster creation examples and how to chain them with this TUI.
-- **`@wire-e2e-tests/debugging-server`** — the in-cluster HTTP server that writes the OPP envelopes this TUI tails.
-- **`@wire-e2e-tests/debugging-shared`** — shared types (ports, cluster config/state, endpoint-type reverse maps).
-- **`@wire-e2e-tests/debugging-client-shared`** — `JsonRPCClient` + `DebuggingServerClient` for callers that need to talk to the debugging server over HTTP (the TUI currently reads from disk and doesn't require this client, but a future feature may).
+- **`@wireio/test-cluster-tool`** (`wire-test-cluster` CLI) — builds and runs the clusters this TUI debugs. See its README for cluster creation examples and how to chain them with this TUI.
+- **`@wireio/debugging-server`** — the in-cluster HTTP server that writes the OPP envelopes this TUI tails.
+- **`@wireio/debugging-shared`** — shared types (ports, cluster config/state, endpoint-type reverse maps).
+- **`@wireio/debugging-client-shared`** — `JsonRPCClient` + `DebuggingServerClient` for callers that need to talk to the debugging server over HTTP (the TUI currently reads from disk and doesn't require this client, but a future feature may).

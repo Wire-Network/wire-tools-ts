@@ -1,5 +1,5 @@
 {
-  "name": "@wire-e2e-tests/debugging-server",
+  "name": "@wireio/debugging-server",
   "version": "0.1.0",
   "private": false,
   "publishConfig": {
@@ -14,10 +14,12 @@
   "scripts": {
     "compile": "tsc -b tsconfig.json",
     "compile:watch": "tsc -b tsconfig.json -w",
-    "build": "pnpm run compile && pnpm run bundle",
-    "dev": "node esbuild.config.js --dev",
     "bundle": "node esbuild.config.js",
     "bundle:watch": "node esbuild.config.js --watch",
+    "build": "pnpm run compile && pnpm run bundle",
+    "postinstall": "pnpm run build",
+    "prepare": "pnpm run build",
+    "dev": "node esbuild.config.js --dev",
     "dist": "pnpm build && pnpm bundle",
     "test": "jest",
     "clean": "rm -rf lib dist"
@@ -25,7 +27,7 @@
   "dependencies": {
     "@3fv/prelude-ts": "^0.8.37",
     "@protobuf-ts/runtime": "^2.11.1",
-    "@wire-e2e-tests/debugging-shared": "workspace:*",
+    "@wireio/debugging-shared": "workspace:*",
     "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/shared": "^1.0.21",
     "@wireio/sdk-core": "^1.0.21",

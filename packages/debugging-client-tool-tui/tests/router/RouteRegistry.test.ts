@@ -1,6 +1,6 @@
 import React from "react"
-import { RouteRegistry } from "@wire-e2e-tests/debugging-client-tool-tui/router/RouteRegistry.js"
-import type { Route } from "@wire-e2e-tests/debugging-client-tool-tui/router/RouteTypes.js"
+import { RouteRegistry } from "@wireio/debugging-client-tool-tui/router/RouteRegistry.js"
+import type { Route } from "@wireio/debugging-client-tool-tui/router/RouteTypes.js"
 
 function mkRoute(path: string, featureId: string, cyclable = true): Route {
   return {
@@ -30,9 +30,9 @@ describe("RouteRegistry.register", () => {
   })
 
   it("requires a non-empty path", () => {
-    expect(() =>
-      RouteRegistry.register(mkRoute("", "feat-a"))
-    ).toThrow(/required/)
+    expect(() => RouteRegistry.register(mkRoute("", "feat-a"))).toThrow(
+      /required/
+    )
   })
 })
 
@@ -56,9 +56,10 @@ describe("RouteRegistry.all / cyclable / findByFeatureId", () => {
   })
 
   it("findByFeatureId returns all routes owned by a provider", () => {
-    expect(
-      RouteRegistry.findByFeatureId("feat-a").map(r => r.path)
-    ).toEqual(["/a", "/a/detail"])
+    expect(RouteRegistry.findByFeatureId("feat-a").map(r => r.path)).toEqual([
+      "/a",
+      "/a/detail"
+    ])
   })
 
   it("find returns undefined for unknown paths", () => {

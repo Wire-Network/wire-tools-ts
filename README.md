@@ -13,10 +13,10 @@ Exercises the full OPP message flow across three blockchains:
 
 | Package | Description |
 |---------|-------------|
-| `@wire-e2e-tests/harness` | Process management (nodeop, anvil, solana-test-validator) + chain clients |
-| `@wire-e2e-tests/flow-a` | Flow A: Empty Epoch (balance sheet only) |
-| `@wire-e2e-tests/flow-b` | Flow B: Node Operator Collateral Deposit |
-| `@wire-e2e-tests/flow-c` | Flow C: SWAP 50 ETH → 1042 SOL (with underwriting) |
+| `@wireio/test-cluster-tool` | Process management (nodeop, anvil, solana-test-validator) + chain clients |
+| `@wireio/flow-a` | Flow A: Empty Epoch (balance sheet only) |
+| `@wireio/flow-b` | Flow B: Node Operator Collateral Deposit |
+| `@wireio/flow-c` | Flow C: SWAP 50 ETH → 1042 SOL (with underwriting) |
 
 ## Prerequisites
 

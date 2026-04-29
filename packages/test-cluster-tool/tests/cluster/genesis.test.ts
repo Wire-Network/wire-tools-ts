@@ -1,9 +1,9 @@
-import { generateGenesis } from "@wire-e2e-tests/harness/cluster/genesis"
+import { generateGenesis } from "@wireio/test-cluster-tool/cluster/genesis"
 import {
   DEV_K1_PUBLIC_KEY,
   MAX_BLOCK_CPU_USAGE,
   MAX_TRANSACTION_CPU_USAGE
-} from "@wire-e2e-tests/harness/cluster/constants"
+} from "@wireio/test-cluster-tool/cluster/constants"
 
 describe("generateGenesis", () => {
   it("returns an object with initial_timestamp, initial_key, and initial_configuration", () => {

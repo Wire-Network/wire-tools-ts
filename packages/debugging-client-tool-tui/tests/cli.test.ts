@@ -35,7 +35,7 @@ import {
   CLI,
   coerceFeatures,
   loadCluster
-} from "@wire-e2e-tests/debugging-client-tool-tui/cli.js"
+} from "@wireio/debugging-client-tool-tui/cli.js"
 /* eslint-enable import/first */
 
 function makeCluster(opts: { withState?: boolean } = {}): string {
@@ -44,7 +44,11 @@ function makeCluster(opts: { withState?: boolean } = {}): string {
   if (opts.withState) {
     Fs.writeFileSync(
       Path.join(dir, "cluster-state.json"),
-      JSON.stringify({ nodes: [], batchOperatorNodes: [], underwriterNodes: [] })
+      JSON.stringify({
+        nodes: [],
+        batchOperatorNodes: [],
+        underwriterNodes: []
+      })
     )
   }
   return dir

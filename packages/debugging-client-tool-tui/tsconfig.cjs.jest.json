@@ -8,8 +8,8 @@
     "ignoreDeprecations": "6.0",
     "jsx": "react-jsx",
     "paths": {
-      "@wire-e2e-tests/debugging-client-tool-tui": ["./src"],
-      "@wire-e2e-tests/debugging-client-tool-tui/*": ["./src/*"]
+      "@wireio/debugging-client-tool-tui": ["./src"],
+      "@wireio/debugging-client-tool-tui/*": ["./src/*"]
     }
   },
   "references": [

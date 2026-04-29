@@ -6,7 +6,7 @@ import {
   pollUntil,
   log,
   ProcessManager
-} from "@wire-e2e-tests/harness"
+} from "@wireio/test-cluster-tool"
 import {
   ChainKind,
   OperatorType,
@@ -217,7 +217,12 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   test("Batch operators are AVAILABLE in opreg", async () => {
     const { rows } = await ctx.wireClient.getOperators()
     const batchOps = rows.filter((r: any) =>
-      enumValueMatches(OperatorType, OperatorType.BATCH, r.type, "OPERATOR_TYPE")
+      enumValueMatches(
+        OperatorType,
+        OperatorType.BATCH,
+        r.type,
+        "OPERATOR_TYPE"
+      )
     )
     expect(batchOps.length).toBe(3)
     batchOps.forEach((op: any) => {
@@ -271,9 +276,7 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
       data: depositEvent!.data
     })
     expect(decoded!.name).toBe("OperatorDeposited")
-    expect(decoded!.args.operator.toLowerCase()).toBe(
-      signerAddr.toLowerCase()
-    )
+    expect(decoded!.args.operator.toLowerCase()).toBe(signerAddr.toLowerCase())
     expect(Number(decoded!.args.operatorType)).toBe(OPERATOR_TYPE_BATCH)
     expect(decoded!.args.amount).toBe(BOND_AMOUNT)
   })

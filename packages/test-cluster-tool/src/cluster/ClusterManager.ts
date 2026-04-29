@@ -52,7 +52,7 @@ import { which } from "zx"
 import { asOption } from "@3fv/prelude-ts"
 import { range } from "lodash"
 import { Deferred, getValue, isNumber, isString } from "@wireio/shared"
-import { DebuggingServer } from "@wire-e2e-tests/debugging-server"
+import { DebuggingServer } from "@wireio/debugging-server"
 import { ETHBootstrapper } from "./ETHBootstrapper.js"
 import { SOLBootstrap } from "../bootstrap/SOLBootstrap.js"
 import {
@@ -70,7 +70,7 @@ import {
   type ClusterState,
   type NodeState,
   type SolanaProgramDeployment
-} from "@wire-e2e-tests/debugging-shared"
+} from "@wireio/debugging-shared"
 
 import { ClusterOptions } from "../HarnessTypes"
 
@@ -78,7 +78,7 @@ import { ClusterOptions } from "../HarnessTypes"
 // Types
 // ---------------------------------------------------------------------------
 
-// Cluster shapes now live in `@wire-e2e-tests/debugging-shared/cluster/Types`
+// Cluster shapes now live in `@wireio/debugging-shared/cluster/Types`
 // so out-of-process tooling (TUI, debugging server) can consume them without
 // pulling in the full harness runtime. Re-exported here for backward compat
 // with existing consumers (flow-*, TestEnvironment, FlowTestContext).
@@ -89,7 +89,7 @@ export type {
   ClusterFiles,
   NodeState,
   SolanaProgramDeployment
-} from "@wire-e2e-tests/debugging-shared"
+} from "@wireio/debugging-shared"
 
 // ---------------------------------------------------------------------------
 // Constants

@@ -4,7 +4,7 @@
     "rootDir": "tests",
     "outDir": "lib/out-tests",
     "paths": {
-      "@wire-e2e-tests/harness": ["../harness/src"]
+      "@wireio/test-cluster-tool": ["../test-cluster-tool/src"]
     }
   },
   "include": ["tests"],

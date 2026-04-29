@@ -2,9 +2,9 @@ import {
   featuresSlice,
   registerFeature,
   setActiveFeatures
-} from "@wire-e2e-tests/debugging-client-tool-tui/store/features/FeaturesSlice.js"
-import { selectFeatures } from "@wire-e2e-tests/debugging-client-tool-tui/store/features/FeaturesSelectors.js"
-import { SliceName } from "@wire-e2e-tests/debugging-client-tool-tui/store/StoreTypes.js"
+} from "@wireio/debugging-client-tool-tui/store/features/FeaturesSlice.js"
+import { selectFeatures } from "@wireio/debugging-client-tool-tui/store/features/FeaturesSelectors.js"
+import { SliceName } from "@wireio/debugging-client-tool-tui/store/StoreTypes.js"
 
 describe("featuresSlice", () => {
   it("initial state: empty registered + empty activeIds", () => {

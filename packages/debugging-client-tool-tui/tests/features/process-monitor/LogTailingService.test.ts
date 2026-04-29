@@ -2,18 +2,18 @@ import Os from "node:os"
 import Path from "node:path"
 import Fs from "node:fs"
 import { Level } from "@wireio/shared"
-import { LoggingManager } from "@wire-e2e-tests/debugging-client-tool-tui/logging/LoggingManager.js"
+import { LoggingManager } from "@wireio/debugging-client-tool-tui/logging/LoggingManager.js"
 import {
   LogTailingEventName,
   LogTailingService,
   type LogTailingRuntime
-} from "@wire-e2e-tests/debugging-client-tool-tui/features/process-monitor/LogTailingService.js"
-import { ProcessMonitorService } from "@wire-e2e-tests/debugging-client-tool-tui/features/process-monitor/ProcessMonitorService.js"
-import { ReduxService } from "@wire-e2e-tests/debugging-client-tool-tui/services/ReduxService.js"
-import { ServiceId } from "@wire-e2e-tests/debugging-client-tool-tui/services/ServiceId.js"
-import { ServiceManager } from "@wire-e2e-tests/debugging-client-tool-tui/services/ServiceManager.js"
-import { setLogViewerPath } from "@wire-e2e-tests/debugging-client-tool-tui/store/process-monitor/ProcessMonitorSlice.js"
-import { store } from "@wire-e2e-tests/debugging-client-tool-tui/store/Store.js"
+} from "@wireio/debugging-client-tool-tui/features/process-monitor/LogTailingService.js"
+import { ProcessMonitorService } from "@wireio/debugging-client-tool-tui/features/process-monitor/ProcessMonitorService.js"
+import { ReduxService } from "@wireio/debugging-client-tool-tui/services/ReduxService.js"
+import { ServiceId } from "@wireio/debugging-client-tool-tui/services/ServiceId.js"
+import { ServiceManager } from "@wireio/debugging-client-tool-tui/services/ServiceManager.js"
+import { setLogViewerPath } from "@wireio/debugging-client-tool-tui/store/process-monitor/ProcessMonitorSlice.js"
+import { store } from "@wireio/debugging-client-tool-tui/store/Store.js"
 
 const logDir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "log-tail-svc-"))
 
@@ -104,7 +104,11 @@ describe("LogTailingService runtime", () => {
       .register(LogTailingService)
     await sm.boot()
     const svc = sm.get<LogTailingService>(ServiceId.LogTailing)
-    expect(svc.getRuntime()).toEqual({ totalLines: 0, totalBytes: 0, indexing: false })
+    expect(svc.getRuntime()).toEqual({
+      totalLines: 0,
+      totalBytes: 0,
+      indexing: false
+    })
     await sm.destroy()
   })
 

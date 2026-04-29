@@ -1,5 +1,5 @@
 import React from "react"
-import { OPPRoute } from "@wire-e2e-tests/debugging-client-tool-tui/features/opp/routes/OPPRoute.js"
+import { OPPRoute } from "@wireio/debugging-client-tool-tui/features/opp/routes/OPPRoute.js"
 
 describe("OPPRoute", () => {
   it("is a function component", () => {

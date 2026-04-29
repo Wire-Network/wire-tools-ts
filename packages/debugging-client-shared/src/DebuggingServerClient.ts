@@ -8,7 +8,7 @@ import {
   type HandlerURIType,
   type InferredRequestType,
   type InferredResponseType
-} from "@wire-e2e-tests/debugging-shared"
+} from "@wireio/debugging-shared"
 
 import { JsonRPCClient } from "./rpc/JsonRPCClient.js"
 
@@ -22,8 +22,7 @@ export interface DebuggingToolClientOptions {
 }
 
 /** Fully-resolved runtime config derived from {@link DebuggingToolClientOptions}. */
-export interface DebuggingToolClientConfig
-  extends Required<DebuggingToolClientOptions> {}
+export interface DebuggingToolClientConfig extends Required<DebuggingToolClientOptions> {}
 
 /**
  * High-level client for the debugging server.
@@ -61,9 +60,7 @@ export class DebuggingServerClient {
       `Debugging server not reachable at ${pingUrl}`
     )
 
-    const rpc = new JsonRPCClient(
-      `${config.baseUrl}${ApiPaths.OPP.Endpoint}`
-    )
+    const rpc = new JsonRPCClient(`${config.baseUrl}${ApiPaths.OPP.Endpoint}`)
     return new DebuggingServerClient(config, rpc)
   }
 
