@@ -213,7 +213,7 @@ The rules above are enforced on every change. Before declaring a task complete, 
 
 ## Cross-repo rules
 
-- **`@wireio/opp-typescript-models` and `@wireio/opp-solidity-models` MUST NOT appear in any `wire-libraries-ts` package.json.** The code generators that produce those packages live in `wire-libraries-ts` — depending on them there creates a tool/output cycle. These packages are consumed by **`wire-e2e-tests` and `wire-ethereum` only**. If you see them resolved under `wire-libraries-ts/node_modules/.pnpm/`, treat it as a red flag and verify the dep graph before continuing.
+- **`@wireio/opp-typescript-models` and `@wireio/opp-solidity-models` MUST NOT appear in any `wire-libraries-ts` package.json.** The code generators that produce those packages live in `wire-libraries-ts` — depending on them there creates a tool/output cycle. These packages are consumed by **`wire-tools-ts` and `wire-ethereum` only**. If you see them resolved under `wire-libraries-ts/node_modules/.pnpm/`, treat it as a red flag and verify the dep graph before continuing.
 - **Shared types consumed by both a server and its client live in the shared package** (`debugging-shared` for the debugging server/client/TUI; don't duplicate host/port/version strings across two `package.json`s).
 
 ## Classes of mistakes to avoid (learned the hard way)

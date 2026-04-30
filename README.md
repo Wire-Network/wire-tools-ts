@@ -1,4 +1,4 @@
-# wire-e2e-tests
+# wire-tools-ts
 
 End-to-end integration tests for the WIRE OPP (Outpost Protocol) cross-chain messaging system.
 
