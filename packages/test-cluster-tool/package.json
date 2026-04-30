@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-cluster-tool",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": false,
   "type": "commonjs",
   "types": "lib/cjs/index.d.ts",
