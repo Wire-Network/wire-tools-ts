@@ -96,7 +96,9 @@ function pkill(
     execFileSync("pkill", ["-x", name], { stdio: "ignore" })
   ).match({
     Left: err => {
-      log.debug(`Failed to kill process ${name} with signal ${signal}`, err)
+      log.debug(
+        `pkill process ${name} with signal ${signal} was unsuccessful, process may already be terminated`
+      )
       return false
     },
     Right: () => true

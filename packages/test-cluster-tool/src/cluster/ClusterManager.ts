@@ -291,8 +291,19 @@ export class ClusterManager {
       log.info(
         `File (${soFile}) not found, attempting to build opp-outpost program artifacts...`
       )
-      Sh.exec("cargo build", { cwd: cfg.solanaPath })
-      Sh.exec("anchor build -p opp-outpost", { cwd: cfg.solanaPath })
+      const cargoRes = Sh.exec("cargo build", { cwd: cfg.solanaPath })
+      Assert.ok(
+        cargoRes.code === 0,
+        `Cargo build failed with exit code ${cargoRes.code}: ${cargoRes.stderr}`
+      )
+
+      const anchorRes = Sh.exec("anchor build -p opp-outpost", {
+        cwd: cfg.solanaPath
+      })
+      Assert.ok(
+        anchorRes.code === 0,
+        `Anchor build failed with exit code ${anchorRes.code}: ${anchorRes.stderr}`
+      )
     }
 
     const idlSrc = Path.join(
