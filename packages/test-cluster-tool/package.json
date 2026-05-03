@@ -13,12 +13,14 @@
     "README.md"
   ],
   "bin": {
-    "wire-test-cluster": "lib/cjs/cli.js"
+    "wire-test-cluster": "bin/wire-test-cluster",
+    "wtc": "bin/wire-test-cluster"
   },
   "scripts": {
     "compile": "tsc -b tsconfig.json",
     "compile:watch": "tsc -b tsconfig.json -w",
     "build": "pnpm run compile",
+    "dist": "pnpm run build",
     "prepublishOnly": "pnpm run build",
     "prepare": "pnpm run build",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
@@ -55,8 +57,5 @@
     "@types/node": "25.5.0",
     "@types/shelljs": "^0.10.0",
     "@types/yargs": "^17.0.35"
-  },
-  "resolutions": {
-    "uuid": "11"
   }
 }

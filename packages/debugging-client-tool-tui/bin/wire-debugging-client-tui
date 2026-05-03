@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+import Path from "node:path"
+import Fs from "node:fs"
+import Assert from "node:assert"
+
+const log = console
+
+async function main() {
+	const
+		mainFile = Path.resolve(import.meta.dirname, "..", "dist", "bundle", "wire-debugging-client-tool-tui.mjs")
+	
+	Assert.ok(Fs.existsSync(mainFile),
+		`Main file not found @ ${mainFile}.`)
+	
+	await import(mainFile)
+}
+
+main()
+	.catch(err => {
+		log.error(`Error in wire-debugging-client-tool-tui: ${err}`, err);
+		process.exit(1);
+	})
+
+
+
+
+
+
+
+

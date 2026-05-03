@@ -1,0 +1,21 @@
+#!/usr/bin/env node
+const
+	log = console,
+	Path = require("path"),
+	Assert = require("assert"),
+	Fs = require("fs"),
+	mainFile = Path.resolve(__dirname, "..", "dist","bundle","wire-debugging-client-tool.cjs")
+
+Assert.ok(Fs.existsSync(mainFile),
+	`Main file not found @ ${mainFile}.`)
+
+require(mainFile)
+	
+
+
+
+
+
+
+
+

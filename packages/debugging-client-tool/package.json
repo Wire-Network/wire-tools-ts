@@ -7,14 +7,16 @@
   },
   "type": "commonjs",
   "types": "lib/cjs/index.d.ts",
-  "main": "dist/bundle/wire-debugging-client-tool.cjs",
+  "main": "bin/wire-debugging-client-tool",
   "bin": {
-    "wire-debugging-client-tool": "dist/bundle/wire-debugging-client-tool.cjs"
+    "wire-debugging-client-tool": "bin/wire-debugging-client-tool",
+    "wdctool": "bin/wire-debugging-client-tool"
   },
   "scripts": {
     "compile": "tsc -b tsconfig.json",
     "compile:watch": "tsc -b tsconfig.json -w",
     "bundle": "node esbuild.config.js",
+    "build": "pnpm run compile && pnpm run bundle",
     "dist": "pnpm build && pnpm bundle",
     "test": "jest",
     "clean": "rm -rf lib dist"

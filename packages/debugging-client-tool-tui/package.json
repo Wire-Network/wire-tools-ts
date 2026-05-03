@@ -7,9 +7,11 @@
   },
   "type": "module",
   "types": "lib/cjs/tui.d.ts",
-  "main": "dist/bundle/wire-debugging-client-tool-tui.mjs",
+  "main": "bin/wire-debugging-client-tui",
   "bin": {
-    "wire-debugging-client-tool-tui": "dist/bundle/wire-debugging-client-tool-tui.mjs"
+    "wire-debugging-client-tool-tui": "bin/wire-debugging-client-tui",
+    "wdc-tui": "bin/wire-debugging-client-tui",
+    "wdctui": "bin/wire-debugging-client-tui"
   },
   "scripts": {
     "compile": "tsc -b tsconfig.json",
@@ -49,6 +51,7 @@
     "@types/redux-logger": "^3.0.13",
     "@types/yargs": "^17.0.35",
     "esbuild": "^0.28.0",
+    "react-devtools": "^7.0.1",
     "react-devtools-core": "^7.0.1",
     "source-map-support": "^0.5.21",
     "ts-jest": "^29.4.9",

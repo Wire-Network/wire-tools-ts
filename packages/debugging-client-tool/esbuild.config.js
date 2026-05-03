@@ -28,7 +28,7 @@ async function main() {
     platform: "node",
     target: "node24",
     format: "cjs",
-    outfile: "dist/bundle/wire-debugging-tool-client-tool.cjs",
+    outfile: "dist/bundle/wire-debugging-client-tool.cjs",
     sourcemap: true,
     minify: false,
     banner: {

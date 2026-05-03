@@ -9,7 +9,8 @@
   "types": "lib/cjs/index.d.ts",
   "main": "lib/cjs/index.js",
   "bin": {
-    "wire-debugging-server": "dist/bundle/wire-debugging-server.cjs"
+    "wire-debugging-server": "bin/wire-debugging-server",
+    "wds": "bin/wire-debugging-server"
   },
   "scripts": {
     "compile": "tsc -b tsconfig.json",
@@ -46,8 +47,5 @@
     "esbuild": "^0.27.3",
     "ts-jest": "^29.4.6",
     "typescript": "^6.0.2"
-  },
-  "resolutions": {
-    "uuid": "11"
   }
 }
