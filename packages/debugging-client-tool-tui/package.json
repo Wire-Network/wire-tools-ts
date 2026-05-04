@@ -30,7 +30,8 @@
     "start": "pnpm run build && node dist/bundle/wire-debugging-client-tool-tui.mjs",
     "dist": "pnpm build",
     "test": "jest",
-    "clean": "rm -rf lib dist"
+    "clean": "rm -rf lib dist",
+    "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
     "@3fv/prelude-ts": "^0.8.37",

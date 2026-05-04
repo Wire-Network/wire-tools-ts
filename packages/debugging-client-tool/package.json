@@ -26,7 +26,8 @@
     "build": "pnpm run compile && pnpm run bundle",
     "dist": "pnpm build && pnpm bundle",
     "test": "jest",
-    "clean": "rm -rf lib dist"
+    "clean": "rm -rf lib dist",
+    "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
     "@wireio/debugging-shared": "workspace:*",
