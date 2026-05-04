@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-c",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "type": "commonjs",
   "description": "Flow C: SWAP 50 ETH → 1042 SOL (with Underwriting)",
