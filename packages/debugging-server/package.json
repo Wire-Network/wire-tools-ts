@@ -12,6 +12,13 @@
     "wire-debugging-server": "bin/wire-debugging-server",
     "wds": "bin/wire-debugging-server"
   },
+  "files": [
+    "dist",
+    "lib",
+    "bin",
+    "src",
+    "README.md"
+  ],
   "scripts": {
     "compile": "tsc -b tsconfig.json",
     "compile:watch": "tsc -b tsconfig.json -w",

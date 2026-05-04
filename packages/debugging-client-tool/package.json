@@ -12,6 +12,13 @@
     "wire-debugging-client-tool": "bin/wire-debugging-client-tool",
     "wdctool": "bin/wire-debugging-client-tool"
   },
+  "files": [
+    "dist",
+    "lib",
+    "bin",
+    "src",
+    "README.md"
+  ],
   "scripts": {
     "compile": "tsc -b tsconfig.json",
     "compile:watch": "tsc -b tsconfig.json -w",

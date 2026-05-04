@@ -13,6 +13,13 @@
     "wdc-tui": "bin/wire-debugging-client-tui",
     "wdctui": "bin/wire-debugging-client-tui"
   },
+  "files": [
+    "dist",
+    "lib",
+    "bin",
+    "src",
+    "README.md"
+  ],
   "scripts": {
     "compile": "tsc -b tsconfig.json",
     "compile:watch": "tsc -b tsconfig.json -w",
