@@ -150,13 +150,13 @@ export const CORE_SYMBOL_PRECISION = 4
 // ---------------------------------------------------------------------------
 
 /** Total SYS allocated for ROA activation. */
-export const ROA_TOTAL_SYS = "75496.0000 SYS"
+export const ROA_TOTAL_SYS = "1000000000.0000 SYS"
 
 /** Bytes per resource unit for ROA. */
 export const ROA_BYTES_PER_UNIT = 104
 
-export const DEFAULT_RESOURCE_WEIGHT = "200.0000 SYS"
-export const DEFAULT_RAM_WEIGHT = "20.0000 SYS"
+export const DEFAULT_RESOURCE_WEIGHT = "25.0000 SYS"
+export const DEFAULT_RAM_WEIGHT = "25.0000 SYS"
 
 // ---------------------------------------------------------------------------
 // Port bases

@@ -1895,10 +1895,8 @@ async function bootstrapChain(
   await sleep(ClusterManager.PostAccountCreateSettleMs)
 
   // Assign resource policies
-  await Promise.all(
-    allOperatorAccounts.map(account =>
-      addResourcePolicy(clio, account, BOOTSTRAP_NODE_OWNER)
-    )
+  await Bluebird.mapSeries(allOperatorAccounts, account =>
+    addResourcePolicy(clio, account, BOOTSTRAP_NODE_OWNER)
   )
 
   log.info(
