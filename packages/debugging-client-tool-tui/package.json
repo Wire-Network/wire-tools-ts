@@ -1,6 +1,6 @@
 {
   "name": "@wireio/debugging-client-tool-tui",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "private": false,
   "publishConfig": {
     "access": "public"
