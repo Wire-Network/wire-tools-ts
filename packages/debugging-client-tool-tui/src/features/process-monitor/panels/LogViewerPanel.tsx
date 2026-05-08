@@ -32,7 +32,7 @@ import {
   type LogTailingRuntime
 } from "../LogTailingService.js"
 import { LineRender, compileSearchRegex } from "../util/lineRender.js"
-import { PidSources } from "../util/PidSources.js"
+import { PidSources } from "@wireio/debugging-shared"
 import {
   LogViewerJSONLine,
   jsonColumnBoundaries,

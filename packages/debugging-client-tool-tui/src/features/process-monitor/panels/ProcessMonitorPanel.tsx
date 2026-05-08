@@ -17,7 +17,7 @@ import {
   PidSourceKind,
   logPathForSource,
   type PidSource
-} from "../util/PidSources.js"
+} from "@wireio/debugging-shared"
 import type { ProcessMonitorService } from "../ProcessMonitorService.js"
 import { LogViewerPanel } from "./LogViewerPanel.js"
 

@@ -39,7 +39,7 @@ export enum JsonLogLevel {
 }
 
 /**
- * Identity-mapped Ink color names used to colorise log levels. Identity
+ * Identity-mapped Ink color names used to colorize log levels. Identity
  * mapping keeps the value identical to Ink's accepted string set.
  */
 export enum LogLevelColor {
@@ -80,7 +80,7 @@ export function parseJsonLogLine(raw: string): JsonLogRecord | string {
   return raw
 }
 
-/** Ink color for a JSONL `lvl` field. Unrecognised values render in default fg. */
+/** Ink color for a JSONL `lvl` field. Unrecognized values render in default fg. */
 export function colorForLevel(lvl: string): LogLevelColor | undefined {
   return match(lvl.toLowerCase())
     .with(JsonLogLevel.trace, () => LogLevelColor.gray)
@@ -95,7 +95,7 @@ export function colorForLevel(lvl: string): LogLevelColor | undefined {
 /**
  * `HH:mm:ss.SSS` slice of the record's `ts` field.
  *
- * @example `formatTimestamp("2026-04-27T19:58:15.417594Z")` → `"19:58:15.417"`
+ * @example `formatTimestamp("2026-04-27T19:58:15.417594Z")` returns `"19:58:15.417"`
  */
 export function formatTimestamp(ts: string): string {
   return ts.length >= JsonLogRecord.TimestampMinLength
@@ -108,7 +108,7 @@ export function formatTimestamp(ts: string): string {
  * stripped so the column stays narrow; full path is still on disk in the
  * underlying record if a debugger ever wants it.
  *
- * @example `formatLocation({ file: "/.../signature_provider.cpp", line: 426 })` → `"signature_provider.cpp:426"`
+ * @example `formatLocation({ file: "/.../signature_provider.cpp", line: 426 })` returns `"signature_provider.cpp:426"`
  */
 export function formatLocation(record: JsonLogRecord): string {
   const slash = record.file.lastIndexOf("/"),

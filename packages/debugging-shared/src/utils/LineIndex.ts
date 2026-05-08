@@ -1,6 +1,6 @@
 import Fs from "node:fs"
 
-/** Byte offsets for each line start in a file. Used by `LogTailingService`. */
+/** Byte offsets for each line start in a file. Consumed by log-tail services in the server and the local-disk client. */
 export interface LineIndex {
   path: string
   /** Inode — invalidates the index on rotation. */
@@ -18,8 +18,9 @@ export interface LineIndex {
    * Count of lines that ended in `\n` at scan time. When the file's tail is
    * mid-write (no terminating `\n`), the renderer would otherwise treat the
    * partial bytes as a "line" — for JSONL that surfaces as a malformed-JSON
-   * row at the bottom of the viewport. `LogTailingService` exposes this as
-   * `runtime.totalLines`, so the partial line stays hidden until flushed.
+   * row at the bottom of the viewport. Servers and clients expose this as
+   * the `totalLines` counter on `LogStat`, so the partial line stays hidden
+   * until flushed.
    */
   completeLineCount: number
 }

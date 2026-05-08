@@ -10,8 +10,10 @@ import { LogViewerPanel } from "@wireio/debugging-client-tool-tui/features/proce
 import { ProcessMonitorPanel } from "@wireio/debugging-client-tool-tui/features/process-monitor/panels/ProcessMonitorPanel.js"
 import { NodeCountWidget } from "@wireio/debugging-client-tool-tui/features/process-monitor/widgets/NodeCountWidget.js"
 import { FeatureComponentToken } from "@wireio/debugging-client-tool-tui/providers/ComponentProviders.js"
+import { DebuggingClientService } from "@wireio/debugging-client-tool-tui/services/DebuggingClientService.js"
 import { ReduxService } from "@wireio/debugging-client-tool-tui/services/ReduxService.js"
 import { ServiceManager } from "@wireio/debugging-client-tool-tui/services/ServiceManager.js"
+import { MockDebuggingClient } from "../MockDebuggingClient.js"
 
 const logDir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "pm-fp-"))
 
@@ -53,6 +55,7 @@ describe("ProcessMonitorFeatureProvider.registerComponents", () => {
 describe("ProcessMonitorFeatureProvider.registerServices", () => {
   it("registers ProcessMonitor before LogTailing (dep order)", () => {
     const manager = ServiceManager.get().register(ReduxService)
+    manager.registerInstance(new DebuggingClientService(new MockDebuggingClient()))
     ProcessMonitorFeatureProvider.registerServices(manager)
     expect(manager.find(ProcessMonitorService.id)).toBeDefined()
     expect(manager.find(LogTailingService.id)).toBeDefined()

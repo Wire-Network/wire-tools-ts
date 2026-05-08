@@ -6,6 +6,7 @@
  */
 export enum ServiceId {
   Redux = "redux",
+  DebuggingClient = "debugging-client",
   OPPTracking = "opp-tracking",
   ProcessMonitor = "process-monitor",
   LogTailing = "log-tailing"

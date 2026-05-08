@@ -63,12 +63,15 @@ export class JsonRPCClient {
     const resp = await fetch(this.url, {
       method: JsonRPCClient.HttpMethod,
       headers: JsonRPCClient.Headers,
-      body: JSON.stringify({
-        jsonrpc: DebuggingDefaults.JsonrpcVersion,
-        method,
-        params,
-        id
-      })
+      body: JSON.stringify(
+        {
+          jsonrpc: DebuggingDefaults.JsonrpcVersion,
+          method,
+          params,
+          id
+        },
+        JsonRPCClient.bigintReplacer
+      )
     })
 
     Assert.ok(
@@ -114,6 +117,18 @@ export namespace JsonRPCClient {
     "Content-Type": "application/json",
     Accept: "application/json"
   } as const
+
+  /**
+   * `JSON.stringify` replacer that turns `bigint` values into their
+   * decimal string form. `JSON.stringify` would otherwise throw
+   * `TypeError: Do not know how to serialize a BigInt`.
+   *
+   * Server-side, protobuf-ts's JSON parser accepts uint64 fields as
+   * either string or number, so this round-trips losslessly.
+   */
+  export function bigintReplacer(_key: string, value: unknown): unknown {
+    return typeof value === "bigint" ? value.toString() : value
+  }
 
   /**
    * Shape of a parsed JSON-RPC 2.0 response envelope. Only one of `result`

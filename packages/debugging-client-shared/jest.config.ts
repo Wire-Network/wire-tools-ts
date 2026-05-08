@@ -16,7 +16,9 @@ const config = {
     "^@wireio/debugging-client-shared$": "<rootDir>/src/index",
     "^@wireio/debugging-client-shared/(.*)$": "<rootDir>/src/$1",
     "^@wireio/debugging-shared$": "<rootDir>/../debugging-shared/src/index",
-    "^@wireio/debugging-shared/(.*)$": "<rootDir>/../debugging-shared/src/$1"
+    "^@wireio/debugging-shared/(.*)$": "<rootDir>/../debugging-shared/src/$1",
+    "^@wireio/debugging-server$": "<rootDir>/../debugging-server/src/index",
+    "^@wireio/debugging-server/(.*)$": "<rootDir>/../debugging-server/src/$1"
   }
 }
 

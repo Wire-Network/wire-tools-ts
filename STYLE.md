@@ -167,7 +167,15 @@ This makes defaults discoverable, overrideable by reference, and documents inten
 
 ## Factory Model
 
-Classes that manage external resources use an **async static factory** (`create()`) with a **private constructor**.
+Use the **async static factory** (`create()`) with a **private constructor** pattern only when one of the two criteria below is met. A class with a synchronous, validation-free constructor stays a plain `new`-able class — adding a factory just to follow a pattern is overhead.
+
+**Use a factory when:**
+1. Construction is **genuinely async** — filesystem checks, binary lookups, ping handshakes, anything that has to `await` before the instance is usable. Constructors can't be `async`.
+2. The class is a **singleton** with a precondition that must be set before first use (see "Singleton variant" below).
+
+**Don't use a factory when:**
+- The constructor takes plain values and stores them — no I/O, no async, no validation that needs to fail loudly. A plain `new Foo(opts)` is clearer.
+- The "factory" only forwards args to `new`. That's pattern-matching for its own sake.
 
 ### Structure
 
@@ -730,7 +738,7 @@ Prefer chains over intermediate variables when the sequence reads as a pipeline 
 ## General Conventions
 
 - **`Assert.ook()` liberally.** Validate preconditions at the top of public methods and factory functions. Fail fast with a clear message rather than propagating `undefined` through the call stack.
-- **JSDoc everywhere** EVERY FUNCTION, CLASS, TYPE, INTERFACE, VARIABLE, ENUM, CONSTANT, ... EVERYTHING.
+- **JSDoc on every public / exported symbol.** That covers exported functions, exported classes, public methods, exported interfaces, type aliases, enums, exported constants, and public class fields/properties. **Skip:** local (function-scoped) variables and `private`/`protected` class fields — their names plus types already document them, and a JSDoc block on a private field is noise. The bar is "would a reader looking at this from outside the file need a one-line description?" — if yes, JSDoc; if no, leave it.
 - **Lodash for focused utilities.** Use `defaults`, `range`, `last`, `identity` — the small, composable functions. Don't import lodash for things TypeScript or `Array` methods handle natively.
 - **`source-map-support/register`** at the CLI entry point. Stack traces should point to `.ts` lines, not compiled `.js`.
 - **No string literals for known values.** If a value is defined in an enum, constant, or namespace, reference the identifier — never the raw string or number.

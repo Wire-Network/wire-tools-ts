@@ -1,36 +1,14 @@
 import Fs from "node:fs"
 import Path from "node:path"
+import { asOption } from "@3fv/prelude-ts"
 import { match } from "ts-pattern"
+
+import { NodeRole, type ClusterState, type NodeState } from "../cluster/index.js"
 import {
-  NodeRole,
-  type ClusterState,
-  type NodeState
-} from "@wireio/debugging-shared"
+  PidSourceKind,
+  type PidSource
+} from "../processes/index.js"
 import { currentDateStamp } from "./dateStamp.js"
-
-/** Classifies a monitored process for display grouping and fallback handling. */
-export enum PidSourceKind {
-  Bios = "bios",
-  Producer = "producer",
-  BatchOperator = "batch-operator",
-  Underwriter = "underwriter",
-  Anvil = "anvil",
-  SolanaValidator = "solana-validator"
-}
-
-/** A pid-file-backed process known to the TUI. */
-export interface PidSource {
-  /** Filename label (no `.pid` suffix); always matches what ProcessManager wrote. */
-  label: string
-  /** Absolute pid file path. */
-  pidPath: string
-  /** Directory containing the pid file; usable for log discovery. */
-  directory: string
-  /** Semantic classification. */
-  kind: PidSourceKind
-  /** Present when the source is one of the WIRE node arrays. */
-  node?: NodeState
-}
 
 export namespace PidSources {
   /** Filename suffix used by harness ProcessManager for pid files. */
@@ -69,6 +47,7 @@ function kindForNode(node: NodeState): PidSourceKind {
     .otherwise(() => PidSourceKind.Producer)
 }
 
+/** Internal raw pid record produced by the directory scan. */
 interface RawPid {
   label: string
   pidPath: string
@@ -183,4 +162,28 @@ function latestJsonlIn(logsDir: string): string | null {
     .filter(f => f.endsWith(PidSources.JsonlExt))
     .sort()
   return matches.length === 0 ? null : matches[matches.length - 1]
+}
+
+/** Read pid from a pid file; null on missing / malformed / non-positive. */
+export function readPid(pidPath: string): number | null {
+  return asOption(pidPath)
+    .filter(p => Fs.existsSync(p))
+    .map(p => Fs.readFileSync(p, "utf8").trim())
+    .map(s => parseInt(s, 10))
+    .filter(n => !isNaN(n) && n > 0)
+    .getOrNull()
+}
+
+/** Null-safe `process.kill(pid, 0)` liveness probe. */
+export function pidIsAlive(pid: number | null): boolean {
+  return asOption(pid)
+    .map(p => {
+      try {
+        process.kill(p, 0)
+        return true
+      } catch {
+        return false
+      }
+    })
+    .getOrElse(false)
 }

@@ -381,12 +381,9 @@ export class ClusterManager {
 
   /** Start the in-process OPP debugging server. */
   private async startDebuggingServer(): Promise<void> {
-    const oppStoragePath = mkdirs(
-      Path.join(this.config.dataPath, ClusterManager.OPPDebuggingSubpath)
-    )
     this.debuggingServer = await DebuggingServer.create({
       port: this.config.ports.debuggingServer,
-      oppStoragePath
+      clusterPath: this.config.clusterPath
     })
     const addr = await this.debuggingServer.start()
     log.info(`Debugging server listening on ${addr.address}:${addr.port}`)

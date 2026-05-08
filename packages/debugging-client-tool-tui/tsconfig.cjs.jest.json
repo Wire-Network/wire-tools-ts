@@ -9,7 +9,15 @@
     "jsx": "react-jsx",
     "paths": {
       "@wireio/debugging-client-tool-tui": ["./src"],
-      "@wireio/debugging-client-tool-tui/*": ["./src/*"]
+      "@wireio/debugging-client-tool-tui/*": ["./src/*"],
+      "@wireio/debugging-shared": ["../debugging-shared/src/index.ts"],
+      "@wireio/debugging-shared/*": ["../debugging-shared/src/*"],
+      "@wireio/debugging-client-shared": [
+        "../debugging-client-shared/src/index.ts"
+      ],
+      "@wireio/debugging-client-shared/*": [
+        "../debugging-client-shared/src/*"
+      ]
     }
   },
   "references": [

@@ -37,7 +37,8 @@ describe(`JSON-RPC 2.0 via POST ${ApiPaths.OPP.Endpoint}`, () => {
   let nextId = 1
 
   beforeAll(async () => {
-    server = await DebuggingServer.create({ oppStoragePath: tmpDir, port: 0 })
+    Fs.mkdirSync(tmpDir, { recursive: true })
+    server = await DebuggingServer.create({ clusterPath: tmpDir, port: 0 })
     const addr = await server.start()
     baseUrl = `http://127.0.0.1:${addr.port}`
   })
@@ -143,7 +144,8 @@ describe(`Plain JSON via POST ${ApiPaths.OPP.Methods.Envelope}`, () => {
   let baseUrl: string
 
   beforeAll(async () => {
-    server = await DebuggingServer.create({ oppStoragePath: tmpDir, port: 0 })
+    Fs.mkdirSync(tmpDir, { recursive: true })
+    server = await DebuggingServer.create({ clusterPath: tmpDir, port: 0 })
     const addr = await server.start()
     baseUrl = `http://127.0.0.1:${addr.port}`
   })
@@ -186,7 +188,8 @@ describe(`GET ${ApiPaths.Ping}`, () => {
   let baseUrl: string
 
   beforeAll(async () => {
-    server = await DebuggingServer.create({ oppStoragePath: tmpDir, port: 0 })
+    Fs.mkdirSync(tmpDir, { recursive: true })
+    server = await DebuggingServer.create({ clusterPath: tmpDir, port: 0 })
     const addr = await server.start()
     baseUrl = `http://127.0.0.1:${addr.port}`
   })
@@ -214,7 +217,8 @@ describe(`JSON-RPC ${ApiPaths.OPP.Methods.EnvelopeList}`, () => {
   let nextId = 1
 
   beforeAll(async () => {
-    server = await DebuggingServer.create({ oppStoragePath: tmpDir, port: 0 })
+    Fs.mkdirSync(tmpDir, { recursive: true })
+    server = await DebuggingServer.create({ clusterPath: tmpDir, port: 0 })
     const addr = await server.start()
     baseUrl = `http://127.0.0.1:${addr.port}`
 
@@ -315,7 +319,8 @@ describe(`JSON-RPC ${ApiPaths.OPP.Methods.EnvelopeGet}`, () => {
   let storedKey: string
 
   beforeAll(async () => {
-    server = await DebuggingServer.create({ oppStoragePath: tmpDir, port: 0 })
+    Fs.mkdirSync(tmpDir, { recursive: true })
+    server = await DebuggingServer.create({ clusterPath: tmpDir, port: 0 })
     const addr = await server.start()
     baseUrl = `http://127.0.0.1:${addr.port}`
 

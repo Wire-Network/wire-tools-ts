@@ -1,11 +1,8 @@
-import Fs from "node:fs"
-import Os from "node:os"
-import Path from "node:path"
 import { Level } from "@wireio/shared"
 
 // `yargs` is ESM-only as of v18; jest's CJS runtime can't load it without extensive
 // transform plumbing. Mock it for the tests in this file. parseArgs's behavior under
-// real yargs is covered by the bundled-binary smoke path (§10 of the plan).
+// real yargs is covered by the bundled-binary smoke path.
 jest.mock("yargs", () => {
   const chain: any = {}
   const returnChain = () => chain
@@ -33,26 +30,9 @@ jest.mock("yargs/helpers", () => ({
 /* eslint-disable import/first */
 import {
   CLI,
-  coerceFeatures,
-  loadCluster
+  coerceFeatures
 } from "@wireio/debugging-client-tool-tui/cli.js"
 /* eslint-enable import/first */
-
-function makeCluster(opts: { withState?: boolean } = {}): string {
-  const dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "cli-cluster-"))
-  Fs.writeFileSync(Path.join(dir, "cluster-config.json"), "{}")
-  if (opts.withState) {
-    Fs.writeFileSync(
-      Path.join(dir, "cluster-state.json"),
-      JSON.stringify({
-        nodes: [],
-        batchOperatorNodes: [],
-        underwriterNodes: []
-      })
-    )
-  }
-  return dir
-}
 
 describe("coerceFeatures", () => {
   it("returns null for undefined / empty / whitespace-only input", () => {
@@ -72,36 +52,12 @@ describe("coerceFeatures", () => {
   })
 })
 
-describe("loadCluster", () => {
-  it("returns config + null state when cluster-state.json absent", () => {
-    const dir = makeCluster()
-    const loaded = loadCluster(dir)
-    expect(loaded.path).toBe(dir)
-    expect(loaded.state).toBeNull()
-  })
-
-  it("returns parsed state when cluster-state.json present", () => {
-    const dir = makeCluster({ withState: true })
-    const loaded = loadCluster(dir)
-    expect(loaded.state?.nodes).toEqual([])
-  })
-
-  it("throws when cluster path does not exist", () => {
-    expect(() => loadCluster("/tmp/does-not-exist-xyz-123")).toThrow(
-      /Cluster path does not exist/
-    )
-  })
-
-  it("throws when cluster-config.json is missing", () => {
-    const dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "cli-empty-"))
-    expect(() => loadCluster(dir)).toThrow(/cluster-config.json not found/)
-  })
-})
-
 describe("CLI namespace constants", () => {
   it("exposes expected option names + aliases", () => {
     expect(CLI.Options.ClusterPathOption).toBe("cluster-path")
     expect(CLI.Options.ClusterPathAlias).toBe("c")
+    expect(CLI.Options.ServerUrlOption).toBe("server-url")
+    expect(CLI.Options.ServerUrlAlias).toBe("s")
     expect(CLI.Options.FeaturesOption).toBe("features")
     expect(CLI.Options.LogLevelOption).toBe("log-level")
   })

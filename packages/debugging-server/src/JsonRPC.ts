@@ -197,17 +197,29 @@ export namespace JsonRPC {
     }
 
     try {
-      const [reqMessageType, resMessageType] =
-          HandlerTypeMappings[body.method as HandlerURIType],
-        reqMessage = reqMessageType.fromJson(
-          body.params,
-          FROM_JSON_OPTIONS
-        ) as IMessageType<any>
+      const protoEntry = (
+        HandlerTypeMappings as Record<
+          string,
+          [IMessageType<any>, IMessageType<any>] | undefined
+        >
+      )[body.method]
 
-      // const result = await Future.of(handler(body.params, req, res))
-      const result = await Future.of(handler(reqMessage, req, res))
-        .map(resMessage => resMessageType.toJson(resMessage, TO_JSON_OPTIONS))
-        .toPromise()
+      let result: unknown
+      if (protoEntry) {
+        // Protobuf-encoded request/response (OPP routes)
+        const [reqMessageType, resMessageType] = protoEntry,
+          reqMessage = reqMessageType.fromJson(
+            body.params,
+            FROM_JSON_OPTIONS
+          ) as IMessageType<any>
+        result = await Future.of(handler(reqMessage, req, res))
+          .map(resMessage => resMessageType.toJson(resMessage, TO_JSON_OPTIONS))
+          .toPromise()
+      } else {
+        // Plain JSON request/response (cluster, processes, logs)
+        result = await Future.of(handler(body.params, req, res)).toPromise()
+      }
+
       if (!res.headersSent) {
         sendJson(res, 200, {
           jsonrpc: DebuggingDefaults.JsonrpcVersion,

@@ -27,16 +27,17 @@ Yargs(process.argv.slice(2))
           default: DebuggingServer.DefaultHost,
           describe: "Server bind address"
         })
-        .option("opp-storage-path", {
+        .option("cluster-path", {
           type: "string",
-          default: DebuggingServer.DefaultOPPStoragePath,
-          describe: "Storage directory for OPP debugging data"
+          demandOption: true,
+          describe:
+            "Cluster directory (required, no default). OPP envelopes resolve to <cluster-path>/data/opp-debugging."
         }),
     async argv => {
       const server = await DebuggingServer.create({
         port: argv.port,
         host: argv.host,
-        oppStoragePath: argv.oppStoragePath
+        clusterPath: argv.clusterPath
       })
       const addr = await server.start()
       log.info(`Debugging server listening on ${addr.address}:${addr.port}`)

@@ -1,130 +1,106 @@
-import Fs from "node:fs"
-import { asOption } from "@3fv/prelude-ts"
-import { match } from "ts-pattern"
+import {
+  ClosedReason,
+  StreamTopic,
+  type PidSource,
+  type ProcessLivenessEvent
+} from "@wireio/debugging-shared"
+import type {
+  DebuggingClient,
+  DebuggingSubscription
+} from "@wireio/debugging-client-shared"
+
 import { LoggingManager } from "../../logging/LoggingManager.js"
+import { DebuggingClientService } from "../../services/DebuggingClientService.js"
 import { ReduxService } from "../../services/ReduxService.js"
 import { ServiceId } from "../../services/ServiceId.js"
 import type { Service } from "../../services/Service.js"
 import type { ServiceManager } from "../../services/ServiceManager.js"
-import { selectCluster } from "../../store/cluster/ClusterSelectors.js"
 import {
   removeProcess,
   setProcess
 } from "../../store/process-monitor/ProcessMonitorSlice.js"
-import type { ProcessLiveness } from "../../store/process-monitor/ProcessMonitorTypes.js"
-import {
-  collectPidSources,
-  type PidSource
-} from "./util/PidSources.js"
 
 /**
- * Probes kernel liveness for every pid-file-backed cluster process every 5s.
- * Covers nodeop nodes (producer/bios/batch-operator/underwriter), Anvil, and
- * the Solana test validator.
+ * Subscribes to the {@link StreamTopic.ProcessLiveness} stream on the
+ * configured {@link DebuggingClient} and pumps diff events into the
+ * process-monitor Redux slice. Also exposes a one-shot
+ * `client.listProcessSources()` lookup for panels that need the full
+ * source list (label + path metadata, not just liveness).
  */
 export class ProcessMonitorService implements Service {
   static readonly id = ServiceId.ProcessMonitor
-  static readonly dependsOn: readonly string[] = [ServiceId.Redux]
+  static readonly dependsOn: readonly string[] = [
+    ServiceId.Redux,
+    ServiceId.DebuggingClient
+  ]
 
   private readonly log = LoggingManager.getLogger(
     ProcessMonitorService.Category
   )
-  private timer: NodeJS.Timeout | null = null
   private redux: ReduxService | null = null
+  private client: DebuggingClient | null = null
+  private subscription: DebuggingSubscription<ProcessLivenessEvent> | null =
+    null
+  private cachedSources: PidSource[] = []
 
   async init(manager: ServiceManager): Promise<this> {
     this.redux = manager.get<ReduxService>(ServiceId.Redux)
+    this.client = manager.get<DebuggingClientService>(
+      ServiceId.DebuggingClient
+    ).client
     return this
   }
 
   async start(_manager: ServiceManager): Promise<this> {
-    if (!this.redux) return this
-    this.poll()
-    this.timer = setInterval(
-      () => this.poll(),
-      ProcessMonitorService.PollIntervalMs
+    if (!this.client || !this.redux) return this
+    // Seed the source cache so `listSources()` returns a populated list
+    // even before the first stream tick lands.
+    this.cachedSources = await this.client.listProcessSources()
+    this.subscription = await this.client.subscribe(
+      StreamTopic.ProcessLiveness,
+      {}
+    )
+    this.subscription.on("event", evt => this.onEvent(evt))
+    this.subscription.on("closed", reason =>
+      this.log.warn(`process-liveness subscription closed: ${reason}`)
     )
     return this
   }
 
   async stop(_manager: ServiceManager): Promise<this> {
-    if (this.timer) clearInterval(this.timer)
-    this.timer = null
+    this.subscription?.close(ClosedReason.ClientRequested)
+    this.subscription = null
     return this
   }
 
-  /**
-   * Enumerate every pid-backed source, snapshot liveness, update Redux.
-   * Stale labels that no longer correspond to a pid file are pruned.
-   */
-  private poll(): void {
-    if (!this.redux) return
-    const cluster = selectCluster(this.redux.getState())
-    if (!cluster.state || !cluster.path) return
-    const now = Date.now(),
-      sources = collectPidSources(cluster.path, cluster.state),
-      seenLabels = new Set<string>()
-    sources.forEach(source => {
-      const pid = readPid(source.pidPath),
-        alive = pidIsAlive(pid),
-        prev = this.redux!.getState().processMonitor.processes[source.label],
-        exitedAt = match({ alive, prev })
-          .with({ alive: true }, () => null)
-          .with({ alive: false, prev: { alive: true } }, () => now)
-          .otherwise(({ prev: p }) => p?.exitedAt ?? null) as number | null
-      seenLabels.add(source.label)
-      const liveness: ProcessLiveness = {
-        label: source.label,
-        pid,
-        alive,
-        lastCheckedAt: now,
-        exitedAt
-      }
-      this.redux!.dispatch(setProcess(liveness))
-    })
-    const existing = Object.keys(this.redux.getState().processMonitor.processes)
-    existing
-      .filter(label => !seenLabels.has(label))
-      .forEach(label => this.redux!.dispatch(removeProcess(label)))
+  /** Latest source list cache. Returned by panels for label-driven lookups. */
+  listSources(): PidSource[] {
+    return this.cachedSources
   }
 
-  /** Snapshot of the latest pid-source list for panels / sibling services. */
-  listSources(): PidSource[] {
-    if (!this.redux) return []
-    const cluster = selectCluster(this.redux.getState())
-    return cluster.path
-      ? collectPidSources(cluster.path, cluster.state)
-      : []
+  private onEvent(evt: ProcessLivenessEvent): void {
+    if (!this.redux) return
+    evt.setSnapshots.forEach(snap => this.redux!.dispatch(setProcess(snap)))
+    evt.removedLabels.forEach(label =>
+      this.redux!.dispatch(removeProcess(label))
+    )
+    // Refresh the source-list cache opportunistically — the listing rarely
+    // changes during a session but a new pid file can appear after a
+    // standby promotion, etc.
+    if (this.client) {
+      void this.client
+        .listProcessSources()
+        .then(sources => {
+          this.cachedSources = sources
+        })
+        .catch(err =>
+          this.log.debug("listProcessSources refresh failed", err)
+        )
+    }
   }
 }
 
 export namespace ProcessMonitorService {
   /** Log category. */
   export const Category = "tui:process-monitor" as const
-  /** Interval between liveness snapshots. */
-  export const PollIntervalMs = 5_000
-}
-
-/** Read pid from a pid file; null on missing / malformed / non-positive. */
-function readPid(pidPath: string): number | null {
-  return asOption(pidPath)
-    .filter(p => Fs.existsSync(p))
-    .map(p => Fs.readFileSync(p, "utf8").trim())
-    .map(s => parseInt(s, 10))
-    .filter(n => !isNaN(n) && n > 0)
-    .getOrNull()
-}
-
-/** Null-safe `process.kill(pid, 0)` liveness probe. */
-function pidIsAlive(pid: number | null): boolean {
-  return asOption(pid)
-    .map(p => {
-      try {
-        process.kill(p, 0)
-        return true
-      } catch {
-        return false
-      }
-    })
-    .getOrElse(false)
 }

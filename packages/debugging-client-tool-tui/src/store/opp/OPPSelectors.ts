@@ -48,3 +48,13 @@ export const selectEpochByNumber =
   (epoch: number) =>
   (state: RootState): DebugOPPEpochRecord | undefined =>
     state[SliceName.OPP].epochs[epoch]
+
+/**
+ * Lowest cached epoch index (head of the LRU). Used by the "load older"
+ * affordance to compute `epochEnd = oldest - 1` for the next batch of
+ * historical envelopes. Returns `null` when the cache is empty.
+ */
+export const selectOldestEpochIndex = (state: RootState): number | null => {
+  const opp = state[SliceName.OPP]
+  return opp.epochOrder.length === 0 ? null : opp.epochOrder[0]
+}

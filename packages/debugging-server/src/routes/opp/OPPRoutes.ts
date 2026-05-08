@@ -12,7 +12,13 @@ import {
   Envelope
 } from "@wireio/opp-typescript-models"
 
-import { ApiPaths, endpointsTypeToKey } from "@wireio/debugging-shared"
+import {
+  ApiPaths,
+  endpointsTypeToKey,
+  readEnvelopeRecordsFromDir,
+  type LoadEnvelopeRecordsRequest,
+  type LoadEnvelopeRecordsResponse
+} from "@wireio/debugging-shared"
 
 import { JsonRPC } from "../../JsonRPC.js"
 
@@ -185,6 +191,26 @@ export namespace OPPRoutes {
           entries,
           total: entries.length
         })
+      }
+    )
+
+    // -----------------------------------------------------------------
+    //  LOAD RECORDS — bulk-decoded epoch records for the "load older"
+    //  affordance in client UIs. Plain JSON body (no protobuf entry in
+    //  HandlerTypeMappings) — dispatcher's else-branch carries it.
+    // -----------------------------------------------------------------
+    JsonRPC.addRoute(
+      registry,
+      ApiPaths.OPP.Methods.LoadRecords,
+      async (
+        params: LoadEnvelopeRecordsRequest
+      ): Promise<LoadEnvelopeRecordsResponse> => {
+        const records = await readEnvelopeRecordsFromDir(oppStoragePath, {
+          epochStart: params.epochStart,
+          epochEnd: params.epochEnd,
+          endpointsType: params.endpointsType
+        })
+        return { records }
       }
     )
 

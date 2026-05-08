@@ -9,8 +9,10 @@ import { EpochTrackerPanel } from "@wireio/debugging-client-tool-tui/features/op
 import { EpochDetailRoute } from "@wireio/debugging-client-tool-tui/features/opp/routes/EpochDetailRoute.js"
 import { EpochStatusBarWidget } from "@wireio/debugging-client-tool-tui/features/opp/widgets/EpochStatusBarWidget.js"
 import { FeatureComponentToken } from "@wireio/debugging-client-tool-tui/providers/ComponentProviders.js"
+import { DebuggingClientService } from "@wireio/debugging-client-tool-tui/services/DebuggingClientService.js"
 import { ReduxService } from "@wireio/debugging-client-tool-tui/services/ReduxService.js"
 import { ServiceManager } from "@wireio/debugging-client-tool-tui/services/ServiceManager.js"
+import { MockDebuggingClient } from "../MockDebuggingClient.js"
 
 const logDir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "opp-fp-"))
 
@@ -47,8 +49,9 @@ describe("OPPFeatureProvider.registerComponents", () => {
 
 describe("OPPFeatureProvider.registerServices", () => {
   it("registers the OPPTrackingService with the manager", () => {
-    // OPPTrackingService dependsOn [Redux], so register Redux first.
+    // OPPTrackingService dependsOn [Redux, DebuggingClient]; register both first.
     const manager = ServiceManager.get().register(ReduxService)
+    manager.registerInstance(new DebuggingClientService(new MockDebuggingClient()))
     OPPFeatureProvider.registerServices(manager)
     expect(manager.find(OPPTrackingService.id)?.serviceType).toBe(
       OPPTrackingService

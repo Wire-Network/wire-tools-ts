@@ -1,3 +1,4 @@
+export * from "./DebuggingClientService.js"
 export * from "./Service.js"
 export * from "./ServiceId.js"
 export * from "./ServiceType.js"

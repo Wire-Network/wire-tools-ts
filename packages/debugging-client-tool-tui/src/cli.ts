@@ -1,47 +1,41 @@
-import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import { asOption } from "@3fv/prelude-ts"
 import Yargs from "yargs"
 import { hideBin } from "yargs/helpers"
+import { ClusterFiles } from "@wireio/debugging-shared"
 import {
-  ClusterFiles,
-  type ClusterConfig,
-  type ClusterState
-} from "@wireio/debugging-shared"
+  LocalFileDebuggingClient,
+  NetDebuggingClient,
+  type DebuggingClient
+} from "@wireio/debugging-client-shared"
 import { type Level } from "@wireio/shared"
-
-/** Result of loading a cluster directory's on-disk files. */
-export interface ToolClusterConfig {
-  /** Absolute cluster directory (same as `CLI.Args.clusterPath`). */
-  path: string
-  /** Contents of `cluster-config.json` — always present after create. */
-  config: ClusterConfig
-  /**
-   * Contents of `cluster-state.json` — null before the cluster has been
-   * bootstrapped or if the state file is missing. In that case the TUI can
-   * still load config-only info (ports, paths) but has no node process state
-   * to monitor.
-   */
-  state: ClusterState | null
-}
 
 export namespace CLI {
   export namespace Options {
-    /** Yargs option name for the cluster path. */
+    /** Yargs option name for the local cluster path mode. */
     export const ClusterPathOption = "cluster-path" as const
     /** Short alias for the cluster path option. */
     export const ClusterPathAlias = "c" as const
+    /** Yargs option name for the network mode (debugging-server URL). */
+    export const ServerUrlOption = "server-url" as const
+    /** Short alias for the server URL option. */
+    export const ServerUrlAlias = "s" as const
     /** Yargs option name for the feature-id filter. */
     export const FeaturesOption = "features" as const
     /** Yargs option name for the root log level. */
     export const LogLevelOption = "log-level" as const
   }
 
+  /** Mutually-exclusive transport selection captured from the CLI. */
+  export type Mode =
+    | { kind: "local"; clusterPath: string }
+    | { kind: "remote"; serverUrl: string }
+
   /** Parsed CLI arguments — resolved and validated. */
   export interface Args {
-    /** Absolute path to a cluster directory. */
-    clusterPath: string
+    /** Transport selection — exactly one of local-disk or remote. */
+    mode: Mode
     /** Null when `--features` is omitted (all providers active). Lowercased ids otherwise. */
     activeFeatureIds: Set<string> | null
     /** Root log level supplied via `--log-level`, defaults to {@link DefaultLogLevel}. */
@@ -76,31 +70,29 @@ export function coerceFeatures(raw?: string): Set<string> | null {
 }
 
 /**
- * Parse argv into a strongly-typed `CLI.Args`. Defaults `--cluster-path` to
- * `process.cwd()` so the TUI is launchable from inside a cluster directory
- * without extra flags.
+ * Parse argv into a strongly-typed `CLI.Args`. The TUI requires exactly
+ * one of `--cluster-path` (local-disk transport) or `--server-url`
+ * (remote debugging-server transport).
  */
 export function parseArgs(
   argv: readonly string[] = hideBin(process.argv)
 ): CLI.Args {
-  // noinspection JSUnusedGlobalSymbols
   const parsed = Yargs(argv.slice())
     .scriptName("wire-debugging-client-tool-tui")
     .usage(
-      "$0 [--cluster-path|-c <path>] [--features <ids>] [--log-level <level>]"
+      "$0 (--cluster-path|-c <path> | --server-url|-s <url>) [--features <ids>] [--log-level <level>]"
     )
     .option(CLI.Options.ClusterPathOption, {
       alias: CLI.Options.ClusterPathAlias,
       type: "string",
-      default: process.cwd(),
       describe:
-        "Path to a cluster directory. Defaults to the current directory.",
-      coerce: (clusterPath: string) =>
-        asOption(Path.resolve(clusterPath))
-          .filter(p => Fs.existsSync(Path.join(p, ClusterFiles.ConfigFilename)))
-          .getOrThrow(
-            `${ClusterFiles.ConfigFilename} not found in ${clusterPath} — is this a cluster directory?`
-          )
+        "Path to a cluster directory (local-disk transport). Mutually exclusive with --server-url."
+    })
+    .option(CLI.Options.ServerUrlOption, {
+      alias: CLI.Options.ServerUrlAlias,
+      type: "string",
+      describe:
+        "Base URL of a running debugging-server (remote transport, e.g. http://127.0.0.1:9876). Mutually exclusive with --cluster-path."
     })
     .option(CLI.Options.FeaturesOption, {
       type: "string",
@@ -114,41 +106,49 @@ export function parseArgs(
       choices: CLI.LogLevels,
       describe: "Root log level."
     })
+    .check(args => {
+      const hasCluster = typeof args.clusterPath === "string",
+        hasServer = typeof args.serverUrl === "string"
+      if (hasCluster === hasServer) {
+        throw new Error(
+          `Specify exactly one of --${CLI.Options.ClusterPathOption} or --${CLI.Options.ServerUrlOption}`
+        )
+      }
+      if (hasCluster) {
+        const resolved = Path.resolve(args.clusterPath as string),
+          configFile = Path.join(resolved, ClusterFiles.ConfigFilename)
+        if (!Fs.existsSync(configFile)) {
+          throw new Error(
+            `${ClusterFiles.ConfigFilename} not found in ${resolved} — is this a cluster directory?`
+          )
+        }
+      }
+      return true
+    })
     .strict()
     .help()
     .parseSync()
 
+  const mode: CLI.Mode =
+    typeof parsed.clusterPath === "string"
+      ? { kind: "local", clusterPath: Path.resolve(parsed.clusterPath) }
+      : { kind: "remote", serverUrl: parsed.serverUrl as string }
+
   return {
-    clusterPath: parsed.clusterPath as string,
+    mode,
     activeFeatureIds: (parsed.features as Set<string> | null) ?? null,
     logLevel: parsed.logLevel as Level
   }
 }
 
 /**
- * Load the on-disk cluster shape from a directory produced by
- * `wire-test-cluster create`. Throws if the config file is absent; state is
- * returned as `null` when its file hasn't been written yet.
+ * Construct the right `DebuggingClient` for the selected mode. Validates
+ * connectivity (ping for net mode, file existence for local mode) before
+ * returning so launch-time misconfigurations surface immediately.
  */
-export function loadCluster(clusterPath: string): ToolClusterConfig {
-  Assert.ok(
-    Fs.existsSync(clusterPath),
-    `Cluster path does not exist: ${clusterPath}`
-  )
-  const configFile = Path.join(clusterPath, ClusterFiles.ConfigFilename),
-    stateFile = Path.join(clusterPath, ClusterFiles.StateFilename)
-  Assert.ok(
-    Fs.existsSync(configFile),
-    `${ClusterFiles.ConfigFilename} not found in ${clusterPath} — is this a cluster directory?`
-  )
-  const config = JSON.parse(
-      Fs.readFileSync(configFile, "utf-8")
-    ) as ClusterConfig,
-    state = asOption(Fs.existsSync(stateFile))
-      .filter(Boolean)
-      .map(
-        () => JSON.parse(Fs.readFileSync(stateFile, "utf-8")) as ClusterState
-      )
-      .getOrNull()
-  return { path: clusterPath, config, state }
+export async function createClient(mode: CLI.Mode): Promise<DebuggingClient> {
+  if (mode.kind === "local") {
+    return LocalFileDebuggingClient.create({ clusterPath: mode.clusterPath })
+  }
+  return NetDebuggingClient.create({ baseUrl: mode.serverUrl })
 }

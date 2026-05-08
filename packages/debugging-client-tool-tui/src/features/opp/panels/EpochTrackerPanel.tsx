@@ -5,8 +5,14 @@ import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import type { PanelComponentProps } from "../../../components/PanelComponent.js"
 import { adjustStickyWindow } from "../../../components/stickyWindow.js"
 import { useRouter } from "../../../router/index.js"
+import { useService } from "../../../services/ServiceContext.js"
+import { ServiceId } from "../../../services/ServiceId.js"
 import { useAppSelector } from "../../../store/Store.js"
-import { selectAllEpochsDescending } from "../../../store/opp/OPPSelectors.js"
+import {
+  selectAllEpochsDescending,
+  selectOldestEpochIndex
+} from "../../../store/opp/OPPSelectors.js"
+import { OPPTrackingService } from "../OPPTrackingService.js"
 import type {
   DebugOPPEnvelopeRecord,
   DebugOPPEpochRecord
@@ -208,6 +214,8 @@ function EpochRow(props: {
 
 function EpochTrackerBody(_: PanelComponentProps): React.ReactElement {
   const epochs = useAppSelector(selectAllEpochsDescending),
+    oldestEpoch = useAppSelector(selectOldestEpochIndex),
+    tracking = useService<OPPTrackingService>(ServiceId.OPPTracking),
     { rows } = useWindowSize(),
     router = useRouter(),
     { isFocused } = useFocus({
@@ -216,7 +224,9 @@ function EpochTrackerBody(_: PanelComponentProps): React.ReactElement {
     }),
     { focus: _focus } = useFocusManager(),
     [selectedEpoch, setSelectedEpoch] = useState<number | null>(null),
-    [sliceStart, setSliceStart] = useState(0)
+    [sliceStart, setSliceStart] = useState(0),
+    [loadingOlder, setLoadingOlder] = useState(false),
+    [olderExhausted, setOlderExhausted] = useState(false)
 
   const cursorByLabel =
       selectedEpoch === null
@@ -253,6 +263,21 @@ function EpochTrackerBody(_: PanelComponentProps): React.ReactElement {
     [epochs, safeCursorIdx]
   )
 
+  const loadOlder = React.useCallback(async () => {
+    if (loadingOlder || olderExhausted) return
+    if (oldestEpoch === null || oldestEpoch <= 0) {
+      setOlderExhausted(true)
+      return
+    }
+    setLoadingOlder(true)
+    try {
+      const lowest = await tracking.loadOlder(oldestEpoch)
+      if (lowest === null) setOlderExhausted(true)
+    } finally {
+      setLoadingOlder(false)
+    }
+  }, [loadingOlder, olderExhausted, oldestEpoch, tracking])
+
   useInput(
     (input, key) => {
       if (epochs.length === 0) return
@@ -261,6 +286,8 @@ function EpochTrackerBody(_: PanelComponentProps): React.ReactElement {
         .with({ input: "k" }, () => move(-1))
         .with({ key: { downArrow: true } }, () => move(1))
         .with({ input: "j" }, () => move(1))
+        .with({ input: "<" }, () => void loadOlder())
+        .with({ input: "[" }, () => void loadOlder())
         .with({ key: { return: true } }, () =>
           router.push(EpochTrackerPanel.DetailRoutePath, {
             epoch: String(epochs[safeCursorIdx].epoch)
@@ -288,6 +315,11 @@ function EpochTrackerBody(_: PanelComponentProps): React.ReactElement {
     <Box flexDirection="column">
       <Text bold color={isFocused ? "cyan" : undefined}>
         {epochs.length} epoch(s) cached — ↑/↓ select, Enter for detail
+        {olderExhausted
+          ? "  ·  no older epochs"
+          : loadingOlder
+            ? "  ·  loading older…"
+            : "  ·  < or [ to load older"}
         {isFocused ? "" : "  (Tab to focus)"}
       </Text>
       <Box flexDirection="column" marginTop={1}>

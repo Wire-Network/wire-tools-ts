@@ -3,12 +3,13 @@ import React from "react"
 import { render } from "ink"
 import { Provider } from "react-redux"
 import { App } from "./App.js"
-import { loadCluster, parseArgs } from "./cli.js"
+import { createClient, parseArgs } from "./cli.js"
 import {
   LoggingManager,
   getGlobalLogger
 } from "./logging/LoggingManager.js"
 import {
+  DebuggingClientService,
   ReduxService,
   ServiceManager,
   ServiceManagerProvider
@@ -41,23 +42,37 @@ import {
 
 async function main(): Promise<void> {
   const args = parseArgs(),
-    loaded = loadCluster(args.clusterPath)
+    client = await createClient(args.mode)
+
+  // The cluster slice still expects a `path` for log file paths the
+  // server publishes — for local mode it's the local cluster, for
+  // remote mode the server's path is opaque to the client (UI uses
+  // it as an identifier only).
+  const config = await client.getClusterConfig(),
+    state = await client.getClusterState(),
+    clusterPath = config.clusterPath
+
   LoggingManager.configure({
-    clusterPath: loaded.path,
+    clusterPath,
     level: args.logLevel
   })
   const log = getGlobalLogger()
-  log.info(`TUI starting — cluster: ${loaded.path}`)
+  log.info(
+    args.mode.kind === "local"
+      ? `TUI starting (local) — cluster: ${args.mode.clusterPath}`
+      : `TUI starting (remote) — server: ${args.mode.serverUrl}`
+  )
 
   store.dispatch(
     setCluster({
-      path: loaded.path,
-      config: loaded.config,
-      state: loaded.state
+      path: clusterPath,
+      config,
+      state
     })
   )
 
   ServiceManager.register(ReduxService)
+  ServiceManager.get().registerInstance(new DebuggingClientService(client))
 
   const active = selectActiveProviders(KnownProviders, args.activeFeatureIds),
     activeIds = active.map(p => p.id)

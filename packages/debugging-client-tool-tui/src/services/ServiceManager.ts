@@ -58,6 +58,45 @@ export class ServiceManager {
     return this
   }
 
+  /**
+   * Register a pre-constructed service instance. Use when the service's
+   * constructor needs runtime arguments that are only available at the
+   * call site (e.g. a `DebuggingClient` chosen by CLI flags). The
+   * instance's `init()` and `start()` are still invoked by `boot()`.
+   *
+   * The instance must expose `static readonly id` and `static readonly
+   * dependsOn` matching the {@link ServiceType} contract — those are
+   * read off the constructor.
+   */
+  registerInstance<T extends Service>(service: T): this {
+    Assert.ok(
+      this.configurable,
+      "ServiceManager already booted; cannot register more services"
+    )
+    const ctor = service.constructor as ServiceType<T>
+    Assert.ok(ctor?.id, "Pre-constructed service missing static id")
+    Assert.ok(
+      !this.serviceRecordMap.has(ctor.id),
+      `Service "${ctor.id}" is already registered`
+    )
+    const depRecords: ServiceRecord[] = (ctor.dependsOn ?? []).map(depId => {
+      const dep = this.serviceRecordMap.get(depId)
+      Assert.ok(
+        dep,
+        `Service "${ctor.id}" depends on "${depId}" which is not yet registered`
+      )
+      return dep
+    })
+    const rec: ServiceRecord<T> = {
+      id: ctor.id,
+      serviceType: ctor,
+      service,
+      dependsOn: depRecords
+    }
+    this.serviceRecordMap.set(ctor.id, rec)
+    return this
+  }
+
   /** Lookup a registered record without asserting boot status. */
   find(id: string): ServiceRecord | undefined {
     return this.serviceRecordMap.get(id)
@@ -118,7 +157,7 @@ export class ServiceManager {
     )
     try {
       await Bluebird.each(records, async r => {
-        r.service = new r.serviceType()
+        if (!r.service) r.service = new r.serviceType()
         await r.service.init(this)
       })
       this.log.info("Starting services")

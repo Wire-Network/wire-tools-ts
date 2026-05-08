@@ -7,7 +7,7 @@ import {
   parseJsonLogLine,
   type JsonLogRecord,
   type LogLevelColor
-} from "../util/JsonLogRecord.js"
+} from "@wireio/debugging-shared"
 import {
   LineRender,
   renderWithHighlight,
