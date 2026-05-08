@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-b",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": true,
   "type": "commonjs",
   "description": "Flow B: Node Operator Collateral Deposit",
