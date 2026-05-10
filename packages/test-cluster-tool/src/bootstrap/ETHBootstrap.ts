@@ -162,7 +162,11 @@ export class ETHBootstrap {
         await mgr.configureOPPEndpoint(
           this.addr("OperatorRegistry"),
           [OPERATOR_ACTION, UNDERWRITE_CONFIRM], // sends
-          [UNDERWRITE_INTENT, SLASH_OPERATOR, ROSTER_UPDATE] // receives
+          // OPERATORS/ROSTER_UPDATE is consumed exclusively by OPPInbound's
+          // address-resolver cache. OperatorRegistry reads that cache on
+          // demand at slash / remit time via the inherited oppInboundAddress()
+          // getter, so it doesn't need its own copy of the attestation.
+          [UNDERWRITE_INTENT, SLASH_OPERATOR] // receives
         )
       },
       { label: "configure OperatorRegistry" }
