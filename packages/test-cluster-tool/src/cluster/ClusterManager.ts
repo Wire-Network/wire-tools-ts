@@ -1789,9 +1789,50 @@ async function bootstrapChain(
 
   // ── Phase 14a–c: Grant sysio.code on OPP contract authorities ──
   // Required for inline actions (epoch advance, evalcons, processprod, etc.)
-  await Bluebird.each(["sysio.epoch", "sysio.msgch", "sysio.opreg"], account =>
-    grantSysioCode(clio, account)
+  await Bluebird.each(
+    [
+      "sysio.epoch",
+      "sysio.msgch",
+      "sysio.opreg",
+      "sysio.uwrit",
+      "sysio.reserv",
+      "sysio.chalg"
+    ],
+    account => grantSysioCode(clio, account)
   )
+
+  // ── Phase 14d: Cross-contract delegation for inline-action dispatch ──
+  // sysio.msgch's `dispatch_operator_action` invokes `sysio.opreg::deposit`
+  // and `sysio.opreg::queuewtdw` inline. Both opreg actions check
+  // `require_auth(get_self()=sysio.opreg)`, so msgch must declare
+  // `permission_level{sysio.opreg, active}` on its inline action. For the
+  // chain's inline-send auth check to accept that declaration, `opreg.active`
+  // must trust `sysio.msgch@sysio.code` — added here, mirroring the
+  // sysio↔sysio.authex grant in Phase 12 above.
+  await clio.pushTransaction({
+    account: "sysio",
+    name: "updateauth",
+    data: {
+      account: "sysio.opreg",
+      permission: "active",
+      parent: "owner",
+      auth: {
+        threshold: 1,
+        keys: [{ key: DEV_K1_PUBLIC_KEY, weight: 1 }],
+        accounts: [
+          {
+            permission: { actor: "sysio.msgch", permission: "sysio.code" },
+            weight: 1
+          },
+          {
+            permission: { actor: "sysio.opreg", permission: "sysio.code" },
+            weight: 1
+          }
+        ]
+      }
+    },
+    authorization: [{ actor: "sysio.opreg", permission: "owner" }]
+  })
 
   // ── Phase 15: Configure sysio.epoch ──
   log.info("[Phase 15] Configuring sysio.epoch...")
