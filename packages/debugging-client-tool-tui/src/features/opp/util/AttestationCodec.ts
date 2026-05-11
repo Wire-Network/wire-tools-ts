@@ -5,6 +5,7 @@ import {
   ChainReserveBalanceSheet,
   ChallengeOperatorHash,
   ChallengeRequest,
+  DepositRevert,
   EpochSync,
   NodeOwnerReg,
   OperatorAction,
@@ -12,13 +13,15 @@ import {
   PretokenPurchase,
   PretokenYield,
   Remit,
-  SlashOperator,
   StakeResult,
   StakeUpdate,
   StakingReward,
   SwapRequest,
+  SwapRevert,
   UnderwriteConfirm,
   UnderwriteIntent,
+  UnderwriteIntentCommit,
+  UnderwriteIntentReject,
   WireTokenPurchase,
   type AttestationEntry
 } from "@wireio/opp-typescript-models"
@@ -36,8 +39,8 @@ interface AttestationMessageType {
 /**
  * Single source of truth mapping every `AttestationType` enum value → the
  * `MessageType` that knows how to decode its `data` bytes. Unmapped values
- * (e.g. `UNSPECIFIED`, the few `STAKE`/`UNSTAKE`/`NATIVE_YIELD_REWARD` names
- * for which no companion class is exported by the generated package) fall
+ * (e.g. `UNSPECIFIED`, the few `STAKE`/`UNSTAKE` / pre-launch names for
+ * which no companion class is exported by the generated package) fall
  * through to a raw-record render in the panel — no decode is attempted.
  *
  * Keep the keys aligned with `AttestationType`'s identifiers; renames in the
@@ -53,7 +56,6 @@ export const AttestationDecoders: Partial<
   [AttestationType.STAKE_UPDATE]: StakeUpdate,
   [AttestationType.WIRE_TOKEN_PURCHASE]: WireTokenPurchase,
   [AttestationType.CHALLENGE_RESPONSE]: ChallengeOperatorHash,
-  [AttestationType.SLASH_OPERATOR]: SlashOperator,
   [AttestationType.SWAP]: SwapRequest,
   [AttestationType.UNDERWRITE_INTENT]: UnderwriteIntent,
   [AttestationType.UNDERWRITE_CONFIRM]: UnderwriteConfirm,
@@ -65,7 +67,11 @@ export const AttestationDecoders: Partial<
   [AttestationType.NODE_OWNER_REG]: NodeOwnerReg,
   [AttestationType.STAKING_REWARD]: StakingReward,
   [AttestationType.STAKE_RESULT]: StakeResult,
-  [AttestationType.ATTESTATION_PROCESSING_ERROR]: AttestationProcessingError
+  [AttestationType.ATTESTATION_PROCESSING_ERROR]: AttestationProcessingError,
+  [AttestationType.UNDERWRITE_INTENT_COMMIT]: UnderwriteIntentCommit,
+  [AttestationType.UNDERWRITE_INTENT_REJECT]: UnderwriteIntentReject,
+  [AttestationType.SWAP_REVERT]: SwapRevert,
+  [AttestationType.DEPOSIT_REVERT]: DepositRevert
 }
 
 /**

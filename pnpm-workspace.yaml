@@ -4,3 +4,5 @@ allowBuilds:
   bufferutil: true
   unrs-resolver: true
   utf-8-validate: true
+overrides:
+  uuid: '11'

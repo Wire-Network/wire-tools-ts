@@ -429,6 +429,20 @@ export class ProcessManager {
     return this.handles.get(label)
   }
 
+  /**
+   * Snapshot of every currently-tracked [label, handle] pair, in insertion
+   * order. Useful for tests that need to find a process whose label is
+   * constructed at cluster-bootstrap time (e.g. `batchop.a`-style
+   * identifiers under `ClusterManager`). The returned array is a copy —
+   * adding / removing handles after the call does not mutate it.
+   */
+  getAll(): { label: string; handle: ProcessHandle }[] {
+    return [...this.handles.entries()].map(([label, handle]) => ({
+      label,
+      handle
+    }))
+  }
+
   /** Kill all tracked processes. */
   async killAll(): Promise<void> {
     const labels = [...this.handles.keys()]

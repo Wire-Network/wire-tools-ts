@@ -18,6 +18,8 @@
     { "path": "./packages/flow-b/tsconfig.json" },
     { "path": "./packages/flow-c/tsconfig.json" },
     { "path": "./packages/flow-d/tsconfig.json" },
+    { "path": "./packages/flow-e/tsconfig.json" },
+    { "path": "./packages/flow-f/tsconfig.json" },
     { "path": "./packages/debugging-shared/tsconfig.json" },
     { "path": "./packages/debugging-server/tsconfig.json" },
     { "path": "./packages/debugging-client-shared/tsconfig.json" },

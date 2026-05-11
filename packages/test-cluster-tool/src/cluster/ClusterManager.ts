@@ -42,11 +42,13 @@ import {
   DEV_K1_PUBLIC_KEY,
   MAX_PRODUCERS,
   OPP_CONTRACT_PATHS,
+  OPP_SYSTEM_ACCOUNTS,
   SYSTEM_ACCOUNTS,
   underwriterAccountName
 } from "./constants.js"
 import { ethers } from "ethers"
 import * as Assert from "node:assert"
+import { Keypair } from "@solana/web3.js"
 import { Bytes, KeyType, PrivateKey, SystemContracts } from "@wireio/sdk-core"
 import { which } from "zx"
 import { asOption } from "@3fv/prelude-ts"
@@ -88,6 +90,7 @@ export type {
   ClusterState,
   ClusterFiles,
   NodeState,
+  OperatorNodeKeyMaterial,
   SolanaProgramDeployment
 } from "@wireio/debugging-shared"
 
@@ -241,8 +244,21 @@ export function toNodeLabel(nodeId: string | number): string {
 
 export class ClusterManager {
   private readonly onStopDeferred = new Deferred<void>()
-  private state: ClusterState | null = null
+  private _state: ClusterState | null = null
   private debuggingServer: DebuggingServer | null = null
+
+  /**
+   * Persisted cluster topology + per-node state. Populated by `create()`
+   * after bootstrap completes (or by `loadState()` in attach mode).
+   * Read-only to outside callers — mutate via the public mutators on
+   * this class (`create`, `loadState`, …). Consumers like
+   * `FlowTestContext.getWallet` read `state.batchOperatorNodes` /
+   * `state.underwriterNodes` to reconstruct operator wallets.
+   */
+  get state(): ClusterState | null {
+    return this._state
+  }
+
   get clusterPath() {
     return this.config.clusterPath
   }
@@ -325,11 +341,16 @@ export class ClusterManager {
       `opp-outpost IDL missing: ${idlSrc} (run 'anchor build -p opp-outpost')`
     )
 
-    // Read program id from keypair to feed --bpf-program <id> <so>.
+    // Read program id from keypair to feed --bpf-program <id> <so>. Use the
+    // static `import { Keypair }` at the top of this file rather than a
+    // dynamic `await import(...)` — the dynamic form requires jest to run
+    // with `--experimental-vm-modules`, which the harness does not enable,
+    // so every flow test hit `A dynamic import callback was invoked without
+    // --experimental-vm-modules` inside the SOL-bootstrap leg of cluster
+    // bring-up.
     const keyBytes = Uint8Array.from(
       JSON.parse(Fs.readFileSync(programKeypairFile, "utf-8"))
     )
-    const { Keypair } = await import("@solana/web3.js")
     const programId = Keypair.fromSecretKey(keyBytes).publicKey.toBase58()
 
     // Copy the IDL into the cluster data dir so batch op nodes read a stable
@@ -996,6 +1017,46 @@ export class ClusterManager {
       ])
       log.info("Batch op + underwriter nodes synced")
 
+      // ── 11c. Persist per-operator key material onto NodeStates ──
+      // Flow tests reconstruct operator wallets via
+      // `FlowTestContext.getWallet(chain, type)`; those factories need the
+      // WIRE K1/BLS and (optionally) SOL ED private material on disk to
+      // recreate the same signing identities the bootstrap installed in
+      // kiod / on the sig-provider. ETH-side material is omitted because
+      // wallets are derived deterministically from
+      // `ETHBootstrapper.AnvilMnemonic` + HD index.
+      batchOpStates.forEach((ns, i) => {
+        const k = batchOpKeys[i]
+        const solKey = batchOpSolKeys[ns.operatorAccount!]
+        ns.keys = {
+          wireK1: { publicKey: k.k1.publicKey, privateKey: k.k1.privateKey },
+          wireBls: {
+            publicKey: k.bls.publicKey,
+            privateKey: k.bls.privateKey,
+            proofOfPossession: k.bls.proofOfPossession
+          },
+          ...(solKey
+            ? {
+                solEd: {
+                  publicKey: solKey.toPublic().toString(),
+                  privateKey: solKey.toString()
+                }
+              }
+            : {})
+        }
+      })
+      underwriterStates.forEach((ns, i) => {
+        const k = uwKeys[i]
+        ns.keys = {
+          wireK1: { publicKey: k.k1.publicKey, privateKey: k.k1.privateKey },
+          wireBls: {
+            publicKey: k.bls.publicKey,
+            privateKey: k.bls.privateKey,
+            proofOfPossession: k.bls.proofOfPossession
+          }
+        }
+      })
+
       // ── 12. Persist state (bios excluded, matching Python _save_state) ──
       const clusterState: ClusterState = {
         pnodes: cfg.nodeCount,
@@ -1014,7 +1075,7 @@ export class ClusterManager {
         solanaPrograms: this.solanaPrograms,
         solanaIdlPath: this.solanaIdlPath
       }
-      this.state = clusterState
+      this._state = clusterState
       this.saveState(clusterPath, clusterState)
 
       // ── 12. Shut everything down ──
@@ -1205,7 +1266,7 @@ export class ClusterManager {
     if (!Fs.existsSync(stateFile)) {
       throw new Error(`No cluster state at ${stateFile}`)
     }
-    this.state = JSON.parse(Fs.readFileSync(stateFile, "utf-8")) as ClusterState
+    this._state = JSON.parse(Fs.readFileSync(stateFile, "utf-8")) as ClusterState
     log.info(`Loaded cluster state: ${this.state.nodes.length} nodes`)
     return this
   }
@@ -1788,18 +1849,9 @@ async function bootstrapChain(
   log.info("[Phase 14] OPP contracts deployed")
 
   // ── Phase 14a–c: Grant sysio.code on OPP contract authorities ──
-  // Required for inline actions (epoch advance, evalcons, processprod, etc.)
-  await Bluebird.each(
-    [
-      "sysio.epoch",
-      "sysio.msgch",
-      "sysio.opreg",
-      "sysio.uwrit",
-      "sysio.reserv",
-      "sysio.chalg"
-    ],
-    account => grantSysioCode(clio, account)
-  )
+  // Required for inline actions (epoch advance, evalcons, processprod, etc.).
+  // Iterates the single source of truth — keeps deploy + grant lists in sync.
+  await Bluebird.each(OPP_SYSTEM_ACCOUNTS, account => grantSysioCode(clio, account))
 
   // ── Phase 14d: Cross-contract delegation for inline-action dispatch ──
   // sysio.msgch's `dispatch_operator_action` invokes `sysio.opreg::deposit`

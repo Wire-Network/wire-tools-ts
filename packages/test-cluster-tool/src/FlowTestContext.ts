@@ -4,6 +4,7 @@ import Fs from "node:fs"
 import { ethers } from "ethers"
 import { match } from "ts-pattern"
 import { asOption } from "@3fv/prelude-ts"
+import { ChainKind, OperatorType } from "@wireio/opp-typescript-models"
 import { type ClusterConfig, ClusterManager } from "./cluster/ClusterManager.js"
 import { type ClusterPorts } from "./cluster/ClusterPorts.js"
 import { WIREClient } from "./clients/WIREClient.js"
@@ -11,6 +12,12 @@ import { ClusterOptions } from "./HarnessTypes.js"
 import { log } from "./logger.js"
 import { ProcessManager } from "./processes/ProcessManager.js"
 import { sleep } from "./util.js"
+import {
+  type OperatorAccountWallet,
+  buildEthereumOperatorWallets,
+  buildSolanaOperatorWallets,
+  buildWireOperatorWallets
+} from "./wallet/index.js"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -252,6 +259,93 @@ export class FlowTestContext {
   /** Load an ETH contract instance by name and address. */
   loadETHContract(name: string, address: string): ethers.Contract {
     return new ethers.Contract(address, this.loadETHABI(name), this.ethSigner)
+  }
+
+  // ── Operator wallet accessors ───────────────────────────────────────────
+
+  /**
+   * Lazy cache for {@link getWallet}. Computing the per-chain wallet
+   * bundle requires HD-derivation (ETH) or base58 decoding (SOL) for
+   * every bootstrapped operator; we do it once per `(chain, type)` pair
+   * and hand out a stable array.
+   *
+   * Key shape: `"<chain>:<type>"` — both ChainKind and OperatorType are
+   * numeric enums, so a small string composite avoids nested maps.
+   */
+  private walletCacheByChainAndType = new Map<string, OperatorAccountWallet[]>()
+
+  /**
+   * Return the bootstrapped operator wallets for a `(chain, type)` pair.
+   *
+   * `ClusterManager` Phases 18a / 19 / 19a have already created the WIRE
+   * account, registered the operator in `sysio.opreg::operators`, and
+   * written `sysio.authex::links` entries binding it to chain-specific
+   * pubkeys. The returned wallets can sign on the originating chain
+   * (`ethers.HDNodeWallet` for ETH, `@solana/web3.js Keypair` for SOL,
+   * clio-mediated for WIRE) and carry the curve-appropriate
+   * `PublicKey` / `PrivateKey` that downstream OPP attestations index on.
+   *
+   * Each entry in the returned array is a concrete subclass keyed on
+   * `chain` (e.g., `EthereumOperatorAccountWallet` for
+   * `ChainKind.ETHEREUM`); call sites can narrow via `instanceof` if
+   * they need chain-specific surface beyond the interface.
+   *
+   * @param chain  Originating chain — `ETHEREUM`, `SOLANA`, or `WIRE`.
+   * @param type   Operator type — `BATCH`, `UNDERWRITER`. (`PRODUCER` is
+   *               not bootstrapped through opreg; callers asking for it
+   *               raise.)
+   * @return Read-only array of {@link OperatorAccountWallet}s — empty if
+   *         the cluster is configured with zero operators of that type.
+   */
+  getWallet(
+    chain: ChainKind,
+    type: OperatorType
+  ): readonly OperatorAccountWallet[] {
+    const key = `${chain}:${type}`
+    const cached = this.walletCacheByChainAndType.get(key)
+    if (cached !== undefined) return cached
+    const built = this.computeWallets(chain, type)
+    this.walletCacheByChainAndType.set(key, built)
+    return built
+  }
+
+  /**
+   * One-shot computation for {@link getWallet}'s cache. Reads the
+   * persisted cluster state, selects the operators of the requested
+   * `type`, and hands each off to the chain-specific factory under
+   * `src/wallet/`.
+   */
+  private computeWallets(
+    chain: ChainKind,
+    type: OperatorType
+  ): OperatorAccountWallet[] {
+    const state = this.manager.state
+    Assert.ok(
+      state,
+      "FlowTestContext.getWallet: cluster state not loaded — call after manager.loadState()"
+    )
+    const batchOps = state.batchOperatorNodes ?? [],
+      underwriters = state.underwriterNodes ?? []
+    return match(chain)
+      .with(ChainKind.ETHEREUM, () =>
+        buildEthereumOperatorWallets({
+          ethProvider: this.ethProvider,
+          batchOps,
+          underwriters,
+          type
+        })
+      )
+      .with(ChainKind.SOLANA, () =>
+        buildSolanaOperatorWallets({ batchOps, underwriters, type })
+      )
+      .with(ChainKind.WIRE, () =>
+        buildWireOperatorWallets({ batchOps, underwriters, type })
+      )
+      .otherwise(() => {
+        Assert.fail(
+          `FlowTestContext.getWallet: unsupported chain ${ChainKind[chain]}`
+        )
+      })
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────────────

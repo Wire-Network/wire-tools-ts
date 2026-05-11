@@ -80,6 +80,26 @@ export class WIREClient {
     })
   }
 
+  /**
+   * Read the pending-withdraw queue from sysio.opreg.
+   *
+   * Rows land here when an operator (or their outpost on their behalf) calls
+   * `opreg::withdraw` / `opreg::withdrawinle`; they age out as `flushwtdw`
+   * reaches `eligible_at_epoch` each `sysio.epoch::advance` tick, at which
+   * point an OPERATOR_ACTION(WITHDRAW_REMIT) is emitted outbound to the
+   * holding outpost (or, for chain=WIRE, the funds transfer inline).
+   *
+   * Used by the collateral-lifecycle flow to assert (a) a row appears post-
+   * `withdraw()` and (b) the row disappears after the wait window.
+   */
+  async getWithdrawQueue() {
+    return this.getTableRows<any>({
+      code: WIREClient.Contract.Opreg,
+      scope: WIREClient.Contract.Opreg,
+      table: WIREClient.OpregTable.WithdrawQueue
+    })
+  }
+
   /** Read outpost registry from sysio.epoch */
   async getOutposts() {
     return this.getTableRows<SystemContracts.SysioEpochOutpostInfoType>({
@@ -174,7 +194,8 @@ export namespace WIREClient {
 
   /** Tables on `sysio.opreg`. */
   export enum OpregTable {
-    Operators = "operators"
+    Operators = "operators",
+    WithdrawQueue = "wtdwqueue"
   }
 
   /** Tables on `sysio.msgch`. */

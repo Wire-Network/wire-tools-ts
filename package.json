@@ -32,11 +32,6 @@
   
   },
   "resolutions": {
-    "@wireio/opp-solidity-models": "^1.0.26",
-    "@wireio/opp-typescript-models": "^1.0.26",
-    "@wireio/sdk-core": "^1.0.22",
-    "@wireio/shared": "^1.0.22",
-    "@wireio/shared-node": "^1.0.22",
     "uuid": "11"
   }
 }

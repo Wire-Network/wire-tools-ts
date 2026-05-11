@@ -1,6 +1,7 @@
 import { ethers } from "ethers"
 import Path from "path"
 import Fs from "fs"
+import { AttestationType } from "@wireio/opp-solidity-models"
 import { ETHClient } from "../clients/ETHClient.js"
 import { log } from "../logger.js"
 import { retry } from "../util.js"
@@ -145,28 +146,24 @@ export class ETHBootstrap {
       { label: "setupOPPRoles" }
     )
 
-    // 6. Configure OPP endpoints with attestation types
-    // AttestationType enum values (from protobuf)
-    const OPERATOR_ACTION = 2001
-    const RESERVE_BALANCE_SHEET = 43520
-    const UNDERWRITE_INTENT = 60935
-    const UNDERWRITE_CONFIRM = 60936
-    const SLASH_OPERATOR = 60933
-    const ROSTER_UPDATE = 60941
-    const REMIT = 60938
-    const REMIT_CONFIRM = 60942
-
+    // 6. Configure OPP endpoints — use the typed AttestationType enum
+    // from @wireio/opp-solidity-models (the regenerated bundle) so renames
+    // propagate through the compiler rather than via parallel-maintained
+    // magic numbers.
     log.info("Configuring OperatorRegistry endpoint...")
     await retry(
       async () => {
         await mgr.configureOPPEndpoint(
           this.addr("OperatorRegistry"),
-          [OPERATOR_ACTION, UNDERWRITE_CONFIRM], // sends
-          // OPERATORS/ROSTER_UPDATE is consumed exclusively by OPPInbound's
-          // address-resolver cache. OperatorRegistry reads that cache on
-          // demand at slash / remit time via the inherited oppInboundAddress()
-          // getter, so it doesn't need its own copy of the attestation.
-          [UNDERWRITE_INTENT, SLASH_OPERATOR] // receives
+          [AttestationType.OPERATOR_ACTION, AttestationType.UNDERWRITE_CONFIRM], // sends
+          // OPERATOR_ACTION carries the full inbound surface: WITHDRAW_REMIT
+          // (success-path withdraw return) + SLASH (depot-internal slash
+          // routed to LP). DEPOSIT_REVERT rolls back local deposited credit
+          // when the depot rejects a DEPOSIT_REQUEST (refunds depositor
+          // minus a gas-penalty routed to OutpostReserve / paired LP).
+          // OPERATORS roster is consumed exclusively by OPPInbound's
+          // address-resolver cache.
+          [AttestationType.OPERATOR_ACTION, AttestationType.DEPOSIT_REVERT, AttestationType.UNDERWRITE_INTENT] // receives
         )
       },
       { label: "configure OperatorRegistry" }
@@ -177,8 +174,8 @@ export class ETHBootstrap {
       async () => {
         await mgr.configureOPPEndpoint(
           this.addr("OutpostReserve"),
-          [RESERVE_BALANCE_SHEET, REMIT_CONFIRM], // sends
-          [REMIT] // receives
+          [AttestationType.RESERVE_BALANCE_SHEET, AttestationType.REMIT_CONFIRM], // sends
+          [AttestationType.REMIT] // receives
         )
       },
       { label: "configure OutpostReserve" }
@@ -189,14 +186,16 @@ export class ETHBootstrap {
       async () => {
         await mgr.configureOPPEndpoint(
           this.addr("BAR"),
-          [OPERATOR_ACTION], // sends
+          [AttestationType.OPERATOR_ACTION], // sends
           [] // receives nothing
         )
       },
       { label: "configure BAR" }
     )
 
-    // 7. Set OperatorRegistry on OPPInbound for queryBond
+    // 7. Configuration role grant. (OperatorRegistry no longer needs to be
+    //    registered with OPPInbound — per-operator bond weighting moved
+    //    off-chain to WIRE JSON-RPC; on-chain consensus uses equal weight.)
     log.info("Setting OperatorRegistry on OPPInbound...")
     await retry(
       async () => {

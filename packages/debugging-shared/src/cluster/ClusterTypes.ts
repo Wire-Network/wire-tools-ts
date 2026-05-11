@@ -84,6 +84,48 @@ export enum NodeRole {
 }
 
 /**
+ * Cryptographic material persisted alongside a node's bootstrap state.
+ *
+ * All values use Wire's canonical string spelling (`PUB_K1_*`, `PVT_K1_*`,
+ * `PUB_ED_*`, `PVT_ED_*`, `SIG_BLS_*`) so they round-trip through
+ * `@wireio/sdk-core`'s `PrivateKey.from(str)` / `PublicKey.from(str)`
+ * without any chain-specific byte reshaping. The harness needs these on
+ * disk so that `attach`-mode flow tests can reconstruct the same signing
+ * identities the original bootstrap produced — `kiod`'s wallet is the
+ * source of truth at runtime, but it isn't queryable for raw private
+ * material.
+ *
+ * ETH-side material is intentionally absent: ETH wallets are derived
+ * deterministically from `ETHBootstrapper.AnvilMnemonic + HD index`, so
+ * there's no entropy worth persisting.
+ */
+export interface OperatorNodeKeyMaterial {
+  /**
+   * WIRE-chain K1 signing key — required for every operator node, used to
+   * sign transactions on the depot's WIRE chain.
+   */
+  wireK1: { publicKey: string; privateKey: string }
+  /**
+   * BLS finalizer key + proof-of-possession — present on nodes
+   * registered as producers / finalizers. Underwriter + batch-operator
+   * nodes also receive one because the bootstrap pre-creates the material
+   * even when they don't currently sign blocks.
+   */
+  wireBls?: {
+    publicKey: string
+    privateKey: string
+    proofOfPossession: string
+  }
+  /**
+   * Solana ED25519 key — present on batch-operator nodes when the cluster
+   * was bootstrapped with a Solana outpost. Matches the key linked via
+   * `sysio.authex::createlink` (`linkOperatorChainAccounts`) and the key
+   * configured on the node's `sol-<account>` signature provider.
+   */
+  solEd?: { publicKey: string; privateKey: string }
+}
+
+/**
  * Snapshot of a single cluster node written to state.json. `cmd` is the
  * exact argv the harness launches the process with on `wire-test-cluster run`.
  */
@@ -98,6 +140,12 @@ export interface NodeState {
   producerName: string | null
   role?: NodeRole
   operatorAccount?: string
+  /**
+   * Cryptographic material — populated for operator nodes (batch ops +
+   * underwriters) during bootstrap so flow tests can reconstruct the same
+   * signing identities in attach mode. See {@link OperatorNodeKeyMaterial}.
+   */
+  keys?: OperatorNodeKeyMaterial
 }
 
 /**

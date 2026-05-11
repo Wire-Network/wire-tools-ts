@@ -14,6 +14,7 @@ import {
   CORE_SYMBOL_PRECISION,
   CONTRACT_PATHS,
   OPP_CONTRACT_PATHS,
+  OPP_SYSTEM_ACCOUNTS,
   BASE_PLUGINS,
   PRODUCER_PLUGINS,
   BATCH_OPERATOR_PLUGINS,
@@ -67,6 +68,10 @@ describe("constants", () => {
 
     it("includes sysio.uwrit", () => {
       expect(SYSTEM_ACCOUNTS).toContain("sysio.uwrit")
+    })
+
+    it("includes sysio.reserv", () => {
+      expect(SYSTEM_ACCOUNTS).toContain("sysio.reserv")
     })
 
     it("has no duplicate entries", () => {
@@ -176,6 +181,39 @@ describe("constants", () => {
 
     it("has sysio.uwrit entry", () => {
       expect(OPP_CONTRACT_PATHS["sysio.uwrit"]).toBeDefined()
+    })
+
+    it("has sysio.reserv entry", () => {
+      expect(OPP_CONTRACT_PATHS["sysio.reserv"]).toBeDefined()
+    })
+  })
+
+  describe("OPP_SYSTEM_ACCOUNTS / OPP_CONTRACT_PATHS / SYSTEM_ACCOUNTS sync", () => {
+    // The three lists feed three Phase-14-era bootstrap loops in
+    // `ClusterManager.ts` (account creation, contract deployment, sysio.code
+    // grant). If they ever drift apart — e.g. an account makes it into the
+    // grant loop but is missing from account creation — bootstrap fails at
+    // `updateauth` with an `unsatisfied_authorization` error because the
+    // wallet has no key for an account that doesn't exist. Lock the
+    // invariant in tests so the next OPP contract addition can't repeat it.
+    it("every OPP_SYSTEM_ACCOUNTS account has an OPP_CONTRACT_PATHS entry", () => {
+      const contractKeys = new Set(Object.keys(OPP_CONTRACT_PATHS))
+      const missing = OPP_SYSTEM_ACCOUNTS.filter(a => !contractKeys.has(a))
+      expect(missing).toEqual([])
+    })
+
+    it("every OPP_SYSTEM_ACCOUNTS account is also in SYSTEM_ACCOUNTS", () => {
+      const sysAccounts = new Set<string>(SYSTEM_ACCOUNTS)
+      const missing = OPP_SYSTEM_ACCOUNTS.filter(a => !sysAccounts.has(a))
+      expect(missing).toEqual([])
+    })
+
+    it("every OPP_CONTRACT_PATHS account is in OPP_SYSTEM_ACCOUNTS", () => {
+      const oppAccounts = new Set<string>(OPP_SYSTEM_ACCOUNTS)
+      const missing = Object.keys(OPP_CONTRACT_PATHS).filter(
+        k => !oppAccounts.has(k)
+      )
+      expect(missing).toEqual([])
     })
   })
 

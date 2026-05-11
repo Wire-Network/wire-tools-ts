@@ -47,4 +47,22 @@ describe("ProcessManager", () => {
     await pm.killAll()
     expect(pm.count).toBe(0)
   })
+
+  it("getAll returns empty array when nothing is tracked", () => {
+    expect(pm.getAll()).toEqual([])
+  })
+
+  it("getAll returns each {label, handle} pair in insertion order", async () => {
+    await pm.spawn({ label: "first", command: "sleep", args: ["60"] })
+    await pm.spawn({ label: "second", command: "sleep", args: ["60"] })
+
+    const entries = pm.getAll()
+    expect(entries.map(e => e.label)).toEqual(["first", "second"])
+    expect(entries[0].handle.pid).toBeGreaterThan(0)
+    expect(entries[1].handle.pid).toBeGreaterThan(0)
+    // Returned array is a copy — mutating it doesn't leak back into the
+    // manager.
+    entries.pop()
+    expect(pm.count).toBe(2)
+  })
 })

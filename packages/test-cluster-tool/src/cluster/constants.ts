@@ -120,6 +120,7 @@ export const SYSTEM_ACCOUNTS = [
   "sysio.opreg",
   "sysio.msgch",
   "sysio.uwrit",
+  "sysio.reserv",
   "sysio.chalg",
   "dev.owner1"
 ] as const
@@ -254,6 +255,7 @@ export const OPP_CONTRACT_PATHS = {
   "sysio.opreg": "contracts/sysio.opreg",
   "sysio.msgch": "contracts/sysio.msgch",
   "sysio.uwrit": "contracts/sysio.uwrit",
+  "sysio.reserv": "contracts/sysio.reserv",
   "sysio.chalg": "contracts/sysio.chalg"
 } as const
 
@@ -268,6 +270,7 @@ export const OPP_SYSTEM_ACCOUNTS = [
   "sysio.opreg",
   "sysio.msgch",
   "sysio.uwrit",
+  "sysio.reserv",
   "sysio.chalg"
 ] as const
 

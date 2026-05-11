@@ -1,0 +1,12 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {
+  
+  },
+  "include": [],
+  "references": [
+    { "path": "../test-cluster-tool/tsconfig.json" },
+    { "path": "./tsconfig.src.json" },
+    { "path": "./tsconfig.tests.json" }
+  ]
+}

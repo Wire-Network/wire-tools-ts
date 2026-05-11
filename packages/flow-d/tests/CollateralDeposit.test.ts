@@ -2,6 +2,7 @@ import "jest"
 import { ethers } from "ethers"
 import {
   AnvilManager,
+  type EthereumOperatorAccountWallet,
   FlowTestContext,
   pollUntil,
   log,
@@ -12,7 +13,8 @@ import {
   OperatorType,
   OperatorStatus,
   AttestationType,
-  MessageDirection
+  MessageDirection,
+  TokenKind
 } from "@wireio/opp-typescript-models"
 
 /**
@@ -119,6 +121,9 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   let oppInboundContract: ethers.Contract
   let barContract: ethers.Contract
   let opRegContract: ethers.Contract
+  /** Bootstrapped batch operator used to drive the deposit. */
+  let batchOp: EthereumOperatorAccountWallet
+  let signerAddr: string
 
   // ── Setup ──
 
@@ -127,13 +132,22 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
       epochDurationSec: TEST_EPOCH_DURATION_SEC
     })
 
+    const batchOps = ctx.getWallet(ChainKind.ETHEREUM, OperatorType.BATCH)
+    expect(batchOps.length).toBeGreaterThan(0)
+    batchOp = batchOps[0] as EthereumOperatorAccountWallet
+    signerAddr = batchOp.address
+
     const ethAddrs = ctx.loadETHAddresses()
     oppContract = ctx.loadETHContract("OPP", ethAddrs.OPP)
     oppInboundContract = ctx.loadETHContract("OPPInbound", ethAddrs.OPPInbound)
     barContract = ctx.loadETHContract("BAR", ethAddrs.BAR)
-    opRegContract = ctx.loadETHContract(
-      "OperatorRegistry",
-      ethAddrs.OperatorRegistry
+    // Connect OperatorRegistry via the batch op's HD wallet so deposit
+    // transactions are signed by an authex-linked operator; the depot
+    // resolves `op_address` → WIRE-name via the `bypubkey` index.
+    opRegContract = new ethers.Contract(
+      ethAddrs.OperatorRegistry,
+      ctx.loadETHABI("OperatorRegistry"),
+      batchOp.ethWallet
     )
   }, BootstrapTimeoutMs)
 
@@ -246,18 +260,20 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   })
 
   test("OperatorRegistry has no deposits before test", async () => {
-    const signerAddr = await ctx.ethSigner.getAddress()
-    const info = await opRegContract.operators(signerAddr)
-    expect(Number(info.deposited)).toBe(0)
+    const eth = await opRegContract.depositedByKind(signerAddr, TokenKind.ETH)
+    expect(Number(eth)).toBe(0)
   })
 
   // ── Collateral deposit via OperatorRegistry.deposit() ──
 
   test("OperatorRegistry.deposit() succeeds and emits OperatorDeposited + OPPEnvelope", async () => {
-    const signerAddr = await ctx.ethSigner.getAddress()
-    const tx = await opRegContract.deposit(OPERATOR_TYPE_BATCH, {
-      value: BOND_AMOUNT
-    })
+    const tx = await opRegContract.deposit(
+      OPERATOR_TYPE_BATCH,
+      batchOp.publicKey.data.array,
+      TokenKind.ETH,
+      BOND_AMOUNT,
+      { value: BOND_AMOUNT }
+    )
     const receipt = await tx.wait()
     expect(receipt.status).toBe(1)
 
@@ -282,9 +298,9 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   })
 
   test("Deposit is recorded in OperatorRegistry", async () => {
-    const signerAddr = await ctx.ethSigner.getAddress()
+    const eth = await opRegContract.depositedByKind(signerAddr, TokenKind.ETH)
+    expect(eth).toBe(BOND_AMOUNT)
     const info = await opRegContract.operators(signerAddr)
-    expect(info.deposited).toBe(BOND_AMOUNT)
     expect(Number(info.operatorType)).toBe(OPERATOR_TYPE_BATCH)
     expect(Number(info.status)).toBe(OperatorStatus.ACTIVE)
   })
