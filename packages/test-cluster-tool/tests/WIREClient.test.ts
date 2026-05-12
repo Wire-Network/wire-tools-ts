@@ -41,9 +41,8 @@ describe("WIREClient namespace", () => {
 
   describe("UwritTable", () => {
     it("covers the uwrit-side tables consumed by flow tests", () => {
-      expect(WIREClient.UwritTable.UnderwritingLedger).toBe("uwledger")
       expect(WIREClient.UwritTable.UnderwriteRequests).toBe("uwreqs")
-      expect(WIREClient.UwritTable.Collateral).toBe("collateral")
+      expect(WIREClient.UwritTable.Locks).toBe("locks")
     })
   })
 

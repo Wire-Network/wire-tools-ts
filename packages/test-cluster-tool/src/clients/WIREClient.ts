@@ -1,4 +1,5 @@
 import { APIClient, SystemContracts } from "@wireio/sdk-core"
+import { ChainKind, TokenKind } from "@wireio/opp-typescript-models"
 
 import { Clio, type ClioConfig } from "./Clio.js"
 
@@ -145,15 +146,6 @@ export class WIREClient {
     })
   }
 
-  /** Read underwriting ledger from sysio.uwrit */
-  async getUnderwritingLedger() {
-    return this.getTableRows<SystemContracts.SysioUwritUnderwritingEntryType>({
-      code: WIREClient.Contract.Uwrit,
-      scope: WIREClient.Contract.Uwrit,
-      table: WIREClient.UwritTable.UnderwritingLedger
-    })
-  }
-
   /** Read underwrite requests from sysio.uwrit */
   async getUwRequests() {
     return this.getTableRows<any>({
@@ -163,19 +155,168 @@ export class WIREClient {
     })
   }
 
-  /** Read collateral from sysio.uwrit */
-  async getCollateral() {
-    return this.getTableRows<SystemContracts.SysioUwritCollateralEntryType>({
+  /** Read lock rows from sysio.uwrit. Each lock is one underwriter-side
+   *  obligation for one leg of an in-flight UWREQ; pushed by
+   *  `try_select_winner` and erased by `release`. */
+  async getLocks() {
+    return this.getTableRows<SystemContracts.SysioUwritLockEntryType>({
       code: WIREClient.Contract.Uwrit,
       scope: WIREClient.Contract.Uwrit,
-      table: WIREClient.UwritTable.Collateral
+      table: WIREClient.UwritTable.Locks
     })
+  }
+
+  /**
+   * Provision a per-(chain, external-token) reserve on `sysio.reserv` via
+   * the `setreserve` action. Flat `number` amounts; the `TokenAmount`
+   * wire shape is built internally so test-time provisioning stays DRY.
+   * Uses `pushActionAndWait` so the row is queryable immediately on
+   * resolution.
+   *
+   * The connector-weight knob is omitted from the helper surface — today
+   * `swapquote` ignores it and runs pure constant-product math, so the
+   * action receives the default (5000 bps = constant product).
+   *
+   * @param chain          Outpost chain (ETHEREUM / SOLANA / SUI).
+   * @param kind           Outpost-side TokenKind paired with WIRE in this
+   *                        reserve. Must NOT be `TOKEN_KIND_WIRE`.
+   * @param externalAmount Initial outpost-side balance.
+   * @param wireAmount     Initial WIRE-side balance.
+   */
+  async seedReserve(args: {
+    chain: ChainKind
+    kind: TokenKind
+    externalAmount: number
+    wireAmount: number
+  }): Promise<void> {
+    const { chain, kind, externalAmount, wireAmount } = args
+    const DEFAULT_CONNECTOR_WEIGHT_BPS = 5000
+    // The regenerated `SysioReservTokenamountType` wraps `amount` as
+    // `{ value: number }` (a codegen quirk: it reflects CDT's
+    // `vint64`-wrapping struct, not the JSON wire shape). The ABI
+    // serializer wants a flat number; pass through as untyped to
+    // bypass the broken constraint.
+    await this.clio.pushActionAndWait(
+      "sysio.reserv",
+      "setreserve",
+      {
+        chain,
+        outpost_amount: { kind, amount: externalAmount },
+        wire_amount: { kind: TokenKind.WIRE, amount: wireAmount },
+        connector_weight_bps: DEFAULT_CONNECTOR_WEIGHT_BPS
+      },
+      "sysio.reserv@active"
+    )
+  }
+
+  /**
+   * Cross-chain swap quote for `(from_amount, to_chain, to_token)` —
+   * the read-only `sysio.reserv::swapquote` surface, evaluated
+   * client-side from the live `reserves` table.
+   *
+   * Mirrors the depot's `cp_output` math (constant-product, uint128-
+   * safe) so callers can assert expected quotes before issuing a
+   * SWAP_REQUEST. Uses `APIClient.v1.chain.get_table_rows` from
+   * `@wireio/sdk-core` to read reserves; no extra RPC plumbing.
+   *
+   * @returns the destination amount (number), or `0` when any
+   *          required reserve row is missing — matches the on-chain
+   *          `swapquote` "no quote available" convention.
+   */
+  async swapquote(args: {
+    fromAmount: { kind: TokenKind; amount: number }
+    toChain: ChainKind
+    toToken: TokenKind
+  }): Promise<{ kind: TokenKind; amount: number }> {
+    const { fromAmount, toChain, toToken } = args
+    if (fromAmount.amount <= 0) return { kind: toToken, amount: 0 }
+    if (
+      fromAmount.kind === TokenKind.WIRE &&
+      toToken === TokenKind.WIRE
+    ) {
+      return { kind: toToken, amount: fromAmount.amount }
+    }
+
+    const { rows } = await this.getTableRows<any>({
+      code: "sysio.reserv",
+      scope: "sysio.reserv",
+      table: "reserves",
+      limit: WIREClient.MaxReservesScan
+    })
+
+    const findReserve = (chain: ChainKind, kind: TokenKind) =>
+      rows.find(
+        (r: any) =>
+          Number(r.chain) === Number(chain) &&
+          Number(r.reserve_outpost_amount?.kind) === Number(kind)
+      )
+
+    const outpostAmt = (r: any) => Number(r?.reserve_outpost_amount?.amount ?? 0)
+    const wireAmt = (r: any) => Number(r?.reserve_wire_amount?.amount ?? 0)
+
+    if (fromAmount.kind === TokenKind.WIRE) {
+      const r = findReserve(toChain, toToken)
+      if (!r) return { kind: toToken, amount: 0 }
+      return {
+        kind: toToken,
+        amount: WIREClient.cpOutput(wireAmt(r), outpostAmt(r), fromAmount.amount)
+      }
+    }
+    if (toToken === TokenKind.WIRE) {
+      const r = findReserve(toChain, fromAmount.kind)
+      if (!r) return { kind: toToken, amount: 0 }
+      return {
+        kind: toToken,
+        amount: WIREClient.cpOutput(outpostAmt(r), wireAmt(r), fromAmount.amount)
+      }
+    }
+    // Full hop: src->WIRE->dst, two reserves consulted.
+    const srcR = findReserve(toChain, fromAmount.kind)
+    const dstR = findReserve(toChain, toToken)
+    if (!srcR || !dstR) return { kind: toToken, amount: 0 }
+    const wireIntermediate = WIREClient.cpOutput(
+      outpostAmt(srcR),
+      wireAmt(srcR),
+      fromAmount.amount
+    )
+    if (wireIntermediate === 0) return { kind: toToken, amount: 0 }
+    return {
+      kind: toToken,
+      amount: WIREClient.cpOutput(wireAmt(dstR), outpostAmt(dstR), wireIntermediate)
+    }
   }
 }
 
 export namespace WIREClient {
   /** Default row limit for `getTableRows` when the caller doesn't specify one. */
   export const DefaultRowLimit = 100
+
+  /** Upper bound for a single-page scan of `sysio.reserv::reserves`. The
+   *  table is keyed `(chain, token_kind)` and grows linearly in
+   *  configured pairs — a couple hundred is enough headroom for any
+   *  cluster `swapquote` would target. */
+  export const MaxReservesScan = 256
+
+  /**
+   * Constant-product output, uint128-safe via BigInt — matches
+   * `sysio.reserv::cp_output` exactly. Returns 0 when any side is
+   * zero or when src_amount is zero; saturates at JS `Number.MAX_SAFE_INTEGER`
+   * (well below the on-chain uint64 cap, but every harness test sits
+   * comfortably under it).
+   */
+  export function cpOutput(
+    reserveSrc: number,
+    reserveDst: number,
+    srcAmount: number
+  ): number {
+    if (reserveSrc <= 0 || reserveDst <= 0 || srcAmount <= 0) return 0
+    const num = BigInt(reserveDst) * BigInt(srcAmount)
+    const den = BigInt(reserveSrc) + BigInt(srcAmount)
+    const out = num / den
+    return out > Number.MAX_SAFE_INTEGER
+      ? Number.MAX_SAFE_INTEGER
+      : Number(out)
+  }
 
   /** System contract account names this client reads from. */
   export enum Contract {
@@ -206,10 +347,11 @@ export namespace WIREClient {
     OutEnvelopes = "outenvelopes"
   }
 
-  /** Tables on `sysio.uwrit`. */
+  /** Tables on `sysio.uwrit`. Post-Band-C the contract holds one row per
+   *  uw_request (`uwreqs`) and one row per per-leg lock (`locks`); the
+   *  pre-refactor `uwledger` / `collateral` tables are gone. */
   export enum UwritTable {
-    UnderwritingLedger = "uwledger",
     UnderwriteRequests = "uwreqs",
-    Collateral = "collateral"
+    Locks = "locks"
   }
 }

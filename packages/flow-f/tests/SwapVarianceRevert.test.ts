@@ -16,18 +16,22 @@ import {
  * Flow F: Swap Variance-Tolerance Revert.
  *
  * Per CLAUDE-WIRE-OPERATOR-COLLATERAL-IMPL-PLAN.md §11.4 — variance-tolerance
- * is the per-SWAP guard against LP price drift between quote-time and
- * underwriter-race-open. When the depot's `sysio.reserve::reserve_quote` for
- * the configured (src, dst) legs returns an output more than `tolerance_bps`
- * worse than the user's quote, `sysio.uwrit::createuwreq` REJECTS the swap
- * BEFORE any UWREQ row is created. The depot then emits a SWAP_REVERT
- * outbound to the source outpost so the user's deposited funds get refunded.
+ * is the per-SWAP_REQUEST guard against reserve price drift between
+ * quote-time and underwriter-race-open. When the depot's
+ * `sysio.reserv::swapquote` for the configured (src, dst) legs returns an
+ * output more than `tolerance_bps` worse than the user's quote,
+ * `sysio.uwrit::createuwreq` REJECTS the swap BEFORE any UWREQ row is
+ * created. The depot then emits a SWAP_REVERT outbound to the source
+ * outpost so the user's deposited funds get refunded.
  *
  * Sequence:
- *   1. Provision an LP on `sysio.reserve` for (ETHEREUM, ETH/WIRE).
+ *   1. Provision a reserve on `sysio.reserv` for (ETHEREUM, ETH/WIRE) via
+ *      `setreserve`.
  *   2. Compute the on-chain quote at time T0.
- *   3. Drift the LP price ≥ 100 bps via additional `creditlp` calls.
- *   4. Submit a SWAP attestation with the T0 quote + a 50 bps tolerance.
+ *   3. Drift the outpost-side reserve ≥ 100 bps via an `onreward` credit
+ *      (STAKING_REWARD-shaped action; grows only `reserve_outpost_amount`).
+ *   4. Submit a SWAP_REQUEST attestation with the T0 quote + a 50 bps
+ *      tolerance.
  *   5. Assert NO `uwreqs` row gets created.
  *   6. Assert a SWAP_REVERT attestation is queued outbound to the source
  *      outpost (visible in `sysio.msgch::outenvelopes`).
@@ -37,11 +41,12 @@ import {
  *      DEPOSIT_REVERT but with different correlation fields).
  *
  * NOTE on test mechanics:
- *   This flow needs a way to (a) provision an LP, (b) drift it, (c) submit
- *   a SWAP attestation. The simplest route in v1 is via direct depot-side
- *   action pushes (sysio.reserve::setlp + creditlp via wireClient.push)
- *   rather than waiting for outpost-driven SWAPs — the outpost path requires
- *   an underwriter for the COMMIT race, which is deferred to §11.3.
+ *   This flow needs a way to (a) provision a reserve, (b) drift it,
+ *   (c) submit a SWAP_REQUEST attestation. The simplest route in v1 is
+ *   via direct depot-side action pushes (`sysio.reserv::setreserve` +
+ *   `onreward` via `wireClient.push`) rather than waiting for
+ *   outpost-driven SWAP_REQUESTs — the outpost path requires an
+ *   underwriter for the COMMIT race, which is deferred to §11.3.
  *
  * Environment matches flow-b / flow-d.
  */
@@ -53,25 +58,25 @@ import {
 /** Epoch duration kept short to keep the run under jest's cap. */
 const TEST_EPOCH_DURATION_SEC = 30
 
-/** Initial LP reserves at T0. ETH paired with WIRE, both in base units. */
-const INITIAL_LP_PAIRED = 10_000_000n
-const INITIAL_LP_WIRE = 20_000_000n
+/** Initial reserve balances at T0. ETH paired with WIRE, both in base units. */
+const INITIAL_OUTPOST_AMOUNT = 10_000_000n
+const INITIAL_WIRE_AMOUNT = 20_000_000n
 
 /** Connector weight in bps (50% — standard Bancor). */
 const CONNECTOR_WEIGHT_BPS = 5_000
 
-/** Source amount the user is offering on the SWAP. */
+/** Source amount the user is offering on the SWAP_REQUEST. */
 const SRC_AMOUNT = 100_000n
 
-/** Tolerance the user's SWAP carries (50 bps = 0.5%). Drift must exceed
- *  this to trigger the revert. */
+/** Tolerance the user's SWAP_REQUEST carries (50 bps = 0.5%). Drift must
+ *  exceed this to trigger the revert. */
 const TOLERANCE_BPS = 50
 
-/** Additional LP top-up that drifts the price BEYOND the 50 bps tolerance.
- *  We add a lopsided credit (paired side only) so the WIRE-per-paired rate
- *  shifts well above 100 bps from the original quote. */
-const DRIFT_PAIRED_CREDIT = 1_000_000n
-const DRIFT_WIRE_CREDIT = 0n
+/** Additional reserve top-up that drifts the price BEYOND the 50 bps
+ *  tolerance. `onreward` only credits `reserve_outpost_amount`, so the
+ *  WIRE-per-outpost-token rate shifts well above 100 bps from the
+ *  original quote. */
+const DRIFT_OUTPOST_CREDIT = 1_000_000n
 
 /** 1 s in ms. */
 const MsPerSecond = 1_000
@@ -117,70 +122,83 @@ describe("Flow F: Swap Variance-Tolerance Revert", () => {
     expect(Number(info.head_block_num)).toBeGreaterThan(0)
   })
 
-  // ── Step 1: provision the LP ──
+  // ── Step 1: provision the reserve ──
 
-  test("setlp provisions an ETH/WIRE pool on sysio.reserv", async () => {
-    // sysio.reserv::setlp requires the contract's own active permission
-    // (privileged at bootstrap). The harness's clio wrapper signs with the
-    // bootstrap K1 key which holds sysio.reserv@active per Phase 14d.
+  test("setreserve provisions an ETH/WIRE reserve on sysio.reserv", async () => {
+    // sysio.reserv::setreserve requires the contract's own active
+    // permission (privileged at bootstrap). The harness's clio wrapper
+    // signs with the bootstrap K1 key which holds sysio.reserv@active
+    // per Phase 14d.
     await ctx.wireClient.clio.pushAction(
       "sysio.reserv",
-      "setlp",
+      "setreserve",
       {
         chain: ChainKind.ETHEREUM,
-        paired_token: TokenKind.ETH,
-        reserve_paired: Number(INITIAL_LP_PAIRED),
-        reserve_wire: Number(INITIAL_LP_WIRE),
+        outpost_amount: {
+          kind: TokenKind.ETH,
+          amount: Number(INITIAL_OUTPOST_AMOUNT)
+        },
+        wire_amount: {
+          kind: TokenKind.WIRE,
+          amount: Number(INITIAL_WIRE_AMOUNT)
+        },
         connector_weight_bps: CONNECTOR_WEIGHT_BPS
       },
       "sysio.reserv@active"
     )
-    // The LP row's primary key packs (chain << 32) | paired_token. ETH=2,
-    // ETH-token=256 → 2<<32 | 256 = 8589934848. Read it back to confirm.
+    // The reserve row's primary key packs (chain << 32) | outpost_token.
+    // ETH=2, ETH-token=256 → 2<<32 | 256 = 8589934848. Read it back to
+    // confirm.
     const rows = await ctx.wireClient.getTableRows<any>({
       code: "sysio.reserv",
       scope: "sysio.reserv",
-      table: "lps"
+      table: "reserves"
     })
-    const lp = rows.rows.find(
-      (r: any) => Number(r.reserve_paired) === Number(INITIAL_LP_PAIRED)
+    const r = rows.rows.find(
+      (row: any) =>
+        Number(row.reserve_outpost_amount?.amount) ===
+        Number(INITIAL_OUTPOST_AMOUNT)
     )
-    expect(lp).toBeDefined()
-    expect(Number(lp.reserve_wire)).toBe(Number(INITIAL_LP_WIRE))
+    expect(r).toBeDefined()
+    expect(Number(r.reserve_wire_amount.amount)).toBe(Number(INITIAL_WIRE_AMOUNT))
   })
 
-  // ── Step 2-3: drift the LP price beyond tolerance ──
+  // ── Step 2-3: drift the reserve price beyond tolerance ──
 
-  test("creditlp drifts the LP rate by more than TOLERANCE_BPS", async () => {
-    // sysio.reserv::creditlp expects auth=sysio.msgch (STAKING_REWARD
-    // dispatch). For the test we sign as sysio.msgch (the harness wallet
-    // holds its key from bootstrap Phase 14a–c).
+  test("onreward drifts the reserve rate by more than TOLERANCE_BPS", async () => {
+    // sysio.reserv::onreward expects auth=sysio.msgch (STAKING_REWARD
+    // dispatch). For the test we sign as sysio.msgch (the harness
+    // wallet holds its key from bootstrap Phase 14a–c). `onreward`
+    // grows ONLY `reserve_outpost_amount` — the WIRE-side payout to
+    // the staker is a separate next-epoch action owned by the staking
+    // work stream.
     await ctx.wireClient.clio.pushAction(
       "sysio.reserv",
-      "creditlp",
+      "onreward",
       {
         chain: ChainKind.ETHEREUM,
-        paired_token: TokenKind.ETH,
-        paired_amount: Number(DRIFT_PAIRED_CREDIT),
-        wire_amount: Number(DRIFT_WIRE_CREDIT)
+        outpost_amount: {
+          kind: TokenKind.ETH,
+          amount: Number(DRIFT_OUTPOST_CREDIT)
+        }
       },
       "sysio.msgch@active"
     )
     const rows = await ctx.wireClient.getTableRows<any>({
       code: "sysio.reserv",
       scope: "sysio.reserv",
-      table: "lps"
+      table: "reserves"
     })
-    const lp = rows.rows[0]
-    expect(Number(lp.reserve_paired)).toBe(
-      Number(INITIAL_LP_PAIRED + DRIFT_PAIRED_CREDIT)
+    const r = rows.rows[0]
+    expect(Number(r.reserve_outpost_amount.amount)).toBe(
+      Number(INITIAL_OUTPOST_AMOUNT + DRIFT_OUTPOST_CREDIT)
     )
   })
 
-  // ── Step 4-5: submit a SWAP with a stale quote — expect rejection ──
+  // ── Step 4-5: submit a SWAP_REQUEST with a stale quote — expect rejection ──
 
   test(
-    "createuwreq with stale-quote SWAP yields no uwreqs row + queues SWAP_REVERT outbound",
+    "createuwreq with stale-quote SWAP_REQUEST yields no uwreqs row + queues SWAP_REVERT outbound",
     async () => {
       // The depot-side variance check happens inside
       // `sysio.uwrit::createuwreq`, dispatched from msgch when an
@@ -193,10 +211,10 @@ describe("Flow F: Swap Variance-Tolerance Revert", () => {
       //
       // Path (b) is the fast lane for this scenario — it exercises the
       // variance-check branch without the full envelope round-trip.
-      const stalePairedRate =
-        Number(INITIAL_LP_WIRE) / Number(INITIAL_LP_PAIRED)
+      const staleRate =
+        Number(INITIAL_WIRE_AMOUNT) / Number(INITIAL_OUTPOST_AMOUNT)
       const staleDstAmount = BigInt(
-        Math.floor(Number(SRC_AMOUNT) * stalePairedRate)
+        Math.floor(Number(SRC_AMOUNT) * staleRate)
       )
       await ctx.wireClient.clio.pushAction(
         "sysio.uwrit",

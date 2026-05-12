@@ -428,21 +428,17 @@ export class WIREBootstrap {
     //   log.warn(`Failed to register SOL outpost: ${err.message}`)
     // }
 
-    // sysio.uwrit::setconfig
+    // sysio.uwrit::setconfig — post-Band-C the action takes only
+    // `fee_bps`; the lock duration and share splits moved off the
+    // setconfig surface.
     try {
       await this.clio.pushAction<SystemContracts.SysioUwritSetconfigAction>(
         "sysio.uwrit",
         "setconfig",
-        {
-          fee_bps: 10,
-          confirm_lock_sec: 86400,
-          uw_fee_share_pct: 50,
-          other_uw_share_pct: 25,
-          batch_op_share_pct: 25
-        },
+        { fee_bps: 10 },
         "sysio.uwrit@active"
       )
-      log.info("Underwriting config set (10bps fee, 24hr lock)")
+      log.info("Underwriting config set (10bps fee)")
     } catch (err: any) {
       log.warn(`Failed to configure underwriting: ${err.message}`)
     }

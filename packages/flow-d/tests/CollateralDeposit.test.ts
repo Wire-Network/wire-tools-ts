@@ -413,8 +413,8 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
 
   // ── WIRE-side state after relay ──
 
-  test("No underwriting entries on WIRE (collateral deposit, not underwriting)", async () => {
-    const { rows } = await ctx.wireClient.getUnderwritingLedger()
+  test("No uwreq lock rows on WIRE (collateral deposit, not underwriting)", async () => {
+    const { rows } = await ctx.wireClient.getLocks()
     expect(rows.length).toBe(0)
   })
 })
