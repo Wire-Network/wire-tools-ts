@@ -12,10 +12,11 @@ import {
   Operators,
   PretokenPurchase,
   PretokenYield,
-  Remit,
   StakeResult,
   StakeUpdate,
   StakingReward,
+  SwapRejected,
+  SwapRemit,
   SwapRequest,
   SwapRevert,
   UnderwriteConfirm,
@@ -56,10 +57,10 @@ export const AttestationDecoders: Partial<
   [AttestationType.STAKE_UPDATE]: StakeUpdate,
   [AttestationType.WIRE_TOKEN_PURCHASE]: WireTokenPurchase,
   [AttestationType.CHALLENGE_RESPONSE]: ChallengeOperatorHash,
-  [AttestationType.SWAP]: SwapRequest,
+  [AttestationType.SWAP_REQUEST]: SwapRequest,
   [AttestationType.UNDERWRITE_INTENT]: UnderwriteIntent,
   [AttestationType.UNDERWRITE_CONFIRM]: UnderwriteConfirm,
-  [AttestationType.REMIT]: Remit,
+  [AttestationType.SWAP_REMIT]: SwapRemit,
   [AttestationType.CHALLENGE_REQUEST]: ChallengeRequest,
   [AttestationType.EPOCH_SYNC]: EpochSync,
   [AttestationType.OPERATORS]: Operators,
@@ -71,7 +72,8 @@ export const AttestationDecoders: Partial<
   [AttestationType.UNDERWRITE_INTENT_COMMIT]: UnderwriteIntentCommit,
   [AttestationType.UNDERWRITE_INTENT_REJECT]: UnderwriteIntentReject,
   [AttestationType.SWAP_REVERT]: SwapRevert,
-  [AttestationType.DEPOSIT_REVERT]: DepositRevert
+  [AttestationType.DEPOSIT_REVERT]: DepositRevert,
+  [AttestationType.SWAP_REJECTED]: SwapRejected
 }
 
 /**

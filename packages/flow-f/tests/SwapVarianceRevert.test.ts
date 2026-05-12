@@ -184,11 +184,11 @@ describe("Flow F: Swap Variance-Tolerance Revert", () => {
     async () => {
       // The depot-side variance check happens inside
       // `sysio.uwrit::createuwreq`, dispatched from msgch when an
-      // ATTESTATION_TYPE_SWAP envelope is processed. For test purposes we
-      // can either:
-      //   (a) inject the SWAP attestation through the OPP envelope path
-      //       (requires building a complete envelope + delivering via a
-      //       batch operator), or
+      // ATTESTATION_TYPE_SWAP_REQUEST envelope is processed. For test
+      // purposes we can either:
+      //   (a) inject the SWAP_REQUEST attestation through the OPP envelope
+      //       path (requires building a complete envelope + delivering via
+      //       a batch operator), or
       //   (b) call `sysio.uwrit::createuwreq` directly as sysio.msgch.
       //
       // Path (b) is the fast lane for this scenario — it exercises the
@@ -203,7 +203,7 @@ describe("Flow F: Swap Variance-Tolerance Revert", () => {
         "createuwreq",
         {
           attestation_id: 1,
-          type: AttestationType.SWAP,
+          type: AttestationType.SWAP_REQUEST,
           outpost_id: 0,
           src_chain: ChainKind.ETHEREUM,
           src_token_kind: TokenKind.ETH,

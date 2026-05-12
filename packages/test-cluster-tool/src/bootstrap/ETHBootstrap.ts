@@ -119,7 +119,7 @@ export class ETHBootstrap {
     const operatorRegistry = await this.deployDirect("OperatorRegistry", [
       this.addr("OutpostManagerAuthority")
     ])
-    const outpostReserve = await this.deployDirect("OutpostReserve", [
+    const reserve = await this.deployDirect("Reserve", [
       this.addr("OutpostManagerAuthority")
     ])
     const bar = await this.deployDirect("BAR", [
@@ -158,9 +158,9 @@ export class ETHBootstrap {
           [AttestationType.OPERATOR_ACTION, AttestationType.UNDERWRITE_CONFIRM], // sends
           // OPERATOR_ACTION carries the full inbound surface: WITHDRAW_REMIT
           // (success-path withdraw return) + SLASH (depot-internal slash
-          // routed to LP). DEPOSIT_REVERT rolls back local deposited credit
-          // when the depot rejects a DEPOSIT_REQUEST (refunds depositor
-          // minus a gas-penalty routed to OutpostReserve / paired LP).
+          // routed to Reserve). DEPOSIT_REVERT rolls back local deposited
+          // credit when the depot rejects a DEPOSIT_REQUEST (refunds depositor
+          // minus a gas-penalty routed to Reserve).
           // OPERATORS roster is consumed exclusively by OPPInbound's
           // address-resolver cache.
           [AttestationType.OPERATOR_ACTION, AttestationType.DEPOSIT_REVERT, AttestationType.UNDERWRITE_INTENT] // receives
@@ -169,16 +169,16 @@ export class ETHBootstrap {
       { label: "configure OperatorRegistry" }
     )
 
-    log.info("Configuring OutpostReserve endpoint...")
+    log.info("Configuring Reserve endpoint...")
     await retry(
       async () => {
         await mgr.configureOPPEndpoint(
-          this.addr("OutpostReserve"),
-          [AttestationType.RESERVE_BALANCE_SHEET, AttestationType.REMIT_CONFIRM], // sends
-          [AttestationType.REMIT] // receives
+          this.addr("Reserve"),
+          [AttestationType.RESERVE_BALANCE_SHEET, AttestationType.SWAP_REJECTED], // sends
+          [AttestationType.SWAP_REMIT] // receives
         )
       },
-      { label: "configure OutpostReserve" }
+      { label: "configure Reserve" }
     )
 
     log.info("Configuring BAR endpoint...")
@@ -205,9 +205,9 @@ export class ETHBootstrap {
     )
 
     // Fund the reserve with some ETH for testing
-    log.info("Funding OutpostReserve with 100 ETH...")
+    log.info("Funding Reserve with 100 ETH...")
     await this.client.signer.sendTransaction({
-      to: this.addr("OutpostReserve"),
+      to: this.addr("Reserve"),
       value: ethers.parseEther("100")
     })
 
