@@ -66,12 +66,11 @@ export namespace EthereumOperatorAccountWallet {
    * key material into sdk-core `PrivateKey` / `PublicKey` so the result
    * satisfies the `OperatorAccountWallet` contract.
    */
-  export function fromEthersWallet(args: {
-    name: string
-    operatorType: OperatorType
+  export function fromEthersWallet(
+    name: string,
+    operatorType: OperatorType,
     ethWallet: ethers.HDNodeWallet
-  }): EthereumOperatorAccountWallet {
-    const { name, operatorType, ethWallet } = args
+  ): EthereumOperatorAccountWallet {
     const privHex = ethWallet.privateKey.startsWith("0x")
       ? ethWallet.privateKey.slice(2)
       : ethWallet.privateKey

@@ -108,12 +108,12 @@ describe("Flow C: SWAP_REQUEST race → SWAP_REMIT", () => {
   // ── Step 1: provision the reserve ──
 
   test("setreserve provisions an ETH/WIRE reserve", async () => {
-    await ctx.wireClient.seedReserve({
-      chain: ChainKind.ETHEREUM,
-      kind: TokenKind.ETH,
-      externalAmount: INITIAL_OUTPOST_AMOUNT,
-      wireAmount: INITIAL_WIRE_AMOUNT
-    })
+    await ctx.wireClient.seedReserve(
+      ChainKind.ETHEREUM,
+      TokenKind.ETH,
+      INITIAL_OUTPOST_AMOUNT,
+      INITIAL_WIRE_AMOUNT
+    )
     const { rows } = await ctx.wireClient.getTableRows<any>({
       code: "sysio.reserv",
       scope: "sysio.reserv",
@@ -132,19 +132,20 @@ describe("Flow C: SWAP_REQUEST race → SWAP_REMIT", () => {
   let expectedDstAmount = 0
 
   test("swapquote returns the constant-product output for the seeded reserve", async () => {
-    const quote = await ctx.wireClient.swapquote({
-      fromAmount: { kind: TokenKind.WIRE, amount: SRC_AMOUNT },
-      toChain: ChainKind.ETHEREUM,
-      toToken: TokenKind.ETH
-    })
+    const quote = await ctx.wireClient.swapquote(
+      TokenKind.WIRE,
+      SRC_AMOUNT,
+      ChainKind.ETHEREUM,
+      TokenKind.ETH
+    )
     // WIRE -> ETH half-hop: cp_output(reserve_wire, reserve_outpost, src).
     const expected = WIREClient.cpOutput(
       INITIAL_WIRE_AMOUNT,
       INITIAL_OUTPOST_AMOUNT,
       SRC_AMOUNT
     )
-    expect(quote.amount).toBe(expected)
-    expectedDstAmount = quote.amount
+    expect(quote).toBe(expected)
+    expectedDstAmount = quote
     log.info(`swapquote: ${SRC_AMOUNT} WIRE -> ${expectedDstAmount} ETH`)
   })
 

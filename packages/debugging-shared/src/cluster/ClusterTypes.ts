@@ -191,6 +191,28 @@ export interface ClusterConfig {
   /** Number of epochs an operator waits in COOLDOWN before deregistering. */
   cooldownEpochs: number
 
+  /**
+   * Per-batch-op rolling-window threshold for `sysio.opreg::termcheck`. Tests
+   * that exercise termination-via-miss (flow-e) shrink this to 2 so termcheck
+   * fires inside the test budget; production-shaped clusters keep the
+   * default 5.
+   */
+  terminateMaxConsecutiveMisses?: number
+
+  /**
+   * Trailing-window miss-rate threshold (percent) for `sysio.opreg::termcheck`.
+   * Defaults to 5 (matches `DEFAULT_TERMINATE_MAX_PCT_MISSES_24H` on the
+   * depot). Tests rarely need to override.
+   */
+  terminateMaxPctMisses24H?: number
+
+  /**
+   * Wall-clock width of the rolling miss window in milliseconds. Defaults to
+   * 24h (matches `DEFAULT_TERMINATE_WINDOW_MS` on the depot). Tests that
+   * compress epochs shrink this so the window covers the test runtime.
+   */
+  terminateWindowMs?: number
+
   /** All port assignments for the cluster. Resolved during create, persisted for run. */
   ports: ClusterPorts
 

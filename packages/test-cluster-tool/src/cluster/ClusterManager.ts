@@ -1919,7 +1919,17 @@ async function bootstrapChain(
       max_available_producers: 21,
       max_available_batch_ops: 63,
       max_available_underwriters: 21,
-      terminate_prune_delay_ms: 600_000 // 10 min for dev
+      terminate_prune_delay_ms: 600_000, // 10 min for dev
+      // Termination thresholds: defaults match `DEFAULT_TERMINATE_*` on the
+      // depot (5 consecutive misses, 5% rate, 24h window). Tests that need
+      // to observe termination in their timeout budget override via
+      // `ClusterConfig.terminateMaxConsecutiveMisses` etc.
+      terminate_max_consecutive_misses:
+        cfg.terminateMaxConsecutiveMisses ?? 5,
+      terminate_max_pct_misses_24h:
+        cfg.terminateMaxPctMisses24H ?? 5,
+      terminate_window_ms:
+        cfg.terminateWindowMs ?? 24 * 60 * 60 * 1000
     },
     "sysio.opreg@active"
   )
@@ -2279,6 +2289,9 @@ export namespace ClusterManager {
       epochDurationSec = 360,
       warmupEpochs = 1,
       cooldownEpochs = 1,
+      terminateMaxConsecutiveMisses,
+      terminateMaxPctMisses24H,
+      terminateWindowMs,
       force = false
     } = opts
 
@@ -2304,6 +2317,9 @@ export namespace ClusterManager {
       epochDurationSec,
       warmupEpochs,
       cooldownEpochs,
+      terminateMaxConsecutiveMisses,
+      terminateMaxPctMisses24H,
+      terminateWindowMs,
       ports: await ClusterPorts.resolve({
         nodeCount,
         batchOperatorCount,

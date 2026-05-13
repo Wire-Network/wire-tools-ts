@@ -54,13 +54,12 @@ export namespace WireOperatorAccountWallet {
    * Build a WIRE wallet from `PUB_K1_*` / `PVT_K1_*` strings as persisted
    * to `NodeState.keys.wireK1`.
    */
-  export function fromStrings(args: {
-    name: string
-    operatorType: OperatorType
-    publicKey: string
+  export function fromStrings(
+    name: string,
+    operatorType: OperatorType,
+    publicKey: string,
     privateKey: string
-  }): WireOperatorAccountWallet {
-    const { name, operatorType, publicKey, privateKey } = args
+  ): WireOperatorAccountWallet {
     return new WireOperatorAccountWallet(
       name,
       operatorType,

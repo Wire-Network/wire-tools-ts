@@ -94,11 +94,11 @@ export function buildEthereumOperatorWallets(
       `${ETHBootstrapper.DerivationPath}${hdIndex}`
     )
     const ethWallet = derived.connect(ethProvider)
-    return EthereumOperatorAccountWallet.fromEthersWallet({
-      name: ns.operatorAccount,
-      operatorType: type,
+    return EthereumOperatorAccountWallet.fromEthersWallet(
+      ns.operatorAccount,
+      type,
       ethWallet
-    })
+    )
   })
 }
 
@@ -124,11 +124,11 @@ export function buildSolanaOperatorWallets(
       return []
     }
     return [
-      SolanaOperatorAccountWallet.fromSdkPrivateKey({
-        name: ns.operatorAccount,
-        operatorType: type,
-        privateKey: PrivateKey.from(keys.solEd.privateKey)
-      })
+      SolanaOperatorAccountWallet.fromSdkPrivateKey(
+        ns.operatorAccount,
+        type,
+        PrivateKey.from(keys.solEd.privateKey)
+      )
     ]
   })
 }
@@ -153,12 +153,12 @@ export function buildWireOperatorWallets(
       keys.wireK1,
       `buildWireOperatorWallets: ${ns.operatorAccount} missing wireK1 key material`
     )
-    return WireOperatorAccountWallet.fromStrings({
-      name: ns.operatorAccount,
-      operatorType: type,
-      publicKey: keys.wireK1.publicKey,
-      privateKey: keys.wireK1.privateKey
-    })
+    return WireOperatorAccountWallet.fromStrings(
+      ns.operatorAccount,
+      type,
+      keys.wireK1.publicKey,
+      keys.wireK1.privateKey
+    )
   })
 }
 

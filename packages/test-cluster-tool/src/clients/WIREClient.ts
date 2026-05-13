@@ -183,26 +183,25 @@ export class WIREClient {
    * @param externalAmount Initial outpost-side balance.
    * @param wireAmount     Initial WIRE-side balance.
    */
-  async seedReserve(args: {
-    chain: ChainKind
-    kind: TokenKind
-    externalAmount: number
+  async seedReserve(
+    chain: ChainKind,
+    kind: TokenKind,
+    externalAmount: number,
     wireAmount: number
-  }): Promise<void> {
-    const { chain, kind, externalAmount, wireAmount } = args
+  ): Promise<void> {
     const DEFAULT_CONNECTOR_WEIGHT_BPS = 5000
-    // The regenerated `SysioReservTokenamountType` wraps `amount` as
-    // `{ value: number }` (a codegen quirk: it reflects CDT's
-    // `vint64`-wrapping struct, not the JSON wire shape). The ABI
-    // serializer wants a flat number; pass through as untyped to
-    // bypass the broken constraint.
+    // Post no-proto-messages-in-actions split: `setreserve` takes flat
+    // `(chain, outpost_kind, outpost_amount, wire_amount,
+    //  connector_weight_bps)` — no nested TokenAmount object on the wire
+    // (which would leak vint64 typedefs into the ABI).
     await this.clio.pushActionAndWait(
       "sysio.reserv",
       "setreserve",
       {
         chain,
-        outpost_amount: { kind, amount: externalAmount },
-        wire_amount: { kind: TokenKind.WIRE, amount: wireAmount },
+        outpost_kind: kind,
+        outpost_amount: externalAmount,
+        wire_amount: wireAmount,
         connector_weight_bps: DEFAULT_CONNECTOR_WEIGHT_BPS
       },
       "sysio.reserv@active"
@@ -221,20 +220,19 @@ export class WIREClient {
    *
    * @returns the destination amount (number), or `0` when any
    *          required reserve row is missing — matches the on-chain
-   *          `swapquote` "no quote available" convention.
+   *          `swapquote` "no quote available" convention. Caller passes
+   *          `toToken` so the destination kind is implicit; mirrors the
+   *          contract's post-split `uint64` return.
    */
-  async swapquote(args: {
-    fromAmount: { kind: TokenKind; amount: number }
-    toChain: ChainKind
+  async swapquote(
+    fromKind: TokenKind,
+    fromAmount: number,
+    toChain: ChainKind,
     toToken: TokenKind
-  }): Promise<{ kind: TokenKind; amount: number }> {
-    const { fromAmount, toChain, toToken } = args
-    if (fromAmount.amount <= 0) return { kind: toToken, amount: 0 }
-    if (
-      fromAmount.kind === TokenKind.WIRE &&
-      toToken === TokenKind.WIRE
-    ) {
-      return { kind: toToken, amount: fromAmount.amount }
+  ): Promise<number> {
+    if (fromAmount <= 0) return 0
+    if (fromKind === TokenKind.WIRE && toToken === TokenKind.WIRE) {
+      return fromAmount
     }
 
     const { rows } = await this.getTableRows<any>({
@@ -251,39 +249,35 @@ export class WIREClient {
           Number(r.reserve_outpost_amount?.kind) === Number(kind)
       )
 
-    const outpostAmt = (r: any) => Number(r?.reserve_outpost_amount?.amount ?? 0)
+    const outpostAmt = (r: any) =>
+      Number(r?.reserve_outpost_amount?.amount ?? 0)
     const wireAmt = (r: any) => Number(r?.reserve_wire_amount?.amount ?? 0)
 
-    if (fromAmount.kind === TokenKind.WIRE) {
+    if (fromKind === TokenKind.WIRE) {
       const r = findReserve(toChain, toToken)
-      if (!r) return { kind: toToken, amount: 0 }
-      return {
-        kind: toToken,
-        amount: WIREClient.cpOutput(wireAmt(r), outpostAmt(r), fromAmount.amount)
-      }
+      if (!r) return 0
+      return WIREClient.cpOutput(wireAmt(r), outpostAmt(r), fromAmount)
     }
     if (toToken === TokenKind.WIRE) {
-      const r = findReserve(toChain, fromAmount.kind)
-      if (!r) return { kind: toToken, amount: 0 }
-      return {
-        kind: toToken,
-        amount: WIREClient.cpOutput(outpostAmt(r), wireAmt(r), fromAmount.amount)
-      }
+      const r = findReserve(toChain, fromKind)
+      if (!r) return 0
+      return WIREClient.cpOutput(outpostAmt(r), wireAmt(r), fromAmount)
     }
     // Full hop: src->WIRE->dst, two reserves consulted.
-    const srcR = findReserve(toChain, fromAmount.kind)
+    const srcR = findReserve(toChain, fromKind)
     const dstR = findReserve(toChain, toToken)
-    if (!srcR || !dstR) return { kind: toToken, amount: 0 }
+    if (!srcR || !dstR) return 0
     const wireIntermediate = WIREClient.cpOutput(
       outpostAmt(srcR),
       wireAmt(srcR),
-      fromAmount.amount
+      fromAmount
     )
-    if (wireIntermediate === 0) return { kind: toToken, amount: 0 }
-    return {
-      kind: toToken,
-      amount: WIREClient.cpOutput(wireAmt(dstR), outpostAmt(dstR), wireIntermediate)
-    }
+    if (wireIntermediate === 0) return 0
+    return WIREClient.cpOutput(
+      wireAmt(dstR),
+      outpostAmt(dstR),
+      wireIntermediate
+    )
   }
 }
 
@@ -313,9 +307,7 @@ export namespace WIREClient {
     const num = BigInt(reserveDst) * BigInt(srcAmount)
     const den = BigInt(reserveSrc) + BigInt(srcAmount)
     const out = num / den
-    return out > Number.MAX_SAFE_INTEGER
-      ? Number.MAX_SAFE_INTEGER
-      : Number(out)
+    return out > Number.MAX_SAFE_INTEGER ? Number.MAX_SAFE_INTEGER : Number(out)
   }
 
   /** System contract account names this client reads from. */

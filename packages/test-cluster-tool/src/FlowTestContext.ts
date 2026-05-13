@@ -183,6 +183,9 @@ export class FlowTestContext {
         opts.underwriterCount ?? FlowTestContext.DefaultUnderwriterCount,
       epochDurationSec:
         opts.epochDurationSec ?? FlowTestContext.DefaultEpochDurationSec,
+      terminateMaxConsecutiveMisses: opts.terminateMaxConsecutiveMisses,
+      terminateMaxPctMisses24H: opts.terminateMaxPctMisses24H,
+      terminateWindowMs: opts.terminateWindowMs,
       force: true
     })
 

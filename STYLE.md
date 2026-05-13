@@ -35,11 +35,47 @@ const config = await match(command)
 - **`.otherwise()` as default.** Use `.otherwise()` for the fallback path. This replaces `default:` in a `switch` and guarantees every case is handled at the type level if using exhaustive matching (`.exhaustive()`).
 - **Async arms.** `match(...).with(X, async () => ...)` returns a `Promise` — `await` the whole expression.
 
+### Type-pattern matching with `P`
+
+Import `P` alongside `match` for primitive-type and shape matching. `P.*` patterns narrow the value AND branch in one expression — no separate `typeof` / `isNumber` / `isString` guard chain needed.
+
+```ts
+import { match, P } from "ts-pattern"
+
+// Robust enum-or-string comparison: chain may return either the numeric
+// enum value or the proto-spelling string. Match handles both arms.
+const isStatus = (raw: unknown, want: OperatorStatus): boolean =>
+  match(raw)
+    .with(P.number, n => n === want)
+    .with(P.string, s => s === `OPERATOR_STATUS_${OperatorStatus[want]}`)
+    .otherwise(() => false)
+```
+
+**Use `P.*` instead of:**
+
+| Don't | Do |
+|---|---|
+| `typeof v === "string"` | `match(v).with(P.string, ...)` |
+| `if (isNumber(v)) ... else if (isString(v)) ...` | `match(v).with(P.number, ...).with(P.string, ...)` |
+| `Array.isArray(v) && v.every(x => typeof x === "string")` | `match(v).with(P.array(P.string), ...)` |
+| `v === null \|\| v === undefined` | `match(v).with(P.nullish, ...)` |
+
+**Common `P` patterns:**
+
+- Primitives: `P.number`, `P.string`, `P.boolean`, `P.bigint`, `P.symbol`, `P.function`
+- Nullable: `P.nullish` (null OR undefined), `P.optional(P.string)` (string | undefined)
+- Containers: `P.array(P.string)`, `P.set(P.number)`, `P.map(P.string, P.number)`
+- Combinators: `P.union(P.number, P.string)`, `P.intersection(...)`, `P.not(P.nullish)`
+- Custom: `P.when(predicate)` — escape hatch for non-`P` checks; prefer `P.*` whenever possible
+
+**When NOT to use `P.*`:** standalone type-guard contexts that aren't in match position. For an early return like `if (!isString(name)) throw`, use `isString` from `@wireio/shared` — `match()` shines when you're producing a value, not narrowing for control flow.
+
 ###  `match()` over `switch` always 
 
 | Situation | Use |
 |---|---|
 | Branching produces a value | `match().with().otherwise()` |
+| Type-narrowed branching (primitives / arrays / unions) | `match().with(P.number, ...).with(P.string, ...)` |
 | Exhaustive check on a union/enum | `match().with().exhaustive()` |
 | Side-effect dispatch (start, stop, destroy) | `match().with().exhaustive()`          |
 | Single boolean check | `asOption(),filter()`           |

@@ -1,5 +1,6 @@
 import "jest"
 import { ethers } from "ethers"
+import { match, P } from "ts-pattern"
 import {
   type EthereumOperatorAccountWallet,
   FlowTestContext,
@@ -56,8 +57,16 @@ import {
 // Config
 // ---------------------------------------------------------------------------
 
-/** Epoch duration kept short to keep the wait windows under jest's cap. */
-const TEST_EPOCH_DURATION_SEC = 30
+/**
+ * Epoch duration matches the bare-cluster working baseline
+ * (`wire-test-cluster --epoch-duration=60`). 30s does NOT give the
+ * full OPP cycle (depot advance → buildenv → batch-op outbound →
+ * outpost ingest → outpost emit → batch-op inbound → deliver →
+ * evalcons) enough time to complete a round-trip — consensus stalls
+ * and the chain halts at the first epoch where the cycle exceeds
+ * `epoch_duration_sec`.
+ */
+const TEST_EPOCH_DURATION_SEC = 60
 
 /** Bond size for the would-be-terminated batch operator. */
 const BOND_AMOUNT = 2_000_000n
@@ -75,11 +84,19 @@ const LongPollIntervalMs = 3_000
 const BootstrapTimeoutMs = 300_000
 
 /**
- * Epochs the test must wait BEFORE termcheck fires. Set above the
- * "3 consecutive misses" threshold with a safety margin — 5 epochs of
- * suppressed delivery is well above the 3-miss boundary.
+ * Epochs the test must wait BEFORE termcheck fires. With 9 batch ops in
+ * 3 groups, the suppressed op's group is active every 3rd epoch — so
+ * `terminate_max_consecutive_misses` of N requires roughly 3*N wall-clock
+ * epochs. The test overrides that threshold to 2 (see the setconfig push
+ * in `beforeAll`), giving an expected ≥6 epochs to terminate; 10 epochs
+ * adds head-room for relay-pipeline latency.
  */
-const MissAccumulationEpochs = 5
+const MissAccumulationEpochs = 10
+
+/** Per-flow-e override of `terminate_max_consecutive_misses` — small
+ *  enough that the kill scenario fires termcheck inside the test budget,
+ *  but >1 so a single transient miss doesn't false-positive. */
+const FlowETerminateMaxConsecutiveMisses = 2
 
 /**
  * Additional epochs allotted for the post-termination remit to propagate
@@ -87,6 +104,36 @@ const MissAccumulationEpochs = 5
  * ETH OperatorRegistry handles inbound).
  */
 const RemitPropagationEpochs = 6
+
+// ---------------------------------------------------------------------------
+// Enum-comparison helpers
+//
+// `chain_plugin::get_table_rows` returns enum-typed columns as their full
+// proto spelling (e.g. `"OPERATOR_STATUS_ACTIVE"`) when called with
+// `json:true`. The TS-side `OperatorStatus` / `OperatorType` enums (from
+// `@wireio/opp-typescript-models`) strip the prefix, so a naive
+// `Number(row.status) === OperatorStatus.ACTIVE` comparison NaN's. Match
+// the row's string form against both the prefixed (chain-emitted) form
+// AND the numeric value so we're robust to either encoding.
+// ---------------------------------------------------------------------------
+
+/** Proto prefix the chain emits in front of the bare enum member name. */
+const EnumProtoPrefix = {
+  status: "OPERATOR_STATUS_",
+  type: "OPERATOR_TYPE_"
+} as const
+
+const isStatus = (raw: unknown, want: OperatorStatus): boolean =>
+  match(raw)
+    .with(P.number, n => n === want)
+    .with(P.string, s => s === `${EnumProtoPrefix.status}${OperatorStatus[want]}`)
+    .otherwise(() => false)
+
+const isType = (raw: unknown, want: OperatorType): boolean =>
+  match(raw)
+    .with(P.number, n => n === want)
+    .with(P.string, s => s === `${EnumProtoPrefix.type}${OperatorType[want]}`)
+    .otherwise(() => false)
 
 // ---------------------------------------------------------------------------
 // Test suite
@@ -108,10 +155,22 @@ describe("Flow E: Termination via Delivery Underperformance (batch operator)", (
   beforeAll(async () => {
     ctx = await FlowTestContext.create({
       epochDurationSec: TEST_EPOCH_DURATION_SEC,
-      // Need at least 2 batch operators: one to terminate, one to keep
-      // producing envelopes so the chain advances during the miss window.
-      // 3 is the default minimum active enforced by sysio.epoch::setconfig.
-      batchOperatorCount: 3
+      // 9 batch operators × 3 groups = 3 ops per group (ODD). Per the
+      // consensus-majority-fallback rule (see
+      // `feedback_batch_op_group_odd_sizing.md`), killing 1 of 3 still
+      // leaves 2/3 consensus reachable — the chain advances, miss is
+      // recorded on the killed op, and termcheck fires naturally.
+      // 3-op clusters deadlock the moment one batchop dies because
+      // each group has only 1 op and consensus on its outpost+epoch
+      // can never resolve.
+      batchOperatorCount: 9,
+      // Push the depot-side `terminate_max_consecutive_misses` down to
+      // `FlowETerminateMaxConsecutiveMisses` (=2) so the kill scenario
+      // produces a TERMINATED status inside `MissAccumulationEpochs` of
+      // wall-clock. Bootstrap installs the override via opreg::setconfig
+      // during its wallet-unlocked window, avoiding the post-bootstrap
+      // wallet-availability race.
+      terminateMaxConsecutiveMisses: FlowETerminateMaxConsecutiveMisses
     })
     const batchOps = ctx.getWallet(ChainKind.ETHEREUM, OperatorType.BATCH)
     expect(batchOps.length).toBeGreaterThan(0)
@@ -147,42 +206,29 @@ describe("Flow E: Termination via Delivery Underperformance (batch operator)", (
     expect(code.length).toBeGreaterThan(4)
   })
 
-  // ── Bond the target operator on ETH so they're ACTIVE on the depot ──
-
-  test("deposit() bonds the test operator", async () => {
-    const tx = await opRegContract.deposit(
-      OperatorType.BATCH,
-      batchOp.publicKey.data.array,
-      TokenKind.ETH,
-      BOND_AMOUNT,
-      { value: BOND_AMOUNT }
-    )
-    const receipt = await tx.wait()
-    expect(receipt.status).toBe(1)
-
-    const eth = await opRegContract.depositedByKind(operatorAddr, TokenKind.ETH)
-    expect(eth).toBe(BOND_AMOUNT)
-    const info = await opRegContract.operators(operatorAddr)
-    expect(Number(info.status)).toBe(OperatorStatus.ACTIVE)
-  })
+  // ── Bootstrapped batch operators are ACTIVE by fiat on the depot ──
+  //
+  // `batchop.a` was created via `regoperator(is_bootstrapped=true)` during
+  // Phase 18a of cluster bootstrap → its status is ACTIVE from genesis, no
+  // deposit flow needed. Per the no-deposits-for-bootstrapped-ops rule,
+  // pushing `OperatorRegistry.deposit(...)` for batchop.a would be
+  // DEPOSIT_REVERT'd by `sysio.opreg::depositinle` on the depot side,
+  // so we skip that step entirely.
+  //
+  // (The depositinle → DEPOSIT_REVERT flow for non-bootstrapped operators
+  //  is covered by flow-d. flow-e's scope is termination-via-miss, not
+  //  the bonding flow.)
 
   test(
-    "operator becomes ACTIVE on the depot opreg roster",
+    "target batch operator is ACTIVE on the depot opreg roster",
     async () => {
-      // After deposit, the depot's roster should reflect at least one ACTIVE
-      // batch operator. The exact operator-to-wire-account mapping depends
-      // on the authex link populated during bootstrap; we assert presence
-      // of the role with the expected balance.
       await pollUntil(
-        "active batch operator with non-zero ETH balance appears",
+        "batchop.a appears with status=ACTIVE on the depot",
         async () => {
           const { rows } = await ctx.wireClient.getOperators()
           return rows.some(
             (op: any) =>
-              Number(op.status) === OperatorStatus.ACTIVE &&
-              (op.balances ?? []).some(
-                (b: any) => Number(b.balance) >= Number(BOND_AMOUNT)
-              )
+              op.account === "batchop.a" && isStatus(op.status, OperatorStatus.ACTIVE)
           )
         },
         TEST_EPOCH_DURATION_SEC * MissAccumulationEpochs * MsPerSecond,
@@ -223,9 +269,7 @@ describe("Flow E: Termination via Delivery Underperformance (batch operator)", (
         "at least one batch operator status flips to TERMINATED",
         async () => {
           const { rows } = await ctx.wireClient.getOperators()
-          return rows.some(
-            (op: any) => Number(op.status) === OperatorStatus.TERMINATED
-          )
+          return rows.some((op: any) => isStatus(op.status, OperatorStatus.TERMINATED))
         },
         terminateDeadlineMs,
         LongPollIntervalMs
@@ -238,21 +282,33 @@ describe("Flow E: Termination via Delivery Underperformance (batch operator)", (
   // ── Post-termination assertions ──
 
   test(
-    "depot emits WITHDRAW_REMIT for the terminated operator's bond",
+    "terminated operator carries a terminated_at timestamp and status_reason on the depot",
     async () => {
-      // termcheck → terminate decrements opreg balance and queues
-      // OPERATOR_ACTION(WITHDRAW_REMIT) outbound to the holding outpost.
-      // After flushwtdw matures the row, the ETH outpost decrements
-      // info.deposited and transfers the funds back to the operator's ETH
-      // address (the authex destination, not the LP — that's slash).
+      // Bootstrapped operators (batchop.a) are bonded on the depot by fiat
+      // and never call `OperatorRegistry.deposit(...)` on the ETH side, so
+      // the WITHDRAW_REMIT round-trip + the ETH mirror update have no
+      // observable effect here — both paths require an actual prior bond
+      // to exercise. flow-d covers the bonded round-trip; flow-e's scope
+      // is the termination state transition on the depot itself.
+      //
+      // The depot-side post-termination invariants for ANY terminated op
+      // (bonded or not):
+      //   - status == TERMINATED      (already covered by the prior test)
+      //   - terminated_at > 0         (set inside terminate_inline)
+      //   - status_reason populated   (rolling-window threshold text)
       const remitDeadlineMs =
         TEST_EPOCH_DURATION_SEC * RemitPropagationEpochs * MsPerSecond
       await pollUntil(
-        "ETH info.deposited decremented after WITHDRAW_REMIT",
+        "any batch operator carries terminated_at>0 and non-empty status_reason",
         async () => {
-          const info = await opRegContract.operators(operatorAddr)
-          // After full remit, deposited should be 0 (entire bond returned).
-          return info.deposited < BOND_AMOUNT
+          const { rows } = await ctx.wireClient.getOperators()
+          return rows.some(
+            (op: any) =>
+              isStatus(op.status, OperatorStatus.TERMINATED) &&
+              Number(op.terminated_at) > 0 &&
+              typeof op.status_reason === "string" &&
+              op.status_reason.length > 0
+          )
         },
         remitDeadlineMs,
         LongPollIntervalMs
@@ -277,8 +333,8 @@ describe("Flow E: Termination via Delivery Underperformance (batch operator)", (
           const { rows } = await ctx.wireClient.getOperators()
           const active = rows.filter(
             (op: any) =>
-              Number(op.type) === OperatorType.BATCH &&
-              Number(op.status) === OperatorStatus.ACTIVE
+              isType(op.type, OperatorType.BATCH) &&
+              isStatus(op.status, OperatorStatus.ACTIVE)
           )
           // Minimum-active was 3 at registration; one termination shouldn't
           // shrink that below the configured floor IF a standby was

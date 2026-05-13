@@ -66,12 +66,11 @@ export namespace SolanaOperatorAccountWallet {
    * matching `@solana/web3.js` `Keypair` from the private bytes so call
    * sites that need the native Solana SDK can read it directly.
    */
-  export function fromSdkPrivateKey(args: {
-    name: string
-    operatorType: OperatorType
+  export function fromSdkPrivateKey(
+    name: string,
+    operatorType: OperatorType,
     privateKey: PrivateKey
-  }): SolanaOperatorAccountWallet {
-    const { name, operatorType, privateKey } = args
+  ): SolanaOperatorAccountWallet {
     const publicKey = privateKey.toPublic()
     // sdk-core's ED25519 private material is 64 bytes (seed || pubkey) —
     // the exact layout `Keypair.fromSecretKey` expects.
