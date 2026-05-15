@@ -13,7 +13,8 @@ import {
   KeyType,
   PrivateKey,
   PublicKey,
-  Signature
+  Signature,
+  SystemContracts
 } from "@wireio/sdk-core"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import type { Clio } from "../clients/Clio.js"
@@ -105,11 +106,14 @@ export async function createAuthExLink(
     ? signEthereumMessage(privateKey, message, ethWallet)
     : signSolanaMessage(privateKey, message))
 
-  await clio.pushAction(
+  await clio.pushAction<SystemContracts.SysioAuthexCreatelinkAction>(
     "sysio.authex",
     "createlink",
     {
-      chain_kind: chainKind,
+      // `ChainKind` (proto enum) and `SysioAuthexChainkind` (system-contract
+      // enum mirror) share identical numeric values — the cast bridges
+      // nominal typing without runtime cost.
+      chain_kind: chainKind as unknown as SystemContracts.SysioAuthexChainkind,
       account,
       sig: signature.toString(),
       pub_key: pubKeyString,

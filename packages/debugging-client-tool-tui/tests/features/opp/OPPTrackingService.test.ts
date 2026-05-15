@@ -1,7 +1,4 @@
-import {
-  EnvelopeEventKind,
-  StreamTopic
-} from "@wireio/debugging-shared"
+import { EnvelopeEventKind, StreamTopic } from "@wireio/debugging-shared"
 import {
   DebuggingClientService,
   ReduxService,
@@ -9,9 +6,7 @@ import {
 } from "@wireio/debugging-client-tool-tui/services/index.js"
 import { OPPTrackingService } from "@wireio/debugging-client-tool-tui/features/opp/OPPTrackingService.js"
 import { store } from "@wireio/debugging-client-tool-tui/store/Store.js"
-import {
-  oppSlice
-} from "@wireio/debugging-client-tool-tui/store/opp/OPPSlice.js"
+import { oppSlice } from "@wireio/debugging-client-tool-tui/store/opp/OPPSlice.js"
 import { LoggingManager } from "@wireio/debugging-client-tool-tui/logging/LoggingManager.js"
 import { Level } from "@wireio/shared"
 import * as Fs from "node:fs"
@@ -41,7 +36,7 @@ describe("OPPTrackingService", () => {
     client = new MockDebuggingClient()
     manager = ServiceManager.get()
     manager.register(ReduxService)
-    manager.registerInstance(new DebuggingClientService(client))
+    manager.registerInstance(new DebuggingClientService(client as any))
     manager.register(OPPTrackingService)
     await manager.boot()
   })

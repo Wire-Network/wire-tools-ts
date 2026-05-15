@@ -1742,7 +1742,7 @@ async function bootstrapChain(
     }
   )
   await clio.setPriv("sysio.roa")
-  await clio.pushActionAndWait(
+  await clio.pushActionAndWait<SystemContracts.SysioRoaActivateroaAction>(
     "sysio.roa",
     "activateroa",
     { total_sys: "75496.0000 SYS", bytes_per_unit: 104 },
@@ -1912,6 +1912,18 @@ async function bootstrapChain(
 
   // ── Phase 15a: Configure sysio.opreg ──
   log.info("[Phase 15a] Configuring sysio.opreg...")
+  // Map ClusterConfig.ChainMinBond[] → action-shape: the depot stamps
+  // `config_timestamp_ms` itself, so callers pin it to 0 here.
+  const toChainMinBondRows = (
+    rows: { chain: number; tokenKind: number; minBond: number }[] | undefined
+  ) =>
+    (rows ?? []).map(r => ({
+      chain: r.chain,
+      token_kind: r.tokenKind,
+      min_bond: r.minBond,
+      config_timestamp_ms: 0
+    }))
+
   await clio.pushAction<SystemContracts.SysioOpregSetconfigAction>(
     "sysio.opreg",
     "setconfig",
@@ -1929,7 +1941,14 @@ async function bootstrapChain(
       terminate_max_pct_misses_24h:
         cfg.terminateMaxPctMisses24H ?? 5,
       terminate_window_ms:
-        cfg.terminateWindowMs ?? 24 * 60 * 60 * 1000
+        cfg.terminateWindowMs ?? 24 * 60 * 60 * 1000,
+      // Per-role collateral requirements. Bootstrapped operators bypass
+      // these; non-bootstrapped operators must satisfy every (chain,
+      // token_kind, min_bond) entry in the matching vector before the
+      // depot's eligibility predicate flips them to ACTIVE.
+      req_prod_collat:    toChainMinBondRows(cfg.reqProdCollat),
+      req_batchop_collat: toChainMinBondRows(cfg.reqBatchopCollat),
+      req_uw_collat:      toChainMinBondRows(cfg.reqUwCollat)
     },
     "sysio.opreg@active"
   )
@@ -2000,12 +2019,12 @@ async function bootstrapChain(
   // ── Phase 18a: Register operators via sysio.opreg ──
   log.info("[Phase 18a] Registering batch operators...")
   await Bluebird.each(batchOpStates, bo =>
-    clio.pushActionAndWait(
+    clio.pushActionAndWait<SystemContracts.SysioOpregRegoperatorAction>(
       "sysio.opreg",
       "regoperator",
       {
         account: bo.operatorAccount!,
-        type: OperatorType.BATCH,
+        type: SystemContracts.SysioOpregOperatortype.OPERATOR_TYPE_BATCH,
         is_bootstrapped: true
       },
       "sysio.opreg@active"
@@ -2016,12 +2035,12 @@ async function bootstrapChain(
   // ── Phase 19: Register underwriters via sysio.opreg ──
   log.info("[Phase 19] Registering underwriters...")
   await Bluebird.each(underwriterStates, uw =>
-    clio.pushActionAndWait(
+    clio.pushActionAndWait<SystemContracts.SysioOpregRegoperatorAction>(
       "sysio.opreg",
       "regoperator",
       {
         account: uw.operatorAccount!,
-        type: OperatorType.UNDERWRITER,
+        type: SystemContracts.SysioOpregOperatortype.OPERATOR_TYPE_UNDERWRITER,
         is_bootstrapped: false
       },
       "sysio.opreg@active"
@@ -2069,10 +2088,10 @@ async function bootstrapChain(
   log.info("[Phase 20] Initializing epoch state...")
 
   // No activation needed — bootstrapped batch ops are already AVAILABLE
-  // initgroups reads AVAILABLE batch ops from sysio.opreg
-  await clio.pushActionAndWait<SystemContracts.SysioEpochInitgroupsAction>(
+  // schbatchgps reads AVAILABLE batch ops from sysio.opreg
+  await clio.pushActionAndWait<SystemContracts.SysioEpochSchbatchgpsAction>(
     "sysio.epoch",
-    "initgroups",
+    "schbatchgps",
     {},
     "sysio.epoch@active"
   )
@@ -2292,6 +2311,9 @@ export namespace ClusterManager {
       terminateMaxConsecutiveMisses,
       terminateMaxPctMisses24H,
       terminateWindowMs,
+      reqProdCollat,
+      reqBatchopCollat,
+      reqUwCollat,
       force = false
     } = opts
 
@@ -2320,6 +2342,9 @@ export namespace ClusterManager {
       terminateMaxConsecutiveMisses,
       terminateMaxPctMisses24H,
       terminateWindowMs,
+      reqProdCollat,
+      reqBatchopCollat,
+      reqUwCollat,
       ports: await ClusterPorts.resolve({
         nodeCount,
         batchOperatorCount,

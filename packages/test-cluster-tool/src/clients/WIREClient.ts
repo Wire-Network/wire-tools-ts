@@ -194,12 +194,15 @@ export class WIREClient {
     // `(chain, outpost_kind, outpost_amount, wire_amount,
     //  connector_weight_bps)` — no nested TokenAmount object on the wire
     // (which would leak vint64 typedefs into the ABI).
-    await this.clio.pushActionAndWait(
+    await this.clio.pushActionAndWait<SystemContracts.SysioReservSetreserveAction>(
       "sysio.reserv",
       "setreserve",
       {
-        chain,
-        outpost_kind: kind,
+        // `ChainKind` / `TokenKind` (proto enums) ↔ `SysioReservChainkind` /
+        // `SysioReservTokenkind` (system-contract enum mirrors) — identical
+        // numeric values; cast bridges nominal typing.
+        chain: chain as unknown as SystemContracts.SysioReservChainkind,
+        outpost_kind: kind as unknown as SystemContracts.SysioReservTokenkind,
         outpost_amount: externalAmount,
         wire_amount: wireAmount,
         connector_weight_bps: DEFAULT_CONNECTOR_WEIGHT_BPS

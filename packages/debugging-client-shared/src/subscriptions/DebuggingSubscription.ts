@@ -1,9 +1,6 @@
 import { EventEmitter } from "eventemitter3"
 
-import type {
-  ClosedReason,
-  StreamTopic
-} from "@wireio/debugging-shared"
+import type { ClosedReason, StreamTopic } from "@wireio/debugging-shared"
 
 /**
  * Event surface for a subscription. Identity-mapped string enum so listener
@@ -71,13 +68,13 @@ export class DebuggingSubscription<T> extends EventEmitter<
    *           transport to route server-pushed events to the right
    *           subscription instance.
    * @param topic The stream topic this subscription belongs to.
-   * @param onClose Transport-supplied teardown hook; invoked exactly once
+   * @param onCloseInternal Transport-supplied teardown hook; invoked exactly once
    *                from `close()`.
    */
   constructor(
     readonly id: number,
     readonly topic: StreamTopic,
-    private readonly onClose: (reason: ClosedReason) => void
+    private readonly onCloseInternal: (reason: ClosedReason) => void
   ) {
     super()
   }
@@ -117,7 +114,7 @@ export class DebuggingSubscription<T> extends EventEmitter<
    */
   close(reason: ClosedReason): void {
     if (this.closed) return
-    this.onClose(reason)
+    this.onCloseInternal(reason)
     this.notifyClosed(reason)
   }
 
@@ -149,9 +146,7 @@ export class DebuggingSubscription<T> extends EventEmitter<
       const drain = this.pendingEvents
       this.pendingEvents = []
       setImmediate(() =>
-        drain.forEach(p =>
-          this.emit(DebuggingSubscriptionEventName.Event, p)
-        )
+        drain.forEach(p => this.emit(DebuggingSubscriptionEventName.Event, p))
       )
     }
     if (

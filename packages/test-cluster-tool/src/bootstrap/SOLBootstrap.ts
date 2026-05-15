@@ -41,10 +41,6 @@ export interface SOLBootstrapConfig {
   deployerKeypair?: string
   /** Program keypair for the opp-outpost program. */
   programKeypairFile?: string
-  /** Initial consensus threshold; overridden by the first inbound
-   *  BATCH_OPERATOR_GROUPS attestation. Defaults to 1 so the bootstrap epoch
-   *  can land with a single delivery. */
-  consensusThreshold?: number
 }
 
 export class SOLBootstrap {
@@ -248,13 +244,16 @@ export class SOLBootstrap {
     const idl = JSON.parse(Fs.readFileSync(idlFile, "utf8"))
     const program = new anchor.Program(idl, provider)
 
-    const consensusThreshold = this.config.consensusThreshold ?? 1
-
     // Build tx and send+confirm via HTTP polling. Anchor's .rpc() uses the
     // deprecated confirmTransaction (30s wall-clock) which fails here because
     // the Solana WebSocket port (rpcPort+1) is occupied by another service.
+    // `initialize` no longer takes a consensus threshold — both consensus
+    // thresholds (primary = group_size, fallback = ceil(group_size / 2)) are
+    // derived on-the-fly from `OperatorRegistry.groups[0].members.len()` at
+    // each `epoch_in` call, and `epoch_duration_sec` is propagated via the
+    // `BATCH_OPERATOR_GROUPS` attestation. See .claude/rules/opp-consensus.md.
     const tx = await program.methods
-      .initialize(consensusThreshold)
+      .initialize()
       .accounts({
         authority: deployer.publicKey,
         config: configPda,

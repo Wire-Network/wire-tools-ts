@@ -51,7 +51,9 @@ describe("OPPFeatureProvider.registerServices", () => {
   it("registers the OPPTrackingService with the manager", () => {
     // OPPTrackingService dependsOn [Redux, DebuggingClient]; register both first.
     const manager = ServiceManager.get().register(ReduxService)
-    manager.registerInstance(new DebuggingClientService(new MockDebuggingClient()))
+    manager.registerInstance(
+      new DebuggingClientService(new MockDebuggingClient() as any)
+    )
     OPPFeatureProvider.registerServices(manager)
     expect(manager.find(OPPTrackingService.id)?.serviceType).toBe(
       OPPTrackingService

@@ -18,7 +18,8 @@ function encodeBatchOperatorGroups(): Uint8Array {
   return BatchOperatorGroups.toBinary({
     activeGroupIndex: 0,
     epochIndex: 0,
-    groups: []
+    groups: [],
+    epochDurationSec: 0
   })
 }
 

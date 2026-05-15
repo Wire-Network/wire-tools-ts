@@ -55,7 +55,9 @@ describe("ProcessMonitorFeatureProvider.registerComponents", () => {
 describe("ProcessMonitorFeatureProvider.registerServices", () => {
   it("registers ProcessMonitor before LogTailing (dep order)", () => {
     const manager = ServiceManager.get().register(ReduxService)
-    manager.registerInstance(new DebuggingClientService(new MockDebuggingClient()))
+    manager.registerInstance(
+      new DebuggingClientService(new MockDebuggingClient() as any)
+    )
     ProcessMonitorFeatureProvider.registerServices(manager)
     expect(manager.find(ProcessMonitorService.id)).toBeDefined()
     expect(manager.find(LogTailingService.id)).toBeDefined()

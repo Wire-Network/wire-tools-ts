@@ -213,10 +213,47 @@ export interface ClusterConfig {
    */
   terminateWindowMs?: number
 
+  /**
+   * Per-role collateral requirements installed by the bootstrap
+   * `sysio.opreg::setconfig` call. Each entry binds a `(chain,
+   * tokenKind, minBond)` triple; an operator of the matching role must
+   * have at least `minBond` of `tokenKind` available on `chain` before
+   * the depot's eligibility predicate flips status to ACTIVE.
+   *
+   * Bootstrapped operators are ACTIVE-by-fiat and bypass these
+   * requirements; the vectors only gate **non-bootstrapped** operators.
+   * Leave any vector unset (or empty) to disable the requirement for
+   * that role — flow tests that don't exercise the eligibility gate
+   * skip them.
+   */
+  reqProdCollat?: ChainMinBond[]
+  reqBatchopCollat?: ChainMinBond[]
+  reqUwCollat?: ChainMinBond[]
+
   /** All port assignments for the cluster. Resolved during create, persisted for run. */
   ports: ClusterPorts
 
   executables: ClusterExePaths
+}
+
+/**
+ * Per-(chain, token_kind) collateral requirement triple. Mirrors the
+ * depot's `sysio.opreg::chain_min_bond` row. Declared with primitive
+ * `number` fields so `debugging-shared` stays free of an
+ * `@wireio/opp-typescript-models` dependency — callers pass the proto
+ * enum values directly (e.g. `ChainKind.SOLANA`, `TokenKind.SOL`).
+ */
+export interface ChainMinBond {
+  /** ChainKind discriminant — see `@wireio/opp-typescript-models`. */
+  chain: number
+  /** TokenKind discriminant — see `@wireio/opp-typescript-models`. */
+  tokenKind: number
+  /**
+   * Minimum bond in the token's base units (lamports for SOL, wei for
+   * ETH, etc.). Compared against `sysio.opreg::available(account,
+   * chain, token_kind)` for each non-bootstrapped operator.
+   */
+  minBond: number
 }
 
 /**

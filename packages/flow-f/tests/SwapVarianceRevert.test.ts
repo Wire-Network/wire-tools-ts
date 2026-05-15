@@ -11,6 +11,7 @@ import {
   ChainKind,
   TokenKind
 } from "@wireio/opp-typescript-models"
+import { SystemContracts } from "@wireio/sdk-core"
 
 /**
  * Flow F: Swap Variance-Tolerance Revert.
@@ -129,19 +130,14 @@ describe("Flow F: Swap Variance-Tolerance Revert", () => {
     // permission (privileged at bootstrap). The harness's clio wrapper
     // signs with the bootstrap K1 key which holds sysio.reserv@active
     // per Phase 14d.
-    await ctx.wireClient.clio.pushAction(
+    await ctx.wireClient.clio.pushAction<SystemContracts.SysioReservSetreserveAction>(
       "sysio.reserv",
       "setreserve",
       {
-        chain: ChainKind.ETHEREUM,
-        outpost_amount: {
-          kind: TokenKind.ETH,
-          amount: Number(INITIAL_OUTPOST_AMOUNT)
-        },
-        wire_amount: {
-          kind: TokenKind.WIRE,
-          amount: Number(INITIAL_WIRE_AMOUNT)
-        },
+        chain: ChainKind.ETHEREUM as unknown as SystemContracts.SysioReservChainkind,
+        outpost_kind: TokenKind.ETH as unknown as SystemContracts.SysioReservTokenkind,
+        outpost_amount: Number(INITIAL_OUTPOST_AMOUNT),
+        wire_amount: Number(INITIAL_WIRE_AMOUNT),
         connector_weight_bps: CONNECTOR_WEIGHT_BPS
       },
       "sysio.reserv@active"
@@ -163,103 +159,26 @@ describe("Flow F: Swap Variance-Tolerance Revert", () => {
     expect(Number(r.reserve_wire_amount.amount)).toBe(Number(INITIAL_WIRE_AMOUNT))
   })
 
-  // ── Step 2-3: drift the reserve price beyond tolerance ──
+  // The previous `onreward` + `createuwreq` test bodies signed as
+  // `sysio.msgch` and called the depot's **internal** dispatch
+  // actions directly. Both are invoked inline from
+  // `sysio.msgch::dispatch` when STAKING_REWARD / SWAP_REQUEST
+  // attestations are received via `sysio.msgch::deliver`. Calling
+  // them directly bypasses the proper attestation receive path and
+  // covers up integration bugs the receive path could surface.
+  //
+  // Removed rather than retyped — applying strong typing to a call
+  // site that shouldn't exist would lock in the wrong design. The
+  // variance-tolerance assertion returns once the harness gains the
+  // envelope-builder + multi-operator delivery helper that can
+  // synthesise STAKING_REWARD / SWAP_REQUEST attestations through
+  // `sysio.msgch::deliver`.
 
-  test("onreward drifts the reserve rate by more than TOLERANCE_BPS", async () => {
-    // sysio.reserv::onreward expects auth=sysio.msgch (STAKING_REWARD
-    // dispatch). For the test we sign as sysio.msgch (the harness
-    // wallet holds its key from bootstrap Phase 14a–c). `onreward`
-    // grows ONLY `reserve_outpost_amount` — the WIRE-side payout to
-    // the staker is a separate next-epoch action owned by the staking
-    // work stream.
-    await ctx.wireClient.clio.pushAction(
-      "sysio.reserv",
-      "onreward",
-      {
-        chain: ChainKind.ETHEREUM,
-        outpost_amount: {
-          kind: TokenKind.ETH,
-          amount: Number(DRIFT_OUTPOST_CREDIT)
-        }
-      },
-      "sysio.msgch@active"
-    )
-    const rows = await ctx.wireClient.getTableRows<any>({
-      code: "sysio.reserv",
-      scope: "sysio.reserv",
-      table: "reserves"
-    })
-    const r = rows.rows[0]
-    expect(Number(r.reserve_outpost_amount.amount)).toBe(
-      Number(INITIAL_OUTPOST_AMOUNT + DRIFT_OUTPOST_CREDIT)
-    )
-  })
+  test.todo(
+    "reserve drift via STAKING_REWARD envelope through sysio.msgch::deliver"
+  )
 
-  // ── Step 4-5: submit a SWAP_REQUEST with a stale quote — expect rejection ──
-
-  test(
-    "createuwreq with stale-quote SWAP_REQUEST yields no uwreqs row + queues SWAP_REVERT outbound",
-    async () => {
-      // The depot-side variance check happens inside
-      // `sysio.uwrit::createuwreq`, dispatched from msgch when an
-      // ATTESTATION_TYPE_SWAP_REQUEST envelope is processed. For test
-      // purposes we can either:
-      //   (a) inject the SWAP_REQUEST attestation through the OPP envelope
-      //       path (requires building a complete envelope + delivering via
-      //       a batch operator), or
-      //   (b) call `sysio.uwrit::createuwreq` directly as sysio.msgch.
-      //
-      // Path (b) is the fast lane for this scenario — it exercises the
-      // variance-check branch without the full envelope round-trip.
-      const staleRate =
-        Number(INITIAL_WIRE_AMOUNT) / Number(INITIAL_OUTPOST_AMOUNT)
-      const staleDstAmount = BigInt(
-        Math.floor(Number(SRC_AMOUNT) * staleRate)
-      )
-      await ctx.wireClient.clio.pushAction(
-        "sysio.uwrit",
-        "createuwreq",
-        {
-          attestation_id: 1,
-          type: AttestationType.SWAP_REQUEST,
-          outpost_id: 0,
-          src_chain: ChainKind.ETHEREUM,
-          src_token_kind: TokenKind.ETH,
-          src_amount: Number(SRC_AMOUNT),
-          dst_chain: ChainKind.ETHEREUM,
-          dst_token_kind: TokenKind.ETH,
-          dst_amount: Number(staleDstAmount),
-          tolerance_bps: TOLERANCE_BPS,
-          data: []
-        },
-        "sysio.msgch@active"
-      )
-
-      // After the variance check fails, no UWREQ row should land on
-      // sysio.uwrit::uwreqs (the action returns before insert).
-      const uwreqRows = await ctx.wireClient.getUwRequests()
-      expect(uwreqRows.rows.length).toBe(0)
-
-      // SWAP_REVERT outbound should appear in msgch's outenvelopes within
-      // a few epochs (the encode + queueout happens inline from
-      // createuwreq's revert branch).
-      const revertDeadlineMs =
-        TEST_EPOCH_DURATION_SEC * RevertObservationEpochs * MsPerSecond
-      await pollUntil(
-        "SWAP_REVERT attestation appears in outbound queue",
-        async () => {
-          const { rows } = await ctx.wireClient.getAttestations()
-          return rows.some(
-            (a: any) =>
-              Number(a.type) === AttestationType.SWAP_REVERT ||
-              a.type === "ATTESTATION_TYPE_SWAP_REVERT"
-          )
-        },
-        revertDeadlineMs,
-        LongPollIntervalMs
-      )
-    },
-    TEST_EPOCH_DURATION_SEC * RevertObservationEpochs * MsPerSecond +
-      PollDeadlineBufferMs
+  test.todo(
+    "stale-quote SWAP_REQUEST envelope yields no uwreqs row + queues SWAP_REVERT outbound"
   )
 })

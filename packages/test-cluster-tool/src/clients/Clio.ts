@@ -167,6 +167,49 @@ export class Clio {
     )
   }
 
+  /**
+   * Load a wallet file from disk into kiod's memory. Idempotent — kiod's
+   * `wallet open` returns a benign "already open" / "could not open"
+   * error when the wallet is already loaded; both are swallowed.
+   */
+  async walletOpen(walletName: string): Promise<void> {
+    try {
+      await this.run(["wallet", "open", "-n", walletName], { json: false })
+    } catch (err: any) {
+      const msg = err?.message ?? err?.stderr ?? ""
+      if (msg.includes("Already")     ||
+          msg.includes("already open") ||
+          msg.includes("cannot open"))     // benign "already open" surfaces
+      {
+        return
+      }
+      throw err
+    }
+  }
+
+  /**
+   * Open + unlock the wallet in one call. Used by post-bootstrap test
+   * code that needs to sign new transactions — the bootstrap process
+   * leaves kiod with the wallet closed/locked for security, but the
+   * wallet file + password are still on disk and the test can re-open
+   * them via this helper.
+   */
+  async walletOpenAndUnlock(
+    walletName: string,
+    password: string = this.walletPassword
+  ): Promise<void> {
+    await this.walletOpen(walletName)
+    try {
+      await this.walletUnlock(walletName, password)
+    } catch (err: any) {
+      const msg = err?.message ?? err?.stderr ?? ""
+      // Benign — wallet may already be unlocked from a prior call within
+      // the same kiod session.
+      if (msg.includes("Already unlocked")) return
+      throw err
+    }
+  }
+
   // ── Account ──
 
   /**
@@ -236,40 +279,61 @@ export class Clio {
   /**
    * Push an action to the WIRE chain.
    *
-   * When `data` is an object, it is JSON-stringified internally and the
-   * response is parsed as JSON (`API.v1.SendTransactionResponse`).
+   * `data` is the typed action payload. It is JSON-stringified internally
+   * and the response is parsed as `API.v1.SendTransactionResponse`.
    *
-   * When `data` is a string, it is passed through as-is and raw stdout
-   * is returned.
+   * Per `.claude/rules/strongly-typed-actions.md`, every call MUST specify
+   * the matching `SystemContracts.Sysio<Contract><Action>Action` interface
+   * as the generic so the data shape is enforced at compile time. The
+   * `pushActionRaw` escape hatch below exists for the rare case where a
+   * caller genuinely needs to ship pre-stringified JSON (e.g. test
+   * fixtures replaying captured calldata); production-style action pushes
+   * always go through this typed overload.
    */
   async pushAction<T extends {}>(
     account: string,
     action: string,
     data: T,
     auth: string
-  ): Promise<API.v1.SendTransactionResponse>
-  async pushAction(
+  ): Promise<API.v1.SendTransactionResponse> {
+    const args = [
+      "push",
+      "action",
+      account,
+      action,
+      JSON.stringify(data),
+      "-p",
+      auth,
+      "-j"
+    ]
+    return this.run<API.v1.SendTransactionResponse>(args, { json: true })
+  }
+
+  /**
+   * **Escape hatch** — push an action with a pre-serialized JSON string
+   * payload. Bypasses the strongly-typed generic on `pushAction`. Reserve
+   * for the narrow cases where the caller has already produced the
+   * JSON-encoded action data (replay fixtures, opaque transcoder paths).
+   * For every other call site use `pushAction<SystemContracts.Sysio*Action>`.
+   *
+   * Named distinctly so a code-review grep can flag every untyped push at
+   * a glance.
+   */
+  async pushActionRaw(
     account: string,
     action: string,
     data: string,
     auth: string
-  ): Promise<string>
-  async pushAction(
-    account: string,
-    action: string,
-    data: string | {},
-    auth: string
-  ): Promise<API.v1.SendTransactionResponse | string> {
-    const isJson = !isString(data),
-      dataStr = isJson ? JSON.stringify(data) : data,
-      args = ["push", "action", account, action, dataStr, "-p", auth]
-
-    if (isJson) {
-      args.push("-j")
-      return this.run<API.v1.SendTransactionResponse>(args, { json: true })
-    }
-
-    return this.run(args)
+  ): Promise<string> {
+    return this.run([
+      "push",
+      "action",
+      account,
+      action,
+      data,
+      "-p",
+      auth
+    ])
   }
 
   async pushTransaction(
@@ -286,10 +350,10 @@ export class Clio {
   // ── Privileged ──
 
   async setPriv(account: string): Promise<API.v1.SendTransactionResponse> {
-    const result = await this.pushAction(
+    const result = await this.pushAction<SystemContracts.SysioBiosSetprivAction>(
       "sysio",
       "setpriv",
-      { account, is_priv: 1 } satisfies SystemContracts.SysioBiosSetprivAction,
+      { account, is_priv: 1 },
       "sysio@active"
     )
     await this.waitForHeadToAdvance()
@@ -534,7 +598,7 @@ export class Clio {
     auth: string,
     waitTimeoutMs = Clio.DefaultTimeoutMs
   ): Promise<API.v1.SendTransactionResponse> {
-    const result = await this.pushAction(account, action, data, auth)
+    const result = await this.pushAction<T>(account, action, data, auth)
 
     log.info(`pushActionAndWait result:`, result)
 
@@ -610,12 +674,10 @@ export class Clio {
   async activateFeature(
     featureDigest: string
   ): Promise<API.v1.SendTransactionResponse> {
-    return this.pushAction(
+    return this.pushAction<SystemContracts.SysioBiosActivateAction>(
       "sysio",
       "activate",
-      {
-        feature_digest: featureDigest
-      } satisfies SystemContracts.SysioBiosActivateAction,
+      { feature_digest: featureDigest },
       "sysio@active"
     )
   }

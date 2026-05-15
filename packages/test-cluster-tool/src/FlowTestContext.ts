@@ -93,6 +93,15 @@ export class FlowTestContext {
     )
   }
 
+  /** Resolved solana repo path (from config or env). Used by tests that
+   *  need to load the deployed program's IDL or program-id keypair. */
+  get solanaPath(): string | undefined {
+    return (
+      this.config.solanaPath ??
+      process.env[FlowTestContext.EnvVar.SolanaPath]
+    )
+  }
+
   /** Cluster data path. */
   get clusterPath(): string {
     return this.config.clusterPath
@@ -186,6 +195,9 @@ export class FlowTestContext {
       terminateMaxConsecutiveMisses: opts.terminateMaxConsecutiveMisses,
       terminateMaxPctMisses24H: opts.terminateMaxPctMisses24H,
       terminateWindowMs: opts.terminateWindowMs,
+      reqProdCollat:    opts.reqProdCollat,
+      reqBatchopCollat: opts.reqBatchopCollat,
+      reqUwCollat:      opts.reqUwCollat,
       force: true
     })
 
