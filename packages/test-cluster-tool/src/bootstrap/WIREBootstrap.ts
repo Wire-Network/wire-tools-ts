@@ -428,17 +428,24 @@ export class WIREBootstrap {
     //   log.warn(`Failed to register SOL outpost: ${err.message}`)
     // }
 
-    // sysio.uwrit::setconfig — post-Band-C the action takes only
-    // `fee_bps`; the lock duration and share splits moved off the
-    // setconfig surface.
+    // sysio.uwrit::setconfig — sets fee_bps, collateral-lock duration,
+    // and the three fee-split shares (winner / other-uw / batch-op). Shares
+    // must sum to 100. Distribution logic itself is deferred; the fields
+    // are persisted only.
     try {
       await this.clio.pushAction<SystemContracts.SysioUwritSetconfigAction>(
         "sysio.uwrit",
         "setconfig",
-        { fee_bps: 10 },
+        {
+          fee_bps: 10,
+          collateral_lock_duration_epoch_count: 10,
+          fee_split_winner_pct: 50,
+          fee_split_other_uw_pct: 25,
+          fee_split_batch_op_pct: 25
+        },
         "sysio.uwrit@active"
       )
-      log.info("Underwriting config set (10bps fee)")
+      log.info("Underwriting config set (10bps fee, 10-epoch lock, 50/25/25 split)")
     } catch (err: any) {
       log.warn(`Failed to configure underwriting: ${err.message}`)
     }

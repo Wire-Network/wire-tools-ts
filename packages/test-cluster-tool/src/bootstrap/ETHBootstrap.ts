@@ -155,7 +155,7 @@ export class ETHBootstrap {
       async () => {
         await mgr.configureOPPEndpoint(
           this.addr("OperatorRegistry"),
-          [AttestationType.OPERATOR_ACTION, AttestationType.UNDERWRITE_CONFIRM], // sends
+          [AttestationType.OPERATOR_ACTION, AttestationType.UNDERWRITE_INTENT_COMMIT], // sends
           // OPERATOR_ACTION carries the full inbound surface: WITHDRAW_REMIT
           // (success-path withdraw return) + SLASH (depot-internal slash
           // routed to Reserve). DEPOSIT_REVERT rolls back local deposited
@@ -163,7 +163,7 @@ export class ETHBootstrap {
           // minus a gas-penalty routed to Reserve).
           // OPERATORS roster is consumed exclusively by OPPInbound's
           // address-resolver cache.
-          [AttestationType.OPERATOR_ACTION, AttestationType.DEPOSIT_REVERT, AttestationType.UNDERWRITE_INTENT] // receives
+          [AttestationType.OPERATOR_ACTION, AttestationType.DEPOSIT_REVERT] // receives
         )
       },
       { label: "configure OperatorRegistry" }

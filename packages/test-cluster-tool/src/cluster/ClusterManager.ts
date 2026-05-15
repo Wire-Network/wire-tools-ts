@@ -1985,7 +1985,13 @@ async function bootstrapChain(
   await clio.pushAction<SystemContracts.SysioUwritSetconfigAction>(
     "sysio.uwrit",
     "setconfig",
-    { fee_bps: 10 },
+    {
+      fee_bps: 10,
+      collateral_lock_duration_epoch_count: 10,
+      fee_split_winner_pct: 50,
+      fee_split_other_uw_pct: 25,
+      fee_split_batch_op_pct: 25
+    },
     "sysio.uwrit@active"
   )
   log.info("[Phase 17] sysio.uwrit configured")

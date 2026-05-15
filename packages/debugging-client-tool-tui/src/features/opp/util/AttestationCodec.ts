@@ -18,10 +18,7 @@ import {
   SwapRemit,
   SwapRequest,
   SwapRevert,
-  UnderwriteConfirm,
-  UnderwriteIntent,
   UnderwriteIntentCommit,
-  UnderwriteIntentReject,
   WireTokenPurchase,
   type AttestationEntry
 } from "@wireio/opp-typescript-models"
@@ -57,8 +54,6 @@ export const AttestationDecoders: Partial<
   [AttestationType.WIRE_TOKEN_PURCHASE]: WireTokenPurchase,
   [AttestationType.CHALLENGE_RESPONSE]: ChallengeOperatorHash,
   [AttestationType.SWAP_REQUEST]: SwapRequest,
-  [AttestationType.UNDERWRITE_INTENT]: UnderwriteIntent,
-  [AttestationType.UNDERWRITE_CONFIRM]: UnderwriteConfirm,
   [AttestationType.SWAP_REMIT]: SwapRemit,
   [AttestationType.CHALLENGE_REQUEST]: ChallengeRequest,
   [AttestationType.OPERATORS]: Operators,
@@ -68,7 +63,6 @@ export const AttestationDecoders: Partial<
   [AttestationType.STAKE_RESULT]: StakeResult,
   [AttestationType.ATTESTATION_PROCESSING_ERROR]: AttestationProcessingError,
   [AttestationType.UNDERWRITE_INTENT_COMMIT]: UnderwriteIntentCommit,
-  [AttestationType.UNDERWRITE_INTENT_REJECT]: UnderwriteIntentReject,
   [AttestationType.SWAP_REVERT]: SwapRevert,
   [AttestationType.DEPOSIT_REVERT]: DepositRevert,
   [AttestationType.SWAP_REJECTED]: SwapRejected
