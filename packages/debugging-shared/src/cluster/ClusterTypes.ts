@@ -230,10 +230,64 @@ export interface ClusterConfig {
   reqBatchopCollat?: ChainMinBond[]
   reqUwCollat?: ChainMinBond[]
 
+  /**
+   * Per-underwriter collateral to deposit during bootstrap. Resolved by
+   * `loadUnderwriterCollateral` from the optional CLI flag
+   * `--underwriter-collateral-json-file`, or filled with defaults
+   * (`1000` base units of each integrated outpost's default token, plus
+   * WIRE) when omitted.
+   *
+   * Shape: always a length-`underwriterCount` array of per-underwriter
+   * entry lists. The "uniform" CLI input (single
+   * `Array<ChainTokenAmount>`) is fan-out-expanded to the same value
+   * for every underwriter at load time, so the bootstrap step sees a
+   * single canonical shape regardless of which CLI form the operator
+   * used.
+   *
+   * Stored as `UnderwriterCollateralEntry[][]` (primitive numbers only)
+   * to keep `debugging-shared` free of an `@wireio/opp-typescript-models`
+   * dependency. Callers parse the JSON file against the proto-generated
+   * `ChainTokenAmount` model and project down to this primitive shape.
+   */
+  underwriterCollateral?: UnderwriterCollateralEntry[][]
+
   /** All port assignments for the cluster. Resolved during create, persisted for run. */
   ports: ClusterPorts
 
   executables: ClusterExePaths
+}
+
+/**
+ * Primitive per-(chain, token) collateral entry used inside
+ * `ClusterConfig.underwriterCollateral`. Mirrors the data inside the
+ * proto-generated `sysio.opp.types.ChainTokenAmount` message
+ * (`{chain, amount}`) but flattened to primitive fields so
+ * `debugging-shared` does not depend on
+ * `@wireio/opp-typescript-models`. The harness's underwriter-collateral
+ * loader parses the CLI JSON file against the proto model and projects
+ * down to this shape; the bootstrap step reads from this shape and
+ * dispatches per-chain to the appropriate deposit helper.
+ */
+export interface UnderwriterCollateralEntry {
+  /** ChainKind discriminant — see `@wireio/opp-typescript-models`. */
+  chain: number
+  /**
+   * Chain numeric id (the `id` field on the proto `ChainId`). Identifies
+   * a specific instance of a chain (e.g. mainnet vs testnet) when more
+   * than one runs simultaneously. Default `0` when unspecified — the
+   * test-cluster-tool ignores this today but it is preserved so the
+   * config round-trips losslessly through the JSON file.
+   */
+  chainId: number
+  /** TokenKind discriminant — see `@wireio/opp-typescript-models`. */
+  tokenKind: number
+  /**
+   * Deposit amount expressed in base units of the token, encoded as a
+   * decimal string for safe JSON round-trip of values that overflow
+   * IEEE-754 doubles (lamports / wei). Parsed back to `bigint` at the
+   * deposit-site call.
+   */
+  amount: string
 }
 
 /**

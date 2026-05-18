@@ -17,6 +17,7 @@ import {
   type SolanaValidatorOptions
 } from "./processes/SolanaValidatorManager.js"
 import { mkdirs } from "./util.js"
+import { loadUnderwriterCollateral } from "./underwriter-collateral/index.js"
 
 export interface TestEnvironmentConfig {
   /** WIRE chain configuration (required) */
@@ -166,6 +167,10 @@ export class TestEnvironment {
         epochDurationSec,
         warmupEpochs,
         cooldownEpochs,
+        underwriterCollateral: loadUnderwriterCollateral(
+          undefined,
+          underwriterCount
+        ),
         ports: await ClusterPorts.resolve({
           nodeCount,
           batchOperatorCount,

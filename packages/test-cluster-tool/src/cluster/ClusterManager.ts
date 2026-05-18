@@ -58,6 +58,11 @@ import { DebuggingServer } from "@wireio/debugging-server"
 import { ETHBootstrapper } from "./ETHBootstrapper.js"
 import { SOLBootstrap } from "../bootstrap/SOLBootstrap.js"
 import {
+  depositUnderwriterCollateral,
+  loadUnderwriterCollateral,
+  type UnderwriterDepositContext
+} from "../underwriter-collateral/index.js"
+import {
   createAuthExLink,
   emPrivateKeyFromEthWallet
 } from "../tools/AuthExLinkTool.js"
@@ -513,6 +518,18 @@ export class ClusterManager {
         batchOpSolKeys[account] = PrivateKey.generate(KeyType.ED)
       })
 
+      // ── 3b. Pre-generate underwriter ED25519 SOL keys ──
+      // Same rationale as 3a: keep authex linking + the Phase 19b
+      // collateral deposit aligned on a single SOL keypair per
+      // underwriter. The harness retains these in-memory only — they
+      // exist solely to fund the underwriter's deposit tx + match the
+      // pubkey the depot's authex link advertises.
+      const uwSolKeys: Record<string, PrivateKey> = {}
+      range(cfg.underwriterCount).forEach(i => {
+        const account = underwriterAccountName(i)
+        uwSolKeys[account] = PrivateKey.generate(KeyType.ED)
+      })
+
       // ── 3. Build producer name assignments (mirrors Python bind_nodes) ──
       const allProducerNames = range(cfg.producerCount).map(toProducerName)
       // Assign producers round-robin across nodes (non-consecutive, matching Python)
@@ -809,7 +826,8 @@ export class ClusterManager {
         nodeKeys,
         batchOpStates,
         underwriterStates,
-        batchOpSolKeys
+        batchOpSolKeys,
+        uwSolKeys
       )
 
       // ── 10. ETH bootstrap (if ethereum-dir provided) ──
@@ -1436,7 +1454,8 @@ async function bootstrapChain(
   nodeKeys: NodeKeySet[],
   batchOpStates: NodeState[],
   underwriterStates: NodeState[],
-  batchOpSolKeys: Record<string, PrivateKey>
+  batchOpSolKeys: Record<string, PrivateKey>,
+  uwSolKeys: Record<string, PrivateKey>
 ): Promise<void> {
   log.info("=== Bootstrap sequence starting ===")
 
@@ -2073,7 +2092,12 @@ async function bootstrapChain(
     allOperatorStates.entries(),
     async ([i, nodeState]) => {
       const account = nodeState.operatorAccount!
-      const solKey = batchOpSolKeys[account]
+      // Batch ops have keys in `batchOpSolKeys`; underwriters in
+      // `uwSolKeys` (the keys are kept on separate maps so that each
+      // operator-type cohort is generated from a single site and the
+      // Phase 19b deposit can lift the underwriter key without
+      // string-matching against `account.startsWith("uwrit.")`).
+      const solKey = batchOpSolKeys[account] ?? uwSolKeys[account]
       await linkOperatorChainAccounts(
         clio,
         anvilMnemonic,
@@ -2089,6 +2113,49 @@ async function bootstrapChain(
   )
 
   log.info("[Phase 19a] All authex links created")
+
+  // ── Phase 19b: Deposit underwriter collateral ────────────────────────
+  //
+  // Submits the per-underwriter collateral plan (defaults or
+  // operator-supplied via `--underwriter-collateral-json-file`) on each
+  // outpost. The OPP envelopes carrying the resulting
+  // `OPERATOR_ACTION(DEPOSIT_REQUEST)` attestations propagate back to
+  // the depot asynchronously when batch operators advance epochs — the
+  // submission here returns once the source-chain tx confirms, NOT
+  // when the depot credits the balance. Tests that need an ACTIVE
+  // underwriter status poll `sysio.opreg::operators` themselves.
+  if (
+    cfg.underwriterCollateral !== undefined &&
+    cfg.underwriterCollateral.length === underwriterStates.length &&
+    underwriterStates.length > 0
+  ) {
+    log.info("[Phase 19b] Depositing underwriter collateral...")
+    const uwContexts: UnderwriterDepositContext[] = underwriterStates.map(
+      (uw, idx) => ({
+        account: uw.operatorAccount!,
+        // HD index aligns with the Phase 19a link step: batch ops
+        // occupy slots `1..batchOpCount`, underwriters follow at
+        // `batchOpCount + 1..` (matches the `i + 1` indexing above).
+        ethHdIndex: batchOpStates.length + idx + 1,
+        solPrivateKey: uwSolKeys[uw.operatorAccount!]
+      })
+    )
+    await depositUnderwriterCollateral({
+      ethereumPath: cfg.ethereumPath,
+      solanaPath: cfg.solanaPath,
+      anvilRpcUrl: `http://127.0.0.1:${cfg.ports.anvil}`,
+      solanaRpcUrl: `http://127.0.0.1:${cfg.ports.solanaRpc}`,
+      collateral: cfg.underwriterCollateral,
+      underwriters: uwContexts
+    })
+    log.info(
+      `[Phase 19b] Deposited collateral for ${underwriterStates.length} underwriter(s)`
+    )
+  } else if (underwriterStates.length > 0) {
+    log.warn(
+      "[Phase 19b] No underwriterCollateral plan on ClusterConfig; skipping deposits"
+    )
+  }
 
   // ── Phase 20: Initialize batch operator groups ──
   log.info("[Phase 20] Initializing epoch state...")
@@ -2320,6 +2387,7 @@ export namespace ClusterManager {
       reqProdCollat,
       reqBatchopCollat,
       reqUwCollat,
+      underwriterCollateral,
       force = false
     } = opts
 
@@ -2351,6 +2419,9 @@ export namespace ClusterManager {
       reqProdCollat,
       reqBatchopCollat,
       reqUwCollat,
+      underwriterCollateral:
+        underwriterCollateral ??
+        loadUnderwriterCollateral(undefined, underwriterCount),
       ports: await ClusterPorts.resolve({
         nodeCount,
         batchOperatorCount,

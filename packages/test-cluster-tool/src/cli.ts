@@ -26,6 +26,7 @@ import { inRange, isNotEmpty, mkdirs } from "./util.js"
 import { asOption, Future } from "@3fv/prelude-ts"
 import { isPromise } from "@wireio/shared"
 import { ClusterFiles } from "@wireio/debugging-shared"
+import { loadUnderwriterCollateral } from "./underwriter-collateral/index.js"
 
 const GlobalArgs = {
   clusterPath: "",
@@ -185,6 +186,15 @@ async function main(): Promise<void> {
                 describe:
                   "Path to wire-solana repo root. If provided, solana-test-validator is bootstrapped with the opp-outpost program."
               })
+              .option("underwriter-collateral-json-file", {
+                type: "string",
+                describe:
+                  "Path to a JSON file specifying per-underwriter collateral deposits. " +
+                  "Two shapes accepted (parsed via the `ChainTokenAmount` proto model): " +
+                  "(uniform) `Array<ChainTokenAmount>` applied to every underwriter, or " +
+                  "(varied) `Array<Array<ChainTokenAmount>>` with outer length === --underwriters. " +
+                  "Omit for defaults (1000 base units of WIRE/ETH/SOL per underwriter)."
+              })
               .check(argv => {
                 Assert.ok(
                   inRange(argv["batch-operator-count"], 3, 21),
@@ -258,6 +268,10 @@ async function main(): Promise<void> {
                 epochDurationSec,
                 warmupEpochs,
                 cooldownEpochs,
+                underwriterCollateral: loadUnderwriterCollateral(
+                  argv.underwriterCollateralJsonFile as string | undefined,
+                  underwriterCount
+                ),
                 ports,
                 executables: await ClusterManager.resolveExePaths(buildPath)
               }
