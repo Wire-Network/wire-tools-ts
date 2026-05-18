@@ -7,14 +7,18 @@ import { Connection, Keypair } from "@solana/web3.js"
 import { ethers } from "ethers"
 import Bluebird from "bluebird"
 
-import { ChainKind, OperatorType, TokenKind } from "@wireio/opp-typescript-models"
+import {
+  ChainKind,
+  ChainTokenAmount,
+  OperatorType,
+  TokenKind
+} from "@wireio/opp-typescript-models"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
-import type { UnderwriterCollateralEntry } from "@wireio/debugging-shared"
 
-import { ETHBootstrapper } from "../cluster/ETHBootstrapper.js"
-import { log } from "../logger.js"
-import { depositETHCollateral } from "../tools/ETHCollateralTool.js"
-import { depositSOLCollateral } from "../tools/SOLCollateralTool.js"
+import { ETHBootstrapper } from "../../cluster/ETHBootstrapper"
+import { log } from "../../logger"
+import { depositETHCollateral } from "../ETHCollateralTool"
+import { depositSOLCollateral } from "../SOLCollateralTool"
 
 /**
  * Per-underwriter context the deposit step needs in order to dispatch
@@ -56,9 +60,12 @@ export interface DepositUnderwriterCollateralOptions {
   /**
    * Per-underwriter collateral plan from
    * `ClusterConfig.underwriterCollateral`. Length must match
-   * `underwriters.length`.
+   * `underwriters.length`. Each inner entry is a fully-hydrated
+   * `ChainTokenAmount` proto message — `entry.chain.kind` is `ChainKind`,
+   * `entry.amount.kind` is `TokenKind`, `entry.amount.amount` is a
+   * `bigint`.
    */
-  collateral: UnderwriterCollateralEntry[][]
+  collateral: ChainTokenAmount[][]
   /** Per-underwriter deposit context (account + ETH HD index + SOL key). */
   underwriters: UnderwriterDepositContext[]
 }
@@ -101,78 +108,82 @@ export async function depositUnderwriterCollateral(
   // ETH-only and we shouldn't spin up an Anchor provider for nothing.
   const solCtx = asSolanaContextLazy(opts)
 
-  await Bluebird.mapSeries(
-    opts.underwriters.entries(),
-    async ([idx, uw]) => {
-      const ethWallet = ethers.HDNodeWallet.fromMnemonic(
-        anvilMnemonic,
-        `${ETHBootstrapper.DerivationPath}${uw.ethHdIndex}`
-      ).connect(ethProvider)
-      // `ethers.Contract` exposes ABI-declared methods dynamically;
-      // structurally cast to the deposit interface the helper expects.
-      const opRegContract = new ethers.Contract(
-        ethAddrs.OperatorRegistry,
-        opRegAbi,
-        ethWallet
-      ) as unknown as Parameters<typeof depositETHCollateral>[0]
-      const compressedPubkey = ethers.getBytes(
-        ethers.SigningKey.computePublicKey(ethWallet.privateKey, /* compressed */ true)
+  await Bluebird.mapSeries(opts.underwriters.entries(), async ([idx, uw]) => {
+    const ethWallet = ethers.HDNodeWallet.fromMnemonic(
+      anvilMnemonic,
+      `${ETHBootstrapper.DerivationPath}${uw.ethHdIndex}`
+    ).connect(ethProvider)
+    // `ethers.Contract` exposes ABI-declared methods dynamically;
+    // structurally cast to the deposit interface the helper expects.
+    const opRegContract = new ethers.Contract(
+      ethAddrs.OperatorRegistry,
+      opRegAbi,
+      ethWallet
+    ) as unknown as Parameters<typeof depositETHCollateral>[0]
+    const compressedPubkey = ethers.getBytes(
+      ethers.SigningKey.computePublicKey(
+        ethWallet.privateKey,
+        /* compressed */ true
       )
+    )
 
-      await Bluebird.each(opts.collateral[idx], async entry => {
-        const amount = BigInt(entry.amount)
-        if (amount <= 0n) return
+    await Bluebird.each(opts.collateral[idx], async entry => {
+      Assert.ok(entry.chain, "ChainTokenAmount.chain is required")
+      Assert.ok(entry.amount, "ChainTokenAmount.amount is required")
+      const chainKind = entry.chain.kind,
+        tokenKind = entry.amount.kind,
+        amount = entry.amount.amount
+      if (amount <= 0n) return
 
-        if (entry.chain === ChainKind.ETHEREUM) {
-          await depositETHCollateral(
-            opRegContract,
-            OperatorType.UNDERWRITER,
-            compressedPubkey,
-            entry.tokenKind,
-            amount
-          )
-          log.info(
-            `[uw-collateral] ${uw.account}: deposited ${entry.amount} ` +
-              `${TokenKind[entry.tokenKind]} on ETH`
-          )
-          return
-        }
-        if (entry.chain === ChainKind.SOLANA) {
-          const sol = await solCtx.get()
-          const depositorKp = privateKeyToKeypair(uw.solPrivateKey)
-          await depositSOLCollateral(
-            sol.connection,
-            sol.program,
-            depositorKp,
-            OperatorType.UNDERWRITER,
-            entry.tokenKind,
-            amount
-          )
-          log.info(
-            `[uw-collateral] ${uw.account}: deposited ${entry.amount} ` +
-              `${TokenKind[entry.tokenKind]} on SOL`
-          )
-          return
-        }
-        if (entry.chain === ChainKind.WIRE) {
-          // WIRE collateral has no outpost-side deposit path today — the
-          // OPP-attestation deposit credits live on external chains by
-          // construction. Skip with a structured warn so the config
-          // round-trips losslessly and a future WIRE deposit pathway can
-          // be slotted in without touching every caller.
-          log.warn(
-            `[uw-collateral] ${uw.account}: skipping WIRE/${TokenKind[entry.tokenKind]} ` +
-              `entry — no WIRE-native underwriter collateral deposit path yet`
-          )
-          return
-        }
-        log.warn(
-          `[uw-collateral] ${uw.account}: skipping unsupported chain ` +
-            `${ChainKind[entry.chain]}/${TokenKind[entry.tokenKind]}`
+      if (chainKind === ChainKind.ETHEREUM) {
+        await depositETHCollateral(
+          opRegContract,
+          OperatorType.UNDERWRITER,
+          compressedPubkey,
+          tokenKind,
+          amount
         )
-      })
-    }
-  )
+        log.info(
+          `[uw-collateral] ${uw.account}: deposited ${amount} ` +
+            `${TokenKind[tokenKind]} on ETH`
+        )
+        return
+      }
+      if (chainKind === ChainKind.SOLANA) {
+        const sol = await solCtx.get()
+        const depositorKp = privateKeyToKeypair(uw.solPrivateKey)
+        await depositSOLCollateral(
+          sol.connection,
+          sol.program,
+          depositorKp,
+          OperatorType.UNDERWRITER,
+          tokenKind,
+          amount
+        )
+        log.info(
+          `[uw-collateral] ${uw.account}: deposited ${amount} ` +
+            `${TokenKind[tokenKind]} on SOL`
+        )
+        return
+      }
+      if (chainKind === ChainKind.WIRE) {
+        // WIRE collateral has no outpost-side deposit path today — the
+        // OPP-attestation deposit credits live on external chains by
+        // construction. Skip with a structured warn so the config
+        // round-trips losslessly and a future WIRE deposit pathway can
+        // be slotted in without touching every caller.
+        log.warn(
+          `[uw-collateral] ${uw.account}: skipping WIRE/${TokenKind[tokenKind]} ` +
+            `entry — no WIRE-native underwriter collateral deposit path yet`
+        )
+        return
+      }
+      log.warn(
+        `[uw-collateral] ${uw.account}: skipping unsupported chain ` +
+          `${ChainKind[chainKind]}/${TokenKind[tokenKind]}`
+      )
+    })
+  })
 }
 
 interface SolanaContext {
@@ -186,9 +197,9 @@ interface SolanaContext {
  * shouldn't pay for it; deferred until the first SOL deposit is
  * actually requested.
  */
-function asSolanaContextLazy(
-  opts: DepositUnderwriterCollateralOptions
-): { get(): Promise<SolanaContext> } {
+function asSolanaContextLazy(opts: DepositUnderwriterCollateralOptions): {
+  get(): Promise<SolanaContext>
+} {
   let cached: SolanaContext | undefined
   return {
     async get(): Promise<SolanaContext> {

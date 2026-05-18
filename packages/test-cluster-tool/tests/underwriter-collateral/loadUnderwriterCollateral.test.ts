@@ -29,14 +29,18 @@ function writeJsonFile(name: string, value: unknown): string {
 }
 
 describe("buildDefaultUnderwriterCollateral", () => {
-  it("returns one entry per integrated default pair, each with the default amount", () => {
+  it("returns one ChainTokenAmount per integrated default pair with the default amount", () => {
     const entries = buildDefaultUnderwriterCollateral()
     expect(entries.length).toBe(DefaultUnderwriterCollateralPairs.length)
     entries.forEach(entry => {
-      expect(entry.amount).toBe(DefaultUnderwriterCollateralAmount)
-      expect(entry.chainId).toBe(0)
+      expect(entry.chain).toBeDefined()
+      expect(entry.amount).toBeDefined()
+      expect(entry.amount!.amount).toBe(DefaultUnderwriterCollateralAmount)
+      expect(entry.chain!.id).toBe(0)
     })
-    const present = entries.map(e => `${e.chain}/${e.tokenKind}`).sort()
+    const present = entries
+      .map(e => `${e.chain!.kind}/${e.amount!.kind}`)
+      .sort()
     const expected = DefaultUnderwriterCollateralPairs.map(
       p => `${p.chain}/${p.tokenKind}`
     ).sort()
@@ -72,10 +76,7 @@ describe("loadUnderwriterCollateral — no file → defaults", () => {
 
   it("throws on a missing file path", () => {
     expect(() =>
-      loadUnderwriterCollateral(
-        Path.join(tempDir, "does-not-exist.json"),
-        2
-      )
+      loadUnderwriterCollateral(Path.join(tempDir, "does-not-exist.json"), 2)
     ).toThrow(/does not exist/)
   })
 
@@ -103,9 +104,9 @@ describe("parseUnderwriterCollateralJson — uniform shape", () => {
     plan.forEach(entries => {
       expect(entries.length).toBe(1)
       const [e] = entries
-      expect(e.chain).toBe(ChainKind.ETHEREUM)
-      expect(e.tokenKind).toBe(TokenKind.ETH)
-      expect(e.amount).toBe("42")
+      expect(e.chain!.kind).toBe(ChainKind.ETHEREUM)
+      expect(e.amount!.kind).toBe(TokenKind.ETH)
+      expect(e.amount!.amount).toBe(42n)
     })
   })
 
@@ -127,8 +128,9 @@ describe("parseUnderwriterCollateralJson — uniform shape", () => {
       ],
       1
     )
-    expect(plan[0][0].chain).toBe(ChainKind.SOLANA)
-    expect(plan[0][0].tokenKind).toBe(TokenKind.SOL)
+    expect(plan[0][0].chain!.kind).toBe(ChainKind.SOLANA)
+    expect(plan[0][0].amount!.kind).toBe(TokenKind.SOL)
+    expect(plan[0][0].amount!.amount).toBe(10_000n)
   })
 })
 
@@ -152,8 +154,8 @@ describe("parseUnderwriterCollateralJson — varied shape", () => {
       2
     )
     expect(plan.length).toBe(2)
-    expect(plan[0][0].amount).toBe("50")
-    expect(plan[1][0].amount).toBe("100")
+    expect(plan[0][0].amount!.amount).toBe(50n)
+    expect(plan[1][0].amount!.amount).toBe(100n)
   })
 
   it("rejects mismatched outer length", () => {
@@ -183,8 +185,8 @@ describe("loadUnderwriterCollateral — round-trip from JSON file", () => {
     ])
     const plan = loadUnderwriterCollateral(filePath, 2)
     expect(plan.length).toBe(2)
-    expect(plan[0][0].chain).toBe(ChainKind.SOLANA)
-    expect(plan[1][0].amount).toBe("777")
+    expect(plan[0][0].chain!.kind).toBe(ChainKind.SOLANA)
+    expect(plan[1][0].amount!.amount).toBe(777n)
   })
 
   it("parses a varied file written to disk", () => {
@@ -203,7 +205,7 @@ describe("loadUnderwriterCollateral — round-trip from JSON file", () => {
       ]
     ])
     const plan = loadUnderwriterCollateral(filePath, 2)
-    expect(plan[0][0].chain).toBe(ChainKind.ETHEREUM)
-    expect(plan[1][0].chain).toBe(ChainKind.SOLANA)
+    expect(plan[0][0].chain!.kind).toBe(ChainKind.ETHEREUM)
+    expect(plan[1][0].chain!.kind).toBe(ChainKind.SOLANA)
   })
 })

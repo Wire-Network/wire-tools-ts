@@ -2,40 +2,8 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 
 import { ChainTokenAmount } from "@wireio/opp-typescript-models"
-import type { UnderwriterCollateralEntry } from "@wireio/debugging-shared"
 
 import { buildDefaultUnderwriterCollateral } from "./defaultUnderwriterCollateral.js"
-
-/**
- * Project a parsed `ChainTokenAmount` proto message onto the primitive
- * `UnderwriterCollateralEntry` stored on `ClusterConfig`. The proto
- * model carries `chain: { kind, id }` and `amount: { kind, amount }`;
- * the primitive shape flattens both and stringifies the amount so the
- * config round-trips losslessly through JSON without losing bigint
- * precision.
- *
- * @param parsed Hydrated `ChainTokenAmount` message (from
- *   `ChainTokenAmount.fromJson` or `.fromBinary`).
- * @returns Flattened entry with primitive fields.
- */
-function projectChainTokenAmount(
-  parsed: ChainTokenAmount
-): UnderwriterCollateralEntry {
-  Assert.ok(
-    parsed.chain,
-    "ChainTokenAmount.chain is required"
-  )
-  Assert.ok(
-    parsed.amount,
-    "ChainTokenAmount.amount is required"
-  )
-  return {
-    chain: parsed.chain.kind,
-    chainId: parsed.chain.id,
-    tokenKind: parsed.amount.kind,
-    amount: String(parsed.amount.amount)
-  }
-}
 
 /**
  * Parse a JSON value (already loaded from disk) into the canonical
@@ -53,6 +21,9 @@ function projectChainTokenAmount(
  * the proto-generated `ChainTokenAmount` model, so callers get full
  * field-level validation (unknown fields → error, missing required
  * enum → error, etc.) without the harness re-implementing the schema.
+ * The output preserves the hydrated proto-message instances — the
+ * `chain.kind` field is the typed `ChainKind` enum, `amount.kind` is
+ * the typed `TokenKind` enum, and `amount.amount` is a `bigint`.
  *
  * @param json             Already-parsed JSON value (`JSON.parse(fileContents)`).
  * @param underwriterCount Number of underwriters in the cluster — used
@@ -66,11 +37,8 @@ function projectChainTokenAmount(
 export function parseUnderwriterCollateralJson(
   json: unknown,
   underwriterCount: number
-): UnderwriterCollateralEntry[][] {
-  Assert.ok(
-    Array.isArray(json),
-    "underwriter collateral JSON must be an array"
-  )
+): ChainTokenAmount[][] {
+  Assert.ok(Array.isArray(json), "underwriter collateral JSON must be an array")
   Assert.ok(
     underwriterCount > 0,
     `underwriterCount must be positive, got ${underwriterCount}`
@@ -105,18 +73,18 @@ export function parseUnderwriterCollateralJson(
         `underwriter collateral (varied shape): entry ${idx} must be an array`
       )
       return entry.map(raw =>
-        projectChainTokenAmount(ChainTokenAmount.fromJson(
+        ChainTokenAmount.fromJson(
           raw as Parameters<typeof ChainTokenAmount.fromJson>[0]
-        ))
+        )
       )
     })
   }
 
   // Uniform shape: parse once, fan out to every underwriter.
   const uniform = items.map(raw =>
-    projectChainTokenAmount(ChainTokenAmount.fromJson(
-          raw as Parameters<typeof ChainTokenAmount.fromJson>[0]
-        ))
+    ChainTokenAmount.fromJson(
+      raw as Parameters<typeof ChainTokenAmount.fromJson>[0]
+    )
   )
   return Array.from({ length: underwriterCount }, () => uniform.slice())
 }
@@ -141,7 +109,7 @@ export function parseUnderwriterCollateralJson(
 export function loadUnderwriterCollateral(
   filePath: string | undefined,
   underwriterCount: number
-): UnderwriterCollateralEntry[][] {
+): ChainTokenAmount[][] {
   Assert.ok(
     underwriterCount > 0,
     `underwriterCount must be positive, got ${underwriterCount}`

@@ -26,7 +26,7 @@ import { inRange, isNotEmpty, mkdirs } from "./util.js"
 import { asOption, Future } from "@3fv/prelude-ts"
 import { isPromise } from "@wireio/shared"
 import { ClusterFiles } from "@wireio/debugging-shared"
-import { loadUnderwriterCollateral } from "./underwriter-collateral/index.js"
+import { loadUnderwriterCollateral } from "./tools/underwriter-collateral/index.js"
 
 const GlobalArgs = {
   clusterPath: "",

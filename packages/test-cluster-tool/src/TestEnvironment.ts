@@ -17,7 +17,7 @@ import {
   type SolanaValidatorOptions
 } from "./processes/SolanaValidatorManager.js"
 import { mkdirs } from "./util.js"
-import { loadUnderwriterCollateral } from "./underwriter-collateral/index.js"
+import { loadUnderwriterCollateral } from "./tools/underwriter-collateral/index.js"
 
 export interface TestEnvironmentConfig {
   /** WIRE chain configuration (required) */

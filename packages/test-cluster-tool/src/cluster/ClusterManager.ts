@@ -61,7 +61,7 @@ import {
   depositUnderwriterCollateral,
   loadUnderwriterCollateral,
   type UnderwriterDepositContext
-} from "../underwriter-collateral/index.js"
+} from "../tools/underwriter-collateral/index.js"
 import {
   createAuthExLink,
   emPrivateKeyFromEthWallet
@@ -1284,7 +1284,9 @@ export class ClusterManager {
     if (!Fs.existsSync(stateFile)) {
       throw new Error(`No cluster state at ${stateFile}`)
     }
-    this._state = JSON.parse(Fs.readFileSync(stateFile, "utf-8")) as ClusterState
+    this._state = JSON.parse(
+      Fs.readFileSync(stateFile, "utf-8")
+    ) as ClusterState
     log.info(`Loaded cluster state: ${this.state.nodes.length} nodes`)
     return this
   }
@@ -1870,7 +1872,9 @@ async function bootstrapChain(
   // ── Phase 14a–c: Grant sysio.code on OPP contract authorities ──
   // Required for inline actions (epoch advance, evalcons, processprod, etc.).
   // Iterates the single source of truth — keeps deploy + grant lists in sync.
-  await Bluebird.each(OPP_SYSTEM_ACCOUNTS, account => grantSysioCode(clio, account))
+  await Bluebird.each(OPP_SYSTEM_ACCOUNTS, account =>
+    grantSysioCode(clio, account)
+  )
 
   // ── Phase 14d: Cross-contract delegation for inline-action dispatch ──
   // sysio.msgch's `dispatch_operator_action` invokes `sysio.opreg::deposit`
@@ -1955,19 +1959,16 @@ async function bootstrapChain(
       // depot (5 consecutive misses, 5% rate, 24h window). Tests that need
       // to observe termination in their timeout budget override via
       // `ClusterConfig.terminateMaxConsecutiveMisses` etc.
-      terminate_max_consecutive_misses:
-        cfg.terminateMaxConsecutiveMisses ?? 5,
-      terminate_max_pct_misses_24h:
-        cfg.terminateMaxPctMisses24H ?? 5,
-      terminate_window_ms:
-        cfg.terminateWindowMs ?? 24 * 60 * 60 * 1000,
+      terminate_max_consecutive_misses: cfg.terminateMaxConsecutiveMisses ?? 5,
+      terminate_max_pct_misses_24h: cfg.terminateMaxPctMisses24H ?? 5,
+      terminate_window_ms: cfg.terminateWindowMs ?? 24 * 60 * 60 * 1000,
       // Per-role collateral requirements. Bootstrapped operators bypass
       // these; non-bootstrapped operators must satisfy every (chain,
       // token_kind, min_bond) entry in the matching vector before the
       // depot's eligibility predicate flips them to ACTIVE.
-      req_prod_collat:    toChainMinBondRows(cfg.reqProdCollat),
+      req_prod_collat: toChainMinBondRows(cfg.reqProdCollat),
       req_batchop_collat: toChainMinBondRows(cfg.reqBatchopCollat),
-      req_uw_collat:      toChainMinBondRows(cfg.reqUwCollat)
+      req_uw_collat: toChainMinBondRows(cfg.reqUwCollat)
     },
     "sysio.opreg@active"
   )

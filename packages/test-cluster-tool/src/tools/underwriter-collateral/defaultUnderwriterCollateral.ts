@@ -1,5 +1,10 @@
-import { ChainKind, TokenKind } from "@wireio/opp-typescript-models"
-import type { UnderwriterCollateralEntry } from "@wireio/debugging-shared"
+import {
+  ChainId,
+  ChainKind,
+  ChainTokenAmount,
+  TokenAmount,
+  TokenKind
+} from "@wireio/opp-typescript-models"
 
 /**
  * Default per-(chain, token) deposit amount when neither
@@ -11,12 +16,13 @@ import type { UnderwriterCollateralEntry } from "@wireio/debugging-shared"
  * need realistic magnitudes pass `--underwriter-collateral-json-file`
  * with explicit per-leg amounts.
  *
- * Changing this constant rescales the default deposit across every
- * underwriter on every integrated chain; consumers that want a
- * different value should set the JSON config file rather than tweak
- * this default.
+ * Encoded as a `bigint` to match the `TokenAmount.amount` proto field
+ * (`@protobuf-ts/runtime` decodes `int64` as `bigint`). Changing this
+ * constant rescales the default deposit across every underwriter on
+ * every integrated chain; consumers that want a different value
+ * should set the JSON config file rather than tweak this default.
  */
-export const DefaultUnderwriterCollateralAmount = "1000"
+export const DefaultUnderwriterCollateralAmount: bigint = 1000n
 
 /**
  * Default chain/token pairs deposited to every underwriter when no
@@ -38,19 +44,27 @@ export const DefaultUnderwriterCollateralPairs: ReadonlyArray<{
 ]
 
 /**
- * Build the default underwriter-collateral set: one entry per
- * `DefaultUnderwriterCollateralPairs` entry, each amounting to
- * `DefaultUnderwriterCollateralAmount` base units.
+ * Build the default underwriter-collateral set: one
+ * {@link ChainTokenAmount} per
+ * {@link DefaultUnderwriterCollateralPairs} entry, each amounting to
+ * {@link DefaultUnderwriterCollateralAmount} base units.
+ *
+ * Constructed via the message-type `.create()` factory so the
+ * returned messages are fully-initialised proto instances (suitable
+ * for both `.toJson()` round-tripping and field-level access).
  *
  * @returns A fresh array (the caller may mutate without aliasing the
  *   defaults). Returns the per-underwriter list shape — fan-out to all
  *   underwriters happens in `loadUnderwriterCollateral`.
  */
-export function buildDefaultUnderwriterCollateral(): UnderwriterCollateralEntry[] {
-  return DefaultUnderwriterCollateralPairs.map(({ chain, tokenKind }) => ({
-    chain,
-    chainId: 0,
-    tokenKind,
-    amount: DefaultUnderwriterCollateralAmount
-  }))
+export function buildDefaultUnderwriterCollateral(): ChainTokenAmount[] {
+  return DefaultUnderwriterCollateralPairs.map(({ chain, tokenKind }) =>
+    ChainTokenAmount.create({
+      chain: ChainId.create({ kind: chain, id: 0 }),
+      amount: TokenAmount.create({
+        kind: tokenKind,
+        amount: DefaultUnderwriterCollateralAmount
+      })
+    })
+  )
 }
