@@ -15,7 +15,11 @@ import {
   BIOS_HTTP_PORT
 } from "@wireio/test-cluster-tool/cluster/constants"
 import OS from "node:os"
-import { ClusterManager } from "@wireio/test-cluster-tool"
+import {
+  ClusterManager,
+  ListenAllAddress,
+  toAddress
+} from "@wireio/test-cluster-tool"
 
 describe("ClusterManager smoke tests", () => {
   describe("genesis.ts", () => {
@@ -57,10 +61,10 @@ describe("ClusterManager smoke tests", () => {
     test("builds bios start.cmd with both K1 and BLS signature-providers", () => {
       const cmd = buildStartCmd({
         nodeopBinary: "/opt/bin/nodeop",
-        p2pListenEndpoint: `0.0.0.0:${BIOS_P2P_PORT}`,
-        p2pServerAddress: `${ClusterManager.LocalHost}:${BIOS_P2P_PORT}`,
+        p2pListenEndpoint: toAddress(BIOS_P2P_PORT, ListenAllAddress),
+        p2pServerAddress: toAddress(BIOS_P2P_PORT),
         p2pPeerAddresses: [],
-        httpServerAddress: `${ClusterManager.LocalHost}${BIOS_HTTP_PORT}`,
+        httpServerAddress: toAddress(BIOS_HTTP_PORT),
         enableStaleProduction: true,
         producerNames: ["sysio"],
         k1Keys: [BIOS_K1_KEY],

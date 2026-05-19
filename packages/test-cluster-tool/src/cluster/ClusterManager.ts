@@ -23,6 +23,12 @@ import { KiodManager } from "../processes/KiodManager.js"
 import { Clio } from "../clients/Clio.js"
 import { log } from "../logger.js"
 import { mkdirs, retry, sleep, waitForEndpoint } from "../util.js"
+import {
+  ListenAllAddress,
+  Localhost,
+  toAddress,
+  toURL
+} from "../tools/NetTools.js"
 import { generateGenesis } from "./genesis.js"
 import {
   BIOS_BLS_KEY,
@@ -36,6 +42,7 @@ import { generateLoggingConfig } from "./generateLoggingConfig"
 import {
   BATCH_OPERATOR_PLUGINS,
   batchOperatorAccountName,
+  BIOS_HTTP_PORT,
   DEFAULT_RAM_WEIGHT,
   DEFAULT_RESOURCE_WEIGHT,
   DEV_K1_PRIVATE_KEY,
@@ -62,6 +69,7 @@ import {
   loadUnderwriterCollateral,
   type UnderwriterDepositContext
 } from "../tools/underwriter-collateral/index.js"
+import { writeClusterConfigFile } from "./ClusterConfigPersistence.js"
 import {
   createAuthExLink,
   emPrivateKeyFromEthWallet
@@ -380,7 +388,7 @@ export class ClusterManager {
     // Initialise on-chain PDAs (OutpostConfig, OutboundMessageBuffer, OperatorRegistry).
     const bootstrap = new SOLBootstrap({
       wireSolPath: cfg.solanaPath,
-      rpcUrl: `http://127.0.0.1:${cfg.ports.solanaRpc}`,
+      rpcUrl: toURL(cfg.ports.solanaRpc),
       programKeypairFile
     })
     await bootstrap.bootstrap()
@@ -545,11 +553,11 @@ export class ClusterManager {
       // producerPeerAddresses excludes bios (for batch op + underwriter nodes
       // that start after bios is killed).
       const { ports } = cfg,
-        biosP2P = `${ClusterManager.LocalHost}:${ports.biosP2p}`,
+        biosP2P = toAddress(ports.biosP2p),
         producerPeerAddresses: string[] = [],
         allPeerAddresses: string[] = [biosP2P]
       ports.producerP2p.forEach(p2p => {
-        const addr = `${ClusterManager.LocalHost}:${p2p}`
+        const addr = toAddress(p2p)
         allPeerAddresses.push(addr)
         producerPeerAddresses.push(addr)
       })
@@ -587,10 +595,10 @@ export class ClusterManager {
         biosGenesisFile = Path.join(biosPath, "genesis.json"),
         biosCmd = buildStartCmd({
           nodeopBinary: executables.nodeop,
-          p2pListenEndpoint: `0.0.0.0:${ports.biosP2p}`,
-          p2pServerAddress: `${ClusterManager.LocalHost}:${ports.biosP2p}`,
+          p2pListenEndpoint: toAddress(ports.biosP2p, ListenAllAddress),
+          p2pServerAddress: toAddress(ports.biosP2p),
           p2pPeerAddresses: [],
-          httpServerAddress: `${ClusterManager.LocalHost}:${ports.biosHttp}`,
+          httpServerAddress: toAddress(ports.biosHttp),
           enableStaleProduction: true,
           producerNames: ["sysio"],
           k1Keys: [BIOS_K1_KEY],
@@ -604,7 +612,6 @@ export class ClusterManager {
         })
       writeNodeFiles(biosPath, biosCmd)
 
-      const { LocalHost, ListenAllAddress } = ClusterManager
       const p2pMaxNodesPerHost =
         cfg.nodeCount + cfg.batchOperatorCount + cfg.underwriterCount + 1
 
@@ -617,16 +624,14 @@ export class ClusterManager {
         const nodeGenesisFile = Path.join(nodePath, "genesis.json")
         const httpPort = ports.producerHttp[i]
         const p2pPort = ports.producerP2p[i]
-        const peers = allPeerAddresses.filter(
-          a => a !== `${LocalHost}:${p2pPort}`
-        )
+        const peers = allPeerAddresses.filter(a => a !== toAddress(p2pPort))
         const keys = nodeKeys[i]
         const cmd = buildStartCmd({
           nodeopBinary: executables.nodeop,
-          p2pListenEndpoint: `${ListenAllAddress}:${p2pPort}`,
-          p2pServerAddress: `${LocalHost}:${p2pPort}`,
+          p2pListenEndpoint: toAddress(p2pPort, ListenAllAddress),
+          p2pServerAddress: toAddress(p2pPort),
           p2pPeerAddresses: peers,
-          httpServerAddress: `${LocalHost}:${httpPort}`,
+          httpServerAddress: toAddress(httpPort),
           producerNames: nodeProducers[i],
           k1Keys: [keys.k1],
           blsKeys: [keys.bls],
@@ -640,7 +645,7 @@ export class ClusterManager {
 
         return {
           nodeId: i,
-          host: LocalHost,
+          host: Localhost,
           port: httpPort,
           dataPath: nodePath,
           configPath: nodePath,
@@ -668,7 +673,7 @@ export class ClusterManager {
           const httpPort = ports.batchOperatorHttp[i]
           const p2pPort = ports.batchOperatorP2p[i]
           const peers = producerPeerAddresses.filter(
-            a => a !== `${LocalHost}:${p2pPort}`
+            a => a !== toAddress(p2pPort)
           )
           const keys = batchOpKeys[i]
           const account = batchOperatorAccountName(i)
@@ -676,7 +681,7 @@ export class ClusterManager {
             publicKey: DEV_K1_PUBLIC_KEY,
             privateKey: DEV_K1_PRIVATE_KEY
           })
-          const debuggingServerUrl = `http://${LocalHost}:${ports.debuggingServer}`
+          const debuggingServerUrl = toURL(ports.debuggingServer)
           const batchOpExtraArgs: string[] = [
             "--read-mode",
             "head",
@@ -696,10 +701,10 @@ export class ClusterManager {
           ]
           const cmd = buildStartCmd({
             nodeopBinary: executables.nodeop,
-            p2pListenEndpoint: `${ListenAllAddress}:${p2pPort}`,
-            p2pServerAddress: `${LocalHost}:${p2pPort}`,
+            p2pListenEndpoint: toAddress(p2pPort, ListenAllAddress),
+            p2pServerAddress: toAddress(p2pPort),
             p2pPeerAddresses: peers,
-            httpServerAddress: `${LocalHost}:${httpPort}`,
+            httpServerAddress: toAddress(httpPort),
             producerNames: [], // no producer plugin
             k1Keys: [keys.k1],
             blsKeys: [keys.bls],
@@ -715,7 +720,7 @@ export class ClusterManager {
 
           return {
             nodeId: `batchop_${ClusterManager.padIndex(i)}`,
-            host: LocalHost,
+            host: Localhost,
             port: httpPort,
             dataPath: nodePath,
             configPath: nodePath,
@@ -739,17 +744,17 @@ export class ClusterManager {
           const httpPort = ports.underwriterHttp[i]
           const p2pPort = ports.underwriterP2p[i]
           const peers = producerPeerAddresses.filter(
-            a => a !== `${LocalHost}:${p2pPort}`
+            a => a !== toAddress(p2pPort)
           )
           const keys = uwKeys[i]
           const account = underwriterAccountName(i)
 
           const cmd = buildStartCmd({
             nodeopBinary: executables.nodeop,
-            p2pListenEndpoint: `${ListenAllAddress}:${p2pPort}`,
-            p2pServerAddress: `${LocalHost}:${p2pPort}`,
+            p2pListenEndpoint: toAddress(p2pPort, ListenAllAddress),
+            p2pServerAddress: toAddress(p2pPort),
             p2pPeerAddresses: peers,
-            httpServerAddress: `${LocalHost}:${httpPort}`,
+            httpServerAddress: toAddress(httpPort),
             producerNames: [], // no producer plugin
             k1Keys: [keys.k1],
             blsKeys: [keys.bls],
@@ -764,7 +769,7 @@ export class ClusterManager {
 
           return {
             nodeId: `uwrit_${ClusterManager.padIndex(i)}`,
-            host: LocalHost,
+            host: Localhost,
             port: httpPort,
             dataPath: nodePath,
             configPath: nodePath,
@@ -783,7 +788,7 @@ export class ClusterManager {
 
       // ── 6. Start bios node ──
       await this.launchFromCmd("node-bios", biosCmd, biosPath)
-      const biosHttpUrl = `http://127.0.0.1:${ports.biosHttp}`
+      const biosHttpUrl = toURL(ports.biosHttp)
       await waitForEndpoint(`${biosHttpUrl}/v1/chain/get_info`, {
         label: "bios-node",
         timeoutMs: ClusterManager.NodeStartupTimeoutMs
@@ -802,7 +807,7 @@ export class ClusterManager {
       // Wait for all to sync to block 1
       await Promise.all(
         nodeStates.map(ns =>
-          waitForEndpoint(`http://127.0.0.1:${ns.port}/v1/chain/get_info`, {
+          waitForEndpoint(`${toURL(ns.port)}/v1/chain/get_info`, {
             label: toNodeLabel(ns.nodeId),
             timeoutMs: ClusterManager.NodeStartupTimeoutMs
           })
@@ -898,8 +903,8 @@ export class ClusterManager {
         const anvilMnemonic = ethers.Mnemonic.fromPhrase(
           ETHBootstrapper.AnvilMnemonic
         )
-        const anvilRpcUrl = `http://127.0.0.1:${cfg.ports.anvil}`
-        const solanaRpcUrl = `http://127.0.0.1:${cfg.ports.solanaRpc}`
+        const anvilRpcUrl = toURL(cfg.ports.anvil)
+        const solanaRpcUrl = toURL(cfg.ports.solanaRpc)
 
         // ── 10b. SOL bootstrap (if solana-path provided) ──
         // Order matters: must run before 10a so we know the SOL program ID,
@@ -1065,15 +1070,99 @@ export class ClusterManager {
       })
       underwriterStates.forEach((ns, i) => {
         const k = uwKeys[i]
+        const solKey = uwSolKeys[ns.operatorAccount!]
         ns.keys = {
           wireK1: { publicKey: k.k1.publicKey, privateKey: k.k1.privateKey },
           wireBls: {
             publicKey: k.bls.publicKey,
             privateKey: k.bls.privateKey,
             proofOfPossession: k.bls.proofOfPossession
-          }
+          },
+          // Persist the underwriter's ED25519 SOL key so the
+          // post-`start()` collateral deposit (Phase 11d) signs with
+          // the same key that was authex-linked at Phase 19a — and so
+          // a subsequent `start()` from saved state can still recover
+          // it. Mirrors the batch-op persistence above.
+          ...(solKey
+            ? {
+                solEd: {
+                  publicKey: solKey.toPublic().toString(),
+                  privateKey: solKey.toString()
+                }
+              }
+            : {})
         }
       })
+
+      // ── 11d. Deposit underwriter collateral ─────────────────────────
+      //
+      // One-shot setup step that submits the per-underwriter
+      // collateral plan (defaults or operator-supplied via
+      // `--underwriter-collateral-json-file`) on each outpost.
+      // Belongs in `create` (not `run`) because it's a one-time
+      // bootstrap action: depot-side balance crediting is NOT
+      // idempotent, so running it on every `run` would over-credit.
+      //
+      // anvil was shut down at the end of the ETH bootstrap (Phase 10)
+      // so it could dump its state. We restart it briefly here from
+      // the dumped state, submit the ETH-leg deposits + the SOL-leg
+      // deposits (SOL validator is still alive from Phase 10b), then
+      // shut anvil back down so the post-deposit state is captured
+      // in the same dump file `run` will load from. Result: when
+      // `run` restarts everything, the deposit txs are already on
+      // anvil's chain history and batch operators pick up the logs
+      // → emit `OPERATOR_ACTION(DEPOSIT_REQUEST)` OPP envelopes → the
+      // depot credits the underwriter's balance the normal async way.
+      const anvilStatePath = Path.join(dataPath, ClusterManager.AnvilStateSubpath)
+      if (
+        cfg.ethereumPath &&
+        cfg.underwriterCollateral !== undefined &&
+        cfg.underwriterCollateral.length === underwriterStates.length &&
+        underwriterStates.length > 0
+      ) {
+        log.info("[Phase 11d] Restarting anvil to deposit underwriter collateral...")
+        const anvilMgr = await AnvilManager.create({
+          binary: cfg.executables.anvil,
+          port: cfg.ports.anvil,
+          stateFile: Path.join(anvilStatePath, "anvil.json")
+        })
+        await anvilMgr.start()
+        try {
+          const uwContexts: UnderwriterDepositContext[] = underwriterStates.map(
+            (uw, idx) => ({
+              account: uw.operatorAccount!,
+              // HD index aligns with Phase 19a authex linking: batch
+              // ops occupy `1..batchOpCount`, underwriters follow at
+              // `batchOpCount + 1..`.
+              ethHdIndex: batchOpStates.length + idx + 1,
+              solPrivateKey: uwSolKeys[uw.operatorAccount!]
+            })
+          )
+          await depositUnderwriterCollateral({
+            ethereumPath: cfg.ethereumPath,
+            solanaPath: cfg.solanaPath,
+            anvilRpcUrl: toURL(cfg.ports.anvil),
+            solanaRpcUrl: toURL(cfg.ports.solanaRpc),
+            collateral: cfg.underwriterCollateral,
+            underwriters: uwContexts
+          })
+          log.info(
+            `[Phase 11d] Deposited collateral for ${underwriterStates.length} underwriter(s)`
+          )
+        } finally {
+          // Stop anvil so the post-deposit state is dumped into the
+          // state file `run` will later load from.
+          await anvilMgr.stop()
+        }
+      } else if (underwriterStates.length > 0 && !cfg.ethereumPath) {
+        log.warn(
+          "[Phase 11d] No ethereumPath configured; skipping underwriter collateral deposit"
+        )
+      } else if (underwriterStates.length > 0) {
+        log.warn(
+          "[Phase 11d] No underwriterCollateral plan on ClusterConfig; skipping deposits"
+        )
+      }
 
       // ── 12. Persist state (bios excluded, matching Python _save_state) ──
       const clusterState: ClusterState = {
@@ -1178,7 +1267,7 @@ export class ClusterManager {
         .map(async ns => {
           try {
             const resp = await fetch(
-              `http://127.0.0.1:${ns.port}/v1/producer/resume`,
+              `${toURL(ns.port)}/v1/producer/resume`,
               { method: "POST" }
             )
             log.info(`Resumed producer on node ${ns.nodeId}: ${resp.status}`)
@@ -1305,7 +1394,7 @@ export class ClusterManager {
   static nodeopSyncVerify(
     httpPort: number
   ): (handle: ProcessHandle) => Promise<boolean> {
-    const baseUrl = `http://127.0.0.1:${httpPort}`
+    const baseUrl = toURL(httpPort)
     return async () => {
       try {
         // First check the node is responding at all
@@ -2115,49 +2204,6 @@ async function bootstrapChain(
 
   log.info("[Phase 19a] All authex links created")
 
-  // ── Phase 19b: Deposit underwriter collateral ────────────────────────
-  //
-  // Submits the per-underwriter collateral plan (defaults or
-  // operator-supplied via `--underwriter-collateral-json-file`) on each
-  // outpost. The OPP envelopes carrying the resulting
-  // `OPERATOR_ACTION(DEPOSIT_REQUEST)` attestations propagate back to
-  // the depot asynchronously when batch operators advance epochs — the
-  // submission here returns once the source-chain tx confirms, NOT
-  // when the depot credits the balance. Tests that need an ACTIVE
-  // underwriter status poll `sysio.opreg::operators` themselves.
-  if (
-    cfg.underwriterCollateral !== undefined &&
-    cfg.underwriterCollateral.length === underwriterStates.length &&
-    underwriterStates.length > 0
-  ) {
-    log.info("[Phase 19b] Depositing underwriter collateral...")
-    const uwContexts: UnderwriterDepositContext[] = underwriterStates.map(
-      (uw, idx) => ({
-        account: uw.operatorAccount!,
-        // HD index aligns with the Phase 19a link step: batch ops
-        // occupy slots `1..batchOpCount`, underwriters follow at
-        // `batchOpCount + 1..` (matches the `i + 1` indexing above).
-        ethHdIndex: batchOpStates.length + idx + 1,
-        solPrivateKey: uwSolKeys[uw.operatorAccount!]
-      })
-    )
-    await depositUnderwriterCollateral({
-      ethereumPath: cfg.ethereumPath,
-      solanaPath: cfg.solanaPath,
-      anvilRpcUrl: `http://127.0.0.1:${cfg.ports.anvil}`,
-      solanaRpcUrl: `http://127.0.0.1:${cfg.ports.solanaRpc}`,
-      collateral: cfg.underwriterCollateral,
-      underwriters: uwContexts
-    })
-    log.info(
-      `[Phase 19b] Deposited collateral for ${underwriterStates.length} underwriter(s)`
-    )
-  } else if (underwriterStates.length > 0) {
-    log.warn(
-      "[Phase 19b] No underwriterCollateral plan on ClusterConfig; skipping deposits"
-    )
-  }
-
   // ── Phase 20: Initialize batch operator groups ──
   log.info("[Phase 20] Initializing epoch state...")
 
@@ -2222,7 +2268,7 @@ export namespace ClusterManager {
   // ── Timeouts & ports ──
 
   /** Fallback clio URL (used during wallet setup before nodes are up). */
-  export const ClioFallbackUrl = "http://127.0.0.1:8788"
+  export const ClioFallbackUrl = toURL(BIOS_HTTP_PORT)
 
   /** Timeout for waiting on a node endpoint (ms). */
   export const NodeStartupTimeoutMs = 30_000
@@ -2235,12 +2281,6 @@ export namespace ClusterManager {
 
   /** Delay after node shutdown before proceeding (ms). */
   export const ShutdownDelayMs = 2_000
-
-  /** Hostname used for every local endpoint in a cluster. */
-  export const LocalHost = "localhost"
-
-  /** Bind-all address for p2p listen sockets. */
-  export const ListenAllAddress = "0.0.0.0"
 
   /**
    * How often batch operators poll the chain for new epochs. Setting this
@@ -2431,9 +2471,9 @@ export namespace ClusterManager {
       executables: await resolveExePaths(buildPath)
     }
 
-    Fs.writeFileSync(
+    writeClusterConfigFile(
       Path.join(clusterPath, ClusterFiles.ConfigFilename),
-      JSON.stringify(config, null, 2)
+      config
     )
 
     const manager = new ClusterManager(config)

@@ -6,6 +6,8 @@ import { match } from "ts-pattern"
 import { asOption } from "@3fv/prelude-ts"
 import { ChainKind, OperatorType } from "@wireio/opp-typescript-models"
 import { type ClusterConfig, ClusterManager } from "./cluster/ClusterManager.js"
+import { readClusterConfigFile } from "./cluster/ClusterConfigPersistence.js"
+import { toURL } from "./tools/NetTools.js"
 import { type ClusterPorts } from "./cluster/ClusterPorts.js"
 import { WIREClient } from "./clients/WIREClient.js"
 import { ClusterOptions } from "./HarnessTypes.js"
@@ -137,9 +139,7 @@ export class FlowTestContext {
       configPath
     )
 
-    const config: ClusterConfig = JSON.parse(
-      Fs.readFileSync(configPath, "utf-8")
-    )
+    const config: ClusterConfig = readClusterConfigFile(configPath)
 
     ProcessManager.setClusterPath(config.clusterPath)
     const manager = new ClusterManager(config)
@@ -218,9 +218,9 @@ export class FlowTestContext {
     config: ClusterConfig
   ): FlowTestContext {
     const ports = config.ports,
-      producerUrl = FlowTestContext.toLocalHttpUrl(ports.producerHttp[0]),
-      kiodUrl = FlowTestContext.toLocalHttpUrl(ports.kiod),
-      anvilUrl = FlowTestContext.toLocalHttpUrl(ports.anvil)
+      producerUrl = toURL(ports.producerHttp[0]),
+      kiodUrl = toURL(ports.kiod),
+      anvilUrl = toURL(ports.anvil)
 
     const wireClient = new WIREClient({
       httpUrl: producerUrl,
@@ -380,8 +380,6 @@ export class FlowTestContext {
 }
 
 export namespace FlowTestContext {
-  /** Loopback host used when constructing local RPC URLs. */
-  export const LocalHost = "127.0.0.1" as const
   /** Default poll interval for {@link pollUntil}. */
   export const DefaultPollIntervalMs = 2_000
 
@@ -413,8 +411,4 @@ export namespace FlowTestContext {
     ClusterConfig = "WIRE_CLUSTER_CONFIG"
   }
 
-  /** Build a `http://127.0.0.1:<port>` URL using the loopback host constant. */
-  export function toLocalHttpUrl(port: number): string {
-    return `http://${LocalHost}:${port}`
-  }
 }

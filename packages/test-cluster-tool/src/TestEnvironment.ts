@@ -18,6 +18,7 @@ import {
 } from "./processes/SolanaValidatorManager.js"
 import { mkdirs } from "./util.js"
 import { loadUnderwriterCollateral } from "./tools/underwriter-collateral/index.js"
+import { toURL } from "./tools/NetTools.js"
 
 export interface TestEnvironmentConfig {
   /** WIRE chain configuration (required) */
@@ -195,7 +196,7 @@ export class TestEnvironment {
     await this.cluster.start()
 
     // WIRE client points at the first producer node, using the resolved port.
-    const wireHttpUrl = TestEnvironment.toLocalHttpUrl(
+    const wireHttpUrl = toURL(
       clusterConfig.ports.producerHttp[0]
     )
     this.wireClient = new WIREClient({
@@ -257,8 +258,6 @@ export class TestEnvironment {
 }
 
 export namespace TestEnvironment {
-  /** Loopback host used when constructing local RPC URLs. */
-  export const LocalHost = "127.0.0.1" as const
   /** Prefix used when synthesising a per-run temp directory under `os.tmpdir()`. */
   export const TempPathPrefix = "wire-e2e-" as const
   /** Subdirectory under the temp path used as the cluster root when none is supplied. */
@@ -284,8 +283,4 @@ export namespace TestEnvironment {
   /** Default COOLDOWN→deregister delay (epochs). */
   export const DefaultCooldownEpochs = 1
 
-  /** Build a `http://127.0.0.1:<port>` URL using the loopback host constant. */
-  export function toLocalHttpUrl(port: number): string {
-    return `http://${LocalHost}:${port}`
-  }
 }

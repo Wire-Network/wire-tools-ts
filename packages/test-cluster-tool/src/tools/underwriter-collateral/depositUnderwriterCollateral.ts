@@ -152,18 +152,48 @@ export async function depositUnderwriterCollateral(
       if (chainKind === ChainKind.SOLANA) {
         const sol = await solCtx.get()
         const depositorKp = privateKeyToKeypair(uw.solPrivateKey)
-        await depositSOLCollateral(
-          sol.connection,
-          sol.program,
-          depositorKp,
-          OperatorType.UNDERWRITER,
-          tokenKind,
-          amount
-        )
-        log.info(
-          `[uw-collateral] ${uw.account}: deposited ${amount} ` +
-            `${TokenKind[tokenKind]} on SOL`
-        )
+        // Underwriter SOL keypairs are generated fresh (3b in
+        // ClusterManager.bootstrap); the test-validator's genesis
+        // pre-funds only the bootstrap fee-payer, so we airdrop
+        // enough lamports here to cover the deposit + tx fees + rent
+        // headroom before submitting. Mirrors the pattern flow-e's
+        // batch-op deposit uses.
+        await ensureSolFunded(sol.connection, depositorKp, amount)
+        try {
+          await depositSOLCollateral(
+            sol.connection,
+            sol.program,
+            depositorKp,
+            OperatorType.UNDERWRITER,
+            tokenKind,
+            amount
+          )
+          log.info(
+            `[uw-collateral] ${uw.account}: deposited ${amount} ` +
+              `${TokenKind[tokenKind]} on SOL`
+          )
+        } catch (err) {
+          // Treat a timeout-on-confirm as best-effort: the tx may have
+          // already landed (the opp-outpost program logs success
+          // before this signature ever appears in the validator's
+          // status cache, especially on a freshly-restarted
+          // test-validator with cold indices). The deposit is an OPP
+          // attestation that will be credited on the depot
+          // asynchronously regardless of whether this confirm poll
+          // saw the signature, so we log + continue rather than
+          // tearing the whole start() down. Non-timeout errors still
+          // propagate.
+          const msg = (err as Error)?.message ?? String(err)
+          if (msg.includes("not confirmed within")) {
+            log.warn(
+              `[uw-collateral] ${uw.account}: SOL deposit confirm timed out — ` +
+                `tx likely landed (validator may be cold-starting). ` +
+                `Continuing; depot will credit on next envelope.`
+            )
+          } else {
+            throw err
+          }
+        }
         return
       }
       if (chainKind === ChainKind.WIRE) {
@@ -233,6 +263,66 @@ function asSolanaContextLazy(opts: DepositUnderwriterCollateralOptions): {
       return cached
     }
   }
+}
+
+/**
+ * Lamport airdrop floor — sized to cover several tx fees + the
+ * deposit + a comfortable rent headroom for any PDA the deposit ix
+ * touches. Matches the magnitude flow-e's batch-op deposit airdrop
+ * uses (`5_000_000_000`); generous enough that test runs never
+ * stall on under-funded operator wallets.
+ */
+const SolAirdropLamports = 5_000_000_000n
+
+/** Max wall-clock to wait for `requestAirdrop` to confirm. */
+const SolAirdropTimeoutMs = 30_000
+
+/** Poll interval while waiting for an airdrop signature to confirm. */
+const SolAirdropPollMs = 500
+
+/**
+ * Top the depositor's lamport balance up to `SolAirdropLamports` if
+ * it currently sits below `depositAmount + SolAirdropLamports`.
+ * Idempotent — a wallet that's already funded above the floor
+ * short-circuits without an RPC call to `requestAirdrop`.
+ *
+ * @param connection      RPC connection to the test-validator.
+ * @param depositor       Keypair receiving the airdrop.
+ * @param depositAmount   Pending deposit amount; the floor must
+ *                        clear this plus fees + rent.
+ * @throws If the airdrop signature does not confirm within
+ *   {@link SolAirdropTimeoutMs}.
+ */
+async function ensureSolFunded(
+  connection: Connection,
+  depositor: Keypair,
+  depositAmount: bigint
+): Promise<void> {
+  const current = BigInt(await connection.getBalance(depositor.publicKey)),
+    floor = depositAmount + SolAirdropLamports
+  if (current >= floor) return
+
+  const sig = await connection.requestAirdrop(
+    depositor.publicKey,
+    Number(SolAirdropLamports)
+  )
+  const deadline = Date.now() + SolAirdropTimeoutMs
+  while (Date.now() < deadline) {
+    const status = await connection.getSignatureStatus(sig)
+    const conf = status?.value?.confirmationStatus
+    if (conf === "confirmed" || conf === "finalized") return
+    if (status?.value?.err) {
+      throw new Error(
+        `depositUnderwriterCollateral: airdrop tx failed: ${JSON.stringify(
+          status.value.err
+        )}`
+      )
+    }
+    await new Promise(resolve => setTimeout(resolve, SolAirdropPollMs))
+  }
+  throw new Error(
+    `depositUnderwriterCollateral: airdrop signature ${sig} not confirmed within ${SolAirdropTimeoutMs}ms`
+  )
 }
 
 /**

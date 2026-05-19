@@ -10,19 +10,23 @@ import {
  * Default per-(chain, token) deposit amount when neither
  * `--underwriter-collateral-json-file` nor a programmatic override is
  * provided. The spec at "Underwriter Collateral Config for
- * `test-cluster-tool`" reads "deposit `1000` tokens of each
- * integrated outposts default token (and WIRE)", interpreted here as
- * `1000` base units (lamports / wei / WIRE-smallest-unit). Tests that
- * need realistic magnitudes pass `--underwriter-collateral-json-file`
- * with explicit per-leg amounts.
+ * `test-cluster-tool`" calls for `1000` of each token, but the
+ * underlying chains have widely-varying smallest-unit conventions —
+ * 1000 lamports on Solana is below the rent-exempt threshold the
+ * `opp_outpost::deposit` ix triggers when it resizes the
+ * operator-registry PDA, which makes a literal-1000 default fail at
+ * simulation time. The value here (`1_000_000` base units) matches
+ * flow-e's batch-operator deposit (`FLOW_E_REQ_SOL_MIN_BOND`) and is
+ * the smallest amount empirically known to clear PDA rent growth on
+ * Solana while remaining negligible on Ethereum (1M wei =
+ * 10⁻¹² ETH) and on WIRE.
  *
  * Encoded as a `bigint` to match the `TokenAmount.amount` proto field
- * (`@protobuf-ts/runtime` decodes `int64` as `bigint`). Changing this
- * constant rescales the default deposit across every underwriter on
- * every integrated chain; consumers that want a different value
- * should set the JSON config file rather than tweak this default.
+ * (`@protobuf-ts/runtime` decodes `int64` as `bigint`). Operators
+ * that need realistic magnitudes set
+ * `--underwriter-collateral-json-file` with explicit per-leg amounts.
  */
-export const DefaultUnderwriterCollateralAmount: bigint = 1000n
+export const DefaultUnderwriterCollateralAmount: bigint = 1_000_000n
 
 /**
  * Default chain/token pairs deposited to every underwriter when no

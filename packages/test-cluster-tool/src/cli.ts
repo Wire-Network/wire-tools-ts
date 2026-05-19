@@ -27,6 +27,10 @@ import { asOption, Future } from "@3fv/prelude-ts"
 import { isPromise } from "@wireio/shared"
 import { ClusterFiles } from "@wireio/debugging-shared"
 import { loadUnderwriterCollateral } from "./tools/underwriter-collateral/index.js"
+import {
+  readClusterConfigFile,
+  writeClusterConfigFile
+} from "./cluster/ClusterConfigPersistence.js"
 
 const GlobalArgs = {
   clusterPath: "",
@@ -66,7 +70,7 @@ function loadClusterConfig(): ClusterConfig {
   )
   log.info(`wire-test-cluster: loading config from ${configFile}`)
   Assert.ok(Fs.existsSync(configFile), `config file not found: ${configFile}`)
-  return JSON.parse(Fs.readFileSync(configFile, "utf-8"))
+  return readClusterConfigFile(configFile)
 }
 
 /**
@@ -277,7 +281,7 @@ async function main(): Promise<void> {
               }
 
             log.info(`wire-test-cluster: writing config to ${configFile}`)
-            Fs.writeFileSync(configFile, JSON.stringify(config, null, 2))
+            writeClusterConfigFile(configFile, config)
 
             await createClusterManager(config).create()
 
