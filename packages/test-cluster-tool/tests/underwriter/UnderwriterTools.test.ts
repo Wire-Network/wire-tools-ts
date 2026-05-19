@@ -2,13 +2,7 @@ import Fs from "node:fs"
 import OS from "node:os"
 import Path from "node:path"
 import { ChainKind, TokenKind } from "@wireio/opp-typescript-models"
-import {
-  DefaultUnderwriterCollateralAmount,
-  DefaultUnderwriterCollateralPairs,
-  buildDefaultUnderwriterCollateral,
-  loadUnderwriterCollateral,
-  parseUnderwriterCollateralJson
-} from "@wireio/test-cluster-tool"
+import { UnderwriterTools } from "@wireio/test-cluster-tool"
 
 const TempDirPrefix = "uw-collateral-test-"
 
@@ -28,70 +22,79 @@ function writeJsonFile(name: string, value: unknown): string {
   return filePath
 }
 
-describe("buildDefaultUnderwriterCollateral", () => {
+describe("UnderwriterTools.Collateral.buildDefault", () => {
   it("returns one ChainTokenAmount per integrated default pair with the default amount", () => {
-    const entries = buildDefaultUnderwriterCollateral()
-    expect(entries.length).toBe(DefaultUnderwriterCollateralPairs.length)
+    const entries = UnderwriterTools.Collateral.buildDefault()
+    expect(entries.length).toBe(
+      UnderwriterTools.Collateral.DefaultPairs.length
+    )
     entries.forEach(entry => {
       expect(entry.chain).toBeDefined()
       expect(entry.amount).toBeDefined()
-      expect(entry.amount!.amount).toBe(DefaultUnderwriterCollateralAmount)
+      expect(entry.amount!.amount).toBe(
+        UnderwriterTools.Collateral.DefaultAmount
+      )
       expect(entry.chain!.id).toBe(0)
     })
     const present = entries
       .map(e => `${e.chain!.kind}/${e.amount!.kind}`)
       .sort()
-    const expected = DefaultUnderwriterCollateralPairs.map(
+    const expected = UnderwriterTools.Collateral.DefaultPairs.map(
       p => `${p.chain}/${p.tokenKind}`
     ).sort()
     expect(present).toEqual(expected)
   })
 
   it("returns a fresh array on each call (mutation safe)", () => {
-    const a = buildDefaultUnderwriterCollateral()
-    const b = buildDefaultUnderwriterCollateral()
+    const a = UnderwriterTools.Collateral.buildDefault()
+    const b = UnderwriterTools.Collateral.buildDefault()
     expect(a).not.toBe(b)
     a.length = 0
-    expect(b.length).toBe(DefaultUnderwriterCollateralPairs.length)
+    expect(b.length).toBe(UnderwriterTools.Collateral.DefaultPairs.length)
   })
 })
 
-describe("loadUnderwriterCollateral — no file → defaults", () => {
+describe("UnderwriterTools.Collateral.load — no file → defaults", () => {
   it("fans the default plan out to every underwriter", () => {
-    const plan = loadUnderwriterCollateral(undefined, 3)
+    const plan = UnderwriterTools.Collateral.load(undefined, 3)
     expect(plan.length).toBe(3)
     plan.forEach(entries => {
-      expect(entries.length).toBe(DefaultUnderwriterCollateralPairs.length)
+      expect(entries.length).toBe(
+        UnderwriterTools.Collateral.DefaultPairs.length
+      )
     })
   })
 
   it("throws when underwriterCount is 0 or negative", () => {
-    expect(() => loadUnderwriterCollateral(undefined, 0)).toThrow(
+    expect(() => UnderwriterTools.Collateral.load(undefined, 0)).toThrow(
       /underwriterCount must be positive/
     )
-    expect(() => loadUnderwriterCollateral(undefined, -1)).toThrow(
+    expect(() => UnderwriterTools.Collateral.load(undefined, -1)).toThrow(
       /underwriterCount must be positive/
     )
   })
 
   it("throws on a missing file path", () => {
     expect(() =>
-      loadUnderwriterCollateral(Path.join(tempDir, "does-not-exist.json"), 2)
+      UnderwriterTools.Collateral.load(
+        Path.join(tempDir, "does-not-exist.json"),
+        2
+      )
     ).toThrow(/does not exist/)
   })
 
   it("throws on invalid JSON", () => {
     const filePath = Path.join(tempDir, "bad.json")
     Fs.writeFileSync(filePath, "{not-json")
-    expect(() => loadUnderwriterCollateral(filePath, 2)).toThrow(
+    expect(() => UnderwriterTools.Collateral.load(filePath, 2)).toThrow(
       /not valid JSON/
     )
   })
 })
 
-describe("parseUnderwriterCollateralJson — uniform shape", () => {
+describe("UnderwriterTools.Collateral.parseJson — uniform shape", () => {
   it("fans a single entry list out to every underwriter", () => {
-    const plan = parseUnderwriterCollateralJson(
+    const plan = UnderwriterTools.Collateral.parseJson(
       [
         {
           chain: { kind: "CHAIN_KIND_ETHEREUM", id: 0 },
@@ -111,15 +114,17 @@ describe("parseUnderwriterCollateralJson — uniform shape", () => {
   })
 
   it("treats an empty array as 'use defaults'", () => {
-    const plan = parseUnderwriterCollateralJson([], 2)
+    const plan = UnderwriterTools.Collateral.parseJson([], 2)
     expect(plan.length).toBe(2)
     plan.forEach(entries => {
-      expect(entries.length).toBe(DefaultUnderwriterCollateralPairs.length)
+      expect(entries.length).toBe(
+        UnderwriterTools.Collateral.DefaultPairs.length
+      )
     })
   })
 
   it("accepts numeric enum encodings (proto wire format)", () => {
-    const plan = parseUnderwriterCollateralJson(
+    const plan = UnderwriterTools.Collateral.parseJson(
       [
         {
           chain: { kind: ChainKind.SOLANA, id: 0 },
@@ -134,9 +139,9 @@ describe("parseUnderwriterCollateralJson — uniform shape", () => {
   })
 })
 
-describe("parseUnderwriterCollateralJson — varied shape", () => {
+describe("UnderwriterTools.Collateral.parseJson — varied shape", () => {
   it("preserves per-underwriter entries when outer length matches", () => {
-    const plan = parseUnderwriterCollateralJson(
+    const plan = UnderwriterTools.Collateral.parseJson(
       [
         [
           {
@@ -160,7 +165,7 @@ describe("parseUnderwriterCollateralJson — varied shape", () => {
 
   it("rejects mismatched outer length", () => {
     expect(() =>
-      parseUnderwriterCollateralJson(
+      UnderwriterTools.Collateral.parseJson(
         [
           [
             {
@@ -175,7 +180,7 @@ describe("parseUnderwriterCollateralJson — varied shape", () => {
   })
 })
 
-describe("loadUnderwriterCollateral — round-trip from JSON file", () => {
+describe("UnderwriterTools.Collateral.load — round-trip from JSON file", () => {
   it("parses a uniform file written to disk", () => {
     const filePath = writeJsonFile("uniform.json", [
       {
@@ -183,7 +188,7 @@ describe("loadUnderwriterCollateral — round-trip from JSON file", () => {
         amount: { kind: TokenKind.SOL, amount: "777" }
       }
     ])
-    const plan = loadUnderwriterCollateral(filePath, 2)
+    const plan = UnderwriterTools.Collateral.load(filePath, 2)
     expect(plan.length).toBe(2)
     expect(plan[0][0].chain!.kind).toBe(ChainKind.SOLANA)
     expect(plan[1][0].amount!.amount).toBe(777n)
@@ -204,7 +209,7 @@ describe("loadUnderwriterCollateral — round-trip from JSON file", () => {
         }
       ]
     ])
-    const plan = loadUnderwriterCollateral(filePath, 2)
+    const plan = UnderwriterTools.Collateral.load(filePath, 2)
     expect(plan[0][0].chain!.kind).toBe(ChainKind.ETHEREUM)
     expect(plan[1][0].chain!.kind).toBe(ChainKind.SOLANA)
   })

@@ -3,7 +3,7 @@
  * loopback constants, and (future) other socket-layer utilities. Lives
  * under `tools/` to keep the surface together with the other reusable
  * helpers (`AuthExLinkTool`, `ETHCollateralTool`, `SOLCollateralTool`,
- * `AnchorEnumTools`, `underwriter-collateral/`).
+ * `AnchorEnumTools`, `underwriter/`).
  */
 
 /**

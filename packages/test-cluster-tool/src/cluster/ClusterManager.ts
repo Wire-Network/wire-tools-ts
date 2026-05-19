@@ -64,11 +64,7 @@ import { Deferred, getValue, isNumber, isString } from "@wireio/shared"
 import { DebuggingServer } from "@wireio/debugging-server"
 import { ETHBootstrapper } from "./ETHBootstrapper.js"
 import { SOLBootstrap } from "../bootstrap/SOLBootstrap.js"
-import {
-  depositUnderwriterCollateral,
-  loadUnderwriterCollateral,
-  type UnderwriterDepositContext
-} from "../tools/underwriter-collateral/index.js"
+import { UnderwriterTools } from "../tools/underwriter/index.js"
 import { writeClusterConfigFile } from "./ClusterConfigPersistence.js"
 import {
   createAuthExLink,
@@ -1128,17 +1124,16 @@ export class ClusterManager {
         })
         await anvilMgr.start()
         try {
-          const uwContexts: UnderwriterDepositContext[] = underwriterStates.map(
-            (uw, idx) => ({
+          const uwContexts: UnderwriterTools.Collateral.DepositContext[] =
+            underwriterStates.map((uw, idx) => ({
               account: uw.operatorAccount!,
               // HD index aligns with Phase 19a authex linking: batch
               // ops occupy `1..batchOpCount`, underwriters follow at
               // `batchOpCount + 1..`.
               ethHdIndex: batchOpStates.length + idx + 1,
               solPrivateKey: uwSolKeys[uw.operatorAccount!]
-            })
-          )
-          await depositUnderwriterCollateral({
+            }))
+          await UnderwriterTools.Collateral.deposit({
             ethereumPath: cfg.ethereumPath,
             solanaPath: cfg.solanaPath,
             anvilRpcUrl: toURL(cfg.ports.anvil),
@@ -2462,7 +2457,7 @@ export namespace ClusterManager {
       reqUwCollat,
       underwriterCollateral:
         underwriterCollateral ??
-        loadUnderwriterCollateral(undefined, underwriterCount),
+        UnderwriterTools.Collateral.load(undefined, underwriterCount),
       ports: await ClusterPorts.resolve({
         nodeCount,
         batchOperatorCount,

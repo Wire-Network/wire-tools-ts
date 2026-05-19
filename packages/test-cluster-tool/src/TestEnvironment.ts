@@ -17,7 +17,7 @@ import {
   type SolanaValidatorOptions
 } from "./processes/SolanaValidatorManager.js"
 import { mkdirs } from "./util.js"
-import { loadUnderwriterCollateral } from "./tools/underwriter-collateral/index.js"
+import { UnderwriterTools } from "./tools/underwriter/index.js"
 import { toURL } from "./tools/NetTools.js"
 
 export interface TestEnvironmentConfig {
@@ -168,7 +168,7 @@ export class TestEnvironment {
         epochDurationSec,
         warmupEpochs,
         cooldownEpochs,
-        underwriterCollateral: loadUnderwriterCollateral(
+        underwriterCollateral: UnderwriterTools.Collateral.load(
           undefined,
           underwriterCount
         ),

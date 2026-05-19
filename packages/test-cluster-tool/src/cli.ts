@@ -26,7 +26,7 @@ import { inRange, isNotEmpty, mkdirs } from "./util.js"
 import { asOption, Future } from "@3fv/prelude-ts"
 import { isPromise } from "@wireio/shared"
 import { ClusterFiles } from "@wireio/debugging-shared"
-import { loadUnderwriterCollateral } from "./tools/underwriter-collateral/index.js"
+import { UnderwriterTools } from "./tools/underwriter/index.js"
 import {
   readClusterConfigFile,
   writeClusterConfigFile
@@ -272,7 +272,7 @@ async function main(): Promise<void> {
                 epochDurationSec,
                 warmupEpochs,
                 cooldownEpochs,
-                underwriterCollateral: loadUnderwriterCollateral(
+                underwriterCollateral: UnderwriterTools.Collateral.load(
                   argv.underwriterCollateralJsonFile as string | undefined,
                   underwriterCount
                 ),
