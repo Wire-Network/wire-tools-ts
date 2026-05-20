@@ -12,7 +12,7 @@
 import Assert from "node:assert"
 import * as anchor from "@coral-xyz/anchor"
 import { Connection, Keypair, PublicKey, SystemProgram } from "@solana/web3.js"
-import { OperatorType, TokenKind } from "@wireio/opp-typescript-models"
+import { OperatorType } from "@wireio/opp-typescript-models"
 
 /** PDA seeds — kept in sync with `wire-solana/programs/opp-outpost/src`. */
 const OUTPOST_CONFIG_SEED            = Buffer.from("outpost_config")
@@ -35,10 +35,12 @@ const SOL_CONFIRM_POLL_MS    = 500
  *                      identity on the depot (matched via authex link).
  *                      Must hold at least `amount` lamports + rent.
  * @param operatorType  Numeric `OperatorType` (BATCH / UNDERWRITER / PRODUCER).
- * @param tokenKind     Numeric `TokenKind` (SOL or LIQSOL). LIQSOL deposits
- *                      are accepted by the contract but the LIQSOL custody
- *                      path is not yet wired — pass `TokenKind.SOL` until
- *                      `liqsol-core` integration lands.
+ * @param tokenCode     8-byte slug_name (`uint64`) of the deposited token
+ *                      — `SlugName.from("SOL")` for native SOL,
+ *                      `SlugName.from("LIQSOL")` once LIQSOL custody lands.
+ *                      Must already be registered on the outpost via
+ *                      `set_token_address` (native uses the all-zeroes
+ *                      Pubkey marker).
  * @param amount        Lamports to escrow.
  * @return The transaction signature on confirm.
  */
@@ -47,7 +49,7 @@ export async function depositSOLCollateral(
   program:      anchor.Program<anchor.Idl>,
   depositor:    Keypair,
   operatorType: OperatorType,
-  tokenKind:    TokenKind,
+  tokenCode:    bigint,
   amount:       bigint
 ): Promise<string> {
   Assert.ok(amount > 0n, "SOLCollateralTool: amount must be positive")
@@ -60,18 +62,14 @@ export async function depositSOLCollateral(
 
   // `program.methods.deposit(...)` returns a builder; the args are the
   // Anchor IDL's positional argument list for the deposit ix —
-  // operator_type, token_kind, amount. Use `new anchor.BN(...)` for the
-  // u64 amount to round-trip through Borsh.
-  // Pass raw u32 enum values — opp-outpost::deposit takes primitive
-  // ints because the proto-generated `OperatorType` / `TokenKind` enums
-  // serialise as 4-byte i32 (not Anchor's IDL-default 1-byte variant
-  // tag), so the IDL-driven TS encoder would otherwise produce
-  // mismatched bytes and the program would reject with
-  // InstructionDidNotDeserialize (102). See deposit.rs::handle_deposit.
+  // operator_type (u32), token_code (u64), amount (u64). Both u64s go
+  // through `new anchor.BN(...)` so Borsh sees a `toArrayLike`-able
+  // value; the u32 operator_type stays a plain number. See
+  // deposit.rs::handle_deposit.
   const tx = await program.methods
     .deposit(
       operatorType,
-      tokenKind,
+      new anchor.BN(tokenCode.toString()),
       new anchor.BN(amount.toString())
     )
     .accounts({

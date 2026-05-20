@@ -30,7 +30,7 @@ import type { OperatorAccountWallet } from "./OperatorAccountWallet.js"
  * the depot's `bypubkey` lookup back to `name`.
  */
 export class EthereumOperatorAccountWallet implements OperatorAccountWallet {
-  readonly chain: ChainKind = ChainKind.ETHEREUM
+  readonly chain: ChainKind = ChainKind.EVM
 
   /**
    * @param name         WIRE account name registered in `sysio.opreg`.

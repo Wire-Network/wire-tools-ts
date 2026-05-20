@@ -11,7 +11,7 @@ import {
   ChainKind,
   TokenKind
 } from "@wireio/opp-typescript-models"
-import { SystemContracts } from "@wireio/sdk-core"
+import { SlugName, SystemContracts } from "@wireio/sdk-core"
 
 /**
  * Flow F: Swap Variance-Tolerance Revert.
@@ -125,26 +125,29 @@ describe("Flow F: Swap Variance-Tolerance Revert", () => {
 
   // ── Step 1: provision the reserve ──
 
-  test("setreserve provisions an ETH/WIRE reserve on sysio.reserv", async () => {
-    // sysio.reserv::setreserve requires the contract's own active
-    // permission (privileged at bootstrap). The harness's clio wrapper
-    // signs with the bootstrap K1 key which holds sysio.reserv@active
-    // per Phase 14d.
-    await ctx.wireClient.clio.pushAction<SystemContracts.SysioReservSetreserveAction>(
+  test("regreserve provisions an ETH/WIRE reserve on sysio.reserv", async () => {
+    // sysio.reserv::regreserve is bootstrap-window-only and requires the
+    // contract's own active permission (privileged at bootstrap). The
+    // harness's clio wrapper signs with the bootstrap K1 key which holds
+    // sysio.reserv@active per Phase 14d.
+    await ctx.wireClient.clio.pushAction<SystemContracts.SysioReservRegreserveAction>(
       "sysio.reserv",
-      "setreserve",
+      "regreserve",
       {
-        chain: ChainKind.ETHEREUM as unknown as SystemContracts.SysioReservChainkind,
-        outpost_kind: TokenKind.ETH as unknown as SystemContracts.SysioReservTokenkind,
-        outpost_amount: Number(INITIAL_OUTPOST_AMOUNT),
-        wire_amount: Number(INITIAL_WIRE_AMOUNT),
+        chain_code: { value: SlugName.from("ETHEREUM") },
+        token_code: { value: SlugName.from("ETH") },
+        reserve_code: { value: SlugName.from("PRIMARY") },
+        name: "ETHEREUM-ETH-PRIMARY",
+        description: "flow-f variance-revert seed reserve",
+        initial_chain_amount: Number(INITIAL_OUTPOST_AMOUNT),
+        initial_wire_amount: Number(INITIAL_WIRE_AMOUNT),
         connector_weight_bps: CONNECTOR_WEIGHT_BPS
       },
       "sysio.reserv@active"
     )
-    // The reserve row's primary key packs (chain << 32) | outpost_token.
-    // ETH=2, ETH-token=256 → 2<<32 | 256 = 8589934848. Read it back to
-    // confirm.
+    // The reserve row's primary key is now a `checksum256` hash of the
+    // (chain_code, token_code, reserve_code) triple, so we scan + filter
+    // rather than computing the key directly.
     const rows = await ctx.wireClient.getTableRows<any>({
       code: "sysio.reserv",
       scope: "sysio.reserv",
@@ -152,11 +155,10 @@ describe("Flow F: Swap Variance-Tolerance Revert", () => {
     })
     const r = rows.rows.find(
       (row: any) =>
-        Number(row.reserve_outpost_amount?.amount) ===
-        Number(INITIAL_OUTPOST_AMOUNT)
+        Number(row.reserve_chain_amount) === Number(INITIAL_OUTPOST_AMOUNT)
     )
     expect(r).toBeDefined()
-    expect(Number(r.reserve_wire_amount.amount)).toBe(Number(INITIAL_WIRE_AMOUNT))
+    expect(Number(r.reserve_wire_amount)).toBe(Number(INITIAL_WIRE_AMOUNT))
   })
 
   // The previous `onreward` + `createuwreq` test bodies signed as

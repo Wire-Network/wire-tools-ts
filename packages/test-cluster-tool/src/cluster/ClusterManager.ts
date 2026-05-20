@@ -56,7 +56,7 @@ import {
 import { ethers } from "ethers"
 import * as Assert from "node:assert"
 import { Keypair } from "@solana/web3.js"
-import { Bytes, KeyType, PrivateKey, SystemContracts } from "@wireio/sdk-core"
+import { Bytes, SlugName, KeyType, PrivateKey, SystemContracts } from "@wireio/sdk-core"
 import { which } from "zx"
 import { asOption } from "@3fv/prelude-ts"
 import { range } from "lodash"
@@ -176,7 +176,7 @@ async function linkOperatorChainAccounts(
   )
 
   await createAuthExLink(clio, {
-    chainKind: ChainKind.ETHEREUM,
+    chainKind: ChainKind.EVM,
     account,
     privateKey: emPrivateKeyFromEthWallet(ethWallet),
     ethWallet
@@ -184,7 +184,7 @@ async function linkOperatorChainAccounts(
 
   if (!skipSolLink) {
     await createAuthExLink(clio, {
-      chainKind: ChainKind.SOLANA,
+      chainKind: ChainKind.SVM,
       account,
       privateKey: solPrivateKey ?? PrivateKey.generate(KeyType.ED)
     })
@@ -1612,10 +1612,10 @@ async function bootstrapChain(
   await Bluebird.each(featureList, async feature => {
     const digest = feature.feature_digest
     if (!digest) return
-    const codename = feature.specification?.find(
+    const slug_name = feature.specification?.find(
       s => s.name === "builtin_feature_codename"
     )?.value
-    if (codename === "PREACTIVATE_FEATURE") return
+    if (slug_name === "PREACTIVATE_FEATURE") return
     try {
       await clio.activateFeature(digest)
       activatedCount++
@@ -1627,7 +1627,7 @@ async function bootstrapChain(
       ) {
         log.warn(
           "[Phase 3] Feature activation issue: {} - {}",
-          codename ?? digest,
+          slug_name ?? digest,
           msg
         )
       }
@@ -2021,12 +2021,16 @@ async function bootstrapChain(
   log.info("[Phase 15a] Configuring sysio.opreg...")
   // Map ClusterConfig.ChainMinBond[] → action-shape: the depot stamps
   // `config_timestamp_ms` itself, so callers pin it to 0 here.
+  // ChainMinBond now keys by (chain_code, token_code) — codenames packed
+  // into the nested `{ value: uint64 }` shape the regenerated ABI types
+  // emit. The harness-local input still carries plain numbers; this
+  // helper wraps them at the action boundary.
   const toChainMinBondRows = (
-    rows: { chain: number; tokenKind: number; minBond: number }[] | undefined
+    rows: { chainCode: number; tokenCode: number; minBond: number }[] | undefined
   ) =>
     (rows ?? []).map(r => ({
-      chain: r.chain,
-      token_kind: r.tokenKind,
+      chain_code: { value: r.chainCode },
+      token_code: { value: r.tokenCode },
       min_bond: r.minBond,
       config_timestamp_ms: 0
     }))
@@ -2058,30 +2062,53 @@ async function bootstrapChain(
   )
   log.info("[Phase 15a] sysio.opreg configured")
 
-  // ── Phase 16: Register outposts ──
-  log.info("[Phase 16] Registering outposts...")
-  await clio.pushActionAndWait<SystemContracts.SysioEpochRegoutpostAction>(
-    "sysio.epoch",
-    "regoutpost",
+  // ── Phase 16: Register chains on sysio.chains ──
+  // Post-v6 the chain registry lives on `sysio.chains` and is keyed by a
+  // slug_name primary key (uint64 packed). The depot also has its own
+  // self-row at `("WIRE"_c, kind=WIRE, is_depot=true)` — registered first
+  // so that downstream contract logic that consults the chain table can
+  // unconditionally find WIRE without a special-case fallback.
+  log.info("[Phase 16] Registering chains on sysio.chains...")
+  await clio.pushActionAndWait<SystemContracts.SysioChainsRegchainAction>(
+    "sysio.chains",
+    "regchain",
     {
-      chain_kind: SystemContracts.SysioEpochChainkind.CHAIN_KIND_ETHEREUM,
-      chain_id: AnvilManager.DefaultChainId
+      kind: SystemContracts.SysioChainsChainkind.CHAIN_KIND_WIRE,
+      code: { value: SlugName.from("WIRE") },
+      external_chain_id: 0,
+      name: "Wire (depot)",
+      description: "The WIRE depot chain itself"
     },
-    "sysio.epoch@active"
+    "sysio.chains@active"
+  )
+  await clio.pushActionAndWait<SystemContracts.SysioChainsRegchainAction>(
+    "sysio.chains",
+    "regchain",
+    {
+      kind: SystemContracts.SysioChainsChainkind.CHAIN_KIND_EVM,
+      code: { value: SlugName.from("ETHEREUM") },
+      external_chain_id: AnvilManager.DefaultChainId,
+      name: "Ethereum (anvil)",
+      description: "Local anvil EVM chain (test cluster)"
+    },
+    "sysio.chains@active"
   )
   if (cfg.solanaPath) {
-    await clio.pushActionAndWait<SystemContracts.SysioEpochRegoutpostAction>(
-      "sysio.epoch",
-      "regoutpost",
+    await clio.pushActionAndWait<SystemContracts.SysioChainsRegchainAction>(
+      "sysio.chains",
+      "regchain",
       {
-        chain_kind: SystemContracts.SysioEpochChainkind.CHAIN_KIND_SOLANA,
-        chain_id: 0
+        kind: SystemContracts.SysioChainsChainkind.CHAIN_KIND_SVM,
+        code: { value: SlugName.from("SOLANA") },
+        external_chain_id: 0,
+        name: "Solana (test-validator)",
+        description: "Local solana-test-validator (test cluster)"
       },
-      "sysio.epoch@active"
+      "sysio.chains@active"
     )
   }
   log.info(
-    `[Phase 16] Outposts registered (ETH${cfg.solanaPath ? " + SOL" : ""})`
+    `[Phase 16] Chains registered (WIRE + ETH${cfg.solanaPath ? " + SOL" : ""})`
   )
 
   // ── Phase 17: Configure sysio.uwrit ──

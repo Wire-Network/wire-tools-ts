@@ -12,15 +12,15 @@ import {
 import { Future } from "@3fv/prelude-ts"
 
 function makeEnvelopeBase64(epochIndex: number): string {
+  // Note: per the v6 OPP-proto trim, `merkle` / `start_message_id` /
+  // `end_message_id` were removed from `Envelope`. Test fixtures only
+  // populate the fields the wire format still carries.
   const bytes = Envelope.toBinary(
     Envelope.create({
       epochIndex,
       epochTimestamp: BigInt(Date.now()),
       envelopeHash: new Uint8Array(32),
       previousEnvelopeHash: new Uint8Array(32),
-      merkle: new Uint8Array(32),
-      startMessageId: new Uint8Array(32),
-      endMessageId: new Uint8Array(32),
       messages: []
     })
   )

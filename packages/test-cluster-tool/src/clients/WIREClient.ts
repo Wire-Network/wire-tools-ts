@@ -1,7 +1,11 @@
-import { APIClient, SystemContracts } from "@wireio/sdk-core"
-import { ChainKind, TokenKind } from "@wireio/opp-typescript-models"
+import { APIClient, SlugName, SystemContracts } from "@wireio/sdk-core"
 
 import { Clio, type ClioConfig } from "./Clio.js"
+
+/** SlugName packed `("WIRE"_c).value` — the depot's own chain code. */
+const WireChainCode = SlugName.from("WIRE")
+/** SlugName packed `("WIRE"_c).value` — the WIRE native token code. */
+const WireTokenCode = SlugName.from("WIRE")
 
 export interface WIREClientConfig {
   /** nodeop HTTP URL */
@@ -51,7 +55,17 @@ export class WIREClient {
       upper_bound: params.upper_bound
     }
     const result = await this.api.v1.chain.get_table_rows(opts as any)
-    return result as { rows: T[]; more: boolean }
+    // v6: depot KV tables (operators, epochstate, envelopes, chains,
+    // tokens, reserves) return each row as `{ key: {...}, value: {...} }`.
+    // The actual row fields live under `.value`. Unwrap centrally so
+    // every caller sees a flat row shape compatible with v5-style
+    // `.find(r => r.account === X)` access; rows without a `.value`
+    // wrapper (non-KV multi_index tables) pass through unchanged.
+    const rows = (result as any).rows ?? []
+    const unwrapped = rows.map((r: any) =>
+      r != null && typeof r === "object" && "value" in r ? r.value : r
+    )
+    return { rows: unwrapped as T[], more: (result as any).more ?? false }
   }
 
   /** Read epoch state from sysio.epoch contract */
@@ -101,12 +115,17 @@ export class WIREClient {
     })
   }
 
-  /** Read outpost registry from sysio.epoch */
-  async getOutposts() {
-    return this.getTableRows<SystemContracts.SysioEpochOutpostInfoType>({
-      code: WIREClient.Contract.Epoch,
-      scope: WIREClient.Contract.Epoch,
-      table: WIREClient.EpochTable.Outposts
+  /**
+   * Read the chain registry from `sysio.chains::chains`. Replaces the
+   * pre-v6 `sysio.epoch::outposts` lookup — the outposts table is gone and
+   * every chain (including the WIRE depot itself) lives on the new
+   * `sysio.chains` contract keyed by `chain.code` slug_name.
+   */
+  async getChains() {
+    return this.getTableRows<SystemContracts.SysioChainsChainRowType>({
+      code: WIREClient.Contract.Chains,
+      scope: WIREClient.Contract.Chains,
+      table: WIREClient.ChainsTable.Chains
     })
   }
 
@@ -167,44 +186,45 @@ export class WIREClient {
   }
 
   /**
-   * Provision a per-(chain, external-token) reserve on `sysio.reserv` via
-   * the `setreserve` action. Flat `number` amounts; the `TokenAmount`
-   * wire shape is built internally so test-time provisioning stays DRY.
-   * Uses `pushActionAndWait` so the row is queryable immediately on
-   * resolution.
+   * Provision a per-(chain_code, token_code, reserve_code) reserve on
+   * `sysio.reserv` via the `regreserve` action. Bootstrap-window-only — the
+   * action inserts the row with `status=ACTIVE` and pairs the
+   * `initial_chain_amount` (outpost-side) with `initial_wire_amount`
+   * (WIRE-side). Uses `pushActionAndWait` so the row is queryable
+   * immediately on resolution.
    *
-   * The connector-weight knob is omitted from the helper surface — today
-   * `swapquote` ignores it and runs pure constant-product math, so the
-   * action receives the default (5000 bps = constant product).
+   * The connector-weight knob defaults to 5000 (50% Bancor weight = pure
+   * constant product) which is what `swapquote` assumes today.
    *
-   * @param chain          Outpost chain (ETHEREUM / SOLANA / SUI).
-   * @param kind           Outpost-side TokenKind paired with WIRE in this
-   *                        reserve. Must NOT be `TOKEN_KIND_WIRE`.
+   * @param chainCode    SlugName of the outpost chain (e.g.
+   *   `SlugName.from("ETHEREUM")`).
+   * @param tokenCode    SlugName of the outpost-side token (must not be
+   *   `SlugName.from("WIRE")` — there is no WIRE-on-WIRE reserve).
+   * @param reserveCode  SlugName of the reserve (typically
+   *   `SlugName.from("PRIMARY")` for the bootstrap one).
    * @param externalAmount Initial outpost-side balance.
    * @param wireAmount     Initial WIRE-side balance.
    */
   async seedReserve(
-    chain: ChainKind,
-    kind: TokenKind,
+    chainCode: number,
+    tokenCode: number,
+    reserveCode: number,
     externalAmount: number,
     wireAmount: number
   ): Promise<void> {
     const DEFAULT_CONNECTOR_WEIGHT_BPS = 5000
-    // Post no-proto-messages-in-actions split: `setreserve` takes flat
-    // `(chain, outpost_kind, outpost_amount, wire_amount,
-    //  connector_weight_bps)` — no nested TokenAmount object on the wire
-    // (which would leak vint64 typedefs into the ABI).
-    await this.clio.pushActionAndWait<SystemContracts.SysioReservSetreserveAction>(
+    const name = `${SlugName.toString(chainCode)}-${SlugName.toString(tokenCode)}-${SlugName.toString(reserveCode)}`
+    await this.clio.pushActionAndWait<SystemContracts.SysioReservRegreserveAction>(
       "sysio.reserv",
-      "setreserve",
+      "regreserve",
       {
-        // `ChainKind` / `TokenKind` (proto enums) ↔ `SysioReservChainkind` /
-        // `SysioReservTokenkind` (system-contract enum mirrors) — identical
-        // numeric values; cast bridges nominal typing.
-        chain: chain as unknown as SystemContracts.SysioReservChainkind,
-        outpost_kind: kind as unknown as SystemContracts.SysioReservTokenkind,
-        outpost_amount: externalAmount,
-        wire_amount: wireAmount,
+        chain_code: { value: chainCode },
+        token_code: { value: tokenCode },
+        reserve_code: { value: reserveCode },
+        name,
+        description: `bootstrap-seeded reserve for ${name}`,
+        initial_chain_amount: externalAmount,
+        initial_wire_amount: wireAmount,
         connector_weight_bps: DEFAULT_CONNECTOR_WEIGHT_BPS
       },
       "sysio.reserv@active"
@@ -228,13 +248,21 @@ export class WIREClient {
    *          contract's post-split `uint64` return.
    */
   async swapquote(
-    fromKind: TokenKind,
+    fromChainCode: number,
+    fromTokenCode: number,
+    fromReserveCode: number,
     fromAmount: number,
-    toChain: ChainKind,
-    toToken: TokenKind
+    toChainCode: number,
+    toTokenCode: number,
+    toReserveCode: number
   ): Promise<number> {
     if (fromAmount <= 0) return 0
-    if (fromKind === TokenKind.WIRE && toToken === TokenKind.WIRE) {
+    // A WIRE-on-WIRE leg has no reserve — pass-through 1:1.
+    const fromIsWire =
+      fromChainCode === WireChainCode && fromTokenCode === WireTokenCode
+    const toIsWire =
+      toChainCode === WireChainCode && toTokenCode === WireTokenCode
+    if (fromIsWire && toIsWire) {
       return fromAmount
     }
 
@@ -245,40 +273,53 @@ export class WIREClient {
       limit: WIREClient.MaxReservesScan
     })
 
-    const findReserve = (chain: ChainKind, kind: TokenKind) =>
+    // Match on the (chain_code, token_code, reserve_code) triple — fields
+    // are nested `{ value: number }` slug_name messages on the v6 reserves
+    // table; some indexes may surface them as plain `number`s (e.g. when
+    // the secondary read returns the unpacked uint64 directly), so accept
+    // both shapes defensively.
+    const codenameValue = (v: unknown): number =>
+      typeof v === "object" && v !== null && "value" in v
+        ? Number((v as { value: unknown }).value)
+        : Number(v)
+    const findReserve = (
+      chainCode: number,
+      tokenCode: number,
+      reserveCode: number
+    ) =>
       rows.find(
         (r: any) =>
-          Number(r.chain) === Number(chain) &&
-          Number(r.reserve_outpost_amount?.kind) === Number(kind)
+          codenameValue(r.chain_code) === chainCode &&
+          codenameValue(r.token_code) === tokenCode &&
+          codenameValue(r.reserve_code) === reserveCode
       )
 
-    const outpostAmt = (r: any) =>
-      Number(r?.reserve_outpost_amount?.amount ?? 0)
-    const wireAmt = (r: any) => Number(r?.reserve_wire_amount?.amount ?? 0)
+    const chainAmt = (r: any) => Number(r?.reserve_chain_amount ?? 0)
+    const wireAmt = (r: any) => Number(r?.reserve_wire_amount ?? 0)
 
-    if (fromKind === TokenKind.WIRE) {
-      const r = findReserve(toChain, toToken)
+    if (fromIsWire) {
+      const r = findReserve(toChainCode, toTokenCode, toReserveCode)
       if (!r) return 0
-      return WIREClient.cpOutput(wireAmt(r), outpostAmt(r), fromAmount)
+      return WIREClient.cpOutput(wireAmt(r), chainAmt(r), fromAmount)
     }
-    if (toToken === TokenKind.WIRE) {
-      const r = findReserve(toChain, fromKind)
+    if (toIsWire) {
+      const r = findReserve(fromChainCode, fromTokenCode, fromReserveCode)
       if (!r) return 0
-      return WIREClient.cpOutput(outpostAmt(r), wireAmt(r), fromAmount)
+      return WIREClient.cpOutput(chainAmt(r), wireAmt(r), fromAmount)
     }
     // Full hop: src->WIRE->dst, two reserves consulted.
-    const srcR = findReserve(toChain, fromKind)
-    const dstR = findReserve(toChain, toToken)
+    const srcR = findReserve(fromChainCode, fromTokenCode, fromReserveCode)
+    const dstR = findReserve(toChainCode, toTokenCode, toReserveCode)
     if (!srcR || !dstR) return 0
     const wireIntermediate = WIREClient.cpOutput(
-      outpostAmt(srcR),
+      chainAmt(srcR),
       wireAmt(srcR),
       fromAmount
     )
     if (wireIntermediate === 0) return 0
     return WIREClient.cpOutput(
       wireAmt(dstR),
-      outpostAmt(dstR),
+      chainAmt(dstR),
       wireIntermediate
     )
   }
@@ -315,17 +356,23 @@ export namespace WIREClient {
 
   /** System contract account names this client reads from. */
   export enum Contract {
+    Chains = "sysio.chains",
     Epoch = "sysio.epoch",
     Opreg = "sysio.opreg",
     Msgch = "sysio.msgch",
     Uwrit = "sysio.uwrit"
   }
 
-  /** Tables on `sysio.epoch`. */
+  /** Tables on `sysio.chains`. */
+  export enum ChainsTable {
+    Chains = "chains"
+  }
+
+  /** Tables on `sysio.epoch`. The pre-v6 `outposts` table is gone; chains
+   *  live on `sysio.chains` now. */
   export enum EpochTable {
     EpochState = "epochstate",
-    EpochConfig = "epochcfg",
-    Outposts = "outposts"
+    EpochConfig = "epochcfg"
   }
 
   /** Tables on `sysio.opreg`. */

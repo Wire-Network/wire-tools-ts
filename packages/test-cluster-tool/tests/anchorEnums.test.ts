@@ -24,20 +24,20 @@ describe("anchorEnums", () => {
 
   describe("tokenKindVariant", () => {
     test.each([
-      [TokenKind.WIRE,    { tokenKindWire:    {} }],
-      [TokenKind.ETH,     { tokenKindEth:     {} }],
+      [TokenKind.UNKNOWN, { tokenKindUnknown: {} }],
+      [TokenKind.NATIVE,  { tokenKindNative:  {} }],
       [TokenKind.ERC20,   { tokenKindErc20:   {} }],
       [TokenKind.ERC721,  { tokenKindErc721:  {} }],
       [TokenKind.ERC1155, { tokenKindErc1155: {} }],
-      [TokenKind.LIQETH,  { tokenKindLiqeth:  {} }],
-      [TokenKind.SOL,     { tokenKindSol:     {} }],
-      [TokenKind.LIQSOL,  { tokenKindLiqsol:  {} }]
+      [TokenKind.SPL,     { tokenKindSpl:     {} }],
+      [TokenKind.SPL_NFT, { tokenKindSplNft:  {} }],
+      [TokenKind.LIQ,     { tokenKindLiq:     {} }]
     ])("maps %s to the Anchor variant tag", (k, expected) => {
       expect(tokenKindVariant(k)).toEqual(expected)
     })
 
-    test("SOL kind serialises to the deposit-ix expected tag", () => {
-      expect(tokenKindVariant(TokenKind.SOL)).toEqual({ tokenKindSol: {} })
+    test("NATIVE kind serialises to the deposit-ix expected tag", () => {
+      expect(tokenKindVariant(TokenKind.NATIVE)).toEqual({ tokenKindNative: {} })
     })
   })
 })

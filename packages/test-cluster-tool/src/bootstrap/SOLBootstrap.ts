@@ -7,6 +7,8 @@ import {
 import * as anchor from "@coral-xyz/anchor"
 import Path from "path"
 import Fs from "fs"
+import { SlugName } from "@wireio/sdk-core"
+
 import { SOLClient } from "../clients/SOLClient.js"
 import { log } from "../logger.js"
 import { retry, sleep } from "../util.js"
@@ -252,8 +254,13 @@ export class SOLBootstrap {
     // derived on-the-fly from `OperatorRegistry.groups[0].members.len()` at
     // each `epoch_in` call, and `epoch_duration_sec` is propagated via the
     // `BATCH_OPERATOR_GROUPS` attestation. See .claude/rules/opp-consensus.md.
+    //
+    // `chain_code` (v6 data-model refactor) — the outpost's slug_name on
+    // the WIRE depot's chain registry, stamped onto every outbound
+    // attestation. SOL outpost ⇒ `"SOLANA"_c`.
+    const solanaChainCode = new anchor.BN(SlugName.from("SOLANA"))
     const tx = await program.methods
-      .initialize()
+      .initialize(solanaChainCode)
       .accounts({
         authority: deployer.publicKey,
         config: configPda,
@@ -286,5 +293,83 @@ export class SOLBootstrap {
       throw new Error("Initialize not confirmed within 60s")
 
     log.info("PDAs initialized successfully")
+
+    // Register the native-SOL binding so the outpost will accept native
+    // deposits. Per the proto rule `ChainToken.is_native ⇒ empty
+    // contract_addr`, "native" on the outpost is the entry whose mint
+    // is the all-zeroes Pubkey (`NATIVE_TOKEN_MARKER`). Without this
+    // entry, `deposit(SOL_CODE, ...)` reverts with
+    // `TokenCodeNotConfigured` because the per-code lookup is empty.
+    const solTokenCode = new anchor.BN(SlugName.from("SOL"))
+    const setTokenAddrTx = await program.methods
+      .setTokenAddress(solTokenCode, anchor.web3.PublicKey.default)
+      .accounts({
+        authority: deployer.publicKey,
+        config:    configPda
+      })
+      .signers([deployer])
+      .transaction()
+    const setSig = await this.connection.sendTransaction(
+      setTokenAddrTx,
+      [deployer],
+      { skipPreflight: false }
+    )
+    const setDeadline = Date.now() + 60_000
+    while (Date.now() < setDeadline) {
+      const status = await this.connection.getSignatureStatus(setSig)
+      const conf = status?.value?.confirmationStatus
+      if (conf === "confirmed" || conf === "finalized") break
+      if (status?.value?.err)
+        throw new Error(
+          `set_token_address tx failed: ${JSON.stringify(status.value.err)}`
+        )
+      await sleep(500)
+    }
+    if (Date.now() >= setDeadline)
+      throw new Error("set_token_address not confirmed within 60s")
+
+    log.info("SOL native-token binding registered")
+
+    // Initialize the ReserveAggregate PDA (seeded with `reserve_aggregate`).
+    // The `epoch_in` ix declares this account as a writable Anchor
+    // `Account<ReserveAggregate>`, so without `init_reserve` running first
+    // every inbound delivery from the batch operators fails with an
+    // assert-exception at the simulation boundary (PDA doesn't exist).
+    const [reserveAggregatePda] = anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from("reserve_aggregate")],
+      this.programId!
+    )
+    log.info(`  ReserveAggregate PDA:         ${reserveAggregatePda.toBase58()}`)
+    const initReserveTx = await program.methods
+      .initReserve()
+      .accounts({
+        payer:            deployer.publicKey,
+        authority:        deployer.publicKey,
+        config:           configPda,
+        reserveAggregate: reserveAggregatePda,
+        systemProgram:    anchor.web3.SystemProgram.programId
+      })
+      .signers([deployer])
+      .transaction()
+    const initReserveSig = await this.connection.sendTransaction(
+      initReserveTx,
+      [deployer],
+      { skipPreflight: false }
+    )
+    const initReserveDeadline = Date.now() + 60_000
+    while (Date.now() < initReserveDeadline) {
+      const status = await this.connection.getSignatureStatus(initReserveSig)
+      const conf = status?.value?.confirmationStatus
+      if (conf === "confirmed" || conf === "finalized") break
+      if (status?.value?.err)
+        throw new Error(
+          `init_reserve tx failed: ${JSON.stringify(status.value.err)}`
+        )
+      await sleep(500)
+    }
+    if (Date.now() >= initReserveDeadline)
+      throw new Error("init_reserve not confirmed within 60s")
+
+    log.info("SOL ReserveAggregate PDA initialized")
   }
 }

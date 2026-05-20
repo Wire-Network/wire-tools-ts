@@ -12,7 +12,7 @@ import {
   TokenKind,
   UnderwriteRequestStatus
 } from "@wireio/opp-typescript-models"
-import { SystemContracts } from "@wireio/sdk-core"
+import { SlugName, SystemContracts } from "@wireio/sdk-core"
 
 /**
  * Flow C: SWAP_REQUEST → underwriter race → SWAP_REMIT.
@@ -108,10 +108,11 @@ describe("Flow C: SWAP_REQUEST race → SWAP_REMIT", () => {
 
   // ── Step 1: provision the reserve ──
 
-  test("setreserve provisions an ETH/WIRE reserve", async () => {
+  test("regreserve provisions an ETH/WIRE reserve", async () => {
     await ctx.wireClient.seedReserve(
-      ChainKind.ETHEREUM,
-      TokenKind.ETH,
+      SlugName.from("ETHEREUM"),
+      SlugName.from("ETH"),
+      SlugName.from("PRIMARY"),
       INITIAL_OUTPOST_AMOUNT,
       INITIAL_WIRE_AMOUNT
     )
@@ -122,10 +123,10 @@ describe("Flow C: SWAP_REQUEST race → SWAP_REMIT", () => {
     })
     const r = rows.find(
       (row: any) =>
-        Number(row.reserve_outpost_amount?.amount) === INITIAL_OUTPOST_AMOUNT
+        Number(row.reserve_chain_amount) === INITIAL_OUTPOST_AMOUNT
     )
     expect(r).toBeDefined()
-    expect(Number(r.reserve_wire_amount.amount)).toBe(INITIAL_WIRE_AMOUNT)
+    expect(Number(r.reserve_wire_amount)).toBe(INITIAL_WIRE_AMOUNT)
   })
 
   // ── Step 2: compute the expected destination amount via swapquote ──
@@ -134,12 +135,15 @@ describe("Flow C: SWAP_REQUEST race → SWAP_REMIT", () => {
 
   test("swapquote returns the constant-product output for the seeded reserve", async () => {
     const quote = await ctx.wireClient.swapquote(
-      TokenKind.WIRE,
+      SlugName.from("WIRE"),
+      SlugName.from("WIRE"),
+      SlugName.from("PRIMARY"),
       SRC_AMOUNT,
-      ChainKind.ETHEREUM,
-      TokenKind.ETH
+      SlugName.from("ETHEREUM"),
+      SlugName.from("ETH"),
+      SlugName.from("PRIMARY")
     )
-    // WIRE -> ETH half-hop: cp_output(reserve_wire, reserve_outpost, src).
+    // WIRE -> ETH half-hop: cp_output(reserve_wire, reserve_chain, src).
     const expected = WIREClient.cpOutput(
       INITIAL_WIRE_AMOUNT,
       INITIAL_OUTPOST_AMOUNT,
@@ -175,21 +179,26 @@ describe("Flow C: SWAP_REQUEST race → SWAP_REMIT", () => {
 
   // ── Step 5: reserve was debited by `dst_amount` ──
 
-  test("reserve_outpost_amount debited by exactly dst_amount at emit time", async () => {
+  test("reserve_chain_amount debited by exactly dst_amount at emit time", async () => {
     const { rows } = await ctx.wireClient.getTableRows<any>({
       code: "sysio.reserv",
       scope: "sysio.reserv",
       table: "reserves"
     })
+    const ethTokenCode = SlugName.from("ETH"),
+      codenameValue = (v: unknown): number =>
+        typeof v === "object" && v !== null && "value" in v
+          ? Number((v as { value: unknown }).value)
+          : Number(v)
     const r = rows.find(
-      (row: any) => Number(row.reserve_outpost_amount?.kind) === TokenKind.ETH
+      (row: any) => codenameValue(row.token_code) === ethTokenCode
     )
     expect(r).toBeDefined()
-    expect(Number(r.reserve_outpost_amount.amount)).toBe(
+    expect(Number(r.reserve_chain_amount)).toBe(
       INITIAL_OUTPOST_AMOUNT - expectedDstAmount
     )
     // WIRE side untouched — only the outpost-side reserve moves on emit.
-    expect(Number(r.reserve_wire_amount.amount)).toBe(INITIAL_WIRE_AMOUNT)
+    expect(Number(r.reserve_wire_amount)).toBe(INITIAL_WIRE_AMOUNT)
   })
 
   // ── Step 6: SWAP_REMIT envelope queued outbound ──

@@ -15,12 +15,12 @@ import {
   DEV_K1_PUBLIC_KEY,
   OPP_SYSTEM_ACCOUNTS
 } from "../cluster/constants.js"
-import { SystemContracts } from "@wireio/sdk-core"
+import { SlugName, SystemContracts } from "@wireio/sdk-core"
 import { asOption, Future } from "@3fv/prelude-ts"
 import { which } from "zx"
 import { defaults } from "lodash"
 import { assert } from "@wireio/shared"
-import { SysioEpochChainkind } from "@wireio/sdk-core/types/SystemContractTypes"
+import { SysioChainsChainkind } from "@wireio/sdk-core/types/SystemContractTypes"
 
 /**
  * WIRE chain bootstrap sequence.
@@ -396,36 +396,46 @@ export class WIREBootstrap {
       log.warn(`Failed to configure epoch: ${err.message}`)
     }
 
-    // Register outposts: ETHEREUM (anvil local chain) and SOLANA (disabled below).
+    // Register chains on sysio.chains: WIRE (depot), ETHEREUM (anvil local
+    // chain). SOLANA registration sits behind the same disabled block as
+    // before — re-enabled per cluster once the SOL outpost binaries are
+    // built into the harness path.
     try {
-      await this.clio.pushAction<SystemContracts.SysioEpochRegoutpostAction>(
-        "sysio.epoch",
-        "regoutpost",
+      await this.clio.pushAction<SystemContracts.SysioChainsRegchainAction>(
+        "sysio.chains",
+        "regchain",
         {
-          chain_kind: SysioEpochChainkind.CHAIN_KIND_ETHEREUM,
-          chain_id: AnvilManager.DefaultChainId
+          kind: SysioChainsChainkind.CHAIN_KIND_EVM,
+          code: { value: SlugName.from("ETHEREUM") },
+          external_chain_id: AnvilManager.DefaultChainId,
+          name: "Ethereum (anvil)",
+          description: "Local anvil EVM chain (test cluster)"
         },
-        "sysio.epoch@active"
+        "sysio.chains@active"
       )
       log.info(
-        `Registered ETH outpost (chain_kind=CHAIN_KIND_ETHEREUM, chain_id=${AnvilManager.DefaultChainId})`
+        `Registered ETH chain (kind=CHAIN_KIND_EVM, external_chain_id=${AnvilManager.DefaultChainId})`
       )
     } catch (err: any) {
-      log.error(`Failed to register ETH outpost: ${err.message}`, err)
+      log.error(`Failed to register ETH chain: ${err.message}`, err)
     }
 
     // try {
-    //   await this.clio.pushAction<SystemContracts.SysioEpochRegoutpostAction>(
-    //     "sysio.epoch",
-    //     "regoutpost",
-    //     { chain_kind: SysioEpochChainkind.CHAIN_KIND_SOLANA, chain_id: 1 },
-    //     "sysio.epoch@active"
+    //   await this.clio.pushAction<SystemContracts.SysioChainsRegchainAction>(
+    //     "sysio.chains",
+    //     "regchain",
+    //     {
+    //       kind: SysioChainsChainkind.CHAIN_KIND_SVM,
+    //       code: { value: SlugName.from("SOLANA") },
+    //       external_chain_id: 1,
+    //       name: "Solana (test-validator)",
+    //       description: "Local solana-test-validator (test cluster)"
+    //     },
+    //     "sysio.chains@active"
     //   )
-    //   log.info(
-    //     "Registered SOL outpost (chain_kind=CHAIN_KIND_SOLANA, chain_id=1)"
-    //   )
+    //   log.info("Registered SOL chain (kind=CHAIN_KIND_SVM, external_chain_id=1)")
     // } catch (err: any) {
-    //   log.warn(`Failed to register SOL outpost: ${err.message}`)
+    //   log.warn(`Failed to register SOL chain: ${err.message}`)
     // }
 
     // sysio.uwrit::setconfig — sets fee_bps, collateral-lock duration,

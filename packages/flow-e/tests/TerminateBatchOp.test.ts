@@ -13,6 +13,7 @@ import {
 } from "@wireio/opp-typescript-models"
 import {
   Bytes,
+  SlugName,
   KeyType,
   PrivateKey,
   SystemContracts
@@ -208,8 +209,16 @@ describe("Flow E: Termination via miss-window (non-bootstrapped op, two-chain bo
       // requirement check and the test would green on incomplete config
       // (the failure mode that motivated this rewrite).
       reqBatchopCollat: [
-        { chain: ChainKind.ETHEREUM, tokenKind: TokenKind.ETH, minBond: FLOW_E_REQ_ETH_MIN_BOND },
-        { chain: ChainKind.SOLANA,   tokenKind: TokenKind.SOL, minBond: FLOW_E_REQ_SOL_MIN_BOND }
+        {
+          chainCode: SlugName.from("ETHEREUM"),
+          tokenCode: SlugName.from("ETH"),
+          minBond: FLOW_E_REQ_ETH_MIN_BOND
+        },
+        {
+          chainCode: SlugName.from("SOLANA"),
+          tokenCode: SlugName.from("SOL"),
+          minBond: FLOW_E_REQ_SOL_MIN_BOND
+        }
       ]
     })
 
@@ -364,7 +373,7 @@ describe("Flow E: Termination via miss-window (non-bootstrapped op, two-chain bo
         )
       )
       await createAuthExLink(ctx.wireClient.clio, {
-        chainKind:  ChainKind.ETHEREUM,
+        chainKind:  ChainKind.EVM,
         account:    FRESH_OP_NAME,
         privateKey: emPriv,
         ethWallet:  freshEthWallet
@@ -372,7 +381,7 @@ describe("Flow E: Termination via miss-window (non-bootstrapped op, two-chain bo
 
       // 6) Authex link for SOL — signs with ED25519.
       await createAuthExLink(ctx.wireClient.clio, {
-        chainKind:  ChainKind.SOLANA,
+        chainKind:  ChainKind.SVM,
         account:    FRESH_OP_NAME,
         privateKey: solSdkKey
       })
@@ -422,16 +431,17 @@ describe("Flow E: Termination via miss-window (non-bootstrapped op, two-chain bo
         deposit: (
           operatorType: number,
           compressedPubkey: Uint8Array,
-          tokenKind: number,
+          tokenCode: bigint,
           amount: bigint,
           overrides?: ethers.Overrides & { value?: bigint }
         ) => Promise<ethers.ContractTransactionResponse>
+        nativeTokenCode: () => Promise<bigint>
       }
       await depositETHCollateral(
         opReg,
         OperatorType.BATCH,
         freshEthPubkey33,
-        TokenKind.ETH,
+        BigInt(SlugName.from("ETH")),
         FLOW_E_MIN_ETH_BOND
       )
 
@@ -445,11 +455,12 @@ describe("Flow E: Termination via miss-window (non-bootstrapped op, two-chain bo
           const { rows } = await ctx.wireClient.getOperators()
           const op       = rows.find((o: any) => o.account === FRESH_OP_NAME)
           if (!op) return false
-          const balances = op.balances ?? []
-          const ethRow   = balances.find(
-            (b: any) =>
-              (typeof b.chain === "number" ? b.chain : b.chain) === ChainKind.ETHEREUM ||
-              b.chain === "CHAIN_KIND_ETHEREUM"
+          // v6: balance entry's chain identifier is `chain_code` (a
+          // slug_name `{value: uint64}`), not `chain` (ChainKind enum).
+          const balances   = op.balances ?? []
+          const ethCodeNum = SlugName.from("ETHEREUM")
+          const ethRow     = balances.find(
+            (b: any) => Number(b.chain_code?.value ?? b.chain_code) === ethCodeNum
           )
           if (!ethRow) return false
           return Number(ethRow.balance) >= FLOW_E_REQ_ETH_MIN_BOND
@@ -484,7 +495,7 @@ describe("Flow E: Termination via miss-window (non-bootstrapped op, two-chain bo
         program,
         freshSolKeypair,
         OperatorType.BATCH,
-        TokenKind.SOL,
+        BigInt(SlugName.from("SOL")),
         FLOW_E_MIN_SOL_BOND
       )
 
@@ -538,6 +549,8 @@ describe("Flow E: Termination via miss-window (non-bootstrapped op, two-chain bo
             })
             const rows = result.rows ?? []
             if (rows.length === 0) return false
+            // WIREClient.getTableRows now auto-unwraps the v6 KV
+            // `{key, value}` envelope, so the fields are at the top level.
             const groups = (rows[0] as any).batch_op_groups ?? []
             return groups.some(
               (members: string[]) =>
@@ -630,11 +643,15 @@ describe("Flow E: Termination via miss-window (non-bootstrapped op, two-chain bo
             // rather than `=== true` to match either form.
             return at === "ACTION_TYPE_WITHDRAW_REMIT" && Boolean(entry.success)
           })
-          const chains = new Set(remits.map((e: any) => String(e.action?.chain)))
-          return (
-            chains.has("CHAIN_KIND_ETHEREUM") &&
-            chains.has("CHAIN_KIND_SOLANA")
+          // v6: the action's chain identifier is `chain_code` (slug_name
+          // uint64), not `chain` (ChainKind enum name). Compare against
+          // the packed slug_name numeric value.
+          const ethCodeNum = SlugName.from("ETHEREUM")
+          const solCodeNum = SlugName.from("SOLANA")
+          const chainCodes = new Set(
+            remits.map((e: any) => Number(e.action?.chain_code ?? e.action?.chain_code?.value))
           )
+          return chainCodes.has(ethCodeNum) && chainCodes.has(solCodeNum)
         },
         TEST_EPOCH_DURATION_SEC * RemitPropagationEpochs * MsPerSecond,
         LongPollIntervalMs
@@ -649,11 +666,12 @@ describe("Flow E: Termination via miss-window (non-bootstrapped op, two-chain bo
     "ETH outpost: depositedByKind for fresh op returns to 0 after inbound WITHDRAW_REMIT",
     async () => {
       await pollUntil(
-        "ETH OperatorRegistry.depositedByKind(freshAddr, ETH) returns to 0",
+        "ETH OperatorRegistry.depositedByCode(freshAddr, ETH) returns to 0",
         async () => {
-          const balance = await (opRegContract as any).depositedByKind(
+          // v6: depositedByKind(TokenKind) → depositedByCode(uint64 slug_name).
+          const balance = await (opRegContract as any).depositedByCode(
             freshEthWallet.address,
-            TokenKind.ETH
+            BigInt(SlugName.from("ETH"))
           )
           return BigInt(balance) === 0n
         },
@@ -729,13 +747,19 @@ describe("Flow E: Termination via miss-window (non-bootstrapped op, two-chain bo
       )
       const registryAccount =
         await (oppProgram.account as any).operatorRegistry.fetch(registryPda)
-      const ledger = registryAccount.collateralByKind as Array<{
+      // v6: SOL OperatorRegistry field renamed `collateral_by_kind` →
+      // `collateral_by_code` (Anchor IDL camelCases to `collateralByCode`).
+      // Each entry's discriminator is now a `token_code` (u64 slug_name),
+      // not a `token_kind` (enum). `freshop` deposited native SOL, so
+      // match against the SOL slug_name.
+      const ledger = registryAccount.collateralByCode as Array<{
         depositor: PublicKey
-        tokenKind: number
+        tokenCode: anchor.BN | number | bigint
         amount: anchor.BN
       }>
-      const row = ledger.find(
-        e => e.depositor.equals(freshSolPubkey) && e.tokenKind === TokenKind.SOL
+      const solCodeBig = BigInt(SlugName.from("SOL"))
+      const row = ledger?.find?.(
+        e => e.depositor.equals(freshSolPubkey) && BigInt(e.tokenCode.toString()) === solCodeBig
       )
       // Row may be retained at 0, or pruned — either is a valid remit
       // outcome. Assert: row absent OR amount === 0.

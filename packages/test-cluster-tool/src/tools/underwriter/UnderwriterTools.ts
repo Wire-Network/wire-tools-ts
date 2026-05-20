@@ -16,14 +16,13 @@ import { ethers } from "ethers"
 import Bluebird from "bluebird"
 
 import {
-  ChainId,
   ChainKind,
-  ChainTokenAmount,
   OperatorType,
   TokenAmount,
   TokenKind
 } from "@wireio/opp-typescript-models"
-import { KeyType, PrivateKey } from "@wireio/sdk-core"
+import { SlugName, KeyType, PrivateKey } from "@wireio/sdk-core"
+import type { ChainTokenAmount } from "@wireio/debugging-shared"
 
 import { ETHBootstrapper } from "../../cluster/ETHBootstrapper.js"
 import { log } from "../../logger.js"
@@ -66,23 +65,34 @@ export namespace CollateralTools {
   export const DefaultAmount: bigint = 1_000_000n
 
   /**
-   * Default chain/token pairs deposited to every underwriter when
-   * no `--underwriter-collateral-json-file` is supplied. One entry
-   * per integrated outpost's default token, plus the WIRE/WIRE
-   * pair.
-   *
-   * Tracks the integrated-outpost set; if a new outpost is added
-   * (Sui, etc.), add the corresponding `(ChainKind, TokenKind)`
-   * pair here so the default deposits cover it without requiring
-   * every caller to specify a config file.
+   * Default (chain_code, token_code) slug_name pairs deposited to every
+   * underwriter when no `--underwriter-collateral-json-file` is supplied.
+   * Tracks the integrated-outpost set; if a new outpost is added (Sui, etc.),
+   * add the corresponding `(chainCode, tokenCode)` pair here so the default
+   * deposits cover it without requiring every caller to specify a config
+   * file.
    */
   export const DefaultPairs: ReadonlyArray<{
-    chain: ChainKind
-    tokenKind: TokenKind
+    chainCode: number
+    tokenCode: number
+    /** Discriminant the per-chain deposit dispatch matches on. */
+    chainKind: ChainKind
   }> = [
-    { chain: ChainKind.WIRE, tokenKind: TokenKind.WIRE },
-    { chain: ChainKind.ETHEREUM, tokenKind: TokenKind.ETH },
-    { chain: ChainKind.SOLANA, tokenKind: TokenKind.SOL }
+    {
+      chainCode: SlugName.from("WIRE"),
+      tokenCode: SlugName.from("WIRE"),
+      chainKind: ChainKind.WIRE
+    },
+    {
+      chainCode: SlugName.from("ETHEREUM"),
+      tokenCode: SlugName.from("ETH"),
+      chainKind: ChainKind.EVM
+    },
+    {
+      chainCode: SlugName.from("SOLANA"),
+      tokenCode: SlugName.from("SOL"),
+      chainKind: ChainKind.SVM
+    }
   ] as const
 
   /**
@@ -90,22 +100,22 @@ export namespace CollateralTools {
    * {@link ChainTokenAmount} per {@link DefaultPairs} entry, each
    * amounting to {@link DefaultAmount} base units.
    *
-   * Constructed via the message-type `.create()` factory so the
-   * returned messages are fully-initialised proto instances
-   * (suitable for both `.toJson()` round-tripping and field-level
-   * access).
+   * Each entry pairs the harness-local `chain_code` (slug_name / uint64) with
+   * a proto-generated `TokenAmount` carrying the matching `token_code` +
+   * `bigint` amount.
    *
    * @returns A fresh array (the caller may mutate without aliasing
    *   the defaults). Returns the per-underwriter list shape —
    *   fan-out to all underwriters happens in {@link load}.
    */
   export function buildDefault(): ChainTokenAmount[] {
-    return DefaultPairs.map(({ chain, tokenKind }) =>
-      ChainTokenAmount.create({
-        chain: ChainId.create({ kind: chain, id: 0 }),
-        amount: TokenAmount.create({ kind: tokenKind, amount: DefaultAmount })
+    return DefaultPairs.map(({ chainCode, tokenCode }) => ({
+      chain_code: chainCode,
+      amount: TokenAmount.create({
+        tokenCode: BigInt(tokenCode),
+        amount: DefaultAmount
       })
-    )
+    }))
   }
 
   // ── JSON config parsing ─────────────────────────────────────────────────
@@ -181,20 +191,12 @@ export namespace CollateralTools {
           Array.isArray(entry),
           `underwriter collateral (varied shape): entry ${idx} must be an array`
         )
-        return entry.map(raw =>
-          ChainTokenAmount.fromJson(
-            raw as Parameters<typeof ChainTokenAmount.fromJson>[0]
-          )
-        )
+        return entry.map(raw => parseChainTokenAmountJson(raw))
       })
     }
 
     // Uniform shape: parse once, fan out to every underwriter.
-    const uniform = items.map(raw =>
-      ChainTokenAmount.fromJson(
-        raw as Parameters<typeof ChainTokenAmount.fromJson>[0]
-      )
-    )
+    const uniform = items.map(raw => parseChainTokenAmountJson(raw))
     return Array.from({ length: underwriterCount }, () => uniform.slice())
   }
 
@@ -289,10 +291,11 @@ export namespace CollateralTools {
     /**
      * Per-underwriter collateral plan from
      * `ClusterConfig.underwriterCollateral`. Length must match
-     * `underwriters.length`. Each inner entry is a fully-hydrated
-     * `ChainTokenAmount` proto message — `entry.chain.kind` is
-     * `ChainKind`, `entry.amount.kind` is `TokenKind`,
-     * `entry.amount.amount` is a `bigint`.
+     * `underwriters.length`. Each inner entry is a harness-local
+     * {@link ChainTokenAmount} — `entry.chain_code` is a slug_name
+     * (uint64 packed) and `entry.amount` is a proto `TokenAmount`
+     * (`amount.tokenCode` is a slug_name `bigint`, `amount.amount` is
+     * a `bigint`).
      */
     collateral: ChainTokenAmount[][]
     /** Per-underwriter deposit context (account + ETH HD index + SOL key). */
@@ -358,28 +361,30 @@ export namespace CollateralTools {
       )
 
       await Bluebird.each(opts.collateral[idx], async entry => {
-        Assert.ok(entry.chain, "ChainTokenAmount.chain is required")
         Assert.ok(entry.amount, "ChainTokenAmount.amount is required")
-        const chainKind = entry.chain.kind,
-          tokenKind = entry.amount.kind,
+        const chainName = SlugName.toString(entry.chain_code),
+          tokenCode = BigInt(Number(entry.amount.tokenCode)),
+          tokenName = SlugName.toString(Number(entry.amount.tokenCode)),
+          chainKind = chainKindForCodename(entry.chain_code),
+          tokenKind = tokenKindForCodename(Number(entry.amount.tokenCode)),
           amount = entry.amount.amount
         if (amount <= 0n) return
 
-        if (chainKind === ChainKind.ETHEREUM) {
+        if (chainKind === ChainKind.EVM) {
           await depositETHCollateral(
             opRegContract,
             OperatorType.UNDERWRITER,
             compressedPubkey,
-            tokenKind,
+            tokenCode,
             amount
           )
           log.info(
             `[uw-collateral] ${uw.account}: deposited ${amount} ` +
-              `${TokenKind[tokenKind]} on ETH`
+              `${tokenName} on ${chainName}`
           )
           return
         }
-        if (chainKind === ChainKind.SOLANA) {
+        if (chainKind === ChainKind.SVM) {
           const sol = await solCtx.get()
           const depositorKp = privateKeyToKeypair(uw.solPrivateKey)
           // Underwriter SOL keypairs are generated fresh in
@@ -395,12 +400,12 @@ export namespace CollateralTools {
               sol.program,
               depositorKp,
               OperatorType.UNDERWRITER,
-              tokenKind,
+              tokenCode,
               amount
             )
             log.info(
               `[uw-collateral] ${uw.account}: deposited ${amount} ` +
-                `${TokenKind[tokenKind]} on SOL`
+                `${tokenName} on ${chainName}`
             )
           } catch (err) {
             // Treat a timeout-on-confirm as best-effort: the tx may
@@ -434,14 +439,14 @@ export namespace CollateralTools {
           // WIRE-native pathway can slot in without touching every
           // caller.
           log.warn(
-            `[uw-collateral] ${uw.account}: skipping WIRE/${TokenKind[tokenKind]} ` +
+            `[uw-collateral] ${uw.account}: skipping WIRE/${tokenName} ` +
               `entry — no WIRE-native underwriter collateral deposit path yet`
           )
           return
         }
         log.warn(
           `[uw-collateral] ${uw.account}: skipping unsupported chain ` +
-            `${ChainKind[chainKind]}/${TokenKind[tokenKind]}`
+            `${chainName}/${tokenName}`
         )
       })
     })
@@ -449,6 +454,70 @@ export namespace CollateralTools {
 }
 
 // ── Module-internal plumbing (NOT exported from the namespace) ────────────
+
+/**
+ * Bootstrap-time slug_name ↔ enum routing tables. The on-chain data model uses
+ * `slug_name` (uint64 packed) for chain and token primary keys; the harness
+ * still has to dispatch to per-chain outpost deposit helpers and pass the
+ * appropriate `ChainKind` / `TokenKind` enum value to outpost-side contract
+ * code (which is being migrated separately). These maps cover the bootstrap
+ * set; if/when more outposts come online, extend with the matching entries.
+ */
+const ChainKindByCodename: ReadonlyMap<number, ChainKind> = new Map([
+  [SlugName.from("WIRE"), ChainKind.WIRE],
+  [SlugName.from("ETHEREUM"), ChainKind.EVM],
+  [SlugName.from("SOLANA"), ChainKind.SVM]
+])
+
+const TokenKindByCodename: ReadonlyMap<number, TokenKind> = new Map([
+  [SlugName.from("WIRE"), TokenKind.NATIVE],
+  [SlugName.from("ETH"), TokenKind.NATIVE],
+  [SlugName.from("SOL"), TokenKind.NATIVE],
+  [SlugName.from("LIQETH"), TokenKind.LIQ],
+  [SlugName.from("LIQSOL"), TokenKind.LIQ]
+])
+
+/**
+ * Resolve a packed `chain_code` slug_name to its protobuf `ChainKind` VM-family
+ * discriminant. Falls back to `ChainKind.UNKNOWN` so unknown chains land in
+ * the deposit-dispatch's "unsupported" branch and emit a structured warn
+ * rather than throwing — the cluster shouldn't crash on a typo-encoded code.
+ */
+function chainKindForCodename(chainCode: number): ChainKind {
+  return ChainKindByCodename.get(chainCode) ?? ChainKind.UNKNOWN
+}
+
+/**
+ * Resolve a packed `token_code` slug_name to its protobuf `TokenKind`
+ * token-standard discriminant. Falls back to `TokenKind.UNKNOWN` so
+ * unrecognised tokens flow into the warn-and-continue branch rather than
+ * triggering a hard failure.
+ */
+function tokenKindForCodename(tokenCode: number): TokenKind {
+  return TokenKindByCodename.get(tokenCode) ?? TokenKind.UNKNOWN
+}
+
+/**
+ * Parse one entry of the `cluster-config.json`-shaped `ChainTokenAmount`
+ * JSON form back into the harness-local in-memory shape: `chain_code`
+ * passes through as a plain `number`, `amount` is rehydrated through
+ * `TokenAmount.fromJson` so the int64 amount restores to `bigint`.
+ *
+ * @throws if `raw` is not a `{ chain_code, amount }` object literal.
+ */
+function parseChainTokenAmountJson(raw: unknown): ChainTokenAmount {
+  Assert.ok(
+    raw && typeof raw === "object" && "chain_code" in raw && "amount" in raw,
+    "ChainTokenAmount JSON must be a `{chain_code, amount}` object literal"
+  )
+  const r = raw as { chain_code: number; amount: unknown }
+  return {
+    chain_code: r.chain_code,
+    amount: TokenAmount.fromJson(
+      r.amount as Parameters<typeof TokenAmount.fromJson>[0]
+    )
+  }
+}
 
 interface SolanaContext {
   connection: Connection

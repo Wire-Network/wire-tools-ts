@@ -32,10 +32,15 @@ describe("WIREClient namespace", () => {
   })
 
   describe("EpochTable", () => {
-    it("covers epochstate / epochcfg / outposts", () => {
+    it("covers epochstate / epochcfg", () => {
       expect(WIREClient.EpochTable.EpochState).toBe("epochstate")
       expect(WIREClient.EpochTable.EpochConfig).toBe("epochcfg")
-      expect(WIREClient.EpochTable.Outposts).toBe("outposts")
+    })
+  })
+
+  describe("ChainsTable", () => {
+    it("covers the v6 sysio.chains chains table", () => {
+      expect(WIREClient.ChainsTable.Chains).toBe("chains")
     })
   })
 
@@ -48,6 +53,7 @@ describe("WIREClient namespace", () => {
 
   describe("Contract enum", () => {
     it("matches the sysio.* account names the depot deploys to", () => {
+      expect(WIREClient.Contract.Chains).toBe("sysio.chains")
       expect(WIREClient.Contract.Epoch).toBe("sysio.epoch")
       expect(WIREClient.Contract.Opreg).toBe("sysio.opreg")
       expect(WIREClient.Contract.Msgch).toBe("sysio.msgch")

@@ -3,62 +3,68 @@
  * `OperatorRegistry.deposit(...)` collateral-deposit entry point.
  *
  * Centralises the deposit-call shape used by flow tests (and any future
- * tooling) so callers don't repeat the per-TokenKind argument-shape
- * juggling: `TOKEN_KIND_ETH` is paid via `msg.value`; `TOKEN_KIND_LIQETH`
- * is paid via `transferFrom` (the operator must have pre-approved this
- * contract). For both kinds, the operator's 33-byte compressed secp256k1
- * pubkey is the `opAddress` the depot resolves through `sysio.authex::
- * links::bypubkey` to identify the operator's WIRE account.
+ * tooling) so callers don't repeat the per-token-code argument-shape
+ * juggling: the contract's `nativeTokenCode` is paid via `msg.value`;
+ * every other registered tokenCode is paid via `transferFrom` (the
+ * operator must have pre-approved the outpost contract). For both
+ * kinds, the operator's 33-byte compressed secp256k1 pubkey is the
+ * `opAddress` the depot resolves through
+ * `sysio.authex::links::bypubkey` to identify the operator's WIRE
+ * account.
  */
 
 import Assert from "node:assert"
 import { ethers } from "ethers"
-import { OperatorType, TokenKind } from "@wireio/opp-typescript-models"
+import { OperatorType } from "@wireio/opp-typescript-models"
 
 /**
  * Minimal `ethers` contract surface this helper relies on. Typed
  * structurally so the caller can pass an `ethers.Contract` instance,
  * a typechain-generated `OperatorRegistry`, or any compatible mock —
  * the only contract is that `deposit(...)` returns a transaction
- * response that yields a receipt with `status === 1n`.
+ * response that yields a receipt with `status === 1n` and
+ * `nativeTokenCode()` returns the slug_name used for the msg.value
+ * branch.
  */
 export interface OperatorRegistryDepositContract {
   deposit: (
     operatorType: number,
     compressedPubkey: string | Uint8Array,
-    tokenKind: number,
+    tokenCode: bigint,
     amount: bigint,
     overrides?: ethers.Overrides & { value?: bigint }
   ) => Promise<ethers.ContractTransactionResponse>
+  nativeTokenCode: () => Promise<bigint>
 }
 
 /**
  * Submit a collateral deposit to the Ethereum outpost's
  * `OperatorRegistry.deposit(...)` and await receipt confirmation.
  *
- * For ETH: forwards `amount` as `msg.value`. For LIQETH: omits
+ * For the contract's `nativeTokenCode`: forwards `amount` as
+ * `msg.value`. For every other registered token code: omits
  * `msg.value` and relies on the operator having pre-approved the
- * outpost contract for `amount` LIQETH (the contract calls
- * `liqETH.transferFrom` internally).
+ * outpost contract for `amount` of the underlying ERC20 (the contract
+ * calls `transferFrom` internally).
  *
- * @param opRegContract  Operator-registry contract bound to the
- *                       operator's signer (`contract.connect(wallet)`).
- * @param operatorType   `OperatorType` numeric enum value (BATCH /
- *                       UNDERWRITER / PRODUCER).
+ * @param opRegContract    Operator-registry contract bound to the
+ *                         operator's signer (`contract.connect(wallet)`).
+ * @param operatorType     `OperatorType` numeric enum value (BATCH /
+ *                         UNDERWRITER / PRODUCER).
  * @param compressedPubkey 33-byte secp256k1 compressed public key whose
- *                       derived ETH address matches the connected
- *                       signer's address.
- * @param tokenKind      `TokenKind` numeric enum value
- *                       (ETH / LIQETH).
- * @param amount         Quantity of `tokenKind` (wei for ETH, base
- *                       units for LIQETH).
+ *                         derived ETH address matches the connected
+ *                         signer's address.
+ * @param tokenCode        8-byte slug_name (`uint64`) of the deposited
+ *                         token (e.g. `SlugName.from("ETH")`).
+ * @param amount           Quantity of `tokenCode` (wei for native ETH,
+ *                         base units for ERC20s).
  * @return The mined transaction receipt.
  */
 export async function depositETHCollateral(
   opRegContract: OperatorRegistryDepositContract,
   operatorType: OperatorType,
   compressedPubkey: Uint8Array,
-  tokenKind: TokenKind,
+  tokenCode: bigint,
   amount: bigint
 ): Promise<ethers.TransactionReceipt> {
   Assert.ok(amount > 0n, "ETHCollateralTool: amount must be positive")
@@ -67,13 +73,14 @@ export async function depositETHCollateral(
     `ETHCollateralTool: compressedPubkey must be 33 bytes, got ${compressedPubkey.byteLength}`
   )
 
+  const nativeCode = await opRegContract.nativeTokenCode()
   const overrides: ethers.Overrides & { value?: bigint } =
-    tokenKind === TokenKind.ETH ? { value: amount } : {}
+    tokenCode === nativeCode ? { value: amount } : {}
 
   const tx = await opRegContract.deposit(
     operatorType,
     compressedPubkey,
-    tokenKind,
+    tokenCode,
     amount,
     overrides
   )

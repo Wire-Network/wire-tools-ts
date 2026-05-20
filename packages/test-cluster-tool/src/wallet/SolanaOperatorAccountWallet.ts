@@ -26,7 +26,7 @@ import type { OperatorAccountWallet } from "./OperatorAccountWallet.js"
  * canonical Solana account identifier.
  */
 export class SolanaOperatorAccountWallet implements OperatorAccountWallet {
-  readonly chain: ChainKind = ChainKind.SOLANA
+  readonly chain: ChainKind = ChainKind.SVM
 
   /**
    * @param name         WIRE account name registered in `sysio.opreg`.

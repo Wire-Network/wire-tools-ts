@@ -8,7 +8,29 @@
  * them without pulling in the full harness runtime.
  */
 
-import type { ChainTokenAmount } from "@wireio/opp-typescript-models"
+import type { TokenAmount } from "@wireio/opp-typescript-models"
+
+/**
+ * Harness-local (chain, token) amount tuple. The previous proto-emitted
+ * `ChainTokenAmount` was removed in the v6 data-model refactor — `Token.code`
+ * is globally unique now, so the proto carries `TokenAmount` (just
+ * `token_code` + `amount`) without a redundant chain tag. We still need the
+ * chain dimension at the harness layer (per-underwriter collateral fans out
+ * across `{ETH, SOL, WIRE}`), so this local shape pairs each `TokenAmount`
+ * with its `chain_code` (slug_name / uint64).
+ *
+ * Persisted through `cluster-config.json` — `amount.amount` is `bigint`,
+ * which `JSON.stringify` cannot serialise natively. {@link
+ * serializeClusterConfig} / {@link deserializeClusterConfig} project the
+ * field through the proto `TokenAmount`'s JSON helpers so the int64 round-
+ * trips losslessly as a string.
+ */
+export interface ChainTokenAmount {
+  /** SlugName / uint64 chain identifier (e.g. `SlugName.from("ETHEREUM")`). */
+  chain_code: number
+  /** Token amount carrying its own slug_name + int64 amount. */
+  amount: TokenAmount
+}
 
 // ---------------------------------------------------------------------------
 // Cluster filenames
@@ -240,18 +262,16 @@ export interface ClusterConfig {
    * WIRE) when omitted.
    *
    * Shape: always a length-`underwriterCount` array of per-underwriter
-   * `ChainTokenAmount` lists. The "uniform" CLI input (single
+   * {@link ChainTokenAmount} lists. The "uniform" CLI input (single
    * `Array<ChainTokenAmount>`) is fan-out-expanded to the same value
    * for every underwriter at load time, so the bootstrap step sees a
    * single canonical shape regardless of which CLI form the operator
    * used.
    *
-   * Carried as the proto-generated `ChainTokenAmount` model from
-   * `@wireio/opp-typescript-models` (NOT a primitive projection) so
-   * `chain.kind` is `ChainKind` (not `number`), `amount.kind` is
-   * `TokenKind` (not `number`), and the model's `.toJson()` / `.fromJson()`
-   * round-trip through the persisted `cluster-config.json` without
-   * loss of precision (the model already stringifies its int64 amount).
+   * Each entry pairs `chain_code` (slug_name / uint64) with a proto-generated
+   * `TokenAmount` (carrying its own `token_code` + `bigint` amount); the
+   * persistence layer round-trips the amount through `TokenAmount.toJson` /
+   * `TokenAmount.fromJson` so the int64 amount survives the JSON boundary.
    */
   underwriterCollateral?: ChainTokenAmount[][]
 
@@ -262,21 +282,22 @@ export interface ClusterConfig {
 }
 
 /**
- * Per-(chain, token_kind) collateral requirement triple. Mirrors the
- * depot's `sysio.opreg::chain_min_bond` row. Declared with primitive
- * `number` fields so `debugging-shared` stays free of an
- * `@wireio/opp-typescript-models` dependency — callers pass the proto
- * enum values directly (e.g. `ChainKind.SOLANA`, `TokenKind.SOL`).
+ * Per-(chain, token) collateral requirement triple. Mirrors the depot's
+ * `sysio.opreg::chain_min_bond` row, which in the v6 data model is keyed
+ * by `chain_code` + `token_code` codenames (uint64 packed). Declared with
+ * primitive `number` fields so `debugging-shared` stays free of any
+ * model-package dependency — callers compute slug_name values via
+ * `SlugName.from("ETH")` etc. from `@wireio/sdk-core`.
  */
 export interface ChainMinBond {
-  /** ChainKind discriminant — see `@wireio/opp-typescript-models`. */
-  chain: number
-  /** TokenKind discriminant — see `@wireio/opp-typescript-models`. */
-  tokenKind: number
+  /** SlugName / uint64 chain identifier (e.g. `SlugName.from("ETHEREUM")`). */
+  chainCode: number
+  /** SlugName / uint64 token identifier (e.g. `SlugName.from("ETH")`). */
+  tokenCode: number
   /**
    * Minimum bond in the token's base units (lamports for SOL, wei for
    * ETH, etc.). Compared against `sysio.opreg::available(account,
-   * chain, token_kind)` for each non-bootstrapped operator.
+   * chain_code, token_code)` for each non-bootstrapped operator.
    */
   minBond: number
 }

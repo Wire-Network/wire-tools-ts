@@ -94,7 +94,7 @@ export async function createAuthExLink(
   // For ETH: derive pubkey from ethers wallet (ensures compressed key matches).
   // For other chains: derive from the PrivateKey.
   const publicKey =
-    chainKind === ChainKind.ETHEREUM && ethWallet
+    chainKind === ChainKind.EVM && ethWallet
       ? emPublicKeyFromEthWallet(ethWallet)
       : privateKey.toPublic()
   const pubKeyString = publicKey.toString()
@@ -102,7 +102,7 @@ export async function createAuthExLink(
 
   const message = buildLinkMessage(pubKeyString, account, chainKind, nonce)
 
-  const signature = await (chainKind === ChainKind.ETHEREUM && ethWallet
+  const signature = await (chainKind === ChainKind.EVM && ethWallet
     ? signEthereumMessage(privateKey, message, ethWallet)
     : signSolanaMessage(privateKey, message))
 

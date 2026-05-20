@@ -1,24 +1,28 @@
 import Fs from "node:fs"
 
-import { ChainTokenAmount } from "@wireio/opp-typescript-models"
+import { TokenAmount } from "@wireio/opp-typescript-models"
 import type { ClusterConfig } from "@wireio/debugging-shared"
 
 /**
  * Serialise a `ClusterConfig` to JSON bytes suitable for
  * `cluster-config.json`. Plain field values pass through unchanged;
- * the `underwriterCollateral` field carries proto-message instances
- * with `bigint` amounts that `JSON.stringify` cannot serialise
- * natively, so it is projected through the message-type's
- * `.toJson()` helper (which encodes int64 as a string).
+ * the `underwriterCollateral` field carries `TokenAmount` proto-message
+ * instances with `bigint` amounts that `JSON.stringify` cannot serialise
+ * natively, so each entry's `amount` is projected through `TokenAmount.toJson`
+ * (which encodes int64 as a string). The harness-local `chain_code` field
+ * (plain `number`) round-trips unchanged.
  *
  * @param config Fully-resolved cluster config.
- * @returns Pretty-printed JSON string with a trailing newline.
+ * @returns Pretty-printed JSON string.
  */
 export function serializeClusterConfig(config: ClusterConfig): string {
   const projected = {
     ...config,
     underwriterCollateral: config.underwriterCollateral?.map(arr =>
-      arr.map(msg => ChainTokenAmount.toJson(msg))
+      arr.map(entry => ({
+        chain_code: entry.chain_code,
+        amount: TokenAmount.toJson(entry.amount)
+      }))
     )
   }
   return JSON.stringify(projected, null, 2)
@@ -26,10 +30,10 @@ export function serializeClusterConfig(config: ClusterConfig): string {
 
 /**
  * Parse a `cluster-config.json` payload (or raw bytes) into a fully
- * hydrated `ClusterConfig`. Rehydrates `underwriterCollateral` via
- * `ChainTokenAmount.fromJson` so consumers see typed `ChainKind` /
- * `TokenKind` / `bigint` fields rather than the JSON-encoded strings
- * that were persisted.
+ * hydrated `ClusterConfig`. Rehydrates each `underwriterCollateral`
+ * entry's `amount` via `TokenAmount.fromJson` so consumers see a typed
+ * proto `TokenAmount` with the `bigint` amount restored, rather than the
+ * JSON-encoded string that was persisted.
  *
  * Accepts either the raw file contents (as a `string`) or an already-
  * parsed JSON value (`unknown`). The dual signature lets the same
@@ -43,11 +47,15 @@ export function deserializeClusterConfig(input: string | unknown): ClusterConfig
     typeof input === "string" ? JSON.parse(input) : (input as ClusterConfig)
   if (parsed.underwriterCollateral) {
     parsed.underwriterCollateral = parsed.underwriterCollateral.map(arr =>
-      arr.map(raw =>
-        ChainTokenAmount.fromJson(
-          raw as Parameters<typeof ChainTokenAmount.fromJson>[0]
-        )
-      )
+      arr.map(raw => {
+        const r = raw as { chain_code: number; amount: unknown }
+        return {
+          chain_code: r.chain_code,
+          amount: TokenAmount.fromJson(
+            r.amount as Parameters<typeof TokenAmount.fromJson>[0]
+          )
+        }
+      })
     )
   }
   return parsed

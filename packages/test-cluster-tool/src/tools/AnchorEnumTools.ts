@@ -39,19 +39,25 @@ export const operatorTypeVariant = (t: OperatorType): AnchorEnumVariant =>
  * Convert a numeric `TokenKind` to the Anchor IDL variant-tag object
  * expected by `opp-outpost` instruction args.
  *
- * @param k Numeric token kind (e.g. `TokenKind.SOL`).
- * @return  Variant-tag object (e.g. `{ tokenKindSol: {} }`).
+ * Post-v6 the `TokenKind` proto enum collapses to chain-agnostic token
+ * STANDARDS — individual tokens (ETH, SOL, USDC, …) are no longer enum
+ * members; they're `Token` rows keyed by slug_name. The Anchor IDL is
+ * being migrated in lockstep by a separate agent; until that lands this
+ * helper maps each present `TokenKind` to a stable variant-tag spelling.
+ *
+ * @param k Numeric token kind (e.g. `TokenKind.NATIVE`).
+ * @return  Variant-tag object (e.g. `{ tokenKindNative: {} }`).
  */
 export const tokenKindVariant = (k: TokenKind): AnchorEnumVariant =>
   match(k)
-    .with(TokenKind.WIRE,    () => ({ tokenKindWire:    {} }))
-    .with(TokenKind.ETH,     () => ({ tokenKindEth:     {} }))
+    .with(TokenKind.UNKNOWN, () => ({ tokenKindUnknown: {} }))
+    .with(TokenKind.NATIVE,  () => ({ tokenKindNative:  {} }))
     .with(TokenKind.ERC20,   () => ({ tokenKindErc20:   {} }))
     .with(TokenKind.ERC721,  () => ({ tokenKindErc721:  {} }))
     .with(TokenKind.ERC1155, () => ({ tokenKindErc1155: {} }))
-    .with(TokenKind.LIQETH,  () => ({ tokenKindLiqeth:  {} }))
-    .with(TokenKind.SOL,     () => ({ tokenKindSol:     {} }))
-    .with(TokenKind.LIQSOL,  () => ({ tokenKindLiqsol:  {} }))
+    .with(TokenKind.SPL,     () => ({ tokenKindSpl:     {} }))
+    .with(TokenKind.SPL_NFT, () => ({ tokenKindSplNft:  {} }))
+    .with(TokenKind.LIQ,     () => ({ tokenKindLiq:     {} }))
     .otherwise(v => {
       throw new Error(`tokenKindVariant: unknown TokenKind ${v}`)
     })

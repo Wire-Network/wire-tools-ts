@@ -92,7 +92,7 @@ const ZeroMessageId =
  *                          upper-snake names are ALSO considered a match.
  *
  * @example
- * enumValueMatches(ChainKind, ChainKind.ETHEREUM, r.chain_kind, "CHAIN_KIND")
+ * enumValueMatches(ChainKind, ChainKind.EVM, r.chain_kind, "CHAIN_KIND")
  * // matches 2  | "ETHEREUM"  | "CHAIN_KIND_ETHEREUM"
  */
 const enumValueMatches = <E extends object>(
@@ -132,7 +132,7 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
       epochDurationSec: TEST_EPOCH_DURATION_SEC
     })
 
-    const batchOps = ctx.getWallet(ChainKind.ETHEREUM, OperatorType.BATCH)
+    const batchOps = ctx.getWallet(ChainKind.EVM, OperatorType.BATCH)
     expect(batchOps.length).toBeGreaterThan(0)
     batchOp = batchOps[0] as EthereumOperatorAccountWallet
     signerAddr = batchOp.address
@@ -214,18 +214,18 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
     expect(rows[0].batch_op_groups.length).toBe(3)
   })
 
-  test("ETH outpost is registered", async () => {
-    const { rows } = await ctx.wireClient.getOutposts()
-    const ethOutpost = rows.find(
+  test("ETH chain is registered", async () => {
+    const { rows } = await ctx.wireClient.getChains()
+    const ethChain = rows.find(
       (r: any) =>
         enumValueMatches(
           ChainKind,
-          ChainKind.ETHEREUM,
-          r.chain_kind,
+          ChainKind.EVM,
+          r.kind,
           "CHAIN_KIND"
-        ) && r.chain_id === AnvilManager.DefaultChainId
+        ) && r.external_chain_id === AnvilManager.DefaultChainId
     )
-    expect(ethOutpost).toBeDefined()
+    expect(ethChain).toBeDefined()
   })
 
   test("Batch operators are AVAILABLE in opreg", async () => {
@@ -260,7 +260,7 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   })
 
   test("OperatorRegistry has no deposits before test", async () => {
-    const eth = await opRegContract.depositedByKind(signerAddr, TokenKind.ETH)
+    const eth = await opRegContract.depositedByKind(signerAddr, TokenKind.NATIVE)
     expect(Number(eth)).toBe(0)
   })
 
@@ -270,7 +270,7 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
     const tx = await opRegContract.deposit(
       OPERATOR_TYPE_BATCH,
       batchOp.publicKey.data.array,
-      TokenKind.ETH,
+      TokenKind.NATIVE,
       BOND_AMOUNT,
       { value: BOND_AMOUNT }
     )
@@ -298,7 +298,7 @@ describe("Flow D: Collateral Deposit via OperatorRegistry (ETH → WIRE)", () =>
   })
 
   test("Deposit is recorded in OperatorRegistry", async () => {
-    const eth = await opRegContract.depositedByKind(signerAddr, TokenKind.ETH)
+    const eth = await opRegContract.depositedByKind(signerAddr, TokenKind.NATIVE)
     expect(eth).toBe(BOND_AMOUNT)
     const info = await opRegContract.operators(signerAddr)
     expect(Number(info.operatorType)).toBe(OPERATOR_TYPE_BATCH)

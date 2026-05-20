@@ -146,7 +146,7 @@ describe("Flow B: Node Operator Collateral Lifecycle (ETH ↔ WIRE)", () => {
     // Pick the first bootstrapped BATCH operator. The harness creates
     // `DefaultBatchOperatorCount` (3) of them by default; all are
     // already authex-linked + opreg-registered.
-    const batchOps = ctx.getWallet(ChainKind.ETHEREUM, OperatorType.BATCH)
+    const batchOps = ctx.getWallet(ChainKind.EVM, OperatorType.BATCH)
     expect(batchOps.length).toBeGreaterThan(0)
     batchOp = batchOps[0] as EthereumOperatorAccountWallet
     compressedPubkey = batchOp.publicKey.data.array
@@ -189,18 +189,18 @@ describe("Flow B: Node Operator Collateral Lifecycle (ETH ↔ WIRE)", () => {
     expect(code.length).toBeGreaterThan(4)
   })
 
-  test("ETH outpost is registered on WIRE", async () => {
-    const { rows } = await ctx.wireClient.getOutposts()
-    const ethOutpost = rows.find(
+  test("ETH chain is registered on WIRE", async () => {
+    const { rows } = await ctx.wireClient.getChains()
+    const ethChain = rows.find(
       (r: any) =>
         enumValueMatches(
           ChainKind,
-          ChainKind.ETHEREUM,
-          r.chain_kind,
+          ChainKind.EVM,
+          r.kind,
           "CHAIN_KIND"
-        ) && r.chain_id === AnvilManager.DefaultChainId
+        ) && r.external_chain_id === AnvilManager.DefaultChainId
     )
-    expect(ethOutpost).toBeDefined()
+    expect(ethChain).toBeDefined()
   })
 
   // ── Pre-deposit baseline ──
@@ -211,7 +211,7 @@ describe("Flow B: Node Operator Collateral Lifecycle (ETH ↔ WIRE)", () => {
   })
 
   test("OperatorRegistry has no ETH deposit for this address yet", async () => {
-    const eth = await opRegContract.depositedByKind(operatorAddr, TokenKind.ETH)
+    const eth = await opRegContract.depositedByKind(operatorAddr, TokenKind.NATIVE)
     expect(Number(eth)).toBe(0)
   })
 
@@ -221,7 +221,7 @@ describe("Flow B: Node Operator Collateral Lifecycle (ETH ↔ WIRE)", () => {
     const tx = await opRegContract.deposit(
       OPERATOR_TYPE_BATCH,
       compressedPubkey,
-      TokenKind.ETH,
+      TokenKind.NATIVE,
       BOND_AMOUNT,
       { value: BOND_AMOUNT }
     )
@@ -247,7 +247,7 @@ describe("Flow B: Node Operator Collateral Lifecycle (ETH ↔ WIRE)", () => {
   })
 
   test("OperatorRegistry locally credits the deposit immediately", async () => {
-    const eth = await opRegContract.depositedByKind(operatorAddr, TokenKind.ETH)
+    const eth = await opRegContract.depositedByKind(operatorAddr, TokenKind.NATIVE)
     expect(eth).toBe(BOND_AMOUNT)
     const info = await opRegContract.operators(operatorAddr)
     expect(Number(info.operatorType)).toBe(OPERATOR_TYPE_BATCH)
@@ -273,7 +273,7 @@ describe("Flow B: Node Operator Collateral Lifecycle (ETH ↔ WIRE)", () => {
               (b: any) =>
                 enumValueMatches(
                   ChainKind,
-                  ChainKind.ETHEREUM,
+                  ChainKind.EVM,
                   b.chain,
                   "CHAIN_KIND"
                 ) && Number(b.balance) >= Number(BOND_AMOUNT)
@@ -293,7 +293,7 @@ describe("Flow B: Node Operator Collateral Lifecycle (ETH ↔ WIRE)", () => {
   test("withdraw() emits WithdrawRequested + queues outbound OPERATOR_ACTION", async () => {
     const tx = await opRegContract.withdraw(
       compressedPubkey,
-      TokenKind.ETH,
+      TokenKind.NATIVE,
       WITHDRAW_AMOUNT
     )
     const receipt = await tx.wait()
@@ -320,7 +320,7 @@ describe("Flow B: Node Operator Collateral Lifecycle (ETH ↔ WIRE)", () => {
     // Per OperatorRegistry.withdraw(), the per-kind escrow only changes
     // on the inbound WITHDRAW_REMIT — REQUEST is just an attestation.
     // The depot's `available()` rollup tracks the in-flight reservation.
-    const eth = await opRegContract.depositedByKind(operatorAddr, TokenKind.ETH)
+    const eth = await opRegContract.depositedByKind(operatorAddr, TokenKind.NATIVE)
     expect(eth).toBe(BOND_AMOUNT)
   })
 
@@ -339,7 +339,7 @@ describe("Flow B: Node Operator Collateral Lifecycle (ETH ↔ WIRE)", () => {
             (r: any) =>
               enumValueMatches(
                 ChainKind,
-                ChainKind.ETHEREUM,
+                ChainKind.EVM,
                 r.chain,
                 "CHAIN_KIND"
               ) && Number(r.amount) === Number(WITHDRAW_AMOUNT)
@@ -368,7 +368,7 @@ describe("Flow B: Node Operator Collateral Lifecycle (ETH ↔ WIRE)", () => {
             (r: any) =>
               enumValueMatches(
                 ChainKind,
-                ChainKind.ETHEREUM,
+                ChainKind.EVM,
                 r.chain,
                 "CHAIN_KIND"
               ) && Number(r.amount) === Number(WITHDRAW_AMOUNT)
@@ -392,7 +392,7 @@ describe("Flow B: Node Operator Collateral Lifecycle (ETH ↔ WIRE)", () => {
         async () => {
           const eth = await opRegContract.depositedByKind(
             operatorAddr,
-            TokenKind.ETH
+            TokenKind.NATIVE
           )
           return eth === EXPECTED_REMAINING_BALANCE
         },

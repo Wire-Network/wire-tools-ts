@@ -302,7 +302,7 @@ export class FlowTestContext {
    *
    * Each entry in the returned array is a concrete subclass keyed on
    * `chain` (e.g., `EthereumOperatorAccountWallet` for
-   * `ChainKind.ETHEREUM`); call sites can narrow via `instanceof` if
+   * `ChainKind.EVM`); call sites can narrow via `instanceof` if
    * they need chain-specific surface beyond the interface.
    *
    * @param chain  Originating chain — `ETHEREUM`, `SOLANA`, or `WIRE`.
@@ -342,7 +342,7 @@ export class FlowTestContext {
     const batchOps = state.batchOperatorNodes ?? [],
       underwriters = state.underwriterNodes ?? []
     return match(chain)
-      .with(ChainKind.ETHEREUM, () =>
+      .with(ChainKind.EVM, () =>
         buildEthereumOperatorWallets({
           ethProvider: this.ethProvider,
           batchOps,
@@ -350,7 +350,7 @@ export class FlowTestContext {
           type
         })
       )
-      .with(ChainKind.SOLANA, () =>
+      .with(ChainKind.SVM, () =>
         buildSolanaOperatorWallets({ batchOps, underwriters, type })
       )
       .with(ChainKind.WIRE, () =>
