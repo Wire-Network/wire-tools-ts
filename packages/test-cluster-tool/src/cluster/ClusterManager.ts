@@ -2111,6 +2111,226 @@ async function bootstrapChain(
     `[Phase 16] Chains registered (WIRE + ETH${cfg.solanaPath ? " + SOL" : ""})`
   )
 
+  // ── Phase 16a: Register tokens on sysio.tokens ──
+  // Per the v6 plan §3.16 bootstrap-seed table: WIRE / ETH / SOL native +
+  // LIQETH / LIQSOL liquid-staking receipts. NATIVE tokens leave
+  // `Token.address` empty per the `ChainToken.is_native ⇒ empty
+  // contract_addr` proto rule; LIQ tokens carry their canonical
+  // chain-of-origin contract address when available.
+  log.info("[Phase 16a] Registering tokens on sysio.tokens...")
+  const liqEthAddrHex: string | undefined = (() => {
+    try {
+      if (!cfg.ethereumPath) return undefined
+      const liqethAddrsFile = Path.join(
+        cfg.ethereumPath,
+        ".local/deployments/liqeth-addrs.json"
+      )
+      if (!Fs.existsSync(liqethAddrsFile)) return undefined
+      const addrs = JSON.parse(Fs.readFileSync(liqethAddrsFile, "utf-8"))
+      return typeof addrs.LiqEthToken === "string"
+        ? addrs.LiqEthToken
+        : undefined
+    } catch {
+      return undefined
+    }
+  })()
+  const emptyChainAddr = {
+    kind: SystemContracts.SysioTokensChainkind.CHAIN_KIND_UNKNOWN,
+    address: ""
+  }
+  const liqEthChainAddr = liqEthAddrHex
+    ? {
+        kind: SystemContracts.SysioTokensChainkind.CHAIN_KIND_EVM,
+        address: liqEthAddrHex.replace(/^0x/i, "")
+      }
+    : emptyChainAddr
+  // LIQSOL mint address — not yet wired through the harness; v6 plan §3.16
+  // lists it as `(SVM, <liqsol mint>)`. Seed empty for now; backfill once
+  // the liqsol-core deploy exposes its mint via SOLBootstrapper.
+  const liqSolChainAddr = emptyChainAddr
+
+  const tokenRegs: SystemContracts.SysioTokensRegtokenAction[] = [
+    {
+      kind: SystemContracts.SysioTokensTokenkind.TOKEN_KIND_NATIVE,
+      code: { value: SlugName.from("WIRE") },
+      symbol_name: "Wire",
+      description: "WIRE chain native asset",
+      precision: 9,
+      address: emptyChainAddr
+    },
+    {
+      kind: SystemContracts.SysioTokensTokenkind.TOKEN_KIND_NATIVE,
+      code: { value: SlugName.from("ETH") },
+      symbol_name: "Ether",
+      description: "Ethereum native asset",
+      precision: 18,
+      address: emptyChainAddr
+    },
+    {
+      kind: SystemContracts.SysioTokensTokenkind.TOKEN_KIND_LIQ,
+      code: { value: SlugName.from("LIQETH") },
+      symbol_name: "Liquid ETH",
+      description: "Liquid-staking receipt for ETH",
+      precision: 18,
+      address: liqEthChainAddr
+    }
+  ]
+  if (cfg.solanaPath) {
+    tokenRegs.push(
+      {
+        kind: SystemContracts.SysioTokensTokenkind.TOKEN_KIND_NATIVE,
+        code: { value: SlugName.from("SOL") },
+        symbol_name: "Sol",
+        description: "Solana native asset",
+        precision: 9,
+        address: emptyChainAddr
+      },
+      {
+        kind: SystemContracts.SysioTokensTokenkind.TOKEN_KIND_LIQ,
+        code: { value: SlugName.from("LIQSOL") },
+        symbol_name: "Liquid SOL",
+        description: "Liquid-staking receipt for SOL",
+        precision: 9,
+        address: liqSolChainAddr
+      }
+    )
+  }
+  await Bluebird.each(tokenRegs, async tokenReg => {
+    await clio.pushActionAndWait<SystemContracts.SysioTokensRegtokenAction>(
+      "sysio.tokens",
+      "regtoken",
+      tokenReg,
+      "sysio.tokens@active"
+    )
+  })
+  log.info(`[Phase 16a] Registered ${tokenRegs.length} token(s)`)
+
+  // ── Phase 16b: Register ChainToken bindings on sysio.tokens ──
+  // Exactly one is_native binding per Chain. LIQ tokens get a per-chain
+  // `contract_addr` (the deployed liqEth contract bytes on EVM, the
+  // liqsol mint bytes on SVM); native bindings leave `contract_addr` empty.
+  log.info("[Phase 16b] Registering ChainToken bindings on sysio.tokens...")
+  const ctokRegs: SystemContracts.SysioTokensRegctokAction[] = [
+    {
+      chain_code: { value: SlugName.from("WIRE") },
+      token_code: { value: SlugName.from("WIRE") },
+      contract_addr: "",
+      precision_override: 0,
+      is_native: true
+    },
+    {
+      chain_code: { value: SlugName.from("ETHEREUM") },
+      token_code: { value: SlugName.from("ETH") },
+      contract_addr: "",
+      precision_override: 0,
+      is_native: true
+    },
+    {
+      chain_code: { value: SlugName.from("ETHEREUM") },
+      token_code: { value: SlugName.from("LIQETH") },
+      contract_addr: liqEthAddrHex
+        ? liqEthAddrHex.replace(/^0x/i, "")
+        : "",
+      precision_override: 0,
+      is_native: false
+    }
+  ]
+  if (cfg.solanaPath) {
+    ctokRegs.push(
+      {
+        chain_code: { value: SlugName.from("SOLANA") },
+        token_code: { value: SlugName.from("SOL") },
+        contract_addr: "",
+        precision_override: 0,
+        is_native: true
+      },
+      {
+        chain_code: { value: SlugName.from("SOLANA") },
+        token_code: { value: SlugName.from("LIQSOL") },
+        contract_addr: "",  // TODO: backfill liqsol mint bytes
+        precision_override: 0,
+        is_native: false
+      }
+    )
+  }
+  await Bluebird.each(ctokRegs, async ctokReg => {
+    await clio.pushActionAndWait<SystemContracts.SysioTokensRegctokAction>(
+      "sysio.tokens",
+      "regctok",
+      ctokReg,
+      "sysio.tokens@active"
+    )
+  })
+  log.info(`[Phase 16b] Registered ${ctokRegs.length} ChainToken binding(s)`)
+
+  // ── Phase 16c: Seed default reserves on sysio.reserv ──
+  // Per v6 plan §3.16, four PRIMARY reserves are seeded with status=ACTIVE
+  // at bootstrap (native + LIQ pairs on each external chain). The
+  // initial chain/wire amounts are devnet-sized — large enough to clear
+  // the constant-product `swapquote` floor and any reasonable per-leg
+  // underwriter capacity test, small enough to keep WIRE-side custody
+  // explainable in test ledgers.
+  log.info("[Phase 16c] Seeding default reserves on sysio.reserv...")
+  const reserveSeedAmount = 10_000_000_000
+  const reserveRegs: SystemContracts.SysioReservRegreserveAction[] = []
+  if (cfg.ethereumPath) {
+    reserveRegs.push(
+      {
+        chain_code: { value: SlugName.from("ETHEREUM") },
+        token_code: { value: SlugName.from("ETH") },
+        reserve_code: { value: SlugName.from("PRIMARY") },
+        name: "ETHEREUM-ETH/WIRE primary reserve",
+        description: "Bootstrap-seeded native ETH ↔ WIRE reserve",
+        initial_chain_amount: reserveSeedAmount,
+        initial_wire_amount: reserveSeedAmount,
+        connector_weight_bps: 5000
+      },
+      {
+        chain_code: { value: SlugName.from("ETHEREUM") },
+        token_code: { value: SlugName.from("LIQETH") },
+        reserve_code: { value: SlugName.from("PRIMARY") },
+        name: "ETHEREUM-LIQETH/WIRE primary reserve",
+        description: "Bootstrap-seeded liqETH ↔ WIRE reserve",
+        initial_chain_amount: reserveSeedAmount,
+        initial_wire_amount: reserveSeedAmount,
+        connector_weight_bps: 5000
+      }
+    )
+  }
+  if (cfg.solanaPath) {
+    reserveRegs.push(
+      {
+        chain_code: { value: SlugName.from("SOLANA") },
+        token_code: { value: SlugName.from("SOL") },
+        reserve_code: { value: SlugName.from("PRIMARY") },
+        name: "SOLANA-SOL/WIRE primary reserve",
+        description: "Bootstrap-seeded native SOL ↔ WIRE reserve",
+        initial_chain_amount: reserveSeedAmount,
+        initial_wire_amount: reserveSeedAmount,
+        connector_weight_bps: 5000
+      },
+      {
+        chain_code: { value: SlugName.from("SOLANA") },
+        token_code: { value: SlugName.from("LIQSOL") },
+        reserve_code: { value: SlugName.from("PRIMARY") },
+        name: "SOLANA-LIQSOL/WIRE primary reserve",
+        description: "Bootstrap-seeded liqSOL ↔ WIRE reserve",
+        initial_chain_amount: reserveSeedAmount,
+        initial_wire_amount: reserveSeedAmount,
+        connector_weight_bps: 5000
+      }
+    )
+  }
+  await Bluebird.each(reserveRegs, async reserveReg => {
+    await clio.pushActionAndWait<SystemContracts.SysioReservRegreserveAction>(
+      "sysio.reserv",
+      "regreserve",
+      reserveReg,
+      "sysio.reserv@active"
+    )
+  })
+  log.info(`[Phase 16c] Seeded ${reserveRegs.length} default reserve(s)`)
+
   // ── Phase 17: Configure sysio.uwrit ──
   log.info("[Phase 17] Configuring sysio.uwrit...")
   await clio.pushAction<SystemContracts.SysioUwritSetconfigAction>(
