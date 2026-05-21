@@ -38,23 +38,41 @@
       "@wireio/test-cluster-tool/*": [
         "./packages/test-cluster-tool/src/*"
       ],
-      "@wireio/test-flow-a": [
-        "./packages/flow-a/src"
+      "@wireio/test-flow-empty-epoch-balance-sheet": [
+        "./packages/flow-empty-epoch-balance-sheet/src"
       ],
-      "@wireio/test-flow-a/*": [
-        "./packages/flow-a/src/*"
+      "@wireio/test-flow-empty-epoch-balance-sheet/*": [
+        "./packages/flow-empty-epoch-balance-sheet/src/*"
       ],
-      "@wireio/test-flow-b": [
-        "./packages/flow-b/src"
+      "@wireio/test-flow-operator-collateral-deposit": [
+        "./packages/flow-operator-collateral-deposit/src"
       ],
-      "@wireio/test-flow-b/*": [
-        "./packages/flow-b/src/*"
+      "@wireio/test-flow-operator-collateral-deposit/*": [
+        "./packages/flow-operator-collateral-deposit/src/*"
       ],
-      "@wireio/test-flow-c": [
-        "./packages/flow-c/src"
+      "@wireio/test-flow-swap-with-underwriting": [
+        "./packages/flow-swap-with-underwriting/src"
       ],
-      "@wireio/test-flow-c/*": [
-        "./packages/flow-c/src/*"
+      "@wireio/test-flow-swap-with-underwriting/*": [
+        "./packages/flow-swap-with-underwriting/src/*"
+      ],
+      "@wireio/test-flow-collateral-deposit-via-bar": [
+        "./packages/flow-collateral-deposit-via-bar/src"
+      ],
+      "@wireio/test-flow-collateral-deposit-via-bar/*": [
+        "./packages/flow-collateral-deposit-via-bar/src/*"
+      ],
+      "@wireio/test-flow-batch-operator-termination": [
+        "./packages/flow-batch-operator-termination/src"
+      ],
+      "@wireio/test-flow-batch-operator-termination/*": [
+        "./packages/flow-batch-operator-termination/src/*"
+      ],
+      "@wireio/test-flow-swap-variance-revert": [
+        "./packages/flow-swap-variance-revert/src"
+      ],
+      "@wireio/test-flow-swap-variance-revert/*": [
+        "./packages/flow-swap-variance-revert/src/*"
       ],
       "@wireio/debugging-shared": [
         "./packages/debugging-shared/src"

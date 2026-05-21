@@ -30,9 +30,6 @@ function makeEnvelopeBase64(epochIndex: number): string {
       epochTimestamp: BigInt(Date.now()),
       envelopeHash: new Uint8Array(32),
       previousEnvelopeHash: new Uint8Array(32),
-      merkle: new Uint8Array(32),
-      startMessageId: new Uint8Array(32),
-      endMessageId: new Uint8Array(32),
       messages: []
     })
   )

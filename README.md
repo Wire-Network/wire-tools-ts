@@ -14,9 +14,12 @@ Exercises the full OPP message flow across three blockchains:
 | Package | Description |
 |---------|-------------|
 | `@wireio/test-cluster-tool` | Process management (nodeop, anvil, solana-test-validator) + chain clients |
-| `@wireio/flow-a` | Flow A: Empty Epoch (balance sheet only) |
-| `@wireio/flow-b` | Flow B: Node Operator Collateral Deposit |
-| `@wireio/flow-c` | Flow C: SWAP 50 ETH → 1042 SOL (with underwriting) |
+| `@wireio/test-flow-empty-epoch-balance-sheet` | Flow: Empty Epoch (balance sheet only) |
+| `@wireio/test-flow-operator-collateral-deposit` | Flow: Node Operator Collateral Deposit |
+| `@wireio/test-flow-swap-with-underwriting` | Flow: Bidirectional SWAP (Ethereum ↔ Solana) with Underwriting |
+| `@wireio/test-flow-collateral-deposit-via-bar` | Flow: Collateral Deposit via BAR (OperatorAction Ethereum → WIRE) |
+| `@wireio/test-flow-batch-operator-termination` | Flow: Batch Operator Termination via Delivery Underperformance |
+| `@wireio/test-flow-swap-variance-revert` | Flow: Swap Variance-Tolerance Revert |
 
 ## Prerequisites
 
@@ -58,12 +61,15 @@ pnpm install
 pnpm test
 
 # Individual flows
-pnpm test:flow-a    # Empty epoch
-pnpm test:flow-b    # Collateral deposit
-pnpm test:flow-c    # SWAP with underwriting
+pnpm --filter @wireio/test-flow-empty-epoch-balance-sheet test
+pnpm --filter @wireio/test-flow-operator-collateral-deposit test
+pnpm --filter @wireio/test-flow-swap-with-underwriting test
+pnpm --filter @wireio/test-flow-collateral-deposit-via-bar test
+pnpm --filter @wireio/test-flow-batch-operator-termination test
+pnpm --filter @wireio/test-flow-swap-variance-revert test
 
 # With custom build dir
-WIRE_BUILD_DIR=/path/to/build pnpm test:flow-a
+WIRE_BUILD_DIR=/path/to/build pnpm --filter @wireio/test-flow-empty-epoch-balance-sheet test
 ```
 
 ## Environment Variables

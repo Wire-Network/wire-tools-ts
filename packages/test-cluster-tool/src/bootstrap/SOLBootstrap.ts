@@ -23,6 +23,27 @@ const SolAirdropConfirmIntervalMs = 500
 const SolAirdropConfirmTimeoutMs = 60_000
 
 /**
+ * Lamports to fund the bootstrap-seeded native SOL Reserve PDA with.
+ * Sized to cover several swap-with-underwriting test runs (each draws
+ * ~0.5 SOL of source amount → ~0.5 SOL destination payout, so 20 SOL
+ * provides ~40 runs of headroom) plus the per-account rent floor.
+ */
+const BootstrapNativeReserveLamports = 20 * LAMPORTS_PER_SOL
+
+/** Bancor weight in basis points for the bootstrap-seeded native reserve. */
+const BootstrapConnectorWeightBps = 5000
+
+/**
+ * Encode a `number` slug_name as an 8-byte little-endian Buffer matching
+ * the program's `to_le_bytes()` seed derivation.
+ */
+function SlugNameToLeBuffer(value: number): Buffer {
+  const buf = Buffer.alloc(8)
+  buf.writeBigUInt64LE(BigInt(value))
+  return buf
+}
+
+/**
  * Solana outpost bootstrap.
  *
  * Runs against a test validator that already has the `opp_outpost` program
@@ -371,5 +392,73 @@ export class SOLBootstrap {
       throw new Error("init_reserve not confirmed within 60s")
 
     log.info("SOL ReserveAggregate PDA initialized")
+
+    // Bootstrap-seeded native SOL reserve.
+    //
+    // The depot's `sysio.reserv::regreserve` (run in `ClusterManager`
+    // Phase 16c) creates the depot-side accounting row for
+    // SOLANA/SOL/PRIMARY with status=ACTIVE. The outpost-side mirror is
+    // the per-(token_code, reserve_code) Reserve PDA — without it
+    // `handle_swap_remit` can't find the lamport escrow when a
+    // depot-authorized SwapRemit arrives, and `request_swap` reverts
+    // on the `seeds = [RESERVE_SEED, ...]` constraint.
+    //
+    // `create_reserve_native` is the authority-gated, NATIVE-only
+    // bootstrap-symmetry IX (no SPL Mint/ATA required, no
+    // RESERVE_CREATE attestation emitted — depot row already exists,
+    // status=Active set inline).
+    const solReserveCode = new anchor.BN(SlugName.from("PRIMARY"))
+    const initialChainAmount = new anchor.BN(BootstrapNativeReserveLamports)
+    const initialWireAmount  = new anchor.BN(BootstrapNativeReserveLamports)
+    const [solReservePda] = anchor.web3.PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("reserve"),
+        SlugNameToLeBuffer(SlugName.from("SOL")),
+        SlugNameToLeBuffer(SlugName.from("PRIMARY"))
+      ],
+      this.programId!
+    )
+    log.info(`  Reserve PDA (SOL/PRIMARY):    ${solReservePda.toBase58()}`)
+    const createReserveTx = await program.methods
+      .createReserveNative(
+        solTokenCode,
+        solReserveCode,
+        initialChainAmount,
+        initialWireAmount,
+        BootstrapConnectorWeightBps,
+        "SOLANA-SOL/WIRE primary reserve",
+        "Bootstrap-seeded native SOL ↔ WIRE reserve (outpost-side custody)"
+      )
+      .accounts({
+        payer:         deployer.publicKey,
+        authority:     deployer.publicKey,
+        config:        configPda,
+        reserve:       solReservePda,
+        systemProgram: anchor.web3.SystemProgram.programId
+      })
+      .signers([deployer])
+      .transaction()
+    const createReserveSig = await this.connection.sendTransaction(
+      createReserveTx,
+      [deployer],
+      { skipPreflight: false }
+    )
+    const createReserveDeadline = Date.now() + 60_000
+    while (Date.now() < createReserveDeadline) {
+      const status = await this.connection.getSignatureStatus(createReserveSig)
+      const conf = status?.value?.confirmationStatus
+      if (conf === "confirmed" || conf === "finalized") break
+      if (status?.value?.err)
+        throw new Error(
+          `create_reserve_native tx failed: ${JSON.stringify(status.value.err)}`
+        )
+      await sleep(500)
+    }
+    if (Date.now() >= createReserveDeadline)
+      throw new Error("create_reserve_native not confirmed within 60s")
+
+    log.info(
+      `SOL native reserve seeded (PDA=${solReservePda.toBase58()}, lamports=${BootstrapNativeReserveLamports})`
+    )
   }
 }

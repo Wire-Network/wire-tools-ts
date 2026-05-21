@@ -1,7 +1,7 @@
 /**
  * Minimal ESM → CJS transformer for jest.
  * Converts `import`/`export` syntax to `require`/`module.exports`.
- * Used for ESM-only dependencies like @wireio/opp-solidity-models.
+ * Used for ESM-only dependencies like @wireio/opp-typescript-models.
  */
 module.exports = {
   process(sourceText) {

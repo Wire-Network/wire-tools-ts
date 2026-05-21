@@ -65,11 +65,27 @@ export async function pollUntil(
   intervalMs: number = FlowTestContext.DefaultPollIntervalMs
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
+  let lastError: unknown = null
   while (Date.now() < deadline) {
-    if (await condition()) return
+    try {
+      if (await condition()) return
+    } catch (err) {
+      // Transient RPC failures (anvil ECONNREFUSED, momentary clio HTTP 500,
+      // solana RPC timeout) must NOT end the test. The cluster's RPC
+      // surfaces are hammered by 3 batch ops + 1 underwriter polling every
+      // few seconds; one in N polls can hit a fleeting socket / keepalive
+      // hiccup. The `pollUntil` deadline is the timing budget — let it run.
+      // Log the most recent transient so a real RPC-down state is visible
+      // on the timeout error message.
+      lastError = err
+      log.debug(`pollUntil[${label}]: transient — ${err instanceof Error ? err.message : String(err)}`)
+    }
     await sleep(intervalMs)
   }
-  throw new Error(`Timed out waiting for: ${label} (${timeoutMs}ms)`)
+  const tail = lastError
+    ? ` (last transient: ${lastError instanceof Error ? lastError.message : String(lastError)})`
+    : ""
+  throw new Error(`Timed out waiting for: ${label} (${timeoutMs}ms)${tail}`)
 }
 
 // ---------------------------------------------------------------------------

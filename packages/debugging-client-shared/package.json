@@ -28,7 +28,7 @@
   "scripts": {
     "compile": "tsc -b tsconfig.json",
     "compile:watch": "tsc -b tsconfig.json -w",
-    "build": "tsc -b tsconfig.json && node ../../scripts/fix-hybrid-output.mjs .",
+    "build": "pnpm run compile && node ../../scripts/fix-hybrid-output.mjs .",
     "test": "jest",
     "clean": "rm -rf lib"
   },

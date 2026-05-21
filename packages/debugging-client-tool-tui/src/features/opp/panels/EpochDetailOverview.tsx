@@ -17,8 +17,8 @@ export interface EpochDetailOverviewProps {
 /**
  * Static summary of the selected epoch — per-endpoint status (✓ + count or
  * `unreceived` in yellow), total attestation count across every received
- * envelope, and the metadata (`checksum`, `merkle`) for each present
- * envelope. Lives above the scrollable {@link EnvelopeDetailView} stack.
+ * envelope, and the `checksum` metadata for each present envelope. Lives
+ * above the scrollable {@link EnvelopeDetailView} stack.
  */
 export function EpochDetailOverview(
   props: EpochDetailOverviewProps
@@ -64,7 +64,6 @@ export function EpochDetailOverview(
             </Text>,
             <Text key={`${name}-meta`} dimColor>
               {indent}checksum: {env.checksum}
-              {"  "}merkle: {merkleSnippet(env.envelope?.merkle)}
             </Text>
           ]
         })}
@@ -73,25 +72,11 @@ export function EpochDetailOverview(
   )
 }
 
-/**
- * Render the envelope's `merkle` field as a short hex/base64 prefix. The
- * service base64-encodes Uint8Array fields when serializing for Redux, so
- * the value is already a string at this layer.
- */
-function merkleSnippet(merkle: unknown): string {
-  if (typeof merkle !== "string" || merkle.length === 0) return "—"
-  return merkle.length <= EpochDetailOverview.MerkleSnippetLength
-    ? merkle
-    : merkle.slice(0, EpochDetailOverview.MerkleSnippetLength) + "…"
-}
-
 export namespace EpochDetailOverview {
   /** Width of the endpoint-name column in the overview. */
   export const EndpointLabelWidth = 26
   /** Number of spaces the metadata sub-row is indented under its endpoint. */
   export const MetadataIndent = 2
-  /** Cap on the merkle preview — full bytes-base64 strings would overflow rows. */
-  export const MerkleSnippetLength = 24
   /** Inline label for an endpoint we haven't received yet. */
   export const UnreceivedLabel = "unreceived" as const
   /** Empty-state copy when the route param doesn't match any cached epoch. */

@@ -1,0 +1,26 @@
+{
+  "name": "@wireio/test-flow-collateral-deposit-via-bar",
+  "version": "0.1.10",
+  "private": true,
+  "type": "commonjs",
+  "description": "Flow: Collateral Deposit via BAR (OperatorAction Ethereum \u2192 WIRE)",
+  "scripts": {
+    "compile": "tsc -b tsconfig.json",
+    "compile:watch": "tsc -b tsconfig.json -w",
+    "build": "pnpm run compile",
+    "test": "jest --runInBand",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@wireio/test-cluster-tool": "workspace:*",
+    "@wireio/sdk-core": "^1.0.17",
+    "@wireio/opp-typescript-models": "^1.0.26",
+    "@wireio/shared": "^1.0.17",
+    "@wireio/shared-node": "^1.0.17",
+    "ethers": "^6.14.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "25.5.0"
+  }
+}

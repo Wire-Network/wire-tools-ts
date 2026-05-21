@@ -25,7 +25,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -b tsconfig.json && node ../../scripts/fix-hybrid-output.mjs .",
+    "build": "pnpm run compile && node ../../scripts/fix-hybrid-output.mjs .",
     "build:dev": "tsc -b tsconfig.json -w",
     "test": "jest",
     "clean": "rm -rf lib"

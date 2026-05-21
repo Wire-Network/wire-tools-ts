@@ -36,7 +36,6 @@
     "@3fv/prelude-ts": "^0.8.37",
     "@coral-xyz/anchor": "^0.31.0",
     "@solana/web3.js": "^1.98.0",
-    "@wireio/opp-solidity-models": "^1.0.26",
     "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/sdk-core": "^1.0.21",
     "@wireio/shared": "^1.0.21",

@@ -41,6 +41,7 @@ import { buildRelaunchCmd, buildStartCmd } from "./startCmd.js"
 import { generateLoggingConfig } from "./generateLoggingConfig"
 import {
   BATCH_OPERATOR_PLUGINS,
+  UNDERWRITER_PLUGINS,
   batchOperatorAccountName,
   BIOS_HTTP_PORT,
   DEFAULT_RAM_WEIGHT,
@@ -744,7 +745,35 @@ export class ClusterManager {
           )
           const keys = uwKeys[i]
           const account = underwriterAccountName(i)
-
+          const wireK1SigProvider = formatK1SignatureProvider({
+            publicKey: DEV_K1_PUBLIC_KEY,
+            privateKey: DEV_K1_PRIVATE_KEY
+          })
+          const debuggingServerUrl = toURL(ports.debuggingServer)
+          // Base underwriter args — ETH/SOL outpost client + signing-key
+          // injection happens in Phase 10a (after deploy) alongside the
+          // batch op outpost injection. The base args here load the
+          // underwriter_plugin + outpost client plugins + cron_plugin
+          // so the daemon can poll for new UWREQ rows and call
+          // OperatorRegistry.commit / opp_outpost::commit_underwrite on
+          // the matching outposts.
+          const underwriterExtraArgs: string[] = [
+            "--read-mode",
+            "head",
+            ...UNDERWRITER_PLUGINS.flatMap(p => ["--plugin", p]),
+            "--plugin",
+            "sysio::external_debugging_plugin",
+            "--plugin",
+            "sysio::cron_plugin",
+            "--signature-provider",
+            wireK1SigProvider,
+            "--underwriter-enabled",
+            "true",
+            "--underwriter-account",
+            account,
+            "--ext-debugging-server",
+            debuggingServerUrl
+          ]
           const cmd = buildStartCmd({
             nodeopBinary: executables.nodeop,
             p2pListenEndpoint: toAddress(p2pPort, ListenAllAddress),
@@ -759,7 +788,7 @@ export class ClusterManager {
             genesisJson: nodeGenesisFile,
             genesisTimestamp: launchTime,
             p2pMaxNodesPerHost,
-            extraArgs: ["--read-mode", "head"]
+            extraArgs: underwriterExtraArgs
           })
           writeNodeFiles(nodePath, cmd)
 
@@ -870,7 +899,13 @@ export class ClusterManager {
         // outpost_ethereum_client_plugin. Each file is a JSON object with
         // { address, abi } so get_events can filter by contract address.
         const ethAbiDir = mkdirs(Path.join(dataPath, "eth-abis"))
-        const ethAbiFiles = ["OPP", "OPPInbound", "BAR"]
+        // Include ReserveManager + OperatorRegistry so the underwriter
+        // plugin can resolve `requestSwap` (source-deposit verification
+        // target on ReserveManager) and `commit` (where the underwriter
+        // submits UnderwriteIntentCommit on OperatorRegistry). Without
+        // these the preflight ABI lookup fails and the plugin won't
+        // start its scan loop.
+        const ethAbiFiles = ["OPP", "OPPInbound", "BAR", "ReserveManager", "OperatorRegistry"]
           .map(name => {
             const artifactPath = Path.join(
               cfg.ethereumPath!,
@@ -1008,6 +1043,97 @@ export class ClusterManager {
           )
           log.info(
             `[Phase 10a] Injected ETH${solProgramId ? "+SOL" : ""} outpost args for ${ns.operatorAccount}`
+          )
+        })
+
+        // Underwriter outpost arg injection — mirrors the batch op
+        // block above but populates --underwriter-* args for the
+        // underwriter_plugin. Each underwriter gets an HD-derived ETH
+        // signing key (slot N+i+1, past every batch op), the persisted
+        // ED25519 SOL key, the OperatorRegistry contract address on ETH,
+        // and the source-deposit function/instruction names so the
+        // daemon can verify the user's source-chain deposit before
+        // submitting commit() on both outposts.
+        const opregAddr = ethAddrs.OperatorRegistry
+        Assert.ok(
+          opregAddr,
+          "OperatorRegistry address missing from outpost-addrs.json"
+        )
+        underwriterStates.forEach((ns, i) => {
+          const hdIndex = batchOpStates.length + i + 1
+          const ethWallet = ethers.HDNodeWallet.fromMnemonic(
+            anvilMnemonic,
+            `${ETHBootstrapper.DerivationPath}${hdIndex}`
+          )
+          const sigProviderName = `eth-${ns.operatorAccount}`
+          const ethPrivKey = emPrivateKeyFromEthWallet(ethWallet)
+          const ethPubKey = "0x" + ethWallet.signingKey.publicKey.slice(4)
+          const ethSigProvider = [
+            sigProviderName,
+            "ethereum",
+            "ethereum",
+            ethPubKey,
+            `KEY:${ethPrivKey.toNativeString()}`
+          ].join(",")
+          const ethClientSpec = [
+            "eth-default",
+            sigProviderName,
+            anvilRpcUrl,
+            String(AnvilManager.DefaultChainId)
+          ].join(",")
+
+          const solKey = uwSolKeys[ns.operatorAccount!]
+          Assert.ok(
+            solKey,
+            `Missing SOL key for underwriter ${ns.operatorAccount}`
+          )
+          const solPub = solKey.toPublic()
+          const solSigProvider = [
+            `sol-${ns.operatorAccount}`,
+            "solana",
+            "solana",
+            solPub.toNativeString(),
+            `KEY:${solKey.toNativeString()}`
+          ].join(",")
+          const solClientSpec = `sol-default,sol-${ns.operatorAccount},${solanaRpcUrl}`
+
+          const outpostArgs = [
+            "--signature-provider",
+            ethSigProvider,
+            "--outpost-ethereum-client",
+            ethClientSpec,
+            ...ethAbiFiles.flatMap(f => ["--ethereum-abi-file", f]),
+            "--underwriter-eth-opreg-addr",
+            opregAddr,
+            "--underwriter-eth-source-deposit-function",
+            "requestSwap",
+            "--underwriter-eth-client-id",
+            "eth-default",
+            // Anvil only mines blocks on user txs in the test cluster,
+            // so the underwriter would deadlock waiting for the
+            // mainnet-default 12 confirmations. 1 is sufficient when
+            // the chain doesn't reorg (anvil never does).
+            "--underwriter-eth-min-confirmations",
+            "1",
+            "--signature-provider",
+            solSigProvider,
+            "--outpost-solana-client",
+            solClientSpec,
+            "--underwriter-sol-source-deposit-instruction",
+            "request_swap",
+            "--underwriter-sol-client-id",
+            "sol-default"
+          ]
+          if (solProgramId && solIdlPath) {
+            outpostArgs.push("--solana-idl-file", solIdlPath)
+          }
+          ns.cmd.push(...outpostArgs)
+          Fs.writeFileSync(
+            Path.join(ns.dataPath, "start.cmd"),
+            ns.cmd.join(" ")
+          )
+          log.info(
+            `[Phase 10a] Injected ETH${solProgramId ? "+SOL" : ""} outpost args for underwriter ${ns.operatorAccount}`
           )
         })
       }
@@ -2163,7 +2289,13 @@ async function bootstrapChain(
       code: { value: SlugName.from("ETH") },
       symbol_name: "Ether",
       description: "Ethereum native asset",
-      precision: 18,
+      // Project rule: every token registers with precision=9 (max).
+      // Native ETH at 18-decimal wei would overflow the depot's
+      // `swap_quote` cp_output math against a 10B-unit reserve seed;
+      // standardising on 9 keeps every constant-product computation
+      // in a sane integer range and aligns all four chains' token
+      // ledgers under one precision contract.
+      precision: 9,
       address: emptyChainAddr
     },
     {
@@ -2171,7 +2303,8 @@ async function bootstrapChain(
       code: { value: SlugName.from("LIQETH") },
       symbol_name: "Liquid ETH",
       description: "Liquid-staking receipt for ETH",
-      precision: 18,
+      // Project rule: every token registers with precision=9 (max).
+      precision: 9,
       address: liqEthChainAddr
     }
   ]
@@ -2211,18 +2344,21 @@ async function bootstrapChain(
   // liqsol mint bytes on SVM); native bindings leave `contract_addr` empty.
   log.info("[Phase 16b] Registering ChainToken bindings on sysio.tokens...")
   const ctokRegs: SystemContracts.SysioTokensRegctokAction[] = [
+    // Depot ChainToken bindings carry no precision field — the depot's
+    // `Token.precision` is the only precision contract (project rule:
+    // 9 for all tokens; see `feedback-token-precision-9-max`). Any
+    // chain-native ↔ depot precision conversion (e.g. ETH wei → 9-dec)
+    // is an outpost-internal concern, not depot-tracked state.
     {
       chain_code: { value: SlugName.from("WIRE") },
       token_code: { value: SlugName.from("WIRE") },
       contract_addr: "",
-      precision_override: 0,
       is_native: true
     },
     {
       chain_code: { value: SlugName.from("ETHEREUM") },
       token_code: { value: SlugName.from("ETH") },
       contract_addr: "",
-      precision_override: 0,
       is_native: true
     },
     {
@@ -2231,7 +2367,6 @@ async function bootstrapChain(
       contract_addr: liqEthAddrHex
         ? liqEthAddrHex.replace(/^0x/i, "")
         : "",
-      precision_override: 0,
       is_native: false
     }
   ]
@@ -2241,14 +2376,12 @@ async function bootstrapChain(
         chain_code: { value: SlugName.from("SOLANA") },
         token_code: { value: SlugName.from("SOL") },
         contract_addr: "",
-        precision_override: 0,
         is_native: true
       },
       {
         chain_code: { value: SlugName.from("SOLANA") },
         token_code: { value: SlugName.from("LIQSOL") },
-        contract_addr: "",  // TODO: backfill liqsol mint bytes
-        precision_override: 0,
+        contract_addr: "",
         is_native: false
       }
     )

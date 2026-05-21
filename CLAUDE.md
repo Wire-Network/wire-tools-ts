@@ -24,10 +24,12 @@ pnpm build:dev
 pnpm test
 
 # Run a specific flow's tests
-pnpm test:flow-a
-pnpm test:flow-b
-pnpm test:flow-c
-pnpm test:flow-d
+pnpm --filter @wireio/test-flow-empty-epoch-balance-sheet test
+pnpm --filter @wireio/test-flow-operator-collateral-deposit test
+pnpm --filter @wireio/test-flow-swap-with-underwriting test
+pnpm --filter @wireio/test-flow-collateral-deposit-via-bar test
+pnpm --filter @wireio/test-flow-batch-operator-termination test
+pnpm --filter @wireio/test-flow-swap-variance-revert test
 
 # Run only harness unit tests
 pnpm --filter @wireio/test-cluster-tool test
@@ -45,11 +47,13 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 
 | Package | Name | Purpose |
 |---------|------|---------|
-| `harness` | `@wireio/test-cluster-tool` | Core library: process managers, chain clients, bootstrap, CLI |
-| `flow-a` | `@wireio/flow-a` | Test: Empty Epoch (balance sheet only) |
-| `flow-b` | `@wireio/flow-b` | Test: Node Operator Collateral Deposit |
-| `flow-c` | `@wireio/flow-c` | Test: SWAP 50 ETH → 1042 SOL (with underwriting) |
-| `flow-d` | `@wireio/flow-d` | Test: Collateral Deposit via BAR (OperatorAction ETH → WIRE) |
+| `test-cluster-tool` | `@wireio/test-cluster-tool` | Core library: process managers, chain clients, bootstrap, CLI |
+| `flow-empty-epoch-balance-sheet` | `@wireio/test-flow-empty-epoch-balance-sheet` | Flow: Empty Epoch (balance sheet only) |
+| `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Flow: Node Operator Collateral Deposit |
+| `flow-swap-with-underwriting` | `@wireio/test-flow-swap-with-underwriting` | Flow: Bidirectional SWAP (Ethereum ↔ Solana) with Underwriting |
+| `flow-collateral-deposit-via-bar` | `@wireio/test-flow-collateral-deposit-via-bar` | Flow: Collateral Deposit via BAR (OperatorAction Ethereum → WIRE) |
+| `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Flow: Batch Operator Termination via Delivery Underperformance |
+| `flow-swap-variance-revert` | `@wireio/test-flow-swap-variance-revert` | Flow: Swap Variance-Tolerance Revert |
 
 Flow packages depend on `harness` via `workspace:*`.
 
@@ -134,8 +138,9 @@ wire-test-cluster --chain-dir=<path> destroy   # stop + delete data
 
 `.pnpmfile.cjs` hooks resolve `@wireio/*` packages from sibling repos:
 - `../wire-libraries-ts/packages/` → `@wireio/sdk-core`, `@wireio/shared`, `@wireio/shared-node`
-- `../wire-opp/solidity/` → `@wireio/opp-solidity-models`
 - `../wire-opp/typescript/` → `@wireio/opp-typescript-models`
+
+> **Do not depend on `@wireio/opp-solidity-models` here.** That package is `wire-ethereum`-only — see [`/data/shared/code/wire/.claude/rules/opp-models-packages.md`](../.claude/rules/opp-models-packages.md). The TypeScript surface of both packages is identical; importing the Solidity-track package from a TS-only consumer couples the consumer to Solidity-track regen timing and produces silent stale-enum failures.
 
 These link automatically on `pnpm install` if the sibling directories exist.
 
@@ -213,7 +218,7 @@ The rules above are enforced on every change. Before declaring a task complete, 
 
 ## Cross-repo rules
 
-- **`@wireio/opp-typescript-models` and `@wireio/opp-solidity-models` MUST NOT appear in any `wire-libraries-ts` package.json.** The code generators that produce those packages live in `wire-libraries-ts` — depending on them there creates a tool/output cycle. These packages are consumed by **`wire-tools-ts` and `wire-ethereum` only**. If you see them resolved under `wire-libraries-ts/node_modules/.pnpm/`, treat it as a red flag and verify the dep graph before continuing.
+- **OPP models packages have repo-specific consumers.** `@wireio/opp-typescript-models` is the canonical TS package for `wire-tools-ts` (and `wire-libraries-ts` where applicable). `@wireio/opp-solidity-models` is `wire-ethereum`-ONLY. Never depend on `opp-solidity-models` from a TS-only repo — see [`/data/shared/code/wire/.claude/rules/opp-models-packages.md`](../.claude/rules/opp-models-packages.md). And neither package may appear in a `wire-libraries-ts` package.json — the generators that produce them live there.
 - **Shared types consumed by both a server and its client live in the shared package** (`debugging-shared` for the debugging server/client/TUI; don't duplicate host/port/version strings across two `package.json`s).
 
 ## Classes of mistakes to avoid (learned the hard way)

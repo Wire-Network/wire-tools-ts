@@ -140,9 +140,6 @@ function renderEnvelope(envelopeData: Uint8Array): string[] {
       `  Epoch Timestamp: ${formatTimestamp(Number(envelope.epochTimestamp))}`,
       `  Envelope Hash:   ${bufToHex(envelope.envelopeHash)}`,
       `  Previous Hash:   ${bufToHex(envelope.previousEnvelopeHash)}`,
-      `  Merkle:          ${bufToHex(envelope.merkle)}`,
-      `  Start Msg ID:    ${bufToHex(envelope.startMessageId)}`,
-      `  End Msg ID:      ${bufToHex(envelope.endMessageId)}`,
       `  Messages:        ${envelope.messages.length}`
     ]
 
@@ -215,7 +212,6 @@ function inspectToPlainObject(
         epochTimestamp: Number(envelope.epochTimestamp),
         envelopeHash: bufToHex(envelope.envelopeHash),
         previousEnvelopeHash: bufToHex(envelope.previousEnvelopeHash),
-        merkle: bufToHex(envelope.merkle),
         messageCount: envelope.messages.length,
         messages: envelope.messages.map((msg, i) => ({
           index: i,

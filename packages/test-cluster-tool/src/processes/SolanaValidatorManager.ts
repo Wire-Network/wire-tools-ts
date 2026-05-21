@@ -63,12 +63,18 @@ export class SolanaValidatorManager {
 
   async start(): Promise<void> {
     const { config } = this
+    // `--quiet` suppresses program `msg!()` output. Keep it ON for normal
+    // runs but disable when WIRE_SOLANA_VALIDATOR_VERBOSE=1 so on-chain
+    // `handle_swap_remit` / `epoch_in` / etc. log lines land in the
+    // process log for debugging. Otherwise we're flying blind on Solana
+    // program behaviour the moment something goes silently wrong.
+    const verbose = process.env.WIRE_SOLANA_VALIDATOR_VERBOSE === "1"
     const args = [
       "--rpc-port",
       String(config.rpcPort),
       "--faucet-port",
       String(config.faucetPort),
-      "--quiet",
+      ...(verbose ? [] : ["--quiet"]),
       ...(config.ledgerPath ? ["--ledger", config.ledgerPath] : []),
       ...(config.programs ?? []).flatMap(prog => [
         "--bpf-program",

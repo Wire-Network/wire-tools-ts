@@ -217,7 +217,7 @@ export interface ClusterConfig {
 
   /**
    * Per-batch-op rolling-window threshold for `sysio.opreg::termcheck`. Tests
-   * that exercise termination-via-miss (flow-e) shrink this to 2 so termcheck
+   * that exercise termination-via-miss (flow-batch-operator-termination) shrink this to 2 so termcheck
    * fires inside the test budget; production-shaped clusters keep the
    * default 5.
    */

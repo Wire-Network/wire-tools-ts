@@ -3,11 +3,11 @@ import type { Config } from "jest"
 const config: Config = {
   projects: [
     "packages/test-cluster-tool",
-    "packages/flow-a",
-    "packages/flow-b",
-    "packages/flow-c",
-    "packages/flow-e",
-    "packages/flow-f",
+    "packages/flow-empty-epoch-balance-sheet",
+    "packages/flow-operator-collateral-deposit",
+    "packages/flow-swap-with-underwriting",
+    "packages/flow-batch-operator-termination",
+    "packages/flow-swap-variance-revert",
     "packages/debugging-shared",
     "packages/debugging-server",
     "packages/debugging-client-shared",

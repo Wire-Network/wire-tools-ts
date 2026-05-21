@@ -23,6 +23,15 @@ export class SOLClient {
     return balance / LAMPORTS_PER_SOL
   }
 
+  /**
+   * Get the raw lamport balance of an address (no SOL conversion). Useful
+   * for tests that need to assert exact wei-precision deltas — e.g. the
+   * Phase A user receiving destination-side lamports from a swap remit.
+   */
+  async getLamports(pubkey: PublicKey): Promise<number> {
+    return this.connection.getBalance(pubkey)
+  }
+
   /** Airdrop SOL to a pubkey (test-validator only). */
   async airdrop(pubkey: PublicKey, solAmount: number): Promise<string> {
     const sig = await this.connection.requestAirdrop(

@@ -1,0 +1,28 @@
+{
+  "name": "@wireio/test-flow-swap-with-underwriting",
+  "version": "0.1.10",
+  "private": true,
+  "type": "commonjs",
+  "description": "Flow: Bidirectional SWAP (Ethereum \u2194 Solana) with Underwriting",
+  "scripts": {
+    "compile": "tsc -b tsconfig.json",
+    "compile:watch": "tsc -b tsconfig.json -w",
+    "build": "pnpm run compile",
+    "test": "jest --runInBand",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.31.0",
+    "@wireio/test-cluster-tool": "workspace:*",
+    "@wireio/opp-typescript-models": "^1.0.26",
+    "@wireio/sdk-core": "^1.0.17",
+    "@wireio/shared": "^1.0.17",
+    "@wireio/shared-node": "^1.0.17",
+    "@solana/web3.js": "^1.98.0",
+    "ethers": "^6.14.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "25.5.0"
+  }
+}

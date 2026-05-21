@@ -263,7 +263,7 @@ const manager = new ClusterManager(clusterConfig).loadState()
 await manager.startAndWait()
 ```
 
-See the `flow-a` / `flow-b` / `flow-c` / `flow-d` packages for end-to-end test examples that drive full scenarios against a harness-built cluster.
+See the `flow-empty-epoch-balance-sheet` / `flow-operator-collateral-deposit` / `flow-swap-with-underwriting` / `flow-collateral-deposit-via-bar` / `flow-batch-operator-termination` / `flow-swap-variance-revert` packages for end-to-end test examples that drive full scenarios against a harness-built cluster.
 
 ---
 

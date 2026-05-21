@@ -50,7 +50,7 @@ export namespace CollateralTools {
    * `opp_outpost::deposit` ix triggers when it resizes the
    * operator-registry PDA, so a literal-1000 default fails at
    * simulation time. The value here (`1_000_000` base units)
-   * matches flow-e's batch-operator deposit
+   * matches flow-batch-operator-termination's batch-operator deposit
    * (`FLOW_E_REQ_SOL_MIN_BOND`) and is the smallest amount
    * empirically known to clear PDA rent growth on Solana while
    * remaining negligible on Ethereum (1M wei = 10⁻¹² ETH) and on
@@ -62,7 +62,7 @@ export namespace CollateralTools {
    * `--underwriter-collateral-json-file` with explicit per-leg
    * amounts.
    */
-  export const DefaultAmount: bigint = 1_000_000n
+  export const DefaultAmount: bigint = 1_000_000_000n
 
   /**
    * Default (chain_code, token_code) slug_name pairs deposited to every
@@ -391,8 +391,8 @@ export namespace CollateralTools {
           // `ClusterManager.bootstrap`; the test-validator's genesis
           // pre-funds only the bootstrap fee-payer, so we airdrop
           // enough lamports here to cover the deposit + tx fees +
-          // rent headroom before submitting. Mirrors flow-e's
-          // batch-op deposit pattern.
+          // rent headroom before submitting. Mirrors
+          // flow-batch-operator-termination's batch-op deposit pattern.
           await ensureSolFunded(sol.connection, depositorKp, amount)
           try {
             await depositSOLCollateral(
@@ -571,7 +571,7 @@ function asSolanaContextLazy(opts: CollateralTools.DepositOptions): {
 /**
  * Lamport airdrop floor — sized to cover several tx fees + the
  * deposit + a comfortable rent headroom for any PDA the deposit ix
- * touches. Matches the magnitude flow-e's batch-op deposit airdrop
+ * touches. Matches the magnitude flow-batch-operator-termination's batch-op deposit airdrop
  * uses (`5_000_000_000`); generous enough that test runs never stall
  * on under-funded operator wallets.
  */
