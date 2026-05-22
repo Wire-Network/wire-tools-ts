@@ -11,7 +11,17 @@
 
 import Assert from "node:assert"
 import * as anchor from "@coral-xyz/anchor"
-import { Connection, Keypair, PublicKey, SystemProgram } from "@solana/web3.js"
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  SYSVAR_RENT_PUBKEY
+} from "@solana/web3.js"
+import {
+  TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddressSync
+} from "@solana/spl-token"
 import { OperatorType } from "@wireio/opp-typescript-models"
 
 /** PDA seeds — kept in sync with `wire-solana/programs/opp-outpost/src`. */
@@ -19,6 +29,9 @@ const OUTPOST_CONFIG_SEED            = Buffer.from("outpost_config")
 const OUTBOUND_MESSAGE_BUFFER_SEED   = Buffer.from("outbound_message_buffer")
 const OPERATOR_REGISTRY_SEED         = Buffer.from("operator_registry")
 const VAULT_SEED                     = Buffer.from("outpost_vault")
+/** Per-`token_code` SPL collateral vault seed — matches
+ *  `deposit_non_native.rs::COLLATERAL_VAULT_SEED`. */
+const COLLATERAL_VAULT_SEED          = Buffer.from("collateral_vault")
 
 /** Number of ms to poll `getSignatureStatus` before timing out. */
 const SOL_CONFIRM_TIMEOUT_MS = 60_000
@@ -104,4 +117,101 @@ export async function depositSOLCollateral(
     await new Promise(resolve => setTimeout(resolve, SOL_CONFIRM_POLL_MS))
   }
   throw new Error(`SOLCollateralTool: deposit tx ${sig} not confirmed within ${SOL_CONFIRM_TIMEOUT_MS}ms`)
+}
+
+/**
+ * Deposit `amount` of SPL token `tokenCode` (e.g. USDCSOL, LIQSOL) into
+ * the outpost's per-`tokenCode` SPL collateral vault and queue an
+ * `OPERATOR_ACTION(DEPOSIT_REQUEST)` with the supplied `reserveCode`.
+ *
+ * Counterpart to ETH's `depositETHNonNativeCollateral`. Mirrors the
+ * native-deposit polling pattern (no `confirmTransaction`/WS dependency).
+ *
+ * @param connection      Solana RPC connection.
+ * @param program         Anchor `Program` bound to the deployed
+ *                        `opp_outpost` IDL — must include the new
+ *                        `depositNonNative` IX (rebuild the IDL after
+ *                        editing `opp-outpost/src/lib.rs`).
+ * @param depositor       Keypair whose ATA is debited. Must hold
+ *                        `amount` of `mint` and enough lamports for
+ *                        the first-time vault rent.
+ * @param chainCode       Outpost chain slug_name (asserted ==
+ *                        `OutpostConfig.chain_code`).
+ * @param tokenCode       SPL token slug_name (`SlugName.from("USDCSOL")`
+ *                        etc.). Must be configured via
+ *                        `set_token_address` to a non-marker mint.
+ * @param reserveCode     Reserve slug_name the collateral nominally
+ *                        backs. Plumbed onto the attestation only.
+ * @param operatorType    `OperatorType` numeric enum value.
+ * @param mint            SPL mint Pubkey for `tokenCode` — used to
+ *                        derive the depositor's ATA and sanity-check
+ *                        against the configured mint inside the IX.
+ * @param amount          SPL base units to escrow.
+ * @return The transaction signature on confirm.
+ */
+export async function depositSOLNonNativeCollateral(
+  connection:   Connection,
+  program:      anchor.Program<anchor.Idl>,
+  depositor:    Keypair,
+  chainCode:    bigint,
+  tokenCode:    bigint,
+  reserveCode:  bigint,
+  operatorType: OperatorType,
+  mint:         PublicKey,
+  amount:       bigint
+): Promise<string> {
+  Assert.ok(amount > 0n, "SOLCollateralTool: amount must be positive")
+
+  const programId = program.programId
+  const [configPda]                = PublicKey.findProgramAddressSync([OUTPOST_CONFIG_SEED], programId)
+  const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync([OUTBOUND_MESSAGE_BUFFER_SEED], programId)
+  const [operatorRegistryPda]      = PublicKey.findProgramAddressSync([OPERATOR_REGISTRY_SEED], programId)
+  const tokenCodeLeBytes = Buffer.alloc(8)
+  tokenCodeLeBytes.writeBigUInt64LE(tokenCode)
+  const [collateralVaultPda] = PublicKey.findProgramAddressSync(
+    [COLLATERAL_VAULT_SEED, tokenCodeLeBytes],
+    programId
+  )
+  const depositorAta = getAssociatedTokenAddressSync(mint, depositor.publicKey)
+
+  const tx = await program.methods
+    .depositNonNative(
+      new anchor.BN(chainCode.toString()),
+      new anchor.BN(tokenCode.toString()),
+      new anchor.BN(reserveCode.toString()),
+      operatorType,
+      new anchor.BN(amount.toString())
+    )
+    .accounts({
+      depositor:              depositor.publicKey,
+      config:                 configPda,
+      operatorRegistry:       operatorRegistryPda,
+      outboundMessageBuffer:  outboundMessageBufferPda,
+      mint,
+      depositorAta,
+      collateralVault:        collateralVaultPda,
+      tokenProgram:           TOKEN_PROGRAM_ID,
+      systemProgram:          SystemProgram.programId,
+      rent:                   SYSVAR_RENT_PUBKEY
+    })
+    .signers([depositor])
+    .transaction()
+
+  const sig = await connection.sendTransaction(tx, [depositor], {
+    skipPreflight: false
+  })
+
+  const deadline = Date.now() + SOL_CONFIRM_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    const status = await connection.getSignatureStatus(sig)
+    const conf   = status?.value?.confirmationStatus
+    if (conf === "confirmed" || conf === "finalized") return sig
+    if (status?.value?.err) {
+      throw new Error(
+        `SOLCollateralTool: depositNonNative tx failed: ${JSON.stringify(status.value.err)}`
+      )
+    }
+    await new Promise(resolve => setTimeout(resolve, SOL_CONFIRM_POLL_MS))
+  }
+  throw new Error(`SOLCollateralTool: depositNonNative tx ${sig} not confirmed within ${SOL_CONFIRM_TIMEOUT_MS}ms`)
 }

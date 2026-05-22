@@ -1,12 +1,12 @@
 import "jest"
 import * as anchor from "@coral-xyz/anchor"
 import { Connection, Keypair, PublicKey } from "@solana/web3.js"
+import { TokenAmount } from "@wireio/opp-typescript-models"
 import {
   getAssociatedTokenAddressSync,
   getAccount
 } from "@solana/spl-token"
 import { ethers } from "ethers"
-import * as OS from "node:os"
 import {
   FlowTestContext,
   log,
@@ -18,7 +18,8 @@ import {
   requestSolanaSwapSpl,
   signErc20Permit,
   mintMockErc20ToUser,
-  mintMockSplToUser
+  mintMockSplToUser,
+  resolveLatestNonce
 } from "@wireio/test-cluster-tool"
 import { SlugName } from "@wireio/sdk-core"
 import * as Fs from "node:fs"
@@ -56,6 +57,19 @@ describe("Flow: SWAP with non-native tokens", () => {
   let solDeployer: Keypair
 
   beforeAll(async () => {
+    // Underwriter must bond on every (chain, token) leg this flow's
+    // swap matrix touches. The depot's `sysio.uwrit::createuwreq`
+    // re-checks `meets_role_min` for BOTH legs of every swap; the
+    // underwriter plugin's `select_coverable` further requires a
+    // non-zero credit-line bucket per (chain, token_kind). Without
+    // a USDC/USDT/LIQETH/USDCSOL/USDTSOL/LIQSOL deposit, the swap
+    // gets reverted with "insufficient bond on one or both legs".
+    //
+    // Amounts are large enough to cover several round-trips of the
+    // 0.1-unit-of-each swap tests (`SwapAmounts.SourceErc20Stable`
+    // = 100_000 chain units; `TargetAmounts.Default` = 98_000_000
+    // depot units).
+    const uwCollatAmount = 1_000_000_000n
     context = await FlowTestContext.create({
       epochDurationSec: Timing.EpochDurationSec,
       reqUwCollat: [
@@ -69,7 +83,54 @@ describe("Flow: SWAP with non-native tokens", () => {
           tokenCode: SlugName.from("SOL"),
           minBond: 1_000_000_000
         }
-      ]
+      ],
+      underwriterCollateral: [[
+        // ETH-side bonds — native + every ERC-20 the swap matrix
+        // sources from or targets to.
+        {
+          chain_code: SlugName.from("ETHEREUM"),
+          amount: TokenAmount.create({
+            tokenCode: BigInt(SlugName.from("ETH")),
+            amount:    uwCollatAmount
+          })
+        },
+        {
+          chain_code: SlugName.from("ETHEREUM"),
+          amount: TokenAmount.create({
+            tokenCode: BigInt(SlugName.from("USDC")),
+            amount:    uwCollatAmount
+          })
+        },
+        {
+          chain_code: SlugName.from("ETHEREUM"),
+          amount: TokenAmount.create({
+            tokenCode: BigInt(SlugName.from("USDT")),
+            amount:    uwCollatAmount
+          })
+        },
+        // SOL-side bonds — native + every SPL the swap matrix uses.
+        {
+          chain_code: SlugName.from("SOLANA"),
+          amount: TokenAmount.create({
+            tokenCode: BigInt(SlugName.from("SOL")),
+            amount:    uwCollatAmount
+          })
+        },
+        {
+          chain_code: SlugName.from("SOLANA"),
+          amount: TokenAmount.create({
+            tokenCode: BigInt(SlugName.from("USDCSOL")),
+            amount:    uwCollatAmount
+          })
+        },
+        {
+          chain_code: SlugName.from("SOLANA"),
+          amount: TokenAmount.create({
+            tokenCode: BigInt(SlugName.from("USDTSOL")),
+            amount:    uwCollatAmount
+          })
+        }
+      ]]
     })
     users = await ensureSwapUserIdentities(context)
 
@@ -77,10 +138,25 @@ describe("Flow: SWAP with non-native tokens", () => {
     const ethAddrs = context.loadETHAddresses()
     reserveManager = context.loadETHContract("ReserveManager", ethAddrs.ReserveManager)
       .connect(users.ethereumWallet) as ethers.Contract
-    mockUsdc = context.loadETHContract("MockUsdc", ethAddrs.MockUsdc)
-      .connect(users.ethereumWallet) as ethers.Contract
-    mockUsdt = context.loadETHContract("MockUsdt", ethAddrs.MockUsdt)
-      .connect(users.ethereumWallet) as ethers.Contract
+    // Mock ERC-20s live under contracts/test/outpost/ (not the
+    // production contracts/outpost/ that FlowTestContext.loadETHABI
+    // assumes); load their ABIs directly from the hardhat artifacts.
+    // Bind to the *deployer* signer (anvil HD 0) for the funding-time
+    // `mint(...)` calls — the user wallet (HD index 32) has surfaced
+    // intermittent "nonce too low" rejections from anvil despite a
+    // freshly-spawned validator, and the mocks expose `mint(...)`
+    // ungated so any signer suffices. The downstream permit / approval
+    // tests pass `users.ethereumWallet` explicitly to `signErc20Permit`
+    // / `ReserveManager.connect(users.ethereumWallet)` so they still
+    // exercise the user-signed source-custody path.
+    mockUsdc = new ethers.Contract(
+      ethAddrs.MockUsdc, loadTestERC20Abi(context.ethereumPath!, "MockUsdc"),
+      context.ethSigner
+    )
+    mockUsdt = new ethers.Contract(
+      ethAddrs.MockUsdt, loadTestERC20Abi(context.ethereumPath!, "MockUsdt"),
+      context.ethSigner
+    )
 
     // ── SOL-side: opp-outpost program + mock SPL mints ──
     const solanaPath = context.solanaPath
@@ -107,36 +183,38 @@ describe("Flow: SWAP with non-native tokens", () => {
     const splMints = JSON.parse(Fs.readFileSync(splMintsFile, "utf-8")) as Array<{
       code: number; mint: string; decimals: number
     }>
-    const usdcEntry   = splMints.find(m => m.code === SlugName.from("USDC"))
-    const usdtEntry   = splMints.find(m => m.code === SlugName.from("USDT"))
+    const usdcEntry   = splMints.find(m => m.code === SlugName.from("USDCSOL"))
+    const usdtEntry   = splMints.find(m => m.code === SlugName.from("USDTSOL"))
     if (!usdcEntry || !usdtEntry) {
-      throw new Error("Bootstrap did not persist USDC/USDT SPL mints")
+      throw new Error("Bootstrap did not persist USDCSOL/USDTSOL SPL mints")
     }
     mockUsdcSolMint = new PublicKey(usdcEntry.mint)
     mockUsdtSolMint = new PublicKey(usdtEntry.mint)
 
-    // Load the cluster deployer keypair for SPL minting (mint
-    // authority on the mock SPL mints created by
-    // `SOLBootstrap.provisionSplReserves`). Default path matches
-    // the `solana-keygen new` convention.
-    const deployerKeypairPath = Path.join(OS.homedir(), ".config", "solana", "id.json")
+    // Load the cluster deployer keypair (mint authority on the
+    // mock SPL mints created by `SOLBootstrap.provisionSplReserves`).
+    // `SOLBootstrap.bootstrap` persists the deployer keypair to
+    // `<cluster>/data/sol-deployer-keypair.json` whether it loaded
+    // it from `~/.config/solana/id.json` or generated a fresh one.
+    const deployerKeypairPath = Path.join(
+      context.clusterPath, "data", "sol-deployer-keypair.json"
+    )
     solDeployer = Keypair.fromSecretKey(
-      Buffer.from(JSON.parse(Fs.readFileSync(deployerKeypairPath, "utf-8")))
+      Uint8Array.from(JSON.parse(Fs.readFileSync(deployerKeypairPath, "utf-8")))
     )
 
     // Fund the user with mock balances on both chains so they can
-    // source-spend in each test cell.
+    // source-spend in each test cell. MockUsdc/Usdt mint is ungated
+    // (test-cluster convenience) so the deployer-signed mint above is
+    // sufficient. Use stderr.write for the diagnostic — Console.info
+    // can race with jest's stdout capture on a failing beforeAll.
+    const userAddr = users.ethereumWallet.address
+    process.stderr.write(`[flow-snnt] funding user ${userAddr}\n`)
     const fundAmtErc20 = 100n * SwapAmounts.SourceErc20Stable // 10 USDC / 10 USDT on ETH
-    await mintMockErc20ToUser(
-      mockUsdc.connect(context.ethSigner) as any,
-      users.ethereumWallet.address,
-      fundAmtErc20
-    )
-    await mintMockErc20ToUser(
-      mockUsdt.connect(context.ethSigner) as any,
-      users.ethereumWallet.address,
-      fundAmtErc20
-    )
+    await mintMockErc20ToUser(mockUsdc as any, userAddr, fundAmtErc20)
+    process.stderr.write(`[flow-snnt] usdc mint complete\n`)
+    await mintMockErc20ToUser(mockUsdt as any, userAddr, fundAmtErc20)
+    process.stderr.write(`[flow-snnt] usdt mint complete\n`)
     const fundAmtSpl = 100n * SwapAmounts.SourceSplStable
     await mintMockSplToUser(
       solanaConnection,
@@ -177,9 +255,16 @@ describe("Flow: SWAP with non-native tokens", () => {
       table: "reserves",
       limit: 50
     })
+    // `WIREClient.getTableRows` unwraps v6's `{key, value}` KV-row
+    // envelope automatically — slug-name fields appear flattened on
+    // each row as `chain_code: {value}`, `token_code: {value}`.
+    const slugValue = (v: unknown): number =>
+      typeof v === "object" && v !== null && "value" in v
+        ? Number((v as { value: unknown }).value)
+        : Number(v)
     const ethCodes = rows
-      .filter(r => r.value?.chain_code?.value === Reserves.Ethereum.ChainCode)
-      .map(r => r.value.token_code.value)
+      .filter(r => slugValue(r.chain_code) === Reserves.Ethereum.ChainCode)
+      .map(r => slugValue(r.token_code))
     expect(ethCodes).toEqual(
       expect.arrayContaining([
         Reserves.Ethereum.ETH,
@@ -197,9 +282,13 @@ describe("Flow: SWAP with non-native tokens", () => {
       table: "reserves",
       limit: 50
     })
+    const slugValue = (v: unknown): number =>
+      typeof v === "object" && v !== null && "value" in v
+        ? Number((v as { value: unknown }).value)
+        : Number(v)
     const solCodes = rows
-      .filter(r => r.value?.chain_code?.value === Reserves.Solana.ChainCode)
-      .map(r => r.value.token_code.value)
+      .filter(r => slugValue(r.chain_code) === Reserves.Solana.ChainCode)
+      .map(r => slugValue(r.token_code))
     expect(solCodes).toEqual(
       expect.arrayContaining([
         Reserves.Solana.SOL,
@@ -258,9 +347,19 @@ describe("Flow: SWAP with non-native tokens", () => {
     const usdtBefore = await mockUsdt.balanceOf(reserveManagerAddr)
     const solBalanceBefore = await solanaConnection.getBalance(users.solanaKeypair.publicKey)
 
-    // Pre-set allowance (mainnet USDT does not implement EIP-2612).
-    const approveTx = await mockUsdt.approve(reserveManagerAddr, SwapAmounts.SourceErc20Stable)
-    await approveTx.wait()
+    // Pre-set allowance — `mockUsdt` is deployer-bound for the funding
+    // step, so the test connects to the user signer inline so the
+    // allowance is recorded against the user's balance (not the
+    // deployer's). Mainnet USDT does not implement EIP-2612, so the
+    // approval-path is the production codepath for those tokens.
+    const userMockUsdt = mockUsdt.connect(users.ethereumWallet) as ethers.Contract
+    const approveNonce = await resolveLatestNonce(userMockUsdt as ethers.BaseContract)
+    const approveTx    = await userMockUsdt.approve(
+      reserveManagerAddr,
+      SwapAmounts.SourceErc20Stable,
+      { nonce: approveNonce }
+    )
+    await approveTx.wait(1)
 
     const result = await requestEthereumSwapErc20WithApproval(
       reserveManager as any,
@@ -403,6 +502,20 @@ describe("Flow: SWAP with non-native tokens", () => {
     )
   }, Timing.RemitDeadlineMs + Timing.UwreqDeadlineMs)
 })
+
+/**
+ * Load a test-only ERC-20 mock ABI from hardhat artifacts. Mock
+ * contracts live under `contracts/test/outpost/` (separate from
+ * production `contracts/outpost/` that `FlowTestContext.loadETHABI`
+ * assumes).
+ */
+function loadTestERC20Abi(ethereumPath: string, contractName: string): ethers.InterfaceAbi {
+  const artifactPath = Path.join(
+    ethereumPath, "artifacts", "contracts", "test", "outpost",
+    `${contractName}.sol`, `${contractName}.json`
+  )
+  return JSON.parse(Fs.readFileSync(artifactPath, "utf-8")).abi
+}
 
 /**
  * Poll until `address` holds at least `floor` lamports, or the

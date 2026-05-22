@@ -19,6 +19,8 @@
 import Assert from "node:assert"
 import { ethers } from "ethers"
 
+import { resolveLatestNonce } from "../util.js"
+
 /**
  * Minimal `ethers` contract surface this helper relies on. Typed structurally
  * so the caller can pass an `ethers.Contract`, a typechain-generated
@@ -112,6 +114,7 @@ export async function requestEthereumSwap(
   Assert.ok(request.targetToleranceBps >= 0 && request.targetToleranceBps <= 10_000,
     `EthereumSwapTool: targetToleranceBps must be in [0, 10000], got ${request.targetToleranceBps}`)
 
+  const nonce = await resolveLatestNonce(reserveManager as unknown as ethers.BaseContract)
   const tx = await reserveManager.requestSwap(
     request.sourceTokenCode,
     request.sourceReserveCode,
@@ -121,9 +124,9 @@ export async function requestEthereumSwap(
     request.targetRecipient,
     request.targetAmount,
     request.targetToleranceBps,
-    { value: request.sourceAmountWei }
+    { value: request.sourceAmountWei, nonce }
   )
-  const receipt = await tx.wait()
+  const receipt = await tx.wait(1)
   Assert.ok(
     receipt !== null && receipt.status === 1,
     `EthereumSwapTool: requestSwap tx reverted (status=${receipt?.status ?? "null"})`
@@ -208,8 +211,9 @@ export async function requestEthereumSwapErc20WithPermit(
   Assert.ok(args.targetToleranceBps >= 0 && args.targetToleranceBps <= 10_000,
     `EthereumSwapTool: targetToleranceBps must be in [0, 10000], got ${args.targetToleranceBps}`)
 
-  const tx = await reserveManager.requestSwapErc20WithPermit(args, permitSig)
-  const receipt = await tx.wait()
+  const nonce = await resolveLatestNonce(reserveManager as unknown as ethers.BaseContract)
+  const tx = await reserveManager.requestSwapErc20WithPermit(args, permitSig, { nonce })
+  const receipt = await tx.wait(1)
   Assert.ok(
     receipt !== null && receipt.status === 1,
     `EthereumSwapTool: requestSwapErc20WithPermit tx reverted (status=${receipt?.status ?? "null"})`
@@ -241,8 +245,9 @@ export async function requestEthereumSwapErc20WithApproval(
   Assert.ok(args.targetToleranceBps >= 0 && args.targetToleranceBps <= 10_000,
     `EthereumSwapTool: targetToleranceBps must be in [0, 10000], got ${args.targetToleranceBps}`)
 
-  const tx = await reserveManager.requestSwapErc20WithApproval(args)
-  const receipt = await tx.wait()
+  const nonce = await resolveLatestNonce(reserveManager as unknown as ethers.BaseContract)
+  const tx = await reserveManager.requestSwapErc20WithApproval(args, { nonce })
+  const receipt = await tx.wait(1)
   Assert.ok(
     receipt !== null && receipt.status === 1,
     `EthereumSwapTool: requestSwapErc20WithApproval tx reverted (status=${receipt?.status ?? "null"})`
@@ -305,8 +310,9 @@ export async function requestEthereumReserveCreateErc20WithPermit(
   Assert.ok(args.reserveCode !== 0n,
     "EthereumSwapTool: reserveCode must be non-zero")
 
-  const tx = await reserveManager.requestReserveCreateErc20WithPermit(args, permitSig)
-  const receipt = await tx.wait()
+  const nonce = await resolveLatestNonce(reserveManager as unknown as ethers.BaseContract)
+  const tx = await reserveManager.requestReserveCreateErc20WithPermit(args, permitSig, { nonce })
+  const receipt = await tx.wait(1)
   Assert.ok(
     receipt !== null && receipt.status === 1,
     `EthereumSwapTool: requestReserveCreateErc20WithPermit tx reverted (status=${receipt?.status ?? "null"})`
@@ -332,8 +338,9 @@ export async function requestEthereumReserveCreateErc20WithApproval(
   Assert.ok(args.reserveCode !== 0n,
     "EthereumSwapTool: reserveCode must be non-zero")
 
-  const tx = await reserveManager.requestReserveCreateErc20WithApproval(args)
-  const receipt = await tx.wait()
+  const nonce = await resolveLatestNonce(reserveManager as unknown as ethers.BaseContract)
+  const tx = await reserveManager.requestReserveCreateErc20WithApproval(args, { nonce })
+  const receipt = await tx.wait(1)
   Assert.ok(
     receipt !== null && receipt.status === 1,
     `EthereumSwapTool: requestReserveCreateErc20WithApproval tx reverted (status=${receipt?.status ?? "null"})`

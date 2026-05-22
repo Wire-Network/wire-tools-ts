@@ -214,6 +214,7 @@ export class FlowTestContext {
       reqProdCollat:    opts.reqProdCollat,
       reqBatchopCollat: opts.reqBatchopCollat,
       reqUwCollat:      opts.reqUwCollat,
+      underwriterCollateral: opts.underwriterCollateral,
       force: true
     })
 

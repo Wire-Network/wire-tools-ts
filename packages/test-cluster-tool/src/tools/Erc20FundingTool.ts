@@ -18,6 +18,8 @@
 import Assert from "node:assert"
 import { ethers } from "ethers"
 
+import { resolveLatestNonce } from "../util.js"
+
 /**
  * Minimal structural surface for an ERC-20 mock that exposes
  * `mint(to, amount)`. All test mocks under `contracts/test/outpost/`
@@ -34,6 +36,15 @@ export interface MintableErc20 {
 
 /**
  * Mint `amount` of `mockErc20` to `recipient`. Confirms via `tx.wait()`.
+ *
+ * Resolves the runner's `pending` nonce explicitly and passes it as an
+ * `Overrides` field. ethers v6's auto-nonce population has surfaced
+ * intermittent NONCE_EXPIRED rejections from anvil when two `.mint(...)`
+ * calls are awaited back-to-back from the same `Wallet` instance — the
+ * second call re-fetches the count *before* anvil has marked the first
+ * tx as broadcast, so both txs encode the same nonce. Resolving the
+ * nonce ourselves and waiting on `tx.wait()` between calls makes the
+ * sequencing explicit and deterministic.
  *
  * @param mockErc20 Mock ERC-20 with an ungated `mint(to, amount)` method.
  *                  Must be bound to a signer that holds the (ungated)
@@ -54,8 +65,13 @@ export async function mintMockErc20ToUser(
   Assert.ok(amount > 0n,
     "Erc20FundingTool: mint amount must be > 0")
 
-  const tx      = await mockErc20.mint(recipient, amount)
-  const receipt = await tx.wait()
+  const nonce   = await resolveLatestNonce(mockErc20 as unknown as ethers.BaseContract)
+  const tx      = await mockErc20.mint(recipient, amount, { nonce })
+  const receipt = await tx.wait(1)
+  Assert.ok(
+    receipt !== null && receipt.status === 1 && receipt.blockNumber > 0,
+    `Erc20FundingTool: mint tx not confirmed (status=${receipt?.status ?? "null"})`
+  )
   Assert.ok(
     receipt !== null && receipt.status === 1,
     `Erc20FundingTool: mint tx reverted (status=${receipt?.status ?? "null"})`

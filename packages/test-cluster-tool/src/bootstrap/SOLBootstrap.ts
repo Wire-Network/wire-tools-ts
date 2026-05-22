@@ -194,6 +194,18 @@ export class SOLBootstrap {
       )
     }
 
+    // Always persist the deployer keypair under the cluster data dir
+    // so flow tests can re-load it to act as the deployer (e.g.
+    // `flow-swap-non-native-tokens` needs to mint mock SPL to test
+    // users using the same mint authority `provisionSplReserves`
+    // installed via `set_token_address`).
+    if (this.config.clusterDataPath) {
+      Fs.mkdirSync(this.config.clusterDataPath, { recursive: true })
+      const persistedPath = Path.join(this.config.clusterDataPath, "sol-deployer-keypair.json")
+      Fs.writeFileSync(persistedPath, JSON.stringify(Array.from(deployer.secretKey)))
+      log.info(`Persisted SOL deployer keypair to ${persistedPath}`)
+    }
+
     log.info(`Deployer: ${deployer.publicKey.toBase58()}`)
     await retry(
       async () => {
@@ -491,8 +503,8 @@ export class SOLBootstrap {
     )
 
     // Provision mock SPL reserves (USDC, USDT, LIQSOL) for flow-swap-
-    // non-native-tokens. Skipped if no clusterDataPath was provided
-    // (e.g. unit-test invocations of the bootstrap).
+    // non-native-tokens. Required for any flow that depends on SPL
+    // custody / payout on the SOL outpost.
     if (this.config.clusterDataPath) {
       await this.provisionSplReserves(deployer, program, configPda)
     }
@@ -521,16 +533,28 @@ export class SOLBootstrap {
     Assert.ok(this.config.clusterDataPath,
       "SOLBootstrap.provisionSplReserves: clusterDataPath required")
     const programId = this.programId!
-    log.info("[SOL bootstrap] Provisioning mock SPL reserves (USDC, USDT, LIQSOL)...")
+    log.info("[SOL bootstrap] Provisioning mock SPL reserves (USDCSOL, USDTSOL, LIQSOL)...")
 
     // Spec: (code, decimals, bootstrap chain-side amount in chain units)
-    // USDC/USDT use 6 decimals (mainnet parity), LIQSOL uses 9 (depot parity).
+    // USDCSOL/USDTSOL use 6 decimals (mainnet parity for the underlying
+    // USDC/USDT on Solana), LIQSOL uses 9 (depot parity).
+    //
+    // Per the v6 "TWO Token rows per cross-chain pair" decision, the
+    // depot registers SOL-side stablecoins under distinct slug_names
+    // (`USDCSOL` / `USDTSOL`) from their ETH-side counterparts
+    // (`USDC` / `USDT`) — same underlying asset on each chain but
+    // distinct codes so the depot's `Token.code` primary key doesn't
+    // collide. The SOL outpost MUST use the SOL-side code on
+    // `set_token_address` so the depot's view of the mint and the
+    // outpost's view stay consistent through `OPERATOR_ACTION`
+    // attestations + `SwapRequest` round-trips.
+    //
     // Bootstrap amounts are sized to clear the `swap_quote` floor plus
     // a generous headroom for ~40 flow-test runs each.
     const specs: { codeName: string; decimals: number; chainAmount: bigint }[] = [
-      { codeName: "USDC",   decimals: 6, chainAmount: 1_000_000n * 1_000_000n }, // 1M USDC
-      { codeName: "USDT",   decimals: 6, chainAmount: 1_000_000n * 1_000_000n }, // 1M USDT
-      { codeName: "LIQSOL", decimals: 9, chainAmount: 20n * 1_000_000_000n },    // 20 LIQSOL
+      { codeName: "USDCSOL", decimals: 6, chainAmount: 1_000_000n * 1_000_000n }, // 1M USDC-on-SOL
+      { codeName: "USDTSOL", decimals: 6, chainAmount: 1_000_000n * 1_000_000n }, // 1M USDT-on-SOL
+      { codeName: "LIQSOL",  decimals: 9, chainAmount: 20n * 1_000_000_000n },    // 20 LIQSOL
     ]
     const primaryCode = new anchor.BN(SlugName.from("PRIMARY"))
     const persisted: PersistedSplMint[] = []

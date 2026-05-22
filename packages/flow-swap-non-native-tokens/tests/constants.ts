@@ -80,23 +80,31 @@ export namespace SwapAmounts {
 
 /**
  * Variance tolerance attached to each SwapRequest.
+ *
+ * Set wide enough to cover the cumulative slippage of a 1% draw across
+ * two constant-product legs (chain → WIRE → chain) plus the depot's
+ * 10 bps swap fee. The single-leg quote at 1% input on a 10B/10B
+ * reserve is `~99_010_000`; the two-leg chained quote is
+ * `~98_039_215`. With a `targetAmount` set conservatively below the
+ * two-leg result, 200 bps gives the depot ample room to drift before
+ * the variance check fires.
  */
 export namespace Variance {
-  /** 50 basis points = 0.5%. */
-  export const ToleranceBps = 50
+  /** 200 basis points = 2%. */
+  export const ToleranceBps = 200
 }
 
 /**
  * Expected target-side amounts (used to populate the user-specified
- * `targetAmount` on each SwapRequest). Sized to be inside the
- * variance-tolerance window of what the depot's `swapquote` will
- * produce against the seeded 10B/10B reserves with a constant-product
- * curve.
+ * `targetAmount` on each SwapRequest). Sized below the depot's
+ * `swap_quote` against the seeded 10B/10B reserves with a 1% input
+ * through both legs of the chained constant-product curve.
  */
 export namespace TargetAmounts {
-  /** Generic conservative target — depot's swap_quote against the
-   *  seeded 10B/10B reserves with 1% input typically lands close to
-   *  the geometric mean. Pick a value that's inside the 50 bps
-   *  variance window. */
-  export const Default = 99_000_000n // 1e8 minus 1% — inside the 50 bps tolerance.
+  /** Match the depot's chained `swap_quote` to within a few bps —
+   *  for 1e8 source on a 10B/10B reserve pair, two cp_output legs
+   *  through WIRE yield exactly 98_039_215. Set the published target
+   *  to the rounded `98_000_000`; the 200 bps tolerance window then
+   *  covers both the cp_output remainder and the 10 bps swap fee. */
+  export const Default = 98_000_000n
 }

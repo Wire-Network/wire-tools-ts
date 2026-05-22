@@ -1,4 +1,6 @@
+import Assert from "node:assert"
 import { isEmpty, negate } from "lodash"
+import { ethers } from "ethers"
 import { log } from "./logger.js"
 import { Deferred } from "@wireio/shared"
 import Fs from "fs"
@@ -127,4 +129,77 @@ export function inRange(
   max: number = Number.MAX_SAFE_INTEGER
 ): boolean {
   return value >= min && value <= max
+}
+
+/**
+ * Process-local nonce tracker, keyed by EVM address.
+ *
+ * Anvil's `eth_getTransactionCount(addr, "latest" | "pending")` can
+ * briefly under-report the count for an account that just mined a tx —
+ * two consecutive `contract.fn(...) + tx.wait(1)` calls from the same
+ * signer end up fetching identical values, the second tx encodes a
+ * stale nonce, and anvil rejects it with `NONCE_EXPIRED`. The fix is
+ * to track the next-nonce in-process: seed from `getTransactionCount`
+ * on first use, then increment locally for every subsequent submission.
+ *
+ * Single-writer per address by construction (this code is the only
+ * code path that submits txs for the cluster's deployer signer), so a
+ * `Map<address, number>` is sufficient; no locking needed.
+ */
+const nonceCounters = new Map<string, number>()
+
+/**
+ * Resolve the next nonce to submit from `contract`'s bound signer.
+ *
+ * First call per address seeds from `getTransactionCount(addr, "latest")`;
+ * subsequent calls increment the cached counter. Caller MUST pass the
+ * returned value as the `nonce` field of the tx `Overrides` object AND
+ * await `tx.wait(1)` (or higher) before issuing the next call from the
+ * same signer — the cached counter is only valid if every submission
+ * actually lands on-chain.
+ *
+ * If a submission fails for a reason other than NONCE_EXPIRED (e.g. a
+ * revert), the caller should call `clearNonceCache(addr)` so the next
+ * `resolveLatestNonce` re-seeds from the chain.
+ *
+ * @param contract Ethers contract instance bound to a Signer (its runner
+ *                 must be a Signer with a Provider).
+ * @return The next nonce to submit.
+ * @throws If the contract is not bound to a Signer with a Provider.
+ */
+export async function resolveLatestNonce(
+  contract: ethers.BaseContract
+): Promise<number> {
+  const runner   = contract.runner
+  Assert.ok(
+    runner !== null && typeof (runner as ethers.Signer).getAddress === "function",
+    "resolveLatestNonce: contract must be bound to a Signer (got runner without getAddress)"
+  )
+  const signer   = runner as ethers.Signer
+  const provider = signer.provider
+  Assert.ok(provider !== null,
+    "resolveLatestNonce: signer must have a Provider attached")
+  const fromAddr = (await signer.getAddress()).toLowerCase()
+
+  const cached = nonceCounters.get(fromAddr)
+  if (cached !== undefined) {
+    const nonce = cached
+    nonceCounters.set(fromAddr, cached + 1)
+    return nonce
+  }
+  const chainNonce = await provider.getTransactionCount(fromAddr, "latest")
+  nonceCounters.set(fromAddr, chainNonce + 1)
+  return chainNonce
+}
+
+/**
+ * Reset the in-process nonce counter for `address`. Call when a tx
+ * submission fails in a way that did NOT actually consume the nonce
+ * (e.g. a pre-broadcast revert) so the next submission re-seeds from
+ * the chain instead of skipping ahead.
+ *
+ * @param address EVM address whose counter to clear (case-insensitive).
+ */
+export function clearNonceCache(address: string): void {
+  nonceCounters.delete(address.toLowerCase())
 }

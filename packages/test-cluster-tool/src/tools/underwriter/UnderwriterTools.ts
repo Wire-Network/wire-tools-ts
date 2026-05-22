@@ -11,7 +11,7 @@ import Fs from "node:fs"
 import Path from "node:path"
 
 import * as anchor from "@coral-xyz/anchor"
-import { Connection, Keypair } from "@solana/web3.js"
+import { Connection, Keypair, PublicKey } from "@solana/web3.js"
 import { ethers } from "ethers"
 import Bluebird from "bluebird"
 
@@ -26,8 +26,19 @@ import type { ChainTokenAmount } from "@wireio/debugging-shared"
 
 import { ETHBootstrapper } from "../../cluster/ETHBootstrapper.js"
 import { log } from "../../logger.js"
-import { depositETHCollateral } from "../ETHCollateralTool.js"
-import { depositSOLCollateral } from "../SOLCollateralTool.js"
+import {
+  depositETHCollateral,
+  depositETHNonNativeCollateral,
+  type OperatorRegistryDepositContract,
+  type OperatorRegistryDepositNonNativeContract,
+  type Erc20ApprovableContract
+} from "../ETHCollateralTool.js"
+import {
+  depositSOLCollateral,
+  depositSOLNonNativeCollateral
+} from "../SOLCollateralTool.js"
+import { mintMockSplToUser } from "../SplFundingTool.js"
+import { resolveLatestNonce } from "../../util.js"
 
 /**
  * Underwriter collateral surface — defaults, JSON config parsing,
@@ -341,6 +352,46 @@ export namespace CollateralTools {
     // run ETH-only and we shouldn't spin up an Anchor provider for nothing.
     const solCtx = asSolanaContextLazy(opts)
 
+    // Mock-ERC20 → outpost-addrs.json key lookup for non-native ETH
+    // collateral. The bootstrap-side `deployLocal.ts` deploys USDC /
+    // USDT (+ optionally LIQETH) as mocks under these `outpost-addrs`
+    // keys; `OperatorRegistry.depositNonNative` resolves the actual
+    // token contract via `ReserveManager.tokenAddressesByCode`, so
+    // these mappings only exist to give the harness the
+    // *uw-signer-bound* ERC-20 contract for the `approve(...)` step.
+    const ethTokenAddrKey: Record<string, string | undefined> = {
+      USDC:   ethAddrs.MockUsdc,
+      USDT:   ethAddrs.MockUsdt,
+      LIQETH: ethAddrs.LiqEth ?? ethAddrs.LiqETH ?? ethAddrs.LiqEthToken
+    }
+    const erc20Abi = [
+      "function approve(address spender, uint256 amount) returns (bool)",
+      "function balanceOf(address) view returns (uint256)"
+    ]
+
+    // SOL mock-SPL-mint lookup. `SOLBootstrap.provisionSplReserves`
+    // writes the file at the end of Phase 10b; absence is treated as
+    // "no SPL mints configured" — non-native SOL entries are skipped
+    // with a warn rather than a throw so the harness stays usable
+    // without the SPL bootstrap.
+    const splMintByTokenCode: Map<bigint, PublicKey> = new Map()
+    if (opts.solanaPath) {
+      // The cluster dir is the parent of the wire-solana path here
+      // (anvil + solana validator are spawned alongside it).
+      // Read sol-mock-mints.json relative to the cluster data path —
+      // ClusterManager passes `solanaRpcUrl` but not the cluster path;
+      // resolve it from the rpcUrl's parent dir if present.
+      const splMintsCandidate = process.env.WIRE_CLUSTER_PATH
+        ? Path.join(process.env.WIRE_CLUSTER_PATH, "data", "sol-mock-mints.json")
+        : null
+      if (splMintsCandidate && Fs.existsSync(splMintsCandidate)) {
+        const splMints = JSON.parse(Fs.readFileSync(splMintsCandidate, "utf-8")) as Array<{
+          code: number; mint: string; decimals: number
+        }>
+        splMints.forEach(m => splMintByTokenCode.set(BigInt(m.code), new PublicKey(m.mint)))
+      }
+    }
+
     await Bluebird.mapSeries(opts.underwriters.entries(), async ([idx, uw]) => {
       const ethWallet = ethers.HDNodeWallet.fromMnemonic(
         anvilMnemonic,
@@ -352,7 +403,8 @@ export namespace CollateralTools {
         ethAddrs.OperatorRegistry,
         opRegAbi,
         ethWallet
-      ) as unknown as Parameters<typeof depositETHCollateral>[0]
+      ) as unknown as OperatorRegistryDepositContract &
+        OperatorRegistryDepositNonNativeContract
       const compressedPubkey = ethers.getBytes(
         ethers.SigningKey.computePublicKey(
           ethWallet.privateKey,
@@ -363,6 +415,7 @@ export namespace CollateralTools {
       await Bluebird.each(opts.collateral[idx], async entry => {
         Assert.ok(entry.amount, "ChainTokenAmount.amount is required")
         const chainName = SlugName.toString(entry.chain_code),
+          chainCode = BigInt(entry.chain_code),
           tokenCode = BigInt(Number(entry.amount.tokenCode)),
           tokenName = SlugName.toString(Number(entry.amount.tokenCode)),
           chainKind = chainKindForCodename(entry.chain_code),
@@ -371,17 +424,56 @@ export namespace CollateralTools {
         if (amount <= 0n) return
 
         if (chainKind === ChainKind.EVM) {
-          await depositETHCollateral(
-            opRegContract,
-            OperatorType.UNDERWRITER,
-            compressedPubkey,
-            tokenCode,
-            amount
-          )
-          log.info(
-            `[uw-collateral] ${uw.account}: deposited ${amount} ` +
-              `${tokenName} on ${chainName}`
-          )
+          if (tokenKind === TokenKind.NATIVE) {
+            await depositETHCollateral(
+              opRegContract,
+              OperatorType.UNDERWRITER,
+              compressedPubkey,
+              tokenCode,
+              amount
+            )
+            log.info(
+              `[uw-collateral] ${uw.account}: deposited ${amount} ` +
+                `${tokenName} on ${chainName} (native)`
+            )
+          } else {
+            const tokenAddr = ethTokenAddrKey[tokenName]
+            Assert.ok(
+              tokenAddr !== undefined,
+              `[uw-collateral] ETH non-native token ${tokenName} not deployed by deployLocal.ts; ` +
+                `outpost-addrs.json keys: ${Object.keys(ethAddrs).join(", ")}`
+            )
+            const erc20Contract = new ethers.Contract(
+              tokenAddr,
+              erc20Abi,
+              ethWallet
+            ) as unknown as Erc20ApprovableContract
+            // UW wallets are anvil HD accounts pre-funded with native
+            // ETH only — they hold zero balance on the mock ERC-20s
+            // that `deployLocal.ts` minted to the deployer. Mint up
+            // to the deposit amount on demand. The mocks expose an
+            // ungated `mint(...)`; the wallet (signer-bound) calls it
+            // directly to grant itself the balance.
+            await ensureUnderwriterErc20Balance(
+              ethWallet,
+              tokenAddr,
+              amount
+            )
+            await depositETHNonNativeCollateral(
+              opRegContract,
+              erc20Contract,
+              chainCode,
+              tokenCode,
+              BigInt(SlugName.from("PRIMARY")),
+              OperatorType.UNDERWRITER,
+              compressedPubkey,
+              amount
+            )
+            log.info(
+              `[uw-collateral] ${uw.account}: deposited ${amount} ` +
+                `${tokenName} on ${chainName} (ERC-20 @ ${tokenAddr})`
+            )
+          }
           return
         }
         if (chainKind === ChainKind.SVM) {
@@ -394,6 +486,47 @@ export namespace CollateralTools {
           // rent headroom before submitting. Mirrors
           // flow-batch-operator-termination's batch-op deposit pattern.
           await ensureSolFunded(sol.connection, depositorKp, amount)
+          if (tokenKind !== TokenKind.NATIVE) {
+            const mint = splMintByTokenCode.get(tokenCode)
+            if (!mint) {
+              log.warn(
+                `[uw-collateral] ${uw.account}: skipping SOL non-native ` +
+                  `${tokenName} — no mock SPL mint persisted for this token code`
+              )
+              return
+            }
+            // The depositor needs a balance in their ATA on the mock
+            // mint. Create the ATA + fund it before deposit.
+            await ensureSolanaSplBalance(sol.connection, depositorKp, mint, amount)
+            try {
+              await depositSOLNonNativeCollateral(
+                sol.connection,
+                sol.program,
+                depositorKp,
+                chainCode,
+                tokenCode,
+                BigInt(SlugName.from("PRIMARY")),
+                OperatorType.UNDERWRITER,
+                mint,
+                amount
+              )
+              log.info(
+                `[uw-collateral] ${uw.account}: deposited ${amount} ` +
+                  `${tokenName} on ${chainName} (SPL mint=${mint.toBase58()})`
+              )
+            } catch (err) {
+              const msg = (err as Error)?.message ?? String(err)
+              if (msg.includes("not confirmed within")) {
+                log.warn(
+                  `[uw-collateral] ${uw.account}: SPL deposit confirm timed out — ` +
+                    `tx likely landed; depot will credit on next envelope.`
+                )
+              } else {
+                throw err
+              }
+            }
+            return
+          }
           try {
             await depositSOLCollateral(
               sol.connection,
@@ -405,7 +538,7 @@ export namespace CollateralTools {
             )
             log.info(
               `[uw-collateral] ${uw.account}: deposited ${amount} ` +
-                `${tokenName} on ${chainName}`
+                `${tokenName} on ${chainName} (native)`
             )
           } catch (err) {
             // Treat a timeout-on-confirm as best-effort: the tx may
@@ -470,11 +603,21 @@ const ChainKindByCodename: ReadonlyMap<number, ChainKind> = new Map([
 ])
 
 const TokenKindByCodename: ReadonlyMap<number, TokenKind> = new Map([
-  [SlugName.from("WIRE"), TokenKind.NATIVE],
-  [SlugName.from("ETH"), TokenKind.NATIVE],
-  [SlugName.from("SOL"), TokenKind.NATIVE],
-  [SlugName.from("LIQETH"), TokenKind.LIQ],
-  [SlugName.from("LIQSOL"), TokenKind.LIQ]
+  [SlugName.from("WIRE"),    TokenKind.NATIVE],
+  [SlugName.from("ETH"),     TokenKind.NATIVE],
+  [SlugName.from("SOL"),     TokenKind.NATIVE],
+  [SlugName.from("LIQETH"),  TokenKind.LIQ],
+  [SlugName.from("LIQSOL"),  TokenKind.LIQ],
+  // Mock stablecoins deployed by `deployLocal.ts` (ETH) /
+  // `SOLBootstrap.provisionSplReserves` (SOL). The depot's `Token`
+  // table assigns each its own slug_name code per the v6
+  // "TWO Token rows per cross-chain pair" decision — same underlying
+  // asset on each chain but distinct codes so the primary key
+  // doesn't collide.
+  [SlugName.from("USDC"),    TokenKind.ERC20],
+  [SlugName.from("USDT"),    TokenKind.ERC20],
+  [SlugName.from("USDCSOL"), TokenKind.SPL],
+  [SlugName.from("USDTSOL"), TokenKind.SPL]
 ])
 
 /**
@@ -618,6 +761,87 @@ async function ensureSolFunded(
   }
   throw new Error(
     `CollateralTools.deposit: airdrop signature ${sig} not confirmed within ${SolAirdropTimeoutMs}ms`
+  )
+}
+
+/**
+ * Mint `amount` of `tokenAddr` (mock ERC-20) into `wallet.address`'s
+ * balance if the wallet currently holds less than `amount`. Used by
+ * the UW collateral deposit flow to ensure the operator has enough
+ * mock-token balance to `approve(...) + depositNonNative(...)`. The
+ * mocks under `wire-ethereum/contracts/test/outpost/` expose an
+ * ungated `mint(address,uint256)` — any signer can mint.
+ */
+async function ensureUnderwriterErc20Balance(
+  wallet:    ethers.HDNodeWallet,
+  tokenAddr: string,
+  amount:    bigint
+): Promise<void> {
+  const erc20Abi = [
+    "function balanceOf(address) view returns (uint256)",
+    "function mint(address to, uint256 amount)"
+  ]
+  const token = new ethers.Contract(tokenAddr, erc20Abi, wallet) as unknown as {
+    balanceOf: (addr: string) => Promise<bigint>
+    mint:      (to: string, amt: bigint, overrides?: ethers.Overrides) =>
+                 Promise<ethers.ContractTransactionResponse>
+  }
+  const current = await token.balanceOf(wallet.address)
+  if (current >= amount) return
+
+  const need  = amount - current
+  const nonce = await resolveLatestNonce(token as unknown as ethers.BaseContract)
+  const tx    = await token.mint(wallet.address, need, { nonce })
+  await tx.wait(1)
+  log.info(
+    `[uw-collateral] minted ${need} of mock ERC-20 ${tokenAddr} ` +
+      `to underwriter wallet ${wallet.address}`
+  )
+}
+
+/**
+ * Mint `amount` of `mint` into `recipient`'s ATA (creating the ATA on
+ * the fly if it doesn't yet exist), using the persisted cluster
+ * deployer keypair as the mint authority. The cluster's
+ * `SOLBootstrap.provisionSplReserves` writes the keypair to
+ * `<cluster>/data/sol-deployer-keypair.json` at the end of Phase 10b.
+ *
+ * Caller MUST pass `WIRE_CLUSTER_PATH` as an env var so the keypair
+ * file can be located. If the file is missing the function logs a
+ * warning and returns without minting — this lets the harness stay
+ * usable for native-only clusters.
+ */
+async function ensureSolanaSplBalance(
+  connection: Connection,
+  depositor: Keypair,
+  mint: PublicKey,
+  amount: bigint
+): Promise<void> {
+  const clusterPath = process.env.WIRE_CLUSTER_PATH
+  if (!clusterPath) {
+    log.warn(
+      `[uw-collateral] ensureSolanaSplBalance: WIRE_CLUSTER_PATH unset; ` +
+        `cannot resolve deployer keypair for mint=${mint.toBase58()}`
+    )
+    return
+  }
+  const deployerKeypairPath = Path.join(clusterPath, "data", "sol-deployer-keypair.json")
+  if (!Fs.existsSync(deployerKeypairPath)) {
+    log.warn(
+      `[uw-collateral] ensureSolanaSplBalance: deployer keypair not found at ${deployerKeypairPath}; ` +
+        `SOLBootstrap.provisionSplReserves may not have run`
+    )
+    return
+  }
+  const deployer = Keypair.fromSecretKey(
+    Uint8Array.from(JSON.parse(Fs.readFileSync(deployerKeypairPath, "utf-8")))
+  )
+  await mintMockSplToUser(
+    connection,
+    deployer,
+    mint,
+    depositor.publicKey,
+    amount
   )
 }
 
