@@ -134,3 +134,213 @@ export async function requestEthereumSwap(
     gasUsed: receipt.gasUsed
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+//  ERC-20 source-side swap helpers
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * EIP-2612 permit signature bundle ready to pass into
+ * `ReserveManager.requestSwapErc20WithPermit` (struct `PermitSig`).
+ * Matches the on-chain layout: `(deadline, v, r, s)`.
+ */
+export interface EthereumPermitSig {
+  /** Permit deadline (unix seconds). */
+  deadline: bigint
+  /** Recovery id from the signature. */
+  v: number
+  /** Signature r component. */
+  r: string
+  /** Signature s component. */
+  s: string
+}
+
+/**
+ * Calldata-facing `SwapArgs` struct that mirrors
+ * `ReserveManagerLib.SwapArgs` on the contract. Carries `sourceAmount`
+ * directly (in chain-native token units — 6-decimal base units for
+ * USDC/USDT, 18-decimal wei for LIQETH).
+ */
+export interface EthereumSwapArgs {
+  sourceTokenCode: bigint
+  sourceReserveCode: bigint
+  sourceAmount: bigint
+  targetChainCode: bigint
+  targetTokenCode: bigint
+  targetReserveCode: bigint
+  targetRecipient: Uint8Array
+  targetAmount: bigint
+  targetToleranceBps: number
+}
+
+/** Structural surface for the new ERC-20 entry points. */
+export interface ReserveManagerErc20SwapContract {
+  requestSwapErc20WithPermit: (
+    args: EthereumSwapArgs,
+    permitSig: EthereumPermitSig,
+    overrides?: ethers.Overrides
+  ) => Promise<ethers.ContractTransactionResponse>
+  requestSwapErc20WithApproval: (
+    args: EthereumSwapArgs,
+    overrides?: ethers.Overrides
+  ) => Promise<ethers.ContractTransactionResponse>
+}
+
+/**
+ * Submit a SWAP_REQUEST emission for an ERC-20 source token via inline
+ * EIP-2612 permit. The whole call is atomic: permit + transferFrom +
+ * fee-on-transfer guard + outbound queue all happen in a single tx.
+ *
+ * Used by `flow-swap-non-native-tokens` for USDC / USDT / LIQETH source
+ * legs. Native-ETH source still flows through `requestEthereumSwap`.
+ */
+export async function requestEthereumSwapErc20WithPermit(
+  reserveManager: ReserveManagerErc20SwapContract,
+  args: EthereumSwapArgs,
+  permitSig: EthereumPermitSig
+): Promise<EthereumSwapResult> {
+  Assert.ok(args.sourceAmount > 0n,
+    "EthereumSwapTool: sourceAmount must be > 0")
+  Assert.ok(args.targetRecipient.byteLength > 0,
+    "EthereumSwapTool: targetRecipient must be non-empty")
+  Assert.ok(args.targetAmount > 0n,
+    "EthereumSwapTool: targetAmount must be > 0")
+  Assert.ok(args.targetToleranceBps >= 0 && args.targetToleranceBps <= 10_000,
+    `EthereumSwapTool: targetToleranceBps must be in [0, 10000], got ${args.targetToleranceBps}`)
+
+  const tx = await reserveManager.requestSwapErc20WithPermit(args, permitSig)
+  const receipt = await tx.wait()
+  Assert.ok(
+    receipt !== null && receipt.status === 1,
+    `EthereumSwapTool: requestSwapErc20WithPermit tx reverted (status=${receipt?.status ?? "null"})`
+  )
+  return {
+    transactionHash: receipt.hash,
+    blockNumber: receipt.blockNumber,
+    gasUsed: receipt.gasUsed
+  }
+}
+
+/**
+ * Submit a SWAP_REQUEST emission for an ERC-20 source token via a
+ * pre-set allowance. Production fallback for legacy ERC-20s that don't
+ * implement EIP-2612 (mainnet USDT, etc.). Caller MUST have already
+ * called `IERC20(sourceToken).approve(reserveManager, sourceAmount)` in
+ * a prior transaction.
+ */
+export async function requestEthereumSwapErc20WithApproval(
+  reserveManager: ReserveManagerErc20SwapContract,
+  args: EthereumSwapArgs
+): Promise<EthereumSwapResult> {
+  Assert.ok(args.sourceAmount > 0n,
+    "EthereumSwapTool: sourceAmount must be > 0")
+  Assert.ok(args.targetRecipient.byteLength > 0,
+    "EthereumSwapTool: targetRecipient must be non-empty")
+  Assert.ok(args.targetAmount > 0n,
+    "EthereumSwapTool: targetAmount must be > 0")
+  Assert.ok(args.targetToleranceBps >= 0 && args.targetToleranceBps <= 10_000,
+    `EthereumSwapTool: targetToleranceBps must be in [0, 10000], got ${args.targetToleranceBps}`)
+
+  const tx = await reserveManager.requestSwapErc20WithApproval(args)
+  const receipt = await tx.wait()
+  Assert.ok(
+    receipt !== null && receipt.status === 1,
+    `EthereumSwapTool: requestSwapErc20WithApproval tx reverted (status=${receipt?.status ?? "null"})`
+  )
+  return {
+    transactionHash: receipt.hash,
+    blockNumber: receipt.blockNumber,
+    gasUsed: receipt.gasUsed
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  ERC-20 reserve-create helpers
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Calldata-facing `ReserveCreateArgs` struct mirroring
+ * `ReserveManagerLib.ReserveCreateArgs` on the contract.
+ */
+export interface EthereumReserveCreateArgs {
+  tokenCode: bigint
+  reserveCode: bigint
+  externalTokenAmount: bigint
+  requestedWireAmount: bigint
+  connectorWeightBps: number
+  name: string
+  description: string
+}
+
+/** Structural surface for the ERC-20 reserve-create entries. */
+export interface ReserveManagerErc20ReserveCreateContract {
+  requestReserveCreateErc20WithPermit: (
+    args: EthereumReserveCreateArgs,
+    permitSig: EthereumPermitSig,
+    overrides?: ethers.Overrides
+  ) => Promise<ethers.ContractTransactionResponse>
+  requestReserveCreateErc20WithApproval: (
+    args: EthereumReserveCreateArgs,
+    overrides?: ethers.Overrides
+  ) => Promise<ethers.ContractTransactionResponse>
+}
+
+/**
+ * Open a new ERC-20 reserve on the Ethereum outpost via inline
+ * EIP-2612 permit. Permissionless — any user can call.
+ *
+ * Funds escrow into the contract atomically with the permit consumption
+ * and the RESERVE_CREATE outbound attestation queue. The depot's
+ * `sysio.reserv::oncrtreserve` handler inserts the depot-side row;
+ * subsequent depot `match` action flips status to ACTIVE and emits
+ * RESERVE_READY back, which the outpost handles inline.
+ */
+export async function requestEthereumReserveCreateErc20WithPermit(
+  reserveManager: ReserveManagerErc20ReserveCreateContract,
+  args: EthereumReserveCreateArgs,
+  permitSig: EthereumPermitSig
+): Promise<EthereumSwapResult> {
+  Assert.ok(args.externalTokenAmount > 0n,
+    "EthereumSwapTool: externalTokenAmount must be > 0")
+  Assert.ok(args.reserveCode !== 0n,
+    "EthereumSwapTool: reserveCode must be non-zero")
+
+  const tx = await reserveManager.requestReserveCreateErc20WithPermit(args, permitSig)
+  const receipt = await tx.wait()
+  Assert.ok(
+    receipt !== null && receipt.status === 1,
+    `EthereumSwapTool: requestReserveCreateErc20WithPermit tx reverted (status=${receipt?.status ?? "null"})`
+  )
+  return {
+    transactionHash: receipt.hash,
+    blockNumber: receipt.blockNumber,
+    gasUsed: receipt.gasUsed
+  }
+}
+
+/**
+ * Open a new ERC-20 reserve via a pre-set allowance. Companion to
+ * `requestEthereumReserveCreateErc20WithPermit` for legacy ERC-20s
+ * that don't implement EIP-2612.
+ */
+export async function requestEthereumReserveCreateErc20WithApproval(
+  reserveManager: ReserveManagerErc20ReserveCreateContract,
+  args: EthereumReserveCreateArgs
+): Promise<EthereumSwapResult> {
+  Assert.ok(args.externalTokenAmount > 0n,
+    "EthereumSwapTool: externalTokenAmount must be > 0")
+  Assert.ok(args.reserveCode !== 0n,
+    "EthereumSwapTool: reserveCode must be non-zero")
+
+  const tx = await reserveManager.requestReserveCreateErc20WithApproval(args)
+  const receipt = await tx.wait()
+  Assert.ok(
+    receipt !== null && receipt.status === 1,
+    `EthereumSwapTool: requestReserveCreateErc20WithApproval tx reverted (status=${receipt?.status ?? "null"})`
+  )
+  return {
+    transactionHash: receipt.hash,
+    blockNumber: receipt.blockNumber,
+    gasUsed: receipt.gasUsed
+  }
+}

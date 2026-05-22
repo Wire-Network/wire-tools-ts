@@ -1,9 +1,11 @@
+import Assert from "node:assert"
 import {
   Connection,
   Keypair,
   PublicKey,
   LAMPORTS_PER_SOL
 } from "@solana/web3.js"
+import { TOKEN_PROGRAM_ID } from "@solana/spl-token"
 import * as anchor from "@coral-xyz/anchor"
 import Path from "path"
 import Fs from "fs"
@@ -12,6 +14,7 @@ import { SlugName } from "@wireio/sdk-core"
 import { SOLClient } from "../clients/SOLClient.js"
 import { log } from "../logger.js"
 import { retry, sleep } from "../util.js"
+import { createMockSplMint, mintMockSplToUser } from "../tools/SplFundingTool.js"
 
 /** Total attempts allowed for each Solana airdrop / RPC retry block. */
 const SolAirdropRetryAttempts = 3
@@ -64,6 +67,32 @@ export interface SOLBootstrapConfig {
   deployerKeypair?: string
   /** Program keypair for the opp-outpost program. */
   programKeypairFile?: string
+  /**
+   * Optional directory under which mock-SPL-mint metadata is
+   * persisted (file: `sol-mock-mints.json`) for downstream consumers
+   * — primarily `ClusterManager`'s Phase 16 token registration, which
+   * needs the SPL mint pubkeys to register the chain-side
+   * `ChainToken.contract_addr` for USDC/USDT/LIQSOL on the SOL
+   * side. When omitted, the SPL provisioning step is skipped (the
+   * outpost still has native SOL working, but no SPL reserves).
+   */
+  clusterDataPath?: string
+}
+
+/**
+ * Persisted mock-SPL-mint metadata written by `provisionSplReserves`
+ * and consumed by `ClusterManager`'s Phase 16a/b/c token registration.
+ * Each entry is a `(slug_name code, mint pubkey, decimals)` triple
+ * keyed by code so callers can look up by slug_name without a map
+ * dependency.
+ */
+export interface PersistedSplMint {
+  /** Slug-name codename packed into `u64`-equivalent number. */
+  code: number
+  /** Base58 mint pubkey. */
+  mint: string
+  /** Chain-native decimals (6 for USDC/USDT, 9 for LIQSOL). */
+  decimals: number
 }
 
 export class SOLBootstrap {
@@ -460,5 +489,164 @@ export class SOLBootstrap {
     log.info(
       `SOL native reserve seeded (PDA=${solReservePda.toBase58()}, lamports=${BootstrapNativeReserveLamports})`
     )
+
+    // Provision mock SPL reserves (USDC, USDT, LIQSOL) for flow-swap-
+    // non-native-tokens. Skipped if no clusterDataPath was provided
+    // (e.g. unit-test invocations of the bootstrap).
+    if (this.config.clusterDataPath) {
+      await this.provisionSplReserves(deployer, program, configPda)
+    }
+  }
+
+  /**
+   * Bootstrap mock SPL reserves on the SOL outpost. Creates SPL mints
+   * for USDC + USDT + LIQSOL, binds each via `set_token_address` +
+   * `set_token_precision`, then calls `create_reserve_spl_authority`
+   * to allocate per-reserve token vaults seeded with bootstrap
+   * liquidity. Persists the resulting mint pubkeys to
+   * `<clusterDataPath>/sol-mock-mints.json` for `ClusterManager`'s
+   * Phase 16 token registration.
+   *
+   * Treats LIQSOL as just another SPL mock per the
+   * `outpost-three-concerns.md` rule that the outpost views LIQ
+   * tokens as ordinary SPL custody assets (no burn/mint integration).
+   * Production deployments would instead bind LIQSOL to the canonical
+   * `liqsol-token` mint pubkey via `set_token_address`.
+   */
+  private async provisionSplReserves(
+    deployer: Keypair,
+    program:  anchor.Program<anchor.Idl>,
+    configPda: PublicKey
+  ): Promise<void> {
+    Assert.ok(this.config.clusterDataPath,
+      "SOLBootstrap.provisionSplReserves: clusterDataPath required")
+    const programId = this.programId!
+    log.info("[SOL bootstrap] Provisioning mock SPL reserves (USDC, USDT, LIQSOL)...")
+
+    // Spec: (code, decimals, bootstrap chain-side amount in chain units)
+    // USDC/USDT use 6 decimals (mainnet parity), LIQSOL uses 9 (depot parity).
+    // Bootstrap amounts are sized to clear the `swap_quote` floor plus
+    // a generous headroom for ~40 flow-test runs each.
+    const specs: { codeName: string; decimals: number; chainAmount: bigint }[] = [
+      { codeName: "USDC",   decimals: 6, chainAmount: 1_000_000n * 1_000_000n }, // 1M USDC
+      { codeName: "USDT",   decimals: 6, chainAmount: 1_000_000n * 1_000_000n }, // 1M USDT
+      { codeName: "LIQSOL", decimals: 9, chainAmount: 20n * 1_000_000_000n },    // 20 LIQSOL
+    ]
+    const primaryCode = new anchor.BN(SlugName.from("PRIMARY"))
+    const persisted: PersistedSplMint[] = []
+
+    // Sequentially: create mint → fund deployer ATA → register on outpost →
+    // seed Reserve PDA. Each step is dependent on the previous one
+    // landing on-chain, so Bluebird.each-style ordering is required.
+    for (const spec of specs) {
+      const code   = SlugName.from(spec.codeName)
+      const codeBN = new anchor.BN(code)
+      log.info(`[SOL bootstrap]  - Creating mock SPL mint for ${spec.codeName} (decimals=${spec.decimals})`)
+      const mint = await createMockSplMint(this.connection, deployer, spec.decimals)
+      log.info(`[SOL bootstrap]    mint=${mint.toBase58()}`)
+
+      // Mint chain-amount + margin to deployer's ATA so the
+      // create_reserve_spl_authority transfer succeeds.
+      const deployerAta = await mintMockSplToUser(
+        this.connection, deployer, mint, deployer.publicKey, spec.chainAmount * 2n
+      )
+      log.info(`[SOL bootstrap]    deployer ATA funded (ata=${deployerAta.toBase58()})`)
+
+      // set_token_address — bind the slug_name code to the SPL mint.
+      const setAddrTx = await program.methods
+        .setTokenAddress(codeBN, mint)
+        .accounts({ authority: deployer.publicKey, config: configPda })
+        .signers([deployer])
+        .transaction()
+      await this.runSimpleAuthorityIx(
+        deployer, setAddrTx, `set_token_address(${spec.codeName})`
+      )
+
+      // set_token_precision — record chain-native decimals.
+      const setPrecTx = await program.methods
+        .setTokenPrecision(codeBN, spec.decimals)
+        .accounts({ authority: deployer.publicKey, config: configPda })
+        .signers([deployer])
+        .transaction()
+      await this.runSimpleAuthorityIx(
+        deployer, setPrecTx, `set_token_precision(${spec.codeName})`
+      )
+
+      // create_reserve_spl_authority — allocate Reserve PDA + vault,
+      // transfer initial amount, status=Active inline.
+      const [reservePda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("reserve"), SlugNameToLeBuffer(code), SlugNameToLeBuffer(SlugName.from("PRIMARY"))],
+        programId
+      )
+      const [reserveVaultPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("reserve_vault"), SlugNameToLeBuffer(code), SlugNameToLeBuffer(SlugName.from("PRIMARY"))],
+        programId
+      )
+
+      const createTx = await program.methods
+        .createReserveSplAuthority(
+          codeBN,
+          primaryCode,
+          new anchor.BN(spec.chainAmount.toString()),
+          new anchor.BN(spec.chainAmount.toString()),
+          BootstrapConnectorWeightBps,
+          `SOLANA-${spec.codeName}/WIRE primary reserve`,
+          `Bootstrap-seeded mock ${spec.codeName} ↔ WIRE reserve (outpost-side custody)`
+        )
+        .accounts({
+          payer:          deployer.publicKey,
+          authority:      deployer.publicKey,
+          config:         configPda,
+          reserve:        reservePda,
+          reserveVault:   reserveVaultPda,
+          mint,
+          authorityAta:   deployerAta,
+          tokenProgram:   TOKEN_PROGRAM_ID,
+          systemProgram:  anchor.web3.SystemProgram.programId,
+          rent:           anchor.web3.SYSVAR_RENT_PUBKEY
+        })
+        .signers([deployer])
+        .transaction()
+      await this.runSimpleAuthorityIx(
+        deployer, createTx, `create_reserve_spl_authority(${spec.codeName}/PRIMARY)`
+      )
+
+      persisted.push({ code, mint: mint.toBase58(), decimals: spec.decimals })
+      log.info(`[SOL bootstrap]    Reserve PDA seeded (${spec.codeName}/PRIMARY)`)
+    }
+
+    // Persist for ClusterManager's Phase 16 to pick up.
+    const persistDir  = this.config.clusterDataPath!
+    const persistFile = Path.join(persistDir, "sol-mock-mints.json")
+    Fs.mkdirSync(persistDir, { recursive: true })
+    Fs.writeFileSync(persistFile, JSON.stringify(persisted, null, 2))
+    log.info(`[SOL bootstrap] Persisted ${persisted.length} mock SPL mint(s) to ${persistFile}`)
+  }
+
+  /**
+   * Submit a pre-built transaction signed by `signer`, poll
+   * `getSignatureStatus` until `confirmed`/`finalized`, and throw on
+   * timeout. Shared between `set_token_address`, `set_token_precision`,
+   * and `create_reserve_spl_authority` to keep `provisionSplReserves`
+   * focused on the orchestration shape rather than the polling
+   * boilerplate.
+   */
+  private async runSimpleAuthorityIx(
+    signer: Keypair,
+    tx:     anchor.web3.Transaction,
+    label:  string
+  ): Promise<void> {
+    const sig = await this.connection.sendTransaction(tx, [signer], { skipPreflight: false })
+    const deadline = Date.now() + 60_000
+    while (Date.now() < deadline) {
+      const status = await this.connection.getSignatureStatus(sig)
+      const conf   = status?.value?.confirmationStatus
+      if (conf === "confirmed" || conf === "finalized") return
+      if (status?.value?.err) {
+        throw new Error(`${label} tx failed: ${JSON.stringify(status.value.err)}`)
+      }
+      await sleep(500)
+    }
+    throw new Error(`${label} not confirmed within 60s`)
   }
 }

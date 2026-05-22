@@ -35,6 +35,7 @@
     "@3fv/guard": "^1.4.39",
     "@3fv/prelude-ts": "^0.8.37",
     "@coral-xyz/anchor": "^0.31.0",
+    "@solana/spl-token": "^0.4.9",
     "@solana/web3.js": "^1.98.0",
     "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/sdk-core": "^1.0.21",

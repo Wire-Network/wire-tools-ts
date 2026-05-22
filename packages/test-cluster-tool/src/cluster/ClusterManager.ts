@@ -56,7 +56,7 @@ import {
 } from "./constants.js"
 import { ethers } from "ethers"
 import * as Assert from "node:assert"
-import { Keypair } from "@solana/web3.js"
+import { Keypair, PublicKey as SolanaPublicKey } from "@solana/web3.js"
 import { Bytes, SlugName, KeyType, PrivateKey, SystemContracts } from "@wireio/sdk-core"
 import { which } from "zx"
 import { asOption } from "@3fv/prelude-ts"
@@ -295,7 +295,6 @@ export class ClusterManager {
     dataPath: string,
     batchOpSolKeys: Record<string, PrivateKey>
   ): Promise<{ programId: string; idlPath: string }> {
-    Assert.ok(cfg.solanaPath, "bootstrapSolanaOutpost requires cfg.solanaPath")
     log.info("[Phase 10b] Solana outpost bootstrap starting")
 
     // Resolve build artifacts from the wire-solana source tree. We don't
@@ -383,10 +382,15 @@ export class ClusterManager {
     await solManager.start()
 
     // Initialise on-chain PDAs (OutpostConfig, OutboundMessageBuffer, OperatorRegistry).
+    // `clusterDataPath` lets SOLBootstrap persist mock SPL mint
+    // pubkeys (USDC/USDT/LIQSOL) for Phase 16a/b/c token-row
+    // registration; the file lives under
+    // `<cluster>/data/sol-mock-mints.json`.
     const bootstrap = new SOLBootstrap({
       wireSolPath: cfg.solanaPath,
       rpcUrl: toURL(cfg.ports.solanaRpc),
-      programKeypairFile
+      programKeypairFile,
+      clusterDataPath: Path.join(cfg.clusterPath, "data")
     })
     await bootstrap.bootstrap()
 
@@ -861,282 +865,271 @@ export class ClusterManager {
       )
 
       // ── 10. ETH bootstrap (if ethereum-dir provided) ──
-      if (cfg.ethereumPath) {
-        const ethBootstrapper = new ETHBootstrapper({
-          ethereumPath: cfg.ethereumPath,
-          anvilDataPath: Path.join(dataPath, "anvil"),
-          anvilPort: cfg.ports.anvil,
-          chainId: AnvilManager.DefaultChainId
-        })
-        await ethBootstrapper.bootstrap()
+      const ethBootstrapper = new ETHBootstrapper({
+        ethereumPath: cfg.ethereumPath,
+        anvilDataPath: Path.join(dataPath, "anvil"),
+        anvilPort: cfg.ports.anvil,
+        chainId: AnvilManager.DefaultChainId
+      })
+      await ethBootstrapper.bootstrap()
 
-        // ── 10a. Inject ETH + SOL outpost client args into batch operator cmds ──
-        // Now that ETH contracts are deployed, read addresses and configure
-        // the outpost client plugins with signing keys and contract addresses.
-        const outpostAddrsPath = Path.join(
-          cfg.ethereumPath,
-          ".local",
-          "deployments",
-          "outpost-addrs.json"
-        )
-        Assert.ok(
-          Fs.existsSync(outpostAddrsPath),
-          `ETH outpost addresses not found at ${outpostAddrsPath}`
-        )
-        const ethAddrs: Record<string, string> = JSON.parse(
-          Fs.readFileSync(outpostAddrsPath, "utf-8")
-        )
-        const ethOppAddr = ethAddrs.OPP
-        const ethOppInboundAddr = ethAddrs.OPPInbound
-        Assert.ok(ethOppAddr, "OPP address missing from outpost-addrs.json")
-        Assert.ok(
-          ethOppInboundAddr,
-          "OPPInbound address missing from outpost-addrs.json"
-        )
+      // ── 10a. Inject ETH + SOL outpost client args into batch operator cmds ──
+      // Now that ETH contracts are deployed, read addresses and configure
+      // the outpost client plugins with signing keys and contract addresses.
+      const outpostAddrsPath = Path.join(
+        cfg.ethereumPath,
+        ".local",
+        "deployments",
+        "outpost-addrs.json"
+      )
+      Assert.ok(
+        Fs.existsSync(outpostAddrsPath),
+        `ETH outpost addresses not found at ${outpostAddrsPath}`
+      )
+      const ethAddrs: Record<string, string> = JSON.parse(
+        Fs.readFileSync(outpostAddrsPath, "utf-8")
+      )
+      const ethOppAddr = ethAddrs.OPP
+      const ethOppInboundAddr = ethAddrs.OPPInbound
+      Assert.ok(ethOppAddr, "OPP address missing from outpost-addrs.json")
+      Assert.ok(
+        ethOppInboundAddr,
+        "OPPInbound address missing from outpost-addrs.json"
+      )
 
-        // ABI files for OPP contracts (Hardhat artifact format, parser handles it)
-        // Generate ABI files with embedded deployed addresses for the
-        // outpost_ethereum_client_plugin. Each file is a JSON object with
-        // { address, abi } so get_events can filter by contract address.
-        const ethAbiDir = mkdirs(Path.join(dataPath, "eth-abis"))
-        // Include ReserveManager + OperatorRegistry so the underwriter
-        // plugin can resolve `requestSwap` (source-deposit verification
-        // target on ReserveManager) and `commit` (where the underwriter
-        // submits UnderwriteIntentCommit on OperatorRegistry). Without
-        // these the preflight ABI lookup fails and the plugin won't
-        // start its scan loop.
-        const ethAbiFiles = ["OPP", "OPPInbound", "BAR", "ReserveManager", "OperatorRegistry"]
-          .map(name => {
-            const artifactPath = Path.join(
-              cfg.ethereumPath!,
-              "artifacts",
-              "contracts",
-              "outpost",
-              `${name}.sol`,
-              `${name}.json`
-            )
-            if (!Fs.existsSync(artifactPath)) return null
-            const artifact = JSON.parse(Fs.readFileSync(artifactPath, "utf-8"))
-            const addr = ethAddrs[name]
-            const abiWithAddr = {
-              contractName: name,
-              address: addr,
-              abi: artifact.abi
-            }
-            const outPath = Path.join(ethAbiDir, `${name}.json`)
-            Fs.writeFileSync(outPath, JSON.stringify(abiWithAddr, null, 2))
-            return outPath
-          })
-          .filter((p): p is string => p !== null)
-
-        // Derive ETH signing accounts from anvil's deterministic mnemonic.
-        // Account 0 is the deployer; accounts 1..N are for batch operators.
-        const anvilMnemonic = ethers.Mnemonic.fromPhrase(
-          ETHBootstrapper.AnvilMnemonic
-        )
-        const anvilRpcUrl = toURL(cfg.ports.anvil)
-        const solanaRpcUrl = toURL(cfg.ports.solanaRpc)
-
-        // ── 10b. SOL bootstrap (if solana-path provided) ──
-        // Order matters: must run before 10a so we know the SOL program ID,
-        // IDL path, and validator RPC URL to splice into batch op start.cmds.
-        let solProgramId: string | undefined
-        let solIdlPath: string | undefined
-        if (cfg.solanaPath) {
-          const sol = await this.bootstrapSolanaOutpost(
-            cfg,
-            dataPath,
-            batchOpSolKeys
+      // ABI files for OPP contracts (Hardhat artifact format, parser handles it)
+      // Generate ABI files with embedded deployed addresses for the
+      // outpost_ethereum_client_plugin. Each file is a JSON object with
+      // { address, abi } so get_events can filter by contract address.
+      const ethAbiDir = mkdirs(Path.join(dataPath, "eth-abis"))
+      // Include ReserveManager + OperatorRegistry so the underwriter
+      // plugin can resolve `requestSwap` (source-deposit verification
+      // target on ReserveManager) and `commit` (where the underwriter
+      // submits UnderwriteIntentCommit on OperatorRegistry). Without
+      // these the preflight ABI lookup fails and the plugin won't
+      // start its scan loop.
+      const ethAbiFiles = ["OPP", "OPPInbound", "BAR", "ReserveManager", "OperatorRegistry"]
+        .map(name => {
+          const artifactPath = Path.join(
+            cfg.ethereumPath,
+            "artifacts",
+            "contracts",
+            "outpost",
+            `${name}.sol`,
+            `${name}.json`
           )
-          solProgramId = sol.programId
-          solIdlPath = sol.idlPath
+          if (!Fs.existsSync(artifactPath)) return null
+          const artifact = JSON.parse(Fs.readFileSync(artifactPath, "utf-8"))
+          const addr = ethAddrs[name]
+          const abiWithAddr = {
+            contractName: name,
+            address: addr,
+            abi: artifact.abi
+          }
+          const outPath = Path.join(ethAbiDir, `${name}.json`)
+          Fs.writeFileSync(outPath, JSON.stringify(abiWithAddr, null, 2))
+          return outPath
+        })
+        .filter((p): p is string => p !== null)
+
+      // Derive ETH signing accounts from anvil's deterministic mnemonic.
+      // Account 0 is the deployer; accounts 1..N are for batch operators.
+      const anvilMnemonic = ethers.Mnemonic.fromPhrase(
+        ETHBootstrapper.AnvilMnemonic
+      )
+      const anvilRpcUrl = toURL(cfg.ports.anvil)
+      const solanaRpcUrl = toURL(cfg.ports.solanaRpc)
+
+      // ── 10b. SOL bootstrap (if solana-path provided) ──
+      // Order matters: must run before 10a so we know the SOL program ID,
+      // IDL path, and validator RPC URL to splice into batch op start.cmds.
+      const { programId: solProgramId, idlPath: solIdlPath } =
+        await this.bootstrapSolanaOutpost(cfg, dataPath, batchOpSolKeys)
+
+      batchOpStates.forEach((ns, i) => {
+        const ethWallet = ethers.HDNodeWallet.fromMnemonic(
+          anvilMnemonic,
+          `${ETHBootstrapper.DerivationPath}${i + 1}`
+        )
+        const sigProviderName = `eth-${ns.operatorAccount}`
+
+        const ethPrivKey = emPrivateKeyFromEthWallet(ethWallet)
+
+        // Signature provider: <name>,<chain-kind>,<key-type>,<public-key>,KEY:<private-key>
+        // Public key must be the full 64-byte uncompressed key (0x + 128 hex),
+        // NOT the 20-byte address. ethers signingKey.publicKey is 0x04 + 128 hex;
+        // strip the 04 prefix to match the C++ fixture format.
+        const ethPubKey = "0x" + ethWallet.signingKey.publicKey.slice(4)
+        const ethSigProvider = [
+          sigProviderName,
+          "ethereum",
+          "ethereum",
+          ethPubKey,
+          `KEY:${ethPrivKey.toNativeString()}`
+        ].join(",")
+
+        // Outpost ethereum client: <id>,<sig-provider-name>,<rpc-url>,<chain-id>
+        const ethClientSpec = [
+          "eth-default",
+          sigProviderName,
+          anvilRpcUrl,
+          String(AnvilManager.DefaultChainId)
+        ].join(",")
+
+        // Solana client spec. The ED25519 key MUST match the one linked via
+        // authex in Phase 19a — otherwise the SOL outpost's active-operator
+        // check rejects this node's epoch_in. We pulled the key from
+        // `batchOpSolKeys` above; regenerating here would break parity.
+        const solKey = batchOpSolKeys[ns.operatorAccount!]
+        Assert.ok(
+          solKey,
+          `Missing SOL key for batch operator ${ns.operatorAccount}`
+        )
+        const solPub = solKey.toPublic()
+        const solSigProvider = [
+          `sol-${ns.operatorAccount}`,
+          "solana",
+          "solana",
+          solPub.toNativeString(),
+          `KEY:${solKey.toNativeString()}`
+        ].join(",")
+        const solClientSpec = `sol-default,sol-${ns.operatorAccount},${solanaRpcUrl}`
+
+        const outpostArgs = [
+          "--signature-provider",
+          ethSigProvider,
+          "--outpost-ethereum-client",
+          ethClientSpec,
+          ...ethAbiFiles.flatMap(f => ["--ethereum-abi-file", f]),
+          "--batch-eth-opp-addr",
+          ethOppAddr,
+          "--batch-eth-opp-inbound-addr",
+          ethOppInboundAddr,
+          "--batch-eth-client-id",
+          "eth-default",
+          "--signature-provider",
+          solSigProvider,
+          "--outpost-solana-client",
+          solClientSpec,
+          "--batch-sol-client-id",
+          "sol-default"
+        ]
+
+        // When a SOL outpost is configured, splice in the plugin's own CLI
+        // options so the batch_operator_plugin can locate the program IDL
+        // (for strongly-typed `opp_solana_outpost_client` calls) and target
+        // the right on-chain program id.
+        if (solProgramId && solIdlPath) {
+          outpostArgs.push(
+            "--solana-idl-file",
+            solIdlPath,
+            "--batch-sol-program-id",
+            solProgramId
+          )
         }
 
-        batchOpStates.forEach((ns, i) => {
-          const ethWallet = ethers.HDNodeWallet.fromMnemonic(
-            anvilMnemonic,
-            `${ETHBootstrapper.DerivationPath}${i + 1}`
-          )
-          const sigProviderName = `eth-${ns.operatorAccount}`
+        ns.cmd.push(...outpostArgs)
 
-          const ethPrivKey = emPrivateKeyFromEthWallet(ethWallet)
-
-          // Signature provider: <name>,<chain-kind>,<key-type>,<public-key>,KEY:<private-key>
-          // Public key must be the full 64-byte uncompressed key (0x + 128 hex),
-          // NOT the 20-byte address. ethers signingKey.publicKey is 0x04 + 128 hex;
-          // strip the 04 prefix to match the C++ fixture format.
-          const ethPubKey = "0x" + ethWallet.signingKey.publicKey.slice(4)
-          const ethSigProvider = [
-            sigProviderName,
-            "ethereum",
-            "ethereum",
-            ethPubKey,
-            `KEY:${ethPrivKey.toNativeString()}`
-          ].join(",")
-
-          // Outpost ethereum client: <id>,<sig-provider-name>,<rpc-url>,<chain-id>
-          const ethClientSpec = [
-            "eth-default",
-            sigProviderName,
-            anvilRpcUrl,
-            String(AnvilManager.DefaultChainId)
-          ].join(",")
-
-          // Solana client spec. The ED25519 key MUST match the one linked via
-          // authex in Phase 19a — otherwise the SOL outpost's active-operator
-          // check rejects this node's epoch_in. We pulled the key from
-          // `batchOpSolKeys` above; regenerating here would break parity.
-          const solKey = batchOpSolKeys[ns.operatorAccount!]
-          Assert.ok(
-            solKey,
-            `Missing SOL key for batch operator ${ns.operatorAccount}`
-          )
-          const solPub = solKey.toPublic()
-          const solSigProvider = [
-            `sol-${ns.operatorAccount}`,
-            "solana",
-            "solana",
-            solPub.toNativeString(),
-            `KEY:${solKey.toNativeString()}`
-          ].join(",")
-          const solClientSpec = `sol-default,sol-${ns.operatorAccount},${solanaRpcUrl}`
-
-          const outpostArgs = [
-            "--signature-provider",
-            ethSigProvider,
-            "--outpost-ethereum-client",
-            ethClientSpec,
-            ...ethAbiFiles.flatMap(f => ["--ethereum-abi-file", f]),
-            "--batch-eth-opp-addr",
-            ethOppAddr,
-            "--batch-eth-opp-inbound-addr",
-            ethOppInboundAddr,
-            "--batch-eth-client-id",
-            "eth-default",
-            "--signature-provider",
-            solSigProvider,
-            "--outpost-solana-client",
-            solClientSpec,
-            "--batch-sol-client-id",
-            "sol-default"
-          ]
-
-          // When a SOL outpost is configured, splice in the plugin's own CLI
-          // options so the batch_operator_plugin can locate the program IDL
-          // (for strongly-typed `opp_solana_outpost_client` calls) and target
-          // the right on-chain program id.
-          if (solProgramId && solIdlPath) {
-            outpostArgs.push(
-              "--solana-idl-file",
-              solIdlPath,
-              "--batch-sol-program-id",
-              solProgramId
-            )
-          }
-
-          ns.cmd.push(...outpostArgs)
-
-          // Re-write start.cmd to include the injected outpost args
-          Fs.writeFileSync(
-            Path.join(ns.dataPath, "start.cmd"),
-            ns.cmd.join(" ")
-          )
-          log.info(
-            `[Phase 10a] Injected ETH${solProgramId ? "+SOL" : ""} outpost args for ${ns.operatorAccount}`
-          )
-        })
-
-        // Underwriter outpost arg injection — mirrors the batch op
-        // block above but populates --underwriter-* args for the
-        // underwriter_plugin. Each underwriter gets an HD-derived ETH
-        // signing key (slot N+i+1, past every batch op), the persisted
-        // ED25519 SOL key, the OperatorRegistry contract address on ETH,
-        // and the source-deposit function/instruction names so the
-        // daemon can verify the user's source-chain deposit before
-        // submitting commit() on both outposts.
-        const opregAddr = ethAddrs.OperatorRegistry
-        Assert.ok(
-          opregAddr,
-          "OperatorRegistry address missing from outpost-addrs.json"
+        // Re-write start.cmd to include the injected outpost args
+        Fs.writeFileSync(
+          Path.join(ns.dataPath, "start.cmd"),
+          ns.cmd.join(" ")
         )
-        underwriterStates.forEach((ns, i) => {
-          const hdIndex = batchOpStates.length + i + 1
-          const ethWallet = ethers.HDNodeWallet.fromMnemonic(
-            anvilMnemonic,
-            `${ETHBootstrapper.DerivationPath}${hdIndex}`
-          )
-          const sigProviderName = `eth-${ns.operatorAccount}`
-          const ethPrivKey = emPrivateKeyFromEthWallet(ethWallet)
-          const ethPubKey = "0x" + ethWallet.signingKey.publicKey.slice(4)
-          const ethSigProvider = [
-            sigProviderName,
-            "ethereum",
-            "ethereum",
-            ethPubKey,
-            `KEY:${ethPrivKey.toNativeString()}`
-          ].join(",")
-          const ethClientSpec = [
-            "eth-default",
-            sigProviderName,
-            anvilRpcUrl,
-            String(AnvilManager.DefaultChainId)
-          ].join(",")
+        log.info(
+          `[Phase 10a] Injected ETH${solProgramId ? "+SOL" : ""} outpost args for ${ns.operatorAccount}`
+        )
+      })
 
-          const solKey = uwSolKeys[ns.operatorAccount!]
-          Assert.ok(
-            solKey,
-            `Missing SOL key for underwriter ${ns.operatorAccount}`
-          )
-          const solPub = solKey.toPublic()
-          const solSigProvider = [
-            `sol-${ns.operatorAccount}`,
-            "solana",
-            "solana",
-            solPub.toNativeString(),
-            `KEY:${solKey.toNativeString()}`
-          ].join(",")
-          const solClientSpec = `sol-default,sol-${ns.operatorAccount},${solanaRpcUrl}`
+      // Underwriter outpost arg injection — mirrors the batch op
+      // block above but populates --underwriter-* args for the
+      // underwriter_plugin. Each underwriter gets an HD-derived ETH
+      // signing key (slot N+i+1, past every batch op), the persisted
+      // ED25519 SOL key, the OperatorRegistry contract address on ETH,
+      // and the source-deposit function/instruction names so the
+      // daemon can verify the user's source-chain deposit before
+      // submitting commit() on both outposts.
+      const opregAddr = ethAddrs.OperatorRegistry
+      Assert.ok(
+        opregAddr,
+        "OperatorRegistry address missing from outpost-addrs.json"
+      )
+      underwriterStates.forEach((ns, i) => {
+        const hdIndex = batchOpStates.length + i + 1
+        const ethWallet = ethers.HDNodeWallet.fromMnemonic(
+          anvilMnemonic,
+          `${ETHBootstrapper.DerivationPath}${hdIndex}`
+        )
+        const sigProviderName = `eth-${ns.operatorAccount}`
+        const ethPrivKey = emPrivateKeyFromEthWallet(ethWallet)
+        const ethPubKey = "0x" + ethWallet.signingKey.publicKey.slice(4)
+        const ethSigProvider = [
+          sigProviderName,
+          "ethereum",
+          "ethereum",
+          ethPubKey,
+          `KEY:${ethPrivKey.toNativeString()}`
+        ].join(",")
+        const ethClientSpec = [
+          "eth-default",
+          sigProviderName,
+          anvilRpcUrl,
+          String(AnvilManager.DefaultChainId)
+        ].join(",")
 
-          const outpostArgs = [
-            "--signature-provider",
-            ethSigProvider,
-            "--outpost-ethereum-client",
-            ethClientSpec,
-            ...ethAbiFiles.flatMap(f => ["--ethereum-abi-file", f]),
-            "--underwriter-eth-opreg-addr",
-            opregAddr,
-            "--underwriter-eth-source-deposit-function",
-            "requestSwap",
-            "--underwriter-eth-client-id",
-            "eth-default",
-            // Anvil only mines blocks on user txs in the test cluster,
-            // so the underwriter would deadlock waiting for the
-            // mainnet-default 12 confirmations. 1 is sufficient when
-            // the chain doesn't reorg (anvil never does).
-            "--underwriter-eth-min-confirmations",
-            "1",
-            "--signature-provider",
-            solSigProvider,
-            "--outpost-solana-client",
-            solClientSpec,
-            "--underwriter-sol-source-deposit-instruction",
-            "request_swap",
-            "--underwriter-sol-client-id",
-            "sol-default"
-          ]
-          if (solProgramId && solIdlPath) {
-            outpostArgs.push("--solana-idl-file", solIdlPath)
-          }
-          ns.cmd.push(...outpostArgs)
-          Fs.writeFileSync(
-            Path.join(ns.dataPath, "start.cmd"),
-            ns.cmd.join(" ")
-          )
-          log.info(
-            `[Phase 10a] Injected ETH${solProgramId ? "+SOL" : ""} outpost args for underwriter ${ns.operatorAccount}`
-          )
-        })
-      }
+        const solKey = uwSolKeys[ns.operatorAccount!]
+        Assert.ok(
+          solKey,
+          `Missing SOL key for underwriter ${ns.operatorAccount}`
+        )
+        const solPub = solKey.toPublic()
+        const solSigProvider = [
+          `sol-${ns.operatorAccount}`,
+          "solana",
+          "solana",
+          solPub.toNativeString(),
+          `KEY:${solKey.toNativeString()}`
+        ].join(",")
+        const solClientSpec = `sol-default,sol-${ns.operatorAccount},${solanaRpcUrl}`
+
+        const outpostArgs = [
+          "--signature-provider",
+          ethSigProvider,
+          "--outpost-ethereum-client",
+          ethClientSpec,
+          ...ethAbiFiles.flatMap(f => ["--ethereum-abi-file", f]),
+          "--underwriter-eth-opreg-addr",
+          opregAddr,
+          "--underwriter-eth-source-deposit-function",
+          "requestSwap",
+          "--underwriter-eth-client-id",
+          "eth-default",
+          // Anvil only mines blocks on user txs in the test cluster,
+          // so the underwriter would deadlock waiting for the
+          // mainnet-default 12 confirmations. 1 is sufficient when
+          // the chain doesn't reorg (anvil never does).
+          "--underwriter-eth-min-confirmations",
+          "1",
+          "--signature-provider",
+          solSigProvider,
+          "--outpost-solana-client",
+          solClientSpec,
+          "--underwriter-sol-source-deposit-instruction",
+          "request_swap",
+          "--underwriter-sol-client-id",
+          "sol-default"
+        ]
+        if (solProgramId && solIdlPath) {
+          outpostArgs.push("--solana-idl-file", solIdlPath)
+        }
+        ns.cmd.push(...outpostArgs)
+        Fs.writeFileSync(
+          Path.join(ns.dataPath, "start.cmd"),
+          ns.cmd.join(" ")
+        )
+        log.info(
+          `[Phase 10a] Injected ETH${solProgramId ? "+SOL" : ""} outpost args for underwriter ${ns.operatorAccount}`
+        )
+      })
 
       // ── 11. Kill bios node (not needed after bootstrap) ──
       log.info("Killing bios node (not needed after bootstrap)...")
@@ -1237,7 +1230,6 @@ export class ClusterManager {
       // depot credits the underwriter's balance the normal async way.
       const anvilStatePath = Path.join(dataPath, ClusterManager.AnvilStateSubpath)
       if (
-        cfg.ethereumPath &&
         cfg.underwriterCollateral !== undefined &&
         cfg.underwriterCollateral.length === underwriterStates.length &&
         underwriterStates.length > 0
@@ -1275,10 +1267,6 @@ export class ClusterManager {
           // state file `run` will later load from.
           await anvilMgr.stop()
         }
-      } else if (underwriterStates.length > 0 && !cfg.ethereumPath) {
-        log.warn(
-          "[Phase 11d] No ethereumPath configured; skipping underwriter collateral deposit"
-        )
       } else if (underwriterStates.length > 0) {
         log.warn(
           "[Phase 11d] No underwriterCollateral plan on ClusterConfig; skipping deposits"
@@ -2219,23 +2207,19 @@ async function bootstrapChain(
     },
     "sysio.chains@active"
   )
-  if (cfg.solanaPath) {
-    await clio.pushActionAndWait<SystemContracts.SysioChainsRegchainAction>(
-      "sysio.chains",
-      "regchain",
-      {
-        kind: SystemContracts.SysioChainsChainkind.CHAIN_KIND_SVM,
-        code: { value: SlugName.from("SOLANA") },
-        external_chain_id: 0,
-        name: "Solana (test-validator)",
-        description: "Local solana-test-validator (test cluster)"
-      },
-      "sysio.chains@active"
-    )
-  }
-  log.info(
-    `[Phase 16] Chains registered (WIRE + ETH${cfg.solanaPath ? " + SOL" : ""})`
+  await clio.pushActionAndWait<SystemContracts.SysioChainsRegchainAction>(
+    "sysio.chains",
+    "regchain",
+    {
+      kind: SystemContracts.SysioChainsChainkind.CHAIN_KIND_SVM,
+      code: { value: SlugName.from("SOLANA") },
+      external_chain_id: 0,
+      name: "Solana (test-validator)",
+      description: "Local solana-test-validator (test cluster)"
+    },
+    "sysio.chains@active"
   )
+  log.info("[Phase 16] Chains registered (WIRE + ETH + SOL)")
 
   // ── Phase 16a: Register tokens on sysio.tokens ──
   // Per the v6 plan §3.16 bootstrap-seed table: WIRE / ETH / SOL native +
@@ -2246,7 +2230,6 @@ async function bootstrapChain(
   log.info("[Phase 16a] Registering tokens on sysio.tokens...")
   const liqEthAddrHex: string | undefined = (() => {
     try {
-      if (!cfg.ethereumPath) return undefined
       const liqethAddrsFile = Path.join(
         cfg.ethereumPath,
         ".local/deployments/liqeth-addrs.json"
@@ -2270,10 +2253,111 @@ async function bootstrapChain(
         address: liqEthAddrHex.replace(/^0x/i, "")
       }
     : emptyChainAddr
-  // LIQSOL mint address — not yet wired through the harness; v6 plan §3.16
-  // lists it as `(SVM, <liqsol mint>)`. Seed empty for now; backfill once
-  // the liqsol-core deploy exposes its mint via SOLBootstrapper.
-  const liqSolChainAddr = emptyChainAddr
+  // LIQSOL is treated as a regular SPL mock for the test cluster (per
+  // `outpost-three-concerns.md` — outpost views LIQ tokens as ordinary
+  // SPL custody assets). SOLBootstrap.provisionSplReserves creates a
+  // mock SPL mint for LIQSOL and persists it alongside USDC/USDT in
+  // `<cluster>/data/sol-mock-mints.json`. Read here for Phase 16
+  // registration. Production would instead bind LIQSOL to the canonical
+  // liqsol-token mint.
+  const solMockMints: Record<string, { mint: string; decimals: number }> = (() => {
+    try {
+      const persistFile = Path.join(cfg.clusterPath, "data", "sol-mock-mints.json")
+      if (!Fs.existsSync(persistFile)) return {}
+      const raw = JSON.parse(Fs.readFileSync(persistFile, "utf-8")) as Array<{
+        code: number; mint: string; decimals: number
+      }>
+      const out: Record<string, { mint: string; decimals: number }> = {}
+      raw.forEach(e => {
+        // Reverse-lookup slug_name code → string name by scanning the
+        // SlugName roundtrip on the strings we care about. The persist
+        // file stores the numeric `code` for compactness.
+        ["USDC", "USDT", "LIQSOL"].forEach(name => {
+          if (SlugName.from(name) === e.code) {
+            out[name] = { mint: e.mint, decimals: e.decimals }
+          }
+        })
+      })
+      return out
+    } catch {
+      return {}
+    }
+  })()
+  const mockUsdcSolMint    = solMockMints["USDC"]?.mint
+  const mockUsdtSolMint    = solMockMints["USDT"]?.mint
+  const mockLiqsolSolMint  = solMockMints["LIQSOL"]?.mint
+
+  /**
+   * Convert a Solana base58 mint pubkey to the SVM-encoded
+   * `ChainToken.contract_addr` hex string the depot expects. The
+   * depot stores all chain-side addresses as raw hex of the
+   * chain-native byte representation (32 bytes for SVM ed25519
+   * pubkeys, 20 bytes for EVM addresses).
+   */
+  const splMintToHex = (b58: string): string => {
+    const buf = Buffer.from(
+      // Lightweight base58 decode via @solana/web3.js PublicKey.
+      // Keep the dependency surface inline to avoid an explicit
+      // bs58 import — PublicKey ships with web3.js which is
+      // already a workspace dep.
+      new SolanaPublicKey(b58).toBytes()
+    )
+    return buf.toString("hex")
+  }
+  const liqSolChainAddr = mockLiqsolSolMint
+    ? {
+        kind: SystemContracts.SysioTokensChainkind.CHAIN_KIND_SVM,
+        address: splMintToHex(mockLiqsolSolMint)
+      }
+    : emptyChainAddr
+
+  // Mock USDC/USDT addresses (ERC-20 on ETH, SPL on SOL). All four
+  // are deployed/created by the bootstrap pipeline:
+  //   - ETH side: `deployLocal.ts` deploys MockUsdc + MockUsdt and
+  //     persists addresses in `outpost-addrs.json`.
+  //   - SOL side: `SOLBootstrap.provisionSplReserves` creates the SPL
+  //     mints and persists them in `sol-mock-mints.json`.
+  // Both are read here for Phase 16 token registration.
+  const mockUsdcEthAddrHex: string | undefined = (() => {
+    try {
+      const file = Path.join(cfg.ethereumPath, ".local/deployments/outpost-addrs.json")
+      if (!Fs.existsSync(file)) return undefined
+      const addrs = JSON.parse(Fs.readFileSync(file, "utf-8"))
+      return typeof addrs.MockUsdc === "string" ? addrs.MockUsdc : undefined
+    } catch { return undefined }
+  })()
+  const mockUsdtEthAddrHex: string | undefined = (() => {
+    try {
+      const file = Path.join(cfg.ethereumPath, ".local/deployments/outpost-addrs.json")
+      if (!Fs.existsSync(file)) return undefined
+      const addrs = JSON.parse(Fs.readFileSync(file, "utf-8"))
+      return typeof addrs.MockUsdt === "string" ? addrs.MockUsdt : undefined
+    } catch { return undefined }
+  })()
+  const usdcEthChainAddr = mockUsdcEthAddrHex
+    ? {
+        kind: SystemContracts.SysioTokensChainkind.CHAIN_KIND_EVM,
+        address: mockUsdcEthAddrHex.replace(/^0x/i, "")
+      }
+    : emptyChainAddr
+  const usdtEthChainAddr = mockUsdtEthAddrHex
+    ? {
+        kind: SystemContracts.SysioTokensChainkind.CHAIN_KIND_EVM,
+        address: mockUsdtEthAddrHex.replace(/^0x/i, "")
+      }
+    : emptyChainAddr
+  const usdcSolChainAddr = mockUsdcSolMint
+    ? {
+        kind: SystemContracts.SysioTokensChainkind.CHAIN_KIND_SVM,
+        address: splMintToHex(mockUsdcSolMint)
+      }
+    : emptyChainAddr
+  const usdtSolChainAddr = mockUsdtSolMint
+    ? {
+        kind: SystemContracts.SysioTokensChainkind.CHAIN_KIND_SVM,
+        address: splMintToHex(mockUsdtSolMint)
+      }
+    : emptyChainAddr
 
   const tokenRegs: SystemContracts.SysioTokensRegtokenAction[] = [
     {
@@ -2308,26 +2392,65 @@ async function bootstrapChain(
       address: liqEthChainAddr
     }
   ]
-  if (cfg.solanaPath) {
-    tokenRegs.push(
-      {
-        kind: SystemContracts.SysioTokensTokenkind.TOKEN_KIND_NATIVE,
-        code: { value: SlugName.from("SOL") },
-        symbol_name: "Sol",
-        description: "Solana native asset",
-        precision: 9,
-        address: emptyChainAddr
-      },
-      {
-        kind: SystemContracts.SysioTokensTokenkind.TOKEN_KIND_LIQ,
-        code: { value: SlugName.from("LIQSOL") },
-        symbol_name: "Liquid SOL",
-        description: "Liquid-staking receipt for SOL",
-        precision: 9,
-        address: liqSolChainAddr
-      }
-    )
-  }
+  // ERC-20 stablecoins on Ethereum — mock USDC + USDT for the test
+  // cluster (mainnet would register the canonical contract
+  // addresses via the same shape). Per the v6 "TWO Token rows per
+  // cross-chain pair" decision, the SOL-side counterparts get
+  // distinct slug_name codes (`USDCSOL` / `USDTSOL`) so the depot's
+  // `code` primary key doesn't collide.
+  tokenRegs.push(
+    {
+      kind: SystemContracts.SysioTokensTokenkind.TOKEN_KIND_ERC20,
+      code: { value: SlugName.from("USDC") },
+      symbol_name: "USD Coin",
+      description: "USDC stablecoin on Ethereum",
+      precision: 9,
+      address: usdcEthChainAddr
+    },
+    {
+      kind: SystemContracts.SysioTokensTokenkind.TOKEN_KIND_ERC20,
+      code: { value: SlugName.from("USDT") },
+      symbol_name: "Tether USD",
+      description: "USDT stablecoin on Ethereum",
+      precision: 9,
+      address: usdtEthChainAddr
+    },
+    {
+      kind: SystemContracts.SysioTokensTokenkind.TOKEN_KIND_NATIVE,
+      code: { value: SlugName.from("SOL") },
+      symbol_name: "Sol",
+      description: "Solana native asset",
+      precision: 9,
+      address: emptyChainAddr
+    },
+    {
+      kind: SystemContracts.SysioTokensTokenkind.TOKEN_KIND_LIQ,
+      code: { value: SlugName.from("LIQSOL") },
+      symbol_name: "Liquid SOL",
+      description: "Liquid-staking receipt for SOL",
+      precision: 9,
+      address: liqSolChainAddr
+    },
+    // SPL stablecoins on Solana — mock USDC + USDT mints created
+    // by `SOLBootstrap.provisionSplReserves` (distinct codes from
+    // the ETH-side rows per the two-row decision).
+    {
+      kind: SystemContracts.SysioTokensTokenkind.TOKEN_KIND_SPL,
+      code: { value: SlugName.from("USDCSOL") },
+      symbol_name: "USDC (Solana)",
+      description: "USDC stablecoin on Solana",
+      precision: 9,
+      address: usdcSolChainAddr
+    },
+    {
+      kind: SystemContracts.SysioTokensTokenkind.TOKEN_KIND_SPL,
+      code: { value: SlugName.from("USDTSOL") },
+      symbol_name: "USDT (Solana)",
+      description: "USDT stablecoin on Solana",
+      precision: 9,
+      address: usdtSolChainAddr
+    }
+  )
   await Bluebird.each(tokenRegs, async tokenReg => {
     await clio.pushActionAndWait<SystemContracts.SysioTokensRegtokenAction>(
       "sysio.tokens",
@@ -2370,22 +2493,55 @@ async function bootstrapChain(
       is_native: false
     }
   ]
-  if (cfg.solanaPath) {
-    ctokRegs.push(
-      {
-        chain_code: { value: SlugName.from("SOLANA") },
-        token_code: { value: SlugName.from("SOL") },
-        contract_addr: "",
-        is_native: true
-      },
-      {
-        chain_code: { value: SlugName.from("SOLANA") },
-        token_code: { value: SlugName.from("LIQSOL") },
-        contract_addr: "",
-        is_native: false
-      }
-    )
-  }
+  // ERC-20 stablecoin bindings on Ethereum + SPL bindings on Solana.
+  ctokRegs.push(
+    {
+      chain_code: { value: SlugName.from("ETHEREUM") },
+      token_code: { value: SlugName.from("USDC") },
+      contract_addr: mockUsdcEthAddrHex
+        ? mockUsdcEthAddrHex.replace(/^0x/i, "")
+        : "",
+      is_native: false
+    },
+    {
+      chain_code: { value: SlugName.from("ETHEREUM") },
+      token_code: { value: SlugName.from("USDT") },
+      contract_addr: mockUsdtEthAddrHex
+        ? mockUsdtEthAddrHex.replace(/^0x/i, "")
+        : "",
+      is_native: false
+    },
+    {
+      chain_code: { value: SlugName.from("SOLANA") },
+      token_code: { value: SlugName.from("SOL") },
+      contract_addr: "",
+      is_native: true
+    },
+    {
+      chain_code: { value: SlugName.from("SOLANA") },
+      token_code: { value: SlugName.from("LIQSOL") },
+      contract_addr: mockLiqsolSolMint
+        ? splMintToHex(mockLiqsolSolMint)
+        : "",
+      is_native: false
+    },
+    {
+      chain_code: { value: SlugName.from("SOLANA") },
+      token_code: { value: SlugName.from("USDCSOL") },
+      contract_addr: mockUsdcSolMint
+        ? splMintToHex(mockUsdcSolMint)
+        : "",
+      is_native: false
+    },
+    {
+      chain_code: { value: SlugName.from("SOLANA") },
+      token_code: { value: SlugName.from("USDTSOL") },
+      contract_addr: mockUsdtSolMint
+        ? splMintToHex(mockUsdtSolMint)
+        : "",
+      is_native: false
+    }
+  )
   await Bluebird.each(ctokRegs, async ctokReg => {
     await clio.pushActionAndWait<SystemContracts.SysioTokensRegctokAction>(
       "sysio.tokens",
@@ -2405,9 +2561,7 @@ async function bootstrapChain(
   // explainable in test ledgers.
   log.info("[Phase 16c] Seeding default reserves on sysio.reserv...")
   const reserveSeedAmount = 10_000_000_000
-  const reserveRegs: SystemContracts.SysioReservRegreserveAction[] = []
-  if (cfg.ethereumPath) {
-    reserveRegs.push(
+  const reserveRegs: SystemContracts.SysioReservRegreserveAction[] = [
       {
         chain_code: { value: SlugName.from("ETHEREUM") },
         token_code: { value: SlugName.from("ETH") },
@@ -2427,11 +2581,27 @@ async function bootstrapChain(
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
         connector_weight_bps: 5000
-      }
-    )
-  }
-  if (cfg.solanaPath) {
-    reserveRegs.push(
+      },
+      {
+        chain_code: { value: SlugName.from("ETHEREUM") },
+        token_code: { value: SlugName.from("USDC") },
+        reserve_code: { value: SlugName.from("PRIMARY") },
+        name: "ETHEREUM-USDC/WIRE primary reserve",
+        description: "Bootstrap-seeded USDC ↔ WIRE reserve (mock ERC-20)",
+        initial_chain_amount: reserveSeedAmount,
+        initial_wire_amount: reserveSeedAmount,
+        connector_weight_bps: 5000
+      },
+      {
+        chain_code: { value: SlugName.from("ETHEREUM") },
+        token_code: { value: SlugName.from("USDT") },
+        reserve_code: { value: SlugName.from("PRIMARY") },
+        name: "ETHEREUM-USDT/WIRE primary reserve",
+        description: "Bootstrap-seeded USDT ↔ WIRE reserve (mock ERC-20)",
+        initial_chain_amount: reserveSeedAmount,
+        initial_wire_amount: reserveSeedAmount,
+        connector_weight_bps: 5000
+      },
       {
         chain_code: { value: SlugName.from("SOLANA") },
         token_code: { value: SlugName.from("SOL") },
@@ -2451,9 +2621,28 @@ async function bootstrapChain(
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
         connector_weight_bps: 5000
+      },
+      {
+        chain_code: { value: SlugName.from("SOLANA") },
+        token_code: { value: SlugName.from("USDCSOL") },
+        reserve_code: { value: SlugName.from("PRIMARY") },
+        name: "SOLANA-USDCSOL/WIRE primary reserve",
+        description: "Bootstrap-seeded USDC ↔ WIRE reserve on Solana (mock SPL)",
+        initial_chain_amount: reserveSeedAmount,
+        initial_wire_amount: reserveSeedAmount,
+        connector_weight_bps: 5000
+      },
+      {
+        chain_code: { value: SlugName.from("SOLANA") },
+        token_code: { value: SlugName.from("USDTSOL") },
+        reserve_code: { value: SlugName.from("PRIMARY") },
+        name: "SOLANA-USDTSOL/WIRE primary reserve",
+        description: "Bootstrap-seeded USDT ↔ WIRE reserve on Solana (mock SPL)",
+        initial_chain_amount: reserveSeedAmount,
+        initial_wire_amount: reserveSeedAmount,
+        connector_weight_bps: 5000
       }
-    )
-  }
+    ]
   await Bluebird.each(reserveRegs, async reserveReg => {
     await clio.pushActionAndWait<SystemContracts.SysioReservRegreserveAction>(
       "sysio.reserv",
@@ -2541,7 +2730,6 @@ async function bootstrapChain(
   // ── Phase 19a: Link operator chain accounts via authex ──
   // Each operator needs authex links for all active outpost chains so that
   // advance() can include their chain addresses in the OPERATORS attestation.
-  Assert.ok(cfg.ethereumPath, `ethereumPath is invalid: ${cfg.ethereumPath}`)
   log.info("[Phase 19a] Linking operator chain accounts via authex...")
   const anvilMnemonic = ethers.Mnemonic.fromPhrase(
     ETHBootstrapper.AnvilMnemonic
@@ -2552,7 +2740,6 @@ async function bootstrapChain(
   // sign Solana transactions — otherwise the SOL outpost would reject
   // epoch_in as coming from a non-active operator.
   const allOperatorStates = [...batchOpStates, ...underwriterStates]
-  const skipSolLink = cfg.solanaPath === undefined
   await Bluebird.mapSeries(
     allOperatorStates.entries(),
     async ([i, nodeState]) => {
@@ -2569,11 +2756,9 @@ async function bootstrapChain(
         account,
         i + 1,
         solKey,
-        skipSolLink
+        false
       )
-      log.info(
-        `[Phase 19a] Linked ETH${skipSolLink ? "" : "+SOL"} keys for ${account}`
-      )
+      log.info(`[Phase 19a] Linked ETH+SOL keys for ${account}`)
     }
   )
 

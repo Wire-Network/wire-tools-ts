@@ -18,6 +18,7 @@
     { "path": "./packages/flow-swap-with-underwriting/tsconfig.json" },
     { "path": "./packages/flow-batch-operator-termination/tsconfig.json" },
     { "path": "./packages/flow-swap-variance-revert/tsconfig.json" },
+    { "path": "./packages/flow-swap-non-native-tokens/tsconfig.json" },
     { "path": "./packages/debugging-shared/tsconfig.json" },
     { "path": "./packages/debugging-server/tsconfig.json" },
     { "path": "./packages/debugging-client-shared/tsconfig.json" },

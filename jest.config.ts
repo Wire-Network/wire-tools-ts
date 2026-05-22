@@ -7,6 +7,7 @@ const config: Config = {
     "packages/flow-swap-with-underwriting",
     "packages/flow-batch-operator-termination",
     "packages/flow-swap-variance-revert",
+    "packages/flow-swap-non-native-tokens",
     "packages/debugging-shared",
     "packages/debugging-server",
     "packages/debugging-client-shared",
