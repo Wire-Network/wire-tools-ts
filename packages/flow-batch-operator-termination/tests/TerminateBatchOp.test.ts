@@ -19,14 +19,14 @@ import {
   SystemContracts
 } from "@wireio/sdk-core"
 import {
-  createAuthExLink,
   depositETHCollateral,
   depositSOLCollateral,
-  ETHBootstrapper,
   FlowTestContext,
   log,
   pollUntil,
   ProcessManager,
+  provisionFreshBatchOperator,
+  type FreshBatchOperator,
   SOLClient
 } from "@wireio/test-cluster-tool"
 
@@ -144,11 +144,10 @@ const RemitPropagationEpochs = 8
 
 // Pre-bootstrap-created account whose K1 key was loaded into kiod by
 // the harness — used to sign new account creations on the WIRE side.
-const DEV_K1_PUBLIC_KEY = "SYS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV"
-const BOOTSTRAP_NODE_OWNER = "defproducera"
-
-const ANVIL_MNEMONIC = ETHBootstrapper.AnvilMnemonic
-const ANVIL_DERIVATION_PATH = ETHBootstrapper.DerivationPath
+// Account creation, ROA policy, ETH HD derivation, SOL airdrop, authex
+// links, and regoperator(is_bootstrapped=false) all live inside the
+// shared `provisionFreshBatchOperator` helper now — see
+// `.claude/rules/flow-test-scenario-structure.md`.
 
 // ──────────────────────────────────────────────────────────────────────
 //  Enum-comparison helpers (chain_plugin can return enums as either the
@@ -176,11 +175,14 @@ describe("Flow: Termination via miss-window (non-bootstrapped op, two-chain bond
   let opRegContract: ethers.Contract
   let opRegAddress: string
 
-  // The fresh op's identities — populated in step 2 (post-bootstrap).
-  let freshEthWallet: ethers.HDNodeWallet
+  // Fresh non-bootstrapped batch op provisioned in beforeAll via
+  // `provisionFreshBatchOperator`. The individual handles are
+  // mirrored from `freshOp` for ergonomic per-test access.
+  let freshOp:          FreshBatchOperator
+  let freshEthWallet:   ethers.HDNodeWallet
   let freshEthPubkey33: Uint8Array
-  let freshSolKeypair: Keypair
-  let freshSolPubkey: PublicKey
+  let freshSolKeypair:  Keypair
+  let freshSolPubkey:   PublicKey
 
   let solConnection: Connection
   let oppProgram: anchor.Program<anchor.Idl>
@@ -247,6 +249,24 @@ describe("Flow: Termination via miss-window (non-bootstrapped op, two-chain bond
       { commitment: "confirmed" }
     )
     oppProgram = new anchor.Program(idl, provider)
+
+    // ── Scenario provisioning: fresh non-bootstrapped batch op ──
+    // Per `.claude/rules/flow-test-scenario-structure.md`,
+    // scenario-specific setup happens in `beforeAll`. The harness
+    // substrate only registers BOOTSTRAPPED operators, and
+    // `bootstrapped-operator-invariants.md` makes them immune to the
+    // termination machinery — exactly what this flow needs to NOT
+    // happen to its target operator.
+    freshOp = await provisionFreshBatchOperator(ctx, {
+      account:        FRESH_OP_NAME,
+      ethHdIndex:     FRESH_OP_HD_INDEX,
+      solConnection,
+      solAirdropFloor: 5_000_000_000
+    })
+    freshEthWallet   = freshOp.ethWallet
+    freshEthPubkey33 = freshOp.ethCompressedPubkey
+    freshSolKeypair  = freshOp.solKeypair
+    freshSolPubkey   = freshOp.solPublicKey
   }, BootstrapTimeoutMs)
 
   afterAll(async () => {
@@ -275,143 +295,18 @@ describe("Flow: Termination via miss-window (non-bootstrapped op, two-chain bond
     expect(slot).toBeGreaterThan(0)
   })
 
-  // ── Create batchop.fresh: account + authex links + regoperator ──
+  // ── freshop provisioned in beforeAll ──
 
-  test(
-    "create batchop.fresh account, ETH+SOL authex links, regoperator(non-bootstrapped)",
-    async () => {
-      // 0) Bootstrap leaves the wallet closed/locked for security; re-open
-      // + unlock so signed actions below (createAccount, createlink,
-      // addpolicy) can complete with `clio` resolving the dev K1 key.
-      await ctx.wireClient.clio.walletOpenAndUnlock("default")
-
-      // 1) Account.
-      try {
-        await ctx.wireClient.clio.createAccount(
-          "sysio",
-          FRESH_OP_NAME,
-          DEV_K1_PUBLIC_KEY,
-          DEV_K1_PUBLIC_KEY
-        )
-      } catch (err: any) {
-        if (!(err?.message ?? "").includes("already exists")) {
-          throw new Error(`Failed to create ${FRESH_OP_NAME}: ${err?.message ?? err}`)
-        }
-      }
-
-      // 2) Resource policy from the bootstrap node owner — same flow the
-      // harness uses internally for every operator account. The `_weight`
-      // fields are sysio.token assets ("25.0000 SYS"), NOT raw integers
-      // — the strongly-typed generic enforces that at compile time per
-      // `feedback_strongly_typed_contract_actions.md`.
-      await ctx.wireClient.clio.pushActionAndWait<SystemContracts.SysioRoaAddpolicyAction>(
-        "sysio.roa",
-        "addpolicy",
-        {
-          owner:        FRESH_OP_NAME,
-          issuer:       BOOTSTRAP_NODE_OWNER,
-          net_weight:   "25.0000 SYS",
-          ram_weight:   "25.0000 SYS",
-          cpu_weight:   "25.0000 SYS",
-          time_block:   0,
-          network_gen:  0
-        },
-        `${BOOTSTRAP_NODE_OWNER}@active`
-      )
-
-      // 3) ETH wallet — HD-derive at slot one past the 9 bootstrapped batchops.
-      const mnemonic = ethers.Mnemonic.fromPhrase(ANVIL_MNEMONIC)
-      freshEthWallet = ethers.HDNodeWallet.fromMnemonic(
-        mnemonic,
-        `${ANVIL_DERIVATION_PATH}${FRESH_OP_HD_INDEX}`
-      ).connect(ctx.ethProvider)
-      // 33-byte compressed pubkey for the OperatorRegistry.deposit call +
-      // for the authex link the depot indexes on bypubkey.
-      const compressedHex = ethers.SigningKey.computePublicKey(
-        freshEthWallet.publicKey,
-        /*compressed=*/ true
-      )
-      freshEthPubkey33 = ethers.getBytes(
-        compressedHex.startsWith("0x") ? compressedHex : `0x${compressedHex}`
-      )
-
-      // 4) SOL keypair — random ED25519, no mnemonic derivation needed.
-      const solSdkKey = PrivateKey.generate(KeyType.ED)
-      freshSolKeypair = Keypair.fromSecretKey(solSdkKey.data.array)
-      freshSolPubkey  = freshSolKeypair.publicKey
-      // Fund the SOL keypair with enough lamports to cover the deposit
-      // + a handful of tx fees. The test-validator's airdrop is gated
-      // at 100 SOL = 100e9 lamports — well above our 2e6-lamport deposit.
-      //
-      // `Connection.confirmTransaction` uses a WS-subscription confirm
-      // strategy by default; the test-validator's WS port is unavailable
-      // (`Unexpected server response: 404`), so the WS path hangs the
-      // full 30s timeout window. Pattern matches `SOLBootstrap.
-      // initializePDAs` — poll `getSignatureStatus` against a deadline.
-      const airdropSig = await solConnection.requestAirdrop(freshSolPubkey, 5_000_000_000)
-      const airdropDeadlineMs = Date.now() + 30_000
-      while (Date.now() < airdropDeadlineMs) {
-        const status = await solConnection.getSignatureStatus(airdropSig)
-        const conf   = status?.value?.confirmationStatus
-        if (conf === "confirmed" || conf === "finalized") break
-        if (status?.value?.err) {
-          throw new Error(`Airdrop tx failed: ${JSON.stringify(status.value.err)}`)
-        }
-        await new Promise(resolve => setTimeout(resolve, 500))
-      }
-      const finalBalance = await solConnection.getBalance(freshSolPubkey)
-      expect(finalBalance).toBeGreaterThanOrEqual(5_000_000_000)
-
-      // 5) Authex link for ETH — signs with the operator's secp256k1 key.
-      const emPriv = PrivateKey.regenerate(
-        KeyType.EM,
-        Bytes.fromString(
-          freshEthWallet.privateKey.startsWith("0x")
-            ? freshEthWallet.privateKey.slice(2)
-            : freshEthWallet.privateKey,
-          "hex"
-        )
-      )
-      await createAuthExLink(ctx.wireClient.clio, {
-        chainKind:  ChainKind.EVM,
-        account:    FRESH_OP_NAME,
-        privateKey: emPriv,
-        ethWallet:  freshEthWallet
-      })
-
-      // 6) Authex link for SOL — signs with ED25519.
-      await createAuthExLink(ctx.wireClient.clio, {
-        chainKind:  ChainKind.SVM,
-        account:    FRESH_OP_NAME,
-        privateKey: solSdkKey
-      })
-
-      // 7) regoperator(is_bootstrapped=false). Signed as opreg so the
-      // authex-link check at lines 132-144 of sysio.opreg.cpp is
-      // bypassed via has_auth(get_self()) (we created the links above
-      // for the deposit-path's bypubkey index, not because regoperator
-      // would otherwise reject).
-      await ctx.wireClient.clio.pushActionAndWait<SystemContracts.SysioOpregRegoperatorAction>(
-        "sysio.opreg",
-        "regoperator",
-        {
-          account:         FRESH_OP_NAME,
-          type:            SystemContracts.SysioOpregOperatortype.OPERATOR_TYPE_BATCH,
-          is_bootstrapped: false
-        },
-        "sysio.opreg@active"
-      )
-
-      // Post-condition: operator row exists with status=UNKNOWN (no
-      // deposits yet — meets_role_min iterates req_batchop_collat and
-      // every available(...) returns 0).
-      const { rows } = await ctx.wireClient.getOperators()
-      const fresh    = rows.find((op: any) => op.account === FRESH_OP_NAME)
-      expect(fresh).toBeDefined()
-      expect(isStatus(fresh.status, OperatorStatus.UNKNOWN)).toBe(true)
-    },
-    60_000
-  )
+  test("freshop registered as non-bootstrapped batch op with status=UNKNOWN", async () => {
+    // Post-condition of `provisionFreshBatchOperator` — the operator
+    // row exists with status=UNKNOWN (no deposits yet —
+    // meets_role_min iterates req_batchop_collat and every
+    // available(...) returns 0).
+    const { rows } = await ctx.wireClient.getOperators()
+    const fresh    = rows.find((op: any) => op.account === FRESH_OP_NAME)
+    expect(fresh).toBeDefined()
+    expect(isStatus(fresh.status, OperatorStatus.UNKNOWN)).toBe(true)
+  })
 
   // ── ETH deposit → depot ledger ──
 

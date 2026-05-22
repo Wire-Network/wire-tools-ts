@@ -77,23 +77,40 @@ function currentDateStamp(date: Date = new Date()): string {
   return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`
 }
 
-/** Check if a process with the given name is running via `pgrep`. */
+/**
+ * Build the canonical `-f` regex for a managed process name. Matches the
+ * binary basename preceded by either start-of-line or `/`, followed by
+ * end-of-line or whitespace — i.e. the binary itself, not a substring of
+ * a longer command (`solana-test-validator-helper` won't match).
+ *
+ * `-f` is mandatory because `pkill`/`pgrep` default to matching against the
+ * 15-char `/proc/<pid>/comm` field, which truncates `solana-test-validator`
+ * (21 chars) to `solana-test-val` and silently no-ops. See
+ * `.claude/rules/kill-the-cluster-properly.md`.
+ */
+function cmdlineRegex(name: ManagedProcessName): string {
+  return `(^|/)${name}($|\\s)`
+}
+
+/** Check if a process with the given name is running via `pgrep -f`. */
 function isProcessRunning(name: ManagedProcessName): boolean {
   return Either.try(() =>
-    execFileSync("pgrep", ["-x", name], { stdio: "ignore" })
+    execFileSync("pgrep", ["-f", cmdlineRegex(name)], { stdio: "ignore" })
   ).match({
     Left: () => false,
     Right: () => true
   })
 }
 
-/** Send a signal to all processes matching `name` via `pkill`. */
+/** Send a signal to all processes matching `name` via `pkill -f`. */
 function pkill(
   name: ManagedProcessName,
   signal: ProcessSignalName = ProcessSignalName.SIGTERM
 ): boolean {
   return Either.try(() =>
-    execFileSync("pkill", ["-x", name], { stdio: "ignore" })
+    execFileSync("pkill", [`-${signal}`, "-f", cmdlineRegex(name)], {
+      stdio: "ignore"
+    })
   ).match({
     Left: err => {
       log.debug(

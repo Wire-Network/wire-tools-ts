@@ -24,10 +24,8 @@ pnpm build:dev
 pnpm test
 
 # Run a specific flow's tests
-pnpm --filter @wireio/test-flow-empty-epoch-balance-sheet test
 pnpm --filter @wireio/test-flow-operator-collateral-deposit test
 pnpm --filter @wireio/test-flow-swap-with-underwriting test
-pnpm --filter @wireio/test-flow-collateral-deposit-via-bar test
 pnpm --filter @wireio/test-flow-batch-operator-termination test
 pnpm --filter @wireio/test-flow-swap-variance-revert test
 
@@ -48,10 +46,8 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 | Package | Name | Purpose |
 |---------|------|---------|
 | `test-cluster-tool` | `@wireio/test-cluster-tool` | Core library: process managers, chain clients, bootstrap, CLI |
-| `flow-empty-epoch-balance-sheet` | `@wireio/test-flow-empty-epoch-balance-sheet` | Flow: Empty Epoch (balance sheet only) |
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Flow: Node Operator Collateral Deposit |
 | `flow-swap-with-underwriting` | `@wireio/test-flow-swap-with-underwriting` | Flow: Bidirectional SWAP (Ethereum ↔ Solana) with Underwriting |
-| `flow-collateral-deposit-via-bar` | `@wireio/test-flow-collateral-deposit-via-bar` | Flow: Collateral Deposit via BAR (OperatorAction Ethereum → WIRE) |
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Flow: Batch Operator Termination via Delivery Underperformance |
 | `flow-swap-variance-revert` | `@wireio/test-flow-swap-variance-revert` | Flow: Swap Variance-Tolerance Revert |
 

@@ -14,10 +14,8 @@
   ],
   "references": [
     { "path": "./packages/test-cluster-tool/tsconfig.json" },
-    { "path": "./packages/flow-empty-epoch-balance-sheet/tsconfig.json" },
     { "path": "./packages/flow-operator-collateral-deposit/tsconfig.json" },
     { "path": "./packages/flow-swap-with-underwriting/tsconfig.json" },
-    { "path": "./packages/flow-collateral-deposit-via-bar/tsconfig.json" },
     { "path": "./packages/flow-batch-operator-termination/tsconfig.json" },
     { "path": "./packages/flow-swap-variance-revert/tsconfig.json" },
     { "path": "./packages/debugging-shared/tsconfig.json" },
