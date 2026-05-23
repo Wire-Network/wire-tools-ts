@@ -205,16 +205,15 @@ describe("Flow: SWAP with non-native tokens", () => {
 
     // Fund the user with mock balances on both chains so they can
     // source-spend in each test cell. MockUsdc/Usdt mint is ungated
-    // (test-cluster convenience) so the deployer-signed mint above is
-    // sufficient. Use stderr.write for the diagnostic — Console.info
-    // can race with jest's stdout capture on a failing beforeAll.
+    // (test-cluster convenience) so the deployer-signed mint above
+    // is sufficient.
     const userAddr = users.ethereumWallet.address
-    process.stderr.write(`[flow-snnt] funding user ${userAddr}\n`)
+    log.info(`[flow-snnt] funding user ${userAddr}`)
     const fundAmtErc20 = 100n * SwapAmounts.SourceErc20Stable // 10 USDC / 10 USDT on ETH
     await mintMockErc20ToUser(mockUsdc as any, userAddr, fundAmtErc20)
-    process.stderr.write(`[flow-snnt] usdc mint complete\n`)
+    log.info(`[flow-snnt] usdc mint complete`)
     await mintMockErc20ToUser(mockUsdt as any, userAddr, fundAmtErc20)
-    process.stderr.write(`[flow-snnt] usdt mint complete\n`)
+    log.info(`[flow-snnt] usdt mint complete`)
     const fundAmtSpl = 100n * SwapAmounts.SourceSplStable
     await mintMockSplToUser(
       solanaConnection,
@@ -427,9 +426,13 @@ describe("Flow: SWAP with non-native tokens", () => {
     const userUsdtSolAta = getAssociatedTokenAddressSync(
       mockUsdtSolMint, users.solanaKeypair.publicKey
     )
-    // Note: the user's USDT-on-SOL ATA may not exist yet; the
-    // SOL outpost's handle_swap_remit SPL branch creates it
-    // on-demand via associated_token::create.
+    // Capture pre-swap ATA balance. beforeAll seeded the user with
+    // 10_000_000 base units of USDT-on-SOL so they can act as source
+    // for the LIQ-style direction — meaning the floor MUST be
+    // balance-delta, not an absolute threshold, or it would pass
+    // vacuously off the pre-existing balance without proving the
+    // SwapRemit actually paid out.
+    const usdtSolBefore = await getSplBalance(solanaConnection, userUsdtSolAta)
 
     const deadline  = BigInt(Math.floor(Date.now() / 1000) + 3600)
     const permitSig = await signErc20Permit(
@@ -453,11 +456,15 @@ describe("Flow: SWAP with non-native tokens", () => {
     )
     expect(result.transactionHash).toBeDefined()
 
-    // Canonical proof: user's USDT-on-SOL ATA balance bumps. This
-    // also proves on-chain ATA creation worked (the ATA didn't
-    // exist before the swap landed).
-    const drift = (TargetAmounts.Default * BigInt(Variance.ToleranceBps)) / 10_000n
-    const floor = TargetAmounts.Default - drift
+    // Canonical proof: user's USDT-on-SOL ATA balance bumps by AT
+    // LEAST `target - drift` chain-native base units.
+    //
+    // Conversion: target is in DEPOT 9-dec units; USDTSOL is 6-dec, so
+    // the SOL outpost applies `from_depot(amount, 6) = amount / 1000`
+    // before the SPL transfer. The user's ATA gains `target / 1000`.
+    const drift     = (TargetAmounts.Default * BigInt(Variance.ToleranceBps)) / 10_000n
+    const payoutMin = (TargetAmounts.Default - drift) / 1_000n
+    const floor     = usdtSolBefore + payoutMin
     await pollUntilSplBalance(
       solanaConnection, userUsdtSolAta, floor, Timing.RemitDeadlineMs
     )
@@ -472,6 +479,9 @@ describe("Flow: SWAP with non-native tokens", () => {
     const userUsdcSolAta = getAssociatedTokenAddressSync(
       mockUsdcSolMint, users.solanaKeypair.publicKey
     )
+    // Pre-swap ATA balance — see USDC→USDT test for the balance-delta
+    // rationale (user was pre-funded with 10_000_000 USDCSOL).
+    const usdcSolBefore = await getSplBalance(solanaConnection, userUsdcSolAta)
 
     const deadline  = BigInt(Math.floor(Date.now() / 1000) + 3600)
     const permitSig = await signErc20Permit(
@@ -495,8 +505,10 @@ describe("Flow: SWAP with non-native tokens", () => {
     )
     expect(result.transactionHash).toBeDefined()
 
-    const drift = (TargetAmounts.Default * BigInt(Variance.ToleranceBps)) / 10_000n
-    const floor = TargetAmounts.Default - drift
+    // Floor is balance-delta in CHAIN-NATIVE SPL base units (6-dec).
+    const drift     = (TargetAmounts.Default * BigInt(Variance.ToleranceBps)) / 10_000n
+    const payoutMin = (TargetAmounts.Default - drift) / 1_000n
+    const floor     = usdcSolBefore + payoutMin
     await pollUntilSplBalance(
       solanaConnection, userUsdcSolAta, floor, Timing.RemitDeadlineMs
     )
@@ -566,6 +578,18 @@ async function pollUntilEthBalance(
  * recipient ATA may not exist before the test (the SOL outpost's
  * `handle_swap_remit` creates it on demand).
  */
+async function getSplBalance(
+  connection: Connection,
+  ata:        PublicKey
+): Promise<bigint> {
+  try {
+    const account = await getAccount(connection, ata)
+    return account.amount
+  } catch {
+    return 0n
+  }
+}
+
 async function pollUntilSplBalance(
   connection: Connection,
   ata:        PublicKey,

@@ -133,6 +133,23 @@ export class ETHBootstrapper {
       // ── 3. Deploy contracts ──
       await this.deployContracts(ethereumPath, rpcUrl)
 
+      // ── 3b. Seed ReserveManager + Mock-ERC-20 reserves with custody
+      //        balances. The depot's `sysio.reserv::regreserve` records
+      //        10_000_000_000 depot-9-dec units logically per reserve,
+      //        but the outpost-side custody (contract balance / ERC-20
+      //        balanceOf) is independent and must be physically funded
+      //        for a SwapRemit (or RESERVE_REMIT) on a non-native dst
+      //        to have anything to draw against.
+      //
+      //        Flows whose first swap is ETH→X fund the reserve as a
+      //        side-effect of the user-initiated requestSwap; flows
+      //        where every ETH-side test sources from ERC-20 (e.g.
+      //        flow-swap-non-native-tokens, where test 6's USDCSOL→ETH
+      //        direction precedes any ETH→X) need the seed because no
+      //        ETH ever flows into the reserve before the first
+      //        X→ETH SwapRemit lands.
+      await this.seedReserveManager(rpcUrl, ethereumPath)
+
       // ── 4. Write accounts.json ──
       const accountsFile = Path.join(
         anvilDataPath,
@@ -281,6 +298,92 @@ export class ETHBootstrapper {
     }
 
     log.info("[ETH] Contract deployment complete")
+  }
+
+  /**
+   * Send native ETH + mock ERC-20 (USDC/USDT/LIQETH) from the
+   * deployer wallet to ReserveManager so it holds physical custody
+   * matching the depot's `sysio.reserv::regreserve` logical view.
+   *
+   * Runs AFTER `deployContracts` returns, so anvil + every contract
+   * is up and `outpost-addrs.json` reflects the final addresses. Uses
+   * a single owner-managed nonce counter (seeded from `getNonce("pending")`
+   * once, incremented per tx) to avoid the back-to-back-tx nonce race
+   * that surfaced when these transfers were attempted inside
+   * `deployLocal.ts` after the AccessManager `manager.execute` flow.
+   */
+  private async seedReserveManager(
+    rpcUrl:       string,
+    ethereumPath: string
+  ): Promise<void> {
+    const outpostAddrsFile = Path.join(
+      ethereumPath, ".local", "deployments", "outpost-addrs.json"
+    )
+    if (!Fs.existsSync(outpostAddrsFile)) {
+      log.warn("[ETH] seedReserveManager: outpost-addrs.json missing, skipping")
+      return
+    }
+    const addrs = JSON.parse(Fs.readFileSync(outpostAddrsFile, "utf-8"))
+    const reserveManagerAddr: string | undefined = addrs.ReserveManager
+    const mockUsdcAddr:       string | undefined = addrs.MockUsdc
+    const mockUsdtAddr:       string | undefined = addrs.MockUsdt
+    if (!reserveManagerAddr) {
+      log.warn("[ETH] seedReserveManager: ReserveManager addr missing, skipping")
+      return
+    }
+
+    // Bind deployer (anvil HD-index 0) — same identity deployLocal.ts
+    // used as `owner` so previously-minted MockUSDC/USDT balances are
+    // available here for transfer.
+    const provider = new ethers.JsonRpcProvider(rpcUrl)
+    const deployer = new ethers.Wallet(this.accounts[0].privateKey, provider)
+    let nonce = await deployer.getNonce("pending")
+    log.info(`[ETH] seedReserveManager start (deployer=${deployer.address}, nonce=${nonce})`)
+
+    const erc20Abi = [
+      "function transfer(address,uint256) returns (bool)",
+      "function balanceOf(address) view returns (uint256)"
+    ]
+    const ethSeed   = ethers.parseEther("100")
+    const stableSeed = ethers.parseUnits("100", 6)
+
+    log.info(`[ETH] seed ${ethers.formatEther(ethSeed)} ETH (nonce ${nonce})`)
+    const ethTx = await deployer.sendTransaction({
+      to:    reserveManagerAddr,
+      value: ethSeed,
+      nonce: nonce++
+    })
+    await ethTx.wait()
+
+    if (mockUsdcAddr) {
+      log.info(`[ETH] seed ${ethers.formatUnits(stableSeed, 6)} USDC (nonce ${nonce})`)
+      const usdc = new ethers.Contract(mockUsdcAddr, erc20Abi, deployer)
+      const usdcTx = await usdc.transfer(reserveManagerAddr, stableSeed, { nonce: nonce++ })
+      await usdcTx.wait()
+    }
+    if (mockUsdtAddr) {
+      log.info(`[ETH] seed ${ethers.formatUnits(stableSeed, 6)} USDT (nonce ${nonce})`)
+      const usdt = new ethers.Contract(mockUsdtAddr, erc20Abi, deployer)
+      const usdtTx = await usdt.transfer(reserveManagerAddr, stableSeed, { nonce: nonce++ })
+      await usdtTx.wait()
+    }
+
+    // LIQETH only if the LiqEth deploy went through (sometimes
+    // toggled off for outpost-only test runs).
+    const liqEthAddr: string | undefined = addrs.LiqEth
+    if (liqEthAddr) {
+      const liqEthSeed = ethers.parseEther("100")
+      const liqEth = new ethers.Contract(liqEthAddr, erc20Abi, deployer)
+      const ownerLiqBal: bigint = await liqEth.balanceOf(deployer.address)
+      if (ownerLiqBal >= liqEthSeed) {
+        log.info(`[ETH] seed ${ethers.formatEther(liqEthSeed)} LIQETH (nonce ${nonce})`)
+        const liqTx = await liqEth.transfer(reserveManagerAddr, liqEthSeed, { nonce: nonce++ })
+        await liqTx.wait()
+      } else {
+        log.info(`[ETH] skip LIQETH seed (deployer bal ${ethers.formatEther(ownerLiqBal)} < ${ethers.formatEther(liqEthSeed)})`)
+      }
+    }
+    log.info("[ETH] seedReserveManager complete")
   }
 }
 
