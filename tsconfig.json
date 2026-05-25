@@ -23,6 +23,7 @@
     { "path": "./packages/debugging-server/tsconfig.json" },
     { "path": "./packages/debugging-client-shared/tsconfig.json" },
     { "path": "./packages/debugging-client-tool/tsconfig.json" },
-    { "path": "./packages/debugging-client-tool-tui/tsconfig.json" }
+    { "path": "./packages/debugging-client-tool-tui/tsconfig.json" },
+    { "path": "./packages/test-app-server/tsconfig.json" }
   ]
 }

@@ -91,6 +91,12 @@
       ],
       "@wireio/debugging-client-tool-tui/*": [
         "./packages/debugging-client-tool-tui/src/*"
+      ],
+      "@wireio/test-app-server": [
+        "./packages/test-app-server/src/"
+      ],
+      "@wireio/test-app-server/*": [
+        "./packages/test-app-server/src/*"
       ]
     }
   },
