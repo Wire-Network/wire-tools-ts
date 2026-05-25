@@ -38,7 +38,7 @@
     "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/shared": "^1.0.21",
     "@wireio/sdk-core": "^1.0.21",
-    "@3fv/prelude-ts": "^0.8.37",
+    "@3fv/prelude-ts": "^0.8.41",
     "bluebird": "^3.7.2",
     "eventemitter3": "^5.0.4",
     "lodash": "^4.17.21",

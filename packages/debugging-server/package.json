@@ -33,7 +33,7 @@
     "clean": "rm -rf lib dist"
   },
   "dependencies": {
-    "@3fv/prelude-ts": "^0.8.37",
+    "@3fv/prelude-ts": "^0.8.41",
     "@protobuf-ts/runtime": "^2.11.1",
     "@wireio/debugging-shared": "workspace:*",
     "@wireio/opp-typescript-models": "^1.0.26",

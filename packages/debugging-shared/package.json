@@ -31,7 +31,7 @@
     "clean": "rm -rf lib"
   },
   "dependencies": {
-    "@3fv/prelude-ts": "^0.8.37",
+    "@3fv/prelude-ts": "^0.8.41",
     "@protobuf-ts/runtime": "^2.11.1",
     "@wireio/opp-typescript-models": "^1.0.26",
     "lodash": "^4.17.21",
