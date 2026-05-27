@@ -124,6 +124,14 @@ export const SYSTEM_ACCOUNTS = [
   "sysio.uwrit",
   "sysio.reserv",
   "sysio.chalg",
+  // Capital / dclaim contract account. Also serves as the
+  // CAPITAL_ACCOUNT recipient for emissions `fundclaim` transfers and the
+  // per-staker `STAKING_REWARD` claim ledger.
+  "sysio.dclaim",
+  // T5 governance bucket (recipient of governance_bps split in payepoch).
+  "sysio.gov",
+  // T5 capex / operations bucket (recipient of capex_bps split in payepoch).
+  "sysio.ops",
   "dev.owner1"
 ] as const
 
@@ -260,7 +268,13 @@ export const OPP_CONTRACT_PATHS = {
   "sysio.msgch": "contracts/sysio.msgch",
   "sysio.uwrit": "contracts/sysio.uwrit",
   "sysio.reserv": "contracts/sysio.reserv",
-  "sysio.chalg": "contracts/sysio.chalg"
+  "sysio.chalg": "contracts/sysio.chalg",
+  // sysio.dclaim is a depot-side contract (not a true OPP attestation
+  // handler), but it deploys/configures via the same path: setContract +
+  // setPriv + sysio.code grant on its own active permission so it can
+  // inline-transfer WIRE on `claim`. Co-locating with OPP contracts keeps
+  // the deploy list a single source of truth.
+  "sysio.dclaim": "contracts/sysio.dclaim"
 } as const
 
 export type OppContractName = keyof typeof OPP_CONTRACT_PATHS
@@ -277,7 +291,10 @@ export const OPP_SYSTEM_ACCOUNTS = [
   "sysio.msgch",
   "sysio.uwrit",
   "sysio.reserv",
-  "sysio.chalg"
+  "sysio.chalg",
+  // Mirrors OPP_CONTRACT_PATHS; dclaim needs sysio.code on its active perm
+  // so `claim` and `linkswept` can inline-send WIRE transfers.
+  "sysio.dclaim"
 ] as const
 
 // ---------------------------------------------------------------------------
@@ -331,3 +348,103 @@ export function batchOperatorAccountName(index: number): string {
 export function underwriterAccountName(index: number): string {
   return `uwrit.${LowercaseAlphabet[index % LowercaseAlphabet.length]}`
 }
+
+// ---------------------------------------------------------------------------
+// Emissions config (sysio.system::setemitcfg)
+// ---------------------------------------------------------------------------
+
+/**
+ * Shape of the `sysio.system::setemitcfg` action payload.
+ *
+ * Mirrors the on-chain `emission_config` struct in
+ * `wire-sysio/contracts/sysio.system/include/sysio.system/emissions.hpp`
+ * (post wire-sysio PR #354 — no `capital_bps`; the implicit capital reserve
+ * is `10000 - compute - capex - governance`, drained lazily by
+ * `sysio.system::fundclaim` on each `sysio.dclaim::onreward`).
+ *
+ * Until @wireio/sdk-core regenerates types against the new ABI, callers
+ * push this payload via `clio.pushAction<EmissionConfig>(...)`.
+ */
+export interface EmissionConfig {
+  // Node-owner tier allocations (WIRE subunits, 9 decimals)
+  t1_allocation: number
+  t2_allocation: number
+  t3_allocation: number
+  // Vesting durations per tier (seconds)
+  t1_duration: number
+  t2_duration: number
+  t3_duration: number
+  // Minimum claim threshold (subunits)
+  min_claimable: number
+  // T5 treasury
+  t5_distributable: number
+  t5_floor: number
+  // Decay + emission caps expressed annually; payepoch derives per-epoch
+  // values from sysio.epoch::epochcfg::epoch_duration_sec.
+  target_annual_decay_bps: number
+  annual_initial_emission: number
+  annual_max_emission: number
+  annual_min_emission: number
+  // Category splits (bps). compute + capex + governance <= 10000.
+  // Implicit capital reserve = 10000 - sum.
+  compute_bps: number
+  capex_bps: number
+  governance_bps: number
+  // compute_bps sub-split between producers and batch operators (must sum to 10000)
+  producer_bps: number
+  batch_op_bps: number
+  // Producer / standby ranking
+  standby_end_rank: number
+  // Epoch-log retention envelope
+  epoch_log_retention_count: number
+  // payepoch firing cadence (in epochs). 1 = fire every epoch.
+  pay_cadence_epochs: number
+}
+
+/**
+ * Default emissions config used by ClusterManager bootstrap.
+ *
+ * Numbers mirror `wire-sysio/contracts/tests/emissions_tests.cpp` realistic
+ * fixture (`setemitcfg_with_cadence`):
+ * - 9-decimal WIRE subunits everywhere
+ * - 30.6% annual decay survival (decay_bps = 6940)
+ * - compute 40% / capex 20% / governance 10% → implicit capital reserve 30%
+ * - compute split: producer 70% / batch op 30%
+ *
+ * `pay_cadence_epochs` defaults to 1 so soak runs see a payepoch every epoch
+ * (matches single-epoch test fixture). Real chains use higher cadence;
+ * flows can override via `ClusterConfig.emissionConfig`.
+ */
+export const EMISSION_CONFIG_DEFAULTS: EmissionConfig = {
+  // Node-owner tiers — mirror test fixture (T1 = 7.5M WIRE total tier
+  // allocation; T2/T3 scaled by tier-size ratio).
+  t1_allocation: 7_500_000_000_000_000, // 7,500,000 WIRE × 1e9
+  t2_allocation: 15_000_000_000_000_000, // 15,000,000 WIRE × 1e9
+  t3_allocation: 30_000_000_000_000_000, // 30,000,000 WIRE × 1e9
+  // SECONDS_PER_MONTH baseline = 30 days
+  t1_duration: 12 * 30 * 24 * 60 * 60,
+  t2_duration: 24 * 30 * 24 * 60 * 60,
+  t3_duration: 36 * 30 * 24 * 60 * 60,
+  min_claimable: 10_000_000_000, // 10 WIRE
+  // T5 treasury: 375M distributable, 125M floor
+  t5_distributable: 375_000_000_000_000_000,
+  t5_floor: 125_000_000_000_000_000,
+  // Decay/emission curve
+  target_annual_decay_bps: 6940,
+  annual_initial_emission: 563_150_000_000_000 * 365,
+  annual_max_emission: 3_000_000_000_000_000 * 365,
+  annual_min_emission: 100_000_000_000_000 * 365,
+  // Category splits — sum = 7000, implicit capital reserve = 3000
+  compute_bps: 4000,
+  capex_bps: 2000,
+  governance_bps: 1000,
+  // compute split
+  producer_bps: 7000,
+  batch_op_bps: 3000,
+  // Producer ranking
+  standby_end_rank: 28,
+  epoch_log_retention_count: 8640,
+  // Soak-friendly: emit every epoch
+  pay_cadence_epochs: 1
+}
+
