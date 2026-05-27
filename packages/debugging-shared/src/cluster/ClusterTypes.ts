@@ -275,6 +275,21 @@ export interface ClusterConfig {
    */
   underwriterCollateral?: ChainTokenAmount[][]
 
+  /**
+   * Overrides for the `sysio::setemitcfg` payload pushed during Phase 15b.
+   * Any field omitted falls back to the value in
+   * `test-cluster-tool/src/cluster/constants.ts::EMISSION_CONFIG_DEFAULTS`
+   * (which mirrors the wire-sysio `setemitcfg_with_cadence` fixture).
+   *
+   * Pure JSON-friendly numbers — the depot's `sysio.system::setemitcfg`
+   * accepts `int64` for the magnitude fields, JSON.stringify preserves
+   * those exactly when they're within `Number.MAX_SAFE_INTEGER`.
+   * Flow tests that need values outside that range (e.g. > 9e15) must
+   * pass an alternate Phase-15b override path; today's defaults stay
+   * inside the safe range.
+   */
+  emissionConfig?: Partial<EmissionConfigOverrides>
+
   /** All port assignments for the cluster. Resolved during create, persisted for run. */
   ports: ClusterPorts
 
@@ -289,6 +304,45 @@ export interface ClusterConfig {
  * model-package dependency — callers compute slug_name values via
  * `SlugName.from("ETH")` etc. from `@wireio/sdk-core`.
  */
+/**
+ * Per-cluster emission config knobs exposed for flow-test overrides.
+ *
+ * Mirrors the `sysio::setemitcfg` action payload (post wire-sysio PR #354 —
+ * no `capital_bps`; implicit capital reserve = `10000 - compute - capex -
+ * governance`). The full type lives in
+ * `test-cluster-tool/src/cluster/constants.ts::EmissionConfig`; this
+ * dependency-free copy keeps `debugging-shared` free of model deps while
+ * letting `ClusterConfig.emissionConfig` carry a partial override.
+ *
+ * Values are pure JSON numbers; magnitudes fit inside
+ * `Number.MAX_SAFE_INTEGER` (2^53 - 1 = ~9e15) for every field that the
+ * default fixture exercises. Flow tests that need wider ranges should
+ * bypass this surface and call `sysio::setemitcfg` directly.
+ */
+export interface EmissionConfigOverrides {
+  t1_allocation: number
+  t2_allocation: number
+  t3_allocation: number
+  t1_duration: number
+  t2_duration: number
+  t3_duration: number
+  min_claimable: number
+  t5_distributable: number
+  t5_floor: number
+  target_annual_decay_bps: number
+  annual_initial_emission: number
+  annual_max_emission: number
+  annual_min_emission: number
+  compute_bps: number
+  capex_bps: number
+  governance_bps: number
+  producer_bps: number
+  batch_op_bps: number
+  standby_end_rank: number
+  epoch_log_retention_count: number
+  pay_cadence_epochs: number
+}
+
 export interface ChainMinBond {
   /** SlugName / uint64 chain identifier (e.g. `SlugName.from("ETHEREUM")`). */
   chainCode: number

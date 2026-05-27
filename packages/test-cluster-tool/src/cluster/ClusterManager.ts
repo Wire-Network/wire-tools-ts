@@ -48,6 +48,8 @@ import {
   DEFAULT_RESOURCE_WEIGHT,
   DEV_K1_PRIVATE_KEY,
   DEV_K1_PUBLIC_KEY,
+  EMISSION_CONFIG_DEFAULTS,
+  type EmissionConfig,
   MAX_PRODUCERS,
   OPP_CONTRACT_PATHS,
   OPP_SYSTEM_ACCOUNTS,
@@ -2176,6 +2178,103 @@ async function bootstrapChain(
   )
   log.info("[Phase 15a] sysio.opreg configured")
 
+  // ── Phase 15b: Configure sysio.system emissions ──
+  // payepoch reads sysio.epoch::epochcfg::epoch_duration_sec for the
+  // annual→per-epoch scaling, so emissions setup must come after Phase 15
+  // (sysio.epoch::setconfig). All annual values must round to a non-zero
+  // per-epoch share at the configured epoch_duration_sec; setemitcfg checks
+  // and rejects otherwise.
+  //
+  // Post-PR-354 schema: no `capital_bps`. The implicit capital reserve is
+  // `10000 - compute - capex - governance` (= 3000 with these defaults).
+  // It stays in `sysio`'s balance each period and is drained lazily by
+  // `sysio.system::fundclaim` when `sysio.dclaim::onreward` fires.
+  log.info("[Phase 15b] Configuring sysio.system emissions...")
+
+  // The emissions contract reads sysio's balance in WIRE (9-decimal) — a
+  // separate token from the chain's SYS resource token. Create + issue
+  // WIRE to sysio before setemitcfg/initt5 so the gate sees a balance and
+  // payepoch can transfer. Matches the contract test fixture
+  // (`contracts/tests/emissions_tests.cpp`): symbol(9, "WIRE").
+  // pushActionAndWait is required: each step here reads state mutated by
+  // the previous one (issue reads token from create; initt5 reads emitcfg
+  // from setemitcfg), so the prior tx must land in a block before the
+  // next is built.
+  await clio.pushActionAndWait<{
+    issuer: string
+    maximum_supply: string
+  }>(
+    "sysio.token",
+    "create",
+    {
+      issuer: "sysio",
+      maximum_supply: "1000000000.000000000 WIRE"
+    },
+    "sysio.token@active"
+  )
+  await clio.pushActionAndWait<{ to: string; quantity: string; memo: string }>(
+    "sysio.token",
+    "issue",
+    {
+      to: "sysio",
+      quantity: "1000000000.000000000 WIRE",
+      memo: "initial WIRE for emissions"
+    },
+    "sysio@active"
+  )
+
+  const emissionCfg: EmissionConfig = {
+    ...EMISSION_CONFIG_DEFAULTS,
+    ...(cfg.emissionConfig ?? {})
+  }
+  // TODO(sdk-core): replace with `SystemContracts.SysioSystemSetemitcfgAction`
+  // once @wireio/sdk-core regenerates types against the post-PR-354 ABI.
+  await clio.pushActionAndWait<{ cfg: EmissionConfig }>(
+    "sysio",
+    "setemitcfg",
+    { cfg: emissionCfg },
+    "sysio@active"
+  )
+
+  // Seed t5_state. The emissions gate (sysio.epoch::check_emissions_ready)
+  // returns STATE_UNINITIALIZED until this singleton exists, which would
+  // make Phase 21 (msgch::bootstrap → epoch::advance) record a blocklog row
+  // and refuse to advance from epoch 0 → 1. initt5 must come AFTER
+  // setemitcfg (it reads emitcfg) and BEFORE Phase 21.
+  await clio.pushActionAndWait<{ start_time: string }>(
+    "sysio",
+    "initt5",
+    {
+      // Use chain head time, not local wall clock, so the start_time matches
+      // the chain's clock used by accrueepoch.
+      start_time: new Date(
+        (await clio.getInfo()).head_block_time + "Z"
+      )
+        .toISOString()
+        .slice(0, 19)
+    },
+    "sysio@active"
+  )
+
+  log.info(
+    `[Phase 15b] sysio.system emissions configured ` +
+      `(compute=${emissionCfg.compute_bps}bps capex=${emissionCfg.capex_bps}bps ` +
+      `gov=${emissionCfg.governance_bps}bps cadence=${emissionCfg.pay_cadence_epochs})`
+  )
+
+  // ── Phase 15c: Initialize sysio.dclaim ──
+  // Idempotent setconfig (creates `cap_config` singleton with default
+  // 180-day claimable window). dclaim::onreward / claim / linkswept all
+  // assert the singleton exists.
+  log.info("[Phase 15c] Initializing sysio.dclaim...")
+  await clio.pushAction<{}>(
+    "sysio.dclaim",
+    "setconfig",
+    {},
+    "sysio.dclaim@active"
+  )
+  log.info("[Phase 15c] sysio.dclaim initialized")
+
   // ── Phase 16: Register chains on sysio.chains ──
   // Post-v6 the chain registry lives on `sysio.chains` and is keyed by a
   // slug_name primary key (uint64 packed). The depot also has its own
@@ -2989,6 +3088,7 @@ export namespace ClusterManager {
       reqBatchopCollat,
       reqUwCollat,
       underwriterCollateral,
+      emissionConfig,
       force = false
     } = opts
 
@@ -3023,6 +3123,7 @@ export namespace ClusterManager {
       underwriterCollateral:
         underwriterCollateral ??
         UnderwriterTools.Collateral.load(undefined, underwriterCount),
+      emissionConfig,
       ports: await ClusterPorts.resolve({
         nodeCount,
         batchOperatorCount,

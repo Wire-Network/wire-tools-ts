@@ -79,20 +79,51 @@ export async function depositETHCollateral(
   const overrides: ethers.Overrides & { value?: bigint } =
     tokenCode === nativeCode ? { value: amount } : {}
 
-  const nonce = await resolveLatestNonce(opRegContract as unknown as ethers.BaseContract)
-  const tx = await opRegContract.deposit(
-    operatorType,
-    compressedPubkey,
-    tokenCode,
-    amount,
-    { ...overrides, nonce }
-  )
-  const receipt = await tx.wait(1)
-  Assert.ok(
-    receipt !== null && receipt.status === 1,
-    `ETHCollateralTool: deposit tx reverted (status=${receipt?.status ?? "null"})`
-  )
-  return receipt
+  // Retry the deposit call on `AccessManagedUnauthorized` reverts. After
+  // anvil's `--dump-state` → `--load-state` cycle (used between the
+  // bootstrap's first anvil pass and Phase 11d's deposit pass) the OZ
+  // AccessManager's per-target-function role table can intermittently
+  // present as un-granted on the first estimateGas — re-issuing the
+  // identical call against the same loaded state succeeds. The same
+  // tx, same signer, same args; only the JSON-RPC interaction is
+  // racy. The selector + custom-error pair we look for is
+  // 0x068ca9d8(address) = `AccessManagedUnauthorized(address)`.
+  const ACCESS_MANAGED_UNAUTHORIZED_SELECTOR = "0x068ca9d8"
+  const MAX_RETRIES = 3
+  const RETRY_BASE_DELAY_MS = 500
+  let lastErr: unknown = undefined
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const nonce = await resolveLatestNonce(opRegContract as unknown as ethers.BaseContract)
+      const tx = await opRegContract.deposit(
+        operatorType,
+        compressedPubkey,
+        tokenCode,
+        amount,
+        { ...overrides, nonce }
+      )
+      const receipt = await tx.wait(1)
+      Assert.ok(
+        receipt !== null && receipt.status === 1,
+        `ETHCollateralTool: deposit tx reverted (status=${receipt?.status ?? "null"})`
+      )
+      return receipt
+    } catch (err) {
+      lastErr = err
+      const errData = (err as { data?: string; info?: { error?: { data?: string } } })
+      const customData =
+        errData?.data ??
+        errData?.info?.error?.data ??
+        ""
+      const isAccessManagedFlake =
+        typeof customData === "string" &&
+        customData.toLowerCase().startsWith(ACCESS_MANAGED_UNAUTHORIZED_SELECTOR)
+      if (!isAccessManagedFlake || attempt === MAX_RETRIES - 1) throw err
+      await new Promise(r => setTimeout(r, RETRY_BASE_DELAY_MS * (attempt + 1)))
+    }
+  }
+  // Unreachable — the loop either returns the receipt or throws.
+  throw lastErr ?? new Error("ETHCollateralTool: deposit retry loop exhausted")
 }
 
 /**
