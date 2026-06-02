@@ -2109,6 +2109,69 @@ async function bootstrapChain(
     authorization: [{ actor: "sysio.opreg", permission: "owner" }]
   })
 
+  // ── Phase 14e: Cross-contract delegation for the NodeOwnerRegistration claim ──
+  // sysio.msgch's `dispatch_node_owner_reg` inline-sends `sysio.roa::newnameduser` (account
+  // create) and `sysio.roa::nodeownreg` (register + record ETH link). Both check
+  // `require_auth(get_self()=sysio.roa)`, so msgch declares `permission_level{sysio.roa, active}`;
+  // the chain accepts that only if `roa.active` trusts `sysio.msgch@sysio.code`. `sysio.roa@sysio.code`
+  // is retained so sysio.roa's own inline `newaccount` (newuser / newnameduser) stays authorized.
+  // Accounts are sorted by actor (sysio.msgch < sysio.roa) as the authority encoding requires.
+  await clio.pushTransaction({
+    account: "sysio",
+    name: "updateauth",
+    data: {
+      account: "sysio.roa",
+      permission: "active",
+      parent: "owner",
+      auth: {
+        threshold: 1,
+        keys: [{ key: DEV_K1_PUBLIC_KEY, weight: 1 }],
+        accounts: [
+          {
+            permission: { actor: "sysio.msgch", permission: "sysio.code" },
+            weight: 1
+          },
+          {
+            permission: { actor: "sysio.roa", permission: "sysio.code" },
+            weight: 1
+          }
+        ]
+      }
+    },
+    authorization: [{ actor: "sysio.roa", permission: "owner" }]
+  })
+
+  // ── Phase 14f: sysio.roa → sysio.authex delegation for recordlink ──
+  // sysio.roa::nodeownreg inline-sends `sysio.authex::recordlink`
+  // (`require_auth(get_self()=sysio.authex)`), declaring `permission_level{sysio.authex, active}`;
+  // the chain accepts that only if `authex.active` trusts `sysio.roa@sysio.code`.
+  // `sysio.authex@sysio.code` is retained for authex's own inline sends. Accounts sorted by actor
+  // (sysio.authex < sysio.roa).
+  await clio.pushTransaction({
+    account: "sysio",
+    name: "updateauth",
+    data: {
+      account: "sysio.authex",
+      permission: "active",
+      parent: "owner",
+      auth: {
+        threshold: 1,
+        keys: [{ key: DEV_K1_PUBLIC_KEY, weight: 1 }],
+        accounts: [
+          {
+            permission: { actor: "sysio.authex", permission: "sysio.code" },
+            weight: 1
+          },
+          {
+            permission: { actor: "sysio.roa", permission: "sysio.code" },
+            weight: 1
+          }
+        ]
+      }
+    },
+    authorization: [{ actor: "sysio.authex", permission: "owner" }]
+  })
+
   // ── Phase 15: Configure sysio.epoch ──
   log.info("[Phase 15] Configuring sysio.epoch...")
   // batch_operator_minimum_active must equal operators_per_epoch * batch_op_groups
