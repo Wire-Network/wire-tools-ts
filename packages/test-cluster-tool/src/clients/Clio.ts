@@ -666,7 +666,8 @@ export class Clio {
   // }
 
   async getTable(code: string, scope: string, table: string): Promise<string> {
-    return this.run(["get", "table", code, scope, table])
+    // clio `get table` takes positionals (account, table); scope is the -S/--scope option.
+    return this.run(["get", "table", code, table, "-S", scope])
   }
 
   // ── Protocol features ──
