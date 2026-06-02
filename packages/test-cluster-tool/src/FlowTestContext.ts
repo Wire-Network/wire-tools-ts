@@ -382,11 +382,22 @@ export class FlowTestContext {
 
   // ── Lifecycle ───────────────────────────────────────────────────────────
 
-  /** Teardown: stops cluster in fresh mode, no-op in attach mode. */
+  /**
+   * Teardown, dispatched exhaustively on {@link FlowMode}.
+   *
+   * Fresh mode owns the cluster, so it also destroys the ETH JSON-RPC provider:
+   * ethers' `AbstractProvider` holds a poll-timer map plus a keep-alive HTTP
+   * agent that otherwise outlive the suite and leave jest unable to exit
+   * ("asynchronous operations that weren't stopped" / open handles).
+   * Attach mode is a deliberate no-op — the external owner that supplied the
+   * long-lived cluster owns provider lifecycle too, so we must not destroy it
+   * here. `.exhaustive()` forces any future {@link FlowMode} to make this call.
+   */
   async teardown(): Promise<void> {
     await match(this.mode)
       .with(FlowMode.Fresh, async () => {
         log.info("[FlowTestContext] Stopping fresh cluster…")
+        this.ethProvider.destroy()
         await this.manager.stop()
       })
       .with(FlowMode.Attach, () => {
