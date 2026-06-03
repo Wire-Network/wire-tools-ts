@@ -134,7 +134,7 @@ async function generateAndImportKeys(
  * Used by OPP contracts that need inline action capabilities.
  */
 async function grantSysioCode(clio: Clio, account: string): Promise<void> {
-  await clio.pushTransaction({
+  await clio.pushTransactionAndWait({
     account: "sysio",
     name: "updateauth",
     data: {
@@ -658,7 +658,7 @@ export class ClusterManager {
         }
       })
 
-      // ── 5c. Batch operator nodes (read-mode=head, no producer_plugin) ──
+      // ── 5c. Batch operator nodes (read-mode=irreversible, no producer_plugin) ──
       // Plugin args for batch_operator_plugin, outpost_ethereum_client_plugin,
       // outpost_solana_client_plugin, cron_plugin are appended here as base args.
       // ETH/SOL-specific args (contract addresses, signing keys) are injected
@@ -687,7 +687,7 @@ export class ClusterManager {
           const debuggingServerUrl = toURL(ports.debuggingServer)
           const batchOpExtraArgs: string[] = [
             "--read-mode",
-            "head",
+            Clio.FinalityType.irreversible,
             ...BATCH_OPERATOR_PLUGINS.flatMap(p => ["--plugin", p]),
             "--signature-provider",
             wireK1SigProvider,
@@ -736,7 +736,7 @@ export class ClusterManager {
         }
       )
 
-      // ── 5d. Underwriter nodes (read-mode=head, no producer_plugin) ──
+      // ── 5d. Underwriter nodes (read-mode=irreversible, no producer_plugin) ──
       const underwriterStates: NodeState[] = range(cfg.underwriterCount).map(
         i => {
           const nodePath = Path.join(
@@ -765,7 +765,7 @@ export class ClusterManager {
           // the matching outposts.
           const underwriterExtraArgs: string[] = [
             "--read-mode",
-            "head",
+            Clio.FinalityType.irreversible,
             ...UNDERWRITER_PLUGINS.flatMap(p => ["--plugin", p]),
             "--plugin",
             "sysio::external_debugging_plugin",
@@ -1391,7 +1391,7 @@ export class ClusterManager {
     // Start debugging server (batch ops connect to it via --ext-debugging-server)
     await this.startDebuggingServer()
 
-    // Start batch operator nodes (read-mode=head — sync from P2P)
+    // Start batch operator nodes (read-mode=irreversible — sync from P2P)
     log.info(
       `Starting ${(this.state.batchOperatorNodes ?? []).length} batch op node(s)...`
     )
@@ -1932,7 +1932,7 @@ async function bootstrapChain(
     "sysio@active"
   )
   await Bluebird.each(producerNames, name =>
-    clio.pushAction<SystemContracts.SysioTokenTransferAction>(
+    clio.pushActionAndWait<SystemContracts.SysioTokenTransferAction>(
       "sysio.token",
       "transfer",
       {
@@ -1993,7 +1993,7 @@ async function bootstrapChain(
   )
   await clio.setPriv("sysio.authex")
   await grantSysioCode(clio, "sysio.authex")
-  await clio.pushTransaction({
+  await clio.pushTransactionAndWait({
     account: "sysio",
     name: "updateauth",
     data: {
@@ -2031,7 +2031,7 @@ async function bootstrapChain(
 
   // ── Phase 13: System init ──
   log.info("[Phase 13] System init...")
-  await clio.pushAction<SystemContracts.SysioSystemInitAction>(
+  await clio.pushActionAndWait<SystemContracts.SysioSystemInitAction>(
     "sysio",
     "init",
     { version: 0, core: "4,SYS" },
@@ -2084,7 +2084,7 @@ async function bootstrapChain(
   // chain's inline-send auth check to accept that declaration, `opreg.active`
   // must trust `sysio.msgch@sysio.code` — added here, mirroring the
   // sysio↔sysio.authex grant in Phase 12 above.
-  await clio.pushTransaction({
+  await clio.pushTransactionAndWait({
     account: "sysio",
     name: "updateauth",
     data: {
@@ -2181,7 +2181,7 @@ async function bootstrapChain(
   const opsPerEpoch =
     batchOpGroups > 0 ? Math.ceil(batchOpMin / batchOpGroups) : 1
   const adjustedMin = opsPerEpoch * batchOpGroups
-  await clio.pushAction<SystemContracts.SysioEpochSetconfigAction>(
+  await clio.pushActionAndWait<SystemContracts.SysioEpochSetconfigAction>(
     "sysio.epoch",
     "setconfig",
     {
@@ -2214,7 +2214,7 @@ async function bootstrapChain(
       config_timestamp_ms: 0
     }))
 
-  await clio.pushAction<SystemContracts.SysioOpregSetconfigAction>(
+  await clio.pushActionAndWait<SystemContracts.SysioOpregSetconfigAction>(
     "sysio.opreg",
     "setconfig",
     {
@@ -2817,7 +2817,7 @@ async function bootstrapChain(
 
   // ── Phase 17: Configure sysio.uwrit ──
   log.info("[Phase 17] Configuring sysio.uwrit...")
-  await clio.pushAction<SystemContracts.SysioUwritSetconfigAction>(
+  await clio.pushActionAndWait<SystemContracts.SysioUwritSetconfigAction>(
     "sysio.uwrit",
     "setconfig",
     {

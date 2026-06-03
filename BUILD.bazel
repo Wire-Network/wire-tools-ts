@@ -1,0 +1,40 @@
+# =============================================================================
+# wire-tools-ts — test cluster harness, flow tests, debugging server + TUI.
+#                 pnpm workspace (packages/*).
+# =============================================================================
+# Chain position 6 (last): depends on //wire-solana:build, the predecessor in
+# the required sequential build order. Through that single edge it transitively
+# pulls the whole chain (cdt -> sysio -> libraries-ts -> ethereum -> solana),
+# so `bazel build //wire-tools-ts:build` builds the entire platform in order.
+#
+# wire-tools-ts consumes @wireio/sdk-core + @wireio/shared (from wire-libraries-ts)
+# and resolves @wireio/opp-typescript-models from wire-sysio/build/opp via its
+# .pnpmfile.cjs at `pnpm install` — both satisfied by the upstream chain.
+# =============================================================================
+
+load("//:build_defs.bzl", "js_workspace_build")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = glob(
+        ["**"],
+        exclude = [
+            "node_modules/**",
+            "**/lib/**",
+            "**/dist/**",
+            ".git/**",
+            "BUILD.bazel",
+        ],
+    ),
+)
+
+js_workspace_build(
+    name = "build",
+    package_manager = "pnpm",
+    # Predecessor in the sequential chain; transitively pulls the full platform.
+    deps = ["//wire-solana:build"],
+    tags = ["ts"],
+    working_dir = "wire-tools-ts",
+)

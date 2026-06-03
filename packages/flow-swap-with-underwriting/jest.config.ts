@@ -4,6 +4,11 @@ const config = {
   roots: ["<rootDir>/tests"],
   testMatch: ["**/*.test.ts"],
   testTimeout: 300_000, // 5 min — multi-epoch flow
+  // forceExit: the Solana web3.js Connection WebSocket (1.98.x) exposes no
+  // public close(), so its reconnect/idle timers can outlive teardown and
+  // hang jest. This guarantees a clean exit on every path incl. errors; the
+  // ETH provider is closed properly in FlowTestContext.teardown().
+  forceExit: true,
   transform: {
     "^.+\\.ts$": [
       "ts-jest",

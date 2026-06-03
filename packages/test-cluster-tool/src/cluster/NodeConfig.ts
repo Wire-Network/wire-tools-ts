@@ -18,6 +18,7 @@ import {
   DEV_K1_PUBLIC_KEY
 } from "./constants.js"
 import { type ConfigOptions } from "./Config.js"
+import { Clio } from "../clients/Clio.js"
 import { range } from "lodash"
 
 /** Default hostname used when constructing node peer / listen addresses. */
@@ -73,7 +74,7 @@ export interface OperatorNode {
   p2pPort: number
   httpPort: number
   /** OPP operator nodes run in irreversible read-mode. */
-  readMode: "irreversible"
+  readMode: Clio.FinalityType
   batchOperatorAccount?: string
   batchEnabled?: boolean
   underwriterAccount?: string
@@ -245,7 +246,7 @@ export function generateNodeConfigs(
     name: toNodeName(totalNonBios + i),
     p2pPort: allocator.nextP2p(),
     httpPort: allocator.nextHttp(),
-    readMode: "irreversible"
+    readMode: Clio.FinalityType.irreversible
   }))
 
   return [...configs, ...producerNodes, ...apiNodes, ...operatorNodes]
