@@ -165,8 +165,9 @@ async function main(): Promise<void> {
               .option("epoch-duration-sec", {
                 alias: ["epoch-duration"],
                 type: "number",
-                default: 360,
-                describe: "Epoch duration in seconds"
+                default: 60,
+                describe:
+                  "Epoch duration in seconds (depot floor is 60 — sysio.epoch::setconfig rejects lower)"
               })
               .option("warmup-epochs", {
                 type: "number",
@@ -182,13 +183,15 @@ async function main(): Promise<void> {
               })
               .option("ethereum-path", {
                 type: "string",
+                demandOption: true,
                 describe:
-                  "Path to wire-ethereum repo root. If provided, anvil is bootstrapped with contract deployment."
+                  "Path to wire-ethereum repo root. anvil is bootstrapped with the outpost contract deployment."
               })
               .option("solana-path", {
                 type: "string",
+                demandOption: true,
                 describe:
-                  "Path to wire-solana repo root. If provided, solana-test-validator is bootstrapped with the opp-outpost program."
+                  "Path to wire-solana repo root. solana-test-validator is bootstrapped with the opp-outpost program."
               })
               .option("underwriter-collateral-json-file", {
                 type: "string",
@@ -211,8 +214,8 @@ async function main(): Promise<void> {
                 )
 
                 Assert.ok(
-                  inRange(argv["epoch-duration-sec"], 1),
-                  "--epoch-duration must be at least 1"
+                  inRange(argv["epoch-duration-sec"], 60),
+                  "--epoch-duration must be at least 60"
                 )
                 return true
               }),
