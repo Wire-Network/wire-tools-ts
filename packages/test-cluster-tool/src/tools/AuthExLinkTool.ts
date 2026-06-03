@@ -106,7 +106,7 @@ export async function createAuthExLink(
     ? signEthereumMessage(privateKey, message, ethWallet)
     : signSolanaMessage(privateKey, message))
 
-  await clio.pushAction<SystemContracts.SysioAuthexCreatelinkAction>(
+  await clio.pushActionAndWait<SystemContracts.SysioAuthexCreatelinkAction>(
     "sysio.authex",
     "createlink",
     {

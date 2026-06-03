@@ -98,8 +98,13 @@ const slugValue = (raw: unknown): number => {
 // Config
 // ---------------------------------------------------------------------------
 
-/** Epoch duration sized to keep the run under jest's 120 s test cap. */
-const TEST_EPOCH_DURATION_SEC = 30
+/**
+ * Epoch duration in seconds. MUST be >= `MIN_EPOCH_DURATION_SEC` (60) — the
+ * `sysio.epoch::setconfig` floor rejects anything lower, which fails bootstrap.
+ * Per-test `pollUntil` deadlines below are derived from this value, so they
+ * scale automatically with it.
+ */
+const TEST_EPOCH_DURATION_SEC = 60
 
 /** This flow exclusively registers a batch operator. */
 const OPERATOR_TYPE_BATCH = OperatorType.BATCH

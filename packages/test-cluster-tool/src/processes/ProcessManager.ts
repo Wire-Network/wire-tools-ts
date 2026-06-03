@@ -15,7 +15,29 @@ import * as Assert from "node:assert"
 import { mkdirs } from "../util.js"
 import { identity } from "lodash"
 
-const GracefulKillMs = 2_000
+/**
+ * Signal used to gracefully stop managed processes. nodeop/kiod (appbase) flush
+ * their chain state and exit cleanly on SIGINT; SIGTERM gives nodeop a fast exit
+ * that SKIPS the chainbase flush, so a later relaunch loads stale state and
+ * silently loses recently-irreversible writes (e.g. the bootstrapped epoch).
+ * anvil and solana-test-validator also stop cleanly on SIGINT (their Ctrl-C
+ * path), so SIGINT is the right graceful signal for every managed process.
+ */
+const GracefulSignal = ProcessSignalName.SIGINT
+
+/**
+ * How long to wait for a graceful (SIGINT) exit before escalating to SIGKILL.
+ * Must comfortably exceed nodeop's on-shutdown chainbase flush — a window that
+ * cuts the flush short re-loses the very state SIGINT was meant to persist. A
+ * healthy process exits well before this; the bound only catches a hung one.
+ */
+const GracefulKillMs = 30_000
+
+/**
+ * Grace for the startup orphan sweep. Leftover processes from a crashed prior
+ * run hold no state worth preserving, so they get a brief window then SIGKILL.
+ */
+const OrphanSweepGraceMs = 2_000
 const ChildStdio: StdioOptions = ["ignore", "pipe", "pipe"]
 
 /**
@@ -56,7 +78,7 @@ export interface ProcessHandle {
   pid: number
   /** Absolute path to the pid file written on spawn and removed on exit/kill. */
   pidFile: string
-  /** Kill the process (SIGTERM → escalate to SIGKILL on timeout) and wait for exit. */
+  /** Kill the process (SIGINT → escalate to SIGKILL on timeout) and wait for exit. */
   kill(): Promise<void>
   /** Resolve with the exit code once the process has exited. */
   wait(): Promise<number>
@@ -105,7 +127,7 @@ function isProcessRunning(name: ManagedProcessName): boolean {
 /** Send a signal to all processes matching `name` via `pkill -f`. */
 function pkill(
   name: ManagedProcessName,
-  signal: ProcessSignalName = ProcessSignalName.SIGTERM
+  signal: ProcessSignalName = GracefulSignal
 ): boolean {
   return Either.try(() =>
     execFileSync("pkill", [`-${signal}`, "-f", cmdlineRegex(name)], {
@@ -131,7 +153,7 @@ function treeKillAsync(pid: number, signal: ProcessSignalName): Promise<void> {
 
 /**
  * Kill any existing instances of managed processes.
- * Sends SIGTERM first, waits {@link GracefulKillMs}, then SIGKILL for stragglers.
+ * Sends SIGINT first, waits {@link OrphanSweepGraceMs}, then SIGKILL stragglers.
  */
 function killExistingProcesses(): void {
   const running = ManagedProcessNames.filter(isProcessRunning)
@@ -140,7 +162,7 @@ function killExistingProcesses(): void {
   log.info(`Killing existing processes: ${running.join(", ")}`)
   running.forEach(name => pkill(name))
 
-  execFileSync("sleep", [String(GracefulKillMs / 1000)])
+  execFileSync("sleep", [String(OrphanSweepGraceMs / 1000)])
 
   const stragglers = running.filter(isProcessRunning)
   if (stragglers.length > 0) {
@@ -385,9 +407,9 @@ export class ProcessManager {
         if (exitDeferred.isSettled()) return
         log.info(`Killing ${config.label} (id=${id}, pid=${pid})`)
         try {
-          await treeKillAsync(pid, ProcessSignalName.SIGTERM)
+          await treeKillAsync(pid, GracefulSignal)
         } catch (err: any) {
-          log.warn(`SIGTERM failed for ${config.label}: ${err.message}`)
+          log.warn(`${GracefulSignal} failed for ${config.label}: ${err.message}`)
         }
 
         const timer = new Promise<"timeout">(resolve =>
