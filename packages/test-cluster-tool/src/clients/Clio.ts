@@ -3,8 +3,8 @@ import { promisify } from "util"
 import assert from "node:assert"
 import { log } from "../logger.js"
 import { asOption, Future } from "@3fv/prelude-ts"
-import { flatten, isEmpty, negate } from "lodash"
-import { isNotEmpty } from "../util.js"
+import { flatten, negate } from "lodash"
+import { isNotEmpty, retry } from "../util.js"
 import {
   Deferred,
   isDefined,
@@ -350,14 +350,36 @@ export class Clio {
   // ── Privileged ──
 
   async setPriv(account: string): Promise<API.v1.SendTransactionResponse> {
-    const result = await this.pushAction<SystemContracts.SysioBiosSetprivAction>(
-      "sysio",
-      "setpriv",
-      { account, is_priv: 1 },
-      "sysio@active"
+    // Wait for IRREVERSIBLE, not just head-advance: a forked-out setpriv leaves
+    // the contract unprivileged, which silently breaks its inline-action sends
+    // (e.g. sysio.epoch's queueout fan-out) downstream.
+    const label = `setpriv ${account}`
+    return retry(
+      async () => {
+        const result =
+            await this.pushAction<SystemContracts.SysioBiosSetprivAction>(
+              "sysio",
+              "setpriv",
+              { account, is_priv: 1 },
+              "sysio@active"
+            ),
+          txId = Clio.getTransId(result)
+        if (isString(txId) && isNotEmpty(txId)) {
+          await this.assertFinality(
+            txId,
+            label,
+            Clio.DefaultFinality,
+            Clio.DefaultTimeoutMs
+          )
+        }
+        return result
+      },
+      {
+        maxAttempts: Clio.FinalityMaxAttempts,
+        delayMs: Clio.FinalityRetryDelayMs,
+        label
+      }
     )
-    await this.waitForHeadToAdvance()
-    return result
   }
 
   // ── Transaction confirmation ──
@@ -381,6 +403,19 @@ export class Clio {
       return (result as { transaction_id: string }).transaction_id
     }
     return null
+  }
+
+  /**
+   * True if the block's transaction list contains the given transaction id.
+   * The `trx` field is either the bare id string or an object carrying `id`.
+   */
+  static blockContainsTransaction(
+    block: Clio.IGetBlockResponse,
+    txId: string
+  ): boolean {
+    return (block.transactions ?? []).some(
+      tx => (typeof tx.trx === "string" ? tx.trx : tx.trx?.id) === txId
+    )
   }
 
   // ── HTTP API (direct fetch, bypasses clio CLI) ──
@@ -568,11 +603,7 @@ export class Clio {
 
       try {
         const block = await this.getBlock(blockNum)
-        const match = (block.transactions ?? []).find(tx => {
-          const txId = typeof tx.trx === "string" ? tx.trx : tx.trx?.id
-          return txId === transId
-        })
-        if (match) {
+        if (Clio.blockContainsTransaction(block, transId)) {
           log.info(`Transaction ${transId} found in block ${blockNum}`)
           return blockNum
         }
@@ -588,73 +619,210 @@ export class Clio {
   }
 
   /**
-   * Push an action and wait for it to be included in a block.
-   * Uses `-j` flag to get JSON result with `transaction_id`, then waits for block inclusion.
+   * Resolve the canonical block height a transaction currently sits at, or
+   * `null` if it is not in any applied block (never included, or forked out
+   * and not re-applied). Re-querying this each poll is what makes the finality
+   * wait transparent to a fork that re-applies the tx at a different height.
+   */
+  private async locateTransactionBlock(txId: string): Promise<number | null> {
+    const trace = await this.getTransaction(txId).catch(() => null)
+    return isObject(trace) && isNumber(trace.block_num) && trace.block_num > 0
+      ? trace.block_num
+      : null
+  }
+
+  /**
+   * Wait until a transaction is committed to an IRREVERSIBLE (final, un-forkable)
+   * block, tolerating a fork that re-applies it at a different height.
+   *
+   * Inclusion in a block is NOT finality: a freshly produced block can still be
+   * orphaned by a fork before it reaches the chain's last-irreversible height,
+   * which silently discards the transaction's effects. This polls the chain's
+   * `last_irreversible_block_num` and only succeeds once the transaction is
+   * present in a block at or below it.
+   *
+   * @param txId transaction id to confirm.
+   * @param blockNum height the transaction was first observed in.
+   * @param timeoutMs budget for the irreversibility wait.
+   * @return `true` once irreversibly committed; `false` if it was forked out
+   *   and not re-applied within `timeoutMs` — the caller MUST re-push, because
+   *   a forked-out transaction never re-applies itself.
+   */
+  async waitForTransactionIrreversible(
+    txId: string,
+    blockNum: number,
+    timeoutMs = Clio.DefaultTimeoutMs
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs
+    let height = blockNum
+    while (Date.now() < deadline) {
+      try {
+        const lib = (await this.getInfo()).last_irreversible_block_num
+        if (lib >= height) {
+          const block = await this.getBlock(height)
+          if (Clio.blockContainsTransaction(block, txId)) return true
+          // The height became final WITHOUT the tx → it was forked out. A fork
+          // may have re-applied it at a new height; re-resolve before concluding.
+          const relocated = await this.locateTransactionBlock(txId)
+          if (relocated === null) return false
+          height = relocated
+        }
+      } catch (err) {
+        // Transient RPC blip — keep polling rather than forcing a re-push.
+        log.debug(`waitForTransactionIrreversible(${txId}): poll error: ${err}`)
+      }
+      await Deferred.delay(Clio.PollIntervalMs)
+    }
+    return false
+  }
+
+  /**
+   * Wait for a known transaction to reach the requested {@link Clio.FinalityType}.
+   * `irreversible`: wait for in-block inclusion then for that block to become
+   * final, throwing if it is forked out first — the throw is what drives the
+   * {@link retry}-based re-push (a forked-out tx never re-applies itself, so
+   * finality has to be re-driven by re-sending). `head`/`speculative`: wait only
+   * for in-block inclusion.
+   */
+  private async assertFinality(
+    txId: string,
+    label: string,
+    finality: Clio.FinalityType,
+    timeoutMs: number
+  ): Promise<void> {
+    const blockNum = await this.waitForTransactionInBlock(txId, timeoutMs)
+    if (
+      finality === Clio.FinalityType.irreversible &&
+      !(await this.waitForTransactionIrreversible(txId, blockNum, timeoutMs))
+    ) {
+      throw new Error(`${label}: tx ${txId} forked out before irreversibility`)
+    }
+  }
+
+  /**
+   * Push an action and wait until it reaches `finality` (default
+   * {@link Clio.DefaultFinality} = irreversible), re-pushing the same action
+   * (fresh TAPOS + expiration → new tx id, never a duplicate) if it is forked
+   * out before finality. Bounded by {@link Clio.FinalityMaxAttempts}.
    */
   async pushActionAndWait<T extends {}>(
     account: string,
     action: string,
     data: T,
     auth: string,
-    waitTimeoutMs = Clio.DefaultTimeoutMs
+    waitTimeoutMs = Clio.DefaultTimeoutMs,
+    finality = Clio.DefaultFinality
   ): Promise<API.v1.SendTransactionResponse> {
-    const result = await this.pushAction<T>(account, action, data, auth)
-
-    log.info(`pushActionAndWait result:`, result)
-
-    const txId = asOption(result?.transaction_id)
-      .filter(isString)
-      .filter(isNotEmpty)
-      .getOrThrow(`Result missing transaction_id: ${JSON.stringify(result)}`)
-
-    await this.waitForTransactionInBlock(txId, waitTimeoutMs)
-    return result
+    const label = `${account}::${action}`
+    return retry(
+      async () => {
+        const result = await this.pushAction<T>(account, action, data, auth),
+          txId = Clio.getTransId(result)
+        if (isString(txId) && isNotEmpty(txId)) {
+          await this.assertFinality(txId, label, finality, waitTimeoutMs)
+        }
+        return result
+      },
+      {
+        maxAttempts: Clio.FinalityMaxAttempts,
+        delayMs: Clio.FinalityRetryDelayMs,
+        label
+      }
+    )
   }
 
   /**
-   * Deploy a contract and wait for it to be included in a block.
-   * Uses `-j` flag to get JSON result with `transaction_id`, then waits for block inclusion.
+   * Push a (multi-)action transaction and wait until it reaches `finality`
+   * (default {@link Clio.DefaultFinality} = irreversible), re-pushing the same
+   * transaction if it is forked out before finality. Use for bootstrap-critical
+   * grants (`updateauth`, etc.) downstream steps depend on.
+   */
+  async pushTransactionAndWait(
+    actions: Clio.IAnyAction | Clio.IAnyAction[],
+    finality = Clio.DefaultFinality
+  ): Promise<API.v1.SendTransactionResponse> {
+    const actionList = Array.isArray(actions) ? actions : [actions]
+    const label = actionList
+      .map(action => `${action.account}::${action.name}`)
+      .join(",")
+    return retry(
+      async () => {
+        const result = await this.pushTransaction(...actionList),
+          txId = Clio.getTransId(result)
+        if (isString(txId) && isNotEmpty(txId)) {
+          await this.assertFinality(txId, label, finality, Clio.DefaultTimeoutMs)
+        }
+        return result
+      },
+      {
+        maxAttempts: Clio.FinalityMaxAttempts,
+        delayMs: Clio.FinalityRetryDelayMs,
+        label
+      }
+    )
+  }
+
+  /**
+   * Deploy a contract and wait until it reaches `finality` (default
+   * {@link Clio.DefaultFinality} = irreversible), re-pushing the same deploy if
+   * it is forked out before finality. Re-pushing is safe: a redeploy of
+   * identical code is a settled no-op (`NoTransactionSent`).
    */
   async setContractAndWait(
     account: string,
     contractPath: string,
     wasmFile: string,
     abiFile: string,
-    waitTimeoutMs = Clio.DefaultTimeoutMs
+    waitTimeoutMs = Clio.DefaultTimeoutMs,
+    finality = Clio.DefaultFinality
   ): Promise<Record<string, unknown>> {
-    const result = await this.run<Record<string, unknown>>(
-      [
-        "set",
-        "contract",
-        account,
-        contractPath,
-        wasmFile,
-        abiFile,
-        "-p",
-        `${account}@active`,
-        "-j"
-      ],
-      { json: true }
-    )
-    log.info(
-      `setContractAndWait result: ${JSON.stringify(result).slice(0, 200)}`
-    )
+    const label = `setContract ${account}`
+    return retry(
+      async () => {
+        const result = await this.run<Record<string, unknown>>(
+          [
+            "set",
+            "contract",
+            account,
+            contractPath,
+            wasmFile,
+            abiFile,
+            "-p",
+            `${account}@active`,
+            "-j"
+          ],
+          { json: true }
+        )
+        log.info(
+          `setContractAndWait result: ${JSON.stringify(result).slice(0, 200)}`
+        )
 
-    // THIS OCCURS WHEN THE CODE IS IDENTICAL TO EXISTING CODE.
-    if (isString(result) && result.includes(Clio.NoTransactionSent)) {
-      return { transaction_id: "no_transaction_sent" }
-    }
-    assert(
-      typeof result === "object" && result !== null,
-      `Expected object result, got ${typeof result}`
+        // THIS OCCURS WHEN THE CODE IS IDENTICAL TO EXISTING CODE — settled no-op.
+        if (isString(result) && result.includes(Clio.NoTransactionSent)) {
+          return { transaction_id: Clio.NoTransactionSentTxId }
+        }
+        assert(
+          typeof result === "object" && result !== null,
+          `Expected object result, got ${typeof result}`
+        )
+        assert(
+          "transaction_id" in result,
+          `Result missing transaction_id: ${JSON.stringify(result).slice(0, 200)}`
+        )
+        await this.assertFinality(
+          result.transaction_id as string,
+          label,
+          finality,
+          waitTimeoutMs
+        )
+        return result
+      },
+      {
+        maxAttempts: Clio.FinalityMaxAttempts,
+        delayMs: Clio.FinalityRetryDelayMs,
+        label
+      }
     )
-    assert(
-      "transaction_id" in result,
-      `Result missing transaction_id: ${JSON.stringify(result).slice(0, 200)}`
-    )
-    const txId = result.transaction_id as string
-    await this.waitForTransactionInBlock(txId, waitTimeoutMs)
-    return result
   }
 
   // ── Chain info ──
@@ -758,5 +926,39 @@ export namespace Clio {
   /** Interval between poll attempts when waiting for blocks/transactions (ms). */
   export const PollIntervalMs = 500
 
+  /**
+   * Chain finality level. The string values are the literal nodeop `--read-mode`
+   * argument values, so this enum is the single source of those spellings for
+   * both node configuration and the `*AndWait` confirmation level:
+   *   - `irreversible` — the block is final / un-forkable (last-irreversible).
+   *   - `head` / `speculative` — the (revertible) head; in-block but not final.
+   */
+  export enum FinalityType {
+    speculative = "speculative",
+    head = "head",
+    irreversible = "irreversible"
+  }
+
+  /**
+   * Default finality for `*AndWait` confirmation and for OPP operator nodes.
+   * Irreversible: the batch_operator / underwriter plugins must act on final
+   * state (see CLAUDE-WIRE-OVERVIEW §6), and bootstrap state must survive a
+   * fork before downstream steps depend on it.
+   */
+  export const DefaultFinality = FinalityType.irreversible
+
+  /**
+   * Max attempts (incl. the first) to push a transaction that is forked out
+   * before reaching irreversibility. A forked-out tx never re-applies itself, so
+   * finality has to be re-driven by re-sending; this bounds that retry.
+   */
+  export const FinalityMaxAttempts = 3
+
+  /** Delay between finality re-push attempts (ms) — lets the chain settle. */
+  export const FinalityRetryDelayMs = 1_000
+
   export const NoTransactionSent = "no transaction is sent"
+
+  /** Sentinel `transaction_id` returned when set-contract sends no transaction. */
+  export const NoTransactionSentTxId = "no_transaction_sent"
 }

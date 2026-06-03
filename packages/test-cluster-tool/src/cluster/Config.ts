@@ -5,6 +5,8 @@
  * `construct_command_line()` and cluster_manager's HTTP-insecure patch.
  */
 
+import { Clio } from "../clients/Clio.js"
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -84,8 +86,8 @@ export interface ConfigOptions {
 
   // -- OPP operator node options --
 
-  /** Read mode: "speculative" | "head" | "irreversible". */
-  readMode?: "speculative" | "head" | "irreversible"
+  /** Read mode (nodeop `--read-mode`). */
+  readMode?: Clio.FinalityType
 
   /** Batch operator account name. */
   batchOperatorAccount?: string
