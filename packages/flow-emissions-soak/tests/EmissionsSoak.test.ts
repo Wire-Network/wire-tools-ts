@@ -1,6 +1,4 @@
 import "jest"
-import * as Fs from "node:fs"
-import * as Path from "node:path"
 import {
   convertImportSeed,
   createAuthExLink,
@@ -58,7 +56,8 @@ import {
  * Override via `SOAK_DURATION_MS`. Below ~5min the per-epoch assertions
  * may not have enough samples.
  *
- * Chain data: `/mnt/data/wire-e2e-soak/flow-emissions-soak-<timestamp>`.
+ * Chain data lives under the cluster path the runner provides (WIRE_CLUSTER_PATH),
+ * matching the other standard flows -- no explicit directory is set here.
  */
 
 // ─── Config ────────────────────────────────────────────────────────────────
@@ -78,18 +77,7 @@ const BULK_SOL_PURCHASERS = Number(process.env.BULK_SOL_PURCHASERS ?? 20)
 const BULK_SOL_STAKERS = Number(process.env.BULK_SOL_STAKERS ?? 20)
 const SYNTHETIC_SEED = Number(process.env.SYNTHETIC_SEED ?? 1)
 
-const DEFAULT_CHAIN_DIR_BASE = "/mnt/data/wire-e2e-soak"
-
 // ─── Helpers ───────────────────────────────────────────────────────────────
-function buildChainDir(): string {
-  if (process.env.WIRE_CHAIN_DIR) return process.env.WIRE_CHAIN_DIR
-  const stamp = new Date()
-    .toISOString()
-    .replace(/[:.]/g, "-")
-    .replace(/T/, "_")
-    .replace(/Z$/, "")
-  return Path.join(DEFAULT_CHAIN_DIR_BASE, `flow-emissions-soak-${stamp}`)
-}
 
 interface T5StateRow {
   total_distributed: string | number
@@ -169,10 +157,6 @@ describeCluster("Emissions + dclaim multi-hour soak", () => {
   let solDump: IndexBalanceDump
 
   beforeAll(async () => {
-    const chainDir = buildChainDir()
-    log.info(`[soak] chain dir: ${chainDir}`)
-    Fs.mkdirSync(chainDir, { recursive: true })
-
     // Build controlled stakers + synthetic dumps that include them.
     // Generation happens here so each suite run is self-contained and
     // the seed change is observable in the log header.
@@ -206,9 +190,8 @@ describeCluster("Emissions + dclaim multi-hour soak", () => {
       epochDurationSec: EPOCH_DURATION_SEC,
       producerCount: 3,
       batchOperatorCount: 3,
-      underwriterCount: 1,
-      clusterPath: chainDir
-    } as Parameters<typeof FlowTestContext.create>[0])
+      underwriterCount: 1
+    })
   }, 30 * 60 * 1000)
 
   afterAll(async () => {
