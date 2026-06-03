@@ -23,31 +23,31 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import { ethers } from "ethers"
+import { SystemContracts } from "@wireio/sdk-core"
 
 import type { Clio } from "../clients/Clio.js"
 
 /** Tier IDs accepted by sysio.roa::nodeownreg (matches MockWireNodes NodeInfo). */
-export const NodeOwnerTier = {
-  Validator: 1,
-  Compute: 2,
-  Operator: 3
-} as const
-export type NodeOwnerTier = typeof NodeOwnerTier[keyof typeof NodeOwnerTier]
+export enum NodeOwnerTier {
+  Validator = 1,
+  Compute = 2,
+  Operator = 3
+}
 
 /** nodeownerreg.reg_status values (mirror sysio.roa.hpp). */
-export const NodeOwnerRegStatus = {
-  Confirmed: 2,
-  Rejected: 3
-} as const
+export enum NodeOwnerRegStatus {
+  Confirmed = 2,
+  Rejected = 3
+}
 
 /** nodeownerreg.reject_reason values (mirror sysio.roa.hpp); meaningful only when REJECTED. */
-export const NodeOwnerRejectReason = {
-  None: 0,
-  NameInvalid: 1,
-  OwnerNotAccount: 2,
-  AccountKeyMismatch: 3,
-  Duplicate: 4
-} as const
+export enum NodeOwnerRejectReason {
+  None = 0,
+  NameInvalid = 1,
+  OwnerNotAccount = 2,
+  AccountKeyMismatch = 3,
+  Duplicate = 4
+}
 
 /** Minimal `ethers` surface of `MockWireNodes.sol`. */
 export interface MockWireNodesContract {
@@ -132,7 +132,7 @@ export async function pushNewNamedUser(
   wirePubKey: string,
   tier: NodeOwnerTier
 ): Promise<void> {
-  await clio.pushActionAndWait<{ account: string; pubkey: string; tier: number }>(
+  await clio.pushActionAndWait<SystemContracts.SysioRoaNewnameduserAction>(
     "sysio.roa",
     "newnameduser",
     { account, pubkey: wirePubKey, tier },
@@ -160,12 +160,7 @@ export async function pushNodeOwnerReg(
   wirePubKey: string
 ): Promise<void> {
   try {
-    await clio.pushActionAndWait<{
-      owner: string
-      tier: number
-      eth_pub_key: string
-      wire_pub_key: string
-    }>(
+    await clio.pushActionAndWait<SystemContracts.SysioRoaNodeownregAction>(
       "sysio.roa",
       "nodeownreg",
       {
@@ -189,20 +184,6 @@ export async function pushNodeOwnerReg(
   }
 }
 
-/** A sysio.roa nodeownerreg audit row (the soft-fail / confirmation record). */
-export interface NodeOwnerRegRow {
-  owner: string
-  status: number
-  tier: number
-  reason: number
-}
-
-/** A sysio.roa nodeowners registration row. */
-export interface NodeOwnerRow {
-  owner: string
-  tier: number
-}
-
 /** Find a row by `owner` in a sysio.roa kv::table (rows wrap the struct in a `value` object). */
 function findRoaRow<T extends { owner: string }>(tableJson: string, owner: string): T | undefined {
   const parsed = JSON.parse(tableJson) as { rows?: Array<{ value?: T } | T> }
@@ -214,13 +195,19 @@ function findRoaRow<T extends { owner: string }>(tableJson: string, owner: strin
 }
 
 /** Read the nodeownerreg audit row for `owner` (scope = network_gen = 0), or undefined. */
-export async function readNodeOwnerReg(clio: Clio, owner: string): Promise<NodeOwnerRegRow | undefined> {
+export async function readNodeOwnerReg(
+  clio: Clio,
+  owner: string
+): Promise<SystemContracts.SysioRoaNodeownerregType | undefined> {
   const json = await clio.getTable("sysio.roa", "0", "nodeownerreg")
-  return findRoaRow<NodeOwnerRegRow>(json, owner)
+  return findRoaRow<SystemContracts.SysioRoaNodeownerregType>(json, owner)
 }
 
 /** Read the nodeowners registration row for `owner` (scope = network_gen = 0), or undefined. */
-export async function readNodeOwner(clio: Clio, owner: string): Promise<NodeOwnerRow | undefined> {
+export async function readNodeOwner(
+  clio: Clio,
+  owner: string
+): Promise<SystemContracts.SysioRoaNodeownersType | undefined> {
   const json = await clio.getTable("sysio.roa", "0", "nodeowners")
-  return findRoaRow<NodeOwnerRow>(json, owner)
+  return findRoaRow<SystemContracts.SysioRoaNodeownersType>(json, owner)
 }
