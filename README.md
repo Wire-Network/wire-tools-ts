@@ -30,7 +30,7 @@ nothing on-chain itself, it orchestrates the already-built artifacts of:
 
 All four are checked out together as a single workspace via Google's `repo` tool.
 **For cloning and syncing the platform, follow
-[`wire-platform-manifest/README.md`](../wire-platform-manifest/README.md) first** —
+[`wire-platform-manifest/README.md`](https://github.com/Wire-Network/wire-platform-manifest/blob/master/README.md) first** —
 this README assumes the siblings already exist next to this repo.
 
 For a full, from-scratch host build of every dependency (Ubuntu 24.04 / WSL2),
