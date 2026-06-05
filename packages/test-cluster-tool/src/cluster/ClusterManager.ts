@@ -2116,7 +2116,7 @@ async function bootstrapChain(
   // the chain accepts that only if `roa.active` trusts `sysio.msgch@sysio.code`. `sysio.roa@sysio.code`
   // is retained so sysio.roa's own inline `newaccount` (newuser / newnameduser) stays authorized.
   // Accounts are sorted by actor (sysio.msgch < sysio.roa) as the authority encoding requires.
-  await clio.pushTransaction({
+  await clio.pushTransactionAndWait({
     account: "sysio",
     name: "updateauth",
     data: {
@@ -2147,7 +2147,7 @@ async function bootstrapChain(
   // the chain accepts that only if `authex.active` trusts `sysio.roa@sysio.code`.
   // `sysio.authex@sysio.code` is retained for authex's own inline sends. Accounts sorted by actor
   // (sysio.authex < sysio.roa).
-  await clio.pushTransaction({
+  await clio.pushTransactionAndWait({
     account: "sysio",
     name: "updateauth",
     data: {
