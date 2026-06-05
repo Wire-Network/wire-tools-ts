@@ -43,7 +43,10 @@ import { SlugName } from "@wireio/sdk-core"
  *   (c) Replayed `external_epoch_ref` is a no-op (dclaim reward-cursor dedup).
  *   (d) capital_shortfall_total stays 0 when emissions cover the credit.
  *
- * Chain data: `/mnt/data/wire-e2e-soak/flow-yield-distribution-<timestamp>`.
+ * Cluster data dir: the standard fresh-mode `WIRE_CLUSTER_PATH` (resolved
+ * by `FlowTestContext.create`, asserted in `FlowTestContext.fresh`) —
+ * identical to every gate flow. No bespoke `WIRE_CHAIN_DIR` / `/mnt/data`
+ * path; the harness owns directory creation.
  */
 
 // ─── Config ────────────────────────────────────────────────────────────────
@@ -55,18 +58,6 @@ const SOL_REWARD_PER_STAKER = 1_000_000n // 1e6 lamports
 /** How long to wait for an attestation to round-trip from emitter → depot. */
 const PROPAGATION_TIMEOUT_MS = 5 * 60_000
 const PROPAGATION_POLL_MS    = 2_000
-
-const DEFAULT_CHAIN_DIR_BASE = "/mnt/data/wire-e2e-soak"
-
-function buildChainDir(): string {
-  if (process.env.WIRE_CHAIN_DIR) return process.env.WIRE_CHAIN_DIR
-  const stamp = new Date()
-    .toISOString()
-    .replace(/[:.]/g, "-")
-    .replace(/T/, "_")
-    .replace(/Z$/, "")
-  return Path.join(DEFAULT_CHAIN_DIR_BASE, `flow-yield-distribution-${stamp}`)
-}
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 interface PclaimRow {
@@ -140,7 +131,6 @@ const describeCluster = process.env.WIRE_BUILD_PATH ? describe : describe.skip
 
 describeCluster("Yield distribution through fake emitters", () => {
   let ctx: FlowTestContext
-  let chainDir: string
 
   // ETH: deployer signer (HD index 0) holds the AccessManager admin
   // role granted in deployLocal.ts::postDeploy.
@@ -168,20 +158,16 @@ describeCluster("Yield distribution through fake emitters", () => {
   let nextExternalEpochRef = 1n
 
   beforeAll(async () => {
-    chainDir = buildChainDir()
-    log.info(`[yield] chain dir: ${chainDir}`)
-    Fs.mkdirSync(chainDir, { recursive: true })
-
     ctx = await FlowTestContext.create({
       epochDurationSec: EPOCH_DURATION_SEC,
       producerCount: 3,
       batchOperatorCount: 3,
-      underwriterCount: 1,
-      clusterPath: chainDir
+      underwriterCount: 1
     })
+    log.info(`[yield] cluster data dir: ${ctx.clusterPath}`)
 
     // ── ETH wiring ─────────────────────────────────────────────────────
-    const ethereumPath = ctx.config.ethereumPath
+    const ethereumPath = ctx.ethereumPath
     expect(ethereumPath).toBeTruthy()
     const outpostAddrsPath = Path.join(
       ethereumPath,
@@ -197,9 +183,9 @@ describeCluster("Yield distribution through fake emitters", () => {
     )
 
     // ── SOL wiring ─────────────────────────────────────────────────────
-    const solanaPath = ctx.config.solanaPath
+    const solanaPath = ctx.solanaPath
     expect(solanaPath).toBeTruthy()
-    const solKpPath = Path.join(chainDir, "data", "sol-deployer-keypair.json")
+    const solKpPath = Path.join(ctx.clusterPath, "data", "sol-deployer-keypair.json")
     expect(Fs.existsSync(solKpPath)).toBe(true)
     solDeployer = Keypair.fromSecretKey(
       Uint8Array.from(JSON.parse(Fs.readFileSync(solKpPath, "utf-8")))

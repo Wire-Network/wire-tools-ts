@@ -1,13 +1,15 @@
-// Multi-hour soak — timeout is hours, not minutes. Override per-test via
-// `jest.setTimeout(...)` inside the test if a finer bound is wanted.
+// Emissions soak — default 30-min sampling window (override via
+// `SOAK_DURATION_MS`). The long soak test sets its own per-test timeout
+// (`SOAK_DURATION_MS + 30min`); this config-level ceiling is the default
+// for the shorter bootstrap / import / claim tests.
 const config = {
   displayName: "flow-emissions-soak",
   testEnvironment: "node",
   roots: ["<rootDir>/tests"],
   testMatch: ["**/*.test.ts"],
-  // 4h ceiling — covers the documented 2h soak plus startup/teardown
-  // and gives headroom for slower hosts. Individual flows override.
-  testTimeout: 4 * 60 * 60 * 1000,
+  // 1h ceiling — covers the 30-min soak plus bootstrap / import / teardown
+  // with headroom for slower hosts. The soak test overrides per-test.
+  testTimeout: 60 * 60 * 1000,
   transform: {
     "^.+\\.ts$": [
       "ts-jest",

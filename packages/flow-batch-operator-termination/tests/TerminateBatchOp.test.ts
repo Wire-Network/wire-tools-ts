@@ -125,7 +125,13 @@ const MsPerSecond = 1_000
 
 const PollDeadlineBufferMs = 30_000
 const LongPollIntervalMs   = 3_000
-const BootstrapTimeoutMs   = 300_000
+// 12 min. The beforeAll does full cluster bootstrap (~5 min) PLUS the fresh
+// operator's two-chain deposit → ACTIVE OPP round-trip (multi-epoch on both
+// ETH and SOL). The old 5 min was entirely consumed by bootstrap, leaving no
+// time for the operator path (the freshop createlink wasn't even reached until
+// the deadline). Matches the collateral-deposit flow's proven budget for the
+// same fresh-operator provisioning.
+const BootstrapTimeoutMs   = 720_000
 
 /** Epochs to wait for termination after both deposits land + ACTIVE
  *  flip. With `terminateMaxConsecutiveMisses=2`, the suppressed op

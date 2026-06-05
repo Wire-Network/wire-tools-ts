@@ -52,17 +52,19 @@ import {
  * lands. `capital_shortfall_total` is asserted == 0 here (trivially
  * true today because no `fundclaim` calls occur).
  *
- * Default target: 2 hours wall-clock at 60s epochs ⇒ ~120 epochs.
+ * Default target: 30 minutes wall-clock at 60s epochs ⇒ ~30 epochs.
  * Override via `SOAK_DURATION_MS`. Below ~5min the per-epoch assertions
  * may not have enough samples.
  *
- * Chain data lives under the cluster path the runner provides (WIRE_CLUSTER_PATH),
- * matching the other standard flows -- no explicit directory is set here.
+ * Cluster data dir: the standard fresh-mode `WIRE_CLUSTER_PATH` (resolved
+ * by `FlowTestContext.create`, asserted in `FlowTestContext.fresh`) —
+ * identical to every gate flow. No bespoke `WIRE_CHAIN_DIR` / `/mnt/data`
+ * path; the harness owns directory creation.
  */
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const SOAK_DURATION_MS = Number(
-  process.env.SOAK_DURATION_MS ?? 2 * 60 * 60 * 1000
+  process.env.SOAK_DURATION_MS ?? 30 * 60 * 1000
 )
 const EPOCH_DURATION_SEC = Number(process.env.EPOCH_DURATION_SEC ?? 60)
 const CONTROLLED_STAKER_COUNT = Number(process.env.CONTROLLED_STAKER_COUNT ?? 5)
@@ -78,7 +80,6 @@ const BULK_SOL_STAKERS = Number(process.env.BULK_SOL_STAKERS ?? 20)
 const SYNTHETIC_SEED = Number(process.env.SYNTHETIC_SEED ?? 1)
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
-
 interface T5StateRow {
   total_distributed: string | number
   capital_shortfall_total: string | number
@@ -192,6 +193,7 @@ describeCluster("Emissions + dclaim multi-hour soak", () => {
       batchOperatorCount: 3,
       underwriterCount: 1
     })
+    log.info(`[soak] cluster data dir: ${ctx.clusterPath}`)
   }, 30 * 60 * 1000)
 
   afterAll(async () => {

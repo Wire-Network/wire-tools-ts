@@ -18,15 +18,16 @@
     "@wireio/shared-node": "^1.0.22",
     "jest": "^30.3.0",
     "prettier": "^3.8.1",
+    "shelljs": "^0.10.0",
     "ts-jest": "^29.4.6",
     "ts-node": "^10.9.2",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",    
+    "zx": "^8.8.5"
   },
   "packageManager": "pnpm@10.32.1",
   "engines": {
     "node": ">=22"
   },
-  "dependencies": {},
   "resolutions": {
     "uuid": "11"
   }
