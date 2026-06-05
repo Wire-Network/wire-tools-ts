@@ -24,15 +24,14 @@ import Fs from "node:fs"
 import Path from "node:path"
 import { ethers } from "ethers"
 import { SystemContracts } from "@wireio/sdk-core"
+import { NodeOwnerTier } from "@wireio/opp-typescript-models"
 
 import type { Clio } from "../clients/Clio.js"
 
-/** Tier IDs accepted by sysio.roa::nodeownreg (matches MockWireNodes NodeInfo). */
-export enum NodeOwnerTier {
-  Validator = 1,
-  Compute = 2,
-  Operator = 3
-}
+// Tier IDs accepted by sysio.roa::nodeownreg (matches MockWireNodes NodeInfo). The canonical enum
+// lives in the OPP protobuf models (sysio.opp.types.NodeOwnerTier: T1=1, T2=2, T3=3); re-exported
+// here so flows keep importing it from @wireio/test-cluster-tool.
+export { NodeOwnerTier }
 
 /** nodeownerreg.reg_status values (mirror sysio.roa.hpp). */
 export enum NodeOwnerRegStatus {
@@ -125,7 +124,7 @@ export async function mintNodeNFT(
  *
  * @param account     The vanity account name to create (tier-1 = 2-6 chars; tier 2/3 = 1-12).
  * @param wirePubKey  The holder's Wire owner/active public key (e.g. PUB_K1_*).
- * @param tier        1 (Validator), 2 (Compute), or 3 (Operator).
+ * @param tier        1 (T1), 2 (T2), or 3 (T3).
  */
 export async function pushNewNamedUser(
   clio: Clio,
@@ -149,7 +148,7 @@ export async function pushNewNamedUser(
  * invariants -- tier out of [1,3] and a non-EM eth key -- hard-abort, which this surfaces as a throw.
  *
  * @param ownerAccount  The Wire account to register.
- * @param tier          1 (Validator), 2 (Compute), or 3 (Operator).
+ * @param tier          1 (T1), 2 (T2), or 3 (T3).
  * @param ethPubKey     Depositor's `PUB_EM_*` secp256k1 key (recorded as the sysio.authex link).
  * @param wirePubKey    The account's owner/active key; an existing account must be controlled by it.
  */

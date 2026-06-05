@@ -112,12 +112,12 @@ describeCluster("Node owner NFT registration (create-in-flow)", () => {
   // ──────────────────────────────────────────────────────────────────────
   it("creates the account and registers the owner at the requested tier", async () => {
     const account = "nfta"
-    await pushNewNamedUser(ctx.wireClient.clio, account, DEV_K1_PUBLIC_KEY, NodeOwnerTier.Validator)
-    await pushNodeOwnerReg(ctx.wireClient.clio, account, NodeOwnerTier.Validator, freshEthPubEm(), DEV_K1_PUBLIC_KEY)
+    await pushNewNamedUser(ctx.wireClient.clio, account, DEV_K1_PUBLIC_KEY, NodeOwnerTier.T1)
+    await pushNodeOwnerReg(ctx.wireClient.clio, account, NodeOwnerTier.T1, freshEthPubEm(), DEV_K1_PUBLIC_KEY)
 
     const reg = await readNodeOwner(ctx.wireClient.clio, account)
     expect(reg).toBeDefined()
-    expect(Number(reg!.tier)).toBe(NodeOwnerTier.Validator)
+    expect(Number(reg!.tier)).toBe(NodeOwnerTier.T1)
     const audit = await readNodeOwnerReg(ctx.wireClient.clio, account)
     expect(Number(audit?.status)).toBe(NodeOwnerRegStatus.Confirmed)
   })
@@ -127,9 +127,9 @@ describeCluster("Node owner NFT registration (create-in-flow)", () => {
   // ──────────────────────────────────────────────────────────────────────
   it("soft-fails when the account is controlled by a different key", async () => {
     const account = "nftb"
-    await pushNewNamedUser(ctx.wireClient.clio, account, DEV_K1_PUBLIC_KEY, NodeOwnerTier.Validator)
+    await pushNewNamedUser(ctx.wireClient.clio, account, DEV_K1_PUBLIC_KEY, NodeOwnerTier.T1)
     // Claim with a Wire key the account is NOT controlled by.
-    await pushNodeOwnerReg(ctx.wireClient.clio, account, NodeOwnerTier.Validator, freshEthPubEm(), OTHER_WIRE_KEY)
+    await pushNodeOwnerReg(ctx.wireClient.clio, account, NodeOwnerTier.T1, freshEthPubEm(), OTHER_WIRE_KEY)
 
     expect(await readNodeOwner(ctx.wireClient.clio, account)).toBeUndefined()
     const audit = await readNodeOwnerReg(ctx.wireClient.clio, account)
@@ -142,7 +142,7 @@ describeCluster("Node owner NFT registration (create-in-flow)", () => {
   // ──────────────────────────────────────────────────────────────────────
   it("soft-fails a tier-1 name longer than the prefix budget", async () => {
     const account = "toolongname" // 11 chars: valid charset, too long for tier 1
-    await pushNodeOwnerReg(ctx.wireClient.clio, account, NodeOwnerTier.Validator, freshEthPubEm(), DEV_K1_PUBLIC_KEY)
+    await pushNodeOwnerReg(ctx.wireClient.clio, account, NodeOwnerTier.T1, freshEthPubEm(), DEV_K1_PUBLIC_KEY)
 
     expect(await readNodeOwner(ctx.wireClient.clio, account)).toBeUndefined()
     const audit = await readNodeOwnerReg(ctx.wireClient.clio, account)
@@ -155,7 +155,7 @@ describeCluster("Node owner NFT registration (create-in-flow)", () => {
   // ──────────────────────────────────────────────────────────────────────
   it("soft-fails when the owner account does not exist", async () => {
     const account = "ghost" // 5 chars: valid for tier 1, but never created
-    await pushNodeOwnerReg(ctx.wireClient.clio, account, NodeOwnerTier.Validator, freshEthPubEm(), DEV_K1_PUBLIC_KEY)
+    await pushNodeOwnerReg(ctx.wireClient.clio, account, NodeOwnerTier.T1, freshEthPubEm(), DEV_K1_PUBLIC_KEY)
 
     expect(await readNodeOwner(ctx.wireClient.clio, account)).toBeUndefined()
     const audit = await readNodeOwnerReg(ctx.wireClient.clio, account)
@@ -168,9 +168,9 @@ describeCluster("Node owner NFT registration (create-in-flow)", () => {
   // ──────────────────────────────────────────────────────────────────────
   it("soft-fails a second registration for the same owner", async () => {
     const account = "nftd"
-    await pushNewNamedUser(ctx.wireClient.clio, account, DEV_K1_PUBLIC_KEY, NodeOwnerTier.Validator)
-    await pushNodeOwnerReg(ctx.wireClient.clio, account, NodeOwnerTier.Validator, freshEthPubEm(), DEV_K1_PUBLIC_KEY)
-    await pushNodeOwnerReg(ctx.wireClient.clio, account, NodeOwnerTier.Compute, freshEthPubEm(), DEV_K1_PUBLIC_KEY)
+    await pushNewNamedUser(ctx.wireClient.clio, account, DEV_K1_PUBLIC_KEY, NodeOwnerTier.T1)
+    await pushNodeOwnerReg(ctx.wireClient.clio, account, NodeOwnerTier.T1, freshEthPubEm(), DEV_K1_PUBLIC_KEY)
+    await pushNodeOwnerReg(ctx.wireClient.clio, account, NodeOwnerTier.T2, freshEthPubEm(), DEV_K1_PUBLIC_KEY)
 
     const audit = await readNodeOwnerReg(ctx.wireClient.clio, account)
     expect(Number(audit?.status)).toBe(NodeOwnerRegStatus.Rejected)
@@ -182,7 +182,7 @@ describeCluster("Node owner NFT registration (create-in-flow)", () => {
   // ──────────────────────────────────────────────────────────────────────
   it("hard-aborts tier 0 and tier 4", async () => {
     const account = "nfte"
-    await pushNewNamedUser(ctx.wireClient.clio, account, DEV_K1_PUBLIC_KEY, NodeOwnerTier.Validator)
+    await pushNewNamedUser(ctx.wireClient.clio, account, DEV_K1_PUBLIC_KEY, NodeOwnerTier.T1)
     await expect(
       pushNodeOwnerReg(ctx.wireClient.clio, account, 0 as unknown as NodeOwnerTier, freshEthPubEm(), DEV_K1_PUBLIC_KEY)
     ).rejects.toThrow(/Tier level must be between 1 and 3/)
@@ -196,10 +196,10 @@ describeCluster("Node owner NFT registration (create-in-flow)", () => {
   // ──────────────────────────────────────────────────────────────────────
   it("hard-aborts a non-EM (K1) eth key", async () => {
     const account = "nftf"
-    await pushNewNamedUser(ctx.wireClient.clio, account, DEV_K1_PUBLIC_KEY, NodeOwnerTier.Validator)
+    await pushNewNamedUser(ctx.wireClient.clio, account, DEV_K1_PUBLIC_KEY, NodeOwnerTier.T1)
     await expect(
       // DEV_K1_PUBLIC_KEY is a K1 key passed where an EM key is required.
-      pushNodeOwnerReg(ctx.wireClient.clio, account, NodeOwnerTier.Validator, DEV_K1_PUBLIC_KEY, DEV_K1_PUBLIC_KEY)
+      pushNodeOwnerReg(ctx.wireClient.clio, account, NodeOwnerTier.T1, DEV_K1_PUBLIC_KEY, DEV_K1_PUBLIC_KEY)
     ).rejects.toThrow(/EM \(secp256k1\) public key/)
   })
 
@@ -207,12 +207,12 @@ describeCluster("Node owner NFT registration (create-in-flow)", () => {
   // 8. MockWireNodes sanity — the ERC-1155 surface the production flow observes.
   // ──────────────────────────────────────────────────────────────────────
   it("MockWireNodes accepts a tier-1 mint at 1 ether", async () => {
-    const before = await mockWireNodes.viewTotalSupply(NodeOwnerTier.Validator)
-    const receipt = await mintNodeNFT(mockWireNodes, NodeOwnerTier.Validator, 1)
+    const before = await mockWireNodes.viewTotalSupply(NodeOwnerTier.T1)
+    const receipt = await mintNodeNFT(mockWireNodes, NodeOwnerTier.T1, 1)
     expect(receipt.status).toBe(1)
-    const after = await mockWireNodes.viewTotalSupply(NodeOwnerTier.Validator)
+    const after = await mockWireNodes.viewTotalSupply(NodeOwnerTier.T1)
     expect(after - before).toBe(1n)
-    const minterBal = await mockWireNodes.balanceOf(await ctx.ethSigner.getAddress(), NodeOwnerTier.Validator)
+    const minterBal = await mockWireNodes.balanceOf(await ctx.ethSigner.getAddress(), NodeOwnerTier.T1)
     expect(minterBal).toBeGreaterThanOrEqual(1n)
   })
 })
