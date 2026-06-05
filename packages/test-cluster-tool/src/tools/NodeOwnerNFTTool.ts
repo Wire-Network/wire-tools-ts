@@ -36,8 +36,8 @@ export enum NodeOwnerTier {
 
 /** nodeownerreg.reg_status values (mirror sysio.roa.hpp). */
 export enum NodeOwnerRegStatus {
-  Confirmed = 2,
-  Rejected = 3
+  Confirmed = 0,
+  Rejected = 1
 }
 
 /** nodeownerreg.reject_reason values (mirror sysio.roa.hpp); meaningful only when REJECTED. */
@@ -46,7 +46,8 @@ export enum NodeOwnerRejectReason {
   NameInvalid = 1,
   OwnerNotAccount = 2,
   AccountKeyMismatch = 3,
-  Duplicate = 4
+  Duplicate = 4,
+  LinkKeyMismatch = 5
 }
 
 /** Minimal `ethers` surface of `MockWireNodes.sol`. */
