@@ -23,6 +23,8 @@ import {
 } from "@wireio/sdk-core"
 import { match } from "ts-pattern"
 import Path from "path"
+import os from "os"
+import { promises as fsp } from "fs"
 import Fs from "fs"
 import { DEV_K1_PRIVATE_KEY, DEV_K1_PUBLIC_KEY } from "../cluster/constants.js"
 
@@ -760,6 +762,47 @@ export class Clio {
         label
       }
     )
+  }
+
+  /**
+   * Like {@link pushActionAndWait}, but submits the action inside a transaction written to a temp FILE and run
+   * via `clio push transaction <file>`. This avoids the OS argv limit (`E2BIG`) that `push action <data>` hits
+   * when the action data is large — e.g. a contract wasm/abi passed to sysio.roa::setsyscode / setsysabi
+   * (`clio push action`'s `data` is a command-line argument; `push transaction`'s positional accepts a
+   * filename). Still wallet-signed; clio fills TAPOS. The temp file is removed afterward.
+   */
+  async pushActionFileAndWait<T extends {}>(
+    account: string,
+    action: string,
+    data: T,
+    auth: string,
+    waitTimeoutMs = Clio.DefaultTimeoutMs
+  ): Promise<API.v1.SendTransactionResponse> {
+    const [actor, permission] = auth.split("@")
+    const body = {
+      actions: [
+        { account, name: action, authorization: [{ actor, permission }], data }
+      ]
+    }
+    const tmpFile = Path.join(
+      os.tmpdir(),
+      `wire-trx-${account}-${action}-${process.pid}-${Date.now()}.json`
+    )
+    await fsp.writeFile(tmpFile, JSON.stringify(body))
+    try {
+      const result = await this.run<API.v1.SendTransactionResponse>(
+        ["push", "transaction", "-j", tmpFile],
+        { json: true }
+      )
+      const txId = asOption(result?.transaction_id)
+        .filter(isString)
+        .filter(isNotEmpty)
+        .getOrThrow(`Result missing transaction_id: ${JSON.stringify(result)}`)
+      await this.waitForTransactionInBlock(txId, waitTimeoutMs)
+      return result
+    } finally {
+      await fsp.unlink(tmpFile).catch(() => {})
+    }
   }
 
   /**

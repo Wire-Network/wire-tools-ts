@@ -21,6 +21,7 @@ import { AnvilManager } from "../processes/AnvilManager.js"
 import { SolanaValidatorManager } from "../processes/SolanaValidatorManager.js"
 import { KiodManager } from "../processes/KiodManager.js"
 import { Clio } from "../clients/Clio.js"
+import { deploySysContract, createSysioAccount } from "./sysContractDeploy.js"
 import { log } from "../logger.js"
 import { mkdirs, retry, sleep, waitForEndpoint } from "../util.js"
 import {
@@ -44,6 +45,7 @@ import {
   UNDERWRITER_PLUGINS,
   batchOperatorAccountName,
   BIOS_HTTP_PORT,
+  BOOTSTRAP_NODE_OWNER,
   DEFAULT_RAM_WEIGHT,
   DEFAULT_RESOURCE_WEIGHT,
   DEV_K1_PRIVATE_KEY,
@@ -71,8 +73,16 @@ import { UnderwriterTools } from "../tools/underwriter/index.js"
 import { writeClusterConfigFile } from "./ClusterConfigPersistence.js"
 import {
   createAuthExLink,
-  emPrivateKeyFromEthWallet
+  emPrivateKeyFromEthWallet,
+  emPublicKeyFromEthWallet
 } from "../tools/AuthExLinkTool.js"
+import {
+  NodeOwnerTier,
+  pushNewNamedUser,
+  pushNodeOwnerReg,
+  readNodeOwner,
+  readNodeOwnerReg
+} from "../tools/NodeOwnerNFTTool.js"
 import { ClusterPorts } from "./ClusterPorts.js"
 import Bluebird from "bluebird"
 import { ChainKind, OperatorType } from "@wireio/opp-typescript-models"
@@ -1578,14 +1588,16 @@ export class ClusterManager {
 //  Bootstrap helpers
 // ---------------------------------------------------------------------------
 
-/** Register a node owner via sysio.roa (required before addpolicy) */
-async function ensureNodeOwner(clio: Clio, nodeAccount: string): Promise<void> {
-  await clio.pushActionAndWait<SystemContracts.SysioRoaForceregAction>(
-    "sysio.roa",
-    "forcereg",
-    { owner: nodeAccount, tier: 1 },
-    "sysio.roa@active"
-  )
+/**
+ * A fresh depositor EM (secp256k1) public key (`PUB_EM_*`) derived from a random ethers wallet.
+ *
+ * Stands in for the ETH key an NFT depositor supplies in the production node-owner claim. The key is
+ * only recorded as a sysio.authex link for the bootstrap node owner; it is never signed with, so a
+ * throwaway wallet suffices (matches flow-node-owner-nft's `freshEthPubEm`).
+ */
+function freshEthPubEm(): string {
+  const wallet = ethers.Wallet.createRandom() as unknown as ethers.HDNodeWallet
+  return emPublicKeyFromEthWallet(wallet).toString()
 }
 
 /** Assign a resource allocation policy to an account via sysio.roa */
@@ -1630,12 +1642,49 @@ async function createAccountWithRam(
   }
 }
 
-/** Use defproducera as the bootstrap node owner — it already has resources */
-const BOOTSTRAP_NODE_OWNER = "defproducera"
-
-/** One-time setup: register an existing producer as a node owner */
+/**
+ * Register the bootstrap node owner via the production node-owner registration flow.
+ *
+ * Mirrors what the OPP NFT-claim depot (sysio.msgch) inline-sends for a real claim, driving the two
+ * sysio.roa actions directly (the same way flow-node-owner-nft does):
+ *   1. `newnameduser` creates {@link BOOTSTRAP_NODE_OWNER} with the dev K1 key as owner/active and a
+ *      finite, pool-gifted RAM allocation.
+ *   2. `nodeownreg` registers it at tier 1, records the (fake) depositor EM eth key as a sysio.authex
+ *      link, and allocates the tier-1 ROA reserve it then issues operator/underwriter policies from.
+ *
+ * Deliberately does NOT use `sysio.roa::forcereg` (the admin shortcut): production node owners only
+ * enter through `nodeownreg`, so the bootstrap exercises the same path. Preconditions: ROA active and
+ * the `sysio.roa -> sysio.authex@sysio.code` delegation present (so the inline `recordlink`
+ * authorizes) -- both hold once Phase 14f has run.
+ */
 async function setupNodeOwner(clio: Clio): Promise<void> {
-  await ensureNodeOwner(clio, BOOTSTRAP_NODE_OWNER)
+  await pushNewNamedUser(
+    clio,
+    BOOTSTRAP_NODE_OWNER,
+    DEV_K1_PUBLIC_KEY,
+    NodeOwnerTier.T1
+  )
+  await pushNodeOwnerReg(
+    clio,
+    BOOTSTRAP_NODE_OWNER,
+    NodeOwnerTier.T1,
+    freshEthPubEm(),
+    DEV_K1_PUBLIC_KEY
+  )
+
+  // nodeownreg soft-fails on a claim-payload problem (records a REJECTED nodeownerreg audit row and
+  // returns instead of throwing), so confirm the nodeowners row exists. A silently-unregistered owner
+  // would otherwise surface only later as a cryptic "Only Node Owners can issue policies" at Phase 18.
+  const reg = await readNodeOwner(clio, BOOTSTRAP_NODE_OWNER)
+  if (!reg) {
+    const audit = await readNodeOwnerReg(clio, BOOTSTRAP_NODE_OWNER)
+    throw new Error(
+      `Bootstrap node owner ${BOOTSTRAP_NODE_OWNER} was not registered by nodeownreg` +
+        (audit
+          ? ` (rejected: status=${audit.status}, reason=${audit.reason})`
+          : " (no audit row found)")
+    )
+  }
 }
 
 /** Create account + assign resource policy from the bootstrap node owner */
@@ -1784,9 +1833,14 @@ async function bootstrapChain(
     throw new Error(`[Phase 4] Instant finality activation FAILED: ${msg}`)
   }
 
-  // ── Phase 5: Create producer accounts ──
-  log.info("[Phase 5] Creating producer accounts...")
-  await Bluebird.each(producerNames, name =>
+  // ── Phase 5: Create the bring-up-essential accounts only (sysio.roa, sysio.acct) ──
+  // Everything else — producers AND the rest of the sysio.* system accounts — is created later (Phase 11d),
+  // after sysio.system is deployed and ROA is active, so system::newaccount gifts each account's RAM from the
+  // sysio pool (set_resource_limits 0 + transfer_ram) — finite, never unlimited. These two must exist now:
+  // sysio.roa hosts the contract deployed in Phase 11, and activateroa seeds sysio.acct's bucket. They are
+  // transiently unlimited (bios has no gifting newaccount) until activateroa sets them finite.
+  log.info("[Phase 5] Creating bring-up accounts (sysio.roa, sysio.acct)...")
+  await Bluebird.each(["sysio.roa", "sysio.acct"], name =>
     retry(
       () =>
         clio.createAccount("sysio", name, DEV_K1_PUBLIC_KEY, DEV_K1_PUBLIC_KEY),
@@ -1797,20 +1851,7 @@ async function bootstrapChain(
       }
     )
   )
-  log.info(`[Phase 5] Created ${producerNames.length} producer accounts`)
-
-  // ── Phase 6: Create system accounts ──
-  log.info("[Phase 6] Creating system accounts...")
-  await Bluebird.each(SYSTEM_ACCOUNTS, async acctName => {
-    try {
-      await clio.createSystemAccount(acctName, DEV_K1_PUBLIC_KEY)
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (!msg.includes("already exists"))
-        throw new Error(`Failed to create ${acctName}: ${msg}`)
-    }
-  })
-  log.info(`[Phase 6] Created ${SYSTEM_ACCOUNTS.length} system accounts`)
+  log.info("[Phase 5] Bring-up accounts created")
 
   // ── Phase 7: Deploy sysio.system ──
   log.info("[Phase 7] Deploying sysio.system...")
@@ -1830,8 +1871,75 @@ async function bootstrapChain(
   )
   log.info("[Phase 7] sysio.system deployed")
 
-  // ── Phase 8: Set producers + handoff ──
-  log.info("[Phase 8] Setting producers...")
+  // (Producer accounts, the producer schedule/handoff, and the remaining sysio.* accounts now happen AFTER ROA
+  //  activation — see Phases 11d/11e — so every account is created via system::newaccount with RAM gifted from
+  //  the sysio pool. The genesis `sysio` producer carries the chain, finalized by the producer nodes' BLS keys,
+  //  until that handoff. sysio.token likewise deploys post-ROA via setsyscode — see Phase 11c.)
+
+  // ── Phase 11: Deploy sysio.roa ──
+  log.info("[Phase 11] Deploying sysio.roa...")
+  await retry(
+    () =>
+      clio.setContractAndWait(
+        "sysio.roa",
+        resolveContractPath("sysio.roa"),
+        "sysio.roa.wasm",
+        "sysio.roa.abi"
+      ),
+    {
+      label: "deploy sysio.roa",
+      maxAttempts: ClusterManager.ClioRetryAttempts,
+      delayMs: ClusterManager.ClioRetryHeavyDelayMs
+    }
+  )
+  await clio.setPriv("sysio.roa")
+  await clio.pushActionAndWait<SystemContracts.SysioRoaActivateroaAction>(
+    "sysio.roa",
+    "activateroa",
+    { total_sys: "75496.0000 SYS", bytes_per_unit: 104 },
+    "sysio.roa@active"
+  )
+  log.info("[Phase 11] sysio.roa deployed")
+
+  // ── Phase 11d: Create producers + remaining system accounts (pool-gifted) ──
+  // Created now (after sysio.system + activateroa) so system::native::newaccount gifts each account's RAM from
+  // the sysio pool — set_resource_limits(new,0,0,0) + transfer_ram(sysio,new,newaccount_ram) — making them
+  // FINITE, never unlimited. Producers keep their own block-signing key; system accounts likewise (DEV_K1).
+  // The bootstrap node owner is NOT registered here: it is created post-bootstrap via the real
+  // sysio.roa::nodeownreg flow (see setupNodeOwner below), which needs ROA active + the authex delegation.
+  log.info(
+    "[Phase 11d] Creating producer + remaining system accounts (pool-gifted)..."
+  )
+  await Bluebird.each(producerNames, name =>
+    retry(
+      () =>
+        clio.createAccount("sysio", name, DEV_K1_PUBLIC_KEY, DEV_K1_PUBLIC_KEY),
+      {
+        label: `create producer ${name}`,
+        maxAttempts: ClusterManager.ClioRetryAttempts,
+        delayMs: ClusterManager.ClioRetryLightDelayMs
+      }
+    )
+  )
+
+  const remainingSysAccounts = SYSTEM_ACCOUNTS.filter(
+    a => a !== "sysio.roa" && a !== "sysio.acct"
+  )
+  await Bluebird.each(remainingSysAccounts, async acctName => {
+    try {
+      await clio.createSystemAccount(acctName, DEV_K1_PUBLIC_KEY)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (!msg.includes("already exists"))
+        throw new Error(`Failed to create ${acctName}: ${msg}`)
+    }
+  })
+  log.info(
+    `[Phase 11d] Created ${producerNames.length} producer + ${remainingSysAccounts.length} system accounts`
+  )
+
+  // ── Phase 11e: Set producers + hand off from the genesis sysio producer ──
+  log.info("[Phase 11e] Setting producers...")
 
   // Extract each node's K1 public key from its start.cmd signature-provider arg
   // to use as block_signing_key (matches Python: keys["public"])
@@ -1868,7 +1976,7 @@ async function bootstrapChain(
     { schedule: prodSchedule },
     "sysio@active"
   )
-  log.info("[Phase 8] Waiting for producer handoff (timeout 90s)...")
+  log.info("[Phase 11e] Waiting for producer handoff (timeout 90s)...")
   const handoffDeadline = Date.now() + ClusterManager.HandoffTimeoutMs
   let handoffComplete = false
   while (Date.now() < handoffDeadline) {
@@ -1876,7 +1984,7 @@ async function bootstrapChain(
       const info = await clio.getInfo()
       if (info.head_block_producer && info.head_block_producer !== "sysio") {
         log.info(
-          `[Phase 8] Producer handoff: ${info.head_block_producer as string}`
+          `[Phase 11e] Producer handoff: ${info.head_block_producer as string}`
         )
         handoffComplete = true
         break
@@ -1884,7 +1992,7 @@ async function bootstrapChain(
     } catch (err: any) {
       // getInfo may fail transiently during handoff — retry
       log.debug(
-        `[Phase 8] Handoff poll error (retrying): ${err.message?.slice(0, 100)}`
+        `[Phase 11e] Handoff poll error (retrying): ${err.message?.slice(0, 100)}`
       )
     }
     await sleep(ClusterManager.HandoffPollIntervalMs)
@@ -1894,15 +2002,17 @@ async function bootstrapChain(
     `Producer handoff failed within ${ClusterManager.HandoffTimeoutMs}ms`
   )
 
-  // ── Phase 9: Deploy sysio.token + setpriv ──
-  log.info("[Phase 9] Deploying sysio.token...")
+  // ── Phase 11c: Deploy sysio.token (setsyscode, post-ROA) + distribute ──
+  // Moved after activateroa so the token contract is deployed privileged with its code RAM gifted from the
+  // sysio pool (setsyscode), not raw setcode+setpriv. Token create/issue/transfer follow as before.
+  log.info("[Phase 11c] Deploying sysio.token + distributing...")
   await retry(
     () =>
-      clio.setContractAndWait(
+      deploySysContract(
+        clio,
         "sysio.token",
-        resolveContractPath("sysio.token"),
-        "sysio.token.wasm",
-        "sysio.token.abi"
+        Path.join(resolveContractPath("sysio.token"), "sysio.token.wasm"),
+        Path.join(resolveContractPath("sysio.token"), "sysio.token.abi")
       ),
     {
       label: "deploy sysio.token",
@@ -1910,11 +2020,6 @@ async function bootstrapChain(
       delayMs: ClusterManager.ClioRetryHeavyDelayMs
     }
   )
-  await clio.setPriv("sysio.token")
-  log.info("[Phase 9] sysio.token deployed")
-
-  // ── Phase 10: Token distribution ──
-  log.info("[Phase 10] Creating and distributing tokens...")
   await clio.pushActionAndWait<SystemContracts.SysioTokenCreateAction>(
     "sysio.token",
     "create",
@@ -1924,66 +2029,28 @@ async function bootstrapChain(
   await clio.pushActionAndWait<SystemContracts.SysioTokenIssueAction>(
     "sysio.token",
     "issue",
-    {
-      to: "sysio",
-      quantity: ClusterManager.InitialTokenSupply,
-      memo: "initial issue"
-    },
+    { to: "sysio", quantity: ClusterManager.InitialTokenSupply, memo: "initial issue" },
     "sysio@active"
   )
   await Bluebird.each(producerNames, name =>
     clio.pushActionAndWait<SystemContracts.SysioTokenTransferAction>(
       "sysio.token",
       "transfer",
-      {
-        from: "sysio",
-        to: name,
-        quantity: ClusterManager.ProducerInitialGrant,
-        memo: "init"
-      },
+      { from: "sysio", to: name, quantity: ClusterManager.ProducerInitialGrant, memo: "init" },
       "sysio@active"
     )
   )
-  log.info("[Phase 10] Tokens distributed")
-
-  // ── Phase 11: Deploy sysio.roa ──
-  log.info("[Phase 11] Deploying sysio.roa...")
-  await retry(
-    () =>
-      clio.setContractAndWait(
-        "sysio.roa",
-        resolveContractPath("sysio.roa"),
-        "sysio.roa.wasm",
-        "sysio.roa.abi"
-      ),
-    {
-      label: "deploy sysio.roa",
-      maxAttempts: ClusterManager.ClioRetryAttempts,
-      delayMs: ClusterManager.ClioRetryHeavyDelayMs
-    }
-  )
-  await clio.setPriv("sysio.roa")
-  await clio.pushActionAndWait<SystemContracts.SysioRoaActivateroaAction>(
-    "sysio.roa",
-    "activateroa",
-    { total_sys: "75496.0000 SYS", bytes_per_unit: 104 },
-    "sysio.roa@active"
-  )
-  log.info("[Phase 11] sysio.roa deployed")
-
-  // ── Phase 11b: Create bootstrap node owner for resource policies ──
-  await setupNodeOwner(clio)
-  log.info("[Phase 11b] Bootstrap node owner ready")
+  log.info("[Phase 11c] sysio.token deployed + distributed")
 
   // ── Phase 12: Deploy sysio.authex ──
   log.info("[Phase 12] Deploying sysio.authex...")
   await retry(
     () =>
-      clio.setContractAndWait(
+      deploySysContract(
+        clio,
         "sysio.authex",
-        resolveContractPath("sysio.authex"),
-        "sysio.authex.wasm",
-        "sysio.authex.abi"
+        Path.join(resolveContractPath("sysio.authex"), "sysio.authex.wasm"),
+        Path.join(resolveContractPath("sysio.authex"), "sysio.authex.abi")
       ),
     {
       label: "deploy sysio.authex",
@@ -1991,7 +2058,6 @@ async function bootstrapChain(
       delayMs: ClusterManager.ClioRetryHeavyDelayMs
     }
   )
-  await clio.setPriv("sysio.authex")
   await grantSysioCode(clio, "sysio.authex")
   await clio.pushTransactionAndWait({
     account: "sysio",
@@ -2050,15 +2116,13 @@ async function bootstrapChain(
         return
       }
       await retry(
-        async () => {
-          await clio.setContractAndWait(
+        () =>
+          deploySysContract(
+            clio,
             contractName,
-            contractPath,
-            `${contractName}.wasm`,
-            `${contractName}.abi`
-          )
-          await clio.setPriv(contractName)
-        },
+            Path.join(contractPath, `${contractName}.wasm`),
+            Path.join(contractPath, `${contractName}.abi`)
+          ),
         {
           label: `deploy ${contractName}`,
           maxAttempts: ClusterManager.ClioRetryAttempts,
@@ -2171,6 +2235,34 @@ async function bootstrapChain(
     },
     authorization: [{ actor: "sysio.authex", permission: "owner" }]
   })
+
+  // ===========================================================================
+  // === PRODUCTION BOOTSTRAP COMPLETE ===
+  //
+  // Everything ABOVE stands up the core chain exactly as production will: bios then sysio.system
+  // (raw, on the `sysio` account); sysio.roa (raw) + activateroa establishing the single sysio RAM
+  // pool; every other privileged system contract (token, authex, and the OPP set) deployed via
+  // sysio.roa::setsyscode/setsysabi with its code RAM gifted from that pool; all accounts finite and
+  // pool-gifted (no unlimited accounts); producers set + handed off; and the inline-auth (sysio.code)
+  // delegations wired. At this point the chain is fully bootstrapped and self-sufficient.
+  //
+  // Everything BELOW is POST-BOOTSTRAP OPERATIONS SETUP — the operations layer (cross-chain config,
+  // node owners, operators, underwriters, epochs). In production this is NOT done by the bootstrap
+  // process: real node owners register through the NFT-claim -> sysio.roa::nodeownreg flow and then
+  // provision operators. The cluster performs it inline only so e2e flows have a live operations
+  // layer to test against. It is kept faithful to production — no admin shortcuts (no forcereg).
+  // ===========================================================================
+
+  // ── Post-bootstrap: register the bootstrap node owner (real nodeownreg flow, fake EM eth) ──
+  // The "actual node owner" that sets up operations below. Runs here (not in Phase 11d) because
+  // nodeownreg needs ROA active AND the Phase 14f sysio.roa->sysio.authex@sysio.code delegation so its
+  // inline recordlink authorizes. It must precede Phase 18 (operators), which issues ROA policies from
+  // BOOTSTRAP_NODE_OWNER as the registered node owner.
+  log.info("[Post-bootstrap] Registering bootstrap node owner via nodeownreg...")
+  await setupNodeOwner(clio)
+  log.info(
+    `[Post-bootstrap] Bootstrap node owner ${BOOTSTRAP_NODE_OWNER} registered (tier 1)`
+  )
 
   // ── Phase 15: Configure sysio.epoch ──
   log.info("[Phase 15] Configuring sysio.epoch...")
