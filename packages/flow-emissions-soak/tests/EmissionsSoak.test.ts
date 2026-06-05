@@ -1,5 +1,6 @@
 import "jest"
 import {
+  BOOTSTRAP_NODE_OWNER,
   convertImportSeed,
   createAuthExLink,
   DEV_K1_PUBLIC_KEY,
@@ -420,14 +421,14 @@ describeCluster("Emissions + dclaim multi-hour soak", () => {
         "addpolicy",
         {
           owner: s.wireAccount,
-          issuer: "defproducera",
+          issuer: BOOTSTRAP_NODE_OWNER,
           net_weight: "25.0000 SYS",
           ram_weight: "25.0000 SYS",
           cpu_weight: "25.0000 SYS",
           time_block: 0,
           network_gen: 0
         },
-        "defproducera@active"
+        `${BOOTSTRAP_NODE_OWNER}@active`
       )
     }
 

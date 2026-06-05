@@ -6,6 +6,7 @@ import * as anchor from "@coral-xyz/anchor"
 import { Connection, Keypair, PublicKey } from "@solana/web3.js"
 
 import {
+  BOOTSTRAP_NODE_OWNER,
   createAuthExLink,
   DEV_K1_PUBLIC_KEY,
   emitSolanaYield,
@@ -226,14 +227,14 @@ describeCluster("Yield distribution through fake emitters", () => {
       "addpolicy",
       {
         owner: linkedEthAccount,
-        issuer: "defproducera",
+        issuer: BOOTSTRAP_NODE_OWNER,
         net_weight: "25.0000 SYS",
         ram_weight: "25.0000 SYS",
         cpu_weight: "25.0000 SYS",
         time_block: 0,
         network_gen: 0
       },
-      "defproducera@active"
+      `${BOOTSTRAP_NODE_OWNER}@active`
     )
     await createAuthExLink(ctx.wireClient.clio, {
       chainKind: ChainKind.EVM,

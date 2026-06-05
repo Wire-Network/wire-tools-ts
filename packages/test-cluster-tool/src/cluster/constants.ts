@@ -169,6 +169,20 @@ export const ROA_BYTES_PER_UNIT = 104
 export const DEFAULT_RESOURCE_WEIGHT = "25.0000 SYS"
 export const DEFAULT_RAM_WEIGHT = "25.0000 SYS"
 
+/**
+ * Bootstrap node owner account name.
+ *
+ * Registered during post-bootstrap operations setup via the real `sysio.roa::nodeownreg` flow (the
+ * same path the NFT-claim depot drives -- NOT the `forcereg` admin shortcut) at tier 1 (Validator).
+ * It then issues the operator/underwriter ROA resource policies. The name is kept to 2-6 characters
+ * so it satisfies `sysio.roa::valid_name_for_tier` for tier 1; a longer name (e.g. a 12-char producer
+ * name) would be rejected with NAME_INVALID on the real registration path.
+ *
+ * Single source of truth: ClusterManager registers it, OperatorProvisioning issues from it, and any
+ * flow that issues its own ROA policy imports this constant rather than hardcoding the account name.
+ */
+export const BOOTSTRAP_NODE_OWNER = "wireno"
+
 // ---------------------------------------------------------------------------
 // Port bases
 // ---------------------------------------------------------------------------
