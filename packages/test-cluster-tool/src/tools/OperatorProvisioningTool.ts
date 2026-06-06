@@ -46,7 +46,7 @@ import {
 } from "@wireio/sdk-core"
 import { ChainKind, OperatorType } from "@wireio/opp-typescript-models"
 import type { FlowTestContext } from "../FlowTestContext.js"
-import { BOOTSTRAP_NODE_OWNER } from "../cluster/constants.js"
+import { BOOTSTRAP_NODE_OWNER, DEV_K1_PUBLIC_KEY } from "../cluster/constants.js"
 import { ETHBootstrapper } from "../cluster/ETHBootstrapper.js"
 import { createAuthExLink } from "./AuthExLinkTool.js"
 import { ProcessManager } from "../processes/ProcessManager.js"
@@ -127,9 +127,8 @@ export namespace OperatorProvisioning {
   export const DefaultEthFundWei      = 10n ** 18n
   /** Bootstrap node owner that issues the ROA policy for new accounts (single source: constants.ts). */
   export const BootstrapNodeOwner     = BOOTSTRAP_NODE_OWNER
-  /** Dev K1 pubkey loaded into kiod at bootstrap; used as owner/active. */
-  export const DevK1PublicKey         =
-    "SYS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV"
+  /** Dev K1 pubkey loaded into kiod at bootstrap; used as owner/active (single source: constants.ts). */
+  export const DevK1PublicKey         = DEV_K1_PUBLIC_KEY
   /** Deadline + interval for the SOL airdrop confirmation poll. */
   export const AirdropConfirmTimeoutMs      = 30_000
   export const AirdropConfirmPollIntervalMs = 500

@@ -155,3 +155,15 @@ export function emPublicKeyFromEthWallet(
     compressed: compressedBytes
   })
 }
+
+/**
+ * A fresh depositor EM (secp256k1) public key (`PUB_EM_*`), derived from a random ethers wallet.
+ *
+ * Stands in for the ETH key an NFT depositor supplies in a node-owner claim. The key is only recorded as
+ * a sysio.authex link; it is never signed with, so a throwaway wallet suffices. Shared by the cluster
+ * bootstrap node owner (ClusterManager) and flow-node-owner-nft so the two stay identical.
+ */
+export function freshEthPubEm(): string {
+  const wallet = ethers.Wallet.createRandom() as unknown as ethers.HDNodeWallet
+  return emPublicKeyFromEthWallet(wallet).toString()
+}

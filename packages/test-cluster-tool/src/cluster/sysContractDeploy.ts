@@ -11,7 +11,7 @@
  */
 
 import Fs from "fs"
-import { ABI, Serializer, SystemContracts } from "@wireio/sdk-core"
+import { ABI, Name, Serializer, SystemContracts } from "@wireio/sdk-core"
 import { Clio } from "../clients/Clio.js"
 
 /**
@@ -24,7 +24,7 @@ import { Clio } from "../clients/Clio.js"
  * @param abiJson - ABI as a JSON string or already-parsed object.
  * @returns the packed `abi_def` as a lowercase hex string.
  */
-export function packAbi(abiJson: string | object): string {
+function packAbi(abiJson: string | object): string {
   const obj = typeof abiJson === "string" ? JSON.parse(abiJson) : abiJson
   return Serializer.encode({ object: ABI.from(obj), type: ABI }).hexString
 }
@@ -80,6 +80,44 @@ export function sysioActiveAuthority() {
   }
 }
 
+/**
+ * An authority controlled by `sysio@active` PLUS the given accounts' `@sysio.code` permissions.
+ *
+ * Used by the cross-contract delegations (Stage 8): a privileged contract that inline-sends actions needs
+ * the relevant `@sysio.code` weight in its authority, but it must stay governed by `sysio@active` (no
+ * standalone key) like every other system account. This keeps the `sysio@active` base and adds the code
+ * weights, rather than the bootstrap's earlier DEV_K1-key model.
+ *
+ * The `accounts` list is sorted by account name value (ascending) as the chain's authority encoding
+ * requires; `sysio` sorts before every `sysio.*` account, so `sysio@active` is always first.
+ *
+ * @param codeAccounts - accounts whose `@sysio.code` permission to trust (the contract itself and/or a
+ *                       cross-contract caller). `sysio@active` is always included as the base.
+ */
+export function sysioActiveCodeAuthority(codeAccounts: string[]) {
+  const accounts = [
+    { permission: { actor: "sysio", permission: "active" }, weight: 1 },
+    ...codeAccounts.map(actor => ({
+      permission: { actor, permission: "sysio.code" },
+      weight: 1
+    }))
+  ].sort((a, b) => {
+    const av = Name.from(a.permission.actor).value.value
+    const bv = Name.from(b.permission.actor).value.value
+    if (av !== bv) return av < bv ? -1 : 1
+    // Tie-break by permission name when the same actor appears twice.
+    const ap = Name.from(a.permission.permission).value.value
+    const bp = Name.from(b.permission.permission).value.value
+    return ap === bp ? 0 : ap < bp ? -1 : 1
+  })
+  return {
+    threshold: 1,
+    keys: [] as Array<{ key: string; weight: number }>,
+    accounts,
+    waits: [] as Array<{ wait_sec: number; weight: number }>
+  }
+}
+
 /** Data shape for the native `sysio::newaccount` action with full authorities. */
 interface NewAccountAuthData {
   creator: string
@@ -89,11 +127,17 @@ interface NewAccountAuthData {
 }
 
 /**
- * Create a `sysio.*` system account controlled by `sysio@active`, via `sysio::newaccount`.
+ * Create a `sysio.*` system account controlled by `sysio@active` (owner = active = `sysio@active`, no
+ * standalone key), via `sysio::newaccount`.
  *
- * MUST run after `sysio.system` is deployed AND ROA is active: `system::native::newaccount` then sets the
- * new account to 0 RAM and `transfer_ram(sysio, name, newaccount_ram)` from the pool, so the account is
- * FINITE (never unlimited) and a subsequent {@link deploySysContract} `giftram` can top up its code RAM.
+ * RAM behaviour depends on which contract is deployed on the `sysio` account at call time:
+ *   - After `sysio.system` is deployed AND ROA is active, `system::native::newaccount` sets the new
+ *     account to 0 RAM then `transfer_ram(sysio, name, newaccount_ram)` from the pool, so it is FINITE and
+ *     a subsequent {@link deploySysContract} `giftram` can top up its code RAM. This is the normal case.
+ *   - Under bios pre-ROA (only the two bring-up accounts `sysio.roa` / `sysio.acct`), bios' `newaccount`
+ *     does not gift RAM, so the account is transiently unlimited until `activateroa` sets it finite.
+ *
+ * Either way the account is governed by `sysio@active`, which is the point of this helper.
  *
  * @param clio          - Clio client.
  * @param name          - System account name to create.
