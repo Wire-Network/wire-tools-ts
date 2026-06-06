@@ -21,7 +21,11 @@ import { AnvilManager } from "../processes/AnvilManager.js"
 import { SolanaValidatorManager } from "../processes/SolanaValidatorManager.js"
 import { KiodManager } from "../processes/KiodManager.js"
 import { Clio } from "../clients/Clio.js"
-import { deploySysContract, createSysioAccount } from "./sysContractDeploy.js"
+import {
+  deploySysContract,
+  createSysioAccount,
+  sysioActiveCodeAuthority
+} from "./sysContractDeploy.js"
 import { log } from "../logger.js"
 import { mkdirs, retry, sleep, waitForEndpoint } from "../util.js"
 import {
@@ -74,7 +78,7 @@ import { writeClusterConfigFile } from "./ClusterConfigPersistence.js"
 import {
   createAuthExLink,
   emPrivateKeyFromEthWallet,
-  emPublicKeyFromEthWallet
+  freshEthPubEm
 } from "../tools/AuthExLinkTool.js"
 import {
   NodeOwnerTier,
@@ -140,7 +144,9 @@ async function generateAndImportKeys(
 }
 
 /**
- * Grant `sysio.code` permission on the owner authority of an account.
+ * Grant `account@sysio.code` on the account's owner authority so it can inline-send actions, while
+ * keeping the account governed by `sysio@active` (no standalone key) — the production model. The account
+ * was created with owner = active = sysio@active; this resets owner to sysio@active + account@sysio.code.
  * Used by OPP contracts that need inline action capabilities.
  */
 async function grantSysioCode(clio: Clio, account: string): Promise<void> {
@@ -151,16 +157,7 @@ async function grantSysioCode(clio: Clio, account: string): Promise<void> {
       account,
       permission: "owner",
       parent: "",
-      auth: {
-        threshold: 1,
-        keys: [{ key: DEV_K1_PUBLIC_KEY, weight: 1 }],
-        accounts: [
-          {
-            permission: { actor: account, permission: "sysio.code" },
-            weight: 1
-          }
-        ]
-      }
+      auth: sysioActiveCodeAuthority([account])
     },
     authorization: [{ actor: account, permission: "owner" }]
   })
@@ -1588,18 +1585,6 @@ export class ClusterManager {
 //  Bootstrap helpers
 // ---------------------------------------------------------------------------
 
-/**
- * A fresh depositor EM (secp256k1) public key (`PUB_EM_*`) derived from a random ethers wallet.
- *
- * Stands in for the ETH key an NFT depositor supplies in the production node-owner claim. The key is
- * only recorded as a sysio.authex link for the bootstrap node owner; it is never signed with, so a
- * throwaway wallet suffices (matches flow-node-owner-nft's `freshEthPubEm`).
- */
-function freshEthPubEm(): string {
-  const wallet = ethers.Wallet.createRandom() as unknown as ethers.HDNodeWallet
-  return emPublicKeyFromEthWallet(wallet).toString()
-}
-
 /** Assign a resource allocation policy to an account via sysio.roa */
 async function addResourcePolicy(
   clio: Clio,
@@ -1834,22 +1819,21 @@ async function bootstrapChain(
   }
 
   // ── Phase 5: Create the bring-up-essential accounts only (sysio.roa, sysio.acct) ──
-  // Everything else — producers AND the rest of the sysio.* system accounts — is created later (Phase 11d),
+  // Everything else — producers AND the rest of the sysio.* system accounts — is created later (Phase 11a),
   // after sysio.system is deployed and ROA is active, so system::newaccount gifts each account's RAM from the
   // sysio pool (set_resource_limits 0 + transfer_ram) — finite, never unlimited. These two must exist now:
   // sysio.roa hosts the contract deployed in Phase 11, and activateroa seeds sysio.acct's bucket. They are
   // transiently unlimited (bios has no gifting newaccount) until activateroa sets them finite.
   log.info("[Phase 5] Creating bring-up accounts (sysio.roa, sysio.acct)...")
+  // owner = active = sysio@active (no standalone key): every sysio.* account is governed by sysio, the
+  // production model. These two are created under bios (pre-ROA), so they are transiently unlimited until
+  // activateroa sets them finite -- but their authority is sysio@active from birth.
   await Bluebird.each(["sysio.roa", "sysio.acct"], name =>
-    retry(
-      () =>
-        clio.createAccount("sysio", name, DEV_K1_PUBLIC_KEY, DEV_K1_PUBLIC_KEY),
-      {
-        label: `create account ${name}`,
-        maxAttempts: ClusterManager.ClioRetryAttempts,
-        delayMs: ClusterManager.ClioRetryLightDelayMs
-      }
-    )
+    retry(() => createSysioAccount(clio, name), {
+      label: `create account ${name}`,
+      maxAttempts: ClusterManager.ClioRetryAttempts,
+      delayMs: ClusterManager.ClioRetryLightDelayMs
+    })
   )
   log.info("[Phase 5] Bring-up accounts created")
 
@@ -1901,14 +1885,16 @@ async function bootstrapChain(
   )
   log.info("[Phase 11] sysio.roa deployed")
 
-  // ── Phase 11d: Create producers + remaining system accounts (pool-gifted) ──
+  // ── Phase 11a: Create producers + remaining system accounts (pool-gifted) ──
   // Created now (after sysio.system + activateroa) so system::native::newaccount gifts each account's RAM from
   // the sysio pool — set_resource_limits(new,0,0,0) + transfer_ram(sysio,new,newaccount_ram) — making them
-  // FINITE, never unlimited. Producers keep their own block-signing key; system accounts likewise (DEV_K1).
-  // The bootstrap node owner is NOT registered here: it is created post-bootstrap via the real
-  // sysio.roa::nodeownreg flow (see setupNodeOwner below), which needs ROA active + the authex delegation.
+  // FINITE, never unlimited. Producers keep their own block-signing key (DEV_K1); every sysio.* system account
+  // is created with owner = active = sysio@active (no standalone key) via createSysioAccount, so chain
+  // governance owns it — the production model. The bootstrap node owner is NOT registered here: it is created
+  // post-bootstrap via the real sysio.roa::nodeownreg flow (see setupNodeOwner below), which needs ROA active
+  // + the authex delegation.
   log.info(
-    "[Phase 11d] Creating producer + remaining system accounts (pool-gifted)..."
+    "[Phase 11a] Creating producer + remaining system accounts (pool-gifted)..."
   )
   await Bluebird.each(producerNames, name =>
     retry(
@@ -1927,7 +1913,7 @@ async function bootstrapChain(
   )
   await Bluebird.each(remainingSysAccounts, async acctName => {
     try {
-      await clio.createSystemAccount(acctName, DEV_K1_PUBLIC_KEY)
+      await createSysioAccount(clio, acctName)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       if (!msg.includes("already exists"))
@@ -1935,11 +1921,11 @@ async function bootstrapChain(
     }
   })
   log.info(
-    `[Phase 11d] Created ${producerNames.length} producer + ${remainingSysAccounts.length} system accounts`
+    `[Phase 11a] Created ${producerNames.length} producer + ${remainingSysAccounts.length} system accounts`
   )
 
-  // ── Phase 11e: Set producers + hand off from the genesis sysio producer ──
-  log.info("[Phase 11e] Setting producers...")
+  // ── Phase 11b: Set producers + hand off from the genesis sysio producer ──
+  log.info("[Phase 11b] Setting producers...")
 
   // Extract each node's K1 public key from its start.cmd signature-provider arg
   // to use as block_signing_key (matches Python: keys["public"])
@@ -1976,7 +1962,7 @@ async function bootstrapChain(
     { schedule: prodSchedule },
     "sysio@active"
   )
-  log.info("[Phase 11e] Waiting for producer handoff (timeout 90s)...")
+  log.info("[Phase 11b] Waiting for producer handoff (timeout 90s)...")
   const handoffDeadline = Date.now() + ClusterManager.HandoffTimeoutMs
   let handoffComplete = false
   while (Date.now() < handoffDeadline) {
@@ -1984,7 +1970,7 @@ async function bootstrapChain(
       const info = await clio.getInfo()
       if (info.head_block_producer && info.head_block_producer !== "sysio") {
         log.info(
-          `[Phase 11e] Producer handoff: ${info.head_block_producer as string}`
+          `[Phase 11b] Producer handoff: ${info.head_block_producer as string}`
         )
         handoffComplete = true
         break
@@ -1992,7 +1978,7 @@ async function bootstrapChain(
     } catch (err: any) {
       // getInfo may fail transiently during handoff — retry
       log.debug(
-        `[Phase 11e] Handoff poll error (retrying): ${err.message?.slice(0, 100)}`
+        `[Phase 11b] Handoff poll error (retrying): ${err.message?.slice(0, 100)}`
       )
     }
     await sleep(ClusterManager.HandoffPollIntervalMs)
@@ -2155,20 +2141,9 @@ async function bootstrapChain(
       account: "sysio.opreg",
       permission: "active",
       parent: "owner",
-      auth: {
-        threshold: 1,
-        keys: [{ key: DEV_K1_PUBLIC_KEY, weight: 1 }],
-        accounts: [
-          {
-            permission: { actor: "sysio.msgch", permission: "sysio.code" },
-            weight: 1
-          },
-          {
-            permission: { actor: "sysio.opreg", permission: "sysio.code" },
-            weight: 1
-          }
-        ]
-      }
+      // sysio@active base (no key) + msgch@sysio.code (cross-contract caller) + opreg@sysio.code (own
+      // inline sends); the helper prepends sysio@active and sorts the accounts list.
+      auth: sysioActiveCodeAuthority(["sysio.msgch", "sysio.opreg"])
     },
     authorization: [{ actor: "sysio.opreg", permission: "owner" }]
   })
@@ -2179,7 +2154,6 @@ async function bootstrapChain(
   // `require_auth(get_self()=sysio.roa)`, so msgch declares `permission_level{sysio.roa, active}`;
   // the chain accepts that only if `roa.active` trusts `sysio.msgch@sysio.code`. `sysio.roa@sysio.code`
   // is retained so sysio.roa's own inline `newaccount` (newuser / newnameduser) stays authorized.
-  // Accounts are sorted by actor (sysio.msgch < sysio.roa) as the authority encoding requires.
   await clio.pushTransactionAndWait({
     account: "sysio",
     name: "updateauth",
@@ -2187,20 +2161,9 @@ async function bootstrapChain(
       account: "sysio.roa",
       permission: "active",
       parent: "owner",
-      auth: {
-        threshold: 1,
-        keys: [{ key: DEV_K1_PUBLIC_KEY, weight: 1 }],
-        accounts: [
-          {
-            permission: { actor: "sysio.msgch", permission: "sysio.code" },
-            weight: 1
-          },
-          {
-            permission: { actor: "sysio.roa", permission: "sysio.code" },
-            weight: 1
-          }
-        ]
-      }
+      // sysio@active base (no key) + msgch@sysio.code + roa@sysio.code; the helper prepends sysio@active
+      // and sorts the accounts list as the authority encoding requires.
+      auth: sysioActiveCodeAuthority(["sysio.msgch", "sysio.roa"])
     },
     authorization: [{ actor: "sysio.roa", permission: "owner" }]
   })
@@ -2209,8 +2172,7 @@ async function bootstrapChain(
   // sysio.roa::nodeownreg inline-sends `sysio.authex::recordlink`
   // (`require_auth(get_self()=sysio.authex)`), declaring `permission_level{sysio.authex, active}`;
   // the chain accepts that only if `authex.active` trusts `sysio.roa@sysio.code`.
-  // `sysio.authex@sysio.code` is retained for authex's own inline sends. Accounts sorted by actor
-  // (sysio.authex < sysio.roa).
+  // `sysio.authex@sysio.code` is retained for authex's own inline sends.
   await clio.pushTransactionAndWait({
     account: "sysio",
     name: "updateauth",
@@ -2218,20 +2180,9 @@ async function bootstrapChain(
       account: "sysio.authex",
       permission: "active",
       parent: "owner",
-      auth: {
-        threshold: 1,
-        keys: [{ key: DEV_K1_PUBLIC_KEY, weight: 1 }],
-        accounts: [
-          {
-            permission: { actor: "sysio.authex", permission: "sysio.code" },
-            weight: 1
-          },
-          {
-            permission: { actor: "sysio.roa", permission: "sysio.code" },
-            weight: 1
-          }
-        ]
-      }
+      // sysio@active base (no key) + authex@sysio.code + roa@sysio.code; the helper prepends sysio@active
+      // and sorts the accounts list.
+      auth: sysioActiveCodeAuthority(["sysio.authex", "sysio.roa"])
     },
     authorization: [{ actor: "sysio.authex", permission: "owner" }]
   })
@@ -2254,7 +2205,7 @@ async function bootstrapChain(
   // ===========================================================================
 
   // ── Post-bootstrap: register the bootstrap node owner (real nodeownreg flow, fake EM eth) ──
-  // The "actual node owner" that sets up operations below. Runs here (not in Phase 11d) because
+  // The "actual node owner" that sets up operations below. Runs here (not in Phase 11a) because
   // nodeownreg needs ROA active AND the Phase 14f sysio.roa->sysio.authex@sysio.code delegation so its
   // inline recordlink authorizes. It must precede Phase 18 (operators), which issues ROA policies from
   // BOOTSTRAP_NODE_OWNER as the registered node owner.

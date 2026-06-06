@@ -41,7 +41,8 @@ Every account's RAM is **finite** and **gifted from the `sysio` pool** as a cons
 - **All `sysio.*` accounts: owner = active = `sysio@active`** — an account-authority delegating to `sysio`
   (`{threshold:1, keys:[], accounts:[{permission:{actor:"sysio",permission:"active"},weight:1}], waits:[]}`); no
   standalone key. Governance (`sysio`, msig-backed in production) controls every system account and signs every
-  `[sysio.X@active]` step. Stage 8 only ADDS `@sysio.code` weights to active (never removes `sysio@active`).
+  `[sysio.X@active]` step. Stage 8 only ADDS `@sysio.code` weights on top of that `sysio@active` base (never
+  removes it) — a contract's own code permission on its owner authority, cross-contract delegations on active.
 - All system contracts are privileged: `sysio`/`bios`/`system` from genesis; the **sys**-deployed set via
   `setsyscode`. Hard requirements (from source): `sysio.token` (bills rows to `sysio`), `sysio.msig`,
   `sysio.wrap` (both `act.send()` arbitrary-auth actions).

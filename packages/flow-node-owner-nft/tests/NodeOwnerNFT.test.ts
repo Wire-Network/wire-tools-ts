@@ -1,12 +1,11 @@
 import "jest"
 import * as Fs from "node:fs"
 import * as Path from "node:path"
-import { ethers } from "ethers"
 
 import {
   DEV_K1_PUBLIC_KEY,
-  emPublicKeyFromEthWallet,
   FlowTestContext,
+  freshEthPubEm,
   loadMockWireNodes,
   log,
   mintNodeNFT,
@@ -58,12 +57,6 @@ function buildChainDir(): string {
     .replace(/T/, "_")
     .replace(/Z$/, "")
   return Path.join(DEFAULT_CHAIN_DIR_BASE, `flow-node-owner-nft-${stamp}`)
-}
-
-/** A fresh depositor EM public key (PUB_EM_*) from a random ethers wallet. */
-function freshEthPubEm(): string {
-  const wallet = ethers.Wallet.createRandom() as unknown as ethers.HDNodeWallet
-  return emPublicKeyFromEthWallet(wallet).toString()
 }
 
 // `describe.skip` for unit-only environments — the flow needs a real nodeop cluster, anvil, and the

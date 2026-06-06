@@ -765,44 +765,65 @@ export class Clio {
   }
 
   /**
-   * Like {@link pushActionAndWait}, but submits the action inside a transaction written to a temp FILE and run
-   * via `clio push transaction <file>`. This avoids the OS argv limit (`E2BIG`) that `push action <data>` hits
+   * Like {@link pushActionAndWait} — same finality guarantee: waits for `finality` (default
+   * {@link Clio.DefaultFinality} = irreversible) and re-pushes a fresh transaction if it is forked out
+   * before then — but submits the action inside a transaction written to a temp FILE and run via
+   * `clio push transaction <file>`. This avoids the OS argv limit (`E2BIG`) that `push action <data>` hits
    * when the action data is large — e.g. a contract wasm/abi passed to sysio.roa::setsyscode / setsysabi
    * (`clio push action`'s `data` is a command-line argument; `push transaction`'s positional accepts a
-   * filename). Still wallet-signed; clio fills TAPOS. The temp file is removed afterward.
+   * filename). Still wallet-signed; clio fills TAPOS. Each attempt writes (and afterwards removes) its own
+   * temp file, so a re-push uses fresh TAPOS + expiration and never duplicates.
    */
   async pushActionFileAndWait<T extends {}>(
     account: string,
     action: string,
     data: T,
     auth: string,
-    waitTimeoutMs = Clio.DefaultTimeoutMs
+    waitTimeoutMs = Clio.DefaultTimeoutMs,
+    finality = Clio.DefaultFinality
   ): Promise<API.v1.SendTransactionResponse> {
     const [actor, permission] = auth.split("@")
-    const body = {
-      actions: [
-        { account, name: action, authorization: [{ actor, permission }], data }
-      ]
-    }
-    const tmpFile = Path.join(
-      os.tmpdir(),
-      `wire-trx-${account}-${action}-${process.pid}-${Date.now()}.json`
+    const label = `${account}::${action} (file)`
+    return retry(
+      async () => {
+        const body = {
+          actions: [
+            {
+              account,
+              name: action,
+              authorization: [{ actor, permission }],
+              data
+            }
+          ]
+        }
+        const tmpFile = Path.join(
+          os.tmpdir(),
+          `wire-trx-${account}-${action}-${process.pid}-${Date.now()}.json`
+        )
+        await fsp.writeFile(tmpFile, JSON.stringify(body))
+        try {
+          const result = await this.run<API.v1.SendTransactionResponse>(
+            ["push", "transaction", "-j", tmpFile],
+            { json: true }
+          )
+          const txId = asOption(result?.transaction_id)
+            .filter(isString)
+            .filter(isNotEmpty)
+            .getOrThrow(
+              `Result missing transaction_id: ${JSON.stringify(result)}`
+            )
+          await this.assertFinality(txId, label, finality, waitTimeoutMs)
+          return result
+        } finally {
+          await fsp.unlink(tmpFile).catch(() => {})
+        }
+      },
+      {
+        maxAttempts: Clio.FinalityMaxAttempts,
+        delayMs: Clio.FinalityRetryDelayMs,
+        label
+      }
     )
-    await fsp.writeFile(tmpFile, JSON.stringify(body))
-    try {
-      const result = await this.run<API.v1.SendTransactionResponse>(
-        ["push", "transaction", "-j", tmpFile],
-        { json: true }
-      )
-      const txId = asOption(result?.transaction_id)
-        .filter(isString)
-        .filter(isNotEmpty)
-        .getOrThrow(`Result missing transaction_id: ${JSON.stringify(result)}`)
-      await this.waitForTransactionInBlock(txId, waitTimeoutMs)
-      return result
-    } finally {
-      await fsp.unlink(tmpFile).catch(() => {})
-    }
   }
 
   /**
