@@ -13,8 +13,9 @@ import { SlugName } from "@wireio/sdk-core"
 
 import { SOLClient } from "../clients/SOLClient.js"
 import { log } from "../logger.js"
-import { retry, sleep } from "../util.js"
+import { retry } from "../util.js"
 import { createMockSplMint, mintMockSplToUser } from "../tools/SplFundingTool.js"
+import { confirmSignature } from "../sol/confirmSignature.js"
 
 /** Total attempts allowed for each Solana airdrop / RPC retry block. */
 const SolAirdropRetryAttempts = 3
@@ -123,21 +124,10 @@ export class SOLBootstrap {
         await retry(
           async () => {
             const sig = await this.connection.requestAirdrop(pub, lamports)
-            const deadline = Date.now() + SolAirdropConfirmTimeoutMs
-            while (Date.now() < deadline) {
-              const status = await this.connection.getSignatureStatus(sig)
-              const conf = status?.value?.confirmationStatus
-              if (conf === "confirmed" || conf === "finalized") break
-              if (status?.value?.err)
-                throw new Error(
-                  `Airdrop tx failed: ${JSON.stringify(status.value.err)}`
-                )
-              await sleep(SolAirdropConfirmIntervalMs)
-            }
-            if (Date.now() >= deadline)
-              throw new Error(
-                `Airdrop not confirmed within ${SolAirdropConfirmTimeoutMs}ms`
-              )
+            await confirmSignature(this.connection, sig, `airdrop to ${pk}`, {
+              deadlineMs: SolAirdropConfirmTimeoutMs,
+              intervalMs: SolAirdropConfirmIntervalMs
+            })
           },
           { label: `airdrop to ${pk}`, maxAttempts: SolAirdropRetryAttempts, delayMs: SolAirdropRetryDelayMs }
         )
@@ -213,22 +203,11 @@ export class SOLBootstrap {
           deployer.publicKey,
           100 * LAMPORTS_PER_SOL
         )
-        // Poll signature status via HTTP to avoid the WebSocket dependency.
-        // The Solana WebSocket (rpc+1) may conflict with other services on the
-        // same host, making confirmTransaction unreliable during cluster create.
-        const deadline = Date.now() + 60_000
-        while (Date.now() < deadline) {
-          const status = await this.connection.getSignatureStatus(sig)
-          const conf = status?.value?.confirmationStatus
-          if (conf === "confirmed" || conf === "finalized") break
-          if (status?.value?.err)
-            throw new Error(
-              `Airdrop tx failed: ${JSON.stringify(status.value.err)}`
-            )
-          await sleep(500)
-        }
-        if (Date.now() >= deadline)
-          throw new Error("Airdrop not confirmed within 60s")
+        // Poll signature status via HTTP (each RPC bounded) to avoid the
+        // WebSocket dependency: the Solana WebSocket (rpc+1) may conflict with
+        // other services on the same host, making confirmTransaction unreliable
+        // during cluster create.
+        await confirmSignature(this.connection, sig, "airdrop to deployer")
       },
       { label: "airdrop to deployer", maxAttempts: SolAirdropRetryAttempts, delayMs: SolAirdropRetryDelayMs }
     )
@@ -340,19 +319,7 @@ export class SOLBootstrap {
       skipPreflight: false
     })
 
-    const initDeadline = Date.now() + 60_000
-    while (Date.now() < initDeadline) {
-      const status = await this.connection.getSignatureStatus(initSig)
-      const conf = status?.value?.confirmationStatus
-      if (conf === "confirmed" || conf === "finalized") break
-      if (status?.value?.err)
-        throw new Error(
-          `Initialize tx failed: ${JSON.stringify(status.value.err)}`
-        )
-      await sleep(500)
-    }
-    if (Date.now() >= initDeadline)
-      throw new Error("Initialize not confirmed within 60s")
+    await confirmSignature(this.connection, initSig, "Initialize")
 
     log.info("PDAs initialized successfully")
 
@@ -376,19 +343,7 @@ export class SOLBootstrap {
       [deployer],
       { skipPreflight: false }
     )
-    const setDeadline = Date.now() + 60_000
-    while (Date.now() < setDeadline) {
-      const status = await this.connection.getSignatureStatus(setSig)
-      const conf = status?.value?.confirmationStatus
-      if (conf === "confirmed" || conf === "finalized") break
-      if (status?.value?.err)
-        throw new Error(
-          `set_token_address tx failed: ${JSON.stringify(status.value.err)}`
-        )
-      await sleep(500)
-    }
-    if (Date.now() >= setDeadline)
-      throw new Error("set_token_address not confirmed within 60s")
+    await confirmSignature(this.connection, setSig, "set_token_address")
 
     log.info("SOL native-token binding registered")
 
@@ -418,19 +373,7 @@ export class SOLBootstrap {
       [deployer],
       { skipPreflight: false }
     )
-    const initReserveDeadline = Date.now() + 60_000
-    while (Date.now() < initReserveDeadline) {
-      const status = await this.connection.getSignatureStatus(initReserveSig)
-      const conf = status?.value?.confirmationStatus
-      if (conf === "confirmed" || conf === "finalized") break
-      if (status?.value?.err)
-        throw new Error(
-          `init_reserve tx failed: ${JSON.stringify(status.value.err)}`
-        )
-      await sleep(500)
-    }
-    if (Date.now() >= initReserveDeadline)
-      throw new Error("init_reserve not confirmed within 60s")
+    await confirmSignature(this.connection, initReserveSig, "init_reserve")
 
     log.info("SOL ReserveAggregate PDA initialized")
 
@@ -484,19 +427,7 @@ export class SOLBootstrap {
       [deployer],
       { skipPreflight: false }
     )
-    const createReserveDeadline = Date.now() + 60_000
-    while (Date.now() < createReserveDeadline) {
-      const status = await this.connection.getSignatureStatus(createReserveSig)
-      const conf = status?.value?.confirmationStatus
-      if (conf === "confirmed" || conf === "finalized") break
-      if (status?.value?.err)
-        throw new Error(
-          `create_reserve_native tx failed: ${JSON.stringify(status.value.err)}`
-        )
-      await sleep(500)
-    }
-    if (Date.now() >= createReserveDeadline)
-      throw new Error("create_reserve_native not confirmed within 60s")
+    await confirmSignature(this.connection, createReserveSig, "create_reserve_native")
 
     log.info(
       `SOL native reserve seeded (PDA=${solReservePda.toBase58()}, lamports=${BootstrapNativeReserveLamports})`
@@ -661,16 +592,6 @@ export class SOLBootstrap {
     label:  string
   ): Promise<void> {
     const sig = await this.connection.sendTransaction(tx, [signer], { skipPreflight: false })
-    const deadline = Date.now() + 60_000
-    while (Date.now() < deadline) {
-      const status = await this.connection.getSignatureStatus(sig)
-      const conf   = status?.value?.confirmationStatus
-      if (conf === "confirmed" || conf === "finalized") return
-      if (status?.value?.err) {
-        throw new Error(`${label} tx failed: ${JSON.stringify(status.value.err)}`)
-      }
-      await sleep(500)
-    }
-    throw new Error(`${label} not confirmed within 60s`)
+    await confirmSignature(this.connection, sig, label)
   }
 }
