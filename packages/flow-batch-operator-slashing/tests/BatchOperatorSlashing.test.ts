@@ -68,6 +68,9 @@ const TEST_EPOCH_DURATION_SEC = 60
 const MsPerSecond = 1_000
 const PollDeadlineBufferMs = 30_000
 const LongPollIntervalMs   = 3_000
+// Margin past next_epoch_start (in CHAIN time) before injecting the divergent deliveries, so the
+// dispute-opening deliver lands comfortably after the epoch boundary even if block production lags.
+const EpochBoundaryMarginMs = 2_000
 // Bootstrap (~5 min) PLUS provisioning 3 SBP-less dispute ops (ETH/SOL identities each) and waiting for
 // them to flip ACTIVE + become the sole active group across a few epochs.
 const BootstrapTimeoutMs   = 1_200_000
@@ -397,7 +400,10 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
       const op   = DISPUTE_OPS[i]
       const tag  = ENVELOPE_TAGS[i]
       const data = encodeDivergentEnvelope(epoch, tag) // TODO(live): real Envelope bytes
-      await ctx.wireClient.clio.pushAction(
+      // pushActionAndWait (not pushAction): the dispute opens from the 3rd divergent deliver's
+      // inline evalcons, so each deliver must be CONFIRMED to land — a forked-out/dropped deliver
+      // would leave fewer than 3 distinct checksums and the dispute would never open.
+      await ctx.wireClient.clio.pushActionAndWait(
         "sysio.msgch",
         "deliver",
         { batch_op_name: op, chain_code: contestedChainCode(), data: bytesToHex(data) },
@@ -440,17 +446,27 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
     }
   }
 
-  /** Wait until wall-clock is past the current epoch's `next_epoch_start`. The SBP-less dispute group
-   *  never reaches consensus, so the epoch stays put — and only a deliver landing past the boundary
-   *  opens a dispute (chkcons can't). Chain timestamps are UTC; append `Z` if missing. */
+  /** Wait until the CHAIN's head-block time is past the current epoch's `next_epoch_start`
+   *  (plus a margin). A dispute opens only from a deliver whose ON-CHAIN block time is
+   *  >= next_epoch_start (chkcons can't open one), and the SBP-less dispute group never reaches
+   *  consensus so the epoch stays put. Gating on the chain clock rather than the test runner's
+   *  wall clock avoids the race where the runner is past the boundary but the chain is a block or
+   *  two behind, landing the divergent deliver pre-boundary so no dispute ever opens. Chain
+   *  timestamps are UTC; append `Z` if missing. */
   async function waitPastEpochBoundary(): Promise<void> {
     await pollUntil(
-      "epoch boundary passes (now >= next_epoch_start)",
+      "chain head-block time passes next_epoch_start",
       async () => {
-        const st  = await ctx.wireClient.getEpochState()
-        const raw = String((st.rows[0] as any).next_epoch_start)
+        const st   = await ctx.wireClient.getEpochState()
+        const raw  = String((st.rows[0] as any).next_epoch_start)
         const next = Date.parse(raw.endsWith("Z") ? raw : `${raw}Z`)
-        return Number.isFinite(next) && Date.now() >= next
+        const hraw = String((await ctx.wireClient.getInfo()).head_block_time)
+        const head = Date.parse(hraw.endsWith("Z") ? hraw : `${hraw}Z`)
+        return (
+          Number.isFinite(next) &&
+          Number.isFinite(head) &&
+          head >= next + EpochBoundaryMarginMs
+        )
       },
       TEST_EPOCH_DURATION_SEC * 2 * MsPerSecond,
       1_000
@@ -464,7 +480,10 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
   async function deliverConsensus(chainCode: number, epoch: number): Promise<void> {
     const data = bytesToHex(encodeDivergentEnvelope(epoch, "consensus"))
     for (const op of DISPUTE_OPS) {
-      await ctx.wireClient.clio.pushAction(
+      // Confirm each lands so the non-contested outpost deterministically reaches epoch-E
+      // consensus (the post-resolution advance where the slash runs needs every active outpost
+      // at epoch-E consensus).
+      await ctx.wireClient.clio.pushActionAndWait(
         "sysio.msgch",
         "deliver",
         { batch_op_name: op, chain_code: chainCode, data },
