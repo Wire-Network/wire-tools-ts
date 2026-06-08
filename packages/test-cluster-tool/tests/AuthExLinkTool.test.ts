@@ -9,6 +9,7 @@ import {
   emPrivateKeyFromEthWallet,
   emPublicKeyFromEthWallet
 } from "@wireio/test-cluster-tool"
+import { freshEthPubEm } from "@wireio/test-cluster-tool/tools/AuthExLinkTool"
 
 const ANVIL_MNEMONIC =
   "test test test test test test test test test test test junk"
@@ -115,6 +116,19 @@ describe("AuthExLinkTool", () => {
       expect(msg).toMatch(
         /^PUB_EM_02[0-9a-f]{64}\|batchop\.a\|2\|1234567890\|createlink auth$/
       )
+    })
+  })
+
+  describe("freshEthPubEm", () => {
+    it("returns a PUB_EM_ secp256k1 public key string", () => {
+      const key = freshEthPubEm()
+      expect(typeof key).toBe("string")
+      // PUB_EM_ + 0x02/0x03 prefix byte + 32-byte X coordinate = 66 hex chars.
+      expect(key).toMatch(/^PUB_EM_0[23][0-9a-f]{64}$/)
+    })
+
+    it("returns a different key on each call (random wallet)", () => {
+      expect(freshEthPubEm()).not.toBe(freshEthPubEm())
     })
   })
 })

@@ -20,7 +20,8 @@ import {
   BATCH_OPERATOR_PLUGINS,
   UNDERWRITER_PLUGINS,
   batchOperatorAccountName,
-  underwriterAccountName
+  underwriterAccountName,
+  BOOTSTRAP_NODE_OWNER
 } from "@wireio/test-cluster-tool/cluster/constants"
 
 describe("constants", () => {
@@ -262,6 +263,19 @@ describe("constants", () => {
       )
       const unique = new Set(names)
       expect(unique.size).toBe(26)
+    })
+  })
+
+  describe("BOOTSTRAP_NODE_OWNER", () => {
+    it("is the wireno bootstrap node-owner account", () => {
+      expect(BOOTSTRAP_NODE_OWNER).toBe("wireno")
+    })
+
+    it("is a valid sysio account name", () => {
+      expect(typeof BOOTSTRAP_NODE_OWNER).toBe("string")
+      expect(BOOTSTRAP_NODE_OWNER.length).toBeGreaterThan(0)
+      expect(BOOTSTRAP_NODE_OWNER.length).toBeLessThanOrEqual(12)
+      expect(BOOTSTRAP_NODE_OWNER).toMatch(/^[a-z1-5.]+$/)
     })
   })
 })

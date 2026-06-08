@@ -40,24 +40,14 @@ import {
  * Claim-payload problems (2-5) soft-fail into a nodeownerreg audit row rather than throwing
  * (trust-OPP); only depot/system invariants (6-7) hard-abort.
  *
- * Chain data: `/mnt/data/wire-e2e-soak/flow-node-owner-nft-<timestamp>`.
+ * Cluster data dir: the standard fresh-mode `WIRE_CLUSTER_PATH` (resolved by FlowTestContext.create),
+ * identical to every other gate flow -- no bespoke `WIRE_CHAIN_DIR` / `/mnt/data`.
  */
 
 const EPOCH_DURATION_SEC = Number(process.env.EPOCH_DURATION_SEC ?? 60)
-const DEFAULT_CHAIN_DIR_BASE = "/mnt/data/wire-e2e-soak"
 
 // A second, distinct Wire K1 key (from `clio create key --k1`) for the wrong-key case.
 const OTHER_WIRE_KEY = "PUB_K1_84yPGCSNRdSTrdpYnfzWun477PzuKR4L4R8eYumxqLjoG8s2Jo"
-
-function buildChainDir(): string {
-  if (process.env.WIRE_CHAIN_DIR) return process.env.WIRE_CHAIN_DIR
-  const stamp = new Date()
-    .toISOString()
-    .replace(/[:.]/g, "-")
-    .replace(/T/, "_")
-    .replace(/Z$/, "")
-  return Path.join(DEFAULT_CHAIN_DIR_BASE, `flow-node-owner-nft-${stamp}`)
-}
 
 // `describe.skip` for unit-only environments — the flow needs a real nodeop cluster, anvil, and the
 // wire-sysio build path on disk.
@@ -65,21 +55,15 @@ const describeCluster = process.env.WIRE_BUILD_PATH ? describe : describe.skip
 
 describeCluster("Node owner NFT registration (create-in-flow)", () => {
   let ctx: FlowTestContext
-  let chainDir: string
   let mockWireNodes: MockWireNodesContract
   let outpostAddrs: Record<string, string>
 
   beforeAll(async () => {
-    chainDir = buildChainDir()
-    log.info(`[node-owner-nft] chain dir: ${chainDir}`)
-    Fs.mkdirSync(chainDir, { recursive: true })
-
     ctx = await FlowTestContext.create({
       epochDurationSec: EPOCH_DURATION_SEC,
       producerCount: 3,
       batchOperatorCount: 3,
-      underwriterCount: 1,
-      clusterPath: chainDir
+      underwriterCount: 1
     })
 
     const ethereumPath = ctx.ethereumPath
