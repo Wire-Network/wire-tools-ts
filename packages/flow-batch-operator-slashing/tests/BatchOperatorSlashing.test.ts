@@ -101,6 +101,18 @@ const isStatus = (raw: unknown, want: OperatorStatus): boolean =>
     .with(P.string, s => s === `OPERATOR_STATUS_${OperatorStatus[want]}`)
     .otherwise(() => false)
 
+// sysio.chalg DisputeStatus carries the same dual numeric/string representation
+// as OperatorStatus above (DISPUTE_STATUS_OPEN = 1, DISPUTE_STATUS_RESOLVED = 2).
+const DISPUTE_STATUS_VALUE = { OPEN: 1, RESOLVED: 2 } as const
+const isDisputeStatus = (
+  raw: unknown,
+  want: keyof typeof DISPUTE_STATUS_VALUE
+): boolean =>
+  match(raw)
+    .with(P.number, n => n === DISPUTE_STATUS_VALUE[want])
+    .with(P.string, s => s === `DISPUTE_STATUS_${want}`)
+    .otherwise(() => false)
+
 // ──────────────────────────────────────────────────────────────────────
 //  Test suite
 // ──────────────────────────────────────────────────────────────────────
@@ -213,7 +225,7 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
           try { await pushCheckDispute(dispute!.id) } catch { /* already resolving/resolved */ }
           const d = await readDispute(dispute!.id)
           return d != null
-            && String(d.status).endsWith("RESOLVED")
+            && isDisputeStatus(d.status, "RESOLVED")
             && d.winning_checksum === canonicalChecksum
         },
         TEST_EPOCH_DURATION_SEC * 2 * MsPerSecond,
@@ -484,7 +496,7 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
       code: "sysio.chalg", scope: "sysio.chalg", table: "disputes", limit: 100
     })
     return rows.find(
-      r => Number(r.epoch_index) === epoch && String(r.status).endsWith("OPEN")
+      r => Number(r.epoch_index) === epoch && isDisputeStatus(r.status, "OPEN")
     )
   }
 
