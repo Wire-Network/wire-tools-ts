@@ -1,3 +1,4 @@
+import Fs from "fs"
 import { Clio } from "@wireio/test-cluster-tool/clients/Clio"
 
 /**
@@ -206,5 +207,72 @@ describe("Clio.FinalityType", () => {
 
   it("DefaultFinality is irreversible", () => {
     expect(Clio.DefaultFinality).toBe(Clio.FinalityType.irreversible)
+  })
+})
+
+/**
+ * Minimal view of the private internals the file-push path delegates to, so the
+ * test can mock them without spawning clio: `run` execs the binary and
+ * `assertFinality` waits for the tx to reach the requested finality.
+ */
+type ClioFilePushInternals = {
+  run: (args: string[], opts?: { json?: boolean }) => Promise<unknown>
+  assertFinality: (
+    txId: string,
+    label: string,
+    finality: unknown,
+    waitTimeoutMs: number
+  ) => Promise<void>
+}
+
+describe("Clio.pushActionFileAndWait", () => {
+  it("writes the action to a temp file, runs `push transaction -j`, waits for finality, then removes the file", async () => {
+    const clio = makeClio()
+    const internals = clio as unknown as ClioFilePushInternals
+    let capturedPath = ""
+    let capturedBody: unknown
+    const run = jest
+      .spyOn(internals, "run")
+      .mockImplementation(async (args: string[]) => {
+        capturedPath = args[args.length - 1]
+        capturedBody = JSON.parse(Fs.readFileSync(capturedPath, "utf-8"))
+        return { transaction_id: "txfile1" }
+      })
+    const finality = jest
+      .spyOn(internals, "assertFinality")
+      .mockResolvedValue(undefined)
+
+    const res = await clio.pushActionFileAndWait(
+      "sysio.roa",
+      "setsyscode",
+      { account: "sysio.token", code: "deadbeef" },
+      "sysio@active"
+    )
+
+    expect(res).toEqual({ transaction_id: "txfile1" })
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(run).toHaveBeenCalledWith(
+      ["push", "transaction", "-j", capturedPath],
+      { json: true }
+    )
+    // The temp file held a single-action transaction with the split @ auth.
+    expect(capturedBody).toEqual({
+      actions: [
+        {
+          account: "sysio.roa",
+          name: "setsyscode",
+          authorization: [{ actor: "sysio", permission: "active" }],
+          data: { account: "sysio.token", code: "deadbeef" }
+        }
+      ]
+    })
+    expect(finality).toHaveBeenCalledWith(
+      "txfile1",
+      expect.any(String),
+      expect.anything(),
+      expect.anything()
+    )
+    // The temp file is unlinked in the finally block.
+    expect(Fs.existsSync(capturedPath)).toBe(false)
   })
 })
