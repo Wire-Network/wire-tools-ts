@@ -20,6 +20,17 @@ export interface AnvilOptions {
   binary?: string
   /** Additional CLI flags */
   extraArgs?: string[]
+  /**
+   * If set, pass `--slots-in-an-epoch` (beacon-finality depth). Omit during the
+   * deploy phase so anvil keeps default finality; set on the run-phase anvil.
+   */
+  slotsInAnEpoch?: number
+  /**
+   * If set, pass `--block-time` seconds (interval mining). Omit during the deploy
+   * phase: it disables instamine, which the hardhat deploy depends on. Set only on
+   * the run-phase anvil, where contracts are already deployed.
+   */
+  blockTimeSec?: number
 }
 
 export async function createAnvilDefaultOptions(): Promise<
@@ -64,13 +75,18 @@ export class AnvilManager {
       "--port",
       String(config.port),
       "--chain-id",
-      String(config.chainId),
-      // Beacon-finality emulation -- see SlotsInAnEpoch / BlockTimeSec docs.
-      "--slots-in-an-epoch",
-      String(AnvilManager.SlotsInAnEpoch),
-      "--block-time",
-      String(AnvilManager.BlockTimeSec)
+      String(config.chainId)
     ]
+    // Beacon-finality emulation -- opt-in, set ONLY for the run-phase anvil (see
+    // SlotsInAnEpoch / BlockTimeSec docs). Deliberately omitted during the deploy
+    // phase: `--block-time` disables anvil's instamine, which the hardhat deploy
+    // (deployLocal.ts) depends on -- enabling it there fails every contract deploy.
+    if (config.slotsInAnEpoch) {
+      args.push("--slots-in-an-epoch", String(config.slotsInAnEpoch))
+    }
+    if (config.blockTimeSec) {
+      args.push("--block-time", String(config.blockTimeSec))
+    }
     if (config.stateFile) {
       args.push("--dump-state", config.stateFile)
       // Only load state if the file already exists (not first run)
@@ -110,18 +126,24 @@ export namespace AnvilManager {
   /** Default EVM chain id (Foundry's standard). */
   export const DefaultChainId = 31_337
   /**
-   * Beacon-finality emulation. nodeop's outpost client reads inbound envelopes
-   * at the `finalized` block tag (wire-sysio#387; the read commitment is a
-   * consensus parameter, deliberately not operator-configurable). Stock anvil
-   * only mines on transactions and marks a block finalized two 32-slot epochs
-   * (64 slots) later, so on the harness's quiet dev chain `finalized` sits at
-   * genesis forever and every inbound read returns pre-deploy state -- no ETH
-   * envelope is ever delivered and OPP epoch advancement stalls at 1.
+   * Beacon-finality emulation for the RUN-phase anvil only. nodeop's outpost
+   * client reads inbound envelopes at the `finalized` block tag (wire-sysio#387;
+   * the read commitment is a consensus parameter, not operator-configurable).
+   * Stock anvil only mines on transactions and finalizes a block two 32-slot
+   * epochs (64 slots) later, so on the harness's quiet dev chain `finalized` sits
+   * at genesis forever, every inbound read returns pre-deploy state, no ETH
+   * envelope is delivered, and OPP epoch advancement stalls at 1.
    *
    * `--slots-in-an-epoch 1` finalizes a block after 2 blocks instead of 64.
-   * `--block-time 1` mines every second regardless of traffic so finality
-   * keeps advancing on a quiet chain (this disables instamine; each tx waits
-   * <=1s for inclusion, which the harness's receipt polling already tolerates).
+   * `--block-time 1` mines every second regardless of traffic so finality keeps
+   * advancing on a quiet chain.
+   *
+   * CRITICAL: these are applied ONLY to the run-phase anvil (contracts already
+   * deployed, loaded from state). They MUST NOT be set during the deploy phase --
+   * `--block-time` disables instamine, and the hardhat deploy (deployLocal.ts)
+   * depends on instant mining; enabling it there fails every contract deploy.
+   * In the run phase the harness only sends plain txs (no deploys), which tolerate
+   * the <=1s interval-mining inclusion delay.
    */
   export const SlotsInAnEpoch = 1
   /** Anvil block interval (seconds) — see SlotsInAnEpoch. */

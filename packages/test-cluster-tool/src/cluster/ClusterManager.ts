@@ -1437,7 +1437,12 @@ export class ClusterManager {
       const anvilManager = await AnvilManager.create({
         binary: this.config.executables.anvil,
         port: this.config.ports.anvil,
-        stateFile: Path.join(this.state.anvilStatePath, "anvil.json")
+        stateFile: Path.join(this.state.anvilStatePath, "anvil.json"),
+        // Run phase only: contracts are already deployed (loaded from state), so
+        // interval mining + shallow finality are safe here (no hardhat deploy to
+        // break) and let the outpost clients' `finalized` inbound reads progress.
+        slotsInAnEpoch: AnvilManager.SlotsInAnEpoch,
+        blockTimeSec: AnvilManager.BlockTimeSec
       })
       await anvilManager.start()
     }
