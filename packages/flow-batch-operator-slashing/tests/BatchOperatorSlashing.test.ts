@@ -48,15 +48,15 @@ import {
  *     existing miss -> recorddel -> termcheck -> terminate ladder.
  *
  * ──────────────────────────────────────────────────────────────────────────
- * STATUS: scaffold. The cluster bootstrap, Tier-1 voter provisioning, dispute
- * voting, and the assertions use confirmed `@wireio/test-cluster-tool` APIs.
- * The one piece that needs to be finalized against a live cluster is the
- * DIVERGENT DELIVERY INJECTION (see `injectDivergentDeliveries` below): the
- * real SBPs deliver consistent envelopes, so to force a 3-way split the three
- * target operators must be the sole deliverers for the target (outpost, epoch)
- * and their deliveries must be pushed with three distinct envelope payloads.
- * The exact envelope encoding helper (`@wireio/opp-typescript-models` Envelope)
- * and SBP-suppression wiring are marked with TODO(live) below.
+ * Runs end-to-end against a live cluster. To force a 3-way split, the three
+ * dispute operators are provisioned SBP-less (`provisionDisputeOps`) and made
+ * the sole active batch-op group (`makeDisputeOpsSoleActiveGroup`), so their
+ * hand-pushed deliveries are the only ones the depot sees for the contested
+ * (outpost, epoch). Each divergent delivery carries a distinct, epoch-matching
+ * OPP Envelope (`encodeDivergentEnvelope`, built with the
+ * `@wireio/opp-typescript-models` Envelope encoder), so the depot's trustless
+ * `sha256(data)` yields three distinct candidate checksums and `opendispute`
+ * fires.
  * ──────────────────────────────────────────────────────────────────────────
  */
 
@@ -86,8 +86,8 @@ const T1_VOTER_NAMES = ["voter1", "voter2", "voter3"] as const
 
 /** The three batch operators whose divergent deliveries form the split. The
  *  operator delivering `CANONICAL_TAG` is the one the Tier-1 owners vote for;
- *  the other two are slashed. These names must match operators the harness
- *  bootstraps (or freshly-provisioned SBP-less ops) — see TODO(live). */
+ *  the other two are slashed. These are freshly provisioned SBP-less via
+ *  `provisionDisputeOps` so the test fully controls their deliveries. */
 const DISPUTE_OPS = ["dispop.a", "dispop.b", "dispop.c"] as const
 const CANONICAL_OP = DISPUTE_OPS[0]
 const LOSING_OPS   = [DISPUTE_OPS[1], DISPUTE_OPS[2]]
@@ -383,23 +383,21 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
    * DISTINCT envelope payload for the same (outpost, epoch), forming a 3-way
    * split with no majority.
    *
-   * TODO(live): finalize against a running cluster —
-   *   (a) Encode three valid OPP Envelopes for `epoch` whose only difference is
-   *       a benign payload byte (so the three sha256 checksums differ). Use the
-   *       `@wireio/opp-typescript-models` Envelope encoder; the depot recomputes
-   *       sha256(data) trustlessly, so any well-formed, epoch-matching envelope
-   *       works.
-   *   (b) Ensure DISPUTE_OPS are the SOLE deliverers for the contested outpost
-   *       this epoch (provision them SBP-less like flow-batch-operator-
-   *       termination's freshop, or suppress the bootstrapped SBPs for this
-   *       outpost) — otherwise the consistent SBP deliveries form a majority and
-   *       no dispute opens.
+   * Preconditions established earlier in the flow:
+   *   (a) Each delivery carries a valid OPP Envelope for `epoch` differing only
+   *       in a benign payload tag (so the three sha256 checksums differ) — see
+   *       `encodeDivergentEnvelope`. The depot recomputes sha256(data)
+   *       trustlessly, so any well-formed, epoch-matching envelope works.
+   *   (b) DISPUTE_OPS are the SOLE deliverers for the contested outpost this
+   *       epoch: provisioned SBP-less (`provisionDisputeOps`) and made the sole
+   *       active group (`makeDisputeOpsSoleActiveGroup`), so no consistent SBP
+   *       deliveries form a majority that would suppress the dispute.
    */
   async function injectDivergentDeliveries(epoch: number): Promise<void> {
     for (let i = 0; i < DISPUTE_OPS.length; i++) {
       const op   = DISPUTE_OPS[i]
       const tag  = ENVELOPE_TAGS[i]
-      const data = encodeDivergentEnvelope(epoch, tag) // TODO(live): real Envelope bytes
+      const data = encodeDivergentEnvelope(epoch, tag)
       // pushActionAndWait (not pushAction): the dispute opens from the 3rd divergent deliver's
       // inline evalcons, so each deliver must be CONFIRMED to land — a forked-out/dropped deliver
       // would leave fewer than 3 distinct checksums and the dispute would never open.
@@ -540,7 +538,7 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
 })
 
 // ──────────────────────────────────────────────────────────────────────
-//  Encoding stubs — finalize against the live OPP models (TODO(live))
+//  Envelope encoding (built with the real @wireio/opp-typescript-models models)
 // ──────────────────────────────────────────────────────────────────────
 
 /** slug_name uint64 of the contested outpost. ETHEREUM is one of the two outposts the production
