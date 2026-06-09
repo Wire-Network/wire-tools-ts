@@ -64,7 +64,12 @@ export class AnvilManager {
       "--port",
       String(config.port),
       "--chain-id",
-      String(config.chainId)
+      String(config.chainId),
+      // Beacon-finality emulation -- see SlotsInAnEpoch / BlockTimeSec docs.
+      "--slots-in-an-epoch",
+      String(AnvilManager.SlotsInAnEpoch),
+      "--block-time",
+      String(AnvilManager.BlockTimeSec)
     ]
     if (config.stateFile) {
       args.push("--dump-state", config.stateFile)
@@ -104,6 +109,23 @@ export namespace AnvilManager {
   export const DefaultPort = 8545
   /** Default EVM chain id (Foundry's standard). */
   export const DefaultChainId = 31_337
+  /**
+   * Beacon-finality emulation. nodeop's outpost client reads inbound envelopes
+   * at the `finalized` block tag (wire-sysio#387; the read commitment is a
+   * consensus parameter, deliberately not operator-configurable). Stock anvil
+   * only mines on transactions and marks a block finalized two 32-slot epochs
+   * (64 slots) later, so on the harness's quiet dev chain `finalized` sits at
+   * genesis forever and every inbound read returns pre-deploy state -- no ETH
+   * envelope is ever delivered and OPP epoch advancement stalls at 1.
+   *
+   * `--slots-in-an-epoch 1` finalizes a block after 2 blocks instead of 64.
+   * `--block-time 1` mines every second regardless of traffic so finality
+   * keeps advancing on a quiet chain (this disables instamine; each tx waits
+   * <=1s for inclusion, which the harness's receipt polling already tolerates).
+   */
+  export const SlotsInAnEpoch = 1
+  /** Anvil block interval (seconds) — see SlotsInAnEpoch. */
+  export const BlockTimeSec = 1
   /** Process-manager label — used as the pid file basename and log prefix. */
   export const ProcessLabel = "anvil" as const
   /** Timeout for waiting on anvil startup (ms). */
