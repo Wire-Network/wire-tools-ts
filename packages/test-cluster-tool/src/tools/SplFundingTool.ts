@@ -45,6 +45,7 @@ import {
 } from "@solana/spl-token"
 
 import { log } from "../logger.js"
+import { confirmSignature } from "../sol/confirmSignature.js"
 
 /** Polling cadence + deadline for transaction confirmation. Matches
  *  `SOLBootstrap`'s pattern so all SPL setup steps confirm the same
@@ -134,11 +135,11 @@ export async function mintMockSplToUser(
 }
 
 /**
- * Sign, send, and poll for confirmation of `tx`. Mirrors
- * `SOLBootstrap`'s submission pattern — no `confirmTransaction`,
- * no WebSocket subscription. Fetches a recent blockhash inline so
- * stale-blockhash drops don't cause the harness's longer-running
- * SPL setup to fail.
+ * Sign, send, and confirm `tx`. Fetches a recent blockhash inline (so a
+ * stale-blockhash drop can't fail the harness's longer-running SPL setup),
+ * sends the raw signed bytes, then defers to {@link confirmSignature}, which
+ * bounds each status RPC and periodically re-sends the same signed bytes so a
+ * validator that silently dropped the tx still lands it.
  */
 async function sendAndPoll(
   connection: Connection,
@@ -152,24 +153,15 @@ async function sendAndPoll(
   tx.recentBlockhash = blockhash
   tx.feePayer        = signers[0].publicKey
   tx.sign(...signers)
+  const raw = tx.serialize()
   log.info(`[sendAndPoll/${label}] tx signed, calling sendRawTransaction`)
 
-  const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false })
+  const sig = await connection.sendRawTransaction(raw, { skipPreflight: false })
   log.info(`[sendAndPoll/${label}] sendRawTransaction returned sig=${sig}`)
-  const deadline = Date.now() + POLL_DEADLINE_MS
-  let pollCount = 0
-  while (Date.now() < deadline) {
-    const status = await connection.getSignatureStatus(sig)
-    const conf   = status?.value?.confirmationStatus
-    if (pollCount % 10 === 0) {
-      log.info(`[sendAndPoll/${label}] poll #${pollCount} conf=${conf} err=${JSON.stringify(status?.value?.err)}`)
-    }
-    pollCount++
-    if (conf === "confirmed" || conf === "finalized") return sig
-    if (status?.value?.err) {
-      throw new Error(`${label} tx failed: ${JSON.stringify(status.value.err)}`)
-    }
-    await new Promise(r => setTimeout(r, POLL_INTERVAL_MS))
-  }
-  throw new Error(`${label} tx ${sig} not confirmed within ${POLL_DEADLINE_MS}ms`)
+  await confirmSignature(connection, sig, label, {
+    deadlineMs:  POLL_DEADLINE_MS,
+    intervalMs:  POLL_INTERVAL_MS,
+    rebroadcast: () => connection.sendRawTransaction(raw, { skipPreflight: true })
+  })
+  return sig
 }
