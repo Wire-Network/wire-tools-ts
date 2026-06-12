@@ -136,7 +136,7 @@ wire-test-cluster --chain-dir=<path> destroy   # stop + delete data
 - `../wire-libraries-ts/packages/` → `@wireio/sdk-core`, `@wireio/shared`, `@wireio/shared-node`
 - `../wire-opp/typescript/` → `@wireio/opp-typescript-models`
 
-> **Do not depend on `@wireio/opp-solidity-models` here.** That package is `wire-ethereum`-only — see [`/data/shared/code/wire/.claude/rules/opp-models-packages.md`](../.claude/rules/opp-models-packages.md). The TypeScript surface of both packages is identical; importing the Solidity-track package from a TS-only consumer couples the consumer to Solidity-track regen timing and produces silent stale-enum failures.
+> **Do not depend on `@wireio/opp-solidity-models` here.** That package is `wire-ethereum`-only — see [`<wire-platform-root>/.claude/rules/opp-models-packages.md`](../.claude/rules/opp-models-packages.md). The TypeScript surface of both packages is identical; importing the Solidity-track package from a TS-only consumer couples the consumer to Solidity-track regen timing and produces silent stale-enum failures.
 
 These link automatically on `pnpm install` if the sibling directories exist.
 
@@ -214,7 +214,7 @@ The rules above are enforced on every change. Before declaring a task complete, 
 
 ## Cross-repo rules
 
-- **OPP models packages have repo-specific consumers.** `@wireio/opp-typescript-models` is the canonical TS package for `wire-tools-ts` (and `wire-libraries-ts` where applicable). `@wireio/opp-solidity-models` is `wire-ethereum`-ONLY. Never depend on `opp-solidity-models` from a TS-only repo — see [`/data/shared/code/wire/.claude/rules/opp-models-packages.md`](../.claude/rules/opp-models-packages.md). And neither package may appear in a `wire-libraries-ts` package.json — the generators that produce them live there.
+- **OPP models packages have repo-specific consumers.** `@wireio/opp-typescript-models` is the canonical TS package for `wire-tools-ts` (and `wire-libraries-ts` where applicable). `@wireio/opp-solidity-models` is `wire-ethereum`-ONLY. Never depend on `opp-solidity-models` from a TS-only repo — see [`<wire-platform-root>/.claude/rules/opp-models-packages.md`](../.claude/rules/opp-models-packages.md). And neither package may appear in a `wire-libraries-ts` package.json — the generators that produce them live there.
 - **Shared types consumed by both a server and its client live in the shared package** (`debugging-shared` for the debugging server/client/TUI; don't duplicate host/port/version strings across two `package.json`s).
 
 ## Classes of mistakes to avoid (learned the hard way)
