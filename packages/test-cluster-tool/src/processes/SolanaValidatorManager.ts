@@ -2,6 +2,7 @@ import Path from "path"
 import { Connection } from "@solana/web3.js"
 import { ProcessManager, type ProcessConfig } from "./ProcessManager.js"
 import { existsAsync, waitForEndpoint, sleep } from "../util.js"
+import { DefaultSolanaCommitment } from "../sol/SolanaCommitment.js"
 import { log } from "../logger.js"
 import { defaults } from "lodash"
 import { which } from "zx"
@@ -101,7 +102,7 @@ export class SolanaValidatorManager {
     // processed. Attempting an airdrop before any slots are produced causes
     // TransactionExpiredTimeoutError because the faucet's submitted txn never
     // lands in a confirmed block.
-    const conn = new Connection(this.rpcUrl, "confirmed")
+    const conn = new Connection(this.rpcUrl, DefaultSolanaCommitment)
     const slotDeadline = Date.now() + SolanaValidatorManager.StartupTimeoutMs
     while (Date.now() < slotDeadline) {
       try {

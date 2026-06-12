@@ -38,6 +38,8 @@ import {
   depositSOLNonNativeCollateral
 } from "../SOLCollateralTool.js"
 import { mintMockSplToUser } from "../SplFundingTool.js"
+import { confirmSignature } from "../../sol/confirmSignature.js"
+import { DefaultSolanaCommitment } from "../../sol/SolanaCommitment.js"
 import { resolveLatestNonce } from "../../util.js"
 
 /**
@@ -695,7 +697,7 @@ function asSolanaContextLazy(opts: CollateralTools.DepositOptions): {
         `CollateralTools.deposit: opp_outpost IDL not found at ${idlFile}`
       )
       const idl = JSON.parse(Fs.readFileSync(idlFile, "utf8")) as anchor.Idl
-      const connection = new Connection(opts.solanaRpcUrl, "confirmed")
+      const connection = new Connection(opts.solanaRpcUrl, DefaultSolanaCommitment)
       // The Anchor provider needs a wallet to construct, but
       // `depositSOLCollateral` passes its own depositor keypair to
       // the signers list — the placeholder wallet never signs.
@@ -703,7 +705,7 @@ function asSolanaContextLazy(opts: CollateralTools.DepositOptions): {
       const provider = new anchor.AnchorProvider(
         connection,
         new anchor.Wallet(placeholder),
-        { commitment: "confirmed" }
+        { commitment: DefaultSolanaCommitment }
       )
       cached = { connection, program: new anchor.Program(idl, provider) }
       return cached
@@ -719,12 +721,6 @@ function asSolanaContextLazy(opts: CollateralTools.DepositOptions): {
  * on under-funded operator wallets.
  */
 const SolAirdropLamports = 5_000_000_000n
-
-/** Max wall-clock to wait for `requestAirdrop` to confirm. */
-const SolAirdropTimeoutMs = 30_000
-
-/** Poll interval while waiting for an airdrop signature to confirm. */
-const SolAirdropPollMs = 500
 
 /**
  * Top the depositor's lamport balance up to {@link SolAirdropLamports}
@@ -745,22 +741,10 @@ async function ensureSolFunded(
     depositor.publicKey,
     Number(SolAirdropLamports)
   )
-  const deadline = Date.now() + SolAirdropTimeoutMs
-  while (Date.now() < deadline) {
-    const status = await connection.getSignatureStatus(sig)
-    const conf = status?.value?.confirmationStatus
-    if (conf === "confirmed" || conf === "finalized") return
-    if (status?.value?.err) {
-      throw new Error(
-        `CollateralTools.deposit: airdrop tx failed: ${JSON.stringify(
-          status.value.err
-        )}`
-      )
-    }
-    await new Promise(resolve => setTimeout(resolve, SolAirdropPollMs))
-  }
-  throw new Error(
-    `CollateralTools.deposit: airdrop signature ${sig} not confirmed within ${SolAirdropTimeoutMs}ms`
+  await confirmSignature(
+    connection,
+    sig,
+    `CollateralTools.deposit airdrop to ${depositor.publicKey.toBase58()}`
   )
 }
 

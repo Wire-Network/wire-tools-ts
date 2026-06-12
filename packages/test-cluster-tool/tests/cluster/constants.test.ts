@@ -21,7 +21,8 @@ import {
   UNDERWRITER_PLUGINS,
   batchOperatorAccountName,
   underwriterAccountName,
-  BOOTSTRAP_NODE_OWNER
+  BOOTSTRAP_NODE_OWNER,
+  DEFAULT_WALLET_NAME
 } from "@wireio/test-cluster-tool/cluster/constants"
 
 describe("constants", () => {
@@ -276,6 +277,12 @@ describe("constants", () => {
       expect(BOOTSTRAP_NODE_OWNER.length).toBeGreaterThan(0)
       expect(BOOTSTRAP_NODE_OWNER.length).toBeLessThanOrEqual(12)
       expect(BOOTSTRAP_NODE_OWNER).toMatch(/^[a-z1-5.]+$/)
+    })
+  })
+
+  describe("DEFAULT_WALLET_NAME", () => {
+    it("is the kiod default wallet the bootstrap creates", () => {
+      expect(DEFAULT_WALLET_NAME).toBe("default")
     })
   })
 })

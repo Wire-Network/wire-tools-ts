@@ -46,12 +46,7 @@ import {
 
 import { log } from "../logger.js"
 import { confirmSignature } from "../sol/confirmSignature.js"
-
-/** Polling cadence + deadline for transaction confirmation. Matches
- *  `SOLBootstrap`'s pattern so all SPL setup steps confirm the same
- *  way (no WebSocket dependency). */
-const POLL_INTERVAL_MS = 500
-const POLL_DEADLINE_MS = 60_000
+import { DefaultSolanaCommitment } from "../sol/SolanaCommitment.js"
 
 /**
  * Create a fresh SPL mint with `mintAuthority = funder.publicKey` and
@@ -148,7 +143,7 @@ async function sendAndPoll(
   label:      string
 ): Promise<string> {
   log.info(`[sendAndPoll/${label}] fetching blockhash`)
-  const { blockhash } = await connection.getLatestBlockhash("confirmed")
+  const { blockhash } = await connection.getLatestBlockhash(DefaultSolanaCommitment)
   log.info(`[sendAndPoll/${label}] got blockhash=${blockhash.slice(0,12)}...`)
   tx.recentBlockhash = blockhash
   tx.feePayer        = signers[0].publicKey
@@ -159,8 +154,6 @@ async function sendAndPoll(
   const sig = await connection.sendRawTransaction(raw, { skipPreflight: false })
   log.info(`[sendAndPoll/${label}] sendRawTransaction returned sig=${sig}`)
   await confirmSignature(connection, sig, label, {
-    deadlineMs:  POLL_DEADLINE_MS,
-    intervalMs:  POLL_INTERVAL_MS,
     rebroadcast: () => connection.sendRawTransaction(raw, { skipPreflight: true })
   })
   return sig

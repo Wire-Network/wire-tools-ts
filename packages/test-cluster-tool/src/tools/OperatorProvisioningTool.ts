@@ -46,8 +46,11 @@ import {
 } from "@wireio/sdk-core"
 import { ChainKind, OperatorType } from "@wireio/opp-typescript-models"
 import type { FlowTestContext } from "../FlowTestContext.js"
-import { BOOTSTRAP_NODE_OWNER, DEV_K1_PUBLIC_KEY } from "../cluster/constants.js"
+import { DEV_K1_PUBLIC_KEY } from "../cluster/constants.js"
+import { createAccountWithResources } from "../cluster/accountProvisioning.js"
 import { ETHBootstrapper } from "../cluster/ETHBootstrapper.js"
+import { confirmSignature } from "../sol/confirmSignature.js"
+import { DefaultSolanaCommitment } from "../sol/SolanaCommitment.js"
 import { createAuthExLink } from "./AuthExLinkTool.js"
 import { ProcessManager } from "../processes/ProcessManager.js"
 import { waitForEndpoint } from "../util.js"
@@ -125,13 +128,6 @@ export namespace OperatorProvisioning {
   export const DefaultSolAirdropFloor = 5 * LAMPORTS_PER_SOL
   /** Default ETH funding — ~1 ETH covers any deposit + ample gas. */
   export const DefaultEthFundWei      = 10n ** 18n
-  /** Bootstrap node owner that issues the ROA policy for new accounts (single source: constants.ts). */
-  export const BootstrapNodeOwner     = BOOTSTRAP_NODE_OWNER
-  /** Dev K1 pubkey loaded into kiod at bootstrap; used as owner/active (single source: constants.ts). */
-  export const DevK1PublicKey         = DEV_K1_PUBLIC_KEY
-  /** Deadline + interval for the SOL airdrop confirmation poll. */
-  export const AirdropConfirmTimeoutMs      = 30_000
-  export const AirdropConfirmPollIntervalMs = 500
 }
 
 /**
@@ -166,7 +162,7 @@ export async function provisionFreshBatchOperator(
   const airdropFloor    = options.solAirdropFloor
     ?? OperatorProvisioning.DefaultSolAirdropFloor
   const solConnection   = options.solConnection
-    ?? new Connection(`http://127.0.0.1:${ctx.ports.solanaRpc}`, "confirmed")
+    ?? new Connection(`http://127.0.0.1:${ctx.ports.solanaRpc}`, DefaultSolanaCommitment)
   const ethFundWei      = options.ethFundWei
     ?? OperatorProvisioning.DefaultEthFundWei
 
@@ -178,45 +174,15 @@ export async function provisionFreshBatchOperator(
     "provisionFreshBatchOperator: ctx.ethProvider is required")
 
   // 1) Wallet open + unlock so subsequent clio-signed actions complete.
-  await ctx.wireClient.clio.walletOpenAndUnlock("default")
+  await ctx.wireClient.clio.walletOpenAndUnlock()
 
-  // 2) WIRE account creation. Tolerate the "already exists" branch
-  //    so the helper is idempotent across re-runs.
-  try {
-    await ctx.wireClient.clio.createAccount(
-      "sysio",
-      account,
-      OperatorProvisioning.DevK1PublicKey,
-      OperatorProvisioning.DevK1PublicKey
-    )
-  } catch (err: any) {
-    if (!(err?.message ?? "").includes("already exists")) {
-      throw new Error(
-        `provisionFreshBatchOperator: createAccount(${account}) failed: ${err?.message ?? err}`
-      )
-    }
-  }
-
-  // 3) Resource policy from the bootstrap node owner — every
-  //    operator account needs this to push actions on its own
-  //    permission level. `_weight` fields are sysio.token assets,
-  //    enforced at compile time by the strongly-typed generic
-  //    (per feedback_strongly_typed_contract_actions.md).
-  await ctx.wireClient.clio.pushActionAndWait<
-    SystemContracts.SysioRoaAddpolicyAction
-  >(
-    "sysio.roa",
-    "addpolicy",
-    {
-      owner:       account,
-      issuer:      OperatorProvisioning.BootstrapNodeOwner,
-      net_weight:  "25.0000 SYS",
-      ram_weight:  "25.0000 SYS",
-      cpu_weight:  "25.0000 SYS",
-      time_block:  0,
-      network_gen: 0
-    },
-    `${OperatorProvisioning.BootstrapNodeOwner}@active`
+  // 2+3) WIRE account creation (idempotent across re-runs) + resource
+  //      policy from the bootstrap node owner — every operator account
+  //      needs the policy to push actions on its own permission level.
+  await createAccountWithResources(
+    ctx.wireClient.clio,
+    account,
+    DEV_K1_PUBLIC_KEY
   )
 
   // 4) ETH HD wallet derivation at the requested slot.
@@ -252,20 +218,11 @@ export async function provisionFreshBatchOperator(
   const solKeypair  = Keypair.fromSecretKey(solSdkKey.data.array)
   const solPublicKey = solKeypair.publicKey
   const airdropSig  = await solConnection.requestAirdrop(solPublicKey, airdropFloor)
-  const deadlineMs  = Date.now() + OperatorProvisioning.AirdropConfirmTimeoutMs
-  while (Date.now() < deadlineMs) {
-    const status = await solConnection.getSignatureStatus(airdropSig)
-    const conf   = status?.value?.confirmationStatus
-    if (conf === "confirmed" || conf === "finalized") break
-    if (status?.value?.err) {
-      throw new Error(
-        `provisionFreshBatchOperator: airdrop tx failed for ${solPublicKey.toBase58()}: ${JSON.stringify(status.value.err)}`
-      )
-    }
-    await new Promise(resolve =>
-      setTimeout(resolve, OperatorProvisioning.AirdropConfirmPollIntervalMs)
-    )
-  }
+  await confirmSignature(
+    solConnection,
+    airdropSig,
+    `provisionFreshBatchOperator airdrop to ${solPublicKey.toBase58()}`
+  )
   const solBalance = await solConnection.getBalance(solPublicKey)
   Assert.ok(solBalance >= airdropFloor,
     `provisionFreshBatchOperator: airdrop landed ${solBalance} < floor ${airdropFloor} for ${solPublicKey.toBase58()}`)

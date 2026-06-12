@@ -26,16 +26,13 @@ import {
   TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync
 } from "@solana/spl-token"
+import { confirmSignature } from "../sol/confirmSignature.js"
 
 /** PDA seeds — kept in sync with `wire-solana/programs/opp-outpost/src`. */
 const OUTPOST_CONFIG_SEED          = Buffer.from("outpost_config")
 const OUTBOUND_MESSAGE_BUFFER_SEED = Buffer.from("outbound_message_buffer")
 const RESERVE_SEED                 = Buffer.from("reserve")
 const RESERVE_VAULT_SEED           = Buffer.from("reserve_vault")
-
-/** Number of ms to poll `getSignatureStatus` before timing out. */
-const SOL_CONFIRM_TIMEOUT_MS = 60_000
-const SOL_CONFIRM_POLL_MS    = 500
 
 /**
  * Structured arguments for a SOL-source SWAP_REQUEST emission. All
@@ -126,22 +123,8 @@ export async function requestSolanaSwap(
     .transaction()
 
   const sig = await connection.sendTransaction(tx, [user], { skipPreflight: false })
-
-  const deadline = Date.now() + SOL_CONFIRM_TIMEOUT_MS
-  while (Date.now() < deadline) {
-    const status = await connection.getSignatureStatus(sig)
-    const conf   = status?.value?.confirmationStatus
-    if (conf === "confirmed" || conf === "finalized") return sig
-    if (status?.value?.err) {
-      throw new Error(
-        `SolanaSwapTool: request_swap tx failed: ${JSON.stringify(status.value.err)}`
-      )
-    }
-    await new Promise(resolve => setTimeout(resolve, SOL_CONFIRM_POLL_MS))
-  }
-  throw new Error(
-    `SolanaSwapTool: request_swap tx ${sig} not confirmed within ${SOL_CONFIRM_TIMEOUT_MS}ms`
-  )
+  await confirmSignature(connection, sig, "SolanaSwapTool request_swap")
+  return sig
 }
 
 /**
@@ -250,20 +233,6 @@ export async function requestSolanaSwapSpl(
     .transaction()
 
   const sig = await connection.sendTransaction(tx, [user], { skipPreflight: false })
-
-  const deadline = Date.now() + SOL_CONFIRM_TIMEOUT_MS
-  while (Date.now() < deadline) {
-    const status = await connection.getSignatureStatus(sig)
-    const conf   = status?.value?.confirmationStatus
-    if (conf === "confirmed" || conf === "finalized") return sig
-    if (status?.value?.err) {
-      throw new Error(
-        `SolanaSwapTool: request_swap_spl tx failed: ${JSON.stringify(status.value.err)}`
-      )
-    }
-    await new Promise(resolve => setTimeout(resolve, SOL_CONFIRM_POLL_MS))
-  }
-  throw new Error(
-    `SolanaSwapTool: request_swap_spl tx ${sig} not confirmed within ${SOL_CONFIRM_TIMEOUT_MS}ms`
-  )
+  await confirmSignature(connection, sig, "SolanaSwapTool request_swap_spl")
+  return sig
 }

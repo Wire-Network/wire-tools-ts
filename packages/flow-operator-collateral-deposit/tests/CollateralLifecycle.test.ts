@@ -8,6 +8,7 @@ import {
   AnvilManager,
   depositSOLCollateral,
   FlowTestContext,
+  matchesProtoEnum,
   pollUntil,
   log,
   ProcessManager,
@@ -22,7 +23,7 @@ import {
   OperatorStatus,
   AttestationType
 } from "@wireio/opp-typescript-models"
-import { SlugName } from "@wireio/sdk-core"
+import { SlugName, SystemContracts } from "@wireio/sdk-core"
 
 /**
  * Native ETH `tokenCode` on the OperatorRegistry. The contract was
@@ -430,9 +431,14 @@ describe("Flow: Node Operator Collateral Lifecycle (ETH ↔ WIRE)", () => {
         const op = rows.find(
           (o: any) => o.account === freshOp.account
         )
-        return op != null &&
-          (Number(op.status) === OperatorStatus.ACTIVE ||
-           op.status === "OPERATOR_STATUS_ACTIVE")
+        return (
+          op != null &&
+          matchesProtoEnum(
+            op.status,
+            SystemContracts.SysioOpregOperatorstatus,
+            SystemContracts.SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
+          )
+        )
       },
       relayDeadlineMs,
       LongPollIntervalMs

@@ -16,15 +16,12 @@ import { log } from "../logger.js"
 import { retry } from "../util.js"
 import { createMockSplMint, mintMockSplToUser } from "../tools/SplFundingTool.js"
 import { confirmSignature } from "../sol/confirmSignature.js"
+import { DefaultSolanaCommitment } from "../sol/SolanaCommitment.js"
 
 /** Total attempts allowed for each Solana airdrop / RPC retry block. */
 const SolAirdropRetryAttempts = 3
 /** Delay between airdrop / RPC retries. */
 const SolAirdropRetryDelayMs = 2_000
-/** Confirmation polling interval for airdrops. */
-const SolAirdropConfirmIntervalMs = 500
-/** Hard deadline for an individual airdrop confirmation. */
-const SolAirdropConfirmTimeoutMs = 60_000
 
 /**
  * Lamports to fund the bootstrap-seeded native SOL Reserve PDA with.
@@ -104,7 +101,7 @@ export class SOLBootstrap {
 
   constructor(config: SOLBootstrapConfig) {
     this.config = config
-    this.connection = new Connection(config.rpcUrl, "confirmed")
+    this.connection = new Connection(config.rpcUrl, DefaultSolanaCommitment)
     this.client = new SOLClient(config.rpcUrl)
   }
 
@@ -124,10 +121,7 @@ export class SOLBootstrap {
         await retry(
           async () => {
             const sig = await this.connection.requestAirdrop(pub, lamports)
-            await confirmSignature(this.connection, sig, `airdrop to ${pk}`, {
-              deadlineMs: SolAirdropConfirmTimeoutMs,
-              intervalMs: SolAirdropConfirmIntervalMs
-            })
+            await confirmSignature(this.connection, sig, `airdrop to ${pk}`)
           },
           { label: `airdrop to ${pk}`, maxAttempts: SolAirdropRetryAttempts, delayMs: SolAirdropRetryDelayMs }
         )
@@ -269,7 +263,7 @@ export class SOLBootstrap {
 
     const wallet = new anchor.Wallet(deployer)
     const provider = new anchor.AnchorProvider(this.connection, wallet, {
-      commitment: "confirmed"
+      commitment: DefaultSolanaCommitment
     })
 
     // Anchor's IDL path — matches the Rust program mod name (`opp_outpost`).

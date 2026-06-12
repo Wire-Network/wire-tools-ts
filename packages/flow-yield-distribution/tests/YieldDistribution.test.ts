@@ -6,8 +6,9 @@ import * as anchor from "@coral-xyz/anchor"
 import { Connection, Keypair, PublicKey } from "@solana/web3.js"
 
 import {
-  BOOTSTRAP_NODE_OWNER,
+  createAccountWithResources,
   createAuthExLink,
+  DefaultSolanaCommitment,
   DEV_K1_PUBLIC_KEY,
   emitSolanaYield,
   emitYieldBatch,
@@ -193,7 +194,7 @@ describeCluster("Yield distribution through fake emitters", () => {
     )
     solConnection = new Connection(
       `http://127.0.0.1:${ctx.ports.solanaRpc}`,
-      "confirmed"
+      DefaultSolanaCommitment
     )
     const oppOutpostIdl = JSON.parse(
       Fs.readFileSync(
@@ -204,7 +205,7 @@ describeCluster("Yield distribution through fake emitters", () => {
     const anchorProvider = new anchor.AnchorProvider(
       solConnection,
       new anchor.Wallet(solDeployer),
-      { commitment: "confirmed" }
+      { commitment: DefaultSolanaCommitment }
     )
     solProgram = new anchor.Program(oppOutpostIdl, anchorProvider)
 
@@ -217,24 +218,14 @@ describeCluster("Yield distribution through fake emitters", () => {
 
     // Open + unlock the default wallet — kiod is restarted between
     // cluster create and run, leaving it closed.
-    await ctx.wireClient.clio.walletOpenAndUnlock("default")
+    await ctx.wireClient.clio.walletOpenAndUnlock()
 
     // Create the linked staker's WIRE account + ROA policy and
     // createlink-bind it to its ETH wallet.
-    await ctx.wireClient.clio.createSystemAccount(linkedEthAccount, DEV_K1_PUBLIC_KEY)
-    await ctx.wireClient.clio.pushActionAndWait(
-      "sysio.roa",
-      "addpolicy",
-      {
-        owner: linkedEthAccount,
-        issuer: BOOTSTRAP_NODE_OWNER,
-        net_weight: "25.0000 SYS",
-        ram_weight: "25.0000 SYS",
-        cpu_weight: "25.0000 SYS",
-        time_block: 0,
-        network_gen: 0
-      },
-      `${BOOTSTRAP_NODE_OWNER}@active`
+    await createAccountWithResources(
+      ctx.wireClient.clio,
+      linkedEthAccount,
+      DEV_K1_PUBLIC_KEY
     )
     await createAuthExLink(ctx.wireClient.clio, {
       chainKind: ChainKind.EVM,

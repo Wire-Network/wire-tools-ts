@@ -1,6 +1,7 @@
 import Assert from "node:assert"
 import { isEmpty, negate } from "lodash"
 import { ethers } from "ethers"
+import { match, P } from "ts-pattern"
 import { log } from "./logger.js"
 import { Deferred } from "@wireio/shared"
 import Fs from "fs"
@@ -9,6 +10,34 @@ import { Future } from "@3fv/prelude-ts"
 /** Sleep for `ms` milliseconds. */
 export function sleep(ms: number): Promise<void> {
   return Deferred.delay(ms)
+}
+
+/**
+ * Match a depot-table enum cell against an expected proto-enum member.
+ *
+ * chain_plugin's get-table JSON may carry an enum cell as the numeric value
+ * (`3`), the numeric value as a string (`"3"`), or the proto-spelling string
+ * (`"OPERATOR_STATUS_ACTIVE"`) depending on the serialization path. The
+ * `SystemContracts` proto enums use the full proto spelling as the member
+ * name, so the enum's reverse mapping `enumObj[want]` IS the wire string —
+ * pass those enums here, never a hand-rolled `{ NAME: value }` table.
+ *
+ * @param raw     - The cell as returned by `getTableRows` (unknown shape).
+ * @param enumObj - The generated proto enum (e.g. `SysioOpregOperatorstatus`).
+ * @param want    - The member to test for (e.g. `SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE`).
+ * @returns Whether `raw` denotes `want` under any of the three spellings.
+ * @example
+ *   matchesProtoEnum(row.status, SysioChalgDisputestatus, SysioChalgDisputestatus.DISPUTE_STATUS_OPEN)
+ */
+export function matchesProtoEnum(
+  raw: unknown,
+  enumObj: Record<string | number, string | number>,
+  want: number
+): boolean {
+  return match(raw)
+    .with(P.number, n => n === want)
+    .with(P.string, s => s === enumObj[want] || Number(s) === want)
+    .otherwise(() => false)
 }
 
 /**
@@ -170,15 +199,18 @@ const nonceCounters = new Map<string, number>()
 export async function resolveLatestNonce(
   contract: ethers.BaseContract
 ): Promise<number> {
-  const runner   = contract.runner
+  const runner = contract.runner
   Assert.ok(
-    runner !== null && typeof (runner as ethers.Signer).getAddress === "function",
+    runner !== null &&
+      typeof (runner as ethers.Signer).getAddress === "function",
     "resolveLatestNonce: contract must be bound to a Signer (got runner without getAddress)"
   )
-  const signer   = runner as ethers.Signer
+  const signer = runner as ethers.Signer
   const provider = signer.provider
-  Assert.ok(provider !== null,
-    "resolveLatestNonce: signer must have a Provider attached")
+  Assert.ok(
+    provider !== null,
+    "resolveLatestNonce: signer must have a Provider attached"
+  )
   const fromAddr = (await signer.getAddress()).toLowerCase()
 
   const cached = nonceCounters.get(fromAddr)

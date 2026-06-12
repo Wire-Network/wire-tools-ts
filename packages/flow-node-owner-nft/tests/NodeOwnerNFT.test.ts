@@ -73,7 +73,7 @@ describeCluster("Node owner NFT registration (create-in-flow)", () => {
     mockWireNodes = loadMockWireNodes(ethereumPath, outpostAddrs, ctx.ethSigner)
 
     // kiod is restarted between cluster create + run; open + unlock so clio can sign sysio.roa@active.
-    await ctx.wireClient.clio.walletOpenAndUnlock("default")
+    await ctx.wireClient.clio.walletOpenAndUnlock()
   }, 30 * 60 * 1000)
 
   afterAll(async () => {

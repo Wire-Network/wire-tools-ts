@@ -23,6 +23,7 @@ import {
   getAssociatedTokenAddressSync
 } from "@solana/spl-token"
 import { OperatorType } from "@wireio/opp-typescript-models"
+import { confirmSignature } from "../sol/confirmSignature.js"
 
 /** PDA seeds — kept in sync with `wire-solana/programs/opp-outpost/src`. */
 const OUTPOST_CONFIG_SEED            = Buffer.from("outpost_config")
@@ -32,10 +33,6 @@ const VAULT_SEED                     = Buffer.from("outpost_vault")
 /** Per-`token_code` SPL collateral vault seed — matches
  *  `deposit_non_native.rs::COLLATERAL_VAULT_SEED`. */
 const COLLATERAL_VAULT_SEED          = Buffer.from("collateral_vault")
-
-/** Number of ms to poll `getSignatureStatus` before timing out. */
-const SOL_CONFIRM_TIMEOUT_MS = 60_000
-const SOL_CONFIRM_POLL_MS    = 500
 
 /**
  * Deposit `amount` lamports (or LIQSOL base units, when wired) into the
@@ -101,22 +98,10 @@ export async function depositSOLCollateral(
   })
 
   // Anchor's `.rpc()` uses the deprecated `confirmTransaction` path that
-  // hangs on test-validator setups where the WS port is occupied; the
-  // pattern here matches SOLBootstrap.initializePDAs — poll
-  // `getSignatureStatus` with a deadline.
-  const deadline = Date.now() + SOL_CONFIRM_TIMEOUT_MS
-  while (Date.now() < deadline) {
-    const status = await connection.getSignatureStatus(sig)
-    const conf   = status?.value?.confirmationStatus
-    if (conf === "confirmed" || conf === "finalized") return sig
-    if (status?.value?.err) {
-      throw new Error(
-        `SOLCollateralTool: deposit tx failed: ${JSON.stringify(status.value.err)}`
-      )
-    }
-    await new Promise(resolve => setTimeout(resolve, SOL_CONFIRM_POLL_MS))
-  }
-  throw new Error(`SOLCollateralTool: deposit tx ${sig} not confirmed within ${SOL_CONFIRM_TIMEOUT_MS}ms`)
+  // hangs on test-validator setups where the WS port is occupied —
+  // confirmSignature polls `getSignatureStatus` with a bounded deadline.
+  await confirmSignature(connection, sig, "SOLCollateralTool deposit")
+  return sig
 }
 
 /**
@@ -201,17 +186,6 @@ export async function depositSOLNonNativeCollateral(
     skipPreflight: false
   })
 
-  const deadline = Date.now() + SOL_CONFIRM_TIMEOUT_MS
-  while (Date.now() < deadline) {
-    const status = await connection.getSignatureStatus(sig)
-    const conf   = status?.value?.confirmationStatus
-    if (conf === "confirmed" || conf === "finalized") return sig
-    if (status?.value?.err) {
-      throw new Error(
-        `SOLCollateralTool: depositNonNative tx failed: ${JSON.stringify(status.value.err)}`
-      )
-    }
-    await new Promise(resolve => setTimeout(resolve, SOL_CONFIRM_POLL_MS))
-  }
-  throw new Error(`SOLCollateralTool: depositNonNative tx ${sig} not confirmed within ${SOL_CONFIRM_TIMEOUT_MS}ms`)
+  await confirmSignature(connection, sig, "SOLCollateralTool depositNonNative")
+  return sig
 }

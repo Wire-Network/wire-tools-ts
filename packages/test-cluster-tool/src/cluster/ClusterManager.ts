@@ -50,8 +50,6 @@ import {
   batchOperatorAccountName,
   BIOS_HTTP_PORT,
   BOOTSTRAP_NODE_OWNER,
-  DEFAULT_RAM_WEIGHT,
-  DEFAULT_RESOURCE_WEIGHT,
   DEV_K1_PRIVATE_KEY,
   DEV_K1_PUBLIC_KEY,
   EMISSION_CONFIG_DEFAULTS,
@@ -62,6 +60,12 @@ import {
   SYSTEM_ACCOUNTS,
   underwriterAccountName
 } from "./constants.js"
+import {
+  addResourcePolicy,
+  createAccountWithRam,
+  createAccountWithResources,
+  isAccountAlreadyExistsError
+} from "./accountProvisioning.js"
 import { ethers } from "ethers"
 import * as Assert from "node:assert"
 import { Keypair, PublicKey as SolanaPublicKey } from "@solana/web3.js"
@@ -1590,48 +1594,6 @@ export class ClusterManager {
 //  Bootstrap helpers
 // ---------------------------------------------------------------------------
 
-/** Assign a resource allocation policy to an account via sysio.roa */
-async function addResourcePolicy(
-  clio: Clio,
-  owner: string,
-  issuer: string,
-  net_weight = DEFAULT_RESOURCE_WEIGHT,
-  ram_weight = DEFAULT_RAM_WEIGHT,
-  cpu_weight = DEFAULT_RESOURCE_WEIGHT
-): Promise<void> {
-  await clio.pushActionAndWait<SystemContracts.SysioRoaAddpolicyAction>(
-    "sysio.roa",
-    "addpolicy",
-    {
-      owner,
-      issuer,
-      net_weight,
-      ram_weight,
-      cpu_weight,
-      time_block: 0,
-      network_gen: 0
-    },
-    `${issuer}@active`
-  )
-}
-
-/** Create an account with resource policy, ignoring "already exists" errors */
-async function createAccountWithRam(
-  clio: Clio,
-  account: string,
-  ownerKey: string
-): Promise<void> {
-  try {
-    await clio.createAccount("sysio", account, ownerKey, ownerKey)
-  } catch (err: any) {
-    const msg = err.message ?? err.stderr ?? ""
-    if (!msg.includes("already exists")) {
-      throw new Error(`Failed to create account ${account}: ${msg}`)
-    }
-    log.debug(`Account ${account} already exists, continuing`)
-  }
-}
-
 /**
  * Register the bootstrap node owner via the production node-owner registration flow.
  *
@@ -1675,16 +1637,6 @@ async function setupNodeOwner(clio: Clio): Promise<void> {
           : " (no audit row found)")
     )
   }
-}
-
-/** Create account + assign resource policy from the bootstrap node owner */
-async function createAccountWithResources(
-  clio: Clio,
-  account: string,
-  ownerKey: string
-): Promise<void> {
-  await createAccountWithRam(clio, account, ownerKey)
-  await addResourcePolicy(clio, account, BOOTSTRAP_NODE_OWNER)
 }
 
 async function bootstrapChain(
@@ -1920,9 +1872,10 @@ async function bootstrapChain(
     try {
       await createSysioAccount(clio, acctName)
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (!msg.includes("already exists"))
+      if (!isAccountAlreadyExistsError(err)) {
+        const msg = err instanceof Error ? err.message : String(err)
         throw new Error(`Failed to create ${acctName}: ${msg}`)
+      }
     }
   })
   log.info(

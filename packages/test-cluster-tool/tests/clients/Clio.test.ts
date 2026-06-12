@@ -1,5 +1,6 @@
 import Fs from "fs"
-import { Clio } from "@wireio/test-cluster-tool/clients/Clio"
+import { Clio, ClioErrorFragment } from "@wireio/test-cluster-tool/clients/Clio"
+import { DEFAULT_WALLET_NAME } from "@wireio/test-cluster-tool/cluster/constants"
 
 /**
  * Finality / fork-retry behaviour for {@link Clio}.
@@ -42,9 +43,9 @@ afterEach(() => jest.restoreAllMocks())
 
 describe("Clio.blockContainsTransaction", () => {
   it("matches a bare-string trx id", () => {
-    expect(Clio.blockContainsTransaction(blockWith(1, ["abc", "def"]), "def")).toBe(
-      true
-    )
+    expect(
+      Clio.blockContainsTransaction(blockWith(1, ["abc", "def"]), "def")
+    ).toBe(true)
   })
 
   it("matches an object trx.id", () => {
@@ -59,7 +60,9 @@ describe("Clio.blockContainsTransaction", () => {
   })
 
   it("returns false when the tx id is absent", () => {
-    expect(Clio.blockContainsTransaction(blockWith(1, ["abc"]), "zzz")).toBe(false)
+    expect(Clio.blockContainsTransaction(blockWith(1, ["abc"]), "zzz")).toBe(
+      false
+    )
   })
 
   it("returns false for an empty or missing transaction list", () => {
@@ -274,5 +277,52 @@ describe("Clio.pushActionFileAndWait", () => {
     )
     // The temp file is unlinked in the finally block.
     expect(Fs.existsSync(capturedPath)).toBe(false)
+  })
+})
+
+describe("ClioErrorFragment", () => {
+  it("carries the chain error fragments the harness branches on", () => {
+    expect(ClioErrorFragment.AccountAlreadyExists).toBe("already exists")
+    expect(ClioErrorFragment.WalletAlreadyUnlocked).toBe("Already unlocked")
+  })
+})
+
+describe("Clio.walletOpenAndUnlock", () => {
+  it("defaults to DEFAULT_WALLET_NAME when no wallet is given", async () => {
+    const clio = makeClio()
+    const open = jest
+      .spyOn(clio, "walletOpen")
+      .mockResolvedValue(undefined as never)
+    const unlock = jest
+      .spyOn(clio, "walletUnlock")
+      .mockResolvedValue(undefined as never)
+
+    await clio.walletOpenAndUnlock()
+
+    expect(open).toHaveBeenCalledWith(DEFAULT_WALLET_NAME)
+    expect(unlock).toHaveBeenCalledWith(
+      DEFAULT_WALLET_NAME,
+      clio.walletPassword
+    )
+  })
+
+  it("treats the already-unlocked rejection as benign", async () => {
+    const clio = makeClio()
+    jest.spyOn(clio, "walletOpen").mockResolvedValue(undefined as never)
+    jest
+      .spyOn(clio, "walletUnlock")
+      .mockRejectedValue(new Error("Already unlocked: default"))
+
+    await expect(clio.walletOpenAndUnlock()).resolves.toBeUndefined()
+  })
+
+  it("rethrows any other unlock failure", async () => {
+    const clio = makeClio()
+    jest.spyOn(clio, "walletOpen").mockResolvedValue(undefined as never)
+    jest
+      .spyOn(clio, "walletUnlock")
+      .mockRejectedValue(new Error("invalid password"))
+
+    await expect(clio.walletOpenAndUnlock()).rejects.toThrow("invalid password")
   })
 })

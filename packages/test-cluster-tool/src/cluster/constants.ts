@@ -183,6 +183,13 @@ export const DEFAULT_RAM_WEIGHT = "25.0000 SYS"
  */
 export const BOOTSTRAP_NODE_OWNER = "wireno"
 
+/**
+ * Name of the kiod wallet the bootstrap creates and every post-bootstrap
+ * helper / flow re-opens to sign actions. Changing it orphans the wallet
+ * file + password persisted under `<clusterPath>/wallet` by earlier runs.
+ */
+export const DEFAULT_WALLET_NAME = "default"
+
 // ---------------------------------------------------------------------------
 // Port bases
 // ---------------------------------------------------------------------------
@@ -461,4 +468,3 @@ export const EMISSION_CONFIG_DEFAULTS: EmissionConfig = {
   // Soak-friendly: emit every epoch
   pay_cadence_epochs: 1
 }
-
