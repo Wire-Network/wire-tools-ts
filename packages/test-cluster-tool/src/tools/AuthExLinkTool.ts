@@ -57,8 +57,12 @@ async function signEthereumMessage(
 
 /**
  * Sign a createlink message for Solana (ED / Ed25519).
- * The authex contract expects SHA256 of the message mapped to ASCII [33..126],
- * then signed with the Ed25519 key.
+ * The authex contract computes SHA256 of the message, maps it to ASCII
+ * [33..126], and passes that as the digest to `assert_recover_key`. Since
+ * wire-sysio 030c32f8e5, every ed25519 recovery path verifies the signature
+ * over `fc::to_hex(digest)` (the SDK signing convention — 64 lowercase hex
+ * chars), NOT the raw digest bytes — so the payload signed here is the hex
+ * encoding of the mapped digest.
  */
 async function signSolanaMessage(
   privateKey: PrivateKey,
@@ -70,7 +74,8 @@ async function signSolanaMessage(
   hashBytes.forEach((b, i) => {
     mapped[i] = 33 + (b % 94)
   })
-  const sig64 = privateKey.signMessage(Bytes.from(mapped))
+  const mappedHex = ethers.hexlify(mapped).slice(2)
+  const sig64 = privateKey.signMessage(Bytes.from(ethers.toUtf8Bytes(mappedHex)))
 
   // Wire/sysio ED25519 signatures are 96 bytes: 32-byte embedded public key
   // followed by 64-byte signature. This allows recover() to extract the

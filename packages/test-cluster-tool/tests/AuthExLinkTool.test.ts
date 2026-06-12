@@ -1,15 +1,20 @@
 import { ethers } from "ethers"
 import {
+  Bytes,
   getCompressedPublicKey,
   KeyType,
   PublicKey,
-  PrivateKey
+  PrivateKey,
+  Signature
 } from "@wireio/sdk-core"
 import {
+  createAuthExLink,
   emPrivateKeyFromEthWallet,
   emPublicKeyFromEthWallet
 } from "@wireio/test-cluster-tool"
 import { freshEthPubEm } from "@wireio/test-cluster-tool/tools/AuthExLinkTool"
+import { ChainKind } from "@wireio/opp-typescript-models"
+import type { Clio } from "@wireio/test-cluster-tool/clients/Clio"
 
 const ANVIL_MNEMONIC =
   "test test test test test test test test test test test junk"
@@ -129,6 +134,57 @@ describe("AuthExLinkTool", () => {
 
     it("returns a different key on each call (random wallet)", () => {
       expect(freshEthPubEm()).not.toBe(freshEthPubEm())
+    })
+  })
+
+  describe("createAuthExLink SVM signature payload", () => {
+    it("signs the hex-encoded mapped digest (wire-sysio 030c32f8e5 convention)", async () => {
+      const edKey = PrivateKey.generate(KeyType.ED)
+      const pushActionAndWait = jest.fn().mockResolvedValue(undefined)
+      const clio = { pushActionAndWait } as unknown as Clio
+
+      await createAuthExLink(clio, {
+        chainKind: ChainKind.SVM,
+        account: "freshop",
+        // The tests project resolves sdk-core's ESM typings while the src
+        // declarations pin the CJS flavor — same runtime class, nominally
+        // twinned types. Bridge like the chainKind cast in AuthExLinkTool.
+        privateKey: edKey as unknown as Parameters<
+          typeof createAuthExLink
+        >[1]["privateKey"]
+      })
+
+      expect(pushActionAndWait).toHaveBeenCalledWith(
+        "sysio.authex",
+        "createlink",
+        expect.objectContaining({ account: "freshop" }),
+        "freshop@active"
+      )
+      const payload = pushActionAndWait.mock.calls[0][2]
+
+      // Recompute the contract-side digest: sha256(msg) mapped to ASCII
+      // [33..126], then hex-encoded — the payload the chain's ed25519
+      // recovery verifies against since wire-sysio 030c32f8e5.
+      const message = `${payload.pub_key}|freshop|${ChainKind.SVM}|${payload.nonce}|createlink auth`
+      const mapped = Uint8Array.from(
+        ethers.getBytes(ethers.sha256(ethers.toUtf8Bytes(message))),
+        b => 33 + (b % 94)
+      )
+      const mappedHex = ethers.hexlify(mapped).slice(2)
+
+      // ED25519 signing is deterministic: re-signing the hex payload with
+      // the same key must reproduce the 64-byte signature embedded at
+      // bytes [32..96] of the 96-byte wire signature.
+      const expected64 = edKey.signMessage(
+        Bytes.from(ethers.toUtf8Bytes(mappedHex))
+      ).data.array
+      const sig = Signature.from(payload.sig)
+      const sigBytes = sig.data.array
+      expect(sigBytes.length).toBe(96)
+      expect(Buffer.from(sigBytes.slice(0, 32))).toEqual(
+        Buffer.from(edKey.toPublic().data.array)
+      )
+      expect(Buffer.from(sigBytes.slice(32))).toEqual(Buffer.from(expected64))
     })
   })
 })
