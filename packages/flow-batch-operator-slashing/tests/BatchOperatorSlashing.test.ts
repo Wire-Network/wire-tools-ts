@@ -6,7 +6,7 @@ import {
   OperatorStatus,
   NodeOwnerTier
 } from "@wireio/opp-typescript-models"
-import { SlugName } from "@wireio/sdk-core"
+import { SlugName, SystemContracts } from "@wireio/sdk-core"
 import {
   DEV_K1_PUBLIC_KEY,
   FlowTestContext,
@@ -225,7 +225,14 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
         "dispute resolves to the canonical winner",
         async () => {
           // Re-crank the permissionless tally each poll until the votes are tallied and it resolves.
-          try { await pushCheckDispute(dispute!.id) } catch { /* already resolving/resolved */ }
+          // Expected-transient (already resolving/resolved), but log it rather than swallow blindly.
+          try {
+            await pushCheckDispute(dispute!.id)
+          } catch (err) {
+            log.debug(
+              `[slashing] chkdispute transient: ${err instanceof Error ? err.message : String(err)}`
+            )
+          }
           const d = await readDispute(dispute!.id)
           return d != null
             && isDisputeStatus(d.status, "RESOLVED")
@@ -411,7 +418,7 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
   }
 
   async function pushVote(owner: string, disputeId: number, chosenChecksum: string): Promise<void> {
-    await ctx.wireClient.clio.pushAction(
+    await ctx.wireClient.clio.pushActionAndWait<SystemContracts.SysioChalgVotedisputeAction>(
       "sysio.chalg",
       "votedispute",
       { owner, dispute_id: disputeId, chosen_checksum: chosenChecksum },
@@ -421,7 +428,11 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
 
   async function pushCheckDispute(disputeId: number): Promise<void> {
     // Permissionless — sign as any account with a loaded key (a DISPUTE_OP works).
-    await ctx.wireClient.clio.pushAction(
+    // pushActionAndWait (not pushAction): chkdispute is cranked in a poll loop;
+    // a fire-and-forget push re-sends a byte-identical tx before the prior one
+    // is final and collides on TAPOS -> `tx_duplicate (3040008)`. Waiting for
+    // finality spaces the cranks and re-pushes with fresh TAPOS on a fork.
+    await ctx.wireClient.clio.pushActionAndWait<SystemContracts.SysioChalgChkdisputeAction>(
       "sysio.chalg",
       "chkdispute",
       { dispute_id: disputeId },
@@ -435,12 +446,28 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
    * so the test does — to open the dispute past the boundary and to drive the post-resolution `advance`
    * where the slash runs. Tolerant of transient errors (e.g. a duplicate tx landing in the same block)
    * so it is safe to call inside a poll.
+   *
+   * pushActionAndWait (not pushAction): `chkcons` carries empty action data,
+   * so every fire-and-forget push is byte-identical. Called rapidly in a poll
+   * loop, two pushes collide on the same TAPOS reference block before either
+   * is final and the second is rejected `tx_duplicate (3040008)` — which the
+   * catch below silently swallows, so the crank that drives `advance` never
+   * lands and the epoch freezes. Waiting for finality spaces the cranks (so
+   * each gets a fresh head/TAPOS) and re-pushes with fresh TAPOS on a fork.
    */
   async function crankConsensus(): Promise<void> {
     try {
-      await ctx.wireClient.clio.pushAction("sysio.msgch", "chkcons", {}, DISPUTE_OPS[0])
-    } catch {
-      /* transient — keep polling */
+      await ctx.wireClient.clio.pushActionAndWait<SystemContracts.SysioMsgchChkconsAction>(
+        "sysio.msgch", "chkcons", {}, DISPUTE_OPS[0]
+      )
+    } catch (err) {
+      // Transient (e.g. chkcons racing a concurrent advance / a forked-out
+      // crank) — safe to keep polling, but NEVER swallow it silently: a
+      // persistent crank failure (the original tx_duplicate bug) is only
+      // diagnosable if it is logged.
+      log.warn(
+        `[slashing] crankConsensus chkcons transient: ${err instanceof Error ? err.message : String(err)}`
+      )
     }
   }
 
