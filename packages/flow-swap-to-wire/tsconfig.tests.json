@@ -1,0 +1,14 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {
+    "rootDir": "tests",
+    "outDir": "lib/out-tests",
+    "paths": {
+      "@wireio/test-cluster-tool": ["../test-cluster-tool/src"]
+    }
+  },
+  "include": ["tests"],
+  "references": [
+    { "path": "./tsconfig.src.json" }
+  ]
+}

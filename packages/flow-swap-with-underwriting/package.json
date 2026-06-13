@@ -8,7 +8,7 @@
     "compile": "tsc -b tsconfig.json",
     "compile:watch": "tsc -b tsconfig.json -w",
     "build": "pnpm run compile",
-    "test": "jest --runInBand",
+    "test": "jest --runInBand --no-cache",
     "clean": "rm -rf lib"
   },
   "dependencies": {

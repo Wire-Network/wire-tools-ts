@@ -57,8 +57,15 @@ async function signEthereumMessage(
 
 /**
  * Sign a createlink message for Solana (ED / Ed25519).
- * The authex contract expects SHA256 of the message mapped to ASCII [33..126],
- * then signed with the Ed25519 key.
+ *
+ * The authex contract maps SHA256(message) into printable ASCII [33..126]
+ * and passes those 32 bytes to `assert_recover_key` as the digest. The
+ * chain's unified ED25519 verification (`fc::crypto::ed::signature_shim`,
+ * shared by recover_key / assert_recover_key / tx authorization since the
+ * 2026-06-09 libfc fix) verifies the signature over the LOWERCASE-HEX
+ * ENCODING of that digest — Phantom-wallet guard rails: wallets sign a
+ * displayable hex string, never raw binary. So the payload signed here is
+ * the 64-char ASCII hex of the mapped digest, not the raw mapped bytes.
  */
 async function signSolanaMessage(
   privateKey: PrivateKey,
@@ -70,7 +77,8 @@ async function signSolanaMessage(
   hashBytes.forEach((b, i) => {
     mapped[i] = 33 + (b % 94)
   })
-  const sig64 = privateKey.signMessage(Bytes.from(mapped))
+  const hexPayload = ethers.toUtf8Bytes(ethers.hexlify(mapped).slice(2))
+  const sig64 = privateKey.signMessage(Bytes.from(hexPayload))
 
   // Wire/sysio ED25519 signatures are 96 bytes: 32-byte embedded public key
   // followed by 64-byte signature. This allows recover() to extract the

@@ -46,6 +46,37 @@ describe("Flow: SWAP with underwriting (bidirectional Ethereum ↔ Solana)", () 
   let oppProgram: anchor.Program<anchor.Idl>
   let solanaConnection: Connection
 
+  const slugValueOf = (v: unknown): number =>
+    typeof v === "object" && v !== null && "value" in v
+      ? Number((v as { value: unknown }).value)
+      : Number(v)
+
+  /** Read one reserve row's (chain, wire) book by its slug triple. */
+  async function reserveBook(
+    chainCode: number, tokenCode: number, reserveCode: number
+  ): Promise<{ chain: bigint; wire: bigint }> {
+    const { rows } = await context.wireClient.getTableRows<any>({
+      code: "sysio.reserv", scope: "sysio.reserv", table: "reserves"
+    })
+    const row = rows.find((r: any) =>
+      slugValueOf(r.chain_code) === chainCode &&
+      slugValueOf(r.token_code) === tokenCode &&
+      slugValueOf(r.reserve_code) === reserveCode
+    )
+    expect(row).toBeDefined()
+    return {
+      chain: BigInt(row.reserve_chain_amount),
+      wire: BigInt(row.reserve_wire_amount)
+    }
+  }
+
+  async function locksForUwreq(uwreqId: number): Promise<any[]> {
+    const { rows } = await context.wireClient.getTableRows<any>({
+      code: "sysio.uwrit", scope: "sysio.uwrit", table: "locks"
+    })
+    return rows.filter((l: any) => Number(l.uwreq_id) === uwreqId)
+  }
+
   beforeAll(async () => {
     // `reqUwCollat`: the depot's `meets_role_min` rejects non-bootstrapped
     // underwriters when the config is empty (matches the gate flow-c needs
@@ -193,7 +224,24 @@ describe("Flow: SWAP with underwriting (bidirectional Ethereum ↔ Solana)", () 
       log.info(`[PhaseA] swapquote = ${quote} → targetAmount = ${phaseATargetAmount}`)
     })
 
+    let booksBefore: {
+      src: { chain: bigint; wire: bigint }
+      dst: { chain: bigint; wire: bigint }
+    }
+
     test("user calls ReserveManager.requestSwap (50 ETH → SOL)", async () => {
+      booksBefore = {
+        src: await reserveBook(
+          Reserves.Ethereum.ETH.ChainCode,
+          Reserves.Ethereum.ETH.TokenCode,
+          Reserves.Ethereum.ETH.ReserveCode
+        ),
+        dst: await reserveBook(
+          Reserves.Solana.SOL.ChainCode,
+          Reserves.Solana.SOL.TokenCode,
+          Reserves.Solana.SOL.ReserveCode
+        )
+      }
       solanaBalanceBefore = await solanaConnection.getBalance(users.solanaKeypair.publicKey)
       const result = await requestEthereumSwap(reserveManager as any, {
         sourceTokenCode:    BigInt(Reserves.Ethereum.ETH.TokenCode),
@@ -251,6 +299,50 @@ describe("Flow: SWAP with underwriting (bidirectional Ethereum ↔ Solana)", () 
         Timing.LongPollIntervalMs
       )
     }, Timing.RaceDeadlineMs + 30_000)
+
+    test("emit-time four-sided reserve accounting + two persistent locks", async () => {
+      // The reserve books move in the SAME transaction that resolves the
+      // race — before the SWAP_REMIT ever leaves the depot — so they are
+      // already final here, ahead of the destination payout:
+      //   src: chain += src_amount, wire -= w
+      //   dst: wire  += w,          chain -= dst_amount
+      // with w = cp_output(src.chain, src.wire, src_amount) on the
+      // pre-swap source row.
+      const srcAmountDepot = SwapAmounts.PhaseA.SourceEthereumWei / 10n ** 9n
+      const w = (booksBefore.src.wire * srcAmountDepot)
+              / (booksBefore.src.chain + srcAmountDepot)
+
+      const src = await reserveBook(
+        Reserves.Ethereum.ETH.ChainCode,
+        Reserves.Ethereum.ETH.TokenCode,
+        Reserves.Ethereum.ETH.ReserveCode
+      )
+      const dst = await reserveBook(
+        Reserves.Solana.SOL.ChainCode,
+        Reserves.Solana.SOL.TokenCode,
+        Reserves.Solana.SOL.ReserveCode
+      )
+      expect(src.chain).toBe(booksBefore.src.chain + srcAmountDepot)
+      expect(src.wire).toBe(booksBefore.src.wire - w)
+      expect(dst.wire).toBe(booksBefore.dst.wire + w)
+      expect(dst.chain).toBe(booksBefore.dst.chain - phaseATargetAmount)
+
+      // The w hop is internal — Σ reserve_wire_amount is unchanged by a
+      // normal swap (custody invariant: no real WIRE moved).
+      expect(src.wire + dst.wire).toBe(booksBefore.src.wire + booksBefore.dst.wire)
+
+      // Both legs locked, and the locks PERSIST (wall-clock challenge
+      // window — never released by delivery).
+      const { rows } = await context.wireClient.getTableRows<any>({
+        code: "sysio.uwrit", scope: "sysio.uwrit", table: "uwreqs"
+      })
+      const uwreq = rows.find((r: any) =>
+        slugValueOf(r.src_chain_code) === Reserves.Ethereum.ETH.ChainCode &&
+        slugValueOf(r.dst_chain_code) === Reserves.Solana.SOL.ChainCode
+      )
+      expect(uwreq).toBeDefined()
+      expect(await locksForUwreq(Number(uwreq.id))).toHaveLength(2)
+    })
 
     test("user's SOL balance bumps by ~targetAmount", async () => {
       await pollUntil(

@@ -6,7 +6,7 @@
   "description": "Flow: Node Operator Collateral Deposit",
   "scripts": {
     "build": "tsc -b tsconfig.json",
-    "test": "jest --runInBand",
+    "test": "jest --runInBand --no-cache",
     "clean": "rm -rf lib"
   },
   "dependencies": {

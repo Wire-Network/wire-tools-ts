@@ -28,6 +28,30 @@ export class WIREClient {
     this.clio = new Clio(config.clio)
   }
 
+  /**
+   * Real WIRE token balance (raw 9-decimal base units) for an account,
+   * via `/v1/chain/get_currency_balance` against `sysio.token`. Returns
+   * `0n` when the account holds no WIRE row. The WIRE-endpoint swap flows
+   * assert the custody invariant with this (`Σ reserve_wire_amount ==
+   * sysio.reserv's real balance + in-flight escrows`).
+   *
+   * @param account WIRE account name to query.
+   * @return Raw base-unit balance as a bigint.
+   */
+  async getWireBalance(account: string): Promise<bigint> {
+    const rows = (await this.api.v1.chain.get_currency_balance(
+      "sysio.token",
+      account,
+      "WIRE"
+    )) as unknown as Array<{ toString(): string }>
+    if (!rows || rows.length === 0) return 0n
+    // Asset string shape: "123.456789000 WIRE" — strip the symbol and
+    // the decimal point to recover raw base units.
+    const [amount] = rows[0].toString().split(" ")
+    const [whole, frac = ""] = amount.split(".")
+    return BigInt(whole) * 1_000_000_000n + BigInt(frac.padEnd(9, "0"))
+  }
+
   /** GET /v1/chain/get_info via sdk-core */
   async getInfo() {
     return this.api.v1.chain.get_info()
@@ -210,7 +234,9 @@ export class WIREClient {
     tokenCode: number,
     reserveCode: number,
     externalAmount: number,
-    wireAmount: number
+    wireAmount: number,
+    isPrivate: boolean = false,
+    owner: string = ""
   ): Promise<void> {
     const DEFAULT_CONNECTOR_WEIGHT_BPS = 5000
     const name = `${SlugName.toString(chainCode)}-${SlugName.toString(tokenCode)}-${SlugName.toString(reserveCode)}`
@@ -225,7 +251,9 @@ export class WIREClient {
         description: `bootstrap-seeded reserve for ${name}`,
         initial_chain_amount: externalAmount,
         initial_wire_amount: wireAmount,
-        connector_weight_bps: DEFAULT_CONNECTOR_WEIGHT_BPS
+        connector_weight_bps: DEFAULT_CONNECTOR_WEIGHT_BPS,
+        is_private: isPrivate,
+        owner
       },
       "sysio.reserv@active"
     )

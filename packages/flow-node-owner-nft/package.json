@@ -6,7 +6,7 @@
   "description": "Flow: ERC-1155 NFT deposit -> authex link -> sysio.roa::nodeownreg (wire-sysio PR #359)",
   "scripts": {
     "build": "tsc -b tsconfig.json",
-    "test": "jest --runInBand",
+    "test": "jest --runInBand --no-cache",
     "clean": "rm -rf lib"
   },
   "dependencies": {

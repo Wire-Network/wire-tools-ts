@@ -542,7 +542,7 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
 // ──────────────────────────────────────────────────────────────────────
 
 /** slug_name uint64 of the contested outpost. ETHEREUM is one of the two outposts the production
- *  bootstrap registers + activates; its slug fits a JS number (58623385699589). */
+ *  bootstrap registers + activates; its slug fits a JS number (23373300651341). */
 function contestedChainCode(): number {
   return Number(SlugName.from("ETHEREUM"))
 }
