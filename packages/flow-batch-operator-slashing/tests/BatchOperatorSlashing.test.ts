@@ -145,6 +145,11 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
     // their (manually pushed) deliveries are the only ones evalcons sees for the contested outpost.
     await provisionDisputeOps()
     await makeDisputeOpsSoleActiveGroup()
+
+    // Roll off the genesis epoch (whose bucket still carries the bootstrap ops' pre-swap deliveries)
+    // onto a fresh post-swap epoch, so the divergent split later lands in an EMPTY bucket and actually
+    // opens a dispute rather than colliding with the bootstrap majority. See advanceOntoFreshEpoch.
+    await advanceOntoFreshEpoch()
   }, BootstrapTimeoutMs)
 
   afterAll(async () => {
@@ -176,12 +181,14 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
   test(
     "three divergent deliveries open a dispute and pause the epoch",
     async () => {
-      // A dispute opens ONLY from deliver's inline evalcons, and only when that deliver lands with
-      // now >= next_epoch_start (chkcons does NOT open disputes). The SBP-less group never reaches
-      // consensus, so the epoch is stuck at E and current_epoch_index stays E — wait past E's boundary,
-      // then deliver, so the 3rd contested-outpost deliver opens the dispute. Also deliver a CONSISTENT
-      // envelope for the non-contested outpost (SOLANA) so it reaches Option-A consensus for epoch E:
-      // the chkcons advance where the slash runs requires EVERY active outpost to have epoch-E consensus.
+      // beforeAll already rolled us onto a FRESH post-swap epoch E (advanceOntoFreshEpoch), so E's
+      // contested-outpost bucket is empty — only the SBP-less dispute ops are elected and they have
+      // delivered nothing yet. A dispute opens ONLY from deliver's inline evalcons, and only when that
+      // deliver lands with now >= next_epoch_start (chkcons does NOT open disputes). The SBP-less group
+      // never reaches consensus on its own, so E stays put — wait past E's boundary, then deliver, so
+      // the 3rd contested-outpost deliver opens the dispute. Also deliver a CONSISTENT envelope for the
+      // non-contested outpost (SOLANA) so it reaches Option-A consensus for epoch E: the chkcons advance
+      // where the slash runs requires EVERY active outpost to have epoch-E consensus.
       await waitPastEpochBoundary()
       const epoch = await currentEpoch()
       await deliverConsensus(nonContestedChainCode(), epoch)
@@ -386,6 +393,45 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
   }
 
   /**
+   * Roll off the bootstrap-polluted genesis epoch onto a fresh, post-swap epoch before staging the
+   * dispute.
+   *
+   * `makeDisputeOpsSoleActiveGroup` necessarily runs DURING the genesis epoch, whose envelope bucket
+   * already holds the bootstrap operators' consistent deliveries (pushed by their cranks before the
+   * group swap de-elected them). Those form an Option-B majority, so a 3-way divergent split injected
+   * at the genesis epoch reaches `evalcons` consensus on the bootstrap checksum instead of opening a
+   * dispute — the dispute never opens and the flow times out. (This was the e2e-gate failure: epoch 1
+   * "carries the bootstrap data", so it can never host the dispute.)
+   *
+   * The bootstrap operators already drove the genesis epoch to per-outpost consensus, so crank
+   * `chkcons` (which re-runs `evalcons` + drives `advance`) to roll onto the next epoch. The dispute
+   * ops stay SILENT for the genesis epoch, so the slash pass on this advance sees no non-winner
+   * delivery from them and leaves them untouched. The next epoch is fully post-swap: only the dispute
+   * ops are elected and, being SBP-less, they deliver nothing until the test pushes — its bucket is
+   * empty, so the divergent split there opens a genuine dispute.
+   *
+   * @return the fresh (post-swap) `current_epoch_index` on which the dispute can be staged.
+   */
+  async function advanceOntoFreshEpoch(): Promise<number> {
+    const polluted = await currentEpoch()
+    await waitPastEpochBoundary()
+    await pollUntil(
+      `epoch advances off the bootstrap-polluted genesis epoch ${polluted}`,
+      async () => {
+        // chkcons re-runs evalcons (reaching the bootstrap Option-B majority past the boundary) and
+        // then drives advance. The dispute ops deliver NOTHING this epoch, so no slash touches them.
+        await crankConsensus()
+        return (await currentEpoch()) > polluted
+      },
+      TEST_EPOCH_DURATION_SEC * 4 * MsPerSecond,
+      LongPollIntervalMs
+    )
+    const fresh = await currentEpoch()
+    log.info(`[slashing] rolled off bootstrap-polluted epoch ${polluted} onto fresh epoch ${fresh}`)
+    return fresh
+  }
+
+  /**
    * Push three `sysio.msgch::deliver` actions — one per DISPUTE_OP — each with a
    * DISTINCT envelope payload for the same (outpost, epoch), forming a 3-way
    * split with no majority.
@@ -396,9 +442,11 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
    *       `encodeDivergentEnvelope`. The depot recomputes sha256(data)
    *       trustlessly, so any well-formed, epoch-matching envelope works.
    *   (b) DISPUTE_OPS are the SOLE deliverers for the contested outpost this
-   *       epoch: provisioned SBP-less (`provisionDisputeOps`) and made the sole
-   *       active group (`makeDisputeOpsSoleActiveGroup`), so no consistent SBP
-   *       deliveries form a majority that would suppress the dispute.
+   *       epoch: provisioned SBP-less (`provisionDisputeOps`), made the sole
+   *       active group (`makeDisputeOpsSoleActiveGroup`), AND staged on a fresh
+   *       post-swap epoch (`advanceOntoFreshEpoch`) whose bucket carries no
+   *       pre-swap bootstrap deliveries — so no consistent majority exists to
+   *       suppress the dispute.
    */
   async function injectDivergentDeliveries(epoch: number): Promise<void> {
     for (let i = 0; i < DISPUTE_OPS.length; i++) {
