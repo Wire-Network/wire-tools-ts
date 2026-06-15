@@ -146,10 +146,11 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
     await provisionDisputeOps()
     await makeDisputeOpsSoleActiveGroup()
 
-    // Roll off the genesis epoch (whose bucket still carries the bootstrap ops' pre-swap deliveries)
-    // onto a fresh post-swap epoch, so the divergent split later lands in an EMPTY bucket and actually
-    // opens a dispute rather than colliding with the bootstrap majority. See advanceOntoFreshEpoch.
-    await advanceOntoFreshEpoch()
+    // Wait for the epoch to settle (freeze) on the first fully-post-swap epoch — only the SBP-less
+    // dispute ops are elected there, so its contested bucket is EMPTY of the bootstrap ops' pre-swap
+    // deliveries. Staging the divergent split there opens a genuine dispute instead of colliding with
+    // the bootstrap majority that pollutes the genesis epoch. See settleOnFreshDisputeEpoch.
+    await settleOnFreshDisputeEpoch()
   }, BootstrapTimeoutMs)
 
   afterAll(async () => {
@@ -181,7 +182,7 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
   test(
     "three divergent deliveries open a dispute and pause the epoch",
     async () => {
-      // beforeAll already rolled us onto a FRESH post-swap epoch E (advanceOntoFreshEpoch), so E's
+      // beforeAll already settled us onto a FROZEN post-swap epoch E (settleOnFreshDisputeEpoch), so E's
       // contested-outpost bucket is empty — only the SBP-less dispute ops are elected and they have
       // delivered nothing yet. A dispute opens ONLY from deliver's inline evalcons, and only when that
       // deliver lands with now >= next_epoch_start (chkcons does NOT open disputes). The SBP-less group
@@ -393,42 +394,53 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
   }
 
   /**
-   * Roll off the bootstrap-polluted genesis epoch onto a fresh, post-swap epoch before staging the
-   * dispute.
+   * Settle onto the fresh, dispute-ops-owned epoch on which the dispute is staged.
    *
-   * `makeDisputeOpsSoleActiveGroup` necessarily runs DURING the genesis epoch, whose envelope bucket
-   * already holds the bootstrap operators' consistent deliveries (pushed by their cranks before the
-   * group swap de-elected them). Those form an Option-B majority, so a 3-way divergent split injected
-   * at the genesis epoch reaches `evalcons` consensus on the bootstrap checksum instead of opening a
-   * dispute — the dispute never opens and the flow times out. (This was the e2e-gate failure: epoch 1
-   * "carries the bootstrap data", so it can never host the dispute.)
+   * `makeDisputeOpsSoleActiveGroup` runs while the genesis epoch is live, whose envelope bucket already
+   * holds the bootstrap operators' consistent deliveries (pushed by their cranks before the group swap
+   * de-elected them). Those form an Option-B majority, so a 3-way divergent split injected at the
+   * genesis epoch reaches `evalcons` consensus on the bootstrap checksum instead of opening a dispute —
+   * the dispute never opens and the flow times out. (The e2e-gate failure: epoch 1 "carries the
+   * bootstrap data", so it can never host the dispute.)
    *
-   * The bootstrap operators already drove the genesis epoch to per-outpost consensus, so crank
-   * `chkcons` (which re-runs `evalcons` + drives `advance`) to roll onto the next epoch. The dispute
-   * ops stay SILENT for the genesis epoch, so the slash pass on this advance sees no non-winner
-   * delivery from them and leaves them untouched. The next epoch is fully post-swap: only the dispute
-   * ops are elected and, being SBP-less, they deliver nothing until the test pushes — its bucket is
-   * empty, so the divergent split there opens a genuine dispute.
+   * But we do NOT have to advance manually. After the swap, the bootstrap operators finish driving the
+   * genesis epoch to consensus and `advance` rolls forward to the FIRST fully-post-swap epoch — where
+   * only the SBP-less dispute ops are elected, so nothing auto-delivers and the epoch FREEZES. That
+   * frozen epoch's contested-outpost bucket is empty (the bootstrap ops were de-elected before it
+   * began), which is exactly where the divergent split must land. So we just wait for the epoch index
+   * to stabilise while the dispute ops own the active group — crucially WITHOUT cranking, which would
+   * fight the freeze (the earlier bug: cranking to advance OFF this epoch can never succeed, because a
+   * SBP-less group has no one to reach consensus, so it timed out).
    *
-   * @return the fresh (post-swap) `current_epoch_index` on which the dispute can be staged.
+   * @return the frozen, dispute-ops-owned `current_epoch_index` on which the dispute can be staged.
    */
-  async function advanceOntoFreshEpoch(): Promise<number> {
-    const polluted = await currentEpoch()
-    await waitPastEpochBoundary()
+  async function settleOnFreshDisputeEpoch(): Promise<number> {
+    let prev = -1
+    let stableChecks = 0
     await pollUntil(
-      `epoch advances off the bootstrap-polluted genesis epoch ${polluted}`,
+      "epoch settles (frozen) on the dispute-ops-owned post-swap epoch",
       async () => {
-        // chkcons re-runs evalcons (reaching the bootstrap Option-B majority past the boundary) and
-        // then drives advance. The dispute ops deliver NOTHING this epoch, so no slash touches them.
-        await crankConsensus()
-        return (await currentEpoch()) > polluted
+        const e = await currentEpoch()
+        stableChecks = e === prev ? stableChecks + 1 : 0
+        prev = e
+        const { rows } = await ctx.wireClient.getTableRows<any>({
+          code: "sysio.epoch", scope: "sysio.epoch", table: "epochstate", limit: 1
+        })
+        const active: string[] = (rows[0] as any)?.batch_op_groups?.[0] ?? []
+        const owned =
+          active.length === DISPUTE_OPS.length && DISPUTE_OPS.every(op => active.includes(op))
+        // Frozen := the index held across >= 2 consecutive polls (poll interval is ~0.75 epoch, so two
+        // stable reads span > one epoch_duration — long enough that a still-advancing epoch would have
+        // ticked). Combined with dispute-ops ownership, that guarantees a post-swap epoch whose
+        // contested bucket carries no bootstrap deliveries.
+        return owned && stableChecks >= 2
       },
-      TEST_EPOCH_DURATION_SEC * 4 * MsPerSecond,
-      LongPollIntervalMs
+      TEST_EPOCH_DURATION_SEC * 6 * MsPerSecond,
+      Math.floor(TEST_EPOCH_DURATION_SEC * 0.75) * MsPerSecond
     )
-    const fresh = await currentEpoch()
-    log.info(`[slashing] rolled off bootstrap-polluted epoch ${polluted} onto fresh epoch ${fresh}`)
-    return fresh
+    const epoch = await currentEpoch()
+    log.info(`[slashing] settled on frozen dispute-ops-owned epoch ${epoch}`)
+    return epoch
   }
 
   /**
@@ -444,7 +456,7 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
    *   (b) DISPUTE_OPS are the SOLE deliverers for the contested outpost this
    *       epoch: provisioned SBP-less (`provisionDisputeOps`), made the sole
    *       active group (`makeDisputeOpsSoleActiveGroup`), AND staged on a fresh
-   *       post-swap epoch (`advanceOntoFreshEpoch`) whose bucket carries no
+   *       post-swap epoch (`settleOnFreshDisputeEpoch`) whose bucket carries no
    *       pre-swap bootstrap deliveries — so no consistent majority exists to
    *       suppress the dispute.
    */
