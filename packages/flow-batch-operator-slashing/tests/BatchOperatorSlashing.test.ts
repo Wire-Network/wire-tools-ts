@@ -131,6 +131,12 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
     // their (manually pushed) deliveries are the only ones evalcons sees for the contested outpost.
     await provisionDisputeOps()
     await makeDisputeOpsSoleActiveGroup()
+
+    // Wait for the epoch to settle (freeze) on the first fully-post-swap epoch — only the SBP-less
+    // dispute ops are elected there, so its contested bucket is EMPTY of the bootstrap ops' pre-swap
+    // deliveries. Staging the divergent split there opens a genuine dispute instead of colliding with
+    // the bootstrap majority that pollutes the genesis epoch. See settleOnFreshDisputeEpoch.
+    await settleOnFreshDisputeEpoch()
   }, BootstrapTimeoutMs)
 
   afterAll(async () => {
@@ -162,12 +168,14 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
   test(
     "three divergent deliveries open a dispute and pause the epoch",
     async () => {
-      // A dispute opens ONLY from deliver's inline evalcons, and only when that deliver lands with
-      // now >= next_epoch_start (chkcons does NOT open disputes). The SBP-less group never reaches
-      // consensus, so the epoch is stuck at E and current_epoch_index stays E — wait past E's boundary,
-      // then deliver, so the 3rd contested-outpost deliver opens the dispute. Also deliver a CONSISTENT
-      // envelope for the non-contested outpost (SOLANA) so it reaches Option-A consensus for epoch E:
-      // the chkcons advance where the slash runs requires EVERY active outpost to have epoch-E consensus.
+      // beforeAll already settled us onto a FROZEN post-swap epoch E (settleOnFreshDisputeEpoch), so E's
+      // contested-outpost bucket is empty — only the SBP-less dispute ops are elected and they have
+      // delivered nothing yet. A dispute opens ONLY from deliver's inline evalcons, and only when that
+      // deliver lands with now >= next_epoch_start (chkcons does NOT open disputes). The SBP-less group
+      // never reaches consensus on its own, so E stays put — wait past E's boundary, then deliver, so
+      // the 3rd contested-outpost deliver opens the dispute. Also deliver a CONSISTENT envelope for the
+      // non-contested outpost (SOLANA) so it reaches Option-A consensus for epoch E: the chkcons advance
+      // where the slash runs requires EVERY active outpost to have epoch-E consensus.
       await waitPastEpochBoundary()
       const epoch = await currentEpoch()
       await deliverConsensus(nonContestedChainCode(), epoch)
@@ -211,7 +219,14 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
         "dispute resolves to the canonical winner",
         async () => {
           // Re-crank the permissionless tally each poll until the votes are tallied and it resolves.
-          try { await pushCheckDispute(dispute!.id) } catch { /* already resolving/resolved */ }
+          // Expected-transient (already resolving/resolved), but log it rather than swallow blindly.
+          try {
+            await pushCheckDispute(dispute!.id)
+          } catch (err) {
+            log.debug(
+              `[slashing] chkdispute transient: ${err instanceof Error ? err.message : String(err)}`
+            )
+          }
           const d = await readDispute(dispute!.id)
           return d != null
             && matchesProtoEnum(d.status, DisputeStatus, DisputeStatus.DISPUTE_STATUS_RESOLVED)
@@ -385,6 +400,56 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
   }
 
   /**
+   * Settle onto the fresh, dispute-ops-owned epoch on which the dispute is staged.
+   *
+   * `makeDisputeOpsSoleActiveGroup` runs while the genesis epoch is live, whose envelope bucket already
+   * holds the bootstrap operators' consistent deliveries (pushed by their cranks before the group swap
+   * de-elected them). Those form an Option-B majority, so a 3-way divergent split injected at the
+   * genesis epoch reaches `evalcons` consensus on the bootstrap checksum instead of opening a dispute —
+   * the dispute never opens and the flow times out. (The e2e-gate failure: epoch 1 "carries the
+   * bootstrap data", so it can never host the dispute.)
+   *
+   * But we do NOT have to advance manually. After the swap, the bootstrap operators finish driving the
+   * genesis epoch to consensus and `advance` rolls forward to the FIRST fully-post-swap epoch — where
+   * only the SBP-less dispute ops are elected, so nothing auto-delivers and the epoch FREEZES. That
+   * frozen epoch's contested-outpost bucket is empty (the bootstrap ops were de-elected before it
+   * began), which is exactly where the divergent split must land. So we just wait for the epoch index
+   * to stabilise while the dispute ops own the active group — crucially WITHOUT cranking, which would
+   * fight the freeze (the earlier bug: cranking to advance OFF this epoch can never succeed, because a
+   * SBP-less group has no one to reach consensus, so it timed out).
+   *
+   * @return the frozen, dispute-ops-owned `current_epoch_index` on which the dispute can be staged.
+   */
+  async function settleOnFreshDisputeEpoch(): Promise<number> {
+    let prev = -1
+    let stableChecks = 0
+    await pollUntil(
+      "epoch settles (frozen) on the dispute-ops-owned post-swap epoch",
+      async () => {
+        const e = await currentEpoch()
+        stableChecks = e === prev ? stableChecks + 1 : 0
+        prev = e
+        const { rows } = await ctx.wireClient.getTableRows<any>({
+          code: "sysio.epoch", scope: "sysio.epoch", table: "epochstate", limit: 1
+        })
+        const active: string[] = (rows[0] as any)?.batch_op_groups?.[0] ?? []
+        const owned =
+          active.length === DISPUTE_OPS.length && DISPUTE_OPS.every(op => active.includes(op))
+        // Frozen := the index held across >= 2 consecutive polls (poll interval is ~0.75 epoch, so two
+        // stable reads span > one epoch_duration — long enough that a still-advancing epoch would have
+        // ticked). Combined with dispute-ops ownership, that guarantees a post-swap epoch whose
+        // contested bucket carries no bootstrap deliveries.
+        return owned && stableChecks >= 2
+      },
+      TEST_EPOCH_DURATION_SEC * 6 * MsPerSecond,
+      Math.floor(TEST_EPOCH_DURATION_SEC * 0.75) * MsPerSecond
+    )
+    const epoch = await currentEpoch()
+    log.info(`[slashing] settled on frozen dispute-ops-owned epoch ${epoch}`)
+    return epoch
+  }
+
+  /**
    * Push three `sysio.msgch::deliver` actions — one per DISPUTE_OP — each with a
    * DISTINCT envelope payload for the same (outpost, epoch), forming a 3-way
    * split with no majority.
@@ -395,9 +460,11 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
    *       `encodeDivergentEnvelope`. The depot recomputes sha256(data)
    *       trustlessly, so any well-formed, epoch-matching envelope works.
    *   (b) DISPUTE_OPS are the SOLE deliverers for the contested outpost this
-   *       epoch: provisioned SBP-less (`provisionDisputeOps`) and made the sole
-   *       active group (`makeDisputeOpsSoleActiveGroup`), so no consistent SBP
-   *       deliveries form a majority that would suppress the dispute.
+   *       epoch: provisioned SBP-less (`provisionDisputeOps`), made the sole
+   *       active group (`makeDisputeOpsSoleActiveGroup`), AND staged on a fresh
+   *       post-swap epoch (`settleOnFreshDisputeEpoch`) whose bucket carries no
+   *       pre-swap bootstrap deliveries — so no consistent majority exists to
+   *       suppress the dispute.
    */
   async function injectDivergentDeliveries(epoch: number): Promise<void> {
     for (let i = 0; i < DISPUTE_OPS.length; i++) {
@@ -417,7 +484,7 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
   }
 
   async function pushVote(owner: string, disputeId: number, chosenChecksum: string): Promise<void> {
-    await ctx.wireClient.clio.pushAction(
+    await ctx.wireClient.clio.pushActionAndWait<SystemContracts.SysioChalgVotedisputeAction>(
       "sysio.chalg",
       "votedispute",
       { owner, dispute_id: disputeId, chosen_checksum: chosenChecksum },
@@ -427,7 +494,11 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
 
   async function pushCheckDispute(disputeId: number): Promise<void> {
     // Permissionless — sign as any account with a loaded key (a DISPUTE_OP works).
-    await ctx.wireClient.clio.pushAction(
+    // pushActionAndWait (not pushAction): chkdispute is cranked in a poll loop;
+    // a fire-and-forget push re-sends a byte-identical tx before the prior one
+    // is final and collides on TAPOS -> `tx_duplicate (3040008)`. Waiting for
+    // finality spaces the cranks and re-pushes with fresh TAPOS on a fork.
+    await ctx.wireClient.clio.pushActionAndWait<SystemContracts.SysioChalgChkdisputeAction>(
       "sysio.chalg",
       "chkdispute",
       { dispute_id: disputeId },
@@ -441,12 +512,28 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
    * so the test does — to open the dispute past the boundary and to drive the post-resolution `advance`
    * where the slash runs. Tolerant of transient errors (e.g. a duplicate tx landing in the same block)
    * so it is safe to call inside a poll.
+   *
+   * pushActionAndWait (not pushAction): `chkcons` carries empty action data,
+   * so every fire-and-forget push is byte-identical. Called rapidly in a poll
+   * loop, two pushes collide on the same TAPOS reference block before either
+   * is final and the second is rejected `tx_duplicate (3040008)` — which the
+   * catch below silently swallows, so the crank that drives `advance` never
+   * lands and the epoch freezes. Waiting for finality spaces the cranks (so
+   * each gets a fresh head/TAPOS) and re-pushes with fresh TAPOS on a fork.
    */
   async function crankConsensus(): Promise<void> {
     try {
-      await ctx.wireClient.clio.pushAction("sysio.msgch", "chkcons", {}, DISPUTE_OPS[0])
-    } catch {
-      /* transient — keep polling */
+      await ctx.wireClient.clio.pushActionAndWait<SystemContracts.SysioMsgchChkconsAction>(
+        "sysio.msgch", "chkcons", {}, DISPUTE_OPS[0]
+      )
+    } catch (err) {
+      // Transient (e.g. chkcons racing a concurrent advance / a forked-out
+      // crank) — safe to keep polling, but NEVER swallow it silently: a
+      // persistent crank failure (the original tx_duplicate bug) is only
+      // diagnosable if it is logged.
+      log.warn(
+        `[slashing] crankConsensus chkcons transient: ${err instanceof Error ? err.message : String(err)}`
+      )
     }
   }
 
@@ -550,7 +637,7 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
 // ──────────────────────────────────────────────────────────────────────
 
 /** slug_name uint64 of the contested outpost. ETHEREUM is one of the two outposts the production
- *  bootstrap registers + activates; its slug fits a JS number (58623385699589). */
+ *  bootstrap registers + activates; its slug fits a JS number (23373300651341). */
 function contestedChainCode(): number {
   return Number(SlugName.from("ETHEREUM"))
 }

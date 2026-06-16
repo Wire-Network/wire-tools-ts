@@ -6,7 +6,7 @@
   "description": "Flow: Batch Operator Termination via Delivery Underperformance",
   "scripts": {
     "build": "tsc -b tsconfig.json",
-    "test": "jest --runInBand",
+    "test": "jest --runInBand --no-cache",
     "clean": "rm -rf lib"
   },
   "dependencies": {

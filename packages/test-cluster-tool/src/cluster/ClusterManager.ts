@@ -2733,7 +2733,9 @@ async function bootstrapChain(
         description: "Bootstrap-seeded native ETH ↔ WIRE reserve",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
-        connector_weight_bps: 5000
+        connector_weight_bps: 5000,
+        is_private: false,
+        owner: ""
       },
       {
         chain_code: { value: SlugName.from("ETHEREUM") },
@@ -2743,7 +2745,9 @@ async function bootstrapChain(
         description: "Bootstrap-seeded liqETH ↔ WIRE reserve",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
-        connector_weight_bps: 5000
+        connector_weight_bps: 5000,
+        is_private: false,
+        owner: ""
       },
       {
         chain_code: { value: SlugName.from("ETHEREUM") },
@@ -2753,7 +2757,9 @@ async function bootstrapChain(
         description: "Bootstrap-seeded USDC ↔ WIRE reserve (mock ERC-20)",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
-        connector_weight_bps: 5000
+        connector_weight_bps: 5000,
+        is_private: false,
+        owner: ""
       },
       {
         chain_code: { value: SlugName.from("ETHEREUM") },
@@ -2763,7 +2769,9 @@ async function bootstrapChain(
         description: "Bootstrap-seeded USDT ↔ WIRE reserve (mock ERC-20)",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
-        connector_weight_bps: 5000
+        connector_weight_bps: 5000,
+        is_private: false,
+        owner: ""
       },
       {
         chain_code: { value: SlugName.from("SOLANA") },
@@ -2773,7 +2781,9 @@ async function bootstrapChain(
         description: "Bootstrap-seeded native SOL ↔ WIRE reserve",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
-        connector_weight_bps: 5000
+        connector_weight_bps: 5000,
+        is_private: false,
+        owner: ""
       },
       {
         chain_code: { value: SlugName.from("SOLANA") },
@@ -2783,7 +2793,9 @@ async function bootstrapChain(
         description: "Bootstrap-seeded liqSOL ↔ WIRE reserve",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
-        connector_weight_bps: 5000
+        connector_weight_bps: 5000,
+        is_private: false,
+        owner: ""
       },
       {
         chain_code: { value: SlugName.from("SOLANA") },
@@ -2793,7 +2805,9 @@ async function bootstrapChain(
         description: "Bootstrap-seeded USDC ↔ WIRE reserve on Solana (mock SPL)",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
-        connector_weight_bps: 5000
+        connector_weight_bps: 5000,
+        is_private: false,
+        owner: ""
       },
       {
         chain_code: { value: SlugName.from("SOLANA") },
@@ -2803,7 +2817,9 @@ async function bootstrapChain(
         description: "Bootstrap-seeded USDT ↔ WIRE reserve on Solana (mock SPL)",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
-        connector_weight_bps: 5000
+        connector_weight_bps: 5000,
+        is_private: false,
+        owner: ""
       }
     ]
   await Bluebird.each(reserveRegs, async reserveReg => {
@@ -2823,7 +2839,11 @@ async function bootstrapChain(
     "setconfig",
     {
       fee_bps: 10,
-      collateral_lock_duration_epoch_count: 10,
+      // Collateral locks are a wall-clock challenge window (the contract
+      // default is 12h). Dev clusters shorten it to 10 minutes — long
+      // enough that flows can assert locks PERSIST after settlement,
+      // short enough that lock-expiry behaviour is observable in a run.
+      collateral_lock_duration_ms: 600_000,
       fee_split_winner_pct: 50,
       fee_split_other_uw_pct: 25,
       fee_split_batch_op_pct: 25

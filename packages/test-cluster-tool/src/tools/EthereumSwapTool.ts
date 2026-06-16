@@ -266,6 +266,11 @@ export async function requestEthereumSwapErc20WithApproval(
 /**
  * Calldata-facing `ReserveCreateArgs` struct mirroring
  * `ReserveManagerLib.ReserveCreateArgs` on the contract.
+ *
+ * `externalTokenAmount` is RAW chain-native units (the escrow the
+ * contract takes custody of); the outpost converts it to the depot
+ * 9-decimal frame at the boundary for the RESERVE_CREATE attestation's
+ * `ReserveAmount` — callers never pre-scale.
  */
 export interface EthereumReserveCreateArgs {
   tokenCode: bigint
@@ -275,6 +280,14 @@ export interface EthereumReserveCreateArgs {
   connectorWeightBps: number
   name: string
   description: string
+  /** Private reserves pair only with same-owner counterparts. */
+  isPrivate: boolean
+  /**
+   * The caller's 33-byte compressed secp256k1 public key (hex) — the
+   * contract verifies it derives to the sending wallet, and the depot
+   * resolves the creator's authex link from it.
+   */
+  creatorPubKey: string
 }
 
 /** Structural surface for the ERC-20 reserve-create entries. */

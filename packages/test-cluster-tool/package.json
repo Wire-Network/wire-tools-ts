@@ -30,13 +30,13 @@
     "clean": "rm -rf lib"
   },
   "dependencies": {
-    "@wireio/debugging-server": "workspace:*",
-    "@wireio/debugging-shared": "workspace:*",
     "@3fv/guard": "^1.4.39",
     "@3fv/prelude-ts": "^0.8.41",
     "@coral-xyz/anchor": "^0.31.0",
     "@solana/spl-token": "^0.4.9",
     "@solana/web3.js": "^1.98.0",
+    "@wireio/debugging-server": "workspace:*",
+    "@wireio/debugging-shared": "workspace:*",
     "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/sdk-core": "^1.0.21",
     "@wireio/shared": "^1.0.21",
@@ -58,6 +58,7 @@
     "@types/lodash": "^4.17.24",
     "@types/node": "25.5.0",
     "@types/shelljs": "^0.10.0",
-    "@types/yargs": "^17.0.35"
+    "@types/yargs": "^17.0.35",
+    "tweetnacl": "^1.0.3"
   }
 }

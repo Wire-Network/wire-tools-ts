@@ -46,6 +46,36 @@ export enum ClioErrorFragment {
   WalletAlreadyUnlocked = "Already unlocked"
 }
 
+/**
+ * Fold a failed clio child process's captured output into the thrown
+ * error's `message`.
+ *
+ * `clio -j` prints chain-side rejection details — most importantly
+ * `assertion failure with message: ...` — to STDOUT, while node's exec
+ * error message carries only `Command failed: <argv>`. Without the fold,
+ * negative-path flow tests (`expect(...).rejects.toThrow(/some assert/)`) can
+ * never see the on-chain reason. The original error object (with its
+ * `stdout` / `stderr` / `code` properties) is preserved — only `message`
+ * grows.
+ *
+ * @param err     the error thrown by the exec call (returned as-is when
+ *                it doesn't carry a string `message`)
+ * @param stdout  the child's captured stdout ("" when none)
+ * @param stderr  the child's captured stderr ("" when none)
+ * @return        the same error, message enriched with both streams
+ */
+export function enrichClioError(err: unknown, stdout: string, stderr: string): unknown {
+  // Deliberately duck-typed rather than `instanceof Error`: jest gives each
+  // module registry its own `Error` global while node's child_process
+  // rejects with the host realm's Error, so instanceof is false cross-realm
+  // and the enrichment would silently skip inside every jest-driven flow.
+  const e = err as { message?: unknown }
+  if (e != null && typeof e === "object" && typeof e.message === "string") {
+    e.message = [e.message, stdout, stderr].filter(isNotEmpty).join("\n")
+  }
+  return err
+}
+
 export interface ClioConfig {
   /**
    * Path to cluster path root
@@ -148,7 +178,7 @@ export class Clio {
 
       log.error(`clio failed: ${stderr}`, err)
 
-      throw err
+      throw enrichClioError(err, stdout, stderr)
     }
   }
 
