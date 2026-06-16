@@ -6,6 +6,7 @@ import {
 } from "@solana/web3.js"
 import { log } from "../logger.js"
 import Bluebird from "bluebird"
+import { DefaultSolanaCommitment } from "../sol/SolanaCommitment.js"
 
 /**
  * Client for interacting with a Solana outpost on solana-test-validator.
@@ -14,7 +15,7 @@ export class SOLClient {
   public connection: Connection
 
   constructor(public readonly rpcUrl: string) {
-    this.connection = new Connection(rpcUrl, "confirmed")
+    this.connection = new Connection(rpcUrl, DefaultSolanaCommitment)
   }
 
   /** Get SOL balance of an address. */

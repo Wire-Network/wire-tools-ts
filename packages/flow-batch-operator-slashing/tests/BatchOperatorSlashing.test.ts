@@ -1,9 +1,7 @@
 import "jest"
-import { match, P } from "ts-pattern"
 import {
   AttestationType,
   Envelope,
-  OperatorStatus,
   NodeOwnerTier
 } from "@wireio/opp-typescript-models"
 import { SlugName, SystemContracts } from "@wireio/sdk-core"
@@ -12,6 +10,7 @@ import {
   FlowTestContext,
   freshEthPubEm,
   log,
+  matchesProtoEnum,
   pollUntil,
   ProcessManager,
   provisionFreshBatchOperator,
@@ -97,24 +96,11 @@ const ENVELOPE_TAGS = ["canonical", "fork-1", "fork-2"] as const
 
 const SlashPropagationEpochs = 8
 
-// chain_plugin may return enums as the numeric value or the proto-spelling string.
-const isStatus = (raw: unknown, want: OperatorStatus): boolean =>
-  match(raw)
-    .with(P.number, n => n === want)
-    .with(P.string, s => s === `OPERATOR_STATUS_${OperatorStatus[want]}`)
-    .otherwise(() => false)
-
-// sysio.chalg DisputeStatus carries the same dual numeric/string representation
-// as OperatorStatus above (DISPUTE_STATUS_OPEN = 1, DISPUTE_STATUS_RESOLVED = 2).
-const DISPUTE_STATUS_VALUE = { OPEN: 1, RESOLVED: 2 } as const
-const isDisputeStatus = (
-  raw: unknown,
-  want: keyof typeof DISPUTE_STATUS_VALUE
-): boolean =>
-  match(raw)
-    .with(P.number, n => n === DISPUTE_STATUS_VALUE[want])
-    .with(P.string, s => s === `DISPUTE_STATUS_${want}`)
-    .otherwise(() => false)
+// chain_plugin may return enums as the numeric value or the proto-spelling
+// string — `matchesProtoEnum` (harness) covers both against the generated
+// `SystemContracts` enums.
+const { SysioOpregOperatorstatus: OperatorStatus } = SystemContracts
+const { SysioChalgDisputestatus: DisputeStatus } = SystemContracts
 
 // ──────────────────────────────────────────────────────────────────────
 //  Test suite
@@ -136,7 +122,7 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
     // T1 via the same path the NFT claim uses (pushNewNamedUser creates the
     // account, pushNodeOwnerReg registers it + inline-bumps nodecount.t1_count
     // — the N that chkdispute reads). See flow-node-owner-nft for the pattern.
-    await ctx.wireClient.clio.walletOpenAndUnlock("default")
+    await ctx.wireClient.clio.walletOpenAndUnlock()
     for (const owner of T1_VOTER_NAMES) {
       await provisionTier1Voter(owner)
     }
@@ -243,7 +229,7 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
           }
           const d = await readDispute(dispute!.id)
           return d != null
-            && isDisputeStatus(d.status, "RESOLVED")
+            && matchesProtoEnum(d.status, DisputeStatus, DisputeStatus.DISPUTE_STATUS_RESOLVED)
             && d.winning_checksum === canonicalChecksum
         },
         TEST_EPOCH_DURATION_SEC * 2 * MsPerSecond,
@@ -276,7 +262,14 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
             await crankConsensus()
             const { rows } = await ctx.wireClient.getOperators()
             const o = rows.find((r: any) => r.account === op)
-            return o != null && isStatus(o.status, OperatorStatus.SLASHED)
+            return (
+              o != null &&
+              matchesProtoEnum(
+                o.status,
+                OperatorStatus,
+                OperatorStatus.OPERATOR_STATUS_SLASHED
+              )
+            )
           },
           TEST_EPOCH_DURATION_SEC * SlashPropagationEpochs * MsPerSecond,
           LongPollIntervalMs
@@ -287,7 +280,13 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
       const canonical = rows.find((r: any) => r.account === CANONICAL_OP)
       expect(canonical).toBeDefined()
       // Canonical deliverer must NOT be slashed (may be ACTIVE/UNKNOWN, never SLASHED).
-      expect(isStatus(canonical.status, OperatorStatus.SLASHED)).toBe(false)
+      expect(
+        matchesProtoEnum(
+          canonical.status,
+          OperatorStatus,
+          OperatorStatus.OPERATOR_STATUS_SLASHED
+        )
+      ).toBe(false)
     },
     TEST_EPOCH_DURATION_SEC * SlashPropagationEpochs * MsPerSecond + PollDeadlineBufferMs
   )
@@ -365,7 +364,14 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
         async () => {
           const { rows } = await ctx.wireClient.getOperators()
           const o = rows.find((r: any) => r.account === op)
-          return o != null && isStatus(o.status, OperatorStatus.ACTIVE)
+          return (
+            o != null &&
+            matchesProtoEnum(
+              o.status,
+              OperatorStatus,
+              OperatorStatus.OPERATOR_STATUS_ACTIVE
+            )
+          )
         },
         TEST_EPOCH_DURATION_SEC * 2 * MsPerSecond,
         LongPollIntervalMs
@@ -600,7 +606,9 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
       code: "sysio.chalg", scope: "sysio.chalg", table: "disputes", limit: 100
     })
     return rows.find(
-      r => Number(r.epoch_index) === epoch && isDisputeStatus(r.status, "OPEN")
+      r =>
+        Number(r.epoch_index) === epoch &&
+        matchesProtoEnum(r.status, DisputeStatus, DisputeStatus.DISPUTE_STATUS_OPEN)
     )
   }
 

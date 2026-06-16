@@ -33,18 +33,13 @@ import {
   type StakingReward,
   StakingReward as StakingRewardMsg
 } from "@wireio/opp-typescript-models"
+import { confirmSignature } from "../sol/confirmSignature.js"
 
 /** Seed for the `OutpostConfig` singleton PDA (mirrors
  *  `wire-solana/programs/opp-outpost/src/state/outpost_config.rs`). */
 const OUTPOST_CONFIG_SEED = Buffer.from("outpost_config")
 /** Seed for the `OutboundMessageBuffer` singleton PDA. */
 const OUTBOUND_MESSAGE_BUFFER_SEED = Buffer.from("outbound_message_buffer")
-
-/** Polling deadline + cadence for `getSignatureStatus` — mirrors the
- *  pattern used elsewhere in test-cluster-tool so we don't depend on
- *  anchor's `confirmTransaction` (broken in this env). */
-const CONFIRM_TIMEOUT_MS = 60_000
-const CONFIRM_POLL_MS    = 500
 
 /** Per-staker entry in an `emitYieldBatch` invocation. Mirrors the ETH
  *  side's `YieldEntry` shape for ergonomic symmetry across the two
@@ -203,22 +198,8 @@ export async function emitSolanaYield(
     skipPreflight: false
   })
 
-  // Poll for confirmation — see SOLBootstrap.initializePDAs for the
-  // rationale (anchor's .rpc() confirmTransaction is broken in our
-  // test-validator env).
-  const deadline = Date.now() + CONFIRM_TIMEOUT_MS
-  while (Date.now() < deadline) {
-    const status = await connection.getSignatureStatus(sig)
-    const conf   = status?.value?.confirmationStatus
-    if (conf === "confirmed" || conf === "finalized") return sig
-    if (status?.value?.err) {
-      throw new Error(
-        `SolanaYieldEmitterTool: add_attestation tx failed: ${JSON.stringify(status.value.err)}`
-      )
-    }
-    await new Promise(resolve => setTimeout(resolve, CONFIRM_POLL_MS))
-  }
-  throw new Error(
-    `SolanaYieldEmitterTool: add_attestation tx ${sig} not confirmed within ${CONFIRM_TIMEOUT_MS}ms`
-  )
+  // Poll for confirmation via the shared bounded poller — anchor's
+  // .rpc() confirmTransaction is broken in our test-validator env.
+  await confirmSignature(connection, sig, "SolanaYieldEmitterTool add_attestation")
+  return sig
 }

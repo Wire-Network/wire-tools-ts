@@ -40,6 +40,7 @@ import { Keypair, LAMPORTS_PER_SOL, type PublicKey } from "@solana/web3.js"
 import type { FlowTestContext } from "../FlowTestContext.js"
 import { SOLClient } from "../clients/SOLClient.js"
 import { ETHBootstrapper } from "../cluster/ETHBootstrapper.js"
+import { confirmSignature } from "../sol/confirmSignature.js"
 import { log } from "../logger.js"
 
 /**
@@ -93,10 +94,6 @@ export namespace SwapUserIdentities {
   export const DefaultSolanaAirdropFloorLamports = 100 * LAMPORTS_PER_SOL
   /** Persisted-state filename under `<clusterPath>/state/`. */
   export const StateFilename = "swap_user.json"
-  /** Deadline for the airdrop confirmation poll. */
-  export const AirdropConfirmTimeoutMs = 60_000
-  /** Sleep between airdrop confirmation polls. */
-  export const AirdropConfirmPollIntervalMs = 500
 }
 
 /**
@@ -213,19 +210,9 @@ async function maybeAirdropSolana(
     `[SwapUserIdentities] airdropping ${requestLamports} lamports to ${publicKey.toBase58()} (current=${current} floor=${floorLamports})`
   )
   const sig = await solClient.connection.requestAirdrop(publicKey, requestLamports)
-  const deadline = Date.now() + SwapUserIdentities.AirdropConfirmTimeoutMs
-  while (Date.now() < deadline) {
-    const status = await solClient.connection.getSignatureStatus(sig)
-    const conf = status?.value?.confirmationStatus
-    if (conf === "confirmed" || conf === "finalized") return
-    if (status?.value?.err) {
-      throw new Error(
-        `[SwapUserIdentities] airdrop tx failed: ${JSON.stringify(status.value.err)}`
-      )
-    }
-    await new Promise(resolve => setTimeout(resolve, SwapUserIdentities.AirdropConfirmPollIntervalMs))
-  }
-  throw new Error(
-    `[SwapUserIdentities] airdrop tx ${sig} not confirmed within ${SwapUserIdentities.AirdropConfirmTimeoutMs}ms`
+  await confirmSignature(
+    solClient.connection,
+    sig,
+    `SwapUserIdentities airdrop to ${publicKey.toBase58()}`
   )
 }

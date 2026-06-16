@@ -5,16 +5,18 @@ import { ethers } from "ethers"
 import {
   FlowTestContext,
   log,
+  matchesProtoEnum,
   pollUntil,
   ProcessManager,
   ensureSwapUserIdentities,
   requestEthereumSwap,
   requestSolanaSwap,
   SwapUserIdentities,
-  SOLClient
+  SOLClient,
+  underwriterAccountName
 } from "@wireio/test-cluster-tool"
 import { UnderwriteRequestStatus } from "@wireio/opp-typescript-models"
-import { SlugName } from "@wireio/sdk-core"
+import { SlugName, SystemContracts } from "@wireio/sdk-core"
 import * as Fs from "node:fs"
 import * as Path from "node:path"
 import { Timing, Reserves, SwapAmounts, Variance } from "./constants.js"
@@ -182,13 +184,13 @@ describe("Flow: SWAP with underwriting (bidirectional Ethereum ↔ Solana)", () 
         const { rows } = await context.wireClient.getTableRows<any>({
           code: "sysio.opreg", scope: "sysio.opreg", table: "operators"
         })
-        const uw = rows.find((r: any) => r.account === "uwrit.a")
+        const uw = rows.find((r: any) => r.account === underwriterAccountName(0))
         if (!uw) return false
-        const isActive =
-          Number(uw.status) === 1 ||
-          uw.status === "OPERATOR_STATUS_ACTIVE" ||
-          uw.status === 1
-        return isActive
+        return matchesProtoEnum(
+          uw.status,
+          SystemContracts.SysioOpregOperatorstatus,
+          SystemContracts.SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
+        )
       },
       Timing.UwreqDeadlineMs,
       Timing.LongPollIntervalMs

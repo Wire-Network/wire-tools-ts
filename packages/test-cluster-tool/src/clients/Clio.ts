@@ -26,9 +26,25 @@ import Path from "path"
 import os from "os"
 import { promises as fsp } from "fs"
 import Fs from "fs"
-import { DEV_K1_PRIVATE_KEY, DEV_K1_PUBLIC_KEY } from "../cluster/constants.js"
+import {
+  DEFAULT_WALLET_NAME,
+  DEV_K1_PRIVATE_KEY,
+  DEV_K1_PUBLIC_KEY
+} from "../cluster/constants.js"
 
 const execFileAsync = promisify(execFile)
+
+/**
+ * Recognised fragments of clio / chain error messages the harness branches
+ * on. Substring-matched against `err.message` / `err.stderr` — clio wraps
+ * the chain's assertion text in CLI noise, so exact-match is not possible.
+ */
+export enum ClioErrorFragment {
+  /** `sysio::newaccount` (and friends) rejecting a name that is taken. */
+  AccountAlreadyExists = "already exists",
+  /** `kiod` refusing to unlock a wallet that is already unlocked. */
+  WalletAlreadyUnlocked = "Already unlocked"
+}
 
 /**
  * Fold a failed clio child process's captured output into the thrown
@@ -227,7 +243,7 @@ export class Clio {
    * them via this helper.
    */
   async walletOpenAndUnlock(
-    walletName: string,
+    walletName: string = DEFAULT_WALLET_NAME,
     password: string = this.walletPassword
   ): Promise<void> {
     await this.walletOpen(walletName)
@@ -237,7 +253,7 @@ export class Clio {
       const msg = err?.message ?? err?.stderr ?? ""
       // Benign — wallet may already be unlocked from a prior call within
       // the same kiod session.
-      if (msg.includes("Already unlocked")) return
+      if (msg.includes(ClioErrorFragment.WalletAlreadyUnlocked)) return
       throw err
     }
   }

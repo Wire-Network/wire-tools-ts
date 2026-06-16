@@ -1,6 +1,7 @@
 import type { Connection } from "@solana/web3.js"
 import { log } from "../logger.js"
 import { sleep } from "../util.js"
+import { SolanaConfirmationStatus } from "./SolanaCommitment.js"
 
 /**
  * Reject if `p` does not settle within `ms`. Bounds an otherwise-unbounded
@@ -65,9 +66,9 @@ export async function confirmSignature(
   label: string,
   opts: ConfirmSignatureOptions = {}
 ): Promise<void> {
-  const deadlineMs    = opts.deadlineMs    ?? DEFAULT_DEADLINE_MS
-  const intervalMs    = opts.intervalMs    ?? DEFAULT_INTERVAL_MS
-  const rpcTimeoutMs  = opts.rpcTimeoutMs  ?? DEFAULT_RPC_TIMEOUT_MS
+  const deadlineMs = opts.deadlineMs ?? DEFAULT_DEADLINE_MS
+  const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS
+  const rpcTimeoutMs = opts.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS
   const rebroadcastMs = opts.rebroadcastMs ?? DEFAULT_REBROADCAST_MS
 
   const deadline = Date.now() + deadlineMs
@@ -84,11 +85,13 @@ export async function confirmSignature(
         `${label} getSignatureStatus`
       )
       conf = status?.value?.confirmationStatus
-      err  = status?.value?.err
+      err = status?.value?.err
     } catch (e) {
       // Slow/hung status RPC: keep polling so the deadline is still enforced.
       if (pollCount % 10 === 0)
-        log.warn(`[confirmSignature/${label}] status RPC unavailable: ${String(e)}`)
+        log.warn(
+          `[confirmSignature/${label}] status RPC unavailable: ${String(e)}`
+        )
     }
     if (pollCount % 10 === 0)
       log.info(
@@ -96,7 +99,11 @@ export async function confirmSignature(
       )
     pollCount++
 
-    if (conf === "confirmed" || conf === "finalized") return
+    if (
+      conf === SolanaConfirmationStatus.Confirmed ||
+      conf === SolanaConfirmationStatus.Finalized
+    )
+      return
     if (err) throw new Error(`${label} tx failed: ${JSON.stringify(err)}`)
 
     if (opts.rebroadcast && Date.now() - lastRebroadcast >= rebroadcastMs) {

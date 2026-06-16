@@ -1,7 +1,7 @@
 import "jest"
 import {
-  BOOTSTRAP_NODE_OWNER,
   convertImportSeed,
+  createAccountWithResources,
   createAuthExLink,
   DEV_K1_PUBLIC_KEY,
   emPrivateKeyFromEthWallet,
@@ -244,7 +244,7 @@ describeCluster("Emissions + dclaim multi-hour soak", () => {
   it("converts synthetic dumps and seeds dclaim via importseed", async () => {
     // Ensure the default wallet is open + unlocked — kiod is restarted
     // between cluster create and run, leaving it closed/locked.
-    await ctx.wireClient.clio.walletOpenAndUnlock("default")
+    await ctx.wireClient.clio.walletOpenAndUnlock()
 
     const ethConv = convertImportSeed(ethDump, { chain: "CHAIN_KIND_EVM" })
     const solConv = convertImportSeed(solDump, { chain: "CHAIN_KIND_SVM" })
@@ -378,7 +378,7 @@ describeCluster("Emissions + dclaim multi-hour soak", () => {
     // ClusterManager's create and run phases, so the default wallet is
     // closed/locked when we get here. Matches the pattern used by
     // OperatorProvisioningTool for the same reason.
-    await ctx.wireClient.clio.walletOpenAndUnlock("default")
+    await ctx.wireClient.clio.walletOpenAndUnlock()
 
     // (a) Pre-fund sysio.dclaim from sysio for the controlled-staker
     //     obligations.
@@ -407,28 +407,10 @@ describeCluster("Emissions + dclaim multi-hour soak", () => {
     //     Without it, the createlink inline-action trips the RAM
     //     guard on the new account.
     for (const s of controlled) {
-      await ctx.wireClient.clio.createSystemAccount(s.wireAccount, DEV_K1_PUBLIC_KEY)
-      await ctx.wireClient.clio.pushActionAndWait<{
-        owner: string
-        issuer: string
-        net_weight: string
-        ram_weight: string
-        cpu_weight: string
-        time_block: number
-        network_gen: number
-      }>(
-        "sysio.roa",
-        "addpolicy",
-        {
-          owner: s.wireAccount,
-          issuer: BOOTSTRAP_NODE_OWNER,
-          net_weight: "25.0000 SYS",
-          ram_weight: "25.0000 SYS",
-          cpu_weight: "25.0000 SYS",
-          time_block: 0,
-          network_gen: 0
-        },
-        `${BOOTSTRAP_NODE_OWNER}@active`
+      await createAccountWithResources(
+        ctx.wireClient.clio,
+        s.wireAccount,
+        DEV_K1_PUBLIC_KEY
       )
     }
 
