@@ -57,9 +57,6 @@ export interface ConfigOptions {
   /** Enable contracts console output. */
   contractsConsole?: boolean
 
-  /** Disable trace ABIs. */
-  traceNoAbis?: boolean
-
   /** Maximum P2P connections from a single host. */
   p2pMaxNodesPerHost?: number
 
@@ -191,7 +188,6 @@ export function generateConfigFileContent(opts: ConfigOptions): string {
     // Misc flags
     opts.skipTransactionSignatures && kv("skip-transaction-signatures", "true"),
     opts.contractsConsole && kv("contracts-console", "true"),
-    opts.traceNoAbis && kv("trace-no-abis", ""),
 
     // Limits
     opts.p2pMaxNodesPerHost &&

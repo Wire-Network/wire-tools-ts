@@ -81,7 +81,6 @@ describe("ClusterManager smoke tests", () => {
       expect(s).toContain("sysio::producer_plugin")
       expect(s).toContain("--enable-stale-production")
       expect(s).toContain("--producer-name sysio")
-      expect(s).toContain("--trace-no-abis")
       expect(s).toContain("--genesis-json /tmp/test/node_bios/genesis.json")
       expect(s).toContain("--genesis-timestamp 2026-03-27T00:00:00.000")
     })
