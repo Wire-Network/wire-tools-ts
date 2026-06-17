@@ -2086,6 +2086,31 @@ async function bootstrapChain(
 
   log.info("[Phase 12] sysio.authex deployed")
 
+  // ── Phase 12a: Deploy sysio.msig + sysio.wrap ──
+  // Standalone privileged system contracts. Unlike authex they need NO
+  // cross-contract sysio.code grant: setsyscode deploys them privileged, which
+  // is all they require (msig::exec acts on the proposers' collected approvals;
+  // wrap::exec relies on being privileged and governed by sysio@active). The
+  // accounts were created in Phase 11a; here we set their code/abi.
+  log.info("[Phase 12a] Deploying sysio.msig + sysio.wrap...")
+  for (const contractName of ["sysio.msig", "sysio.wrap"] as const) {
+    await retry(
+      () =>
+        deploySysContract(
+          clio,
+          contractName,
+          Path.join(resolveContractPath(contractName), `${contractName}.wasm`),
+          Path.join(resolveContractPath(contractName), `${contractName}.abi`)
+        ),
+      {
+        label: `deploy ${contractName}`,
+        maxAttempts: ClusterManager.ClioRetryAttempts,
+        delayMs: ClusterManager.ClioRetryHeavyDelayMs
+      }
+    )
+  }
+  log.info("[Phase 12a] sysio.msig + sysio.wrap deployed")
+
   // ── Phase 13: System init ──
   log.info("[Phase 13] System init...")
   await clio.pushActionAndWait<SystemContracts.SysioSystemInitAction>(
