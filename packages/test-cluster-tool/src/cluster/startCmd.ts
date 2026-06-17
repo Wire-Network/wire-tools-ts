@@ -150,7 +150,6 @@ export function buildStartCmd(opts: StartCmdOptions): string[] {
     ),
     ...(opts.contractsConsole !== false ? ["--contracts-console"] : []),
     ...pluginArgs(TrailingPlugins),
-    "--trace-no-abis",
     ...pair(
       "--http-max-response-time-ms",
       String(opts.httpMaxResponseTimeMs ?? DefaultHttpMaxResponseTimeMs)

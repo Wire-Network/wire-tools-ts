@@ -315,7 +315,6 @@ export function nodeConfigToIniOptions(
 
     // nodeop extra args from cluster_manager
     contractsConsole: true,
-    traceNoAbis: true,
     voteThreads: NODEOP_EXTRA_ARGS.voteThreads,
     maxTransactionTime: NODEOP_EXTRA_ARGS.maxTransactionTime,
     abiSerializerMaxTimeMs: NODEOP_EXTRA_ARGS.abiSerializerMaxTimeMs,
