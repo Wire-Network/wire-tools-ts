@@ -13,7 +13,8 @@ import {
   requestSolanaSwap,
   SwapUserIdentities,
   SOLClient,
-  underwriterAccountName
+  underwriterAccountName,
+  WIREClient
 } from "@wireio/test-cluster-tool"
 import { UnderwriteRequestStatus } from "@wireio/opp-typescript-models"
 import { SlugName, SystemContracts } from "@wireio/sdk-core"
@@ -313,6 +314,10 @@ describe("Flow: SWAP with underwriting (bidirectional Ethereum ↔ Solana)", () 
       const srcAmountDepot = SwapAmounts.PhaseA.SourceEthereumWei / 10n ** 9n
       const w = (booksBefore.src.wire * srcAmountDepot)
               / (booksBefore.src.chain + srcAmountDepot)
+      // #414: the source gives up the full gross WIRE intermediate `w`, but the
+      // destination receives only the post-fee net — the fee is skimmed in the
+      // hop and routed to rewards (custody) + emissions (out).
+      const phaseAFee = WIREClient.splitWireFee(w)
 
       const src = await reserveBook(
         Reserves.Ethereum.ETH.ChainCode,
@@ -326,12 +331,14 @@ describe("Flow: SWAP with underwriting (bidirectional Ethereum ↔ Solana)", () 
       )
       expect(src.chain).toBe(booksBefore.src.chain + srcAmountDepot)
       expect(src.wire).toBe(booksBefore.src.wire - w)
-      expect(dst.wire).toBe(booksBefore.dst.wire + w)
+      expect(dst.wire).toBe(booksBefore.dst.wire + w - phaseAFee.fee)
       expect(dst.chain).toBe(booksBefore.dst.chain - phaseATargetAmount)
 
-      // The w hop is internal — Σ reserve_wire_amount is unchanged by a
-      // normal swap (custody invariant: no real WIRE moved).
-      expect(src.wire + dst.wire).toBe(booksBefore.src.wire + booksBefore.dst.wire)
+      // The w hop is internal, but #414 skims the WIRE-leg fee inside it — so
+      // Σ reserve_wire_amount across the pair drops by exactly the fee (the
+      // emissions half leaves custody, the rewards half moves to the bucket).
+      expect(src.wire + dst.wire)
+        .toBe(booksBefore.src.wire + booksBefore.dst.wire - phaseAFee.fee)
 
       // Both legs locked, and the locks PERSIST (wall-clock challenge
       // window — never released by delivery).

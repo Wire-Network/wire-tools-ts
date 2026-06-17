@@ -8,7 +8,8 @@ import {
   ensureSwapUserIdentities,
   provisionWireUser,
   SwapUserIdentities,
-  WireUser
+  WireUser,
+  WIREClient
 } from "@wireio/test-cluster-tool"
 import { UnderwriteRequestStatus } from "@wireio/opp-typescript-models"
 import { SlugName, SystemContracts } from "@wireio/sdk-core"
@@ -217,10 +218,13 @@ describe("Flow: Swap FROM WIRE (WIRE depot → Solana)", () => {
     expect(slugValue(locks[0].chain_code)).toBe(Reserves.Solana.SOL.ChainCode)
 
     // Emit-time books: the escrow became dst-reserve WIRE liquidity and
-    // the chain side was debited BEFORE the remit left the depot.
+    // the chain side was debited BEFORE the remit left the depot. #414's
+    // `applyfromwire` skims the WIRE-leg fee off the escrowed input, so the
+    // reserve's WIRE side grows by the post-fee NET, not the gross escrow.
+    const fromWireFee = WIREClient.splitWireFee(SwapAmounts.SourceWireUnits)
     const reserve = await solReserveRow()
     expect(BigInt(reserve.reserve_wire_amount))
-      .toBe(solReserveBefore.wire + SwapAmounts.SourceWireUnits)
+      .toBe(solReserveBefore.wire + fromWireFee.net)
     expect(BigInt(reserve.reserve_chain_amount))
       .toBe(solReserveBefore.chain - targetSolAmount)
   }, Timing.RaceDeadlineMs + 30_000)
@@ -243,9 +247,14 @@ describe("Flow: Swap FROM WIRE (WIRE depot → Solana)", () => {
 
   test("escrowed WIRE stays in custody (it now backs the reserve) and the lock persists", async () => {
     // FROM-WIRE never pays the escrow back out — it became reserve
-    // liquidity. Custody still holds the deposit.
+    // liquidity. Custody still holds the deposit MINUS the emissions half of
+    // the WIRE-leg fee (which #414 transfers out to the emissions treasury;
+    // the rewards half stays in custody as a rewards bucket).
+    const fromWireFee = WIREClient.splitWireFee(SwapAmounts.SourceWireUnits)
     const custody = await context.wireClient.getWireBalance("sysio.reserv")
-    expect(custody).toBe(reservCustodyBefore + SwapAmounts.SourceWireUnits)
+    expect(custody).toBe(
+      reservCustodyBefore + SwapAmounts.SourceWireUnits - fromWireFee.emissionsShare
+    )
 
     // Challenge window: the target-leg lock persists after delivery.
     const row = await fromWireUwreq()

@@ -21,7 +21,8 @@ import {
   requestSolanaSwapSpl,
   resolveLatestNonce,
   SwapUserIdentities,
-  WireUser
+  WireUser,
+  WIREClient
 } from "@wireio/test-cluster-tool"
 import {
   ChainKind,
@@ -626,8 +627,10 @@ describe("Flow: bidirectional swaps through a same-owner PRIVATE reserve pair", 
 
     test("emit-time four-leg books move on the two private rows", async () => {
       // `applyswap` fires inline with the race win: src.chain += src,
-      // src.wire -= w, dst.wire += w, dst.chain -= target — all four
-      // legs exact, and the WIRE intermediate cancels across the pair.
+      // src.wire -= w (gross), dst.wire += net, dst.chain -= target. #414 skims
+      // the WIRE-leg fee inside the hop, so the destination gains the post-fee
+      // net and the pair's Σwire drops by exactly the fee (no longer conserved).
+      const feeA = WIREClient.splitWireFee(wireIntermediateA)
       const ethRow = await ethPrivateRow()
       const solRow = await solPrivateRow()
       expect(BigInt(ethRow.reserve_chain_amount))
@@ -635,13 +638,13 @@ describe("Flow: bidirectional swaps through a same-owner PRIVATE reserve pair", 
       expect(BigInt(ethRow.reserve_wire_amount))
         .toBe(ethRowBefore.wire - wireIntermediateA)
       expect(BigInt(solRow.reserve_wire_amount))
-        .toBe(solRowBefore.wire + wireIntermediateA)
+        .toBe(solRowBefore.wire + wireIntermediateA - feeA.fee)
       expect(BigInt(solRow.reserve_chain_amount))
         .toBe(solRowBefore.chain - targetA)
-      // Σ reserve_wire_amount over the pair is conserved.
+      // Σ reserve_wire_amount over the pair drops by the WIRE-leg fee.
       expect(
         BigInt(ethRow.reserve_wire_amount) + BigInt(solRow.reserve_wire_amount)
-      ).toBe(ethRowBefore.wire + solRowBefore.wire)
+      ).toBe(ethRowBefore.wire + solRowBefore.wire - feeA.fee)
     })
 
     test("user's USDCSOL ATA bumps by ~target", async () => {
@@ -761,6 +764,9 @@ describe("Flow: bidirectional swaps through a same-owner PRIVATE reserve pair", 
     }, Timing.RaceDeadlineMs + 30_000)
 
     test("emit-time four-leg books move on the two private rows (inverted)", async () => {
+      // Inverted hop: SOL is the source (gives up gross wireIntermediateB),
+      // ETH the destination (gains the post-fee net); Σwire drops by the fee.
+      const feeB = WIREClient.splitWireFee(wireIntermediateB)
       const ethRow = await ethPrivateRow()
       const solRow = await solPrivateRow()
       expect(BigInt(solRow.reserve_chain_amount))
@@ -768,12 +774,12 @@ describe("Flow: bidirectional swaps through a same-owner PRIVATE reserve pair", 
       expect(BigInt(solRow.reserve_wire_amount))
         .toBe(solRowBefore.wire - wireIntermediateB)
       expect(BigInt(ethRow.reserve_wire_amount))
-        .toBe(ethRowBefore.wire + wireIntermediateB)
+        .toBe(ethRowBefore.wire + wireIntermediateB - feeB.fee)
       expect(BigInt(ethRow.reserve_chain_amount))
         .toBe(ethRowBefore.chain - targetB)
       expect(
         BigInt(ethRow.reserve_wire_amount) + BigInt(solRow.reserve_wire_amount)
-      ).toBe(ethRowBefore.wire + solRowBefore.wire)
+      ).toBe(ethRowBefore.wire + solRowBefore.wire - feeB.fee)
     })
 
     test("user's ETH balance bumps by ~target", async () => {

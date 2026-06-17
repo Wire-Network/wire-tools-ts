@@ -9,7 +9,8 @@ import {
   provisionWireUser,
   requestEthereumSwap,
   SwapUserIdentities,
-  WireUser
+  WireUser,
+  WIREClient
 } from "@wireio/test-cluster-tool"
 import { UnderwriteRequestStatus } from "@wireio/opp-typescript-models"
 import { SlugName } from "@wireio/sdk-core"
@@ -218,21 +219,27 @@ describe("Flow: Swap TO WIRE (Ethereum → WIRE depot)", () => {
       Timing.LongPollIntervalMs
     )
     const received = await context.wireClient.getWireBalance(recipient.account)
-    // paywire pays dst_amount exactly (the user's variance-gated target).
+    // paywire pays dst_amount exactly (the user's variance-gated target) —
+    // the recipient's payout is NOT reduced by the fee.
     expect(received).toBe(targetWireAmount)
 
-    // Source reserve books: chain += src, wire -= paid — applied in the
-    // SAME transaction as the race resolution (emit-time settlement).
+    // Source reserve books: chain += src, wire -= (paid + fee) — applied in
+    // the SAME transaction as the race resolution (emit-time settlement).
+    // #414 charges the WIRE-leg fee on the gross intermediate (== the target
+    // for a 50/50 reserve) ON TOP of the recipient's payout, so the source
+    // reserve's WIRE side gives up target + fee.
+    const toWireFee = WIREClient.splitWireFee(targetWireAmount)
     const row = await ethReserveRow()
     expect(BigInt(row.reserve_chain_amount))
       .toBe(reserveBefore.chain + SwapAmounts.SourceDepotUnits)
     expect(BigInt(row.reserve_wire_amount))
-      .toBe(reserveBefore.wire - targetWireAmount)
+      .toBe(reserveBefore.wire - targetWireAmount - toWireFee.fee)
 
-    // Custody invariant: Σ reserve_wire_amount and the REAL balance
-    // dropped together.
+    // Custody: the recipient's payout plus the emissions half of the fee both
+    // leave `sysio.reserv` (the rewards half stays as a rewards bucket).
     const custodyAfter = await context.wireClient.getWireBalance("sysio.reserv")
-    expect(custodyAfter).toBe(reservCustodyBefore - targetWireAmount)
+    expect(custodyAfter)
+      .toBe(reservCustodyBefore - targetWireAmount - toWireFee.emissionsShare)
   }, Timing.PayoutDeadlineMs + 30_000)
 
   test("the source-leg lock PERSISTS after payout (challenge window)", async () => {
