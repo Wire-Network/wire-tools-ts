@@ -14,7 +14,6 @@ import {
   StakeResult,
   StakeUpdate,
   StakingReward,
-  SwapRejected,
   SwapRemit,
   SwapRequest,
   SwapRevert,
@@ -64,8 +63,7 @@ export const AttestationDecoders: Partial<
   [AttestationType.ATTESTATION_PROCESSING_ERROR]: AttestationProcessingError,
   [AttestationType.UNDERWRITE_INTENT_COMMIT]: UnderwriteIntentCommit,
   [AttestationType.SWAP_REVERT]: SwapRevert,
-  [AttestationType.DEPOSIT_REVERT]: DepositRevert,
-  [AttestationType.SWAP_REJECTED]: SwapRejected
+  [AttestationType.DEPOSIT_REVERT]: DepositRevert
 }
 
 /**
