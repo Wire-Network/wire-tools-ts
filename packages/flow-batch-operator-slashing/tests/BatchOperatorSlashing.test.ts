@@ -114,7 +114,17 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
       epochDurationSec: TEST_EPOCH_DURATION_SEC,
       // Enough bootstrapped batch ops to keep the rest of the network healthy
       // while DISPUTE_OPS drive the contested outpost.
-      batchOperatorCount: 9
+      batchOperatorCount: 9,
+      // Disable the miss-based termination ladder for the run. The DISPUTE_OPS
+      // are SBP-less and only deliver when the test injects a divergent
+      // envelope, so across the multi-epoch dispute (vote + tally + resolve)
+      // they would otherwise accrue enough scheduled-and-missed epochs to trip
+      // `termcheck` and flip SLASHED -> TERMINATED before the dispute lands —
+      // making the slash a no-op on an already-terminated op. Termination is
+      // exercised by flow-batch-operator-termination; THIS flow verifies the
+      // dispute-driven slash, which is independent of the miss ladder.
+      terminateMaxConsecutiveMisses: 100_000,
+      terminateMaxPctMisses24H: 100
     })
 
     // Provision the Tier-1 electorate. Each owner is created with the shared

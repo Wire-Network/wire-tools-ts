@@ -382,6 +382,83 @@ export namespace WIREClient {
     return out > Number.MAX_SAFE_INTEGER ? Number.MAX_SAFE_INTEGER : Number(out)
   }
 
+  /** Basis-point denominator (10000 = 100%). */
+  export const BpsTotal = 10000
+
+  /**
+   * WIRE-leg swap fee in basis points that the dev cluster configures via
+   * `sysio.uwrit::setconfig`. `sysio.uwrit`/`sysio.reserv` skim this off every
+   * swap's WIRE intermediate before crediting the destination reserve. The
+   * cluster bootstrap ({@link ClusterManager} Phase 17) sends this exact value,
+   * and the swap flows mirror it to predict post-fee reserve books — so the two
+   * MUST stay in lock-step. Changing it re-baselines every swap flow's expected
+   * reserve / custody movement.
+   */
+  export const WireSwapFeeBps = 10
+
+  /**
+   * Reward share of the WIRE-leg fee, in basis points (the remainder routes to
+   * the emissions treasury). Mirrors `sysio.reserv::FEE_REWARD_SHARE_BPS`
+   * (5000 = a 50/50 reward/emissions split). The reward share is retained in
+   * `sysio.reserv` custody as a rewards bucket; only the emissions share leaves
+   * custody — so it is the half that shifts a flow's custody-balance assertion.
+   */
+  export const FeeRewardShareBps = 5000
+
+  /**
+   * Decomposition of a WIRE-leg swap fee — the TypeScript mirror of
+   * `sysio::opp::amm::wire_fee`. Every field is an exact integer (BigInt)
+   * quantity: `rewardShare + emissionsShare === fee` and `net + fee ===
+   * wireAmount`, with no rounding leak.
+   */
+  export interface WireFee {
+    /** Total fee charged on the WIRE leg. */
+    fee: bigint
+    /** Portion accrued to the rewards bucket — stays in `sysio.reserv` custody. */
+    rewardShare: bigint
+    /** Portion returned to the emissions treasury — leaves `sysio.reserv` custody. */
+    emissionsShare: bigint
+    /** `wireAmount - fee`: the net WIRE that continues through the swap. */
+    net: bigint
+  }
+
+  /**
+   * Split a gross WIRE amount into its swap fee and remainder, mirroring
+   * `sysio::opp::amm::split_wire_fee` bit-for-bit (floored integer math, done in
+   * BigInt). Swap flows use this to predict the post-fee reserve books and
+   * custody movement the depot settles inline (`reserve::applyswap` /
+   * `applyfromwire`): the destination reserve gains `net`, the source gives up
+   * the full gross, and `fee` is routed to rewards (custody) + emissions (out).
+   *
+   * @param wireAmount     The gross WIRE leg — the constant-product intermediate
+   *                       for a token source, or the user's escrowed WIRE for a
+   *                       from-WIRE swap.
+   * @param feeBps         Fee in basis points (defaults to {@link WireSwapFeeBps}).
+   * @param rewardShareBps Reward share of the fee in bps (defaults to
+   *                       {@link FeeRewardShareBps}).
+   * @return The {@link WireFee} decomposition.
+   * @example
+   * // 0.1% fee on a 99_009_900 WIRE intermediate → 99_009 fee, 98_910_891 net.
+   * splitWireFee(99_009_900n).net // 98_910_891n
+   */
+  export function splitWireFee(
+    wireAmount: bigint,
+    feeBps: number = WireSwapFeeBps,
+    rewardShareBps: number = FeeRewardShareBps
+  ): WireFee {
+    const bps = BigInt(BpsTotal)
+    const fb = BigInt(Math.min(Math.max(feeBps, 0), BpsTotal))
+    const rb = BigInt(Math.min(Math.max(rewardShareBps, 0), BpsTotal))
+    const fee = (wireAmount * fb) / bps
+    const rewardShare = (fee * rb) / bps
+    return {
+      fee,
+      rewardShare,
+      emissionsShare: fee - rewardShare,
+      net: wireAmount - fee
+    }
+  }
+
   /** System contract account names this client reads from. */
   export enum Contract {
     Chains = "sysio.chains",
