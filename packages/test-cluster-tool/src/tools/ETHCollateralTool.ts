@@ -202,20 +202,56 @@ export async function depositETHNonNativeCollateral(
   const approveTx      = await erc20Contract.approve(opRegAddr, amount, { nonce: approveNonce })
   await approveTx.wait(1)
 
-  const depositNonce   = await resolveLatestNonce(opRegContract as unknown as ethers.BaseContract)
-  const tx             = await opRegContract.depositNonNative(
-    chainCode,
-    tokenCode,
-    reserveCode,
-    operatorType,
-    compressedPubkey,
-    amount,
-    { nonce: depositNonce }
+  // The non-native deposit can transiently revert after the bootstrap's anvil
+  // dump-state → load-state cycle (the same cycle the native `deposit()` path
+  // guards): the first eth_call against freshly-loaded state can present stale
+  // OperatorRegistry / ReserveManager storage, then settle on a re-issue. Gate
+  // each send with a `staticCall` dry-run — retry a transient revert with
+  // backoff, and only surface the decoded `require(cond, "msg")` reason if it
+  // PERSISTS across every attempt (a mined status-0 receipt carries no reason,
+  // so without this a real failure would read as an opaque CALL_EXCEPTION).
+  const MAX_RETRIES = 3
+  const RETRY_BASE_DELAY_MS = 500
+  let lastReason = ""
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      await (opRegContract as unknown as ethers.Contract)
+        .getFunction("depositNonNative")
+        .staticCall(chainCode, tokenCode, reserveCode, operatorType, compressedPubkey, amount)
+    } catch (err) {
+      const e = err as { reason?: string; shortMessage?: string; message?: string }
+      lastReason = e?.reason ?? e?.shortMessage ?? e?.message ?? String(err)
+      if (attempt < MAX_RETRIES - 1) {
+        await new Promise(r => setTimeout(r, RETRY_BASE_DELAY_MS * (attempt + 1)))
+        continue
+      }
+      throw new Error(
+        `ETHCollateralTool: depositNonNative would revert — ${lastReason} ` +
+          `[chainCode=${chainCode} tokenCode=${tokenCode} reserveCode=${reserveCode} ` +
+          `operatorType=${operatorType} amount=${amount} opReg=${opRegAddr}]`
+      )
+    }
+
+    // Dry-run clean → submit the real deposit (re-fetch the nonce per attempt).
+    const depositNonce = await resolveLatestNonce(opRegContract as unknown as ethers.BaseContract)
+    const tx = await opRegContract.depositNonNative(
+      chainCode,
+      tokenCode,
+      reserveCode,
+      operatorType,
+      compressedPubkey,
+      amount,
+      { nonce: depositNonce }
+    )
+    const receipt = await tx.wait(1)
+    Assert.ok(
+      receipt !== null && receipt.status === 1,
+      `ETHCollateralTool: depositNonNative tx reverted (status=${receipt?.status ?? "null"})`
+    )
+    return receipt
+  }
+  // Unreachable — the loop returns the receipt or throws on the final attempt.
+  throw new Error(
+    `ETHCollateralTool: depositNonNative retry loop exhausted${lastReason ? ` — ${lastReason}` : ""}`
   )
-  const receipt        = await tx.wait(1)
-  Assert.ok(
-    receipt !== null && receipt.status === 1,
-    `ETHCollateralTool: depositNonNative tx reverted (status=${receipt?.status ?? "null"})`
-  )
-  return receipt
 }
