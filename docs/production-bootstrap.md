@@ -30,10 +30,17 @@ defaults*. They split into two kinds:
 
 ## RAM model — no unlimited accounts
 Every account's RAM is **finite** and **gifted from the `sysio` pool** as a conserving transfer (never minted):
-- **`activateroa`** partitions `total_sys * bytes_per_unit` into node-owner reserves + `sysio.roa` allocation
-  (`leftover/2`) + the `sysio` pool + the `sysio.acct` seed, and sets finite limits on `sysio`, `sysio.roa`,
-  `sysio.acct`. With the cluster defaults (`total_sys = 75496.0000 SYS`, `bytes_per_unit = 104`) the pool is
-  `75496 * 104 = 7,851,584` byte-units before partitioning.
+- **`activateroa`** partitions the total RAM into node-owner reserves + `sysio.roa` allocation (`leftover/2`) +
+  the `sysio` pool + the `sysio.acct` seed, and sets finite limits on `sysio`, `sysio.roa`, `sysio.acct`. Total
+  RAM = `total_sys.amount * bytes_per_unit` — the asset's **smallest units**, NOT the display value. The tier
+  reserves are *fractions* of supply (per node: T1 4%, T2 0.15%, T3 0.003%; × the tier caps 21 / 84 / 1000 ⇒
+  **99.6% of supply**), so only **0.4%** is left for everything else, at any scale. With the cluster defaults
+  (`75496.0000 SYS` ⇒ amount `754,960,000`, `bytes_per_unit = 104`) total RAM ≈ `754,960,000 * 104` ≈
+  **78.5 GB**: ~66 GB reserved across 21 T1 owners (~3.1 GB each), ~9.9 GB T2, ~2.4 GB T3, and a ~314 MB
+  leftover split into `sysio.roa` ≈ 157 MB + the `sysio` bootstrap pool ≈ 157 MB (+ a 1144-byte `sysio.acct`
+  seed). So `total_sys` sets the **absolute** RAM budget — the split is ratiometric, but the bytes are real:
+  the leftover pool must clear the bootstrap's fixed RAM costs (every contract's code/abi + each account's
+  `newaccount_ram = 1144 B`), which is why the supply is tuned to this value, not arbitrary.
 - **Account creation** (`system::native::newaccount`): `set_resource_limits(new, 0,0,0)` then
   `transfer_ram(sysio, new, newaccount_ram)` — the new account gets a finite limit funded from the pool. This
   requires `system` deployed AND ROA active, so all non-essential accounts are created **after** Stage 4.
