@@ -76,15 +76,17 @@ Every account's RAM is **finite** and **gifted from the `sysio` pool** as a cons
 Single source of truth for the cross-cutting scalars; the stages reference these by name.
 
 ### Keys & identities (cluster dev keys — production substitutes real keys / msig)
-| Constant | Value | Derivation / role |
+| Constant | Role | Value |
 |---|---|---|
-| `DEV_K1_PUBLIC_KEY` | `SYS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV` | `K1` regenerated from `SHA256("nathan")` (the well-known dev key, SYS-prefixed). Genesis `initial_key` (bios block-signing key); owner/active **only** of the key-controlled cluster accounts — producers, operators (`batchop.*`/`uwrit.*`), and node owner `wireno`. The `sysio.*` system accounts (and `dev.owner1`) are governed by `sysio@active`, **not** this key — production governs system accounts via `sysio` (msig), so do not model their governance around this key. |
-| `DEV_K1_PRIVATE_KEY` | `5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3` | Matching WIF. Imported into the `default` kiod wallet. |
-| `DEV_BLS_PUBLIC_KEY` | `PUB_BLS_3igm9y-m3poDQL9IU-oE2E3rjKVD025aN5_Kpod8aVKjqtg4xOrP-jGtz4wLg_IFzc7gay9YghYwVgNafpxphE2xOY5gzEPa8li1rmtFfdpXguDFhNw2FpuLWSWami8WXgUo3A` | `BLS` regenerated from `SHA256("wire")`. Genesis `initial_finalizer_key` (bios finalizer). |
-| `DEV_BLS_PROOF_OF_POSSESSION` | `SIG_BLS_qdQ36ASsBk_pJ9efSCZmSN5OcqNX7GIxjzpREX8TBOBVpUOheRfZmCGO7jay2lIZiD2vkrODGQDCsa3lfkB2FjhmoTce1TYpMOWv-PoPO4D36Y4yjItfa0iMgouirmcG_rubUJDtgn0bHdvtroCc3HDoBHVeI994Ycs62RVJEROyTjIlTVGk3iXoAK9skkQKz3DM3wT0yevxP_O47Ul85rJWnEVAlAjCUOsirAdu0yO1362pdnnl8kjXaPqEj_EYPvrRXw` | PoP for `DEV_BLS_PUBLIC_KEY`. |
-| Per-node K1/BLS keys | generated at runtime (`clio create key --k1`, `sys-util bls create key`) | The **producer nodes'** own block-signing (K1) and finalizer (BLS) keys — distinct from `DEV_*`. Used by `setprodkeys` and `setfinalizer`. |
-| `BOOTSTRAP_NODE_OWNER` | `wireno` | Bootstrap tier-1 node owner (2–6 chars to satisfy `valid_name_for_tier`). Issues every operator ROA policy. |
-| `DEFAULT_WALLET_NAME` | `default` | kiod wallet name the bootstrap creates and every helper re-opens. |
+| `DEV_K1_PUBLIC_KEY` | Genesis `initial_key` (bios block-signing key); owner/active of the **key-controlled** accounts only — see note ¹. | `SYS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV` |
+| `DEV_K1_PRIVATE_KEY` | Matching WIF; imported into the `default` kiod wallet. | `5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3` |
+| `DEV_BLS_PUBLIC_KEY` | Genesis `initial_finalizer_key` (bios finalizer); `BLS` from `SHA256("wire")`. | `PUB_BLS_3igm9y-m3poDQL9IU-oE2E3rjKVD025aN5_Kpod8aVKjqtg4xOrP-jGtz4wLg_IFzc7gay9YghYwVgNafpxphE2xOY5gzEPa8li1rmtFfdpXguDFhNw2FpuLWSWami8WXgUo3A` |
+| `DEV_BLS_PROOF_OF_POSSESSION` | PoP for `DEV_BLS_PUBLIC_KEY`. | `SIG_BLS_qdQ36ASsBk_pJ9efSCZmSN5OcqNX7GIxjzpREX8TBOBVpUOheRfZmCGO7jay2lIZiD2vkrODGQDCsa3lfkB2FjhmoTce1TYpMOWv-PoPO4D36Y4yjItfa0iMgouirmcG_rubUJDtgn0bHdvtroCc3HDoBHVeI994Ycs62RVJEROyTjIlTVGk3iXoAK9skkQKz3DM3wT0yevxP_O47Ul85rJWnEVAlAjCUOsirAdu0yO1362pdnnl8kjXaPqEj_EYPvrRXw` |
+| Per-node K1/BLS keys | Producer nodes' own block-signing (K1) + finalizer (BLS) keys, distinct from `DEV_*`; used by `setprodkeys` / `setfinalizer`. | generated at runtime (`clio create key --k1`, `sys-util bls create key`) |
+| `BOOTSTRAP_NODE_OWNER` | Bootstrap tier-1 node owner (2–6 chars to satisfy `valid_name_for_tier`); issues every operator ROA policy. | `wireno` |
+| `DEFAULT_WALLET_NAME` | kiod wallet the bootstrap creates and every helper re-opens. | `default` |
+
+¹ **`DEV_K1` derivation & governance scope.** `DEV_K1_PUBLIC_KEY` is `K1` regenerated from `SHA256("nathan")` (the well-known dev key, SYS-prefixed). It is the owner/active key **only** of the key-controlled cluster accounts — producers, operators (`batchop.*` / `uwrit.*`), and node owner `wireno`. The `sysio.*` system accounts (and `dev.owner1`) are governed by `sysio@active`, **not** this key — production governs system accounts via `sysio` (msig), so do not model their governance around this key.
 
 ### Core symbol, tokens & supplies
 | Constant | Value |
@@ -159,6 +161,7 @@ Single source of truth for the cross-cutting scalars; the stages reference these
 Every account here is created via `system::native::newaccount`, which gifts `newaccount_ram` from the `sysio`
 pool (`set_resource_limits(new,0,0,0)` + `transfer_ram(sysio,new,newaccount_ram)`) — each is FINITE, never
 unlimited.
+
 9. **Producer accounts** — `sysio::newaccount({creator:"sysio", name, owner:DEV_K1_PUBLIC_KEY,
    active:DEV_K1_PUBLIC_KEY})` × 21 — `[sysio@active]` — names `defproducera … defproduceru`. Producers carry
    their own account key (cluster: `DEV_K1`; production: the producer's real key); their RAM is pool-gifted
@@ -166,10 +169,13 @@ unlimited.
 10. **Remaining `sysio.*` accounts** — `sysio::newaccount({creator:"sysio", name, owner:sysio@active,
     active:sysio@active})` — `[sysio@active]` — every entry of the system-account set except `sysio.roa` /
     `sysio.acct` (created in Stage 2):
-    `sysio.noop`, `sysio.bpay`, `sysio.msig`, `sysio.names`, `sysio.token`, `sysio.vpay`, `sysio.wrap`,
-    `sysio.authex`, `sysio.chains`, `sysio.tokens`, `sysio.epoch`, `sysio.opreg`, `sysio.msgch`, `sysio.uwrit`,
-    `sysio.reserv`, `sysio.chalg`, `sysio.dclaim`, `sysio.gov` (T5 governance bucket), `sysio.ops` (T5
-    capex/ops bucket), and `dev.owner1` **(cluster-only dev account)**.
+
+| Group | Accounts |
+|---|---|
+| System / authority | `sysio.noop`, `sysio.bpay`, `sysio.msig`, `sysio.names`, `sysio.token`, `sysio.vpay`, `sysio.wrap`, `sysio.authex` |
+| OPP set | `sysio.chains`, `sysio.tokens`, `sysio.epoch`, `sysio.opreg`, `sysio.msgch`, `sysio.uwrit`, `sysio.reserv`, `sysio.chalg`, `sysio.dclaim` |
+| T5 buckets | `sysio.gov` (governance), `sysio.ops` (capex/ops) |
+| Dev-only (cluster) | `dev.owner1` |
 11. `sysio::setprodkeys({schedule:[{producer_name, block_signing_key}…]})` — `[sysio@active]` — one row per
     producer; `block_signing_key` = the **generated K1 pubkey of the node hosting that producer** (cluster
     single-node: all 21 map to that one node's key). Then poll `get_info` until `head_block_producer != "sysio"`
@@ -212,6 +218,7 @@ unlimited.
 
 ## Stage 9 — Register the bootstrap node owner (real `nodeownreg` flow; NO `forcereg`)
 Drives the two `sysio.roa` actions the OPP NFT-claim depot (`sysio.msgch`) would inline-send for a real claim:
+
 26. `sysio.roa::newnameduser({account:"wireno", pubkey:DEV_K1_PUBLIC_KEY, tier:1})` — `[sysio.roa@active]` —
     creates `wireno` (owner = active = `DEV_K1`) with a finite pool-gifted RAM allocation. `tier:1` = T1
     (Validator); `NodeOwnerTier` = `{T1:1, T2:2, T3:3}`.
@@ -230,53 +237,55 @@ Drives the two `sysio.roa` actions the OPP NFT-claim depot (`sysio.msgch`) would
     `batchOperatorCount = 3` ⇒ `3, 1, 3`). `epoch_duration_sec` **(cluster 360; production: real cadence)**.
 
 29. `sysio.opreg::setconfig({...})` — `[sysio.opreg@active]`:
-    | Field | Value | Notes |
-    |---|---|---|
-    | `max_available_producers` | `21` | |
-    | `max_available_batch_ops` | `63` | |
-    | `max_available_underwriters` | `21` | |
-    | `terminate_prune_delay_ms` | `600000` | 10 min **(cluster; production: larger)** |
-    | `terminate_max_consecutive_misses` | `5` | |
-    | `terminate_max_pct_misses_24h` | `5` | |
-    | `terminate_window_ms` | `86400000` | 24 h |
-    | `req_prod_collat` | `[]` | per-(chain,token) min-bond rows; empty ⇒ no collateral required **(cluster; production: real minimums)** |
-    | `req_batchop_collat` | `[]` | empty by default |
-    | `req_uw_collat` | `[]` | empty by default |
+
+| Field | Value | Notes |
+|---|---|---|
+| `max_available_producers` | `21` | |
+| `max_available_batch_ops` | `63` | |
+| `max_available_underwriters` | `21` | |
+| `terminate_prune_delay_ms` | `600000` | 10 min **(cluster; production: larger)** |
+| `terminate_max_consecutive_misses` | `5` | |
+| `terminate_max_pct_misses_24h` | `5` | |
+| `terminate_window_ms` | `86400000` | 24 h |
+| `req_prod_collat` | `[]` | per-(chain,token) min-bond rows; empty ⇒ no collateral required **(cluster; production: real minimums)** |
+| `req_batchop_collat` | `[]` | empty by default |
+| `req_uw_collat` | `[]` | empty by default |
 
 30. **WIRE token + emissions** — `sysio.token` is reused for a separate `9,WIRE` token the emissions contract
-    reads from `sysio`'s balance:
-    - `sysio.token::create({issuer:"sysio", maximum_supply:"1000000000.000000000 WIRE"})` —
-      `[sysio.token@active]`.
-    - `sysio.token::issue({to:"sysio", quantity:"1000000000.000000000 WIRE", memo:"initial WIRE for emissions"})`
-      — `[sysio@active]`.
-    - `sysio::setemitcfg({cfg:{…}})` — `[sysio@active]` — full payload (WIRE amounts are 9-decimal subunits):
-      | Field | Value | Meaning |
-      |---|---|---|
-      | `t1_allocation` | `7500000000000000` | 7,500,000 WIRE (T1 tier total) |
-      | `t2_allocation` | `15000000000000000` | 15,000,000 WIRE |
-      | `t3_allocation` | `30000000000000000` | 30,000,000 WIRE |
-      | `t1_duration` | `31104000` | 12 × 30 d, seconds |
-      | `t2_duration` | `62208000` | 24 × 30 d |
-      | `t3_duration` | `93312000` | 36 × 30 d |
-      | `min_claimable` | `10000000000` | 10 WIRE |
-      | `t5_distributable` | `375000000000000000` | 375,000,000 WIRE (T5 treasury budget) |
-      | `t5_floor` | `125000000000000000` | 125,000,000 WIRE (T5 floor) |
-      | `target_annual_decay_bps` | `6940` | 69.40% annual survival (≈30.6% decay) |
-      | `annual_initial_emission` | `563150000000000 × 365 = 205549750000000000` | ≈563,150 WIRE/day, annualized |
-      | `annual_max_emission` | `3000000000000000 × 365 = 1095000000000000000` | 3,000,000 WIRE/day cap |
-      | `annual_min_emission` | `100000000000000 × 365 = 36500000000000000` | 100,000 WIRE/day floor |
-      | `compute_bps` | `4000` | 40% → producers + batch ops |
-      | `capex_bps` | `2000` | 20% → `sysio.ops` |
-      | `governance_bps` | `1000` | 10% → `sysio.gov` |
-      | *(implicit capital reserve)* | `3000` | `10000 − compute − capex − governance`; stays on `sysio`, drained by `fundclaim` |
-      | `producer_bps` | `7000` | compute split: 70% producers |
-      | `batch_op_bps` | `3000` | compute split: 30% batch ops |
-      | `standby_end_rank` | `28` | producers ranked ≤28 are standby-eligible |
-      | `epoch_log_retention_count` | `8640` | emissions pay-log retention (≈30 d at 360 s/epoch) |
-      | `pay_cadence_epochs` | `1` | fire `payepoch` every epoch **(cluster; production: higher)** |
+    reads from `sysio`'s balance. Four actions, in order:
+    - `sysio.token::create({issuer:"sysio", maximum_supply:"1000000000.000000000 WIRE"})` — `[sysio.token@active]`.
+    - `sysio.token::issue({to:"sysio", quantity:"1000000000.000000000 WIRE", memo:"initial WIRE for emissions"})` — `[sysio@active]`.
+    - `sysio::setemitcfg({cfg:{…}})` — `[sysio@active]` — full payload in the table below.
     - `sysio::initt5({start_time:"<chain head time, ISO-8601 YYYY-MM-DDTHH:MM:SS>"})` — `[sysio@active]` — seeds
       the T5 state singleton (`start_time` = the chain's `head_block_time`, not wall clock). Must run after
       `setemitcfg` and before Stage 11's `bootstrap`.
+
+    `sysio::setemitcfg` payload (WIRE amounts are 9-decimal subunits):
+
+| Field | Value | Meaning |
+|---|---|---|
+| `t1_allocation` | `7500000000000000` | 7,500,000 WIRE (T1 tier total) |
+| `t2_allocation` | `15000000000000000` | 15,000,000 WIRE |
+| `t3_allocation` | `30000000000000000` | 30,000,000 WIRE |
+| `t1_duration` | `31104000` | 12 × 30 d, seconds |
+| `t2_duration` | `62208000` | 24 × 30 d |
+| `t3_duration` | `93312000` | 36 × 30 d |
+| `min_claimable` | `10000000000` | 10 WIRE |
+| `t5_distributable` | `375000000000000000` | 375,000,000 WIRE (T5 treasury budget) |
+| `t5_floor` | `125000000000000000` | 125,000,000 WIRE (T5 floor) |
+| `target_annual_decay_bps` | `6940` | 69.40% annual survival (≈30.6% decay) |
+| `annual_initial_emission` | `563150000000000 × 365 = 205549750000000000` | ≈563,150 WIRE/day, annualized |
+| `annual_max_emission` | `3000000000000000 × 365 = 1095000000000000000` | 3,000,000 WIRE/day cap |
+| `annual_min_emission` | `100000000000000 × 365 = 36500000000000000` | 100,000 WIRE/day floor |
+| `compute_bps` | `4000` | 40% → producers + batch ops |
+| `capex_bps` | `2000` | 20% → `sysio.ops` |
+| `governance_bps` | `1000` | 10% → `sysio.gov` |
+| *(implicit capital reserve)* | `3000` | `10000 − compute − capex − governance`; stays on `sysio`, drained by `fundclaim` |
+| `producer_bps` | `7000` | compute split: 70% producers |
+| `batch_op_bps` | `3000` | compute split: 30% batch ops |
+| `standby_end_rank` | `28` | producers ranked ≤28 are standby-eligible |
+| `epoch_log_retention_count` | `8640` | emissions pay-log retention (≈30 d at 360 s/epoch) |
+| `pay_cadence_epochs` | `1` | fire `payepoch` every epoch **(cluster; production: higher)** |
 
 31. `sysio.dclaim::setconfig({})` — `[sysio.dclaim@active]` — idempotent; creates the `cap_config` singleton
     with the contract's default 180-day claim window. (No `setclmwindow`/`importseed`/`importdone` in the
@@ -284,29 +293,32 @@ Drives the two `sysio.roa` actions the OPP NFT-claim depot (`sysio.msgch`) would
 
 32. **Chains** — `sysio.chains::regchain({kind, code, external_chain_id, name, description})` —
     `[sysio.chains@active]`, one per chain (registered ACTIVE; there is no separate `activchain`):
-    | `kind` | `code` | `external_chain_id` | `name` | `description` |
-    |---|---|---|---|---|
-    | `CHAIN_KIND_WIRE` | `slug("WIRE")` | `0` | `Wire (depot)` | the WIRE depot chain itself |
-    | `CHAIN_KIND_EVM` | `slug("ETHEREUM")` | `31337` **(cluster anvil; production: real EVM id)** | `Ethereum (anvil)` | local anvil EVM chain |
-    | `CHAIN_KIND_SVM` | `slug("SOLANA")` | `0` | `Solana (test-validator)` | local solana-test-validator |
+
+| `kind` | `code` | `external_chain_id` | `name` | `description` |
+|---|---|---|---|---|
+| `CHAIN_KIND_WIRE` | `slug("WIRE")` | `0` | `Wire (depot)` | the WIRE depot chain itself |
+| `CHAIN_KIND_EVM` | `slug("ETHEREUM")` | `31337` **(cluster anvil; production: real EVM id)** | `Ethereum (anvil)` | local anvil EVM chain |
+| `CHAIN_KIND_SVM` | `slug("SOLANA")` | `0` | `Solana (test-validator)` | local solana-test-validator |
 
 33. **Tokens** — `sysio.tokens::regtoken({kind, code, symbol_name, description, precision, address})` —
     `[sysio.tokens@active]`, one per token (registered ACTIVE; no separate `activtoken`). **`precision = 9`
     for every token** (project rule). `address = {kind, address}`; NATIVE leaves `address` empty; non-native
     carries the chain-side contract bytes (hex, `0x` stripped):
-    | `kind` | `code` | `symbol_name` | `address` source |
-    |---|---|---|---|
-    | `TOKEN_KIND_NATIVE` | `slug("WIRE")` | `Wire` | empty |
-    | `TOKEN_KIND_NATIVE` | `slug("ETH")` | `Ether` | empty |
-    | `TOKEN_KIND_LIQ` | `slug("LIQETH")` | `Liquid ETH` | deployed LiqETH EVM address **(runtime)** |
-    | `TOKEN_KIND_ERC20` | `slug("USDC")` | `USD Coin` | mock USDC EVM address **(runtime)** |
-    | `TOKEN_KIND_ERC20` | `slug("USDT")` | `Tether USD` | mock USDT EVM address **(runtime)** |
-    | `TOKEN_KIND_NATIVE` | `slug("SOL")` | `Sol` | empty |
-    | `TOKEN_KIND_LIQ` | `slug("LIQSOL")` | `Liquid SOL` | mock LIQSOL SPL mint **(runtime)** |
-    | `TOKEN_KIND_SPL` | `slug("USDCSOL")` | `USDC (Solana)` | mock USDC SPL mint **(runtime)** |
-    | `TOKEN_KIND_SPL` | `slug("USDTSOL")` | `USDT (Solana)` | mock USDT SPL mint **(runtime)** |
-    Chain-side addresses are deployed by the ETH/SOL bootstrap (anvil / solana-test-validator); production
-    registers the canonical contract/mint addresses via the same shape.
+
+| `kind` | `code` | `symbol_name` | `address` source |
+|---|---|---|---|
+| `TOKEN_KIND_NATIVE` | `slug("WIRE")` | `Wire` | empty |
+| `TOKEN_KIND_NATIVE` | `slug("ETH")` | `Ether` | empty |
+| `TOKEN_KIND_LIQ` | `slug("LIQETH")` | `Liquid ETH` | deployed LiqETH EVM address **(runtime)** |
+| `TOKEN_KIND_ERC20` | `slug("USDC")` | `USD Coin` | mock USDC EVM address **(runtime)** |
+| `TOKEN_KIND_ERC20` | `slug("USDT")` | `Tether USD` | mock USDT EVM address **(runtime)** |
+| `TOKEN_KIND_NATIVE` | `slug("SOL")` | `Sol` | empty |
+| `TOKEN_KIND_LIQ` | `slug("LIQSOL")` | `Liquid SOL` | mock LIQSOL SPL mint **(runtime)** |
+| `TOKEN_KIND_SPL` | `slug("USDCSOL")` | `USDC (Solana)` | mock USDC SPL mint **(runtime)** |
+| `TOKEN_KIND_SPL` | `slug("USDTSOL")` | `USDT (Solana)` | mock USDT SPL mint **(runtime)** |
+
+Chain-side addresses are deployed by the ETH/SOL bootstrap (anvil / solana-test-validator); production
+registers the canonical contract/mint addresses via the same shape.
 
 34. **Chain-token bindings** — `sysio.tokens::regctok({chain_code, token_code, contract_addr, is_native})` —
     `[sysio.tokens@active]`, one per binding (no separate `activctok`). Exactly one `is_native:true` per chain;
@@ -333,6 +345,7 @@ Drives the two `sysio.roa` actions the OPP NFT-claim depot (`sysio.msgch`) would
 ## Stage 11 — Operator provisioning + first epoch
 Performed against the registered node owner `wireno`; the genesis-replacing real producer schedule is already
 live. NOTHING here uses `forcereg`.
+
 37. **Operator accounts** — `sysio::newaccount({creator:"sysio", name, owner:DEV_K1_PUBLIC_KEY,
     active:DEV_K1_PUBLIC_KEY})` — `[sysio@active]` — `batchop.a/b/c` (3) + `uwrit.a` (1) **(cluster counts)**.
     Then `sysio.roa::addpolicy({owner:<operator>, issuer:"wireno", net_weight:"25.0000 SYS",
