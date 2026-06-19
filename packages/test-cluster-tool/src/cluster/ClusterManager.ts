@@ -58,6 +58,8 @@ import {
   MAX_PRODUCERS,
   OPP_CONTRACT_PATHS,
   OPP_SYSTEM_ACCOUNTS,
+  ROA_BYTES_PER_UNIT,
+  ROA_TOTAL_SYS,
   SYSTEM_ACCOUNTS,
   underwriterAccountName
 } from "./constants.js"
@@ -1838,7 +1840,7 @@ async function bootstrapChain(
   await clio.pushActionAndWait<SystemContracts.SysioRoaActivateroaAction>(
     "sysio.roa",
     "activateroa",
-    { total_sys: "75496.0000 SYS", bytes_per_unit: 104 },
+    { total_sys: ROA_TOTAL_SYS, bytes_per_unit: ROA_BYTES_PER_UNIT },
     "sysio.roa@active"
   )
   log.info("[Phase 11] sysio.roa deployed")
