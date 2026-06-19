@@ -78,7 +78,7 @@ Single source of truth for the cross-cutting scalars; the stages reference these
 ### Keys & identities (cluster dev keys — production substitutes real keys / msig)
 | Constant | Value | Derivation / role |
 |---|---|---|
-| `DEV_K1_PUBLIC_KEY` | `SYS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV` | `K1` regenerated from `SHA256("nathan")` (the well-known dev key, SYS-prefixed). Genesis `initial_key`; owner/active of every cluster-created account. |
+| `DEV_K1_PUBLIC_KEY` | `SYS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV` | `K1` regenerated from `SHA256("nathan")` (the well-known dev key, SYS-prefixed). Genesis `initial_key` (bios block-signing key); owner/active **only** of the key-controlled cluster accounts — producers, operators (`batchop.*`/`uwrit.*`), and node owner `wireno`. The `sysio.*` system accounts (and `dev.owner1`) are governed by `sysio@active`, **not** this key — production governs system accounts via `sysio` (msig), so do not model their governance around this key. |
 | `DEV_K1_PRIVATE_KEY` | `5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3` | Matching WIF. Imported into the `default` kiod wallet. |
 | `DEV_BLS_PUBLIC_KEY` | `PUB_BLS_3igm9y-m3poDQL9IU-oE2E3rjKVD025aN5_Kpod8aVKjqtg4xOrP-jGtz4wLg_IFzc7gay9YghYwVgNafpxphE2xOY5gzEPa8li1rmtFfdpXguDFhNw2FpuLWSWami8WXgUo3A` | `BLS` regenerated from `SHA256("wire")`. Genesis `initial_finalizer_key` (bios finalizer). |
 | `DEV_BLS_PROOF_OF_POSSESSION` | `SIG_BLS_qdQ36ASsBk_pJ9efSCZmSN5OcqNX7GIxjzpREX8TBOBVpUOheRfZmCGO7jay2lIZiD2vkrODGQDCsa3lfkB2FjhmoTce1TYpMOWv-PoPO4D36Y4yjItfa0iMgouirmcG_rubUJDtgn0bHdvtroCc3HDoBHVeI994Ycs62RVJEROyTjIlTVGk3iXoAK9skkQKz3DM3wT0yevxP_O47Ul85rJWnEVAlAjCUOsirAdu0yO1362pdnnl8kjXaPqEj_EYPvrRXw` | PoP for `DEV_BLS_PUBLIC_KEY`. |
@@ -361,17 +361,17 @@ live. NOTHING here uses `forcereg`.
 Not on-chain actions, but the remaining config the tooling sets so the picture is complete.
 
 ### `genesis.json` — `initial_configuration` (matches the Python launcher; CPU limits overridden to 400k/375k)
-| Field | Value | | Field | Value |
-|---|---|---|---|---|
-| `initial_key` | `DEV_K1_PUBLIC_KEY` | | `min_transaction_cpu_usage` | `100` |
-| `initial_finalizer_key` | `DEV_BLS_PUBLIC_KEY` | | `max_transaction_lifetime` | `3600` |
-| `max_block_net_usage` | `1048576` | | `deferred_trx_expiration_window` | `600` |
-| `target_block_net_usage_pct` | `10000` | | `max_transaction_delay` | `3888000` |
-| `max_transaction_net_usage` | `524288` | | `max_inline_action_size` | `524287` |
-| `base_per_transaction_net_usage` | `12` | | `max_inline_action_depth` | `10` |
-| `net_usage_leeway` | `500` | | `max_authority_depth` | `10` |
-| `context_free_discount_net_usage_num/den` | `20 / 100` | | `max_block_cpu_usage` | `400000` |
-| `target_block_cpu_usage_pct` | `10` | | `max_transaction_cpu_usage` | `375000` |
+| Field | Value | Field | Value |
+|---|---|---|---|
+| `initial_key` | `DEV_K1_PUBLIC_KEY` | `min_transaction_cpu_usage` | `100` |
+| `initial_finalizer_key` | `DEV_BLS_PUBLIC_KEY` | `max_transaction_lifetime` | `3600` |
+| `max_block_net_usage` | `1048576` | `deferred_trx_expiration_window` | `600` |
+| `target_block_net_usage_pct` | `10000` | `max_transaction_delay` | `3888000` |
+| `max_transaction_net_usage` | `524288` | `max_inline_action_size` | `524287` |
+| `base_per_transaction_net_usage` | `12` | `max_inline_action_depth` | `10` |
+| `net_usage_leeway` | `500` | `max_authority_depth` | `10` |
+| `context_free_discount_net_usage_num/den` | `20 / 100` | `max_block_cpu_usage` | `400000` |
+| `target_block_cpu_usage_pct` | `10` | `max_transaction_cpu_usage` | `375000` |
 
 ### nodeop arguments & topology
 - Extra args (every node): `vote-threads = 4`, `max-transaction-time = -1`, `abi-serializer-max-time-ms =
