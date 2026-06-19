@@ -22,7 +22,9 @@ import {
   batchOperatorAccountName,
   underwriterAccountName,
   BOOTSTRAP_NODE_OWNER,
-  DEFAULT_WALLET_NAME
+  DEFAULT_WALLET_NAME,
+  ROA_TOTAL_SYS,
+  ROA_BYTES_PER_UNIT
 } from "@wireio/test-cluster-tool/cluster/constants"
 
 describe("constants", () => {
@@ -129,6 +131,26 @@ describe("constants", () => {
 
     it("CORE_SYMBOL_PRECISION is 4", () => {
       expect(CORE_SYMBOL_PRECISION).toBe(4)
+    })
+  })
+
+  describe("ROA pool sizing", () => {
+    // ROA_TOTAL_SYS and ROA_BYTES_PER_UNIT are passed verbatim to
+    // sysio.roa::activateroa, which converts the asset's SMALLEST units to
+    // bytes (total RAM = amount * bytes_per_unit). These two values therefore
+    // size the chain's entire RAM pool, so pin them to guard against a silent
+    // drift. bytes_per_unit must also divide the contract's newaccount_ram
+    // (1144 = 104 * 11), which the contract enforces via check_divisible_byte_price.
+    it('ROA_TOTAL_SYS is "75496.0000 SYS"', () => {
+      expect(ROA_TOTAL_SYS).toBe("75496.0000 SYS")
+    })
+
+    it("ROA_BYTES_PER_UNIT is 104", () => {
+      expect(ROA_BYTES_PER_UNIT).toBe(104)
+    })
+
+    it("ROA_BYTES_PER_UNIT divides the 1144-byte newaccount_ram", () => {
+      expect(1144 % ROA_BYTES_PER_UNIT).toBe(0)
     })
   })
 

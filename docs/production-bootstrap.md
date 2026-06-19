@@ -395,10 +395,12 @@ Not on-chain actions, but the remaining config the tooling sets so the picture i
   because `setsyscode`'s `giftram` cannot self-target the `sysio` pool account.
 - **Genesis vs. handoff keys:** genesis runs on `DEV_K1` (block signer) + `DEV_BLS` (finalizer) — the bios
   node. `setfinalizer` (Stage 1) switches finality to the producer nodes' generated BLS keys, and
-  `setprodkeys` (Stage 5) switches production to their generated K1 keys. The `DEV_*` keys remain the
-  owner/active key of cluster-created accounts; production replaces all of these with real keys.
-- **`activateroa` total_sys:** the bootstrap passes `75496.0000 SYS`. (A `ROA_TOTAL_SYS = 1000000000.0000 SYS`
-  constant exists in the tooling but is not what `activateroa` receives — the literal `75496.0000 SYS` is.)
+  `setprodkeys` (Stage 5) switches production to their generated K1 keys. `DEV_K1` stays the owner/active key
+  only of the key-controlled accounts (producers, operators, `wireno`) — the `sysio.*` system accounts and
+  `dev.owner1` are `sysio@active`, not `DEV_K1`; production replaces all of these with real keys / msig.
+- **`activateroa` sizing:** the bootstrap passes `total_sys = ROA_TOTAL_SYS = 75496.0000 SYS` and
+  `bytes_per_unit = ROA_BYTES_PER_UNIT = 104` (both from `constants.ts`). Per the asset-amount semantics in the
+  RAM model above, that is `754,960,000 × 104` ≈ 78.5 GB of total RAM, not `75496 × 104`.
 - **Registered ACTIVE, not activated:** `regchain`/`regtoken`/`regctok`/`regreserve` seed their rows ACTIVE at
   bootstrap; there are no `activchain`/`activtoken`/`activctok`/activation actions in the sequence.
 - **Execution-order vs. stage grouping:** the tooling's real order differs slightly from this idealized stage
