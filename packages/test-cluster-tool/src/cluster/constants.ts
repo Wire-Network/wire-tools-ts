@@ -160,10 +160,22 @@ export const CORE_SYMBOL_PRECISION = 4
 // ROA (Resource Ownership & Allocation) parameters
 // ---------------------------------------------------------------------------
 
-/** Total SYS allocated for ROA activation. */
-export const ROA_TOTAL_SYS = "1000000000.0000 SYS"
+/**
+ * `total_sys` passed to `sysio.roa::activateroa` — the supply the ROA RAM pool is sized from.
+ *
+ * The contract converts this asset's SMALLEST units to bytes: total RAM = `amount * bytes_per_unit`
+ * = `754,960,000 * 104` ≈ 78.5 GB. The tier reserves consume a fixed ~99.6% of supply (per node T1 4% ×
+ * 21, T2 0.15% × 84, T3 0.003% × 1000), leaving ~0.4% (~314 MB) split between `sysio.roa` and the `sysio`
+ * bootstrap pool. The split is ratiometric, but the bytes are real, so this is tuned just large enough that
+ * the leftover pool clears the bootstrap's fixed RAM costs (each contract's code/abi + `newaccount_ram`).
+ * See `docs/production-bootstrap.md`.
+ */
+export const ROA_TOTAL_SYS = "75496.0000 SYS"
 
-/** Bytes per resource unit for ROA. */
+/**
+ * `bytes_per_unit` for `activateroa` — bytes of RAM per smallest SYS unit. Must divide `newaccount_ram`
+ * (1144 = 104 × 11), which the contract enforces (`check_divisible_byte_price`).
+ */
 export const ROA_BYTES_PER_UNIT = 104
 
 export const DEFAULT_RESOURCE_WEIGHT = "25.0000 SYS"
