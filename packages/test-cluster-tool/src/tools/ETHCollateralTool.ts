@@ -127,20 +127,40 @@ export async function depositETHCollateral(
 }
 
 /**
+ * Positional argument tuple of `OperatorRegistry.depositNonNative(...)`,
+ * shared by the send overload and the `staticCall` dry-run below so the two
+ * never drift. The trailing `overrides` is optional (the dry-run omits it).
+ */
+type DepositNonNativeArgs = [
+  chainCode: bigint,
+  tokenCode: bigint,
+  reserveCode: bigint,
+  operatorType: number,
+  compressedPubkey: string | Uint8Array,
+  amount: bigint,
+  overrides?: ethers.Overrides
+]
+
+/**
  * Minimal `ethers` contract surface for the
  * `OperatorRegistry.depositNonNative(...)` entry point and the
  * companion ERC-20 the harness needs to pre-approve before calling.
  */
 export interface OperatorRegistryDepositNonNativeContract {
-  depositNonNative: (
-    chainCode: bigint,
-    tokenCode: bigint,
-    reserveCode: bigint,
-    operatorType: number,
-    compressedPubkey: string | Uint8Array,
-    amount: bigint,
-    overrides?: ethers.Overrides
-  ) => Promise<ethers.ContractTransactionResponse>
+  /**
+   * `depositNonNative(...)` as an ethers v6 contract method: invoke it to
+   * SEND the transaction, or call `.staticCall(...)` to dry-run it (an
+   * `eth_call` that surfaces the contract's `require(cond, "msg")` reason
+   * instead of mining a reasonless status-0 receipt). The deposit guard
+   * relies on BOTH surfaces, so `.staticCall` is part of the structural
+   * contract here — a mock that omits it is a compile error, not a runtime
+   * `getFunction is not a function`.
+   */
+  depositNonNative: ((
+    ...args: DepositNonNativeArgs
+  ) => Promise<ethers.ContractTransactionResponse>) & {
+    staticCall: (...args: DepositNonNativeArgs) => Promise<unknown>
+  }
   getAddress: () => Promise<string>
 }
 
@@ -215,9 +235,14 @@ export async function depositETHNonNativeCollateral(
   let lastReason = ""
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      await (opRegContract as unknown as ethers.Contract)
-        .getFunction("depositNonNative")
-        .staticCall(chainCode, tokenCode, reserveCode, operatorType, compressedPubkey, amount)
+      await opRegContract.depositNonNative.staticCall(
+        chainCode,
+        tokenCode,
+        reserveCode,
+        operatorType,
+        compressedPubkey,
+        amount
+      )
     } catch (err) {
       const e = err as { reason?: string; shortMessage?: string; message?: string }
       lastReason = e?.reason ?? e?.shortMessage ?? e?.message ?? String(err)
