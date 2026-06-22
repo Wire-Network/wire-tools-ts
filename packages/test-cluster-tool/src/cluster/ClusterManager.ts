@@ -2873,17 +2873,7 @@ async function bootstrapChain(
       // default is 12h). Dev clusters shorten it to 10 minutes — long
       // enough that flows can assert locks PERSIST after settlement,
       // short enough that lock-expiry behaviour is observable in a run.
-      collateral_lock_duration_ms: 600_000,
-      // NOTE: #414 (fix/opp-dex-precision-routing) drops these three fields from
-      // `sysio.uwrit::setconfig` (the WIRE-leg fee is now split rewards/emissions
-      // by the fixed `FEE_REWARD_SHARE_BPS`, not by a configurable winner/uw/op
-      // share). clio's ABI serializer ignores extra JSON fields, so sending them
-      // against #414 is a harmless no-op. They can only be deleted in lock-step
-      // with regenerating sdk-core's `SysioUwritSetconfigAction` from #414's ABI
-      // (it still types them as required); that regen lands with the #414 merge.
-      fee_split_winner_pct: 50,
-      fee_split_other_uw_pct: 25,
-      fee_split_batch_op_pct: 25
+      collateral_lock_duration_ms: 600_000
     },
     "sysio.uwrit@active"
   )
