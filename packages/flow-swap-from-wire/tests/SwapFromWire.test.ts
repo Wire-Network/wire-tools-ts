@@ -246,15 +246,24 @@ describe("Flow: Swap FROM WIRE (WIRE depot → Solana)", () => {
   }, Timing.RemitDeadlineMs + 30_000)
 
   test("escrowed WIRE stays in custody (it now backs the reserve) and the lock persists", async () => {
-    // FROM-WIRE never pays the escrow back out — it became reserve
-    // liquidity. Custody still holds the deposit MINUS the emissions half of
-    // the WIRE-leg fee (which #414 transfers out to the emissions treasury;
-    // the rewards half stays in custody as a rewards bucket).
+    // FROM-WIRE never pays the escrow back out — it became reserve liquidity.
+    // Custody holds the deposit MINUS the FULL WIRE-leg fee: the emissions half
+    // at emit (#414), and as of #425 the rewards half drained from the rewards
+    // bucket each epoch by payepoch (sysio.reserv::drainrewards). That drain can
+    // land just after the SOL-recipient remit while the prior poll has already
+    // succeeded, so poll until custody settles at the fully-drained value rather
+    // than snapshotting mid-race.
     const fromWireFee = WIREClient.splitWireFee(SwapAmounts.SourceWireUnits)
-    const custody = await context.wireClient.getWireBalance("sysio.reserv")
-    expect(custody).toBe(
-      reservCustodyBefore + SwapAmounts.SourceWireUnits - fromWireFee.emissionsShare
+    const expectedCustody =
+      reservCustodyBefore + SwapAmounts.SourceWireUnits - fromWireFee.fee
+    await pollUntil(
+      "rewards bucket drained from sysio.reserv custody",
+      async () =>
+        (await context.wireClient.getWireBalance("sysio.reserv")) === expectedCustody,
+      Timing.DrainDeadlineMs,
+      Timing.LongPollIntervalMs
     )
+    expect(await context.wireClient.getWireBalance("sysio.reserv")).toBe(expectedCustody)
 
     // Challenge window: the target-leg lock persists after delivery.
     const row = await fromWireUwreq()
