@@ -247,13 +247,15 @@ describe("Flow: Swap FROM WIRE (WIRE depot → Solana)", () => {
 
   test("escrowed WIRE stays in custody (it now backs the reserve) and the lock persists", async () => {
     // FROM-WIRE never pays the escrow back out — it became reserve
-    // liquidity. Custody still holds the deposit MINUS the emissions half of
-    // the WIRE-leg fee (which #414 transfers out to the emissions treasury;
-    // the rewards half stays in custody as a rewards bucket).
+    // liquidity. Custody holds the deposit MINUS the FULL WIRE-leg fee: the
+    // emissions half goes to the treasury (#414), and as of #425 the rewards
+    // half no longer lingers in custody — payepoch drains the rewards bucket
+    // each epoch (sysio.reserv::drainrewards) and distributes it, so by now
+    // neither half of the fee remains escrowed.
     const fromWireFee = WIREClient.splitWireFee(SwapAmounts.SourceWireUnits)
     const custody = await context.wireClient.getWireBalance("sysio.reserv")
     expect(custody).toBe(
-      reservCustodyBefore + SwapAmounts.SourceWireUnits - fromWireFee.emissionsShare
+      reservCustodyBefore + SwapAmounts.SourceWireUnits - fromWireFee.fee
     )
 
     // Challenge window: the target-leg lock persists after delivery.
