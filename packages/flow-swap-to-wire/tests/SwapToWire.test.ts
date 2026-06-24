@@ -235,11 +235,22 @@ describe("Flow: Swap TO WIRE (Ethereum → WIRE depot)", () => {
     expect(BigInt(row.reserve_wire_amount))
       .toBe(reserveBefore.wire - targetWireAmount - toWireFee.fee)
 
-    // Custody: the recipient's payout plus the emissions half of the fee both
-    // leave `sysio.reserv` (the rewards half stays as a rewards bucket).
-    const custodyAfter = await context.wireClient.getWireBalance("sysio.reserv")
-    expect(custodyAfter)
-      .toBe(reservCustodyBefore - targetWireAmount - toWireFee.emissionsShare)
+    // Custody: the recipient's payout leaves `sysio.reserv`, and so does the
+    // FULL WIRE-leg fee — the emissions half at emit (#414) and, as of #425,
+    // the rewards half drained from the rewards bucket each epoch by payepoch
+    // (sysio.reserv::drainrewards). The drain can land just after emit, so the
+    // custody balance races the epoch boundary; poll until it settles at the
+    // fully-drained value rather than snapshotting mid-race.
+    const expectedCustody =
+      reservCustodyBefore - targetWireAmount - toWireFee.fee
+    await pollUntil(
+      "rewards bucket drained from sysio.reserv custody",
+      async () =>
+        (await context.wireClient.getWireBalance("sysio.reserv")) === expectedCustody,
+      Timing.PayoutDeadlineMs,
+      Timing.LongPollIntervalMs
+    )
+    expect(await context.wireClient.getWireBalance("sysio.reserv")).toBe(expectedCustody)
   }, Timing.PayoutDeadlineMs + 30_000)
 
   test("the source-leg lock PERSISTS after payout (challenge window)", async () => {
