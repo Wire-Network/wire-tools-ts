@@ -241,7 +241,8 @@ describe("Flow: Swap TO WIRE (Ethereum → WIRE depot)", () => {
     // (sysio.reserv::drainrewards). The drain can land just after emit, so the
     // custody balance races the epoch boundary; poll until it settles at the
     // fully-drained value rather than snapshotting mid-race.
-    const expectedCustody = reservCustodyBefore - targetWireAmount - toWireFee.fee
+    const expectedCustody =
+      reservCustodyBefore - targetWireAmount - toWireFee.fee
     await pollUntil(
       "rewards bucket drained from sysio.reserv custody",
       async () =>
