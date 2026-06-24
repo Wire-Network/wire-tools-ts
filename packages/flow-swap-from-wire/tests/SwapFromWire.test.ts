@@ -253,13 +253,23 @@ describe("Flow: Swap FROM WIRE (WIRE depot → Solana)", () => {
     // each epoch (sysio.reserv::drainrewards) and distributes it, so by now
     // neither half of the fee remains escrowed.
     const fromWireFee = WIREClient.splitWireFee(SwapAmounts.SourceWireUnits)
-    const custody = await context.wireClient.getWireBalance("sysio.reserv")
-    expect(custody).toBe(
+    // The rewards-bucket drain (payepoch -> sysio.reserv::drainrewards) can
+    // land just after the SOL-recipient poll succeeds, so custody races the
+    // epoch boundary. Poll until it settles at the fully-drained value rather
+    // than snapshotting mid-race (matches the TO-WIRE custody check).
+    const expectedCustody =
       reservCustodyBefore + SwapAmounts.SourceWireUnits - fromWireFee.fee
+    await pollUntil(
+      "rewards bucket drained from sysio.reserv custody",
+      async () =>
+        (await context.wireClient.getWireBalance("sysio.reserv")) === expectedCustody,
+      Timing.DrainDeadlineMs,
+      Timing.LongPollIntervalMs
     )
+    expect(await context.wireClient.getWireBalance("sysio.reserv")).toBe(expectedCustody)
 
     // Challenge window: the target-leg lock persists after delivery.
     const row = await fromWireUwreq()
     expect(await locksForUwreq(Number(row.id))).toHaveLength(1)
-  })
+  }, Timing.DrainDeadlineMs + 30_000)
 })
