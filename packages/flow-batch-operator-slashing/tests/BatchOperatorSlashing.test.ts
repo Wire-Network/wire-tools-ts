@@ -194,7 +194,13 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
       await pollUntil(
         "an OPEN dispute row appears for the contested (outpost, epoch)",
         async () => (await findOpenDispute(epoch)) != null,
-        TEST_EPOCH_DURATION_SEC * 2 * MsPerSecond,
+        // CI-load timing margin: the dispute opens on the 3rd divergent deliver's
+        // inline evalcons once it lands past next_epoch_start. Under CI load the
+        // deliver txns + epoch boundary can lag, so the dispute row can appear a
+        // little late — allow 4 epochs (was 2, which raced the boundary and flaked,
+        // e.g. run 28108464932). The poll returns the instant the row appears, so a
+        // wider ceiling adds no wall-clock to the happy path.
+        TEST_EPOCH_DURATION_SEC * 4 * MsPerSecond,
         LongPollIntervalMs
       )
       const dispute = await findOpenDispute(epoch)
@@ -205,7 +211,10 @@ describe("Flow: Batch operator slashing via OPP envelope dispute vote", () => {
       const paused = await epochPaused()
       expect(paused).toBe(true)
     },
-    TEST_EPOCH_DURATION_SEC * 3 * MsPerSecond + PollDeadlineBufferMs
+    // Jest budget must exceed the (now 4-epoch) dispute-open poll plus the
+    // pre-poll setup (waitPastEpochBoundary + the consensus/divergent deliveries):
+    // 6 epochs + buffer leaves comfortable margin over the 4-epoch poll ceiling.
+    TEST_EPOCH_DURATION_SEC * 6 * MsPerSecond + PollDeadlineBufferMs
   )
 
   // ── 2 + 3. Tier-1 vote -> chkdispute resolves -> winner dispatched + unpause ──
