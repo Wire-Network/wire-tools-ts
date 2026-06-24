@@ -237,7 +237,7 @@ export class WIREClient {
     wireAmount: number,
     isPrivate: boolean = false,
     owner: string = "",
-    chainPrecision: number = 9
+    sourceTokenPrecision: number = 9
   ): Promise<void> {
     const DEFAULT_CONNECTOR_WEIGHT_BPS = 5000
     const name = `${SlugName.toString(chainCode)}-${SlugName.toString(tokenCode)}-${SlugName.toString(reserveCode)}`
@@ -252,9 +252,9 @@ export class WIREClient {
         description: `bootstrap-seeded reserve for ${name}`,
         initial_chain_amount: externalAmount,
         initial_wire_amount: wireAmount,
-        // Depot-frame precision of the token side = min(native, 9). The
+        // Depot-frame precision of the source token side = min(native, 9). The
         // `initial_chain_amount` above is denominated in this precision.
-        chain_precision: chainPrecision,
+        source_token_precision: sourceTokenPrecision,
         connector_weight_bps: DEFAULT_CONNECTOR_WEIGHT_BPS,
         is_private: isPrivate,
         owner

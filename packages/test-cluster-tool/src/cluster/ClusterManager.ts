@@ -2773,7 +2773,7 @@ async function bootstrapChain(
         description: "Bootstrap-seeded native ETH ↔ WIRE reserve",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
-        chain_precision: 9,
+        source_token_precision: 9,
         connector_weight_bps: 5000,
         is_private: false,
         owner: ""
@@ -2786,7 +2786,7 @@ async function bootstrapChain(
         description: "Bootstrap-seeded liqETH ↔ WIRE reserve",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
-        chain_precision: 9,
+        source_token_precision: 9,
         connector_weight_bps: 5000,
         is_private: false,
         owner: ""
@@ -2799,7 +2799,7 @@ async function bootstrapChain(
         description: "Bootstrap-seeded USDC ↔ WIRE reserve (mock ERC-20)",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
-        chain_precision: 9,
+        source_token_precision: 9,
         connector_weight_bps: 5000,
         is_private: false,
         owner: ""
@@ -2812,7 +2812,7 @@ async function bootstrapChain(
         description: "Bootstrap-seeded USDT ↔ WIRE reserve (mock ERC-20)",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
-        chain_precision: 9,
+        source_token_precision: 9,
         connector_weight_bps: 5000,
         is_private: false,
         owner: ""
@@ -2825,7 +2825,7 @@ async function bootstrapChain(
         description: "Bootstrap-seeded native SOL ↔ WIRE reserve",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
-        chain_precision: 9,
+        source_token_precision: 9,
         connector_weight_bps: 5000,
         is_private: false,
         owner: ""
@@ -2838,7 +2838,7 @@ async function bootstrapChain(
         description: "Bootstrap-seeded liqSOL ↔ WIRE reserve",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
-        chain_precision: 9,
+        source_token_precision: 9,
         connector_weight_bps: 5000,
         is_private: false,
         owner: ""
@@ -2851,7 +2851,7 @@ async function bootstrapChain(
         description: "Bootstrap-seeded USDC ↔ WIRE reserve on Solana (mock SPL)",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
-        chain_precision: 9,
+        source_token_precision: 9,
         connector_weight_bps: 5000,
         is_private: false,
         owner: ""
@@ -2864,7 +2864,7 @@ async function bootstrapChain(
         description: "Bootstrap-seeded USDT ↔ WIRE reserve on Solana (mock SPL)",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
-        chain_precision: 9,
+        source_token_precision: 9,
         connector_weight_bps: 5000,
         is_private: false,
         owner: ""
@@ -2877,7 +2877,7 @@ async function bootstrapChain(
   const stableReserveCodes = ["USDC", "USDT", "USDCSOL", "USDTSOL"].map(c => SlugName.from(c))
   reserveRegs.forEach(r => {
     if (stableReserveCodes.includes(r.token_code.value)) {
-      r.chain_precision = 6
+      r.source_token_precision = 6
       r.initial_chain_amount = reserveSeedAmount / 1000
     }
   })
