@@ -648,8 +648,9 @@ describe("Flow: bidirectional swaps through a same-owner PRIVATE reserve pair", 
     })
 
     test("user's USDCSOL ATA bumps by ~target", async () => {
-      // target is depot 9-dec; USDCSOL is 6-dec so the SOL outpost pays
-      // `from_depot(target, 6) = target / 1000` SPL base units.
+      // USDCSOL is carried at native 6-dec in the depot frame, so the target
+      // is already in SPL base units — `from_depot(target, 6)` is the identity
+      // (UsdcSolFromDepotDivisor = 1) and the user's ATA bumps by ~target.
       const drift = (targetA * BigInt(Variance.ToleranceBps)) / 10_000n
       const floor =
         userAtaBefore + (targetA - drift) / SwapAmounts.UsdcSolFromDepotDivisor

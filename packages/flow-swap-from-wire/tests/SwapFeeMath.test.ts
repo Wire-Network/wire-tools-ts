@@ -1,10 +1,14 @@
 import { WIREClient } from "@wireio/test-cluster-tool"
 
 /**
- * Unit coverage for the TypeScript mirror of `sysio::opp::amm::split_wire_fee`.
- * The exact-integer relationships (`reward + emissions === fee`,
- * `net + fee === wireAmount`) are the contract invariants the swap flows rely
- * on to predict post-fee reserve books, so they're asserted directly here.
+ * Fast static-vector coverage for `WIREClient.splitWireFee` — the TypeScript
+ * mirror of `sysio::opp::amm::split_wire_fee`. This runs with the swap-flow
+ * suite (no cluster) and pins the fee kernel against fixed vectors; the live
+ * SwapFromWire scenario in this package is the end-to-end check, asserting the
+ * depot's actual post-fee reserve books equal `splitWireFee(...)`. The
+ * exact-integer relationships (`reward + emissions === fee`,
+ * `net + fee === wireAmount`) are the invariants every swap flow relies on to
+ * predict reserve movement, so they're asserted directly here too.
  */
 describe("WIREClient.splitWireFee", () => {
   test("defaults to the dev-cluster fee (0.1%) and 50/50 reward split", () => {

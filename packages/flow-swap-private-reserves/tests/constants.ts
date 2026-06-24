@@ -97,15 +97,20 @@ export namespace SwapAmounts {
   /** Phase A: 0.1 ETH in wei (the ETH outpost divides by 1e9 → depot). */
   export const PhaseASourceWei        = 100_000_000_000_000_000n
   export const PhaseASourceDepotUnits = PhaseASourceWei / 10n ** 9n
-  /** Phase B: 0.1 USDCSOL in 6-dec chain units (outpost ×1e3 → depot). */
-  export const PhaseBSourceSplUnits   = 100_000n
-  export const PhaseBSourceDepotUnits = PhaseBSourceSplUnits * 1_000n
   /**
-   * 6-dec ↔ depot 9-dec scale for USDCSOL: the SOL outpost applies
-   * `from_depot(amount, 6) = amount / 1000` before the SPL payout.
+   * Phase B: 0.1 USDCSOL in 6-dec chain units. Under per-token precision
+   * USDCSOL is carried at its native 6 decimals in the depot frame
+   * (min(6, 9) = 6), so the outpost's to_depot is identity — the depot units
+   * equal the chain units.
    */
-  export const UsdcSolFromDepotDivisor = 1_000n
-  /** Depot 9-dec → wei scale for native-ETH payouts. */
+  export const PhaseBSourceSplUnits   = 100_000n
+  export const PhaseBSourceDepotUnits = PhaseBSourceSplUnits
+  /**
+   * USDCSOL depot precision == native (6), so `from_depot(amount, 6)` is the
+   * identity — no scaling between depot units and SPL base units.
+   */
+  export const UsdcSolFromDepotDivisor = 1n
+  /** Depot 9-dec → wei scale for native-ETH payouts (ETH stays 9-dec depot-side). */
   export const EthWeiPerDepotUnit      = 1_000_000_000n
 }
 
