@@ -59,13 +59,14 @@ export namespace Reserves {
 /**
  * create_reserve parameters for the private pair.
  *
- * Sizing note: the outposts convert the escrow to the depot's 9-decimal
- * frame at the boundary (`PrecisionLib.toDepot` on ETH, `precision::
- * to_depot` on SOL) and ship it inside the RESERVE_CREATE attestation's
- * `ReserveAmount` — exactly like the swap paths. Both escrows below are
- * wallet-scale chain-native amounts that land as 1e10 depot units, so
- * the depot rows seed ~1:1 against the matched WIRE and the constant-
- * product math over a 1e8 depot-unit draw (~1%) stays well-conditioned.
+ * Sizing note: each outpost converts the escrow to the reserve's depot
+ * frame at the boundary (`PrecisionLib.toDepot` on ETH downscales 18→9;
+ * `precision::to_depot` on SOL is identity for 6-dec USDCSOL under
+ * per-token precision) and ships it inside the RESERVE_CREATE
+ * attestation's `ReserveAmount`. The ETH escrow lands as 1e10 depot
+ * units (9-dec); the USDCSOL escrow lands as 1e7 (native 6-dec). Each
+ * seeds ~1:1 against the matched WIRE in its own frame, so the
+ * constant-product math over a ~1% draw stays well-conditioned.
  */
 export namespace CreateParams {
   /** ETH escrow — 10 ETH in wei; `toDepot(·, 18)` → 1e10 depot units. */
@@ -74,10 +75,12 @@ export namespace CreateParams {
   export const EthereumEscrowDepotUnits = EthereumEscrowWei / 10n ** 9n
   /** WIRE (raw 9-dp) the owner matches against the ETH reserve. */
   export const EthereumRequestedWire  = 10_000_000_000n
-  /** USDCSOL escrow — 10 USDC in 6-dec units; `to_depot(·, 6)` → 1e10. */
+  /** USDCSOL escrow — 10 USDC in 6-dec units. Under per-token precision
+   *  (`min(6, 9) = 6`) `to_depot(·, 6)` is identity, so the depot seed
+   *  equals the chain units (1e7), not the old ×1000 upscale. */
   export const SolanaEscrowChainUnits = 10_000_000n
   /** Depot-frame seed the USDCSOL escrow lands as on the depot row. */
-  export const SolanaEscrowDepotUnits = SolanaEscrowChainUnits * 1_000n
+  export const SolanaEscrowDepotUnits = SolanaEscrowChainUnits
   /** WIRE (raw 9-dp) the owner matches against the SOL reserve. */
   export const SolanaRequestedWire    = 10_000_000_000n
   /** 50% Bancor connector weight = pure constant product. */
@@ -90,8 +93,9 @@ export namespace CreateParams {
 }
 
 /**
- * Per-phase swap source amounts. Both phases draw 1e8 depot units (~1%
- * of the 1e10 seeds) so slippage stays well inside the tolerance.
+ * Per-phase swap source amounts. Each phase draws ~1% of its source
+ * reserve (Phase A: 1e8 of the 1e10 ETH seed; Phase B: 1e5 of the 1e7
+ * USDCSOL seed) so slippage stays well inside the tolerance.
  */
 export namespace SwapAmounts {
   /** Phase A: 0.1 ETH in wei (the ETH outpost divides by 1e9 → depot). */

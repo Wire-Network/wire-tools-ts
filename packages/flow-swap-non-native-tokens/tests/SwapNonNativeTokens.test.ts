@@ -449,7 +449,7 @@ describe("Flow: SWAP with non-native tokens", () => {
         targetTokenCode:    BigInt(Reserves.Solana.USDTSOL),
         targetReserveCode:  BigInt(Reserves.ReserveCode),
         targetRecipient:    users.solanaKeypair.publicKey.toBytes(),
-        targetAmount:       TargetAmounts.Default,
+        targetAmount:       TargetAmounts.StableDefault,
         targetToleranceBps: Variance.ToleranceBps
       },
       permitSig
@@ -459,11 +459,12 @@ describe("Flow: SWAP with non-native tokens", () => {
     // Canonical proof: user's USDT-on-SOL ATA balance bumps by AT
     // LEAST `target - drift` chain-native base units.
     //
-    // Conversion: target is in DEPOT 9-dec units; USDTSOL is 6-dec, so
-    // the SOL outpost applies `from_depot(amount, 6) = amount / 1000`
-    // before the SPL transfer. The user's ATA gains `target / 1000`.
-    const drift     = (TargetAmounts.Default * BigInt(Variance.ToleranceBps)) / 10_000n
-    const payoutMin = (TargetAmounts.Default - drift) / 1_000n
+    // USDTSOL rides the depot at its native 6-dec precision (min(6, 9)),
+    // so the target is already in 6-dec units and the SOL outpost's
+    // `from_depot(amount, 6)` is identity — the ATA gains the target
+    // directly (no /1000 downscale).
+    const drift     = (TargetAmounts.StableDefault * BigInt(Variance.ToleranceBps)) / 10_000n
+    const payoutMin = TargetAmounts.StableDefault - drift
     const floor     = usdtSolBefore + payoutMin
     await pollUntilSplBalance(
       solanaConnection, userUsdtSolAta, floor, Timing.RemitDeadlineMs
@@ -498,7 +499,7 @@ describe("Flow: SWAP with non-native tokens", () => {
         targetTokenCode:    BigInt(Reserves.Solana.USDCSOL),
         targetReserveCode:  BigInt(Reserves.ReserveCode),
         targetRecipient:    users.solanaKeypair.publicKey.toBytes(),
-        targetAmount:       TargetAmounts.Default,
+        targetAmount:       TargetAmounts.StableDefault,
         targetToleranceBps: Variance.ToleranceBps
       },
       permitSig
@@ -506,8 +507,10 @@ describe("Flow: SWAP with non-native tokens", () => {
     expect(result.transactionHash).toBeDefined()
 
     // Floor is balance-delta in CHAIN-NATIVE SPL base units (6-dec).
-    const drift     = (TargetAmounts.Default * BigInt(Variance.ToleranceBps)) / 10_000n
-    const payoutMin = (TargetAmounts.Default - drift) / 1_000n
+    // USDCSOL rides the depot at native 6-dec, so the target is already
+    // in 6-dec units and from_depot(amount, 6) is identity (no /1000).
+    const drift     = (TargetAmounts.StableDefault * BigInt(Variance.ToleranceBps)) / 10_000n
+    const payoutMin = TargetAmounts.StableDefault - drift
     const floor     = usdcSolBefore + payoutMin
     await pollUntilSplBalance(
       solanaConnection, userUsdcSolAta, floor, Timing.RemitDeadlineMs

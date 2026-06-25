@@ -105,6 +105,16 @@ export namespace TargetAmounts {
    *  for 1e8 source on a 10B/10B reserve pair, two cp_output legs
    *  through WIRE yield exactly 98_039_215. Set the published target
    *  to the rounded `98_000_000`; the 200 bps tolerance window then
-   *  covers both the cp_output remainder and the 10 bps swap fee. */
+   *  covers both the cp_output remainder and the 10 bps swap fee.
+   *
+   *  Used for destinations whose depot frame is 9-dec (native SOL, and
+   *  ETH which the outpost downscales from 18-dec). */
   export const Default = 98_000_000n
+
+  /** 6-dec stablecoin destinations (USDCSOL/USDTSOL) now ride the depot
+   *  at their NATIVE 6-dec precision (`min(6, 9)`), so `from_depot(·, 6)`
+   *  is identity and the target is published in 6-dec units. The cp
+   *  ratios are unchanged (the 6-dec reserves are seeded at 1/1000 the
+   *  9-dec value), so the two-leg yield is exactly `Default / 1000`. */
+  export const StableDefault = 98_000n
 }
