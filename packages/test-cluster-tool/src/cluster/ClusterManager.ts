@@ -2660,24 +2660,20 @@ async function bootstrapChain(
   // liqsol mint bytes on SVM); native bindings leave `contract_addr` empty.
   log.info("[Phase 16b] Registering ChainToken bindings on sysio.tokens...")
   const ctokRegs: SystemContracts.SysioTokensRegctokAction[] = [
-    // Each ChainToken binding carries `precision_override` (added in
-    // wire-sysio #425) — the chain-native decimal precision for the binding,
-    // defaulting to the depot's canonical 9-dec frame. Per the project rule
-    // (9 for all tokens; see `feedback-token-precision-9-max`) every binding
-    // uses 9; any chain-native ↔ depot precision conversion (e.g. ETH wei →
-    // 9-dec) remains an outpost-internal concern, not depot-tracked state.
+    // ChainToken bindings no longer carry a precision field: wire-sysio #427
+    // removed `precision_override` (precision conversion is purely an
+    // outpost-internal concern, not depot-tracked state). A reserve's
+    // source-token precision is recorded per-reserve via regreserve instead.
     {
       chain_code: { value: SlugName.from("WIRE") },
       token_code: { value: SlugName.from("WIRE") },
       contract_addr: "",
-      precision_override: 9,
       is_native: true
     },
     {
       chain_code: { value: SlugName.from("ETHEREUM") },
       token_code: { value: SlugName.from("ETH") },
       contract_addr: "",
-      precision_override: 9,
       is_native: true
     },
     {
@@ -2686,7 +2682,6 @@ async function bootstrapChain(
       contract_addr: liqEthAddrHex
         ? liqEthAddrHex.replace(/^0x/i, "")
         : "",
-      precision_override: 9,
       is_native: false
     }
   ]
@@ -2698,7 +2693,6 @@ async function bootstrapChain(
       contract_addr: mockUsdcEthAddrHex
         ? mockUsdcEthAddrHex.replace(/^0x/i, "")
         : "",
-      precision_override: 9,
       is_native: false
     },
     {
@@ -2707,14 +2701,12 @@ async function bootstrapChain(
       contract_addr: mockUsdtEthAddrHex
         ? mockUsdtEthAddrHex.replace(/^0x/i, "")
         : "",
-      precision_override: 9,
       is_native: false
     },
     {
       chain_code: { value: SlugName.from("SOLANA") },
       token_code: { value: SlugName.from("SOL") },
       contract_addr: "",
-      precision_override: 9,
       is_native: true
     },
     {
@@ -2723,7 +2715,6 @@ async function bootstrapChain(
       contract_addr: mockLiqsolSolMint
         ? splMintToHex(mockLiqsolSolMint)
         : "",
-      precision_override: 9,
       is_native: false
     },
     {
@@ -2732,7 +2723,6 @@ async function bootstrapChain(
       contract_addr: mockUsdcSolMint
         ? splMintToHex(mockUsdcSolMint)
         : "",
-      precision_override: 9,
       is_native: false
     },
     {
@@ -2741,7 +2731,6 @@ async function bootstrapChain(
       contract_addr: mockUsdtSolMint
         ? splMintToHex(mockUsdtSolMint)
         : "",
-      precision_override: 9,
       is_native: false
     }
   )
