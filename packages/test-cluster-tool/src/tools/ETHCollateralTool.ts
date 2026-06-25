@@ -258,22 +258,40 @@ export async function depositETHNonNativeCollateral(
     }
 
     // Dry-run clean → submit the real deposit (re-fetch the nonce per attempt).
-    const depositNonce = await resolveLatestNonce(opRegContract as unknown as ethers.BaseContract)
-    const tx = await opRegContract.depositNonNative(
-      chainCode,
-      tokenCode,
-      reserveCode,
-      operatorType,
-      compressedPubkey,
-      amount,
-      { nonce: depositNonce }
-    )
-    const receipt = await tx.wait(1)
-    Assert.ok(
-      receipt !== null && receipt.status === 1,
-      `ETHCollateralTool: depositNonNative tx reverted (status=${receipt?.status ?? "null"})`
-    )
-    return receipt
+    // The submit itself can also fail transiently — a validator/RPC-dropped tx,
+    // or a status-0 receipt against freshly load-stated storage — so retry those
+    // with the same backoff instead of only retrying the dry-run revert above.
+    // The next iteration re-runs the dry-run, re-validating state before re-send.
+    try {
+      const depositNonce = await resolveLatestNonce(opRegContract as unknown as ethers.BaseContract)
+      const tx = await opRegContract.depositNonNative(
+        chainCode,
+        tokenCode,
+        reserveCode,
+        operatorType,
+        compressedPubkey,
+        amount,
+        { nonce: depositNonce }
+      )
+      const receipt = await tx.wait(1)
+      Assert.ok(
+        receipt !== null && receipt.status === 1,
+        `ETHCollateralTool: depositNonNative tx reverted (status=${receipt?.status ?? "null"})`
+      )
+      return receipt
+    } catch (err) {
+      const e = err as { reason?: string; shortMessage?: string; message?: string }
+      lastReason = e?.reason ?? e?.shortMessage ?? e?.message ?? String(err)
+      if (attempt < MAX_RETRIES - 1) {
+        await new Promise(r => setTimeout(r, RETRY_BASE_DELAY_MS * (attempt + 1)))
+        continue
+      }
+      throw new Error(
+        `ETHCollateralTool: depositNonNative submit failed across ${MAX_RETRIES} attempts — ${lastReason} ` +
+          `[chainCode=${chainCode} tokenCode=${tokenCode} reserveCode=${reserveCode} ` +
+          `operatorType=${operatorType} amount=${amount} opReg=${opRegAddr}]`
+      )
+    }
   }
   // Unreachable — the loop returns the receipt or throws on the final attempt.
   throw new Error(
