@@ -2564,12 +2564,10 @@ async function bootstrapChain(
       code: { value: SlugName.from("ETH") },
       symbol_name: "Ether",
       description: "Ethereum native asset",
-      // Project rule: every token registers with precision=9 (max).
-      // Native ETH at 18-decimal wei would overflow the depot's
-      // `swap_quote` cp_output math against a 10B-unit reserve seed;
-      // standardising on 9 keeps every constant-product computation
-      // in a sane integer range and aligns all four chains' token
-      // ledgers under one precision contract.
+      // Depot precision = min(native, 9). Native ETH is 18-decimal wei,
+      // which is above the 9-dec frame cap (and would overflow the depot's
+      // uint64 amount fields), so ETH is downscaled to 9 at the outpost
+      // boundary and carried at 9 in the depot frame.
       precision: 9,
       address: emptyChainAddr
     },
@@ -2578,7 +2576,7 @@ async function bootstrapChain(
       code: { value: SlugName.from("LIQETH") },
       symbol_name: "Liquid ETH",
       description: "Liquid-staking receipt for ETH",
-      // Project rule: every token registers with precision=9 (max).
+      // Liquid-staking ERC-20 (18-decimal) → depot precision = min(18, 9) = 9.
       precision: 9,
       address: liqEthChainAddr
     }
@@ -2595,7 +2593,8 @@ async function bootstrapChain(
       code: { value: SlugName.from("USDC") },
       symbol_name: "USD Coin",
       description: "USDC stablecoin on Ethereum",
-      precision: 9,
+      // Native 6-decimal ERC-20 → depot precision = min(6, 9) = 6 (carried natively).
+      precision: 6,
       address: usdcEthChainAddr
     },
     {
@@ -2603,7 +2602,8 @@ async function bootstrapChain(
       code: { value: SlugName.from("USDT") },
       symbol_name: "Tether USD",
       description: "USDT stablecoin on Ethereum",
-      precision: 9,
+      // Native 6-decimal ERC-20 → depot precision = min(6, 9) = 6 (carried natively).
+      precision: 6,
       address: usdtEthChainAddr
     },
     {
@@ -2630,7 +2630,8 @@ async function bootstrapChain(
       code: { value: SlugName.from("USDCSOL") },
       symbol_name: "USDC (Solana)",
       description: "USDC stablecoin on Solana",
-      precision: 9,
+      // Native 6-decimal SPL → depot precision = min(6, 9) = 6 (carried natively).
+      precision: 6,
       address: usdcSolChainAddr
     },
     {
@@ -2638,7 +2639,8 @@ async function bootstrapChain(
       code: { value: SlugName.from("USDTSOL") },
       symbol_name: "USDT (Solana)",
       description: "USDT stablecoin on Solana",
-      precision: 9,
+      // Native 6-decimal SPL → depot precision = min(6, 9) = 6 (carried natively).
+      precision: 6,
       address: usdtSolChainAddr
     }
   )
@@ -2658,24 +2660,20 @@ async function bootstrapChain(
   // liqsol mint bytes on SVM); native bindings leave `contract_addr` empty.
   log.info("[Phase 16b] Registering ChainToken bindings on sysio.tokens...")
   const ctokRegs: SystemContracts.SysioTokensRegctokAction[] = [
-    // Each ChainToken binding carries `precision_override` (added in
-    // wire-sysio #425) — the chain-native decimal precision for the binding,
-    // defaulting to the depot's canonical 9-dec frame. Per the project rule
-    // (9 for all tokens; see `feedback-token-precision-9-max`) every binding
-    // uses 9; any chain-native ↔ depot precision conversion (e.g. ETH wei →
-    // 9-dec) remains an outpost-internal concern, not depot-tracked state.
+    // ChainToken bindings no longer carry a precision field: wire-sysio #427
+    // removed `precision_override` (precision conversion is purely an
+    // outpost-internal concern, not depot-tracked state). A reserve's
+    // source-token precision is recorded per-reserve via regreserve instead.
     {
       chain_code: { value: SlugName.from("WIRE") },
       token_code: { value: SlugName.from("WIRE") },
       contract_addr: "",
-      precision_override: 9,
       is_native: true
     },
     {
       chain_code: { value: SlugName.from("ETHEREUM") },
       token_code: { value: SlugName.from("ETH") },
       contract_addr: "",
-      precision_override: 9,
       is_native: true
     },
     {
@@ -2684,7 +2682,6 @@ async function bootstrapChain(
       contract_addr: liqEthAddrHex
         ? liqEthAddrHex.replace(/^0x/i, "")
         : "",
-      precision_override: 9,
       is_native: false
     }
   ]
@@ -2696,7 +2693,6 @@ async function bootstrapChain(
       contract_addr: mockUsdcEthAddrHex
         ? mockUsdcEthAddrHex.replace(/^0x/i, "")
         : "",
-      precision_override: 9,
       is_native: false
     },
     {
@@ -2705,14 +2701,12 @@ async function bootstrapChain(
       contract_addr: mockUsdtEthAddrHex
         ? mockUsdtEthAddrHex.replace(/^0x/i, "")
         : "",
-      precision_override: 9,
       is_native: false
     },
     {
       chain_code: { value: SlugName.from("SOLANA") },
       token_code: { value: SlugName.from("SOL") },
       contract_addr: "",
-      precision_override: 9,
       is_native: true
     },
     {
@@ -2721,7 +2715,6 @@ async function bootstrapChain(
       contract_addr: mockLiqsolSolMint
         ? splMintToHex(mockLiqsolSolMint)
         : "",
-      precision_override: 9,
       is_native: false
     },
     {
@@ -2730,7 +2723,6 @@ async function bootstrapChain(
       contract_addr: mockUsdcSolMint
         ? splMintToHex(mockUsdcSolMint)
         : "",
-      precision_override: 9,
       is_native: false
     },
     {
@@ -2739,7 +2731,6 @@ async function bootstrapChain(
       contract_addr: mockUsdtSolMint
         ? splMintToHex(mockUsdtSolMint)
         : "",
-      precision_override: 9,
       is_native: false
     }
   )
@@ -2771,6 +2762,7 @@ async function bootstrapChain(
         description: "Bootstrap-seeded native ETH ↔ WIRE reserve",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
+        source_token_precision: 9,
         connector_weight_bps: 5000,
         is_private: false,
         owner: ""
@@ -2783,6 +2775,7 @@ async function bootstrapChain(
         description: "Bootstrap-seeded liqETH ↔ WIRE reserve",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
+        source_token_precision: 9,
         connector_weight_bps: 5000,
         is_private: false,
         owner: ""
@@ -2795,6 +2788,7 @@ async function bootstrapChain(
         description: "Bootstrap-seeded USDC ↔ WIRE reserve (mock ERC-20)",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
+        source_token_precision: 9,
         connector_weight_bps: 5000,
         is_private: false,
         owner: ""
@@ -2807,6 +2801,7 @@ async function bootstrapChain(
         description: "Bootstrap-seeded USDT ↔ WIRE reserve (mock ERC-20)",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
+        source_token_precision: 9,
         connector_weight_bps: 5000,
         is_private: false,
         owner: ""
@@ -2819,6 +2814,7 @@ async function bootstrapChain(
         description: "Bootstrap-seeded native SOL ↔ WIRE reserve",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
+        source_token_precision: 9,
         connector_weight_bps: 5000,
         is_private: false,
         owner: ""
@@ -2831,6 +2827,7 @@ async function bootstrapChain(
         description: "Bootstrap-seeded liqSOL ↔ WIRE reserve",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
+        source_token_precision: 9,
         connector_weight_bps: 5000,
         is_private: false,
         owner: ""
@@ -2843,6 +2840,7 @@ async function bootstrapChain(
         description: "Bootstrap-seeded USDC ↔ WIRE reserve on Solana (mock SPL)",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
+        source_token_precision: 9,
         connector_weight_bps: 5000,
         is_private: false,
         owner: ""
@@ -2855,11 +2853,23 @@ async function bootstrapChain(
         description: "Bootstrap-seeded USDT ↔ WIRE reserve on Solana (mock SPL)",
         initial_chain_amount: reserveSeedAmount,
         initial_wire_amount: reserveSeedAmount,
+        source_token_precision: 9,
         connector_weight_bps: 5000,
         is_private: false,
         owner: ""
       }
     ]
+  // Stablecoins are carried at their native 6-dec depot precision (min(6, 9)),
+  // so seed their chain side at the same VALUE as a 9-dec token (÷1000) to keep
+  // the 1:1 bootstrap price against the 9-dec WIRE side. Everything else stays
+  // at the 9-dec depot frame.
+  const stableReserveCodes = ["USDC", "USDT", "USDCSOL", "USDTSOL"].map(c => SlugName.from(c))
+  reserveRegs.forEach(r => {
+    if (stableReserveCodes.includes(r.token_code.value)) {
+      r.source_token_precision = 6
+      r.initial_chain_amount = reserveSeedAmount / 1000
+    }
+  })
   await Bluebird.each(reserveRegs, async reserveReg => {
     await clio.pushActionAndWait<SystemContracts.SysioReservRegreserveAction>(
       "sysio.reserv",
