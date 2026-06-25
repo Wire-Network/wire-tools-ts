@@ -2009,7 +2009,7 @@ async function bootstrapChain(
     }
   )
   await grantSysioCode(clio, "sysio.authex")
-  await clio.pushTransactionAndWait({
+  await clio.pushTransactionAndWait<SystemContracts.SysioSystemUpdateauthAction>({
     account: "sysio",
     name: "updateauth",
     data: {
