@@ -384,8 +384,8 @@ export class Clio {
     ])
   }
 
-  async pushTransaction(
-    ...actionArgs: Clio.IAnyAction[] | Array<Clio.IAnyAction[]>
+  async pushTransaction<T = any, D extends Clio.IAnyAction<T> | Clio.IAnyAction<T>[] = Clio.IAnyAction<T> | Clio.IAnyAction<T>[]>(
+    ...actionArgs: D[]
   ) {
     const actions = flatten(actionArgs),
       body = { actions },
@@ -785,8 +785,8 @@ export class Clio {
    * transaction if it is forked out before finality. Use for bootstrap-critical
    * grants (`updateauth`, etc.) downstream steps depend on.
    */
-  async pushTransactionAndWait(
-    actions: Clio.IAnyAction | Clio.IAnyAction[],
+  async pushTransactionAndWait<T = any, D extends Clio.IAnyAction<T> | Clio.IAnyAction<T>[] = Clio.IAnyAction<T> | Clio.IAnyAction<T>[]>(
+    actions: D,
     finality = Clio.DefaultFinality
   ): Promise<API.v1.SendTransactionResponse> {
     const actionList = Array.isArray(actions) ? actions : [actions]
@@ -795,7 +795,7 @@ export class Clio {
       .join(",")
     return retry(
       async () => {
-        const result = await this.pushTransaction(...actionList),
+        const result = await this.pushTransaction<T,D>(...actionList),
           txId = Clio.getTransId(result)
         if (isString(txId) && isNotEmpty(txId)) {
           await this.assertFinality(txId, label, finality, Clio.DefaultTimeoutMs)
@@ -1015,11 +1015,11 @@ export namespace Clio {
   }
 
   /** Action type that may or may not have its data encoded */
-  export interface IAnyAction {
+  export interface IAnyAction<T = any, D =string | Uint8Array | ArrayBuffer | Record<string, any> | T> {
     account: string
     name: string
     authorization: IPermissionLevelType[]
-    data: string | Uint8Array | ArrayBuffer | Record<string, any> | any
+    data: D
   }
 
   /** Maximum stdout buffer size for clio subprocess (bytes). */
