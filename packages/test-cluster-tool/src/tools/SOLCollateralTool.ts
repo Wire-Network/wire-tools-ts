@@ -23,7 +23,7 @@ import {
   getAssociatedTokenAddressSync
 } from "@solana/spl-token"
 import { OperatorType } from "@wireio/opp-typescript-models"
-import { confirmSignature } from "../sol/confirmSignature.js"
+import { sendAndConfirm } from "../sol/sendAndConfirm.js"
 
 /** PDA seeds — kept in sync with `wire-solana/programs/opp-outpost/src`. */
 const OUTPOST_CONFIG_SEED            = Buffer.from("outpost_config")
@@ -93,14 +93,11 @@ export async function depositSOLCollateral(
     .signers([depositor])
     .transaction()
 
-  const sig = await connection.sendTransaction(tx, [depositor], {
-    skipPreflight: false
-  })
-
-  // Anchor's `.rpc()` uses the deprecated `confirmTransaction` path that
-  // hangs on test-validator setups where the WS port is occupied —
-  // confirmSignature polls `getSignatureStatus` with a bounded deadline.
-  await confirmSignature(connection, sig, "SOLCollateralTool deposit")
+  // sendAndConfirm signs once, sends the raw bytes, and re-broadcasts the SAME
+  // signature if the test-validator silently drops it. Anchor's `.rpc()` confirm
+  // path hangs when the WS port is occupied, and a bare confirm has no drop
+  // recovery — the source of the `conf=undefined` flake.
+  const sig = await sendAndConfirm(connection, tx, [depositor], "SOLCollateralTool deposit")
   return sig
 }
 
@@ -182,10 +179,7 @@ export async function depositSOLNonNativeCollateral(
     .signers([depositor])
     .transaction()
 
-  const sig = await connection.sendTransaction(tx, [depositor], {
-    skipPreflight: false
-  })
-
-  await confirmSignature(connection, sig, "SOLCollateralTool depositNonNative")
+  // Re-broadcasts the SAME signature on a dropped tx (see deposit() above).
+  const sig = await sendAndConfirm(connection, tx, [depositor], "SOLCollateralTool depositNonNative")
   return sig
 }

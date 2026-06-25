@@ -45,8 +45,7 @@ import {
 } from "@solana/spl-token"
 
 import { log } from "../logger.js"
-import { confirmSignature } from "../sol/confirmSignature.js"
-import { DefaultSolanaCommitment } from "../sol/SolanaCommitment.js"
+import { sendAndConfirm } from "../sol/sendAndConfirm.js"
 
 /**
  * Create a fresh SPL mint with `mintAuthority = funder.publicKey` and
@@ -88,9 +87,9 @@ export async function createMockSplMint(
       null
     )
   )
-  log.info(`[SplFundingTool] tx built, calling sendAndPoll`)
-  await sendAndPoll(connection, tx, [funder, mintKeypair], "createMockSplMint")
-  log.info(`[SplFundingTool] sendAndPoll returned, mint=${mintKeypair.publicKey.toBase58()}`)
+  log.info(`[SplFundingTool] tx built, calling sendAndConfirm`)
+  await sendAndConfirm(connection, tx, [funder, mintKeypair], "createMockSplMint")
+  log.info(`[SplFundingTool] sendAndConfirm returned, mint=${mintKeypair.publicKey.toBase58()}`)
   return mintKeypair.publicKey
 }
 
@@ -125,36 +124,6 @@ export async function mintMockSplToUser(
     tx.add(createAssociatedTokenAccountInstruction(funder.publicKey, ata, recipient, mint))
   }
   tx.add(createMintToInstruction(mint, ata, funder.publicKey, amount))
-  await sendAndPoll(connection, tx, [funder], "mintMockSplToUser")
+  await sendAndConfirm(connection, tx, [funder], "mintMockSplToUser")
   return ata
-}
-
-/**
- * Sign, send, and confirm `tx`. Fetches a recent blockhash inline (so a
- * stale-blockhash drop can't fail the harness's longer-running SPL setup),
- * sends the raw signed bytes, then defers to {@link confirmSignature}, which
- * bounds each status RPC and periodically re-sends the same signed bytes so a
- * validator that silently dropped the tx still lands it.
- */
-async function sendAndPoll(
-  connection: Connection,
-  tx:         Transaction,
-  signers:    Keypair[],
-  label:      string
-): Promise<string> {
-  log.info(`[sendAndPoll/${label}] fetching blockhash`)
-  const { blockhash } = await connection.getLatestBlockhash(DefaultSolanaCommitment)
-  log.info(`[sendAndPoll/${label}] got blockhash=${blockhash.slice(0,12)}...`)
-  tx.recentBlockhash = blockhash
-  tx.feePayer        = signers[0].publicKey
-  tx.sign(...signers)
-  const raw = tx.serialize()
-  log.info(`[sendAndPoll/${label}] tx signed, calling sendRawTransaction`)
-
-  const sig = await connection.sendRawTransaction(raw, { skipPreflight: false })
-  log.info(`[sendAndPoll/${label}] sendRawTransaction returned sig=${sig}`)
-  await confirmSignature(connection, sig, label, {
-    rebroadcast: () => connection.sendRawTransaction(raw, { skipPreflight: true })
-  })
-  return sig
 }
