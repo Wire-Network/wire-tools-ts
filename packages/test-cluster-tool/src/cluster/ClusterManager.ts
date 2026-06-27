@@ -1119,12 +1119,10 @@ export class ClusterManager {
           "requestSwap",
           "--underwriter-eth-client-id",
           "eth-default",
-          // Anvil only mines blocks on user txs in the test cluster,
-          // so the underwriter would deadlock waiting for the
-          // mainnet-default 12 confirmations. 1 is sufficient when
-          // the chain doesn't reorg (anvil never does).
-          "--underwriter-eth-min-confirmations",
-          "1",
+          // SEC-51 removed --underwriter-eth-min-confirmations (the
+          // non-finality escape hatch). The underwriter now reads source
+          // deposits at the ETH `finalized` tag, which the runtime anvil
+          // advances via --slots-in-an-epoch/--block-time (see AnvilManager).
           "--signature-provider",
           solSigProvider,
           "--outpost-solana-client",
