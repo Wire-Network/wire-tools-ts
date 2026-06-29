@@ -1119,12 +1119,10 @@ export class ClusterManager {
           "requestSwap",
           "--underwriter-eth-client-id",
           "eth-default",
-          // Anvil only mines blocks on user txs in the test cluster,
-          // so the underwriter would deadlock waiting for the
-          // mainnet-default 12 confirmations. 1 is sufficient when
-          // the chain doesn't reorg (anvil never does).
-          "--underwriter-eth-min-confirmations",
-          "1",
+          // SEC-51 removed --underwriter-eth-min-confirmations (the
+          // non-finality escape hatch). The underwriter now reads source
+          // deposits at the ETH `finalized` tag, which the runtime anvil
+          // advances via --slots-in-an-epoch/--block-time (see AnvilManager).
           "--signature-provider",
           solSigProvider,
           "--outpost-solana-client",
@@ -1431,10 +1429,15 @@ export class ClusterManager {
         log.info(
           `  Starting underwriter ${ns.nodeId} (port ${ns.port}): ${ns.operatorAccount}`
         )
-        return this.launchFromCmd(toNodeLabel(ns.nodeId), ns.cmd, ns.dataPath, {
-          verifyPort: ns.port,
-          extraArgs: ["--enable-stale-production"]
-        })
+        // buildRelaunchCmd strips flags removed since the cluster was created
+        // (SEC-51's --underwriter-eth-min-confirmations) and re-adds
+        // --enable-stale-production, so a pre-upgrade saved cmd replays cleanly.
+        return this.launchFromCmd(
+          toNodeLabel(ns.nodeId),
+          buildRelaunchCmd(ns.cmd),
+          ns.dataPath,
+          { verifyPort: ns.port }
+        )
       })
     )
     log.info("Underwriter nodes started and synced")

@@ -1,7 +1,10 @@
 import "jest"
 import { generateGenesis } from "@wireio/test-cluster-tool/cluster/genesis"
 import { generateLoggingConfig } from "../../src/cluster/generateLoggingConfig"
-import { buildStartCmd } from "@wireio/test-cluster-tool/cluster/startCmd"
+import {
+  buildStartCmd,
+  buildRelaunchCmd
+} from "@wireio/test-cluster-tool/cluster/startCmd"
 import {
   BIOS_K1_KEY,
   BIOS_BLS_KEY,
@@ -117,6 +120,43 @@ describe("ClusterManager smoke tests", () => {
       expect(s).toContain("--producer-name defproducerb")
       expect(s).toContain("--p2p-peer-address localhost:9776")
       expect(s).not.toContain("--enable-stale-production")
+    })
+  })
+
+  describe("buildRelaunchCmd", () => {
+    test("strips the SEC-51-removed --underwriter-eth-min-confirmations pair", () => {
+      const cmd = buildRelaunchCmd([
+        "/opt/bin/nodeop",
+        "--underwriter-eth-client-id",
+        "eth-default",
+        "--underwriter-eth-min-confirmations",
+        "1",
+        "--http-server-address",
+        "127.0.0.1:8888"
+      ])
+      expect(cmd).not.toContain("--underwriter-eth-min-confirmations")
+      expect(cmd).toEqual([
+        "/opt/bin/nodeop",
+        "--underwriter-eth-client-id",
+        "eth-default",
+        "--http-server-address",
+        "127.0.0.1:8888",
+        "--enable-stale-production"
+      ])
+    })
+
+    test("strips one-shot genesis flags and appends --enable-stale-production once", () => {
+      const cmd = buildRelaunchCmd([
+        "/opt/bin/nodeop",
+        "--genesis-json",
+        "/tmp/genesis.json",
+        "--genesis-timestamp",
+        "2026-03-27T00:00:00.000",
+        "--enable-stale-production"
+      ])
+      expect(cmd).not.toContain("--genesis-json")
+      expect(cmd).not.toContain("--genesis-timestamp")
+      expect(cmd.filter(a => a === "--enable-stale-production")).toHaveLength(1)
     })
   })
 

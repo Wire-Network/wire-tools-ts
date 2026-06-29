@@ -174,10 +174,13 @@ export function buildStartCmdString(opts: StartCmdOptions): string {
  * Flags whose `[flag, value]` pair gets stripped by {@link buildRelaunchCmd}.
  * Genesis settings are one-shot: applying them on every relaunch would
  * re-stamp the chain with a new genesis timestamp.
+ * `--underwriter-eth-min-confirmations` was removed by SEC-51 (wire-sysio#446);
+ * replaying it from a pre-upgrade cluster-state.json would abort nodeop.
  */
 const RelaunchStripFlags: ReadonlySet<string> = new Set([
   "--genesis-json",
-  "--genesis-timestamp"
+  "--genesis-timestamp",
+  "--underwriter-eth-min-confirmations"
 ])
 
 /** Flag appended to relaunches so the restarted producer can resume. */
