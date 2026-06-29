@@ -1429,10 +1429,15 @@ export class ClusterManager {
         log.info(
           `  Starting underwriter ${ns.nodeId} (port ${ns.port}): ${ns.operatorAccount}`
         )
-        return this.launchFromCmd(toNodeLabel(ns.nodeId), ns.cmd, ns.dataPath, {
-          verifyPort: ns.port,
-          extraArgs: ["--enable-stale-production"]
-        })
+        // buildRelaunchCmd strips flags removed since the cluster was created
+        // (SEC-51's --underwriter-eth-min-confirmations) and re-adds
+        // --enable-stale-production, so a pre-upgrade saved cmd replays cleanly.
+        return this.launchFromCmd(
+          toNodeLabel(ns.nodeId),
+          buildRelaunchCmd(ns.cmd),
+          ns.dataPath,
+          { verifyPort: ns.port }
+        )
       })
     )
     log.info("Underwriter nodes started and synced")
