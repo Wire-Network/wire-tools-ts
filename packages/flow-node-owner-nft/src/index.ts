@@ -1,2 +1,10 @@
-// flow-node-owner-nft — no source surface; test-only package.
-export {}
+import { FlowCLI } from "@wireio/test-cluster-tool"
+import { NodeOwnerNftScenario } from "./NodeOwnerNftScenario.js"
+
+/** Run the node-owner NFT flow as an executable — exit code = report success. */
+async function main(): Promise<void> {
+  const report = await FlowCLI.create(NodeOwnerNftScenario).run()
+  process.exit(report.succeeded ? 0 : 1)
+}
+
+void main()

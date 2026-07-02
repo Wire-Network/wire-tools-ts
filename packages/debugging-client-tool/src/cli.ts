@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import "source-map-support/register"
 import Yargs from "yargs"
+import { getLogger } from "@wireio/shared"
 import { DebuggingServerClient } from "@wireio/debugging-client-shared"
 
 import { handleList } from "./commands/list.js"
@@ -9,10 +10,26 @@ import { handleTail } from "./commands/tail.js"
 import { OutputFormat } from "./formatter.js"
 import { pick } from "lodash"
 
+const log = getLogger(__filename)
+
 enum Command {
   list = "list",
   inspect = "inspect",
   tail = "tail"
+}
+
+/**
+ * Run a command handler, logging any failure through the framework (never
+ * `console.*`) before a non-zero exit. Data output already went through the
+ * `stdout` logger inside the handler.
+ */
+async function run(handler: () => Promise<void>): Promise<void> {
+  try {
+    await handler()
+  } catch (err) {
+    log.error(`command failed: ${err instanceof Error ? err.message : String(err)}`)
+    process.exit(1)
+  }
 }
 
 Yargs(process.argv.slice(2))
@@ -56,18 +73,19 @@ Yargs(process.argv.slice(2))
           type: "string",
           describe: "Filter by end timestamp (ISO or unix ms)"
         }),
-    async argv => {
-      await handleList({
-        server: argv.server,
-        format: argv.format,
-        epoch: argv.epoch,
-        epochStart: argv.epochStart,
-        epochEnd: argv.epochEnd,
-        endpoints: argv.endpoints,
-        start: argv.start,
-        end: argv.end
-      })
-    }
+    async argv =>
+      run(() =>
+        handleList({
+          server: argv.server,
+          format: argv.format,
+          epoch: argv.epoch,
+          epochStart: argv.epochStart,
+          epochEnd: argv.epochEnd,
+          endpoints: argv.endpoints,
+          start: argv.start,
+          end: argv.end
+        })
+      )
   )
   .command(
     Command.inspect,
@@ -78,9 +96,7 @@ Yargs(process.argv.slice(2))
         demandOption: true,
         describe: "Storage key (from list output)"
       }),
-    async argv => {
-      await handleInspect(pick(argv, "server", "format", "key"))
-    }
+    async argv => run(() => handleInspect(pick(argv, "server", "format", "key")))
   )
   .command(
     Command.tail,
@@ -96,9 +112,8 @@ Yargs(process.argv.slice(2))
           type: "string",
           describe: "Filter by endpoints type name"
         }),
-    async argv => {
-      await handleTail(pick(argv, "server", "format", "pollMs", "endpoints"))
-    }
+    async argv =>
+      run(() => handleTail(pick(argv, "server", "format", "pollMs", "endpoints")))
   )
   .demandCommand(1)
   .strict()

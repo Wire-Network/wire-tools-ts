@@ -3,24 +3,18 @@
   "version": "0.1.10",
   "private": true,
   "type": "commonjs",
-  "description": "Flow: Swap TO WIRE (Ethereum \u2192 WIRE depot, single-leg underwriting + direct WIRE payout)",
+  "description": "Flow: Swap TO WIRE (Ethereum → WIRE depot, single-leg underwriting + direct WIRE payout)",
   "scripts": {
-    "compile": "tsc -b tsconfig.json",
-    "compile:watch": "tsc -b tsconfig.json -w",
-    "build": "pnpm run compile",
-    "test": "jest --runInBand --no-cache",
+    "build": "tsc -b tsconfig.json",
+    "test": "node lib/index.js",
     "clean": "rm -rf lib"
   },
   "dependencies": {
     "@wireio/test-cluster-tool": "workspace:*",
-    "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/sdk-core": "^1.0.17",
-    "@wireio/shared": "^1.0.17",
-    "@wireio/shared-node": "^1.0.17",
     "ethers": "^6.14.0"
   },
   "devDependencies": {
-    "@types/jest": "^30.0.0",
     "@types/node": "25.5.0"
   }
 }

@@ -5,7 +5,13 @@ import {
   EnvelopeListEntry
 } from "@wireio/opp-typescript-models"
 
+import { getLogger } from "@wireio/shared"
 import { formatList, OutputFormat } from "../formatter.js"
+import { getStdoutLogger } from "../logger.js"
+import { sleep } from "../utils/asyncUtils.js"
+
+const log = getLogger(__filename)
+const stdout = getStdoutLogger()
 
 export interface TailArgs {
   server: string
@@ -45,10 +51,9 @@ export async function handleTail(argv: TailArgs): Promise<void> {
   initial.entries.forEach(e => seenKeys.add(e.key))
 
   if (format === OutputFormat.plain) {
-    console.log(
+    log.info(
       `Watching for new envelopes (poll every ${argv.pollMs}ms, ${seenKeys.size} existing)...`
     )
-    console.log("")
   }
 
   // Poll loop
@@ -75,14 +80,7 @@ export async function handleTail(argv: TailArgs): Promise<void> {
 
     if (newEntries.length > 0) {
       newEntries.forEach(e => seenKeys.add(e.key))
-      console.log(formatList(newEntries, format))
-      if (format === OutputFormat.plain) {
-        console.log("")
-      }
+      stdout.info(formatList(newEntries, format))
     }
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
 }

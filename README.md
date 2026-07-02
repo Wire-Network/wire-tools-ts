@@ -299,3 +299,55 @@ See [`CLAUDE.md`](CLAUDE.md) and `STYLE.md`. Highlights:
   arrow parens `avoid`.
 - Every new/modified exported symbol ships unit tests in the same change.
 - No `src/` in `import`/`export` specifiers — use package aliases or barrels.
+
+## Appendix
+
+### Useful Info
+
+#### Parallel Process Caveats
+
+Running two or more flows (or clusters) concurrently on one host is supported,
+but only because each of the following shared-state hazards is explicitly
+handled. Keep them in mind when touching any of these areas:
+
+- **Port selection vs port binding.** `BindConfig.resolve` picks free ports,
+  but a picked port is not *bound* until its daemon spawns (possibly minutes
+  later). A second process resolving in that window would happily re-pick it.
+  Every resolving process therefore registers its full resolved `BindConfig`
+  in `/tmp/wire-platform-bind-config/<pid>.bind-config.json` *before*
+  releasing the host-global port lock; later resolvers read every LIVE
+  registration into their exclusion set (dead-pid files are reaped —
+  `kill(pid, 0)` + a `/proc/<pid>/cmdline` recycled-pid guard). Files are
+  removed on process exit; `findAvailable` reads the registry but never
+  writes it.
+- **Hardhat deploy shares the repo's compile cache.** The Ethereum outpost
+  deploy (`npx hardhat run src/scripts/deployLocal.ts`) compiles-if-stale
+  into `<wire-ethereum>/artifacts/` + `<wire-ethereum>/cache/`, which are
+  checkout-wide. Hardhat has no cross-process build lock, and two concurrent
+  compiles corrupt those dirs for every later run. The harness serializes the
+  hardhat invocation with a host-global file lock
+  (`EthereumOutpostBootstrapper.HardhatDeployLockPath`, long-hold retry
+  options). When artifacts are already fresh the hold is just the deploy
+  (~30–60s); a colliding pair serializes its two deploys.
+- **Ethereum deploy state is per-cluster, never repo-shared.** Deploy configs
+  and address files (`outpost-addrs.json`, `liqeth-addrs.json`, …) live under
+  `<cluster>/data/ethereum-deployments/`
+  (`ClusterConfig.ethereumDeploymentsPath`), and `deployLocal.ts` is pointed
+  there via `WIRE_ETH_DEPLOYMENTS_PATH`. The pre-rewrite location —
+  `<wire-ethereum>/.local/deployments/`, shared by every run — let one run's
+  deploy wipe another's configs and address files mid-deploy (2026-07-02
+  pair-1 incident: the "stale artifact" clear of run B deleted the address
+  file run A was about to read). Never read outpost addresses from the repo
+  path; go through `ClusterConfig.ethereumDeploymentsPath` /
+  `EthereumCollateralTool.loadOutpostAddresses(deploymentsPath)`.
+- **Hardhat ABI artifacts are read-shared.** ABIs load from
+  `<wire-ethereum>/artifacts/` (read-only after compile, which the deploy
+  lock serializes) — that is fine to share; only *deploy state* had to move.
+- **Solana state is already per-cluster.** The SOL bootstrap persists its
+  keypair + mock-mints under `<cluster>/data/`, and programs load per
+  validator via `--bpf-program` — no shared writes.
+- **Process cleanup is pid-targeted, never name-targeted.** `ProcessManager`
+  sweeps only pids recorded in THIS cluster's pidfiles and signals only its
+  own registered pids on exit (with a `/proc` recycled-pid guard). A host-wide
+  `pkill nodeop` from any tooling would kill *every* parallel run's nodes —
+  see the incident note in `ProcessManager.ts`.

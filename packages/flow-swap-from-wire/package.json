@@ -3,24 +3,18 @@
   "version": "0.1.10",
   "private": true,
   "type": "commonjs",
-  "description": "Flow: Swap FROM WIRE (WIRE depot \u2192 Solana, queued escrow + single-leg underwriting)",
+  "description": "Flow: Swap FROM WIRE (WIRE depot → Solana, queued escrow + single-leg underwriting)",
   "scripts": {
-    "compile": "tsc -b tsconfig.json",
-    "compile:watch": "tsc -b tsconfig.json -w",
-    "build": "pnpm run compile",
-    "test": "jest --runInBand --no-cache",
+    "build": "tsc -b tsconfig.json",
+    "test": "node lib/index.js",
     "clean": "rm -rf lib"
   },
   "dependencies": {
-    "@solana/web3.js": "^1.98.0",
     "@wireio/test-cluster-tool": "workspace:*",
-    "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/sdk-core": "^1.0.17",
-    "@wireio/shared": "^1.0.17",
-    "@wireio/shared-node": "^1.0.17"
+    "@wireio/shared": "^1.0.17"
   },
   "devDependencies": {
-    "@types/jest": "^30.0.0",
     "@types/node": "25.5.0"
   }
 }

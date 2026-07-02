@@ -2,7 +2,10 @@ import { DebuggingServerClient } from "@wireio/debugging-client-shared"
 import { ApiPaths } from "@wireio/debugging-shared"
 
 import { formatList, OutputFormat } from "../formatter.js"
+import { getStdoutLogger } from "../logger.js"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
+
+const stdout = getStdoutLogger()
 
 export interface ListArgs {
   server: string
@@ -48,10 +51,10 @@ export async function handleList(argv: ListArgs): Promise<void> {
     timestampEnd: BigInt(timestampEnd)
   })
 
-  console.log(formatList(result.entries, format))
+  stdout.info(formatList(result.entries, format))
 
   if (format === OutputFormat.plain) {
-    console.log(`\nTotal: ${result.total} envelope(s)`)
+    stdout.info(`\nTotal: ${result.total} envelope(s)`)
   }
 }
 

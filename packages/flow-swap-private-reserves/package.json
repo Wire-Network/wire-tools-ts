@@ -3,27 +3,24 @@
   "version": "0.1.10",
   "private": true,
   "type": "commonjs",
-  "description": "Flow: bidirectional swaps through a same-owner PRIVATE reserve pair (native \u00d7 non-native) + private\u2192WIRE exclusion",
+  "description": "Flow: bidirectional swaps through a same-owner PRIVATE reserve pair (native × non-native) + private→WIRE exclusion",
   "scripts": {
-    "compile": "tsc -b tsconfig.json",
-    "compile:watch": "tsc -b tsconfig.json -w",
-    "build": "pnpm run compile",
-    "test": "jest --runInBand --no-cache",
+    "build": "tsc -b tsconfig.json",
+    "test": "node lib/index.js",
     "clean": "rm -rf lib"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.0",
-    "@wireio/test-cluster-tool": "workspace:*",
-    "@wireio/opp-typescript-models": "^1.0.26",
-    "@wireio/sdk-core": "^1.0.17",
-    "@wireio/shared": "^1.0.17",
-    "@wireio/shared-node": "^1.0.17",
     "@solana/spl-token": "^0.4.9",
     "@solana/web3.js": "^1.98.0",
+    "@wireio/test-cluster-tool": "workspace:*",
+    "@wireio/debugging-shared": "workspace:*",
+    "@wireio/sdk-core": "^1.0.17",
+    "@wireio/opp-typescript-models": "^1.0.26",
+    "@wireio/shared": "^1.0.17",
     "ethers": "^6.14.0"
   },
   "devDependencies": {
-    "@types/jest": "^30.0.0",
     "@types/node": "25.5.0"
   }
 }

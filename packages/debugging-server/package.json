@@ -41,6 +41,7 @@
     "@wireio/sdk-core": "^1.0.21",
     "bluebird": "^3.7.2",
     "express": "^5.2.1",
+    "get-port": "^7.2.0",
     "lodash": "^4.17.21",
     "source-map-support": "^0.5.21",
     "ts-pattern": "^5.9.0",
