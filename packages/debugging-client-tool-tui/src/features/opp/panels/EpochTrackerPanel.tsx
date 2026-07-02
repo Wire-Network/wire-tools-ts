@@ -3,7 +3,7 @@ import { Box, Text, useFocus, useFocusManager, useInput, useWindowSize } from "i
 import { match } from "ts-pattern"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import type { PanelComponentProps } from "../../../components/PanelComponent.js"
-import { adjustStickyWindow } from "../../../components/stickyWindow.js"
+import { adjustStickyWindow } from "../../../utils/windowUtils.js"
 import { useRouter } from "../../../router/index.js"
 import { useService } from "../../../services/ServiceContext.js"
 import { ServiceId } from "../../../services/ServiceId.js"

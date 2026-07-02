@@ -43,6 +43,7 @@
     "@wireio/shared": "^1.0.21",
     "bluebird": "^3.7.2",
     "eventemitter3": "^5.0.4",
+    "get-port": "^7.2.0",
     "ink": "^7.0.1",
     "lodash": "^4.17.21",
     "react": "^19.2.5",

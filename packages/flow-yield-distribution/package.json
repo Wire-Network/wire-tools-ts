@@ -3,24 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "commonjs",
-  "description": "Flow: fake-yield STAKING_REWARD \u2192 sysio.dclaim::onreward \u2192 sysio.system::fundclaim",
+  "description": "Flow: fake-yield STAKING_REWARD → sysio.dclaim::onreward → sysio.system::fundclaim",
   "scripts": {
     "build": "tsc -b tsconfig.json",
-    "test": "jest --runInBand --no-cache",
+    "test": "node lib/index.js",
     "clean": "rm -rf lib"
   },
   "dependencies": {
-    "@coral-xyz/anchor": "^0.31.0",
     "@solana/web3.js": "^1.98.0",
     "@wireio/test-cluster-tool": "workspace:*",
     "@wireio/sdk-core": "^1.0.17",
     "@wireio/opp-typescript-models": "^1.0.26",
-    "@wireio/shared": "^1.0.17",
-    "@wireio/shared-node": "^1.0.17",
     "ethers": "^6.14.0"
   },
   "devDependencies": {
-    "@types/jest": "^30.0.0",
     "@types/node": "25.5.0"
   }
 }

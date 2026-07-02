@@ -1,0 +1,77 @@
+import Path from "node:path"
+import { AnvilProcess } from "../../../cluster/processes/AnvilProcess.js"
+import { Report } from "../../../report/Report.js"
+import { ClusterBuildContext } from "../../ClusterBuildContext.js"
+import {
+  ClusterBuildStep,
+  type ClusterBuildStepOptions
+} from "../../ClusterBuildStep.js"
+
+/** Steps that manage the cluster's run-time anvil (Ethereum) process. */
+export namespace AnvilProcessSteps {
+  /** Subpath (under the cluster data dir) for the anvil dumped-state file. */
+  const StateSubpath = "anvil"
+  /** Anvil dumped-state filename (loaded on restart, dumped on stop). */
+  const StateFilename = "anvil.json"
+
+  /**
+   * Start the run-time anvil (get-or-create from `ctx.processManager`). It starts
+   * in **instamine** mode (no `--block-time`) so the Hardhat outpost deploy — which
+   * depends on instant mining — succeeds; {@link enableIntervalMining} switches it
+   * to interval mining afterward. Idempotent: a no-op if the anvil is already up.
+   */
+  export function start<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, null> {
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runStart)
+  }
+
+  /** Named runner — get-or-create the {@link AnvilProcess} and start it. */
+  export async function runStart<C extends ClusterBuildContext>(
+    ctx: C,
+    _input: null,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    if (ctx.processManager.get(AnvilProcess.ProcessLabel) != null) return
+    const anvil = await AnvilProcess.create(ctx.processManager, {
+      port: ctx.config.bind.anvil.port,
+      chainId: AnvilProcess.DefaultChainId,
+      stateFile: Path.join(ctx.config.dataPath, StateSubpath, StateFilename)
+    })
+    await anvil.start()
+  }
+
+  /**
+   * Switch the running anvil from instamine to interval mining (`block-time`),
+   * emulating Ethereum finality for the flow tests. Run AFTER the outpost deploy.
+   */
+  export function enableIntervalMining<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, null> {
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runEnableIntervalMining
+    )
+  }
+
+  /** Named runner — `evm_setIntervalMining` to the configured block time. */
+  export async function runEnableIntervalMining<C extends ClusterBuildContext>(
+    ctx: C,
+    _input: null,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await ctx.ethereum.provider.send("evm_setIntervalMining", [AnvilProcess.BlockTimeSec])
+  }
+}

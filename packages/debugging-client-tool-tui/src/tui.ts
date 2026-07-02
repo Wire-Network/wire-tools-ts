@@ -130,12 +130,9 @@ async function main(): Promise<void> {
 }
 
 main().catch(err => {
-  try {
-    getGlobalLogger().fatal("TUI main() crashed", err)
-  } catch {
-    /* logger not yet configured */
-  }
-  // Safe ONLY before `render()` mounts — Ink is not holding stdout yet.
-  console.error(err)
+  // The logging manager always has a sink — the `@wireio/shared` lazy
+  // ConsoleAppender before `configure()` runs, the FileAppender after — so
+  // `fatal` is the sole crash sink (no `console.*`, per use-logging-framework).
+  getGlobalLogger().fatal("TUI main() crashed", err)
   process.exit(1)
 })

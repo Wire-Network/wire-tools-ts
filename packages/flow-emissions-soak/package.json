@@ -6,7 +6,7 @@
   "description": "Flow: Multi-Hour Emissions + sysio.dclaim Payout Soak",
   "scripts": {
     "build": "tsc -b tsconfig.json",
-    "test": "jest --runInBand --no-cache",
+    "test": "node lib/index.js",
     "clean": "rm -rf lib"
   },
   "dependencies": {
@@ -15,11 +15,9 @@
     "@wireio/sdk-core": "^1.0.17",
     "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/shared": "^1.0.17",
-    "@wireio/shared-node": "^1.0.17",
     "ethers": "^6.14.0"
   },
   "devDependencies": {
-    "@types/jest": "^30.0.0",
     "@types/node": "25.5.0"
   }
 }

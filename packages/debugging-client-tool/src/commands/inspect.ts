@@ -2,6 +2,9 @@ import { DebuggingServerClient } from "@wireio/debugging-client-shared"
 import { ApiPaths } from "@wireio/debugging-shared"
 
 import { formatInspect, OutputFormat } from "../formatter.js"
+import { getStdoutLogger } from "../logger.js"
+
+const stdout = getStdoutLogger()
 
 export interface InspectArgs {
   server: string
@@ -18,5 +21,5 @@ export async function handleInspect(argv: InspectArgs): Promise<void> {
     key: argv.key
   })
 
-  console.log(formatInspect(result, format))
+  stdout.info(formatInspect(result, format))
 }

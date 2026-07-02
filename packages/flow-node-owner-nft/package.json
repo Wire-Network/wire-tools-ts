@@ -3,22 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "commonjs",
-  "description": "Flow: ERC-1155 NFT deposit -> authex link -> sysio.roa::nodeownreg (wire-sysio PR #359)",
+  "description": "Flow: ERC-1155 mint -> sysio.roa create-in-flow node-owner registration (happy path, soft-fail audits, depot hard-aborts)",
   "scripts": {
     "build": "tsc -b tsconfig.json",
-    "test": "jest --runInBand --no-cache",
+    "test": "node lib/index.js",
     "clean": "rm -rf lib"
   },
   "dependencies": {
     "@wireio/test-cluster-tool": "workspace:*",
-    "@wireio/sdk-core": "^1.0.17",
-    "@wireio/opp-typescript-models": "^1.0.26",
-    "@wireio/shared": "^1.0.17",
-    "@wireio/shared-node": "^1.0.17",
-    "ethers": "^6.14.0"
+    "@wireio/sdk-core": "^1.0.17"
   },
   "devDependencies": {
-    "@types/jest": "^30.0.0",
     "@types/node": "25.5.0"
   }
 }

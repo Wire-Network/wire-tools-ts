@@ -1,0 +1,19 @@
+import { Steps } from "@wireio/test-cluster-tool/orchestration"
+import { Report } from "@wireio/test-cluster-tool/report"
+
+describe("Steps.contracts.sysio.msgch", () => {
+  it.each(["bootstrap", "chkcons"] as const)(
+    "%s builds an input-less step with a runner",
+    action => {
+      const step = Steps.contracts.sysio.msgch[action](
+        Report.Actor.Sysio,
+        action,
+        `crank ${action}`,
+        {}
+      )
+      expect(step.actor).toBe(Report.Actor.Sysio)
+      expect(step.input).toBeNull()
+      expect(typeof step.runner).toBe("function")
+    }
+  )
+})

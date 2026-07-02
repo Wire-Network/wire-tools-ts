@@ -34,6 +34,7 @@
     "@3fv/prelude-ts": "^0.8.41",
     "@protobuf-ts/runtime": "^2.11.1",
     "@wireio/opp-typescript-models": "^1.0.26",
+    "get-port": "^7.2.0",
     "lodash": "^4.17.21",
     "ts-pattern": "^5.9.0"
   },
