@@ -29,7 +29,7 @@ import {
 
 const { SysioContractName } = SysioContracts
 const { Actor } = Report
-const { Reserves, SwapAmounts, Timing } = Constants
+const { Reserves, SwapAmounts, Timing, TokenDecimals } = Constants
 
 // ── Step option presets (poll deadline + buffer per the timing budgets) ─────
 
@@ -56,10 +56,11 @@ const UsdcPermitToSolanaNativeCell: SwapCell = {
   sourceChainCode: Reserves.Ethereum.ChainCode,
   sourceTokenCode: Reserves.Ethereum.USDC,
   sourceAmount: SwapAmounts.SourceErc20Stable,
+  sourceDecimals: TokenDecimals.Erc20Stable,
   targetChainCode: Reserves.Solana.ChainCode,
   targetTokenCode: Reserves.Solana.SOL,
-  // Native SOL rides the depot's 9-dec frame as lamports — identity.
-  destinationUnitMultiplier: 1n,
+  // Native SOL is 9-dec — the depot-frame target IS lamports.
+  destinationDecimals: TokenDecimals.SolanaNative,
   destination: SwapDestinationKind.solanaNative
 }
 
@@ -69,9 +70,10 @@ const UsdtApprovalToSolanaNativeCell: SwapCell = {
   sourceChainCode: Reserves.Ethereum.ChainCode,
   sourceTokenCode: Reserves.Ethereum.USDT,
   sourceAmount: SwapAmounts.SourceErc20Stable,
+  sourceDecimals: TokenDecimals.Erc20Stable,
   targetChainCode: Reserves.Solana.ChainCode,
   targetTokenCode: Reserves.Solana.SOL,
-  destinationUnitMultiplier: 1n,
+  destinationDecimals: TokenDecimals.SolanaNative,
   destination: SwapDestinationKind.solanaNative
 }
 
@@ -81,10 +83,11 @@ const UsdcSolanaToEthereumNativeCell: SwapCell = {
   sourceChainCode: Reserves.Solana.ChainCode,
   sourceTokenCode: Reserves.Solana.USDCSOL,
   sourceAmount: SwapAmounts.SourceSplStable,
+  sourceDecimals: TokenDecimals.SplStable,
   targetChainCode: Reserves.Ethereum.ChainCode,
   targetTokenCode: Reserves.Ethereum.ETH,
-  // The ETH target publishes in depot 9-dec units; the outpost pays wei (×1e9).
-  destinationUnitMultiplier: Constants.WeiPerDepotUnit,
+  // The target publishes in depot 9-dec units; the outpost pays wei (×1e9).
+  destinationDecimals: TokenDecimals.EthereumNative,
   destination: SwapDestinationKind.ethereumNative
 }
 
@@ -94,10 +97,11 @@ const UsdcPermitToUsdtSolanaCell: SwapCell = {
   sourceChainCode: Reserves.Ethereum.ChainCode,
   sourceTokenCode: Reserves.Ethereum.USDC,
   sourceAmount: SwapAmounts.SourceErc20Stable,
+  sourceDecimals: TokenDecimals.Erc20Stable,
   targetChainCode: Reserves.Solana.ChainCode,
   targetTokenCode: Reserves.Solana.USDTSOL,
-  // 6-dec SPL stablecoins ride the depot at native precision — identity.
-  destinationUnitMultiplier: 1n,
+  // 6-dec SPL destination — the outpost pays fromDepot(target) = target ÷ 1e3.
+  destinationDecimals: TokenDecimals.SplStable,
   destination: SwapDestinationKind.solanaSplToken
 }
 
@@ -107,9 +111,10 @@ const UsdcPermitToUsdcSolanaCell: SwapCell = {
   sourceChainCode: Reserves.Ethereum.ChainCode,
   sourceTokenCode: Reserves.Ethereum.USDC,
   sourceAmount: SwapAmounts.SourceErc20Stable,
+  sourceDecimals: TokenDecimals.Erc20Stable,
   targetChainCode: Reserves.Solana.ChainCode,
   targetTokenCode: Reserves.Solana.USDCSOL,
-  destinationUnitMultiplier: 1n,
+  destinationDecimals: TokenDecimals.SplStable,
   destination: SwapDestinationKind.solanaSplToken
 }
 

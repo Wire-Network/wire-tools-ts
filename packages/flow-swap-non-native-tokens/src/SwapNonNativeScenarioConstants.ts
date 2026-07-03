@@ -12,12 +12,16 @@ export namespace SwapNonNativeScenarioConstants {
    * Per-leg underwriter bond posted for EVERY (chain, token) the swap matrix
    * touches. The depot's `sysio.uwrit::createuwreq` re-checks `meets_role_min`
    * for BOTH legs of every swap, and the underwriter plugin's `select_coverable`
-   * requires a non-zero credit-line bucket per (chain, token) — without a
-   * USDC/USDT/USDCSOL/USDTSOL deposit the swap reverts with "insufficient bond
-   * on one or both legs". Large enough for several round-trips of the 0.1-unit
-   * swaps below.
+   * requires the leg's credit line to cover the FULL leg amount — the credit
+   * line is the depot balance (deposits relay RAW native units, no frame
+   * conversion — a known contracts precision bug) minus persistent locks, and
+   * every uwreq leg amount is depot 9-dec frame. The LIVE-quoted SOL-family
+   * destinations run ~4.8e9 depot units per swap on the lopsided seeded books,
+   * and the two SOL-native destination cells lock sequentially (~9.6e9 summed),
+   * so the bond must exceed that with margin (2026-07-02 incident: a 1e9 bond
+   * left every uwreq "no requests coverable" and the race timed out).
    */
-  export const UnderwriterCollateralAmount = 1_000_000_000n
+  export const UnderwriterCollateralAmount = 15_000_000_000n
 
   /** Native-leg minimum bond mirrored into `sysio.opreg::setconfig req_uw_collat`. */
   export const UnderwriterMinimumBond = 1_000_000_000
@@ -54,6 +58,22 @@ export namespace SwapNonNativeScenarioConstants {
     export const SourceSplStable = 100_000n
   }
 
+  /**
+   * Chain-native decimals per token class — drives the native ↔ depot-9-dec
+   * frame conversions (`WireReserveTool.toDepot`/`fromDepot`) each cell's
+   * quote and payout-floor math must mirror.
+   */
+  export namespace TokenDecimals {
+    /** Mock USDC / USDT ERC-20s (`MockUsdc.decimals() == 6`). */
+    export const Erc20Stable = 6
+    /** Mock USDCSOL / USDTSOL SPL mints (created with 6 decimals). */
+    export const SplStable = 6
+    /** Native ETH (wei). */
+    export const EthereumNative = 18
+    /** Native SOL (lamports). */
+    export const SolanaNative = 9
+  }
+
   /** Variance-tolerance knobs every SwapRequest publishes. */
   export namespace Variance {
     /** Published tolerance window (bps) — covers cp remainder + swap fee. */
@@ -84,12 +104,6 @@ export namespace SwapNonNativeScenarioConstants {
   /** Mock SPL units minted to the swap user per stablecoin (10 USDCSOL / 10 USDTSOL). */
   export const SplFundingAmount = FundingMultiple * SwapAmounts.SourceSplStable
 
-  /**
-   * Wei per depot 9-dec unit — native-ETH payout targets publish in the depot
-   * frame and the outpost upscales to 18-dec wei (`× 1e9`) when paying out.
-   */
-  export const WeiPerDepotUnit = 1_000_000_000n
-
   /** EIP-2612 permit validity window (s) — one hour from signing. */
   export const PermitDeadlineWindowSec = 3_600
 
@@ -99,9 +113,6 @@ export namespace SwapNonNativeScenarioConstants {
    * PERSIST for the wall-clock challenge window (never released by delivery).
    */
   export const LocksPerSwap = 2
-
-  /** Basis-point divisor for the variance drift window (`bps / 10_000`). */
-  export const BasisPointDivisor = 10_000n
 
   /**
    * Mock-SPL-mint manifest the Solana outpost bootstrapper persists into the

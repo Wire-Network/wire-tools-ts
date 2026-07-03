@@ -503,7 +503,11 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
         "swap-revert-circulated",
         "a SWAP_REVERT attestation circulates back toward the ETH outpost",
         runVerifySwapRevertCirculated,
-        uwreqOptions
+        // Remit-class budget: request → outpost outbound (up to 2 epochs) →
+        // depot reject → SWAP_REVERT rides the NEXT depot outbound (~4-5
+        // epochs total). The 3-epoch uwreq budget missed by seconds
+        // (2026-07-02: E>D envelope 13 carried the request at t+176s).
+        remitOptions
       ),
       verifyStep<Context>(
         Actor.Sysio,
@@ -866,9 +870,8 @@ async function runPhaseAFourLegBooks(ctx: Context): Promise<void> {
 }
 
 /**
- * USDCSOL is carried at native 6-dec in the depot frame, so the target is
- * already in SPL base units — `from_depot(target, 6)` is the identity and the
- * user's ATA bumps by ~target.
+ * The target rides the attestation in depot 9-dec units; the SOL outpost pays
+ * the user's ATA `from_depot(target, 6)` SPL base units (÷1e3).
  */
 async function runPhaseAUserPayout(ctx: Context): Promise<void> {
   const target = ctx.outputs.assert(Outputs.phaseATarget),
@@ -879,7 +882,10 @@ async function runPhaseAUserPayout(ctx: Context): Promise<void> {
     ),
     floor =
       balanceBefore +
-      (target - drift) / Constants.SwapAmounts.UsdcSolFromDepotDivisor
+      WireReserveTool.fromDepot(
+        target - drift,
+        Constants.SwapAmounts.UsdcSolDecimals
+      )
   await pollUntil(
     "PhaseA user USDCSOL ATA bump",
     async () => (await readUserUsdcSolBalance(ctx)) >= floor,
@@ -1038,13 +1044,16 @@ async function runPhaseBFourLegBooks(ctx: Context): Promise<void> {
 
 /**
  * target is depot 9-dec; native ETH is 18-dec so the ETH outpost pays
- * `target × 1e9` wei from its custody balance.
+ * `fromDepot(target, 18)` wei (×1e9) from its custody balance.
  */
 async function runPhaseBUserPayout(ctx: Context): Promise<void> {
   const swapUser = ctx.outputs.assert(swapUserOutputKey()),
     target = ctx.outputs.assert(Outputs.phaseBTarget),
     balanceBefore = ctx.outputs.assert(Outputs.phaseBEthereumBalanceBefore),
-    targetWei = target * Constants.SwapAmounts.EthereumWeiPerDepotUnit,
+    targetWei = WireReserveTool.fromDepot(
+      target,
+      Constants.SwapAmounts.EthereumNativeDecimals
+    ),
     driftWei = WireReserveTool.varianceDrift(
       targetWei,
       Constants.Variance.ToleranceBps
@@ -1081,7 +1090,9 @@ async function runVerifySwapRevertCirculated(ctx: Context): Promise<void> {
   await pollUntil(
     "SWAP_REVERT attestation circulated toward the ETH outpost",
     async () => containsSwapRevert(oppDebuggingDirectory),
-    Constants.Timing.UwreqDeadlineMs,
+    // Remit-class round trip (see the step registration) — NOT the 3-epoch
+    // uwreq budget.
+    Constants.Timing.RemitDeadlineMs,
     Constants.Timing.LongPollIntervalMs
   )
 }

@@ -41,7 +41,8 @@ const artifacts: OperatorDaemonArtifacts = {
   ethereumAddresses: {
     OPP: "0x1111111111111111111111111111111111111111",
     OPPInbound: "0x2222222222222222222222222222222222222222",
-    OperatorRegistry: "0x3333333333333333333333333333333333333333"
+    OperatorRegistry: "0x3333333333333333333333333333333333333333",
+    ReserveManager: "0x4444444444444444444444444444444444444444"
   },
   solanaProgramId: "GrqvbZLCLkfeSQqvE7rL8XKHVWjNhAG2faLsY8yr9tD5",
   solanaIdlFile: "/cluster/data/solana-idls/opp_outpost.json"
@@ -120,14 +121,27 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(args, "--plugin")).toEqual([...OperatorDaemonTool.UnderwriterPlugins])
       expect(valuesOf(args, "--underwriter-enabled")).toEqual(["true"])
       expect(valuesOf(args, "--underwriter-account")).toEqual(["uwritaaaaaa"])
-      expect(valuesOf(args, "--underwriter-eth-opreg-addr")).toEqual([
-        artifacts.ethereumAddresses.OperatorRegistry
-      ])
       expect(valuesOf(args, "--underwriter-eth-source-deposit-function")).toEqual(["requestSwap"])
-      expect(valuesOf(args, "--underwriter-eth-client-id")).toEqual(["eth-default"])
       expect(valuesOf(args, "--underwriter-sol-source-deposit-instruction")).toEqual(["request_swap"])
-      expect(valuesOf(args, "--underwriter-sol-client-id")).toEqual(["sol-default"])
       expect(valuesOf(args, "--solana-idl-file")).toEqual([artifacts.solanaIdlFile])
+    })
+
+    it("wires each outpost with one consolidated per-chain CSV spec", () => {
+      expect(valuesOf(args, "--underwriter-eth-outpost")).toEqual([
+        [
+          OperatorDaemonTool.EthereumChainCodename,
+          OperatorDaemonTool.EthereumClientId,
+          artifacts.ethereumAddresses.OperatorRegistry,
+          artifacts.ethereumAddresses.ReserveManager
+        ].join(",")
+      ])
+      expect(valuesOf(args, "--underwriter-sol-outpost")).toEqual([
+        [
+          OperatorDaemonTool.SolanaChainCodename,
+          OperatorDaemonTool.SolanaClientId,
+          artifacts.solanaProgramId
+        ].join(",")
+      ])
     })
   })
 

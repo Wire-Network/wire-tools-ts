@@ -1,4 +1,5 @@
 import { SlugName } from "@wireio/sdk-core"
+import { WireReserveTool } from "@wireio/test-cluster-tool"
 
 /**
  * Constants for the private-reserve swap flow. Every value carries over from
@@ -68,28 +69,25 @@ export namespace SwapPrivateReservesScenarioConstants {
   /**
    * create_reserve parameters for the private pair.
    *
-   * Sizing note: each outpost converts the escrow to the reserve's depot
-   * frame at the boundary (`PrecisionLib.toDepot` on ETH downscales 18→9;
-   * `precision::to_depot` on SOL is identity for 6-dec USDCSOL under
-   * per-token precision) and ships it inside the RESERVE_CREATE
-   * attestation's `ReserveAmount`. The ETH escrow lands as 1e10 depot
-   * units (9-dec); the USDCSOL escrow lands as 1e7 (native 6-dec). Each
-   * seeds ~1:1 against the matched WIRE in its own frame, so the
-   * constant-product math over a ~1% draw stays well-conditioned.
+   * Sizing note: every amount riding an OPP envelope is in the depot's
+   * UNIFORM 9-dec frame — each outpost converts at its boundary
+   * (`PrecisionLib.toDepot` on ETH downscales 18→9; `precision::to_depot`
+   * on SOL upscales 6-dec USDCSOL ×1e3) before stamping the RESERVE_CREATE
+   * attestation's `ReserveAmount`. Both escrows land as 1e10 depot units,
+   * seeding ~1:1 against the matched WIRE so the constant-product math over
+   * a ~1% draw stays well-conditioned.
    */
   export namespace CreateParams {
     /** ETH escrow — 10 ETH in wei; `toDepot(·, 18)` → 1e10 depot units. */
     export const EthereumEscrowWei = 10_000_000_000_000_000_000n
     /** Depot-frame seed the ETH escrow lands as on the depot row. */
-    export const EthereumEscrowDepotUnits = EthereumEscrowWei / 10n ** 9n
+    export const EthereumEscrowDepotUnits = WireReserveTool.toDepot(EthereumEscrowWei, 18)
     /** WIRE (raw 9-dp) the owner matches against the ETH reserve. */
     export const EthereumRequestedWire = 10_000_000_000n
-    /** USDCSOL escrow — 10 USDC in 6-dec units. Under per-token precision
-     *  (`min(6, 9) = 6`) `to_depot(·, 6)` is identity, so the depot seed
-     *  equals the chain units (1e7), not the old ×1000 upscale. */
+    /** USDCSOL escrow — 10 USDC in 6-dec units; `to_depot(·, 6)` → ×1e3. */
     export const SolanaEscrowChainUnits = 10_000_000n
-    /** Depot-frame seed the USDCSOL escrow lands as on the depot row. */
-    export const SolanaEscrowDepotUnits = SolanaEscrowChainUnits
+    /** Depot-frame seed the USDCSOL escrow lands as on the depot row (1e10). */
+    export const SolanaEscrowDepotUnits = WireReserveTool.toDepot(SolanaEscrowChainUnits, 6)
     /** WIRE (raw 9-dp) the owner matches against the SOL reserve. */
     export const SolanaRequestedWire = 10_000_000_000n
     /** 50% Bancor connector weight = pure constant product. */
@@ -105,28 +103,20 @@ export namespace SwapPrivateReservesScenarioConstants {
 
   /**
    * Per-phase swap source amounts. Each phase draws ~1% of its source
-   * reserve (Phase A: 1e8 of the 1e10 ETH seed; Phase B: 1e5 of the 1e7
-   * USDCSOL seed) so slippage stays well inside the tolerance.
+   * reserve (1e8 depot units against the 1e10 depot-frame seed on each
+   * side) so slippage stays well inside the tolerance.
    */
   export namespace SwapAmounts {
-    /** Phase A: 0.1 ETH in wei (the ETH outpost divides by 1e9 → depot). */
+    /** Phase A: 0.1 ETH in wei; `toDepot(·, 18)` → 1e8 depot units. */
     export const PhaseASourceWei = 100_000_000_000_000_000n
-    export const PhaseASourceDepotUnits = PhaseASourceWei / 10n ** 9n
-    /**
-     * Phase B: 0.1 USDCSOL in 6-dec chain units. Under per-token precision
-     * USDCSOL is carried at its native 6 decimals in the depot frame
-     * (min(6, 9) = 6), so the outpost's to_depot is identity — the depot units
-     * equal the chain units.
-     */
+    export const PhaseASourceDepotUnits = WireReserveTool.toDepot(PhaseASourceWei, 18)
+    /** Phase B: 0.1 USDCSOL in 6-dec chain units; `to_depot(·, 6)` → 1e8 depot units. */
     export const PhaseBSourceSplUnits = 100_000n
-    export const PhaseBSourceDepotUnits = PhaseBSourceSplUnits
-    /**
-     * USDCSOL depot precision == native (6), so `from_depot(amount, 6)` is the
-     * identity — no scaling between depot units and SPL base units.
-     */
-    export const UsdcSolFromDepotDivisor = 1n
-    /** Depot 9-dec → wei scale for native-ETH payouts (ETH stays 9-dec depot-side). */
-    export const EthereumWeiPerDepotUnit = 1_000_000_000n
+    export const PhaseBSourceDepotUnits = WireReserveTool.toDepot(PhaseBSourceSplUnits, 6)
+    /** USDCSOL chain-native decimals — payouts convert `fromDepot(target, 6)` (÷1e3). */
+    export const UsdcSolDecimals = 6
+    /** Native-ETH chain decimals — payouts convert `fromDepot(target, 18)` (×1e9). */
+    export const EthereumNativeDecimals = 18
   }
 
   export namespace Variance {

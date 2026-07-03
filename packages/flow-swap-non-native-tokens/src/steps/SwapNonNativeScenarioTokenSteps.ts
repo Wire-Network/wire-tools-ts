@@ -84,21 +84,28 @@ export interface SwapCell {
   readonly sourceTokenCode: number
   /** Source amount in chain-native base units (6-dec for the mock stables). */
   readonly sourceAmount: bigint
+  /**
+   * Source token's chain-native decimals. The source outpost stamps the
+   * outbound `SwapRequest.source_amount` as `toDepot(sourceAmount, this)`,
+   * so {@link SwapNonNativeScenarioTokenSteps.quoteTarget} must quote with
+   * the SAME depot-frame amount the depot will re-quote with at ingestion
+   * (2026-07-02 incident: quoting with the raw 6-dec 100_000 instead of the
+   * depot-frame 100_000_000 mispriced the curve 1000× and every swap
+   * reverted "variance exceeded tolerance"). The target itself is NEVER
+   * static — the depot re-quotes the live curve at ingestion.
+   */
+  readonly sourceDecimals: number
   /** Target chain slug value. */
   readonly targetChainCode: number
   /** Target token slug value. */
   readonly targetTokenCode: number
   /**
-   * DESTINATION-native units per depot-frame target unit — the payout floor
-   * multiplies the LIVE-quoted target by this. Identity (1n) for lamports and
-   * 6-dec SPL destinations; `WeiPerDepotUnit` for native ETH. The target
-   * itself is NEVER static: the depot re-quotes the curve at ingestion and
-   * reverts anything outside tolerance, so each cell quotes live via
-   * {@link SwapNonNativeScenarioTokenSteps.quoteTarget} (2026-07-02 incident:
-   * a static 98_000_000 target assumed 10B/10B books while the real quote was
-   * 4_754_411_063 — "variance exceeded tolerance" reverted every swap).
+   * Destination token's chain-native decimals. The published target rides
+   * the attestation in depot 9-dec units; the destination outpost pays out
+   * `fromDepot(target, this)` native units, which is what the payout-floor
+   * assertion must expect.
    */
-  readonly destinationUnitMultiplier: bigint
+  readonly destinationDecimals: number
   /** How the destination payout balance is read for the floor assertion. */
   readonly destination: SwapDestinationKind
 }
@@ -308,13 +315,19 @@ export namespace SwapNonNativeScenarioTokenSteps {
       name,
       description,
       async ctx => {
+        // Quote with the DEPOT-frame source — the amount the source outpost
+        // stamps into SwapRequest.source_amount and the depot re-quotes with.
+        const depotSourceAmount = WireReserveTool.toDepot(
+          cell.sourceAmount,
+          cell.sourceDecimals
+        )
         const target = await WireReserveTool.swapquote(ctx.wire, {
           from: {
             chainCode: cell.sourceChainCode,
             tokenCode: cell.sourceTokenCode,
             reserveCode: Constants.Reserves.ReserveCode
           },
-          fromAmount: cell.sourceAmount,
+          fromAmount: depotSourceAmount,
           to: {
             chainCode: cell.targetChainCode,
             tokenCode: cell.targetTokenCode,
@@ -327,7 +340,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
         )
         ctx.outputs.set(liveTargetOutputKey(cell.name), target)
         ctx.log.info(
-          `[swap-non-native] ${cell.name}: live target ${target} for source ${cell.sourceAmount}`
+          `[swap-non-native] ${cell.name}: live target ${target} (depot frame) for depot source ${depotSourceAmount} (native ${cell.sourceAmount})`
         )
       },
       options
@@ -1001,17 +1014,23 @@ function readDestinationBalance(
     .exhaustive()
 }
 
-/** The payout floor: `before + (liveTarget × destination multiplier − variance drift)`. */
+/**
+ * The payout floor: `before + fromDepot(liveTarget − variance drift)`. Drift is
+ * applied in the depot frame (where the depot's variance gate evaluates it),
+ * then the net converts to destination-native units exactly as the outpost's
+ * `fromDepot` payout does.
+ */
 function destinationPayoutFloor(
   destinationBefore: bigint,
   cell: SwapCell,
   liveTarget: bigint
 ): bigint {
-  const destinationTarget = liveTarget * cell.destinationUnitMultiplier
-  const drift =
-    (destinationTarget * BigInt(Constants.Variance.ToleranceBps)) /
-    Constants.BasisPointDivisor
-  return destinationBefore + (destinationTarget - drift)
+  const depotNet =
+    liveTarget -
+    WireReserveTool.varianceDrift(liveTarget, Constants.Variance.ToleranceBps)
+  return (
+    destinationBefore + WireReserveTool.fromDepot(depotNet, cell.destinationDecimals)
+  )
 }
 
 /** The calldata-facing `SwapArgs` struct for the cell (ERC-20 source paths). */

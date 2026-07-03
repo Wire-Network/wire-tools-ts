@@ -1,7 +1,7 @@
 import Path from "node:path"
 import { asOption } from "@3fv/prelude-ts"
 import { isString, Level } from "@wireio/shared"
-import { camelCase, range } from "lodash"
+import { camelCase, defaultsDeep, range } from "lodash"
 import { match, P } from "ts-pattern"
 import type { Argv, Options as YargsOption } from "yargs"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
@@ -407,27 +407,68 @@ function toYargsOption(
 }
 
 /**
+ * The `WIRE_*` environment variables seeding the shared path flags — the e2e
+ * gate's uniform per-flow contract (`e2e-tests-no-per-flow-env-customization`)
+ * and `scripts/run-flow.mjs` set exactly these. NOT an identity enum (the
+ * values are external variable names), so a `const` lookup per the
+ * string-enum-value-equals-key rule. NOTE the historical spelling
+ * `WIRE_ETH_PATH` → `ethereumPath` — not a mechanical kebab mapping.
+ */
+export const PathEnvironmentVariableByOption = {
+  clusterPath: "WIRE_CLUSTER_PATH",
+  buildPath: "WIRE_BUILD_PATH",
+  ethereumPath: "WIRE_ETH_PATH",
+  solanaPath: "WIRE_SOLANA_PATH"
+} as const satisfies Partial<Record<keyof ClusterBuildOptions, string>>
+
+/**
+ * Read the `WIRE_*` path variables into a {@link ClusterBuildOptions} layer —
+ * absent / empty variables are omitted so they never mask another source.
+ *
+ * @param environment - The environment map (injectable for tests).
+ * @returns The env-derived path options.
+ */
+export function environmentPathDefaults(
+  environment: NodeJS.ProcessEnv = process.env
+): ClusterBuildOptions {
+  return Object.fromEntries(
+    Object.entries(PathEnvironmentVariableByOption)
+      .map(([option, variable]) => [option, environment[variable]])
+      .filter(([, value]) => isString(value) && value.length > 0)
+  ) as ClusterBuildOptions
+}
+
+/**
  * Add the shared {@link ClusterBuildOptions} flag surface to a yargs instance —
  * the SAME flags for the `wire-test-cluster` CLI and every `flow-*` executable
  * (so a flow runs under the identical env, per
  * `e2e-tests-no-per-flow-env-customization`). Every leaf of `ClusterBuildOptions`
  * — at ANY nesting depth — becomes a `--kebab-path` flag (dotted path with each
- * camelCase segment kebab-cased, `.` → `-`; array leaves index numerically). A
- * caller's `defaults` (e.g. a flow's `Scenario.defaults` or the `WIRE_*` env)
- * seed each flag, making a seeded leaf optional rather than required. Every
+ * camelCase segment kebab-cased, `.` → `-`; array leaves index numerically).
+ * Flag defaults seed from the `WIRE_*` path variables
+ * ({@link environmentPathDefaults} — per-invocation operator intent, highest)
+ * then the caller's `defaults` (a flow's `Scenario.defaults`); a seeded leaf
+ * becomes optional rather than required, and an explicit flag beats both. Every
  * generated flag carries a `describe`.
  *
  * @param yargs - The yargs instance to extend.
  * @param defaults - Per-scenario option defaults (paths / counts / epoch / …).
+ * @param environment - The environment map (injectable for tests).
  * @returns The extended yargs instance.
  */
 export function applyClusterBuildOptionsArgs(
   yargs: Argv,
-  defaults: ClusterBuildOptions = {}
+  defaults: ClusterBuildOptions = {},
+  environment: NodeJS.ProcessEnv = process.env
 ): Argv {
-  return flattenOptionLeaves(buildOptionShape(defaults)).reduce(
+  const seededDefaults: ClusterBuildOptions = defaultsDeep(
+    {},
+    environmentPathDefaults(environment),
+    defaults
+  )
+  return flattenOptionLeaves(buildOptionShape(seededDefaults)).reduce(
     (instance, optionLeaf) =>
-      instance.option(optionLeaf.flag, toYargsOption(optionLeaf, defaults)),
+      instance.option(optionLeaf.flag, toYargsOption(optionLeaf, seededDefaults)),
     yargs
   )
 }
