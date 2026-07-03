@@ -145,7 +145,7 @@ describe("OperatorDaemonTool", () => {
     })
   })
 
-  describe("runPrepareArtifacts", () => {
+  describe("runArtifactPreparation", () => {
     let dir: string
     beforeAll(() => {
       dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "daemon-artifacts-"))
@@ -191,7 +191,7 @@ describe("OperatorDaemonTool", () => {
           outputs,
           log: { info: () => undefined }
         } as unknown as ClusterBuildContext
-      await OperatorDaemonTool.runPrepareArtifacts(ctx, null, new AbortController().signal)
+      await OperatorDaemonTool.runArtifactPreparation(ctx, null, new AbortController().signal)
 
       const prepared = outputs.assert(OperatorDaemonArtifactsKey)
       expect(prepared.solanaProgramId).toBe(programKeypair.publicKey.toBase58())

@@ -158,7 +158,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
     underwriterCount: Constants.UnderwriterCount
   }
 
-  build(cluster: ClusterBuild): void {
+  plan(cluster: ClusterBuild): void {
     const stepOptions = { timeoutMs: Constants.StepTimeoutMs }
 
     // ── 1. Happy path — create with the holder's key, register, CONFIRMED ──

@@ -300,7 +300,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
     return new SwapScenarioContext(config, log)
   }
 
-  build(cluster: ClusterBuild<SwapScenarioContext>): void {
+  plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const config = cluster.context.config,
       underwriterAccounts = Array.from(
         { length: config.underwriterCount },
@@ -362,7 +362,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
     )
 
     // ── 2. The swap user's paired ETH + SOL identity (+ SOL airdrop) ──
-    SwapUserIdentities.ensure<SwapScenarioContext>(
+    SwapUserIdentities.planIdentityProvisioning<SwapScenarioContext>(
       cluster,
       "SwapUser",
       "Provision the swap user's paired Ethereum + Solana identity",
@@ -386,7 +386,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
 
     // ── 4. Underwriter bonds on both outposts → roster flips ACTIVE ──
     // (The old harness bonded these during bootstrap; the scenario owns them now.)
-    WireUnderwriterTool.deposit<SwapScenarioContext>(
+    WireUnderwriterTool.planCollateralDeposit<SwapScenarioContext>(
       cluster,
       "UnderwriterCollateral",
       "Bond default underwriter collateral on both outpost chains",

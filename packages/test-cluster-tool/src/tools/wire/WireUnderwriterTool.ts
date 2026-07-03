@@ -1,7 +1,7 @@
 /**
  * WireUnderwriterTool — the underwriter collateral surface. The pure VALUE
  * helpers (defaults / JSON-config parsing) compute the per-underwriter collateral
- * plan; {@link WireUnderwriterTool.deposit} is the orchestration-unit factory that
+ * plan; {@link WireUnderwriterTool.planCollateralDeposit} is the orchestration-unit factory that
  * turns that plan into a {@link ClusterBuildPhaseGroup} of per-underwriter
  * {@link ClusterBuildPhase}s, each holding the per-`(chain, token)` deposit Steps
  * (so the `Report` records every individual bond). Every on-chain WRITE is its own
@@ -283,14 +283,14 @@ export namespace WireUnderwriterTool {
    * `(chain, token)` collateral entry — the deposit Step(s). Every on-chain WRITE
    * is its own Step so the `Report` validates each individual bond:
    *
-   *   * EVM native → {@link EthereumCollateralTool.deposit}.
-   *   * EVM non-native (ERC-20) → {@link EthereumFundingTool.mintErc20} +
-   *     {@link EthereumCollateralTool.approveErc20} +
-   *     {@link EthereumCollateralTool.depositNonNative}.
-   *   * SVM native → {@link SolanaFundingTool.airdrop} (fund the escrow) +
-   *     {@link SolanaCollateralTool.deposit}.
-   *   * SVM non-native (SPL) → {@link SolanaFundingTool.airdrop} +
-   *     {@link SolanaFundingTool.mintSpl} + {@link SolanaCollateralTool.depositNonNative}.
+   *   * EVM native → {@link EthereumCollateralTool.planDeposit}.
+   *   * EVM non-native (ERC-20) → {@link EthereumFundingTool.planErc20Mint} +
+   *     {@link EthereumCollateralTool.planErc20Approval} +
+   *     {@link EthereumCollateralTool.planNonNativeDeposit}.
+   *   * SVM native → {@link SolanaFundingTool.planAirdrop} (fund the escrow) +
+   *     {@link SolanaCollateralTool.planDeposit}.
+   *   * SVM non-native (SPL) → {@link SolanaFundingTool.planAirdrop} +
+   *     {@link SolanaFundingTool.planSplMint} + {@link SolanaCollateralTool.planNonNativeDeposit}.
    *   * WIRE → skipped (no outpost deposit path today).
    *
    * The deposit Steps resolve the operator identity from `ctx.keyStore`
@@ -307,7 +307,7 @@ export namespace WireUnderwriterTool {
    * @returns The self-registered deposit PhaseGroup.
    * @throws If `collateral.length !== underwriterAccounts.length`.
    */
-  export function deposit<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCollateralDeposit<C extends ClusterBuildContext = ClusterBuildContext>(
     parent: ClusterBuildParent<C>,
     name: string,
     description: string,
@@ -317,7 +317,7 @@ export namespace WireUnderwriterTool {
   ): ClusterBuildPhaseGroup<C> {
     Assert.ok(
       collateral.length === underwriterAccounts.length,
-      `WireUnderwriterTool.deposit: collateral plan length (${collateral.length}) ` +
+      `WireUnderwriterTool.planCollateralDeposit: collateral plan length (${collateral.length}) ` +
         `must equal underwriter count (${underwriterAccounts.length})`
     )
     const config = parent.context.config
@@ -493,7 +493,7 @@ function ethereumNativeSteps<C extends ClusterBuildContext>(
   amount: bigint
 ): ClusterBuildStep.Any<C>[] {
   return [
-    EthereumCollateralTool.deposit<C>(
+    EthereumCollateralTool.planDeposit<C>(
       Report.Actor.Underwriter,
       `${account}-${chainName}-${tokenName}-deposit`,
       `deposit ${amount} ${tokenName} on ${chainName} (native)`,
@@ -523,7 +523,7 @@ function ethereumNonNativeSteps<C extends ClusterBuildContext>(
   amount: bigint
 ): ClusterBuildStep.Any<C>[] {
   return [
-    EthereumFundingTool.mintErc20<C>(
+    EthereumFundingTool.planErc20Mint<C>(
       Report.Actor.Underwriter,
       `${account}-${tokenName}-mint`,
       `mint ${amount} mock ${tokenName} to ${account}`,
@@ -532,7 +532,7 @@ function ethereumNonNativeSteps<C extends ClusterBuildContext>(
       tokenName,
       amount
     ),
-    EthereumCollateralTool.approveErc20<C>(
+    EthereumCollateralTool.planErc20Approval<C>(
       Report.Actor.Underwriter,
       `${account}-${tokenName}-approve`,
       `approve ${amount} ${tokenName} to OperatorRegistry`,
@@ -541,7 +541,7 @@ function ethereumNonNativeSteps<C extends ClusterBuildContext>(
       tokenName,
       amount
     ),
-    EthereumCollateralTool.depositNonNative<C>(
+    EthereumCollateralTool.planNonNativeDeposit<C>(
       Report.Actor.Underwriter,
       `${account}-${chainName}-${tokenName}-deposit`,
       `deposit ${amount} ${tokenName} on ${chainName} (ERC-20)`,
@@ -566,7 +566,7 @@ function solanaNativeSteps<C extends ClusterBuildContext>(
   amount: bigint
 ): ClusterBuildStep.Any<C>[] {
   return [
-    SolanaFundingTool.airdrop<C>(
+    SolanaFundingTool.planAirdrop<C>(
       Report.Actor.Underwriter,
       `${account}-${chainName}-airdrop`,
       `fund ${account} SOL keypair for the ${tokenName} deposit`,
@@ -574,7 +574,7 @@ function solanaNativeSteps<C extends ClusterBuildContext>(
       account,
       amount + WireUnderwriterTool.SolAirdropHeadroomLamports
     ),
-    SolanaCollateralTool.deposit<C>(
+    SolanaCollateralTool.planDeposit<C>(
       Report.Actor.Underwriter,
       `${account}-${chainName}-${tokenName}-deposit`,
       `deposit ${amount} ${tokenName} on ${chainName} (native)`,
@@ -603,7 +603,7 @@ function solanaNonNativeSteps<C extends ClusterBuildContext>(
   amount: bigint
 ): ClusterBuildStep.Any<C>[] {
   return [
-    SolanaFundingTool.airdrop<C>(
+    SolanaFundingTool.planAirdrop<C>(
       Report.Actor.Underwriter,
       `${account}-${chainName}-airdrop`,
       `fund ${account} SOL keypair for the ${tokenName} deposit`,
@@ -611,7 +611,7 @@ function solanaNonNativeSteps<C extends ClusterBuildContext>(
       account,
       amount + WireUnderwriterTool.SolAirdropHeadroomLamports
     ),
-    SolanaFundingTool.mintSpl<C>(
+    SolanaFundingTool.planSplMint<C>(
       Report.Actor.Underwriter,
       `${account}-${tokenName}-mint`,
       `mint ${amount} mock ${tokenName} to ${account}`,
@@ -620,7 +620,7 @@ function solanaNonNativeSteps<C extends ClusterBuildContext>(
       tokenCode,
       amount
     ),
-    SolanaCollateralTool.depositNonNative<C>(
+    SolanaCollateralTool.planNonNativeDeposit<C>(
       Report.Actor.Underwriter,
       `${account}-${chainName}-${tokenName}-deposit`,
       `deposit ${amount} ${tokenName} on ${chainName} (SPL)`,

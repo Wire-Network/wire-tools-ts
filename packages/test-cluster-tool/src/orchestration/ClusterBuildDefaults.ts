@@ -55,7 +55,7 @@ const BatchOperatorAirdropLamports = 100n * BigInt(LAMPORTS_PER_SOL)
  * OPP contracts, registry, outposts, and PRODUCER operators) and **Cluster Post
  * Contract Deployment** (batch operators + underwriters, operator nodes, first
  * epoch). Every operator — producer, batch, underwriter — is provisioned through the
- * ONE {@link WireOperatorProvisioningTool.provision} mechanism into per-account
+ * ONE {@link WireOperatorProvisioningTool.planOperatorAccountProvisioning} mechanism into per-account
  * {@link OperatorAccount}s. Composed entirely from the {@link Steps} palette. The CLI
  * `create` command runs `create(options).build()`.
  */
@@ -147,7 +147,7 @@ export namespace ClusterBuildDefaults {
     // ── producer operators + remaining system accounts + handoff ──
     // Producers are operators: provisioned through the ONE mechanism, each account
     // materializing its (round-robin, node-shared) K1+BLS into an OperatorAccount.
-    WireOperatorProvisioningTool.provision<C>(
+    WireOperatorProvisioningTool.planOperatorAccountProvisioning<C>(
       prerequisites,
       "Producers",
       "Provision producer operators (account + node-shared identity)",
@@ -294,12 +294,12 @@ export namespace ClusterBuildDefaults {
     // artifacts (ETH ABIs with addresses, SOL program id + IDL) their args reference.
     ClusterBuildPhase.create<C>(postContractDeployment, "OperatorDaemonPrerequisites", "Start the OPP debugging server + prepare daemon artifacts").push(
       Steps.processes.debuggingServer.start<C>(Actor.Sysio, "start-debugging-server", "start the in-process OPP debugging server", {}),
-      OperatorDaemonTool.prepareArtifacts<C>(Actor.Sysio, "prepare-daemon-artifacts", "write ETH ABI + SOL IDL artifacts for operator daemons", {})
+      OperatorDaemonTool.planArtifactPreparation<C>(Actor.Sysio, "prepare-daemon-artifacts", "write ETH ABI + SOL IDL artifacts for operator daemons", {})
     )
 
     // Bootstrapped batch operators + underwriters via the ONE mechanism (no funding —
     // deposit flows provision their own non-bootstrapped ops with funding).
-    WireOperatorProvisioningTool.provision<C>(
+    WireOperatorProvisioningTool.planOperatorAccountProvisioning<C>(
       postContractDeployment,
       "Create batchops & uws",
       "Provision the bootstrapped batch operators + underwriters",

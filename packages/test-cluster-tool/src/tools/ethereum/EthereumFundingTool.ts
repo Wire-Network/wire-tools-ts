@@ -210,7 +210,7 @@ const MintWithBalanceAbi: ethers.InterfaceAbi = [
  * flow-layer utilities (they take a pre-bound contract / signer).
  */
 export namespace EthereumFundingTool {
-  /** Input for {@link mintErc20} — one mock-ERC-20 self-mint to the operator wallet. */
+  /** Input for {@link planErc20Mint} — one mock-ERC-20 self-mint to the operator wallet. */
   export interface MintErc20Input extends StepInput {
     readonly kind: "EthereumFundingTool.MintErc20Input"
     /** Operator whose ETH wallet is read from `ctx.outputs` and self-mints. */
@@ -231,7 +231,7 @@ export namespace EthereumFundingTool {
    * The operator's ETH wallet is read from `ctx.outputs` (self-mints via the mock's
    * ungated `mint`); idempotent — a wallet already at/above `amount` no-ops.
    */
-  export function mintErc20<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planErc20Mint<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -251,19 +251,19 @@ export namespace EthereumFundingTool {
         tokenName,
         amount
       },
-      runMintErc20
+      runErc20Mint
     )
   }
 
   /** Named runner — resolve the mock's deployed address, read the balance, then
    *  ONE `mint(...)` of the shortfall. */
-  export async function runMintErc20<C extends ClusterBuildContext>(
+  export async function runErc20Mint<C extends ClusterBuildContext>(
     ctx: C,
     input: MintErc20Input,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(input.amount > 0n, "EthereumFundingTool.mintErc20: amount must be positive")
+    Assert.ok(input.amount > 0n, "EthereumFundingTool.planErc20Mint: amount must be positive")
     const operator = ctx.keyStore.assertOperator(input.operatorAccount)
     const signer = ethereumSigner(operator.ethereum, ctx.ethereum.provider)
     const tokenAddress = EthereumCollateralTool.mockErc20Address(

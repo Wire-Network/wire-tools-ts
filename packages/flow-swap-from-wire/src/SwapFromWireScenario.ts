@@ -145,7 +145,7 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
     return new SwapScenarioContext(config, log)
   }
 
-  build(cluster: ClusterBuild<SwapScenarioContext>): void {
+  plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const config = cluster.context.config,
       underwriterAccounts = Array.from(
         { length: config.underwriterCount },
@@ -199,7 +199,7 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
     )
 
     // ── 2. Underwriter bonds on both outposts → ACTIVE (deposits credit) ──
-    WireUnderwriterTool.deposit(
+    WireUnderwriterTool.planCollateralDeposit(
       cluster,
       "UnderwriterCollateral",
       "Bond the default underwriter collateral on both outposts",
@@ -229,7 +229,7 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
     )
 
     // ── 3. The Solana recipient + the WIRE depositor ──
-    SwapUserIdentities.ensure(
+    SwapUserIdentities.planIdentityProvisioning(
       cluster,
       "ProvisionSwapUser",
       "Provision the swap recipient's Ethereum + Solana identity",

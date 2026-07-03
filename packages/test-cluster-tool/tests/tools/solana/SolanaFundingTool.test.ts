@@ -38,7 +38,7 @@ describe("SolanaFundingTool input validation", () => {
 
 describe("SolanaFundingTool step factories", () => {
   it("airdrop builds a Step carrying the operator + floor input", () => {
-    const step = SolanaFundingTool.airdrop(
+    const step = SolanaFundingTool.planAirdrop(
       Report.Actor.Underwriter,
       "uwa-airdrop",
       "fund uwa",
@@ -54,7 +54,7 @@ describe("SolanaFundingTool step factories", () => {
   })
 
   it("mintSpl builds a Step carrying the operator + tokenCode + amount input", () => {
-    const step = SolanaFundingTool.mintSpl(
+    const step = SolanaFundingTool.planSplMint(
       Report.Actor.Underwriter,
       "uwa-usdcsol-mint",
       "mint usdcsol",

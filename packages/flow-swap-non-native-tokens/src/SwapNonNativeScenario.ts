@@ -307,7 +307,7 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
     return new SwapScenarioContext(config, log)
   }
 
-  build(cluster: ClusterBuild<SwapScenarioContext>): void {
+  plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const config = cluster.context.config
     const underwriterAccounts = Array.from(
       { length: config.underwriterCount },
@@ -321,7 +321,7 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
     )
 
     // ── 1. Bond every (chain, token) leg the swap matrix touches ──
-    WireUnderwriterTool.deposit<SwapScenarioContext>(
+    WireUnderwriterTool.planCollateralDeposit<SwapScenarioContext>(
       cluster,
       "UnderwriterCollateral",
       "Bond the per-leg underwriter collateral for the swap matrix",
@@ -331,7 +331,7 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
     )
 
     // ── 2. The dual-chain swap end-user ──
-    SwapUserIdentities.ensure<SwapScenarioContext>(
+    SwapUserIdentities.planIdentityProvisioning<SwapScenarioContext>(
       cluster,
       "SwapUser",
       "Provision the dual-chain swap user identity",

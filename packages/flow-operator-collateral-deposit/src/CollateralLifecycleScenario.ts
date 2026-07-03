@@ -78,12 +78,12 @@ export class CollateralLifecycleScenario extends FlowScenario {
     ]
   }
 
-  build(cluster: ClusterBuild): void {
+  plan(cluster: ClusterBuild): void {
     const stepOptions = { timeoutMs: Constants.relayDeadlineMs() + Constants.PollDeadlineBufferMs },
       remitStepOptions = { timeoutMs: Constants.remitDeadlineMs() + Constants.PollDeadlineBufferMs }
 
     // ── 1. Provision the non-bootstrapped depositor (the ONE mechanism) ──
-    WireOperatorProvisioningTool.provision(
+    WireOperatorProvisioningTool.planOperatorAccountProvisioning(
       cluster,
       "ProvisionDepositor",
       "Provision the non-bootstrapped depositor batch operator",
@@ -101,7 +101,7 @@ export class CollateralLifecycleScenario extends FlowScenario {
 
     // ── 2. The depositor's daemon (schedule-relay requirement once ACTIVE) ──
     ClusterBuildPhase.create(cluster, "DepositorDaemon", "Start the depositor's batch-operator daemon").push(
-      OperatorDaemonTool.startDaemon(
+      OperatorDaemonTool.planDaemonStart(
         Actor.BatchOperator,
         "start-depositor-daemon",
         `start ${Constants.DepositorAccount}'s batch-operator daemon`,
@@ -112,7 +112,7 @@ export class CollateralLifecycleScenario extends FlowScenario {
 
     // ── 3. ETH bond → depot balance row ──
     ClusterBuildPhase.create(cluster, "DepositEthereum", "Bond ETH collateral; depot credits the balance row").push(
-      EthereumCollateralTool.deposit(
+      EthereumCollateralTool.planDeposit(
         Actor.User,
         "deposit-ethereum",
         `deposit ${Constants.BondAmount} wei ETH collateral`,
@@ -147,7 +147,7 @@ export class CollateralLifecycleScenario extends FlowScenario {
 
     // ── 4. SOL bond → all-chain rule met → ACTIVE ──
     ClusterBuildPhase.create(cluster, "DepositSolana", "Bond SOL collateral; operator flips ACTIVE").push(
-      SolanaCollateralTool.deposit(
+      SolanaCollateralTool.planDeposit(
         Actor.User,
         "deposit-solana",
         `deposit ${Constants.BondAmount} lamports SOL collateral`,
@@ -185,7 +185,7 @@ export class CollateralLifecycleScenario extends FlowScenario {
 
     // ── 5. Withdraw half the ETH bond → depot queues it ──
     ClusterBuildPhase.create(cluster, "WithdrawRequest", "Release half the ETH bond; depot enqueues wtdwqueue").push(
-      EthereumCollateralTool.withdraw(
+      EthereumCollateralTool.planWithdrawal(
         Actor.User,
         "withdraw-ethereum",
         `withdraw ${Constants.WithdrawAmount} wei of the ETH bond`,

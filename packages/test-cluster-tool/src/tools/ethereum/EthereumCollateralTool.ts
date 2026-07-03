@@ -1,9 +1,9 @@
 /**
  * EthereumCollateralTool — Step factories for the Ethereum-outpost collateral
  * writes. Every on-chain WRITE is its OWN {@link ClusterBuildStep} so the
- * `Report` records it: {@link deposit} (native ETH), {@link withdraw} (the
- * collateral withdraw request), {@link approveErc20} (the ERC-20 allowance
- * write), {@link depositNonNative} (the ERC-20 deposit write). Each runner
+ * `Report` records it: {@link planDeposit} (native ETH), {@link planWithdrawal} (the
+ * collateral withdraw request), {@link planErc20Approval} (the ERC-20 allowance
+ * write), {@link planNonNativeDeposit} (the ERC-20 deposit write). Each runner
  * resolves the operator identity from `ctx.keyStore`, binds the
  * `OperatorRegistry` to the operator's derived wallet, and performs exactly ONE
  * write. The contract-surface types + artifact resolution are pure value helpers
@@ -73,9 +73,9 @@ export interface Erc20ApprovableContract extends ethers.BaseContract {
 }
 
 export namespace EthereumCollateralTool {
-  // ── Step: native ETH deposit (`OperatorRegistry.deposit`) ────────────────
+  // ── Step: native ETH planDeposit (`OperatorRegistry.deposit`) ────────────────
 
-  /** Input for {@link deposit} — one native-ETH collateral deposit write. */
+  /** Input for {@link planDeposit} — one native-ETH collateral deposit write. */
   export interface DepositInput extends StepInput {
     readonly kind: "EthereumCollateralTool.DepositInput"
     /** Operator whose identity is read from `ctx.outputs`. */
@@ -88,7 +88,7 @@ export namespace EthereumCollateralTool {
   }
 
   /** A single native-ETH collateral deposit write to `OperatorRegistry.deposit(...)`. */
-  export function deposit<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planDeposit<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -121,12 +121,12 @@ export namespace EthereumCollateralTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(input.amount > 0n, "EthereumCollateralTool.deposit: amount must be positive")
+    Assert.ok(input.amount > 0n, "EthereumCollateralTool.planDeposit: amount must be positive")
     const operator = ctx.keyStore.assertOperator(input.operatorAccount)
     const compressedPubkey = ethereumCompressedPubkey(operator.ethereum)
     Assert.ok(
       compressedPubkey.byteLength === 33,
-      `EthereumCollateralTool.deposit: compressedPubkey must be 33 bytes, got ${compressedPubkey.byteLength}`
+      `EthereumCollateralTool.planDeposit: compressedPubkey must be 33 bytes, got ${compressedPubkey.byteLength}`
     )
     const registry = loadOperatorRegistry(ctx, ethereumSigner(operator.ethereum, ctx.ethereum.provider))
     const isNative = input.tokenCode === (await registry.nativeTokenCode())
@@ -142,13 +142,13 @@ export namespace EthereumCollateralTool {
     const receipt = await response.wait(1)
     Assert.ok(
       receipt?.status === 1,
-      `EthereumCollateralTool.deposit: reverted (status=${receipt?.status ?? "null"})`
+      `EthereumCollateralTool.planDeposit: reverted (status=${receipt?.status ?? "null"})`
     )
   }
 
   // ── Step: collateral withdraw request (`OperatorRegistry.withdraw`) ──────
 
-  /** Input for {@link withdraw} — one collateral withdraw-request write. */
+  /** Input for {@link planWithdrawal} — one collateral withdraw-request write. */
   export interface WithdrawInput extends StepInput {
     readonly kind: "EthereumCollateralTool.WithdrawInput"
     /** Operator whose identity is resolved from `ctx.keyStore`. */
@@ -165,7 +165,7 @@ export namespace EthereumCollateralTool {
    * wtdwqueue`) and the escrow only decrements when the WITHDRAW_REMIT comes
    * back through OPP.
    */
-  export function withdraw<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planWithdrawal<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -180,18 +180,18 @@ export namespace EthereumCollateralTool {
       description,
       options,
       { kind: "EthereumCollateralTool.WithdrawInput", operatorAccount, tokenCode, amount },
-      runWithdraw
+      runWithdrawal
     )
   }
 
   /** Named runner — ONE `OperatorRegistry.withdraw(...)` write. */
-  export async function runWithdraw<C extends ClusterBuildContext>(
+  export async function runWithdrawal<C extends ClusterBuildContext>(
     ctx: C,
     input: WithdrawInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(input.amount > 0n, "EthereumCollateralTool.withdraw: amount must be positive")
+    Assert.ok(input.amount > 0n, "EthereumCollateralTool.planWithdrawal: amount must be positive")
     const operator = ctx.keyStore.assertOperator(input.operatorAccount)
     const registry = loadOperatorRegistry(ctx, ethereumSigner(operator.ethereum, ctx.ethereum.provider))
     const nonce = await resolveLatestNonce(registry)
@@ -204,7 +204,7 @@ export namespace EthereumCollateralTool {
     const receipt = await response.wait(1)
     Assert.ok(
       receipt?.status === 1,
-      `EthereumCollateralTool.withdraw: reverted (status=${receipt?.status ?? "null"})`
+      `EthereumCollateralTool.planWithdrawal: reverted (status=${receipt?.status ?? "null"})`
     )
   }
 
@@ -228,7 +228,7 @@ export namespace EthereumCollateralTool {
 
   // ── Step: ERC-20 allowance (`approve`) ───────────────────────────────────
 
-  /** Input for {@link approveErc20} — one ERC-20 allowance write. */
+  /** Input for {@link planErc20Approval} — one ERC-20 allowance write. */
   export interface ApproveErc20Input extends StepInput {
     readonly kind: "EthereumCollateralTool.ApproveErc20Input"
     readonly operatorAccount: string
@@ -242,7 +242,7 @@ export namespace EthereumCollateralTool {
   }
 
   /** A single `ERC20.approve(OperatorRegistry, amount)` write, signed by the operator wallet. */
-  export function approveErc20<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planErc20Approval<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -262,12 +262,12 @@ export namespace EthereumCollateralTool {
         tokenName,
         amount
       },
-      runApproveErc20
+      runErc20Approval
     )
   }
 
   /** Named runner — resolve token + OperatorRegistry addresses, then ONE `ERC20.approve(...)` write. */
-  export async function runApproveErc20<C extends ClusterBuildContext>(
+  export async function runErc20Approval<C extends ClusterBuildContext>(
     ctx: C,
     input: ApproveErc20Input,
     signal: AbortSignal
@@ -299,9 +299,9 @@ export namespace EthereumCollateralTool {
     )
   }
 
-  // ── Step: ERC-20 deposit (`depositNonNative`) ────────────────────────────
+  // ── Step: ERC-20 planDeposit (`depositNonNative`) ────────────────────────────
 
-  /** Input for {@link depositNonNative} — one ERC-20 collateral deposit write. */
+  /** Input for {@link planNonNativeDeposit} — one ERC-20 collateral deposit write. */
   export interface DepositNonNativeInput extends StepInput {
     readonly kind: "EthereumCollateralTool.DepositNonNativeInput"
     readonly operatorAccount: string
@@ -314,9 +314,9 @@ export namespace EthereumCollateralTool {
 
   /**
    * A single `OperatorRegistry.depositNonNative(...)` write. The ERC-20 must be
-   * pre-approved by an {@link approveErc20} Step earlier in the same phase.
+   * pre-approved by an {@link planErc20Approval} Step earlier in the same phase.
    */
-  export function depositNonNative<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planNonNativeDeposit<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -342,18 +342,18 @@ export namespace EthereumCollateralTool {
         operatorType,
         amount
       },
-      runDepositNonNative
+      runNonNativeDeposit
     )
   }
 
   /** Named runner — ONE `OperatorRegistry.depositNonNative(...)` write. */
-  export async function runDepositNonNative<C extends ClusterBuildContext>(
+  export async function runNonNativeDeposit<C extends ClusterBuildContext>(
     ctx: C,
     input: DepositNonNativeInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(input.amount > 0n, "EthereumCollateralTool.depositNonNative: amount must be positive")
+    Assert.ok(input.amount > 0n, "EthereumCollateralTool.planNonNativeDeposit: amount must be positive")
     const operator = ctx.keyStore.assertOperator(input.operatorAccount)
     const registry = loadOperatorRegistry(ctx, ethereumSigner(operator.ethereum, ctx.ethereum.provider))
     const nonce = await resolveLatestNonce(registry)
@@ -369,7 +369,7 @@ export namespace EthereumCollateralTool {
     const receipt = await response.wait(1)
     Assert.ok(
       receipt?.status === 1,
-      `EthereumCollateralTool.depositNonNative: reverted (status=${receipt?.status ?? "null"})`
+      `EthereumCollateralTool.planNonNativeDeposit: reverted (status=${receipt?.status ?? "null"})`
     )
   }
 

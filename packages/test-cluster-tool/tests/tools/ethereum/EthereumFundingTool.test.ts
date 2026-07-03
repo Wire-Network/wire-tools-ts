@@ -4,7 +4,7 @@ import { Report } from "@wireio/test-cluster-tool/report"
 describe("EthereumFundingTool step factories", () => {
   describe("mintErc20", () => {
     it("builds a mint Step carrying the operator + token + amount input", () => {
-      const step = EthereumFundingTool.mintErc20(
+      const step = EthereumFundingTool.planErc20Mint(
         Report.Actor.Underwriter,
         "uwa-usdc-mint",
         "mint usdc to uwa",

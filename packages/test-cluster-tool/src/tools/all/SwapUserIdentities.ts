@@ -8,7 +8,7 @@
  * identity in the depot's authex resolution, so swap flows provision their own
  * user here.
  *
- * Per the orchestration model, {@link ensure} RETURNS a {@link ClusterBuildPhase}:
+ * Per the orchestration model, {@link planIdentityProvisioning} RETURNS a {@link ClusterBuildPhase}:
  * a `provision-identity` setup Step (derive the ETH wallet + SOL keypair, store a
  * {@link SwapUserOutput}) followed by an `airdrop` write Step. Cross-step values
  * ride `ctx.outputs`; identity derivation is a pure value helper inside the runner.
@@ -45,7 +45,7 @@ export namespace SwapUserIdentities {
    * identity lands in `ctx.outputs` under {@link swapUserOutputKey} for the swap
    * Steps to read.
    */
-  export function ensure<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planIdentityProvisioning<C extends ClusterBuildContext = ClusterBuildContext>(
     parent: ClusterBuildParent<C>,
     name: string,
     description: string,
@@ -54,14 +54,14 @@ export namespace SwapUserIdentities {
     airdropFloorLamports: number = DefaultSolanaAirdropFloorLamports
   ): ClusterBuildPhase<C> {
     return ClusterBuildPhase.create<C>(parent, name, description, [
-      provisionIdentity<C>(
+      planIdentityCreation<C>(
         Report.Actor.User,
         "swap-user-identity",
         "generate the swap user's ETH + SOL identity",
         options,
         ethereumHdIndex
       ),
-      airdrop<C>(
+      planAirdrop<C>(
         Report.Actor.User,
         "swap-user-airdrop",
         "airdrop SOL to the swap user",
@@ -73,14 +73,14 @@ export namespace SwapUserIdentities {
 
   // ── Step: provision identity (setup — generate + store the output) ───────
 
-  /** Input for {@link provisionIdentity}. */
+  /** Input for {@link planIdentityCreation}. */
   export interface ProvisionIdentityInput extends StepInput {
     readonly kind: "SwapUserIdentities.ProvisionIdentityInput"
     readonly ethereumHdIndex: number
   }
 
   /** Derive the swap user's ETH wallet + SOL keypair and store a {@link SwapUserOutput}. */
-  export function provisionIdentity<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planIdentityCreation<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -93,12 +93,12 @@ export namespace SwapUserIdentities {
       description,
       options,
       { kind: "SwapUserIdentities.ProvisionIdentityInput", ethereumHdIndex },
-      runProvisionIdentity
+      runIdentityCreation
     )
   }
 
   /** Named runner — derive keys, store the {@link SwapUserOutput}. */
-  export async function runProvisionIdentity<C extends ClusterBuildContext>(
+  export async function runIdentityCreation<C extends ClusterBuildContext>(
     ctx: C,
     input: ProvisionIdentityInput,
     signal: AbortSignal
@@ -122,14 +122,14 @@ export namespace SwapUserIdentities {
 
   // ── Step: airdrop SOL to the swap user (write) ───────────────────────────
 
-  /** Input for {@link airdrop}. */
+  /** Input for {@link planAirdrop}. */
   export interface AirdropInput extends StepInput {
     readonly kind: "SwapUserIdentities.AirdropInput"
     readonly floorLamports: number
   }
 
   /** Airdrop SOL to the swap user when the balance is below `floorLamports`. */
-  export function airdrop<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planAirdrop<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
