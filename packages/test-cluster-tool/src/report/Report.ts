@@ -6,29 +6,40 @@ import type { ReportRendererRegistry } from "./ReportRendererRegistry.js"
 const log = getLogger("Report")
 
 /**
- * The complete run narrative — phases of actor-by-actor steps. Built up as a
- * ClusterBuild runs (each `ClusterBuildPhase.build()` returns a
- * {@link Report.Phase}), then rendered to every configured {@link Report.Format}.
+ * The complete run narrative — a TREE of phase groups and phases mirroring the
+ * build's orchestration structure (Build → PhaseGroup → PhaseGroup/Phase →
+ * Steps, nested to any depth). Built up as a ClusterBuild runs (each
+ * `ClusterBuildPhaseGroup.run()` returns one {@link Report.Group} node, each
+ * `ClusterBuildPhase.run()` one {@link Report.Phase} node), then rendered to
+ * every configured {@link Report.Format}.
  *
  * `Report` is BOTH this class and a companion namespace (below) carrying the
  * report domain types, the phase builder, and the step/error factories.
  */
 export class Report {
-  private readonly phaseList: Report.Phase[] = []
+  private readonly nodeList: Report.Node[] = []
 
-  /** The phases recorded so far — internally mutable, externally read-only. */
+  /** The narrative tree's root nodes — internally mutable, externally read-only. */
+  get nodes(): ReadonlyArray<Report.Node> {
+    return this.nodeList
+  }
+
+  /**
+   * Every {@link Report.Phase} in the tree, depth-first — the flat view for
+   * consumers that only care about phase/step outcomes (counts, verdicts).
+   */
   get phases(): ReadonlyArray<Report.Phase> {
-    return this.phaseList
+    return this.nodeList.flatMap(node => Report.Node.phases(node))
   }
 
-  /** True when every phase succeeded. */
+  /** True when every node in the tree succeeded. */
   get succeeded(): boolean {
-    return this.phaseList.every(phase => phase.succeeded)
+    return this.nodeList.every(node => node.succeeded)
   }
 
-  /** Append finished phases (variadic, fluent). */
-  push(...phases: Report.Phase[]): Report {
-    this.phaseList.push(...phases)
+  /** Append finished nodes (variadic, fluent). */
+  push(...nodes: Report.Node[]): Report {
+    this.nodeList.push(...nodes)
     return this
   }
 
@@ -88,6 +99,12 @@ export namespace Report {
     skipped = "skipped"
   }
 
+  /** Narrative tree node kinds. */
+  export enum NodeKind {
+    group = "group",
+    phase = "phase"
+  }
+
   /** Full failure detail — every slot present (null when absent) so it survives JSON. */
   export interface ErrorDetail {
     message: string
@@ -105,17 +122,39 @@ export namespace Report {
     startedAt: string
     durationMs: number
     input: unknown | null
+    /**
+     * Client-call capture for the step — every wire/clio/ethereum/solana
+     * client action, transaction, and CLI invocation the step's runner
+     * performed (payloads + command lines), recorded by
+     * `StepExtraRecorder`. A plain, JSON-stringify-safe object; null when
+     * the step made no recorded client calls.
+     */
+    extra: Record<string, unknown> | null
     error: ErrorDetail | null
   }
 
-  /** A built phase of the narrative. */
+  /** A leaf narrative node: one phase of executed steps. */
   export interface Phase {
+    kind: NodeKind.phase
     name: string
     description: string
     steps: ReadonlyArray<StepResult>
     succeeded: boolean
     durationMs: number
   }
+
+  /** A branch narrative node: a phase group of phases and/or sub-groups. */
+  export interface Group {
+    kind: NodeKind.group
+    name: string
+    description: string
+    children: ReadonlyArray<Node>
+    succeeded: boolean
+    durationMs: number
+  }
+
+  /** Any narrative tree node. */
+  export type Node = Phase | Group
 
   /** Derived readings over a {@link Phase} shared by the renderers. */
   export namespace Phase {
@@ -127,6 +166,68 @@ export namespace Report {
     export function skippedCount(phase: Phase): number {
       return phase.steps.filter(step => step.status === StepStatus.skipped)
         .length
+    }
+  }
+
+  /** Factory + derived readings over {@link Group} nodes. */
+  export namespace Group {
+    /**
+     * Freeze a group node from its executed children — succeeded iff every
+     * child succeeded (a sequential group that omitted children after a
+     * failure is already failed via that failing child).
+     */
+    export function from(
+      name: string,
+      description: string,
+      children: Node[],
+      durationMs: number
+    ): Group {
+      return {
+        kind: NodeKind.group,
+        name,
+        description,
+        children,
+        succeeded: children.every(child => child.succeeded),
+        durationMs
+      }
+    }
+  }
+
+  /** Recursive readings over any {@link Node}. */
+  export namespace Node {
+    /** Type guard: the node is a {@link Group}. */
+    export function isGroup(node: Node): node is Group {
+      return node.kind === NodeKind.group
+    }
+
+    /** Type guard: the node is a {@link Phase}. */
+    export function isPhase(node: Node): node is Phase {
+      return node.kind === NodeKind.phase
+    }
+
+    /** Every phase under `node` (itself included when a phase), depth-first. */
+    export function phases(node: Node): Phase[] {
+      return isPhase(node)
+        ? [node]
+        : node.children.flatMap(child => phases(child))
+    }
+
+    /** Total executed-step count under `node`. */
+    export function stepCount(node: Node): number {
+      return phases(node).reduce((total, phase) => total + phase.steps.length, 0)
+    }
+
+    /** Total skipped-step count under `node`. */
+    export function skippedCount(node: Node): number {
+      return phases(node).reduce(
+        (total, phase) => total + Phase.skippedCount(phase),
+        0
+      )
+    }
+
+    /** True when `node` (or any descendant) carries a failure or skip. */
+    export function hasProblem(node: Node): boolean {
+      return !node.succeeded || skippedCount(node) > 0
     }
   }
 
@@ -151,7 +252,7 @@ export namespace Report {
 
   /**
    * Accumulates a phase's step results, then freezes them into a {@link Phase}.
-   * Created by `ClusterBuildPhase.build()`; one `push` per executed step.
+   * Created by `ClusterBuildPhase.run()`; one `push` per executed step.
    */
   export class PhaseBuilder {
     private readonly results: StepResult[] = []
@@ -171,6 +272,7 @@ export namespace Report {
     /** Freeze into an immutable {@link Phase}. */
     build(): Phase {
       return {
+        kind: NodeKind.phase,
         name: this.name,
         description: this.description,
         steps: this.results,
@@ -191,7 +293,8 @@ export namespace Report {
       step: StepLike,
       status: StepStatus,
       durationMs: number,
-      error: ErrorDetail | null
+      error: ErrorDetail | null,
+      extra: Record<string, unknown> | null
     ): StepResult {
       return {
         name: step.name,
@@ -201,29 +304,36 @@ export namespace Report {
         startedAt: new Date(Date.now() - durationMs).toISOString(),
         durationMs,
         input: step.input ?? null,
+        extra,
         error
       }
     }
     /** A successful step result. */
-    export function ok(step: StepLike, durationMs: number): StepResult {
-      return base(step, StepStatus.ok, durationMs, null)
+    export function ok(
+      step: StepLike,
+      durationMs: number,
+      extra: Record<string, unknown> | null = null
+    ): StepResult {
+      return base(step, StepStatus.ok, durationMs, null, extra)
     }
     /** A failed step result (builds the ErrorDetail from `error` + the step input). */
     export function failed(
       step: StepLike,
       durationMs: number,
-      error: unknown
+      error: unknown,
+      extra: Record<string, unknown> | null = null
     ): StepResult {
       return base(
         step,
         StepStatus.failed,
         durationMs,
-        ErrorDetail.from(error, step.input)
+        ErrorDetail.from(error, step.input),
+        extra
       )
     }
     /** A skipped step result (an earlier sibling failed → this never ran). */
     export function skipped(step: StepLike): StepResult {
-      return base(step, StepStatus.skipped, 0, null)
+      return base(step, StepStatus.skipped, 0, null, null)
     }
   }
 

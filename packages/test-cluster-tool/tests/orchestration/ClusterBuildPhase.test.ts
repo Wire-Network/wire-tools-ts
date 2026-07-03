@@ -25,9 +25,11 @@ const fail = (name: string) =>
     throw new Error(`${name} boom`)
   })
 
-/** Run a phase to its single Report.Phase (the base returns a flat array). */
+/** Run a phase to its single Report.Phase node (the base returns Node[]). */
 const runOne = (phase: ClusterBuildPhase): Promise<Report.Phase> =>
-  phase.run(new AbortController().signal).then(phases => phases[0])
+  phase
+    .run(new AbortController().signal)
+    .then(nodes => nodes[0] as Report.Phase)
 
 describe("ClusterBuildPhase executor", () => {
   it("runs steps sequentially in order; all ok → phase succeeded", async () => {

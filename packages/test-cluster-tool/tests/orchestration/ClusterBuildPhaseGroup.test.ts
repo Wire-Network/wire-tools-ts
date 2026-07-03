@@ -26,8 +26,11 @@ const fail = (name: string) =>
     throw new Error(`${name} boom`)
   })
 
+/** Run a group and flatten its single Group node to the contained phases. */
 const runGroup = (group: ClusterBuildPhaseGroup): Promise<Report.Phase[]> =>
-  group.run(new AbortController().signal)
+  group
+    .run(new AbortController().signal)
+    .then(nodes => nodes.flatMap(node => Report.Node.phases(node)))
 
 describe("ClusterBuildPhaseGroup", () => {
   it("defaults to sequential; runs child phases in registration order", async () => {

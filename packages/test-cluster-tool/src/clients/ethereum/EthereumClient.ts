@@ -1,5 +1,6 @@
 import { ethers } from "ethers"
 import { EthereumWallet } from "./EthereumWallet.js"
+import { RecordingJsonRpcProvider } from "./RecordingJsonRpcProvider.js"
 
 /**
  * Client for the Ethereum outpost on anvil/hardhat. Loads (and caches)
@@ -16,7 +17,10 @@ export class EthereumClient {
     readonly rpcUrl: string,
     privateKey: string | null = null
   ) {
-    this.provider = new ethers.JsonRpcProvider(rpcUrl)
+    // Recording provider: every tx submission / anvil admin call made through
+    // this client (or any signer/contract bound to it) lands in the running
+    // step's `Report.StepResult.extra`.
+    this.provider = new RecordingJsonRpcProvider(rpcUrl)
     this.wallet = new EthereumWallet(
       this.provider,
       privateKey ?? EthereumClient.DefaultPrivateKey

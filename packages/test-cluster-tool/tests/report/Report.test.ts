@@ -112,7 +112,7 @@ describe("Report.write", () => {
     const md = Fs.readFileSync(Path.join(dir, "run.md"), "utf8")
     const html = Fs.readFileSync(Path.join(dir, "run.html"), "utf8")
     expect(csv.split("\n")[0]).toBe(
-      "phase,step,actor,status,startedAt,durationMs,error"
+      "path,phase,step,actor,status,startedAt,durationMs,error,extra"
     )
     expect(md).toContain("# Cluster Run Report — FAILED")
     expect(html).toContain("<!doctype html>")

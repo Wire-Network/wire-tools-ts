@@ -2,6 +2,7 @@ import { ReportMarkdownRenderer } from "@wireio/test-cluster-tool/report"
 import {
   createBigintFailureReport,
   createFailureReport,
+  createNestedReport,
   createSkippedTailReport,
   createSuccessReport
 } from "../reportFixture.js"
@@ -39,5 +40,22 @@ describe("ReportMarkdownRenderer", () => {
   it("annotates the skipped count on a failed phase's header", () => {
     const md = new ReportMarkdownRenderer(createFailureReport()).render()
     expect(md).toContain("· 1 skipped)")
+  })
+})
+
+describe("ReportMarkdownRenderer nesting + extra", () => {
+  it("deepens heading level per nesting depth", () => {
+    const md = new ReportMarkdownRenderer(createNestedReport()).render()
+    expect(md).toContain("## [OK] Bootstrap")
+    expect(md).toContain("### [OK] Processes")
+    expect(md).toContain("#### [OK] Kiod")
+    expect(md).toContain("### [OK] Registry")
+    expect(md).toContain("## [FAIL] Scenario")
+  })
+
+  it("renders a client-calls details block per step with extra", () => {
+    const md = new ReportMarkdownRenderer(createNestedReport()).render()
+    expect(md).toContain("<code>start-kiod</code> — client calls (1)")
+    expect(md).toContain("eth_sendRawTransaction")
   })
 })
