@@ -2,6 +2,7 @@ import Bluebird from "bluebird"
 import { performance } from "node:perf_hooks"
 import { match } from "ts-pattern"
 import { Report } from "../report/Report.js"
+import { StepExtraRecorder } from "../report/StepExtraRecorder.js"
 import type { ClusterBuildContext } from "./ClusterBuildContext.js"
 import {
   ClusterBuildPhaseBase,
@@ -70,12 +71,12 @@ export class ClusterBuildPhase<
   }
 
   /**
-   * Run every step and assemble a single {@link Report.Phase} (returned as a
-   * one-element array to satisfy the {@link ClusterBuildPhaseBase} contract).
-   * Sequential by default; parallel when `options.parallelize`. A pre-aborted
-   * `signal` skips every step.
+   * Run every step and assemble a single {@link Report.Phase} node (returned
+   * as a one-element array to satisfy the {@link ClusterBuildPhaseBase}
+   * contract). Sequential by default; parallel when `options.parallelize`. A
+   * pre-aborted `signal` skips every step.
    */
-  async run(signal: AbortSignal): Promise<Report.Phase[]> {
+  async run(signal: AbortSignal): Promise<Report.Node[]> {
     const builder = new Report.PhaseBuilder(this.name, this.description, Date.now()),
       controller = new AbortController(),
       onAbort = () => controller.abort()
@@ -118,20 +119,35 @@ export class ClusterBuildPhase<
     }
 
     const startedAt = performance.now()
+    // One recorder per step: client wrappers record every action/tx/CLI call
+    // into it via AsyncLocalStorage, landing in `StepResult.extra`. Parallel
+    // steps each get their own async scope, so captures never cross steps.
+    const recorder = new StepExtraRecorder()
     this.context.log.info(`▶ ${step.actor}: ${step.description}`)
     try {
-      await runWithTimeout(
-        signal => step.runner(this.context, step.input, signal),
-        step.options.timeoutMs ?? this.options.timeoutMs ?? null,
-        controller
+      await StepExtraRecorder.runWith(recorder, () =>
+        runWithTimeout(
+          signal => step.runner(this.context, step.input, signal),
+          step.options.timeoutMs ?? this.options.timeoutMs ?? null,
+          controller
+        )
       )
-      return Report.StepResult.ok(step, performance.now() - startedAt)
+      return Report.StepResult.ok(
+        step,
+        performance.now() - startedAt,
+        recorder.toExtra()
+      )
     } catch (error) {
       controller.abort() // first-error: cancel siblings / skip the rest
       this.context.log.error(
         `✖ ${step.name}: ${error instanceof Error ? error.message : String(error)}`
       )
-      return Report.StepResult.failed(step, performance.now() - startedAt, error)
+      return Report.StepResult.failed(
+        step,
+        performance.now() - startedAt,
+        error,
+        recorder.toExtra()
+      )
     }
   }
 }

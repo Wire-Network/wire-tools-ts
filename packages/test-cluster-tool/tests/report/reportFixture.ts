@@ -122,3 +122,62 @@ export function createFailureReport(): Report {
     .build()
   return new Report().push(deploy, deposit)
 }
+
+/**
+ * A nested tree: Bootstrap group → (Processes sub-group → Kiod phase) +
+ * Registry phase; a step carrying recorded client calls (`extra`) and a
+ * failed step with `extra` in a second top-level group.
+ */
+export function createNestedReport(): Report {
+  const kiod = new Report.PhaseBuilder("Kiod", "start kiod", Date.now())
+    .push(
+      Report.StepResult.ok(
+        {
+          name: "start-kiod",
+          description: "spawn kiod",
+          actor: Report.Actor.Sysio,
+          input: null
+        },
+        40,
+        { calls: [{ client: "clio", kind: "cli", command: ["clio", "wallet", "create"], ok: true }] }
+      )
+    )
+    .build()
+  const registry = new Report.PhaseBuilder("Registry", "seed registry", Date.now())
+    .push(
+      Report.StepResult.ok(
+        {
+          name: "regchain",
+          description: "register chains",
+          actor: Report.Actor.Sysio,
+          input: { chains: 3 }
+        },
+        90
+      )
+    )
+    .build()
+  const processes = Report.Group.from("Processes", "daemon startup", [kiod], 50)
+  const bootstrap = Report.Group.from(
+    "Bootstrap",
+    "cluster prerequisites",
+    [processes, registry],
+    150
+  )
+  const swap = new Report.PhaseBuilder("Swap", "swap phase", Date.now())
+    .push(
+      Report.StepResult.failed(
+        {
+          name: "request-swap",
+          description: "user swaps",
+          actor: Report.Actor.User,
+          input: { amount: "100000" }
+        },
+        200,
+        new Error("variance exceeded tolerance"),
+        { calls: [{ client: "ethereum", kind: "rpc", method: "eth_sendRawTransaction", ok: false }] }
+      )
+    )
+    .build()
+  const scenario = Report.Group.from("Scenario", "the swap scenario", [swap], 210)
+  return new Report().push(bootstrap, scenario)
+}

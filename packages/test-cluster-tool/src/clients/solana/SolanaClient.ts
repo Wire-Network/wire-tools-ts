@@ -7,6 +7,7 @@ import {
 import { getAccount } from "@solana/spl-token"
 import Bluebird from "bluebird"
 import { getLogger } from "@wireio/shared"
+import { RecordingConnection } from "./RecordingConnection.js"
 import { SolanaWallet } from "./SolanaWallet.js"
 
 const log = getLogger(__filename)
@@ -25,7 +26,10 @@ export class SolanaClient {
     wallet: SolanaWallet,
     commitment: Commitment = SolanaClient.DefaultCommitment
   ) {
-    this.connection = new Connection(rpcUrl, commitment)
+    // Recording connection: every transaction submission / airdrop made
+    // through this client (or anchor providers built over it) lands in the
+    // running step's `Report.StepResult.extra`.
+    this.connection = new RecordingConnection(rpcUrl, commitment)
     this.wallet = wallet
   }
 

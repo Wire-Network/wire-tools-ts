@@ -1,7 +1,7 @@
 import Bluebird from "bluebird"
 import { defaults } from "lodash"
 import { match } from "ts-pattern"
-import type { Report } from "../report/Report.js"
+import { Report } from "../report/Report.js"
 import type { ClusterBuildContext } from "./ClusterBuildContext.js"
 import {
   ClusterBuildPhaseBase,
@@ -73,30 +73,32 @@ export class ClusterBuildPhaseGroup<
   }
 
   /**
-   * Run children per {@link config}, returning their flattened
-   * {@link Report.Phase}s. Sequential: stop at the first failed child (the rest
-   * are omitted). Parallel: a failing child aborts the shared controller so
-   * in-flight siblings cancel; all produced phases are collected.
+   * Run children per {@link config} and return ONE {@link Report.Group} node
+   * whose `children` nest the produced {@link Report.Node}s in run order.
+   * Sequential: stop at the first failed child (the rest are omitted —
+   * absent from the node tree). Parallel: a failing child aborts the shared
+   * controller so in-flight siblings cancel; all produced nodes are collected.
    */
-  async run(signal: AbortSignal): Promise<Report.Phase[]> {
-    const controller = new AbortController(),
+  async run(signal: AbortSignal): Promise<Report.Node[]> {
+    const startedAtMs = Date.now(),
+      controller = new AbortController(),
       onAbort = () => controller.abort()
     if (signal.aborted) controller.abort()
     else signal.addEventListener("abort", onAbort, { once: true })
     try {
-      return await match(this.config.parallel)
+      const children = await match(this.config.parallel)
         .with(true, async () => {
           const results = await Promise.all(
             this.childList.map(async child => {
-              const phases = await child.run(controller.signal)
-              if (phases.some(phase => !phase.succeeded)) controller.abort()
-              return phases
+              const nodes = await child.run(controller.signal)
+              if (nodes.some(node => !node.succeeded)) controller.abort()
+              return nodes
             })
           )
           return results.flat()
         })
         .with(false, async () => {
-          const phases: Report.Phase[] = []
+          const nodes: Report.Node[] = []
           await Bluebird.each(this.childList, async child => {
             if (controller.signal.aborted) {
               this.context.log.info(
@@ -104,13 +106,21 @@ export class ClusterBuildPhaseGroup<
               )
               return
             }
-            const childPhases = await child.run(controller.signal)
-            phases.push(...childPhases)
-            if (childPhases.some(phase => !phase.succeeded)) controller.abort()
+            const childNodes = await child.run(controller.signal)
+            nodes.push(...childNodes)
+            if (childNodes.some(node => !node.succeeded)) controller.abort()
           })
-          return phases
+          return nodes
         })
         .exhaustive()
+      return [
+        Report.Group.from(
+          this.name,
+          this.description,
+          children,
+          Date.now() - startedAtMs
+        )
+      ]
     } finally {
       signal.removeEventListener("abort", onAbort)
     }

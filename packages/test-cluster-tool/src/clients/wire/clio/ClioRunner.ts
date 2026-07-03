@@ -3,6 +3,7 @@ import { promisify } from "node:util"
 import { asOption } from "@3fv/prelude-ts"
 import { getLogger } from "@wireio/shared"
 import { negate } from "lodash"
+import { StepExtraRecorder } from "../../../report/StepExtraRecorder.js"
 import { retry } from "../../../utils/asyncUtils.js"
 import { isNotEmpty } from "../../../utils/predicateUtils.js"
 
@@ -87,12 +88,39 @@ export class ClioRunner {
     // host connection churn — the node itself keeps serving) never reached chain
     // processing, so re-running is safe (a re-pushed duplicate surfaces as the
     // benign `tx_duplicate`). A NON-transport error IS the result (rethrown).
-    return retry(() => this.runOnce(fullArgs, options), {
-      maxAttempts: ClioRunner.TransportRetryAttempts,
-      delayMs: ClioRunner.TransportRetryDelayMs,
-      label: `clio ${args[0] ?? ""} transport`,
-      checkResult: negate(ClioRunner.isTransportFailure)
-    })
+    // Every logical clio invocation — command line, outcome, duration — is
+    // recorded into the running step's `Report.StepResult.extra`.
+    const startedAtMs = Date.now(),
+      command = [this.config.binary, ...fullArgs]
+    try {
+      const result = await retry(() => this.runOnce(fullArgs, options), {
+        maxAttempts: ClioRunner.TransportRetryAttempts,
+        delayMs: ClioRunner.TransportRetryDelayMs,
+        label: `clio ${args[0] ?? ""} transport`,
+        checkResult: negate(ClioRunner.isTransportFailure)
+      })
+      StepExtraRecorder.record({
+        client: "clio",
+        kind: "cli",
+        command,
+        ok: true,
+        durationMs: Date.now() - startedAtMs,
+        result: ClioRunner.summarizeResult(result)
+      })
+      return result
+    } catch (error) {
+      StepExtraRecorder.record({
+        client: "clio",
+        kind: "cli",
+        command,
+        ok: false,
+        durationMs: Date.now() - startedAtMs,
+        error: ClioRunner.truncateForRecord(
+          error instanceof Error ? error.message : String(error)
+        )
+      })
+      throw error
+    }
   }
 
   /** One clio subprocess execution (the retry loop above owns transport failures). */
@@ -174,4 +202,38 @@ export namespace ClioRunner {
     /** kiod refusing to unlock a wallet that is already unlocked. */
     WalletAlreadyUnlocked: "Already unlocked"
   } as const
+
+  /** Cap on recorded result / error strings in `StepResult.extra` — full
+   *  payloads ride the COMMAND line; outputs only need enough to identify
+   *  the outcome without ballooning reports. */
+  export const RecordStringCap = 600
+
+  /** Truncate a string for an `extra` record, marking the cut. */
+  export function truncateForRecord(value: string): string {
+    return value.length > RecordStringCap
+      ? `${value.slice(0, RecordStringCap)}… [truncated ${value.length - RecordStringCap} chars]`
+      : value
+  }
+
+  /**
+   * The `extra`-record view of a clio result: a transaction response keeps its
+   * id + receipt status; anything else is its (truncated) string form. The
+   * INPUT payload already rides the recorded command line in full.
+   */
+  export function summarizeResult(result: unknown): unknown {
+    if (result != null && typeof result === "object") {
+      const candidate = result as {
+        transaction_id?: unknown
+        processed?: { receipt?: { status?: unknown } }
+      }
+      if (typeof candidate.transaction_id === "string") {
+        return {
+          transaction_id: candidate.transaction_id,
+          status: candidate.processed?.receipt?.status ?? null
+        }
+      }
+      return truncateForRecord(JSON.stringify(result))
+    }
+    return truncateForRecord(String(result))
+  }
 }
