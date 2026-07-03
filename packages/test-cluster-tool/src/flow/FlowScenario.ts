@@ -9,7 +9,7 @@ import { ClusterBuildContext } from "../orchestration/ClusterBuildContext.js"
  * on top of the {@link ClusterBuildDefaults} bootstrap. The class IS the
  * definition: it carries the flow `name` / `description` / option `defaults`, an
  * optional {@link createContext} factory (its own `ClusterBuildContext` subclass),
- * and a single {@link build} that registers the scenario phases via
+ * and a single {@link plan} that registers the scenario phases via
  * `ClusterBuildPhase.create<C>(cluster, …)`.
  *
  * @typeParam C - The scenario's context type (a `ClusterBuildContext` subclass
@@ -41,7 +41,7 @@ export abstract class FlowScenario<C extends ClusterBuildContext = ClusterBuildC
    *
    * @param cluster - The cluster build, pre-loaded with the bootstrap phases.
    */
-  abstract build(cluster: ClusterBuild<C>): void
+  abstract plan(cluster: ClusterBuild<C>): void
 }
 
 /** A zero-arg scenario constructor (`FlowCLI.create` instantiates the class). */

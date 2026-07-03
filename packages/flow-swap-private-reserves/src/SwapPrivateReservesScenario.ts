@@ -183,7 +183,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
     return new SwapScenarioContext(config, contextLog)
   }
 
-  build(cluster: ClusterBuild<Context>): void {
+  plan(cluster: ClusterBuild<Context>): void {
     const relayOptions = {
         timeoutMs:
           Constants.Timing.RelayDeadlineMs +
@@ -226,7 +226,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
       { length: cluster.config.underwriterCount },
       (_, index) => HarnessConstants.underwriterAccountName(index)
     )
-    WireUnderwriterTool.deposit(
+    WireUnderwriterTool.planCollateralDeposit(
       cluster,
       "UnderwriterCollateral",
       "Underwriters bond collateral on every leg the swap matrix touches",
@@ -259,7 +259,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
     )
 
     // ── 3. The swap user's dual-chain identity (creator on BOTH chains) ──
-    SwapUserIdentities.ensure<Context>(
+    SwapUserIdentities.planIdentityProvisioning<Context>(
       cluster,
       "SwapUserIdentity",
       "Provision the dual-chain swap user (reserve creator + swap actor)",

@@ -134,7 +134,7 @@ export class ReserveLifecycleScenario extends FlowScenario {
     ]
   }
 
-  build(cluster: ClusterBuild): void {
+  plan(cluster: ClusterBuild): void {
     const relayStepOptions = { timeoutMs: Constants.RelayDeadlineMs + Constants.PollDeadlineBufferMs },
       readyStepOptions = { timeoutMs: Constants.ReadyDeadlineMs + Constants.PollDeadlineBufferMs },
       windowStepOptions = { timeoutMs: Constants.NoUwreqWindowMs + Constants.PollDeadlineBufferMs },
@@ -167,7 +167,7 @@ export class ReserveLifecycleScenario extends FlowScenario {
     )
 
     // ── 1. The reserve creator's paired ETH + SOL identity (+ SOL airdrop) ──
-    SwapUserIdentities.ensure(
+    SwapUserIdentities.planIdentityProvisioning(
       cluster,
       "ProvisionCreatorIdentity",
       "Provision the reserve creator's ETH + SOL identity",

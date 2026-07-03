@@ -2,7 +2,7 @@
  * SolanaCollateralTool — Step factories for the Solana-outpost
  * `opp-outpost::deposit` / `deposit_non_native` collateral writes. Every Anchor
  * WRITE is its OWN {@link ClusterBuildStep} so the `Report` records it:
- * {@link deposit} (native SOL) and {@link depositNonNative} (SPL). Each runner
+ * {@link planDeposit} (native SOL) and {@link planNonNativeDeposit} (SPL). Each runner
  * reads the operator identity from `ctx.outputs`, builds the `opp_outpost`
  * program bound to the operator's keypair, resolves the program PDAs, and submits
  * exactly ONE deposit ix. PDA derivation + IDL/program loading are pure value
@@ -45,9 +45,9 @@ const VaultSeed = Buffer.from("outpost_vault")
 const CollateralVaultSeed = Buffer.from("collateral_vault")
 
 export namespace SolanaCollateralTool {
-  // ── Step: native SOL deposit (`opp-outpost::deposit`) ────────────────────
+  // ── Step: native SOL planDeposit (`opp-outpost::deposit`) ────────────────────
 
-  /** Input for {@link deposit} — one native-SOL collateral deposit write. */
+  /** Input for {@link planDeposit} — one native-SOL collateral deposit write. */
   export interface DepositInput extends StepInput {
     readonly kind: "SolanaCollateralTool.DepositInput"
     /** Operator whose identity is read from `ctx.outputs`. */
@@ -60,7 +60,7 @@ export namespace SolanaCollateralTool {
   }
 
   /** A single native-SOL collateral deposit write to `opp-outpost::deposit`. */
-  export function deposit<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planDeposit<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -93,7 +93,7 @@ export namespace SolanaCollateralTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(input.amount > 0n, "SolanaCollateralTool.deposit: amount must be positive")
+    Assert.ok(input.amount > 0n, "SolanaCollateralTool.planDeposit: amount must be positive")
     const operator = ctx.keyStore.assertOperator(input.operatorAccount)
     const keypair = solanaKeypair(operator.solana)
     const program = loadOppOutpostProgram(ctx, keypair)
@@ -119,12 +119,12 @@ export namespace SolanaCollateralTool {
       [keypair],
       { skipPreflight: false }
     )
-    await confirmSignature(ctx.solana.connection, signature, "SolanaCollateralTool.deposit")
+    await confirmSignature(ctx.solana.connection, signature, "SolanaCollateralTool.planDeposit")
   }
 
-  // ── Step: SPL deposit (`opp-outpost::deposit_non_native`) ────────────────
+  // ── Step: SPL planDeposit (`opp-outpost::deposit_non_native`) ────────────────
 
-  /** Input for {@link depositNonNative} — one SPL collateral deposit write. */
+  /** Input for {@link planNonNativeDeposit} — one SPL collateral deposit write. */
   export interface DepositNonNativeInput extends StepInput {
     readonly kind: "SolanaCollateralTool.DepositNonNativeInput"
     readonly operatorAccount: string
@@ -141,7 +141,7 @@ export namespace SolanaCollateralTool {
   }
 
   /** A single `opp-outpost::deposit_non_native` SPL write, signed by the operator keypair. */
-  export function depositNonNative<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planNonNativeDeposit<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -167,18 +167,18 @@ export namespace SolanaCollateralTool {
         operatorType,
         amount
       },
-      runDepositNonNative
+      runNonNativeDeposit
     )
   }
 
   /** Named runner — ONE `opp-outpost::deposit_non_native` SPL write. */
-  export async function runDepositNonNative<C extends ClusterBuildContext>(
+  export async function runNonNativeDeposit<C extends ClusterBuildContext>(
     ctx: C,
     input: DepositNonNativeInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(input.amount > 0n, "SolanaCollateralTool.depositNonNative: amount must be positive")
+    Assert.ok(input.amount > 0n, "SolanaCollateralTool.planNonNativeDeposit: amount must be positive")
     const operator = ctx.keyStore.assertOperator(input.operatorAccount)
     const keypair = solanaKeypair(operator.solana)
     const program = loadOppOutpostProgram(ctx, keypair)
@@ -218,7 +218,7 @@ export namespace SolanaCollateralTool {
     await confirmSignature(
       ctx.solana.connection,
       signature,
-      "SolanaCollateralTool.depositNonNative"
+      "SolanaCollateralTool.planNonNativeDeposit"
     )
   }
 

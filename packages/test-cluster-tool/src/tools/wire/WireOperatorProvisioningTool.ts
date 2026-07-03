@@ -1,7 +1,7 @@
 /**
  * WireOperatorProvisioningTool — THE operator-provisioning mechanism. Every
  * operator — producer, batch operator, underwriter, or a flow's extra account —
- * is provisioned through {@link provision}, which RETURNS a
+ * is provisioned through {@link planOperatorAccountProvisioning}, which RETURNS a
  * {@link ClusterBuildPhaseGroup} with one {@link ClusterBuildPhase} per operator
  * (per the orchestration model: every WRITE is its own {@link ClusterBuildStep}
  * so the `Report` records it).
@@ -21,7 +21,7 @@
  * Downstream write runners DERIVE the live ethers/web3 signing objects from the
  * stored typed keys via `utils/keyPairUtils` — no raw SDK handle is ever stored.
  * A flow-provisioned operator's daemon is started separately via
- * `OperatorDaemonTool.startDaemon` (needed once a non-bootstrapped op flips
+ * `OperatorDaemonTool.planDaemonStart` (needed once a non-bootstrapped op flips
  * ACTIVE and enters the schedule).
  */
 
@@ -95,10 +95,10 @@ export namespace WireOperatorProvisioningTool {
    * @param name - The group name (e.g. "Create batchops & uws").
    * @param description - Human-readable group description.
    * @param options - Step option overrides applied to every step.
-   * @param operators - The operators to provision (one Phase each).
+   * @param operators - The operators to planOperatorAccountProvisioning (one Phase each).
    * @returns The self-registered phase group.
    */
-  export function provision<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planOperatorAccountProvisioning<C extends ClusterBuildContext = ClusterBuildContext>(
     parent: ClusterBuildParent<C>,
     name: string,
     description: string,
@@ -142,7 +142,7 @@ export namespace WireOperatorProvisioningTool {
       `provision producer ${account}: producerNodeIndex is required`
     )
     return ClusterBuildPhase.create<C>(group, `Provision ${account}`, `provision producer ${account}`, [
-      materializeProducer<C>(
+      planProducerMaterialization<C>(
         Report.Actor.Producer,
         `${account}-identity`,
         `materialize producer ${account} identity from node ${producerNodeIndex}`,
@@ -150,7 +150,7 @@ export namespace WireOperatorProvisioningTool {
         account,
         producerNodeIndex
       ),
-      createAccount<C>(
+      planAccountCreation<C>(
         Report.Actor.Producer,
         `${account}-account`,
         `create WIRE account ${account}`,
@@ -186,7 +186,7 @@ export namespace WireOperatorProvisioningTool {
       `provision operator ${account}: ethereumHdIndex is required`
     )
     return ClusterBuildPhase.create<C>(group, `Provision ${account}`, `provision operator ${account}`, [
-      materializeIdentity<C>(
+      planIdentityMaterialization<C>(
         actor,
         `${account}-identity`,
         `generate ${account} WIRE + ETH + SOL identity`,
@@ -195,7 +195,7 @@ export namespace WireOperatorProvisioningTool {
         type,
         ethereumHdIndex
       ),
-      createAccount<C>(
+      planAccountCreation<C>(
         actor,
         `${account}-account`,
         `create WIRE account ${account}`,
@@ -204,7 +204,7 @@ export namespace WireOperatorProvisioningTool {
       ),
       ...(fundEthereumWei != null
         ? [
-            fundEthereum<C>(
+            planEthereumFunding<C>(
               actor,
               `${account}-fund-ethereum`,
               `fund ${account} ETH wallet`,
@@ -216,7 +216,7 @@ export namespace WireOperatorProvisioningTool {
         : []),
       ...(airdropSolanaLamports != null
         ? [
-            airdropSolana<C>(
+            planSolanaAirdrop<C>(
               actor,
               `${account}-airdrop-solana`,
               `airdrop SOL to ${account}`,
@@ -226,7 +226,7 @@ export namespace WireOperatorProvisioningTool {
             )
           ]
         : []),
-      authexLink<C>(
+      planAuthexLink<C>(
         actor,
         `${account}-authex-ethereum`,
         `authex-link ${account} on Ethereum`,
@@ -234,7 +234,7 @@ export namespace WireOperatorProvisioningTool {
         account,
         ChainKind.EVM
       ),
-      authexLink<C>(
+      planAuthexLink<C>(
         actor,
         `${account}-authex-solana`,
         `authex-link ${account} on Solana`,
@@ -260,7 +260,7 @@ export namespace WireOperatorProvisioningTool {
 
   // ── Step: materialize an OPP operator's identity (keys → store + wallet) ──
 
-  /** Input for {@link materializeIdentity}. */
+  /** Input for {@link planIdentityMaterialization}. */
   export interface MaterializeIdentityInput extends StepInput {
     readonly kind: "WireOperatorProvisioningTool.MaterializeIdentityInput"
     readonly account: string
@@ -274,7 +274,7 @@ export namespace WireOperatorProvisioningTool {
    * (ED) keys, all via the {@link KeyGenerator} facade — then accumulate the
    * {@link OperatorAccount} into `ctx.keyStore`.
    */
-  export function materializeIdentity<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planIdentityMaterialization<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -294,12 +294,12 @@ export namespace WireOperatorProvisioningTool {
         type,
         ethereumHdIndex
       },
-      runMaterializeIdentity
+      runIdentityMaterialization
     )
   }
 
   /** Named runner — generate K1/ED/EM, import the K1 into kiod, store the account. */
-  export async function runMaterializeIdentity<C extends ClusterBuildContext>(
+  export async function runIdentityMaterialization<C extends ClusterBuildContext>(
     ctx: C,
     input: MaterializeIdentityInput,
     signal: AbortSignal
@@ -337,7 +337,7 @@ export namespace WireOperatorProvisioningTool {
 
   // ── Step: materialize a producer's identity (from its node's shared keys) ──
 
-  /** Input for {@link materializeProducer}. */
+  /** Input for {@link planProducerMaterialization}. */
   export interface MaterializeProducerInput extends StepInput {
     readonly kind: "WireOperatorProvisioningTool.MaterializeProducerInput"
     readonly account: string
@@ -349,7 +349,7 @@ export namespace WireOperatorProvisioningTool {
    * K1+BLS in `ctx.keyStore` — sibling producer accounts on the same node share
    * that key set (the node signs blocks for all of them). Pure read + accumulate.
    */
-  export function materializeProducer<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planProducerMaterialization<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -367,12 +367,12 @@ export namespace WireOperatorProvisioningTool {
         account,
         producerNodeIndex
       },
-      runMaterializeProducer
+      runProducerMaterialization
     )
   }
 
   /** Named runner — read the producer node's keys, accumulate the producer OperatorAccount. */
-  export async function runMaterializeProducer<C extends ClusterBuildContext>(
+  export async function runProducerMaterialization<C extends ClusterBuildContext>(
     ctx: C,
     input: MaterializeProducerInput,
     signal: AbortSignal
@@ -392,7 +392,7 @@ export namespace WireOperatorProvisioningTool {
 
   // ── Step: create the operator's WIRE account with ITS OWN key (write) ─────
 
-  /** Input for {@link createAccount}. */
+  /** Input for {@link planAccountCreation}. */
   export interface CreateAccountInput extends StepInput {
     readonly kind: "WireOperatorProvisioningTool.CreateAccountInput"
     readonly account: string
@@ -403,7 +403,7 @@ export namespace WireOperatorProvisioningTool {
    * public key from `ctx.keyStore`). Requires the operator's materialize step to
    * have run first.
    */
-  export function createAccount<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planAccountCreation<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -416,12 +416,12 @@ export namespace WireOperatorProvisioningTool {
       description,
       options,
       { kind: "WireOperatorProvisioningTool.CreateAccountInput", account },
-      runCreateAccount
+      runAccountCreation
     )
   }
 
   /** Named runner — ONE `newaccount`, keyed by the stored operator's `wire` key. */
-  export async function runCreateAccount<C extends ClusterBuildContext>(
+  export async function runAccountCreation<C extends ClusterBuildContext>(
     ctx: C,
     input: CreateAccountInput,
     signal: AbortSignal
@@ -438,7 +438,7 @@ export namespace WireOperatorProvisioningTool {
 
   // ── Step: fund the operator's ETH wallet (write) ─────────────────────────
 
-  /** Input for {@link fundEthereum}. */
+  /** Input for {@link planEthereumFunding}. */
   export interface FundEthereumInput extends StepInput {
     readonly kind: "WireOperatorProvisioningTool.FundEthereumInput"
     readonly account: string
@@ -446,7 +446,7 @@ export namespace WireOperatorProvisioningTool {
   }
 
   /** A single ETH transfer from anvil's deployer to the operator's wallet. */
-  export function fundEthereum<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planEthereumFunding<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -460,12 +460,12 @@ export namespace WireOperatorProvisioningTool {
       description,
       options,
       { kind: "WireOperatorProvisioningTool.FundEthereumInput", account, wei },
-      runFundEthereum
+      runEthereumFunding
     )
   }
 
   /** Named runner — ONE `sendTransaction` from anvil #0 to the operator wallet. */
-  export async function runFundEthereum<C extends ClusterBuildContext>(
+  export async function runEthereumFunding<C extends ClusterBuildContext>(
     ctx: C,
     input: FundEthereumInput,
     signal: AbortSignal
@@ -481,7 +481,7 @@ export namespace WireOperatorProvisioningTool {
 
   // ── Step: airdrop SOL to the operator keypair (write) ────────────────────
 
-  /** Input for {@link airdropSolana}. */
+  /** Input for {@link planSolanaAirdrop}. */
   export interface AirdropSolanaInput extends StepInput {
     readonly kind: "WireOperatorProvisioningTool.AirdropSolanaInput"
     readonly account: string
@@ -489,7 +489,7 @@ export namespace WireOperatorProvisioningTool {
   }
 
   /** A single `requestAirdrop` to the operator's SOL keypair. */
-  export function airdropSolana<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSolanaAirdrop<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -503,12 +503,12 @@ export namespace WireOperatorProvisioningTool {
       description,
       options,
       { kind: "WireOperatorProvisioningTool.AirdropSolanaInput", account, lamports },
-      runAirdropSolana
+      runSolanaAirdrop
     )
   }
 
   /** Named runner — ONE `requestAirdrop` + confirm, to the derived SOL keypair. */
-  export async function runAirdropSolana<C extends ClusterBuildContext>(
+  export async function runSolanaAirdrop<C extends ClusterBuildContext>(
     ctx: C,
     input: AirdropSolanaInput,
     signal: AbortSignal
@@ -528,7 +528,7 @@ export namespace WireOperatorProvisioningTool {
 
   // ── Step: authex-link the operator's chain key (write) ───────────────────
 
-  /** Input for {@link authexLink}. */
+  /** Input for {@link planAuthexLink}. */
   export interface AuthexLinkInput extends StepInput {
     readonly kind: "WireOperatorProvisioningTool.AuthexLinkInput"
     readonly account: string
@@ -536,7 +536,7 @@ export namespace WireOperatorProvisioningTool {
   }
 
   /** A single `sysio.authex::createlink` write for the operator on one chain. */
-  export function authexLink<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planAuthexLink<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

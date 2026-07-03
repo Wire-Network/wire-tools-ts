@@ -53,7 +53,7 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
     scenarioClass: FlowScenarioConstructor<FlowScenario<C>>
   ): FlowCLI<FlowScenarioContextOf<S>> {
     // `S extends FlowScenario<FlowScenarioContextOf<S>>` holds semantically, but the
-    // `build(cluster: ClusterBuild<C>)` param makes `FlowScenario<C>` contravariant
+    // `plan(cluster: ClusterBuild<C>)` param makes `FlowScenario<C>` contravariant
     // in `C`, so TS won't verify the narrowing — route through `unknown`.
     const scenario = new scenarioClass()
     
@@ -75,7 +75,7 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
       options,
       this.scenario.createContext?.bind(this.scenario)
     )
-    this.scenario.build(cluster)
+    this.scenario.plan(cluster)
     const report = await ClusterManager.launch(cluster)
     log.info(
       `[${this.scenario.name}] ${report.succeeded ? "SUCCEEDED" : "FAILED"}`

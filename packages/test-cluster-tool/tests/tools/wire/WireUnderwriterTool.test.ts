@@ -139,7 +139,7 @@ describe("WireUnderwriterTool", () => {
 
   describe("deposit", () => {
     it("returns a PhaseGroup with one Phase per underwriter", () => {
-      const group = WireUnderwriterTool.deposit(
+      const group = WireUnderwriterTool.planCollateralDeposit(
         newBuild(),
         "uw-collateral",
         "underwriter collateral",
@@ -153,7 +153,7 @@ describe("WireUnderwriterTool", () => {
     })
 
     it("emits ETH-native deposit + SOL airdrop/deposit and skips WIRE for the default plan", () => {
-      const group = WireUnderwriterTool.deposit(
+      const group = WireUnderwriterTool.planCollateralDeposit(
         newBuild(),
         "uw-collateral",
         "underwriter collateral",
@@ -170,7 +170,7 @@ describe("WireUnderwriterTool", () => {
     })
 
     it("emits a single ETH-native deposit Step for a single ETH entry", () => {
-      const group = WireUnderwriterTool.deposit(
+      const group = WireUnderwriterTool.planCollateralDeposit(
         newBuild(),
         "uw-collateral",
         "d",
@@ -183,7 +183,7 @@ describe("WireUnderwriterTool", () => {
     })
 
     it("emits an empty Phase for a WIRE-only underwriter (no outpost deposit path)", () => {
-      const group = WireUnderwriterTool.deposit(
+      const group = WireUnderwriterTool.planCollateralDeposit(
         newBuild(),
         "uw-collateral",
         "d",
@@ -200,7 +200,7 @@ describe("WireUnderwriterTool", () => {
       // must come from the collateral plan, never from an artifact probe.
       // The old factory-time read silently skipped every non-native leg
       // (2026-07-02 flow-swap-non-native-tokens incident).
-      const group = WireUnderwriterTool.deposit(
+      const group = WireUnderwriterTool.planCollateralDeposit(
         newBuild(),
         "uw-collateral",
         "d",
@@ -217,7 +217,7 @@ describe("WireUnderwriterTool", () => {
 
     it("throws when the collateral plan length != underwriter count", () => {
       expect(() =>
-        WireUnderwriterTool.deposit(
+        WireUnderwriterTool.planCollateralDeposit(
           newBuild(),
           "uw-collateral",
           "d",

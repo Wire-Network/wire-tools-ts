@@ -169,7 +169,7 @@ export class YieldDistributionScenario extends FlowScenario {
     underwriterCount: Constants.UnderwriterCount
   }
 
-  build(cluster: ClusterBuild): void {
+  plan(cluster: ClusterBuild): void {
     const emitStepOptions = { timeoutMs: Constants.EmitStepTimeoutMs },
       propagationStepOptions = {
         timeoutMs: Constants.PropagationTimeoutMs + Constants.PollDeadlineBufferMs

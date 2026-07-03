@@ -136,7 +136,7 @@ export class SlashingScenario extends FlowScenario {
     terminateMaxPercentMisses24h: Constants.TerminateMaxPercentMisses24h
   }
 
-  build(cluster: ClusterBuild): void {
+  plan(cluster: ClusterBuild): void {
     const activeStepOptions = { timeoutMs: Constants.activeDeadlineMs() + Constants.PollDeadlineBufferMs },
       groupStepOptions = { timeoutMs: Constants.groupDeadlineMs() + Constants.PollDeadlineBufferMs },
       settleStepOptions = { timeoutMs: Constants.settleDeadlineMs() + Constants.PollDeadlineBufferMs },
@@ -193,7 +193,7 @@ export class SlashingScenario extends FlowScenario {
     // auto-deliver — the flow pushes their deliveries by hand. With
     // `req_batchop_collat` empty (this flow does not set it), processbatch can
     // flip them ACTIVE with no collateral deposits.
-    WireOperatorProvisioningTool.provision(
+    WireOperatorProvisioningTool.planOperatorAccountProvisioning(
       setup,
       "ProvisionDisputeOperators",
       "Provision the 3 SBP-less non-bootstrapped dispute batch operators",

@@ -5,7 +5,7 @@
  * in `ctx.keyStore`), the outpost client specs, and the deploy artifacts (ETH ABI
  * files with embedded addresses, the SOL program id + IDL).
  *
- * {@link prepareArtifacts} is a Step (run once, after both outpost deploys) that
+ * {@link planArtifactPreparation} is a Step (run once, after both outpost deploys) that
  * writes the cluster-local artifact files and stores the typed
  * {@link OperatorDaemonArtifacts}; {@link batchOperatorArgs} /
  * {@link underwriterArgs} are PURE value builders the operator-node start runner
@@ -124,17 +124,17 @@ export namespace OperatorDaemonTool {
    * and store the typed {@link OperatorDaemonArtifacts}. Runs ONCE, after both
    * outpost deploys, before any operator node starts.
    */
-  export function prepareArtifacts<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planArtifactPreparation<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runPrepareArtifacts)
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runArtifactPreparation)
   }
 
   /** Named runner — write ABI/IDL artifacts + store {@link OperatorDaemonArtifacts}. */
-  export async function runPrepareArtifacts<C extends ClusterBuildContext>(
+  export async function runArtifactPreparation<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,
     signal: AbortSignal
@@ -358,7 +358,7 @@ export namespace OperatorDaemonTool {
     return `node_${account}`
   }
 
-  /** Input for {@link startDaemon}. */
+  /** Input for {@link planDaemonStart}. */
   export interface StartDaemonInput extends StepInput {
     readonly kind: "OperatorDaemonTool.StartDaemonInput"
     readonly account: string
@@ -374,7 +374,7 @@ export namespace OperatorDaemonTool {
    * operator nodes are planned by `NodeConfig.plan` instead; this Step is for
    * operators provisioned AFTER the plan (flow scenarios).
    */
-  export function startDaemon<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planDaemonStart<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -387,12 +387,12 @@ export namespace OperatorDaemonTool {
       description,
       options,
       { kind: "OperatorDaemonTool.StartDaemonInput", account },
-      runStartDaemon
+      runDaemonStart
     )
   }
 
   /** Named runner — ONE nodeop spawn: the operator's daemon node. */
-  export async function runStartDaemon<C extends ClusterBuildContext>(
+  export async function runDaemonStart<C extends ClusterBuildContext>(
     ctx: C,
     input: StartDaemonInput,
     signal: AbortSignal

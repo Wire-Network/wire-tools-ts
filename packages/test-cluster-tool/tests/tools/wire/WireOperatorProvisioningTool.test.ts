@@ -25,9 +25,9 @@ function firstPhaseStepKinds(group: { children: ReadonlyArray<ClusterBuildPhaseB
   return phase.steps.map(step => (step.input as { kind?: string } | null)?.kind ?? "")
 }
 
-describe("WireOperatorProvisioningTool.provision", () => {
+describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
   it("returns a parallel PhaseGroup with one Phase per operator", () => {
-    const group = WireOperatorProvisioningTool.provision(fakeParent(), "Create ops", "provision ops", {}, [
+    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "Create ops", "provision ops", {}, [
       { account: "batchopaaaa", type: OperatorType.BATCH, ethereumHdIndex: 1, isBootstrapped: true },
       { account: "uwritaaaaaa", type: OperatorType.UNDERWRITER, ethereumHdIndex: 2, isBootstrapped: false }
     ])
@@ -40,7 +40,7 @@ describe("WireOperatorProvisioningTool.provision", () => {
   })
 
   it("a producer Phase materializes from its node + creates the account with ITS key (no authex/register)", () => {
-    const group = WireOperatorProvisioningTool.provision(fakeParent(), "Producers", "producers", {}, [
+    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "Producers", "producers", {}, [
       { account: "defproducera", type: OperatorType.PRODUCER, producerNodeIndex: 0 }
     ])
     const kinds = firstPhaseStepKinds(group)
@@ -56,7 +56,7 @@ describe("WireOperatorProvisioningTool.provision", () => {
   })
 
   it("a bootstrap batch/uw Phase (no funding) skips fund + airdrop, authex-links both chains, registers", () => {
-    const group = WireOperatorProvisioningTool.provision(fakeParent(), "ops", "ops", {}, [
+    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "ops", "ops", {}, [
       { account: "batchopaaaa", type: OperatorType.BATCH, ethereumHdIndex: 1, isBootstrapped: true }
     ])
     const kinds = firstPhaseStepKinds(group)
@@ -70,7 +70,7 @@ describe("WireOperatorProvisioningTool.provision", () => {
   })
 
   it("a flow op WITH funding includes fund + airdrop steps", () => {
-    const group = WireOperatorProvisioningTool.provision(fakeParent(), "flow", "flow", {}, [
+    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "flow", "flow", {}, [
       {
         account: "depositoraaa",
         type: OperatorType.BATCH,

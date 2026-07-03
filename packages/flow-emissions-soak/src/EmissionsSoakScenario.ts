@@ -107,7 +107,7 @@ export class EmissionsSoakScenario extends FlowScenario {
     underwriterCount: Constants.UnderwriterCount
   }
 
-  build(cluster: ClusterBuild): void {
+  plan(cluster: ClusterBuild): void {
     // Pure value generation (no chain side effects): the synthetic corpus is
     // built here so the batch/staker step fan-out is known at registration
     // time — one write step per importseed batch, one per claimer action.

@@ -182,7 +182,7 @@ export class TerminationScenario extends FlowScenario {
     ]
   }
 
-  build(cluster: ClusterBuild): void {
+  plan(cluster: ClusterBuild): void {
     const quickStepOptions = { timeoutMs: Constants.QuickVerifyTimeoutMs },
       depositStepOptions = { timeoutMs: Constants.DepositStepTimeoutMs },
       ethereumDepositStepOptions = {
@@ -245,7 +245,7 @@ export class TerminationScenario extends FlowScenario {
     // ── 2. Provision the doomed non-bootstrapped operator (the ONE mechanism).
     //       Its daemon is DELIBERATELY never started — the whole flow depends on
     //       the scheduled operator staying silent so misses accumulate. ──
-    WireOperatorProvisioningTool.provision(
+    WireOperatorProvisioningTool.planOperatorAccountProvisioning(
       cluster,
       "ProvisionOperator",
       "Provision the doomed non-bootstrapped batch operator (no daemon — it must miss)",
@@ -292,7 +292,7 @@ export class TerminationScenario extends FlowScenario {
 
     // ── 4. ETH bond → depot balance row; status stays UNKNOWN ──
     ClusterBuildPhase.create(cluster, "DepositEthereum", "Bond ETH collateral; depot credits the balance row; status stays UNKNOWN").push(
-      EthereumCollateralTool.deposit(
+      EthereumCollateralTool.planDeposit(
         Actor.User,
         "deposit-ethereum",
         `deposit ${Constants.EthereumBondAmount} wei ETH collateral`,
@@ -345,7 +345,7 @@ export class TerminationScenario extends FlowScenario {
 
     // ── 5. SOL bond → all-chain rule met → ACTIVE; snapshot remit baselines ──
     ClusterBuildPhase.create(cluster, "DepositSolana", "Bond SOL collateral; operator flips ACTIVE; snapshot wallet baselines").push(
-      SolanaCollateralTool.deposit(
+      SolanaCollateralTool.planDeposit(
         Actor.User,
         "deposit-solana",
         `deposit ${Constants.SolanaBondAmount} lamports SOL collateral`,

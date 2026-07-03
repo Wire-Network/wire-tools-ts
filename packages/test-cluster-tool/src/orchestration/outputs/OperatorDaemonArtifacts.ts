@@ -3,7 +3,7 @@ import { outputKey, type OutputKey } from "../OutputStore.js"
 /**
  * The outpost deploy artifacts an operator daemon (batch_operator_plugin /
  * underwriter_plugin nodeop) needs on its command line — prepared once per run
- * by `OperatorDaemonTool.prepareArtifacts` (after both outpost deploys) and read
+ * by `OperatorDaemonTool.planArtifactPreparation` (after both outpost deploys) and read
  * by every operator-node start step.
  */
 export interface OperatorDaemonArtifacts {

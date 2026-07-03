@@ -233,7 +233,7 @@ export class SwapVarianceRevertScenario extends FlowScenario<SwapScenarioContext
     return new SwapScenarioContext(config, log)
   }
 
-  build(cluster: ClusterBuild<SwapScenarioContext>): void {
+  plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const defaultStepOptions: ClusterBuildStepOptions = {
         timeoutMs: Constants.DefaultStepTimeoutMs
       },
@@ -246,7 +246,7 @@ export class SwapVarianceRevertScenario extends FlowScenario<SwapScenarioContext
       }
 
     // ── 1. Provision the paired ETH + SOL swap end-user identity ──
-    SwapUserIdentities.ensure(
+    SwapUserIdentities.planIdentityProvisioning(
       cluster,
       "ProvisionSwapUser",
       "Provision the paired ETH + SOL swap end-user identity",

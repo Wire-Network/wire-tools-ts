@@ -126,7 +126,7 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
     return new SwapScenarioContext(config, log)
   }
 
-  build(cluster: ClusterBuild<SwapScenarioContext>): void {
+  plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const config = cluster.context.config,
       firstUnderwriter = ClusterConstants.underwriterAccountName(0),
       underwriterAccounts = Array.from(
@@ -152,7 +152,7 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
     // ── 1. Bond underwriter collateral on both outposts. The bootstrap
     //       provisions the underwriter accounts but leaves the bonds to the
     //       flow; each per-(chain, token) deposit is its own Step. ──
-    WireUnderwriterTool.deposit(
+    WireUnderwriterTool.planCollateralDeposit(
       cluster,
       "UnderwriterCollateral",
       "Bond every underwriter's collateral on the Ethereum + Solana outposts",
@@ -163,7 +163,7 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
     )
 
     // ── 2. The swap end-user's paired ETH + SOL identity (+ SOL airdrop) ──
-    SwapUserIdentities.ensure(
+    SwapUserIdentities.planIdentityProvisioning(
       cluster,
       "SwapUser",
       "Provision the swap end-user's Ethereum + Solana identities",
