@@ -10,7 +10,7 @@ describe("Steps.contracts.sysio.roa", () => {
       pubkey: "PUB_K1_examplekey",
       tier: NodeOwnerTier.T1
     }
-    const step = Steps.contracts.sysio.roa.newnameduser(
+    const step = Steps.contracts.sysio.roa.planNewnameduser(
       Report.Actor.Sysio,
       "create-node-owner",
       "create the bootstrap node owner",
@@ -30,7 +30,7 @@ describe("Steps.contracts.sysio.roa", () => {
       eth_pub_key: "PUB_EM_examplekey",
       wire_pub_key: "PUB_K1_examplekey"
     }
-    const step = Steps.contracts.sysio.roa.nodeownreg(
+    const step = Steps.contracts.sysio.roa.planNodeownreg(
       Report.Actor.Sysio,
       "register-node-owner",
       "register the bootstrap node owner at tier 1",
@@ -48,7 +48,7 @@ describe("Steps.contracts.sysio.roa", () => {
       total_sys: "1000000000.000000000 SYS",
       bytes_per_unit: 1024
     }
-    const step = Steps.contracts.sysio.roa.activateroa(
+    const step = Steps.contracts.sysio.roa.planActivateroa(
       Report.Actor.Sysio,
       "activate-roa",
       "activate ROA (finite RAM gifting)",

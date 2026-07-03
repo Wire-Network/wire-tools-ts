@@ -324,7 +324,7 @@ export namespace WireUnderwriterTool {
     const group = ClusterBuildPhaseGroup.create<C>(parent, name, description)
     underwriterAccounts.forEach((account, index) => {
       const steps = collateral[index].flatMap(entry =>
-        depositStepsForEntry<C>(config, options, account, entry)
+        planDepositStepsForEntry<C>(config, options, account, entry)
       )
       ClusterBuildPhase.create<C>(
         group,
@@ -419,7 +419,7 @@ function parseChainTokenAmountJson(raw: unknown): ChainTokenAmount {
  * Steps to emit runs directly here; each emitted Step is a validated on-chain
  * write recorded by the Report.
  */
-function depositStepsForEntry<C extends ClusterBuildContext>(
+function planDepositStepsForEntry<C extends ClusterBuildContext>(
   config: ClusterConfig,
   options: ClusterBuildStepOptions,
   account: string,
@@ -439,10 +439,10 @@ function depositStepsForEntry<C extends ClusterBuildContext>(
 
   return match({ chainKind, tokenKind })
     .with({ chainKind: ChainKind.EVM, tokenKind: TokenKind.NATIVE }, () =>
-      ethereumNativeSteps<C>(options, account, chainName, tokenName, tokenCode, amount)
+      planEthereumNativeSteps<C>(options, account, chainName, tokenName, tokenCode, amount)
     )
     .with({ chainKind: ChainKind.EVM }, () =>
-      ethereumNonNativeSteps<C>(
+      planEthereumNonNativeSteps<C>(
         options,
         account,
         chainName,
@@ -453,10 +453,10 @@ function depositStepsForEntry<C extends ClusterBuildContext>(
       )
     )
     .with({ chainKind: ChainKind.SVM, tokenKind: TokenKind.NATIVE }, () =>
-      solanaNativeSteps<C>(options, account, chainName, tokenName, tokenCode, amount)
+      planSolanaNativeSteps<C>(options, account, chainName, tokenName, tokenCode, amount)
     )
     .with({ chainKind: ChainKind.SVM }, () =>
-      solanaNonNativeSteps<C>(
+      planSolanaNonNativeSteps<C>(
         options,
         account,
         chainName,
@@ -484,7 +484,7 @@ function depositStepsForEntry<C extends ClusterBuildContext>(
 }
 
 /** EVM native deposit — one `OperatorRegistry.deposit` write. */
-function ethereumNativeSteps<C extends ClusterBuildContext>(
+function planEthereumNativeSteps<C extends ClusterBuildContext>(
   options: ClusterBuildStepOptions,
   account: string,
   chainName: string,
@@ -513,7 +513,7 @@ function ethereumNativeSteps<C extends ClusterBuildContext>(
  * exist when the build constructs its steps — the outpost deploys later in the
  * same build; the old factory-time read silently skipped every non-native leg).
  */
-function ethereumNonNativeSteps<C extends ClusterBuildContext>(
+function planEthereumNonNativeSteps<C extends ClusterBuildContext>(
   options: ClusterBuildStepOptions,
   account: string,
   chainName: string,
@@ -557,7 +557,7 @@ function ethereumNonNativeSteps<C extends ClusterBuildContext>(
 }
 
 /** SVM native deposit — airdrop the escrow, then one `opp-outpost::deposit` write. */
-function solanaNativeSteps<C extends ClusterBuildContext>(
+function planSolanaNativeSteps<C extends ClusterBuildContext>(
   options: ClusterBuildStepOptions,
   account: string,
   chainName: string,
@@ -593,7 +593,7 @@ function solanaNativeSteps<C extends ClusterBuildContext>(
  * RUNNERS resolve at run time (`sol-mock-mints.json` does not exist when the
  * build constructs its steps — the outpost deploys later in the same build).
  */
-function solanaNonNativeSteps<C extends ClusterBuildContext>(
+function planSolanaNonNativeSteps<C extends ClusterBuildContext>(
   options: ClusterBuildStepOptions,
   account: string,
   chainName: string,

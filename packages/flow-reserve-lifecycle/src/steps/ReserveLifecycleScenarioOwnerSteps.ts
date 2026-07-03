@@ -21,7 +21,7 @@ import {
 export namespace ReserveLifecycleScenarioOwnerSteps {
   // ── Step: provision a WIRE user (create + policy + optional funding) ──────
 
-  /** Input for {@link provisionUser} — one WIRE-user provisioning write set. */
+  /** Input for {@link planProvisionUser} — one WIRE-user provisioning write set. */
   export interface ProvisionUserInput extends StepInput {
     readonly kind: "ReserveLifecycleScenarioOwnerSteps.ProvisionUserInput"
     /** WIRE account name to provision (1..12 chars, base32 alphabet). */
@@ -42,7 +42,7 @@ export namespace ReserveLifecycleScenarioOwnerSteps {
    * @param fundWireAmount - Raw WIRE base units to fund the account with.
    * @returns The definition step.
    */
-  export function provisionUser<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planProvisionUser<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -78,7 +78,7 @@ export namespace ReserveLifecycleScenarioOwnerSteps {
 
   // ── Step: authex link (matcher ↔ the creator wallet's secp256k1 key) ──────
 
-  /** Input for {@link createLink} — one `sysio.authex::createlink` write. */
+  /** Input for {@link planCreateLink} — one `sysio.authex::createlink` write. */
   export interface CreateLinkInput extends StepInput {
     readonly kind: "ReserveLifecycleScenarioOwnerSteps.CreateLinkInput"
     /** WIRE account the creator key is linked TO. */
@@ -99,7 +99,7 @@ export namespace ReserveLifecycleScenarioOwnerSteps {
    * @param account - WIRE account to link the creator key to.
    * @returns The definition step.
    */
-  export function createLink<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCreateLink<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

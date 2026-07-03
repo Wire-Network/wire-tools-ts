@@ -5,10 +5,11 @@ import {
   PublicKey
 } from "@solana/web3.js"
 import { getAccount } from "@solana/spl-token"
-import Bluebird from "bluebird"
 import { getLogger } from "@wireio/shared"
 import { RecordingConnection } from "./RecordingConnection.js"
 import { SolanaWallet } from "./SolanaWallet.js"
+import { mapSeries } from "../../utils/asyncUtils.js"
+
 
 const log = getLogger(__filename)
 
@@ -96,7 +97,7 @@ export class SolanaClient {
     const signatures = await this.connection.getSignaturesForAddress(programId, {
       limit
     })
-    const logArrays = await Bluebird.mapSeries(
+    const logArrays = await mapSeries(
       signatures,
       async signature =>
         (

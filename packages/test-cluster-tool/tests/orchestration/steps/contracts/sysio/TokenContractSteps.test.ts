@@ -8,7 +8,7 @@ describe("Steps.contracts.sysio.token", () => {
       issuer: "sysio",
       maximum_supply: "1000000000.000000000 WIRE"
     }
-    const step = Steps.contracts.sysio.token.create(
+    const step = Steps.contracts.sysio.token.planCreate(
       Report.Actor.Sysio,
       "create-wire",
       "create the WIRE token",
@@ -28,7 +28,7 @@ describe("Steps.contracts.sysio.token", () => {
       quantity: "1000000000.000000000 WIRE",
       memo: "initial WIRE"
     }
-    const step = Steps.contracts.sysio.token.issue(
+    const step = Steps.contracts.sysio.token.planIssue(
       Report.Actor.Sysio,
       "issue-wire",
       "issue WIRE to sysio",
@@ -48,7 +48,7 @@ describe("Steps.contracts.sysio.token", () => {
       quantity: "1000.000000000 SYS",
       memo: "producer grant"
     }
-    const step = Steps.contracts.sysio.token.transfer(
+    const step = Steps.contracts.sysio.token.planTransfer(
       Report.Actor.Sysio,
       "grant-sys",
       "grant SYS to defproducera",

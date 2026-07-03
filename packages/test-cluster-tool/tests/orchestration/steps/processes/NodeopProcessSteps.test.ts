@@ -3,7 +3,7 @@ import { Report } from "@wireio/test-cluster-tool/report"
 
 describe("Steps.processes.nodeop", () => {
   it("start carries the target node name as typed input", () => {
-    const step = Steps.processes.nodeop.start(
+    const step = Steps.processes.nodeop.planStart(
       Report.Actor.Producer,
       "start-node_00",
       "start node_00",
@@ -17,7 +17,7 @@ describe("Steps.processes.nodeop", () => {
   })
 
   it("restart carries the target node name as typed input", () => {
-    const step = Steps.processes.nodeop.restart(
+    const step = Steps.processes.nodeop.planRestart(
       Report.Actor.Underwriter,
       "restart-node_04",
       "relaunch node_04 after sync",

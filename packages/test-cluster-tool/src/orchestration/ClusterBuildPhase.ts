@@ -1,8 +1,8 @@
-import Bluebird from "bluebird"
 import { performance } from "node:perf_hooks"
 import { match } from "ts-pattern"
+import { eachSeries } from "../utils/asyncUtils.js"
 import { Report } from "../report/Report.js"
-import { StepExtraRecorder } from "../report/StepExtraRecorder.js"
+import { StepExtraRecorder } from "../report/tools/StepExtraRecorder.js"
 import type { ClusterBuildContext } from "./ClusterBuildContext.js"
 import {
   ClusterBuildPhaseBase,
@@ -91,7 +91,7 @@ export class ClusterBuildPhase<
           builder.push(...results)
         })
         .with(false, () =>
-          Bluebird.each(this.stepList, async step =>
+          eachSeries(this.stepList, async step =>
             builder.push(await this.runStep(step, controller))
           )
         )
@@ -135,7 +135,7 @@ export class ClusterBuildPhase<
       return Report.StepResult.ok(
         step,
         performance.now() - startedAt,
-        recorder.toExtra()
+        recorder.toExtra() ?? StepExtraRecorder.fallbackExtra(step.description)
       )
     } catch (error) {
       controller.abort() // first-error: cancel siblings / skip the rest
@@ -146,7 +146,7 @@ export class ClusterBuildPhase<
         step,
         performance.now() - startedAt,
         error,
-        recorder.toExtra()
+        recorder.toExtra() ?? StepExtraRecorder.fallbackExtra(step.description)
       )
     }
   }

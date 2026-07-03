@@ -35,7 +35,7 @@ describe("Steps.contracts.sysio.system", () => {
       epoch_log_retention_count: 10,
       pay_cadence_epochs: 1
     }
-    const step = Steps.contracts.sysio.system.setemitcfg(
+    const step = Steps.contracts.sysio.system.planSetemitcfg(
       Report.Actor.Sysio,
       "set-emit-config",
       "set the emission config",
@@ -50,7 +50,7 @@ describe("Steps.contracts.sysio.system", () => {
   })
 
   it("initt5 builds an input-less step with a runner", () => {
-    const step = Steps.contracts.sysio.system.initt5(
+    const step = Steps.contracts.sysio.system.planInitt5(
       Report.Actor.Sysio,
       "init-t5",
       "seed t5_state at chain head time",
@@ -65,7 +65,7 @@ describe("Steps.contracts.sysio.system", () => {
       version: 0,
       core: "9,SYS"
     }
-    const step = Steps.contracts.sysio.system.init(
+    const step = Steps.contracts.sysio.system.planInit(
       Report.Actor.Sysio,
       "system-init",
       "initialize sysio.system",
@@ -82,7 +82,7 @@ describe("Steps.contracts.sysio.system", () => {
       account: "sysio.roa",
       is_priv: 1
     }
-    const step = Steps.contracts.sysio.system.setpriv(
+    const step = Steps.contracts.sysio.system.planSetpriv(
       Report.Actor.Sysio,
       "setpriv-roa",
       "mark sysio.roa privileged",
@@ -101,7 +101,7 @@ describe("Steps.contracts.sysio.system", () => {
       owner: authority,
       active: authority
     }
-    const step = Steps.contracts.sysio.system.newaccount(
+    const step = Steps.contracts.sysio.system.planNewaccount(
       Report.Actor.Sysio,
       "create-bpay",
       "create sysio.bpay",
@@ -117,7 +117,7 @@ describe("Steps.contracts.sysio.system", () => {
     const data: SysioContracts.SysioSystemSetprodkeysAction = {
       schedule: [{ producer_name: "defproducera", block_signing_key: DevK1 }]
     }
-    const step = Steps.contracts.sysio.system.setprodkeys(
+    const step = Steps.contracts.sysio.system.planSetprodkeys(
       Report.Actor.Sysio,
       "set-prod-keys",
       "set the producer schedule",
@@ -138,7 +138,7 @@ describe("Steps.contracts.sysio.system", () => {
       authorized_by: null
     }
     const authorization = [{ actor: "sysio.opreg", permission: "owner" }]
-    const step = Steps.contracts.sysio.system.updateauth(
+    const step = Steps.contracts.sysio.system.planUpdateauth(
       Report.Actor.Sysio,
       "grant-opreg-code",
       "grant @sysio.code to sysio.opreg",

@@ -8,7 +8,7 @@ describe("Steps.contracts.sysio.uwrit", () => {
       fee_bps: 30,
       collateral_lock_duration_ms: 600_000
     }
-    const step = Steps.contracts.sysio.uwrit.setconfig(
+    const step = Steps.contracts.sysio.uwrit.planSetconfig(
       Report.Actor.Sysio,
       "configure-uwrit",
       "set the underwriter config",

@@ -16,7 +16,7 @@ describe("Steps.contracts.sysio.opreg", () => {
       req_batchop_collat: [],
       req_uw_collat: []
     }
-    const step = Steps.contracts.sysio.opreg.setconfig(
+    const step = Steps.contracts.sysio.opreg.planSetconfig(
       Report.Actor.Sysio,
       "configure-opreg",
       "set the operator-registry config",
@@ -36,7 +36,7 @@ describe("Steps.contracts.sysio.opreg", () => {
       type: SysioContracts.SysioOpregOperatortype.OPERATOR_TYPE_BATCH,
       is_bootstrapped: true
     }
-    const step = Steps.contracts.sysio.opreg.regoperator(
+    const step = Steps.contracts.sysio.opreg.planRegoperator(
       Report.Actor.BatchOperator,
       "register-batchop-a",
       "register batchop.a as a bootstrapped batch operator",

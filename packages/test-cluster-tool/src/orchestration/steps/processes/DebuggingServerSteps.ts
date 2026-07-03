@@ -18,7 +18,7 @@ export namespace DebuggingServerSteps {
    * it under {@link DebuggingServerKey}. Idempotent: a second start is a no-op
    * when the server is already held.
    */
-  export function start<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planStart<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -27,7 +27,7 @@ export namespace DebuggingServerSteps {
     return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runStart)
   }
 
-  /** Named runner — `DebuggingServer.create({port, clusterPath})` + `start()`. */
+  /** Named runner — `DebuggingServer.create({port, clusterPath})` + `planStart()`. */
   export async function runStart<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,

@@ -18,7 +18,7 @@ const { SysioContractName, SysioUwritChainkind } = SysioContracts
  * Report-validated write Step here.
  */
 export namespace SwapFromWireScenarioUwritSteps {
-  /** Input for {@link swapfromwire} — the swap's static scalars; the quoted
+  /** Input for {@link planSwapfromwire} — the swap's static scalars; the quoted
    *  target and the recipient identity resolve from `ctx.outputs` at run time. */
   export interface SwapfromwireInput extends StepInput {
     readonly kind: "SwapFromWireScenarioUwritSteps.SwapfromwireInput"
@@ -53,7 +53,7 @@ export namespace SwapFromWireScenarioUwritSteps {
    * @param targetToleranceBps - Variance tolerance (bps).
    * @returns The definition step.
    */
-  export function swapfromwire<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSwapfromwire<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

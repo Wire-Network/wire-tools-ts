@@ -17,10 +17,10 @@ export namespace AnvilProcessSteps {
   /**
    * Start the run-time anvil (get-or-create from `ctx.processManager`). It starts
    * in **instamine** mode (no `--block-time`) so the Hardhat outpost deploy — which
-   * depends on instant mining — succeeds; {@link enableIntervalMining} switches it
+   * depends on instant mining — succeeds; {@link planEnableIntervalMining} switches it
    * to interval mining afterward. Idempotent: a no-op if the anvil is already up.
    */
-  export function start<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planStart<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -49,7 +49,7 @@ export namespace AnvilProcessSteps {
    * Switch the running anvil from instamine to interval mining (`block-time`),
    * emulating Ethereum finality for the flow tests. Run AFTER the outpost deploy.
    */
-  export function enableIntervalMining<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planEnableIntervalMining<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

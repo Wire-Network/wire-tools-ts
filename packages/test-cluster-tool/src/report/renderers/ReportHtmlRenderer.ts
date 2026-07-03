@@ -27,14 +27,15 @@ export class ReportHtmlRenderer implements ReportRenderer {
       nodes = report.nodes
         .map(node => this.renderNode(node, 0))
         .join("\n")
+    const title = ReportHtmlRenderer.esc(Report.title(report))
     return [
       "<!doctype html>",
       `<html lang="en"><head><meta charset="utf-8">`,
-      `<title>Cluster Run Report — ${report.succeeded ? "SUCCEEDED" : "FAILED"}</title>`,
+      `<title>${title}</title>`,
       `<style>${ReportHtmlRenderer.Css}</style></head>`,
       `<body><header class="${report.succeeded ? "ok" : "fail"}">`,
-      `<h1>${report.succeeded ? "Run Succeeded" : "Run Failed"}</h1>`,
-      `<p>${report.phases.length} phases · ${stepCount} steps · ` +
+      `<h1>${title}</h1>`,
+      `<p>${Report.timestampLine()} · ${report.phases.length} phases · ${stepCount} steps · ` +
         `${(totalMs / 1000).toFixed(1)}s</p>`,
       `<nav class="fold-controls">` +
         `<button data-fold="expand">Expand all</button>` +
@@ -96,7 +97,7 @@ export class ReportHtmlRenderer implements ReportRenderer {
       // owning step failed (the calls are the failure's forensic trail).
       body.push(
         this.renderPayload(
-          `client calls (${ReportHtmlRenderer.callCount(step)})`,
+          `extra (${ReportHtmlRenderer.callCount(step)})`,
           step.extra,
           failed,
           "extra"
@@ -143,7 +144,7 @@ export class ReportHtmlRenderer implements ReportRenderer {
 }
 
 export namespace ReportHtmlRenderer {
-  /** Count of recorded client calls on a step (0 when `extra` is absent). */
+  /** Count of recorded extra entries (client calls + notes) on a step. */
   export function callCount(step: Report.StepResult): number {
     const calls = step.extra?.calls
     return Array.isArray(calls) ? calls.length : 0
@@ -197,6 +198,8 @@ export namespace ReportHtmlRenderer {
   /**
    * Inline fold controls: expand / collapse every `<details>` at any level,
    * or fold back to the failures-only view (the server-rendered defaults).
+   * On a failed run it also auto-expands the path to the FIRST failed step
+   * and scrolls it into view on load.
    */
   export const FoldScript = `
     (function () {
@@ -217,5 +220,16 @@ export namespace ReportHtmlRenderer {
           else set(false, failuresOnly);
         });
       });
+      // On a FAILED run, expand the chain down to the first failed step and
+      // bring it into view — the report opens ON the failure.
+      var firstFailure = document.querySelector("main details.step.fail");
+      if (firstFailure) {
+        var node = firstFailure;
+        while (node) {
+          if (node.tagName === "DETAILS") node.open = true;
+          node = node.parentElement;
+        }
+        firstFailure.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
     })();`
 }

@@ -10,7 +10,7 @@ import {
 describe("ReportMarkdownRenderer", () => {
   it("titles a successful run + renders a phase table", () => {
     const md = new ReportMarkdownRenderer(createSuccessReport()).render()
-    expect(md).toContain("# Cluster Run Report — SUCCEEDED")
+    expect(md).toContain("# cluster-build: SUCCESS")
     expect(md).toContain("## [OK] Deploy")
     expect(md).toContain("| # | Step | Actor | Status | Duration |")
     expect(md).toContain("| 1 | deploy-opreg | Sysio | ok | 120ms |")
@@ -18,7 +18,7 @@ describe("ReportMarkdownRenderer", () => {
 
   it("marks a failed run + embeds a collapsible error-detail block", () => {
     const md = new ReportMarkdownRenderer(createFailureReport()).render()
-    expect(md).toContain("# Cluster Run Report — FAILED")
+    expect(md).toContain("# cluster-build: FAILED")
     expect(md).toContain("## [FAIL] DepositSOL")
     expect(md).toContain("<details><summary>[FAIL] <code>relay</code>")
     expect(md).toContain("timed out waiting for balance")
@@ -32,7 +32,7 @@ describe("ReportMarkdownRenderer", () => {
 
   it("a skipped tail fails the phase (all steps must be ok) + annotates the count", () => {
     const md = new ReportMarkdownRenderer(createSkippedTailReport()).render()
-    expect(md).toContain("# Cluster Run Report — FAILED")
+    expect(md).toContain("# cluster-build: FAILED")
     expect(md).toContain("## [FAIL] PhaseA")
     expect(md).toContain("· 2 skipped)")
   })
@@ -55,7 +55,7 @@ describe("ReportMarkdownRenderer nesting + extra", () => {
 
   it("renders a client-calls details block per step with extra", () => {
     const md = new ReportMarkdownRenderer(createNestedReport()).render()
-    expect(md).toContain("<code>start-kiod</code> — client calls (1)")
+    expect(md).toContain("<code>start-kiod</code> — extra (1)")
     expect(md).toContain("eth_sendRawTransaction")
   })
 })

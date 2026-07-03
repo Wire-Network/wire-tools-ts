@@ -1,4 +1,6 @@
 import {
+  eachSeries,
+  mapSeries,
   retry,
   sleep,
   toURL,
@@ -97,5 +99,46 @@ describe("asyncUtils", () => {
         waitForEndpoint(url, { timeoutMs: 20, intervalMs: 5 })
       ).rejects.toThrow(/did not become ready/)
     })
+  })
+})
+
+describe("mapSeries / eachSeries (AsyncLocalStorage-safe sequential iteration)", () => {
+  it("maps sequentially, in order, with indexes", async () => {
+    const order: number[] = []
+    const results = await mapSeries([10, 20, 30], async (item, index) => {
+      order.push(index)
+      await sleep(1)
+      return item + index
+    })
+    expect(results).toEqual([10, 21, 32])
+    expect(order).toEqual([0, 1, 2])
+  })
+
+  it("eachSeries runs effects strictly in order", async () => {
+    const seen: string[] = []
+    await eachSeries(["a", "b"], async item => {
+      seen.push(`start-${item}`)
+      await sleep(1)
+      seen.push(`end-${item}`)
+    })
+    expect(seen).toEqual(["start-a", "end-a", "start-b", "end-b"])
+  })
+
+  it("preserves the step recorder scope even nested under a Bluebird chain", async () => {
+    // The live composition that LOST records: Bluebird drains its shared
+    // callback queue under the scheduling context, so a Bluebird iteration
+    // inside a step detached from StepExtraRecorder's AsyncLocalStorage.
+    // The native helpers must hold the scope through the same nesting.
+    const { StepExtraRecorder } = await import("@wireio/test-cluster-tool/report")
+    const Bluebird = (await import("bluebird")).default
+    const recorder = new StepExtraRecorder()
+    await Bluebird.each([1], async () => {
+      await StepExtraRecorder.runWith(recorder, async () => {
+        await mapSeries([1, 2], async item => {
+          StepExtraRecorder.record({ client: "clio", kind: "cli", item })
+        })
+      })
+    })
+    expect(recorder.calls.map(call => call.item)).toEqual([1, 2])
   })
 })

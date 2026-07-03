@@ -2,7 +2,7 @@ import { Steps } from "@wireio/test-cluster-tool/orchestration"
 import { Report } from "@wireio/test-cluster-tool/report"
 
 describe("Steps.processes.anvil", () => {
-  it.each(["start", "enableIntervalMining"] as const)(
+  it.each(["planStart", "planEnableIntervalMining"] as const)(
     "%s builds an input-less step with a runner",
     factoryName => {
       const step = Steps.processes.anvil[factoryName](

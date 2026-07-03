@@ -3,7 +3,7 @@ import { Report } from "@wireio/test-cluster-tool/report"
 
 describe("Steps.processes.kiod", () => {
   it("start builds an input-less step with a runner", () => {
-    const step = Steps.processes.kiod.start(
+    const step = Steps.processes.kiod.planStart(
       Report.Actor.Sysio,
       "start-kiod",
       "start the kiod wallet daemon",

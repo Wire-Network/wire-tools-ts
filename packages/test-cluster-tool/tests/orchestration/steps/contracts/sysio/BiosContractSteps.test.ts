@@ -25,7 +25,7 @@ describe("Steps.contracts.sysio.bios", () => {
         ]
       }
     }
-    const step = Steps.contracts.sysio.bios.setfinalizer(
+    const step = Steps.contracts.sysio.bios.planSetfinalizer(
       Report.Actor.Sysio,
       "set-finalizer",
       "set the BLS finalizer policy from node keys",
@@ -45,7 +45,7 @@ describe("Steps.contracts.sysio.bios", () => {
       owner: authority,
       active: authority
     }
-    const step = Steps.contracts.sysio.bios.newaccount(
+    const step = Steps.contracts.sysio.bios.planNewaccount(
       Report.Actor.Sysio,
       "create-roa",
       "create sysio.roa",
@@ -63,7 +63,7 @@ describe("Steps.contracts.sysio.bios", () => {
       account: "sysio.roa",
       is_priv: 1
     }
-    const step = Steps.contracts.sysio.bios.setpriv(
+    const step = Steps.contracts.sysio.bios.planSetpriv(
       Report.Actor.Sysio,
       "setpriv-roa",
       "mark sysio.roa privileged",
@@ -80,7 +80,7 @@ describe("Steps.contracts.sysio.bios", () => {
     const data: SysioContracts.SysioBiosSetprodkeysAction = {
       schedule: [{ producer_name: "defproducera", block_signing_key: DevK1 }]
     }
-    const step = Steps.contracts.sysio.bios.setprodkeys(
+    const step = Steps.contracts.sysio.bios.planSetprodkeys(
       Report.Actor.Sysio,
       "set-prod-keys",
       "set producer schedule + await handoff",

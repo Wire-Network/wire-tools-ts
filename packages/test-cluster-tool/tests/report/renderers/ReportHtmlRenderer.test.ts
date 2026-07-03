@@ -12,7 +12,7 @@ describe("ReportHtmlRenderer", () => {
     const html = new ReportHtmlRenderer(createSuccessReport()).render()
     expect(html.startsWith("<!doctype html>")).toBe(true)
     expect(html).toContain('<header class="ok">')
-    expect(html).toContain("Run Succeeded")
+    expect(html).toContain("cluster-build: SUCCESS")
     expect(html).toContain('<span class="actor">Sysio</span>')
     expect(html).toContain('<details class="phase ok"')
     expect(html).toContain('<details class="step ok"')
@@ -58,9 +58,27 @@ describe("ReportHtmlRenderer", () => {
   it("collapses extra by default, expands it on the failed step", () => {
     const html = new ReportHtmlRenderer(createNestedReport()).render()
     // ok step: extra present but NOT open
-    expect(html).toContain('<details class="payload extra"><summary>client calls (1)</summary>')
+    expect(html).toContain('<details class="payload extra"><summary>extra (1)</summary>')
     // failed step: extra open
-    expect(html).toContain('<details class="payload extra" open><summary>client calls (1)</summary>')
+    expect(html).toContain('<details class="payload extra" open><summary>extra (1)</summary>')
     expect(html).toContain("eth_sendRawTransaction")
   })
 })
+
+describe("report header + failure focus", () => {
+  it("titles with the flow name and stamps UTC + Eastern time", () => {
+    const report = createSuccessReport()
+    report.name = "flow-node-owner-nft"
+    const html = new ReportHtmlRenderer(report).render()
+    expect(html).toContain("<title>flow-node-owner-nft: SUCCESS</title>")
+    expect(html).toContain("<h1>flow-node-owner-nft: SUCCESS</h1>")
+    expect(html).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC · \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} E[SD]T · /)
+  })
+
+  it("ships the auto-expand-to-first-failure script", () => {
+    const html = new ReportHtmlRenderer(createFailureReport()).render()
+    expect(html).toContain('querySelector("main details.step.fail")')
+    expect(html).toContain("scrollIntoView")
+  })
+})
+

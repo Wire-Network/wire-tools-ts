@@ -120,7 +120,7 @@ export interface SwapCell {
 export namespace SwapNonNativeScenarioTokenSteps {
   // ── Typed per-cell output keys (cross-step values ride ctx.outputs) ──────
 
-  /** The cell's signed EIP-2612 permit (set by {@link signPermit}). */
+  /** The cell's signed EIP-2612 permit (set by {@link planSignPermit}). */
   export function permitSignatureOutputKey(cellName: string): OutputKey<PermitSignature> {
     return outputKey<PermitSignature>(
       `${cellName}.permitSignature`,
@@ -144,7 +144,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
     )
   }
 
-  /** The LIVE depot quote for the cell (set by {@link quoteTarget}). */
+  /** The LIVE depot quote for the cell (set by {@link planQuoteTarget}). */
   export function liveTargetOutputKey(cellName: string): OutputKey<bigint> {
     return outputKey<bigint>(
       `${cellName}.liveTarget`,
@@ -160,14 +160,14 @@ export namespace SwapNonNativeScenarioTokenSteps {
     )
   }
 
-  /** The cell's own uwreq row id (set once {@link verifyUwreqCreated} sees it). */
+  /** The cell's own uwreq row id (set once {@link planVerifyUwreqCreated} sees it). */
   export function uwreqIdOutputKey(cellName: string): OutputKey<number> {
     return outputKey<number>(`${cellName}.uwreqId`, `uwreq row id for ${cellName}`)
   }
 
   // ── Step: mint mock ERC-20 to the swap user (write) ──────────────────────
 
-  /** Input for {@link mintErc20ToSwapUser}. */
+  /** Input for {@link planMintErc20ToSwapUser}. */
   export interface MintErc20ToSwapUserInput extends StepInput {
     readonly kind: "SwapNonNativeScenarioTokenSteps.MintErc20ToSwapUserInput"
     /** Mock ERC-20 token slug value (resolves the deployed mock's address). */
@@ -183,7 +183,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
    * jest run hit — the swap steps still sign source custody with the USER
    * wallet, so the user-signed path stays exercised.
    */
-  export function mintErc20ToSwapUser(
+  export function planMintErc20ToSwapUser(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -227,7 +227,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
 
   // ── Step: mint mock SPL to the swap user's ATA (write) ───────────────────
 
-  /** Input for {@link mintSplToSwapUser}. */
+  /** Input for {@link planMintSplToSwapUser}. */
   export interface MintSplToSwapUserInput extends StepInput {
     readonly kind: "SwapNonNativeScenarioTokenSteps.MintSplToSwapUserInput"
     /** Mock SPL token slug value (resolves the persisted mint pubkey). */
@@ -241,7 +241,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
    * ATA on demand). The mint pubkey comes from the bootstrap-persisted
    * `sol-mock-mints.json`; the deployer keypair is the mint authority.
    */
-  export function mintSplToSwapUser(
+  export function planMintSplToSwapUser(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -286,7 +286,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
 
   // ── Step: sign the cell's EIP-2612 permit (setup — stores the output) ────
 
-  /** Input for {@link signPermit}. */
+  /** Input for {@link planSignPermit}. */
   export interface SignPermitInput extends StepInput {
     readonly kind: "SwapNonNativeScenarioTokenSteps.SignPermitInput"
     readonly cell: SwapCell
@@ -295,7 +295,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
   /**
    * The user signs an EIP-2612 permit granting ReserveManager the cell's
    * source amount, stored under {@link permitSignatureOutputKey} for the
-   * {@link requestSwapErc20WithPermit} write. Off-chain typed-data signing —
+   * {@link planRequestSwapErc20WithPermit} write. Off-chain typed-data signing —
    * no transaction leaves this step.
    */
   /**
@@ -304,7 +304,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
    * re-quotes at ingestion and reverts anything outside tolerance, so the
    * published target must come from the same curve — never a static constant.
    */
-  export function quoteTarget(
+  export function planQuoteTarget(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -348,7 +348,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
     )
   }
 
-  export function signPermit(
+  export function planSignPermit(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -390,7 +390,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
 
   // ── Step: pre-set ERC-20 allowance for the approval path (write) ─────────
 
-  /** Input for {@link approveErc20Spend}. */
+  /** Input for {@link planApproveErc20Spend}. */
   export interface ApproveErc20SpendInput extends StepInput {
     readonly kind: "SwapNonNativeScenarioTokenSteps.ApproveErc20SpendInput"
     readonly cell: SwapCell
@@ -401,7 +401,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
    * source ERC-20. Mainnet USDT does not implement EIP-2612, so this pre-set
    * allowance is the production codepath for those tokens.
    */
-  export function approveErc20Spend(
+  export function planApproveErc20Spend(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -447,7 +447,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
 
   // ── Step: ERC-20 swap via inline permit (write) ──────────────────────────
 
-  /** Input for {@link requestSwapErc20WithPermit}. */
+  /** Input for {@link planRequestSwapErc20WithPermit}. */
   export interface RequestSwapErc20WithPermitInput extends StepInput {
     readonly kind: "SwapNonNativeScenarioTokenSteps.RequestSwapErc20WithPermitInput"
     readonly cell: SwapCell
@@ -459,7 +459,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
    * queue, all atomic. Snapshots the custody / destination / uwreq baselines
    * (reads) immediately before submitting.
    */
-  export function requestSwapErc20WithPermit(
+  export function planRequestSwapErc20WithPermit(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -502,7 +502,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
 
   // ── Step: ERC-20 swap via pre-set allowance (write) ──────────────────────
 
-  /** Input for {@link requestSwapErc20WithApproval}. */
+  /** Input for {@link planRequestSwapErc20WithApproval}. */
   export interface RequestSwapErc20WithApprovalInput extends StepInput {
     readonly kind: "SwapNonNativeScenarioTokenSteps.RequestSwapErc20WithApprovalInput"
     readonly cell: SwapCell
@@ -510,10 +510,10 @@ export namespace SwapNonNativeScenarioTokenSteps {
 
   /**
    * ONE user-signed `ReserveManager.requestSwapErc20WithApproval(...)` write.
-   * The allowance MUST be pre-set by an {@link approveErc20Spend} Step earlier
+   * The allowance MUST be pre-set by an {@link planApproveErc20Spend} Step earlier
    * in the same phase.
    */
-  export function requestSwapErc20WithApproval(
+  export function planRequestSwapErc20WithApproval(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -554,7 +554,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
 
   // ── Step: SPL swap via signed request_swap_spl IX (write) ────────────────
 
-  /** Input for {@link requestSwapSpl}. */
+  /** Input for {@link planRequestSwapSpl}. */
   export interface RequestSwapSplInput extends StepInput {
     readonly kind: "SwapNonNativeScenarioTokenSteps.RequestSwapSplInput"
     readonly cell: SwapCell
@@ -566,7 +566,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
    * queues the SWAP_REQUEST attestation. Snapshots the destination / uwreq
    * baselines (reads) immediately before submitting.
    */
-  export function requestSwapSpl(
+  export function planRequestSwapSpl(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -621,7 +621,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
    * `sourceAmount` (proves the fee-on-transfer guard didn't reject and
    * custody landed). Read-once — the swap write already awaited its receipt.
    */
-  export function verifyErc20Custody(
+  export function planVerifyErc20Custody(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -655,7 +655,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
    * pre-swap baseline); the row id is stored under {@link uwreqIdOutputKey}
    * for the confirm / lock verifies.
    */
-  export function verifyUwreqCreated(
+  export function planVerifyUwreqCreated(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -694,7 +694,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
    * also accepted — a poll tick can land after settlement already advanced the
    * row, and reaching COMPLETED implies CONFIRMED happened.
    */
-  export function verifyUwreqConfirmed(
+  export function planVerifyUwreqConfirmed(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -740,7 +740,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
    * rows reference the cell's uwreq (the locks form in the race-resolving
    * transaction and persist for the challenge window).
    */
-  export function verifyUwreqLocks(
+  export function planVerifyUwreqLocks(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -771,7 +771,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
    * custody, the OPP round-trip, the underwriter race, the depot variance
    * check, and the destination payout all worked.
    */
-  export function verifyDestinationPayout(
+  export function planVerifyDestinationPayout(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -805,7 +805,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
    * `sysio.uwrit::createuwreq` before the bonds exist depot-side and revert
    * with "insufficient bond on one or both legs".
    */
-  export function verifyUnderwriterBondsRelayed(
+  export function planVerifyUnderwriterBondsRelayed(
     actor: Report.Actor,
     name: string,
     description: string,

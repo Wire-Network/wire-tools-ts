@@ -35,7 +35,7 @@ const { PdaSeed } = SolanaOutpostBootstrapper
 export namespace SwapPrivateReservesScenarioReserveSteps {
   // ── Step: ETH-native create_reserve (write) ──────────────────────────────
 
-  /** Input for {@link createEthereumReserve}. */
+  /** Input for {@link planCreateEthereumReserve}. */
   export interface CreateEthereumReserveInput extends StepInput {
     readonly kind: "SwapPrivateReservesScenarioReserveSteps.CreateEthereumReserveInput"
     readonly tokenCode: number
@@ -51,7 +51,7 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
    * escrows `msg.value` wei and ships the creator's compressed secp256k1 key
    * (contract-verified to derive to the caller).
    */
-  export function createEthereumReserve<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCreateEthereumReserve<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -107,7 +107,7 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
 
   // ── Step: SOL SPL-branch create_reserve (write) ──────────────────────────
 
-  /** Input for {@link createSolanaReserve}. */
+  /** Input for {@link planCreateSolanaReserve}. */
   export interface CreateSolanaReserveInput extends StepInput {
     readonly kind: "SwapPrivateReservesScenarioReserveSteps.CreateSolanaReserveInput"
     readonly tokenCode: number
@@ -126,7 +126,7 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
    * signer's ed25519 key rides the attestation as `creator_pub_key`
    * automatically.
    */
-  export function createSolanaReserve<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCreateSolanaReserve<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -223,7 +223,7 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
 
   // ── Step: depot matchreserve (write) ─────────────────────────────────────
 
-  /** Input for {@link matchReserve}. */
+  /** Input for {@link planMatchReserve}. */
   export interface MatchReserveInput extends StepInput {
     readonly kind: "SwapPrivateReservesScenarioReserveSteps.MatchReserveInput"
     readonly chainCode: number
@@ -240,7 +240,7 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
    * reserve)` triple — escrows the requested WIRE, flips the depot row ACTIVE
    * synchronously, and queues RESERVE_READY back to the outpost.
    */
-  export function matchReserve<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planMatchReserve<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

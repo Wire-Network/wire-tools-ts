@@ -16,14 +16,14 @@ const { SysioContractName } = SysioContracts
  * variants — post-ROA use `Steps.contracts.sysio.system.*`.
  */
 export namespace BiosContractSteps {
-  /** Input for {@link setfinalizer} — the generated `bios::setfinalizer` data. */
+  /** Input for {@link planSetfinalizer} — the generated `bios::setfinalizer` data. */
   export interface SetfinalizerInput extends StepInput {
     readonly kind: "BiosContractSteps.SetfinalizerInput"
     readonly data: SysioContracts.SysioBiosSetfinalizerAction
   }
 
   /** `sysio.bios::setfinalizer` — activate BLS instant finality with a policy. */
-  export function setfinalizer<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetfinalizer<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -52,14 +52,14 @@ export namespace BiosContractSteps {
       .actions.setfinalizer.invoke(input.data)
   }
 
-  /** Input for {@link newaccount} — the generated `bios::newaccount` data. */
+  /** Input for {@link planNewaccount} — the generated `bios::newaccount` data. */
   export interface NewaccountInput extends StepInput {
     readonly kind: "BiosContractSteps.NewaccountInput"
     readonly data: SysioContracts.SysioBiosNewaccountAction
   }
 
   /** `sysio.bios::newaccount` — create a bring-up account (pre-ROA, transiently unlimited). */
-  export function newaccount<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planNewaccount<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -88,14 +88,14 @@ export namespace BiosContractSteps {
       .actions.newaccount.invoke(input.data)
   }
 
-  /** Input for {@link setpriv} — the generated `bios::setpriv` data. */
+  /** Input for {@link planSetpriv} — the generated `bios::setpriv` data. */
   export interface SetprivInput extends StepInput {
     readonly kind: "BiosContractSteps.SetprivInput"
     readonly data: SysioContracts.SysioBiosSetprivAction
   }
 
   /** `sysio.bios::setpriv` — mark an account privileged (pre-ROA). */
-  export function setpriv<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetpriv<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -124,14 +124,14 @@ export namespace BiosContractSteps {
       .actions.setpriv.invoke(input.data)
   }
 
-  /** Input for {@link setprodkeys} — the generated `bios::setprodkeys` data. */
+  /** Input for {@link planSetprodkeys} — the generated `bios::setprodkeys` data. */
   export interface SetprodkeysInput extends StepInput {
     readonly kind: "BiosContractSteps.SetprodkeysInput"
     readonly data: SysioContracts.SysioBiosSetprodkeysAction
   }
 
   /** `sysio.bios::setprodkeys` — set the producer schedule (pre-ROA). */
-  export function setprodkeys<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetprodkeys<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

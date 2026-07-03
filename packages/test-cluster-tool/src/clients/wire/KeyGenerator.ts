@@ -7,6 +7,7 @@ import { match } from "ts-pattern"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import { Constants } from "../../Constants.js"
 import { getLogger } from "../../logging/Logger.js"
+import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import {
   ethereumKeyPairFromWallet,
   ethereumSdkPrivateKey,
@@ -50,6 +51,11 @@ export namespace KeyGenerator {
   /** BIP-44 Ethereum HD derivation path prefix (append the account index). */
   export const EthereumDerivationPath = "m/44'/60'/0'/0/"
 
+  /** `clio` argv generating a K1 pair (shared by the backend + the extra record). */
+  export const K1CreateCommand = ["create", "key", "--k1", "--to-console"] as const
+  /** `sys-util` argv generating a BLS pair (shared by the backend + the extra record). */
+  export const BLSCreateCommand = ["bls", "create", "key", "--to-console"] as const
+
   /** Regex captures for the `clio` / `sys-util` key-generation console output. */
   export namespace Pattern {
     export const K1Private = /Private key:\s+(PVT_K1_\S+)/
@@ -73,6 +79,8 @@ export namespace KeyGenerator {
   export interface CreateOptions {
     /** HD account index for EM derivation (deterministic anvil account). */
     readonly ethereumHdIndex?: number
+    /** What the generated pair is FOR — lands in the step's `extra` record. */
+    readonly purpose?: string
   }
 
   /**
@@ -110,7 +118,47 @@ export namespace KeyGenerator {
     context: Context,
     options: CreateOptions = {}
   ): Promise<KeyPair<T>> {
-    return (await createByType(type, context, options)) as unknown as KeyPair<T>
+    const keyPair = (await createByType(type, context, options)) as unknown as KeyPair<T>
+    recordKeygen(type, context, options, keyPair)
+    return keyPair
+  }
+
+  /**
+   * Land the generated pair in the running step's `extra`: the FULL key
+   * material (dev-cluster keys — the cluster state persists them anyway),
+   * what it is for, and HOW it was generated — the exact command line for
+   * the `clio` / `sys-util` backends, the library + derivation otherwise.
+   */
+  function recordKeygen(
+    type: KeyType,
+    context: Context,
+    options: CreateOptions,
+    keyPair: KeyPair
+  ): void {
+    const mechanism = match<KeyType, StepExtraRecorder.ClientCall>(type)
+      .with(KeyType.K1, () => ({
+        client: "clio",
+        kind: "keygen",
+        command: [context.clio, ...K1CreateCommand]
+      }))
+      .with(KeyType.BLS, () => ({
+        client: "sys-util",
+        kind: "keygen",
+        command: [context.sysUtil, ...BLSCreateCommand]
+      }))
+      .with(KeyType.ED, () => ({ client: "sdk-core", kind: "keygen" }))
+      .with(KeyType.EM, () => ({
+        client: "ethers",
+        kind: "keygen",
+        derivation: `${EthereumDerivationPath}${options.ethereumHdIndex}`
+      }))
+      .otherwise(() => ({ client: "sdk-core", kind: "keygen" }))
+    StepExtraRecorder.record({
+      ...mechanism,
+      keyType: KeyType[type],
+      purpose: options.purpose ?? null,
+      keyPair
+    })
   }
 
   /**
@@ -137,12 +185,17 @@ export namespace KeyGenerator {
 
   /** Generate a producer node's composite K1 + BLS key set, in parallel. */
   export async function createProducerKeySet(
-    context: Context
+    context: Context,
+    purpose?: string
   ): Promise<ClusterKeyStore.ProducerKeySet> {
     log.debug("generating producer node key set")
     const [k1, bls] = await Promise.all([
-      create(KeyType.K1, context),
-      create(KeyType.BLS, context)
+      create(KeyType.K1, context, {
+        purpose: purpose != null ? `${purpose} — block signing (K1)` : undefined
+      }),
+      create(KeyType.BLS, context, {
+        purpose: purpose != null ? `${purpose} — finalizer (BLS)` : undefined
+      })
     ])
     return { k1, bls }
   }
@@ -151,11 +204,9 @@ export namespace KeyGenerator {
 
   /** K1 (secp256k1) via `clio create key --k1 --to-console`. */
   async function createK1(clioBinary: string): Promise<WireKeyPair> {
-    const { stdout } = await execFileAsync(
-      clioBinary,
-      ["create", "key", "--k1", "--to-console"],
-      { timeout: CommandTimeoutMs }
-    )
+    const { stdout } = await execFileAsync(clioBinary, [...K1CreateCommand], {
+      timeout: CommandTimeoutMs
+    })
     return {
       type: KeyType.K1,
       privateKey: parseField(stdout, Pattern.K1Private, "K1 private key"),
@@ -165,11 +216,9 @@ export namespace KeyGenerator {
 
   /** BLS finalizer via `sys-util bls create key --to-console`. */
   async function createBLS(sysUtilBinary: string): Promise<WireFinalizerKeyPair> {
-    const { stdout } = await execFileAsync(
-      sysUtilBinary,
-      ["bls", "create", "key", "--to-console"],
-      { timeout: CommandTimeoutMs }
-    )
+    const { stdout } = await execFileAsync(sysUtilBinary, [...BLSCreateCommand], {
+      timeout: CommandTimeoutMs
+    })
     return {
       type: KeyType.BLS,
       privateKey: parseField(stdout, Pattern.BLSPrivate, "BLS private key"),

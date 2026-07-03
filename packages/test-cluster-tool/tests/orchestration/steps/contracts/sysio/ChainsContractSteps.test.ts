@@ -11,7 +11,7 @@ describe("Steps.contracts.sysio.chains", () => {
       name: "Wire (depot)",
       description: "The WIRE depot chain itself"
     }
-    const step = Steps.contracts.sysio.chains.regchain(
+    const step = Steps.contracts.sysio.chains.planRegchain(
       Report.Actor.Sysio,
       "register-wire",
       "register the WIRE depot chain",

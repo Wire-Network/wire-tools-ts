@@ -11,7 +11,7 @@ describe("Steps.contracts.sysio.epoch", () => {
       batch_op_groups: 3,
       epoch_retention_envelope_log_count: 10
     }
-    const step = Steps.contracts.sysio.epoch.setconfig(
+    const step = Steps.contracts.sysio.epoch.planSetconfig(
       Report.Actor.Sysio,
       "configure-epoch",
       "set the global epoch config",
@@ -24,7 +24,7 @@ describe("Steps.contracts.sysio.epoch", () => {
     expect(typeof step.runner).toBe("function")
   })
 
-  it.each(["schbatchgps", "advance"] as const)(
+  it.each(["planSchbatchgps", "planAdvance"] as const)(
     "%s builds an input-less step with a runner",
     action => {
       const factory = Steps.contracts.sysio.epoch[action]

@@ -7,6 +7,7 @@ import { Deferred } from "@wireio/shared"
 import { getLogger, type Logger } from "../../logging/Logger.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { sleep } from "../../utils/asyncUtils.js"
+import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { ProcessManager } from "./ProcessManager.js"
 import { ProcessSignalName } from "./ProcessSignals.js"
 
@@ -103,6 +104,15 @@ export abstract class ManagedProcess {
   async start(): Promise<this> {
     Assert.ok(!this.child, `${this.label} already started`)
     this.log.info(`spawning ${this.exe} ${this.args.join(" ")}`)
+    // The step that starts a process gets the FULL spawn in its extra — the
+    // executable + argv is the step's payload, same as a clio command line.
+    StepExtraRecorder.record({
+      client: "process",
+      kind: "spawn",
+      label: this.label,
+      command: [this.exe, ...this.args],
+      cwd: this.cwd
+    })
     const child = spawn(this.exe, this.args, {
       cwd: this.cwd,
       env: { ...process.env, ...this.env } as NodeJS.ProcessEnv,

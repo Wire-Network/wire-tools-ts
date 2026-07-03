@@ -15,7 +15,7 @@ export namespace SolanaOutpostSteps {
    * token registration). Input-less — paths + RPC come from `ctx.config` /
    * `ctx.solana`; the validator must already be running.
    */
-  export function deploy<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planDeploy<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

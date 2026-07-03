@@ -6,7 +6,7 @@ const { SysioContractName } = SysioContracts
 
 describe("Steps.contract.deploy", () => {
   it("builds a deploy step with the contract + default system (setsyscode) mode", () => {
-    const step = Steps.contract.deploy(
+    const step = Steps.contract.planDeploy(
       Report.Actor.Sysio,
       "deploy-epoch",
       "deploy sysio.epoch",
@@ -21,7 +21,7 @@ describe("Steps.contract.deploy", () => {
   })
 
   it("honors raw mode (bios/system/roa, pre-ROA)", () => {
-    const step = Steps.contract.deploy(
+    const step = Steps.contract.planDeploy(
       Report.Actor.Sysio,
       "deploy-bios",
       "deploy sysio.bios raw",
@@ -36,7 +36,7 @@ describe("Steps.contract.deploy", () => {
 
 describe("Steps.contract.grantSysioCode", () => {
   it("carries the target account as typed input", () => {
-    const step = Steps.contract.grantSysioCode(
+    const step = Steps.contract.planGrantSysioCode(
       Report.Actor.Sysio,
       "grant-opreg",
       "sysio.opreg gets @sysio.code",

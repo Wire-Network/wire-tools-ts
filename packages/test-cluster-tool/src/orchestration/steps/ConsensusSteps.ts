@@ -28,7 +28,7 @@ export namespace ConsensusSteps {
    * Activate BLS instant finality (`sysio.bios::setfinalizer`) with a policy built
    * from every producer node's generated BLS key — threshold `⌊2N/3⌋ + 1`.
    */
-  export function setFinalizer<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetFinalizer<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -70,7 +70,7 @@ export namespace ConsensusSteps {
    * account to its hosting node's generated K1 signing key, then wait for the
    * handoff off the genesis `sysio` producer.
    */
-  export function setProducerKeys<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetProducerKeys<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

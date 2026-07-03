@@ -1,4 +1,4 @@
-import Bluebird from "bluebird"
+import { eachSeries } from "../utils/asyncUtils.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 import { ClusterConfig } from "../config/ClusterConfig.js"
 import { getLogger, type Logger } from "../logging/Logger.js"
@@ -22,9 +22,14 @@ export class ClusterBuild<C extends ClusterBuildContext = ClusterBuildContext>
   implements ClusterBuildParent<C>
 {
   private readonly childList: ClusterBuildPhaseBase<C>[] = []
-  private readonly report = new Report()
+  private readonly reportInternal = new Report()
 
   private constructor(readonly context: C) {}
+
+  /** The run's report — named by the flow (`report.name`) before launch. */
+  get report(): Report {
+    return this.reportInternal
+  }
 
   /** The resolved cluster config (from the context). */
   get config(): ClusterConfig {
@@ -94,7 +99,7 @@ export class ClusterBuild<C extends ClusterBuildContext = ClusterBuildContext>
    */
   async build(): Promise<Report> {
     const controller = new AbortController()
-    await Bluebird.each(this.childList, async child => {
+    await eachSeries(this.childList, async child => {
       if (controller.signal.aborted) {
         this.context.log.info(
           `↷ Abort signalled by an earlier failure — "${child.name}" will not be executed (omitted)`
@@ -102,10 +107,10 @@ export class ClusterBuild<C extends ClusterBuildContext = ClusterBuildContext>
         return
       }
       const phases = await child.run(controller.signal)
-      this.report.push(...phases)
+      this.reportInternal.push(...phases)
       if (phases.some(phase => !phase.succeeded)) controller.abort()
     })
-    await this.report.write(this.config.report, ReportRendererRegistry.createDefault())
-    return this.report
+    await this.reportInternal.write(this.config.report, ReportRendererRegistry.createDefault())
+    return this.reportInternal
   }
 }

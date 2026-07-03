@@ -11,14 +11,14 @@ const { SysioContractName } = SysioContracts
 
 /** Steps for `sysio.uwrit` (underwriting) actions. */
 export namespace UwritContractSteps {
-  /** Input for {@link setconfig} — the generated `uwrit::setconfig` data. */
+  /** Input for {@link planSetconfig} — the generated `uwrit::setconfig` data. */
   export interface SetconfigInput extends StepInput {
     readonly kind: "UwritContractSteps.SetconfigInput"
     readonly data: SysioContracts.SysioUwritSetconfigAction
   }
 
   /** `sysio.uwrit::setconfig` — WIRE-leg swap fee + collateral-lock challenge window. */
-  export function setconfig<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetconfig<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

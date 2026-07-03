@@ -3,7 +3,7 @@ import { Report } from "@wireio/test-cluster-tool/report"
 
 describe("Steps.solanaOutpost.deploy", () => {
   it("builds an input-less deploy step with a runner", () => {
-    const step = Steps.solanaOutpost.deploy(
+    const step = Steps.solanaOutpost.planDeploy(
       Report.Actor.SolanaOutpost,
       "deploy-solana-outpost",
       "deploy the Solana outpost",

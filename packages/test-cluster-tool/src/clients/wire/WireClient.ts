@@ -13,6 +13,7 @@ import {
   SysioContracts
 } from "@wireio/sdk-core"
 import { isNotEmpty, retry } from "../../utils/index.js"
+import { RecordingFetchProvider } from "./RecordingFetchProvider.js"
 import { ClioRunner } from "./clio/ClioRunner.js"
 import { WireWallet } from "./WireWallet.js"
 
@@ -52,7 +53,11 @@ export class WireClient {
   constructor(readonly config: WireClientConfig) {
     this.runner = new ClioRunner(config)
     this.wallet = new WireWallet(this.runner)
-    this.api = new APIClient({ url: config.nodeopUrl })
+    // The recording provider lands every SDK RPC (table queries, get_info,
+    // pushes) in the running step's Report extra — see RecordingFetchProvider.
+    this.api = new APIClient({
+      provider: new RecordingFetchProvider(config.nodeopUrl)
+    })
   }
 
   // ── Typed contract client (metadata-backed) ──────────────────────────────

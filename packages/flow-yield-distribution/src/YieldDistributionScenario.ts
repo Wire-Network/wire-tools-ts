@@ -233,7 +233,7 @@ export class YieldDistributionScenario extends FlowScenario {
           )
         }
       ),
-      EmitSteps.ethereumEmit(
+      EmitSteps.planEthereumEmit(
         Actor.EthereumOutpost,
         "emit-ethereum-linked",
         `emit ${Constants.EthereumRewardPerStaker} wei STAKING_REWARD for ${Constants.LinkedStakerAccount}`,
@@ -291,7 +291,7 @@ export class YieldDistributionScenario extends FlowScenario {
           )
         }
       ),
-      EmitSteps.ethereumEmit(
+      EmitSteps.planEthereumEmit(
         Actor.EthereumOutpost,
         "emit-ethereum-unlinked",
         `emit ${Constants.EthereumRewardPerStaker} wei STAKING_REWARD for the unlinked staker`,
@@ -353,7 +353,7 @@ export class YieldDistributionScenario extends FlowScenario {
           )
         }
       ),
-      EmitSteps.ethereumEmitReplay(
+      EmitSteps.planEthereumEmitReplay(
         Actor.EthereumOutpost,
         "emit-ethereum-replay",
         "re-emit the SAME external_epoch_ref — the emitter's monotonic check must revert",
@@ -400,7 +400,7 @@ export class YieldDistributionScenario extends FlowScenario {
           )
         }
       ),
-      EmitSteps.solanaEmit(
+      EmitSteps.planSolanaEmit(
         Actor.SolanaOutpost,
         "emit-solana-reward",
         `emit ${Constants.SolanaRewardPerStaker} lamports STAKING_REWARD for a new unlinked SOL staker`,

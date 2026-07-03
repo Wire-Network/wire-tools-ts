@@ -48,7 +48,7 @@ export namespace EmissionsSoakScenarioSteps {
    * before the import and claim bursts — kiod auto-locks after its unlock
    * timeout, which the 30-minute soak window always exceeds.
    */
-  export function unlockWallet<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planUnlockWallet<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -69,7 +69,7 @@ export namespace EmissionsSoakScenarioSteps {
 
   // ── publish the build-time seed data into ctx.outputs ─────────────────────
 
-  /** Input for {@link publishSeedData} — the build-time-generated seed corpus. */
+  /** Input for {@link planPublishSeedData} — the build-time-generated seed corpus. */
   export interface PublishSeedDataInput extends StepInput {
     readonly kind: "EmissionsSoakScenarioSteps.PublishSeedDataInput"
     readonly identities: ControlledStakerIdentity[]
@@ -82,7 +82,7 @@ export namespace EmissionsSoakScenarioSteps {
    * into `ctx.outputs` (the cross-step channel every import/claimer/verify
    * step reads), logging the conversion stats the old suite logged.
    */
-  export function publishSeedData<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planPublishSeedData<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -127,7 +127,7 @@ export namespace EmissionsSoakScenarioSteps {
 
   // ── push ONE importseed batch (one write per step) ─────────────────────────
 
-  /** Input for {@link importSeedBatch} — names the batch; the payload rides `ctx.outputs`. */
+  /** Input for {@link planImportSeedBatch} — names the batch; the payload rides `ctx.outputs`. */
   export interface ImportSeedBatchInput extends StepInput {
     readonly kind: "EmissionsSoakScenarioSteps.ImportSeedBatchInput"
     readonly chain: ImportSeedChainKind
@@ -136,7 +136,7 @@ export namespace EmissionsSoakScenarioSteps {
   }
 
   /** `sysio.dclaim::importseed` — push ONE converted batch (dclaim self-auth). */
-  export function importSeedBatch<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planImportSeedBatch<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -176,7 +176,7 @@ export namespace EmissionsSoakScenarioSteps {
   // ── close the import window ────────────────────────────────────────────────
 
   /** `sysio.dclaim::importdone` — flip `cap_config.imported_complete` (dclaim self-auth). */
-  export function importDone<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planImportDone<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -197,7 +197,7 @@ export namespace EmissionsSoakScenarioSteps {
 
   // ── provision a claimer's WIRE account ─────────────────────────────────────
 
-  /** Input for {@link provisionClaimer}. */
+  /** Input for {@link planProvisionClaimer}. */
   export interface ProvisionClaimerInput extends StepInput {
     readonly kind: "EmissionsSoakScenarioSteps.ProvisionClaimerInput"
     readonly wireAccount: string
@@ -208,7 +208,7 @@ export namespace EmissionsSoakScenarioSteps {
    * standard resource policy (the account must host its authex link + pclaim
    * row) — the harness's ONE user-provisioning mechanism, unfunded.
    */
-  export function provisionClaimer<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planProvisionClaimer<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -237,7 +237,7 @@ export namespace EmissionsSoakScenarioSteps {
 
   // ── authex-link a claimer's ETH wallet ─────────────────────────────────────
 
-  /** Input for {@link authexLink} — the staker identity (wallet re-derived from the HD index). */
+  /** Input for {@link planAuthexLink} — the staker identity (wallet re-derived from the HD index). */
   export interface AuthexLinkInput extends StepInput {
     readonly kind: "EmissionsSoakScenarioSteps.AuthexLinkInput"
     readonly identity: ControlledStakerIdentity
@@ -248,7 +248,7 @@ export namespace EmissionsSoakScenarioSteps {
    * account. The EM key identifies which ETH wallet "owns" the account; the
    * account still signs with the dev K1 key.
    */
-  export function authexLink<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planAuthexLink<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -283,7 +283,7 @@ export namespace EmissionsSoakScenarioSteps {
 
   // ── sweep the staker's unmapped credit into pending_claims ────────────────
 
-  /** Input for {@link linkswept}. */
+  /** Input for {@link planLinkswept}. */
   export interface LinksweptInput extends StepInput {
     readonly kind: "EmissionsSoakScenarioSteps.LinksweptInput"
     readonly wireAccount: string
@@ -300,7 +300,7 @@ export namespace EmissionsSoakScenarioSteps {
    * `pending_claims`. `createlink` does NOT auto-sweep; in a real launch an
    * off-chain orchestrator batches one sweep per new link — mirrored here.
    */
-  export function linkswept<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planLinkswept<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -338,14 +338,14 @@ export namespace EmissionsSoakScenarioSteps {
 
   // ── claim the staker's pending balance ─────────────────────────────────────
 
-  /** Input for {@link claim}. */
+  /** Input for {@link planClaim}. */
   export interface ClaimInput extends StepInput {
     readonly kind: "EmissionsSoakScenarioSteps.ClaimInput"
     readonly wireAccount: string
   }
 
   /** `sysio.dclaim::claim` — drain the staker's pclaim row into WIRE (staker-authed). */
-  export function claim<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planClaim<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

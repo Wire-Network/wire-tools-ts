@@ -35,7 +35,7 @@ export namespace SwapWithUnderwritingScenarioSwapSteps {
   // ── Step: Phase A SWAP_REQUEST (`ReserveManager.requestSwap`) ─────────────
 
   /**
-   * Input for {@link requestSwapEthereum} — the static SWAP_REQUEST parameters.
+   * Input for {@link planRequestSwapEthereum} — the static SWAP_REQUEST parameters.
    * The target amount rides {@link SwapWithUnderwritingScenarioConstants.PhaseATargetAmountKey}
    * and the recipient is the swap user's SOL pubkey (both resolved from
    * `ctx.outputs` at run time).
@@ -70,7 +70,7 @@ export namespace SwapWithUnderwritingScenarioSwapSteps {
    * @param request - The static swap parameters ({@link RequestSwapEthereumInput} minus `kind`).
    * @returns The definition step.
    */
-  export function requestSwapEthereum<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRequestSwapEthereum<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -124,7 +124,7 @@ export namespace SwapWithUnderwritingScenarioSwapSteps {
   // ── Step: Phase B SWAP_REQUEST (`opp_outpost::request_swap`) ──────────────
 
   /**
-   * Input for {@link requestSwapSolana} — the static SWAP_REQUEST parameters.
+   * Input for {@link planRequestSwapSolana} — the static SWAP_REQUEST parameters.
    * The depot-frame target amount rides
    * {@link SwapWithUnderwritingScenarioConstants.PhaseBTargetAmountDepotKey}
    * and the recipient is the swap user's ETH address bytes (both resolved from
@@ -159,7 +159,7 @@ export namespace SwapWithUnderwritingScenarioSwapSteps {
    * @param request - The static swap parameters ({@link RequestSwapSolanaInput} minus `kind`).
    * @returns The definition step.
    */
-  export function requestSwapSolana<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRequestSwapSolana<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

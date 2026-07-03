@@ -15,7 +15,7 @@ import {
  * shape.
  */
 export namespace SwapFromWireScenarioUserSteps {
-  /** Input for {@link provisionWire}. */
+  /** Input for {@link planProvisionWire}. */
   export interface ProvisionWireInput extends StepInput {
     readonly kind: "SwapFromWireScenarioUserSteps.ProvisionWireInput"
     /** WIRE account name to provision. */
@@ -35,7 +35,7 @@ export namespace SwapFromWireScenarioUserSteps {
    * @param fundWireAmount - Treasury funding in raw WIRE base units.
    * @returns The definition step.
    */
-  export function provisionWire<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planProvisionWire<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

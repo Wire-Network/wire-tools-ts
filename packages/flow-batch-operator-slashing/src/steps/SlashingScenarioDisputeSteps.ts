@@ -379,9 +379,9 @@ export namespace SlashingScenarioDisputeSteps {
     return epoch
   }
 
-  // ── Step: sysio.roa::newnameduser (write) ─────────────────────────────────
+  // ── Step: sysio.roa::planNewnameduser (write) ─────────────────────────────────
 
-  /** Input for {@link newnameduser}. */
+  /** Input for {@link planNewnameduser}. */
   export interface NewnameduserInput extends StepInput {
     readonly kind: "SlashingScenarioDisputeSteps.NewnameduserInput"
     readonly account: string
@@ -401,7 +401,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param tier - The node-owner tier.
    * @returns The definition step.
    */
-  export function newnameduser<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planNewnameduser<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -434,9 +434,9 @@ export namespace SlashingScenarioDisputeSteps {
     )
   }
 
-  // ── Step: sysio.roa::nodeownreg (write) ───────────────────────────────────
+  // ── Step: sysio.roa::planNodeownreg (write) ───────────────────────────────────
 
-  /** Input for {@link nodeownreg}. */
+  /** Input for {@link planNodeownreg}. */
   export interface NodeownregInput extends StepInput {
     readonly kind: "SlashingScenarioDisputeSteps.NodeownregInput"
     readonly account: string
@@ -453,11 +453,11 @@ export namespace SlashingScenarioDisputeSteps {
    * @param name - Step name.
    * @param description - Step description.
    * @param options - Step option overrides.
-   * @param account - The voter account (created by {@link newnameduser}).
+   * @param account - The voter account (created by {@link planNewnameduser}).
    * @param tier - The node-owner tier.
    * @returns The definition step.
    */
-  export function nodeownreg<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planNodeownreg<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -491,9 +491,9 @@ export namespace SlashingScenarioDisputeSteps {
     )
   }
 
-  // ── Step: sysio.opreg::processbatch (write) ───────────────────────────────
+  // ── Step: sysio.opreg::planProcessbatch (write) ───────────────────────────────
 
-  /** Input for {@link processbatch} — the generated `opreg::processbatch` data. */
+  /** Input for {@link planProcessbatch} — the generated `opreg::processbatch` data. */
   export interface ProcessbatchInput extends StepInput {
     readonly kind: "SlashingScenarioDisputeSteps.ProcessbatchInput"
     readonly data: SysioContracts.SysioOpregProcessbatchAction
@@ -503,7 +503,7 @@ export namespace SlashingScenarioDisputeSteps {
    * `sysio.opreg::processbatch` — force a dispute operator ACTIVE. Normally an
    * operator flips UNKNOWN→ACTIVE via `reevaluate_eligibility`, which only
    * fires on a deposit event; the dispute operators post no collateral, so
-   * nothing would ever evaluate them. `processbatch(account, was_eligible=false,
+   * nothing would ever evaluate them. `planProcessbatch(account, was_eligible=false,
    * is_eligible=true)` IS the eligibility callback and flips status directly;
    * it only needs `sysio.opreg` auth (= `sysio@active` = the kiod dev key
    * in-cluster). They carry no bond, which is fine — the flow asserts the
@@ -516,7 +516,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param data - The generated action data.
    * @returns The definition step.
    */
-  export function processbatch<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planProcessbatch<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -545,9 +545,9 @@ export namespace SlashingScenarioDisputeSteps {
       .actions.processbatch.invoke(input.data)
   }
 
-  // ── Step: sysio.msgch::deliver (write) ────────────────────────────────────
+  // ── Step: sysio.msgch::planDeliver (write) ────────────────────────────────────
 
-  /** Input for {@link deliver}. */
+  /** Input for {@link planDeliver}. */
   export interface DeliverInput extends StepInput {
     readonly kind: "SlashingScenarioDisputeSteps.DeliverInput"
     readonly batchOperator: string
@@ -571,7 +571,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param tag - The envelope payload tag (drives the checksum).
    * @returns The definition step.
    */
-  export function deliver<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planDeliver<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -610,9 +610,9 @@ export namespace SlashingScenarioDisputeSteps {
     )
   }
 
-  // ── Step: sysio.chalg::votedispute (write) ────────────────────────────────
+  // ── Step: sysio.chalg::planVotedispute (write) ────────────────────────────────
 
-  /** Input for {@link votedispute}. */
+  /** Input for {@link planVotedispute}. */
   export interface VotedisputeInput extends StepInput {
     readonly kind: "SlashingScenarioDisputeSteps.VotedisputeInput"
     readonly owner: string
@@ -630,7 +630,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param owner - The voting Tier-1 owner.
    * @returns The definition step.
    */
-  export function votedispute<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planVotedispute<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -678,7 +678,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param options - Step option overrides.
    * @returns The definition step.
    */
-  export function stageContestedEpoch<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planStageContestedEpoch<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -721,7 +721,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param options - Step option overrides.
    * @returns The definition step.
    */
-  export function awaitDisputeOpened<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planAwaitDisputeOpened<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -789,7 +789,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param options - Step option overrides.
    * @returns The definition step.
    */
-  export function awaitDisputeResolved<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planAwaitDisputeResolved<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -835,7 +835,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   // ── Step: await an operator slash (crank chkcons inside the poll) ─────────
 
-  /** Input for {@link awaitOperatorSlashed}. */
+  /** Input for {@link planAwaitOperatorSlashed}. */
   export interface AwaitOperatorSlashedInput extends StepInput {
     readonly kind: "SlashingScenarioDisputeSteps.AwaitOperatorSlashedInput"
     readonly account: string
@@ -854,7 +854,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param account - The non-canonical deliverer expected to be slashed.
    * @returns The definition step.
    */
-  export function awaitOperatorSlashed<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planAwaitOperatorSlashed<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -899,7 +899,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   // ── Step: await an operator's ACTIVE flip (pure poll) ─────────────────────
 
-  /** Input for {@link awaitOperatorActive}. */
+  /** Input for {@link planAwaitOperatorActive}. */
   export interface AwaitOperatorActiveInput extends StepInput {
     readonly kind: "SlashingScenarioDisputeSteps.AwaitOperatorActiveInput"
     readonly account: string
@@ -907,7 +907,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /**
    * Poll until `account` flips OPERATOR_STATUS_ACTIVE (after its
-   * {@link processbatch} eligibility flip lands).
+   * {@link planProcessbatch} eligibility flip lands).
    *
    * @param actor - The narrative subject.
    * @param name - Step name.
@@ -916,7 +916,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param account - The dispute operator expected to flip ACTIVE.
    * @returns The definition step.
    */
-  export function awaitOperatorActive<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planAwaitOperatorActive<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

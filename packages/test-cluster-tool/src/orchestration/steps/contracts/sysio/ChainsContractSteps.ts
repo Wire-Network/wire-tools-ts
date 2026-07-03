@@ -11,14 +11,14 @@ const { SysioContractName } = SysioContracts
 
 /** Steps for `sysio.chains` actions. */
 export namespace ChainsContractSteps {
-  /** Input for {@link regchain} — the generated `chains::regchain` data. */
+  /** Input for {@link planRegchain} — the generated `chains::regchain` data. */
   export interface RegchainInput extends StepInput {
     readonly kind: "ChainsContractSteps.RegchainInput"
     readonly data: SysioContracts.SysioChainsRegchainAction
   }
 
   /** `sysio.chains::regchain` — register one chain (WIRE / EVM / SVM). */
-  export function regchain<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRegchain<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

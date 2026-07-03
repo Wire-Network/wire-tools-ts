@@ -33,7 +33,7 @@ import { YieldDistributionScenarioConstants as Constants } from "../YieldDistrib
 export namespace YieldDistributionScenarioEmitSteps {
   // ── Step: ETH-side STAKING_REWARD (`MockYieldEmitter.emitYield`) ──────────
 
-  /** Input for {@link ethereumEmit} — one `MockYieldEmitter.emitYield(...)` write. */
+  /** Input for {@link planEthereumEmit} — one `MockYieldEmitter.emitYield(...)` write. */
   export interface EthereumEmitInput extends StepInput {
     readonly kind: "YieldDistributionScenarioEmitSteps.EthereumEmitInput"
     /** Output key holding the staker's ETH wallet (minted by SetupStakers). */
@@ -68,7 +68,7 @@ export namespace YieldDistributionScenarioEmitSteps {
    * @param rewardEpochIndex - Informational WIRE epoch index.
    * @returns The definition step.
    */
-  export function ethereumEmit<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planEthereumEmit<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -123,7 +123,7 @@ export namespace YieldDistributionScenarioEmitSteps {
 
   // ── Step: replayed ETH-side emission (same `external_epoch_ref`) ──────────
 
-  /** Input for {@link ethereumEmitReplay} — the replayed-`external_epoch_ref` write attempt. */
+  /** Input for {@link planEthereumEmitReplay} — the replayed-`external_epoch_ref` write attempt. */
   export interface EthereumEmitReplayInput extends StepInput {
     readonly kind: "YieldDistributionScenarioEmitSteps.EthereumEmitReplayInput"
     /** Output key holding the staker's ETH wallet (the linked staker). */
@@ -155,7 +155,7 @@ export namespace YieldDistributionScenarioEmitSteps {
    * @param rewardEpochIndex - Informational WIRE epoch index.
    * @returns The definition step.
    */
-  export function ethereumEmitReplay<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planEthereumEmitReplay<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -221,7 +221,7 @@ export namespace YieldDistributionScenarioEmitSteps {
 
   // ── Step: SOL-side STAKING_REWARD (`opp_outpost::add_attestation`) ────────
 
-  /** Input for {@link solanaEmit} — one `opp_outpost::add_attestation` write. */
+  /** Input for {@link planSolanaEmit} — one `opp_outpost::add_attestation` write. */
   export interface SolanaEmitInput extends StepInput {
     readonly kind: "YieldDistributionScenarioEmitSteps.SolanaEmitInput"
     /** WIRE account the depot credits — `""` parks the reward in `unmapped`. */
@@ -260,7 +260,7 @@ export namespace YieldDistributionScenarioEmitSteps {
    * @param rewardEpochIndex - Informational WIRE epoch index.
    * @returns The definition step.
    */
-  export function solanaEmit<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSolanaEmit<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

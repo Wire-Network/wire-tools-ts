@@ -11,14 +11,14 @@ const { SysioContractName } = SysioContracts
 
 /** Steps for `sysio.reserv` actions. */
 export namespace ReservContractSteps {
-  /** Input for {@link regreserve} — the generated `reserv::regreserve` data. */
+  /** Input for {@link planRegreserve} — the generated `reserv::regreserve` data. */
   export interface RegreserveInput extends StepInput {
     readonly kind: "ReservContractSteps.RegreserveInput"
     readonly data: SysioContracts.SysioReservRegreserveAction
   }
 
   /** `sysio.reserv::regreserve` — seed one `(chain, token, reserve)` reserve book. */
-  export function regreserve<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRegreserve<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

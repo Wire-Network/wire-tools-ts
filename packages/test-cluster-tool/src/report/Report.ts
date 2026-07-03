@@ -2,6 +2,7 @@ import { promises as Fsp } from "node:fs"
 import Path from "node:path"
 import { getLogger } from "@wireio/shared"
 import type { ReportRendererRegistry } from "./ReportRendererRegistry.js"
+import { StepExtraRecorder as StepExtraRecorderTool } from "./tools/StepExtraRecorder.js"
 
 const log = getLogger("Report")
 
@@ -18,6 +19,14 @@ const log = getLogger("Report")
  */
 export class Report {
   private readonly nodeList: Report.Node[] = []
+
+  /**
+   * The run's display name — the flow scenario's name (`flow-…`), set by
+   * `FlowCLI` before the build runs; null for unnamed runs (the
+   * `wire-test-cluster` CLI), where renderers fall back to
+   * {@link Report.DefaultName}.
+   */
+  name: string | null = null
 
   /** The narrative tree's root nodes — internally mutable, externally read-only. */
   get nodes(): ReadonlyArray<Report.Node> {
@@ -74,6 +83,46 @@ export class Report {
 }
 
 export namespace Report {
+  /**
+   * Per-step client-call capture (see `report/tools/StepExtraRecorder.ts`) —
+   * re-exported here so consumers reach it as `Report.StepExtraRecorder`.
+   */
+  export import StepExtraRecorder = StepExtraRecorderTool
+
+  /** Title fallback when the run has no {@link Report.name} (CLI runs). */
+  export const DefaultName = "cluster-build"
+
+  /** The Eastern-time zone the report timestamps render alongside UTC. */
+  export const EasternTimeZone = "America/New_York"
+
+  /** The run title: `<name>: SUCCESS|FAILED` (the renderers' heading text). */
+  export function title(report: Report): string {
+    return `${report.name ?? DefaultName}: ${report.succeeded ? "SUCCESS" : "FAILED"}`
+  }
+
+  /**
+   * The report's generation timestamp in UTC and Eastern time —
+   * `2026-07-03 19:52:08 UTC · 2026-07-03 15:52:08 EDT` — prepended to the
+   * phases/steps/duration stats by the MD + HTML renderers.
+   */
+  export function timestampLine(at: Date = new Date()): string {
+    const utc = at.toISOString().slice(0, 19).replace("T", " ")
+    const eastern = new Intl.DateTimeFormat("en-CA", {
+      timeZone: EasternTimeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+      timeZoneName: "short"
+    })
+      .format(at)
+      .replace(",", "")
+    return `${utc} UTC · ${eastern}`
+  }
+
   /** Who performed a step — the narrative's subject. String value === key. */
   export enum Actor {
     Sysio = "Sysio",
@@ -333,7 +382,15 @@ export namespace Report {
     }
     /** A skipped step result (an earlier sibling failed → this never ran). */
     export function skipped(step: StepLike): StepResult {
-      return base(step, StepStatus.skipped, 0, null, null)
+      return base(step, StepStatus.skipped, 0, null, {
+        calls: [
+          {
+            client: "harness",
+            kind: "note",
+            text: "skipped — an earlier sibling failed; the step never ran"
+          }
+        ]
+      })
     }
   }
 

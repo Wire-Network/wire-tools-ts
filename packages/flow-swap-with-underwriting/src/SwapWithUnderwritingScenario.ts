@@ -281,7 +281,7 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
           )
         }
       ),
-      SwapSteps.requestSwapEthereum(
+      SwapSteps.planRequestSwapEthereum(
         Actor.User,
         "request-swap-ethereum",
         `user calls ReserveManager.requestSwap (${Constants.SourceEthereumWei} wei ETH → SOL)`,
@@ -509,7 +509,7 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
           )
         }
       ),
-      SwapSteps.requestSwapSolana(
+      SwapSteps.planRequestSwapSolana(
         Actor.User,
         "request-swap-solana",
         `user calls opp_outpost::request_swap (${Constants.SourceSolanaLamports} lamports SOL → ETH)`,

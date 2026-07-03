@@ -16,14 +16,14 @@ const SysioActiveAuthorization: PermissionLevelType[] = [
 
 /** Steps for `sysio.token` (the core token ledger) actions. */
 export namespace TokenContractSteps {
-  /** Input for {@link create} — the generated `token::create` data. */
+  /** Input for {@link planCreate} — the generated `token::create` data. */
   export interface CreateInput extends StepInput {
     readonly kind: "TokenContractSteps.CreateInput"
     readonly data: SysioContracts.SysioTokenCreateAction
   }
 
   /** `sysio.token::create` — create a token (authorized `sysio.token@active`). */
-  export function create<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCreate<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -50,14 +50,14 @@ export namespace TokenContractSteps {
     await ctx.wire.getSysioContract(SysioContractName.token).actions.create.invoke(input.data)
   }
 
-  /** Input for {@link issue} — the generated `token::issue` data. */
+  /** Input for {@link planIssue} — the generated `token::issue` data. */
   export interface IssueInput extends StepInput {
     readonly kind: "TokenContractSteps.IssueInput"
     readonly data: SysioContracts.SysioTokenIssueAction
   }
 
   /** `sysio.token::issue` — issue supply, signed by the issuer `sysio@active`. */
-  export function issue<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planIssue<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -86,14 +86,14 @@ export namespace TokenContractSteps {
       .actions.issue.invoke(input.data, { authorization: SysioActiveAuthorization })
   }
 
-  /** Input for {@link transfer} — the generated `token::transfer` data. */
+  /** Input for {@link planTransfer} — the generated `token::transfer` data. */
   export interface TransferInput extends StepInput {
     readonly kind: "TokenContractSteps.TransferInput"
     readonly data: SysioContracts.SysioTokenTransferAction
   }
 
   /** `sysio.token::transfer` — transfer tokens, signed by the sender `sysio@active`. */
-  export function transfer<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planTransfer<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

@@ -213,34 +213,34 @@ function assertReserveTokenCodes(
  * @param cell - The swap cell under verification.
  * @returns The four verify steps, in lifecycle order.
  */
-function swapVerifySteps(cell: SwapCell): ClusterBuildStep.Any<SwapScenarioContext>[] {
+function planSwapVerifySteps(cell: SwapCell): ClusterBuildStep.Any<SwapScenarioContext>[] {
   const destinationActor =
     cell.destination === SwapDestinationKind.ethereumNative
       ? Actor.EthereumOutpost
       : Actor.SolanaOutpost
   return [
-    TokenSteps.verifyUwreqCreated(
+    TokenSteps.planVerifyUwreqCreated(
       Actor.Sysio,
       "uwreq-created",
       "depot opens a new UWREQ row for the swap",
       UwreqStepOptions,
       cell
     ),
-    TokenSteps.verifyUwreqConfirmed(
+    TokenSteps.planVerifyUwreqConfirmed(
       Actor.Underwriter,
       "uwreq-confirmed",
       "the underwriter race resolves the UWREQ to CONFIRMED",
       RaceStepOptions,
       cell
     ),
-    TokenSteps.verifyUwreqLocks(
+    TokenSteps.planVerifyUwreqLocks(
       Actor.Sysio,
       "uwreq-locks",
       `both legs locked (${Constants.LocksPerSwap} persistent locks)`,
       UwreqStepOptions,
       cell
     ),
-    TokenSteps.verifyDestinationPayout(
+    TokenSteps.planVerifyDestinationPayout(
       destinationActor,
       "payout",
       "the user's destination balance bumps by the variance-adjusted target",
@@ -344,7 +344,7 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
       "SetupTokens",
       "Mint mock stablecoin balances to the swap user on both chains"
     ).push(
-      TokenSteps.mintErc20ToSwapUser(
+      TokenSteps.planMintErc20ToSwapUser(
         Actor.User,
         "mint-usdc",
         `mint ${Constants.Erc20FundingAmount} USDC base units to the swap user`,
@@ -352,7 +352,7 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
         Reserves.Ethereum.USDC,
         Constants.Erc20FundingAmount
       ),
-      TokenSteps.mintErc20ToSwapUser(
+      TokenSteps.planMintErc20ToSwapUser(
         Actor.User,
         "mint-usdt",
         `mint ${Constants.Erc20FundingAmount} USDT base units to the swap user`,
@@ -360,7 +360,7 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
         Reserves.Ethereum.USDT,
         Constants.Erc20FundingAmount
       ),
-      TokenSteps.mintSplToSwapUser(
+      TokenSteps.planMintSplToSwapUser(
         Actor.User,
         "mint-usdcsol",
         `mint ${Constants.SplFundingAmount} USDCSOL base units into the swap user's ATA`,
@@ -368,7 +368,7 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
         Reserves.Solana.USDCSOL,
         Constants.SplFundingAmount
       ),
-      TokenSteps.mintSplToSwapUser(
+      TokenSteps.planMintSplToSwapUser(
         Actor.User,
         "mint-usdtsol",
         `mint ${Constants.SplFundingAmount} USDTSOL base units into the swap user's ATA`,
@@ -428,7 +428,7 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
       "UnderwriterBondsRelayed",
       "Every underwriter bond relayed + credited on sysio.opreg"
     ).push(
-      TokenSteps.verifyUnderwriterBondsRelayed(
+      TokenSteps.planVerifyUnderwriterBondsRelayed(
         Actor.Sysio,
         "bonds-relayed",
         "sysio.opreg balance rows exist for every collateral leg",
@@ -449,140 +449,140 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
       "UsdcPermitToSolanaNative",
       "USDC (ETH) → native SOL: permit custody + cross-chain payout"
     ).push(
-      TokenSteps.quoteTarget(
+      TokenSteps.planQuoteTarget(
         Actor.Sysio,
         "quote-target",
         "quote the swap live against the depot reserve books",
         WriteStepOptions,
         UsdcPermitToSolanaNativeCell
       ),
-      TokenSteps.signPermit(
+      TokenSteps.planSignPermit(
         Actor.User,
         "sign-permit",
         "user signs the EIP-2612 permit for the swap amount",
         WriteStepOptions,
         UsdcPermitToSolanaNativeCell
       ),
-      TokenSteps.requestSwapErc20WithPermit(
+      TokenSteps.planRequestSwapErc20WithPermit(
         Actor.User,
         "request-swap",
         `swap ${SwapAmounts.SourceErc20Stable} USDC base units → SOL via inline permit`,
         WriteStepOptions,
         UsdcPermitToSolanaNativeCell
       ),
-      TokenSteps.verifyErc20Custody(
+      TokenSteps.planVerifyErc20Custody(
         Actor.EthereumOutpost,
         "custody-escrowed",
         "ReserveManager's USDC balance bumps by exactly the source amount",
         WriteStepOptions,
         UsdcPermitToSolanaNativeCell
       ),
-      ...swapVerifySteps(UsdcPermitToSolanaNativeCell)
+      ...planSwapVerifySteps(UsdcPermitToSolanaNativeCell)
     )
     ClusterBuildPhase.create<SwapScenarioContext>(
       ethereumToSolana,
       "UsdtApprovalToSolanaNative",
       "USDT (ETH) → native SOL: pre-set-allowance custody + cross-chain payout"
     ).push(
-      TokenSteps.quoteTarget(
+      TokenSteps.planQuoteTarget(
         Actor.Sysio,
         "quote-target",
         "quote the swap live against the depot reserve books",
         WriteStepOptions,
         UsdtApprovalToSolanaNativeCell
       ),
-      TokenSteps.approveErc20Spend(
+      TokenSteps.planApproveErc20Spend(
         Actor.User,
         "approve-spend",
         "user pre-approves ReserveManager for the swap amount (no-permit path)",
         WriteStepOptions,
         UsdtApprovalToSolanaNativeCell
       ),
-      TokenSteps.requestSwapErc20WithApproval(
+      TokenSteps.planRequestSwapErc20WithApproval(
         Actor.User,
         "request-swap",
         `swap ${SwapAmounts.SourceErc20Stable} USDT base units → SOL via pre-set allowance`,
         WriteStepOptions,
         UsdtApprovalToSolanaNativeCell
       ),
-      TokenSteps.verifyErc20Custody(
+      TokenSteps.planVerifyErc20Custody(
         Actor.EthereumOutpost,
         "custody-escrowed",
         "ReserveManager's USDT balance bumps by exactly the source amount",
         WriteStepOptions,
         UsdtApprovalToSolanaNativeCell
       ),
-      ...swapVerifySteps(UsdtApprovalToSolanaNativeCell)
+      ...planSwapVerifySteps(UsdtApprovalToSolanaNativeCell)
     )
     ClusterBuildPhase.create<SwapScenarioContext>(
       ethereumToSolana,
       "UsdcPermitToUsdtSolana",
       "USDC (ETH) → USDT (SOL): cross-chain ERC-20 → SPL stablecoin swap"
     ).push(
-      TokenSteps.quoteTarget(
+      TokenSteps.planQuoteTarget(
         Actor.Sysio,
         "quote-target",
         "quote the swap live against the depot reserve books",
         WriteStepOptions,
         UsdcPermitToUsdtSolanaCell
       ),
-      TokenSteps.signPermit(
+      TokenSteps.planSignPermit(
         Actor.User,
         "sign-permit",
         "user signs the EIP-2612 permit for the swap amount",
         WriteStepOptions,
         UsdcPermitToUsdtSolanaCell
       ),
-      TokenSteps.requestSwapErc20WithPermit(
+      TokenSteps.planRequestSwapErc20WithPermit(
         Actor.User,
         "request-swap",
         `swap ${SwapAmounts.SourceErc20Stable} USDC base units → USDTSOL via inline permit`,
         WriteStepOptions,
         UsdcPermitToUsdtSolanaCell
       ),
-      TokenSteps.verifyErc20Custody(
+      TokenSteps.planVerifyErc20Custody(
         Actor.EthereumOutpost,
         "custody-escrowed",
         "ReserveManager's USDC balance bumps by exactly the source amount",
         WriteStepOptions,
         UsdcPermitToUsdtSolanaCell
       ),
-      ...swapVerifySteps(UsdcPermitToUsdtSolanaCell)
+      ...planSwapVerifySteps(UsdcPermitToUsdtSolanaCell)
     )
     ClusterBuildPhase.create<SwapScenarioContext>(
       ethereumToSolana,
       "UsdcPermitToUsdcSolana",
       "USDC (ETH) → USDCSOL: cross-chain same-asset bridging"
     ).push(
-      TokenSteps.quoteTarget(
+      TokenSteps.planQuoteTarget(
         Actor.Sysio,
         "quote-target",
         "quote the swap live against the depot reserve books",
         WriteStepOptions,
         UsdcPermitToUsdcSolanaCell
       ),
-      TokenSteps.signPermit(
+      TokenSteps.planSignPermit(
         Actor.User,
         "sign-permit",
         "user signs the EIP-2612 permit for the swap amount",
         WriteStepOptions,
         UsdcPermitToUsdcSolanaCell
       ),
-      TokenSteps.requestSwapErc20WithPermit(
+      TokenSteps.planRequestSwapErc20WithPermit(
         Actor.User,
         "request-swap",
         `swap ${SwapAmounts.SourceErc20Stable} USDC base units → USDCSOL via inline permit`,
         WriteStepOptions,
         UsdcPermitToUsdcSolanaCell
       ),
-      TokenSteps.verifyErc20Custody(
+      TokenSteps.planVerifyErc20Custody(
         Actor.EthereumOutpost,
         "custody-escrowed",
         "ReserveManager's USDC balance bumps by exactly the source amount",
         WriteStepOptions,
         UsdcPermitToUsdcSolanaCell
       ),
-      ...swapVerifySteps(UsdcPermitToUsdcSolanaCell)
+      ...planSwapVerifySteps(UsdcPermitToUsdcSolanaCell)
     )
 
     // ── 7. SPL source custody on Solana → native ETH payout ──
@@ -591,21 +591,21 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
       "SwapSolanaToEthereumSpl",
       "SPL source custody on Solana → native ETH payout"
     ).push(
-      TokenSteps.quoteTarget(
+      TokenSteps.planQuoteTarget(
         Actor.Sysio,
         "quote-target",
         "quote the swap live against the depot reserve books",
         WriteStepOptions,
         UsdcSolanaToEthereumNativeCell
       ),
-      TokenSteps.requestSwapSpl(
+      TokenSteps.planRequestSwapSpl(
         Actor.User,
         "request-swap",
         `swap ${SwapAmounts.SourceSplStable} USDCSOL base units → ETH via signed request_swap_spl`,
         WriteStepOptions,
         UsdcSolanaToEthereumNativeCell
       ),
-      ...swapVerifySteps(UsdcSolanaToEthereumNativeCell)
+      ...planSwapVerifySteps(UsdcSolanaToEthereumNativeCell)
     )
   }
 }

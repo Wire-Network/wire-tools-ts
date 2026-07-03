@@ -1,6 +1,6 @@
-import Bluebird from "bluebird"
 import { defaults } from "lodash"
 import { match } from "ts-pattern"
+import { eachSeries } from "../utils/asyncUtils.js"
 import { Report } from "../report/Report.js"
 import type { ClusterBuildContext } from "./ClusterBuildContext.js"
 import {
@@ -99,7 +99,7 @@ export class ClusterBuildPhaseGroup<
         })
         .with(false, async () => {
           const nodes: Report.Node[] = []
-          await Bluebird.each(this.childList, async child => {
+          await eachSeries(this.childList, async child => {
             if (controller.signal.aborted) {
               this.context.log.info(
                 `↷ Abort signalled by an earlier failure — "${child.name}" will not be executed (omitted)`

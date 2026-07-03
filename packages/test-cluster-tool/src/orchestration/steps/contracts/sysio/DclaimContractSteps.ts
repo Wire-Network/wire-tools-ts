@@ -11,7 +11,7 @@ const { SysioContractName } = SysioContracts
 /** Steps for `sysio.dclaim` (distribution claims) actions. */
 export namespace DclaimContractSteps {
   /** `sysio.dclaim::setconfig` — initialize the `cap_config` singleton (idempotent). */
-  export function setconfig<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetconfig<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

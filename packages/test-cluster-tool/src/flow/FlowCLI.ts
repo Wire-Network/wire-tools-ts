@@ -76,6 +76,9 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
       this.scenario.createContext?.bind(this.scenario)
     )
     this.scenario.plan(cluster)
+    // Name the report before launch — the renderers title with it
+    // ("flow-…: SUCCESS|FAILED") and launch writes the files.
+    cluster.report.name = this.scenario.name
     const report = await ClusterManager.launch(cluster)
     log.info(
       `[${this.scenario.name}] ${report.succeeded ? "SUCCEEDED" : "FAILED"}`

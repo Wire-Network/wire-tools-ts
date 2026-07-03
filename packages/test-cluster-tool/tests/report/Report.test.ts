@@ -90,6 +90,31 @@ describe("Report.PhaseBuilder + Report", () => {
   })
 })
 
+describe("Report.title / Report.timestampLine", () => {
+  it("titles a named run with its verdict", () => {
+    const report = new Report()
+    report.name = "flow-swap-with-underwriting"
+    expect(Report.title(report)).toBe("flow-swap-with-underwriting: SUCCESS")
+    const failed = createFailureReport()
+    failed.name = "flow-swap-with-underwriting"
+    expect(Report.title(failed)).toBe("flow-swap-with-underwriting: FAILED")
+  })
+
+  it("falls back to the default name for unnamed (CLI) runs", () => {
+    expect(Report.title(new Report())).toBe(`${Report.DefaultName}: SUCCESS`)
+  })
+
+  it("timestampLine renders the same instant in UTC and Eastern", () => {
+    const line = Report.timestampLine(new Date("2026-01-15T19:52:08Z"))
+    expect(line).toBe("2026-01-15 19:52:08 UTC · 2026-01-15 14:52:08 EST")
+  })
+
+  it("timestampLine tracks daylight saving (EDT in summer)", () => {
+    const line = Report.timestampLine(new Date("2026-07-03T19:52:08Z"))
+    expect(line).toBe("2026-07-03 19:52:08 UTC · 2026-07-03 15:52:08 EDT")
+  })
+})
+
 describe("Report.write", () => {
   let dir: string
   beforeAll(() => {
@@ -114,8 +139,8 @@ describe("Report.write", () => {
     expect(csv.split("\n")[0]).toBe(
       "path,phase,step,actor,status,startedAt,durationMs,error,extra"
     )
-    expect(md).toContain("# Cluster Run Report — FAILED")
+    expect(md).toContain("# cluster-build: FAILED")
     expect(html).toContain("<!doctype html>")
-    expect(html).toContain("Run Failed")
+    expect(html).toContain("cluster-build: FAILED")
   })
 })

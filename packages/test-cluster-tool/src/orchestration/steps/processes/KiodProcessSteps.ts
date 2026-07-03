@@ -9,7 +9,7 @@ import {
 /** Steps that manage the cluster's kiod (wallet daemon) process. */
 export namespace KiodProcessSteps {
   /** Start kiod (get-or-create from `ctx.processManager`). Idempotent. */
-  export function start<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planStart<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
