@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-swap-non-native-tokens",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "private": true,
   "type": "commonjs",
   "description": "Flow: SWAP with non-native tokens (USDC / USDT / LIQ on ETH + SOL)",

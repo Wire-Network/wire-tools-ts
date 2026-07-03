@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-reserve-lifecycle",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "private": true,
   "type": "commonjs",
   "description": "Flow: gated reserve create→match lifecycle + private-reserve exclusions",

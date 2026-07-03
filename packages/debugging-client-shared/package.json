@@ -1,6 +1,6 @@
 {
   "name": "@wireio/debugging-client-shared",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "private": false,
   "publishConfig": {
     "access": "public"
@@ -13,7 +13,6 @@
       "types": "./lib/esm/index.d.ts",
       "import": "./lib/esm/index.js",
       "require": "./lib/cjs/index.js"
-      
     },
     "./*": {
       "types": "./lib/esm/*.d.ts",

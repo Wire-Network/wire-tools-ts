@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-operator-collateral-deposit",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "private": true,
   "type": "commonjs",
   "description": "Flow: Node Operator Collateral Deposit",
@@ -22,7 +22,6 @@
     "get-port": "^7.2.0"
   },
   "devDependencies": {
-
     "@types/node": "25.5.0"
   }
 }
