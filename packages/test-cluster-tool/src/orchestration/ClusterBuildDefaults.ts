@@ -338,33 +338,12 @@ export namespace ClusterBuildDefaults {
         )
       })
 
-    // The underwriter_plugin's startup preflight reads the node's LOCAL chain
-    // state and hard-gates on the operator's sysio.opreg registration +
-    // sysio.authex links — a FIRST boot starts at genesis (unsynced), so the
-    // plugin permanently disables its cron. Relaunch each underwriter node
-    // once synced: the second boot replays the chain and the preflight sees
-    // every bootstrap-written registration. Batch operator nodes need no
-    // relaunch — their plugin has no preflight and polls via cron.
-    const underwriterNodes = NodeConfig.plan(config).filter(
-      node => node.underwriterAccount != null
-    )
-    if (underwriterNodes.length > 0) {
-      ClusterBuildPhase.create<C>(
-        postContractDeployment,
-        "UnderwriterDaemonRestart",
-        "Relaunch underwriter nodes so the synced local state passes the plugin preflight"
-      ).push(
-        ...underwriterNodes.map(node =>
-          Steps.processes.nodeop.restart<C>(
-            Actor.Underwriter,
-            `restart-${node.name}`,
-            `relaunch ${node.name} after sync`,
-            {},
-            node.name
-          )
-        )
-      )
-    }
+    // The underwriter_plugin defers its startup preflight until the chain
+    // plugin reports the node synced (head within `sync_recency_ms` of now,
+    // via the controller's accepted_block signal), so a first boot that
+    // starts at genesis simply waits out its replay — no relaunch needed.
+    // The generic `Steps.processes.nodeop.restart` machinery remains for
+    // scenarios that need a real restart.
 
     // ── first epoch ──
     ClusterBuildPhase.create<C>(postContractDeployment, "EpochBootstrap", "Schedule groups + bootstrap epoch 0 → 1").push(
