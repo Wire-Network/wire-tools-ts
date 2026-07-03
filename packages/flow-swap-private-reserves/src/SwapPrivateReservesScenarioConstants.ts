@@ -20,8 +20,13 @@ export namespace SwapPrivateReservesScenarioConstants {
     export const RelayDeadlineMs = 240_000
     /** RESERVE_READY round-trip → outpost-local record ACTIVE. */
     export const ReadyDeadlineMs = 240_000
-    /** SWAP_REQUEST relay + UWREQ insert (also the uwrit.a ACTIVE budget). */
-    export const UwreqDeadlineMs = 180_000
+    /**
+     * SWAP_REQUEST relay + UWREQ insert (also the uwrit.a ACTIVE budget).
+     * A request rides the outpost's NEXT outbound emit (0–2 min of phase
+     * alignment) + delivery + the depot's createuwreq (~1–1.5 min) — up to
+     * ~3.5 minutes end-to-end, so the budget is five epochs.
+     */
+    export const UwreqDeadlineMs = 300_000
     /** Two-leg underwriter race resolution. */
     export const RaceDeadlineMs = 240_000
     /** SWAP_REMIT delivery + destination payout. */
@@ -69,13 +74,14 @@ export namespace SwapPrivateReservesScenarioConstants {
   /**
    * create_reserve parameters for the private pair.
    *
-   * Sizing note: every amount riding an OPP envelope is in the depot's
-   * UNIFORM 9-dec frame — each outpost converts at its boundary
-   * (`PrecisionLib.toDepot` on ETH downscales 18→9; `precision::to_depot`
-   * on SOL upscales 6-dec USDCSOL ×1e3) before stamping the RESERVE_CREATE
-   * attestation's `ReserveAmount`. Both escrows land as 1e10 depot units,
-   * seeding ~1:1 against the matched WIRE so the constant-product math over
-   * a ~1% draw stays well-conditioned.
+   * Sizing note: a token's depot precision is `min(nativeDecimals, 9)` —
+   * each outpost converts at its boundary (`PrecisionLib.toDepot` on ETH
+   * downscales 18-dec wei ÷1e9; 6-dec USDCSOL is at the cap or below, so
+   * `to_depot` on SOL is identity) before stamping the RESERVE_CREATE
+   * attestation's `ReserveAmount`. The ETH escrow lands as 1e10 depot units
+   * and the USDCSOL escrow as 1e7 (its native 6-dec base units); each seeds
+   * against 1e10 matched WIRE, and the ~1% Phase draws below keep the
+   * constant-product math well-conditioned on both books.
    */
   export namespace CreateParams {
     /** ETH escrow — 10 ETH in wei; `toDepot(·, 18)` → 1e10 depot units. */
@@ -84,9 +90,9 @@ export namespace SwapPrivateReservesScenarioConstants {
     export const EthereumEscrowDepotUnits = WireReserveTool.toDepot(EthereumEscrowWei, 18)
     /** WIRE (raw 9-dp) the owner matches against the ETH reserve. */
     export const EthereumRequestedWire = 10_000_000_000n
-    /** USDCSOL escrow — 10 USDC in 6-dec units; `to_depot(·, 6)` → ×1e3. */
+    /** USDCSOL escrow — 10 USDC in 6-dec units; at/below the cap → identity. */
     export const SolanaEscrowChainUnits = 10_000_000n
-    /** Depot-frame seed the USDCSOL escrow lands as on the depot row (1e10). */
+    /** Depot-frame seed the USDCSOL escrow lands as on the depot row (1e7). */
     export const SolanaEscrowDepotUnits = WireReserveTool.toDepot(SolanaEscrowChainUnits, 6)
     /** WIRE (raw 9-dp) the owner matches against the SOL reserve. */
     export const SolanaRequestedWire = 10_000_000_000n
@@ -103,17 +109,17 @@ export namespace SwapPrivateReservesScenarioConstants {
 
   /**
    * Per-phase swap source amounts. Each phase draws ~1% of its source
-   * reserve (1e8 depot units against the 1e10 depot-frame seed on each
-   * side) so slippage stays well inside the tolerance.
+   * reserve (Phase A: 1e8 of the 1e10-depot-unit ETH seed; Phase B: 1e5 of
+   * the 1e7-unit USDCSOL seed) so slippage stays well inside the tolerance.
    */
   export namespace SwapAmounts {
     /** Phase A: 0.1 ETH in wei; `toDepot(·, 18)` → 1e8 depot units. */
     export const PhaseASourceWei = 100_000_000_000_000_000n
     export const PhaseASourceDepotUnits = WireReserveTool.toDepot(PhaseASourceWei, 18)
-    /** Phase B: 0.1 USDCSOL in 6-dec chain units; `to_depot(·, 6)` → 1e8 depot units. */
+    /** Phase B: 0.1 USDCSOL in 6-dec chain units; at/below the cap → identity (1e5). */
     export const PhaseBSourceSplUnits = 100_000n
     export const PhaseBSourceDepotUnits = WireReserveTool.toDepot(PhaseBSourceSplUnits, 6)
-    /** USDCSOL chain-native decimals — payouts convert `fromDepot(target, 6)` (÷1e3). */
+    /** USDCSOL chain-native decimals — at/below the cap, so `fromDepot(target, 6)` is identity. */
     export const UsdcSolDecimals = 6
     /** Native-ETH chain decimals — payouts convert `fromDepot(target, 18)` (×1e9). */
     export const EthereumNativeDecimals = 18

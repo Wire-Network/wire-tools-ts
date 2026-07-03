@@ -69,9 +69,9 @@ export namespace SwapToWireScenarioConstants {
   // ── Swap amounts ─────────────────────────────────────────────────────────
 
   /**
-   * 0.1 ETH = 1e17 wei → 1e8 depot units (the ETH outpost divides native wei
-   * by 1e9 into the uniform 9-decimal depot frame). ~1% of the seeded reserve,
-   * so slippage stays well inside the tolerance.
+   * 0.1 ETH = 1e17 wei → 1e8 depot units (18-dec wei is above the per-token
+   * depot precision cap of 9, so the ETH outpost divides by 1e9). ~1% of the
+   * seeded reserve, so slippage stays well inside the tolerance.
    */
   export const SourceEthereumWei = 100_000_000_000_000_000n
   /** The escrowed source amount in the depot's 9-decimal frame. */

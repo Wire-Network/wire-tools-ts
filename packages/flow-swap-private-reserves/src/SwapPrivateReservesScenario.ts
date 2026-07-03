@@ -459,7 +459,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
       verifyStep<Context>(
         Actor.Sysio,
         "phase-b-uwreq-created",
-        "depot creates the PENDING inverse UWREQ (src_amount rescaled to the depot frame)",
+        "depot creates the PENDING inverse UWREQ (src_amount in the token's depot frame)",
         runPhaseBUwreqCreated,
         uwreqOptions
       ),
@@ -582,8 +582,9 @@ function assertPrivateRowActive(
     `${label}: expected is_private=true, got ${row.is_private}`
   )
   // The match escrowed the requested WIRE verbatim; the chain side seeded at
-  // the DEPOT-FRAME conversion of the escrow (`ReserveCreate.external_amount`
-  // — toDepot(wei,18) / to_depot(·,6)), not the raw chain-native units.
+  // the escrow's DEPOT-FRAME conversion (`ReserveCreate.external_amount` —
+  // `toDepot(amount, nativeDecimals)`: ÷1e9 for 18-dec wei, identity for the
+  // 6-dec USDCSOL escrow).
   Assert.strictEqual(
     BigInt(row.reserve_wire_amount),
     requestedWireAmount,
@@ -870,8 +871,9 @@ async function runPhaseAFourLegBooks(ctx: Context): Promise<void> {
 }
 
 /**
- * The target rides the attestation in depot 9-dec units; the SOL outpost pays
- * the user's ATA `from_depot(target, 6)` SPL base units (÷1e3).
+ * The target rides the attestation in USDCSOL's depot frame — its native
+ * 6-dec units (at/below the per-token cap) — so the SOL outpost pays the
+ * user's ATA `from_depot(target, 6)` = target, identity.
  */
 async function runPhaseAUserPayout(ctx: Context): Promise<void> {
   const target = ctx.outputs.assert(Outputs.phaseATarget),
