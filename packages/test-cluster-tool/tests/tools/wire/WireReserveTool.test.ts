@@ -101,15 +101,16 @@ describe("WireReserveTool", () => {
     })
   })
 
-  describe("toDepot / fromDepot (native ↔ depot 9-dec frame)", () => {
-    it("upscales below-depot precision (6-dec USDC → ×1e3)", () => {
-      // The 2026-07-02 non-native incident: 100_000 native units rode the
-      // attestation as 100_000_000 depot units.
-      expect(WireReserveTool.toDepot(100_000n, 6)).toBe(100_000_000n)
+  describe("toDepot / fromDepot (per-token depot precision = min(native, 9))", () => {
+    it("depotPrecision caps at 9 and passes sub-cap precision through", () => {
+      expect(WireReserveTool.depotPrecision(6)).toBe(6)
+      expect(WireReserveTool.depotPrecision(9)).toBe(9)
+      expect(WireReserveTool.depotPrecision(18)).toBe(9)
     })
 
-    it("downscales above-depot precision (18-dec wei → ÷1e9, floored)", () => {
-      expect(WireReserveTool.toDepot(1_500_000_000_999_999_999n, 18)).toBe(1_500_000_000n)
+    it("carries an at-or-below-cap token at NATIVE precision (6-dec identity)", () => {
+      expect(WireReserveTool.toDepot(100_000n, 6)).toBe(100_000n)
+      expect(WireReserveTool.fromDepot(100_000n, 6)).toBe(100_000n)
     })
 
     it("is identity at exactly 9 decimals (lamports)", () => {
@@ -117,14 +118,18 @@ describe("WireReserveTool", () => {
       expect(WireReserveTool.fromDepot(10_000_000_000n, 9)).toBe(10_000_000_000n)
     })
 
-    it("fromDepot pays 18-dec wei at ×1e9 and 6-dec SPL at ÷1e3 (floored)", () => {
+    it("downscales an above-cap token (18-dec wei → ÷1e9, floored)", () => {
+      expect(WireReserveTool.toDepot(1_500_000_000_999_999_999n, 18)).toBe(1_500_000_000n)
+    })
+
+    it("fromDepot upscales an above-cap token (18-dec wei → ×1e9)", () => {
       expect(WireReserveTool.fromDepot(4_754_411_063n, 18)).toBe(4_754_411_063_000_000_000n)
-      expect(WireReserveTool.fromDepot(4_754_411_063n, 6)).toBe(4_754_411n)
     })
 
     it("rejects a zero / non-integer decimals argument", () => {
       expect(() => WireReserveTool.toDepot(1n, 0)).toThrow(/invalid native decimals/)
       expect(() => WireReserveTool.fromDepot(1n, 1.5)).toThrow(/invalid native decimals/)
+      expect(() => WireReserveTool.depotPrecision(-1)).toThrow(/invalid native decimals/)
     })
   })
 

@@ -69,10 +69,10 @@ export namespace SwapWithUnderwritingScenarioConstants {
   export const InitialReserveAmount = 10_000_000_000n
 
   /**
-   * Wei per depot base unit: the depot books every token in a UNIFORM
-   * 9-decimal frame (`feedback-token-precision-9-max`), and native ETH is
-   * 18-decimal — so the ETH outpost divides wei by 1e9 inbound
-   * (`_toDepotUnits`) and multiplies by 1e9 when settling a SWAP_REMIT.
+   * Wei per depot base unit: a token's depot precision is
+   * `min(nativeDecimals, 9)`, and native ETH is 18-decimal — above the cap —
+   * so the ETH outpost divides wei by 1e9 inbound (`PrecisionLib.toDepot`)
+   * and multiplies by 1e9 when settling a SWAP_REMIT.
    */
   export const WeiPerDepotUnit = 10n ** 9n
 

@@ -11,15 +11,12 @@ export namespace SwapNonNativeScenarioConstants {
   /**
    * Per-leg underwriter bond posted for EVERY (chain, token) the swap matrix
    * touches. The depot's `sysio.uwrit::createuwreq` re-checks `meets_role_min`
-   * for BOTH legs of every swap, and the underwriter plugin's `select_coverable`
-   * requires the leg's credit line to cover the FULL leg amount — the credit
-   * line is the depot balance (deposits relay RAW native units, no frame
-   * conversion — a known contracts precision bug) minus persistent locks, and
-   * every uwreq leg amount is depot 9-dec frame. The LIVE-quoted SOL-family
-   * destinations run ~4.8e9 depot units per swap on the lopsided seeded books,
-   * and the two SOL-native destination cells lock sequentially (~9.6e9 summed),
-   * so the bond must exceed that with margin (2026-07-02 incident: a 1e9 bond
-   * left every uwreq "no requests coverable" and the race timed out).
+   * for BOTH legs of every swap, and the underwriter plugin's
+   * `select_coverable` requires the leg's credit line (the depot balance —
+   * raw native deposit units — minus persistent locks) to cover the FULL
+   * leg amount in the token's depot frame. Sized with heavy margin over the
+   * summed live-quoted leg exposures across all five sequential cells (locks
+   * persist for the challenge window, so per-leg exposure accumulates).
    */
   export const UnderwriterCollateralAmount = 15_000_000_000n
 
@@ -59,9 +56,9 @@ export namespace SwapNonNativeScenarioConstants {
   }
 
   /**
-   * Chain-native decimals per token class — drives the native ↔ depot-9-dec
-   * frame conversions (`WireReserveTool.toDepot`/`fromDepot`) each cell's
-   * quote and payout-floor math must mirror.
+   * Chain-native decimals per token class — drives the native ↔ depot-frame
+   * conversions (`WireReserveTool.toDepot`/`fromDepot`, per-token precision
+   * `min(decimals, 9)`) each cell's quote and payout-floor math must mirror.
    */
   export namespace TokenDecimals {
     /** Mock USDC / USDT ERC-20s (`MockUsdc.decimals() == 6`). */
@@ -85,8 +82,14 @@ export namespace SwapNonNativeScenarioConstants {
     export const EpochDurationSec = 60
     /** Per on-chain write step budget. */
     export const WriteTimeoutMs = 60_000
-    /** Relay → depot uwreq appearance budget (~3 epochs). */
-    export const UwreqDeadlineMs = 180_000
+    /**
+     * Relay → depot uwreq appearance budget. A request rides the outpost's
+     * NEXT outbound emit (0–2 min of phase alignment, verified on-chain
+     * 2026-07-03) + delivery + the depot's createuwreq (~1–1.5 min) — up to
+     * ~3.5 minutes end-to-end, so a 3-epoch budget was an alignment coin
+     * flip. Five epochs covers it with margin.
+     */
+    export const UwreqDeadlineMs = 300_000
     /** Underwriter race resolution budget (~3 epochs). */
     export const RaceDeadlineMs = 180_000
     /** SWAP_REMIT round-trip + destination payout budget (~8 epochs). */

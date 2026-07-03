@@ -100,7 +100,7 @@ const UsdcPermitToUsdtSolanaCell: SwapCell = {
   sourceDecimals: TokenDecimals.Erc20Stable,
   targetChainCode: Reserves.Solana.ChainCode,
   targetTokenCode: Reserves.Solana.USDTSOL,
-  // 6-dec SPL destination — the outpost pays fromDepot(target) = target ÷ 1e3.
+  // 6-dec SPL destination — at/below the cap, `fromDepot(target)` is identity.
   destinationDecimals: TokenDecimals.SplStable,
   destination: SwapDestinationKind.solanaSplToken
 }

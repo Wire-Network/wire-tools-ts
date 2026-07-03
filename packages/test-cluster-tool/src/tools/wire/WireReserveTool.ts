@@ -122,51 +122,66 @@ export namespace WireReserveTool {
   }
 
   /**
-   * The depot's uniform amount scale. Every amount riding an OPP envelope —
-   * `SwapRequest.source_amount`, published targets, `sysio.reserv` books —
-   * is in this 9-decimal frame; each outpost converts at its boundary
-   * (Ethereum `PrecisionLib.toDepot/fromDepot`, Solana `precision::to_depot/
-   * from_depot`). Changing it requires a coordinated depot + outpost migration.
+   * The depot-frame precision CAP. A token's depot precision is
+   * `min(nativeDecimals, DepotPrecisionCap)` — a token at or below the cap
+   * (6-dec stablecoins, 9-dec lamports) rides OPP envelopes at its NATIVE
+   * precision (identity), and only an above-cap token (18-dec wei) scales.
+   * Mirrors Ethereum `PrecisionLib.DEPOT_PRECISION` and Solana
+   * `precision::DEPOT_PRECISION_DECIMALS`; changing it requires a
+   * coordinated depot + outpost migration.
    */
-  export const DepotPrecision = 9
+  export const DepotPrecisionCap = 9
 
   /**
-   * Convert a chain-native amount to the depot's 9-decimal frame — the exact
-   * scaling the source outpost applies before stamping an outbound
-   * `SwapRequest.source_amount` (mirror of Ethereum's `PrecisionLib.toDepot`
-   * and Solana's `precision::to_depot`).
+   * The depot-frame precision the depot records for a token —
+   * `min(nativeDecimals, DepotPrecisionCap)` (mirror of Ethereum's
+   * `PrecisionLib.depotPrecision`).
    *
-   * @param nativeAmount - Amount in chain-native base units (wei, lamports, ERC-20 units).
    * @param nativeDecimals - The token's chain-native decimal scale.
-   * @returns The amount in depot 9-decimal units (floored when downscaling).
+   * @returns The token's depot-frame precision.
    */
-  export function toDepot(nativeAmount: bigint, nativeDecimals: number): bigint {
+  export function depotPrecision(nativeDecimals: number): number {
     Assert.ok(
       Number.isInteger(nativeDecimals) && nativeDecimals > 0,
-      `WireReserveTool.toDepot: invalid native decimals ${nativeDecimals}`
+      `WireReserveTool.depotPrecision: invalid native decimals ${nativeDecimals}`
     )
-    return nativeDecimals > DepotPrecision
-      ? nativeAmount / 10n ** BigInt(nativeDecimals - DepotPrecision)
-      : nativeAmount * 10n ** BigInt(DepotPrecision - nativeDecimals)
+    return Math.min(nativeDecimals, DepotPrecisionCap)
   }
 
   /**
-   * Convert a depot 9-decimal amount to chain-native base units — the exact
+   * Convert a chain-native amount to the token's depot frame — the exact
+   * scaling the source outpost applies before stamping an outbound
+   * `SwapRequest.source_amount` (mirror of Ethereum's `PrecisionLib.toDepot`
+   * and Solana's `precision::to_depot`). Per-token precision: an at-or-below-cap
+   * token is identity; only an above-cap token downscales.
+   *
+   * @param nativeAmount - Amount in chain-native base units (wei, lamports, ERC-20 units).
+   * @param nativeDecimals - The token's chain-native decimal scale.
+   * @returns The amount in the token's depot-frame units (floored when downscaling).
+   */
+  export function toDepot(nativeAmount: bigint, nativeDecimals: number): bigint {
+    const precision = depotPrecision(nativeDecimals)
+    return nativeDecimals > precision
+      ? nativeAmount / 10n ** BigInt(nativeDecimals - precision)
+      : nativeAmount
+  }
+
+  /**
+   * Convert a depot-frame amount to chain-native base units — the exact
    * scaling the destination outpost applies when paying out a remit (mirror
    * of Ethereum's `PrecisionLib.fromDepot` and Solana's `precision::from_depot`).
+   * Per-token precision: an at-or-below-cap token is identity; only an
+   * above-cap token upscales.
    *
-   * @param depotAmount - Amount in depot 9-decimal units.
+   * @param depotAmount - Amount in the token's depot-frame units.
    * @param nativeDecimals - The destination token's chain-native decimal scale.
-   * @returns The amount in chain-native base units (floored when downscaling).
+   * @returns The amount in chain-native base units.
    */
   export function fromDepot(depotAmount: bigint, nativeDecimals: number): bigint {
-    Assert.ok(
-      Number.isInteger(nativeDecimals) && nativeDecimals > 0,
-      `WireReserveTool.fromDepot: invalid native decimals ${nativeDecimals}`
-    )
-    return nativeDecimals > DepotPrecision
-      ? depotAmount * 10n ** BigInt(nativeDecimals - DepotPrecision)
-      : depotAmount / 10n ** BigInt(DepotPrecision - nativeDecimals)
+    const precision = depotPrecision(nativeDecimals)
+    return nativeDecimals > precision
+      ? depotAmount * 10n ** BigInt(nativeDecimals - precision)
+      : depotAmount
   }
 
   /**

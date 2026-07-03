@@ -86,13 +86,13 @@ export interface SwapCell {
   readonly sourceAmount: bigint
   /**
    * Source token's chain-native decimals. The source outpost stamps the
-   * outbound `SwapRequest.source_amount` as `toDepot(sourceAmount, this)`,
-   * so {@link SwapNonNativeScenarioTokenSteps.quoteTarget} must quote with
-   * the SAME depot-frame amount the depot will re-quote with at ingestion
-   * (2026-07-02 incident: quoting with the raw 6-dec 100_000 instead of the
-   * depot-frame 100_000_000 mispriced the curve 1000× and every swap
-   * reverted "variance exceeded tolerance"). The target itself is NEVER
-   * static — the depot re-quotes the live curve at ingestion.
+   * outbound `SwapRequest.source_amount` as `toDepot(sourceAmount, this)` —
+   * per-token depot precision `min(decimals, 9)`: identity for the 6-dec
+   * stables, ÷1e9 for 18-dec wei — so
+   * {@link SwapNonNativeScenarioTokenSteps.quoteTarget} must quote with the
+   * SAME depot-frame amount the depot re-quotes with at ingestion. The
+   * target itself is NEVER static — the depot re-quotes the live curve at
+   * ingestion and variance-reverts anything outside tolerance.
    */
   readonly sourceDecimals: number
   /** Target chain slug value. */
@@ -101,7 +101,8 @@ export interface SwapCell {
   readonly targetTokenCode: number
   /**
    * Destination token's chain-native decimals. The published target rides
-   * the attestation in depot 9-dec units; the destination outpost pays out
+   * the attestation in the DESTINATION token's depot frame
+   * (`min(decimals, 9)` precision); the destination outpost pays out
    * `fromDepot(target, this)` native units, which is what the payout-floor
    * assertion must expect.
    */

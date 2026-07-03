@@ -27,7 +27,7 @@ const {
  * deploy runs, so the rows cannot be static per-entry steps.
  */
 export namespace RegistrySteps {
-  /** Bootstrap reserve chain/wire seed amount (depot 9-dec frame). */
+  /** Bootstrap reserve chain/wire seed amount (each token's depot frame = `min(native, 9)` decimals). */
   const ReserveSeedAmount = 10_000_000_000
   /** Bancor connector weight (bps) for every bootstrap reserve. */
   const ConnectorWeightBps = 5000
