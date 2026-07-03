@@ -99,7 +99,7 @@ async function assertToWireUwreq(
 
 // ── Flow-local write Steps (each on-chain WRITE is its own Step) ─────────────
 
-/** Input for {@link provisionRecipient}. */
+/** Input for {@link planProvisionRecipient}. */
 interface ProvisionRecipientInput extends StepInput {
   readonly kind: "SwapToWireScenario.ProvisionRecipientInput"
   /** WIRE account name to provision (unfunded — the payout is the flow's proof). */
@@ -118,7 +118,7 @@ interface ProvisionRecipientInput extends StepInput {
  * @param account - The WIRE account name to provision.
  * @returns The definition step.
  */
-function provisionRecipient(
+function planProvisionRecipient(
   actor: Report.Actor,
   name: string,
   description: string,
@@ -146,7 +146,7 @@ async function runProvisionRecipient(
   ctx.outputs.set(SwapToWireScenario.Output.recipient, recipient)
 }
 
-/** Input for {@link requestSwap}. */
+/** Input for {@link planRequestSwap}. */
 interface RequestSwapInput extends StepInput {
   readonly kind: "SwapToWireScenario.RequestSwapInput"
   /** Wei escrowed into the source reserve as the swap input. */
@@ -169,7 +169,7 @@ interface RequestSwapInput extends StepInput {
  * @param toleranceBps - Variance tolerance riding the request.
  * @returns The definition step.
  */
-function requestSwap(
+function planRequestSwap(
   actor: Report.Actor,
   name: string,
   description: string,
@@ -375,7 +375,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
       "Recipient",
       "Provision the (unfunded) WIRE recipient"
     ).push(
-      provisionRecipient(
+      planProvisionRecipient(
         Actor.User,
         "provision-recipient",
         `provision ${Constants.RecipientAccount} (zero WIRE until the payout)`,
@@ -460,7 +460,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
           )
         }
       ),
-      requestSwap(
+      planRequestSwap(
         Actor.User,
         "request-swap",
         `requestSwap: ${Constants.SourceEthereumWei} wei ETH → WIRE (sentinel reserve, recipient account bytes)`,

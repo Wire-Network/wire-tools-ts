@@ -26,6 +26,48 @@ const DefaultRetryDelayMs = 1_000
  *
  * @param ms - Duration to wait.
  */
+/**
+ * Sequentially map `items` through an async `mapper` — the native,
+ * AsyncLocalStorage-SAFE replacement for `Bluebird.mapSeries`. Bluebird
+ * drains its shared callback queue under whichever async context scheduled
+ * the drain, so Bluebird continuations nested inside another Bluebird chain
+ * (e.g. a step runner inside the phase executor) DETACH from the step's
+ * `StepExtraRecorder` scope and their client calls vanish from the report.
+ * Anything that can run under a step scope iterates through THIS.
+ *
+ * @param items - The inputs, processed strictly in order.
+ * @param mapper - Async transform (receives the item + its index).
+ * @returns The mapped results, in input order.
+ */
+export async function mapSeries<T, R>(
+  items: readonly T[],
+  mapper: (item: T, index: number) => Promise<R> | R
+): Promise<R[]> {
+  return items.reduce(
+    async (chain, item, index) => {
+      const results = await chain
+      results.push(await mapper(item, index))
+      return results
+    },
+    Promise.resolve([] as R[])
+  )
+}
+
+/**
+ * Sequentially run `fn` for each item (result discarded) — the native,
+ * AsyncLocalStorage-safe replacement for `Bluebird.each`; see
+ * {@link mapSeries} for why Bluebird cannot be used under a step scope.
+ *
+ * @param items - The inputs, processed strictly in order.
+ * @param fn - Async effect (receives the item + its index).
+ */
+export async function eachSeries<T>(
+  items: readonly T[],
+  fn: (item: T, index: number) => Promise<unknown> | unknown
+): Promise<void> {
+  await mapSeries(items, fn)
+}
+
 export function sleep(ms: number): Promise<void> {
   return Deferred.delay(ms)
 }

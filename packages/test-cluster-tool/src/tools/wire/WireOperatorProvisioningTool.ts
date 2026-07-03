@@ -46,6 +46,7 @@ import type { StepInput } from "../../orchestration/StepRunner.js"
 import { OperatorSteps } from "../../orchestration/steps/OperatorSteps.js"
 import { EthereumOutpostBootstrapper } from "../../orchestration/ethereum/EthereumOutpostBootstrapper.js"
 import { Report } from "../../report/Report.js"
+import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import {
   ethereumSigner,
   solanaKeypair,
@@ -108,20 +109,20 @@ export namespace WireOperatorProvisioningTool {
     const group = ClusterBuildPhaseGroup.create<C>(parent, name, description, {
       parallel: true
     })
-    operators.forEach(spec => provisionPhase<C>(group, spec, options))
+    operators.forEach(spec => planProvisionPhase<C>(group, spec, options))
     return group
   }
 
   /** Dispatch one operator's Phase by type (self-registers on `group`). */
-  function provisionPhase<C extends ClusterBuildContext>(
+  function planProvisionPhase<C extends ClusterBuildContext>(
     group: ClusterBuildParent<C>,
     spec: OperatorProvisioningSpec,
     options: ClusterBuildStepOptions
   ): ClusterBuildPhase<C> {
     return match(spec.type)
-      .with(OperatorType.PRODUCER, () => provisionProducerPhase<C>(group, spec, options))
+      .with(OperatorType.PRODUCER, () => planProvisionProducerPhase<C>(group, spec, options))
       .with(OperatorType.BATCH, OperatorType.UNDERWRITER, () =>
-        provisionOppOperatorPhase<C>(group, spec, options)
+        planProvisionOppOperatorPhase<C>(group, spec, options)
       )
       .otherwise(() => {
         throw new Error(
@@ -131,7 +132,7 @@ export namespace WireOperatorProvisioningTool {
   }
 
   /** A producer's Phase: materialize its (node-shared) identity, then create its account. */
-  function provisionProducerPhase<C extends ClusterBuildContext>(
+  function planProvisionProducerPhase<C extends ClusterBuildContext>(
     group: ClusterBuildParent<C>,
     spec: OperatorProvisioningSpec,
     options: ClusterBuildStepOptions
@@ -166,7 +167,7 @@ export namespace WireOperatorProvisioningTool {
    * Funding steps are included only when the spec supplies an amount (bootstrap
    * ops skip them; deposit flows opt in).
    */
-  function provisionOppOperatorPhase<C extends ClusterBuildContext>(
+  function planProvisionOppOperatorPhase<C extends ClusterBuildContext>(
     group: ClusterBuildParent<C>,
     spec: OperatorProvisioningSpec,
     options: ClusterBuildStepOptions
@@ -242,7 +243,7 @@ export namespace WireOperatorProvisioningTool {
         account,
         ChainKind.SVM
       ),
-      OperatorSteps.register<C>(
+      OperatorSteps.planRegister<C>(
         actor,
         `${account}-register`,
         `register operator ${account}`,
@@ -315,9 +316,16 @@ export namespace WireOperatorProvisioningTool {
       EthereumOutpostBootstrapper.AnvilMnemonic
     )
     const [wire, solana, ethereum] = await Promise.all([
-      KeyGenerator.create(KeyType.K1, keyContext),
-      KeyGenerator.create(KeyType.ED, keyContext),
-      KeyGenerator.create(KeyType.EM, keyContext, { ethereumHdIndex: input.ethereumHdIndex })
+      KeyGenerator.create(KeyType.K1, keyContext, {
+        purpose: `operator ${input.account} — WIRE account key (K1)`
+      }),
+      KeyGenerator.create(KeyType.ED, keyContext, {
+        purpose: `operator ${input.account} — solana outpost key (ED)`
+      }),
+      KeyGenerator.create(KeyType.EM, keyContext, {
+        ethereumHdIndex: input.ethereumHdIndex,
+        purpose: `operator ${input.account} — ethereum outpost key (EM)`
+      })
     ])
     // Import the operator's unique wire key so kiod can sign `account@active`
     // (authex links, registration, and any operator-signed flow actions).
@@ -385,6 +393,16 @@ export namespace WireOperatorProvisioningTool {
       wire: nodeKeys.keys.k1,
       bls: nodeKeys.keys.bls
     })
+    // Descriptive payload only — the full pairs live under the step that
+    // GENERATED them (generate-keys); here we just say whose set this is.
+    StepExtraRecorder.note(
+      `producer ${input.account} assumes node_${String(input.producerNodeIndex).padStart(2, "0")}'s signing set`,
+      {
+        account: input.account,
+        wirePublicKey: nodeKeys.keys.k1.publicKey,
+        blsPublicKey: nodeKeys.keys.bls.publicKey
+      }
+    )
     log.info(
       `[provision] producer ${input.account} — node ${input.producerNodeIndex} (K1 ${nodeKeys.keys.k1.publicKey})`
     )

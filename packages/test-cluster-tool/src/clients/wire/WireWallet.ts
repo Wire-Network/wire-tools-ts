@@ -1,9 +1,9 @@
 import Fs from "node:fs"
 import Path from "node:path"
-import Bluebird from "bluebird"
 import { flatten } from "lodash"
 import { asOption } from "@3fv/prelude-ts"
 import { getLogger } from "@wireio/shared"
+import { eachSeries } from "../../utils/asyncUtils.js"
 import { isNotEmpty } from "../../utils/predicateUtils.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { ClioRunner } from "./clio/ClioRunner.js"
@@ -84,7 +84,7 @@ export class WireWallet {
   async addPrivateKey(
     ...privateKeys: Array<string | readonly string[]>
   ): Promise<WireWallet> {
-    await Bluebird.each(flatten(privateKeys).filter(isNotEmpty), key =>
+    await eachSeries(flatten(privateKeys).filter(isNotEmpty), key =>
       this.runner.run([
         "wallet",
         "import",

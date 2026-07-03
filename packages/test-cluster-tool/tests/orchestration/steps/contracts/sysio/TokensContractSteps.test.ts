@@ -15,7 +15,7 @@ describe("Steps.contracts.sysio.tokens", () => {
         address: ""
       }
     }
-    const step = Steps.contracts.sysio.tokens.regtoken(
+    const step = Steps.contracts.sysio.tokens.planRegtoken(
       Report.Actor.Sysio,
       "register-wire-token",
       "register the WIRE native token",
@@ -36,7 +36,7 @@ describe("Steps.contracts.sysio.tokens", () => {
       contract_addr: "",
       is_native: true
     }
-    const step = Steps.contracts.sysio.tokens.regctok(
+    const step = Steps.contracts.sysio.tokens.planRegctok(
       Report.Actor.Sysio,
       "bind-ethereum-eth",
       "bind native ETH on the Ethereum outpost",

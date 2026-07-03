@@ -3,7 +3,7 @@ import { Report } from "@wireio/test-cluster-tool/report"
 
 describe("Steps.registry", () => {
   it("seedRegistry builds an input-less step with a runner", () => {
-    const step = Steps.registry.seedRegistry(
+    const step = Steps.registry.planSeedRegistry(
       Report.Actor.Sysio,
       "seed-registry",
       "register chains + tokens + chain-tokens + reserves",

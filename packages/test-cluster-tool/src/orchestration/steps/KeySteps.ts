@@ -1,5 +1,5 @@
+import { mapSeries } from "../../utils/asyncUtils.js"
 import { Constants } from "../../Constants.js"
-import Bluebird from "bluebird"
 import { range } from "lodash"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { Report } from "../../report/Report.js"
@@ -22,7 +22,7 @@ export namespace KeySteps {
    * {@link ClusterKeyStoreKey} for downstream node-config, wallet, authex, and
    * registration steps.
    */
-  export function generateNodeKeys<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planGenerateNodeKeys<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -54,9 +54,15 @@ export namespace KeySteps {
     // Operator identities (producer / batch / underwriter accounts) accumulate
     // into the same store per-account as their provisioning phases materialize
     // them — producers referencing their node's set from here.
-    const nodes: ClusterKeyStore.NodeKeys[] = await Bluebird.mapSeries(
+    const nodes: ClusterKeyStore.NodeKeys[] = await mapSeries(
       range(ctx.config.nodeCount),
-      async index => ({ index, keys: await KeyGenerator.createProducerKeySet(keyContext) })
+      async index => ({
+        index,
+        keys: await KeyGenerator.createProducerKeySet(
+          keyContext,
+          `producer node_${String(index).padStart(2, "0")} signing set`
+        )
+      })
     )
     ctx.keyStore.pushNodes(...nodes)
   }
@@ -64,9 +70,9 @@ export namespace KeySteps {
   /**
    * Open the kiod wallet and import every key needed for the run: the BIOS dev
    * K1 + BLS keys plus every generated node K1/BLS and operator K1. Requires
-   * {@link generateNodeKeys} to have run first.
+   * {@link planGenerateNodeKeys} to have run first.
    */
-  export function createWallet<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCreateWallet<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

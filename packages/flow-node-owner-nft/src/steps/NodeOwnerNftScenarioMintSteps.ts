@@ -16,13 +16,13 @@ import {
 /**
  * Step factory + companions for the `MockWireNodes.sol` ERC-1155 mint — the
  * outpost surface the production flow observes (its `TransferSingle`) to build
- * the NodeOwnerRegistration attestation. The {@link mint} write is its OWN
+ * the NodeOwnerRegistration attestation. The {@link planMint} write is its OWN
  * {@link ClusterBuildStep}; the pre-mint `viewTotalSupply` snapshot rides
  * `ctx.outputs` under {@link TotalSupplyBeforeKey} so the scenario's supply
  * verify reads it back without shared mutable closures.
  */
 export namespace NodeOwnerNftScenarioMintSteps {
-  /** `viewTotalSupply` snapshot taken before the mint (consumed by the supply verify). */
+  /** `viewTotalSupply` snapshot taken before the planMint (consumed by the supply verify). */
   export const TotalSupplyBeforeKey = outputKey<bigint>(
     "NodeOwnerNftScenarioMintSteps.totalSupplyBefore",
     "MockWireNodes totalSupply for the minted tier, snapshotted before the mint"
@@ -32,7 +32,7 @@ export namespace NodeOwnerNftScenarioMintSteps {
    * Resolve `MockWireNodes` from the run's deploy artifacts
    * (`outpost-addrs.json` + the hardhat artifact), bound to the run's default
    * anvil signer — the minter. A pure artifact load: used inside the
-   * {@link mint} runner and the scenario's snapshot / supply verify steps.
+   * {@link planMint} runner and the scenario's snapshot / supply verify steps.
    *
    * @param ctx - The build context (ethereum path + anvil client).
    * @returns The signer-bound contract surface.
@@ -47,7 +47,7 @@ export namespace NodeOwnerNftScenarioMintSteps {
     )
   }
 
-  /** Input for {@link mint} — one MockWireNodes ERC-1155 mint write. */
+  /** Input for {@link planMint} — one MockWireNodes ERC-1155 mint write. */
   export interface MintInput extends StepInput {
     readonly kind: "NodeOwnerNftScenarioMintSteps.MintInput"
     /** The ERC-1155 id minted (the node-owner tier). */
@@ -68,7 +68,7 @@ export namespace NodeOwnerNftScenarioMintSteps {
    * @param amount - Units to mint.
    * @returns The definition step.
    */
-  export function mint<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planMint<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

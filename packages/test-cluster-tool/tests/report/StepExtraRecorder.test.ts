@@ -33,6 +33,116 @@ describe("StepExtraRecorder", () => {
     expect(new StepExtraRecorder().toExtra()).toBeNull()
   })
 
+  it("collapses identical repeated calls into one counted entry (poll loops)", () => {
+    const recorder = new StepExtraRecorder()
+    const query = {
+      client: "wire",
+      kind: "rpc",
+      path: "/v1/chain/get_table_rows",
+      params: { code: "sysio.opreg", table: "operators" }
+    }
+    recorder.record(query)
+    recorder.record(query)
+    recorder.record(query)
+    expect(recorder.calls.length).toBe(1)
+    expect(recorder.calls[0].count).toBe(3)
+  })
+
+  it("collapses ALTERNATING poll patterns within the dedupe window", () => {
+    const recorder = new StepExtraRecorder()
+    const receipt = { client: "ethereum", kind: "call", method: "eth_getTransactionReceipt" }
+    const blockNumber = { client: "ethereum", kind: "call", method: "eth_blockNumber" }
+    ;[receipt, blockNumber, receipt, blockNumber, receipt].forEach(call =>
+      recorder.record({ ...call })
+    )
+    expect(recorder.calls.length).toBe(2)
+    expect(recorder.calls[0].count).toBe(3)
+    expect(recorder.calls[1].count).toBe(2)
+  })
+
+  it("does NOT collapse calls whose payloads differ (distinct writes)", () => {
+    const recorder = new StepExtraRecorder()
+    recorder.record({ client: "clio", kind: "cli", command: ["a"], durationMs: 5 })
+    recorder.record({ client: "clio", kind: "cli", command: ["a"], durationMs: 9 })
+    expect(recorder.calls.length).toBe(2)
+  })
+
+  it("caps entries at MaxCalls and surfaces the overflow as dropped", () => {
+    const recorder = new StepExtraRecorder()
+    Array.from({ length: StepExtraRecorder.MaxCalls + 7 }, (_, index) =>
+      recorder.record({ client: "wire", kind: "rpc", index })
+    )
+    expect(recorder.calls.length).toBe(StepExtraRecorder.MaxCalls)
+    expect(recorder.toExtra()?.dropped).toBe(7)
+  })
+
+  it("note() lands a harness note entry with merged data", () => {
+    const recorder = new StepExtraRecorder()
+    StepExtraRecorder.runWith(recorder, async () => {
+      StepExtraRecorder.note("check deposited collateral for some.acct", {
+        account: "some.acct"
+      })
+    })
+    expect(recorder.calls).toEqual([
+      {
+        client: "harness",
+        kind: "note",
+        text: "check deposited collateral for some.acct",
+        account: "some.acct"
+      }
+    ])
+  })
+
+  it("every executed step gets extra — a no-call runner falls back to its description", async () => {
+    const build = fixtureBuild()
+    const phase = ClusterBuildPhase.create(build, "P", "fallback", []).push(
+      ClusterBuildStep.create(
+        Report.Actor.Sysio,
+        "checkpoint",
+        "confirm the registry rows landed",
+        {},
+        null,
+        async () => undefined
+      )
+    )
+    const nodes = await phase.run(new AbortController().signal)
+    expect((nodes[0] as Report.Phase).steps[0].extra).toEqual({
+      calls: [
+        {
+          client: "harness",
+          kind: "note",
+          text: "confirm the registry rows landed"
+        }
+      ]
+    })
+  })
+
+  it("skipped steps carry a note explaining they never ran", async () => {
+    const build = fixtureBuild()
+    const phase = ClusterBuildPhase.create(build, "P", "skip tail", []).push(
+      ClusterBuildStep.create(Report.Actor.Sysio, "boom", "fails", {}, null, async () => {
+        throw new Error("boom")
+      }),
+      ClusterBuildStep.create(Report.Actor.Sysio, "tail", "never runs", {}, null, async () => undefined)
+    )
+    const nodes = await phase.run(new AbortController().signal)
+    const tail = (nodes[0] as Report.Phase).steps[1]
+    expect(tail.status).toBe(Report.StepStatus.skipped)
+    expect(JSON.stringify(tail.extra)).toContain("never ran")
+  })
+
+  it("caps long strings with an elision annotation", () => {
+    const recorder = new StepExtraRecorder()
+    recorder.record({
+      client: "ethereum",
+      kind: "rpc",
+      raw: "ab".repeat(StepExtraRecorder.MaxStringLength)
+    })
+    const raw = recorder.calls[0].raw as string
+    expect(raw.length).toBeLessThan(StepExtraRecorder.MaxStringLength + 30)
+    expect(raw).toContain("…(+")
+  })
+
   it("record() outside any step scope is a silent no-op", () => {
     expect(StepExtraRecorder.current()).toBeNull()
     expect(() =>

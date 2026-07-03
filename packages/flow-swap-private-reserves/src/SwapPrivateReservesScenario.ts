@@ -272,27 +272,27 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
       "OwnerProvisioning",
       `Provision ${Constants.Accounts.Owner} (WIRE account, BOTH-chain authex links, creator USDCSOL funding)`
     ).push(
-      OwnerSteps.provisionOwner<Context>(
+      OwnerSteps.planProvisionOwner<Context>(
         Actor.User,
         "provision-owner",
         `create + fund the ${Constants.Accounts.Owner} WIRE account`,
         writeOptions
       ),
-      OwnerSteps.linkOwner<Context>(
+      OwnerSteps.planLinkOwner<Context>(
         Actor.User,
         "link-owner-ethereum",
         `authex-link ${Constants.Accounts.Owner} to the ETH creator wallet's secp256k1 key`,
         writeOptions,
         ChainKind.EVM
       ),
-      OwnerSteps.linkOwner<Context>(
+      OwnerSteps.planLinkOwner<Context>(
         Actor.User,
         "link-owner-solana",
         `authex-link ${Constants.Accounts.Owner} to the SOL creator keypair's ed25519 key`,
         writeOptions,
         ChainKind.SVM
       ),
-      OwnerSteps.mintCreatorUsdcSol<Context>(
+      OwnerSteps.planMintCreatorUsdcSol<Context>(
         Actor.SolanaOutpost,
         "mint-creator-usdcsol",
         `mint ${Constants.SplFunding.CreatorMintAmount} USDCSOL base units to the creator's ATA`,
@@ -306,7 +306,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
       "CreateMatchEthereumPrivate",
       "ETH outpost create_reserve(isPrivate) → depot PENDING → matchreserve → ACTIVE + RESERVE_READY"
     ).push(
-      ReserveSteps.createEthereumReserve<Context>(
+      ReserveSteps.planCreateEthereumReserve<Context>(
         Actor.User,
         "create-ethereum-private-reserve",
         `create_reserve(ETH/PRIVATE) escrowing ${Constants.CreateParams.EthereumEscrowWei} wei`,
@@ -319,7 +319,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
         runVerifyEthereumDepotRowPending,
         relayOptions
       ),
-      ReserveSteps.matchReserve<Context>(
+      ReserveSteps.planMatchReserve<Context>(
         Actor.User,
         "match-ethereum-private-reserve",
         `${Constants.Accounts.Owner} matches the ETH private reserve with ${Constants.CreateParams.EthereumRequestedWire} WIRE`,
@@ -350,7 +350,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
       "CreateMatchSolanaPrivate",
       "SOL outpost create_reserve(isPrivate, SPL) → depot PENDING → matchreserve → ACTIVE + RESERVE_READY"
     ).push(
-      ReserveSteps.createSolanaReserve<Context>(
+      ReserveSteps.planCreateSolanaReserve<Context>(
         Actor.User,
         "create-solana-private-reserve",
         `create_reserve(USDCSOL/PRIVATE) escrowing ${Constants.CreateParams.SolanaEscrowChainUnits} base units`,
@@ -363,7 +363,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
         runVerifySolanaDepotRowPending,
         relayOptions
       ),
-      ReserveSteps.matchReserve<Context>(
+      ReserveSteps.planMatchReserve<Context>(
         Actor.User,
         "match-solana-private-reserve",
         `${Constants.Accounts.Owner} matches the SOL private reserve with ${Constants.CreateParams.SolanaRequestedWire} WIRE`,
@@ -401,7 +401,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
         runPhaseAQuote,
         writeOptions
       ),
-      SwapSteps.requestSwapEthereumToSolana<Context>(
+      SwapSteps.planRequestSwapEthereumToSolana<Context>(
         Actor.User,
         "phase-a-request-swap",
         "user calls ReserveManager.requestSwap sourcing the private ETH reserve",
@@ -450,7 +450,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
         runPhaseBQuote,
         writeOptions
       ),
-      SwapSteps.requestSwapSolanaToEthereum<Context>(
+      SwapSteps.planRequestSwapSolanaToEthereum<Context>(
         Actor.User,
         "phase-b-request-swap",
         "user calls opp_outpost::request_swap_spl sourcing the private USDCSOL reserve",
@@ -492,7 +492,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
       "PrivateToWireExcluded",
       "A swap sourcing the private ETH reserve toward WIRE draws a SWAP_REVERT and never creates a UWREQ"
     ).push(
-      SwapSteps.requestSwapPrivateToWire<Context>(
+      SwapSteps.planRequestSwapPrivateToWire<Context>(
         Actor.User,
         "request-private-to-wire",
         "user requests private-ETH → WIRE (the privacy gate must reject it)",

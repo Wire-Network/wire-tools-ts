@@ -176,7 +176,7 @@ export class ReserveLifecycleScenario extends FlowScenario {
 
     // ── 2. The WIRE matcher accounts + the creator-key authex link ──
     ClusterBuildPhase.create(cluster, "ProvisionOwner", "Provision the matcher accounts and authex-link the matcher to the creator key").push(
-      OwnerSteps.provisionUser(
+      OwnerSteps.planProvisionUser(
         Actor.User,
         "provision-matcher",
         `provision + fund ${Constants.MatcherAccount} (the legitimate matcher)`,
@@ -186,7 +186,7 @@ export class ReserveLifecycleScenario extends FlowScenario {
       ),
       // The wrong matcher is funded identically so ONLY the missing authex
       // link explains its rejection.
-      OwnerSteps.provisionUser(
+      OwnerSteps.planProvisionUser(
         Actor.User,
         "provision-wrong-matcher",
         `provision + fund ${Constants.WrongMatcherAccount} (never authex-linked)`,
@@ -194,7 +194,7 @@ export class ReserveLifecycleScenario extends FlowScenario {
         Constants.WrongMatcherAccount,
         Constants.WrongMatcherFunding
       ),
-      OwnerSteps.createLink(
+      OwnerSteps.planCreateLink(
         Actor.User,
         "authex-link-matcher",
         `authex-link ${Constants.MatcherAccount} to the creator wallet's secp256k1 key`,
@@ -205,7 +205,7 @@ export class ReserveLifecycleScenario extends FlowScenario {
 
     // ── 3. CreatePrivateLinked — linked creator's create lands PENDING ──
     ClusterBuildPhase.create(cluster, "CreatePrivateLinked", "The linked creator's private create_reserve lands a PENDING depot row").push(
-      ReserveSteps.createReserve(
+      ReserveSteps.planCreateReserve(
         Actor.User,
         "create-private-reserve",
         `create_reserve(PRIVRES, isPrivate) escrowing ${Constants.PrivateEscrowWei} wei`,
@@ -270,14 +270,14 @@ export class ReserveLifecycleScenario extends FlowScenario {
 
     // ── 4. CreatePrivateUnlinked — unlinked creator is cancelled back + refunded ──
     ClusterBuildPhase.create(cluster, "CreatePrivateUnlinked", "An unlinked creator's create is cancelled back and its escrow refunded").push(
-      ReserveSteps.fundUnlinkedCreator(
+      ReserveSteps.planFundUnlinkedCreator(
         Actor.User,
         "fund-unlinked-creator",
         `seed the never-linked creator wallet with ${Constants.NoLinkWalletFundingWei} wei`,
         ethereumWriteOptions,
         Constants.NoLinkWalletFundingWei
       ),
-      ReserveSteps.createReserveUnlinked(
+      ReserveSteps.planCreateReserveUnlinked(
         Actor.User,
         "create-unlinked-reserve",
         `create_reserve(NOLINKRS) escrowing ${Constants.NoLinkEscrowWei} wei from the unlinked creator`,
@@ -397,7 +397,7 @@ export class ReserveLifecycleScenario extends FlowScenario {
         },
         wireWriteOptions
       ),
-      ReserveSteps.matchReserve(
+      ReserveSteps.planMatchReserve(
         Actor.User,
         "match-reserve",
         `${Constants.MatcherAccount} escrows ${Constants.RequestedWireAmount} raw WIRE via matchreserve`,
@@ -494,7 +494,7 @@ export class ReserveLifecycleScenario extends FlowScenario {
 
     // ── 6. PrivateRejectPublic — the privacy gate rejects cross-owner pairings ──
     ClusterBuildPhase.create(cluster, "PrivateRejectPublic", "A private reserve cannot pair with a public counterpart, in either direction").push(
-      ReserveSteps.requestSwapProbe(
+      ReserveSteps.planRequestSwapProbe(
         Actor.User,
         "swap-private-to-public",
         "requestSwap sourcing PRIVRES against the public SOLANA/SOL/PRIMARY reserve",

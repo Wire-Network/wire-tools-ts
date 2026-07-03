@@ -3,7 +3,7 @@ import { Report } from "@wireio/test-cluster-tool/report"
 
 describe("Steps.ethereumOutpost.deploy", () => {
   it("builds an input-less deploy step with a runner", () => {
-    const step = Steps.ethereumOutpost.deploy(
+    const step = Steps.ethereumOutpost.planDeploy(
       Report.Actor.EthereumOutpost,
       "deploy-ethereum-outpost",
       "deploy the Ethereum outpost",

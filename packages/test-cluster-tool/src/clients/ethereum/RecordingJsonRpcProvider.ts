@@ -1,22 +1,24 @@
 import { ethers } from "ethers"
-import { StepExtraRecorder } from "../../report/StepExtraRecorder.js"
+import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 
 /**
- * An `ethers.JsonRpcProvider` that records every STATE-CHANGING JSON-RPC send
- * — transaction submissions plus anvil/hardhat admin calls — into the running
- * step's `Report.StepResult.extra` (via {@link StepExtraRecorder}). Every
- * signer, wallet, and contract bound to this provider funnels through
+ * An `ethers.JsonRpcProvider` that records every JSON-RPC send into the
+ * running step's `Report.StepResult.extra` (via {@link StepExtraRecorder}).
+ * Every signer, wallet, and contract bound to this provider funnels through
  * {@link send}, so instrumenting here captures the whole Ethereum surface the
  * harness (and the flows' contract views) drive, with zero changes outside
  * `clients/`.
  *
- * Read-class methods (`eth_call`, `eth_getBalance`, block/receipt polling, …)
- * are NOT recorded — poll loops would balloon `extra` with thousands of
- * entries carrying no payload information.
+ * State-changing / admin methods (transaction submissions, anvil/hardhat
+ * admin) record richly — decoded payload + outcome. Read-class methods
+ * (`eth_call`, `eth_getBalance`, block/receipt polling, …) record
+ * REQUEST-ONLY, so identical poll repeats collapse into one `count`ed entry
+ * in the recorder instead of ballooning `extra`.
  */
 export class RecordingJsonRpcProvider extends ethers.JsonRpcProvider {
   override async send(method: string, params: unknown[]): Promise<unknown> {
     if (!RecordingJsonRpcProvider.shouldRecord(method)) {
+      StepExtraRecorder.record({ client: "ethereum", kind: "call", method, params })
       return super.send(method, params)
     }
     const call = RecordingJsonRpcProvider.toCall(method, params)
@@ -37,13 +39,13 @@ export class RecordingJsonRpcProvider extends ethers.JsonRpcProvider {
 
 export namespace RecordingJsonRpcProvider {
   /**
-   * State-changing / admin JSON-RPC methods worth recording. Everything else
-   * (reads, polling) passes through unrecorded.
+   * State-changing / admin JSON-RPC methods recorded RICHLY (payload +
+   * outcome). Everything else records request-only via the `call` kind.
    */
   export const RecordedMethodPattern =
     /^(eth_sendTransaction|eth_sendRawTransaction|evm_|anvil_|hardhat_)/
 
-  /** True when `method` is a recorded (state-changing / admin) RPC. */
+  /** True when `method` records richly (state-changing / admin RPC). */
   export function shouldRecord(method: string): boolean {
     return RecordedMethodPattern.test(method)
   }

@@ -37,6 +37,7 @@ import {
   OperatorDaemonArtifactsKey
 } from "../../orchestration/outputs/OperatorDaemonArtifacts.js"
 import { Report } from "../../report/Report.js"
+import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { Localhost, toURL } from "../../utils/netUtils.js"
 
@@ -201,6 +202,17 @@ export namespace OperatorDaemonTool {
     Fs.copyFileSync(idlSource, solanaIdlFile)
 
     ctx.outputs.set(OperatorDaemonArtifactsKey, {
+      ethereumAbiFiles,
+      ethereumAddresses,
+      solanaProgramId,
+      solanaIdlFile
+    })
+    // The step's payload: the artifact set every operator daemon's command
+    // line references (fs writes — no client boundary records these).
+    StepExtraRecorder.record({
+      client: "harness",
+      kind: "artifact",
+      text: "address-embedded ETH ABI files + opp-outpost IDL prepared for the operator daemons",
       ethereumAbiFiles,
       ethereumAddresses,
       solanaProgramId,

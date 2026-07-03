@@ -42,7 +42,7 @@ const BiosOperator: OperatorAccount = {
 
 /** Steps that start the cluster's nodeop instances (bios / producer / operator). */
 export namespace NodeopProcessSteps {
-  /** Input for {@link start} — which planned node to start (by its `NodeConfig.name`). */
+  /** Input for {@link planStart} — which planned node to planStart (by its `NodeConfig.name`). */
   export interface StartInput extends StepInput {
     readonly kind: "NodeopProcessSteps.StartInput"
     readonly nodeName: string
@@ -56,7 +56,7 @@ export namespace NodeopProcessSteps {
    * underwriter → the provisioned operator, whose OPP daemon args ride
    * `extraArgs`). One step per node.
    */
-  export function start<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planStart<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -98,7 +98,7 @@ export namespace NodeopProcessSteps {
   /** Poll gap for the restart sync gate. */
   export const SyncGatePollIntervalMs = 1_000
 
-  /** Input for {@link restart} — which running node to relaunch (by its `NodeConfig.name`). */
+  /** Input for {@link planRestart} — which running node to relaunch (by its `NodeConfig.name`). */
   export interface RestartInput extends StepInput {
     readonly kind: "NodeopProcessSteps.RestartInput"
     readonly nodeName: string
@@ -113,7 +113,7 @@ export namespace NodeopProcessSteps {
    * plugin permanently disables its cron. The relaunch REPLAYS the synced
    * chain, so the preflight sees every bootstrap-written registration.
    */
-  export function restart<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRestart<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

@@ -2,7 +2,7 @@ import { Steps } from "@wireio/test-cluster-tool/orchestration"
 import { Report } from "@wireio/test-cluster-tool/report"
 
 describe("Steps.contracts.sysio.msgch", () => {
-  it.each(["bootstrap", "chkcons"] as const)(
+  it.each(["planBootstrap", "planChkcons"] as const)(
     "%s builds an input-less step with a runner",
     action => {
       const step = Steps.contracts.sysio.msgch[action](

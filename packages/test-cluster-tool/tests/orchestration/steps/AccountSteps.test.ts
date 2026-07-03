@@ -3,7 +3,7 @@ import { Report } from "@wireio/test-cluster-tool/report"
 
 describe("Steps.account.createSystem", () => {
   it("carries the system account as typed input", () => {
-    const step = Steps.account.createSystem(
+    const step = Steps.account.planCreateSystem(
       Report.Actor.Sysio,
       "create-opreg",
       "create sysio.opreg system account",
@@ -20,7 +20,7 @@ describe("Steps.account.createSystem", () => {
 
 describe("Steps.account.createKeyed", () => {
   it("carries account + key + default sysio creator", () => {
-    const step = Steps.account.createKeyed(
+    const step = Steps.account.planCreateKeyed(
       Report.Actor.Producer,
       "create-producer",
       "create a keyed producer account",
@@ -36,7 +36,7 @@ describe("Steps.account.createKeyed", () => {
   })
 
   it("honors an explicit creator override", () => {
-    const step = Steps.account.createKeyed(
+    const step = Steps.account.planCreateKeyed(
       Report.Actor.User,
       "create-user",
       "create a keyed user account from a non-sysio creator",

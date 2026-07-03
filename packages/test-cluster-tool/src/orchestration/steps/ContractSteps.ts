@@ -23,7 +23,7 @@ export namespace ContractSteps {
     system = "system"
   }
 
-  /** Input for {@link deploy}. */
+  /** Input for {@link planDeploy}. */
   export interface DeployInput extends StepInput {
     readonly kind: "ContractSteps.DeployInput"
     readonly contract: SysioContracts.SysioContractName
@@ -34,7 +34,7 @@ export namespace ContractSteps {
    * Deploy a system contract. `mode` selects the raw vs production path (default
    * production); the artifacts are resolved from `ctx.config.buildPath`.
    */
-  export function deploy<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planDeploy<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -84,7 +84,7 @@ export namespace ContractSteps {
       .exhaustive()
   }
 
-  /** Input for {@link grantSysioCode}. */
+  /** Input for {@link planGrantSysioCode}. */
   export interface GrantSysioCodeInput extends StepInput {
     readonly kind: "ContractSteps.GrantSysioCodeInput"
     readonly account: string
@@ -95,7 +95,7 @@ export namespace ContractSteps {
    * own actions (epoch advance, evalcons, dispatch, …), kept governed by
    * `sysio@active`.
    */
-  export function grantSysioCode<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planGrantSysioCode<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

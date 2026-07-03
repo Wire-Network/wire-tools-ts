@@ -11,14 +11,14 @@ const { SysioContractName } = SysioContracts
 
 /** Steps for `sysio.opreg` (operator registry) actions. */
 export namespace OpregContractSteps {
-  /** Input for {@link setconfig} — the generated `opreg::setconfig` data. */
+  /** Input for {@link planSetconfig} — the generated `opreg::setconfig` data. */
   export interface SetconfigInput extends StepInput {
     readonly kind: "OpregContractSteps.SetconfigInput"
     readonly data: SysioContracts.SysioOpregSetconfigAction
   }
 
   /** `sysio.opreg::setconfig` — availability caps, termination thresholds, collateral minimums. */
-  export function setconfig<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetconfig<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -47,14 +47,14 @@ export namespace OpregContractSteps {
       .actions.setconfig.invoke(input.data)
   }
 
-  /** Input for {@link regoperator} — the generated `opreg::regoperator` data. */
+  /** Input for {@link planRegoperator} — the generated `opreg::regoperator` data. */
   export interface RegoperatorInput extends StepInput {
     readonly kind: "OpregContractSteps.RegoperatorInput"
     readonly data: SysioContracts.SysioOpregRegoperatorAction
   }
 
   /** `sysio.opreg::regoperator` — register a batch operator / underwriter / producer. */
-  export function regoperator<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRegoperator<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

@@ -205,7 +205,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
 
   // ── Step: create_reserve from the LINKED creator (the swap-user wallet) ───
 
-  /** Input for {@link createReserve} — one linked-creator `create_reserve` write. */
+  /** Input for {@link planCreateReserve} — one linked-creator `create_reserve` write. */
   export interface CreateReserveInput extends StepInput {
     readonly kind: "ReserveLifecycleScenarioReserveSteps.CreateReserveInput"
     /** The create args; the runner injects the creator's compressed pubkey. */
@@ -224,7 +224,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * @param create - The create args (pubkey injected at run time).
    * @returns The definition step.
    */
-  export function createReserve<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCreateReserve<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -257,7 +257,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
 
   // ── Step: create_reserve from the UNLINKED creator (new HD wallet) ──────
 
-  /** Input for {@link createReserveUnlinked} — one unlinked-creator create write. */
+  /** Input for {@link planCreateReserveUnlinked} — one unlinked-creator create write. */
   export interface CreateReserveUnlinkedInput extends StepInput {
     readonly kind: "ReserveLifecycleScenarioReserveSteps.CreateReserveUnlinkedInput"
     /** The create args; the runner injects the creator's compressed pubkey. */
@@ -279,7 +279,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * @param create - The create args (pubkey injected at run time).
    * @returns The definition step.
    */
-  export function createReserveUnlinked<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCreateReserveUnlinked<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -314,7 +314,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
 
   // ── Step: fund the unlinked creator wallet (gas + escrow headroom) ────────
 
-  /** Input for {@link fundUnlinkedCreator} — one wei transfer write. */
+  /** Input for {@link planFundUnlinkedCreator} — one wei transfer write. */
   export interface FundUnlinkedCreatorInput extends StepInput {
     readonly kind: "ReserveLifecycleScenarioReserveSteps.FundUnlinkedCreatorInput"
     /** Wei sent from anvil signer 0 to the unlinked creator wallet. */
@@ -332,7 +332,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * @param amountWei - Wei to seed the wallet with.
    * @returns The definition step.
    */
-  export function fundUnlinkedCreator<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planFundUnlinkedCreator<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -373,7 +373,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
 
   // ── Step: matchreserve (the depot escrow write that activates the row) ────
 
-  /** Input for {@link matchReserve} — one `sysio.reserv::matchreserve` write. */
+  /** Input for {@link planMatchReserve} — one `sysio.reserv::matchreserve` write. */
   export interface MatchReserveInput extends StepInput {
     readonly kind: "ReserveLifecycleScenarioReserveSteps.MatchReserveInput"
     /** The reserve's chain slug value. */
@@ -405,7 +405,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * @param wireAmount - Raw WIRE base units to escrow (exact match required).
    * @returns The definition step.
    */
-  export function matchReserve<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planMatchReserve<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -465,7 +465,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
 
   // ── Step: the private↔public swap probe (rejected by the privacy gate) ────
 
-  /** Input for {@link requestSwapProbe} — one `requestSwap` write. */
+  /** Input for {@link planRequestSwapProbe} — one `requestSwap` write. */
   export interface RequestSwapProbeInput extends StepInput {
     readonly kind: "ReserveLifecycleScenarioReserveSteps.RequestSwapProbeInput"
     /** The swap args; the runner injects the swap user's SOL recipient bytes. */
@@ -485,7 +485,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * @param request - The swap args (recipient injected at run time).
    * @returns The definition step.
    */
-  export function requestSwapProbe<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRequestSwapProbe<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

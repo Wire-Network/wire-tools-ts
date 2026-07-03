@@ -15,9 +15,9 @@ import {
 /**
  * Step factories for the `sysio.roa` create-in-flow registration WRITES — the
  * two actions the production depot (`sysio.msgch`) inline-sends when it decodes
- * an inbound OPP NodeOwnerRegistration: {@link createNamedUser}
+ * an inbound OPP NodeOwnerRegistration: {@link planCreateNamedUser}
  * (`roa::newnameduser`, create the account from the claim's Wire key) and
- * {@link registerNodeOwner} (`roa::nodeownreg`, register + inline-record the
+ * {@link planRegisterNodeOwner} (`roa::nodeownreg`, register + inline-record the
  * depositor's ETH link in `sysio.authex`). Each write is its OWN
  * {@link ClusterBuildStep} so the `Report` records it — including the
  * intentionally-bad claims, whose transactions SUCCEED and soft-fail into a
@@ -28,7 +28,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
    * A new depositor `PUB_EM_*` public key, derived from the run's anvil
    * mnemonic at `ethereumHdIndex` — deterministic, and distinct per claim when
    * each claim carries its own index. A pure value helper: used inside the
-   * {@link registerNodeOwner} runner and the scenario's hard-abort probes.
+   * {@link planRegisterNodeOwner} runner and the scenario's hard-abort probes.
    *
    * @param ctx - The build context (clio / build-path key-generation material).
    * @param ethereumHdIndex - HD account index for the EM derivation.
@@ -47,7 +47,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
     return pair.publicKey
   }
 
-  /** Input for {@link createNamedUser} — one `sysio.roa::newnameduser` write. */
+  /** Input for {@link planCreateNamedUser} — one `sysio.roa::newnameduser` write. */
   export interface CreateNamedUserInput extends StepInput {
     readonly kind: "NodeOwnerNftScenarioRegistrationSteps.CreateNamedUserInput"
     /** The vanity account to create (tier-1 names are a 2-6 char prefix). */
@@ -72,7 +72,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
    * @param tier - The claim tier the name is validated against.
    * @returns The definition step.
    */
-  export function createNamedUser<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCreateNamedUser<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -106,7 +106,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
     await pushNewNamedUser(ctx.wire, input.account, input.wirePublicKey, input.tier)
   }
 
-  /** Input for {@link registerNodeOwner} — one `sysio.roa::nodeownreg` write. */
+  /** Input for {@link planRegisterNodeOwner} — one `sysio.roa::nodeownreg` write. */
   export interface RegisterNodeOwnerInput extends StepInput {
     readonly kind: "NodeOwnerNftScenarioRegistrationSteps.RegisterNodeOwnerInput"
     /** The Wire account the claim registers. */
@@ -138,7 +138,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
    * @param wirePublicKey - The claimed owner/active Wire key.
    * @returns The definition step.
    */
-  export function registerNodeOwner<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRegisterNodeOwner<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

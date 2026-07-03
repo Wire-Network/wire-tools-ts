@@ -1,8 +1,8 @@
 import Fs from "node:fs"
 import Path from "node:path"
-import Bluebird from "bluebird"
 import { PublicKey as SolanaPublicKey } from "@solana/web3.js"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
+import { eachSeries } from "../../utils/asyncUtils.js"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { Report } from "../../report/Report.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
@@ -35,7 +35,7 @@ export namespace RegistrySteps {
   const StableCodenames = ["USDC", "USDT", "USDCSOL", "USDTSOL"]
 
   /** Seed chains + tokens + chain-token bindings + reserves. */
-  export function seedRegistry<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSeedRegistry<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -104,7 +104,7 @@ export namespace RegistrySteps {
         description: "Local solana-test-validator (test cluster)"
       }
     ]
-    await Bluebird.each(chainRegistrations, data => chains.actions.regchain.invoke(data))
+    await eachSeries(chainRegistrations, data => chains.actions.regchain.invoke(data))
 
     // ── tokens ──
     const tokenRegistrations: SysioContracts.SysioTokensRegtokenAction[] = [
@@ -118,7 +118,7 @@ export namespace RegistrySteps {
       splToken("USDCSOL", "USDC (Solana)", "USDC stablecoin on Solana", svmAddress(solanaMints.USDC)),
       splToken("USDTSOL", "USDT (Solana)", "USDT stablecoin on Solana", svmAddress(solanaMints.USDT))
     ]
-    await Bluebird.each(tokenRegistrations, data => tokens.actions.regtoken.invoke(data))
+    await eachSeries(tokenRegistrations, data => tokens.actions.regtoken.invoke(data))
 
     // ── chain-token bindings ──
     const chainTokenBindings: SysioContracts.SysioTokensRegctokAction[] = [
@@ -132,7 +132,7 @@ export namespace RegistrySteps {
       chainToken("SOLANA", "USDCSOL", nullableMintHex(solanaMints.USDC), false),
       chainToken("SOLANA", "USDTSOL", nullableMintHex(solanaMints.USDT), false)
     ]
-    await Bluebird.each(chainTokenBindings, data => tokens.actions.regctok.invoke(data))
+    await eachSeries(chainTokenBindings, data => tokens.actions.regctok.invoke(data))
 
     // ── reserves (all static; stablecoins carry 6-dec precision + ÷1000 chain seed) ──
     const reservePairs: Array<[string, string, string]> = [
@@ -145,7 +145,7 @@ export namespace RegistrySteps {
       ["SOLANA", "USDCSOL", "USDC (mock SPL)"],
       ["SOLANA", "USDTSOL", "USDT (mock SPL)"]
     ]
-    await Bluebird.each(reservePairs, ([chainCodename, tokenCodename, label]) => {
+    await eachSeries(reservePairs, ([chainCodename, tokenCodename, label]) => {
       const stable = StableCodenames.includes(tokenCodename)
       return reserv.actions.regreserve.invoke({
         chain_code: { value: SlugName.from(chainCodename) },

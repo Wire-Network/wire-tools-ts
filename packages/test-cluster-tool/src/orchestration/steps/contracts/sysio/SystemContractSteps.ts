@@ -21,14 +21,14 @@ export namespace SystemContractSteps {
   /** Suffix appended to the chain's `head_block_time` so it parses as UTC. */
   const UtcSuffix = "Z"
 
-  /** Input for {@link setemitcfg} — the generated emission-config struct. */
+  /** Input for {@link planSetemitcfg} — the generated emission-config struct. */
   export interface SetemitcfgInput extends StepInput {
     readonly kind: "SystemContractSteps.SetemitcfgInput"
     readonly data: SysioContracts.SysioSystemEmissionConfigType
   }
 
   /** `sysio.system::setemitcfg` — set the emission config. */
-  export function setemitcfg<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetemitcfg<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -62,7 +62,7 @@ export namespace SystemContractSteps {
    * chain's `head_block_time` (the clock `accrueepoch` uses). Input-less; the
    * runner reads the head time.
    */
-  export function initt5<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planInitt5<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -94,14 +94,14 @@ export namespace SystemContractSteps {
       .actions.initt5.invoke({ start_time: startTime })
   }
 
-  /** Input for {@link init} — the generated `system::init` data. */
+  /** Input for {@link planInit} — the generated `system::init` data. */
   export interface InitInput extends StepInput {
     readonly kind: "SystemContractSteps.InitInput"
     readonly data: SysioContracts.SysioSystemInitAction
   }
 
   /** `sysio.system::init` — initialize the system contract state. */
-  export function init<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planInit<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -128,14 +128,14 @@ export namespace SystemContractSteps {
     await ctx.wire.getSysioContract(SysioContractName.system).actions.init.invoke(input.data)
   }
 
-  /** Input for {@link setprodkeys} — the generated `system::setprodkeys` data. */
+  /** Input for {@link planSetprodkeys} — the generated `system::setprodkeys` data. */
   export interface SetprodkeysInput extends StepInput {
     readonly kind: "SystemContractSteps.SetprodkeysInput"
     readonly data: SysioContracts.SysioSystemSetprodkeysAction
   }
 
   /** `sysio.system::setprodkeys` — set the producer schedule (post-ROA producer handoff). */
-  export function setprodkeys<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetprodkeys<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -164,14 +164,14 @@ export namespace SystemContractSteps {
       .actions.setprodkeys.invoke(input.data)
   }
 
-  /** Input for {@link newaccount} — the generated `system::newaccount` data. */
+  /** Input for {@link planNewaccount} — the generated `system::newaccount` data. */
   export interface NewaccountInput extends StepInput {
     readonly kind: "SystemContractSteps.NewaccountInput"
     readonly data: SysioContracts.SysioSystemNewaccountAction
   }
 
   /** `sysio.system::newaccount` — create a RAM-gifted account (post-ROA). */
-  export function newaccount<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planNewaccount<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -200,14 +200,14 @@ export namespace SystemContractSteps {
       .actions.newaccount.invoke(input.data)
   }
 
-  /** Input for {@link setpriv} — the generated `system::setpriv` data. */
+  /** Input for {@link planSetpriv} — the generated `system::setpriv` data. */
   export interface SetprivInput extends StepInput {
     readonly kind: "SystemContractSteps.SetprivInput"
     readonly data: SysioContracts.SysioSystemSetprivAction
   }
 
   /** `sysio.system::setpriv` — mark an account privileged (post-ROA). */
-  export function setpriv<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetpriv<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -237,7 +237,7 @@ export namespace SystemContractSteps {
   }
 
   /**
-   * Input for {@link updateauth} — the generated `system::updateauth` data plus
+   * Input for {@link planUpdateauth} — the generated `system::updateauth` data plus
    * the explicit authorization (updateauth is signed by the account being
    * modified, `<account>@owner`/`@active`, NOT the default `sysio@active`).
    */
@@ -248,7 +248,7 @@ export namespace SystemContractSteps {
   }
 
   /** `sysio.system::updateauth` — set an account's permission authority (grants, cross-delegation). */
-  export function updateauth<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planUpdateauth<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

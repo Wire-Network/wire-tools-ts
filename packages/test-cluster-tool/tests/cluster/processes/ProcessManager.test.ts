@@ -121,6 +121,21 @@ describe("ProcessManager + ManagedProcess", () => {
     expect(isAlive(process.pid)).toBe(true) // this jest worker survived
   })
 
+  it("start() lands the spawn command in the running step's extra", async () => {
+    const { StepExtraRecorder } = await import("@wireio/test-cluster-tool/report")
+    const recorder = new StepExtraRecorder()
+    const managed = new FakeProcess(manager, "spawn-extra", "/bin/sleep", ["1"])
+    await StepExtraRecorder.runWith(recorder, () => managed.start())
+    await managed.stop()
+    expect(recorder.calls[0]).toEqual({
+      client: "process",
+      kind: "spawn",
+      label: "spawn-extra",
+      command: ["/bin/sleep", "1"],
+      cwd: managed.cwd
+    })
+  })
+
   it("throws on a duplicate label", () => {
     new FakeProcess(manager, "dup")
     expect(() => new FakeProcess(manager, "dup")).toThrow(/already registered/)

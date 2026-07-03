@@ -20,9 +20,9 @@ export class ReportMarkdownRenderer implements ReportRenderer {
       totalMs = report.nodes.reduce((sum, node) => sum + node.durationMs, 0),
       stepCount = phases.reduce((count, phase) => count + phase.steps.length, 0),
       out: string[] = [
-        `# Cluster Run Report — ${report.succeeded ? "SUCCEEDED" : "FAILED"}`,
+        `# ${Report.title(report)}`,
         "",
-        `**Phases:** ${phases.length} · **Steps:** ${stepCount} · ` +
+        `${Report.timestampLine()} · **Phases:** ${phases.length} · **Steps:** ${stepCount} · ` +
           `**Duration:** ${(totalMs / 1000).toFixed(1)}s`,
         ""
       ]
@@ -71,7 +71,7 @@ export class ReportMarkdownRenderer implements ReportRenderer {
       }
       if (step.extra !== null) {
         this.renderDetails(
-          `<code>${step.name}</code> — client calls (${ReportMarkdownRenderer.callCount(step)})`,
+          `<code>${step.name}</code> — extra (${ReportMarkdownRenderer.callCount(step)})`,
           step.extra,
           out
         )
@@ -104,7 +104,7 @@ export class ReportMarkdownRenderer implements ReportRenderer {
 }
 
 export namespace ReportMarkdownRenderer {
-  /** Count of recorded client calls on a step (0 when `extra` is absent). */
+  /** Count of recorded extra entries (client calls + notes) on a step. */
   export function callCount(step: Report.StepResult): number {
     const calls = step.extra?.calls
     return Array.isArray(calls) ? calls.length : 0

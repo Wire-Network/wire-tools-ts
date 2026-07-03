@@ -9,14 +9,14 @@ import type { StepInput } from "../StepRunner.js"
 
 /** Steps that create accounts during bootstrap. */
 export namespace AccountSteps {
-  /** Input for {@link createSystem}. */
+  /** Input for {@link planCreateSystem}. */
   export interface CreateSystemInput extends StepInput {
     readonly kind: "AccountSteps.CreateSystemInput"
     readonly account: string
   }
 
   /** Create a `sysio.*` system account governed solely by `sysio@active`. */
-  export function createSystem<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCreateSystem<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -43,7 +43,7 @@ export namespace AccountSteps {
     await new WireSysioContractTool(ctx.wire).createSysioAccount(input.account)
   }
 
-  /** Input for {@link createKeyed}. */
+  /** Input for {@link planCreateKeyed}. */
   export interface CreateKeyedInput extends StepInput {
     readonly kind: "AccountSteps.CreateKeyedInput"
     readonly account: string
@@ -52,7 +52,7 @@ export namespace AccountSteps {
   }
 
   /** Create a keyed account (owner = active = `publicKey`), e.g. a producer. */
-  export function createKeyed<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCreateKeyed<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

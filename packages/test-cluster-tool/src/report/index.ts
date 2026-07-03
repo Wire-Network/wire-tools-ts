@@ -1,5 +1,5 @@
 export * from "./Report.js"
-export * from "./StepExtraRecorder.js"
+export * from "./tools/index.js"
 export * from "./ReportRenderer.js"
 export * from "./ReportRendererRegistry.js"
 export * from "./renderers/ReportCsvRenderer.js"

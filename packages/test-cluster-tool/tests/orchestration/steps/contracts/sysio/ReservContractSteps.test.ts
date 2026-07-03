@@ -17,7 +17,7 @@ describe("Steps.contracts.sysio.reserv", () => {
       is_private: false,
       owner: ""
     }
-    const step = Steps.contracts.sysio.reserv.regreserve(
+    const step = Steps.contracts.sysio.reserv.planRegreserve(
       Report.Actor.Sysio,
       "seed-ethereum-eth",
       "seed the ETHEREUM-ETH/WIRE primary reserve",

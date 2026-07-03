@@ -11,14 +11,14 @@ const { SysioContractName } = SysioContracts
 
 /** Steps for `sysio.tokens` actions (the OPP token + chain-token registry). */
 export namespace TokensContractSteps {
-  /** Input for {@link regtoken} — the generated `tokens::regtoken` data. */
+  /** Input for {@link planRegtoken} — the generated `tokens::regtoken` data. */
   export interface RegtokenInput extends StepInput {
     readonly kind: "TokensContractSteps.RegtokenInput"
     readonly data: SysioContracts.SysioTokensRegtokenAction
   }
 
   /** `sysio.tokens::regtoken` — register one token (native / ERC-20 / SPL / LIQ). */
-  export function regtoken<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRegtoken<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -47,14 +47,14 @@ export namespace TokensContractSteps {
       .actions.regtoken.invoke(input.data)
   }
 
-  /** Input for {@link regctok} — the generated `tokens::regctok` data. */
+  /** Input for {@link planRegctok} — the generated `tokens::regctok` data. */
   export interface RegctokInput extends StepInput {
     readonly kind: "TokensContractSteps.RegctokInput"
     readonly data: SysioContracts.SysioTokensRegctokAction
   }
 
   /** `sysio.tokens::regctok` — register one `(chain, token)` binding. */
-  export function regctok<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRegctok<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

@@ -4,11 +4,12 @@ import Path from "node:path"
 import * as anchor from "@coral-xyz/anchor"
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js"
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token"
-import Bluebird from "bluebird"
 import { SlugName } from "@wireio/sdk-core"
+import { mapSeries } from "../../utils/asyncUtils.js"
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { getLogger } from "../../logging/Logger.js"
+import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../utils/asyncUtils.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
@@ -114,6 +115,14 @@ export class SolanaOutpostBootstrapper {
       const keypairData = JSON.parse(Fs.readFileSync(this.config.programKeypairFile, "utf8"))
       this.programId = Keypair.fromSecretKey(Uint8Array.from(keypairData)).publicKey
       log.info(`opp-outpost program id: ${this.programId.toBase58()}`)
+      // The deploy step's payload: which program this outpost runs as (the
+      // PDAs + reserve provisioning below record as solana RPC/tx calls).
+      StepExtraRecorder.record({
+        client: "harness",
+        kind: "artifact",
+        file: this.config.programKeypairFile,
+        programId: this.programId.toBase58()
+      })
     } else {
       log.warn(`program keypair not found at ${this.config.programKeypairFile}`)
     }
@@ -352,7 +361,7 @@ export class SolanaOutpostBootstrapper {
     const persisted: SolanaOutpostBootstrapper.PersistedSplMint[] = []
 
     // Sequential: each step depends on the previous landing on-chain.
-    await Bluebird.mapSeries(
+    await mapSeries(
       SolanaOutpostBootstrapper.SplReserveSpecifications,
       async specification => {
         const code = SlugName.from(specification.codeName)

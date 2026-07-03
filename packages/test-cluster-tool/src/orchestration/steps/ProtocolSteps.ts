@@ -1,5 +1,5 @@
-import Bluebird from "bluebird"
 import { SysioContracts } from "@wireio/sdk-core"
+import { eachSeries } from "../../utils/asyncUtils.js"
 import { Report } from "../../report/Report.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import {
@@ -18,7 +18,7 @@ export namespace ProtocolSteps {
   const AlreadyActivatedFragments = ["already activated", "already been activated"]
 
   /** Activate every supported protocol feature (skipping PREACTIVATE). */
-  export function activateFeatures<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planActivateFeatures<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -42,7 +42,7 @@ export namespace ProtocolSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const features = await ctx.wire.getSupportedProtocolFeatures()
-    await Bluebird.each(features, async feature => {
+    await eachSeries(features, async feature => {
       const codename = feature.specification?.find(
         spec => spec.name === FeatureCodenameSpecName
       )?.value
@@ -61,14 +61,14 @@ export namespace ProtocolSteps {
     })
   }
 
-  /** Input for {@link setFinalizer} — the finalizer policy (generated action shape). */
+  /** Input for {@link planSetFinalizer} — the finalizer policy (generated action shape). */
   export interface SetFinalizerInput extends StepInput {
     readonly kind: "ProtocolSteps.SetFinalizerInput"
     readonly policy: SysioContracts.SysioBiosSetfinalizerAction["finalizer_policy"]
   }
 
   /** Activate BLS instant finality with the given finalizer policy. */
-  export function setFinalizer<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetFinalizer<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

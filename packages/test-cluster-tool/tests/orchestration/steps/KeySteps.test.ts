@@ -2,7 +2,7 @@ import { Steps } from "@wireio/test-cluster-tool/orchestration"
 import { Report } from "@wireio/test-cluster-tool/report"
 
 describe("Steps.keys", () => {
-  it.each(["generateNodeKeys", "createWallet"] as const)(
+  it.each(["planGenerateNodeKeys", "planCreateWallet"] as const)(
     "%s builds an input-less step with a runner",
     factoryName => {
       const step = Steps.keys[factoryName](

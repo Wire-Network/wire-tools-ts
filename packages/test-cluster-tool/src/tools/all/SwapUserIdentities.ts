@@ -29,6 +29,7 @@ import type { StepInput } from "../../orchestration/StepRunner.js"
 import { swapUserOutputKey } from "../../orchestration/outputs/SwapUserOutput.js"
 import { EthereumOutpostBootstrapper } from "../../orchestration/ethereum/EthereumOutpostBootstrapper.js"
 import { Report } from "../../report/Report.js"
+import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 
 const log = getLogger(__filename)
 
@@ -109,6 +110,28 @@ export namespace SwapUserIdentities {
       `${EthereumOutpostBootstrapper.DerivationPath}${input.ethereumHdIndex}`
     ).connect(ctx.ethereum.provider)
     const solanaKeypair = Keypair.generate()
+    StepExtraRecorder.record({
+      client: "ethers",
+      kind: "keygen",
+      purpose: "swap user — ethereum wallet (EM, anvil HD derivation)",
+      derivation: `${EthereumOutpostBootstrapper.DerivationPath}${input.ethereumHdIndex}`,
+      keyPair: {
+        type: "EM",
+        address: ethereumWallet.address,
+        publicKey: ethereumWallet.publicKey,
+        privateKey: ethereumWallet.privateKey
+      }
+    })
+    StepExtraRecorder.record({
+      client: "solana-web3",
+      kind: "keygen",
+      purpose: "swap user — solana keypair (ED)",
+      keyPair: {
+        type: "ED",
+        publicKey: solanaKeypair.publicKey.toBase58(),
+        secretKeyBase64: Buffer.from(solanaKeypair.secretKey).toString("base64")
+      }
+    })
     ctx.outputs.set(swapUserOutputKey(), {
       ethereumWallet,
       solanaKeypair,

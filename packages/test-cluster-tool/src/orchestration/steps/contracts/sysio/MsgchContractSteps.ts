@@ -11,7 +11,7 @@ const { SysioContractName } = SysioContracts
 /** Steps for `sysio.msgch` (message channel) actions. */
 export namespace MsgchContractSteps {
   /** `sysio.msgch::bootstrap` — bootstrap the first epoch (epoch 0 → 1). */
-  export function bootstrap<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planBootstrap<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -40,7 +40,7 @@ export namespace MsgchContractSteps {
   }
 
   /** `sysio.msgch::chkcons` — crank depot envelope consensus. */
-  export function chkcons<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planChkcons<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

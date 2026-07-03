@@ -163,7 +163,7 @@ export class SlashingScenario extends FlowScenario {
     // registers it + inline-bumps nodecount.t1_count — the N chkdispute reads).
     ClusterBuildPhase.create(setup, "ProvisionVoters", "Create + register the 3 Tier-1 voters (the dispute electorate)").push(
       ...Constants.Tier1VoterNames.flatMap(voter => [
-        DisputeSteps.newnameduser(
+        DisputeSteps.planNewnameduser(
           Actor.User,
           `create-${voter}`,
           `create Tier-1 voter account ${voter}`,
@@ -171,7 +171,7 @@ export class SlashingScenario extends FlowScenario {
           voter,
           NodeOwnerTier.T1
         ),
-        DisputeSteps.nodeownreg(
+        DisputeSteps.planNodeownreg(
           Actor.User,
           `register-${voter}`,
           `register ${voter} as a Tier-1 node owner`,
@@ -216,7 +216,7 @@ export class SlashingScenario extends FlowScenario {
     // (the governance key loaded in kiod), so the flow can sign setconfig /
     // schbatchgps.
     ClusterBuildPhase.create(setup, "ReshapeSchedule", "One group of exactly the 3 dispute operators").push(
-      Steps.contracts.sysio.epoch.setconfig(
+      Steps.contracts.sysio.epoch.planSetconfig(
         Actor.Sysio,
         "one-group-of-three",
         "reconfigure the epoch to a single 3-operator group",
@@ -230,7 +230,7 @@ export class SlashingScenario extends FlowScenario {
         }
       ),
       ...Constants.DisputeOperators.map(operator =>
-        DisputeSteps.processbatch(
+        DisputeSteps.planProcessbatch(
           Actor.Sysio,
           `force-eligible-${operator}`,
           `flip ${operator} eligible via opreg::processbatch`,
@@ -239,7 +239,7 @@ export class SlashingScenario extends FlowScenario {
         )
       ),
       ...Constants.DisputeOperators.map(operator =>
-        DisputeSteps.awaitOperatorActive(
+        DisputeSteps.planAwaitOperatorActive(
           Actor.Sysio,
           `${operator}-active`,
           `${operator} flips OPERATOR_STATUS_ACTIVE`,
@@ -247,7 +247,7 @@ export class SlashingScenario extends FlowScenario {
           operator
         )
       ),
-      Steps.contracts.sysio.epoch.schbatchgps(
+      Steps.contracts.sysio.epoch.planSchbatchgps(
         Actor.Sysio,
         "rebuild-groups",
         "rebuild the batch-operator groups around the ACTIVE dispute operators",
@@ -289,7 +289,7 @@ export class SlashingScenario extends FlowScenario {
     // disputes) — so wait past the frozen epoch's boundary first, capturing the
     // contested epoch index for every subsequent deliver / dispute read.
     ClusterBuildPhase.create(inject, "StageContestedEpoch", "Chain clock passes the frozen epoch's boundary; the contested epoch is captured").push(
-      DisputeSteps.stageContestedEpoch(
+      DisputeSteps.planStageContestedEpoch(
         Actor.Sysio,
         "stage-contested-epoch",
         "chain head-block time passes next_epoch_start; capture the contested epoch",
@@ -314,7 +314,7 @@ export class SlashingScenario extends FlowScenario {
     )
     Constants.DisputeOperators.forEach((operator, index) => {
       ClusterBuildPhase.create(deliveries, `Deliver ${operator}`, `${operator} delivers consensus SOLANA + divergent ETHEREUM`).push(
-        DisputeSteps.deliver(
+        DisputeSteps.planDeliver(
           Actor.BatchOperator,
           `${operator}-deliver-solana`,
           `${operator} delivers the consensus SOLANA envelope`,
@@ -323,7 +323,7 @@ export class SlashingScenario extends FlowScenario {
           Constants.NonContestedChainCode,
           Constants.ConsensusEnvelopeTag
         ),
-        DisputeSteps.deliver(
+        DisputeSteps.planDeliver(
           Actor.BatchOperator,
           `${operator}-deliver-ethereum`,
           `${operator} delivers its divergent ETHEREUM envelope (${Constants.EnvelopeTags[index]})`,
@@ -336,7 +336,7 @@ export class SlashingScenario extends FlowScenario {
     })
 
     ClusterBuildPhase.create(inject, "DisputeOpens", "The 3-way split opens a dispute and pauses the epoch").push(
-      DisputeSteps.awaitDisputeOpened(
+      DisputeSteps.planAwaitDisputeOpened(
         Actor.Sysio,
         "dispute-opens",
         "an OPEN dispute row appears for the contested (outpost, epoch) with a candidate per operator",
@@ -356,7 +356,7 @@ export class SlashingScenario extends FlowScenario {
       // clears the live quorum Q = floor(nodecount.t1_count/2)+1 (= 3 with the
       // 3 voters + the bootstrap owner wireno).
       ...Constants.Tier1VoterNames.map(voter =>
-        DisputeSteps.votedispute(
+        DisputeSteps.planVotedispute(
           Actor.User,
           `vote-${voter}`,
           `${voter} votes the canonical checksum via sysio.chalg::votedispute`,
@@ -364,7 +364,7 @@ export class SlashingScenario extends FlowScenario {
           voter
         )
       ),
-      DisputeSteps.awaitDisputeResolved(
+      DisputeSteps.planAwaitDisputeResolved(
         Actor.Sysio,
         "dispute-resolves",
         "the dispute resolves to the canonical winner",
@@ -382,7 +382,7 @@ export class SlashingScenario extends FlowScenario {
     // ── 4. SlashNonCanonical — losers SLASHED, winner untouched ──
     ClusterBuildPhase.create(cluster, "SlashNonCanonical", "Non-canonical deliverers flip SLASHED; the canonical deliverer does not").push(
       ...Constants.LosingOperators.map(operator =>
-        DisputeSteps.awaitOperatorSlashed(
+        DisputeSteps.planAwaitOperatorSlashed(
           Actor.Sysio,
           `${operator}-slashed`,
           `${operator} (non-canonical) becomes OPERATOR_STATUS_SLASHED`,

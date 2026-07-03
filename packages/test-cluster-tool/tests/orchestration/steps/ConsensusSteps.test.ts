@@ -2,7 +2,7 @@ import { Steps } from "@wireio/test-cluster-tool/orchestration"
 import { Report } from "@wireio/test-cluster-tool/report"
 
 describe("Steps.consensus", () => {
-  it.each(["setFinalizer", "setProducerKeys"] as const)(
+  it.each(["planSetFinalizer", "planSetProducerKeys"] as const)(
     "%s builds an input-less step with a runner",
     factoryName => {
       const step = Steps.consensus[factoryName](

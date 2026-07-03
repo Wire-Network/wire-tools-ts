@@ -201,13 +201,13 @@ export class EmissionsSoakScenario extends FlowScenario {
       "GenerateAndImport",
       "Convert the synthetic dumps and seed dclaim via importseed + importdone"
     ).push(
-      EmissionsSoakScenarioSteps.unlockWallet(
+      EmissionsSoakScenarioSteps.planUnlockWallet(
         Actor.Sysio,
         "unlock-wallet-import",
         "open + unlock the cluster wallet for the import burst",
         actionOptions
       ),
-      EmissionsSoakScenarioSteps.publishSeedData(
+      EmissionsSoakScenarioSteps.planPublishSeedData(
         Actor.Sysio,
         "publish-seed-data",
         "publish the controlled-staker roster + converted importseed batches",
@@ -242,7 +242,7 @@ export class EmissionsSoakScenario extends FlowScenario {
         }
       ),
       ...ethereumConversion.batches.map((batch, index) =>
-        EmissionsSoakScenarioSteps.importSeedBatch(
+        EmissionsSoakScenarioSteps.planImportSeedBatch(
           Actor.Sysio,
           `import-ethereum-batch-${index + 1}`,
           `push importseed ETH batch ${index + 1}/${ethereumConversion.batches.length} (${batch.credits.length} credits)`,
@@ -253,7 +253,7 @@ export class EmissionsSoakScenario extends FlowScenario {
         )
       ),
       ...solanaConversion.batches.map((batch, index) =>
-        EmissionsSoakScenarioSteps.importSeedBatch(
+        EmissionsSoakScenarioSteps.planImportSeedBatch(
           Actor.Sysio,
           `import-solana-batch-${index + 1}`,
           `push importseed SOL batch ${index + 1}/${solanaConversion.batches.length} (${batch.credits.length} credits)`,
@@ -263,7 +263,7 @@ export class EmissionsSoakScenario extends FlowScenario {
           batch.credits.length
         )
       ),
-      EmissionsSoakScenarioSteps.importDone(
+      EmissionsSoakScenarioSteps.planImportDone(
         Actor.Sysio,
         "import-done",
         "close the import window (sysio.dclaim::importdone)",
@@ -295,7 +295,7 @@ export class EmissionsSoakScenario extends FlowScenario {
       "SetupClaimers",
       "Pre-fund dclaim + provision, link, and sweep every controlled staker"
     ).push(
-      Steps.contracts.sysio.token.transfer(
+      Steps.contracts.sysio.token.planTransfer(
         Actor.Sysio,
         "prefund-dclaim",
         `pre-fund sysio.dclaim with ${preFundAsset} for the controlled-staker obligations`,
@@ -308,7 +308,7 @@ export class EmissionsSoakScenario extends FlowScenario {
         }
       ),
       ...identities.map(identity =>
-        EmissionsSoakScenarioSteps.provisionClaimer(
+        EmissionsSoakScenarioSteps.planProvisionClaimer(
           Actor.User,
           `provision-${identity.wireAccount}`,
           `provision ${identity.wireAccount} (account + resource policy)`,
@@ -317,7 +317,7 @@ export class EmissionsSoakScenario extends FlowScenario {
         )
       ),
       ...identities.map(identity =>
-        EmissionsSoakScenarioSteps.authexLink(
+        EmissionsSoakScenarioSteps.planAuthexLink(
           Actor.User,
           `authex-link-${identity.wireAccount}`,
           `authex-link ${identity.wireAccount}'s ETH wallet (hd=${identity.ethereumHdIndex})`,
@@ -326,7 +326,7 @@ export class EmissionsSoakScenario extends FlowScenario {
         )
       ),
       ...identities.map(identity =>
-        EmissionsSoakScenarioSteps.linkswept(
+        EmissionsSoakScenarioSteps.planLinkswept(
           Actor.User,
           `linkswept-${identity.wireAccount}`,
           `sweep ${identity.wireAccount}'s unmapped credit into pending_claims`,
@@ -418,7 +418,7 @@ export class EmissionsSoakScenario extends FlowScenario {
       "Claim",
       "Each controlled staker claims and receives its exact seeded WIRE"
     ).push(
-      EmissionsSoakScenarioSteps.unlockWallet(
+      EmissionsSoakScenarioSteps.planUnlockWallet(
         Actor.User,
         "unlock-wallet-claim",
         "re-open + unlock the cluster wallet (kiod auto-locks across the soak)",
@@ -435,7 +435,7 @@ export class EmissionsSoakScenario extends FlowScenario {
         ctx.outputs.set(PreClaimBalancesKey, Object.fromEntries(entries))
       }),
       ...identities.map(identity =>
-        EmissionsSoakScenarioSteps.claim(
+        EmissionsSoakScenarioSteps.planClaim(
           Actor.User,
           `claim-${identity.wireAccount}`,
           `${identity.wireAccount} claims its pending WIRE`,

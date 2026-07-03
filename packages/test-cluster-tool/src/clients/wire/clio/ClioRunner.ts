@@ -3,7 +3,7 @@ import { promisify } from "node:util"
 import { asOption } from "@3fv/prelude-ts"
 import { getLogger } from "@wireio/shared"
 import { negate } from "lodash"
-import { StepExtraRecorder } from "../../../report/StepExtraRecorder.js"
+import { StepExtraRecorder } from "../../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../../utils/asyncUtils.js"
 import { isNotEmpty } from "../../../utils/predicateUtils.js"
 

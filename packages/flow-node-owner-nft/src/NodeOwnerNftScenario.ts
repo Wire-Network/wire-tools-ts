@@ -167,7 +167,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
       "HappyPath",
       "Create + register a tier-1 owner → nodeowners row + CONFIRMED audit"
     ).push(
-      RegistrationSteps.createNamedUser(
+      RegistrationSteps.planCreateNamedUser(
         Actor.User,
         "create-happy-owner",
         `create ${Constants.HappyPathAccount} under the dev key`,
@@ -176,7 +176,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
         Constants.DEV_K1_PUBLIC_KEY,
         NodeOwnerTier.T1
       ),
-      RegistrationSteps.registerNodeOwner(
+      RegistrationSteps.planRegisterNodeOwner(
         Actor.User,
         "register-happy-owner",
         `register ${Constants.HappyPathAccount} at tier 1`,
@@ -201,7 +201,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
       "WrongKey",
       "Claim for an existing account controlled by a different key → REJECTED/ACCOUNT_KEY_MISMATCH"
     ).push(
-      RegistrationSteps.createNamedUser(
+      RegistrationSteps.planCreateNamedUser(
         Actor.User,
         "create-wrong-key-owner",
         `create ${Constants.WrongKeyAccount} under the dev key`,
@@ -210,7 +210,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
         Constants.DEV_K1_PUBLIC_KEY,
         NodeOwnerTier.T1
       ),
-      RegistrationSteps.registerNodeOwner(
+      RegistrationSteps.planRegisterNodeOwner(
         Actor.User,
         "register-wrong-key-owner",
         `claim ${Constants.WrongKeyAccount} with a Wire key it is NOT controlled by`,
@@ -240,7 +240,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
       "NameInvalid",
       "Tier-1 name over the 2-6 char prefix budget → REJECTED/NAME_INVALID"
     ).push(
-      RegistrationSteps.registerNodeOwner(
+      RegistrationSteps.planRegisterNodeOwner(
         Actor.User,
         "register-name-invalid-owner",
         `claim the 11-char name ${Constants.NameInvalidAccount} at tier 1`,
@@ -270,7 +270,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
       "OwnerNotAccount",
       "Valid-for-tier name that was never created → REJECTED/OWNER_NOT_ACCOUNT"
     ).push(
-      RegistrationSteps.registerNodeOwner(
+      RegistrationSteps.planRegisterNodeOwner(
         Actor.User,
         "register-ghost-owner",
         `claim the never-created account ${Constants.GhostAccount} at tier 1`,
@@ -300,7 +300,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
       "Duplicate",
       "A second registration for the same owner → REJECTED/DUPLICATE"
     ).push(
-      RegistrationSteps.createNamedUser(
+      RegistrationSteps.planCreateNamedUser(
         Actor.User,
         "create-duplicate-owner",
         `create ${Constants.DuplicateAccount} under the dev key`,
@@ -309,7 +309,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
         Constants.DEV_K1_PUBLIC_KEY,
         NodeOwnerTier.T1
       ),
-      RegistrationSteps.registerNodeOwner(
+      RegistrationSteps.planRegisterNodeOwner(
         Actor.User,
         "register-duplicate-first",
         `register ${Constants.DuplicateAccount} at tier 1 (confirms)`,
@@ -319,7 +319,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
         Constants.DuplicateEthereumHdIndex,
         Constants.DEV_K1_PUBLIC_KEY
       ),
-      RegistrationSteps.registerNodeOwner(
+      RegistrationSteps.planRegisterNodeOwner(
         Actor.User,
         "register-duplicate-replay",
         `replay ${Constants.DuplicateAccount} at tier 2 with a new eth key`,
@@ -349,7 +349,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
       "HardAborts",
       "Tier out of [1,3] and a non-EM eth key REVERT the registration tx"
     ).push(
-      RegistrationSteps.createNamedUser(
+      RegistrationSteps.planCreateNamedUser(
         Actor.User,
         "create-invalid-tier-owner",
         `create ${Constants.InvalidTierAccount} under the dev key`,
@@ -392,7 +392,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
           ),
         stepOptions
       ),
-      RegistrationSteps.createNamedUser(
+      RegistrationSteps.planCreateNamedUser(
         Actor.User,
         "create-non-em-key-owner",
         `create ${Constants.NonEmKeyAccount} under the dev key`,
@@ -430,7 +430,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
         snapshotTotalSupplyBefore,
         stepOptions
       ),
-      MintSteps.mint(
+      MintSteps.planMint(
         Actor.User,
         "mint-tier-one",
         `mint ${Constants.MintAmount} tier-1 NFT at 1 ether`,

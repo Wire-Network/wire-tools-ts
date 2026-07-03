@@ -240,7 +240,7 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
       "ProvisionDepositor",
       "Provision the WIRE depositor, funded from the treasury"
     ).push(
-      SwapFromWireScenarioUserSteps.provisionWire<SwapScenarioContext>(
+      SwapFromWireScenarioUserSteps.planProvisionWire<SwapScenarioContext>(
         Actor.User,
         "provision-depositor",
         `provision ${Constants.DepositorAccount} + fund ${Constants.DepositorFunding} WIRE base units from the treasury`,
@@ -309,7 +309,7 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
             .set(Outputs.recipientLamportsBefore, recipientLamportsBefore)
         }
       ),
-      SwapFromWireScenarioUwritSteps.swapfromwire<SwapScenarioContext>(
+      SwapFromWireScenarioUwritSteps.planSwapfromwire<SwapScenarioContext>(
         Actor.User,
         "push-swapfromwire",
         `${Constants.DepositorAccount} pushes sysio.uwrit::swapfromwire for ${Constants.SourceWireUnits} WIRE base units`,

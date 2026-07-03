@@ -8,6 +8,7 @@ import { defaults, range } from "lodash"
 import Assert from "node:assert"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { getLogger } from "../../logging/Logger.js"
+import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { LongFileLockOptions, mkdirs, withFileLock } from "../../utils/fsUtils.js"
 
 const log = getLogger(__filename)
@@ -164,6 +165,12 @@ export class EthereumOutpostBootstrapper {
     Fs.writeFileSync(Path.join(localDir, "outpost.json"), JSON.stringify(outpostConfig, null, 2))
 
     log.info("[ethereum] running deployLocal.ts via hardhat...")
+    StepExtraRecorder.record({
+      client: "process",
+      kind: "exec",
+      command: ["npx", "hardhat", "run", "src/scripts/deployLocal.ts", "--network", "localhost"],
+      cwd: ethereumPath
+    })
     // withFileLock: hardhat compiles into the SHARED repo cache/artifacts on
     // demand — two concurrent compiles corrupt them. The per-run state (configs
     // + address files) is already isolated via deploymentsPath.
@@ -196,8 +203,18 @@ export class EthereumOutpostBootstrapper {
 
     EthereumOutpostBootstrapper.StaleDeployArtifactFiles.forEach(name => {
       const file = Path.join(localDir, name)
-      if (Fs.existsSync(file))
-        log.info(`[ethereum] ${name}: ${Fs.readFileSync(file, "utf-8")}`)
+      if (Fs.existsSync(file)) {
+        const contents = Fs.readFileSync(file, "utf-8")
+        log.info(`[ethereum] ${name}: ${contents}`)
+        // The deploy's OUTPUT — the deployed contract addresses — is the
+        // step's payload; land each artifact file in the step extra.
+        StepExtraRecorder.record({
+          client: "harness",
+          kind: "artifact",
+          file: name,
+          contents: JSON.parse(contents) as Record<string, unknown>
+        })
+      }
     })
     log.info("[ethereum] contract deployment complete")
   }

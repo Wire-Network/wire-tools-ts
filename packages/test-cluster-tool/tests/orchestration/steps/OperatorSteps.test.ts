@@ -9,7 +9,7 @@ describe("Steps.operator.register", () => {
       type: SysioContracts.SysioOpregOperatortype.OPERATOR_TYPE_BATCH,
       is_bootstrapped: true
     }
-    const step = Steps.operator.register(
+    const step = Steps.operator.planRegister(
       Report.Actor.BatchOperator,
       "register-batchop",
       "register a bootstrapped batch operator",

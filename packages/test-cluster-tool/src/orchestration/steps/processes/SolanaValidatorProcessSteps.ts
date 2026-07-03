@@ -26,7 +26,7 @@ export namespace SolanaValidatorProcessSteps {
    * with the `opp-outpost` program loaded via `--bpf-program` (the SOL outpost
    * deploy depends on it). Idempotent.
    */
-  export function start<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planStart<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

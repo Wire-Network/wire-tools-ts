@@ -15,14 +15,14 @@ const { SysioContractName } = SysioContracts
  * names match the ABI action name exactly.
  */
 export namespace EpochContractSteps {
-  /** Input for {@link setconfig} — the generated `epoch::setconfig` data. */
+  /** Input for {@link planSetconfig} — the generated `epoch::setconfig` data. */
   export interface SetconfigInput extends StepInput {
     readonly kind: "EpochContractSteps.SetconfigInput"
     readonly data: SysioContracts.SysioEpochSetconfigAction
   }
 
   /** `sysio.epoch::setconfig` — global epoch duration, group sizing, retention. */
-  export function setconfig<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetconfig<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -52,7 +52,7 @@ export namespace EpochContractSteps {
   }
 
   /** `sysio.epoch::schbatchgps` — build the initial batch-operator group schedule. */
-  export function schbatchgps<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSchbatchgps<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -81,7 +81,7 @@ export namespace EpochContractSteps {
   }
 
   /** `sysio.epoch::advance` — advance the depot epoch. */
-  export function advance<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planAdvance<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

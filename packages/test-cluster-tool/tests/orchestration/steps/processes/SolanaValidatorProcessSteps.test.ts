@@ -3,7 +3,7 @@ import { Report } from "@wireio/test-cluster-tool/report"
 
 describe("Steps.processes.solanaValidator", () => {
   it("start builds an input-less step with a runner", () => {
-    const step = Steps.processes.solanaValidator.start(
+    const step = Steps.processes.solanaValidator.planStart(
       Report.Actor.SolanaOutpost,
       "start-validator",
       "start solana-test-validator + opp-outpost",

@@ -3,7 +3,7 @@ import { Report } from "@wireio/test-cluster-tool/report"
 
 describe("Steps.protocol", () => {
   it("activateFeatures builds an input-less step", () => {
-    const step = Steps.protocol.activateFeatures(
+    const step = Steps.protocol.planActivateFeatures(
       Report.Actor.Sysio,
       "features",
       "activate protocol features",
@@ -15,7 +15,7 @@ describe("Steps.protocol", () => {
   })
 
   it("setFinalizer carries the finalizer policy input", () => {
-    const step = Steps.protocol.setFinalizer(
+    const step = Steps.protocol.planSetFinalizer(
       Report.Actor.Sysio,
       "finality",
       "BLS instant finality",

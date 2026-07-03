@@ -155,3 +155,35 @@ describe("KeyGenerator", () => {
     expect(KeyGenerator.BiosBLSKey.proofOfPossession).toMatch(/^SIG_BLS_/)
   })
 })
+
+describe("keygen extra records", () => {
+  it("create(ED) records an sdk-core keygen entry with purpose + full pair", async () => {
+    const { StepExtraRecorder } = await import("@wireio/test-cluster-tool/report")
+    const context = KeyGenerator.context("/usr/bin/clio", "/build", AnvilMnemonic)
+    const recorder = new StepExtraRecorder()
+    const pair = await StepExtraRecorder.runWith(recorder, () =>
+      KeyGenerator.create(KeyType.ED, context, { purpose: "operator x — solana key" })
+    )
+    expect(recorder.calls).toEqual([
+      {
+        client: "sdk-core",
+        kind: "keygen",
+        keyType: "ED",
+        purpose: "operator x — solana key",
+        keyPair: { type: KeyType.ED, publicKey: pair.publicKey, privateKey: pair.privateKey }
+      }
+    ])
+  })
+
+  it("create(EM) records the ethers derivation path", async () => {
+    const { StepExtraRecorder } = await import("@wireio/test-cluster-tool/report")
+    const context = KeyGenerator.context("/usr/bin/clio", "/build", AnvilMnemonic)
+    const recorder = new StepExtraRecorder()
+    await StepExtraRecorder.runWith(recorder, () =>
+      KeyGenerator.create(KeyType.EM, context, { ethereumHdIndex: 3 })
+    )
+    expect(recorder.calls[0].client).toBe("ethers")
+    expect(recorder.calls[0].derivation).toBe(`${KeyGenerator.EthereumDerivationPath}3`)
+    expect(recorder.calls[0].purpose).toBeNull()
+  })
+})

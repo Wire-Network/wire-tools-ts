@@ -3,7 +3,7 @@ import { Report } from "@wireio/test-cluster-tool/report"
 
 describe("Steps.contracts.sysio.dclaim", () => {
   it("setconfig builds an input-less step with a runner", () => {
-    const step = Steps.contracts.sysio.dclaim.setconfig(
+    const step = Steps.contracts.sysio.dclaim.planSetconfig(
       Report.Actor.Sysio,
       "init-dclaim",
       "initialize the dclaim cap_config",

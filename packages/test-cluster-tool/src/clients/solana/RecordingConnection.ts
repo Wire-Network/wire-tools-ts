@@ -9,7 +9,7 @@ import {
   type Signer,
   type TransactionSignature
 } from "@solana/web3.js"
-import { StepExtraRecorder } from "../../report/StepExtraRecorder.js"
+import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 
 /**
  * A `@solana/web3.js` `Connection` that records every transaction submission
@@ -19,13 +19,24 @@ import { StepExtraRecorder } from "../../report/StepExtraRecorder.js"
  * this connection, so instrumenting the connection captures the whole Solana
  * write surface with zero changes outside `clients/`.
  *
- * Read-class methods (balances, account info, signature polling, …) are NOT
- * recorded — poll loops would balloon `extra` with entries carrying no
- * payload information.
+ * Read-class methods (balances, account info, signature polling, …) record
+ * REQUEST-ONLY via an `_rpcRequest` wrap, so identical poll repeats collapse
+ * into one `count`ed entry in the recorder instead of ballooning `extra`.
  */
 export class RecordingConnection extends Connection {
   constructor(endpoint: string, commitmentOrConfig?: Commitment | ConnectionConfig) {
     super(endpoint, commitmentOrConfig)
+    // Every web3.js call funnels through the connection's private
+    // `_rpcRequest`; wrapping it here captures the READ surface (the rich
+    // overrides below own the send-class methods, so those skip this wrap).
+    const self = this as unknown as { _rpcRequest: RecordingConnection.RpcRequest }
+    const original = self._rpcRequest.bind(this)
+    self._rpcRequest = async (method, args) => {
+      if (!RecordingConnection.RichlyRecordedMethods.has(method)) {
+        StepExtraRecorder.record({ client: "solana", kind: "rpc", method, args })
+      }
+      return original(method, args)
+    }
   }
 
   override async sendTransaction(
@@ -102,6 +113,19 @@ export class RecordingConnection extends Connection {
 }
 
 export namespace RecordingConnection {
+  /** The private web3.js RPC transport shape the read wrap intercepts. */
+  export type RpcRequest = (method: string, args: unknown[]) => Promise<unknown>
+
+  /**
+   * Raw RPC method names the rich overrides (sendTransaction /
+   * sendRawTransaction / requestAirdrop) already record with decoded
+   * payloads — the `_rpcRequest` read wrap skips these to avoid duplicates.
+   */
+  export const RichlyRecordedMethods: ReadonlySet<string> = new Set([
+    "sendTransaction",
+    "requestAirdrop"
+  ])
+
   /**
    * The `extra` record for a (legacy or versioned) transaction submission —
    * per-instruction program ids + data bytes, the actual payload the chain

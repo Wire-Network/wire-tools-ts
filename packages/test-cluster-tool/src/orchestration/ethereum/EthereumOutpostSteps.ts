@@ -20,7 +20,7 @@ export namespace EthereumOutpostSteps {
    * accounts file (later phases re-read `accounts.json` / `outpost-addrs.json`
    * from disk). Input-less — paths + the anvil port come from `ctx.config`.
    */
-  export function deploy<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planDeploy<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
