@@ -71,6 +71,10 @@ export namespace OperatorDaemonTool {
   export const EthereumClientId = "eth-default"
   /** The single solana outpost client id every plugin arg references. */
   export const SolanaClientId = "sol-default"
+  /** The `sysio.chains` codename keying the ETH outpost wiring specs. */
+  export const EthereumChainCodename = "ETHEREUM"
+  /** The `sysio.chains` codename keying the SOL outpost wiring specs. */
+  export const SolanaChainCodename = "SOLANA"
   /** ETH source-deposit function the underwriter verifies before committing. */
   export const EthereumSourceDepositFunction = "requestSwap"
   /** SOL source-deposit instruction the underwriter verifies before committing. */
@@ -309,11 +313,25 @@ export namespace OperatorDaemonTool {
       ...pair("--underwriter-account", operator.account),
       ...pair("--ext-debugging-server", network.debuggingServerUrl),
       ...outpostClientArgs(operator, artifacts, network),
-      ...pair("--underwriter-eth-opreg-addr", assertAddress(artifacts, "OperatorRegistry")),
+      // Per-chain outpost wiring (repeatable CSV specs; replaced the removed
+      // --underwriter-eth-opreg-addr / --underwriter-{eth,sol}-client-id):
+      //   EVM: <chain_code>,<client_id>,<operator_registry_addr>,<source_deposit_contract_addr>
+      //   SVM: <chain_code>,<client_id>,<opp_outpost_program_id>
+      ...pair(
+        "--underwriter-eth-outpost",
+        [
+          EthereumChainCodename,
+          EthereumClientId,
+          assertAddress(artifacts, "OperatorRegistry"),
+          assertAddress(artifacts, "ReserveManager")
+        ].join(",")
+      ),
+      ...pair(
+        "--underwriter-sol-outpost",
+        [SolanaChainCodename, SolanaClientId, artifacts.solanaProgramId].join(",")
+      ),
       ...pair("--underwriter-eth-source-deposit-function", EthereumSourceDepositFunction),
-      ...pair("--underwriter-eth-client-id", EthereumClientId),
       ...pair("--underwriter-sol-source-deposit-instruction", SolanaSourceDepositInstruction),
-      ...pair("--underwriter-sol-client-id", SolanaClientId),
       ...pair("--solana-idl-file", artifacts.solanaIdlFile)
     ]
   }

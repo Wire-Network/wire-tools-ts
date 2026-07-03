@@ -3,6 +3,7 @@ import type { Argv } from "yargs"
 import {
   applyClusterBuildOptionsArgs,
   buildOptionShape,
+  environmentPathDefaults,
   flattenOptionLeaves,
   OptionLeafType,
   toClusterBuildOptions,
@@ -39,10 +40,17 @@ function createYargsRecorder(): {
   return { argv: recorder as unknown as Argv, options }
 }
 
-/** Register `defaults` onto a fresh recorder and return the captured option map. */
-function register(defaults = {}): Map<string, RecordedOption> {
+/**
+ * Register `defaults` onto a fresh recorder and return the captured option map.
+ * `environment` defaults EMPTY so a developer shell's `WIRE_*` exports can never
+ * leak into the deterministic registration assertions.
+ */
+function register(
+  defaults = {},
+  environment: NodeJS.ProcessEnv = {}
+): Map<string, RecordedOption> {
   const { argv, options } = createYargsRecorder()
-  applyClusterBuildOptionsArgs(argv, defaults)
+  applyClusterBuildOptionsArgs(argv, defaults, environment)
   return options
 }
 
@@ -212,6 +220,48 @@ describe("applyClusterBuildOptionsArgs registration", () => {
     const options = register()
     expect(options.get("cluster-path")?.alias).toBe("d")
     expect(options.get("batch-operator-count")?.alias).toBe("b")
+  })
+})
+
+describe("WIRE_* environment seeding (the run-flow.mjs / e2e-gate contract)", () => {
+  const environment: NodeJS.ProcessEnv = {
+    WIRE_CLUSTER_PATH: "/tmp/env-cluster",
+    WIRE_BUILD_PATH: "/tmp/env-build",
+    WIRE_ETH_PATH: "/tmp/env-ethereum",
+    WIRE_SOLANA_PATH: "/tmp/env-solana"
+  }
+
+  it("environmentPathDefaults maps the four WIRE_* variables (empty ones omitted)", () => {
+    expect(environmentPathDefaults(environment)).toEqual({
+      clusterPath: "/tmp/env-cluster",
+      buildPath: "/tmp/env-build",
+      ethereumPath: "/tmp/env-ethereum",
+      solanaPath: "/tmp/env-solana"
+    })
+    expect(environmentPathDefaults({ WIRE_BUILD_PATH: "" })).toEqual({})
+    expect(environmentPathDefaults({})).toEqual({})
+  })
+
+  it("env-seeded path flags become optional with the env value as default", () => {
+    const options = register({}, environment)
+    expect(options.get("cluster-path")).toMatchObject({
+      demandOption: false,
+      default: "/tmp/env-cluster"
+    })
+    expect(options.get("ethereum-path")).toMatchObject({
+      demandOption: false,
+      default: "/tmp/env-ethereum"
+    })
+  })
+
+  it("the environment (per-invocation operator intent) beats scenario defaults", () => {
+    const options = register({ clusterPath: "/tmp/scenario-cluster" }, environment)
+    expect(options.get("cluster-path")?.default).toBe("/tmp/env-cluster")
+  })
+
+  it("scenario defaults still seed leaves the environment does not carry", () => {
+    const options = register({ epochDurationSec: 42 }, environment)
+    expect(options.get("epoch-duration-sec")?.default).toBe(42)
   })
 })
 
