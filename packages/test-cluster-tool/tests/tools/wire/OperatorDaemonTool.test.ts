@@ -117,6 +117,18 @@ describe("OperatorDaemonTool", () => {
     const operator = operatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER)
     const args = OperatorDaemonTool.underwriterArgs(operator, artifacts, network)
 
+    it("passes the SCALED action timeout (flow timing scale reaches the daemon)", () => {
+      process.env.WIRE_FLOW_TIMEOUT_SCALE = "4"
+      try {
+        const scaled = OperatorDaemonTool.underwriterArgs(operator, artifacts, network)
+        expect(valuesOf(scaled, "--underwriter-action-timeout-ms")).toEqual([
+          String(OperatorDaemonTool.UnderwriterActionTimeoutMs * 4)
+        ])
+      } finally {
+        delete process.env.WIRE_FLOW_TIMEOUT_SCALE
+      }
+    })
+
     it("loads the underwriter plugin set + source-deposit verification targets", () => {
       expect(valuesOf(args, "--plugin")).toEqual([...OperatorDaemonTool.UnderwriterPlugins])
       expect(valuesOf(args, "--underwriter-enabled")).toEqual(["true"])
