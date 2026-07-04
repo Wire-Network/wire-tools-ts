@@ -1,7 +1,7 @@
 import { Connection } from "@solana/web3.js"
 import Assert from "node:assert"
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
-import { BindConfig } from "../../config/BindConfig.js"
+import { BindConfig, type BindConfigPortRange } from "../../config/BindConfig.js"
 import { probeEndpoint } from "../../utils/asyncUtils.js"
 import { existsAsync, which } from "../../utils/fsUtils.js"
 import { Localhost, toURL } from "../../utils/netUtils.js"
@@ -21,6 +21,14 @@ export interface SolanaValidatorOptions {
   rpcPort?: number
   /** Faucet port. Defaults to a free port preferring `DefaultFaucetPort`. */
   faucetPort?: number
+  /**
+   * `--dynamic-port-range` window for the validator's gossip/TPU/TVU sockets.
+   * MUST be disjoint per concurrent validator: without it every instance
+   * carves from the same agave default range, UDP-double-binds silently, and
+   * forwarded transactions vanish into the co-runner's TPU (signatures
+   * returned, never landed). Defaults to `BindConfig.findAvailableRange()`.
+   */
+  dynamicPortRange?: BindConfigPortRange
   /** Ledger directory (`--ledger`). */
   ledgerPath?: string | null
   /** Validator binary. Resolved from PATH when omitted. */
@@ -53,6 +61,8 @@ export class SolanaValidatorProcess extends ManagedProcess {
       faucetPort:
         options.faucetPort ??
         (await BindConfig.findAvailable(BindConfig.DefaultSolanaFaucet)),
+      dynamicPortRange:
+        options.dynamicPortRange ?? (await BindConfig.findAvailableRange()),
       ledgerPath: options.ledgerPath ?? null,
       binary,
       programs: options.programs ?? [],
@@ -84,6 +94,8 @@ export class SolanaValidatorProcess extends ManagedProcess {
       String(this.config.rpcPort),
       "--faucet-port",
       String(this.config.faucetPort),
+      "--dynamic-port-range",
+      `${this.config.dynamicPortRange.first}-${this.config.dynamicPortRange.last}`,
       ...(verbose ? [] : ["--quiet"]),
       ...(this.config.ledgerPath ? ["--ledger", this.config.ledgerPath] : []),
       ...this.config.programs.flatMap(program => [

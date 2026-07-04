@@ -57,6 +57,7 @@ export namespace SolanaValidatorProcessSteps {
     const validator = await SolanaValidatorProcess.create(ctx.processManager, {
       rpcPort: ctx.config.bind.solana.ports.http,
       faucetPort: ctx.config.bind.solana.ports.faucet,
+      dynamicPortRange: ctx.config.bind.solana.ports.dynamicRange,
       ledgerPath: Path.join(ctx.config.dataPath, LedgerSubpath),
       programs: [{ name: ProgramName, programId, soFile }]
     })

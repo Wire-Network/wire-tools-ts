@@ -93,3 +93,18 @@ export async function resolveLatestNonce(
 export function clearNonceCache(address: string): void {
   nonceCounters.delete(address.toLowerCase())
 }
+
+/**
+ * The most specific human-readable reason an ethers error carries: the decoded
+ * `require(cond, "msg")` `reason` when present, else ethers' `shortMessage`,
+ * else the plain `message`, else the stringified error. Use when surfacing a
+ * revert from a `staticCall` dry-run — a mined status-0 receipt carries no
+ * reason, so the dry-run's decode is the only reason a report will ever show.
+ *
+ * @param error - The caught ethers (or arbitrary) error.
+ * @returns The best available reason string.
+ */
+export function ethereumRevertReason(error: unknown): string {
+  const decoded = error as { reason?: string; shortMessage?: string; message?: string }
+  return decoded?.reason ?? decoded?.shortMessage ?? decoded?.message ?? String(error)
+}

@@ -1,7 +1,10 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+import { OperatorType } from "@wireio/opp-typescript-models"
 import { EthereumCollateralTool } from "@wireio/test-cluster-tool/tools/ethereum"
+import type { ClusterBuildContext } from "@wireio/test-cluster-tool/orchestration"
+import { Report } from "@wireio/test-cluster-tool/report"
 
 describe("EthereumCollateralTool.mockErc20Address", () => {
   let deploymentsPath: string
@@ -39,5 +42,52 @@ describe("EthereumCollateralTool.mockErc20Address", () => {
     expect(() =>
       EthereumCollateralTool.mockErc20Address("/no/such/deployments", "USDC")
     ).toThrow(/outpost addresses not found/)
+  })
+})
+
+describe("EthereumCollateralTool.planNonNativeDeposit", () => {
+  it("captures the full typed input and binds the named runner", () => {
+    const step = EthereumCollateralTool.planNonNativeDeposit(
+      Report.Actor.Underwriter,
+      "deposit-usdc",
+      "Underwriter bonds USDC collateral",
+      {},
+      "uwrit.a",
+      2n,
+      7n,
+      3n,
+      OperatorType.UNDERWRITER,
+      1_000_000n
+    )
+    expect(step.input).toEqual({
+      kind: "EthereumCollateralTool.DepositNonNativeInput",
+      operatorAccount: "uwrit.a",
+      chainCode: 2n,
+      tokenCode: 7n,
+      reserveCode: 3n,
+      operatorType: OperatorType.UNDERWRITER,
+      amount: 1_000_000n
+    })
+    expect(step.runner).toBe(EthereumCollateralTool.runNonNativeDeposit)
+  })
+
+  it("runner rejects a non-positive amount before touching any client", async () => {
+    // The amount guard fires before ctx is read, so an empty fake suffices.
+    const ctx = {} as unknown as ClusterBuildContext
+    await expect(
+      EthereumCollateralTool.runNonNativeDeposit(
+        ctx,
+        {
+          kind: "EthereumCollateralTool.DepositNonNativeInput",
+          operatorAccount: "uwrit.a",
+          chainCode: 2n,
+          tokenCode: 7n,
+          reserveCode: 3n,
+          operatorType: OperatorType.UNDERWRITER,
+          amount: 0n
+        },
+        new AbortController().signal
+      )
+    ).rejects.toThrow(/amount must be positive/)
   })
 })

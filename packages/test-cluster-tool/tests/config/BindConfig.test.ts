@@ -220,6 +220,63 @@ describe("BindConfig", () => {
     })
   })
 
+  describe("solana dynamic port range", () => {
+    it("resolves an aligned, full-width window included in allPorts", async () => {
+      const config = await BindConfig.resolve({}, {})
+      const { first, last } = config.solana.ports.dynamicRange
+      expect(last - first + 1).toBe(BindConfig.SolanaDynamicPortRangeSize)
+      expect(first).toBeGreaterThanOrEqual(BindConfig.DefaultSolanaDynamicPortFirst)
+      // Scanned windows step by the range size from the default first port.
+      expect(
+        (first - BindConfig.DefaultSolanaDynamicPortFirst) %
+          BindConfig.SolanaDynamicPortRangeSize
+      ).toBe(0)
+      expect(config.allPorts).toEqual(expect.arrayContaining([first, last]))
+    })
+
+    it("two resolves claim DISJOINT windows (the co-running-validator guarantee)", async () => {
+      const first = await BindConfig.resolve({}, {})
+      const second = await BindConfig.resolve({}, {})
+      const a = first.solana.ports.dynamicRange
+      const b = second.solana.ports.dynamicRange
+      const overlaps = a.first <= b.last && b.first <= a.last
+      expect(overlaps).toBe(false)
+    })
+
+    it("uses a caller-pinned window when it is free", async () => {
+      const pinned = {
+        first: 13_000,
+        last: 13_000 + BindConfig.SolanaDynamicPortRangeSize - 1
+      }
+      const config = await BindConfig.resolve(
+        { solana: { ports: { dynamicRange: pinned } } },
+        {}
+      )
+      expect(config.solana.ports.dynamicRange).toEqual(pinned)
+    })
+
+    it("throws when a pinned window is unavailable", async () => {
+      const pinned = {
+        first: 13_000,
+        last: 13_000 + BindConfig.SolanaDynamicPortRangeSize - 1
+      }
+      // One occupied port anywhere in the window poisons the whole pin.
+      allocator.markTaken(13_007)
+      await expect(
+        BindConfig.resolve({ solana: { ports: { dynamicRange: pinned } } }, {})
+      ).rejects.toThrow(/pinned but unavailable/)
+    })
+
+    it("findAvailableRange returns a full-width window without registering", async () => {
+      const window = await BindConfig.findAvailableRange()
+      expect(window.last - window.first + 1).toBe(
+        BindConfig.SolanaDynamicPortRangeSize
+      )
+      // reading never registers THIS process (mirrors findAvailable)
+      expect(Fs.existsSync(BindConfig.registryFile())).toBe(false)
+    })
+  })
+
   describe("findAvailable", () => {
     it("returns the preferred port when it is free", async () => {
       expect(await BindConfig.findAvailable(BindConfig.DefaultAnvil)).toBe(
@@ -252,7 +309,12 @@ describe("BindConfig", () => {
         { address: BindConfig.LoopbackAddress, port: port + 3 },
         {
           address: BindConfig.LoopbackAddress,
-          ports: { http: port + 4, faucet: port + 5 }
+          ports: {
+            http: port + 4,
+            faucet: port + 5,
+            // Width-1 window keeps the claim minimal (one extra port).
+            dynamicRange: { first: port + 7, last: port + 7 }
+          }
         },
         { address: BindConfig.LoopbackAddress, port: port + 6 }
       )

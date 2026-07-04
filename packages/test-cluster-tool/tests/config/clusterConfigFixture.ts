@@ -48,7 +48,14 @@ export const PersistedFixture = {
       address: Address,
       ports: {
         http: BindConfig.DefaultSolanaRpc,
-        faucet: BindConfig.DefaultSolanaFaucet
+        faucet: BindConfig.DefaultSolanaFaucet,
+        dynamicRange: {
+          first: BindConfig.DefaultSolanaDynamicPortFirst,
+          last:
+            BindConfig.DefaultSolanaDynamicPortFirst +
+            BindConfig.SolanaDynamicPortRangeSize -
+            1
+        }
       }
     },
     debuggingServer: { address: Address, port: BindConfig.DefaultDebuggingServer }

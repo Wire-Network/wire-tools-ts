@@ -5,6 +5,7 @@ import {
   ProcessManager,
   SolanaValidatorProcess
 } from "@wireio/test-cluster-tool/cluster/processes"
+import { BindConfig } from "@wireio/test-cluster-tool/config"
 import { Localhost } from "@wireio/test-cluster-tool/utils"
 
 describe("SolanaValidatorProcess", () => {
@@ -50,5 +51,25 @@ describe("SolanaValidatorProcess", () => {
       binary: "/bin/true"
     })
     expect(validator.args).not.toContain("--quiet")
+  })
+
+  it("passes an explicit --dynamic-port-range window verbatim", async () => {
+    const validator = await SolanaValidatorProcess.create(manager, {
+      binary: "/bin/true",
+      dynamicPortRange: { first: 13_100, last: 13_163 }
+    })
+    expect(validator.args).toEqual(
+      expect.arrayContaining(["--dynamic-port-range", "13100-13163"])
+    )
+  })
+
+  it("defaults --dynamic-port-range to a resolved full-width window", async () => {
+    const validator = await SolanaValidatorProcess.create(manager, {
+      binary: "/bin/true"
+    })
+    const index = validator.args.indexOf("--dynamic-port-range")
+    expect(index).toBeGreaterThanOrEqual(0)
+    const [first, last] = validator.args[index + 1].split("-").map(Number)
+    expect(last - first + 1).toBe(BindConfig.SolanaDynamicPortRangeSize)
   })
 })

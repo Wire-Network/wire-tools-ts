@@ -1,4 +1,5 @@
 import Assert from "node:assert"
+import Dgram from "node:dgram"
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
@@ -56,6 +57,27 @@ async function clearPortLocks(): Promise<void> {
   mod.clearLockedPorts()
 }
 
+/**
+ * True when `port` is bindable as UDP right now (dgram probe on the bind-all
+ * address, so a taken port on ANY interface reads as taken). `get-port` only
+ * probes TCP; the solana validator's gossip/TPU/TVU sockets are UDP, where the
+ * kernel permits SILENT double-binding — two validators sharing a UDP port
+ * split the packet stream and forwarded transactions vanish into the co-runner.
+ *
+ * @param port - Port to probe.
+ * @returns Whether the port is UDP-bindable.
+ */
+function isUdpPortFree(port: number): Promise<boolean> {
+  return new Promise(resolve => {
+    const socket = Dgram.createSocket({ type: "udp4", reuseAddr: false })
+    socket.once("error", () => {
+      guard(() => socket.close())
+      resolve(false)
+    })
+    socket.bind(port, ListenAllAddress, () => socket.close(() => resolve(true)))
+  })
+}
+
 /** One nodeop's `{ http, p2p }` listen ports. */
 export interface BindConfigNodeopPorts {
   http: number
@@ -82,10 +104,25 @@ export interface BindConfigNodeop {
   ports: BindConfigNodeopClusterPorts
 }
 
-/** solana ports — `http` is the RPC port, `faucet` the airdrop faucet. */
+/** An inclusive contiguous port window (`first`..`last`). */
+export interface BindConfigPortRange {
+  first: number
+  last: number
+}
+
+/**
+ * solana ports — `http` is the RPC port, `faucet` the airdrop faucet.
+ * `dynamicRange` is the validator's `--dynamic-port-range` window
+ * (gossip/TPU/TVU/repair sockets). Without a per-cluster window every
+ * solana-test-validator carves its dynamic sockets from the SAME agave default
+ * range; two concurrent validators then UDP-double-bind (the kernel allows it
+ * silently) and each forwards transactions into the other's TPU, which drops
+ * foreign-genesis packets — airdrops/txs return signatures that never land.
+ */
 export interface BindConfigSolanaPorts {
   http: number
   faucet: number
+  dynamicRange: BindConfigPortRange
 }
 
 export interface BindConfigSolana {
@@ -115,6 +152,8 @@ export interface BindNodeopOptions {
 export interface BindSolanaPortsOptions {
   http?: number
   faucet?: number
+  /** Pinned validator dynamic-port window; every port must be free or `resolve` throws. */
+  dynamicRange?: BindConfigPortRange
 }
 export interface BindSolanaOptions {
   address?: string
@@ -271,7 +310,18 @@ export class BindConfig {
             options.solana?.ports?.faucet ?? null,
             BindConfig.DefaultSolanaFaucet,
             "solana.faucet"
-          )
+          ),
+          dynamicRange: await (async () => {
+            const dynamicRange = await BindConfig.pickPortRange(
+              options.solana?.ports?.dynamicRange ?? null,
+              claimed,
+              "solana.dynamicRange"
+            )
+            range(dynamicRange.first, dynamicRange.last + 1).forEach(port =>
+              claimed.add(port)
+            )
+            return dynamicRange
+          })()
         }
       },
       {
@@ -292,7 +342,8 @@ export class BindConfig {
   /** Flat list of every port, for validation. */
   get allPorts(): number[] {
     const np = this.nodeop.ports,
-      flat = (xs: BindConfigNodeopPorts[]) => xs.flatMap(p => [p.http, p.p2p])
+      flat = (xs: BindConfigNodeopPorts[]) => xs.flatMap(p => [p.http, p.p2p]),
+      dynamicRange = this.solana.ports.dynamicRange
     return [
       this.kiod.port,
       np.bios.http,
@@ -303,6 +354,7 @@ export class BindConfig {
       this.anvil.port,
       this.solana.ports.http,
       this.solana.ports.faucet,
+      ...range(dynamicRange.first, dynamicRange.last + 1),
       this.debuggingServer.port
     ]
   }
@@ -345,6 +397,24 @@ export namespace BindConfig {
   export const DefaultAnvil = 8545
   export const DefaultSolanaRpc = 8899
   export const DefaultSolanaFaucet = 9900
+  /**
+   * First candidate port of the validator's `--dynamic-port-range` window.
+   * Sits clear of every daemon default above and below the kernel's ephemeral
+   * range; raising it shifts every cluster's candidate windows.
+   */
+  export const DefaultSolanaDynamicPortFirst = 12_000
+  /**
+   * Width of each validator dynamic-port window. agave binds ~19 dynamic
+   * sockets (gossip/TPU/TVU/repair/broadcast); 64 leaves headroom for version
+   * drift. Shrinking it below the validator's socket count breaks startup.
+   */
+  export const SolanaDynamicPortRangeSize = 64
+  /**
+   * Contiguous windows scanned (stepping by {@link SolanaDynamicPortRangeSize})
+   * before `resolve` gives up — bounds the search to
+   * `DefaultSolanaDynamicPortFirst + SearchLimit × RangeSize`.
+   */
+  export const SolanaDynamicPortRangeSearchLimit = 32
   export const DefaultDebuggingServer = 9901
   export const DefaultProducerCount = 1
   export const DefaultBatchCount = 3
@@ -543,6 +613,89 @@ export namespace BindConfig {
       fallbackDefault !== null
         ? { port: fallbackDefault, exclude: claimed }
         : { exclude: claimed }
+    )
+  }
+
+  /**
+   * Whether EVERY port of the window starting at `first` is free: not in
+   * `exclusions`, UDP-bindable (dgram probe — the validator's dynamic sockets
+   * are UDP, invisible to `get-port`'s TCP probe), and TCP-bindable.
+   *
+   * @param first - First port of the candidate window.
+   * @param exclusions - Ports already claimed/registered.
+   * @returns Whether the whole window is free.
+   */
+  async function isRangeFree(
+    first: number,
+    exclusions: Set<number>
+  ): Promise<boolean> {
+    const ports = range(first, first + SolanaDynamicPortRangeSize)
+    if (ports.some(port => exclusions.has(port))) return false
+    const udpFree = await Bluebird.filter(ports, isUdpPortFree, {
+      concurrency: 8
+    })
+    if (udpFree.length !== ports.length) return false
+    const tcpTaken = await Bluebird.filter(
+      ports,
+      async port => (await getPort({ port })) !== port,
+      { concurrency: 1 }
+    )
+    return tcpTaken.length === 0
+  }
+
+  /**
+   * Resolve a free contiguous {@link SolanaDynamicPortRangeSize}-port window: a
+   * caller-pinned range must be entirely free (else THROW, mirroring
+   * {@link pickPort}); otherwise candidate windows are scanned from
+   * {@link DefaultSolanaDynamicPortFirst}. Call only under the
+   * {@link BindConfig.PortLockPath} lock (resolve does).
+   *
+   * @param callerPin - The caller's pinned window, or null.
+   * @param exclusions - Ports already claimed/registered.
+   * @param daemon - Label for the error message.
+   * @returns The resolved window.
+   * @throws If pinned-but-unavailable, or no free window within the search limit.
+   */
+  export async function pickPortRange(
+    callerPin: BindConfigPortRange | null,
+    exclusions: Set<number>,
+    daemon: string
+  ): Promise<BindConfigPortRange> {
+    if (callerPin !== null) {
+      Assert.ok(
+        await isRangeFree(callerPin.first, exclusions),
+        `port range ${callerPin.first}-${callerPin.last} for ${daemon} is pinned but unavailable`
+      )
+      return callerPin
+    }
+    const starts = range(0, SolanaDynamicPortRangeSearchLimit).map(
+      i => DefaultSolanaDynamicPortFirst + i * SolanaDynamicPortRangeSize
+    )
+    const first = await Bluebird.reduce(
+      starts,
+      async (found: number | null, start) =>
+        found ?? ((await isRangeFree(start, exclusions)) ? start : null),
+      null as number | null
+    )
+    Assert.ok(
+      first !== null,
+      `no free ${SolanaDynamicPortRangeSize}-port window for ${daemon} within ` +
+        `${SolanaDynamicPortRangeSearchLimit} windows from ${DefaultSolanaDynamicPortFirst}`
+    )
+    return { first, last: first + SolanaDynamicPortRangeSize - 1 }
+  }
+
+  /**
+   * Resolve an available validator dynamic-port window OUTSIDE a full
+   * `resolve` — the standalone counterpart of {@link findAvailable} (e.g.
+   * `SolanaValidatorProcess.create` without a cluster BindConfig). Reads the
+   * cross-process registry for exclusions under the host-global port lock.
+   *
+   * @returns A currently-free window.
+   */
+  export async function findAvailableRange(): Promise<BindConfigPortRange> {
+    return withFileLock(BindConfig.PortLockPath, () =>
+      pickPortRange(null, readRegistryPortExclusions(), "solana.dynamicRange")
     )
   }
 }
