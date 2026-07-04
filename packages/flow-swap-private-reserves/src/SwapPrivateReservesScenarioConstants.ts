@@ -1,36 +1,36 @@
 import { SlugName } from "@wireio/sdk-core"
-import { WireReserveTool } from "@wireio/test-cluster-tool"
+import { ProtocolTiming, WireReserveTool } from "@wireio/test-cluster-tool"
 
 /**
- * Constants for the private-reserve swap flow. Every value carries over from
- * the previously-validated jest run (`tests/constants.ts`): the same-owner
- * PRIVATE reserve pair sizing, the per-phase ~1% swap draws, the 60s-epoch
- * timing budgets, and the private→WIRE exclusion-probe parameters.
+ * Constants for the private-reserve swap flow: the same-owner PRIVATE reserve
+ * pair sizing, the per-phase ~1% swap draws, and the private→WIRE
+ * exclusion-probe parameters. Protocol waits derive from the
+ * {@link ProtocolTiming} envelope.
  */
 export namespace SwapPrivateReservesScenarioConstants {
   /**
-   * Timing budgets — 60s epochs per `epoch-stall-is-fatal.md`. Each poll
-   * deadline is also the enclosing step's timeout minus
+   * Timing budgets — protocol waits pinned to their {@link ProtocolTiming}
+   * class. Each poll deadline is also the enclosing step's timeout minus
    * {@link Timing.PollDeadlineBufferMs}.
    */
   export namespace Timing {
     /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
     export const EpochDurationSec = 60
-    /** Outpost RESERVE_CREATE → depot PENDING row (per chain). */
-    export const RelayDeadlineMs = 240_000
-    /** RESERVE_READY round-trip → outpost-local record ACTIVE. */
-    export const ReadyDeadlineMs = 240_000
+    /** Outpost RESERVE_CREATE → depot PENDING row (per chain) — a single hop. */
+    export const RelayDeadlineMs = ProtocolTiming.SingleHopBudgetMs
+    /** RESERVE_READY → outpost-local record ACTIVE — a single depot→outpost hop. */
+    export const ReadyDeadlineMs = ProtocolTiming.SingleHopBudgetMs
     /**
-     * SWAP_REQUEST relay + UWREQ insert (also the uwrit.a ACTIVE budget).
-     * A request rides the outpost's NEXT outbound emit (0–2 min of phase
-     * alignment) + delivery + the depot's createuwreq (~1–1.5 min) — up to
-     * ~3.5 minutes end-to-end, so the budget is five epochs.
+     * SWAP_REQUEST relay + UWREQ insert (also the uwrit.a ACTIVE budget) — a
+     * single outpost→depot hop: the request rides the outpost's NEXT outbound
+     * emit (0–2 min of phase alignment) + delivery + the depot's createuwreq.
      */
-    export const UwreqDeadlineMs = 300_000
-    /** Two-leg underwriter race resolution. */
-    export const RaceDeadlineMs = 240_000
-    /** SWAP_REMIT delivery + destination payout. */
-    export const RemitDeadlineMs = 480_000
+    export const UwreqDeadlineMs = ProtocolTiming.SingleHopBudgetMs
+    /** Two-leg underwriter race resolution — a single hop back to the depot. */
+    export const RaceDeadlineMs = ProtocolTiming.SingleHopBudgetMs
+    /** SWAP_REMIT delivery + destination payout — the tail of the full
+     *  outpost→depot→outpost path, budgeted as the double hop. */
+    export const RemitDeadlineMs = ProtocolTiming.DoubleHopBudgetMs
     /** Window in which the forbidden private→WIRE UWREQ must NOT appear. */
     export const NoUwreqWindowMs = 90_000
     /** Interval for long-running chain-state polls (ms). */

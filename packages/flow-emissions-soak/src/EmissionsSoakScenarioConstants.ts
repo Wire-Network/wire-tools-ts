@@ -1,4 +1,4 @@
-import type { ImportSeedChainKind } from "@wireio/test-cluster-tool"
+import { ProtocolTiming, type ImportSeedChainKind } from "@wireio/test-cluster-tool"
 
 /**
  * Constants for the emissions + dclaim payout soak flow. Values carry over from
@@ -109,8 +109,16 @@ export namespace EmissionsSoakScenarioConstants {
 
   // ── Poll / query budgets ───────────────────────────────────────────────────
 
-  /** Deadline for `pending_claims` rows to land after the linkswept sweeps (ms). */
-  export const PendingClaimsTimeoutMs = 2 * 60_000
+  /** 1 s in ms — multiplies epoch counts into ms deadlines. */
+  export const MsPerSecond = 1_000
+  /** Epochs budgeted for the `pending_claims` rows after the linkswept sweeps. */
+  export const PendingClaimsEpochBudget = 3
+  /** Deadline for `pending_claims` rows to land after the linkswept sweeps —
+   *  depot-internal, so extension-inclusive epochs rather than a hop class. */
+  export const PendingClaimsTimeoutMs =
+    ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+    PendingClaimsEpochBudget *
+    MsPerSecond
   /** Poll interval for the `pending_claims` wait (ms). */
   export const PendingClaimsPollIntervalMs = 2_000
   /**

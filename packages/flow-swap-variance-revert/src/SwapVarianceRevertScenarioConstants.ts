@@ -1,10 +1,11 @@
 import { SlugName } from "@wireio/sdk-core"
+import { ProtocolTiming } from "@wireio/test-cluster-tool"
 
 /**
- * Constants for the swap variance-tolerance revert flow. Timing budgets and
- * amounts carry over from the previously-validated jest suite (which mirrored
+ * Constants for the swap variance-tolerance revert flow. Amounts mirror
  * `flow-swap-with-underwriting` so both flows run against the same bootstrap
- * reserve seed): the user requests an ETHEREUM/ETH → SOLANA/SOL swap whose
+ * reserve seed; protocol waits derive from the {@link ProtocolTiming}
+ * envelope. The user requests an ETHEREUM/ETH → SOLANA/SOL swap whose
  * `target_amount` is deliberately inflated past the variance tolerance, so the
  * depot's `sysio.uwrit::createuwreq` guard rejects it and refunds the source
  * deposit via SWAP_REVERT.
@@ -19,17 +20,19 @@ export namespace SwapVarianceRevertScenarioConstants {
    * Negative-assertion wait (ms): how long the flow sleeps before checking that
    * NO UWREQ row was created. Needs to be long enough that the SwapRequest
    * envelope has reached the depot and `createuwreq` has dispatched — one epoch
-   * (60s) plus the natural batch-op relay latency.
+   * (60s) plus the natural batch-op relay latency. Deliberately NOT an envelope
+   * budget: this is a fixed sleep, so widening it adds wall clock to every run,
+   * and an early check can only weaken the assertion, never flake it.
    */
   export const UwreqNegativeAssertMs = 90_000
 
   /**
    * Time (ms) the SWAP_REVERT outbound has to reach `DEPOT_OUTPOST_ETHEREUM`
-   * AND for the ETH outpost to credit the user's refund. The outbound goes
-   * through one full epoch (build → emit → batch-op deliver → outpost
-   * dispatch), so ≥ 2 epochs.
+   * AND for the ETH outpost to credit the user's refund. The request travels
+   * outpost → depot, the rejection rides the depot's NEXT outbound back to the
+   * outpost — a true double hop.
    */
-  export const RevertDeadlineMs = 240_000
+  export const RevertDeadlineMs = ProtocolTiming.DoubleHopBudgetMs
 
   /** Sleep between long-running chain-state polls (ms). */
   export const LongPollIntervalMs = 3_000

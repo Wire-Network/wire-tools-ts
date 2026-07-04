@@ -1,4 +1,4 @@
-import { Constants } from "@wireio/test-cluster-tool/Constants"
+import { Constants, ProtocolTiming } from "@wireio/test-cluster-tool/Constants"
 
 describe("Constants", () => {
   describe("development keys", () => {
@@ -57,5 +57,28 @@ describe("Constants", () => {
       )
       expect(c.producer_bps + c.batch_op_bps).toBe(10_000)
     })
+  })
+})
+
+describe("ProtocolTiming", () => {
+  it("pins each envelope class to its top value", () => {
+    expect(ProtocolTiming.EpochExtensionMaxSec).toBe(30)
+    expect(ProtocolTiming.CollateralVerifyBudgetMs).toBe(360_000)
+    expect(ProtocolTiming.SingleHopBudgetMs).toBe(420_000)
+    expect(ProtocolTiming.DoubleHopBudgetMs).toBe(840_000)
+  })
+
+  it("orders the classes: collateral < single hop < double hop = 2x single", () => {
+    expect(ProtocolTiming.CollateralVerifyBudgetMs).toBeLessThan(
+      ProtocolTiming.SingleHopBudgetMs
+    )
+    expect(ProtocolTiming.DoubleHopBudgetMs).toBe(
+      2 * ProtocolTiming.SingleHopBudgetMs
+    )
+  })
+
+  it("effectiveEpochSec adds the max delivery extension", () => {
+    expect(ProtocolTiming.effectiveEpochSec(60)).toBe(90)
+    expect(ProtocolTiming.effectiveEpochSec(300)).toBe(330)
   })
 })

@@ -312,3 +312,46 @@ export namespace Constants {
     pay_cadence_epochs: 1
   }
 }
+
+/**
+ * Protocol timing envelope (author guidance, 2026-07-04) — the authoritative
+ * worst-case durations of OPP propagation classes at the 60s minimum epoch.
+ * An epoch can extend ~15–30s past its nominal duration while a scheduled
+ * batch operator has yet to deliver (operators crank on ~15s internal loops);
+ * collateral deposit + depot verification takes ~4–6 minutes; a single-hop
+ * wait (act on an outpost, verify on the depot — or the reverse) commonly
+ * reaches 5–7 minutes; a full outpost → depot → outpost path doubles that to
+ * 10–14 minutes. Every flow's protocol-wait budget derives from this namespace
+ * and pins the TOP of its class: polls return the moment the condition holds,
+ * so a generous ceiling adds no wall clock to a healthy run, while an
+ * undershot one fails healthy runs at the envelope's tail. There is NO
+ * concurrency-derived scaling — concurrency reduces total wall clock, it does
+ * not define protocol latency.
+ */
+export namespace ProtocolTiming {
+  /** Max extension an epoch can run past `epoch_duration_sec` while a
+   *  scheduled batch operator has yet to deliver (s). */
+  export const EpochExtensionMaxSec = 30
+
+  /** Collateral deposit + depot verification (ms) — 6-minute envelope top. */
+  export const CollateralVerifyBudgetMs = 360_000
+
+  /** Single hop — act on an outpost, verify on the depot, or the reverse
+   *  (ms) — 7-minute envelope top. */
+  export const SingleHopBudgetMs = 420_000
+
+  /** Double hop — outpost → depot → outpost (ms) — 14-minute envelope top. */
+  export const DoubleHopBudgetMs = 840_000
+
+  /**
+   * Effective per-epoch duration for N-epoch deadlines (s): the nominal
+   * duration plus the maximum delivery extension, so an N-epoch budget
+   * survives N consecutively-extended epochs.
+   *
+   * @param epochDurationSec - The cluster's configured epoch duration (s).
+   * @returns The extension-inclusive per-epoch duration (s).
+   */
+  export function effectiveEpochSec(epochDurationSec: number): number {
+    return epochDurationSec + EpochExtensionMaxSec
+  }
+}

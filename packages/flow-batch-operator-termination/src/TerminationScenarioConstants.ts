@@ -1,4 +1,5 @@
 import { SlugName } from "@wireio/sdk-core"
+import { ProtocolTiming } from "@wireio/test-cluster-tool"
 
 /**
  * Constants for the batch-operator-termination flow. Every amount, threshold,
@@ -99,26 +100,26 @@ export namespace TerminationScenarioConstants {
 
   /** Deadline for the ETH deposit to credit the depot balance row. */
   export function ethereumDepositDeadlineMs(): number {
-    return EpochDurationSec * EthereumDepositRelayEpochs * MsPerSecond
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * EthereumDepositRelayEpochs * MsPerSecond
   }
 
   /** Deadline for the SOL deposit to land and the ACTIVE flip to follow. */
   export function solanaActivationDeadlineMs(): number {
-    return EpochDurationSec * SolanaActivationEpochs * MsPerSecond
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * SolanaActivationEpochs * MsPerSecond
   }
 
   /** Deadline for the operator to appear in `epochstate.batch_op_groups`. */
   export function scheduleWindowDeadlineMs(): number {
-    return EpochDurationSec * ScheduleWindowEpochs * MsPerSecond
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * ScheduleWindowEpochs * MsPerSecond
   }
 
   /** Deadline for the miss window to accumulate and `termcheck` to flip TERMINATED. */
   export function terminationDeadlineMs(): number {
-    return EpochDurationSec * MissAccumulationEpochs * MsPerSecond
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * MissAccumulationEpochs * MsPerSecond
   }
 
   /** Deadline for the post-termination WITHDRAW_REMIT effects on either outpost. */
   export function remitDeadlineMs(): number {
-    return EpochDurationSec * RemitPropagationEpochs * MsPerSecond
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * RemitPropagationEpochs * MsPerSecond
   }
 }
