@@ -39,6 +39,7 @@ import {
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { mkdirs } from "../../utils/fsUtils.js"
+import { scaleTimeoutMs } from "../../utils/asyncUtils.js"
 import { Localhost, toURL } from "../../utils/netUtils.js"
 
 export namespace OperatorDaemonTool {
@@ -66,8 +67,17 @@ export namespace OperatorDaemonTool {
 
   /** batch_operator_plugin epoch poll interval (ms). */
   export const BatchEpochPollMs = 15_000
-  /** batch_operator_plugin delivery timeout (ms). */
+  /** batch_operator_plugin delivery timeout (ms; nominal — scaled at arg build). */
   export const BatchDeliveryTimeoutMs = 15_000
+  /**
+   * underwriter_plugin outpost action timeout (ms; nominal — scaled at arg
+   * build). Mirrors the plugin default; passed EXPLICITLY so the flow timing
+   * scale reaches it: on a starved shared-host validator a commit tx can
+   * take >15s to confirm, and the plugin then re-submits every scan cycle
+   * forever (run 28700849707: uwreq 35's SOL leg timed out at 15s per
+   * attempt for 12 minutes while the ETH leg sat confirmed).
+   */
+  export const UnderwriterActionTimeoutMs = 15_000
   /** The single ethereum outpost client id every plugin arg references. */
   export const EthereumClientId = "eth-default"
   /** The single solana outpost client id every plugin arg references. */
@@ -290,7 +300,7 @@ export namespace OperatorDaemonTool {
       ...pair("--batch-enabled", "true"),
       ...pair("--batch-operator-account", operator.account),
       ...pair("--batch-epoch-poll-ms", String(BatchEpochPollMs)),
-      ...pair("--batch-delivery-timeout-ms", String(BatchDeliveryTimeoutMs)),
+      ...pair("--batch-delivery-timeout-ms", String(scaleTimeoutMs(BatchDeliveryTimeoutMs))),
       ...pair("--ext-debugging-server", network.debuggingServerUrl),
       ...outpostClientArgs(operator, artifacts, network),
       ...pair("--batch-eth-opp-addr", assertAddress(artifacts, "OPP")),
@@ -323,6 +333,10 @@ export namespace OperatorDaemonTool {
       ...pair("--signature-provider", KeyGenerator.toSignatureProvider(operator.wire)),
       ...pair("--underwriter-enabled", "true"),
       ...pair("--underwriter-account", operator.account),
+      ...pair(
+        "--underwriter-action-timeout-ms",
+        String(scaleTimeoutMs(UnderwriterActionTimeoutMs))
+      ),
       ...pair("--ext-debugging-server", network.debuggingServerUrl),
       ...outpostClientArgs(operator, artifacts, network),
       // Per-chain outpost wiring (repeatable CSV specs; replaced the removed
