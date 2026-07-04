@@ -1,25 +1,32 @@
 import { SlugName } from "@wireio/sdk-core"
-import { outputKey, type Books, type OutputKey } from "@wireio/test-cluster-tool"
+import {
+  outputKey,
+  ProtocolTiming,
+  type Books,
+  type OutputKey
+} from "@wireio/test-cluster-tool"
 
 /**
- * Constants for the bidirectional swap-with-underwriting flow. Timing budgets,
- * swap amounts, and the variance tolerance carry over from the previously-
- * validated jest run (`tests/constants.ts`, tuned against the real cluster):
- * every deadline scales from the 60s minimum-epoch rule per
- * `epoch-stall-is-fatal.md`, and each direction's source amount draws 1% of the
- * bootstrap reserve seed.
+ * Constants for the bidirectional swap-with-underwriting flow. Every
+ * protocol-wait budget derives from the {@link ProtocolTiming} envelope
+ * (collateral 4–6 min, single hop 5–7 min, double hop 10–14 min at the 60s
+ * minimum epoch); each direction's source amount draws 1% of the bootstrap
+ * reserve seed.
  */
 export namespace SwapWithUnderwritingScenarioConstants {
   // ── Timing ────────────────────────────────────────────────────────────────
 
   /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
   export const EpochDurationSec = 60
-  /** Time the depot has to insert a UWREQ row after the source outpost emits SWAP_REQUEST. */
-  export const UwreqDeadlineMs = 180_000
-  /** Time for the underwriter race to resolve (CONFIRMED status). */
-  export const RaceDeadlineMs = 240_000
-  /** Time for the SWAP_REMIT to land on the destination outpost AND credit the user. */
-  export const RemitDeadlineMs = 480_000
+  /** UWREQ row on the depot after the source outpost emits SWAP_REQUEST — a
+   *  single outpost→depot hop. */
+  export const UwreqDeadlineMs = ProtocolTiming.SingleHopBudgetMs
+  /** Underwriter race resolution (CONFIRMED): the winning commit lands on the
+   *  destination outpost and relays back to the depot — a single hop. */
+  export const RaceDeadlineMs = ProtocolTiming.SingleHopBudgetMs
+  /** SWAP_REMIT on the destination outpost AND the user credited — the tail of
+   *  the full outpost→depot→outpost path, budgeted as the double hop. */
+  export const RemitDeadlineMs = ProtocolTiming.DoubleHopBudgetMs
   /** Sleep between long-running chain-state polls. */
   export const LongPollIntervalMs = 3_000
   /** Buffer added on top of each poll deadline for the enclosing step timeout (ms). */
@@ -31,17 +38,20 @@ export namespace SwapWithUnderwritingScenarioConstants {
 
   /**
    * Epochs budgeted for the underwriter collateral DEPOSIT_REQUESTs to relay to
-   * the depot and flip `uwrit.a` ACTIVE. The old jest flow polled this gate with
-   * `UwreqDeadlineMs` (180s) because its bootstrap had already submitted the
-   * deposits minutes earlier (old Phase 11d); this flow submits them as its own
-   * first scenario phase, so the gate budgets the full deposit→credit relay —
-   * the same 9-epoch budget `flow-operator-collateral-deposit` validated green.
+   * the depot and flip `uwrit.a` ACTIVE — the same 9-epoch budget
+   * `flow-operator-collateral-deposit` validated green, comfortably above the
+   * envelope's 4–6 minute collateral class.
    */
   export const UnderwriterActiveEpochBudget = 9
 
-  /** Deadline for the underwriter deposit relay + ACTIVE eligibility flip. */
+  /** Deadline for the underwriter deposit relay + ACTIVE eligibility flip —
+   *  extension-inclusive epochs so consecutive extended epochs still fit. */
   export function underwriterActiveDeadlineMs(): number {
-    return EpochDurationSec * UnderwriterActiveEpochBudget * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      UnderwriterActiveEpochBudget *
+      MsPerSecond
+    )
   }
 
   // ── Registry slugs (must match the bootstrap registry seed) ──────────────

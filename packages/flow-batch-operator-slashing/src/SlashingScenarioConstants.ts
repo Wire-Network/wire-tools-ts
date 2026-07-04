@@ -1,4 +1,5 @@
 import { SlugName } from "@wireio/sdk-core"
+import { ProtocolTiming } from "@wireio/test-cluster-tool"
 
 /**
  * Constants for the batch-operator-slashing flow. Names, tags, epoch budgets,
@@ -145,17 +146,17 @@ export namespace SlashingScenarioConstants {
 
   /** Deadline for a dispute operator's ACTIVE flip (ms). */
   export function activeDeadlineMs(): number {
-    return EpochDurationSec * ActiveEpochBudget * MsPerSecond
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * ActiveEpochBudget * MsPerSecond
   }
 
   /** Deadline for the sole-active-group rebuild (ms). */
   export function groupDeadlineMs(): number {
-    return EpochDurationSec * GroupEpochBudget * MsPerSecond
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * GroupEpochBudget * MsPerSecond
   }
 
   /** Deadline for the frozen-epoch settle (ms). */
   export function settleDeadlineMs(): number {
-    return EpochDurationSec * SettleEpochBudget * MsPerSecond
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * SettleEpochBudget * MsPerSecond
   }
 
   /** Interval between frozen-epoch settle polls (ms). */
@@ -165,26 +166,26 @@ export namespace SlashingScenarioConstants {
 
   /** Deadline for the chain clock to pass the epoch boundary (ms). */
   export function boundaryDeadlineMs(): number {
-    return EpochDurationSec * BoundaryEpochBudget * MsPerSecond
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * BoundaryEpochBudget * MsPerSecond
   }
 
   /** Deadline for the OPEN dispute row to appear (ms). */
   export function disputeOpenDeadlineMs(): number {
-    return EpochDurationSec * DisputeOpenEpochBudget * MsPerSecond
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * DisputeOpenEpochBudget * MsPerSecond
   }
 
   /** Deadline for the dispute to resolve to the canonical winner (ms). */
   export function resolveDeadlineMs(): number {
-    return EpochDurationSec * ResolveEpochBudget * MsPerSecond
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * ResolveEpochBudget * MsPerSecond
   }
 
   /** Deadline for the epoch to unpause after resolution (ms). */
   export function unpauseDeadlineMs(): number {
-    return EpochDurationSec * UnpauseEpochBudget * MsPerSecond
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * UnpauseEpochBudget * MsPerSecond
   }
 
   /** Deadline for a non-canonical deliverer to flip SLASHED (ms). */
   export function slashDeadlineMs(): number {
-    return EpochDurationSec * SlashPropagationEpochs * MsPerSecond
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * SlashPropagationEpochs * MsPerSecond
   }
 }

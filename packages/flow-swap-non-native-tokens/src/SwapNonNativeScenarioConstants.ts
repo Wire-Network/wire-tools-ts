@@ -1,4 +1,5 @@
 import { SlugName } from "@wireio/sdk-core"
+import { ProtocolTiming } from "@wireio/test-cluster-tool"
 
 /**
  * Constants for the non-native-token swap flow. Token codes, swap amounts,
@@ -77,23 +78,24 @@ export namespace SwapNonNativeScenarioConstants {
     export const ToleranceBps = 200
   }
 
-  /** Timing budgets (scaled from the 60 s minimum epoch). */
+  /** Timing budgets — protocol waits derive from the {@link ProtocolTiming} envelope. */
   export namespace Timing {
     export const EpochDurationSec = 60
     /** Per on-chain write step budget. */
     export const WriteTimeoutMs = 60_000
     /**
-     * Relay → depot uwreq appearance budget. A request rides the outpost's
-     * NEXT outbound emit (0–2 min of phase alignment, verified on-chain
-     * 2026-07-03) + delivery + the depot's createuwreq (~1–1.5 min) — up to
-     * ~3.5 minutes end-to-end, so a 3-epoch budget was an alignment coin
-     * flip. Five epochs covers it with margin.
+     * Relay → depot uwreq appearance — a single outpost→depot hop. A request
+     * rides the outpost's NEXT outbound emit (0–2 min of phase alignment,
+     * verified on-chain 2026-07-03) + delivery + the depot's createuwreq
+     * (~1–1.5 min), inside the envelope's 5–7 minute single-hop class.
      */
-    export const UwreqDeadlineMs = 300_000
-    /** Underwriter race resolution budget (~3 epochs). */
-    export const RaceDeadlineMs = 180_000
-    /** SWAP_REMIT round-trip + destination payout budget (~8 epochs). */
-    export const RemitDeadlineMs = 480_000
+    export const UwreqDeadlineMs = ProtocolTiming.SingleHopBudgetMs
+    /** Underwriter race resolution — the winning commit lands on the
+     *  destination outpost and relays back to the depot: a single hop. */
+    export const RaceDeadlineMs = ProtocolTiming.SingleHopBudgetMs
+    /** SWAP_REMIT + destination payout — the tail of the full
+     *  outpost→depot→outpost path, budgeted as the double hop. */
+    export const RemitDeadlineMs = ProtocolTiming.DoubleHopBudgetMs
     /** Poll cadence for table / balance probes. */
     export const LongPollIntervalMs = 3_000
     /** Slack added to phase timeouts over their poll deadlines. */

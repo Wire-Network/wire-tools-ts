@@ -1,25 +1,26 @@
 import { SlugName } from "@wireio/sdk-core"
+import { ProtocolTiming } from "@wireio/test-cluster-tool"
 
 /**
- * Constants for the swap-to-WIRE flow — amounts, slug codes, and timing budgets
- * carried from the previously-validated jest suite (`tests/constants.ts`,
- * 2026-06). The flow is single-leg: the user escrows native ETH on the source
- * outpost, the depot books the source reserve and pays the recipient REAL WIRE
- * from `sysio.reserv` custody inline — no destination outpost, no SWAP_REMIT.
+ * Constants for the swap-to-WIRE flow — amounts, slug codes, and timing
+ * budgets. Protocol waits derive from the {@link ProtocolTiming} envelope. The
+ * flow is single-leg: the user escrows native ETH on the source outpost, the
+ * depot books the source reserve and pays the recipient REAL WIRE from
+ * `sysio.reserv` custody inline — no destination outpost, no SWAP_REMIT.
  */
 export namespace SwapToWireScenarioConstants {
   // ── Timing budgets (60s epochs per `epoch-stall-is-fatal.md`) ────────────
 
   /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
   export const EpochDurationSec = 60
-  /** SWAP_REQUEST relay + UWREQ insert. */
-  export const UwreqDeadlineMs = 180_000
-  /** Single-leg underwriter race (source commit only). */
-  export const RaceDeadlineMs = 240_000
+  /** SWAP_REQUEST relay + UWREQ insert — a single outpost→depot hop. */
+  export const UwreqDeadlineMs = ProtocolTiming.SingleHopBudgetMs
+  /** Single-leg underwriter race (source commit only) — a single hop. */
+  export const RaceDeadlineMs = ProtocolTiming.SingleHopBudgetMs
   /**
    * Direct WIRE payout window. The depot pays in the SAME transaction that
-   * resolves the race — no destination outpost round-trip — so this is shorter
-   * than the cross-chain remit deadline.
+   * resolves the race — no outpost hop — so this stays a depot-local window
+   * rather than an envelope class.
    */
   export const PayoutDeadlineMs = 120_000
   /** Interval for long-running chain-state polls (ms). */
@@ -30,17 +31,21 @@ export namespace SwapToWireScenarioConstants {
   export const WriteTimeoutMs = 60_000
   /**
    * Epochs budgeted for the underwriter DEPOSIT_REQUESTs to relay + credit on
-   * the depot and flip the underwriters ACTIVE (the old harness bonded them
-   * during bootstrap; the scenario owns those deposits now, so the budget
-   * mirrors flow-operator-collateral-deposit's validated relay window).
+   * the depot and flip the underwriters ACTIVE — above the envelope's
+   * 4–6 minute collateral class.
    */
   export const RelayEpochBudget = 9
   /** 1 s in ms — multiplies epoch counts into ms deadlines. */
   export const MsPerSecond = 1_000
 
-  /** Deadline for the underwriter bonds to credit over OPP and flip ACTIVE. */
+  /** Deadline for the underwriter bonds to credit over OPP and flip ACTIVE —
+   *  extension-inclusive epochs so consecutive extended epochs still fit. */
   export function relayDeadlineMs(): number {
-    return EpochDurationSec * RelayEpochBudget * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      RelayEpochBudget *
+      MsPerSecond
+    )
   }
 
   // ── Bootstrap-seeded reserve identity (source leg) ───────────────────────

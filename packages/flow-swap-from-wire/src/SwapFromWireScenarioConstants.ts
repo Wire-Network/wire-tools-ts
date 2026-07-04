@@ -1,11 +1,12 @@
 import { SlugName } from "@wireio/sdk-core"
+import { ProtocolTiming } from "@wireio/test-cluster-tool"
 
 /**
- * Constants for the swap-from-WIRE flow. Timing budgets, reserve slug codes,
- * the escrow amount, and the depositor account carry over from the
- * previously-validated jest suite (`tests/constants.ts`, 2026-06): the depositor
- * escrows 0.1 WIRE against the bootstrap-seeded SOLANA/SOL/PRIMARY reserve and
- * the payout lands on a provisioned Solana recipient.
+ * Constants for the swap-from-WIRE flow. Protocol waits derive from the
+ * {@link ProtocolTiming} envelope; reserve slug codes, the escrow amount, and
+ * the depositor account carry over from the previously-validated suite: the
+ * depositor escrows 0.1 WIRE against the bootstrap-seeded SOLANA/SOL/PRIMARY
+ * reserve and the payout lands on a provisioned Solana recipient.
  */
 export namespace SwapFromWireScenarioConstants {
   /** Swap-from-WIRE depositor — a plain WIRE user funded from the treasury. */
@@ -15,26 +16,35 @@ export namespace SwapFromWireScenarioConstants {
 
   /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
   export const EpochDurationSec = 60
+  /** Epochs budgeted for the depot-internal `drainfwq` queue drain. */
+  export const DrainEpochBudget = 3
+  /** 1 s in ms — multiplies epoch counts into ms deadlines. */
+  export const MsPerSecond = 1_000
 
   /**
    * `swapfromwire` is QUEUED — the PENDING uwreq materialises at the next
-   * `sysio.epoch::advance` (drainfwq). Budget two epochs + relay slack. Also
-   * bounds the #425 rewards-bucket custody settlement poll.
+   * `sysio.epoch::advance` (drainfwq). Depot-internal, so the budget is
+   * extension-inclusive epochs rather than a hop class. Also bounds the #425
+   * rewards-bucket custody settlement poll.
    */
-  export const DrainDeadlineMs = 180_000
-  /** Single-leg underwriter race (target commit only). */
-  export const RaceDeadlineMs = 240_000
-  /** SWAP_REMIT delivery to the SOL outpost + recipient credit. */
-  export const RemitDeadlineMs = 480_000
+  export const DrainDeadlineMs =
+    ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+    DrainEpochBudget *
+    MsPerSecond
+  /** Single-leg underwriter race (target commit only) — a single hop: the
+   *  winning commit lands on the SOL outpost and relays back to the depot. */
+  export const RaceDeadlineMs = ProtocolTiming.SingleHopBudgetMs
+  /** SWAP_REMIT delivery to the SOL outpost + recipient credit — the tail of
+   *  the depot→outpost path, budgeted as the double hop. */
+  export const RemitDeadlineMs = ProtocolTiming.DoubleHopBudgetMs
   /** Interval for long-running chain-state polls (ms). */
   export const PollIntervalMs = 3_000
   /** Buffer added on top of each poll deadline for the enclosing step timeout (ms). */
   export const PollDeadlineBufferMs = 30_000
 
-  /** Epochs budgeted for the underwriter bonds to relay + credit + flip ACTIVE. */
+  /** Epochs budgeted for the underwriter bonds to relay + credit + flip ACTIVE —
+   *  above the envelope's 4–6 minute collateral class. */
   export const RelayEpochBudget = 9
-  /** 1 s in ms — multiplies epoch counts into ms deadlines. */
-  export const MsPerSecond = 1_000
 
   /** Registered chain slug codes (must match the bootstrap registry seed). */
   export const WireChainCode = SlugName.from("WIRE")
@@ -68,6 +78,10 @@ export namespace SwapFromWireScenarioConstants {
 
   /** Deadline for the underwriter deposit → depot credit → ACTIVE relay. */
   export function relayDeadlineMs(): number {
-    return EpochDurationSec * RelayEpochBudget * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      RelayEpochBudget *
+      MsPerSecond
+    )
   }
 }

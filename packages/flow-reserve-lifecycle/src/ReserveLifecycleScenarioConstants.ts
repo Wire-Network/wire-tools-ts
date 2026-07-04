@@ -1,13 +1,13 @@
 import { SlugName } from "@wireio/sdk-core"
-import { SwapUserIdentities } from "@wireio/test-cluster-tool"
+import { ProtocolTiming, SwapUserIdentities } from "@wireio/test-cluster-tool"
 
 /**
- * Constants for the reserve-lifecycle flow. Amounts, reserve identities, and
- * timing budgets carry over from the previously-validated jest run: a linked
- * creator opens a PRIVATE ETH reserve (PENDING → matched → ACTIVE with exact
- * WIRE custody), an unlinked creator's reserve is cancelled back + refunded,
- * and the private reserve is excluded from public pairings and WIRE-endpoint
- * swaps.
+ * Constants for the reserve-lifecycle flow. Amounts and reserve identities
+ * carry over from the previously-validated jest run; protocol waits derive
+ * from the {@link ProtocolTiming} envelope. A linked creator opens a PRIVATE
+ * ETH reserve (PENDING → matched → ACTIVE with exact WIRE custody), an
+ * unlinked creator's reserve is cancelled back + refunded, and the private
+ * reserve is excluded from public pairings and WIRE-endpoint swaps.
  */
 export namespace ReserveLifecycleScenarioConstants {
   // ── timing (60s epochs per `epoch-stall-is-fatal.md`) ──────────────────────
@@ -15,15 +15,16 @@ export namespace ReserveLifecycleScenarioConstants {
   /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
   export const EpochDurationSec = 60
   /**
-   * Outpost RESERVE_CREATE → OPP relay → depot `oncrtreserve` row insert.
-   * Budget two epochs of envelope cadence plus relay slack.
+   * Outpost RESERVE_CREATE → OPP relay → depot `oncrtreserve` row insert — a
+   * single outpost→depot hop.
    */
-  export const RelayDeadlineMs = 240_000
+  export const RelayDeadlineMs = ProtocolTiming.SingleHopBudgetMs
   /**
-   * Depot RESERVE_READY / RESERVE_CREATE_CANCELLED round-trip back to the
-   * outpost (local record flip + refund both ride inbound dispatch).
+   * Depot RESERVE_READY / RESERVE_CREATE_CANCELLED back to the outpost (local
+   * record flip + refund both ride inbound dispatch) — a single
+   * depot→outpost hop.
    */
-  export const ReadyDeadlineMs = 240_000
+  export const ReadyDeadlineMs = ProtocolTiming.SingleHopBudgetMs
   /**
    * Window in which a FORBIDDEN UWREQ must NOT appear. ~1.5 epochs — long
    * enough for the SWAP_REQUEST to have relayed and been rejected, short

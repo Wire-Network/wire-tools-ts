@@ -1,11 +1,13 @@
 import { SlugName } from "@wireio/sdk-core"
+import { ProtocolTiming } from "@wireio/test-cluster-tool"
 
 /**
  * Constants for the collateral-lifecycle flow. Amounts + epoch budgets carry
  * over from the previously-validated flow run (2026-06): the bond is deposited
  * on BOTH outpost chains (all-chain collateral invariant), half the ETH bond is
- * withdrawn mid-flow, and every poll deadline derives from the epoch duration so
- * the flow scales with it.
+ * withdrawn mid-flow, and every poll deadline derives from extension-inclusive
+ * epochs ({@link ProtocolTiming.effectiveEpochSec}) so the flow scales with the
+ * epoch duration and survives extended epochs.
  */
 export namespace CollateralLifecycleScenarioConstants {
   /** The flow's NON-bootstrapped batch operator (provisioned by the scenario). */
@@ -46,11 +48,19 @@ export namespace CollateralLifecycleScenarioConstants {
 
   /** Deadline for depot-side relay effects (balance row / status / queue row). */
   export function relayDeadlineMs(): number {
-    return EpochDurationSec * RelayEpochBudget * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      RelayEpochBudget *
+      MsPerSecond
+    )
   }
 
   /** Deadline for the withdraw wait window + flush + outpost remit. */
   export function remitDeadlineMs(): number {
-    return EpochDurationSec * RemitEpochBudget * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      RemitEpochBudget *
+      MsPerSecond
+    )
   }
 }

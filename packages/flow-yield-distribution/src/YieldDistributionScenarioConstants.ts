@@ -1,4 +1,5 @@
 import { SlugName } from "@wireio/sdk-core"
+import { ProtocolTiming } from "@wireio/test-cluster-tool"
 
 /**
  * Constants for the yield-distribution flow. Rewards, share bps, external
@@ -47,8 +48,9 @@ export namespace YieldDistributionScenarioConstants {
   /** Registered token slug code of the SOL-side reward token. */
   export const SolanaTokenCode = SlugName.from("SOL")
 
-  /** Deadline for an attestation to round-trip emitter → batchop ferry → depot table (ms). */
-  export const PropagationTimeoutMs = 5 * 60_000
+  /** Deadline for an attestation to round-trip emitter → batchop ferry → depot
+   *  table — a single outpost→depot hop (envelope class). */
+  export const PropagationTimeoutMs = ProtocolTiming.SingleHopBudgetMs
   /** Interval between depot-table polls (ms). */
   export const PropagationPollMs = 2_000
   /** Row page size for `sysio.dclaim` table scans (matches the old suite's read limit). */
