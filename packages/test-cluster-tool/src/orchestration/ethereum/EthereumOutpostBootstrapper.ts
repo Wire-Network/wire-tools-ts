@@ -320,7 +320,7 @@ export namespace EthereumOutpostBootstrapper {
     "wire-ethereum-hardhat-deploy.lock"
   )
   /** Hardhat deploy subprocess timeout (ms). */
-  export const HardhatDeployTimeoutMs = 120_000
+  export const HardhatDeployTimeoutMs = 600_000
   /** Hardhat deploy subprocess stdout/stderr buffer cap (bytes). */
   export const HardhatDeployBufferBytes = 10 * 1_024 * 1_024
   /** Chars of Hardhat stderr logged after a run. */

@@ -164,7 +164,7 @@ export namespace ClusterBuildDefaults {
       )
     )
     ClusterBuildPhase.create<C>(prerequisites, "ProducerHandoff", "Set producers + hand off from sysio").push(
-      Steps.consensus.planSetProducerKeys<C>(Actor.Sysio, "set-producer-keys", "set producer schedule + await handoff", { timeoutMs: 120_000 })
+      Steps.consensus.planSetProducerKeys<C>(Actor.Sysio, "set-producer-keys", "set producer schedule + await handoff", { timeoutMs: 300_000 })
     )
 
     // ── token (SYS) + authex/msig/wrap ──
@@ -263,12 +263,12 @@ export namespace ClusterBuildDefaults {
     // ── outpost deploys (own the run anvil + validator) ──
     ClusterBuildPhase.create<C>(prerequisites, "EthereumOutpost", "Deploy the Ethereum outpost").push(
       Steps.processes.anvil.planStart<C>(Actor.EthereumOutpost, "start-anvil", "start the run-time anvil (instamine)", {}),
-      Steps.ethereumOutpost.planDeploy<C>(Actor.EthereumOutpost, "deploy-ethereum", "deploy + seed the Ethereum outpost", { timeoutMs: 180_000 }),
+      Steps.ethereumOutpost.planDeploy<C>(Actor.EthereumOutpost, "deploy-ethereum", "deploy + seed the Ethereum outpost", { timeoutMs: 900_000 }),
       Steps.processes.anvil.planEnableIntervalMining<C>(Actor.EthereumOutpost, "enable-interval-mining", "switch anvil to interval mining", {})
     )
     ClusterBuildPhase.create<C>(prerequisites, "SolanaOutpost", "Deploy the Solana outpost").push(
       Steps.processes.solanaValidator.planStart<C>(Actor.SolanaOutpost, "start-validator", "start solana-test-validator + opp-outpost", {}),
-      Steps.solanaOutpost.planDeploy<C>(Actor.SolanaOutpost, "deploy-solana", "init PDAs + provision SPL reserves", { timeoutMs: 180_000 })
+      Steps.solanaOutpost.planDeploy<C>(Actor.SolanaOutpost, "deploy-solana", "init PDAs + provision SPL reserves", { timeoutMs: 900_000 })
     )
 
     // ── registry + underwriter config ──
@@ -348,7 +348,7 @@ export namespace ClusterBuildDefaults {
     // ── first epoch ──
     ClusterBuildPhase.create<C>(postContractDeployment, "EpochBootstrap", "Schedule groups + bootstrap epoch 0 → 1").push(
       Steps.contracts.sysio.epoch.planSchbatchgps<C>(Actor.Sysio, "schedule-batch-groups", "build the initial batch-operator schedule", {}),
-      Steps.contracts.sysio.msgch.planBootstrap<C>(Actor.Sysio, "bootstrap-epoch", "bootstrap the first epoch", { timeoutMs: 120_000 })
+      Steps.contracts.sysio.msgch.planBootstrap<C>(Actor.Sysio, "bootstrap-epoch", "bootstrap the first epoch", { timeoutMs: 300_000 })
     )
   }
 

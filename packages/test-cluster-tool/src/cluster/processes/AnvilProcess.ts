@@ -138,7 +138,7 @@ export namespace AnvilProcess {
   /** Process label (pid file basename + log prefix). */
   export const ProcessLabel = "anvil" as const
   /** Startup verify timeout (ms). */
-  export const StartupTimeoutMs = 15_000
+  export const StartupTimeoutMs = 60_000
   /** `--code-size-limit` — the OPP outpost contracts exceed EIP-170's 24KB. */
   export const CodeSizeLimit = "99999"
   /** `--accounts` — deployer (HD 0) + operator HD accounts must all be pre-funded. */

@@ -241,7 +241,7 @@ export namespace NodeopProcess {
   export const DefaultMaxClients = 25
   export const DefaultConnectionCleanupPeriodSec = 15
   export const DefaultHttpMaxResponseTimeMs = 990_000
-  export const StartupTimeoutMs = 60_000
+  export const StartupTimeoutMs = 180_000
   /** Per-probe fetch timeout for the {@link NodeopProcess.head} reader (ms). */
   export const HeadProbeTimeoutMs = 2_000
   export const HealthCheckPath = "/v1/chain/get_info" as const

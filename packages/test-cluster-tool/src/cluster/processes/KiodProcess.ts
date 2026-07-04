@@ -108,5 +108,5 @@ export namespace KiodProcess {
   export const ProcessLabel = "kiod" as const
   /** Endpoint polled to confirm kiod is up. */
   export const HealthCheckPath = "/v1/wallet/list_wallets" as const
-  export const StartupTimeoutMs = 10_000
+  export const StartupTimeoutMs = 60_000
 }
