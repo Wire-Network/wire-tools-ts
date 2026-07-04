@@ -2,6 +2,41 @@ import { pollStep, pollUntil, verifyStep } from "@wireio/test-cluster-tool/orche
 import { ClusterBuildContext } from "@wireio/test-cluster-tool/orchestration"
 import { Report } from "@wireio/test-cluster-tool/report"
 
+describe("pollUntil.timeoutScale", () => {
+  afterEach(() => {
+    delete process.env[pollUntil.TimeoutScaleEnvVar]
+  })
+
+  it("defaults to 1 when unset or invalid", () => {
+    expect(pollUntil.timeoutScale()).toBe(1)
+    process.env[pollUntil.TimeoutScaleEnvVar] = "not-a-number"
+    expect(pollUntil.timeoutScale()).toBe(1)
+  })
+
+  it("clamps into [MinTimeoutScale, MaxTimeoutScale]", () => {
+    process.env[pollUntil.TimeoutScaleEnvVar] = "0.25"
+    expect(pollUntil.timeoutScale()).toBe(pollUntil.MinTimeoutScale)
+    process.env[pollUntil.TimeoutScaleEnvVar] = "99"
+    expect(pollUntil.timeoutScale()).toBe(pollUntil.MaxTimeoutScale)
+    process.env[pollUntil.TimeoutScaleEnvVar] = "2"
+    expect(pollUntil.timeoutScale()).toBe(2)
+  })
+
+  it("stretches the deadline (timeout message carries the scaled budget)", async () => {
+    process.env[pollUntil.TimeoutScaleEnvVar] = "3"
+    await expect(
+      pollUntil("never", async () => false, 20, 5)
+    ).rejects.toThrow("Timed out waiting for: never (60ms)")
+  })
+
+  it("does not delay a satisfied poll", async () => {
+    process.env[pollUntil.TimeoutScaleEnvVar] = "5"
+    const startedAt = Date.now()
+    await pollUntil("immediate", async () => true, 10_000, 1_000)
+    expect(Date.now() - startedAt).toBeLessThan(500)
+  })
+})
+
 describe("pollUntil", () => {
   it("resolves once the predicate returns true", async () => {
     let calls = 0

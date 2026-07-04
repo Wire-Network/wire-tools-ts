@@ -27,13 +27,45 @@ export async function pollUntil(
   timeoutMs: number,
   intervalMs: number
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs
+  const scaledTimeoutMs = Math.round(timeoutMs * pollUntil.timeoutScale())
+  const deadline = Date.now() + scaledTimeoutMs
   while (Date.now() < deadline) {
     if (await predicate()) return
     await sleep(intervalMs)
   }
-  log.error(`pollUntil timed out: ${label} (${timeoutMs}ms)`)
-  throw new Error(`Timed out waiting for: ${label} (${timeoutMs}ms)`)
+  log.error(`pollUntil timed out: ${label} (${scaledTimeoutMs}ms)`)
+  throw new Error(`Timed out waiting for: ${label} (${scaledTimeoutMs}ms)`)
+}
+
+export namespace pollUntil {
+  /**
+   * Env var carrying a uniform deadline multiplier for EVERY flow poll.
+   *
+   * Flow budgets are wall-clock constants calibrated against nominal 60s
+   * epochs on a dedicated machine. When several clusters share a host (the
+   * e2e gate's FLOW_MAX_CONCURRENCY pool), the OPP pipeline's effective
+   * cadence stretches — observed live (run 28685090729): epoch cadence ~2×
+   * nominal, so fixed budgets fell below the epoch counts they were designed
+   * for and four settlement waits timed out on healthy, progressing state.
+   * The gate sets this ONCE for all flows (uniform env — never per-flow),
+   * typically to the flow concurrency. Success paths are unaffected: polls
+   * return the moment the predicate holds; only worst-case waits stretch.
+   */
+  export const TimeoutScaleEnvVar = "WIRE_FLOW_TIMEOUT_SCALE"
+  /** Scale floor — never shrink budgets below their calibrated values. */
+  export const MinTimeoutScale = 1
+  /** Scale ceiling — a runaway value must not disable timeouts entirely. */
+  export const MaxTimeoutScale = 5
+
+  /**
+   * The active deadline multiplier: `WIRE_FLOW_TIMEOUT_SCALE` clamped into
+   * [{@link MinTimeoutScale}, {@link MaxTimeoutScale}]; 1 when unset/invalid.
+   */
+  export function timeoutScale(): number {
+    const parsed = Number.parseFloat(process.env[TimeoutScaleEnvVar] ?? "")
+    if (!Number.isFinite(parsed)) return MinTimeoutScale
+    return Math.min(MaxTimeoutScale, Math.max(MinTimeoutScale, parsed))
+  }
 }
 
 /**
