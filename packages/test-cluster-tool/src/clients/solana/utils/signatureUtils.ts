@@ -129,7 +129,7 @@ export async function confirmSignature(
 }
 
 export namespace confirmSignature {
-  export const DefaultDeadlineMs = 60_000
+  export const DefaultDeadlineMs = 120_000
   export const DefaultIntervalMs = 500
   export const DefaultRpcTimeoutMs = 10_000
   export const DefaultRebroadcastMs = 5_000

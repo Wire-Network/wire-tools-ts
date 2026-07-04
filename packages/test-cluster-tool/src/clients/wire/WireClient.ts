@@ -670,7 +670,7 @@ export namespace WireClient {
   export const DefaultFinality = FinalityType.irreversible
   export const FinalityMaxAttempts = 3
   export const FinalityRetryDelayMs = 1_000
-  export const DefaultTimeoutMs = 30_000
+  export const DefaultTimeoutMs = 60_000
   export const PollIntervalMs = 500
   export const BlocksAhead = 5
   export const NoTransactionSent = "no transaction is sent"

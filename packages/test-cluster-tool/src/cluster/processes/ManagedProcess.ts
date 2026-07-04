@@ -264,6 +264,6 @@ export namespace ManagedProcess {
   /** Window for a graceful SIGINT exit before escalating to SIGKILL (ms) — must
    *  exceed nodeop's chainbase flush. */
   export const GracefulKillMs = 30_000
-  export const DefaultVerifyTimeoutMs = 60_000
+  export const DefaultVerifyTimeoutMs = 180_000
   export const DefaultVerifyIntervalMs = 1_000
 }

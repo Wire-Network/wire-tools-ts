@@ -68,7 +68,7 @@ export namespace OperatorDaemonTool {
   /** batch_operator_plugin epoch poll interval (ms). */
   export const BatchEpochPollMs = 15_000
   /** batch_operator_plugin delivery timeout (ms; nominal — scaled at arg build). */
-  export const BatchDeliveryTimeoutMs = 15_000
+  export const BatchDeliveryTimeoutMs = 30_000
   /**
    * underwriter_plugin outpost action timeout (ms; nominal — scaled at arg
    * build). Mirrors the plugin default; passed EXPLICITLY so the flow timing
@@ -77,7 +77,7 @@ export namespace OperatorDaemonTool {
    * forever (run 28700849707: uwreq 35's SOL leg timed out at 15s per
    * attempt for 12 minutes while the ETH leg sat confirmed).
    */
-  export const UnderwriterActionTimeoutMs = 15_000
+  export const UnderwriterActionTimeoutMs = 30_000
   /** The single ethereum outpost client id every plugin arg references. */
   export const EthereumClientId = "eth-default"
   /** The single solana outpost client id every plugin arg references. */

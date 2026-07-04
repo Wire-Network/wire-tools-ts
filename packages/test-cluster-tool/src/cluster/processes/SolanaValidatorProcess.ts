@@ -144,7 +144,7 @@ export namespace SolanaValidatorProcess {
   export const WsPortOffset = 1
   export const ProcessLabel = "solana-test-validator" as const
   export const SlotPollIntervalMs = 500
-  export const StartupTimeoutMs = 30_000
+  export const StartupTimeoutMs = 180_000
   /** Env var that, when `"1"`, drops `--quiet` so program logs are captured. */
   export const VerboseEnvironmentVariable = "WIRE_SOLANA_VALIDATOR_VERBOSE"
 }
