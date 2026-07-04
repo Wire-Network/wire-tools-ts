@@ -10,6 +10,7 @@ import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { getLogger } from "../../logging/Logger.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { LongFileLockOptions, mkdirs, withFileLock } from "../../utils/fsUtils.js"
+import { scaleTimeoutMs } from "../../utils/asyncUtils.js"
 
 const log = getLogger(__filename)
 const execFileAsync = promisify(execFile)
@@ -182,7 +183,7 @@ export class EthereumOutpostBootstrapper {
           ["hardhat", "run", "src/scripts/deployLocal.ts", "--network", "localhost"],
           {
             cwd: ethereumPath,
-            timeout: EthereumOutpostBootstrapper.HardhatDeployTimeoutMs,
+            timeout: scaleTimeoutMs(EthereumOutpostBootstrapper.HardhatDeployTimeoutMs),
             maxBuffer: EthereumOutpostBootstrapper.HardhatDeployBufferBytes,
             env: {
               ...process.env,

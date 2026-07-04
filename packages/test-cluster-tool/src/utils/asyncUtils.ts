@@ -27,6 +27,44 @@ const DefaultRetryDelayMs = 1_000
  * @param ms - Duration to wait.
  */
 /**
+ * Env var carrying the flow-wide TIMING SCALE: a uniform multiplier for every
+ * wall-clock progress deadline in a flow run — pollUntil deadlines, step/phase
+ * timeout ceilings, chain-confirmation deadlines (solana signature confirms,
+ * WIRE finality waits), process verify-ready windows, and the hardhat deploy
+ * timeout. Budgets are calibrated against nominal 60s epochs on a dedicated
+ * machine; the e2e gate's pooled runner is both slower per-core and runs N
+ * clusters at once, stretching the pipeline's effective cadence (runs
+ * 28685090729 / 28691422161 / 28694281083 — each exposed another unscaled
+ * deadline class). Satisfied waits return immediately; only worst cases stretch.
+ */
+export const FlowTimeoutScaleEnvVar = "WIRE_FLOW_TIMEOUT_SCALE"
+/** Scale floor — never shrink budgets below their calibrated values. */
+export const MinFlowTimeoutScale = 1
+/** Scale ceiling — a runaway value must not disable timeouts entirely. */
+export const MaxFlowTimeoutScale = 5
+
+/**
+ * The active flow timing scale: `WIRE_FLOW_TIMEOUT_SCALE` clamped into
+ * [{@link MinFlowTimeoutScale}, {@link MaxFlowTimeoutScale}]; 1 when
+ * unset/invalid.
+ */
+export function flowTimeoutScale(): number {
+  const parsed = Number.parseFloat(process.env[FlowTimeoutScaleEnvVar] ?? "")
+  if (!Number.isFinite(parsed)) return MinFlowTimeoutScale
+  return Math.min(MaxFlowTimeoutScale, Math.max(MinFlowTimeoutScale, parsed))
+}
+
+/**
+ * A wall-clock deadline multiplied by the flow timing scale.
+ *
+ * @param timeoutMs - The calibrated (nominal) deadline.
+ * @returns The scaled deadline, rounded to whole ms.
+ */
+export function scaleTimeoutMs(timeoutMs: number): number {
+  return Math.round(timeoutMs * flowTimeoutScale())
+}
+
+/**
  * Sequentially map `items` through an async `mapper` — the native,
  * AsyncLocalStorage-SAFE replacement for `Bluebird.mapSeries`. Bluebird
  * drains its shared callback queue under whichever async context scheduled
