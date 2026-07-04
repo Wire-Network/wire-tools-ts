@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-emissions-soak",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "commonjs",
   "description": "Flow: Multi-Hour Emissions + sysio.dclaim Payout Soak",
