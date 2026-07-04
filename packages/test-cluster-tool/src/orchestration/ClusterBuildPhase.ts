@@ -1,6 +1,7 @@
 import { performance } from "node:perf_hooks"
 import { match } from "ts-pattern"
 import { eachSeries } from "../utils/asyncUtils.js"
+import { pollUntil } from "./StepTools.js"
 import { Report } from "../report/Report.js"
 import { StepExtraRecorder } from "../report/tools/StepExtraRecorder.js"
 import type { ClusterBuildContext } from "./ClusterBuildContext.js"
@@ -128,7 +129,11 @@ export class ClusterBuildPhase<
       await StepExtraRecorder.runWith(recorder, () =>
         runWithTimeout(
           signal => step.runner(this.context, step.input, signal),
-          step.options.timeoutMs ?? this.options.timeoutMs ?? null,
+          // Step ceilings are wall-clock constants calibrated like the poll
+          // budgets — the flow-wide timing scale applies to BOTH (run
+          // 28691422161: deploy-solana crossed its 180s ceiling under a
+          // co-running heavy flow while every poll was scaled).
+          scaledTimeoutMs(step.options.timeoutMs ?? this.options.timeoutMs ?? null),
           controller
         )
       )
@@ -157,6 +162,11 @@ export class ClusterBuildPhase<
  * A `null` budget means "no timeout". The body receives the signal so a
  * well-behaved step can bail cooperatively.
  */
+/** A step/phase ceiling multiplied by the flow-wide timing scale (null passes through). */
+function scaledTimeoutMs(timeoutMs: number | null): number | null {
+  return timeoutMs != null ? Math.round(timeoutMs * pollUntil.timeoutScale()) : null
+}
+
 function runWithTimeout(
   body: (signal: AbortSignal) => Promise<void>,
   timeoutMs: number | null,

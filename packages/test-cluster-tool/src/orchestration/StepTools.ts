@@ -39,7 +39,9 @@ export async function pollUntil(
 
 export namespace pollUntil {
   /**
-   * Env var carrying a uniform deadline multiplier for EVERY flow poll.
+   * Env var carrying a uniform timing multiplier for EVERY flow poll deadline
+   * AND every step/phase timeout ceiling (the executor scales
+   * `options.timeoutMs` through {@link timeoutScale} too).
    *
    * Flow budgets are wall-clock constants calibrated against nominal 60s
    * epochs on a dedicated machine. When several clusters share a host (the
