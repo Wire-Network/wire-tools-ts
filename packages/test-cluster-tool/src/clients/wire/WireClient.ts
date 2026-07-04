@@ -12,7 +12,7 @@ import {
   type PermissionLevelType,
   SysioContracts
 } from "@wireio/sdk-core"
-import { isNotEmpty, retry } from "../../utils/index.js"
+import { scaleTimeoutMs, isNotEmpty, retry } from "../../utils/index.js"
 import { RecordingFetchProvider } from "./RecordingFetchProvider.js"
 import { ClioRunner } from "./clio/ClioRunner.js"
 import { WireWallet } from "./WireWallet.js"
@@ -437,7 +437,7 @@ export class WireClient {
 
   /** Wait for head to advance past the current head. */
   async waitForHeadToAdvance(
-    timeoutMs = WireClient.DefaultTimeoutMs
+    timeoutMs = scaleTimeoutMs(WireClient.DefaultTimeoutMs)
   ): Promise<void> {
     const startBlock = await this.getHead(),
       deadline = Date.now() + timeoutMs
@@ -469,7 +469,7 @@ export class WireClient {
             transactionId,
             label,
             finality,
-            WireClient.DefaultTimeoutMs
+            scaleTimeoutMs(WireClient.DefaultTimeoutMs)
           )
         return result
       },
@@ -499,7 +499,7 @@ export class WireClient {
   /** Poll until a tx appears in a block; returns its block number. */
   async waitForTransactionInBlock(
     transactionId: string,
-    timeoutMs = WireClient.DefaultTimeoutMs,
+    timeoutMs = scaleTimeoutMs(WireClient.DefaultTimeoutMs),
     blocksAhead = WireClient.BlocksAhead
   ): Promise<number> {
     const deadline = Date.now() + timeoutMs,
@@ -556,7 +556,7 @@ export class WireClient {
   async waitForTransactionIrreversible(
     transactionId: string,
     blockNum: number,
-    timeoutMs = WireClient.DefaultTimeoutMs
+    timeoutMs = scaleTimeoutMs(WireClient.DefaultTimeoutMs)
   ): Promise<boolean> {
     const deadline = Date.now() + timeoutMs
     let height = blockNum

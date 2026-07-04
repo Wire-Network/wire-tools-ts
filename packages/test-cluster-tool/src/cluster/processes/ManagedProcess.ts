@@ -6,7 +6,7 @@ import treeKill from "tree-kill"
 import { Deferred } from "@wireio/shared"
 import { getLogger, type Logger } from "../../logging/Logger.js"
 import { mkdirs } from "../../utils/fsUtils.js"
-import { sleep } from "../../utils/asyncUtils.js"
+import { scaleTimeoutMs, sleep } from "../../utils/asyncUtils.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { ProcessManager } from "./ProcessManager.js"
 import { ProcessSignalName } from "./ProcessSignals.js"
@@ -146,7 +146,10 @@ export abstract class ManagedProcess {
   }
 
   private async awaitReady(): Promise<void> {
-    const deadline = Date.now() + this.verifyTimeoutMs
+    // Verify-ready windows are calibrated wall-clock constants — scale them
+    // with the flow timing scale (a starved shared host boots daemons slower).
+    const verifyBudgetMs = scaleTimeoutMs(this.verifyTimeoutMs)
+    const deadline = Date.now() + verifyBudgetMs
     while (Date.now() < deadline) {
       try {
         if (await this.verifyReady()) {
@@ -162,7 +165,7 @@ export abstract class ManagedProcess {
       await sleep(this.verifyIntervalMs)
     }
     throw new Error(
-      `${this.label} did not pass verifyReady within ${this.verifyTimeoutMs}ms`
+      `${this.label} did not pass verifyReady within ${verifyBudgetMs}ms`
     )
   }
 

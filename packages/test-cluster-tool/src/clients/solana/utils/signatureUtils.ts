@@ -1,6 +1,6 @@
 import type { Connection } from "@solana/web3.js"
 import { getLogger } from "@wireio/shared"
-import { sleep } from "../../../utils/asyncUtils.js"
+import { scaleTimeoutMs, sleep } from "../../../utils/asyncUtils.js"
 import { SolanaClient } from "../SolanaClient.js"
 
 const log = getLogger("signatureUtils")
@@ -64,7 +64,12 @@ export async function confirmSignature(
   label: string,
   options: ConfirmSignatureOptions = {}
 ): Promise<void> {
-  const deadlineMs = options.deadlineMs ?? confirmSignature.DefaultDeadlineMs,
+  // Confirmation deadlines are calibrated wall-clock constants — the flow
+  // timing scale stretches them uniformly (a starved shared-host validator
+  // legitimately confirms slower; see utils/asyncUtils.FlowTimeoutScaleEnvVar).
+  const deadlineMs = scaleTimeoutMs(
+      options.deadlineMs ?? confirmSignature.DefaultDeadlineMs
+    ),
     intervalMs = options.intervalMs ?? confirmSignature.DefaultIntervalMs,
     rpcTimeoutMs = options.rpcTimeoutMs ?? confirmSignature.DefaultRpcTimeoutMs,
     rebroadcastMs =

@@ -1,7 +1,12 @@
 import {
+  FlowTimeoutScaleEnvVar,
+  MaxFlowTimeoutScale,
+  MinFlowTimeoutScale,
   eachSeries,
+  flowTimeoutScale,
   mapSeries,
   retry,
+  scaleTimeoutMs,
   sleep,
   toURL,
   waitForEndpoint
@@ -140,5 +145,27 @@ describe("mapSeries / eachSeries (AsyncLocalStorage-safe sequential iteration)",
       })
     })
     expect(recorder.calls.map(call => call.item)).toEqual([1, 2])
+  })
+})
+
+describe("flowTimeoutScale / scaleTimeoutMs", () => {
+  afterEach(() => {
+    delete process.env[FlowTimeoutScaleEnvVar]
+  })
+
+  it("defaults to 1 and clamps into [1, 5]", () => {
+    expect(flowTimeoutScale()).toBe(1)
+    process.env[FlowTimeoutScaleEnvVar] = "0.1"
+    expect(flowTimeoutScale()).toBe(MinFlowTimeoutScale)
+    process.env[FlowTimeoutScaleEnvVar] = "50"
+    expect(flowTimeoutScale()).toBe(MaxFlowTimeoutScale)
+    process.env[FlowTimeoutScaleEnvVar] = "2.5"
+    expect(flowTimeoutScale()).toBe(2.5)
+  })
+
+  it("scaleTimeoutMs multiplies and rounds", () => {
+    process.env[FlowTimeoutScaleEnvVar] = "3"
+    expect(scaleTimeoutMs(60_000)).toBe(180_000)
+    expect(scaleTimeoutMs(333)).toBe(999)
   })
 })

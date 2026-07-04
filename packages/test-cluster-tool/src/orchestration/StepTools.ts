@@ -5,7 +5,13 @@ import {
   type ClusterBuildStepOptions
 } from "./ClusterBuildStep.js"
 import { Report } from "../report/Report.js"
-import { sleep } from "../utils/asyncUtils.js"
+import {
+  FlowTimeoutScaleEnvVar,
+  MaxFlowTimeoutScale,
+  MinFlowTimeoutScale,
+  flowTimeoutScale,
+  sleep
+} from "../utils/asyncUtils.js"
 
 const log = getLogger(__filename)
 
@@ -38,35 +44,16 @@ export async function pollUntil(
 }
 
 export namespace pollUntil {
-  /**
-   * Env var carrying a uniform timing multiplier for EVERY flow poll deadline
-   * AND every step/phase timeout ceiling (the executor scales
-   * `options.timeoutMs` through {@link timeoutScale} too).
-   *
-   * Flow budgets are wall-clock constants calibrated against nominal 60s
-   * epochs on a dedicated machine. When several clusters share a host (the
-   * e2e gate's FLOW_MAX_CONCURRENCY pool), the OPP pipeline's effective
-   * cadence stretches — observed live (run 28685090729): epoch cadence ~2×
-   * nominal, so fixed budgets fell below the epoch counts they were designed
-   * for and four settlement waits timed out on healthy, progressing state.
-   * The gate sets this ONCE for all flows (uniform env — never per-flow),
-   * typically to the flow concurrency. Success paths are unaffected: polls
-   * return the moment the predicate holds; only worst-case waits stretch.
-   */
-  export const TimeoutScaleEnvVar = "WIRE_FLOW_TIMEOUT_SCALE"
+  /** See `utils/asyncUtils.ts` — the single-source flow timing scale. */
+  export const TimeoutScaleEnvVar = FlowTimeoutScaleEnvVar
   /** Scale floor — never shrink budgets below their calibrated values. */
-  export const MinTimeoutScale = 1
+  export const MinTimeoutScale = MinFlowTimeoutScale
   /** Scale ceiling — a runaway value must not disable timeouts entirely. */
-  export const MaxTimeoutScale = 5
+  export const MaxTimeoutScale = MaxFlowTimeoutScale
 
-  /**
-   * The active deadline multiplier: `WIRE_FLOW_TIMEOUT_SCALE` clamped into
-   * [{@link MinTimeoutScale}, {@link MaxTimeoutScale}]; 1 when unset/invalid.
-   */
+  /** The active flow timing scale (delegates to {@link flowTimeoutScale}). */
   export function timeoutScale(): number {
-    const parsed = Number.parseFloat(process.env[TimeoutScaleEnvVar] ?? "")
-    if (!Number.isFinite(parsed)) return MinTimeoutScale
-    return Math.min(MaxTimeoutScale, Math.max(MinTimeoutScale, parsed))
+    return flowTimeoutScale()
   }
 }
 
