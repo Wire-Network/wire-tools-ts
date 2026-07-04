@@ -152,19 +152,36 @@ const TrxEchoExcludePattern = "TRX_TRACE|log_trx_results"
 const EchoWrapperExcludePattern = `${TrxEchoExcludePattern}|signaled NACK|bad packed_transaction`
 
 /**
+ * Outpost registry-sync lag rejections — self-healing gate bounces, NOISE not
+ * FATAL. An operator flips ACTIVE on the depot mid-epoch; the outpost only
+ * learns via the NEXT envelope's OPERATORS attestation (1–2 epochs), and until
+ * that dispatches the underwriter plugin's commit retries bounce off the
+ * outpost's status gate: SOL opp-outpost `0x1795` (OperatorNotActive), ETH
+ * `OPP_NotActiveOperator`. Forensically verified (2026-07-04,
+ * flow-swap-from-wire): the epoch-2 envelope carried ACTIVE and dispatched 24s
+ * after the first bounce — the ~5s retry loop heals on the next attempt, so
+ * bailing on growth here kills a healthy flow. The liveness probes (epoch
+ * advance, opp delta, per-direction growth) remain the bail gates.
+ */
+const RegistrySyncLagPattern =
+  "custom program error: 0x1795|OPP_NotActiveOperator"
+
+/**
  * FATAL exclusions: the echo wrappers PLUS `sysio_assert_message` — a
  * plugin-tagged line whose payload is a chain assertion is the plugin
  * NARRATING chain noise (its push bounced off a depot gate): NOISE, not a
  * plugin failure. Removing this exclusion re-creates the false-positive bails
- * on healthy 9-operator clusters.
+ * on healthy 9-operator clusters. Registry-sync lag bounces are excluded for
+ * the same reason (see {@link RegistrySyncLagPattern}).
  */
-const FatalExcludePattern = `${EchoWrapperExcludePattern}|sysio_assert_message`
+const FatalExcludePattern = `${EchoWrapperExcludePattern}|sysio_assert_message|${RegistrySyncLagPattern}`
 
-/** NOISE signature (ERE): chain assertion-failure gate rejections. */
-const NoiseSignaturePattern = "assertion failure"
+/** NOISE signatures (ERE): chain assertion-failure gate rejections + outpost
+ *  registry-sync lag bounces (counted + quoted, never a bail). */
+const NoiseSignaturePattern = `assertion failure|${RegistrySyncLagPattern}`
 
-/** The line shape the NOISE tail quotes (it carries the actual assert message). */
-const NoiseTailSourcePattern = "assertion failure with message"
+/** The line shapes the NOISE tail quotes (they carry the actual reason). */
+const NoiseTailSourcePattern = `assertion failure with message|${RegistrySyncLagPattern}`
 
 /** Action-receipt shape in the aggregate log (`sysio.<contract>::<action>`). */
 const ActionReceiptPattern = "sysio\\.[a-z]+::[a-z]+"
@@ -202,14 +219,59 @@ function flowProcessPattern(clusterPath) {
 }
 
 /**
- * Whether the watched flow process is still running.
+ * Env var orchestrators (run-flows.mjs, the e2e gate) use to hand a flow its
+ * cluster path — in that spawn mode the path never appears in argv.
+ */
+const ClusterPathEnvVar = "WIRE_CLUSTER_PATH"
+
+/**
+ * Broad candidate ERE for ANY flow executable (`node lib/index.js`), argv-less
+ * of the cluster path. The `[.]` form keeps it from matching the monitor's own
+ * pgrep shell wrappers (their command lines carry the pattern text verbatim,
+ * which `[.]` does not match).
+ */
+const FlowExecutablePattern = "lib/index[.]js"
+
+/**
+ * PIDs of the watched flow's processes for THIS cluster, across BOTH spawn
+ * modes: the direct-CLI form (`node lib/index.js -d <cluster-path>` — cluster
+ * path in argv) and the orchestrator form (`pnpm --filter <pkg> test` with
+ * `WIRE_CLUSTER_PATH=<cluster-path>` exported — cluster path ONLY in the
+ * environment). The env form matches `lib/index.js` candidates by the exact
+ * cluster path in `/proc/<pid>/environ`, so concurrent flows in a pooled run
+ * stay isolated per monitor.
  *
  * @param {string} clusterPath the watched cluster's data dir.
- * @return {Promise<boolean>} true while pgrep finds the flow.
+ * @return {Promise<string[]>} matching pids (argv-form ∪ env-form).
+ */
+async function flowPids(clusterPath) {
+  const normalized = clusterPath.replace(/\/+$/, "")
+  const argvHits = await $`pgrep -f ${flowProcessPattern(normalized)}`.nothrow().quiet()
+  const candidates = await $`pgrep -f ${FlowExecutablePattern}`.nothrow().quiet()
+  const wantedEnvEntry = `${ClusterPathEnvVar}=${normalized}`
+  const envHits = candidates.stdout
+    .split("\n")
+    .map(pid => pid.trim())
+    .filter(Boolean)
+    .filter(pid => {
+      try {
+        return fs.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0").includes(wantedEnvEntry)
+      } catch {
+        return false // pid exited between the pgrep and the environ read
+      }
+    })
+  const argvPids = argvHits.stdout.split("\n").map(pid => pid.trim()).filter(Boolean)
+  return [...new Set([...argvPids, ...envHits])]
+}
+
+/**
+ * Whether the watched flow process is still running (either spawn mode).
+ *
+ * @param {string} clusterPath the watched cluster's data dir.
+ * @return {Promise<boolean>} true while a matching flow process exists.
  */
 async function isFlowAlive(clusterPath) {
-  const result = await $`pgrep -f ${flowProcessPattern(clusterPath)}`.nothrow().quiet()
-  return result.exitCode === 0
+  return (await flowPids(clusterPath)).length > 0
 }
 
 /**
@@ -249,7 +311,10 @@ async function bail(reason, clusterPath) {
     process.exit(0)
   }
   console.log(`BAIL: ${reason}`)
-  await $`pkill -INT -f ${flowProcessPattern(clusterPath)}`.nothrow().quiet()
+  // SIGINT every matched flow pid — covers both spawn modes (the argv-form
+  // pkill alone misses env-spawned flows whose argv carries no cluster path).
+  const pids = await flowPids(clusterPath)
+  await Promise.all(pids.map(pid => $`kill -INT ${pid}`.nothrow().quiet()))
   process.exit(1)
 }
 

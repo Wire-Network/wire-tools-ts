@@ -1,6 +1,7 @@
 import { ethers } from "ethers"
 import {
   contractView,
+  ethereumRevertReason,
   resolveLatestNonce
 } from "@wireio/test-cluster-tool/utils"
 
@@ -37,5 +38,31 @@ describe("resolveLatestNonce", () => {
     await expect(resolveLatestNonce(view)).rejects.toThrow(
       /must be bound to a Signer/
     )
+  })
+})
+
+describe("ethereumRevertReason", () => {
+  it("prefers the decoded require reason over every other field", () => {
+    expect(
+      ethereumRevertReason({
+        reason: "insufficient collateral",
+        shortMessage: "execution reverted",
+        message: "execution reverted (long form)"
+      })
+    ).toBe("insufficient collateral")
+  })
+
+  it("falls back to shortMessage, then message", () => {
+    expect(
+      ethereumRevertReason({
+        shortMessage: "execution reverted",
+        message: "execution reverted (long form)"
+      })
+    ).toBe("execution reverted")
+    expect(ethereumRevertReason(new Error("plain failure"))).toBe("plain failure")
+  })
+
+  it("stringifies a reason-less value instead of losing it", () => {
+    expect(ethereumRevertReason("raw string error")).toBe("raw string error")
   })
 })

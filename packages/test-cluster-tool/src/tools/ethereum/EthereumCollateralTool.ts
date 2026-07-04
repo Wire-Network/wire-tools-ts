@@ -27,7 +27,12 @@ import {
   ethereumSigner
 } from "../../utils/keyPairUtils.js"
 import { Report } from "../../report/Report.js"
-import { contractView, resolveLatestNonce } from "../../utils/ethereumUtils.js"
+import { retry } from "../../utils/asyncUtils.js"
+import {
+  contractView,
+  ethereumRevertReason,
+  resolveLatestNonce
+} from "../../utils/ethereumUtils.js"
 
 /** Positional argument tuple of `OperatorRegistry.depositNonNative(...)`. */
 type DepositNonNativeArgs = [
@@ -346,7 +351,21 @@ export namespace EthereumCollateralTool {
     )
   }
 
-  /** Named runner — ONE `OperatorRegistry.depositNonNative(...)` write. */
+  /** Attempts for the staticCall dry-run gating the non-native deposit send. */
+  const NonNativeDepositAttempts = 3
+  /** Backoff between non-native deposit dry-run attempts (ms). */
+  const NonNativeDepositRetryDelayMs = 500
+
+  /**
+   * Named runner — ONE `OperatorRegistry.depositNonNative(...)` write.
+   *
+   * The send is gated by a `staticCall` dry-run inside a bounded retry: the
+   * deposit can transiently revert after the bootstrap's anvil dump-state →
+   * load-state cycle (the first eth_call against freshly-loaded state can
+   * present stale OperatorRegistry / ReserveManager storage, then settle on a
+   * re-issue). Only a PERSISTENT revert surfaces — with its decoded
+   * `require(cond, "msg")` reason, which a mined status-0 receipt never carries.
+   */
   export async function runNonNativeDeposit<C extends ClusterBuildContext>(
     ctx: C,
     input: DepositNonNativeInput,
@@ -356,13 +375,39 @@ export namespace EthereumCollateralTool {
     Assert.ok(input.amount > 0n, "EthereumCollateralTool.planNonNativeDeposit: amount must be positive")
     const operator = ctx.keyStore.assertOperator(input.operatorAccount)
     const registry = loadOperatorRegistry(ctx, ethereumSigner(operator.ethereum, ctx.ethereum.provider))
+    const compressedPubkey = ethereumCompressedPubkey(operator.ethereum)
+    await retry(
+      () =>
+        registry
+          .getFunction("depositNonNative")
+          .staticCall(
+            input.chainCode,
+            input.tokenCode,
+            input.reserveCode,
+            input.operatorType,
+            compressedPubkey,
+            input.amount
+          ),
+      {
+        maxAttempts: NonNativeDepositAttempts,
+        delayMs: NonNativeDepositRetryDelayMs,
+        label: `depositNonNative dry-run (${input.operatorAccount})`
+      }
+    ).catch(error => {
+      throw new Error(
+        `EthereumCollateralTool.runNonNativeDeposit: depositNonNative would revert — ` +
+          `${ethereumRevertReason(error)} ` +
+          `[chainCode=${input.chainCode} tokenCode=${input.tokenCode} reserveCode=${input.reserveCode} ` +
+          `operatorType=${input.operatorType} amount=${input.amount}]`
+      )
+    })
     const nonce = await resolveLatestNonce(registry)
     const response = await registry.depositNonNative(
       input.chainCode,
       input.tokenCode,
       input.reserveCode,
       input.operatorType,
-      ethereumCompressedPubkey(operator.ethereum),
+      compressedPubkey,
       input.amount,
       { nonce }
     )
