@@ -2,8 +2,7 @@ import {
   ClusterBuild,
   ClusterBuildContext,
   ClusterBuildPhase,
-  ClusterBuildStep
-} from "@wireio/test-cluster-tool/orchestration"
+  ClusterBuildStep, pollUntil } from "@wireio/test-cluster-tool/orchestration"
 import { getLogger } from "@wireio/test-cluster-tool/logging"
 import { Report } from "@wireio/test-cluster-tool/report"
 import { sleep } from "@wireio/test-cluster-tool/utils"
@@ -156,3 +155,49 @@ describe("ClusterBuildPhase executor", () => {
     expect(result.steps[0].input).toEqual({ kind: "T", v: 7 })
   })
 })
+
+describe("step timeout scaling (WIRE_FLOW_TIMEOUT_SCALE)", () => {
+  afterEach(() => {
+    delete process.env[pollUntil.TimeoutScaleEnvVar]
+  })
+
+  it("a step ceiling stretches by the flow-wide scale", async () => {
+    process.env[pollUntil.TimeoutScaleEnvVar] = "3"
+    const build = newBuild()
+    const phase = ClusterBuildPhase.create(build, "P", "scaled ceiling", []).push(
+      ClusterBuildStep.create(
+        Report.Actor.Sysio,
+        "slow-but-fine",
+        "sleeps past the UNSCALED ceiling",
+        { timeoutMs: 40 },
+        null,
+        async () => {
+          await new Promise(resolve => setTimeout(resolve, 80))
+        }
+      )
+    )
+    const nodes = await phase.run(new AbortController().signal)
+    expect((nodes[0] as Report.Phase).steps[0].status).toBe(Report.StepStatus.ok)
+  })
+
+  it("without the scale the same step times out (control)", async () => {
+    const build = newBuild()
+    const phase = ClusterBuildPhase.create(build, "P", "unscaled ceiling", []).push(
+      ClusterBuildStep.create(
+        Report.Actor.Sysio,
+        "too-slow",
+        "sleeps past the ceiling",
+        { timeoutMs: 40 },
+        null,
+        async () => {
+          await new Promise(resolve => setTimeout(resolve, 200))
+        }
+      )
+    )
+    const nodes = await phase.run(new AbortController().signal)
+    const step = (nodes[0] as Report.Phase).steps[0]
+    expect(step.status).toBe(Report.StepStatus.failed)
+    expect(step.error?.message).toContain("step exceeded")
+  })
+})
+
