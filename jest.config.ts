@@ -2,7 +2,7 @@ import type { Config } from "jest"
 
 const config: Config = {
   projects: [
-    "packages/test-cluster-tool",
+    "packages/cluster-tool",
     "packages/debugging-shared",
     "packages/debugging-server",
     "packages/debugging-client-shared",

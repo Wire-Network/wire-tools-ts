@@ -2,7 +2,7 @@
 
 Canonical, ordered list of on-chain actions to bootstrap a Wire chain, with **every** value each action
 passes specified inline. The cluster tooling (`wire-tools-ts`,
-`packages/test-cluster-tool/src/cluster/ClusterManager.ts` + `constants.ts`) is the source of truth for the
+`packages/cluster-tool/src/cluster/ClusterManager.ts` + `constants.ts`) is the source of truth for the
 concrete values shown here; this document is meant to be read **stand-alone** — no value requires opening
 the code.
 

@@ -6,7 +6,7 @@ import {
   type ClusterBuildStepOptions,
   type Report,
   type StepInput
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { SwapFromWireScenarioOutputs as Outputs } from "../SwapFromWireScenarioOutputs.js"
 
 const { SysioContractName, SysioUwritChainkind } = SysioContracts

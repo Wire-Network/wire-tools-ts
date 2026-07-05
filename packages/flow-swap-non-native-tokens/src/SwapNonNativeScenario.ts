@@ -18,7 +18,7 @@ import {
   type ClusterBuildStepOptions,
   type ClusterConfig,
   type Logger
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { SwapNonNativeScenarioConstants as Constants } from "./SwapNonNativeScenarioConstants.js"
 import {
   SwapDestinationKind,

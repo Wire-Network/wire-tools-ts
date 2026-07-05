@@ -4,13 +4,13 @@
     "rootDir": "src",
     "outDir": "lib",
     "paths": {
-      "@wireio/test-cluster-tool": ["../test-cluster-tool/src"],
+      "@wireio/cluster-tool": ["../cluster-tool/src"],
       "@wireio/debugging-shared": ["../debugging-shared/src"]
     }
   },
   "include": ["src"],
   "references": [
-    { "path": "../test-cluster-tool/tsconfig.json" },
+    { "path": "../cluster-tool/tsconfig.json" },
     { "path": "../debugging-shared/tsconfig.json" }
   ]
 }

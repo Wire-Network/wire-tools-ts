@@ -26,7 +26,7 @@ import {
   type Report,
   type ReserveManagerRequestSwapContract,
   type StepInput
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { SwapWithUnderwritingScenarioConstants as Constants } from "../SwapWithUnderwritingScenarioConstants.js"
 
 const log = getLogger(__filename)

@@ -11,7 +11,7 @@ import {
   type ClusterBuildStepOptions,
   type MockWireNodesContract,
   type StepInput
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 
 /**
  * Step factory + companions for the `MockWireNodes.sol` ERC-1155 mint — the

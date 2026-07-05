@@ -4,7 +4,7 @@ import {
   ProtocolTiming,
   type Books,
   type OutputKey
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 
 /**
  * Constants for the bidirectional swap-with-underwriting flow. Every

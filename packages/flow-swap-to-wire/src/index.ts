@@ -1,4 +1,4 @@
-import { FlowCLI } from "@wireio/test-cluster-tool"
+import { FlowCLI } from "@wireio/cluster-tool"
 import { SwapToWireScenario } from "./SwapToWireScenario.js"
 
 /** Run the swap-to-WIRE flow as an executable — exit code = report success. */

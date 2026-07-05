@@ -124,7 +124,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 
 | Package | Name | Purpose |
 |---|---|---|
-| `test-cluster-tool` | `@wireio/test-cluster-tool` | Core harness: process managers, chain clients, bootstrap, **`wire-test-cluster` CLI** |
+| `cluster-tool` | `@wireio/cluster-tool` | Core harness: process managers, chain clients, bootstrap, **`wire-cluster-tool` CLI** |
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Node-operator collateral deposit + withdraw remit |
 | `flow-swap-with-underwriting` | `@wireio/test-flow-swap-with-underwriting` | Bidirectional SWAP (ETH ↔ SOL) with underwriting |
 | `flow-swap-non-native-tokens` | `@wireio/test-flow-swap-non-native-tokens` | SWAP of non-native tokens (USDC / USDT / LIQ) |
@@ -194,12 +194,12 @@ pnpm test
 
 For interactive work — poking the chains with `clio`, the debugging TUI, or
 attaching multiple flow runs to one long-lived cluster — drive the
-`wire-test-cluster` CLI directly (alias: `wtc`). It has three commands: `create`,
+`wire-cluster-tool` CLI directly (alias: `wtc`). It has three commands: `create`,
 `run`, `destroy`.
 
 ```bash
-wire-test-cluster \
-  --cluster-path=/tmp/wire-test-cluster-001 \
+wire-cluster-tool \
+  --cluster-path=/tmp/wire-cluster-tool-001 \
   --force \
   create \
     --build-path=/data/shared/code/wire-platform/wire-sysio/build/release \
@@ -210,8 +210,8 @@ wire-test-cluster \
     --epoch-duration=60 \
     --ethereum-path=/data/shared/code/wire-platform/wire-ethereum \
     --solana-path=/data/shared/code/wire-platform/wire-solana \
-  && wire-test-cluster \
-  --cluster-path=/tmp/wire-test-cluster-001 run
+  && wire-cluster-tool \
+  --cluster-path=/tmp/wire-cluster-tool-001 run
 ```
 
 `create` writes a `cluster-config.json` under `--cluster-path` and bootstraps the
@@ -219,7 +219,7 @@ chains; `run` starts the cluster from that saved config and **blocks until you
 `Ctrl+C`** (which triggers a clean shutdown). Tear it down with:
 
 ```bash
-wire-test-cluster --cluster-path=/tmp/wire-test-cluster-001 destroy
+wire-cluster-tool --cluster-path=/tmp/wire-cluster-tool-001 destroy
 ```
 
 ### Global options
@@ -259,7 +259,7 @@ To instead point a flow at the persistent cluster above, set `WIRE_CLUSTER_CONFI
 to its config file — the flow runs in **attach** mode against the live processes:
 
 ```bash
-WIRE_CLUSTER_CONFIG=/tmp/wire-test-cluster-001/cluster-config.json \
+WIRE_CLUSTER_CONFIG=/tmp/wire-cluster-tool-001/cluster-config.json \
   pnpm --filter @wireio/test-flow-swap-with-underwriting test
 ```
 

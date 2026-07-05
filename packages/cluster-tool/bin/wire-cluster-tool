@@ -1,0 +1,11 @@
+#!/usr/bin/env node
+const Path = require("path")
+const Assert = require("assert")
+const Fs = require("fs")
+
+// The CLI entry (self-invoking main) — lib/cjs/cli/index.js.
+const mainFile = Path.resolve(__dirname, "..", "lib", "cjs", "cli", "index.js")
+
+Assert.ok(Fs.existsSync(mainFile), `Main file not found @ ${mainFile}.`)
+
+require(mainFile)

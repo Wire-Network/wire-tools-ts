@@ -1,4 +1,4 @@
-import { ProtocolTiming, type ImportSeedChainKind } from "@wireio/test-cluster-tool"
+import { ProtocolTiming, type ImportSeedChainKind } from "@wireio/cluster-tool"
 
 /**
  * Constants for the emissions + dclaim payout soak flow. Values carry over from

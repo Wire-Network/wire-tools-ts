@@ -14,7 +14,7 @@ import {
   verifyStep,
   type ClusterBuild,
   type ClusterBuildOptions
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { SlashingScenarioConstants as Constants } from "./SlashingScenarioConstants.js"
 import { SlashingScenarioDisputeSteps as DisputeSteps } from "./steps/SlashingScenarioDisputeSteps.js"
 

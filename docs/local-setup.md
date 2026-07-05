@@ -1,6 +1,6 @@
-# wire-test-cluster: Local Setup (Non-Docker)
+# wire-cluster-tool: Local Setup (Non-Docker)
 
-End-to-end instructions for building Wire's `wire-test-cluster` CLI from source on the host (Ubuntu 24.04 / WSL2), **without** the Docker image. Based on the five repos' own README / CLAUDE.md files; the reference Dockerfile is out of date in a few places (see "Differences from the Dockerfile" at the bottom).
+End-to-end instructions for building Wire's `wire-cluster-tool` CLI from source on the host (Ubuntu 24.04 / WSL2), **without** the Docker image. Based on the five repos' own README / CLAUDE.md files; the reference Dockerfile is out of date in a few places (see "Differences from the Dockerfile" at the bottom).
 
 > **Status:** built and smoke-tested on Ubuntu 24.04 WSL2, 2026-04-24.
 > End-to-end `create` + `run` both succeed — cluster spins up 1 bios + 5
@@ -99,7 +99,7 @@ mkdir -p "$WIRE_ROOT/wire-opp"
 
 ### 1.4 Branches required for the OPP cross-chain integration
 
-`master` isn't enough — the `wire-test-cluster` harness expects artifacts
+`master` isn't enough — the `wire-cluster-tool` harness expects artifacts
 (contracts, scripts, Solana program, protos) that only exist on the OPP
 feature branches:
 
@@ -279,19 +279,19 @@ anchor build -p opp-outpost
 # Produces target/deploy/opp_outpost.so and target/idl/opp_outpost.json
 ```
 
-### 3.6 `wire-e2e-tests` — harness monorepo + `wire-test-cluster` CLI
+### 3.6 `wire-e2e-tests` — harness monorepo + `wire-cluster-tool` CLI
 
 ```bash
 cd "$WIRE_ROOT/wire-e2e-tests"
 pnpm install            # .pnpmfile.cjs auto-links @wireio/* from ../wire-libraries-ts and ../wire-opp
 pnpm build              # tsc -b composite build across flow-a…flow-d + harness
 
-# Expose wire-test-cluster on PATH — the harness package.json declares
-# "bin": { "wire-test-cluster": "lib/cjs/cli.js" }, so a plain link
+# Expose wire-cluster-tool on PATH — the harness package.json declares
+# "bin": { "wire-cluster-tool": "lib/cjs/cli.js" }, so a plain link
 # picks up the post-tsc output. No pkg/standalone binary step.
 (cd packages/harness && pnpm link --global)
 
-command -v wire-test-cluster
+command -v wire-cluster-tool
 ```
 
 ---
@@ -306,7 +306,7 @@ killall nodeop kiod anvil solana-test-validator 2>/dev/null || true
 
 export CHAIN_DIR="$HOME/ext/wire-chains/dev-001"
 
-wire-test-cluster \
+wire-cluster-tool \
     --cluster-path="$CHAIN_DIR" \
     --force \
     create \
@@ -319,8 +319,8 @@ wire-test-cluster \
         --underwriters=1 \
         --epoch-duration=60
 
-wire-test-cluster --cluster-path="$CHAIN_DIR" run
-# Ctrl+C to stop. To wipe: wire-test-cluster --cluster-path="$CHAIN_DIR" destroy
+wire-cluster-tool --cluster-path="$CHAIN_DIR" run
+# Ctrl+C to stop. To wipe: wire-cluster-tool --cluster-path="$CHAIN_DIR" destroy
 ```
 
 > Note: the harness CLI looks for `nodeop`/`kiod`/`clio`/`sys-util` at
@@ -445,7 +445,7 @@ unconditionally.)
 Fix: install the three CLIs via §3.1 and ensure `$PNPM_HOME` (typically
 `$HOME/.local/share/pnpm`) is on `PATH` before `cmake --build`.
 
-### 6.6 `wire-test-cluster create` crashes with `paths[0] must be string` when `--solana-path` is omitted
+### 6.6 `wire-cluster-tool create` crashes with `paths[0] must be string` when `--solana-path` is omitted
 
 Harness `cli.ts:233` calls `Path.resolve(argv.solanaPath)` unconditionally.
 Until fixed in harness, always pass `--solana-path=<wire-solana-root>` even
@@ -466,6 +466,6 @@ not contain `opp-outpost`. Checkout
 The Dockerfile's run instructions suggest
 `pkill -f "solana-test-validator|anvil|kiod|nodeop"`. Because that regex is
 matched against the full argv (including the pattern string itself), `pkill`
-kills its parent shell — the Bash/zsh invocation exits 144 and `wire-test-cluster`
+kills its parent shell — the Bash/zsh invocation exits 144 and `wire-cluster-tool`
 never runs. Use `killall <exact name>` instead.
 

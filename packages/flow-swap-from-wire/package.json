@@ -10,7 +10,7 @@
     "clean": "rm -rf lib"
   },
   "dependencies": {
-    "@wireio/test-cluster-tool": "workspace:*",
+    "@wireio/cluster-tool": "workspace:*",
     "@wireio/sdk-core": "^1.0.17",
     "@wireio/shared": "^1.0.17"
   },

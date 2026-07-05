@@ -30,7 +30,7 @@ pnpm --filter @wireio/test-flow-batch-operator-termination test
 pnpm --filter @wireio/test-flow-swap-variance-revert test
 
 # Run only harness unit tests
-pnpm --filter @wireio/test-cluster-tool test
+pnpm --filter @wireio/cluster-tool test
 
 # Format code
 pnpm format
@@ -45,7 +45,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 
 | Package | Name | Purpose |
 |---------|------|---------|
-| `test-cluster-tool` | `@wireio/test-cluster-tool` | Core library: process managers, chain clients, bootstrap, CLI |
+| `cluster-tool` | `@wireio/cluster-tool` | Core library: process managers, chain clients, bootstrap, CLI |
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Flow: Node Operator Collateral Deposit |
 | `flow-swap-with-underwriting` | `@wireio/test-flow-swap-with-underwriting` | Flow: Bidirectional SWAP (Ethereum ↔ Solana) with Underwriting |
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Flow: Batch Operator Termination via Delivery Underperformance |
@@ -99,12 +99,12 @@ If you find yourself tempted to write a `src/`-containing specifier to "just mak
 
 ## CLI Tool
 
-`wire-test-cluster` (bin from harness package):
+`wire-cluster-tool` (bin from harness package):
 
 ```bash
-wire-test-cluster --chain-dir=<path> create --build-dir=<wire-sysio-build> [options]
-wire-test-cluster --chain-dir=<path> run      # start cluster, Ctrl+C to stop
-wire-test-cluster --chain-dir=<path> destroy   # stop + delete data
+wire-cluster-tool --chain-dir=<path> create --build-dir=<wire-sysio-build> [options]
+wire-cluster-tool --chain-dir=<path> run      # start cluster, Ctrl+C to stop
+wire-cluster-tool --chain-dir=<path> destroy   # stop + delete data
 ```
 
 ## Key Architecture
@@ -193,7 +193,7 @@ The rules above are enforced on every change. Before declaring a task complete, 
 3. **Enums over raw values.** Command names, statuses, chain kinds, attestation types — always the enum member. `ClusterCommand.create` not `"create"`; `ChainKind.ETHEREUM` not `2`. Rename propagates through the compiler; raw strings do not.
 
 4. **Import hygiene.**
-   - **No cross-package `../src/...` / `../../../lib/...` paths.** Cross-package imports use the package alias (`@wireio/test-cluster-tool`, `@wireio/shared`, etc.). In-package relative imports are fine.
+   - **No cross-package `../src/...` / `../../../lib/...` paths.** Cross-package imports use the package alias (`@wireio/cluster-tool`, `@wireio/shared`, etc.). In-package relative imports are fine.
    - **Do not re-export third-party surface from local barrels.** If a consumer needs a type from `@wireio/opp-typescript-models`, they import it from there directly — don't list 9 of its types in a `debugging-shared` barrel.
    - **Import order:** Node built-ins → external packages → internal monorepo packages → relative imports. Blank line between groups.
 

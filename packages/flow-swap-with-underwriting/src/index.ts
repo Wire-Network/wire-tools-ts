@@ -1,4 +1,4 @@
-import { FlowCLI } from "@wireio/test-cluster-tool"
+import { FlowCLI } from "@wireio/cluster-tool"
 import { SwapWithUnderwritingScenario } from "./SwapWithUnderwritingScenario.js"
 
 /** Run the swap-with-underwriting flow as an executable — exit code = report success. */

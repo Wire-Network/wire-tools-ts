@@ -16,7 +16,7 @@ import {
   type ClusterBuild,
   type ClusterBuildContext,
   type ClusterBuildOptions
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { ReserveLifecycleScenarioConstants as Constants } from "./ReserveLifecycleScenarioConstants.js"
 import { ReserveLifecycleScenarioOwnerSteps as OwnerSteps } from "./steps/ReserveLifecycleScenarioOwnerSteps.js"
 import { ReserveLifecycleScenarioReserveSteps as ReserveSteps } from "./steps/ReserveLifecycleScenarioReserveSteps.js"

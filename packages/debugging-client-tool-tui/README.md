@@ -4,13 +4,13 @@ A React + Ink terminal UI for observing a running WIRE test cluster. Tails OPP e
 
 - **Binary:** `wire-debugging-client-tool-tui`
 - **Stack:** Node ≥22, React 19, Ink 7, Redux Toolkit, `ts-pattern`, `@3fv/prelude-ts`
-- **Targets:** clusters built with the sibling `@wireio/test-cluster-tool` package (`wire-test-cluster` CLI).
+- **Targets:** clusters built with the sibling `@wireio/cluster-tool` package (`wire-cluster-tool` CLI).
 
 ---
 
 ## Overview
 
-When you run an end-to-end test cluster with `wire-test-cluster`, the harness spawns a collection of long-lived processes (WIRE `nodeop` nodes, a `kiod` wallet daemon, optionally `anvil` and `solana-test-validator`) and an embedded OPP debugging HTTP server. Each spawned process writes a pid file and an on-disk log under `<cluster-path>/data/`, and the debugging server persists OPP envelopes under `<cluster-path>/data/opp-debugging/`.
+When you run an end-to-end test cluster with `wire-cluster-tool`, the harness spawns a collection of long-lived processes (WIRE `nodeop` nodes, a `kiod` wallet daemon, optionally `anvil` and `solana-test-validator`) and an embedded OPP debugging HTTP server. Each spawned process writes a pid file and an on-disk log under `<cluster-path>/data/`, and the debugging server persists OPP envelopes under `<cluster-path>/data/opp-debugging/`.
 
 This TUI reads from that on-disk layout. It is **non-destructive** — it never starts, stops, or signals cluster processes. It only watches pid files, tails logs, and dispatches decoded envelopes into a Redux store that drives a keyboard-navigable panel layout.
 
@@ -197,7 +197,7 @@ Tests live at `tests/` mirroring the `src/` tree (e.g. `src/services/ServiceMana
 ## Troubleshooting
 
 - **"Raw mode is not supported on the current process.stdin"** — Ink requires a TTY. Running the binary with piped stdin/stdout/stderr (e.g. in CI without a pseudo-TTY) will fail with this message. Use a real terminal, or `script -q -c wire-debugging-client-tool-tui …` for CI shell captures.
-- **"cluster-config.json not found"** — the `--cluster-path` (or cwd) doesn't contain a valid cluster directory. Run `wire-test-cluster … create` first (see `../test-cluster-tool/README.md`).
+- **"cluster-config.json not found"** — the `--cluster-path` (or cwd) doesn't contain a valid cluster directory. Run `wire-cluster-tool … create` first (see `../cluster-tool/README.md`).
 - **Empty Process Monitor panel** — `cluster-state.json` isn't written until bootstrap completes. If the cluster is mid-`create`, wait for it to finish.
 - **No OPP data appears** — confirm `--features` includes `opp` (or is omitted entirely), and that envelope `.data`/`.metadata` files are appearing under `<cluster-path>/data/opp-debugging/`. The tracker logs each hydrate/append at `debug` level.
 - **Follow mode stuck at a stale position** — press `F` to toggle off and on, or `G` to jump to bottom. Rotation (inode change) is detected automatically; a stale cache would be a bug worth reporting.
@@ -206,7 +206,7 @@ Tests live at `tests/` mirroring the `src/` tree (e.g. `src/services/ServiceMana
 
 ## Related packages
 
-- **`@wireio/test-cluster-tool`** (`wire-test-cluster` CLI) — builds and runs the clusters this TUI debugs. See its README for cluster creation examples and how to chain them with this TUI.
+- **`@wireio/cluster-tool`** (`wire-cluster-tool` CLI) — builds and runs the clusters this TUI debugs. See its README for cluster creation examples and how to chain them with this TUI.
 - **`@wireio/debugging-server`** — the in-cluster HTTP server that writes the OPP envelopes this TUI tails.
 - **`@wireio/debugging-shared`** — shared types (ports, cluster config/state, endpoint-type reverse maps).
 - **`@wireio/debugging-client-shared`** — `JsonRPCClient` + `DebuggingServerClient` for callers that need to talk to the debugging server over HTTP (the TUI currently reads from disk and doesn't require this client, but a future feature may).

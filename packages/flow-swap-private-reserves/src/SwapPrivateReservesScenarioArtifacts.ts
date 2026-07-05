@@ -8,7 +8,7 @@ import {
   EthereumCollateralTool,
   SolanaOutpostBootstrapper,
   type ClusterBuildContext
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { SwapPrivateReservesScenarioConstants as Constants } from "./SwapPrivateReservesScenarioConstants.js"
 
 /**

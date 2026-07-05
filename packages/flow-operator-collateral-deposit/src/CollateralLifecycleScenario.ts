@@ -15,7 +15,7 @@ import {
   type ClusterBuild,
   type ClusterBuildContext,
   type ClusterBuildOptions
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { CollateralLifecycleScenarioConstants as Constants } from "./CollateralLifecycleScenarioConstants.js"
 
 const { SysioContractName, SysioOpregOperatorstatus } = SysioContracts

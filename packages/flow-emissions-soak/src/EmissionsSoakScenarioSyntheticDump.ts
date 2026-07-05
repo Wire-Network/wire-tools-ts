@@ -16,7 +16,7 @@ import { ethers } from "ethers"
 import {
   EthereumOutpostBootstrapper,
   type IndexBalanceDump
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 
 /** ETH-style address length in raw bytes. */
 const EthereumAddressByteLength = 20

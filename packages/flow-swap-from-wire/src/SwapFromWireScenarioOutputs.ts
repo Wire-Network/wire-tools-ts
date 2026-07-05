@@ -1,4 +1,4 @@
-import { outputKey, type ReserveBook } from "@wireio/test-cluster-tool"
+import { outputKey, type ReserveBook } from "@wireio/cluster-tool"
 
 /**
  * Typed cross-step outputs for the swap-from-WIRE scenario — every baseline and

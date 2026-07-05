@@ -21,7 +21,7 @@ import {
   type ClusterBuild,
   type ClusterBuildContext,
   type ClusterBuildOptions
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { TerminationScenarioConstants as Constants } from "./TerminationScenarioConstants.js"
 
 const log = getLogger(__filename)

@@ -18,7 +18,7 @@ import {
   type OutputKey,
   type ReserveManagerRequestSwapContract,
   type StepInput
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { ReserveLifecycleScenarioConstants as Constants } from "../ReserveLifecycleScenarioConstants.js"
 
 const { SysioContractAccount, SysioContractName } = SysioContracts

@@ -1,4 +1,4 @@
-import { FlowCLI } from "@wireio/test-cluster-tool"
+import { FlowCLI } from "@wireio/cluster-tool"
 import { SwapPrivateReservesScenario } from "./SwapPrivateReservesScenario.js"
 
 /** Run the private-reserve swap flow as an executable — exit code = report success. */

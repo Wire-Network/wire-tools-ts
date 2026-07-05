@@ -1,4 +1,4 @@
-import { FlowCLI } from "@wireio/test-cluster-tool"
+import { FlowCLI } from "@wireio/cluster-tool"
 import { SlashingScenario } from "./SlashingScenario.js"
 
 /** Run the batch-operator-slashing flow as an executable — exit code = report success. */

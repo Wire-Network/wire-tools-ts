@@ -2,7 +2,7 @@ import {
   outputKey,
   serializeBatchForClio,
   type ImportSeedResult
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import type { ControlledStakerIdentity } from "./EmissionsSoakScenarioSyntheticDump.js"
 
 /**

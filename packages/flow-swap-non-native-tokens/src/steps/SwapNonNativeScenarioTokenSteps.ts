@@ -50,7 +50,7 @@ import {
   type ReserveManagerErc20SwapContract,
   type StepInput,
   type SwapUserOutput
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { SwapNonNativeScenarioConstants as Constants } from "../SwapNonNativeScenarioConstants.js"
 
 const log = getLogger(__filename)

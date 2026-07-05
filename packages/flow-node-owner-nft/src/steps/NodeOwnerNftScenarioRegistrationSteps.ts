@@ -10,7 +10,7 @@ import {
   Report,
   type ClusterBuildStepOptions,
   type StepInput
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 
 /**
  * Step factories for the `sysio.roa` create-in-flow registration WRITES — the

@@ -13,7 +13,7 @@
     "@coral-xyz/anchor": "^0.31.0",
     "@solana/spl-token": "^0.4.9",
     "@solana/web3.js": "^1.98.0",
-    "@wireio/test-cluster-tool": "workspace:*",
+    "@wireio/cluster-tool": "workspace:*",
     "@wireio/debugging-shared": "workspace:*",
     "@wireio/sdk-core": "^1.0.17",
     "@wireio/opp-typescript-models": "^1.0.26",
