@@ -1,6 +1,12 @@
 # TypeScript Style Guide — wire-tools-ts
 
-Project-specific conventions for the `wire-tools-ts` repo (test harness, flow tests, debugging tooling). Examples are drawn from real classes in this repo: `AnvilManager`, `KiodManager`, `ClusterManager`, `Clio`, etc.
+Project-specific conventions for the `wire-tools-ts` repo (cluster harness, flow executables, debugging tooling). Examples are drawn from real classes in this repo: `AnvilProcess`, `KiodProcess`, `ClusterManager`, `WireClient`, `ClusterBuildStep`, etc.
+
+> **The orchestration sections below are the heart of this repo.** Everything in
+> `cluster-tool` and every `flow-*` package is built on ONE declarative model —
+> `ClusterBuildPhaseGroup` → `ClusterBuildPhase` → `ClusterBuildStep` — whose
+> execution produces the `Report` narrative. Read "Orchestration Model" before
+> writing any harness or flow code.
 
 > **Org-wide baseline**: the canonical style guide lives at `wire-libraries-ts/STYLE.md`. It covers general TypeScript idioms, tsconfig hierarchy, hybrid CJS+ESM packaging, and the React/Redux Toolkit stack. Rules in this file extend or specialize that baseline for the process-orchestration / CLI harness work in this repo. When the two conflict, the more specific guidance in this file wins for code under `wire-tools-ts/`.
 
@@ -388,11 +394,12 @@ This applies even when the directory mirrors a class or feature whose source fil
 
 ### File names — case follows primary export
 
-- **PascalCase** for files whose primary export is a class, interface, type alias, or class + companion namespace: `AnvilManager.ts`, `ClusterManager.ts`, `ProcessManager.ts`, `TestEnvironment.ts`, `ETHClient.ts`, `Clio.ts`, `NodeConfig.ts`, `JsonLogRecord.ts`.
-- **camelCase** for files that export functions, constants, or utility collections with no primary class/type: `cli.ts`, `constants.ts`, `genesis.ts`, `keyGen.ts`, `loggingConfig.ts`, `startCmd.ts`, `logger.ts`, `util.ts`, `lineRender.tsx`.
-- **`index.ts`** is the barrel re-export file. Always lowercase.
-- The filename matches the primary export name exactly: `AnvilManager.ts` exports `class AnvilManager`; `keyGen.ts` exports `function generateNodeKeySet`; `JsonLogRecord.ts` exports `interface JsonLogRecord`.
+- **PascalCase** for files whose primary export is a class, interface, type alias, or class + companion namespace: `AnvilProcess.ts`, `ClusterManager.ts`, `ProcessManager.ts`, `WireClient.ts`, `NodeConfig.ts`, `ClusterBuildStep.ts`, `KeyGenerator.ts`.
+- **camelCase** for files that export functions, constants, or utility collections with no primary class/type — and utilities are **topic files, never one-function files**: `asyncUtils.ts` (sleep/retry/pollUntil/probeEndpoint), `keyPairUtils.ts`, `netUtils.ts`, `slugUtils.ts`, `enumUtils.ts`, `lineRender.tsx`. A file named after its single function (`sleep.ts`, `confirmSignatures.ts`) is wrong — fold it into its topic.
+- **`index.ts`** is the barrel re-export file. Always lowercase. `Constants.ts` (cross-cutting package constants) is the sanctioned PascalCase exception at the package root.
+- The filename matches the primary export name exactly: `AnvilProcess.ts` exports `class AnvilProcess`; `KeyPair.ts` exports `type KeyPair<T>`.
 - When a file has both a primary type AND helper functions, the type wins — file is PascalCase, functions live alongside the type with no rename pressure.
+- **Component kind picks the folder AND the suffix**: a step namespace → `steps/<Name>Steps.ts`, a typed output → `orchestration/outputs/<Name>*.ts`, a renderer → `renderers/<Name>Renderer.ts`, a tool → `tools/<chain>/<Name>Tool.ts`, a process → `cluster/processes/<Name>Process.ts`, a client → `clients/<chain>/<Name>Client.ts`. Never dump a component file at a module root, and never create a file before something consumes it (no orphan types).
 
 ---
 
@@ -566,34 +573,35 @@ Every class that has associated constants, sub-types, or utility functions gets 
 
 ```ts
 // Constants and defaults
-export namespace KiodManager {
+export namespace KiodProcess {
   export const DefaultPort = 8900
   export const DefaultUnlockTimeout = 999_999
-  export const StartupTimeoutMs = 10_000
+  export const StartupTimeoutMs = 60_000
 }
 
-// Path builders and helpers
-export namespace ClusterManager {
-  export const BiosNodePath = "node_bios"
-  export const ProducerNodePrefix = "node_"
-
-  export function padIndex(i: number): string {
-    return String(i).padStart(2, "0")
-  }
-
-  export function toProducerNodePath(i: number): string {
-    return `${ProducerNodePrefix}${padIndex(i)}`
-  }
-}
-
-// Sub-types (response shapes, config variants)
-export namespace Clio {
-  export interface IGetInfoResponse {
+// Sub-types (response shapes, typed-client generics, error fragments)
+export namespace WireClient {
+  export interface GetInfoResponse {
     server_version: string
     chain_id: string
     head_block_num: number
     // ...
   }
+  export enum FinalityType {
+    speculative = "speculative",
+    head = "head",
+    irreversible = "irreversible"
+  }
+}
+
+// Identity objects for construction-safe bases
+export namespace ManagedProcess {
+  export interface Identity {
+    label: string
+    kind: Kind
+  }
+  export const GracefulKillMs = 30_000
+  export const DefaultVerifyTimeoutMs = 180_000
 }
 ```
 
@@ -621,12 +629,12 @@ Resolved config objects (including executable paths, directory paths, and all se
 
 | Interface | Role | All fields optional? | Example |
 |---|---|---|---|
-| `FooOptions` | Caller input | Yes | `AnvilOptions`, `KiodOptions` |
-| `FooConfig` | Runtime config | No (`Required<FooOptions>`) | `AnvilConfig`, `KiodConfig` |
-| `ExePaths` | Resolved binary locations | No | All paths validated at resolution time |
-| `ProcessConfig` | Cross-cutting spawn descriptor | Mix (some required, some optional) | `{ label, command, args, cwd?, env? }` |
-| `ProcessHandle` | Returned resource handle | No | `{ pmId, pid, kill(), wait() }` |
-| `FooState` | Serializable snapshot for persistence | No | Saved to JSON, loaded on relaunch |
+| `FooOptions` | Caller input | Yes | `AnvilOptions`, `SolanaValidatorOptions`, `BindOptions` |
+| `FooConfig` | Runtime config | No (`Required<FooOptions>`) | `AnvilConfig`, `SolanaValidatorConfig` |
+| `ClusterExecutablePaths` | Resolved binary locations | No | All paths validated at resolution time |
+| `ManagedProcess.Identity` | Construction-safe ctor descriptor | No | `{ label, kind }` — read by the base ctor, never overridden getters |
+| `StepInput` subtypes | A step's typed, self-describing input | No | `{ kind: "UserSteps.CreateInput", accountName, … }` — lands in the Report |
+| `OutputKey<T>` | Typed cross-step store handle | No | Minted via `outputKey<T>(name, description)` |
 
 ---
 
@@ -773,7 +781,7 @@ Prefer chains over intermediate variables when the sequence reads as a pipeline 
 
 ## General Conventions
 
-- **`Assert.ook()` liberally.** Validate preconditions at the top of public methods and factory functions. Fail fast with a clear message rather than propagating `undefined` through the call stack.
+- **`Assert.ok()` liberally.** Validate preconditions at the top of public methods and factory functions. Fail fast with a clear message rather than propagating `undefined` through the call stack.
 - **JSDoc on every public / exported symbol.** That covers exported functions, exported classes, public methods, exported interfaces, type aliases, enums, exported constants, and public class fields/properties. **Skip:** local (function-scoped) variables and `private`/`protected` class fields — their names plus types already document them, and a JSDoc block on a private field is noise. The bar is "would a reader looking at this from outside the file need a one-line description?" — if yes, JSDoc; if no, leave it.
 - **Lodash for focused utilities.** Use `defaults`, `range`, `last`, `identity` — the small, composable functions. Don't import lodash for things TypeScript or `Array` methods handle natively.
 - **`source-map-support/register`** at the CLI entry point. Stack traces should point to `.ts` lines, not compiled `.js`.
@@ -785,3 +793,320 @@ Prefer chains over intermediate variables when the sequence reads as a pipeline 
     - Use `Either` from `@3fv/prelude-ts` for error handling.
     - Use `match` from `ts-pattern` for pattern matching.
     
+---
+
+## Orchestration Model — Steps, Phases, PhaseGroups, Report
+
+The entire harness + every `flow-*` package runs on ONE declarative model:
+`ClusterBuild` holds a tree of `ClusterBuildPhaseGroup` → `ClusterBuildPhase` →
+`ClusterBuildStep`; executing it produces the `Report` — a per-step narrative
+(actor, status, duration, typed input, error, extra) that IS the deliverable.
+These rules are load-bearing; violating them produces work the Report cannot
+validate.
+
+### Writes are Steps; reads execute freely
+
+- **Every on-chain WRITE / tx / process spawn is its own `ClusterBuildStep`** —
+  one contract call, one deposit, one airdrop, one `push action`, one spawn.
+  Never batch two writes into one step; never perform a write outside a step.
+- **Reads (table queries, `pollUntil`, balance checks) are execution details** —
+  they run inside runners or factories as needed. When a read IS the scenario's
+  assertion, wrap it in a **verify step** (`verifyStep(actor, name, desc, fn)`)
+  so the assertion lands in the Report.
+- **"N actors each do X" is a Phase of N steps** — one per actor — never one
+  step looping over N.
+
+### Tools are FACTORIES that return orchestration units
+
+A harness "tool" never side-effects directly; it returns a Step, Phase, or
+PhaseGroup. Every step factory has the uniform shape — **actor first**, then
+name/description/options, then domain args — bundling the args into a named
+`StepInput` and passing a **named runner**:
+
+```ts
+export function planNonNativeDeposit<C extends ClusterBuildContext = ClusterBuildContext>(
+  actor: Report.Actor,
+  name: string,
+  description: string,
+  options: ClusterBuildStepOptions,
+  operatorAccount: string,
+  /* …domain args… */
+): ClusterBuildStep<C, DepositNonNativeInput> {
+  return ClusterBuildStep.create<C, DepositNonNativeInput>(
+    actor, name, description, options,
+    { kind: "EthereumCollateralTool.DepositNonNativeInput", operatorAccount /* … */ },
+    runNonNativeDeposit
+  )
+}
+
+/** Named runner — a plain, unit-testable function. NEVER an inline closure. */
+export async function runNonNativeDeposit<C extends ClusterBuildContext>(
+  ctx: C, input: DepositNonNativeInput, signal: AbortSignal
+): Promise<void> { /* resolve everything from ctx; perform ONE write */ }
+```
+
+### Cross-step data rides `ctx`, never closures
+
+Steps are constructed before anything runs, so they cannot capture mutable
+scenario state. Values flow through `ctx.outputs` (typed `OutputStore` keyed by
+`OutputKey<T>` constants — `ctx.outputs.assert(key)` / `.get(key)`), the
+accumulating `ctx.keyStore` (`ClusterKeyStore` — the ONE home for every
+provisioned `OperatorAccount` and node key set), or typed `eventemitter3`
+events on the context. Never an `onX` callback parameter on a step, never a
+`Map<string, unknown>` + cast.
+
+### Report `extra` + `StepExtraRecorder`
+
+Client calls made inside a runner are captured into the step's `extra` via the
+`AsyncLocalStorage`-scoped `StepExtraRecorder`. On recorder-scoped paths use
+NATIVE sequential helpers (`mapSeries`/`eachSeries` from `asyncUtils`) —
+Bluebird's shared drain queue detaches the ALS context and silently drops the
+capture.
+
+---
+
+## `plan*` / `run*` Naming
+
+- **Every function that returns a `ClusterBuildStep`, `ClusterBuildPhase`, or
+  `ClusterBuildPhaseGroup` is prefixed `plan`**: `planDeposit`, `planStart`,
+  `planNonNativeDeposit`, `planSetProducerKeys`.
+- **`run*` is reserved for the named runners referenced by a `plan*` factory**:
+  `runNonNativeDeposit`, `runStart`. A helper nobody wires into a step is
+  neither.
+- The `Steps` palette mirrors the generated surface as trees:
+  `Steps.contracts.sysio.<contract>.<abi-action>` (factory named EXACTLY like
+  the ABI action) and `Steps.processes.<daemon>.planStart` — plus the semantic
+  composites (`Steps.keys`, `Steps.operator`, `Steps.registry`, …).
+
+---
+
+## Timing Budgets — the `ProtocolTiming` Envelope
+
+All timing derives from the protocol's real envelope (`ProtocolTiming` in
+`Constants.ts`) — **never from hardware calibration, and never from a
+concurrency-derived multiplier** (concurrency reduces wall clock; it does not
+define protocol latency):
+
+| Class | Budget | Use for |
+|---|---|---|
+| `EpochExtensionMaxSec` (30s) | via `effectiveEpochSec()` | every N-epoch deadline: `N × (epochDurationSec + 30) × MsPerSecond` |
+| `CollateralVerifyBudgetMs` (6 min) | deposit → depot verification gates |
+| `SingleHopBudgetMs` (7 min) | act on an outpost, verify on the depot — or the reverse (uwreq appears, race confirms, reserve relay/READY, attestation propagation) |
+| `DoubleHopBudgetMs` (14 min) | outpost → depot → outpost tails (remit/payout, SWAP_REVERT round-trips) |
+
+Principles:
+
+- **Polls return the moment the condition holds** — a generous ceiling adds no
+  wall clock to a healthy run; an undershot one fails healthy runs at the
+  envelope's tail. Pin budgets to the TOP of their class.
+- **Local-operation ceilings are sized to the loaded-host worst case**, not the
+  dev box: process readiness 180s for chain nodes (a restarted node may
+  sync-catchup before its endpoint answers), hardhat deploy 600s (cold-cache
+  compile), step ceilings above their inner budgets.
+- `WIRE_FLOW_TIMEOUT_SCALE` exists ONLY as an explicit operator override
+  (default 1, clamped [1, 5]). No code path may derive it.
+
+---
+
+## Timer & Handle Hygiene
+
+**Every `setTimeout` armed inside a `Promise.race` is cleared when the race
+settles**, and long-lived module timers are `.unref()`d. This class of bug has
+bitten three times: the phase executor's stale step timer (aborted the shared
+phase controller after the step already passed), and `ManagedProcess.stop()`'s
+30s `GracefulKillMs` escalation timer (leaked one pending handle per graceful
+stop — the perennial jest "worker failed to exit gracefully" warning).
+
+```ts
+let killEscalation: ReturnType<typeof setTimeout> | null = null
+const timer = new Promise<"timeout">(resolve => {
+  killEscalation = setTimeout(() => resolve("timeout"), ManagedProcess.GracefulKillMs)
+})
+const outcome = await Promise.race([exited, timer, aborted]).finally(() => {
+  if (killEscalation != null) clearTimeout(killEscalation)
+})
+```
+
+Same discipline for every resource: dgram/net probe sockets closed on both
+paths, child stdio consumed, spawned probe children awaited. In tests, a
+helper child's lifetime is tied to the WORKER (block on stdin → pipe EOF ends
+it on any parent death), reaped in `afterAll` with the exit AWAITED — and the
+handle deliberately NOT `unref()`d, so a failed cleanup is loud instead of
+hidden.
+
+---
+
+## Ports & Parallel Runs
+
+Multiple clusters run concurrently on one host as a first-class requirement.
+
+- **Never commit to a fixed port** — harness code AND tests obtain ports via
+  `await BindConfig.findAvailable(preferredDefault)`; a caller-PINNED but
+  unavailable port THROWS. Any URL built from a port is a bound URL and follows
+  the same rule.
+- `BindConfig.resolve` runs under the host-global file lock and the
+  **cross-process registry** (`/tmp/wire-platform-bind-config/<pid>.bind-config.json`):
+  resolved-but-not-yet-bound ports count as taken for every other process.
+- **`solana-test-validator` gets a per-cluster disjoint `--dynamic-port-range`
+  window** (`BindConfig.findAvailableRange()` / `solana.ports.dynamicRange`,
+  UDP + TCP probed). Without it, concurrent validators UDP-double-bind the
+  shared agave default range and forwarded transactions silently vanish into a
+  co-runner's TPU — transactions return signatures that never land.
+- Shared mutable host state (hardhat deploys, per-repo artifact dirs) is either
+  per-cluster (`WIRE_ETH_DEPLOYMENTS_PATH`) or serialized via
+  `withFileLock(..., LongFileLockOptions)`.
+
+---
+
+## Logging — per-file `log`, clean std streams
+
+- Every file that logs makes its OWN logger: `const log = getLogger(__filename)`.
+  NEVER `export const log` / import a shared one (it erases the per-module
+  category). Never name a logger `out`.
+- CLI DATA output (tables, JSON) goes through `getStdoutLogger()` /
+  `getStderrLogger()` from the package's `logger.ts` — raw bytes on the stream,
+  no diagnostic prefix. The routing appender is the ONLY place
+  `process.stdout.write` is permitted.
+- `console.*` is banned repo-wide (jest buffers it; the framework writes
+  through). See `use-logging-framework.md` + `per-file-logger-and-std-streams.md`
+  in `wire-platform-manifest/.claude/rules/` for the carve-outs.
+
+---
+
+## Error-Handling Primitives
+
+Pick by what you do with the outcome — never by habit:
+
+| You want to… | Use |
+|---|---|
+| branch on success/failure (`.match`, `.getOrElse`, `.map`) | `Either.try(fn)` |
+| run a side-effect best-effort, swallow, ignore result | `guard(fn)` from `@wireio/shared` |
+| run a fn, swallow, get value-or-default | `getValue(fn, fallback)` |
+
+**Never call `Either.try` and discard the `Either`** — on `void`-returning fns
+it throws `liftEither got undefined!`, and semantically it's `guard`'s job.
+
+**Never silently swallow an RPC/chain error.** Every `catch` around a chain or
+network call logs through the framework with the error's MESSAGE (the chain
+reason is the whole point), level by intent: `debug` for expected retry-loop
+control flow, `warn` for tolerated transients, `error` (+ rethrow) for the
+unexpected.
+
+---
+
+## Generated Types First
+
+Before declaring ANY type touching OPP, bootstrap, attestations, contract
+actions/tables, or network shapes — grep BOTH generated sources:
+`@wireio/opp-typescript-models` (proto messages + enums) and
+`SysioContracts`/`SysioContractTypes` from `@wireio/sdk-core` (ABI action-data,
+table rows, `SysioContractName`/`Mapping`/`Definitions`).
+
+- **Table reads go through the typed accessor**:
+  `wire.getSysioContract(SysioContractName.opreg).tables.operators.query(...)`.
+  Raw `getTableRows` is the documented escape hatch only.
+- **Action pushes go through the typed invoker** with the generated action-data
+  type as the step's `StepInput`.
+- **Enums are first-class everywhere**: a closed set always rides its typed
+  enum (`ChainKind`, `OperatorStatus`, `ProcessSignalName` for POSIX signals —
+  never `"SIGKILL"` as a raw literal). Bridge ABI↔proto enum spellings with
+  `enumUtils.abiEnumValue` (protobuf-ts STRIPS shared prefixes — bridge by
+  VALUE, never by spelling).
+- **No `unknown`/`any` for a field that has a real type.** `unknown` is for
+  caught errors, unparsed blobs, and deliberate existentials only.
+
+---
+
+## One Generic Facade per Concept
+
+A concept with several implementations keyed by a closed discriminator gets ONE
+generic entry point; the per-variant backends are private and named
+`<facadeName><Variant>`:
+
+```ts
+export namespace KeyGenerator {
+  export async function create<T extends KeyType>(
+    type: T, context: Context, options: CreateOptions = {}
+  ): Promise<KeyPair<T>> {
+    const keyPair = await match(type as KeyType)
+      .with(KeyType.K1, () => createK1(context.clio))
+      .with(KeyType.BLS, () => createBLS(context.sysUtil))
+      .with(KeyType.ED, async () => createED())
+      .with(KeyType.EM, async () => createEM(context.ethereumMnemonic, options.ethereumHdIndex))
+      .otherwise(() => { throw new Error(`KeyGenerator: unsupported key type ${KeyType[type] ?? type}`) })
+    return keyPair as KeyPair<T>   // the ONE cast, at the dispatch point
+  }
+}
+```
+
+Never scattered per-variant public functions for one concept — and never merge
+DIFFERENT concepts into one facade (generation ≠ derivation: `KeyGenerator`
+vs `keyPairUtils`).
+
+---
+
+## Options Compose Domain Types
+
+An `Options`/`Config`/`Input` interface COMPOSES the richest existing domain
+types — never a flat bag of primitives re-spelling what those types carry:
+
+```ts
+// ✓ RIGHT — domain members; endpoints/paths/roles derive INSIDE the component
+export interface NodeopOptions {
+  node: NodeConfig              // ports/peers/producers/nodePath + cluster
+  operator?: OperatorAccount    // the account the node acts for
+  tuning?: NodeopTuningOptions  // genuine per-instance leaves, typed, defaulted
+  extraArgs?: string[]
+}
+```
+
+Red flags: a field derivable from another member (`httpPort` next to
+`httpServerAddress`), empty arrays as role markers, callers hand-assembling
+`${host}:${port}` strings. If more than ~5 primitive fields survive, look
+again.
+
+---
+
+## ESM-only Dependencies from CJS
+
+This repo emits CommonJS; ESM-only deps (`get-port`, …) load through ONE cached
+dynamic-import accessor — cache assigned synchronously (Deferred) so concurrent
+callers share the single in-flight import; types derived via
+`typeof import("dep")`. Never scatter `await import("dep")` across functions.
+Jest needs `NODE_OPTIONS=--experimental-vm-modules` (already wired into test
+scripts).
+
+---
+
+## Naming Standards (author-specified — binding)
+
+| Concept | Standard | Banned |
+|---|---|---|
+| get-or-throw helper | `assert*` (`assertOperator`, `outputs.assert`) | `require*` (Node global collision) |
+| factory | `create*` | `make*`, `build*` (as factory stems) |
+| newly created | `new*` | `fresh*` |
+| build composition | `append` | `apply` (collides with `Function.apply`) |
+| facade variant backend | `<facadeName><Variant>` (`toSignatureProviderEM`) | any fresh stem |
+| chains in identifiers | `ethereum` / `solana` spelled out | `eth`/`sol` (those mean the TOKENS) |
+| every word spelled out | `requiredBatchOperatorCollateral`, `WireKeyGenerator` | `reqBatchopCollat`, `WireKeyGen` — only `id` and unit suffixes (`Ms`, `Sec`) exempt |
+| orchestration factories | `plan*` / `run*` (see above) | ad-hoc verbs |
+
+When the author corrects a name, the correction IS the standard — sweep every
+occurrence in the same change; no half-renames.
+
+---
+
+## Design Discipline
+
+- **Never decide by file count or "simpler".** "Fewer files", "less surface",
+  "less ceremony" are not inputs to a design decision. When the choice is
+  between more semantic/typed/explicit structure and fewer files, take the
+  structure.
+- **No ceremony ≠ less structure.** Ceremony is EMPTY wrapping (a lambda around
+  one call, dead indirection, two styles for one goal). A typed per-action Step
+  factory is not ceremony — it is the semantic structure the model requires.
+- **Execute the entire plan.** A plan is a single deliverable; every enumerated
+  item lands or its deferral is explicitly agreed. A passing test is sampled
+  coverage, not the acceptance criterion.
+- The cross-repo rules in `wire-platform-manifest/.claude/rules/*.md` are
+  authoritative; this guide restates the ones future readers hit daily.

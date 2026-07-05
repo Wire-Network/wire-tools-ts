@@ -54,12 +54,21 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      # Optional but recommended: ensure tests/build pass before publishing.
-      # Replace with your actual scripts or delete these steps.
-      # - name: Test
-      #   run: pnpm -r test
-      # - name: Build
-      #   run: pnpm -r build
+      # Gate the release on the ROOT jest run (all 6 projects). NEVER
+      # `pnpm -r test` here — flow-* package test scripts launch live clusters.
+      - name: Test
+        env:
+          JEST_JUNIT_OUTPUT_DIR: reports/junit
+          JEST_JUNIT_OUTPUT_NAME: jest-junit.xml
+        run: pnpm run test:ci
+
+      - name: Upload test results (JUnit XML)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-test-results
+          path: reports/junit/
+          if-no-files-found: ignore
 
       - name: Configure git author
         run: |

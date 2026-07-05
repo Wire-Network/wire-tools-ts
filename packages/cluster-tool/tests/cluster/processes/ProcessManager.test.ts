@@ -1,7 +1,9 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+import type { ChildProcess } from "node:child_process"
 import { Readable } from "node:stream"
+import { Deferred, guard } from "@wireio/shared"
 import {
   ManagedProcess,
   ProcessManager,
@@ -45,6 +47,7 @@ describe("ProcessManager + ManagedProcess", () => {
   let manager: ProcessManager
   /** A copy of `sleep` named `anvil` — a live pid with a MANAGED basename. */
   let orphanPid: number
+  let orphanChild: ChildProcess
   let orphanPidFile: string
   /** A pidfile pointing at THIS jest process — an UNMANAGED basename (node). */
   let unmanagedPidFile: string
@@ -82,9 +85,9 @@ describe("ProcessManager + ManagedProcess", () => {
     const fakeAnvil = Path.join(dir, "anvil")
     Fs.copyFileSync("/usr/bin/sleep", fakeAnvil)
     const { spawn } = await import("node:child_process")
-    const child = spawn(fakeAnvil, ["300"], { stdio: "ignore", detached: true })
-    child.unref()
-    orphanPid = child.pid
+    orphanChild = spawn(fakeAnvil, ["300"], { stdio: "ignore", detached: true })
+    orphanChild.unref()
+    orphanPid = orphanChild.pid
     const anvilDirectory = Path.join(dir, "data", "anvil")
     Fs.mkdirSync(anvilDirectory, { recursive: true })
     orphanPidFile = Path.join(anvilDirectory, "anvil.pid")
@@ -100,8 +103,20 @@ describe("ProcessManager + ManagedProcess", () => {
   afterEach(async () => {
     await manager.stopAll()
   })
-  afterAll(() => {
-    if (isAlive(orphanPid)) process.kill(orphanPid, ProcessSignalName.SIGKILL)
+  afterAll(async () => {
+    // The sweep normally killed the orphan mid-suite; make sure its handle is
+    // FULLY closed (exit + stdio) before the worker tears down — a child
+    // handle still closing at worker exit is the intermittent jest
+    // "worker failed to exit gracefully" warning.
+    const closed = Deferred.useCallback<void>(deferred => {
+      if (orphanChild.exitCode != null || orphanChild.signalCode != null) {
+        deferred.resolve()
+        return
+      }
+      orphanChild.once("close", () => deferred.resolve())
+    }).promise
+    guard(() => process.kill(orphanPid, ProcessSignalName.SIGKILL))
+    await closed
     Fs.rmSync(dir, { recursive: true, force: true })
   })
 
