@@ -17,7 +17,7 @@ import {
   Report,
   type ClusterBuildStepOptions,
   type StepInput
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { SlashingScenarioConstants as Constants } from "../SlashingScenarioConstants.js"
 
 const {

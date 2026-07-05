@@ -5,7 +5,7 @@ import {
   type ClusterBuildStepOptions,
   type Report,
   type StepInput
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 
 /**
  * Flow-local user Steps — WIRE-side depositor provisioning. The harness ships

@@ -19,7 +19,7 @@ import {
   type ClusterBuildOptions,
   type ClusterConfig,
   type Logger
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { SwapFromWireScenarioConstants as Constants } from "./SwapFromWireScenarioConstants.js"
 import { SwapFromWireScenarioOutputs as Outputs } from "./SwapFromWireScenarioOutputs.js"
 import {

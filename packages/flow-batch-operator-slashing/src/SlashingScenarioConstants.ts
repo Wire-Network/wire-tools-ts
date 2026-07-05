@@ -1,5 +1,5 @@
 import { SlugName } from "@wireio/sdk-core"
-import { ProtocolTiming } from "@wireio/test-cluster-tool"
+import { ProtocolTiming } from "@wireio/cluster-tool"
 
 /**
  * Constants for the batch-operator-slashing flow. Names, tags, epoch budgets,

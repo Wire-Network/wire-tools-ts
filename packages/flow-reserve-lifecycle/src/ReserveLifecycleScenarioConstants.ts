@@ -1,5 +1,5 @@
 import { SlugName } from "@wireio/sdk-core"
-import { ProtocolTiming, SwapUserIdentities } from "@wireio/test-cluster-tool"
+import { ProtocolTiming, SwapUserIdentities } from "@wireio/cluster-tool"
 
 /**
  * Constants for the reserve-lifecycle flow. Amounts and reserve identities

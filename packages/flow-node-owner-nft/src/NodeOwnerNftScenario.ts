@@ -13,7 +13,7 @@ import {
   type ClusterBuild,
   type ClusterBuildContext,
   type ClusterBuildOptions
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { NodeOwnerNftScenarioConstants as Constants } from "./NodeOwnerNftScenarioConstants.js"
 import { NodeOwnerNftScenarioMintSteps as MintSteps } from "./steps/NodeOwnerNftScenarioMintSteps.js"
 import { NodeOwnerNftScenarioRegistrationSteps as RegistrationSteps } from "./steps/NodeOwnerNftScenarioRegistrationSteps.js"

@@ -27,7 +27,7 @@ import {
   type MockYieldEmitterContract,
   type OutputKey,
   type StepInput
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { YieldDistributionScenarioConstants as Constants } from "../YieldDistributionScenarioConstants.js"
 
 export namespace YieldDistributionScenarioEmitSteps {

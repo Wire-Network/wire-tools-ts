@@ -1,4 +1,4 @@
-import { FlowCLI } from "@wireio/test-cluster-tool"
+import { FlowCLI } from "@wireio/cluster-tool"
 import { SwapVarianceRevertScenario } from "./SwapVarianceRevertScenario.js"
 
 /** Run the swap variance-revert flow as an executable — exit code = report success. */

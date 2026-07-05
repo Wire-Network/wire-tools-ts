@@ -23,7 +23,7 @@ import {
   type ClusterBuildOptions,
   type ClusterConfig,
   type Logger
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { SwapPrivateReservesScenarioArtifacts as Artifacts } from "./SwapPrivateReservesScenarioArtifacts.js"
 import { SwapPrivateReservesScenarioConstants as Constants } from "./SwapPrivateReservesScenarioConstants.js"
 import { SwapPrivateReservesScenarioOutputs as Outputs } from "./SwapPrivateReservesScenarioOutputs.js"

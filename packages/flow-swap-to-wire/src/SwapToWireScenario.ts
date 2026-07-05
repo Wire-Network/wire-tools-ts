@@ -32,7 +32,7 @@ import {
   type ReserveManagerRequestSwapContract,
   type StepInput,
   type WireUser
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { SwapToWireScenarioConstants as Constants } from "./SwapToWireScenarioConstants.js"
 
 const {

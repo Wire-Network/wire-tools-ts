@@ -42,7 +42,7 @@ export interface ChainTokenAmount {
  * runtime state.
  */
 export namespace ClusterFiles {
-  /** Resolved cluster config written by `wire-test-cluster create`. */
+  /** Resolved cluster config written by `wire-cluster-tool create`. */
   export const ConfigFilename = "cluster-config.json" as const
   /** Serialized cluster state written after bootstrap. Hidden dotfile. */
   export const StateFilename = "cluster-state.json" as const
@@ -151,7 +151,7 @@ export interface OperatorNodeKeyMaterial {
 
 /**
  * Snapshot of a single cluster node written to state.json. `cmd` is the
- * exact argv the harness launches the process with on `wire-test-cluster run`.
+ * exact argv the harness launches the process with on `wire-cluster-tool run`.
  */
 export interface NodeState {
   nodeId: string | number
@@ -278,7 +278,7 @@ export interface ClusterConfig {
   /**
    * Overrides for the `sysio::setemitcfg` payload pushed during Phase 15b.
    * Any field omitted falls back to the value in
-   * `test-cluster-tool/src/cluster/constants.ts::EMISSION_CONFIG_DEFAULTS`
+   * `cluster-tool/src/cluster/constants.ts::EMISSION_CONFIG_DEFAULTS`
    * (which mirrors the wire-sysio `setemitcfg_with_cadence` fixture).
    *
    * Pure JSON-friendly numbers — the depot's `sysio.system::setemitcfg`
@@ -310,7 +310,7 @@ export interface ClusterConfig {
  * Mirrors the `sysio::setemitcfg` action payload (post wire-sysio PR #354 —
  * no `capital_bps`; implicit capital reserve = `10000 - compute - capex -
  * governance`). The full type lives in
- * `test-cluster-tool/src/cluster/constants.ts::EmissionConfig`; this
+ * `cluster-tool/src/cluster/constants.ts::EmissionConfig`; this
  * dependency-free copy keeps `debugging-shared` free of model deps while
  * letting `ClusterConfig.emissionConfig` carry a partial override.
  *

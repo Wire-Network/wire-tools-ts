@@ -9,7 +9,7 @@ import {
   type ClusterBuildContext,
   type ClusterBuildStepOptions,
   type StepInput
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 
 /**
  * Flow-local Step factories for the reserve OWNER provisioning writes: the

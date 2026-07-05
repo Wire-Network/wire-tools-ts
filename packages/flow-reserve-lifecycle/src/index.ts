@@ -1,4 +1,4 @@
-import { FlowCLI } from "@wireio/test-cluster-tool"
+import { FlowCLI } from "@wireio/cluster-tool"
 import { ReserveLifecycleScenario } from "./ReserveLifecycleScenario.js"
 
 /** Run the reserve-lifecycle flow as an executable — exit code = report success. */

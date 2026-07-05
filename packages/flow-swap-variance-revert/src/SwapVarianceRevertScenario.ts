@@ -27,7 +27,7 @@ import {
   type Logger,
   type ReserveManagerRequestSwapContract,
   type StepInput
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { SwapVarianceRevertScenarioConstants as Constants } from "./SwapVarianceRevertScenarioConstants.js"
 
 const log = getLogger(__filename)

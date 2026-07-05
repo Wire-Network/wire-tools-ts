@@ -19,7 +19,7 @@ import {
   type ClusterBuildContext,
   type ClusterBuildOptions,
   type ClusterConfig
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { SwapWithUnderwritingScenarioConstants as Constants } from "./SwapWithUnderwritingScenarioConstants.js"
 import { SwapWithUnderwritingScenarioSwapSteps as SwapSteps } from "./steps/index.js"
 

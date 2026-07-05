@@ -1,4 +1,4 @@
-import { Constants, NodeOwnerTier } from "@wireio/test-cluster-tool"
+import { Constants, NodeOwnerTier } from "@wireio/cluster-tool"
 
 /**
  * Constants for the node-owner NFT flow. Account names, the wrong-key fixture,

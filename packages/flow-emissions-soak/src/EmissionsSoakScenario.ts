@@ -14,7 +14,7 @@ import {
   type ClusterBuild,
   type ClusterBuildContext,
   type ClusterBuildOptions
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { EmissionsSoakScenarioConstants as Constants } from "./EmissionsSoakScenarioConstants.js"
 import {
   ClaimantIdentitiesKey,

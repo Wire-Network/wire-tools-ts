@@ -1,5 +1,5 @@
 import { SlugName } from "@wireio/sdk-core"
-import { ProtocolTiming, WireReserveTool } from "@wireio/test-cluster-tool"
+import { ProtocolTiming, WireReserveTool } from "@wireio/cluster-tool"
 
 /**
  * Constants for the private-reserve swap flow: the same-owner PRIVATE reserve

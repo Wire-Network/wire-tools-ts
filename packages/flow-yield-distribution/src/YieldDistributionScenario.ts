@@ -18,7 +18,7 @@ import {
   type ClusterBuildContext,
   type ClusterBuildOptions,
   type StepInput
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { YieldDistributionScenarioConstants as Constants } from "./YieldDistributionScenarioConstants.js"
 import { YieldDistributionScenarioEmitSteps as EmitSteps } from "./steps/index.js"
 

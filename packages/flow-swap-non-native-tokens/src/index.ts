@@ -1,4 +1,4 @@
-import { FlowCLI } from "@wireio/test-cluster-tool"
+import { FlowCLI } from "@wireio/cluster-tool"
 import { SwapNonNativeScenario } from "./SwapNonNativeScenario.js"
 
 /** Run the non-native-token swap flow as an executable — exit code = report success. */

@@ -4,7 +4,7 @@
  * cluster-state active-probing rule
  * (`wire-platform-manifest/.claude/rules/cluster-state-active-probing.md`).
  *
- * Watches ONE running flow (a `wire-test-cluster` / flow run driving a cluster
+ * Watches ONE running flow (a `wire-cluster-tool` / flow run driving a cluster
  * at `--cluster-path`) and, every `--interval-seconds`, executes ALL six probes
  * from the rule, printing ONE line-oriented, flushed heartbeat on stdout:
  *

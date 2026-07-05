@@ -12,7 +12,7 @@ import {
   type ClusterBuildStepOptions,
   type ImportSeedChainKind,
   type StepInput
-} from "@wireio/test-cluster-tool"
+} from "@wireio/cluster-tool"
 import { EmissionsSoakScenarioConstants as Constants } from "../EmissionsSoakScenarioConstants.js"
 import {
   ClaimantIdentitiesKey,

@@ -1,4 +1,4 @@
-import { outputKey, type Books } from "@wireio/test-cluster-tool"
+import { outputKey, type Books } from "@wireio/cluster-tool"
 
 /**
  * Typed cross-step output keys for the private-reserve swap flow. Each swap

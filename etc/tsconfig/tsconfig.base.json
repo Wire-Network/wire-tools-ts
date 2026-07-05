@@ -32,11 +32,11 @@
     "target": "ES2022",
     "types": ["node", "jest"],
     "paths": {
-      "@wireio/test-cluster-tool": [
-        "./packages/test-cluster-tool/src/"
+      "@wireio/cluster-tool": [
+        "./packages/cluster-tool/src/"
       ],
-      "@wireio/test-cluster-tool/*": [
-        "./packages/test-cluster-tool/src/*"
+      "@wireio/cluster-tool/*": [
+        "./packages/cluster-tool/src/*"
       ],
       "@wireio/test-flow-operator-collateral-deposit": [
         "./packages/flow-operator-collateral-deposit/src"

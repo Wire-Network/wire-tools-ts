@@ -1,4 +1,4 @@
-import { FlowCLI } from "@wireio/test-cluster-tool"
+import { FlowCLI } from "@wireio/cluster-tool"
 import { YieldDistributionScenario } from "./YieldDistributionScenario.js"
 
 /** Run the yield-distribution flow as an executable — exit code = report success. */

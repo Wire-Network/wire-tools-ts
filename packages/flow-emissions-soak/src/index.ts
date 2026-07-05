@@ -1,4 +1,4 @@
-import { FlowCLI } from "@wireio/test-cluster-tool"
+import { FlowCLI } from "@wireio/cluster-tool"
 import { EmissionsSoakScenario } from "./EmissionsSoakScenario.js"
 
 /** Run the emissions-soak flow as an executable — exit code = report success. */
