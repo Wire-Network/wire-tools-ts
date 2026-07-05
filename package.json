@@ -7,10 +7,12 @@
     "build": "tsc -b tsconfig.json",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "test": "pnpm run build && NODE_OPTIONS=--experimental-vm-modules jest",
+    "test:ci": "pnpm run build && NODE_OPTIONS=--experimental-vm-modules jest --reporters=default --reporters=jest-junit",
     "clean": "./scripts/clean.sh && pnpm -r run clean"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
+    "jest-junit": "^16.0.0",
     "@types/node": "25.5.0",
     "@types/proper-lockfile": "^4.1.4",
     "@wireio/opp-typescript-models": "^1.0.26",

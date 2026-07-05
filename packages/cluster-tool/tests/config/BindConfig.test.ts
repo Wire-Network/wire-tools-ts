@@ -2,7 +2,7 @@ import { jest } from "@jest/globals"
 import { spawn, spawnSync } from "node:child_process"
 import Fs from "node:fs"
 import Path from "node:path"
-import { guard } from "@wireio/shared"
+import { Deferred, guard } from "@wireio/shared"
 import { ProcessSignalName } from "@wireio/cluster-tool/cluster/processes"
 
 /**
@@ -341,21 +341,34 @@ describe("BindConfig", () => {
      * reaps the seeded registration, failing the live-registrant tests.
      */
     let registrant: ReturnType<typeof spawn>
-    /** How long the registrant child stays alive — outlives any suite run. */
-    const RegistrantLifetimeMs = 60_000
     beforeAll(() => {
-      registrant = spawn(
-        process.execPath,
-        ["-e", `setTimeout(() => {}, ${RegistrantLifetimeMs})`],
-        { stdio: "ignore" }
-      )
-      // The handle must not hold this worker open; afterAll reaps the child.
-      registrant.unref()
+      // The child blocks on its stdin pipe, so it lives EXACTLY as long as
+      // this worker: afterAll kills it on the normal path, and if the worker
+      // dies any other way the pipe EOF drains its event loop and it exits on
+      // its own — no idle-timer lifetime to race the suite, no orphan window.
+      // Deliberately NOT unref'd: if the reap below ever fails, jest must
+      // report the leaked handle, not hide it.
+      registrant = spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+        stdio: ["pipe", "ignore", "ignore"]
+      })
       expect(registrant.pid).toBeGreaterThan(0)
     })
-    afterAll(() => {
-      // Best-effort reap — swallow ESRCH if the child already exited.
+    afterAll(async () => {
+      // Await "close" (exit + stdio teardown), not "exit": the stdin pipe
+      // socket and the child handle must be FULLY gone before the worker
+      // tears down, or their closing races jest's exit grace (the
+      // intermittent "worker failed to exit gracefully" warning).
+      const closed = Deferred.useCallback<void>(deferred => {
+        if (registrant.exitCode != null || registrant.signalCode != null) {
+          deferred.resolve()
+          return
+        }
+        registrant.once("close", () => deferred.resolve())
+      }).promise
+      registrant.stdin.destroy()
+      // Best-effort signal — ESRCH if the child already exited.
       guard(() => process.kill(registrant.pid, ProcessSignalName.SIGKILL))
+      await closed
     })
 
     it("registryPath honors the env override (installed by jest.setup)", () => {

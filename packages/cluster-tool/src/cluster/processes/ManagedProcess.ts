@@ -129,10 +129,17 @@ export abstract class ManagedProcess {
       if (!this.exited.isSettled()) this.exited.resolve(1)
     })
     child.on("exit", (code, signal) => {
-      const exitCode = code ?? (signal ? 1 : 0)
       this.log.info(`${this.label} exited (code=${code}, signal=${signal})`)
       Fs.rmSync(this.pidFile, { force: true })
       this.manager.closeProcessLogStream(this.label)
+    })
+    // `exited` settles on "close", not "exit": close fires only once the
+    // stdio pipes are torn down too, so stop()/kill()/wait() resolving
+    // guarantees NO lingering pipe-socket or child handles — a child handle
+    // still closing when a jest worker is asked to exit is exactly the
+    // intermittent "worker failed to exit gracefully" warning.
+    child.on("close", (code, signal) => {
+      const exitCode = code ?? (signal ? 1 : 0)
       if (!this.exited.isSettled()) this.exited.resolve(exitCode)
     })
 

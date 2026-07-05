@@ -1,226 +1,256 @@
 # Wire E2E Tests
 
-End-to-end test harness and test suites for the WIRE blockchain (OPP flows across WIRE, ETH, and SOL chains).
+End-to-end cluster harness and flow suites for the WIRE blockchain (OPP flows
+across the WIRE depot and the Ethereum + Solana outposts).
+
+**Binding companions to this file:**
+
+- [`STYLE.md`](STYLE.md) — the repo's style guide. The "Orchestration Model",
+  "Timing Budgets", "Ports & Parallel Runs", and "Naming Standards" sections
+  are load-bearing for ALL new code; read them before designing anything.
+- `wire-platform-manifest/.claude/rules/*.md` — authoritative cross-repo rules
+  (injected by hook). Where this file summarizes one, the rule file wins.
 
 ## Package Manager
 
-**pnpm** (`pnpm@10.32.1`, specified in `packageManager` field). Node `>=22` required.
-
+**pnpm** (`packageManager` field pins the version). Node `>=22` required.
 Never use `npm` or `yarn`.
 
 ## Build & Test
 
 ```bash
-# Install dependencies
-pnpm install
+pnpm install               # links workspace + sibling-repo packages
+pnpm build                 # tsc -b project references (incremental)
+pnpm test                  # build + jest across all 6 jest projects
+pnpm --filter @wireio/cluster-tool test    # harness unit tests only
+pnpm clean                 # remove lib/ + tsbuildinfo everywhere
 
-# Build all packages (uses TypeScript project references)
-pnpm build
-
-# Build in watch mode
-pnpm build:dev
-
-# Run all tests (builds first)
-pnpm test
-
-# Run a specific flow's tests
-pnpm --filter @wireio/test-flow-operator-collateral-deposit test
-pnpm --filter @wireio/test-flow-swap-with-underwriting test
-pnpm --filter @wireio/test-flow-batch-operator-termination test
-pnpm --filter @wireio/test-flow-swap-variance-revert test
-
-# Run only harness unit tests
-pnpm --filter @wireio/cluster-tool test
-
-# Format code
-pnpm format
-
-# Clean all build artifacts
-pnpm clean
+# Run ONE flow as a standalone executable (flows are NOT jest — see below):
+env WIRE_CLUSTER_PATH=/tmp/wire-flow \
+    WIRE_BUILD_PATH=<wire-sysio>/build/debug \
+    WIRE_ETH_PATH=<wire-ethereum> \
+    WIRE_SOLANA_PATH=<wire-solana> \
+  node packages/flow-operator-collateral-deposit/lib/index.js
 ```
+
+A flow exits `0` iff every Report step succeeded. The e2e gate
+(`wire-platform-build-system` → `run-flows.mjs`) discovers every `flow-*`
+package dynamically and runs them through a work-stealing pool
+(`FLOW_MAX_CONCURRENCY`); never special-case one flow's environment there.
 
 ## Monorepo Structure
 
 pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 
-| Package | Name | Purpose |
-|---------|------|---------|
-| `cluster-tool` | `@wireio/cluster-tool` | Core library: process managers, chain clients, bootstrap, CLI |
-| `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Flow: Node Operator Collateral Deposit |
-| `flow-swap-with-underwriting` | `@wireio/test-flow-swap-with-underwriting` | Flow: Bidirectional SWAP (Ethereum ↔ Solana) with Underwriting |
-| `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Flow: Batch Operator Termination via Delivery Underperformance |
-| `flow-swap-variance-revert` | `@wireio/test-flow-swap-variance-revert` | Flow: Swap Variance-Tolerance Revert |
+| Package | Purpose |
+|---------|---------|
+| `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
+| `flow-*` (13 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and the six swap variants |
+| `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
+| `test-app-server` | Fixture app server used by debugging tests |
 
-Flow packages depend on `harness` via `workspace:*`.
+Flow packages depend on `@wireio/cluster-tool` via `workspace:*`.
 
 ## TypeScript
 
-- **Build**: `tsc -b` with project references (incremental, composite)
-- **Module system**: CommonJS output (`"type": "commonjs"` in all packages)
-- **Base config**: `etc/tsconfig/tsconfig.base.cjs.json` (module=nodenext, target=esnext)
-- **Source**: `src/` → **Output**: `lib/`
-- **Import paths**: Always use `.js` extensions (nodenext module resolution)
-- **Path mappings**: `@wireio/*` → `packages/*/src` (in base tsconfig)
-- **Jest tsconfig**: `etc/tsconfig/tsconfig.base.jest.json` (disables composite/incremental)
+- **Build**: `tsc -b` with project references (incremental, composite);
+  source `src/` → output `lib/` (CommonJS, `"type": "commonjs"`,
+  `module: nodenext`).
+- **Import specifiers always carry `.js`** (nodenext resolution) — including
+  barrel re-exports (`export * from "./Paths.js"`, `"./<subdir>/index.js"`).
+- **Path mappings**: `@wireio/*` → `packages/*/src` in the base tsconfig;
+  each jest config's `moduleNameMapper` does the equivalent, so the alias form
+  works identically under tsc, jest, and runtime.
+- `strictNullChecks` is OFF (`etc/tsconfig/tsconfig.base.json`) — never add
+  `?? null` / `| null` ceremony; explicit `null` only where it carries runtime
+  meaning (JSON persistence). See the manifest `prefer-null-over-undefined.md`.
+
+## The Orchestration Model (read STYLE.md "Orchestration Model" first)
+
+One declarative model is shared by the `wire-cluster-tool` CLI and every flow:
+
+- `ClusterBuild` holds a tree of `ClusterBuildPhaseGroup` →
+  `ClusterBuildPhase` → `ClusterBuildStep`; running it produces the
+  **`Report`** (CSV/MD/HTML under `<cluster>/reports/`) — the per-step
+  narrative that IS the deliverable. `ClusterBuildDefaults.create()` registers
+  the ~40-phase bootstrap; a flow's `FlowScenario.build(cluster)` appends its
+  scenario phases.
+- **Every write/tx/spawn is its own Step** (factory `plan*`, named runner
+  `run*`, typed `StepInput`, actor-first signature); reads run freely inside
+  runners; assertions that ARE the scenario ride `verifyStep`. Cross-step data
+  flows through `ctx.outputs` (`OutputKey<T>`) / `ctx.keyStore`
+  (`ClusterKeyStore`) — never closures.
+- Steps palette: `Steps.contracts.sysio.<contract>.<abi-action>` +
+  `Steps.processes.<daemon>.planStart` + semantic composites
+  (`Steps.keys`, `Steps.operator`, `Steps.registry`, …).
 
 ## Testing
 
-- **Framework**: Jest with `ts-jest`
-- **Test location**: `packages/*/tests/*.test.ts`
-- **Timeout**: 120s for flow tests (long-running chain operations)
-- **Run mode**: `--runInBand` (no parallelization — tests manage shared processes)
-- **Config**: Root `jest.config.ts` is multi-project, each package has its own `jest.config.ts`
+- **`cluster-tool` + `debugging-*` keep jest** (`tests/` mirrors `src/`;
+  ts-jest; `NODE_OPTIONS=--experimental-vm-modules` is wired into the test
+  scripts for the ESM dynamic imports). Root `jest.config.ts` is
+  multi-project.
+- **`flow-*` packages have NO jest.** A flow is verified by RUNNING its built
+  `lib/index.js` against a live cluster (its `test` script does exactly that).
+- **Unit tests are mandatory for every created or modified symbol** — happy
+  path + at least one failure/edge case, in the same commit. Mirror the `src/`
+  tree under `tests/`. No exceptions for "trivial" code.
+- Tests must be environment-independent: never depend on incidental process
+  ancestry (spawn a real child when a live pid with a known basename is
+  needed), never bind fixed ports (`await BindConfig.findAvailable(...)` in
+  `beforeAll`), never leak children or timers (tie helper-child lifetime to
+  the worker, await the reap in `afterAll`).
 
-### Unit tests are mandatory for every new or modified symbol
+### Live flow runs — monitoring is mandatory
 
-Every TypeScript function, class, type, interface, module, or exported constant that is **created or edited** in the course of a task MUST ship with unit tests in the same PR/commit.
+Any `flow-*` run against a cluster is watched by the canonical heartbeat
+monitor (`scripts/flow-heartbeat-monitor.mjs --cluster-path <cluster>`, 90s
+cadence, all six probes) per
+`wire-platform-manifest/.claude/rules/cluster-state-active-probing.md`. Extend
+that script rather than hand-rolling probes. Epoch stall = stop the run,
+preserve forensics, diagnose (`epoch-stall-is-fatal.md`).
 
-- **Coverage**: every exported symbol has at least one behavior-verifying test — happy path plus one failure / edge case minimum. `beforeEach` state resets, mocks, and temp-dir fixtures are allowed.
-- **Location**: mirror the `src/` tree under `tests/` — a test file for `src/services/ServiceManager.ts` lives at `tests/services/ServiceManager.test.ts`. Sub-utility files get their own tests; don't fold five utilities into one test file.
-- **No exceptions for "trivial" code**: a one-line helper still warrants a one-line test. Trivial-looking code is where regressions hide.
-- **Tests must run green locally** before declaring a task complete — `pnpm --filter <package> test` must pass with non-zero tests executed.
-- This rule applies equally to production code and test tooling (fixtures, mocks).
+## No `src/` traversal in `import` / `export` — EVER
 
-### No `src/` traversal in `import` / `export` — **EVER**
+**No `import`/`export` specifier in this repo may contain `src/`.** Cross-package
+imports use the package alias (`@wireio/cluster-tool`, `@wireio/shared`, …) or
+a directory subpath (`@wireio/cluster-tool/cluster/processes`); in-package
+imports are relative with `.js` extensions. The tsconfig `paths` map and each
+jest `moduleNameMapper` resolve the alias to source. If an import tempts you
+to include `src/`, the barrel or path map is broken — fix it there.
 
-**No `import` or `export` statement in this repo may contain `src/` anywhere in its specifier.** This applies to every file — production code, test files, tooling scripts, barrels, examples. Period.
+## Code Quality Invariants (scan every diff against these)
 
-Reaching into `src/` (via `./src/...`, `../src/...`, or `../../src/...`) couples the consumer to internal file layout and defeats the barrel-export + package-alias contract.
-
-- **Correct (external / alias import)**: `import { ServiceManager } from "@wireio/debugging-client-tool-tui/services/ServiceManager.js"`
-- **Correct (in-package relative)**: `import { ServiceManager } from "./ServiceManager.js"` (inside `src/services/`)
-- **Wrong**: `import { ServiceManager } from "../../src/services/ServiceManager.js"`
-- **Wrong**: `export * from "./src/services/index.js"`
-- **Wrong**: `import { ServiceManager } from "@wireio/debugging-client-tool-tui/src/services/ServiceManager.js"`
-
-The `moduleNameMapper` in every package's `jest.config.cjs` maps `@wireio/<pkg>/(.*)` → `<rootDir>/src/$1`; the `tsconfig.base.cjs.json` paths mapping does the equivalent for `tsc`. Both resolve the alias to the source file — the alias form works identically in tests and at runtime. If a module isn't reachable via its barrel yet, add the barrel entry first; never bypass the barrel by traversing `src/`.
-
-If you find yourself tempted to write a `src/`-containing specifier to "just make it compile", stop — the barrel or the tsconfig path mapping is broken and needs fixing there, not worked around here.
+1. **Duplicated helpers** — extract at the right level: package-internal
+   `src/utils/` topic file → shared across packages: `cluster-tool`'s
+   `src/utils/` → usable outside this repo: promote into `@wireio/shared` /
+   `@wireio/sdk-core` in `wire-libraries-ts`. Never copy-paste between flows
+   or between the harness and a flow; subclass-common behavior goes on the
+   base as `protected`.
+2. **Magic literals** — every non-trivial value gets a named constant
+   (companion namespace / `Constants.ts`); protocol identifiers get an enum.
+3. **Enums over raw values** — always the member (`ProcessSignalName.SIGKILL`,
+   `ChainKind.ETHEREUM`), never the string/number.
+4. **Import hygiene** — order: Node built-ins → external → internal monorepo →
+   relative, blank line between groups; no cross-package relative paths; no
+   re-exporting third-party surface from local barrels.
+5. **Filename shape** — PascalCase for class/type-primary files, camelCase
+   topic files for utilities, `kebab-case` directories; component kind picks
+   the folder + suffix (see STYLE.md "File & Directory Naming").
+6. **Full JSDoc on exported symbols** — description, `@param`, `@return`;
+   constants say what changing them affects.
+7. **Process management is `child_process.spawn` + `tree-kill`** — never pm2
+   or another orchestrator.
+8. **Typed Redux hooks** in TUI code (`useAppDispatch`/`useAppSelector`) —
+   the cross-process wallet extension in `wire-libraries-ts` is the sole
+   raw-hooks exception.
 
 ## CLI Tool
 
-`wire-cluster-tool` (bin from harness package):
+`wire-cluster-tool` (bin from `cluster-tool`; alias `wtc`):
 
 ```bash
-wire-cluster-tool --chain-dir=<path> create --build-dir=<wire-sysio-build> [options]
-wire-cluster-tool --chain-dir=<path> run      # start cluster, Ctrl+C to stop
-wire-cluster-tool --chain-dir=<path> destroy   # stop + delete data
+wire-cluster-tool create --cluster-path <dir> --build-path <wire-sysio-build> \
+  --ethereum-path <wire-ethereum> --solana-path <wire-solana> [options]
+wire-cluster-tool destroy -d <dir>     # stop + delete
 ```
 
-## Key Architecture
+`create` exposes every `ClusterBuildOptions` leaf as a `--kebab-path` flag via
+the SAME `applyClusterBuildOptionsArgs` surface every flow uses (env vars
+`WIRE_*` seed the path flags). Exit code mirrors the bootstrap Report.
 
-### Process Management (`harness/src/processes/`)
-- **ProcessManager**: Core process lifecycle manager built on `child_process.spawn` + `tree-kill` (NOT pm2). On startup, kills existing `nodeop`/`kiod`/`anvil`/`solana-test-validator` via OS-level `pkill`. Registers exit handlers to clean up on tool exit. Supports per-process and combined cluster file logging when `clusterDir` is set.
-- **WIREChainManager**: Manages `nodeop` + `kiod` processes
-- **AnvilManager**: Manages local Ethereum node (`anvil`)
-- **SolanaValidatorManager**: Manages `solana-test-validator`
+## Key Architecture (`packages/cluster-tool/src/`)
 
-### Cluster Management (`harness/src/cluster/`)
-- **ClusterManager**: Orchestrates full WIRE cluster lifecycle — creates directory structure, generates genesis + config, runs bootstrap sequence, manages node state persistence
-- Cluster data lives under `<chainDir>/data/node_<id>/` with per-node config, blocks, and logs
-
-### Clients (`harness/src/clients/`)
-- **Clio**: WIRE CLI wrapper (wallet, contract deployment, account management)
-- **WIREClient**: HTTP client for WIRE chain RPC
-- **ETHClient**: Ethereum client (ethers.js)
-- **SOLClient**: Solana client (@solana/web3.js)
-
-### Bootstrap (`harness/src/bootstrap/`)
-- **WIREBootstrap**: Chain initialization (system contracts, accounts, producers)
-- **ETHBootstrap**: Anvil setup + OPP contract deployment
-- **SOLBootstrap**: Solana validator + Anchor program deployment
+- **`orchestration/`** — the engine (`ClusterBuild*`), `ClusterBuildContext`
+  (clients + `outputs` + `keyStore` + typed events), `OutputStore`,
+  `ClusterBuildDefaults` (bootstrap phases), `steps/` palette, per-chain
+  outpost bootstrappers, `outputs/` (typed cross-step values incl.
+  `OperatorAccount`, `ClusterKeyStore`).
+- **`cluster/`** — slim `ClusterManager` (dirs/launch/destroy) +
+  `processes/`: construction-safe `ManagedProcess` base (self-registers,
+  graceful stop with cleared escalation timer) and
+  `NodeopProcess`/`KiodProcess`/`AnvilProcess`/`SolanaValidatorProcess`
+  (per-cluster disjoint `--dynamic-port-range` — REQUIRED for parallel runs).
+- **`clients/`** — `WireClient` (typed contract client via
+  `getSysioContract(name).actions/tables`, finality waits, `ClioRunner`),
+  `EthereumClient`, `SolanaClient`, `KeyGenerator.create<T extends KeyType>`.
+- **`config/`** — `ClusterBuildOptions` → `ClusterConfig.resolve` →
+  persisted `cluster-config.json`; `BindConfig` (file-locked, cross-process
+  port registry, `findAvailable`/`findAvailableRange`); `NodeConfig.plan` +
+  renderers.
+- **`report/`** — `Report` + CSV/MD/HTML renderers + `StepExtraRecorder`
+  (ALS-scoped per-step extra capture — use native `mapSeries` on recorder
+  paths, Bluebird detaches ALS).
+- **`flow/`** — `FlowScenario`/`FlowCLI` + shared scenario contexts +
+  `oppEnvelopeScan`.
+- **`Constants.ts`** — dev keys, emission defaults, and **`ProtocolTiming`**
+  (the timing envelope every protocol-wait budget derives from — see
+  STYLE.md "Timing Budgets"; no concurrency-derived scaling exists).
 
 ## Local Package Linking
 
-`.pnpmfile.cjs` hooks resolve `@wireio/*` packages from sibling repos:
-- `../wire-libraries-ts/packages/` → `@wireio/sdk-core`, `@wireio/shared`, `@wireio/shared-node`
-- `../wire-opp/typescript/` → `@wireio/opp-typescript-models`
+`.pnpmfile.cjs` hooks resolve `@wireio/*` packages from sibling repos
+(`../wire-libraries-ts/packages/` → `sdk-core`/`shared`/`shared-node`;
+`wire-sysio/build/opp/typescript` → `@wireio/opp-typescript-models`). They
+link automatically on `pnpm install` when the siblings exist.
 
-> **Do not depend on `@wireio/opp-solidity-models` here.** That package is `wire-ethereum`-only — see [`<wire-platform-root>/.claude/rules/opp-models-packages.md`](../.claude/rules/opp-models-packages.md). The TypeScript surface of both packages is identical; importing the Solidity-track package from a TS-only consumer couples the consumer to Solidity-track regen timing and produces silent stale-enum failures.
-
-These link automatically on `pnpm install` if the sibling directories exist.
+> **Never depend on `@wireio/opp-solidity-models` here** — it is
+> `wire-ethereum`-only (`opp-models-packages.md`).
 
 ## Environment Variables
 
-- `WIRE_BUILD_DIR`: Path to wire-sysio build directory (used by flow tests)
-- `WIRE_CHAIN_DIR`: Override default chain data directory
-- `LOG_LEVEL`: Logging verbosity (default: `info`)
+| Variable | Role |
+|---|---|
+| `WIRE_CLUSTER_PATH` | Cluster data dir (seeds `--cluster-path`; the e2e gate's ONLY per-flow value) |
+| `WIRE_BUILD_PATH` | wire-sysio build dir (binaries + contract artifacts) |
+| `WIRE_ETH_PATH` / `WIRE_SOLANA_PATH` | Outpost repo roots |
+| `WIRE_FLOW_TIMEOUT_SCALE` | EXPLICIT operator override of flow timing (default 1, clamped [1,5]); no code derives it |
+| `WIRE_ETH_DEPLOYMENTS_PATH` | Per-cluster hardhat deployments dir (parallel-run isolation) |
+| `WIRE_BIND_REGISTRY_PATH` | Bind-registry dir override (tests sandbox it) |
+| `WIRE_SOLANA_VALIDATOR_VERBOSE` | `"1"` drops `--quiet` so program logs land in the process log |
+| `LOG_LEVEL` | Logging verbosity (default `info`) |
 
-## Documentation Comments
+## How future sessions should design and produce code here
 
-All generated or modified TypeScript code **must** include JSDoc comments (`/** ... */`), compatible with Docusaurus.
-
-## Code Style
-
-See `STYLE.md` for full patterns and examples.
-
-- Prettier: no semicolons, no trailing commas, double quotes, 2-space indent, arrow parens `avoid`
-
-### Critical rules
-
-- **No string/number literals for known values.** If a value exists in an enum, constant, or namespace, use the identifier. `ClusterCommand.create`, not `"create"`. `AnvilManager.DefaultChainId`, not `31337`. `ClusterFiles.StateFilename`, not `".cluster_state.json"`.
-- **No redundant dispatch.** If the framework routes commands (Yargs `.command()` handlers), do not add a `match()`/`switch` on top. Collocate handler logic with the command definition.
-- **Modern JS iteration only.** `.forEach` / `.map` / `.filter` / `.reduce` / spread — never `for`, `for...of`, `for...in` for iteration. `while` is acceptable ONLY for deadline polling with an explicit timeout. For sequential async, use `Bluebird.each` / `Bluebird.mapSeries` / `Bluebird.reduce` (already in the harness tree).
-- **FP branching**. Prefer `match` (from `ts-pattern`) for multi-branch value-producing dispatch or exhaustive enum checks. Single-guard `if` is fine — don't `match` two branches.
-  - `Future` from `@3fv/prelude-ts` for async flows.
-  - `Option`/`asOption` from `@3fv/prelude-ts` for optional values and chained flows.
-  - `Either` from `@3fv/prelude-ts` for error handling.
-  - `Deferred.useCallback` from `@wireio/shared` for promisifying callback APIs.
-- **Enum over `as const` for string-literal maps.** `as const` is fine for complex / polymorphic value maps. For pure `{ Key: "key-string" }` tables, use an `enum` — it gives reverse mapping and survives rename refactoring.
-- **Enum members as identifiers everywhere.** Command names, config keys, roles, chain kinds — always the enum member, never the raw string. Use enum reverse mapping (`SomeEnum[value]`) instead of hand-rolled lookup tables.
-- **Fluent chains over intermediate variables.** Methods that configure state return `this`. Write `createClusterManager(config).loadState().startAndWait()`, not three separate statements.
-- **Extract focused helpers.** Any logically distinct operation (load config, create manager, resolve paths) becomes a named module-level function with assertions at entry.
-- **`identity` for no-op params.** When a framework callback is required but unneeded, pass `identity` from lodash.
-- **Module-level shared state via middleware.** Cross-cutting values (global args, derived paths) go in a module-level object populated by Yargs `.middleware()`, destructured in handlers.
-- **Typed Redux hooks.** Use `useAppDispatch` / `useAppSelector` (or equivalent typed wrappers exported from the slice's store file), never bare `useDispatch` / `useSelector`. Exception: cross-process extension packages (e.g. `wallet-browser-ext` in `wire-libraries-ts`) keep raw hooks by design — don't "fix" them.
-- **Process management uses `child_process.spawn` + `tree-kill`.** Never reintroduce pm2 or other orchestration libraries without a concrete justification.
-
-## Code Quality Invariants
-
-The rules above are enforced on every change. Before declaring a task complete, scan the diff for:
-
-1. **Duplicated helpers.** If the same function / guard / computation appears in two files, extract it:
-   - **Package-internal:** a `src/util/` module exported for in-package use.
-   - **Shared across packages in this repo:** `harness/src/util/` so all flows can import.
-   - **Usable outside this repo:** promote into `@wireio/shared` / `@wireio/sdk-core` over in `wire-libraries-ts`, then depend on it from here. Never copy-paste between flows or between harness and a flow.
-   - **Subclass-common behaviour:** `protected` method on the base class, not repeated in every subclass.
-
-2. **Magic literals.** Every string or numeric value that isn't a trivial index / bound gets a named constant. Grouping options:
-   - **File-local:** `const X = ...` at module top, or `as const` tuples / objects for literal-narrowed types.
-   - **Cross-file within a package:** `export const` from a `constants.ts`.
-   - **Protocol identifiers (command names, RPC method names, event names, endpoint paths):** an `enum` or `as const` object so IDE rename works.
-
-3. **Enums over raw values.** Command names, statuses, chain kinds, attestation types — always the enum member. `ClusterCommand.create` not `"create"`; `ChainKind.ETHEREUM` not `2`. Rename propagates through the compiler; raw strings do not.
-
-4. **Import hygiene.**
-   - **No cross-package `../src/...` / `../../../lib/...` paths.** Cross-package imports use the package alias (`@wireio/cluster-tool`, `@wireio/shared`, etc.). In-package relative imports are fine.
-   - **Do not re-export third-party surface from local barrels.** If a consumer needs a type from `@wireio/opp-typescript-models`, they import it from there directly — don't list 9 of its types in a `debugging-shared` barrel.
-   - **Import order:** Node built-ins → external packages → internal monorepo packages → relative imports. Blank line between groups.
-
-5. **Barrel-export discipline.**
-   - Every subdirectory with public exports has an `index.ts` barrel of `export * from "./<file>.js"` lines only — no logic, types, or constants live in the barrel itself.
-   - **Barrel file re-exports INCLUDE the `.js` extension.** `export * from "./Paths.js"`, never `"./Paths"`.
-   - **Parent barrels re-export child subdirectories via `export * from "./<subdir>/index.js"`** — NOT `"./<subdir>"`. Always spell out `index.js`.
-   - **All relative imports in `.ts` files include the `.js` extension.** `import { X } from "./foo.js"`, never `"./foo"`. Same applies to directory references — always `"./dir/index.js"`, never `"./dir"`.
-   - Consumers import from the package root or from a directory path (`import { Foo } from "@scope/pkg"` or `"@scope/pkg/rpc"`) — never from a specific file. Moving `Foo.ts` between subdirectories should not ripple through callers.
-   - Never `export *` a third-party package from a local barrel. See STYLE.md "Barrel Exports" for the full pattern.
-
-6. **Filename shape.** Class- or type-primary files → PascalCase (`AnvilManager.ts`, `ClusterManager.ts`, `JsonLogRecord.ts`). Function/const/utility files → camelCase (`logger.ts`, `keyGen.ts`, `startCmd.ts`, `lineRender.tsx`). If the primary export changes shape (class → utility fns, or fns → type), rename the file to match. **Directories are always `kebab-case`** — `process-monitor/`, `log-tailing/`, never `processMonitor/` or `ProcessMonitor/`. See STYLE.md "File & Directory Naming" for the full rule.
-
-7. **Full JSDoc on exported items.**
-   - Functions / methods: description, `@param` for each arg, `@return` (unless `void`), `@example` when non-obvious.
-   - Exported constants: description + **what changing the value affects** (one line is enough, but it has to answer "why would I touch this").
-   - NodeJS typed literals like `"pipe"`, `"inherit"`, `"ignore"` in `StdioOptions` stay inline — they're typed, not magic.
-
-## Cross-repo rules
-
-- **OPP models packages have repo-specific consumers.** `@wireio/opp-typescript-models` is the canonical TS package for `wire-tools-ts` (and `wire-libraries-ts` where applicable). `@wireio/opp-solidity-models` is `wire-ethereum`-ONLY. Never depend on `opp-solidity-models` from a TS-only repo — see [`<wire-platform-root>/.claude/rules/opp-models-packages.md`](../.claude/rules/opp-models-packages.md). And neither package may appear in a `wire-libraries-ts` package.json — the generators that produce them live there.
-- **Shared types consumed by both a server and its client live in the shared package** (`debugging-shared` for the debugging server/client/TUI; don't duplicate host/port/version strings across two `package.json`s).
+1. **Design from the rules, not from habit.** Before proposing a shape, check
+   STYLE.md's orchestration/naming/options sections and the manifest rules.
+   Design decisions are NEVER justified by "fewer files" or "simpler" —
+   semantic, typed, explicit structure wins (`design-not-driven-by-file-count-or-simplicity.md`).
+2. **Names come from the author's standard** (`standard-names-not-invented.md`):
+   `assert*` never `require*`, `create*`/`new*`/`append`, `plan*`/`run*` for
+   orchestration, full words (`ethereum`, `WireKeyGenerator`), no
+   abbreviations. A user correction IS the standard — sweep it everywhere in
+   the same change.
+3. **Search generated types before declaring any type**
+   (`@wireio/opp-typescript-models` + `SysioContracts`); typed table
+   accessors over raw `getTableRows`; enums first-class at every call site
+   (`ProcessSignalName`, `ChainKind`, …); no `unknown`/`any` shortcuts.
+4. **Every write is a Step; tools return orchestration units** — never a bare
+   side-effecting async function (`tools-return-orchestration-units.md`).
+5. **Timing = envelope, ceilings = loaded-host worst case, polls return
+   early.** Never reintroduce derived timeout scaling.
+6. **Resource hygiene**: race timers cleared on settle, sockets/children
+   closed and awaited, `.unref()` only for long-lived module timers — never to
+   hide a leak.
+7. **Ship tests with every symbol, run them, and report honestly** — a claim
+   of "done" requires green output in hand; gaps are surfaced, not silent
+   (`execute-the-entire-plan.md`).
+8. **VCS discipline**: local edits are always fine; commits and every remote
+   write happen ONLY on explicit instruction — one commit per named ask, and a
+   review comment on a pushed PR authorizes a working-tree fix, never a new
+   commit/push.
 
 ## Classes of mistakes to avoid (learned the hard way)
 
-- **"The package.json is clean" is not proof the dep edge is absent.** If `node_modules/.pnpm/<forbidden>/` exists, investigate the lockfile, the `.pnpmfile.cjs` hooks, and any transitive chain before declaring victory.
-- **Before writing a new helper or type, grep.** `sleep`, `pollUntil`, cluster state filenames, default host/port — these already exist somewhere. Reusing beats re-inventing.
-- **Don't bulk re-export a generated-types package.** Import what you need at the call site.
-- **Stale commented-out code is dead weight.** If `match()` replaces an `if/else` chain, delete the commented original. Leaving "for reference" is how slop accumulates.
-
+- **"The package.json is clean" is not proof a dep edge is absent** — check
+  `node_modules/.pnpm/`, the lockfile, and `.pnpmfile.cjs` before declaring.
+- **Before writing a new helper or type, grep** — `sleep`, `pollUntil`, retry,
+  slug/enum bridges, and most domain types already exist.
+- **Don't bulk re-export a generated-types package** — import at the call site.
+- **Stale commented-out code is dead weight** — delete it.
+- **A timer/handle that outlives its purpose is a bug even when invisible** —
+  the jest "worker failed to exit gracefully" warning was a real 30s-per-stop
+  production leak.
+- **Concurrent validators need disjoint dynamic port ranges** — UDP
+  double-binding is silent and eats forwarded transactions; never remove the
+  `--dynamic-port-range` wiring.
