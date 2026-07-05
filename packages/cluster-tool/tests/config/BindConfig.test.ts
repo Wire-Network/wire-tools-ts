@@ -2,6 +2,8 @@ import { jest } from "@jest/globals"
 import { spawn, spawnSync } from "node:child_process"
 import Fs from "node:fs"
 import Path from "node:path"
+import { guard } from "@wireio/shared"
+import { ProcessSignalName } from "@wireio/cluster-tool/cluster/processes"
 
 /**
  * Options the fake `get-port` honors — the subset {@link BindConfig} passes
@@ -339,16 +341,21 @@ describe("BindConfig", () => {
      * reaps the seeded registration, failing the live-registrant tests.
      */
     let registrant: ReturnType<typeof spawn>
+    /** How long the registrant child stays alive — outlives any suite run. */
+    const RegistrantLifetimeMs = 60_000
     beforeAll(() => {
-      registrant = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], {
-        stdio: "ignore"
-      })
+      registrant = spawn(
+        process.execPath,
+        ["-e", `setTimeout(() => {}, ${RegistrantLifetimeMs})`],
+        { stdio: "ignore" }
+      )
       // The handle must not hold this worker open; afterAll reaps the child.
       registrant.unref()
       expect(registrant.pid).toBeGreaterThan(0)
     })
     afterAll(() => {
-      registrant.kill("SIGKILL")
+      // Best-effort reap — swallow ESRCH if the child already exited.
+      guard(() => process.kill(registrant.pid, ProcessSignalName.SIGKILL))
     })
 
     it("registryPath honors the env override (installed by jest.setup)", () => {

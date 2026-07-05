@@ -4,7 +4,8 @@ import Path from "node:path"
 import { Readable } from "node:stream"
 import {
   ManagedProcess,
-  ProcessManager
+  ProcessManager,
+  ProcessSignalName
 } from "@wireio/cluster-tool/cluster/processes"
 
 /** A concrete ManagedProcess for tests — trivial exe, fast verify window. */
@@ -100,7 +101,7 @@ describe("ProcessManager + ManagedProcess", () => {
     await manager.stopAll()
   })
   afterAll(() => {
-    if (isAlive(orphanPid)) process.kill(orphanPid, "SIGKILL")
+    if (isAlive(orphanPid)) process.kill(orphanPid, ProcessSignalName.SIGKILL)
     Fs.rmSync(dir, { recursive: true, force: true })
   })
 
