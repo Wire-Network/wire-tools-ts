@@ -94,12 +94,19 @@ describe("OperatorDaemonTool", () => {
         `sol-default,sol-batchopaaaa,${network.solanaRpcUrl}`
       ])
       expect(valuesOf(args, "--ethereum-abi-file")).toEqual(artifacts.ethereumAbiFiles)
-      expect(valuesOf(args, "--batch-eth-opp-addr")).toEqual([artifacts.ethereumAddresses.OPP])
-      expect(valuesOf(args, "--batch-eth-opp-inbound-addr")).toEqual([artifacts.ethereumAddresses.OPPInbound])
-      expect(valuesOf(args, "--batch-eth-client-id")).toEqual(["eth-default"])
       expect(valuesOf(args, "--batch-sol-client-id")).toEqual(["sol-default"])
       expect(valuesOf(args, "--solana-idl-file")).toEqual([artifacts.solanaIdlFile])
-      expect(valuesOf(args, "--batch-sol-program-id")).toEqual([artifacts.solanaProgramId])
+    })
+
+    it("binds each outpost with one consolidated per-chain CSV spec", () => {
+      expect(valuesOf(args, "--batch-outpost")).toEqual([
+        [
+          OperatorDaemonTool.EthereumChainCodename,
+          artifacts.ethereumAddresses.OPP,
+          artifacts.ethereumAddresses.OPPInbound
+        ].join(","),
+        [OperatorDaemonTool.SolanaChainCodename, artifacts.solanaProgramId].join(",")
+      ])
     })
 
     it("rejects a non-batch operator", () => {
