@@ -109,6 +109,13 @@ describe("OperatorDaemonTool", () => {
       ])
     })
 
+    it("emits none of the flags removed by wire-sysio #474 (nodeop rejects them)", () => {
+      expect(valuesOf(args, "--batch-eth-opp-addr")).toEqual([])
+      expect(valuesOf(args, "--batch-eth-opp-inbound-addr")).toEqual([])
+      expect(valuesOf(args, "--batch-eth-client-id")).toEqual([])
+      expect(valuesOf(args, "--batch-sol-program-id")).toEqual([])
+    })
+
     it("rejects a non-batch operator", () => {
       expect(() =>
         OperatorDaemonTool.batchOperatorArgs(
