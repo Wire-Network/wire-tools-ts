@@ -65,6 +65,12 @@ describe("NodeConfig", () => {
         `p2p-listen-endpoint = ${BindConfig.LoopbackAddress}:${BindConfig.DefaultBiosP2p}`
       )
       expect(ini).toContain("http-validate-host = false")
+      // Dev boxes routinely sit above nodeop's 90% resource-monitor disk
+      // threshold; without this line every node self-terminates ~1s after
+      // boot and the only harness symptom is a readiness-probe timeout.
+      expect(ini).toContain(
+        "resource-monitor-not-shutdown-on-threshold-exceeded = true"
+      )
     })
 
     it("renders operator config with read-mode + the operator account", () => {

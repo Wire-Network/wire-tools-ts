@@ -39,6 +39,21 @@ const WireSupply = "1000000000.000000000 WIRE"
 /** WIRE-leg swap fee (bps) + collateral-lock challenge window (dev). */
 const SwapFeeBps = 30
 const CollateralLockDurationMs = 600_000
+/**
+ * Minimum `swapfromwire` escrow (9-dec base units). The contract default is
+ * 5 WIRE; dev clusters lower it to exactly the 0.1 WIRE escrow the
+ * swap-from-WIRE flow pushes — the same way they shorten the collateral-lock
+ * window — so the enqueue boundary stays exercised without re-baselining flow
+ * economics.
+ */
+const MinFromWireAmount = 100_000_000
+/**
+ * Fee (bps of the escrow) forfeited on caller-fault drain-time reverts of
+ * queued `swapfromwire` rows (zero quote / missed variance at `drainfwq`),
+ * routed like the settlement fee. Mirrors the contract default; happy-path
+ * flows never pay it and system-caused reverts refund in full.
+ */
+const FromWireRevertFeeBps = 10
 /** Epoch envelope-log retention. */
 const EnvelopeLogRetentionEpochs = 10
 /**
@@ -278,7 +293,9 @@ export namespace ClusterBuildDefaults {
     ClusterBuildPhase.create<C>(prerequisites, "UnderwriterConfig", "Configure sysio.uwrit").push(
       Steps.contracts.sysio.uwrit.planSetconfig<C>(Actor.Sysio, "configure-uwrit", "set the underwriter config", {}, {
         fee_bps: SwapFeeBps,
-        collateral_lock_duration_ms: CollateralLockDurationMs
+        collateral_lock_duration_ms: CollateralLockDurationMs,
+        min_fromwire_amount: MinFromWireAmount,
+        fromwire_revert_fee_bps: FromWireRevertFeeBps
       })
     )
 
