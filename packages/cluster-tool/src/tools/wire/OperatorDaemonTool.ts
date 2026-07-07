@@ -303,12 +303,26 @@ export namespace OperatorDaemonTool {
       ...pair("--batch-delivery-timeout-ms", String(scaleTimeoutMs(BatchDeliveryTimeoutMs))),
       ...pair("--ext-debugging-server", network.debuggingServerUrl),
       ...outpostClientArgs(operator, artifacts, network),
-      ...pair("--batch-eth-opp-addr", assertAddress(artifacts, "OPP")),
-      ...pair("--batch-eth-opp-inbound-addr", assertAddress(artifacts, "OPPInbound")),
-      ...pair("--batch-eth-client-id", EthereumClientId),
+      // Per-chain outpost bindings (repeatable CSV specs; replaced the removed
+      // --batch-eth-{client-id,opp-addr,opp-inbound-addr} / --batch-sol-program-id —
+      // the EVM RPC client is auto-selected by matching the chains row's
+      // external_chain_id against the --outpost-ethereum-client chain ids):
+      //   EVM: <chain_code>,<opp_addr>,<opp_inbound_addr>
+      //   SVM: <chain_code>,<opp_outpost_program_id>
+      ...pair(
+        "--batch-outpost",
+        [
+          EthereumChainCodename,
+          assertAddress(artifacts, "OPP"),
+          assertAddress(artifacts, "OPPInbound")
+        ].join(",")
+      ),
+      ...pair(
+        "--batch-outpost",
+        [SolanaChainCodename, artifacts.solanaProgramId].join(",")
+      ),
       ...pair("--batch-sol-client-id", SolanaClientId),
-      ...pair("--solana-idl-file", artifacts.solanaIdlFile),
-      ...pair("--batch-sol-program-id", artifacts.solanaProgramId)
+      ...pair("--solana-idl-file", artifacts.solanaIdlFile)
     ]
   }
 
