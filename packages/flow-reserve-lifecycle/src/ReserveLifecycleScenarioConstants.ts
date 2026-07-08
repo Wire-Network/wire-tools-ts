@@ -93,8 +93,12 @@ export namespace ReserveLifecycleScenarioConstants {
 
   // ── `swapfromwire` private-exclusion probe ─────────────────────────────────
 
-  /** 0.001 WIRE — never escrowed; the push asserts before the transfer. */
-  export const FromWireProbeWireAmount = 1_000_000n
+  /**
+   * 0.1 WIRE — meets the dev-cluster `min_fromwire_amount` floor exactly, so
+   * the privacy gate (not the escrow floor) is what rejects the push. Never
+   * escrowed; the push asserts before the transfer.
+   */
+  export const FromWireProbeWireAmount = 100_000_000n
   /** Positive sentinel — the privacy assert fires first. */
   export const FromWireProbeTargetAmount = 1n
   export const FromWireProbeToleranceBps = 500

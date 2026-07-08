@@ -82,6 +82,11 @@ export namespace NodeConfigIniRenderer {
     "access-control-allow-origin = *",
     "access-control-allow-headers = *",
     "verbose-http-errors = true",
-    "http-validate-host = false"
+    "http-validate-host = false",
+    "",
+    "# Dev clusters run on workstations that routinely sit above nodeop's 90%",
+    "# resource-monitor disk threshold; ephemeral cluster data is tiny, so warn",
+    "# instead of self-terminating one second after boot.",
+    "resource-monitor-not-shutdown-on-threshold-exceeded = true"
   ]
 }
