@@ -68,35 +68,7 @@ export class AnvilManager {
 
   async start(): Promise<void> {
     const { config } = this
-    const args = [
-      "-vvv",
-      "--host",
-      config.host,
-      "--port",
-      String(config.port),
-      "--chain-id",
-      String(config.chainId)
-    ]
-    // Beacon-finality emulation -- opt-in, set ONLY for the run-phase anvil (see
-    // SlotsInAnEpoch / BlockTimeSec docs). Deliberately omitted during the deploy
-    // phase: `--block-time` disables anvil's instamine, which the hardhat deploy
-    // (deployLocal.ts) depends on -- enabling it there fails every contract deploy.
-    if (config.slotsInAnEpoch) {
-      args.push("--slots-in-an-epoch", String(config.slotsInAnEpoch))
-    }
-    if (config.blockTimeSec) {
-      args.push("--block-time", String(config.blockTimeSec))
-    }
-    if (config.stateFile) {
-      args.push("--dump-state", config.stateFile)
-      // Only load state if the file already exists (not first run)
-      if (Fs.existsSync(config.stateFile)) {
-        args.push("--load-state", config.stateFile)
-      }
-    }
-    if (config.extraArgs) {
-      args.push(...config.extraArgs)
-    }
+    const args = AnvilManager.buildArgs(config)
 
     const procConfig: ProcessConfig = {
       label: AnvilManager.ProcessLabel,
@@ -119,6 +91,55 @@ export class AnvilManager {
 }
 
 export namespace AnvilManager {
+  /** Anvil flags that make every local ETH node simulate Osaka gas behavior. */
+  export const OsakaSimulationArgs = [
+    "--hardfork",
+    "osaka",
+    "--enable-tx-gas-limit",
+    "--gas-limit",
+    "60000000"
+  ] as const
+
+  /**
+   * Build Anvil argv shared by deploy, bootstrap-restart, and run phases.
+   *
+   * @param config - Fully resolved Anvil process configuration.
+   * @return Command-line arguments passed to the Anvil binary.
+   */
+  export function buildArgs(config: AnvilConfig): string[] {
+    const args = [
+      "-vvv",
+      "--host",
+      config.host,
+      "--port",
+      String(config.port),
+      "--chain-id",
+      String(config.chainId),
+      ...OsakaSimulationArgs
+    ]
+    // Beacon-finality emulation -- opt-in, set ONLY for the run-phase anvil (see
+    // SlotsInAnEpoch / BlockTimeSec docs). Deliberately omitted during the deploy
+    // phase: `--block-time` disables anvil's instamine, which the hardhat deploy
+    // (deployLocal.ts) depends on -- enabling it there fails every contract deploy.
+    if (config.slotsInAnEpoch) {
+      args.push("--slots-in-an-epoch", String(config.slotsInAnEpoch))
+    }
+    if (config.blockTimeSec) {
+      args.push("--block-time", String(config.blockTimeSec))
+    }
+    if (config.stateFile) {
+      args.push("--dump-state", config.stateFile)
+      // Only load state if the file already exists (not first run)
+      if (Fs.existsSync(config.stateFile)) {
+        args.push("--load-state", config.stateFile)
+      }
+    }
+    if (config.extraArgs) {
+      args.push(...config.extraArgs)
+    }
+    return args
+  }
+
   /** Default loopback host for the anvil HTTP RPC. */
   export const DefaultHost = "127.0.0.1"
   /** Default JSON-RPC port. */
