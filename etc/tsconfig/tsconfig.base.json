@@ -62,11 +62,23 @@
       "@wireio/test-flow-swap-variance-revert/*": [
         "./packages/flow-swap-variance-revert/src/*"
       ],
+      "@wireio/test-flow-swap-stress-saturation": [
+        "./packages/flow-swap-stress-saturation/src"
+      ],
+      "@wireio/test-flow-swap-stress-saturation/*": [
+        "./packages/flow-swap-stress-saturation/src/*"
+      ],
       "@wireio/debugging-shared": [
         "./packages/debugging-shared/src"
       ],
       "@wireio/debugging-shared/*": [
         "./packages/debugging-shared/src/*"
+      ],
+      "@wireio/test-opp-stress": [
+        "./packages/opp-stress/src"
+      ],
+      "@wireio/test-opp-stress/*": [
+        "./packages/opp-stress/src/*"
       ],
       "@wireio/debugging-server": [
         "./packages/debugging-server/src"

@@ -13,6 +13,8 @@ const config: Config = {
     "packages/flow-swap-from-wire",
     "packages/flow-reserve-lifecycle",
     "packages/flow-swap-private-reserves",
+    "packages/opp-stress",
+    "packages/flow-swap-stress-saturation",
     "packages/debugging-shared",
     "packages/debugging-server",
     "packages/debugging-client-shared",
