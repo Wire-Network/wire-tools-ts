@@ -1,4 +1,9 @@
-import { matchesProtoEnum } from "@wireio/test-cluster-tool/util"
+import { ethers } from "ethers"
+import {
+  clearNonceCache,
+  matchesProtoEnum,
+  resolveLatestNonce
+} from "@wireio/test-cluster-tool/util"
 import { SystemContracts } from "@wireio/sdk-core"
 
 /**
@@ -57,3 +62,72 @@ describe("matchesProtoEnum", () => {
     ).toBe(false)
   })
 })
+
+describe("resolveLatestNonce", () => {
+  it("reserves a contiguous nonce block from a cached account", async () => {
+    // Given: a signer whose chain nonce starts at 11.
+    const address = "0x00000000000000000000000000000000000000dd",
+      contract = nonceContract(address, 11)
+    clearNonceCache(address)
+
+    // When: callers reserve one nonce and then a three-nonce burst block.
+    const first = await resolveLatestNonce(contract),
+      burstFirst = await resolveLatestNonce(contract, 3),
+      next = await resolveLatestNonce(contract)
+
+    // Then: the cache advances by the full reserved block size.
+    expect(first).toBe(11)
+    expect(burstFirst).toBe(12)
+    expect(next).toBe(15)
+  })
+
+  it("rejects non-positive reservation counts", async () => {
+    // Given: a structurally valid signer-bound contract.
+    const address = "0x00000000000000000000000000000000000000ee",
+      contract = nonceContract(address, 0)
+    clearNonceCache(address)
+
+    // When / Then: reserving zero nonces is rejected before mutating the cache.
+    await expect(resolveLatestNonce(contract, 0)).rejects.toThrow(
+      "resolveLatestNonce: reservationCount must be a positive integer"
+    )
+  })
+})
+
+function nonceContract(
+  address: string,
+  chainNonce: number
+): ethers.BaseContract {
+  const runner: NonceRunner = {
+    getAddress: async () => address,
+    provider: new NonceProvider(chainNonce)
+  }
+  return new ethers.Contract(address, [], runner)
+}
+
+type NonceRunner = ethers.ContractRunner & {
+  readonly getAddress: () => Promise<string>
+}
+
+class NonceProvider extends ethers.AbstractProvider {
+  constructor(private readonly chainNonce: number) {
+    super(ethers.Network.from(1))
+  }
+
+  override async getTransactionCount(
+    _address: string,
+    _blockTag?: ethers.BlockTag
+  ): Promise<number> {
+    return this.chainNonce
+  }
+
+  override async _detectNetwork(): Promise<ethers.Network> {
+    return ethers.Network.from(1)
+  }
+
+  override async _perform<T = unknown>(
+    _request: ethers.PerformActionRequest
+  ): Promise<T> {
+    throw new Error("NonceProvider only supports getTransactionCount")
+  }
+}

@@ -193,12 +193,18 @@ const nonceCounters = new Map<string, number>()
  *
  * @param contract Ethers contract instance bound to a Signer (its runner
  *                 must be a Signer with a Provider).
- * @return The next nonce to submit.
+ * @param reservationCount Number of contiguous nonces to reserve. Defaults to one.
+ * @return The first nonce in the reserved block.
  * @throws If the contract is not bound to a Signer with a Provider.
  */
 export async function resolveLatestNonce(
-  contract: ethers.BaseContract
+  contract: ethers.BaseContract,
+  reservationCount = 1
 ): Promise<number> {
+  Assert.ok(
+    Number.isInteger(reservationCount) && reservationCount > 0,
+    "resolveLatestNonce: reservationCount must be a positive integer"
+  )
   const runner = contract.runner
   Assert.ok(
     runner !== null &&
@@ -216,11 +222,11 @@ export async function resolveLatestNonce(
   const cached = nonceCounters.get(fromAddr)
   if (cached !== undefined) {
     const nonce = cached
-    nonceCounters.set(fromAddr, cached + 1)
+    nonceCounters.set(fromAddr, cached + reservationCount)
     return nonce
   }
   const chainNonce = await provider.getTransactionCount(fromAddr, "latest")
-  nonceCounters.set(fromAddr, chainNonce + 1)
+  nonceCounters.set(fromAddr, chainNonce + reservationCount)
   return chainNonce
 }
 
