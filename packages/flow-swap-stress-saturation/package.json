@@ -1,0 +1,28 @@
+{
+  "name": "@wireio/test-flow-swap-stress-saturation",
+  "version": "0.1.10",
+  "private": true,
+  "type": "commonjs",
+  "description": "Flow: deterministic swap stress identity and OPP envelope saturation helpers",
+  "scripts": {
+    "compile": "tsc -b tsconfig.json",
+    "compile:watch": "tsc -b tsconfig.json -w",
+    "build": "pnpm run compile",
+    "test": "sh -c 'jest --runInBand --no-cache' --",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.31.0",
+    "@solana/web3.js": "^1.98.0",
+    "@solana/spl-token": "^0.4.9",
+    "@wireio/debugging-shared": "workspace:*",
+    "@wireio/opp-typescript-models": "^1.0.26",
+    "@wireio/sdk-core": "^1.0.17",
+    "@wireio/test-cluster-tool": "workspace:*",
+    "ethers": "^6.14.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "25.5.0"
+  }
+}

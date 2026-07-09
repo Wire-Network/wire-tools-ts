@@ -1,0 +1,18 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/out",
+    "paths": {
+      "@wireio/debugging-shared": ["../debugging-shared/src"],
+      "@wireio/debugging-shared/*": ["../debugging-shared/src/*"],
+      "@wireio/test-cluster-tool": ["../test-cluster-tool/src"],
+      "@wireio/test-cluster-tool/*": ["../test-cluster-tool/src/*"]
+    }
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../debugging-shared/tsconfig.json" },
+    { "path": "../test-cluster-tool/tsconfig.json" }
+  ]
+}
