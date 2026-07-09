@@ -17,6 +17,35 @@ import {
   DEFAULT_RESOURCE_WEIGHT
 } from "./constants.js"
 
+type KeyAuthority = {
+  readonly threshold: number
+  readonly keys: ReadonlyArray<{
+    readonly key: string
+    readonly weight: number
+  }>
+  readonly accounts: readonly []
+  readonly waits: readonly []
+}
+
+type NewAccountData = {
+  readonly creator: string
+  readonly name: string
+  readonly owner: KeyAuthority
+  readonly active: KeyAuthority
+}
+
+const EMPTY_AUTHORITY_ACCOUNTS: readonly [] = []
+const EMPTY_AUTHORITY_WAITS: readonly [] = []
+
+function keyAuthority(publicKey: string): KeyAuthority {
+  return {
+    threshold: 1,
+    keys: [{ key: publicKey, weight: 1 }],
+    accounts: EMPTY_AUTHORITY_ACCOUNTS,
+    waits: EMPTY_AUTHORITY_WAITS
+  }
+}
+
 /**
  * Whether `err` is the chain rejecting an account creation because the name
  * is taken. The "already exists" branch is benign for idempotent
@@ -80,8 +109,19 @@ export async function createAccountWithRam(
   account: string,
   ownerKey: string
 ): Promise<void> {
+  const authority = keyAuthority(ownerKey)
   try {
-    await clio.createAccount("sysio", account, ownerKey, ownerKey)
+    await clio.pushActionAndWait<NewAccountData>(
+      "sysio",
+      "newaccount",
+      {
+        creator: "sysio",
+        name: account,
+        owner: authority,
+        active: authority
+      },
+      "sysio@active"
+    )
   } catch (err: unknown) {
     if (!isAccountAlreadyExistsError(err)) {
       const anyErr = err as { message?: string; stderr?: string } | null

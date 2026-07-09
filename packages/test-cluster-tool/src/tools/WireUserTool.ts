@@ -1,7 +1,23 @@
 import { SystemContracts } from "@wireio/sdk-core"
 import type { Clio } from "../clients/Clio.js"
-import { BOOTSTRAP_NODE_OWNER, DEV_K1_PUBLIC_KEY } from "../cluster/constants.js"
+import {
+  BOOTSTRAP_NODE_OWNER,
+  DEFAULT_RAM_WEIGHT,
+  DEFAULT_RESOURCE_WEIGHT,
+  DEV_K1_PUBLIC_KEY
+} from "../cluster/constants.js"
+import { createAccountWithRam } from "../cluster/accountProvisioning.js"
 import { log } from "../logger.js"
+
+/** ROA policy weights assigned to a provisioned WIRE user account. */
+export interface WireUserResourcePolicy {
+  /** NET allocation as a SYS asset string. */
+  readonly netWeight: string
+  /** RAM allocation as a SYS asset string. */
+  readonly ramWeight: string
+  /** CPU allocation as a SYS asset string. */
+  readonly cpuWeight: string
+}
 
 /**
  * Options for {@link provisionWireUser}.
@@ -13,6 +29,8 @@ export interface WireUserOptions {
    * swap-to-WIRE recipient that only needs to exist).
    */
   fundWireAmount?: bigint
+  /** Resource policy weights for the account; defaults to standard flow user weights. */
+  resourcePolicy?: WireUserResourcePolicy
 }
 
 /** Result of {@link provisionWireUser}. */
@@ -55,20 +73,12 @@ export async function provisionWireUser(
   account: string,
   options: WireUserOptions = {}
 ): Promise<WireUser> {
-  const fundWireAmount = options.fundWireAmount ?? 0n
+  const fundWireAmount = options.fundWireAmount ?? 0n,
+    resourcePolicy = options.resourcePolicy ?? defaultResourcePolicy()
 
   await clio.walletOpenAndUnlock("default")
 
-  // Account creation — tolerate "already exists" so re-runs are idempotent.
-  try {
-    await clio.createAccount("sysio", account, DEV_K1_PUBLIC_KEY, DEV_K1_PUBLIC_KEY)
-  } catch (err: any) {
-    if (!(err?.message ?? "").includes("already exists")) {
-      throw new Error(
-        `provisionWireUser: createAccount(${account}) failed: ${err?.message ?? err}`
-      )
-    }
-  }
+  await createAccountWithRam(clio, account, DEV_K1_PUBLIC_KEY)
 
   // Resource policy so the account can push its own actions.
   await clio.pushActionAndWait<SystemContracts.SysioRoaAddpolicyAction>(
@@ -77,9 +87,9 @@ export async function provisionWireUser(
     {
       owner: account,
       issuer: BOOTSTRAP_NODE_OWNER,
-      net_weight: "25.0000 SYS",
-      ram_weight: "25.0000 SYS",
-      cpu_weight: "25.0000 SYS",
+      net_weight: resourcePolicy.netWeight,
+      ram_weight: resourcePolicy.ramWeight,
+      cpu_weight: resourcePolicy.cpuWeight,
       time_block: 0,
       network_gen: 0
     },
@@ -105,5 +115,13 @@ export async function provisionWireUser(
   return {
     account,
     accountBytes: new TextEncoder().encode(account)
+  }
+}
+
+function defaultResourcePolicy(): WireUserResourcePolicy {
+  return {
+    netWeight: DEFAULT_RESOURCE_WEIGHT,
+    ramWeight: DEFAULT_RAM_WEIGHT,
+    cpuWeight: DEFAULT_RESOURCE_WEIGHT
   }
 }

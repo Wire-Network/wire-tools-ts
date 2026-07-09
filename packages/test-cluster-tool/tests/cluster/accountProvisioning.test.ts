@@ -49,20 +49,36 @@ describe("isAccountAlreadyExistsError", () => {
 })
 
 describe("createAccountWithRam", () => {
-  it("creates the account with the owner key on both permissions", async () => {
+  it("creates the account through sysio::newaccount and waits for finality", async () => {
     const { stub, clio } = makeClioStub()
     await createAccountWithRam(clio, "freshop", "SYS_KEY")
-    expect(stub.createAccount).toHaveBeenCalledWith(
+    expect(stub.createAccount).not.toHaveBeenCalled()
+    expect(stub.pushActionAndWait).toHaveBeenCalledWith(
       "sysio",
-      "freshop",
-      "SYS_KEY",
-      "SYS_KEY"
+      "newaccount",
+      {
+        creator: "sysio",
+        name: "freshop",
+        owner: {
+          threshold: 1,
+          keys: [{ key: "SYS_KEY", weight: 1 }],
+          accounts: [],
+          waits: []
+        },
+        active: {
+          threshold: 1,
+          keys: [{ key: "SYS_KEY", weight: 1 }],
+          accounts: [],
+          waits: []
+        }
+      },
+      "sysio@active"
     )
   })
 
   it("swallows the benign already-exists rejection", async () => {
     const { clio } = makeClioStub({
-      createAccount: jest
+      pushActionAndWait: jest
         .fn()
         .mockRejectedValue(new Error("account freshop already exists"))
     })
@@ -73,7 +89,9 @@ describe("createAccountWithRam", () => {
 
   it("rethrows any other failure with the account name in the message", async () => {
     const { clio } = makeClioStub({
-      createAccount: jest.fn().mockRejectedValue(new Error("rpc unreachable"))
+      pushActionAndWait: jest
+        .fn()
+        .mockRejectedValue(new Error("rpc unreachable"))
     })
     await expect(
       createAccountWithRam(clio, "freshop", "SYS_KEY")
@@ -114,11 +132,11 @@ describe("createAccountWithResources", () => {
   it("creates the account then issues the policy from the bootstrap node owner by default", async () => {
     const { stub, clio } = makeClioStub()
     await createAccountWithResources(clio, "freshop", "SYS_KEY")
-    expect(stub.createAccount).toHaveBeenCalledTimes(1)
-    expect(stub.pushActionAndWait).toHaveBeenCalledTimes(1)
-    const payload = stub.pushActionAndWait.mock.calls[0][2]
+    expect(stub.createAccount).not.toHaveBeenCalled()
+    expect(stub.pushActionAndWait).toHaveBeenCalledTimes(2)
+    const payload = stub.pushActionAndWait.mock.calls[1][2]
     expect(payload.issuer).toBe(BOOTSTRAP_NODE_OWNER)
-    expect(stub.pushActionAndWait.mock.calls[0][3]).toBe(
+    expect(stub.pushActionAndWait.mock.calls[1][3]).toBe(
       `${BOOTSTRAP_NODE_OWNER}@active`
     )
   })
@@ -126,6 +144,6 @@ describe("createAccountWithResources", () => {
   it("threads a custom issuer through to the policy", async () => {
     const { stub, clio } = makeClioStub()
     await createAccountWithResources(clio, "freshop", "SYS_KEY", "voter1")
-    expect(stub.pushActionAndWait.mock.calls[0][2].issuer).toBe("voter1")
+    expect(stub.pushActionAndWait.mock.calls[1][2].issuer).toBe("voter1")
   })
 })
