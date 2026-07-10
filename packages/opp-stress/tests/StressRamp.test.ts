@@ -137,6 +137,49 @@ describe("runOppStressRamp", () => {
       missingEndpoints: ["DEPOT_OUTPOST_ETHEREUM"]
     })
   })
+
+  it("preserves incomplete saturated evidence as partial saturation", async () => {
+    // Given: a synthetic runner reports saturation while one required endpoint is missing.
+    const evidenceDir = makeEvidenceDir("incomplete-saturated")
+
+    // When: the ramp applies campaign-level endpoint aggregation.
+    const result = await runOppStressRamp({
+      evidenceDir,
+      config: {
+        initialCount: 2,
+        multiplier: 2,
+        maxCount: 2,
+        phaseTimeoutMs: 30_000
+      },
+      requiredEndpoints: ["OUTPOST_ETHEREUM_DEPOT", "DEPOT_OUTPOST_ETHEREUM"],
+      runIteration: async input => ({
+        kind: "saturated",
+        iterationIndex: input.iterationIndex,
+        accountCount: input.accountCount,
+        phase: "phase-d",
+        startedAtMs: 700,
+        endedAtMs: 800,
+        txSuccesses: input.accountCount,
+        txFailures: 0,
+        envelopeCount: 1,
+        envelopeByteSizes: [512],
+        endpoint: "OUTPOST_ETHEREUM_DEPOT",
+        epochStart: 4,
+        epochEnd: 4,
+        saturatedEndpoints: ["OUTPOST_ETHEREUM_DEPOT"]
+      })
+    })
+
+    // Then: incomplete saturation at the maximum count remains a terminal partial result.
+    expect(result.status).toBe("partial_saturation")
+    expect(result.preserveCluster).toBe(true)
+    expect(result.iterations.map(iteration => iteration.accountCount)).toEqual([2])
+    expect(readEvidence(evidenceDir, 0)).toMatchObject({
+      status: "partial_saturation",
+      preserveCluster: true,
+      missingEndpoints: ["DEPOT_OUTPOST_ETHEREUM"]
+    })
+  })
 })
 
 function makeEvidenceDir(label: string): string {

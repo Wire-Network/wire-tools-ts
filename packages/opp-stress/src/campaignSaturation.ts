@@ -1,4 +1,4 @@
-import type { OppStressRampIterationOutcome } from "./rampController.js"
+import type { OppStressRampIterationOutcome } from "./rampControllerTypes.js"
 
 /** Required and diagnostic endpoint aggregation across one OPP stress campaign. */
 export type CampaignSaturation = {
