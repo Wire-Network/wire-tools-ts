@@ -19,6 +19,7 @@
     "@wireio/opp-typescript-models": "^1.0.26",
     "@wireio/sdk-core": "^1.0.17",
     "@wireio/test-cluster-tool": "workspace:*",
+    "@wireio/test-opp-stress": "workspace:*",
     "ethers": "^6.14.0"
   },
   "devDependencies": {
