@@ -108,6 +108,8 @@ export namespace SlashingScenarioConstants {
   export const OperatorTableReadLimit = 100
   /** Row ceiling for `sysio.chalg::disputes` reads. */
   export const DisputeTableReadLimit = 100
+  /** Row ceiling for `sysio.msgch::outpcons` reads (one row per active outpost). */
+  export const OutpostConsensusTableReadLimit = 100
 
   /**
    * Frozen := the epoch index held across ≥ this many consecutive settle polls

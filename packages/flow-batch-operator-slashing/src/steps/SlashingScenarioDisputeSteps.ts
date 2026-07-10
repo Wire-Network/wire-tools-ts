@@ -67,6 +67,96 @@ export namespace SlashingScenarioDisputeSteps {
   )
 
   // ── Envelope encoding (built with the real @wireio/opp-typescript-models) ──
+  //
+  // The semantic header (opp.proto MessageHeader) is validated by `sysio.msgch::apply_consensus`
+  // since SEC-102, so the winning dispute envelope needs a spec-correct, message-chained header.
+  // Its checksums are keccak256 over the FIELD-COMPLETE canonical encoding (every singular field
+  // written, defaults included) — which protobuf-ts `toBinary` does NOT produce — so we compute
+  // them with the small canonical encoder below (mirrors the depot's opp_canonical_codec.hpp and
+  // the C++ oracle in contracts/tests/opp_envelope_oracle.hpp). The delivered wire bytes stay
+  // `Envelope.toBinary` output: the depot decodes them and re-canonicalises before recomputing,
+  // so a non-canonical-but-decodable wire form validates identically.
+
+  const CanonicalEmpty = new Uint8Array(0)
+
+  function canonicalVarint(value: bigint): number[] {
+    const out: number[] = []
+    while (value >= 0x80n) {
+      out.push(Number(value & 0x7fn) | 0x80)
+      value >>= 7n
+    }
+    out.push(Number(value))
+    return out
+  }
+  const canonicalTag = (field: number, wireType: number) =>
+    canonicalVarint(BigInt((field << 3) | wireType))
+  const canonicalVarintField = (field: number, value: bigint | number) => [
+    ...canonicalTag(field, 0),
+    ...canonicalVarint(BigInt(value))
+  ]
+  const canonicalBytesField = (field: number, bytes: Uint8Array) => [
+    ...canonicalTag(field, 2),
+    ...canonicalVarint(BigInt(bytes.length)),
+    ...bytes
+  ]
+  const canonicalSubMessage = (field: number, body: number[]) => [
+    ...canonicalTag(field, 2),
+    ...canonicalVarint(BigInt(body.length)),
+    ...body
+  ]
+  const canonicalChainId = (kind: number, id: number) => [
+    ...canonicalVarintField(1, kind),
+    ...canonicalVarintField(2, id)
+  ]
+  // endpoints is reserved-default across all emitters (routing derives from the proven chain).
+  const canonicalEndpointsDefault = () => [
+    ...canonicalSubMessage(1, canonicalChainId(0, 0)),
+    ...canonicalSubMessage(2, canonicalChainId(0, 0))
+  ]
+  const canonicalAttestation = (att: { type: number; dataSize: number; data: Uint8Array }) => [
+    ...canonicalVarintField(1, att.type),
+    ...canonicalVarintField(2, att.dataSize),
+    ...canonicalBytesField(3, att.data)
+  ]
+  const canonicalPayload = (
+    version: number,
+    atts: { type: number; dataSize: number; data: Uint8Array }[]
+  ) => [
+    ...canonicalVarintField(1, version),
+    ...atts.flatMap(att => canonicalSubMessage(2, canonicalAttestation(att)))
+  ]
+  // Slot 4 (encoding_flags) was removed from opp.proto; reserved, never encoded.
+  const canonicalHeader = (header: {
+    messageId: Uint8Array
+    previousMessageId: Uint8Array
+    payloadSize: number
+    payloadChecksum: Uint8Array
+    timestamp: bigint
+    headerChecksum: Uint8Array
+  }) => [
+    ...canonicalSubMessage(1, canonicalEndpointsDefault()),
+    ...canonicalBytesField(2, header.messageId),
+    ...canonicalBytesField(3, header.previousMessageId),
+    ...canonicalVarintField(5, header.payloadSize),
+    ...canonicalBytesField(6, header.payloadChecksum),
+    ...canonicalVarintField(7, header.timestamp),
+    ...canonicalBytesField(8, header.headerChecksum)
+  ]
+
+  const keccakBytes = (bytes: number[] | Uint8Array) =>
+    ethers.getBytes(ethers.keccak256(Uint8Array.from(bytes)))
+
+  /** Big-endian sequence number in the first 8 bytes of a message id; 0 when empty (genesis). */
+  function messageSequence(messageId: Uint8Array): bigint {
+    return messageId.length < 8 ? 0n : ethers.toBigInt(messageId.slice(0, 8))
+  }
+
+  /** `headerChecksum` with its first 8 bytes replaced by the big-endian sequence number. */
+  function deriveMessageId(headerChecksum: Uint8Array, sequence: bigint): Uint8Array {
+    const out = new Uint8Array(headerChecksum)
+    out.set(ethers.getBytes(ethers.toBeHex(sequence, 8)), 0)
+    return out
+  }
 
   /**
    * Encode a valid OPP Envelope for `epochIndex` whose only varying content is
@@ -76,33 +166,112 @@ export namespace SlashingScenarioDisputeSteps {
    * Mirrors `contracts/tests/sysio.dispute_tests.cpp::encode_envelope`: one
    * message carrying one benign `ATTESTATION_TYPE_UNSPECIFIED` attestation whose
    * `data` is the tag. UNSPECIFIED makes the winner's eventual dispatch a no-op
-   * (no side effects). The depot validates only `epoch_index == current epoch`
-   * and recomputes the checksum trustlessly, so any well-formed, epoch-matching
-   * envelope is accepted.
+   * (no side effects).
+   *
+   * The semantic header is derived per the SEC-102 spec: `payload_size` /
+   * `payload_checksum` over the canonical payload bytes, `header_checksum` over
+   * the blanked canonical header, and `message_id` = that checksum with the
+   * big-endian sequence number spliced over its first 8 bytes. `prevMessageId`
+   * is the outpost's current inbound message tip (empty at stream genesis); the
+   * message must continue it, so the caller reads it from `outpcons` first.
    *
    * @param epochIndex - The contested epoch the envelope claims.
    * @param tag - The benign payload distinguishing the checksum.
+   * @param prevMessageId - The outpost's current inbound message tip.
    * @returns The serialized envelope bytes.
    */
-  export function encodeTaggedEnvelope(epochIndex: number, tag: string): Uint8Array {
+  export function encodeTaggedEnvelope(
+    epochIndex: number,
+    tag: string,
+    prevMessageId: Uint8Array
+  ): Uint8Array {
     const data = new TextEncoder().encode(tag)
+    const version = Constants.EnvelopeVersion
+    const atts = [{ type: AttestationType.UNSPECIFIED, dataSize: data.length, data }]
+    const timestamp = Constants.EnvelopeEpochTimestampMs
+
+    const payloadCanonical = canonicalPayload(version, atts)
+    const payloadChecksum = keccakBytes(payloadCanonical)
+    const headerChecksum = keccakBytes(
+      canonicalHeader({
+        messageId: CanonicalEmpty,
+        previousMessageId: prevMessageId,
+        payloadSize: payloadCanonical.length,
+        payloadChecksum,
+        timestamp,
+        headerChecksum: CanonicalEmpty
+      })
+    )
+    const messageId = deriveMessageId(headerChecksum, messageSequence(prevMessageId) + 1n)
+
     return Envelope.toBinary(
       Envelope.create({
         epochIndex,
         epochEnvelopeIndex: Constants.EnvelopeEpochEnvelopeIndex,
-        epochTimestamp: Constants.EnvelopeEpochTimestampMs,
+        epochTimestamp: timestamp,
         messages: [
           {
-            payload: {
-              version: Constants.EnvelopeVersion,
-              attestations: [
-                { type: AttestationType.UNSPECIFIED, dataSize: data.length, data }
-              ]
-            }
+            header: {
+              messageId,
+              previousMessageId: prevMessageId,
+              payloadSize: payloadCanonical.length,
+              payloadChecksum,
+              timestamp,
+              headerChecksum
+            },
+            payload: { version, attestations: atts }
           }
         ]
       })
     )
+  }
+
+  /**
+   * The outpost's current inbound MESSAGE tip from `sysio.msgch::outpcons` — the
+   * raw 32-byte `message_id` the next accepted message must carry in
+   * `previous_message_id` (SEC-102 replay guard). Empty at stream genesis: no
+   * row yet, or an all-zero tip (the depot leaves `message_tip` zero until the
+   * first message-bearing envelope from the outpost is accepted). By the time
+   * this scenario runs, bootstrap emissions have advanced both outposts' tips,
+   * so the synthetic dispute envelopes must continue from the real tip.
+   *
+   * @param ctx - The build context.
+   * @param chainCode - The outpost slug_name.
+   * @returns The 32-byte tip, or empty at genesis.
+   */
+  /**
+   * Cache of the inbound message tip per `${chainCode}:${epochIndex}`, so all deliveries an
+   * outpost receives for one contested epoch chain from the SAME pre-delivery tip. Without this,
+   * once the non-contested outpost's 2/3 majority triggers `apply_consensus` inline and advances
+   * the tip, a re-read for the third delivery would produce a differently-chained (and so
+   * differently-checksummed) envelope — mis-classified as a divergent delivery and wrongly slashed.
+   */
+  const inboundMessageTipCache = new Map<string, Uint8Array>()
+
+  export async function readInboundMessageTip(
+    ctx: ClusterBuildContext,
+    chainCode: number,
+    epochIndex: number
+  ): Promise<Uint8Array> {
+    const cacheKey = `${chainCode}:${epochIndex}`
+    const cached = inboundMessageTipCache.get(cacheKey)
+    if (cached !== undefined) return cached
+
+    const { rows } = await ctx.wire
+      .getSysioContract(SysioContractName.msgch)
+      .tables.outpcons.query({ limit: Constants.OutpostConsensusTableReadLimit })
+    // `message_tip` is new in the deployed ABI (SEC-102) but absent from the pinned
+    // SystemContractTypes, so read it off the runtime row.
+    const row = rows.find(r => String(r.chain_code) === String(chainCode)) as
+      | { message_tip?: string }
+      | undefined
+    const tip = row?.message_tip
+    const resolved =
+      !tip || /^0*$/.test(tip)
+        ? CanonicalEmpty
+        : ethers.getBytes(tip.startsWith("0x") ? tip : `0x${tip}`)
+    inboundMessageTipCache.set(cacheKey, resolved)
+    return resolved
   }
 
   /**
@@ -598,11 +767,16 @@ export namespace SlashingScenarioDisputeSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const epochIndex = ctx.outputs.assert(ContestedEpochKey)
+    // Chain the synthetic envelope from the outpost's current inbound message tip so the winner
+    // (or, for the non-contested outpost, the consensus envelope) passes SEC-102 header validation
+    // in apply_consensus. The three divergent envelopes for the contested outpost all read the same
+    // pre-dispute tip; only the voted winner dispatches and advances it.
+    const prevMessageId = await readInboundMessageTip(ctx, input.chainCode, epochIndex)
     await ctx.wire.getSysioContract(SysioContractName.msgch).actions.deliver.invoke(
       {
         batch_op_name: input.batchOperator,
         chain_code: input.chainCode,
-        data: bytesToHex(encodeTaggedEnvelope(epochIndex, input.tag))
+        data: bytesToHex(encodeTaggedEnvelope(epochIndex, input.tag, prevMessageId))
       },
       {
         authorization: [{ actor: input.batchOperator, permission: ActivePermission }]
