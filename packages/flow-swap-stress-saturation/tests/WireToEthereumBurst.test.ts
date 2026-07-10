@@ -11,10 +11,10 @@ describe("buildPhase2Requests", () => {
   it("builds WIRE-to-ETH stress requests without Solana source semantics", () => {
     // Given: paired identities and route codes include legacy Solana values plus Ethereum target values.
     const identities = stressIdentities(),
-      targetAmount = 88_002n
+      targetAmounts = [88_002n, 87_991n]
 
     // When: phase 2 request payloads are built.
-    const requests = buildPhase2Requests(Route, identities, targetAmount)
+    const requests = buildPhase2Requests(Route, identities, targetAmounts)
 
     // Then: requests escrow WIRE on the depot and target generated Ethereum recipients.
     expect(requests).toHaveLength(2)
@@ -47,8 +47,8 @@ describe("buildPhase2Requests", () => {
       Array.from(identities.ethereum[1].addressBytes)
     ])
     expect(requests.map(request => request.request.targetAmount)).toEqual([
-      targetAmount,
-      targetAmount
+      88_002n,
+      87_991n
     ])
     expect(requests.map(request => request.request.targetToleranceBps)).toEqual(
       [

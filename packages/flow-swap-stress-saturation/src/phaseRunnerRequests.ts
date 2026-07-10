@@ -17,26 +17,31 @@ import type {
  *
  * @param route Public ETH to WIRE route constants.
  * @param identities Generated stress identities.
- * @param targetAmount Quoted WIRE target amount.
+ * @param targetAmounts Quoted WIRE target amounts in submission order.
  * @returns ETH burst requests in identity order.
  */
 export function buildPhase1Requests(
   route: SwapStressRouteCodes,
   identities: StressIdentities,
-  targetAmount: bigint
+  targetAmounts: readonly bigint[]
 ): readonly EthereumBurstSwapRequest[] {
-  return identities.wire.map(identity => ({
-    index: identity.index,
-    sourceTokenCode: route.ethereumTokenCode,
-    sourceReserveCode: route.wireSentinelReserveCode,
-    sourceAmountWei: SwapStressPhaseAmounts.Phase1SourceWei,
-    targetChainCode: route.wireChainCode,
-    targetTokenCode: route.wireTokenCode,
-    targetReserveCode: route.wireSentinelReserveCode,
-    targetRecipient: identity.accountBytes,
-    targetAmount,
-    targetToleranceBps: SwapStressPhaseAmounts.TargetToleranceBps
-  }))
+  return identities.wire.map((identity, index) => {
+    const targetAmount = targetAmounts[index]
+    if (targetAmount === undefined)
+      throw new RangeError("paired phase-1 target missing")
+    return {
+      index: identity.index,
+      sourceTokenCode: route.ethereumTokenCode,
+      sourceReserveCode: route.wireSentinelReserveCode,
+      sourceAmountWei: SwapStressPhaseAmounts.Phase1SourceWei,
+      targetChainCode: route.wireChainCode,
+      targetTokenCode: route.wireTokenCode,
+      targetReserveCode: route.wireSentinelReserveCode,
+      targetRecipient: identity.accountBytes,
+      targetAmount,
+      targetToleranceBps: SwapStressPhaseAmounts.TargetToleranceBps
+    }
+  })
 }
 
 /**
@@ -44,18 +49,21 @@ export function buildPhase1Requests(
  *
  * @param route WIRE to public ETH route constants.
  * @param identities Generated stress identities.
- * @param targetAmount Quoted ETH target amount in depot units.
+ * @param targetAmounts Quoted ETH target amounts in depot units.
  * @returns WIRE-source burst requests in identity order.
  */
 export function buildPhase2Requests(
   route: SwapStressRouteCodes,
   identities: StressIdentities,
-  targetAmount: bigint
+  targetAmounts: readonly bigint[]
 ): readonly SolanaBurstRequest<Phase2SwapRequest>[] {
   return identities.wire.map((identity, index) => {
-    const ethereum = identities.ethereum[index]
+    const ethereum = identities.ethereum[index],
+      targetAmount = targetAmounts[index]
     if (ethereum === undefined)
       throw new RangeError("paired ETH identity missing")
+    if (targetAmount === undefined)
+      throw new RangeError("paired phase-2 target missing")
     return {
       index,
       request: {

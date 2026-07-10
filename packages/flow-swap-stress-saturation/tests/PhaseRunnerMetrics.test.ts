@@ -40,6 +40,45 @@ describe("createSwapStressPhaseRunner phase metrics", () => {
     ).toBeGreaterThan(events.indexOf("payout:phase-2"))
   })
 
+  it("classifies a phase 2 metrics timeout without fabricating envelope evidence", async () => {
+    // Given: all swaps and payouts succeed, but the required ETH return artifact never appears.
+    const metricsFailureReason =
+        "Timed out waiting for: phase-2 DEPOT_OUTPOST_ETHEREUM OPP evidence observed",
+      deps = createDeps({ phase2MetricsFailureReason: metricsFailureReason })
+
+    // When: one bidirectional iteration reaches phase-2 metrics collection.
+    const outcome = await createSwapStressPhaseRunner(deps).runIteration(2)
+
+    // Then: the timeout is preserved as breakage with the required endpoint still missing.
+    expect(outcome.kind).toBe("breakage")
+    expect(outcome.phase).toBe("phase-2")
+    expect(outcome.breakageReason).toBe(
+      `phase-2 metrics collection failed: ${metricsFailureReason}`
+    )
+    expect(outcome.phaseResults[1]).toMatchObject({
+      phase: "phase-2",
+      saturated: false,
+      envelopeCount: 0,
+      envelopeByteSizes: [],
+      endpoint: "DEPOT_OUTPOST_ETHEREUM",
+      txSuccesses: 2,
+      txFailures: 0
+    })
+    expect(outcome.missingEndpoints).toContain("DEPOT_OUTPOST_ETHEREUM")
+  })
+
+  it("propagates a non-timeout phase 2 metrics error", async () => {
+    // Given: the metrics collector fails for a reason unrelated to missing evidence.
+    const deps = createDeps({
+      phase2MetricsFailureReason: "corrupt envelope metadata"
+    })
+
+    // When / Then: unexpected collector defects remain loud.
+    await expect(
+      createSwapStressPhaseRunner(deps).runIteration(2)
+    ).rejects.toThrow("corrupt envelope metadata")
+  })
+
   it("rechecks phase 1 Ethereum source evidence after payout timeout before Solana diagnostics", async () => {
     // Given: phase 1 source evidence becomes saturated only after the payout wait times out.
     const events: string[] = [],
@@ -81,6 +120,7 @@ type TestDepsOptions = {
   readonly phase1PayoutFailureReason?: string
   readonly phase1SourceSaturatedAfterPayoutFailure?: boolean
   readonly phase1DiagnosticSaturated?: boolean
+  readonly phase2MetricsFailureReason?: string
 }
 
 function createDeps(options: TestDepsOptions = {}): TestDeps {
@@ -125,6 +165,12 @@ function createDeps(options: TestDepsOptions = {}): TestDeps {
     recipientPayoutObserver: payoutObserver(options),
     returnPayoutObserver: payoutObserver(options),
     collectEnvelopeMetrics: async request => {
+      if (
+        request.phase === "phase-2" &&
+        options.phase2MetricsFailureReason !== undefined
+      ) {
+        throw new Error(options.phase2MetricsFailureReason)
+      }
       const timing = options.events?.includes(`payout:${request.phase}`)
         ? "after-payout"
         : "before-payout"

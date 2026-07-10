@@ -31,7 +31,7 @@ describe("createSwapStressPhaseRunner", () => {
         phase: "phase-1",
         expectedCount: 2,
         minimumObservedCount: 1,
-        targetAmount: 99_990_000n,
+        targetAmount: 99_970_006n,
         targets: [
           expect.objectContaining({ index: 0 }),
           expect.objectContaining({ index: 1 })
@@ -43,7 +43,7 @@ describe("createSwapStressPhaseRunner", () => {
         phase: "phase-1",
         expectedCount: 2,
         minimumObservedCount: 1,
-        targetAmount: 99_990_000n,
+        targetAmount: 99_970_006n,
         targets: [
           expect.objectContaining({ index: 0 }),
           expect.objectContaining({ index: 1 })
@@ -56,7 +56,7 @@ describe("createSwapStressPhaseRunner", () => {
         phase: "phase-2",
         expectedCount: 2,
         minimumObservedCount: 1,
-        targetAmount: 99_990_000_000_000_000n,
+        targetAmount: 99_970_006_000_000_000n,
         targets: [
           expect.objectContaining({ index: 0 }),
           expect.objectContaining({ index: 1 })

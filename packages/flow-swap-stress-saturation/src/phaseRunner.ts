@@ -1,31 +1,19 @@
-import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
-
-import { runEthereumSwapBurst, runSolanaSwapBurst } from "./boundedBursts.js"
 import {
-  buildPayoutRequest,
-  buildPhase1Requests,
-  buildPhase2Requests
-} from "./phaseRunnerRequests.js"
-import { quoteSwapStressPhase1, quoteSwapStressPhase2 } from "./phaseQuotes.js"
+  quoteSwapStressPhase1Targets,
+  quoteSwapStressPhase2Targets
+} from "./phaseQuotes.js"
 import { createStressIdentities } from "./stressIdentities.js"
 import {
   complete,
   breakage,
   burstReason,
-  collectMetrics,
-  errorMessage,
-  phaseResult,
-  type PhaseRun
+  errorMessage
 } from "./phaseRunnerOutcomes.js"
-import {
-  SwapStressImpossibleQuoteError,
-  SwapStressPhaseAmounts
-} from "./phaseRunnerTypes.js"
-import type { SwapStressPhaseQuote } from "./phaseQuotes.js"
-import type { StressIdentities } from "./stressIdentities.js"
+import { runPhase1 } from "./phaseRunnerPhase1.js"
+import { runPhase2 } from "./phaseRunnerPhase2.js"
+import { SwapStressImpossibleQuoteError } from "./phaseRunnerTypes.js"
 import type {
   SwapStressIterationOutcome,
-  SwapStressPhase,
   SwapStressPhaseRunner,
   SwapStressPhaseRunnerDeps
 } from "./phaseRunnerTypes.js"
@@ -51,10 +39,14 @@ async function runIteration(
   try {
     assertPositiveCount(count)
     const identities = (deps.createIdentities ?? createStressIdentities)(count),
+      phase1Targets = quoteSwapStressPhase1Targets(
+        await deps.readReservePairSnapshot(),
+        identities.wire.length
+      ),
       phase1 = await runPhase1(
         deps,
         identities,
-        quoteSwapStressPhase1(await deps.readReservePairSnapshot()),
+        phase1Targets,
         clock
       )
     if (phase1.burst.failures.length > 0) {
@@ -80,12 +72,11 @@ async function runIteration(
         "phase-1 payout not observed"
       )
     }
-    const phase2 = await runPhase2(
-        deps,
-        identities,
-        quoteSwapStressPhase2(await deps.readReservePairSnapshot()),
-        clock
+    const phase2Targets = quoteSwapStressPhase2Targets(
+        await deps.readReservePairSnapshot(),
+        identities.wire.length
       ),
+      phase2 = await runPhase2(deps, identities, phase2Targets, clock),
       phaseResults = [phase1.result, phase2.result]
     if (phase1.batchOperatorFailureReason !== null) {
       return breakage(
@@ -125,6 +116,16 @@ async function runIteration(
         clock(),
         phaseResults,
         `phase-2 batch operator failure: ${phase2.batchOperatorFailureReason}`
+      )
+    }
+    if (phase2.metricsFailureReason !== null) {
+      return breakage(
+        count,
+        "phase-2",
+        startedAtMs,
+        clock(),
+        phaseResults,
+        `phase-2 metrics collection failed: ${phase2.metricsFailureReason}`
       )
     }
     if (phase2.payoutFailureReason !== null) {
@@ -167,200 +168,6 @@ async function runIteration(
     }
     throw error
   }
-}
-
-async function runPhase1(
-  deps: SwapStressPhaseRunnerDeps,
-  identities: StressIdentities,
-  quote: SwapStressPhaseQuote,
-  clock: () => number
-): Promise<PhaseRun> {
-  const phaseStartedAtMs = clock(),
-    payoutRequest = buildPayoutRequest(
-      "phase-1",
-      identities.wire.map(identity => ({
-        index: identity.index,
-        address: identity.account
-      })),
-      quote.wireIntermediate
-    )
-  await deps.recipientPayoutObserver.preparePayouts?.(payoutRequest)
-  const phase1Requests = buildPhase1Requests(
-      deps.route,
-      identities,
-      quote.wireIntermediate
-    ),
-    burst = await runEthereumSwapBurst({
-      reserveManager: deps.ethereumReserveManager,
-      requests: phase1Requests,
-      firstNonce: await deps.getEthereumFirstNonce(phase1Requests.length),
-      concurrency: deps.concurrency
-    })
-  const metrics = await collectMetrics(
-    deps,
-    "phase-1",
-    phaseStartedAtMs,
-    clock()
-  )
-  let payout: PhaseRun["result"]["payout"] = null,
-    payoutFailureReason: string | null = null,
-    batchOperatorFailureReason: string | null = null
-  if (burst.failures.length === 0) {
-    try {
-      payout = await deps.recipientPayoutObserver.waitForPayouts(payoutRequest)
-    } catch (error) {
-      payoutFailureReason =
-        error instanceof Error ? error.message : String(error)
-      batchOperatorFailureReason = await detectBatchOperatorFailure(
-        deps,
-        "phase-1",
-        phaseStartedAtMs,
-        clock(),
-        payoutFailureReason
-      )
-    }
-  }
-  if (payoutFailureReason !== null && !metrics.saturated) {
-    const sourceMetrics = await collectMetrics(
-      deps,
-      "phase-1",
-      phaseStartedAtMs,
-      clock(),
-      DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT
-    )
-    if (sourceMetrics.saturated) {
-      const sourceEndedAtMs = clock()
-      return {
-        burst,
-        result: phaseResult(
-          "phase-1",
-          burst,
-          null,
-          sourceMetrics,
-          phaseStartedAtMs,
-          sourceEndedAtMs
-        ),
-        payoutFailureReason,
-        batchOperatorFailureReason
-      }
-    }
-    const destinationMetrics = await collectMetrics(
-      deps,
-      "phase-1",
-      phaseStartedAtMs,
-      clock(),
-      DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA
-    )
-    if (destinationMetrics.saturated) {
-      const destinationEndedAtMs = clock()
-      return {
-        burst,
-        result: phaseResult(
-          "phase-1",
-          burst,
-          null,
-          destinationMetrics,
-          phaseStartedAtMs,
-          destinationEndedAtMs
-        ),
-        payoutFailureReason,
-        batchOperatorFailureReason
-      }
-    }
-  }
-  const endedAtMs = clock()
-  return {
-    burst,
-    result: phaseResult(
-      "phase-1",
-      burst,
-      payout,
-      metrics,
-      phaseStartedAtMs,
-      endedAtMs
-    ),
-    payoutFailureReason,
-    batchOperatorFailureReason
-  }
-}
-
-async function runPhase2(
-  deps: SwapStressPhaseRunnerDeps,
-  identities: StressIdentities,
-  quote: SwapStressPhaseQuote,
-  clock: () => number
-): Promise<PhaseRun> {
-  const phaseStartedAtMs = clock(),
-    targetWei = quote.targetAmount * SwapStressPhaseAmounts.EthWeiPerDepotUnit,
-    payoutRequest = buildPayoutRequest(
-      "phase-2",
-      identities.ethereum.map(identity => ({
-        index: identity.index,
-        address: identity.address
-      })),
-      targetWei
-    )
-  await deps.returnPayoutObserver.preparePayouts?.(payoutRequest)
-  const burst = await runSolanaSwapBurst({
-    requests: buildPhase2Requests(deps.route, identities, quote.targetAmount),
-    concurrency: deps.concurrency,
-    submit: deps.submitPhase2Swap
-  })
-  let payout: PhaseRun["result"]["payout"] = null,
-    payoutFailureReason: string | null = null,
-    batchOperatorFailureReason: string | null = null
-  if (burst.failures.length === 0) {
-    try {
-      payout = await deps.returnPayoutObserver.waitForPayouts(payoutRequest)
-    } catch (error) {
-      payoutFailureReason =
-        error instanceof Error ? error.message : String(error)
-      batchOperatorFailureReason = await detectBatchOperatorFailure(
-        deps,
-        "phase-2",
-        phaseStartedAtMs,
-        clock(),
-        payoutFailureReason
-      )
-    }
-  }
-  const endedAtMs = clock()
-  const metrics = await collectMetrics(
-    deps,
-    "phase-2",
-    phaseStartedAtMs,
-    endedAtMs
-  )
-  return {
-    burst,
-    result: phaseResult(
-      "phase-2",
-      burst,
-      payout,
-      metrics,
-      phaseStartedAtMs,
-      endedAtMs
-    ),
-    payoutFailureReason,
-    batchOperatorFailureReason
-  }
-}
-
-async function detectBatchOperatorFailure(
-  deps: SwapStressPhaseRunnerDeps,
-  phase: SwapStressPhase,
-  startedAtMs: number,
-  endedAtMs: number,
-  payoutFailureReason: string
-): Promise<string | null> {
-  return deps.batchOperatorFailureProbe === undefined
-    ? null
-    : deps.batchOperatorFailureProbe({
-        phase,
-        startedAtMs,
-        endedAtMs,
-        payoutFailureReason
-      })
 }
 
 function assertPositiveCount(count: number): void {

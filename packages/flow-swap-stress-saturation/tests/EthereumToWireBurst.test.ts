@@ -11,10 +11,10 @@ describe("buildPhase1Requests", () => {
   it("targets WIRE for ETH-to-WIRE stress requests", () => {
     // Given: route codes include both legacy Solana values and the WIRE target values.
     const identities = stressIdentities(),
-      targetAmount = 99_001n
+      targetAmounts = [99_001n, 98_991n]
 
     // When: phase 1 request payloads are built.
-    const requests = buildPhase1Requests(Route, identities, targetAmount)
+    const requests = buildPhase1Requests(Route, identities, targetAmounts)
 
     // Then: every request targets the WIRE depot, not Solana recipients or reserves.
     expect(requests).toHaveLength(2)
@@ -56,8 +56,8 @@ describe("buildPhase1Requests", () => {
       Array.from(identities.solana[1].publicKeyBytes)
     ])
     expect(requests.map(request => request.targetAmount)).toEqual([
-      targetAmount,
-      targetAmount
+      99_001n,
+      98_991n
     ])
   })
 })
