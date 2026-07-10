@@ -93,11 +93,11 @@ describe("runSaturationRamp", () => {
     expect(readEvidence(evidenceDir, 1).preserveCluster).toBe(true)
   })
 
-  it("does not pass a saturated outcome that is still missing a required Ethereum endpoint", async () => {
+  it("continues a saturated outcome that is still missing a required Ethereum endpoint", async () => {
     // Given: a runner reports saturation but only one required Ethereum endpoint is present.
     const evidenceDir = makeEvidenceDir("synthetic-missing-endpoint")
 
-    // When: the ramp controller applies campaign-level all-legs aggregation.
+    // When: the ramp controller applies campaign-level all-legs aggregation until max count.
     const result = await runSaturationRamp({
       evidenceDir,
       config: RampFixtures.Config,
@@ -121,10 +121,15 @@ describe("runSaturationRamp", () => {
       })
     })
 
-    // Then: a mislabeled iteration cannot bypass the strict both-directions rule.
+    // Then: a mislabeled iteration cannot bypass the strict both-directions rule before max count.
     expect(result.status).toBe("partial_saturation")
     expect(result.preserveCluster).toBe(true)
     expect(readEvidence(evidenceDir, 0)).toMatchObject({
+      status: "not_saturated",
+      preserveCluster: false,
+      missingEndpoints: [requiredEndpointNames()[1]]
+    })
+    expect(readEvidence(evidenceDir, 3)).toMatchObject({
       status: "partial_saturation",
       preserveCluster: true,
       missingEndpoints: [requiredEndpointNames()[1]]
