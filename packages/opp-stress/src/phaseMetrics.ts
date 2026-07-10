@@ -1,7 +1,10 @@
 import { oppDebuggingPath } from "@wireio/debugging-shared"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 
-import { collectOppEnvelopeSaturationMetrics } from "./envelopeMetrics.js"
+import {
+  collectOppEnvelopeSaturationMetrics,
+  type OppEnvelopeSaturationStrategy
+} from "./envelopeMetrics.js"
 
 /** Envelope collector request for a named OPP workload phase. */
 export type OppPhaseMetricRequest = {
@@ -13,13 +16,15 @@ export type OppPhaseMetricRequest = {
   readonly endedAtMs: number
   /** Endpoint direction expected to carry the phase's OPP evidence. */
   readonly endpointsType: DebugOutpostEndpointsType
+  /** Saturation classifier; defaults to rollover for generic OPP stress. */
+  readonly saturationStrategy?: OppEnvelopeSaturationStrategy
 }
 
 /** Phase envelope metrics projected into ramp telemetry. */
 export type OppPhaseEnvelopeMetrics = {
   /** Phase label these metrics describe. */
   readonly phase: string
-  /** Whether this phase rolled over to multiple envelopes. */
+  /** Whether this phase satisfies the selected saturation strategy. */
   readonly saturated: boolean
   /** Whether any matching Solana destination envelope exceeds the raw transaction byte cap. */
   readonly solanaOversized: boolean
@@ -46,13 +51,17 @@ export async function collectOppPhaseMetrics(
   clusterPath: string,
   request: OppPhaseMetricRequest
 ): Promise<OppPhaseEnvelopeMetrics> {
+  const window = {
+    endpointsType: request.endpointsType,
+    timestampStartMs: request.startedAtMs,
+    timestampEndMs: request.endedAtMs,
+    ...(request.saturationStrategy === undefined
+      ? {}
+      : { saturationStrategy: request.saturationStrategy })
+  }
   const metrics = await collectOppEnvelopeSaturationMetrics(
     oppDebuggingPath(clusterPath),
-    {
-      endpointsType: request.endpointsType,
-      timestampStartMs: request.startedAtMs,
-      timestampEndMs: request.endedAtMs
-    }
+    window
   )
   return {
     phase: request.phase,

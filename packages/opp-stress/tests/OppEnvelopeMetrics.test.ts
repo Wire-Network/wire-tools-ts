@@ -17,6 +17,7 @@ import {
 import {
   collectOppPhaseMetrics,
   collectOppEnvelopeSaturationMetrics,
+  MaxEnvelopeBytes,
   SolanaRawTransactionBytesMax
 } from "@wireio/test-opp-stress"
 
@@ -80,6 +81,23 @@ describe("collectOppEnvelopeSaturationMetrics", () => {
     expect(metrics.envelopeCount).toBe(2)
     expect(metrics.epochEnvelopeIndexes).toEqual([0, 0])
     expect(metrics.saturated).toBe(false)
+  })
+
+  it("reports near-max byte saturation when the byte-threshold strategy is selected", async () => {
+    // Given: one matching envelope is near the raw OPP envelope cap without rollover.
+    const storageDir = makeStorageDir("near-max")
+    writeEnvelopeFixture(storageDir, 0, { payloadSize: MaxEnvelopeBytes - 512 })
+
+    // When: metrics are collected with the byte-threshold strategy.
+    const metrics = await collectOppEnvelopeSaturationMetrics(storageDir, {
+      endpointsType: DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT,
+      saturationStrategy: "byte_threshold"
+    })
+
+    // Then: near-cap bytes classify saturation independently from rollover.
+    expect(metrics.saturated).toBe(true)
+    expect(metrics.epochEnvelopeIndexes).toEqual([0])
+    expect(metrics.byteSizes[0]).toBeGreaterThanOrEqual(MaxEnvelopeBytes - 512)
   })
 
   it("projects cluster OPP debug artifacts into phase metrics", async () => {
