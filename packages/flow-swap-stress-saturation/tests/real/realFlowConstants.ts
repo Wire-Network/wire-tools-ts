@@ -98,10 +98,21 @@ export namespace SplFunding {
       BigInt(RealRamp.Config.maxCount)
 }
 
-/** Local ETH ReserveManager status value for ACTIVE private reserves. */
-export enum EthLocalReserveStatus {
-  ACTIVE = 1
+/** Real-flow underwriter collateral budgets sized for the full configured ramp. */
+export namespace UnderwriterFunding {
+  /** ETH collateral budget; changing this alters the maximum phase-2 remit volume. */
+  export const EthereumAmount =
+    SwapStressPhaseAmounts.Phase2SourceWireUnits *
+    BigInt(RealRamp.Config.maxCount) *
+    BigInt(RealRamp.MaxIterationCount)
+  /** Solana bootstrap collateral per token; changing this alters setup funding needs. */
+  export const SolanaAmount = 1_000_000_000n
 }
+
+/** Local ETH ReserveManager status value for ACTIVE private reserves. */
+export const EthLocalReserveStatus = {
+  ACTIVE: 1
+} as const
 
 /** Underwriter collateral requirements for real stress swaps. */
 export function underwriterRequirements() {
@@ -121,27 +132,26 @@ export function underwriterRequirements() {
 
 /** Underwriter collateral balances for native and USDCSOL legs. */
 export function underwriterCollateral() {
-  const amount = 1_000_000_000n
   return [
     {
       chain_code: Reserves.Ethereum.ChainCode,
       amount: TokenAmount.create({
         tokenCode: BigInt(Reserves.Ethereum.TokenCode),
-        amount
+        amount: UnderwriterFunding.EthereumAmount
       })
     },
     {
       chain_code: Reserves.Solana.ChainCode,
       amount: TokenAmount.create({
         tokenCode: BigInt(Reserves.Solana.NativeTokenCode),
-        amount
+        amount: UnderwriterFunding.SolanaAmount
       })
     },
     {
       chain_code: Reserves.Solana.ChainCode,
       amount: TokenAmount.create({
         tokenCode: BigInt(Reserves.Solana.TokenCode),
-        amount
+        amount: UnderwriterFunding.SolanaAmount
       })
     }
   ]

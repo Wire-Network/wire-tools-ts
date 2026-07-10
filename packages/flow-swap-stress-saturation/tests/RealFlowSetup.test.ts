@@ -2,7 +2,12 @@ import {
   provisionStressWireAccountsWith,
   StressWireAccountFunding
 } from "./real/realStressWireAccounts.js"
-import { RealRamp, Timing } from "./real/realFlowConstants.js"
+import {
+  RealRamp,
+  Reserves,
+  Timing,
+  underwriterCollateral
+} from "./real/realFlowConstants.js"
 import { SwapStressPhaseAmounts } from "@wireio/test-flow-swap-stress-saturation"
 
 describe("provisionStressWireAccountsWith", () => {
@@ -51,6 +56,40 @@ describe("provisionStressWireAccountsWith", () => {
       SwapStressPhaseAmounts.Phase2SourceWireUnits *
         BigInt(RealRamp.MaxIterationCount)
     )
+  })
+
+  it("funds ETH underwriter collateral for the configured phase-2 ramp", () => {
+    // Given: phase 2 can remit to every configured account across every real-ramp iteration.
+    const collateral = underwriterCollateral(),
+      requiredEthCollateral =
+        SwapStressPhaseAmounts.Phase2SourceWireUnits *
+        BigInt(RealRamp.Config.maxCount) *
+        BigInt(RealRamp.MaxIterationCount)
+
+    // When: the real-flow ETH underwriter collateral entry is selected.
+    const ethereum = collateral.find(
+      entry =>
+        entry.chain_code === Reserves.Ethereum.ChainCode &&
+        entry.amount.tokenCode === BigInt(Reserves.Ethereum.TokenCode)
+    )
+
+    // Then: it can cover the configured phase-2 remit budget.
+    expect(ethereum?.amount.amount).toBeGreaterThanOrEqual(
+      requiredEthCollateral
+    )
+  })
+
+  it("keeps Solana underwriter collateral within bootstrap funding", () => {
+    // Given: Solana collateral is bootstrap-only for this ETH-targeted ramp.
+    const collateral = underwriterCollateral()
+
+    // When: both Solana collateral entries are selected.
+    const solanaAmounts = collateral
+      .filter(entry => entry.chain_code === Reserves.Solana.ChainCode)
+      .map(entry => entry.amount.amount)
+
+    // Then: neither entry inherits the larger ETH remit budget.
+    expect(solanaAmounts).toEqual([1_000_000_000n, 1_000_000_000n])
   })
 
   it("budgets the real saturation ramp timeout as phaseTimeoutMs * MaxIterationCount plus BootstrapTimeoutMs", () => {
