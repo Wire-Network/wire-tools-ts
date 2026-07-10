@@ -16,6 +16,9 @@ const config = {
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",
     "^@wireio/test-flow-swap-stress-saturation$": "<rootDir>/src/index",
+    "^@wireio/test-opp-stress$": "<rootDir>/../opp-stress/src/index",
+    "^@wireio/test-opp-stress/(.*)\\.js$": "<rootDir>/../opp-stress/src/$1",
+    "^@wireio/test-opp-stress/(.*)$": "<rootDir>/../opp-stress/src/$1",
     "^@wireio/test-cluster-tool$": "<rootDir>/../test-cluster-tool/src/index",
     "^@wireio/test-cluster-tool/(.*)\\.js$":
       "<rootDir>/../test-cluster-tool/src/$1",

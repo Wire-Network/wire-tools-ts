@@ -8,11 +8,14 @@
       "@wireio/debugging-shared/*": ["../debugging-shared/src/*"],
       "@wireio/test-cluster-tool": ["../test-cluster-tool/src"],
       "@wireio/test-cluster-tool/*": ["../test-cluster-tool/src/*"],
+      "@wireio/test-opp-stress": ["../opp-stress/src"],
+      "@wireio/test-opp-stress/*": ["../opp-stress/src/*"],
       "@wireio/test-flow-swap-stress-saturation": ["./src"]
     }
   },
   "include": ["tests"],
   "references": [
+    { "path": "../opp-stress/tsconfig.json" },
     { "path": "./tsconfig.src.json" }
   ]
 }
