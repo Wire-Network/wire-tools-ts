@@ -6,6 +6,7 @@
   "references": [
     { "path": "../debugging-shared/tsconfig.json" },
     { "path": "../test-cluster-tool/tsconfig.json" },
+    { "path": "../opp-stress/tsconfig.json" },
     { "path": "./tsconfig.src.json" },
     { "path": "./tsconfig.tests.json" }
   ]
