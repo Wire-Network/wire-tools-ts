@@ -1,6 +1,6 @@
 import Assert from "node:assert"
 import { ethers } from "ethers"
-import { AttestationType, Envelope, NodeOwnerTier } from "@wireio/opp-typescript-models"
+import { NodeOwnerTier } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
 import {
@@ -18,6 +18,8 @@ import {
   type ClusterBuildStepOptions,
   type StepInput
 } from "@wireio/cluster-tool"
+import { bytesToHex, encodeTaggedEnvelope, parseChainTip } from "../EnvelopeCanonicalCodec.js"
+import { SingleFlightCache } from "../SingleFlightCache.js"
 import { SlashingScenarioConstants as Constants } from "../SlashingScenarioConstants.js"
 
 const {
@@ -66,222 +68,83 @@ export namespace SlashingScenarioDisputeSteps {
     "the open dispute's id + the canonical candidate checksum the Tier-1 electorate votes for"
   )
 
-  // ── Envelope encoding (built with the real @wireio/opp-typescript-models) ──
+  // ── Envelope encoding + inbound chain tips ────────────────────────────────
   //
-  // The semantic header (opp.proto MessageHeader) is validated by `sysio.msgch::apply_consensus`
-  // since SEC-102, so the winning dispute envelope needs a spec-correct, message-chained header.
-  // Its checksums are keccak256 over the FIELD-COMPLETE canonical encoding (every singular field
-  // written, defaults included) — which protobuf-ts `toBinary` does NOT produce — so we compute
-  // them with the small canonical encoder below (mirrors the depot's opp_canonical_codec.hpp and
-  // the C++ oracle in contracts/tests/opp_envelope_oracle.hpp). The delivered wire bytes stay
-  // `Envelope.toBinary` output: the depot decodes them and re-canonicalises before recomputing,
-  // so a non-canonical-but-decodable wire form validates identically.
+  // The canonical OPP codec (semantic-header derivation + tagged-envelope encoding) lives in
+  // ../EnvelopeCanonicalCodec.ts so it can be unit-tested without this step module's cluster-tool
+  // dependency; see that file for why the checksums are computed over a field-complete canonical
+  // encoding rather than protobuf-ts `toBinary`.
 
-  const CanonicalEmpty = new Uint8Array(0)
-
-  function canonicalVarint(value: bigint): number[] {
-    const out: number[] = []
-    while (value >= 0x80n) {
-      out.push(Number(value & 0x7fn) | 0x80)
-      value >>= 7n
-    }
-    out.push(Number(value))
-    return out
-  }
-  const canonicalTag = (field: number, wireType: number) =>
-    canonicalVarint(BigInt((field << 3) | wireType))
-  const canonicalVarintField = (field: number, value: bigint | number) => [
-    ...canonicalTag(field, 0),
-    ...canonicalVarint(BigInt(value))
-  ]
-  const canonicalBytesField = (field: number, bytes: Uint8Array) => [
-    ...canonicalTag(field, 2),
-    ...canonicalVarint(BigInt(bytes.length)),
-    ...bytes
-  ]
-  const canonicalSubMessage = (field: number, body: number[]) => [
-    ...canonicalTag(field, 2),
-    ...canonicalVarint(BigInt(body.length)),
-    ...body
-  ]
-  const canonicalChainId = (kind: number, id: number) => [
-    ...canonicalVarintField(1, kind),
-    ...canonicalVarintField(2, id)
-  ]
-  // endpoints is reserved-default across all emitters (routing derives from the proven chain).
-  const canonicalEndpointsDefault = () => [
-    ...canonicalSubMessage(1, canonicalChainId(0, 0)),
-    ...canonicalSubMessage(2, canonicalChainId(0, 0))
-  ]
-  const canonicalAttestation = (att: { type: number; dataSize: number; data: Uint8Array }) => [
-    ...canonicalVarintField(1, att.type),
-    ...canonicalVarintField(2, att.dataSize),
-    ...canonicalBytesField(3, att.data)
-  ]
-  const canonicalPayload = (
-    version: number,
-    atts: { type: number; dataSize: number; data: Uint8Array }[]
-  ) => [
-    ...canonicalVarintField(1, version),
-    ...atts.flatMap(att => canonicalSubMessage(2, canonicalAttestation(att)))
-  ]
-  // Slot 4 (encoding_flags) was removed from opp.proto; reserved, never encoded.
-  const canonicalHeader = (header: {
-    messageId: Uint8Array
-    previousMessageId: Uint8Array
-    payloadSize: number
-    payloadChecksum: Uint8Array
-    timestamp: bigint
-    headerChecksum: Uint8Array
-  }) => [
-    ...canonicalSubMessage(1, canonicalEndpointsDefault()),
-    ...canonicalBytesField(2, header.messageId),
-    ...canonicalBytesField(3, header.previousMessageId),
-    ...canonicalVarintField(5, header.payloadSize),
-    ...canonicalBytesField(6, header.payloadChecksum),
-    ...canonicalVarintField(7, header.timestamp),
-    ...canonicalBytesField(8, header.headerChecksum)
-  ]
-
-  const keccakBytes = (bytes: number[] | Uint8Array) =>
-    ethers.getBytes(ethers.keccak256(Uint8Array.from(bytes)))
-
-  /** Big-endian sequence number in the first 8 bytes of a message id; 0 when empty (genesis). */
-  function messageSequence(messageId: Uint8Array): bigint {
-    return messageId.length < 8 ? 0n : ethers.toBigInt(messageId.slice(0, 8))
-  }
-
-  /** `headerChecksum` with its first 8 bytes replaced by the big-endian sequence number. */
-  function deriveMessageId(headerChecksum: Uint8Array, sequence: bigint): Uint8Array {
-    const out = new Uint8Array(headerChecksum)
-    out.set(ethers.getBytes(ethers.toBeHex(sequence, 8)), 0)
-    return out
+  /** The outpost's inbound chain tips from `sysio.msgch::outpcons`, read once per contested epoch. */
+  export interface OutpostInboundTips {
+    /**
+     * The inbound MESSAGE tip: the raw 32-byte `message_id` the next accepted
+     * message must carry in `previous_message_id` (SEC-102 replay guard). Empty
+     * at stream genesis: no row yet, or an all-zero tip (the depot leaves
+     * `message_tip` zero until the first message-bearing envelope is accepted).
+     */
+    messageTip: Uint8Array
+    /**
+     * The inbound ENVELOPE tip: `outpcons.envelope_digest`, the canonical epoch
+     * digest the next envelope must carry in `previous_envelope_hash`.
+     * `apply_consensus` checks this BEFORE the semantic-header validation and
+     * drops any non-genesis envelope that does not continue it, so a headerless
+     * (empty) prev-hash is dropped once bootstrap has established a tip. Empty at
+     * genesis.
+     */
+    envelopeDigest: Uint8Array
   }
 
   /**
-   * Encode a valid OPP Envelope for `epochIndex` whose only varying content is
-   * `tag`, so the depot's `sha256(data)` differs per tag (that is what produces
-   * the distinct candidate checksums).
-   *
-   * Mirrors `contracts/tests/sysio.dispute_tests.cpp::encode_envelope`: one
-   * message carrying one benign `ATTESTATION_TYPE_UNSPECIFIED` attestation whose
-   * `data` is the tag. UNSPECIFIED makes the winner's eventual dispatch a no-op
-   * (no side effects).
-   *
-   * The semantic header is derived per the SEC-102 spec: `payload_size` /
-   * `payload_checksum` over the canonical payload bytes, `header_checksum` over
-   * the blanked canonical header, and `message_id` = that checksum with the
-   * big-endian sequence number spliced over its first 8 bytes. `prevMessageId`
-   * is the outpost's current inbound message tip (empty at stream genesis); the
-   * message must continue it, so the caller reads it from `outpcons` first.
-   *
-   * @param epochIndex - The contested epoch the envelope claims.
-   * @param tag - The benign payload distinguishing the checksum.
-   * @param prevMessageId - The outpost's current inbound message tip.
-   * @returns The serialized envelope bytes.
+   * Cache of each outpost's inbound tips per `${chainCode}:${epochIndex}`, so all deliveries an
+   * outpost receives for one contested epoch chain from the SAME pre-delivery tips. The cache is
+   * SINGLE-FLIGHT ({@link SingleFlightCache}): the three per-operator deliveries run in parallel, so
+   * without it each would issue its own read, and once the non-contested outpost's 2/3 majority
+   * triggers `apply_consensus` inline and advances the tips, a late read would produce a
+   * differently-chained (and so differently-checksummed) envelope — mis-classified as a divergent
+   * delivery and wrongly slashed. Registering the in-flight read synchronously collapses the
+   * parallel misses onto one read that observes the pre-delivery tips.
    */
-  export function encodeTaggedEnvelope(
-    epochIndex: number,
-    tag: string,
-    prevMessageId: Uint8Array
-  ): Uint8Array {
-    const data = new TextEncoder().encode(tag)
-    const version = Constants.EnvelopeVersion
-    const atts = [{ type: AttestationType.UNSPECIFIED, dataSize: data.length, data }]
-    const timestamp = Constants.EnvelopeEpochTimestampMs
-
-    const payloadCanonical = canonicalPayload(version, atts)
-    const payloadChecksum = keccakBytes(payloadCanonical)
-    const headerChecksum = keccakBytes(
-      canonicalHeader({
-        messageId: CanonicalEmpty,
-        previousMessageId: prevMessageId,
-        payloadSize: payloadCanonical.length,
-        payloadChecksum,
-        timestamp,
-        headerChecksum: CanonicalEmpty
-      })
-    )
-    const messageId = deriveMessageId(headerChecksum, messageSequence(prevMessageId) + 1n)
-
-    return Envelope.toBinary(
-      Envelope.create({
-        epochIndex,
-        epochEnvelopeIndex: Constants.EnvelopeEpochEnvelopeIndex,
-        epochTimestamp: timestamp,
-        messages: [
-          {
-            header: {
-              messageId,
-              previousMessageId: prevMessageId,
-              payloadSize: payloadCanonical.length,
-              payloadChecksum,
-              timestamp,
-              headerChecksum
-            },
-            payload: { version, attestations: atts }
-          }
-        ]
-      })
-    )
-  }
+  const inboundTipsCache = new SingleFlightCache<string, OutpostInboundTips>()
 
   /**
-   * The outpost's current inbound MESSAGE tip from `sysio.msgch::outpcons` — the
-   * raw 32-byte `message_id` the next accepted message must carry in
-   * `previous_message_id` (SEC-102 replay guard). Empty at stream genesis: no
-   * row yet, or an all-zero tip (the depot leaves `message_tip` zero until the
-   * first message-bearing envelope from the outpost is accepted). By the time
-   * this scenario runs, bootstrap emissions have advanced both outposts' tips,
-   * so the synthetic dispute envelopes must continue from the real tip.
+   * The outpost's current inbound message + envelope tips from `sysio.msgch::outpcons`, read once
+   * per `(chainCode, epochIndex)` and shared across that epoch's parallel deliveries (see
+   * {@link inboundTipsCache}). By the time this scenario runs, bootstrap emissions have advanced
+   * both outposts' tips, so the synthetic dispute envelopes must continue from the real tips.
    *
    * @param ctx - The build context.
    * @param chainCode - The outpost slug_name.
-   * @returns The 32-byte tip, or empty at genesis.
+   * @param epochIndex - The contested epoch (cache scope, so a later epoch re-reads).
+   * @returns The outpost's inbound tips (each empty at genesis).
    */
-  /**
-   * Cache of the inbound message tip per `${chainCode}:${epochIndex}`, so all deliveries an
-   * outpost receives for one contested epoch chain from the SAME pre-delivery tip. Without this,
-   * once the non-contested outpost's 2/3 majority triggers `apply_consensus` inline and advances
-   * the tip, a re-read for the third delivery would produce a differently-chained (and so
-   * differently-checksummed) envelope — mis-classified as a divergent delivery and wrongly slashed.
-   */
-  const inboundMessageTipCache = new Map<string, Uint8Array>()
-
-  export async function readInboundMessageTip(
+  export function readInboundTips(
     ctx: ClusterBuildContext,
     chainCode: number,
     epochIndex: number
-  ): Promise<Uint8Array> {
-    const cacheKey = `${chainCode}:${epochIndex}`
-    const cached = inboundMessageTipCache.get(cacheKey)
-    if (cached !== undefined) return cached
+  ): Promise<OutpostInboundTips> {
+    return inboundTipsCache.get(`${chainCode}:${epochIndex}`, () =>
+      fetchOutpostInboundTips(ctx, chainCode)
+    )
+  }
 
+  /** Read + parse one outpost's `outpcons` row into its inbound tips (the cache's fetch). */
+  async function fetchOutpostInboundTips(
+    ctx: ClusterBuildContext,
+    chainCode: number
+  ): Promise<OutpostInboundTips> {
     const { rows } = await ctx.wire
       .getSysioContract(SysioContractName.msgch)
       .tables.outpcons.query({ limit: Constants.OutpostConsensusTableReadLimit })
-    // `message_tip` is new in the deployed ABI (SEC-102) but absent from the pinned
-    // SystemContractTypes, so read it off the runtime row.
+    // `message_tip` / `envelope_digest` are new in the deployed ABI (SEC-102) but absent from the
+    // pinned SystemContractTypes, so read them off the runtime row.
     const row = rows.find(r => String(r.chain_code) === String(chainCode)) as
-      | { message_tip?: string }
+      | { message_tip?: string; envelope_digest?: string }
       | undefined
-    const tip = row?.message_tip
-    const resolved =
-      !tip || /^0*$/.test(tip)
-        ? CanonicalEmpty
-        : ethers.getBytes(tip.startsWith("0x") ? tip : `0x${tip}`)
-    inboundMessageTipCache.set(cacheKey, resolved)
-    return resolved
-  }
-
-  /**
-   * Hex-encode envelope bytes for the `sysio.msgch::deliver` `data` field.
-   *
-   * @param bytes - The serialized envelope.
-   * @returns The lowercase hex spelling.
-   */
-  export function bytesToHex(bytes: Uint8Array): string {
-    return Buffer.from(bytes).toString("hex")
+    return {
+      messageTip: parseChainTip(row?.message_tip),
+      envelopeDigest: parseChainTip(row?.envelope_digest)
+    }
   }
 
   // ── Reads (execute freely inside runners / verify steps) ─────────────────
@@ -767,16 +630,27 @@ export namespace SlashingScenarioDisputeSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const epochIndex = ctx.outputs.assert(ContestedEpochKey)
-    // Chain the synthetic envelope from the outpost's current inbound message tip so the winner
-    // (or, for the non-contested outpost, the consensus envelope) passes SEC-102 header validation
-    // in apply_consensus. The three divergent envelopes for the contested outpost all read the same
-    // pre-dispute tip; only the voted winner dispatches and advances it.
-    const prevMessageId = await readInboundMessageTip(ctx, input.chainCode, epochIndex)
+    // Chain the synthetic envelope from the outpost's current inbound tips so the winner (or, for
+    // the non-contested outpost, the consensus envelope) passes SEC-102 validation in
+    // apply_consensus: `previous_envelope_hash` continues the envelope chain and
+    // `previous_message_id` continues the message chain. The three divergent envelopes for the
+    // contested outpost all read the SAME pre-dispute tips; only the voted winner dispatches and
+    // advances them.
+    const tips = await readInboundTips(ctx, input.chainCode, epochIndex)
+    const envelope = encodeTaggedEnvelope({
+      epochIndex,
+      epochEnvelopeIndex: Constants.EnvelopeEpochEnvelopeIndex,
+      epochTimestampMs: Constants.EnvelopeEpochTimestampMs,
+      payloadVersion: Constants.EnvelopeVersion,
+      tag: input.tag,
+      previousMessageId: tips.messageTip,
+      previousEnvelopeHash: tips.envelopeDigest
+    })
     await ctx.wire.getSysioContract(SysioContractName.msgch).actions.deliver.invoke(
       {
         batch_op_name: input.batchOperator,
         chain_code: input.chainCode,
-        data: bytesToHex(encodeTaggedEnvelope(epochIndex, input.tag, prevMessageId))
+        data: bytesToHex(envelope)
       },
       {
         authorization: [{ actor: input.batchOperator, permission: ActivePermission }]
