@@ -62,6 +62,12 @@
       "@wireio/test-flow-swap-variance-revert/*": [
         "./packages/flow-swap-variance-revert/src/*"
       ],
+      "@wireio/test-flow-batch-operator-slashing": [
+        "./packages/flow-batch-operator-slashing/src"
+      ],
+      "@wireio/test-flow-batch-operator-slashing/*": [
+        "./packages/flow-batch-operator-slashing/src/*"
+      ],
       "@wireio/debugging-shared": [
         "./packages/debugging-shared/src"
       ],

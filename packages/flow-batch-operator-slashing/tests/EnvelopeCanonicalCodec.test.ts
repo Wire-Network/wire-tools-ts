@@ -6,7 +6,7 @@ import {
   encodeTaggedEnvelope,
   parseChainTip,
   type TaggedEnvelopeInput
-} from "../src/EnvelopeCanonicalCodec.js"
+} from "@wireio/test-flow-batch-operator-slashing/EnvelopeCanonicalCodec.js"
 
 /** keccak-timestamp shared by every pinned vector (matches `GOLDEN_TS_MS` in the C++ suite). */
 const GOLDEN_TS_MS = 1_775_612_516_983n
@@ -16,10 +16,12 @@ const DEAD = Uint8Array.from([0xde, 0xad, 0xbe, 0xef])
 const CAFE = Uint8Array.from([0xca, 0xfe, 0xba, 0xbe, 0x01])
 
 const hex = (b: Uint8Array): string => Buffer.from(b).toString("hex")
-const fromHex = (h: string): Uint8Array => ethers.getBytes(h.startsWith("0x") ? h : `0x${h}`)
+const fromHex = (h: string): Uint8Array =>
+  ethers.getBytes(h.startsWith("0x") ? h : `0x${h}`)
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s)
 /** Big-endian sequence number in a message id's first 8 bytes. */
-const sequenceOf = (messageId: Uint8Array): bigint => ethers.toBigInt(messageId.slice(0, 8))
+const sequenceOf = (messageId: Uint8Array): bigint =>
+  ethers.toBigInt(messageId.slice(0, 8))
 /** A 32-byte message tip whose first 8 bytes carry `sequence` (the rest zero). */
 const tipWithSequence = (sequence: bigint): Uint8Array => {
   const out = new Uint8Array(32)
@@ -41,13 +43,21 @@ describe("EnvelopeCanonicalCodec", () => {
         previousMessageId: new Uint8Array(0)
       })
       expect(header.payloadSize).toBe(15)
-      expect(hex(header.payloadChecksum)).toBe("6429fe11b290953c3e28e6ed7887059307329591c6296d6e41d27e4e6ddcae99")
-      expect(hex(header.headerChecksum)).toBe("fb2b80f90bf26934210103982d1ae1f083b047bde00e77e4a337f3b31c8d223c")
-      expect(hex(header.messageId)).toBe("0000000000000001210103982d1ae1f083b047bde00e77e4a337f3b31c8d223c")
+      expect(hex(header.payloadChecksum)).toBe(
+        "6429fe11b290953c3e28e6ed7887059307329591c6296d6e41d27e4e6ddcae99"
+      )
+      expect(hex(header.headerChecksum)).toBe(
+        "fb2b80f90bf26934210103982d1ae1f083b047bde00e77e4a337f3b31c8d223c"
+      )
+      expect(hex(header.messageId)).toBe(
+        "0000000000000001210103982d1ae1f083b047bde00e77e4a337f3b31c8d223c"
+      )
     })
 
     it("reproduces vector B: chained from A, two attestations, sequence 2", () => {
-      const aMessageId = fromHex("0000000000000001210103982d1ae1f083b047bde00e77e4a337f3b31c8d223c")
+      const aMessageId = fromHex(
+        "0000000000000001210103982d1ae1f083b047bde00e77e4a337f3b31c8d223c"
+      )
       const header = deriveSemanticHeader({
         version: 1,
         attestations: [
@@ -58,14 +68,22 @@ describe("EnvelopeCanonicalCodec", () => {
         previousMessageId: aMessageId
       })
       expect(header.payloadSize).toBe(29)
-      expect(hex(header.payloadChecksum)).toBe("fdbcffc45ad50a6a2d1376af8c498d86910751868ae7e14fe909477b319ec98d")
-      expect(hex(header.headerChecksum)).toBe("8d135355c556a6ed2437e72cf67a093c4c5753cbb3ce71b76c890da8f9965c35")
-      expect(hex(header.messageId)).toBe("00000000000000022437e72cf67a093c4c5753cbb3ce71b76c890da8f9965c35")
+      expect(hex(header.payloadChecksum)).toBe(
+        "fdbcffc45ad50a6a2d1376af8c498d86910751868ae7e14fe909477b319ec98d"
+      )
+      expect(hex(header.headerChecksum)).toBe(
+        "8d135355c556a6ed2437e72cf67a093c4c5753cbb3ce71b76c890da8f9965c35"
+      )
+      expect(hex(header.messageId)).toBe(
+        "00000000000000022437e72cf67a093c4c5753cbb3ce71b76c890da8f9965c35"
+      )
     })
   })
 
   describe("deriveSemanticHeader — message-chain sequencing", () => {
-    const oneAttestation = [{ type: AttestationType.UNSPECIFIED, data: utf8("payload") }]
+    const oneAttestation = [
+      { type: AttestationType.UNSPECIFIED, data: utf8("payload") }
+    ]
 
     it("derives sequence 1 at stream genesis (empty tip)", () => {
       const header = deriveSemanticHeader({
@@ -94,7 +112,9 @@ describe("EnvelopeCanonicalCodec", () => {
         timestampMs: GOLDEN_TS_MS,
         previousMessageId: tipWithSequence(41n)
       })
-      expect(hex(header.messageId.slice(8))).toBe(hex(header.headerChecksum.slice(8)))
+      expect(hex(header.messageId.slice(8))).toBe(
+        hex(header.headerChecksum.slice(8))
+      )
       expect(sequenceOf(header.messageId)).toBe(42n)
     })
   })
@@ -119,7 +139,9 @@ describe("EnvelopeCanonicalCodec", () => {
       const previousMessageId = tipWithSequence(4n)
       const env = encode({ previousEnvelopeHash, previousMessageId })
       expect(hex(env.previousEnvelopeHash)).toBe(hex(previousEnvelopeHash))
-      expect(hex(env.messages[0].header.previousMessageId)).toBe(hex(previousMessageId))
+      expect(hex(env.messages[0].header.previousMessageId)).toBe(
+        hex(previousMessageId)
+      )
     })
 
     it("embeds the derived semantic header for its tag + tips", () => {
@@ -127,7 +149,9 @@ describe("EnvelopeCanonicalCodec", () => {
       const env = encode({ previousMessageId })
       const derived = deriveSemanticHeader({
         version: 0,
-        attestations: [{ type: AttestationType.UNSPECIFIED, data: utf8("canonical") }],
+        attestations: [
+          { type: AttestationType.UNSPECIFIED, data: utf8("canonical") }
+        ],
         timestampMs: GOLDEN_TS_MS,
         previousMessageId
       })
@@ -152,7 +176,10 @@ describe("EnvelopeCanonicalCodec", () => {
       const previousMessageId = tipWithSequence(4n)
       const previousEnvelopeHash = fromHex("22".repeat(32))
       const ids = ["canonical", "fork-1", "fork-2"].map(tag =>
-        hex(encode({ tag, previousMessageId, previousEnvelopeHash }).messages[0].header.messageId)
+        hex(
+          encode({ tag, previousMessageId, previousEnvelopeHash }).messages[0]
+            .header.messageId
+        )
       )
       expect(new Set(ids).size).toBe(3)
     })
@@ -167,7 +194,8 @@ describe("EnvelopeCanonicalCodec", () => {
     })
 
     it("decodes a 32-byte tip, tolerating an optional 0x prefix", () => {
-      const raw = "fb2b80f90bf26934210103982d1ae1f083b047bde00e77e4a337f3b31c8d223c"
+      const raw =
+        "fb2b80f90bf26934210103982d1ae1f083b047bde00e77e4a337f3b31c8d223c"
       expect(parseChainTip(raw).length).toBe(32)
       expect(hex(parseChainTip(raw))).toBe(raw)
       expect(hex(parseChainTip(`0x${raw}`))).toBe(raw)

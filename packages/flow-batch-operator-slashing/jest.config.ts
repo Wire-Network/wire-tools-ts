@@ -12,7 +12,9 @@ const config = {
     ]
   },
   moduleNameMapper: {
-    "^(\\.{1,2}/.*)\\.js$": "$1"
+    "^(\\.{1,2}/.*)\\.js$": "$1",
+    "^@wireio/test-flow-batch-operator-slashing/(.*)\\.js$": "<rootDir>/src/$1",
+    "^@wireio/test-flow-batch-operator-slashing/(.*)$": "<rootDir>/src/$1"
   }
 }
 

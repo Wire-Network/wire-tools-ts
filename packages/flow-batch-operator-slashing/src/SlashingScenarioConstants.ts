@@ -67,7 +67,10 @@ export namespace SlashingScenarioConstants {
   /** The operator delivering the canonical checksum (NOT slashed). */
   export const CanonicalOperator = DisputeOperators[0]
   /** The operators delivering the non-canonical checksums (slashed). */
-  export const LosingOperators = [DisputeOperators[1], DisputeOperators[2]] as const
+  export const LosingOperators = [
+    DisputeOperators[1],
+    DisputeOperators[2]
+  ] as const
   /** HD slots for the dispute operators' ETH wallets — past every bootstrapped operator slot. */
   export const DisputeOperatorEthereumHdBase = 35
 
@@ -148,46 +151,80 @@ export namespace SlashingScenarioConstants {
 
   /** Deadline for a dispute operator's ACTIVE flip (ms). */
   export function activeDeadlineMs(): number {
-    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * ActiveEpochBudget * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      ActiveEpochBudget *
+      MsPerSecond
+    )
   }
 
   /** Deadline for the sole-active-group rebuild (ms). */
   export function groupDeadlineMs(): number {
-    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * GroupEpochBudget * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      GroupEpochBudget *
+      MsPerSecond
+    )
   }
 
   /** Deadline for the frozen-epoch settle (ms). */
   export function settleDeadlineMs(): number {
-    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * SettleEpochBudget * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      SettleEpochBudget *
+      MsPerSecond
+    )
   }
 
   /** Interval between frozen-epoch settle polls (ms). */
   export function settlePollIntervalMs(): number {
-    return Math.floor(EpochDurationSec * SettlePollIntervalEpochRatio) * MsPerSecond
+    return (
+      Math.floor(EpochDurationSec * SettlePollIntervalEpochRatio) * MsPerSecond
+    )
   }
 
   /** Deadline for the chain clock to pass the epoch boundary (ms). */
   export function boundaryDeadlineMs(): number {
-    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * BoundaryEpochBudget * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      BoundaryEpochBudget *
+      MsPerSecond
+    )
   }
 
   /** Deadline for the OPEN dispute row to appear (ms). */
   export function disputeOpenDeadlineMs(): number {
-    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * DisputeOpenEpochBudget * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      DisputeOpenEpochBudget *
+      MsPerSecond
+    )
   }
 
   /** Deadline for the dispute to resolve to the canonical winner (ms). */
   export function resolveDeadlineMs(): number {
-    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * ResolveEpochBudget * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      ResolveEpochBudget *
+      MsPerSecond
+    )
   }
 
   /** Deadline for the epoch to unpause after resolution (ms). */
   export function unpauseDeadlineMs(): number {
-    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * UnpauseEpochBudget * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      UnpauseEpochBudget *
+      MsPerSecond
+    )
   }
 
   /** Deadline for a non-canonical deliverer to flip SLASHED (ms). */
   export function slashDeadlineMs(): number {
-    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * SlashPropagationEpochs * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      SlashPropagationEpochs *
+      MsPerSecond
+    )
   }
 }
