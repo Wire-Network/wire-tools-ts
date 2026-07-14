@@ -158,6 +158,19 @@ export abstract class ManagedProcess {
     const verifyBudgetMs = scaleTimeoutMs(this.verifyTimeoutMs)
     const deadline = Date.now() + verifyBudgetMs
     while (Date.now() < deadline) {
+      // A child that DIED can never become ready — fail fast with its exit
+      // code instead of burning the whole verify budget. Without this, a
+      // crashed daemon and a slow boot produce the IDENTICAL
+      // "did not pass verifyReady within Nms" line, which is undiagnosable
+      // from the failure alone (2026-07-14 e2e gate: solana-test-validator
+      // failures were indistinguishable between contention and a startup
+      // abort).
+      if (this.exited.isSettled()) {
+        const exitCode = await this.exited.promise
+        throw new Error(
+          `${this.label} exited (code ${exitCode}) before passing verifyReady — see its process log for the startup failure`
+        )
+      }
       try {
         if (await this.verifyReady()) {
           this.log.info(`${this.label} ready`)
