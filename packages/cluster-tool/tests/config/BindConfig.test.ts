@@ -129,6 +129,7 @@ describe("BindConfig", () => {
       expect(config.anvil.port).toBe(BindConfig.DefaultAnvil)
       expect(config.solana.ports.http).toBe(BindConfig.DefaultSolanaRpc)
       expect(config.solana.ports.faucet).toBe(BindConfig.DefaultSolanaFaucet)
+      expect(config.solana.ports.gossip).toBe(BindConfig.DefaultSolanaGossip)
       expect(config.debuggingServer.port).toBe(BindConfig.DefaultDebuggingServer)
     })
 
@@ -269,6 +270,23 @@ describe("BindConfig", () => {
       ).rejects.toThrow(/pinned but unavailable/)
     })
 
+    it("uses a caller-pinned gossip port when it is free", async () => {
+      const pinned = 14_500
+      const config = await BindConfig.resolve(
+        { solana: { ports: { gossip: pinned } } },
+        {}
+      )
+      expect(config.solana.ports.gossip).toBe(pinned)
+    })
+
+    it("throws when a pinned gossip port is taken (same pin semantics as every daemon)", async () => {
+      const pinned = 14_600
+      allocator.markTaken(pinned)
+      await expect(
+        BindConfig.resolve({ solana: { ports: { gossip: pinned } } }, {})
+      ).rejects.toThrow(/pinned but unavailable/)
+    })
+
     it("findAvailableRange returns a full-width window without registering", async () => {
       const window = await BindConfig.findAvailableRange()
       expect(window.last - window.first + 1).toBe(
@@ -314,6 +332,7 @@ describe("BindConfig", () => {
           ports: {
             http: port + 4,
             faucet: port + 5,
+            gossip: port + 8,
             // Width-1 window keeps the claim minimal (one extra port).
             dynamicRange: { first: port + 7, last: port + 7 }
           }

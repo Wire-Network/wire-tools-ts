@@ -238,7 +238,11 @@ function buildBindShape(
       address: optionalLeaf(OptionLeafType.string, "solana bind address"),
       ports: {
         http: optionalLeaf(OptionLeafType.number, "solana RPC listen port"),
-        faucet: optionalLeaf(OptionLeafType.number, "solana faucet listen port")
+        faucet: optionalLeaf(OptionLeafType.number, "solana faucet listen port"),
+        gossip: optionalLeaf(
+          OptionLeafType.number,
+          "solana validator gossip listen port (--gossip-port)"
+        )
       }
     },
     debuggingServer: buildDaemonShape("debugging server")

@@ -1,5 +1,4 @@
 import Assert from "node:assert"
-import Dgram from "node:dgram"
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
@@ -57,27 +56,6 @@ async function clearPortLocks(): Promise<void> {
   mod.clearLockedPorts()
 }
 
-/**
- * True when `port` is bindable as UDP right now (dgram probe on the bind-all
- * address, so a taken port on ANY interface reads as taken). `get-port` only
- * probes TCP; the solana validator's gossip/TPU/TVU sockets are UDP, where the
- * kernel permits SILENT double-binding — two validators sharing a UDP port
- * split the packet stream and forwarded transactions vanish into the co-runner.
- *
- * @param port - Port to probe.
- * @returns Whether the port is UDP-bindable.
- */
-function isUdpPortFree(port: number): Promise<boolean> {
-  return new Promise(resolve => {
-    const socket = Dgram.createSocket({ type: "udp4", reuseAddr: false })
-    socket.once("error", () => {
-      guard(() => socket.close())
-      resolve(false)
-    })
-    socket.bind(port, ListenAllAddress, () => socket.close(() => resolve(true)))
-  })
-}
-
 /** One nodeop's `{ http, p2p }` listen ports. */
 export interface BindConfigNodeopPorts {
   http: number
@@ -112,8 +90,13 @@ export interface BindConfigPortRange {
 
 /**
  * solana ports — `http` is the RPC port, `faucet` the airdrop faucet.
+ * `gossip` is the validator's `--gossip-port`: agave 4.x binds the test
+ * validator's gossip socket at its FIXED default (8000) instead of carving it
+ * from the dynamic range, so a second concurrent validator panics with
+ * `gossip_addr bind_to port 8000: Address already in use` unless each cluster
+ * passes its own resolved gossip port.
  * `dynamicRange` is the validator's `--dynamic-port-range` window
- * (gossip/TPU/TVU/repair sockets). Without a per-cluster window every
+ * (TPU/TVU/repair sockets). Without a per-cluster window every
  * solana-test-validator carves its dynamic sockets from the SAME agave default
  * range; two concurrent validators then UDP-double-bind (the kernel allows it
  * silently) and each forwards transactions into the other's TPU, which drops
@@ -122,13 +105,14 @@ export interface BindConfigPortRange {
 export interface BindConfigSolanaPorts {
   http: number
   faucet: number
+  gossip: number
   dynamicRange: BindConfigPortRange
 }
 
 export interface BindConfigSolana {
   address: string
   ports: BindConfigSolanaPorts
-}
+} 
 
 /** Caller BIND options for a single-port daemon. NOT a `Partial<BindConfig>`. */
 export interface BindDaemonOptions {
@@ -152,6 +136,8 @@ export interface BindNodeopOptions {
 export interface BindSolanaPortsOptions {
   http?: number
   faucet?: number
+  /** Pinned gossip port; must be free (TCP + UDP) or `resolve` throws. */
+  gossip?: number
   /** Pinned validator dynamic-port window; every port must be free or `resolve` throws. */
   dynamicRange?: BindConfigPortRange
 }
@@ -311,6 +297,18 @@ export class BindConfig {
             BindConfig.DefaultSolanaFaucet,
             "solana.faucet"
           ),
+          // agave 4.x binds the test validator's gossip socket at its FIXED
+          // default (8000) instead of carving it from --dynamic-port-range,
+          // so every parallel validator needs an explicit per-cluster
+          // --gossip-port. Cross-cluster disjointness comes from the same
+          // machinery as every other port: the file-locked registry feeds
+          // `claim`'s exclusions, so no two clusters ever resolve the same
+          // gossip port.
+          gossip: await claim(
+            options.solana?.ports?.gossip ?? null,
+            BindConfig.DefaultSolanaGossip,
+            "solana.gossip"
+          ),
           dynamicRange: await (async () => {
             const dynamicRange = await BindConfig.pickPortRange(
               options.solana?.ports?.dynamicRange ?? null,
@@ -354,6 +352,7 @@ export class BindConfig {
       this.anvil.port,
       this.solana.ports.http,
       this.solana.ports.faucet,
+      this.solana.ports.gossip,
       ...range(dynamicRange.first, dynamicRange.last + 1),
       this.debuggingServer.port
     ]
@@ -397,6 +396,12 @@ export namespace BindConfig {
   export const DefaultAnvil = 8545
   export const DefaultSolanaRpc = 8899
   export const DefaultSolanaFaucet = 9900
+  /**
+   * Preferred validator gossip port — agave's test-validator default. The
+   * resolver prefers it and falls to a free ephemeral port when a concurrent
+   * validator already holds it (gossip is UDP, so the claim re-probes UDP).
+   */
+  export const DefaultSolanaGossip = 8000
   /**
    * First candidate port of the validator's `--dynamic-port-range` window.
    * Sits clear of every daemon default above and below the kernel's ephemeral
@@ -618,8 +623,8 @@ export namespace BindConfig {
 
   /**
    * Whether EVERY port of the window starting at `first` is free: not in
-   * `exclusions`, UDP-bindable (dgram probe — the validator's dynamic sockets
-   * are UDP, invisible to `get-port`'s TCP probe), and TCP-bindable.
+   * `exclusions` (the file-locked registry + this resolve's claims — the
+   * cross-process coordination surface) and available per `get-port`.
    *
    * @param first - First port of the candidate window.
    * @param exclusions - Ports already claimed/registered.
@@ -631,16 +636,12 @@ export namespace BindConfig {
   ): Promise<boolean> {
     const ports = range(first, first + SolanaDynamicPortRangeSize)
     if (ports.some(port => exclusions.has(port))) return false
-    const udpFree = await Bluebird.filter(ports, isUdpPortFree, {
-      concurrency: 8
-    })
-    if (udpFree.length !== ports.length) return false
-    const tcpTaken = await Bluebird.filter(
+    const taken = await Bluebird.filter(
       ports,
       async port => (await getPort({ port })) !== port,
       { concurrency: 1 }
     )
-    return tcpTaken.length === 0
+    return taken.length === 0
   }
 
   /**

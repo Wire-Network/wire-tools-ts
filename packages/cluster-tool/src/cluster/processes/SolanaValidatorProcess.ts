@@ -22,6 +22,14 @@ export interface SolanaValidatorOptions {
   /** Faucet port. Defaults to a free port preferring `DefaultFaucetPort`. */
   faucetPort?: number
   /**
+   * `--gossip-port`. agave 4.x binds gossip at its FIXED default (8000)
+   * instead of carving it from `--dynamic-port-range`, so a second concurrent
+   * validator panics with `Address already in use` unless each instance gets
+   * its own resolved port. Defaults to a free port preferring
+   * `BindConfig.DefaultSolanaGossip`.
+   */
+  gossipPort?: number
+  /**
    * `--dynamic-port-range` window for the validator's gossip/TPU/TVU sockets.
    * MUST be disjoint per concurrent validator: without it every instance
    * carves from the same agave default range, UDP-double-binds silently, and
@@ -31,6 +39,16 @@ export interface SolanaValidatorOptions {
   dynamicPortRange?: BindConfigPortRange
   /** Ledger directory (`--ledger`). */
   ledgerPath?: string | null
+  /**
+   * `--limit-ledger-size` (shreds retained in root slots). agave's default is
+   * a mere 10 000 shreds — the blockstore prunes to a ~90-second window, after
+   * which `getSignaturesForAddress` / `getTransaction` history evaporates and
+   * any consumer that scans it (the underwriter's SwapDeposit source-deposit
+   * verify, forensic replay) hard-fails on transactions older than that.
+   * Defaults to `DefaultLimitLedgerSizeShreds`, which retains a full flow
+   * run's history (the cap bounds disk only when traffic actually reaches it).
+   */
+  limitLedgerSizeShreds?: number
   /** Validator binary. Resolved from PATH when omitted. */
   binary?: string
   /** Programs to deploy on startup (`--bpf-program`). */
@@ -61,9 +79,15 @@ export class SolanaValidatorProcess extends ManagedProcess {
       faucetPort:
         options.faucetPort ??
         (await BindConfig.findAvailable(BindConfig.DefaultSolanaFaucet)),
+      gossipPort:
+        options.gossipPort ??
+        (await BindConfig.findAvailable(BindConfig.DefaultSolanaGossip)),
       dynamicPortRange:
         options.dynamicPortRange ?? (await BindConfig.findAvailableRange()),
       ledgerPath: options.ledgerPath ?? null,
+      limitLedgerSizeShreds:
+        options.limitLedgerSizeShreds ??
+        SolanaValidatorProcess.DefaultLimitLedgerSizeShreds,
       binary,
       programs: options.programs ?? [],
       extraArgs: options.extraArgs ?? []
@@ -94,8 +118,12 @@ export class SolanaValidatorProcess extends ManagedProcess {
       String(this.config.rpcPort),
       "--faucet-port",
       String(this.config.faucetPort),
+      "--gossip-port",
+      String(this.config.gossipPort),
       "--dynamic-port-range",
       `${this.config.dynamicPortRange.first}-${this.config.dynamicPortRange.last}`,
+      "--limit-ledger-size",
+      String(this.config.limitLedgerSizeShreds),
       ...(verbose ? [] : ["--quiet"]),
       ...(this.config.ledgerPath ? ["--ledger", this.config.ledgerPath] : []),
       ...this.config.programs.flatMap(program => [
@@ -147,4 +175,15 @@ export namespace SolanaValidatorProcess {
   export const StartupTimeoutMs = 180_000
   /** Env var that, when `"1"`, drops `--quiet` so program logs are captured. */
   export const VerboseEnvironmentVariable = "WIRE_SOLANA_VALIDATOR_VERBOSE"
+  /**
+   * Default `--limit-ledger-size` (shreds) = agave-validator's MAINNET
+   * default (`DEFAULT_MAX_LEDGER_SHREDS`), the value a real operator gets
+   * when enabling the flag. solana-test-validator's own default is a mere
+   * 10 000 shreds — the blockstore prunes to a ~90-second window, which
+   * breaks every history-scanning consumer mid-flow (canonically: the
+   * underwriter's SwapDeposit source-deposit verify walking
+   * `getSignaturesForAddress`). The cap only bounds disk when actual
+   * traffic reaches it; lowering it re-introduces mid-run history loss.
+   */
+  export const DefaultLimitLedgerSizeShreds = 200_000_000
 }

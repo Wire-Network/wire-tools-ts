@@ -29,7 +29,7 @@ export interface ClusterExecutablePaths {
 }
 
 /** The plain JSON shape persisted to `cluster-config.json`. */
-interface PersistedClusterConfig {
+export interface PersistedClusterConfig {
   buildPath: string
   clusterPath: string
   dataPath: string
@@ -58,7 +58,7 @@ interface PersistedClusterConfig {
 }
 
 /** Throw if a required option is missing (fail-fast at the boundary). */
-function requireOption<T>(value: T | null, name: string): T {
+function assertOption<T>(value: T | null, name: string): T {
   Assert.ok(value != null, `ClusterBuildOptions.${name} is required`)
   return value
 }
@@ -106,8 +106,8 @@ export class ClusterConfig {
    * @returns The fully-resolved, validated config.
    */
   static async resolve(options: ClusterBuildOptions): Promise<ClusterConfig> {
-    const buildPath = requireOption(options.buildPath, "buildPath"),
-      clusterPath = requireOption(options.clusterPath, "clusterPath"),
+    const buildPath = assertOption(options.buildPath, "buildPath"),
+      clusterPath = assertOption(options.clusterPath, "clusterPath"),
       bind = await BindConfig.resolve(options.bind ?? {}, {
         producerCount: options.nodeCount,
         batchOperatorCount: options.batchOperatorCount,
@@ -130,8 +130,8 @@ export class ClusterConfig {
       options.epochDurationSec ?? ClusterConfig.DefaultEpochDurationSec,
       options.warmupEpochs ?? 1,
       options.cooldownEpochs ?? 1,
-      requireOption(options.ethereumPath, "ethereumPath"),
-      requireOption(options.solanaPath, "solanaPath"),
+      assertOption(options.ethereumPath, "ethereumPath"),
+      assertOption(options.solanaPath, "solanaPath"),
       bind,
       executables,
       report,
@@ -155,8 +155,8 @@ export class ClusterConfig {
       nodeop: toBin("nodeop"),
       kiod: toBin("kiod"),
       clio: toBin("clio"),
-      anvil: requireOption(await which("anvil"), "anvil (on PATH)"),
-      solanaTestValidator: requireOption(
+      anvil: assertOption(await which("anvil"), "anvil (on PATH)"),
+      solanaTestValidator: assertOption(
         await which("solana-test-validator"),
         "solana-test-validator (on PATH)"
       )
