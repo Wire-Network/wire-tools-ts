@@ -68,27 +68,33 @@ the seed via env to surface non-deterministic bugs across runs.
 
 ## Running
 
+Like every flow, run it with the canonical runner + heartbeat monitor pair
+(see the repo README's "Running flows" / "Monitoring a live flow run" and
+`wire-platform-manifest/.claude/rules/run-flows-via-canonical-scripts.md`):
+
 ```bash
-# Default: 2-hour soak, chain data under /mnt/data/wire-e2e-soak/
-pnpm --filter @wireio/test-flow-emissions-soak test
+# From the wire-tools-ts root — default soak window:
+node scripts/run-flow.mjs flow-emissions-soak \
+  --cluster-path    /tmp/wire-flow-soak \
+  --wire-build-path ../wire-sysio/build/release \
+  --ethereum-path   ../wire-ethereum \
+  --solana-path     ../wire-solana
 
-# Override duration
-SOAK_DURATION_MS=$((30 * 60 * 1000)) \
-  pnpm --filter @wireio/test-flow-emissions-soak test
+# In a second terminal — the mandatory six-probe heartbeat:
+node scripts/flow-heartbeat-monitor.mjs --cluster-path /tmp/wire-flow-soak
 
-# Override chain dir (default is /mnt/data/wire-e2e-soak/flow-emissions-soak-<timestamp>)
-WIRE_CHAIN_DIR=/tmp/quick-soak \
-  pnpm --filter @wireio/test-flow-emissions-soak test
+# Override the soak duration (flow-specific knob, env-only):
+SOAK_DURATION_MS=$((30 * 60 * 1000)) node scripts/run-flow.mjs flow-emissions-soak …
 ```
 
 ## Environment
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SOAK_DURATION_MS` | `7200000` (2h) | Soak duration in milliseconds. |
+| `SOAK_DURATION_MS` | `1800000` (30 min) | Soak duration in milliseconds. |
 | `EPOCH_DURATION_SEC` | `60` | Epoch duration passed to sysio.epoch::setconfig. |
-| `WIRE_CHAIN_DIR` | `/mnt/data/wire-e2e-soak/flow-emissions-soak-<timestamp>` | Chain data directory. |
-| `WIRE_BUILD_DIR` | (harness default) | Path to wire-sysio build directory. |
+| `WIRE_CLUSTER_PATH` | (fresh temp dir per run) | Cluster data directory (the standard harness contract; seeds `--cluster-path`). |
+| `WIRE_BUILD_PATH` | (required) | Path to the wire-sysio build directory (seeds `--wire-build-path`). |
 | `SYNTHETIC_SEED` | `1` | Seed for the synthetic dump PRNG (deterministic). |
 | `CONTROLLED_STAKER_COUNT` | `5` | Number of test-owned ETH wallets driving the link/claim path. |
 | `BULK_ETH_PURCHASERS` / `BULK_ETH_STAKERS` / `BULK_ETH_OVERLAPPING` / `BULK_ETH_YIELD_CLAIMED` | `40`/`40`/`8`/`8` | Synthetic ETH bulk-row counts. |

@@ -1,6 +1,7 @@
 import { pollStep, pollUntil, verifyStep } from "@wireio/cluster-tool/orchestration"
 import { ClusterBuildContext } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
+import { fixtureContext } from "../config/clusterBuildContextFixture.js"
 
 describe("pollUntil.timeoutScale", () => {
   afterEach(() => {
@@ -89,8 +90,8 @@ describe("pollStep.lift", () => {
       2
     )
     expect(typeof fn).toBe("function")
-    // predicate ignores ctx, so a null stand-in is fine at runtime
-    await fn(null as unknown as ClusterBuildContext)
+    // The predicate ignores ctx; the fixture context keeps the call typed.
+    await fn(fixtureContext())
     expect(calls).toBe(2)
   })
 })

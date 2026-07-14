@@ -6,12 +6,13 @@ import { Keypair } from "@solana/web3.js"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
+import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
 import {
   OperatorDaemonArtifactsKey,
   type OperatorAccount,
   type OperatorDaemonArtifacts
 } from "@wireio/cluster-tool/orchestration/outputs"
-import { OutputStore, type ClusterBuildContext } from "@wireio/cluster-tool/orchestration"
+import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
 
 /** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
@@ -45,7 +46,7 @@ const artifacts: OperatorDaemonArtifacts = {
     ReserveManager: "0x4444444444444444444444444444444444444444"
   },
   solanaProgramId: "GrqvbZLCLkfeSQqvE7rL8XKHVWjNhAG2faLsY8yr9tD5",
-  solanaIdlFile: "/cluster/data/solana-idls/opp_outpost.json"
+  solanaIdlFile: "/cluster/data/solana-idls/liqsol_core.json"
 }
 
 const network: OperatorDaemonTool.OperatorDaemonNetwork = {
@@ -96,6 +97,11 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(args, "--ethereum-abi-file")).toEqual(artifacts.ethereumAbiFiles)
       expect(valuesOf(args, "--batch-sol-client-id")).toEqual(["sol-default"])
       expect(valuesOf(args, "--solana-idl-file")).toEqual([artifacts.solanaIdlFile])
+      // The cleanroom hosts the outpost interface in liqsol_core — nodeop's
+      // IDL-name gate must be pointed at it.
+      expect(valuesOf(args, "--solana-outpost-program-name")).toEqual([
+        SolanaOutpostProgramTool.ProgramName
+      ])
     })
 
     it("binds each outpost with one consolidated per-chain CSV spec", () => {
@@ -150,6 +156,9 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(args, "--underwriter-eth-source-deposit-function")).toEqual(["requestSwap"])
       expect(valuesOf(args, "--underwriter-sol-source-deposit-instruction")).toEqual(["request_swap"])
       expect(valuesOf(args, "--solana-idl-file")).toEqual([artifacts.solanaIdlFile])
+      expect(valuesOf(args, "--solana-outpost-program-name")).toEqual([
+        SolanaOutpostProgramTool.ProgramName
+      ])
     })
 
     it("wires each outpost with one consolidated per-chain CSV spec", () => {
@@ -198,30 +207,43 @@ describe("OperatorDaemonTool", () => {
         Path.join(oppArtifactDir, "OPP.json"),
         JSON.stringify({ abi: [{ type: "event", name: "OPPEnvelope" }] })
       )
-      // SOL fixtures: program keypair + IDL.
+      // SOL fixtures: committed liqsol_core program keypair + generated IDL
+      // (metadata.name = liqsol_core; instructions cover the daemon-invoked
+      // set the structural guard asserts).
       const programKeypair = Keypair.generate()
-      Fs.mkdirSync(Path.join(solanaPath, "wallets"), { recursive: true })
+      Fs.mkdirSync(Path.join(solanaPath, ".keys"), { recursive: true })
       Fs.writeFileSync(
-        Path.join(solanaPath, "wallets", "opp-outpost-keypair.json"),
+        Path.join(solanaPath, ".keys", "liqsol_core-keypair.json"),
         JSON.stringify([...programKeypair.secretKey])
       )
       Fs.mkdirSync(Path.join(solanaPath, "target", "idl"), { recursive: true })
       Fs.writeFileSync(
-        Path.join(solanaPath, "target", "idl", "opp_outpost.json"),
-        JSON.stringify({ name: "opp_outpost" })
+        Path.join(solanaPath, "target", "idl", "liqsol_core.json"),
+        JSON.stringify({
+          metadata: { name: "liqsol_core" },
+          instructions: OperatorDaemonTool.RequiredSolanaIdlInstructions.map(name => ({ name }))
+        })
       )
 
-      const outputs = new OutputStore(),
-        ctx = {
-          config: { ethereumPath, solanaPath, dataPath, ethereumDeploymentsPath },
-          outputs,
-          log: { info: () => undefined }
-        } as unknown as ClusterBuildContext
+      // Real context over the fixture config aimed at this sandbox —
+      // `ethereumDeploymentsPath` derives from `dataPath`, matching the
+      // fixture layout written above.
+      const ctx = fixtureContext({
+        clusterPath: Path.join(dir, "cluster"),
+        dataPath,
+        ethereumPath,
+        solanaPath
+      })
       await OperatorDaemonTool.runArtifactPreparation(ctx, null, new AbortController().signal)
 
-      const prepared = outputs.assert(OperatorDaemonArtifactsKey)
+      const prepared = ctx.outputs.assert(OperatorDaemonArtifactsKey)
       expect(prepared.solanaProgramId).toBe(programKeypair.publicKey.toBase58())
       expect(Fs.existsSync(prepared.solanaIdlFile)).toBe(true)
+      // Verbatim copy under the liqsol_core filename — metadata.name is NOT
+      // rewritten (nodeop is pointed at it via --solana-outpost-program-name).
+      expect(Path.basename(prepared.solanaIdlFile)).toBe(OperatorDaemonTool.SolanaIdlFilename)
+      const copiedIdl = JSON.parse(Fs.readFileSync(prepared.solanaIdlFile, "utf-8"))
+      expect(copiedIdl.metadata.name).toBe(SolanaOutpostProgramTool.ProgramName)
       expect(prepared.ethereumAbiFiles.length).toBe(1)
       const abi = JSON.parse(Fs.readFileSync(prepared.ethereumAbiFiles[0], "utf-8"))
       expect(abi).toEqual({
@@ -229,6 +251,49 @@ describe("OperatorDaemonTool", () => {
         address: "0xaaa0000000000000000000000000000000000aaa",
         abi: [{ type: "event", name: "OPPEnvelope" }]
       })
+    })
+
+    it("rejects an IDL missing a daemon-invoked instruction (wrong/stale IDL guard)", async () => {
+      const ethereumPath = Path.join(dir, "wire-ethereum-2"),
+        solanaPath = Path.join(dir, "wire-solana-2"),
+        dataPath = Path.join(dir, "cluster-2", "data"),
+        ethereumDeploymentsPath = Path.join(dataPath, "ethereum-deployments")
+      Fs.mkdirSync(ethereumDeploymentsPath, { recursive: true })
+      Fs.writeFileSync(
+        Path.join(ethereumDeploymentsPath, "outpost-addrs.json"),
+        JSON.stringify({ OPP: "0xaaa0000000000000000000000000000000000aaa" })
+      )
+      const oppArtifactDir = Path.join(ethereumPath, "artifacts", "contracts", "outpost", "OPP.sol")
+      Fs.mkdirSync(oppArtifactDir, { recursive: true })
+      Fs.writeFileSync(
+        Path.join(oppArtifactDir, "OPP.json"),
+        JSON.stringify({ abi: [{ type: "event", name: "OPPEnvelope" }] })
+      )
+      const programKeypair = Keypair.generate()
+      Fs.mkdirSync(Path.join(solanaPath, ".keys"), { recursive: true })
+      Fs.writeFileSync(
+        Path.join(solanaPath, ".keys", "liqsol_core-keypair.json"),
+        JSON.stringify([...programKeypair.secretKey])
+      )
+      Fs.mkdirSync(Path.join(solanaPath, "target", "idl"), { recursive: true })
+      Fs.writeFileSync(
+        Path.join(solanaPath, "target", "idl", "liqsol_core.json"),
+        JSON.stringify({
+          metadata: { name: "liqsol_core" },
+          // epoch_in / commit_underwrite / request_swap all absent.
+          instructions: [{ name: "sol_to_liqsol" }]
+        })
+      )
+
+      const ctx = fixtureContext({
+        clusterPath: Path.join(dir, "cluster-2"),
+        dataPath,
+        ethereumPath,
+        solanaPath
+      })
+      await expect(
+        OperatorDaemonTool.runArtifactPreparation(ctx, null, new AbortController().signal)
+      ).rejects.toThrow(/missing the 'epoch_in' instruction/)
     })
   })
 })

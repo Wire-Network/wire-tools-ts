@@ -148,11 +148,15 @@ flags to the helper script below):
 | `WIRE_SOLANA_PATH` | `wire-solana` repo root (built `opp-outpost`) |
 | `WIRE_CLUSTER_PATH` | *(optional)* cluster data dir; the harness generates a fresh temp dir per run when unset |
 
-### Option A — the `run-flow.mjs` helper (recommended)
+### Option A — the `run-flow.mjs` helper (THE canonical way)
 
 [`scripts/run-flow.mjs`](scripts/run-flow.mjs) discovers the flow packages
-dynamically, lets you pick one by name / regex (or interactively), wires the env
-vars, and runs jest in the matching package.
+dynamically, lets you pick one by name / regex (or interactively), validates the
+sibling-repo paths, wires the env vars, and drives the matching package's `test`
+script. **This is the canonical flow runner** — sessions/automation MUST use it
+(per `wire-platform-manifest/.claude/rules/run-flows-via-canonical-scripts.md`),
+and every live run is paired with the heartbeat monitor (see
+[Monitoring a live flow run](#monitoring-a-live-flow-run) below).
 
 ```bash
 # Usage: ./scripts/run-flow.mjs [name-or-pattern] [options]
@@ -176,7 +180,10 @@ its env var (`WIRE_BUILD_PATH` / `WIRE_ETH_PATH` / `WIRE_SOLANA_PATH`); one of t
 two is required. `--cluster-path` (env `WIRE_CLUSTER_PATH`) is optional — omit it
 and the harness picks a fresh temp dir.
 
-### Option B — `pnpm --filter` directly
+### Option B — `pnpm --filter` directly (what Option A runs under the hood)
+
+For a human at an interactive terminal only — sessions/automation always go
+through Option A, which adds path validation and correct stdio handling:
 
 ```bash
 export WIRE_BUILD_PATH=../wire-sysio/build/release
@@ -189,6 +196,39 @@ pnpm --filter @wireio/test-flow-swap-with-underwriting       test
 # Every flow at once (long — builds first):
 pnpm test
 ```
+
+### Monitoring a live flow run
+
+Every live run is watched by the canonical six-probe heartbeat monitor,
+[`scripts/flow-heartbeat-monitor.mjs`](scripts/flow-heartbeat-monitor.mjs) —
+**one instance per flow run**, started right after the flow and left attached
+for the run's entire life:
+
+```bash
+node scripts/flow-heartbeat-monitor.mjs --cluster-path <cluster-dir>
+```
+
+Every 90s it probes chain liveness, operators, epoch state, msgch envelopes,
+`data/opp-debugging/` per-direction artifact counts, and the aggregate cluster
+log (FATAL vs NOISE classified), printing one `HB …` line per cycle — and it
+**bails loudly** on the fatal conditions (epoch stall, zero-delta opp-debugging,
+plugin-layer failures) instead of letting a dead run burn its full `pollUntil`
+deadline. It self-concludes when the flow exits. `--interval-seconds` /
+`--epoch-duration-seconds` are the only tuning knobs; everything else derives
+from the cluster's `cluster-config.json`.
+
+Rules of the road (binding for sessions/automation; see
+`wire-platform-manifest/.claude/rules/run-flows-via-canonical-scripts.md` and
+`…/cluster-state-active-probing.md`):
+
+- **Never** run a flow without its monitor, and never watch one with a
+  hand-rolled `tail | grep` instead of the script.
+- **Never** wrap either script in session-local launcher/watcher scripts — if a
+  run needs a new probe, bail, or launch behavior, extend
+  `flow-heartbeat-monitor.mjs` / `run-flow.mjs` themselves.
+- Parallel runs need disjoint `--cluster-path` dirs; port allocation is
+  collision-proof via `BindConfig`, so parallelism is bounded only by host
+  resources.
 
 ## Launching a persistent test cluster
 
@@ -260,7 +300,10 @@ to its config file — the flow runs in **attach** mode against the live process
 
 ```bash
 WIRE_CLUSTER_CONFIG=/tmp/wire-cluster-tool-001/cluster-config.json \
-  pnpm --filter @wireio/test-flow-swap-with-underwriting test
+  node scripts/run-flow.mjs swap-with-underwriting \
+    --wire-build-path ../wire-sysio/build/release \
+    --ethereum-path   ../wire-ethereum \
+    --solana-path     ../wire-solana
 ```
 
 ## Environment variables

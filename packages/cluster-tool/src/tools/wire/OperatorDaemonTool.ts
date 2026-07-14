@@ -15,7 +15,6 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
-import { Keypair } from "@solana/web3.js"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { match } from "ts-pattern"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
@@ -38,6 +37,7 @@ import {
 } from "../../orchestration/outputs/OperatorDaemonArtifacts.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
+import { SolanaOutpostProgramTool } from "../solana/SolanaOutpostProgramTool.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { scaleTimeoutMs } from "../../utils/asyncUtils.js"
 import { Localhost, toURL } from "../../utils/netUtils.js"
@@ -90,6 +90,20 @@ export namespace OperatorDaemonTool {
   export const EthereumSourceDepositFunction = "requestSwap"
   /** SOL source-deposit instruction the underwriter verifies before committing. */
   export const SolanaSourceDepositInstruction = "request_swap"
+  /** SOL inbound-delivery instruction the batch operator invokes. */
+  export const SolanaEpochInInstruction = "epoch_in"
+  /** SOL underwriter-commit instruction. */
+  export const SolanaCommitUnderwriteInstruction = "commit_underwrite"
+  /**
+   * OPP outpost instructions the daemons invoke — asserted present in the
+   * copied IDL so a wrong or stale IDL fails at artifact preparation, not at
+   * the first delivery.
+   */
+  export const RequiredSolanaIdlInstructions = [
+    SolanaEpochInInstruction,
+    SolanaCommitUnderwriteInstruction,
+    SolanaSourceDepositInstruction
+  ] as const
   /** OPP outpost contracts whose ABIs (with embedded addresses) the plugins load. */
   export const EthereumAbiContractNames = [
     "OPP",
@@ -100,10 +114,10 @@ export namespace OperatorDaemonTool {
   ] as const
   /** Cluster-data subpath holding the generated `{contractName, address, abi}` files. */
   export const EthereumAbiSubpath = "eth-abis"
-  /** Cluster-data subpath holding the copied `opp_outpost.json` IDL. */
+  /** Cluster-data subpath holding the copied OPP outpost IDL. */
   export const SolanaIdlSubpath = "solana-idls"
-  /** The opp-outpost IDL filename. */
-  export const SolanaIdlFilename = "opp_outpost.json"
+  /** The OPP outpost IDL filename (cluster-local verbatim copy). */
+  export const SolanaIdlFilename = `${SolanaOutpostProgramTool.ProgramName}.json`
 
   // ── network endpoints the daemon dials ─────────────────────────────────────
 
@@ -131,7 +145,7 @@ export namespace OperatorDaemonTool {
    * Prepare the artifacts every operator daemon's command line references:
    * generate `<dataPath>/eth-abis/<Name>.json` (`{contractName, address, abi}`,
    * from the wire-ethereum hardhat artifacts + `outpost-addrs.json`), copy the
-   * `opp_outpost` IDL to `<dataPath>/solana-idls/`, resolve the SOL program id,
+   * `liqsol_core` (OPP outpost) IDL to `<dataPath>/solana-idls/`, resolve the SOL program id,
    * and store the typed {@link OperatorDaemonArtifacts}. Runs ONCE, after both
    * outpost deploys, before any operator node starts.
    */
@@ -191,23 +205,21 @@ export namespace OperatorDaemonTool {
     }).filter(file => file != null)
     Assert.ok(ethereumAbiFiles.length > 0, "prepareArtifacts: no ETH outpost ABI artifacts found")
 
-    // SOL program id (from the program keypair) + a cluster-local IDL copy so
-    // operator nodes read a stable path.
-    const programKeypairFile = Path.join(solanaPath, "wallets", "opp-outpost-keypair.json")
-    Assert.ok(
-      Fs.existsSync(programKeypairFile),
-      `opp-outpost program keypair not found at ${programKeypairFile}`
-    )
-    const keypairBytes = Uint8Array.from(
-        JSON.parse(Fs.readFileSync(programKeypairFile, "utf8"))
-      ),
-      solanaProgramId = Keypair.fromSecretKey(keypairBytes).publicKey.toBase58()
+    // SOL program id (from the committed liqsol_core program keypair) + a
+    // cluster-local VERBATIM IDL copy so operator nodes read a stable path
+    // (nodeop accepts it via --solana-outpost-program-name liqsol_core).
+    const solanaProgramId = SolanaOutpostProgramTool.assertProgramId(solanaPath).toBase58()
 
-    const idlSource = Path.join(solanaPath, "target", "idl", SolanaIdlFilename)
-    Assert.ok(
-      Fs.existsSync(idlSource),
-      `opp-outpost IDL missing: ${idlSource} (run 'anchor build -p opp-outpost')`
-    )
+    const idlSource = SolanaOutpostProgramTool.programIdlFile(solanaPath),
+      idl = SolanaOutpostProgramTool.readIdl(solanaPath),
+      idlInstructionNames = new Set(idl.instructions.map(instruction => instruction.name))
+    for (const requiredInstruction of RequiredSolanaIdlInstructions) {
+      Assert.ok(
+        idlInstructionNames.has(requiredInstruction),
+        `prepareArtifacts: ${SolanaOutpostProgramTool.ProgramName} IDL at ${idlSource} ` +
+          `is missing the '${requiredInstruction}' instruction — wrong or stale IDL?`
+      )
+    }
     const solanaIdlFile = Path.join(mkdirs(Path.join(dataPath, SolanaIdlSubpath)), SolanaIdlFilename)
     Fs.copyFileSync(idlSource, solanaIdlFile)
 
@@ -222,7 +234,7 @@ export namespace OperatorDaemonTool {
     StepExtraRecorder.record({
       client: "harness",
       kind: "artifact",
-      text: "address-embedded ETH ABI files + opp-outpost IDL prepared for the operator daemons",
+      text: "address-embedded ETH ABI files + liqsol_core (OPP outpost) IDL prepared for the operator daemons",
       ethereumAbiFiles,
       ethereumAddresses,
       solanaProgramId,
@@ -322,7 +334,10 @@ export namespace OperatorDaemonTool {
         [SolanaChainCodename, artifacts.solanaProgramId].join(",")
       ),
       ...pair("--batch-sol-client-id", SolanaClientId),
-      ...pair("--solana-idl-file", artifacts.solanaIdlFile)
+      ...pair("--solana-idl-file", artifacts.solanaIdlFile),
+      // The outpost interface is hosted in liqsol_core since the clean-room
+      // rewrite; nodeop's compiled-in default IDL name is opp_outpost.
+      ...pair("--solana-outpost-program-name", SolanaOutpostProgramTool.ProgramName)
     ]
   }
 
@@ -372,7 +387,10 @@ export namespace OperatorDaemonTool {
       ),
       ...pair("--underwriter-eth-source-deposit-function", EthereumSourceDepositFunction),
       ...pair("--underwriter-sol-source-deposit-instruction", SolanaSourceDepositInstruction),
-      ...pair("--solana-idl-file", artifacts.solanaIdlFile)
+      ...pair("--solana-idl-file", artifacts.solanaIdlFile),
+      // The outpost interface is hosted in liqsol_core since the clean-room
+      // rewrite; nodeop's compiled-in default IDL name is opp_outpost.
+      ...pair("--solana-outpost-program-name", SolanaOutpostProgramTool.ProgramName)
     ]
   }
 

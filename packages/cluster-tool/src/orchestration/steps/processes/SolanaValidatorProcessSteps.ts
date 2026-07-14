@@ -1,8 +1,6 @@
-import Fs from "node:fs"
 import Path from "node:path"
-import Assert from "node:assert"
-import { Keypair } from "@solana/web3.js"
 import { SolanaValidatorProcess } from "../../../cluster/processes/SolanaValidatorProcess.js"
+import { SolanaOutpostProgramTool } from "../../../tools/solana/SolanaOutpostProgramTool.js"
 import { Report } from "../../../report/Report.js"
 import { ClusterBuildContext } from "../../ClusterBuildContext.js"
 import {
@@ -12,19 +10,13 @@ import {
 
 /** Steps that manage the cluster's solana-test-validator process. */
 export namespace SolanaValidatorProcessSteps {
-  /** Subpath (under `wire-solana`) of the opp-outpost program keypair. */
-  const ProgramKeypairSubpath = "wallets/opp-outpost-keypair.json"
-  /** Subpath (under `wire-solana`) of the compiled opp-outpost `.so`. */
-  const ProgramSoSubpath = "target/deploy/opp_outpost.so"
-  /** opp-outpost program name (`--bpf-program`). */
-  const ProgramName = "opp_outpost"
   /** Subpath (under the cluster data dir) for the validator ledger. */
   const LedgerSubpath = "solana-ledger"
 
   /**
    * Start the solana-test-validator (get-or-create from `ctx.processManager`)
-   * with the `opp-outpost` program loaded via `--bpf-program` (the SOL outpost
-   * deploy depends on it). Idempotent.
+   * with the `liqsol_core` program (hosting the OPP outpost interface) loaded
+   * via `--bpf-program` (the SOL outpost deploy depends on it). Idempotent.
    */
   export function planStart<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
@@ -44,22 +36,17 @@ export namespace SolanaValidatorProcessSteps {
     signal.throwIfAborted()
     if (ctx.processManager.get(SolanaValidatorProcess.ProcessLabel) != null) return
 
-    const programKeypairFile = Path.join(ctx.config.solanaPath, ProgramKeypairSubpath)
-    Assert.ok(
-      Fs.existsSync(programKeypairFile),
-      `opp-outpost program keypair missing: ${programKeypairFile} (run 'anchor build -p opp-outpost')`
-    )
-    const programId = Keypair.fromSecretKey(
-      Uint8Array.from(JSON.parse(Fs.readFileSync(programKeypairFile, "utf8")))
-    ).publicKey.toBase58()
-    const soFile = Path.join(ctx.config.solanaPath, ProgramSoSubpath)
+    const programId = SolanaOutpostProgramTool.assertProgramId(ctx.config.solanaPath)
+      .toBase58()
+    const soFile = SolanaOutpostProgramTool.programSoFile(ctx.config.solanaPath)
 
     const validator = await SolanaValidatorProcess.create(ctx.processManager, {
       rpcPort: ctx.config.bind.solana.ports.http,
       faucetPort: ctx.config.bind.solana.ports.faucet,
+      gossipPort: ctx.config.bind.solana.ports.gossip,
       dynamicPortRange: ctx.config.bind.solana.ports.dynamicRange,
       ledgerPath: Path.join(ctx.config.dataPath, LedgerSubpath),
-      programs: [{ name: ProgramName, programId, soFile }]
+      programs: [{ name: SolanaOutpostProgramTool.ProgramName, programId, soFile }]
     })
     await validator.start()
   }

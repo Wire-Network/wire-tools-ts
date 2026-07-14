@@ -24,7 +24,6 @@ import {
   Connection,
   Keypair,
   PublicKey,
-  SystemProgram,
   Transaction,
   TransactionInstruction
 } from "@solana/web3.js"
@@ -36,7 +35,7 @@ import {
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 
 /** Seed for the `OutpostConfig` singleton PDA (mirrors
- *  `wire-solana/programs/opp-outpost/src/state/outpost_config.rs`). */
+ *  `wire-solana/programs/liqsol-core/src/states/opp_states.rs`). */
 const OUTPOST_CONFIG_SEED = Buffer.from("outpost_config")
 /** Seed for the `OutboundMessageBuffer` singleton PDA. */
 const OUTBOUND_MESSAGE_BUFFER_SEED = Buffer.from("outbound_message_buffer")
@@ -153,8 +152,8 @@ export async function emitSolanaYield(
 
   // `add_attestation`'s `AttestationType` arg is declared in the IDL as a
   // unit enum, but the proto-generated Rust enum carries a custom Borsh
-  // impl that serializes as `i32` (4-byte LE) — see
-  // wire-sysio/build/opp/solana/src/sysio/opp/types/types.rs:
+  // impl that serializes as `i32` (4-byte LE) — see the wire-opp-solana-models
+  // crate (types.rs):
   //   impl borsh::BorshSerialize for AttestationType { ... as i32 ... }
   // anchor.Program would encode it as the IDL's 1-byte variant tag,
   // producing bytes the program's deserializer reads as a corrupted
@@ -182,13 +181,14 @@ export async function emitSolanaYield(
   ixData.writeUInt32LE(dataBuf.length, off); off += 4
   dataBuf.copy(ixData, off)
 
+  // `AddAttestation` declares exactly 3 accounts (authority, config,
+  // outbound_message_buffer) — the keys below must match that list.
   const ix = new TransactionInstruction({
     programId,
     keys: [
       { pubkey: authority.publicKey,         isSigner: true,  isWritable: true  },
       { pubkey: configPda,                   isSigner: false, isWritable: false },
-      { pubkey: outboundMessageBufferPda,    isSigner: false, isWritable: true  },
-      { pubkey: SystemProgram.programId,     isSigner: false, isWritable: false }
+      { pubkey: outboundMessageBufferPda,    isSigner: false, isWritable: true  }
     ],
     data: ixData
   })

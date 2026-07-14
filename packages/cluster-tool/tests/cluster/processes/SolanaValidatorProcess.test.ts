@@ -29,10 +29,20 @@ describe("SolanaValidatorProcess", () => {
       binary: "/bin/true"
     })
     expect(validator.args).toEqual(
-      expect.arrayContaining(["--rpc-port", "--faucet-port", "--quiet"])
+      expect.arrayContaining(["--rpc-port", "--faucet-port", "--gossip-port", "--quiet"])
     )
     expect(validator.rpcUrl).toContain(Localhost)
     expect(validator.wsUrl).toMatch(/^ws:\/\//)
+  })
+
+  it("passes an explicit --gossip-port verbatim (agave 4.x fixed-default gossip)", async () => {
+    const validator = await SolanaValidatorProcess.create(manager, {
+      binary: "/bin/true",
+      gossipPort: 14_700
+    })
+    expect(validator.args).toEqual(
+      expect.arrayContaining(["--gossip-port", "14700"])
+    )
   })
 
   it("deploys programs via --bpf-program", async () => {
@@ -71,5 +81,27 @@ describe("SolanaValidatorProcess", () => {
     expect(index).toBeGreaterThanOrEqual(0)
     const [first, last] = validator.args[index + 1].split("-").map(Number)
     expect(last - first + 1).toBe(BindConfig.SolanaDynamicPortRangeSize)
+  })
+
+  it("defaults --limit-ledger-size to the full-run retention (agave's 10k-shred default prunes to ~90s)", async () => {
+    const validator = await SolanaValidatorProcess.create(manager, {
+      binary: "/bin/true"
+    })
+    expect(validator.args).toEqual(
+      expect.arrayContaining([
+        "--limit-ledger-size",
+        String(SolanaValidatorProcess.DefaultLimitLedgerSizeShreds)
+      ])
+    )
+  })
+
+  it("passes an explicit --limit-ledger-size verbatim", async () => {
+    const validator = await SolanaValidatorProcess.create(manager, {
+      binary: "/bin/true",
+      limitLedgerSizeShreds: 250_000
+    })
+    expect(validator.args).toEqual(
+      expect.arrayContaining(["--limit-ledger-size", "250000"])
+    )
   })
 })

@@ -3,8 +3,8 @@ import Os from "node:os"
 import Path from "node:path"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { EthereumCollateralTool } from "@wireio/cluster-tool/tools/ethereum"
-import type { ClusterBuildContext } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
+import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 
 describe("EthereumCollateralTool.mockErc20Address", () => {
   let deploymentsPath: string
@@ -72,8 +72,8 @@ describe("EthereumCollateralTool.planNonNativeDeposit", () => {
   })
 
   it("runner rejects a non-positive amount before touching any client", async () => {
-    // The amount guard fires before ctx is read, so an empty fake suffices.
-    const ctx = {} as unknown as ClusterBuildContext
+    // The amount guard fires before any client getter is touched.
+    const ctx = fixtureContext()
     await expect(
       EthereumCollateralTool.runNonNativeDeposit(
         ctx,

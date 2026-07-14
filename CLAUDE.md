@@ -25,18 +25,28 @@ pnpm test                  # build + jest across all 6 jest projects
 pnpm --filter @wireio/cluster-tool test    # harness unit tests only
 pnpm clean                 # remove lib/ + tsbuildinfo everywhere
 
-# Run ONE flow as a standalone executable (flows are NOT jest — see below):
-env WIRE_CLUSTER_PATH=/tmp/wire-flow \
-    WIRE_BUILD_PATH=<wire-sysio>/build/debug \
-    WIRE_ETH_PATH=<wire-ethereum> \
-    WIRE_SOLANA_PATH=<wire-solana> \
-  node packages/flow-operator-collateral-deposit/lib/index.js
+# Run ONE flow — ALWAYS via the canonical runner (never invoke the flow
+# executable or `pnpm --filter <pkg> test` directly in a session; see
+# wire-platform-manifest/.claude/rules/run-flows-via-canonical-scripts.md):
+node scripts/run-flow.mjs flow-operator-collateral-deposit \
+  --cluster-path    /tmp/wire-flow \
+  --wire-build-path <wire-sysio>/build/debug \
+  --ethereum-path   <wire-ethereum> \
+  --solana-path     <wire-solana>
+
+# ...and EVERY live run is watched by the canonical heartbeat monitor,
+# armed directly via a background Monitor (one instance per run):
+node scripts/flow-heartbeat-monitor.mjs --cluster-path /tmp/wire-flow
 ```
 
-A flow exits `0` iff every Report step succeeded. The e2e gate
+A flow exits `0` iff every Report step succeeded. Under the hood the runner
+resolves the flow name, validates the three sibling-repo paths, wires the
+`WIRE_*` env vars, and drives the package's `test` script (which executes the
+built `lib/index.js`). The e2e gate
 (`wire-platform-build-system` → `run-flows.mjs`) discovers every `flow-*`
 package dynamically and runs them through a work-stealing pool
-(`FLOW_MAX_CONCURRENCY`); never special-case one flow's environment there.
+(`FLOW_MAX_CONCURRENCY`); never special-case one flow's environment there —
+and never hand-invoke that pool locally.
 
 ## Monorepo Structure
 
@@ -91,7 +101,10 @@ One declarative model is shared by the `wire-cluster-tool` CLI and every flow:
   scripts for the ESM dynamic imports). Root `jest.config.ts` is
   multi-project.
 - **`flow-*` packages have NO jest.** A flow is verified by RUNNING its built
-  `lib/index.js` against a live cluster (its `test` script does exactly that).
+  `lib/index.js` against a live cluster (its `test` script does exactly that) —
+  launched via `scripts/run-flow.mjs` and watched via
+  `scripts/flow-heartbeat-monitor.mjs`, never invoked directly (see "Live flow
+  runs" below).
 - **Unit tests are mandatory for every created or modified symbol** — happy
   path + at least one failure/edge case, in the same commit. Mirror the `src/`
   tree under `tests/`. No exceptions for "trivial" code.
@@ -101,14 +114,27 @@ One declarative model is shared by the `wire-cluster-tool` CLI and every flow:
   `beforeAll`), never leak children or timers (tie helper-child lifetime to
   the worker, await the reap in `afterAll`).
 
-### Live flow runs — monitoring is mandatory
+### Live flow runs — the two canonical scripts, monitoring mandatory
 
-Any `flow-*` run against a cluster is watched by the canonical heartbeat
-monitor (`scripts/flow-heartbeat-monitor.mjs --cluster-path <cluster>`, 90s
-cadence, all six probes) per
-`wire-platform-manifest/.claude/rules/cluster-state-active-probing.md`. Extend
-that script rather than hand-rolling probes. Epoch stall = stop the run,
-preserve forensics, diagnose (`epoch-stall-is-fatal.md`).
+Running a flow means exactly two scripts, per
+`wire-platform-manifest/.claude/rules/run-flows-via-canonical-scripts.md`:
+
+1. **Launch** with `scripts/run-flow.mjs <flow> --cluster-path … --wire-build-path …
+   --ethereum-path … --solana-path …` (in a session: a tracked background shell
+   with output redirected to a log — the log tail carries the
+   `[flow-…] SUCCEEDED`/exit verdict).
+2. **Watch** with `scripts/flow-heartbeat-monitor.mjs --cluster-path <cluster>`
+   (90s cadence, all six probes) per
+   `wire-platform-manifest/.claude/rules/cluster-state-active-probing.md` —
+   armed DIRECTLY via a background Monitor, one instance per run; its stdout is
+   the event stream and it self-concludes on flow exit or bail.
+
+NEVER wrap either script in session-local launchers/watchers, never invoke
+`lib/index.js` or `pnpm --filter <pkg> test` directly in a session, and extend
+the scripts (not new ones) when a run needs something they lack. Epoch stall =
+stop the run, preserve forensics, diagnose (`epoch-stall-is-fatal.md`).
+Parallel runs get disjoint `--cluster-path` dirs; parallelism is bounded only
+by host resources.
 
 ## No `src/` traversal in `import` / `export` — EVER
 

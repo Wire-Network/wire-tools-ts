@@ -282,7 +282,7 @@ export namespace ClusterBuildDefaults {
       Steps.processes.anvil.planEnableIntervalMining<C>(Actor.EthereumOutpost, "enable-interval-mining", "switch anvil to interval mining", {})
     )
     ClusterBuildPhase.create<C>(prerequisites, "SolanaOutpost", "Deploy the Solana outpost").push(
-      Steps.processes.solanaValidator.planStart<C>(Actor.SolanaOutpost, "start-validator", "start solana-test-validator + opp-outpost", {}),
+      Steps.processes.solanaValidator.planStart<C>(Actor.SolanaOutpost, "start-validator", "start solana-test-validator + liqsol_core (OPP outpost)", {}),
       Steps.solanaOutpost.planDeploy<C>(Actor.SolanaOutpost, "deploy-solana", "init PDAs + provision SPL reserves", { timeoutMs: 900_000 })
     )
 
