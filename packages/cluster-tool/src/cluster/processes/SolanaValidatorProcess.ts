@@ -172,7 +172,16 @@ export namespace SolanaValidatorProcess {
   export const WsPortOffset = 1
   export const ProcessLabel = "solana-test-validator" as const
   export const SlotPollIntervalMs = 500
-  export const StartupTimeoutMs = 180_000
+  /**
+   * Verify-ready ceiling. Loaded-host worst case, NOT the healthy-host
+   * typical (~15s): the e2e gate bootstraps several clusters concurrently
+   * (FLOW_MAX_CONCURRENCY), and simultaneous agave genesis creation + PoH
+   * initialization on a shared runner blew past the previous 180s ceiling
+   * (2026-07-14 gate run, concurrency 4). The readiness poll returns the
+   * moment the validator answers + produces a slot, so a healthy host never
+   * pays this ceiling.
+   */
+  export const StartupTimeoutMs = 480_000
   /** Env var that, when `"1"`, drops `--quiet` so program logs are captured. */
   export const VerboseEnvironmentVariable = "WIRE_SOLANA_VALIDATOR_VERBOSE"
   /**
