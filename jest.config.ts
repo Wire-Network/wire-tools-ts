@@ -3,6 +3,7 @@ import type { Config } from "jest"
 const config: Config = {
   projects: [
     "packages/cluster-tool",
+    "packages/flow-batch-operator-slashing",
     "packages/debugging-shared",
     "packages/debugging-server",
     "packages/debugging-client-shared",
