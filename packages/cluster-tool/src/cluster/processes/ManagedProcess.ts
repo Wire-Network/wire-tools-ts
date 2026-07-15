@@ -66,6 +66,33 @@ export abstract class ManagedProcess {
   protected verifyReady(): Promise<boolean> {
     return Promise.resolve(true)
   }
+
+  /**
+   * Extra failure context appended to a {@link start} rejection (both the
+   * exited-before-ready and the verify-timeout paths): a daemon's own log-file
+   * tail, the holder of a contested socket — whatever names the cause that the
+   * captured stdio didn't. Base has none; subclasses override.
+   */
+  protected startupFailureDetail(): Promise<string | null> {
+    return Promise.resolve(null)
+  }
+
+  /**
+   * {@link startupFailureDetail} guarded: the probe is best-effort context —
+   * it must never mask the primary startup error, so its own failure is
+   * logged (debug) and dropped.
+   */
+  private async guardedStartupFailureDetail(): Promise<string> {
+    try {
+      const detail = await this.startupFailureDetail()
+      return detail == null || detail.length === 0 ? "" : `\n${detail}`
+    } catch (error) {
+      this.log.debug(
+        `${this.label} startupFailureDetail probe failed: ${error instanceof Error ? error.message : String(error)}`
+      )
+      return ""
+    }
+  }
   protected get verifyTimeoutMs(): number {
     return ManagedProcess.DefaultVerifyTimeoutMs
   }
@@ -168,7 +195,8 @@ export abstract class ManagedProcess {
       if (this.exited.isSettled()) {
         const exitCode = await this.exited.promise
         throw new Error(
-          `${this.label} exited (code ${exitCode}) before passing verifyReady — see its process log for the startup failure`
+          `${this.label} exited (code ${exitCode}) before passing verifyReady — see its process log for the startup failure` +
+            (await this.guardedStartupFailureDetail())
         )
       }
       try {
@@ -185,7 +213,8 @@ export abstract class ManagedProcess {
       await sleep(this.verifyIntervalMs)
     }
     throw new Error(
-      `${this.label} did not pass verifyReady within ${verifyBudgetMs}ms`
+      `${this.label} did not pass verifyReady within ${verifyBudgetMs}ms` +
+        (await this.guardedStartupFailureDetail())
     )
   }
 

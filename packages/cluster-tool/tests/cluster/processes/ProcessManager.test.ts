@@ -275,5 +275,53 @@ describe("ProcessManager + ManagedProcess", () => {
       )
       expect(Date.now() - startedAt).toBeLessThan(5_000)
     })
+
+    describe("startupFailureDetail", () => {
+      /** FakeProcess whose failure detail is a fixed marker (or a throwing probe). */
+      class DetailProcess extends FakeProcess {
+        constructor(
+          label: string,
+          exePath: string,
+          argv: string[],
+          private readonly detail: () => Promise<string | null>
+        ) {
+          super(manager, label, exePath, argv, false)
+        }
+        protected override startupFailureDetail(): Promise<string | null> {
+          return this.detail()
+        }
+      }
+
+      it("is appended to the exit-before-ready rejection", async () => {
+        const process = new DetailProcess("detail-exit", "/bin/false", [], () =>
+          Promise.resolve("DETAIL-MARKER: holder pid 4242")
+        )
+        await expect(process.start()).rejects.toThrow(
+          /exited \(code 1\)[\s\S]*DETAIL-MARKER: holder pid 4242/
+        )
+      })
+
+      it("is appended to the verify-timeout rejection", async () => {
+        const process = new DetailProcess(
+          "detail-timeout",
+          "/bin/sleep",
+          ["5"],
+          () => Promise.resolve("DETAIL-MARKER: still booting")
+        )
+        await expect(process.start()).rejects.toThrow(
+          /did not pass verifyReady within[\s\S]*DETAIL-MARKER: still booting/
+        )
+        await process.kill()
+      })
+
+      it("a throwing detail probe never masks the primary error", async () => {
+        const process = new DetailProcess("detail-throws", "/bin/false", [], () =>
+          Promise.reject(new Error("probe exploded"))
+        )
+        await expect(process.start()).rejects.toThrow(
+          /exited \(code 1\) before passing verifyReady/
+        )
+      })
+    })
   })
 })
