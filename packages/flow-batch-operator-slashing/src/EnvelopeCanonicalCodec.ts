@@ -106,12 +106,18 @@ const canonicalEndpointsDefault = () => [
   ...canonicalSubMessage(EndpointsField.end, canonicalChainId(0, 0))
 ]
 
-/** An `opp.Attestation` body (type + data_size + data). */
-const canonicalAttestation = (att: {
+/** The wire-level fields of one `opp.Attestation` body, as fed to the canonical encoder. */
+interface CanonicalAttestationBody {
+  /** `Attestation.type` (an `AttestationType` value). */
   type: number
+  /** `Attestation.data_size` — encoded explicitly, field-complete. */
   dataSize: number
+  /** `Attestation.data` — the raw attestation bytes. */
   data: Uint8Array
-}) => [
+}
+
+/** An `opp.Attestation` body (type + data_size + data). */
+const canonicalAttestation = (att: CanonicalAttestationBody) => [
   ...canonicalVarintField(AttestationField.type, att.type),
   ...canonicalVarintField(AttestationField.dataSize, att.dataSize),
   ...canonicalBytesField(AttestationField.data, att.data)
@@ -120,7 +126,7 @@ const canonicalAttestation = (att: {
 /** An `opp.MessagePayload` body (version + repeated attestation sub-messages). */
 const canonicalPayload = (
   version: number,
-  atts: { type: number; dataSize: number; data: Uint8Array }[]
+  atts: CanonicalAttestationBody[]
 ) => [
   ...canonicalVarintField(PayloadField.version, version),
   ...atts.flatMap(att =>
@@ -128,15 +134,24 @@ const canonicalPayload = (
   )
 ]
 
-/** An `opp.MessageHeader` body in field-complete canonical form (slot 4 reserved, never encoded). */
-const canonicalHeader = (header: {
+/** The wire-level fields of an `opp.MessageHeader` body, as fed to the canonical encoder. */
+interface CanonicalHeaderBody {
+  /** `MessageHeader.message_id` (empty in the blanked pre-image). */
   messageId: Uint8Array
+  /** `MessageHeader.previous_message_id` (empty at stream genesis). */
   previousMessageId: Uint8Array
+  /** `MessageHeader.payload_size`. */
   payloadSize: number
+  /** `MessageHeader.payload_checksum`. */
   payloadChecksum: Uint8Array
+  /** `MessageHeader.timestamp` — milliseconds since the Unix epoch. */
   timestamp: bigint
+  /** `MessageHeader.header_checksum` (empty in the blanked pre-image). */
   headerChecksum: Uint8Array
-}) => [
+}
+
+/** An `opp.MessageHeader` body in field-complete canonical form (slot 4 reserved, never encoded). */
+const canonicalHeader = (header: CanonicalHeaderBody) => [
   ...canonicalSubMessage(HeaderField.endpoints, canonicalEndpointsDefault()),
   ...canonicalBytesField(HeaderField.messageId, header.messageId),
   ...canonicalBytesField(

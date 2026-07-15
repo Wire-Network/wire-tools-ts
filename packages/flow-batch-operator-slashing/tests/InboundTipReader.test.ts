@@ -33,11 +33,16 @@ function otherRow(): OutpostConsensusRow {
   }
 }
 
-/** A query stub returning `rows`, counting its invocations. */
-function queryOf(rows: OutpostConsensusRow[]): {
+/** A counting `outpcons` query stub: the query itself plus its invocation counter. */
+interface CountingQuery {
+  /** The stubbed table query handed to the reader. */
   query: () => Promise<OutpostConsensusRow[]>
+  /** Number of times the query has been invoked. */
   calls: () => number
-} {
+}
+
+/** A query stub returning `rows`, counting its invocations. */
+function queryOf(rows: OutpostConsensusRow[]): CountingQuery {
   let calls = 0
   return {
     query: async () => {
