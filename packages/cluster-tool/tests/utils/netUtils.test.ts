@@ -37,13 +37,13 @@ describe("netUtils", () => {
     it("is false while a UDP socket holds the port, true after release", async () => {
       // OS-assigned port (never a fixed bind — see bind-available-ports rule).
       const holder = Dgram.createSocket("udp4")
-      const bound = new Deferred<number>()
-      holder.bind(0, () => bound.resolve(holder.address().port))
-      const port = await bound.promise
+      const port = await Deferred.useCallback<number>(deferred =>
+        holder.bind(0, () => deferred.resolve(holder.address().port))
+      ).promise
       expect(await isUdpPortFree(port)).toBe(false)
-      const closed = new Deferred<void>()
-      holder.close(() => closed.resolve())
-      await closed.promise
+      await Deferred.useCallback<void>(deferred =>
+        holder.close(() => deferred.resolve())
+      ).promise
       expect(await isUdpPortFree(port)).toBe(true)
     })
   })

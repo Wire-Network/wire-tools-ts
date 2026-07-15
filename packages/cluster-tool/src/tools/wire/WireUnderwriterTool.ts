@@ -16,7 +16,6 @@
 
 import Assert from "node:assert"
 import Fs from "node:fs"
-import Path from "node:path"
 
 import { match } from "ts-pattern"
 
@@ -27,7 +26,7 @@ import {
   TokenKind
 } from "@wireio/opp-typescript-models"
 import { SlugName } from "@wireio/sdk-core"
-import { getLogger, getValue } from "@wireio/shared"
+import { getLogger } from "@wireio/shared"
 import type { ChainTokenAmount } from "@wireio/debugging-shared"
 
 import type { ClusterConfig } from "../../config/ClusterConfig.js"

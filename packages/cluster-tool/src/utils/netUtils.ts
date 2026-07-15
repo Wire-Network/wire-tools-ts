@@ -79,14 +79,14 @@ export function toURL(
  * @returns Whether a UDP bind on `port` succeeds.
  */
 export function isUdpPortFree(port: number): Promise<boolean> {
-  const result = new Deferred<boolean>()
-  const probe = Dgram.createSocket("udp4")
-  probe.once("error", () => {
-    guard(() => probe.close())
-    result.resolve(false)
-  })
-  probe.bind(port, () => probe.close(() => result.resolve(true)))
-  return result.promise
+  return Deferred.useCallback<boolean>(deferred => {
+    const probe = Dgram.createSocket("udp4")
+    probe.once("error", () => {
+      guard(() => probe.close())
+      deferred.resolve(false)
+    })
+    probe.bind(port, () => probe.close(() => deferred.resolve(true)))
+  }).promise
 }
 
 /**

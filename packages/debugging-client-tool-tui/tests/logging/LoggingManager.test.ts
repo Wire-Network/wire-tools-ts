@@ -4,13 +4,10 @@ import Path from "node:path"
 import { Level } from "@wireio/shared"
 import { LoggingManager } from "@wireio/debugging-client-tool-tui/logging/LoggingManager.js"
 
-/** Override the module-private `configured` flag via a getter hack per test. */
-function resetConfiguredFlag(): void {
-  // `configured` is a module-level `let` in LoggingManager — we can't poke it
-  // directly, so these tests treat it as a black box across the whole suite.
-  // A `beforeAll` call to `configure` makes subsequent re-configures no-ops,
-  // which matches production semantics.
-}
+// `configured` is a module-level `let` in LoggingManager — it can't be poked
+// directly, so these tests treat it as a black box across the whole suite. A
+// `beforeAll` call to `configure` makes subsequent re-configures no-ops,
+// which matches production semantics.
 
 describe("LoggingManager.configure", () => {
   let dir: string

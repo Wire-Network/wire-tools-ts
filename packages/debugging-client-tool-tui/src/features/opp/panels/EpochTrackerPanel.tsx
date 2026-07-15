@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react"
 import { Box, Text, useFocus, useFocusManager, useInput, useWindowSize } from "ink"
 import { match } from "ts-pattern"
-import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import type { PanelComponentProps } from "../../../components/PanelComponent.js"
 import { adjustStickyWindow } from "../../../utils/windowUtils.js"
 import { useRouter } from "../../../router/index.js"

@@ -123,6 +123,8 @@ describe("ServiceManagerProvider", () => {
       </ServiceManagerProvider>
     )
     expect(element.props.manager).toBe(sm)
-    expect((element.type as Function).name).toBe("ServiceManagerProvider")
+    expect((element.type as typeof ServiceManagerProvider).name).toBe(
+      "ServiceManagerProvider"
+    )
   })
 })

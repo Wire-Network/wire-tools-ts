@@ -283,11 +283,11 @@ describe("ProcessManager + ManagedProcess", () => {
           label: string,
           exePath: string,
           argv: string[],
-          private readonly detail: () => Promise<string | null>
+          private readonly detail: () => Promise<string>
         ) {
           super(manager, label, exePath, argv, false)
         }
-        protected override startupFailureDetail(): Promise<string | null> {
+        protected override startupFailureDetail(): Promise<string> {
           return this.detail()
         }
       }

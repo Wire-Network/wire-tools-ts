@@ -22,11 +22,7 @@ const log = getLogger("WireClient")
 // The contract registry is exported under the `SysioContracts` namespace; alias
 // the value + type locally so the generics below read cleanly (and the §17
 // design's top-level names resolve).
-const {
-  SysioContractName,
-  SysioContractAccount,
-  SysioContractDefinitions
-} = SysioContracts
+const { SysioContractName, SysioContractDefinitions } = SysioContracts
 type SysioContractName = SysioContracts.SysioContractName
 type SysioContractMapping = SysioContracts.SysioContractMapping
 

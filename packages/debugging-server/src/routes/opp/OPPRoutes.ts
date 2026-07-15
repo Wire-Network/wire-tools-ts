@@ -6,7 +6,6 @@ import {
   PutEnvelopeResponse,
   ListEnvelopesResponse,
   EnvelopeListEntry,
-  GetEnvelopeResponse,
   DebugOutpostEndpointsType,
   DebugEnvelopeMetadataRecord,
   Envelope

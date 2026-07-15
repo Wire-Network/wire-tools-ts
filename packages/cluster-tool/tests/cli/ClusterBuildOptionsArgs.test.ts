@@ -194,7 +194,7 @@ describe("applyClusterBuildOptionsArgs registration", () => {
   })
 
   it("gives EVERY registered flag a non-empty describe (--help completeness)", () => {
-    register().forEach((config, flag) =>
+    register().forEach(config =>
       expect(
         typeof config.describe === "string" && config.describe.length > 0
       ).toBe(true)

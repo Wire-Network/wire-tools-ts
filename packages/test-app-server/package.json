@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@wireio/sdk-core": "^1.0.22",
+    "@wireio/shared": "^1.0.60",
     "@wireio/wallet-ext-sdk": "^0.1.2",
     "buffer": "^6.0.3",
     "ethers": "^6.16.0",

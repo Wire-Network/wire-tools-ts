@@ -8,10 +8,7 @@ import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
 } from "../ClusterBuildStep.js"
-import {
-  ClusterKeyStore,
-  ClusterKeyStoreKey
-} from "../outputs/ClusterKeyStore.js"
+import { ClusterKeyStore } from "../outputs/ClusterKeyStore.js"
 import { EthereumOutpostBootstrapper } from "../ethereum/EthereumOutpostBootstrapper.js"
 
 /** Steps that generate the cluster {@link ClusterKeyStore} + set up the kiod wallet. */

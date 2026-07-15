@@ -7,17 +7,18 @@ import {
     APIError,
     getCompressedPublicKey,
     KeyType,
-    Name,
-    PermissionLevel, PrivateKey,
     PublicKey,
     Signature,
     SignedTransaction,
     Transaction
 } from "@wireio/sdk-core"
+import { getLogger } from "@wireio/shared"
 import { WireWalletClient } from "@wireio/wallet-ext-sdk"
 import { ethers } from "ethers"
 import * as wallet from "./wallet"
 import { ChainKind, WireChain } from "../types"
+
+const log = getLogger(__filename)
 
 /**
  * Convert an array of AnyAction objects to Action objects using the provided API client.
@@ -84,7 +85,7 @@ export async function pushTransaction(
     try {
       return await api.v1.chain.push_transaction(signedTrx)
     } catch (e: any) {
-      console.error("Error pushing transaction (remote):", e)
+      log.error(`Error pushing transaction (remote): ${e instanceof Error ? e.message : String(e)}`, e)
       if (e instanceof APIError) {
         throw new Error(
           e.details[0]?.message?.replace(/Error:/g, "") || e.message
@@ -93,7 +94,7 @@ export async function pushTransaction(
       throw e
     }
   } catch (e: any) {
-    console.error("Error pushing transaction:", e)
+    log.error(`Error pushing transaction: ${e instanceof Error ? e.message : String(e)}`, e)
     throw e
   }
 }

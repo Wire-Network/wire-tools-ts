@@ -4,7 +4,6 @@ import * as Path from "node:path"
 import { createHash } from "node:crypto"
 
 import {
-  ApiPaths,
   ClusterFiles,
   EnvelopeEventKind,
   StreamFrameType,
@@ -17,8 +16,7 @@ import {
 import {
   DebugEnvelopeMetadataRecord,
   DebugOutpostEndpointsType,
-  Envelope,
-  PutEnvelopeRequest
+  Envelope
 } from "@wireio/opp-typescript-models"
 
 import { DebuggingServer } from "@wireio/debugging-server"

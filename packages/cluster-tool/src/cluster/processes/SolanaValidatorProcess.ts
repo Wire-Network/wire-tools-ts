@@ -3,7 +3,7 @@ import Assert from "node:assert"
 import { execFileSync } from "node:child_process"
 import Fs from "node:fs"
 import Path from "node:path"
-import { range } from "lodash"
+import { isEmpty, range } from "lodash"
 import { getValue } from "@wireio/shared"
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
 import {
@@ -174,7 +174,7 @@ export class SolanaValidatorProcess extends ManagedProcess {
   private get assignedPorts(): Set<number> {
     return new Set([
       this.config.rpcPort,
-      this.config.rpcPort + SolanaValidatorProcess.WsPortOffset,
+      this.config.rpcPort + BindConfig.SolanaWsPortOffset,
       this.config.faucetPort,
       this.config.gossipPort,
       ...range(
@@ -192,17 +192,15 @@ export class SolanaValidatorProcess extends ManagedProcess {
    * assigned ports (`ss -tuapn`), since a bind conflict's root cause is the
    * HOLDER, which is gone from every log by teardown time.
    */
-  protected async startupFailureDetail(): Promise<string | null> {
-    const parts: string[] = []
-    const logTail = this.validatorLogTail()
-    if (logTail !== null) parts.push(logTail)
-    const holders = this.assignedPortHolders()
-    if (holders !== null) parts.push(holders)
+  protected async startupFailureDetail(): Promise<string> {
+    const parts = [this.validatorLogTail(), this.assignedPortHolders()].filter(
+      part => !isEmpty(part)
+    )
     return parts.length === 0 ? null : parts.join("\n")
   }
 
-  /** Last {@link SolanaValidatorProcess.ValidatorLogTailLines} lines of the ledger's validator.log, or null when unreadable. */
-  private validatorLogTail(): string | null {
+  /** Last {@link SolanaValidatorProcess.ValidatorLogTailLines} lines of the ledger's validator.log (null when unreadable). */
+  private validatorLogTail(): string {
     if (this.config.ledgerPath == null) return null
     const logFile = Path.join(this.config.ledgerPath, "validator.log")
     return getValue(() => {
@@ -214,8 +212,8 @@ export class SolanaValidatorProcess extends ManagedProcess {
     }, null)
   }
 
-  /** Live sockets on this validator's assigned ports per `ss -tuapn`, or null when `ss` is unavailable. */
-  private assignedPortHolders(): string | null {
+  /** Live sockets on this validator's assigned ports per `ss -tuapn` (null when `ss` is unavailable). */
+  private assignedPortHolders(): string {
     return getValue(() => {
       const sockets = filterSocketLinesByLocalPort(
         execFileSync("ss", ["-tuapn"], { encoding: "utf8" }),
@@ -233,7 +231,7 @@ export class SolanaValidatorProcess extends ManagedProcess {
 
   get wsUrl(): string {
     return toURL(
-      this.config.rpcPort + SolanaValidatorProcess.WsPortOffset,
+      this.config.rpcPort + BindConfig.SolanaWsPortOffset,
       Localhost,
       "ws"
     )
@@ -241,8 +239,6 @@ export class SolanaValidatorProcess extends ManagedProcess {
 }
 
 export namespace SolanaValidatorProcess {
-  /** Offset added to `rpcPort` for the WebSocket port (Solana convention). */
-  export const WsPortOffset = 1
   export const ProcessLabel = "solana-test-validator" as const
   export const SlotPollIntervalMs = 500
   /**

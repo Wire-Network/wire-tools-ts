@@ -19,7 +19,6 @@ import {
   type ClusterBuildStepOptions,
   type StepInput
 } from "@wireio/cluster-tool"
-import { ethers } from "ethers"
 import { SwapPrivateReservesScenarioArtifacts as Artifacts } from "../SwapPrivateReservesScenarioArtifacts.js"
 import { SwapPrivateReservesScenarioConstants as Constants } from "../SwapPrivateReservesScenarioConstants.js"
 

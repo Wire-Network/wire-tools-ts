@@ -102,7 +102,7 @@ export class EthereumOutpostBootstrapper {
     // final addresses; the depot's logical `sysio.reserv` view and the
     // outpost's physical custody are independent ledgers (a non-native dst
     // SwapRemit can only draw against physically-funded custody).
-    await this.seedReserveManager(rpcUrl, ethereumPath)
+    await this.seedReserveManager(rpcUrl)
 
     const accountsFile = Path.join(mkdirs(anvilDataPath), EthereumOutpostBootstrapper.AccountsFile)
     Fs.writeFileSync(accountsFile, JSON.stringify(this.accounts, null, 2))
@@ -227,7 +227,7 @@ export class EthereumOutpostBootstrapper {
    * counter (seeded once from `getNonce("pending")`, incremented per tx) to
    * avoid the back-to-back-tx nonce race.
    */
-  private async seedReserveManager(rpcUrl: string, ethereumPath: string): Promise<void> {
+  private async seedReserveManager(rpcUrl: string): Promise<void> {
     const outpostAddressesFile = Path.join(
       this.config.deploymentsPath,
       "outpost-addrs.json"
