@@ -261,5 +261,19 @@ describe("ProcessManager + ManagedProcess", () => {
       await expect(process.start()).rejects.toThrow(/did not pass verifyReady/)
       await process.kill()
     })
+
+    it("fails FAST with the exit code when the child dies before ready (crash ≠ slow boot)", async () => {
+      // /bin/false exits immediately with code 1; verifyReady never passes.
+      // The verify loop must surface the death + exit code well inside the
+      // budget instead of burning it and reporting the generic timeout line
+      // (a crashed daemon and a slow boot must be distinguishable from the
+      // failure message alone).
+      const process = new FakeProcess(manager, "dies", "/bin/false", [], false)
+      const startedAt = Date.now()
+      await expect(process.start()).rejects.toThrow(
+        /exited \(code 1\) before passing verifyReady/
+      )
+      expect(Date.now() - startedAt).toBeLessThan(5_000)
+    })
   })
 })

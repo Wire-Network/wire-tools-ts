@@ -1,5 +1,9 @@
 import { Level } from "@wireio/shared"
-import { BindConfig, ClusterConfig } from "@wireio/cluster-tool/config"
+import {
+  BindConfig,
+  ClusterConfig,
+  PersistedClusterConfig
+} from "@wireio/cluster-tool/config"
 import { LogFileAppender } from "@wireio/cluster-tool/logging"
 import { Report } from "@wireio/cluster-tool/report"
 
@@ -14,8 +18,10 @@ const pair = (offset: number) => ({
   p2p: p2pBase + offset
 })
 
-/** A complete persisted `cluster-config.json` payload for tests (no env deps). */
-export const PersistedFixture = {
+/** A complete persisted `cluster-config.json` payload for tests (no env deps).
+ *  Typed against the REAL persisted shape so override sites typecheck against
+ *  the interface's field types rather than this literal's narrowings. */
+export const PersistedFixture: PersistedClusterConfig = {
   buildPath: "/build",
   clusterPath: "/cluster",
   dataPath: "/cluster/data",
@@ -49,6 +55,7 @@ export const PersistedFixture = {
       ports: {
         http: BindConfig.DefaultSolanaRpc,
         faucet: BindConfig.DefaultSolanaFaucet,
+        gossip: BindConfig.DefaultSolanaGossip,
         dynamicRange: {
           first: BindConfig.DefaultSolanaDynamicPortFirst,
           last:
@@ -83,7 +90,15 @@ export const PersistedFixture = {
   initialFinalizerKey: null
 }
 
-/** Build a `ClusterConfig` from the fixture (via deserialize — no resolve / env). */
-export function fixtureConfig(): ClusterConfig {
-  return ClusterConfig.deserialize(JSON.stringify(PersistedFixture))
+/** Build a `ClusterConfig` from the fixture (via deserialize — no resolve / env).
+ *
+ * @param overrides - Top-level fixture fields to replace (typed by the fixture
+ *   itself). Nested structures are replaced whole — spread the fixture's own
+ *   nested object at the call site to change one leaf
+ *   (`executables: { ...PersistedFixture.executables, nodeop: "/bin/true" }`).
+ */
+export function fixtureConfig(
+  overrides: Partial<PersistedClusterConfig> = {}
+): ClusterConfig {
+  return ClusterConfig.deserialize(JSON.stringify({ ...PersistedFixture, ...overrides }))
 }

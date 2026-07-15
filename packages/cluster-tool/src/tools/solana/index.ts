@@ -1,4 +1,5 @@
 export * from "./SolanaFundingTool.js"
+export * from "./SolanaOutpostProgramTool.js"
 export * from "./SolanaCollateralTool.js"
 export * from "./SolanaSwapTool.js"
 export * from "./SolanaYieldEmitterTool.js"

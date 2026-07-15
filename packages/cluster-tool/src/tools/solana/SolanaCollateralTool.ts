@@ -10,8 +10,6 @@
  */
 
 import Assert from "node:assert"
-import Fs from "node:fs"
-import Path from "node:path"
 import * as anchor from "@coral-xyz/anchor"
 import {
   PublicKey,
@@ -26,6 +24,7 @@ import {
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
 import { SolanaFundingTool } from "./SolanaFundingTool.js"
+import { SolanaOutpostProgramTool } from "./SolanaOutpostProgramTool.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import {
@@ -36,7 +35,7 @@ import type { StepInput } from "../../orchestration/StepRunner.js"
 import { solanaKeypair } from "../../utils/keyPairUtils.js"
 import { Report } from "../../report/Report.js"
 
-/** PDA seeds — kept in sync with `wire-solana/programs/opp-outpost/src`. */
+/** PDA seeds — kept in sync with `wire-solana/programs/liqsol-core/src/states/opp_states.rs`. */
 const OutpostConfigSeed = Buffer.from("outpost_config")
 const OutboundMessageBufferSeed = Buffer.from("outbound_message_buffer")
 const OperatorRegistrySeed = Buffer.from("operator_registry")
@@ -232,25 +231,16 @@ export namespace SolanaCollateralTool {
   }
 
   /**
-   * Build the `opp_outpost` Anchor program bound to `keypair` (its own signer for
-   * the deposit ix). IDL from `<solanaPath>/target/idl/opp_outpost.json`;
-   * connection from `ctx.solana`.
+   * Build the OPP outpost Anchor program (hosted in `liqsol_core` since the
+   * clean-room rewrite) bound to `keypair` (its own signer for the deposit
+   * ix). IDL from `<solanaPath>/target/idl/liqsol_core.json`; connection from
+   * `ctx.solana`.
    */
   export function loadOppOutpostProgram<C extends ClusterBuildContext>(
     ctx: C,
     keypair: Keypair
   ): anchor.Program<anchor.Idl> {
-    const idlPath = Path.join(
-      ctx.config.solanaPath,
-      "target",
-      "idl",
-      "opp_outpost.json"
-    )
-    Assert.ok(
-      Fs.existsSync(idlPath),
-      `SolanaCollateralTool: opp_outpost IDL not found at ${idlPath}`
-    )
-    const idl = JSON.parse(Fs.readFileSync(idlPath, "utf8")) as anchor.Idl
+    const idl = SolanaOutpostProgramTool.readIdl(ctx.config.solanaPath)
     const provider = new anchor.AnchorProvider(
       ctx.solana.connection,
       new anchor.Wallet(keypair),

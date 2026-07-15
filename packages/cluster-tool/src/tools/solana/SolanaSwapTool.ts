@@ -28,7 +28,7 @@ import {
 } from "@solana/spl-token"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 
-/** PDA seeds — kept in sync with `wire-solana/programs/opp-outpost/src`. */
+/** PDA seeds — kept in sync with `wire-solana/programs/liqsol-core/src/states/opp_states.rs`. */
 const OUTPOST_CONFIG_SEED          = Buffer.from("outpost_config")
 const OUTBOUND_MESSAGE_BUFFER_SEED = Buffer.from("outbound_message_buffer")
 const RESERVE_SEED                 = Buffer.from("reserve")

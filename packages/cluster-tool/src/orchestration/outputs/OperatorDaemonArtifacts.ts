@@ -11,9 +11,9 @@ export interface OperatorDaemonArtifacts {
   readonly ethereumAbiFiles: string[]
   /** Deployed Ethereum outpost addresses (from `outpost-addrs.json`). */
   readonly ethereumAddresses: Record<string, string>
-  /** The `opp-outpost` program id (base58). */
+  /** The OPP outpost program id (base58) — `liqsol_core`'s `declare_id`. */
   readonly solanaProgramId: string
-  /** Cluster-local copy of the `opp_outpost` IDL. */
+  /** Cluster-local verbatim copy of the `liqsol_core` (OPP outpost) IDL. */
   readonly solanaIdlFile: string
 }
 

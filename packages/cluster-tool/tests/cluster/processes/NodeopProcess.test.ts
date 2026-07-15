@@ -7,6 +7,7 @@ import { NodeopProcess, ProcessManager } from "@wireio/cluster-tool/cluster/proc
 import { NodeConfig, NodeRole, type ClusterConfig } from "@wireio/cluster-tool/config"
 import { type OperatorAccount } from "@wireio/cluster-tool/orchestration/outputs"
 import { Localhost } from "@wireio/cluster-tool/utils"
+import { fixtureConfig, PersistedFixture } from "../../config/clusterConfigFixture.js"
 
 describe("NodeopProcess", () => {
   let dir: string
@@ -20,18 +21,18 @@ describe("NodeopProcess", () => {
     )
     ProcessManager.setClusterPath(dir)
     manager = ProcessManager.get()
-    // Structural ClusterConfig covering exactly what NodeopProcess derives from
-    // (binaries, bind address, node dirs, the genesis file).
-    cluster = {
+    // Fixture ClusterConfig aimed at this test's sandbox — NodeopProcess
+    // derives node dirs + `genesisFile` from `clusterPath`/`dataPath`, and
+    // the fixture's node counts (1/3/1) match the planning assertions below.
+    cluster = fixtureConfig({
       clusterPath: dir,
       dataPath: Path.join(dir, "data"),
-      executables: { nodeop: "/bin/true" },
-      bind: { nodeop: { address: "0.0.0.0" } },
-      genesisFile: Path.join(dir, "genesis.json"),
-      nodeCount: 1,
-      batchOperatorCount: 3,
-      underwriterCount: 1
-    } as unknown as ClusterConfig
+      executables: { ...PersistedFixture.executables, nodeop: "/bin/true" },
+      bind: {
+        ...PersistedFixture.bind,
+        nodeop: { ...PersistedFixture.bind.nodeop, address: "0.0.0.0" }
+      }
+    })
   })
   afterEach(async () => {
     await manager.stopAll()
@@ -66,10 +67,17 @@ describe("NodeopProcess", () => {
   }
 
   it("requires genesis.json to exist", async () => {
-    const missing = {
-      ...cluster,
-      genesisFile: "/nope/genesis.json"
-    } as unknown as ClusterConfig
+    // `genesisFile` derives from `clusterPath` — a cluster path with no
+    // genesis.json written under it is the missing-genesis case.
+    const missing = fixtureConfig({
+      clusterPath: "/nope",
+      dataPath: Path.join(dir, "data"),
+      executables: { ...PersistedFixture.executables, nodeop: "/bin/true" },
+      bind: {
+        ...PersistedFixture.bind,
+        nodeop: { ...PersistedFixture.bind.nodeop, address: "0.0.0.0" }
+      }
+    })
     await expect(
       NodeopProcess.create(manager, {
         node: new NodeConfig(missing, NodeRole.producer, 0, "missing-genesis", { http: 1, p2p: 2 }, [], [])

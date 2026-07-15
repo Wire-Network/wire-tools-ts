@@ -6,7 +6,7 @@ describe("Steps.processes.solanaValidator", () => {
     const step = Steps.processes.solanaValidator.planStart(
       Report.Actor.SolanaOutpost,
       "start-validator",
-      "start solana-test-validator + opp-outpost",
+      "start solana-test-validator + liqsol_core (OPP outpost)",
       {}
     )
     expect(step.actor).toBe(Report.Actor.SolanaOutpost)

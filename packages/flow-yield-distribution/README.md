@@ -42,11 +42,21 @@ currently a rename-only placeholder with no STAKING_REWARD path.
 
 ## Running
 
+Like every flow, run it with the canonical runner + heartbeat monitor pair
+(see the repo README's "Running flows" / "Monitoring a live flow run" and
+`wire-platform-manifest/.claude/rules/run-flows-via-canonical-scripts.md`):
+
 ```bash
-WIRE_BUILD_PATH=$HOME/code/wire/wire-sysio/build \
-WIRE_ETH_PATH=$HOME/code/wire/wire-ethereum \
-WIRE_SOLANA_PATH=$HOME/code/wire/wire-solana \
-pnpm -F @wireio/test-flow-yield-distribution test
+# From the wire-tools-ts root:
+node scripts/run-flow.mjs flow-yield-distribution \
+  --cluster-path    /tmp/wire-flow-yield \
+  --wire-build-path $HOME/code/wire/wire-sysio/build \
+  --ethereum-path   $HOME/code/wire/wire-ethereum \
+  --solana-path     $HOME/code/wire/wire-solana
+
+# In a second terminal — the mandatory six-probe heartbeat:
+node scripts/flow-heartbeat-monitor.mjs --cluster-path /tmp/wire-flow-yield
 ```
 
-Chain data: `/mnt/data/wire-e2e-soak/flow-yield-distribution-<timestamp>/`.
+Cluster data lands under `--cluster-path` (env `WIRE_CLUSTER_PATH`); omit it
+and the harness generates a fresh temp dir per run.

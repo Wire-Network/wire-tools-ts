@@ -13,6 +13,7 @@ import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../utils/asyncUtils.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
+import { SolanaOutpostProgramTool } from "../../tools/solana/SolanaOutpostProgramTool.js"
 
 const log = getLogger(__filename)
 
@@ -24,7 +25,11 @@ export interface SolanaOutpostBootstrapperOptions {
   rpcUrl: string
   /** Deployer keypair file (default: `~/.config/solana/id.json`). */
   deployerKeypairFile?: string
-  /** opp-outpost program keypair file (default: `<solanaPath>/wallets/opp-outpost-keypair.json`). */
+  /**
+   * OPP outpost program keypair file (default:
+   * `<solanaPath>/.keys/liqsol_core-keypair.json` — the outpost interface is
+   * hosted in the `liqsol_core` program since the clean-room rewrite).
+   */
   programKeypairFile?: string
   /**
    * Directory under which mock-SPL-mint metadata (`sol-mock-mints.json`) +
@@ -46,11 +51,12 @@ export interface SolanaOutpostBootstrapperConfig {
 /**
  * Bootstrap the Solana (test-validator) outpost: airdrop SOL to a deployer,
  * initialize the `OutpostConfig` / `OutboundMessageBuffer` / `OperatorRegistry`
- * (+ envelope-log + reserve) PDAs against the already-loaded `opp_outpost`
- * program, seed the native-SOL reserve, and (when a cluster data path is given)
- * provision mock SPL reserves. The program is deployed via `--bpf-program` at
- * validator launch; per-epoch `EpochDeliveries` PDAs are allocated lazily by the
- * batch operator on first delivery.
+ * (+ envelope-log + reserve) PDAs against the already-loaded `liqsol_core`
+ * program (which hosts the OPP outpost interface), seed the native-SOL
+ * reserve, and (when a cluster data path is given) provision mock SPL
+ * reserves. The program is deployed via `--bpf-program` at validator launch;
+ * per-epoch `EpochDeliveries` PDAs are allocated lazily by the batch operator
+ * on first delivery.
  *
  * Test-cluster custody priming (`provisionSplReserves`) lives HERE in the
  * harness, never in `wire-solana`'s deploy scripts.
@@ -58,7 +64,7 @@ export interface SolanaOutpostBootstrapperConfig {
 export class SolanaOutpostBootstrapper {
   private readonly config: SolanaOutpostBootstrapperConfig
   private readonly connection: Connection
-  /** opp-outpost program id (resolved from the program keypair file), or null when absent. */
+  /** OPP outpost program id (resolved from the program keypair file), or null when absent. */
   programId: PublicKey | null = null
 
   constructor(options: SolanaOutpostBootstrapperOptions) {
@@ -72,7 +78,7 @@ export class SolanaOutpostBootstrapper {
         SolanaOutpostBootstrapper.defaultDeployerKeypairFile(),
       programKeypairFile:
         options.programKeypairFile ??
-        Path.join(options.solanaPath, "wallets", "opp-outpost-keypair.json"),
+        SolanaOutpostProgramTool.programKeypairFile(options.solanaPath),
       clusterDataPath: options.clusterDataPath ?? null
     }
     this.connection = new Connection(options.rpcUrl, SolanaClient.DefaultCommitment)
@@ -114,7 +120,9 @@ export class SolanaOutpostBootstrapper {
     if (Fs.existsSync(this.config.programKeypairFile)) {
       const keypairData = JSON.parse(Fs.readFileSync(this.config.programKeypairFile, "utf8"))
       this.programId = Keypair.fromSecretKey(Uint8Array.from(keypairData)).publicKey
-      log.info(`opp-outpost program id: ${this.programId.toBase58()}`)
+      log.info(
+        `${SolanaOutpostProgramTool.ProgramName} (OPP outpost) program id: ${this.programId.toBase58()}`
+      )
       // The deploy step's payload: which program this outpost runs as (the
       // PDAs + reserve provisioning below record as solana RPC/tx calls).
       StepExtraRecorder.record({
@@ -130,10 +138,10 @@ export class SolanaOutpostBootstrapper {
     if (this.programId != null) {
       const accountInfo = await this.connection.getAccountInfo(this.programId)
       if (accountInfo?.executable)
-        log.info("opp-outpost program is loaded on the validator")
+        log.info("OPP outpost program is loaded on the validator")
       else
         log.warn(
-          "opp-outpost program not found on validator — it should be deployed via --bpf-program"
+          "OPP outpost program not found on validator — it should be deployed via --bpf-program"
         )
     }
 
@@ -210,7 +218,7 @@ export class SolanaOutpostBootstrapper {
   private async initializePDAs(deployer: Keypair): Promise<void> {
     const programId = this.programId
     Assert.ok(programId != null, "initializePDAs: programId required")
-    log.info("initializing opp-outpost PDAs...")
+    log.info("initializing OPP outpost PDAs...")
 
     const Seed = SolanaOutpostBootstrapper.PdaSeed
     const configPda = this.deriveProgramAddress(programId, Seed.OutpostConfig)
@@ -236,7 +244,7 @@ export class SolanaOutpostBootstrapper {
     const provider = new anchor.AnchorProvider(this.connection, new anchor.Wallet(deployer), {
       commitment: SolanaClient.DefaultCommitment
     })
-    const idlFile = Path.join(this.config.solanaPath, "target", "idl", "opp_outpost.json")
+    const idlFile = SolanaOutpostProgramTool.programIdlFile(this.config.solanaPath)
     if (!Fs.existsSync(idlFile)) {
       log.warn(`IDL not found at ${idlFile} — skipping PDA initialization`)
       return
@@ -244,12 +252,14 @@ export class SolanaOutpostBootstrapper {
     const idl = JSON.parse(Fs.readFileSync(idlFile, "utf8"))
     const program = new anchor.Program(idl, provider)
 
-    // `initialize` takes only the outpost's `chain_code` (SOL ⇒ "SOLANA"_c) —
-    // consensus thresholds are derived on-the-fly per `epoch_in` and the epoch
-    // duration is propagated via the BATCH_OPERATOR_GROUPS attestation.
+    // `initialize_outpost` takes only the outpost's `chain_code`
+    // (SOL ⇒ "SOLANA"_c) — consensus thresholds are derived on-the-fly per
+    // `epoch_in` and the epoch duration is propagated via the
+    // BATCH_OPERATOR_GROUPS attestation. (The clean-room rename: liqsol_core's
+    // own staking `initialize` already claims the bare name.)
     const solanaChainCode = new anchor.BN(SlugName.from(SolanaOutpostBootstrapper.SolanaChainCodename))
     const initializeTransaction = await program.methods
-      .initialize(solanaChainCode)
+      .initializeOutpost(solanaChainCode)
       .accounts({
         authority: deployer.publicKey,
         config: configPda,
@@ -262,7 +272,7 @@ export class SolanaOutpostBootstrapper {
       })
       .signers([deployer])
       .transaction()
-    await this.runSimpleAuthorityInstruction(deployer, initializeTransaction, "initialize")
+    await this.runSimpleAuthorityInstruction(deployer, initializeTransaction, "initialize_outpost")
     log.info("PDAs initialized successfully")
 
     // Register the native-SOL binding (mint = all-zeroes `PublicKey.default`)
@@ -275,6 +285,23 @@ export class SolanaOutpostBootstrapper {
       .transaction()
     await this.runSimpleAuthorityInstruction(deployer, setTokenAddressTransaction, "set_token_address")
     log.info("SOL native-token binding registered")
+
+    // Precision is REQUIRED for every registered token — the program's
+    // `PrecisionUnconfigured` gate and wire-ethereum's
+    // `WIRE_TokenPrecisionUnset` are the same contract (no silent defaults).
+    // Bind native SOL's 9 (lamports) right after its address binding so
+    // `create_reserve_native` and every SOL swap path can frame-convert.
+    const setSolPrecisionTransaction = await program.methods
+      .setTokenPrecision(solTokenCode, SolanaOutpostBootstrapper.SolTokenDecimals)
+      .accounts({ authority: deployer.publicKey, config: configPda })
+      .signers([deployer])
+      .transaction()
+    await this.runSimpleAuthorityInstruction(
+      deployer,
+      setSolPrecisionTransaction,
+      "set_token_precision(SOL)"
+    )
+    log.info("SOL native-token precision registered")
 
     // Initialize the ReserveAggregate PDA — `epoch_in` declares it as a writable
     // account, so without it every inbound delivery fails at simulation.
@@ -497,10 +524,12 @@ export namespace SolanaOutpostBootstrapper {
   export const SolanaChainCodename = "SOLANA"
   /** Native SOL token codename. */
   export const SolTokenCodename = "SOL"
+  /** Native SOL chain decimals (lamports) — bound via `set_token_precision`. */
+  export const SolTokenDecimals = 9
   /** Default reserve codename. */
   export const PrimaryReserveCodename = "PRIMARY"
 
-  /** Program-derived-address seeds — MUST match `wire-solana/programs/opp-outpost/src/state/*.rs`. */
+  /** Program-derived-address seeds — MUST match `wire-solana/programs/liqsol-core/src/states/opp_states.rs`. */
   export namespace PdaSeed {
     export const OutpostConfig = "outpost_config"
     export const OutboundMessageBuffer = "outbound_message_buffer"
