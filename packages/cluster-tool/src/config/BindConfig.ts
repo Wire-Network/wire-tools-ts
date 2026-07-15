@@ -4,7 +4,11 @@ import Os from "node:os"
 import Path from "node:path"
 import Bluebird from "bluebird"
 import { range } from "lodash"
-import { ListenAllAddress, Localhost } from "../utils/netUtils.js"
+import {
+  isUdpPortFree,
+  ListenAllAddress,
+  Localhost
+} from "../utils/netUtils.js"
 import { mkdirs, withFileLock } from "../utils/fsUtils.js"
 import { isPidAlive, processCommandBasename } from "../utils/processUtils.js"
 import { Deferred, getLogger, getValue, guard } from "@wireio/shared"
@@ -54,6 +58,17 @@ async function getPort(
 async function clearPortLocks(): Promise<void> {
   const mod = await importGetPortModule()
   mod.clearLockedPorts()
+}
+
+/**
+ * The transport a resolved port will be bound with. TCP ports are fully
+ * covered by `get-port`'s probe; UDP ports (the validator's gossip socket and
+ * dynamic-range sockets) additionally require {@link isUdpPortFree} — see its
+ * note for the failure class this closes.
+ */
+export enum BindConfigPortProtocol {
+  tcp = "tcp",
+  udp = "udp"
 }
 
 /** One nodeop's `{ http, p2p }` listen ports. */
@@ -219,13 +234,15 @@ export class BindConfig {
       claim = async (
         callerPin: number | null,
         fallbackDefault: number | null,
-        daemon: string
+        daemon: string,
+        protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
       ): Promise<number> => {
         const port = await BindConfig.pickPort(
           callerPin,
           fallbackDefault,
           claimed,
-          daemon
+          daemon,
+          protocol
         )
         claimed.add(port)
         return port
@@ -303,11 +320,14 @@ export class BindConfig {
           // --gossip-port. Cross-cluster disjointness comes from the same
           // machinery as every other port: the file-locked registry feeds
           // `claim`'s exclusions, so no two clusters ever resolve the same
-          // gossip port.
+          // gossip port. Gossip is a UDP socket — the claim additionally
+          // UDP-probes candidates, catching non-registry UDP holders that
+          // get-port's TCP probe cannot see.
           gossip: await claim(
             options.solana?.ports?.gossip ?? null,
             BindConfig.DefaultSolanaGossip,
-            "solana.gossip"
+            "solana.gossip",
+            BindConfigPortProtocol.udp
           ),
           dynamicRange: await (async () => {
             const dynamicRange = await BindConfig.pickPortRange(
@@ -398,10 +418,18 @@ export namespace BindConfig {
   export const DefaultSolanaFaucet = 9900
   /**
    * Preferred validator gossip port — agave's test-validator default. The
-   * resolver prefers it and falls to a free ephemeral port when a concurrent
-   * validator already holds it (gossip is UDP, so the claim re-probes UDP).
+   * resolver prefers it and falls to a free ephemeral port when it is held —
+   * gossip is UDP, so the claim probes a UDP bind in addition to get-port's
+   * TCP probe (see {@link BindConfigPortProtocol}).
    */
   export const DefaultSolanaGossip = 8000
+  /**
+   * Bounded redraws when resolving a UDP-role port: candidates that pass the
+   * TCP probe but fail the UDP probe are excluded and redrawn up to this many
+   * times before the resolve fails loudly. Raising it only matters on a host
+   * whose UDP space is heavily squatted.
+   */
+  export const UdpPickAttempts = 16
   /**
    * First candidate port of the validator's `--dynamic-port-range` window.
    * Sits clear of every daemon default above and below the kernel's ephemeral
@@ -453,11 +481,22 @@ export namespace BindConfig {
    * registers.
    *
    * @param preferred - The preferred port (e.g. `BindConfig.DefaultAnvil`).
+   * @param protocol - Transport the port will be bound with; UDP-role ports
+   *   (validator gossip) are additionally UDP-probed.
    * @returns A currently-free port (the preferred one when possible).
    */
-  export async function findAvailable(preferred: number): Promise<number> {
+  export async function findAvailable(
+    preferred: number,
+    protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
+  ): Promise<number> {
     return withFileLock(BindConfig.PortLockPath, () =>
-      getPort({ port: preferred, exclude: readRegistryPortExclusions() })
+      pickPort(
+        null,
+        preferred,
+        readRegistryPortExclusions(),
+        "findAvailable",
+        protocol
+      )
     )
   }
 
@@ -604,27 +643,56 @@ export namespace BindConfig {
     callerPin: number | null,
     fallbackDefault: number | null,
     claimed: Set<number>,
-    daemon: string
+    daemon: string,
+    protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
   ): Promise<number> {
     if (callerPin !== null) {
       const resolved = await getPort({ port: callerPin, exclude: claimed })
       Assert.ok(
-        resolved === callerPin,
+        resolved === callerPin &&
+          (protocol === BindConfigPortProtocol.tcp ||
+            (await isUdpPortFree(callerPin))),
         `port ${callerPin} for ${daemon} is pinned but unavailable`
       )
       return callerPin
     }
-    return getPort(
-      fallbackDefault !== null
-        ? { port: fallbackDefault, exclude: claimed }
-        : { exclude: claimed }
+    // First draw prefers the default; a UDP-role candidate that fails the UDP
+    // probe is excluded and redrawn (get-port alone would happily re-offer a
+    // TCP-free port that a UDP-only holder squats).
+    const picked = await Bluebird.reduce(
+      range(0, BindConfig.UdpPickAttempts),
+      async (found: number | null, attempt: number) => {
+        if (found !== null) return found
+        const candidate = await getPort(
+          attempt === 0 && fallbackDefault !== null
+            ? { port: fallbackDefault, exclude: claimed }
+            : { exclude: claimed }
+        )
+        if (
+          protocol === BindConfigPortProtocol.tcp ||
+          (await isUdpPortFree(candidate))
+        ) {
+          return candidate
+        }
+        claimed.add(candidate)
+        return null
+      },
+      null as number | null
     )
+    Assert.ok(
+      picked !== null,
+      `no UDP-bindable port found for ${daemon} within ${BindConfig.UdpPickAttempts} attempts`
+    )
+    return picked
   }
 
   /**
    * Whether EVERY port of the window starting at `first` is free: not in
    * `exclusions` (the file-locked registry + this resolve's claims — the
-   * cross-process coordination surface) and available per `get-port`.
+   * cross-process coordination surface), available per `get-port` (TCP), AND
+   * UDP-bindable. The window is consumed by the validator's dynamic sockets,
+   * which are predominantly UDP — a UDP-only squatter inside a candidate
+   * window is invisible to the TCP probe and panics agave at first bind.
    *
    * @param first - First port of the candidate window.
    * @param exclusions - Ports already claimed/registered.
@@ -638,7 +706,8 @@ export namespace BindConfig {
     if (ports.some(port => exclusions.has(port))) return false
     const taken = await Bluebird.filter(
       ports,
-      async port => (await getPort({ port })) !== port,
+      async port =>
+        (await getPort({ port })) !== port || !(await isUdpPortFree(port)),
       { concurrency: 1 }
     )
     return taken.length === 0

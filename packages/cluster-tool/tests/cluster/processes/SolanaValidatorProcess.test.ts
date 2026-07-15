@@ -45,6 +45,27 @@ describe("SolanaValidatorProcess", () => {
     )
   })
 
+  it("startup failure surfaces the validator.log tail and the assigned-port holders", async () => {
+    // agave's real error (panic text, the AddrInUse socket) lands in the
+    // ledger's validator.log, not on stdio — the fail-fast error must carry
+    // it, or a CI failure is undiagnosable (2026-07-15 gate: five instant
+    // exit-101s whose reason never reached any surfaced log).
+    const ledgerPath = Path.join(dir, "failing-ledger")
+    Fs.mkdirSync(ledgerPath, { recursive: true })
+    Fs.writeFileSync(
+      Path.join(ledgerPath, "validator.log"),
+      "boot line\nPANIC-MARKER: gossip_addr bind: Address already in use\n"
+    )
+    const validator = await SolanaValidatorProcess.create(manager, {
+      binary: "/bin/false",
+      ledgerPath,
+      dynamicPortRange: await BindConfig.findAvailableRange()
+    })
+    await expect(validator.start()).rejects.toThrow(
+      /exited \(code 1\)[\s\S]*validator\.log tail[\s\S]*PANIC-MARKER: gossip_addr bind[\s\S]*sockets live on assigned ports/
+    )
+  })
+
   it("deploys programs via --bpf-program", async () => {
     const validator = await SolanaValidatorProcess.create(manager, {
       binary: "/bin/true",

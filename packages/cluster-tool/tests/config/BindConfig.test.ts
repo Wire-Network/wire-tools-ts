@@ -102,6 +102,20 @@ jest.unstable_mockModule("get-port", () => ({
   clearLockedPorts: jest.fn(() => allocator.clearLocks())
 }))
 
+/**
+ * Test-controlled "UDP-held by a non-registry process" set. The real
+ * `isUdpPortFree` binds actual OS sockets — deterministic outcomes here
+ * require faking it exactly like `get-port` above (otherwise a live validator
+ * on the host would steer which dynamic-range window these tests resolve).
+ */
+const mockUdpTakenPorts = new Set<number>()
+jest.mock("@wireio/cluster-tool/utils/netUtils", () => ({
+  ...(jest.requireActual(
+    "@wireio/cluster-tool/utils/netUtils"
+  ) as typeof import("@wireio/cluster-tool/utils/netUtils")),
+  isUdpPortFree: jest.fn(async (port: number) => !mockUdpTakenPorts.has(port))
+}))
+
 describe("BindConfig", () => {
   // Import AFTER the mock is registered so BindConfig's cached get-port is the
   // fake. A static top-level import would load the real module first.
@@ -113,6 +127,7 @@ describe("BindConfig", () => {
 
   beforeEach(() => {
     allocator.reset()
+    mockUdpTakenPorts.clear()
     // Fresh registry per test — resolve() registers its ports, and a leftover
     // registration would leak exclusions into the next test's outcome. The
     // scratch dir itself is installed by tests/jest.setup.ts.
@@ -294,6 +309,67 @@ describe("BindConfig", () => {
       )
       // reading never registers THIS process (mirrors findAvailable)
       expect(Fs.existsSync(BindConfig.registryFile())).toBe(false)
+    })
+  })
+
+  // A UDP-only holder passes every TCP probe (get-port) while still panicking
+  // agave at first bind — the 2026-07-15 gate failure class. UDP-role ports
+  // (gossip, dynamic range) must consult the UDP probe; TCP-role ports must
+  // not change behavior.
+  describe("UDP-role ports (non-registry UDP holders)", () => {
+    it("gossip falls back to an ephemeral when the default is UDP-held (TCP probe passes)", async () => {
+      mockUdpTakenPorts.add(BindConfig.DefaultSolanaGossip)
+      const config = await BindConfig.resolve({}, {})
+      expect(config.solana.ports.gossip).not.toBe(BindConfig.DefaultSolanaGossip)
+      expect(mockUdpTakenPorts.has(config.solana.ports.gossip)).toBe(false)
+      // TCP-role defaults are untouched by the UDP holder.
+      expect(config.solana.ports.http).toBe(BindConfig.DefaultSolanaRpc)
+    })
+
+    it("throws when a pinned gossip port is UDP-held", async () => {
+      const pinned = 14_700
+      mockUdpTakenPorts.add(pinned)
+      await expect(
+        BindConfig.resolve({ solana: { ports: { gossip: pinned } } }, {})
+      ).rejects.toThrow(/pinned but unavailable/)
+    })
+
+    it("dynamic range skips a window containing a UDP-held port", async () => {
+      mockUdpTakenPorts.add(BindConfig.DefaultSolanaDynamicPortFirst + 5)
+      const config = await BindConfig.resolve({}, {})
+      expect(config.solana.ports.dynamicRange.first).toBe(
+        BindConfig.DefaultSolanaDynamicPortFirst +
+          BindConfig.SolanaDynamicPortRangeSize
+      )
+    })
+
+    it("throws when a pinned window contains a UDP-held port", async () => {
+      const pinned = {
+        first: 13_000,
+        last: 13_000 + BindConfig.SolanaDynamicPortRangeSize - 1
+      }
+      mockUdpTakenPorts.add(13_042)
+      await expect(
+        BindConfig.resolve({ solana: { ports: { dynamicRange: pinned } } }, {})
+      ).rejects.toThrow(/pinned but unavailable/)
+    })
+
+    it("findAvailable redraws past a UDP-held preferred port only under the udp protocol", async () => {
+      const { BindConfigPortProtocol } = await import(
+        "@wireio/cluster-tool/config"
+      )
+      const preferred = 14_800
+      mockUdpTakenPorts.add(preferred)
+      // tcp (default): the UDP holder is irrelevant — preferred wins.
+      expect(await BindConfig.findAvailable(preferred)).toBe(preferred)
+      allocator.clearLocks()
+      // udp: the holder forces a redraw to a UDP-free ephemeral.
+      const port = await BindConfig.findAvailable(
+        preferred,
+        BindConfigPortProtocol.udp
+      )
+      expect(port).not.toBe(preferred)
+      expect(mockUdpTakenPorts.has(port)).toBe(false)
     })
   })
 

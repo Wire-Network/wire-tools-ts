@@ -1,9 +1,11 @@
 /**
- * Network helpers — loopback / bind-all constants and `<address>:<port>` /
- * URL construction. Single source of truth for every host literal the harness
- * hands to a process, chain client, or readiness probe (folds the former
- * `tools/NetTools.ts`).
+ * Network helpers — loopback / bind-all constants, `<address>:<port>` /
+ * URL construction, and socket probes. Single source of truth for every host
+ * literal the harness hands to a process, chain client, or readiness probe
+ * (folds the former `tools/NetTools.ts`).
  */
+import Dgram from "node:dgram"
+import { Deferred, guard } from "@wireio/shared"
 
 /**
  * Loopback IPv4 address — the default `address` for {@link toURL}/{@link toAddress}
@@ -61,4 +63,52 @@ export function toURL(
   scheme: URLScheme = "http"
 ): string {
   return `${scheme}://${toAddress(port, address)}`
+}
+
+/**
+ * True when `port` accepts a UDP bind on all interfaces right now. `get-port`
+ * (the TCP probe behind every BindConfig path) cannot see a UDP-only holder —
+ * a foreign daemon, or another cluster's validator sockets — while that is
+ * exactly what an agave validator trips over first: its gossip/TPU/TVU
+ * sockets are UDP. In the 2026-07-15 e2e gate run, validators handed the
+ * default port set died within milliseconds of spawn (exit 101) five times in
+ * a row while every TCP probe passed — the holder was UDP-only and outside
+ * the bind registry. UDP-role ports must be probed with a UDP bind.
+ *
+ * @param port - Port to probe.
+ * @returns Whether a UDP bind on `port` succeeds.
+ */
+export function isUdpPortFree(port: number): Promise<boolean> {
+  const result = new Deferred<boolean>()
+  const probe = Dgram.createSocket("udp4")
+  probe.once("error", () => {
+    guard(() => probe.close())
+    result.resolve(false)
+  })
+  probe.bind(port, () => probe.close(() => result.resolve(true)))
+  return result.promise
+}
+
+/**
+ * Filter `ss`/`netstat`-style socket lines down to those whose LOCAL address
+ * carries one of `ports`. A local address is the 5th whitespace field of the
+ * standard `ss -tuapn` row (`Netid State Recv-Q Send-Q Local:Port Peer:Port
+ * [process]`); the port is whatever follows the last `:` (covers `0.0.0.0:80`,
+ * `[::]:80`, and `127.0.0.1%lo:80` forms). Pure — callers run `ss` themselves.
+ *
+ * @param output - Raw multi-line `ss -tuapn` output.
+ * @param ports - Local ports to keep.
+ * @returns The matching lines, header excluded.
+ */
+export function filterSocketLinesByLocalPort(
+  output: string,
+  ports: ReadonlySet<number>
+): string[] {
+  return output
+    .split("\n")
+    .filter(line => {
+      const local = line.trim().split(/\s+/)[4] ?? ""
+      const port = Number.parseInt(local.slice(local.lastIndexOf(":") + 1), 10)
+      return Number.isFinite(port) && ports.has(port)
+    })
 }
