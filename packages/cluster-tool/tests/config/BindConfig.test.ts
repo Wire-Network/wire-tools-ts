@@ -312,6 +312,64 @@ describe("BindConfig", () => {
     })
   })
 
+  // agave binds implicit sockets first-free from its built-in 8000-10000
+  // range regardless of --gossip-port/--dynamic-port-range, so the band is a
+  // standing registration: NOTHING the harness assigns may sit inside it —
+  // not a default, not an ephemeral fallback, not a caller pin, not a window.
+  describe("reserved agave band (8000-10000 is never assigned)", () => {
+    it("every default preference and the window base sit OUTSIDE the band (and clear of the solana ws companion rpc+1)", () => {
+      const band = BindConfig.ReservedAgavePortBand
+      const defaults = [
+        BindConfig.DefaultKiod,
+        BindConfig.DefaultBiosHttp,
+        BindConfig.DefaultBiosP2p,
+        BindConfig.DefaultAnvil,
+        BindConfig.DefaultSolanaRpc,
+        BindConfig.DefaultSolanaFaucet,
+        BindConfig.DefaultSolanaGossip,
+        BindConfig.DefaultDebuggingServer,
+        BindConfig.DefaultSolanaDynamicPortFirst
+      ]
+      defaults.forEach(port =>
+        expect(port < band.first || port > band.last).toBe(true)
+      )
+      // rpc+1 is agave's automatic websocket port — no default may collide.
+      expect(defaults).not.toContain(BindConfig.DefaultSolanaRpc + 1)
+    })
+
+    it("findAvailable never returns an in-band port even when preferred and OS-free", async () => {
+      const inBand = 8899
+      const port = await BindConfig.findAvailable(inBand)
+      expect(port).not.toBe(inBand)
+      expect(
+        port < BindConfig.ReservedAgavePortBand.first ||
+          port > BindConfig.ReservedAgavePortBand.last
+      ).toBe(true)
+    })
+
+    it("throws on a caller pin inside the band, naming the band", async () => {
+      await expect(
+        BindConfig.resolve({ solana: { ports: { http: 8899 } } }, {})
+      ).rejects.toThrow(/reserved agave validator band 8000-10000/)
+    })
+
+    it("throws on a pinned window overlapping the band, naming the band", async () => {
+      const pinned = { first: 9_990, last: 9_990 + BindConfig.SolanaDynamicPortRangeSize - 1 }
+      await expect(
+        BindConfig.resolve({ solana: { ports: { dynamicRange: pinned } } }, {})
+      ).rejects.toThrow(/reserved agave validator band 8000-10000/)
+    })
+
+    it("resolve produces NO in-band port and claims the solana ws companion (rpc+1)", async () => {
+      const config = await BindConfig.resolve({}, {})
+      const band = BindConfig.ReservedAgavePortBand
+      config.allPorts.forEach(port =>
+        expect(port < band.first || port > band.last).toBe(true)
+      )
+      expect(config.allPorts).toContain(config.solana.ports.http + 1)
+    })
+  })
+
   // A UDP-only holder passes every TCP probe (get-port) while still panicking
   // agave at first bind — the 2026-07-15 gate failure class. UDP-role ports
   // (gossip, dynamic range) must consult the UDP probe; TCP-role ports must
@@ -510,7 +568,13 @@ describe("BindConfig", () => {
       )
       Fs.writeFileSync(file, "not json {")
       const exclusions = BindConfig.readRegistryPortExclusions()
-      expect(exclusions.size).toBe(0)
+      // Only the standing reserved-band seed remains — nothing from the
+      // malformed registration survived.
+      expect(exclusions.size).toBe(
+        BindConfig.ReservedAgavePortBand.last -
+          BindConfig.ReservedAgavePortBand.first +
+          1
+      )
       expect(Fs.existsSync(file)).toBe(false) // reaped
     })
 
