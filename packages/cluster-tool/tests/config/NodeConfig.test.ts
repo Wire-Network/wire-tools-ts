@@ -115,5 +115,13 @@ describe("NodeConfig", () => {
       const genesis = JSON.parse(fixtureConfig().genesis.render())
       expect(genesis.initial_finalizer_key).toBeUndefined()
     })
+
+    it("does not emit the removed base_per_transaction_net_usage parameter", () => {
+      const genesis = JSON.parse(fixtureConfig().genesis.render())
+      expect(genesis.initial_configuration.net_usage_leeway).toBe(500)
+      expect(genesis.initial_configuration).not.toHaveProperty(
+        "base_per_transaction_net_usage"
+      )
+    })
   })
 })
