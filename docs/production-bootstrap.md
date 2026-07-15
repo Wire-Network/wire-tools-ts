@@ -381,10 +381,10 @@ Not on-chain actions, but the remaining config the tooling sets so the picture i
 | `max_block_net_usage` | `1048576` | `deferred_trx_expiration_window` | `600` |
 | `target_block_net_usage_pct` | `10000` | `max_transaction_delay` | `3888000` |
 | `max_transaction_net_usage` | `524288` | `max_inline_action_size` | `524287` |
-| `base_per_transaction_net_usage` | `12` | `max_inline_action_depth` | `10` |
-| `net_usage_leeway` | `500` | `max_authority_depth` | `10` |
-| `context_free_discount_net_usage_num/den` | `20 / 100` | `max_block_cpu_usage` | `400000` |
-| `target_block_cpu_usage_pct` | `10` | `max_transaction_cpu_usage` | `375000` |
+| `net_usage_leeway` | `500` | `max_inline_action_depth` | `10` |
+| `context_free_discount_net_usage_num/den` | `20 / 100` | `max_authority_depth` | `10` |
+| `target_block_cpu_usage_pct` | `10` | `max_block_cpu_usage` | `400000` |
+| `max_transaction_cpu_usage` | `375000` | | |
 
 ### nodeop arguments & topology
 - Extra args (every node): `vote-threads = 4`, `max-transaction-time = -1`, `abi-serializer-max-time-ms =
