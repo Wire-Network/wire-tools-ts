@@ -417,12 +417,21 @@ export namespace BindConfig {
   export const DefaultSolanaRpc = 8899
   export const DefaultSolanaFaucet = 9900
   /**
-   * Preferred validator gossip port — agave's test-validator default. The
-   * resolver prefers it and falls to a free ephemeral port when it is held —
-   * gossip is UDP, so the claim probes a UDP bind in addition to get-port's
-   * TCP probe (see {@link BindConfigPortProtocol}).
+   * Preferred validator gossip port. Deliberately OUTSIDE agave's built-in
+   * port range (8000-10000): a 4.x test-validator binds an implicit UDP
+   * socket drawn from that range — first-free, so the first validator to
+   * boot takes UDP 8000 — REGARDLESS of `--gossip-port` /
+   * `--dynamic-port-range` (verified 2026-07-15 via `ss -ulpn` on an
+   * explicitly-ported validator). Preferring agave's nominal gossip default
+   * (8000) therefore self-destructs under parallel boots: the claim probes
+   * free (no validator is up yet at resolve time), and by bind time a
+   * co-booting sibling's implicit socket has raced it —
+   * `gossip_addr bind_to port 8000: Address already in use`, instant exit
+   * 101 (two e2e gate runs lost their wave-1 default-set winner exactly this
+   * way). No claim may sit inside 8000-10000; ephemeral fallbacks (32768+)
+   * and the dynamic-range windows (12000+) are already clear.
    */
-  export const DefaultSolanaGossip = 8000
+  export const DefaultSolanaGossip = 11_000
   /**
    * Bounded redraws when resolving a UDP-role port: candidates that pass the
    * TCP probe but fail the UDP probe are excluded and redrawn up to this many
