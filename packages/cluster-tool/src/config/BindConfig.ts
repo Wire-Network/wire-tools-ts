@@ -304,11 +304,18 @@ export class BindConfig {
       {
         address: addr("solana"),
         ports: {
-          http: await claim(
-            options.solana?.ports?.http ?? null,
-            BindConfig.DefaultSolanaRpc,
-            "solana.http"
-          ),
+          http: await (async () => {
+            const http = await claim(
+              options.solana?.ports?.http ?? null,
+              BindConfig.DefaultSolanaRpc,
+              "solana.http"
+            )
+            // agave binds the RPC's companion websocket at rpc+1 AUTOMATICALLY
+            // (no flag assigns it) — claim it so no other daemon here, and no
+            // other cluster via the registry, is ever handed it.
+            claimed.add(http + 1)
+            return http
+          })(),
           faucet: await claim(
             options.solana?.ports?.faucet ?? null,
             BindConfig.DefaultSolanaFaucet,
@@ -371,6 +378,10 @@ export class BindConfig {
       ...flat(np.underwriters),
       this.anvil.port,
       this.solana.ports.http,
+      // The RPC's companion websocket — agave binds rpc+1 automatically (no
+      // flag assigns it); it rides allPorts so the registry excludes it for
+      // every other resolver.
+      this.solana.ports.http + 1,
       this.solana.ports.faucet,
       this.solana.ports.gossip,
       ...range(dynamicRange.first, dynamicRange.last + 1),
@@ -410,26 +421,43 @@ export namespace BindConfig {
    * path.
    */
   export const PortLockPath = Path.join(Os.tmpdir(), "wire-cluster-ports.lock")
-  export const DefaultKiod = 8900
-  export const DefaultBiosHttp = 8788
-  export const DefaultBiosP2p = 9776
-  export const DefaultAnvil = 8545
-  export const DefaultSolanaRpc = 8899
-  export const DefaultSolanaFaucet = 9900
   /**
-   * Preferred validator gossip port. Deliberately OUTSIDE agave's built-in
-   * port range (8000-10000): a 4.x test-validator binds an implicit UDP
-   * socket drawn from that range — first-free, so the first validator to
-   * boot takes UDP 8000 — REGARDLESS of `--gossip-port` /
-   * `--dynamic-port-range` (verified 2026-07-15 via `ss -ulpn` on an
-   * explicitly-ported validator). Preferring agave's nominal gossip default
-   * (8000) therefore self-destructs under parallel boots: the claim probes
-   * free (no validator is up yet at resolve time), and by bind time a
-   * co-booting sibling's implicit socket has raced it —
-   * `gossip_addr bind_to port 8000: Address already in use`, instant exit
-   * 101 (two e2e gate runs lost their wave-1 default-set winner exactly this
-   * way). No claim may sit inside 8000-10000; ephemeral fallbacks (32768+)
-   * and the dynamic-range windows (12000+) are already clear.
+   * agave's built-in validator port range — RESERVED host-wide; the harness
+   * NEVER assigns a port inside it. A 4.x (solana-test-)validator binds
+   * implicit sockets drawn first-free from this range REGARDLESS of
+   * `--gossip-port` / `--dynamic-port-range` (verified 2026-07-15 via
+   * `ss -ulpn`: an explicitly-ported validator still bound
+   * `udp 0.0.0.0:8000`). Any harness claim inside the band can therefore be
+   * stomped by a co-booting validator's implicit bind minutes after a
+   * perfectly-valid locked+registered selection — two e2e gate runs lost
+   * their wave-1 default-set flow to
+   * `gossip_addr bind_to port 8000: Address already in use` exactly this
+   * way. The band is seeded into EVERY exclusion set
+   * ({@link readRegistryPortExclusions}), so no path — default preference,
+   * ephemeral fallback, caller pin, or range window — can produce a port
+   * inside it.
+   */
+  export const ReservedAgavePortBand: BindConfigPortRange = {
+    first: 8_000,
+    last: 10_000
+  }
+  // Daemon default preferences. Layout: everything lives in 10500-11999 —
+  // above the reserved agave band, below the 12000+ dynamic-range windows,
+  // far below the kernel's 32768+ ephemeral fallbacks. The pre-band values
+  // are preserved as suffixes where possible (anvil 8545 → 10545, solana rpc
+  // 8899 → 10899, ...). 10900 is deliberately UNASSIGNED: it is the solana
+  // RPC's companion websocket port (rpc+1, bound by agave automatically —
+  // see {@link BindConfig.allPorts}).
+  export const DefaultKiod = 10_890
+  export const DefaultBiosHttp = 10_788
+  export const DefaultBiosP2p = 10_776
+  export const DefaultAnvil = 10_545
+  export const DefaultSolanaRpc = 10_899
+  export const DefaultSolanaFaucet = 10_990
+  /**
+   * Preferred validator gossip port — outside {@link ReservedAgavePortBand}
+   * like every other default; gossip is UDP, so its claim additionally
+   * UDP-probes candidates (see {@link BindConfigPortProtocol}).
    */
   export const DefaultSolanaGossip = 11_000
   /**
@@ -457,7 +485,7 @@ export namespace BindConfig {
    * `DefaultSolanaDynamicPortFirst + SearchLimit × RangeSize`.
    */
   export const SolanaDynamicPortRangeSearchLimit = 32
-  export const DefaultDebuggingServer = 9901
+  export const DefaultDebuggingServer = 10_991
   export const DefaultProducerCount = 1
   export const DefaultBatchCount = 3
   export const DefaultUnderwriterCount = 1
@@ -552,12 +580,18 @@ export namespace BindConfig {
    * is kept conservatively. Call only under the {@link BindConfig.PortLockPath}
    * lock — read/reap/resolve/write must be one critical section.
    *
-   * @returns The union of every live registration's ports.
+   * The set is SEEDED with {@link ReservedAgavePortBand} — the band is a
+   * standing registration on behalf of every validator's implicit binds, so
+   * no picker downstream of this read can ever assign inside it.
+   *
+   * @returns The union of the reserved band and every live registration's ports.
    */
   export function readRegistryPortExclusions(): Set<number> {
     const dir = registryPath()
     mkdirs(dir)
-    const exclusions = new Set<number>()
+    const exclusions = new Set<number>(
+      range(ReservedAgavePortBand.first, ReservedAgavePortBand.last + 1)
+    )
     Fs.readdirSync(dir)
       .filter(fileName => fileName.endsWith(RegistryFileSuffix))
       .forEach(fileName => {
@@ -656,6 +690,12 @@ export namespace BindConfig {
     protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
   ): Promise<number> {
     if (callerPin !== null) {
+      Assert.ok(
+        !isReservedPort(callerPin),
+        `port ${callerPin} for ${daemon} is inside the reserved agave validator band ` +
+          `${BindConfig.ReservedAgavePortBand.first}-${BindConfig.ReservedAgavePortBand.last} ` +
+          `(agave binds implicit sockets there regardless of flags) — pin a port outside it`
+      )
       const resolved = await getPort({ port: callerPin, exclude: claimed })
       Assert.ok(
         resolved === callerPin &&
@@ -693,6 +733,14 @@ export namespace BindConfig {
       `no UDP-bindable port found for ${daemon} within ${BindConfig.UdpPickAttempts} attempts`
     )
     return picked
+  }
+
+  /** Whether `port` sits inside {@link ReservedAgavePortBand}. */
+  function isReservedPort(port: number): boolean {
+    return (
+      port >= BindConfig.ReservedAgavePortBand.first &&
+      port <= BindConfig.ReservedAgavePortBand.last
+    )
   }
 
   /**
@@ -741,6 +789,13 @@ export namespace BindConfig {
     daemon: string
   ): Promise<BindConfigPortRange> {
     if (callerPin !== null) {
+      Assert.ok(
+        callerPin.first > BindConfig.ReservedAgavePortBand.last ||
+          callerPin.last < BindConfig.ReservedAgavePortBand.first,
+        `port range ${callerPin.first}-${callerPin.last} for ${daemon} overlaps the reserved agave validator band ` +
+          `${BindConfig.ReservedAgavePortBand.first}-${BindConfig.ReservedAgavePortBand.last} ` +
+          `(agave binds implicit sockets there regardless of flags) — pin a window outside it`
+      )
       Assert.ok(
         await isRangeFree(callerPin.first, exclusions),
         `port range ${callerPin.first}-${callerPin.last} for ${daemon} is pinned but unavailable`
