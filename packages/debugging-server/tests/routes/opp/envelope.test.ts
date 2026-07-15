@@ -6,7 +6,6 @@ import { JsonRPC, DebuggingServer } from "@wireio/debugging-server"
 import { ApiPaths, JsonRPCResult } from "@wireio/debugging-shared"
 import {
   DebugOutpostEndpointsType,
-  DebugEnvelopeMetadataRecord,
   Envelope
 } from "@wireio/opp-typescript-models"
 import { Future } from "@3fv/prelude-ts"

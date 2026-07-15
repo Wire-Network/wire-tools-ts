@@ -1,5 +1,4 @@
 import Assert from "node:assert"
-import { ethers } from "ethers"
 import { SysioContracts } from "@wireio/sdk-core"
 import {
   contractView,

@@ -2,8 +2,9 @@ import { spawn, type ChildProcess, type StdioOptions } from "node:child_process"
 import Fs from "node:fs"
 import Path from "node:path"
 import Assert from "node:assert"
+import { isEmpty } from "lodash"
 import treeKill from "tree-kill"
-import { Deferred } from "@wireio/shared"
+import { Deferred, getValue } from "@wireio/shared"
 import { getLogger, type Logger } from "../../logging/Logger.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { scaleTimeoutMs, sleep } from "../../utils/asyncUtils.js"
@@ -65,6 +66,34 @@ export abstract class ManagedProcess {
   /** Health gate polled after spawn; default = up immediately. */
   protected verifyReady(): Promise<boolean> {
     return Promise.resolve(true)
+  }
+
+  /**
+   * Extra failure context appended to a {@link start} rejection (both the
+   * exited-before-ready and the verify-timeout paths): a daemon's own log-file
+   * tail, the holder of a contested socket — whatever names the cause that the
+   * captured stdio didn't. Base has none (resolves null); subclasses override.
+   */
+  protected startupFailureDetail(): Promise<string> {
+    return Promise.resolve(null)
+  }
+
+  /**
+   * {@link startupFailureDetail} as an appendable error suffix: `""` when the
+   * probe yields nothing, `"\n<detail>"` otherwise. The probe is best-effort
+   * context — its own failure is logged (debug) and never masks the primary
+   * startup error.
+   */
+  private async startupFailureDetailSuffix(): Promise<string> {
+    const detail = await getValue(
+      () => this.startupFailureDetail(),
+      null,
+      error =>
+        this.log.debug(
+          `${this.label} startupFailureDetail probe failed: ${error instanceof Error ? error.message : String(error)}`
+        )
+    )
+    return isEmpty(detail) ? "" : `\n${detail}`
   }
   protected get verifyTimeoutMs(): number {
     return ManagedProcess.DefaultVerifyTimeoutMs
@@ -168,7 +197,8 @@ export abstract class ManagedProcess {
       if (this.exited.isSettled()) {
         const exitCode = await this.exited.promise
         throw new Error(
-          `${this.label} exited (code ${exitCode}) before passing verifyReady — see its process log for the startup failure`
+          `${this.label} exited (code ${exitCode}) before passing verifyReady — see its process log for the startup failure` +
+            (await this.startupFailureDetailSuffix())
         )
       }
       try {
@@ -185,7 +215,8 @@ export abstract class ManagedProcess {
       await sleep(this.verifyIntervalMs)
     }
     throw new Error(
-      `${this.label} did not pass verifyReady within ${verifyBudgetMs}ms`
+      `${this.label} did not pass verifyReady within ${verifyBudgetMs}ms` +
+        (await this.startupFailureDetailSuffix())
     )
   }
 

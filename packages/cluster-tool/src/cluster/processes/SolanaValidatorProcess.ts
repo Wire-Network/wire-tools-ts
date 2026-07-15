@@ -1,10 +1,23 @@
 import { Connection } from "@solana/web3.js"
 import Assert from "node:assert"
+import { execFileSync } from "node:child_process"
+import Fs from "node:fs"
+import Path from "node:path"
+import { isEmpty, range } from "lodash"
+import { getValue } from "@wireio/shared"
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
-import { BindConfig, type BindConfigPortRange } from "../../config/BindConfig.js"
+import {
+  BindConfig,
+  BindConfigPortProtocol,
+  type BindConfigPortRange
+} from "../../config/BindConfig.js"
 import { probeEndpoint } from "../../utils/asyncUtils.js"
 import { existsAsync, which } from "../../utils/fsUtils.js"
-import { Localhost, toURL } from "../../utils/netUtils.js"
+import {
+  filterSocketLinesByLocalPort,
+  Localhost,
+  toURL
+} from "../../utils/netUtils.js"
 import { ManagedProcess } from "./ManagedProcess.js"
 import type { ProcessManager } from "./ProcessManager.js"
 
@@ -81,7 +94,10 @@ export class SolanaValidatorProcess extends ManagedProcess {
         (await BindConfig.findAvailable(BindConfig.DefaultSolanaFaucet)),
       gossipPort:
         options.gossipPort ??
-        (await BindConfig.findAvailable(BindConfig.DefaultSolanaGossip)),
+        (await BindConfig.findAvailable(
+          BindConfig.DefaultSolanaGossip,
+          BindConfigPortProtocol.udp
+        )),
       dynamicPortRange:
         options.dynamicPortRange ?? (await BindConfig.findAvailableRange()),
       ledgerPath: options.ledgerPath ?? null,
@@ -154,13 +170,68 @@ export class SolanaValidatorProcess extends ManagedProcess {
     }
   }
 
+  /** Every port this validator's config commits to binding. */
+  private get assignedPorts(): Set<number> {
+    return new Set([
+      this.config.rpcPort,
+      this.config.rpcPort + BindConfig.SolanaWsPortOffset,
+      this.config.faucetPort,
+      this.config.gossipPort,
+      ...range(
+        this.config.dynamicPortRange.first,
+        this.config.dynamicPortRange.last + 1
+      )
+    ])
+  }
+
+  /**
+   * Startup-failure context: agave writes its real error (panic message, the
+   * exact socket of an `AddrInUse`) to `<ledger>/validator.log`, NOT to the
+   * captured stdio — the console shows only `Initializing...` before an
+   * instant exit. Also names whoever currently holds one of this validator's
+   * assigned ports (`ss -tuapn`), since a bind conflict's root cause is the
+   * HOLDER, which is gone from every log by teardown time.
+   */
+  protected async startupFailureDetail(): Promise<string> {
+    const parts = [this.validatorLogTail(), this.assignedPortHolders()].filter(
+      part => !isEmpty(part)
+    )
+    return parts.length === 0 ? null : parts.join("\n")
+  }
+
+  /** Last {@link SolanaValidatorProcess.ValidatorLogTailLines} lines of the ledger's validator.log (null when unreadable). */
+  private validatorLogTail(): string {
+    if (this.config.ledgerPath == null) return null
+    const logFile = Path.join(this.config.ledgerPath, "validator.log")
+    return getValue(() => {
+      const lines = Fs.readFileSync(logFile, "utf8").trimEnd().split("\n")
+      const tail = lines
+        .slice(-SolanaValidatorProcess.ValidatorLogTailLines)
+        .join("\n")
+      return `validator.log tail (${logFile}):\n${tail}`
+    }, null)
+  }
+
+  /** Live sockets on this validator's assigned ports per `ss -tuapn` (null when `ss` is unavailable). */
+  private assignedPortHolders(): string {
+    return getValue(() => {
+      const sockets = filterSocketLinesByLocalPort(
+        execFileSync("ss", ["-tuapn"], { encoding: "utf8" }),
+        this.assignedPorts
+      )
+      return `sockets live on assigned ports (ss -tuapn):\n${
+        sockets.length > 0 ? sockets.join("\n") : "(none visible)"
+      }`
+    }, null)
+  }
+
   get rpcUrl(): string {
     return toURL(this.config.rpcPort, Localhost)
   }
 
   get wsUrl(): string {
     return toURL(
-      this.config.rpcPort + SolanaValidatorProcess.WsPortOffset,
+      this.config.rpcPort + BindConfig.SolanaWsPortOffset,
       Localhost,
       "ws"
     )
@@ -168,8 +239,6 @@ export class SolanaValidatorProcess extends ManagedProcess {
 }
 
 export namespace SolanaValidatorProcess {
-  /** Offset added to `rpcPort` for the WebSocket port (Solana convention). */
-  export const WsPortOffset = 1
   export const ProcessLabel = "solana-test-validator" as const
   export const SlotPollIntervalMs = 500
   /**
@@ -184,6 +253,11 @@ export namespace SolanaValidatorProcess {
   export const StartupTimeoutMs = 480_000
   /** Env var that, when `"1"`, drops `--quiet` so program logs are captured. */
   export const VerboseEnvironmentVariable = "WIRE_SOLANA_VALIDATOR_VERBOSE"
+  /**
+   * Lines of `<ledger>/validator.log` surfaced in a startup-failure error —
+   * agave's panic/bind-error detail lands there, not on the captured stdio.
+   */
+  export const ValidatorLogTailLines = 40
   /**
    * Default `--limit-ledger-size` (shreds) = agave-validator's MAINNET
    * default (`DEFAULT_MAX_LEDGER_SHREDS`), the value a real operator gets

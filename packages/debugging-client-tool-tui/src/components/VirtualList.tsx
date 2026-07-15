@@ -22,6 +22,12 @@ export interface VirtualListProps<T> {
   renderItem: (item: T, index: number) => React.ReactElement
 }
 
+/** One fetched window: the items plus the offset they were fetched FOR. */
+interface VirtualListSnapshot<T> {
+  items: T[]
+  offset: number
+}
+
 /**
  * Virtual-scroll list based on `ink-virtual-list`'s offset model. Re-fetches
  * the window via `fetchRange` when `offset`, `viewportHeight`, or the
@@ -47,17 +53,18 @@ export function VirtualList<T>(props: VirtualListProps<T>): React.ReactElement {
       0,
       Math.min(offset, Math.max(0, totalItems - viewportHeight))
     ),
-    [snapshot, setSnapshot] = useState<{ items: T[]; offset: number }>({
+    [snapshot, setSnapshot] = useState<VirtualListSnapshot<T>>({
       items: [],
       offset: 0
     })
 
   useEffect(() => {
     let cancelled = false
-    void (async () => {
+    const loadRange = async () => {
       const fetched = await fetchRange(clampedOffset, viewportHeight)
       if (!cancelled) setSnapshot({ items: fetched, offset: clampedOffset })
-    })()
+    }
+    void loadRange()
     return () => {
       cancelled = true
     }

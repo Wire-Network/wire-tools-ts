@@ -1,12 +1,8 @@
 import { endpointsTypeToKey } from "@wireio/debugging-shared"
 import {
-  DebugEnvelopeMetadataRecord,
   EnvelopeListEntry,
-  GetEnvelopeResponse,
   Envelope,
-  Endpoints,
-  PutEnvelopeResponse,
-  ListEnvelopesResponse
+  GetEnvelopeResponse
 } from "@wireio/opp-typescript-models"
 import { EnvelopeRenderer } from "./EnvelopeRenderer.js"
 

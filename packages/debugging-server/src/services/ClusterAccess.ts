@@ -34,8 +34,7 @@ export class ClusterAccess {
   /** Begin watching both files. Idempotent. */
   start(): void {
     if (this.configWatcher) return
-    const configFile = Path.join(this.clusterPath, ClusterFiles.ConfigFilename),
-      stateFile = Path.join(this.clusterPath, ClusterFiles.StateFilename)
+    const configFile = Path.join(this.clusterPath, ClusterFiles.ConfigFilename)
     try {
       this.configWatcher = Fs.watch(configFile, () => {
         this.configCache = null

@@ -1,4 +1,3 @@
-import React from "react"
 import { LogViewerTextLine } from "@wireio/debugging-client-tool-tui/features/process-monitor/panels/LogViewerTextLine.js"
 
 describe("LogViewerTextLine", () => {

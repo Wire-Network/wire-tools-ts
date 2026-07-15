@@ -32,6 +32,11 @@ filegroup(
 
 js_workspace_build(
     name = "build",
+    # Newline-separated (NOT `&&` — set -e AND-OR exemption, see build_defs).
+    # Lint runs in the same gate step as the build: the eslint config encodes
+    # the mechanical STYLE.md / manifest-rule laws, so a violation fails the
+    # platform build, not a human review three pushes later.
+    build_cmd = "pnpm run build\npnpm run lint",
     package_manager = "pnpm",
     # Predecessor in the sequential chain; transitively pulls the full platform.
     deps = ["//wire-solana:build"],

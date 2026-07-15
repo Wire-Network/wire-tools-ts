@@ -1,13 +1,5 @@
-import {
-  PanelComponentProps,
-  type PanelComponentType
-} from "../components/PanelComponent.js"
-import {
-  StatusBarComponentProps,
-  type StatusBarComponentType
-} from "../components/StatusBarComponent.js"
-import { asOption } from "@3fv/prelude-ts"
-import React from "react"
+import { type PanelComponentType } from "../components/PanelComponent.js"
+import { type StatusBarComponentType } from "../components/StatusBarComponent.js"
 
 /** Constructor token accepted by `register`/`get` — works on abstract bases too. */
 export enum FeatureComponentToken {

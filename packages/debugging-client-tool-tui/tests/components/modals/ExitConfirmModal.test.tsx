@@ -1,4 +1,3 @@
-import React from "react"
 import { ExitConfirmModal } from "@wireio/debugging-client-tool-tui/components/modals/ExitConfirmModal.js"
 
 type Key = {

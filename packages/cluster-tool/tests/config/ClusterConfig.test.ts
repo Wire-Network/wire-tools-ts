@@ -1,7 +1,7 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import { ClusterConfig } from "@wireio/cluster-tool/config"
+import { BindConfig, ClusterConfig } from "@wireio/cluster-tool/config"
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
 
 describe("ClusterConfig", () => {
@@ -22,7 +22,7 @@ describe("ClusterConfig", () => {
     it("rehydrates a BindConfig instance with the persisted topology", () => {
       const cfg = fixtureConfig()
       expect(cfg.bind.nodeop.ports.batch).toHaveLength(3)
-      expect(cfg.bind.nodeop.ports.bios.http).toBe(8788)
+      expect(cfg.bind.nodeop.ports.bios.http).toBe(BindConfig.DefaultBiosHttp)
       expect(cfg.epochDurationSec).toBe(60)
       // BindConfig methods must exist (rebuilt as an instance, not a plain object)
       expect(typeof cfg.bind.validate).toBe("function")
@@ -46,7 +46,9 @@ describe("ClusterConfig", () => {
       expect(round.buildPath).toBe(PersistedFixture.buildPath)
       expect(round.producerCount).toBe(PersistedFixture.producerCount)
       expect(round.report.formats).toEqual(PersistedFixture.report.formats)
-      expect(round.bind.solana.ports.faucet).toBe(9900)
+      expect(round.bind.solana.ports.faucet).toBe(
+        BindConfig.DefaultSolanaFaucet
+      )
     })
   })
 

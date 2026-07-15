@@ -1,4 +1,3 @@
-import * as Fs from "node:fs"
 
 import {
   ClosedReason,

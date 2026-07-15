@@ -27,12 +27,10 @@ jest.mock("yargs/helpers", () => ({
 }))
 
 // Imports that pull yargs must come AFTER the mocks are registered.
-/* eslint-disable import/first */
 import {
   CLI,
   coerceFeatures
 } from "@wireio/debugging-client-tool-tui/cli.js"
-/* eslint-enable import/first */
 
 describe("coerceFeatures", () => {
   it("returns null for undefined / empty / whitespace-only input", () => {

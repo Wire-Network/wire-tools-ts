@@ -4,11 +4,9 @@ import { createHash } from "node:crypto"
 
 import Bluebird from "bluebird"
 import { match } from "ts-pattern"
-import { asOption } from "@3fv/prelude-ts"
 
 import {
   ClusterFiles,
-  ClosedReason,
   EnvelopeEventKind,
   StreamTopic,
   buildLineIndex,
