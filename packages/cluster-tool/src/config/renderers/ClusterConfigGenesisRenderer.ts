@@ -23,7 +23,6 @@ export class ClusterConfigGenesisRenderer implements Renderer {
           max_block_net_usage: 1_048_576,
           target_block_net_usage_pct: 10_000,
           max_transaction_net_usage: 524_288,
-          base_per_transaction_net_usage: 12,
           net_usage_leeway: 500,
           context_free_discount_net_usage_num: 20,
           context_free_discount_net_usage_den: 100,
