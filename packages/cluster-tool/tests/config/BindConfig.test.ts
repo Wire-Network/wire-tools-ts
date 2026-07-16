@@ -715,6 +715,53 @@ describe("BindConfig", () => {
         expect(config.portWindow).toEqual(windowAt(0))
       })
 
+      it("honors a pinned solana RPC at the window's last port", async () => {
+        // window.last is excluded from DYNAMIC selection (so the rpc+1
+        // companion stays in-window) but must never reject a caller pin.
+        const pin = windowAt(0).last
+        const config = await BindConfig.resolve(
+          { solana: { ports: { http: pin } } },
+          {}
+        )
+        expect(config.solana.ports.http).toBe(pin)
+        // The companion rides outside the window — the caller's choice with a pin.
+        expect(config.allPorts).toContain(pin + 1)
+      })
+
+      it("propagates a filesystem failure instead of reporting exhaustion", async () => {
+        // A claim-file create failing with EACCES is a real filesystem error;
+        // scanning on would end in a false "every window is claimed".
+        Fs.mkdirSync(BindConfig.registryPath(), { recursive: true })
+        Fs.chmodSync(BindConfig.registryPath(), 0o555)
+        try {
+          await expect(BindConfig.resolve({}, {})).rejects.toThrow(
+            /EACCES|permission denied/
+          )
+        } finally {
+          Fs.chmodSync(BindConfig.registryPath(), 0o755)
+        }
+      })
+
+      it("keeps claim ownership when deletion fails, so release is retryable", async () => {
+        const config = await BindConfig.resolve({}, {})
+        const claimFile = Path.join(
+          BindConfig.registryPath(),
+          `window-${config.portWindow!.first}.claim`
+        )
+        expect(Fs.existsSync(claimFile)).toBe(true)
+        Fs.chmodSync(BindConfig.registryPath(), 0o555)
+        try {
+          // Deletion fails; ownership must be retained (file still present).
+          BindConfig.releaseWindowClaim(config.portWindow!)
+          expect(Fs.existsSync(claimFile)).toBe(true)
+        } finally {
+          Fs.chmodSync(BindConfig.registryPath(), 0o755)
+        }
+        // The retained ownership makes the release retryable.
+        BindConfig.releaseWindowClaim(config.portWindow!)
+        expect(Fs.existsSync(claimFile)).toBe(false)
+      })
+
       it("a malformed window claim is reaped rather than honored", async () => {
         const file = seedWindowClaim(registrant.pid, windowAt(0).first)
         Fs.writeFileSync(file, "not a pid")

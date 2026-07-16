@@ -304,22 +304,38 @@ export class BindConfig {
       // this resolve and no other cluster via the registry is ever handed the
       // companion. The window's LAST port is excluded from the RPC pick so the
       // companion (rpc+1) always lands inside this resolve's window too.
-      claimSolanaHttp = async (): Promise<number> =>
-        asOption(
-          await BindConfig.pickPort(
-            options.solana?.ports?.http ?? null,
-            null,
-            new Set([...claimed, window.last]),
-            "solana.http",
-            BindConfigPortProtocol.tcp,
-            window
-          )
+      claimSolanaHttp = async (): Promise<number> => {
+        const pinned = options.solana?.ports?.http ?? null
+        const http = await BindConfig.pickPort(
+          pinned,
+          null,
+          // window.last is excluded from DYNAMIC selection only, so the
+          // companion always lands inside the window for unpinned picks; a
+          // caller pin is honored as-is (pins may sit anywhere, including
+          // the window's last port).
+          pinned !== null ? claimed : new Set([...claimed, window.last]),
+          "solana.http",
+          BindConfigPortProtocol.tcp,
+          window
         )
-          .tap(http => {
-            claimed.add(http)
-            claimed.add(http + BindConfig.SolanaWsPortOffset)
-          })
-          .get(),
+        // A pin's implicitly-bound websocket companion (rpc+1) is validated
+        // separately, AFTER the pin itself (so band/availability errors name
+        // the pin first): within this resolve's claims and against the OS.
+        // Raw get-port probe — the resolve already holds the port lock, so
+        // the locking isPortAvailable would self-deadlock here.
+        if (pinned !== null) {
+          const companion = pinned + BindConfig.SolanaWsPortOffset
+          Assert.ok(
+            !claimed.has(companion) &&
+              (await getPort({ port: companion })) === companion,
+            `solana.http is pinned to ${pinned} but its websocket companion ` +
+              `${companion} (bound by agave automatically) is unavailable`
+          )
+        }
+        claimed.add(http)
+        claimed.add(http + BindConfig.SolanaWsPortOffset)
+        return http
+      },
       // The range's ports are claimed individually so every later pick in
       // this resolve — and every other resolver via the registry — excludes
       // the whole range, not just its first port.
@@ -666,8 +682,14 @@ export namespace BindConfig {
       try {
         // O_EXCL: exactly one process can create the claim, lock or no lock.
         Fs.writeFileSync(file, String(process.pid), { flag: "wx" })
-      } catch {
-        continue // lost the create race (or a claim reappeared) — next window
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code === "EEXIST") {
+          continue // lost the create race (or a claim reappeared) — next window
+        }
+        // EACCES/ENOSPC/EIO — a real filesystem failure, not contention:
+        // scanning on would end in a false "every window is claimed" error
+        // that hides the actual cause.
+        throw err
       }
       ownedWindowClaims.push(file)
       if (!windowClaimExitCleanupArmed) {
@@ -703,8 +725,19 @@ export namespace BindConfig {
     if (index < 0) {
       return
     }
+    try {
+      Fs.rmSync(file, { force: true })
+    } catch (err) {
+      // Keep ownership so a later release — or the exit hook — retries the
+      // deletion; the claim file still names this LIVE pid, so no other
+      // process reaps or steals the window while we hold it.
+      log.error(
+        `failed to release window claim ${Path.basename(file)} — retrying at exit`,
+        err
+      )
+      return
+    }
     ownedWindowClaims.splice(index, 1)
-    guard(() => Fs.rmSync(file, { force: true }))
   }
 
   /**
