@@ -12,9 +12,14 @@ import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { ProcessManager } from "./ProcessManager.js"
 import { ProcessSignalName } from "./ProcessSignals.js"
 
-/** Graceful stop signal — appbase (nodeop/kiod) flushes chainbase on SIGINT;
- *  anvil + solana-test-validator also Ctrl-C cleanly on SIGINT. SIGTERM skips
- *  the nodeop flush and silently loses recently-irreversible writes. */
+/** Graceful stop signal — appbase (nodeop/kiod) treats SIGINT and SIGTERM
+ *  identically (both run the full shutdown incl. the chainbase flush — see
+ *  appbase `application_base.cpp` signal handling); anvil +
+ *  solana-test-validator stop cleanly on SIGINT (their Ctrl-C path), so SIGINT
+ *  is the one signal EVERY managed process handles gracefully. Historical
+ *  "SIGTERM loses state" reports traced to the CLI exiting without waiting for
+ *  the flush, then the next run's sweep SIGKILLing the still-flushing child —
+ *  not to the signal itself. */
 const GracefulSignalName = ProcessSignalName.SIGINT
 
 /** child stdio: ignore stdin, pipe stdout/stderr (typed literals, not magic). */
@@ -109,6 +114,18 @@ export abstract class ManagedProcess {
   private pidInternal = 0
   private child: ChildProcess | null = null
   private readonly exited = new Deferred<number>()
+  private readonly recentLines: string[] = []
+
+  /**
+   * Tail of the child's captured stdout + stderr (oldest first, capped at
+   * {@link ManagedProcess.RecentOutputCap} lines). Startup-failure diagnostics
+   * read this instead of re-parsing log files — e.g. {@link NodeopProcess}
+   * matches chainbase's `database dirty flag set` abort here to decide on a
+   * hard-replay recovery.
+   */
+  get recentOutput(): readonly string[] {
+    return this.recentLines
+  }
 
   get id(): number {
     return this.idInternal
@@ -236,6 +253,9 @@ export abstract class ManagedProcess {
         .split("\n")
         .filter(Boolean)
         .forEach(line => {
+          this.recentLines.push(line)
+          if (this.recentLines.length > ManagedProcess.RecentOutputCap)
+            this.recentLines.shift()
           this.manager.writeRaw(this.label, line)
           if (isErr) this.log.warn(line)
           else this.log.info(line)
@@ -327,4 +347,6 @@ export namespace ManagedProcess {
   export const GracefulKillMs = 30_000
   export const DefaultVerifyTimeoutMs = 180_000
   export const DefaultVerifyIntervalMs = 1_000
+  /** Cap on retained child-output lines (see {@link ManagedProcess.recentOutput}). */
+  export const RecentOutputCap = 200
 }

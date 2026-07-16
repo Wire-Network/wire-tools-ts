@@ -187,4 +187,128 @@ describe("NodeopProcess", () => {
       expect.arrayContaining(["--plugin", "sysio::net_plugin"])
     )
   })
+
+  describe("dirty-chainbase recovery", () => {
+    /** chainbase's real abort line (`pinnable_mapped_file.cpp`). */
+    const DirtyLine = '"state" database dirty flag set'
+
+    it("DirtyChainbasePattern matches chainbase's abort line only", () => {
+      expect(NodeopProcess.DirtyChainbasePattern.test(DirtyLine)).toBe(true)
+      expect(
+        NodeopProcess.DirtyChainbasePattern.test("Produced block 00abc... #42")
+      ).toBe(false)
+    })
+
+    it("isDirtyChainbaseAbort requires an EXITED child carrying the abort line", () => {
+      expect(
+        NodeopProcess.isDirtyChainbaseAbort({ isRunning: false, recentOutput: [DirtyLine] })
+      ).toBe(true)
+      expect(
+        NodeopProcess.isDirtyChainbaseAbort({ isRunning: true, recentOutput: [DirtyLine] })
+      ).toBe(false)
+      expect(
+        NodeopProcess.isDirtyChainbaseAbort({ isRunning: false, recentOutput: ["clean exit"] })
+      ).toBe(false)
+      expect(
+        NodeopProcess.isDirtyChainbaseAbort({ isRunning: false, recentOutput: [] })
+      ).toBe(false)
+    })
+
+    it("finalizerSafetyFile is <data-dir>/finalizers/safety.dat", () => {
+      expect(NodeopProcess.finalizerSafetyFile({ nodePath: "/data/node_00" })).toBe(
+        "/data/node_00/finalizers/safety.dat"
+      )
+    })
+
+    /** Fixture aimed at a nodeop stand-in: WITHOUT --hard-replay-blockchain it
+     *  aborts exactly like a dirty chainbase; WITH it, it stays up. */
+    let dirtyCluster: ClusterConfig
+    let readySpy: jest.SpyInstance
+    beforeAll(() => {
+      const fakeNodeop = Path.join(dir, "fake-dirty-nodeop")
+      Fs.writeFileSync(
+        fakeNodeop,
+        [
+          "#!/bin/bash",
+          'for arg in "$@"; do',
+          '  if [[ "$arg" == "--hard-replay-blockchain" ]]; then exec /bin/sleep 300; fi',
+          "done",
+          `echo '${DirtyLine}' >&2`,
+          "exit 2"
+        ].join("\n"),
+        { mode: 0o755 }
+      )
+      dirtyCluster = fixtureConfig({
+        clusterPath: dir,
+        dataPath: Path.join(dir, "data"),
+        executables: { ...PersistedFixture.executables, nodeop: fakeNodeop },
+        bind: {
+          ...PersistedFixture.bind,
+          nodeop: { ...PersistedFixture.bind.nodeop, address: "0.0.0.0" }
+        }
+      })
+      // Deterministic readiness with no HTTP server: only the hard-replay
+      // relaunch (which stays up) counts as ready. The dirty first boot dies
+      // instantly and fails via the dead-child fast path regardless of any
+      // verify race.
+      interface VerifyReadyProbe {
+        verifyReady(): Promise<boolean>
+      }
+      const proto = NodeopProcess.prototype as unknown as VerifyReadyProbe
+      readySpy = jest
+        .spyOn(proto, "verifyReady")
+        .mockImplementation(function (this: NodeopProcess) {
+          return Promise.resolve(
+            this.isRunning && this.args.includes(NodeopProcess.HardReplayBlockchainFlag)
+          )
+        })
+    })
+    afterAll(() => {
+      readySpy.mockRestore()
+    })
+
+    /** A planned operator node over the dirty-cluster fixture. */
+    function dirtyNode(name: string): NodeConfig {
+      return new NodeConfig(dirtyCluster, NodeRole.operator, 0, name, { http: 18888, p2p: 19876 }, [], [])
+    }
+
+    it("startWithRecovery relaunches once with --hard-replay-blockchain and wipes the stale fsi", async () => {
+      const node = dirtyNode("dirty-recovers")
+      const safetyFile = NodeopProcess.finalizerSafetyFile(node)
+      Fs.mkdirSync(Path.dirname(safetyFile), { recursive: true })
+      Fs.writeFileSync(safetyFile, "stale-fsi")
+
+      const recovered = await NodeopProcess.startWithRecovery(manager, { node })
+      expect(recovered.args).toContain(NodeopProcess.HardReplayBlockchainFlag)
+      // The retry runs in relaunch mode — one-shot genesis flags are stale.
+      expect(recovered.args).not.toContain("--genesis-json")
+      expect(recovered.isRunning).toBe(true)
+      expect(manager.get("dirty-recovers")).toBe(recovered)
+      // The fsi lock points into the reversible blocks hard replay discards —
+      // leaving it would stall finality (fsi lockout), so recovery removes it.
+      expect(Fs.existsSync(safetyFile)).toBe(false)
+      await recovered.kill()
+    })
+
+    it("startWithRecovery rethrows a non-dirty failure without retrying or touching the fsi", async () => {
+      // The outer fixture's nodeop is /bin/true: it exits cleanly with no
+      // output — a startup failure that is NOT the dirty-chainbase abort.
+      const cleanNode = node("clean-dies", NodeRole.operator)
+      const safetyFile = NodeopProcess.finalizerSafetyFile(cleanNode)
+      Fs.mkdirSync(Path.dirname(safetyFile), { recursive: true })
+      Fs.writeFileSync(safetyFile, "keep-me")
+
+      await expect(
+        NodeopProcess.startWithRecovery(manager, { node: cleanNode })
+      ).rejects.toThrow(/before passing verifyReady/)
+      expect(Fs.existsSync(safetyFile)).toBe(true)
+      // No retry: the first (failed) instance still owns the label.
+      expect(manager.get("clean-dies")).not.toBeNull()
+    })
+
+    it("start() surfaces the dirty abort line in the rejection via startupFailureDetail", async () => {
+      const first = await NodeopProcess.create(manager, { node: dirtyNode("dirty-detail") })
+      await expect(first.start()).rejects.toThrow(/database dirty flag set/)
+    })
+  })
 })
