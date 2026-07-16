@@ -3,7 +3,8 @@ config-dir/
 .ai
 .idea
 .vscode
-.claude*
+.claude/*.json 
+.omc/
 .remember
 .env
 .envrc
