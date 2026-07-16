@@ -93,20 +93,37 @@ export async function withFileLock<T>(
 ): Promise<T> {
   mkdirs(Path.dirname(lockPath))
   const release = await lockfile.lock(lockPath, options)
-  try {
-    return await criticalSection()
-  } finally {
-    // A release failure must never mask the critical section's outcome: after
-    // a compromised (stale-stolen) lock, proper-lockfile marks this holder
-    // released before invoking onCompromised, so release() rejects with
-    // ERELEASED — the lock is gone either way.
-    await release().catch(err =>
-      log.warn(
-        `file lock release failed for ${lockPath} (already released?)`,
-        err
-      )
-    )
+  const releaseLock = async (propagateUnexpected: boolean): Promise<void> => {
+    try {
+      await release()
+    } catch (err) {
+      // ERELEASED is the one EXPECTED rejection: after a compromised
+      // (stale-stolen) lock, proper-lockfile marks this holder released
+      // before invoking onCompromised, so the lock is gone either way.
+      if ((err as NodeJS.ErrnoException)?.code === "ERELEASED") {
+        log.warn(`file lock for ${lockPath} was already released (compromised)`)
+        return
+      }
+      // Anything else (EACCES, EIO, ...) may leave the lock dir behind and
+      // wedge later contenders — surface it unless the critical section's own
+      // error already owns the outcome.
+      log.error(`file lock release failed for ${lockPath}`, err)
+      if (propagateUnexpected) {
+        throw err
+      }
+    }
   }
+  let result: T
+  try {
+    result = await criticalSection()
+  } catch (err) {
+    // The critical section's error owns the outcome; a release failure here
+    // is logged but must not mask it.
+    await releaseLock(false)
+    throw err
+  }
+  await releaseLock(true)
+  return result
 }
 
 /**

@@ -234,6 +234,30 @@ export class BindConfig {
     options: BindOptions,
     topology: ClusterTopologyOptions
   ): Promise<BindConfig> {
+    // Claim this resolve's DISJOINT port window FIRST (atomic O_EXCL claim
+    // file, independent of the advisory lock): every unpinned pick below is
+    // drawn from it, so two resolves cannot collide even if the lock is
+    // compromised mid-resolve (observed 2026-07-16: two concurrent CI flows
+    // drew the same ephemeral port under 4-way cold-start lock contention,
+    // and one cluster's nodeop died at bind). Freed when this process exits
+    // (or its stale claim is reaped) — or RELEASED below when the resolve
+    // fails, so a caller that catches and retries cannot burn windows toward
+    // a false region-exhaustion error.
+    const window = BindConfig.allocateWindow()
+    try {
+      return await BindConfig.resolveInWindow(options, topology, window)
+    } catch (err) {
+      BindConfig.releaseWindowClaim(window)
+      throw err
+    }
+  }
+
+  /** {@link resolveLocked} body once the window claim is held. */
+  private static async resolveInWindow(
+    options: BindOptions,
+    topology: ClusterTopologyOptions,
+    window: BindConfigPortRange
+  ): Promise<BindConfig> {
     const host = topology.bindAll
         ? BindConfig.BindAllAddress
         : BindConfig.LoopbackAddress,
@@ -244,14 +268,6 @@ export class BindConfig {
       // resolved it but hasn't bound its daemons yet (they spawn minutes
       // later). Dead registrants are reaped during the read.
       claimed = BindConfig.readRegistryPortExclusions(),
-      // Claim this resolve's DISJOINT port window FIRST (atomic O_EXCL claim
-      // file, independent of the advisory lock): every unpinned pick below is
-      // drawn from it, so two resolves cannot collide even if the lock is
-      // compromised mid-resolve (observed 2026-07-16: two concurrent CI flows
-      // drew the same ephemeral port under 4-way cold-start lock contention,
-      // and one cluster's nodeop died at bind). Freed when this process exits
-      // (or its stale claim is reaped).
-      window = BindConfig.allocateWindow(),
       claim = async (
         callerPin: number | null,
         daemon: string,
@@ -583,6 +599,21 @@ export namespace BindConfig {
       )
   }
 
+  /**
+   * Lock options for the STANDALONE pickers ({@link findAvailable} /
+   * {@link findAvailableRange}): same contention-hardened retries as
+   * {@link PortLockOptions}, but a compromised lock stays FAIL-CLOSED
+   * (proper-lockfile's default onCompromised throws). Unlike {@link resolve},
+   * these paths hold no atomic window claim — their cross-process safety IS
+   * the lock — so continuing after a steal could hand two processes the same
+   * preferred port or range.
+   */
+  export const StandalonePortLockOptions: LockOptions = {
+    realpath: false,
+    retries: { retries: 120, factor: 1, minTimeout: 500, maxTimeout: 500 },
+    stale: 10_000
+  }
+
   /** Claim-file path for the window starting at `first` (content: claimant pid). */
   function windowClaimFile(first: number): string {
     return Path.join(registryPath(), `window-${first}.claim`)
@@ -656,6 +687,27 @@ export namespace BindConfig {
   }
 
   /**
+   * Release a window claim this process holds — the failure path of
+   * {@link BindConfig.resolve}: a resolve that throws after allocation (a
+   * pinned-but-unavailable port, an unusable dynamic range, a registry write
+   * error) must hand its window back immediately rather than hold it until
+   * process exit, or a caller that catches and retries burns windows toward a
+   * false region-exhaustion error. Releasing a window this process does not
+   * own is a no-op.
+   *
+   * @param window - The window returned by {@link allocateWindow}.
+   */
+  export function releaseWindowClaim(window: BindConfigPortRange): void {
+    const file = windowClaimFile(window.first)
+    const index = ownedWindowClaims.indexOf(file)
+    if (index < 0) {
+      return
+    }
+    ownedWindowClaims.splice(index, 1)
+    guard(() => Fs.rmSync(file, { force: true }))
+  }
+
+  /**
    * True if `port` is bindable right now, via `get-port` (asks it for exactly
    * `port`; a differing result means `port` is taken or already locked in
    * get-port's cache). NOTE: a `true` result LOCKS `port` in get-port's
@@ -701,7 +753,7 @@ export namespace BindConfig {
           "findAvailable",
           protocol
         ),
-      BindConfig.PortLockOptions
+      BindConfig.StandalonePortLockOptions
     )
   }
 
@@ -1046,7 +1098,7 @@ export namespace BindConfig {
           readRegistryPortExclusions(),
           "solana.dynamicRange"
         ),
-      BindConfig.PortLockOptions
+      BindConfig.StandalonePortLockOptions
     )
   }
 }

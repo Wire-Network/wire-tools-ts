@@ -702,6 +702,19 @@ describe("BindConfig", () => {
         expect(Fs.readFileSync(file, "utf8")).toBe(String(process.pid))
       })
 
+      it("releases its window claim when the resolve fails", async () => {
+        // A pinned-but-unavailable port fails the resolve AFTER the window was
+        // claimed; the claim must be handed back immediately — a caller that
+        // catches and retries must not burn windows toward a false
+        // region-exhaustion error.
+        allocator.markTaken(12_345)
+        await expect(
+          BindConfig.resolve({ kiod: { port: 12_345 } }, {})
+        ).rejects.toThrow(/pinned but unavailable/)
+        const config = await BindConfig.resolve({}, {})
+        expect(config.portWindow).toEqual(windowAt(0))
+      })
+
       it("a malformed window claim is reaped rather than honored", async () => {
         const file = seedWindowClaim(registrant.pid, windowAt(0).first)
         Fs.writeFileSync(file, "not a pid")
