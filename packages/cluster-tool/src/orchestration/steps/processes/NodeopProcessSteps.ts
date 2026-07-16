@@ -85,12 +85,14 @@ export namespace NodeopProcessSteps {
     if (ctx.processManager.get(node.name) != null) return
 
     const operator = resolveOperator(ctx, node)
-    const nodeop = await NodeopProcess.create(ctx.processManager, {
+    // startWithRecovery (not bare create+start): a node dir left dirty by an
+    // unclean shutdown relaunches once with --hard-replay-blockchain instead
+    // of failing the build.
+    await NodeopProcess.startWithRecovery(ctx.processManager, {
       node,
       operator,
       extraArgs: resolveOperatorDaemonArgs(ctx, node, operator)
     })
-    await nodeop.start()
   }
 
   /** Deadline for the restart sync gate — the node's local head catching the depot head. */
@@ -169,13 +171,15 @@ export namespace NodeopProcessSteps {
     ctx.processManager.remove(node.name)
 
     const operator = resolveOperator(ctx, node)
-    const relaunched = await NodeopProcess.create(ctx.processManager, {
+    // startWithRecovery: if the graceful stop above was cut short (crashed
+    // CLI, host pressure), the relaunch recovers the dirty chainbase with
+    // --hard-replay-blockchain instead of failing the build.
+    await NodeopProcess.startWithRecovery(ctx.processManager, {
       node,
       operator,
       extraArgs: resolveOperatorDaemonArgs(ctx, node, operator),
       relaunch: true
     })
-    await relaunched.start()
   }
 
   /**

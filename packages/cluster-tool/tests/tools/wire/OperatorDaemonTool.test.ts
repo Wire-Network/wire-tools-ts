@@ -5,6 +5,10 @@ import { ethers } from "ethers"
 import { Keypair } from "@solana/web3.js"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
+import {
+  NodeopProcess,
+  ProcessManager
+} from "@wireio/cluster-tool/cluster/processes"
 import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
 import {
@@ -62,6 +66,39 @@ function valuesOf(args: string[], flag: string): string[] {
 }
 
 describe("OperatorDaemonTool", () => {
+  describe("runDaemonStart", () => {
+    it("launches the daemon through NodeopProcess.startWithRecovery (dirty-chainbase resilient)", async () => {
+      const ctx = fixtureContext()
+      // The context's processManager getter requires the singleton's cluster
+      // path to be set (idempotent for the same value).
+      ProcessManager.setClusterPath(ctx.config.clusterPath)
+      const operator = operatorAccount("batchopbbbb", OperatorType.BATCH)
+      ctx.keyStore.setOperator(operator)
+      ctx.outputs.set(OperatorDaemonArtifactsKey, artifacts)
+      const recoverySpy = jest
+        .spyOn(NodeopProcess, "startWithRecovery")
+        .mockResolvedValue(undefined as unknown as NodeopProcess)
+      try {
+        await OperatorDaemonTool.runDaemonStart(
+          ctx,
+          { kind: "OperatorDaemonTool.StartDaemonInput", account: "batchopbbbb" },
+          new AbortController().signal
+        )
+        // A flow rerun reuses the daemon's data dir, so this launch must go
+        // through the dirty-chainbase recovery path, not bare create+start.
+        expect(recoverySpy).toHaveBeenCalledWith(
+          ctx.processManager,
+          expect.objectContaining({
+            operator,
+            extraArgs: expect.arrayContaining(["--batch-enabled"])
+          })
+        )
+      } finally {
+        recoverySpy.mockRestore()
+      }
+    })
+  })
+
   describe("batchOperatorArgs", () => {
     const operator = operatorAccount("batchopaaaa", OperatorType.BATCH)
     const args = OperatorDaemonTool.batchOperatorArgs(operator, artifacts, network)

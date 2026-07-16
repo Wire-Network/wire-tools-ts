@@ -7,7 +7,8 @@ import { Deferred, guard } from "@wireio/shared"
 import {
   ManagedProcess,
   ProcessManager,
-  ProcessSignalName
+  ProcessSignalName,
+  terminatePidsSync
 } from "@wireio/cluster-tool/cluster/processes"
 
 /** A concrete ManagedProcess for tests — trivial exe, fast verify window. */
@@ -126,9 +127,10 @@ describe("ProcessManager + ManagedProcess", () => {
   })
 
   it("the first push swept the cluster's own managed orphan pid", () => {
-    // Armed by the FakeProcess above: SIGINT → 2s grace → SIGKILL stragglers.
-    // The child zombifies under jest (unreaped), so assert the sweep's own
-    // liveness semantics: it no longer runs the managed binary.
+    // Armed by the FakeProcess above: SIGINT → poll for exit (up to
+    // SweepGraceMs) → SIGKILL stragglers. The child zombifies under jest
+    // (unreaped), so assert the sweep's own liveness semantics: it no longer
+    // runs the managed binary.
     expect(commandBasename(orphanPid)).toBe("")
   })
 
@@ -231,6 +233,74 @@ describe("ProcessManager + ManagedProcess", () => {
     expect(writeSpy).toHaveBeenCalledWith("cap", "line1")
     expect(writeSpy).toHaveBeenCalledWith("cap", "line2")
     writeSpy.mockRestore()
+  })
+
+  describe("recentOutput", () => {
+    it("retains captured lines in order", async () => {
+      const process = new FakeProcess(manager, "recent-order")
+      const stream = Readable.from(["alpha\nbeta\n", "gamma\n"])
+      process.capture(stream)
+      await new Promise<void>(resolve => stream.once("end", () => resolve()))
+      expect(process.recentOutput).toEqual(["alpha", "beta", "gamma"])
+    })
+
+    it("caps retention at RecentOutputCap, dropping the oldest lines", async () => {
+      const process = new FakeProcess(manager, "recent-cap")
+      const overflow = 5
+      const lines = Array.from(
+        { length: ManagedProcess.RecentOutputCap + overflow },
+        (_, index) => `line-${index}`
+      )
+      const stream = Readable.from([lines.join("\n") + "\n"])
+      process.capture(stream)
+      await new Promise<void>(resolve => stream.once("end", () => resolve()))
+      expect(process.recentOutput).toHaveLength(ManagedProcess.RecentOutputCap)
+      expect(process.recentOutput[0]).toBe(`line-${overflow}`)
+      expect(process.recentOutput[process.recentOutput.length - 1]).toBe(
+        `line-${lines.length - 1}`
+      )
+    })
+  })
+
+  describe("terminatePidsSync", () => {
+    /** The sweep's own liveness semantics — zombies (empty cmdline) count as exited. */
+    const isAliveByCmdline = (pid: number): boolean => commandBasename(pid) !== ""
+
+    it("returns [] without signalling when nothing passes isAlive", () => {
+      const killSpy = jest.spyOn(process, "kill")
+      try {
+        expect(terminatePidsSync([987_654], 1_000, () => false)).toEqual([])
+        expect(killSpy).not.toHaveBeenCalledWith(987_654, expect.anything())
+      } finally {
+        killSpy.mockRestore()
+      }
+    })
+
+    it("waits for a graceful exit and returns [] well inside the grace window", async () => {
+      const { spawn } = await import("node:child_process")
+      const child = spawn("/bin/sleep", ["300"], { stdio: "ignore" })
+      const startedAt = Date.now()
+      const forced = terminatePidsSync([child.pid], 10_000, isAliveByCmdline)
+      expect(forced).toEqual([])
+      // The poll returns as soon as the pid is gone — nowhere near the 10s cap.
+      expect(Date.now() - startedAt).toBeLessThan(5_000)
+      expect(isAliveByCmdline(child.pid)).toBe(false)
+    })
+
+    it("SIGKILLs a straggler that ignores the graceful signal and reports it", async () => {
+      const { spawn } = await import("node:child_process")
+      const child = spawn("/bin/bash", ["-c", "trap '' INT; sleep 300"], {
+        stdio: "ignore"
+      })
+      // Let bash install the trap first, or the SIGINT lands early and the
+      // child exits gracefully — the straggler path would go untested.
+      await new Promise(resolve => setTimeout(resolve, 500))
+      const forced = terminatePidsSync([child.pid], 1_200, isAliveByCmdline)
+      expect(forced).toEqual([child.pid])
+      // SIGKILL is untrappable — give the kernel a beat, then confirm death.
+      await new Promise(resolve => setTimeout(resolve, 200))
+      expect(isAliveByCmdline(child.pid)).toBe(false)
+    })
   })
 
   describe("stopAll", () => {

@@ -75,21 +75,55 @@ function readOrphanPids(clusterPath: string): number[] {
 }
 
 /**
+ * Terminate `pids` with the graceful signal, synchronously poll for their exit
+ * for up to `graceMs`, then SIGKILL the survivors. Returns the pids that were
+ * force-killed. Only pids passing `isAlive` are touched (default: the
+ * recycled-pid guard {@link isManagedPid}, whose zombie semantics — an empty
+ * `/proc/<pid>/cmdline` — also make a reaped-but-unwaited child count as
+ * exited).
+ *
+ * Synchronous throughout (blocking `sleep` between polls) so process `exit` /
+ * signal handlers — where queued async work never resumes — get the SAME
+ * guarantee as the async stop path: nodeop's post-SIGINT chainbase flush +
+ * fork_db.dat write routinely takes tens of seconds, and cutting it short is
+ * what leaves `database dirty flag set` (a node that refuses to boot) and a
+ * missing fork_db.dat (lost reversible blocks → stalled finality) behind for
+ * the next launch.
+ */
+export function terminatePidsSync(
+  pids: number[],
+  graceMs: number,
+  isAlive: (pid: number) => boolean = isManagedPid
+): number[] {
+  let remaining = pids.filter(isAlive)
+  if (remaining.length === 0) return []
+  remaining.forEach(pid => signalPid(pid, GracefulSignal))
+  const deadline = Date.now() + graceMs
+  remaining = remaining.filter(isAlive)
+  while (remaining.length > 0 && Date.now() < deadline) {
+    execFileSync("sleep", [String(ProcessManager.SweepPollIntervalMs / 1000)])
+    remaining = remaining.filter(isAlive)
+  }
+  if (remaining.length > 0) {
+    log.warn(`Force-killing straggler pid(s): ${remaining.join(", ")}`)
+    remaining.forEach(pid => signalPid(pid, ProcessSignalName.SIGKILL))
+  }
+  return remaining
+}
+
+/**
  * Sweep a crashed prior run's processes on THIS cluster path:
- * SIGINT → grace → SIGKILL, targeting only pids from the cluster's own
- * pidfiles (validated against the managed basenames).
+ * SIGINT → poll for exit (up to {@link ProcessManager.SweepGraceMs}) → SIGKILL,
+ * targeting only pids from the cluster's own pidfiles (validated against the
+ * managed basenames). An orphan is usually a HEALTHY nodeop whose CLI died —
+ * mid chainbase flush or still serving — so it gets the full graceful window,
+ * not a token pause; the poll returns as soon as everything is gone.
  */
 function sweepOrphans(clusterPath: string): void {
   const orphans = readOrphanPids(clusterPath)
   if (orphans.length === 0) return
   log.info(`Sweeping ${orphans.length} orphan pid(s) from ${clusterPath}: ${orphans.join(", ")}`)
-  orphans.forEach(pid => signalPid(pid, GracefulSignal))
-  execFileSync("sleep", [String(ProcessManager.OrphanSweepGraceMs / 1000)])
-  const stragglers = orphans.filter(isManagedPid)
-  if (stragglers.length > 0) {
-    log.warn(`Force-killing straggler pid(s): ${stragglers.join(", ")}`)
-    stragglers.forEach(pid => signalPid(pid, ProcessSignalName.SIGKILL))
-  }
+  terminatePidsSync(orphans, ProcessManager.SweepGraceMs)
 }
 
 /**
@@ -138,11 +172,18 @@ export class ProcessManager {
     this.initialized = true
     const cleanup = () => {
       log.info("ProcessManager: cleanup on exit")
-      // Signal ONLY this manager's registered pids (validated against the
-      // managed basenames) — never a host-wide basename kill.
+      // Terminate ONLY this manager's registered pids (validated against the
+      // managed basenames) — never a host-wide basename kill. The synchronous
+      // wait is the point: exiting the CLI while nodeop is still mid
+      // chainbase-flush orphans it half-written, and whatever signals it next
+      // (or a SIGKILL sweep) leaves `database dirty flag set` for the next
+      // boot. `process.exit()` in the signal handlers below runs AFTER this
+      // returns, so the children get their full graceful window.
+      terminatePidsSync(
+        [...this.processes.values()].map(managed => managed.pid),
+        ProcessManager.SweepGraceMs
+      )
       this.processes.forEach(managed => {
-        if (managed.pid > 0 && isManagedPid(managed.pid))
-          signalPid(managed.pid, GracefulSignal)
         guard(() => Fs.rmSync(managed.pidFile, { force: true }))
       })
       this.closeAllLogStreams()
@@ -274,6 +315,15 @@ export class ProcessManager {
 }
 
 export namespace ProcessManager {
-  /** Grace before SIGKILL on the startup orphan sweep (ms). */
-  export const OrphanSweepGraceMs = 2_000
+  /**
+   * Max synchronous wait for swept / exit-cleanup pids to leave gracefully
+   * before SIGKILL (ms). Deliberately equals {@link ManagedProcess.GracefulKillMs}
+   * — the same chainbase-flush window the async stop path grants — kept as an
+   * independent literal because a value import of `ManagedProcess` here would
+   * create a module cycle. The old 2s grace SIGKILLed nodeop mid-flush and
+   * manufactured the `database dirty flag set` unclean-shutdown state.
+   */
+  export const SweepGraceMs = 30_000
+  /** Poll gap while waiting for terminated pids to exit (ms). */
+  export const SweepPollIntervalMs = 500
 }

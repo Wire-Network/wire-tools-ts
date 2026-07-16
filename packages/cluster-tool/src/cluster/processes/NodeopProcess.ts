@@ -1,6 +1,7 @@
 import Assert from "node:assert"
 import { execFile } from "node:child_process"
 import Fs from "node:fs"
+import Path from "node:path"
 import { promisify } from "node:util"
 import { asOption } from "@3fv/prelude-ts"
 import { defaults } from "lodash"
@@ -8,12 +9,15 @@ import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import type { WireClient } from "../../clients/wire/WireClient.js"
 import type { ClusterConfig } from "../../config/ClusterConfig.js"
 import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
+import { getLogger } from "../../logging/Logger.js"
 import type { OperatorAccount } from "../../orchestration/outputs/OperatorAccount.js"
 import { probeEndpoint } from "../../utils/asyncUtils.js"
 import { existsAsync, mkdirs } from "../../utils/fsUtils.js"
 import { Localhost, toURL } from "../../utils/netUtils.js"
 import { ManagedProcess } from "./ManagedProcess.js"
 import type { ProcessManager } from "./ProcessManager.js"
+
+const log = getLogger(__filename)
 
 /** Plugins loaded on every node regardless of role. */
 const AlwaysOnPlugins = ["sysio::net_plugin", "sysio::chain_api_plugin"] as const
@@ -205,6 +209,20 @@ export class NodeopProcess extends ManagedProcess {
     return probeEndpoint(`${this.httpUrl}${NodeopProcess.HealthCheckPath}`)
   }
 
+  /**
+   * Startup-failure context: nodeop's abort reason (e.g. chainbase's
+   * `database dirty flag set` after an unclean shutdown, a plugin init
+   * failure, a rejected option) arrives on the captured stderr — surface the
+   * recent-output tail directly in the rejection instead of pointing at a log
+   * file.
+   */
+  protected startupFailureDetail(): Promise<string> {
+    const tail = this.recentOutput.slice(-NodeopProcess.StartupFailureDetailLines)
+    return Promise.resolve(
+      tail.length === 0 ? null : `recent output:\n${tail.join("\n")}`
+    )
+  }
+
   /** Loopback dial URL for this node's HTTP API. */
   get httpUrl(): string {
     return toURL(this.config.node.ports.http, Localhost)
@@ -247,6 +265,16 @@ export namespace NodeopProcess {
   export const HealthCheckPath = "/v1/chain/get_info" as const
   /** trace_api_plugin raw-trace flag (capability-probed — see `supportsTraceNoAbis`). */
   export const TraceNoAbisFlag = "--trace-no-abis"
+  /** nodeop recovery flag: wipe state, recover what blocks.log holds, replay with full validation. */
+  export const HardReplayBlockchainFlag = "--hard-replay-blockchain"
+  /** chainbase's startup-abort line after an unclean shutdown (`pinnable_mapped_file.cpp`). */
+  export const DirtyChainbasePattern = /database dirty flag set/
+  /** Captured-output lines surfaced by {@link NodeopProcess.startupFailureDetail}. */
+  export const StartupFailureDetailLines = 20
+  /** `--finalizers-dir` default under the node's data dir (wire-sysio `config.hpp`). */
+  export const FinalizersDirname = "finalizers"
+  /** Finalizer safety information file (fsi) inside {@link FinalizersDirname}. */
+  export const SafetyDatFilename = "safety.dat"
 
   /**
    * Build the full nodeop command-line (binary + args), matching the Python
@@ -322,5 +350,79 @@ export namespace NodeopProcess {
     return stripped.includes(EnableStaleProductionFlag)
       ? stripped
       : [...stripped, EnableStaleProductionFlag]
+  }
+
+  /** The node's finalizer safety file: `<data-dir>/finalizers/safety.dat`. */
+  export function finalizerSafetyFile(node: Pick<NodeConfig, "nodePath">): string {
+    return Path.join(node.nodePath, FinalizersDirname, SafetyDatFilename)
+  }
+
+  /**
+   * The startup-outcome surface {@link isDirtyChainbaseAbort} inspects —
+   * structurally satisfied by any {@link ManagedProcess}.
+   */
+  export interface StartupOutcome {
+    isRunning: boolean
+    recentOutput: readonly string[]
+  }
+
+  /**
+   * Whether a failed start was chainbase's dirty-flag abort (state left by an
+   * unclean shutdown): the child EXITED and its captured output carries
+   * {@link DirtyChainbasePattern}. A live-but-slow node never matches.
+   */
+  export function isDirtyChainbaseAbort(candidate: StartupOutcome): boolean {
+    return (
+      !candidate.isRunning &&
+      candidate.recentOutput.some(line => DirtyChainbasePattern.test(line))
+    )
+  }
+
+  /**
+   * Create + start a nodeop, recovering ONCE from a dirty chainbase.
+   *
+   * An unclean shutdown (SIGKILL mid chainbase-flush) leaves the state dirty,
+   * so the next boot aborts with `database dirty flag set` — and the
+   * reversible blocks / fork_db.dat are already lost. Recovery relaunches with
+   * {@link HardReplayBlockchainFlag} (wipe state, replay from blocks.log) and
+   * first removes the node's finalizer safety file: hard replay discards the
+   * reversible blocks the fsi lock points into, and a finalizer locked on a
+   * discarded block can never vote again (its liveness AND safety checks both
+   * fail), which stalls finality cluster-wide and pauses every producer with
+   * `Not producing block because no recent votes received`. Wiping the fsi is
+   * the documented dev-cluster recovery (wire-sysio `disaster_recovery_3.py`);
+   * a production finalizer must NEVER do this. The retry runs in relaunch mode
+   * — a dirty chainbase implies an existing chain, so the one-shot genesis
+   * flags are stale.
+   *
+   * @param manager - The registry the processes register with.
+   * @param options - Same options as {@link NodeopProcess.create}.
+   */
+  export async function startWithRecovery(
+    manager: ProcessManager,
+    options: NodeopOptions
+  ): Promise<NodeopProcess> {
+    const first = await NodeopProcess.create(manager, options)
+    try {
+      return await first.start()
+    } catch (error) {
+      if (!isDirtyChainbaseAbort(first)) throw error
+      const safetyFile = finalizerSafetyFile(options.node)
+      // force:true tolerates a missing file; any OTHER rm failure (EACCES,
+      // EISDIR, EIO) must abort recovery — a surviving stale fsi keeps the
+      // finality lock this wipe exists to clear, and hard replay would
+      // relaunch straight back into the cluster-wide stall.
+      Fs.rmSync(safetyFile, { force: true })
+      manager.remove(first.label)
+      log.warn(
+        `${first.label}: chainbase dirty from an unclean shutdown — relaunching with ${HardReplayBlockchainFlag} (stale ${safetyFile} removed)`
+      )
+      const retry = await NodeopProcess.create(manager, {
+        ...options,
+        relaunch: true,
+        extraArgs: [...(options.extraArgs ?? []), HardReplayBlockchainFlag]
+      })
+      return retry.start()
+    }
   }
 }
