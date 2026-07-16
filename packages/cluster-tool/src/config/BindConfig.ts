@@ -5,6 +5,7 @@ import Path from "node:path"
 import { asOption } from "@3fv/prelude-ts"
 import Bluebird from "bluebird"
 import { range } from "lodash"
+import type { LockOptions } from "proper-lockfile"
 import {
   isUdpPortFree,
   ListenAllAddress,
@@ -35,18 +36,15 @@ let importGetPortModuleDeferred: Deferred<GetPortModuleType> = null
 function importGetPortModule(): Promise<GetPortModuleType> {
   if (importGetPortModuleDeferred === null) {
     importGetPortModuleDeferred = new Deferred()
-    import("get-port").then((getPortModule)=>
-        importGetPortModuleDeferred.resolve(getPortModule))
+    import("get-port").then(getPortModule =>
+      importGetPortModuleDeferred.resolve(getPortModule)
+    )
   }
   return importGetPortModuleDeferred.promise
 }
 
-
-
 /** Find an available port via `get-port` (see the note above). */
-async function getPort(
-  ...args: GetPortParameters
-): Promise<number> {
+async function getPort(...args: GetPortParameters): Promise<number> {
   const mod = await importGetPortModule()
   return mod.default(...args)
 }
@@ -128,7 +126,7 @@ export interface BindConfigSolanaPorts {
 export interface BindConfigSolana {
   address: string
   ports: BindConfigSolanaPorts
-} 
+}
 
 /** Caller BIND options for a single-port daemon. NOT a `Partial<BindConfig>`. */
 export interface BindDaemonOptions {
@@ -192,7 +190,16 @@ export class BindConfig {
     readonly nodeop: BindConfigNodeop,
     readonly anvil: BindConfigDaemon,
     readonly solana: BindConfigSolana,
-    readonly debuggingServer: BindConfigDaemon
+    readonly debuggingServer: BindConfigDaemon,
+    /**
+     * The per-resolve port window every unpinned port of this config was drawn
+     * from (see {@link BindConfig.FlowPortWindowRegion}) — serialized into the
+     * cross-process registry so later resolvers claim DISJOINT windows. Null on
+     * configs rehydrated from the registry for port-exclusion purposes (the
+     * window claim is read from the plain JSON, not the rehydrated instance)
+     * and on configs predating window allocation.
+     */
+    readonly portWindow: BindConfigPortRange | null = null
   ) {}
 
   /**
@@ -211,9 +218,14 @@ export class BindConfig {
   ): Promise<BindConfig> {
     // Hold the host-global port lock for the WHOLE cluster port selection so a
     // parallel process cannot interleave and pick an overlapping set (get-port
-    // only de-dupes within one process — see PortLockPath).
-    return withFileLock(BindConfig.PortLockPath, () =>
-      BindConfig.resolveLocked(options, topology)
+    // only de-dupes within one process — see PortLockPath). The lock is
+    // belt-and-braces: even a compromised lock cannot produce a cross-resolve
+    // collision, because every resolve draws from its own disjoint window
+    // (see FlowPortWindowRegion).
+    return withFileLock(
+      BindConfig.PortLockPath,
+      () => BindConfig.resolveLocked(options, topology),
+      BindConfig.PortLockOptions
     )
   }
 
@@ -232,18 +244,25 @@ export class BindConfig {
       // resolved it but hasn't bound its daemons yet (they spawn minutes
       // later). Dead registrants are reaped during the read.
       claimed = BindConfig.readRegistryPortExclusions(),
+      // Claim this resolve's DISJOINT port window: every unpinned pick below is
+      // drawn from it, so two resolves cannot collide even if the advisory lock
+      // is ever compromised (observed 2026-07-16: two concurrent CI flows drew
+      // the same ephemeral port under 4-way cold-start lock contention, and one
+      // cluster's nodeop died at bind). Registered with the config below, so
+      // later resolvers skip it; freed when this process exits (or is reaped).
+      window = BindConfig.allocateWindow(BindConfig.readRegistryWindowClaims()),
       claim = async (
         callerPin: number | null,
-        fallbackDefault: number | null,
         daemon: string,
         protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
       ): Promise<number> => {
         const port = await BindConfig.pickPort(
           callerPin,
-          fallbackDefault,
+          null,
           claimed,
           daemon,
-          protocol
+          protocol,
+          window
         )
         claimed.add(port)
         return port
@@ -252,8 +271,8 @@ export class BindConfig {
         base: BindNodeopPortsOptions | null,
         daemon: string
       ): Promise<BindConfigNodeopPorts> => ({
-        http: await claim(base?.http ?? null, null, `${daemon}.http`),
-        p2p: await claim(base?.p2p ?? null, null, `${daemon}.p2p`)
+        http: await claim(base?.http ?? null, `${daemon}.http`),
+        p2p: await claim(base?.p2p ?? null, `${daemon}.p2p`)
       }),
       pairs = (
         bases: BindNodeopPortsOptions[] | null,
@@ -266,26 +285,34 @@ export class BindConfig {
       // agave binds the RPC's companion websocket at rpc+1 AUTOMATICALLY (no
       // flag assigns it) — claiming the RPC port claims BOTH, so no daemon in
       // this resolve and no other cluster via the registry is ever handed the
-      // companion.
+      // companion. The window's LAST port is excluded from the RPC pick so the
+      // companion (rpc+1) always lands inside this resolve's window too.
       claimSolanaHttp = async (): Promise<number> =>
         asOption(
-          await claim(
+          await BindConfig.pickPort(
             options.solana?.ports?.http ?? null,
-            BindConfig.DefaultSolanaRpc,
-            "solana.http"
+            null,
+            new Set([...claimed, window.last]),
+            "solana.http",
+            BindConfigPortProtocol.tcp,
+            window
           )
         )
-          .tap(http => claimed.add(http + BindConfig.SolanaWsPortOffset))
+          .tap(http => {
+            claimed.add(http)
+            claimed.add(http + BindConfig.SolanaWsPortOffset)
+          })
           .get(),
-      // The window's ports are claimed individually so every later pick in
+      // The range's ports are claimed individually so every later pick in
       // this resolve — and every other resolver via the registry — excludes
-      // the whole window, not just its first port.
+      // the whole range, not just its first port.
       claimSolanaDynamicRange = async (): Promise<BindConfigPortRange> =>
         asOption(
           await BindConfig.pickPortRange(
             options.solana?.ports?.dynamicRange ?? null,
             claimed,
-            "solana.dynamicRange"
+            "solana.dynamicRange",
+            window
           )
         )
           .tap(dynamicRange =>
@@ -303,7 +330,7 @@ export class BindConfig {
     const resolved = new BindConfig(
       {
         address: addr("kiod"),
-        port: await claim(options.kiod?.port ?? null, BindConfig.DefaultKiod, "kiod")
+        port: await claim(options.kiod?.port ?? null, "kiod")
       },
       {
         address: addr("nodeop"),
@@ -311,16 +338,15 @@ export class BindConfig {
           bios: {
             http: await claim(
               nodeopPorts?.bios?.http ?? null,
-              BindConfig.DefaultBiosHttp,
               "nodeop.bios.http"
             ),
-            p2p: await claim(
-              nodeopPorts?.bios?.p2p ?? null,
-              BindConfig.DefaultBiosP2p,
-              "nodeop.bios.p2p"
-            )
+            p2p: await claim(nodeopPorts?.bios?.p2p ?? null, "nodeop.bios.p2p")
           },
-          producers: await pairs(nodeopPorts?.producers ?? null, producerCount, "producer"),
+          producers: await pairs(
+            nodeopPorts?.producers ?? null,
+            producerCount,
+            "producer"
+          ),
           batch: await pairs(nodeopPorts?.batch ?? null, batchCount, "batch"),
           underwriters: await pairs(
             nodeopPorts?.underwriters ?? null,
@@ -331,7 +357,7 @@ export class BindConfig {
       },
       {
         address: addr("anvil"),
-        port: await claim(options.anvil?.port ?? null, BindConfig.DefaultAnvil, "anvil")
+        port: await claim(options.anvil?.port ?? null, "anvil")
       },
       {
         address: addr("solana"),
@@ -339,7 +365,6 @@ export class BindConfig {
           http: await claimSolanaHttp(),
           faucet: await claim(
             options.solana?.ports?.faucet ?? null,
-            BindConfig.DefaultSolanaFaucet,
             "solana.faucet"
           ),
           // agave 4.x binds the test validator's gossip socket at its FIXED
@@ -353,7 +378,6 @@ export class BindConfig {
           // get-port's TCP probe cannot see.
           gossip: await claim(
             options.solana?.ports?.gossip ?? null,
-            BindConfig.DefaultSolanaGossip,
             "solana.gossip",
             BindConfigPortProtocol.udp
           ),
@@ -364,13 +388,14 @@ export class BindConfig {
         address: addr("debuggingServer"),
         port: await claim(
           options.debuggingServer?.port ?? null,
-          BindConfig.DefaultDebuggingServer,
           "debuggingServer"
         )
-      }
+      },
+      window
     )
     // Register BEFORE the lock releases: the next resolver (any process) must
-    // see these ports as reserved even though no daemon has bound them yet.
+    // see these ports — and this resolve's window claim — as reserved even
+    // though no daemon has bound them yet.
     BindConfig.registerResolved(resolved)
     return resolved
   }
@@ -509,6 +534,79 @@ export namespace BindConfig {
   export const DefaultUnderwriterCount = 1
 
   /**
+   * Host region carved into per-resolve port windows. Every unpinned port of a
+   * resolve — nodeop http/p2p, kiod, anvil, solana rpc/ws/faucet/gossip, the
+   * validator dynamic range, the debugging server — is drawn from the resolve's
+   * OWN window, so two resolves cannot collide even if the advisory port lock is
+   * compromised (observed 2026-07-16: 4-way CI cold-start contention let two
+   * flows resolve concurrently and draw the same ephemeral port; one cluster's
+   * nodeop died at bind with `Address already in use`). The region sits above
+   * the daemon-default (10500-11999) and legacy dynamic-range (12000+) bands and
+   * BELOW the kernel's ephemeral floor (32768 on CI runners), so an outbound
+   * connection's kernel-assigned source port can never squat a window port.
+   */
+  export const FlowPortWindowRegion: BindConfigPortRange = {
+    first: 16_384,
+    last: 28_671
+  }
+
+  /**
+   * Width of one per-resolve window. The largest cluster footprint (a dozen
+   * nodeop pairs, the singleton daemons, the RPC websocket companion, and a
+   * {@link SolanaDynamicPortRangeSize}-port validator range) is ~110 ports;
+   * 512 leaves generous slack for in-window squatters and future daemons while
+   * still yielding 24 windows — far beyond any realistic flow concurrency.
+   */
+  export const FlowPortWindowWidth = 512
+
+  /**
+   * proper-lockfile options for the host-global port lock. The default backoff
+   * (5 retries, ~3s total) can be exhausted while several cold-starting flows
+   * queue behind one multi-second resolve, and a stolen-stale lock previously
+   * meant silent collisions; fixed-interval retries wait out a deep queue, and
+   * a compromised lock is LOGGED loudly instead of throwing asynchronously —
+   * with disjoint windows the worst case is noise, not a collision.
+   */
+  export const PortLockOptions: LockOptions = {
+    realpath: false,
+    retries: { retries: 120, factor: 1, minTimeout: 500, maxTimeout: 500 },
+    stale: 10_000,
+    onCompromised: err =>
+      log.error(
+        "port lock compromised (stale-stolen mid-resolve) — windows keep resolves disjoint, continuing",
+        err
+      )
+  }
+
+  /**
+   * Claim the lowest free window in {@link FlowPortWindowRegion}: window claims
+   * are the `portWindow` fields of LIVE registry entries, so a window frees when
+   * its claimant exits (or is reaped). Call only under the
+   * {@link BindConfig.PortLockPath} lock ({@link resolve} does).
+   *
+   * @param claims - `first` ports of every live-claimed window
+   *   ({@link readRegistryWindowClaims}).
+   * @returns The claimed window.
+   * @throws When every window in the region is claimed by a live resolve.
+   */
+  export function allocateWindow(claims: Set<number>): BindConfigPortRange {
+    const count = Math.floor(
+      (FlowPortWindowRegion.last - FlowPortWindowRegion.first + 1) /
+        FlowPortWindowWidth
+    )
+    for (const index of range(count)) {
+      const first = FlowPortWindowRegion.first + index * FlowPortWindowWidth
+      if (!claims.has(first)) {
+        return { first, last: first + FlowPortWindowWidth - 1 }
+      }
+    }
+    return Assert.fail(
+      `all ${count} port windows in ${FlowPortWindowRegion.first}-${FlowPortWindowRegion.last} ` +
+        `are claimed by live resolves — lower the flow concurrency or widen FlowPortWindowRegion`
+    )
+  }
+
+  /**
    * True if `port` is bindable right now, via `get-port` (asks it for exactly
    * `port`; a differing result means `port` is taken or already locked in
    * get-port's cache). NOTE: a `true` result LOCKS `port` in get-port's
@@ -544,14 +642,17 @@ export namespace BindConfig {
     preferred: number,
     protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
   ): Promise<number> {
-    return withFileLock(BindConfig.PortLockPath, () =>
-      pickPort(
-        null,
-        preferred,
-        readRegistryPortExclusions(),
-        "findAvailable",
-        protocol
-      )
+    return withFileLock(
+      BindConfig.PortLockPath,
+      () =>
+        pickPort(
+          null,
+          preferred,
+          readRegistryPortExclusions(),
+          "findAvailable",
+          protocol
+        ),
+      BindConfig.PortLockOptions
     )
   }
 
@@ -604,12 +705,18 @@ export namespace BindConfig {
    *
    * @returns The union of the reserved band and every live registration's ports.
    */
-  export function readRegistryPortExclusions(): Set<number> {
+  /**
+   * Every LIVE registration's raw entries, reaping stale files as they are
+   * found (see {@link readRegistryPortExclusions} for the reaping rules). The
+   * shared walk behind the port-exclusion and window-claim readers. Call only
+   * under the {@link BindConfig.PortLockPath} lock.
+   *
+   * @returns The raw (plain-JSON) entries of every live registration.
+   */
+  function readLiveRegistryEntries(): unknown[] {
     const dir = registryPath()
     mkdirs(dir)
-    const exclusions = new Set<number>(
-      range(ReservedAgavePortBand.first, ReservedAgavePortBand.last + 1)
-    )
+    const live: unknown[] = []
     Fs.readdirSync(dir)
       .filter(fileName => fileName.endsWith(RegistryFileSuffix))
       .forEach(fileName => {
@@ -635,25 +742,53 @@ export namespace BindConfig {
           guard(() => Fs.rmSync(filePath, { force: true }))
           return
         }
-        entries.forEach(entry => {
-          // Rehydrate through the class so allPorts stays the ONE port walker.
-          const ports = getValue(() => {
-            const plain = entry as BindConfig
-            return new BindConfig(
-              plain.kiod,
-              plain.nodeop,
-              plain.anvil,
-              plain.solana,
-              plain.debuggingServer
-            ).allPorts
-          }, [] as number[])
-          if (ports.length === 0) {
-            log.warn(`bind registry: ignoring malformed entry in ${fileName}`)
-          }
-          ports.forEach(port => exclusions.add(port))
-        })
+        entries.forEach(entry => live.push(entry))
       })
+    return live
+  }
+
+  export function readRegistryPortExclusions(): Set<number> {
+    const exclusions = new Set<number>(
+      range(ReservedAgavePortBand.first, ReservedAgavePortBand.last + 1)
+    )
+    readLiveRegistryEntries().forEach(entry => {
+      // Rehydrate through the class so allPorts stays the ONE port walker.
+      const ports = getValue(() => {
+        const plain = entry as BindConfig
+        return new BindConfig(
+          plain.kiod,
+          plain.nodeop,
+          plain.anvil,
+          plain.solana,
+          plain.debuggingServer
+        ).allPorts
+      }, [] as number[])
+      if (ports.length === 0) {
+        log.warn("bind registry: ignoring malformed entry")
+      }
+      ports.forEach(port => exclusions.add(port))
+    })
     return exclusions
+  }
+
+  /**
+   * The `first` port of every LIVE registration's claimed window — the
+   * occupancy set {@link allocateWindow} scans. Entries without a `portWindow`
+   * (pre-window registrations) claim no window but still exclude their ports
+   * via {@link readRegistryPortExclusions}. Call only under the
+   * {@link BindConfig.PortLockPath} lock.
+   *
+   * @returns The claimed windows' `first` ports.
+   */
+  export function readRegistryWindowClaims(): Set<number> {
+    const claims = new Set<number>()
+    readLiveRegistryEntries().forEach(entry => {
+      const window = (entry as BindConfig).portWindow
+      if (window && Number.isFinite(window.first)) {
+        claims.add(window.first)
+      }
+    })
+    return claims
   }
 
   let registryExitCleanupArmed = false
@@ -705,7 +840,8 @@ export namespace BindConfig {
     fallbackDefault: number | null,
     claimed: Set<number>,
     daemon: string,
-    protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
+    protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp,
+    window: BindConfigPortRange | null = null
   ): Promise<number> {
     if (callerPin !== null) {
       Assert.ok(
@@ -723,17 +859,32 @@ export namespace BindConfig {
       )
       return callerPin
     }
-    // First draw prefers the default; a UDP-role candidate that fails the UDP
-    // probe is redrawn — the rejected candidate stays locked in get-port's
-    // in-process cache, so no later draw can re-offer it.
+    // Windowed draws scan the window in order (lowest free first — get-port
+    // tries iterable preferences sequentially), so a resolve's layout is
+    // deterministic per window slot; unwindowed draws prefer the default on
+    // the first attempt. A UDP-role candidate that fails the UDP probe is
+    // redrawn — the rejected candidate stays locked in get-port's in-process
+    // cache, so no later draw can re-offer it.
     const picked = await Bluebird.reduce(
       range(0, UdpPickAttempts),
       async (found: number | null, attempt: number) => {
         if (found !== null) return found
         const candidate = await getPort(
-          attempt === 0 && fallbackDefault !== null
-            ? { port: fallbackDefault, exclude: claimed }
-            : { exclude: claimed }
+          window !== null
+            ? { port: range(window.first, window.last + 1), exclude: claimed }
+            : attempt === 0 && fallbackDefault !== null
+              ? { port: fallbackDefault, exclude: claimed }
+              : { exclude: claimed }
+        )
+        // get-port falls back to an OS-assigned ephemeral when every
+        // preference is unavailable — for a windowed draw that silent escape
+        // would defeat cross-resolve disjointness, so it is a hard error.
+        Assert.ok(
+          window === null ||
+            (candidate >= window.first && candidate <= window.last),
+          `${daemon}: port window ${window?.first}-${window?.last} is exhausted ` +
+            `(get-port fell back to ${candidate}) — foreign listeners inside the ` +
+            `window, or FlowPortWindowWidth is too small for this topology`
         )
         return protocol === BindConfigPortProtocol.tcp ||
           (await isUdpPortFree(candidate))
@@ -799,7 +950,8 @@ export namespace BindConfig {
   export async function pickPortRange(
     callerPin: BindConfigPortRange | null,
     exclusions: Set<number>,
-    daemon: string
+    daemon: string,
+    window: BindConfigPortRange | null = null
   ): Promise<BindConfigPortRange> {
     if (callerPin !== null) {
       Assert.ok(
@@ -815,9 +967,21 @@ export namespace BindConfig {
       )
       return callerPin
     }
-    const starts = range(0, SolanaDynamicPortRangeSearchLimit).map(
-      i => DefaultSolanaDynamicPortFirst + i * SolanaDynamicPortRangeSize
-    )
+    // Windowed scans carve the range from the resolve's own window
+    // (SolanaDynamicPortRangeSize-aligned offsets) so the validator's dynamic
+    // sockets stay inside the resolve's disjoint footprint; unwindowed scans
+    // (findAvailableRange) keep the legacy region.
+    const starts =
+      window !== null
+        ? range(
+            0,
+            Math.floor(
+              (window.last - window.first + 1) / SolanaDynamicPortRangeSize
+            )
+          ).map(i => window.first + i * SolanaDynamicPortRangeSize)
+        : range(0, SolanaDynamicPortRangeSearchLimit).map(
+            i => DefaultSolanaDynamicPortFirst + i * SolanaDynamicPortRangeSize
+          )
     const first = await Bluebird.reduce(
       starts,
       async (found: number | null, start) =>
@@ -826,8 +990,12 @@ export namespace BindConfig {
     )
     Assert.ok(
       first !== null,
-      `no free ${SolanaDynamicPortRangeSize}-port window for ${daemon} within ` +
-        `${SolanaDynamicPortRangeSearchLimit} windows from ${DefaultSolanaDynamicPortFirst}`
+      window !== null
+        ? `no free ${SolanaDynamicPortRangeSize}-port range for ${daemon} inside window ` +
+            `${window.first}-${window.last} — foreign listeners inside the window, or ` +
+            `FlowPortWindowWidth is too small for this topology`
+        : `no free ${SolanaDynamicPortRangeSize}-port window for ${daemon} within ` +
+            `${SolanaDynamicPortRangeSearchLimit} windows from ${DefaultSolanaDynamicPortFirst}`
     )
     return { first, last: first + SolanaDynamicPortRangeSize - 1 }
   }
@@ -841,8 +1009,15 @@ export namespace BindConfig {
    * @returns A currently-free window.
    */
   export async function findAvailableRange(): Promise<BindConfigPortRange> {
-    return withFileLock(BindConfig.PortLockPath, () =>
-      pickPortRange(null, readRegistryPortExclusions(), "solana.dynamicRange")
+    return withFileLock(
+      BindConfig.PortLockPath,
+      () =>
+        pickPortRange(
+          null,
+          readRegistryPortExclusions(),
+          "solana.dynamicRange"
+        ),
+      BindConfig.PortLockOptions
     )
   }
 }
