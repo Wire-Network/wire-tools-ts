@@ -4,7 +4,6 @@ import Fs from "node:fs"
 import Path from "node:path"
 import { promisify } from "node:util"
 import { asOption } from "@3fv/prelude-ts"
-import { guard } from "@wireio/shared"
 import { defaults } from "lodash"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import type { WireClient } from "../../clients/wire/WireClient.js"
@@ -408,9 +407,13 @@ export namespace NodeopProcess {
       return await first.start()
     } catch (error) {
       if (!isDirtyChainbaseAbort(first)) throw error
-      manager.remove(first.label)
       const safetyFile = finalizerSafetyFile(options.node)
-      guard(() => Fs.rmSync(safetyFile, { force: true }))
+      // force:true tolerates a missing file; any OTHER rm failure (EACCES,
+      // EISDIR, EIO) must abort recovery — a surviving stale fsi keeps the
+      // finality lock this wipe exists to clear, and hard replay would
+      // relaunch straight back into the cluster-wide stall.
+      Fs.rmSync(safetyFile, { force: true })
+      manager.remove(first.label)
       log.warn(
         `${first.label}: chainbase dirty from an unclean shutdown — relaunching with ${HardReplayBlockchainFlag} (stale ${safetyFile} removed)`
       )

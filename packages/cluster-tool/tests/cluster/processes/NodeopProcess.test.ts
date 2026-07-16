@@ -290,6 +290,26 @@ describe("NodeopProcess", () => {
       await recovered.kill()
     })
 
+    it("startWithRecovery aborts recovery when the stale fsi cannot be removed", async () => {
+      const node = dirtyNode("dirty-fsi-locked")
+      const safetyFile = NodeopProcess.finalizerSafetyFile(node)
+      // A DIRECTORY at the fsi path defeats rmSync({ force: true })
+      // deterministically (EISDIR) — the stand-in for EACCES/EIO removal
+      // failures. Recovery must abort: hard-replaying with the stale fsi
+      // still in place would relaunch straight back into the finality stall.
+      Fs.mkdirSync(safetyFile, { recursive: true })
+
+      await expect(
+        NodeopProcess.startWithRecovery(manager, { node })
+      ).rejects.toThrow(/EISDIR|is a directory/i)
+      expect(Fs.existsSync(safetyFile)).toBe(true)
+      // No retry happened: the first instance still owns the label and no
+      // hard-replay relaunch was registered.
+      const owner = manager.get("dirty-fsi-locked")
+      expect(owner).not.toBeNull()
+      expect(owner.args).not.toContain(NodeopProcess.HardReplayBlockchainFlag)
+    })
+
     it("startWithRecovery rethrows a non-dirty failure without retrying or touching the fsi", async () => {
       // The outer fixture's nodeop is /bin/true: it exits cleanly with no
       // output — a startup failure that is NOT the dirty-chainbase abort.

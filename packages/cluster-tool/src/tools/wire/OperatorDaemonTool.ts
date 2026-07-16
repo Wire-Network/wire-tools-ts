@@ -475,12 +475,14 @@ export namespace OperatorDaemonTool {
       http: await BindConfig.findAvailable(PreferredDaemonHttpPort),
       p2p: await BindConfig.findAvailable(PreferredDaemonP2pPort)
     }
-    const nodeop = await NodeopProcess.create(ctx.processManager, {
+    // startWithRecovery (not bare create+start): a flow rerun reuses the
+    // daemon's data dir, so an unclean prior stop leaves a dirty chainbase
+    // this launch must recover from, same as the planned-node paths.
+    await NodeopProcess.startWithRecovery(ctx.processManager, {
       node: daemonNodeConfig(ctx.config, operator, ports),
       operator,
       extraArgs: daemonArgs
     })
-    await nodeop.start()
     ctx.log.info(`[operator-daemon] ${input.account} daemon up (${nodeName}, http=${ports.http})`)
   }
 
