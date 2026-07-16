@@ -3,6 +3,9 @@ import Path from "node:path"
 import lockfile from "proper-lockfile"
 import type { LockOptions } from "proper-lockfile"
 import { which as zxWhich } from "zx"
+import { getLogger } from "@wireio/shared"
+
+const log = getLogger(__filename)
 
 /**
  * proper-lockfile options for the short critical sections {@link withFileLock}
@@ -93,7 +96,16 @@ export async function withFileLock<T>(
   try {
     return await criticalSection()
   } finally {
-    await release()
+    // A release failure must never mask the critical section's outcome: after
+    // a compromised (stale-stolen) lock, proper-lockfile marks this holder
+    // released before invoking onCompromised, so release() rejects with
+    // ERELEASED — the lock is gone either way.
+    await release().catch(err =>
+      log.warn(
+        `file lock release failed for ${lockPath} (already released?)`,
+        err
+      )
+    )
   }
 }
 

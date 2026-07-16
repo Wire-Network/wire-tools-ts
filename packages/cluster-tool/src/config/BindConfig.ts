@@ -193,11 +193,11 @@ export class BindConfig {
     readonly debuggingServer: BindConfigDaemon,
     /**
      * The per-resolve port window every unpinned port of this config was drawn
-     * from (see {@link BindConfig.FlowPortWindowRegion}) — serialized into the
-     * cross-process registry so later resolvers claim DISJOINT windows. Null on
-     * configs rehydrated from the registry for port-exclusion purposes (the
-     * window claim is read from the plain JSON, not the rehydrated instance)
-     * and on configs predating window allocation.
+     * from (see {@link BindConfig.FlowPortWindowRegion}). Informational — the
+     * allocation truth is the window's atomic claim file
+     * ({@link BindConfig.allocateWindow}); this field rides the registry entry
+     * for diagnosability. Null on configs rehydrated from the registry and on
+     * configs predating window allocation.
      */
     readonly portWindow: BindConfigPortRange | null = null
   ) {}
@@ -244,13 +244,14 @@ export class BindConfig {
       // resolved it but hasn't bound its daemons yet (they spawn minutes
       // later). Dead registrants are reaped during the read.
       claimed = BindConfig.readRegistryPortExclusions(),
-      // Claim this resolve's DISJOINT port window: every unpinned pick below is
-      // drawn from it, so two resolves cannot collide even if the advisory lock
-      // is ever compromised (observed 2026-07-16: two concurrent CI flows drew
-      // the same ephemeral port under 4-way cold-start lock contention, and one
-      // cluster's nodeop died at bind). Registered with the config below, so
-      // later resolvers skip it; freed when this process exits (or is reaped).
-      window = BindConfig.allocateWindow(BindConfig.readRegistryWindowClaims()),
+      // Claim this resolve's DISJOINT port window FIRST (atomic O_EXCL claim
+      // file, independent of the advisory lock): every unpinned pick below is
+      // drawn from it, so two resolves cannot collide even if the lock is
+      // compromised mid-resolve (observed 2026-07-16: two concurrent CI flows
+      // drew the same ephemeral port under 4-way cold-start lock contention,
+      // and one cluster's nodeop died at bind). Freed when this process exits
+      // (or its stale claim is reaped).
+      window = BindConfig.allocateWindow(),
       claim = async (
         callerPin: number | null,
         daemon: string,
@@ -371,8 +372,8 @@ export class BindConfig {
           // default (8000) instead of carving it from --dynamic-port-range,
           // so every parallel validator needs an explicit per-cluster
           // --gossip-port. Cross-cluster disjointness comes from the same
-          // machinery as every other port: the file-locked registry feeds
-          // `claim`'s exclusions, so no two clusters ever resolve the same
+          // machinery as every other port: the pick is drawn from this
+          // resolve's own window, so no two clusters ever resolve the same
           // gossip port. Gossip is a UDP socket — the claim additionally
           // UDP-probes candidates, catching non-registry UDP holders that
           // get-port's TCP probe cannot see.
@@ -562,10 +563,14 @@ export namespace BindConfig {
   /**
    * proper-lockfile options for the host-global port lock. The default backoff
    * (5 retries, ~3s total) can be exhausted while several cold-starting flows
-   * queue behind one multi-second resolve, and a stolen-stale lock previously
-   * meant silent collisions; fixed-interval retries wait out a deep queue, and
-   * a compromised lock is LOGGED loudly instead of throwing asynchronously —
-   * with disjoint windows the worst case is noise, not a collision.
+   * queue behind one multi-second resolve; fixed-interval retries wait out a
+   * deep queue. A compromised (stale-stolen) lock is LOGGED loudly instead of
+   * proper-lockfile's asynchronous throw: window claims are ATOMIC O_EXCL
+   * claim files ({@link allocateWindow}), taken BEFORE any pick, so a thief
+   * resolver cannot double-allocate a window — the two resolves proceed in
+   * disjoint windows and the compromise is noise, not a collision. (The
+   * holder's eventual release() rejects with ERELEASED after a compromise;
+   * `withFileLock` swallows release failures for the same reason.)
    */
   export const PortLockOptions: LockOptions = {
     realpath: false,
@@ -573,32 +578,76 @@ export namespace BindConfig {
     stale: 10_000,
     onCompromised: err =>
       log.error(
-        "port lock compromised (stale-stolen mid-resolve) — windows keep resolves disjoint, continuing",
+        "port lock compromised (stale-stolen mid-resolve) — window claims are atomic, continuing",
         err
       )
   }
 
+  /** Claim-file path for the window starting at `first` (content: claimant pid). */
+  function windowClaimFile(first: number): string {
+    return Path.join(registryPath(), `window-${first}.claim`)
+  }
+
+  /** Window claim files THIS process created — released together on exit. */
+  const ownedWindowClaims: string[] = []
+  let windowClaimExitCleanupArmed = false
+
   /**
-   * Claim the lowest free window in {@link FlowPortWindowRegion}: window claims
-   * are the `portWindow` fields of LIVE registry entries, so a window frees when
-   * its claimant exits (or is reaped). Call only under the
-   * {@link BindConfig.PortLockPath} lock ({@link resolve} does).
+   * Claim the lowest free window in {@link FlowPortWindowRegion} via an ATOMIC
+   * exclusive-create (`wx`) claim file per window — deliberately independent of
+   * the advisory port lock, so even a compromised lock cannot hand two resolves
+   * the same window: the filesystem arbitrates. A stale claim (dead pid,
+   * recycled pid, unreadable content) is reaped exactly like a stale registry
+   * file; a claim frees when its process exits (exit hook) or is reaped.
+   * {@link resolve} calls this under the {@link BindConfig.PortLockPath} lock,
+   * but correctness does not depend on it.
    *
-   * @param claims - `first` ports of every live-claimed window
-   *   ({@link readRegistryWindowClaims}).
    * @returns The claimed window.
-   * @throws When every window in the region is claimed by a live resolve.
+   * @throws When every window in the region is claimed by a live process.
    */
-  export function allocateWindow(claims: Set<number>): BindConfigPortRange {
+  export function allocateWindow(): BindConfigPortRange {
+    mkdirs(registryPath())
     const count = Math.floor(
       (FlowPortWindowRegion.last - FlowPortWindowRegion.first + 1) /
         FlowPortWindowWidth
     )
     for (const index of range(count)) {
       const first = FlowPortWindowRegion.first + index * FlowPortWindowWidth
-      if (!claims.has(first)) {
-        return { first, last: first + FlowPortWindowWidth - 1 }
+      const file = windowClaimFile(first)
+      const content = getValue(() => Fs.readFileSync(file, "utf8"), null)
+      if (content !== null) {
+        const pid = Number.parseInt(content, 10)
+        const basename = Number.isFinite(pid)
+            ? processCommandBasename(pid)
+            : "",
+          alive = Number.isFinite(pid) && isPidAlive(pid),
+          // "" basename + alive = unreadable /proc (foreign user) → keep.
+          recycled = alive && basename !== "" && basename !== RegistrantBasename
+        if (alive && !recycled) {
+          continue
+        }
+        log.info(
+          `bind registry: reaping stale window claim ${Path.basename(file)} ` +
+            `(${!alive ? "pid gone" : `pid recycled to ${basename}`})`
+        )
+        guard(() => Fs.rmSync(file, { force: true }))
       }
+      try {
+        // O_EXCL: exactly one process can create the claim, lock or no lock.
+        Fs.writeFileSync(file, String(process.pid), { flag: "wx" })
+      } catch {
+        continue // lost the create race (or a claim reappeared) — next window
+      }
+      ownedWindowClaims.push(file)
+      if (!windowClaimExitCleanupArmed) {
+        windowClaimExitCleanupArmed = true
+        process.on("exit", () =>
+          ownedWindowClaims.forEach(claim =>
+            guard(() => Fs.rmSync(claim, { force: true }))
+          )
+        )
+      }
+      return { first, last: first + FlowPortWindowWidth - 1 }
     }
     return Assert.fail(
       `all ${count} port windows in ${FlowPortWindowRegion.first}-${FlowPortWindowRegion.last} ` +
@@ -769,26 +818,6 @@ export namespace BindConfig {
       ports.forEach(port => exclusions.add(port))
     })
     return exclusions
-  }
-
-  /**
-   * The `first` port of every LIVE registration's claimed window — the
-   * occupancy set {@link allocateWindow} scans. Entries without a `portWindow`
-   * (pre-window registrations) claim no window but still exclude their ports
-   * via {@link readRegistryPortExclusions}. Call only under the
-   * {@link BindConfig.PortLockPath} lock.
-   *
-   * @returns The claimed windows' `first` ports.
-   */
-  export function readRegistryWindowClaims(): Set<number> {
-    const claims = new Set<number>()
-    readLiveRegistryEntries().forEach(entry => {
-      const window = (entry as BindConfig).portWindow
-      if (window && Number.isFinite(window.first)) {
-        claims.add(window.first)
-      }
-    })
-    return claims
   }
 
   let registryExitCleanupArmed = false

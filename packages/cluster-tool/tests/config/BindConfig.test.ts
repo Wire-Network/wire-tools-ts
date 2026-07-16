@@ -492,14 +492,11 @@ describe("BindConfig", () => {
 
   describe("cross-process registry", () => {
     /**
-     * A minimal resolved BindConfig whose only interesting claim is `port`
-     * (plus, optionally, a window claim — omitted models a legacy pre-window
-     * registration, which claims PORTS but no window).
+     * A minimal resolved BindConfig whose only interesting claim is `port` —
+     * models a legacy pre-window registration, which claims PORTS but no
+     * window (window claims live in their own atomic claim files).
      */
-    function configClaiming(
-      port: number,
-      portWindow: { first: number; last: number } | null = null
-    ) {
+    function configClaiming(port: number) {
       return new BindConfig(
         { address: BindConfig.LoopbackAddress, port },
         {
@@ -522,9 +519,16 @@ describe("BindConfig", () => {
             dynamicRange: { first: port + 7, last: port + 7 }
           }
         },
-        { address: BindConfig.LoopbackAddress, port: port + 6 },
-        portWindow
+        { address: BindConfig.LoopbackAddress, port: port + 6 }
       )
+    }
+
+    /** Write a window claim file for `pid` claiming the window starting at `first`. */
+    function seedWindowClaim(pid: number, first: number): string {
+      Fs.mkdirSync(BindConfig.registryPath(), { recursive: true })
+      const file = Path.join(BindConfig.registryPath(), `window-${first}.claim`)
+      Fs.writeFileSync(file, String(pid))
+      return file
     }
 
     /** Write a registry file for `pid` claiming `config`'s ports. */
@@ -679,10 +683,7 @@ describe("BindConfig", () => {
       })
 
       it("a live foreign WINDOW claim shifts this resolve to the next window", async () => {
-        seedRegistration(
-          registrant.pid,
-          configClaiming(region().first, windowAt(0))
-        )
+        seedWindowClaim(registrant.pid, windowAt(0).first)
         const config = await BindConfig.resolve({}, {})
         expect(config.portWindow).toEqual(windowAt(1))
         config.allPorts.forEach(port => {
@@ -694,22 +695,25 @@ describe("BindConfig", () => {
       it("a DEAD pid's window claim is reaped and its window reused", async () => {
         const dead = spawnSync("/bin/true")
         expect(dead.pid).toBeGreaterThan(0)
-        seedRegistration(dead.pid, configClaiming(region().first, windowAt(0)))
+        const file = seedWindowClaim(dead.pid, windowAt(0).first)
+        const config = await BindConfig.resolve({}, {})
+        expect(config.portWindow).toEqual(windowAt(0))
+        // The stale claim was replaced by this resolve's own (live) claim.
+        expect(Fs.readFileSync(file, "utf8")).toBe(String(process.pid))
+      })
+
+      it("a malformed window claim is reaped rather than honored", async () => {
+        const file = seedWindowClaim(registrant.pid, windowAt(0).first)
+        Fs.writeFileSync(file, "not a pid")
         const config = await BindConfig.resolve({}, {})
         expect(config.portWindow).toEqual(windowAt(0))
       })
 
-      it("throws when every window is claimed by live registrations", async () => {
+      it("throws when every window is claimed by live processes", async () => {
         const count = Math.floor((region().last - region().first + 1) / width())
-        const file = Path.join(
-          BindConfig.registryPath(),
-          `${registrant.pid}${BindConfig.RegistryFileSuffix}`
+        Array.from({ length: count }, (_, index) =>
+          seedWindowClaim(registrant.pid, windowAt(index).first)
         )
-        Fs.mkdirSync(BindConfig.registryPath(), { recursive: true })
-        const entries = Array.from({ length: count }, (_, index) =>
-          configClaiming(windowAt(index).first, windowAt(index))
-        )
-        Fs.writeFileSync(file, JSON.stringify(entries))
         await expect(BindConfig.resolve({}, {})).rejects.toThrow(
           /are claimed by live resolves/
         )
