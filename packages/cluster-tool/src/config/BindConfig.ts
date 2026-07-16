@@ -218,14 +218,20 @@ export class BindConfig {
   ): Promise<BindConfig> {
     // Hold the host-global port lock for the WHOLE cluster port selection so a
     // parallel process cannot interleave and pick an overlapping set (get-port
-    // only de-dupes within one process — see PortLockPath). The lock is
-    // belt-and-braces: even a compromised lock cannot produce a cross-resolve
-    // collision, because every resolve draws from its own disjoint window
-    // (see FlowPortWindowRegion).
+    // only de-dupes within one process — see PortLockPath). For PINLESS
+    // resolves the lock is belt-and-braces — every pick is inside the
+    // atomically-claimed window, so even a compromised lock cannot produce a
+    // cross-resolve collision. Caller pins step OUTSIDE that footprint (the
+    // pin itself and, for solana.http, its rpc+1 companion — which for a
+    // window.last pin is the NEXT window's first port): their safety IS the
+    // lock, so pinned resolves fail closed on a compromised lock instead of
+    // continuing.
     return withFileLock(
       BindConfig.PortLockPath,
       () => BindConfig.resolveLocked(options, topology),
-      BindConfig.PortLockOptions
+      BindConfig.hasPinnedPorts(options)
+        ? BindConfig.StandalonePortLockOptions
+        : BindConfig.PortLockOptions
     )
   }
 
@@ -617,7 +623,8 @@ export namespace BindConfig {
 
   /**
    * Lock options for the STANDALONE pickers ({@link findAvailable} /
-   * {@link findAvailableRange}): same contention-hardened retries as
+   * {@link findAvailableRange}) AND for resolves with caller pins
+   * ({@link hasPinnedPorts}): same contention-hardened retries as
    * {@link PortLockOptions}, but a compromised lock stays FAIL-CLOSED
    * (proper-lockfile's default onCompromised throws). Unlike {@link resolve},
    * these paths hold no atomic window claim — their cross-process safety IS
@@ -628,6 +635,37 @@ export namespace BindConfig {
     realpath: false,
     retries: { retries: 120, factor: 1, minTimeout: 500, maxTimeout: 500 },
     stale: 10_000
+  }
+
+  /**
+   * True when any caller pin appears in `options`. A pinned resolve relies on
+   * the advisory lock for the ports OUTSIDE its atomically-claimed window (the
+   * pins themselves and, for a pinned solana RPC, its implicitly-bound rpc+1
+   * companion), so {@link BindConfig.resolve} runs it under the fail-closed
+   * {@link StandalonePortLockOptions} instead of the continue-on-compromise
+   * {@link PortLockOptions} that window atomicity justifies for pinless
+   * resolves.
+   *
+   * @param options - Caller binding overrides.
+   * @returns Whether any port (or range) is pinned.
+   */
+  export function hasPinnedPorts(options: BindOptions): boolean {
+    const nodeopPorts = options.nodeop?.ports
+    const pairPinned = (pair?: BindNodeopPortsOptions | null): boolean =>
+      pair?.http !== undefined || pair?.p2p !== undefined
+    return (
+      options.kiod?.port !== undefined ||
+      options.anvil?.port !== undefined ||
+      options.debuggingServer?.port !== undefined ||
+      options.solana?.ports?.http !== undefined ||
+      options.solana?.ports?.faucet !== undefined ||
+      options.solana?.ports?.gossip !== undefined ||
+      options.solana?.ports?.dynamicRange !== undefined ||
+      pairPinned(nodeopPorts?.bios) ||
+      (nodeopPorts?.producers ?? []).some(pairPinned) ||
+      (nodeopPorts?.batch ?? []).some(pairPinned) ||
+      (nodeopPorts?.underwriters ?? []).some(pairPinned)
+    )
   }
 
   /** Claim-file path for the window starting at `first` (content: claimant pid). */

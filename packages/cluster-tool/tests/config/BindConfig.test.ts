@@ -232,6 +232,53 @@ describe("BindConfig", () => {
     })
   })
 
+  // The routing predicate behind resolve()'s lock-option choice: pinned
+  // resolves rely on the advisory lock for their out-of-window footprint and
+  // must fail closed on a compromised lock; pinless resolves may continue
+  // (window claims are atomic and every pick is in-window).
+  describe("hasPinnedPorts", () => {
+    it("is false for empty and address-only options", () => {
+      expect(BindConfig.hasPinnedPorts({})).toBe(false)
+      expect(
+        BindConfig.hasPinnedPorts({
+          kiod: { address: "127.0.0.1" },
+          nodeop: { address: "0.0.0.0" },
+          solana: { address: "127.0.0.1" }
+        })
+      ).toBe(false)
+    })
+
+    it("is true for every pin shape", () => {
+      expect(BindConfig.hasPinnedPorts({ kiod: { port: 1 } })).toBe(true)
+      expect(BindConfig.hasPinnedPorts({ anvil: { port: 1 } })).toBe(true)
+      expect(BindConfig.hasPinnedPorts({ debuggingServer: { port: 1 } })).toBe(
+        true
+      )
+      expect(
+        BindConfig.hasPinnedPorts({ solana: { ports: { http: 1 } } })
+      ).toBe(true)
+      expect(
+        BindConfig.hasPinnedPorts({ solana: { ports: { faucet: 1 } } })
+      ).toBe(true)
+      expect(
+        BindConfig.hasPinnedPorts({ solana: { ports: { gossip: 1 } } })
+      ).toBe(true)
+      expect(
+        BindConfig.hasPinnedPorts({
+          solana: { ports: { dynamicRange: { first: 1, last: 64 } } }
+        })
+      ).toBe(true)
+      expect(
+        BindConfig.hasPinnedPorts({ nodeop: { ports: { bios: { p2p: 1 } } } })
+      ).toBe(true)
+      expect(
+        BindConfig.hasPinnedPorts({
+          nodeop: { ports: { batch: [{}, { http: 1 }] } }
+        })
+      ).toBe(true)
+    })
+  })
+
   describe("isPortAvailable", () => {
     it("is false for a taken port and true for a free one", async () => {
       const port = 6543
