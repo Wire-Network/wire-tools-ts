@@ -1,7 +1,23 @@
 import { ethers } from "ethers"
+import { Keypair, SystemProgram, Transaction } from "@solana/web3.js"
+
+import type { Fetch } from "@wireio/sdk-core"
 import { RecordingJsonRpcProvider } from "@wireio/cluster-tool/clients/ethereum"
 import { RecordingConnection } from "@wireio/cluster-tool/clients/solana"
-import { Keypair, SystemProgram, Transaction } from "@solana/web3.js"
+
+/** The request-init shape `FetchProvider` hands its injected fetch. */
+interface FetchFakeInit {
+  /** JSON-encoded params for POST calls; absent on GET. */
+  body?: string
+}
+
+/** One request observed by the recording test's fetch fake. */
+interface RecordedFetchRequest {
+  /** Full URL the provider dialed. */
+  url: string
+  /** The request body as sent, or `null` when the call carried none. */
+  body: string | null
+}
 
 describe("RecordingJsonRpcProvider.shouldRecord", () => {
   it("records tx submissions + anvil admin methods only", () => {
@@ -70,15 +86,15 @@ describe("read-path recording", () => {
       "@wireio/cluster-tool/clients/wire"
     )
     const { StepExtraRecorder } = await import("@wireio/cluster-tool/report")
-    const seen: Array<{ url: string; body: string | undefined }> = []
-    const fetchFake = (async (url: string, init: { body?: string }) => {
-      seen.push({ url, body: init.body })
-      return {
-        status: 200,
-        headers: new Map(),
-        text: async () => JSON.stringify({ head_block_num: 7 })
-      }
-    }) as unknown as typeof fetch
+    const seen: RecordedFetchRequest[] = []
+    // A real Response: sdk-core's bounded body reader (SEC-74) consumes the
+    // web ReadableStream — a text()-only stub is no longer a valid response.
+    const fetchFake: Fetch = async (url: string, init: FetchFakeInit) => {
+      seen.push({ url, body: init.body ?? null })
+      return new Response(JSON.stringify({ head_block_num: 7 }), {
+        status: 200
+      })
+    }
     const provider = new RecordingFetchProvider("http://127.0.0.1:1", { fetch: fetchFake })
     const recorder = new StepExtraRecorder()
     await StepExtraRecorder.runWith(recorder, async () => {
