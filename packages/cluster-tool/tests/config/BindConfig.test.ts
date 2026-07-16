@@ -3,14 +3,16 @@ import { spawn, spawnSync } from "node:child_process"
 import Fs from "node:fs"
 import Path from "node:path"
 import { Deferred, guard } from "@wireio/shared"
-import { ProcessSignalName } from "@wireio/cluster-tool/cluster/processes"
+// Leaf import (not the processes barrel): the barrel pulls NodeopProcess →
+// WireClient → @wireio/sdk-core into this config-only suite's module graph.
+import { ProcessSignalName } from "@wireio/cluster-tool/cluster/processes/ProcessSignals"
 
 /**
  * Options the fake `get-port` honors — the subset {@link BindConfig} passes
  * (`port` preference + `exclude` set). Named (not inline) per repo style.
  */
 interface FakeGetPortOptions {
-  port?: number
+  port?: number | Iterable<number>
   exclude?: Iterable<number>
 }
 
@@ -22,9 +24,11 @@ const FakeEphemeralBase = 50000
  * the test rather than whatever real host ports happen to be free while other
  * suites run in parallel (the whole point — see the bind-available-ports rule).
  *
- * Faithful to the two behaviors {@link BindConfig} relies on:
- * - a preferred `port` is returned WHEN it is free (not taken, not locked, not
- *   excluded); otherwise a fresh ephemeral is returned (the fallback),
+ * Faithful to the behaviors {@link BindConfig} relies on:
+ * - a preferred `port` (a single number or, as real `get-port` accepts, an
+ *   ITERABLE tried in order — the windowed-draw path) yields the first free
+ *   preference; when every preference is unavailable a fresh ephemeral is
+ *   returned (the fallback BindConfig's windowed draws must detect),
  * - every returned port is LOCKED in-process, so consecutive calls never repeat
  *   — the same collision-avoidance real `get-port` provides. {@link clearLocks}
  *   drops those locks (what {@link BindConfig.validate} does before re-probing).
@@ -73,11 +77,15 @@ class FakePortAllocator {
       ...this.locked,
       ...(options?.exclude ?? [])
     ])
-    const preferred = options?.port
+    const preferences =
+      options?.port === undefined
+        ? []
+        : typeof options.port === "number"
+          ? [options.port]
+          : [...options.port]
     const chosen =
-      preferred !== undefined && !blocked.has(preferred)
-        ? preferred
-        : this.nextEphemeral(blocked)
+      preferences.find(preference => !blocked.has(preference)) ??
+      this.nextEphemeral(blocked)
     this.locked.add(chosen)
     return chosen
   }
@@ -98,7 +106,9 @@ const allocator = new FakePortAllocator()
 // deterministically decides every outcome.
 jest.unstable_mockModule("get-port", () => ({
   __esModule: true,
-  default: jest.fn(async (options?: FakeGetPortOptions) => allocator.allocate(options)),
+  default: jest.fn(async (options?: FakeGetPortOptions) =>
+    allocator.allocate(options)
+  ),
   clearLockedPorts: jest.fn(() => allocator.clearLocks())
 }))
 
@@ -119,10 +129,12 @@ jest.mock("@wireio/cluster-tool/utils/netUtils", () => ({
 describe("BindConfig", () => {
   // Import AFTER the mock is registered so BindConfig's cached get-port is the
   // fake. A static top-level import would load the real module first.
-  let BindConfig: typeof import("@wireio/cluster-tool/config").BindConfig
+  let BindConfig: typeof import("@wireio/cluster-tool/config/BindConfig").BindConfig
 
   beforeAll(async () => {
-    ;({ BindConfig } = await import("@wireio/cluster-tool/config"))
+    // Leaf import (not the config barrel): the barrel pulls NodeConfig →
+    // WireClient → @wireio/sdk-core into this suite's module graph.
+    ;({ BindConfig } = await import("@wireio/cluster-tool/config/BindConfig"))
   })
 
   beforeEach(() => {
@@ -135,35 +147,41 @@ describe("BindConfig", () => {
   })
 
   describe("resolve", () => {
-    it("prefers every default port when the defaults are free", async () => {
+    it("draws every unpinned port from the first free window, lowest-first", async () => {
       const config = await BindConfig.resolve({}, {})
-      // Nothing taken → every daemon with a default gets exactly that default.
-      expect(config.kiod.port).toBe(BindConfig.DefaultKiod)
-      expect(config.nodeop.ports.bios.http).toBe(BindConfig.DefaultBiosHttp)
-      expect(config.nodeop.ports.bios.p2p).toBe(BindConfig.DefaultBiosP2p)
-      expect(config.anvil.port).toBe(BindConfig.DefaultAnvil)
-      expect(config.solana.ports.http).toBe(BindConfig.DefaultSolanaRpc)
-      expect(config.solana.ports.faucet).toBe(BindConfig.DefaultSolanaFaucet)
-      expect(config.solana.ports.gossip).toBe(BindConfig.DefaultSolanaGossip)
-      expect(config.debuggingServer.port).toBe(BindConfig.DefaultDebuggingServer)
+      // Nothing taken → the resolve claims window 0 and fills it from the base
+      // (get-port tries the window's ports in order), so the first pick IS the
+      // window base and every port — including the RPC websocket companion —
+      // lands inside the claimed window. Daemon DEFAULTS are deliberately not
+      // preferred: a default-preferring pick is exactly the cross-resolve
+      // collision surface windows exist to remove.
+      expect(config.portWindow).toEqual({
+        first: BindConfig.FlowPortWindowRegion.first,
+        last:
+          BindConfig.FlowPortWindowRegion.first +
+          BindConfig.FlowPortWindowWidth -
+          1
+      })
+      expect(config.kiod.port).toBe(config.portWindow!.first)
+      const { first, last } = config.portWindow!
+      config.allPorts.forEach(port => {
+        expect(port).toBeGreaterThanOrEqual(first)
+        expect(port).toBeLessThanOrEqual(last)
+      })
     })
 
-    it("falls back to an ephemeral when a default is taken", async () => {
-      // Take three defaults; leave bios.http free to prove per-daemon independence.
-      allocator.markTaken(
-        BindConfig.DefaultKiod,
-        BindConfig.DefaultAnvil,
-        BindConfig.DefaultSolanaRpc
-      )
+    it("skips a squatted in-window port without leaving the window", async () => {
+      const windowFirst = BindConfig.FlowPortWindowRegion.first
+      // Squat the window base and the third slot; picks flow around them.
+      allocator.markTaken(windowFirst, windowFirst + 2)
       const config = await BindConfig.resolve({}, {})
-      expect(config.kiod.port).not.toBe(BindConfig.DefaultKiod)
-      expect(config.kiod.port).toBeGreaterThan(0)
-      expect(config.anvil.port).not.toBe(BindConfig.DefaultAnvil)
-      expect(config.anvil.port).toBeGreaterThan(0)
-      expect(config.solana.ports.http).not.toBe(BindConfig.DefaultSolanaRpc)
-      expect(config.solana.ports.http).toBeGreaterThan(0)
-      // The untaken default is still preferred.
-      expect(config.nodeop.ports.bios.http).toBe(BindConfig.DefaultBiosHttp)
+      expect(config.kiod.port).toBe(windowFirst + 1)
+      expect(config.nodeop.ports.bios.http).toBe(windowFirst + 3)
+      const { first, last } = config.portWindow!
+      config.allPorts.forEach(port => {
+        expect(port).toBeGreaterThanOrEqual(first)
+        expect(port).toBeLessThanOrEqual(last)
+      })
     })
 
     it("populates every daemon with addresses + unique ports", async () => {
@@ -214,6 +232,53 @@ describe("BindConfig", () => {
     })
   })
 
+  // The routing predicate behind resolve()'s lock-option choice: pinned
+  // resolves rely on the advisory lock for their out-of-window footprint and
+  // must fail closed on a compromised lock; pinless resolves may continue
+  // (window claims are atomic and every pick is in-window).
+  describe("hasPinnedPorts", () => {
+    it("is false for empty and address-only options", () => {
+      expect(BindConfig.hasPinnedPorts({})).toBe(false)
+      expect(
+        BindConfig.hasPinnedPorts({
+          kiod: { address: "127.0.0.1" },
+          nodeop: { address: "0.0.0.0" },
+          solana: { address: "127.0.0.1" }
+        })
+      ).toBe(false)
+    })
+
+    it("is true for every pin shape", () => {
+      expect(BindConfig.hasPinnedPorts({ kiod: { port: 1 } })).toBe(true)
+      expect(BindConfig.hasPinnedPorts({ anvil: { port: 1 } })).toBe(true)
+      expect(BindConfig.hasPinnedPorts({ debuggingServer: { port: 1 } })).toBe(
+        true
+      )
+      expect(
+        BindConfig.hasPinnedPorts({ solana: { ports: { http: 1 } } })
+      ).toBe(true)
+      expect(
+        BindConfig.hasPinnedPorts({ solana: { ports: { faucet: 1 } } })
+      ).toBe(true)
+      expect(
+        BindConfig.hasPinnedPorts({ solana: { ports: { gossip: 1 } } })
+      ).toBe(true)
+      expect(
+        BindConfig.hasPinnedPorts({
+          solana: { ports: { dynamicRange: { first: 1, last: 64 } } }
+        })
+      ).toBe(true)
+      expect(
+        BindConfig.hasPinnedPorts({ nodeop: { ports: { bios: { p2p: 1 } } } })
+      ).toBe(true)
+      expect(
+        BindConfig.hasPinnedPorts({
+          nodeop: { ports: { batch: [{}, { http: 1 }] } }
+        })
+      ).toBe(true)
+    })
+  })
+
   describe("isPortAvailable", () => {
     it("is false for a taken port and true for a free one", async () => {
       const port = 6543
@@ -239,14 +304,15 @@ describe("BindConfig", () => {
   })
 
   describe("solana dynamic port range", () => {
-    it("resolves an aligned, full-width window included in allPorts", async () => {
+    it("resolves an aligned, full-width range inside the resolve's window", async () => {
       const config = await BindConfig.resolve({}, {})
       const { first, last } = config.solana.ports.dynamicRange
       expect(last - first + 1).toBe(BindConfig.SolanaDynamicPortRangeSize)
-      expect(first).toBeGreaterThanOrEqual(BindConfig.DefaultSolanaDynamicPortFirst)
-      // Scanned windows step by the range size from the default first port.
+      // Carved from the resolve's own window at range-size-aligned offsets.
+      expect(first).toBeGreaterThanOrEqual(config.portWindow!.first)
+      expect(last).toBeLessThanOrEqual(config.portWindow!.last)
       expect(
-        (first - BindConfig.DefaultSolanaDynamicPortFirst) %
+        (first - config.portWindow!.first) %
           BindConfig.SolanaDynamicPortRangeSize
       ).toBe(0)
       expect(config.allPorts).toEqual(expect.arrayContaining([first, last]))
@@ -354,7 +420,10 @@ describe("BindConfig", () => {
     })
 
     it("throws on a pinned window overlapping the band, naming the band", async () => {
-      const pinned = { first: 9_990, last: 9_990 + BindConfig.SolanaDynamicPortRangeSize - 1 }
+      const pinned = {
+        first: 9_990,
+        last: 9_990 + BindConfig.SolanaDynamicPortRangeSize - 1
+      }
       await expect(
         BindConfig.resolve({ solana: { ports: { dynamicRange: pinned } } }, {})
       ).rejects.toThrow(/reserved agave validator band 8000-10000/)
@@ -375,13 +444,27 @@ describe("BindConfig", () => {
   // (gossip, dynamic range) must consult the UDP probe; TCP-role ports must
   // not change behavior.
   describe("UDP-role ports (non-registry UDP holders)", () => {
-    it("gossip falls back to an ephemeral when the default is UDP-held (TCP probe passes)", async () => {
-      mockUdpTakenPorts.add(BindConfig.DefaultSolanaGossip)
+    it("gossip redraws past a UDP-held in-window candidate (TCP probe passes)", async () => {
+      // Learn where gossip lands on a clean resolve, then UDP-hold exactly that
+      // port: the layout is deterministic (lowest-free-in-window), so the same
+      // slot is offered first on the re-run and must be redrawn past.
+      const clean = await BindConfig.resolve({}, {})
+      const cleanGossip = clean.solana.ports.gossip
+      allocator.reset()
+      Fs.rmSync(BindConfig.registryPath(), { recursive: true, force: true })
+      mockUdpTakenPorts.add(cleanGossip)
       const config = await BindConfig.resolve({}, {})
-      expect(config.solana.ports.gossip).not.toBe(BindConfig.DefaultSolanaGossip)
+      expect(config.solana.ports.gossip).not.toBe(cleanGossip)
       expect(mockUdpTakenPorts.has(config.solana.ports.gossip)).toBe(false)
-      // TCP-role defaults are untouched by the UDP holder.
-      expect(config.solana.ports.http).toBe(BindConfig.DefaultSolanaRpc)
+      // The redrawn gossip port stays inside the resolve's window, and the
+      // TCP-role picks are untouched by the UDP holder.
+      expect(config.solana.ports.gossip).toBeGreaterThanOrEqual(
+        config.portWindow!.first
+      )
+      expect(config.solana.ports.gossip).toBeLessThanOrEqual(
+        config.portWindow!.last
+      )
+      expect(config.solana.ports.http).toBe(clean.solana.ports.http)
     })
 
     it("throws when a pinned gossip port is UDP-held", async () => {
@@ -392,12 +475,20 @@ describe("BindConfig", () => {
       ).rejects.toThrow(/pinned but unavailable/)
     })
 
-    it("dynamic range skips a window containing a UDP-held port", async () => {
-      mockUdpTakenPorts.add(BindConfig.DefaultSolanaDynamicPortFirst + 5)
+    it("dynamic range skips an aligned slot containing a UDP-held port", async () => {
+      // Learn the clean slot, UDP-hold a port inside it, and expect the next
+      // range-size-aligned slot within the same window.
+      const clean = await BindConfig.resolve({}, {})
+      const cleanFirst = clean.solana.ports.dynamicRange.first
+      allocator.reset()
+      Fs.rmSync(BindConfig.registryPath(), { recursive: true, force: true })
+      mockUdpTakenPorts.add(cleanFirst + 5)
       const config = await BindConfig.resolve({}, {})
       expect(config.solana.ports.dynamicRange.first).toBe(
-        BindConfig.DefaultSolanaDynamicPortFirst +
-          BindConfig.SolanaDynamicPortRangeSize
+        cleanFirst + BindConfig.SolanaDynamicPortRangeSize
+      )
+      expect(config.solana.ports.dynamicRange.last).toBeLessThanOrEqual(
+        config.portWindow!.last
       )
     })
 
@@ -413,9 +504,9 @@ describe("BindConfig", () => {
     })
 
     it("findAvailable redraws past a UDP-held preferred port only under the udp protocol", async () => {
-      const { BindConfigPortProtocol } = await import(
-        "@wireio/cluster-tool/config"
-      )
+      // Leaf import — the config barrel drags @wireio/sdk-core in (see beforeAll).
+      const { BindConfigPortProtocol } =
+        await import("@wireio/cluster-tool/config/BindConfig")
       const preferred = 14_800
       mockUdpTakenPorts.add(preferred)
       // tcp (default): the UDP holder is irrelevant — preferred wins.
@@ -447,7 +538,11 @@ describe("BindConfig", () => {
   })
 
   describe("cross-process registry", () => {
-    /** A minimal resolved BindConfig whose only interesting claim is `port`. */
+    /**
+     * A minimal resolved BindConfig whose only interesting claim is `port` —
+     * models a legacy pre-window registration, which claims PORTS but no
+     * window (window claims live in their own atomic claim files).
+     */
     function configClaiming(port: number) {
       return new BindConfig(
         { address: BindConfig.LoopbackAddress, port },
@@ -475,8 +570,19 @@ describe("BindConfig", () => {
       )
     }
 
+    /** Write a window claim file for `pid` claiming the window starting at `first`. */
+    function seedWindowClaim(pid: number, first: number): string {
+      Fs.mkdirSync(BindConfig.registryPath(), { recursive: true })
+      const file = Path.join(BindConfig.registryPath(), `window-${first}.claim`)
+      Fs.writeFileSync(file, String(pid))
+      return file
+    }
+
     /** Write a registry file for `pid` claiming `config`'s ports. */
-    function seedRegistration(pid: number, config: InstanceType<typeof BindConfig>): string {
+    function seedRegistration(
+      pid: number,
+      config: InstanceType<typeof BindConfig>
+    ): string {
       Fs.mkdirSync(BindConfig.registryPath(), { recursive: true })
       const file = Path.join(
         BindConfig.registryPath(),
@@ -525,36 +631,49 @@ describe("BindConfig", () => {
     })
 
     it("registryPath honors the env override (installed by jest.setup)", () => {
-      expect(BindConfig.registryPath()).toBe(process.env.WIRE_BIND_REGISTRY_PATH)
+      expect(BindConfig.registryPath()).toBe(
+        process.env.WIRE_BIND_REGISTRY_PATH
+      )
     })
 
     it("resolve registers its ports in this process's file, appending per resolve", async () => {
       const first = await BindConfig.resolve({}, {})
       const second = await BindConfig.resolve({}, {})
-      const entries = JSON.parse(Fs.readFileSync(BindConfig.registryFile(), "utf8"))
+      const entries = JSON.parse(
+        Fs.readFileSync(BindConfig.registryFile(), "utf8")
+      )
       expect(Array.isArray(entries)).toBe(true)
       expect(entries).toHaveLength(2)
       expect(entries[0].kiod.port).toBe(first.kiod.port)
       expect(entries[1].kiod.port).toBe(second.kiod.port)
       // The second resolve read the first's registration — zero overlap.
-      const overlap = first.allPorts.filter(port => second.allPorts.includes(port))
+      const overlap = first.allPorts.filter(port =>
+        second.allPorts.includes(port)
+      )
       expect(overlap).toEqual([])
     })
 
     it("resolve excludes a LIVE foreign registration's ports", async () => {
-      // configClaiming puts its anvil claim at base+3, so base = DefaultAnvil-3
-      // makes the foreign registration claim the anvil default: resolve must
-      // fall back to an ephemeral for anvil while other defaults stay.
-      seedRegistration(registrant.pid, configClaiming(BindConfig.DefaultAnvil - 3))
+      // The foreign claim sits at the base of window 0 — exactly where this
+      // resolve's lowest-first picks would land — so the exclusion is
+      // observable: the picks flow around the claimed ports while staying in
+      // the window (a legacy entry without a portWindow claims PORTS only,
+      // not the window itself).
+      const base = BindConfig.FlowPortWindowRegion.first
+      seedRegistration(registrant.pid, configClaiming(base))
       const config = await BindConfig.resolve({}, {})
-      expect(config.anvil.port).not.toBe(BindConfig.DefaultAnvil)
-      expect(config.kiod.port).toBe(BindConfig.DefaultKiod)
+      expect(config.portWindow!.first).toBe(base)
+      const foreign = configClaiming(base).allPorts
+      foreign.forEach(port => expect(config.allPorts).not.toContain(port))
     })
 
     it("reaps a DEAD pid's registration instead of honoring it", async () => {
       const dead = spawnSync("/bin/true")
       expect(dead.pid).toBeGreaterThan(0)
-      const file = seedRegistration(dead.pid, configClaiming(BindConfig.DefaultAnvil - 3))
+      const file = seedRegistration(
+        dead.pid,
+        configClaiming(BindConfig.DefaultAnvil - 3)
+      )
       const exclusions = BindConfig.readRegistryPortExclusions()
       expect(exclusions.has(BindConfig.DefaultAnvil)).toBe(false)
       expect(Fs.existsSync(file)).toBe(false) // reaped
@@ -585,6 +704,127 @@ describe("BindConfig", () => {
       expect(port).not.toBe(claimed)
       // reading never registers THIS process
       expect(Fs.existsSync(BindConfig.registryFile())).toBe(false)
+    })
+
+    // The structural guarantee behind cross-resolve disjointness: every resolve
+    // draws from its own claimed window, so even a compromised port lock cannot
+    // produce a collision (the 2026-07-16 CI failure class — two concurrent
+    // flows drew the same port and one cluster's nodeop died at bind).
+    describe("port windows", () => {
+      const region = () => BindConfig.FlowPortWindowRegion
+      const width = () => BindConfig.FlowPortWindowWidth
+      const windowAt = (index: number) => ({
+        first: region().first + index * width(),
+        last: region().first + (index + 1) * width() - 1
+      })
+
+      it("consecutive resolves claim disjoint windows with zero port overlap", async () => {
+        const first = await BindConfig.resolve({}, {})
+        const second = await BindConfig.resolve({}, {})
+        expect(first.portWindow).toEqual(windowAt(0))
+        expect(second.portWindow).toEqual(windowAt(1))
+        const overlap = first.allPorts.filter(port =>
+          second.allPorts.includes(port)
+        )
+        expect(overlap).toEqual([])
+      })
+
+      it("a live foreign WINDOW claim shifts this resolve to the next window", async () => {
+        seedWindowClaim(registrant.pid, windowAt(0).first)
+        const config = await BindConfig.resolve({}, {})
+        expect(config.portWindow).toEqual(windowAt(1))
+        config.allPorts.forEach(port => {
+          expect(port).toBeGreaterThanOrEqual(windowAt(1).first)
+          expect(port).toBeLessThanOrEqual(windowAt(1).last)
+        })
+      })
+
+      it("a DEAD pid's window claim is reaped and its window reused", async () => {
+        const dead = spawnSync("/bin/true")
+        expect(dead.pid).toBeGreaterThan(0)
+        const file = seedWindowClaim(dead.pid, windowAt(0).first)
+        const config = await BindConfig.resolve({}, {})
+        expect(config.portWindow).toEqual(windowAt(0))
+        // The stale claim was replaced by this resolve's own (live) claim.
+        expect(Fs.readFileSync(file, "utf8")).toBe(String(process.pid))
+      })
+
+      it("releases its window claim when the resolve fails", async () => {
+        // A pinned-but-unavailable port fails the resolve AFTER the window was
+        // claimed; the claim must be handed back immediately — a caller that
+        // catches and retries must not burn windows toward a false
+        // region-exhaustion error.
+        allocator.markTaken(12_345)
+        await expect(
+          BindConfig.resolve({ kiod: { port: 12_345 } }, {})
+        ).rejects.toThrow(/pinned but unavailable/)
+        const config = await BindConfig.resolve({}, {})
+        expect(config.portWindow).toEqual(windowAt(0))
+      })
+
+      it("honors a pinned solana RPC at the window's last port", async () => {
+        // window.last is excluded from DYNAMIC selection (so the rpc+1
+        // companion stays in-window) but must never reject a caller pin.
+        const pin = windowAt(0).last
+        const config = await BindConfig.resolve(
+          { solana: { ports: { http: pin } } },
+          {}
+        )
+        expect(config.solana.ports.http).toBe(pin)
+        // The companion rides outside the window — the caller's choice with a pin.
+        expect(config.allPorts).toContain(pin + 1)
+      })
+
+      it("propagates a filesystem failure instead of reporting exhaustion", async () => {
+        // A claim-file create failing with EACCES is a real filesystem error;
+        // scanning on would end in a false "every window is claimed".
+        Fs.mkdirSync(BindConfig.registryPath(), { recursive: true })
+        Fs.chmodSync(BindConfig.registryPath(), 0o555)
+        try {
+          await expect(BindConfig.resolve({}, {})).rejects.toThrow(
+            /EACCES|permission denied/
+          )
+        } finally {
+          Fs.chmodSync(BindConfig.registryPath(), 0o755)
+        }
+      })
+
+      it("keeps claim ownership when deletion fails, so release is retryable", async () => {
+        const config = await BindConfig.resolve({}, {})
+        const claimFile = Path.join(
+          BindConfig.registryPath(),
+          `window-${config.portWindow!.first}.claim`
+        )
+        expect(Fs.existsSync(claimFile)).toBe(true)
+        Fs.chmodSync(BindConfig.registryPath(), 0o555)
+        try {
+          // Deletion fails; ownership must be retained (file still present).
+          BindConfig.releaseWindowClaim(config.portWindow!)
+          expect(Fs.existsSync(claimFile)).toBe(true)
+        } finally {
+          Fs.chmodSync(BindConfig.registryPath(), 0o755)
+        }
+        // The retained ownership makes the release retryable.
+        BindConfig.releaseWindowClaim(config.portWindow!)
+        expect(Fs.existsSync(claimFile)).toBe(false)
+      })
+
+      it("a malformed window claim is reaped rather than honored", async () => {
+        const file = seedWindowClaim(registrant.pid, windowAt(0).first)
+        Fs.writeFileSync(file, "not a pid")
+        const config = await BindConfig.resolve({}, {})
+        expect(config.portWindow).toEqual(windowAt(0))
+      })
+
+      it("throws when every window is claimed by live processes", async () => {
+        const count = Math.floor((region().last - region().first + 1) / width())
+        Array.from({ length: count }, (_, index) =>
+          seedWindowClaim(registrant.pid, windowAt(index).first)
+        )
+        await expect(BindConfig.resolve({}, {})).rejects.toThrow(
+          /are claimed by live resolves/
+        )
+      })
     })
   })
 })
