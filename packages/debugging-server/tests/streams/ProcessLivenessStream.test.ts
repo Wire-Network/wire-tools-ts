@@ -4,13 +4,14 @@ import * as Path from "node:path"
 
 import {
   ClusterFiles,
-  NodeRole,
+  ClusterStateNodeRole,
+  ClusterStateVersion,
   PidSources,
   StreamFrameType,
   StreamTopic,
   type ClusterState,
+  type ClusterStateNode,
   type EventFrame,
-  type NodeState,
   type ProcessLivenessEvent
 } from "@wireio/debugging-shared"
 
@@ -34,28 +35,23 @@ describe("ProcessLivenessStream over WS", () => {
       Path.join(nodeDir, `nodeop${PidSources.PidExt}`),
       String(process.pid)
     )
-    const node: NodeState = {
-      nodeId: PidSources.BiosNodeId,
-      host: "127.0.0.1",
-      port: 0,
-      dataPath: nodeDir,
-      configPath: "",
-      cmd: [],
-      isProducer: true,
-      producerName: null,
-      role: NodeRole.Producer
+    const node: ClusterStateNode = {
+      name: PidSources.BiosNodeId,
+      role: ClusterStateNodeRole.bios,
+      nodePath: nodeDir,
+      ports: { http: 0, p2p: 0 },
+      producers: [],
+      batchOperatorAccount: null,
+      underwriterAccount: null
     }
     const state: ClusterState = {
-      pnodes: 1,
-      totalNodes: 1,
-      prodCount: 1,
-      topo: "mesh",
+      version: ClusterStateVersion,
+      createdAt: new Date().toISOString(),
       nodes: [node],
-      batchOperatorNodes: [],
-      underwriterNodes: [],
-      anvilStatePath: "",
+      walletPath: "",
+      anvilStateFile: "",
       solanaLedgerPath: "",
-      walletPath: ""
+      solanaIdlFile: null
     }
     Fs.writeFileSync(
       Path.join(tmpDir, ClusterFiles.ConfigFilename),

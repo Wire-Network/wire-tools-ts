@@ -19,6 +19,14 @@ import type {
 } from "./ClusterBuildOptions.js"
 import { ClusterConfigGenesisRenderer } from "./renderers/ClusterConfigGenesisRenderer.js"
 
+/**
+ * The plain JSON shape persisted to `cluster-config.json`. Single-sourced in
+ * `debugging-shared` (consumed there by the debugging server, the TUI, and
+ * `PidSources`) — re-exported here so `cluster-tool` consumers keep importing
+ * it from `@wireio/cluster-tool/config`.
+ */
+export type { PersistedClusterConfig } from "@wireio/debugging-shared"
+
 /** Resolved, validated binary locations. */
 export interface ClusterExecutablePaths {
   nodeop: string
@@ -26,35 +34,6 @@ export interface ClusterExecutablePaths {
   clio: string
   anvil: string
   solanaTestValidator: string
-}
-
-/** The plain JSON shape persisted to `cluster-config.json`. */
-export interface PersistedClusterConfig {
-  buildPath: string
-  clusterPath: string
-  dataPath: string
-  walletPath: string
-  producerCount: number
-  nodeCount: number
-  batchOperatorCount: number
-  underwriterCount: number
-  epochDurationSec: number
-  warmupEpochs: number
-  cooldownEpochs: number
-  ethereumPath: string
-  solanaPath: string
-  bind: Pick<
-    BindConfig,
-    "kiod" | "nodeop" | "anvil" | "solana" | "debuggingServer"
-  >
-  executables: ClusterExecutablePaths
-  report: Report.Config
-  logging: LoggingConfig
-  requiredBatchOperatorCollateral: CollateralRequirement[]
-  requiredUnderwriterCollateral: CollateralRequirement[]
-  requiredProducerCollateral: CollateralRequirement[]
-  underwriterCollateral: ChainTokenAmount[][] | null
-  initialFinalizerKey: string | null
 }
 
 /** Throw if a required option is missing (fail-fast at the boundary). */

@@ -1,12 +1,13 @@
 import Fs from "node:fs"
+import Http from "node:http"
 import Os from "node:os"
 import Path from "node:path"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
 import { NodeopProcess, ProcessManager } from "@wireio/cluster-tool/cluster/processes"
-import { NodeConfig, NodeRole, type ClusterConfig } from "@wireio/cluster-tool/config"
+import { BindConfig, NodeConfig, NodeRole, type ClusterConfig } from "@wireio/cluster-tool/config"
 import { type OperatorAccount } from "@wireio/cluster-tool/orchestration/outputs"
-import { Localhost } from "@wireio/cluster-tool/utils"
+import { Localhost, toURL } from "@wireio/cluster-tool/utils"
 import { fixtureConfig, PersistedFixture } from "../../config/clusterConfigFixture.js"
 
 describe("NodeopProcess", () => {
@@ -254,6 +255,11 @@ describe("NodeopProcess", () => {
       interface VerifyReadyProbe {
         verifyReady(): Promise<boolean>
       }
+      // `verifyReady` is `protected` on `NodeopProcess` — TS's structural
+      // typing treats a protected member as only assignable within its
+      // declaring class hierarchy, so a direct `as VerifyReadyProbe` doesn't
+      // typecheck; bridging through `unknown` is the standard way to spy on
+      // a protected method from a test.
       const proto = NodeopProcess.prototype as unknown as VerifyReadyProbe
       readySpy = jest
         .spyOn(proto, "verifyReady")
@@ -329,6 +335,46 @@ describe("NodeopProcess", () => {
     it("start() surfaces the dirty abort line in the rejection via startupFailureDetail", async () => {
       const first = await NodeopProcess.create(manager, { node: dirtyNode("dirty-detail") })
       await expect(first.start()).rejects.toThrow(/database dirty flag set/)
+    })
+  })
+
+  describe("resumeProduction", () => {
+    let server: Http.Server
+    let requestedPath: string
+    let requestedMethod: string
+
+    afterEach(async () => {
+      await new Promise<void>(resolve => server.close(() => resolve()))
+    })
+
+    it("POSTs the resume path and resolves on an OK response", async () => {
+      server = Http.createServer((req, res) => {
+        requestedPath = req.url
+        requestedMethod = req.method
+        res.writeHead(200)
+        res.end()
+      })
+      const port = await BindConfig.findAvailable(BindConfig.DefaultBiosHttp)
+      await new Promise<void>(resolve => server.listen(port, Localhost, resolve))
+
+      await expect(
+        NodeopProcess.resumeProduction(toURL(port, Localhost))
+      ).resolves.toBeUndefined()
+      expect(requestedMethod).toBe("POST")
+      expect(requestedPath).toBe(NodeopProcess.ResumeProductionPath)
+    })
+
+    it("rejects when the endpoint answers a non-OK status", async () => {
+      server = Http.createServer((_req, res) => {
+        res.writeHead(503)
+        res.end()
+      })
+      const port = await BindConfig.findAvailable(BindConfig.DefaultBiosHttp)
+      await new Promise<void>(resolve => server.listen(port, Localhost, resolve))
+
+      await expect(
+        NodeopProcess.resumeProduction(toURL(port, Localhost))
+      ).rejects.toThrow(/answered 503/)
     })
   })
 })

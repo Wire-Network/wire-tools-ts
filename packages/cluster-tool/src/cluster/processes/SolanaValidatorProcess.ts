@@ -269,4 +269,6 @@ export namespace SolanaValidatorProcess {
    * traffic reaches it; lowering it re-introduces mid-run history loss.
    */
   export const DefaultLimitLedgerSizeShreds = 200_000_000
+  /** Subpath (under the cluster data dir) for the validator ledger. */
+  export const LedgerSubpath = "solana-ledger"
 }

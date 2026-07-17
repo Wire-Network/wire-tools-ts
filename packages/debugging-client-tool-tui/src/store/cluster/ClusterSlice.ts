@@ -1,5 +1,8 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
-import type { ClusterConfig, ClusterState } from "@wireio/debugging-shared"
+import type {
+  ClusterState,
+  PersistedClusterConfig
+} from "@wireio/debugging-shared"
 import { SliceName } from "../StoreTypes.js"
 
 /** Snapshot of the loaded cluster directory. */
@@ -7,7 +10,7 @@ export interface ClusterSliceState {
   /** Absolute path to the cluster directory. */
   path: string | null
   /** Resolved `cluster-config.json`. */
-  config: ClusterConfig | null
+  config: PersistedClusterConfig | null
   /** Resolved `cluster-state.json`. Null until the cluster has bootstrapped. */
   state: ClusterState | null
 }
@@ -21,7 +24,7 @@ const initialState: ClusterSliceState = {
 /** Payload for {@link setCluster}. */
 export interface SetClusterPayload {
   path: string
-  config: ClusterConfig
+  config: PersistedClusterConfig
   state: ClusterState | null
 }
 

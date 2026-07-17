@@ -145,4 +145,8 @@ export namespace AnvilProcess {
   export const AccountCount = 50
   /** `--balance` (ether) per pre-funded account. */
   export const BalancePerAccountEther = 100_000
+  /** Subpath (under the cluster data dir) for the anvil dumped-state file. */
+  export const StateSubpath = "anvil"
+  /** Anvil dumped-state filename (loaded on restart, dumped on stop). */
+  export const StateFilename = "anvil.json"
 }

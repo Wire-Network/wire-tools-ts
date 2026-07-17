@@ -121,6 +121,17 @@ describe("ProcessManager + ManagedProcess", () => {
     Fs.rmSync(dir, { recursive: true, force: true })
   })
 
+  it("initialize() runs the one-time orphan sweep directly, before any process is pushed", () => {
+    // Nothing has been pushed yet — the sweep seeded in beforeAll (a live
+    // managed-basename orphan pid + an unmanaged pidfile) only runs if
+    // initialize() itself triggers ensureInitialized(), not the lazy push path.
+    manager.initialize()
+    expect(commandBasename(orphanPid)).toBe("")
+    expect(Fs.existsSync(unmanagedPidFile)).toBe(false)
+    // A second call is idempotent — no re-sweep, no re-registered handlers.
+    expect(() => manager.initialize()).not.toThrow()
+  })
+
   it("self-registers in the constructor (inverted ownership)", () => {
     const managed = new FakeProcess(manager, "self-reg")
     expect(manager.get("self-reg")).toBe(managed)

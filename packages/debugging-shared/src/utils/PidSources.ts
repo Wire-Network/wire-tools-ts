@@ -3,7 +3,11 @@ import Path from "node:path"
 import { asOption } from "@3fv/prelude-ts"
 import { match } from "ts-pattern"
 
-import { NodeRole, type ClusterState, type NodeState } from "../cluster/index.js"
+import {
+  ClusterStateNodeRole,
+  type ClusterState,
+  type ClusterStateNode
+} from "../cluster/index.js"
 import {
   PidSourceKind,
   type PidSource
@@ -31,20 +35,26 @@ export namespace PidSources {
   export const PlainLogPrefix = "log_" as const
   /** Filename suffix for the plain stderr-captured daily log. */
   export const PlainLogExt = ".log" as const
-  /** `nodeId` that identifies the genesis-bootstrap node in `NodeState`. */
+  /** `name` that identifies the genesis-bootstrap node in `ClusterStateNode`. */
   export const BiosNodeId = "bios" as const
 }
 
-/** Kind for a NodeState based on role + bios-nodeId heuristic. */
-function kindForNode(node: NodeState): PidSourceKind {
-  return match({
-    role: node.role ?? NodeRole.Producer,
-    nodeId: node.nodeId
-  })
-    .with({ role: NodeRole.BatchOperator }, () => PidSourceKind.BatchOperator)
-    .with({ role: NodeRole.Underwriter }, () => PidSourceKind.Underwriter)
-    .with({ nodeId: PidSources.BiosNodeId }, () => PidSourceKind.Bios)
-    .otherwise(() => PidSourceKind.Producer)
+/**
+ * Kind for a `ClusterStateNode` based on its role: `bios` → {@link
+ * PidSourceKind.Bios}, `producer` → {@link PidSourceKind.Producer}, and
+ * `operator` → {@link PidSourceKind.BatchOperator} when the node has a
+ * `batchOperatorAccount`, otherwise {@link PidSourceKind.Underwriter}.
+ */
+function kindForNode(node: ClusterStateNode): PidSourceKind {
+  return match(node.role)
+    .with(ClusterStateNodeRole.bios, () => PidSourceKind.Bios)
+    .with(ClusterStateNodeRole.producer, () => PidSourceKind.Producer)
+    .with(ClusterStateNodeRole.operator, () =>
+      node.batchOperatorAccount != null
+        ? PidSourceKind.BatchOperator
+        : PidSourceKind.Underwriter
+    )
+    .exhaustive()
 }
 
 /** Internal raw pid record produced by the directory scan. */
@@ -64,13 +74,13 @@ function readPidFiles(dir: string): RawPid[] {
     }))
 }
 
-/** Pid files in a NodeState's `dataPath`, tagged with its {@link PidSourceKind}. */
-function sourcesForNode(node: NodeState): PidSource[] {
+/** Pid files in a `ClusterStateNode`'s `nodePath`, tagged with its {@link PidSourceKind}. */
+function sourcesForNode(node: ClusterStateNode): PidSource[] {
   const kind = kindForNode(node)
-  return readPidFiles(node.dataPath).map(raw => ({
+  return readPidFiles(node.nodePath).map(raw => ({
     label: raw.label,
     pidPath: raw.pidPath,
-    directory: node.dataPath,
+    directory: node.nodePath,
     kind,
     node
   }))
@@ -106,11 +116,7 @@ export function collectPidSources(
   state: ClusterState | null
 ): PidSource[] {
   if (!state) return []
-  const nodeSources: PidSource[] = [
-    ...state.nodes.flatMap(sourcesForNode),
-    ...state.batchOperatorNodes.flatMap(sourcesForNode),
-    ...state.underwriterNodes.flatMap(sourcesForNode)
-  ]
+  const nodeSources: PidSource[] = state.nodes.flatMap(sourcesForNode)
   const anvilSources = sourcesForSubdir(
       clusterPath,
       PidSources.AnvilSubpath,
@@ -156,7 +162,7 @@ export function logPathForSource(
 }
 
 /** Lex-latest `*.jsonl` filename in `logsDir`, or null when there are none. */
-function latestJsonlIn(logsDir: string): string | null {
+function latestJsonlIn(logsDir: string): string {
   if (!Fs.existsSync(logsDir)) return null
   const matches = Fs.readdirSync(logsDir)
     .filter(f => f.endsWith(PidSources.JsonlExt))
@@ -165,7 +171,7 @@ function latestJsonlIn(logsDir: string): string | null {
 }
 
 /** Read pid from a pid file; null on missing / malformed / non-positive. */
-export function readPid(pidPath: string): number | null {
+export function readPid(pidPath: string): number {
   return asOption(pidPath)
     .filter(p => Fs.existsSync(p))
     .map(p => Fs.readFileSync(p, "utf8").trim())

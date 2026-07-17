@@ -1,59 +1,21 @@
 import "source-map-support/register.js"
-import Path from "node:path"
 import Yargs from "yargs"
-import { ClusterManager } from "../cluster/ClusterManager.js"
-import { ClusterConfig } from "../config/ClusterConfig.js"
-import { getLogger } from "../logging/Logger.js"
-import {
-  applyClusterBuildOptionsArgs,
-  toClusterBuildOptions
-} from "./ClusterBuildOptionsArgs.js"
-
-const log = getLogger(__filename)
+import { createCreateCommand } from "./CreateCommand.js"
+import { createDestroyCommand } from "./DestroyCommand.js"
+import { createRunCommand } from "./RunCommand.js"
 
 /**
- * The `wire-cluster-tool` CLI (orchestration-engine path): `create` bootstraps a
- * cluster via {@link ClusterManager} from the shared
- * {@link applyClusterBuildOptionsArgs} flag surface (the SAME every `flow-*`
- * uses — one implementation, no CLI/flow duplication); `destroy` tears it down.
- * Exit code reflects the bootstrap {@link Report}'s success.
+ * The `wire-cluster-tool` CLI: parser assembly only — each command's options
+ * and handler are collocated in its own module ({@link createCreateCommand},
+ * {@link createRunCommand}, {@link createDestroyCommand}) per STYLE.md's
+ * "Framework-Native Dispatch"; yargs dispatches, this function does not.
  */
 export function main(argv: string[] = process.argv.slice(2)): Promise<unknown> {
   return Yargs(argv.filter(arg => !arg.startsWith("--inspect")))
     .scriptName("wire-cluster-tool")
-    .command(
-      "create",
-      "Create + bootstrap a new cluster",
-      builder => applyClusterBuildOptionsArgs(builder),
-      async args => {
-        const report = await ClusterManager.create(toClusterBuildOptions(args))
-        log.info(
-          `[cluster] bootstrap ${report.succeeded ? "SUCCEEDED" : "FAILED"}`
-        )
-        process.exit(report.succeeded ? 0 : 1)
-      }
-    )
-    .command(
-      "destroy",
-      "Stop + delete a cluster",
-      builder =>
-        builder.option("cluster-path", {
-          alias: "d",
-          type: "string",
-          demandOption: true,
-          describe: "cluster data directory"
-        }),
-      async args => {
-        const config = ClusterConfig.loadSync(
-          Path.join(
-            Path.resolve(args.clusterPath),
-            ClusterConfig.ConfigFilename
-          )
-        )
-        await ClusterManager.destroy(config)
-        process.exit(0)
-      }
-    )
+    .command(createCreateCommand())
+    .command(createRunCommand())
+    .command(createDestroyCommand())
     .demandCommand(1)
     .strict()
     .help()

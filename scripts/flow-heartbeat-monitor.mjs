@@ -233,16 +233,72 @@ const ClusterPathEnvVar = "WIRE_CLUSTER_PATH"
 const FlowExecutablePattern = "lib/index[.]js"
 
 /**
- * PIDs of the watched flow's processes for THIS cluster, across BOTH spawn
- * modes: the direct-CLI form (`node lib/index.js -d <cluster-path>` — cluster
- * path in argv) and the orchestrator form (`pnpm --filter <pkg> test` with
- * `WIRE_CLUSTER_PATH=<cluster-path>` exported — cluster path ONLY in the
- * environment). The env form matches `lib/index.js` candidates by the exact
- * cluster path in `/proc/<pid>/environ`, so concurrent flows in a pooled run
- * stay isolated per monitor.
+ * Broad candidate ERE for the cluster CLI's `run` command
+ * (`wire-cluster-tool … run` — the resume-a-created-cluster entry point,
+ * which parks while its daemons serve). Candidates are narrowed to THIS
+ * cluster by exact argv TOKENS read from /proc/<pid>/cmdline — never by
+ * substring — so sibling clusters (`…-001` vs `…-0012`) and the monitor's
+ * own pgrep/shell wrappers (whose command lines carry the text only inside
+ * one composite argument) never match.
+ */
+const RunCliExecutablePattern = "wire-cluster-tool"
+
+/** Argv flag spellings that carry the cluster path for the run CLI. */
+const ClusterPathFlagNames = ["-d", "--cluster-path"]
+
+/**
+ * Whether a NUL-split /proc cmdline is `wire-cluster-tool run` for the given
+ * cluster: it carries the discrete `run` command token AND the cluster path as
+ * `-d <path>`, `--cluster-path <path>`, or `--cluster-path=<path>`.
+ *
+ * @param {string[]} args NUL-split argv tokens.
+ * @param {string} clusterPath the normalized cluster path.
+ * @return {boolean} whether this argv addresses `run` for the cluster.
+ */
+function isRunCliArgv(args, clusterPath) {
+  if (!args.includes("run")) return false
+  return args.some((arg, index) =>
+    ClusterPathFlagNames.some(
+      flag => arg === `${flag}=${clusterPath}` || (arg === flag && args[index + 1] === clusterPath)
+    )
+  )
+}
+
+/**
+ * PIDs of `wire-cluster-tool run` parked for THIS cluster — the liveness
+ * anchor for CLI-resumed clusters, exactly as the flow process is for flows.
+ *
+ * @param {string} clusterPath the normalized cluster path.
+ * @return {Promise<string[]>} matching pids.
+ */
+async function runCliPids(clusterPath) {
+  const candidates = await $`pgrep -f ${RunCliExecutablePattern}`.nothrow().quiet()
+  return candidates.stdout
+    .split("\n")
+    .map(pid => pid.trim())
+    .filter(Boolean)
+    .filter(pid => {
+      try {
+        const args = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0")
+        return isRunCliArgv(args, clusterPath)
+      } catch {
+        return false // pid exited between the pgrep and the cmdline read
+      }
+    })
+}
+
+/**
+ * PIDs of the watched run's processes for THIS cluster, across ALL THREE
+ * launch modes: the flow direct-CLI form (`node lib/index.js -d
+ * <cluster-path>` — cluster path in argv), the flow orchestrator form
+ * (`pnpm --filter <pkg> test` with `WIRE_CLUSTER_PATH=<cluster-path>`
+ * exported — cluster path ONLY in the environment), and the cluster CLI's
+ * parked `wire-cluster-tool … run` form. The env form matches `lib/index.js`
+ * candidates by the exact cluster path in `/proc/<pid>/environ`, so
+ * concurrent flows in a pooled run stay isolated per monitor.
  *
  * @param {string} clusterPath the watched cluster's data dir.
- * @return {Promise<string[]>} matching pids (argv-form ∪ env-form).
+ * @return {Promise<string[]>} matching pids (argv-form ∪ env-form ∪ run-CLI).
  */
 async function flowPids(clusterPath) {
   const normalized = clusterPath.replace(/\/+$/, "")
@@ -261,14 +317,16 @@ async function flowPids(clusterPath) {
       }
     })
   const argvPids = argvHits.stdout.split("\n").map(pid => pid.trim()).filter(Boolean)
-  return [...new Set([...argvPids, ...envHits])]
+  const runPids = await runCliPids(normalized)
+  return [...new Set([...argvPids, ...envHits, ...runPids])]
 }
 
 /**
- * Whether the watched flow process is still running (either spawn mode).
+ * Whether the watched flow / run-CLI process is still running (any launch
+ * mode).
  *
  * @param {string} clusterPath the watched cluster's data dir.
- * @return {Promise<boolean>} true while a matching flow process exists.
+ * @return {Promise<boolean>} true while a matching process exists.
  */
 async function isFlowAlive(clusterPath) {
   return (await flowPids(clusterPath)).length > 0

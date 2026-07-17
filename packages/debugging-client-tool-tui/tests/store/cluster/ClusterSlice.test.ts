@@ -1,20 +1,99 @@
-import type { ClusterConfig, ClusterState } from "@wireio/debugging-shared"
+import {
+  ClusterStateNodeRole,
+  ClusterStateVersion,
+  type ClusterState,
+  type PersistedClusterConfig
+} from "@wireio/debugging-shared"
 import {
   clusterSlice,
   setCluster,
   type ClusterSliceState
 } from "@wireio/debugging-client-tool-tui/store/cluster/ClusterSlice.js"
 import { selectCluster } from "@wireio/debugging-client-tool-tui/store/cluster/ClusterSelectors.js"
+import { store, type RootState } from "@wireio/debugging-client-tool-tui/store/Store.js"
 import { SliceName } from "@wireio/debugging-client-tool-tui/store/StoreTypes.js"
 
-const stubConfig = {
-  ports: { debuggingServer: 9901 }
-} as unknown as ClusterConfig
-const stubState = {
-  nodes: [],
-  batchOperatorNodes: [],
-  underwriterNodes: []
-} as unknown as ClusterState
+/** A complete `PersistedClusterConfig` fixture — no field left to `as unknown as`. */
+const stubConfig: PersistedClusterConfig = {
+  buildPath: "/build",
+  clusterPath: "/cluster",
+  dataPath: "/cluster/data",
+  walletPath: "/cluster/wallet",
+  producerCount: 1,
+  nodeCount: 1,
+  batchOperatorCount: 0,
+  underwriterCount: 0,
+  epochDurationSec: 60,
+  warmupEpochs: 0,
+  cooldownEpochs: 0,
+  ethereumPath: "/eth",
+  solanaPath: "/sol",
+  bind: {
+    kiod: { address: "127.0.0.1", port: 8900 },
+    nodeop: {
+      address: "127.0.0.1",
+      ports: {
+        bios: { http: 8888, p2p: 9876 },
+        producers: [],
+        batch: [],
+        underwriters: []
+      }
+    },
+    anvil: { address: "127.0.0.1", port: 8545 },
+    solana: {
+      address: "127.0.0.1",
+      ports: {
+        http: 8899,
+        faucet: 9900,
+        gossip: 8001,
+        dynamicRange: { first: 9010, last: 9019 }
+      }
+    },
+    debuggingServer: { address: "127.0.0.1", port: 9901 }
+  },
+  executables: {
+    nodeop: "/build/bin/nodeop",
+    kiod: "/build/bin/kiod",
+    clio: "/build/bin/clio",
+    anvil: "/usr/bin/anvil",
+    solanaTestValidator: "/usr/bin/solana-test-validator"
+  },
+  report: {
+    path: "/cluster/reports",
+    basename: "cluster-build",
+    formats: ["csv", "md", "html"]
+  },
+  logging: {
+    levels: { console: "info", file: "debug" },
+    fileFormat: "jsonl"
+  },
+  requiredBatchOperatorCollateral: [],
+  requiredUnderwriterCollateral: [],
+  requiredProducerCollateral: [],
+  underwriterCollateral: null,
+  initialFinalizerKey: null
+}
+
+/** A complete `ClusterState` fixture (post-bootstrap snapshot, no nodes). */
+const stubState: ClusterState = {
+  version: ClusterStateVersion,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  nodes: [
+    {
+      name: "bios",
+      role: ClusterStateNodeRole.bios,
+      nodePath: "/cluster/data/node_bios",
+      ports: { http: 8888, p2p: 9876 },
+      producers: ["sysio"],
+      batchOperatorAccount: null,
+      underwriterAccount: null
+    }
+  ],
+  walletPath: "/cluster/wallet",
+  anvilStateFile: "/cluster/data/anvil/anvil.json",
+  solanaLedgerPath: "/cluster/data/solana_validator",
+  solanaIdlFile: null
+}
 
 describe("clusterSlice", () => {
   it("initial state has all three fields null", () => {
@@ -50,6 +129,9 @@ describe("selectCluster", () => {
       config: stubConfig,
       state: null
     }
-    expect(selectCluster({ [SliceName.Cluster]: value } as any)).toEqual(value)
+    // A genuine RootState (from the real store) with only the cluster slice
+    // overridden — no cast needed to satisfy `selectCluster`'s signature.
+    const state: RootState = { ...store.getState(), [SliceName.Cluster]: value }
+    expect(selectCluster(state)).toEqual(value)
   })
 })

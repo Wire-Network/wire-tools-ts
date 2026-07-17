@@ -186,9 +186,10 @@ export namespace NodeopProcessSteps {
    * The {@link OperatorAccount} a node acts for, by role. A producer node's
    * account carries its NODE-shared signing set from `ctx.keyStore` (identical
    * to what its provisioning phase materializes); operator nodes resolve the
-   * provisioned account itself.
+   * provisioned account itself. Exported so `ClusterManager.run` (the relaunch
+   * path) reuses the SAME resolution logic — no duplication.
    */
-  function resolveOperator(ctx: ClusterBuildContext, node: NodeConfig): OperatorAccount {
+  export function resolveOperator(ctx: ClusterBuildContext, node: NodeConfig): OperatorAccount {
     return match(node.role)
       .with(NodeRole.bios, () => BiosOperator)
       .with(NodeRole.producer, () => producerOperator(ctx, node))
@@ -217,8 +218,10 @@ export namespace NodeopProcessSteps {
    * The OPP daemon extra args for an OPERATOR node (batch operator / underwriter),
    * built from the operator's {@link OperatorAccount} + the prepared
    * {@link OperatorDaemonArtifactsKey} artifacts; empty for bios/producer nodes.
+   * Exported so `ClusterManager.run` reuses the SAME resolution logic — no
+   * duplication.
    */
-  function resolveOperatorDaemonArgs(
+  export function resolveOperatorDaemonArgs(
     ctx: ClusterBuildContext,
     node: NodeConfig,
     operator: OperatorAccount

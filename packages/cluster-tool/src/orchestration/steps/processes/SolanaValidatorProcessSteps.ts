@@ -10,9 +10,6 @@ import {
 
 /** Steps that manage the cluster's solana-test-validator process. */
 export namespace SolanaValidatorProcessSteps {
-  /** Subpath (under the cluster data dir) for the validator ledger. */
-  const LedgerSubpath = "solana-ledger"
-
   /**
    * Start the solana-test-validator (get-or-create from `ctx.processManager`)
    * with the `liqsol_core` program (hosting the OPP outpost interface) loaded
@@ -45,7 +42,7 @@ export namespace SolanaValidatorProcessSteps {
       faucetPort: ctx.config.bind.solana.ports.faucet,
       gossipPort: ctx.config.bind.solana.ports.gossip,
       dynamicPortRange: ctx.config.bind.solana.ports.dynamicRange,
-      ledgerPath: Path.join(ctx.config.dataPath, LedgerSubpath),
+      ledgerPath: Path.join(ctx.config.dataPath, SolanaValidatorProcess.LedgerSubpath),
       programs: [{ name: SolanaOutpostProgramTool.ProgramName, programId, soFile }]
     })
     await validator.start()
