@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-swap-to-wire",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "private": true,
   "type": "commonjs",
   "description": "Flow: Swap TO WIRE (Ethereum → WIRE depot, single-leg underwriting + direct WIRE payout)",

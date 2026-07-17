@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-batch-operator-slashing",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "type": "commonjs",
   "description": "Flow: Batch Operator Slashing via OPP envelope dispute vote",

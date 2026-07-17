@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-app-server",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "scripts": {
     "compile": "tsc -b tsconfig.json",

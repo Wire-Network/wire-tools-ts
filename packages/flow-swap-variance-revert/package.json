@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-swap-variance-revert",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "private": true,
   "type": "commonjs",
   "description": "Flow: Swap Variance-Tolerance Revert",
