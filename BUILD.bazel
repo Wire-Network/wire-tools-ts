@@ -41,5 +41,9 @@ js_workspace_build(
     # Predecessor in the sequential chain; transitively pulls the full platform.
     deps = ["//wire-solana:build"],
     tags = ["ts"],
+    # Unit tests (cluster-tool + debugging-*) gate the platform build — and
+    # therefore run before the e2e gate's flow tests — skippable only via the
+    # shared SKIP_TESTS knob (see js_workspace_build).
+    test_cmd = "pnpm test",
     working_dir = "wire-tools-ts",
 )
