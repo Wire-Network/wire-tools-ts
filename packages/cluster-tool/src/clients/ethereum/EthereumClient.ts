@@ -79,14 +79,6 @@ export class EthereumClient {
     return this.queryEvents(opp, EthereumClient.OppEnvelopeEvent, fromBlock)
   }
 
-  /** Query `OPPEpoch` events from a contract. */
-  getOPPEpochs(
-    opp: ethers.Contract,
-    fromBlock = 0
-  ): Promise<ethers.EventLog[]> {
-    return this.queryEvents(opp, EthereumClient.OppEpochEvent, fromBlock)
-  }
-
   private async queryEvents(
     contract: ethers.Contract,
     eventName: string,
@@ -108,6 +100,4 @@ export namespace EthereumClient {
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
   /** OPP envelope event name on the outpost contract. */
   export const OppEnvelopeEvent = "OPPEnvelope"
-  /** OPP epoch event name on the outpost contract. */
-  export const OppEpochEvent = "OPPEpoch"
 }
