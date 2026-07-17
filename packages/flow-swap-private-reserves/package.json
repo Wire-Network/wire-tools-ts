@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-swap-private-reserves",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "private": true,
   "type": "commonjs",
   "description": "Flow: bidirectional swaps through a same-owner PRIVATE reserve pair (native × non-native) + private→WIRE exclusion",

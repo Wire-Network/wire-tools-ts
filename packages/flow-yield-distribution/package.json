@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-yield-distribution",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "commonjs",
   "description": "Flow: fake-yield STAKING_REWARD → sysio.dclaim::onreward → sysio.system::fundclaim",

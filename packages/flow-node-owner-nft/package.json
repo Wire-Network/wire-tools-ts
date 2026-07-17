@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-node-owner-nft",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "commonjs",
   "description": "Flow: ERC-1155 mint -> sysio.roa create-in-flow node-owner registration (happy path, soft-fail audits, depot hard-aborts)",

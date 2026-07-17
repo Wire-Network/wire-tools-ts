@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-swap-from-wire",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "private": true,
   "type": "commonjs",
   "description": "Flow: Swap FROM WIRE (WIRE depot → Solana, queued escrow + single-leg underwriting)",
