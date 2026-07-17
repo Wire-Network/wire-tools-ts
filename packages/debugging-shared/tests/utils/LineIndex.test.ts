@@ -58,8 +58,13 @@ describe("LineIndex", () => {
   it("rebuilds fully on inode change (rotation)", async () => {
     Fs.writeFileSync(logPath, "alpha\n", "utf8")
     const initial = await buildLineIndex(logPath)
-    Fs.unlinkSync(logPath)
-    Fs.writeFileSync(logPath, "delta\nepsilon\n", "utf8")
+    // Rotate the way rotation tools do: write the replacement WHILE the old
+    // file still exists, then rename it over the path. unlink-then-recreate
+    // lets the filesystem reuse the freed inode (seen on CI), which defeats
+    // the ino-change detection this test exists to exercise.
+    const rotatedPath = Path.join(tmpDir, "log.rotated.txt")
+    Fs.writeFileSync(rotatedPath, "delta\nepsilon\n", "utf8")
+    Fs.renameSync(rotatedPath, logPath)
     const rebuilt = await extendLineIndex(initial)
     expect(rebuilt.completeLineCount).toBe(2)
     expect(rebuilt.ino).not.toBe(initial.ino)
