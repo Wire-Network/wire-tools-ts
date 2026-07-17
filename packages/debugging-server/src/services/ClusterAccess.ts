@@ -3,8 +3,8 @@ import * as Path from "node:path"
 
 import {
   ClusterFiles,
-  type ClusterConfig,
-  type ClusterState
+  type ClusterState,
+  type PersistedClusterConfig
 } from "@wireio/debugging-shared"
 
 import { log } from "../logging/index.js"
@@ -20,7 +20,7 @@ import { log } from "../logging/index.js"
  * errors surface to the route handler.
  */
 export class ClusterAccess {
-  private configCache: ClusterConfig | null = null
+  private configCache: PersistedClusterConfig | null = null
   private stateCache: ClusterState | null | "unread" = "unread"
   private configWatcher: Fs.FSWatcher | null = null
   private stateWatcher: Fs.FSWatcher | null = null
@@ -77,11 +77,11 @@ export class ClusterAccess {
    * Resolve and cache the cluster config. Throws when the file is
    * unreadable — the caller should surface the failure to the client.
    */
-  async getConfig(): Promise<ClusterConfig> {
+  async getConfig(): Promise<PersistedClusterConfig> {
     if (this.configCache) return this.configCache
     const file = Path.join(this.clusterPath, ClusterFiles.ConfigFilename),
       raw = await Fs.promises.readFile(file, "utf8")
-    this.configCache = JSON.parse(raw) as ClusterConfig
+    this.configCache = JSON.parse(raw) as PersistedClusterConfig
     return this.configCache
   }
 
@@ -89,7 +89,7 @@ export class ClusterAccess {
    * Resolve the cluster state. Returns `null` when the file does not
    * exist — the harness writes it only after bootstrap completes.
    */
-  async getState(): Promise<ClusterState | null> {
+  async getState(): Promise<ClusterState> {
     if (this.stateCache !== "unread") return this.stateCache
     const file = Path.join(this.clusterPath, ClusterFiles.StateFilename)
     if (!Fs.existsSync(file)) {

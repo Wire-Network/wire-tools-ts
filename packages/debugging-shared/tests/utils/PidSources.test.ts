@@ -3,7 +3,8 @@ import * as OS from "node:os"
 import * as Path from "node:path"
 
 import {
-  NodeRole,
+  ClusterStateNodeRole,
+  ClusterStateVersion,
   PidSourceKind,
   PidSources,
   collectPidSources,
@@ -11,7 +12,7 @@ import {
   pidIsAlive,
   readPid,
   type ClusterState,
-  type NodeState
+  type ClusterStateNode
 } from "@wireio/debugging-shared"
 
 describe("collectPidSources", () => {
@@ -30,10 +31,10 @@ describe("collectPidSources", () => {
   })
 
   it("classifies bios / producer / batch-operator / underwriter / anvil / solana", () => {
-    const biosDir = Path.join(tmpDir, "data", "node_bios"),
-      producerDir = Path.join(tmpDir, "data", "node_p1"),
-      batchDir = Path.join(tmpDir, "data", "node_b1"),
-      underwriterDir = Path.join(tmpDir, "data", "node_u1"),
+    const biosDir = Path.join(tmpDir, "data", "bios"),
+      producerDir = Path.join(tmpDir, "data", "node_00"),
+      batchDir = Path.join(tmpDir, "data", "node_01"),
+      underwriterDir = Path.join(tmpDir, "data", "node_02"),
       anvilDir = Path.join(tmpDir, PidSources.AnvilSubpath),
       solanaDir = Path.join(tmpDir, PidSources.SolanaSubpath)
 
@@ -53,35 +54,34 @@ describe("collectPidSources", () => {
     )
 
     const node = (
-      nodeId: string | number,
-      dataPath: string,
-      role: NodeRole | undefined
-    ): NodeState => ({
-      nodeId,
-      host: "127.0.0.1",
-      port: 0,
-      dataPath,
-      configPath: "",
-      cmd: [],
-      isProducer: role === undefined,
-      producerName: null,
-      role
+      name: string,
+      nodePath: string,
+      role: ClusterStateNodeRole,
+      batchOperatorAccount: string | null = null,
+      underwriterAccount: string | null = null
+    ): ClusterStateNode => ({
+      name,
+      role,
+      nodePath,
+      ports: { http: 0, p2p: 0 },
+      producers: [],
+      batchOperatorAccount,
+      underwriterAccount
     })
 
     const state: ClusterState = {
-      pnodes: 1,
-      totalNodes: 4,
-      prodCount: 1,
-      topo: "mesh",
+      version: ClusterStateVersion,
+      createdAt: new Date().toISOString(),
       nodes: [
-        node(PidSources.BiosNodeId, biosDir, NodeRole.Producer),
-        node(1, producerDir, NodeRole.Producer)
+        node(PidSources.BiosNodeId, biosDir, ClusterStateNodeRole.bios),
+        node("node_00", producerDir, ClusterStateNodeRole.producer),
+        node("node_01", batchDir, ClusterStateNodeRole.operator, "batchop1"),
+        node("node_02", underwriterDir, ClusterStateNodeRole.operator, null, "underwriter1")
       ],
-      batchOperatorNodes: [node(1, batchDir, NodeRole.BatchOperator)],
-      underwriterNodes: [node(1, underwriterDir, NodeRole.Underwriter)],
-      anvilStatePath: "",
+      walletPath: "",
+      anvilStateFile: "",
       solanaLedgerPath: "",
-      walletPath: ""
+      solanaIdlFile: null
     }
 
     const sources = collectPidSources(tmpDir, state),

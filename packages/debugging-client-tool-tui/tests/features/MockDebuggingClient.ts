@@ -1,6 +1,5 @@
 import {
   ClosedReason,
-  type ClusterConfig,
   type ClusterState,
   type InferredStreamEvent,
   type InferredStreamParams,
@@ -8,6 +7,7 @@ import {
   type LoadEnvelopeRecordsResponse,
   type LogReadRequest,
   type LogStat,
+  type PersistedClusterConfig,
   type PidSource,
   type ProcessLivenessSnapshot,
   type StreamTopic
@@ -22,6 +22,13 @@ import type {
   ListEnvelopesResponse
 } from "@wireio/opp-typescript-models"
 
+/** One registered mock subscription — id, topic, and the (type-erased) subscription object. */
+export interface MockSubscriptionEntry {
+  id: number
+  topic: StreamTopic
+  sub: DebuggingSubscription<unknown>
+}
+
 /**
  * Test-friendly `DebuggingClient` whose responses and stream events are
  * driven by the test caller. Each unary method has a `set*` helper to
@@ -30,7 +37,7 @@ import type {
  * server-pushed events.
  */
 export class MockDebuggingClient extends DebuggingClient {
-  private clusterConfig: ClusterConfig | null = null
+  private clusterConfig: PersistedClusterConfig | null = null
   private clusterState: ClusterState | null = null
   private processSources: PidSource[] = []
   private livenessByLabel = new Map<string, ProcessLivenessSnapshot>()
@@ -39,13 +46,9 @@ export class MockDebuggingClient extends DebuggingClient {
   private envelopeListResponse: ListEnvelopesResponse | null = null
   private envelopeByKey = new Map<string, GetEnvelopeResponse>()
   private nextSubId = 1
-  private subscriptions: Array<{
-    id: number
-    topic: StreamTopic
-    sub: DebuggingSubscription<unknown>
-  }> = []
+  private subscriptions: MockSubscriptionEntry[] = []
 
-  setClusterConfig(c: ClusterConfig): this {
+  setClusterConfig(c: PersistedClusterConfig): this {
     this.clusterConfig = c
     return this
   }
@@ -100,11 +103,7 @@ export class MockDebuggingClient extends DebuggingClient {
   }
 
   /** Active subscription objects in registration order. */
-  get activeSubscriptions(): ReadonlyArray<{
-    id: number
-    topic: StreamTopic
-    sub: DebuggingSubscription<unknown>
-  }> {
+  get activeSubscriptions(): readonly MockSubscriptionEntry[] {
     return this.subscriptions
   }
 
@@ -123,12 +122,12 @@ export class MockDebuggingClient extends DebuggingClient {
     this.subscriptions = []
   }
 
-  async getClusterConfig(): Promise<ClusterConfig> {
+  async getClusterConfig(): Promise<PersistedClusterConfig> {
     if (!this.clusterConfig) throw new Error("MockDebuggingClient: no cluster config set")
     return this.clusterConfig
   }
 
-  async getClusterState(): Promise<ClusterState | null> {
+  async getClusterState(): Promise<ClusterState> {
     return this.clusterState
   }
 

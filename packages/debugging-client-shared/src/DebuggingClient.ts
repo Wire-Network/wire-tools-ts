@@ -1,5 +1,4 @@
 import type {
-  ClusterConfig,
   ClusterState,
   InferredStreamEvent,
   InferredStreamParams,
@@ -7,6 +6,7 @@ import type {
   LoadEnvelopeRecordsResponse,
   LogReadRequest,
   LogStat,
+  PersistedClusterConfig,
   PidSource,
   ProcessLivenessSnapshot,
   StreamTopic
@@ -46,10 +46,10 @@ export abstract class DebuggingClient {
   // -------------------------------------------------------------------------
 
   /** Current cluster config. Throws when `cluster-config.json` is unreadable. */
-  abstract getClusterConfig(): Promise<ClusterConfig>
+  abstract getClusterConfig(): Promise<PersistedClusterConfig>
 
   /** Post-bootstrap cluster state. `null` when the cluster has not bootstrapped yet. */
-  abstract getClusterState(): Promise<ClusterState | null>
+  abstract getClusterState(): Promise<ClusterState>
 
   // -------------------------------------------------------------------------
   //  Process monitor

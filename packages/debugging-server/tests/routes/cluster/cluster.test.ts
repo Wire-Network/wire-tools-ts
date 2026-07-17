@@ -5,13 +5,22 @@ import * as Path from "node:path"
 import {
   ApiPaths,
   ClusterFiles,
-  type ClusterConfig,
+  ClusterStateVersion,
   type ClusterState,
   type GetClusterConfigResponse,
-  type GetClusterStateResponse
+  type GetClusterStateResponse,
+  type PersistedClusterConfig
 } from "@wireio/debugging-shared"
 
 import { DebuggingServer } from "@wireio/debugging-server"
+
+/** Parsed JSON-RPC 2.0 response envelope — the wire shape `JsonRPC.mount` writes. */
+interface RpcResponseBody {
+  jsonrpc: string
+  id: number | null
+  result?: unknown
+  error?: { code: number; message: string }
+}
 
 describe(`POST ${ApiPaths.Cluster.Endpoint}`, () => {
   const tmpDir = Path.join(OS.tmpdir(), `cluster-routes-${Date.now()}`)
@@ -19,7 +28,7 @@ describe(`POST ${ApiPaths.Cluster.Endpoint}`, () => {
   let baseUrl: string
   let nextId = 1
 
-  function rpcCall(method: string, params: any = {}) {
+  function rpcCall(method: string, params: Record<string, unknown> = {}) {
     const id = nextId++
     return fetch(`${baseUrl}${ApiPaths.Cluster.Endpoint}`, {
       method: "POST",
@@ -30,25 +39,21 @@ describe(`POST ${ApiPaths.Cluster.Endpoint}`, () => {
       body: JSON.stringify({ jsonrpc: "2.0", method, params, id })
     }).then(async r => ({
       status: r.status,
-      body: (await r.json()) as any,
+      body: (await r.json()) as RpcResponseBody,
       id
     }))
   }
 
   beforeAll(async () => {
     Fs.mkdirSync(tmpDir, { recursive: true })
-    const config: Partial<ClusterConfig> = {
+    const config: Partial<PersistedClusterConfig> = {
       clusterPath: tmpDir,
       epochDurationSec: 60
     }
     const state: Partial<ClusterState> = {
-      pnodes: 1,
-      totalNodes: 1,
-      prodCount: 1,
-      topo: "mesh",
-      nodes: [],
-      batchOperatorNodes: [],
-      underwriterNodes: []
+      version: ClusterStateVersion,
+      createdAt: new Date().toISOString(),
+      nodes: []
     }
     Fs.writeFileSync(
       Path.join(tmpDir, ClusterFiles.ConfigFilename),
@@ -79,7 +84,7 @@ describe(`POST ${ApiPaths.Cluster.Endpoint}`, () => {
     const { body } = await rpcCall(ApiPaths.Cluster.Methods.GetState)
     const result = body.result as GetClusterStateResponse
     expect(result.state).not.toBeNull()
-    expect(result.state!.pnodes).toBe(1)
+    expect(result.state!.version).toBe(ClusterStateVersion)
   })
 })
 
@@ -118,7 +123,7 @@ describe(`Cluster.GetState with no state file`, () => {
         id: 1
       })
     })
-    const body = (await resp.json()) as any
-    expect(body.result.state).toBeNull()
+    const body = (await resp.json()) as RpcResponseBody
+    expect((body.result as GetClusterStateResponse).state).toBeNull()
   })
 })

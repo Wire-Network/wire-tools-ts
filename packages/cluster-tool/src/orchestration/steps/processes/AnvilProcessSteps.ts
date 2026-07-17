@@ -9,11 +9,6 @@ import {
 
 /** Steps that manage the cluster's run-time anvil (Ethereum) process. */
 export namespace AnvilProcessSteps {
-  /** Subpath (under the cluster data dir) for the anvil dumped-state file. */
-  const StateSubpath = "anvil"
-  /** Anvil dumped-state filename (loaded on restart, dumped on stop). */
-  const StateFilename = "anvil.json"
-
   /**
    * Start the run-time anvil (get-or-create from `ctx.processManager`). It starts
    * in **instamine** mode (no `--block-time`) so the Hardhat outpost deploy — which
@@ -40,7 +35,11 @@ export namespace AnvilProcessSteps {
     const anvil = await AnvilProcess.create(ctx.processManager, {
       port: ctx.config.bind.anvil.port,
       chainId: AnvilProcess.DefaultChainId,
-      stateFile: Path.join(ctx.config.dataPath, StateSubpath, StateFilename)
+      stateFile: Path.join(
+        ctx.config.dataPath,
+        AnvilProcess.StateSubpath,
+        AnvilProcess.StateFilename
+      )
     })
     await anvil.start()
   }

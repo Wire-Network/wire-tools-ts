@@ -19,6 +19,7 @@ import {
   type PidSource
 } from "@wireio/debugging-shared"
 import type { ProcessMonitorService } from "../ProcessMonitorService.js"
+import type { ProcessLiveness } from "../../../store/process-monitor/ProcessMonitorTypes.js"
 import { LogViewerPanel } from "./LogViewerPanel.js"
 
 /** Character glyphs for alive / dead / unknown liveness states. */
@@ -31,7 +32,7 @@ namespace StatusGlyph {
 type LivenessKind = "alive" | "dead" | "unknown"
 
 /** Classify liveness for display branching. */
-function classify(liveness: { alive: boolean } | undefined): LivenessKind {
+function classify(liveness: Pick<ProcessLiveness, "alive"> | undefined): LivenessKind {
   return match(liveness)
     .with({ alive: true }, () => "alive" as LivenessKind)
     .with({ alive: false }, () => "dead" as LivenessKind)
@@ -46,12 +47,12 @@ function identifierForSource(source: PidSource): string {
       { kind: PidSourceKind.SolanaValidator },
       () => "solana-test-validator"
     )
-    .otherwise(s => `${s.node?.producerName ?? s.node?.nodeId ?? s.label}`)
+    .otherwise(s => `${s.node?.producers[0] ?? s.node?.name ?? s.label}`)
 }
 
-/** Right-hand endpoint info; only nodeop sources expose host:port. */
+/** Right-hand endpoint info; only nodeop sources expose a listen port. */
 function endpointForSource(source: PidSource): string {
-  return source.node ? ` @ ${source.node.host}:${source.node.port}` : ""
+  return source.node ? ` @ :${source.node.ports.http}` : ""
 }
 
 function ProcessMonitorBody(_: PanelComponentProps): React.ReactElement {

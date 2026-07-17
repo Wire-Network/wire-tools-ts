@@ -1,4 +1,5 @@
 import { AccountSteps } from "./AccountSteps.js"
+import { ClusterStateSteps } from "./ClusterStateSteps.js"
 import { ConsensusSteps } from "./ConsensusSteps.js"
 import { ContractSteps } from "./ContractSteps.js"
 import { KeySteps } from "./KeySteps.js"
@@ -29,6 +30,7 @@ export namespace Steps {
   export import processes = ProcessSteps
 
   export import account = AccountSteps
+  export import clusterState = ClusterStateSteps
   export import consensus = ConsensusSteps
   export import contract = ContractSteps
   export import ethereumOutpost = EthereumOutpostSteps

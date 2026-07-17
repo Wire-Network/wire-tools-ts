@@ -1,4 +1,4 @@
-import type { NodeState } from "../cluster/index.js"
+import type { ClusterStateNode } from "../cluster/index.js"
 
 /** Classifies a monitored process for display grouping and fallback handling. */
 export enum PidSourceKind {
@@ -26,7 +26,7 @@ export interface PidSource {
   /** Semantic classification. */
   kind: PidSourceKind
   /** Present when the source is one of the WIRE node arrays. */
-  node?: NodeState
+  node?: ClusterStateNode
 }
 
 /** Per-label kernel-liveness snapshot from a pid-file probe. */

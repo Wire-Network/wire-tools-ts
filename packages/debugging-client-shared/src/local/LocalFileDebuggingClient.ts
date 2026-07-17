@@ -3,7 +3,7 @@ import * as Path from "node:path"
 import { createHash } from "node:crypto"
 
 import Bluebird from "bluebird"
-import { match } from "ts-pattern"
+import { match, P } from "ts-pattern"
 
 import {
   ClusterFiles,
@@ -21,7 +21,6 @@ import {
   readPid,
   readLines,
   resolveEndpointsType,
-  type ClusterConfig,
   type ClusterState,
   type DebugOPPEnvelopeRecord,
   type EnvelopeEvent,
@@ -34,6 +33,7 @@ import {
   type LogStat,
   type LogTailEvent,
   type LogTailParams,
+  type PersistedClusterConfig,
   type PidSource,
   type ProcessLivenessEvent,
   type ProcessLivenessSnapshot
@@ -126,13 +126,13 @@ export class LocalFileDebuggingClient extends DebuggingClient {
   //  Cluster
   // -------------------------------------------------------------------------
 
-  async getClusterConfig(): Promise<ClusterConfig> {
+  async getClusterConfig(): Promise<PersistedClusterConfig> {
     const file = Path.join(this.config.clusterPath, ClusterFiles.ConfigFilename),
       raw = await Fs.promises.readFile(file, "utf8")
-    return JSON.parse(raw) as ClusterConfig
+    return JSON.parse(raw) as PersistedClusterConfig
   }
 
-  async getClusterState(): Promise<ClusterState | null> {
+  async getClusterState(): Promise<ClusterState> {
     const file = Path.join(this.config.clusterPath, ClusterFiles.StateFilename)
     if (!Fs.existsSync(file)) return null
     const raw = await Fs.promises.readFile(file, "utf8")
@@ -257,10 +257,13 @@ export class LocalFileDebuggingClient extends DebuggingClient {
   async putEnvelope(req: PutEnvelopeRequest): Promise<PutEnvelopeResponse> {
     const storageDir = oppDebuggingPath(this.config.clusterPath)
     await Fs.promises.mkdir(storageDir, { recursive: true })
-    const envelopeBytes = Buffer.from(
-        req.envelopeData as unknown as string,
-        "base64"
-      ),
+    // `envelopeData` is typed `Uint8Array` by the generated proto message, but
+    // a request arriving over the NetDebuggingClient's JSON transport carries
+    // it as a base64 string (JSON has no binary type) — narrow on the actual
+    // runtime shape rather than casting past the generated type.
+    const envelopeBytes = match(req.envelopeData)
+        .with(P.string, base64 => Buffer.from(base64, "base64"))
+        .otherwise(bytes => Buffer.from(bytes)),
       checksum = createHash("sha256")
         .update(envelopeBytes)
         .digest("hex")
@@ -324,22 +327,24 @@ export class LocalFileDebuggingClient extends DebuggingClient {
           teardown?.()
         }
       )
+    // One unavoidable cast per arm, at this facade's dispatch point (per
+    // `one-generic-facade-per-concept.md`): TS cannot correlate the generic
+    // `T` narrowed by `match(topic)` with `InferredStreamEvent<T>` resolving
+    // to the arm's concrete event type.
     const teardown = await match(topic as StreamTopic)
       .with(StreamTopic.LogTail, () =>
         this.startLogTail(
-          sub as unknown as DebuggingSubscription<LogTailEvent>,
+          sub as DebuggingSubscription<LogTailEvent>,
           params as LogTailParams
         )
       )
       .with(StreamTopic.ProcessLiveness, () =>
         this.startProcessLiveness(
-          sub as unknown as DebuggingSubscription<ProcessLivenessEvent>
+          sub as DebuggingSubscription<ProcessLivenessEvent>
         )
       )
       .with(StreamTopic.EnvelopeWatch, () =>
-        this.startEnvelopeWatch(
-          sub as unknown as DebuggingSubscription<EnvelopeEvent>
-        )
+        this.startEnvelopeWatch(sub as DebuggingSubscription<EnvelopeEvent>)
       )
       .exhaustive()
     this.subscriptions.set(id, teardown)
@@ -529,7 +534,7 @@ export class LocalFileDebuggingClient extends DebuggingClient {
   private async readEnvelopePair(
     storageDir: string,
     baseKey: string
-  ): Promise<{ epoch: number; record: DebugOPPEnvelopeRecord } | null> {
+  ): Promise<LocalFileDebuggingClient.EnvelopeRecordPair> {
     const parsed = parseEnvelopeStorageKey(baseKey)
     if (!parsed) return null
     const dataPath = Path.join(
@@ -580,6 +585,24 @@ export namespace LocalFileDebuggingClient {
   export const MetadataChecksumHexChars = 12
   /** Zero-pad width applied to `epoch_index` when forming storage keys. */
   export const EpochIndexPadWidth = 8
+
+  /** Decoded `.data` + `.metadata` pair for one stored envelope. */
+  export interface EnvelopeRecordPair {
+    epoch: number
+    record: DebugOPPEnvelopeRecord
+  }
+
+  /** Result of appending to (or freshly initializing) a metadata record. */
+  export interface MetadataUpdateResult {
+    checksum: bigint
+    batchOpNames: string[]
+  }
+
+  /** `batchOpNames` + hex `checksum` read from a metadata file. */
+  export interface MetadataSummary {
+    batchOpNames: string[]
+    checksum: string
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -610,7 +633,7 @@ function computeExitedAt(
   current: ProcessLivenessSnapshot,
   prior: ProcessLivenessSnapshot | undefined,
   now: number
-): number | null {
+): number {
   return match({ alive: current.alive, prev: prior })
     .with({ alive: true }, () => null)
     .with({ alive: false, prev: { alive: true } }, () => now)
@@ -632,7 +655,7 @@ async function resolveListEntry(
   dataFile: string,
   storageDir: string,
   filter: ListEnvelopesRequest
-): Promise<EnvelopeListEntry | null> {
+): Promise<EnvelopeListEntry> {
   const parsed = parseEnvelopeStorageKey(
     dataFile.replace(LocalFileDebuggingClient.DataExt, "")
   )
@@ -680,7 +703,7 @@ async function readOrInitMetadata(
   metadataFile: string,
   checksum: string,
   batchOpName: string
-): Promise<{ checksum: bigint; batchOpNames: string[] }> {
+): Promise<LocalFileDebuggingClient.MetadataUpdateResult> {
   try {
     const existingBytes = await Fs.promises.readFile(metadataFile),
       decoded = DebugEnvelopeMetadataRecord.fromBinary(existingBytes),
@@ -712,7 +735,7 @@ async function readMetadataBatchOpNames(
 /** Read both `batchOpNames` and the hex checksum from a metadata file. */
 async function readMetadataSummary(
   metadataPath: string
-): Promise<{ batchOpNames: string[]; checksum: string }> {
+): Promise<LocalFileDebuggingClient.MetadataSummary> {
   try {
     const metaBytes = await Fs.promises.readFile(metadataPath),
       meta = DebugEnvelopeMetadataRecord.fromBinary(metaBytes)

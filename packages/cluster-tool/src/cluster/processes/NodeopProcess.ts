@@ -275,6 +275,12 @@ export namespace NodeopProcess {
   export const FinalizersDirname = "finalizers"
   /** Finalizer safety information file (fsi) inside {@link FinalizersDirname}. */
   export const SafetyDatFilename = "safety.dat"
+  /** `producer_api_plugin` resume endpoint — un-pauses block production. */
+  export const ResumeProductionPath = "/v1/producer/resume" as const
+  /** `producer_api_plugin` paused-state endpoint. */
+  export const PausedPath = "/v1/producer/paused" as const
+  /** Per-request timeout for {@link resumeProduction} (ms). */
+  export const ResumeProductionTimeoutMs = 5_000
 
   /**
    * Build the full nodeop command-line (binary + args), matching the Python
@@ -375,6 +381,25 @@ export namespace NodeopProcess {
     return (
       !candidate.isRunning &&
       candidate.recentOutput.some(line => DirtyChainbasePattern.test(line))
+    )
+  }
+
+  /**
+   * POST {@link ResumeProductionPath} against a producing node's HTTP
+   * endpoint — un-pauses block production (a no-op if the node is already
+   * unpaused). Used by `ClusterManager.run` after relaunching a producer so a
+   * cluster that was gracefully stopped mid-production resumes producing.
+   *
+   * @param httpUrl - The node's HTTP dial URL (e.g. `NodeopProcess.httpUrl`).
+   */
+  export async function resumeProduction(httpUrl: string): Promise<void> {
+    const response = await fetch(`${httpUrl}${ResumeProductionPath}`, {
+      method: "POST",
+      signal: AbortSignal.timeout(ResumeProductionTimeoutMs)
+    })
+    Assert.ok(
+      response.ok,
+      `resumeProduction: ${httpUrl}${ResumeProductionPath} answered ${response.status}`
     )
   }
 

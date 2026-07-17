@@ -4,12 +4,13 @@ import * as Path from "node:path"
 
 import {
   ClusterFiles,
-  NodeRole,
+  ClusterStateNodeRole,
+  ClusterStateVersion,
   PidSources,
   oppDebuggingPath,
-  type ClusterConfig,
   type ClusterState,
-  type NodeState
+  type ClusterStateNode,
+  type PersistedClusterConfig
 } from "@wireio/debugging-shared"
 
 /** Disposable on-disk cluster fixture. */
@@ -42,72 +43,93 @@ export function makeFixtureCluster(): FixtureCluster {
   Fs.mkdirSync(oppDebuggingPath(clusterPath), { recursive: true })
 
   const node = (
-    nodeId: string | number,
-    nodeDir: string,
-    role: NodeRole
-  ): NodeState => ({
-    nodeId,
-    host: "127.0.0.1",
-    port: 0,
-    dataPath: nodeDir,
-    configPath: "",
-    cmd: [],
-    isProducer: role === NodeRole.Producer,
-    producerName: null,
-    role
+    name: string,
+    nodePath: string,
+    role: ClusterStateNodeRole,
+    batchOperatorAccount: string | null = null,
+    underwriterAccount: string | null = null
+  ): ClusterStateNode => ({
+    name,
+    role,
+    nodePath,
+    ports: { http: 0, p2p: 0 },
+    producers: [],
+    batchOperatorAccount,
+    underwriterAccount
   })
 
   const state: ClusterState = {
-    pnodes: 1,
-    totalNodes: 3,
-    prodCount: 1,
-    topo: "mesh",
-    nodes: [node(PidSources.BiosNodeId, biosDir, NodeRole.Producer)],
-    batchOperatorNodes: [node(1, batchDir, NodeRole.BatchOperator)],
-    underwriterNodes: [node(1, underwriterDir, NodeRole.Underwriter)],
-    anvilStatePath: "",
+    version: ClusterStateVersion,
+    createdAt: new Date().toISOString(),
+    nodes: [
+      node(PidSources.BiosNodeId, biosDir, ClusterStateNodeRole.bios),
+      node("node_00", batchDir, ClusterStateNodeRole.operator, "batchop1"),
+      node("node_01", underwriterDir, ClusterStateNodeRole.operator, null, "underwriter1")
+    ],
+    walletPath: "",
+    anvilStateFile: "",
     solanaLedgerPath: "",
-    walletPath: ""
+    solanaIdlFile: null
   }
 
-  const config: ClusterConfig = {
+  const config: PersistedClusterConfig = {
     buildPath: "",
     clusterPath,
-    walletPath: "",
     dataPath,
+    walletPath: "",
     producerCount: 1,
     nodeCount: 3,
-    httpSecure: false,
     batchOperatorCount: 1,
     underwriterCount: 1,
-    ethereumPath: "",
-    solanaPath: "",
     epochDurationSec: 60,
     warmupEpochs: 0,
     cooldownEpochs: 0,
-    ports: {
-      kiod: 0,
-      biosHttp: 0,
-      biosP2p: 0,
-      producerHttp: [],
-      producerP2p: [],
-      batchOperatorHttp: [],
-      batchOperatorP2p: [],
-      underwriterHttp: [],
-      underwriterP2p: [],
-      anvil: 0,
-      solanaRpc: 0,
-      solanaFaucet: 0,
-      debuggingServer: 0
+    ethereumPath: "",
+    solanaPath: "",
+    bind: {
+      kiod: { address: "127.0.0.1", port: 0 },
+      nodeop: {
+        address: "127.0.0.1",
+        ports: {
+          bios: { http: 0, p2p: 0 },
+          producers: [],
+          batch: [],
+          underwriters: []
+        }
+      },
+      anvil: { address: "127.0.0.1", port: 0 },
+      solana: {
+        address: "127.0.0.1",
+        ports: {
+          http: 0,
+          faucet: 0,
+          gossip: 0,
+          dynamicRange: { first: 0, last: 0 }
+        }
+      },
+      debuggingServer: { address: "127.0.0.1", port: 0 }
     },
     executables: {
       nodeop: "",
       kiod: "",
       clio: "",
-      sysUtil: "",
       anvil: "",
       solanaTestValidator: ""
-    }
+    },
+    report: {
+      path: "",
+      basename: "cluster-build",
+      formats: []
+    },
+    logging: {
+      levels: { console: "info", file: "debug" },
+      fileFormat: "jsonl"
+    },
+    requiredBatchOperatorCollateral: [],
+    requiredUnderwriterCollateral: [],
+    requiredProducerCollateral: [],
+    underwriterCollateral: null,
+    initialFinalizerKey: null
   }
 
   Fs.writeFileSync(

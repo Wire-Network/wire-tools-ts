@@ -199,6 +199,18 @@ export class ProcessManager {
     })
   }
 
+  /**
+   * Explicitly run the one-time orphan sweep + signal-handler installation
+   * (idempotent — a no-op once already initialized). {@link push} triggers
+   * the same initialization lazily on the first registered process; callers
+   * that need the sweep to run BEFORE any process is pushed (e.g.
+   * `ClusterManager.run`, which must refuse a still-live cluster before it
+   * starts anything) call this directly instead.
+   */
+  initialize(): void {
+    this.ensureInitialized()
+  }
+
   /** A ManagedProcess registers itself here from its constructor (variadic). */
   push(...processes: ManagedProcess[]): this {
     this.ensureInitialized()
@@ -213,7 +225,7 @@ export class ProcessManager {
   }
 
   /** Look up a registered process by label. */
-  get(label: string): ManagedProcess | null {
+  get(label: string): ManagedProcess {
     return this.processes.get(label) ?? null
   }
 

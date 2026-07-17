@@ -84,7 +84,7 @@ describe("NetDebuggingClient", () => {
     it("returns the cluster state when present", async () => {
       const state = await client.getClusterState()
       expect(state).not.toBeNull()
-      expect(state!.nodes.length).toBe(1)
+      expect(state!.nodes.length).toBe(3)
     })
   })
 

@@ -5,7 +5,6 @@ import {
   ApiPaths,
   DebuggingDefaults,
   FROM_JSON_OPTIONS,
-  type ClusterConfig,
   type ClusterState,
   type GetClusterConfigResponse,
   type GetClusterStateResponse,
@@ -20,6 +19,7 @@ import {
   type LogReadResponse,
   type LogStat,
   type LogStatRequest,
+  type PersistedClusterConfig,
   type PidSource,
   type ProcessLivenessSnapshot,
   type StreamTopic
@@ -121,7 +121,7 @@ export class NetDebuggingClient extends DebuggingClient {
   //  Cluster
   // -------------------------------------------------------------------------
 
-  async getClusterConfig(): Promise<ClusterConfig> {
+  async getClusterConfig(): Promise<PersistedClusterConfig> {
     const resp = (await this.clusterRpc.invoke(
       ApiPaths.Cluster.Methods.GetConfig,
       {}
@@ -129,7 +129,7 @@ export class NetDebuggingClient extends DebuggingClient {
     return resp
   }
 
-  async getClusterState(): Promise<ClusterState | null> {
+  async getClusterState(): Promise<ClusterState> {
     const resp = (await this.clusterRpc.invoke(
       ApiPaths.Cluster.Methods.GetState,
       {}
@@ -195,6 +195,12 @@ export class NetDebuggingClient extends DebuggingClient {
       ApiPaths.OPP.Methods.EnvelopeList,
       req
     )
+    // `invoke`'s inferred type is the protobuf-ts message interface
+    // (`ListEnvelopesResponse`, with real `bigint`/`Uint8Array` field types),
+    // but the value crossing the wire is plain parsed JSON matching
+    // protobuf-ts's own `JsonValue` shape — the two are genuinely
+    // structurally incompatible (bigint has no JsonValue member), so a
+    // single-step assertion doesn't typecheck either direction.
     return ListEnvelopesResponse.fromJson(
       json as unknown as JsonValue,
       FROM_JSON_OPTIONS
@@ -207,6 +213,7 @@ export class NetDebuggingClient extends DebuggingClient {
         ApiPaths.OPP.Methods.EnvelopeGet,
         params
       )
+    // Same protobuf-ts JSON-boundary mismatch as `listEnvelopes` above.
     return GetEnvelopeResponse.fromJson(
       json as unknown as JsonValue,
       FROM_JSON_OPTIONS

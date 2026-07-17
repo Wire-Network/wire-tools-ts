@@ -5,15 +5,24 @@ import * as Path from "node:path"
 import {
   ApiPaths,
   ClusterFiles,
-  NodeRole,
+  ClusterStateNodeRole,
+  ClusterStateVersion,
   PidSources,
   type ClusterState,
+  type ClusterStateNode,
   type GetProcessLivenessResponse,
-  type ListProcessesResponse,
-  type NodeState
+  type ListProcessesResponse
 } from "@wireio/debugging-shared"
 
 import { DebuggingServer } from "@wireio/debugging-server"
+
+/** Parsed JSON-RPC 2.0 response envelope — the wire shape `JsonRPC.mount` writes. */
+interface RpcResponseBody {
+  jsonrpc: string
+  id: number | null
+  result?: unknown
+  error?: { code: number; message: string }
+}
 
 describe(`POST ${ApiPaths.Processes.Endpoint}`, () => {
   const tmpDir = Path.join(OS.tmpdir(), `process-routes-${Date.now()}`),
@@ -22,7 +31,7 @@ describe(`POST ${ApiPaths.Processes.Endpoint}`, () => {
   let baseUrl: string
   let nextId = 1
 
-  function rpcCall(method: string, params: any = {}) {
+  function rpcCall(method: string, params: Record<string, unknown> = {}) {
     const id = nextId++
     return fetch(`${baseUrl}${ApiPaths.Processes.Endpoint}`, {
       method: "POST",
@@ -30,7 +39,7 @@ describe(`POST ${ApiPaths.Processes.Endpoint}`, () => {
       body: JSON.stringify({ jsonrpc: "2.0", method, params, id })
     }).then(async r => ({
       status: r.status,
-      body: (await r.json()) as any
+      body: (await r.json()) as RpcResponseBody
     }))
   }
 
@@ -40,28 +49,23 @@ describe(`POST ${ApiPaths.Processes.Endpoint}`, () => {
       Path.join(nodeDir, `nodeop${PidSources.PidExt}`),
       String(process.pid)
     )
-    const node: NodeState = {
-      nodeId: PidSources.BiosNodeId,
-      host: "127.0.0.1",
-      port: 0,
-      dataPath: nodeDir,
-      configPath: "",
-      cmd: [],
-      isProducer: true,
-      producerName: null,
-      role: NodeRole.Producer
+    const node: ClusterStateNode = {
+      name: PidSources.BiosNodeId,
+      role: ClusterStateNodeRole.bios,
+      nodePath: nodeDir,
+      ports: { http: 0, p2p: 0 },
+      producers: [],
+      batchOperatorAccount: null,
+      underwriterAccount: null
     }
     const state: ClusterState = {
-      pnodes: 1,
-      totalNodes: 1,
-      prodCount: 1,
-      topo: "mesh",
+      version: ClusterStateVersion,
+      createdAt: new Date().toISOString(),
       nodes: [node],
-      batchOperatorNodes: [],
-      underwriterNodes: [],
-      anvilStatePath: "",
+      walletPath: "",
+      anvilStateFile: "",
       solanaLedgerPath: "",
-      walletPath: ""
+      solanaIdlFile: null
     }
     Fs.writeFileSync(
       Path.join(tmpDir, ClusterFiles.ConfigFilename),

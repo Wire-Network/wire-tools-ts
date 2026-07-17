@@ -1,10 +1,10 @@
-import type { ClusterConfig, ClusterState } from "./ClusterTypes.js"
+import type { ClusterState, PersistedClusterConfig } from "./ClusterTypes.js"
 
 /** Empty request body for `Cluster.GetConfig`. */
 export interface GetClusterConfigRequest {}
 
 /** Response body for `Cluster.GetConfig`. */
-export type GetClusterConfigResponse = ClusterConfig
+export type GetClusterConfigResponse = PersistedClusterConfig
 
 /** Empty request body for `Cluster.GetState`. */
 export interface GetClusterStateRequest {}

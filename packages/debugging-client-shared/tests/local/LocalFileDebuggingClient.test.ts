@@ -55,7 +55,7 @@ describe("LocalFileDebuggingClient", () => {
     it("returns the on-disk state when present", async () => {
       const state = await client.getClusterState()
       expect(state).not.toBeNull()
-      expect(state!.nodes.length).toBe(1)
+      expect(state!.nodes.length).toBe(3)
     })
 
     it("returns null when state file is missing", async () => {
