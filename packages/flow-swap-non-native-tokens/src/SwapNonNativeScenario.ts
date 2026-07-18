@@ -1,4 +1,5 @@
 import Assert from "node:assert"
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { TokenAmount } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import {
@@ -16,7 +17,6 @@ import {
   type ClusterBuildOptions,
   type ClusterBuildStep,
   type ClusterBuildStepOptions,
-  type ClusterConfig,
   type Logger
 } from "@wireio/cluster-tool"
 import { SwapNonNativeScenarioConstants as Constants } from "./SwapNonNativeScenarioConstants.js"
@@ -34,7 +34,9 @@ const { Reserves, SwapAmounts, Timing, TokenDecimals } = Constants
 // ── Step option presets (poll deadline + buffer per the timing budgets) ─────
 
 /** On-chain write steps (mint / approve / permit / requestSwap transactions). */
-const WriteStepOptions: ClusterBuildStepOptions = { timeoutMs: Timing.WriteTimeoutMs }
+const WriteStepOptions: ClusterBuildStepOptions = {
+  timeoutMs: Timing.WriteTimeoutMs
+}
 /** Verify steps polling to the UWREQ-creation / lock deadline. */
 const UwreqStepOptions: ClusterBuildStepOptions = {
   timeoutMs: Timing.UwreqDeadlineMs + Timing.PollDeadlineBufferMs
@@ -213,7 +215,9 @@ function assertReserveTokenCodes(
  * @param cell - The swap cell under verification.
  * @returns The four verify steps, in lifecycle order.
  */
-function planSwapVerifySteps(cell: SwapCell): ClusterBuildStep.Any<SwapScenarioContext>[] {
+function planSwapVerifySteps(
+  cell: SwapCell
+): ClusterBuildStep.Any<SwapScenarioContext>[] {
   const destinationActor =
     cell.destination === SwapDestinationKind.ethereumNative
       ? Actor.EthereumOutpost
@@ -303,7 +307,10 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
     underwriterCollateral: [underwriterCollateralLegs()]
   }
 
-  override createContext(config: ClusterConfig, log: Logger): SwapScenarioContext {
+  override createContext(
+    config: ClusterConfig,
+    log: Logger
+  ): SwapScenarioContext {
     return new SwapScenarioContext(config, log)
   }
 

@@ -38,8 +38,13 @@ async function readPclaimsRows(
 }
 
 /** How many `pclaims` rows credit `wireAccount` (a read — the dedupe metric). */
-async function readPclaimsCount(ctx: ClusterBuildContext, wireAccount: string): Promise<number> {
-  return (await readPclaimsRows(ctx)).filter(row => row.wire_account === wireAccount).length
+async function readPclaimsCount(
+  ctx: ClusterBuildContext,
+  wireAccount: string
+): Promise<number> {
+  return (await readPclaimsRows(ctx)).filter(
+    row => row.wire_account === wireAccount
+  ).length
 }
 
 /** All `sysio.dclaim::unmapped` rows (a read). */
@@ -59,7 +64,10 @@ async function readT5State(
   const { rows } = await ctx.wire
     .getSysioContract(SysioContractName.system)
     .tables.t5state.query({ limit: 1 })
-  Assert.ok(rows.length >= 1, "sysio::t5state has no row — was initt5 run at bootstrap?")
+  Assert.ok(
+    rows.length >= 1,
+    "sysio::t5state has no row — was initt5 run at bootstrap?"
+  )
   return rows[0]
 }
 
@@ -68,7 +76,9 @@ async function readT5State(
  * arrive as JSON strings, so the conversion is runtime normalization, not
  * ceremony — the expected value here is 0 either way.
  */
-async function readCapitalShortfallTotal(ctx: ClusterBuildContext): Promise<number> {
+async function readCapitalShortfallTotal(
+  ctx: ClusterBuildContext
+): Promise<number> {
   return Number((await readT5State(ctx)).capital_shortfall_total)
 }
 
@@ -97,7 +107,10 @@ async function runProvisionLinkedStaker(
   signal: AbortSignal
 ): Promise<void> {
   signal.throwIfAborted()
-  ctx.outputs.set(YieldDistributionScenario.LinkedStakerWalletKey, ethers.Wallet.createRandom())
+  ctx.outputs.set(
+    YieldDistributionScenario.LinkedStakerWalletKey,
+    ethers.Wallet.createRandom()
+  )
   await provisionWireUser(ctx.wire, input.account)
 }
 
@@ -115,7 +128,9 @@ async function runAuthexLinkLinkedStaker(
   signal: AbortSignal
 ): Promise<void> {
   signal.throwIfAborted()
-  const wallet = ctx.outputs.assert(YieldDistributionScenario.LinkedStakerWalletKey)
+  const wallet = ctx.outputs.assert(
+    YieldDistributionScenario.LinkedStakerWalletKey
+  )
   await AuthExLinkTool.createLink(ctx.wire, {
     chainKind: ChainKind.EVM,
     account: input.account,
@@ -135,7 +150,10 @@ async function runProvisionUnlinkedStaker(
   signal: AbortSignal
 ): Promise<void> {
   signal.throwIfAborted()
-  ctx.outputs.set(YieldDistributionScenario.UnlinkedStakerWalletKey, ethers.Wallet.createRandom())
+  ctx.outputs.set(
+    YieldDistributionScenario.UnlinkedStakerWalletKey,
+    ethers.Wallet.createRandom()
+  )
 }
 
 /**
@@ -172,7 +190,8 @@ export class YieldDistributionScenario extends FlowScenario {
   plan(cluster: ClusterBuild): void {
     const emitStepOptions = { timeoutMs: Constants.EmitStepTimeoutMs },
       propagationStepOptions = {
-        timeoutMs: Constants.PropagationTimeoutMs + Constants.PollDeadlineBufferMs
+        timeoutMs:
+          Constants.PropagationTimeoutMs + Constants.PollDeadlineBufferMs
       },
       dedupeStepOptions = {
         timeoutMs: Constants.dedupeSettleMs() + Constants.PollDeadlineBufferMs
@@ -252,7 +271,8 @@ export class YieldDistributionScenario extends FlowScenario {
         async ctx => {
           await pollUntil(
             `pclaims row for ${Constants.LinkedStakerAccount} (ETH)`,
-            async () => (await readPclaimsCount(ctx, Constants.LinkedStakerAccount)) >= 1,
+            async () =>
+              (await readPclaimsCount(ctx, Constants.LinkedStakerAccount)) >= 1,
             Constants.PropagationTimeoutMs,
             Constants.PropagationPollMs
           )
@@ -264,7 +284,9 @@ export class YieldDistributionScenario extends FlowScenario {
         "capital-shortfall-unchanged",
         "t5state.capital_shortfall_total is unchanged (emissions cover the credit)",
         async ctx => {
-          const before = ctx.outputs.assert(YieldDistributionScenario.CapitalShortfallBeforeKey)
+          const before = ctx.outputs.assert(
+            YieldDistributionScenario.CapitalShortfallBeforeKey
+          )
           Assert.strictEqual(
             await readCapitalShortfallTotal(ctx),
             before,
@@ -308,7 +330,9 @@ export class YieldDistributionScenario extends FlowScenario {
         "unmapped-row-unlinked",
         "an unmapped row appears keyed by the unlinked staker's ETH address",
         async ctx => {
-          const wallet = ctx.outputs.assert(YieldDistributionScenario.UnlinkedStakerWalletKey),
+          const wallet = ctx.outputs.assert(
+              YieldDistributionScenario.UnlinkedStakerWalletKey
+            ),
             expectedPubkey = ethereumNativePubkey(wallet.address)
           await pollUntil(
             "unmapped row for the unlinked ETH staker",
@@ -331,7 +355,10 @@ export class YieldDistributionScenario extends FlowScenario {
             YieldDistributionScenario.EthereumUnmappedCountBeforeKey
           )
           const after = (await readUnmappedRows(ctx)).length
-          Assert.ok(after > before, `unmapped count ${after} did not grow past ${before}`)
+          Assert.ok(
+            after > before,
+            `unmapped count ${after} did not grow past ${before}`
+          )
         }
       )
     )

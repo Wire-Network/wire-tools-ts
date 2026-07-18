@@ -85,9 +85,9 @@ export class StreamServer {
 
   /** Close the WS server and tear down every active subscription. */
   async detach(): Promise<void> {
-    const allSubs = [...this.subscriptions.values()].flatMap(perConn =>
-      [...perConn.values()]
-    )
+    const allSubs = [...this.subscriptions.values()].flatMap(perConn => [
+      ...perConn.values()
+    ])
     await Promise.all(allSubs.map(sub => sub.stream.stop()))
     this.subscriptions.clear()
     this.wss?.clients.forEach(ws => {
@@ -145,9 +145,7 @@ export class StreamServer {
     const perConn = this.subscriptions.get(ws)
     if (!perConn) return
     this.subscriptions.delete(ws)
-    await Promise.all(
-      [...perConn.values()].map(sub => sub.stream.stop())
-    )
+    await Promise.all([...perConn.values()].map(sub => sub.stream.stop()))
   }
 
   // -------------------------------------------------------------------------
@@ -224,9 +222,7 @@ export class StreamServer {
       .with(
         StreamTopic.EnvelopeWatch,
         () =>
-          new EnvelopeWatchStream(
-            this.clusterPath
-          ) as ServerSideStream<unknown>
+          new EnvelopeWatchStream(this.clusterPath) as ServerSideStream<unknown>
       )
       .otherwise(() => null)
   }

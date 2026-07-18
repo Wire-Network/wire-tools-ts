@@ -1,16 +1,17 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import type { Argv } from "yargs"
 import { Deferred } from "@wireio/shared"
-import { ClusterConfig } from "@wireio/cluster-tool/config"
+import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
 import { PersistedFixture } from "../config/clusterConfigFixture.js"
 
 const runMock = jest.fn()
 
 // Preserve every other `ClusterManager` member (create/launch/stop/destroy) via
 // the real module — only `run` is faked, mirroring the established
-// `jest.requireActual` spread pattern (see BindConfig.test.ts's netUtils mock).
+// `jest.requireActual` spread pattern (see BindConfigProvider.test.ts's netUtils mock).
 jest.mock("@wireio/cluster-tool/cluster/ClusterManager", () => ({
   ClusterManager: {
     ...(
@@ -74,7 +75,7 @@ describe("createRunCommand", () => {
       Path.join(Os.tmpdir(), "wire-cluster-run-cmd-test-")
     )
     Fs.writeFileSync(
-      Path.join(clusterPath, ClusterConfig.ConfigFilename),
+      Path.join(clusterPath, ClusterConfigProvider.ConfigFilename),
       JSON.stringify({ ...PersistedFixture, clusterPath })
     )
   })

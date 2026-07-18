@@ -1,12 +1,11 @@
+import type { ClusterConfig, ClusterState } from "@wireio/cluster-tool-shared"
 import type {
-  ClusterState,
   InferredStreamEvent,
   InferredStreamParams,
   LoadEnvelopeRecordsRequest,
   LoadEnvelopeRecordsResponse,
   LogReadRequest,
   LogStat,
-  PersistedClusterConfig,
   PidSource,
   ProcessLivenessSnapshot,
   StreamTopic
@@ -46,7 +45,7 @@ export abstract class DebuggingClient {
   // -------------------------------------------------------------------------
 
   /** Current cluster config. Throws when `cluster-config.json` is unreadable. */
-  abstract getClusterConfig(): Promise<PersistedClusterConfig>
+  abstract getClusterConfig(): Promise<ClusterConfig>
 
   /** Post-bootstrap cluster state. `null` when the cluster has not bootstrapped yet. */
   abstract getClusterState(): Promise<ClusterState>

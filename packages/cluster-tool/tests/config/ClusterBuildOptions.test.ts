@@ -1,8 +1,10 @@
+import type {
+  ClusterConfigLogging,
+  CollateralRequirement
+} from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
 import type {
   ClusterBuildOptions,
-  CollateralRequirement,
-  LoggingConfig,
   LoggingOptions
 } from "@wireio/cluster-tool/config"
 import { LogFileAppender } from "@wireio/cluster-tool/logging"
@@ -27,8 +29,8 @@ describe("ClusterBuildOptions types", () => {
     expect(options.bind?.anvil?.port).toBe(8545)
   })
 
-  it("models the resolved LoggingConfig and caller LoggingOptions distinctly", () => {
-    const config: LoggingConfig = {
+  it("models the resolved ClusterConfigLogging and caller LoggingOptions distinctly", () => {
+    const config: ClusterConfigLogging = {
       levels: { console: Level.info, file: Level.debug },
       fileFormat: LogFileAppender.Format.jsonl
     }

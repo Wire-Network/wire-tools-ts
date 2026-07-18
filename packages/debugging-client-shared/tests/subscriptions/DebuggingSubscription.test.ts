@@ -1,7 +1,4 @@
-import {
-  ClosedReason,
-  StreamTopic
-} from "@wireio/debugging-shared"
+import { ClosedReason, StreamTopic } from "@wireio/debugging-shared"
 
 import {
   DebuggingSubscription,

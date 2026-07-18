@@ -1,4 +1,3 @@
-
 import {
   ClosedReason,
   EnvelopeEventKind,
@@ -20,7 +19,10 @@ import {
   NetDebuggingClient
 } from "@wireio/debugging-client-shared"
 
-import { makeFixtureCluster, type FixtureCluster } from "../local/fixtureCluster.js"
+import {
+  makeFixtureCluster,
+  type FixtureCluster
+} from "../local/fixtureCluster.js"
 
 function makeEnvelopeBase64(epochIndex: number): string {
   const bytes = Envelope.toBinary(
@@ -209,9 +211,7 @@ describe("NetDebuggingClient", () => {
       // ProcessLivenessStream poll cadence is 5s; allow generous time
       await new Promise(r => setTimeout(r, 6_000))
       sub.close(ClosedReason.ClientRequested)
-      const allLabels = events.flatMap(e =>
-        e.setSnapshots.map(s => s.label)
-      )
+      const allLabels = events.flatMap(e => e.setSnapshots.map(s => s.label))
       expect(allLabels).toContain("nodeop")
     }, 15_000)
   })

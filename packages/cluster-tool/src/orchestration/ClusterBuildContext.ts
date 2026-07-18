@@ -1,3 +1,4 @@
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { Keypair } from "@solana/web3.js"
 import { EventEmitter } from "eventemitter3"
 import { asOption } from "@3fv/prelude-ts"
@@ -6,11 +7,14 @@ import { SolanaClient } from "../clients/solana/SolanaClient.js"
 import { SolanaWallet } from "../clients/solana/SolanaWallet.js"
 import { WireClient } from "../clients/wire/WireClient.js"
 import { ProcessManager } from "../cluster/processes/ProcessManager.js"
-import type { ClusterConfig } from "../config/ClusterConfig.js"
+
 import type { Logger } from "../logging/Logger.js"
 import { Localhost, toURL } from "../utils/netUtils.js"
 import { OutputStore } from "./OutputStore.js"
-import { ClusterKeyStore, ClusterKeyStoreKey } from "./outputs/ClusterKeyStore.js"
+import {
+  ClusterKeyStore,
+  ClusterKeyStoreKey
+} from "./outputs/ClusterKeyStore.js"
 
 /**
  * The surface every step in a build shares: the resolved {@link ClusterConfig},

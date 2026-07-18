@@ -6,7 +6,8 @@ import {
   ListenAllAddress,
   Localhost,
   toAddress,
-  toURL
+  toURL,
+  URLScheme
 } from "@wireio/cluster-tool/utils"
 
 describe("netUtils", () => {
@@ -29,7 +30,7 @@ describe("netUtils", () => {
       expect(toURL(8888)).toBe("http://127.0.0.1:8888")
     })
     it("accepts a scheme and address", () => {
-      expect(toURL(8899, Localhost, "ws")).toBe("ws://127.0.0.1:8899")
+      expect(toURL(8899, Localhost, URLScheme.ws)).toBe("ws://127.0.0.1:8899")
     })
   })
 
@@ -57,14 +58,19 @@ describe("netUtils", () => {
     ].join("\n")
 
     it("keeps only lines whose LOCAL port matches, across v4/v6 forms", () => {
-      const lines = filterSocketLinesByLocalPort(SsOutput, new Set([8000, 8899]))
+      const lines = filterSocketLinesByLocalPort(
+        SsOutput,
+        new Set([8000, 8899])
+      )
       expect(lines).toHaveLength(2)
       expect(lines[0]).toContain("0.0.0.0:8000")
       expect(lines[1]).toContain("[::]:8899")
     })
 
     it("matches nothing for ports absent from the output (header never matches)", () => {
-      expect(filterSocketLinesByLocalPort(SsOutput, new Set([12000]))).toHaveLength(0)
+      expect(
+        filterSocketLinesByLocalPort(SsOutput, new Set([12000]))
+      ).toHaveLength(0)
       expect(filterSocketLinesByLocalPort(SsOutput, new Set())).toHaveLength(0)
     })
   })

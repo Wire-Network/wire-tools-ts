@@ -39,7 +39,9 @@ export namespace SwapPrivateReservesScenarioOwnerSteps {
    * standard resource policy, and fund it with enough WIRE to escrow both
    * `matchreserve` amounts (via the harness's `provisionWireUser`).
    */
-  export function planProvisionOwner<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planProvisionOwner<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -89,7 +91,9 @@ export namespace SwapPrivateReservesScenarioOwnerSteps {
    * matcher's link key for the reserve's chain equalling the creator key, so
    * BOTH links are required before either match.
    */
-  export function planLinkOwner<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planLinkOwner<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -162,7 +166,9 @@ export namespace SwapPrivateReservesScenarioOwnerSteps {
    * Phase B source + headroom), signed by the persisted deployer keypair
    * (the mint authority).
    */
-  export function planMintCreatorUsdcSol<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planMintCreatorUsdcSol<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,

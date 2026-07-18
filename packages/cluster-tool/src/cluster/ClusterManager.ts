@@ -1,11 +1,12 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
-import { getValue } from "@wireio/shared"
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
+import { PidSources, pidIsAlive, readPid } from "@wireio/debugging-shared"
 import { ProtocolTiming } from "../Constants.js"
-import { BindConfig } from "../config/BindConfig.js"
+import { BindConfigProvider } from "../config/BindConfigProvider.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
-import { ClusterConfig } from "../config/ClusterConfig.js"
+import { ClusterConfigProvider } from "../config/ClusterConfigProvider.js"
 import { NodeConfig, NodeRole } from "../config/NodeConfig.js"
 import { getLogger } from "../logging/Logger.js"
 import type { ClusterBuild } from "../orchestration/ClusterBuild.js"
@@ -19,7 +20,6 @@ import { OperatorDaemonTool } from "../tools/wire/OperatorDaemonTool.js"
 import { eachSeries } from "../utils/asyncUtils.js"
 import { mkdirs } from "../utils/fsUtils.js"
 import { Localhost, toURL } from "../utils/netUtils.js"
-import { isPidAlive } from "../utils/processUtils.js"
 import { ClusterState } from "./ClusterState.js"
 import { AnvilProcess } from "./processes/AnvilProcess.js"
 import { NodeopProcess } from "./processes/NodeopProcess.js"
@@ -89,14 +89,16 @@ export namespace ClusterManager {
    * @param build - The composed cluster build (bootstrap ± scenario phases).
    * @returns The run's report.
    */
-  export async function launch<C extends ClusterBuildContext = ClusterBuildContext>(
-    build: ClusterBuild<C>
-  ): Promise<Report> {
+  export async function launch<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(build: ClusterBuild<C>): Promise<Report> {
     const config = build.config
     ProcessManager.setClusterPath(config.clusterPath)
     writeClusterFiles(config)
-    await config.save()
-    log.info(`[cluster] filesystem ready at ${config.clusterPath}; running build`)
+    await ClusterConfigProvider.save(config)
+    log.info(
+      `[cluster] filesystem ready at ${config.clusterPath}; running build`
+    )
     return build.build()
   }
 
@@ -105,19 +107,30 @@ export namespace ClusterManager {
     mkdirs(config.dataPath)
     mkdirs(config.walletPath)
     mkdirs(config.report.path)
-    Fs.writeFileSync(config.genesisFile, config.genesis.render())
+    Fs.writeFileSync(
+      ClusterConfigProvider.genesisFile(config),
+      ClusterConfigProvider.genesisRenderer(config).render()
+    )
     NodeConfig.plan(config).forEach(node => {
       mkdirs(node.nodePath)
-      Fs.writeFileSync(Path.join(node.nodePath, NodeConfigFilename), node.ini.render())
-      Fs.writeFileSync(Path.join(node.nodePath, NodeLoggingFilename), node.logging.render())
+      Fs.writeFileSync(
+        Path.join(node.nodePath, NodeConfigFilename),
+        node.ini.render()
+      )
+      Fs.writeFileSync(
+        Path.join(node.nodePath, NodeLoggingFilename),
+        node.logging.render()
+      )
     })
   }
 
   /**
    * Refuse to relaunch a still-live cluster: scan every pidfile under every
    * subdirectory of `config.dataPath` and throw, naming every pid that is
-   * still alive (`process.kill(pid, 0)` via {@link isPidAlive}). Called at
-   * the top of {@link run}, before anything is started or swept.
+   * still alive. Pid parsing + the kernel probe ride debugging-shared's
+   * {@link readPid} / {@link pidIsAlive} — the same primitives the debugging
+   * surface monitors with. Called at the top of {@link run}, before anything
+   * is started or swept.
    *
    * @param config - The cluster config to check.
    * @throws If any pidfile under `config.dataPath` names a live pid.
@@ -130,16 +143,11 @@ export namespace ClusterManager {
       .flatMap(entry => {
         const directory = Path.join(dataPath, entry.name)
         return Fs.readdirSync(directory)
-          .filter(name => name.endsWith(".pid"))
+          .filter(name => name.endsWith(PidSources.PidExt))
           .map(name => Path.join(directory, name))
       })
-      .flatMap(pidFile => {
-        const pid = getValue(
-          () => Number.parseInt(Fs.readFileSync(pidFile, "utf8").trim(), 10),
-          Number.NaN
-        )
-        return Number.isInteger(pid) && pid > 0 && isPidAlive(pid) ? [pid] : []
-      })
+      .map(pidFile => readPid(pidFile))
+      .filter(pid => pidIsAlive(pid))
     Assert.ok(
       livePids.length === 0,
       `cluster at ${config.clusterPath} appears to be running (live pid(s): ${livePids.join(", ")}) — stop it first`
@@ -153,13 +161,20 @@ export namespace ClusterManager {
    * `resolveOperator` / `resolveOperatorDaemonArgs` resolution), with
    * `relaunch: true` so the one-shot genesis flags are stripped.
    */
-  async function startNode(ctx: ClusterBuildContext, node: NodeConfig): Promise<void> {
+  async function startNode(
+    ctx: ClusterBuildContext,
+    node: NodeConfig
+  ): Promise<void> {
     if (ctx.processManager.get(node.name) != null) return
     const operator = Steps.processes.nodeop.resolveOperator(ctx, node)
     await NodeopProcess.startWithRecovery(ctx.processManager, {
       node,
       operator,
-      extraArgs: Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, operator),
+      extraArgs: Steps.processes.nodeop.resolveOperatorDaemonArgs(
+        ctx,
+        node,
+        operator
+      ),
       relaunch: true
     })
   }
@@ -187,14 +202,17 @@ export namespace ClusterManager {
     // NodeConfig.plan(config), the exact deterministic call `create`'s steps
     // make, so `run` and `create` can never drift apart.
     const keys = ClusterState.loadKeys(config)
-    const ctx = new ClusterBuildContext(config, getLogger(config.report.basename))
+    const ctx = new ClusterBuildContext(
+      config,
+      getLogger(config.report.basename)
+    )
     ClusterState.rehydrate(ctx.keyStore, keys)
 
     Assert.ok(
-      await config.bind.validate(),
+      await BindConfigProvider.validate(config.bind),
       `cluster ${config.clusterPath}: one or more resolved ports are no longer free — cannot relaunch`
     )
-    BindConfig.registerResolved(config.bind)
+    BindConfigProvider.registerResolved(config.bind)
 
     const controller = new AbortController(),
       nodes = NodeConfig.plan(config),
@@ -269,7 +287,11 @@ export namespace ClusterManager {
     await Steps.processes.debuggingServer.runStart(ctx, null, controller.signal)
 
     log.info("[cluster] preparing operator daemon artifacts")
-    await OperatorDaemonTool.runArtifactPreparation(ctx, null, controller.signal)
+    await OperatorDaemonTool.runArtifactPreparation(
+      ctx,
+      null,
+      controller.signal
+    )
 
     log.info(`[cluster] starting ${operatorNodes.length} operator node(s)`)
     await Promise.all(operatorNodes.map(node => startNode(ctx, node)))
@@ -312,8 +334,14 @@ export namespace ClusterManager {
     await ProcessManager.get().stopAll(forceKill)
   }
 
-  /** Stop everything + remove the cluster directory. */
+  /**
+   * Stop everything + remove the cluster directory. In the usual CLI case this
+   * runs in a fresh process whose registry is empty — the pidfile orphan sweep
+   * from `initialize()` is what terminates a still-live cluster's daemons.
+   */
   export async function destroy(config: ClusterConfig): Promise<void> {
+    ProcessManager.setClusterPath(config.clusterPath)
+    ProcessManager.get().initialize()
     await stop(true)
     Fs.rmSync(config.clusterPath, { recursive: true, force: true })
   }

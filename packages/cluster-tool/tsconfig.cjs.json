@@ -7,6 +7,9 @@
   "include": ["src"],
   "references": [
     {
+      "path": "../cluster-tool-shared/tsconfig.json"
+    },
+    {
       "path": "../debugging-shared/tsconfig.json"
     },
     {

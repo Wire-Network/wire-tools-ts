@@ -3,22 +3,32 @@ import Os from "node:os"
 import Path from "node:path"
 import { SolanaFundingTool } from "@wireio/cluster-tool/tools/solana"
 import { Connection, Keypair } from "@solana/web3.js"
-import { BindConfig } from "@wireio/cluster-tool/config"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { Report } from "@wireio/cluster-tool/report"
 import { toURL } from "@wireio/cluster-tool/utils"
 
 describe("SolanaFundingTool input validation", () => {
   // The Assert guards fire before any RPC, so this connection is never dialed —
-  // but the URL still resolves via BindConfig.findAvailable (no fixed port).
+  // but the URL still resolves via BindConfigProvider.findAvailable (no fixed port).
   const funder = Keypair.generate()
   let connection: Connection
   beforeAll(async () => {
-    connection = new Connection(toURL(await BindConfig.findAvailable(BindConfig.DefaultSolanaRpc)))
+    connection = new Connection(
+      toURL(
+        await BindConfigProvider.findAvailable(
+          BindConfigProvider.DefaultSolanaRpc
+        )
+      )
+    )
   })
 
   it("createMockSplMint rejects out-of-range decimals", async () => {
     await expect(
-      SolanaFundingTool.createMockSplMint(connection, funder, SolanaFundingTool.MaxDecimals + 1)
+      SolanaFundingTool.createMockSplMint(
+        connection,
+        funder,
+        SolanaFundingTool.MaxDecimals + 1
+      )
     ).rejects.toThrow(/decimals must be in/)
   })
 
@@ -26,7 +36,13 @@ describe("SolanaFundingTool input validation", () => {
     const mint = Keypair.generate().publicKey
     const recipient = Keypair.generate().publicKey
     await expect(
-      SolanaFundingTool.mintMockSplToUser(connection, funder, mint, recipient, 0n)
+      SolanaFundingTool.mintMockSplToUser(
+        connection,
+        funder,
+        mint,
+        recipient,
+        0n
+      )
     ).rejects.toThrow(/amount must be > 0/)
   })
 
@@ -69,9 +85,9 @@ describe("SolanaFundingTool step factories", () => {
   })
 
   it("loadDeployerKeypair throws when the persisted keypair is absent", () => {
-    expect(() => SolanaFundingTool.loadDeployerKeypair("/no/such/data/dir")).toThrow(
-      /deployer keypair not found/
-    )
+    expect(() =>
+      SolanaFundingTool.loadDeployerKeypair("/no/such/data/dir")
+    ).toThrow(/deployer keypair not found/)
   })
 })
 
@@ -89,7 +105,9 @@ describe("SolanaFundingTool.solMintAddress", () => {
   })
 
   it("resolves a persisted mock mint by token code", () => {
-    expect(SolanaFundingTool.solMintAddress(dataPath, 123n)).toBe("MintPubkeyBase58")
+    expect(SolanaFundingTool.solMintAddress(dataPath, 123n)).toBe(
+      "MintPubkeyBase58"
+    )
   })
 
   it("throws LOUDLY for a token code with no persisted mint (never a silent skip)", () => {
@@ -99,8 +117,8 @@ describe("SolanaFundingTool.solMintAddress", () => {
   })
 
   it("throws when the mint manifest is absent entirely", () => {
-    expect(() => SolanaFundingTool.solMintAddress("/no/such/data", 123n)).toThrow(
-      /mock SPL mints not found/
-    )
+    expect(() =>
+      SolanaFundingTool.solMintAddress("/no/such/data", 123n)
+    ).toThrow(/mock SPL mints not found/)
   })
 })

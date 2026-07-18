@@ -1,11 +1,13 @@
 import {
-  BindConfig,
   NodeConfig,
   NodeConfigIniRenderer,
   NodeRole,
-  producerName
+  producerName,
+  BindConfigProvider,
+  ClusterConfigProvider
 } from "@wireio/cluster-tool/config"
 import { WireClient } from "@wireio/cluster-tool/clients/wire"
+import { Localhost } from "@wireio/cluster-tool/utils"
 import { fixtureConfig } from "./clusterConfigFixture.js"
 
 describe("NodeConfig", () => {
@@ -28,8 +30,12 @@ describe("NodeConfig", () => {
       expect(nodes[0].name).toBe(NodeConfig.BiosName)
       const operators = nodes.filter(n => n.role === NodeRole.operator)
       expect(operators).toHaveLength(4)
-      expect(operators.filter(n => n.batchOperatorAccount !== null)).toHaveLength(3)
-      expect(operators.filter(n => n.underwriterAccount !== null)).toHaveLength(1)
+      expect(
+        operators.filter(n => n.batchOperatorAccount !== null)
+      ).toHaveLength(3)
+      expect(operators.filter(n => n.underwriterAccount !== null)).toHaveLength(
+        1
+      )
     })
 
     it("gives each node peer endpoints to every other node", () => {
@@ -47,9 +53,9 @@ describe("NodeConfig", () => {
         .filter(n => n.batchOperatorAccount !== null)
         .map(n => n.batchOperatorAccount)
       expect(batchOps).toContain("batchop.a")
-      expect(nodes.find(n => n.underwriterAccount !== null)?.underwriterAccount).toBe(
-        "uwrit.a"
-      )
+      expect(
+        nodes.find(n => n.underwriterAccount !== null)?.underwriterAccount
+      ).toBe("uwrit.a")
     })
   })
 
@@ -62,7 +68,7 @@ describe("NodeConfig", () => {
       expect(ini).toContain("enable-stale-production = true")
       expect(ini).toContain("signature-provider")
       expect(ini).toContain(
-        `p2p-listen-endpoint = ${BindConfig.LoopbackAddress}:${BindConfig.DefaultBiosP2p}`
+        `p2p-listen-endpoint = ${Localhost}:${BindConfigProvider.DefaultBiosP2p}`
       )
       expect(ini).toContain("http-validate-host = false")
       // Dev boxes routinely sit above nodeop's 90% resource-monitor disk
@@ -76,7 +82,9 @@ describe("NodeConfig", () => {
     it("renders operator config with read-mode + the operator account", () => {
       const batchOp = nodes.find(n => n.batchOperatorAccount !== null)!
       const ini = batchOp.ini.render()
-      expect(ini).toContain(`read-mode = ${WireClient.FinalityType.irreversible}`)
+      expect(ini).toContain(
+        `read-mode = ${WireClient.FinalityType.irreversible}`
+      )
       expect(ini).toContain(
         `batch-operator-account = ${batchOp.batchOperatorAccount}`
       )
@@ -86,7 +94,7 @@ describe("NodeConfig", () => {
       const producer = nodes.find(n => n.role === NodeRole.producer)!
       const ini = producer.ini.render()
       expect(ini).toContain(
-        `p2p-peer-address = ${NodeConfigIniRenderer.Loopback}:${BindConfig.DefaultBiosP2p}`
+        `p2p-peer-address = ${NodeConfigIniRenderer.Loopback}:${BindConfigProvider.DefaultBiosP2p}`
       )
     })
   })
@@ -104,20 +112,26 @@ describe("NodeConfig", () => {
     })
   })
 
-  describe("genesis renderer (via ClusterConfig.genesis)", () => {
+  describe("genesis renderer (via ClusterConfigProvider.genesis)", () => {
     it("renders valid genesis.json with the dev initial_key + CPU overrides", () => {
-      const genesis = JSON.parse(fixtureConfig().genesis.render())
+      const genesis = JSON.parse(
+        ClusterConfigProvider.genesisRenderer(fixtureConfig()).render()
+      )
       expect(genesis.initial_key).toMatch(/^SYS/)
       expect(genesis.initial_configuration.max_block_cpu_usage).toBe(400_000)
     })
 
     it("omits initial_finalizer_key when none is set", () => {
-      const genesis = JSON.parse(fixtureConfig().genesis.render())
+      const genesis = JSON.parse(
+        ClusterConfigProvider.genesisRenderer(fixtureConfig()).render()
+      )
       expect(genesis.initial_finalizer_key).toBeUndefined()
     })
 
     it("does not emit the removed base_per_transaction_net_usage parameter", () => {
-      const genesis = JSON.parse(fixtureConfig().genesis.render())
+      const genesis = JSON.parse(
+        ClusterConfigProvider.genesisRenderer(fixtureConfig()).render()
+      )
       expect(genesis.initial_configuration.net_usage_leeway).toBe(500)
       expect(genesis.initial_configuration).not.toHaveProperty(
         "base_per_transaction_net_usage"

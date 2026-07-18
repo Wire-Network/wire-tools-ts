@@ -5,23 +5,20 @@ import * as Path from "node:path"
 import {
   ClusterFiles,
   ClusterStateNodeRole,
-  ClusterStateVersion,
+  type ClusterState,
+  type ClusterStateNode
+} from "@wireio/cluster-tool-shared"
+import {
   PidSources,
   StreamFrameType,
   StreamTopic,
-  type ClusterState,
-  type ClusterStateNode,
   type EventFrame,
   type ProcessLivenessEvent
 } from "@wireio/debugging-shared"
 
 import { DebuggingServer } from "@wireio/debugging-server"
 
-import {
-  collectFrames,
-  connectStream,
-  sendSubscribe
-} from "./streamHelpers.js"
+import { collectFrames, connectStream, sendSubscribe } from "./streamHelpers.js"
 
 describe("ProcessLivenessStream over WS", () => {
   const tmpDir = Path.join(OS.tmpdir(), `wsProc-${Date.now()}`),
@@ -45,7 +42,6 @@ describe("ProcessLivenessStream over WS", () => {
       underwriterAccount: null
     }
     const state: ClusterState = {
-      version: ClusterStateVersion,
       createdAt: new Date().toISOString(),
       nodes: [node],
       walletPath: "",

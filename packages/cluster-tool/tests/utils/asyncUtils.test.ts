@@ -11,7 +11,7 @@ import {
   toURL,
   waitForEndpoint
 } from "@wireio/cluster-tool/utils"
-import { BindConfig } from "@wireio/cluster-tool/config"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
 
 describe("asyncUtils", () => {
   describe("sleep", () => {
@@ -49,7 +49,8 @@ describe("asyncUtils", () => {
         retry(fn, {
           maxAttempts: 5,
           delayMs: 1,
-          checkResult: error => error instanceof Error && error.message === "chain rejection"
+          checkResult: error =>
+            error instanceof Error && error.message === "chain rejection"
         })
       ).rejects.toThrow("chain rejection")
       expect(fn).toHaveBeenCalledTimes(1)
@@ -65,7 +66,10 @@ describe("asyncUtils", () => {
           maxAttempts: 4,
           delayMs: 1,
           checkResult: error =>
-            !(error instanceof Error && error.message.includes("Connection refused"))
+            !(
+              error instanceof Error &&
+              error.message.includes("Connection refused")
+            )
         })
       ).toBe("ok")
       expect(fn).toHaveBeenCalledTimes(3)
@@ -76,7 +80,7 @@ describe("asyncUtils", () => {
     let fetchSpy: jest.SpyInstance
     let url: string
     beforeAll(async () => {
-      url = `${toURL(await BindConfig.findAvailable(BindConfig.DefaultBiosHttp))}/v1/chain/get_info`
+      url = `${toURL(await BindConfigProvider.findAvailable(BindConfigProvider.DefaultBiosHttp))}/v1/chain/get_info`
     })
     afterEach(() => fetchSpy.mockRestore())
 

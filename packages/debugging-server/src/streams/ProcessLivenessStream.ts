@@ -16,9 +16,7 @@ import type { ServerSideStream } from "./ServerSideStream.js"
  * emits only the diff against the prior snapshot so idle clusters emit
  * nothing per tick.
  */
-export class ProcessLivenessStream
-  implements ServerSideStream<ProcessLivenessEvent>
-{
+export class ProcessLivenessStream implements ServerSideStream<ProcessLivenessEvent> {
   private timer: NodeJS.Timeout | null = null
   private prev = new Map<string, ProcessLivenessSnapshot>()
   private stopped = false
@@ -55,11 +53,7 @@ export class ProcessLivenessStream
       const pid = readPid(src.pidPath),
         alive = pidIsAlive(pid),
         prior = this.prev.get(src.label),
-        exitedAt = alive
-          ? null
-          : prior?.alive
-            ? now
-            : (prior?.exitedAt ?? now)
+        exitedAt = alive ? null : prior?.alive ? now : (prior?.exitedAt ?? now)
       next.set(src.label, {
         label: src.label,
         pid,

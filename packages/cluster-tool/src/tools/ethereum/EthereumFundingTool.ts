@@ -28,6 +28,7 @@ import { Report } from "../../report/Report.js"
 import { contractView, resolveLatestNonce } from "../../utils/ethereumUtils.js"
 import { ethereumSigner } from "../../utils/keyPairUtils.js"
 import { EthereumCollateralTool } from "./EthereumCollateralTool.js"
+import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 
 /**
  * Minimal structural surface for an ERC-20 mock that exposes
@@ -67,15 +68,16 @@ export interface MintableErc20 extends ethers.BaseContract {
 export async function mintMockErc20ToUser(
   mockErc20: MintableErc20,
   recipient: string,
-  amount:    bigint
+  amount: bigint
 ): Promise<string> {
-  Assert.ok(ethers.isAddress(recipient),
-    `Erc20FundingTool: recipient is not a valid address: ${recipient}`)
-  Assert.ok(amount > 0n,
-    "Erc20FundingTool: mint amount must be > 0")
+  Assert.ok(
+    ethers.isAddress(recipient),
+    `Erc20FundingTool: recipient is not a valid address: ${recipient}`
+  )
+  Assert.ok(amount > 0n, "Erc20FundingTool: mint amount must be > 0")
 
-  const nonce   = await resolveLatestNonce(mockErc20)
-  const tx      = await mockErc20.mint(recipient, amount, { nonce })
+  const nonce = await resolveLatestNonce(mockErc20)
+  const tx = await mockErc20.mint(recipient, amount, { nonce })
   const receipt = await tx.wait(1)
   Assert.ok(
     receipt !== null && receipt.status === 1 && receipt.blockNumber > 0,
@@ -133,22 +135,21 @@ export interface PermitSignature {
  * @return `(deadline, v, r, s)` ready to pack into a `PermitSig` struct.
  */
 export async function signErc20Permit(
-  owner:    ethers.Signer,
-  token:    Erc20PermitTarget,
-  spender:  string,
-  value:    bigint,
+  owner: ethers.Signer,
+  token: Erc20PermitTarget,
+  spender: string,
+  value: bigint,
   deadline: bigint
 ): Promise<PermitSignature> {
-  Assert.ok(ethers.isAddress(spender),
-    `Erc20FundingTool: spender is not a valid address: ${spender}`)
-  Assert.ok(value > 0n,
-    "Erc20FundingTool: permit value must be > 0")
-  Assert.ok(deadline > 0n,
-    "Erc20FundingTool: permit deadline must be > 0")
+  Assert.ok(
+    ethers.isAddress(spender),
+    `Erc20FundingTool: spender is not a valid address: ${spender}`
+  )
+  Assert.ok(value > 0n, "Erc20FundingTool: permit value must be > 0")
+  Assert.ok(deadline > 0n, "Erc20FundingTool: permit deadline must be > 0")
 
   const provider = owner.provider
-  Assert.ok(provider !== null,
-    "Erc20FundingTool: owner signer has no provider")
+  Assert.ok(provider !== null, "Erc20FundingTool: owner signer has no provider")
 
   const ownerAddr = await owner.getAddress()
   const [network, nonce, name, tokenAddr] = await Promise.all([
@@ -161,21 +162,21 @@ export async function signErc20Permit(
   const signature = await owner.signTypedData(
     {
       name,
-      version:           "1",
-      chainId:           network.chainId,
+      version: "1",
+      chainId: network.chainId,
       verifyingContract: tokenAddr
     },
     {
       Permit: [
-        { name: "owner",    type: "address" },
-        { name: "spender",  type: "address" },
-        { name: "value",    type: "uint256" },
-        { name: "nonce",    type: "uint256" },
+        { name: "owner", type: "address" },
+        { name: "spender", type: "address" },
+        { name: "value", type: "uint256" },
+        { name: "nonce", type: "uint256" },
         { name: "deadline", type: "uint256" }
       ]
     },
     {
-      owner:    ownerAddr,
+      owner: ownerAddr,
       spender,
       value,
       nonce,
@@ -231,7 +232,9 @@ export namespace EthereumFundingTool {
    * The operator's ETH wallet is read from `ctx.outputs` (self-mints via the mock's
    * ungated `mint`); idempotent — a wallet already at/above `amount` no-ops.
    */
-  export function planErc20Mint<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planErc20Mint<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -263,16 +266,19 @@ export namespace EthereumFundingTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(input.amount > 0n, "EthereumFundingTool.planErc20Mint: amount must be positive")
+    Assert.ok(
+      input.amount > 0n,
+      "EthereumFundingTool.planErc20Mint: amount must be positive"
+    )
     const operator = ctx.keyStore.assertOperator(input.operatorAccount)
     const signer = ethereumSigner(operator.ethereum, ctx.ethereum.provider)
     const tokenAddress = EthereumCollateralTool.mockErc20Address(
-      ctx.config.ethereumDeploymentsPath,
+      ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
       input.tokenName
     )
     const token = contractView<
-        MintableErc20 & { balanceOf: (address: string) => Promise<bigint> }
-      >(tokenAddress, MintWithBalanceAbi, signer)
+      MintableErc20 & { balanceOf: (address: string) => Promise<bigint> }
+    >(tokenAddress, MintWithBalanceAbi, signer)
     const current = await token.balanceOf(signer.address)
     if (current >= input.amount) return
     await mintMockErc20ToUser(token, signer.address, input.amount - current)

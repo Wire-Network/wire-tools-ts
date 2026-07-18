@@ -25,7 +25,8 @@ import {
   type ClusterBuildStepOptions,
   type Report,
   type ReserveManagerRequestSwapContract,
-  type StepInput
+  type StepInput,
+  ClusterConfigProvider
 } from "@wireio/cluster-tool"
 import { SwapWithUnderwritingScenarioConstants as Constants } from "../SwapWithUnderwritingScenarioConstants.js"
 
@@ -70,7 +71,9 @@ export namespace SwapWithUnderwritingScenarioSwapSteps {
    * @param request - The static swap parameters ({@link RequestSwapEthereumInput} minus `kind`).
    * @returns The definition step.
    */
-  export function planRequestSwapEthereum<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRequestSwapEthereum<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -82,7 +85,10 @@ export namespace SwapWithUnderwritingScenarioSwapSteps {
       name,
       description,
       options,
-      { kind: "SwapWithUnderwritingScenarioSwapSteps.RequestSwapEthereumInput", ...request },
+      {
+        kind: "SwapWithUnderwritingScenarioSwapSteps.RequestSwapEthereumInput",
+        ...request
+      },
       runRequestSwapEthereum
     )
   }
@@ -159,7 +165,9 @@ export namespace SwapWithUnderwritingScenarioSwapSteps {
    * @param request - The static swap parameters ({@link RequestSwapSolanaInput} minus `kind`).
    * @returns The definition step.
    */
-  export function planRequestSwapSolana<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRequestSwapSolana<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -171,7 +179,10 @@ export namespace SwapWithUnderwritingScenarioSwapSteps {
       name,
       description,
       options,
-      { kind: "SwapWithUnderwritingScenarioSwapSteps.RequestSwapSolanaInput", ...request },
+      {
+        kind: "SwapWithUnderwritingScenarioSwapSteps.RequestSwapSolanaInput",
+        ...request
+      },
       runRequestSwapSolana
     )
   }
@@ -188,8 +199,13 @@ export namespace SwapWithUnderwritingScenarioSwapSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const swapUser = ctx.outputs.assert(swapUserOutputKey())
-    const targetAmount = ctx.outputs.assert(Constants.PhaseBTargetAmountDepotKey)
-    const program = SolanaCollateralTool.loadOppOutpostProgram(ctx, swapUser.solanaKeypair)
+    const targetAmount = ctx.outputs.assert(
+      Constants.PhaseBTargetAmountDepotKey
+    )
+    const program = SolanaCollateralTool.loadOppOutpostProgram(
+      ctx,
+      swapUser.solanaKeypair
+    )
     const signature = await requestSolanaSwap(
       ctx.solana.connection,
       program,
@@ -228,9 +244,9 @@ export namespace SwapWithUnderwritingScenarioSwapSteps {
     ctx: C,
     wallet: ethers.Signer
   ): ReserveManagerRequestSwapContract {
-    const address = EthereumCollateralTool.loadOutpostAddresses(ctx.config.ethereumDeploymentsPath)[
-      Constants.ReserveManagerContractName
-    ]
+    const address = EthereumCollateralTool.loadOutpostAddresses(
+      ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
+    )[Constants.ReserveManagerContractName]
     Assert.ok(
       address != null && /^0x[0-9a-fA-F]{40}$/.test(address),
       `SwapWithUnderwritingScenarioSwapSteps: ${Constants.ReserveManagerContractName} not in outpost-addrs.json (got ${address})`

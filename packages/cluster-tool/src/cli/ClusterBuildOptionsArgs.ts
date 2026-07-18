@@ -15,7 +15,7 @@ import { LogFileAppender } from "../logging/LogFileAppender.js"
  * explicit flag overrides them.
  *
  * NOTE: these are intentionally the *CLI* defaults and are distinct from
- * `ClusterConfig.Default*` (the resolve-time fallbacks used when an option is
+ * `ClusterConfigProvider.Default*` (the resolve-time fallbacks used when an option is
  * fully unset), which differ for producer count (21) and epoch duration (90s).
  * The CLI has always pinned 1 / 60 here; changing them would silently alter the
  * topology + cadence of every flow. Leave them unless the divergence is being
@@ -238,7 +238,10 @@ function buildBindShape(
       address: optionalLeaf(OptionLeafType.string, "solana bind address"),
       ports: {
         http: optionalLeaf(OptionLeafType.number, "solana RPC listen port"),
-        faucet: optionalLeaf(OptionLeafType.number, "solana faucet listen port"),
+        faucet: optionalLeaf(
+          OptionLeafType.number,
+          "solana faucet listen port"
+        ),
         gossip: optionalLeaf(
           OptionLeafType.number,
           "solana validator gossip listen port (--gossip-port)"
@@ -287,19 +290,17 @@ function buildReportShape(): OptionShapeObject {
 export function buildOptionShape(
   defaults: ClusterBuildOptions
 ): OptionShapeObject {
-  const nodeCount = defaults.nodeCount ?? CliDefault.nodeCount,
-    batchCount = defaults.batchOperatorCount ?? CliDefault.batchOperatorCount,
-    underwriterCount = defaults.underwriterCount ?? CliDefault.underwriterCount
+  const {
+    nodeCount = CliDefault.nodeCount,
+    batchOperatorCount: batchCount = CliDefault.batchOperatorCount,
+    underwriterCount = CliDefault.underwriterCount
+  } = defaults
   return {
     // ── paths ──
     clusterPath: requiredLeaf(OptionLeafType.string, "cluster data directory"),
     buildPath: requiredLeaf(OptionLeafType.string, "wire-sysio build dir"),
     ethereumPath: requiredLeaf(OptionLeafType.string, "wire-ethereum repo"),
     solanaPath: requiredLeaf(OptionLeafType.string, "wire-solana repo"),
-    clusterConfigPath: optionalLeaf(
-      OptionLeafType.string,
-      "explicit cluster-config.json path"
-    ),
     force: leaf(false, "overwrite an existing cluster directory"),
     // ── topology ──
     nodeCount: leaf(CliDefault.nodeCount, "producer node process count"),
@@ -358,18 +359,6 @@ const AliasByFlag: Record<string, string> = {
   "underwriter-count": "u"
 }
 
-/** The yargs `type` union — the wire spelling behind each {@link OptionLeafType}. */
-type YargsPrimitiveType = "string" | "number" | "boolean"
-
-/** Map a typed {@link OptionLeafType} to yargs' `type` string (enum-first, no cast). */
-function yargsType(type: OptionLeafType): YargsPrimitiveType {
-  return match(type)
-    .with(OptionLeafType.string, () => "string" as const)
-    .with(OptionLeafType.number, () => "number" as const)
-    .with(OptionLeafType.boolean, () => "boolean" as const)
-    .exhaustive()
-}
-
 /** A parsed-argv record — every yargs field arrives as `unknown`. */
 type OptionArgv = Record<string, unknown>
 
@@ -397,7 +386,9 @@ function toYargsOption(
 ): YargsOption {
   const seeded = readDeep(defaults, optionLeaf.path) ?? optionLeaf.value,
     option: YargsOption = {
-      type: yargsType(optionLeaf.type),
+      // OptionLeafType's identity values ARE yargs' `type` spellings — the
+      // enum member is assignable to yargs' literal union directly.
+      type: optionLeaf.type,
       describe: optionLeaf.describe,
       // yargs mandates `undefined` for "no default"; normalize `null` at the boundary.
       default: seeded ?? undefined,
@@ -472,7 +463,10 @@ export function applyClusterBuildOptionsArgs(
   )
   return flattenOptionLeaves(buildOptionShape(seededDefaults)).reduce(
     (instance, optionLeaf) =>
-      instance.option(optionLeaf.flag, toYargsOption(optionLeaf, seededDefaults)),
+      instance.option(
+        optionLeaf.flag,
+        toYargsOption(optionLeaf, seededDefaults)
+      ),
     yargs
   )
 }
@@ -552,8 +546,7 @@ const PathOptionKeys = [
   "buildPath",
   "clusterPath",
   "ethereumPath",
-  "solanaPath",
-  "clusterConfigPath"
+  "solanaPath"
 ] as const
 
 /** A `ClusterBuildOptions` member holding a filesystem path. */

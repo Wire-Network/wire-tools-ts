@@ -4,15 +4,16 @@ import * as Path from "node:path"
 
 import {
   ClusterStateNodeRole,
-  ClusterStateVersion,
+  type ClusterState,
+  type ClusterStateNode
+} from "@wireio/cluster-tool-shared"
+import {
   PidSourceKind,
   PidSources,
   collectPidSources,
   logPathForSource,
   pidIsAlive,
-  readPid,
-  type ClusterState,
-  type ClusterStateNode
+  readPid
 } from "@wireio/debugging-shared"
 
 describe("collectPidSources", () => {
@@ -38,9 +39,14 @@ describe("collectPidSources", () => {
       anvilDir = Path.join(tmpDir, PidSources.AnvilSubpath),
       solanaDir = Path.join(tmpDir, PidSources.SolanaSubpath)
 
-    ;[biosDir, producerDir, batchDir, underwriterDir, anvilDir, solanaDir].forEach(d =>
-      Fs.mkdirSync(d, { recursive: true })
-    )
+    ;[
+      biosDir,
+      producerDir,
+      batchDir,
+      underwriterDir,
+      anvilDir,
+      solanaDir
+    ].forEach(d => Fs.mkdirSync(d, { recursive: true }))
 
     Fs.writeFileSync(Path.join(biosDir, "nodeop.pid"), "11", "utf8")
     Fs.writeFileSync(Path.join(producerDir, "nodeop.pid"), "12", "utf8")
@@ -70,13 +76,18 @@ describe("collectPidSources", () => {
     })
 
     const state: ClusterState = {
-      version: ClusterStateVersion,
       createdAt: new Date().toISOString(),
       nodes: [
         node(PidSources.BiosNodeId, biosDir, ClusterStateNodeRole.bios),
         node("node_00", producerDir, ClusterStateNodeRole.producer),
         node("node_01", batchDir, ClusterStateNodeRole.operator, "batchop1"),
-        node("node_02", underwriterDir, ClusterStateNodeRole.operator, null, "underwriter1")
+        node(
+          "node_02",
+          underwriterDir,
+          ClusterStateNodeRole.operator,
+          null,
+          "underwriter1"
+        )
       ],
       walletPath: "",
       anvilStateFile: "",

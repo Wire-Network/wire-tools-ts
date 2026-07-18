@@ -17,7 +17,8 @@ import {
   type EthereumSwapRequest,
   type OutputKey,
   type ReserveManagerRequestSwapContract,
-  type StepInput
+  type StepInput,
+  ClusterConfigProvider
 } from "@wireio/cluster-tool"
 import { ReserveLifecycleScenarioConstants as Constants } from "../ReserveLifecycleScenarioConstants.js"
 
@@ -39,7 +40,10 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * its signing wallet at run time (the contract verifies the compressed key
    * derives to `msg.sender`).
    */
-  export type NativeReserveCreateArgs = Omit<EthereumReserveCreateArgs, "creatorPubKey">
+  export type NativeReserveCreateArgs = Omit<
+    EthereumReserveCreateArgs,
+    "creatorPubKey"
+  >
 
   /** The swap-probe args — `EthereumSwapRequest` minus the runtime recipient. */
   export type SwapProbeRequest = Omit<EthereumSwapRequest, "targetRecipient">
@@ -136,9 +140,9 @@ export namespace ReserveLifecycleScenarioReserveSteps {
     ctx: C,
     signer: ethers.Signer
   ): ReserveManagerNativeContract & ReserveManagerRequestSwapContract {
-    const address = EthereumCollateralTool.loadOutpostAddresses(ctx.config.ethereumDeploymentsPath)[
-      Constants.ReserveManagerContractName
-    ]
+    const address = EthereumCollateralTool.loadOutpostAddresses(
+      ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
+    )[Constants.ReserveManagerContractName]
     Assert.ok(
       address != null && /^0x[0-9a-fA-F]{40}$/.test(address),
       `ReserveLifecycleScenarioReserveSteps: ReserveManager not in outpost-addrs.json (got ${address})`
@@ -224,7 +228,9 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * @param create - The create args (pubkey injected at run time).
    * @returns The definition step.
    */
-  export function planCreateReserve<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCreateReserve<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -236,7 +242,10 @@ export namespace ReserveLifecycleScenarioReserveSteps {
       name,
       description,
       options,
-      { kind: "ReserveLifecycleScenarioReserveSteps.CreateReserveInput", create },
+      {
+        kind: "ReserveLifecycleScenarioReserveSteps.CreateReserveInput",
+        create
+      },
       runCreateReserve
     )
   }
@@ -279,7 +288,9 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * @param create - The create args (pubkey injected at run time).
    * @returns The definition step.
    */
-  export function planCreateReserveUnlinked<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCreateReserveUnlinked<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -291,7 +302,10 @@ export namespace ReserveLifecycleScenarioReserveSteps {
       name,
       description,
       options,
-      { kind: "ReserveLifecycleScenarioReserveSteps.CreateReserveUnlinkedInput", create },
+      {
+        kind: "ReserveLifecycleScenarioReserveSteps.CreateReserveUnlinkedInput",
+        create
+      },
       runCreateReserveUnlinked
     )
   }
@@ -332,7 +346,9 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * @param amountWei - Wei to seed the wallet with.
    * @returns The definition step.
    */
-  export function planFundUnlinkedCreator<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planFundUnlinkedCreator<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -344,7 +360,10 @@ export namespace ReserveLifecycleScenarioReserveSteps {
       name,
       description,
       options,
-      { kind: "ReserveLifecycleScenarioReserveSteps.FundUnlinkedCreatorInput", amountWei },
+      {
+        kind: "ReserveLifecycleScenarioReserveSteps.FundUnlinkedCreatorInput",
+        amountWei
+      },
       runFundUnlinkedCreator
     )
   }
@@ -405,7 +424,9 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * @param wireAmount - Raw WIRE base units to escrow (exact match required).
    * @returns The definition step.
    */
-  export function planMatchReserve<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planMatchReserve<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -485,7 +506,9 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * @param request - The swap args (recipient injected at run time).
    * @returns The definition step.
    */
-  export function planRequestSwapProbe<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRequestSwapProbe<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -497,7 +520,10 @@ export namespace ReserveLifecycleScenarioReserveSteps {
       name,
       description,
       options,
-      { kind: "ReserveLifecycleScenarioReserveSteps.RequestSwapProbeInput", request },
+      {
+        kind: "ReserveLifecycleScenarioReserveSteps.RequestSwapProbeInput",
+        request
+      },
       runRequestSwapProbe
     )
   }

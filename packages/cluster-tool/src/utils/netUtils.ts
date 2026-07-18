@@ -23,10 +23,15 @@ export const Localhost = "127.0.0.1" as const
 export const ListenAllAddress = "0.0.0.0" as const
 
 /**
- * URL schemes the harness builds. A tight union (not bare `string`) so a
- * call-site typo fails at `tsc` rather than against an unreachable URL.
+ * URL schemes the harness builds. A typed identity enum (not bare `string`)
+ * so a call-site typo fails at `tsc` rather than against an unreachable URL.
  */
-export type URLScheme = "http" | "https" | "ws" | "wss"
+export enum URLScheme {
+  http = "http",
+  https = "https",
+  ws = "ws",
+  wss = "wss"
+}
 
 /**
  * Build an `<address>:<port>` host string — the scheme-less form nodeop / kiod /
@@ -51,16 +56,16 @@ export function toAddress(port: number, address: string = Localhost): string {
  *
  * @param port - Numeric port the service listens on.
  * @param address - Hostname or IP. Defaults to {@link Localhost}.
- * @param scheme - URL scheme. Defaults to `"http"`.
+ * @param scheme - URL scheme. Defaults to {@link URLScheme.http}.
  * @returns The fully-qualified URL.
  * @example
- *   toURL(8888)                  // "http://127.0.0.1:8888"
- *   toURL(8899, Localhost, "ws") // "ws://127.0.0.1:8899"
+ *   toURL(8888)                            // "http://127.0.0.1:8888"
+ *   toURL(8899, Localhost, URLScheme.ws)   // "ws://127.0.0.1:8899"
  */
 export function toURL(
   port: number,
   address: string = Localhost,
-  scheme: URLScheme = "http"
+  scheme: URLScheme = URLScheme.http
 ): string {
   return `${scheme}://${toAddress(port, address)}`
 }
@@ -104,11 +109,9 @@ export function filterSocketLinesByLocalPort(
   output: string,
   ports: ReadonlySet<number>
 ): string[] {
-  return output
-    .split("\n")
-    .filter(line => {
-      const local = line.trim().split(/\s+/)[4] ?? ""
-      const port = Number.parseInt(local.slice(local.lastIndexOf(":") + 1), 10)
-      return Number.isFinite(port) && ports.has(port)
-    })
+  return output.split("\n").filter(line => {
+    const local = line.trim().split(/\s+/)[4] ?? ""
+    const port = Number.parseInt(local.slice(local.lastIndexOf(":") + 1), 10)
+    return Number.isFinite(port) && ports.has(port)
+  })
 }

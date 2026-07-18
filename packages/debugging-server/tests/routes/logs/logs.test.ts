@@ -2,9 +2,9 @@ import * as Fs from "node:fs"
 import * as OS from "node:os"
 import * as Path from "node:path"
 
+import { ClusterFiles } from "@wireio/cluster-tool-shared"
 import {
   ApiPaths,
-  ClusterFiles,
   type LogReadResponse,
   type LogStat
 } from "@wireio/debugging-shared"

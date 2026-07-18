@@ -5,7 +5,7 @@ import {
   ProcessManager,
   SolanaValidatorProcess
 } from "@wireio/cluster-tool/cluster/processes"
-import { BindConfig } from "@wireio/cluster-tool/config"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { Localhost } from "@wireio/cluster-tool/utils"
 
 describe("SolanaValidatorProcess", () => {
@@ -29,7 +29,12 @@ describe("SolanaValidatorProcess", () => {
       binary: "/bin/true"
     })
     expect(validator.args).toEqual(
-      expect.arrayContaining(["--rpc-port", "--faucet-port", "--gossip-port", "--quiet"])
+      expect.arrayContaining([
+        "--rpc-port",
+        "--faucet-port",
+        "--gossip-port",
+        "--quiet"
+      ])
     )
     expect(validator.rpcUrl).toContain(Localhost)
     expect(validator.wsUrl).toMatch(/^ws:\/\//)
@@ -59,7 +64,7 @@ describe("SolanaValidatorProcess", () => {
     const validator = await SolanaValidatorProcess.create(manager, {
       binary: "/bin/false",
       ledgerPath,
-      dynamicPortRange: await BindConfig.findAvailableRange()
+      dynamicPortRange: await BindConfigProvider.findAvailableRange()
     })
     await expect(validator.start()).rejects.toThrow(
       /exited \(code 1\)[\s\S]*validator\.log tail[\s\S]*PANIC-MARKER: gossip_addr bind[\s\S]*sockets live on assigned ports/
@@ -101,7 +106,7 @@ describe("SolanaValidatorProcess", () => {
     const index = validator.args.indexOf("--dynamic-port-range")
     expect(index).toBeGreaterThanOrEqual(0)
     const [first, last] = validator.args[index + 1].split("-").map(Number)
-    expect(last - first + 1).toBe(BindConfig.SolanaDynamicPortRangeSize)
+    expect(last - first + 1).toBe(BindConfigProvider.SolanaDynamicPortRangeSize)
   })
 
   it("defaults --limit-ledger-size to the full-run retention (agave's 10k-shred default prunes to ~90s)", async () => {

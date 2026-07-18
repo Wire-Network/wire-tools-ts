@@ -17,6 +17,10 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
 
+import type {
+  ChainTokenAmount,
+  ClusterConfig
+} from "@wireio/cluster-tool-shared"
 import { match } from "ts-pattern"
 
 import {
@@ -27,9 +31,7 @@ import {
 } from "@wireio/opp-typescript-models"
 import { SlugName } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
-import type { ChainTokenAmount } from "@wireio/debugging-shared"
 
-import type { ClusterConfig } from "../../config/ClusterConfig.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../../orchestration/ClusterBuildPhase.js"
 import { ClusterBuildPhaseGroup } from "../../orchestration/ClusterBuildPhaseGroup.js"
@@ -306,7 +308,9 @@ export namespace WireUnderwriterTool {
    * @returns The self-registered deposit PhaseGroup.
    * @throws If `collateral.length !== underwriterAccounts.length`.
    */
-  export function planCollateralDeposit<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCollateralDeposit<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     parent: ClusterBuildParent<C>,
     name: string,
     description: string,
@@ -424,7 +428,10 @@ function planDepositStepsForEntry<C extends ClusterBuildContext>(
   account: string,
   entry: ChainTokenAmount
 ): ClusterBuildStep.Any<C>[] {
-  Assert.ok(entry.amount, "WireUnderwriterTool: ChainTokenAmount.amount is required")
+  Assert.ok(
+    entry.amount,
+    "WireUnderwriterTool: ChainTokenAmount.amount is required"
+  )
   const chainCode = BigInt(entry.chain_code),
     tokenCode = BigInt(entry.amount.tokenCode),
     tokenCodeNum = Number(entry.amount.tokenCode),
@@ -438,7 +445,14 @@ function planDepositStepsForEntry<C extends ClusterBuildContext>(
 
   return match({ chainKind, tokenKind })
     .with({ chainKind: ChainKind.EVM, tokenKind: TokenKind.NATIVE }, () =>
-      planEthereumNativeSteps<C>(options, account, chainName, tokenName, tokenCode, amount)
+      planEthereumNativeSteps<C>(
+        options,
+        account,
+        chainName,
+        tokenName,
+        tokenCode,
+        amount
+      )
     )
     .with({ chainKind: ChainKind.EVM }, () =>
       planEthereumNonNativeSteps<C>(
@@ -452,7 +466,14 @@ function planDepositStepsForEntry<C extends ClusterBuildContext>(
       )
     )
     .with({ chainKind: ChainKind.SVM, tokenKind: TokenKind.NATIVE }, () =>
-      planSolanaNativeSteps<C>(options, account, chainName, tokenName, tokenCode, amount)
+      planSolanaNativeSteps<C>(
+        options,
+        account,
+        chainName,
+        tokenName,
+        tokenCode,
+        amount
+      )
     )
     .with({ chainKind: ChainKind.SVM }, () =>
       planSolanaNonNativeSteps<C>(
@@ -633,4 +654,3 @@ function planSolanaNonNativeSteps<C extends ClusterBuildContext>(
     )
   ]
 }
-

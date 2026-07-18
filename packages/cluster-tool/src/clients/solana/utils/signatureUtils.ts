@@ -70,10 +70,11 @@ export async function confirmSignature(
   const deadlineMs = scaleTimeoutMs(
       options.deadlineMs ?? confirmSignature.DefaultDeadlineMs
     ),
-    intervalMs = options.intervalMs ?? confirmSignature.DefaultIntervalMs,
-    rpcTimeoutMs = options.rpcTimeoutMs ?? confirmSignature.DefaultRpcTimeoutMs,
-    rebroadcastMs =
-      options.rebroadcastMs ?? confirmSignature.DefaultRebroadcastMs,
+    {
+      intervalMs = confirmSignature.DefaultIntervalMs,
+      rpcTimeoutMs = confirmSignature.DefaultRpcTimeoutMs,
+      rebroadcastMs = confirmSignature.DefaultRebroadcastMs
+    } = options,
     deadline = Date.now() + deadlineMs
   let pollCount = 0
   let lastRebroadcast = Date.now()
@@ -107,7 +108,8 @@ export async function confirmSignature(
       confirmationStatus === SolanaClient.ConfirmationStatus.finalized
     )
       return
-    if (txError) throw new Error(`${label} tx failed: ${JSON.stringify(txError)}`)
+    if (txError)
+      throw new Error(`${label} tx failed: ${JSON.stringify(txError)}`)
 
     if (options.rebroadcast && Date.now() - lastRebroadcast >= rebroadcastMs) {
       await withTimeout(

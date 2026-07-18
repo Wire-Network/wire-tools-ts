@@ -59,10 +59,9 @@ describe("LocalFileDebuggingClient", () => {
     })
 
     it("returns null when state file is missing", async () => {
-      Fs.rmSync(
-        Path.join(fixture.clusterPath, "cluster-state.json"),
-        { force: true }
-      )
+      Fs.rmSync(Path.join(fixture.clusterPath, "cluster-state.json"), {
+        force: true
+      })
       expect(await client.getClusterState()).toBeNull()
     })
   })
@@ -209,9 +208,7 @@ describe("LocalFileDebuggingClient", () => {
         setTimeout(r, LocalFileDebuggingClient.ProcessLivenessPollMs + 200)
       )
       sub.close(ClosedReason.ClientRequested)
-      const allLabels = events.flatMap(e =>
-        e.setSnapshots.map(s => s.label)
-      )
+      const allLabels = events.flatMap(e => e.setSnapshots.map(s => s.label))
       expect(allLabels).toContain("nodeop")
     }, 10_000)
   })

@@ -13,6 +13,7 @@
     "dist"
   ],
   "references": [
+    { "path": "./packages/cluster-tool-shared/tsconfig.json" },
     { "path": "./packages/cluster-tool/tsconfig.json" },
     { "path": "./packages/flow-operator-collateral-deposit/tsconfig.json" },
     { "path": "./packages/flow-swap-with-underwriting/tsconfig.json" },

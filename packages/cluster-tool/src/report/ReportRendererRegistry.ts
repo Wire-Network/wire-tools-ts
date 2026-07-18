@@ -1,4 +1,5 @@
 import Assert from "node:assert"
+import type { ClusterConfigReportFormat } from "@wireio/cluster-tool-shared"
 import { Report } from "./Report.js"
 import type { ReportRendererConstructor } from "./ReportRenderer.js"
 import { ReportCsvRenderer } from "./renderers/ReportCsvRenderer.js"
@@ -12,11 +13,14 @@ import { ReportHtmlRenderer } from "./renderers/ReportHtmlRenderer.js"
  */
 export class ReportRendererRegistry {
   constructor(
-    private readonly renderers: ReadonlyMap<Report.Format, ReportRendererConstructor>
+    private readonly renderers: ReadonlyMap<
+      ClusterConfigReportFormat,
+      ReportRendererConstructor
+    >
   ) {}
 
   /** The constructor registered for `format` (throws when none is). */
-  get(format: Report.Format): ReportRendererConstructor {
+  get(format: ClusterConfigReportFormat): ReportRendererConstructor {
     const constructor = this.renderers.get(format)
     Assert.ok(constructor, `No ReportRenderer registered for format ${format}`)
     return constructor
@@ -25,7 +29,7 @@ export class ReportRendererRegistry {
   /** The built-in csv/md/html registry. */
   static createDefault(): ReportRendererRegistry {
     return new ReportRendererRegistry(
-      new Map<Report.Format, ReportRendererConstructor>([
+      new Map<ClusterConfigReportFormat, ReportRendererConstructor>([
         [Report.Format.csv, ReportCsvRenderer],
         [Report.Format.md, ReportMarkdownRenderer],
         [Report.Format.html, ReportHtmlRenderer]

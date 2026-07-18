@@ -1,18 +1,19 @@
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
 import {
-  BindConfig,
-  ClusterConfig,
-  PersistedClusterConfig
+  BindConfigProvider,
+  ClusterConfigProvider
 } from "@wireio/cluster-tool/config"
 import { LogFileAppender } from "@wireio/cluster-tool/logging"
 import { Report } from "@wireio/cluster-tool/report"
+import { Localhost } from "@wireio/cluster-tool/utils"
 
-const Address = BindConfig.LoopbackAddress
+const Address = Localhost
 // Producer / batch / underwriter ports are auto-assigned in production; for this
 // fixture derive a deterministic block from named defaults so no port is a bare
 // magic literal.
-const httpBase = BindConfig.DefaultBiosHttp + 100
-const p2pBase = BindConfig.DefaultBiosP2p + 100
+const httpBase = BindConfigProvider.DefaultBiosHttp + 100
+const p2pBase = BindConfigProvider.DefaultBiosP2p + 100
 const pair = (offset: number) => ({
   http: httpBase + offset,
   p2p: p2pBase + offset
@@ -21,7 +22,7 @@ const pair = (offset: number) => ({
 /** A complete persisted `cluster-config.json` payload for tests (no env deps).
  *  Typed against the REAL persisted shape so override sites typecheck against
  *  the interface's field types rather than this literal's narrowings. */
-export const PersistedFixture: PersistedClusterConfig = {
+export const PersistedFixture: ClusterConfig = {
   buildPath: "/build",
   clusterPath: "/cluster",
   dataPath: "/cluster/data",
@@ -36,36 +37,39 @@ export const PersistedFixture: PersistedClusterConfig = {
   ethereumPath: "/eth",
   solanaPath: "/sol",
   bind: {
-    kiod: { address: Address, port: BindConfig.DefaultKiod },
+    kiod: { address: Address, port: BindConfigProvider.DefaultKiod },
     nodeop: {
       address: Address,
       ports: {
         bios: {
-          http: BindConfig.DefaultBiosHttp,
-          p2p: BindConfig.DefaultBiosP2p
+          http: BindConfigProvider.DefaultBiosHttp,
+          p2p: BindConfigProvider.DefaultBiosP2p
         },
         producers: [pair(0)],
         batch: [pair(1), pair(2), pair(3)],
         underwriters: [pair(4)]
       }
     },
-    anvil: { address: Address, port: BindConfig.DefaultAnvil },
+    anvil: { address: Address, port: BindConfigProvider.DefaultAnvil },
     solana: {
       address: Address,
       ports: {
-        http: BindConfig.DefaultSolanaRpc,
-        faucet: BindConfig.DefaultSolanaFaucet,
-        gossip: BindConfig.DefaultSolanaGossip,
+        http: BindConfigProvider.DefaultSolanaRpc,
+        faucet: BindConfigProvider.DefaultSolanaFaucet,
+        gossip: BindConfigProvider.DefaultSolanaGossip,
         dynamicRange: {
-          first: BindConfig.DefaultSolanaDynamicPortFirst,
+          first: BindConfigProvider.DefaultSolanaDynamicPortFirst,
           last:
-            BindConfig.DefaultSolanaDynamicPortFirst +
-            BindConfig.SolanaDynamicPortRangeSize -
+            BindConfigProvider.DefaultSolanaDynamicPortFirst +
+            BindConfigProvider.SolanaDynamicPortRangeSize -
             1
         }
       }
     },
-    debuggingServer: { address: Address, port: BindConfig.DefaultDebuggingServer }
+    debuggingServer: {
+      address: Address,
+      port: BindConfigProvider.DefaultDebuggingServer
+    }
   },
   executables: {
     nodeop: "/build/bin/nodeop",
@@ -98,7 +102,9 @@ export const PersistedFixture: PersistedClusterConfig = {
  *   (`executables: { ...PersistedFixture.executables, nodeop: "/bin/true" }`).
  */
 export function fixtureConfig(
-  overrides: Partial<PersistedClusterConfig> = {}
+  overrides: Partial<ClusterConfig> = {}
 ): ClusterConfig {
-  return ClusterConfig.deserialize(JSON.stringify({ ...PersistedFixture, ...overrides }))
+  return ClusterConfigProvider.deserialize(
+    JSON.stringify({ ...PersistedFixture, ...overrides })
+  )
 }

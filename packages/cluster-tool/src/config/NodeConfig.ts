@@ -1,8 +1,11 @@
+import type {
+  BindConfigNodeopPorts,
+  ClusterConfig
+} from "@wireio/cluster-tool-shared"
 import { range } from "lodash"
 import { Constants } from "../Constants.js"
 import type { Renderer } from "../utils/Renderer.js"
-import type { BindConfigNodeopPorts } from "./BindConfig.js"
-import type { ClusterConfig } from "./ClusterConfig.js"
+
 import { NodeConfigIniRenderer } from "./renderers/NodeConfigIniRenderer.js"
 import { NodeConfigLoggingRenderer } from "./renderers/NodeConfigLoggingRenderer.js"
 
@@ -29,7 +32,9 @@ function nodeName(index: number): string {
 function alphaStrBase(num: number, base: string): string {
   const quotient = Math.floor(num / base.length),
     remainder = num % base.length
-  return quotient > 0 ? alphaStrBase(quotient, base) + base[remainder] : base[remainder]
+  return quotient > 0
+    ? alphaStrBase(quotient, base) + base[remainder]
+    : base[remainder]
 }
 
 /**

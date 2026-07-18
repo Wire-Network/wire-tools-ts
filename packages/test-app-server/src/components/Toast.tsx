@@ -6,10 +6,17 @@ import {
   ReactNode
 } from "react"
 
+/** Bootstrap alert variants a toast renders with (`toast-<color>` class). */
+export enum ToastColor {
+  success = "success",
+  danger = "danger",
+  warning = "warning"
+}
+
 interface ToastMessage {
   id: number
   text: string
-  color: "success" | "danger" | "warning"
+  color: ToastColor
 }
 
 interface ToastContextType {
@@ -28,7 +35,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastMessage[]>([])
 
   const show = useCallback(
-    (text: string, color: ToastMessage["color"] = "success") => {
+    (text: string, color: ToastMessage["color"] = ToastColor.success) => {
       console.log("Toast:", text)
       const id = nextId++
       setToasts(prev => [...prev, { id, text, color }])

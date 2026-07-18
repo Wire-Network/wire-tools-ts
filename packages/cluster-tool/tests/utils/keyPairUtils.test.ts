@@ -9,11 +9,12 @@ import {
   solanaKeypair,
   solanaSdkPrivateKey
 } from "@wireio/cluster-tool/utils"
-import { BindConfig } from "@wireio/cluster-tool/config"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import type { EthereumKeyPair, SolanaKeyPair } from "@wireio/cluster-tool/types"
 
 /** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
-const AnvilMnemonic = "test test test test test test test test test test test junk"
+const AnvilMnemonic =
+  "test test test test test test test test test test test junk"
 
 function anvilWallet(index: number): ethers.HDNodeWallet {
   return ethers.HDNodeWallet.fromMnemonic(
@@ -24,7 +25,11 @@ function anvilWallet(index: number): ethers.HDNodeWallet {
 
 function solanaFixture(): SolanaKeyPair {
   const priv = PrivateKey.generate(KeyType.ED)
-  return { type: KeyType.ED, publicKey: priv.toPublic().toString(), privateKey: priv.toString() }
+  return {
+    type: KeyType.ED,
+    publicKey: priv.toPublic().toString(),
+    privateKey: priv.toString()
+  }
 }
 
 describe("keyPairUtils", () => {
@@ -33,8 +38,12 @@ describe("keyPairUtils", () => {
     it("derives a PVT_EM_ key deterministically per HD index", () => {
       const key = ethereumPrivateKeyFromWallet(anvilWallet(0))
       expect(key.toString()).toMatch(/^PVT_EM_/)
-      expect(ethereumPrivateKeyFromWallet(anvilWallet(0)).toString()).toBe(key.toString())
-      expect(ethereumPrivateKeyFromWallet(anvilWallet(1)).toString()).not.toBe(key.toString())
+      expect(ethereumPrivateKeyFromWallet(anvilWallet(0)).toString()).toBe(
+        key.toString()
+      )
+      expect(ethereumPrivateKeyFromWallet(anvilWallet(1)).toString()).not.toBe(
+        key.toString()
+      )
     })
   })
 
@@ -56,8 +65,12 @@ describe("keyPairUtils", () => {
       expect(keyPair.publicKey).toMatch(/^PUB_EM_/)
       expect(keyPair.privateKey).toMatch(/^PVT_EM_/)
       expect(keyPair.address).toBe(wallet.address)
-      expect(keyPair.publicKey).toBe(ethereumPublicKeyFromWallet(wallet).toString())
-      expect(keyPair.privateKey).toBe(ethereumPrivateKeyFromWallet(wallet).toString())
+      expect(keyPair.publicKey).toBe(
+        ethereumPublicKeyFromWallet(wallet).toString()
+      )
+      expect(keyPair.privateKey).toBe(
+        ethereumPrivateKeyFromWallet(wallet).toString()
+      )
     })
   })
 
@@ -67,7 +80,9 @@ describe("keyPairUtils", () => {
     beforeAll(async () => {
       // Never dialed — only used to attach the reconstructed Wallet; still resolve
       // a free port per bind-available-ports-not-fixed.
-      const port = await BindConfig.findAvailable(BindConfig.DefaultAnvil)
+      const port = await BindConfigProvider.findAvailable(
+        BindConfigProvider.DefaultAnvil
+      )
       provider = new ethers.JsonRpcProvider(`http://127.0.0.1:${port}`)
     })
 
@@ -93,7 +108,9 @@ describe("keyPairUtils", () => {
     it("reconstructs a deterministic web3 Keypair (64-byte secret)", () => {
       const fixture = solanaFixture(),
         keypair = solanaKeypair(fixture)
-      expect(keypair.publicKey.toBase58()).toBe(solanaKeypair(fixture).publicKey.toBase58())
+      expect(keypair.publicKey.toBase58()).toBe(
+        solanaKeypair(fixture).publicKey.toBase58()
+      )
       expect(keypair.secretKey.length).toBe(64)
     })
   })

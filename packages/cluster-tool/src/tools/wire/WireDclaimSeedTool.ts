@@ -36,13 +36,19 @@
 // 500KB transaction envelope.
 
 import { PublicKey } from "@solana/web3.js"
+import { ChainKind } from "@wireio/opp-typescript-models"
+import { SysioContracts } from "@wireio/sdk-core"
+import { abiEnumValue } from "../../utils/enumUtils.js"
 
 // ---------------------------------------------------------------------------
-// Chain enum names (must match the on-chain `opp::types::ChainKind` proto
-// enum values — see proto/sysio/opp/types/types.proto). importseed
-// rejects unknown values.
+// Chain kinds — the proto `ChainKind` subset importseed accepts (see
+// proto/sysio/opp/types/types.proto). importseed rejects unknown values.
 // ---------------------------------------------------------------------------
-export type ImportSeedChainKind = "CHAIN_KIND_EVM" | "CHAIN_KIND_SVM"
+/** The chain kinds `importseed` accepts — a proto `ChainKind` subset. */
+export type ImportSeedChainKind = ChainKind.EVM | ChainKind.SVM
+
+/** Credits per `importseed` call — fits the 150ms / 500KB transaction envelope. */
+const DefaultImportSeedBatchSize = 10_000
 
 // ---------------------------------------------------------------------------
 // Index data shape
@@ -141,8 +147,16 @@ interface ChainConfig {
 }
 
 const CHAIN_CONFIG: Record<ImportSeedChainKind, ChainConfig> = {
-  CHAIN_KIND_EVM: { decoder: ethDecode, addrLen: 20, divisor: 10n ** 9n },
-  CHAIN_KIND_SVM: { decoder: solDecode, addrLen: 32, divisor: 1n }
+  [ChainKind.EVM]: {
+    decoder: ethDecode,
+    addrLen: 20,
+    divisor: 10n ** 9n
+  },
+  [ChainKind.SVM]: {
+    decoder: solDecode,
+    addrLen: 32,
+    divisor: 1n
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -251,7 +265,7 @@ export interface ImportSeedOptions {
  *
  * @example
  *   const eth = JSON.parse(await fs.readFile("eth-balances.json", "utf8"))
- *   const result = convertImportSeed(eth, { chain: "CHAIN_KIND_EVM" })
+ *   const result = convertImportSeed(eth, { chain: ChainKind.EVM })
  *   for (const batch of result.batches) {
  *     await clio.pushActionAndWait(
  *       "sysio.dclaim",
@@ -269,7 +283,7 @@ export function convertImportSeed(
   if (!cfg) {
     throw new Error(`unknown chain: ${r(opts.chain)}`)
   }
-  const batchSize = opts.batchSize ?? 10_000
+  const { batchSize = DefaultImportSeedBatchSize } = opts
 
   const accumulator = accumulate(data, cfg.decoder, cfg.addrLen)
   const { credits, droppedDust } = toCredits(accumulator, cfg.divisor)
@@ -300,9 +314,10 @@ export function convertImportSeed(
  */
 export function serializeBatchForClio(
   batch: ImportSeedBatch
-): { chain: ImportSeedChainKind; credits: { native_address: string; wire_atomic: string }[] } {
+): SysioContracts.SysioDclaimImportseedAction {
   return {
-    chain: batch.chain,
+    // proto ChainKind → the dclaim ABI's own enum, bridged by VALUE.
+    chain: abiEnumValue(SysioContracts.SysioDclaimChainkind, batch.chain),
     credits: batch.credits.map(c => ({
       native_address: c.native_address,
       wire_atomic: c.wire_atomic.toString()

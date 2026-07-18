@@ -7,7 +7,8 @@ import {
   contractView,
   EthereumCollateralTool,
   SolanaOutpostBootstrapper,
-  type ClusterBuildContext
+  type ClusterBuildContext,
+  ClusterConfigProvider
 } from "@wireio/cluster-tool"
 import { SwapPrivateReservesScenarioConstants as Constants } from "./SwapPrivateReservesScenarioConstants.js"
 
@@ -29,7 +30,8 @@ export namespace SwapPrivateReservesScenarioArtifacts {
    * `OperatorRegistryContract` precedent — typechain types live in
    * `wire-ethereum` and are not consumable here.)
    */
-  export interface ReserveManagerPrivateReserveContract extends ethers.BaseContract {
+  export interface ReserveManagerPrivateReserveContract
+    extends ethers.BaseContract {
     create_reserve: (
       tokenCode: bigint,
       reserveCode: bigint,
@@ -50,7 +52,7 @@ export namespace SwapPrivateReservesScenarioArtifacts {
 
   /**
    * Bind the deployed `ReserveManager` to `signer` — address from
-   * the cluster deployments dir (`ClusterConfig.ethereumDeploymentsPath`), ABI from the
+   * the cluster deployments dir (`ClusterConfigProvider.ethereumDeploymentsPath`), ABI from the
    * hardhat artifact (both via the harness's exported artifact readers).
    *
    * @param ctx - The build context (carries `config.ethereumPath`).
@@ -61,9 +63,9 @@ export namespace SwapPrivateReservesScenarioArtifacts {
     View extends object,
     C extends ClusterBuildContext = ClusterBuildContext
   >(ctx: C, signer: ethers.Signer): View & ethers.BaseContract {
-    const address = EthereumCollateralTool.loadOutpostAddresses(ctx.config.ethereumDeploymentsPath)[
-      ReserveManagerContractName
-    ]
+    const address = EthereumCollateralTool.loadOutpostAddresses(
+      ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
+    )[ReserveManagerContractName]
     Assert.ok(
       address != null && /^0x[0-9a-fA-F]{40}$/.test(address),
       `SwapPrivateReservesScenario: ${ReserveManagerContractName} not in outpost-addrs.json (got ${address})`
@@ -84,8 +86,13 @@ export namespace SwapPrivateReservesScenarioArtifacts {
    * @returns The mint pubkey.
    * @throws When the manifest or the USDCSOL entry is missing.
    */
-  export function loadUsdcSolMint<C extends ClusterBuildContext>(ctx: C): PublicKey {
-    const mintsFile = Path.join(ctx.config.dataPath, Constants.SolanaMockMintsFilename)
+  export function loadUsdcSolMint<C extends ClusterBuildContext>(
+    ctx: C
+  ): PublicKey {
+    const mintsFile = Path.join(
+      ctx.config.dataPath,
+      Constants.SolanaMockMintsFilename
+    )
     Assert.ok(
       Fs.existsSync(mintsFile),
       `SwapPrivateReservesScenario: mock SPL mints not found at ${mintsFile}`

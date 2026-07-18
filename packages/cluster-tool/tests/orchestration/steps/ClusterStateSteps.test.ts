@@ -2,6 +2,7 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { KeyType } from "@wireio/sdk-core"
+
 import { ClusterState } from "@wireio/cluster-tool"
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
@@ -40,7 +41,11 @@ describe("Steps.clusterState", () => {
       ctx.keyStore.pushNodes({
         index: 0,
         keys: {
-          k1: { type: KeyType.K1, publicKey: "PUB_K1_node0", privateKey: "PVT_K1_node0" },
+          k1: {
+            type: KeyType.K1,
+            publicKey: "PUB_K1_node0",
+            privateKey: "PVT_K1_node0"
+          },
           bls: {
             type: KeyType.BLS,
             publicKey: "PUB_BLS_node0",
@@ -50,7 +55,11 @@ describe("Steps.clusterState", () => {
         }
       })
 
-      await Steps.clusterState.runPersist(ctx, null, new AbortController().signal)
+      await Steps.clusterState.runPersist(
+        ctx,
+        null,
+        new AbortController().signal
+      )
 
       expect(Fs.existsSync(ClusterState.stateFilePath(ctx.config))).toBe(true)
       expect(Fs.existsSync(ClusterState.keysFilePath(ctx.config))).toBe(true)

@@ -1,12 +1,14 @@
 import { ethers } from "ethers"
 import { EthereumClient } from "@wireio/cluster-tool/clients/ethereum"
-import { BindConfig } from "@wireio/cluster-tool/config"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { toURL } from "@wireio/cluster-tool/utils"
 
 describe("EthereumClient", () => {
   let rpcUrl: string
   beforeAll(async () => {
-    rpcUrl = toURL(await BindConfig.findAvailable(BindConfig.DefaultAnvil))
+    rpcUrl = toURL(
+      await BindConfigProvider.findAvailable(BindConfigProvider.DefaultAnvil)
+    )
   })
 
   it("derives a deterministic signer address from the default key", () => {
@@ -18,7 +20,10 @@ describe("EthereumClient", () => {
 
   it("matches the default-key address when the key is supplied explicitly", () => {
     const implicit = new EthereumClient(rpcUrl)
-    const explicit = new EthereumClient(rpcUrl, EthereumClient.DefaultPrivateKey)
+    const explicit = new EthereumClient(
+      rpcUrl,
+      EthereumClient.DefaultPrivateKey
+    )
     expect(explicit.wallet.address).toBe(implicit.wallet.address)
   })
 

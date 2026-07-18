@@ -1,8 +1,8 @@
+import type { ProcessLivenessSnapshot } from "@wireio/debugging-shared"
 import type { RootState } from "../RootState.js"
 import { SliceName } from "../StoreTypes.js"
 import type {
   LogViewerState,
-  ProcessLiveness,
   ProcessMonitorState
 } from "./ProcessMonitorTypes.js"
 
@@ -13,7 +13,7 @@ export const selectProcessMonitor = (state: RootState): ProcessMonitorState =>
 /** Label → liveness map. */
 export const selectProcessMap = (
   state: RootState
-): Record<string, ProcessLiveness> =>
+): Record<string, ProcessLivenessSnapshot> =>
   state[SliceName.ProcessMonitor].processes
 
 /** Count of alive processes — drives the status-bar badge. */

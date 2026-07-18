@@ -1,6 +1,6 @@
 import Fs from "node:fs"
 import Assert from "node:assert"
-import { BindConfig } from "../../config/BindConfig.js"
+import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { probeEndpoint } from "../../utils/asyncUtils.js"
 import { existsAsync, which } from "../../utils/fsUtils.js"
 import { Localhost, toURL } from "../../utils/netUtils.js"
@@ -48,15 +48,18 @@ export class AnvilProcess extends ManagedProcess {
     manager: ProcessManager,
     options: AnvilOptions = {}
   ): Promise<AnvilProcess> {
-    const binary = options.binary ?? (await which("anvil"))
+    const { binary = await which("anvil") } = options
     Assert.ok(
       binary != null && (await existsAsync(binary)),
       "anvil binary not found on PATH"
     )
-    const port =
-      options.port ?? (await BindConfig.findAvailable(BindConfig.DefaultAnvil))
+    const {
+      port = await BindConfigProvider.findAvailable(
+        BindConfigProvider.DefaultAnvil
+      )
+    } = options
     const config: AnvilConfig = {
-      host: options.host ?? BindConfig.LoopbackAddress,
+      host: options.host ?? Localhost,
       port,
       chainId: options.chainId ?? AnvilProcess.DefaultChainId,
       stateFile: options.stateFile ?? null,

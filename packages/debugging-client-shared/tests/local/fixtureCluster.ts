@@ -3,15 +3,15 @@ import * as OS from "node:os"
 import * as Path from "node:path"
 
 import {
+  ClusterConfigLoggingFileFormat,
   ClusterFiles,
   ClusterStateNodeRole,
-  ClusterStateVersion,
-  PidSources,
-  oppDebuggingPath,
+  type ClusterConfig,
   type ClusterState,
-  type ClusterStateNode,
-  type PersistedClusterConfig
-} from "@wireio/debugging-shared"
+  type ClusterStateNode
+} from "@wireio/cluster-tool-shared"
+import { Level } from "@wireio/shared"
+import { PidSources, oppDebuggingPath } from "@wireio/debugging-shared"
 
 /** Disposable on-disk cluster fixture. */
 export interface FixtureCluster {
@@ -30,7 +30,9 @@ export interface FixtureCluster {
  * `getClusterState()` finds it.
  */
 export function makeFixtureCluster(): FixtureCluster {
-  const clusterPath = Fs.mkdtempSync(Path.join(OS.tmpdir(), "fixture-cluster-")),
+  const clusterPath = Fs.mkdtempSync(
+      Path.join(OS.tmpdir(), "fixture-cluster-")
+    ),
     dataPath = Path.join(clusterPath, "data"),
     biosDir = Path.join(dataPath, "node_bios"),
     batchDir = Path.join(dataPath, "node_b1"),
@@ -59,12 +61,17 @@ export function makeFixtureCluster(): FixtureCluster {
   })
 
   const state: ClusterState = {
-    version: ClusterStateVersion,
     createdAt: new Date().toISOString(),
     nodes: [
       node(PidSources.BiosNodeId, biosDir, ClusterStateNodeRole.bios),
       node("node_00", batchDir, ClusterStateNodeRole.operator, "batchop1"),
-      node("node_01", underwriterDir, ClusterStateNodeRole.operator, null, "underwriter1")
+      node(
+        "node_01",
+        underwriterDir,
+        ClusterStateNodeRole.operator,
+        null,
+        "underwriter1"
+      )
     ],
     walletPath: "",
     anvilStateFile: "",
@@ -72,7 +79,7 @@ export function makeFixtureCluster(): FixtureCluster {
     solanaIdlFile: null
   }
 
-  const config: PersistedClusterConfig = {
+  const config: ClusterConfig = {
     buildPath: "",
     clusterPath,
     dataPath,
@@ -122,8 +129,8 @@ export function makeFixtureCluster(): FixtureCluster {
       formats: []
     },
     logging: {
-      levels: { console: "info", file: "debug" },
-      fileFormat: "jsonl"
+      levels: { console: Level.info, file: Level.debug },
+      fileFormat: ClusterConfigLoggingFileFormat.jsonl
     },
     requiredBatchOperatorCollateral: [],
     requiredUnderwriterCollateral: [],

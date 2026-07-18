@@ -1,10 +1,14 @@
 import Path from "node:path"
+import { PidSources } from "@wireio/debugging-shared"
 import type { Argv } from "yargs"
 import { ClusterKeepAlive } from "../cluster/ClusterKeepAlive.js"
 import { ClusterManager } from "../cluster/ClusterManager.js"
-import { ClusterConfig } from "../config/ClusterConfig.js"
+import { ClusterConfigProvider } from "../config/ClusterConfigProvider.js"
 import { getLogger } from "../logging/Logger.js"
-import { applyClusterPathArgs, type ClusterPathArgv } from "./ClusterPathArgs.js"
+import {
+  applyClusterPathArgs,
+  type ClusterPathArgv
+} from "./ClusterPathArgs.js"
 import { ClusterCommand } from "./ClusterCommand.js"
 
 const log = getLogger(__filename)
@@ -39,12 +43,12 @@ export function createRunCommand() {
     builder: (builder: Argv) => applyClusterPathArgs(builder),
     handler: async (args: ClusterPathArgv) => {
       const clusterPath = Path.resolve(args.clusterPath)
-      const config = ClusterConfig.loadSync(
-        Path.join(clusterPath, ClusterConfig.ConfigFilename)
+      const config = ClusterConfigProvider.loadSync(
+        Path.join(clusterPath, ClusterConfigProvider.ConfigFilename)
       )
       await ClusterManager.run(config)
       log.info(
-        `[cluster] running — logs: ${Path.join(clusterPath, "logs")} — Ctrl+C for graceful shutdown`
+        `[cluster] running — logs: ${Path.join(clusterPath, PidSources.LogsSubdir)} — Ctrl+C for graceful shutdown`
       )
       await ClusterKeepAlive.create().wait()
     }

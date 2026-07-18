@@ -10,6 +10,7 @@ import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
 } from "../ClusterBuildStep.js"
+import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 
 const {
   SysioContractName,
@@ -35,7 +36,9 @@ export namespace RegistrySteps {
   const StableCodenames = ["USDC", "USDT", "USDCSOL", "USDTSOL"]
 
   /** Seed chains + tokens + chain-token bindings + reserves. */
-  export function planSeedRegistry<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSeedRegistry<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -62,21 +65,36 @@ export namespace RegistrySteps {
       tokens = ctx.wire.getSysioContract(SysioContractName.tokens),
       reserv = ctx.wire.getSysioContract(SysioContractName.reserv),
       ethereumAddresses = readJson(
-        Path.join(ctx.config.ethereumDeploymentsPath, "outpost-addrs.json")
+        Path.join(
+          ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
+          "outpost-addrs.json"
+        )
       ),
       liqEthAddresses = readJson(
-        Path.join(ctx.config.ethereumDeploymentsPath, "liqeth-addrs.json")
+        Path.join(
+          ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
+          "liqeth-addrs.json"
+        )
       ),
-      solanaMints = readSolanaMints(Path.join(ctx.config.dataPath, "sol-mock-mints.json")),
+      solanaMints = readSolanaMints(
+        Path.join(ctx.config.dataPath, "sol-mock-mints.json")
+      ),
       strip0x = (hex: string): string => hex.replace(/^0x/i, ""),
-      emptyAddress = { kind: SysioTokensChainkind.CHAIN_KIND_UNKNOWN, address: "" },
+      emptyAddress = {
+        kind: SysioTokensChainkind.CHAIN_KIND_UNKNOWN,
+        address: ""
+      },
       evmAddress = (hex: string | null) =>
-        hex != null ? { kind: SysioTokensChainkind.CHAIN_KIND_EVM, address: strip0x(hex) } : emptyAddress,
+        hex != null
+          ? { kind: SysioTokensChainkind.CHAIN_KIND_EVM, address: strip0x(hex) }
+          : emptyAddress,
       svmAddress = (mintBase58: string | null) =>
         mintBase58 != null
           ? {
               kind: SysioTokensChainkind.CHAIN_KIND_SVM,
-              address: Buffer.from(new SolanaPublicKey(mintBase58).toBytes()).toString("hex")
+              address: Buffer.from(
+                new SolanaPublicKey(mintBase58).toBytes()
+              ).toString("hex")
             }
           : emptyAddress
 
@@ -104,35 +122,91 @@ export namespace RegistrySteps {
         description: "Local solana-test-validator (test cluster)"
       }
     ]
-    await eachSeries(chainRegistrations, data => chains.actions.regchain.invoke(data))
+    await eachSeries(chainRegistrations, data =>
+      chains.actions.regchain.invoke(data)
+    )
 
     // ── tokens ──
     const tokenRegistrations: SysioContracts.SysioTokensRegtokenAction[] = [
       nativeToken("WIRE", "Wire", "WIRE chain native asset"),
       nativeToken("ETH", "Ether", "Ethereum native asset"),
-      liqToken("LIQETH", "Liquid ETH", "Liquid-staking receipt for ETH", evmAddress(liqEthAddresses.LiqEthToken)),
-      erc20Token("USDC", "USD Coin", "USDC stablecoin on Ethereum", evmAddress(ethereumAddresses.MockUsdc)),
-      erc20Token("USDT", "Tether USD", "USDT stablecoin on Ethereum", evmAddress(ethereumAddresses.MockUsdt)),
+      liqToken(
+        "LIQETH",
+        "Liquid ETH",
+        "Liquid-staking receipt for ETH",
+        evmAddress(liqEthAddresses.LiqEthToken)
+      ),
+      erc20Token(
+        "USDC",
+        "USD Coin",
+        "USDC stablecoin on Ethereum",
+        evmAddress(ethereumAddresses.MockUsdc)
+      ),
+      erc20Token(
+        "USDT",
+        "Tether USD",
+        "USDT stablecoin on Ethereum",
+        evmAddress(ethereumAddresses.MockUsdt)
+      ),
       nativeToken("SOL", "Sol", "Solana native asset"),
-      liqToken("LIQSOL", "Liquid SOL", "Liquid-staking receipt for SOL", svmAddress(solanaMints.LIQSOL)),
-      splToken("USDCSOL", "USDC (Solana)", "USDC stablecoin on Solana", svmAddress(solanaMints.USDC)),
-      splToken("USDTSOL", "USDT (Solana)", "USDT stablecoin on Solana", svmAddress(solanaMints.USDT))
+      liqToken(
+        "LIQSOL",
+        "Liquid SOL",
+        "Liquid-staking receipt for SOL",
+        svmAddress(solanaMints.LIQSOL)
+      ),
+      splToken(
+        "USDCSOL",
+        "USDC (Solana)",
+        "USDC stablecoin on Solana",
+        svmAddress(solanaMints.USDC)
+      ),
+      splToken(
+        "USDTSOL",
+        "USDT (Solana)",
+        "USDT stablecoin on Solana",
+        svmAddress(solanaMints.USDT)
+      )
     ]
-    await eachSeries(tokenRegistrations, data => tokens.actions.regtoken.invoke(data))
+    await eachSeries(tokenRegistrations, data =>
+      tokens.actions.regtoken.invoke(data)
+    )
 
     // ── chain-token bindings ──
     const chainTokenBindings: SysioContracts.SysioTokensRegctokAction[] = [
       chainToken("WIRE", "WIRE", "", true),
       chainToken("ETHEREUM", "ETH", "", true),
-      chainToken("ETHEREUM", "LIQETH", nullableStrip(liqEthAddresses.LiqEthToken, strip0x), false),
-      chainToken("ETHEREUM", "USDC", nullableStrip(ethereumAddresses.MockUsdc, strip0x), false),
-      chainToken("ETHEREUM", "USDT", nullableStrip(ethereumAddresses.MockUsdt, strip0x), false),
+      chainToken(
+        "ETHEREUM",
+        "LIQETH",
+        nullableStrip(liqEthAddresses.LiqEthToken, strip0x),
+        false
+      ),
+      chainToken(
+        "ETHEREUM",
+        "USDC",
+        nullableStrip(ethereumAddresses.MockUsdc, strip0x),
+        false
+      ),
+      chainToken(
+        "ETHEREUM",
+        "USDT",
+        nullableStrip(ethereumAddresses.MockUsdt, strip0x),
+        false
+      ),
       chainToken("SOLANA", "SOL", "", true),
-      chainToken("SOLANA", "LIQSOL", nullableMintHex(solanaMints.LIQSOL), false),
+      chainToken(
+        "SOLANA",
+        "LIQSOL",
+        nullableMintHex(solanaMints.LIQSOL),
+        false
+      ),
       chainToken("SOLANA", "USDCSOL", nullableMintHex(solanaMints.USDC), false),
       chainToken("SOLANA", "USDTSOL", nullableMintHex(solanaMints.USDT), false)
     ]
-    await eachSeries(chainTokenBindings, data => tokens.actions.regctok.invoke(data))
+    await eachSeries(chainTokenBindings, data =>
+      tokens.actions.regctok.invoke(data)
+    )
 
     // ── reserves (all static; stablecoins carry 6-dec precision + ÷1000 chain seed) ──
     const reservePairs: Array<[string, string, string]> = [
@@ -153,7 +227,9 @@ export namespace RegistrySteps {
         reserve_code: { value: SlugName.from("PRIMARY") },
         name: `${chainCodename}-${tokenCodename}/WIRE primary reserve`,
         description: `Bootstrap-seeded ${label} ↔ WIRE reserve`,
-        initial_chain_amount: stable ? ReserveSeedAmount / 1000 : ReserveSeedAmount,
+        initial_chain_amount: stable
+          ? ReserveSeedAmount / 1000
+          : ReserveSeedAmount,
         initial_wire_amount: ReserveSeedAmount,
         source_token_precision: stable ? 6 : 9,
         connector_weight_bps: ConnectorWeightBps,
@@ -268,7 +344,10 @@ export namespace RegistrySteps {
   }
 
   /** `strip0x(hex)` when present, else `""`. */
-  function nullableStrip(hex: string | null, strip: (h: string) => string): string {
+  function nullableStrip(
+    hex: string | null,
+    strip: (h: string) => string
+  ): string {
     return hex != null ? strip(hex) : ""
   }
 

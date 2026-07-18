@@ -1,4 +1,4 @@
-import type { ClusterStateNode } from "../cluster/index.js"
+import type { ClusterStateNode } from "@wireio/cluster-tool-shared"
 
 /** Classifies a monitored process for display grouping and fallback handling. */
 export enum PidSourceKind {

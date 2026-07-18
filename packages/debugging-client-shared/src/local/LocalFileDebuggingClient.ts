@@ -1,12 +1,16 @@
 import * as Fs from "node:fs"
 import * as Path from "node:path"
+import {
+  ClusterFiles,
+  type ClusterConfig,
+  type ClusterState
+} from "@wireio/cluster-tool-shared"
 import { createHash } from "node:crypto"
 
 import Bluebird from "bluebird"
-import { match, P } from "ts-pattern"
+import { match } from "ts-pattern"
 
 import {
-  ClusterFiles,
   EnvelopeEventKind,
   StreamTopic,
   buildLineIndex,
@@ -21,7 +25,6 @@ import {
   readPid,
   readLines,
   resolveEndpointsType,
-  type ClusterState,
   type DebugOPPEnvelopeRecord,
   type EnvelopeEvent,
   type InferredStreamEvent,
@@ -33,7 +36,6 @@ import {
   type LogStat,
   type LogTailEvent,
   type LogTailParams,
-  type PersistedClusterConfig,
   type PidSource,
   type ProcessLivenessEvent,
   type ProcessLivenessSnapshot
@@ -51,9 +53,7 @@ import {
 } from "@wireio/opp-typescript-models"
 
 import { DebuggingClient } from "../DebuggingClient.js"
-import {
-  DebuggingSubscription
-} from "../subscriptions/index.js"
+import { DebuggingSubscription } from "../subscriptions/index.js"
 
 /** Caller-facing options for {@link LocalFileDebuggingClient.create}. */
 export interface LocalFileDebuggingClientOptions {
@@ -62,8 +62,7 @@ export interface LocalFileDebuggingClientOptions {
 }
 
 /** Fully-resolved runtime config. */
-export interface LocalFileDebuggingClientConfig
-  extends Required<LocalFileDebuggingClientOptions> {}
+export interface LocalFileDebuggingClientConfig extends Required<LocalFileDebuggingClientOptions> {}
 
 /**
  * Disk-backed `DebuggingClient` for the case where the consumer shares the
@@ -87,7 +86,10 @@ export class LocalFileDebuggingClient extends DebuggingClient {
     const config: LocalFileDebuggingClientConfig = {
       clusterPath: Path.resolve(options.clusterPath)
     }
-    const configFile = Path.join(config.clusterPath, ClusterFiles.ConfigFilename)
+    const configFile = Path.join(
+      config.clusterPath,
+      ClusterFiles.ConfigFilename
+    )
     if (!Fs.existsSync(configFile)) {
       throw new Error(
         `LocalFileDebuggingClient: cluster-config.json not found at ${configFile}`
@@ -97,10 +99,7 @@ export class LocalFileDebuggingClient extends DebuggingClient {
   }
 
   /** Active subscriptions keyed by their client-allocated id. */
-  private readonly subscriptions = new Map<
-    number,
-    LocalSubscriptionTeardown
-  >()
+  private readonly subscriptions = new Map<number, LocalSubscriptionTeardown>()
 
   /** Monotonic id allocator for subscriptions. */
   private nextSubscriptionId = LocalFileDebuggingClient.InitialSubscriptionId
@@ -118,7 +117,7 @@ export class LocalFileDebuggingClient extends DebuggingClient {
   }
 
   async disconnect(): Promise<void> {
-    [...this.subscriptions.values()].forEach(teardown => teardown())
+    ;[...this.subscriptions.values()].forEach(teardown => teardown())
     this.subscriptions.clear()
   }
 
@@ -126,10 +125,13 @@ export class LocalFileDebuggingClient extends DebuggingClient {
   //  Cluster
   // -------------------------------------------------------------------------
 
-  async getClusterConfig(): Promise<PersistedClusterConfig> {
-    const file = Path.join(this.config.clusterPath, ClusterFiles.ConfigFilename),
+  async getClusterConfig(): Promise<ClusterConfig> {
+    const file = Path.join(
+        this.config.clusterPath,
+        ClusterFiles.ConfigFilename
+      ),
       raw = await Fs.promises.readFile(file, "utf8")
-    return JSON.parse(raw) as PersistedClusterConfig
+    return JSON.parse(raw) as ClusterConfig
   }
 
   async getClusterState(): Promise<ClusterState> {
@@ -178,7 +180,9 @@ export class LocalFileDebuggingClient extends DebuggingClient {
   //  OPP envelope debug
   // -------------------------------------------------------------------------
 
-  async listEnvelopes(req: ListEnvelopesRequest): Promise<ListEnvelopesResponse> {
+  async listEnvelopes(
+    req: ListEnvelopesRequest
+  ): Promise<ListEnvelopesResponse> {
     const storageDir = oppDebuggingPath(this.config.clusterPath)
     if (!Fs.existsSync(storageDir)) {
       return ListEnvelopesResponse.create({ entries: [], total: 0 })
@@ -188,13 +192,9 @@ export class LocalFileDebuggingClient extends DebuggingClient {
         .filter(f => f.endsWith(LocalFileDebuggingClient.DataExt))
         .sort()
     const resolved = await Promise.all(
-      dataFiles.map(dataFile =>
-        resolveListEntry(dataFile, storageDir, req)
-      )
+      dataFiles.map(dataFile => resolveListEntry(dataFile, storageDir, req))
     )
-    const entries = resolved.filter(
-      (e): e is EnvelopeListEntry => e !== null
-    )
+    const entries = resolved.filter((e): e is EnvelopeListEntry => e !== null)
     return ListEnvelopesResponse.create({ entries, total: entries.length })
   }
 
@@ -259,11 +259,15 @@ export class LocalFileDebuggingClient extends DebuggingClient {
     await Fs.promises.mkdir(storageDir, { recursive: true })
     // `envelopeData` is typed `Uint8Array` by the generated proto message, but
     // a request arriving over the NetDebuggingClient's JSON transport carries
-    // it as a base64 string (JSON has no binary type) — narrow on the actual
-    // runtime shape rather than casting past the generated type.
-    const envelopeBytes = match(req.envelopeData)
-        .with(P.string, base64 => Buffer.from(base64, "base64"))
-        .otherwise(bytes => Buffer.from(bytes)),
+    // it as a base64 string (JSON has no binary type). Widen to the honest
+    // runtime union at the boundary (plain assignment — no cast) and branch
+    // with a compiler-native `typeof` guard: ts-pattern's `P.string` mis-infers
+    // this arm against TS 6's generic `Uint8Array<ArrayBufferLike>` builtin.
+    const envelopeData: Uint8Array | string = req.envelopeData
+    const envelopeBytes =
+        typeof envelopeData === "string"
+          ? Buffer.from(envelopeData, "base64")
+          : Buffer.from(envelopeData),
       checksum = createHash("sha256")
         .update(envelopeBytes)
         .digest("hex")
@@ -318,15 +322,11 @@ export class LocalFileDebuggingClient extends DebuggingClient {
     params: InferredStreamParams<T>
   ): Promise<DebuggingSubscription<InferredStreamEvent<T>>> {
     const id = this.nextSubscriptionId++,
-      sub = new DebuggingSubscription<InferredStreamEvent<T>>(
-        id,
-        topic,
-        () => {
-          const teardown = this.subscriptions.get(id)
-          this.subscriptions.delete(id)
-          teardown?.()
-        }
-      )
+      sub = new DebuggingSubscription<InferredStreamEvent<T>>(id, topic, () => {
+        const teardown = this.subscriptions.get(id)
+        this.subscriptions.delete(id)
+        teardown?.()
+      })
     // One unavoidable cast per arm, at this facade's dispatch point (per
     // `one-generic-facade-per-concept.md`): TS cannot correlate the generic
     // `T` narrowed by `match(topic)` with `InferredStreamEvent<T>` resolving
@@ -482,9 +482,7 @@ export class LocalFileDebuggingClient extends DebuggingClient {
       const existing = await Fs.promises.readdir(storageDir),
         baseKeys = existing
           .filter(f => f.endsWith(LocalFileDebuggingClient.MetadataExt))
-          .map(f =>
-            f.slice(0, -LocalFileDebuggingClient.MetadataExt.length)
-          )
+          .map(f => f.slice(0, -LocalFileDebuggingClient.MetadataExt.length))
       await Bluebird.each(baseKeys, async baseKey => {
         if (sub.isClosed()) return
         const pair = await this.readEnvelopePair(storageDir, baseKey)
@@ -556,9 +554,7 @@ export class LocalFileDebuggingClient extends DebuggingClient {
           checksum: parsed.checksum,
           endpointsType: resolveEndpointsType(parsed.endpointsKey),
           envelope: plainify(Envelope.fromBinary(dataBytes)),
-          metadata: plainify(
-            DebugEnvelopeMetadataRecord.fromBinary(metaBytes)
-          ),
+          metadata: plainify(DebugEnvelopeMetadataRecord.fromBinary(metaBytes)),
           receivedAt: Date.now()
         }
       }
@@ -660,7 +656,8 @@ async function resolveListEntry(
     dataFile.replace(LocalFileDebuggingClient.DataExt, "")
   )
   if (!parsed) return null
-  if (filter.epochStart > 0 && parsed.epochIndex < filter.epochStart) return null
+  if (filter.epochStart > 0 && parsed.epochIndex < filter.epochStart)
+    return null
   if (filter.epochEnd > 0 && parsed.epochIndex > filter.epochEnd) return null
   if (filter.endpointsType !== DebugOutpostEndpointsType.UNKNOWN) {
     const filterKey = endpointsTypeToKey(filter.endpointsType)

@@ -1,4 +1,5 @@
 import Assert from "node:assert"
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { ethers } from "ethers"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import { oppDebuggingPath } from "@wireio/debugging-shared"
@@ -23,10 +24,10 @@ import {
   type ClusterBuild,
   type ClusterBuildOptions,
   type ClusterBuildStepOptions,
-  type ClusterConfig,
   type Logger,
   type ReserveManagerRequestSwapContract,
-  type StepInput
+  type StepInput,
+  ClusterConfigProvider
 } from "@wireio/cluster-tool"
 import { SwapVarianceRevertScenarioConstants as Constants } from "./SwapVarianceRevertScenarioConstants.js"
 
@@ -63,7 +64,7 @@ function loadReserveManager(
   wallet: ethers.Signer
 ): ReserveManagerRequestSwapContract {
   const address = EthereumCollateralTool.loadOutpostAddresses(
-    ctx.config.ethereumDeploymentsPath
+    ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
   )[Constants.ReserveManagerContractName]
   Assert.ok(
     ethers.isAddress(address),

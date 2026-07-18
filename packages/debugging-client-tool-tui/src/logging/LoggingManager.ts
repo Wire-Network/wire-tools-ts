@@ -2,11 +2,7 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import { defaults } from "lodash"
-import {
-  getLoggingManager,
-  type Level,
-  type Logger
-} from "@wireio/shared"
+import { getLoggingManager, type Level, type Logger } from "@wireio/shared"
 import { FileAppender } from "@wireio/shared/node"
 
 /**
@@ -59,9 +55,13 @@ export namespace LoggingManager {
       options.filename || options.clusterPath,
       "LoggingManager.configure: clusterPath or filename is required"
     )
-    const filename =
-      options.filename ??
-      Path.join(options.clusterPath as string, LogSubpath, LogFilename)
+    const {
+      filename = Path.join(
+        options.clusterPath as string,
+        LogSubpath,
+        LogFilename
+      )
+    } = options
     return defaults(
       { ...options, filename },
       { clusterPath: options.clusterPath ?? "", level: DefaultLevel }

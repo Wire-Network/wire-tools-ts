@@ -4,7 +4,7 @@ const createMock = jest.fn()
 
 // Preserve every other `ClusterManager` member (launch/stop/destroy) via the
 // real module — only `create` is faked, mirroring the established
-// `jest.requireActual` spread pattern (see BindConfig.test.ts's netUtils mock).
+// `jest.requireActual` spread pattern (see BindConfigProvider.test.ts's netUtils mock).
 jest.mock("@wireio/cluster-tool/cluster/ClusterManager", () => ({
   ClusterManager: {
     ...(
@@ -43,7 +43,9 @@ describe("createCreateCommand", () => {
 
   beforeEach(() => {
     createMock.mockReset()
-    exitSpy = jest.spyOn(process, "exit").mockImplementation((() => undefined) as never)
+    exitSpy = jest
+      .spyOn(process, "exit")
+      .mockImplementation((() => undefined) as never)
   })
 
   afterEach(() => {

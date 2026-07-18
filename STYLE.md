@@ -375,6 +375,36 @@ enum ClusterCommand {
 }
 ```
 
+### String unions derive from enums — never hand-written
+
+A hand-written union of string literals is a closed set without its enum.
+**Declare the identity enum and use its members**; when a union TYPE is
+genuinely needed, DERIVE it from an enum instead of re-spelling literals
+(mechanically enforced by `BanStringLiteralUnion` in `eslint.config.mjs`;
+see `wire-platform-manifest/.claude/rules/string-unions-derive-from-enums.md`):
+
+```ts
+// ✗ WRONG — closed sets with no enum (all real, all swept 2026-07-18)
+export type ClusterConfigReportFormat = "csv" | "md" | "html"
+type LivenessKind = "alive" | "dead" | "unknown"
+private stateCache: ClusterState | null | "unread" = "unread"
+
+// ✓ RIGHT — the identity enum IS the set…
+export enum ClusterConfigReportFormat { csv = "csv", md = "md", html = "html" }
+enum StateCacheSentinel { unread = "unread" }   // even a 1-member sentinel
+
+// …and any needed union DERIVES:
+export type LevelName = `${Level}`                        // template over the enum
+type YargsPrimitiveType = keyof typeof OptionLeafType     // member-name union
+type SafeLevel = Level.debug | Level.info | Level.warn    // enum-MEMBER union (subset)
+export type ImportSeedChainKind = ChainKind.EVM | ChainKind.SVM  // subset of a generated enum
+```
+
+Single literal types stay fine (`kind: "UserSteps.CreateInput"` StepInput
+discriminators). When one enum must alias another package's declaration, use
+`export import Format = ClusterConfigReportFormat` inside the namespace — ONE
+declaration, zero call-site churn.
+
 ### Numeric literals
 
 Use numeric separators for timeouts and large values. `15_000` reads as "15 seconds" at a glance; `999_999` is obviously "a large number."
@@ -477,6 +507,32 @@ Use joined declarations when:
 - The group reads as "set up these related values."
 
 
+### Destructuring over member-coalesce
+
+When pulling members off one object into locals — with defaults, renames, or
+both — **destructure**; never re-spell the member name in an accessor +
+`??` chain (enforced by `BanMemberCoalesceDeclarator`):
+
+```ts
+// ✗ WRONG (real, swept 2026-07-18)
+const producerCount = topology.producerCount ?? DefaultProducerCount,
+  batchCount = topology.batchOperatorCount ?? DefaultBatchCount,
+  uwCount = topology.underwriterCount ?? DefaultUnderwriterCount
+
+// ✓ RIGHT — defaults + renames live in the pattern
+const {
+  producerCount = DefaultProducerCount,
+  batchOperatorCount: batchCount = DefaultBatchCount,
+  underwriterCount: uwCount = DefaultUnderwriterCount
+} = topology
+```
+
+Notes: async defaults are fine (`const { port = await BindConfigProvider.findAvailable(…) } = options`);
+a fallback to ANOTHER member destructures both then coalesces the locals
+(`const { batchOperatorAccount, underwriterAccount } = node` →
+`batchOperatorAccount ?? underwriterAccount`); optional chains and computed
+members (`arr[0] ?? x`) stay accessor-form.
+
 ### Module-level joined declarations
 
 Top-level setup (e.g., CLI parser construction) uses the same pattern:
@@ -496,11 +552,10 @@ const scriptName = last(process.argv[1].split("/")),
 Beyond nullable unwrapping, use `asOption` to construct an object and apply initialization side-effects in a single expression. The pattern is: build the value, `.tap()` to mutate or validate, `.get()` to unwrap.
 
 ```ts
-const exePaths: ClusterExePaths = asOption({
+const exePaths: ClusterExecutablePaths = asOption({
     nodeop: toBin("nodeop"),
     kiod: toBin("kiod"),
     clio: toBin("clio"),
-    sysUtil: toBin("sys-util"),
     anvil: await which("anvil"),
     solanaTestValidator: await which("solana-test-validator")
   })
@@ -531,6 +586,26 @@ Use this pattern for:
 - Constructing an object and immediately validating all its fields.
 - Building a value and logging or registering it as a side-effect.
 - Any case where you want "construct then tweak" without a mutable intermediate.
+
+**NEVER `asOption(await …).tap(…).get()`** (enforced by `BanAsOptionAwait`).
+Wrapping an ALREADY-AWAITED value just to tap a side effect and immediately
+unwrap is ceremony — bind the value and use plain statements (or compose a
+genuine `Future` pipeline when chaining async stages):
+
+```ts
+// ✗ WRONG (real, swept 2026-07-18)
+claimSolanaHttp = async (): Promise<number> =>
+  asOption(await claim(options.solana?.ports?.http ?? null, DefaultSolanaRpc, "solana.http"))
+    .tap(http => claimed.add(http + SolanaWsPortOffset))
+    .get()
+
+// ✓ RIGHT — the awaited value is already a plain binding
+claimSolanaHttp = async (): Promise<number> => {
+  const http = await claim(options.solana?.ports?.http ?? null, DefaultSolanaRpc, "solana.http")
+  claimed.add(http + SolanaWsPortOffset)
+  return http
+}
+```
 
 ---
 
@@ -941,14 +1016,14 @@ hidden.
 Multiple clusters run concurrently on one host as a first-class requirement.
 
 - **Never commit to a fixed port** — harness code AND tests obtain ports via
-  `await BindConfig.findAvailable(preferredDefault)`; a caller-PINNED but
+  `await BindConfigProvider.findAvailable(preferredDefault)`; a caller-PINNED but
   unavailable port THROWS. Any URL built from a port is a bound URL and follows
   the same rule.
-- `BindConfig.resolve` runs under the host-global file lock and the
+- `BindConfigProvider.resolve` runs under the host-global file lock and the
   **cross-process registry** (`/tmp/wire-platform-bind-config/<pid>.bind-config.json`):
   resolved-but-not-yet-bound ports count as taken for every other process.
 - **`solana-test-validator` gets a per-cluster disjoint `--dynamic-port-range`
-  window** (`BindConfig.findAvailableRange()` / `solana.ports.dynamicRange`,
+  window** (`BindConfigProvider.findAvailableRange()` / `solana.ports.dynamicRange`,
   UDP + TCP probed). Without it, concurrent validators UDP-double-bind the
   shared agave default range and forwarded transactions silently vanish into a
   co-runner's TPU — transactions return signatures that never land.
@@ -1014,6 +1089,15 @@ table rows, `SysioContractName`/`Mapping`/`Definitions`).
   VALUE, never by spelling).
 - **No `unknown`/`any` for a field that has a real type.** `unknown` is for
   caught errors, unparsed blobs, and deliberate existentials only.
+- **Never re-declare an existing shared symbol** — grep `@wireio/shared`,
+  `@wireio/opp-typescript-models`, `@wireio/sdk-core`, and the local `utils/`
+  BEFORE declaring any type, enum, or constant
+  (`reuse-shared-symbols-never-redeclare.md`). Real dupes swept 2026-07-18:
+  `ClusterConfigLoggingLevel` re-spelled `Level` (@wireio/shared);
+  `BindConfigProvider.LoopbackAddress`/`BindAllAddress` re-exported
+  `netUtils.Localhost`/`ListenAllAddress`; `ImportSeedChainKind` re-spelled the
+  proto `ChainKind` (bridge ABI spellings by VALUE via `abiEnumValue`, never by
+  re-declaring them).
 
 ---
 

@@ -52,10 +52,7 @@ export class LogTailStream implements ServerSideStream<LogTailEvent> {
     } catch (err) {
       log.debug(`LogTailStream initial buildLineIndex failed`, err)
     }
-    this.timer = setInterval(
-      () => void this.tick(emit),
-      LogTailStream.PollMs
-    )
+    this.timer = setInterval(() => void this.tick(emit), LogTailStream.PollMs)
   }
 
   async stop(): Promise<void> {

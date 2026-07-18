@@ -1,6 +1,6 @@
 import { Connection, type TransactionConfirmationStatus } from "@solana/web3.js"
 import { confirmSignature } from "@wireio/cluster-tool/clients/solana"
-import { BindConfig } from "@wireio/cluster-tool/config"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { toURL } from "@wireio/cluster-tool/utils"
 
 describe("confirmSignature", () => {
@@ -8,7 +8,11 @@ describe("confirmSignature", () => {
   let statusSpy: jest.SpyInstance
   beforeAll(async () => {
     connection = new Connection(
-      toURL(await BindConfig.findAvailable(BindConfig.DefaultSolanaRpc))
+      toURL(
+        await BindConfigProvider.findAvailable(
+          BindConfigProvider.DefaultSolanaRpc
+        )
+      )
     )
   })
   afterEach(() => statusSpy?.mockRestore())

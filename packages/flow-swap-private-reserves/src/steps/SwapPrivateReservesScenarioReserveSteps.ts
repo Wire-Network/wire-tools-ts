@@ -50,7 +50,9 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
    * escrows `msg.value` wei and ships the creator's compressed secp256k1 key
    * (contract-verified to derive to the caller).
    */
-  export function planCreateEthereumReserve<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCreateEthereumReserve<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -80,10 +82,11 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const swapUser = ctx.outputs.assert(swapUserOutputKey())
-    const reserveManager = Artifacts.loadReserveManager<Artifacts.ReserveManagerPrivateReserveContract>(
-      ctx,
-      swapUser.ethereumWallet
-    )
+    const reserveManager =
+      Artifacts.loadReserveManager<Artifacts.ReserveManagerPrivateReserveContract>(
+        ctx,
+        swapUser.ethereumWallet
+      )
     const nonce = await resolveLatestNonce(reserveManager)
     const response = await reserveManager.create_reserve(
       BigInt(input.tokenCode),
@@ -125,7 +128,9 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
    * signer's ed25519 key rides the attestation as `creator_pub_key`
    * automatically.
    */
-  export function planCreateSolanaReserve<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planCreateSolanaReserve<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -239,7 +244,9 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
    * reserve)` triple — escrows the requested WIRE, flips the depot row ACTIVE
    * synchronously, and queues RESERVE_READY back to the outpost.
    */
-  export function planMatchReserve<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planMatchReserve<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -289,13 +296,14 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
   // ── Outpost-local record reads (polled by the RESERVE_READY verifies) ────
 
   /** True once the ETH outpost's local PRIVATE record reports ACTIVE (a read). */
-  export async function readEthereumLocalReserveActive<C extends ClusterBuildContext>(
-    ctx: C
-  ): Promise<boolean> {
-    const reserveManager = Artifacts.loadReserveManager<Artifacts.ReserveManagerPrivateReserveContract>(
-      ctx,
-      ctx.ethereum.wallet.signer
-    )
+  export async function readEthereumLocalReserveActive<
+    C extends ClusterBuildContext
+  >(ctx: C): Promise<boolean> {
+    const reserveManager =
+      Artifacts.loadReserveManager<Artifacts.ReserveManagerPrivateReserveContract>(
+        ctx,
+        ctx.ethereum.wallet.signer
+      )
     const record = await reserveManager.getReserve(
       BigInt(Constants.Reserves.Ethereum.TokenCode),
       BigInt(Constants.Reserves.PrivateReserveCode)
@@ -308,9 +316,9 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
    * Required before Phase B — `request_swap_spl` constraint-gates on the local
    * status, so the RESERVE_READY round-trip must have landed.
    */
-  export async function readSolanaLocalReserveActive<C extends ClusterBuildContext>(
-    ctx: C
-  ): Promise<boolean> {
+  export async function readSolanaLocalReserveActive<
+    C extends ClusterBuildContext
+  >(ctx: C): Promise<boolean> {
     const swapUser = ctx.outputs.assert(swapUserOutputKey())
     const program = SolanaCollateralTool.loadOppOutpostProgram(
       ctx,

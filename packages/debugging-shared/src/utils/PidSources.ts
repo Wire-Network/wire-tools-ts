@@ -7,11 +7,9 @@ import {
   ClusterStateNodeRole,
   type ClusterState,
   type ClusterStateNode
-} from "../cluster/index.js"
-import {
-  PidSourceKind,
-  type PidSource
-} from "../processes/index.js"
+} from "@wireio/cluster-tool-shared"
+
+import { PidSourceKind, type PidSource } from "../processes/index.js"
 import { currentDateStamp } from "./dateStamp.js"
 
 export namespace PidSources {

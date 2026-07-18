@@ -71,8 +71,11 @@ function randomBigInt(rng: () => number, max: bigint): bigint {
   const bits = max.toString(2).length,
     chunkCount = Math.ceil(bits / RandomChunkBits),
     total =
-      Array.from({ length: chunkCount }, () => BigInt(Math.floor(rng() * RandomChunkRange))).reduce(
-        (accumulator, chunk, index) => accumulator + (chunk << BigInt(index * RandomChunkBits)),
+      Array.from({ length: chunkCount }, () =>
+        BigInt(Math.floor(rng() * RandomChunkRange))
+      ).reduce(
+        (accumulator, chunk, index) =>
+          accumulator + (chunk << BigInt(index * RandomChunkBits)),
         0n
       ) % max
   return total === 0n ? 1n : total
@@ -86,7 +89,9 @@ function randomBigInt(rng: () => number, max: bigint): bigint {
  * @return The hex string.
  */
 function randomBytesHex(rng: () => number, byteLength: number): string {
-  return Array.from({ length: byteLength }, () => Math.floor(rng() * ByteValueRange))
+  return Array.from({ length: byteLength }, () =>
+    Math.floor(rng() * ByteValueRange)
+  )
     .map(byte => byte.toString(16).padStart(2, "0"))
     .join("")
 }
@@ -146,7 +151,9 @@ function walletAtHdIndex(ethereumHdIndex: number): ethers.HDNodeWallet {
  * @param identity - The staker identity.
  * @return The derived HD wallet.
  */
-export function controlledStakerWallet(identity: ControlledStakerIdentity): ethers.HDNodeWallet {
+export function controlledStakerWallet(
+  identity: ControlledStakerIdentity
+): ethers.HDNodeWallet {
   return walletAtHdIndex(identity.ethereumHdIndex)
 }
 
@@ -168,7 +175,9 @@ export function buildControlledStakerIdentities(
     const ethereumHdIndex = ethereumHdIndexBase + index
     return {
       wireAccount: `${wireAccountPrefix}${toLetterSuffix(index)}`,
-      addressHex: walletAtHdIndex(ethereumHdIndex).address.toLowerCase().replace(/^0x/, ""),
+      addressHex: walletAtHdIndex(ethereumHdIndex)
+        .address.toLowerCase()
+        .replace(/^0x/, ""),
       ethereumHdIndex
     }
   })
@@ -218,36 +227,53 @@ export interface EthereumDumpOptions {
  * @param options - Row counts, seed, and the controlled-staker roster.
  * @return The indexer-shaped dump.
  */
-export function buildSyntheticEthereumDump(options: EthereumDumpOptions = {}): IndexBalanceDump {
+export function buildSyntheticEthereumDump(
+  options: EthereumDumpOptions = {}
+): IndexBalanceDump {
   const rng = mulberry32(options.seed ?? DefaultEthereumSeed),
-    minimumSourceUnits = options.minSourceUnits ?? DefaultEthereumMinimumSourceUnits,
-    randomAddress = (): string => `0x${randomBytesHex(rng, EthereumAddressByteLength)}`,
+    { minSourceUnits: minimumSourceUnits = DefaultEthereumMinimumSourceUnits } =
+      options,
+    randomAddress = (): string =>
+      `0x${randomBytesHex(rng, EthereumAddressByteLength)}`,
     randomAmount = (): bigint =>
-      minimumSourceUnits + randomBigInt(rng, minimumSourceUnits * RandomAmountSpread)
+      minimumSourceUnits +
+      randomBigInt(rng, minimumSourceUnits * RandomAmountSpread)
 
-  const standalonePurchasers = Array.from({ length: options.purchaserCount ?? 0 }, () => ({
-      address: randomAddress(),
-      totalPretokens: randomAmount().toString()
-    })),
-    standaloneStakers = Array.from({ length: options.stakerCount ?? 0 }, () => ({
-      address: randomAddress(),
-      pretokenYield: randomAmount().toString()
-    })),
-    overlappingRows = Array.from({ length: options.overlappingCount ?? 0 }, () => {
-      const address = randomAddress()
-      return {
-        purchaser: { address, totalPretokens: randomAmount().toString() },
-        staker: { address, pretokenYield: randomAmount().toString() }
-      }
-    }),
-    yieldClaimedStakers = Array.from({ length: options.yieldClaimedCount ?? 0 }, () => {
-      const pretokenYield = randomAmount()
-      return {
+  const standalonePurchasers = Array.from(
+      { length: options.purchaserCount ?? 0 },
+      () => ({
         address: randomAddress(),
-        pretokenYield: pretokenYield.toString(),
-        yieldClaimed: randomBigInt(rng, pretokenYield / 2n).toString()
+        totalPretokens: randomAmount().toString()
+      })
+    ),
+    standaloneStakers = Array.from(
+      { length: options.stakerCount ?? 0 },
+      () => ({
+        address: randomAddress(),
+        pretokenYield: randomAmount().toString()
+      })
+    ),
+    overlappingRows = Array.from(
+      { length: options.overlappingCount ?? 0 },
+      () => {
+        const address = randomAddress()
+        return {
+          purchaser: { address, totalPretokens: randomAmount().toString() },
+          staker: { address, pretokenYield: randomAmount().toString() }
+        }
       }
-    }),
+    ),
+    yieldClaimedStakers = Array.from(
+      { length: options.yieldClaimedCount ?? 0 },
+      () => {
+        const pretokenYield = randomAmount()
+        return {
+          address: randomAddress(),
+          pretokenYield: pretokenYield.toString(),
+          yieldClaimed: randomBigInt(rng, pretokenYield / 2n).toString()
+        }
+      }
+    ),
     controlledPurchasers = (options.controlled ?? []).map(identity => ({
       address: `0x${identity.addressHex}`,
       totalPretokens: (options.controlledSourceUnits ?? 0n).toString()
@@ -257,7 +283,11 @@ export function buildSyntheticEthereumDump(options: EthereumDumpOptions = {}): I
       ...overlappingRows.map(row => row.purchaser),
       ...controlledPurchasers
     ],
-    stakers = [...standaloneStakers, ...overlappingRows.map(row => row.staker), ...yieldClaimedStakers]
+    stakers = [
+      ...standaloneStakers,
+      ...overlappingRows.map(row => row.staker),
+      ...yieldClaimedStakers
+    ]
 
   return {
     metadata: {
@@ -294,17 +324,24 @@ export interface SolanaDumpOptions {
  * @param options - Row counts and seed.
  * @return The indexer-shaped dump.
  */
-export function buildSyntheticSolanaDump(options: SolanaDumpOptions = {}): IndexBalanceDump {
+export function buildSyntheticSolanaDump(
+  options: SolanaDumpOptions = {}
+): IndexBalanceDump {
   const rng = mulberry32(options.seed ?? DefaultSolanaSeed),
-    minimumSourceUnits = options.minSourceUnits ?? DefaultSolanaMinimumSourceUnits,
+    { minSourceUnits: minimumSourceUnits = DefaultSolanaMinimumSourceUnits } =
+      options,
     randomAddress = (): string => Keypair.generate().publicKey.toBase58(),
     randomAmount = (): bigint =>
-      minimumSourceUnits + randomBigInt(rng, minimumSourceUnits * RandomAmountSpread)
+      minimumSourceUnits +
+      randomBigInt(rng, minimumSourceUnits * RandomAmountSpread)
 
-  const purchasers = Array.from({ length: options.purchaserCount ?? 0 }, () => ({
-      address: randomAddress(),
-      totalPretokens: randomAmount().toString()
-    })),
+  const purchasers = Array.from(
+      { length: options.purchaserCount ?? 0 },
+      () => ({
+        address: randomAddress(),
+        totalPretokens: randomAmount().toString()
+      })
+    ),
     stakers = Array.from({ length: options.stakerCount ?? 0 }, () => ({
       address: randomAddress(),
       pretokenYield: randomAmount().toString()

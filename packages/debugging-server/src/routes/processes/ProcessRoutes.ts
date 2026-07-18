@@ -39,9 +39,7 @@ export namespace ProcessRoutes {
     JsonRPC.addRoute(
       registry,
       ApiPaths.Processes.Methods.List,
-      async (
-        _params: ListProcessesRequest
-      ): Promise<ListProcessesResponse> => {
+      async (_params: ListProcessesRequest): Promise<ListProcessesResponse> => {
         const state = await clusterAccess.getState(),
           sources = collectPidSources(clusterAccess.clusterPath, state)
         return { sources }

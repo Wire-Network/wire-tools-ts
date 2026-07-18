@@ -1,9 +1,10 @@
 import Fs from "node:fs"
 import Path from "node:path"
+import { ClusterFiles } from "@wireio/cluster-tool-shared"
 import { asOption } from "@3fv/prelude-ts"
 import Yargs from "yargs"
 import { hideBin } from "yargs/helpers"
-import { ClusterFiles } from "@wireio/debugging-shared"
+
 import {
   LocalFileDebuggingClient,
   NetDebuggingClient,

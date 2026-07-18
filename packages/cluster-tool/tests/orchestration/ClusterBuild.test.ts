@@ -7,31 +7,47 @@ import {
   ClusterBuildPhase,
   ClusterBuildStep
 } from "@wireio/cluster-tool/orchestration"
-import { ClusterConfig } from "@wireio/cluster-tool/config"
+import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
 import { getLogger } from "@wireio/cluster-tool/logging"
 import { Report } from "@wireio/cluster-tool/report"
 import { PersistedFixture } from "../config/clusterConfigFixture.js"
 
 /** A build whose report writes into `dir` (the fixture's path is unwritable). */
 function buildWithReportDir(dir: string): ClusterBuild {
-  const config = ClusterConfig.deserialize(
+  const config = ClusterConfigProvider.deserialize(
     JSON.stringify({
       ...PersistedFixture,
       report: { ...PersistedFixture.report, path: dir }
     })
   )
-  return ClusterBuild.forContext(new ClusterBuildContext(config, getLogger("build-test")))
+  return ClusterBuild.forContext(
+    new ClusterBuildContext(config, getLogger("build-test"))
+  )
 }
 
 const ok = (order: string[], name: string) =>
-  ClusterBuildStep.create(Report.Actor.Sysio, name, name, {}, null, async () => {
-    order.push(name)
-  })
+  ClusterBuildStep.create(
+    Report.Actor.Sysio,
+    name,
+    name,
+    {},
+    null,
+    async () => {
+      order.push(name)
+    }
+  )
 
 const fail = (name: string) =>
-  ClusterBuildStep.create(Report.Actor.Sysio, name, name, {}, null, async () => {
-    throw new Error(`${name} boom`)
-  })
+  ClusterBuildStep.create(
+    Report.Actor.Sysio,
+    name,
+    name,
+    {},
+    null,
+    async () => {
+      throw new Error(`${name} boom`)
+    }
+  )
 
 describe("ClusterBuild", () => {
   let dir: string

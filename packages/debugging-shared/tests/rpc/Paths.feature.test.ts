@@ -59,9 +59,7 @@ describe("InferredRequestType / InferredResponseType", () => {
   })
 
   it("infers log read/stat shapes", () => {
-    const stat: InferredResponseType<
-      typeof ApiPaths.Logs.Methods.GetStat
-    > = {
+    const stat: InferredResponseType<typeof ApiPaths.Logs.Methods.GetStat> = {
       path: "/x.log",
       ino: 1,
       totalBytes: 0,

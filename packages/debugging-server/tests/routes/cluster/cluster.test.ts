@@ -3,23 +3,32 @@ import * as OS from "node:os"
 import * as Path from "node:path"
 
 import {
-  ApiPaths,
   ClusterFiles,
-  ClusterStateVersion,
-  type ClusterState,
+  type ClusterConfig,
+  type ClusterState
+} from "@wireio/cluster-tool-shared"
+import {
+  ApiPaths,
   type GetClusterConfigResponse,
-  type GetClusterStateResponse,
-  type PersistedClusterConfig
+  type GetClusterStateResponse
 } from "@wireio/debugging-shared"
 
 import { DebuggingServer } from "@wireio/debugging-server"
+
+/** JSON-RPC 2.0 error member carried by a failed response. */
+interface RpcResponseError {
+  /** JSON-RPC error code. */
+  code: number
+  /** Human-readable error description. */
+  message: string
+}
 
 /** Parsed JSON-RPC 2.0 response envelope — the wire shape `JsonRPC.mount` writes. */
 interface RpcResponseBody {
   jsonrpc: string
   id: number | null
   result?: unknown
-  error?: { code: number; message: string }
+  error?: RpcResponseError
 }
 
 describe(`POST ${ApiPaths.Cluster.Endpoint}`, () => {
@@ -46,12 +55,11 @@ describe(`POST ${ApiPaths.Cluster.Endpoint}`, () => {
 
   beforeAll(async () => {
     Fs.mkdirSync(tmpDir, { recursive: true })
-    const config: Partial<PersistedClusterConfig> = {
+    const config: Partial<ClusterConfig> = {
       clusterPath: tmpDir,
       epochDurationSec: 60
     }
     const state: Partial<ClusterState> = {
-      version: ClusterStateVersion,
       createdAt: new Date().toISOString(),
       nodes: []
     }
@@ -84,15 +92,11 @@ describe(`POST ${ApiPaths.Cluster.Endpoint}`, () => {
     const { body } = await rpcCall(ApiPaths.Cluster.Methods.GetState)
     const result = body.result as GetClusterStateResponse
     expect(result.state).not.toBeNull()
-    expect(result.state!.version).toBe(ClusterStateVersion)
   })
 })
 
 describe(`Cluster.GetState with no state file`, () => {
-  const tmpDir = Path.join(
-    OS.tmpdir(),
-    `cluster-no-state-${Date.now()}`
-  )
+  const tmpDir = Path.join(OS.tmpdir(), `cluster-no-state-${Date.now()}`)
   let server: DebuggingServer
   let baseUrl: string
 

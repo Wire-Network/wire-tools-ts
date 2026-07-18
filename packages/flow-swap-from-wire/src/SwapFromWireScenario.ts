@@ -1,4 +1,5 @@
 import Assert from "node:assert"
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { SysioContracts } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
 import {
@@ -17,7 +18,6 @@ import {
   verifyStep,
   type ClusterBuild,
   type ClusterBuildOptions,
-  type ClusterConfig,
   type Logger
 } from "@wireio/cluster-tool"
 import { SwapFromWireScenarioConstants as Constants } from "./SwapFromWireScenarioConstants.js"

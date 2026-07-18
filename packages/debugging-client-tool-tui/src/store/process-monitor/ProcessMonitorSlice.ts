@@ -1,8 +1,8 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
+import type { ProcessLivenessSnapshot } from "@wireio/debugging-shared"
 import { SliceName } from "../StoreTypes.js"
 import type {
   LogViewerState,
-  ProcessLiveness,
   ProcessMonitorState
 } from "./ProcessMonitorTypes.js"
 
@@ -26,7 +26,7 @@ export const processMonitorSlice = createSlice({
   initialState,
   reducers: {
     /** Upsert liveness by label. */
-    setProcess: (state, action: PayloadAction<ProcessLiveness>) => {
+    setProcess: (state, action: PayloadAction<ProcessLivenessSnapshot>) => {
       state.processes[action.payload.label] = action.payload
     },
     /** Drop a liveness record — used when a node disappears from `ClusterState`. */
@@ -57,10 +57,7 @@ export const processMonitorSlice = createSlice({
       state.logViewer.follow = action.payload
     },
     /** Horizontal-pan offset (in characters). Negative values clamp to 0. */
-    setLogViewerHorizontalOffset: (
-      state,
-      action: PayloadAction<number>
-    ) => {
+    setLogViewerHorizontalOffset: (state, action: PayloadAction<number>) => {
       state.logViewer.horizontalOffset = Math.max(0, action.payload)
     },
     /**
