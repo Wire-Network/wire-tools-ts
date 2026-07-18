@@ -9,7 +9,11 @@ import Assert from "node:assert"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { getLogger } from "../../logging/Logger.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
-import { LongFileLockOptions, mkdirs, withFileLock } from "../../utils/fsUtils.js"
+import {
+  LongFileLockOptions,
+  mkdirs,
+  withFileLock
+} from "../../utils/fsUtils.js"
 import { scaleTimeoutMs } from "../../utils/asyncUtils.js"
 
 const log = getLogger(__filename)
@@ -33,7 +37,7 @@ export interface EthereumOutpostBootstrapperOptions {
   /** RPC URL of the already-running run anvil to deploy against. */
   rpcUrl: string
   /**
-   * THIS cluster's deploy-artifact dir (`ClusterConfig.ethereumDeploymentsPath`)
+   * THIS cluster's deploy-artifact dir (`ClusterConfigProvider.ethereumDeploymentsPath`)
    * — deploy configs + address files land here, and `deployLocal.ts` is pointed
    * at it via `WIRE_ETH_DEPLOYMENTS_PATH`. Per-cluster so parallel flows never
    * clobber each other's deploy state (2026-07-02 pair-1 incident: two deploys
@@ -49,8 +53,7 @@ export interface EthereumOutpostBootstrapperOptions {
 }
 
 /** Resolved {@link EthereumOutpostBootstrapper} config. */
-export interface EthereumOutpostBootstrapperConfig
-  extends Required<EthereumOutpostBootstrapperOptions> {}
+export interface EthereumOutpostBootstrapperConfig extends Required<EthereumOutpostBootstrapperOptions> {}
 
 /**
  * Bootstrap the Ethereum (anvil) outpost for the test cluster: generate
@@ -72,8 +75,14 @@ export class EthereumOutpostBootstrapper {
   private accounts: EthereumAccount[] = []
 
   constructor(options: EthereumOutpostBootstrapperOptions) {
-    Assert.ok(options.ethereumPath, "EthereumOutpostBootstrapper: ethereumPath is required")
-    Assert.ok(options.anvilDataPath, "EthereumOutpostBootstrapper: anvilDataPath is required")
+    Assert.ok(
+      options.ethereumPath,
+      "EthereumOutpostBootstrapper: ethereumPath is required"
+    )
+    Assert.ok(
+      options.anvilDataPath,
+      "EthereumOutpostBootstrapper: anvilDataPath is required"
+    )
     Assert.ok(options.rpcUrl, "EthereumOutpostBootstrapper: rpcUrl is required")
     Assert.ok(
       options.deploymentsPath,
@@ -94,7 +103,9 @@ export class EthereumOutpostBootstrapper {
   async bootstrap(): Promise<EthereumAccount[]> {
     const { ethereumPath, anvilDataPath, rpcUrl, accountCount } = this.config
 
-    log.info(`[ethereum] generating ${accountCount} accounts, deploying against ${rpcUrl}`)
+    log.info(
+      `[ethereum] generating ${accountCount} accounts, deploying against ${rpcUrl}`
+    )
     this.accounts = EthereumOutpostBootstrapper.generateAccounts(accountCount)
 
     await this.deployContracts(ethereumPath, rpcUrl)
@@ -104,9 +115,14 @@ export class EthereumOutpostBootstrapper {
     // SwapRemit can only draw against physically-funded custody).
     await this.seedReserveManager(rpcUrl)
 
-    const accountsFile = Path.join(mkdirs(anvilDataPath), EthereumOutpostBootstrapper.AccountsFile)
+    const accountsFile = Path.join(
+      mkdirs(anvilDataPath),
+      EthereumOutpostBootstrapper.AccountsFile
+    )
     Fs.writeFileSync(accountsFile, JSON.stringify(this.accounts, null, 2))
-    log.info(`[ethereum] wrote ${this.accounts.length} accounts to ${accountsFile}`)
+    log.info(
+      `[ethereum] wrote ${this.accounts.length} accounts to ${accountsFile}`
+    )
 
     return this.accounts
   }
@@ -129,7 +145,10 @@ export class EthereumOutpostBootstrapper {
    * hardhat invocation itself is serialized host-wide: parallel runs share the
    * repo's compile cache/artifacts, and concurrent compiles corrupt them.
    */
-  private async deployContracts(ethereumPath: string, rpcUrl: string): Promise<void> {
+  private async deployContracts(
+    ethereumPath: string,
+    rpcUrl: string
+  ): Promise<void> {
     log.info(`[ethereum] deploying contracts from ${ethereumPath}`)
     const deployerPrivateKey =
       this.accounts[EthereumOutpostBootstrapper.DeployerAccountIndex].privateKey
@@ -162,14 +181,27 @@ export class EthereumOutpostBootstrapper {
       gasLimitFile: Path.join(localDir, "outpost-gas-limits.json"),
       useMockAggregator: true
     }
-    Fs.writeFileSync(Path.join(localDir, "liqeth.json"), JSON.stringify(liqEthConfig, null, 2))
-    Fs.writeFileSync(Path.join(localDir, "outpost.json"), JSON.stringify(outpostConfig, null, 2))
+    Fs.writeFileSync(
+      Path.join(localDir, "liqeth.json"),
+      JSON.stringify(liqEthConfig, null, 2)
+    )
+    Fs.writeFileSync(
+      Path.join(localDir, "outpost.json"),
+      JSON.stringify(outpostConfig, null, 2)
+    )
 
     log.info("[ethereum] running deployLocal.ts via hardhat...")
     StepExtraRecorder.record({
       client: "process",
       kind: "exec",
-      command: ["npx", "hardhat", "run", "src/scripts/deployLocal.ts", "--network", "localhost"],
+      command: [
+        "npx",
+        "hardhat",
+        "run",
+        "src/scripts/deployLocal.ts",
+        "--network",
+        "localhost"
+      ],
       cwd: ethereumPath
     })
     // withFileLock: hardhat compiles into the SHARED repo cache/artifacts on
@@ -180,10 +212,18 @@ export class EthereumOutpostBootstrapper {
       () =>
         execFileAsync(
           "npx",
-          ["hardhat", "run", "src/scripts/deployLocal.ts", "--network", "localhost"],
+          [
+            "hardhat",
+            "run",
+            "src/scripts/deployLocal.ts",
+            "--network",
+            "localhost"
+          ],
           {
             cwd: ethereumPath,
-            timeout: scaleTimeoutMs(EthereumOutpostBootstrapper.HardhatDeployTimeoutMs),
+            timeout: scaleTimeoutMs(
+              EthereumOutpostBootstrapper.HardhatDeployTimeoutMs
+            ),
             maxBuffer: EthereumOutpostBootstrapper.HardhatDeployBufferBytes,
             env: {
               ...process.env,
@@ -233,15 +273,21 @@ export class EthereumOutpostBootstrapper {
       "outpost-addrs.json"
     )
     if (!Fs.existsSync(outpostAddressesFile)) {
-      log.warn("[ethereum] seedReserveManager: outpost-addrs.json missing, skipping")
+      log.warn(
+        "[ethereum] seedReserveManager: outpost-addrs.json missing, skipping"
+      )
       return
     }
     const addresses = JSON.parse(Fs.readFileSync(outpostAddressesFile, "utf-8"))
-    const reserveManagerAddress: string | null = addresses.ReserveManager ?? null
-    const mockUsdcAddress: string | null = addresses.MockUsdc ?? null
-    const mockUsdtAddress: string | null = addresses.MockUsdt ?? null
+    const {
+      ReserveManager: reserveManagerAddress,
+      MockUsdc: mockUsdcAddress,
+      MockUsdt: mockUsdtAddress
+    } = addresses
     if (reserveManagerAddress == null) {
-      log.warn("[ethereum] seedReserveManager: ReserveManager address missing, skipping")
+      log.warn(
+        "[ethereum] seedReserveManager: ReserveManager address missing, skipping"
+      )
       return
     }
 
@@ -249,19 +295,26 @@ export class EthereumOutpostBootstrapper {
     // used as `owner`, so its minted MockUSDC/USDT balances are available here.
     const provider = new ethers.JsonRpcProvider(rpcUrl)
     const deployer = new ethers.Wallet(
-      this.accounts[EthereumOutpostBootstrapper.DeployerAccountIndex].privateKey,
+      this.accounts[EthereumOutpostBootstrapper.DeployerAccountIndex]
+        .privateKey,
       provider
     )
     let nonce = await deployer.getNonce("pending")
-    log.info(`[ethereum] seedReserveManager start (deployer=${deployer.address}, nonce=${nonce})`)
+    log.info(
+      `[ethereum] seedReserveManager start (deployer=${deployer.address}, nonce=${nonce})`
+    )
 
-    const nativeSeed = ethers.parseEther(EthereumOutpostBootstrapper.NativeSeedEther)
+    const nativeSeed = ethers.parseEther(
+      EthereumOutpostBootstrapper.NativeSeedEther
+    )
     const stableSeed = ethers.parseUnits(
       EthereumOutpostBootstrapper.StableSeedUnits,
       EthereumOutpostBootstrapper.StableDecimals
     )
 
-    log.info(`[ethereum] seed ${ethers.formatEther(nativeSeed)} ETH (nonce ${nonce})`)
+    log.info(
+      `[ethereum] seed ${ethers.formatEther(nativeSeed)} ETH (nonce ${nonce})`
+    )
     const ethTx = await deployer.sendTransaction({
       to: reserveManagerAddress,
       value: nativeSeed,
@@ -269,24 +322,49 @@ export class EthereumOutpostBootstrapper {
     })
     await ethTx.wait()
 
-    const transferStable = async (tokenAddress: string, label: string): Promise<void> => {
-      log.info(`[ethereum] seed ${ethers.formatUnits(stableSeed, 6)} ${label} (nonce ${nonce})`)
-      const token = new ethers.Contract(tokenAddress, EthereumOutpostBootstrapper.Erc20Abi, deployer)
-      const tx = await token.transfer(reserveManagerAddress, stableSeed, { nonce: nonce++ })
+    const transferStable = async (
+      tokenAddress: string,
+      label: string
+    ): Promise<void> => {
+      log.info(
+        `[ethereum] seed ${ethers.formatUnits(stableSeed, 6)} ${label} (nonce ${nonce})`
+      )
+      const token = new ethers.Contract(
+        tokenAddress,
+        EthereumOutpostBootstrapper.Erc20Abi,
+        deployer
+      )
+      const tx = await token.transfer(reserveManagerAddress, stableSeed, {
+        nonce: nonce++
+      })
       await tx.wait()
     }
     if (mockUsdcAddress != null) await transferStable(mockUsdcAddress, "USDC")
     if (mockUsdtAddress != null) await transferStable(mockUsdtAddress, "USDT")
 
     // LIQETH only if the LiqEth deploy went through (toggled off for outpost-only runs).
-    const liqEthAddress: string | null = addresses.LiqEth ?? null
+    const { LiqEth: liqEthAddress } = addresses
     if (liqEthAddress != null) {
-      const liqEthSeed = ethers.parseEther(EthereumOutpostBootstrapper.NativeSeedEther)
-      const liqEth = new ethers.Contract(liqEthAddress, EthereumOutpostBootstrapper.Erc20Abi, deployer)
-      const ownerLiqEthBalance: bigint = await liqEth.balanceOf(deployer.address)
+      const liqEthSeed = ethers.parseEther(
+        EthereumOutpostBootstrapper.NativeSeedEther
+      )
+      const liqEth = new ethers.Contract(
+        liqEthAddress,
+        EthereumOutpostBootstrapper.Erc20Abi,
+        deployer
+      )
+      const ownerLiqEthBalance: bigint = await liqEth.balanceOf(
+        deployer.address
+      )
       if (ownerLiqEthBalance >= liqEthSeed) {
-        log.info(`[ethereum] seed ${ethers.formatEther(liqEthSeed)} LIQETH (nonce ${nonce})`)
-        const liqEthTx = await liqEth.transfer(reserveManagerAddress, liqEthSeed, { nonce: nonce++ })
+        log.info(
+          `[ethereum] seed ${ethers.formatEther(liqEthSeed)} LIQETH (nonce ${nonce})`
+        )
+        const liqEthTx = await liqEth.transfer(
+          reserveManagerAddress,
+          liqEthSeed,
+          { nonce: nonce++ }
+        )
         await liqEthTx.wait()
       } else {
         log.info(
@@ -302,13 +380,17 @@ export namespace EthereumOutpostBootstrapper {
   /** Annotated accounts filename written under the anvil data path. */
   export const AccountsFile = "accounts.json"
   /** Anvil's default deterministic mnemonic. */
-  export const AnvilMnemonic = "test test test test test test test test test test test junk"
+  export const AnvilMnemonic =
+    "test test test test test test test test test test test junk"
   /** BIP-44 derivation path prefix anvil uses for its accounts. */
   export const DerivationPath = "m/44'/60'/0'/0/"
   /** HD index of the deployer account. */
   export const DeployerAccountIndex = 0
   /** Deploy-artifact files cleared before every deploy (stale-address guard). */
-  export const StaleDeployArtifactFiles = ["liqeth-addrs.json", "outpost-addrs.json"] as const
+  export const StaleDeployArtifactFiles = [
+    "liqeth-addrs.json",
+    "outpost-addrs.json"
+  ] as const
   /**
    * Host-global lock serializing the hardhat deploy subprocess across every
    * wire process: parallel deploys share `<wire-ethereum>`'s compile
@@ -354,7 +436,10 @@ export namespace EthereumOutpostBootstrapper {
   export function generateAccounts(count: number): EthereumAccount[] {
     const mnemonic = ethers.Mnemonic.fromPhrase(AnvilMnemonic)
     return range(count).map(index => {
-      const wallet = ethers.HDNodeWallet.fromMnemonic(mnemonic, `${DerivationPath}${index}`)
+      const wallet = ethers.HDNodeWallet.fromMnemonic(
+        mnemonic,
+        `${DerivationPath}${index}`
+      )
       return {
         address: wallet.address,
         privateKey: wallet.privateKey,

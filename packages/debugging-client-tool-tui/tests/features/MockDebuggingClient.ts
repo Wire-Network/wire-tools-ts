@@ -1,13 +1,12 @@
+import type { ClusterConfig, ClusterState } from "@wireio/cluster-tool-shared"
 import {
   ClosedReason,
-  type ClusterState,
   type InferredStreamEvent,
   type InferredStreamParams,
   type LoadEnvelopeRecordsRequest,
   type LoadEnvelopeRecordsResponse,
   type LogReadRequest,
   type LogStat,
-  type PersistedClusterConfig,
   type PidSource,
   type ProcessLivenessSnapshot,
   type StreamTopic
@@ -37,7 +36,7 @@ export interface MockSubscriptionEntry {
  * server-pushed events.
  */
 export class MockDebuggingClient extends DebuggingClient {
-  private clusterConfig: PersistedClusterConfig | null = null
+  private clusterConfig: ClusterConfig | null = null
   private clusterState: ClusterState | null = null
   private processSources: PidSource[] = []
   private livenessByLabel = new Map<string, ProcessLivenessSnapshot>()
@@ -48,7 +47,7 @@ export class MockDebuggingClient extends DebuggingClient {
   private nextSubId = 1
   private subscriptions: MockSubscriptionEntry[] = []
 
-  setClusterConfig(c: PersistedClusterConfig): this {
+  setClusterConfig(c: ClusterConfig): this {
     this.clusterConfig = c
     return this
   }
@@ -89,10 +88,7 @@ export class MockDebuggingClient extends DebuggingClient {
   }
 
   /** Invoked by the test to push an event into the active subscription for `topic`. */
-  emit<T extends StreamTopic>(
-    topic: T,
-    payload: InferredStreamEvent<T>
-  ): void {
+  emit<T extends StreamTopic>(topic: T, payload: InferredStreamEvent<T>): void {
     this.subscriptions
       .filter(s => s.topic === topic)
       .forEach(s =>
@@ -122,8 +118,9 @@ export class MockDebuggingClient extends DebuggingClient {
     this.subscriptions = []
   }
 
-  async getClusterConfig(): Promise<PersistedClusterConfig> {
-    if (!this.clusterConfig) throw new Error("MockDebuggingClient: no cluster config set")
+  async getClusterConfig(): Promise<ClusterConfig> {
+    if (!this.clusterConfig)
+      throw new Error("MockDebuggingClient: no cluster config set")
     return this.clusterConfig
   }
 
@@ -148,7 +145,8 @@ export class MockDebuggingClient extends DebuggingClient {
 
   async getLogStat(path: string): Promise<LogStat> {
     const stat = this.logStats.get(path)
-    if (!stat) throw new Error(`MockDebuggingClient: no LogStat set for ${path}`)
+    if (!stat)
+      throw new Error(`MockDebuggingClient: no LogStat set for ${path}`)
     return stat
   }
 
@@ -157,7 +155,9 @@ export class MockDebuggingClient extends DebuggingClient {
     return all.slice(req.fromLine, req.fromLine + req.count)
   }
 
-  async listEnvelopes(_req: ListEnvelopesRequest): Promise<ListEnvelopesResponse> {
+  async listEnvelopes(
+    _req: ListEnvelopesRequest
+  ): Promise<ListEnvelopesResponse> {
     if (!this.envelopeListResponse)
       throw new Error("MockDebuggingClient: no envelope list set")
     return this.envelopeListResponse
@@ -165,7 +165,8 @@ export class MockDebuggingClient extends DebuggingClient {
 
   async getEnvelope(key: string): Promise<GetEnvelopeResponse> {
     const resp = this.envelopeByKey.get(key)
-    if (!resp) throw new Error(`MockDebuggingClient: no envelope for key ${key}`)
+    if (!resp)
+      throw new Error(`MockDebuggingClient: no envelope for key ${key}`)
     return resp
   }
 
@@ -180,13 +181,9 @@ export class MockDebuggingClient extends DebuggingClient {
     _params: InferredStreamParams<T>
   ): Promise<DebuggingSubscription<InferredStreamEvent<T>>> {
     const id = this.nextSubId++,
-      sub = new DebuggingSubscription<InferredStreamEvent<T>>(
-        id,
-        topic,
-        () => {
-          this.subscriptions = this.subscriptions.filter(s => s.id !== id)
-        }
-      )
+      sub = new DebuggingSubscription<InferredStreamEvent<T>>(id, topic, () => {
+        this.subscriptions = this.subscriptions.filter(s => s.id !== id)
+      })
     this.subscriptions.push({
       id,
       topic,

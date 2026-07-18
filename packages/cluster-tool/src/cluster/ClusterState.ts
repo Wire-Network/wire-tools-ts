@@ -6,11 +6,10 @@ import { OperatorType } from "@wireio/opp-typescript-models"
 import {
   ClusterFiles,
   ClusterStateNodeRole,
-  ClusterStateVersion,
+  type ClusterConfig,
   type ClusterState as ClusterStateSnapshot,
   type ClusterStateNode
-} from "@wireio/debugging-shared"
-import { ClusterConfig } from "../config/ClusterConfig.js"
+} from "@wireio/cluster-tool-shared"
 import { NodeConfig, NodeRole } from "../config/NodeConfig.js"
 import type { ClusterBuildContext } from "../orchestration/ClusterBuildContext.js"
 import { ClusterKeyStore } from "../orchestration/outputs/ClusterKeyStore.js"
@@ -45,11 +44,17 @@ export interface ClusterKeysNodeEntry {
  * `underwriterArgs`) build directly from them on relaunch.
  */
 export interface ClusterKeysOperatorEntry {
+  /** WIRE account name the operator was provisioned under. */
   account: string
+  /** Operator role (batch operator / underwriter / producer). */
   type: OperatorType
+  /** The operator's WIRE (K1) signing key. */
   wire: WireKeyPair
+  /** Finality (BLS) key — producers only. */
   bls?: WireFinalizerKeyPair
+  /** Ethereum (secp256k1) key — operators bonded on the ETH outpost. */
   ethereum?: EthereumKeyPair
+  /** Solana (ed25519) key — operators bonded on the SOL outpost. */
   solana?: SolanaKeyPair
 }
 
@@ -61,8 +66,6 @@ export interface ClusterKeysOperatorEntry {
  * served over the debugging-server RPC surface.
  */
 export interface ClusterKeys {
-  /** Schema version — see {@link ClusterState.KeysVersion}. */
-  version: number
   /** Every generated producer-node key set. */
   nodes: ClusterKeysNodeEntry[]
   /** Every provisioned operator account. */
@@ -92,17 +95,25 @@ function toClusterStateNodeRole(role: NodeRole): ClusterStateNodeRole {
  * {@link ClusterState.save}'s round-trip-test counterpart and for tooling.
  */
 export namespace ClusterState {
-  /** Schema version for `cluster-keys.json` (independent of `ClusterStateVersion`). */
-  export const KeysVersion = 1 as const
   /** File permission `cluster-keys.json` is written with (owner read/write only). */
   export const KeysFileMode = 0o600
 
-  /** Absolute path of `cluster-state.json` for `config`. */
+  /**
+   * Absolute path of `cluster-state.json` for `config`.
+   *
+   * @param config - The cluster configuration.
+   * @returns `<clusterPath>/cluster-state.json`.
+   */
   export function stateFilePath(config: ClusterConfig): string {
     return Path.join(config.clusterPath, ClusterFiles.StateFilename)
   }
 
-  /** Absolute path of `cluster-keys.json` for `config`. */
+  /**
+   * Absolute path of `cluster-keys.json` for `config`.
+   *
+   * @param config - The cluster configuration.
+   * @returns `<clusterPath>/cluster-keys.json`.
+   */
   export function keysFilePath(config: ClusterConfig): string {
     return Path.join(config.clusterPath, ClusterFiles.KeysFilename)
   }
@@ -114,7 +125,7 @@ export namespace ClusterState {
    * when no operator daemon artifacts were prepared — no Solana outpost).
    *
    * @param ctx - The build's context (config + outputs).
-   * @returns The v2 cluster-state snapshot.
+   * @returns The cluster-state snapshot.
    */
   export function capture(ctx: ClusterBuildContext): ClusterStateSnapshot {
     const { config } = ctx
@@ -128,7 +139,6 @@ export namespace ClusterState {
       underwriterAccount: node.underwriterAccount
     }))
     return {
-      version: ClusterStateVersion,
       createdAt: new Date().toISOString(),
       nodes,
       walletPath: config.walletPath,
@@ -137,8 +147,12 @@ export namespace ClusterState {
         AnvilProcess.StateSubpath,
         AnvilProcess.StateFilename
       ),
-      solanaLedgerPath: Path.join(config.dataPath, SolanaValidatorProcess.LedgerSubpath),
-      solanaIdlFile: ctx.outputs.get(OperatorDaemonArtifactsKey)?.solanaIdlFile ?? null
+      solanaLedgerPath: Path.join(
+        config.dataPath,
+        SolanaValidatorProcess.LedgerSubpath
+      ),
+      solanaIdlFile:
+        ctx.outputs.get(OperatorDaemonArtifactsKey)?.solanaIdlFile ?? null
     }
   }
 
@@ -153,7 +167,6 @@ export namespace ClusterState {
    */
   export function captureKeys(ctx: ClusterBuildContext): ClusterKeys {
     return {
-      version: KeysVersion,
       nodes: ctx.keyStore.nodes.map(nodeKeys => ({
         index: nodeKeys.index,
         k1: nodeKeys.keys.k1,
@@ -164,7 +177,10 @@ export namespace ClusterState {
   }
 
   /** Write `state` to {@link stateFilePath}. */
-  export function save(config: ClusterConfig, state: ClusterStateSnapshot): void {
+  export function save(
+    config: ClusterConfig,
+    state: ClusterStateSnapshot
+  ): void {
     Fs.writeFileSync(stateFilePath(config), JSON.stringify(state, null, 2))
   }
 
@@ -173,14 +189,16 @@ export namespace ClusterState {
    *  existing file needs the explicit `chmodSync` to guarantee 0600. */
   export function saveKeys(config: ClusterConfig, keys: ClusterKeys): void {
     const file = keysFilePath(config)
-    Fs.writeFileSync(file, JSON.stringify(keys, null, 2), { mode: KeysFileMode })
+    Fs.writeFileSync(file, JSON.stringify(keys, null, 2), {
+      mode: KeysFileMode
+    })
     Fs.chmodSync(file, KeysFileMode)
   }
 
   /**
-   * Read + version-check `cluster-state.json`.
+   * Read `cluster-state.json`.
    *
-   * @throws If the file is missing, or its `version` doesn't match {@link ClusterStateVersion}.
+   * @throws If the file is missing.
    */
   export function load(config: ClusterConfig): ClusterStateSnapshot {
     const file = stateFilePath(config)
@@ -188,18 +206,13 @@ export namespace ClusterState {
       Fs.existsSync(file),
       `ClusterState.load: ${file} not found — run "wire-cluster-tool create" first`
     )
-    const parsed = JSON.parse(Fs.readFileSync(file, "utf8")) as ClusterStateSnapshot
-    Assert.ok(
-      parsed.version === ClusterStateVersion,
-      `ClusterState.load: ${file} is version ${parsed.version}, expected ${ClusterStateVersion} — re-run "wire-cluster-tool create"`
-    )
-    return parsed
+    return JSON.parse(Fs.readFileSync(file, "utf8")) as ClusterStateSnapshot
   }
 
   /**
-   * Read + version-check `cluster-keys.json`.
+   * Read `cluster-keys.json`.
    *
-   * @throws If the file is missing, or its `version` doesn't match {@link KeysVersion}.
+   * @throws If the file is missing.
    */
   export function loadKeys(config: ClusterConfig): ClusterKeys {
     const file = keysFilePath(config)
@@ -207,12 +220,7 @@ export namespace ClusterState {
       Fs.existsSync(file),
       `ClusterState.loadKeys: ${file} not found — run "wire-cluster-tool create" first`
     )
-    const parsed = JSON.parse(Fs.readFileSync(file, "utf8")) as ClusterKeys
-    Assert.ok(
-      parsed.version === KeysVersion,
-      `ClusterState.loadKeys: ${file} is version ${parsed.version}, expected ${KeysVersion} — re-run "wire-cluster-tool create"`
-    )
-    return parsed
+    return JSON.parse(Fs.readFileSync(file, "utf8")) as ClusterKeys
   }
 
   /**
@@ -224,7 +232,10 @@ export namespace ClusterState {
    * @param keyStore - The (empty) store to populate.
    * @param keys - The loaded key payload.
    */
-  export function rehydrate(keyStore: ClusterKeyStore, keys: ClusterKeys): void {
+  export function rehydrate(
+    keyStore: ClusterKeyStore,
+    keys: ClusterKeys
+  ): void {
     keyStore.pushNodes(
       ...keys.nodes.map(entry => ({
         index: entry.index,

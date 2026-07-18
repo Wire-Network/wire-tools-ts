@@ -82,10 +82,7 @@ export class EnvelopeWatchStream implements ServerSideStream<EnvelopeEvent> {
     emit: (payload: EnvelopeEvent) => void
   ): Promise<void> {
     if (!filename.endsWith(EnvelopeWatchStream.MetadataExt)) return
-    const baseKey = filename.slice(
-      0,
-      -EnvelopeWatchStream.MetadataExt.length
-    )
+    const baseKey = filename.slice(0, -EnvelopeWatchStream.MetadataExt.length)
     await this.tryEmitBaseKey(baseKey, hydrating, emit)
   }
 
@@ -129,9 +126,7 @@ export class EnvelopeWatchStream implements ServerSideStream<EnvelopeEvent> {
           checksum: parsed.checksum,
           endpointsType: resolveEndpointsType(parsed.endpointsKey),
           envelope: plainify(Envelope.fromBinary(dataBytes)),
-          metadata: plainify(
-            DebugEnvelopeMetadataRecord.fromBinary(metaBytes)
-          ),
+          metadata: plainify(DebugEnvelopeMetadataRecord.fromBinary(metaBytes)),
           receivedAt: Date.now()
         }
       }

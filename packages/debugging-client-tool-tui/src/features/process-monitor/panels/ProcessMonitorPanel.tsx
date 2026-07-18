@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react"
+import { ClusterFiles } from "@wireio/cluster-tool-shared"
 import { Box, Text, useFocus, useFocusManager, useInput } from "ink"
 import { match } from "ts-pattern"
-import { ClusterFiles } from "@wireio/debugging-shared"
+
 import type { PanelComponentProps } from "../../../components/PanelComponent.js"
 import { adjustStickyWindow } from "../../../utils/windowUtils.js"
 import { useService } from "../../../services/ServiceContext.js"
@@ -16,10 +17,10 @@ import { setLogViewerPath } from "../../../store/process-monitor/ProcessMonitorS
 import {
   PidSourceKind,
   logPathForSource,
-  type PidSource
+  type PidSource,
+  type ProcessLivenessSnapshot
 } from "@wireio/debugging-shared"
 import type { ProcessMonitorService } from "../ProcessMonitorService.js"
-import type { ProcessLiveness } from "../../../store/process-monitor/ProcessMonitorTypes.js"
 import { LogViewerPanel } from "./LogViewerPanel.js"
 
 /** Character glyphs for alive / dead / unknown liveness states. */
@@ -29,14 +30,19 @@ namespace StatusGlyph {
   export const Unknown = "…" as const
 }
 
-type LivenessKind = "alive" | "dead" | "unknown"
+/** Display classification of a process's liveness. */
+enum LivenessKind {
+  alive = "alive",
+  dead = "dead",
+  unknown = "unknown"
+}
 
-/** Classify liveness for display branching. */
-function classify(liveness: Pick<ProcessLiveness, "alive"> | undefined): LivenessKind {
-  return match(liveness)
-    .with({ alive: true }, () => "alive" as LivenessKind)
-    .with({ alive: false }, () => "dead" as LivenessKind)
-    .otherwise(() => "unknown" as LivenessKind)
+/** Classify liveness for display branching — `unknown` when no snapshot exists yet. */
+function classify(alive: ProcessLivenessSnapshot["alive"]): LivenessKind {
+  return match(alive)
+    .with(true, () => LivenessKind.alive)
+    .with(false, () => LivenessKind.dead)
+    .otherwise(() => LivenessKind.unknown)
 }
 
 /** Human-readable identifier shown per row. */
@@ -146,16 +152,16 @@ function ProcessMonitorBody(_: PanelComponentProps): React.ReactElement {
       {visibleSources.map((s, i) => {
         const sourceIdx = sliceStart + i,
           liveness = processes[s.label],
-          kind = classify(liveness),
+          kind = classify(liveness?.alive),
           cursorMarker = sourceIdx === cursor ? "›" : " ",
           selected = viewer.path === logPathForSource(s),
           glyph = match(kind)
-            .with("alive", () => StatusGlyph.Alive)
-            .with("dead", () => StatusGlyph.Dead)
+            .with(LivenessKind.alive, () => StatusGlyph.Alive)
+            .with(LivenessKind.dead, () => StatusGlyph.Dead)
             .otherwise(() => StatusGlyph.Unknown),
           color = match(kind)
-            .with("alive", () => "green")
-            .with("dead", () => "red")
+            .with(LivenessKind.alive, () => "green")
+            .with(LivenessKind.dead, () => "red")
             .otherwise(() => "gray")
         return (
           <Text key={s.label} inverse={selected}>

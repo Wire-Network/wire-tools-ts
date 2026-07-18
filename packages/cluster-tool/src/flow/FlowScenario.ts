@@ -1,5 +1,6 @@
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
-import type { ClusterConfig } from "../config/ClusterConfig.js"
+
 import type { Logger } from "../logging/Logger.js"
 import type { ClusterBuild } from "../orchestration/ClusterBuild.js"
 import { ClusterBuildContext } from "../orchestration/ClusterBuildContext.js"
@@ -15,7 +16,9 @@ import { ClusterBuildContext } from "../orchestration/ClusterBuildContext.js"
  * @typeParam C - The scenario's context type (a `ClusterBuildContext` subclass
  *   carrying flow query helpers + typed events, or the base context).
  */
-export abstract class FlowScenario<C extends ClusterBuildContext = ClusterBuildContext> {
+export abstract class FlowScenario<
+  C extends ClusterBuildContext = ClusterBuildContext
+> {
   /** Flow identifier — used as the report basename + cluster label (`"flow-…"`). */
   abstract readonly name: string
 
@@ -45,7 +48,8 @@ export abstract class FlowScenario<C extends ClusterBuildContext = ClusterBuildC
 }
 
 /** A zero-arg scenario constructor (`FlowCLI.create` instantiates the class). */
-export type FlowScenarioConstructor<S extends FlowScenario = FlowScenario> = new () => S
+export type FlowScenarioConstructor<S extends FlowScenario = FlowScenario> =
+  new () => S
 
 /** Extract a scenario's context type, so `FlowCLI.create(SomeScenario)` infers `FlowCLI<ItsContext>`. */
 export type FlowScenarioContextOf<S extends FlowScenario> =

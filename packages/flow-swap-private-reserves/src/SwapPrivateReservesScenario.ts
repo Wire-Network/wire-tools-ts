@@ -1,4 +1,5 @@
 import Assert from "node:assert"
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { getAssociatedTokenAddressSync } from "@solana/spl-token"
 import { ChainKind, TokenAmount } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
@@ -21,7 +22,6 @@ import {
   verifyStep,
   type ClusterBuild,
   type ClusterBuildOptions,
-  type ClusterConfig,
   type Logger
 } from "@wireio/cluster-tool"
 import { SwapPrivateReservesScenarioArtifacts as Artifacts } from "./SwapPrivateReservesScenarioArtifacts.js"

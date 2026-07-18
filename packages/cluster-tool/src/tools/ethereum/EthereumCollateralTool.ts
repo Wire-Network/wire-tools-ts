@@ -33,6 +33,7 @@ import {
   ethereumRevertReason,
   resolveLatestNonce
 } from "../../utils/ethereumUtils.js"
+import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 
 /** Positional argument tuple of `OperatorRegistry.depositNonNative(...)`. */
 type DepositNonNativeArgs = [
@@ -93,7 +94,9 @@ export namespace EthereumCollateralTool {
   }
 
   /** A single native-ETH collateral deposit write to `OperatorRegistry.deposit(...)`. */
-  export function planDeposit<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planDeposit<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -126,17 +129,25 @@ export namespace EthereumCollateralTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(input.amount > 0n, "EthereumCollateralTool.planDeposit: amount must be positive")
+    Assert.ok(
+      input.amount > 0n,
+      "EthereumCollateralTool.planDeposit: amount must be positive"
+    )
     const operator = ctx.keyStore.assertOperator(input.operatorAccount)
     const compressedPubkey = ethereumCompressedPubkey(operator.ethereum)
     Assert.ok(
       compressedPubkey.byteLength === 33,
       `EthereumCollateralTool.planDeposit: compressedPubkey must be 33 bytes, got ${compressedPubkey.byteLength}`
     )
-    const registry = loadOperatorRegistry(ctx, ethereumSigner(operator.ethereum, ctx.ethereum.provider))
+    const registry = loadOperatorRegistry(
+      ctx,
+      ethereumSigner(operator.ethereum, ctx.ethereum.provider)
+    )
     const isNative = input.tokenCode === (await registry.nativeTokenCode())
     const nonce = await resolveLatestNonce(registry)
-    const overrides: ethers.Overrides = isNative ? { value: input.amount, nonce } : { nonce }
+    const overrides: ethers.Overrides = isNative
+      ? { value: input.amount, nonce }
+      : { nonce }
     const response = await registry.deposit(
       input.operatorType,
       compressedPubkey,
@@ -170,7 +181,9 @@ export namespace EthereumCollateralTool {
    * wtdwqueue`) and the escrow only decrements when the WITHDRAW_REMIT comes
    * back through OPP.
    */
-  export function planWithdrawal<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planWithdrawal<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -184,7 +197,12 @@ export namespace EthereumCollateralTool {
       name,
       description,
       options,
-      { kind: "EthereumCollateralTool.WithdrawInput", operatorAccount, tokenCode, amount },
+      {
+        kind: "EthereumCollateralTool.WithdrawInput",
+        operatorAccount,
+        tokenCode,
+        amount
+      },
       runWithdrawal
     )
   }
@@ -196,9 +214,15 @@ export namespace EthereumCollateralTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(input.amount > 0n, "EthereumCollateralTool.planWithdrawal: amount must be positive")
+    Assert.ok(
+      input.amount > 0n,
+      "EthereumCollateralTool.planWithdrawal: amount must be positive"
+    )
     const operator = ctx.keyStore.assertOperator(input.operatorAccount)
-    const registry = loadOperatorRegistry(ctx, ethereumSigner(operator.ethereum, ctx.ethereum.provider))
+    const registry = loadOperatorRegistry(
+      ctx,
+      ethereumSigner(operator.ethereum, ctx.ethereum.provider)
+    )
     const nonce = await resolveLatestNonce(registry)
     const response = await registry.withdraw(
       ethereumCompressedPubkey(operator.ethereum),
@@ -247,7 +271,9 @@ export namespace EthereumCollateralTool {
   }
 
   /** A single `ERC20.approve(OperatorRegistry, amount)` write, signed by the operator wallet. */
-  export function planErc20Approval<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planErc20Approval<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -280,11 +306,11 @@ export namespace EthereumCollateralTool {
     signal.throwIfAborted()
     const operator = ctx.keyStore.assertOperator(input.operatorAccount)
     const tokenAddress = mockErc20Address(
-      ctx.config.ethereumDeploymentsPath,
+      ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
       input.tokenName
     )
     const spender = loadOutpostAddresses(
-      ctx.config.ethereumDeploymentsPath
+      ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
     ).OperatorRegistry
     Assert.ok(
       spender != null && /^0x[0-9a-fA-F]{40}$/.test(spender),
@@ -321,7 +347,9 @@ export namespace EthereumCollateralTool {
    * A single `OperatorRegistry.depositNonNative(...)` write. The ERC-20 must be
    * pre-approved by an {@link planErc20Approval} Step earlier in the same phase.
    */
-  export function planNonNativeDeposit<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planNonNativeDeposit<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -372,9 +400,15 @@ export namespace EthereumCollateralTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(input.amount > 0n, "EthereumCollateralTool.planNonNativeDeposit: amount must be positive")
+    Assert.ok(
+      input.amount > 0n,
+      "EthereumCollateralTool.planNonNativeDeposit: amount must be positive"
+    )
     const operator = ctx.keyStore.assertOperator(input.operatorAccount)
-    const registry = loadOperatorRegistry(ctx, ethereumSigner(operator.ethereum, ctx.ethereum.provider))
+    const registry = loadOperatorRegistry(
+      ctx,
+      ethereumSigner(operator.ethereum, ctx.ethereum.provider)
+    )
     const compressedPubkey = ethereumCompressedPubkey(operator.ethereum)
     await retry(
       () =>
@@ -428,14 +462,14 @@ export namespace EthereumCollateralTool {
   /**
    * Resolve the `OperatorRegistry` contract from the run's deploy artifacts,
    * bound to `wallet`. Address from THIS cluster's deployments dir
-   * (`ClusterConfig.ethereumDeploymentsPath`); ABI from the hardhat artifact.
+   * (`ClusterConfigProvider.ethereumDeploymentsPath`); ABI from the hardhat artifact.
    */
   export function loadOperatorRegistry<C extends ClusterBuildContext>(
     ctx: C,
     wallet: ethers.Signer
   ): OperatorRegistryContract {
     const address = loadOutpostAddresses(
-      ctx.config.ethereumDeploymentsPath
+      ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
     ).OperatorRegistry
     Assert.ok(
       address != null && /^0x[0-9a-fA-F]{40}$/.test(address),
@@ -447,9 +481,11 @@ export namespace EthereumCollateralTool {
 
   /**
    * Read the outpost deploy-address map from THIS cluster's deployments dir
-   * (`ClusterConfig.ethereumDeploymentsPath` — per-run, parallel-safe).
+   * (`ClusterConfigProvider.ethereumDeploymentsPath` — per-run, parallel-safe).
    */
-  export function loadOutpostAddresses(deploymentsPath: string): Record<string, string> {
+  export function loadOutpostAddresses(
+    deploymentsPath: string
+  ): Record<string, string> {
     const addressesPath = Path.join(deploymentsPath, "outpost-addrs.json")
     Assert.ok(
       Fs.existsSync(addressesPath),

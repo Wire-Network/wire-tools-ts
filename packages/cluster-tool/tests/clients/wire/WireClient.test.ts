@@ -2,7 +2,7 @@ import Os from "node:os"
 import Path from "node:path"
 import { SysioContracts } from "@wireio/sdk-core"
 import { Constants } from "@wireio/cluster-tool/Constants"
-import { BindConfig } from "@wireio/cluster-tool/config"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import {
   WireClient,
   type WireClientConfig
@@ -15,7 +15,11 @@ describe("WireClient", () => {
     config = {
       clusterPath: Os.tmpdir(),
       binary: Path.join(Os.tmpdir(), "clio"),
-      nodeopUrl: toURL(await BindConfig.findAvailable(BindConfig.DefaultBiosHttp)),
+      nodeopUrl: toURL(
+        await BindConfigProvider.findAvailable(
+          BindConfigProvider.DefaultBiosHttp
+        )
+      ),
       kiodUrl: null
     }
   })
@@ -60,7 +64,10 @@ describe("WireClient", () => {
     it("resolves the system contract account override to 'sysio'", () => {
       const payload = new WireClient(config)
         .getSysioContract(SysioContracts.SysioContractName.system)
-        .actions.init.prepare({ version: 0, core: Constants.CORE_SYMBOL_SPECIFICATION })
+        .actions.init.prepare({
+          version: 0,
+          core: Constants.CORE_SYMBOL_SPECIFICATION
+        })
       expect(payload.account).toBe("sysio")
     })
   })
@@ -70,7 +77,9 @@ describe("WireClient", () => {
       expect(WireClient.getTransactionId({ transaction_id: "abc" })).toBe("abc")
     })
     it("extracts from a JSON string", () => {
-      expect(WireClient.getTransactionId('{"transaction_id":"def"}')).toBe("def")
+      expect(WireClient.getTransactionId('{"transaction_id":"def"}')).toBe(
+        "def"
+      )
     })
     it("extracts from raw text via regex", () => {
       expect(

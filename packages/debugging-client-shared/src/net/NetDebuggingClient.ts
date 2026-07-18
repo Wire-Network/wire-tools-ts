@@ -1,11 +1,11 @@
 import Assert from "node:assert"
+import type { ClusterConfig, ClusterState } from "@wireio/cluster-tool-shared"
 import { defaults } from "lodash"
 
 import {
   ApiPaths,
   DebuggingDefaults,
   FROM_JSON_OPTIONS,
-  type ClusterState,
   type GetClusterConfigResponse,
   type GetClusterStateResponse,
   type GetProcessLivenessRequest,
@@ -19,7 +19,6 @@ import {
   type LogReadResponse,
   type LogStat,
   type LogStatRequest,
-  type PersistedClusterConfig,
   type PidSource,
   type ProcessLivenessSnapshot,
   type StreamTopic
@@ -44,8 +43,7 @@ export interface NetDebuggingClientOptions {
 }
 
 /** Fully-resolved runtime config. */
-export interface NetDebuggingClientConfig
-  extends Required<NetDebuggingClientOptions> {}
+export interface NetDebuggingClientConfig extends Required<NetDebuggingClientOptions> {}
 
 /**
  * `DebuggingClient` over HTTP+WebSocket. Per-feature {@link JsonRPCClient}
@@ -80,9 +78,7 @@ export class NetDebuggingClient extends DebuggingClient {
       processesRpc = new JsonRPCClient(
         `${config.baseUrl}${ApiPaths.Processes.Endpoint}`
       ),
-      logsRpc = new JsonRPCClient(
-        `${config.baseUrl}${ApiPaths.Logs.Endpoint}`
-      ),
+      logsRpc = new JsonRPCClient(`${config.baseUrl}${ApiPaths.Logs.Endpoint}`),
       ws = new WebSocketStreamClient(config.baseUrl)
     return new NetDebuggingClient(
       config,
@@ -121,7 +117,7 @@ export class NetDebuggingClient extends DebuggingClient {
   //  Cluster
   // -------------------------------------------------------------------------
 
-  async getClusterConfig(): Promise<PersistedClusterConfig> {
+  async getClusterConfig(): Promise<ClusterConfig> {
     const resp = (await this.clusterRpc.invoke(
       ApiPaths.Cluster.Methods.GetConfig,
       {}
@@ -190,7 +186,9 @@ export class NetDebuggingClient extends DebuggingClient {
   //  `Uint8Array` for bytes).
   // -------------------------------------------------------------------------
 
-  async listEnvelopes(req: ListEnvelopesRequest): Promise<ListEnvelopesResponse> {
+  async listEnvelopes(
+    req: ListEnvelopesRequest
+  ): Promise<ListEnvelopesResponse> {
     const json = await this.oppRpc.invoke(
       ApiPaths.OPP.Methods.EnvelopeList,
       req
@@ -209,10 +207,7 @@ export class NetDebuggingClient extends DebuggingClient {
 
   async getEnvelope(key: string): Promise<GetEnvelopeResponse> {
     const params: GetEnvelopeRequest = { key },
-      json = await this.oppRpc.invoke(
-        ApiPaths.OPP.Methods.EnvelopeGet,
-        params
-      )
+      json = await this.oppRpc.invoke(ApiPaths.OPP.Methods.EnvelopeGet, params)
     // Same protobuf-ts JSON-boundary mismatch as `listEnvelopes` above.
     return GetEnvelopeResponse.fromJson(
       json as unknown as JsonValue,

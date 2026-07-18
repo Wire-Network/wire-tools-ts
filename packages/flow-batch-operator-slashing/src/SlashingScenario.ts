@@ -33,7 +33,9 @@ async function verifyChainProducing(ctx: ClusterBuildContext): Promise<void> {
  * The Tier-1 electorate registered — `nodecount.t1_count` covers the voters
  * (each `nodeownreg` inline-bumps it; `chkdispute` reads it as the quorum N).
  */
-async function verifyElectorateRegistered(ctx: ClusterBuildContext): Promise<void> {
+async function verifyElectorateRegistered(
+  ctx: ClusterBuildContext
+): Promise<void> {
   const { rows } = await ctx.wire
     .getSysioContract(SysioContractName.system)
     .tables.nodecount.query({ limit: 1 })
@@ -73,14 +75,21 @@ async function verifySoleActiveGroup(ctx: ClusterBuildContext): Promise<void> {
 }
 
 /** The epoch settles (frozen) on the dispute-operators-owned post-swap epoch. */
-async function verifySettledDisputeEpoch(ctx: ClusterBuildContext): Promise<void> {
+async function verifySettledDisputeEpoch(
+  ctx: ClusterBuildContext
+): Promise<void> {
   await DisputeSteps.settleOnDisputeEpoch(ctx)
 }
 
 /** The canonical deliverer must NOT be slashed (may be ACTIVE/UNKNOWN, never SLASHED). */
-async function verifyCanonicalNotSlashed(ctx: ClusterBuildContext): Promise<void> {
+async function verifyCanonicalNotSlashed(
+  ctx: ClusterBuildContext
+): Promise<void> {
   const row = await DisputeSteps.readOperator(ctx, Constants.CanonicalOperator)
-  Assert.ok(row != null, `operator row missing for ${Constants.CanonicalOperator}`)
+  Assert.ok(
+    row != null,
+    `operator row missing for ${Constants.CanonicalOperator}`
+  )
   Assert.ok(
     !matchesProtoEnum(
       row.status,
@@ -137,14 +146,34 @@ export class SlashingScenario extends FlowScenario {
   }
 
   plan(cluster: ClusterBuild): void {
-    const activeStepOptions = { timeoutMs: Constants.activeDeadlineMs() + Constants.PollDeadlineBufferMs },
-      groupStepOptions = { timeoutMs: Constants.groupDeadlineMs() + Constants.PollDeadlineBufferMs },
-      settleStepOptions = { timeoutMs: Constants.settleDeadlineMs() + Constants.PollDeadlineBufferMs },
-      stageStepOptions = { timeoutMs: Constants.boundaryDeadlineMs() + Constants.PollDeadlineBufferMs },
-      disputeOpenStepOptions = { timeoutMs: Constants.disputeOpenDeadlineMs() + Constants.PollDeadlineBufferMs },
-      resolveStepOptions = { timeoutMs: Constants.resolveDeadlineMs() + Constants.PollDeadlineBufferMs },
-      unpauseStepOptions = { timeoutMs: Constants.unpauseDeadlineMs() + Constants.PollDeadlineBufferMs },
-      slashStepOptions = { timeoutMs: Constants.slashDeadlineMs() + Constants.PollDeadlineBufferMs }
+    const activeStepOptions = {
+        timeoutMs: Constants.activeDeadlineMs() + Constants.PollDeadlineBufferMs
+      },
+      groupStepOptions = {
+        timeoutMs: Constants.groupDeadlineMs() + Constants.PollDeadlineBufferMs
+      },
+      settleStepOptions = {
+        timeoutMs: Constants.settleDeadlineMs() + Constants.PollDeadlineBufferMs
+      },
+      stageStepOptions = {
+        timeoutMs:
+          Constants.boundaryDeadlineMs() + Constants.PollDeadlineBufferMs
+      },
+      disputeOpenStepOptions = {
+        timeoutMs:
+          Constants.disputeOpenDeadlineMs() + Constants.PollDeadlineBufferMs
+      },
+      resolveStepOptions = {
+        timeoutMs:
+          Constants.resolveDeadlineMs() + Constants.PollDeadlineBufferMs
+      },
+      unpauseStepOptions = {
+        timeoutMs:
+          Constants.unpauseDeadlineMs() + Constants.PollDeadlineBufferMs
+      },
+      slashStepOptions = {
+        timeoutMs: Constants.slashDeadlineMs() + Constants.PollDeadlineBufferMs
+      }
 
     // ── 1. SetupDispute — 3 T1 voters, 3 SBP-less dispute ops, 1-group/3-op epoch ──
     const setup = ClusterBuildPhaseGroup.create(
@@ -153,15 +182,28 @@ export class SlashingScenario extends FlowScenario {
       "Provision the Tier-1 electorate + the 3 SBP-less dispute operators; reshape to a single 3-operator group"
     )
 
-    ClusterBuildPhase.create(setup, "ChainHealth", "The WIRE chain is producing blocks").push(
-      verifyStep(Actor.Sysio, "chain-producing", "WIRE chain is producing blocks", verifyChainProducing)
+    ClusterBuildPhase.create(
+      setup,
+      "ChainHealth",
+      "The WIRE chain is producing blocks"
+    ).push(
+      verifyStep(
+        Actor.Sysio,
+        "chain-producing",
+        "WIRE chain is producing blocks",
+        verifyChainProducing
+      )
     )
 
     // The dispute electorate: each owner is created with the shared dev K1 key
     // (so the flow can sign votes as any of them) and registered T1 via the same
     // path the NFT claim uses (newnameduser creates the account, nodeownreg
     // registers it + inline-bumps nodecount.t1_count — the N chkdispute reads).
-    ClusterBuildPhase.create(setup, "ProvisionVoters", "Create + register the 3 Tier-1 voters (the dispute electorate)").push(
+    ClusterBuildPhase.create(
+      setup,
+      "ProvisionVoters",
+      "Create + register the 3 Tier-1 voters (the dispute electorate)"
+    ).push(
       ...Constants.Tier1VoterNames.flatMap(voter => [
         DisputeSteps.planNewnameduser(
           Actor.User,
@@ -215,7 +257,11 @@ export class SlashingScenario extends FlowScenario {
     // the flow tells them to. `sysio.epoch@active` resolves to `sysio@active`
     // (the governance key loaded in kiod), so the flow can sign setconfig /
     // schbatchgps.
-    ClusterBuildPhase.create(setup, "ReshapeSchedule", "One group of exactly the 3 dispute operators").push(
+    ClusterBuildPhase.create(
+      setup,
+      "ReshapeSchedule",
+      "One group of exactly the 3 dispute operators"
+    ).push(
       Steps.contracts.sysio.epoch.planSetconfig(
         Actor.Sysio,
         "one-group-of-three",
@@ -226,7 +272,8 @@ export class SlashingScenario extends FlowScenario {
           operators_per_epoch: Constants.DisputeOperators.length,
           batch_operator_minimum_active: Constants.DisputeOperators.length,
           batch_op_groups: Constants.DisputeBatchOperatorGroupCount,
-          epoch_retention_envelope_log_count: Constants.EpochRetentionEnvelopeLogCount
+          epoch_retention_envelope_log_count:
+            Constants.EpochRetentionEnvelopeLogCount
         }
       ),
       ...Constants.DisputeOperators.map(operator =>
@@ -267,7 +314,11 @@ export class SlashingScenario extends FlowScenario {
     // is EMPTY of the bootstrap ops' pre-swap deliveries. Staging the divergent
     // split there opens a genuine dispute instead of colliding with the
     // bootstrap majority that pollutes the genesis epoch.
-    ClusterBuildPhase.create(setup, "SettleDisputeEpoch", "The epoch settles (frozen) on the dispute-operators-owned epoch").push(
+    ClusterBuildPhase.create(
+      setup,
+      "SettleDisputeEpoch",
+      "The epoch settles (frozen) on the dispute-operators-owned epoch"
+    ).push(
       verifyStep(
         Actor.Sysio,
         "settle-frozen-epoch",
@@ -288,7 +339,11 @@ export class SlashingScenario extends FlowScenario {
     // deliver lands with now >= next_epoch_start (chkcons does NOT open
     // disputes) — so wait past the frozen epoch's boundary first, capturing the
     // contested epoch index for every subsequent deliver / dispute read.
-    ClusterBuildPhase.create(inject, "StageContestedEpoch", "Chain clock passes the frozen epoch's boundary; the contested epoch is captured").push(
+    ClusterBuildPhase.create(
+      inject,
+      "StageContestedEpoch",
+      "Chain clock passes the frozen epoch's boundary; the contested epoch is captured"
+    ).push(
       DisputeSteps.planStageContestedEpoch(
         Actor.Sysio,
         "stage-contested-epoch",
@@ -313,7 +368,11 @@ export class SlashingScenario extends FlowScenario {
       { parallel: true }
     )
     Constants.DisputeOperators.forEach((operator, index) => {
-      ClusterBuildPhase.create(deliveries, `Deliver ${operator}`, `${operator} delivers consensus SOLANA + divergent ETHEREUM`).push(
+      ClusterBuildPhase.create(
+        deliveries,
+        `Deliver ${operator}`,
+        `${operator} delivers consensus SOLANA + divergent ETHEREUM`
+      ).push(
         DisputeSteps.planDeliver(
           Actor.BatchOperator,
           `${operator}-deliver-solana`,
@@ -335,7 +394,11 @@ export class SlashingScenario extends FlowScenario {
       )
     })
 
-    ClusterBuildPhase.create(inject, "DisputeOpens", "The 3-way split opens a dispute and pauses the epoch").push(
+    ClusterBuildPhase.create(
+      inject,
+      "DisputeOpens",
+      "The 3-way split opens a dispute and pauses the epoch"
+    ).push(
       DisputeSteps.planAwaitDisputeOpened(
         Actor.Sysio,
         "dispute-opens",
@@ -351,7 +414,11 @@ export class SlashingScenario extends FlowScenario {
     )
 
     // ── 3. VoteAndResolve — Tier-1 vote → chkdispute resolves → unpause ──
-    ClusterBuildPhase.create(cluster, "VoteAndResolve", "The 3 Tier-1 owners vote the canonical checksum; chkdispute resolves the dispute + unpauses").push(
+    ClusterBuildPhase.create(
+      cluster,
+      "VoteAndResolve",
+      "The 3 Tier-1 owners vote the canonical checksum; chkdispute resolves the dispute + unpauses"
+    ).push(
       // All provisioned Tier-1 owners vote for the canonical checksum — 3 votes
       // clears the live quorum Q = floor(nodecount.t1_count/2)+1 (= 3 with the
       // 3 voters + the bootstrap owner wireno).
@@ -380,7 +447,11 @@ export class SlashingScenario extends FlowScenario {
     )
 
     // ── 4. SlashNonCanonical — losers SLASHED, winner untouched ──
-    ClusterBuildPhase.create(cluster, "SlashNonCanonical", "Non-canonical deliverers flip SLASHED; the canonical deliverer does not").push(
+    ClusterBuildPhase.create(
+      cluster,
+      "SlashNonCanonical",
+      "Non-canonical deliverers flip SLASHED; the canonical deliverer does not"
+    ).push(
       ...Constants.LosingOperators.map(operator =>
         DisputeSteps.planAwaitOperatorSlashed(
           Actor.Sysio,

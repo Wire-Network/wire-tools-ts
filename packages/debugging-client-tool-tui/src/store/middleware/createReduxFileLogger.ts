@@ -1,4 +1,5 @@
 import type { Middleware } from "@reduxjs/toolkit"
+import { Level } from "@wireio/shared"
 import { createLogger } from "redux-logger"
 import { LoggingManager } from "../../logging/LoggingManager.js"
 
@@ -67,7 +68,10 @@ function isReduxLoggingEnabled(): boolean {
  * dropped so we don't crash the store.
  */
 function createFileConsoleShim(): FileConsoleShim {
-  const safeLog = (level: "debug" | "info" | "warn" | "error", args: unknown[]): void => {
+  const safeLog = (
+    level: Level.debug | Level.info | Level.warn | Level.error,
+    args: unknown[]
+  ): void => {
     try {
       LoggingManager.getLogger(ReduxFileLogger.Category)[level](
         stringifyArgs(args)
@@ -77,14 +81,14 @@ function createFileConsoleShim(): FileConsoleShim {
     }
   }
   return {
-    log: (...args) => safeLog("debug", args),
-    error: (...args) => safeLog("error", args),
-    warn: (...args) => safeLog("warn", args),
-    info: (...args) => safeLog("info", args),
+    log: (...args) => safeLog(Level.debug, args),
+    error: (...args) => safeLog(Level.error, args),
+    warn: (...args) => safeLog(Level.warn, args),
+    info: (...args) => safeLog(Level.info, args),
     // group / groupCollapsed: emit the title as a debug line so we don't
     // lose context; groupEnd is a no-op.
-    group: (...args) => safeLog("debug", args),
-    groupCollapsed: (...args) => safeLog("debug", args),
+    group: (...args) => safeLog(Level.debug, args),
+    groupCollapsed: (...args) => safeLog(Level.debug, args),
     groupEnd: () => {}
   }
 }

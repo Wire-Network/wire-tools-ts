@@ -3,25 +3,34 @@ import * as OS from "node:os"
 import * as Path from "node:path"
 
 import {
-  ApiPaths,
   ClusterFiles,
   ClusterStateNodeRole,
-  ClusterStateVersion,
-  PidSources,
   type ClusterState,
-  type ClusterStateNode,
+  type ClusterStateNode
+} from "@wireio/cluster-tool-shared"
+import {
+  ApiPaths,
+  PidSources,
   type GetProcessLivenessResponse,
   type ListProcessesResponse
 } from "@wireio/debugging-shared"
 
 import { DebuggingServer } from "@wireio/debugging-server"
 
+/** JSON-RPC 2.0 error member carried by a failed response. */
+interface RpcResponseError {
+  /** JSON-RPC error code. */
+  code: number
+  /** Human-readable error description. */
+  message: string
+}
+
 /** Parsed JSON-RPC 2.0 response envelope — the wire shape `JsonRPC.mount` writes. */
 interface RpcResponseBody {
   jsonrpc: string
   id: number | null
   result?: unknown
-  error?: { code: number; message: string }
+  error?: RpcResponseError
 }
 
 describe(`POST ${ApiPaths.Processes.Endpoint}`, () => {
@@ -59,7 +68,6 @@ describe(`POST ${ApiPaths.Processes.Endpoint}`, () => {
       underwriterAccount: null
     }
     const state: ClusterState = {
-      version: ClusterStateVersion,
       createdAt: new Date().toISOString(),
       nodes: [node],
       walletPath: "",

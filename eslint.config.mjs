@@ -30,7 +30,8 @@ import prettier from "eslint-config-prettier"
 // STYLE.md "match() over switch always".
 const BanSwitch = {
   selector: "SwitchStatement",
-  message: "Use match() from ts-pattern (STYLE.md 'match() over switch always')."
+  message:
+    "Use match() from ts-pattern (STYLE.md 'match() over switch always')."
 }
 
 // STYLE.md "Extracted Helper Functions": an immediately-invoked function
@@ -48,7 +49,8 @@ const BanInlineIife = {
 // `| null` union to a return type — the compiler doesn't enforce it, so it is
 // dead ceremony; write the plain type, callers guard with `!= null`.
 const BanNullUnionReturn = {
-  selector: ":function > TSTypeAnnotation.returnType TSUnionType > TSNullKeyword",
+  selector:
+    ":function > TSTypeAnnotation.returnType TSUnionType > TSNullKeyword",
   message:
     "No `| null` return-type ceremony — strictNullChecks is OFF, the union is unenforced clutter; write the plain type (prefer-null-over-undefined.md)."
 }
@@ -60,6 +62,54 @@ const BanInlineTypeLiteral = {
   selector: "TSTypeLiteral",
   message:
     "No inline object types — declare a named interface/type (author law; see STYLE.md 'Interface Design')."
+}
+
+// no-pick-in-parameter-types.md (author law, 2026-07-17): a parameter demands
+// the minimum REAL data — one field → the indexed-access type
+// (`alive: ProcessLivenessSnapshot["alive"]`), several optional fields →
+// Partial<T>, the real object → T. A Pick<T,K> parameter forces callers to
+// assemble a synthetic one-off object that is neither the domain object nor a
+// plain value. Return types and genuine data-model projections are out of
+// scope (the selector matches parameter positions only).
+const BanPickParameter = {
+  selector:
+    ":matches(FunctionDeclaration, FunctionExpression, ArrowFunctionExpression, TSDeclareFunction, TSEmptyBodyFunctionExpression, TSMethodSignature, TSFunctionType) > :matches(Identifier, ObjectPattern, ArrayPattern, RestElement, AssignmentPattern, TSParameterProperty) TSTypeReference[typeName.name='Pick']",
+  message:
+    'No Pick<T,K> parameter contracts — one field → indexed access (T["field"]), several optional fields → Partial<T>, otherwise T (no-pick-in-parameter-types.md).'
+}
+
+// string-unions-derive-from-enums.md (author law, 2026-07-18): a hand-written
+// union of string literals is a closed set without its enum. Declare the
+// identity enum and use its members — or, when a union TYPE is genuinely
+// needed, derive it from an existing enum (`${Enum}` template /
+// keyof typeof Enum / a union of Enum.member types) or reuse the generated
+// type that already carries the spellings.
+const BanStringLiteralUnion = {
+  selector: "TSUnionType > TSLiteralType > Literal[raw=/^[\"']/]",
+  message:
+    "No hand-written string-literal unions — declare the identity enum, or derive the union from one (`${Enum}` / keyof typeof Enum) (string-unions-derive-from-enums.md)."
+}
+
+// STYLE.md "asOption" carve-out (author law, 2026-07-18): wrapping an
+// ALREADY-AWAITED value in asOption just to tap a side effect and get() it
+// back is ceremony — bind the value and use plain statements (or a genuine
+// Future pipeline when composing async stages).
+const BanAsOptionAwait = {
+  selector: "CallExpression[callee.name='asOption'] > AwaitExpression",
+  message:
+    "Never asOption(await …) — bind the awaited value and use plain statements (or a genuine Future pipeline) (STYLE.md 'asOption')."
+}
+
+// STYLE.md "Destructuring over member-coalesce" (author law, 2026-07-18):
+// `const local = obj.member ?? Default` re-spells the member name at every
+// pull — destructure with defaults/renames instead:
+// `const { member: local = Default } = obj`. Computed members (`arr[0]`) and
+// optional chains stay accessor-form.
+const BanMemberCoalesceDeclarator = {
+  selector:
+    "VariableDeclarator > LogicalExpression.init[operator='??'] > MemberExpression.left[computed=false]",
+  message:
+    "Destructure with a default — `const { member: local = Default } = obj` — not `const local = obj.member ?? Default` (STYLE.md 'Destructuring over member-coalesce')."
 }
 
 // Pre-existing `| null` return-type debt, grandfathered — prefer-null forbids
@@ -136,7 +186,6 @@ const InlineTypeLiteralDebtFiles = [
   "packages/debugging-client-tool-tui/tests/store/middleware/createReduxFileLogger.test.ts",
   "packages/debugging-server/src/routes/opp/OPPRoutes.ts",
   "packages/debugging-server/src/streams/EnvelopeWatchStream.ts",
-  "packages/debugging-shared/src/cluster/ClusterTypes.ts",
   "packages/debugging-shared/src/opp/EnvelopeRecordReader.ts",
   "packages/debugging-shared/src/rpc/Paths.ts",
   "packages/debugging-shared/src/rpc/StreamProtocol.ts",
@@ -151,7 +200,16 @@ const InlineTypeLiteralDebtFiles = [
 // One config block per exemption signature: a debt file keeps every ban
 // EXCEPT the one(s) it is grandfathered for. Computed, so the two ratchet
 // lists compose without a hand-maintained matrix.
-const AllBans = [BanSwitch, BanInlineIife, BanNullUnionReturn, BanInlineTypeLiteral]
+const AllBans = [
+  BanSwitch,
+  BanInlineIife,
+  BanNullUnionReturn,
+  BanInlineTypeLiteral,
+  BanPickParameter,
+  BanStringLiteralUnion,
+  BanAsOptionAwait,
+  BanMemberCoalesceDeclarator
+]
 const debtExemptionBlocks = (() => {
   const exemptionsByFile = new Map()
   NullUnionReturnDebtFiles.forEach(file =>

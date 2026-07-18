@@ -1,5 +1,6 @@
 import Fs from "node:fs"
 import Path from "node:path"
+import { ClusterConfigLoggingFileFormat } from "@wireio/cluster-tool-shared"
 import {
   LevelThresholds,
   type Appender,
@@ -85,13 +86,10 @@ export class LogFileAppender implements Appender {
 
 export namespace LogFileAppender {
   /**
-   * File format. `jsonl` (one JSON object per line) is the default — it is
-   * grep-/`jq`-friendly; `text` is the human-readable console-style form.
+   * File format (`jsonl` is the default). Aliases the ONE declaration,
+   * `ClusterConfigLoggingFileFormat` (`@wireio/cluster-tool-shared`).
    */
-  export enum Format {
-    text = "text",
-    jsonl = "jsonl"
-  }
+  export import Format = ClusterConfigLoggingFileFormat
 
   /** Turns one log record into its on-disk line (newline added by the appender). */
   export type Formatter = (record: LogRecord) => string

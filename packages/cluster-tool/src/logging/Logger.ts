@@ -28,7 +28,7 @@ export function getLogger(categoryOrFilename: string): Logger {
 /**
  * Input to {@link configureLogging}. The console and file sinks filter
  * independently; the shared root level is set to the more verbose of the two so
- * neither sink is starved. Distinct from the persisted `config.LoggingConfig`
+ * neither sink is starved. Distinct from the persisted `ClusterConfigLogging`
  * (`{ levels, fileFormat }`) — this is the runtime setup form, carrying the
  * derived `runLogFile` path.
  */
@@ -71,8 +71,7 @@ class LevelConsoleAppender extends ConsoleAppender<LogRecord> {
  * @param config - Per-run levels, file format, and the run-log path.
  */
 export function configureLogging(options: LoggingSetupOptions): void {
-  const consoleLevel = options.consoleLevel ?? Level.info,
-    fileLevel = options.fileLevel ?? Level.debug
+  const { consoleLevel = Level.info, fileLevel = Level.debug } = options
   getLoggingManager()
     .setRootLevel(moreVerbose(consoleLevel, fileLevel))
     .setAppenders(

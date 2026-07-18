@@ -1,5 +1,9 @@
 import { promises as Fsp } from "node:fs"
 import Path from "node:path"
+import {
+  ClusterConfigReportFormat,
+  type ClusterConfigReport
+} from "@wireio/cluster-tool-shared"
 import { getLogger } from "@wireio/shared"
 import type { ReportRendererRegistry } from "./ReportRendererRegistry.js"
 import { StepExtraRecorder as StepExtraRecorderTool } from "./tools/StepExtraRecorder.js"
@@ -72,7 +76,7 @@ export class Report {
 
   private async writeOne(
     config: Report.Config,
-    format: Report.Format,
+    format: ClusterConfigReportFormat,
     registry: ReportRendererRegistry
   ): Promise<void> {
     const Ctor = registry.get(format)
@@ -134,12 +138,11 @@ export namespace Report {
     SolanaOutpost = "SolanaOutpost"
   }
 
-  /** Output format — value matches the file extension. */
-  export enum Format {
-    csv = "csv",
-    md = "md",
-    html = "html"
-  }
+  /**
+   * Output format — value matches the file extension. Aliases the ONE
+   * declaration, `ClusterConfigReportFormat` (`@wireio/cluster-tool-shared`).
+   */
+  export import Format = ClusterConfigReportFormat
 
   /** Per-step outcome. */
   export enum StepStatus {
@@ -263,7 +266,10 @@ export namespace Report {
 
     /** Total executed-step count under `node`. */
     export function stepCount(node: Node): number {
-      return phases(node).reduce((total, phase) => total + phase.steps.length, 0)
+      return phases(node).reduce(
+        (total, phase) => total + phase.steps.length,
+        0
+      )
     }
 
     /** Total skipped-step count under `node`. */
@@ -280,12 +286,13 @@ export namespace Report {
     }
   }
 
-  /** Caller-facing write target — the resolved `Config`. */
-  export interface Config {
-    path: string
-    basename: string
-    formats: Format[]
-  }
+  /**
+   * Caller-facing write target — the persisted `ClusterConfigReport` shape
+   * (`@wireio/cluster-tool-shared`). `Format` enum values satisfy its
+   * literal-union `formats` by identity, so construction sites keep using the
+   * enum while the ONE declaration lives with the persisted config family.
+   */
+  export interface Config extends ClusterConfigReport {}
 
   /** The optional, caller-supplied form of {@link Config}. */
   export type Options = Partial<Config>

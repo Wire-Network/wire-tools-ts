@@ -1,10 +1,7 @@
 import { Keypair } from "@solana/web3.js"
 import { getAccount, TokenAccountNotFoundError } from "@solana/spl-token"
-import {
-  SolanaClient,
-  SolanaWallet
-} from "@wireio/cluster-tool/clients/solana"
-import { BindConfig } from "@wireio/cluster-tool/config"
+import { SolanaClient, SolanaWallet } from "@wireio/cluster-tool/clients/solana"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { toURL } from "@wireio/cluster-tool/utils"
 
 jest.mock("@solana/spl-token", () => ({
@@ -17,7 +14,11 @@ const newWallet = () => new SolanaWallet(Keypair.generate())
 describe("SolanaClient", () => {
   let rpcUrl: string
   beforeAll(async () => {
-    rpcUrl = toURL(await BindConfig.findAvailable(BindConfig.DefaultSolanaRpc))
+    rpcUrl = toURL(
+      await BindConfigProvider.findAvailable(
+        BindConfigProvider.DefaultSolanaRpc
+      )
+    )
   })
 
   it("opens a connection at the given rpc url", () => {
@@ -40,7 +41,9 @@ describe("SolanaClient", () => {
   it("getSplBalance returns the ATA's raw token amount", async () => {
     jest
       .mocked(getAccount)
-      .mockResolvedValueOnce({ amount: 123n } as Awaited<ReturnType<typeof getAccount>>)
+      .mockResolvedValueOnce({ amount: 123n } as Awaited<
+        ReturnType<typeof getAccount>
+      >)
     const client = new SolanaClient(rpcUrl, newWallet())
     await expect(
       client.getSplBalance(Keypair.generate().publicKey)

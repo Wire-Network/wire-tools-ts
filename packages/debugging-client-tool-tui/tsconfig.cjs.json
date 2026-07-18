@@ -6,8 +6,17 @@
     "jsx": "react-jsx"
   },
   "references": [
-    { "path": "../debugging-shared/tsconfig.json" },
-    { "path": "../debugging-client-shared/tsconfig.json" }
+    {
+      "path": "../cluster-tool-shared/tsconfig.json"
+    },
+    {
+      "path": "../debugging-shared/tsconfig.json"
+    },
+    {
+      "path": "../debugging-client-shared/tsconfig.json"
+    }
   ],
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

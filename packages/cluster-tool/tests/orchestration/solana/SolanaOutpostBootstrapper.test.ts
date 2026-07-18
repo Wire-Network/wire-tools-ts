@@ -1,5 +1,5 @@
 import { SolanaOutpostBootstrapper } from "@wireio/cluster-tool/orchestration"
-import { BindConfig } from "@wireio/cluster-tool/config"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { toURL } from "@wireio/cluster-tool/utils"
 
 describe("SolanaOutpostBootstrapper.slugNameToLittleEndianBuffer", () => {
@@ -11,7 +11,8 @@ describe("SolanaOutpostBootstrapper.slugNameToLittleEndianBuffer", () => {
   })
 
   it("round-trips an arbitrary slug code", () => {
-    const buffer = SolanaOutpostBootstrapper.slugNameToLittleEndianBuffer(123_456_789)
+    const buffer =
+      SolanaOutpostBootstrapper.slugNameToLittleEndianBuffer(123_456_789)
     expect(buffer.readBigUInt64LE(0)).toBe(123_456_789n)
   })
 })
@@ -19,7 +20,10 @@ describe("SolanaOutpostBootstrapper.slugNameToLittleEndianBuffer", () => {
 describe("SolanaOutpostBootstrapper.SplReserveSpecifications", () => {
   it("provisions USDCSOL / USDTSOL / LIQSOL with the expected decimals", () => {
     const byCode = new Map(
-      SolanaOutpostBootstrapper.SplReserveSpecifications.map(spec => [spec.codeName, spec])
+      SolanaOutpostBootstrapper.SplReserveSpecifications.map(spec => [
+        spec.codeName,
+        spec
+      ])
     )
     expect(byCode.get("USDCSOL")?.decimals).toBe(6)
     expect(byCode.get("USDTSOL")?.decimals).toBe(6)
@@ -30,7 +34,11 @@ describe("SolanaOutpostBootstrapper.SplReserveSpecifications", () => {
 describe("SolanaOutpostBootstrapper constructor", () => {
   let rpcUrl: string
   beforeAll(async () => {
-    rpcUrl = toURL(await BindConfig.findAvailable(BindConfig.DefaultSolanaRpc))
+    rpcUrl = toURL(
+      await BindConfigProvider.findAvailable(
+        BindConfigProvider.DefaultSolanaRpc
+      )
+    )
   })
 
   it("throws when solanaPath is missing", () => {
@@ -41,7 +49,8 @@ describe("SolanaOutpostBootstrapper constructor", () => {
 
   it("throws when rpcUrl is missing", () => {
     expect(
-      () => new SolanaOutpostBootstrapper({ solanaPath: "/repo/sol", rpcUrl: "" })
+      () =>
+        new SolanaOutpostBootstrapper({ solanaPath: "/repo/sol", rpcUrl: "" })
     ).toThrow(/rpcUrl is required/)
   })
 })

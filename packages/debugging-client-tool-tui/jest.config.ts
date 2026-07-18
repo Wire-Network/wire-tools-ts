@@ -26,6 +26,10 @@ const config = {
   ],
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",
+    "^@wireio/cluster-tool-shared$":
+      "<rootDir>/../cluster-tool-shared/src/index",
+    "^@wireio/cluster-tool-shared/(.*)$":
+      "<rootDir>/../cluster-tool-shared/src/$1",
     "^@wireio/debugging-client-tool-tui$": "<rootDir>/src/tui",
     "^@wireio/debugging-client-tool-tui/(.*)\\.js$": "<rootDir>/src/$1",
     "^@wireio/debugging-client-tool-tui/(.*)$": "<rootDir>/src/$1",

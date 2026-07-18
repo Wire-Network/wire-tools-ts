@@ -6,7 +6,7 @@ import { Hash, KeyType, PrivateKey } from "@wireio/sdk-core"
  * token / ROA parameters, contract paths, plugin sets, account-name generators,
  * and the emissions config defaults. Ported from the former
  * the former `cluster/constants.ts`; network ports are NOT here — they live on
- * `config/BindConfig.ts`, which owns binding.
+ * `config/BindConfigProvider.ts`, which owns binding.
  */
 export namespace Constants {
   /** Seed for the deterministic dev K1 key pair (matches the genesis bios key). */
@@ -48,7 +48,9 @@ export namespace Constants {
       publicKeyStr: publicKey.toString(),
       proofOfPossessionStr: privateKey.proofOfPossessionString
     }
-  }).getOrThrow(`Failed to create default BLS key pair: ${DefaultBLSKeyPairSeed}`)
+  }).getOrThrow(
+    `Failed to create default BLS key pair: ${DefaultBLSKeyPairSeed}`
+  )
 
   export type DefaultBLSKeyPairType = typeof DefaultBLSKeyPair
 
@@ -57,7 +59,8 @@ export namespace Constants {
   /** Default sysio development BLS public key. */
   export const DEV_BLS_PUBLIC_KEY = DefaultBLSKeyPair.publicKeyStr
   /** Default sysio development BLS proof of possession. */
-  export const DEV_BLS_PROOF_OF_POSSESSION = DefaultBLSKeyPair.proofOfPossessionStr
+  export const DEV_BLS_PROOF_OF_POSSESSION =
+    DefaultBLSKeyPair.proofOfPossessionStr
 
   /**
    * Format a nodeop signature-provider config value:

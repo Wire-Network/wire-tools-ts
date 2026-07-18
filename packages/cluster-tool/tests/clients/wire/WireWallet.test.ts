@@ -1,18 +1,17 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import {
-  ClioRunner,
-  WireWallet
-} from "@wireio/cluster-tool/clients/wire"
-import { BindConfig } from "@wireio/cluster-tool/config"
+import { ClioRunner, WireWallet } from "@wireio/cluster-tool/clients/wire"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { toURL } from "@wireio/cluster-tool/utils"
 
 describe("WireWallet", () => {
   let dir: string
   let nodeopUrl: string
   beforeAll(async () => {
-    nodeopUrl = toURL(await BindConfig.findAvailable(BindConfig.DefaultBiosHttp))
+    nodeopUrl = toURL(
+      await BindConfigProvider.findAvailable(BindConfigProvider.DefaultBiosHttp)
+    )
   })
   beforeEach(() => {
     dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "wirewallet-"))
@@ -104,22 +103,44 @@ describe("WireWallet", () => {
   describe("namespace helpers", () => {
     it("errorMessage reads message ?? stderr", () => {
       expect(WireWallet.errorMessage(new Error("boom"))).toBe("boom")
-      expect(WireWallet.errorMessage({ stderr: "from stderr" })).toBe("from stderr")
+      expect(WireWallet.errorMessage({ stderr: "from stderr" })).toBe(
+        "from stderr"
+      )
       expect(WireWallet.errorMessage(null)).toBe("")
     })
     it("tolerate returns the fallback on a benign match, else rethrows", () => {
-      expect(WireWallet.tolerate(new Error("x already exists"), "already exists", "fb")).toBe("fb")
-      expect(() => WireWallet.tolerate(new Error("fatal"), "already exists", "fb")).toThrow("fatal")
+      expect(
+        WireWallet.tolerate(
+          new Error("x already exists"),
+          "already exists",
+          "fb"
+        )
+      ).toBe("fb")
+      expect(() =>
+        WireWallet.tolerate(new Error("fatal"), "already exists", "fb")
+      ).toThrow("fatal")
     })
     it("swallowBenign swallows a match (string or regex), else rethrows", () => {
       expect(() =>
-        WireWallet.swallowBenign(new Error("Already unlocked"), "Already unlocked", "ok")
+        WireWallet.swallowBenign(
+          new Error("Already unlocked"),
+          "Already unlocked",
+          "ok"
+        )
       ).not.toThrow()
       expect(() =>
-        WireWallet.swallowBenign(new Error("cannot open it"), WireWallet.AlreadyOpenPattern, "ok")
+        WireWallet.swallowBenign(
+          new Error("cannot open it"),
+          WireWallet.AlreadyOpenPattern,
+          "ok"
+        )
       ).not.toThrow()
       expect(() =>
-        WireWallet.swallowBenign(new Error("real failure"), "Already unlocked", "ok")
+        WireWallet.swallowBenign(
+          new Error("real failure"),
+          "Already unlocked",
+          "ok"
+        )
       ).toThrow("real failure")
     })
   })

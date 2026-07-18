@@ -93,9 +93,7 @@ export class ProcessMonitorService implements Service {
         .then(sources => {
           this.cachedSources = sources
         })
-        .catch(err =>
-          this.log.debug("listProcessSources refresh failed", err)
-        )
+        .catch(err => this.log.debug("listProcessSources refresh failed", err))
     }
   }
 }

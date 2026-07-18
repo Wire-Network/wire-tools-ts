@@ -49,7 +49,8 @@ import {
   type PermitSignature,
   type ReserveManagerErc20SwapContract,
   type StepInput,
-  type SwapUserOutput
+  type SwapUserOutput,
+  ClusterConfigProvider
 } from "@wireio/cluster-tool"
 import { SwapNonNativeScenarioConstants as Constants } from "../SwapNonNativeScenarioConstants.js"
 
@@ -121,7 +122,9 @@ export namespace SwapNonNativeScenarioTokenSteps {
   // ── Typed per-cell output keys (cross-step values ride ctx.outputs) ──────
 
   /** The cell's signed EIP-2612 permit (set by {@link planSignPermit}). */
-  export function permitSignatureOutputKey(cellName: string): OutputKey<PermitSignature> {
+  export function permitSignatureOutputKey(
+    cellName: string
+  ): OutputKey<PermitSignature> {
     return outputKey<PermitSignature>(
       `${cellName}.permitSignature`,
       `signed EIP-2612 permit for ${cellName}`
@@ -137,7 +140,9 @@ export namespace SwapNonNativeScenarioTokenSteps {
   }
 
   /** The user's destination balance snapshotted before the swap write. */
-  export function destinationBeforeOutputKey(cellName: string): OutputKey<bigint> {
+  export function destinationBeforeOutputKey(
+    cellName: string
+  ): OutputKey<bigint> {
     return outputKey<bigint>(
       `${cellName}.destinationBefore`,
       `pre-swap destination balance for ${cellName}`
@@ -153,7 +158,9 @@ export namespace SwapNonNativeScenarioTokenSteps {
   }
 
   /** Highest pre-existing uwreq id for the cell's chain pair (-1 when none). */
-  export function uwreqBaselineIdOutputKey(cellName: string): OutputKey<number> {
+  export function uwreqBaselineIdOutputKey(
+    cellName: string
+  ): OutputKey<number> {
     return outputKey<number>(
       `${cellName}.uwreqBaselineId`,
       `pre-swap max uwreq id for ${cellName}`
@@ -162,7 +169,10 @@ export namespace SwapNonNativeScenarioTokenSteps {
 
   /** The cell's own uwreq row id (set once {@link planVerifyUwreqCreated} sees it). */
   export function uwreqIdOutputKey(cellName: string): OutputKey<number> {
-    return outputKey<number>(`${cellName}.uwreqId`, `uwreq row id for ${cellName}`)
+    return outputKey<number>(
+      `${cellName}.uwreqId`,
+      `uwreq row id for ${cellName}`
+    )
   }
 
   // ── Step: mint mock ERC-20 to the swap user (write) ──────────────────────
@@ -191,7 +201,10 @@ export namespace SwapNonNativeScenarioTokenSteps {
     tokenCode: number,
     amount: bigint
   ): ClusterBuildStep<SwapScenarioContext, MintErc20ToSwapUserInput> {
-    return ClusterBuildStep.create<SwapScenarioContext, MintErc20ToSwapUserInput>(
+    return ClusterBuildStep.create<
+      SwapScenarioContext,
+      MintErc20ToSwapUserInput
+    >(
       actor,
       name,
       description,
@@ -374,7 +387,10 @@ export namespace SwapNonNativeScenarioTokenSteps {
     signal.throwIfAborted()
     const { cell } = input
     const swapUser = ctx.outputs.assert(swapUserOutputKey())
-    const token = mockErc20Contract<Erc20PermitTarget>(ctx, cell.sourceTokenCode)
+    const token = mockErc20Contract<Erc20PermitTarget>(
+      ctx,
+      cell.sourceTokenCode
+    )
     const deadline = BigInt(
       Math.floor(Date.now() / 1_000) + Constants.PermitDeadlineWindowSec
     )
@@ -466,7 +482,10 @@ export namespace SwapNonNativeScenarioTokenSteps {
     options: ClusterBuildStepOptions,
     cell: SwapCell
   ): ClusterBuildStep<SwapScenarioContext, RequestSwapErc20WithPermitInput> {
-    return ClusterBuildStep.create<SwapScenarioContext, RequestSwapErc20WithPermitInput>(
+    return ClusterBuildStep.create<
+      SwapScenarioContext,
+      RequestSwapErc20WithPermitInput
+    >(
       actor,
       name,
       description,
@@ -488,16 +507,24 @@ export namespace SwapNonNativeScenarioTokenSteps {
     signal.throwIfAborted()
     const { cell } = input
     const swapUser = ctx.outputs.assert(swapUserOutputKey())
-    const permitSignature = ctx.outputs.assert(permitSignatureOutputKey(cell.name))
+    const permitSignature = ctx.outputs.assert(
+      permitSignatureOutputKey(cell.name)
+    )
     await snapshotErc20Custody(ctx, cell)
     await snapshotSwapBaselines(ctx, swapUser, cell)
     const result = await requestEthereumSwapErc20WithPermit(
       reserveManagerForSwapUser(ctx, swapUser.ethereumWallet),
-      erc20SwapArgs(swapUser, cell, ctx.outputs.assert(liveTargetOutputKey(cell.name))),
+      erc20SwapArgs(
+        swapUser,
+        cell,
+        ctx.outputs.assert(liveTargetOutputKey(cell.name))
+      ),
       permitSignature
     )
     Assert.ok(result.transactionHash, "requestSwapErc20WithPermit: no tx hash")
-    log.info(`[swap-non-native] ${cell.name}: swap requested (${result.transactionHash})`)
+    log.info(
+      `[swap-non-native] ${cell.name}: swap requested (${result.transactionHash})`
+    )
   }
 
   // ── Step: ERC-20 swap via pre-set allowance (write) ──────────────────────
@@ -520,7 +547,10 @@ export namespace SwapNonNativeScenarioTokenSteps {
     options: ClusterBuildStepOptions,
     cell: SwapCell
   ): ClusterBuildStep<SwapScenarioContext, RequestSwapErc20WithApprovalInput> {
-    return ClusterBuildStep.create<SwapScenarioContext, RequestSwapErc20WithApprovalInput>(
+    return ClusterBuildStep.create<
+      SwapScenarioContext,
+      RequestSwapErc20WithApprovalInput
+    >(
       actor,
       name,
       description,
@@ -546,10 +576,19 @@ export namespace SwapNonNativeScenarioTokenSteps {
     await snapshotSwapBaselines(ctx, swapUser, cell)
     const result = await requestEthereumSwapErc20WithApproval(
       reserveManagerForSwapUser(ctx, swapUser.ethereumWallet),
-      erc20SwapArgs(swapUser, cell, ctx.outputs.assert(liveTargetOutputKey(cell.name)))
+      erc20SwapArgs(
+        swapUser,
+        cell,
+        ctx.outputs.assert(liveTargetOutputKey(cell.name))
+      )
     )
-    Assert.ok(result.transactionHash, "requestSwapErc20WithApproval: no tx hash")
-    log.info(`[swap-non-native] ${cell.name}: swap requested (${result.transactionHash})`)
+    Assert.ok(
+      result.transactionHash,
+      "requestSwapErc20WithApproval: no tx hash"
+    )
+    log.info(
+      `[swap-non-native] ${cell.name}: swap requested (${result.transactionHash})`
+    )
   }
 
   // ── Step: SPL swap via signed request_swap_spl IX (write) ────────────────
@@ -601,7 +640,10 @@ export namespace SwapNonNativeScenarioTokenSteps {
         sourceTokenCode: BigInt(cell.sourceTokenCode),
         sourceReserveCode: BigInt(Constants.Reserves.ReserveCode),
         sourceAmount: cell.sourceAmount,
-        sourceMint: resolveSolanaMockMint(ctx.config.dataPath, cell.sourceTokenCode),
+        sourceMint: resolveSolanaMockMint(
+          ctx.config.dataPath,
+          cell.sourceTokenCode
+        ),
         targetChainCode: BigInt(cell.targetChainCode),
         targetTokenCode: BigInt(cell.targetTokenCode),
         targetReserveCode: BigInt(Constants.Reserves.ReserveCode),
@@ -633,7 +675,9 @@ export namespace SwapNonNativeScenarioTokenSteps {
       name,
       description,
       async ctx => {
-        const custodyBefore = ctx.outputs.assert(custodyBeforeOutputKey(cell.name))
+        const custodyBefore = ctx.outputs.assert(
+          custodyBeforeOutputKey(cell.name)
+        )
         const custodyAfter = await readMockErc20Balance(
           ctx,
           cell.sourceTokenCode,
@@ -667,12 +711,18 @@ export namespace SwapNonNativeScenarioTokenSteps {
       name,
       description,
       async ctx => {
-        const baselineId = ctx.outputs.assert(uwreqBaselineIdOutputKey(cell.name))
+        const baselineId = ctx.outputs.assert(
+          uwreqBaselineIdOutputKey(cell.name)
+        )
         await pollUntil(
           `${cell.name}: new UWREQ row (id > ${baselineId})`,
           async () => {
             const created = (
-              await readUwreqRowsForPair(ctx, cell.sourceChainCode, cell.targetChainCode)
+              await readUwreqRowsForPair(
+                ctx,
+                cell.sourceChainCode,
+                cell.targetChainCode
+              )
             ).filter(row => Number(row.id) > baselineId)
             if (created.length === 0) return false
             const newest = created.reduce((left, right) =>
@@ -711,7 +761,11 @@ export namespace SwapNonNativeScenarioTokenSteps {
           `${cell.name}: UWREQ ${uwreqId} CONFIRMED`,
           async () => {
             const row = (
-              await readUwreqRowsForPair(ctx, cell.sourceChainCode, cell.targetChainCode)
+              await readUwreqRowsForPair(
+                ctx,
+                cell.sourceChainCode,
+                cell.targetChainCode
+              )
             ).find(candidate => Number(candidate.id) === uwreqId)
             return (
               row != null &&
@@ -756,7 +810,8 @@ export namespace SwapNonNativeScenarioTokenSteps {
         await pollUntil(
           `${cell.name}: ${Constants.LocksPerSwap} locks on UWREQ ${uwreqId}`,
           async () =>
-            (await ctx.locksForUwreq(uwreqId)).length === Constants.LocksPerSwap,
+            (await ctx.locksForUwreq(uwreqId)).length ===
+            Constants.LocksPerSwap,
           Timing.UwreqDeadlineMs,
           Timing.LongPollIntervalMs
         )
@@ -784,12 +839,19 @@ export namespace SwapNonNativeScenarioTokenSteps {
       description,
       async ctx => {
         const swapUser = ctx.outputs.assert(swapUserOutputKey())
-        const destinationBefore = ctx.outputs.assert(destinationBeforeOutputKey(cell.name))
+        const destinationBefore = ctx.outputs.assert(
+          destinationBeforeOutputKey(cell.name)
+        )
         const liveTarget = ctx.outputs.assert(liveTargetOutputKey(cell.name))
-        const floor = destinationPayoutFloor(destinationBefore, cell, liveTarget)
+        const floor = destinationPayoutFloor(
+          destinationBefore,
+          cell,
+          liveTarget
+        )
         await pollUntil(
           `${cell.name}: destination balance ≥ ${floor}`,
-          async () => (await readDestinationBalance(ctx, swapUser, cell)) >= floor,
+          async () =>
+            (await readDestinationBalance(ctx, swapUser, cell)) >= floor,
           Timing.RemitDeadlineMs,
           Timing.LongPollIntervalMs
         )
@@ -839,7 +901,8 @@ export namespace SwapNonNativeScenarioTokenSteps {
                 operator.balances.some(
                   balance =>
                     slugValue(balance.chain_code) === entry.chain_code &&
-                    slugValue(balance.token_code) === Number(entry.amount.tokenCode) &&
+                    slugValue(balance.token_code) ===
+                      Number(entry.amount.tokenCode) &&
                     BigInt(balance.balance) >= entry.amount.amount
                 )
               )
@@ -879,7 +942,10 @@ const NoUwreqBaselineId = -1
  * `contracts/test/outpost/` — separate from the production `contracts/outpost/`
  * tree that `EthereumCollateralTool.loadOutpostAbi` reads.
  */
-function loadTestErc20Abi(ethereumPath: string, contractName: string): ethers.InterfaceAbi {
+function loadTestErc20Abi(
+  ethereumPath: string,
+  contractName: string
+): ethers.InterfaceAbi {
   const artifactPath = Path.join(
     ethereumPath,
     "artifacts",
@@ -911,9 +977,9 @@ function mockErc20Contract<View extends object = object>(
     addressKey != null,
     `SwapNonNativeScenarioTokenSteps: no mock ERC-20 mapping for token code ${tokenCode}`
   )
-  const address = EthereumCollateralTool.loadOutpostAddresses(ctx.config.ethereumDeploymentsPath)[
-    addressKey
-  ]
+  const address = EthereumCollateralTool.loadOutpostAddresses(
+    ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
+  )[addressKey]
   Assert.ok(
     address != null && ethers.isAddress(address),
     `SwapNonNativeScenarioTokenSteps: ${addressKey} not in outpost-addrs.json (got ${address})`
@@ -928,9 +994,9 @@ function mockErc20Contract<View extends object = object>(
 
 /** The deployed ReserveManager address from `outpost-addrs.json` (asserted). */
 function assertReserveManagerAddress(ctx: SwapScenarioContext): string {
-  const address = EthereumCollateralTool.loadOutpostAddresses(ctx.config.ethereumDeploymentsPath)[
-    Constants.OutpostAddressKey.ReserveManager
-  ]
+  const address = EthereumCollateralTool.loadOutpostAddresses(
+    ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
+  )[Constants.OutpostAddressKey.ReserveManager]
   Assert.ok(
     address != null && ethers.isAddress(address),
     `SwapNonNativeScenarioTokenSteps: ReserveManager not in outpost-addrs.json (got ${address})`
@@ -964,7 +1030,9 @@ function resolveSolanaMockMint(dataPath: string, tokenCode: number): PublicKey {
     Fs.existsSync(mintsFile),
     `SwapNonNativeScenarioTokenSteps: mock SPL mints not found at ${mintsFile}`
   )
-  const mints = JSON.parse(Fs.readFileSync(mintsFile, "utf8")) as SolanaMockMint[]
+  const mints = JSON.parse(
+    Fs.readFileSync(mintsFile, "utf8")
+  ) as SolanaMockMint[]
   const found = mints.find(entry => entry.code === tokenCode)
   Assert.ok(
     found,
@@ -979,9 +1047,9 @@ function readMockErc20Balance(
   tokenCode: number,
   owner: string
 ): Promise<bigint> {
-  return (
-    mockErc20Contract<Erc20BalanceReadContract>(ctx, tokenCode)
-  ).balanceOf(owner)
+  return mockErc20Contract<Erc20BalanceReadContract>(ctx, tokenCode).balanceOf(
+    owner
+  )
 }
 
 /** The cell's raw recipient bytes on the target chain (20-byte EVM / 32-byte SVM). */
@@ -1030,7 +1098,8 @@ function destinationPayoutFloor(
     liveTarget -
     WireReserveTool.varianceDrift(liveTarget, Constants.Variance.ToleranceBps)
   return (
-    destinationBefore + WireReserveTool.fromDepot(depotNet, cell.destinationDecimals)
+    destinationBefore +
+    WireReserveTool.fromDepot(depotNet, cell.destinationDecimals)
   )
 }
 
@@ -1075,10 +1144,9 @@ async function maxUwreqIdForPair(
   sourceChainCode: number,
   targetChainCode: number
 ): Promise<number> {
-  return (await readUwreqRowsForPair(ctx, sourceChainCode, targetChainCode)).reduce(
-    (max, row) => Math.max(max, Number(row.id)),
-    NoUwreqBaselineId
-  )
+  return (
+    await readUwreqRowsForPair(ctx, sourceChainCode, targetChainCode)
+  ).reduce((max, row) => Math.max(max, Number(row.id)), NoUwreqBaselineId)
 }
 
 /** Snapshot the ReserveManager's source-token custody before an ERC-20 swap write. */
@@ -1088,7 +1156,11 @@ async function snapshotErc20Custody(
 ): Promise<void> {
   ctx.outputs.set(
     SwapNonNativeScenarioTokenSteps.custodyBeforeOutputKey(cell.name),
-    await readMockErc20Balance(ctx, cell.sourceTokenCode, assertReserveManagerAddress(ctx))
+    await readMockErc20Balance(
+      ctx,
+      cell.sourceTokenCode,
+      assertReserveManagerAddress(ctx)
+    )
   )
 }
 

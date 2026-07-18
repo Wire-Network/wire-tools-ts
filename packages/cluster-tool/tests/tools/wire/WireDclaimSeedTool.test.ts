@@ -8,6 +8,7 @@
 // — harness tests never import from flow-* packages, so the fixture is
 // self-contained.
 
+import { ChainKind } from "@wireio/opp-typescript-models"
 import {
   convertImportSeed,
   serializeBatchForClio,
@@ -166,7 +167,7 @@ describe("WireDclaimSeedTool", () => {
     it("batches an empty dump into zero batches", () => {
       const result = convertImportSeed(
         { purchasers: [], stakers: [] },
-        { chain: "CHAIN_KIND_EVM" }
+        { chain: ChainKind.EVM }
       )
       expect(result.batches).toHaveLength(0)
       expect(result.totalAtomic).toBe(0n)
@@ -188,7 +189,7 @@ describe("WireDclaimSeedTool", () => {
           }
         ]
       }
-      const result = convertImportSeed(dump, { chain: "CHAIN_KIND_EVM" })
+      const result = convertImportSeed(dump, { chain: ChainKind.EVM })
       expect(result.uniqueAddresses).toBe(1)
       expect(result.nonZeroCredits).toBe(1)
       const credit = result.batches[0].credits[0]
@@ -203,7 +204,7 @@ describe("WireDclaimSeedTool", () => {
           { address: `0x${"22".repeat(20)}`, totalPretokens: "1500000000" }
         ]
       }
-      const result = convertImportSeed(dump, { chain: "CHAIN_KIND_EVM" })
+      const result = convertImportSeed(dump, { chain: ChainKind.EVM })
       expect(result.batches[0].credits[0].wire_atomic).toBe(1n)
       expect(result.droppedDust).toBe(500_000_000n)
     })
@@ -217,7 +218,7 @@ describe("WireDclaimSeedTool", () => {
           }
         ]
       }
-      const result = convertImportSeed(dump, { chain: "CHAIN_KIND_SVM" })
+      const result = convertImportSeed(dump, { chain: ChainKind.SVM })
       expect(result.batches[0].credits[0].wire_atomic).toBe(987_654_321n)
       expect(result.droppedDust).toBe(0n)
     })
@@ -230,15 +231,15 @@ describe("WireDclaimSeedTool", () => {
         }))
       }
       const result = convertImportSeed(dump, {
-        chain: "CHAIN_KIND_EVM",
+        chain: ChainKind.EVM,
         batchSize: 2
       })
       expect(result.batches.map(batch => batch.credits.length)).toEqual([
         2, 2, 1
       ])
-      expect(
-        result.batches.every(batch => batch.chain === "CHAIN_KIND_EVM")
-      ).toBe(true)
+      expect(result.batches.every(batch => batch.chain === ChainKind.EVM)).toBe(
+        true
+      )
       const serialized = serializeBatchForClio(result.batches[0])
       expect(typeof serialized.credits[0].wire_atomic).toBe("string")
       expect(serialized.credits[0].wire_atomic).toBe("1")
@@ -255,7 +256,7 @@ describe("WireDclaimSeedTool", () => {
             }
           ]
         },
-        { chain: "CHAIN_KIND_EVM" }
+        { chain: ChainKind.EVM }
       )
       expect(result.uniqueAddresses).toBe(0)
       expect(result.nonZeroCredits).toBe(0)
@@ -268,7 +269,7 @@ describe("WireDclaimSeedTool", () => {
       expect(() =>
         convertImportSeed(
           { purchasers: [{ address: "0x1234", totalPretokens: "1000000000" }] },
-          { chain: "CHAIN_KIND_EVM" }
+          { chain: ChainKind.EVM }
         )
       ).toThrow(/invalid ethereum address/)
     })
@@ -281,7 +282,7 @@ describe("WireDclaimSeedTool", () => {
               { address: `0x${"33".repeat(20)}`, totalPretokens: "1000000000" }
             ]
           },
-          { chain: "CHAIN_KIND_EVM", batchSize: 0 }
+          { chain: ChainKind.EVM, batchSize: 0 }
         )
       ).toThrow(/batch size must be > 0/)
     })
@@ -290,14 +291,14 @@ describe("WireDclaimSeedTool", () => {
   describe("serializeBatchForClio", () => {
     it("serializes chain, native_address, and wire_atomic as a clio-ready payload", () => {
       const batch: ImportSeedBatch = {
-        chain: "CHAIN_KIND_EVM",
+        chain: ChainKind.EVM,
         credits: [
           { native_address: "aa".repeat(20), wire_atomic: 7n },
           { native_address: "bb".repeat(20), wire_atomic: 1_000_000_000n }
         ]
       }
       expect(serializeBatchForClio(batch)).toEqual({
-        chain: "CHAIN_KIND_EVM",
+        chain: ChainKind.EVM,
         credits: [
           { native_address: "aa".repeat(20), wire_atomic: "7" },
           { native_address: "bb".repeat(20), wire_atomic: "1000000000" }
@@ -307,7 +308,7 @@ describe("WireDclaimSeedTool", () => {
 
     it("serializes wire_atomic beyond Number.MAX_SAFE_INTEGER without precision loss", () => {
       const serialized = serializeBatchForClio({
-        chain: "CHAIN_KIND_SVM",
+        chain: ChainKind.SVM,
         credits: [
           {
             native_address: "cc".repeat(32),
@@ -322,8 +323,8 @@ describe("WireDclaimSeedTool", () => {
 
     it("serializes an empty batch to an empty credits array", () => {
       expect(
-        serializeBatchForClio({ chain: "CHAIN_KIND_EVM", credits: [] })
-      ).toEqual({ chain: "CHAIN_KIND_EVM", credits: [] })
+        serializeBatchForClio({ chain: ChainKind.EVM, credits: [] })
+      ).toEqual({ chain: ChainKind.EVM, credits: [] })
     })
   })
 
@@ -364,7 +365,7 @@ describe("WireDclaimSeedTool", () => {
       expect(dump.purchasers).toHaveLength(8)
       expect(dump.stakers).toHaveLength(6)
 
-      const result = convertImportSeed(dump, { chain: "CHAIN_KIND_EVM" })
+      const result = convertImportSeed(dump, { chain: ChainKind.EVM })
       // Unique addresses = 8 + 6 − 2 (dedup of overlapping) = 12
       expect(result.uniqueAddresses).toBe(12)
       // All amounts are ≥ 1e18 source units → ≥ 1 atomic WIRE → no

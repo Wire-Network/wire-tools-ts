@@ -1,6 +1,7 @@
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { eachSeries } from "../utils/asyncUtils.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
-import { ClusterConfig } from "../config/ClusterConfig.js"
+import { ClusterConfigProvider } from "../config/ClusterConfigProvider.js"
 import { getLogger, type Logger } from "../logging/Logger.js"
 import { Report } from "../report/Report.js"
 import { ReportRendererRegistry } from "../report/ReportRendererRegistry.js"
@@ -18,9 +19,9 @@ import {
  * `flow-*` run this identical engine — they differ only in which phases/groups were
  * registered.
  */
-export class ClusterBuild<C extends ClusterBuildContext = ClusterBuildContext>
-  implements ClusterBuildParent<C>
-{
+export class ClusterBuild<
+  C extends ClusterBuildContext = ClusterBuildContext
+> implements ClusterBuildParent<C> {
   private readonly childList: ClusterBuildPhaseBase<C>[] = []
   private readonly reportInternal = new Report()
 
@@ -63,7 +64,7 @@ export class ClusterBuild<C extends ClusterBuildContext = ClusterBuildContext>
     children: ClusterBuildPhaseBase<C>[] = [],
     createContext?: (config: ClusterConfig, log: Logger) => C
   ): Promise<ClusterBuild<C>> {
-    const config = await ClusterConfig.resolve(options),
+    const config = await ClusterConfigProvider.resolve(options),
       log = getLogger(config.report.basename),
       context = createContext
         ? createContext(config, log)
@@ -110,7 +111,10 @@ export class ClusterBuild<C extends ClusterBuildContext = ClusterBuildContext>
       this.reportInternal.push(...phases)
       if (phases.some(phase => !phase.succeeded)) controller.abort()
     })
-    await this.reportInternal.write(this.config.report, ReportRendererRegistry.createDefault())
+    await this.reportInternal.write(
+      this.config.report,
+      ReportRendererRegistry.createDefault()
+    )
     return this.reportInternal
   }
 }

@@ -53,7 +53,9 @@ export namespace SwapFromWireScenarioUwritSteps {
    * @param targetToleranceBps - Variance tolerance (bps).
    * @returns The definition step.
    */
-  export function planSwapfromwire<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSwapfromwire<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -106,7 +108,9 @@ export namespace SwapFromWireScenarioUwritSteps {
         target_amount: Number(targetAmount),
         target_tolerance_bps: input.targetToleranceBps,
         recipient_kind: SysioUwritChainkind.CHAIN_KIND_SVM,
-        recipient_addr: Buffer.from(swapUser.solanaPublicKeyBytes).toString("hex")
+        recipient_addr: Buffer.from(swapUser.solanaPublicKeyBytes).toString(
+          "hex"
+        )
       }
     await ctx.wire
       .getSysioContract(SysioContractName.uwrit)

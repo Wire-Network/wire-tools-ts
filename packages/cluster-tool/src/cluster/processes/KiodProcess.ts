@@ -1,5 +1,5 @@
 import Assert from "node:assert"
-import { BindConfig } from "../../config/BindConfig.js"
+import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { probeEndpoint } from "../../utils/asyncUtils.js"
 import { existsAsync } from "../../utils/fsUtils.js"
 import { Localhost, toURL } from "../../utils/netUtils.js"
@@ -39,15 +39,19 @@ export class KiodProcess extends ManagedProcess {
       options.walletPath != null && (await existsAsync(options.walletPath)),
       "kiod walletPath is required"
     )
-    const port =
-      options.port ?? (await BindConfig.findAvailable(BindConfig.DefaultKiod))
+    const {
+      port = await BindConfigProvider.findAvailable(
+        BindConfigProvider.DefaultKiod
+      )
+    } = options
     const config: KiodConfig = {
       binary: options.binary,
       walletPath: options.walletPath,
       port,
       unlockTimeout: options.unlockTimeout ?? KiodProcess.DefaultUnlockTimeout,
       httpMaxResponseTimeMs:
-        options.httpMaxResponseTimeMs ?? KiodProcess.DefaultHttpMaxResponseTimeMs,
+        options.httpMaxResponseTimeMs ??
+        KiodProcess.DefaultHttpMaxResponseTimeMs,
       extraArgs: options.extraArgs ?? []
     }
     return new KiodProcess(manager, config)

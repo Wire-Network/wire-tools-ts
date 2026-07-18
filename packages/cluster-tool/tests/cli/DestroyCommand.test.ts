@@ -1,8 +1,9 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import type { Argv } from "yargs"
-import { ClusterConfig } from "@wireio/cluster-tool/config"
+import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
 import { PersistedFixture } from "../config/clusterConfigFixture.js"
 
 const destroyMock = jest.fn()
@@ -51,10 +52,12 @@ describe("createDestroyCommand", () => {
       Path.join(Os.tmpdir(), "wire-cluster-destroy-cmd-test-")
     )
     Fs.writeFileSync(
-      Path.join(clusterPath, ClusterConfig.ConfigFilename),
+      Path.join(clusterPath, ClusterConfigProvider.ConfigFilename),
       JSON.stringify({ ...PersistedFixture, clusterPath })
     )
-    exitSpy = jest.spyOn(process, "exit").mockImplementation((() => undefined) as never)
+    exitSpy = jest
+      .spyOn(process, "exit")
+      .mockImplementation((() => undefined) as never)
   })
 
   afterEach(() => {

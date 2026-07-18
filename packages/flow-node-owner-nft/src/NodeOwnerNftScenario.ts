@@ -79,7 +79,9 @@ async function assertNodeOwnerRegistrationAborts(
 }
 
 /** HappyPath verify — `nodeowners` row at tier 1 + CONFIRMED audit (reads). */
-async function verifyHappyPathConfirmed(ctx: ClusterBuildContext): Promise<void> {
+async function verifyHappyPathConfirmed(
+  ctx: ClusterBuildContext
+): Promise<void> {
   const registration = await readNodeOwner(ctx.wire, Constants.HappyPathAccount)
   Assert.ok(
     registration != null,
@@ -99,7 +101,9 @@ async function verifyHappyPathConfirmed(ctx: ClusterBuildContext): Promise<void>
 }
 
 /** Mint snapshot — record the pre-mint tier-1 `viewTotalSupply` into `ctx.outputs` (a read checkpoint). */
-async function snapshotTotalSupplyBefore(ctx: ClusterBuildContext): Promise<void> {
+async function snapshotTotalSupplyBefore(
+  ctx: ClusterBuildContext
+): Promise<void> {
   const contract = MintSteps.resolveMockWireNodes(ctx)
   ctx.outputs.set(
     MintSteps.TotalSupplyBeforeKey,
@@ -108,7 +112,9 @@ async function snapshotTotalSupplyBefore(ctx: ClusterBuildContext): Promise<void
 }
 
 /** Mint verify — `viewTotalSupply` bumped by exactly the mint; the minter holds ≥ 1 (reads). */
-async function verifyMintSupplyAndBalance(ctx: ClusterBuildContext): Promise<void> {
+async function verifyMintSupplyAndBalance(
+  ctx: ClusterBuildContext
+): Promise<void> {
   const contract = MintSteps.resolveMockWireNodes(ctx),
     totalSupplyBefore = ctx.outputs.assert(MintSteps.TotalSupplyBeforeKey),
     totalSupplyAfter = await contract.viewTotalSupply(NodeOwnerTier.T1)

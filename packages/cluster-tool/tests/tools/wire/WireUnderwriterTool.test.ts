@@ -1,9 +1,10 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+import type { ChainTokenAmount } from "@wireio/cluster-tool-shared"
 import { TokenAmount } from "@wireio/opp-typescript-models"
 import { SlugName } from "@wireio/sdk-core"
-import type { ChainTokenAmount } from "@wireio/debugging-shared"
+
 import {
   ClusterBuild,
   ClusterBuildContext,
@@ -30,7 +31,11 @@ function newBuild(): ClusterBuild {
 }
 
 /** Build one `ChainTokenAmount` entry for a native (chain, token) pair. */
-function entry(chainCode: number, tokenCode: number, amount: bigint): ChainTokenAmount {
+function entry(
+  chainCode: number,
+  tokenCode: number,
+  amount: bigint
+): ChainTokenAmount {
   return {
     chain_code: chainCode,
     amount: TokenAmount.create({ tokenCode: BigInt(tokenCode), amount })
@@ -50,8 +55,14 @@ describe("WireUnderwriterTool", () => {
   describe("buildDefault", () => {
     it("builds one entry per default pair (WIRE, ETH, SOL) at DefaultAmount", () => {
       const built = WireUnderwriterTool.buildDefault()
-      expect(built.map(e => e.chain_code)).toEqual([WireChain, EthChain, SolChain])
-      expect(built.every(e => e.amount.amount === WireUnderwriterTool.DefaultAmount)).toBe(true)
+      expect(built.map(e => e.chain_code)).toEqual([
+        WireChain,
+        EthChain,
+        SolChain
+      ])
+      expect(
+        built.every(e => e.amount.amount === WireUnderwriterTool.DefaultAmount)
+      ).toBe(true)
       expect(built[1].amount.tokenCode).toBe(BigInt(EthToken))
       expect(built[2].amount.tokenCode).toBe(BigInt(SolToken))
     })
@@ -65,7 +76,12 @@ describe("WireUnderwriterTool", () => {
 
   describe("parseJson", () => {
     const uniformJson = [
-      { chain_code: EthChain, amount: TokenAmount.toJson(TokenAmount.create({ tokenCode: BigInt(EthToken), amount: 5n })) }
+      {
+        chain_code: EthChain,
+        amount: TokenAmount.toJson(
+          TokenAmount.create({ tokenCode: BigInt(EthToken), amount: 5n })
+        )
+      }
     ]
 
     it("fans a uniform (Array<ChainTokenAmount>) input out to every underwriter", () => {
@@ -87,17 +103,25 @@ describe("WireUnderwriterTool", () => {
     })
 
     it("throws when a varied input's outer length != underwriterCount", () => {
-      expect(() => WireUnderwriterTool.parseJson([uniformJson], 2)).toThrow(/outer array length/)
+      expect(() => WireUnderwriterTool.parseJson([uniformJson], 2)).toThrow(
+        /outer array length/
+      )
     })
 
     it("throws on a non-array input", () => {
-      expect(() => WireUnderwriterTool.parseJson({ nope: true }, 1)).toThrow(/must be an array/)
+      expect(() => WireUnderwriterTool.parseJson({ nope: true }, 1)).toThrow(
+        /must be an array/
+      )
     })
 
     it("treats an empty array as 'use defaults' per underwriter", () => {
       const parsed = WireUnderwriterTool.parseJson([], 2)
       expect(parsed).toHaveLength(2)
-      expect(parsed[0].map(e => e.chain_code)).toEqual([WireChain, EthChain, SolChain])
+      expect(parsed[0].map(e => e.chain_code)).toEqual([
+        WireChain,
+        EthChain,
+        SolChain
+      ])
     })
   })
 
@@ -105,11 +129,19 @@ describe("WireUnderwriterTool", () => {
     it("returns the fanned-out defaults when no file path is given", () => {
       const loaded = WireUnderwriterTool.load(null, 2)
       expect(loaded).toHaveLength(2)
-      loaded.forEach(list => expect(list.map(e => e.chain_code)).toEqual([WireChain, EthChain, SolChain]))
+      loaded.forEach(list =>
+        expect(list.map(e => e.chain_code)).toEqual([
+          WireChain,
+          EthChain,
+          SolChain
+        ])
+      )
     })
 
     it("throws when underwriterCount is not positive", () => {
-      expect(() => WireUnderwriterTool.load(null, 0)).toThrow(/must be positive/)
+      expect(() => WireUnderwriterTool.load(null, 0)).toThrow(
+        /must be positive/
+      )
     })
 
     it("parses a supplied JSON file (uniform shape)", () => {
@@ -118,7 +150,12 @@ describe("WireUnderwriterTool", () => {
       Fs.writeFileSync(
         file,
         JSON.stringify([
-          { chain_code: EthChain, amount: TokenAmount.toJson(TokenAmount.create({ tokenCode: BigInt(EthToken), amount: 7n })) }
+          {
+            chain_code: EthChain,
+            amount: TokenAmount.toJson(
+              TokenAmount.create({ tokenCode: BigInt(EthToken), amount: 7n })
+            )
+          }
         ])
       )
       try {
@@ -131,7 +168,9 @@ describe("WireUnderwriterTool", () => {
     })
 
     it("throws when the file path does not exist", () => {
-      expect(() => WireUnderwriterTool.load("/no/such/collateral.json", 1)).toThrow(/does not exist/)
+      expect(() =>
+        WireUnderwriterTool.load("/no/such/collateral.json", 1)
+      ).toThrow(/does not exist/)
     })
   })
 
@@ -145,11 +184,17 @@ describe("WireUnderwriterTool", () => {
         "underwriter collateral",
         {},
         ["uwa", "uwb"],
-        [WireUnderwriterTool.buildDefault(), [entry(EthChain, EthToken, WireUnderwriterTool.DefaultAmount)]]
+        [
+          WireUnderwriterTool.buildDefault(),
+          [entry(EthChain, EthToken, WireUnderwriterTool.DefaultAmount)]
+        ]
       )
       expect(group).toBeInstanceOf(ClusterBuildPhaseGroup)
       expect(group.children).toHaveLength(2)
-      expect(group.children.map(child => child.name)).toEqual(["uwa-collateral", "uwb-collateral"])
+      expect(group.children.map(child => child.name)).toEqual([
+        "uwa-collateral",
+        "uwb-collateral"
+      ])
     })
 
     it("emits ETH-native deposit + SOL airdrop/deposit and skips WIRE for the default plan", () => {
@@ -178,8 +223,12 @@ describe("WireUnderwriterTool", () => {
         ["uwb"],
         [[entry(EthChain, EthToken, WireUnderwriterTool.DefaultAmount)]]
       )
-      expect(stepKinds(group, 0)).toEqual(["EthereumCollateralTool.DepositInput"])
-      expect((group.children[0] as ClusterBuildPhase).steps[0].actor).toBe(Report.Actor.Underwriter)
+      expect(stepKinds(group, 0)).toEqual([
+        "EthereumCollateralTool.DepositInput"
+      ])
+      expect((group.children[0] as ClusterBuildPhase).steps[0].actor).toBe(
+        Report.Actor.Underwriter
+      )
     })
 
     it("emits an empty Phase for a WIRE-only underwriter (no outpost deposit path)", () => {
@@ -223,7 +272,10 @@ describe("WireUnderwriterTool", () => {
           "d",
           {},
           ["only-one"],
-          [WireUnderwriterTool.buildDefault(), WireUnderwriterTool.buildDefault()]
+          [
+            WireUnderwriterTool.buildDefault(),
+            WireUnderwriterTool.buildDefault()
+          ]
         )
       ).toThrow(/must equal underwriter count/)
     })

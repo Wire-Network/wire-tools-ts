@@ -157,7 +157,9 @@ export namespace JsonRPC {
     req: Request,
     res: Response
   ): Promise<void> {
-    const id = body.id ?? null
+    // `= null` (not absence): the JSON-RPC response echoes `id: null` for an
+    // id-less request, and the destructuring default keeps that shape.
+    const { id = null } = body
 
     if (typeof body.method !== "string") {
       sendJson(res, 200, {

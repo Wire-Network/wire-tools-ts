@@ -62,7 +62,11 @@ export function LogViewerJSONLine(
   const segments = composeSegments(parsed, props.locationVisible)
   return (
     <Text wrap={LineRender.TruncateMode}>
-      {renderColumnsWithOffset(segments, props.horizontalOffset, props.highlight)}
+      {renderColumnsWithOffset(
+        segments,
+        props.horizontalOffset,
+        props.highlight
+      )}
     </Text>
   )
 }
@@ -73,7 +77,10 @@ function composeSegments(
   locationVisible: boolean
 ): ColumnSegment[] {
   const namespace = LogViewerJSONLine,
-    timestamp = padToWidth(formatTimestamp(record.ts), namespace.TimestampWidth),
+    timestamp = padToWidth(
+      formatTimestamp(record.ts),
+      namespace.TimestampWidth
+    ),
     level = padToWidth(record.lvl.toLowerCase(), namespace.LevelWidth),
     category = padToWidth(`[${record.logger}]`, namespace.CategoryWidth),
     location = padToWidth(

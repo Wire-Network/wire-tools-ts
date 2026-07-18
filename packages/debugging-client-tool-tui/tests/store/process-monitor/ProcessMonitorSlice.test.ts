@@ -10,7 +10,7 @@ import {
   setSearchQuery,
   toggleLocationColumn
 } from "@wireio/debugging-client-tool-tui/store/process-monitor/ProcessMonitorSlice.js"
-import type { ProcessLiveness } from "@wireio/debugging-client-tool-tui/store/process-monitor/ProcessMonitorTypes.js"
+import type { ProcessLivenessSnapshot } from "@wireio/debugging-shared"
 import {
   selectAliveCount,
   selectLogViewer,
@@ -24,7 +24,7 @@ function mkLiveness(
   label: string,
   alive: boolean,
   pid: number | null = 1
-): ProcessLiveness {
+): ProcessLivenessSnapshot {
   return { label, pid, alive, lastCheckedAt: 0, exitedAt: alive ? null : 0 }
 }
 

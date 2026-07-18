@@ -1,4 +1,5 @@
 import Assert from "node:assert"
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { execFile } from "node:child_process"
 import Fs from "node:fs"
 import Path from "node:path"
@@ -7,7 +8,7 @@ import { asOption } from "@3fv/prelude-ts"
 import { defaults } from "lodash"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import type { WireClient } from "../../clients/wire/WireClient.js"
-import type { ClusterConfig } from "../../config/ClusterConfig.js"
+import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
 import { getLogger } from "../../logging/Logger.js"
 import type { OperatorAccount } from "../../orchestration/outputs/OperatorAccount.js"
@@ -20,7 +21,10 @@ import type { ProcessManager } from "./ProcessManager.js"
 const log = getLogger(__filename)
 
 /** Plugins loaded on every node regardless of role. */
-const AlwaysOnPlugins = ["sysio::net_plugin", "sysio::chain_api_plugin"] as const
+const AlwaysOnPlugins = [
+  "sysio::net_plugin",
+  "sysio::chain_api_plugin"
+] as const
 /** Plugins loaded only when the node has producers assigned. */
 const ProducerPlugins = ["sysio::producer_plugin"] as const
 /** Plugins loaded after the standard argument block. */
@@ -82,7 +86,9 @@ export interface NodeopTuningConfig extends Required<NodeopTuningOptions> {}
  * flow-provisioned ad-hoc daemons — a limit of 1 leaves late-joining nodes
  * unable to sync (their dials get "Peer closed connection").
  */
-export function createNodeopTuningDefaultOptions(cluster: ClusterConfig): NodeopTuningConfig {
+export function createNodeopTuningDefaultOptions(
+  cluster: ClusterConfig
+): NodeopTuningConfig {
   return {
     blocksPath: NodeopProcess.DefaultBlocksPath,
     voteThreads: NodeopProcess.DefaultVoteThreads,
@@ -160,8 +166,14 @@ export class NodeopProcess extends ManagedProcess {
   ): Promise<NodeopProcess> {
     const { node } = options,
       cluster = node.cluster
-    Assert.ok(await existsAsync(cluster.executables.nodeop), "nodeop binary not found")
-    Assert.ok(await existsAsync(cluster.genesisFile), "genesis.json not found")
+    Assert.ok(
+      await existsAsync(cluster.executables.nodeop),
+      "nodeop binary not found"
+    )
+    Assert.ok(
+      await existsAsync(ClusterConfigProvider.genesisFile(cluster)),
+      "genesis.json not found"
+    )
     Assert.ok(
       node.producers.length === 0 ||
         (options.operator != null && options.operator.bls != null),
@@ -170,13 +182,17 @@ export class NodeopProcess extends ManagedProcess {
     mkdirs(node.nodePath)
     const config: NodeopConfig = {
       ...options,
-      tuning: defaults({ ...options.tuning }, createNodeopTuningDefaultOptions(cluster)),
+      tuning: defaults(
+        { ...options.tuning },
+        createNodeopTuningDefaultOptions(cluster)
+      ),
       extraArgs: options.extraArgs ?? [],
-      genesisTimestamp: JSON.parse(Fs.readFileSync(cluster.genesisFile, "utf8"))
-        .initial_timestamp,
-      supportsTraceNoAbis: (await binaryHelp(cluster.executables.nodeop)).includes(
-        NodeopProcess.TraceNoAbisFlag
-      )
+      genesisTimestamp: JSON.parse(
+        Fs.readFileSync(ClusterConfigProvider.genesisFile(cluster), "utf8")
+      ).initial_timestamp,
+      supportsTraceNoAbis: (
+        await binaryHelp(cluster.executables.nodeop)
+      ).includes(NodeopProcess.TraceNoAbisFlag)
     }
     return new NodeopProcess(manager, config)
   }
@@ -185,7 +201,10 @@ export class NodeopProcess extends ManagedProcess {
     manager: ProcessManager,
     private readonly config: NodeopConfig
   ) {
-    super(manager, { label: config.node.name, kind: ManagedProcess.Kind.nodeop })
+    super(manager, {
+      label: config.node.name,
+      kind: ManagedProcess.Kind.nodeop
+    })
   }
 
   get exe(): string {
@@ -217,7 +236,9 @@ export class NodeopProcess extends ManagedProcess {
    * file.
    */
   protected startupFailureDetail(): Promise<string> {
-    const tail = this.recentOutput.slice(-NodeopProcess.StartupFailureDetailLines)
+    const tail = this.recentOutput.slice(
+      -NodeopProcess.StartupFailureDetailLines
+    )
     return Promise.resolve(
       tail.length === 0 ? null : `recent output:\n${tail.join("\n")}`
     )
@@ -238,10 +259,7 @@ export class NodeopProcess extends ManagedProcess {
       `${this.httpUrl}${NodeopProcess.HealthCheckPath}`,
       { signal: AbortSignal.timeout(NodeopProcess.HeadProbeTimeoutMs) }
     )
-    Assert.ok(
-      response.ok,
-      `${this.label} get_info answered ${response.status}`
-    )
+    Assert.ok(response.ok, `${this.label} get_info answered ${response.status}`)
     const info = (await response.json()) as WireClient.GetInfoResponse
     return info.head_block_num
   }
@@ -293,7 +311,8 @@ export namespace NodeopProcess {
     const { node, operator, tuning } = config,
       cluster = node.cluster,
       listen = cluster.bind.nodeop.address,
-      isProducing = node.producers.length > 0 && operator != null && operator.bls != null
+      isProducing =
+        node.producers.length > 0 && operator != null && operator.bls != null
     return [
       cluster.executables.nodeop,
       ...pair("--blocks-dir", tuning.blocksPath),
@@ -305,27 +324,42 @@ export namespace NodeopProcess {
       ...(isProducing
         ? [
             ...pluginArgs(ProducerPlugins),
-            ...pair("--signature-provider", KeyGenerator.toSignatureProvider(operator.wire)),
-            ...pair("--signature-provider", KeyGenerator.toSignatureProvider(operator.bls)),
+            ...pair(
+              "--signature-provider",
+              KeyGenerator.toSignatureProvider(operator.wire)
+            ),
+            ...pair(
+              "--signature-provider",
+              KeyGenerator.toSignatureProvider(operator.bls)
+            ),
             ...node.producers.flatMap(name => pair("--producer-name", name))
           ]
         : []),
       ...pair("--vote-threads", String(tuning.voteThreads)),
       ...pair("--max-transaction-time", String(tuning.maxTransactionTime)),
-      ...pair("--abi-serializer-max-time-ms", String(tuning.abiSerializerMaxTimeMs)),
+      ...pair(
+        "--abi-serializer-max-time-ms",
+        String(tuning.abiSerializerMaxTimeMs)
+      ),
       ...pair("--p2p-max-nodes-per-host", String(tuning.p2pMaxNodesPerHost)),
       ...pair("--max-clients", String(tuning.maxClients)),
-      ...pair("--connection-cleanup-period", String(tuning.connectionCleanupPeriodSec)),
+      ...pair(
+        "--connection-cleanup-period",
+        String(tuning.connectionCleanupPeriodSec)
+      ),
       ...(tuning.contractsConsole ? ["--contracts-console"] : []),
       ...pluginArgs(TrailingPlugins),
       // The harness supplies no trace-api ABI set — serve raw traces. Newer
       // nodeop generations hard-fail trace_api_plugin init without this flag;
       // older ones reject the unknown option, hence the capability probe.
       ...(config.supportsTraceNoAbis ? [TraceNoAbisFlag] : []),
-      ...pair("--http-max-response-time-ms", String(tuning.httpMaxResponseTimeMs)),
+      ...pair(
+        "--http-max-response-time-ms",
+        String(tuning.httpMaxResponseTimeMs)
+      ),
       ...pair("--config-dir", node.nodePath),
       ...pair("--data-dir", node.nodePath),
-      ...pair("--genesis-json", cluster.genesisFile),
+      ...pair("--genesis-json", ClusterConfigProvider.genesisFile(cluster)),
       ...pair("--genesis-timestamp", config.genesisTimestamp),
       ...pair("--http-server-address", `${listen}:${node.ports.http}`),
       ...config.extraArgs
@@ -358,9 +392,11 @@ export namespace NodeopProcess {
       : [...stripped, EnableStaleProductionFlag]
   }
 
-  /** The node's finalizer safety file: `<data-dir>/finalizers/safety.dat`. */
-  export function finalizerSafetyFile(node: Pick<NodeConfig, "nodePath">): string {
-    return Path.join(node.nodePath, FinalizersDirname, SafetyDatFilename)
+  /** The node's finalizer safety file: `<nodePath>/finalizers/safety.dat`. */
+  export function finalizerSafetyFile(
+    nodePath: NodeConfig["nodePath"]
+  ): string {
+    return Path.join(nodePath, FinalizersDirname, SafetyDatFilename)
   }
 
   /**
@@ -432,7 +468,7 @@ export namespace NodeopProcess {
       return await first.start()
     } catch (error) {
       if (!isDirtyChainbaseAbort(first)) throw error
-      const safetyFile = finalizerSafetyFile(options.node)
+      const safetyFile = finalizerSafetyFile(options.node.nodePath)
       // force:true tolerates a missing file; any OTHER rm failure (EACCES,
       // EISDIR, EIO) must abort recovery — a surviving stale fsi keeps the
       // finality lock this wipe exists to clear, and hard replay would

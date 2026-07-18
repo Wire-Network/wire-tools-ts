@@ -58,7 +58,7 @@ export async function provisionWireUser(
   account: string,
   options: WireUserOptions = {}
 ): Promise<WireUser> {
-  const fundWireAmount = options.fundWireAmount ?? 0n
+  const { fundWireAmount = 0n } = options
 
   await wire.wallet.unlock()
 
@@ -73,7 +73,9 @@ export async function provisionWireUser(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
     if (!message.includes(ClioRunner.ErrorFragment.AccountAlreadyExists)) {
-      throw new Error(`provisionWireUser: createAccount(${account}) failed: ${message}`)
+      throw new Error(
+        `provisionWireUser: createAccount(${account}) failed: ${message}`
+      )
     }
     log.debug(`provisionWireUser: account ${account} already exists — reusing`)
   }

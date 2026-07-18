@@ -5,14 +5,16 @@ import {
   ClioRunner,
   enrichClioError
 } from "@wireio/cluster-tool/clients/wire/clio"
-import { BindConfig } from "@wireio/cluster-tool/config"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { toURL } from "@wireio/cluster-tool/utils"
 
 describe("ClioRunner", () => {
   let dir: string
   let nodeopUrl: string
   beforeAll(async () => {
-    nodeopUrl = toURL(await BindConfig.findAvailable(BindConfig.DefaultBiosHttp))
+    nodeopUrl = toURL(
+      await BindConfigProvider.findAvailable(BindConfigProvider.DefaultBiosHttp)
+    )
   })
   beforeEach(() => {
     dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "cliorunner-"))
@@ -51,7 +53,9 @@ describe("ClioRunner", () => {
 
     it("falls back to raw stdout when json is not parseable", async () => {
       const bin = makeScript("clio-bad.sh", `echo 'not json'`)
-      const result = await new ClioRunner(config(bin)).run(["x"], { json: true })
+      const result = await new ClioRunner(config(bin)).run(["x"], {
+        json: true
+      })
       expect(result).toBe("not json")
     })
 
@@ -60,9 +64,9 @@ describe("ClioRunner", () => {
         "clio-fail.sh",
         `echo 'assertion failure with message: boom'; exit 1`
       )
-      await expect(
-        new ClioRunner(config(bin)).run(["push"])
-      ).rejects.toThrow(/assertion failure with message: boom/)
+      await expect(new ClioRunner(config(bin)).run(["push"])).rejects.toThrow(
+        /assertion failure with message: boom/
+      )
     })
   })
 
@@ -83,8 +87,12 @@ describe("ClioRunner", () => {
 
   describe("ErrorFragment", () => {
     it("carries the recognised fragments", () => {
-      expect(ClioRunner.ErrorFragment.AccountAlreadyExists).toBe("already exists")
-      expect(ClioRunner.ErrorFragment.WalletAlreadyUnlocked).toBe("Already unlocked")
+      expect(ClioRunner.ErrorFragment.AccountAlreadyExists).toBe(
+        "already exists"
+      )
+      expect(ClioRunner.ErrorFragment.WalletAlreadyUnlocked).toBe(
+        "Already unlocked"
+      )
     })
   })
 })

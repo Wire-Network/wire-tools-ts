@@ -1,5 +1,5 @@
 import { EthereumOutpostBootstrapper } from "@wireio/cluster-tool/orchestration"
-import { BindConfig } from "@wireio/cluster-tool/config"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { toURL } from "@wireio/cluster-tool/utils"
 
 /** anvil/hardhat account 0 from the `test test … junk` mnemonic — well-known + stable. */
@@ -28,7 +28,9 @@ describe("EthereumOutpostBootstrapper constructor", () => {
   let rpcUrl: string
   const deploymentsPath = "/tmp/cluster/data/ethereum-deployments"
   beforeAll(async () => {
-    rpcUrl = toURL(await BindConfig.findAvailable(BindConfig.DefaultAnvil))
+    rpcUrl = toURL(
+      await BindConfigProvider.findAvailable(BindConfigProvider.DefaultAnvil)
+    )
   })
 
   it("throws when ethereumPath is missing", () => {

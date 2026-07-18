@@ -42,7 +42,9 @@ export namespace SwapPrivateReservesScenarioSwapSteps {
    * {@link Outputs.phaseATarget}; SPL recipients ride as the WALLET pubkey —
    * the outpost pays the recipient's ATA (pre-existing via the creator mint).
    */
-  export function planRequestSwapEthereumToSolana<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRequestSwapEthereumToSolana<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -63,7 +65,9 @@ export namespace SwapPrivateReservesScenarioSwapSteps {
   }
 
   /** Named runner — ONE `requestSwap` write against the private pair (A leg). */
-  export async function runRequestSwapEthereumToSolana<C extends ClusterBuildContext>(
+  export async function runRequestSwapEthereumToSolana<
+    C extends ClusterBuildContext
+  >(
     ctx: C,
     input: RequestSwapEthereumToSolanaInput,
     signal: AbortSignal
@@ -71,10 +75,11 @@ export namespace SwapPrivateReservesScenarioSwapSteps {
     signal.throwIfAborted()
     const swapUser = ctx.outputs.assert(swapUserOutputKey())
     const target = ctx.outputs.assert(Outputs.phaseATarget)
-    const reserveManager = Artifacts.loadReserveManager<ReserveManagerRequestSwapContract>(
-      ctx,
-      swapUser.ethereumWallet
-    )
+    const reserveManager =
+      Artifacts.loadReserveManager<ReserveManagerRequestSwapContract>(
+        ctx,
+        swapUser.ethereumWallet
+      )
     await requestEthereumSwap(reserveManager, {
       sourceTokenCode: BigInt(Constants.Reserves.Ethereum.TokenCode),
       sourceReserveCode: BigInt(Constants.Reserves.PrivateReserveCode),
@@ -104,7 +109,9 @@ export namespace SwapPrivateReservesScenarioSwapSteps {
    * from the inverse quote step via {@link Outputs.phaseBTarget}; the payout
    * recipient is the user's raw 20-byte ETH address.
    */
-  export function planRequestSwapSolanaToEthereum<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRequestSwapSolanaToEthereum<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -125,7 +132,9 @@ export namespace SwapPrivateReservesScenarioSwapSteps {
   }
 
   /** Named runner — ONE `request_swap_spl` write against the private pair (B leg). */
-  export async function runRequestSwapSolanaToEthereum<C extends ClusterBuildContext>(
+  export async function runRequestSwapSolanaToEthereum<
+    C extends ClusterBuildContext
+  >(
     ctx: C,
     input: RequestSwapSolanaToEthereumInput,
     signal: AbortSignal
@@ -172,7 +181,9 @@ export namespace SwapPrivateReservesScenarioSwapSteps {
    * — the request itself still lands on the outpost, which is why this is a
    * write step; the negative assertions live in the phase's verify steps.
    */
-  export function planRequestSwapPrivateToWire<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRequestSwapPrivateToWire<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -195,17 +206,20 @@ export namespace SwapPrivateReservesScenarioSwapSteps {
   }
 
   /** Named runner — ONE `requestSwap` write targeting the WIRE endpoint. */
-  export async function runRequestSwapPrivateToWire<C extends ClusterBuildContext>(
+  export async function runRequestSwapPrivateToWire<
+    C extends ClusterBuildContext
+  >(
     ctx: C,
     input: RequestSwapPrivateToWireInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
     const swapUser = ctx.outputs.assert(swapUserOutputKey())
-    const reserveManager = Artifacts.loadReserveManager<ReserveManagerRequestSwapContract>(
-      ctx,
-      swapUser.ethereumWallet
-    )
+    const reserveManager =
+      Artifacts.loadReserveManager<ReserveManagerRequestSwapContract>(
+        ctx,
+        swapUser.ethereumWallet
+      )
     await requestEthereumSwap(reserveManager, {
       sourceTokenCode: BigInt(Constants.Reserves.Ethereum.TokenCode),
       sourceReserveCode: BigInt(Constants.Reserves.PrivateReserveCode),

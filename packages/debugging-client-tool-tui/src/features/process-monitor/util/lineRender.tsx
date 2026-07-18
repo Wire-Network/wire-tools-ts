@@ -88,24 +88,21 @@ export function renderWithHighlight(
   const matches = [...text.matchAll(regex)]
   if (matches.length === 0) return <Text>{text}</Text>
   const initial: HighlightSegments = { cursor: 0, nodes: [] },
-    segments = matches.reduce<HighlightSegments>(
-      ({ cursor, nodes }, m, i) => {
-        const idx = m.index ?? cursor,
-          matched = m[0],
-          next = idx + matched.length,
-          leading =
-            idx > cursor
-              ? [<Text key={`pre-${i}`}>{text.slice(cursor, idx)}</Text>]
-              : [],
-          hit = (
-            <Text key={`hit-${i}`} inverse>
-              {matched}
-            </Text>
-          )
-        return { cursor: next, nodes: [...nodes, ...leading, hit] }
-      },
-      initial
-    ),
+    segments = matches.reduce<HighlightSegments>(({ cursor, nodes }, m, i) => {
+      const { index: idx = cursor } = m,
+        matched = m[0],
+        next = idx + matched.length,
+        leading =
+          idx > cursor
+            ? [<Text key={`pre-${i}`}>{text.slice(cursor, idx)}</Text>]
+            : [],
+        hit = (
+          <Text key={`hit-${i}`} inverse>
+            {matched}
+          </Text>
+        )
+      return { cursor: next, nodes: [...nodes, ...leading, hit] }
+    }, initial),
     tail =
       segments.cursor < text.length
         ? [<Text key="tail">{text.slice(segments.cursor)}</Text>]

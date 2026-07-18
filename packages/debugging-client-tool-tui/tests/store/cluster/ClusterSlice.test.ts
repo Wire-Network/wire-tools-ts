@@ -1,20 +1,25 @@
 import {
+  ClusterConfigLoggingFileFormat,
+  ClusterConfigReportFormat,
   ClusterStateNodeRole,
-  ClusterStateVersion,
-  type ClusterState,
-  type PersistedClusterConfig
-} from "@wireio/debugging-shared"
+  type ClusterConfig,
+  type ClusterState
+} from "@wireio/cluster-tool-shared"
+import { Level } from "@wireio/shared"
 import {
   clusterSlice,
   setCluster,
   type ClusterSliceState
 } from "@wireio/debugging-client-tool-tui/store/cluster/ClusterSlice.js"
 import { selectCluster } from "@wireio/debugging-client-tool-tui/store/cluster/ClusterSelectors.js"
-import { store, type RootState } from "@wireio/debugging-client-tool-tui/store/Store.js"
+import {
+  store,
+  type RootState
+} from "@wireio/debugging-client-tool-tui/store/Store.js"
 import { SliceName } from "@wireio/debugging-client-tool-tui/store/StoreTypes.js"
 
-/** A complete `PersistedClusterConfig` fixture — no field left to `as unknown as`. */
-const stubConfig: PersistedClusterConfig = {
+/** A complete `ClusterConfig` fixture — no field left to `as unknown as`. */
+const stubConfig: ClusterConfig = {
   buildPath: "/build",
   clusterPath: "/cluster",
   dataPath: "/cluster/data",
@@ -61,11 +66,15 @@ const stubConfig: PersistedClusterConfig = {
   report: {
     path: "/cluster/reports",
     basename: "cluster-build",
-    formats: ["csv", "md", "html"]
+    formats: [
+      ClusterConfigReportFormat.csv,
+      ClusterConfigReportFormat.md,
+      ClusterConfigReportFormat.html
+    ]
   },
   logging: {
-    levels: { console: "info", file: "debug" },
-    fileFormat: "jsonl"
+    levels: { console: Level.info, file: Level.debug },
+    fileFormat: ClusterConfigLoggingFileFormat.jsonl
   },
   requiredBatchOperatorCollateral: [],
   requiredUnderwriterCollateral: [],
@@ -76,7 +85,6 @@ const stubConfig: PersistedClusterConfig = {
 
 /** A complete `ClusterState` fixture (post-bootstrap snapshot, no nodes). */
 const stubState: ClusterState = {
-  version: ClusterStateVersion,
   createdAt: "2026-01-01T00:00:00.000Z",
   nodes: [
     {

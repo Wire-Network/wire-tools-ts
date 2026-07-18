@@ -36,6 +36,7 @@
   "dependencies": {
     "@3fv/prelude-ts": "^0.8.41",
     "@reduxjs/toolkit": "^2.11.2",
+    "@wireio/cluster-tool-shared": "workspace:*",
     "@wireio/debugging-client-shared": "workspace:*",
     "@wireio/debugging-shared": "workspace:*",
     "@wireio/opp-typescript-models": "^1.0.26",

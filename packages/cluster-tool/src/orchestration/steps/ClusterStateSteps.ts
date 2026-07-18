@@ -21,17 +21,38 @@ export namespace ClusterStateSteps {
    * Persist `cluster-state.json` + `cluster-keys.json` from the build's
    * current context (`ctx.keyStore` must already hold every provisioned
    * account — this step runs after every provisioning phase).
+   *
+   * @param actor - The Report actor the step is attributed to.
+   * @param name - The step's Report name.
+   * @param description - The step's Report description.
+   * @param options - Step execution options (timeouts, retries).
+   * @returns The persist step (input-less; runner: {@link runPersist}).
    */
-  export function planPersist<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planPersist<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runPersist)
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runPersist
+    )
   }
 
-  /** Named runner — capture + save both files. */
+  /**
+   * Named runner for {@link planPersist} — capture + save both files.
+   *
+   * @param ctx - The build context (config + keyStore + outputs).
+   * @param _input - Unused (the step is input-less).
+   * @param signal - The step's abort signal.
+   */
   export async function runPersist<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,

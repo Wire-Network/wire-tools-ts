@@ -106,8 +106,7 @@ export class WebSocketStreamClient {
         topic,
         reason => this.sendUnsubscribe(id, reason)
       )
-    let ackResolve!: () => void,
-      ackReject!: (err: Error) => void
+    let ackResolve!: () => void, ackReject!: (err: Error) => void
     const ack = new Promise<void>((res, rej) => {
       ackResolve = res
       ackReject = rej

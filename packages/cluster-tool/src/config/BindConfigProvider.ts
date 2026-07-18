@@ -2,9 +2,17 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import { asOption } from "@3fv/prelude-ts"
 import Bluebird from "bluebird"
 import { range } from "lodash"
+import {
+  BindConfigPortProtocol,
+  type BindConfig,
+  type BindConfigNodeopPorts,
+  type BindConfigPortRange,
+  type BindNodeopPortsOptions,
+  type BindOptions,
+  type ClusterTopologyOptions
+} from "@wireio/cluster-tool-shared"
 import {
   isUdpPortFree,
   ListenAllAddress,
@@ -35,26 +43,23 @@ let importGetPortModuleDeferred: Deferred<GetPortModuleType> = null
 function importGetPortModule(): Promise<GetPortModuleType> {
   if (importGetPortModuleDeferred === null) {
     importGetPortModuleDeferred = new Deferred()
-    import("get-port").then((getPortModule)=>
-        importGetPortModuleDeferred.resolve(getPortModule))
+    import("get-port").then(getPortModule =>
+      importGetPortModuleDeferred.resolve(getPortModule)
+    )
   }
   return importGetPortModuleDeferred.promise
 }
 
-
-
 /** Find an available port via `get-port` (see the note above). */
-async function getPort(
-  ...args: GetPortParameters
-): Promise<number> {
+async function getPort(...args: GetPortParameters): Promise<number> {
   const mod = await importGetPortModule()
   return mod.default(...args)
 }
 
 /**
  * Drop `get-port`'s in-process port locks so a subsequent check re-probes true OS
- * bindability. Used by {@link BindConfig.validate} to re-verify the already-
- * resolved (therefore already-locked) ports.
+ * bindability. Used by {@link BindConfigProvider.validate} to re-verify the
+ * already-resolved (therefore already-locked) ports.
  */
 async function clearPortLocks(): Promise<void> {
   const mod = await importGetPortModule()
@@ -62,367 +67,14 @@ async function clearPortLocks(): Promise<void> {
 }
 
 /**
- * The transport a resolved port will be bound with. TCP ports are fully
- * covered by `get-port`'s probe; UDP ports (the validator's gossip socket and
- * dynamic-range sockets) additionally require {@link isUdpPortFree} — see its
- * note for the failure class this closes.
+ * Resolves, validates, and registers cluster network bindings — the behavior
+ * half of the plain-data `BindConfig` shape (`@wireio/cluster-tool-shared`).
+ * Merges the resolver, the per-daemon defaults, and the cross-process port
+ * registry: each `address` defaults to loopback (`ClusterBuildOptions.bindAll`
+ * forces `0.0.0.0`); ports are either a caller's pinned value (which must be
+ * free, or `resolve` throws) or a newly-claimed free port.
  */
-export enum BindConfigPortProtocol {
-  tcp = "tcp",
-  udp = "udp"
-}
-
-/** One nodeop's `{ http, p2p }` listen ports. */
-export interface BindConfigNodeopPorts {
-  http: number
-  p2p: number
-}
-
-/** The full nodeop port set across the cluster (one pair per node, per role). */
-export interface BindConfigNodeopClusterPorts {
-  bios: BindConfigNodeopPorts
-  producers: BindConfigNodeopPorts[]
-  batch: BindConfigNodeopPorts[]
-  underwriters: BindConfigNodeopPorts[]
-}
-
-/** A daemon that listens on one address + one port (kiod, anvil, debuggingServer). */
-export interface BindConfigDaemon {
-  address: string
-  port: number
-}
-
-/** nodeop: one bind address, the cluster-wide nodeop port set. */
-export interface BindConfigNodeop {
-  address: string
-  ports: BindConfigNodeopClusterPorts
-}
-
-/** An inclusive contiguous port window (`first`..`last`). */
-export interface BindConfigPortRange {
-  first: number
-  last: number
-}
-
-/**
- * solana ports — `http` is the RPC port, `faucet` the airdrop faucet.
- * `gossip` is the validator's `--gossip-port`: agave 4.x binds the test
- * validator's gossip socket at its FIXED default (8000) instead of carving it
- * from the dynamic range, so a second concurrent validator panics with
- * `gossip_addr bind_to port 8000: Address already in use` unless each cluster
- * passes its own resolved gossip port.
- * `dynamicRange` is the validator's `--dynamic-port-range` window
- * (TPU/TVU/repair sockets). Without a per-cluster window every
- * solana-test-validator carves its dynamic sockets from the SAME agave default
- * range; two concurrent validators then UDP-double-bind (the kernel allows it
- * silently) and each forwards transactions into the other's TPU, which drops
- * foreign-genesis packets — airdrops/txs return signatures that never land.
- */
-export interface BindConfigSolanaPorts {
-  http: number
-  faucet: number
-  gossip: number
-  dynamicRange: BindConfigPortRange
-}
-
-export interface BindConfigSolana {
-  address: string
-  ports: BindConfigSolanaPorts
-} 
-
-/** Caller BIND options for a single-port daemon. NOT a `Partial<BindConfig>`. */
-export interface BindDaemonOptions {
-  address?: string
-  port?: number
-}
-export interface BindNodeopPortsOptions {
-  http?: number
-  p2p?: number
-}
-export interface BindNodeopClusterPortsOptions {
-  bios?: BindNodeopPortsOptions
-  producers?: BindNodeopPortsOptions[]
-  batch?: BindNodeopPortsOptions[]
-  underwriters?: BindNodeopPortsOptions[]
-}
-export interface BindNodeopOptions {
-  address?: string
-  ports?: BindNodeopClusterPortsOptions
-}
-export interface BindSolanaPortsOptions {
-  http?: number
-  faucet?: number
-  /** Pinned gossip port; must be free (TCP + UDP) or `resolve` throws. */
-  gossip?: number
-  /** Pinned validator dynamic-port window; every port must be free or `resolve` throws. */
-  dynamicRange?: BindConfigPortRange
-}
-export interface BindSolanaOptions {
-  address?: string
-  ports?: BindSolanaPortsOptions
-}
-
-/** Caller-facing binding options (all optional; `BindConfig.resolve` fills the rest). */
-export interface BindOptions {
-  kiod?: BindDaemonOptions
-  nodeop?: BindNodeopOptions
-  anvil?: BindDaemonOptions
-  solana?: BindSolanaOptions
-  debuggingServer?: BindDaemonOptions
-}
-
-/** Topology + bind-all the port resolver needs (counts mirror ClusterBuildOptions). */
-export interface ClusterTopologyOptions {
-  producerCount?: number
-  batchOperatorCount?: number
-  underwriterCount?: number
-  bindAll?: boolean
-}
-
-/**
- * Per-daemon network binding for a cluster — addresses + ports in one place
- * (merges the former `BindConfig` + `ClusterPorts`). Each `address` defaults to
- * loopback; `ClusterBuildOptions.bindAll` forces every address to `0.0.0.0`.
- * Ports are either a caller's pinned value (which must be free, or `resolve`
- * throws) or a newly-claimed free port.
- */
-export class BindConfig {
-  constructor(
-    readonly kiod: BindConfigDaemon,
-    readonly nodeop: BindConfigNodeop,
-    readonly anvil: BindConfigDaemon,
-    readonly solana: BindConfigSolana,
-    readonly debuggingServer: BindConfigDaemon
-  ) {}
-
-  /**
-   * Resolve a complete `BindConfig` from caller options. Addresses come from
-   * `bindAll` / per-daemon overrides; every port is the caller's pinned value
-   * (which must be free) or a newly-claimed free port (never colliding within
-   * one resolve).
-   *
-   * @param options - Caller binding overrides.
-   * @param topology - Node counts + bind-all flag.
-   * @returns The fully-resolved binding.
-   */
-  static resolve(
-    options: BindOptions,
-    topology: ClusterTopologyOptions
-  ): Promise<BindConfig> {
-    // Hold the host-global port lock for the WHOLE cluster port selection so a
-    // parallel process cannot interleave and pick an overlapping set (get-port
-    // only de-dupes within one process — see PortLockPath).
-    return withFileLock(BindConfig.PortLockPath, () =>
-      BindConfig.resolveLocked(options, topology)
-    )
-  }
-
-  /** {@link resolve} body — always runs under the {@link BindConfig.PortLockPath} lock. */
-  private static async resolveLocked(
-    options: BindOptions,
-    topology: ClusterTopologyOptions
-  ): Promise<BindConfig> {
-    const host = topology.bindAll
-        ? BindConfig.BindAllAddress
-        : BindConfig.LoopbackAddress,
-      addr = (daemon: keyof BindOptions): string =>
-        options[daemon]?.address ?? host,
-      // Seed the exclusion set with every LIVE process's registered ports —
-      // a port get-port reports free is still reserved when another process
-      // resolved it but hasn't bound its daemons yet (they spawn minutes
-      // later). Dead registrants are reaped during the read.
-      claimed = BindConfig.readRegistryPortExclusions(),
-      claim = async (
-        callerPin: number | null,
-        fallbackDefault: number | null,
-        daemon: string,
-        protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
-      ): Promise<number> => {
-        const port = await BindConfig.pickPort(
-          callerPin,
-          fallbackDefault,
-          claimed,
-          daemon,
-          protocol
-        )
-        claimed.add(port)
-        return port
-      },
-      pair = async (
-        base: BindNodeopPortsOptions | null,
-        daemon: string
-      ): Promise<BindConfigNodeopPorts> => ({
-        http: await claim(base?.http ?? null, null, `${daemon}.http`),
-        p2p: await claim(base?.p2p ?? null, null, `${daemon}.p2p`)
-      }),
-      pairs = (
-        bases: BindNodeopPortsOptions[] | null,
-        count: number,
-        daemon: string
-      ): Promise<BindConfigNodeopPorts[]> =>
-        Bluebird.mapSeries(range(count), i =>
-          pair(bases?.[i] ?? null, `${daemon}[${i}]`)
-        ),
-      // agave binds the RPC's companion websocket at rpc+1 AUTOMATICALLY (no
-      // flag assigns it) — claiming the RPC port claims BOTH, so no daemon in
-      // this resolve and no other cluster via the registry is ever handed the
-      // companion.
-      claimSolanaHttp = async (): Promise<number> =>
-        asOption(
-          await claim(
-            options.solana?.ports?.http ?? null,
-            BindConfig.DefaultSolanaRpc,
-            "solana.http"
-          )
-        )
-          .tap(http => claimed.add(http + BindConfig.SolanaWsPortOffset))
-          .get(),
-      // The window's ports are claimed individually so every later pick in
-      // this resolve — and every other resolver via the registry — excludes
-      // the whole window, not just its first port.
-      claimSolanaDynamicRange = async (): Promise<BindConfigPortRange> =>
-        asOption(
-          await BindConfig.pickPortRange(
-            options.solana?.ports?.dynamicRange ?? null,
-            claimed,
-            "solana.dynamicRange"
-          )
-        )
-          .tap(dynamicRange =>
-            range(dynamicRange.first, dynamicRange.last + 1).forEach(port =>
-              claimed.add(port)
-            )
-          )
-          .get()
-
-    const nodeopPorts = options.nodeop?.ports,
-      producerCount = topology.producerCount ?? BindConfig.DefaultProducerCount,
-      batchCount = topology.batchOperatorCount ?? BindConfig.DefaultBatchCount,
-      uwCount = topology.underwriterCount ?? BindConfig.DefaultUnderwriterCount
-
-    const resolved = new BindConfig(
-      {
-        address: addr("kiod"),
-        port: await claim(options.kiod?.port ?? null, BindConfig.DefaultKiod, "kiod")
-      },
-      {
-        address: addr("nodeop"),
-        ports: {
-          bios: {
-            http: await claim(
-              nodeopPorts?.bios?.http ?? null,
-              BindConfig.DefaultBiosHttp,
-              "nodeop.bios.http"
-            ),
-            p2p: await claim(
-              nodeopPorts?.bios?.p2p ?? null,
-              BindConfig.DefaultBiosP2p,
-              "nodeop.bios.p2p"
-            )
-          },
-          producers: await pairs(nodeopPorts?.producers ?? null, producerCount, "producer"),
-          batch: await pairs(nodeopPorts?.batch ?? null, batchCount, "batch"),
-          underwriters: await pairs(
-            nodeopPorts?.underwriters ?? null,
-            uwCount,
-            "underwriter"
-          )
-        }
-      },
-      {
-        address: addr("anvil"),
-        port: await claim(options.anvil?.port ?? null, BindConfig.DefaultAnvil, "anvil")
-      },
-      {
-        address: addr("solana"),
-        ports: {
-          http: await claimSolanaHttp(),
-          faucet: await claim(
-            options.solana?.ports?.faucet ?? null,
-            BindConfig.DefaultSolanaFaucet,
-            "solana.faucet"
-          ),
-          // agave 4.x binds the test validator's gossip socket at its FIXED
-          // default (8000) instead of carving it from --dynamic-port-range,
-          // so every parallel validator needs an explicit per-cluster
-          // --gossip-port. Cross-cluster disjointness comes from the same
-          // machinery as every other port: the file-locked registry feeds
-          // `claim`'s exclusions, so no two clusters ever resolve the same
-          // gossip port. Gossip is a UDP socket — the claim additionally
-          // UDP-probes candidates, catching non-registry UDP holders that
-          // get-port's TCP probe cannot see.
-          gossip: await claim(
-            options.solana?.ports?.gossip ?? null,
-            BindConfig.DefaultSolanaGossip,
-            "solana.gossip",
-            BindConfigPortProtocol.udp
-          ),
-          dynamicRange: await claimSolanaDynamicRange()
-        }
-      },
-      {
-        address: addr("debuggingServer"),
-        port: await claim(
-          options.debuggingServer?.port ?? null,
-          BindConfig.DefaultDebuggingServer,
-          "debuggingServer"
-        )
-      }
-    )
-    // Register BEFORE the lock releases: the next resolver (any process) must
-    // see these ports as reserved even though no daemon has bound them yet.
-    BindConfig.registerResolved(resolved)
-    return resolved
-  }
-
-  /** Flat list of every port, for validation. */
-  get allPorts(): number[] {
-    const np = this.nodeop.ports,
-      flat = (xs: BindConfigNodeopPorts[]) => xs.flatMap(p => [p.http, p.p2p]),
-      dynamicRange = this.solana.ports.dynamicRange
-    return [
-      this.kiod.port,
-      np.bios.http,
-      np.bios.p2p,
-      ...flat(np.producers),
-      ...flat(np.batch),
-      ...flat(np.underwriters),
-      this.anvil.port,
-      this.solana.ports.http,
-      // The RPC's companion websocket — agave binds rpc+1 automatically (no
-      // flag assigns it); it rides allPorts so the registry excludes it for
-      // every other resolver.
-      this.solana.ports.http + BindConfig.SolanaWsPortOffset,
-      this.solana.ports.faucet,
-      this.solana.ports.gossip,
-      ...range(dynamicRange.first, dynamicRange.last + 1),
-      this.debuggingServer.port
-    ]
-  }
-
-  /**
-   * True iff every resolved port is currently free.
-   *
-   * @returns Whether all ports are available.
-   */
-  async validate(): Promise<boolean> {
-    // The resolved ports were locked in get-port's in-process cache at resolve
-    // time; clear it so each isPortAvailable re-probes true OS bindability.
-    await clearPortLocks()
-    const taken = await Bluebird.filter(
-      this.allPorts,
-      async port => !(await BindConfig.isPortAvailable(port)),
-      { concurrency: 1 }
-    )
-    return taken.length === 0
-  }
-}
-
-export namespace BindConfig {
-  /** Loopback listen address (the default) — sourced from `netUtils.Localhost`. */
-  export const LoopbackAddress = Localhost
-  /** Bind-all listen address (`options.bindAll`) — sourced from `netUtils.ListenAllAddress`. */
-  export const BindAllAddress = ListenAllAddress
+export namespace BindConfigProvider {
   /**
    * Host-global lock path serializing port SELECTION across every wire process
    * (parallel `flow-*` / `wire-cluster-tool` runs). `get-port` only de-dupes
@@ -458,7 +110,7 @@ export namespace BindConfig {
   // are preserved as suffixes where possible (anvil 8545 → 10545, solana rpc
   // 8899 → 10899, ...). 10900 is deliberately UNASSIGNED: it is the solana
   // RPC's companion websocket port (rpc+1, bound by agave automatically —
-  // see {@link BindConfig.allPorts}).
+  // see {@link BindConfigProvider.allPorts}).
   export const DefaultKiod = 10_890
   export const DefaultBiosHttp = 10_788
   export const DefaultBiosP2p = 10_776
@@ -469,7 +121,7 @@ export namespace BindConfig {
    * Offset from the solana RPC port to its companion websocket port — agave
    * binds rpc+1 automatically, with no flag assigning it, so the RPC claim
    * covers both (see `claimSolanaHttp` in the resolver and
-   * {@link BindConfig.allPorts}).
+   * {@link BindConfigProvider.allPorts}).
    */
   export const SolanaWsPortOffset = 1
   /**
@@ -511,50 +163,230 @@ export namespace BindConfig {
   export const DefaultUnderwriterCount = 1
 
   /**
-   * True if `port` is bindable right now, via `get-port` (asks it for exactly
-   * `port`; a differing result means `port` is taken or already locked in
-   * get-port's cache). NOTE: a `true` result LOCKS `port` in get-port's
-   * in-process cache (its collision-avoidance) — to re-check an already-resolved
-   * port, call `clearPortLocks()` first (see {@link BindConfig.validate}).
+   * Resolve a complete `BindConfig` from caller options. Addresses come from
+   * `bindAll` / per-daemon overrides; every port is the caller's pinned value
+   * (which must be free) or a newly-claimed free port (never colliding within
+   * one resolve).
    *
-   * @param port - Port to probe.
-   * @returns Whether the port is free.
+   * @param options - Caller binding overrides.
+   * @param topology - Node counts + bind-all flag.
+   * @returns The fully-resolved binding.
    */
-  export async function isPortAvailable(port: number): Promise<boolean> {
-    return withFileLock(
-      BindConfig.PortLockPath,
-      async () => (await getPort({ port })) === port
-    )
+  export function resolve(
+    options: BindOptions,
+    topology: ClusterTopologyOptions
+  ): Promise<BindConfig> {
+    // Hold the host-global port lock for the WHOLE cluster port selection so a
+    // parallel process cannot interleave and pick an overlapping set (get-port
+    // only de-dupes within one process — see PortLockPath).
+    return withFileLock(PortLockPath, () => resolveLocked(options, topology))
+  }
+
+  /** {@link resolve} body — always runs under the {@link PortLockPath} lock. */
+  async function resolveLocked(
+    options: BindOptions,
+    topology: ClusterTopologyOptions
+  ): Promise<BindConfig> {
+    const host = topology.bindAll ? ListenAllAddress : Localhost,
+      addr = (daemon: keyof BindOptions): string =>
+        options[daemon]?.address ?? host,
+      // Seed the exclusion set with every LIVE process's registered ports —
+      // a port get-port reports free is still reserved when another process
+      // resolved it but hasn't bound its daemons yet (they spawn minutes
+      // later). Dead registrants are reaped during the read.
+      claimed = readRegistryPortExclusions(),
+      claim = async (
+        callerPin: number | null,
+        fallbackDefault: number | null,
+        daemon: string,
+        protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
+      ): Promise<number> => {
+        const port = await pickPort(
+          callerPin,
+          fallbackDefault,
+          claimed,
+          daemon,
+          protocol
+        )
+        claimed.add(port)
+        return port
+      },
+      pair = async (
+        base: BindNodeopPortsOptions | null,
+        daemon: string
+      ): Promise<BindConfigNodeopPorts> => ({
+        http: await claim(base?.http ?? null, null, `${daemon}.http`),
+        p2p: await claim(base?.p2p ?? null, null, `${daemon}.p2p`)
+      }),
+      pairs = (
+        bases: BindNodeopPortsOptions[] | null,
+        count: number,
+        daemon: string
+      ): Promise<BindConfigNodeopPorts[]> =>
+        Bluebird.mapSeries(range(count), i =>
+          pair(bases?.[i] ?? null, `${daemon}[${i}]`)
+        ),
+      // agave binds the RPC's companion websocket at rpc+1 AUTOMATICALLY (no
+      // flag assigns it) — claiming the RPC port claims BOTH, so no daemon in
+      // this resolve and no other cluster via the registry is ever handed the
+      // companion.
+      claimSolanaHttp = async (): Promise<number> => {
+        const http = await claim(
+          options.solana?.ports?.http ?? null,
+          DefaultSolanaRpc,
+          "solana.http"
+        )
+        claimed.add(http + SolanaWsPortOffset)
+        return http
+      },
+      // The window's ports are claimed individually so every later pick in
+      // this resolve — and every other resolver via the registry — excludes
+      // the whole window, not just its first port.
+      claimSolanaDynamicRange = async (): Promise<BindConfigPortRange> => {
+        const dynamicRange = await pickPortRange(
+          options.solana?.ports?.dynamicRange ?? null,
+          claimed,
+          "solana.dynamicRange"
+        )
+        range(dynamicRange.first, dynamicRange.last + 1).forEach(port =>
+          claimed.add(port)
+        )
+        return dynamicRange
+      }
+
+    const nodeopPorts = options.nodeop?.ports,
+      {
+        producerCount = DefaultProducerCount,
+        batchOperatorCount: batchCount = DefaultBatchCount,
+        underwriterCount: uwCount = DefaultUnderwriterCount
+      } = topology
+
+    const resolved: BindConfig = {
+      kiod: {
+        address: addr("kiod"),
+        port: await claim(options.kiod?.port ?? null, DefaultKiod, "kiod")
+      },
+      nodeop: {
+        address: addr("nodeop"),
+        ports: {
+          bios: {
+            http: await claim(
+              nodeopPorts?.bios?.http ?? null,
+              DefaultBiosHttp,
+              "nodeop.bios.http"
+            ),
+            p2p: await claim(
+              nodeopPorts?.bios?.p2p ?? null,
+              DefaultBiosP2p,
+              "nodeop.bios.p2p"
+            )
+          },
+          producers: await pairs(
+            nodeopPorts?.producers ?? null,
+            producerCount,
+            "producer"
+          ),
+          batch: await pairs(nodeopPorts?.batch ?? null, batchCount, "batch"),
+          underwriters: await pairs(
+            nodeopPorts?.underwriters ?? null,
+            uwCount,
+            "underwriter"
+          )
+        }
+      },
+      anvil: {
+        address: addr("anvil"),
+        port: await claim(options.anvil?.port ?? null, DefaultAnvil, "anvil")
+      },
+      solana: {
+        address: addr("solana"),
+        ports: {
+          http: await claimSolanaHttp(),
+          faucet: await claim(
+            options.solana?.ports?.faucet ?? null,
+            DefaultSolanaFaucet,
+            "solana.faucet"
+          ),
+          // agave 4.x binds the test validator's gossip socket at its FIXED
+          // default (8000) instead of carving it from --dynamic-port-range,
+          // so every parallel validator needs an explicit per-cluster
+          // --gossip-port. Cross-cluster disjointness comes from the same
+          // machinery as every other port: the file-locked registry feeds
+          // `claim`'s exclusions, so no two clusters ever resolve the same
+          // gossip port. Gossip is a UDP socket — the claim additionally
+          // UDP-probes candidates, catching non-registry UDP holders that
+          // get-port's TCP probe cannot see.
+          gossip: await claim(
+            options.solana?.ports?.gossip ?? null,
+            DefaultSolanaGossip,
+            "solana.gossip",
+            BindConfigPortProtocol.udp
+          ),
+          dynamicRange: await claimSolanaDynamicRange()
+        }
+      },
+      debuggingServer: {
+        address: addr("debuggingServer"),
+        port: await claim(
+          options.debuggingServer?.port ?? null,
+          DefaultDebuggingServer,
+          "debuggingServer"
+        )
+      }
+    }
+    // Register BEFORE the lock releases: the next resolver (any process) must
+    // see these ports as reserved even though no daemon has bound them yet.
+    registerResolved(resolved)
+    return resolved
   }
 
   /**
-   * Resolve an AVAILABLE port via `get-port`, preferring `preferred`. Returns
-   * `preferred` when it is free right now, otherwise a get-port-assigned free
-   * port. Use this ANYWHERE a bind port / URL is produced — harness code AND
-   * tests. The default port is only a PREFERENCE; never commit to a fixed port,
-   * which collides across concurrent processes / test runs. READS the
-   * cross-process registry (another process's resolved-but-not-yet-bound ports
-   * count as taken) but never writes it — only {@link BindConfig.resolve}
-   * registers.
+   * Flat list of every port of a resolved binding, for validation and registry
+   * exclusion — the ONE port walker over the `BindConfig` shape.
    *
-   * @param preferred - The preferred port (e.g. `BindConfig.DefaultAnvil`).
-   * @param protocol - Transport the port will be bound with; UDP-role ports
-   *   (validator gossip) are additionally UDP-probed.
-   * @returns A currently-free port (the preferred one when possible).
+   * @param config - The resolved binding.
+   * @returns Every claimed port, including agave's implicit rpc+1 websocket.
    */
-  export async function findAvailable(
-    preferred: number,
-    protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
-  ): Promise<number> {
-    return withFileLock(BindConfig.PortLockPath, () =>
-      pickPort(
-        null,
-        preferred,
-        readRegistryPortExclusions(),
-        "findAvailable",
-        protocol
-      )
+  export function allPorts(config: BindConfig): number[] {
+    const np = config.nodeop.ports,
+      flat = (xs: BindConfigNodeopPorts[]) => xs.flatMap(p => [p.http, p.p2p]),
+      dynamicRange = config.solana.ports.dynamicRange
+    return [
+      config.kiod.port,
+      np.bios.http,
+      np.bios.p2p,
+      ...flat(np.producers),
+      ...flat(np.batch),
+      ...flat(np.underwriters),
+      config.anvil.port,
+      config.solana.ports.http,
+      // The RPC's companion websocket — agave binds rpc+1 automatically (no
+      // flag assigns it); it rides allPorts so the registry excludes it for
+      // every other resolver.
+      config.solana.ports.http + SolanaWsPortOffset,
+      config.solana.ports.faucet,
+      config.solana.ports.gossip,
+      ...range(dynamicRange.first, dynamicRange.last + 1),
+      config.debuggingServer.port
+    ]
+  }
+
+  /**
+   * True iff every port of an already-resolved binding is currently free.
+   *
+   * @param config - The resolved binding to re-probe.
+   * @returns Whether all ports are available.
+   */
+  export async function validate(config: BindConfig): Promise<boolean> {
+    // The resolved ports were locked in get-port's in-process cache at resolve
+    // time; clear it so each isPortAvailable re-probes true OS bindability.
+    await clearPortLocks()
+    const taken = await Bluebird.filter(
+      allPorts(config),
+      async port => !(await isPortAvailable(port)),
+      { concurrency: 1 }
     )
+    return taken.length === 0
   }
 
   // ── cross-process port registry ────────────────────────────────────────
@@ -597,8 +429,9 @@ export namespace BindConfig {
    * registry file whose pid is gone, or whose pid no longer runs `node`
    * (recycled), or whose content does not parse, is DELETED instead of
    * honored. A live pid whose `/proc` is unreadable (another user's process)
-   * is kept conservatively. Call only under the {@link BindConfig.PortLockPath}
-   * lock — read/reap/resolve/write must be one critical section.
+   * is kept conservatively. Call only under the
+   * {@link BindConfigProvider.PortLockPath} lock — read/reap/resolve/write
+   * must be one critical section.
    *
    * The set is SEEDED with {@link ReservedAgavePortBand} — the band is a
    * standing registration on behalf of every validator's implicit binds, so
@@ -638,17 +471,12 @@ export namespace BindConfig {
           return
         }
         entries.forEach(entry => {
-          // Rehydrate through the class so allPorts stays the ONE port walker.
-          const ports = getValue(() => {
-            const plain = entry as BindConfig
-            return new BindConfig(
-              plain.kiod,
-              plain.nodeop,
-              plain.anvil,
-              plain.solana,
-              plain.debuggingServer
-            ).allPorts
-          }, [] as number[])
+          // Walked via allPorts so it stays the ONE port walker over the
+          // plain-data BindConfig shape.
+          const ports = getValue(
+            () => allPorts(entry as BindConfig),
+            [] as number[]
+          )
           if (ports.length === 0) {
             log.warn(`bind registry: ignoring malformed entry in ${fileName}`)
           }
@@ -686,6 +514,53 @@ export namespace BindConfig {
         guard(() => Fs.rmSync(registryFile(), { force: true }))
       )
     }
+  }
+
+  /**
+   * True if `port` is bindable right now, via `get-port` (asks it for exactly
+   * `port`; a differing result means `port` is taken or already locked in
+   * get-port's cache). NOTE: a `true` result LOCKS `port` in get-port's
+   * in-process cache (its collision-avoidance) — to re-check an already-resolved
+   * port, call `clearPortLocks()` first (see {@link BindConfigProvider.validate}).
+   *
+   * @param port - Port to probe.
+   * @returns Whether the port is free.
+   */
+  export async function isPortAvailable(port: number): Promise<boolean> {
+    return withFileLock(
+      PortLockPath,
+      async () => (await getPort({ port })) === port
+    )
+  }
+
+  /**
+   * Resolve an AVAILABLE port via `get-port`, preferring `preferred`. Returns
+   * `preferred` when it is free right now, otherwise a get-port-assigned free
+   * port. Use this ANYWHERE a bind port / URL is produced — harness code AND
+   * tests. The default port is only a PREFERENCE; never commit to a fixed port,
+   * which collides across concurrent processes / test runs. READS the
+   * cross-process registry (another process's resolved-but-not-yet-bound ports
+   * count as taken) but never writes it — only {@link BindConfigProvider.resolve}
+   * registers.
+   *
+   * @param preferred - The preferred port (e.g. `BindConfigProvider.DefaultAnvil`).
+   * @param protocol - Transport the port will be bound with; UDP-role ports
+   *   (validator gossip) are additionally UDP-probed.
+   * @returns A currently-free port (the preferred one when possible).
+   */
+  export async function findAvailable(
+    preferred: number,
+    protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
+  ): Promise<number> {
+    return withFileLock(PortLockPath, () =>
+      pickPort(
+        null,
+        preferred,
+        readRegistryPortExclusions(),
+        "findAvailable",
+        protocol
+      )
+    )
   }
 
   /**
@@ -796,7 +671,7 @@ export namespace BindConfig {
    * caller-pinned range must be entirely free (else THROW, mirroring
    * {@link pickPort}); otherwise candidate windows are scanned from
    * {@link DefaultSolanaDynamicPortFirst}. Call only under the
-   * {@link BindConfig.PortLockPath} lock (resolve does).
+   * {@link BindConfigProvider.PortLockPath} lock (resolve does).
    *
    * @param callerPin - The caller's pinned window, or null.
    * @param exclusions - Ports already claimed/registered.
@@ -849,7 +724,7 @@ export namespace BindConfig {
    * @returns A currently-free window.
    */
   export async function findAvailableRange(): Promise<BindConfigPortRange> {
-    return withFileLock(BindConfig.PortLockPath, () =>
+    return withFileLock(PortLockPath, () =>
       pickPortRange(null, readRegistryPortExclusions(), "solana.dynamicRange")
     )
   }

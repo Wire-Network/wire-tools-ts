@@ -5,7 +5,14 @@
     "outDir": "lib/cjs"
   },
   "references": [
-    { "path": "../debugging-shared/tsconfig.json" }
+    {
+      "path": "../cluster-tool-shared/tsconfig.json"
+    },
+    {
+      "path": "../debugging-shared/tsconfig.json"
+    }
   ],
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

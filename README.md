@@ -201,7 +201,7 @@ pnpm test
 
 Every live run is watched by the canonical six-probe heartbeat monitor,
 [`scripts/flow-heartbeat-monitor.mjs`](scripts/flow-heartbeat-monitor.mjs) —
-**one instance per flow run**, started right after the flow and left attached
+**one instance per flow run**, started right after the flow and left running
 for the run's entire life:
 
 ```bash
@@ -232,26 +232,23 @@ Rules of the road (binding for sessions/automation; see
 
 ## Launching a persistent test cluster
 
-For interactive work — poking the chains with `clio`, the debugging TUI, or
-attaching multiple flow runs to one long-lived cluster — drive the
-`wire-cluster-tool` CLI directly (alias: `wtc`). It has three commands: `create`,
-`run`, `destroy`.
+For interactive work — poking the chains with `clio` or the debugging TUI —
+drive the `wire-cluster-tool` CLI directly (alias: `wtc`). It has three
+commands: `create`, `run`, `destroy`.
 
 ```bash
-wire-cluster-tool \
+wire-cluster-tool create \
   --cluster-path=/tmp/wire-cluster-tool-001 \
   --force \
-  create \
-    --build-path=/data/shared/code/wire-platform/wire-sysio/build/release \
-    --prod-count=5 \
-    --pnodes=1 \
-    --batch-operators=3 \
-    --underwriters=1 \
-    --epoch-duration=60 \
-    --ethereum-path=/data/shared/code/wire-platform/wire-ethereum \
-    --solana-path=/data/shared/code/wire-platform/wire-solana \
-  && wire-cluster-tool \
-  --cluster-path=/tmp/wire-cluster-tool-001 run
+  --build-path=/data/shared/code/wire-platform/wire-sysio/build/release \
+  --producer-count=5 \
+  --node-count=1 \
+  --batch-operator-count=3 \
+  --underwriter-count=1 \
+  --epoch-duration-sec=60 \
+  --ethereum-path=/data/shared/code/wire-platform/wire-ethereum \
+  --solana-path=/data/shared/code/wire-platform/wire-solana \
+&& wire-cluster-tool run --cluster-path=/tmp/wire-cluster-tool-001
 ```
 
 `create` writes a `cluster-config.json` under `--cluster-path` and bootstraps the
@@ -259,62 +256,52 @@ chains; `run` starts the cluster from that saved config and **blocks until you
 `Ctrl+C`** (which triggers a clean shutdown). Tear it down with:
 
 ```bash
-wire-cluster-tool --cluster-path=/tmp/wire-cluster-tool-001 destroy
+wire-cluster-tool destroy --cluster-path=/tmp/wire-cluster-tool-001
 ```
 
-### Global options
+### Common options (every command)
+
+Options follow their command (`wire-cluster-tool <command> --flag …` — the
+command comes first).
 
 | Option | Alias | Description |
 |---|---|---|
 | `--cluster-path` | `-d` | **(required)** directory for cluster data + `cluster-config.json` |
-| `--force` | | remove an existing `--cluster-path` before `create` |
+
+`run` and `destroy` take only `--cluster-path`.
 
 ### `create` options
 
 | Option | Alias | Default | Description |
 |---|---|---|---|
 | `--build-path` | | **(required)** | `wire-sysio` build dir (with `bin/nodeop`) |
-| `--ethereum-path` | | — | `wire-ethereum` repo root; bootstraps `anvil` + outpost deploy |
-| `--solana-path` | | — | `wire-solana` repo root; bootstraps `solana-test-validator` + `opp-outpost` |
-| `--pnodes` | `-p` | `1` | producer **nodes** to launch |
-| `--nodes` | `-n` | `0` | non-producer nodes to launch |
-| `--prod-count` | | `21` | producers to **register** on-chain |
-| `--batch-operators` | `-b`, `--batch-operator-count` | `3` | batch-operator nodes (3–21) |
-| `--underwriters` | `-u`, `--underwriter-count` | `1` | underwriter nodes (1–100) |
-| `--epoch-duration` | `--epoch-duration-sec` | `360` | epoch duration in seconds (depot floor is **60** — `sysio.epoch::setconfig` rejects lower) |
-| `--topology` | `-s` | `mesh` | network topology: `mesh` \| `ring` \| `star` |
-| `--http-secure` | | `false` | use HTTPS for RPC endpoints |
+| `--ethereum-path` | | **(required)** | `wire-ethereum` repo root; bootstraps `anvil` + outpost deploy |
+| `--solana-path` | | **(required)** | `wire-solana` repo root; bootstraps `solana-test-validator` + `opp-outpost` |
+| `--force` | | `false` | overwrite an existing cluster directory |
+| `--node-count` | `-n` | `1` | producer node **processes** to launch |
+| `--producer-count` | `-p` | `1` | producer **accounts** to register on-chain |
+| `--batch-operator-count` | `-b` | `3` | batch operators |
+| `--underwriter-count` | `-u` | `1` | underwriters |
+| `--epoch-duration-sec` | | `60` | minimum epoch duration in seconds (the depot floor — `sysio.epoch::setconfig` rejects lower) |
 | `--warmup-epochs` | | `1` | epochs before an operator goes `WARMUP` → `ACTIVE` |
 | `--cooldown-epochs` | | `1` | epochs before an operator can deregister after `COOLDOWN` |
-| `--underwriter-collateral-json-file` | | — | per-underwriter collateral overrides (`ChainTokenAmount[]` or `ChainTokenAmount[][]`); defaults to 1000 base units of WIRE/ETH/SOL each |
-
-> `--ethereum-path` / `--solana-path` are declared optional but a full OPP cluster
-> needs **both** outposts — supply them unless you are deliberately bringing up a
-> depot-only chain.
-
-### Attaching flows to a running cluster
-
-Flow tests default to **fresh** mode (they create and tear down their own cluster).
-To instead point a flow at the persistent cluster above, set `WIRE_CLUSTER_CONFIG`
-to its config file — the flow runs in **attach** mode against the live processes:
-
-```bash
-WIRE_CLUSTER_CONFIG=/tmp/wire-cluster-tool-001/cluster-config.json \
-  node scripts/run-flow.mjs swap-with-underwriting \
-    --wire-build-path ../wire-sysio/build/release \
-    --ethereum-path   ../wire-ethereum \
-    --solana-path     ../wire-solana
-```
+| `--terminate-max-consecutive-misses` | | — | consecutive missed-delivery termination threshold |
+| `--terminate-max-percent-misses24h` | | — | 24h missed-delivery percentage termination threshold |
+| `--terminate-window-ms` | | — | termination evaluation window in ms |
+| `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
+| `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, `--bind-nodeop-ports-bios-http`, …); unpinned ports are auto-assigned collision-free |
+| `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink log levels |
+| `--logging-file-format` | | `jsonl` | log file format: `text` or `jsonl` |
+| `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output location |
 
 ## Environment variables
 
 | Variable | Used by | Description |
 |---|---|---|
-| `WIRE_BUILD_PATH` | fresh-mode flows | `wire-sysio` build dir (with `bin/nodeop`) |
-| `WIRE_ETH_PATH` | fresh-mode flows | `wire-ethereum` repo root |
-| `WIRE_SOLANA_PATH` | fresh-mode flows | `wire-solana` repo root |
-| `WIRE_CLUSTER_PATH` | fresh-mode flows | cluster data dir (optional; temp dir if unset) |
-| `WIRE_CLUSTER_CONFIG` | attach-mode flows | path to an existing `cluster-config.json` |
+| `WIRE_BUILD_PATH` | flows | `wire-sysio` build dir (with `bin/nodeop`) |
+| `WIRE_ETH_PATH` | flows | `wire-ethereum` repo root |
+| `WIRE_SOLANA_PATH` | flows | `wire-solana` repo root |
+| `WIRE_CLUSTER_PATH` | flows | cluster data dir (optional; temp dir if unset) |
 | `LOG_LEVEL` | everything | harness log level: `debug` \| `info` \| `warn` \| `error` (default `info`) |
 
 ## Architecture
@@ -353,7 +340,7 @@ Running two or more flows (or clusters) concurrently on one host is supported,
 but only because each of the following shared-state hazards is explicitly
 handled. Keep them in mind when touching any of these areas:
 
-- **Port selection vs port binding.** `BindConfig.resolve` picks free ports,
+- **Port selection vs port binding.** `BindConfigProvider.resolve` picks free ports,
   but a picked port is not *bound* until its daemon spawns (possibly minutes
   later). A second process resolving in that window would happily re-pick it.
   Every resolving process therefore registers its full resolved `BindConfig`
@@ -375,13 +362,13 @@ handled. Keep them in mind when touching any of these areas:
 - **Ethereum deploy state is per-cluster, never repo-shared.** Deploy configs
   and address files (`outpost-addrs.json`, `liqeth-addrs.json`, …) live under
   `<cluster>/data/ethereum-deployments/`
-  (`ClusterConfig.ethereumDeploymentsPath`), and `deployLocal.ts` is pointed
+  (`ClusterConfigProvider.ethereumDeploymentsPath`), and `deployLocal.ts` is pointed
   there via `WIRE_ETH_DEPLOYMENTS_PATH`. The pre-rewrite location —
   `<wire-ethereum>/.local/deployments/`, shared by every run — let one run's
   deploy wipe another's configs and address files mid-deploy (2026-07-02
   pair-1 incident: the "stale artifact" clear of run B deleted the address
   file run A was about to read). Never read outpost addresses from the repo
-  path; go through `ClusterConfig.ethereumDeploymentsPath` /
+  path; go through `ClusterConfigProvider.ethereumDeploymentsPath` /
   `EthereumCollateralTool.loadOutpostAddresses(deploymentsPath)`.
 - **Hardhat ABI artifacts are read-shared.** ABIs load from
   `<wire-ethereum>/artifacts/` (read-only after compile, which the deploy

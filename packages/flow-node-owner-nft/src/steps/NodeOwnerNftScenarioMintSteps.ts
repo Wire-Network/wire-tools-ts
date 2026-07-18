@@ -10,7 +10,8 @@ import {
   Report,
   type ClusterBuildStepOptions,
   type MockWireNodesContract,
-  type StepInput
+  type StepInput,
+  ClusterConfigProvider
 } from "@wireio/cluster-tool"
 
 /**
@@ -42,7 +43,9 @@ export namespace NodeOwnerNftScenarioMintSteps {
   ): MockWireNodesContract {
     return loadMockWireNodes(
       ctx.config.ethereumPath,
-      EthereumCollateralTool.loadOutpostAddresses(ctx.config.ethereumDeploymentsPath),
+      EthereumCollateralTool.loadOutpostAddresses(
+        ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
+      ),
       ctx.ethereum.wallet.signer
     )
   }
@@ -93,7 +96,15 @@ export namespace NodeOwnerNftScenarioMintSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const receipt = await mintNodeNFT(resolveMockWireNodes(ctx), input.tier, input.amount)
-    Assert.strictEqual(receipt.status, 1, "MockWireNodes.mint: receipt status must be 1")
+    const receipt = await mintNodeNFT(
+      resolveMockWireNodes(ctx),
+      input.tier,
+      input.amount
+    )
+    Assert.strictEqual(
+      receipt.status,
+      1,
+      "MockWireNodes.mint: receipt status must be 1"
+    )
   }
 }

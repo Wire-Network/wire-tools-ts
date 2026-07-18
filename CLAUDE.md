@@ -110,7 +110,7 @@ One declarative model is shared by the `wire-cluster-tool` CLI and every flow:
   tree under `tests/`. No exceptions for "trivial" code.
 - Tests must be environment-independent: never depend on incidental process
   ancestry (spawn a real child when a live pid with a known basename is
-  needed), never bind fixed ports (`await BindConfig.findAvailable(...)` in
+  needed), never bind fixed ports (`await BindConfigProvider.findAvailable(...)` in
   `beforeAll`), never leak children or timers (tie helper-child lifetime to
   the worker, await the reap in `afterAll`).
 
@@ -200,7 +200,7 @@ the SAME `applyClusterBuildOptionsArgs` surface every flow uses (env vars
 - **`clients/`** — `WireClient` (typed contract client via
   `getSysioContract(name).actions/tables`, finality waits, `ClioRunner`),
   `EthereumClient`, `SolanaClient`, `KeyGenerator.create<T extends KeyType>`.
-- **`config/`** — `ClusterBuildOptions` → `ClusterConfig.resolve` →
+- **`config/`** — `ClusterBuildOptions` → `ClusterConfigProvider.resolve` →
   persisted `cluster-config.json`; `BindConfig` (file-locked, cross-process
   port registry, `findAvailable`/`findAvailableRange`); `NodeConfig.plan` +
   renderers.

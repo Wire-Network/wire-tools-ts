@@ -1,4 +1,5 @@
 import Assert from "node:assert"
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { SysioContracts } from "@wireio/sdk-core"
 import {
   contractView,
@@ -25,12 +26,12 @@ import {
   type ClusterBuild,
   type ClusterBuildOptions,
   type ClusterBuildStepOptions,
-  type ClusterConfig,
   type Logger,
   type ReserveBook,
   type ReserveManagerRequestSwapContract,
   type StepInput,
-  type WireUser
+  type WireUser,
+  ClusterConfigProvider
 } from "@wireio/cluster-tool"
 import { SwapToWireScenarioConstants as Constants } from "./SwapToWireScenarioConstants.js"
 
@@ -204,7 +205,7 @@ async function runRequestSwap(
     recipient = ctx.outputs.assert(SwapToWireScenario.Output.recipient),
     target = ctx.outputs.assert(SwapToWireScenario.Output.target)
   const addresses = EthereumCollateralTool.loadOutpostAddresses(
-      ctx.config.ethereumDeploymentsPath
+      ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
     ),
     reserveManagerAddress = addresses[Constants.ReserveManagerContractName]
   Assert.ok(

@@ -1,3 +1,7 @@
+import {
+  BindConfigPortProtocol,
+  type BindConfigPortRange
+} from "@wireio/cluster-tool-shared"
 import { Connection } from "@solana/web3.js"
 import Assert from "node:assert"
 import { execFileSync } from "node:child_process"
@@ -6,17 +10,14 @@ import Path from "node:path"
 import { isEmpty, range } from "lodash"
 import { getValue } from "@wireio/shared"
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
-import {
-  BindConfig,
-  BindConfigPortProtocol,
-  type BindConfigPortRange
-} from "../../config/BindConfig.js"
+import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { probeEndpoint } from "../../utils/asyncUtils.js"
 import { existsAsync, which } from "../../utils/fsUtils.js"
 import {
   filterSocketLinesByLocalPort,
   Localhost,
-  toURL
+  toURL,
+  URLScheme
 } from "../../utils/netUtils.js"
 import { ManagedProcess } from "./ManagedProcess.js"
 import type { ProcessManager } from "./ProcessManager.js"
@@ -39,7 +40,7 @@ export interface SolanaValidatorOptions {
    * instead of carving it from `--dynamic-port-range`, so a second concurrent
    * validator panics with `Address already in use` unless each instance gets
    * its own resolved port. Defaults to a free port preferring
-   * `BindConfig.DefaultSolanaGossip`.
+   * `BindConfigProvider.DefaultSolanaGossip`.
    */
   gossipPort?: number
   /**
@@ -47,7 +48,7 @@ export interface SolanaValidatorOptions {
    * MUST be disjoint per concurrent validator: without it every instance
    * carves from the same agave default range, UDP-double-binds silently, and
    * forwarded transactions vanish into the co-runner's TPU (signatures
-   * returned, never landed). Defaults to `BindConfig.findAvailableRange()`.
+   * returned, never landed). Defaults to `BindConfigProvider.findAvailableRange()`.
    */
   dynamicPortRange?: BindConfigPortRange
   /** Ledger directory (`--ledger`). */
@@ -71,8 +72,7 @@ export interface SolanaValidatorOptions {
 }
 
 /** Resolved validator config. */
-export interface SolanaValidatorConfig
-  extends Required<SolanaValidatorOptions> {}
+export interface SolanaValidatorConfig extends Required<SolanaValidatorOptions> {}
 
 /** Manages a solana-test-validator (Agave) process. */
 export class SolanaValidatorProcess extends ManagedProcess {
@@ -80,7 +80,7 @@ export class SolanaValidatorProcess extends ManagedProcess {
     manager: ProcessManager,
     options: SolanaValidatorOptions = {}
   ): Promise<SolanaValidatorProcess> {
-    const binary = options.binary ?? (await which("solana-test-validator"))
+    const { binary = await which("solana-test-validator") } = options
     Assert.ok(
       binary != null && (await existsAsync(binary)),
       "solana-test-validator binary not found on PATH"
@@ -88,18 +88,23 @@ export class SolanaValidatorProcess extends ManagedProcess {
     const config: SolanaValidatorConfig = {
       rpcPort:
         options.rpcPort ??
-        (await BindConfig.findAvailable(BindConfig.DefaultSolanaRpc)),
+        (await BindConfigProvider.findAvailable(
+          BindConfigProvider.DefaultSolanaRpc
+        )),
       faucetPort:
         options.faucetPort ??
-        (await BindConfig.findAvailable(BindConfig.DefaultSolanaFaucet)),
+        (await BindConfigProvider.findAvailable(
+          BindConfigProvider.DefaultSolanaFaucet
+        )),
       gossipPort:
         options.gossipPort ??
-        (await BindConfig.findAvailable(
-          BindConfig.DefaultSolanaGossip,
+        (await BindConfigProvider.findAvailable(
+          BindConfigProvider.DefaultSolanaGossip,
           BindConfigPortProtocol.udp
         )),
       dynamicPortRange:
-        options.dynamicPortRange ?? (await BindConfig.findAvailableRange()),
+        options.dynamicPortRange ??
+        (await BindConfigProvider.findAvailableRange()),
       ledgerPath: options.ledgerPath ?? null,
       limitLedgerSizeShreds:
         options.limitLedgerSizeShreds ??
@@ -128,7 +133,8 @@ export class SolanaValidatorProcess extends ManagedProcess {
   get args(): string[] {
     // `--quiet` suppresses program `msg!()` output; disable it (verbose) so
     // on-chain log lines land in the process log when debugging.
-    const verbose = process.env[SolanaValidatorProcess.VerboseEnvironmentVariable] === "1"
+    const verbose =
+      process.env[SolanaValidatorProcess.VerboseEnvironmentVariable] === "1"
     return [
       "--rpc-port",
       String(this.config.rpcPort),
@@ -174,7 +180,7 @@ export class SolanaValidatorProcess extends ManagedProcess {
   private get assignedPorts(): Set<number> {
     return new Set([
       this.config.rpcPort,
-      this.config.rpcPort + BindConfig.SolanaWsPortOffset,
+      this.config.rpcPort + BindConfigProvider.SolanaWsPortOffset,
       this.config.faucetPort,
       this.config.gossipPort,
       ...range(
@@ -231,9 +237,9 @@ export class SolanaValidatorProcess extends ManagedProcess {
 
   get wsUrl(): string {
     return toURL(
-      this.config.rpcPort + BindConfig.SolanaWsPortOffset,
+      this.config.rpcPort + BindConfigProvider.SolanaWsPortOffset,
       Localhost,
-      "ws"
+      URLScheme.ws
     )
   }
 }

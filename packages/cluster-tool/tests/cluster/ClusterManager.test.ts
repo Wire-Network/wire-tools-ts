@@ -52,3 +52,40 @@ describe("ClusterManager.assertClusterStopped", () => {
     }
   })
 })
+
+describe("ClusterManager.destroy", () => {
+  // ProcessManager.setClusterPath is once-per-process (idempotent for the same
+  // value), so every destroy() in this file must target the SAME cluster root.
+  const destroyRoot = Fs.mkdtempSync(Path.join(Os.tmpdir(), "cluster-manager-destroy-"))
+
+  /** The shared-root `ClusterConfig`, its dataPath laid out like a real cluster. */
+  function destroyConfig() {
+    return fixtureConfig({
+      clusterPath: destroyRoot,
+      dataPath: Path.join(destroyRoot, "data")
+    })
+  }
+
+  beforeEach(() => {
+    Fs.mkdirSync(Path.join(destroyRoot, "data", "node_bios"), { recursive: true })
+  })
+
+  afterAll(() => {
+    Fs.rmSync(destroyRoot, { recursive: true, force: true })
+  })
+
+  it("sets the process-manager cluster path itself and removes the cluster directory", async () => {
+    await expect(ClusterManager.destroy(destroyConfig())).resolves.toBeUndefined()
+    expect(Fs.existsSync(destroyRoot)).toBe(false)
+  })
+
+  it("prunes a stale pidfile via the orphan sweep and still removes the directory", async () => {
+    // A pid number far past any real pid — guaranteed not alive (ESRCH).
+    Fs.writeFileSync(
+      Path.join(destroyRoot, "data", "node_bios", "node_bios.pid"),
+      "987654321"
+    )
+    await expect(ClusterManager.destroy(destroyConfig())).resolves.toBeUndefined()
+    expect(Fs.existsSync(destroyRoot)).toBe(false)
+  })
+})

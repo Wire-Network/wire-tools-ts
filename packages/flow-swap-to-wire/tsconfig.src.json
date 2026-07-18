@@ -4,11 +4,23 @@
     "rootDir": "src",
     "outDir": "lib",
     "paths": {
-      "@wireio/cluster-tool": ["../cluster-tool/src"]
+      "@wireio/cluster-tool": [
+        "../cluster-tool/src"
+      ],
+      "@wireio/cluster-tool-shared": [
+        "../cluster-tool-shared/src"
+      ]
     }
   },
-  "include": ["src"],
+  "include": [
+    "src"
+  ],
   "references": [
-    { "path": "../cluster-tool/tsconfig.json" }
+    {
+      "path": "../cluster-tool-shared/tsconfig.json"
+    },
+    {
+      "path": "../cluster-tool/tsconfig.json"
+    }
   ]
 }

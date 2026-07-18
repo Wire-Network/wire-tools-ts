@@ -98,7 +98,11 @@ export class LogTailingService
     const max = this.runtime.totalLines
     if (from >= max || count <= 0) return []
     const safeCount = Math.min(count, max - from)
-    if (this.lines.length < from + safeCount && this.client && this.currentPath) {
+    if (
+      this.lines.length < from + safeCount &&
+      this.client &&
+      this.currentPath
+    ) {
       // Fill cache from the server / disk for the requested window.
       const fetched = await this.client.readLogWindow({
         path: this.currentPath,

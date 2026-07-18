@@ -81,7 +81,9 @@ async function assertNeverWithinWindow(
 ): Promise<void> {
   await pollUntil(label, predicate, windowMs, intervalMs).then(
     () => {
-      throw new Error(`Forbidden condition observed within ${windowMs}ms: ${label}`)
+      throw new Error(
+        `Forbidden condition observed within ${windowMs}ms: ${label}`
+      )
     },
     (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error)
@@ -135,18 +137,38 @@ export class ReserveLifecycleScenario extends FlowScenario {
   }
 
   plan(cluster: ClusterBuild): void {
-    const relayStepOptions = { timeoutMs: Constants.RelayDeadlineMs + Constants.PollDeadlineBufferMs },
-      readyStepOptions = { timeoutMs: Constants.ReadyDeadlineMs + Constants.PollDeadlineBufferMs },
-      windowStepOptions = { timeoutMs: Constants.NoUwreqWindowMs + Constants.PollDeadlineBufferMs },
-      ethereumWriteOptions = { timeoutMs: Constants.EthereumWriteStepTimeoutMs },
+    const relayStepOptions = {
+        timeoutMs: Constants.RelayDeadlineMs + Constants.PollDeadlineBufferMs
+      },
+      readyStepOptions = {
+        timeoutMs: Constants.ReadyDeadlineMs + Constants.PollDeadlineBufferMs
+      },
+      windowStepOptions = {
+        timeoutMs: Constants.NoUwreqWindowMs + Constants.PollDeadlineBufferMs
+      },
+      ethereumWriteOptions = {
+        timeoutMs: Constants.EthereumWriteStepTimeoutMs
+      },
       wireWriteOptions = { timeoutMs: Constants.WireWriteStepTimeoutMs }
 
     // ── 0. Substrate health (the old suite's phase-0 checks) ──
-    ClusterBuildPhase.create(cluster, "VerifySubstrate", "The chain produces blocks; the public counterpart is seeded").push(
-      verifyStep(Actor.Sysio, "wire-chain-producing", "WIRE chain is producing blocks", async ctx => {
-        const info = await ctx.wire.getInfo()
-        Assert.ok(Number(info.head_block_num) > 0, "head_block_num must be > 0")
-      }),
+    ClusterBuildPhase.create(
+      cluster,
+      "VerifySubstrate",
+      "The chain produces blocks; the public counterpart is seeded"
+    ).push(
+      verifyStep(
+        Actor.Sysio,
+        "wire-chain-producing",
+        "WIRE chain is producing blocks",
+        async ctx => {
+          const info = await ctx.wire.getInfo()
+          Assert.ok(
+            Number(info.head_block_num) > 0,
+            "head_block_num must be > 0"
+          )
+        }
+      ),
       verifyStep(
         Actor.Sysio,
         "public-counterpart-seeded",
@@ -175,7 +197,11 @@ export class ReserveLifecycleScenario extends FlowScenario {
     )
 
     // ── 2. The WIRE matcher accounts + the creator-key authex link ──
-    ClusterBuildPhase.create(cluster, "ProvisionOwner", "Provision the matcher accounts and authex-link the matcher to the creator key").push(
+    ClusterBuildPhase.create(
+      cluster,
+      "ProvisionOwner",
+      "Provision the matcher accounts and authex-link the matcher to the creator key"
+    ).push(
       OwnerSteps.planProvisionUser(
         Actor.User,
         "provision-matcher",
@@ -204,7 +230,11 @@ export class ReserveLifecycleScenario extends FlowScenario {
     )
 
     // ── 3. CreatePrivateLinked — linked creator's create lands PENDING ──
-    ClusterBuildPhase.create(cluster, "CreatePrivateLinked", "The linked creator's private create_reserve lands a PENDING depot row").push(
+    ClusterBuildPhase.create(
+      cluster,
+      "CreatePrivateLinked",
+      "The linked creator's private create_reserve lands a PENDING depot row"
+    ).push(
       ReserveSteps.planCreateReserve(
         Actor.User,
         "create-private-reserve",
@@ -260,7 +290,8 @@ export class ReserveLifecycleScenario extends FlowScenario {
             "PRIVRES depot row must carry is_private"
           )
           Assert.ok(
-            typeof row.creator_pub_key === "string" && row.creator_pub_key.length > 0,
+            typeof row.creator_pub_key === "string" &&
+              row.creator_pub_key.length > 0,
             "PRIVRES depot row must carry the creator pubkey"
           )
         },
@@ -269,7 +300,11 @@ export class ReserveLifecycleScenario extends FlowScenario {
     )
 
     // ── 4. CreatePrivateUnlinked — unlinked creator is cancelled back + refunded ──
-    ClusterBuildPhase.create(cluster, "CreatePrivateUnlinked", "An unlinked creator's create is cancelled back and its escrow refunded").push(
+    ClusterBuildPhase.create(
+      cluster,
+      "CreatePrivateUnlinked",
+      "An unlinked creator's create is cancelled back and its escrow refunded"
+    ).push(
       ReserveSteps.planFundUnlinkedCreator(
         Actor.User,
         "fund-unlinked-creator",
@@ -365,7 +400,11 @@ export class ReserveLifecycleScenario extends FlowScenario {
     )
 
     // ── 5. MatcherMustBeLinked — the match gate rejects unlinked, accepts linked ──
-    ClusterBuildPhase.create(cluster, "MatcherMustBeLinked", "matchreserve gates on the matcher's authex link; the linked matcher activates with exact WIRE escrow").push(
+    ClusterBuildPhase.create(
+      cluster,
+      "MatcherMustBeLinked",
+      "matchreserve gates on the matcher's authex link; the linked matcher activates with exact WIRE escrow"
+    ).push(
       verifyStep(
         Actor.Sysio,
         "unlinked-matcher-rejected",
@@ -387,7 +426,10 @@ export class ReserveLifecycleScenario extends FlowScenario {
                 },
                 {
                   authorization: [
-                    { actor: Constants.WrongMatcherAccount, permission: "active" }
+                    {
+                      actor: Constants.WrongMatcherAccount,
+                      permission: "active"
+                    }
                   ],
                   skipWait: true
                 }
@@ -440,7 +482,11 @@ export class ReserveLifecycleScenario extends FlowScenario {
             Constants.EthereumTokenCode,
             Constants.PrivateReserveCode
           )
-          Assert.strictEqual(row.owner, Constants.MatcherAccount, "owner must be the matcher")
+          Assert.strictEqual(
+            row.owner,
+            Constants.MatcherAccount,
+            "owner must be the matcher"
+          )
           Assert.strictEqual(
             BigInt(row.reserve_wire_amount),
             Constants.RequestedWireAmount,
@@ -454,11 +500,15 @@ export class ReserveLifecycleScenario extends FlowScenario {
         "wire-custody-exact",
         "the match IS a WIRE deposit — custody up, matcher down, exactly",
         async ctx => {
-          const snapshot = ctx.outputs.assert(ReserveSteps.wireCustodySnapshotKey())
+          const snapshot = ctx.outputs.assert(
+            ReserveSteps.wireCustodySnapshotKey()
+          )
           const custodyAfter = await ctx.wire.getWireBalance(
             SysioContractAccount[SysioContractName.reserv]
           )
-          const matcherAfter = await ctx.wire.getWireBalance(Constants.MatcherAccount)
+          const matcherAfter = await ctx.wire.getWireBalance(
+            Constants.MatcherAccount
+          )
           Assert.strictEqual(
             custodyAfter,
             snapshot.custody + Constants.RequestedWireAmount,
@@ -493,7 +543,11 @@ export class ReserveLifecycleScenario extends FlowScenario {
     )
 
     // ── 6. PrivateRejectPublic — the privacy gate rejects cross-owner pairings ──
-    ClusterBuildPhase.create(cluster, "PrivateRejectPublic", "A private reserve cannot pair with a public counterpart, in either direction").push(
+    ClusterBuildPhase.create(
+      cluster,
+      "PrivateRejectPublic",
+      "A private reserve cannot pair with a public counterpart, in either direction"
+    ).push(
       ReserveSteps.planRequestSwapProbe(
         Actor.User,
         "swap-private-to-public",
@@ -534,7 +588,8 @@ export class ReserveLifecycleScenario extends FlowScenario {
         async ctx => {
           await pollUntil(
             "SWAP_REVERT envelope on DEPOT→ETHEREUM",
-            async () => containsSwapRevert(oppDebuggingPath(ctx.config.clusterPath)),
+            async () =>
+              containsSwapRevert(oppDebuggingPath(ctx.config.clusterPath)),
             Constants.ReadyDeadlineMs,
             Constants.PollIntervalMs
           )
@@ -563,7 +618,9 @@ export class ReserveLifecycleScenario extends FlowScenario {
                   target_amount: Number(Constants.FromWireProbeTargetAmount),
                   target_tolerance_bps: Constants.FromWireProbeToleranceBps,
                   recipient_kind: SysioUwritChainkind.CHAIN_KIND_EVM,
-                  recipient_addr: Buffer.from(swapUser.ethereumAddressBytes).toString("hex")
+                  recipient_addr: Buffer.from(
+                    swapUser.ethereumAddressBytes
+                  ).toString("hex")
                 },
                 {
                   authorization: [

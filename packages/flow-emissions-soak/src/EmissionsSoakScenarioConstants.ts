@@ -1,4 +1,5 @@
-import { ProtocolTiming, type ImportSeedChainKind } from "@wireio/cluster-tool"
+import { ChainKind } from "@wireio/opp-typescript-models"
+import { ProtocolTiming } from "@wireio/cluster-tool"
 
 /**
  * Constants for the emissions + dclaim payout soak flow. Values carry over from
@@ -25,7 +26,10 @@ export namespace EmissionsSoakScenarioConstants {
    * `max(60s, soak/12)` so short local windows still collect ≥1 sample and the
    * default window samples roughly per epoch.
    */
-  export const SampleIntervalMs = Math.max(60_000, Math.floor(SoakDurationMs / 12))
+  export const SampleIntervalMs = Math.max(
+    60_000,
+    Math.floor(SoakDurationMs / 12)
+  )
   /**
    * Margin added to the soak window for the StabilityLoop step/phase timeout —
    * the old suite's per-test budget was `SOAK_DURATION_MS + 30 min`.
@@ -64,13 +68,15 @@ export namespace EmissionsSoakScenarioConstants {
    * Exact WIRE atomic each controlled staker is seeded with (and must receive
    * on claim): `ControlledStakerSourceUnits / 1e9`, zero dust by construction.
    */
-  export const PerStakerClaimAtomic = ControlledStakerSourceUnits / WireAtomicDivisor
+  export const PerStakerClaimAtomic =
+    ControlledStakerSourceUnits / WireAtomicDivisor
   /**
    * WIRE atomic pre-funded from `sysio` to `sysio.dclaim` to cover every
    * controlled-staker claim (the importseed path never calls `fundclaim`; only
    * the onreward path does — a real launch pre-funds dclaim the same way).
    */
-  export const ClaimPreFundAtomic = PerStakerClaimAtomic * BigInt(ControlledStakerCount)
+  export const ClaimPreFundAtomic =
+    PerStakerClaimAtomic * BigInt(ControlledStakerCount)
   /** Memo on the dclaim pre-fund transfer. */
   export const PreFundMemo = "pre-fund for importseed claim payouts"
 
@@ -83,7 +89,10 @@ export namespace EmissionsSoakScenarioConstants {
   /** ETH addresses appearing in BOTH purchasers and stakers (dedup path). */
   export const BulkEthereumOverlapping = envInteger("BULK_ETH_OVERLAPPING", 8)
   /** ETH stakers with non-zero `yieldClaimed` (netting path). */
-  export const BulkEthereumYieldClaimed = envInteger("BULK_ETH_YIELD_CLAIMED", 8)
+  export const BulkEthereumYieldClaimed = envInteger(
+    "BULK_ETH_YIELD_CLAIMED",
+    8
+  )
   /** Standalone SOL purchaser rows. */
   export const BulkSolanaPurchasers = envInteger("BULK_SOL_PURCHASERS", 20)
   /** Standalone SOL staker rows. */
@@ -91,12 +100,12 @@ export namespace EmissionsSoakScenarioConstants {
   /** Deterministic PRNG seed for the synthetic dumps (reproducible failures). */
   export const SyntheticSeed = envInteger("SYNTHETIC_SEED", 1)
 
-  // ── importseed chain kinds (the dclaim ABI's wire-format spellings) ───────
+  // ── importseed chain kinds (proto `ChainKind` members) ────────────────────
 
-  /** `ChainKind` wire spelling for the ETH dump (`satisfies` keeps the literal). */
-  export const EthereumChain = "CHAIN_KIND_EVM" satisfies ImportSeedChainKind
-  /** `ChainKind` wire spelling for the SOL dump. */
-  export const SolanaChain = "CHAIN_KIND_SVM" satisfies ImportSeedChainKind
+  /** Proto `ChainKind` for the ETH dump. */
+  export const EthereumChain = ChainKind.EVM
+  /** Proto `ChainKind` for the SOL dump. */
+  export const SolanaChain = ChainKind.SVM
 
   // ── Expected bootstrap emission splits (pinned — alerts on default drift) ──
 

@@ -56,7 +56,9 @@ export namespace NodeopProcessSteps {
    * underwriter → the provisioned operator, whose OPP daemon args ride
    * `extraArgs`). One step per node.
    */
-  export function planStart<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planStart<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -80,7 +82,9 @@ export namespace NodeopProcessSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const node = NodeConfig.plan(ctx.config).find(planned => planned.name === input.nodeName)
+    const node = NodeConfig.plan(ctx.config).find(
+      planned => planned.name === input.nodeName
+    )
     Assert.ok(node != null, `nodeop start: node not planned: ${input.nodeName}`)
     if (ctx.processManager.get(node.name) != null) return
 
@@ -115,7 +119,9 @@ export namespace NodeopProcessSteps {
    * plugin permanently disables its cron. The relaunch REPLAYS the synced
    * chain, so the preflight sees every bootstrap-written registration.
    */
-  export function planRestart<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRestart<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -139,8 +145,13 @@ export namespace NodeopProcessSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const node = NodeConfig.plan(ctx.config).find(planned => planned.name === input.nodeName)
-    Assert.ok(node != null, `nodeop restart: node not planned: ${input.nodeName}`)
+    const node = NodeConfig.plan(ctx.config).find(
+      planned => planned.name === input.nodeName
+    )
+    Assert.ok(
+      node != null,
+      `nodeop restart: node not planned: ${input.nodeName}`
+    )
     const running = ctx.processManager.get(node.name)
     Assert.ok(
       running instanceof NodeopProcess,
@@ -189,15 +200,23 @@ export namespace NodeopProcessSteps {
    * provisioned account itself. Exported so `ClusterManager.run` (the relaunch
    * path) reuses the SAME resolution logic — no duplication.
    */
-  export function resolveOperator(ctx: ClusterBuildContext, node: NodeConfig): OperatorAccount {
+  export function resolveOperator(
+    ctx: ClusterBuildContext,
+    node: NodeConfig
+  ): OperatorAccount {
     return match(node.role)
       .with(NodeRole.bios, () => BiosOperator)
       .with(NodeRole.producer, () => producerOperator(ctx, node))
-      .otherwise(() => ctx.keyStore.assertOperator(assertOperatorAccountName(node)))
+      .otherwise(() =>
+        ctx.keyStore.assertOperator(assertOperatorAccountName(node))
+      )
   }
 
   /** A producer node's OperatorAccount — its first hosted account + the node-shared keys. */
-  function producerOperator(ctx: ClusterBuildContext, node: NodeConfig): OperatorAccount {
+  function producerOperator(
+    ctx: ClusterBuildContext,
+    node: NodeConfig
+  ): OperatorAccount {
     const nodeKeys = ctx.keyStore.node(node.index)
     return {
       account: node.producers[0] ?? node.name,
@@ -209,8 +228,12 @@ export namespace NodeopProcessSteps {
 
   /** Assert an operator node names its batch / underwriter account. */
   function assertOperatorAccountName(node: NodeConfig): string {
-    const account = node.batchOperatorAccount ?? node.underwriterAccount
-    Assert.ok(account != null, `nodeop start: operator node ${node.name} has no operator account`)
+    const { batchOperatorAccount, underwriterAccount } = node,
+      account = batchOperatorAccount ?? underwriterAccount
+    Assert.ok(
+      account != null,
+      `nodeop start: operator node ${node.name} has no operator account`
+    )
     return account
   }
 

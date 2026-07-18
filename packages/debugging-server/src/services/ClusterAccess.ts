@@ -3,10 +3,9 @@ import * as Path from "node:path"
 
 import {
   ClusterFiles,
-  type ClusterState,
-  type PersistedClusterConfig
-} from "@wireio/debugging-shared"
-
+  type ClusterConfig,
+  type ClusterState
+} from "@wireio/cluster-tool-shared"
 import { log } from "../logging/index.js"
 
 /**
@@ -19,9 +18,18 @@ import { log } from "../logging/index.js"
  * the file the first time it's called, which is also where missing-file
  * errors surface to the route handler.
  */
+/**
+ * Sentinel marking {@link ClusterAccess}'s state cache as not-yet-read —
+ * distinct from `null`, which means "read, and no state file exists".
+ */
+enum StateCacheSentinel {
+  unread = "unread"
+}
+
 export class ClusterAccess {
-  private configCache: PersistedClusterConfig | null = null
-  private stateCache: ClusterState | null | "unread" = "unread"
+  private configCache: ClusterConfig | null = null
+  private stateCache: ClusterState | null | StateCacheSentinel =
+    StateCacheSentinel.unread
   private configWatcher: Fs.FSWatcher | null = null
   private stateWatcher: Fs.FSWatcher | null = null
 
@@ -46,7 +54,7 @@ export class ClusterAccess {
       // Watch the parent dir — file may not exist yet.
       this.stateWatcher = Fs.watch(this.clusterPath, (_evt, filename) => {
         if (filename?.toString() === ClusterFiles.StateFilename) {
-          this.stateCache = "unread"
+          this.stateCache = StateCacheSentinel.unread
         }
       })
     } catch (err) {
@@ -77,11 +85,11 @@ export class ClusterAccess {
    * Resolve and cache the cluster config. Throws when the file is
    * unreadable — the caller should surface the failure to the client.
    */
-  async getConfig(): Promise<PersistedClusterConfig> {
+  async getConfig(): Promise<ClusterConfig> {
     if (this.configCache) return this.configCache
     const file = Path.join(this.clusterPath, ClusterFiles.ConfigFilename),
       raw = await Fs.promises.readFile(file, "utf8")
-    this.configCache = JSON.parse(raw) as PersistedClusterConfig
+    this.configCache = JSON.parse(raw) as ClusterConfig
     return this.configCache
   }
 
@@ -90,7 +98,7 @@ export class ClusterAccess {
    * exist — the harness writes it only after bootstrap completes.
    */
   async getState(): Promise<ClusterState> {
-    if (this.stateCache !== "unread") return this.stateCache
+    if (this.stateCache !== StateCacheSentinel.unread) return this.stateCache
     const file = Path.join(this.clusterPath, ClusterFiles.StateFilename)
     if (!Fs.existsSync(file)) {
       this.stateCache = null

@@ -35,10 +35,11 @@
   "dependencies": {
     "@3fv/prelude-ts": "^0.8.41",
     "@protobuf-ts/runtime": "^2.11.1",
+    "@wireio/cluster-tool-shared": "workspace:*",
     "@wireio/debugging-shared": "workspace:*",
     "@wireio/opp-typescript-models": "^1.0.26",
-    "@wireio/shared": "^1.0.21",
     "@wireio/sdk-core": "^1.0.21",
+    "@wireio/shared": "^1.0.21",
     "bluebird": "^3.7.2",
     "express": "^5.2.1",
     "get-port": "^7.2.0",

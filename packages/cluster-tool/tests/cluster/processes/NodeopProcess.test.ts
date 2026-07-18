@@ -2,13 +2,24 @@ import Fs from "node:fs"
 import Http from "node:http"
 import Os from "node:os"
 import Path from "node:path"
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
-import { NodeopProcess, ProcessManager } from "@wireio/cluster-tool/cluster/processes"
-import { BindConfig, NodeConfig, NodeRole, type ClusterConfig } from "@wireio/cluster-tool/config"
+import {
+  NodeopProcess,
+  ProcessManager
+} from "@wireio/cluster-tool/cluster/processes"
+import {
+  NodeConfig,
+  NodeRole,
+  BindConfigProvider
+} from "@wireio/cluster-tool/config"
 import { type OperatorAccount } from "@wireio/cluster-tool/orchestration/outputs"
 import { Localhost, toURL } from "@wireio/cluster-tool/utils"
-import { fixtureConfig, PersistedFixture } from "../../config/clusterConfigFixture.js"
+import {
+  fixtureConfig,
+  PersistedFixture
+} from "../../config/clusterConfigFixture.js"
 
 describe("NodeopProcess", () => {
   let dir: string
@@ -49,7 +60,15 @@ describe("NodeopProcess", () => {
     producers: string[] = [],
     peers: string[] = []
   ): NodeConfig {
-    return new NodeConfig(cluster, role, 0, name, { http: 8888, p2p: 9876 }, producers, peers)
+    return new NodeConfig(
+      cluster,
+      role,
+      0,
+      name,
+      { http: 8888, p2p: 9876 },
+      producers,
+      peers
+    )
   }
 
   /** A producer OperatorAccount carrying the node-shared signing keys. */
@@ -81,14 +100,24 @@ describe("NodeopProcess", () => {
     })
     await expect(
       NodeopProcess.create(manager, {
-        node: new NodeConfig(missing, NodeRole.producer, 0, "missing-genesis", { http: 1, p2p: 2 }, [], [])
+        node: new NodeConfig(
+          missing,
+          NodeRole.producer,
+          0,
+          "missing-genesis",
+          { http: 1, p2p: 2 },
+          [],
+          []
+        )
       })
     ).rejects.toThrow(/genesis/)
   })
 
   it("requires a producer OperatorAccount (wire + bls) for a producing node", async () => {
     await expect(
-      NodeopProcess.create(manager, { node: node("keyless", NodeRole.producer, ["sysio"]) })
+      NodeopProcess.create(manager, {
+        node: node("keyless", NodeRole.producer, ["sysio"])
+      })
     ).rejects.toThrow(/requires a producer OperatorAccount/)
   })
 
@@ -115,9 +144,13 @@ describe("NodeopProcess", () => {
     expect(nodeop.args).toEqual(
       expect.arrayContaining(["--p2p-listen-endpoint", "0.0.0.0:9876"])
     )
-    expect(nodeop.args.filter(arg => arg === "--signature-provider")).toHaveLength(2)
+    expect(
+      nodeop.args.filter(arg => arg === "--signature-provider")
+    ).toHaveLength(2)
     expect(nodeop.args.some(arg => arg.includes("wire-PUB_K1_p"))).toBe(true)
-    expect(nodeop.args.some(arg => arg.includes("wire-bls-PUB_BLS_p"))).toBe(true)
+    expect(nodeop.args.some(arg => arg.includes("wire-bls-PUB_BLS_p"))).toBe(
+      true
+    )
     expect(nodeop.httpUrl).toContain(Localhost)
   })
 
@@ -130,7 +163,12 @@ describe("NodeopProcess", () => {
     expect(nodeop.args).not.toContain("sysio::producer_plugin")
     expect(nodeop.args).not.toContain("--producer-name")
     expect(nodeop.args).toEqual(
-      expect.arrayContaining(["--plugin", "sysio::net_plugin", "--batch-enabled", "true"])
+      expect.arrayContaining([
+        "--plugin",
+        "sysio::net_plugin",
+        "--batch-enabled",
+        "true"
+      ])
     )
   })
 
@@ -154,7 +192,11 @@ describe("NodeopProcess", () => {
     })
     // 1 producer node + 3 batch ops + 1 underwriter + bios + ad-hoc headroom
     const allowance =
-      1 + 3 + 1 + NodeopProcess.BiosNodeCount + NodeopProcess.AdHocDaemonPeerHeadroom
+      1 +
+      3 +
+      1 +
+      NodeopProcess.BiosNodeCount +
+      NodeopProcess.AdHocDaemonPeerHeadroom
     expect(nodeop.args).toEqual(
       expect.arrayContaining(["--p2p-max-nodes-per-host", String(allowance)])
     )
@@ -202,21 +244,33 @@ describe("NodeopProcess", () => {
 
     it("isDirtyChainbaseAbort requires an EXITED child carrying the abort line", () => {
       expect(
-        NodeopProcess.isDirtyChainbaseAbort({ isRunning: false, recentOutput: [DirtyLine] })
+        NodeopProcess.isDirtyChainbaseAbort({
+          isRunning: false,
+          recentOutput: [DirtyLine]
+        })
       ).toBe(true)
       expect(
-        NodeopProcess.isDirtyChainbaseAbort({ isRunning: true, recentOutput: [DirtyLine] })
+        NodeopProcess.isDirtyChainbaseAbort({
+          isRunning: true,
+          recentOutput: [DirtyLine]
+        })
       ).toBe(false)
       expect(
-        NodeopProcess.isDirtyChainbaseAbort({ isRunning: false, recentOutput: ["clean exit"] })
+        NodeopProcess.isDirtyChainbaseAbort({
+          isRunning: false,
+          recentOutput: ["clean exit"]
+        })
       ).toBe(false)
       expect(
-        NodeopProcess.isDirtyChainbaseAbort({ isRunning: false, recentOutput: [] })
+        NodeopProcess.isDirtyChainbaseAbort({
+          isRunning: false,
+          recentOutput: []
+        })
       ).toBe(false)
     })
 
     it("finalizerSafetyFile is <data-dir>/finalizers/safety.dat", () => {
-      expect(NodeopProcess.finalizerSafetyFile({ nodePath: "/data/node_00" })).toBe(
+      expect(NodeopProcess.finalizerSafetyFile("/data/node_00")).toBe(
         "/data/node_00/finalizers/safety.dat"
       )
     })
@@ -261,13 +315,14 @@ describe("NodeopProcess", () => {
       // typecheck; bridging through `unknown` is the standard way to spy on
       // a protected method from a test.
       const proto = NodeopProcess.prototype as unknown as VerifyReadyProbe
-      readySpy = jest
-        .spyOn(proto, "verifyReady")
-        .mockImplementation(function (this: NodeopProcess) {
-          return Promise.resolve(
-            this.isRunning && this.args.includes(NodeopProcess.HardReplayBlockchainFlag)
-          )
-        })
+      readySpy = jest.spyOn(proto, "verifyReady").mockImplementation(function (
+        this: NodeopProcess
+      ) {
+        return Promise.resolve(
+          this.isRunning &&
+            this.args.includes(NodeopProcess.HardReplayBlockchainFlag)
+        )
+      })
     })
     afterAll(() => {
       readySpy.mockRestore()
@@ -275,12 +330,20 @@ describe("NodeopProcess", () => {
 
     /** A planned operator node over the dirty-cluster fixture. */
     function dirtyNode(name: string): NodeConfig {
-      return new NodeConfig(dirtyCluster, NodeRole.operator, 0, name, { http: 18888, p2p: 19876 }, [], [])
+      return new NodeConfig(
+        dirtyCluster,
+        NodeRole.operator,
+        0,
+        name,
+        { http: 18888, p2p: 19876 },
+        [],
+        []
+      )
     }
 
     it("startWithRecovery relaunches once with --hard-replay-blockchain and wipes the stale fsi", async () => {
       const node = dirtyNode("dirty-recovers")
-      const safetyFile = NodeopProcess.finalizerSafetyFile(node)
+      const safetyFile = NodeopProcess.finalizerSafetyFile(node.nodePath)
       Fs.mkdirSync(Path.dirname(safetyFile), { recursive: true })
       Fs.writeFileSync(safetyFile, "stale-fsi")
 
@@ -298,7 +361,7 @@ describe("NodeopProcess", () => {
 
     it("startWithRecovery aborts recovery when the stale fsi cannot be removed", async () => {
       const node = dirtyNode("dirty-fsi-locked")
-      const safetyFile = NodeopProcess.finalizerSafetyFile(node)
+      const safetyFile = NodeopProcess.finalizerSafetyFile(node.nodePath)
       // A DIRECTORY at the fsi path defeats rmSync({ force: true })
       // deterministically (EISDIR) — the stand-in for EACCES/EIO removal
       // failures. Recovery must abort: hard-replaying with the stale fsi
@@ -320,7 +383,7 @@ describe("NodeopProcess", () => {
       // The outer fixture's nodeop is /bin/true: it exits cleanly with no
       // output — a startup failure that is NOT the dirty-chainbase abort.
       const cleanNode = node("clean-dies", NodeRole.operator)
-      const safetyFile = NodeopProcess.finalizerSafetyFile(cleanNode)
+      const safetyFile = NodeopProcess.finalizerSafetyFile(cleanNode.nodePath)
       Fs.mkdirSync(Path.dirname(safetyFile), { recursive: true })
       Fs.writeFileSync(safetyFile, "keep-me")
 
@@ -333,7 +396,9 @@ describe("NodeopProcess", () => {
     })
 
     it("start() surfaces the dirty abort line in the rejection via startupFailureDetail", async () => {
-      const first = await NodeopProcess.create(manager, { node: dirtyNode("dirty-detail") })
+      const first = await NodeopProcess.create(manager, {
+        node: dirtyNode("dirty-detail")
+      })
       await expect(first.start()).rejects.toThrow(/database dirty flag set/)
     })
   })
@@ -354,8 +419,12 @@ describe("NodeopProcess", () => {
         res.writeHead(200)
         res.end()
       })
-      const port = await BindConfig.findAvailable(BindConfig.DefaultBiosHttp)
-      await new Promise<void>(resolve => server.listen(port, Localhost, resolve))
+      const port = await BindConfigProvider.findAvailable(
+        BindConfigProvider.DefaultBiosHttp
+      )
+      await new Promise<void>(resolve =>
+        server.listen(port, Localhost, resolve)
+      )
 
       await expect(
         NodeopProcess.resumeProduction(toURL(port, Localhost))
@@ -369,8 +438,12 @@ describe("NodeopProcess", () => {
         res.writeHead(503)
         res.end()
       })
-      const port = await BindConfig.findAvailable(BindConfig.DefaultBiosHttp)
-      await new Promise<void>(resolve => server.listen(port, Localhost, resolve))
+      const port = await BindConfigProvider.findAvailable(
+        BindConfigProvider.DefaultBiosHttp
+      )
+      await new Promise<void>(resolve =>
+        server.listen(port, Localhost, resolve)
+      )
 
       await expect(
         NodeopProcess.resumeProduction(toURL(port, Localhost))

@@ -110,7 +110,10 @@ export class DebuggingServer {
     this.clusterAccess = new ClusterAccess(config.clusterPath)
     this.clusterAccess.start()
 
-    const clusterRegistry = ClusterRoutes.register(new Map(), this.clusterAccess)
+    const clusterRegistry = ClusterRoutes.register(
+      new Map(),
+      this.clusterAccess
+    )
     JsonRPC.mount(this.app, ApiPaths.Cluster.Endpoint, clusterRegistry)
 
     const processRegistry = ProcessRoutes.register(
@@ -122,10 +125,7 @@ export class DebuggingServer {
     const logRegistry = LogRoutes.register(new Map(), config.clusterPath)
     JsonRPC.mount(this.app, ApiPaths.Logs.Endpoint, logRegistry)
 
-    this.streamServer = new StreamServer(
-      this.clusterAccess,
-      config.clusterPath
-    )
+    this.streamServer = new StreamServer(this.clusterAccess, config.clusterPath)
 
     // JSON error handler — prevents Express from returning HTML error pages
     this.app.use(this.handleError.bind(this))

@@ -3,7 +3,7 @@ import { WireChain } from "../types"
 import { getApi } from "../services/chain"
 import { retrievePubKey } from "../services/key"
 import { createLinkTransaction } from "../services/transaction"
-import { useToast } from "./Toast"
+import { ToastColor, useToast } from "./Toast"
 import { shortenAddress } from "../services/wallet"
 
 interface Props {
@@ -36,12 +36,12 @@ export default function CreateLink({
 
       if (result?.processed) {
         setDone(true)
-        show("Link created successfully!", "success")
+        show("Link created successfully!", ToastColor.success)
       } else {
         throw new Error("Transaction not processed")
       }
     } catch (e: any) {
-      show(e.message || "Failed to create link", "danger")
+      show(e.message || "Failed to create link", ToastColor.danger)
     } finally {
       setLoading(false)
     }

@@ -2,8 +2,8 @@ import * as Fs from "node:fs"
 import * as OS from "node:os"
 import * as Path from "node:path"
 
+import { ClusterFiles } from "@wireio/cluster-tool-shared"
 import {
-  ClusterFiles,
   StreamFrameType,
   StreamTopic,
   type EventFrame,
@@ -13,11 +13,7 @@ import {
 
 import { DebuggingServer } from "@wireio/debugging-server"
 
-import {
-  collectFrames,
-  connectStream,
-  sendSubscribe
-} from "./streamHelpers.js"
+import { collectFrames, connectStream, sendSubscribe } from "./streamHelpers.js"
 
 describe("LogTailStream over WS", () => {
   const tmpDir = Path.join(OS.tmpdir(), `wsLogTail-${Date.now()}`),

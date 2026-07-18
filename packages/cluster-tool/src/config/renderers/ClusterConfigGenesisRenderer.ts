@@ -1,6 +1,6 @@
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { Constants } from "../../Constants.js"
 import type { Renderer } from "../../utils/Renderer.js"
-import type { ClusterConfig } from "../ClusterConfig.js"
 
 /**
  * Renders `genesis.json` (ports the former `cluster/genesis.ts`). Uses the dev

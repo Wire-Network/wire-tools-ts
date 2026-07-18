@@ -79,8 +79,12 @@ export class CollateralLifecycleScenario extends FlowScenario {
   }
 
   plan(cluster: ClusterBuild): void {
-    const stepOptions = { timeoutMs: Constants.relayDeadlineMs() + Constants.PollDeadlineBufferMs },
-      remitStepOptions = { timeoutMs: Constants.remitDeadlineMs() + Constants.PollDeadlineBufferMs }
+    const stepOptions = {
+        timeoutMs: Constants.relayDeadlineMs() + Constants.PollDeadlineBufferMs
+      },
+      remitStepOptions = {
+        timeoutMs: Constants.remitDeadlineMs() + Constants.PollDeadlineBufferMs
+      }
 
     // ── 1. Provision the non-bootstrapped depositor (the ONE mechanism) ──
     WireOperatorProvisioningTool.planOperatorAccountProvisioning(
@@ -100,7 +104,11 @@ export class CollateralLifecycleScenario extends FlowScenario {
     )
 
     // ── 2. The depositor's daemon (schedule-relay requirement once ACTIVE) ──
-    ClusterBuildPhase.create(cluster, "DepositorDaemon", "Start the depositor's batch-operator daemon").push(
+    ClusterBuildPhase.create(
+      cluster,
+      "DepositorDaemon",
+      "Start the depositor's batch-operator daemon"
+    ).push(
       OperatorDaemonTool.planDaemonStart(
         Actor.BatchOperator,
         "start-depositor-daemon",
@@ -111,7 +119,11 @@ export class CollateralLifecycleScenario extends FlowScenario {
     )
 
     // ── 3. ETH bond → depot balance row ──
-    ClusterBuildPhase.create(cluster, "DepositEthereum", "Bond ETH collateral; depot credits the balance row").push(
+    ClusterBuildPhase.create(
+      cluster,
+      "DepositEthereum",
+      "Bond ETH collateral; depot credits the balance row"
+    ).push(
       EthereumCollateralTool.planDeposit(
         Actor.User,
         "deposit-ethereum",
@@ -133,7 +145,8 @@ export class CollateralLifecycleScenario extends FlowScenario {
               const operator = await readDepositorRow(ctx)
               return (operator?.balances ?? []).some(
                 balance =>
-                  slugValue(balance.chain_code) === Constants.EthereumChainCode &&
+                  slugValue(balance.chain_code) ===
+                    Constants.EthereumChainCode &&
                   Number(balance.balance) >= Number(Constants.BondAmount)
               )
             },
@@ -146,7 +159,11 @@ export class CollateralLifecycleScenario extends FlowScenario {
     )
 
     // ── 4. SOL bond → all-chain rule met → ACTIVE ──
-    ClusterBuildPhase.create(cluster, "DepositSolana", "Bond SOL collateral; operator flips ACTIVE").push(
+    ClusterBuildPhase.create(
+      cluster,
+      "DepositSolana",
+      "Bond SOL collateral; operator flips ACTIVE"
+    ).push(
       SolanaCollateralTool.planDeposit(
         Actor.User,
         "deposit-solana",
@@ -184,7 +201,11 @@ export class CollateralLifecycleScenario extends FlowScenario {
     )
 
     // ── 5. Withdraw half the ETH bond → depot queues it ──
-    ClusterBuildPhase.create(cluster, "WithdrawRequest", "Release half the ETH bond; depot enqueues wtdwqueue").push(
+    ClusterBuildPhase.create(
+      cluster,
+      "WithdrawRequest",
+      "Release half the ETH bond; depot enqueues wtdwqueue"
+    ).push(
       EthereumCollateralTool.planWithdrawal(
         Actor.User,
         "withdraw-ethereum",
@@ -205,7 +226,8 @@ export class CollateralLifecycleScenario extends FlowScenario {
               const requests = await readWithdrawQueueRows(ctx)
               return requests.some(
                 request =>
-                  slugValue(request.chain_code) === Constants.EthereumChainCode &&
+                  slugValue(request.chain_code) ===
+                    Constants.EthereumChainCode &&
                   Number(request.amount) === Number(Constants.WithdrawAmount)
               )
             },
@@ -218,7 +240,11 @@ export class CollateralLifecycleScenario extends FlowScenario {
     )
 
     // ── 6. Wait window elapses; flushwtdw drains the queue ──
-    ClusterBuildPhase.create(cluster, "WaitAndFlush", "The withdraw wait window elapses; flushwtdw drains the queue").push(
+    ClusterBuildPhase.create(
+      cluster,
+      "WaitAndFlush",
+      "The withdraw wait window elapses; flushwtdw drains the queue"
+    ).push(
       verifyStep(
         Actor.Sysio,
         "flush-drains-queue",
@@ -236,7 +262,11 @@ export class CollateralLifecycleScenario extends FlowScenario {
     )
 
     // ── 7. WITHDRAW_REMIT lands on the ETH outpost; escrow decrements ──
-    ClusterBuildPhase.create(cluster, "ProcessRemit", "The ETH outpost processes WITHDRAW_REMIT; escrow decrements").push(
+    ClusterBuildPhase.create(
+      cluster,
+      "ProcessRemit",
+      "The ETH outpost processes WITHDRAW_REMIT; escrow decrements"
+    ).push(
       verifyStep(
         Actor.EthereumOutpost,
         "escrow-decrements",
