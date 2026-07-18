@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-swap-with-underwriting",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "private": true,
   "type": "commonjs",
   "description": "Flow: Bidirectional SWAP (Ethereum ↔ Solana) with Underwriting",
