@@ -31,17 +31,12 @@ import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
 } from "../../orchestration/ClusterBuildStep.js"
+import { SolanaOutpostPdaSeed } from "../../orchestration/solana/SolanaOutpostPdaSeed.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
-import { solanaKeypair } from "../../utils/keyPairUtils.js"
 import { Report } from "../../report/Report.js"
+import { solanaKeypair } from "../../utils/keyPairUtils.js"
 
-/** PDA seeds — kept in sync with `wire-solana/programs/liqsol-core/src/states/opp_states.rs`. */
-const OutpostConfigSeed = Buffer.from("outpost_config")
-const OutboundMessageBufferSeed = Buffer.from("outbound_message_buffer")
-const OperatorRegistrySeed = Buffer.from("operator_registry")
-const VaultSeed = Buffer.from("outpost_vault")
-/** Per-`token_code` SPL collateral vault seed — matches `deposit_non_native.rs`. */
-const CollateralVaultSeed = Buffer.from("collateral_vault")
+const Seed = SolanaOutpostPdaSeed.Bytes
 
 export namespace SolanaCollateralTool {
   // ── Step: native SOL planDeposit (`opp-outpost::deposit`) ────────────────────
@@ -105,10 +100,10 @@ export namespace SolanaCollateralTool {
       )
       .accounts({
         depositor: keypair.publicKey,
-        config: pda(OutpostConfigSeed, programId),
-        operatorRegistry: pda(OperatorRegistrySeed, programId),
-        outboundMessageBuffer: pda(OutboundMessageBufferSeed, programId),
-        vault: pda(VaultSeed, programId),
+        config: pda(Seed.OutpostConfig, programId),
+        operatorRegistry: pda(Seed.OperatorRegistry, programId),
+        outboundMessageBuffer: pda(Seed.OutboundMessageBuffer, programId),
+        vault: pda(Seed.OutpostVault, programId),
         systemProgram: SystemProgram.programId
       })
       .signers([keypair])
@@ -197,12 +192,12 @@ export namespace SolanaCollateralTool {
       )
       .accounts({
         depositor: keypair.publicKey,
-        config: pda(OutpostConfigSeed, programId),
-        operatorRegistry: pda(OperatorRegistrySeed, programId),
-        outboundMessageBuffer: pda(OutboundMessageBufferSeed, programId),
+        config: pda(Seed.OutpostConfig, programId),
+        operatorRegistry: pda(Seed.OperatorRegistry, programId),
+        outboundMessageBuffer: pda(Seed.OutboundMessageBuffer, programId),
         mint,
         depositorAta: getAssociatedTokenAddressSync(mint, keypair.publicKey),
-        collateralVault: pda(CollateralVaultSeed, programId, tokenCodeLeBytes),
+        collateralVault: pda(Seed.CollateralVault, programId, tokenCodeLeBytes),
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         rent: SYSVAR_RENT_PUBKEY

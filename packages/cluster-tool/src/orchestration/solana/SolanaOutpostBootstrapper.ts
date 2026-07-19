@@ -14,6 +14,7 @@ import { retry } from "../../utils/asyncUtils.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
 import { SolanaOutpostProgramTool } from "../../tools/solana/SolanaOutpostProgramTool.js"
+import { SolanaOutpostPdaSeed } from "./SolanaOutpostPdaSeed.js"
 
 const log = getLogger(__filename)
 
@@ -220,7 +221,7 @@ export class SolanaOutpostBootstrapper {
     Assert.ok(programId != null, "initializePDAs: programId required")
     log.info("initializing OPP outpost PDAs...")
 
-    const Seed = SolanaOutpostBootstrapper.PdaSeed
+    const Seed = SolanaOutpostPdaSeed
     const configPda = this.deriveProgramAddress(programId, Seed.OutpostConfig)
     const outboundMessageBufferPda = this.deriveProgramAddress(programId, Seed.OutboundMessageBuffer)
     const operatorRegistryPda = this.deriveProgramAddress(programId, Seed.OperatorRegistry)
@@ -436,13 +437,13 @@ export class SolanaOutpostBootstrapper {
 
         const reservePda = this.deriveReserveScopedAddress(
           programId,
-          SolanaOutpostBootstrapper.PdaSeed.Reserve,
+          SolanaOutpostPdaSeed.Reserve,
           code,
           SlugName.from(SolanaOutpostBootstrapper.PrimaryReserveCodename)
         )
         const reserveVaultPda = this.deriveReserveScopedAddress(
           programId,
-          SolanaOutpostBootstrapper.PdaSeed.ReserveVault,
+          SolanaOutpostPdaSeed.ReserveVault,
           code,
           SlugName.from(SolanaOutpostBootstrapper.PrimaryReserveCodename)
         )
@@ -529,18 +530,12 @@ export namespace SolanaOutpostBootstrapper {
   /** Default reserve codename. */
   export const PrimaryReserveCodename = "PRIMARY"
 
-  /** Program-derived-address seeds — MUST match `wire-solana/programs/liqsol-core/src/states/opp_states.rs`. */
-  export namespace PdaSeed {
-    export const OutpostConfig = "outpost_config"
-    export const OutboundMessageBuffer = "outbound_message_buffer"
-    export const OperatorRegistry = "operator_registry"
-    export const InboundEnvelopes = "inbound_envelopes"
-    export const OutboundEnvelopes = "outbound_envelopes"
-    export const LatestOutboundEnvelope = "latest_outbound_envelope"
-    export const ReserveAggregate = "reserve_aggregate"
-    export const Reserve = "reserve"
-    export const ReserveVault = "reserve_vault"
-  }
+  /**
+   * Alias of {@link SolanaOutpostPdaSeed} — kept so existing flow imports
+   * (`SolanaOutpostBootstrapper.PdaSeed`) continue to resolve to the single
+   * shared seed table.
+   */
+  export import PdaSeed = SolanaOutpostPdaSeed
 
   /**
    * Persisted mock-SPL-mint metadata (consumed by depot-side token

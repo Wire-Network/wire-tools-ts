@@ -33,12 +33,9 @@ import {
   StakingReward as StakingRewardMsg
 } from "@wireio/opp-typescript-models"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
+import { SolanaOutpostPdaSeed } from "../../orchestration/solana/SolanaOutpostPdaSeed.js"
 
-/** Seed for the `OutpostConfig` singleton PDA (mirrors
- *  `wire-solana/programs/liqsol-core/src/states/opp_states.rs`). */
-const OUTPOST_CONFIG_SEED = Buffer.from("outpost_config")
-/** Seed for the `OutboundMessageBuffer` singleton PDA. */
-const OUTBOUND_MESSAGE_BUFFER_SEED = Buffer.from("outbound_message_buffer")
+const Seed = SolanaOutpostPdaSeed.Bytes
 
 /** Per-staker entry in an `emitYieldBatch` invocation. Mirrors the ETH
  *  side's `YieldEntry` shape for ergonomic symmetry across the two
@@ -144,9 +141,9 @@ export async function emitSolanaYield(
   )
 
   const programId = program.programId
-  const [configPda] = PublicKey.findProgramAddressSync([OUTPOST_CONFIG_SEED], programId)
+  const [configPda] = PublicKey.findProgramAddressSync([Seed.OutpostConfig], programId)
   const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync(
-    [OUTBOUND_MESSAGE_BUFFER_SEED],
+    [Seed.OutboundMessageBuffer],
     programId
   )
 

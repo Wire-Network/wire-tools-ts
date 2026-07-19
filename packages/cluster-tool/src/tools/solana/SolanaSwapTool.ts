@@ -27,12 +27,9 @@ import {
   getAssociatedTokenAddressSync
 } from "@solana/spl-token"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
+import { SolanaOutpostPdaSeed } from "../../orchestration/solana/SolanaOutpostPdaSeed.js"
 
-/** PDA seeds — kept in sync with `wire-solana/programs/liqsol-core/src/states/opp_states.rs`. */
-const OUTPOST_CONFIG_SEED          = Buffer.from("outpost_config")
-const OUTBOUND_MESSAGE_BUFFER_SEED = Buffer.from("outbound_message_buffer")
-const RESERVE_SEED                 = Buffer.from("reserve")
-const RESERVE_VAULT_SEED           = Buffer.from("reserve_vault")
+const Seed = SolanaOutpostPdaSeed.Bytes
 
 /**
  * Structured arguments for a SOL-source SWAP_REQUEST emission. All
@@ -89,14 +86,17 @@ export async function requestSolanaSwap(
   )
 
   const programId                  = program.programId
-  const [configPda]                = PublicKey.findProgramAddressSync([OUTPOST_CONFIG_SEED], programId)
-  const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync([OUTBOUND_MESSAGE_BUFFER_SEED], programId)
+  const [configPda]                = PublicKey.findProgramAddressSync([Seed.OutpostConfig], programId)
+  const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync(
+    [Seed.OutboundMessageBuffer],
+    programId
+  )
 
-  // Reserve PDA — derived from `RESERVE_SEED` + LE-encoded source codes.
+  // Reserve PDA — derived from `Seed.Reserve` + LE-encoded source codes.
   const sourceTokenCodeLE   = toU64LeBuffer(request.sourceTokenCode)
   const sourceReserveCodeLE = toU64LeBuffer(request.sourceReserveCode)
   const [reservePda] = PublicKey.findProgramAddressSync(
-    [RESERVE_SEED, sourceTokenCodeLE, sourceReserveCodeLE],
+    [Seed.Reserve, sourceTokenCodeLE, sourceReserveCodeLE],
     programId
   )
 
@@ -191,16 +191,19 @@ export async function requestSolanaSwapSpl(
   )
 
   const programId                  = program.programId
-  const [configPda]                = PublicKey.findProgramAddressSync([OUTPOST_CONFIG_SEED], programId)
-  const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync([OUTBOUND_MESSAGE_BUFFER_SEED], programId)
+  const [configPda]                = PublicKey.findProgramAddressSync([Seed.OutpostConfig], programId)
+  const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync(
+    [Seed.OutboundMessageBuffer],
+    programId
+  )
 
   const sourceTokenCodeLE   = toU64LeBuffer(request.sourceTokenCode)
   const sourceReserveCodeLE = toU64LeBuffer(request.sourceReserveCode)
   const [reservePda]      = PublicKey.findProgramAddressSync(
-    [RESERVE_SEED, sourceTokenCodeLE, sourceReserveCodeLE], programId
+    [Seed.Reserve, sourceTokenCodeLE, sourceReserveCodeLE], programId
   )
   const [reserveVaultPda] = PublicKey.findProgramAddressSync(
-    [RESERVE_VAULT_SEED, sourceTokenCodeLE, sourceReserveCodeLE], programId
+    [Seed.ReserveVault, sourceTokenCodeLE, sourceReserveCodeLE], programId
   )
 
   // The user's ATA for `sourceMint` MUST exist before this call — the
