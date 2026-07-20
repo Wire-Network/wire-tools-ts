@@ -2,6 +2,8 @@ import Assert from "node:assert"
 
 import {
   DebuggingDefaults,
+  JsonRPCResponseEnvelopeSchemaCodec,
+  PlainJsonRpcResponseCodecs,
   type HandlerURIType,
   type InferredRequestType,
   type InferredResponseType
@@ -79,7 +81,13 @@ export class JsonRPCClient {
       `JSON-RPC POST failed: ${resp.status} ${resp.statusText}`
     )
 
-    const body = (await resp.json()) as JsonRPCClient.ResponseEnvelope
+    // Validate the response envelope structurally via the codec (replaces the
+    // hand-rolled `as ResponseEnvelope` cast); `result` stays opaque per-method.
+    const parsed: unknown = await resp.json()
+    if (!JsonRPCResponseEnvelopeSchemaCodec.check(parsed)) {
+      throw new Error("JSON-RPC response is not a valid response envelope")
+    }
+    const body = parsed
 
     Assert.ok(
       body.jsonrpc === DebuggingDefaults.JsonrpcVersion,
@@ -97,6 +105,14 @@ export class JsonRPCClient {
     }
 
     Assert.ok("result" in body, "JSON-RPC response missing 'result'")
+    // Validate the plain-JSON result via the method's codec (closes the
+    // `as InferredResponseType` cast gap); proto methods have no entry and
+    // pass through — protobuf-ts already validated them on the server's toJson.
+    const responseCodec = PlainJsonRpcResponseCodecs[method]
+    Assert.ok(
+      !responseCodec || responseCodec.check(body.result),
+      `JSON-RPC result for ${method} failed response validation`
+    )
     return body.result as InferredResponseType<P>
   }
 }
@@ -128,21 +144,5 @@ export namespace JsonRPCClient {
    */
   export function bigintReplacer(_key: string, value: unknown): unknown {
     return typeof value === "bigint" ? value.toString() : value
-  }
-
-  /**
-   * Shape of a parsed JSON-RPC 2.0 response envelope. Only one of `result`
-   * or `error` is ever populated per the spec, but we keep both optional
-   * here — runtime `Assert.ok` handles the enforcement.
-   */
-  export interface ResponseEnvelope<T = unknown> {
-    jsonrpc: string
-    id: number | string | null
-    result?: T
-    error?: {
-      code: number
-      message: string
-      data?: unknown
-    }
   }
 }

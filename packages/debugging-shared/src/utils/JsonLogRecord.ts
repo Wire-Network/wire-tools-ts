@@ -1,4 +1,7 @@
+import { Either } from "@3fv/prelude-ts"
+import { SchemaCodec } from "@wireio/cluster-tool-shared"
 import { match } from "ts-pattern"
+import { z } from "zod"
 
 /**
  * One nodeop JSONL log line, post-`JSON.parse`. Fields mirror the C++
@@ -59,25 +62,39 @@ export namespace JsonLogRecord {
 }
 
 /**
- * Parse a single JSONL line. Returns the raw string when parsing fails or the
- * parsed value isn't a structured record (missing `msg`) — callers always
- * receive something printable.
+ * Zod schema for a nodeop JSONL log record — every field the C++
+ * `daily_file_sink` formatter emits. Bound to {@link JsonLogRecord} via the
+ * explicit codec generic below (the companion namespace precludes `z.infer`),
+ * so a drift between the two fails the build.
+ */
+export const JsonLogRecordSchema = z.object({
+  ts: z.string(),
+  lvl: z.string(),
+  thread: z.string(),
+  logger: z.string(),
+  file: z.string(),
+  line: z.number(),
+  func: z.string(),
+  msg: z.string()
+})
+
+/** The {@link SchemaCodec} for {@link JsonLogRecord} — a validated JSONL round-trip. */
+export const JsonLogRecordSchemaCodec = SchemaCodec.create<JsonLogRecord>(
+  JsonLogRecordSchema
+)
+
+/**
+ * Parse a single JSONL line into a validated {@link JsonLogRecord}. Returns the
+ * raw string when the line is not valid JSON or does not validate as a full
+ * record (via {@link JsonLogRecordSchemaCodec}) — callers always receive
+ * something printable.
  */
 export function parseJsonLogLine(raw: string): JsonLogRecord | string {
   if (raw.length === 0) return raw
-  try {
-    const obj = JSON.parse(raw)
-    if (
-      typeof obj === "object" &&
-      obj !== null &&
-      typeof (obj as { msg?: unknown }).msg === "string"
-    ) {
-      return obj as JsonLogRecord
-    }
-  } catch {
-    /* fall through */
-  }
-  return raw
+  return Either.try(() => JsonLogRecordSchemaCodec.deserialize(raw)).match({
+    Left: (): JsonLogRecord | string => raw,
+    Right: record => record
+  })
 }
 
 /** Ink color for a JSONL `lvl` field. Unrecognized values render in default fg. */

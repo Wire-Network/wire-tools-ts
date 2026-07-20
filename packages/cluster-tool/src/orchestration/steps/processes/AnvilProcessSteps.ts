@@ -33,6 +33,7 @@ export namespace AnvilProcessSteps {
     signal.throwIfAborted()
     if (ctx.processManager.get(AnvilProcess.ProcessLabel) != null) return
     const anvil = await AnvilProcess.create(ctx.processManager, {
+      host: ctx.config.bind.anvil.address,
       port: ctx.config.bind.anvil.port,
       chainId: AnvilProcess.DefaultChainId,
       stateFile: Path.join(

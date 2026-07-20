@@ -1,15 +1,11 @@
+import { Either } from "@3fv/prelude-ts"
 import { WebSocket } from "ws"
 import {
   ApiPaths,
   ClosedReason,
+  StreamFrameSchemaCodec,
   StreamFrameType,
   StreamTopic,
-  isClosedFrame,
-  isErrorFrame,
-  isEventFrame,
-  isStreamFrame,
-  isSubscribedFrame,
-  type EventFrame,
   type InferredStreamEvent,
   type InferredStreamParams,
   type StreamFrame,
@@ -135,29 +131,24 @@ export class WebSocketStreamClient {
   // -------------------------------------------------------------------------
 
   private onMessage(raw: string): void {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(raw)
-    } catch {
-      return
-    }
-    if (!isStreamFrame(parsed)) return
-    const frame = parsed as StreamFrame
-    if (isSubscribedFrame(frame)) {
-      const rec = this.subs.get(frame.id)
-      rec?.ackResolve()
-    } else if (isEventFrame(frame)) {
+    // Parse + validate the wire frame via the codec; a malformed frame is a
+    // benign no-op (drop the message), same as the pre-codec guard behavior.
+    const frame = Either.try(() =>
+      StreamFrameSchemaCodec.deserialize(raw)
+    ).getOrElse(null)
+    if (frame == null) return
+    if (frame.type === StreamFrameType.Subscribed) {
+      this.subs.get(frame.id)?.ackResolve()
+    } else if (frame.type === StreamFrameType.Event) {
       const rec = this.subs.get(frame.id)
       if (!rec) return
-      rec.subscription.emitEvent(
-        (frame as EventFrame<StreamTopic>).payload as never
-      )
-    } else if (isClosedFrame(frame)) {
+      rec.subscription.emitEvent(frame.payload as never)
+    } else if (frame.type === StreamFrameType.Closed) {
       const rec = this.subs.get(frame.id)
       if (!rec) return
       this.subs.delete(frame.id)
       rec.subscription.notifyClosed(frame.reason)
-    } else if (isErrorFrame(frame)) {
+    } else if (frame.type === StreamFrameType.Error) {
       // Protocol-level error — terminate every active subscription with
       // an InternalError reason; the consumer must reconnect.
       this.subs.forEach(rec => {
@@ -188,7 +179,7 @@ export class WebSocketStreamClient {
 
   private send(frame: StreamFrame): void {
     if (!this.ws || this.ws.readyState !== this.ws.OPEN) return
-    this.ws.send(JSON.stringify(frame))
+    this.ws.send(StreamFrameSchemaCodec.serialize(frame))
   }
 }
 

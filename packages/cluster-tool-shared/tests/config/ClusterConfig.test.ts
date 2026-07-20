@@ -1,6 +1,8 @@
 import {
   ClusterConfigLoggingFileFormat,
   ClusterConfigReportFormat,
+  ClusterConfigSchemaCodec,
+  SignatureProviderType,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
@@ -69,7 +71,9 @@ describe("ClusterConfig shape", () => {
     requiredUnderwriterCollateral: [],
     requiredProducerCollateral: [],
     underwriterCollateral: null,
-    initialFinalizerKey: null
+    initialFinalizerKey: null,
+    signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
+    externalOutposts: null
   }
 
   it("persists the report/logging enum fields as their wire spellings", () => {
@@ -87,5 +91,26 @@ describe("ClusterConfig shape", () => {
     expect(config.requiredBatchOperatorCollateral).toEqual([
       { chainCode: 1, tokenCode: 2, minimumBond: 1000 }
     ])
+  })
+
+  it("round-trips through ClusterConfigSchemaCodec with no data loss", () => {
+    const rehydrated = ClusterConfigSchemaCodec.deserialize(
+      ClusterConfigSchemaCodec.serialize(config)
+    )
+    expect(rehydrated).toEqual(config)
+  })
+
+  it("loads a legacy config (no signatureProvider/externalOutposts) via schema defaults", () => {
+    const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    delete parsed.signatureProvider
+    delete parsed.externalOutposts
+    const rehydrated = ClusterConfigSchemaCodec.deserialize(
+      JSON.stringify(parsed)
+    )
+    expect(rehydrated.signatureProvider).toEqual({
+      type: SignatureProviderType.KEY,
+      ssm: null
+    })
+    expect(rehydrated.externalOutposts).toBeNull()
   })
 })

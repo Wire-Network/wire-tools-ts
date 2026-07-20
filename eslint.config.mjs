@@ -116,7 +116,6 @@ const BanMemberCoalesceDeclarator = {
 // sweeping untouched files. RATCHET: when you touch one of these files, clean
 // its return types and DELETE its entry. Never add an entry.
 const NullUnionReturnDebtFiles = [
-  "packages/cluster-tool/src/cli/ClusterBuildOptionsArgs.ts",
   "packages/cluster-tool/src/clients/solana/SolanaClient.ts",
   "packages/cluster-tool/src/clients/wire/WireClient.ts",
   "packages/cluster-tool/src/clients/wire/WireWallet.ts",
@@ -129,7 +128,6 @@ const NullUnionReturnDebtFiles = [
   "packages/debugging-client-tool-tui/src/features/opp/util/EpochSummary.ts",
   "packages/debugging-client-tool-tui/src/store/opp/OPPSelectors.ts",
   "packages/debugging-server/src/routes/opp/OPPRoutes.ts",
-  "packages/debugging-server/src/streams/StreamServer.ts",
   "packages/debugging-shared/src/opp/EnvelopeStorageKey.ts",
   "packages/debugging-shared/src/utils/ProtobufHelpers.ts",
   "packages/test-app-server/src/services/key.ts",
@@ -168,7 +166,6 @@ const InlineTypeLiteralDebtFiles = [
   "packages/cluster-tool/tests/tools/wire/WireOperatorProvisioningTool.test.ts",
   "packages/cluster-tool/tests/tools/wire/WireReserveTool.test.ts",
   "packages/cluster-tool/tests/tools/wire/WireUnderwriterTool.test.ts",
-  "packages/debugging-client-shared/src/rpc/JsonRPCClient.ts",
   "packages/debugging-client-shared/tests/subscriptions/DebuggingSubscription.test.ts",
   "packages/debugging-client-tool-tui/src/cli.ts",
   "packages/debugging-client-tool-tui/src/components/PanelComponent.ts",
@@ -188,8 +185,6 @@ const InlineTypeLiteralDebtFiles = [
   "packages/debugging-server/src/streams/EnvelopeWatchStream.ts",
   "packages/debugging-shared/src/opp/EnvelopeRecordReader.ts",
   "packages/debugging-shared/src/rpc/Paths.ts",
-  "packages/debugging-shared/src/rpc/StreamProtocol.ts",
-  "packages/debugging-shared/src/utils/JsonLogRecord.ts",
   "packages/flow-reserve-lifecycle/src/steps/ReserveLifecycleScenarioReserveSteps.ts",
   "packages/flow-swap-private-reserves/src/SwapPrivateReservesScenarioArtifacts.ts",
   "packages/flow-swap-private-reserves/src/steps/SwapPrivateReservesScenarioReserveSteps.ts",

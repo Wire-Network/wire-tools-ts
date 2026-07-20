@@ -103,7 +103,12 @@ export namespace ClusterBuildDefaults {
       producerNodes = NodeConfig.plan(config).filter(
         node => node.role === NodeRole.producer
       ),
-      producerNodeCount = producerNodes.length
+      producerNodeCount = producerNodes.length,
+      // External-outpost mode: the ETH + SOL outposts already run on real chains
+      // (`config.externalOutposts`), so skip the local anvil/validator starts +
+      // outpost deploys and publish the operator-daemon artifacts from the
+      // external config instead (verifying the endpoints are reachable).
+      isExternalOutpost = config.externalOutposts != null
 
     // ═══ Cluster Prerequisites — processes, keys, contracts, registry, producers ═══
     const prerequisites = ClusterBuildPhaseGroup.create<C>(
@@ -583,49 +588,79 @@ export namespace ClusterBuildDefaults {
       )
     )
 
-    // ── outpost deploys (own the run anvil + validator) ──
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "EthereumOutpost",
-      "Deploy the Ethereum outpost"
-    ).push(
-      Steps.processes.anvil.planStart<C>(
-        Actor.EthereumOutpost,
-        "start-anvil",
-        "start the run-time anvil (instamine)",
-        {}
-      ),
-      Steps.ethereumOutpost.planDeploy<C>(
-        Actor.EthereumOutpost,
-        "deploy-ethereum",
-        "deploy + seed the Ethereum outpost",
-        { timeoutMs: 900_000 }
-      ),
-      Steps.processes.anvil.planEnableIntervalMining<C>(
-        Actor.EthereumOutpost,
-        "enable-interval-mining",
-        "switch anvil to interval mining",
-        {}
+    // ── outpost deploys (own the run anvil + validator) — OR, in external mode,
+    //    verify the already-running remote outpost endpoints instead ──
+    if (isExternalOutpost) {
+      ClusterBuildPhase.create<C>(
+        prerequisites,
+        "MaterializeExternalOutposts",
+        "Materialize the external outpost artifacts + verify the endpoints"
+      ).push(
+        // REPLACES the omitted ETH/SOL deploy phases: copy the config-referenced
+        // files into the canonical data dir so every downstream reader is unchanged.
+        Steps.externalOutpost.planMaterialize<C>(
+          Actor.Sysio,
+          "materialize-external-artifacts",
+          "copy the external-outpost config files into the canonical data dir",
+          {}
+        ),
+        Steps.externalOutpost.planVerifyEthereumEndpoint<C>(
+          Actor.EthereumOutpost,
+          "verify-ethereum-endpoint",
+          "the external Ethereum RPC reports the configured chain id",
+          {}
+        ),
+        Steps.externalOutpost.planVerifySolanaEndpoint<C>(
+          Actor.SolanaOutpost,
+          "verify-solana-endpoint",
+          "the external Solana RPC responds to getVersion",
+          {}
+        )
       )
-    )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "SolanaOutpost",
-      "Deploy the Solana outpost"
-    ).push(
-      Steps.processes.solanaValidator.planStart<C>(
-        Actor.SolanaOutpost,
-        "start-validator",
-        "start solana-test-validator + liqsol_core (OPP outpost)",
-        {}
-      ),
-      Steps.solanaOutpost.planDeploy<C>(
-        Actor.SolanaOutpost,
-        "deploy-solana",
-        "init PDAs + provision SPL reserves",
-        { timeoutMs: 900_000 }
+    } else {
+      ClusterBuildPhase.create<C>(
+        prerequisites,
+        "EthereumOutpost",
+        "Deploy the Ethereum outpost"
+      ).push(
+        Steps.processes.anvil.planStart<C>(
+          Actor.EthereumOutpost,
+          "start-anvil",
+          "start the run-time anvil (instamine)",
+          {}
+        ),
+        Steps.ethereumOutpost.planDeploy<C>(
+          Actor.EthereumOutpost,
+          "deploy-ethereum",
+          "deploy + seed the Ethereum outpost",
+          { timeoutMs: 900_000 }
+        ),
+        Steps.processes.anvil.planEnableIntervalMining<C>(
+          Actor.EthereumOutpost,
+          "enable-interval-mining",
+          "switch anvil to interval mining",
+          {}
+        )
       )
-    )
+      ClusterBuildPhase.create<C>(
+        prerequisites,
+        "SolanaOutpost",
+        "Deploy the Solana outpost"
+      ).push(
+        Steps.processes.solanaValidator.planStart<C>(
+          Actor.SolanaOutpost,
+          "start-validator",
+          "start solana-test-validator + liqsol_core (OPP outpost)",
+          {}
+        ),
+        Steps.solanaOutpost.planDeploy<C>(
+          Actor.SolanaOutpost,
+          "deploy-solana",
+          "init PDAs + provision SPL reserves",
+          { timeoutMs: 900_000 }
+        )
+      )
+    }
 
     // ── registry + underwriter config ──
     ClusterBuildPhase.create<C>(
@@ -680,12 +715,19 @@ export namespace ClusterBuildDefaults {
         "start the in-process OPP debugging server",
         {}
       ),
-      OperatorDaemonTool.planArtifactPreparation<C>(
-        Actor.Sysio,
-        "prepare-daemon-artifacts",
-        "write ETH ABI + SOL IDL artifacts for operator daemons",
-        {}
-      )
+      isExternalOutpost
+        ? Steps.externalOutpost.planPublishArtifacts<C>(
+            Actor.Sysio,
+            "publish-external-artifacts",
+            "publish ETH ABI + SOL IDL daemon artifacts from the external-outpost config",
+            {}
+          )
+        : OperatorDaemonTool.planArtifactPreparation<C>(
+            Actor.Sysio,
+            "prepare-daemon-artifacts",
+            "write ETH ABI + SOL IDL artifacts for operator daemons",
+            {}
+          )
     )
 
     // Bootstrapped batch operators + underwriters via the ONE mechanism (no funding —
@@ -768,6 +810,23 @@ export namespace ClusterBuildDefaults {
         { timeoutMs: 300_000 }
       )
     )
+
+    // External-outpost success gate: no local chain to advance an epoch on, so
+    // prove the depot is producing blocks (head advance) — plan §5.3.
+    if (isExternalOutpost) {
+      ClusterBuildPhase.create<C>(
+        postContractDeployment,
+        "HeadBlockAdvance",
+        "Verify the depot head block advances (external-outpost success gate)"
+      ).push(
+        Steps.externalOutpost.planHeadBlockAdvance<C>(
+          Actor.Sysio,
+          "verify-head-advance",
+          "the depot head block advances (external-outpost liveness)",
+          {}
+        )
+      )
+    }
   }
 
   /** The `sysio.epoch::setconfig` data, derived from the batch-operator topology. */

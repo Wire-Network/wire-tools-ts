@@ -1,3 +1,6 @@
+import { SchemaCodec } from "@wireio/cluster-tool-shared"
+import { z } from "zod"
+
 /**
  * Log file statistics. Mirrors the in-memory `LineIndex` counters but as a
  * wire-friendly snapshot — the index itself stays server-side.
@@ -70,3 +73,40 @@ export interface LogTailEvent {
   /** Inode at the time of this tick — change implies log rotation. */
   ino: number
 }
+
+// ---------------------------------------------------------------------------
+//  Zod schemas + codecs (validated plain-JSON RPC bodies for Logs.GetStat/Read)
+// ---------------------------------------------------------------------------
+
+/** Schema for a {@link LogStat} / {@link LogStatResponse}. */
+export const LogStatSchema = z.object({
+  path: z.string(),
+  ino: z.number(),
+  totalBytes: z.number(),
+  totalLines: z.number()
+})
+/** Codec for the `Logs.GetStat` response body ({@link LogStatResponse} = {@link LogStat}). */
+export const LogStatResponseSchemaCodec =
+  SchemaCodec.create<LogStatResponse>(LogStatSchema)
+
+/** Schema for {@link LogStatRequest}. */
+export const LogStatRequestSchema = z.object({ path: z.string() })
+/** Codec for the `Logs.GetStat` request body. */
+export const LogStatRequestSchemaCodec =
+  SchemaCodec.create<LogStatRequest>(LogStatRequestSchema)
+
+/** Schema for {@link LogReadRequest}. */
+export const LogReadRequestSchema = z.object({
+  path: z.string(),
+  fromLine: z.number(),
+  count: z.number()
+})
+/** Codec for the `Logs.Read` request body. */
+export const LogReadRequestSchemaCodec =
+  SchemaCodec.create<LogReadRequest>(LogReadRequestSchema)
+
+/** Schema for {@link LogReadResponse}. */
+export const LogReadResponseSchema = z.object({ lines: z.array(z.string()) })
+/** Codec for the `Logs.Read` response body. */
+export const LogReadResponseSchemaCodec =
+  SchemaCodec.create<LogReadResponse>(LogReadResponseSchema)

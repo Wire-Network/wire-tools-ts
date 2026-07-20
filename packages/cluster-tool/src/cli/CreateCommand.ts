@@ -3,6 +3,7 @@ import { ClusterManager } from "../cluster/ClusterManager.js"
 import { getLogger } from "../logging/Logger.js"
 import {
   applyClusterBuildOptionsArgs,
+  mergeSignatureProviderSsm,
   toClusterBuildOptions
 } from "./ClusterBuildOptionsArgs.js"
 import { ClusterCommand } from "./ClusterCommand.js"
@@ -23,7 +24,9 @@ export function createCreateCommand() {
     describe: "Create + bootstrap a new cluster",
     builder: (builder: Argv) => applyClusterBuildOptionsArgs(builder),
     handler: async (args: Record<string, unknown>) => {
-      const report = await ClusterManager.create(toClusterBuildOptions(args))
+      const report = await ClusterManager.create(
+        mergeSignatureProviderSsm(toClusterBuildOptions(args), args)
+      )
       log.info(
         `[cluster] bootstrap ${report.succeeded ? "SUCCEEDED" : "FAILED"}`
       )

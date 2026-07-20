@@ -88,6 +88,25 @@ describe("ClusterState", () => {
       expect(raw).not.toContain("PVT_")
       expect(raw).not.toContain(BatchOperatorAccount)
     })
+
+    it("nulls the anvil state + solana ledger paths in external-outpost mode", () => {
+      const ctx = fixtureContext({
+        clusterPath: dir,
+        dataPath: Path.join(dir, "data"),
+        walletPath: Path.join(dir, "wallet"),
+        externalOutposts: {
+          ethereum: {
+            addressFile: "/ext/outpost-addrs.json",
+            abiFiles: ["/ext/eth-abis/OPP.json"],
+            chainId: 11_155_111
+          },
+          solana: { idlFile: "/ext/solana-idls/liqsol_core.json" }
+        }
+      })
+      const state = ClusterState.capture(ctx)
+      expect(state.anvilStateFile).toBeNull()
+      expect(state.solanaLedgerPath).toBeNull()
+    })
   })
 
   describe("save / load round-trip (cluster-state.json)", () => {

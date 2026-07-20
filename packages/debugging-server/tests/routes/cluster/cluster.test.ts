@@ -2,11 +2,7 @@ import * as Fs from "node:fs"
 import * as OS from "node:os"
 import * as Path from "node:path"
 
-import {
-  ClusterFiles,
-  type ClusterConfig,
-  type ClusterState
-} from "@wireio/cluster-tool-shared"
+import { ClusterFiles } from "@wireio/cluster-tool-shared"
 import {
   ApiPaths,
   type GetClusterConfigResponse,
@@ -29,6 +25,82 @@ interface RpcResponseBody {
   id: number | null
   result?: unknown
   error?: RpcResponseError
+}
+
+/**
+ * A structurally-complete `cluster-config.json` payload (dummy but schema-valid
+ * values) — `ClusterAccess.getConfig` now validates it via
+ * `ClusterConfigSchemaCodec`, so a partial fixture no longer round-trips.
+ * `signatureProvider` / `externalOutposts` are schema-defaulted, so omitted.
+ */
+function fullConfig(clusterPath: string) {
+  return {
+    buildPath: "/x/build",
+    clusterPath,
+    dataPath: "/x/data",
+    walletPath: "/x/wallet",
+    producerCount: 1,
+    nodeCount: 1,
+    batchOperatorCount: 0,
+    underwriterCount: 0,
+    epochDurationSec: 60,
+    warmupEpochs: 1,
+    cooldownEpochs: 1,
+    ethereumPath: "/eth",
+    solanaPath: "/sol",
+    bind: {
+      kiod: { address: "127.0.0.1", port: 1 },
+      nodeop: {
+        address: "127.0.0.1",
+        ports: {
+          bios: { http: 2, p2p: 3 },
+          producers: [],
+          batch: [],
+          underwriters: []
+        }
+      },
+      anvil: { address: "127.0.0.1", port: 4 },
+      solana: {
+        address: "127.0.0.1",
+        ports: {
+          http: 5,
+          faucet: 6,
+          gossip: 7,
+          dynamicRange: { first: 8, last: 9 }
+        }
+      },
+      debuggingServer: { address: "127.0.0.1", port: 10 }
+    },
+    executables: {
+      nodeop: "/x/nodeop",
+      kiod: "/x/kiod",
+      clio: "/x/clio",
+      anvil: "/x/anvil",
+      solanaTestValidator: "/x/solana-test-validator"
+    },
+    report: { path: "/x/reports", basename: "cluster-build", formats: [] },
+    logging: {
+      levels: { console: "info", file: "debug" },
+      fileFormat: "jsonl"
+    },
+    requiredBatchOperatorCollateral: [],
+    requiredUnderwriterCollateral: [],
+    requiredProducerCollateral: [],
+    underwriterCollateral: null,
+    initialFinalizerKey: null
+  }
+}
+
+/** A structurally-complete `cluster-state.json` payload (validated via `ClusterStateSchemaCodec`). */
+function fullState(walletPath: string) {
+  return {
+    createdAt: new Date().toISOString(),
+    nodes: [],
+    walletPath,
+    anvilStateFile: null,
+    solanaLedgerPath: null,
+    solanaIdlFile: null
+  }
 }
 
 describe(`POST ${ApiPaths.Cluster.Endpoint}`, () => {
@@ -55,21 +127,13 @@ describe(`POST ${ApiPaths.Cluster.Endpoint}`, () => {
 
   beforeAll(async () => {
     Fs.mkdirSync(tmpDir, { recursive: true })
-    const config: Partial<ClusterConfig> = {
-      clusterPath: tmpDir,
-      epochDurationSec: 60
-    }
-    const state: Partial<ClusterState> = {
-      createdAt: new Date().toISOString(),
-      nodes: []
-    }
     Fs.writeFileSync(
       Path.join(tmpDir, ClusterFiles.ConfigFilename),
-      JSON.stringify(config)
+      JSON.stringify(fullConfig(tmpDir))
     )
     Fs.writeFileSync(
       Path.join(tmpDir, ClusterFiles.StateFilename),
-      JSON.stringify(state)
+      JSON.stringify(fullState(tmpDir))
     )
     server = await DebuggingServer.create({ clusterPath: tmpDir, port: 0 })
     const addr = await server.start()
@@ -104,7 +168,7 @@ describe(`Cluster.GetState with no state file`, () => {
     Fs.mkdirSync(tmpDir, { recursive: true })
     Fs.writeFileSync(
       Path.join(tmpDir, ClusterFiles.ConfigFilename),
-      JSON.stringify({ clusterPath: tmpDir })
+      JSON.stringify(fullConfig(tmpDir))
     )
     server = await DebuggingServer.create({ clusterPath: tmpDir, port: 0 })
     const addr = await server.start()

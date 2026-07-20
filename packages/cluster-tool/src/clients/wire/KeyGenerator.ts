@@ -5,6 +5,10 @@ import Assert from "node:assert"
 import { ethers } from "ethers"
 import { match } from "ts-pattern"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
+import {
+  SignatureProviderType,
+  type ClusterSignatureProviderConfig
+} from "@wireio/cluster-tool-shared"
 import { Constants } from "../../Constants.js"
 import { getLogger } from "../../logging/Logger.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
@@ -254,6 +258,92 @@ export namespace KeyGenerator {
     return ethereumKeyPairFromWallet(wallet)
   }
 
+  // ── signature-provider SOURCE (the spec's final segment) ──────────────────
+
+  /**
+   * Where a rendered `--signature-provider` spec sources its private key: `KEY`
+   * (inline private key), `SSM` (region + rendered secret id), or `KIOD` (a kiod
+   * wallet URL). Rendered as the spec's final segment by {@link toProviderSegment}.
+   */
+  export interface SignatureProviderSource {
+    /** The provider type. */
+    type: SignatureProviderType
+    /** AWS region (SSM only). */
+    awsRegion?: string
+    /** Rendered SSM secret id for this key (SSM only). */
+    awsSecretId?: string
+    /** kiod wallet URL (KIOD only). */
+    kiodUrl?: string
+  }
+
+  /** The default source — an inline `KEY:` spec (byte-identical to the historical output). */
+  export const DefaultKeySource: SignatureProviderSource = {
+    type: SignatureProviderType.KEY
+  }
+
+  /**
+   * Build the {@link SignatureProviderSource} for a cluster's signature-provider
+   * config: `KEY` → inline; `SSM` → region + the pre-rendered per-key
+   * `secretId`; `KIOD` → the `kiodUrl`.
+   *
+   * @param providerConfig - The cluster signature-provider config.
+   * @param secretId - The rendered SSM secret id for this key (SSM only).
+   * @param kiodUrl - The kiod wallet URL (KIOD only).
+   * @returns The rendering source.
+   */
+  export function keySource(
+    providerConfig: ClusterSignatureProviderConfig,
+    secretId: string,
+    kiodUrl: string
+  ): SignatureProviderSource {
+    return match(providerConfig.type)
+      .with(SignatureProviderType.KEY, () => DefaultKeySource)
+      .with(SignatureProviderType.SSM, () => {
+        Assert.ok(
+          providerConfig.ssm != null,
+          "KeyGenerator.keySource: an SSM provider requires ssm settings"
+        )
+        return {
+          type: SignatureProviderType.SSM,
+          awsRegion: providerConfig.ssm.awsRegion,
+          awsSecretId: secretId
+        }
+      })
+      .with(SignatureProviderType.KIOD, () => ({
+        type: SignatureProviderType.KIOD,
+        kiodUrl
+      }))
+      .exhaustive()
+  }
+
+  /**
+   * Render the final `<provider>:<…>` segment of a signature-provider spec:
+   * `KEY:<privateKey>` (inline — the default), `SSM:<region>:<secretId>`, or
+   * `KIOD:<url>`. The C++ `signature_provider_manager_plugin` parses every form.
+   */
+  function toProviderSegment(
+    source: SignatureProviderSource,
+    keyMaterial: string
+  ): string {
+    return match(source.type)
+      .with(SignatureProviderType.KEY, () => `KEY:${keyMaterial}`)
+      .with(SignatureProviderType.SSM, () => {
+        Assert.ok(
+          source.awsRegion != null && source.awsSecretId != null,
+          "KeyGenerator.toProviderSegment: an SSM source requires awsRegion + awsSecretId"
+        )
+        return `SSM:${source.awsRegion}:${source.awsSecretId}`
+      })
+      .with(SignatureProviderType.KIOD, () => {
+        Assert.ok(
+          source.kiodUrl != null,
+          "KeyGenerator.toProviderSegment: a KIOD source requires kiodUrl"
+        )
+        return `KIOD:${source.kiodUrl}`
+      })
+      .exhaustive()
+  }
+
   // ── nodeop signature-provider formatters + well-known dev keys ─────────────
 
   /**
@@ -267,17 +357,30 @@ export namespace KeyGenerator {
    *
    * @param pair - A signing key pair (`K1` / `BLS` / `EM` / `ED`).
    * @param providerName - Provider name — required for `EM` / `ED`, ignored otherwise.
-   * @returns The `<name>,<chain>,<key-tag>,<pub>,KEY:<priv>` provider spec.
+   * @param source - Where the spec sources its key (default {@link DefaultKeySource} → inline `KEY:`).
+   * @returns The `<name>,<chain>,<key-tag>,<pub>,<provider-segment>` provider spec.
    */
-  export function toSignatureProvider(pair: KeyPair, providerName?: string): string {
+  export function toSignatureProvider(
+    pair: KeyPair,
+    providerName?: string,
+    source: SignatureProviderSource = DefaultKeySource
+  ): string {
     return match(pair.type)
-      .with(KeyType.K1, () => toSignatureProviderK1(pair))
-      .with(KeyType.BLS, () => toSignatureProviderBLS(pair))
+      .with(KeyType.K1, () => toSignatureProviderK1(pair, source))
+      .with(KeyType.BLS, () => toSignatureProviderBLS(pair, source))
       .with(KeyType.EM, () =>
-        toSignatureProviderEM(pair as EthereumKeyPair, assertProviderName(pair, providerName))
+        toSignatureProviderEM(
+          pair as EthereumKeyPair,
+          assertProviderName(pair, providerName),
+          source
+        )
       )
       .with(KeyType.ED, () =>
-        toSignatureProviderED(pair as SolanaKeyPair, assertProviderName(pair, providerName))
+        toSignatureProviderED(
+          pair as SolanaKeyPair,
+          assertProviderName(pair, providerName),
+          source
+        )
       )
       .otherwise(() => {
         throw new Error(
@@ -296,38 +399,52 @@ export namespace KeyGenerator {
   }
 
   /** K1 block-signing provider spec (private — dispatched by {@link toSignatureProvider}). */
-  function toSignatureProviderK1(pair: KeyPair): string {
-    return `wire-${pair.publicKey},wire,wire,${pair.publicKey},KEY:${pair.privateKey}`
+  function toSignatureProviderK1(
+    pair: KeyPair,
+    source: SignatureProviderSource
+  ): string {
+    return `wire-${pair.publicKey},wire,wire,${pair.publicKey},${toProviderSegment(source, pair.privateKey)}`
   }
 
   /** BLS finalizer provider spec (private — dispatched by {@link toSignatureProvider}). */
-  function toSignatureProviderBLS(pair: KeyPair): string {
-    return `wire-bls-${pair.publicKey},wire,wire_bls,${pair.publicKey},KEY:${pair.privateKey}`
+  function toSignatureProviderBLS(
+    pair: KeyPair,
+    source: SignatureProviderSource
+  ): string {
+    return `wire-bls-${pair.publicKey},wire,wire_bls,${pair.publicKey},${toProviderSegment(source, pair.privateKey)}`
   }
 
   /**
    * EM (ethereum outpost) provider spec — 64-byte uncompressed public key
-   * (`0x` + 128 hex, no `04` marker) + `0x`-hex native private key.
+   * (`0x` + 128 hex, no `04` marker) + the provider-sourced key segment.
    */
-  function toSignatureProviderEM(pair: EthereumKeyPair, providerName: string): string {
+  function toSignatureProviderEM(
+    pair: EthereumKeyPair,
+    providerName: string,
+    source: SignatureProviderSource
+  ): string {
     return [
       providerName,
       "ethereum",
       "ethereum",
       ethereumUncompressedPublicKeyHex(pair),
-      `KEY:${ethereumSdkPrivateKey(pair).toNativeString()}`
+      toProviderSegment(source, ethereumSdkPrivateKey(pair).toNativeString())
     ].join(",")
   }
 
-  /** ED (solana outpost) provider spec — base58 public key + base58 64-byte secret. */
-  function toSignatureProviderED(pair: SolanaKeyPair, providerName: string): string {
+  /** ED (solana outpost) provider spec — base58 public key + the provider-sourced key segment. */
+  function toSignatureProviderED(
+    pair: SolanaKeyPair,
+    providerName: string,
+    source: SignatureProviderSource
+  ): string {
     const privateKey = solanaSdkPrivateKey(pair)
     return [
       providerName,
       "solana",
       "solana",
       privateKey.toPublic().toNativeString(),
-      `KEY:${privateKey.toNativeString()}`
+      toProviderSegment(source, privateKey.toNativeString())
     ].join(",")
   }
 

@@ -3,7 +3,7 @@ import Assert from "node:assert"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { probeEndpoint } from "../../utils/asyncUtils.js"
 import { existsAsync, which } from "../../utils/fsUtils.js"
-import { Localhost, toURL } from "../../utils/netUtils.js"
+import { Localhost, toDialAddress, toURL } from "../../utils/netUtils.js"
 import { ManagedProcess } from "./ManagedProcess.js"
 import type { ProcessManager } from "./ProcessManager.js"
 
@@ -125,9 +125,9 @@ export class AnvilProcess extends ManagedProcess {
     return probeEndpoint(this.rpcUrl)
   }
 
-  /** Dial URL — loopback (anvil binds `host`, which may be `0.0.0.0`). */
+  /** Dial URL — `host` mapped through {@link toDialAddress} (a `0.0.0.0` bind dials as loopback). */
   get rpcUrl(): string {
-    return toURL(this.config.port, Localhost)
+    return toURL(this.config.port, toDialAddress(this.config.host))
   }
 }
 

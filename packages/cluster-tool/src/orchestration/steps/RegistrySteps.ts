@@ -110,7 +110,11 @@ export namespace RegistrySteps {
       {
         kind: SysioChainsChainkind.CHAIN_KIND_EVM,
         code: { value: SlugName.from("ETHEREUM") },
-        external_chain_id: AnvilProcess.DefaultChainId,
+        // External-outpost mode registers the REAL remote chain id so the
+        // depot's chains row matches what the daemons dial (networkFromConfig).
+        external_chain_id:
+          ctx.config.externalOutposts?.ethereum.chainId ??
+          AnvilProcess.DefaultChainId,
         name: "Ethereum (anvil)",
         description: "Local anvil EVM chain (test cluster)"
       },

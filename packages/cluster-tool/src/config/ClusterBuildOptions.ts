@@ -3,6 +3,7 @@ import type {
   ChainTokenAmount,
   ClusterConfigLoggingFileFormat,
   ClusterConfigLoggingLevels,
+  ClusterSignatureProviderOptions,
   CollateralRequirement
 } from "@wireio/cluster-tool-shared"
 import type { Report } from "../report/Report.js"
@@ -49,4 +50,9 @@ export interface ClusterBuildOptions {
   // outputs
   report?: Report.Options
   logging?: LoggingOptions
+  // signature provider — how the cluster's own signing keys are handled (default KEY)
+  signatureProvider?: ClusterSignatureProviderOptions
+  // external inputs (file paths → `--bind-config` / `--external-outpost-config`)
+  bindConfig?: string
+  externalOutpostConfig?: string
 }

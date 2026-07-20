@@ -1,14 +1,15 @@
 import * as Http from "node:http"
 
+import { Either } from "@3fv/prelude-ts"
 import { match } from "ts-pattern"
 import { WebSocketServer, type WebSocket } from "ws"
 import {
   ApiPaths,
   ClosedReason,
   StreamErrorCode,
+  StreamFrameSchemaCodec,
   StreamFrameType,
   StreamTopic,
-  isStreamFrame,
   type ClosedFrame,
   type ErrorFrame,
   type EventFrame,
@@ -113,18 +114,15 @@ export class StreamServer {
   }
 
   private async onMessage(ws: WebSocket, raw: string): Promise<void> {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(raw)
-    } catch {
-      sendError(ws, StreamErrorCode.ParseError, "Frame is not valid JSON")
+    // Parse + validate the wire frame via the codec (replaces the hand-rolled
+    // JSON.parse + isStreamFrame guard); a malformed frame is a ParseError.
+    const frame = Either.try(() =>
+      StreamFrameSchemaCodec.deserialize(raw)
+    ).getOrElse(null)
+    if (frame == null) {
+      sendError(ws, StreamErrorCode.ParseError, "Frame is not a valid StreamFrame")
       return
     }
-    if (!isStreamFrame(parsed)) {
-      sendError(ws, StreamErrorCode.InvalidFrameType, "Unknown frame type")
-      return
-    }
-    const frame = parsed as StreamFrame
     await match(frame)
       .with({ type: StreamFrameType.Subscribe }, async f => {
         await this.handleSubscribe(ws, f as SubscribeFrame<StreamTopic>)
@@ -203,7 +201,7 @@ export class StreamServer {
 
   private createStream(
     frame: SubscribeFrame<StreamTopic>
-  ): ServerSideStream<unknown> | null {
+  ): ServerSideStream<unknown> {
     return match(frame.topic)
       .with(StreamTopic.LogTail, () => {
         const params = frame.params as LogTailParams
@@ -268,7 +266,7 @@ function sendError(
 function safeSend(ws: WebSocket, frame: StreamFrame): void {
   if (ws.readyState !== ws.OPEN) return
   try {
-    ws.send(JSON.stringify(frame))
+    ws.send(StreamFrameSchemaCodec.serialize(frame))
   } catch (err) {
     log.warn("WS send failed", err)
   }

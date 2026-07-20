@@ -1,7 +1,9 @@
 import * as Fs from "node:fs"
 import * as Path from "node:path"
 import {
+  ClusterConfigSchemaCodec,
   ClusterFiles,
+  ClusterStateSchemaCodec,
   type ClusterConfig,
   type ClusterState
 } from "@wireio/cluster-tool-shared"
@@ -131,14 +133,14 @@ export class LocalFileDebuggingClient extends DebuggingClient {
         ClusterFiles.ConfigFilename
       ),
       raw = await Fs.promises.readFile(file, "utf8")
-    return JSON.parse(raw) as ClusterConfig
+    return ClusterConfigSchemaCodec.deserialize(raw)
   }
 
   async getClusterState(): Promise<ClusterState> {
     const file = Path.join(this.config.clusterPath, ClusterFiles.StateFilename)
     if (!Fs.existsSync(file)) return null
     const raw = await Fs.promises.readFile(file, "utf8")
-    return JSON.parse(raw) as ClusterState
+    return ClusterStateSchemaCodec.deserialize(raw)
   }
 
   // -------------------------------------------------------------------------

@@ -21,7 +21,7 @@ Never use `npm` or `yarn`.
 ```bash
 pnpm install               # links workspace + sibling-repo packages
 pnpm build                 # tsc -b project references (incremental)
-pnpm test                  # build + jest across all 6 jest projects
+pnpm test                  # build + jest across all 8 jest projects
 pnpm --filter @wireio/cluster-tool test    # harness unit tests only
 pnpm clean                 # remove lib/ + tsbuildinfo everywhere
 
@@ -55,6 +55,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 | Package | Purpose |
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
+| `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize) |
 | `flow-*` (13 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and the six swap variants |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
@@ -74,6 +75,14 @@ Flow packages depend on `@wireio/cluster-tool` via `workspace:*`.
 - `strictNullChecks` is OFF (`etc/tsconfig/tsconfig.base.json`) — never add
   `?? null` / `| null` ceremony; explicit `null` only where it carries runtime
   meaning (JSON persistence). See the manifest `prefer-null-over-undefined.md`.
+- **Persisted shapes are zod schema-first.** The complex types in
+  `@wireio/cluster-tool-shared` (`ClusterConfig`, `BindConfig`, `ClusterState`,
+  `ChainTokenAmount`, `SignatureProviderConfig`, `ExternalOutpostConfig`,
+  `ExternalClusterConfig`) are `z.infer` of a zod schema, and every
+  serialize/deserialize path goes through the generic `SchemaCodec` factory
+  (`SchemaCodec.create<T>(schema)` → `{ serialize, deserialize, check }`) — which
+  validates on both ends (safeParse results ride `Either`, never `if`) and
+  bridges the `TokenAmount` bigint round-trip via a `z.codec`.
 
 ## The Orchestration Model (read STYLE.md "Orchestration Model" first)
 
@@ -83,7 +92,7 @@ One declarative model is shared by the `wire-cluster-tool` CLI and every flow:
   `ClusterBuildPhase` → `ClusterBuildStep`; running it produces the
   **`Report`** (CSV/MD/HTML under `<cluster>/reports/`) — the per-step
   narrative that IS the deliverable. `ClusterBuildDefaults.create()` registers
-  the ~40-phase bootstrap; a flow's `FlowScenario.build(cluster)` appends its
+  the ~40-phase bootstrap; a flow's `FlowScenario.plan(cluster)` appends its
   scenario phases.
 - **Every write/tx/spawn is its own Step** (factory `plan*`, named runner
   `run*`, typed `StepInput`, actor-first signature); reads run freely inside
@@ -178,8 +187,27 @@ to include `src/`, the barrel or path map is broken — fix it there.
 ```bash
 wire-cluster-tool create --cluster-path <dir> --build-path <wire-sysio-build> \
   --ethereum-path <wire-ethereum> --solana-path <wire-solana> [options]
+wire-cluster-tool run -d <dir>         # start an existing cluster from saved state
 wire-cluster-tool destroy -d <dir>     # stop + delete
+wire-cluster-tool -d <dir> package --package-type zip   # per-node archives (post-create)
+wire-cluster-tool create-external-config \              # clone → deployable external dir + emit its ExternalClusterConfig
+  --local-cluster-path <created-dir> --external-cluster-path <new-dir> \
+  --external-bind-config <bind.json>
 ```
+
+`create` also carries `--signature-provider-type <KEY|SSM|KIOD>` (default KEY)
+and `--signature-provider-ssm '<inline-json>'|<file>` (the SSM region +
+secret-id pattern), plus `--external-outpost-config <file>` (bootstrap the depot
+against already-deployed REMOTE ETH+SOL outposts — no local anvil/validator) and
+`--bind-config <file>` (a complete `BindConfig` used verbatim, or a partial
+override merged over the resolved defaults; a remote anvil/solana address
+requires `--external-outpost-config`); `package` writes one `<node>.<ext>` per
+node under `<cluster>/packages/` (a hand-off artifact for a multihost environment
+with distinct compute + storage — S3/EC2, GCS, or any other, loosely coupled).
+`create-external-config` clones a CREATED, STOPPED local cluster into a deployable
+external directory with the external `BindConfig` merged in and emits its
+self-described `external-cluster-config.json` (the Validate → Clone → Rebind →
+Emit → Verify pipeline; a mismatched bind config fails fast before any write).
 
 `create` exposes every `ClusterBuildOptions` leaf as a `--kebab-path` flag via
 the SAME `applyClusterBuildOptionsArgs` surface every flow uses (env vars

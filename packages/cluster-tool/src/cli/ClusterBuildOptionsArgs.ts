@@ -1,6 +1,13 @@
+import Fs from "node:fs"
 import Path from "node:path"
 import { asOption } from "@3fv/prelude-ts"
 import { isString, Level } from "@wireio/shared"
+import {
+  ClusterSignatureProviderSSMOptionsSchema,
+  SchemaCodec,
+  SignatureProviderType,
+  type ClusterSignatureProviderSSMOptions
+} from "@wireio/cluster-tool-shared"
 import { camelCase, defaultsDeep, range } from "lodash"
 import { match, P } from "ts-pattern"
 import type { Argv, Options as YargsOption } from "yargs"
@@ -29,6 +36,14 @@ const CliDefault = {
   epochDurationSec: 60
 } as const
 
+/** The dedicated `--signature-provider-ssm` flag: inline JSON, or a file path when the value doesn't start with `{`. */
+export const SignatureProviderSsmFlag = "signature-provider-ssm"
+
+/** Validated codec for the `--signature-provider-ssm` payload. */
+const ssmOptionsCodec = SchemaCodec.create<ClusterSignatureProviderSSMOptions>(
+  ClusterSignatureProviderSSMOptionsSchema
+)
+
 /** A scalar option-leaf value — the yargs primitive kinds a flag can carry. */
 export type OptionLeafValue = string | number | boolean
 
@@ -54,7 +69,8 @@ export class OptionLeafSpec {
     readonly value: OptionLeafValue | null,
     readonly describe: string,
     readonly required = false,
-    readonly explicitType: OptionLeafType | null = null
+    readonly explicitType: OptionLeafType | null = null,
+    readonly choices: readonly string[] | null = null
   ) {}
 }
 
@@ -87,6 +103,7 @@ export interface OptionLeaf {
   value: OptionLeafValue | null
   describe: string
   required: boolean
+  choices: readonly string[] | null
 }
 
 /** Scalar leaf whose yargs type is inferred from a non-null default `value`. */
@@ -102,6 +119,15 @@ function optionalLeaf(type: OptionLeafType, describe: string): OptionLeafSpec {
 /** Required leaf with no default — `demandOption` unless a caller seeds it. */
 function requiredLeaf(type: OptionLeafType, describe: string): OptionLeafSpec {
   return new OptionLeafSpec(null, describe, true, type)
+}
+
+/** String leaf constrained to `choices` (yargs enforces the set), with a seeded default. */
+function choicesLeaf(
+  choices: readonly string[],
+  value: OptionLeafValue,
+  describe: string
+): OptionLeafSpec {
+  return new OptionLeafSpec(value, describe, false, null, choices)
 }
 
 /**
@@ -157,7 +183,8 @@ function toLeaf(spec: OptionLeafSpec, path: string[]): OptionLeaf {
     type: leafType(spec),
     value: spec.value,
     describe: spec.describe,
-    required: spec.required
+    required: spec.required,
+    choices: spec.choices
   }
 }
 
@@ -339,6 +366,23 @@ export function buildOptionShape(
     // ── network binding ──
     bindAll: leaf(false, "bind every daemon to 0.0.0.0 instead of loopback"),
     bind: buildBindShape(nodeCount, batchCount, underwriterCount),
+    bindConfig: optionalLeaf(
+      OptionLeafType.string,
+      "path to a BindConfig JSON (complete → used verbatim; partial → merged over resolved defaults)"
+    ),
+    // ── external outposts (bootstrap the depot against already-deployed remote outposts) ──
+    externalOutpostConfig: optionalLeaf(
+      OptionLeafType.string,
+      "path to an ExternalOutpostConfig JSON (ETH + SOL outposts already run on real chains)"
+    ),
+    // ── signature provider (how the cluster's own signing keys are handled) ──
+    signatureProvider: {
+      type: choicesLeaf(
+        Object.values(SignatureProviderType),
+        SignatureProviderType.KEY,
+        "signature provider type: KEY (inline), SSM, or KIOD"
+      )
+    },
     // ── collateral (empty-by-default → no indexed flags) ──
     requiredProducerCollateral: [],
     requiredBatchOperatorCollateral: [],
@@ -366,7 +410,7 @@ type OptionArgv = Record<string, unknown>
 function readDeep(
   source: ClusterBuildOptions,
   path: string[]
-): OptionLeafValue | null {
+): OptionLeafValue {
   const found = path.reduce<unknown>(
     (node, segment) =>
       node != null && typeof node === "object"
@@ -393,7 +437,8 @@ function toYargsOption(
       // yargs mandates `undefined` for "no default"; normalize `null` at the boundary.
       default: seeded ?? undefined,
       demandOption: optionLeaf.required && seeded == null,
-      // conditional spread — the `alias` KEY itself is absent for unaliased flags
+      // conditional spread — `choices` / `alias` keys are absent when unset
+      ...(optionLeaf.choices != null ? { choices: optionLeaf.choices } : {}),
       ...asOption(AliasByFlag[optionLeaf.flag])
         .map((alias): Partial<Pick<YargsOption, "alias">> => ({ alias }))
         .getOrElse({})
@@ -461,7 +506,7 @@ export function applyClusterBuildOptionsArgs(
     environmentPathDefaults(environment),
     defaults
   )
-  return flattenOptionLeaves(buildOptionShape(seededDefaults)).reduce(
+  const withShape = flattenOptionLeaves(buildOptionShape(seededDefaults)).reduce(
     (instance, optionLeaf) =>
       instance.option(
         optionLeaf.flag,
@@ -469,6 +514,14 @@ export function applyClusterBuildOptionsArgs(
       ),
     yargs
   )
+  // `--signature-provider-ssm` lives OUTSIDE the option shape: its payload is a
+  // JSON object / file path, not a scalar leaf. A leading `{` selects inline
+  // JSON; otherwise it is read as a file path.
+  return withShape.option(SignatureProviderSsmFlag, {
+    type: "string",
+    describe:
+      "SSM publish settings as inline JSON ({awsRegion, awsSecretIdPattern}) or a file path (required when --signature-provider-type SSM)"
+  })
 }
 
 /** Read a flag off argv by its kebab form, falling back to yargs' camelCase alias. */
@@ -502,7 +555,7 @@ function isIndexSegment(segment: string): boolean {
 function childOf(
   node: OptionTreeContainer,
   segment: string
-): OptionTreeValue | null {
+): OptionTreeValue {
   return (node as OptionTreeObject)[segment] ?? null
 }
 
@@ -647,4 +700,46 @@ function carryNonFlagOption<K extends NonFlagOptionKey>(
   if (defaults[key] != null) {
     options[key] = defaults[key]
   }
+}
+
+/**
+ * Parse the dedicated `--signature-provider-ssm` flag — inline JSON (leading
+ * `{`) or a file path — into {@link ClusterSignatureProviderSSMOptions}, or
+ * `null` when the flag is absent.
+ *
+ * @param argv - The parsed yargs result.
+ * @returns The SSM options, or `null`.
+ */
+export function toClusterSignatureProviderSsmOptions(
+  argv: OptionArgv
+): ClusterSignatureProviderSSMOptions {
+  const raw = readArg(argv, SignatureProviderSsmFlag)
+  if (!isString(raw) || raw.trim().length === 0) {
+    return null
+  }
+  const text = raw.trim(),
+    json = text.startsWith("{")
+      ? text
+      : Fs.readFileSync(Path.resolve(text), "utf-8")
+  return ssmOptionsCodec.deserialize(json)
+}
+
+/**
+ * Merge the `--signature-provider-ssm` payload into `options.signatureProvider`
+ * (called after {@link toClusterBuildOptions}) — the single create-side hook
+ * shared by `CreateCommand` and `FlowCLI`. A no-op when the flag is absent.
+ *
+ * @param options - The resolved build options (mutated + returned).
+ * @param argv - The parsed yargs result.
+ * @returns `options`, with `signatureProvider.ssm` filled when supplied.
+ */
+export function mergeSignatureProviderSsm(
+  options: ClusterBuildOptions,
+  argv: OptionArgv
+): ClusterBuildOptions {
+  const ssm = toClusterSignatureProviderSsmOptions(argv)
+  if (ssm != null) {
+    options.signatureProvider = { ...(options.signatureProvider ?? {}), ssm }
+  }
+  return options
 }

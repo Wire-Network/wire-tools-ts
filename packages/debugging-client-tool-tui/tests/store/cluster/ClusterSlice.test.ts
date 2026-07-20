@@ -2,6 +2,7 @@ import {
   ClusterConfigLoggingFileFormat,
   ClusterConfigReportFormat,
   ClusterStateNodeRole,
+  SignatureProviderType,
   type ClusterConfig,
   type ClusterState
 } from "@wireio/cluster-tool-shared"
@@ -80,7 +81,9 @@ const stubConfig: ClusterConfig = {
   requiredUnderwriterCollateral: [],
   requiredProducerCollateral: [],
   underwriterCollateral: null,
-  initialFinalizerKey: null
+  initialFinalizerKey: null,
+  signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
+  externalOutposts: null
 }
 
 /** A complete `ClusterState` fixture (post-bootstrap snapshot, no nodes). */

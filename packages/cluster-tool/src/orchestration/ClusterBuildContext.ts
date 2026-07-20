@@ -9,7 +9,7 @@ import { WireClient } from "../clients/wire/WireClient.js"
 import { ProcessManager } from "../cluster/processes/ProcessManager.js"
 
 import type { Logger } from "../logging/Logger.js"
-import { Localhost, toURL } from "../utils/netUtils.js"
+import { toDialAddress, toURL } from "../utils/netUtils.js"
 import { OutputStore } from "./OutputStore.js"
 import {
   ClusterKeyStore,
@@ -49,21 +49,30 @@ export class ClusterBuildContext<
       clusterPath: this.config.clusterPath,
       binary: this.config.executables.clio,
       nodeopUrl: ClusterBuildContext.nodeopUrl(this.config),
-      kiodUrl: toURL(this.config.bind.kiod.port, Localhost)
+      kiodUrl: toURL(
+        this.config.bind.kiod.port,
+        toDialAddress(this.config.bind.kiod.address)
+      )
     }))
   }
 
   /** The Ethereum client, bound to the cluster's anvil RPC. */
   get ethereum(): EthereumClient {
     return (this.ethereumClient ??= new EthereumClient(
-      toURL(this.config.bind.anvil.port, Localhost)
+      toURL(
+        this.config.bind.anvil.port,
+        toDialAddress(this.config.bind.anvil.address)
+      )
     ))
   }
 
   /** The Solana client, bound to the cluster's validator RPC (ambient payer). */
   get solana(): SolanaClient {
     return (this.solanaClient ??= new SolanaClient(
-      toURL(this.config.bind.solana.ports.http, Localhost),
+      toURL(
+        this.config.bind.solana.ports.http,
+        toDialAddress(this.config.bind.solana.address)
+      ),
       new SolanaWallet(Keypair.generate())
     ))
   }
@@ -98,6 +107,9 @@ export namespace ClusterBuildContext {
   /** The nodeop HTTP dial URL — the first producer (bios retires after handoff). */
   export function nodeopUrl(config: ClusterConfig): string {
     const ports = config.bind.nodeop.ports
-    return toURL(ports.producers[0]?.http ?? ports.bios.http, Localhost)
+    return toURL(
+      ports.producers[0]?.http ?? ports.bios.http,
+      toDialAddress(config.bind.nodeop.address)
+    )
   }
 }

@@ -37,7 +37,8 @@
     "@wireio/opp-typescript-models": "^1.0.26",
     "get-port": "^7.2.0",
     "lodash": "^4.17.21",
-    "ts-pattern": "^5.9.0"
+    "ts-pattern": "^5.9.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/lodash": "^4.17.24",

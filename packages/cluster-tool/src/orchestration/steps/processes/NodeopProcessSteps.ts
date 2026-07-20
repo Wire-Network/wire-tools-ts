@@ -4,6 +4,7 @@ import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
 import { match } from "ts-pattern"
+import { ClusterConfigProvider } from "../../../config/ClusterConfigProvider.js"
 import { NodeConfig, NodeRole } from "../../../config/NodeConfig.js"
 import { NodeopProcess } from "../../../cluster/processes/NodeopProcess.js"
 import { Report } from "../../../report/Report.js"
@@ -251,9 +252,10 @@ export namespace NodeopProcessSteps {
   ): string[] {
     if (node.role !== NodeRole.operator) return []
     const artifacts = ctx.outputs.assert(OperatorDaemonArtifactsKey),
-      network = OperatorDaemonTool.networkFromConfig(ctx.config)
+      network = OperatorDaemonTool.networkFromConfig(ctx.config),
+      keySourceFor = ClusterConfigProvider.signatureProviderSource(ctx.config)
     return node.batchOperatorAccount != null
-      ? OperatorDaemonTool.batchOperatorArgs(operator, artifacts, network)
-      : OperatorDaemonTool.underwriterArgs(operator, artifacts, network)
+      ? OperatorDaemonTool.batchOperatorArgs(operator, artifacts, network, keySourceFor)
+      : OperatorDaemonTool.underwriterArgs(operator, artifacts, network, keySourceFor)
   }
 }

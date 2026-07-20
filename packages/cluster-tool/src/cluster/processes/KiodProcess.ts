@@ -2,7 +2,7 @@ import Assert from "node:assert"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { probeEndpoint } from "../../utils/asyncUtils.js"
 import { existsAsync } from "../../utils/fsUtils.js"
-import { Localhost, toURL } from "../../utils/netUtils.js"
+import { Localhost, toDialAddress, toURL } from "../../utils/netUtils.js"
 import { ManagedProcess } from "./ManagedProcess.js"
 import type { ProcessManager } from "./ProcessManager.js"
 
@@ -12,6 +12,8 @@ export interface KiodOptions {
   binary?: string
   /** Wallet directory (data/config/wallet dir + cwd). Required. */
   walletPath?: string
+  /** Listen address (from `bind.kiod.address`). Defaults to loopback. */
+  address?: string
   /** HTTP port. Defaults to a free port preferring `DefaultKiod`. */
   port?: number
   /** Unlock timeout (seconds). */
@@ -47,6 +49,7 @@ export class KiodProcess extends ManagedProcess {
     const config: KiodConfig = {
       binary: options.binary,
       walletPath: options.walletPath,
+      address: options.address ?? Localhost,
       port,
       unlockTimeout: options.unlockTimeout ?? KiodProcess.DefaultUnlockTimeout,
       httpMaxResponseTimeMs:
@@ -85,7 +88,7 @@ export class KiodProcess extends ManagedProcess {
       "--config-dir",
       this.config.walletPath,
       `--unlock-timeout=${this.config.unlockTimeout}`,
-      `--http-server-address=${Localhost}:${this.config.port}`,
+      `--http-server-address=${this.config.address}:${this.config.port}`,
       "--http-max-response-time-ms",
       String(this.config.httpMaxResponseTimeMs),
       "--verbose-http-errors",
@@ -102,7 +105,7 @@ export class KiodProcess extends ManagedProcess {
   }
 
   get httpUrl(): string {
-    return toURL(this.config.port, Localhost)
+    return toURL(this.config.port, toDialAddress(this.config.address))
   }
 }
 

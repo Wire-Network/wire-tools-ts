@@ -10,6 +10,9 @@ import {
   ProcessManager
 } from "@wireio/cluster-tool/cluster/processes"
 import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
+import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
+import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
+import { SignatureProviderType } from "@wireio/cluster-tool-shared"
 import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
 import {
   OperatorDaemonArtifactsKey,
@@ -17,6 +20,7 @@ import {
   type OperatorDaemonArtifacts
 } from "@wireio/cluster-tool/orchestration/outputs"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
+import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
 
 /** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
@@ -65,6 +69,12 @@ function valuesOf(args: string[], flag: string): string[] {
   return args.flatMap((arg, index) => (arg === flag ? [args[index + 1]] : []))
 }
 
+/**
+ * These daemon-arg assertions pin the byte-identical KEY (default) source; the
+ * SSM/KIOD source rendering is covered by the signature-provider tests.
+ */
+const keySourceFor = () => KeyGenerator.DefaultKeySource
+
 describe("OperatorDaemonTool", () => {
   describe("runDaemonStart", () => {
     it("launches the daemon through NodeopProcess.startWithRecovery (dirty-chainbase resilient)", async () => {
@@ -101,7 +111,7 @@ describe("OperatorDaemonTool", () => {
 
   describe("batchOperatorArgs", () => {
     const operator = operatorAccount("batchopaaaa", OperatorType.BATCH)
-    const args = OperatorDaemonTool.batchOperatorArgs(operator, artifacts, network)
+    const args = OperatorDaemonTool.batchOperatorArgs(operator, artifacts, network, keySourceFor)
 
     it("loads the batch plugin set at irreversible read-mode", () => {
       expect(valuesOf(args, "--read-mode")).toEqual(["irreversible"])
@@ -164,20 +174,49 @@ describe("OperatorDaemonTool", () => {
         OperatorDaemonTool.batchOperatorArgs(
           operatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER),
           artifacts,
-          network
+          network,
+          keySourceFor
         )
       ).toThrow(/not a batch operator/)
+    })
+
+    it("renders the operator's SOLANA (ED) provider as SSM under an SSM cluster", () => {
+      // H6: the ED key must obtain its SSM source (not render inline KEY), or
+      // the published ED param is orphaned and SSM isolation is defeated.
+      const ssmKeySourceFor = ClusterConfigProvider.signatureProviderSource(
+          fixtureConfig({
+            clusterPath: "/tmp/wire-ssm",
+            signatureProvider: {
+              type: SignatureProviderType.SSM,
+              ssm: {
+                awsRegion: "us-east-1",
+                awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
+              }
+            }
+          })
+        ),
+        ssmArgs = OperatorDaemonTool.batchOperatorArgs(
+          operator,
+          artifacts,
+          network,
+          ssmKeySourceFor
+        ),
+        solProvider = valuesOf(ssmArgs, "--signature-provider").find(provider =>
+          provider.startsWith(`sol-${operator.account}`)
+        )
+      expect(solProvider).toMatch(/,SSM:us-east-1:/)
+      expect(solProvider).not.toMatch(/,KEY:/)
     })
   })
 
   describe("underwriterArgs", () => {
     const operator = operatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER)
-    const args = OperatorDaemonTool.underwriterArgs(operator, artifacts, network)
+    const args = OperatorDaemonTool.underwriterArgs(operator, artifacts, network, keySourceFor)
 
     it("passes the SCALED action timeout (flow timing scale reaches the daemon)", () => {
       process.env.WIRE_FLOW_TIMEOUT_SCALE = "4"
       try {
-        const scaled = OperatorDaemonTool.underwriterArgs(operator, artifacts, network)
+        const scaled = OperatorDaemonTool.underwriterArgs(operator, artifacts, network, keySourceFor)
         expect(valuesOf(scaled, "--underwriter-action-timeout-ms")).toEqual([
           String(OperatorDaemonTool.UnderwriterActionTimeoutMs * 4)
         ])

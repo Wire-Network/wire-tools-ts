@@ -29,6 +29,7 @@ export namespace KiodProcessSteps {
     const kiod = await KiodProcess.create(ctx.processManager, {
       binary: ctx.config.executables.kiod,
       walletPath: ctx.config.walletPath,
+      address: ctx.config.bind.kiod.address,
       port: ctx.config.bind.kiod.port
     })
     await kiod.start()
