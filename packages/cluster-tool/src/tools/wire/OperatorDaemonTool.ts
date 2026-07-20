@@ -50,10 +50,15 @@ import { toDialAddress, toURL } from "../../utils/netUtils.js"
 export namespace OperatorDaemonTool {
   // ── plugin sets ────────────────────────────────────────────────────────────
 
+  /** The OPP-debugging sink plugin — reports OPP envelope artifacts to the
+   *  external debugging server; dropped from a daemon's plugin set when the
+   *  cluster's debugging server is disabled (`debuggingServerEnabled === false`). */
+  export const ExternalDebuggingPlugin = "sysio::external_debugging_plugin"
+
   /** Plugins a batch-operator daemon loads. */
   export const BatchOperatorPlugins = [
     "sysio::batch_operator_plugin",
-    "sysio::external_debugging_plugin",
+    ExternalDebuggingPlugin,
     "sysio::outpost_ethereum_client_plugin",
     "sysio::outpost_solana_client_plugin",
     "sysio::cron_plugin"
@@ -64,9 +69,18 @@ export namespace OperatorDaemonTool {
     "sysio::underwriter_plugin",
     "sysio::outpost_ethereum_client_plugin",
     "sysio::outpost_solana_client_plugin",
-    "sysio::external_debugging_plugin",
+    ExternalDebuggingPlugin,
     "sysio::cron_plugin"
   ] as const
+
+  /** `plugins` with the external-debugging sink removed when the server is off. */
+  const debuggingGatedPlugins = (
+    plugins: readonly string[],
+    debuggingServerEnabled: boolean
+  ): readonly string[] =>
+    debuggingServerEnabled
+      ? plugins
+      : plugins.filter(plugin => plugin !== ExternalDebuggingPlugin)
 
   // ── daemon tuning + protocol constants ────────────────────────────────────
 
@@ -132,6 +146,7 @@ export namespace OperatorDaemonTool {
     readonly ethereumChainId: number
     readonly solanaRpcUrl: string
     readonly debuggingServerUrl: string
+    readonly debuggingServerEnabled: boolean
   }
 
   /** Resolve the daemon network endpoints from the resolved cluster config. */
@@ -154,7 +169,8 @@ export namespace OperatorDaemonTool {
       debuggingServerUrl: toURL(
         config.bind.debuggingServer.port,
         toDialAddress(config.bind.debuggingServer.address)
-      )
+      ),
+      debuggingServerEnabled: config.debuggingServerEnabled !== false
     }
   }
 
@@ -368,7 +384,7 @@ export namespace OperatorDaemonTool {
     assertOutpostKeys(operator)
     return [
       ...pair("--read-mode", WireClient.FinalityType.irreversible),
-      ...pluginArgs(BatchOperatorPlugins),
+      ...pluginArgs(debuggingGatedPlugins(BatchOperatorPlugins, network.debuggingServerEnabled)),
       ...pair(
         "--signature-provider",
         KeyGenerator.toSignatureProvider(
@@ -384,7 +400,9 @@ export namespace OperatorDaemonTool {
         "--batch-delivery-timeout-ms",
         String(scaleTimeoutMs(BatchDeliveryTimeoutMs))
       ),
-      ...pair("--ext-debugging-server", network.debuggingServerUrl),
+      ...(network.debuggingServerEnabled
+        ? pair("--ext-debugging-server", network.debuggingServerUrl)
+        : []),
       ...outpostClientArgs(operator, artifacts, network, keySourceFor),
       // Per-chain outpost bindings (repeatable CSV specs; replaced the removed
       // --batch-eth-{client-id,opp-addr,opp-inbound-addr} / --batch-sol-program-id —
@@ -433,7 +451,7 @@ export namespace OperatorDaemonTool {
     assertOutpostKeys(operator)
     return [
       ...pair("--read-mode", WireClient.FinalityType.irreversible),
-      ...pluginArgs(UnderwriterPlugins),
+      ...pluginArgs(debuggingGatedPlugins(UnderwriterPlugins, network.debuggingServerEnabled)),
       ...pair(
         "--signature-provider",
         KeyGenerator.toSignatureProvider(
@@ -448,7 +466,9 @@ export namespace OperatorDaemonTool {
         "--underwriter-action-timeout-ms",
         String(scaleTimeoutMs(UnderwriterActionTimeoutMs))
       ),
-      ...pair("--ext-debugging-server", network.debuggingServerUrl),
+      ...(network.debuggingServerEnabled
+        ? pair("--ext-debugging-server", network.debuggingServerUrl)
+        : []),
       ...outpostClientArgs(operator, artifacts, network, keySourceFor),
       // Per-chain outpost wiring (repeatable CSV specs; replaced the removed
       // --underwriter-eth-opreg-addr / --underwriter-{eth,sol}-client-id):

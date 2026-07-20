@@ -163,7 +163,13 @@ export const ClusterConfigSchema = z.object({
    * for the standard local-anvil/local-solana bootstrap. Schema-defaulted to
    * `null` so pre-existing configs stay loadable.
    */
-  externalOutposts: ExternalOutpostConfigSchema.nullable().default(null)
+  externalOutposts: ExternalOutpostConfigSchema.nullable().default(null),
+  /**
+   * Whether operator daemons load the OPP-debugging sink plugin AND the cluster
+   * starts the debugging server. Schema-defaulted `true`; persisted `false` by
+   * `create-external-config --no-debugging-server` (run without a debugging server).
+   */
+  debuggingServerEnabled: z.boolean().default(true)
 })
 /** THE canonical cluster configuration — the schema-inferred shape of {@link ClusterConfigSchema}. */
 export type ClusterConfig = z.infer<typeof ClusterConfigSchema>

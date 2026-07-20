@@ -73,7 +73,8 @@ describe("ClusterConfig shape", () => {
     underwriterCollateral: null,
     initialFinalizerKey: null,
     signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
-    externalOutposts: null
+    externalOutposts: null,
+    debuggingServerEnabled: true
   }
 
   it("persists the report/logging enum fields as their wire spellings", () => {
@@ -100,10 +101,11 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated).toEqual(config)
   })
 
-  it("loads a legacy config (no signatureProvider/externalOutposts) via schema defaults", () => {
+  it("loads a legacy config (no signatureProvider/externalOutposts/debuggingServerEnabled) via schema defaults", () => {
     const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
     delete parsed.signatureProvider
     delete parsed.externalOutposts
+    delete parsed.debuggingServerEnabled
     const rehydrated = ClusterConfigSchemaCodec.deserialize(
       JSON.stringify(parsed)
     )
@@ -112,5 +114,6 @@ describe("ClusterConfig shape", () => {
       ssm: null
     })
     expect(rehydrated.externalOutposts).toBeNull()
+    expect(rehydrated.debuggingServerEnabled).toBe(true)
   })
 })

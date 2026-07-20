@@ -57,12 +57,44 @@ export namespace ExternalClusterConfigSteps {
   const NodeConfigFilename = "config.ini"
   const NodeLoggingFilename = "logging.json"
 
+  /** Directory basenames excluded from the external clone (runtime artifacts). */
+  const CloneExcludedDirnames: ReadonlySet<string> = new Set(["logs", "reports"])
+  /** Pidfile suffix excluded from the external clone. */
+  const PidFileSuffix = ".pid"
+
+  /**
+   * Whether a cluster-tree entry should be copied into the external clone.
+   * Excludes runtime artifacts (`logs/`, `reports/`, `*.pid`) AND non-regular
+   * inodes that `Fs.cpSync` cannot copy — unix sockets (`kiod.sock`, the solana
+   * ledger's `admin.rpc`), FIFOs, and devices. `assertClusterStopped` only
+   * checks pidfiles, so a cleanly-stopped cluster can still leave stale socket
+   * inodes on disk; skipping them here keeps the clone from throwing an
+   * `ERR_FS_CP_*` partway through.
+   * @param source - Absolute path of the candidate entry (from `cpSync`'s filter).
+   * @returns `true` to copy the entry, `false` to skip it (and its subtree when a directory).
+   */
+  function isClonableEntry(source: string): boolean {
+    const base = Path.basename(source)
+    if (CloneExcludedDirnames.has(base) || source.endsWith(PidFileSuffix)) return false
+    const stats = Fs.lstatSync(source)
+    return (
+      !stats.isSocket() &&
+      !stats.isFIFO() &&
+      !stats.isBlockDevice() &&
+      !stats.isCharacterDevice()
+    )
+  }
+
   /** Command-scoped params (the local cluster is `ctx.config`). */
   export interface Params {
     /** The destination external cluster directory (empty/non-existent). */
     externalClusterPath: string
     /** Path to the external `BindConfig` JSON file. */
     externalBindConfigFile: string
+    /** When true, disable the OPP debugging server in the emitted external
+     *  cluster — drops the sink plugin + `--ext-debugging-server` from the
+     *  operator daemons and skips starting the server. */
+    noDebuggingServer?: boolean
   }
 
   /** The command-supplied params — seeded on `ctx.outputs` before the build runs. */
@@ -528,10 +560,7 @@ export namespace ExternalClusterConfigSteps {
       { externalClusterPath } = ctx.outputs.assert(ParamsKey)
     Fs.cpSync(localConfig.clusterPath, externalClusterPath, {
       recursive: true,
-      filter: source => {
-        const base = Path.basename(source)
-        return base !== "logs" && base !== "reports" && !source.endsWith(".pid")
-      }
+      filter: isClonableEntry
     })
     // cpSync does not reliably carry file mode — re-assert 0600 on the keys file.
     const externalKeysFile = Path.join(
@@ -592,7 +621,7 @@ export namespace ExternalClusterConfigSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const localConfig = ctx.config,
-      { externalClusterPath } = ctx.outputs.assert(ParamsKey),
+      { externalClusterPath, noDebuggingServer } = ctx.outputs.assert(ParamsKey),
       externalBind = ctx.outputs.assert(ExternalBindKey),
       // Remap any path rooted at the local cluster dir onto the external root;
       // host-specific roots (build/ethereum/solana/executables) stay verbatim.
@@ -618,7 +647,8 @@ export namespace ExternalClusterConfigSteps {
                 rootSwap(localConfig.dataPath),
                 localConfig.externalOutposts
               )
-            : null
+            : null,
+        debuggingServerEnabled: noDebuggingServer ? false : localConfig.debuggingServerEnabled
       }
 
     await ClusterConfigProvider.save(mergedConfig)

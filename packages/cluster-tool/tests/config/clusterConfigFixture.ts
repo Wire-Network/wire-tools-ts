@@ -96,7 +96,8 @@ export const PersistedFixture: ClusterConfig = {
   underwriterCollateral: null,
   initialFinalizerKey: null,
   signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
-  externalOutposts: null
+  externalOutposts: null,
+  debuggingServerEnabled: true
 }
 
 /** Build a `ClusterConfig` from the fixture (via deserialize — no resolve / env).

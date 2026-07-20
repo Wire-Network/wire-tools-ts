@@ -1,4 +1,5 @@
 import Fs from "node:fs"
+import Net from "node:net"
 import Os from "node:os"
 import Path from "node:path"
 import { OperatorType } from "@wireio/opp-typescript-models"
@@ -80,6 +81,16 @@ function findFiles(dir: string, name: string): string[] {
   })
 }
 
+/** Create a listening unix-domain socket at `path` (a non-copyable inode). */
+async function listenUnixSocket(path: string): Promise<Net.Server> {
+  const server = Net.createServer()
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject)
+    server.listen(path, () => resolve())
+  })
+  return server
+}
+
 describe("Steps.externalClusterConfig (create-external-config pipeline)", () => {
   let root: string,
     localDir: string,
@@ -150,7 +161,8 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
    */
   function runContext(
     bindFile: string = externalBindFile,
-    signatureProvider: ClusterSignatureProviderConfig = PersistedFixture.signatureProvider
+    signatureProvider: ClusterSignatureProviderConfig = PersistedFixture.signatureProvider,
+    noDebuggingServer?: boolean
   ) {
     const ctx = fixtureContext({
       clusterPath: localDir,
@@ -160,7 +172,8 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     })
     ctx.outputs.set(External.ParamsKey, {
       externalClusterPath: externalDir,
-      externalBindConfigFile: bindFile
+      externalBindConfigFile: bindFile,
+      noDebuggingServer
     })
     return ctx
   }
@@ -257,11 +270,57 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     expect(findFiles(externalDir, "nodeop.pid")).toHaveLength(0)
   })
 
+  it("skips stale unix sockets in the clone instead of throwing", async () => {
+    // A stopped cluster can leave live/stale socket inodes (kiod.sock, the
+    // solana ledger's admin.rpc) that assertClusterStopped's pidfile check
+    // misses; Fs.cpSync throws on them, so the clone must filter them out.
+    const ledgerDir = Path.join(localDir, "data", "solana-ledger")
+    Fs.mkdirSync(ledgerDir, { recursive: true })
+    Fs.writeFileSync(Path.join(ledgerDir, "genesis.bin"), "ledger")
+    const kiodSocket = await listenUnixSocket(Path.join(localDir, "kiod.sock")),
+      adminSocket = await listenUnixSocket(Path.join(ledgerDir, "admin.rpc"))
+    try {
+      await expect(
+        External.runClone(runContext(), null, signal)
+      ).resolves.toBeUndefined()
+    } finally {
+      kiodSocket.close()
+      adminSocket.close()
+    }
+    expect(findFiles(externalDir, "kiod.sock")).toHaveLength(0)
+    expect(findFiles(externalDir, "admin.rpc")).toHaveLength(0)
+    // a regular sibling of a skipped socket is still copied
+    expect(findFiles(externalDir, "genesis.bin")).toHaveLength(1)
+  })
+
   it("preserves 0600 on the cloned cluster-keys.json", async () => {
     await External.runClone(runContext(), null, signal)
     const externalKeys = findFiles(externalDir, "cluster-keys.json")
     expect(externalKeys.length).toBeGreaterThan(0)
     expect(Fs.statSync(externalKeys[0]).mode & 0o777).toBe(0o600)
+  })
+
+  it("persists debuggingServerEnabled:false when create-external-config --no-debugging-server is set", async () => {
+    const ctx = runContext(externalBindFile, PersistedFixture.signatureProvider, true)
+    await External.runLoadExternalBind(ctx, null, signal)
+    await External.runClone(ctx, null, signal)
+    await External.runRebind(ctx, null, signal)
+    const merged = ctx.outputs.assert(External.MergedConfigKey)
+    expect(merged.debuggingServerEnabled).toBe(false)
+    // …and it round-trips through the persisted external cluster-config.json.
+    const reloaded = ClusterConfigProvider.loadSync(
+      ClusterConfigProvider.configFilePath(merged)
+    )
+    expect(reloaded.debuggingServerEnabled).toBe(false)
+  })
+
+  it("inherits the local debuggingServerEnabled when --no-debugging-server is absent", async () => {
+    const ctx = runContext()
+    await External.runLoadExternalBind(ctx, null, signal)
+    await External.runClone(ctx, null, signal)
+    await External.runRebind(ctx, null, signal)
+    // The local fixture has debuggingServerEnabled: true → inherited unchanged.
+    expect(ctx.outputs.assert(External.MergedConfigKey).debuggingServerEnabled).toBe(true)
   })
 
   it("Validate composes one verify step per cross-check (fail-fast order)", () => {
