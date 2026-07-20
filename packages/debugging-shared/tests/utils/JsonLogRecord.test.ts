@@ -1,5 +1,6 @@
 import {
   JsonLogLevel,
+  JsonLogRecordSchemaCodec,
   LogLevelColor,
   colorForLevel,
   formatLocation,
@@ -7,6 +8,38 @@ import {
   parseJsonLogLine,
   type JsonLogRecord
 } from "@wireio/debugging-shared"
+
+const fullRecord: JsonLogRecord = {
+  ts: "2026-04-27T19:58:15.417594Z",
+  lvl: JsonLogLevel.info,
+  thread: "nodeop",
+  logger: "default",
+  file: "/x/y/z.cpp",
+  line: 1,
+  func: "f",
+  msg: "hello"
+}
+
+describe("JsonLogRecordSchemaCodec", () => {
+  it("round-trips a record through serialize → deserialize", () => {
+    expect(
+      JsonLogRecordSchemaCodec.deserialize(
+        JsonLogRecordSchemaCodec.serialize(fullRecord)
+      )
+    ).toEqual(fullRecord)
+  })
+
+  it("check accepts a full record and rejects a partial one", () => {
+    expect(JsonLogRecordSchemaCodec.check(fullRecord)).toBe(true)
+    expect(JsonLogRecordSchemaCodec.check({ msg: "hi" })).toBe(false)
+  })
+
+  it("deserialize throws on a structurally-invalid record (wrong field type)", () => {
+    expect(() =>
+      JsonLogRecordSchemaCodec.deserialize(JSON.stringify({ ...fullRecord, line: "x" }))
+    ).toThrow()
+  })
+})
 
 describe("parseJsonLogLine", () => {
   it("returns the empty string verbatim for empty input", () => {
@@ -23,18 +56,8 @@ describe("parseJsonLogLine", () => {
     )
   })
 
-  it("returns the parsed record when `msg` is present", () => {
-    const record: JsonLogRecord = {
-      ts: "2026-04-27T19:58:15.417594Z",
-      lvl: JsonLogLevel.info,
-      thread: "nodeop",
-      logger: "default",
-      file: "/x/y/z.cpp",
-      line: 1,
-      func: "f",
-      msg: "hello"
-    }
-    expect(parseJsonLogLine(JSON.stringify(record))).toEqual(record)
+  it("returns the parsed record for a full structured record", () => {
+    expect(parseJsonLogLine(JSON.stringify(fullRecord))).toEqual(fullRecord)
   })
 })
 

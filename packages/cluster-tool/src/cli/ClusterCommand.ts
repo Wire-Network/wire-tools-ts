@@ -12,5 +12,14 @@ export enum ClusterCommand {
   /** Start an existing cluster (produced by {@link ClusterCommand.create}) from saved state. */
   run = "run",
   /** Stop every daemon and delete a cluster's data directory. */
-  destroy = "destroy"
+  destroy = "destroy",
+  /** Package each node's config tree into a per-node archive (post-`create`). */
+  package = "package",
+  /**
+   * Clone a created local cluster into a deployable external cluster directory
+   * (external `BindConfig` merged in) + emit its `ExternalClusterConfig`. Quoted
+   * member — access via `ClusterCommand["create-external-config"]` (the hyphen
+   * is not a valid identifier), value === key like every other member.
+   */
+  "create-external-config" = "create-external-config"
 }

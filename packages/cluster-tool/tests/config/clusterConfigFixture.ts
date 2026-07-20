@@ -1,4 +1,7 @@
-import type { ClusterConfig } from "@wireio/cluster-tool-shared"
+import {
+  SignatureProviderType,
+  type ClusterConfig
+} from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
 import {
   BindConfigProvider,
@@ -91,7 +94,9 @@ export const PersistedFixture: ClusterConfig = {
   requiredUnderwriterCollateral: [],
   requiredProducerCollateral: [],
   underwriterCollateral: null,
-  initialFinalizerKey: null
+  initialFinalizerKey: null,
+  signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
+  externalOutposts: null
 }
 
 /** Build a `ClusterConfig` from the fixture (via deserialize — no resolve / env).

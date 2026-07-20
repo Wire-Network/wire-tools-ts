@@ -1,12 +1,17 @@
+import Fs from "node:fs"
+import Os from "node:os"
 import Path from "node:path"
 import type { Argv } from "yargs"
+import { SignatureProviderType } from "@wireio/cluster-tool-shared"
 import {
   applyClusterBuildOptionsArgs,
   buildOptionShape,
   environmentPathDefaults,
   flattenOptionLeaves,
+  mergeSignatureProviderSsm,
   OptionLeafType,
   toClusterBuildOptions,
+  toClusterSignatureProviderSsmOptions,
   toFlag,
   type OptionLeaf
 } from "@wireio/cluster-tool/cli/ClusterBuildOptionsArgs"
@@ -346,5 +351,58 @@ describe("register → parse round-trip", () => {
     expect(options.bindAll).toBe(false)
     // unseeded (null-default) bind ports never materialize
     expect(options.bind?.kiod?.port).toBeUndefined()
+  })
+})
+
+const SsmJson =
+  '{"awsRegion":"us-east-1","awsSecretIdPattern":"/wire/{cluster}/{account}/{keyType}"}'
+const SsmFlag = "signature-provider-ssm"
+
+describe("toClusterSignatureProviderSsmOptions", () => {
+  it("parses inline JSON", () => {
+    const ssm = toClusterSignatureProviderSsmOptions({ [SsmFlag]: SsmJson })
+    expect(ssm?.awsRegion).toBe("us-east-1")
+    expect(ssm?.awsSecretIdPattern).toBe("/wire/{cluster}/{account}/{keyType}")
+  })
+
+  it("parses a file path", () => {
+    const dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "ssm-opts-")),
+      file = Path.join(dir, "ssm.json")
+    Fs.writeFileSync(file, SsmJson)
+    try {
+      expect(
+        toClusterSignatureProviderSsmOptions({ [SsmFlag]: file })?.awsRegion
+      ).toBe("us-east-1")
+    } finally {
+      Fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("returns null when the flag is absent", () => {
+    expect(toClusterSignatureProviderSsmOptions({})).toBeNull()
+  })
+
+  it("throws on a malformed SSM payload (missing awsSecretIdPattern)", () => {
+    expect(() =>
+      toClusterSignatureProviderSsmOptions({ [SsmFlag]: '{"awsRegion":"x"}' })
+    ).toThrow()
+  })
+})
+
+describe("mergeSignatureProviderSsm", () => {
+  it("is a no-op when the flag is absent", () => {
+    const options = { signatureProvider: { type: SignatureProviderType.SSM } }
+    expect(
+      mergeSignatureProviderSsm(options, {}).signatureProvider?.ssm
+    ).toBeUndefined()
+  })
+
+  it("merges the SSM payload into signatureProvider.ssm", () => {
+    const options = { signatureProvider: { type: SignatureProviderType.SSM } },
+      merged = mergeSignatureProviderSsm(options, { [SsmFlag]: SsmJson })
+    expect(merged.signatureProvider?.ssm?.awsRegion).toBe("us-east-1")
+    expect(merged.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
+      "/wire/{cluster}/{account}/{keyType}"
+    )
   })
 })

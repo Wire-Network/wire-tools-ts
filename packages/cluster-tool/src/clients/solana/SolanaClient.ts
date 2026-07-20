@@ -44,6 +44,11 @@ export class SolanaClient {
     return this.connection.getBalance(pubkey)
   }
 
+  /** The version the connected RPC reports (endpoint-liveness probe). */
+  getVersion(): Promise<Awaited<ReturnType<Connection["getVersion"]>>> {
+    return this.connection.getVersion()
+  }
+
   /**
    * SPL token balance of an associated token account — `0n` when the account
    * does not exist yet (the normal pre-fund state).

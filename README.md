@@ -233,8 +233,8 @@ Rules of the road (binding for sessions/automation; see
 ## Launching a persistent test cluster
 
 For interactive work — poking the chains with `clio` or the debugging TUI —
-drive the `wire-cluster-tool` CLI directly (alias: `wtc`). It has three
-commands: `create`, `run`, `destroy`.
+drive the `wire-cluster-tool` CLI directly (alias: `wtc`). Its commands:
+`create`, `run`, `destroy`, `package`, and `create-external-config`.
 
 ```bash
 wire-cluster-tool create \
@@ -290,9 +290,198 @@ command comes first).
 | `--terminate-window-ms` | | — | termination evaluation window in ms |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, `--bind-nodeop-ports-bios-http`, …); unpinned ports are auto-assigned collision-free |
+| `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults) |
+| `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file: bootstrap the depot against already-deployed REMOTE ETH+SOL outposts (skips the local anvil/validator + outpost deploys) |
 | `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink log levels |
 | `--logging-file-format` | | `jsonl` | log file format: `text` or `jsonl` |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output location |
+
+### Cluster signature providers
+
+`create` controls how the cluster's own signing keys are handled via
+`--signature-provider-type` (default `KEY`):
+
+- `KEY` — keys are generated locally and embedded inline in each node's
+  `--signature-provider` spec (`KEY:<privateKey>`). The default; byte-identical
+  to the historical bootstrap.
+- `SSM` — keys are published to AWS SSM Parameter Store and referenced as
+  `SSM:<region>:<secretId>`. Requires `--signature-provider-ssm` carrying the
+  region + secret-id pattern, either inline JSON (leading `{`) or a file path:
+
+  ```bash
+  wire-cluster-tool create … --signature-provider-type SSM \
+    --signature-provider-ssm '{"awsRegion":"us-east-1","awsSecretIdPattern":"/wire-sysio/{cluster}/keys/{account}/{keyType}"}'
+  ```
+
+  Pattern placeholders: `{cluster}` (cluster dir basename), `{account}`,
+  `{keyType}`; an unknown placeholder fails fast. Publishing runs at create
+  time and needs AWS credentials.
+- `KIOD` — material-less; the key lives in the local kiod wallet and specs
+  render `KIOD:<kiod-url>`.
+
+### Node packaging
+
+`package` archives each node's full config tree (config.ini, logging.json, data
+dirs) plus the cluster `genesis.json` into `<cluster>/packages/<node>.<ext>` —
+one self-contained archive per node, the hand-off artifact for a multihost
+environment with distinct compute and storage (for example S3/EC2 — equally GCS
+or any other provider; deliberately loosely coupled to the target). Runs only on
+a successfully-`create`d, STOPPED cluster:
+
+```bash
+wire-cluster-tool -d <cluster-dir> package --package-type zip   # case-insensitive
+```
+
+The format is a required `--package-type` choice (`zip` today; the
+`ClusterPackageType` enum + its per-type backend is the extension seam). Under
+the default `KEY` provider each node's `config.ini` embeds its signing-key
+specs, so archives are sensitive; `cluster-keys.json` is NEVER included.
+
+### External outpost clusters
+
+Point a cluster at Ethereum + Solana outposts that already run on real chains
+instead of the local anvil / solana-test-validator: pass
+`--external-outpost-config <file>` at `create` (the depot bootstraps normally but
+no local outpost is started or deployed), together with a `--bind-config` whose
+`anvil` / `solana` addresses are the REMOTE RPC endpoints. The
+`ExternalOutpostConfig` is fully self-described (RPC endpoints come from the bind
+config; the Solana program id is parsed from the IDL):
+
+```json
+{
+  "ethereum": {
+    "addressFile": "/opt/wire/eth/outpost-addrs.json",
+    "abiFiles": ["/opt/wire/eth/eth-abis/OPP.json", "/opt/wire/eth/eth-abis/OPPInbound.json"],
+    "chainId": 11155111
+  },
+  "solana": { "idlFile": "/opt/wire/sol/liqsol_core.json" }
+}
+```
+
+At `create` the harness verifies the external endpoints are reachable
+(`eth_chainId` matches the configured `chainId`; Solana `getVersion` responds)
+and gates bootstrap success on the depot's head block advancing — NOT on epoch
+distribution (there is no local chain to advance). A remote `anvil`/`solana` bind
+address WITHOUT `--external-outpost-config` fails fast.
+
+### Exporting a deployable external config
+
+`create-external-config` clones a CREATED, STOPPED local cluster into a fresh,
+deployable directory with a different (typically remote) `BindConfig` merged in,
+and emits a self-described `external-cluster-config.json`:
+
+```bash
+wire-cluster-tool create-external-config \
+  --local-cluster-path    /opt/wire/testnet-local \
+  --external-cluster-path /opt/wire/testnet \
+  --external-bind-config  ~/testnet-bind-config.json
+```
+
+The five stages run as Report steps: **Validate** (the external `BindConfig` is
+topology-compatible — one bind entry per node/role, every operator account
+present, no duplicate ports, sane solana dynamic range; fails fast before any
+write), **Clone** (copy the tree, excluding `*.pid` / `logs/` / `reports/`,
+preserving `cluster-keys.json`'s 0600), **Rebind** (re-render `cluster-config.json`,
+`genesis.json`, every node's `config.ini` / `logging.json`, and
+`cluster-state.json` from the merged, external-rooted model — never text-patched),
+**Emit** (`external-cluster-config.json`), and **Verify** (scan the tree for any
+stale local port + round-trip the emitted JSON). The emitted config carries the
+external `bindings`, each operator account's key providers **matching the source
+cluster's provider type** (`KEY` inline for a `KEY` cluster, `SSM`
+`awsSecretId` references — no plaintext — for an `SSM` cluster, material-less
+`KIOD` for a `KIOD` cluster), the depot `epochDurationSec` + genesis path, and
+the ethereum/solana outpost references — fully self-described, so the external
+directory can then be `package`d and deployed on another host (`create` →
+`create-external-config` → `package`).
+
+#### End-to-end: an SSM-keyed cluster → deployable external config
+
+A single cluster's lifecycle — `create` with keys in AWS SSM, `run` to verify, then
+`create-external-config` to export for deployment:
+
+**Step 1: Create with SSM key providers**
+
+```bash
+# Create a cluster whose signing keys are PUBLISHED to AWS SSM (not embedded inline).
+# Publishing runs at create time and requires AWS credentials in the environment.
+wire-cluster-tool create \
+  --cluster-path  /opt/wire/testnet-local \
+  --build-path    /opt/wire-sysio/build/release \
+  --ethereum-path /opt/wire-ethereum \
+  --solana-path   /opt/wire-solana \
+  --signature-provider-type SSM \
+  --signature-provider-ssm '{"awsRegion":"us-east-1","awsSecretIdPattern":"/wire-sysio/{cluster}/keys/{account}/{keyType}"}'
+```
+
+Each generated key is published to AWS Secrets Manager under the rendered secret ID (e.g.,
+`/wire-sysio/testnet-local/keys/batchop.a/K1`, where `{cluster}` is the cluster-path basename),
+and node/daemon `--signature-provider` specs render `SSM:us-east-1:<secretId>` (no plaintext keys on disk).
+
+**Step 2: Run the cluster to verify it works**
+
+```bash
+wire-cluster-tool run --cluster-path /opt/wire/testnet-local &
+# The cluster boots, produces blocks, and gates success on depot head-block advancement.
+# (Let it run for a few epochs to confirm all operators are active.)
+```
+
+**Step 3: Prepare the external BindConfig for your target environment**
+
+Create a JSON file specifying the addresses and ports the cluster will use on the target (e.g., `prod-bind.json`):
+
+```json
+{
+  "kiod": {"address": "10.1.2.10", "port": 10890},
+  "nodeop": {
+    "address": "10.1.2.0",
+    "ports": {
+      "bios": {"http": 10788, "p2p": 10776},
+      "producers": [
+        {"http": 11000, "p2p": 11100},
+        {"http": 11001, "p2p": 11101}
+      ],
+      "batch": [{"http": 11200, "p2p": 11300}],
+      "underwriters": [{"http": 11400, "p2p": 11500}]
+    }
+  },
+  "anvil": {"address": "10.1.2.20", "port": 10545},
+  "debuggingServer": {"address": "10.1.2.30", "port": 10991},
+  "solana": {
+    "address": "10.1.2.40",
+    "ports": {"http": 10899, "faucet": 10990, "gossip": 11000, "dynamicRange": {"first": 12000, "last": 12063}}
+  }
+}
+```
+
+**Step 4: Stop the cluster and export its deployable external config**
+
+```bash
+# Kill the background `run` process (Ctrl+C if foreground, or pkill -f "wire-cluster-tool run")
+# Then export the cluster for deployment with the external BindConfig:
+wire-cluster-tool create-external-config \
+  --local-cluster-path    /opt/wire/testnet-local \
+  --external-cluster-path /opt/wire/testnet \
+  --external-bind-config  path/to/prod-bind.json
+```
+
+The five stages execute (Validate → Clone → Rebind → Emit → Verify):
+- **Validate:** the external BindConfig is topology-compatible (one bind entry per node/role, all operators present, no duplicate ports).
+- **Clone:** the tree is copied (excluding `*.pid`/`logs/`/`reports/`), preserving `cluster-keys.json` at 0600.
+- **Rebind:** all config files (`cluster-config.json`, `genesis.json`, each node's `config.ini`/`logging.json`, `cluster-state.json`) are re-rendered with the external BindConfig merged in — never text-patched.
+- **Emit:** `external-cluster-config.json` is written with the external bindings, each operator's provider type and secret IDs, depot epoch duration, and outpost references — fully self-described.
+- **Verify:** the tree is scanned for stale local ports and the emitted JSON is round-tripped.
+
+Because the source cluster used SSM, `external-cluster-config.json` carries SSM providers (`{awsRegion, awsSecretId}` — the same secret IDs `create` published, reconstructed from the pattern) with **no plaintext keys**. (A KEY cluster emits inline KEY providers; a KIOD cluster emits material-less KIOD providers.)
+
+**Step 5: Package the synced cluster for deployment**
+
+```bash
+wire-cluster-tool package \
+  --cluster-path /opt/wire/testnet \
+  --package-type ZIP
+```
+
+This creates a ZIP archive for each node under `/opt/wire/testnet/packages/<node>.zip`, containing the node's full config tree and genesis.json — ready to transfer to a compute node and extract to boot a fully synced cluster.
 
 ## Environment variables
 

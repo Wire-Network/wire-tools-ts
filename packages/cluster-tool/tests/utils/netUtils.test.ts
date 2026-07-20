@@ -6,6 +6,7 @@ import {
   ListenAllAddress,
   Localhost,
   toAddress,
+  toDialAddress,
   toURL,
   URLScheme
 } from "@wireio/cluster-tool/utils"
@@ -72,6 +73,22 @@ describe("netUtils", () => {
         filterSocketLinesByLocalPort(SsOutput, new Set([12000]))
       ).toHaveLength(0)
       expect(filterSocketLinesByLocalPort(SsOutput, new Set())).toHaveLength(0)
+    })
+  })
+
+  describe("toDialAddress", () => {
+    it("maps the listen wildcard (0.0.0.0) to loopback", () => {
+      expect(toDialAddress(ListenAllAddress)).toBe(Localhost)
+    })
+    it("maps an empty address to loopback", () => {
+      expect(toDialAddress("")).toBe(Localhost)
+    })
+    it("passes loopback through verbatim", () => {
+      expect(toDialAddress(Localhost)).toBe(Localhost)
+    })
+    it("passes a remote / LAN / hostname address through verbatim", () => {
+      expect(toDialAddress("10.0.0.5")).toBe("10.0.0.5")
+      expect(toDialAddress("rpc.testnet.example")).toBe("rpc.testnet.example")
     })
   })
 })

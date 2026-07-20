@@ -16,6 +16,7 @@ import { existsAsync, which } from "../../utils/fsUtils.js"
 import {
   filterSocketLinesByLocalPort,
   Localhost,
+  toDialAddress,
   toURL,
   URLScheme
 } from "../../utils/netUtils.js"
@@ -31,6 +32,8 @@ export interface SolanaValidatorProgram {
 
 /** Caller options for the solana-test-validator. */
 export interface SolanaValidatorOptions {
+  /** Dial address (from `bind.solana.address`). Defaults to loopback. */
+  address?: string
   /** RPC port. Defaults to a free port preferring `DefaultRpcPort`. */
   rpcPort?: number
   /** Faucet port. Defaults to a free port preferring `DefaultFaucetPort`. */
@@ -86,6 +89,7 @@ export class SolanaValidatorProcess extends ManagedProcess {
       "solana-test-validator binary not found on PATH"
     )
     const config: SolanaValidatorConfig = {
+      address: options.address ?? Localhost,
       rpcPort:
         options.rpcPort ??
         (await BindConfigProvider.findAvailable(
@@ -232,13 +236,13 @@ export class SolanaValidatorProcess extends ManagedProcess {
   }
 
   get rpcUrl(): string {
-    return toURL(this.config.rpcPort, Localhost)
+    return toURL(this.config.rpcPort, toDialAddress(this.config.address))
   }
 
   get wsUrl(): string {
     return toURL(
       this.config.rpcPort + BindConfigProvider.SolanaWsPortOffset,
-      Localhost,
+      toDialAddress(this.config.address),
       URLScheme.ws
     )
   }

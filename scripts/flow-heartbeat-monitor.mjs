@@ -397,7 +397,20 @@ function readClusterConfig(clusterConfigPath) {
     const clioExecutable = config?.executables?.clio
     const producerHttpPort = config?.bind?.nodeop?.ports?.producers?.[0]?.http
     if (clioExecutable == null || producerHttpPort == null) return null
-    return { clioExecutable, producerUrl: `http://${Localhost}:${producerHttpPort}` }
+    // Dial the producer at its bind address, mapping the non-dialable listen
+    // wildcard (0.0.0.0 / empty) to loopback — mirrors netUtils.toDialAddress
+    // (this script is outside the eslint/TS surface, so the mapping is inline).
+    const nodeopAddress = config?.bind?.nodeop?.address
+    const producerHost =
+      nodeopAddress == null ||
+      nodeopAddress === "0.0.0.0" ||
+      nodeopAddress === ""
+        ? Localhost
+        : nodeopAddress
+    return {
+      clioExecutable,
+      producerUrl: `http://${producerHost}:${producerHttpPort}`
+    }
   } catch {
     return null // mid-write JSON — same as absent; the next beat re-reads
   }

@@ -2,7 +2,9 @@ import * as Fs from "node:fs"
 import * as Path from "node:path"
 
 import {
+  ClusterConfigSchemaCodec,
   ClusterFiles,
+  ClusterStateSchemaCodec,
   type ClusterConfig,
   type ClusterState
 } from "@wireio/cluster-tool-shared"
@@ -89,7 +91,7 @@ export class ClusterAccess {
     if (this.configCache) return this.configCache
     const file = Path.join(this.clusterPath, ClusterFiles.ConfigFilename),
       raw = await Fs.promises.readFile(file, "utf8")
-    this.configCache = JSON.parse(raw) as ClusterConfig
+    this.configCache = ClusterConfigSchemaCodec.deserialize(raw)
     return this.configCache
   }
 
@@ -105,7 +107,7 @@ export class ClusterAccess {
       return null
     }
     const raw = await Fs.promises.readFile(file, "utf8")
-    this.stateCache = JSON.parse(raw) as ClusterState
+    this.stateCache = ClusterStateSchemaCodec.deserialize(raw)
     return this.stateCache
   }
 }

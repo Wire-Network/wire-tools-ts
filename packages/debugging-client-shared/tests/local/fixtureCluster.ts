@@ -6,6 +6,7 @@ import {
   ClusterConfigLoggingFileFormat,
   ClusterFiles,
   ClusterStateNodeRole,
+  SignatureProviderType,
   type ClusterConfig,
   type ClusterState,
   type ClusterStateNode
@@ -136,7 +137,9 @@ export function makeFixtureCluster(): FixtureCluster {
     requiredUnderwriterCollateral: [],
     requiredProducerCollateral: [],
     underwriterCollateral: null,
-    initialFinalizerKey: null
+    initialFinalizerKey: null,
+    signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
+    externalOutposts: null
   }
 
   Fs.writeFileSync(

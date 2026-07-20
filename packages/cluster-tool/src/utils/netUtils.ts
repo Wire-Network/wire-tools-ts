@@ -22,6 +22,9 @@ export const Localhost = "127.0.0.1" as const
  */
 export const ListenAllAddress = "0.0.0.0" as const
 
+/** Bind-all address, IPv6 form — the `::` wildcard (dialed at the loopback, like `0.0.0.0`). */
+export const ListenAllAddressV6 = "::" as const
+
 /**
  * URL schemes the harness builds. A typed identity enum (not bare `string`)
  * so a call-site typo fails at `tsc` rather than against an unreachable URL.
@@ -46,7 +49,10 @@ export enum URLScheme {
  *   toAddress(9876, ListenAllAddress) // "0.0.0.0:9876"
  */
 export function toAddress(port: number, address: string = Localhost): string {
-  return `${address}:${port}`
+  // Bracket an IPv6 literal (`::1`, `fe80::1`) so the `:<port>` stays unambiguous.
+  const host =
+    address.includes(":") && !address.startsWith("[") ? `[${address}]` : address
+  return `${host}:${port}`
 }
 
 /**
@@ -68,6 +74,30 @@ export function toURL(
   scheme: URLScheme = URLScheme.http
 ): string {
   return `${scheme}://${toAddress(port, address)}`
+}
+
+/**
+ * Map a LISTEN address to a DIALABLE one: the non-dialable listen wildcard
+ * ({@link ListenAllAddress} / empty) becomes {@link Localhost}; every other
+ * address (loopback, a LAN IP, a remote RPC host) passes through verbatim. A
+ * client cannot connect TO `0.0.0.0` — that means "listen on every interface",
+ * so a daemon bound there is reached at the loopback. This generalizes the
+ * `NodeConfigIniRenderer` advertise constraint (advertising `0.0.0.0` is
+ * meaningless) and is the single mapper every dial/advertise site derives from.
+ *
+ * @param address - A bind/listen address (typically `config.bind.<daemon>.address`).
+ * @returns The address a client should dial (or a node should advertise).
+ * @example
+ *   toDialAddress("0.0.0.0")   // "127.0.0.1"
+ *   toDialAddress("127.0.0.1") // "127.0.0.1"
+ *   toDialAddress("10.0.0.5")  // "10.0.0.5" (remote host, verbatim)
+ */
+export function toDialAddress(address: string): string {
+  return address === ListenAllAddress ||
+    address === ListenAllAddressV6 ||
+    address.length === 0
+    ? Localhost
+    : address
 }
 
 /**

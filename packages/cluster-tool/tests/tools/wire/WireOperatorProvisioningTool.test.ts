@@ -2,11 +2,13 @@ import { OperatorType } from "@wireio/opp-typescript-models"
 import { WireOperatorProvisioningTool } from "@wireio/cluster-tool/tools/wire"
 import { Report } from "@wireio/cluster-tool/report"
 import {
+  ClusterBuild,
   ClusterBuildPhase,
   type ClusterBuildContext,
   type ClusterBuildParent,
   type ClusterBuildPhaseBase
 } from "@wireio/cluster-tool/orchestration"
+import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 
 /** A minimal parent that captures pushed children (no context needed for structure). */
 function fakeParent<C extends ClusterBuildContext = ClusterBuildContext>(): ClusterBuildParent<C> {
@@ -83,5 +85,52 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
     const kinds = firstPhaseStepKinds(group)
     expect(kinds).toContain("WireOperatorProvisioningTool.FundEthereumInput")
     expect(kinds).toContain("WireOperatorProvisioningTool.AirdropSolanaInput")
+  })
+})
+
+describe("planOperatorAccountProvisioning — outpost-chain funding gate (H3)", () => {
+  const FundedSpec = {
+    account: "depositoraaa",
+    type: OperatorType.BATCH,
+    ethereumHdIndex: 35,
+    isBootstrapped: false,
+    fundEthereumWei: 10n ** 18n,
+    airdropSolanaLamports: 5_000_000_000n
+  }
+
+  /** Provision a funded batch op over a REAL context (the gate reads config). */
+  function fundedKinds(externalOutposts?: {
+    ethereum: { addressFile: string; abiFiles: string[]; chainId: number }
+    solana: { idlFile: string }
+  }): string[] {
+    const cluster = ClusterBuild.forContext(
+      fixtureContext(externalOutposts != null ? { externalOutposts } : {})
+    )
+    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(
+      cluster,
+      "ops",
+      "ops",
+      {},
+      [FundedSpec]
+    )
+    return firstPhaseStepKinds(group)
+  }
+
+  it("INCLUDES fund + airdrop in local mode", () => {
+    const kinds = fundedKinds()
+    expect(kinds).toContain("WireOperatorProvisioningTool.FundEthereumInput")
+    expect(kinds).toContain("WireOperatorProvisioningTool.AirdropSolanaInput")
+  })
+
+  it("GATES OUT fund + airdrop in external-outpost mode (depot-side steps stay)", () => {
+    const kinds = fundedKinds({
+      ethereum: { addressFile: "outpost-addrs.json", abiFiles: [], chainId: 1 },
+      solana: { idlFile: "idl.json" }
+    })
+    expect(kinds).not.toContain("WireOperatorProvisioningTool.FundEthereumInput")
+    expect(kinds).not.toContain("WireOperatorProvisioningTool.AirdropSolanaInput")
+    // every depot-side step still runs.
+    expect(kinds).toContain("WireOperatorProvisioningTool.CreateAccountInput")
+    expect(kinds).toContain("OperatorSteps.RegisterInput")
   })
 })

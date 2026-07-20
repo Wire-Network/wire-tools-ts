@@ -32,8 +32,11 @@
     "clean": "rm -rf lib"
   },
   "dependencies": {
+    "@3fv/prelude-ts": "^0.8.42",
     "@wireio/opp-typescript-models": "^1.0.26",
-    "@wireio/shared": "^1.0.21"
+    "@wireio/sdk-core": "^1.0.66",
+    "@wireio/shared": "^1.0.21",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "25.5.0",

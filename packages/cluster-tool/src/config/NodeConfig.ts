@@ -5,6 +5,7 @@ import type {
 import { range } from "lodash"
 import { Constants } from "../Constants.js"
 import type { Renderer } from "../utils/Renderer.js"
+import { toDialAddress } from "../utils/netUtils.js"
 
 import { NodeConfigIniRenderer } from "./renderers/NodeConfigIniRenderer.js"
 import { NodeConfigLoggingRenderer } from "./renderers/NodeConfigLoggingRenderer.js"
@@ -110,7 +111,7 @@ export class NodeConfig {
    */
   static plan(cluster: ClusterConfig): NodeConfig[] {
     const nodeopPorts = cluster.bind.nodeop.ports,
-      advertise = NodeConfigIniRenderer.Loopback,
+      advertise = toDialAddress(cluster.bind.nodeop.address),
       producerNodeCount = nodeopPorts.producers.length,
       producerNames = range(cluster.producerCount).map(i => producerName(i)),
       descriptors: NodeDescriptor[] = [

@@ -1,7 +1,7 @@
 import { Constants } from "../../Constants.js"
 import { WireClient } from "../../clients/wire/WireClient.js"
 import type { Renderer } from "../../utils/Renderer.js"
-import { Localhost } from "../../utils/netUtils.js"
+import { Localhost, toDialAddress } from "../../utils/netUtils.js"
 import { NodeRole, type NodeConfig } from "../NodeConfig.js"
 
 /**
@@ -34,7 +34,7 @@ export class NodeConfigIniRenderer implements Renderer {
         kv("p2p-listen-endpoint", `${listen}:${node.ports.p2p}`),
         kv(
           "p2p-server-address",
-          `${NodeConfigIniRenderer.Loopback}:${node.ports.p2p}`
+          `${toDialAddress(listen)}:${node.ports.p2p}`
         ),
         kv("http-server-address", `${listen}:${node.ports.http}`),
         ...node.peerEndpoints.map(ep => kv("p2p-peer-address", ep)),

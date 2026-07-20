@@ -1,10 +1,15 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
-import type { ClusterConfig } from "@wireio/cluster-tool-shared"
+import {
+  SignatureProviderType,
+  type ClusterConfig
+} from "@wireio/cluster-tool-shared"
 import { PidSources, pidIsAlive, readPid } from "@wireio/debugging-shared"
+import { KeyType } from "@wireio/sdk-core"
 import { ProtocolTiming } from "../Constants.js"
 import { BindConfigProvider } from "../config/BindConfigProvider.js"
+import { SSMClientProvider } from "../config/SSMClientProvider.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 import { ClusterConfigProvider } from "../config/ClusterConfigProvider.js"
 import { NodeConfig, NodeRole } from "../config/NodeConfig.js"
@@ -19,7 +24,7 @@ import { Report } from "../report/Report.js"
 import { OperatorDaemonTool } from "../tools/wire/OperatorDaemonTool.js"
 import { eachSeries } from "../utils/asyncUtils.js"
 import { mkdirs } from "../utils/fsUtils.js"
-import { Localhost, toURL } from "../utils/netUtils.js"
+import { toDialAddress, toURL } from "../utils/netUtils.js"
 import { ClusterState } from "./ClusterState.js"
 import { AnvilProcess } from "./processes/AnvilProcess.js"
 import { NodeopProcess } from "./processes/NodeopProcess.js"
@@ -42,12 +47,6 @@ export namespace ClusterManager {
   /** Per-node nodeop logging config filename. */
   const NodeLoggingFilename = "logging.json"
 
-  /** Minimum head-block advance required to confirm production resumed. */
-  export const HeadAdvanceMinBlocks = 2
-  /** Deadline for the post-resume head-advance verify (ms). */
-  export const ResumeVerifyTimeoutMs = 60_000
-  /** Poll gap for the post-resume head-advance verify (ms). */
-  export const ResumeVerifyPollIntervalMs = 1_000
   /** Epoch-advance liveness budget, expressed in epochs past the run's starting value. */
   export const EpochVerifyEpochCount = 2
   /** Poll gap for the epoch-advance liveness verify (ms). */
@@ -64,6 +63,29 @@ export namespace ClusterManager {
    */
   export async function create(options: ClusterBuildOptions): Promise<Report> {
     const build = await ClusterBuildDefaults.create(options)
+    // SSM mode: publish every generated signing key to AWS SSM immediately
+    // BEFORE persisting state (the last phase). Absent entirely under KEY —
+    // that absence is the KEY-hot-path safety net.
+    if (build.config.signatureProvider.type === SignatureProviderType.SSM) {
+      const publishPhase = ClusterBuildPhase.create(
+        build,
+        "PublishSignatureProviderKeys",
+        "Publish each generated signing key to AWS SSM"
+      )
+      Steps.keys
+        .signatureProviderKeyPublications(build.config)
+        .forEach(publication =>
+          publishPhase.push(
+            Steps.keys.planPublishSignatureProviderKey(
+              Report.Actor.Sysio,
+              `publish-${publication.account}-${KeyType[publication.keyType]}`,
+              `publish ${publication.account} ${KeyType[publication.keyType]} key → SSM`,
+              {},
+              publication
+            )
+          )
+        )
+    }
     ClusterBuildPhase.create(
       build,
       "PersistClusterState",
@@ -208,6 +230,12 @@ export namespace ClusterManager {
     )
     ClusterState.rehydrate(ctx.keyStore, keys)
 
+    // External-outpost mode (`config.externalOutposts`): the ETH + SOL outposts
+    // run on real chains, so `run` skips the local anvil/validator starts and
+    // publishes the daemon artifacts from the config; the head-advance gate
+    // (not the epoch-distribution gate) is the success condition.
+    const isExternalOutpost = config.externalOutposts != null
+
     Assert.ok(
       await BindConfigProvider.validate(config.bind),
       `cluster ${config.clusterPath}: one or more resolved ports are no longer free — cannot relaunch`
@@ -235,66 +263,60 @@ export namespace ClusterManager {
 
     log.info("[cluster] resuming production")
     await eachSeries([biosNode, ...producerNodes], node =>
-      NodeopProcess.resumeProduction(toURL(node.ports.http, Localhost))
+      NodeopProcess.resumeProduction(
+        toURL(node.ports.http, toDialAddress(ctx.config.bind.nodeop.address))
+      )
     )
-    const headNodeName = (producerNodes[0] ?? biosNode).name,
-      headProcess = ctx.processManager.get(headNodeName)
-    Assert.ok(
-      headProcess instanceof NodeopProcess,
-      `run: ${headNodeName} is not a running nodeop`
-    )
-    const startHead = await headProcess.head()
-    await pollUntil(
-      `${headNodeName} head advances >= ${HeadAdvanceMinBlocks} blocks after resume-production`,
-      async () => {
-        try {
-          return (await headProcess.head()) - startHead >= HeadAdvanceMinBlocks
-        } catch (error) {
-          log.debug(
-            `[cluster] head probe transient: ${error instanceof Error ? error.message : String(error)}`
-          )
-          return false
-        }
-      },
-      ResumeVerifyTimeoutMs,
-      ResumeVerifyPollIntervalMs
-    )
+    // Shared head-advance liveness (create's external gate + run use one impl).
+    await Steps.externalOutpost.runHeadBlockAdvance(ctx, controller.signal)
     log.info("[cluster] production resumed; head advancing")
 
-    log.info("[cluster] starting anvil")
-    if (ctx.processManager.get(AnvilProcess.ProcessLabel) == null) {
-      // Interval mining from the FIRST boot (constructor option, not the
-      // create-path's post-deploy `evm_setIntervalMining` RPC toggle) — a
-      // relaunch never runs the outpost deploy that needs instamine.
-      const anvil = await AnvilProcess.create(ctx.processManager, {
-        port: config.bind.anvil.port,
-        chainId: AnvilProcess.DefaultChainId,
-        stateFile: Path.join(
-          config.dataPath,
-          AnvilProcess.StateSubpath,
-          AnvilProcess.StateFilename
-        ),
-        slotsInAnEpoch: AnvilProcess.SlotsInAnEpoch,
-        blockTimeSec: AnvilProcess.BlockTimeSec
-      })
-      await anvil.start()
-    }
+    if (isExternalOutpost) {
+      log.info(
+        "[cluster] external-outpost mode — skipping local anvil + solana-test-validator"
+      )
+    } else {
+      log.info("[cluster] starting anvil")
+      if (ctx.processManager.get(AnvilProcess.ProcessLabel) == null) {
+        // Interval mining from the FIRST boot (constructor option, not the
+        // create-path's post-deploy `evm_setIntervalMining` RPC toggle) — a
+        // relaunch never runs the outpost deploy that needs instamine.
+        const anvil = await AnvilProcess.create(ctx.processManager, {
+          host: config.bind.anvil.address,
+          port: config.bind.anvil.port,
+          chainId: AnvilProcess.DefaultChainId,
+          stateFile: Path.join(
+            config.dataPath,
+            AnvilProcess.StateSubpath,
+            AnvilProcess.StateFilename
+          ),
+          slotsInAnEpoch: AnvilProcess.SlotsInAnEpoch,
+          blockTimeSec: AnvilProcess.BlockTimeSec
+        })
+        await anvil.start()
+      }
 
-    log.info("[cluster] starting solana-test-validator")
-    await Steps.processes.solanaValidator.runStart(ctx, null, controller.signal)
+      log.info("[cluster] starting solana-test-validator")
+      await Steps.processes.solanaValidator.runStart(ctx, null, controller.signal)
+    }
 
     log.info("[cluster] starting debugging server")
     await Steps.processes.debuggingServer.runStart(ctx, null, controller.signal)
 
     log.info("[cluster] preparing operator daemon artifacts")
-    await OperatorDaemonTool.runArtifactPreparation(
-      ctx,
-      null,
-      controller.signal
-    )
+    await (isExternalOutpost
+      ? Steps.externalOutpost.runPublishArtifacts(ctx, null, controller.signal)
+      : OperatorDaemonTool.runArtifactPreparation(ctx, null, controller.signal))
 
     log.info(`[cluster] starting ${operatorNodes.length} operator node(s)`)
     await Promise.all(operatorNodes.map(node => startNode(ctx, node)))
+
+    if (isExternalOutpost) {
+      log.info(
+        "[cluster] external-outpost mode — head advancing; skipping the epoch-advance gate"
+      )
+      return
+    }
 
     log.info("[cluster] verifying epoch-advance liveness")
     const { rows: startRows } = await ctx.wire.getEpochState(),
@@ -343,6 +365,37 @@ export namespace ClusterManager {
     ProcessManager.setClusterPath(config.clusterPath)
     ProcessManager.get().initialize()
     await stop(true)
+    if (config.signatureProvider.type === SignatureProviderType.SSM) {
+      await cleanupSignatureProviderKeys(config)
+    }
     Fs.rmSync(config.clusterPath, { recursive: true, force: true })
+  }
+
+  /**
+   * Best-effort delete of every published SSM parameter — ids re-rendered
+   * deterministically from the persisted pattern × accounts × key types (guard +
+   * log per the never-swallow rule; NEVER blocks destroy).
+   *
+   * @param config - The cluster config (SSM signature provider).
+   */
+  async function cleanupSignatureProviderKeys(
+    config: ClusterConfig
+  ): Promise<void> {
+    const region = config.signatureProvider.ssm?.awsRegion
+    if (region == null) return
+    await eachSeries(
+      Steps.keys.signatureProviderKeyPublications(config),
+      async publication => {
+        try {
+          await SSMClientProvider.deleteParameter(region, publication.secretId)
+        } catch (error) {
+          log.warn(
+            `[cluster] destroy: SSM DeleteParameter ${publication.secretId} failed (best-effort): ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          )
+        }
+      }
+    )
   }
 }

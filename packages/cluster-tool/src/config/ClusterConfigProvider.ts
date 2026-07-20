@@ -2,15 +2,33 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import { promises as Fsp } from "node:fs"
 import Path from "node:path"
-import { TokenAmount } from "@wireio/opp-typescript-models"
 import {
+  BindConfigSchemaCodec,
+  BindOptionsSchema,
+  ClusterConfigSchemaCodec,
   ClusterFiles,
-  type ChainTokenAmount,
+  ExternalOutpostConfigSchemaCodec,
+  SignatureProviderType,
+  type BindConfig,
+  type BindOptions,
   type ClusterConfig,
   type ClusterConfigLogging,
-  type ClusterExecutablePaths
+  type ClusterExecutablePaths,
+  type ClusterSignatureProviderConfig,
+  type ClusterSignatureProviderOptions,
+  type ClusterTopologyOptions,
+  type ExternalOutpostConfig
 } from "@wireio/cluster-tool-shared"
+import { defaultsDeep } from "lodash"
 import { Level } from "@wireio/shared"
+import { KeyType } from "@wireio/sdk-core"
+import { KeyGenerator } from "../clients/wire/KeyGenerator.js"
+import {
+  ListenAllAddress,
+  Localhost,
+  toDialAddress,
+  toURL
+} from "../utils/netUtils.js"
 import { LogFileAppender } from "../logging/LogFileAppender.js"
 import { Report } from "../report/Report.js"
 import type { Renderer } from "../utils/Renderer.js"
@@ -63,15 +81,14 @@ export namespace ClusterConfigProvider {
   ): Promise<ClusterConfig> {
     const buildPath = assertOption(options.buildPath, "buildPath"),
       clusterPath = assertOption(options.clusterPath, "clusterPath"),
-      bind = await BindConfigProvider.resolve(options.bind ?? {}, {
-        producerCount: options.nodeCount,
-        batchOperatorCount: options.batchOperatorCount,
-        underwriterCount: options.underwriterCount,
-        bindAll: options.bindAll
-      }),
+      bind = await resolveBind(options),
       executables = await resolveExecutables(buildPath),
       report = resolveReport(options.report, clusterPath),
-      logging = resolveLogging(options.logging)
+      logging = resolveLogging(options.logging),
+      signatureProvider = resolveSignatureProvider(options.signatureProvider),
+      externalOutposts = await loadExternalOutposts(
+        options.externalOutpostConfig
+      )
 
     return {
       buildPath,
@@ -100,7 +117,175 @@ export namespace ClusterConfigProvider {
       underwriterCollateral: options.underwriterCollateral ?? null,
       // Genesis initial finalizer = the BIOS BLS key, matching the long-green
       // bootstrap (the real finalizer policy is set later via bios::setfinalizer).
-      initialFinalizerKey: Constants.DEV_BLS_PUBLIC_KEY
+      initialFinalizerKey: Constants.DEV_BLS_PUBLIC_KEY,
+      signatureProvider,
+      externalOutposts
+    }
+  }
+
+  /**
+   * Resolve the cluster signature-provider config: default {@link
+   * SignatureProviderType.KEY}, and validate that SSM settings are present iff
+   * the type is `SSM`.
+   *
+   * @param options - Caller signature-provider options (may be omitted).
+   * @returns The resolved, validated config.
+   */
+  function resolveSignatureProvider(
+    options: ClusterSignatureProviderOptions
+  ): ClusterSignatureProviderConfig {
+    const { type = SignatureProviderType.KEY, ssm = null } = options ?? {}
+    Assert.ok(
+      type !== SignatureProviderType.SSM || ssm != null,
+      "signatureProvider.ssm (awsRegion + awsSecretIdPattern) is required when type is SSM"
+    )
+    Assert.ok(
+      ssm == null || type === SignatureProviderType.SSM,
+      "signatureProvider.ssm is only valid when type is SSM"
+    )
+    return { type, ssm }
+  }
+
+  /**
+   * Resolve the cluster's network binding. Without `--bind-config` the resolver
+   * picks free ports (current behavior). WITH `--bind-config`, the file is
+   * classified via {@link BindConfigSchemaCodec}'s `check`:
+   * - COMPLETE `BindConfig` → cross-validated against the topology counts and
+   *   used VERBATIM (remote addresses taken as-is — no port probe / claim /
+   *   registry, since a remote endpoint's port is not this host's to reserve),
+   *   with any CLI `--bind-*` overrides layered on top (CLI > file).
+   * - PARTIAL override → validated via {@link BindOptionsSchema} and merged over
+   *   the resolver's picked defaults (CLI > file > resolver).
+   *
+   * @param options - The caller options (carries `bind`, `bindConfig`, counts).
+   * @returns The resolved bind config.
+   */
+  async function resolveBind(options: ClusterBuildOptions): Promise<BindConfig> {
+    const { bind: cliBind = {} } = options,
+      topology: ClusterTopologyOptions = {
+        producerCount: options.nodeCount,
+        batchOperatorCount: options.batchOperatorCount,
+        underwriterCount: options.underwriterCount,
+        bindAll: options.bindAll
+      },
+      bind =
+        options.bindConfig == null
+          ? await BindConfigProvider.resolve(cliBind, topology)
+          : await resolveBindFromFile(options.bindConfig, cliBind, topology)
+    assertRemoteOutpostRequiresExternalConfig(bind, options)
+    return bind
+  }
+
+  /** Classify + merge a `--bind-config` file (complete → verbatim | partial → merged). */
+  async function resolveBindFromFile(
+    bindConfigFile: string,
+    cliBind: BindOptions,
+    topology: ClusterTopologyOptions
+  ): Promise<BindConfig> {
+    const parsed: unknown = JSON.parse(
+      await Fsp.readFile(Path.resolve(bindConfigFile), "utf-8")
+    )
+    if (BindConfigSchemaCodec.check(parsed)) {
+      // COMPLETE: cross-validate cardinality, then use verbatim with the CLI
+      // `--bind-*` overrides layered on top — remote ports are NOT probed.
+      assertBindCardinality(parsed, topology)
+      return defaultsDeep({ ...cliBind }, parsed) as BindConfig
+    }
+    // PARTIAL: validate the override shape, then merge over resolver defaults.
+    const fileBind = BindOptionsSchema.parse(parsed) as BindOptions
+    return BindConfigProvider.resolve(
+      defaultsDeep({ ...cliBind }, fileBind),
+      topology
+    )
+  }
+
+  /** Fail fast when a COMPLETE `--bind-config`'s node counts mismatch the topology. */
+  function assertBindCardinality(
+    bind: BindConfig,
+    topology: ClusterTopologyOptions
+  ): void {
+    const expect = (label: string, actual: number, want: number): void =>
+      Assert.ok(
+        actual === want,
+        `--bind-config: nodeop.ports.${label} has ${actual} entries but the cluster topology expects ${want}`
+      )
+    expect(
+      "producers",
+      bind.nodeop.ports.producers.length,
+      topology.producerCount ?? DefaultNodeCount
+    )
+    expect(
+      "batch",
+      bind.nodeop.ports.batch.length,
+      topology.batchOperatorCount ?? DefaultBatchOperatorCount
+    )
+    expect(
+      "underwriters",
+      bind.nodeop.ports.underwriters.length,
+      topology.underwriterCount ?? DefaultUnderwriterCount
+    )
+  }
+
+  /**
+   * A remote `anvil`/`solana` bind address requires `--external-outpost-config`
+   * — there is no local outpost chain to bootstrap against a remote endpoint.
+   *
+   * @param bind - The resolved bind config.
+   * @param options - The caller options (for `externalOutpostConfig`).
+   */
+  function assertRemoteOutpostRequiresExternalConfig(
+    bind: BindConfig,
+    options: ClusterBuildOptions
+  ): void {
+    const isRemote = (address: string): boolean =>
+      address !== Localhost && address !== ListenAllAddress
+    const remotes = [
+      isRemote(bind.anvil.address) ? "anvil (Ethereum)" : null,
+      isRemote(bind.solana.address) ? "solana" : null
+    ].filter((entry): entry is string => entry != null)
+    Assert.ok(
+      remotes.length === 0 || options.externalOutpostConfig != null,
+      `--bind-config binds ${remotes.join(" + ")} to a remote address, which requires ` +
+        "--external-outpost-config (no local outpost chain is started for a remote endpoint)"
+    )
+  }
+
+  /**
+   * Load + validate an `--external-outpost-config` file (external-outpost mode),
+   * resolving its `*File`/`*Files` references to absolute paths relative to the
+   * config file's directory. Returns `null` for the standard local bootstrap.
+   *
+   * @param file - Path to the `ExternalOutpostConfig` JSON (may be omitted).
+   * @returns The resolved config, or `null`.
+   */
+  async function loadExternalOutposts(
+    file: string
+  ): Promise<ExternalOutpostConfig> {
+    if (file == null) {
+      return null
+    }
+    const configFile = Path.resolve(file),
+      baseDir = Path.dirname(configFile),
+      config = ExternalOutpostConfigSchemaCodec.deserialize(
+        await Fsp.readFile(configFile, "utf-8")
+      ),
+      resolveRef = (ref: string): string =>
+        Path.isAbsolute(ref) ? ref : Path.resolve(baseDir, ref)
+    return {
+      ethereum: {
+        addressFile: resolveRef(config.ethereum.addressFile),
+        abiFiles: config.ethereum.abiFiles.map(resolveRef),
+        chainId: config.ethereum.chainId,
+        ...(config.ethereum.liqEthAddressFile != null
+          ? { liqEthAddressFile: resolveRef(config.ethereum.liqEthAddressFile) }
+          : {})
+      },
+      solana: {
+        idlFile: resolveRef(config.solana.idlFile),
+        ...(config.solana.mintsFile != null
+          ? { mintsFile: resolveRef(config.solana.mintsFile) }
+          : {})
+      }
     }
   }
 
@@ -250,50 +435,100 @@ export namespace ClusterConfigProvider {
   }
 
   /**
-   * Serialise `config` to pretty JSON. `underwriterCollateral` carries proto
-   * `TokenAmount` (bigint) → projected via `TokenAmount.toJson` (string int64);
-   * every other field is already plain JSON — the persisted document IS the
-   * `ClusterConfig` shape.
+   * Serialise `config` to pretty JSON via {@link ClusterConfigSchemaCodec} —
+   * zod ENCODE (the `underwriterCollateral` `TokenAmount` bigints project to
+   * string int64 inside the schema codec) + `JSON.stringify`.
    *
    * @param config - The config to serialise.
    * @returns The JSON string.
    */
   export function serialize(config: ClusterConfig): string {
-    // projected is the JSON form (amount via TokenAmount.toJson) — left to infer
-    // so the serialized amount doesn't conflict with the runtime ChainTokenAmount.
-    const projected = {
-      ...config,
-      underwriterCollateral:
-        config.underwriterCollateral?.map(arr =>
-          arr.map(entry => ({
-            chain_code: entry.chain_code,
-            amount: TokenAmount.toJson(entry.amount)
-          }))
-        ) ?? null
-    }
-    return JSON.stringify(projected, null, 2)
+    return ClusterConfigSchemaCodec.serialize(config)
   }
 
   /**
-   * Parse + rehydrate a persisted config. `underwriterCollateral.amount` is
-   * restored via `TokenAmount.fromJson`; everything else IS the plain
-   * `ClusterConfig` shape. Does NOT re-validate / re-claim ports (reload, not
-   * resolve) — `run` re-probes via `BindConfigProvider.validate`.
+   * Parse + rehydrate a persisted config via {@link ClusterConfigSchemaCodec} —
+   * zod DECODE (`underwriterCollateral.amount` restored to a `TokenAmount`;
+   * missing `signatureProvider`/`externalOutposts` filled by schema defaults).
+   * Does NOT re-claim ports (reload, not resolve) — `run` re-probes via
+   * `BindConfigProvider.validate`.
    *
    * @param input - Raw JSON string.
    * @returns The rehydrated config.
    */
   export function deserialize(input: string): ClusterConfig {
-    // parsed is the JSON form; amount is rehydrated to a TokenAmount via fromJson,
-    // yielding ChainTokenAmount entries again.
-    const parsed = JSON.parse(input)
-    const underwriterCollateral: ChainTokenAmount[][] | null =
-      parsed.underwriterCollateral?.map(arr =>
-        arr.map(raw => ({
-          chain_code: raw.chain_code,
-          amount: TokenAmount.fromJson(raw.amount)
-        }))
-      ) ?? null
-    return { ...parsed, underwriterCollateral }
+    return ClusterConfigSchemaCodec.deserialize(input)
+  }
+
+  /** Substitutions for a signature-provider SSM secret-id pattern. */
+  export interface SecretIdSubstitutions {
+    /** Basename of the cluster path. */
+    cluster: string
+    /** WIRE account name the key belongs to. */
+    account: string
+    /** Key type (curve) name. */
+    keyType: string
+  }
+
+  /**
+   * Render an SSM secret id from a pattern with `{cluster}` / `{account}` /
+   * `{keyType}` placeholders. An unknown `{placeholder}` fails fast.
+   *
+   * @param pattern - The secret-id pattern.
+   * @param substitutions - The placeholder values.
+   * @returns The rendered secret id.
+   */
+  export function toSecretId(
+    pattern: string,
+    substitutions: SecretIdSubstitutions
+  ): string {
+    return pattern.replace(/\{(\w+)\}/g, (_match, key: string) => {
+      const value = substitutions[key as keyof SecretIdSubstitutions]
+      Assert.ok(
+        value != null,
+        `toSecretId: unknown placeholder {${key}} in pattern "${pattern}"`
+      )
+      return value
+    })
+  }
+
+  /** Builds the {@link KeyGenerator.SignatureProviderSource} for an account's key. */
+  export type SignatureProviderSourceFor = (
+    account: string,
+    keyType: KeyType
+  ) => KeyGenerator.SignatureProviderSource
+
+  /**
+   * Build the per-key signature-provider source for a cluster's provider config —
+   * `KEY` → inline (byte-identical), `SSM` → the region + per-key rendered secret
+   * id (via {@link toSecretId}), `KIOD` → the kiod wallet URL. Threaded into the
+   * node / operator-daemon `--signature-provider` args so an SSM/KIOD cluster's
+   * daemons obtain their keys accordingly. The bios genesis dev key is NOT
+   * SSM/KIOD-managed — callers that render it force {@link KeyGenerator.DefaultKeySource}.
+   *
+   * @param config - The resolved cluster config.
+   * @returns A `(account, keyType) => source` builder.
+   */
+  export function signatureProviderSource(
+    config: ClusterConfig
+  ): SignatureProviderSourceFor {
+    const provider = config.signatureProvider,
+      kiodUrl = toURL(
+        config.bind.kiod.port,
+        toDialAddress(config.bind.kiod.address)
+      ),
+      cluster = Path.basename(config.clusterPath)
+    return (account, keyType) =>
+      KeyGenerator.keySource(
+        provider,
+        provider.type === SignatureProviderType.SSM
+          ? toSecretId(provider.ssm.awsSecretIdPattern, {
+              cluster,
+              account,
+              keyType: KeyType[keyType]
+            })
+          : "",
+        kiodUrl
+      )
   }
 }

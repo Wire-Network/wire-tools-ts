@@ -14,4 +14,10 @@ export namespace ClusterFiles {
    * debugging-server RPC surface.
    */
   export const KeysFilename = "cluster-keys.json" as const
+  /**
+   * The fully self-described `ExternalClusterConfig` JSON emitted by
+   * `create-external-config` into an external cluster directory (consumed by
+   * `package` and later by external flow runs).
+   */
+  export const ExternalConfigFilename = "external-cluster-config.json" as const
 }
