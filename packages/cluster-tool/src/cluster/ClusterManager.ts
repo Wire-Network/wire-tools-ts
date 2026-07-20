@@ -47,8 +47,15 @@ export namespace ClusterManager {
   /** Per-node nodeop logging config filename. */
   const NodeLoggingFilename = "logging.json"
 
-  /** Epoch-advance liveness budget, expressed in epochs past the run's starting value. */
-  export const EpochVerifyEpochCount = 2
+  /**
+   * Epoch-advance liveness budget as a count of effective-epoch windows. At the
+   * default 60s epoch this is 3 × (60 + 30)s = 270s — ≥ the ~4min a *resumed*
+   * cluster can need to restart OPP circulation before `current_epoch_index`
+   * advances. A healthy cluster still passes in ~1 epoch (the poll returns the
+   * moment the index moves), so the larger ceiling adds no wall clock to a
+   * healthy run — it only keeps a slow restart from failing a live cluster.
+   */
+  export const EpochVerifyEpochCount = 3
   /** Poll gap for the epoch-advance liveness verify (ms). */
   export const EpochVerifyPollIntervalMs = 1_000
   /** Local ms-per-second conversion (each flow's own `ScenarioConstants` carries the same literal). */
@@ -300,8 +307,12 @@ export namespace ClusterManager {
       await Steps.processes.solanaValidator.runStart(ctx, null, controller.signal)
     }
 
-    log.info("[cluster] starting debugging server")
-    await Steps.processes.debuggingServer.runStart(ctx, null, controller.signal)
+    if (config.debuggingServerEnabled !== false) {
+      log.info("[cluster] starting debugging server")
+      await Steps.processes.debuggingServer.runStart(ctx, null, controller.signal)
+    } else {
+      log.info("[cluster] debugging server disabled — skipping (debuggingServerEnabled=false)")
+    }
 
     log.info("[cluster] preparing operator daemon artifacts")
     await (isExternalOutpost

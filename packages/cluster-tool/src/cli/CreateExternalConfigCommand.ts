@@ -20,11 +20,15 @@ interface CreateExternalConfigArgv {
   localClusterPath: string
   externalClusterPath: string
   externalBindConfig: string
+  noDebuggingServer: boolean
 }
 
 /** Add the three required, command-local path options (two paths → not `applyClusterPathArgs`). */
 function applyCreateExternalConfigArgs<T>(builder: Argv<T>) {
   return builder
+    // Keep `--no-debugging-server` a plain boolean flag rather than yargs'
+    // implicit negation of a `debugging-server` option.
+    .parserConfiguration({ "boolean-negation": false })
     .option("local-cluster-path", {
       type: "string",
       demandOption: true,
@@ -39,6 +43,12 @@ function applyCreateExternalConfigArgs<T>(builder: Argv<T>) {
       type: "string",
       demandOption: true,
       describe: "path to the external BindConfig JSON to merge in"
+    })
+    .option("no-debugging-server", {
+      type: "boolean",
+      default: false,
+      describe:
+        "disable the OPP debugging server in the emitted external cluster (drops the sink plugin + --ext-debugging-server from the operator daemons and skips starting the server)"
     })
 }
 
@@ -61,7 +71,8 @@ export function createCreateExternalConfigCommand() {
       const report = await runCreateExternalConfig(
         Path.resolve(args.localClusterPath),
         Path.resolve(args.externalClusterPath),
-        Path.resolve(args.externalBindConfig)
+        Path.resolve(args.externalBindConfig),
+        args.noDebuggingServer === true
       )
       log.info(
         `[cluster] create-external-config ${report.succeeded ? "SUCCEEDED" : "FAILED"}`
@@ -75,7 +86,8 @@ export function createCreateExternalConfigCommand() {
 async function runCreateExternalConfig(
   localClusterPath: string,
   externalClusterPath: string,
-  externalBindConfigFile: string
+  externalBindConfigFile: string,
+  noDebuggingServer: boolean
 ): Promise<Report> {
   const config = ClusterConfigProvider.loadSync(
     Path.join(localClusterPath, ClusterConfigProvider.ConfigFilename)
@@ -98,7 +110,8 @@ async function runCreateExternalConfig(
     cluster = ClusterBuild.forContext(context)
   context.outputs.set(ExternalClusterConfigSteps.ParamsKey, {
     externalClusterPath,
-    externalBindConfigFile
+    externalBindConfigFile,
+    noDebuggingServer
   })
 
   const group = ClusterBuildPhaseGroup.create(

@@ -396,14 +396,12 @@ directory can then be `package`d and deployed on another host (`create` →
 
 #### End-to-end: an SSM-keyed cluster → deployable external config
 
-A single cluster's lifecycle — `create` with keys in AWS SSM, `run` to verify, then
-`create-external-config` to export for deployment:
-
-**Step 1: Create with SSM key providers**
+A single cluster's lifecycle — `create` with keys in AWS SSM, then
+`create-external-config` on that same cluster:
 
 ```bash
-# Create a cluster whose signing keys are PUBLISHED to AWS SSM (not embedded inline).
-# Publishing runs at create time and requires AWS credentials in the environment.
+# 1. Create a cluster whose signing keys are PUBLISHED to AWS SSM (not inline).
+#    Publishing runs at create time and needs AWS credentials in the environment.
 wire-cluster-tool create \
   --cluster-path  /opt/wire/testnet-local \
   --build-path    /opt/wire-sysio/build/release \
@@ -411,77 +409,23 @@ wire-cluster-tool create \
   --solana-path   /opt/wire-solana \
   --signature-provider-type SSM \
   --signature-provider-ssm '{"awsRegion":"us-east-1","awsSecretIdPattern":"/wire-sysio/{cluster}/keys/{account}/{keyType}"}'
-```
 
-Each generated key is published to AWS Secrets Manager under the rendered secret ID (e.g.,
-`/wire-sysio/testnet-local/keys/batchop.a/K1`, where `{cluster}` is the cluster-path basename),
-and node/daemon `--signature-provider` specs render `SSM:us-east-1:<secretId>` (no plaintext keys on disk).
+# Each generated key is PutParameter'd to SSM under the rendered id — e.g.
+#   /wire-sysio/testnet-local/keys/batchop.a/K1   ({cluster} = basename of --cluster-path)
+# — and node/daemon --signature-provider specs render SSM:us-east-1:<id>.
 
-**Step 2: Run the cluster to verify it works**
-
-```bash
-wire-cluster-tool run --cluster-path /opt/wire/testnet-local &
-# The cluster boots, produces blocks, and gates success on depot head-block advancement.
-# (Let it run for a few epochs to confirm all operators are active.)
-```
-
-**Step 3: Prepare the external BindConfig for your target environment**
-
-Create a JSON file specifying the addresses and ports the cluster will use on the target (e.g., `prod-bind.json`):
-
-```json
-{
-  "kiod": {"address": "10.1.2.10", "port": 10890},
-  "nodeop": {
-    "address": "10.1.2.0",
-    "ports": {
-      "bios": {"http": 10788, "p2p": 10776},
-      "producers": [
-        {"http": 11000, "p2p": 11100},
-        {"http": 11001, "p2p": 11101}
-      ],
-      "batch": [{"http": 11200, "p2p": 11300}],
-      "underwriters": [{"http": 11400, "p2p": 11500}]
-    }
-  },
-  "anvil": {"address": "10.1.2.20", "port": 10545},
-  "debuggingServer": {"address": "10.1.2.30", "port": 10991},
-  "solana": {
-    "address": "10.1.2.40",
-    "ports": {"http": 10899, "faucet": 10990, "gossip": 11000, "dynamicRange": {"first": 12000, "last": 12063}}
-  }
-}
-```
-
-**Step 4: Stop the cluster and export its deployable external config**
-
-```bash
-# Kill the background `run` process (Ctrl+C if foreground, or pkill -f "wire-cluster-tool run")
-# Then export the cluster for deployment with the external BindConfig:
+# 2. Stop the cluster, then clone it into a deployable external directory with a
+#    remote BindConfig merged in, emitting its self-described external config.
 wire-cluster-tool create-external-config \
   --local-cluster-path    /opt/wire/testnet-local \
   --external-cluster-path /opt/wire/testnet \
-  --external-bind-config  path/to/prod-bind.json
+  --external-bind-config  ~/testnet-bind-config.json
+
+# Because the source cluster used SSM, external-cluster-config.json carries SSM
+# providers ({awsRegion, awsSecretId} — the SAME ids create published,
+# reconstructed from the pattern) with NO plaintext keys. (A KEY cluster emits
+# inline KEY providers; a KIOD cluster, material-less KIOD providers.)
 ```
-
-The five stages execute (Validate → Clone → Rebind → Emit → Verify):
-- **Validate:** the external BindConfig is topology-compatible (one bind entry per node/role, all operators present, no duplicate ports).
-- **Clone:** the tree is copied (excluding `*.pid`/`logs/`/`reports/`), preserving `cluster-keys.json` at 0600.
-- **Rebind:** all config files (`cluster-config.json`, `genesis.json`, each node's `config.ini`/`logging.json`, `cluster-state.json`) are re-rendered with the external BindConfig merged in — never text-patched.
-- **Emit:** `external-cluster-config.json` is written with the external bindings, each operator's provider type and secret IDs, depot epoch duration, and outpost references — fully self-described.
-- **Verify:** the tree is scanned for stale local ports and the emitted JSON is round-tripped.
-
-Because the source cluster used SSM, `external-cluster-config.json` carries SSM providers (`{awsRegion, awsSecretId}` — the same secret IDs `create` published, reconstructed from the pattern) with **no plaintext keys**. (A KEY cluster emits inline KEY providers; a KIOD cluster emits material-less KIOD providers.)
-
-**Step 5: Package the synced cluster for deployment**
-
-```bash
-wire-cluster-tool package \
-  --cluster-path /opt/wire/testnet \
-  --package-type ZIP
-```
-
-This creates a ZIP archive for each node under `/opt/wire/testnet/packages/<node>.zip`, containing the node's full config tree and genesis.json — ready to transfer to a compute node and extract to boot a fully synced cluster.
 
 ## Environment variables
 

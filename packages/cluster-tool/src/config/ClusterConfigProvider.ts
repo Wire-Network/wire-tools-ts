@@ -119,7 +119,8 @@ export namespace ClusterConfigProvider {
       // bootstrap (the real finalizer policy is set later via bios::setfinalizer).
       initialFinalizerKey: Constants.DEV_BLS_PUBLIC_KEY,
       signatureProvider,
-      externalOutposts
+      externalOutposts,
+      debuggingServerEnabled: true
     }
   }
 

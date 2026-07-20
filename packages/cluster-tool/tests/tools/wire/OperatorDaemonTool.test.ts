@@ -61,7 +61,8 @@ const network: OperatorDaemonTool.OperatorDaemonNetwork = {
   ethereumRpcUrl: "http://127.0.0.1:8545",
   ethereumChainId: 31_337,
   solanaRpcUrl: "http://127.0.0.1:8899",
-  debuggingServerUrl: "http://127.0.0.1:9901"
+  debuggingServerUrl: "http://127.0.0.1:9901",
+  debuggingServerEnabled: true
 }
 
 /** The value following `flag` (each occurrence). */
@@ -116,6 +117,24 @@ describe("OperatorDaemonTool", () => {
     it("loads the batch plugin set at irreversible read-mode", () => {
       expect(valuesOf(args, "--read-mode")).toEqual(["irreversible"])
       expect(valuesOf(args, "--plugin")).toEqual([...OperatorDaemonTool.BatchOperatorPlugins])
+    })
+
+    it("drops the external-debugging plugin AND --ext-debugging-server when the debugging server is disabled", () => {
+      const disabledArgs = OperatorDaemonTool.batchOperatorArgs(
+        operator,
+        artifacts,
+        { ...network, debuggingServerEnabled: false },
+        keySourceFor
+      )
+      expect(valuesOf(disabledArgs, "--plugin")).toEqual(
+        OperatorDaemonTool.BatchOperatorPlugins.filter(
+          plugin => plugin !== OperatorDaemonTool.ExternalDebuggingPlugin
+        )
+      )
+      expect(valuesOf(disabledArgs, "--plugin")).not.toContain(
+        OperatorDaemonTool.ExternalDebuggingPlugin
+      )
+      expect(valuesOf(disabledArgs, "--ext-debugging-server")).toEqual([])
     })
 
     it("signs WIRE with the operator's OWN unique wire key (account active)", () => {
@@ -235,6 +254,21 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(args, "--solana-outpost-program-name")).toEqual([
         SolanaOutpostProgramTool.ProgramName
       ])
+    })
+
+    it("drops the external-debugging plugin AND --ext-debugging-server when the debugging server is disabled", () => {
+      const disabledArgs = OperatorDaemonTool.underwriterArgs(
+        operator,
+        artifacts,
+        { ...network, debuggingServerEnabled: false },
+        keySourceFor
+      )
+      expect(valuesOf(disabledArgs, "--plugin")).toEqual(
+        OperatorDaemonTool.UnderwriterPlugins.filter(
+          plugin => plugin !== OperatorDaemonTool.ExternalDebuggingPlugin
+        )
+      )
+      expect(valuesOf(disabledArgs, "--ext-debugging-server")).toEqual([])
     })
 
     it("wires each outpost with one consolidated per-chain CSV spec", () => {
