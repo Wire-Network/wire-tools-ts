@@ -9,6 +9,7 @@ import {
   NodeopProcess,
   ProcessManager
 } from "@wireio/cluster-tool/cluster/processes"
+import { AnvilEthereumTransactionPolicy } from "@wireio/cluster-tool/tools/ethereum"
 import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
 import {
@@ -49,6 +50,7 @@ const artifacts: OperatorDaemonArtifacts = {
     OperatorRegistry: "0x3333333333333333333333333333333333333333",
     ReserveManager: "0x4444444444444444444444444444444444444444"
   },
+  ethereumTransactionPolicyFile: "/cluster/data/ethereum-transaction-policy.json",
   solanaProgramId: "GrqvbZLCLkfeSQqvE7rL8XKHVWjNhAG2faLsY8yr9tD5",
   solanaIdlFile: "/cluster/data/solana-idls/liqsol_core.json"
 }
@@ -90,7 +92,11 @@ describe("OperatorDaemonTool", () => {
           ctx.processManager,
           expect.objectContaining({
             operator,
-            extraArgs: expect.arrayContaining(["--batch-enabled"])
+            extraArgs: expect.arrayContaining([
+              "--batch-enabled",
+              "--outpost-ethereum-transaction-policy-file",
+              artifacts.ethereumTransactionPolicyFile
+            ])
           })
         )
       } finally {
@@ -127,6 +133,9 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(args, "--ext-debugging-server")).toEqual([network.debuggingServerUrl])
       expect(valuesOf(args, "--outpost-ethereum-client")).toEqual([
         `eth-default,eth-batchopaaaa,${network.ethereumRpcUrl},31337`
+      ])
+      expect(valuesOf(args, "--outpost-ethereum-transaction-policy-file")).toEqual([
+        artifacts.ethereumTransactionPolicyFile
       ])
       expect(valuesOf(args, "--outpost-solana-client")).toEqual([
         `sol-default,sol-batchopaaaa,${network.solanaRpcUrl}`
@@ -196,6 +205,22 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(args, "--solana-outpost-program-name")).toEqual([
         SolanaOutpostProgramTool.ProgramName
       ])
+      expect(valuesOf(args, "--outpost-ethereum-transaction-policy-file")).toEqual([
+        artifacts.ethereumTransactionPolicyFile
+      ])
+    })
+
+    it("keeps signer ids distinct while every operator references the same policy", () => {
+      const secondArgs = OperatorDaemonTool.underwriterArgs(
+        operatorAccount("uwritbbbbbb", OperatorType.UNDERWRITER),
+        artifacts,
+        network
+      )
+      expect(valuesOf(args, "--signature-provider")[1]).toMatch(/^eth-uwritaaaaaa,/)
+      expect(valuesOf(secondArgs, "--signature-provider")[1]).toMatch(/^eth-uwritbbbbbb,/)
+      expect(valuesOf(secondArgs, "--outpost-ethereum-transaction-policy-file")).toEqual(
+        valuesOf(args, "--outpost-ethereum-transaction-policy-file")
+      )
     })
 
     it("wires each outpost with one consolidated per-chain CSV spec", () => {
@@ -288,6 +313,30 @@ describe("OperatorDaemonTool", () => {
         address: "0xaaa0000000000000000000000000000000000aaa",
         abi: [{ type: "event", name: "OPPEnvelope" }]
       })
+      expect(Path.basename(prepared.ethereumTransactionPolicyFile)).toBe(
+        OperatorDaemonTool.EthereumTransactionPolicyFilename
+      )
+      expect(JSON.parse(Fs.readFileSync(prepared.ethereumTransactionPolicyFile, "utf-8"))).toEqual(
+        AnvilEthereumTransactionPolicy.create(
+          OperatorDaemonTool.EthereumClientId,
+          network.ethereumChainId
+        )
+      )
+
+      // Saved-cluster `run` invokes the same preparation runner. A regenerated
+      // policy must overwrite stale disk content without a state migration.
+      Fs.writeFileSync(prepared.ethereumTransactionPolicyFile, JSON.stringify({ stale: true }))
+      await OperatorDaemonTool.runArtifactPreparation(
+        ctx,
+        null,
+        new AbortController().signal
+      )
+      expect(JSON.parse(Fs.readFileSync(prepared.ethereumTransactionPolicyFile, "utf-8"))).toEqual(
+        AnvilEthereumTransactionPolicy.create(
+          OperatorDaemonTool.EthereumClientId,
+          network.ethereumChainId
+        )
+      )
     })
 
     it("rejects an IDL missing a daemon-invoked instruction (wrong/stale IDL guard)", async () => {

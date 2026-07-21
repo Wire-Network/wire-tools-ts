@@ -41,6 +41,7 @@ import {
 } from "../../orchestration/outputs/OperatorDaemonArtifacts.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
+import { AnvilEthereumTransactionPolicy } from "../ethereum/EthereumTransactionPolicy.js"
 import { SolanaOutpostProgramTool } from "../solana/SolanaOutpostProgramTool.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { scaleTimeoutMs } from "../../utils/asyncUtils.js"
@@ -118,6 +119,9 @@ export namespace OperatorDaemonTool {
   ] as const
   /** Cluster-data subpath holding the generated `{contractName, address, abi}` files. */
   export const EthereumAbiSubpath = "eth-abis"
+  /** Cluster-data filename for the generated SEC-131 Anvil transaction policy. */
+  export const EthereumTransactionPolicyFilename =
+    "ethereum-transaction-policy.json"
   /** Cluster-data subpath holding the copied OPP outpost IDL. */
   export const SolanaIdlSubpath = "solana-idls"
   /** The OPP outpost IDL filename (cluster-local verbatim copy). */
@@ -151,8 +155,9 @@ export namespace OperatorDaemonTool {
    * Prepare the artifacts every operator daemon's command line references:
    * generate `<dataPath>/eth-abis/<Name>.json` (`{contractName, address, abi}`,
    * from the wire-ethereum hardhat artifacts + `outpost-addrs.json`), copy the
-   * `liqsol_core` (OPP outpost) IDL to `<dataPath>/solana-idls/`, resolve the SOL program id,
-   * and store the typed {@link OperatorDaemonArtifacts}. Runs ONCE, after both
+   * `liqsol_core` (OPP outpost) IDL to `<dataPath>/solana-idls/`, generate the
+   * SEC-131 Anvil transaction-policy file, resolve the SOL program id, and
+   * store the typed {@link OperatorDaemonArtifacts}. Runs ONCE, after both
    * outpost deploys, before any operator node starts.
    */
   export function planArtifactPreparation<
@@ -254,9 +259,26 @@ export namespace OperatorDaemonTool {
     )
     Fs.copyFileSync(idlSource, solanaIdlFile)
 
+    // SEC-131 fails closed when an Ethereum signing client has no matching
+    // policy. Generate the file from typed Anvil-only limits on every create /
+    // run so existing cluster state needs no schema migration.
+    const ethereumTransactionPolicyFile = Path.join(
+        dataPath,
+        EthereumTransactionPolicyFilename
+      ),
+      ethereumTransactionPolicy = AnvilEthereumTransactionPolicy.create(
+        EthereumClientId,
+        AnvilProcess.DefaultChainId
+      )
+    Fs.writeFileSync(
+      ethereumTransactionPolicyFile,
+      JSON.stringify(ethereumTransactionPolicy, null, 2)
+    )
+
     ctx.outputs.set(OperatorDaemonArtifactsKey, {
       ethereumAbiFiles,
       ethereumAddresses,
+      ethereumTransactionPolicyFile,
       solanaProgramId,
       solanaIdlFile
     })
@@ -265,9 +287,10 @@ export namespace OperatorDaemonTool {
     StepExtraRecorder.record({
       client: "harness",
       kind: "artifact",
-      text: "address-embedded ETH ABI files + liqsol_core (OPP outpost) IDL prepared for the operator daemons",
+      text: "address-embedded ETH ABIs + SEC-131 Anvil policy + liqsol_core IDL prepared for the operator daemons",
       ethereumAbiFiles,
       ethereumAddresses,
+      ethereumTransactionPolicyFile,
       solanaProgramId,
       solanaIdlFile
     })
@@ -313,6 +336,10 @@ export namespace OperatorDaemonTool {
           network.ethereumRpcUrl,
           String(network.ethereumChainId)
         ].join(",")
+      ),
+      ...pair(
+        "--outpost-ethereum-transaction-policy-file",
+        artifacts.ethereumTransactionPolicyFile
       ),
       ...artifacts.ethereumAbiFiles.flatMap(file =>
         pair("--ethereum-abi-file", file)

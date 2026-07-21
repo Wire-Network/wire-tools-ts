@@ -11,6 +11,8 @@ export interface OperatorDaemonArtifacts {
   readonly ethereumAbiFiles: string[]
   /** Deployed Ethereum outpost addresses (from `outpost-addrs.json`). */
   readonly ethereumAddresses: Record<string, string>
+  /** Generated SEC-131 transaction-policy JSON for the Anvil Ethereum client. */
+  readonly ethereumTransactionPolicyFile: string
   /** The OPP outpost program id (base58) — `liqsol_core`'s `declare_id`. */
   readonly solanaProgramId: string
   /** Cluster-local verbatim copy of the `liqsol_core` (OPP outpost) IDL. */
@@ -20,5 +22,5 @@ export interface OperatorDaemonArtifacts {
 /** Typed cross-step handle to the prepared {@link OperatorDaemonArtifacts}. */
 export const OperatorDaemonArtifactsKey: OutputKey<OperatorDaemonArtifacts> = outputKey(
   "cluster.operatorDaemonArtifacts",
-  "outpost deploy artifacts for operator daemon command lines (ETH ABIs + addrs, SOL program id + IDL)"
+  "outpost artifacts for operator daemon command lines (ETH ABIs + policy, SOL program id + IDL)"
 )

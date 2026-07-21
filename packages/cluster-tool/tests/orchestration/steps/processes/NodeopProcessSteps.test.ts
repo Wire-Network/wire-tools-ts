@@ -52,6 +52,7 @@ const artifactsFixture: OperatorDaemonArtifacts = {
     OperatorRegistry: "0x3333333333333333333333333333333333333333",
     ReserveManager: "0x4444444444444444444444444444444444444444"
   },
+  ethereumTransactionPolicyFile: "/cluster/data/ethereum-transaction-policy.json",
   solanaProgramId: "GrqvbZLCLkfeSQqvE7rL8XKHVWjNhAG2faLsY8yr9tD5",
   solanaIdlFile: "/cluster/data/solana-idls/liqsol_core.json"
 }
@@ -241,7 +242,9 @@ describe("Steps.processes.nodeop", () => {
           "--batch-enabled",
           "true",
           "--batch-operator-account",
-          "batchopaaaa"
+          "batchopaaaa",
+          "--outpost-ethereum-transaction-policy-file",
+          artifactsFixture.ethereumTransactionPolicyFile
         ])
       )
     })
@@ -257,7 +260,9 @@ describe("Steps.processes.nodeop", () => {
           "--underwriter-enabled",
           "true",
           "--underwriter-account",
-          "underwriteraaaa"
+          "underwriteraaaa",
+          "--outpost-ethereum-transaction-policy-file",
+          artifactsFixture.ethereumTransactionPolicyFile
         ])
       )
     })
