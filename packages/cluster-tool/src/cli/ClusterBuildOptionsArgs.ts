@@ -8,7 +8,7 @@ import {
   SignatureProviderType,
   type ClusterSignatureProviderSSMOptions
 } from "@wireio/cluster-tool-shared"
-import { camelCase, defaultsDeep, range } from "lodash"
+import { camelCase, defaultsDeep, identity, range } from "lodash"
 import { match, P } from "ts-pattern"
 import type { Argv, Options as YargsOption } from "yargs"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
@@ -419,7 +419,7 @@ function readDeep(
     source
   )
   return match(found)
-    .with(P.union(P.string, P.number, P.boolean), scalar => scalar)
+    .with(P.union(P.string, P.number, P.boolean), identity)
     .otherwise(() => null)
 }
 

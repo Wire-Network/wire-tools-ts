@@ -11,6 +11,7 @@ import { createHash } from "node:crypto"
 
 import Bluebird from "bluebird"
 import { match } from "ts-pattern"
+import { NestedError } from "@wireio/shared"
 
 import {
   EnvelopeEventKind,
@@ -215,7 +216,7 @@ export class LocalFileDebuggingClient extends DebuggingClient {
       envelopeData = await Fs.promises.readFile(dataPath)
     } catch (err: any) {
       if (err.code === "ENOENT") {
-        throw new Error(`Envelope not found: ${key}`)
+        throw new NestedError(`Envelope not found: ${key}`, { cause: err })
       }
       throw err
     }

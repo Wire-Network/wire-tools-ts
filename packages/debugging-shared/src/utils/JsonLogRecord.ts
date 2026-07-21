@@ -1,4 +1,5 @@
 import { Either } from "@3fv/prelude-ts"
+import { identity } from "lodash"
 import { SchemaCodec } from "@wireio/cluster-tool-shared"
 import { match } from "ts-pattern"
 import { z } from "zod"
@@ -93,7 +94,7 @@ export function parseJsonLogLine(raw: string): JsonLogRecord | string {
   if (raw.length === 0) return raw
   return Either.try(() => JsonLogRecordSchemaCodec.deserialize(raw)).match({
     Left: (): JsonLogRecord | string => raw,
-    Right: record => record
+    Right: identity
   })
 }
 

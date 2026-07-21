@@ -1,6 +1,7 @@
 import * as Path from "node:path"
 import * as Fs from "node:fs"
 import { createHash } from "node:crypto"
+import { NestedError } from "@wireio/shared"
 
 import {
   PutEnvelopeResponse,
@@ -233,7 +234,7 @@ export namespace OPPRoutes {
           envelopeData = await Fs.promises.readFile(dataPath)
         } catch (err: any) {
           if (err.code === "ENOENT") {
-            throw new Error(`Envelope not found: ${key}`)
+            throw new NestedError(`Envelope not found: ${key}`, { cause: err })
           }
           throw err
         }

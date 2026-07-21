@@ -1,6 +1,8 @@
 import { Either } from "@3fv/prelude-ts"
 import { z } from "zod"
 
+import { NestedError } from "@wireio/shared"
+
 /**
  * The uniform runtime codec over a zod schema: validated string serialization,
  * validated deserialization from JSON text or bytes, and a type guard — the ONE
@@ -68,39 +70,40 @@ export namespace SchemaCodec {
 
   /** Parse `text` as JSON then validate + decode against `schema`, throwing on either failure. */
   function decode<T>(schema: z.ZodType<T>, text: string): T {
+    // The Left is only ever thrown, so `.ifLeft(throw).getOrThrow()` — NOT
+    // `.mapLeft(...).match({ Left: throw, Right: identity })`. `.ifLeft` throws
+    // the NestedError on a Left; `.getOrThrow()` returns the Right value (a Left
+    // never reaches it).
     const parsed = Either.try(() => JSON.parse(text) as unknown)
-      .mapLeft(
-        error => new Error(`SchemaCodec: invalid JSON — ${toMessage(error)}`)
-      )
-      .match({
-        Left: error => {
-          throw error
-        },
-        Right: value => value
+      .ifLeft(error => {
+        throw new NestedError("SchemaCodec: invalid JSON", {
+          cause: error,
+          context: { text }
+        })
       })
+      .getOrThrow()
     return toEither(schema.safeParse(parsed))
-      .mapLeft(formatIssues)
-      .match({
-        Left: error => {
-          throw error
-        },
-        Right: value => value
+      .ifLeft(error => {
+        throw formatIssues(error, text)
       })
+      .getOrThrow()
   }
 
-  /** Render a `ZodError`'s issues as one `path: message` line per issue. */
-  function formatIssues(error: z.ZodError): Error {
+  /**
+   * Render a `ZodError` as a {@link NestedError} that PRESERVES the ZodError as its
+   * cause (its issue tree + stack survive) — one `path: message` line per issue in
+   * the message, the failing `text` in the context.
+   */
+  function formatIssues(error: z.ZodError, text: string): NestedError {
     const detail = error.issues
       .map(
         issue =>
           `${issue.path.length ? issue.path.join(".") : "(root)"}: ${issue.message}`
       )
       .join("; ")
-    return new Error(`SchemaCodec: validation failed — ${detail}`)
-  }
-
-  /** Extract a message from an unknown thrown value. */
-  function toMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error)
+    return new NestedError(`SchemaCodec: validation failed — ${detail}`, {
+      cause: error,
+      context: { text }
+    })
   }
 }

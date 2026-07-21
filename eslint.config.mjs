@@ -27,6 +27,41 @@ import eslint from "@eslint/js"
 import tseslint from "typescript-eslint"
 import prettier from "eslint-config-prettier"
 
+// prefer-lodash-identity.md (author law, 2026-07-21): an identity arrow `x => x`
+// IS lodash `identity` — import { identity } from "lodash". A custom rule because
+// no-restricted-syntax (esquery) cannot assert body-name === param-name.
+const wireLocalPlugin = {
+  meta: { name: "wire-local" },
+  rules: {
+    "no-identity-arrow": {
+      meta: {
+        type: "problem",
+        docs: { description: "Use lodash `identity` instead of an `x => x` arrow." },
+        messages: {
+          useLodashIdentity:
+            "Use `identity` from lodash instead of an `x => x` arrow (prefer-lodash-identity.md)."
+        },
+        schema: []
+      },
+      create(context) {
+        return {
+          ArrowFunctionExpression(node) {
+            const [param] = node.params
+            if (
+              node.params.length === 1 &&
+              param.type === "Identifier" &&
+              node.body.type === "Identifier" &&
+              node.body.name === param.name
+            ) {
+              context.report({ node, messageId: "useLodashIdentity" })
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 // STYLE.md "match() over switch always".
 const BanSwitch = {
   selector: "SwitchStatement",
@@ -110,6 +145,29 @@ const BanMemberCoalesceDeclarator = {
     "VariableDeclarator > LogicalExpression.init[operator='??'] > MemberExpression.left[computed=false]",
   message:
     "Destructure with a default — `const { member: local = Default } = obj` — not `const local = obj.member ?? Default` (STYLE.md 'Destructuring over member-coalesce')."
+}
+
+// nested-error-preserve-cause.md (author law, 2026-07-21): NEVER rewrite a caught
+// error into a bare Error that restrings it — the root cause + its stack + message
+// are SWALLOWED. Wrap it: NestedError(message, { cause, context }). (a) the restring
+// tell — a caught error's `.message`/`.stack` (or `toMessage(err)`) interpolated
+// into a new Error.
+const BanErrorMessageRestring = {
+  selector:
+    "NewExpression[callee.name=/^(Error|TypeError|RangeError|EvalError|SyntaxError|URIError)$/] :matches(CallExpression[callee.name='toMessage'], MemberExpression[property.name=/^(message|stack)$/][object.name=/^(err|error|e|ex|cause|reason)$/])",
+  message:
+    "Don't restring a caught error into a bare Error — use NestedError(message, { cause, context }) so the root cause + its stack survive (nested-error-preserve-cause.md)."
+}
+// (b) a bare (no-cause) native Error constructed inside an error handler that
+// RECEIVES the error (Either.mapLeft/ifLeft/recoverWith, Promise.catch,
+// Future.onFailure) — it discards the very error being handled. Throw a
+// NestedError with { cause }. NOT Option's orElse/ifNone — those handle ABSENCE
+// (a None is not an error), so a fresh Error there has no cause to preserve.
+const BanBareErrorInHandler = {
+  selector:
+    "CallExpression[callee.property.name=/^(mapLeft|ifLeft|catch|recoverWith|onFailure)$/] NewExpression[callee.name=/^(Error|TypeError|RangeError|EvalError|SyntaxError|URIError)$/][arguments.length<2]",
+  message:
+    "A bare Error in an error handler (mapLeft/ifLeft/catch/recoverWith/onFailure) SWALLOWS the handled error — throw a NestedError with { cause } (nested-error-preserve-cause.md)."
 }
 
 // Pre-existing `| null` return-type debt, grandfathered — prefer-null forbids
@@ -203,7 +261,9 @@ const AllBans = [
   BanPickParameter,
   BanStringLiteralUnion,
   BanAsOptionAwait,
-  BanMemberCoalesceDeclarator
+  BanMemberCoalesceDeclarator,
+  BanErrorMessageRestring,
+  BanBareErrorInHandler
 ]
 const debtExemptionBlocks = (() => {
   const exemptionsByFile = new Map()
@@ -254,10 +314,14 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   {
     files: ["**/*.ts", "**/*.tsx"],
+    plugins: { "wire-local": wireLocalPlugin },
     rules: {
       // use-logging-framework.md: console is banned; the framework writes
       // through (jest buffers console.*). Carve-outs below.
       "no-console": "error",
+
+      // prefer-lodash-identity.md: an `x => x` arrow IS lodash `identity`.
+      "wire-local/no-identity-arrow": "error",
 
       "no-restricted-syntax": ["error", ...AllBans],
 
@@ -322,10 +386,11 @@ export default tseslint.config(
       // request shapes (ClusterRequests), and `{}` generic defaults. The rule
       // fights the named-types-everywhere philosophy.
       "@typescript-eslint/no-empty-object-type": "off",
-      // New in eslint 10 recommended; `{ cause }` chaining is NOT a codified
-      // house law and enforcing it would force edits to untouched files.
-      // Candidate for adoption later — off deliberately, not forgotten.
-      "preserve-caught-error": "off",
+      // nested-error-preserve-cause.md (author law, 2026-07-21): a catch clause
+      // that rethrows a bare Error SWALLOWS the original (its message + stack).
+      // Preserve it as `{ cause }` — pair with NestedError for the
+      // { cause, context } form.
+      "preserve-caught-error": "error",
       "prefer-const": "error",
       "no-var": "error"
     }
