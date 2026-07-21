@@ -147,7 +147,7 @@ export class ClioRunner {
         }
       }
       return stdout.trim()
-    } catch (error: any) {
+    } catch (error) {
       const stderr = error?.stderr?.toString() ?? "",
         stdout = error?.stdout?.toString() ?? ""
       asOption(stdout)

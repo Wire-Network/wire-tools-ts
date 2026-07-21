@@ -70,7 +70,6 @@ export namespace ClusterBuildStep {
    * `ClusterBuildStep<C, B>`). The `any` erases `I` for storage ONLY — each
    * step's `runner` + `input` stay correlated WITHIN the step at runtime.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   export type Any<C extends ClusterBuildContext = ClusterBuildContext> = ClusterBuildStep<C, any>
 
   /**

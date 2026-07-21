@@ -84,7 +84,7 @@ export async function pushTransaction(
 
     try {
       return await api.v1.chain.push_transaction(signedTrx)
-    } catch (e: any) {
+    } catch (e) {
       log.error(`Error pushing transaction (remote): ${e instanceof Error ? e.message : String(e)}`, e)
       if (e instanceof APIError) {
         throw new NestedError("push_transaction failed (remote API error)", {
@@ -94,7 +94,7 @@ export async function pushTransaction(
       }
       throw e
     }
-  } catch (e: any) {
+  } catch (e) {
     log.error(`Error pushing transaction: ${e instanceof Error ? e.message : String(e)}`, e)
     throw e
   }

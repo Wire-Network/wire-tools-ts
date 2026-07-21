@@ -214,7 +214,7 @@ export class LocalFileDebuggingClient extends DebuggingClient {
     let envelopeData: Uint8Array
     try {
       envelopeData = await Fs.promises.readFile(dataPath)
-    } catch (err: any) {
+    } catch (err) {
       if (err.code === "ENOENT") {
         throw new NestedError(`Envelope not found: ${key}`, { cause: err })
       }
@@ -293,7 +293,7 @@ export class LocalFileDebuggingClient extends DebuggingClient {
     let dataExisted = false
     try {
       await Fs.promises.writeFile(dataFile, envelopeBytes, { flag: "wx" })
-    } catch (err: any) {
+    } catch (err) {
       if (err.code === "EEXIST") {
         dataExisted = true
       } else {

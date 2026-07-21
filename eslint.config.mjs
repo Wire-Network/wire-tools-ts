@@ -369,9 +369,17 @@ export default tseslint.config(
       // eqeqeq must not fight it.
       eqeqeq: ["error", "always", { null: "ignore" }],
 
-      // precise-types-no-unknown-shortcut.md: `any` only at genuine
-      // third-party boundaries. Pre-existing debt exists → warn (no sweeps).
-      "@typescript-eslint/no-explicit-any": "warn",
+      // `any` OFF by design (author directive, 2026-07-21): the explicit
+      // `any` in this codebase is strongly-typed usage — generic type
+      // arguments (`IMessageType<any>` accepts any conforming message class),
+      // boundary casts, rest args (`...args: any[]`), and generic defaults —
+      // NOT lazy typing. `no-explicit-any` is blunt: no option distinguishes a
+      // type-argument `any` from a lazy `x: any`, so allowing those legitimate
+      // patterns globally means the rule is off. Catch clauses carry no
+      // annotation (`catch (err)`, not `catch (err: any)`). The precise-types
+      // discipline (no `any`/`unknown` where a real type exists) stays enforced
+      // by precise-types-no-unknown-shortcut.md + review.
+      "@typescript-eslint/no-explicit-any": "off",
 
       // Defaults that fight house idioms or the loose tsconfig.
       "@typescript-eslint/no-namespace": "off", // companion namespaces ARE the style
