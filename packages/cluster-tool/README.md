@@ -233,7 +233,7 @@ After `create` completes:
     ├── anvil/                       # anvil state + pid + logs (if --ethereum-path)
     ├── solana_validator/            # solana-test-validator ledger + pid + logs (if --solana-path)
     ├── eth-abis/                    # deployed contract ABIs (OPP, OPPInbound, BAR)
-    ├── ethereum-transaction-policy.json # generated SEC-131 Anvil signing limits
+    ├── ethereum-client.json          # shared unified Ethereum client config for operator daemons
     ├── solana-idls/                 # Anchor IDLs (opp_outpost.json)
     ├── opp-debugging/               # envelope .data/.metadata pairs (debugging server writes)
     └── tui/logs/                    # wire-debugging-client-tool-tui writes here (see companion)
@@ -241,50 +241,22 @@ After `create` completes:
 
 Every managed process writes `<dataPath>/<label>.pid` (e.g. `data/node_00/node-00.pid`) on spawn and removes it on clean exit. The TUI's Process Monitor iterates these.
 
-### Generated Ethereum transaction policy
+### Generated Ethereum client configuration
 
-Cluster artifact preparation writes `data/ethereum-transaction-policy.json`
-and passes it to every generated Ethereum signing client through
-`--outpost-ethereum-transaction-policy-file`. The file contains exactly one
-SEC-131 policy for the stable `eth-default` client id. Batch operators,
-underwriters, flow-provisioned operators, and saved-cluster relaunches all use
-the same shared argument builder; bios and producer-only nodes receive neither
-an Ethereum signing client nor an orphaned policy option.
+Artifact preparation writes one `data/ethereum-client.json`, and every operator
+daemon passes it through `--outpost-ethereum-client-config-file`. The versioned
+file combines the stable `eth-default` client id and signature-provider id with
+the Anvil RPC URL and chain id. Signature-provider ids are process-local, so each
+daemon can register its own Ethereum private key as `eth-default` while safely
+sharing the same client configuration file. Daemon argument builders remain
+pure and reuse the artifact on create, run, restart, and flow-provisioned starts.
 
-The source of truth is `AnvilEthereumTransactionPolicy` in
-`packages/cluster-tool/src/tools/ethereum/EthereumTransactionPolicy.ts`:
+Generated development-cluster files omit `transaction_policy`. Nodeop therefore
+assigns its maximum-`uint256` default caps, preserving the pre-policy behavior
+for local clusters. The schema supports an explicit nested policy when finite
+cluster limits are wanted later. Bios and producer-only nodes receive neither an
+Ethereum signing client nor an orphaned client-config option.
 
-| Limit | Anvil value |
-|---|---:|
-| Maximum priority fee per gas | `2,000,000,000` wei (2 gwei) |
-| Maximum fee per gas | `100,000,000,000` wei (100 gwei) |
-| Maximum final gas limit | `2,000,000` |
-| Maximum total native cost | `250,000,000,000,000,000` wei (0.25 ETH) |
-
-The final-gas limit applies after nodeop's 20% estimate buffer. SEC-131 bounds
-`gas limit × maximum fee per gas + transaction value`; after the full
-`2,000,000 × 100 gwei = 0.2 ETH` gas bound, the 0.25 ETH total-cost cap leaves
-0.05 ETH for transaction value. The fee ceiling leaves deterministic headroom
-for Anvil's EIP-1559 base-fee movement while remaining finite.
-
-A canonical bidirectional `flow-swap-with-underwriting` run against the paired
-SEC-131 Release build measured the policy-governed Ethereum transactions below.
-The maximum-cost column is `transaction gas limit × maxFeePerGas + value`, not
-the smaller receipt cost based on gas actually used.
-
-| Transaction | Receipts | Maximum gas used | Maximum gas limit | Maximum bounded cost |
-|---|---:|---:|---:|---:|
-| `OPPInbound.epochIn` | 13 | `1,247,570` | `1,637,942` | `1,637,942,022,931,188` wei |
-| `OperatorRegistry.commit` | 2 | `724,434` | `960,904` | `960,904,013,452,656` wei |
-
-Those receipts used `maxFeePerGas = 1,000,000,014` wei, a 7-wei block base fee,
-and zero transaction value. The flow completed both ETH→SOL and SOL→ETH
-payouts without a policy rejection. It produced no standalone
-`emitOutboundEnvelope` transaction: steady-state Ethereum outbound emission is
-an internal call on the consensus-reaching `epochIn`, so its gas is included in
-the delivery measurements above.
-
-These development-cluster limits are not production recommendations.
 Production policy selection happens outside `wire-tools-ts`.
 
 ---

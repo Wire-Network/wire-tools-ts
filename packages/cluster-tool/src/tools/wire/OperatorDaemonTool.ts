@@ -8,7 +8,7 @@
  * {@link planArtifactPreparation} is a Step (run once, after both outpost deploys) that
  * writes the cluster-local artifact files and stores the typed
  * {@link OperatorDaemonArtifacts}; {@link batchOperatorArgs} /
- * {@link underwriterArgs} are PURE value builders the operator-node start runner
+ * {@link underwriterArgs} are pure value builders the operator-node start runner
  * composes into `NodeopProcess` extra args.
  */
 
@@ -41,7 +41,7 @@ import {
 } from "../../orchestration/outputs/OperatorDaemonArtifacts.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
-import { AnvilEthereumTransactionPolicy } from "../ethereum/EthereumTransactionPolicy.js"
+import { EthereumClientConfiguration } from "../ethereum/EthereumClientConfiguration.js"
 import { SolanaOutpostProgramTool } from "../solana/SolanaOutpostProgramTool.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { scaleTimeoutMs } from "../../utils/asyncUtils.js"
@@ -85,6 +85,8 @@ export namespace OperatorDaemonTool {
   export const UnderwriterActionTimeoutMs = 30_000
   /** The single ethereum outpost client id every plugin arg references. */
   export const EthereumClientId = "eth-default"
+  /** Process-local signature-provider id referenced by the shared Ethereum client file. */
+  export const EthereumSignatureProviderId = "eth-default"
   /** The single solana outpost client id every plugin arg references. */
   export const SolanaClientId = "sol-default"
   /** The `sysio.chains` codename keying the ETH outpost wiring specs. */
@@ -119,9 +121,8 @@ export namespace OperatorDaemonTool {
   ] as const
   /** Cluster-data subpath holding the generated `{contractName, address, abi}` files. */
   export const EthereumAbiSubpath = "eth-abis"
-  /** Cluster-data filename for the generated SEC-131 Anvil transaction policy. */
-  export const EthereumTransactionPolicyFilename =
-    "ethereum-transaction-policy.json"
+  /** Cluster-data filename for the shared unified Ethereum client configuration. */
+  export const EthereumClientConfigurationFilename = "ethereum-client.json"
   /** Cluster-data subpath holding the copied OPP outpost IDL. */
   export const SolanaIdlSubpath = "solana-idls"
   /** The OPP outpost IDL filename (cluster-local verbatim copy). */
@@ -156,7 +157,7 @@ export namespace OperatorDaemonTool {
    * generate `<dataPath>/eth-abis/<Name>.json` (`{contractName, address, abi}`,
    * from the wire-ethereum hardhat artifacts + `outpost-addrs.json`), copy the
    * `liqsol_core` (OPP outpost) IDL to `<dataPath>/solana-idls/`, generate the
-   * SEC-131 Anvil transaction-policy file, resolve the SOL program id, and
+   * unified Ethereum client file, resolve the SOL program id, and
    * store the typed {@link OperatorDaemonArtifacts}. Runs ONCE, after both
    * outpost deploys, before any operator node starts.
    */
@@ -259,26 +260,27 @@ export namespace OperatorDaemonTool {
     )
     Fs.copyFileSync(idlSource, solanaIdlFile)
 
-    // SEC-131 fails closed when an Ethereum signing client has no matching
-    // policy. Generate the file from typed Anvil-only limits on every create /
-    // run so existing cluster state needs no schema migration.
-    const ethereumTransactionPolicyFile = Path.join(
+    // Signature-provider ids are process-local, so every daemon can register
+    // its own key under the stable name referenced by this shared client file.
+    const ethereumClientConfigurationFile = Path.join(
         dataPath,
-        EthereumTransactionPolicyFilename
+        EthereumClientConfigurationFilename
       ),
-      ethereumTransactionPolicy = AnvilEthereumTransactionPolicy.create(
-        EthereumClientId,
-        AnvilProcess.DefaultChainId
-      )
+      ethereumClientConfiguration = EthereumClientConfiguration.create({
+        clientId: EthereumClientId,
+        signatureProviderId: EthereumSignatureProviderId,
+        rpcUrl: networkFromConfig(ctx.config).ethereumRpcUrl,
+        chainId: AnvilProcess.DefaultChainId
+      })
     Fs.writeFileSync(
-      ethereumTransactionPolicyFile,
-      JSON.stringify(ethereumTransactionPolicy, null, 2)
+      ethereumClientConfigurationFile,
+      JSON.stringify(ethereumClientConfiguration, null, 2)
     )
 
     ctx.outputs.set(OperatorDaemonArtifactsKey, {
       ethereumAbiFiles,
       ethereumAddresses,
-      ethereumTransactionPolicyFile,
+      ethereumClientConfigurationFile,
       solanaProgramId,
       solanaIdlFile
     })
@@ -287,10 +289,10 @@ export namespace OperatorDaemonTool {
     StepExtraRecorder.record({
       client: "harness",
       kind: "artifact",
-      text: "address-embedded ETH ABIs + SEC-131 Anvil policy + liqsol_core IDL prepared for the operator daemons",
+      text: "address-embedded ETH ABIs + unified Ethereum client config + liqsol_core IDL prepared for the operator daemons",
       ethereumAbiFiles,
       ethereumAddresses,
-      ethereumTransactionPolicyFile,
+      ethereumClientConfigurationFile,
       solanaProgramId,
       solanaIdlFile
     })
@@ -315,13 +317,13 @@ export namespace OperatorDaemonTool {
     )
   }
 
-  /** The outpost signature-provider + client specs shared by both daemon types. */
+  /** The outpost signature-provider + client configuration shared by both daemon types. */
   function outpostClientArgs(
     operator: OperatorAccount,
     artifacts: OperatorDaemonArtifacts,
     network: OperatorDaemonNetwork
   ): string[] {
-    const ethereumProvider = `eth-${operator.account}`,
+    const ethereumProvider = EthereumSignatureProviderId,
       solanaProvider = `sol-${operator.account}`
     return [
       ...pair(
@@ -329,17 +331,8 @@ export namespace OperatorDaemonTool {
         KeyGenerator.toSignatureProvider(operator.ethereum, ethereumProvider)
       ),
       ...pair(
-        "--outpost-ethereum-client",
-        [
-          EthereumClientId,
-          ethereumProvider,
-          network.ethereumRpcUrl,
-          String(network.ethereumChainId)
-        ].join(",")
-      ),
-      ...pair(
-        "--outpost-ethereum-transaction-policy-file",
-        artifacts.ethereumTransactionPolicyFile
+        "--outpost-ethereum-client-config-file",
+        artifacts.ethereumClientConfigurationFile
       ),
       ...artifacts.ethereumAbiFiles.flatMap(file =>
         pair("--ethereum-abi-file", file)
@@ -389,7 +382,7 @@ export namespace OperatorDaemonTool {
       // Per-chain outpost bindings (repeatable CSV specs; replaced the removed
       // --batch-eth-{client-id,opp-addr,opp-inbound-addr} / --batch-sol-program-id —
       // the EVM RPC client is auto-selected by matching the chains row's
-      // external_chain_id against the --outpost-ethereum-client chain ids):
+      // external_chain_id against the configured Ethereum client chain ids):
       //   EVM: <chain_code>,<opp_addr>,<opp_inbound_addr>
       //   SVM: <chain_code>,<opp_outpost_program_id>
       ...pair(
