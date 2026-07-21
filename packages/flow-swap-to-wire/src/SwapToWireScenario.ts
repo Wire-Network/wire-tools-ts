@@ -57,13 +57,14 @@ const log = getLogger(__filename)
  */
 async function underwritersActive(
   ctx: SwapScenarioContext,
-  accounts: string[]
+  labels: string[]
 ): Promise<boolean> {
   const { rows } = await ctx.wire
     .getSysioContract(SysioContractName.opreg)
     .tables.operators.query({ limit: Constants.OperatorTableRowLimit })
-  return accounts.every(account => {
-    const operator = rows.find(row => row.account === account)
+  return labels.every(label => {
+    const account = ctx.keyStore.assertOperator(label).account,
+      operator = rows.find(row => row.account === account)
     return (
       operator != null &&
       matchesProtoEnum(
@@ -302,9 +303,9 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
 
   plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const config = cluster.context.config,
-      underwriterAccounts = Array.from(
+      underwriterLabels = Array.from(
         { length: config.underwriterCount },
-        (_, index) => HarnessConstants.underwriterAccountName(index)
+        (_, index) => HarnessConstants.underwriterLabel(index)
       ),
       writeOptions = { timeoutMs: Constants.WriteTimeoutMs },
       activeStepOptions = {
@@ -391,7 +392,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
       "UnderwriterCollateral",
       "Bond default underwriter collateral on both outpost chains",
       writeOptions,
-      underwriterAccounts,
+      underwriterLabels,
       WireUnderwriterTool.load(null, config.underwriterCount)
     )
     ClusterBuildPhase.create(
@@ -406,7 +407,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
         async ctx => {
           await pollUntil(
             "every underwriter OPERATOR_STATUS_ACTIVE",
-            () => underwritersActive(ctx, underwriterAccounts),
+            () => underwritersActive(ctx, underwriterLabels),
             Constants.relayDeadlineMs(),
             Constants.LongPollIntervalMs
           )

@@ -3,8 +3,8 @@ import { Hash, KeyType, PrivateKey } from "@wireio/sdk-core"
 
 /**
  * Cross-cutting harness constants — development keys, system-account names,
- * token / ROA parameters, contract paths, plugin sets, account-name generators,
- * and the emissions config defaults. Ported from the former
+ * token / ROA parameters, contract paths, plugin sets, operator-label
+ * generators, and the emissions config defaults. Ported from the former
  * the former `cluster/constants.ts`; network ports are NOT here — they live on
  * `config/BindConfigProvider.ts`, which owns binding.
  */
@@ -238,26 +238,30 @@ export namespace Constants {
     "sysio::outpost_solana_client_plugin"
   ] as const
 
-  /** Lowercase ASCII alphabet — single-character operator-name suffixes (wraps via modulo). */
+  /** Lowercase ASCII alphabet — single-character operator-label suffixes (wraps via modulo). */
   const LowercaseAlphabet = "abcdefghijklmnopqrstuvwxyz"
 
   /**
-   * Batch-operator account name for an index — `batchop.<letter>`.
+   * Batch-operator provisioning label for an index — `batchop.<letter>`. The
+   * label is the operator's `ClusterKeyStore` key AND its `sysio.roa::newuser`
+   * sponsor nonce — the CHAIN account name is node-owner-generated
+   * (`wireno.<suffix>`), not this value.
    *
    * @param index - Zero-based operator index.
-   * @returns The account name (e.g. `batchOperatorAccountName(0)` → `"batchop.a"`).
+   * @returns The label (e.g. `batchOperatorLabel(0)` → `"batchop.a"`).
    */
-  export function batchOperatorAccountName(index: number): string {
+  export function batchOperatorLabel(index: number): string {
     return `batchop.${LowercaseAlphabet[index % LowercaseAlphabet.length]}`
   }
 
   /**
-   * Underwriter account name for an index — `uwrit.<letter>`.
+   * Underwriter provisioning label for an index — `uwrit.<letter>`. Same
+   * label-vs-generated-account split as {@link batchOperatorLabel}.
    *
    * @param index - Zero-based underwriter index.
-   * @returns The account name (e.g. `underwriterAccountName(1)` → `"uwrit.b"`).
+   * @returns The label (e.g. `underwriterLabel(1)` → `"uwrit.b"`).
    */
-  export function underwriterAccountName(index: number): string {
+  export function underwriterLabel(index: number): string {
     return `uwrit.${LowercaseAlphabet[index % LowercaseAlphabet.length]}`
   }
 

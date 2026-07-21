@@ -8,15 +8,18 @@
  *
  * Each Phase materializes the operator's type-appropriate keys and accumulates
  * its {@link OperatorAccount} into THE single {@link ClusterKeyStore}
- * (`ctx.keyStore`) — the one place keys are accessed from — then runs the
- * on-chain writes:
+ * (`ctx.keyStore`) — the one place keys are accessed from, keyed by the
+ * operator's deterministic `label` — then runs the on-chain writes:
  *
  * - **producer**: materialize (node-shared K1+BLS from the store's node sets) →
- *   create the WIRE account with that K1.
+ *   create the WIRE account with that K1 (`label` = the account name).
  * - **batch operator / underwriter**: materialize (UNIQUE generated K1 + EM + ED;
- *   the K1 imported into the kiod wallet so `account@active` signs) → create the
- *   WIRE account with that K1 → (optional) fund ETH / airdrop SOL → authex-link
- *   both chains → `opreg::regoperator`.
+ *   the K1 imported into the kiod wallet so `account@active` signs) →
+ *   node-owner-sponsored account creation (`sysio.roa::newuser` as the bootstrap
+ *   node owner, nonce = `label`; the chain assigns a generated
+ *   `<nodeOwner>.<suffix>` account name, adopted from the `sponsors` table) →
+ *   (optional) fund ETH / airdrop SOL → authex-link both chains →
+ *   `opreg::regoperator`.
  *
  * Downstream write runners DERIVE the live ethers/web3 signing objects from the
  * stored typed keys via `utils/keyPairUtils` — no raw SDK handle is ever stored.
@@ -31,6 +34,7 @@ import { KeyType, PrivateKey, SysioContracts } from "@wireio/sdk-core"
 import { ChainKind, OperatorType } from "@wireio/opp-typescript-models"
 import { match } from "ts-pattern"
 import { getLogger } from "@wireio/shared"
+import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { abiEnumValue } from "../../utils/enumUtils.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
@@ -43,7 +47,6 @@ import {
 } from "../../orchestration/ClusterBuildStep.js"
 import type { ClusterBuildParent } from "../../orchestration/ClusterBuildPhaseBase.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
-import { OperatorSteps } from "../../orchestration/steps/OperatorSteps.js"
 import { EthereumOutpostBootstrapper } from "../../orchestration/ethereum/EthereumOutpostBootstrapper.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
@@ -66,8 +69,14 @@ export namespace WireOperatorProvisioningTool {
 
   /** One operator to provision — `type` drives which keys + steps its Phase runs. */
   export interface OperatorProvisioningSpec {
-    /** WIRE account name to provision. */
-    readonly account: string
+    /**
+     * The operator's deterministic provisioning label — the `ClusterKeyStore`
+     * key. Producers: the WIRE account name itself (`defproducera`). Batch
+     * operators / underwriters: the `sysio.roa::newuser` sponsor nonce their
+     * generated chain account is created under (`batchop.a`, `uwrit.a`, a
+     * flow's `depositor`). Must be a valid WIRE name (1..12 chars).
+     */
+    readonly label: string
     /** The operator's proto {@link OperatorType}. */
     readonly type: OperatorType
     /** Producer: index of the producer NODE whose K1+BLS this account shares. */
@@ -126,7 +135,7 @@ export namespace WireOperatorProvisioningTool {
       )
       .otherwise(() => {
         throw new Error(
-          `provision ${spec.account}: unsupported operator type ${OperatorType[spec.type] ?? spec.type}`
+          `provision ${spec.label}: unsupported operator type ${OperatorType[spec.type] ?? spec.type}`
         )
       })
   }
@@ -137,35 +146,37 @@ export namespace WireOperatorProvisioningTool {
     spec: OperatorProvisioningSpec,
     options: ClusterBuildStepOptions
   ): ClusterBuildPhase<C> {
-    const { account, producerNodeIndex } = spec
+    const { label, producerNodeIndex } = spec
     Assert.ok(
       producerNodeIndex != null,
-      `provision producer ${account}: producerNodeIndex is required`
+      `provision producer ${label}: producerNodeIndex is required`
     )
-    return ClusterBuildPhase.create<C>(group, `Provision ${account}`, `provision producer ${account}`, [
+    return ClusterBuildPhase.create<C>(group, `Provision ${label}`, `provision producer ${label}`, [
       planProducerMaterialization<C>(
         Report.Actor.Producer,
-        `${account}-identity`,
-        `materialize producer ${account} identity from node ${producerNodeIndex}`,
+        `${label}-identity`,
+        `materialize producer ${label} identity from node ${producerNodeIndex}`,
         options,
-        account,
+        label,
         producerNodeIndex
       ),
       planAccountCreation<C>(
         Report.Actor.Producer,
-        `${account}-account`,
-        `create WIRE account ${account}`,
+        `${label}-account`,
+        `create WIRE account ${label}`,
         options,
-        account
+        label
       )
     ])
   }
 
   /**
-   * A batch-operator / underwriter Phase: materialize keys → create account →
-   * (optional) fund ETH / airdrop SOL → authex-link both chains → register.
-   * Funding steps are included only when the spec supplies an amount (bootstrap
-   * ops skip them; deposit flows opt in).
+   * A batch-operator / underwriter Phase: materialize keys → node-owner-sponsored
+   * account creation → (optional) fund ETH / airdrop SOL → authex-link both
+   * chains → register. Funding steps are included only when the spec supplies an
+   * amount (bootstrap ops skip them; deposit flows opt in). Steps after the
+   * sponsored creation resolve the operator's GENERATED chain account from
+   * `ctx.keyStore` by `label`.
    */
   function planProvisionOppOperatorPhase<C extends ClusterBuildContext>(
     group: ClusterBuildParent<C>,
@@ -173,7 +184,7 @@ export namespace WireOperatorProvisioningTool {
     options: ClusterBuildStepOptions
   ): ClusterBuildPhase<C> {
     const {
-        account,
+        label,
         type,
         ethereumHdIndex,
         isBootstrapped,
@@ -184,33 +195,33 @@ export namespace WireOperatorProvisioningTool {
       actor = isUnderwriter ? Report.Actor.Underwriter : Report.Actor.BatchOperator
     Assert.ok(
       ethereumHdIndex != null,
-      `provision operator ${account}: ethereumHdIndex is required`
+      `provision operator ${label}: ethereumHdIndex is required`
     )
-    return ClusterBuildPhase.create<C>(group, `Provision ${account}`, `provision operator ${account}`, [
+    return ClusterBuildPhase.create<C>(group, `Provision ${label}`, `provision operator ${label}`, [
       planIdentityMaterialization<C>(
         actor,
-        `${account}-identity`,
-        `generate ${account} WIRE + ETH + SOL identity`,
+        `${label}-identity`,
+        `generate ${label} WIRE + ETH + SOL identity`,
         options,
-        account,
+        label,
         type,
         ethereumHdIndex
       ),
-      planAccountCreation<C>(
+      planSponsoredAccountCreation<C>(
         actor,
-        `${account}-account`,
-        `create WIRE account ${account}`,
+        `${label}-account`,
+        `create ${label}'s WIRE account via the node owner (roa::newuser)`,
         options,
-        account
+        label
       ),
       ...(fundEthereumWei != null
         ? [
             planEthereumFunding<C>(
               actor,
-              `${account}-fund-ethereum`,
-              `fund ${account} ETH wallet`,
+              `${label}-fund-ethereum`,
+              `fund ${label} ETH wallet`,
               options,
-              account,
+              label,
               fundEthereumWei
             )
           ]
@@ -219,42 +230,38 @@ export namespace WireOperatorProvisioningTool {
         ? [
             planSolanaAirdrop<C>(
               actor,
-              `${account}-airdrop-solana`,
-              `airdrop SOL to ${account}`,
+              `${label}-airdrop-solana`,
+              `airdrop SOL to ${label}`,
               options,
-              account,
+              label,
               airdropSolanaLamports
             )
           ]
         : []),
       planAuthexLink<C>(
         actor,
-        `${account}-authex-ethereum`,
-        `authex-link ${account} on Ethereum`,
+        `${label}-authex-ethereum`,
+        `authex-link ${label} on Ethereum`,
         options,
-        account,
+        label,
         ChainKind.EVM
       ),
       planAuthexLink<C>(
         actor,
-        `${account}-authex-solana`,
-        `authex-link ${account} on Solana`,
+        `${label}-authex-solana`,
+        `authex-link ${label} on Solana`,
         options,
-        account,
+        label,
         ChainKind.SVM
       ),
-      OperatorSteps.planRegister<C>(
+      planRegistration<C>(
         actor,
-        `${account}-register`,
-        `register operator ${account}`,
+        `${label}-register`,
+        `register operator ${label}`,
         options,
-        {
-          account,
-          // proto OperatorType + the ABI mirror share numeric values —
-          // resolved through the checked bridge.
-          type: abiEnumValue(SysioContracts.SysioOpregOperatortype, type),
-          is_bootstrapped: isBootstrapped ?? true
-        }
+        label,
+        type,
+        isBootstrapped ?? true
       )
     ])
   }
@@ -264,7 +271,7 @@ export namespace WireOperatorProvisioningTool {
   /** Input for {@link planIdentityMaterialization}. */
   export interface MaterializeIdentityInput extends StepInput {
     readonly kind: "WireOperatorProvisioningTool.MaterializeIdentityInput"
-    readonly account: string
+    readonly label: string
     readonly type: OperatorType
     readonly ethereumHdIndex: number
   }
@@ -280,7 +287,7 @@ export namespace WireOperatorProvisioningTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    account: string,
+    label: string,
     type: OperatorType,
     ethereumHdIndex: number
   ): ClusterBuildStep<C, MaterializeIdentityInput> {
@@ -291,7 +298,7 @@ export namespace WireOperatorProvisioningTool {
       options,
       {
         kind: "WireOperatorProvisioningTool.MaterializeIdentityInput",
-        account,
+        label,
         type,
         ethereumHdIndex
       },
@@ -307,8 +314,8 @@ export namespace WireOperatorProvisioningTool {
   ): Promise<void> {
     signal.throwIfAborted()
     Assert.ok(
-      input.account.length > 0 && input.account.length <= 12,
-      `materializeIdentity: account "${input.account}" must be 1..12 chars`
+      input.label.length > 0 && input.label.length <= 12,
+      `materializeIdentity: label "${input.label}" must be 1..12 chars`
     )
     const keyContext = KeyGenerator.context(
       ctx.config.executables.clio,
@@ -317,29 +324,32 @@ export namespace WireOperatorProvisioningTool {
     )
     const [wire, solana, ethereum] = await Promise.all([
       KeyGenerator.create(KeyType.K1, keyContext, {
-        purpose: `operator ${input.account} — WIRE account key (K1)`
+        purpose: `operator ${input.label} — WIRE account key (K1)`
       }),
       KeyGenerator.create(KeyType.ED, keyContext, {
-        purpose: `operator ${input.account} — solana outpost key (ED)`
+        purpose: `operator ${input.label} — solana outpost key (ED)`
       }),
       KeyGenerator.create(KeyType.EM, keyContext, {
         ethereumHdIndex: input.ethereumHdIndex,
-        purpose: `operator ${input.account} — ethereum outpost key (EM)`
+        purpose: `operator ${input.label} — ethereum outpost key (EM)`
       })
     ])
     // Import the operator's unique wire key so kiod can sign `account@active`
     // (authex links, registration, and any operator-signed flow actions).
     const wallet = await ctx.wire.wallet.getOrCreate()
     await wallet.addPrivateKey(wire.privateKey)
+    // `account` provisionally holds the label — the sponsored-creation step
+    // replaces it with the chain-generated name.
     ctx.keyStore.setOperator({
-      account: input.account,
+      label: input.label,
+      account: input.label,
       type: input.type,
       wire,
       ethereum,
       solana
     })
     log.info(
-      `[provision] ${input.account} — WIRE ${wire.publicKey}, ETH ${ethereum.address} (hd=${input.ethereumHdIndex}), SOL ${solana.publicKey}`
+      `[provision] ${input.label} — WIRE ${wire.publicKey}, ETH ${ethereum.address} (hd=${input.ethereumHdIndex}), SOL ${solana.publicKey}`
     )
   }
 
@@ -348,7 +358,7 @@ export namespace WireOperatorProvisioningTool {
   /** Input for {@link planProducerMaterialization}. */
   export interface MaterializeProducerInput extends StepInput {
     readonly kind: "WireOperatorProvisioningTool.MaterializeProducerInput"
-    readonly account: string
+    readonly label: string
     readonly producerNodeIndex: number
   }
 
@@ -362,7 +372,7 @@ export namespace WireOperatorProvisioningTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    account: string,
+    label: string,
     producerNodeIndex: number
   ): ClusterBuildStep<C, MaterializeProducerInput> {
     return ClusterBuildStep.create<C, MaterializeProducerInput>(
@@ -372,7 +382,7 @@ export namespace WireOperatorProvisioningTool {
       options,
       {
         kind: "WireOperatorProvisioningTool.MaterializeProducerInput",
-        account,
+        label,
         producerNodeIndex
       },
       runProducerMaterialization
@@ -387,8 +397,10 @@ export namespace WireOperatorProvisioningTool {
   ): Promise<void> {
     signal.throwIfAborted()
     const nodeKeys = ctx.keyStore.node(input.producerNodeIndex)
+    // A producer's chain account name IS its label (no sponsored generation).
     ctx.keyStore.setOperator({
-      account: input.account,
+      label: input.label,
+      account: input.label,
       type: OperatorType.PRODUCER,
       wire: nodeKeys.keys.k1,
       bls: nodeKeys.keys.bls
@@ -396,44 +408,46 @@ export namespace WireOperatorProvisioningTool {
     // Descriptive payload only — the full pairs live under the step that
     // GENERATED them (generate-keys); here we just say whose set this is.
     StepExtraRecorder.note(
-      `producer ${input.account} assumes node_${String(input.producerNodeIndex).padStart(2, "0")}'s signing set`,
+      `producer ${input.label} assumes node_${String(input.producerNodeIndex).padStart(2, "0")}'s signing set`,
       {
-        account: input.account,
+        account: input.label,
         wirePublicKey: nodeKeys.keys.k1.publicKey,
         blsPublicKey: nodeKeys.keys.bls.publicKey
       }
     )
     log.info(
-      `[provision] producer ${input.account} — node ${input.producerNodeIndex} (K1 ${nodeKeys.keys.k1.publicKey})`
+      `[provision] producer ${input.label} — node ${input.producerNodeIndex} (K1 ${nodeKeys.keys.k1.publicKey})`
     )
   }
 
-  // ── Step: create the operator's WIRE account with ITS OWN key (write) ─────
+  // ── Step: create a producer's WIRE account with ITS OWN key (write) ───────
 
   /** Input for {@link planAccountCreation}. */
   export interface CreateAccountInput extends StepInput {
     readonly kind: "WireOperatorProvisioningTool.CreateAccountInput"
-    readonly account: string
+    readonly label: string
   }
 
   /**
-   * Create the operator's WIRE account (owner = active = the operator's `wire`
-   * public key from `ctx.keyStore`). Requires the operator's materialize step to
-   * have run first.
+   * Create a producer's WIRE account (name = `label`, owner = active = the
+   * operator's `wire` public key from `ctx.keyStore`). Requires the operator's
+   * materialize step to have run first. OPP operators (batch / underwriter) use
+   * {@link planSponsoredAccountCreation} instead — their accounts are
+   * node-owner-created with generated names.
    */
   export function planAccountCreation<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    account: string
+    label: string
   ): ClusterBuildStep<C, CreateAccountInput> {
     return ClusterBuildStep.create<C, CreateAccountInput>(
       actor,
       name,
       description,
       options,
-      { kind: "WireOperatorProvisioningTool.CreateAccountInput", account },
+      { kind: "WireOperatorProvisioningTool.CreateAccountInput", label },
       runAccountCreation
     )
   }
@@ -445,7 +459,7 @@ export namespace WireOperatorProvisioningTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const operator = ctx.keyStore.assertOperator(input.account)
+    const operator = ctx.keyStore.assertOperator(input.label)
     await ctx.wire.createAccount(
       AccountCreator,
       operator.account,
@@ -454,12 +468,168 @@ export namespace WireOperatorProvisioningTool {
     )
   }
 
+  // ── Step: node-owner-sponsored account creation (roa::newuser, write) ─────
+
+  /** Input for {@link planSponsoredAccountCreation}. */
+  export interface SponsoredAccountCreationInput extends StepInput {
+    readonly kind: "WireOperatorProvisioningTool.SponsoredAccountCreationInput"
+    readonly label: string
+  }
+
+  /**
+   * Create an OPP operator's WIRE account via the bootstrap node owner:
+   * `sysio.roa::newuser({creator: wireno, nonce: label, pubkey: <operator K1>})`
+   * signed `[wireno@active]`. The chain generates a `<nodeOwner>.<suffix>`
+   * account name and records the `(creator, nonce) → username` sponsor mapping;
+   * the runner adopts the generated name from the `sponsors` table and replaces
+   * the operator's provisional `account` in `ctx.keyStore`. Re-entrant: an
+   * existing sponsor row for the nonce is adopted without a second `newuser`.
+   * Requires the operator's materialize step to have run first.
+   */
+  export function planSponsoredAccountCreation<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    label: string
+  ): ClusterBuildStep<C, SponsoredAccountCreationInput> {
+    return ClusterBuildStep.create<C, SponsoredAccountCreationInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "WireOperatorProvisioningTool.SponsoredAccountCreationInput",
+        label
+      },
+      runSponsoredAccountCreation
+    )
+  }
+
+  /** Named runner — ONE `roa::newuser` as the node owner, then adopt the generated name. */
+  export async function runSponsoredAccountCreation<C extends ClusterBuildContext>(
+    ctx: C,
+    input: SponsoredAccountCreationInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const operator = ctx.keyStore.assertOperator(input.label),
+      roa = ctx.wire.getSysioContract(SysioContracts.SysioContractName.roa),
+      existing = await readSponsoredUsername(ctx, input.label)
+    if (existing == null) {
+      await roa.actions.newuser.invoke(
+        {
+          creator: Constants.BOOTSTRAP_NODE_OWNER,
+          nonce: input.label,
+          pubkey: operator.wire.publicKey
+        },
+        {
+          authorization: [
+            { actor: Constants.BOOTSTRAP_NODE_OWNER, permission: "active" }
+          ]
+        }
+      )
+    }
+    const account = existing ?? (await readSponsoredUsername(ctx, input.label))
+    Assert.ok(
+      account != null,
+      `sponsoredAccountCreation: no sponsors row for nonce "${input.label}" under ${Constants.BOOTSTRAP_NODE_OWNER} after newuser`
+    )
+    ctx.keyStore.setOperator({ ...operator, account })
+    log.info(
+      `[provision] ${input.label} — node-owner-created WIRE account ${account} (sponsor ${Constants.BOOTSTRAP_NODE_OWNER})`
+    )
+  }
+
+  /**
+   * The generated username the node owner's `sponsors` table records for
+   * `nonce`, or nothing when the nonce has no row yet (typed KV read, scoped to
+   * the sponsoring node owner). A KV table that has never been written can
+   * reject the read outright (`Contract Table Query Exception`) — treated as
+   * "no row yet", logged at debug (expected exactly once, on the first
+   * operator of a fresh chain).
+   */
+  async function readSponsoredUsername(
+    ctx: ClusterBuildContext,
+    nonce: string
+  ): Promise<string> {
+    try {
+      const { rows } = await ctx.wire
+        .getSysioContract(SysioContracts.SysioContractName.roa)
+        .tables.sponsors.query({ scope: Constants.BOOTSTRAP_NODE_OWNER })
+      return rows.find(row => row.nonce === nonce)?.username
+    } catch (error) {
+      log.debug(
+        `[provision] sponsors read for nonce ${nonce} treated as absent: ${error instanceof Error ? error.message : String(error)}`
+      )
+      return undefined
+    }
+  }
+
+  // ── Step: register the operator on sysio.opreg (write) ────────────────────
+
+  /** Input for {@link planRegistration}. */
+  export interface RegistrationInput extends StepInput {
+    readonly kind: "WireOperatorProvisioningTool.RegistrationInput"
+    readonly label: string
+    readonly type: OperatorType
+    readonly isBootstrapped: boolean
+  }
+
+  /**
+   * Register the operator on `sysio.opreg` (`regoperator`). The account is
+   * resolved from `ctx.keyStore` at RUN time — it is the sponsored-creation
+   * step's generated name, unknown when the plan is built.
+   */
+  export function planRegistration<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    label: string,
+    type: OperatorType,
+    isBootstrapped: boolean
+  ): ClusterBuildStep<C, RegistrationInput> {
+    return ClusterBuildStep.create<C, RegistrationInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "WireOperatorProvisioningTool.RegistrationInput",
+        label,
+        type,
+        isBootstrapped
+      },
+      runRegistration
+    )
+  }
+
+  /** Named runner — ONE `opreg::regoperator` for the operator's resolved account. */
+  export async function runRegistration<C extends ClusterBuildContext>(
+    ctx: C,
+    input: RegistrationInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const operator = ctx.keyStore.assertOperator(input.label)
+    await ctx.wire
+      .getSysioContract(SysioContracts.SysioContractName.opreg)
+      .actions.regoperator.invoke({
+        account: operator.account,
+        // proto OperatorType + the ABI mirror share numeric values —
+        // resolved through the checked bridge.
+        type: abiEnumValue(SysioContracts.SysioOpregOperatortype, input.type),
+        is_bootstrapped: input.isBootstrapped
+      })
+  }
+
   // ── Step: fund the operator's ETH wallet (write) ─────────────────────────
 
   /** Input for {@link planEthereumFunding}. */
   export interface FundEthereumInput extends StepInput {
     readonly kind: "WireOperatorProvisioningTool.FundEthereumInput"
-    readonly account: string
+    readonly label: string
     readonly wei: bigint
   }
 
@@ -469,7 +639,7 @@ export namespace WireOperatorProvisioningTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    account: string,
+    label: string,
     wei: bigint
   ): ClusterBuildStep<C, FundEthereumInput> {
     return ClusterBuildStep.create<C, FundEthereumInput>(
@@ -477,7 +647,7 @@ export namespace WireOperatorProvisioningTool {
       name,
       description,
       options,
-      { kind: "WireOperatorProvisioningTool.FundEthereumInput", account, wei },
+      { kind: "WireOperatorProvisioningTool.FundEthereumInput", label, wei },
       runEthereumFunding
     )
   }
@@ -489,7 +659,7 @@ export namespace WireOperatorProvisioningTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const operator = ctx.keyStore.assertOperator(input.account)
+    const operator = ctx.keyStore.assertOperator(input.label)
     const response = await ctx.ethereum.wallet.signer.sendTransaction({
       to: operator.ethereum.address,
       value: input.wei
@@ -502,7 +672,7 @@ export namespace WireOperatorProvisioningTool {
   /** Input for {@link planSolanaAirdrop}. */
   export interface AirdropSolanaInput extends StepInput {
     readonly kind: "WireOperatorProvisioningTool.AirdropSolanaInput"
-    readonly account: string
+    readonly label: string
     readonly lamports: bigint
   }
 
@@ -512,7 +682,7 @@ export namespace WireOperatorProvisioningTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    account: string,
+    label: string,
     lamports: bigint
   ): ClusterBuildStep<C, AirdropSolanaInput> {
     return ClusterBuildStep.create<C, AirdropSolanaInput>(
@@ -520,7 +690,7 @@ export namespace WireOperatorProvisioningTool {
       name,
       description,
       options,
-      { kind: "WireOperatorProvisioningTool.AirdropSolanaInput", account, lamports },
+      { kind: "WireOperatorProvisioningTool.AirdropSolanaInput", label, lamports },
       runSolanaAirdrop
     )
   }
@@ -532,7 +702,7 @@ export namespace WireOperatorProvisioningTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const operator = ctx.keyStore.assertOperator(input.account)
+    const operator = ctx.keyStore.assertOperator(input.label)
     const signature = await ctx.solana.connection.requestAirdrop(
       solanaKeypair(operator.solana).publicKey,
       Number(input.lamports)
@@ -540,7 +710,7 @@ export namespace WireOperatorProvisioningTool {
     await confirmSignature(
       ctx.solana.connection,
       signature,
-      `provision airdrop ${input.account}`
+      `provision airdrop ${input.label}`
     )
   }
 
@@ -549,7 +719,7 @@ export namespace WireOperatorProvisioningTool {
   /** Input for {@link planAuthexLink}. */
   export interface AuthexLinkInput extends StepInput {
     readonly kind: "WireOperatorProvisioningTool.AuthexLinkInput"
-    readonly account: string
+    readonly label: string
     readonly chainKind: ChainKind
   }
 
@@ -559,7 +729,7 @@ export namespace WireOperatorProvisioningTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    account: string,
+    label: string,
     chainKind: ChainKind
   ): ClusterBuildStep<C, AuthexLinkInput> {
     return ClusterBuildStep.create<C, AuthexLinkInput>(
@@ -567,7 +737,7 @@ export namespace WireOperatorProvisioningTool {
       name,
       description,
       options,
-      { kind: "WireOperatorProvisioningTool.AuthexLinkInput", account, chainKind },
+      { kind: "WireOperatorProvisioningTool.AuthexLinkInput", label, chainKind },
       runAuthexLink
     )
   }
@@ -579,12 +749,15 @@ export namespace WireOperatorProvisioningTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const operator = ctx.keyStore.assertOperator(input.account)
+    // `operator.account` is the RESOLVED chain account (the sponsored-creation
+    // step's generated name) — the link message + `account@active` auth must
+    // carry it, never the label.
+    const operator = ctx.keyStore.assertOperator(input.label)
     if (input.chainKind === ChainKind.EVM) {
       const ethereumWallet = ethereumSigner(operator.ethereum, ctx.ethereum.provider)
       await AuthExLinkTool.createLink(ctx.wire, {
         chainKind: ChainKind.EVM,
-        account: input.account,
+        account: operator.account,
         privateKey: PrivateKey.from(operator.ethereum.privateKey),
         ethereumWallet
       })
@@ -592,7 +765,7 @@ export namespace WireOperatorProvisioningTool {
     }
     await AuthExLinkTool.createLink(ctx.wire, {
       chainKind: input.chainKind,
-      account: input.account,
+      account: operator.account,
       privateKey: solanaSdkPrivateKey(operator.solana)
     })
   }

@@ -64,8 +64,8 @@ describe(`POST ${ApiPaths.Processes.Endpoint}`, () => {
       nodePath: nodeDir,
       ports: { http: 0, p2p: 0 },
       producers: [],
-      batchOperatorAccount: null,
-      underwriterAccount: null
+      batchOperatorLabel: null,
+      underwriterLabel: null
     }
     const state: ClusterState = {
       createdAt: new Date().toISOString(),

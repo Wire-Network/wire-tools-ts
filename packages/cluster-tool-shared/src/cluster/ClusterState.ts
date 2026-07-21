@@ -35,10 +35,10 @@ export interface ClusterStateNode {
   ports: ClusterStateNodePorts
   /** Producer account names scheduled on this node (empty for pure operator nodes). */
   producers: string[]
-  /** Batch-operator account this node acts for, when `role === operator`. */
-  batchOperatorAccount: string | null
-  /** Underwriter account this node acts for, when `role === operator`. */
-  underwriterAccount: string | null
+  /** Batch-operator provisioning label this node acts for, when `role === operator`. */
+  batchOperatorLabel: string | null
+  /** Underwriter provisioning label this node acts for, when `role === operator`. */
+  underwriterLabel: string | null
 }
 
 /**

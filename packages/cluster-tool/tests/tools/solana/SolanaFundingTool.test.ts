@@ -65,7 +65,7 @@ describe("SolanaFundingTool step factories", () => {
     expect(step.actor).toBe(Report.Actor.Underwriter)
     expect(step.name).toBe("uwa-airdrop")
     expect(step.input.kind).toBe("SolanaFundingTool.AirdropInput")
-    expect(step.input.operatorAccount).toBe("uwa")
+    expect(step.input.operatorLabel).toBe("uwa")
     expect(step.input.floorLamports).toBe(7n)
   })
 
