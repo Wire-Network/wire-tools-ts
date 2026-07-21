@@ -17,7 +17,8 @@ import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
 import { fixtureContext } from "../../../config/clusterBuildContextFixture.js"
 
 /** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
-const AnvilMnemonic = "test test test test test test test test test test test junk"
+const AnvilMnemonic =
+  "test test test test test test test test test test test junk"
 
 /**
  * A fully-keyed OperatorAccount fixture for the given account/type — REAL
@@ -33,7 +34,11 @@ function operatorAccount(account: string, type: OperatorType): OperatorAccount {
   return {
     account,
     type,
-    wire: { type: KeyType.K1, publicKey: `PUB_K1_${account}`, privateKey: `PVT_K1_${account}` },
+    wire: {
+      type: KeyType.K1,
+      publicKey: `PUB_K1_${account}`,
+      privateKey: `PVT_K1_${account}`
+    },
     ethereum: ethereumKeyPairFromWallet(wallet),
     solana: {
       type: KeyType.ED,
@@ -52,6 +57,7 @@ const artifactsFixture: OperatorDaemonArtifacts = {
     OperatorRegistry: "0x3333333333333333333333333333333333333333",
     ReserveManager: "0x4444444444444444444444444444444444444444"
   },
+  ethereumClientConfigurationFile: "/cluster/data/ethereum-client.json",
   solanaProgramId: "GrqvbZLCLkfeSQqvE7rL8XKHVWjNhAG2faLsY8yr9tD5",
   solanaIdlFile: "/cluster/data/solana-idls/liqsol_core.json"
 }
@@ -131,7 +137,10 @@ describe("Steps.processes.nodeop", () => {
       expect(recoverySpy).toHaveBeenCalledWith(
         ctx.processManager,
         expect.objectContaining({
-          node: expect.objectContaining({ name: bios.name, role: NodeRole.bios })
+          node: expect.objectContaining({
+            name: bios.name,
+            role: NodeRole.bios
+          })
         })
       )
     } finally {
@@ -155,7 +164,11 @@ describe("Steps.processes.nodeop", () => {
       ctx.keyStore.pushNodes({
         index: 1,
         keys: {
-          k1: { type: KeyType.K1, publicKey: "PUB_K1_node1", privateKey: "PVT_K1_node1" },
+          k1: {
+            type: KeyType.K1,
+            publicKey: "PUB_K1_node1",
+            privateKey: "PVT_K1_node1"
+          },
           bls: {
             type: KeyType.BLS,
             publicKey: "PUB_BLS_node1",
@@ -164,7 +177,9 @@ describe("Steps.processes.nodeop", () => {
           }
         }
       })
-      const node = testNode(ctx, NodeRole.producer, 1, "node_01", ["defproducera"])
+      const node = testNode(ctx, NodeRole.producer, 1, "node_01", [
+        "defproducera"
+      ])
       const operator = Steps.processes.nodeop.resolveOperator(ctx, node)
       expect(operator.account).toBe("defproducera")
       expect(operator.type).toBe(OperatorType.PRODUCER)
@@ -176,16 +191,38 @@ describe("Steps.processes.nodeop", () => {
       const ctx = fixtureContext()
       const provisioned = operatorAccount("batchopaaaa", OperatorType.BATCH)
       ctx.keyStore.setOperator(provisioned)
-      const node = testNode(ctx, NodeRole.operator, 2, "node_02", [], "batchopaaaa")
-      expect(Steps.processes.nodeop.resolveOperator(ctx, node)).toBe(provisioned)
+      const node = testNode(
+        ctx,
+        NodeRole.operator,
+        2,
+        "node_02",
+        [],
+        "batchopaaaa"
+      )
+      expect(Steps.processes.nodeop.resolveOperator(ctx, node)).toBe(
+        provisioned
+      )
     })
 
     it("operator node (underwriter) resolves the provisioned account from ctx.keyStore", () => {
       const ctx = fixtureContext()
-      const provisioned = operatorAccount("underwriteraaaa", OperatorType.UNDERWRITER)
+      const provisioned = operatorAccount(
+        "underwriteraaaa",
+        OperatorType.UNDERWRITER
+      )
       ctx.keyStore.setOperator(provisioned)
-      const node = testNode(ctx, NodeRole.operator, 3, "node_03", [], null, "underwriteraaaa")
-      expect(Steps.processes.nodeop.resolveOperator(ctx, node)).toBe(provisioned)
+      const node = testNode(
+        ctx,
+        NodeRole.operator,
+        3,
+        "node_03",
+        [],
+        null,
+        "underwriteraaaa"
+      )
+      expect(Steps.processes.nodeop.resolveOperator(ctx, node)).toBe(
+        provisioned
+      )
     })
 
     it("throws when an operator node names no batch/underwriter account", () => {
@@ -198,7 +235,14 @@ describe("Steps.processes.nodeop", () => {
 
     it("throws when the named operator account has not been provisioned in ctx.keyStore", () => {
       const ctx = fixtureContext()
-      const node = testNode(ctx, NodeRole.operator, 5, "node_05", [], "unprovisioned")
+      const node = testNode(
+        ctx,
+        NodeRole.operator,
+        5,
+        "node_05",
+        [],
+        "unprovisioned"
+      )
       expect(() => Steps.processes.nodeop.resolveOperator(ctx, node)).toThrow(
         /has not been provisioned/
       )
@@ -220,7 +264,9 @@ describe("Steps.processes.nodeop", () => {
 
     it("returns [] for a producer node", () => {
       const ctx = fixtureContext()
-      const node = testNode(ctx, NodeRole.producer, 1, "node_01", ["defproducera"])
+      const node = testNode(ctx, NodeRole.producer, 1, "node_01", [
+        "defproducera"
+      ])
       expect(
         Steps.processes.nodeop.resolveOperatorDaemonArgs(
           ctx,
@@ -234,14 +280,27 @@ describe("Steps.processes.nodeop", () => {
       const ctx = fixtureContext()
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifactsFixture)
       const account = operatorAccount("batchopaaaa", OperatorType.BATCH)
-      const node = testNode(ctx, NodeRole.operator, 2, "node_02", [], "batchopaaaa")
-      const args = Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)
+      const node = testNode(
+        ctx,
+        NodeRole.operator,
+        2,
+        "node_02",
+        [],
+        "batchopaaaa"
+      )
+      const args = Steps.processes.nodeop.resolveOperatorDaemonArgs(
+        ctx,
+        node,
+        account
+      )
       expect(args).toEqual(
         expect.arrayContaining([
           "--batch-enabled",
           "true",
           "--batch-operator-account",
-          "batchopaaaa"
+          "batchopaaaa",
+          "--outpost-ethereum-client-config-file",
+          artifactsFixture.ethereumClientConfigurationFile
         ])
       )
     })
@@ -249,15 +308,32 @@ describe("Steps.processes.nodeop", () => {
     it("builds underwriter daemon args for an operator node with an underwriterAccount", () => {
       const ctx = fixtureContext()
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifactsFixture)
-      const account = operatorAccount("underwriteraaaa", OperatorType.UNDERWRITER)
-      const node = testNode(ctx, NodeRole.operator, 3, "node_03", [], null, "underwriteraaaa")
-      const args = Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)
+      const account = operatorAccount(
+        "underwriteraaaa",
+        OperatorType.UNDERWRITER
+      )
+      const node = testNode(
+        ctx,
+        NodeRole.operator,
+        3,
+        "node_03",
+        [],
+        null,
+        "underwriteraaaa"
+      )
+      const args = Steps.processes.nodeop.resolveOperatorDaemonArgs(
+        ctx,
+        node,
+        account
+      )
       expect(args).toEqual(
         expect.arrayContaining([
           "--underwriter-enabled",
           "true",
           "--underwriter-account",
-          "underwriteraaaa"
+          "underwriteraaaa",
+          "--outpost-ethereum-client-config-file",
+          artifactsFixture.ethereumClientConfigurationFile
         ])
       )
     })
@@ -265,7 +341,14 @@ describe("Steps.processes.nodeop", () => {
     it("throws when the operator daemon artifacts have not been prepared yet", () => {
       const ctx = fixtureContext()
       const account = operatorAccount("batchopbbbb", OperatorType.BATCH)
-      const node = testNode(ctx, NodeRole.operator, 4, "node_04", [], "batchopbbbb")
+      const node = testNode(
+        ctx,
+        NodeRole.operator,
+        4,
+        "node_04",
+        [],
+        "batchopbbbb"
+      )
       expect(() =>
         Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)
       ).toThrow(/Missing asserted output/)

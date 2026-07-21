@@ -233,12 +233,31 @@ After `create` completes:
     ├── anvil/                       # anvil state + pid + logs (if --ethereum-path)
     ├── solana_validator/            # solana-test-validator ledger + pid + logs (if --solana-path)
     ├── eth-abis/                    # deployed contract ABIs (OPP, OPPInbound, BAR)
+    ├── ethereum-client.json          # shared unified Ethereum client config for operator daemons
     ├── solana-idls/                 # Anchor IDLs (opp_outpost.json)
     ├── opp-debugging/               # envelope .data/.metadata pairs (debugging server writes)
     └── tui/logs/                    # wire-debugging-client-tool-tui writes here (see companion)
 ```
 
 Every managed process writes `<dataPath>/<label>.pid` (e.g. `data/node_00/node-00.pid`) on spawn and removes it on clean exit. The TUI's Process Monitor iterates these.
+
+### Generated Ethereum client configuration
+
+Artifact preparation writes one `data/ethereum-client.json`, and every operator
+daemon passes it through `--outpost-ethereum-client-config-file`. The versioned
+file combines the stable `eth-default` client id and signature-provider id with
+the Anvil RPC URL and chain id. Signature-provider ids are process-local, so each
+daemon can register its own Ethereum private key as `eth-default` while safely
+sharing the same client configuration file. Daemon argument builders remain
+pure and reuse the artifact on create, run, restart, and flow-provisioned starts.
+
+Generated development-cluster files omit `transaction_policy`. Nodeop therefore
+assigns its maximum-`uint256` default caps, preserving the pre-policy behavior
+for local clusters. The schema supports an explicit nested policy when finite
+cluster limits are wanted later. Bios and producer-only nodes receive neither an
+Ethereum signing client nor an orphaned client-config option.
+
+Production policy selection happens outside `wire-tools-ts`.
 
 ---
 
