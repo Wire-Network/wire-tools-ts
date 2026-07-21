@@ -172,7 +172,7 @@ export class StreamServer {
     sendSubscribed(ws, frame.id)
     try {
       await stream.start(payload => sendEvent(ws, frame.id, payload))
-    } catch (err: any) {
+    } catch (err) {
       perConn.delete(frame.id)
       sendError(
         ws,

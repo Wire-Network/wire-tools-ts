@@ -40,7 +40,7 @@ export default function CreateLink({
       } else {
         throw new Error("Transaction not processed")
       }
-    } catch (e: any) {
+    } catch (e) {
       show(e.message || "Failed to create link", ToastColor.danger)
     } finally {
       setLoading(false)
