@@ -12,6 +12,7 @@
 
 import Assert from "node:assert"
 import Fs from "node:fs"
+import { NestedError } from "@wireio/shared"
 import Path from "node:path"
 import { ethers } from "ethers"
 import { match } from "ts-pattern"
@@ -428,11 +429,19 @@ export namespace EthereumCollateralTool {
         label: `depositNonNative dry-run (${input.operatorAccount})`
       }
     ).catch(error => {
-      throw new Error(
-        `EthereumCollateralTool.runNonNativeDeposit: depositNonNative would revert — ` +
-          `${ethereumRevertReason(error)} ` +
-          `[chainCode=${input.chainCode} tokenCode=${input.tokenCode} reserveCode=${input.reserveCode} ` +
-          `operatorType=${input.operatorType} amount=${input.amount}]`
+      throw new NestedError(
+        "EthereumCollateralTool.runNonNativeDeposit: depositNonNative would revert",
+        {
+          cause: error,
+          context: {
+            revertReason: ethereumRevertReason(error),
+            chainCode: input.chainCode,
+            tokenCode: input.tokenCode,
+            reserveCode: input.reserveCode,
+            operatorType: input.operatorType,
+            amount: input.amount
+          }
+        }
       )
     })
     const nonce = await resolveLatestNonce(registry)

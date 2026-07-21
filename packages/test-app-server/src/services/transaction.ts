@@ -12,7 +12,7 @@ import {
     SignedTransaction,
     Transaction
 } from "@wireio/sdk-core"
-import { getLogger } from "@wireio/shared"
+import { getLogger, NestedError } from "@wireio/shared"
 import { WireWalletClient } from "@wireio/wallet-ext-sdk"
 import { ethers } from "ethers"
 import * as wallet from "./wallet"
@@ -87,9 +87,10 @@ export async function pushTransaction(
     } catch (e: any) {
       log.error(`Error pushing transaction (remote): ${e instanceof Error ? e.message : String(e)}`, e)
       if (e instanceof APIError) {
-        throw new Error(
-          e.details[0]?.message?.replace(/Error:/g, "") || e.message
-        )
+        throw new NestedError("push_transaction failed (remote API error)", {
+          cause: e,
+          context: { detail: e.details[0]?.message?.replace(/Error:/g, "") }
+        })
       }
       throw e
     }

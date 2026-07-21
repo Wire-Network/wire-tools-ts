@@ -30,7 +30,7 @@ import {
   TokenKind
 } from "@wireio/opp-typescript-models"
 import { SlugName } from "@wireio/sdk-core"
-import { getLogger } from "@wireio/shared"
+import { getLogger, NestedError } from "@wireio/shared"
 
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../../orchestration/ClusterBuildPhase.js"
@@ -267,10 +267,9 @@ export namespace WireUnderwriterTool {
     try {
       parsed = JSON.parse(raw)
     } catch (err) {
-      throw new Error(
-        `--underwriter-collateral-json-file: ${filePath} is not valid JSON: ${
-          (err as Error).message
-        }`
+      throw new NestedError(
+        `--underwriter-collateral-json-file: ${filePath} is not valid JSON`,
+        { cause: err }
       )
     }
     return parseJson(parsed, underwriterCount)
