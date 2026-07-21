@@ -135,7 +135,7 @@ describe("OperatorDaemonTool", () => {
       expect(providers[0]).toBe(
         "wire-PUB_K1_batchopaaaa,wire,wire,PUB_K1_batchopaaaa,KEY:PVT_K1_batchopaaaa"
       )
-      // + the ETH and SOL outpost providers, named per-operator
+      // ETH uses a process-local stable id; SOL keeps its per-operator id.
       expect(providers.length).toBe(3)
       expect(providers[1]).toMatch(
         /^eth-default,ethereum,ethereum,0x[0-9a-fA-F]{128},KEY:0x/
