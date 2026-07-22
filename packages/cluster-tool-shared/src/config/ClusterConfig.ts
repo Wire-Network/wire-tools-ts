@@ -119,10 +119,42 @@ export const ClusterConfigSchema = z.object({
   underwriterCount: z.number(),
   /** Depot epoch duration, seconds (global — see the epoch-duration rule). */
   epochDurationSec: z.number(),
+  /**
+   * `operators_per_epoch` (batch-op group SIZE) override, or `null` to derive
+   * it from `batchOperatorCount` at bootstrap. `null` (not absence) so the slot
+   * round-trips through JSON persistence.
+   */
+  operatorsPerEpoch: z.number().nullable().default(null),
+  /**
+   * `batch_op_groups` (group COUNT) override, or `null` to derive it from
+   * `batchOperatorCount` at bootstrap. `null` (not absence) so the slot
+   * round-trips through JSON persistence.
+   */
+  batchOpGroups: z.number().nullable().default(null),
+  /**
+   * `epoch_retention_envelope_log_count` override, or `null` for the bootstrap
+   * default. `null` (not absence) so the slot round-trips through JSON.
+   */
+  epochRetentionEnvelopeLogCount: z.number().nullable().default(null),
   /** Staking warmup, in epochs. */
   warmupEpochs: z.number(),
   /** Staking cooldown, in epochs. */
   cooldownEpochs: z.number(),
+  /**
+   * `terminate_max_consecutive_misses` override, or `null` for the dev default.
+   * `null` (not absence) so the slot round-trips through JSON persistence.
+   */
+  terminateMaxConsecutiveMisses: z.number().nullable().default(null),
+  /**
+   * `terminate_max_pct_misses_24h` override, or `null` for the dev default.
+   * `null` (not absence) so the slot round-trips through JSON persistence.
+   */
+  terminateMaxPercentMisses24h: z.number().nullable().default(null),
+  /**
+   * `terminate_window_ms` override, or `null` for the dev default (24h).
+   * `null` (not absence) so the slot round-trips through JSON persistence.
+   */
+  terminateWindowMs: z.number().nullable().default(null),
   /** wire-ethereum repo root. */
   ethereumPath: z.string(),
   /** wire-solana repo root. */

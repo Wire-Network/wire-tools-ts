@@ -352,6 +352,35 @@ describe("register → parse round-trip", () => {
     // unseeded (null-default) bind ports never materialize
     expect(options.bind?.kiod?.port).toBeUndefined()
   })
+
+  it("carries the epoch-group + termination overrides through the full defaults→argv→options round-trip", () => {
+    // The slashing-flow shape: scenario defaults set the epoch-group + termination
+    // overrides; they MUST survive registration → the defaulted argv → the reverse
+    // parse. A field absent from buildOptionShape is silently dropped on this path
+    // — the exact gap this guards (batchOpGroups reached ClusterBuildOptions but
+    // never the config until it was registered as a shape leaf).
+    const registered = register({
+        ...RequiredPaths,
+        operatorsPerEpoch: 3,
+        batchOpGroups: 1,
+        epochRetentionEnvelopeLogCount: 200,
+        terminateMaxConsecutiveMisses: 5,
+        terminateMaxPercentMisses24h: 99,
+        terminateWindowMs: 3_600_000
+      }),
+      argv: Record<string, unknown> = {}
+    registered.forEach((config, flag) => {
+      argv[flag] = config.default
+    })
+
+    const options = toClusterBuildOptions(argv)
+    expect(options.operatorsPerEpoch).toBe(3)
+    expect(options.batchOpGroups).toBe(1)
+    expect(options.epochRetentionEnvelopeLogCount).toBe(200)
+    expect(options.terminateMaxConsecutiveMisses).toBe(5)
+    expect(options.terminateMaxPercentMisses24h).toBe(99)
+    expect(options.terminateWindowMs).toBe(3_600_000)
+  })
 })
 
 const SsmJson =

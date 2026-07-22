@@ -22,6 +22,13 @@ function createYargsRecorder(): YargsRecorder {
       option(flag: string, config: RecordedOption) {
         options.set(flag, config)
         return recorder
+      },
+      // The builder chains `.parserConfiguration(...)` before `.option(...)`
+      // (keeps `--no-debugging-server` a plain flag, per commit 9297687f); the
+      // recorder passes it through so the chain resolves — this suite asserts
+      // only on the recorded `.option()` calls.
+      parserConfiguration() {
+        return recorder
       }
     }
   return { argv: recorder as unknown as Argv, options }

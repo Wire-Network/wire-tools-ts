@@ -342,6 +342,18 @@ export function buildOptionShape(
       CliDefault.epochDurationSec,
       "minimum epoch duration in seconds"
     ),
+    operatorsPerEpoch: optionalLeaf(
+      OptionLeafType.number,
+      "batch-op group SIZE (operators_per_epoch); omit to derive from batchOperatorCount"
+    ),
+    batchOpGroups: optionalLeaf(
+      OptionLeafType.number,
+      "batch-op group COUNT (batch_op_groups); omit to derive from batchOperatorCount"
+    ),
+    epochRetentionEnvelopeLogCount: optionalLeaf(
+      OptionLeafType.number,
+      "epoch_retention_envelope_log_count; omit for the bootstrap default"
+    ),
     warmupEpochs: optionalLeaf(
       OptionLeafType.number,
       "warmup epochs before the measured window"

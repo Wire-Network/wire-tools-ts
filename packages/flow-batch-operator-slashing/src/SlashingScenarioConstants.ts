@@ -34,18 +34,24 @@ export namespace SlashingScenarioConstants {
    */
   export const BootstrapBatchOperatorCount = 9
   /**
-   * Disable the miss-based termination ladder for the run. The dispute
-   * operators are SBP-less and only deliver when the flow injects an envelope,
-   * so across the multi-epoch dispute (vote + tally + resolve) they would
-   * otherwise accrue enough scheduled-and-missed epochs to trip `termcheck`
-   * and flip SLASHED → TERMINATED before the dispute lands — making the slash
-   * a no-op on an already-terminated operator. Termination is exercised by
-   * flow-batch-operator-termination; THIS flow verifies the dispute-driven
-   * slash, which is independent of the miss ladder.
+   * Loosest VALID termination thresholds for the run. Termination CANNOT be
+   * fully disabled — the depot contract (`sysio.opreg::setconfig`) caps
+   * `terminate_max_consecutive_misses` at [1, 5] and `terminate_max_pct_misses_24h`
+   * at [1, 99] — so these are the max the contract allows. The dispute operators
+   * are SBP-less and only deliver when the flow injects an envelope; across the
+   * critical window the epoch FREEZES (the sole active group isn't delivering, so
+   * depot consensus can't advance) and then PAUSES (opendispute), so `advance` —
+   * and thus `recorddel` miss-recording — does not run during settle / vote /
+   * tally / resolve. The dispute ops therefore never accrue 5 consecutive missed
+   * ADVANCES, so at the loosest valid thresholds they don't trip `termcheck`
+   * before the slash lands (which would make the slash a no-op on an
+   * already-TERMINATED operator). Termination itself is exercised by
+   * flow-batch-operator-termination; THIS flow verifies the dispute-driven slash,
+   * independent of the miss ladder.
    */
-  export const TerminateMaxConsecutiveMisses = 100_000
-  /** Companion miss-percentage threshold — effectively disabled (see above). */
-  export const TerminateMaxPercentMisses24h = 100
+  export const TerminateMaxConsecutiveMisses = 5
+  /** Companion miss-percentage threshold — the max the contract allows (see above). */
+  export const TerminateMaxPercentMisses24h = 99
 
   /**
    * Tier-1 node owners provisioned as the dispute electorate. Names MUST be

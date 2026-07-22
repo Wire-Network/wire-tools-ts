@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "test": "pnpm run build && NODE_OPTIONS=--experimental-vm-modules jest",
     "test:ci": "pnpm run build && NODE_OPTIONS=--experimental-vm-modules jest --reporters=default --reporters=jest-junit",
-    "clean": "./scripts/clean.sh && pnpm -r run clean"
+    "clean": "./scripts/clean.sh && pnpm -r run clean",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -23,6 +24,7 @@
     "eslint": "^10.7.0",
     "eslint-config-prettier": "^10.1.8",
     "get-port": "^7.2.0",
+    "husky": "^9.1.7",
     "jest": "^30.3.0",
     "jest-junit": "^16.0.0",
     "prettier": "^3.8.1",
