@@ -121,6 +121,9 @@ export class ReserveLifecycleScenario extends FlowScenario {
     "Gated reserve create→match lifecycle + private-reserve exclusions (ETH-side)"
 
   override readonly defaults: ClusterBuildOptions = {
+    // Seed the mock (chain, token) PRIMARY reserves this flow reads — `regreserve`
+    // is epoch-0-gated by the depot, so it must ride the bootstrap, not a flow phase.
+    enableMockReserves: true,
     epochDurationSec: Constants.EpochDurationSec,
     requiredUnderwriterCollateral: [
       {

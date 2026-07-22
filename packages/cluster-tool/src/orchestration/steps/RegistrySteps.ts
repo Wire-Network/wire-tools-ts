@@ -6,11 +6,14 @@ import { eachSeries } from "../../utils/asyncUtils.js"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { Report } from "../../report/Report.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
+import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
+import type { ClusterBuildParent } from "../ClusterBuildPhaseBase.js"
 import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
 } from "../ClusterBuildStep.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
+import { ReservContractSteps } from "./contracts/sysio/ReservContractSteps.js"
 
 const {
   SysioContractName,
@@ -21,11 +24,17 @@ const {
 
 /**
  * Seeds the depot registry (`sysio.chains` chains, `sysio.tokens` tokens +
- * chain-token bindings, `sysio.reserv` reserves). This is ONE composed step
- * because most rows are runtime-artifact-dependent — the ERC-20 / SPL / LIQ
- * addresses come from the outpost deploy artifacts (`outpost-addrs.json`,
- * `liqeth-addrs.json`, `sol-mock-mints.json`) that only exist after the outpost
- * deploy runs, so the rows cannot be static per-entry steps.
+ * chain-token bindings). This is ONE composed step because most rows are
+ * runtime-artifact-dependent — the ERC-20 / SPL / LIQ addresses come from the
+ * outpost deploy artifacts (`outpost-addrs.json`, `liqeth-addrs.json`,
+ * `sol-mock-mints.json`) that only exist after the outpost deploy runs, so the
+ * rows cannot be static per-entry steps.
+ *
+ * The mock (chain, token) PRIMARY reserves are seeded SEPARATELY, by the
+ * {@link RegistrySteps.planMockReserves} phase — their rows ARE fully static, so
+ * each is its own Report-validated `regreserve` step, gated behind
+ * `--enable-mock-reserves` (default off; the contract gates `regreserve` to the
+ * bootstrap epoch-0 window, so the phase only ever runs pre-EpochBootstrap).
  */
 export namespace RegistrySteps {
   /** Bootstrap reserve chain/wire seed amount (each token's depot frame = `min(native, 9)` decimals). */
@@ -34,8 +43,44 @@ export namespace RegistrySteps {
   const ConnectorWeightBps = 5000
   /** Codenames whose reserves carry native 6-dec precision (stablecoins). */
   const StableCodenames = ["USDC", "USDT", "USDCSOL", "USDTSOL"]
+  /** Reserve code every mock reserve registers under. */
+  const PrimaryReserveCodename = "PRIMARY"
+  /** Divisor on a stablecoin reserve's chain seed (its 6-dec frame vs the 9-dec default). */
+  const StableChainSeedDivisor = 1000
+  /** `source_token_precision` for a stablecoin reserve (native 6-dec). */
+  const StableTokenPrecision = 6
+  /** `source_token_precision` for every non-stablecoin reserve (depot 9-dec frame). */
+  const DefaultTokenPrecision = 9
+  /**
+   * The 8 mock (chain, token) reserve pairs — `[chainCodename, tokenCodename,
+   * label]`. Private source both {@link MockReserveRegistrations} (the rows) and
+   * {@link planMockReserves} (the per-step names) derive from, in this order.
+   */
+  const MockReservePairs = [
+    ["ETHEREUM", "ETH", "native ETH"],
+    ["ETHEREUM", "LIQETH", "liqETH"],
+    ["ETHEREUM", "USDC", "USDC (mock ERC-20)"],
+    ["ETHEREUM", "USDT", "USDT (mock ERC-20)"],
+    ["SOLANA", "SOL", "native SOL"],
+    ["SOLANA", "LIQSOL", "liqSOL"],
+    ["SOLANA", "USDCSOL", "USDC (mock SPL)"],
+    ["SOLANA", "USDTSOL", "USDT (mock SPL)"]
+  ] as const
 
-  /** Seed chains + tokens + chain-token bindings + reserves. */
+  /**
+   * The 8 mock (chain, token) PRIMARY `sysio.reserv::regreserve` rows — fully
+   * static (string codenames + numeric constants, no deploy-artifact reads),
+   * byte-identical to the pre-split unconditional seeding. Shared by
+   * {@link planMockReserves} (one Report step per row) and its unit test. The
+   * contract gates `regreserve` to the bootstrap window (epoch 0), so these seed
+   * ONLY during bootstrap — never from a flow phase.
+   */
+  export const MockReserveRegistrations: SysioContracts.SysioReservRegreserveAction[] =
+    MockReservePairs.map(([chainCodename, tokenCodename, label]) =>
+      toReserveRegistration(chainCodename, tokenCodename, label)
+    )
+
+  /** Seed chains + tokens + chain-token bindings. */
   export function planSeedRegistry<
     C extends ClusterBuildContext = ClusterBuildContext
   >(
@@ -54,7 +99,44 @@ export namespace RegistrySteps {
     )
   }
 
-  /** Named runner — port of the old `ClusterManager` Phase 16 / 16a / 16b / 16c. */
+  /**
+   * Seed the 8 mock (chain, token) PRIMARY reserves as ONE
+   * {@link ClusterBuildPhase} of per-reserve `sysio.reserv::regreserve` steps —
+   * every reserve write is its own Report-validated step (the rows are fully
+   * static, from {@link MockReserveRegistrations}). Composed ONLY when
+   * `--enable-mock-reserves` is set; the depot contract gates `regreserve` to
+   * the bootstrap window (epoch 0), so this phase only ever runs
+   * pre-EpochBootstrap and can never be reached from a flow phase.
+   * Self-registers on `parent`.
+   *
+   * @param parent - The build root or enclosing PhaseGroup.
+   * @param name - Short phase name.
+   * @param description - Human-readable phase description.
+   * @param options - Step option overrides threaded to every reserve step.
+   * @returns The self-registered reserve-seeding phase.
+   */
+  export function planMockReserves<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildPhase<C> {
+    const steps: ClusterBuildStep.Any<C>[] = MockReservePairs.map(
+      ([chainCodename, tokenCodename], index) =>
+        ReservContractSteps.planRegreserve<C>(
+          Report.Actor.Sysio,
+          `seed-reserve-${chainCodename.toLowerCase()}-${tokenCodename.toLowerCase()}`,
+          `seed the ${chainCodename}/${tokenCodename} PRIMARY reserve`,
+          options,
+          MockReserveRegistrations[index]
+        )
+    )
+    return ClusterBuildPhase.create<C>(parent, name, description, steps)
+  }
+
+  /** Named runner — port of the old `ClusterManager` Phase 16 / 16a / 16b (chains, tokens, chain-token bindings). */
   export async function runSeedRegistry<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,
@@ -63,7 +145,6 @@ export namespace RegistrySteps {
     signal.throwIfAborted()
     const chains = ctx.wire.getSysioContract(SysioContractName.chains),
       tokens = ctx.wire.getSysioContract(SysioContractName.tokens),
-      reserv = ctx.wire.getSysioContract(SysioContractName.reserv),
       ethereumAddresses = readJson(
         Path.join(
           ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
@@ -211,36 +292,38 @@ export namespace RegistrySteps {
     await eachSeries(chainTokenBindings, data =>
       tokens.actions.regctok.invoke(data)
     )
+  }
 
-    // ── reserves (all static; stablecoins carry 6-dec precision + ÷1000 chain seed) ──
-    const reservePairs: Array<[string, string, string]> = [
-      ["ETHEREUM", "ETH", "native ETH"],
-      ["ETHEREUM", "LIQETH", "liqETH"],
-      ["ETHEREUM", "USDC", "USDC (mock ERC-20)"],
-      ["ETHEREUM", "USDT", "USDT (mock ERC-20)"],
-      ["SOLANA", "SOL", "native SOL"],
-      ["SOLANA", "LIQSOL", "liqSOL"],
-      ["SOLANA", "USDCSOL", "USDC (mock SPL)"],
-      ["SOLANA", "USDTSOL", "USDT (mock SPL)"]
-    ]
-    await eachSeries(reservePairs, ([chainCodename, tokenCodename, label]) => {
-      const stable = StableCodenames.includes(tokenCodename)
-      return reserv.actions.regreserve.invoke({
-        chain_code: { value: SlugName.from(chainCodename) },
-        token_code: { value: SlugName.from(tokenCodename) },
-        reserve_code: { value: SlugName.from("PRIMARY") },
-        name: `${chainCodename}-${tokenCodename}/WIRE primary reserve`,
-        description: `Bootstrap-seeded ${label} ↔ WIRE reserve`,
-        initial_chain_amount: stable
-          ? ReserveSeedAmount / 1000
-          : ReserveSeedAmount,
-        initial_wire_amount: ReserveSeedAmount,
-        source_token_precision: stable ? 6 : 9,
-        connector_weight_bps: ConnectorWeightBps,
-        is_private: false,
-        owner: ""
-      })
-    })
+  // ── reserve-row builder (fully static — no deploy artifacts) ──
+
+  /**
+   * Build one static `regreserve` row for a (chain, token) PRIMARY reserve:
+   * stablecoins carry native 6-dec precision + a ÷1000 chain seed, everything
+   * else the depot's 9-dec frame. Byte-identical to the pre-split seeding.
+   */
+  function toReserveRegistration(
+    chainCodename: string,
+    tokenCodename: string,
+    label: string
+  ): SysioContracts.SysioReservRegreserveAction {
+    const stable = StableCodenames.includes(tokenCodename)
+    return {
+      chain_code: { value: SlugName.from(chainCodename) },
+      token_code: { value: SlugName.from(tokenCodename) },
+      reserve_code: { value: SlugName.from(PrimaryReserveCodename) },
+      name: `${chainCodename}-${tokenCodename}/WIRE primary reserve`,
+      description: `Bootstrap-seeded ${label} ↔ WIRE reserve`,
+      initial_chain_amount: stable
+        ? ReserveSeedAmount / StableChainSeedDivisor
+        : ReserveSeedAmount,
+      initial_wire_amount: ReserveSeedAmount,
+      source_token_precision: stable
+        ? StableTokenPrecision
+        : DefaultTokenPrecision,
+      connector_weight_bps: ConnectorWeightBps,
+      is_private: false,
+      owner: ""
+    }
   }
 
   // ── token-row builders (native = empty addr; the rest carry a ChainAddress) ──

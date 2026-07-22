@@ -128,7 +128,8 @@ export namespace ClusterConfigProvider {
       initialFinalizerKey: Constants.DEV_BLS_PUBLIC_KEY,
       signatureProvider,
       externalOutposts,
-      debuggingServerEnabled: true
+      debuggingServerEnabled: true,
+      enableMockReserves: options.enableMockReserves ?? false
     }
   }
 

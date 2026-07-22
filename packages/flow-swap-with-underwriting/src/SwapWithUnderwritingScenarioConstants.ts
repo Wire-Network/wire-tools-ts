@@ -72,9 +72,9 @@ export namespace SwapWithUnderwritingScenarioConstants {
 
   /**
    * `chain_amount` + `wire_amount` the bootstrap seeds into each PRIMARY
-   * reserve (`RegistrySteps.seedRegistry`, depot 9-decimal frame). The source
-   * amounts below draw 1% of it so the constant-product quote stays deep in
-   * the linear region.
+   * reserve (`RegistrySteps.planMockReserves`, depot 9-decimal frame). The
+   * source amounts below draw 1% of it so the constant-product quote stays deep
+   * in the linear region.
    */
   export const InitialReserveAmount = 10_000_000_000n
 

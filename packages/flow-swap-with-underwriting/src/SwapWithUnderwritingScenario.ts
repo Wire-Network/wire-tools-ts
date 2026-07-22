@@ -98,6 +98,9 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
     "Bidirectional Ethereum ↔ Solana swap settled by an underwriter race (Phase A + inverse Phase B)"
 
   override readonly defaults: ClusterBuildOptions = {
+    // Seed the mock (chain, token) PRIMARY reserves this flow reads — `regreserve`
+    // is epoch-0-gated by the depot, so it must ride the bootstrap, not a flow phase.
+    enableMockReserves: true,
     epochDurationSec: Constants.EpochDurationSec,
     // The depot's `meets_role_min` rejects non-bootstrapped underwriters when
     // the config is empty — `uwrit.a` must flip ACTIVE for the race to land

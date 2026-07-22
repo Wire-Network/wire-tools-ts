@@ -275,6 +275,9 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
     "Single-leg swap TO WIRE: ETH escrow on the source outpost, direct WIRE payout from sysio.reserv custody"
 
   override readonly defaults: ClusterBuildOptions = {
+    // Seed the mock (chain, token) PRIMARY reserves this flow reads — `regreserve`
+    // is epoch-0-gated by the depot, so it must ride the bootstrap, not a flow phase.
+    enableMockReserves: true,
     epochDurationSec: Constants.EpochDurationSec,
     // The underwriter ACTIVE gate: minimums on BOTH outpost chains, matched
     // exactly by the default bond plan the scenario deposits.

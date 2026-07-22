@@ -201,7 +201,14 @@ export const ClusterConfigSchema = z.object({
    * starts the debugging server. Schema-defaulted `true`; persisted `false` by
    * `create-external-config --no-debugging-server` (run without a debugging server).
    */
-  debuggingServerEnabled: z.boolean().default(true)
+  debuggingServerEnabled: z.boolean().default(true),
+  /**
+   * Whether the bootstrap seeds the 8 mock (chain, token) PRIMARY reserves
+   * (the `--enable-mock-reserves` create flag). Schema-defaulted `false` so
+   * pre-existing configs — and every real/external depot — stay reserve-free
+   * unless a caller (or a flow's scenario defaults) opts in.
+   */
+  enableMockReserves: z.boolean().default(false)
 })
 /** THE canonical cluster configuration — the schema-inferred shape of {@link ClusterConfigSchema}. */
 export type ClusterConfig = z.infer<typeof ClusterConfigSchema>

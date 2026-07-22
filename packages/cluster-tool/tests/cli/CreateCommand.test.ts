@@ -66,6 +66,7 @@ describe("createCreateCommand", () => {
     expect(options.has("cluster-path")).toBe(true)
     expect(options.has("build-path")).toBe(true)
     expect(options.has("epoch-duration-sec")).toBe(true)
+    expect(options.has("enable-mock-reserves")).toBe(true)
   })
 
   it("exits 0 and logs SUCCEEDED when the bootstrap report succeeded", async () => {

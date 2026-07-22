@@ -44,6 +44,15 @@ export interface ClusterBuildOptions {
   // network binding
   bindAll?: boolean
   bind?: BindOptions
+  // mock data seeding
+  /**
+   * Seed the 8 mock (chain, token) PRIMARY reserves at bootstrap
+   * (`--enable-mock-reserves`). Default `false` at every layer — an
+   * external / real-world depot gets NO fake reserves unless a caller (or a
+   * flow's scenario `defaults`) opts in. The depot contract gates `regreserve`
+   * to the bootstrap window (epoch 0), so this only ever seeds pre-EpochBootstrap.
+   */
+  enableMockReserves?: boolean
   // termination tuning
   terminateMaxConsecutiveMisses?: number
   terminateMaxPercentMisses24h?: number

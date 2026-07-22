@@ -212,6 +212,9 @@ export class SwapVarianceRevertScenario extends FlowScenario<SwapScenarioContext
     "Out-of-tolerance SwapRequest trips the depot's variance guard: no UWREQ, SWAP_REVERT refunds the user on the ETH outpost"
 
   override readonly defaults: ClusterBuildOptions = {
+    // Seed the mock (chain, token) PRIMARY reserves this flow reads — `regreserve`
+    // is epoch-0-gated by the depot, so it must ride the bootstrap, not a flow phase.
+    enableMockReserves: true,
     epochDurationSec: Constants.EpochDurationSec,
     requiredUnderwriterCollateral: [
       {
