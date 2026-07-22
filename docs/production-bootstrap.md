@@ -79,12 +79,19 @@ Every account's RAM is **finite** and **gifted from the `sysio` pool** as a cons
 Single source of truth for the cross-cutting scalars; the stages reference these by name.
 
 ### Keys & identities (cluster dev keys — production substitutes real keys / msig)
+The dev key material is never spelled out — each key derives deterministically from a hashed seed name:
+
+```text
+DEV_K1  = K1.regenerate(SHA256("nathan"))     # secp256k1
+DEV_BLS = BLS.regenerate(SHA256("wire"))      # BLS12-381 finalizer key
+```
+
 | Constant | Role | Value |
 |---|---|---|
-| `DEV_K1_PUBLIC_KEY` | Genesis `initial_key` (bios block-signing key); the standalone key on `sysio`'s own `active`; owner/active of node owner `wireno` — see note ¹. | `SYS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV` |
-| `DEV_K1_PRIVATE_KEY` | Matching WIF; imported into the `default` kiod wallet. | `5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3` |
-| `DEV_BLS_PUBLIC_KEY` | Genesis `initial_finalizer_key` (bios finalizer); `BLS` from `SHA256("wire")`. | `PUB_BLS_3igm9y-m3poDQL9IU-oE2E3rjKVD025aN5_Kpod8aVKjqtg4xOrP-jGtz4wLg_IFzc7gay9YghYwVgNafpxphE2xOY5gzEPa8li1rmtFfdpXguDFhNw2FpuLWSWami8WXgUo3A` |
-| `DEV_BLS_PROOF_OF_POSSESSION` | PoP for `DEV_BLS_PUBLIC_KEY`. | `SIG_BLS_qdQ36ASsBk_pJ9efSCZmSN5OcqNX7GIxjzpREX8TBOBVpUOheRfZmCGO7jay2lIZiD2vkrODGQDCsa3lfkB2FjhmoTce1TYpMOWv-PoPO4D36Y4yjItfa0iMgouirmcG_rubUJDtgn0bHdvtroCc3HDoBHVeI994Ycs62RVJEROyTjIlTVGk3iXoAK9skkQKz3DM3wT0yevxP_O47Ul85rJWnEVAlAjCUOsirAdu0yO1362pdnnl8kjXaPqEj_EYPvrRXw` |
+| `DEV_K1_PUBLIC_KEY` | Genesis `initial_key` (bios block-signing key); the standalone key on `sysio`'s own `active`; owner/active of node owner `wireno` — see note ¹. | `DEV_K1.publicKey` (SYS-prefixed legacy spelling) |
+| `DEV_K1_PRIVATE_KEY` | Matching private key; imported into the `default` kiod wallet. | `DEV_K1.privateKey` (WIF spelling) |
+| `DEV_BLS_PUBLIC_KEY` | Genesis `initial_finalizer_key` (bios finalizer). | `DEV_BLS.publicKey` (`PUB_BLS_*` spelling) |
+| `DEV_BLS_PROOF_OF_POSSESSION` | PoP for `DEV_BLS_PUBLIC_KEY`. | `DEV_BLS.proofOfPossession` (`SIG_BLS_*` spelling) |
 | Per-node K1/BLS keys | Producer nodes' own block-signing (K1) + finalizer (BLS) keys, distinct from `DEV_*`; used by `setprodkeys` / `setfinalizer` AND as the producer accounts' owner/active keys. | generated at runtime (`clio create key --k1`, `sys-util bls create key`) |
 | Per-operator K1/EM/ED keys | Each batch operator / underwriter's UNIQUE identity: a WIRE account key (K1, imported into kiod so `<operator>@active` signs), an ETH key (EM, anvil-mnemonic HD-derived), and a SOL key (ED25519). | generated at runtime (`KeyGenerator`) |
 | `BOOTSTRAP_NODE_OWNER` | Bootstrap tier-1 node owner (2–6 chars to satisfy `valid_name_for_tier`); its tier-1 reserve is what post-bootstrap resource policies are issued from. | `wireno` |
