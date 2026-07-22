@@ -57,6 +57,14 @@ const MinFromWireAmount = 100_000_000
 const FromWireRevertFeeBps = 10
 /** Epoch envelope-log retention. */
 const EnvelopeLogRetentionEpochs = 10
+/** Dev-default batch-operator group COUNT (sliding-window schedule; per-flow overridable via ClusterConfig). */
+const DefaultBatchOperatorGroupCount = 3
+/** Dev-default `terminate_max_consecutive_misses` (per-flow overridable via ClusterConfig). */
+const DefaultTerminateMaxConsecutiveMisses = 5
+/** Dev-default `terminate_max_pct_misses_24h` (per-flow overridable via ClusterConfig). */
+const DefaultTerminateMaxPercentMisses24h = 5
+/** Dev-default `terminate_window_ms` — 24h (per-flow overridable via ClusterConfig). */
+const DefaultTerminateWindowMs = 24 * 60 * 60 * 1000
 /**
  * Lamports airdropped to each bootstrapped batch operator's SOL keypair — their
  * daemons PAY the fees on every `epoch_in` delivery, every epoch, for the whole
@@ -833,17 +841,29 @@ export namespace ClusterBuildDefaults {
   function epochConfig(
     config: ClusterConfig
   ): SysioContracts.SysioEpochSetconfigAction {
-    const batchOpGroups = Math.min(3, config.batchOperatorCount),
+    // Group SIZE (`operators_per_epoch`) and COUNT (`batch_op_groups`) come from
+    // the config override when a flow set them — so the shape is materialized at
+    // bootstrap and NO mid-run reconfig is ever needed — else derive from the
+    // batch-operator topology. `minimum_active` always derives as size × count.
+    const {
+        batchOpGroups: batchOpGroupsOverride,
+        operatorsPerEpoch: operatorsPerEpochOverride
+      } = config,
+      batchOpGroups =
+        batchOpGroupsOverride ??
+        Math.min(DefaultBatchOperatorGroupCount, config.batchOperatorCount),
       operatorsPerEpoch =
-        batchOpGroups > 0
+        operatorsPerEpochOverride ??
+        (batchOpGroups > 0
           ? Math.ceil(config.batchOperatorCount / batchOpGroups)
-          : 1
+          : 1)
     return {
       epoch_duration_sec: config.epochDurationSec,
       operators_per_epoch: operatorsPerEpoch,
       batch_operator_minimum_active: operatorsPerEpoch * batchOpGroups,
       batch_op_groups: batchOpGroups,
-      epoch_retention_envelope_log_count: EnvelopeLogRetentionEpochs
+      epoch_retention_envelope_log_count:
+        config.epochRetentionEnvelopeLogCount ?? EnvelopeLogRetentionEpochs
     }
   }
 
@@ -868,9 +888,12 @@ export namespace ClusterBuildDefaults {
       max_available_batch_ops: 63,
       max_available_underwriters: 21,
       terminate_prune_delay_ms: 600_000,
-      terminate_max_consecutive_misses: 5,
-      terminate_max_pct_misses_24h: 5,
-      terminate_window_ms: 24 * 60 * 60 * 1000,
+      terminate_max_consecutive_misses:
+        config.terminateMaxConsecutiveMisses ??
+        DefaultTerminateMaxConsecutiveMisses,
+      terminate_max_pct_misses_24h:
+        config.terminateMaxPercentMisses24h ?? DefaultTerminateMaxPercentMisses24h,
+      terminate_window_ms: config.terminateWindowMs ?? DefaultTerminateWindowMs,
       req_prod_collat: config.requiredProducerCollateral.map(toChainMinBond),
       req_batchop_collat:
         config.requiredBatchOperatorCollateral.map(toChainMinBond),

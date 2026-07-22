@@ -18,8 +18,14 @@ describe("ClusterConfig shape", () => {
     batchOperatorCount: 3,
     underwriterCount: 1,
     epochDurationSec: 60,
+    operatorsPerEpoch: null,
+    batchOpGroups: null,
+    epochRetentionEnvelopeLogCount: null,
     warmupEpochs: 1,
     cooldownEpochs: 1,
+    terminateMaxConsecutiveMisses: null,
+    terminateMaxPercentMisses24h: null,
+    terminateWindowMs: null,
     ethereumPath: "/eth",
     solanaPath: "/sol",
     bind: {
@@ -115,5 +121,24 @@ describe("ClusterConfig shape", () => {
     })
     expect(rehydrated.externalOutposts).toBeNull()
     expect(rehydrated.debuggingServerEnabled).toBe(true)
+  })
+
+  it("defaults the epoch-group + termination overrides to null for a legacy config", () => {
+    const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    delete parsed.operatorsPerEpoch
+    delete parsed.batchOpGroups
+    delete parsed.epochRetentionEnvelopeLogCount
+    delete parsed.terminateMaxConsecutiveMisses
+    delete parsed.terminateMaxPercentMisses24h
+    delete parsed.terminateWindowMs
+    const rehydrated = ClusterConfigSchemaCodec.deserialize(
+      JSON.stringify(parsed)
+    )
+    expect(rehydrated.operatorsPerEpoch).toBeNull()
+    expect(rehydrated.batchOpGroups).toBeNull()
+    expect(rehydrated.epochRetentionEnvelopeLogCount).toBeNull()
+    expect(rehydrated.terminateMaxConsecutiveMisses).toBeNull()
+    expect(rehydrated.terminateMaxPercentMisses24h).toBeNull()
+    expect(rehydrated.terminateWindowMs).toBeNull()
   })
 })

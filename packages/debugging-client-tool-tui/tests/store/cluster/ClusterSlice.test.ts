@@ -30,8 +30,14 @@ const stubConfig: ClusterConfig = {
   batchOperatorCount: 0,
   underwriterCount: 0,
   epochDurationSec: 60,
+  operatorsPerEpoch: null,
+  batchOpGroups: null,
+  epochRetentionEnvelopeLogCount: null,
   warmupEpochs: 0,
   cooldownEpochs: 0,
+  terminateMaxConsecutiveMisses: null,
+  terminateMaxPercentMisses24h: null,
+  terminateWindowMs: null,
   ethereumPath: "/eth",
   solanaPath: "/sol",
   bind: {
@@ -83,7 +89,8 @@ const stubConfig: ClusterConfig = {
   underwriterCollateral: null,
   initialFinalizerKey: null,
   signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
-  externalOutposts: null
+  externalOutposts: null,
+  debuggingServerEnabled: true
 }
 
 /** A complete `ClusterState` fixture (post-bootstrap snapshot, no nodes). */

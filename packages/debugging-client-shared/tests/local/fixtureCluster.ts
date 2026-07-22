@@ -90,8 +90,14 @@ export function makeFixtureCluster(): FixtureCluster {
     batchOperatorCount: 1,
     underwriterCount: 1,
     epochDurationSec: 60,
+    operatorsPerEpoch: null,
+    batchOpGroups: null,
+    epochRetentionEnvelopeLogCount: null,
     warmupEpochs: 0,
     cooldownEpochs: 0,
+    terminateMaxConsecutiveMisses: null,
+    terminateMaxPercentMisses24h: null,
+    terminateWindowMs: null,
     ethereumPath: "",
     solanaPath: "",
     bind: {
@@ -139,7 +145,8 @@ export function makeFixtureCluster(): FixtureCluster {
     underwriterCollateral: null,
     initialFinalizerKey: null,
     signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
-    externalOutposts: null
+    externalOutposts: null,
+    debuggingServerEnabled: true
   }
 
   Fs.writeFileSync(

@@ -101,8 +101,16 @@ export namespace ClusterConfigProvider {
         options.batchOperatorCount ?? DefaultBatchOperatorCount,
       underwriterCount: options.underwriterCount ?? DefaultUnderwriterCount,
       epochDurationSec: options.epochDurationSec ?? DefaultEpochDurationSec,
+      operatorsPerEpoch: options.operatorsPerEpoch ?? null,
+      batchOpGroups: options.batchOpGroups ?? null,
+      epochRetentionEnvelopeLogCount:
+        options.epochRetentionEnvelopeLogCount ?? null,
       warmupEpochs: options.warmupEpochs ?? 1,
       cooldownEpochs: options.cooldownEpochs ?? 1,
+      terminateMaxConsecutiveMisses:
+        options.terminateMaxConsecutiveMisses ?? null,
+      terminateMaxPercentMisses24h: options.terminateMaxPercentMisses24h ?? null,
+      terminateWindowMs: options.terminateWindowMs ?? null,
       ethereumPath: assertOption(options.ethereumPath, "ethereumPath"),
       solanaPath: assertOption(options.solanaPath, "solanaPath"),
       bind,

@@ -167,6 +167,18 @@ const RegistrySyncLagPattern =
   "custom program error: 0x1795|OPP_NotActiveOperator"
 
 /**
+ * Expected NEGATIVE-TEST reverts — a flow deliberately submits an invalid action
+ * to VERIFY the outpost/contract rejects it, so the revert IS the asserted
+ * success path, not a failure. flow-yield-distribution submits a non-monotonic
+ * `externalEpochRef` to prove `MockYieldEmitter` enforces monotonicity. NOISE
+ * (an expected, self-contained rejection), never FATAL — the revert otherwise
+ * matches the generic `execution reverted` FATAL signature and false-bails a
+ * healthy flow on its growth.
+ */
+const NegativeTestRevertPattern =
+  "MockYieldEmitter: externalEpochRef not monotonic"
+
+/**
  * FATAL exclusions: the echo wrappers PLUS `sysio_assert_message` — a
  * plugin-tagged line whose payload is a chain assertion is the plugin
  * NARRATING chain noise (its push bounced off a depot gate): NOISE, not a
@@ -174,14 +186,15 @@ const RegistrySyncLagPattern =
  * on healthy 9-operator clusters. Registry-sync lag bounces are excluded for
  * the same reason (see {@link RegistrySyncLagPattern}).
  */
-const FatalExcludePattern = `${EchoWrapperExcludePattern}|sysio_assert_message|${RegistrySyncLagPattern}`
+const FatalExcludePattern = `${EchoWrapperExcludePattern}|sysio_assert_message|${RegistrySyncLagPattern}|${NegativeTestRevertPattern}`
 
 /** NOISE signatures (ERE): chain assertion-failure gate rejections + outpost
- *  registry-sync lag bounces (counted + quoted, never a bail). */
-const NoiseSignaturePattern = `assertion failure|${RegistrySyncLagPattern}`
+ *  registry-sync lag bounces + expected negative-test reverts (counted +
+ *  quoted, never a bail). */
+const NoiseSignaturePattern = `assertion failure|${RegistrySyncLagPattern}|${NegativeTestRevertPattern}`
 
 /** The line shapes the NOISE tail quotes (they carry the actual reason). */
-const NoiseTailSourcePattern = `assertion failure with message|${RegistrySyncLagPattern}`
+const NoiseTailSourcePattern = `assertion failure with message|${RegistrySyncLagPattern}|${NegativeTestRevertPattern}`
 
 /** Action-receipt shape in the aggregate log (`sysio.<contract>::<action>`). */
 const ActionReceiptPattern = "sysio\\.[a-z]+::[a-z]+"
@@ -674,6 +687,12 @@ ${chalk.bold("Options:")}
   --epoch-duration-seconds <n>   the cluster's epoch duration (default: ${DefaultEpochDurationSeconds});
                                  scales the bootstrap-deadline bail and labels
                                  the epoch-stall bail
+  --expect-epoch-freeze          the flow INTENTIONALLY freezes the epoch as its
+                                 mechanism (flow-batch-operator-slashing holds the
+                                 contested epoch across the dispute lifecycle);
+                                 suppresses the epoch-stall / opp-zero-growth /
+                                 direction-plateau bails (FATAL + bootstrap bails
+                                 still fire). Default off.
   -h, --help                     print this usage
 
 ${chalk.bold("Output")} (line-oriented on stdout; each line is a Monitor event):
@@ -734,6 +753,18 @@ if (argv.help === true || argv.h === true) {
 const clusterPath = resolveClusterPath()
 const intervalSeconds = resolveNumberOption("interval-seconds", DefaultIntervalSeconds)
 const epochDurationSeconds = resolveNumberOption("epoch-duration-seconds", DefaultEpochDurationSeconds)
+/**
+ * `--expect-epoch-freeze`: the watched flow INTENTIONALLY freezes the epoch as
+ * part of its mechanism — flow-batch-operator-slashing holds the contested epoch
+ * index across the entire dispute → vote → resolve → slash lifecycle by making
+ * the sole active batch-op group SBP-less (it never delivers, so depot consensus
+ * cannot advance and the epoch is paused for the dispute). Suppresses the three
+ * epoch-ADVANCEMENT bails (epoch-stall, opp zero-growth, direction-plateau) that
+ * would otherwise false-kill such a flow. The FATAL-signature and
+ * bootstrap-never-completes bails STILL fire — a real plugin/execution failure
+ * is still caught. Default off; every other flow's monitoring is unchanged.
+ */
+const expectEpochFreeze = argv["expect-epoch-freeze"] === true
 
 const clusterConfigPath = path.join(clusterPath, ClusterConfigFilename)
 const oppDebuggingDir = path.join(clusterPath, OppDebuggingSubdir)
@@ -852,7 +883,9 @@ while (true) {
     // but consensus latency makes the effective cadence ~90–105s — re-probe
     // once after EpochStallReprobeDelaySeconds and bail only if STILL
     // unchanged (a true stall = dead cluster).
-    if (epochIndex === previousEpochIndex) {
+    // Epoch-ADVANCEMENT bails (epoch-stall + opp zero-growth) — skipped when the
+    // flow intentionally freezes the epoch (see {@link expectEpochFreeze}).
+    if (!expectEpochFreeze && epochIndex === previousEpochIndex) {
       await sleep(EpochStallReprobeDelaySeconds * 1000)
       const reprobedEpochIndex = await probeEpochState(clioExecutable, producerUrl)
       if ((reprobedEpochIndex ?? epochIndex) === previousEpochIndex) {
@@ -864,7 +897,7 @@ while (true) {
       epochIndex = reprobedEpochIndex
     }
     // Zero opp-debugging delta once epoch >= 1: fatal on the FIRST occurrence.
-    if (oppDelta <= 0 && previousOppTotal > 0) {
+    if (!expectEpochFreeze && oppDelta <= 0 && previousOppTotal > 0) {
       await bail(`opp-debugging zero growth (total=${opp.total}) on a post-bootstrap heartbeat`, clusterPath)
     }
     if (oppDelta <= 0 && previousOppTotal === 0 && previousEpochIndex >= 1) {
@@ -879,7 +912,7 @@ while (true) {
         clusterPath
       )
     }
-    if (plateauDirection != null) {
+    if (!expectEpochFreeze && plateauDirection != null) {
       await bail(
         `direction ${plateauDirection} frozen for ${DirectionFreezeBailStreak}+ heartbeats while total advanced`,
         clusterPath

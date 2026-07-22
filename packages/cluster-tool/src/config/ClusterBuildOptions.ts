@@ -33,6 +33,12 @@ export interface ClusterBuildOptions {
   underwriterCount?: number
   // epoch
   epochDurationSec?: number
+  /** `operators_per_epoch` (batch-op group SIZE) — omit to derive from `batchOperatorCount`. */
+  operatorsPerEpoch?: number
+  /** `batch_op_groups` (group COUNT) — omit to derive from `batchOperatorCount`. */
+  batchOpGroups?: number
+  /** `epoch_retention_envelope_log_count` — omit for the bootstrap default. */
+  epochRetentionEnvelopeLogCount?: number
   warmupEpochs?: number
   cooldownEpochs?: number
   // network binding
