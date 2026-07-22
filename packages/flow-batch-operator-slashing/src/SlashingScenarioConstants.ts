@@ -28,11 +28,17 @@ export namespace SlashingScenarioConstants {
   export const EpochBoundaryMarginMs = 2_000
 
   /**
-   * Bootstrapped batch operators provisioned by the harness — enough to keep
-   * the rest of the network healthy while the dispute operators drive the
-   * contested outpost.
+   * Bootstrapped batch operators provisioned by the harness — ONE, so the
+   * bootstrap's derived epoch config materializes exactly
+   * {@link DisputeBatchOperatorGroupCount} (= 1) batch-operator group.
+   * `sysio.epoch::setconfig` REJECTS any `batch_op_groups` change once the
+   * rotation schedule is materialized (wire-sysio #529), so the flow's
+   * one-group reshape must match the bootstrap count from the start; the
+   * reshape then only raises `operators_per_epoch` / the active minimum.
+   * The single bootstrapped operator keeps the network relaying until the
+   * dispute operators take over the sole group.
    */
-  export const BootstrapBatchOperatorCount = 9
+  export const BootstrapBatchOperatorCount = 1
   /**
    * Disable the miss-based termination ladder for the run. The dispute
    * operators are SBP-less and only deliver when the flow injects an envelope,

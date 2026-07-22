@@ -50,36 +50,42 @@ export class ClusterKeyStore {
     return nodeKeys
   }
 
-  /** Add or replace a provisioned operator account (chainable). */
+  /** Add or replace a provisioned operator account, keyed by its `label` (chainable). */
   setOperator(operator: OperatorAccount): this {
-    this.operatorMap.set(operator.account, operator)
+    this.operatorMap.set(operator.label, operator)
     return this
   }
 
-  /** A provisioned operator account, or nothing when absent (see {@link assertOperator}). */
-  operator(account: string): OperatorAccount {
-    return this.operatorMap.get(account)
+  /** A provisioned operator account by `label`, or nothing when absent (see {@link assertOperator}). */
+  operator(label: string): OperatorAccount {
+    return this.operatorMap.get(label)
   }
 
   /**
-   * A provisioned operator account — throws when the account hasn't been
-   * provisioned (its materialize step hasn't run).
+   * A provisioned operator account by `label` — throws when the operator hasn't
+   * been provisioned (its materialize step hasn't run).
    *
-   * @param account - The operator's WIRE account name.
-   * @returns The operator's account + keys.
+   * @param label - The operator's deterministic provisioning label.
+   * @returns The operator's label + account + keys.
    */
-  assertOperator(account: string): OperatorAccount {
-    const operator = this.operatorMap.get(account)
+  assertOperator(label: string): OperatorAccount {
+    const operator = this.operatorMap.get(label)
     Assert.ok(
       operator != null,
-      `ClusterKeyStore: operator "${account}" has not been provisioned (no materialize step ran for it)`
+      `ClusterKeyStore: operator "${label}" has not been provisioned (no materialize step ran for it)`
     )
     return operator
   }
 
-  /** Every provisioned operator of `type`, in provisioning order. */
+  /**
+   * Every provisioned operator of `type`, sorted by `label`. Sorting (not
+   * insertion order) keeps the listing deterministic — provisioning phases run
+   * in parallel, so completion order varies run to run.
+   */
   operatorsByType(type: OperatorType): OperatorAccount[] {
-    return this.operators.filter(operator => operator.type === type)
+    return this.operators
+      .filter(operator => operator.type === type)
+      .sort((a, b) => a.label.localeCompare(b.label))
   }
 }
 

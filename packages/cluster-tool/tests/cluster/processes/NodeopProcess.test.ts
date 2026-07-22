@@ -74,6 +74,7 @@ describe("NodeopProcess", () => {
   /** A producer OperatorAccount carrying the node-shared signing keys. */
   function producerOperator(account: string): OperatorAccount {
     return {
+      label: account,
       account,
       type: OperatorType.PRODUCER,
       wire: { type: KeyType.K1, publicKey: "PUB_K1_p", privateKey: "PVT_K1_s" },

@@ -31,14 +31,15 @@ const {
 const { Actor } = Report
 const log = getLogger(__filename)
 
-/** An operator's row on `sysio.opreg::operators` by account name (a read). */
+/** An operator's row on `sysio.opreg::operators` by provisioning label (a read). */
 async function readUnderwriterRow(
   ctx: ClusterBuildContext,
-  account: string
+  label: string
 ): Promise<SysioContracts.SysioOpregOperatorEntryType> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.opreg)
-    .tables.operators.query({ limit: 100 })
+  const account = ctx.keyStore.assertOperator(label).account,
+    { rows } = await ctx.wire
+      .getSysioContract(SysioContractName.opreg)
+      .tables.operators.query({ limit: 100 })
   return rows.find(row => row.account === account)
 }
 
@@ -128,10 +129,10 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
 
   plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const config = cluster.context.config,
-      firstUnderwriter = ClusterConstants.underwriterAccountName(0),
-      underwriterAccounts = Array.from(
+      firstUnderwriter = ClusterConstants.underwriterLabel(0),
+      underwriterLabels = Array.from(
         { length: config.underwriterCount },
-        (_, index) => ClusterConstants.underwriterAccountName(index)
+        (_, index) => ClusterConstants.underwriterLabel(index)
       ),
       requestStepOptions = { timeoutMs: Constants.RequestStepTimeoutMs },
       underwriterGateOptions = {
@@ -157,7 +158,7 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
       "UnderwriterCollateral",
       "Bond every underwriter's collateral on the Ethereum + Solana outposts",
       requestStepOptions,
-      underwriterAccounts,
+      underwriterLabels,
       config.underwriterCollateral ??
         WireUnderwriterTool.load(null, config.underwriterCount)
     )

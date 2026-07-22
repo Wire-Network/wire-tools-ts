@@ -61,7 +61,7 @@ describe("EthereumCollateralTool.planNonNativeDeposit", () => {
     )
     expect(step.input).toEqual({
       kind: "EthereumCollateralTool.DepositNonNativeInput",
-      operatorAccount: "uwrit.a",
+      operatorLabel: "uwrit.a",
       chainCode: 2n,
       tokenCode: 7n,
       reserveCode: 3n,
@@ -79,7 +79,7 @@ describe("EthereumCollateralTool.planNonNativeDeposit", () => {
         ctx,
         {
           kind: "EthereumCollateralTool.DepositNonNativeInput",
-          operatorAccount: "uwrit.a",
+          operatorLabel: "uwrit.a",
           chainCode: 2n,
           tokenCode: 7n,
           reserveCode: 3n,

@@ -215,7 +215,7 @@ export namespace EthereumFundingTool {
   export interface MintErc20Input extends StepInput {
     readonly kind: "EthereumFundingTool.MintErc20Input"
     /** Operator whose ETH wallet is read from `ctx.outputs` and self-mints. */
-    readonly operatorAccount: string
+    readonly operatorLabel: string
     /**
      * Mock token NAME (`"USDC"` / `"USDT"` / `"LIQETH"`) — the config-level
      * identity. The contract ADDRESS is a deploy artifact that does not exist
@@ -239,7 +239,7 @@ export namespace EthereumFundingTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    operatorAccount: string,
+    operatorLabel: string,
     tokenName: string,
     amount: bigint
   ): ClusterBuildStep<C, MintErc20Input> {
@@ -250,7 +250,7 @@ export namespace EthereumFundingTool {
       options,
       {
         kind: "EthereumFundingTool.MintErc20Input",
-        operatorAccount,
+        operatorLabel,
         tokenName,
         amount
       },
@@ -270,7 +270,7 @@ export namespace EthereumFundingTool {
       input.amount > 0n,
       "EthereumFundingTool.planErc20Mint: amount must be positive"
     )
-    const operator = ctx.keyStore.assertOperator(input.operatorAccount)
+    const operator = ctx.keyStore.assertOperator(input.operatorLabel)
     const signer = ethereumSigner(operator.ethereum, ctx.ethereum.provider)
     const tokenAddress = EthereumCollateralTool.mockErc20Address(
       ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),

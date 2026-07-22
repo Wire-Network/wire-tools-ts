@@ -48,16 +48,16 @@ export function makeFixtureCluster(): FixtureCluster {
     name: string,
     nodePath: string,
     role: ClusterStateNodeRole,
-    batchOperatorAccount: string | null = null,
-    underwriterAccount: string | null = null
+    batchOperatorLabel: string | null = null,
+    underwriterLabel: string | null = null
   ): ClusterStateNode => ({
     name,
     role,
     nodePath,
     ports: { http: 0, p2p: 0 },
     producers: [],
-    batchOperatorAccount,
-    underwriterAccount
+    batchOperatorLabel,
+    underwriterLabel
   })
 
   const state: ClusterState = {

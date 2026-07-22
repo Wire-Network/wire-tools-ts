@@ -50,7 +50,7 @@ export namespace SolanaCollateralTool {
   export interface DepositInput extends StepInput {
     readonly kind: "SolanaCollateralTool.DepositInput"
     /** Operator whose identity is read from `ctx.outputs`. */
-    readonly operatorAccount: string
+    readonly operatorLabel: string
     readonly operatorType: OperatorType
     /** 8-byte slug_name (`uint64`) of the deposited token (native `SOL`). */
     readonly tokenCode: bigint
@@ -64,7 +64,7 @@ export namespace SolanaCollateralTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    operatorAccount: string,
+    operatorLabel: string,
     operatorType: OperatorType,
     tokenCode: bigint,
     amount: bigint
@@ -76,7 +76,7 @@ export namespace SolanaCollateralTool {
       options,
       {
         kind: "SolanaCollateralTool.DepositInput",
-        operatorAccount,
+        operatorLabel,
         operatorType,
         tokenCode,
         amount
@@ -93,7 +93,7 @@ export namespace SolanaCollateralTool {
   ): Promise<void> {
     signal.throwIfAborted()
     Assert.ok(input.amount > 0n, "SolanaCollateralTool.planDeposit: amount must be positive")
-    const operator = ctx.keyStore.assertOperator(input.operatorAccount)
+    const operator = ctx.keyStore.assertOperator(input.operatorLabel)
     const keypair = solanaKeypair(operator.solana)
     const program = loadOppOutpostProgram(ctx, keypair)
     const programId = program.programId
@@ -126,7 +126,7 @@ export namespace SolanaCollateralTool {
   /** Input for {@link planNonNativeDeposit} — one SPL collateral deposit write. */
   export interface DepositNonNativeInput extends StepInput {
     readonly kind: "SolanaCollateralTool.DepositNonNativeInput"
-    readonly operatorAccount: string
+    readonly operatorLabel: string
     readonly chainCode: bigint
     /**
      * Token slug code — the config-level identity. The SPL mint ADDRESS is a
@@ -145,7 +145,7 @@ export namespace SolanaCollateralTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    operatorAccount: string,
+    operatorLabel: string,
     chainCode: bigint,
     tokenCode: bigint,
     reserveCode: bigint,
@@ -159,7 +159,7 @@ export namespace SolanaCollateralTool {
       options,
       {
         kind: "SolanaCollateralTool.DepositNonNativeInput",
-        operatorAccount,
+        operatorLabel,
         chainCode,
         tokenCode,
         reserveCode,
@@ -178,7 +178,7 @@ export namespace SolanaCollateralTool {
   ): Promise<void> {
     signal.throwIfAborted()
     Assert.ok(input.amount > 0n, "SolanaCollateralTool.planNonNativeDeposit: amount must be positive")
-    const operator = ctx.keyStore.assertOperator(input.operatorAccount)
+    const operator = ctx.keyStore.assertOperator(input.operatorLabel)
     const keypair = solanaKeypair(operator.solana)
     const program = loadOppOutpostProgram(ctx, keypair)
     const programId = program.programId
