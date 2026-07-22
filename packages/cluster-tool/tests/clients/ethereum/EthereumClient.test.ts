@@ -44,4 +44,42 @@ describe("EthereumClient", () => {
       expect(b).not.toBe(a)
     })
   })
+
+  describe("OPP events", () => {
+    it("queries and filters the canonical OPPEnvelope event stream", async () => {
+      const client = new EthereumClient(rpcUrl)
+      const filter = {}
+      const envelopeEvent = Object.create(
+        ethers.EventLog.prototype
+      ) as ethers.EventLog
+      const filters = {
+        [EthereumClient.OppEnvelopeEvent]: jest.fn(() => filter)
+      }
+      const queryFilter = jest
+        .fn()
+        .mockResolvedValue([envelopeEvent, { eventName: "unparsed" }])
+      const opp = { filters, queryFilter } as unknown as ethers.Contract
+
+      await expect(client.getOPPEnvelopes(opp, 7)).resolves.toEqual([
+        envelopeEvent
+      ])
+      expect(filters.OPPEnvelope).toHaveBeenCalledTimes(1)
+      expect(queryFilter).toHaveBeenCalledWith(filter, 7)
+    })
+
+    it("propagates query failures and exposes no retired epoch helper", async () => {
+      const client = new EthereumClient(rpcUrl)
+      const error = new Error("RPC unavailable")
+      const opp = {
+        filters: {
+          [EthereumClient.OppEnvelopeEvent]: jest.fn(() => ({}))
+        },
+        queryFilter: jest.fn().mockRejectedValue(error)
+      } as unknown as ethers.Contract
+
+      await expect(client.getOPPEnvelopes(opp)).rejects.toBe(error)
+      expect("getOPPEpochs" in client).toBe(false)
+      expect("OppEpochEvent" in EthereumClient).toBe(false)
+    })
+  })
 })
