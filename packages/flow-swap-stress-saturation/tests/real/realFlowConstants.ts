@@ -1,6 +1,7 @@
 import { TokenAmount } from "@wireio/opp-typescript-models"
 import { SlugName } from "@wireio/sdk-core"
 import {
+  RealFlowMetricPolling,
   StressPrivateReserveCreateParams,
   SwapStressPhaseAmounts
 } from "@wireio/test-flow-swap-stress-saturation"
@@ -42,9 +43,9 @@ export namespace RealRamp {
 export namespace Timing {
   export const EpochDurationSec = 60
   export const BootstrapTimeoutMs = 720_000
-  export const RelayDeadlineMs = 240_000
+  export const RelayDeadlineMs = RealFlowMetricPolling.RelayDeadlineMs
   export const ReadyDeadlineMs = 240_000
-  export const LongPollIntervalMs = 3_000
+  export const LongPollIntervalMs = RealFlowMetricPolling.LongPollIntervalMs
   export const PayoutDeadlineMs = 480_000
 
   /**

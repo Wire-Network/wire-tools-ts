@@ -1,11 +1,18 @@
-import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
-
+import type {
+  OppStressRampDeferredEvidenceBreakageObservation,
+  OppStressRampDeferredEvidenceCompletedObservation,
+  RampBreakageCategory
+} from "@wireio/test-opp-stress"
 import type {
   EthereumBurstReserveManager,
   SolanaBurstRequest
 } from "./boundedBursts.js"
 import type { StressIdentities } from "./stressIdentities.js"
-import type { StressRampIterationOutcome } from "./rampController.js"
+import type { SwapStressPhaseResult } from "./phaseRunnerMetricTypes.js"
+import type {
+  SwapStressTelemetryDegradation,
+  SwapStressTelemetryDeps
+} from "./phaseRunnerTelemetry.js"
 
 /** Source amounts and precision constants for the bidirectional stress phases. */
 export namespace SwapStressPhaseAmounts {
@@ -150,58 +157,46 @@ export type SwapStressBatchOperatorFailureRequest = {
   readonly payoutFailureReason: string
 }
 
-/** Envelope collector request for a phase window. */
-export type SwapStressEnvelopeMetricRequest = {
-  /** Phase whose window is being measured. */
-  readonly phase: SwapStressPhase
-  /** Inclusive phase start timestamp. */
-  readonly startedAtMs: number
-  /** Inclusive phase end timestamp. */
-  readonly endedAtMs: number
-  /** Default direction expected to carry request-side envelopes. */
-  readonly endpointsType: DebugOutpostEndpointsType
-}
-
-/** Phase envelope metrics projected into ramp iteration telemetry. */
-export type SwapStressPhaseEnvelopeMetrics = {
-  /** Phase or classifier label these metrics describe. */
-  readonly phase: string
-  /** Whether this phase rolled over to multiple envelopes. */
-  readonly saturated: boolean
-  /** Matching envelope count. */
-  readonly envelopeCount: number
-  /** Matching envelope byte sizes. */
-  readonly envelopeByteSizes: readonly number[]
-  /** Endpoint direction label persisted for evidence. */
-  readonly endpoint: string
-  /** Inclusive epoch lower bound. */
-  readonly epochStart: number
-  /** Inclusive epoch upper bound. */
-  readonly epochEnd: number
-}
-
-/** Per-phase telemetry retained by the phase runner outcome. */
-export type SwapStressPhaseResult = SwapStressPhaseEnvelopeMetrics & {
-  /** Phase transaction successes. */
-  readonly txSuccesses: number
-  /** Phase transaction failures. */
-  readonly txFailures: number
-  /** Phase start timestamp. */
-  readonly startedAtMs: number
-  /** Phase end timestamp. */
-  readonly endedAtMs: number
-  /** Observed remit payouts for the phase. */
-  readonly payout: SwapStressPayoutObservation | null
-}
-
-/** Full phase-runner outcome with ramp-compatible top-level fields. */
-export type SwapStressIterationOutcome = StressRampIterationOutcome & {
-  /** Detailed phase results for future e2e evidence. */
+/** Clean phase evidence carried by completed and workload-breakage observations. */
+export type SwapStressCleanEvidence = {
   readonly phaseResults: readonly SwapStressPhaseResult[]
+  readonly telemetryDegradation: null
 }
 
-/** Collaborators required to run one bidirectional stress iteration. */
-export type SwapStressPhaseRunnerDeps = {
+/** Phase evidence carrying an exact terminal telemetry degradation. */
+export type SwapStressDegradedEvidence = {
+  readonly phaseResults: readonly SwapStressPhaseResult[]
+  readonly telemetryDegradation: SwapStressTelemetryDegradation
+}
+
+/** Completed phase-runner observation with no controller-owned metadata. */
+export type SwapStressCompletedObservation =
+  OppStressRampDeferredEvidenceCompletedObservation<SwapStressCleanEvidence>
+
+/** Workload breakage observation with clean telemetry evidence. */
+export type SwapStressWorkloadBreakageObservation =
+  OppStressRampDeferredEvidenceBreakageObservation<SwapStressCleanEvidence> & {
+    readonly breakageCategory: RampBreakageCategory.Workload
+  }
+
+/** Telemetry-integrity breakage observation with exact degradation evidence. */
+export type SwapStressTelemetryBreakageObservation =
+  OppStressRampDeferredEvidenceBreakageObservation<SwapStressDegradedEvidence> & {
+    readonly breakageCategory: RampBreakageCategory.TelemetryIntegrity
+  }
+
+/** Final observation-only callback contract for one flow iteration. */
+export type SwapStressIterationObservation =
+  | SwapStressCompletedObservation
+  | SwapStressWorkloadBreakageObservation
+  | SwapStressTelemetryBreakageObservation
+
+/** Evidence payload accepted by the flow's generic deferred parser. */
+export type SwapStressObservationEvidence =
+  SwapStressCleanEvidence | SwapStressDegradedEvidence
+
+/** Nontelemetry collaborators required for one bidirectional stress iteration. */
+type SwapStressNonTelemetryPhaseRunnerDeps = {
   /** Route constants for private ETH <-> USDCSOL swaps. */
   readonly route: SwapStressRouteCodes
   /** Read live ACTIVE private reserve row snapshots. */
@@ -220,10 +215,6 @@ export type SwapStressPhaseRunnerDeps = {
   readonly recipientPayoutObserver: SwapStressPayoutObserver
   /** Wait for at least one original-account return payout after phase 2. */
   readonly returnPayoutObserver: SwapStressPayoutObserver
-  /** Optional collector for envelope saturation metrics. */
-  readonly collectEnvelopeMetrics?: (
-    request: SwapStressEnvelopeMetricRequest
-  ) => Promise<SwapStressPhaseEnvelopeMetrics>
   /** Optional probe for concrete batch-operator delivery failures. */
   readonly batchOperatorFailureProbe?: (
     request: SwapStressBatchOperatorFailureRequest
@@ -234,15 +225,21 @@ export type SwapStressPhaseRunnerDeps = {
   readonly clock?: () => number
 }
 
+/** Collaborators required to run one bidirectional stress iteration. */
+export type SwapStressPhaseRunnerDeps = SwapStressNonTelemetryPhaseRunnerDeps &
+  SwapStressTelemetryDeps
+
 /** Minimal runner surface consumed by the future ramp/e2e todo. */
 export type SwapStressPhaseRunner = {
   /**
    * Run one bidirectional stress iteration.
    *
    * @param count Number of generated recipient/source identity pairs.
-   * @returns Ramp-compatible iteration telemetry plus per-phase details.
+   * @returns Completed or typed breakage observation with per-phase evidence.
    */
-  readonly runIteration: (count: number) => Promise<SwapStressIterationOutcome>
+  readonly runIteration: (
+    count: number
+  ) => Promise<SwapStressIterationObservation>
 }
 
 /** Error raised when live reserve rows cannot produce a positive target. */

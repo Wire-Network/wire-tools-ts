@@ -1,5 +1,8 @@
 import type { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 
+import type { OppEnvelopeTelemetryObservation } from "./TelemetryHealthTypes.js"
+import type { OppEnvelopeTelemetryIssue } from "./TelemetryIssueTypes.js"
+
 /** Maximum OPP envelope payload size; changing it changes saturation ratios. */
 export const MaxEnvelopeBytes = 65_536
 
@@ -20,9 +23,9 @@ export type OppEnvelopeSaturationWindow = {
   readonly epochStart?: number
   /** Inclusive epoch upper bound. */
   readonly epochEnd?: number
-  /** Inclusive data-file mtime lower bound in Unix milliseconds. */
+  /** Optional phase-start timestamp; strict snapshots do not infer authority from file mtimes. */
   readonly timestampStartMs?: number
-  /** Inclusive data-file mtime upper bound in Unix milliseconds. */
+  /** Optional phase-end timestamp; strict snapshots do not infer authority from file mtimes. */
   readonly timestampEndMs?: number
   /** Saturation classifier; defaults to rollover for generic OPP stress. */
   readonly saturationStrategy?: OppEnvelopeSaturationStrategy
@@ -48,12 +51,14 @@ export type OppEnvelopeMetric = {
   readonly batchOpNames: readonly string[]
 }
 
-/** Malformed fixture report for skipped envelope pairs. */
+/** Candidate issue summary with its complete structured diagnostic. */
 export type MalformedOppEnvelopeRecord = {
-  /** Storage key without extension when available, otherwise the malformed base name. */
+  /** Candidate base key, including an empty malformed key when discovered. */
   readonly key: string
-  /** Human-readable reason the pair could not be included. */
+  /** Exact serialized issue code without a policy-message prefix. */
   readonly reason: string
+  /** Lossless structured issue carried beside the legacy key/reason fields. */
+  readonly issue: OppEnvelopeTelemetryIssue
 }
 
 /** Envelope saturation metrics for one OPP stress phase and direction/window. */
@@ -70,17 +75,21 @@ export type OppEnvelopeSaturationMetrics = {
   readonly epochEnvelopeIndexes: readonly number[]
   /** Full per-envelope metric records in deterministic order. */
   readonly envelopes: readonly OppEnvelopeMetric[]
-  /** Malformed pairs skipped during collection. */
+  /** Exact strict-reader candidate accounting and structured issues. */
+  readonly health: OppEnvelopeTelemetryObservation
+  /** Candidate issue summaries keyed for existing metric consumers. */
   readonly malformedRecords: readonly MalformedOppEnvelopeRecord[]
 }
 
-/** Internal metric-read result used by the collector pipeline. */
-export type ReadMetricResult =
-  | { readonly kind: "metric"; readonly metric: OppEnvelopeMetric }
-  | { readonly kind: "malformed"; readonly record: MalformedOppEnvelopeRecord }
-  | { readonly kind: "filtered" }
-
-/** Timestamp-window filter result used by metric readers. */
-export type TimestampWindowResult =
-  | { readonly kind: "matches"; readonly matches: boolean }
-  | Extract<ReadMetricResult, { readonly kind: "malformed" }>
+export type {
+  DegradedOppEnvelopeTelemetryHealth,
+  EmptyOppEnvelopeTelemetryHealth,
+  HealthyOppEnvelopeTelemetryHealth,
+  OppEnvelopeTelemetryCounts,
+  OppEnvelopeTelemetryHealth,
+  OppEnvelopeTelemetryObservation,
+  PendingOppEnvelopeTelemetryHealth
+} from "./TelemetryHealthTypes.js"
+export { OppEnvelopeTelemetryHealthKind } from "./TelemetryHealthTypes.js"
+export type { OppEnvelopeTelemetryIssue } from "./TelemetryIssueTypes.js"
+export { OppEnvelopeTelemetryIssueCode } from "./TelemetryIssueTypes.js"

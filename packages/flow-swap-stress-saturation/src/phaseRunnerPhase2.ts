@@ -5,13 +5,12 @@ import {
   buildPayoutRequest,
   buildPhase2Requests
 } from "./phaseRunnerRequests.js"
+import { errorMessage, type PhaseRun } from "./phaseRunnerOutcomes.js"
 import {
-  collectMetrics,
-  errorMessage,
-  phaseResult,
-  type PhaseRun
-} from "./phaseRunnerOutcomes.js"
-import { emptyMetrics } from "./phaseRunnerFallbacks.js"
+  collectPreparedPhaseMetrics,
+  preparePhaseTelemetry
+} from "./phaseRunnerPreparedTelemetry.js"
+import { emptyMetrics, phaseResult } from "./phaseRunnerMetrics.js"
 import type { StressIdentities } from "./stressIdentities.js"
 import {
   SwapStressPhaseAmounts,
@@ -21,13 +20,6 @@ import {
   detectBatchOperatorFailure,
   minimumTargetAmount
 } from "./phaseRunnerShared.js"
-
-/** Phase 2 result with optional metrics failure classification. */
-export type Phase2Run = PhaseRun & {
-  readonly metricsFailureReason: string | null
-}
-
-const MetricsTimeoutPrefix = "Timed out waiting for:"
 
 /**
  * Execute phase 2, WIRE/Solana-to-Ethereum return swap stress work.
@@ -43,8 +35,35 @@ export async function runPhase2(
   identities: StressIdentities,
   targetAmounts: readonly bigint[],
   clock: () => number
-): Promise<Phase2Run> {
+): Promise<PhaseRun> {
   const phaseStartedAtMs = clock(),
+    preparation = await preparePhaseTelemetry(deps, {
+      phase: "phase-2",
+      endpointsType: DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
+    })
+  if (preparation.kind === "degraded") {
+    const phaseEndedAtMs = clock(),
+      burst = { successes: [], failures: [] }
+    return {
+      burst,
+      result: phaseResult(
+        "phase-2",
+        burst,
+        null,
+        emptyMetrics(
+          "phase-2",
+          DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM,
+          "collection_failed"
+        ),
+        phaseStartedAtMs,
+        phaseEndedAtMs
+      ),
+      payoutFailureReason: null,
+      batchOperatorFailureReason: null,
+      telemetryDegradation: preparation.error
+    }
+  }
+  const preparedTelemetry = preparation.telemetry,
     targetWei =
       minimumTargetAmount(targetAmounts) *
       SwapStressPhaseAmounts.EthWeiPerDepotUnit,
@@ -80,36 +99,25 @@ export async function runPhase2(
       )
     }
   }
-  const endedAtMs = clock()
-  let metrics = emptyMetrics(
-      "phase-2",
-      DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
-    ),
-    metricsFailureReason: string | null = null
-  try {
-    metrics = await collectMetrics(
-      deps,
-      "phase-2",
-      phaseStartedAtMs,
-      endedAtMs
-    )
-  } catch (error) {
-    const message = errorMessage(error)
-    if (!message.startsWith(MetricsTimeoutPrefix)) throw error
-    metricsFailureReason = message
-  }
+  const endedAtMs = clock(),
+    collection = await collectPreparedPhaseMetrics(preparedTelemetry, {
+      phase: "phase-2",
+      startedAtMs: phaseStartedAtMs,
+      endedAtMs,
+      endpointsType: DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
+    })
   return {
     burst,
     result: phaseResult(
       "phase-2",
       burst,
       payout,
-      metrics,
+      collection.metrics,
       phaseStartedAtMs,
       endedAtMs
     ),
     payoutFailureReason,
     batchOperatorFailureReason,
-    metricsFailureReason
+    telemetryDegradation: collection.telemetryDegradation
   }
 }

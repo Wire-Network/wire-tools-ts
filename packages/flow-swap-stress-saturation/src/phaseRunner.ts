@@ -13,7 +13,7 @@ import { runPhase1 } from "./phaseRunnerPhase1.js"
 import { runPhase2 } from "./phaseRunnerPhase2.js"
 import { SwapStressImpossibleQuoteError } from "./phaseRunnerTypes.js"
 import type {
-  SwapStressIterationOutcome,
+  SwapStressIterationObservation,
   SwapStressPhaseRunner,
   SwapStressPhaseRunnerDeps
 } from "./phaseRunnerTypes.js"
@@ -33,9 +33,8 @@ export function createSwapStressPhaseRunner(
 async function runIteration(
   deps: SwapStressPhaseRunnerDeps,
   count: number
-): Promise<SwapStressIterationOutcome> {
-  const clock = deps.clock ?? Date.now,
-    startedAtMs = clock()
+): Promise<SwapStressIterationObservation> {
+  const clock = deps.clock ?? Date.now
   try {
     assertPositiveCount(count)
     const identities = (deps.createIdentities ?? createStressIdentities)(count),
@@ -43,34 +42,30 @@ async function runIteration(
         await deps.readReservePairSnapshot(),
         identities.wire.length
       ),
-      phase1 = await runPhase1(
-        deps,
-        identities,
-        phase1Targets,
-        clock
-      )
+      phase1 = await runPhase1(deps, identities, phase1Targets, clock)
+    if (phase1.telemetryDegradation !== null) {
+      return breakage({
+        phaseResults: [phase1.result],
+        reason: phase1.telemetryDegradation.message,
+        degradation: phase1.telemetryDegradation.degradation
+      })
+    }
     if (phase1.burst.failures.length > 0) {
-      return breakage(
-        count,
-        "phase-1",
-        startedAtMs,
-        clock(),
-        phase1.result,
-        burstReason("phase-1", phase1.burst)
-      )
+      return breakage({
+        phaseResults: [phase1.result],
+        reason: burstReason("phase-1", phase1.burst),
+        degradation: null
+      })
     }
     if (
       phase1.result.payout !== null &&
       phase1.result.payout.observedCount < 1
     ) {
-      return breakage(
-        count,
-        "phase-1",
-        startedAtMs,
-        clock(),
-        phase1.result,
-        "phase-1 payout not observed"
-      )
+      return breakage({
+        phaseResults: [phase1.result],
+        reason: "phase-1 payout not observed",
+        degradation: null
+      })
     }
     const phase2Targets = quoteSwapStressPhase2Targets(
         await deps.readReservePairSnapshot(),
@@ -79,92 +74,68 @@ async function runIteration(
       phase2 = await runPhase2(deps, identities, phase2Targets, clock),
       phaseResults = [phase1.result, phase2.result]
     if (phase1.batchOperatorFailureReason !== null) {
-      return breakage(
-        count,
-        "phase-1",
-        startedAtMs,
-        clock(),
+      return breakage({
         phaseResults,
-        `phase-1 batch operator failure: ${phase1.batchOperatorFailureReason}`
-      )
+        reason: `phase-1 batch operator failure: ${phase1.batchOperatorFailureReason}`,
+        degradation: null
+      })
     }
     if (phase1.payoutFailureReason !== null) {
-      return breakage(
-        count,
-        "phase-1",
-        startedAtMs,
-        clock(),
+      return breakage({
         phaseResults,
-        `phase-1 payout observation failed: ${phase1.payoutFailureReason}`
-      )
+        reason: `phase-1 payout observation failed: ${phase1.payoutFailureReason}`,
+        degradation: null
+      })
+    }
+    if (phase2.telemetryDegradation !== null) {
+      return breakage({
+        phaseResults,
+        reason: phase2.telemetryDegradation.message,
+        degradation: phase2.telemetryDegradation.degradation
+      })
     }
     if (phase2.burst.failures.length > 0) {
-      return breakage(
-        count,
-        "phase-2",
-        startedAtMs,
-        clock(),
+      return breakage({
         phaseResults,
-        burstReason("phase-2", phase2.burst)
-      )
+        reason: burstReason("phase-2", phase2.burst),
+        degradation: null
+      })
     }
     if (phase2.batchOperatorFailureReason !== null) {
-      return breakage(
-        count,
-        "phase-2",
-        startedAtMs,
-        clock(),
+      return breakage({
         phaseResults,
-        `phase-2 batch operator failure: ${phase2.batchOperatorFailureReason}`
-      )
-    }
-    if (phase2.metricsFailureReason !== null) {
-      return breakage(
-        count,
-        "phase-2",
-        startedAtMs,
-        clock(),
-        phaseResults,
-        `phase-2 metrics collection failed: ${phase2.metricsFailureReason}`
-      )
+        reason: `phase-2 batch operator failure: ${phase2.batchOperatorFailureReason}`,
+        degradation: null
+      })
     }
     if (phase2.payoutFailureReason !== null) {
-      return breakage(
-        count,
-        "phase-2",
-        startedAtMs,
-        clock(),
+      return breakage({
         phaseResults,
-        `phase-2 payout observation failed: ${phase2.payoutFailureReason}`
-      )
+        reason: `phase-2 payout observation failed: ${phase2.payoutFailureReason}`,
+        degradation: null
+      })
     }
     if (
       phase2.result.payout !== null &&
       phase2.result.payout.observedCount < 1
     ) {
-      return breakage(
-        count,
-        "phase-2",
-        startedAtMs,
-        clock(),
+      return breakage({
         phaseResults,
-        "phase-2 payout not observed"
-      )
+        reason: "phase-2 payout not observed",
+        degradation: null
+      })
     }
     if (phase2.result.saturated) {
-      return complete(count, startedAtMs, clock(), phaseResults)
+      return complete(phaseResults)
     }
-    return complete(count, startedAtMs, clock(), phaseResults)
+    return complete(phaseResults)
   } catch (error) {
     if (error instanceof SwapStressImpossibleQuoteError) {
-      return breakage(
-        count,
-        "quote",
-        startedAtMs,
-        clock(),
-        [],
-        errorMessage(error)
-      )
+      return breakage({
+        phaseResults: [],
+        reason: errorMessage(error),
+        degradation: null
+      })
     }
     throw error
   }

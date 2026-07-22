@@ -1,6 +1,5 @@
 import * as Path from "node:path"
 import * as Fs from "node:fs"
-import { createHash } from "node:crypto"
 
 import {
   PutEnvelopeResponse,
@@ -8,8 +7,7 @@ import {
   EnvelopeListEntry,
   GetEnvelopeResponse,
   DebugOutpostEndpointsType,
-  DebugEnvelopeMetadataRecord,
-  Envelope
+  DebugEnvelopeMetadataRecord
 } from "@wireio/opp-typescript-models"
 
 import {
@@ -21,32 +19,9 @@ import {
 } from "@wireio/debugging-shared"
 
 import { JsonRPC } from "../../JsonRPC.js"
+import { EnvelopePersistence } from "./EnvelopePersistence.js"
 
-import type express from "express"
 import { asOption } from "@3fv/prelude-ts"
-
-// ---------------------------------------------------------------------------
-//  Storage-key geometry
-// ---------------------------------------------------------------------------
-
-/**
- * Number of hex characters retained from the sha256 checksum when forming the
- * envelope filename. A shorter value makes filenames readable; widening it
- * lowers the chance of accidental collision at the cost of longer keys.
- * The same truncation is used for the `checksum` field echoed back in
- * `EnvelopeListEntry` — keep the two in lockstep.
- */
-const ChecksumHexChars = 16
-
-/**
- * Number of checksum hex chars fed into the BigInt metadata field. Must stay
- * ≤ 15 to fit in a `uint64` after the `0x` prefix — the protobuf field is
- * `uint64`, so widening this will produce serialization failures.
- */
-const MetadataChecksumHexChars = 12
-
-/** Zero-pad width applied to `epoch_index` when forming storage keys. */
-const EpochIndexPadWidth = 8
 
 /** Extensions used by the on-disk envelope storage layout. */
 namespace StorageFile {
@@ -75,68 +50,17 @@ export namespace OPPRoutes {
     JsonRPC.addRoute(
       registry,
       ApiPaths.OPP.Methods.Envelope,
-      async (reqMessage, req: express.Request) => {
-        const { envelopeData } = req.body.params as any
-        const { batchOpName, endpointsType } = reqMessage
-
-        // 1. protobuf `bytes` fields serialize as base64 in JSON encoding
-        const envelopeBytes = Buffer.from(
-          envelopeData as unknown as string,
-          "base64"
-        )
-
-        // 2. Data checksum (sha256 of the raw envelope bytes, truncated)
-        const checksum = createHash("sha256")
-          .update(envelopeBytes)
-          .digest("hex")
-          .substring(0, ChecksumHexChars)
-
-        // 3. Parse epoch index from the envelope for the filename prefix
-        const envelope = Envelope.fromBinary(envelopeBytes)
-        const epochIndex = String(envelope.epochIndex).padStart(
-          EpochIndexPadWidth,
-          "0"
-        )
-
-        // 4. Compose the canonical storage key
-        const endpointsKey = endpointsTypeToKey(endpointsType)
-        const baseKey = `${epochIndex}-${endpointsKey}-${checksum}`
-        const dataFile = Path.join(
-          oppStoragePath,
-          `${baseKey}${StorageFile.Data}`
-        )
-        const metadataFile = Path.join(
-          oppStoragePath,
-          `${baseKey}${StorageFile.Metadata}`
-        )
-
-        // 5. Atomic data-file write (skip-if-exists for dedup)
-        let dataExisted = false
-        try {
-          await Fs.promises.writeFile(dataFile, envelopeBytes, { flag: "wx" })
-        } catch (err: any) {
-          if (err.code === "EEXIST") {
-            dataExisted = true
-          } else {
-            throw err
-          }
-        }
-
-        // 6. Create or merge metadata (batch-op names accumulate per envelope)
-        const metadata = await readOrInitMetadata(
-          metadataFile,
-          checksum,
-          batchOpName
-        )
-        await Fs.promises.writeFile(
-          metadataFile,
-          DebugEnvelopeMetadataRecord.toBinary(metadata)
-        )
-
+      async reqMessage => {
+        const result = await EnvelopePersistence.persist({
+          storageDir: oppStoragePath,
+          envelopeData: reqMessage.envelopeData,
+          batchOpName: reqMessage.batchOpName,
+          endpointsType: reqMessage.endpointsType
+        })
         return PutEnvelopeResponse.create({
-          key: baseKey,
-          dataExisted,
-          batchOpNames: metadata.batchOpNames
+          key: result.key,
+          dataExisted: result.dataExisted,
+          batchOpNames: [...result.batchOpNames]
         })
       }
     )
@@ -280,14 +204,6 @@ interface ParsedStorageKey {
   checksum: string
 }
 
-/**
- * Parse a storage key of the form `"<epochIndex>-<endpointsKey>-<checksum>"`.
- *
- * @param key - Filename-style storage key without its extension.
- * @returns The parsed components, or `null` if the key is malformed.
- *
- * @example parseStorageKey("00000042-OUTPOST_ETHEREUM_DEPOT-abc123def4567890")
- */
 function parseStorageKey(key: string): ParsedStorageKey | null {
   const firstDash = key.indexOf("-")
   if (firstDash < 0) return null
@@ -304,11 +220,6 @@ function parseStorageKey(key: string): ParsedStorageKey | null {
   return { key, epochIndex, endpointsKey, checksum }
 }
 
-/**
- * Reverse-map an endpoints enum name back to its numeric value. Falls back
- * to `UNKNOWN` if no matching member exists — e.g. a client on an older
- * protobuf schema wrote a name we no longer recognize.
- */
 function resolveEndpointsType(endpointsKey: string): DebugOutpostEndpointsType {
   const raw = (DebugOutpostEndpointsType as Record<string, unknown>)[
     endpointsKey
@@ -361,29 +272,6 @@ async function resolveListEntry(
 // ---------------------------------------------------------------------------
 //  Metadata file helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Load an existing metadata record and append `batchOpName` if missing;
- * otherwise initialize a fresh record with a BigInt-packed checksum.
- */
-async function readOrInitMetadata(
-  metadataFile: string,
-  checksum: string,
-  batchOpName: string
-): Promise<{ checksum: bigint; batchOpNames: string[] }> {
-  try {
-    const existingBytes = await Fs.promises.readFile(metadataFile)
-    const decoded = DebugEnvelopeMetadataRecord.fromBinary(existingBytes)
-    const batchOpNames = [...decoded.batchOpNames]
-    if (!batchOpNames.includes(batchOpName)) batchOpNames.push(batchOpName)
-    return { checksum: decoded.checksum, batchOpNames }
-  } catch {
-    return {
-      checksum: BigInt(`0x${checksum.substring(0, MetadataChecksumHexChars)}`),
-      batchOpNames: [batchOpName]
-    }
-  }
-}
 
 /** Read the `batchOpNames` list, tolerating missing metadata files. */
 async function readMetadataBatchOpNames(

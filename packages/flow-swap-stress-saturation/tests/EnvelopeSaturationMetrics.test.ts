@@ -21,7 +21,16 @@ import {
 
 import { EnvelopeMetricFixtures } from "./constants.js"
 
+const TemporaryStorageDirs = new Set<string>()
+
 describe("collectEnvelopeSaturationMetrics", () => {
+  afterEach(() => {
+    TemporaryStorageDirs.forEach(storageDir =>
+      Fs.rmSync(storageDir, { recursive: true, force: true })
+    )
+    TemporaryStorageDirs.clear()
+  })
+
   it("reports one matching envelope as not saturated", async () => {
     // Given: one valid fixture in the target direction and epoch window.
     const storageDir = makeStorageDir("single")
@@ -56,7 +65,6 @@ describe("collectEnvelopeSaturationMetrics", () => {
       epochStart: EnvelopeMetricFixtures.EpochIndex,
       epochEnd: EnvelopeMetricFixtures.EpochIndex
     })
-
     // Then: the single oversized envelope is visible but not treated as rollover saturation.
     expect(metrics.envelopeCount).toBe(1)
     expect(metrics.saturated).toBe(false)
@@ -128,7 +136,11 @@ describe("collectEnvelopeSaturationMetrics", () => {
 })
 
 function makeStorageDir(label: string): string {
-  return Fs.mkdtempSync(Path.join(OS.tmpdir(), `swap-stress-${label}-`))
+  const storageDir = Fs.mkdtempSync(
+    Path.join(OS.tmpdir(), `swap-stress-${label}-`)
+  )
+  TemporaryStorageDirs.add(storageDir)
+  return storageDir
 }
 
 function writeEnvelopeFixture(
@@ -190,7 +202,10 @@ function writeEnvelopeFixture(
   Fs.writeFileSync(
     Path.join(storageDir, `${baseKey}${EnvelopeRecordFile.MetadataExt}`),
     DebugEnvelopeMetadataRecord.toBinary(
-      DebugEnvelopeMetadataRecord.create({ batchOpNames: ["batchop.a"] })
+      DebugEnvelopeMetadataRecord.create({
+        checksum: BigInt(`0x${checksum.slice(0, 12)}`),
+        batchOpNames: ["batchop.a"]
+      })
     )
   )
 }

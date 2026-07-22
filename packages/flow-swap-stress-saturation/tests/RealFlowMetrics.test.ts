@@ -1,126 +1,165 @@
-import * as Fs from "node:fs"
-import * as OS from "node:os"
-import * as Path from "node:path"
-import { createHash } from "node:crypto"
+import {
+  OppEnvelopeTelemetryIssueCode
+} from "@wireio/test-opp-stress"
+import {
+  pollRealFlowMetrics,
+  RealFlowMetricPolling,
+  SwapStressTelemetryDegradedError
+} from "@wireio/test-flow-swap-stress-saturation"
 
 import {
-  oppDebuggingPath,
-  endpointsTypeToKey,
-  EnvelopeRecordFile
-} from "@wireio/debugging-shared"
+  createFakePollingRuntime,
+  createNonHealthyCases,
+  HealthyCollection,
+  PollingRequest
+} from "./realMetricPollingTestSupport.js"
 import {
-  AttestationType,
-  DebugEnvelopeMetadataRecord,
-  DebugOutpostEndpointsType,
-  Envelope
-} from "@wireio/opp-typescript-models"
-import { MaxEnvelopeBytes } from "@wireio/test-flow-swap-stress-saturation"
+  NonPollableIntegrityIssueCodes,
+  producePollableIntegrityIssues
+} from "./realMetricPollingIssueFixtures.js"
 
-import { EnvelopeMetricFixtures } from "./constants.js"
-import { collectPhaseMetrics } from "./real/realFlowUtils.js"
+const LastPreDeadlinePollMs = 237_000,
+  ExpectedPersistentCallCount = 80,
+  PollingCaseNames = [
+    "empty",
+    ...Object.values(OppEnvelopeTelemetryIssueCode).filter(
+      code => code !== OppEnvelopeTelemetryIssueCode.BaselineCaptureFailed
+    ),
+    "partial-valid-plus-invalid"
+  ]
 
-describe("collectPhaseMetrics", () => {
-  it("waits for delayed endpoint evidence and extends the metrics window", async () => {
-    // Given: the phase ended before OPP debug files were flushed to disk.
-    const clusterPath = makeClusterPath(),
-      storageDir = oppDebuggingPath(clusterPath),
-      collection = collectPhaseMetrics(
-        clusterPath,
-        {
-          phase: "phase-2",
-          startedAtMs: 1,
-          endedAtMs: 2,
-          endpointsType: DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
-        },
-        { evidenceTimeoutMs: 250, evidencePollIntervalMs: 1 }
+let nonHealthyCasesPromise: ReturnType<typeof createNonHealthyCases> | null = null
+
+describe("real flow metric polling", () => {
+  it("accounts for every canonical strict issue code", async () => {
+    // Given: producer issue codes are partitioned by polling reachability.
+    const pollable = await producePollableIntegrityIssues()
+    const accounted = [
+      ...pollable.map(fixture => fixture.issue.code),
+      ...NonPollableIntegrityIssueCodes
+    ]
+
+    // When/Then: every code appears exactly once in that partition.
+    expect(accounted.sort()).toEqual(
+      Object.values(OppEnvelopeTelemetryIssueCode).sort()
+    )
+    expect(new Set(accounted).size).toBe(accounted.length)
+  })
+
+  it.each(PollingCaseNames)(
+    "repairs producer-backed %s at the last pre-deadline poll",
+    async name => {
+      const { observation } = await nonHealthyCase(name)
+      // Given: one strict nonhealthy class persists through 237 seconds.
+      const pending = { kind: "pending" as const, observation },
+        runtime = createFakePollingRuntime([
+          ...Array(ExpectedPersistentCallCount - 1).fill(pending),
+          HealthyCollection
+        ])
+
+      // When: the final legal poll repairs the strict snapshot.
+      const result = await pollRealFlowMetrics(PollingRequest, runtime)
+
+      // Then: repair wins without typed terminal degradation or deadline wait.
+      expect(result).toBe(HealthyCollection)
+      expect(runtime.attemptedAtMs).toHaveLength(ExpectedPersistentCallCount)
+      expect(runtime.attemptedAtMs[0]).toBe(0)
+      expect(runtime.attemptedAtMs.at(-1)).toBe(LastPreDeadlinePollMs)
+      expect(runtime.waitsMs).toEqual(
+        Array(ExpectedPersistentCallCount - 1).fill(
+          RealFlowMetricPolling.LongPollIntervalMs
+        )
       )
-
-    // When: matching evidence arrives after collection has already started.
-    setTimeout(() => {
-      writeEnvelopeFixture(
-        storageDir,
-        0,
-        DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM,
-        MaxEnvelopeBytes - 512
+      expect(runtime.requests.every(request => request === PollingRequest)).toBe(
+        true
       )
-      writeEnvelopeFixture(
-        storageDir,
-        1,
-        DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
+      expect(
+        runtime.returnedResults
+          .slice(0, ExpectedPersistentCallCount - 1)
+          .every(snapshot => snapshot === pending)
+      ).toBe(true)
+      expect(
+        runtime.requests.every(
+          request => request.baseline === PollingRequest.baseline
+        )
+      ).toBe(true)
+    }
+  )
+
+  it.each(PollingCaseNames)(
+    "terminalizes persistent producer-backed %s at the deadline",
+    async name => {
+      const { observation } = await nonHealthyCase(name)
+      // Given: the same immutable nonhealthy observation never repairs.
+      const pending = { kind: "pending" as const, observation },
+        runtime = createFakePollingRuntime([pending])
+
+      // When: real polling exhausts the fixed deadline.
+      const result = await pollRealFlowMetrics(PollingRequest, runtime)
+
+      // Then: no deadline scan occurs and exact final evidence is retained.
+      expect(result.kind).toBe("degraded")
+      if (result.kind !== "degraded") throw new Error("expected degradation")
+      expect(result.error).toBeInstanceOf(SwapStressTelemetryDegradedError)
+      expect(result.error.degradation).toEqual({
+        kind: "deadline_exhausted",
+        observation
+      })
+      expect(result.error.degradation.observation).toBe(observation)
+      expect(result.error.degradation.observation.health).toBe(observation.health)
+      expect(result.error.degradation.observation.health.issues[0]).toBe(
+        observation.health.issues[0]
       )
-    }, 5)
+      expect(runtime.attemptedAtMs).toEqual(
+        Array.from(
+          { length: ExpectedPersistentCallCount },
+          (_, index) => index * RealFlowMetricPolling.LongPollIntervalMs
+        )
+      )
+      expect(runtime.waitsMs).toEqual(
+        Array(ExpectedPersistentCallCount).fill(
+          RealFlowMetricPolling.LongPollIntervalMs
+        )
+      )
+      expect(runtime.waitsMs.reduce((total, wait) => total + wait, 0)).toBe(
+        RealFlowMetricPolling.RelayDeadlineMs
+      )
+    }
+  )
 
-    const metrics = await collection
+  it("returns first-poll healthy evidence without waiting", async () => {
+    // Given: the immediate strict snapshot is already healthy.
+    const runtime = createFakePollingRuntime([HealthyCollection])
 
-    // Then: late files are included instead of being filtered by the original end time.
-    expect(metrics.saturated).toBe(true)
-    expect(metrics.envelopeCount).toBe(2)
-    expect(metrics.endpoint).toBe("DEPOT_OUTPOST_ETHEREUM")
-    expect(metrics.epochStart).toBe(EnvelopeMetricFixtures.EpochIndex)
-    expect(metrics.epochEnd).toBe(EnvelopeMetricFixtures.EpochIndex)
+    // When: real polling begins.
+    const result = await pollRealFlowMetrics(PollingRequest, runtime)
+
+    // Then: no retry clock is advanced.
+    expect(result).toBe(HealthyCollection)
+    expect(runtime.attemptedAtMs).toEqual([0])
+    expect(runtime.waitsMs).toEqual([])
+  })
+
+  it("propagates arbitrary collector failures without reclassification", async () => {
+    // Given: the collector throws an infrastructure/programmer exception.
+    const failure = new TypeError("collector contract failure"),
+      fake = createFakePollingRuntime([HealthyCollection]),
+      runtime = {
+        ...fake,
+        collect: async () => Promise.reject(failure)
+      }
+
+    // When / Then: only representable strict health is retryable.
+    await expect(pollRealFlowMetrics(PollingRequest, runtime)).rejects.toBe(
+      failure
+    )
+    expect(fake.waitsMs).toEqual([])
   })
 })
 
-function makeClusterPath(): string {
-  const clusterPath = Fs.mkdtempSync(
-    Path.join(OS.tmpdir(), "swap-stress-real-metrics-")
-  )
-  Fs.mkdirSync(oppDebuggingPath(clusterPath), { recursive: true })
-  return clusterPath
-}
-
-function writeEnvelopeFixture(
-  storageDir: string,
-  epochEnvelopeIndex: number,
-  endpointsType: DebugOutpostEndpointsType,
-  payloadSize = 1
-): void {
-  const endpointsKey = endpointsTypeToKey(endpointsType)
-  if (endpointsKey === null)
-    throw new Error("test fixture endpoint type must resolve to a key")
-
-  const payload = new Uint8Array(payloadSize)
-  payload.fill(1)
-  const envelope = Envelope.create({
-      epochIndex: EnvelopeMetricFixtures.EpochIndex,
-      epochEnvelopeIndex,
-      epochTimestamp: EnvelopeMetricFixtures.EpochTimestamp,
-      envelopeHash: new Uint8Array(32),
-      previousEnvelopeHash: new Uint8Array(32),
-      messages: [
-        {
-          payload: {
-            version: 0,
-            attestations: [
-              {
-                type: AttestationType.UNSPECIFIED,
-                dataSize: payload.length,
-                data: payload
-              }
-            ]
-          }
-        }
-      ]
-    }),
-    bytes = Envelope.toBinary(envelope),
-    checksum = createHash("sha256")
-      .update(Buffer.from(bytes))
-      .digest("hex")
-      .substring(0, EnvelopeMetricFixtures.ChecksumHexChars),
-    epochStr = String(EnvelopeMetricFixtures.EpochIndex).padStart(
-      EnvelopeMetricFixtures.EpochIndexPadWidth,
-      "0"
-    ),
-    baseKey = `${epochStr}-${endpointsKey}-${checksum}`
-
-  Fs.writeFileSync(
-    Path.join(storageDir, `${baseKey}${EnvelopeRecordFile.DataExt}`),
-    Buffer.from(bytes)
-  )
-  Fs.writeFileSync(
-    Path.join(storageDir, `${baseKey}${EnvelopeRecordFile.MetadataExt}`),
-    DebugEnvelopeMetadataRecord.toBinary(
-      DebugEnvelopeMetadataRecord.create({ batchOpNames: ["batchop.a"] })
-    )
-  )
+async function nonHealthyCase(name: string) {
+  nonHealthyCasesPromise ??= createNonHealthyCases()
+  const found = (await nonHealthyCasesPromise).find(value => value.name === name)
+  if (found === undefined) throw new TypeError(`missing polling case ${name}`)
+  return found
 }

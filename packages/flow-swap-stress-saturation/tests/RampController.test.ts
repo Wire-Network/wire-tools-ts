@@ -1,203 +1,142 @@
-import * as Fs from "node:fs"
-import * as OS from "node:os"
-import * as Path from "node:path"
-
-import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import {
-  StressRampDefaults,
-  runSaturationRamp
+  RampBreakageCategory,
+  RunEvidenceEndpoint
+} from "@wireio/test-opp-stress"
+import {
+  runSaturationRamp,
+  type SwapStressIterationObservation
 } from "@wireio/test-flow-swap-stress-saturation"
 
 import { RampFixtures } from "./constants.js"
+import { saturationPhaseResults } from "./flowObservationContractTestSupport.js"
 
 describe("runSaturationRamp", () => {
-  it("doubles until the first saturated iteration and writes JSON evidence", async () => {
-    // Given: synthetic metrics saturate at account count 16.
-    const evidenceDir = makeEvidenceDir("saturated")
+  it("doubles until the first saturated iteration", async () => {
+    // Given: synthetic observations saturate at account count 16.
+    const counts: number[] = []
 
     // When: the ramp controller runs to saturation.
     const result = await runSaturationRamp({
-      evidenceDir,
       config: RampFixtures.Config,
-      runIteration: async ({ accountCount, iterationIndex }) => ({
-        kind:
-          accountCount === RampFixtures.SaturatingCount
-            ? "saturated"
-            : "not_saturated",
-        iterationIndex,
-        accountCount,
-        phase: "phase-a",
-        startedAtMs: RampFixtures.StartedAtMs + iterationIndex,
-        endedAtMs: RampFixtures.EndedAtMs + iterationIndex,
-        txSuccesses: accountCount,
-        txFailures: 0,
-        envelopeCount: accountCount === RampFixtures.SaturatingCount ? 2 : 1,
-        envelopeByteSizes: [StressRampDefaults.EvidenceFixtureBytes],
-        endpoint: RampFixtures.Endpoint,
-        epochStart: RampFixtures.EpochStart,
-        epochEnd: RampFixtures.EpochEnd,
-        saturatedEndpoints:
+      runIteration: async ({ accountCount }) => {
+        counts.push(accountCount)
+        return completedObservation(
           accountCount === RampFixtures.SaturatingCount
             ? requiredEndpointNames()
-            : [],
-        missingEndpoints:
-          accountCount === RampFixtures.SaturatingCount
-            ? []
-            : requiredEndpointNames(),
-        observedNonRequiredEndpoints: []
-      })
+            : []
+        )
+      }
     })
 
-    // Then: the ramp stops at the first saturated count and records evidence.
+    // Then: controller-owned counts and status stop at first saturation.
     expect(result.status).toBe("saturated")
+    expect(counts).toEqual([2, 4, 8, 16])
     expect(result.iterations.map(iteration => iteration.accountCount)).toEqual([
       2, 4, 8, 16
     ])
-    expect(readEvidence(evidenceDir, 3).status).toBe("saturated")
+    expect(result.iterations[3]?.status).toBe("saturated")
     expect(result.preserveCluster).toBe(false)
   })
 
-  it("stops on breakage before saturation and preserves cluster metadata", async () => {
-    // Given: synthetic tx failure appears before saturation.
-    const evidenceDir = makeEvidenceDir("breakage")
+  it("stops on workload breakage and preserves the cluster", async () => {
+    // Given: workload breakage appears at the second count.
+    const runIteration = async ({
+      accountCount
+    }: {
+      readonly accountCount: number
+    }): Promise<SwapStressIterationObservation> =>
+      accountCount === RampFixtures.BreakageCount
+        ? {
+            kind: "breakage",
+            saturatedEndpoints: [],
+            observedNonRequiredEndpoints: [],
+            breakageCategory: RampBreakageCategory.Workload,
+            breakageReason: "tx reverted",
+            evidence: { phaseResults: [], telemetryDegradation: null }
+          }
+        : completedObservation([])
 
-    // When: the ramp sees breakage.
+    // When: the ramp sees the breakage observation.
     const result = await runSaturationRamp({
-      evidenceDir,
       config: RampFixtures.Config,
-      runIteration: async ({ accountCount, iterationIndex }) => ({
-        kind:
-          accountCount === RampFixtures.BreakageCount
-            ? "breakage"
-            : "not_saturated",
-        iterationIndex,
-        accountCount,
-        phase: "phase-b",
-        startedAtMs: RampFixtures.StartedAtMs,
-        endedAtMs: RampFixtures.EndedAtMs,
-        txSuccesses: 1,
-        txFailures: accountCount === RampFixtures.BreakageCount ? 1 : 0,
-        breakageReason:
-          accountCount === RampFixtures.BreakageCount ? "tx reverted" : null,
-        envelopeCount: 1,
-        envelopeByteSizes: [StressRampDefaults.EvidenceFixtureBytes],
-        endpoint: RampFixtures.Endpoint,
-        epochStart: RampFixtures.EpochStart,
-        epochEnd: RampFixtures.EpochEnd
-      })
+      runIteration
     })
 
-    // Then: breakage is classified and evidence asks the caller to preserve the cluster.
+    // Then: controller status and preservation reflect breakage.
     expect(result.status).toBe("failed_before_saturation")
     expect(result.preserveCluster).toBe(true)
-    expect(readEvidence(evidenceDir, 1).preserveCluster).toBe(true)
+    expect(result.iterations[1]).toMatchObject({
+      preserveCluster: true,
+      breakageCategory: RampBreakageCategory.Workload,
+      breakageReason: "tx reverted"
+    })
   })
 
-  it("continues a saturated outcome that is still missing a required Ethereum endpoint", async () => {
-    // Given: a runner reports saturation but only one required Ethereum endpoint is present.
-    const evidenceDir = makeEvidenceDir("synthetic-missing-endpoint")
+  it("continues a completed observation missing one required endpoint", async () => {
+    // Given: every callback claims only one required endpoint.
+    const partialEndpoints = [RunEvidenceEndpoint.OutpostEthereumDepot]
 
-    // When: the ramp controller applies campaign-level all-legs aggregation until max count.
+    // When: the controller reaches exact max with partial saturation.
     const result = await runSaturationRamp({
-      evidenceDir,
       config: RampFixtures.Config,
-      runIteration: async ({ accountCount, iterationIndex }) => ({
-        kind: "saturated",
-        iterationIndex,
-        accountCount,
-        phase: "phase-a",
-        startedAtMs: RampFixtures.StartedAtMs,
-        endedAtMs: RampFixtures.EndedAtMs,
-        txSuccesses: accountCount,
-        txFailures: 0,
-        envelopeCount: 1,
-        envelopeByteSizes: [StressRampDefaults.EvidenceFixtureBytes],
-        endpoint: RampFixtures.Endpoint,
-        epochStart: RampFixtures.EpochStart,
-        epochEnd: RampFixtures.EpochEnd,
-        saturatedEndpoints: [requiredEndpointNames()[0]],
-        missingEndpoints: [requiredEndpointNames()[1]],
-        observedNonRequiredEndpoints: []
-      })
+      runIteration: async () => completedObservation(partialEndpoints)
     })
 
-    // Then: a mislabeled iteration cannot bypass the strict both-directions rule before max count.
+    // Then: callback wording cannot bypass controller all-endpoint ownership.
     expect(result.status).toBe("partial_saturation")
     expect(result.preserveCluster).toBe(true)
-    expect(readEvidence(evidenceDir, 0)).toMatchObject({
+    expect(result.iterations[0]).toMatchObject({
       status: "not_saturated",
-      preserveCluster: false,
-      missingEndpoints: [requiredEndpointNames()[1]]
+      missingEndpoints: [RunEvidenceEndpoint.DepotOutpostEthereum]
     })
-    expect(readEvidence(evidenceDir, 3)).toMatchObject({
+    expect(result.iterations[3]).toMatchObject({
       status: "partial_saturation",
-      preserveCluster: true,
-      missingEndpoints: [requiredEndpointNames()[1]]
+      missingEndpoints: [RunEvidenceEndpoint.DepotOutpostEthereum]
     })
   })
 
-  it("preserves max-count evidence when no required Ethereum endpoint saturates", async () => {
-    // Given: the ramp reaches the configured max count without required endpoint saturation.
-    const evidenceDir = makeEvidenceDir("max-unsaturated")
+  it("preserves max-count evidence when no required endpoint saturates", async () => {
+    // Given: one exact-max observation contains no required saturation.
+    const config = {
+      initialCount: 2,
+      multiplier: 2,
+      maxCount: 2,
+      phaseTimeoutMs: 30_000
+    }
 
     // When: the controller stops at the safety cap.
     const result = await runSaturationRamp({
-      evidenceDir,
-      config: {
-        initialCount: 2,
-        multiplier: 2,
-        maxCount: 2,
-        phaseTimeoutMs: 30_000
-      },
-      runIteration: async ({ accountCount, iterationIndex }) => ({
-        kind: "not_saturated",
-        iterationIndex,
-        accountCount,
-        phase: "phase-a",
-        startedAtMs: RampFixtures.StartedAtMs,
-        endedAtMs: RampFixtures.EndedAtMs,
-        txSuccesses: accountCount,
-        txFailures: 0,
-        envelopeCount: 1,
-        envelopeByteSizes: [StressRampDefaults.EvidenceFixtureBytes],
-        endpoint: RampFixtures.Endpoint,
-        epochStart: RampFixtures.EpochStart,
-        epochEnd: RampFixtures.EpochEnd,
-        saturatedEndpoints: [],
-        missingEndpoints: requiredEndpointNames(),
-        observedNonRequiredEndpoints: []
-      })
+      config,
+      runIteration: async () => completedObservation([])
     })
 
-    // Then: both the final result and persisted evidence ask callers to keep artifacts.
+    // Then: controller-owned terminal fields request artifact preservation.
     expect(result.status).toBe("saturation_not_reached")
     expect(result.preserveCluster).toBe(true)
-    expect(readEvidence(evidenceDir, 0)).toMatchObject({
+    expect(result.iterations[0]).toMatchObject({
       status: "saturation_not_reached",
       preserveCluster: true
     })
   })
 })
 
-function requiredEndpointNames(): readonly string[] {
+function completedObservation(
+  saturatedEndpoints: readonly RunEvidenceEndpoint[]
+): SwapStressIterationObservation {
+  return {
+    kind: "completed",
+    saturatedEndpoints,
+    observedNonRequiredEndpoints: [],
+    evidence: {
+      phaseResults: saturationPhaseResults(saturatedEndpoints),
+      telemetryDegradation: null
+    }
+  }
+}
+
+function requiredEndpointNames(): readonly RunEvidenceEndpoint[] {
   return [
-    DebugOutpostEndpointsType[DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT],
-    DebugOutpostEndpointsType[DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM]
+    RunEvidenceEndpoint.OutpostEthereumDepot,
+    RunEvidenceEndpoint.DepotOutpostEthereum
   ]
-}
-
-function makeEvidenceDir(label: string): string {
-  return Fs.mkdtempSync(Path.join(OS.tmpdir(), `swap-stress-ramp-${label}-`))
-}
-
-function readEvidence(
-  evidenceDir: string,
-  iterationIndex: number
-): Record<string, unknown> {
-  return JSON.parse(
-    Fs.readFileSync(
-      Path.join(evidenceDir, `iteration-${iterationIndex}.json`),
-      "utf-8"
-    )
-  )
 }

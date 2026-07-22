@@ -1,127 +1,96 @@
-import * as Fs from "node:fs"
-import * as OS from "node:os"
-import * as Path from "node:path"
-
-import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import {
-  StressRampDefaults,
+  RampBreakageCategory,
+  RunEvidenceEndpoint
+} from "@wireio/test-opp-stress"
+import {
   runSaturationRamp,
   type StressRampConfig,
-  type StressRampIterationOutcome
+  type SwapStressIterationObservation
 } from "@wireio/test-flow-swap-stress-saturation"
 
-describe("runSaturationRamp ethereum all-legs aggregation", () => {
-  it("continues after the first Ethereum endpoint and passes when the second endpoint saturates later", async () => {
-    // Given: the first iteration saturates only outpost-to-depot and the second saturates depot-to-outpost.
-    const evidenceDir = makeEvidenceDir("two-iteration-pass")
+import { saturationPhaseResults } from "./flowObservationContractTestSupport.js"
 
-    // When: the ramp controller aggregates required endpoints across the campaign.
+describe("runSaturationRamp ethereum all-legs aggregation", () => {
+  it("continues after the first endpoint and passes when the second saturates later", async () => {
+    // Given: each iteration saturates one distinct required Ethereum endpoint.
+    const observations = [
+      completedObservation([RunEvidenceEndpoint.OutpostEthereumDepot]),
+      completedObservation([RunEvidenceEndpoint.DepotOutpostEthereum])
+    ]
+
+    // When: the controller aggregates required endpoints across the campaign.
     const result = await runSaturationRamp({
-      evidenceDir,
       config: TestConfig,
-      runIteration: async input =>
-        iterationOutcome(input.iterationIndex, input.accountCount)
+      runIteration: async input => {
+        const observation = observations[input.iterationIndex]
+        if (observation === undefined)
+          throw new Error("iteration observation fixture missing")
+        return observation
+      }
     })
 
-    // Then: the campaign succeeds only after both required Ethereum directions are present.
+    // Then: success occurs only after both controller-ordered endpoints exist.
     expect(result.status).toBe("saturated")
     expect(result.preserveCluster).toBe(false)
     expect(result.iterations.map(iteration => iteration.accountCount)).toEqual([
       2, 4
     ])
-    expect(readEvidence(evidenceDir, 0)).toMatchObject({
+    expect(result.iterations[0]).toMatchObject({
       status: "not_saturated",
-      saturatedEndpoints: [
-        DebugOutpostEndpointsType[
-          DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT
-        ]
-      ],
-      missingEndpoints: [
-        DebugOutpostEndpointsType[
-          DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
-        ]
-      ]
+      saturatedEndpoints: [RunEvidenceEndpoint.OutpostEthereumDepot],
+      missingEndpoints: [RunEvidenceEndpoint.DepotOutpostEthereum]
     })
-    expect(readEvidence(evidenceDir, 1)).toMatchObject({
+    expect(result.iterations[1]).toMatchObject({
       status: "saturated",
-      saturatedEndpoints: [
-        DebugOutpostEndpointsType[
-          DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT
-        ],
-        DebugOutpostEndpointsType[
-          DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
-        ]
-      ],
+      saturatedEndpoints: requiredEndpointNames(),
       missingEndpoints: []
     })
   })
 
-  it("preserves partial Ethereum saturation when breakage happens before the second endpoint", async () => {
-    // Given: one required Ethereum endpoint saturated before a later transaction breakage.
-    const evidenceDir = makeEvidenceDir("breakage-after-partial")
+  it("preserves partial saturation when later workload breakage occurs", async () => {
+    // Given: one endpoint saturates before a later workload breakage.
+    const first = completedObservation([
+      RunEvidenceEndpoint.OutpostEthereumDepot
+    ])
 
-    // When: the ramp controller sees breakage after a partial required endpoint set.
+    // When: the second iteration returns typed workload breakage.
     const result = await runSaturationRamp({
-      evidenceDir,
       config: TestConfig,
       runIteration: async input =>
-        input.iterationIndex === 0
-          ? iterationOutcome(input.iterationIndex, input.accountCount)
-          : breakageOutcome(input.iterationIndex, input.accountCount)
+        input.iterationIndex === 0 ? first : breakageObservation([])
     })
 
-    // Then: the final status is breakage, not success, and the partial endpoint remains visible.
+    // Then: breakage wins while prior endpoint saturation remains visible.
     expect(result.status).toBe("failed_before_saturation")
     expect(result.preserveCluster).toBe(true)
     expect(result.saturatedEndpoints).toEqual([
-      DebugOutpostEndpointsType[
-        DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT
-      ]
+      RunEvidenceEndpoint.OutpostEthereumDepot
     ])
     expect(result.missingEndpoints).toEqual([
-      DebugOutpostEndpointsType[
-        DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
-      ]
+      RunEvidenceEndpoint.DepotOutpostEthereum
     ])
-    expect(readEvidence(evidenceDir, 1)).toMatchObject({
-      status: "failed_before_saturation",
+    expect(result.iterations[1]).toMatchObject({
       breakageReason: "tx reverted",
-      saturatedEndpoints: [
-        DebugOutpostEndpointsType[
-          DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT
-        ]
-      ],
-      missingEndpoints: [
-        DebugOutpostEndpointsType[
-          DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
-        ]
-      ]
+      saturatedEndpoints: [RunEvidenceEndpoint.OutpostEthereumDepot],
+      missingEndpoints: [RunEvidenceEndpoint.DepotOutpostEthereum]
     })
   })
 
-  it("does not convert all-legs evidence on a breakage iteration into success", async () => {
-    // Given: one iteration reports both required Ethereum endpoints and a payout timeout breakage.
-    const evidenceDir = makeEvidenceDir("breakage-with-all-legs")
+  it("does not convert all-legs breakage into success", async () => {
+    // Given: one workload breakage also reports complete saturation.
+    const observation = breakageObservation(requiredEndpointNames())
 
-    // When: the ramp controller classifies the campaign.
+    // When: the controller applies breakage-before-saturation precedence.
     const result = await runSaturationRamp({
-      evidenceDir,
       config: TestConfig,
-      runIteration: async input =>
-        allLegsBreakageOutcome(input.iterationIndex, input.accountCount)
+      runIteration: async () => observation
     })
 
-    // Then: payout breakage is never success, even when endpoint evidence is complete.
+    // Then: the failed status is preserved despite complete endpoint evidence.
     expect(result.status).toBe("failed_before_saturation")
     expect(result.preserveCluster).toBe(true)
     expect(result.saturatedEndpoints).toEqual(requiredEndpointNames())
     expect(result.missingEndpoints).toEqual([])
-    expect(readEvidence(evidenceDir, 0)).toMatchObject({
-      status: "failed_before_saturation",
-      breakageReason: "phase-1 payout observation failed: timeout",
-      saturatedEndpoints: requiredEndpointNames(),
-      missingEndpoints: []
-    })
   })
 })
 
@@ -132,117 +101,39 @@ const TestConfig: StressRampConfig = {
   phaseTimeoutMs: 30_000
 }
 
-function iterationOutcome(
-  iterationIndex: number,
-  accountCount: number
-): StressRampIterationOutcome {
-  const endpoint =
-    iterationIndex === 0
-      ? DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT
-      : DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
+function completedObservation(
+  saturatedEndpoints: readonly RunEvidenceEndpoint[]
+): SwapStressIterationObservation {
   return {
-    kind: "not_saturated",
-    iterationIndex,
-    accountCount,
-    phase: `phase-${iterationIndex + 1}`,
-    startedAtMs: 1_775_612_500_000 + iterationIndex,
-    endedAtMs: 1_775_612_501_000 + iterationIndex,
-    txSuccesses: accountCount,
-    txFailures: 0,
-    envelopeCount: 2,
-    envelopeByteSizes: [
-      StressRampDefaults.EvidenceFixtureBytes,
-      StressRampDefaults.EvidenceFixtureBytes
-    ],
-    endpoint: DebugOutpostEndpointsType[endpoint],
-    epochStart: 20 + iterationIndex,
-    epochEnd: 21 + iterationIndex,
-    saturatedEndpoints: [DebugOutpostEndpointsType[endpoint]],
-    missingEndpoints: requiredEndpointNames().filter(
-      name => name !== DebugOutpostEndpointsType[endpoint]
-    ),
-    observedNonRequiredEndpoints: []
+    kind: "completed",
+    saturatedEndpoints,
+    observedNonRequiredEndpoints: [],
+    evidence: {
+      phaseResults: saturationPhaseResults(saturatedEndpoints),
+      telemetryDegradation: null
+    }
   }
 }
 
-function breakageOutcome(
-  iterationIndex: number,
-  accountCount: number
-): StressRampIterationOutcome {
+function breakageObservation(
+  saturatedEndpoints: readonly RunEvidenceEndpoint[]
+): SwapStressIterationObservation {
   return {
     kind: "breakage",
-    iterationIndex,
-    accountCount,
-    phase: "phase-2",
-    startedAtMs: 1_775_612_500_000 + iterationIndex,
-    endedAtMs: 1_775_612_501_000 + iterationIndex,
-    txSuccesses: 1,
-    txFailures: 1,
+    saturatedEndpoints,
+    observedNonRequiredEndpoints: [],
+    breakageCategory: RampBreakageCategory.Workload,
     breakageReason: "tx reverted",
-    envelopeCount: 1,
-    envelopeByteSizes: [StressRampDefaults.EvidenceFixtureBytes],
-    endpoint:
-      DebugOutpostEndpointsType[
-        DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
-      ],
-    epochStart: 22,
-    epochEnd: 23,
-    saturatedEndpoints: [],
-    missingEndpoints: requiredEndpointNames(),
-    observedNonRequiredEndpoints: []
+    evidence: {
+      phaseResults: saturationPhaseResults(saturatedEndpoints),
+      telemetryDegradation: null
+    }
   }
 }
 
-function allLegsBreakageOutcome(
-  iterationIndex: number,
-  accountCount: number
-): StressRampIterationOutcome {
-  return {
-    kind: "breakage",
-    iterationIndex,
-    accountCount,
-    phase: "phase-1",
-    startedAtMs: 1_775_612_500_000 + iterationIndex,
-    endedAtMs: 1_775_612_501_000 + iterationIndex,
-    txSuccesses: accountCount,
-    txFailures: 0,
-    breakageReason: "phase-1 payout observation failed: timeout",
-    envelopeCount: 2,
-    envelopeByteSizes: [
-      StressRampDefaults.EvidenceFixtureBytes,
-      StressRampDefaults.EvidenceFixtureBytes
-    ],
-    endpoint:
-      DebugOutpostEndpointsType[
-        DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
-      ],
-    epochStart: 22,
-    epochEnd: 23,
-    saturatedEndpoints: requiredEndpointNames(),
-    missingEndpoints: [],
-    observedNonRequiredEndpoints: []
-  }
-}
-
-function requiredEndpointNames(): readonly string[] {
+function requiredEndpointNames(): readonly RunEvidenceEndpoint[] {
   return [
-    DebugOutpostEndpointsType[DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT],
-    DebugOutpostEndpointsType[DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM]
+    RunEvidenceEndpoint.OutpostEthereumDepot,
+    RunEvidenceEndpoint.DepotOutpostEthereum
   ]
-}
-
-function makeEvidenceDir(label: string): string {
-  return Fs.mkdtempSync(Path.join(OS.tmpdir(), `eth-all-legs-ramp-${label}-`))
-}
-
-function readEvidence(
-  evidenceDir: string,
-  iterationIndex: number
-): Record<string, unknown> {
-  return JSON.parse(
-    Fs.readFileSync(
-      Path.join(evidenceDir, `iteration-${iterationIndex}.json`),
-      "utf-8"
-    )
-  )
 }

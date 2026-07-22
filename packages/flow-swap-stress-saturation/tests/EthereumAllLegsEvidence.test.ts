@@ -1,27 +1,20 @@
-import * as Fs from "node:fs"
-import * as OS from "node:os"
-import * as Path from "node:path"
-
-import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
+import { RunEvidenceEndpoint } from "@wireio/test-opp-stress"
 import {
-  StressRampDefaults,
   runSaturationRamp,
   type StressRampConfig,
   type StressRampEvidence,
-  type StressRampIterationOutcome
+  type SwapStressIterationObservation
 } from "@wireio/test-flow-swap-stress-saturation"
+
+import { saturationPhaseResults } from "./flowObservationContractTestSupport.js"
 
 describe("strict Ethereum all-legs evidence", () => {
   it("records partial_saturation evidence when max count is reached with one Ethereum endpoint", async () => {
     // Given: a campaign only saturates the Ethereum outpost-to-depot direction.
-    const evidenceDir = makeEvidenceDir("partial")
-
     // When: the ramp reaches max count before the return Ethereum direction saturates.
     const result = await runSaturationRamp({
-      evidenceDir,
       config: TestConfig,
-      runIteration: async input =>
-        partialIteration(input.iterationIndex, input.accountCount)
+      runIteration: async () => partialIteration()
     })
 
     // Then: final evidence is visibly non-pass and names the missing Ethereum endpoint.
@@ -32,7 +25,7 @@ describe("strict Ethereum all-legs evidence", () => {
     expect(result.missingEndpoints).toEqual([
       RequiredEndpointNames.DepotOutpostEthereum
     ])
-    expect(readEvidence(evidenceDir, 1)).toMatchObject({
+    expect(result.iterations[1]).toMatchObject({
       status: "partial_saturation",
       saturatedEndpoints: [RequiredEndpointNames.OutpostEthereumDepot],
       missingEndpoints: [RequiredEndpointNames.DepotOutpostEthereum],
@@ -66,36 +59,20 @@ const TestConfig: StressRampConfig = {
 }
 
 const RequiredEndpointNames = {
-  OutpostEthereumDepot:
-    DebugOutpostEndpointsType[DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT],
-  DepotOutpostEthereum:
-    DebugOutpostEndpointsType[DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM]
+  OutpostEthereumDepot: RunEvidenceEndpoint.OutpostEthereumDepot,
+  DepotOutpostEthereum: RunEvidenceEndpoint.DepotOutpostEthereum
 }
 
-function partialIteration(
-  iterationIndex: number,
-  accountCount: number
-): StressRampIterationOutcome {
+function partialIteration(): SwapStressIterationObservation {
+  const saturatedEndpoints = [RequiredEndpointNames.OutpostEthereumDepot]
   return {
-    kind: "not_saturated",
-    iterationIndex,
-    accountCount,
-    phase: "phase-1",
-    startedAtMs: 1_775_612_500_000 + iterationIndex,
-    endedAtMs: 1_775_612_501_000 + iterationIndex,
-    txSuccesses: accountCount,
-    txFailures: 0,
-    envelopeCount: 2,
-    envelopeByteSizes: [
-      StressRampDefaults.EvidenceFixtureBytes,
-      StressRampDefaults.EvidenceFixtureBytes
-    ],
-    endpoint: RequiredEndpointNames.OutpostEthereumDepot,
-    epochStart: 20 + iterationIndex,
-    epochEnd: 21 + iterationIndex,
-    saturatedEndpoints: [RequiredEndpointNames.OutpostEthereumDepot],
-    missingEndpoints: [RequiredEndpointNames.DepotOutpostEthereum],
-    observedNonRequiredEndpoints: []
+    kind: "completed",
+    saturatedEndpoints,
+    observedNonRequiredEndpoints: [],
+    evidence: {
+      phaseResults: saturationPhaseResults(saturatedEndpoints),
+      telemetryDegradation: null
+    }
   }
 }
 
@@ -108,22 +85,4 @@ function assertStrictSaturatedEvidence(
   if (evidence.status === "saturated" && evidence.missingEndpoints.length > 0) {
     throw new Error("saturated evidence missing required Ethereum endpoints")
   }
-}
-
-function makeEvidenceDir(label: string): string {
-  return Fs.mkdtempSync(
-    Path.join(OS.tmpdir(), `eth-all-legs-evidence-${label}-`)
-  )
-}
-
-function readEvidence(
-  evidenceDir: string,
-  iterationIndex: number
-): Record<string, unknown> {
-  return JSON.parse(
-    Fs.readFileSync(
-      Path.join(evidenceDir, `iteration-${iterationIndex}.json`),
-      "utf-8"
-    )
-  )
 }

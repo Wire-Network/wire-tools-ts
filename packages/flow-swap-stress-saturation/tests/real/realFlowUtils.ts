@@ -1,37 +1,19 @@
-import * as Path from "node:path"
-
 import { PublicKey } from "@solana/web3.js"
-import { oppDebuggingPath } from "@wireio/debugging-shared"
-import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import { SystemContracts } from "@wireio/sdk-core"
-import { pollUntil } from "@wireio/test-cluster-tool"
-import { collectEnvelopeSaturationMetrics } from "@wireio/test-flow-swap-stress-saturation"
+import type { FlowTestContext } from "@wireio/test-cluster-tool"
+import type {
+  StressPrivateReserveSnapshot,
+  SwapStressReservePairSnapshot,
+  SwapStressRouteCodes
+} from "@wireio/test-flow-swap-stress-saturation"
 
-import { RequiredEnvVars, Reserves, Timing } from "./realFlowConstants.js"
+import { RequiredEnvVars, Reserves } from "./realFlowConstants.js"
 import type {
   AnchorAccountFetcher,
   RealStressFlow,
   ReserveRow,
   SplMintRecord
 } from "./realFlowTypes.js"
-import type { FlowTestContext } from "@wireio/test-cluster-tool"
-import type {
-  StressPrivateReserveSnapshot,
-  SwapStressEnvelopeMetricRequest,
-  SwapStressPhaseEnvelopeMetrics,
-  SwapStressReservePairSnapshot,
-  SwapStressRouteCodes
-} from "@wireio/test-flow-swap-stress-saturation"
-
-type PhaseMetricsOptions = {
-  readonly evidenceTimeoutMs: number
-  readonly evidencePollIntervalMs: number
-}
-
-const DefaultPhaseMetricsOptions: PhaseMetricsOptions = {
-  evidenceTimeoutMs: Timing.RelayDeadlineMs,
-  evidencePollIntervalMs: Timing.LongPollIntervalMs
-}
 
 /** True when all real-flow env paths are configured. */
 export function requiredEnvPresent(): boolean {
@@ -44,11 +26,6 @@ export function requiredEnvPresent(): boolean {
 export function requireFlow(flow: RealStressFlow | null): RealStressFlow {
   if (flow === null) throw new Error("real stress flow was not bootstrapped")
   return flow
-}
-
-/** Evidence directory used by the real saturation ramp. */
-export function evidenceDir(clusterPath: string): string {
-  return Path.join(clusterPath, "data", "swap-stress-saturation")
 }
 
 /** Locate the USDCSOL SPL mint from bootstrap records. */
@@ -173,45 +150,6 @@ export function routeCodes(): SwapStressRouteCodes {
     wireSentinelReserveCode: BigInt(Reserves.Wire.SentinelReserveCode),
     privateReserveCode: BigInt(Reserves.PrivateReserveCode)
   }
-}
-
-/** Project one phase's persisted OPP envelopes into ramp telemetry. */
-export async function collectPhaseMetrics(
-  clusterPath: string,
-  request: SwapStressEnvelopeMetricRequest,
-  options: PhaseMetricsOptions = DefaultPhaseMetricsOptions
-): Promise<SwapStressPhaseEnvelopeMetrics> {
-  const storageDir = oppDebuggingPath(clusterPath)
-  await pollUntil(
-    `${request.phase} ${DebugOutpostEndpointsType[request.endpointsType]} OPP evidence observed`,
-    async () =>
-      (await collectWindowMetrics(storageDir, request, Date.now()))
-        .envelopeCount > 0,
-    options.evidenceTimeoutMs,
-    options.evidencePollIntervalMs
-  )
-  const metrics = await collectWindowMetrics(storageDir, request, Date.now())
-  return {
-    phase: request.phase,
-    saturated: metrics.saturated,
-    envelopeCount: metrics.envelopeCount,
-    envelopeByteSizes: metrics.byteSizes,
-    endpoint: DebugOutpostEndpointsType[request.endpointsType],
-    epochStart: metrics.envelopes[0]?.epoch ?? 0,
-    epochEnd: metrics.envelopes[metrics.envelopes.length - 1]?.epoch ?? 0
-  }
-}
-
-async function collectWindowMetrics(
-  storageDir: string,
-  request: SwapStressEnvelopeMetricRequest,
-  endedAtMs: number
-) {
-  return collectEnvelopeSaturationMetrics(storageDir, {
-    endpointsType: request.endpointsType,
-    timestampStartMs: request.startedAtMs,
-    timestampEndMs: endedAtMs
-  })
 }
 
 /** Narrow an Anchor account namespace by name. */

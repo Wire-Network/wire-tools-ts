@@ -16,7 +16,10 @@ const config = {
     "^@wireio/debugging-server$": "<rootDir>/src/index",
     "^@wireio/debugging-server/(.*)$": "<rootDir>/src/$1",
     "^@wireio/debugging-shared$": "<rootDir>/../debugging-shared/src/index",
-    "^@wireio/debugging-shared/(.*)$": "<rootDir>/../debugging-shared/src/$1"
+    "^@wireio/debugging-shared/(.*)$": "<rootDir>/../debugging-shared/src/$1",
+    "^@wireio/test-opp-stress$": "<rootDir>/../opp-stress/src/index",
+    "^@wireio/test-opp-stress/(.*)\\.js$": "<rootDir>/../opp-stress/src/$1",
+    "^@wireio/test-opp-stress/(.*)$": "<rootDir>/../opp-stress/src/$1"
   }
 }
 

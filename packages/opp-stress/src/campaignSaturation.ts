@@ -1,5 +1,3 @@
-import type { OppStressRampIterationOutcome } from "./rampControllerTypes.js"
-
 /** Required and diagnostic endpoint aggregation across one OPP stress campaign. */
 export type CampaignSaturation = {
   /** Required endpoints saturated across completed iterations. */
@@ -31,31 +29,32 @@ export function emptyCampaignSaturation(
  *
  * @param requiredEndpoints Endpoint labels required for campaign success.
  * @param prior Endpoint aggregation from earlier iterations.
- * @param outcome Current iteration telemetry.
+ * @param observation Current iteration endpoint observations.
  * @returns Updated campaign endpoint aggregation.
  */
 export function mergeCampaignSaturation(
   requiredEndpoints: readonly string[],
   prior: CampaignSaturation,
-  outcome: OppStressRampIterationOutcome
+  observation: {
+    readonly saturatedEndpoints: readonly string[]
+    readonly observedNonRequiredEndpoints: readonly string[]
+  }
 ): CampaignSaturation {
-  const saturatedEndpoints = mergeUnique(
-      prior.saturatedEndpoints,
-      outcome.saturatedEndpoints ?? []
-    ),
-    observedNonRequiredEndpoints = mergeUnique(
-      prior.observedNonRequiredEndpoints,
-      outcome.observedNonRequiredEndpoints ?? []
+  const saturatedSet = new Set([
+      ...prior.saturatedEndpoints,
+      ...observation.saturatedEndpoints
+    ]),
+    saturatedEndpoints = requiredEndpoints.filter(endpoint =>
+      saturatedSet.has(endpoint)
     ),
     missingEndpoints = requiredEndpoints.filter(
-      endpoint => !saturatedEndpoints.includes(endpoint)
-    )
+      endpoint => !saturatedSet.has(endpoint)
+    ),
+    observedNonRequiredEndpoints = [
+      ...new Set([
+        ...prior.observedNonRequiredEndpoints,
+        ...observation.observedNonRequiredEndpoints
+      ])
+    ].filter(endpoint => !requiredEndpoints.includes(endpoint))
   return { saturatedEndpoints, missingEndpoints, observedNonRequiredEndpoints }
-}
-
-function mergeUnique(
-  left: readonly string[],
-  right: readonly string[]
-): readonly string[] {
-  return [...left, ...right.filter(value => !left.includes(value))]
 }

@@ -18,7 +18,7 @@ const BatchOperatorFailurePatterns = [
 /** Create a phase-runner probe that extracts concrete batch-operator failures from cluster logs. */
 export function batchOperatorFailureProbe(
   clusterPath: string
-): SwapStressPhaseRunnerDeps["batchOperatorFailureProbe"] {
+): NonNullable<SwapStressPhaseRunnerDeps["batchOperatorFailureProbe"]> {
   return async request =>
     findBatchOperatorFailure(
       clusterPath,

@@ -1,6 +1,9 @@
 import { asOption } from "@3fv/prelude-ts"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 
+const CanonicalEpochPattern = /^\d{8}$/
+const CanonicalChecksumPattern = /^[0-9a-f]{16}$/
+
 /**
  * Decomposed form of a canonical envelope storage key. Filenames are written
  * by the server as `<epochIndex>-<endpointsKey>-<checksum>.{data,metadata}`.
@@ -15,6 +18,27 @@ export interface ParsedEnvelopeStorageKey {
   /** Truncated sha256 checksum suffix. */
   checksum: string
 }
+
+/**
+ * Serialized issue codes for canonical storage-key validation failures.
+ * Changing a value changes the persisted diagnostic contract consumed by strict
+ * validation clients and evidence readers.
+ */
+export enum EnvelopeStorageKeyValidationIssue {
+  /** Changing this value changes the diagnostic code for malformed key geometry. */
+  Format = "format",
+  /** Changing this value changes the diagnostic code for invalid epoch prefixes. */
+  Epoch = "epoch",
+  /** Changing this value changes the diagnostic code for invalid endpoint names. */
+  Endpoints = "endpoints",
+  /** Changing this value changes the diagnostic code for invalid checksum suffixes. */
+  Checksum = "checksum"
+}
+
+/** Typed outcome of validating a canonical envelope storage key. */
+export type EnvelopeStorageKeyValidationResult =
+  | { readonly kind: "valid"; readonly value: ParsedEnvelopeStorageKey }
+  | { readonly kind: "invalid"; readonly issue: EnvelopeStorageKeyValidationIssue }
 
 /**
  * Parse a storage key of the form `"<epochIndex>-<endpointsKey>-<checksum>"`.
@@ -39,6 +63,57 @@ export function parseEnvelopeStorageKey(
   if (isNaN(epochIndex)) return null
 
   return { key, epochIndex, endpointsKey, checksum }
+}
+
+/**
+ * Validate the canonical envelope storage-key geometry written by the server.
+ * Unlike {@link parseEnvelopeStorageKey}, this rejects non-canonical values
+ * and reports the invalid component without throwing.
+ *
+ * @param key Filename-style storage key without its extension.
+ * @returns A parsed canonical key or the issue code for its invalid component.
+ *
+ * @example validateEnvelopeStorageKey("00000042-OUTPOST_ETHEREUM_DEPOT-abc123def4567890")
+ */
+export function validateEnvelopeStorageKey(
+  key: string
+): EnvelopeStorageKeyValidationResult {
+  const segments = key.split("-"),
+    epochKey = segments.at(0) ?? "",
+    endpointsKey = segments.at(1) ?? "",
+    checksum = segments.at(2) ?? "",
+    endpointsType = resolveEndpointsType(endpointsKey)
+  if (segments.length !== 3) {
+    return { kind: "invalid", issue: EnvelopeStorageKeyValidationIssue.Format }
+  }
+  if (!CanonicalEpochPattern.test(epochKey)) {
+    return { kind: "invalid", issue: EnvelopeStorageKeyValidationIssue.Epoch }
+  }
+  if (
+    endpointsType === DebugOutpostEndpointsType.UNKNOWN ||
+    DebugOutpostEndpointsType[endpointsType] !== endpointsKey
+  ) {
+    return {
+      kind: "invalid",
+      issue: EnvelopeStorageKeyValidationIssue.Endpoints
+    }
+  }
+  if (!CanonicalChecksumPattern.test(checksum)) {
+    return {
+      kind: "invalid",
+      issue: EnvelopeStorageKeyValidationIssue.Checksum
+    }
+  }
+
+  return {
+    kind: "valid",
+    value: {
+      key,
+      epochIndex: Number(epochKey),
+      endpointsKey,
+      checksum
+    }
+  }
 }
 
 /**

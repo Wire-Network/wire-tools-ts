@@ -5,15 +5,12 @@ import { ethers } from "ethers"
 
 import { RealRamp } from "./realFlowConstants.js"
 import { batchOperatorFailureProbe } from "./realBatchOperatorFailures.js"
+import { createRealPhaseTelemetryDependencies } from "./realPhaseTelemetry.js"
 import {
   ethereumPayoutObserver,
   wirePayoutObserver
 } from "./realFlowPayoutObservers.js"
-import {
-  collectPhaseMetrics,
-  readReservePairSnapshot,
-  routeCodes
-} from "./realFlowUtils.js"
+import { readReservePairSnapshot, routeCodes } from "./realFlowUtils.js"
 import type { RealStressFlow } from "./realFlowTypes.js"
 import type {
   EthereumBurstReserveManager,
@@ -21,11 +18,13 @@ import type {
   SolanaBurstRequest,
   StressRampIterationInput
 } from "@wireio/test-flow-swap-stress-saturation"
+import type { RunEvidencePersistence } from "@wireio/test-opp-stress"
 
 /** Run one real stress iteration through the dependency-injected phase runner. */
 export async function runRealIteration(
   flow: RealStressFlow,
-  input: StressRampIterationInput
+  input: StressRampIterationInput,
+  persistence: RunEvidencePersistence
 ) {
   const runner = createPhaseRunner({
     route: routeCodes(),
@@ -36,22 +35,22 @@ export async function runRealIteration(
     submitPhase2Swap: request => submitPhase2Swap(flow, request),
     recipientPayoutObserver: wirePayoutObserver(flow.context.wireClient),
     returnPayoutObserver: ethereumPayoutObserver(flow.context.ethProvider),
-    collectEnvelopeMetrics: request =>
-      collectPhaseMetrics(flow.context.clusterPath, request),
+    ...createRealPhaseTelemetryDependencies(
+      flow.context.clusterPath,
+      persistence
+    ),
     batchOperatorFailureProbe: batchOperatorFailureProbe(
       flow.context.clusterPath
     ),
     concurrency: RealRamp.Concurrency
   })
-  return {
-    ...(await runner.runIteration(input.accountCount)),
-    iterationIndex: input.iterationIndex
-  }
+  return runner.runIteration(input.accountCount)
 }
 
 function ethereumBurstReserveManager(
   reserveManager: ethers.Contract
 ): EthereumBurstReserveManager {
+  const requestSwap = reserveManager.getFunction("requestSwap")
   return {
     requestSwap: (
       sourceTokenCode,
@@ -64,7 +63,7 @@ function ethereumBurstReserveManager(
       targetToleranceBps,
       overrides
     ) =>
-      reserveManager.requestSwap(
+      requestSwap(
         sourceTokenCode,
         sourceReserveCode,
         targetChainCode,

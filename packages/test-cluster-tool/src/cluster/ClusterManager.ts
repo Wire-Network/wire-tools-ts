@@ -2866,7 +2866,14 @@ async function bootstrapChain(
   // so seed their chain side at the same VALUE as a 9-dec token (÷1000) to keep
   // the 1:1 bootstrap price against the 9-dec WIRE side. Everything else stays
   // at the 9-dec depot frame.
-  const stableReserveCodes = ["USDC", "USDT", "USDCSOL", "USDTSOL"].map(c => SlugName.from(c))
+  // Typed as the ABI's own `slug_name.value` union so the membership test below
+  // compares against the field's declared type without an assertion.
+  const stableReserveCodes: readonly (string | number)[] = [
+    "USDC",
+    "USDT",
+    "USDCSOL",
+    "USDTSOL"
+  ].map(c => SlugName.from(c))
   reserveRegs.forEach(r => {
     if (stableReserveCodes.includes(r.token_code.value)) {
       r.source_token_precision = 6
@@ -2896,7 +2903,15 @@ async function bootstrapChain(
       // default is 12h). Dev clusters shorten it to 10 minutes — long
       // enough that flows can assert locks PERSIST after settlement,
       // short enough that lock-expiry behaviour is observable in a run.
-      collateral_lock_duration_ms: 600_000
+      collateral_lock_duration_ms: 600_000,
+      // The remaining two fields became required when sysio.uwrit gained the
+      // from-WIRE ingress rails. Both restate the contract's own documented
+      // defaults (DEFAULT_MIN_FROMWIRE_AMOUNT / DEFAULT_FROMWIRE_REVERT_FEE_BPS),
+      // so cluster behaviour is unchanged: 5 WIRE at 9-decimal atomic units is
+      // the minimum swapfromwire escrow, and 0.1% is the revert fee on a
+      // caller-caused drain.
+      min_fromwire_amount: 5_000_000_000,
+      fromwire_revert_fee_bps: 10
     },
     "sysio.uwrit@active"
   )

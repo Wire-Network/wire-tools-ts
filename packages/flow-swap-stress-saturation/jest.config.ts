@@ -8,7 +8,7 @@ const config = {
     "^.+\\.ts$": [
       "ts-jest",
       {
-        tsconfig: "<rootDir>/../../etc/tsconfig/tsconfig.base.jest.json"
+        tsconfig: "<rootDir>/tsconfig.tests.json"
       }
     ],
     "^.+\\.js$": "<rootDir>/../../etc/jest/esm-transformer.cjs"
@@ -23,6 +23,7 @@ const config = {
     "^@wireio/test-cluster-tool/(.*)\\.js$":
       "<rootDir>/../test-cluster-tool/src/$1",
     "^@wireio/test-cluster-tool/(.*)$": "<rootDir>/../test-cluster-tool/src/$1",
+    "^@wireio/debugging-server$": "<rootDir>/../debugging-server/src/index",
     "^@wireio/debugging-shared$": "<rootDir>/../debugging-shared/src/index",
     "^@wireio/debugging-shared/(.*)\\.js$":
       "<rootDir>/../debugging-shared/src/$1",

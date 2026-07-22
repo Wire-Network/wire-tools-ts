@@ -58,8 +58,13 @@ describe("LineIndex", () => {
   it("rebuilds fully on inode change (rotation)", async () => {
     Fs.writeFileSync(logPath, "alpha\n", "utf8")
     const initial = await buildLineIndex(logPath)
-    Fs.unlinkSync(logPath)
-    Fs.writeFileSync(logPath, "delta\nepsilon\n", "utf8")
+    const replacementPath = Path.join(tmpDir, "log.replacement.txt")
+    Fs.writeFileSync(replacementPath, "delta\nepsilon\n", "utf8")
+    const original = Fs.lstatSync(logPath),
+      replacement = Fs.lstatSync(replacementPath)
+    expect(original.ino).toBe(initial.ino)
+    expect(replacement.ino).not.toBe(original.ino)
+    Fs.renameSync(replacementPath, logPath)
     const rebuilt = await extendLineIndex(initial)
     expect(rebuilt.completeLineCount).toBe(2)
     expect(rebuilt.ino).not.toBe(initial.ino)

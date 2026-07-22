@@ -14,17 +14,36 @@
       "import": "./lib/esm/index.js",
       "require": "./lib/cjs/index.js"
     },
+    "./opp": {
+      "types": "./lib/esm/opp/index.d.ts",
+      "import": "./lib/esm/opp/index.js",
+      "require": "./lib/cjs/opp/index.js"
+    },
+    "./opp/envelopeBaseline": null,
+    "./opp/envelopeIntegrityError": null,
+    "./opp/envelopeIntegrityFileIdentity": null,
+    "./opp/envelopeIntegrityFileSystem": null,
+    "./opp/envelopeIntegrityIssues": null,
+    "./opp/envelopeIntegrityReaderFailure": null,
+    "./opp/envelopeIntegrityRoot": null,
+    "./opp/envelopeIntegrityRootTypes": null,
+    "./opp/envelopeIntegrityRootVerification": null,
+    "./opp/envelopeIntegritySidecarScan": null,
+    "./opp/envelopeIntegritySnapshot": null,
+    "./opp/envelopeIntegrityValidation": null,
+    "./opp/envelopeIntegrityValidationTypes": null,
+    "./opp/envelopeIntegrityWorkerPool": null,
+    "./utils/atomicFileOperations": null,
+    "./utils/atomicFilePublisher": null,
     "./*": {
       "types": "./lib/esm/*.d.ts",
       "import": "./lib/esm/*.js",
       "require": "./lib/cjs/*.js"
     }
   },
-  "files": [
-    "lib",
-    "README.md"
-  ],
+  "files": ["lib", "README.md"],
   "scripts": {
+    "compile": "tsc -b tsconfig.json",
     "build": "pnpm run compile && node ../../scripts/fix-hybrid-output.mjs .",
     "build:dev": "tsc -b tsconfig.json -w",
     "test": "jest",

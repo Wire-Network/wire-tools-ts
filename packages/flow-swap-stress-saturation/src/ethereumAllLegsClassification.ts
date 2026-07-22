@@ -1,6 +1,6 @@
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 
-import type { SwapStressPhaseResult } from "./phaseRunnerTypes.js"
+import type { SwapStressPhaseResult } from "./phaseRunnerMetricTypes.js"
 
 /** Required Ethereum OPP directions for a successful stress-saturation campaign. */
 export const RequiredEthereumSaturationEndpoints = [

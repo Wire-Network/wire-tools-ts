@@ -3,46 +3,23 @@ import * as Path from "node:path"
 
 import { ProcessManager, log } from "@wireio/test-cluster-tool"
 import {
-  emptyCampaignSaturation,
   runSaturationRamp
 } from "@wireio/test-flow-swap-stress-saturation"
+import {
+  RunEvidenceEndpoint,
+  type RunEvidencePersistence
+} from "@wireio/test-opp-stress"
 
 import { RealRamp, Timing } from "./real/realFlowConstants.js"
 import { createRealStressFlow } from "./real/realFlowSetup.js"
-import {
-  evidenceDir,
-  requireFlow,
-  requiredEnvPresent
-} from "./real/realFlowUtils.js"
+import { requireFlow, requiredEnvPresent } from "./real/realFlowUtils.js"
+import { RealStressFlowLifecycle } from "./real/realFlowLifecycle.js"
 import { runRealIteration } from "./real/realStressRunner.js"
 import type { RealStressFlow } from "./real/realFlowTypes.js"
 import type {
   StressRampResult,
-  SwapStressIterationOutcome
+  SwapStressIterationObservation
 } from "@wireio/test-flow-swap-stress-saturation"
-
-type SetupFailureEvidence = {
-  readonly kind: "failed_before_saturation"
-  readonly iterationIndex: 0
-  readonly accountCount: number
-  readonly phase: "setup"
-  readonly startedAtMs: number
-  readonly endedAtMs: number
-  readonly txSuccesses: 0
-  readonly txFailures: 1
-  readonly breakageReason: string
-  readonly envelopeCount: 0
-  readonly envelopeByteSizes: readonly number[]
-  readonly endpoint: "setup"
-  readonly epochStart: 0
-  readonly epochEnd: 0
-  readonly saturatedEndpoints: readonly string[]
-  readonly missingEndpoints: readonly string[]
-  readonly observedNonRequiredEndpoints: readonly string[]
-  readonly status: "failed_before_saturation"
-  readonly preserveCluster: true
-  readonly config: typeof RealRamp.Config
-}
 
 type RealStressFlowCleanupFlow = {
   readonly context: {
@@ -54,55 +31,18 @@ type RealStressFlowCleanupFlow = {
 type RealStressFlowCleanupDeps = {
   readonly killAll: () => Promise<void>
   readonly warn: (message: string) => void
+  readonly removeCluster: (clusterPath: string) => Promise<void>
 }
 
 type RealStressFlowCleanupInput = {
   readonly flow: RealStressFlowCleanupFlow | null
-  readonly preserveCluster: boolean
-  readonly setupFailed: boolean
+  readonly result: { readonly preserveCluster: boolean } | null
   readonly cleanup?: RealStressFlowCleanupDeps
-}
-
-/** Write iteration-0 evidence when real-flow setup fails before the ramp starts. */
-export async function writeSetupFailureEvidence(
-  clusterPath: string,
-  error: unknown
-): Promise<void> {
-  const timestampMs = Date.now(),
-    campaign = emptyCampaignSaturation(),
-    evidence: SetupFailureEvidence = {
-      kind: "failed_before_saturation",
-      iterationIndex: 0,
-      accountCount: RealRamp.Config.initialCount,
-      phase: "setup",
-      startedAtMs: timestampMs,
-      endedAtMs: timestampMs,
-      txSuccesses: 0,
-      txFailures: 1,
-      breakageReason: `setup failed before saturation: ${errorMessage(error)}`,
-      envelopeCount: 0,
-      envelopeByteSizes: [],
-      endpoint: "setup",
-      epochStart: 0,
-      epochEnd: 0,
-      saturatedEndpoints: campaign.saturatedEndpoints,
-      missingEndpoints: campaign.missingEndpoints,
-      observedNonRequiredEndpoints: campaign.observedNonRequiredEndpoints,
-      status: "failed_before_saturation",
-      preserveCluster: true,
-      config: RealRamp.Config
-    },
-    targetDir = evidenceDir(clusterPath)
-  await Fs.promises.mkdir(targetDir, { recursive: true })
-  await Fs.promises.writeFile(
-    Path.join(targetDir, "iteration-0.json"),
-    `${JSON.stringify(evidence, null, 2)}\n`
-  )
 }
 
 /** Format a real baseline outcome for assertion failures, including BigInt fields. */
 export function formatRealBaselineOutcome(
-  outcome: SwapStressIterationOutcome
+  outcome: SwapStressIterationObservation
 ): string {
   return JSON.stringify(outcome, realBaselineOutcomeReplacer, 2)
 }
@@ -122,25 +62,41 @@ export async function cleanupRealStressFlow(
 ): Promise<void> {
   const cleanup = input.cleanup ?? {
     killAll: () => ProcessManager.get().killAll(),
-    warn: (message: string) => log.warn(message)
+    warn: (message: string) => log.warn(message),
+    removeCluster: clusterPath =>
+      Fs.promises.rm(clusterPath, { recursive: true, force: true })
   }
 
-  if (input.setupFailed) {
+  if (input.flow === null) {
     await cleanup.killAll()
     return
   }
-
-  if (input.flow === null) return
-  if (input.preserveCluster) {
+  if (input.result?.preserveCluster === true) {
     cleanup.warn(
       `[SwapStressSaturation] preserving cluster at ${input.flow.context.clusterPath}`
     )
-    await input.flow.context.teardown()
-    await cleanup.killAll()
-    return
   }
-  await input.flow.context.teardown()
-  await cleanup.killAll()
+  const teardownFailure = await input.flow.context
+      .teardown()
+      .then(
+        () => null,
+        error => error
+      ),
+    processFailure = await cleanup.killAll().then(
+      () => null,
+      error => error
+    )
+  if (processFailure !== null) {
+    if (teardownFailure !== null)
+      throw new AggregateError(
+        [teardownFailure, processFailure],
+        "real stress teardown and process cleanup failed"
+      )
+    throw processFailure
+  }
+  if (teardownFailure !== null) throw teardownFailure
+  if (input.result?.preserveCluster === false)
+    await cleanup.removeCluster(input.flow.context.clusterPath)
 }
 
 /** Register the env-gated local-cluster swap stress baseline flow. */
@@ -149,38 +105,70 @@ export function describeRealSwapStressSaturationFlow(): void {
 
   describeCluster("Flow: swap stress baseline real local cluster", () => {
     let flow: RealStressFlow | null = null
-    let preserveCluster = true
-    let setupFailed = false
+    let lifecycle: RealStressFlowLifecycle | null = null
 
     beforeAll(async () => {
-      try {
-        flow = await createRealStressFlow()
-      } catch (error) {
-        setupFailed = true
-        await writeSetupFailureEvidence(realStressClusterPath(), error)
-        throw error
-      }
+      const clusterPath = realStressClusterPath()
+      lifecycle = await RealStressFlowLifecycle.allocate({
+        clusterPath,
+        rampConfig: RealRamp.Config,
+        requiredEndpoints: [
+          RunEvidenceEndpoint.OutpostEthereumDepot,
+          RunEvidenceEndpoint.DepotOutpostEthereum
+        ],
+        provenance: realStressProvenance(),
+        startedAtMs: `${BigInt(Date.now())}`
+      })
+      const setup = await lifecycle.setup(createRealStressFlow)
+      if (setup.kind === "failed") throw setup.cause
+      flow = setup.flow
     }, Timing.RealSaturationRampTimeoutMs)
 
     afterAll(async () => {
-      await cleanupRealStressFlow({ flow, preserveCluster, setupFailed })
+      const finalizationFailure = await (
+          lifecycle?.finalizeInfrastructureFailure(
+            new RealStressNormalExitError()
+          ) ?? Promise.resolve(null)
+        ).then(
+          () => null,
+          error => error
+        ),
+        cleanupFailure = await cleanupRealStressFlow({
+          flow,
+          result: lifecycle?.canonicalResult ?? null
+        }).then(
+          () => null,
+          error => error
+        )
+      if (finalizationFailure !== null && cleanupFailure !== null)
+        throw new AggregateError(
+          [finalizationFailure, cleanupFailure],
+          "real stress evidence finalization and cleanup failed"
+        )
+      if (finalizationFailure !== null) throw finalizationFailure
+      if (cleanupFailure !== null) throw cleanupFailure
     }, 30_000)
 
     test("WIRE chain is producing blocks", async () => {
-      const info = await requireFlow(flow).context.wireClient.getInfo()
-      expect(Number(info.head_block_num)).toBeGreaterThan(0)
+      await requireLifecycle(lifecycle).runGuarded(async () => {
+        const info = await requireFlow(flow).context.wireClient.getInfo()
+        expect(Number(info.head_block_num)).toBeGreaterThan(0)
+      })
     })
 
     test(
       "runs the private-reserve saturation ramp until both Ethereum OPP directions saturate",
       async () => {
         const activeFlow = requireFlow(flow),
-          result = await runSaturationRamp({
-            evidenceDir: evidenceDir(activeFlow.context.clusterPath),
-            config: RealRamp.Config,
-            runIteration: input => runRealIteration(activeFlow, input)
-          })
-        preserveCluster = result.preserveCluster
+          activeLifecycle = requireLifecycle(lifecycle),
+          result = await activeLifecycle.ramp(() =>
+            runSaturationRamp({
+              persistence: activeLifecycle.persistence,
+              config: RealRamp.Config,
+              runIteration: input =>
+                runRealIteration(activeFlow, input, activeLifecycle.persistence)
+            })
+          )
         if (result.status !== "saturated") {
           throw new Error(
             `expected real saturation, received:\n${formatRealRampResult(result)}`
@@ -200,10 +188,36 @@ function realStressClusterPath(): string {
   )
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+function realStressProvenance(): RunEvidencePersistence.AllocationOptions["provenance"] {
+  return {
+    wireBuildPath: requireEnv("WIRE_BUILD_PATH"),
+    ethereumPath: requireEnv("WIRE_ETH_PATH"),
+    solanaPath: requireEnv("WIRE_SOLANA_PATH")
+  }
+}
+
+function requireEnv(name: string): string {
+  const value = process.env[name]
+  if (value === undefined || value === "")
+    throw new Error(`required real stress environment variable missing: ${name}`)
+  return value
+}
+
+function requireLifecycle(
+  lifecycle: RealStressFlowLifecycle | null
+): RealStressFlowLifecycle {
+  if (lifecycle === null) throw new Error("real stress lifecycle was not allocated")
+  return lifecycle
 }
 
 function realBaselineOutcomeReplacer(_key: string, value: unknown): unknown {
   return typeof value === "bigint" ? value.toString() : value
+}
+
+class RealStressNormalExitError extends Error {
+  readonly name = "RealStressNormalExitError"
+
+  constructor() {
+    super("real stress suite exited before a terminal ramp decision")
+  }
 }

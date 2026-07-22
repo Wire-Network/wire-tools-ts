@@ -9,6 +9,8 @@
     "compile:watch": "tsc -b tsconfig.json -w",
     "build": "pnpm run compile",
     "test": "jest --runInBand --no-cache",
+    "test:built": "node scripts/verify-built-output.mjs",
+    "verify:evidence": "node scripts/verify-evidence.mjs",
     "clean": "rm -rf lib"
   },
   "dependencies": {

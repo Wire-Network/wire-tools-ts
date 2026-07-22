@@ -3,6 +3,7 @@
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "lib/out",
+    "strictNullChecks": true,
     "paths": {
       "@wireio/debugging-shared": ["../debugging-shared/src"],
       "@wireio/debugging-shared/*": ["../debugging-shared/src/*"],

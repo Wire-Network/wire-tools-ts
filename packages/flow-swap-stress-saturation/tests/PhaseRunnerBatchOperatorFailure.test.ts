@@ -7,6 +7,8 @@ import type {
   SwapStressReservePairSnapshot
 } from "@wireio/test-flow-swap-stress-saturation"
 
+import { strictSnapshotMetrics } from "./phaseRunnerMetricFixtures.js"
+
 describe("createSwapStressPhaseRunner batch operator failures", () => {
   it("reports a batch operator failure instead of the phase 1 payout timeout", async () => {
     // Given: the payout observer times out after a batch operator delivery rejection is visible.
@@ -17,11 +19,11 @@ describe("createSwapStressPhaseRunner batch operator failures", () => {
 
     // Then: the runner keeps phase 2 evidence but classifies the concrete batchop rejection.
     expect(outcome.kind).toBe("breakage")
-    expect(outcome.phase).toBe("phase-1")
+    if (outcome.kind !== "breakage") throw new Error("breakage expected")
     expect(outcome.breakageReason).toBe(
       "phase-1 batch operator failure: outpost_opp_job[23373300651341:CHAIN_KIND_EVM:31337]: outbound delivery failed: execution reverted"
     )
-    expect(outcome.phaseResults.map(result => result.phase)).toEqual([
+    expect(outcome.evidence.phaseResults.map(result => result.phase)).toEqual([
       "phase-1",
       "phase-2"
     ])
@@ -41,7 +43,7 @@ describe("createSwapStressPhaseRunner batch operator failures", () => {
 
     // Then: transaction rejection remains breakage even when all-legs evidence exists.
     expect(outcome.kind).toBe("breakage")
-    expect(outcome.phase).toBe("phase-2")
+    if (outcome.kind !== "breakage") throw new Error("breakage expected")
     expect(outcome.breakageReason).toBe(
       "phase-2 batch operator failure: outpost_opp_job[23373300651341:CHAIN_KIND_EVM:31337]: outbound delivery failed: execution reverted"
     )
@@ -64,7 +66,7 @@ describe("createSwapStressPhaseRunner batch operator failures", () => {
 
     // Then: payout timeout remains breakage even when all-legs evidence exists.
     expect(outcome.kind).toBe("breakage")
-    expect(outcome.phase).toBe("phase-2")
+    if (outcome.kind !== "breakage") throw new Error("breakage expected")
     expect(outcome.breakageReason).toBe(
       "phase-2 payout observation failed: Timed out waiting for: phase-2 payout observed"
     )
@@ -89,6 +91,7 @@ type TestDepsOptions = {
 function createDeps(options: TestDepsOptions = {}): TestDeps {
   const phase2Requests: Phase2SwapRequest[] = []
   return {
+    telemetryKind: "synthetic",
     route: {
       ethereumChainCode: 1n,
       ethereumTokenCode: 2n,
@@ -142,16 +145,18 @@ function createDeps(options: TestDepsOptions = {}): TestDeps {
         options.phase2BatchOperatorFailure === true)
         ? "outpost_opp_job[23373300651341:CHAIN_KIND_EVM:31337]: outbound delivery failed: execution reverted"
         : null,
-    collectEnvelopeMetrics: async request => ({
-      phase: request.phase,
-      saturated:
-        request.phase === "phase-1" || options.phase2MetricsSaturated === true,
-      envelopeCount: 2,
-      envelopeByteSizes: [527, 527],
-      endpoint: DebugOutpostEndpointsType[request.endpointsType],
-      epochStart: 7,
-      epochEnd: 8
-    }),
+    collectEnvelopeMetrics: async request =>
+      strictSnapshotMetrics({
+        phase: request.phase,
+        saturated:
+          request.phase === "phase-1" ||
+          options.phase2MetricsSaturated === true,
+        envelopeCount: 2,
+        envelopeByteSizes: [527, 527],
+        endpoint: DebugOutpostEndpointsType[request.endpointsType],
+        epochStart: "7",
+        epochEnd: "8"
+      }),
     clock: fixedClock(),
     concurrency: 2,
     phase2Requests

@@ -1,17 +1,17 @@
-import * as Fs from "node:fs"
-import * as OS from "node:os"
-import * as Path from "node:path"
-
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import { createSwapStressPhaseRunner } from "@wireio/test-flow-swap-stress-saturation"
 import type {
   Phase2SwapRequest,
   StressRampConfig,
-  StressRampIterationOutcome,
+  StressRampIterationInput,
+  SwapStressIterationObservation,
   SwapStressPhase,
   SwapStressPhaseRunnerDeps,
-  SwapStressReservePairSnapshot
+  SwapStressReservePairSnapshot,
+  SwapStressSyntheticEnvelopeMetricCollector
 } from "@wireio/test-flow-swap-stress-saturation"
+
+import { strictSnapshotMetrics } from "./phaseRunnerMetricFixtures.js"
 
 /** Fast synthetic ramp constants used when no real cluster env is present. */
 export const TestRampConfig: StressRampConfig = {
@@ -29,11 +29,9 @@ export type ScenarioOptions = {
 
 /** Synthetic scenario surface consumed by ramp-controller tests. */
 export type Scenario = {
-  readonly runIteration: (input: {
-    readonly iterationIndex: number
-    readonly accountCount: number
-    readonly phaseTimeoutMs: number
-  }) => Promise<StressRampIterationOutcome>
+  readonly runIteration: (
+    input: StressRampIterationInput
+  ) => Promise<SwapStressIterationObservation>
   readonly phase2Requests: readonly Phase2SwapRequest[]
 }
 
@@ -47,35 +45,9 @@ export function createScenario(options: ScenarioOptions): Scenario {
     phase2Requests,
     runIteration: async input => {
       activeAccountCount = input.accountCount
-      const outcome = await runner.runIteration(input.accountCount)
-      return {
-        ...outcome,
-        iterationIndex: input.iterationIndex,
-        accountCount: input.accountCount
-      }
+      return runner.runIteration(input.accountCount)
     }
   }
-}
-
-/** Create a per-test evidence directory under the OS temp directory. */
-export function makeEvidenceDir(label: string): string {
-  return Fs.mkdtempSync(
-    Path.join(OS.tmpdir(), `swap-stress-saturation-${label}-`)
-  )
-}
-
-/** Read one synthetic ramp evidence JSON file. */
-export function readEvidence(
-  evidenceDir: string,
-  iterationIndex: number
-): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(
-    Fs.readFileSync(
-      Path.join(evidenceDir, `iteration-${iterationIndex}.json`),
-      "utf-8"
-    )
-  )
-  return isRecord(parsed) ? parsed : {}
 }
 
 function createDeps(
@@ -84,6 +56,7 @@ function createDeps(
   phase2Requests: Phase2SwapRequest[]
 ): SwapStressPhaseRunnerDeps {
   return {
+    telemetryKind: "synthetic",
     route: {
       ethereumChainCode: 1n,
       ethereumTokenCode: 2n,
@@ -155,11 +128,7 @@ function metricsForPhase(
   phase: SwapStressPhase,
   accountCount: number,
   saturationCount: number | null
-): Awaited<
-  ReturnType<
-    Exclude<SwapStressPhaseRunnerDeps["collectEnvelopeMetrics"], undefined>
-  >
-> {
+): Awaited<ReturnType<SwapStressSyntheticEnvelopeMetricCollector>> {
   const saturated =
       phase === "phase-2" &&
       saturationCount !== null &&
@@ -168,22 +137,18 @@ function metricsForPhase(
       phase === "phase-1"
         ? DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT
         : DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT
-  return {
+  return strictSnapshotMetrics({
     phase,
     saturated,
     envelopeCount: saturated ? 2 : 1,
     envelopeByteSizes: saturated ? [256, 512] : [256],
     endpoint: DebugOutpostEndpointsType[endpointsType],
-    epochStart: 42,
-    epochEnd: 43
-  }
+    epochStart: "42",
+    epochEnd: "43"
+  })
 }
 
 function syntheticClock(): () => number {
   let tick = 0
   return () => 1_000_000 + tick++ * 10
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null
 }

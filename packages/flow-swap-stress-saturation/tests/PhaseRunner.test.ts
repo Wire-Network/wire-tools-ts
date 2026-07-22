@@ -1,14 +1,9 @@
-import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
-
 import {
   createSwapStressPhaseRunner,
   SolanaRawTransactionBytesMax
 } from "@wireio/test-flow-swap-stress-saturation"
-import type {
-  Phase2SwapRequest,
-  SwapStressPhaseRunnerDeps,
-  SwapStressReservePairSnapshot
-} from "@wireio/test-flow-swap-stress-saturation"
+
+import { createDeps } from "./phaseRunnerTestSupport.js"
 
 describe("createSwapStressPhaseRunner", () => {
   it("completes both phases for count 2 after recipient and return payouts", async () => {
@@ -19,10 +14,20 @@ describe("createSwapStressPhaseRunner", () => {
     const outcome = await createSwapStressPhaseRunner(deps).runIteration(2)
 
     // Then: both bounded bursts ran and both payout surfaces observed delivery.
-    expect(outcome.kind).toBe("not_saturated")
-    expect(outcome.txSuccesses).toBe(4)
-    expect(outcome.txFailures).toBe(0)
-    expect(outcome.phaseResults.map(result => result.phase)).toEqual([
+    expect(outcome.kind).toBe("completed")
+    expect(
+      outcome.evidence.phaseResults.reduce(
+        (total, result) => total + result.txSuccesses,
+        0
+      )
+    ).toBe(4)
+    expect(
+      outcome.evidence.phaseResults.reduce(
+        (total, result) => total + result.txFailures,
+        0
+      )
+    ).toBe(0)
+    expect(outcome.evidence.phaseResults.map(result => result.phase)).toEqual([
       "phase-1",
       "phase-2"
     ])
@@ -74,13 +79,17 @@ describe("createSwapStressPhaseRunner", () => {
 
     // Then: the runner stops before phase 2 and reports the burst failure.
     expect(outcome.kind).toBe("breakage")
-    expect(outcome.phase).toBe("phase-1")
-    expect(outcome.accountCount).toBe(2)
-    expect(outcome.txSuccesses).toBe(1)
-    expect(outcome.txFailures).toBe(1)
+    if (outcome.kind !== "breakage") throw new Error("breakage expected")
+    expect(outcome.breakageCategory).toBe("workload")
+    expect(outcome.evidence.phaseResults[0]).toMatchObject({
+      phase: "phase-1",
+      txSuccesses: 1,
+      txFailures: 1
+    })
     expect(outcome.breakageReason).toBe(
       "phase-1 burst failed: injected phase 1 revert"
     )
+    expect(outcome.evidence.telemetryDegradation).toBeNull()
     expect(deps.payoutObservers.recipient.observedRequests).toEqual([])
     expect(deps.phase2Requests).toEqual([])
   })
@@ -97,15 +106,15 @@ describe("createSwapStressPhaseRunner", () => {
 
     // Then: one Ethereum leg is not enough to pass, and payout failure is classified.
     expect(outcome.kind).toBe("breakage")
-    expect(outcome.phase).toBe("phase-1")
+    if (outcome.kind !== "breakage") throw new Error("breakage expected")
     expect(outcome.breakageReason).toBe(
       "phase-1 payout observation failed: phase 1 payout observer timed out"
     )
-    expect(outcome.phaseResults.map(result => result.phase)).toEqual([
+    expect(outcome.evidence.phaseResults.map(result => result.phase)).toEqual([
       "phase-1",
       "phase-2"
     ])
-    expect(outcome.phaseResults[0]).toMatchObject({
+    expect(outcome.evidence.phaseResults[0]).toMatchObject({
       phase: "phase-1",
       saturated: true,
       payout: null
@@ -126,20 +135,22 @@ describe("createSwapStressPhaseRunner", () => {
 
     // Then: Solana destination saturation is diagnostic-only and payout failure is classified.
     expect(outcome.kind).toBe("breakage")
-    expect(outcome.phase).toBe("phase-1")
+    if (outcome.kind !== "breakage") throw new Error("breakage expected")
     expect(outcome.breakageReason).toBe(
       "phase-1 payout observation failed: phase 1 payout observer timed out"
     )
-    expect(outcome.phaseResults[0]?.endpoint).toBe("DEPOT_OUTPOST_SOLANA")
-    expect(outcome.envelopeCount).toBe(1)
-    expect(outcome.phaseResults[0]?.envelopeByteSizes[0]).toBeGreaterThan(
-      SolanaRawTransactionBytesMax
+    expect(outcome.evidence.phaseResults[0]?.endpoint).toBe(
+      "DEPOT_OUTPOST_SOLANA"
     )
-    expect(outcome.phaseResults.map(result => result.phase)).toEqual([
+    expect(outcome.evidence.phaseResults[0]?.envelopeCount).toBe(1)
+    expect(
+      outcome.evidence.phaseResults[0]?.envelopeByteSizes[0]
+    ).toBeGreaterThan(SolanaRawTransactionBytesMax)
+    expect(outcome.evidence.phaseResults.map(result => result.phase)).toEqual([
       "phase-1",
       "phase-2"
     ])
-    expect(outcome.phaseResults[0]).toMatchObject({
+    expect(outcome.evidence.phaseResults[0]).toMatchObject({
       phase: "phase-1",
       saturated: true,
       endpoint: "DEPOT_OUTPOST_SOLANA",
@@ -160,11 +171,11 @@ describe("createSwapStressPhaseRunner", () => {
 
     // Then: the payout failure is surfaced as classified breakage.
     expect(outcome.kind).toBe("breakage")
-    expect(outcome.phase).toBe("phase-1")
+    if (outcome.kind !== "breakage") throw new Error("breakage expected")
     expect(outcome.breakageReason).toBe(
       "phase-1 payout observation failed: phase 1 payout observer timed out"
     )
-    expect(outcome.phaseResults.map(result => result.phase)).toEqual([
+    expect(outcome.evidence.phaseResults.map(result => result.phase)).toEqual([
       "phase-1",
       "phase-2"
     ])
@@ -183,11 +194,11 @@ describe("createSwapStressPhaseRunner", () => {
 
     // Then: payout timeout remains breakage, but phase 2 still runs for all-legs evidence.
     expect(outcome.kind).toBe("breakage")
-    expect(outcome.phase).toBe("phase-1")
+    if (outcome.kind !== "breakage") throw new Error("breakage expected")
     expect(outcome.breakageReason).toBe(
       "phase-1 payout observation failed: phase 1 payout observer timed out"
     )
-    expect(outcome.phaseResults.map(result => result.phase)).toEqual([
+    expect(outcome.evidence.phaseResults.map(result => result.phase)).toEqual([
       "phase-1",
       "phase-2"
     ])
@@ -208,9 +219,8 @@ describe("createSwapStressPhaseRunner", () => {
 
     // Then: the typed quote error is handled as classified breakage.
     expect(outcome.kind).toBe("breakage")
-    expect(outcome.phase).toBe("quote")
-    expect(outcome.txSuccesses).toBe(0)
-    expect(outcome.txFailures).toBe(0)
+    if (outcome.kind !== "breakage") throw new Error("breakage expected")
+    expect(outcome.evidence.phaseResults).toEqual([])
     expect(outcome.breakageReason).toMatch(/phase-1 quote produced zero/)
   })
 
@@ -225,153 +235,3 @@ describe("createSwapStressPhaseRunner", () => {
     expect(deps.ethereumNonceReservationCounts).toEqual([3])
   })
 })
-
-type TestDeps = SwapStressPhaseRunnerDeps & {
-  readonly payoutObservers: {
-    readonly recipient: RecordingPayoutObserver
-    readonly return: RecordingPayoutObserver
-  }
-  readonly phase2Requests: Phase2SwapRequest[]
-  readonly ethereumNonceReservationCounts: Array<number | undefined>
-}
-
-type RecordingPayoutObserver =
-  SwapStressPhaseRunnerDeps["recipientPayoutObserver"] & {
-    readonly preparedRequests: Parameters<
-      SwapStressPhaseRunnerDeps["recipientPayoutObserver"]["waitForPayouts"]
-    >[0][]
-    readonly observedRequests: Parameters<
-      SwapStressPhaseRunnerDeps["recipientPayoutObserver"]["waitForPayouts"]
-    >[0][]
-  }
-
-type TestDepsOptions = {
-  readonly phase1FailureReason?: string
-  readonly phase1MetricsSaturated?: boolean
-  readonly phase1DestinationMetricsSaturated?: boolean
-  readonly phase1PayoutFailureReason?: string
-  readonly reserveSnapshot?: SwapStressReservePairSnapshot
-}
-
-function createDeps(options: TestDepsOptions = {}): TestDeps {
-  const phase2Requests: Phase2SwapRequest[] = [],
-    ethereumNonceReservationCounts: Array<number | undefined> = [],
-    recipient = recordingPayoutObserver(options),
-    returnObserver = recordingPayoutObserver()
-
-  return {
-    route: {
-      ethereumChainCode: 1n,
-      ethereumTokenCode: 2n,
-      solanaChainCode: 3n,
-      solanaTokenCode: 4n,
-      wireChainCode: 5n,
-      wireTokenCode: 6n,
-      wireSentinelReserveCode: 7n,
-      privateReserveCode: 8n
-    },
-    readReservePairSnapshot: async () =>
-      options.reserveSnapshot ?? defaultReserveSnapshot(),
-    getEthereumFirstNonce: async (count?: number) => {
-      ethereumNonceReservationCounts.push(count)
-      return 9
-    },
-    ethereumReserveManager: {
-      requestSwap: async (
-        _sourceToken,
-        _sourceReserve,
-        _targetChain,
-        _targetToken,
-        _targetReserve,
-        _recipient,
-        _targetAmount,
-        _tolerance,
-        overrides
-      ) => {
-        if (
-          options.phase1FailureReason !== undefined &&
-          overrides.nonce === 10
-        ) {
-          throw new Error(options.phase1FailureReason)
-        }
-        return {
-          wait: async () => ({
-            status: 1,
-            hash: `0x${overrides.nonce}`,
-            blockNumber: overrides.nonce,
-            gasUsed: BigInt(overrides.nonce)
-          })
-        }
-      }
-    },
-    submitPhase2Swap: async request => {
-      phase2Requests.push(request.request)
-      return `sig-${request.index}`
-    },
-    recipientPayoutObserver: recipient,
-    returnPayoutObserver: returnObserver,
-    collectEnvelopeMetrics: async request => {
-      const saturated =
-        request.endpointsType === DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA
-          ? (options.phase1DestinationMetricsSaturated ?? false)
-          : (options.phase1MetricsSaturated ?? false)
-      return {
-        phase: request.phase,
-        saturated,
-        envelopeCount: 1,
-        envelopeByteSizes: saturated ? [1_767] : [256],
-        endpoint: DebugOutpostEndpointsType[request.endpointsType],
-        epochStart: 7,
-        epochEnd: 8
-      }
-    },
-    clock: fixedClock(),
-    concurrency: 2,
-    payoutObservers: { recipient, return: returnObserver },
-    phase2Requests,
-    ethereumNonceReservationCounts
-  }
-}
-
-function defaultReserveSnapshot(): SwapStressReservePairSnapshot {
-  return {
-    ethereum: { chain: 1_000_000_000_000n, wire: 1_000_000_000_000n },
-    solana: { chain: 1_000_000_000n, wire: 1_000_000_000_000n }
-  }
-}
-
-function recordingPayoutObserver(
-  options: TestDepsOptions = {}
-): RecordingPayoutObserver {
-  const preparedRequests: RecordingPayoutObserver["preparedRequests"] = [],
-    observedRequests: RecordingPayoutObserver["observedRequests"] = []
-  return {
-    preparedRequests,
-    observedRequests,
-    preparePayouts: async request => {
-      preparedRequests.push(request)
-    },
-    waitForPayouts: async request => {
-      observedRequests.push(request)
-      if (
-        request.phase === "phase-1" &&
-        options.phase1PayoutFailureReason !== undefined
-      ) {
-        throw new Error(options.phase1PayoutFailureReason)
-      }
-      return {
-        phase: request.phase,
-        observedCount: request.minimumObservedCount,
-        expectedCount: request.expectedCount,
-        minimumObservedCount: request.minimumObservedCount,
-        targetAmount: request.targetAmount,
-        targets: request.targets
-      }
-    }
-  }
-}
-
-function fixedClock(): () => number {
-  const times = [1_000, 1_010, 1_020, 1_030, 1_040]
-  return () => times.shift() ?? 1_050
-}

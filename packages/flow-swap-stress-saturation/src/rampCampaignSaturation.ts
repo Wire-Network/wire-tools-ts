@@ -5,7 +5,7 @@ import {
   type CampaignSaturation
 } from "@wireio/test-opp-stress"
 
-import type { StressRampIterationOutcome } from "./rampController.js"
+import type { SwapStressIterationObservation } from "./phaseRunnerTypes.js"
 
 export type { CampaignSaturation }
 
@@ -23,9 +23,12 @@ export function emptyCampaignSaturation(): CampaignSaturation {
  */
 export function mergeCampaignSaturation(
   prior: CampaignSaturation,
-  outcome: StressRampIterationOutcome
+  outcome: SwapStressIterationObservation
 ): CampaignSaturation {
-  return mergeOppCampaignSaturation(requiredEndpointNames(), prior, outcome)
+  return mergeOppCampaignSaturation(requiredEndpointNames(), prior, {
+    saturatedEndpoints: outcome.saturatedEndpoints,
+    observedNonRequiredEndpoints: outcome.observedNonRequiredEndpoints
+  })
 }
 
 function requiredEndpointNames(): readonly string[] {

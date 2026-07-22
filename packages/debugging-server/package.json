@@ -54,6 +54,7 @@
     "@types/node": "25.5.0",
     "@types/ws": "^8.5.13",
     "@types/yargs": "^17.0.35",
+    "@wireio/test-opp-stress": "workspace:*",
     "concurrently": "^9.2.1",
     "esbuild": "^0.27.3",
     "ts-jest": "^29.4.6",

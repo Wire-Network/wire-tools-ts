@@ -4,8 +4,11 @@ import { createSwapStressPhaseRunner } from "@wireio/test-flow-swap-stress-satur
 import type {
   Phase2SwapRequest,
   SwapStressPhaseRunnerDeps,
-  SwapStressReservePairSnapshot
+  SwapStressReservePairSnapshot,
+  SwapStressSyntheticEnvelopeMetricCollector
 } from "@wireio/test-flow-swap-stress-saturation"
+
+import { strictSnapshotMetrics } from "./phaseRunnerMetricFixtures.js"
 
 describe("createSwapStressPhaseRunner phase metrics", () => {
   it("measures phase 2 return evidence with the depot to Ethereum endpoint", async () => {
@@ -16,13 +19,14 @@ describe("createSwapStressPhaseRunner phase metrics", () => {
     const outcome = await createSwapStressPhaseRunner(deps).runIteration(2)
 
     // Then: phase 2 contributes the Ethereum return endpoint required by all-legs evidence.
-    expect(outcome.kind).toBe("saturated")
-    expect(outcome.phaseResults[1]?.endpoint).toBe("DEPOT_OUTPOST_ETHEREUM")
+    expect(outcome.kind).toBe("completed")
+    expect(outcome.evidence.phaseResults[1]?.endpoint).toBe(
+      "DEPOT_OUTPOST_ETHEREUM"
+    )
     expect(outcome.saturatedEndpoints).toEqual([
       "OUTPOST_ETHEREUM_DEPOT",
       "DEPOT_OUTPOST_ETHEREUM"
     ])
-    expect(outcome.missingEndpoints).toEqual([])
   })
 
   it("collects phase 2 return metrics after waiting for return payouts", async () => {
@@ -40,37 +44,30 @@ describe("createSwapStressPhaseRunner phase metrics", () => {
     ).toBeGreaterThan(events.indexOf("payout:phase-2"))
   })
 
-  it("classifies a phase 2 metrics timeout without fabricating envelope evidence", async () => {
-    // Given: all swaps and payouts succeed, but the required ETH return artifact never appears.
-    const metricsFailureReason =
-        "Timed out waiting for: phase-2 DEPOT_OUTPOST_ETHEREUM OPP evidence observed",
-      deps = createDeps({ phase2MetricsFailureReason: metricsFailureReason })
+  it("marks an absent optional collector unmeasured without health or provenance", async () => {
+    // Given: a synthetic phase runner without an envelope collector.
+    const deps = createDeps({ collectorConfigured: false })
 
-    // When: one bidirectional iteration reaches phase-2 metrics collection.
+    // When: one complete bidirectional iteration runs.
     const outcome = await createSwapStressPhaseRunner(deps).runIteration(2)
 
-    // Then: the timeout is preserved as breakage with the required endpoint still missing.
-    expect(outcome.kind).toBe("breakage")
-    expect(outcome.phase).toBe("phase-2")
-    expect(outcome.breakageReason).toBe(
-      `phase-2 metrics collection failed: ${metricsFailureReason}`
+    // Then: both phase results state that collection was not configured.
+    expect(outcome.evidence.phaseResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          measurement: "unmeasured",
+          unmeasuredReason: "collector_not_configured",
+          health: null,
+          provenance: null
+        })
+      ])
     )
-    expect(outcome.phaseResults[1]).toMatchObject({
-      phase: "phase-2",
-      saturated: false,
-      envelopeCount: 0,
-      envelopeByteSizes: [],
-      endpoint: "DEPOT_OUTPOST_ETHEREUM",
-      txSuccesses: 2,
-      txFailures: 0
-    })
-    expect(outcome.missingEndpoints).toContain("DEPOT_OUTPOST_ETHEREUM")
   })
 
   it("propagates a non-timeout phase 2 metrics error", async () => {
     // Given: the metrics collector fails for a reason unrelated to missing evidence.
     const deps = createDeps({
-      phase2MetricsFailureReason: "corrupt envelope metadata"
+      phase2CollectorFailure: "corrupt envelope metadata"
     })
 
     // When / Then: unexpected collector defects remain loud.
@@ -95,7 +92,10 @@ describe("createSwapStressPhaseRunner phase metrics", () => {
 
     // Then: the preserved phase 1 result uses the required Ethereum source endpoint.
     expect(outcome.kind).toBe("breakage")
-    expect(outcome.phaseResults[0]?.endpoint).toBe("OUTPOST_ETHEREUM_DEPOT")
+    if (outcome.kind !== "breakage") throw new Error("breakage expected")
+    expect(outcome.evidence.phaseResults[0]?.endpoint).toBe(
+      "OUTPOST_ETHEREUM_DEPOT"
+    )
     expect(outcome.saturatedEndpoints).toContain("OUTPOST_ETHEREUM_DEPOT")
     expect(events).toEqual(
       expect.arrayContaining([
@@ -117,15 +117,17 @@ type TestDeps = SwapStressPhaseRunnerDeps & {
 
 type TestDepsOptions = {
   readonly events?: string[]
+  readonly collectorConfigured?: boolean
   readonly phase1PayoutFailureReason?: string
   readonly phase1SourceSaturatedAfterPayoutFailure?: boolean
   readonly phase1DiagnosticSaturated?: boolean
-  readonly phase2MetricsFailureReason?: string
+  readonly phase2CollectorFailure?: string
 }
 
 function createDeps(options: TestDepsOptions = {}): TestDeps {
   const phase2Requests: Phase2SwapRequest[] = []
   return {
+    telemetryKind: "synthetic",
     route: {
       ethereumChainCode: 1n,
       ethereumTokenCode: 2n,
@@ -164,34 +166,38 @@ function createDeps(options: TestDepsOptions = {}): TestDeps {
     },
     recipientPayoutObserver: payoutObserver(options),
     returnPayoutObserver: payoutObserver(options),
-    collectEnvelopeMetrics: async request => {
-      if (
-        request.phase === "phase-2" &&
-        options.phase2MetricsFailureReason !== undefined
-      ) {
-        throw new Error(options.phase2MetricsFailureReason)
-      }
-      const timing = options.events?.includes(`payout:${request.phase}`)
-        ? "after-payout"
-        : "before-payout"
-      options.events?.push(
-        `metrics:${request.phase}:${DebugOutpostEndpointsType[request.endpointsType]}:${timing}`
-      )
-      const saturated =
-        request.phase === "phase-1"
-          ? phase1Saturated(request, options, timing)
-          : request.endpointsType ===
-            DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
-      return {
-        phase: request.phase,
-        saturated,
-        envelopeCount: 2,
-        envelopeByteSizes: [527, 527],
-        endpoint: DebugOutpostEndpointsType[request.endpointsType],
-        epochStart: 7,
-        epochEnd: 8
-      }
-    },
+    ...(options.collectorConfigured === false
+      ? {}
+      : {
+          collectEnvelopeMetrics: async request => {
+            if (
+              request.phase === "phase-2" &&
+              options.phase2CollectorFailure !== undefined
+            ) {
+              throw new Error(options.phase2CollectorFailure)
+            }
+            const timing = options.events?.includes(`payout:${request.phase}`)
+              ? "after-payout"
+              : "before-payout"
+            options.events?.push(
+              `metrics:${request.phase}:${DebugOutpostEndpointsType[request.endpointsType]}:${timing}`
+            )
+            const saturated =
+              request.phase === "phase-1"
+                ? phase1Saturated(request, options, timing)
+                : request.endpointsType ===
+                  DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
+            return strictSnapshotMetrics({
+              phase: request.phase,
+              saturated,
+              envelopeCount: 2,
+              envelopeByteSizes: [527, 527],
+              endpoint: DebugOutpostEndpointsType[request.endpointsType],
+              epochStart: "7",
+              epochEnd: "8"
+            })
+          }
+        }),
     clock: fixedClock(),
     concurrency: 2,
     phase2Requests
@@ -230,9 +236,7 @@ function payoutObserver(
 }
 
 function phase1Saturated(
-  request: Parameters<
-    Exclude<SwapStressPhaseRunnerDeps["collectEnvelopeMetrics"], undefined>
-  >[0],
+  request: Parameters<SwapStressSyntheticEnvelopeMetricCollector>[0],
   options: TestDepsOptions,
   timing: string
 ): boolean {

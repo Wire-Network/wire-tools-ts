@@ -1,11 +1,14 @@
 import type {
   OppStressRampConfig,
-  OppStressRampEvidence,
+  OppStressRampDeferredEvidenceResult,
+  OppStressRampDeferredEvidenceSummary,
   OppStressRampIterationInput,
-  OppStressRampIterationOutcome,
-  OppStressRampOptions,
-  OppStressRampResult
+  RunEvidencePersistence
 } from "@wireio/test-opp-stress"
+import type {
+  SwapStressIterationObservation,
+  SwapStressObservationEvidence
+} from "./phaseRunnerTypes.js"
 
 /** Default ramp constants for local stress saturation runs. */
 export namespace StressRampDefaults {
@@ -27,41 +30,24 @@ export type StressRampConfig = OppStressRampConfig
 /** Input passed to the caller's real or synthetic iteration runner. */
 export type StressRampIterationInput = OppStressRampIterationInput
 
-/** Metrics and classification returned by one stress iteration. */
-export type StressRampIterationOutcome = Omit<
-  OppStressRampIterationOutcome,
-  "startedAtMs" | "endedAtMs"
-> & {
-  /** Iteration start timestamp in Unix milliseconds. */
-  readonly startedAtMs: number
-  /** Iteration end timestamp in Unix milliseconds. */
-  readonly endedAtMs: number
-}
-
-/** Persisted evidence for one ramp iteration. */
-export type StressRampEvidence = Omit<
-  OppStressRampEvidence,
-  "startedAtMs" | "endedAtMs"
-> & {
-  /** Iteration start timestamp in Unix milliseconds. */
-  readonly startedAtMs: number
-  /** Iteration end timestamp in Unix milliseconds. */
-  readonly endedAtMs: number
-}
+/** Typed controller summary for one flow iteration. */
+export type StressRampEvidence =
+  OppStressRampDeferredEvidenceSummary<SwapStressObservationEvidence>
 
 /** Final ramp result returned to the future e2e flow. */
-export type StressRampResult = Omit<OppStressRampResult, "iterations"> & {
-  /** Iterations executed before the controller stopped. */
-  readonly iterations: readonly StressRampEvidence[]
-}
+export type StressRampResult =
+  OppStressRampDeferredEvidenceResult<SwapStressObservationEvidence>
 
 /** Options for the saturation ramp controller. */
-export type StressRampOptions = Omit<
-  OppStressRampOptions,
-  "requiredEndpoints" | "runIteration"
-> & {
-  /** Real or synthetic iteration runner. */
+export type StressRampOptions = {
+  /** Optional flow ramp configuration. */
+  readonly config?: StressRampConfig
+  /** Controller lifecycle clock. */
+  readonly clock?: () => number
+  /** Canonical schema-v1 publication authority for the real flow. */
+  readonly persistence?: RunEvidencePersistence
+  /** Observation-only real or synthetic iteration runner. */
   readonly runIteration: (
     input: StressRampIterationInput
-  ) => Promise<StressRampIterationOutcome>
+  ) => Promise<SwapStressIterationObservation>
 }

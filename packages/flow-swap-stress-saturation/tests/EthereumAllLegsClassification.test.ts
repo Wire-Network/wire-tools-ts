@@ -5,6 +5,8 @@ import {
   type SwapStressPhaseResult
 } from "@wireio/test-flow-swap-stress-saturation"
 
+import { strictSnapshotMetrics } from "./phaseRunnerMetricFixtures.js"
+
 describe("classifyEthereumAllLegsSaturation", () => {
   it("returns saturated when both required Ethereum directions saturate", () => {
     // Given: both required Ethereum OPP directions rolled over during the campaign.
@@ -67,17 +69,19 @@ function saturatedPhase(
   endpointsType: DebugOutpostEndpointsType
 ): SwapStressPhaseResult {
   return {
-    phase: DebugOutpostEndpointsType[endpointsType],
-    saturated: true,
-    envelopeCount: 2,
-    envelopeByteSizes: [256, 512],
-    endpoint: DebugOutpostEndpointsType[endpointsType],
-    epochStart: 20,
-    epochEnd: 21,
+    ...strictSnapshotMetrics({
+      phase: DebugOutpostEndpointsType[endpointsType],
+      saturated: true,
+      envelopeCount: 2,
+      envelopeByteSizes: [256, 512],
+      endpoint: DebugOutpostEndpointsType[endpointsType],
+      epochStart: "20",
+      epochEnd: "21"
+    }),
     txSuccesses: 8,
     txFailures: 0,
-    startedAtMs: 1_775_612_500_000,
-    endedAtMs: 1_775_612_501_000,
+    observationStartedAtMs: 1_775_612_500_000,
+    observationEndedAtMs: 1_775_612_501_000,
     payout: null
   }
 }
