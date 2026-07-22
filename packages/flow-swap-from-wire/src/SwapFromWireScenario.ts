@@ -120,6 +120,9 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
     "Swap FROM WIRE (WIRE depot → Solana): queued escrow, single-leg underwriting, SOL payout, rewards drain"
 
   override readonly defaults: ClusterBuildOptions = {
+    // Seed the mock (chain, token) PRIMARY reserves this flow reads — `regreserve`
+    // is epoch-0-gated by the depot, so it must ride the bootstrap, not a flow phase.
+    enableMockReserves: true,
     epochDurationSec: Constants.EpochDurationSec,
     // ACTIVE gates on real bonds on EVERY registered outpost chain, so the
     // flow's underwriter-activation assertion is meaningful.

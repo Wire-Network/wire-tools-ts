@@ -670,19 +670,32 @@ export namespace ClusterBuildDefaults {
       )
     }
 
-    // ── registry + underwriter config ──
+    // ── registry + optional mock reserves + underwriter config ──
     ClusterBuildPhase.create<C>(
       prerequisites,
       "Registry",
-      "Seed chains + tokens + reserves"
+      "Seed chains + tokens"
     ).push(
       Steps.registry.planSeedRegistry<C>(
         Actor.Sysio,
         "seed-registry",
-        "register chains, tokens, chain-tokens, reserves",
+        "register chains, tokens, chain-tokens",
         {}
       )
     )
+    // Mock (chain, token) PRIMARY reserves — opt-in via `--enable-mock-reserves`
+    // (default off, so a real / external depot never gets fake reserves). Seeded
+    // HERE, pre-EpochBootstrap, because the contract gates `regreserve` to the
+    // epoch-0 bootstrap window — a flow phase (which always runs after epoch
+    // 0→1) could never seed them.
+    if (config.enableMockReserves) {
+      Steps.registry.planMockReserves<C>(
+        prerequisites,
+        "MockReserves",
+        "Seed the 8 mock (chain, token) PRIMARY reserves",
+        {}
+      )
+    }
     ClusterBuildPhase.create<C>(
       prerequisites,
       "UnderwriterConfig",

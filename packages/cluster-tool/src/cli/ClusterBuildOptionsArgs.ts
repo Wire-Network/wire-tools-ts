@@ -377,6 +377,11 @@ export function buildOptionShape(
     ),
     // ── network binding ──
     bindAll: leaf(false, "bind every daemon to 0.0.0.0 instead of loopback"),
+    // ── mock data seeding (default false → external / real depots get no fake reserves) ──
+    enableMockReserves: leaf(
+      false,
+      "seed the 8 mock (chain, token) PRIMARY reserves at bootstrap"
+    ),
     bind: buildBindShape(nodeCount, batchCount, underwriterCount),
     bindConfig: optionalLeaf(
       OptionLeafType.string,

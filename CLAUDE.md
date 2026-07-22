@@ -198,10 +198,12 @@ wire-cluster-tool create-external-config \              # clone → deployable e
 `create` also carries `--signature-provider-type <KEY|SSM|KIOD>` (default KEY)
 and `--signature-provider-ssm '<inline-json>'|<file>` (the SSM region +
 secret-id pattern), plus `--external-outpost-config <file>` (bootstrap the depot
-against already-deployed REMOTE ETH+SOL outposts — no local anvil/validator) and
+against already-deployed REMOTE ETH+SOL outposts — no local anvil/validator),
 `--bind-config <file>` (a complete `BindConfig` used verbatim, or a partial
 override merged over the resolved defaults; a remote anvil/solana address
-requires `--external-outpost-config`); `package` writes one `<node>.<ext>` per
+requires `--external-outpost-config`), and `--enable-mock-reserves` (default
+off — seed the 8 mock (chain, token) PRIMARY reserves at bootstrap; a real /
+external depot leaves these unseeded); `package` writes one `<node>.<ext>` per
 node under `<cluster>/packages/` (a hand-off artifact for a multihost environment
 with distinct compute + storage — S3/EC2, GCS, or any other, loosely coupled).
 `create-external-config` clones a CREATED, STOPPED local cluster into a deployable
@@ -212,6 +214,13 @@ Emit → Verify pipeline; a mismatched bind config fails fast before any write).
 `create` exposes every `ClusterBuildOptions` leaf as a `--kebab-path` flag via
 the SAME `applyClusterBuildOptionsArgs` surface every flow uses (env vars
 `WIRE_*` seed the path flags). Exit code mirrors the bootstrap Report.
+
+**Flow authoring — mock reserves.** A flow that reads the mock (chain, token)
+PRIMARY reserves sets `enableMockReserves: true` in its `Scenario.defaults` (the
+same mechanism it uses for `operatorsPerEpoch` / collateral) — never in `plan()`.
+The bootstrap seeds them during epoch 0; a flow's `plan()` phases always run AFTER
+`EpochBootstrap` advances epoch 0→1, and the depot gates `regreserve` to epoch 0,
+so `regreserve` can never be called from a flow phase.
 
 ## Key Architecture (`packages/cluster-tool/src/`)
 

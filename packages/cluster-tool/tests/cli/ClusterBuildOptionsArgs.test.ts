@@ -114,6 +114,7 @@ describe("flattenOptionLeaves + buildOptionShape", () => {
         "epoch-duration-sec",
         "force",
         "bind-all",
+        "enable-mock-reserves",
         "bind-kiod-port",
         "bind-kiod-address",
         "bind-nodeop-ports-bios-http",
@@ -324,6 +325,12 @@ describe("toClusterBuildOptions reverse parse", () => {
   it("coerces boolean flags", () => {
     expect(toClusterBuildOptions({ "bind-all": true }).bindAll).toBe(true)
     expect(toClusterBuildOptions({ "bind-all": false }).bindAll).toBe(false)
+    expect(
+      toClusterBuildOptions({ "enable-mock-reserves": true }).enableMockReserves
+    ).toBe(true)
+    expect(
+      toClusterBuildOptions({ "enable-mock-reserves": false }).enableMockReserves
+    ).toBe(false)
   })
 
   it("reads the camelCase alias yargs also emits", () => {
@@ -349,6 +356,8 @@ describe("register → parse round-trip", () => {
     expect(options.epochDurationSec).toBe(60)
     expect(options.nodeCount).toBe(1)
     expect(options.bindAll).toBe(false)
+    // no opt-in ⇒ the default-false mock-reserves flag survives as false
+    expect(options.enableMockReserves).toBe(false)
     // unseeded (null-default) bind ports never materialize
     expect(options.bind?.kiod?.port).toBeUndefined()
   })
@@ -366,7 +375,8 @@ describe("register → parse round-trip", () => {
         epochRetentionEnvelopeLogCount: 200,
         terminateMaxConsecutiveMisses: 5,
         terminateMaxPercentMisses24h: 99,
-        terminateWindowMs: 3_600_000
+        terminateWindowMs: 3_600_000,
+        enableMockReserves: true
       }),
       argv: Record<string, unknown> = {}
     registered.forEach((config, flag) => {
@@ -380,6 +390,8 @@ describe("register → parse round-trip", () => {
     expect(options.terminateMaxConsecutiveMisses).toBe(5)
     expect(options.terminateMaxPercentMisses24h).toBe(99)
     expect(options.terminateWindowMs).toBe(3_600_000)
+    // the scenario-defaults opt-in path the 6 reserve-needing flows rely on
+    expect(options.enableMockReserves).toBe(true)
   })
 })
 

@@ -90,7 +90,8 @@ const stubConfig: ClusterConfig = {
   initialFinalizerKey: null,
   signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
   externalOutposts: null,
-  debuggingServerEnabled: true
+  debuggingServerEnabled: true,
+  enableMockReserves: false
 }
 
 /** A complete `ClusterState` fixture (post-bootstrap snapshot, no nodes). */
