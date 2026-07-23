@@ -1,7 +1,8 @@
 import Assert from "node:assert"
 import { ethers } from "ethers"
+import { PublicKey } from "@solana/web3.js"
 import { ChainKind } from "@wireio/opp-typescript-models"
-import { SysioContracts } from "@wireio/sdk-core"
+import { Asset, SysioContracts } from "@wireio/sdk-core"
 import {
   AuthExLinkTool,
   ClusterBuildPhase,
@@ -85,6 +86,15 @@ async function readCapitalShortfallTotal(
 /** Lowercased, `0x`-stripped hex of an ETH address — dclaim's `unmapped.native_pubkey` spelling. */
 function ethereumNativePubkey(address: string): string {
   return address.toLowerCase().replace(/^0x/, "")
+}
+
+/**
+ * Lowercase hex of a Solana pubkey's 32 raw bytes — dclaim renders the
+ * `unmapped.native_pubkey` `bytes` column as lowercase hex, so an SVM staker's
+ * key is matched by hex(pubkey.toBytes()) (same spelling the ETH path uses).
+ */
+function solanaNativePubkey(pubkey: PublicKey): string {
+  return Buffer.from(pubkey.toBytes()).toString("hex")
 }
 
 // ── SetupStakers step inputs + named runners ────────────────────────────────
@@ -184,7 +194,12 @@ export class YieldDistributionScenario extends FlowScenario {
     epochDurationSec: Constants.EpochDurationSec,
     producerCount: Constants.ProducerCount,
     batchOperatorCount: Constants.BatchOperatorCount,
-    underwriterCount: Constants.UnderwriterCount
+    underwriterCount: Constants.UnderwriterCount,
+    // This flow cranks `flush_staking_yield`, which requires the Solana clock
+    // at `epoch >= 3`; opt THIS cluster's validator into the epoch warp. No
+    // other flow may — the warp trips the depot's cross-chain deposit nonce
+    // window (see `ClusterConfig.solanaEpochWarp`).
+    solanaEpochWarp: true
   }
 
   plan(cluster: ClusterBuild): void {
@@ -430,29 +445,57 @@ export class YieldDistributionScenario extends FlowScenario {
       EmitSteps.planSolanaEmit(
         Actor.SolanaOutpost,
         "emit-solana-reward",
-        `emit ${Constants.SolanaRewardPerStaker} lamports STAKING_REWARD for a new unlinked SOL staker`,
+        `emit ${Constants.SolanaRewardPerStaker} STAKING_REWARD for a new unlinked SOL staker`,
         emitStepOptions,
+        YieldDistributionScenario.SolanaStakerAddressKey,
         Constants.UnlinkedWireAccount,
         Constants.SolanaRewardPerStaker,
-        Constants.FullShareBps,
-        BigInt(Constants.SolanaChainCode),
-        BigInt(Constants.SolanaTokenCode),
-        Constants.SolanaStakerExternalEpochRef,
-        Constants.RewardEpochIndex
+        Constants.FullShareBps
       ),
       verifyStep(
         Actor.Sysio,
-        "unmapped-count-grew-solana",
-        "the unmapped row count grew past the snapshot",
+        "unmapped-row-solana",
+        "an unmapped row appears keyed by the SOL staker's native address with the reward amount",
         async ctx => {
           const before = ctx.outputs.assert(
-            YieldDistributionScenario.SolanaUnmappedCountBeforeKey
-          )
+              YieldDistributionScenario.SolanaUnmappedCountBeforeKey
+            ),
+            staker = ctx.outputs.assert(
+              YieldDistributionScenario.SolanaStakerAddressKey
+            ),
+            // Match the depot row by the staker's native SOL address — the
+            // genuine `flush_staking_yield` StakingReward parks here under the
+            // program-derived ref, so we key off the address (its 32 bytes →
+            // dclaim's lowercase-hex `native_pubkey`), NOT the scenario's fixed
+            // ref. The credit is always WIRE-denominated (the `unmapped` row
+            // carries no token code), and its atomic balance equals the
+            // emitted reward amount.
+            expectedPubkey = solanaNativePubkey(staker)
           await pollUntil(
             "unmapped row for the unlinked SOL staker",
-            async () => (await readUnmappedRows(ctx)).length > before,
+            async () =>
+              (await readUnmappedRows(ctx)).some(
+                row => row.native_pubkey.toLowerCase() === expectedPubkey
+              ),
             Constants.PropagationTimeoutMs,
             Constants.PropagationPollMs
+          )
+          const rows = await readUnmappedRows(ctx),
+            solanaRow = rows.find(
+              row => row.native_pubkey.toLowerCase() === expectedPubkey
+            )
+          Assert.ok(
+            solanaRow != null,
+            `no unmapped row for the SOL staker ${expectedPubkey}`
+          )
+          Assert.strictEqual(
+            BigInt(Asset.fromString(solanaRow.balance).units.toString()),
+            Constants.SolanaRewardPerStaker,
+            `SOL staker's unmapped balance ${solanaRow.balance} != reward ${Constants.SolanaRewardPerStaker}`
+          )
+          Assert.ok(
+            rows.length > before,
+            `unmapped count ${rows.length} did not grow past ${before}`
           )
         },
         propagationStepOptions
@@ -487,6 +530,11 @@ export namespace YieldDistributionScenario {
   export const SolanaUnmappedCountBeforeKey = outputKey<number>(
     "yieldDistribution.solanaUnmappedCountBefore",
     "unmapped row count before the SOL emission"
+  )
+  /** The fresh SOL staker's pubkey (published by the emit runner) the verify matches the depot row by. */
+  export const SolanaStakerAddressKey = outputKey<PublicKey>(
+    "yieldDistribution.solanaStakerAddress",
+    "the unlinked SOL staker's native address"
   )
   /** The linked staker's `pclaims` row count snapshotted before the replay. */
   export const ReplayPclaimsCountBeforeKey = outputKey<number>(
