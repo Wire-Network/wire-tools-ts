@@ -6,6 +6,7 @@ import {
   NodeOwnerRegStatus,
   NodeOwnerRejectReason,
   NodeOwnerTier,
+  pollUntil,
   readNodeOwner,
   readNodeOwnerReg,
   Report,
@@ -15,6 +16,7 @@ import {
   type ClusterBuildOptions
 } from "@wireio/cluster-tool"
 import { NodeOwnerNftScenarioConstants as Constants } from "./NodeOwnerNftScenarioConstants.js"
+import { NodeOwnerNftScenarioCommitSteps as CommitSteps } from "./steps/NodeOwnerNftScenarioCommitSteps.js"
 import { NodeOwnerNftScenarioMintSteps as MintSteps } from "./steps/NodeOwnerNftScenarioMintSteps.js"
 import { NodeOwnerNftScenarioRegistrationSteps as RegistrationSteps } from "./steps/NodeOwnerNftScenarioRegistrationSteps.js"
 
@@ -100,6 +102,37 @@ async function verifyHappyPathConfirmed(
   )
 }
 
+/**
+ * Commit-path verify — the `nodeowners` row lands via the REAL OPP hop
+ * (`BAR.commitNode` → outbound envelope → depot dispatch → inline
+ * `newnameduser` + `nodeownreg`), then the audit reads CONFIRMED. The poll
+ * budget is the single-hop envelope; the row appears as soon as the depot
+ * processes the consensus envelope carrying the attestation.
+ */
+async function verifyCommitPathConfirmed(
+  ctx: ClusterBuildContext
+): Promise<void> {
+  await pollUntil(
+    `nodeowners row for ${Constants.CommitPathAccount} via OPP`,
+    async () =>
+      (await readNodeOwner(ctx.wire, Constants.CommitPathAccount)) != null,
+    Constants.CommitPathDeadlineMs,
+    Constants.CommitPathPollIntervalMs
+  )
+  const registration = await readNodeOwner(ctx.wire, Constants.CommitPathAccount)
+  Assert.strictEqual(
+    Number(registration.tier),
+    NodeOwnerTier.T1,
+    "commit-path registered tier must be T1"
+  )
+  const audit = await readNodeOwnerReg(ctx.wire, Constants.CommitPathAccount)
+  Assert.strictEqual(
+    Number(audit?.status),
+    NodeOwnerRegStatus.Confirmed,
+    "commit-path audit status must be CONFIRMED"
+  )
+}
+
 /** Mint snapshot — record the pre-mint tier-1 `viewTotalSupply` into `ctx.outputs` (a read checkpoint). */
 async function snapshotTotalSupplyBefore(
   ctx: ClusterBuildContext
@@ -148,6 +181,9 @@ async function verifyMintSupplyAndBalance(
  *    (depot/system invariants — asserted via `Assert.rejects`, not scenario failures).
  * 7. **MockNodesMint** — MockWireNodes accepts a tier-1 mint at 1 ether; the
  *    `TransferSingle`-observed supply bumps and the minter's balance reflects it.
+ * 8. **CommitNodePath** — the PRODUCTION path end-to-end: mint, then
+ *    `BAR.commitNode` emits the full NodeOwnerRegistration via OPP; the depot
+ *    dispatches it and the `nodeowners` row + CONFIRMED audit land on WIRE.
  *
  * Claim-payload problems (2-5) soft-fail into a `nodeownerreg` audit row rather
  * than throwing (trust-OPP); only the depot/system invariants (6) hard-abort.
@@ -450,6 +486,38 @@ export class NodeOwnerNftScenario extends FlowScenario {
         "totalSupply bumped by the mint; minter balance reflects it",
         verifyMintSupplyAndBalance,
         stepOptions
+      )
+    )
+
+    // ── 8. The PRODUCTION path — BAR.commitNode → OPP → depot dispatch ──
+    ClusterBuildPhase.create(
+      cluster,
+      "CommitNodePath",
+      "BAR.commitNode emits the full NodeOwnerRegistration via OPP → nodeowners row + CONFIRMED audit"
+    ).push(
+      MintSteps.planMint(
+        Actor.User,
+        "mint-commit-path",
+        `mint ${Constants.MintAmount} tier-1 NFT for the commit-path claim`,
+        stepOptions,
+        NodeOwnerTier.T1,
+        Constants.MintAmount
+      ),
+      CommitSteps.planCommitNode(
+        Actor.User,
+        "commit-node",
+        `commit the tier-1 node via BAR.commitNode, claiming ${Constants.CommitPathAccount}`,
+        stepOptions,
+        NodeOwnerTier.T1,
+        Constants.CommitPathAccount,
+        Constants.DEV_K1_PUBLIC_KEY
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "confirmed-commit-path",
+        "nodeowners row lands via the OPP hop; audit status CONFIRMED",
+        verifyCommitPathConfirmed,
+        { timeoutMs: Constants.CommitPathDeadlineMs + Constants.PollDeadlineBufferMs }
       )
     )
   }

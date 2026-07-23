@@ -1,5 +1,6 @@
 import { ethers } from "ethers"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
+import { WireKeyType } from "@wireio/opp-typescript-models"
 import {
   ethereumCompressedPubkey,
   ethereumKeyPairFromWallet,
@@ -7,7 +8,8 @@ import {
   ethereumPublicKeyFromWallet,
   ethereumSigner,
   solanaKeypair,
-  solanaSdkPrivateKey
+  solanaSdkPrivateKey,
+  wireKeyFromPublicKey
 } from "@wireio/cluster-tool/utils"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import type { EthereumKeyPair, SolanaKeyPair } from "@wireio/cluster-tool/types"
@@ -112,6 +114,40 @@ describe("keyPairUtils", () => {
         solanaKeypair(fixture).publicKey.toBase58()
       )
       expect(keypair.secretKey.length).toBe(64)
+    })
+  })
+
+  // ── Wire public key → OPP proto WireKey ──
+  describe("wireKeyFromPublicKey", () => {
+    it("maps every account-authority key type to its proto variant with the raw point bytes", () => {
+      const cases = [
+        { type: KeyType.K1, size: 33, wireKeyType: WireKeyType.K1 },
+        { type: KeyType.R1, size: 33, wireKeyType: WireKeyType.R1 },
+        { type: KeyType.EM, size: 33, wireKeyType: WireKeyType.EM },
+        { type: KeyType.ED, size: 32, wireKeyType: WireKeyType.ED }
+      ] as const
+      cases.forEach(({ type, size, wireKeyType }) => {
+        const compressed = new Uint8Array(size).fill(7),
+          wireKey = wireKeyFromPublicKey({ type, compressed })
+        expect(wireKey.keyType).toBe(wireKeyType)
+        expect(wireKey.key).toEqual(compressed)
+      })
+    })
+
+    it("parses the PUB_* string form (an anvil wallet's EM key round-trips)", () => {
+      const publicKey = ethereumPublicKeyFromWallet(anvilWallet(3)),
+        wireKey = wireKeyFromPublicKey(publicKey.toString())
+      expect(wireKey.keyType).toBe(WireKeyType.EM)
+      expect(wireKey.key).toEqual(publicKey.data.array)
+    })
+
+    it("throws for key types unusable as an account authority (WA, BLS)", () => {
+      expect(() =>
+        wireKeyFromPublicKey({ type: KeyType.WA, compressed: new Uint8Array(33) })
+      ).toThrow(/not a Wire account-authority key type/)
+      expect(() =>
+        wireKeyFromPublicKey({ type: KeyType.BLS, compressed: new Uint8Array(96) })
+      ).toThrow(/not a Wire account-authority key type/)
     })
   })
 })

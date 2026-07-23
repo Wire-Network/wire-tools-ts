@@ -1,4 +1,4 @@
-import { Constants, NodeOwnerTier } from "@wireio/cluster-tool"
+import { Constants, NodeOwnerTier, ProtocolTiming } from "@wireio/cluster-tool"
 
 /**
  * Constants for the node-owner NFT flow. Account names, the wrong-key fixture,
@@ -42,6 +42,8 @@ export namespace NodeOwnerNftScenarioConstants {
   export const InvalidTierAccount = "nfte"
   /** Hard-abort owner for the non-EM (K1) eth-key invariant. */
   export const NonEmKeyAccount = "nftf"
+  /** Commit-path owner — claimed via `BAR.commitNode` on the outpost, registered through OPP. */
+  export const CommitPathAccount = "nftg"
 
   /** Tier below the depot's [1,3] window → hard abort. */
   export const TierBelowMinimum = 0
@@ -81,4 +83,14 @@ export namespace NodeOwnerNftScenarioConstants {
 
   /** Hard ceiling per write / verify step (finality waits + hard-abort push retries). */
   export const StepTimeoutMs = 120_000
+
+  /**
+   * Outpost-act → depot-verify deadline for the commit-path claim: the
+   * NODE_OWNER_REG attestation rides the next outbound OPP envelope (one hop).
+   */
+  export const CommitPathDeadlineMs = ProtocolTiming.SingleHopBudgetMs
+  /** Poll gap while waiting for the commit-path depot rows. */
+  export const CommitPathPollIntervalMs = 5_000
+  /** Ceiling margin the commit-path verify step carries above its inner poll deadline. */
+  export const PollDeadlineBufferMs = 30_000
 }
