@@ -68,6 +68,13 @@ export namespace ClusterConfigProvider {
   export const DefaultBatchOperatorCount = 3
   export const DefaultUnderwriterCount = 1
   export const DefaultEpochDurationSec = 90
+  /**
+   * Default for {@link ClusterConfig.solanaEpochWarp} — OFF. Only
+   * `flow-yield-distribution` opts in (via its scenario `defaults`); warping the
+   * Solana clock trips the depot's cross-chain deposit nonce window, so it is
+   * never the cluster-wide default.
+   */
+  export const DefaultSolanaEpochWarp = false
 
   /**
    * Resolve defaults → validate → return a ready config (the only forward
@@ -111,6 +118,7 @@ export namespace ClusterConfigProvider {
         options.terminateMaxConsecutiveMisses ?? null,
       terminateMaxPercentMisses24h: options.terminateMaxPercentMisses24h ?? null,
       terminateWindowMs: options.terminateWindowMs ?? null,
+      solanaEpochWarp: options.solanaEpochWarp ?? DefaultSolanaEpochWarp,
       ethereumPath: assertOption(options.ethereumPath, "ethereumPath"),
       solanaPath: assertOption(options.solanaPath, "solanaPath"),
       bind,

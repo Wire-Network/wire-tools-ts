@@ -43,6 +43,7 @@ export const PersistedFixture: ClusterConfig = {
   terminateMaxConsecutiveMisses: null,
   terminateMaxPercentMisses24h: null,
   terminateWindowMs: null,
+  solanaEpochWarp: false,
   ethereumPath: "/eth",
   solanaPath: "/sol",
   bind: {

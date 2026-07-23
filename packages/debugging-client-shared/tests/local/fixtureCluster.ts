@@ -98,6 +98,7 @@ export function makeFixtureCluster(): FixtureCluster {
     terminateMaxConsecutiveMisses: null,
     terminateMaxPercentMisses24h: null,
     terminateWindowMs: null,
+    solanaEpochWarp: false,
     ethereumPath: "",
     solanaPath: "",
     bind: {

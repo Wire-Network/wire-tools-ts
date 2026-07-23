@@ -134,6 +134,9 @@ describe("flattenOptionLeaves + buildOptionShape", () => {
       OptionLeafType.number
     )
     expect(leafByFlag(leaves, "force").type).toBe(OptionLeafType.boolean)
+    expect(leafByFlag(leaves, "solana-epoch-warp").type).toBe(
+      OptionLeafType.boolean
+    )
     expect(leafByFlag(leaves, "logging-levels-console").type).toBe(
       OptionLeafType.string
     )
@@ -331,6 +334,12 @@ describe("toClusterBuildOptions reverse parse", () => {
     expect(
       toClusterBuildOptions({ "enable-mock-reserves": false }).enableMockReserves
     ).toBe(false)
+    expect(
+      toClusterBuildOptions({ "solana-epoch-warp": true }).solanaEpochWarp
+    ).toBe(true)
+    expect(
+      toClusterBuildOptions({ "solana-epoch-warp": false }).solanaEpochWarp
+    ).toBe(false)
   })
 
   it("reads the camelCase alias yargs also emits", () => {
@@ -358,6 +367,8 @@ describe("register → parse round-trip", () => {
     expect(options.bindAll).toBe(false)
     // no opt-in ⇒ the default-false mock-reserves flag survives as false
     expect(options.enableMockReserves).toBe(false)
+    // solana-epoch-warp defaults OFF — only flow-yield-distribution opts in
+    expect(options.solanaEpochWarp).toBe(false)
     // unseeded (null-default) bind ports never materialize
     expect(options.bind?.kiod?.port).toBeUndefined()
   })

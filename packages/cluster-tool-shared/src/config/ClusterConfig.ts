@@ -155,6 +155,15 @@ export const ClusterConfigSchema = z.object({
    * `null` (not absence) so the slot round-trips through JSON persistence.
    */
   terminateWindowMs: z.number().nullable().default(null),
+  /**
+   * Warp the solana-test-validator past Solana epoch 3 at launch, so a flow
+   * driving `flush_staking_yield` (which requires `Clock.epoch >= 3`) can run.
+   * Off for every flow except `flow-yield-distribution`, which opts in via its
+   * scenario `defaults`: warping advances the Solana clock minutes ahead, which
+   * trips the depot's `sysio.authex` 10-minute nonce window on cross-chain SOL
+   * deposits — so no swap/deposit flow may enable it.
+   */
+  solanaEpochWarp: z.boolean().default(false),
   /** wire-ethereum repo root. */
   ethereumPath: z.string(),
   /** wire-solana repo root. */

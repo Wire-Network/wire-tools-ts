@@ -1,4 +1,3 @@
-import { SlugName } from "@wireio/sdk-core"
 import { ProtocolTiming } from "@wireio/cluster-tool"
 
 /**
@@ -40,13 +39,6 @@ export namespace YieldDistributionScenarioConstants {
   export const LinkedStakerExternalEpochRef = 1n
   /** The unlinked ETH staker's `external_epoch_ref` (counter value 2). */
   export const UnlinkedStakerExternalEpochRef = 2n
-  /** The SOL staker's `external_epoch_ref` (counter value 3). */
-  export const SolanaStakerExternalEpochRef = 3n
-
-  /** Registered chain slug code stamped on the SOL-side emission (must match the bootstrap registry seed). */
-  export const SolanaChainCode = SlugName.from("SOLANA")
-  /** Registered token slug code of the SOL-side reward token. */
-  export const SolanaTokenCode = SlugName.from("SOL")
 
   /** Deadline for an attestation to round-trip emitter → batchop ferry → depot
    *  table — a single outpost→depot hop (envelope class). */

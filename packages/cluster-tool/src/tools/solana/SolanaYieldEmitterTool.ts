@@ -1,37 +1,29 @@
 /**
- * SolanaYieldEmitterTool — drive synthetic STAKING_REWARD attestations
- * into the Solana outpost's `OutboundMessageBuffer` via the existing
- * `opp_outpost::add_attestation` CPI target.
+ * SolanaYieldEmitterTool — drive a genuine STAKING_REWARD emission out of the
+ * folded `liqsol_core` outpost's real yield pipeline.
  *
  * The flow-yield-distribution test uses this to mirror the ETH side's
- * `MockYieldEmitter.sol` without standing up a separate Anchor program:
- * `add_attestation` is the exact CPI surface a real yield-aware Solana
- * contract would invoke. The helper signs each call with the SOL
- * outpost deployer keypair (== `OutpostConfig.authority` set during
- * Phase 10b bootstrap) and ferries the encoded proto bytes through
- * the same envelope path the batch operator polls.
+ * `MockYieldEmitter.sol`: seed a staker's on-chain yield state via the dev-only
+ * `dev_seed_staker_yield` (compiled under `--features development`), then crank
+ * `flush_staking_yield` so the program itself packs a real `StakingReward` into
+ * the outbound buffer — the exact path a production yield-aware Solana contract
+ * exercises. Both instructions are signed by the SOL outpost deployer keypair
+ * (== `global_config.admin`, which is also the `cranker`).
  *
- * Once `add_attestation` lands the entry, the batch-operator plugin
- * picks it up, packs the next `BATCH_OPERATOR_GROUPS` envelope, and
- * the depot dispatches it as `sysio.dclaim::onreward` — same code
- * path a production STAKING_REWARD would exercise.
+ * Once the flush lands the reward, the batch-operator plugin picks it up, packs
+ * the next `BATCH_OPERATOR_GROUPS` envelope, and the depot dispatches it as
+ * `sysio.dclaim::onreward` — same code path a production STAKING_REWARD would.
  */
 
 import Assert from "node:assert"
-import * as crypto from "node:crypto"
 import * as anchor from "@coral-xyz/anchor"
 import {
   Connection,
   Keypair,
   PublicKey,
-  Transaction,
-  TransactionInstruction
+  SystemProgram,
+  Transaction
 } from "@solana/web3.js"
-import {
-  ChainKind,
-  type StakingReward,
-  StakingReward as StakingRewardMsg
-} from "@wireio/opp-typescript-models"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 
 /** Seed for the `OutpostConfig` singleton PDA (mirrors
@@ -39,10 +31,17 @@ import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 const OUTPOST_CONFIG_SEED = Buffer.from("outpost_config")
 /** Seed for the `OutboundMessageBuffer` singleton PDA. */
 const OUTBOUND_MESSAGE_BUFFER_SEED = Buffer.from("outbound_message_buffer")
+/** Seed for the shared liqsol `global_config` PDA (`has_one = admin`). */
+const GLOBAL_CONFIG_SEED = Buffer.from("global_config")
+/** Seed for the outpost `GlobalState` singleton PDA. */
+const OUTPOST_GLOBAL_STATE_SEED = Buffer.from("outpost_global_state")
+/** Seed for the `TokenPurchaseHistory` ring PDA. */
+const TOKEN_PURCHASE_HISTORY_SEED = Buffer.from("token_purchase_history")
+/** Seed prefix for a staker's `OutpostAccount` PDA (`[b"outpost_account", staker]`). */
+const OUTPOST_ACCOUNT_SEED = Buffer.from("outpost_account")
 
-/** Per-staker entry in an `emitYieldBatch` invocation. Mirrors the ETH
- *  side's `YieldEntry` shape for ergonomic symmetry across the two
- *  emitter helpers. */
+/** Per-staker entry in a yield emission. Mirrors the ETH side's `YieldEntry`
+ *  shape for ergonomic symmetry across the two emitter helpers. */
 export interface SolanaYieldEntry {
   /** Solana wallet pubkey of the staker. The 32-byte raw bytes become
    *  the depot-side `StakingReward.staker_native_address.address`
@@ -59,147 +58,95 @@ export interface SolanaYieldEntry {
 }
 
 /**
- * Build a single STAKING_REWARD attestation's encoded proto bytes.
- * Factored out so the test can inspect the payload (e.g. assert the
- * encoded bytes round-trip through `StakingRewardMsg.fromBinary`).
+ * Emit a genuine STAKING_REWARD for one staker through the program's real yield
+ * pipeline: seed the on-chain yield state with the dev instruction
+ * `dev_seed_staker_yield` (seeds `GlobalState`→PostLaunch + the
+ * `TokenPurchaseHistory` ring + the staker's `OutpostAccount`), then crank
+ * `flush_staking_yield` so the program emits the `StakingReward` (WIRE_TOKEN_CODE
+ * = 0, ref derived from the warped SOLANA epoch) into the outbound buffer. Two
+ * separate signed+confirmed transactions (seed, then flush) — the flush reads
+ * the state the seed committed.
  *
- * @param entry            Per-staker triple.
- * @param chainCode        SlugName-packed `uint64` of the Solana outpost
- *                         (e.g. `SlugName.from("SOLANA")`). Stamped onto
- *                         `chain_code` and `reward_amount.token_code`'s
- *                         containing chain frame.
- * @param tokenCode        SlugName-packed `uint64` of the reward token
- *                         (e.g. `SlugName.from("SOL")`).
- * @param externalEpochRef Monotonic-per-staker reference. The depot's
- *                         `sysio.dclaim::onreward` dedupes against this.
- * @param rewardEpochIndex WIRE epoch index — informational.
- */
-export function encodeStakingReward(
-  entry:            SolanaYieldEntry,
-  chainCode:        bigint,
-  tokenCode:        bigint,
-  externalEpochRef: bigint,
-  rewardEpochIndex: number
-): Uint8Array {
-  const reward: StakingReward = {
-    chainCode,
-    stakerWireAccount: { name: entry.wireAccount },
-    shareBps: entry.shareBps,
-    rewardEpochIndex,
-    externalEpochRef,
-    rewardAmount: {
-      tokenCode,
-      amount: entry.rewardAmount
-    },
-    stakerNativeAddress: {
-      kind: ChainKind.SVM,
-      address: entry.staker.toBytes()
-    }
-  }
-  return StakingRewardMsg.toBinary(reward)
-}
-
-/**
- * Push a single STAKING_REWARD attestation through
- * `opp_outpost::add_attestation`. Multiple entries are submitted one
- * call at a time so the depot's per-staker monotonic check sees
- * distinct `external_epoch_ref` values when needed; callers that need
- * a single-tx batch should iterate this helper inside their own
- * `Promise.all` or pass distinct refs per entry.
+ * Each instruction is built via the Anchor `Program` (`.instruction()`) and
+ * submitted through a manual `connection.sendTransaction` +
+ * {@link confirmSignature} (anchor's `.rpc()` confirm is unreliable in the
+ * test-validator env). Only `entry.staker` + `entry.rewardAmount` are used —
+ * the program forces the token code and derives the external epoch ref.
  *
- * The Anchor IDL declares `attestation_type` as the protobuf-derived
- * `AttestationType` enum. Anchor-TS encodes enum variants as
- * `{ <variantName>: {} }`; the matching variant for STAKING_REWARD is
- * `attestationTypeStakingReward`.
- *
- * @param connection         Solana RPC connection (typically `solClient.connection`).
- * @param program            Anchor `Program` bound to `opp_outpost`.
- * @param authority          Deployer keypair = `OutpostConfig.authority`.
- * @param entry              Per-staker triple to emit.
- * @param chainCode          See {@link encodeStakingReward}.
- * @param tokenCode          See {@link encodeStakingReward}.
- * @param externalEpochRef   See {@link encodeStakingReward}.
- * @param rewardEpochIndex   See {@link encodeStakingReward}.
- * @return Confirmed transaction signature.
+ * @param connection Solana RPC connection (typically `solClient.connection`).
+ * @param program    Anchor `Program` bound to the `liqsol_core` dev IDL
+ *                   (exposes `devSeedStakerYield` + `flushStakingYield`).
+ * @param authority  SOL deployer keypair = `global_config.admin`; signs BOTH
+ *                   the seed (as `admin`) and the flush (as `cranker`).
+ * @param entry      Per-staker triple — only `staker` + `rewardAmount` are used.
+ * @return Confirmed signature of the `flush_staking_yield` transaction.
  */
 export async function emitSolanaYield(
-  connection:       Connection,
-  program:          anchor.Program<anchor.Idl>,
-  authority:        Keypair,
-  entry:            SolanaYieldEntry,
-  chainCode:        bigint,
-  tokenCode:        bigint,
-  externalEpochRef: bigint,
-  rewardEpochIndex: number
+  connection: Connection,
+  program:    anchor.Program<anchor.Idl>,
+  authority:  Keypair,
+  entry:      SolanaYieldEntry
 ): Promise<string> {
   Assert.ok(entry.rewardAmount > 0n, "SolanaYieldEmitterTool: rewardAmount must be positive")
-  Assert.ok(externalEpochRef > 0n, "SolanaYieldEmitterTool: externalEpochRef must be positive")
-
-  const encoded = encodeStakingReward(
-    entry,
-    chainCode,
-    tokenCode,
-    externalEpochRef,
-    rewardEpochIndex
-  )
 
   const programId = program.programId
+  const [globalConfigPda] = PublicKey.findProgramAddressSync([GLOBAL_CONFIG_SEED], programId)
+  const [globalStatePda] = PublicKey.findProgramAddressSync([OUTPOST_GLOBAL_STATE_SEED], programId)
+  const [tokenPurchaseHistoryPda] = PublicKey.findProgramAddressSync(
+    [TOKEN_PURCHASE_HISTORY_SEED],
+    programId
+  )
+  const [outpostAccountPda] = PublicKey.findProgramAddressSync(
+    [OUTPOST_ACCOUNT_SEED, entry.staker.toBytes()],
+    programId
+  )
   const [configPda] = PublicKey.findProgramAddressSync([OUTPOST_CONFIG_SEED], programId)
   const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync(
     [OUTBOUND_MESSAGE_BUFFER_SEED],
     programId
   )
 
-  // `add_attestation`'s `AttestationType` arg is declared in the IDL as a
-  // unit enum, but the proto-generated Rust enum carries a custom Borsh
-  // impl that serializes as `i32` (4-byte LE) — see the wire-opp-solana-models
-  // crate (types.rs):
-  //   impl borsh::BorshSerialize for AttestationType { ... as i32 ... }
-  // anchor.Program would encode it as the IDL's 1-byte variant tag,
-  // producing bytes the program's deserializer reads as a corrupted
-  // payload (and the OOM the proto-derived enum's `from(i32)` tries to
-  // allocate a `Vec` over). So we build the instruction by hand with
-  // the correct Borsh shape: 8-byte Anchor discriminator + i32 LE
-  // attestation_type + Vec<u8> data (4-byte LE length + bytes).
-  //
-  // Anchor's instruction discriminator is the first 8 bytes of
-  //   sha256("global:add_attestation")
-  // — same convention every Anchor-generated client uses.
-  const ATTESTATION_TYPE_STAKING_REWARD = 60950 // proto enum value
+  // ── 1. Seed the yield state for this staker ──
+  const seedIx = await program.methods
+    .devSeedStakerYield(entry.staker, new anchor.BN(entry.rewardAmount.toString()))
+    .accounts({
+      admin:                authority.publicKey,
+      globalConfig:         globalConfigPda,
+      globalState:          globalStatePda,
+      tokenPurchaseHistory: tokenPurchaseHistoryPda,
+      outpostAccount:       outpostAccountPda,
+      systemProgram:        SystemProgram.programId
+    })
+    .instruction()
 
-  const discriminator = crypto
-    .createHash("sha256")
-    .update("global:add_attestation")
-    .digest()
-    .subarray(0, 8)
+  const seedSig = await connection.sendTransaction(
+    new Transaction().add(seedIx),
+    [authority],
+    { skipPreflight: false }
+  )
+  await confirmSignature(connection, seedSig, "SolanaYieldEmitterTool dev_seed_staker_yield")
 
-  const dataBuf = Buffer.from(encoded)
-  const ixData = Buffer.alloc(8 + 4 + 4 + dataBuf.length)
-  let off = 0
-  discriminator.copy(ixData, off); off += 8
-  ixData.writeInt32LE(ATTESTATION_TYPE_STAKING_REWARD, off); off += 4
-  ixData.writeUInt32LE(dataBuf.length, off); off += 4
-  dataBuf.copy(ixData, off)
+  // ── 2. Crank the REAL flush — the program emits the StakingReward ──
+  const flushIx = await program.methods
+    .flushStakingYield()
+    .accounts({
+      cranker:                authority.publicKey,
+      globalState:            globalStatePda,
+      tokenPurchaseHistory:   tokenPurchaseHistoryPda,
+      config:                 configPda,
+      outboundMessageBuffer:  outboundMessageBufferPda,
+      systemProgram:          SystemProgram.programId
+    })
+    .remainingAccounts([
+      { pubkey: outpostAccountPda, isSigner: false, isWritable: true }
+    ])
+    .instruction()
 
-  // `AddAttestation` declares exactly 3 accounts (authority, config,
-  // outbound_message_buffer) — the keys below must match that list.
-  const ix = new TransactionInstruction({
-    programId,
-    keys: [
-      { pubkey: authority.publicKey,         isSigner: true,  isWritable: true  },
-      { pubkey: configPda,                   isSigner: false, isWritable: false },
-      { pubkey: outboundMessageBufferPda,    isSigner: false, isWritable: true  }
-    ],
-    data: ixData
-  })
-  const tx = new Transaction().add(ix)
-
-  const sig = await connection.sendTransaction(tx, [authority], {
-    skipPreflight: false
-  })
-
-  // Poll for confirmation via the shared bounded poller — anchor's
-  // .rpc() confirmTransaction is broken in our test-validator env.
-  await confirmSignature(connection, sig, "SolanaYieldEmitterTool add_attestation")
-  return sig
+  const flushSig = await connection.sendTransaction(
+    new Transaction().add(flushIx),
+    [authority],
+    { skipPreflight: false }
+  )
+  await confirmSignature(connection, flushSig, "SolanaYieldEmitterTool flush_staking_yield")
+  return flushSig
 }
