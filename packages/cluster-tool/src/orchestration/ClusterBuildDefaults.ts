@@ -55,6 +55,19 @@ const MinFromWireAmount = 100_000_000
  * flows never pay it and system-caused reverts refund in full.
  */
 const FromWireRevertFeeBps = 10
+/**
+ * Epochs a PENDING uwreq may wait for its underwriter race before
+ * `sysio.uwrit::pruneuwreqs` expires it (refund/revert + EXPIRED). Mirrors
+ * the contract default; flow races resolve within an epoch, so the timeout
+ * only fires for genuinely abandoned requests (SEC-129 / WSA-223).
+ */
+const UwreqPendingTimeoutEpochs = 10
+/**
+ * Epochs a terminal (COMPLETED / REJECTED / EXPIRED) uwreq row is retained
+ * for audit before `sysio.uwrit::pruneuwreqs` erases it. Mirrors the
+ * contract default (SEC-129 / WSA-223).
+ */
+const UwreqRetentionEpochs = 10
 /** Epoch envelope-log retention. */
 const EnvelopeLogRetentionEpochs = 10
 /** Dev-default batch-operator group COUNT (sliding-window schedule; per-flow overridable via ClusterConfig). */
@@ -710,7 +723,9 @@ export namespace ClusterBuildDefaults {
           fee_bps: SwapFeeBps,
           collateral_lock_duration_ms: CollateralLockDurationMs,
           min_fromwire_amount: MinFromWireAmount,
-          fromwire_revert_fee_bps: FromWireRevertFeeBps
+          fromwire_revert_fee_bps: FromWireRevertFeeBps,
+          uwreq_pending_timeout_epochs: UwreqPendingTimeoutEpochs,
+          uwreq_retention_epochs: UwreqRetentionEpochs
         }
       )
     )
