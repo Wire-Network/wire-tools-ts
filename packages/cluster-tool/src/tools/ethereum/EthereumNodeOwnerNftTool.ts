@@ -1,7 +1,7 @@
 /**
  * NodeOwnerNFTTool — helpers for the flow-node-owner-nft test.
  *
- * Wraps two surfaces:
+ * Wraps three surfaces:
  *
  *   - MockWireNodes.sol (wire-ethereum `contracts/test/outpost/`):
  *     ERC-1155 stand-in for the production WireNodes NFT
@@ -9,14 +9,19 @@
  *     `1 ether` mint price so anvil can drive it without a Chainlink
  *     fixture.
  *
+ *   - BAR.sol `commitNode` (wire-ethereum `contracts/outpost/`): the
+ *     PRODUCTION claim entry point. Emits the full NODE_OWNER_REG
+ *     `NodeOwnerRegistration` attestation via OPP, which the depot
+ *     (`sysio.msgch::dispatch_node_owner_reg`) consumes end-to-end.
+ *
  *   - sysio.roa create-in-flow node-owner registration (wire-sysio):
- *     the production depot (sysio.msgch) decodes an inbound OPP
- *     NodeOwnerRegistration and inline-sends sysio.roa::newnameduser
- *     (create the account from the claim's Wire key) then
- *     sysio.roa::nodeownreg (register + inline-record the depositor's
- *     ETH link in sysio.authex). This flow drives those two roa actions
- *     directly (as the depot inline-sends them) — matching the patch's
- *     own integration test (tests/nodeownreg_test.py).
+ *     the two actions the depot inline-sends when an inbound
+ *     NodeOwnerRegistration decodes — sysio.roa::newnameduser (create
+ *     the account from the claim's Wire key) then sysio.roa::nodeownreg
+ *     (register + inline-record the depositor's ETH link in
+ *     sysio.authex). The flow's soft-fail / hard-abort probes drive
+ *     these directly (as the depot inline-sends them); the commit path
+ *     above exercises the same pair through the real OPP hop.
  */
 
 import Assert from "node:assert"
@@ -24,7 +29,7 @@ import Fs from "node:fs"
 import Path from "node:path"
 import { ethers } from "ethers"
 import { SysioContracts } from "@wireio/sdk-core"
-import { NodeOwnerTier } from "@wireio/opp-typescript-models"
+import { NodeOwnerTier, type WireKey } from "@wireio/opp-typescript-models"
 
 import type { WireClient } from "../../clients/wire/WireClient.js"
 import { contractView } from "../../utils/ethereumUtils.js"
@@ -115,6 +120,90 @@ export async function mintNodeNFT(
   const tx = await contract.mint(tier, amount, { value })
   const receipt = await tx.wait()
   Assert.ok(receipt, "mintNodeNFT: receipt is null")
+  return receipt
+}
+
+/** Minimal `ethers` surface of `BAR.sol` for the node-owner commit path. */
+export interface BarContract extends ethers.BaseContract {
+  commitNode: (
+    nftAddress: string,
+    tokenId: bigint | number,
+    wireAccountName: string,
+    wirePubKey: WireKey,
+    depositorPubKey: string,
+    overrides?: ethers.Overrides
+  ) => Promise<ethers.ContractTransactionResponse>
+  getAddress: () => Promise<string>
+}
+
+/**
+ * Load the hardhat-emitted `BAR.json` artifact from wire-ethereum and look up
+ * its deployed address from the matching `outpost-addrs.json`. Mirrors
+ * {@link loadMockWireNodes} exactly so callers can read both off the same
+ * `outpostAddrs` map.
+ */
+export function loadBar(
+  ethereumPath: string,
+  outpostAddrs: Record<string, string>,
+  signer: ethers.Signer
+): BarContract {
+  const addr = outpostAddrs.BAR
+  Assert.ok(
+    addr && /^0x[0-9a-fA-F]{40}$/.test(addr),
+    `NodeOwnerNFTTool: BAR not in outpost-addrs.json (got ${addr}). ` +
+      `Did wire-ethereum's deployLocal.ts run?`
+  )
+
+  const artifactPath = Path.join(
+    ethereumPath,
+    "artifacts",
+    "contracts",
+    "outpost",
+    "BAR.sol",
+    "BAR.json"
+  )
+  Assert.ok(
+    Fs.existsSync(artifactPath),
+    `NodeOwnerNFTTool: artifact not found at ${artifactPath}. ` +
+      `Run \`npx hardhat compile\` in wire-ethereum first.`
+  )
+  const artifact = JSON.parse(Fs.readFileSync(artifactPath, "utf-8"))
+  return contractView<BarContract>(addr, artifact.abi, signer)
+}
+
+/**
+ * Commit a node NFT via `BAR.commitNode` — the production claim entry point.
+ * The contract validates every payload class the depot would silently drop
+ * (tier from the tokenId, name charset/length, Wire key usability, the
+ * depositor key deriving the caller) and queues the full
+ * `NodeOwnerRegistration` NODE_OWNER_REG attestation for the next outbound
+ * OPP envelope.
+ *
+ * @param contract - The signer-bound BAR surface; the signer must hold ≥ 1 of `tier` and match `depositorPubKey`.
+ * @param nftAddress - The WireNodes ERC-1155 contract address.
+ * @param tier - The claimed tier — WireNodes token ids ARE the tiers, so this is also the tokenId.
+ * @param wireAccountName - The Wire account to register (created in-flow when absent).
+ * @param wirePubKey - The account's owner/active authority as the proto `WireKey`.
+ * @param depositorPubKey - The caller's 65-byte SEC1 uncompressed public key (`0x04 || X || Y`).
+ * @returns The mined receipt.
+ */
+export async function commitNode(
+  contract: BarContract,
+  nftAddress: string,
+  tier: NodeOwnerTier,
+  wireAccountName: string,
+  wirePubKey: WireKey,
+  depositorPubKey: string
+): Promise<ethers.ContractTransactionReceipt> {
+  const tx = await contract.commitNode(
+    nftAddress,
+    tier,
+    wireAccountName,
+    wirePubKey,
+    depositorPubKey
+  )
+  const receipt = await tx.wait()
+  Assert.ok(receipt, "commitNode: receipt is null")
   return receipt
 }
 
