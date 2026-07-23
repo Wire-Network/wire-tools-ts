@@ -41,6 +41,7 @@ export interface ClusterBuildOptions {
   epochRetentionEnvelopeLogCount?: number
   warmupEpochs?: number
   cooldownEpochs?: number
+  solanaEpochWarp?: boolean
   // network binding
   bindAll?: boolean
   bind?: BindOptions

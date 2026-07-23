@@ -79,6 +79,18 @@ describe("ClusterConfigProvider", () => {
         BindConfigProvider.DefaultSolanaFaucet
       )
     })
+
+    it("round-trips solanaEpochWarp (default OFF, and ON when a flow opts in)", () => {
+      expect(ClusterConfigProvider.DefaultSolanaEpochWarp).toBe(false)
+      const off = ClusterConfigProvider.deserialize(
+        ClusterConfigProvider.serialize(fixtureConfig())
+      )
+      expect(off.solanaEpochWarp).toBe(false)
+      const on = ClusterConfigProvider.deserialize(
+        JSON.stringify({ ...PersistedFixture, solanaEpochWarp: true })
+      )
+      expect(on.solanaEpochWarp).toBe(true)
+    })
   })
 
   describe("save / loadSync round-trip", () => {

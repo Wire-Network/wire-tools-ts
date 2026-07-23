@@ -38,6 +38,7 @@ const stubConfig: ClusterConfig = {
   terminateMaxConsecutiveMisses: null,
   terminateMaxPercentMisses24h: null,
   terminateWindowMs: null,
+  solanaEpochWarp: false,
   ethereumPath: "/eth",
   solanaPath: "/sol",
   bind: {
