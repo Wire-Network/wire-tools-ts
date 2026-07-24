@@ -1,5 +1,6 @@
 import {
   ClusterStateNodeRole,
+  ClusterStateSchemaCodec,
   type ClusterState,
   type ClusterStateNode
 } from "@wireio/cluster-tool-shared"
@@ -66,5 +67,24 @@ describe("ClusterStateNode / ClusterState shape", () => {
       solanaIdlFile: "/cluster/data/idl.json"
     }
     expect(withSolana.solanaIdlFile).toBe("/cluster/data/idl.json")
+  })
+
+  it("round-trips through ClusterStateSchemaCodec", () => {
+    expect(
+      ClusterStateSchemaCodec.deserialize(ClusterStateSchemaCodec.serialize(state))
+    ).toEqual(state)
+  })
+
+  it("allows null anvilStateFile/solanaLedgerPath (external-outpost mode)", () => {
+    const external: ClusterState = {
+      ...state,
+      anvilStateFile: null,
+      solanaLedgerPath: null
+    }
+    const rehydrated = ClusterStateSchemaCodec.deserialize(
+      ClusterStateSchemaCodec.serialize(external)
+    )
+    expect(rehydrated.anvilStateFile).toBeNull()
+    expect(rehydrated.solanaLedgerPath).toBeNull()
   })
 })

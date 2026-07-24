@@ -1,4 +1,9 @@
-import type { ClusterStateNode } from "@wireio/cluster-tool-shared"
+import {
+  ClusterStateNodeSchema,
+  SchemaCodec,
+  type ClusterStateNode
+} from "@wireio/cluster-tool-shared"
+import { z } from "zod"
 
 /** Classifies a monitored process for display grouping and fallback handling. */
 export enum PidSourceKind {
@@ -78,3 +83,59 @@ export interface GetProcessLivenessResponse {
 
 /** Empty params object for the `ProcessLiveness` stream subscription. */
 export interface ProcessLivenessStreamParams {}
+
+// ---------------------------------------------------------------------------
+//  Zod schemas + codecs (validated plain-JSON RPC bodies) — each bound to its
+//  interface via the explicit codec generic, so a drift fails the build.
+// ---------------------------------------------------------------------------
+
+/** Schema for a {@link PidSource}; `node` reuses the shared {@link ClusterStateNodeSchema}. */
+export const PidSourceSchema = z.object({
+  label: z.string(),
+  pidPath: z.string(),
+  directory: z.string(),
+  kind: z.enum(PidSourceKind),
+  node: ClusterStateNodeSchema.optional()
+})
+
+/** Schema for a {@link ProcessLivenessSnapshot}. */
+export const ProcessLivenessSnapshotSchema = z.object({
+  label: z.string(),
+  pid: z.number().nullable(),
+  alive: z.boolean(),
+  lastCheckedAt: z.number(),
+  exitedAt: z.number().nullable()
+})
+
+/** Schema for {@link ListProcessesRequest} (empty body). */
+export const ListProcessesRequestSchema = z.object({})
+/** Codec for the `Processes.List` request body. */
+export const ListProcessesRequestSchemaCodec =
+  SchemaCodec.create<ListProcessesRequest>(ListProcessesRequestSchema)
+
+/** Schema for {@link ListProcessesResponse}. */
+export const ListProcessesResponseSchema = z.object({
+  sources: z.array(PidSourceSchema)
+})
+/** Codec for the `Processes.List` response body. */
+export const ListProcessesResponseSchemaCodec =
+  SchemaCodec.create<ListProcessesResponse>(ListProcessesResponseSchema)
+
+/** Schema for {@link GetProcessLivenessRequest}. */
+export const GetProcessLivenessRequestSchema = z.object({
+  labels: z.array(z.string())
+})
+/** Codec for the `Processes.GetLiveness` request body. */
+export const GetProcessLivenessRequestSchemaCodec =
+  SchemaCodec.create<GetProcessLivenessRequest>(GetProcessLivenessRequestSchema)
+
+/** Schema for {@link GetProcessLivenessResponse}. */
+export const GetProcessLivenessResponseSchema = z.object({
+  snapshots: z.array(ProcessLivenessSnapshotSchema)
+})
+/** Codec for the `Processes.GetLiveness` response body. (Generic inferred — the
+ *  nullable `pid`/`exitedAt` infer optional under strictNullChecks-off, which the
+ *  explicit interface generic would reject.) */
+export const GetProcessLivenessResponseSchemaCodec = SchemaCodec.create(
+  GetProcessLivenessResponseSchema
+)

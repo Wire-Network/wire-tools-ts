@@ -1,3 +1,7 @@
+import { z } from "zod"
+
+import { SchemaCodec } from "../schema/index.js"
+
 /**
  * The transport a resolved port will be bound with. TCP ports are fully
  * covered by `get-port`'s probe; UDP ports (the validator's gossip socket and
@@ -10,80 +14,60 @@ export enum BindConfigPortProtocol {
 }
 
 /** One nodeop's `{ http, p2p }` listen ports. */
-export interface BindConfigNodeopPorts {
+export const BindConfigNodeopPortsSchema = z.object({
   /** HTTP (RPC) listen port. */
-  http: number
+  http: z.number(),
   /** P2P listen port. */
-  p2p: number
-}
+  p2p: z.number()
+})
+/** One nodeop's `{ http, p2p }` listen ports. */
+export type BindConfigNodeopPorts = z.infer<typeof BindConfigNodeopPortsSchema>
 
 /** The full nodeop port set across the cluster (one pair per node, per role). */
-export interface BindConfigNodeopClusterPorts {
+export const BindConfigNodeopClusterPortsSchema = z.object({
   /** The bios node's port pair. */
-  bios: BindConfigNodeopPorts
+  bios: BindConfigNodeopPortsSchema,
   /** One port pair per producer node. */
-  producers: BindConfigNodeopPorts[]
+  producers: z.array(BindConfigNodeopPortsSchema),
   /** One port pair per batch-operator node. */
-  batch: BindConfigNodeopPorts[]
+  batch: z.array(BindConfigNodeopPortsSchema),
   /** One port pair per underwriter node. */
-  underwriters: BindConfigNodeopPorts[]
-}
+  underwriters: z.array(BindConfigNodeopPortsSchema)
+})
+/** The full nodeop port set across the cluster (one pair per node, per role). */
+export type BindConfigNodeopClusterPorts = z.infer<
+  typeof BindConfigNodeopClusterPortsSchema
+>
 
 /** A daemon that listens on one address + one port (kiod, anvil, debuggingServer). */
-export interface BindConfigDaemon {
+export const BindConfigDaemonSchema = z.object({
   /** Listen address (loopback by default; `0.0.0.0` under bind-all). */
-  address: string
+  address: z.string(),
   /** Listen port. */
-  port: number
-}
+  port: z.number()
+})
+/** A daemon that listens on one address + one port (kiod, anvil, debuggingServer). */
+export type BindConfigDaemon = z.infer<typeof BindConfigDaemonSchema>
 
 /** nodeop: one bind address, the cluster-wide nodeop port set. */
-export interface BindConfigNodeop {
+export const BindConfigNodeopSchema = z.object({
   /** Listen address shared by every nodeop in the cluster. */
-  address: string
-  /** The cluster-wide node
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   *
-   * op port set, by role. */
-  ports: BindConfigNodeopClusterPorts
-}
+  address: z.string(),
+  /** The cluster-wide nodeop port set, by role. */
+  ports: BindConfigNodeopClusterPortsSchema
+})
+/** nodeop: one bind address, the cluster-wide nodeop port set. */
+export type BindConfigNodeop = z.infer<typeof BindConfigNodeopSchema>
 
 /** An inclusive contiguous port window (`first`..`last`). */
-export interface BindConfigPortRange {
+export const BindConfigPortRangeSchema = z.object({
   /** First port of the window (inclusive). */
-  first: number
+  first: z.number(),
   /** Last port of the window (inclusive). */
-  last: number
-}
+  last: z.number()
+})
+/** An inclusive contiguous port window (`first`..`last`). */
+export type BindConfigPortRange = z.infer<typeof BindConfigPortRangeSchema>
 
 /**
  * solana ports — `http` is the RPC port, `faucet` the airdrop faucet.
@@ -99,43 +83,91 @@ export interface BindConfigPortRange {
  * silently) and each forwards transactions into the other's TPU, which drops
  * foreign-genesis packets — airdrops/txs return signatures that never land.
  */
-export interface BindConfigSolanaPorts {
+export const BindConfigSolanaPortsSchema = z.object({
   /** JSON-RPC listen port. */
-  http: number
+  http: z.number(),
   /** Airdrop faucet port. */
-  faucet: number
-  /** The validator's `--gossip-port` (see the interface note). */
-  gossip: number
-  /** The validator's `--dynamic-port-range` window (see the interface note). */
-  dynamicRange: BindConfigPortRange
-}
+  faucet: z.number(),
+  /** The validator's `--gossip-port` (see the schema note). */
+  gossip: z.number(),
+  /** The validator's `--dynamic-port-range` window (see the schema note). */
+  dynamicRange: BindConfigPortRangeSchema
+})
+/** solana-test-validator's resolved port set (see {@link BindConfigSolanaPortsSchema}). */
+export type BindConfigSolanaPorts = z.infer<typeof BindConfigSolanaPortsSchema>
 
 /** solana-test-validator: one bind address + its port set. */
-export interface BindConfigSolana {
+export const BindConfigSolanaSchema = z.object({
   /** Listen address. */
-  address: string
+  address: z.string(),
   /** The validator's resolved port set. */
-  ports: BindConfigSolanaPorts
-}
+  ports: BindConfigSolanaPortsSchema
+})
+/** solana-test-validator: one bind address + its port set. */
+export type BindConfigSolana = z.infer<typeof BindConfigSolanaSchema>
 
 /**
  * A cluster's complete network binding — the five daemons' resolved
- * address/port shapes. THE canonical `BindConfig` type — plain data;
+ * address/port shapes. THE canonical `BindConfig` schema — plain data;
  * `BindConfigProvider` (cluster-tool) resolves, validates, and registers it.
  * Persisted verbatim as the `bind` member of `cluster-config.json`.
  */
-export interface BindConfig {
+export const BindConfigSchema = z.object({
   /** kiod wallet daemon binding. */
-  kiod: BindConfigDaemon
+  kiod: BindConfigDaemonSchema,
   /** nodeop fleet binding. */
-  nodeop: BindConfigNodeop
+  nodeop: BindConfigNodeopSchema,
   /** anvil (Ethereum) binding. */
-  anvil: BindConfigDaemon
+  anvil: BindConfigDaemonSchema,
   /** solana-test-validator binding. */
-  solana: BindConfigSolana
+  solana: BindConfigSolanaSchema,
   /** embedded debugging server binding. */
-  debuggingServer: BindConfigDaemon
-}
+  debuggingServer: BindConfigDaemonSchema
+})
+/** THE canonical `BindConfig` type — the schema-inferred shape of {@link BindConfigSchema}. */
+export type BindConfig = z.infer<typeof BindConfigSchema>
+
+/** Validated codec for the persisted `BindConfig` (the `--bind-config` / `--external-bind-config` gate). */
+export const BindConfigSchemaCodec = SchemaCodec.create<BindConfig>(BindConfigSchema)
+
+const BindConfigDaemonOptionsSchema = BindConfigDaemonSchema.partial()
+const BindConfigNodeopPortsOptionsSchema = BindConfigNodeopPortsSchema.partial()
+const BindConfigNodeopClusterPortsOptionsSchema = z.object({
+  bios: BindConfigNodeopPortsOptionsSchema.optional(),
+  producers: z.array(BindConfigNodeopPortsOptionsSchema).optional(),
+  batch: z.array(BindConfigNodeopPortsOptionsSchema).optional(),
+  underwriters: z.array(BindConfigNodeopPortsOptionsSchema).optional()
+})
+const BindConfigNodeopOptionsSchema = z.object({
+  address: z.string().optional(),
+  ports: BindConfigNodeopClusterPortsOptionsSchema.optional()
+})
+const BindConfigSolanaPortsOptionsSchema = z.object({
+  http: z.number().optional(),
+  faucet: z.number().optional(),
+  gossip: z.number().optional(),
+  // dynamicRange stays pin-whole (a BindAtom — half a window is meaningless).
+  dynamicRange: BindConfigPortRangeSchema.optional()
+})
+const BindConfigSolanaOptionsSchema = z.object({
+  address: z.string().optional(),
+  ports: BindConfigSolanaPortsOptionsSchema.optional()
+})
+
+/**
+ * Runtime validator for a PARTIAL (or complete) caller-supplied bind override —
+ * every field optional at every level (zod v4 has no deep-partial, so this is
+ * composed per-level from the resolved schemas, with `dynamicRange` kept
+ * pin-whole). `--bind-config` (Phase 5) classifies complete-vs-partial via
+ * {@link BindConfigSchemaCodec}'s `check`, then validates the partial form here.
+ */
+export const BindOptionsSchema = z.object({
+  kiod: BindConfigDaemonOptionsSchema.optional(),
+  nodeop: BindConfigNodeopOptionsSchema.optional(),
+  anvil: BindConfigDaemonOptionsSchema.optional(),
+  solana: BindConfigSolanaOptionsSchema.optional(),
+  debuggingServer: BindConfigDaemonOptionsSchema.optional()
+})
 
 /**
  * Shapes treated as indivisible when deriving caller overrides: a pinned value

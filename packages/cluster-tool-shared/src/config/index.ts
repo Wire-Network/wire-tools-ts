@@ -1,2 +1,5 @@
 export * from "./BindConfig.js"
 export * from "./ClusterConfig.js"
+export * from "./ExternalClusterConfig.js"
+export * from "./ExternalOutpostConfig.js"
+export * from "./SignatureProviderConfig.js"

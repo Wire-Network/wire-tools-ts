@@ -58,6 +58,11 @@ export class EthereumClient {
     return this.provider.getBalance(address)
   }
 
+  /** The chain id the connected RPC endpoint reports (endpoint-liveness probe). */
+  async chainId(): Promise<number> {
+    return Number((await this.provider.getNetwork()).chainId)
+  }
+
   /** Mine `blocks` blocks (anvil `evm_mine`). */
   async mine(blocks = 1): Promise<void> {
     await Promise.all(

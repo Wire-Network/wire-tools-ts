@@ -1,3 +1,5 @@
+import { SchemaCodec } from "@wireio/cluster-tool-shared"
+import { z } from "zod"
 import type {
   ProcessLivenessEvent,
   ProcessLivenessStreamParams
@@ -28,19 +30,22 @@ export enum StreamTopic {
  * of truth for what a topic accepts and what it emits — both server and
  * client narrow off this interface at the point of subscribe / dispatch.
  */
+/** A stream topic's params + event pairing carried by {@link StreamMap}. */
+export interface StreamTopicBinding<Params, Event> {
+  params: Params
+  event: Event
+}
+
 export interface StreamMap {
-  [StreamTopic.ProcessLiveness]: {
-    params: ProcessLivenessStreamParams
-    event: ProcessLivenessEvent
-  }
-  [StreamTopic.LogTail]: {
-    params: LogTailParams
-    event: LogTailEvent
-  }
-  [StreamTopic.EnvelopeWatch]: {
-    params: EnvelopeWatchStreamParams
-    event: EnvelopeEvent
-  }
+  [StreamTopic.ProcessLiveness]: StreamTopicBinding<
+    ProcessLivenessStreamParams,
+    ProcessLivenessEvent
+  >
+  [StreamTopic.LogTail]: StreamTopicBinding<LogTailParams, LogTailEvent>
+  [StreamTopic.EnvelopeWatch]: StreamTopicBinding<
+    EnvelopeWatchStreamParams,
+    EnvelopeEvent
+  >
 }
 
 /** Extract the params type for a given topic. */
@@ -168,60 +173,59 @@ export type StreamFrame =
   | ErrorFrame
 
 // ---------------------------------------------------------------------------
-//  Type guards
+//  Wire validation — StreamFrameSchemaCodec (envelope; payload/params opaque)
 // ---------------------------------------------------------------------------
 
+// Each variant validates its hand-rolled ENVELOPE fields; the topic-specific
+// `params` / `payload` (some proto-derived) are opaque passthroughs — validated
+// by their own path, NEVER re-declared here (never-rewrap-generated-proto-types).
+// `topic` stays `z.string()` so an unknown topic reaches the server's graceful
+// `UnknownTopic` path instead of being rejected as a malformed frame.
+const SubscribeFrameSchema = z.object({
+  type: z.literal(StreamFrameType.Subscribe),
+  id: z.number(),
+  topic: z.string(),
+  params: z.unknown()
+})
+const SubscribedFrameSchema = z.object({
+  type: z.literal(StreamFrameType.Subscribed),
+  id: z.number()
+})
+const EventFrameSchema = z.object({
+  type: z.literal(StreamFrameType.Event),
+  id: z.number(),
+  payload: z.unknown()
+})
+const UnsubscribeFrameSchema = z.object({
+  type: z.literal(StreamFrameType.Unsubscribe),
+  id: z.number()
+})
+const ClosedFrameSchema = z.object({
+  type: z.literal(StreamFrameType.Closed),
+  id: z.number(),
+  reason: z.enum(ClosedReason)
+})
+const ErrorFrameSchema = z.object({
+  type: z.literal(StreamFrameType.Error),
+  code: z.enum(StreamErrorCode),
+  message: z.string()
+})
+
+/** Discriminated union over every wire frame — validates the envelope on both ends. */
+export const StreamFrameSchema = z.discriminatedUnion("type", [
+  SubscribeFrameSchema,
+  SubscribedFrameSchema,
+  EventFrameSchema,
+  UnsubscribeFrameSchema,
+  ClosedFrameSchema,
+  ErrorFrameSchema
+])
+
 /**
- * Structural guard for a parsed `StreamFrame`. Accepts only objects whose
- * `type` matches a known `StreamFrameType`. Doesn't validate per-variant
- * fields beyond the discriminant — the per-variant guards below tighten
- * that when the dispatcher cares.
+ * The {@link SchemaCodec} for a wire {@link StreamFrame} — validated
+ * parse/serialize at the WebSocket boundary (replaces the hand-rolled
+ * `isStreamFrame` + per-variant guards). The generic frame interfaces above
+ * remain the app type model (typed `params`/`payload` per topic); this codec is
+ * the boundary validator with `params`/`payload` as opaque passthroughs.
  */
-export function isStreamFrame(value: unknown): value is StreamFrame {
-  if (typeof value !== "object" || value === null) return false
-  const t = (value as { type?: unknown }).type
-  return (
-    t === StreamFrameType.Subscribe ||
-    t === StreamFrameType.Subscribed ||
-    t === StreamFrameType.Event ||
-    t === StreamFrameType.Unsubscribe ||
-    t === StreamFrameType.Closed ||
-    t === StreamFrameType.Error
-  )
-}
-
-/** Narrow a `StreamFrame` to a `SubscribeFrame`. */
-export function isSubscribeFrame(
-  frame: StreamFrame
-): frame is SubscribeFrame<StreamTopic> {
-  return frame.type === StreamFrameType.Subscribe
-}
-
-/** Narrow a `StreamFrame` to a `SubscribedFrame`. */
-export function isSubscribedFrame(frame: StreamFrame): frame is SubscribedFrame {
-  return frame.type === StreamFrameType.Subscribed
-}
-
-/** Narrow a `StreamFrame` to an `EventFrame`. */
-export function isEventFrame(
-  frame: StreamFrame
-): frame is EventFrame<StreamTopic> {
-  return frame.type === StreamFrameType.Event
-}
-
-/** Narrow a `StreamFrame` to an `UnsubscribeFrame`. */
-export function isUnsubscribeFrame(
-  frame: StreamFrame
-): frame is UnsubscribeFrame {
-  return frame.type === StreamFrameType.Unsubscribe
-}
-
-/** Narrow a `StreamFrame` to a `ClosedFrame`. */
-export function isClosedFrame(frame: StreamFrame): frame is ClosedFrame {
-  return frame.type === StreamFrameType.Closed
-}
-
-/** Narrow a `StreamFrame` to an `ErrorFrame`. */
-export function isErrorFrame(frame: StreamFrame): frame is ErrorFrame {
-  return frame.type === StreamFrameType.Error
-}
+export const StreamFrameSchemaCodec = SchemaCodec.create(StreamFrameSchema)

@@ -1,5 +1,6 @@
 import Assert from "node:assert"
-import type { ClusterConfig } from "@wireio/cluster-tool-shared"
+import { type ClusterConfig } from "@wireio/cluster-tool-shared"
+import { KeyType } from "@wireio/sdk-core"
 import { execFile } from "node:child_process"
 import Fs from "node:fs"
 import Path from "node:path"
@@ -14,7 +15,7 @@ import { getLogger } from "../../logging/Logger.js"
 import type { OperatorAccount } from "../../orchestration/outputs/OperatorAccount.js"
 import { probeEndpoint } from "../../utils/asyncUtils.js"
 import { existsAsync, mkdirs } from "../../utils/fsUtils.js"
-import { Localhost, toURL } from "../../utils/netUtils.js"
+import { toDialAddress, toURL } from "../../utils/netUtils.js"
 import { ManagedProcess } from "./ManagedProcess.js"
 import type { ProcessManager } from "./ProcessManager.js"
 
@@ -244,9 +245,12 @@ export class NodeopProcess extends ManagedProcess {
     )
   }
 
-  /** Loopback dial URL for this node's HTTP API. */
+  /** Dial URL for this node's HTTP API — the bind address mapped through {@link toDialAddress}. */
   get httpUrl(): string {
-    return toURL(this.config.node.ports.http, Localhost)
+    return toURL(
+      this.config.node.ports.http,
+      toDialAddress(this.config.node.cluster.bind.nodeop.address)
+    )
   }
 
   /**
@@ -311,13 +315,27 @@ export namespace NodeopProcess {
     const { node, operator, tuning } = config,
       cluster = node.cluster,
       listen = cluster.bind.nodeop.address,
+      // The bios genesis key is a bootstrap dev key (inline KEY always, never
+      // SSM-managed); every other producing node's signing keys use the
+      // cluster's provider source (SSM:/KIOD: render correctly; KEY byte-identical).
+      baseKeySourceFor = ClusterConfigProvider.signatureProviderSource(cluster),
+      keySourceFor = (
+        account: string,
+        keyType: KeyType
+      ): KeyGenerator.SignatureProviderSource =>
+        node.role === NodeRole.bios
+          ? KeyGenerator.DefaultKeySource
+          : baseKeySourceFor(account, keyType),
       isProducing =
         node.producers.length > 0 && operator != null && operator.bls != null
     return [
       cluster.executables.nodeop,
       ...pair("--blocks-dir", tuning.blocksPath),
       ...pair("--p2p-listen-endpoint", `${listen}:${node.ports.p2p}`),
-      ...pair("--p2p-server-address", `${Localhost}:${node.ports.p2p}`),
+      ...pair(
+        "--p2p-server-address",
+        `${toDialAddress(listen)}:${node.ports.p2p}`
+      ),
       ...node.peerEndpoints.flatMap(peer => pair("--p2p-peer-address", peer)),
       ...(node.role === NodeRole.bios ? ["--enable-stale-production"] : []),
       ...pluginArgs(AlwaysOnPlugins),
@@ -326,11 +344,19 @@ export namespace NodeopProcess {
             ...pluginArgs(ProducerPlugins),
             ...pair(
               "--signature-provider",
-              KeyGenerator.toSignatureProvider(operator.wire)
+              KeyGenerator.toSignatureProvider(
+                operator.wire,
+                undefined,
+                keySourceFor(node.name, KeyType.K1)
+              )
             ),
             ...pair(
               "--signature-provider",
-              KeyGenerator.toSignatureProvider(operator.bls)
+              KeyGenerator.toSignatureProvider(
+                operator.bls,
+                undefined,
+                keySourceFor(node.name, KeyType.BLS)
+              )
             ),
             ...node.producers.flatMap(name => pair("--producer-name", name))
           ]

@@ -287,6 +287,9 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
     "SWAP with non-native tokens (USDC / USDT / USDCSOL / USDTSOL) across both outposts"
 
   override readonly defaults: ClusterBuildOptions = {
+    // Seed the mock (chain, token) PRIMARY reserves this flow reads — `regreserve`
+    // is epoch-0-gated by the depot, so it must ride the bootstrap, not a flow phase.
+    enableMockReserves: true,
     epochDurationSec: Timing.EpochDurationSec,
     // The underwriter must bond on every (chain, token) leg this flow's swap
     // matrix touches — `sysio.uwrit::createuwreq` re-checks `meets_role_min`

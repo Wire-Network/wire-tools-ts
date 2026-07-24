@@ -27,6 +27,41 @@ import eslint from "@eslint/js"
 import tseslint from "typescript-eslint"
 import prettier from "eslint-config-prettier"
 
+// prefer-lodash-identity.md (author law, 2026-07-21): an identity arrow `x => x`
+// IS lodash `identity` — import { identity } from "lodash". A custom rule because
+// no-restricted-syntax (esquery) cannot assert body-name === param-name.
+const wireLocalPlugin = {
+  meta: { name: "wire-local" },
+  rules: {
+    "no-identity-arrow": {
+      meta: {
+        type: "problem",
+        docs: { description: "Use lodash `identity` instead of an `x => x` arrow." },
+        messages: {
+          useLodashIdentity:
+            "Use `identity` from lodash instead of an `x => x` arrow (prefer-lodash-identity.md)."
+        },
+        schema: []
+      },
+      create(context) {
+        return {
+          ArrowFunctionExpression(node) {
+            const [param] = node.params
+            if (
+              node.params.length === 1 &&
+              param.type === "Identifier" &&
+              node.body.type === "Identifier" &&
+              node.body.name === param.name
+            ) {
+              context.report({ node, messageId: "useLodashIdentity" })
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 // STYLE.md "match() over switch always".
 const BanSwitch = {
   selector: "SwitchStatement",
@@ -112,11 +147,33 @@ const BanMemberCoalesceDeclarator = {
     "Destructure with a default — `const { member: local = Default } = obj` — not `const local = obj.member ?? Default` (STYLE.md 'Destructuring over member-coalesce')."
 }
 
+// nested-error-preserve-cause.md (author law, 2026-07-21): NEVER rewrite a caught
+// error into a bare Error that restrings it — the root cause + its stack + message
+// are SWALLOWED. Wrap it: NestedError(message, { cause, context }). (a) the restring
+// tell — a caught error's `.message`/`.stack` (or `toMessage(err)`) interpolated
+// into a new Error.
+const BanErrorMessageRestring = {
+  selector:
+    "NewExpression[callee.name=/^(Error|TypeError|RangeError|EvalError|SyntaxError|URIError)$/] :matches(CallExpression[callee.name='toMessage'], MemberExpression[property.name=/^(message|stack)$/][object.name=/^(err|error|e|ex|cause|reason)$/])",
+  message:
+    "Don't restring a caught error into a bare Error — use NestedError(message, { cause, context }) so the root cause + its stack survive (nested-error-preserve-cause.md)."
+}
+// (b) a bare (no-cause) native Error constructed inside an error handler that
+// RECEIVES the error (Either.mapLeft/ifLeft/recoverWith, Promise.catch,
+// Future.onFailure) — it discards the very error being handled. Throw a
+// NestedError with { cause }. NOT Option's orElse/ifNone — those handle ABSENCE
+// (a None is not an error), so a fresh Error there has no cause to preserve.
+const BanBareErrorInHandler = {
+  selector:
+    "CallExpression[callee.property.name=/^(mapLeft|ifLeft|catch|recoverWith|onFailure)$/] NewExpression[callee.name=/^(Error|TypeError|RangeError|EvalError|SyntaxError|URIError)$/][arguments.length<2]",
+  message:
+    "A bare Error in an error handler (mapLeft/ifLeft/catch/recoverWith/onFailure) SWALLOWS the handled error — throw a NestedError with { cause } (nested-error-preserve-cause.md)."
+}
+
 // Pre-existing `| null` return-type debt, grandfathered — prefer-null forbids
 // sweeping untouched files. RATCHET: when you touch one of these files, clean
 // its return types and DELETE its entry. Never add an entry.
 const NullUnionReturnDebtFiles = [
-  "packages/cluster-tool/src/cli/ClusterBuildOptionsArgs.ts",
   "packages/cluster-tool/src/clients/solana/SolanaClient.ts",
   "packages/cluster-tool/src/clients/wire/WireClient.ts",
   "packages/cluster-tool/src/clients/wire/WireWallet.ts",
@@ -129,7 +186,6 @@ const NullUnionReturnDebtFiles = [
   "packages/debugging-client-tool-tui/src/features/opp/util/EpochSummary.ts",
   "packages/debugging-client-tool-tui/src/store/opp/OPPSelectors.ts",
   "packages/debugging-server/src/routes/opp/OPPRoutes.ts",
-  "packages/debugging-server/src/streams/StreamServer.ts",
   "packages/debugging-shared/src/opp/EnvelopeStorageKey.ts",
   "packages/debugging-shared/src/utils/ProtobufHelpers.ts",
   "packages/test-app-server/src/services/key.ts",
@@ -168,7 +224,6 @@ const InlineTypeLiteralDebtFiles = [
   "packages/cluster-tool/tests/tools/wire/WireOperatorProvisioningTool.test.ts",
   "packages/cluster-tool/tests/tools/wire/WireReserveTool.test.ts",
   "packages/cluster-tool/tests/tools/wire/WireUnderwriterTool.test.ts",
-  "packages/debugging-client-shared/src/rpc/JsonRPCClient.ts",
   "packages/debugging-client-shared/tests/subscriptions/DebuggingSubscription.test.ts",
   "packages/debugging-client-tool-tui/src/cli.ts",
   "packages/debugging-client-tool-tui/src/components/PanelComponent.ts",
@@ -188,8 +243,6 @@ const InlineTypeLiteralDebtFiles = [
   "packages/debugging-server/src/streams/EnvelopeWatchStream.ts",
   "packages/debugging-shared/src/opp/EnvelopeRecordReader.ts",
   "packages/debugging-shared/src/rpc/Paths.ts",
-  "packages/debugging-shared/src/rpc/StreamProtocol.ts",
-  "packages/debugging-shared/src/utils/JsonLogRecord.ts",
   "packages/flow-reserve-lifecycle/src/steps/ReserveLifecycleScenarioReserveSteps.ts",
   "packages/flow-swap-private-reserves/src/SwapPrivateReservesScenarioArtifacts.ts",
   "packages/flow-swap-private-reserves/src/steps/SwapPrivateReservesScenarioReserveSteps.ts",
@@ -208,7 +261,9 @@ const AllBans = [
   BanPickParameter,
   BanStringLiteralUnion,
   BanAsOptionAwait,
-  BanMemberCoalesceDeclarator
+  BanMemberCoalesceDeclarator,
+  BanErrorMessageRestring,
+  BanBareErrorInHandler
 ]
 const debtExemptionBlocks = (() => {
   const exemptionsByFile = new Map()
@@ -259,10 +314,14 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   {
     files: ["**/*.ts", "**/*.tsx"],
+    plugins: { "wire-local": wireLocalPlugin },
     rules: {
       // use-logging-framework.md: console is banned; the framework writes
       // through (jest buffers console.*). Carve-outs below.
       "no-console": "error",
+
+      // prefer-lodash-identity.md: an `x => x` arrow IS lodash `identity`.
+      "wire-local/no-identity-arrow": "error",
 
       "no-restricted-syntax": ["error", ...AllBans],
 
@@ -310,9 +369,17 @@ export default tseslint.config(
       // eqeqeq must not fight it.
       eqeqeq: ["error", "always", { null: "ignore" }],
 
-      // precise-types-no-unknown-shortcut.md: `any` only at genuine
-      // third-party boundaries. Pre-existing debt exists → warn (no sweeps).
-      "@typescript-eslint/no-explicit-any": "warn",
+      // `any` OFF by design (author directive, 2026-07-21): the explicit
+      // `any` in this codebase is strongly-typed usage — generic type
+      // arguments (`IMessageType<any>` accepts any conforming message class),
+      // boundary casts, rest args (`...args: any[]`), and generic defaults —
+      // NOT lazy typing. `no-explicit-any` is blunt: no option distinguishes a
+      // type-argument `any` from a lazy `x: any`, so allowing those legitimate
+      // patterns globally means the rule is off. Catch clauses carry no
+      // annotation (`catch (err)`, not `catch (err: any)`). The precise-types
+      // discipline (no `any`/`unknown` where a real type exists) stays enforced
+      // by precise-types-no-unknown-shortcut.md + review.
+      "@typescript-eslint/no-explicit-any": "off",
 
       // Defaults that fight house idioms or the loose tsconfig.
       "@typescript-eslint/no-namespace": "off", // companion namespaces ARE the style
@@ -327,10 +394,11 @@ export default tseslint.config(
       // request shapes (ClusterRequests), and `{}` generic defaults. The rule
       // fights the named-types-everywhere philosophy.
       "@typescript-eslint/no-empty-object-type": "off",
-      // New in eslint 10 recommended; `{ cause }` chaining is NOT a codified
-      // house law and enforcing it would force edits to untouched files.
-      // Candidate for adoption later — off deliberately, not forgotten.
-      "preserve-caught-error": "off",
+      // nested-error-preserve-cause.md (author law, 2026-07-21): a catch clause
+      // that rethrows a bare Error SWALLOWS the original (its message + stack).
+      // Preserve it as `{ cause }` — pair with NestedError for the
+      // { cause, context } form.
+      "preserve-caught-error": "error",
       "prefer-const": "error",
       "no-var": "error"
     }

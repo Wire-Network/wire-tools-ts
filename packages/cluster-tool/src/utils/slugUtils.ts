@@ -1,3 +1,4 @@
+import { identity } from "lodash"
 import { match, P } from "ts-pattern"
 
 /**
@@ -15,7 +16,7 @@ import { match, P } from "ts-pattern"
  */
 export function slugValue(raw: unknown): number {
   return match(raw)
-    .with(P.number, value => value)
+    .with(P.number, identity)
     .with(P.string, value => Number(value))
     .with({ value: P.number }, wrapped => wrapped.value)
     .with({ value: P.string }, wrapped => Number(wrapped.value))

@@ -140,7 +140,16 @@ export class SlashingScenario extends FlowScenario {
     // Enough bootstrapped batch ops to keep the rest of the network healthy
     // while the dispute operators drive the contested outpost.
     batchOperatorCount: Constants.BootstrapBatchOperatorCount,
-    // Miss-ladder termination effectively disabled — see the constants' JSDoc.
+    // The dispute operators are the SOLE active group from the jump: bootstrap
+    // materializes ONE group of exactly DisputeOperators.length. Setting the
+    // group SIZE + COUNT here (never via a mid-run setconfig) is what makes the
+    // batch-op group shape correct from bootstrap — no mid-run reconfig.
+    operatorsPerEpoch: Constants.DisputeOperators.length,
+    batchOpGroups: Constants.DisputeBatchOperatorGroupCount,
+    // The dispute references the contested epoch's envelope log ~16 epochs later
+    // (vote + tally + resolve + slash propagation), so retention must outlast it.
+    epochRetentionEnvelopeLogCount: Constants.EpochRetentionEnvelopeLogCount,
+    // Loosest VALID termination thresholds — see the constants' JSDoc.
     terminateMaxConsecutiveMisses: Constants.TerminateMaxConsecutiveMisses,
     terminateMaxPercentMisses24h: Constants.TerminateMaxPercentMisses24h
   }
@@ -248,34 +257,27 @@ export class SlashingScenario extends FlowScenario {
       }))
     )
 
-    // Reconfigure the epoch to ONE group of 3 and rebuild the groups so the
-    // sole active batch-op group is exactly the 3 dispute ops. `schbatchgps`
-    // sorts non-bootstrapped ops first, then by name, so the three
-    // non-bootstrapped `dispop.*` fill the single group (the bootstrapped
-    // harness ops sort after and fall outside it). `deliver` is gated to the
-    // active group, so only these 3 can deliver — and being SBP-less, only when
-    // the flow tells them to. `sysio.epoch@active` resolves to `sysio@active`
-    // (the governance key loaded in kiod), so the flow can sign setconfig /
-    // schbatchgps.
+    // The epoch config ALREADY materialized ONE group of exactly
+    // DisputeOperators.length at BOOTSTRAP (via the scenario defaults —
+    // `operatorsPerEpoch` / `batchOpGroups`), so there is NO mid-run
+    // `setconfig`: the batch-op group SIZE + COUNT never change after bootstrap
+    // (the depot's #529 invariant forbids resizing a materialized rotation
+    // anyway). Here we only flip the 3 SBP-less dispute ops ACTIVE
+    // (`processbatch`, since `req_batchop_collat` is empty), then re-materialize
+    // the rotation with a fresh `schbatchgps` — the ONLY way to fold the
+    // now-active, non-bootstrapped dispute ops into the schedule (`advance()`
+    // rotates the already-materialized schedule; it does NOT re-select members).
+    // `schbatchgps` sorts non-bootstrapped ops first, then by name, so the three
+    // `dispop.*` fill the single group and the bootstrapped harness ops fall
+    // outside it. `deliver` is gated to the active group, so only these 3 can
+    // deliver — and being SBP-less, only when the flow injects an envelope.
+    // `sysio.epoch@active` resolves to `sysio@active` (the governance key in
+    // kiod), so the flow can sign `schbatchgps`.
     ClusterBuildPhase.create(
       setup,
       "ReshapeSchedule",
       "One group of exactly the 3 dispute operators"
     ).push(
-      Steps.contracts.sysio.epoch.planSetconfig(
-        Actor.Sysio,
-        "one-group-of-three",
-        "reconfigure the epoch to a single 3-operator group",
-        {},
-        {
-          epoch_duration_sec: Constants.EpochDurationSec,
-          operators_per_epoch: Constants.DisputeOperators.length,
-          batch_operator_minimum_active: Constants.DisputeOperators.length,
-          batch_op_groups: Constants.DisputeBatchOperatorGroupCount,
-          epoch_retention_envelope_log_count:
-            Constants.EpochRetentionEnvelopeLogCount
-        }
-      ),
       ...Constants.DisputeOperators.map(operator =>
         DisputeSteps.planProcessbatch(
           Actor.Sysio,

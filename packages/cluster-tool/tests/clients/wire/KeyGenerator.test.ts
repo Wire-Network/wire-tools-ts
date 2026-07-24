@@ -3,6 +3,7 @@ import Os from "node:os"
 import Path from "node:path"
 import { ethers } from "ethers"
 import { KeyType } from "@wireio/sdk-core"
+import { SignatureProviderType } from "@wireio/cluster-tool-shared"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 
 const K1_OUTPUT =
@@ -153,6 +154,43 @@ describe("KeyGenerator", () => {
     expect(KeyGenerator.BiosBLSKey.type).toBe(KeyType.BLS)
     expect(KeyGenerator.BiosBLSKey.publicKey).toMatch(/^PUB_BLS_/)
     expect(KeyGenerator.BiosBLSKey.proofOfPossession).toMatch(/^SIG_BLS_/)
+  })
+
+  it("toSignatureProvider renders SSM: / KIOD: segments per the provider source", () => {
+    const pair = {
+      type: KeyType.K1,
+      publicKey: "PUB_K1_p",
+      privateKey: "PVT_K1_s"
+    }
+    const ssmSource = KeyGenerator.keySource(
+      {
+        type: SignatureProviderType.SSM,
+        ssm: { awsRegion: "us-east-1", awsSecretIdPattern: "p" }
+      },
+      "/wire/batchop1/K1",
+      "http://kiod"
+    )
+    expect(KeyGenerator.toSignatureProvider(pair, undefined, ssmSource)).toBe(
+      "wire-PUB_K1_p,wire,wire,PUB_K1_p,SSM:us-east-1:/wire/batchop1/K1"
+    )
+    const kiodSource = KeyGenerator.keySource(
+      { type: SignatureProviderType.KIOD, ssm: null },
+      "unused",
+      "http://127.0.0.1:8900"
+    )
+    expect(KeyGenerator.toSignatureProvider(pair, undefined, kiodSource)).toBe(
+      "wire-PUB_K1_p,wire,wire,PUB_K1_p,KIOD:http://127.0.0.1:8900"
+    )
+  })
+
+  it("keySource selects the KEY default source for a KEY provider config", () => {
+    expect(
+      KeyGenerator.keySource(
+        { type: SignatureProviderType.KEY, ssm: null },
+        "s",
+        "u"
+      )
+    ).toEqual(KeyGenerator.DefaultKeySource)
   })
 })
 

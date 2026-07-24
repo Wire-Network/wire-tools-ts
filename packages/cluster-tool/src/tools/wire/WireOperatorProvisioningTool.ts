@@ -192,7 +192,11 @@ export namespace WireOperatorProvisioningTool {
         airdropSolanaLamports
       } = spec,
       isUnderwriter = type === OperatorType.UNDERWRITER,
-      actor = isUnderwriter ? Report.Actor.Underwriter : Report.Actor.BatchOperator
+      actor = isUnderwriter ? Report.Actor.Underwriter : Report.Actor.BatchOperator,
+      // External-outpost mode: operators are pre-funded out-of-band on the REAL
+      // chains — there is no anvil prefund / SOL faucet — so the outpost-chain
+      // funding steps are gated out; every depot-side step still runs.
+      isExternalOutpost = group.context.config?.externalOutposts != null
     Assert.ok(
       ethereumHdIndex != null,
       `provision operator ${label}: ethereumHdIndex is required`
@@ -214,7 +218,7 @@ export namespace WireOperatorProvisioningTool {
         options,
         label
       ),
-      ...(fundEthereumWei != null
+      ...(fundEthereumWei != null && !isExternalOutpost
         ? [
             planEthereumFunding<C>(
               actor,
@@ -226,7 +230,7 @@ export namespace WireOperatorProvisioningTool {
             )
           ]
         : []),
-      ...(airdropSolanaLamports != null
+      ...(airdropSolanaLamports != null && !isExternalOutpost
         ? [
             planSolanaAirdrop<C>(
               actor,

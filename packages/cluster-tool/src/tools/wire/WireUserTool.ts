@@ -1,4 +1,4 @@
-import { getLogger } from "@wireio/shared"
+import { getLogger, NestedError } from "@wireio/shared"
 import { SysioContracts } from "@wireio/sdk-core"
 import { WireClient } from "../../clients/wire/WireClient.js"
 import { ClioRunner } from "../../clients/wire/clio/ClioRunner.js"
@@ -73,8 +73,9 @@ export async function provisionWireUser(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
     if (!message.includes(ClioRunner.ErrorFragment.AccountAlreadyExists)) {
-      throw new Error(
-        `provisionWireUser: createAccount(${account}) failed: ${message}`
+      throw new NestedError(
+        `provisionWireUser: createAccount(${account}) failed`,
+        { cause: err }
       )
     }
     log.debug(`provisionWireUser: account ${account} already exists — reusing`)

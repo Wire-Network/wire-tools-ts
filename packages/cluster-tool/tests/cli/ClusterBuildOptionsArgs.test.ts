@@ -1,12 +1,17 @@
+import Fs from "node:fs"
+import Os from "node:os"
 import Path from "node:path"
 import type { Argv } from "yargs"
+import { SignatureProviderType } from "@wireio/cluster-tool-shared"
 import {
   applyClusterBuildOptionsArgs,
   buildOptionShape,
   environmentPathDefaults,
   flattenOptionLeaves,
+  mergeSignatureProviderSsm,
   OptionLeafType,
   toClusterBuildOptions,
+  toClusterSignatureProviderSsmOptions,
   toFlag,
   type OptionLeaf
 } from "@wireio/cluster-tool/cli/ClusterBuildOptionsArgs"
@@ -109,6 +114,7 @@ describe("flattenOptionLeaves + buildOptionShape", () => {
         "epoch-duration-sec",
         "force",
         "bind-all",
+        "enable-mock-reserves",
         "bind-kiod-port",
         "bind-kiod-address",
         "bind-nodeop-ports-bios-http",
@@ -319,6 +325,12 @@ describe("toClusterBuildOptions reverse parse", () => {
   it("coerces boolean flags", () => {
     expect(toClusterBuildOptions({ "bind-all": true }).bindAll).toBe(true)
     expect(toClusterBuildOptions({ "bind-all": false }).bindAll).toBe(false)
+    expect(
+      toClusterBuildOptions({ "enable-mock-reserves": true }).enableMockReserves
+    ).toBe(true)
+    expect(
+      toClusterBuildOptions({ "enable-mock-reserves": false }).enableMockReserves
+    ).toBe(false)
   })
 
   it("reads the camelCase alias yargs also emits", () => {
@@ -344,7 +356,94 @@ describe("register → parse round-trip", () => {
     expect(options.epochDurationSec).toBe(60)
     expect(options.nodeCount).toBe(1)
     expect(options.bindAll).toBe(false)
+    // no opt-in ⇒ the default-false mock-reserves flag survives as false
+    expect(options.enableMockReserves).toBe(false)
     // unseeded (null-default) bind ports never materialize
     expect(options.bind?.kiod?.port).toBeUndefined()
+  })
+
+  it("carries the epoch-group + termination overrides through the full defaults→argv→options round-trip", () => {
+    // The slashing-flow shape: scenario defaults set the epoch-group + termination
+    // overrides; they MUST survive registration → the defaulted argv → the reverse
+    // parse. A field absent from buildOptionShape is silently dropped on this path
+    // — the exact gap this guards (batchOpGroups reached ClusterBuildOptions but
+    // never the config until it was registered as a shape leaf).
+    const registered = register({
+        ...RequiredPaths,
+        operatorsPerEpoch: 3,
+        batchOpGroups: 1,
+        epochRetentionEnvelopeLogCount: 200,
+        terminateMaxConsecutiveMisses: 5,
+        terminateMaxPercentMisses24h: 99,
+        terminateWindowMs: 3_600_000,
+        enableMockReserves: true
+      }),
+      argv: Record<string, unknown> = {}
+    registered.forEach((config, flag) => {
+      argv[flag] = config.default
+    })
+
+    const options = toClusterBuildOptions(argv)
+    expect(options.operatorsPerEpoch).toBe(3)
+    expect(options.batchOpGroups).toBe(1)
+    expect(options.epochRetentionEnvelopeLogCount).toBe(200)
+    expect(options.terminateMaxConsecutiveMisses).toBe(5)
+    expect(options.terminateMaxPercentMisses24h).toBe(99)
+    expect(options.terminateWindowMs).toBe(3_600_000)
+    // the scenario-defaults opt-in path the 6 reserve-needing flows rely on
+    expect(options.enableMockReserves).toBe(true)
+  })
+})
+
+const SsmJson =
+  '{"awsRegion":"us-east-1","awsSecretIdPattern":"/wire/{cluster}/{account}/{keyType}"}'
+const SsmFlag = "signature-provider-ssm"
+
+describe("toClusterSignatureProviderSsmOptions", () => {
+  it("parses inline JSON", () => {
+    const ssm = toClusterSignatureProviderSsmOptions({ [SsmFlag]: SsmJson })
+    expect(ssm?.awsRegion).toBe("us-east-1")
+    expect(ssm?.awsSecretIdPattern).toBe("/wire/{cluster}/{account}/{keyType}")
+  })
+
+  it("parses a file path", () => {
+    const dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "ssm-opts-")),
+      file = Path.join(dir, "ssm.json")
+    Fs.writeFileSync(file, SsmJson)
+    try {
+      expect(
+        toClusterSignatureProviderSsmOptions({ [SsmFlag]: file })?.awsRegion
+      ).toBe("us-east-1")
+    } finally {
+      Fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("returns null when the flag is absent", () => {
+    expect(toClusterSignatureProviderSsmOptions({})).toBeNull()
+  })
+
+  it("throws on a malformed SSM payload (missing awsSecretIdPattern)", () => {
+    expect(() =>
+      toClusterSignatureProviderSsmOptions({ [SsmFlag]: '{"awsRegion":"x"}' })
+    ).toThrow()
+  })
+})
+
+describe("mergeSignatureProviderSsm", () => {
+  it("is a no-op when the flag is absent", () => {
+    const options = { signatureProvider: { type: SignatureProviderType.SSM } }
+    expect(
+      mergeSignatureProviderSsm(options, {}).signatureProvider?.ssm
+    ).toBeUndefined()
+  })
+
+  it("merges the SSM payload into signatureProvider.ssm", () => {
+    const options = { signatureProvider: { type: SignatureProviderType.SSM } },
+      merged = mergeSignatureProviderSsm(options, { [SsmFlag]: SsmJson })
+    expect(merged.signatureProvider?.ssm?.awsRegion).toBe("us-east-1")
+    expect(merged.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
+      "/wire/{cluster}/{account}/{keyType}"
+    )
   })
 })

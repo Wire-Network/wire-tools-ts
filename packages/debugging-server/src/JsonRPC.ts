@@ -138,7 +138,7 @@ export namespace JsonRPC {
             if (!res.headersSent) {
               sendJson(res, 200, result)
             }
-          } catch (err: any) {
+          } catch (err) {
             if (!res.headersSent) {
               sendJson(res, 500, {
                 error: err.message ?? "Unknown error",
@@ -229,7 +229,7 @@ export namespace JsonRPC {
           id
         })
       }
-    } catch (err: any) {
+    } catch (err) {
       log.error(`Error handling RPC request: ${err.message}`, {
         method: body.method,
         params: body.params,

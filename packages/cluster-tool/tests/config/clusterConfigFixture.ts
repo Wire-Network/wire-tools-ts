@@ -1,4 +1,7 @@
-import type { ClusterConfig } from "@wireio/cluster-tool-shared"
+import {
+  SignatureProviderType,
+  type ClusterConfig
+} from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
 import {
   BindConfigProvider,
@@ -32,8 +35,14 @@ export const PersistedFixture: ClusterConfig = {
   batchOperatorCount: 3,
   underwriterCount: 1,
   epochDurationSec: 60,
+  operatorsPerEpoch: null,
+  batchOpGroups: null,
+  epochRetentionEnvelopeLogCount: null,
   warmupEpochs: 1,
   cooldownEpochs: 1,
+  terminateMaxConsecutiveMisses: null,
+  terminateMaxPercentMisses24h: null,
+  terminateWindowMs: null,
   ethereumPath: "/eth",
   solanaPath: "/sol",
   bind: {
@@ -91,7 +100,11 @@ export const PersistedFixture: ClusterConfig = {
   requiredUnderwriterCollateral: [],
   requiredProducerCollateral: [],
   underwriterCollateral: null,
-  initialFinalizerKey: null
+  initialFinalizerKey: null,
+  signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
+  externalOutposts: null,
+  debuggingServerEnabled: true,
+  enableMockReserves: false
 }
 
 /** Build a `ClusterConfig` from the fixture (via deserialize — no resolve / env).
