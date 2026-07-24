@@ -6,6 +6,7 @@ import {
   EthereumCollateralTool,
   NodeOwnerTier,
   Report,
+  approveNodeEscrow,
   commitNode,
   loadBar,
   wireKeyFromPublicKey,
@@ -25,6 +26,11 @@ import { NodeOwnerNftScenarioMintSteps as MintSteps } from "./NodeOwnerNftScenar
  * by hand. The committer is the run's default anvil wallet: it holds the
  * minted tier token, and its uncompressed secp256k1 key is the claim's
  * depositor key (recorded as the account's `sysio.authex` ETH link).
+ *
+ * The commit ESCROWS the committed unit in BAR (claims draw from BAR's
+ * canonical WireNodes contract, wired by deployLocal), so the committer
+ * must first approve BAR as an ERC-1155 operator — the
+ * {@link planApproveEscrow} write, one step before the commit.
  */
 export namespace NodeOwnerNftScenarioCommitSteps {
   /**
@@ -46,6 +52,62 @@ export namespace NodeOwnerNftScenarioCommitSteps {
     )
   }
 
+  /** Input for {@link planApproveEscrow} — one `setApprovalForAll` write. */
+  export interface ApproveEscrowInput extends StepInput {
+    readonly kind: "NodeOwnerNftScenarioCommitSteps.ApproveEscrowInput"
+  }
+
+  /**
+   * A single `MockWireNodes.setApprovalForAll(BAR, true)` write — the
+   * one-time ERC-1155 operator approval `commitNode`'s escrow pull needs.
+   * Idempotent; plan it once before the first {@link planCommitNode}.
+   *
+   * @param actor - The narrative subject (the committing user).
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Per-step tuning.
+   * @returns The definition step.
+   */
+  export function planApproveEscrow<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, ApproveEscrowInput> {
+    return ClusterBuildStep.create<C, ApproveEscrowInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "NodeOwnerNftScenarioCommitSteps.ApproveEscrowInput" },
+      runApproveEscrow
+    )
+  }
+
+  /**
+   * Named runner — ONE `setApprovalForAll` write approving BAR on
+   * MockWireNodes, both resolved from the run's deploy artifacts and bound
+   * to the committer wallet.
+   */
+  export async function runApproveEscrow<C extends ClusterBuildContext>(
+    ctx: C,
+    _input: ApproveEscrowInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const receipt = await approveNodeEscrow(
+      MintSteps.resolveMockWireNodes(ctx),
+      await resolveBar(ctx).getAddress()
+    )
+    Assert.strictEqual(
+      receipt.status,
+      1,
+      "MockWireNodes.setApprovalForAll: receipt status must be 1"
+    )
+  }
+
   /** Input for {@link planCommitNode} — one `BAR.commitNode` write. */
   export interface CommitNodeInput extends StepInput {
     readonly kind: "NodeOwnerNftScenarioCommitSteps.CommitNodeInput"
@@ -59,9 +121,11 @@ export namespace NodeOwnerNftScenarioCommitSteps {
 
   /**
    * A single `BAR.commitNode` write — the production claim entry point,
-   * emitting the full `NodeOwnerRegistration` attestation via OPP. The
-   * committer (the run's anvil wallet) must already hold ≥ 1 unit of the
-   * tier's token (see {@link MintSteps.planMint}).
+   * emitting the full `NodeOwnerRegistration` attestation via OPP and
+   * escrowing the committed unit in BAR. The committer (the run's anvil
+   * wallet) must already hold ≥ 1 unit of the tier's token (see
+   * {@link MintSteps.planMint}) and have approved BAR as an ERC-1155
+   * operator (see {@link planApproveEscrow}).
    *
    * @param actor - The narrative subject (the committing user).
    * @param name - Step name (report row).
@@ -99,8 +163,9 @@ export namespace NodeOwnerNftScenarioCommitSteps {
   }
 
   /**
-   * Named runner — ONE `BAR.commitNode` write. Resolves BAR + MockWireNodes
-   * from the deploy artifacts, converts the claimed Wire key to its proto
+   * Named runner — ONE `BAR.commitNode` write. Resolves BAR from the deploy
+   * artifacts (the WireNodes contract claims draw from is BAR's own
+   * canonical config), converts the claimed Wire key to its proto
    * `WireKey`, and supplies the committer wallet's uncompressed secp256k1
    * public key as the depositor key.
    */
@@ -111,11 +176,9 @@ export namespace NodeOwnerNftScenarioCommitSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const bar = resolveBar(ctx),
-      nftAddress = await MintSteps.resolveMockWireNodes(ctx).getAddress(),
       depositorPubKey = ctx.ethereum.wallet.signer.signingKey.publicKey
     const receipt = await commitNode(
       bar,
-      nftAddress,
       input.tier,
       input.wireAccountName,
       wireKeyFromPublicKey(input.wirePublicKey),

@@ -181,9 +181,10 @@ async function verifyMintSupplyAndBalance(
  *    (depot/system invariants — asserted via `Assert.rejects`, not scenario failures).
  * 7. **MockNodesMint** — MockWireNodes accepts a tier-1 mint at 1 ether; the
  *    `TransferSingle`-observed supply bumps and the minter's balance reflects it.
- * 8. **CommitNodePath** — the PRODUCTION path end-to-end: mint, then
- *    `BAR.commitNode` emits the full NodeOwnerRegistration via OPP; the depot
- *    dispatches it and the `nodeowners` row + CONFIRMED audit land on WIRE.
+ * 8. **CommitNodePath** — the PRODUCTION path end-to-end: mint, approve BAR
+ *    as ERC-1155 operator, then `BAR.commitNode` escrows the unit in BAR and
+ *    emits the full NodeOwnerRegistration via OPP; the depot dispatches it
+ *    and the `nodeowners` row + CONFIRMED audit land on WIRE.
  *
  * Claim-payload problems (2-5) soft-fail into a `nodeownerreg` audit row rather
  * than throwing (trust-OPP); only the depot/system invariants (6) hard-abort.
@@ -502,6 +503,12 @@ export class NodeOwnerNftScenario extends FlowScenario {
         stepOptions,
         NodeOwnerTier.T1,
         Constants.MintAmount
+      ),
+      CommitSteps.planApproveEscrow(
+        Actor.User,
+        "approve-escrow",
+        "approve BAR as ERC-1155 operator so commitNode can escrow the committed unit",
+        stepOptions
       ),
       CommitSteps.planCommitNode(
         Actor.User,

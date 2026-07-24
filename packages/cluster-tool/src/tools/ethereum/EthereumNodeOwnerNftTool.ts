@@ -10,7 +10,10 @@
  *     fixture.
  *
  *   - BAR.sol `commitNode` (wire-ethereum `contracts/outpost/`): the
- *     PRODUCTION claim entry point. Emits the full NODE_OWNER_REG
+ *     PRODUCTION claim entry point. Draws claims from BAR's canonical
+ *     WireNodes contract and escrows the committed unit in BAR (one unit
+ *     backs at most one registration; the committer must approve BAR as
+ *     an ERC-1155 operator first). Emits the full NODE_OWNER_REG
  *     `NodeOwnerRegistration` attestation via OPP, which the depot
  *     (`sysio.msgch::dispatch_node_owner_reg`) consumes end-to-end.
  *
@@ -65,6 +68,11 @@ export interface MockWireNodesContract extends ethers.BaseContract {
   viewTotalSupply: (id: bigint | number) => Promise<bigint>
   viewMaxSupply: (id: bigint | number) => Promise<bigint>
   balanceOf: (account: string, id: bigint | number) => Promise<bigint>
+  setApprovalForAll: (
+    operator: string,
+    approved: boolean
+  ) => Promise<ethers.ContractTransactionResponse>
+  isApprovedForAll: (account: string, operator: string) => Promise<boolean>
   getAddress: () => Promise<string>
 }
 
@@ -123,10 +131,30 @@ export async function mintNodeNFT(
   return receipt
 }
 
+/**
+ * One-time ERC-1155 operator approval so BAR can pull the committed unit
+ * into escrow. `BAR.commitNode` consumes the claimed unit (escrows it in
+ * BAR before the attestation is queued), so the committer must have
+ * approved BAR on WireNodes first — without it the commit reverts with the
+ * token's `ERC1155MissingApprovalForAll`.
+ *
+ * @param contract - The committer-bound WireNodes surface.
+ * @param barAddress - The BAR contract address (the escrow operator).
+ * @returns The mined receipt.
+ */
+export async function approveNodeEscrow(
+  contract: MockWireNodesContract,
+  barAddress: string
+): Promise<ethers.ContractTransactionReceipt> {
+  const tx = await contract.setApprovalForAll(barAddress, true)
+  const receipt = await tx.wait()
+  Assert.ok(receipt, "approveNodeEscrow: receipt is null")
+  return receipt
+}
+
 /** Minimal `ethers` surface of `BAR.sol` for the node-owner commit path. */
 export interface BarContract extends ethers.BaseContract {
   commitNode: (
-    nftAddress: string,
     tokenId: bigint | number,
     wireAccountName: string,
     wirePubKey: WireKey,
@@ -173,6 +201,10 @@ export function loadBar(
 
 /**
  * Commit a node NFT via `BAR.commitNode` — the production claim entry point.
+ * Claims are drawn from the canonical WireNodes contract configured in BAR
+ * (`setWireNodesContract`, wired by deployLocal on the local cluster), and
+ * the commit ESCROWS the claimed unit in BAR — the signer must hold ≥ 1
+ * unit of `tier` and have approved BAR first (see {@link approveNodeEscrow}).
  * The contract validates every payload class the depot would silently drop
  * (tier from the tokenId, name charset/length, Wire key usability, the
  * depositor key deriving the caller) and queues the full
@@ -180,8 +212,7 @@ export function loadBar(
  * OPP envelope.
  *
  * @param contract - The signer-bound BAR surface; the signer must hold ≥ 1 of `tier` and match `depositorPubKey`.
- * @param nftAddress - The WireNodes ERC-1155 contract address.
- * @param tier - The claimed tier — WireNodes token ids ARE the tiers, so this is also the tokenId.
+ * @param tier - The claimed tier — WireNodes token ids ARE the tiers, so this is also the tokenId committed.
  * @param wireAccountName - The Wire account to register (created in-flow when absent).
  * @param wirePubKey - The account's owner/active authority as the proto `WireKey`.
  * @param depositorPubKey - The caller's 65-byte SEC1 uncompressed public key (`0x04 || X || Y`).
@@ -189,14 +220,12 @@ export function loadBar(
  */
 export async function commitNode(
   contract: BarContract,
-  nftAddress: string,
   tier: NodeOwnerTier,
   wireAccountName: string,
   wirePubKey: WireKey,
   depositorPubKey: string
 ): Promise<ethers.ContractTransactionReceipt> {
   const tx = await contract.commitNode(
-    nftAddress,
     tier,
     wireAccountName,
     wirePubKey,
