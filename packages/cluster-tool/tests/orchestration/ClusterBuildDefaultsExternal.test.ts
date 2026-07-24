@@ -2,9 +2,9 @@ import Fs from "node:fs"
 import Path from "node:path"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
 import {
-  createResolveEnv,
-  type ResolveEnv
-} from "../config/resolveEnvFixture.js"
+  fixtureResolveEnvironment,
+  type ResolveEnvironment
+} from "../config/resolveEnvironmentFixture.js"
 
 /** A phase or group node — a group carries `children`, a phase is a leaf. */
 interface NamedNode {
@@ -21,11 +21,14 @@ function collectNames(children: ReadonlyArray<NamedNode>): string[] {
 }
 
 describe("ClusterBuildDefaults — external-outpost compose variant", () => {
-  let env: ResolveEnv, externalConfigFile: string
+  let environment: ResolveEnvironment, externalConfigFile: string
 
   beforeEach(() => {
-    env = createResolveEnv("compose-variant-")
-    externalConfigFile = Path.join(env.dir, "external-outpost.json")
+    environment = fixtureResolveEnvironment("compose-variant-")
+    externalConfigFile = Path.join(
+      environment.rootPath,
+      "external-outpost.json"
+    )
     Fs.writeFileSync(
       externalConfigFile,
       JSON.stringify({
@@ -40,13 +43,13 @@ describe("ClusterBuildDefaults — external-outpost compose variant", () => {
   })
 
   afterEach(() => {
-    env.cleanup()
+    environment.cleanup()
   })
 
   function baseOptions() {
     return {
-      clusterPath: Path.join(env.dir, "cluster"),
-      buildPath: env.buildPath,
+      clusterPath: Path.join(environment.rootPath, "cluster"),
+      buildPath: environment.buildPath,
       ethereumPath: "/fake/eth",
       solanaPath: "/fake/sol"
     }

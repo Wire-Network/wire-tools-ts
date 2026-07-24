@@ -21,7 +21,10 @@ import {
   ClusterConfigProvider
 } from "@wireio/cluster-tool/config"
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
-import { createResolveEnv, type ResolveEnv } from "./resolveEnvFixture.js"
+import {
+  fixtureResolveEnvironment,
+  type ResolveEnvironment
+} from "./resolveEnvironmentFixture.js"
 
 describe("ClusterConfigProvider", () => {
   describe("resolve", () => {
@@ -220,26 +223,26 @@ describe("ClusterConfigProvider", () => {
   })
 
   describe("resolve --bind-config classify/merge", () => {
-    let env: ResolveEnv
+    let environment: ResolveEnvironment
 
     beforeEach(() => {
-      env = createResolveEnv("bind-config-")
+      environment = fixtureResolveEnvironment("bind-config-")
     })
     afterEach(() => {
-      env.cleanup()
+      environment.cleanup()
     })
 
     /** Write a JSON bind (config or partial override) to the temp dir. */
     function writeBindConfig(bind: unknown): string {
-      const file = Path.join(env.dir, "bind.json")
+      const file = Path.join(environment.rootPath, "bind.json")
       Fs.writeFileSync(file, JSON.stringify(bind))
       return file
     }
     /** Base create options (fake host paths; binaries fixture-resolved). */
     function baseOptions(bindConfig: string, extra: object = {}) {
       return {
-        clusterPath: Path.join(env.dir, "cluster"),
-        buildPath: env.buildPath,
+        clusterPath: Path.join(environment.rootPath, "cluster"),
+        buildPath: environment.buildPath,
         ethereumPath: "/fake/eth",
         solanaPath: "/fake/sol",
         bindConfig,
