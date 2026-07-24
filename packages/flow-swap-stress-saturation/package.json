@@ -1,0 +1,29 @@
+{
+  "name": "@wireio/test-flow-swap-stress-saturation",
+  "version": "0.1.16",
+  "private": true,
+  "type": "commonjs",
+  "description": "Flow (excluded soak): saturate both Ethereum OPP directions by ramping low-value swaps from many wallets through a same-owner PRIVATE reserve pair (ETH x USDCSOL)",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "node lib/index.js",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.31.0",
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.98.0",
+    "@wireio/cluster-tool": "workspace:*",
+    "@wireio/debugging-shared": "workspace:*",
+    "@wireio/opp-stress-harness": "workspace:*",
+    "@wireio/opp-swap-stress": "workspace:*",
+    "@wireio/opp-typescript-models": "^1.0.26",
+    "@wireio/sdk-core": "^1.0.17",
+    "@wireio/shared": "^1.0.17",
+    "@wireio/test-opp-stress": "workspace:*",
+    "ethers": "^6.14.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0"
+  }
+}
