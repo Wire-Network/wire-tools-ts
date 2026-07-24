@@ -31,6 +31,31 @@ describe("SolanaOutpostBootstrapper.SplReserveSpecifications", () => {
   })
 })
 
+describe("SolanaOutpostBootstrapper.PdaSeed", () => {
+  it("carries the liqsol yield-pipeline seeds matching the on-chain program", () => {
+    // MUST match wire-solana/programs/liqsol-core/src (GlobalConfig::SEEDS,
+    // GLOBAL_STATE_SEED, TOKEN_PURCHASE_HISTORY_SEED, the OutpostAccount prefix).
+    expect(SolanaOutpostBootstrapper.PdaSeed.GlobalConfig).toBe("global_config")
+    expect(SolanaOutpostBootstrapper.PdaSeed.OutpostGlobalState).toBe(
+      "outpost_global_state"
+    )
+    expect(SolanaOutpostBootstrapper.PdaSeed.TokenPurchaseHistory).toBe(
+      "token_purchase_history"
+    )
+    expect(SolanaOutpostBootstrapper.PdaSeed.OutpostAccount).toBe(
+      "outpost_account"
+    )
+  })
+})
+
+describe("SolanaOutpostBootstrapper.BpfLoaderUpgradeableProgramId", () => {
+  it("is the canonical upgradeable-loader id (parent of every ProgramData PDA)", () => {
+    expect(SolanaOutpostBootstrapper.BpfLoaderUpgradeableProgramId.toBase58()).toBe(
+      "BPFLoaderUpgradeab1e11111111111111111111111"
+    )
+  })
+})
+
 describe("SolanaOutpostBootstrapper constructor", () => {
   let rpcUrl: string
   beforeAll(async () => {

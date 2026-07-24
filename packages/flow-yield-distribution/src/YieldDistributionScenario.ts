@@ -195,10 +195,11 @@ export class YieldDistributionScenario extends FlowScenario {
     producerCount: Constants.ProducerCount,
     batchOperatorCount: Constants.BatchOperatorCount,
     underwriterCount: Constants.UnderwriterCount,
-    // This flow cranks `flush_staking_yield`, which requires the Solana clock
-    // at `epoch >= 3`; opt THIS cluster's validator into the epoch warp. No
-    // other flow may — the warp trips the depot's cross-chain deposit nonce
-    // window (see `ClusterConfig.solanaEpochWarp`).
+    // This flow drives the liqsol yield pipeline; `dev_seed_staker_yield` is
+    // gated on the Solana clock reaching epoch 3, so opt THIS cluster's
+    // validator into the epoch warp. No other flow needs the warped
+    // (~80-minutes-ahead) Solana clock, so none other may enable it — see
+    // `ClusterConfig.solanaEpochWarp`.
     solanaEpochWarp: true
   }
 
@@ -425,11 +426,11 @@ export class YieldDistributionScenario extends FlowScenario {
       )
     )
 
-    // ── 5. EmitSolanaReward — add_attestation mirrors the flow on SOL ──
+    // ── 5. EmitSolanaReward — liqsol_core's real yield pipeline on SOL ──
     ClusterBuildPhase.create(
       cluster,
       "EmitSolanaReward",
-      "opp_outpost::add_attestation drives a SOL-side STAKING_REWARD to the depot (unlinked park)"
+      "liqsol_core dev-seed + flush_staking_yield drive a SOL-side STAKING_REWARD to the depot (unlinked park)"
     ).push(
       verifyStep(
         Actor.Sysio,
@@ -442,15 +443,20 @@ export class YieldDistributionScenario extends FlowScenario {
           )
         }
       ),
-      EmitSteps.planSolanaEmit(
+      EmitSteps.planSolanaSeedYield(
         Actor.SolanaOutpost,
-        "emit-solana-reward",
-        `emit ${Constants.SolanaRewardPerStaker} STAKING_REWARD for a new unlinked SOL staker`,
+        "seed-solana-staker-yield",
+        `dev-seed ${Constants.SolanaRewardPerStaker} yield for a new unlinked SOL staker`,
         emitStepOptions,
         YieldDistributionScenario.SolanaStakerAddressKey,
-        Constants.UnlinkedWireAccount,
-        Constants.SolanaRewardPerStaker,
-        Constants.FullShareBps
+        Constants.SolanaRewardPerStaker
+      ),
+      EmitSteps.planSolanaFlushYield(
+        Actor.SolanaOutpost,
+        "flush-solana-staking-yield",
+        "crank flush_staking_yield — the program packs the STAKING_REWARD into the outbound buffer",
+        emitStepOptions,
+        YieldDistributionScenario.SolanaStakerAddressKey
       ),
       verifyStep(
         Actor.Sysio,

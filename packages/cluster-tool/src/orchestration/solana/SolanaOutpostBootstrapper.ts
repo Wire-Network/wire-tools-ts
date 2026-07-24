@@ -5,7 +5,6 @@ import * as anchor from "@coral-xyz/anchor"
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js"
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token"
 import { SlugName } from "@wireio/sdk-core"
-import { OppSolProgram } from "./OppSolProgram.js"
 import { mapSeries } from "../../utils/asyncUtils.js"
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
@@ -79,7 +78,7 @@ export class SolanaOutpostBootstrapper {
       deployerKeypairFile:
         options.deployerKeypairFile ??
         (options.clusterDataPath != null
-          ? OppSolProgram.clusterDeployerKeypairFile(options.clusterDataPath)
+          ? SolanaFundingTool.deployerKeypairFile(options.clusterDataPath)
           : SolanaOutpostBootstrapper.defaultDeployerKeypairFile()),
       programKeypairFile:
         options.programKeypairFile ??
@@ -189,7 +188,7 @@ export class SolanaOutpostBootstrapper {
     }
     if (this.config.clusterDataPath != null) {
       mkdirs(this.config.clusterDataPath)
-      const persistedFile = Path.join(this.config.clusterDataPath, "sol-deployer-keypair.json")
+      const persistedFile = SolanaFundingTool.deployerKeypairFile(this.config.clusterDataPath)
       Fs.writeFileSync(persistedFile, JSON.stringify(Array.from(deployer.secretKey)))
       log.info(`persisted SOL deployer keypair to ${persistedFile}`)
     }
@@ -531,7 +530,7 @@ export class SolanaOutpostBootstrapper {
     const programId = this.programId
     Assert.ok(programId != null, "ensureGlobalConfig: programId required")
     const [globalConfig] = PublicKey.findProgramAddressSync(
-      [Buffer.from(OppSolProgram.globalConfigSeed)],
+      [Buffer.from(SolanaOutpostBootstrapper.PdaSeed.GlobalConfig)],
       programId
     )
     this.globalConfigPda = globalConfig
@@ -542,7 +541,7 @@ export class SolanaOutpostBootstrapper {
     }
     const [programData] = PublicKey.findProgramAddressSync(
       [programId.toBuffer()],
-      new PublicKey(OppSolProgram.bpfLoaderUpgradeableProgramId)
+      SolanaOutpostBootstrapper.BpfLoaderUpgradeableProgramId
     )
     const transaction = await program.methods
       .initializeGlobalConfig()
@@ -611,7 +610,24 @@ export namespace SolanaOutpostBootstrapper {
     export const ReserveAggregate = "reserve_aggregate"
     export const Reserve = "reserve"
     export const ReserveVault = "reserve_vault"
+    /** liqsol `GlobalConfig` admin-gate PDA (`has_one = admin`) — shared with the staking surface. */
+    export const GlobalConfig = "global_config"
+    /** Outpost `GlobalState` singleton PDA. */
+    export const OutpostGlobalState = "outpost_global_state"
+    /** `TokenPurchaseHistory` yield-ring PDA. */
+    export const TokenPurchaseHistory = "token_purchase_history"
+    /** Per-staker `OutpostAccount` PDA prefix (`[b"outpost_account", staker]`). */
+    export const OutpostAccount = "outpost_account"
   }
+
+  /**
+   * BPF upgradeable-loader program id — owner of every upgradeable program's
+   * `ProgramData` account, from which `initialize_global_config` proves the
+   * caller is the program's on-chain upgrade authority.
+   */
+  export const BpfLoaderUpgradeableProgramId = new PublicKey(
+    "BPFLoaderUpgradeab1e11111111111111111111111"
+  )
 
   /**
    * The shared signer/gating accounts every OPP admin instruction takes: the

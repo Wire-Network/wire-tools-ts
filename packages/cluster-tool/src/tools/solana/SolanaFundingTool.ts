@@ -25,6 +25,7 @@ import {
   type ClusterBuildStepOptions
 } from "../../orchestration/ClusterBuildStep.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
+import { mkdirs } from "../../utils/fsUtils.js"
 import { solanaKeypair } from "../../utils/keyPairUtils.js"
 import { Report } from "../../report/Report.js"
 import { getLogger } from "../../logging/Logger.js"
@@ -121,6 +122,42 @@ export namespace SolanaFundingTool {
 
   /** Persisted mint-authority (deployer) keypair filename in the cluster data dir. */
   export const DeployerKeypairFilename = "sol-deployer-keypair.json"
+
+  /**
+   * Absolute path to the per-cluster SOL deployer keypair file
+   * (`<dataPath>/{@link DeployerKeypairFilename}`). This ONE identity is the
+   * `liqsol_core` program's upgrade authority (set at validator launch), the
+   * liqsol `global_config.admin`, and the mock-SPL mint authority — every
+   * consumer resolves the path through this function so they load the SAME
+   * keypair.
+   *
+   * @param dataPath - The cluster data directory.
+   * @return Absolute path to the deployer keypair JSON file.
+   */
+  export function deployerKeypairFile(dataPath: string): string {
+    return Path.join(dataPath, DeployerKeypairFilename)
+  }
+
+  /**
+   * Get-or-create the per-cluster SOL deployer keypair. Generates + persists
+   * the keypair on the first call; afterwards the persisted file is read back
+   * verbatim, so every caller (validator launch, outpost bootstrap, flow
+   * runners) resolves the identical identity. Idempotent.
+   *
+   * @param dataPath - The cluster data directory.
+   * @return The deployer keypair.
+   */
+  export function createDeployerKeypair(dataPath: string): Keypair {
+    const keypairFile = deployerKeypairFile(dataPath)
+    if (!Fs.existsSync(keypairFile)) {
+      mkdirs(Path.dirname(keypairFile))
+      Fs.writeFileSync(
+        keypairFile,
+        JSON.stringify(Array.from(Keypair.generate().secretKey))
+      )
+    }
+    return loadDeployerKeypair(dataPath)
+  }
 
   // ── Step: airdrop SOL to an operator keypair (write) ─────────────────────
 
@@ -281,7 +318,7 @@ export namespace SolanaFundingTool {
    * mock SPL mints (a value helper used inside {@link runSplMint}).
    */
   export function loadDeployerKeypair(dataPath: string): Keypair {
-    const keypairFile = Path.join(dataPath, DeployerKeypairFilename)
+    const keypairFile = deployerKeypairFile(dataPath)
     Assert.ok(
       Fs.existsSync(keypairFile),
       `SolanaFundingTool.planSplMint: deployer keypair not found at ${keypairFile}`

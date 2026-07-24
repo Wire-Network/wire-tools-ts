@@ -364,7 +364,7 @@ export function buildOptionShape(
     ),
     solanaEpochWarp: leaf(
       false,
-      "warp the solana-test-validator past Solana epoch 3 for the staking-yield flush"
+      "warp the solana-test-validator past Solana epoch 3 (liqsol staking-yield pipeline gate)"
     ),
     // ── termination tuning ──
     terminateMaxConsecutiveMisses: optionalLeaf(

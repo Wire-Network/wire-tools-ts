@@ -157,11 +157,13 @@ export const ClusterConfigSchema = z.object({
   terminateWindowMs: z.number().nullable().default(null),
   /**
    * Warp the solana-test-validator past Solana epoch 3 at launch, so a flow
-   * driving `flush_staking_yield` (which requires `Clock.epoch >= 3`) can run.
-   * Off for every flow except `flow-yield-distribution`, which opts in via its
-   * scenario `defaults`: warping advances the Solana clock minutes ahead, which
-   * trips the depot's `sysio.authex` 10-minute nonce window on cross-chain SOL
-   * deposits — so no swap/deposit flow may enable it.
+   * driving the liqsol yield pipeline can run — `dev_seed_staker_yield` is
+   * gated on `Clock.epoch >= 3` (`MIN_SEED_EPOCH`: the credited epoch is
+   * `Clock.epoch - 2` and must be ≥ the launch epoch). Off for every flow
+   * except `flow-yield-distribution`, which opts in via its scenario
+   * `defaults`: the warp puts the Solana chain clock ~80 minutes ahead of real
+   * time — a non-production clock condition no other flow needs, so none may
+   * silently inherit it.
    */
   solanaEpochWarp: z.boolean().default(false),
   /** wire-ethereum repo root. */

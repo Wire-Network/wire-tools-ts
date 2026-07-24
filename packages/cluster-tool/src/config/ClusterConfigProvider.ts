@@ -70,9 +70,10 @@ export namespace ClusterConfigProvider {
   export const DefaultEpochDurationSec = 90
   /**
    * Default for {@link ClusterConfig.solanaEpochWarp} — OFF. Only
-   * `flow-yield-distribution` opts in (via its scenario `defaults`); warping the
-   * Solana clock trips the depot's cross-chain deposit nonce window, so it is
-   * never the cluster-wide default.
+   * `flow-yield-distribution` opts in (via its scenario `defaults`); the warp
+   * puts the Solana chain clock ~80 minutes ahead of real time — a
+   * non-production clock condition no other flow needs — so it is never the
+   * cluster-wide default.
    */
   export const DefaultSolanaEpochWarp = false
 

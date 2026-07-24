@@ -81,6 +81,45 @@ describe("SolanaValidatorProcess", () => {
     )
   })
 
+  it("adds the epoch-warp slot pair when epochWarp is set", async () => {
+    const validator = await SolanaValidatorProcess.create(manager, {
+      binary: "/bin/true",
+      epochWarp: true
+    })
+    expect(validator.args).toEqual(
+      expect.arrayContaining([
+        "--slots-per-epoch",
+        String(SolanaValidatorProcess.EpochWarpSlotsPerEpoch),
+        "--warp-slot",
+        String(SolanaValidatorProcess.EpochWarpSlot)
+      ])
+    )
+  })
+
+  it("omits the epoch-warp args by default (every flow but yield-distribution)", async () => {
+    const validator = await SolanaValidatorProcess.create(manager, {
+      binary: "/bin/true"
+    })
+    expect(validator.args).not.toContain("--warp-slot")
+    expect(validator.args).not.toContain("--slots-per-epoch")
+  })
+
+  it("warps to a slot inside Solana epoch 3 exactly (not epoch 4+)", () => {
+    // dev_seed_staker_yield requires Clock.epoch >= 3, but a single-node
+    // test-validator can only build epoch 3's leader schedule from genesis
+    // stakes — warping into epoch 4+ leaves it unable to produce blocks. The
+    // target MUST satisfy floor(EpochWarpSlot / EpochWarpSlotsPerEpoch) === 3.
+    expect(
+      Math.floor(
+        SolanaValidatorProcess.EpochWarpSlot /
+          SolanaValidatorProcess.EpochWarpSlotsPerEpoch
+      )
+    ).toBe(3)
+    expect(SolanaValidatorProcess.EpochWarpSlot).toBeGreaterThanOrEqual(
+      3 * SolanaValidatorProcess.EpochWarpSlotsPerEpoch
+    )
+  })
+
   it("deploys upgradeable via --upgradeable-program when an upgradeAuthority is set", async () => {
     const validator = await SolanaValidatorProcess.create(manager, {
       binary: "/bin/true",
