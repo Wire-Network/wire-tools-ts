@@ -28,14 +28,12 @@
  */
 
 import Assert from "node:assert"
-import Fs from "node:fs"
-import Path from "node:path"
 import { ethers } from "ethers"
 import { SysioContracts } from "@wireio/sdk-core"
 import { NodeOwnerTier, type WireKey } from "@wireio/opp-typescript-models"
 
 import type { WireClient } from "../../clients/wire/WireClient.js"
-import { contractView } from "../../utils/ethereumUtils.js"
+import { loadOutpostContract } from "../../utils/ethereumUtils.js"
 
 // Tier IDs accepted by sysio.roa::nodeownreg (matches MockWireNodes NodeInfo). The canonical enum
 // lives in the OPP protobuf models (sysio.opp.types.NodeOwnerTier: T1=1, T2=2, T3=3); re-exported
@@ -77,39 +75,22 @@ export interface MockWireNodesContract extends ethers.BaseContract {
 }
 
 /**
- * Load the hardhat-emitted `MockWireNodes.json` artifact from
- * wire-ethereum and look up its deployed address from the matching
- * `outpost-addrs.json`. Mirrors `loadMockYieldEmitter` exactly so
- * callers can read both off the same `outpostAddrs` map.
+ * Load the deployed `MockWireNodes` fixture from the run's wire-ethereum
+ * deploy artifacts (`outpost-addrs.json` + the hardhat artifact), bound to
+ * `signer`.
  */
 export function loadMockWireNodes(
   ethereumPath: string,
   outpostAddrs: Record<string, string>,
   signer: ethers.Signer
 ): MockWireNodesContract {
-  const addr = outpostAddrs.MockWireNodes
-  Assert.ok(
-    addr && /^0x[0-9a-fA-F]{40}$/.test(addr),
-    `NodeOwnerNFTTool: MockWireNodes not in outpost-addrs.json (got ${addr}). ` +
-      `Did wire-ethereum's deployLocal.ts run with the contract enabled?`
-  )
-
-  const artifactPath = Path.join(
+  return loadOutpostContract<MockWireNodesContract>(
     ethereumPath,
-    "artifacts",
-    "contracts",
-    "test",
-    "outpost",
-    "MockWireNodes.sol",
-    "MockWireNodes.json"
+    outpostAddrs,
+    "MockWireNodes",
+    ["test", "outpost"],
+    signer
   )
-  Assert.ok(
-    Fs.existsSync(artifactPath),
-    `NodeOwnerNFTTool: artifact not found at ${artifactPath}. ` +
-      `Run \`npx hardhat compile\` in wire-ethereum first.`
-  )
-  const artifact = JSON.parse(Fs.readFileSync(artifactPath, "utf-8"))
-  return contractView<MockWireNodesContract>(addr, artifact.abi, signer)
 }
 
 /**
@@ -157,46 +138,29 @@ export interface BarContract extends ethers.BaseContract {
   commitNode: (
     tokenId: bigint | number,
     wireAccountName: string,
-    wirePubKey: WireKey,
-    depositorPubKey: string,
+    wirePublicKey: WireKey,
+    depositorPublicKey: string,
     overrides?: ethers.Overrides
   ) => Promise<ethers.ContractTransactionResponse>
   getAddress: () => Promise<string>
 }
 
 /**
- * Load the hardhat-emitted `BAR.json` artifact from wire-ethereum and look up
- * its deployed address from the matching `outpost-addrs.json`. Mirrors
- * {@link loadMockWireNodes} exactly so callers can read both off the same
- * `outpostAddrs` map.
+ * Load the deployed `BAR` contract from the run's wire-ethereum deploy
+ * artifacts (`outpost-addrs.json` + the hardhat artifact), bound to `signer`.
  */
 export function loadBar(
   ethereumPath: string,
   outpostAddrs: Record<string, string>,
   signer: ethers.Signer
 ): BarContract {
-  const addr = outpostAddrs.BAR
-  Assert.ok(
-    addr && /^0x[0-9a-fA-F]{40}$/.test(addr),
-    `NodeOwnerNFTTool: BAR not in outpost-addrs.json (got ${addr}). ` +
-      `Did wire-ethereum's deployLocal.ts run?`
-  )
-
-  const artifactPath = Path.join(
+  return loadOutpostContract<BarContract>(
     ethereumPath,
-    "artifacts",
-    "contracts",
-    "outpost",
-    "BAR.sol",
-    "BAR.json"
+    outpostAddrs,
+    "BAR",
+    ["outpost"],
+    signer
   )
-  Assert.ok(
-    Fs.existsSync(artifactPath),
-    `NodeOwnerNFTTool: artifact not found at ${artifactPath}. ` +
-      `Run \`npx hardhat compile\` in wire-ethereum first.`
-  )
-  const artifact = JSON.parse(Fs.readFileSync(artifactPath, "utf-8"))
-  return contractView<BarContract>(addr, artifact.abi, signer)
 }
 
 /**
@@ -211,25 +175,25 @@ export function loadBar(
  * `NodeOwnerRegistration` NODE_OWNER_REG attestation for the next outbound
  * OPP envelope.
  *
- * @param contract - The signer-bound BAR surface; the signer must hold ≥ 1 of `tier` and match `depositorPubKey`.
+ * @param contract - The signer-bound BAR surface; the signer must hold ≥ 1 of `tier` and match `depositorPublicKey`.
  * @param tier - The claimed tier — WireNodes token ids ARE the tiers, so this is also the tokenId committed.
  * @param wireAccountName - The Wire account to register (created in-flow when absent).
- * @param wirePubKey - The account's owner/active authority as the proto `WireKey`.
- * @param depositorPubKey - The caller's 65-byte SEC1 uncompressed public key (`0x04 || X || Y`).
+ * @param wirePublicKey - The account's owner/active authority as the proto `WireKey`.
+ * @param depositorPublicKey - The caller's 65-byte SEC1 uncompressed public key (`0x04 || X || Y`).
  * @returns The mined receipt.
  */
 export async function commitNode(
   contract: BarContract,
   tier: NodeOwnerTier,
   wireAccountName: string,
-  wirePubKey: WireKey,
-  depositorPubKey: string
+  wirePublicKey: WireKey,
+  depositorPublicKey: string
 ): Promise<ethers.ContractTransactionReceipt> {
   const tx = await contract.commitNode(
     tier,
     wireAccountName,
-    wirePubKey,
-    depositorPubKey
+    wirePublicKey,
+    depositorPublicKey
   )
   const receipt = await tx.wait()
   Assert.ok(receipt, "commitNode: receipt is null")

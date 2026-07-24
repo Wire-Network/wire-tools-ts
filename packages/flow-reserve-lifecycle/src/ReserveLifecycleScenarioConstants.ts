@@ -34,7 +34,7 @@ export namespace ReserveLifecycleScenarioConstants {
   /** Interval for long-running chain-state polls (ms). */
   export const PollIntervalMs = 3_000
   /** Buffer added on top of each poll deadline for the enclosing step timeout (ms). */
-  export const PollDeadlineBufferMs = 30_000
+  export const PollDeadlineBufferMs = ProtocolTiming.PollDeadlineBufferMs
   /** Step timeout for single Ethereum-outpost writes (tx submit + 1 confirmation). */
   export const EthereumWriteStepTimeoutMs = 60_000
   /** Step timeout for WIRE depot writes (each waits to irreversibility). */

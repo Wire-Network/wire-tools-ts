@@ -176,13 +176,13 @@ export namespace NodeOwnerNftScenarioCommitSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const bar = resolveBar(ctx),
-      depositorPubKey = ctx.ethereum.wallet.signer.signingKey.publicKey
+      depositorPublicKey = ctx.ethereum.wallet.signer.signingKey.publicKey
     const receipt = await commitNode(
       bar,
       input.tier,
       input.wireAccountName,
       wireKeyFromPublicKey(input.wirePublicKey),
-      depositorPubKey
+      depositorPublicKey
     )
     Assert.strictEqual(
       receipt.status,

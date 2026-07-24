@@ -2,7 +2,8 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { ethers } from "ethers"
-import { loadBar } from "@wireio/cluster-tool/tools/ethereum"
+import { NodeOwnerTier, WireKey, WireKeyType } from "@wireio/opp-typescript-models"
+import { commitNode, loadBar, type BarContract } from "@wireio/cluster-tool/tools/ethereum"
 
 /** A syntactically-valid deployed address for the fixture map. */
 const BAR_ADDRESS = "0x00000000000000000000000000000000000000b1"
@@ -53,5 +54,62 @@ describe("EthereumNodeOwnerNftTool.loadBar", () => {
     } finally {
       Fs.rmSync(bareRepo, { recursive: true, force: true })
     }
+  })
+})
+
+describe("EthereumNodeOwnerNftTool.commitNode", () => {
+  const WIRE_ACCOUNT_NAME = "nftg"
+  /** 65-byte SEC1 uncompressed depositor key (`0x04 || X || Y`). */
+  const DEPOSITOR_PUBLIC_KEY = "0x04" + "11".repeat(64)
+  const wireKey = WireKey.create({
+    keyType: WireKeyType.K1,
+    key: new Uint8Array(33).fill(2)
+  })
+
+  /** A stubbed `BarContract` plus the arg lists its `commitNode` recorded. */
+  interface StubBar {
+    contract: BarContract
+    calls: unknown[][]
+  }
+
+  /** Stub `BarContract` recording forwarded args; `tx.wait()` resolves `receipt`. */
+  function stubBar(receipt: unknown): StubBar {
+    const calls: unknown[][] = []
+    const contract = {
+      commitNode: async (...args: unknown[]) => {
+        calls.push(args)
+        return { wait: async () => receipt }
+      }
+    } as unknown as BarContract
+    return { contract, calls }
+  }
+
+  it("forwards the claim args in order and returns the mined receipt", async () => {
+    const receipt = { status: 1 }
+    const { contract, calls } = stubBar(receipt)
+    const result = await commitNode(
+      contract,
+      NodeOwnerTier.T1,
+      WIRE_ACCOUNT_NAME,
+      wireKey,
+      DEPOSITOR_PUBLIC_KEY
+    )
+    expect(result).toBe(receipt)
+    expect(calls).toEqual([
+      [NodeOwnerTier.T1, WIRE_ACCOUNT_NAME, wireKey, DEPOSITOR_PUBLIC_KEY]
+    ])
+  })
+
+  it("throws LOUDLY when the transaction never mines (null receipt)", async () => {
+    const { contract } = stubBar(null)
+    await expect(
+      commitNode(
+        contract,
+        NodeOwnerTier.T1,
+        WIRE_ACCOUNT_NAME,
+        wireKey,
+        DEPOSITOR_PUBLIC_KEY
+      )
+    ).rejects.toThrow(/receipt is null/)
   })
 })
