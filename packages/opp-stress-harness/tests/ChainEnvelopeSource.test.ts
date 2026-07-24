@@ -51,7 +51,8 @@ function outboundRow(
     envelope_hash: EnvelopeHash,
     status:
       SystemContracts.SysioMsgchEnvelopestatus.ENVELOPE_STATUS_CONFIRMED,
-    raw_envelope: "ab".repeat(byteCount)
+    raw_envelope: "ab".repeat(byteCount),
+    last_message_id: "0"
   }
 }
 
