@@ -140,6 +140,15 @@ export namespace SwapStressSaturationScenarioConstants {
     export const PhaseTimeoutMs = 480_000
     export const MaxIterationCount = 5
     export const Concurrency = 4
+    /** Every ramp iteration runs two phases (ETH→WIRE, then WIRE→ETH). */
+    export const PhasesPerIteration = 2
+    /**
+     * RunCampaign step ceiling: the full ramp at every iteration's two
+     * per-phase deadlines. A generous ceiling adds no wall clock to a healthy
+     * run; the ramp concludes the moment it saturates or breaks.
+     */
+    export const CampaignDeadlineMs =
+      PhaseTimeoutMs * MaxIterationCount * PhasesPerIteration
   }
 
   /** WIRE accounts provisioned by this soak. */

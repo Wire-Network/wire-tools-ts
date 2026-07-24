@@ -49,14 +49,26 @@ const nonceCounters = new Map<string, number>()
  * revert), the caller should call {@link clearNonceCache} so the next
  * `resolveLatestNonce` re-seeds from the chain.
  *
+ * A burst caller reserves a contiguous block by passing `count`: the counter
+ * advances by `count` and the FIRST nonce of the block is returned — the
+ * caller submits `nonce … nonce + count - 1`, one per tx, and awaits every
+ * receipt before the next reservation from the same signer.
+ *
  * @param contract Ethers contract instance bound to a Signer (its runner
  *                 must be a Signer with a Provider).
- * @return The next nonce to submit.
- * @throws If the contract is not bound to a Signer with a Provider.
+ * @param count Number of contiguous nonces to reserve (default 1).
+ * @return The next nonce to submit (the first of the reserved block).
+ * @throws If the contract is not bound to a Signer with a Provider, or
+ *         `count` is not a positive integer.
  */
 export async function resolveLatestNonce(
-  contract: ethers.BaseContract
+  contract: ethers.BaseContract,
+  count = 1
 ): Promise<number> {
+  Assert.ok(
+    Number.isInteger(count) && count >= 1,
+    `resolveLatestNonce: count must be a positive integer (got ${count})`
+  )
   const runner = contract.runner
   Assert.ok(
     runner !== null &&
@@ -74,11 +86,11 @@ export async function resolveLatestNonce(
   const cached = nonceCounters.get(fromAddr)
   if (cached != null) {
     const nonce = cached
-    nonceCounters.set(fromAddr, cached + 1)
+    nonceCounters.set(fromAddr, cached + count)
     return nonce
   }
   const chainNonce = await provider.getTransactionCount(fromAddr, "latest")
-  nonceCounters.set(fromAddr, chainNonce + 1)
+  nonceCounters.set(fromAddr, chainNonce + count)
   return chainNonce
 }
 

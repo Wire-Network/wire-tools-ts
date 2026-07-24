@@ -20,6 +20,7 @@ import {
   type Logger
 } from "@wireio/cluster-tool"
 import { SwapStressSaturationScenarioConstants as Constants } from "./SwapStressSaturationScenarioConstants.js"
+import { SwapStressSaturationScenarioCampaignSteps as CampaignSteps } from "./steps/SwapStressSaturationScenarioCampaignSteps.js"
 import { SwapStressSaturationScenarioOwnerSteps as OwnerSteps } from "./steps/SwapStressSaturationScenarioOwnerSteps.js"
 import { SwapStressSaturationScenarioReserveSteps as ReserveSteps } from "./steps/SwapStressSaturationScenarioReserveSteps.js"
 import { SwapStressSaturationScenarioUserSteps as UserSteps } from "./steps/SwapStressSaturationScenarioUserSteps.js"
@@ -209,9 +210,10 @@ async function runVerifySolanaLocalReserveActive(ctx: Context): Promise<void> {
  * the per-swap draw, then provisions the deterministic stress-user roster the
  * ramp campaign reuses.
  *
- * (The ramp campaign + saturation verification — `runSaturationRamp` issuing
- * per-swap ETH `requestSwap` + `sysio.uwrit::swapfromwire` until both Ethereum
- * OPP directions saturate — are appended by the campaign phase.)
+ * The RunCampaign phase then drives `runSaturationRamp` — per-swap ETH
+ * `ReserveManager.requestSwap` + `sysio.uwrit::swapfromwire` bursts with
+ * delta-based payout observers and canonical OPP-envelope telemetry — and the
+ * closing verify step asserts BOTH Ethereum OPP directions saturated.
  */
 export class SwapStressSaturationScenario extends FlowScenario<Context> {
   readonly name = "flow-swap-stress-saturation"
@@ -220,6 +222,10 @@ export class SwapStressSaturationScenario extends FlowScenario<Context> {
 
   override readonly defaults: ClusterBuildOptions = {
     epochDurationSec: Constants.Timing.EpochDurationSec,
+    // The ramp rides the ETH/PRIMARY public reserve on BOTH campaign phases
+    // (phase-1 source side, phase-2 target side) — the bootstrap must seed the
+    // mock PRIMARY reserves (mock seeding is opt-in, per scenario defaults).
+    enableMockReserves: true,
     // `createuwreq` re-checks `meets_role_min` for BOTH legs of every swap.
     requiredUnderwriterCollateral: [
       {
@@ -458,10 +464,26 @@ export class SwapStressSaturationScenario extends FlowScenario<Context> {
       Constants.StressAccounts.Funding
     )
 
-    // ── 8. [next commit] RunCampaign + VerifySaturation ──
-    // The ramp campaign (`runSaturationRamp` issuing per-swap ETH `requestSwap`
-    // + `sysio.uwrit::swapfromwire`) and the both-Ethereum-directions saturation
-    // assertion are appended by the campaign phase.
-    log.debug(`${this.name}: setup phases registered (campaign phase pending)`)
+    // ── 8. The ramp campaign + both-directions saturation verification ──
+    ClusterBuildPhase.create<Context>(
+      cluster,
+      "RunCampaign",
+      `Ramp ${Constants.Ramp.InitialCount}→${Constants.Ramp.MaxCount} accounts (×${Constants.Ramp.Multiplier}) until both Ethereum OPP directions saturate`
+    ).push(
+      CampaignSteps.planRunCampaign<Context>(
+        Actor.User,
+        "run-saturation-ramp",
+        "run the saturation ramp (per-swap ETH requestSwap + sysio.uwrit::swapfromwire, with OPP-envelope telemetry)",
+        { timeoutMs: Constants.Ramp.CampaignDeadlineMs }
+      ),
+      verifyStep<Context>(
+        Actor.Sysio,
+        "verify-saturation",
+        "both Ethereum OPP directions saturated with no missing endpoints",
+        CampaignSteps.runVerifySaturation,
+        writeOptions
+      )
+    )
+    log.debug(`${this.name}: setup + campaign phases registered`)
   }
 }

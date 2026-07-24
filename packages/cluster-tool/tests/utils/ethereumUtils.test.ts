@@ -39,7 +39,43 @@ describe("resolveLatestNonce", () => {
       /must be bound to a Signer/
     )
   })
+
+  it("throws when count is not a positive integer", async () => {
+    const view = contractView<BalanceReadView>(SomeAddress, BalanceAbi, null)
+    await expect(resolveLatestNonce(view, 0)).rejects.toThrow(
+      /count must be a positive integer/
+    )
+    await expect(resolveLatestNonce(view, 1.5)).rejects.toThrow(
+      /count must be a positive integer/
+    )
+  })
+
+  it("reserves a contiguous block: returns the first nonce and advances by count", async () => {
+    const signer = stubSigner("0x00000000000000000000000000000000000000bb", 7),
+      view = contractView<BalanceReadView>(SomeAddress, BalanceAbi, signer)
+    // First call seeds from the chain and reserves 3 nonces (7, 8, 9).
+    expect(await resolveLatestNonce(view, 3)).toBe(7)
+    // The next reservation starts where the block ended.
+    expect(await resolveLatestNonce(view)).toBe(10)
+    expect(await resolveLatestNonce(view, 2)).toBe(11)
+    expect(await resolveLatestNonce(view)).toBe(13)
+  })
 })
+
+/**
+ * Minimal Signer + Provider stub for nonce accounting: the only calls
+ * `resolveLatestNonce` makes are `getAddress()` and
+ * `provider.getTransactionCount(addr, "latest")`.
+ */
+function stubSigner(address: string, chainNonce: number): ethers.Signer {
+  const provider = {
+    getTransactionCount: async () => chainNonce
+  } as unknown as ethers.Provider
+  return {
+    provider,
+    getAddress: async () => address
+  } as unknown as ethers.Signer
+}
 
 describe("ethereumRevertReason", () => {
   it("prefers the decoded require reason over every other field", () => {

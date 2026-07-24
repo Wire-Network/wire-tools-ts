@@ -8,6 +8,7 @@ import {
   EthereumCollateralTool,
   SolanaOutpostBootstrapper,
   type ClusterBuildContext,
+  type ReserveManagerRequestSwapContract,
   ClusterConfigProvider
 } from "@wireio/cluster-tool"
 import { SwapStressSaturationScenarioConstants as Constants } from "./SwapStressSaturationScenarioConstants.js"
@@ -26,12 +27,14 @@ export namespace SwapStressSaturationScenarioArtifacts {
   /**
    * Structural surface of the `ReserveManager` members this flow binds beyond
    * the harness's swap surface: the payable native `create_reserve` write and
-   * the `getReserve` local-record read. (Following the harness's
-   * `OperatorRegistryContract` precedent — typechain types live in
-   * `wire-ethereum` and are not consumable here.)
+   * the `getReserve` local-record read — plus the inherited `requestSwap`
+   * ({@link ReserveManagerRequestSwapContract}) the ramp campaign's phase-1
+   * bursts submit. (Following the harness's `OperatorRegistryContract`
+   * precedent — typechain types live in `wire-ethereum` and are not
+   * consumable here.)
    */
   export interface ReserveManagerPrivateReserveContract
-    extends ethers.BaseContract {
+    extends ReserveManagerRequestSwapContract {
     create_reserve: (
       tokenCode: bigint,
       reserveCode: bigint,
