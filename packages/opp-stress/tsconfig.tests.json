@@ -1,0 +1,16 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {
+    "rootDir": "tests",
+    "outDir": "lib/out-tests",
+    "paths": {
+      "@wireio/debugging-shared": ["../debugging-shared/src"],
+      "@wireio/debugging-shared/*": ["../debugging-shared/src/*"],
+      "@wireio/test-opp-stress": ["./src"]
+    }
+  },
+  "include": ["tests"],
+  "references": [
+    { "path": "./tsconfig.src.json" }
+  ]
+}

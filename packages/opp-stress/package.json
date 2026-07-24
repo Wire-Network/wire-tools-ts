@@ -1,0 +1,25 @@
+{
+  "name": "@wireio/test-opp-stress",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "OPP-focused stress testing helpers for WIRE e2e flows",
+  "main": "lib/out/index.js",
+  "scripts": {
+    "compile": "tsc -b tsconfig.json",
+    "compile:watch": "tsc -b tsconfig.json -w",
+    "build": "pnpm run compile",
+    "test": "jest --runInBand --no-cache",
+    "test:built": "node scripts/verify-built-output.mjs",
+    "verify:evidence": "node scripts/verify-evidence.mjs",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@wireio/debugging-shared": "workspace:*",
+    "@wireio/opp-typescript-models": "^1.0.26"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "25.5.0"
+  }
+}

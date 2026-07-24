@@ -1,0 +1,32 @@
+{
+  "name": "@wireio/opp-stress-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Standalone un-privileged OPP stress-testing harness for a live WIRE testnet",
+  "main": "lib/out/index.js",
+  "bin": {
+    "wire-opp-stress": "bin/wire-opp-stress"
+  },
+  "scripts": {
+    "compile": "tsc -b tsconfig.json",
+    "compile:watch": "tsc -b tsconfig.json -w",
+    "build": "pnpm run compile",
+    "test": "jest --runInBand --no-cache",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@wireio/debugging-shared": "workspace:*",
+    "@wireio/opp-typescript-models": "^1.0.26",
+    "@wireio/sdk-core": "^1.0.17",
+    "@wireio/shared": "^1.0.21",
+    "@wireio/test-opp-stress": "workspace:*",
+    "ethers": "^6.14.0",
+    "yargs": "^18.0.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "25.5.0",
+    "@types/yargs": "^17.0.35"
+  }
+}

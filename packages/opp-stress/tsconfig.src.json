@@ -1,0 +1,15 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/out",
+    "paths": {
+      "@wireio/debugging-shared": ["../debugging-shared/src"],
+      "@wireio/debugging-shared/*": ["../debugging-shared/src/*"]
+    }
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../debugging-shared/tsconfig.json" }
+  ]
+}

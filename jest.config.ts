@@ -5,6 +5,8 @@ const config: Config = {
     "packages/cluster-tool-shared",
     "packages/cluster-tool",
     "packages/flow-batch-operator-slashing",
+    "packages/opp-stress",
+    "packages/opp-stress-harness",
     "packages/debugging-shared",
     "packages/debugging-server",
     "packages/debugging-client-shared",
