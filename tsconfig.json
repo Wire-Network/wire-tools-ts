@@ -30,6 +30,7 @@
     { "path": "./packages/flow-yield-distribution/tsconfig.json" },
     { "path": "./packages/opp-stress/tsconfig.json" },
     { "path": "./packages/opp-stress-harness/tsconfig.json" },
+    { "path": "./packages/opp-swap-stress/tsconfig.json" },
     { "path": "./packages/debugging-shared/tsconfig.json" },
     { "path": "./packages/debugging-server/tsconfig.json" },
     { "path": "./packages/debugging-client-shared/tsconfig.json" },

@@ -1,0 +1,13 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {
+  },
+  "include": [],
+  "references": [
+    { "path": "../debugging-shared/tsconfig.json" },
+    { "path": "../opp-stress/tsconfig.json" },
+    { "path": "../opp-stress-harness/tsconfig.json" },
+    { "path": "./tsconfig.src.json" },
+    { "path": "./tsconfig.tests.json" }
+  ]
+}

@@ -7,6 +7,7 @@ const config: Config = {
     "packages/flow-batch-operator-slashing",
     "packages/opp-stress",
     "packages/opp-stress-harness",
+    "packages/opp-swap-stress",
     "packages/debugging-shared",
     "packages/debugging-server",
     "packages/debugging-client-shared",
