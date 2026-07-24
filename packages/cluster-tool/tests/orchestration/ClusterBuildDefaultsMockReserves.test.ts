@@ -1,7 +1,9 @@
-import Fs from "node:fs"
-import Os from "node:os"
 import Path from "node:path"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
+import {
+  fixtureResolveEnvironment,
+  type ResolveEnvironment
+} from "../config/resolveEnvironmentFixture.js"
 
 /** A phase or group node — a group carries `children`, a phase is a leaf. */
 interface NamedNode {
@@ -18,30 +20,20 @@ function collectNames(children: ReadonlyArray<NamedNode>): string[] {
 }
 
 describe("ClusterBuildDefaults — mock-reserve gating", () => {
-  const previousRegistry = process.env.WIRE_BIND_REGISTRY_PATH
-  let dir: string, buildPath: string
+  let environment: ResolveEnvironment
 
   beforeEach(() => {
-    dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "mock-reserves-"))
-    process.env.WIRE_BIND_REGISTRY_PATH = Path.join(dir, "bind-registry")
-    // resolveExecutables asserts nodeop/kiod/clio exist under buildPath/bin.
-    buildPath = Path.join(dir, "build")
-    Fs.mkdirSync(Path.join(buildPath, "bin"), { recursive: true })
-    ;["nodeop", "kiod", "clio"].forEach(bin =>
-      Fs.writeFileSync(Path.join(buildPath, "bin", bin), "")
-    )
+    environment = fixtureResolveEnvironment("mock-reserves-")
   })
 
   afterEach(() => {
-    if (previousRegistry == null) delete process.env.WIRE_BIND_REGISTRY_PATH
-    else process.env.WIRE_BIND_REGISTRY_PATH = previousRegistry
-    Fs.rmSync(dir, { recursive: true, force: true })
+    environment.cleanup()
   })
 
   function baseOptions() {
     return {
-      clusterPath: Path.join(dir, "cluster"),
-      buildPath,
+      clusterPath: Path.join(environment.rootPath, "cluster"),
+      buildPath: environment.buildPath,
       ethereumPath: "/fake/eth",
       solanaPath: "/fake/sol"
     }

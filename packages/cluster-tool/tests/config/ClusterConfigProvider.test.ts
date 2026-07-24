@@ -21,6 +21,10 @@ import {
   ClusterConfigProvider
 } from "@wireio/cluster-tool/config"
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
+import {
+  fixtureResolveEnvironment,
+  type ResolveEnvironment
+} from "./resolveEnvironmentFixture.js"
 
 describe("ClusterConfigProvider", () => {
   describe("resolve", () => {
@@ -219,36 +223,26 @@ describe("ClusterConfigProvider", () => {
   })
 
   describe("resolve --bind-config classify/merge", () => {
-    const previousRegistry = process.env.WIRE_BIND_REGISTRY_PATH
-    let dir: string, buildPath: string
+    let environment: ResolveEnvironment
 
     beforeEach(() => {
-      dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "bind-config-"))
-      process.env.WIRE_BIND_REGISTRY_PATH = Path.join(dir, "registry")
-      // resolveExecutables asserts nodeop/kiod/clio exist under buildPath/bin.
-      buildPath = Path.join(dir, "build")
-      Fs.mkdirSync(Path.join(buildPath, "bin"), { recursive: true })
-      ;["nodeop", "kiod", "clio"].forEach(bin =>
-        Fs.writeFileSync(Path.join(buildPath, "bin", bin), "")
-      )
+      environment = fixtureResolveEnvironment("bind-config-")
     })
     afterEach(() => {
-      if (previousRegistry == null) delete process.env.WIRE_BIND_REGISTRY_PATH
-      else process.env.WIRE_BIND_REGISTRY_PATH = previousRegistry
-      Fs.rmSync(dir, { recursive: true, force: true })
+      environment.cleanup()
     })
 
     /** Write a JSON bind (config or partial override) to the temp dir. */
     function writeBindConfig(bind: unknown): string {
-      const file = Path.join(dir, "bind.json")
+      const file = Path.join(environment.rootPath, "bind.json")
       Fs.writeFileSync(file, JSON.stringify(bind))
       return file
     }
-    /** Base create options (fake host paths; binaries resolve off PATH). */
+    /** Base create options (fake host paths; binaries fixture-resolved). */
     function baseOptions(bindConfig: string, extra: object = {}) {
       return {
-        clusterPath: Path.join(dir, "cluster"),
-        buildPath,
+        clusterPath: Path.join(environment.rootPath, "cluster"),
+        buildPath: environment.buildPath,
         ethereumPath: "/fake/eth",
         solanaPath: "/fake/sol",
         bindConfig,
