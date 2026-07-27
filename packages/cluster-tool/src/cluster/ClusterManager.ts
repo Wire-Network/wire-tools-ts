@@ -18,6 +18,7 @@ import type { ClusterBuild } from "../orchestration/ClusterBuild.js"
 import { ClusterBuildContext } from "../orchestration/ClusterBuildContext.js"
 import { ClusterBuildDefaults } from "../orchestration/ClusterBuildDefaults.js"
 import { ClusterBuildPhase } from "../orchestration/ClusterBuildPhase.js"
+import { SolanaClusterIdentityKey } from "../orchestration/outputs/SolanaClusterIdentity.js"
 import { Steps } from "../orchestration/steps/index.js"
 import { pollUntil } from "../orchestration/StepTools.js"
 import { Report } from "../report/Report.js"
@@ -227,10 +228,10 @@ export namespace ClusterManager {
     assertClusterStopped(config)
     ProcessManager.get().initialize()
 
-    // Only the key material is reloaded — topology is RE-DERIVED from
-    // NodeConfig.plan(config), the exact deterministic call `create`'s steps
-    // make, so `run` and `create` can never drift apart.
-    const keys = ClusterState.loadKeys(config)
+    // Topology is RE-DERIVED from NodeConfig.plan(config), while persisted
+    // identity and key material are reloaded for daemon provisioning.
+    const state = ClusterState.load(config),
+      keys = ClusterState.loadKeys(config)
     const ctx = new ClusterBuildContext(
       config,
       getLogger(config.report.basename)
@@ -305,6 +306,29 @@ export namespace ClusterManager {
 
       log.info("[cluster] starting solana-test-validator")
       await Steps.processes.solanaValidator.runStart(ctx, null, controller.signal)
+    }
+
+    log.info("[cluster] verifying Solana cluster identity")
+    await Steps.solanaClusterIdentity.runResolve(
+      ctx,
+      {
+        kind: "SolanaClusterIdentitySteps.ResolveInput",
+        source: isExternalOutpost
+          ? Steps.solanaClusterIdentity.Source.external
+          : Steps.solanaClusterIdentity.Source.local,
+        expectedGenesisHash:
+          config.externalOutposts?.solana.genesisHash ?? state.solanaGenesisHash
+      },
+      controller.signal
+    )
+    if (!isExternalOutpost && state.solanaGenesisHash == null) {
+      ClusterState.save(config, {
+        ...state,
+        solanaGenesisHash: ctx.outputs.assert(SolanaClusterIdentityKey)
+      })
+      log.info(
+        "[cluster] migrated legacy cluster state with Solana genesis hash"
+      )
     }
 
     if (config.debuggingServerEnabled !== false) {

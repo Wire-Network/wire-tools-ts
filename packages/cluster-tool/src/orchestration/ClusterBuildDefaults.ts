@@ -618,11 +618,12 @@ export namespace ClusterBuildDefaults {
           "the external Ethereum RPC reports the configured chain id",
           {}
         ),
-        Steps.externalOutpost.planVerifySolanaEndpoint<C>(
+        Steps.solanaClusterIdentity.planVerifyExternal<C>(
           Actor.SolanaOutpost,
-          "verify-solana-endpoint",
-          "the external Solana RPC responds to getVersion",
-          {}
+          "verify-solana-cluster-identity",
+          "the external Solana RPC reports the independently configured genesis hash",
+          {},
+          config.externalOutposts.solana.genesisHash
         )
       )
     } else {
@@ -659,6 +660,12 @@ export namespace ClusterBuildDefaults {
           Actor.SolanaOutpost,
           "start-validator",
           "start solana-test-validator + liqsol_core (OPP outpost)",
+          {}
+        ),
+        Steps.solanaClusterIdentity.planProvisionLocal<C>(
+          Actor.SolanaOutpost,
+          "provision-solana-cluster-identity",
+          "record the locally controlled validator genesis hash",
           {}
         ),
         Steps.solanaOutpost.planDeploy<C>(

@@ -9,6 +9,7 @@ import {
   type ClusterBuildPhaseBase
 } from "@wireio/cluster-tool/orchestration"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
+import { TestSolanaGenesisHash } from "../../config/clusterConfigFixture.js"
 
 /** A minimal parent that captures pushed children (no context needed for structure). */
 function fakeParent<C extends ClusterBuildContext = ClusterBuildContext>(): ClusterBuildParent<C> {
@@ -101,7 +102,7 @@ describe("planOperatorAccountProvisioning — outpost-chain funding gate (H3)", 
   /** Provision a funded batch op over a REAL context (the gate reads config). */
   function fundedKinds(externalOutposts?: {
     ethereum: { addressFile: string; abiFiles: string[]; chainId: number }
-    solana: { idlFile: string }
+    solana: { idlFile: string; genesisHash: string }
   }): string[] {
     const cluster = ClusterBuild.forContext(
       fixtureContext(externalOutposts != null ? { externalOutposts } : {})
@@ -125,7 +126,10 @@ describe("planOperatorAccountProvisioning — outpost-chain funding gate (H3)", 
   it("GATES OUT fund + airdrop in external-outpost mode (depot-side steps stay)", () => {
     const kinds = fundedKinds({
       ethereum: { addressFile: "outpost-addrs.json", abiFiles: [], chainId: 1 },
-      solana: { idlFile: "idl.json" }
+      solana: {
+        idlFile: "idl.json",
+        genesisHash: TestSolanaGenesisHash
+      }
     })
     expect(kinds).not.toContain("WireOperatorProvisioningTool.FundEthereumInput")
     expect(kinds).not.toContain("WireOperatorProvisioningTool.AirdropSolanaInput")

@@ -12,6 +12,9 @@ import { Report } from "@wireio/cluster-tool/report"
 import { Localhost } from "@wireio/cluster-tool/utils"
 
 const Address = Localhost
+/** Canonical 32-byte Base58 Solana genesis hash used by external fixtures. */
+export const TestSolanaGenesisHash =
+  "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi"
 // Producer / batch / underwriter ports are auto-assigned in production; for this
 // fixture derive a deterministic block from named defaults so no port is a bare
 // magic literal.

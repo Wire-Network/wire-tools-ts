@@ -5,8 +5,12 @@ import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
 
 import { ClusterState } from "@wireio/cluster-tool"
-import { ClusterKeyStore } from "@wireio/cluster-tool/orchestration/outputs"
+import {
+  ClusterKeyStore,
+  SolanaClusterIdentityKey
+} from "@wireio/cluster-tool/orchestration/outputs"
 import { fixtureContext } from "../config/clusterBuildContextFixture.js"
+import { TestSolanaGenesisHash } from "../config/clusterConfigFixture.js"
 
 /** A fully-keyed batch-operator account — carries wire + ethereum + solana keys. */
 const BatchOperatorAccount = "batchopaaaa"
@@ -80,6 +84,7 @@ describe("ClusterState", () => {
       expect(state.solanaLedgerPath).toContain(ctx.config.dataPath)
       // No Solana outpost artifacts were prepared in this fixture.
       expect(state.solanaIdlFile).toBeNull()
+      expect(state.solanaGenesisHash).toBeNull()
     })
 
     it("carries NO private key material", () => {
@@ -87,6 +92,14 @@ describe("ClusterState", () => {
       const raw = JSON.stringify(ClusterState.capture(ctx))
       expect(raw).not.toContain("PVT_")
       expect(raw).not.toContain(BatchOperatorAccount)
+    })
+
+    it("persists the provisioned local Solana genesis hash", () => {
+      const ctx = seededContext()
+      ctx.outputs.set(SolanaClusterIdentityKey, TestSolanaGenesisHash)
+      expect(ClusterState.capture(ctx).solanaGenesisHash).toBe(
+        TestSolanaGenesisHash
+      )
     })
 
     it("nulls the anvil state + solana ledger paths in external-outpost mode", () => {
@@ -100,12 +113,17 @@ describe("ClusterState", () => {
             abiFiles: ["/ext/eth-abis/OPP.json"],
             chainId: 11_155_111
           },
-          solana: { idlFile: "/ext/solana-idls/liqsol_core.json" }
+          solana: {
+            idlFile: "/ext/solana-idls/liqsol_core.json",
+            genesisHash: TestSolanaGenesisHash
+          }
         }
       })
+      ctx.outputs.set(SolanaClusterIdentityKey, TestSolanaGenesisHash)
       const state = ClusterState.capture(ctx)
       expect(state.anvilStateFile).toBeNull()
       expect(state.solanaLedgerPath).toBeNull()
+      expect(state.solanaGenesisHash).toBe(TestSolanaGenesisHash)
     })
   })
 

@@ -47,7 +47,8 @@ describe("ProcessLivenessStream over WS", () => {
       walletPath: "",
       anvilStateFile: "",
       solanaLedgerPath: "",
-      solanaIdlFile: null
+      solanaIdlFile: null,
+      solanaGenesisHash: null
     }
     Fs.writeFileSync(
       Path.join(tmpDir, ClusterFiles.ConfigFilename),

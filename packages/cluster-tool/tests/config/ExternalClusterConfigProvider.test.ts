@@ -9,6 +9,7 @@ import {
   type ExternalClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { ExternalClusterConfigProvider } from "@wireio/cluster-tool/config"
+import { TestSolanaGenesisHash } from "./clusterConfigFixture.js"
 
 const config: ExternalClusterConfig = {
   bindings: {
@@ -56,7 +57,11 @@ const config: ExternalClusterConfig = {
     abiFiles: ["eth-abis/OPP.json"],
     chainId: 1
   },
-  solana: { idlFile: "solana-idls/opp.json" }
+  solana: {
+    idlFile: "solana-idls/opp.json",
+    genesisHash: TestSolanaGenesisHash,
+    mintsFile: "sol-mock-mints.json"
+  }
 }
 
 describe("ExternalClusterConfigProvider", () => {
@@ -80,6 +85,8 @@ describe("ExternalClusterConfigProvider", () => {
     expect(loaded.ethereum.addressFile).toBe(Path.join(dir, "outpost-addrs.json"))
     expect(loaded.ethereum.abiFiles[0]).toBe(Path.join(dir, "eth-abis/OPP.json"))
     expect(loaded.solana?.idlFile).toBe(Path.join(dir, "solana-idls/opp.json"))
+    expect(loaded.solana?.mintsFile).toBe(Path.join(dir, "sol-mock-mints.json"))
+    expect(loaded.solana?.genesisHash).toBe(TestSolanaGenesisHash)
   })
 
   it("load leaves absolute references untouched", () => {

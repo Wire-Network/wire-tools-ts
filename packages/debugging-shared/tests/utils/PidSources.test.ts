@@ -92,7 +92,8 @@ describe("collectPidSources", () => {
       walletPath: "",
       anvilStateFile: "",
       solanaLedgerPath: "",
-      solanaIdlFile: null
+      solanaIdlFile: null,
+      solanaGenesisHash: null
     }
 
     const sources = collectPidSources(tmpDir, state),

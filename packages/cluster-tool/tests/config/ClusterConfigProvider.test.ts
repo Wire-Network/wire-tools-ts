@@ -20,7 +20,11 @@ import {
   BindConfigProvider,
   ClusterConfigProvider
 } from "@wireio/cluster-tool/config"
-import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
+import {
+  fixtureConfig,
+  PersistedFixture,
+  TestSolanaGenesisHash
+} from "./clusterConfigFixture.js"
 import {
   fixtureResolveEnvironment,
   type ResolveEnvironment
@@ -163,7 +167,10 @@ describe("ClusterConfigProvider", () => {
             abiFiles: ["/x/eth-abis/OPP.json"],
             chainId: 1
           },
-          solana: { idlFile: "/x/idl.json" }
+          solana: {
+            idlFile: "/x/idl.json",
+            genesisHash: TestSolanaGenesisHash
+          }
         }
       })
       const round = ClusterConfigProvider.deserialize(
@@ -171,6 +178,9 @@ describe("ClusterConfigProvider", () => {
       )
       expect(round.signatureProvider.type).toBe(SignatureProviderType.SSM)
       expect(round.externalOutposts?.ethereum.chainId).toBe(1)
+      expect(round.externalOutposts?.solana.genesisHash).toBe(
+        TestSolanaGenesisHash
+      )
     })
   })
 

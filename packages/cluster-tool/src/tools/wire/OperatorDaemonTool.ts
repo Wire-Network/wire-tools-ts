@@ -17,7 +17,8 @@ import Fs from "node:fs"
 import Path from "node:path"
 import {
   type BindConfigNodeopPorts,
-  type ClusterConfig
+  type ClusterConfig,
+  type SolanaGenesisHash
 } from "@wireio/cluster-tool-shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
@@ -40,6 +41,7 @@ import {
   OperatorDaemonArtifacts,
   OperatorDaemonArtifactsKey
 } from "../../orchestration/outputs/OperatorDaemonArtifacts.js"
+import { SolanaClusterIdentityKey } from "../../orchestration/outputs/SolanaClusterIdentity.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { SolanaOutpostProgramTool } from "../solana/SolanaOutpostProgramTool.js"
@@ -145,13 +147,15 @@ export namespace OperatorDaemonTool {
     readonly ethereumRpcUrl: string
     readonly ethereumChainId: number
     readonly solanaRpcUrl: string
+    readonly solanaGenesisHash: SolanaGenesisHash
     readonly debuggingServerUrl: string
     readonly debuggingServerEnabled: boolean
   }
 
   /** Resolve the daemon network endpoints from the resolved cluster config. */
   export function networkFromConfig(
-    config: ClusterConfig
+    config: ClusterConfig,
+    solanaGenesisHash: SolanaGenesisHash
   ): OperatorDaemonNetwork {
     return {
       ethereumRpcUrl: toURL(
@@ -166,6 +170,7 @@ export namespace OperatorDaemonTool {
         config.bind.solana.ports.http,
         toDialAddress(config.bind.solana.address)
       ),
+      solanaGenesisHash,
       debuggingServerUrl: toURL(
         config.bind.debuggingServer.port,
         toDialAddress(config.bind.debuggingServer.address)
@@ -362,6 +367,10 @@ export namespace OperatorDaemonTool {
       ...pair(
         "--outpost-solana-client",
         [SolanaClientId, solanaProvider, network.solanaRpcUrl].join(",")
+      ),
+      ...pair(
+        "--outpost-solana-cluster-identity",
+        [SolanaClientId, network.solanaGenesisHash].join(",")
       )
     ]
   }
@@ -579,7 +588,10 @@ export namespace OperatorDaemonTool {
 
     const operator = ctx.keyStore.assertOperator(input.account),
       artifacts = ctx.outputs.assert(OperatorDaemonArtifactsKey),
-      network = networkFromConfig(ctx.config),
+      network = networkFromConfig(
+        ctx.config,
+        ctx.outputs.assert(SolanaClusterIdentityKey)
+      ),
       keySourceFor = ClusterConfigProvider.signatureProviderSource(ctx.config),
       daemonArgs = match(operator.type)
         .with(OperatorType.BATCH, () =>

@@ -14,6 +14,7 @@ describe("ClusterStateNodeRole", () => {
 })
 
 describe("ClusterStateNode / ClusterState shape", () => {
+  const GenesisHash = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi"
   const biosNode: ClusterStateNode = {
     name: "bios",
     role: ClusterStateNodeRole.bios,
@@ -40,7 +41,8 @@ describe("ClusterStateNode / ClusterState shape", () => {
     walletPath: "/cluster/wallet",
     anvilStateFile: "/cluster/data/anvil/anvil.json",
     solanaLedgerPath: "/cluster/data/solana_validator",
-    solanaIdlFile: null
+    solanaIdlFile: null,
+    solanaGenesisHash: GenesisHash
   }
 
   it("holds every node in ONE flat array, regardless of role", () => {
@@ -73,6 +75,15 @@ describe("ClusterStateNode / ClusterState shape", () => {
     expect(
       ClusterStateSchemaCodec.deserialize(ClusterStateSchemaCodec.serialize(state))
     ).toEqual(state)
+  })
+
+  it("loads a legacy snapshot without solanaGenesisHash as unprovisioned", () => {
+    const legacy = JSON.parse(ClusterStateSchemaCodec.serialize(state))
+    delete legacy.solanaGenesisHash
+    expect(
+      ClusterStateSchemaCodec.deserialize(JSON.stringify(legacy))
+        .solanaGenesisHash
+    ).toBeNull()
   })
 
   it("allows null anvilStateFile/solanaLedgerPath (external-outpost mode)", () => {

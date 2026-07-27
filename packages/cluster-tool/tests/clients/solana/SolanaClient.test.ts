@@ -38,6 +38,16 @@ describe("SolanaClient", () => {
     )
   })
 
+  it("delegates getGenesisHash to the connected RPC", async () => {
+    const client = new SolanaClient(rpcUrl, newWallet()),
+      genesisHash = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+      spy = jest
+        .spyOn(client.connection, "getGenesisHash")
+        .mockResolvedValue(genesisHash)
+    await expect(client.getGenesisHash()).resolves.toBe(genesisHash)
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
   it("getSplBalance returns the ATA's raw token amount", async () => {
     jest
       .mocked(getAccount)

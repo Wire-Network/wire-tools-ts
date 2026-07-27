@@ -183,7 +183,9 @@ wire-cluster-tool create-external-config \
 
 External-outpost cluster (remote ETH+SOL): pass `--external-outpost-config` +
 a `--bind-config` whose `anvil` / `solana` addresses are the remote RPC
-endpoints; `create` verifies `eth_chainId` / Solana `getVersion` and gates on
+endpoints. The outpost config must supply a trusted Solana `genesisHash`
+independently of the endpoint; `create` verifies `eth_chainId` and an exact
+Solana `getGenesisHash` match before starting operator daemons, then gates on
 head-block advance (not epoch distribution). See the repo root README's
 "External outpost clusters" section.
 

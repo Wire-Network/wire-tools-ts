@@ -6,6 +6,7 @@ import { Steps } from "@wireio/cluster-tool/orchestration"
 import { OperatorDaemonArtifactsKey } from "@wireio/cluster-tool/orchestration/outputs"
 import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
+import { TestSolanaGenesisHash } from "../../config/clusterConfigFixture.js"
 
 describe("Steps.externalOutpost (materialize + publish)", () => {
   const ProgramId = "GrqvbZLCLkfeSQqvE7rL8XKHVWjNhAG2faLsY8yr9tD5",
@@ -59,7 +60,7 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
       dataPath,
       externalOutposts: {
         ethereum: { addressFile, abiFiles: [abiFile], chainId: 11_155_111 },
-        solana: { idlFile }
+        solana: { idlFile, genesisHash: TestSolanaGenesisHash }
       }
     })
   }

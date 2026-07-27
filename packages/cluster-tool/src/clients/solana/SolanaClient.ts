@@ -49,6 +49,11 @@ export class SolanaClient {
     return this.connection.getVersion()
   }
 
+  /** Canonical genesis hash reported by the connected Solana RPC endpoint. */
+  getGenesisHash(): Promise<string> {
+    return this.connection.getGenesisHash()
+  }
+
   /**
    * SPL token balance of an associated token account — `0n` when the account
    * does not exist yet (the normal pre-fund state).

@@ -16,11 +16,12 @@ import { SignatureProviderType } from "@wireio/cluster-tool-shared"
 import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
 import {
   OperatorDaemonArtifactsKey,
+  SolanaClusterIdentityKey,
   type OperatorAccount,
   type OperatorDaemonArtifacts
 } from "@wireio/cluster-tool/orchestration/outputs"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
-import { fixtureConfig } from "../../config/clusterConfigFixture.js"
+import { fixtureConfig, TestSolanaGenesisHash } from "../../config/clusterConfigFixture.js"
 import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
 
 /** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
@@ -61,6 +62,7 @@ const network: OperatorDaemonTool.OperatorDaemonNetwork = {
   ethereumRpcUrl: "http://127.0.0.1:8545",
   ethereumChainId: 31_337,
   solanaRpcUrl: "http://127.0.0.1:8899",
+  solanaGenesisHash: TestSolanaGenesisHash,
   debuggingServerUrl: "http://127.0.0.1:9901",
   debuggingServerEnabled: true
 }
@@ -77,6 +79,15 @@ function valuesOf(args: string[], flag: string): string[] {
 const keySourceFor = () => KeyGenerator.DefaultKeySource
 
 describe("OperatorDaemonTool", () => {
+  it("threads verified Solana identity into the daemon network model", () => {
+    expect(
+      OperatorDaemonTool.networkFromConfig(
+        fixtureConfig(),
+        TestSolanaGenesisHash
+      ).solanaGenesisHash
+    ).toBe(TestSolanaGenesisHash)
+  })
+
   describe("runDaemonStart", () => {
     it("launches the daemon through NodeopProcess.startWithRecovery (dirty-chainbase resilient)", async () => {
       const ctx = fixtureContext()
@@ -86,6 +97,7 @@ describe("OperatorDaemonTool", () => {
       const operator = operatorAccount("batchopbbbb", OperatorType.BATCH)
       ctx.keyStore.setOperator(operator)
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifacts)
+      ctx.outputs.set(SolanaClusterIdentityKey, TestSolanaGenesisHash)
       const recoverySpy = jest
         .spyOn(NodeopProcess, "startWithRecovery")
         .mockResolvedValue(undefined as unknown as NodeopProcess)
@@ -159,6 +171,9 @@ describe("OperatorDaemonTool", () => {
       ])
       expect(valuesOf(args, "--outpost-solana-client")).toEqual([
         `sol-default,sol-batchopaaaa,${network.solanaRpcUrl}`
+      ])
+      expect(valuesOf(args, "--outpost-solana-cluster-identity")).toEqual([
+        `sol-default,${TestSolanaGenesisHash}`
       ])
       expect(valuesOf(args, "--ethereum-abi-file")).toEqual(artifacts.ethereumAbiFiles)
       expect(valuesOf(args, "--batch-sol-client-id")).toEqual(["sol-default"])
@@ -253,6 +268,9 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(args, "--solana-idl-file")).toEqual([artifacts.solanaIdlFile])
       expect(valuesOf(args, "--solana-outpost-program-name")).toEqual([
         SolanaOutpostProgramTool.ProgramName
+      ])
+      expect(valuesOf(args, "--outpost-solana-cluster-identity")).toEqual([
+        `sol-default,${TestSolanaGenesisHash}`
       ])
     })
 

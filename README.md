@@ -346,7 +346,8 @@ instead of the local anvil / solana-test-validator: pass
 no local outpost is started or deployed), together with a `--bind-config` whose
 `anvil` / `solana` addresses are the REMOTE RPC endpoints. The
 `ExternalOutpostConfig` is fully self-described (RPC endpoints come from the bind
-config; the Solana program id is parsed from the IDL):
+config; the Solana program id is parsed from the IDL). The trusted Solana
+genesis hash is configured independently of that endpoint:
 
 ```json
 {
@@ -355,12 +356,16 @@ config; the Solana program id is parsed from the IDL):
     "abiFiles": ["/opt/wire/eth/eth-abis/OPP.json", "/opt/wire/eth/eth-abis/OPPInbound.json"],
     "chainId": 11155111
   },
-  "solana": { "idlFile": "/opt/wire/sol/liqsol_core.json" }
+  "solana": {
+    "idlFile": "/opt/wire/sol/liqsol_core.json",
+    "genesisHash": "<trusted-32-byte-base58-genesis-hash>"
+  }
 }
 ```
 
 At `create` the harness verifies the external endpoints are reachable
-(`eth_chainId` matches the configured `chainId`; Solana `getVersion` responds)
+(`eth_chainId` matches the configured `chainId`; Solana `getGenesisHash` exactly
+matches the independently configured `genesisHash`)
 and gates bootstrap success on the depot's head block advancing — NOT on epoch
 distribution (there is no local chain to advance). A remote `anvil`/`solana` bind
 address WITHOUT `--external-outpost-config` fails fast.

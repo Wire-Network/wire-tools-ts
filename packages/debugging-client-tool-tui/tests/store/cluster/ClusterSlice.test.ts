@@ -111,7 +111,8 @@ const stubState: ClusterState = {
   walletPath: "/cluster/wallet",
   anvilStateFile: "/cluster/data/anvil/anvil.json",
   solanaLedgerPath: "/cluster/data/solana_validator",
-  solanaIdlFile: null
+  solanaIdlFile: null,
+  solanaGenesisHash: null
 }
 
 describe("clusterSlice", () => {

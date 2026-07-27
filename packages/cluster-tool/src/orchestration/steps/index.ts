@@ -9,6 +9,7 @@ import { KeySteps } from "./KeySteps.js"
 import { OperatorSteps } from "./OperatorSteps.js"
 import { ProtocolSteps } from "./ProtocolSteps.js"
 import { RegistrySteps } from "./RegistrySteps.js"
+import { SolanaClusterIdentitySteps } from "./SolanaClusterIdentitySteps.js"
 import { EthereumOutpostSteps } from "../ethereum/EthereumOutpostSteps.js"
 import { SolanaOutpostSteps } from "../solana/SolanaOutpostSteps.js"
 import { SysioContractSteps } from "./contracts/sysio/index.js"
@@ -47,5 +48,6 @@ export namespace Steps {
   export import operator = OperatorSteps
   export import protocol = ProtocolSteps
   export import registry = RegistrySteps
+  export import solanaClusterIdentity = SolanaClusterIdentitySteps
   export import solanaOutpost = SolanaOutpostSteps
 }

@@ -278,39 +278,6 @@ export namespace ExternalOutpostSteps {
     )
   }
 
-  /**
-   * Verify the external Solana RPC endpoint responds to `getVersion`
-   * (Plan-2-reusable — the compose branch composes it).
-   *
-   * @param actor - The Report actor.
-   * @param name - Step name.
-   * @param description - Step description.
-   * @param options - Step options.
-   * @returns The verify step.
-   */
-  export function planVerifySolanaEndpoint<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions = {}
-  ): ClusterBuildStep<C, null> {
-    return verifyStep<C>(
-      actor,
-      name,
-      description,
-      async ctx => {
-        const version = await ctx.solana.getVersion()
-        Assert.ok(
-          version["solana-core"] != null,
-          "external Solana endpoint getVersion returned no solana-core version"
-        )
-      },
-      options
-    )
-  }
-
   // ── head-advance liveness (shared by external create's gate + `run`) ────────
 
   /**

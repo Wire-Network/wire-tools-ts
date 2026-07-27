@@ -77,7 +77,8 @@ export function makeFixtureCluster(): FixtureCluster {
     walletPath: "",
     anvilStateFile: "",
     solanaLedgerPath: "",
-    solanaIdlFile: null
+    solanaIdlFile: null,
+    solanaGenesisHash: null
   }
 
   const config: ClusterConfig = {

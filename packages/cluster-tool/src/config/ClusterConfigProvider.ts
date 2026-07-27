@@ -292,6 +292,7 @@ export namespace ClusterConfigProvider {
       },
       solana: {
         idlFile: resolveRef(config.solana.idlFile),
+        genesisHash: config.solana.genesisHash,
         ...(config.solana.mintsFile != null
           ? { mintsFile: resolveRef(config.solana.mintsFile) }
           : {})

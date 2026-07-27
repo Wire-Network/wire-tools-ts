@@ -73,7 +73,8 @@ describe(`POST ${ApiPaths.Processes.Endpoint}`, () => {
       walletPath: "",
       anvilStateFile: "",
       solanaLedgerPath: "",
-      solanaIdlFile: null
+      solanaIdlFile: null,
+      solanaGenesisHash: null
     }
     Fs.writeFileSync(
       Path.join(tmpDir, ClusterFiles.ConfigFilename),

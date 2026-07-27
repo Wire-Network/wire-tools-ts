@@ -1,6 +1,7 @@
 import { z } from "zod"
 
 import { SchemaCodec } from "../schema/index.js"
+import { SolanaGenesisHashSchema } from "../types/index.js"
 
 /**
  * An already-deployed Ethereum outpost's structural references. All `*File`
@@ -41,6 +42,11 @@ export type ExternalOutpostConfigEthereum = z.infer<
 export const ExternalOutpostConfigSolanaSchema = z.object({
   /** The `opp-outpost` IDL file — SOLE IDL source; program id parsed from it. */
   idlFile: z.string(),
+  /**
+   * Independently trusted Solana cluster identity. The RPC endpoint is
+   * verification input only and must report this exact genesis hash.
+   */
+  genesisHash: SolanaGenesisHashSchema,
   /**
    * The SPL mints file (`sol-mock-mints.json` — array of `{code, mint, decimals}`).
    * The MATERIALIZE step copies it to `<clusterPath>/data/sol-mock-mints.json` so

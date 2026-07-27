@@ -18,6 +18,7 @@ import { pollUntil } from "../../StepTools.js"
 import type { StepInput } from "../../StepRunner.js"
 import { OperatorAccount } from "../../outputs/OperatorAccount.js"
 import { OperatorDaemonArtifactsKey } from "../../outputs/OperatorDaemonArtifacts.js"
+import { SolanaClusterIdentityKey } from "../../outputs/SolanaClusterIdentity.js"
 
 const log = getLogger(__filename)
 
@@ -252,7 +253,10 @@ export namespace NodeopProcessSteps {
   ): string[] {
     if (node.role !== NodeRole.operator) return []
     const artifacts = ctx.outputs.assert(OperatorDaemonArtifactsKey),
-      network = OperatorDaemonTool.networkFromConfig(ctx.config),
+      network = OperatorDaemonTool.networkFromConfig(
+        ctx.config,
+        ctx.outputs.assert(SolanaClusterIdentityKey)
+      ),
       keySourceFor = ClusterConfigProvider.signatureProviderSource(ctx.config)
     return node.batchOperatorAccount != null
       ? OperatorDaemonTool.batchOperatorArgs(operator, artifacts, network, keySourceFor)

@@ -18,6 +18,7 @@ import { NodeConfig, NodeRole } from "../config/NodeConfig.js"
 import type { ClusterBuildContext } from "../orchestration/ClusterBuildContext.js"
 import { ClusterKeyStore } from "../orchestration/outputs/ClusterKeyStore.js"
 import { OperatorDaemonArtifactsKey } from "../orchestration/outputs/OperatorDaemonArtifacts.js"
+import { SolanaClusterIdentityKey } from "../orchestration/outputs/SolanaClusterIdentity.js"
 import type {
   EthereumKeyPair,
   SolanaKeyPair,
@@ -223,7 +224,8 @@ export namespace ClusterState {
           ? null
           : Path.join(config.dataPath, SolanaValidatorProcess.LedgerSubpath),
       solanaIdlFile:
-        ctx.outputs.get(OperatorDaemonArtifactsKey)?.solanaIdlFile ?? null
+        ctx.outputs.get(OperatorDaemonArtifactsKey)?.solanaIdlFile ?? null,
+      solanaGenesisHash: ctx.outputs.get(SolanaClusterIdentityKey)
     }
   }
 

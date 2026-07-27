@@ -144,6 +144,12 @@ export namespace ExternalClusterConfigSteps {
           "deserialize + store the external bind config",
           options
         ),
+        planVerifySolanaClusterIdentity(
+          actor,
+          "verify-solana-cluster-identity",
+          "a trusted Solana genesis hash is available before cloning",
+          options
+        ),
         planVerifyProducerCardinality(
           actor,
           "verify-producer-cardinality",
@@ -232,6 +238,46 @@ export namespace ExternalClusterConfigSteps {
       )
     )
     ctx.outputs.set(ExternalBindKey, externalBind)
+  }
+
+  /**
+   * Plan the trusted Solana cluster-identity presence check.
+   *
+   * @param actor - The Report actor.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step options.
+   * @returns The verify step.
+   */
+  export function planVerifySolanaClusterIdentity<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, null> {
+    return verifyStep<C>(
+      actor,
+      name,
+      description,
+      runVerifySolanaClusterIdentity,
+      options
+    )
+  }
+
+  /** Named runner — fail before clone writes when no trusted Solana identity exists. */
+  export async function runVerifySolanaClusterIdentity<
+    C extends ClusterBuildContext
+  >(ctx: C, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted()
+    const genesisHash =
+      ctx.config.externalOutposts?.solana.genesisHash ??
+      ClusterState.load(ctx.config).solanaGenesisHash
+    Assert.ok(
+      genesisHash != null,
+      "create-external-config: cluster-state.json has no trusted Solana genesis hash; relaunch the local cluster once to provision it"
+    )
   }
 
   /**
@@ -621,6 +667,7 @@ export namespace ExternalClusterConfigSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const localConfig = ctx.config,
+      sourceState = ClusterState.load(localConfig),
       { externalClusterPath, noDebuggingServer } = ctx.outputs.assert(ParamsKey),
       externalBind = ctx.outputs.assert(ExternalBindKey),
       // Remap any path rooted at the local cluster dir onto the external root;
@@ -686,7 +733,10 @@ export namespace ExternalClusterConfigSteps {
             )
     ClusterState.save(mergedConfig, {
       ...state,
-      solanaIdlFile: Fs.existsSync(solanaIdlFile) ? solanaIdlFile : null
+      solanaIdlFile: Fs.existsSync(solanaIdlFile) ? solanaIdlFile : null,
+      solanaGenesisHash:
+        mergedConfig.externalOutposts?.solana.genesisHash ??
+        sourceState.solanaGenesisHash
     })
 
     ctx.outputs.set(MergedConfigKey, mergedConfig)
@@ -930,6 +980,7 @@ export namespace ExternalClusterConfigSteps {
       },
       solana: {
         idlFile: inTree("solana", external.solana.idlFile),
+        genesisHash: external.solana.genesisHash,
         ...(external.solana.mintsFile != null
           ? { mintsFile: inTree("solana", external.solana.mintsFile) }
           : {})
@@ -995,6 +1046,11 @@ export namespace ExternalClusterConfigSteps {
     if (merged.externalOutposts != null) {
       return { ...merged.externalOutposts.solana }
     }
+    const genesisHash = ClusterState.load(merged).solanaGenesisHash
+    Assert.ok(
+      genesisHash != null,
+      "create-external-config: cluster-state.json has no trusted Solana genesis hash; relaunch the local cluster once to provision it"
+    )
     const idlFile = Path.join(
         merged.dataPath,
         OperatorDaemonTool.SolanaIdlSubpath,
@@ -1002,7 +1058,11 @@ export namespace ExternalClusterConfigSteps {
       ),
       mintsFile = Path.join(merged.dataPath, "sol-mock-mints.json")
     return Fs.existsSync(idlFile)
-      ? { idlFile, ...(Fs.existsSync(mintsFile) ? { mintsFile } : {}) }
+      ? {
+          idlFile,
+          genesisHash,
+          ...(Fs.existsSync(mintsFile) ? { mintsFile } : {})
+        }
       : null
   }
 

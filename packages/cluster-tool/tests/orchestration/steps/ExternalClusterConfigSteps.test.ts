@@ -20,9 +20,14 @@ import {
   ClusterBuildPhaseGroup,
   Steps
 } from "@wireio/cluster-tool/orchestration"
+import { SolanaClusterIdentityKey } from "@wireio/cluster-tool/orchestration/outputs"
 import { Report } from "@wireio/cluster-tool/report"
+import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
-import { PersistedFixture } from "../../config/clusterConfigFixture.js"
+import {
+  PersistedFixture,
+  TestSolanaGenesisHash
+} from "../../config/clusterConfigFixture.js"
 
 const External = Steps.externalClusterConfig,
   signal = new AbortController().signal,
@@ -107,6 +112,15 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     })
     Fs.mkdirSync(ctx.config.dataPath, { recursive: true })
     Fs.mkdirSync(ctx.config.walletPath, { recursive: true })
+    const solanaIdlDir = Path.join(
+      ctx.config.dataPath,
+      OperatorDaemonTool.SolanaIdlSubpath
+    )
+    Fs.mkdirSync(solanaIdlDir, { recursive: true })
+    Fs.writeFileSync(
+      Path.join(solanaIdlDir, OperatorDaemonTool.SolanaIdlFilename),
+      JSON.stringify({ address: "11111111111111111111111111111111" })
+    )
     ctx.keyStore.pushNodes({
       index: 0,
       keys: {
@@ -150,6 +164,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
           }
         })
       })
+    ctx.outputs.set(SolanaClusterIdentityKey, TestSolanaGenesisHash)
     ClusterState.save(ctx.config, ClusterState.capture(ctx))
     ClusterState.saveKeys(ctx.config, ClusterState.captureKeys(ctx))
     return ctx
@@ -244,6 +259,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     )
     expect(emitted.wire.epochDurationSec).toBe(ctx.config.epochDurationSec)
     expect(emitted.bindings.kiod.port).toBe(externalBind.kiod.port)
+    expect(emitted.solana?.genesisHash).toBe(TestSolanaGenesisHash)
     const expectedAccounts = NodeConfig.plan(ctx.config)
       .filter(node => node.role === NodeRole.operator)
       .map(node => node.batchOperatorAccount ?? node.underwriterAccount)
@@ -323,6 +339,19 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     expect(ctx.outputs.assert(External.MergedConfigKey).debuggingServerEnabled).toBe(true)
   })
 
+  it("rejects legacy state without trusted identity before cloning writes", async () => {
+    const ctx = runContext(),
+      state = ClusterState.load(ctx.config)
+    ClusterState.save(ctx.config, { ...state, solanaGenesisHash: null })
+    await External.runLoadExternalBind(ctx, null, signal)
+    await expect(
+      External.runVerifySolanaClusterIdentity(ctx, signal)
+    ).rejects.toThrow(
+      /relaunch the local cluster once to provision it/
+    )
+    expect(Fs.existsSync(externalDir)).toBe(false)
+  })
+
   it("Validate composes one verify step per cross-check (fail-fast order)", () => {
     const cluster = ClusterBuild.forContext(runContext()),
       group = ClusterBuildPhaseGroup.create(
@@ -333,6 +362,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       phase = External.planValidatePhase(group, Report.Actor.Sysio, {})
     expect(phase.steps.map(step => step.name)).toEqual([
       "load-external-bind",
+      "verify-solana-cluster-identity",
       "verify-producer-cardinality",
       "verify-batch-cardinality",
       "verify-underwriter-cardinality",

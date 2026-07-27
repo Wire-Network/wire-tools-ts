@@ -9,12 +9,14 @@ import { NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import {
   OperatorDaemonArtifactsKey,
+  SolanaClusterIdentityKey,
   type OperatorAccount,
   type OperatorDaemonArtifacts
 } from "@wireio/cluster-tool/orchestration/outputs"
 import { Report } from "@wireio/cluster-tool/report"
 import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
 import { fixtureContext } from "../../../config/clusterBuildContextFixture.js"
+import { TestSolanaGenesisHash } from "../../../config/clusterConfigFixture.js"
 
 /** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
 const AnvilMnemonic = "test test test test test test test test test test test junk"
@@ -233,6 +235,7 @@ describe("Steps.processes.nodeop", () => {
     it("builds batch-operator daemon args for an operator node with a batchOperatorAccount", () => {
       const ctx = fixtureContext()
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifactsFixture)
+      ctx.outputs.set(SolanaClusterIdentityKey, TestSolanaGenesisHash)
       const account = operatorAccount("batchopaaaa", OperatorType.BATCH)
       const node = testNode(ctx, NodeRole.operator, 2, "node_02", [], "batchopaaaa")
       const args = Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)
@@ -249,6 +252,7 @@ describe("Steps.processes.nodeop", () => {
     it("builds underwriter daemon args for an operator node with an underwriterAccount", () => {
       const ctx = fixtureContext()
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifactsFixture)
+      ctx.outputs.set(SolanaClusterIdentityKey, TestSolanaGenesisHash)
       const account = operatorAccount("underwriteraaaa", OperatorType.UNDERWRITER)
       const node = testNode(ctx, NodeRole.operator, 3, "node_03", [], null, "underwriteraaaa")
       const args = Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)

@@ -1,6 +1,7 @@
 import { z } from "zod"
 
 import { SchemaCodec } from "../schema/index.js"
+import { SolanaGenesisHashSchema } from "../types/index.js"
 
 /**
  * Role a cluster node plays. Identity-mapped string enum matching
@@ -69,7 +70,12 @@ export const ClusterStateSchema = z.object({
   /** Absolute path of the solana-test-validator ledger directory, or `null` in external-outpost mode. */
   solanaLedgerPath: z.string().nullable(),
   /** Absolute path of the primary IDL shared with batch operators, or `null` when no Solana outpost is configured. */
-  solanaIdlFile: z.string().nullable()
+  solanaIdlFile: z.string().nullable(),
+  /**
+   * Trusted Solana cluster genesis hash, or `null` for legacy local snapshots
+   * that predate cluster-identity provisioning.
+   */
+  solanaGenesisHash: SolanaGenesisHashSchema.nullable().default(null)
 })
 /** Post-bootstrap snapshot of cluster runtime layout — the shape of {@link ClusterStateSchema}. */
 export type ClusterState = z.infer<typeof ClusterStateSchema>

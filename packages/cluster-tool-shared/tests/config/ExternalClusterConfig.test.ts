@@ -8,6 +8,7 @@ import {
 } from "@wireio/cluster-tool-shared"
 
 describe("ExternalClusterConfig", () => {
+  const GenesisHash = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi"
   const config: ExternalClusterConfig = {
     bindings: {
       kiod: { address: "127.0.0.1", port: 8900 },
@@ -53,7 +54,8 @@ describe("ExternalClusterConfig", () => {
       addressFile: "outpost-addrs.json",
       abiFiles: ["eth-abis/OPP.json"],
       chainId: 1
-    }
+    },
+    solana: { idlFile: "opp.json", genesisHash: GenesisHash }
   }
 
   it("carries the operator type as its NAME in JSON but the numeric enum in memory", () => {
@@ -83,5 +85,11 @@ describe("ExternalClusterConfig", () => {
     const parsed = JSON.parse(ExternalClusterConfigSchemaCodec.serialize(config))
     delete parsed.solana
     expect(ExternalClusterConfigSchema.safeParse(parsed).success).toBe(true)
+  })
+
+  it("requires genesisHash whenever the solana section is present", () => {
+    const parsed = JSON.parse(ExternalClusterConfigSchemaCodec.serialize(config))
+    delete parsed.solana.genesisHash
+    expect(ExternalClusterConfigSchema.safeParse(parsed).success).toBe(false)
   })
 })
