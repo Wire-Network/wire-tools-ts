@@ -34,6 +34,7 @@ import { Report } from "../report/Report.js"
 import type { Renderer } from "../utils/Renderer.js"
 import { which } from "../utils/fsUtils.js"
 import { Constants } from "../Constants.js"
+import { BatchOperatorSchedule } from "./BatchOperatorSchedule.js"
 import { BindConfigProvider } from "./BindConfigProvider.js"
 import type {
   ClusterBuildOptions,
@@ -48,37 +49,25 @@ function assertOption<T>(value: T | null, name: string): T {
 }
 
 /**
- * Throw unless the batch-operator roster satisfies the schedule spec:
+ * Resolve + validate the batch-operator schedule for `options`, returning the
+ * roster size. Delegates every invariant to {@link BatchOperatorSchedule.resolve}
+ * — the ONE place the shape is derived — so this boundary and the
+ * `epoch::setconfig` step can never disagree.
  *
- * ```
- * groups = 3                      // ClusterConfigProvider.DefaultBatchOperatorGroupCount
- * assert(group_size % 2 == 1)     // strict-majority consensus needs an ODD group
- * total  = groups * group_size    // == batchOperatorCount
- * ```
+ * Called before {@link ClusterConfigProvider.resolve} touches the binding, so an
+ * illegal topology is rejected before a cluster's worth of ports is claimed
+ * (and ~15 minutes before `sysio.epoch::schbatchgps` would have reverted).
  *
- * With `groups` fixed at 3, `total` admits exactly the ODD multiples of 3 —
- * `3, 9, 15, 21, 27, …` — since `group_size = total / 3` is whole only when 3
- * divides the roster, and odd only when the roster itself is odd.
- *
- * Both halves are load-bearing. Divisibility makes `operators_per_epoch` exact,
- * so `batch_operator_minimum_active` equals the roster and
- * `sysio.epoch::schbatchgps` can fill every group; ODDness is what gives the
- * depot's path-2 threshold a strict majority (`opp-consensus.md`).
- *
- * A roster off this lattice (4, 5, 20, …) used to bootstrap for ~15 minutes and
- * then revert at the LAST phase with `not enough available batch operators for
- * group assignment`; this assert moves that to the first second of the run.
- *
- * @param batchOperatorCount - The resolved roster size (`total`).
+ * @param options - The caller's topology + epoch overrides.
  * @returns The validated roster size.
  */
-function assertBatchOperatorCount(batchOperatorCount: number): number {
-  const { DefaultBatchOperatorGroupCount: groups } = ClusterConfigProvider
-  Assert.ok(
-    batchOperatorCount % 2 === 1 && batchOperatorCount % groups === 0,
-    `ClusterBuildOptions.batchOperatorCount must be ODD and divisible by ${groups} ` +
-      `(3, 9, 15, 21, 27, …) — got ${batchOperatorCount}`
-  )
+function assertBatchOperatorSchedule(options: ClusterBuildOptions): number {
+  const {
+    batchOperatorCount = ClusterConfigProvider.DefaultBatchOperatorCount,
+    operatorsPerEpoch,
+    batchOpGroups
+  } = options
+  BatchOperatorSchedule.resolve(batchOperatorCount, operatorsPerEpoch, batchOpGroups)
   return batchOperatorCount
 }
 
@@ -101,14 +90,8 @@ export namespace ClusterConfigProvider {
   export const DefaultProducerCount = 21
   export const DefaultNodeCount = 1
   export const DefaultBatchOperatorCount = 3
-  /**
-   * `batch_op_groups` — the depot's sliding-window group COUNT, and the divisor
-   * every batch-operator roster must satisfy (see {@link
-   * ClusterConfigProvider.resolve}'s roster assert). Changing it changes the
-   * legal roster lattice AND the "an operator is on duty once every N epochs"
-   * rotation the termination window is validated against.
-   */
-  export const DefaultBatchOperatorGroupCount = 3
+  /** `batch_op_groups` default — aliased; ONE declaration lives on {@link BatchOperatorSchedule}. */
+  export import DefaultBatchOperatorGroupCount = BatchOperatorSchedule.DefaultBatchOperatorGroupCount
   export const DefaultUnderwriterCount = 1
   export const DefaultEpochDurationSec = 90
 
@@ -125,9 +108,7 @@ export namespace ClusterConfigProvider {
     // Roster shape first: it is pure arithmetic, and rejecting here means an
     // illegal topology never claims a cluster's worth of ports (nor holds the
     // host-global bind lock) on its way to failing.
-    const batchOperatorCount = assertBatchOperatorCount(
-        options.batchOperatorCount ?? DefaultBatchOperatorCount
-      ),
+    const batchOperatorCount = assertBatchOperatorSchedule(options),
       buildPath = assertOption(options.buildPath, "buildPath"),
       clusterPath = assertOption(options.clusterPath, "clusterPath"),
       bind = await resolveBind(options),

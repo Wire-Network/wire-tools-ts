@@ -253,7 +253,7 @@ describe("ClusterConfigProvider", () => {
     // (an even quotient = an even group size, which breaks the strict-majority
     // path-2 threshold). Every one used to bootstrap ~15 min and then revert in
     // `schbatchgps` with "not enough available batch operators".
-    it.each([1, 4, 5, 6, 7, 20])(
+    it.each([1, 4, 5, 7, 20])(
       "rejects a roster of %i off the odd/3-divisible lattice",
       async batchOperatorCount => {
         await expect(
@@ -265,6 +265,10 @@ describe("ClusterConfigProvider", () => {
     it("pins the group count the lattice is derived from", () => {
       expect(ClusterConfigProvider.DefaultBatchOperatorGroupCount).toBe(3)
     })
+
+    // The explicit-shape acceptance case (`6` with a 1 x 3 shape) is covered
+    // lock-free in BatchOperatorSchedule.test.ts — driving it through `resolve`
+    // claims a cluster's worth of ports under the host-global bind lock.
   })
 
   describe("resolve --bind-config classify/merge", () => {

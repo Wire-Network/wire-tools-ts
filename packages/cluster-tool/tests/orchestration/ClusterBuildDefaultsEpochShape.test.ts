@@ -15,23 +15,19 @@ describe("ClusterBuildDefaults.epochConfig — batch-op group shape", () => {
   // Every admissible roster is 3 × odd, so the derived size is a whole ODD
   // number and `minimum_active` lands exactly ON the roster — never above it,
   // which is what `sysio.epoch::schbatchgps` asserts against.
+  // The lattice/ceiling/override matrix lives in BatchOperatorSchedule.test.ts
+  // (pure, no cluster). What matters HERE is that epochConfig emits the shape
+  // that resolver produced, into the real `epoch::setconfig` payload.
   it.each([
     [3, 1],
     [9, 3],
-    [15, 5],
-    [21, 7],
-    [27, 9],
-    [63, 21]
-  ])(
-    "derives an exact odd group size for a roster of %i → %i per group",
-    (batchOperatorCount, expectedOperatorsPerEpoch) => {
-      const data = ClusterBuildDefaults.epochConfig(config({ batchOperatorCount }))
-      expect(data.operators_per_epoch).toBe(expectedOperatorsPerEpoch)
-      expect(data.operators_per_epoch % 2).toBe(1)
-      expect(data.batch_op_groups).toBe(3)
-      expect(data.batch_operator_minimum_active).toBe(batchOperatorCount)
-    }
-  )
+    [21, 7]
+  ])("emits the resolved shape for a roster of %i → %i per group", (batchOperatorCount, expectedOperatorsPerEpoch) => {
+    const data = ClusterBuildDefaults.epochConfig(config({ batchOperatorCount }))
+    expect(data.operators_per_epoch).toBe(expectedOperatorsPerEpoch)
+    expect(data.batch_op_groups).toBe(3)
+    expect(data.batch_operator_minimum_active).toBe(batchOperatorCount)
+  })
 
   it("carries the global epoch duration through unchanged", () => {
     const data = ClusterBuildDefaults.epochConfig(
