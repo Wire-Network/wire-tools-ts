@@ -262,9 +262,7 @@ describe("ClusterConfigProvider", () => {
       }
     )
 
-    it("pins the group count the lattice is derived from", () => {
-      expect(ClusterConfigProvider.DefaultBatchOperatorGroupCount).toBe(3)
-    })
+    // The lattice constants themselves are pinned in BatchOperatorSchedule.test.ts.
 
     // The explicit-shape acceptance case (`6` with a 1 x 3 shape) is covered
     // lock-free in BatchOperatorSchedule.test.ts — driving it through `resolve`

@@ -67,7 +67,11 @@ function assertBatchOperatorSchedule(options: ClusterBuildOptions): number {
     operatorsPerEpoch,
     batchOpGroups
   } = options
-  BatchOperatorSchedule.resolve(batchOperatorCount, operatorsPerEpoch, batchOpGroups)
+  BatchOperatorSchedule.resolve({
+    batchOperatorCount,
+    operatorsPerEpoch,
+    batchOpGroups
+  })
   return batchOperatorCount
 }
 
@@ -90,8 +94,6 @@ export namespace ClusterConfigProvider {
   export const DefaultProducerCount = 21
   export const DefaultNodeCount = 1
   export const DefaultBatchOperatorCount = 3
-  /** `batch_op_groups` default — aliased; ONE declaration lives on {@link BatchOperatorSchedule}. */
-  export import DefaultBatchOperatorGroupCount = BatchOperatorSchedule.DefaultBatchOperatorGroupCount
   export const DefaultUnderwriterCount = 1
   export const DefaultEpochDurationSec = 90
 

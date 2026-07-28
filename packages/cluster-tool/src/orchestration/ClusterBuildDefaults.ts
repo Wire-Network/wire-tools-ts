@@ -868,11 +868,11 @@ export namespace ClusterBuildDefaults {
     config: ClusterConfig
   ): SysioContracts.SysioEpochSetconfigAction {
     const { operatorsPerEpoch, batchOpGroups, batchOperatorMinimumActive } =
-      BatchOperatorSchedule.resolve(
-        config.batchOperatorCount,
-        config.operatorsPerEpoch,
-        config.batchOpGroups
-      )
+      BatchOperatorSchedule.resolve({
+        batchOperatorCount: config.batchOperatorCount,
+        operatorsPerEpoch: config.operatorsPerEpoch,
+        batchOpGroups: config.batchOpGroups
+      })
     return {
       epoch_duration_sec: config.epochDurationSec,
       operators_per_epoch: operatorsPerEpoch,
