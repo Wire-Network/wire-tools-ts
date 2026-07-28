@@ -43,6 +43,19 @@ export namespace BatchOperatorSchedule {
   export const MaxBatchOperatorGroups = 255
   export const MaxScheduledBatchOperators = 1000
 
+  /**
+   * HARNESS ceiling on the roster — not a depot limit.
+   * `Constants.batchOperatorAccountName` names operators `batchop.<letter>` off
+   * a 26-letter alphabet and wraps modulo its length, so index 26 would collide
+   * with index 0: two operators would share one WIRE account, parallel
+   * provisioning would try to create it twice, and their node/key config would
+   * reuse a single identity. The depot itself would accept a larger roster
+   * (`27 = 9 x 3` is a legal shape), so raising this means giving
+   * `batchOperatorAccountName` a unique suffix past 26 first -- the way
+   * `producerName` already does.
+   */
+  export const MaxBatchOperatorRoster = 26
+
   /** Whether `value` is a positive whole number (the depot's `> 0` uint32 fields). */
   function isPositiveInteger(value: number): boolean {
     return Number.isInteger(value) && value > 0
@@ -104,6 +117,12 @@ export namespace BatchOperatorSchedule {
     Assert.ok(
       isPositiveInteger(batchOperatorCount),
       `batch-operator-count must be a positive whole number — got ${batchOperatorCount}`
+    )
+    Assert.ok(
+      batchOperatorCount <= MaxBatchOperatorRoster,
+      `batch-operator-count ${batchOperatorCount} exceeds the harness ceiling of ` +
+        `${MaxBatchOperatorRoster} — operator accounts are named batchop.<letter> off a ` +
+        `${MaxBatchOperatorRoster}-letter alphabet, so a larger roster would reuse identities`
     )
     // Group COUNT first: the size derivation divides by it, so a zero, negative
     // or fractional count must never reach that division (it used to yield a

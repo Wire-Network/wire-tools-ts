@@ -1,4 +1,7 @@
 import { BatchOperatorSchedule } from "@wireio/cluster-tool/config"
+// Direct module, not the root barrel (it re-exports FlowCLI → yargs@18, which
+// jest cannot require as ESM on Node < 24.9).
+import { Constants } from "@wireio/cluster-tool/Constants"
 
 /**
  * The ONE place the batch-operator schedule is derived + validated, shared by
@@ -16,9 +19,7 @@ describe("BatchOperatorSchedule.resolve", () => {
       [3, 1],
       [9, 3],
       [15, 5],
-      [21, 7],
-      [27, 9],
-      [63, 21]
+      [21, 7]
     ])("derives an exact odd size for a roster of %i → %i per group", (roster, size) => {
       expect(resolve(roster)).toEqual({
         operatorsPerEpoch: size,
@@ -105,38 +106,54 @@ describe("BatchOperatorSchedule.resolve", () => {
   describe("depot ceilings (sysio.epoch.hpp)", () => {
     // Review finding: these used to pass here and fail inside
     // `sysio.epoch::setconfig` after the whole cluster had been stood up.
-    it("rejects a DERIVED size past MAX_OPERATORS_PER_EPOCH (100)", () => {
-      // 303 / 3 = 101 — one past the contract cap.
-      expect(() => resolve(303)).toThrow(
+    // The depot ceilings sit far above the harness roster cap, so they are
+    // reachable only through explicit overrides — which is exactly how an
+    // operator would trip them.
+    it("rejects an explicit size past MAX_OPERATORS_PER_EPOCH (100)", () => {
+      expect(() => resolve(21, 101, 1)).toThrow(
         /operators-per-epoch 101 exceeds the depot ceiling of 100/
       )
     })
 
-    it("rejects an explicit size past MAX_OPERATORS_PER_EPOCH", () => {
-      expect(() => resolve(100_000, 101, 1)).toThrow(
-        /exceeds the depot ceiling of 100/
-      )
-    })
-
     it("rejects a group count past MAX_BATCH_OP_GROUPS (255)", () => {
-      expect(() => resolve(100_000, 1, 256)).toThrow(
+      expect(() => resolve(21, 1, 256)).toThrow(
         /batch-op-groups 256 exceeds the depot ceiling of 255/
       )
     })
 
     it("rejects a scheduled total past MAX_SCHEDULED_BATCH_OPERATORS (1000)", () => {
-      // 99 x 255 = 25245 — under both per-field caps, over the total cap.
-      expect(() => resolve(100_000, 99, 255)).toThrow(
-        /batch_operator_minimum_active 25245 exceeds the depot ceiling of 1000/
+      // 5 x 255 = 1275 — under both per-field caps, over the total cap.
+      expect(() => resolve(21, 5, 255)).toThrow(
+        /batch_operator_minimum_active 1275 exceeds the depot ceiling of 1000/
       )
     })
 
-    it("accepts the largest legal derived roster", () => {
-      // 297 / 3 = 99 (odd, ≤ 100); total 297 ≤ 1000.
-      expect(resolve(297)).toMatchObject({
-        operatorsPerEpoch: 99,
-        batchOperatorMinimumActive: 297
+    it("accepts the largest legal DERIVED roster (21 = 7 x 3)", () => {
+      expect(resolve(21)).toMatchObject({
+        operatorsPerEpoch: 7,
+        batchOperatorMinimumActive: 21
       })
+    })
+
+    it("rejects a roster past the harness account-name space", () => {
+      // 27 IS a legal depot shape (9 x 3) but `batchOperatorAccountName` wraps
+      // modulo 26, so operator 27 would reuse `batchop.a`.
+      expect(() => resolve(27)).toThrow(
+        /batch-operator-count 27 exceeds the harness ceiling of 26/
+      )
+    })
+
+    it("gives every operator in the largest accepted roster a UNIQUE account", () => {
+      const max = BatchOperatorSchedule.MaxBatchOperatorRoster
+      expect(() => resolve(max, 1, 1)).not.toThrow()
+      const names = Array.from({ length: max }, (_, index) =>
+        Constants.batchOperatorAccountName(index)
+      )
+      expect(new Set(names).size).toBe(max)
+      // One past the cap is exactly where the collision starts.
+      expect(Constants.batchOperatorAccountName(max)).toBe(
+        Constants.batchOperatorAccountName(0)
+      )
     })
 
     it("pins the ceilings against the contract", () => {
@@ -144,6 +161,7 @@ describe("BatchOperatorSchedule.resolve", () => {
       expect(BatchOperatorSchedule.MaxBatchOperatorGroups).toBe(255)
       expect(BatchOperatorSchedule.MaxScheduledBatchOperators).toBe(1000)
       expect(BatchOperatorSchedule.DefaultBatchOperatorGroupCount).toBe(3)
+      expect(BatchOperatorSchedule.MaxBatchOperatorRoster).toBe(26)
     })
   })
 })
