@@ -9,6 +9,7 @@ import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
 import { type Logger } from "../logging/Logger.js"
 import { SysioContracts } from "@wireio/sdk-core"
 import { Constants } from "../Constants.js"
+import { ClusterConfigProvider } from "../config/ClusterConfigProvider.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
 import {
   readNodeOwner,
@@ -57,8 +58,12 @@ const MinFromWireAmount = 100_000_000
 const FromWireRevertFeeBps = 10
 /** Epoch envelope-log retention. */
 const EnvelopeLogRetentionEpochs = 10
-/** Dev-default batch-operator group COUNT (sliding-window schedule; per-flow overridable via ClusterConfig). */
-const DefaultBatchOperatorGroupCount = 3
+/**
+ * Floor for the derived batch-operator group SIZE (`operators_per_epoch`) — the
+ * depot rejects a zero size, so an explicit `--batch-op-groups` override wider
+ * than the roster still yields one-member groups.
+ */
+const MinimumOperatorsPerEpoch = 1
 /** Dev-default `terminate_max_consecutive_misses` (per-flow overridable via ClusterConfig). */
 const DefaultTerminateMaxConsecutiveMisses = 5
 /** Dev-default `terminate_max_pct_misses_24h` (per-flow overridable via ClusterConfig). */
@@ -850,8 +855,50 @@ export namespace ClusterBuildDefaults {
     }
   }
 
-  /** The `sysio.epoch::setconfig` data, derived from the batch-operator topology. */
-  function epochConfig(
+  /**
+   * The largest ODD batch-operator group SIZE that fits `batchOperatorCount`
+   * into `batchOpGroups` groups: `floor(count / groups)` rounded DOWN to odd and
+   * floored at {@link MinimumOperatorsPerEpoch}.
+   *
+   * On the DEFAULT path this is exact and the rounding never fires:
+   * `ClusterConfigProvider.resolve` admits only rosters that are odd AND
+   * divisible by {@link ClusterConfigProvider.DefaultBatchOperatorGroupCount},
+   * so `count / groups` is a whole ODD number (21 → 7, 9 → 3, 3 → 1) and
+   * `size × groups` equals the roster exactly. The floor/odd clamping is what
+   * keeps an explicit `--batch-op-groups` override off that lattice
+   * satisfiable — FLOOR because `schbatchgps` asserts the ACTIVE pool is at
+   * least `batch_operator_minimum_active` (= size × groups), and ODD because the
+   * depot's path-2 consensus threshold is a strict group majority
+   * (`opp-consensus.md`).
+   *
+   * @param batchOperatorCount - Bootstrapped batch operators in the roster.
+   * @param batchOpGroups - The sliding-window group COUNT.
+   * @returns The group size (`operators_per_epoch`).
+   */
+  function deriveOperatorsPerEpoch(
+    batchOperatorCount: number,
+    batchOpGroups: number
+  ): number {
+    if (batchOpGroups <= 0) return MinimumOperatorsPerEpoch
+    const fits = Math.floor(batchOperatorCount / batchOpGroups),
+      odd = fits % 2 === 0 ? fits - 1 : fits
+    return Math.max(MinimumOperatorsPerEpoch, odd)
+  }
+
+  /**
+   * The `sysio.epoch::setconfig` data, derived from the batch-operator topology.
+   *
+   * Exported (a pure value helper, not a Step) so the group-shape spec —
+   * `groups = 3`, `assert(group_size % 2 == 1)`, `total = groups × group_size` —
+   * is unit-testable without standing up a cluster: driving it through
+   * {@link ClusterBuildDefaults.create} would claim a full port set under the
+   * host-global bind lock per case.
+   *
+   * @param config - The resolved cluster config (topology + epoch overrides).
+   * @returns The `epoch::setconfig` action data.
+   * @throws If the resulting group shape violates the spec.
+   */
+  export function epochConfig(
     config: ClusterConfig
   ): SysioContracts.SysioEpochSetconfigAction {
     // Group SIZE (`operators_per_epoch`) and COUNT (`batch_op_groups`) come from
@@ -859,17 +906,34 @@ export namespace ClusterBuildDefaults {
     // bootstrap and NO mid-run reconfig is ever needed — else derive from the
     // batch-operator topology. `minimum_active` always derives as size × count.
     const {
+        batchOperatorCount,
         batchOpGroups: batchOpGroupsOverride,
         operatorsPerEpoch: operatorsPerEpochOverride
       } = config,
       batchOpGroups =
         batchOpGroupsOverride ??
-        Math.min(DefaultBatchOperatorGroupCount, config.batchOperatorCount),
+        ClusterConfigProvider.DefaultBatchOperatorGroupCount,
       operatorsPerEpoch =
         operatorsPerEpochOverride ??
-        (batchOpGroups > 0
-          ? Math.ceil(config.batchOperatorCount / batchOpGroups)
-          : 1)
+        deriveOperatorsPerEpoch(batchOperatorCount, batchOpGroups)
+    // The spec: `groups = 3`, `assert(group_size % 2 == 1)`,
+    // `total = groups × group_size`. Both asserts fire at COMPOSITION time, not
+    // ~15 minutes later inside `schbatchgps`.
+    Assert.ok(
+      operatorsPerEpoch % 2 === 1,
+      `batch-op group SIZE must be ODD — got operators-per-epoch ${operatorsPerEpoch} ` +
+        `(an even group has no strict majority, so the depot's path-2 consensus threshold is undefined)`
+    )
+    // The depot needs `total` ACTIVE batch operators to fill the initial sliding
+    // window, and every bootstrapped operator is ACTIVE on registration — so the
+    // roster size IS the available pool.
+    Assert.ok(
+      operatorsPerEpoch * batchOpGroups <= batchOperatorCount,
+      `batch-operator group shape needs ${operatorsPerEpoch * batchOpGroups} ACTIVE batch operators ` +
+        `(operators-per-epoch ${operatorsPerEpoch} × batch-op-groups ${batchOpGroups}) ` +
+        `but batch-operator-count is ${batchOperatorCount} — raise --batch-operator-count ` +
+        `or lower --operators-per-epoch / --batch-op-groups`
+    )
     return {
       epoch_duration_sec: config.epochDurationSec,
       operators_per_epoch: operatorsPerEpoch,

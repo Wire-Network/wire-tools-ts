@@ -48,6 +48,41 @@ function assertOption<T>(value: T | null, name: string): T {
 }
 
 /**
+ * Throw unless the batch-operator roster satisfies the schedule spec:
+ *
+ * ```
+ * groups = 3                      // ClusterConfigProvider.DefaultBatchOperatorGroupCount
+ * assert(group_size % 2 == 1)     // strict-majority consensus needs an ODD group
+ * total  = groups * group_size    // == batchOperatorCount
+ * ```
+ *
+ * With `groups` fixed at 3, `total` admits exactly the ODD multiples of 3 —
+ * `3, 9, 15, 21, 27, …` — since `group_size = total / 3` is whole only when 3
+ * divides the roster, and odd only when the roster itself is odd.
+ *
+ * Both halves are load-bearing. Divisibility makes `operators_per_epoch` exact,
+ * so `batch_operator_minimum_active` equals the roster and
+ * `sysio.epoch::schbatchgps` can fill every group; ODDness is what gives the
+ * depot's path-2 threshold a strict majority (`opp-consensus.md`).
+ *
+ * A roster off this lattice (4, 5, 20, …) used to bootstrap for ~15 minutes and
+ * then revert at the LAST phase with `not enough available batch operators for
+ * group assignment`; this assert moves that to the first second of the run.
+ *
+ * @param batchOperatorCount - The resolved roster size (`total`).
+ * @returns The validated roster size.
+ */
+function assertBatchOperatorCount(batchOperatorCount: number): number {
+  const { DefaultBatchOperatorGroupCount: groups } = ClusterConfigProvider
+  Assert.ok(
+    batchOperatorCount % 2 === 1 && batchOperatorCount % groups === 0,
+    `ClusterBuildOptions.batchOperatorCount must be ODD and divisible by ${groups} ` +
+      `(3, 9, 15, 21, 27, …) — got ${batchOperatorCount}`
+  )
+  return batchOperatorCount
+}
+
+/**
  * Hydrates and persists the cluster configuration — the behavior half of the
  * plain-data `ClusterConfig` shape (`@wireio/cluster-tool-shared`). Plain
  * `ClusterConfig` values flow through the harness; this provider owns the
@@ -66,6 +101,14 @@ export namespace ClusterConfigProvider {
   export const DefaultProducerCount = 21
   export const DefaultNodeCount = 1
   export const DefaultBatchOperatorCount = 3
+  /**
+   * `batch_op_groups` — the depot's sliding-window group COUNT, and the divisor
+   * every batch-operator roster must satisfy (see {@link
+   * ClusterConfigProvider.resolve}'s roster assert). Changing it changes the
+   * legal roster lattice AND the "an operator is on duty once every N epochs"
+   * rotation the termination window is validated against.
+   */
+  export const DefaultBatchOperatorGroupCount = 3
   export const DefaultUnderwriterCount = 1
   export const DefaultEpochDurationSec = 90
 
@@ -79,7 +122,13 @@ export namespace ClusterConfigProvider {
   export async function resolve(
     options: ClusterBuildOptions
   ): Promise<ClusterConfig> {
-    const buildPath = assertOption(options.buildPath, "buildPath"),
+    // Roster shape first: it is pure arithmetic, and rejecting here means an
+    // illegal topology never claims a cluster's worth of ports (nor holds the
+    // host-global bind lock) on its way to failing.
+    const batchOperatorCount = assertBatchOperatorCount(
+        options.batchOperatorCount ?? DefaultBatchOperatorCount
+      ),
+      buildPath = assertOption(options.buildPath, "buildPath"),
       clusterPath = assertOption(options.clusterPath, "clusterPath"),
       bind = await resolveBind(options),
       executables = await resolveExecutables(buildPath),
@@ -97,8 +146,7 @@ export namespace ClusterConfigProvider {
       walletPath: Path.join(clusterPath, WalletSubpath),
       producerCount: options.producerCount ?? DefaultProducerCount,
       nodeCount: options.nodeCount ?? DefaultNodeCount,
-      batchOperatorCount:
-        options.batchOperatorCount ?? DefaultBatchOperatorCount,
+      batchOperatorCount,
       underwriterCount: options.underwriterCount ?? DefaultUnderwriterCount,
       epochDurationSec: options.epochDurationSec ?? DefaultEpochDurationSec,
       operatorsPerEpoch: options.operatorsPerEpoch ?? null,

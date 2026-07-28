@@ -273,6 +273,28 @@ describe("ProcessManager + ManagedProcess", () => {
     })
   })
 
+  describe("sweepGraceMs", () => {
+    it("grants the single-process base window for one pid", () => {
+      expect(ProcessManager.sweepGraceMs(1)).toBe(ProcessManager.SweepGraceMs)
+    })
+
+    it("grows with the process count — every pid flushes concurrently", () => {
+      // A 24-process cluster (21 batch operators + producer + bios +
+      // underwriter) is exactly the shape that blew the flat 30s window and
+      // truncated every nodeop's blocks.log at `create` exit.
+      expect(ProcessManager.sweepGraceMs(24)).toBe(
+        ProcessManager.SweepGraceMs + ProcessManager.SweepGracePerProcessMs * 23
+      )
+      expect(ProcessManager.sweepGraceMs(24)).toBeGreaterThan(
+        ProcessManager.sweepGraceMs(6)
+      )
+    })
+
+    it("never drops below the base window for an empty or degenerate sweep", () => {
+      expect(ProcessManager.sweepGraceMs(0)).toBe(ProcessManager.SweepGraceMs)
+    })
+  })
+
   describe("terminatePidsSync", () => {
     /** The sweep's own liveness semantics — zombies (empty cmdline) count as exited. */
     const isAliveByCmdline = (pid: number): boolean => commandBasename(pid) !== ""

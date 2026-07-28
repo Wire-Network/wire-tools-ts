@@ -123,7 +123,7 @@ function sweepOrphans(clusterPath: string): void {
   const orphans = readOrphanPids(clusterPath)
   if (orphans.length === 0) return
   log.info(`Sweeping ${orphans.length} orphan pid(s) from ${clusterPath}: ${orphans.join(", ")}`)
-  terminatePidsSync(orphans, ProcessManager.SweepGraceMs)
+  terminatePidsSync(orphans, ProcessManager.sweepGraceMs(orphans.length))
 }
 
 /**
@@ -179,10 +179,8 @@ export class ProcessManager {
       // (or a SIGKILL sweep) leaves `database dirty flag set` for the next
       // boot. `process.exit()` in the signal handlers below runs AFTER this
       // returns, so the children get their full graceful window.
-      terminatePidsSync(
-        [...this.processes.values()].map(managed => managed.pid),
-        ProcessManager.SweepGraceMs
-      )
+      const pids = [...this.processes.values()].map(managed => managed.pid)
+      terminatePidsSync(pids, ProcessManager.sweepGraceMs(pids.length))
       this.processes.forEach(managed => {
         guard(() => Fs.rmSync(managed.pidFile, { force: true }))
       })
@@ -328,14 +326,44 @@ export class ProcessManager {
 
 export namespace ProcessManager {
   /**
-   * Max synchronous wait for swept / exit-cleanup pids to leave gracefully
-   * before SIGKILL (ms). Deliberately equals {@link ManagedProcess.GracefulKillMs}
-   * — the same chainbase-flush window the async stop path grants — kept as an
-   * independent literal because a value import of `ManagedProcess` here would
-   * create a module cycle. The old 2s grace SIGKILLed nodeop mid-flush and
-   * manufactured the `database dirty flag set` unclean-shutdown state.
+   * BASE synchronous wait for a SINGLE swept / exit-cleanup pid to leave
+   * gracefully before SIGKILL (ms). Deliberately equals {@link
+   * ManagedProcess.GracefulKillMs} — the same chainbase-flush window the async
+   * stop path grants — kept as an independent literal because a value import of
+   * `ManagedProcess` here would create a module cycle. The old 2s grace
+   * SIGKILLed nodeop mid-flush and manufactured the `database dirty flag set`
+   * unclean-shutdown state.
    */
   export const SweepGraceMs = 30_000
+  /**
+   * Extra grace granted per ADDITIONAL process in the same sweep (ms). Every pid
+   * is signalled at once and they then flush CONCURRENTLY against one disk, so
+   * the wall clock a sweep needs grows with the process count — the single-node
+   * {@link SweepGraceMs} window does not cover a full cluster.
+   */
+  export const SweepGracePerProcessMs = 5_000
+  /**
+   * Graceful window for terminating `processCount` processes in ONE sweep — a
+   * CEILING, not a wait: {@link terminatePidsSync} returns the moment the last
+   * pid exits.
+   *
+   * Sizing this off the count is load-bearing, not defensive. A 24-node cluster
+   * (21 batch operators + producers + bios + underwriter) blew the flat 30s
+   * window at `create` exit: 16 nodeops were SIGKILLed mid-flush, which left
+   * each one's `blocks.log` truncated and its chainbase dirty. The next
+   * `wire-cluster-tool run` then hard-replays, `repair_log` discards the
+   * unreadable tail, and every block after it — INCLUDING the bootstrap's
+   * `schbatchgps` + `bootstrap-epoch` — is silently lost, so the resumed cluster
+   * can never advance an epoch.
+   *
+   * @param processCount - Pids being terminated in this sweep.
+   * @returns The grace window in ms.
+   */
+  export function sweepGraceMs(processCount: number): number {
+    return (
+      SweepGraceMs + SweepGracePerProcessMs * Math.max(0, processCount - 1)
+    )
+  }
   /** Poll gap while waiting for terminated pids to exit (ms). */
   export const SweepPollIntervalMs = 500
 }
