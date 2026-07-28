@@ -28,17 +28,37 @@ export namespace SlashingScenarioConstants {
   export const EpochBoundaryMarginMs = 2_000
 
   /**
-   * Bootstrapped batch operators provisioned by the harness — ONE, so the
-   * bootstrap's derived epoch config materializes exactly
-   * {@link DisputeBatchOperatorGroupCount} (= 1) batch-operator group.
-   * `sysio.epoch::setconfig` REJECTS any `batch_op_groups` change once the
-   * rotation schedule is materialized (wire-sysio #529), so the flow's
-   * one-group reshape must match the bootstrap count from the start; the
-   * reshape then only raises `operators_per_epoch` / the active minimum.
-   * The single bootstrapped operator keeps the network relaying until the
-   * dispute operators take over the sole group.
+   * The three batch operators whose divergent deliveries form the split. The
+   * operator delivering the canonical tag is the one the Tier-1 owners vote
+   * for; the other two are slashed. They are provisioned SBP-less (no daemon)
+   * and non-bootstrapped, so the flow fully controls their deliveries.
    */
-  export const BootstrapBatchOperatorCount = 1
+  export const DisputeOperators = ["dispop.a", "dispop.b", "dispop.c"] as const
+  /** Group SIZE the dispute needs — three divergent deliveries, no majority. */
+  export const DisputeOperatorCount = DisputeOperators.length
+  /**
+   * Bootstrapped batch operators provisioned by the harness — exactly
+   * {@link DisputeOperators}.length, because the scenario states the group
+   * shape EXPLICITLY (`operatorsPerEpoch` + `batchOpGroups` in its `defaults`)
+   * and the bootstrap's `sysio.epoch::schbatchgps` asserts the ACTIVE pool can
+   * fill that shape: `operators_per_epoch x batch_op_groups` operators must
+   * exist when it runs. A smaller roster reverts the bootstrap with "not enough
+   * available batch operators for group assignment".
+   *
+   * These bootstrapped operators do NOT stay in the group: once the flow flips
+   * the SBP-less dispute operators ACTIVE it re-materializes the rotation with a
+   * fresh `schbatchgps`, which sorts non-bootstrapped first — so the three
+   * `dispop.*` fill the sole group and these fall outside it, exactly as the
+   * hand-off in `SlashingScenario.plan` describes. They keep the network
+   * relaying until that hand-off.
+   *
+   * (This was 1 while the shape was DERIVED from the roster — one operator then
+   * produced the wanted single group. The shape is explicit now, so 1 only
+   * starves the group; `batch_op_groups` still comes from
+   * {@link DisputeBatchOperatorGroupCount}, which wire-sysio #529 pins after
+   * materialization.)
+   */
+  export const BootstrapBatchOperatorCount = DisputeOperatorCount
   /**
    * Loosest VALID termination thresholds for the run. Termination CANNOT be
    * fully disabled — the depot contract (`sysio.opreg::setconfig`) caps
@@ -69,13 +89,7 @@ export namespace SlashingScenarioConstants {
    */
   export const Tier1VoterNames = ["voter1", "voter2", "voter3"] as const
 
-  /**
-   * The three batch operators whose divergent deliveries form the split. The
-   * operator delivering the canonical tag is the one the Tier-1 owners vote
-   * for; the other two are slashed. They are provisioned SBP-less (no daemon)
-   * and non-bootstrapped, so the flow fully controls their deliveries.
-   */
-  export const DisputeOperators = ["dispop.a", "dispop.b", "dispop.c"] as const
+
   /** The operator delivering the canonical checksum (NOT slashed). */
   export const CanonicalOperator = DisputeOperators[0]
   /** The operators delivering the non-canonical checksums (slashed). */
