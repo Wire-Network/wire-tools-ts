@@ -34,6 +34,7 @@ import { Report } from "../report/Report.js"
 import type { Renderer } from "../utils/Renderer.js"
 import { which } from "../utils/fsUtils.js"
 import { Constants } from "../Constants.js"
+import { BatchOperatorSchedule } from "./BatchOperatorSchedule.js"
 import { BindConfigProvider } from "./BindConfigProvider.js"
 import type {
   ClusterBuildOptions,
@@ -45,6 +46,33 @@ import { ClusterConfigGenesisRenderer } from "./renderers/ClusterConfigGenesisRe
 function assertOption<T>(value: T | null, name: string): T {
   Assert.ok(value != null, `ClusterBuildOptions.${name} is required`)
   return value
+}
+
+/**
+ * Resolve + validate the batch-operator schedule for `options`, returning the
+ * roster size. Delegates every invariant to {@link BatchOperatorSchedule.resolve}
+ * — the ONE place the shape is derived — so this boundary and the
+ * `epoch::setconfig` step can never disagree.
+ *
+ * Called before {@link ClusterConfigProvider.resolve} touches the binding, so an
+ * illegal topology is rejected before a cluster's worth of ports is claimed
+ * (and ~15 minutes before `sysio.epoch::schbatchgps` would have reverted).
+ *
+ * @param options - The caller's topology + epoch overrides.
+ * @returns The validated roster size.
+ */
+function assertBatchOperatorSchedule(options: ClusterBuildOptions): number {
+  const {
+    batchOperatorCount = ClusterConfigProvider.DefaultBatchOperatorCount,
+    operatorsPerEpoch,
+    batchOpGroups
+  } = options
+  BatchOperatorSchedule.resolve({
+    batchOperatorCount,
+    operatorsPerEpoch,
+    batchOpGroups
+  })
+  return batchOperatorCount
 }
 
 /**
@@ -79,7 +107,11 @@ export namespace ClusterConfigProvider {
   export async function resolve(
     options: ClusterBuildOptions
   ): Promise<ClusterConfig> {
-    const buildPath = assertOption(options.buildPath, "buildPath"),
+    // Roster shape first: it is pure arithmetic, and rejecting here means an
+    // illegal topology never claims a cluster's worth of ports (nor holds the
+    // host-global bind lock) on its way to failing.
+    const batchOperatorCount = assertBatchOperatorSchedule(options),
+      buildPath = assertOption(options.buildPath, "buildPath"),
       clusterPath = assertOption(options.clusterPath, "clusterPath"),
       bind = await resolveBind(options),
       executables = await resolveExecutables(buildPath),
@@ -97,8 +129,7 @@ export namespace ClusterConfigProvider {
       walletPath: Path.join(clusterPath, WalletSubpath),
       producerCount: options.producerCount ?? DefaultProducerCount,
       nodeCount: options.nodeCount ?? DefaultNodeCount,
-      batchOperatorCount:
-        options.batchOperatorCount ?? DefaultBatchOperatorCount,
+      batchOperatorCount,
       underwriterCount: options.underwriterCount ?? DefaultUnderwriterCount,
       epochDurationSec: options.epochDurationSec ?? DefaultEpochDurationSec,
       operatorsPerEpoch: options.operatorsPerEpoch ?? null,

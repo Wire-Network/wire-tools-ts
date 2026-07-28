@@ -9,6 +9,7 @@ import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
 import { type Logger } from "../logging/Logger.js"
 import { SysioContracts } from "@wireio/sdk-core"
 import { Constants } from "../Constants.js"
+import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
 import {
   readNodeOwner,
@@ -57,8 +58,6 @@ const MinFromWireAmount = 100_000_000
 const FromWireRevertFeeBps = 10
 /** Epoch envelope-log retention. */
 const EnvelopeLogRetentionEpochs = 10
-/** Dev-default batch-operator group COUNT (sliding-window schedule; per-flow overridable via ClusterConfig). */
-const DefaultBatchOperatorGroupCount = 3
 /** Dev-default `terminate_max_consecutive_misses` (per-flow overridable via ClusterConfig). */
 const DefaultTerminateMaxConsecutiveMisses = 5
 /** Dev-default `terminate_max_pct_misses_24h` (per-flow overridable via ClusterConfig). */
@@ -850,30 +849,34 @@ export namespace ClusterBuildDefaults {
     }
   }
 
-  /** The `sysio.epoch::setconfig` data, derived from the batch-operator topology. */
-  function epochConfig(
+  /**
+   * The `sysio.epoch::setconfig` data, derived from the batch-operator topology.
+   *
+   * The shape itself comes from {@link BatchOperatorSchedule.resolve} — the ONE
+   * place it is derived and validated, shared with
+   * `ClusterConfigProvider.resolve` so this step can never emit a shape the
+   * CLI/flow boundary would have accepted differently (or vice versa).
+   *
+   * Exported (a pure value helper, not a Step) so the spec is unit-testable
+   * without standing up a cluster.
+   *
+   * @param config - The resolved cluster config (topology + epoch overrides).
+   * @returns The `epoch::setconfig` action data.
+   * @throws If the resulting group shape violates the spec.
+   */
+  export function epochConfig(
     config: ClusterConfig
   ): SysioContracts.SysioEpochSetconfigAction {
-    // Group SIZE (`operators_per_epoch`) and COUNT (`batch_op_groups`) come from
-    // the config override when a flow set them — so the shape is materialized at
-    // bootstrap and NO mid-run reconfig is ever needed — else derive from the
-    // batch-operator topology. `minimum_active` always derives as size × count.
-    const {
-        batchOpGroups: batchOpGroupsOverride,
-        operatorsPerEpoch: operatorsPerEpochOverride
-      } = config,
-      batchOpGroups =
-        batchOpGroupsOverride ??
-        Math.min(DefaultBatchOperatorGroupCount, config.batchOperatorCount),
-      operatorsPerEpoch =
-        operatorsPerEpochOverride ??
-        (batchOpGroups > 0
-          ? Math.ceil(config.batchOperatorCount / batchOpGroups)
-          : 1)
+    const { operatorsPerEpoch, batchOpGroups, batchOperatorMinimumActive } =
+      BatchOperatorSchedule.resolve({
+        batchOperatorCount: config.batchOperatorCount,
+        operatorsPerEpoch: config.operatorsPerEpoch,
+        batchOpGroups: config.batchOpGroups
+      })
     return {
       epoch_duration_sec: config.epochDurationSec,
       operators_per_epoch: operatorsPerEpoch,
-      batch_operator_minimum_active: operatorsPerEpoch * batchOpGroups,
+      batch_operator_minimum_active: batchOperatorMinimumActive,
       batch_op_groups: batchOpGroups,
       epoch_retention_envelope_log_count:
         config.epochRetentionEnvelopeLogCount ?? EnvelopeLogRetentionEpochs

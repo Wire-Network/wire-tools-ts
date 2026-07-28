@@ -222,6 +222,53 @@ describe("ClusterConfigProvider", () => {
     })
   })
 
+  describe("resolve batch-operator roster lattice", () => {
+    let environment: ResolveEnvironment
+
+    beforeEach(() => {
+      environment = fixtureResolveEnvironment("batch-roster-")
+    })
+    afterEach(() => {
+      environment.cleanup()
+    })
+
+    /** Base create options (fake host paths; binaries fixture-resolved). */
+    function rosterOptions(batchOperatorCount?: number) {
+      return {
+        clusterPath: Path.join(environment.rootPath, "cluster"),
+        buildPath: environment.buildPath,
+        ethereumPath: "/fake/eth",
+        solanaPath: "/fake/sol",
+        ...(batchOperatorCount == null ? {} : { batchOperatorCount })
+      }
+    }
+
+    // NO accept case drives a full resolve here: a 21-operator topology claims
+    // ~50 ports under the host-global bind lock, which starves every other
+    // suite's resolve. The default roster's accept path is exercised by every
+    // other `resolve` test in this file, and the admissible lattice is covered
+    // lock-free in ClusterBuildDefaultsEpochShape.
+
+    // 4/20 are even; 5/7 are odd but not 3-divisible; 6 is 3-divisible but even
+    // (an even quotient = an even group size, which breaks the strict-majority
+    // path-2 threshold). Every one used to bootstrap ~15 min and then revert in
+    // `schbatchgps` with "not enough available batch operators".
+    it.each([1, 4, 5, 7, 20])(
+      "rejects a roster of %i off the odd/3-divisible lattice",
+      async batchOperatorCount => {
+        await expect(
+          ClusterConfigProvider.resolve(rosterOptions(batchOperatorCount))
+        ).rejects.toThrow(/must be ODD and divisible by 3/)
+      }
+    )
+
+    // The lattice constants themselves are pinned in BatchOperatorSchedule.test.ts.
+
+    // The explicit-shape acceptance case (`6` with a 1 x 3 shape) is covered
+    // lock-free in BatchOperatorSchedule.test.ts — driving it through `resolve`
+    // claims a cluster's worth of ports under the host-global bind lock.
+  })
+
   describe("resolve --bind-config classify/merge", () => {
     let environment: ResolveEnvironment
 
