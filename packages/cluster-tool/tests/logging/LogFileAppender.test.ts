@@ -12,8 +12,6 @@ const record = (over: Partial<LogRecord>): LogRecord => ({
   ...over
 })
 
-/** Let the WriteStream flush to disk before reading it back. */
-const flush = () => new Promise<void>(resolve => setTimeout(resolve, 30))
 
 describe("LogFileAppender", () => {
   let dir: string
@@ -29,8 +27,7 @@ describe("LogFileAppender", () => {
   it("creates parent directories and writes jsonl by default", async () => {
     const appender = new LogFileAppender({ filename: file, level: "info" })
     appender.append(record({ message: "hello" }))
-    appender.close()
-    await flush()
+    await appender.close()
     const first = Fs.readFileSync(file, "utf8").trim().split("\n")[0]
     expect(JSON.parse(first).message).toBe("hello")
   })
@@ -42,8 +39,7 @@ describe("LogFileAppender", () => {
       format: LogFileAppender.Format.text
     })
     appender.append(record({ message: "hello", category: "cat", level: "warn" }))
-    appender.close()
-    await flush()
+    await appender.close()
     expect(Fs.readFileSync(file, "utf8")).toMatch(/\[cat\] \(warn\) hello/)
   })
 
@@ -51,11 +47,16 @@ describe("LogFileAppender", () => {
     const appender = new LogFileAppender({ filename: file, level: "warn" })
     appender.append(record({ level: "info", message: "skipme" }))
     appender.append(record({ level: "error", message: "keepme" }))
-    appender.close()
-    await flush()
+    await appender.close()
     const content = Fs.readFileSync(file, "utf8")
     expect(content).not.toMatch(/skipme/)
     expect(content).toMatch(/keepme/)
+  })
+
+  it("close resolves immediately when no record ever opened the stream", async () => {
+    const appender = new LogFileAppender({ filename: file, level: "info" })
+    await expect(appender.close()).resolves.toBeUndefined()
+    expect(Fs.existsSync(file)).toBe(false)
   })
 
   it("uses a custom formatter when supplied", async () => {
@@ -65,8 +66,7 @@ describe("LogFileAppender", () => {
       formatter: r => `CUSTOM:${r.message}`
     })
     appender.append(record({ message: "x" }))
-    appender.close()
-    await flush()
+    await appender.close()
     expect(Fs.readFileSync(file, "utf8").trim()).toBe("CUSTOM:x")
   })
 })
