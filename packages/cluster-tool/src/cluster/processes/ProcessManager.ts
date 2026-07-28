@@ -75,30 +75,20 @@ function readOrphanPids(clusterPath: string): number[] {
 }
 
 /**
- * Terminate `pids` with the graceful signal, synchronously poll for their exit,
- * then SIGKILL whatever is left. Returns the pids that were force-killed. Only
- * pids passing `isAlive` are touched (default: the recycled-pid guard {@link
- * isManagedPid}, whose zombie semantics — an empty `/proc/<pid>/cmdline` — also
- * make a reaped-but-unwaited child count as exited).
- *
- * `graceMs` is an **idle** window, not a total: every pid that exits RESETS it,
- * and only {@link ProcessManager.SweepHardCapMs} bounds the sweep absolutely. A
- * sweep that is still draining is healthy — cutting it short is precisely what
- * corrupts the cluster — while a genuinely wedged process still hits the cap.
- *
- * A total budget cannot be sized here: nodeop's post-SIGINT work is its
- * chainbase flush + `fork_db.dat` write AND whatever block backlog it is still
- * applying, and on a 24-node local cluster the operator nodes run minutes
- * behind head (`wire latency: 125708 ms` observed at 21 batch operators), so
- * the drain is unbounded in a way no per-process constant covers. Cutting it
- * short leaves `database dirty flag set` (a node that refuses to boot), a
- * missing `fork_db.dat` (lost reversible blocks → stalled finality), and a
- * truncated `blocks.log` whose next hard replay silently discards every block
- * after the truncation point.
+ * Terminate `pids` with the graceful signal, synchronously poll for their exit
+ * for up to `graceMs`, then SIGKILL the survivors. Returns the pids that were
+ * force-killed. Only pids passing `isAlive` are touched (default: the
+ * recycled-pid guard {@link isManagedPid}, whose zombie semantics — an empty
+ * `/proc/<pid>/cmdline` — also make a reaped-but-unwaited child count as
+ * exited).
  *
  * Synchronous throughout (blocking `sleep` between polls) so process `exit` /
  * signal handlers — where queued async work never resumes — get the SAME
- * guarantee as the async stop path.
+ * guarantee as the async stop path: nodeop's post-SIGINT chainbase flush +
+ * fork_db.dat write routinely takes tens of seconds, and cutting it short is
+ * what leaves `database dirty flag set` (a node that refuses to boot) and a
+ * missing fork_db.dat (lost reversible blocks → stalled finality) behind for
+ * the next launch.
  */
 export function terminatePidsSync(
   pids: number[],
@@ -108,18 +98,11 @@ export function terminatePidsSync(
   let remaining = pids.filter(isAlive)
   if (remaining.length === 0) return []
   remaining.forEach(pid => signalPid(pid, GracefulSignal))
-  const hardDeadline = Date.now() + ProcessManager.SweepHardCapMs
-  let idleDeadline = Date.now() + graceMs
+  const deadline = Date.now() + graceMs
   remaining = remaining.filter(isAlive)
-  while (
-    remaining.length > 0 &&
-    Date.now() < idleDeadline &&
-    Date.now() < hardDeadline
-  ) {
+  while (remaining.length > 0 && Date.now() < deadline) {
     execFileSync("sleep", [String(ProcessManager.SweepPollIntervalMs / 1000)])
-    const before = remaining.length
     remaining = remaining.filter(isAlive)
-    if (remaining.length < before) idleDeadline = Date.now() + graceMs
   }
   if (remaining.length > 0) {
     log.warn(`Force-killing straggler pid(s): ${remaining.join(", ")}`)
@@ -140,7 +123,7 @@ function sweepOrphans(clusterPath: string): void {
   const orphans = readOrphanPids(clusterPath)
   if (orphans.length === 0) return
   log.info(`Sweeping ${orphans.length} orphan pid(s) from ${clusterPath}: ${orphans.join(", ")}`)
-  terminatePidsSync(orphans, ProcessManager.sweepGraceMs(orphans.length))
+  terminatePidsSync(orphans, ProcessManager.SweepGraceMs)
 }
 
 /**
@@ -196,8 +179,10 @@ export class ProcessManager {
       // (or a SIGKILL sweep) leaves `database dirty flag set` for the next
       // boot. `process.exit()` in the signal handlers below runs AFTER this
       // returns, so the children get their full graceful window.
-      const pids = [...this.processes.values()].map(managed => managed.pid)
-      terminatePidsSync(pids, ProcessManager.sweepGraceMs(pids.length))
+      terminatePidsSync(
+        [...this.processes.values()].map(managed => managed.pid),
+        ProcessManager.SweepGraceMs
+      )
       this.processes.forEach(managed => {
         guard(() => Fs.rmSync(managed.pidFile, { force: true }))
       })
@@ -343,52 +328,14 @@ export class ProcessManager {
 
 export namespace ProcessManager {
   /**
-   * BASE synchronous wait for a SINGLE swept / exit-cleanup pid to leave
-   * gracefully before SIGKILL (ms). Deliberately equals {@link
-   * ManagedProcess.GracefulKillMs} — the same chainbase-flush window the async
-   * stop path grants — kept as an independent literal because a value import of
-   * `ManagedProcess` here would create a module cycle. The old 2s grace
-   * SIGKILLed nodeop mid-flush and manufactured the `database dirty flag set`
-   * unclean-shutdown state.
+   * Max synchronous wait for swept / exit-cleanup pids to leave gracefully
+   * before SIGKILL (ms). Deliberately equals {@link ManagedProcess.GracefulKillMs}
+   * — the same chainbase-flush window the async stop path grants — kept as an
+   * independent literal because a value import of `ManagedProcess` here would
+   * create a module cycle. The old 2s grace SIGKILLed nodeop mid-flush and
+   * manufactured the `database dirty flag set` unclean-shutdown state.
    */
   export const SweepGraceMs = 30_000
-  /**
-   * Extra grace granted per ADDITIONAL process in the same sweep (ms). Every pid
-   * is signalled at once and they then flush CONCURRENTLY against one disk, so
-   * the wall clock a sweep needs grows with the process count — the single-node
-   * {@link SweepGraceMs} window does not cover a full cluster.
-   */
-  export const SweepGracePerProcessMs = 5_000
-  /**
-   * Absolute ceiling on ONE sweep, however much progress it is making — the
-   * backstop against a genuinely wedged process holding the CLI open forever.
-   * Generous because the alternative to waiting is a corrupted cluster, and the
-   * sweep only reaches this bound when a pid stops responding entirely.
-   */
-  export const SweepHardCapMs = 10 * 60 * 1000
-  /**
-   * IDLE window for terminating `processCount` processes in ONE sweep — the
-   * no-progress budget {@link terminatePidsSync} resets on every pid that
-   * exits, never a fixed total wait: the sweep returns the moment the last pid
-   * is gone.
-   *
-   * Sizing this off the count is load-bearing, not defensive. A 24-node cluster
-   * (21 batch operators + producers + bios + underwriter) blew the flat 30s
-   * window at `create` exit: 16 nodeops were SIGKILLed mid-flush, which left
-   * each one's `blocks.log` truncated and its chainbase dirty. The next
-   * `wire-cluster-tool run` then hard-replays, `repair_log` discards the
-   * unreadable tail, and every block after it — INCLUDING the bootstrap's
-   * `schbatchgps` + `bootstrap-epoch` — is silently lost, so the resumed cluster
-   * can never advance an epoch.
-   *
-   * @param processCount - Pids being terminated in this sweep.
-   * @returns The grace window in ms.
-   */
-  export function sweepGraceMs(processCount: number): number {
-    return (
-      SweepGraceMs + SweepGracePerProcessMs * Math.max(0, processCount - 1)
-    )
-  }
   /** Poll gap while waiting for terminated pids to exit (ms). */
   export const SweepPollIntervalMs = 500
 }
