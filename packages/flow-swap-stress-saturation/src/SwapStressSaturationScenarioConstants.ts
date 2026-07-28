@@ -1,5 +1,5 @@
 import { SlugName } from "@wireio/sdk-core"
-import { ProtocolTiming } from "@wireio/cluster-tool"
+import { ProtocolTiming, type WireUserResourcePolicy } from "@wireio/cluster-tool"
 import {
   RealFlowMetricPolling,
   StressPrivateReserveCreateParams,
@@ -122,21 +122,23 @@ export namespace SwapStressSaturationScenarioConstants {
       SwapStressPhaseAmounts.Phase2SourceDepotUnits
   }
 
-  /** Swap variance tolerance — generous so quote drift never reverts a swap. */
-  export namespace Variance {
-    export const ToleranceBps = 500
-  }
-
   /**
    * The saturation ramp shape: doubling swap counts from {@link InitialCount}
    * to {@link MaxCount}, reusing the earliest {@link MaxCount} deterministic
    * stress accounts across {@link MaxIterationCount} iterations, with
    * {@link Concurrency} in-flight swaps per phase.
+   *
+   * Sizing (calibrated against the 2026-07-24 r5/r6 runs): attestations run
+   * ~300 bytes, so a cap-packed 62KB+ envelope (the `byte_threshold`
+   * saturation signal) needs ~210+ attestations landing in ONE epoch per
+   * direction. 48 accounts peaked at 14.8KB (23% of cap) — the ramp now runs
+   * 48→96→192→384→512, with the byte gate expected to trip around the
+   * 384-account iteration on both Ethereum directions.
    */
   export namespace Ramp {
-    export const InitialCount = 3
+    export const InitialCount = 48
     export const Multiplier = 2
-    export const MaxCount = 48
+    export const MaxCount = 512
     export const PhaseTimeoutMs = 480_000
     export const MaxIterationCount = 5
     export const Concurrency = 4
@@ -175,6 +177,20 @@ export namespace SwapStressSaturationScenarioConstants {
       SwapAmounts.Phase2SourceWireUnits *
       BigInt(Ramp.MaxIterationCount) *
       2n
+    /**
+     * Lightweight ROA policy for the disposable stress users. The bootstrap
+     * node owner's tier-1 reserve (4% of `ROA_TOTAL_SYS` ≈ 3,019 SYS) has
+     * only ~300 SYS of headroom left once the bootstrap + flow-owner
+     * policies are issued, so the {@link Count}-account roster must stay
+     * inside that: 512 × 3 × 0.1 SYS ≈ 154 SYS. Each account only pushes one
+     * tiny `swapfromwire` per iteration; 0.1 SYS of RAM weight (~100KB via
+     * `ROA_BYTES_PER_UNIT`) is ample.
+     */
+    export const Policy: WireUserResourcePolicy = {
+      netWeight: "0.1000 SYS",
+      ramWeight: "0.1000 SYS",
+      cpuWeight: "0.1000 SYS"
+    }
   }
 
   /** SPL funding for the SOL-side create escrow + the Phase 2 source custody. */

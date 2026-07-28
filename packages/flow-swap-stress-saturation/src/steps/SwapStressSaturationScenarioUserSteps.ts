@@ -6,8 +6,10 @@ import {
   type ClusterBuildContext,
   type ClusterBuildParent,
   type ClusterBuildStepOptions,
-  type StepInput
+  type StepInput,
+  type WireUserResourcePolicy
 } from "@wireio/cluster-tool"
+import { SwapStressSaturationScenarioConstants as Constants } from "../SwapStressSaturationScenarioConstants.js"
 import { createStressIdentities } from "@wireio/opp-swap-stress"
 
 /**
@@ -25,6 +27,8 @@ export namespace SwapStressSaturationScenarioUserSteps {
     readonly account: string
     /** Raw 9-dp WIRE funding (sources the account's swapfromwire per iteration). */
     readonly fundWireAmount: bigint
+    /** Lightweight ROA policy — the roster is too large for the harness default. */
+    readonly resourcePolicy: WireUserResourcePolicy
   }
 
   /**
@@ -50,7 +54,8 @@ export namespace SwapStressSaturationScenarioUserSteps {
       {
         kind: "SwapStressSaturationScenarioUserSteps.ProvisionStressAccountInput",
         account,
-        fundWireAmount
+        fundWireAmount,
+        resourcePolicy: Constants.StressAccounts.Policy
       },
       runProvisionStressAccount
     )
@@ -64,7 +69,8 @@ export namespace SwapStressSaturationScenarioUserSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     await provisionWireUser(ctx.wire, input.account, {
-      fundWireAmount: input.fundWireAmount
+      fundWireAmount: input.fundWireAmount,
+      resourcePolicy: input.resourcePolicy
     })
   }
 

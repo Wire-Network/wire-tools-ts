@@ -31,8 +31,18 @@ export namespace SwapStressPhaseAmounts {
   export const EthWeiPerDepotUnit = 1_000_000_000n
   /** USDCSOL depot precision equals native SPL precision. */
   export const UsdcSolFromDepotDivisor = 1n
-  /** 5% target tolerance mirrors private-reserve flow variance tolerance. */
-  export const TargetToleranceBps = 500
+  /**
+   * 90% variance tolerance — the saturation soak measures OPP throughput,
+   * not pricing. Bursts of hundreds of swaps against the 10-unit mock
+   * ETH/PRIMARY book move the price far past any pricing-grade tolerance
+   * (each 0.1-unit swap is ~1% of the book, and the depot's fee-adjusted
+   * drain math drifts from the fee-less quote walk), so a tight bound mass-
+   * refunds the burst and starves the DEPOT→ETH direction of the very remit
+   * attestations the saturation criterion needs. Tightness belongs to the
+   * pricing flows (`flow-swap-variance-revert`); here the tolerance is wide
+   * open so every submitted swap survives to ride an envelope.
+   */
+  export const TargetToleranceBps = 9000
 }
 
 /**

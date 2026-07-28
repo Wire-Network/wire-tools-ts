@@ -50,6 +50,7 @@ import {
   RunEvidenceSetupStatus,
   RunEvidenceStage,
   collectOppPhaseMetrics,
+  type OppEnvelopeSaturationStrategy,
   type RunEvidenceDecimal
 } from "@wireio/test-opp-stress"
 import { SwapStressSaturationScenarioArtifacts as Artifacts } from "../SwapStressSaturationScenarioArtifacts.js"
@@ -86,6 +87,18 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
   export const PhaseEpochStart = 0
   /** See {@link PhaseEpochStart}. */
   export const PhaseEpochEnd = Number.MAX_SAFE_INTEGER
+
+  /**
+   * Saturation strategy for the campaign's phase metrics. Every current
+   * emitter — `sysio.msgch::buildenv` and both outpost emit loops — packs
+   * ONE envelope per epoch up to `MAX_ENVELOPE_BYTES` and DEFERS overflow
+   * attestations to the next epoch's emit, so a same-epoch second envelope
+   * (`epochEnvelopeIndex > 0`, the `rollover` strategy) can never occur. A
+   * cap-packed envelope (≥95% of the 64KB cap, `byte_threshold`) is the
+   * saturation signal the packing loop actually produces under pressure.
+   */
+  export const CampaignSaturationStrategy: OppEnvelopeSaturationStrategy =
+    "byte_threshold"
 
   /** Chain label for phase-1 recipient (WIRE depot payout) observations. */
   export const WirePayoutLabel = "WIRE"
@@ -585,6 +598,7 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
                 epochStart: PhaseEpochStart,
                 epochEnd: PhaseEpochEnd,
                 endpointsType: retryRequest.endpointsType,
+                saturationStrategy: CampaignSaturationStrategy,
                 baseline: phaseBaseline,
                 evidenceSink: persistence
               })

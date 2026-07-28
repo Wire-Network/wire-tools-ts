@@ -7,6 +7,30 @@ import { Constants } from "../../Constants.js"
 const log = getLogger(__filename)
 
 /**
+ * ROA resource-policy weights attached to a provisioned WIRE user
+ * (`sysio.roa::addpolicy` asset strings, e.g. `"25.0000 SYS"`).
+ */
+export interface WireUserResourcePolicy {
+  /** `net_weight` allocated from the bootstrap node owner. */
+  netWeight: string
+  /** `ram_weight` allocated from the bootstrap node owner. */
+  ramWeight: string
+  /** `cpu_weight` allocated from the bootstrap node owner. */
+  cpuWeight: string
+}
+
+/**
+ * Default per-user policy weights. The node owner's unallocated SYS is
+ * finite — a flow provisioning MANY disposable users passes a lighter
+ * {@link WireUserOptions.resourcePolicy} instead of this default.
+ */
+export const DefaultWireUserResourcePolicy: WireUserResourcePolicy = {
+  netWeight: "25.0000 SYS",
+  ramWeight: "25.0000 SYS",
+  cpuWeight: "25.0000 SYS"
+}
+
+/**
  * Options for {@link provisionWireUser}.
  */
 export interface WireUserOptions {
@@ -16,6 +40,11 @@ export interface WireUserOptions {
    * swap-to-WIRE recipient that only needs to exist).
    */
   fundWireAmount?: bigint
+  /**
+   * ROA policy weights for the account. Defaults to
+   * {@link DefaultWireUserResourcePolicy}.
+   */
+  resourcePolicy?: WireUserResourcePolicy
 }
 
 /** Result of {@link provisionWireUser}. */
@@ -58,7 +87,10 @@ export async function provisionWireUser(
   account: string,
   options: WireUserOptions = {}
 ): Promise<WireUser> {
-  const { fundWireAmount = 0n } = options
+  const {
+    fundWireAmount = 0n,
+    resourcePolicy = DefaultWireUserResourcePolicy
+  } = options
 
   await wire.wallet.unlock()
 
@@ -88,9 +120,9 @@ export async function provisionWireUser(
     {
       owner: account,
       issuer: Constants.BOOTSTRAP_NODE_OWNER,
-      net_weight: "25.0000 SYS",
-      ram_weight: "25.0000 SYS",
-      cpu_weight: "25.0000 SYS",
+      net_weight: resourcePolicy.netWeight,
+      ram_weight: resourcePolicy.ramWeight,
+      cpu_weight: resourcePolicy.cpuWeight,
       time_block: 0,
       network_gen: 0
     },
