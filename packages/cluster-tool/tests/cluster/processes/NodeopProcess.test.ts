@@ -2,7 +2,10 @@ import Fs from "node:fs"
 import Http from "node:http"
 import Os from "node:os"
 import Path from "node:path"
-import type { ClusterConfig } from "@wireio/cluster-tool-shared"
+import {
+  SignatureProviderType,
+  type ClusterConfig
+} from "@wireio/cluster-tool-shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
 import {
@@ -171,6 +174,146 @@ describe("NodeopProcess", () => {
         "true"
       ])
     )
+  })
+
+  it("advertises the per-node advertiseAddress as the p2p-server-address", async () => {
+    const meshNode = new NodeConfig(
+      cluster,
+      NodeRole.operator,
+      0,
+      "meshed",
+      { http: 8888, p2p: 9876, advertiseAddress: "10.1.2.3" },
+      [],
+      []
+    )
+    const nodeop = await NodeopProcess.create(manager, { node: meshNode })
+    expect(nodeop.args).toEqual(
+      expect.arrayContaining(["--p2p-server-address", "10.1.2.3:9876"])
+    )
+    // the LISTEN endpoint stays on the fleet-wide bind address
+    expect(nodeop.args).toEqual(
+      expect.arrayContaining(["--p2p-listen-endpoint", "0.0.0.0:9876"])
+    )
+  })
+
+  describe("signature-provider scheme plugins", () => {
+    const SsmPlugin =
+      NodeopProcess.SignatureProviderSchemePlugins[SignatureProviderType.SSM]
+
+    /** The fixture cluster re-aimed at an SSM signature provider. */
+    function ssmCluster(): ClusterConfig {
+      return fixtureConfig({
+        clusterPath: dir,
+        dataPath: Path.join(dir, "data"),
+        executables: { ...PersistedFixture.executables, nodeop: "/bin/true" },
+        signatureProvider: {
+          type: SignatureProviderType.SSM,
+          ssm: {
+            awsRegion: "us-east-1",
+            awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
+          }
+        }
+      })
+    }
+
+    it("requiredSignatureProviderPlugins maps an SSM spec to the ssm plugin", () => {
+      expect(
+        NodeopProcess.requiredSignatureProviderPlugins([
+          NodeopProcess.SignatureProviderFlag,
+          "name,wire,wire,PUB_K1_p,SSM:us-east-1:/wire/c/a/K1"
+        ])
+      ).toEqual([SsmPlugin])
+    })
+
+    it("requiredSignatureProviderPlugins is empty for KEY / KIOD specs and non-spec args", () => {
+      expect(
+        NodeopProcess.requiredSignatureProviderPlugins([
+          NodeopProcess.SignatureProviderFlag,
+          "name,wire,wire,PUB_K1_p,KEY:PVT_K1_s",
+          NodeopProcess.SignatureProviderFlag,
+          "name2,wire,wire_bls,PUB_BLS_p,KIOD:http://127.0.0.1:8900",
+          NodeopProcess.PluginFlag,
+          "sysio::net_plugin"
+        ])
+      ).toEqual([])
+    })
+
+    it("requiredSignatureProviderPlugins dedupes and skips already-enabled plugins", () => {
+      const twoSsmSpecs = [
+        NodeopProcess.SignatureProviderFlag,
+        "a,wire,wire,P1,SSM:r:/s1",
+        NodeopProcess.SignatureProviderFlag,
+        "b,wire,wire_bls,P2,SSM:r:/s2"
+      ]
+      expect(
+        NodeopProcess.requiredSignatureProviderPlugins(twoSsmSpecs)
+      ).toEqual([SsmPlugin])
+      expect(
+        NodeopProcess.requiredSignatureProviderPlugins([
+          ...twoSsmSpecs,
+          NodeopProcess.PluginFlag,
+          SsmPlugin
+        ])
+      ).toEqual([])
+    })
+
+    it("an SSM cluster's producing node enables the ssm plugin (the 3110006 fix)", async () => {
+      const producing = new NodeConfig(
+        ssmCluster(),
+        NodeRole.producer,
+        0,
+        "ssm-producer",
+        { http: 8888, p2p: 9876 },
+        ["sysio"],
+        []
+      )
+      const nodeop = await NodeopProcess.create(manager, {
+        node: producing,
+        operator: producerOperator("sysio")
+      })
+      expect(nodeop.args).toEqual(
+        expect.arrayContaining([NodeopProcess.PluginFlag, SsmPlugin])
+      )
+      expect(nodeop.args.some(arg => arg.includes("SSM:us-east-1:"))).toBe(true)
+    })
+
+    it("an SSM cluster's bios node stays on the inline dev KEY (no ssm plugin)", async () => {
+      const bios = new NodeConfig(
+        ssmCluster(),
+        NodeRole.bios,
+        NodeConfig.BiosIndex,
+        NodeConfig.BiosName,
+        { http: 8788, p2p: 8776 },
+        [NodeConfig.BiosProducer],
+        []
+      )
+      const nodeop = await NodeopProcess.create(manager, {
+        node: bios,
+        operator: producerOperator(NodeConfig.BiosProducer)
+      })
+      expect(nodeop.args).not.toContain(SsmPlugin)
+    })
+
+    it("a KEY cluster never enables the ssm plugin", async () => {
+      const nodeop = await NodeopProcess.create(manager, {
+        node: node("key-producer", NodeRole.producer, ["sysio"]),
+        operator: producerOperator("sysio")
+      })
+      expect(nodeop.args).not.toContain(SsmPlugin)
+    })
+
+    it("detects an SSM spec arriving via extraArgs (operator daemons)", async () => {
+      const nodeop = await NodeopProcess.create(manager, {
+        node: node("ssm-daemon", NodeRole.operator),
+        extraArgs: [
+          NodeopProcess.SignatureProviderFlag,
+          "op,ethereum,ethereum,0xPUB,SSM:us-east-1:/wire/c/op/EM"
+        ]
+      })
+      expect(nodeop.args).toEqual(
+        expect.arrayContaining([NodeopProcess.PluginFlag, SsmPlugin])
+      )
+    })
   })
 
   it("applies tuning overrides over the defaults", async () => {

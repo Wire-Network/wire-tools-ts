@@ -248,6 +248,32 @@ describe("BindConfigProvider", () => {
       )
       expect(config.kiod.port).toBe(pinned)
     })
+
+    it("carries a per-node advertiseAddress through verbatim (multi-host mesh)", async () => {
+      const AdvertiseAddress = "10.0.0.11",
+        BiosAdvertiseAddress = "10.0.0.10"
+      const config = await BindConfigProvider.resolve(
+        {
+          nodeop: {
+            ports: {
+              bios: { advertiseAddress: BiosAdvertiseAddress },
+              producers: [{ advertiseAddress: AdvertiseAddress }]
+            }
+          }
+        },
+        { producerCount: 2 }
+      )
+      expect(config.nodeop.ports.bios.advertiseAddress).toBe(
+        BiosAdvertiseAddress
+      )
+      expect(config.nodeop.ports.producers[0].advertiseAddress).toBe(
+        AdvertiseAddress
+      )
+      // Unpinned entries persist WITHOUT the key (single-host default).
+      expect(
+        "advertiseAddress" in config.nodeop.ports.producers[1]
+      ).toBe(false)
+    })
   })
 
   describe("isPortAvailable", () => {

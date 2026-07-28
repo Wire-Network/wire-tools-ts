@@ -216,7 +216,13 @@ export namespace BindConfigProvider {
         daemon: string
       ): Promise<BindConfigNodeopPorts> => ({
         http: await claim(base?.http ?? null, null, `${daemon}.http`),
-        p2p: await claim(base?.p2p ?? null, null, `${daemon}.p2p`)
+        p2p: await claim(base?.p2p ?? null, null, `${daemon}.p2p`),
+        // Per-node advertise address (multi-host mesh): a REMOTE address —
+        // carried through verbatim, never probed. Conditional spread so the
+        // single-host default persists with no key at all.
+        ...(base?.advertiseAddress != null
+          ? { advertiseAddress: base.advertiseAddress }
+          : {})
       }),
       pairs = (
         bases: BindNodeopPortsOptions[] | null,
@@ -279,7 +285,11 @@ export namespace BindConfigProvider {
               nodeopPorts?.bios?.p2p ?? null,
               DefaultBiosP2p,
               "nodeop.bios.p2p"
-            )
+            ),
+            // Same verbatim carry-through as `pair` — see the note there.
+            ...(nodeopPorts?.bios?.advertiseAddress != null
+              ? { advertiseAddress: nodeopPorts.bios.advertiseAddress }
+              : {})
           },
           producers: await pairs(
             nodeopPorts?.producers ?? null,
