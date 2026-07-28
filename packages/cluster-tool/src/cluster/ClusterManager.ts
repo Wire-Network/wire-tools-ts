@@ -6,7 +6,6 @@ import {
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { PidSources, pidIsAlive, readPid } from "@wireio/debugging-shared"
-import { KeyType } from "@wireio/sdk-core"
 import { ProtocolTiming } from "../Constants.js"
 import { BindConfigProvider } from "../config/BindConfigProvider.js"
 import { SSMClientProvider } from "../config/SSMClientProvider.js"
@@ -69,30 +68,12 @@ export namespace ClusterManager {
    * here so every `Steps.processes.*` step can get-or-create against it.
    */
   export async function create(options: ClusterBuildOptions): Promise<Report> {
+    // SSM mode: the key-publication phases are composed INSIDE the default
+    // build (`PublishNodeSignatureProviderKeys` after WalletAndKeys,
+    // `PublishOperatorSignatureProviderKeys` after operator provisioning) —
+    // each source's keys must be in SSM BEFORE their consumer nodeops start
+    // and fetch them. Absent entirely under KEY.
     const build = await ClusterBuildDefaults.create(options)
-    // SSM mode: publish every generated signing key to AWS SSM immediately
-    // BEFORE persisting state (the last phase). Absent entirely under KEY —
-    // that absence is the KEY-hot-path safety net.
-    if (build.config.signatureProvider.type === SignatureProviderType.SSM) {
-      const publishPhase = ClusterBuildPhase.create(
-        build,
-        "PublishSignatureProviderKeys",
-        "Publish each generated signing key to AWS SSM"
-      )
-      Steps.keys
-        .signatureProviderKeyPublications(build.config)
-        .forEach(publication =>
-          publishPhase.push(
-            Steps.keys.planPublishSignatureProviderKey(
-              Report.Actor.Sysio,
-              `publish-${publication.account}-${KeyType[publication.keyType]}`,
-              `publish ${publication.account} ${KeyType[publication.keyType]} key → SSM`,
-              {},
-              publication
-            )
-          )
-        )
-    }
     ClusterBuildPhase.create(
       build,
       "PersistClusterState",

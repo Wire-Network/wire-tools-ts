@@ -12,6 +12,8 @@ import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
 import { SSMClientProvider } from "../../config/SSMClientProvider.js"
 import { Report } from "../../report/Report.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
+import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
+import type { ClusterBuildParent } from "../ClusterBuildPhaseBase.js"
 import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
@@ -212,6 +214,52 @@ export namespace KeySteps {
       )
     )
     return publications
+  }
+
+  /**
+   * Compose ONE publish phase for an SSM cluster — the `source`-class subset of
+   * {@link signatureProviderKeyPublications}, one step per key, self-registered
+   * on `parent`. `ClusterBuildDefaults` composes it at the point where the
+   * source's keys EXIST but their SSM-fetching consumers have NOT started:
+   * `node` keys right after `WalletAndKeys` (producer nodes fetch them from SSM
+   * at startup), `operator` keys right after operator provisioning (the
+   * operator daemons fetch theirs at startup). Publishing any later leaves the
+   * consumer's `SSM:<region>:<secretId>` spec pointing at a parameter that does
+   * not exist yet, aborting nodeop startup.
+   *
+   * @param parent - The build / group the phase self-registers on.
+   * @param name - The phase name.
+   * @param description - The phase description.
+   * @param options - Step options applied to every publish step.
+   * @param config - The resolved cluster config (SSM signature provider).
+   * @param source - Which key-store class this phase publishes.
+   * @returns The publish phase.
+   */
+  export function planSignatureProviderKeyPublications<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    config: ClusterConfig,
+    source: SignatureKeySource
+  ): ClusterBuildPhase<C> {
+    const phase = ClusterBuildPhase.create<C>(parent, name, description)
+    signatureProviderKeyPublications(config)
+      .filter(publication => publication.source === source)
+      .forEach(publication =>
+        phase.push(
+          planPublishSignatureProviderKey<C>(
+            Report.Actor.Sysio,
+            `publish-${publication.account}-${KeyType[publication.keyType]}`,
+            `publish ${publication.account} ${KeyType[publication.keyType]} key → SSM`,
+            options,
+            publication
+          )
+        )
+      )
+    return phase
   }
 
   /**

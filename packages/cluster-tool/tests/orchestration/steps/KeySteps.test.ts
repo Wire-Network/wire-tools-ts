@@ -73,6 +73,73 @@ describe("Steps.keys", () => {
     })
   })
 
+  describe("planSignatureProviderKeyPublications", () => {
+    const config = fixtureConfig({
+      clusterPath: "/tmp/wire-cluster-pubs",
+      signatureProvider: {
+        type: SignatureProviderType.SSM,
+        ssm: {
+          awsRegion: "us-east-1",
+          awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
+        }
+      }
+    })
+
+    /** A registered orchestration child as the fake parent sees it (name only). */
+    interface RegisteredChild {
+      name: string
+    }
+
+    /** A minimal structural {@link ClusterBuildParent} capturing registrations. */
+    function fixtureParent() {
+      const children: RegisteredChild[] = [],
+        parent = {
+          context: fixtureContext(),
+          push(...nodes: RegisteredChild[]) {
+            children.push(...nodes)
+            return parent
+          }
+        }
+      return { parent, children }
+    }
+
+    it("composes the node-source phase: one step per producer-node key, self-registered", () => {
+      const { parent, children } = fixtureParent()
+      const phase = Steps.keys.planSignatureProviderKeyPublications(
+        parent as never,
+        "PublishNodeSignatureProviderKeys",
+        "publish node keys",
+        {},
+        config,
+        Steps.keys.SignatureKeySource.node
+      )
+      expect(children).toContain(phase)
+      expect(phase.name).toBe("PublishNodeSignatureProviderKeys")
+      // 1 producer node × (K1 + BLS) — operator publications are filtered OUT.
+      expect(phase.steps.map(step => step.name)).toEqual([
+        "publish-node_00-K1",
+        "publish-node_00-BLS"
+      ])
+    })
+
+    it("composes the operator-source phase: one step per operator key", () => {
+      const { parent } = fixtureParent()
+      const phase = Steps.keys.planSignatureProviderKeyPublications(
+        parent as never,
+        "PublishOperatorSignatureProviderKeys",
+        "publish operator keys",
+        {},
+        config,
+        Steps.keys.SignatureKeySource.operator
+      )
+      // (3 batch + 1 underwriter) × (K1 + EM + ED) = 12; no node publications.
+      expect(phase.steps).toHaveLength(12)
+      expect(
+        phase.steps.every(step => !step.name.startsWith("publish-node_"))
+      ).toBe(true)
+    })
+  })
+
   describe("runPublishSignatureProviderKey (jest SSM mock — no live AWS)", () => {
     beforeEach(() => mockSend.mockReset())
 
