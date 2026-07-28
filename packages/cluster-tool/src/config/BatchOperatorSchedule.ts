@@ -165,7 +165,7 @@ export const BatchOperatorScheduleSchema =
         message:
           `batch-operator-count must be ODD and divisible by ${DefaultBatchOperatorGroupCount} ` +
           `(3, 9, 15, 21) — got ${batchOperatorCount}; ` +
-          `pass --operators-per-epoch / --batch-op-groups to state a shape explicitly`
+          `pass --operators-per-epoch OR --batch-op-groups to state a shape explicitly`
       })
     } else if (total > batchOperatorCount) {
       // What `schbatchgps` actually asserts: the ACTIVE pool must fill the

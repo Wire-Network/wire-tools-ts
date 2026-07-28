@@ -57,7 +57,7 @@ describe("BatchOperatorSchedule.resolve", () => {
 
     it("names the escape hatch in the lattice error", () => {
       expect(() => resolve(20)).toThrow(
-        /pass --operators-per-epoch \/ --batch-op-groups to state a shape explicitly/
+        /pass --operators-per-epoch OR --batch-op-groups to state a shape explicitly/
       )
     })
   })
