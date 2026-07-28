@@ -135,9 +135,19 @@ export namespace ClusterManager {
     log.info(
       `[cluster] filesystem ready at ${config.clusterPath}; running build`
     )
-    const report = await build.build()
-    await stopDaemonsWhileDraining()
-    return report
+    // `finally`, not a trailing await: a build that REJECTS — an unexpected
+    // orchestration error, a `Report.write()` filesystem failure — would
+    // otherwise skip the stop and fall back to the synchronous exit sweep,
+    // which is exactly the deadlock/data-loss path this stop exists to avoid.
+    // The failure path is the one that can least afford a corrupted cluster,
+    // since it is the one an operator will re-run from.
+    try {
+      return await build.build()
+    } finally {
+      // Never throws (it logs and defers to the exit sweep), so it cannot
+      // replace an in-flight rejection with its own.
+      await stopDaemonsWhileDraining()
+    }
   }
 
   /**

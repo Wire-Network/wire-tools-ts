@@ -85,6 +85,45 @@ describe("ClusterManager.launch — daemon stop", () => {
     expect(stopAll).toHaveBeenCalledTimes(1)
   })
 
+  it("stops the daemons when the build REJECTS, preserving the rejection", async () => {
+    // The failure path is the one that can least afford a corrupted cluster —
+    // it is the one an operator re-runs from. Before the `finally`, a rejected
+    // build skipped the stop entirely and fell back to the exit sweep.
+    const stopAll = jest
+      .spyOn(ProcessManager.get(), "stopAll")
+      .mockImplementation(async () => {
+        order.push("stopAll")
+      })
+    const failure = new Error("orchestration blew up"),
+      build = {
+        config: buildStub().config,
+        build: async () => {
+          order.push("build")
+          throw failure
+        }
+      } as unknown as ClusterBuild
+
+    await expect(ClusterManager.launch(build)).rejects.toBe(failure)
+    expect(stopAll).toHaveBeenCalledTimes(1)
+    expect(order).toEqual(["build", "stopAll"])
+  })
+
+  it("preserves the build's rejection even when the stop ALSO fails", async () => {
+    jest
+      .spyOn(ProcessManager.get(), "stopAll")
+      .mockRejectedValue(new Error("stopAll blew up"))
+    const failure = new Error("orchestration blew up"),
+      build = {
+        config: buildStub().config,
+        build: async () => {
+          throw failure
+        }
+      } as unknown as ClusterBuild
+
+    // The stop swallows its own error, so the ORIGINAL cause still surfaces.
+    await expect(ClusterManager.launch(build)).rejects.toBe(failure)
+  })
+
   it("still returns the Report when the graceful stop throws", async () => {
     jest
       .spyOn(ProcessManager.get(), "stopAll")
