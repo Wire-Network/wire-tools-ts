@@ -75,20 +75,30 @@ function readOrphanPids(clusterPath: string): number[] {
 }
 
 /**
- * Terminate `pids` with the graceful signal, synchronously poll for their exit
- * for up to `graceMs`, then SIGKILL the survivors. Returns the pids that were
- * force-killed. Only pids passing `isAlive` are touched (default: the
- * recycled-pid guard {@link isManagedPid}, whose zombie semantics — an empty
- * `/proc/<pid>/cmdline` — also make a reaped-but-unwaited child count as
- * exited).
+ * Terminate `pids` with the graceful signal, synchronously poll for their exit,
+ * then SIGKILL whatever is left. Returns the pids that were force-killed. Only
+ * pids passing `isAlive` are touched (default: the recycled-pid guard {@link
+ * isManagedPid}, whose zombie semantics — an empty `/proc/<pid>/cmdline` — also
+ * make a reaped-but-unwaited child count as exited).
+ *
+ * `graceMs` is an **idle** window, not a total: every pid that exits RESETS it,
+ * and only {@link ProcessManager.SweepHardCapMs} bounds the sweep absolutely. A
+ * sweep that is still draining is healthy — cutting it short is precisely what
+ * corrupts the cluster — while a genuinely wedged process still hits the cap.
+ *
+ * A total budget cannot be sized here: nodeop's post-SIGINT work is its
+ * chainbase flush + `fork_db.dat` write AND whatever block backlog it is still
+ * applying, and on a 24-node local cluster the operator nodes run minutes
+ * behind head (`wire latency: 125708 ms` observed at 21 batch operators), so
+ * the drain is unbounded in a way no per-process constant covers. Cutting it
+ * short leaves `database dirty flag set` (a node that refuses to boot), a
+ * missing `fork_db.dat` (lost reversible blocks → stalled finality), and a
+ * truncated `blocks.log` whose next hard replay silently discards every block
+ * after the truncation point.
  *
  * Synchronous throughout (blocking `sleep` between polls) so process `exit` /
  * signal handlers — where queued async work never resumes — get the SAME
- * guarantee as the async stop path: nodeop's post-SIGINT chainbase flush +
- * fork_db.dat write routinely takes tens of seconds, and cutting it short is
- * what leaves `database dirty flag set` (a node that refuses to boot) and a
- * missing fork_db.dat (lost reversible blocks → stalled finality) behind for
- * the next launch.
+ * guarantee as the async stop path.
  */
 export function terminatePidsSync(
   pids: number[],
@@ -98,11 +108,18 @@ export function terminatePidsSync(
   let remaining = pids.filter(isAlive)
   if (remaining.length === 0) return []
   remaining.forEach(pid => signalPid(pid, GracefulSignal))
-  const deadline = Date.now() + graceMs
+  const hardDeadline = Date.now() + ProcessManager.SweepHardCapMs
+  let idleDeadline = Date.now() + graceMs
   remaining = remaining.filter(isAlive)
-  while (remaining.length > 0 && Date.now() < deadline) {
+  while (
+    remaining.length > 0 &&
+    Date.now() < idleDeadline &&
+    Date.now() < hardDeadline
+  ) {
     execFileSync("sleep", [String(ProcessManager.SweepPollIntervalMs / 1000)])
+    const before = remaining.length
     remaining = remaining.filter(isAlive)
+    if (remaining.length < before) idleDeadline = Date.now() + graceMs
   }
   if (remaining.length > 0) {
     log.warn(`Force-killing straggler pid(s): ${remaining.join(", ")}`)
@@ -343,9 +360,17 @@ export namespace ProcessManager {
    */
   export const SweepGracePerProcessMs = 5_000
   /**
-   * Graceful window for terminating `processCount` processes in ONE sweep — a
-   * CEILING, not a wait: {@link terminatePidsSync} returns the moment the last
-   * pid exits.
+   * Absolute ceiling on ONE sweep, however much progress it is making — the
+   * backstop against a genuinely wedged process holding the CLI open forever.
+   * Generous because the alternative to waiting is a corrupted cluster, and the
+   * sweep only reaches this bound when a pid stops responding entirely.
+   */
+  export const SweepHardCapMs = 10 * 60 * 1000
+  /**
+   * IDLE window for terminating `processCount` processes in ONE sweep — the
+   * no-progress budget {@link terminatePidsSync} resets on every pid that
+   * exits, never a fixed total wait: the sweep returns the moment the last pid
+   * is gone.
    *
    * Sizing this off the count is load-bearing, not defensive. A 24-node cluster
    * (21 batch operators + producers + bios + underwriter) blew the flat 30s

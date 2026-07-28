@@ -293,6 +293,12 @@ describe("ProcessManager + ManagedProcess", () => {
     it("never drops below the base window for an empty or degenerate sweep", () => {
       expect(ProcessManager.sweepGraceMs(0)).toBe(ProcessManager.SweepGraceMs)
     })
+
+    it("stays under the absolute sweep cap for a realistic cluster", () => {
+      expect(ProcessManager.sweepGraceMs(24)).toBeLessThan(
+        ProcessManager.SweepHardCapMs
+      )
+    })
   })
 
   describe("terminatePidsSync", () => {
@@ -319,6 +325,33 @@ describe("ProcessManager + ManagedProcess", () => {
       expect(Date.now() - startedAt).toBeLessThan(5_000)
       expect(isAliveByCmdline(child.pid)).toBe(false)
     })
+
+    it("extends the IDLE window while pids keep exiting", async () => {
+      const { spawn } = await import("node:child_process")
+      // Children that IGNORE the graceful signal and exit on a stagger wider
+      // than the idle window — the shape of a cluster draining its block
+      // backlog. A fixed TOTAL budget SIGKILLs the later two; the
+      // reset-on-progress window carries the sweep through all three.
+      const idleMs = 1_000,
+        children = [0.8, 1.6, 2.4].map(seconds =>
+          spawn("/bin/bash", ["-c", `trap '' INT; sleep ${seconds}`], {
+            stdio: "ignore"
+          })
+        )
+      // Let every child exec + install its trap, or the sweep sees empty
+      // cmdlines (counted as exited) and returns before signalling anything.
+      await new Promise(resolve => setTimeout(resolve, 500))
+      const startedAt = Date.now(),
+        forced = terminatePidsSync(
+          children.map(child => child.pid),
+          idleMs,
+          isAliveByCmdline
+        )
+      expect(forced).toEqual([])
+      // Carried past the idle window because each exit reset it.
+      expect(Date.now() - startedAt).toBeGreaterThan(idleMs)
+      children.forEach(child => expect(isAliveByCmdline(child.pid)).toBe(false))
+    }, 15_000)
 
     it("SIGKILLs a straggler that ignores the graceful signal and reports it", async () => {
       const { spawn } = await import("node:child_process")
