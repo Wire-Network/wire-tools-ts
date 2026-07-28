@@ -53,10 +53,10 @@ export namespace SolanaValidatorProcessSteps {
       dynamicPortRange: ctx.config.bind.solana.ports.dynamicRange,
       ledgerPath: Path.join(ctx.config.dataPath, SolanaValidatorProcess.LedgerSubpath),
       programs: [{ name: SolanaOutpostProgramTool.ProgramName, programId, soFile, upgradeAuthority }],
-      // Per-cluster opt-in (`ClusterConfig.solanaEpochWarp`, set only by
+      // Per-cluster opt-in (`ClusterConfig.solana.epochWarp`, set only by
       // `flow-yield-distribution`'s scenario `defaults`) — see the config
       // field's doc for why every other flow keeps the real-time clock.
-      epochWarp: ctx.config.solanaEpochWarp
+      epochWarp: ctx.config.solana.epochWarp
     })
     await validator.start()
   }

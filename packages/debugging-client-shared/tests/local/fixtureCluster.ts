@@ -98,9 +98,10 @@ export function makeFixtureCluster(): FixtureCluster {
     terminateMaxConsecutiveMisses: null,
     terminateMaxPercentMisses24h: null,
     terminateWindowMs: null,
-    solanaEpochWarp: false,
     ethereumPath: "",
     solanaPath: "",
+    ethereum: {},
+    solana: { epochWarp: false },
     bind: {
       kiod: { address: "127.0.0.1", port: 0 },
       nodeop: {

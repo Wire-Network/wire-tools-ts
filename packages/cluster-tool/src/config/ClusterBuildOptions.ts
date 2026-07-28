@@ -14,6 +14,17 @@ export interface LoggingOptions {
   fileFormat?: ClusterConfigLoggingFileFormat
 }
 
+/** Caller-facing Solana-chain options (the `Options` half of `ClusterConfigSolana`). */
+export interface SolanaOptions {
+  /**
+   * Warp the solana-test-validator past Solana epoch 3 at launch
+   * (`--solana-epoch-warp`). Default `false` at every layer — only
+   * `flow-yield-distribution` opts in via its scenario `defaults`; the warp
+   * puts the Solana chain clock ~80 minutes ahead of real time.
+   */
+  epochWarp?: boolean
+}
+
 /**
  * Everything a caller may set when standing up a cluster (CLI or flow). All
  * fields optional; `ClusterConfigProvider.resolve` fills the rest. `bind` / `report` /
@@ -41,7 +52,8 @@ export interface ClusterBuildOptions {
   epochRetentionEnvelopeLogCount?: number
   warmupEpochs?: number
   cooldownEpochs?: number
-  solanaEpochWarp?: boolean
+  // per-chain options (`ClusterConfig.ethereum` / `ClusterConfig.solana`)
+  solana?: SolanaOptions
   // network binding
   bindAll?: boolean
   bind?: BindOptions

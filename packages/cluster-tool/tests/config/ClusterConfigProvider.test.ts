@@ -80,16 +80,16 @@ describe("ClusterConfigProvider", () => {
       )
     })
 
-    it("round-trips solanaEpochWarp (default OFF, and ON when a flow opts in)", () => {
+    it("round-trips solana.epochWarp (default OFF, and ON when a flow opts in)", () => {
       expect(ClusterConfigProvider.DefaultSolanaEpochWarp).toBe(false)
       const off = ClusterConfigProvider.deserialize(
         ClusterConfigProvider.serialize(fixtureConfig())
       )
-      expect(off.solanaEpochWarp).toBe(false)
+      expect(off.solana.epochWarp).toBe(false)
       const on = ClusterConfigProvider.deserialize(
-        JSON.stringify({ ...PersistedFixture, solanaEpochWarp: true })
+        JSON.stringify({ ...PersistedFixture, solana: { epochWarp: true } })
       )
-      expect(on.solanaEpochWarp).toBe(true)
+      expect(on.solana.epochWarp).toBe(true)
     })
   })
 

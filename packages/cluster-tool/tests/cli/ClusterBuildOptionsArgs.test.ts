@@ -335,10 +335,10 @@ describe("toClusterBuildOptions reverse parse", () => {
       toClusterBuildOptions({ "enable-mock-reserves": false }).enableMockReserves
     ).toBe(false)
     expect(
-      toClusterBuildOptions({ "solana-epoch-warp": true }).solanaEpochWarp
+      toClusterBuildOptions({ "solana-epoch-warp": true }).solana?.epochWarp
     ).toBe(true)
     expect(
-      toClusterBuildOptions({ "solana-epoch-warp": false }).solanaEpochWarp
+      toClusterBuildOptions({ "solana-epoch-warp": false }).solana?.epochWarp
     ).toBe(false)
   })
 
@@ -368,7 +368,7 @@ describe("register → parse round-trip", () => {
     // no opt-in ⇒ the default-false mock-reserves flag survives as false
     expect(options.enableMockReserves).toBe(false)
     // solana-epoch-warp defaults OFF — only flow-yield-distribution opts in
-    expect(options.solanaEpochWarp).toBe(false)
+    expect(options.solana?.epochWarp).toBe(false)
     // unseeded (null-default) bind ports never materialize
     expect(options.bind?.kiod?.port).toBeUndefined()
   })

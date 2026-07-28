@@ -43,9 +43,10 @@ export const PersistedFixture: ClusterConfig = {
   terminateMaxConsecutiveMisses: null,
   terminateMaxPercentMisses24h: null,
   terminateWindowMs: null,
-  solanaEpochWarp: false,
   ethereumPath: "/eth",
   solanaPath: "/sol",
+  ethereum: {},
+  solana: { epochWarp: false },
   bind: {
     kiod: { address: Address, port: BindConfigProvider.DefaultKiod },
     nodeop: {

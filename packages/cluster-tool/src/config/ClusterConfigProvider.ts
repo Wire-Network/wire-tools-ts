@@ -69,7 +69,7 @@ export namespace ClusterConfigProvider {
   export const DefaultUnderwriterCount = 1
   export const DefaultEpochDurationSec = 90
   /**
-   * Default for {@link ClusterConfig.solanaEpochWarp} — OFF. Only
+   * Default for `ClusterConfig.solana.epochWarp` — OFF. Only
    * `flow-yield-distribution` opts in (via its scenario `defaults`); the warp
    * puts the Solana chain clock ~80 minutes ahead of real time — a
    * non-production clock condition no other flow needs — so it is never the
@@ -119,9 +119,10 @@ export namespace ClusterConfigProvider {
         options.terminateMaxConsecutiveMisses ?? null,
       terminateMaxPercentMisses24h: options.terminateMaxPercentMisses24h ?? null,
       terminateWindowMs: options.terminateWindowMs ?? null,
-      solanaEpochWarp: options.solanaEpochWarp ?? DefaultSolanaEpochWarp,
       ethereumPath: assertOption(options.ethereumPath, "ethereumPath"),
       solanaPath: assertOption(options.solanaPath, "solanaPath"),
+      ethereum: {},
+      solana: { epochWarp: options.solana?.epochWarp ?? DefaultSolanaEpochWarp },
       bind,
       executables,
       report,

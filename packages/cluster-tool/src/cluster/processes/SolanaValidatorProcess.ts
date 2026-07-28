@@ -84,7 +84,7 @@ export interface SolanaValidatorOptions {
    * + `--warp-slot` {@link SolanaValidatorProcess.EpochWarpSlot}). Off by
    * default — the warp puts the Solana chain clock ~80 minutes ahead of real
    * time, so only a cluster that needs the liqsol staking-yield epoch gate
-   * opts in; see `ClusterConfig.solanaEpochWarp`.
+   * opts in; see `ClusterConfig.solana.epochWarp` (`ClusterConfigSolana`).
    */
   epochWarp?: boolean
   /** Additional CLI flags. */

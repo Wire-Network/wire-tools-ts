@@ -199,8 +199,8 @@ export class YieldDistributionScenario extends FlowScenario {
     // gated on the Solana clock reaching epoch 3, so opt THIS cluster's
     // validator into the epoch warp. No other flow needs the warped
     // (~80-minutes-ahead) Solana clock, so none other may enable it — see
-    // `ClusterConfig.solanaEpochWarp`.
-    solanaEpochWarp: true
+    // `ClusterConfig.solana.epochWarp`.
+    solana: { epochWarp: true }
   }
 
   plan(cluster: ClusterBuild): void {

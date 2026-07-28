@@ -362,10 +362,13 @@ export function buildOptionShape(
       OptionLeafType.number,
       "cooldown epochs after the measured window"
     ),
-    solanaEpochWarp: leaf(
-      false,
-      "warp the solana-test-validator past Solana epoch 3 (liqsol staking-yield pipeline gate)"
-    ),
+    // ── per-chain options (nested → `--solana-epoch-warp` style flags) ──
+    solana: {
+      epochWarp: leaf(
+        false,
+        "warp the solana-test-validator past Solana epoch 3 (liqsol staking-yield pipeline gate)"
+      )
+    },
     // ── termination tuning ──
     terminateMaxConsecutiveMisses: optionalLeaf(
       OptionLeafType.number,

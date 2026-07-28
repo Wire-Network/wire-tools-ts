@@ -46,7 +46,7 @@ matched by the staker's native SOL address (not a fixed `external_epoch_ref`).
 The dev seed is gated on the Solana clock having reached epoch 3
 (`MIN_SEED_EPOCH` — the credited epoch is `Clock.epoch - 2` and must be ≥ the
 launch epoch), so this flow's scenario `defaults` set
-`solanaEpochWarp: true` — the validator launches warped just past the epoch-3
+`solana: { epochWarp: true }` — the validator launches warped just past the epoch-3
 boundary. The warp puts the Solana chain clock ~80 minutes ahead of real time,
 a non-production condition no other flow needs, so no other flow enables it.
 
