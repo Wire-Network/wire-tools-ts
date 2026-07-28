@@ -1,7 +1,8 @@
 import Assert from "node:assert"
-import type {
-  ClusterConfig,
-  CollateralRequirement
+import {
+  SignatureProviderType,
+  type ClusterConfig,
+  type CollateralRequirement
 } from "@wireio/cluster-tool-shared"
 import { range } from "lodash"
 import { LAMPORTS_PER_SOL } from "@solana/web3.js"
@@ -155,6 +156,20 @@ export namespace ClusterBuildDefaults {
         {}
       )
     )
+    // SSM mode: publish the just-generated producer-node keys BEFORE any node
+    // consumes them — a producer's `--signature-provider ...SSM:` spec fetches
+    // its private key from SSM at nodeop startup, so publication must precede
+    // the ProducerNodes starts (the bios node stays on the inline dev KEY spec).
+    if (config.signatureProvider.type === SignatureProviderType.SSM) {
+      Steps.keys.planSignatureProviderKeyPublications<C>(
+        prerequisites,
+        "PublishNodeSignatureProviderKeys",
+        "Publish each producer-node signing key to AWS SSM",
+        {},
+        config,
+        Steps.keys.SignatureKeySource.node
+      )
+    }
     ClusterBuildPhase.create<C>(
       prerequisites,
       "BiosNode",
@@ -775,6 +790,20 @@ export namespace ClusterBuildDefaults {
         }))
       ]
     )
+
+    // SSM mode: publish the just-provisioned operator keys BEFORE the operator
+    // daemons start — their wire/ethereum/solana `--signature-provider ...SSM:`
+    // specs fetch the private keys from SSM at nodeop startup.
+    if (config.signatureProvider.type === SignatureProviderType.SSM) {
+      Steps.keys.planSignatureProviderKeyPublications<C>(
+        postContractDeployment,
+        "PublishOperatorSignatureProviderKeys",
+        "Publish each operator signing key to AWS SSM",
+        {},
+        config,
+        Steps.keys.SignatureKeySource.operator
+      )
+    }
 
     const operatorNodeGroup = ClusterBuildPhaseGroup.create<C>(
       postContractDeployment,

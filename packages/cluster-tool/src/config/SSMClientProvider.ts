@@ -30,8 +30,8 @@ function importSSMModule(): Promise<SSMModule> {
 /**
  * THE single AWS SSM access surface — the cached SDK accessor + per-region
  * `SSMClient` cache shared by every SSM path: `SignatureProviderConfigProvider`
- * (get), the `PublishSignatureProviderKeys` steps (put), and
- * `ClusterManager.destroy` (delete). Never echoes a parameter VALUE (callers log
+ * (get), the `Publish{Node,Operator}SignatureProviderKeys` phases' steps (put),
+ * and `ClusterManager.destroy` (delete). Never echoes a parameter VALUE (callers log
  * only the id + reason).
  */
 export namespace SSMClientProvider {
