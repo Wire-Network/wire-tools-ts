@@ -8,7 +8,7 @@ import {
 } from "@wireio/cluster-tool/config"
 import { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { Localhost } from "@wireio/cluster-tool/utils"
-import { fixtureConfig } from "./clusterConfigFixture.js"
+import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
 
 describe("NodeConfig", () => {
   describe("producerName", () => {
@@ -56,6 +56,67 @@ describe("NodeConfig", () => {
       expect(
         nodes.find(n => n.underwriterLabel !== null)?.underwriterLabel
       ).toBe("uwrit.a")
+    })
+  })
+
+  describe("multi-host advertise addresses", () => {
+    const ProducerAdvertiseAddress = "10.0.0.11"
+    const meshed = fixtureConfig({
+      bind: {
+        ...PersistedFixture.bind,
+        nodeop: {
+          ...PersistedFixture.bind.nodeop,
+          ports: {
+            ...PersistedFixture.bind.nodeop.ports,
+            producers: [
+              {
+                ...PersistedFixture.bind.nodeop.ports.producers[0],
+                advertiseAddress: ProducerAdvertiseAddress
+              }
+            ]
+          }
+        }
+      }
+    })
+    const nodes = NodeConfig.plan(meshed)
+
+    it("advertiseAddressFor prefers the per-node address, else the dialable bind address", () => {
+      expect(
+        NodeConfig.advertiseAddressFor(
+          meshed,
+          meshed.bind.nodeop.ports.producers[0]
+        )
+      ).toBe(ProducerAdvertiseAddress)
+      expect(
+        NodeConfig.advertiseAddressFor(meshed, meshed.bind.nodeop.ports.bios)
+      ).toBe(Localhost)
+    })
+
+    it("each node advertises its own address", () => {
+      expect(
+        nodes.find(n => n.role === NodeRole.producer)?.advertiseAddress
+      ).toBe(ProducerAdvertiseAddress)
+      expect(nodes[0].advertiseAddress).toBe(Localhost)
+    })
+
+    it("peers dial the producer at its advertised address; every other peer stays on the shared address", () => {
+      const producerP2p = meshed.bind.nodeop.ports.producers[0].p2p,
+        bios = nodes[0]
+      expect(bios.peerEndpoints).toContain(
+        `${ProducerAdvertiseAddress}:${producerP2p}`
+      )
+      bios.peerEndpoints
+        .filter(endpoint => !endpoint.startsWith(ProducerAdvertiseAddress))
+        .forEach(endpoint =>
+          expect(endpoint.startsWith(`${Localhost}:`)).toBe(true)
+        )
+    })
+
+    it("renders the advertised p2p-server-address into the node ini", () => {
+      const producer = nodes.find(n => n.role === NodeRole.producer)!
+      expect(producer.ini.render()).toContain(
+        `p2p-server-address = ${ProducerAdvertiseAddress}:${producer.ports.p2p}`
+      )
     })
   })
 

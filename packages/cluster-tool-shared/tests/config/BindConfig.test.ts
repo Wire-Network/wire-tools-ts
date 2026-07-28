@@ -196,4 +196,49 @@ describe("BindConfigSchemaCodec + BindOptionsSchema", () => {
   it("BindOptionsSchema rejects a wrong-typed field", () => {
     expect(BindOptionsSchema.safeParse({ anvil: { port: "nope" } }).success).toBe(false)
   })
+
+  describe("per-node advertiseAddress (multi-host mesh)", () => {
+    const AdvertiseAddress = "10.0.0.11"
+    const meshed: BindConfig = {
+      ...bind,
+      nodeop: {
+        ...bind.nodeop,
+        ports: {
+          ...bind.nodeop.ports,
+          producers: [{ http: 8988, p2p: 9976, advertiseAddress: AdvertiseAddress }]
+        }
+      }
+    }
+
+    it("round-trips a per-node advertiseAddress through the codec", () => {
+      const roundTripped = BindConfigSchemaCodec.deserialize(
+        BindConfigSchemaCodec.serialize(meshed)
+      )
+      expect(roundTripped).toEqual(meshed)
+      expect(roundTripped.nodeop.ports.producers[0].advertiseAddress).toBe(
+        AdvertiseAddress
+      )
+      expect(BindConfigSchemaCodec.check(meshed)).toBe(true)
+    })
+
+    it("a legacy config without advertiseAddress parses with the field absent", () => {
+      const roundTripped = BindConfigSchemaCodec.deserialize(
+        BindConfigSchemaCodec.serialize(bind)
+      )
+      expect(roundTripped.nodeop.ports.producers[0].advertiseAddress).toBeUndefined()
+    })
+
+    it("BindOptionsSchema accepts a per-node advertiseAddress override and rejects a wrong type", () => {
+      expect(
+        BindOptionsSchema.safeParse({
+          nodeop: { ports: { bios: { advertiseAddress: AdvertiseAddress } } }
+        }).success
+      ).toBe(true)
+      expect(
+        BindOptionsSchema.safeParse({
+          nodeop: { ports: { bios: { advertiseAddress: 42 } } }
+        }).success
+      ).toBe(false)
+    })
+  })
 })

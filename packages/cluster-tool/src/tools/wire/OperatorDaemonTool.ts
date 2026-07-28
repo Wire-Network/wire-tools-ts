@@ -631,7 +631,7 @@ export namespace OperatorDaemonTool {
     const isBatchOperator = operator.type === OperatorType.BATCH,
       producerPeers = config.bind.nodeop.ports.producers.map(
         producerPorts =>
-          `${toDialAddress(config.bind.nodeop.address)}:${producerPorts.p2p}`
+          `${NodeConfig.advertiseAddressFor(config, producerPorts)}:${producerPorts.p2p}`
       )
     return new NodeConfig(
       config,
