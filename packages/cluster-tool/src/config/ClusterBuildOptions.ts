@@ -67,7 +67,17 @@ export interface ClusterBuildOptions {
   logging?: LoggingOptions
   // signature provider — how the cluster's own signing keys are handled (default KEY)
   signatureProvider?: ClusterSignatureProviderOptions
-  // external inputs (file paths → `--bind-config` / `--external-outpost-config`)
+  // external inputs
   bindConfig?: string
   externalOutpostConfig?: string
+  /**
+   * Ethereum prelaunch balance dump imported into `sysio.dclaim` during
+   * cluster creation.
+   */
+  ethereumBootstrapJsonFile?: string
+  /**
+   * Solana prelaunch balance dump imported into `sysio.dclaim` during cluster
+   * creation.
+   */
+  solanaBootstrapJsonFile?: string
 }

@@ -176,9 +176,8 @@ describe("ClusterConfigProvider", () => {
 
   describe("signatureProviderSource", () => {
     it("KEY → the inline default source for every key (byte-identical)", () => {
-      const source = ClusterConfigProvider.signatureProviderSource(
-        fixtureConfig()
-      )
+      const source =
+        ClusterConfigProvider.signatureProviderSource(fixtureConfig())
       expect(source("node_00", KeyType.K1)).toEqual({
         type: SignatureProviderType.KEY
       })
@@ -300,11 +299,20 @@ describe("ClusterConfigProvider", () => {
     it("uses a COMPLETE bind config verbatim (ports not re-picked)", async () => {
       const bind = JSON.parse(JSON.stringify(PersistedFixture.bind)),
         config = await ClusterConfigProvider.resolve(
-          baseOptions(writeBindConfig(bind))
+          baseOptions(writeBindConfig(bind), {
+            ethereumBootstrapJsonFile: "inputs/ethereum.json",
+            solanaBootstrapJsonFile: "inputs/solana.json"
+          })
         )
       expect(config.bind.kiod.port).toBe(bind.kiod.port)
       expect(config.bind.nodeop.ports.bios.http).toBe(
         bind.nodeop.ports.bios.http
+      )
+      expect(config.ethereumBootstrapJsonFile).toBe(
+        Path.resolve("inputs/ethereum.json")
+      )
+      expect(config.solanaBootstrapJsonFile).toBe(
+        Path.resolve("inputs/solana.json")
       )
     })
 

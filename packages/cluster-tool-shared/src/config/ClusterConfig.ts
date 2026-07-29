@@ -159,6 +159,18 @@ export const ClusterConfigSchema = z.object({
   ethereumPath: z.string(),
   /** wire-solana repo root. */
   solanaPath: z.string(),
+  /**
+   * Absolute Ethereum prelaunch balance-dump path used during `create`, or
+   * `null` when no Ethereum dclaim bootstrap input was supplied. Persisted as
+   * provenance; reload paths never reread the source file.
+   */
+  ethereumBootstrapJsonFile: z.string().nullable().default(null),
+  /**
+   * Absolute Solana prelaunch balance-dump path used during `create`, or
+   * `null` when no Solana dclaim bootstrap input was supplied. Persisted as
+   * provenance; reload paths never reread the source file.
+   */
+  solanaBootstrapJsonFile: z.string().nullable().default(null),
   /** Resolved network binding for every daemon. */
   bind: BindConfigSchema,
   /** Resolved binary locations. */

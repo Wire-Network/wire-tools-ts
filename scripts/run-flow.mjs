@@ -18,6 +18,8 @@
  *   --cluster-path <dir>      cluster data dir (env: WIRE_CLUSTER_PATH). Optional — when omitted
  *                             the flow test harness generates a fresh temp cluster path per run.
  *
+ *   -- <flow-options...>       forward every following token unchanged to the flow CLI.
+ *
  * Examples:
  *   ./scripts/run-flow.mjs                       # interactive picker
  *   ./scripts/run-flow.mjs swap                  # regex match → picks/prompts among matches
@@ -27,6 +29,7 @@
 
 import { fileURLToPath } from "node:url"
 import { argv, chalk, echo, fs, glob, path, question, $ } from "zx"
+import { pnpmFlowArguments } from "./run-flow-args.mjs"
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -237,6 +240,7 @@ const clusterPath =
   argv["cluster-path"] != null
     ? path.resolve(String(argv["cluster-path"]))
     : (process.env.WIRE_CLUSTER_PATH ?? null)
+const flowArguments = pnpmFlowArguments(process.argv.slice(2))
 
 // ---------------------------------------------------------------------------
 // Run
@@ -269,4 +273,4 @@ await $({
   stdio: "inherit",
   cwd: repoRoot,
   env: childEnv
-})`pnpm --filter ${flow.pkgName} test`
+})`pnpm --filter ${flow.pkgName} test ${flowArguments}`

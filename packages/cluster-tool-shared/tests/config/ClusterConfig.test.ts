@@ -28,6 +28,8 @@ describe("ClusterConfig shape", () => {
     terminateWindowMs: null,
     ethereumPath: "/eth",
     solanaPath: "/sol",
+    ethereumBootstrapJsonFile: "/inputs/ethereum.json",
+    solanaBootstrapJsonFile: "/inputs/solana.json",
     bind: {
       kiod: { address: "127.0.0.1", port: 8900 },
       nodeop: {
@@ -108,12 +110,14 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated).toEqual(config)
   })
 
-  it("loads a legacy config (no signatureProvider/externalOutposts/debuggingServerEnabled/enableMockReserves) via schema defaults", () => {
+  it("loads a legacy config via schema defaults", () => {
     const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
     delete parsed.signatureProvider
     delete parsed.externalOutposts
     delete parsed.debuggingServerEnabled
     delete parsed.enableMockReserves
+    delete parsed.ethereumBootstrapJsonFile
+    delete parsed.solanaBootstrapJsonFile
     const rehydrated = ClusterConfigSchemaCodec.deserialize(
       JSON.stringify(parsed)
     )
@@ -124,6 +128,8 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.externalOutposts).toBeNull()
     expect(rehydrated.debuggingServerEnabled).toBe(true)
     expect(rehydrated.enableMockReserves).toBe(false)
+    expect(rehydrated.ethereumBootstrapJsonFile).toBeNull()
+    expect(rehydrated.solanaBootstrapJsonFile).toBeNull()
   })
 
   it("defaults the epoch-group + termination overrides to null for a legacy config", () => {

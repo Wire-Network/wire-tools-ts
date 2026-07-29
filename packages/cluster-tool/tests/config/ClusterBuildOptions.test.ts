@@ -16,6 +16,8 @@ describe("ClusterBuildOptions types", () => {
       clusterPath: "/cluster",
       ethereumPath: "/eth",
       solanaPath: "/sol",
+      ethereumBootstrapJsonFile: "/inputs/ethereum.json",
+      solanaBootstrapJsonFile: "/inputs/solana.json",
       producerCount: 1,
       batchOperatorCount: 3,
       underwriterCount: 1,
@@ -27,6 +29,8 @@ describe("ClusterBuildOptions types", () => {
     }
     expect(options.epochDurationSec).toBe(60)
     expect(options.bind?.anvil?.port).toBe(8545)
+    expect(options.ethereumBootstrapJsonFile).toBe("/inputs/ethereum.json")
+    expect(options.solanaBootstrapJsonFile).toBe("/inputs/solana.json")
   })
 
   it("models the resolved ClusterConfigLogging and caller LoggingOptions distinctly", () => {

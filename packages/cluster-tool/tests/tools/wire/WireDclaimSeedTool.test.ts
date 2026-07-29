@@ -8,9 +8,17 @@
 // — harness tests never import from flow-* packages, so the fixture is
 // self-contained.
 
+import Fs from "node:fs"
+import Os from "node:os"
+import Path from "node:path"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import {
+  IndexBalanceDumpSchema,
+  batchImportSeedCredits,
   convertImportSeed,
+  convertImportSeedCredits,
+  loadIndexBalanceDump,
+  mergeImportSeedCredits,
   serializeBatchForClio,
   type ImportSeedBatch,
   type IndexBalanceDump
@@ -163,6 +171,169 @@ function buildSyntheticEthereumDump(
 }
 
 describe("WireDclaimSeedTool", () => {
+  describe("loadIndexBalanceDump", () => {
+    let directory: string
+
+    beforeEach(() => {
+      directory = Fs.mkdtempSync(Path.join(Os.tmpdir(), "dclaim-dump-"))
+    })
+
+    afterEach(() => {
+      Fs.rmSync(directory, { recursive: true, force: true })
+    })
+
+    function write(name: string, value: string | object): string {
+      const file = Path.join(directory, name)
+      Fs.writeFileSync(
+        file,
+        typeof value === "string" ? value : JSON.stringify(value)
+      )
+      return file
+    }
+
+    it("retains unknown fields while validating consumed integer fields", async () => {
+      const file = write("ethereum.json", {
+        metadata: { generatedAt: "now", futureMetadata: true },
+        purchasers: [
+          {
+            address: `0x${"11".repeat(20)}`,
+            totalPretokens: "1000000000",
+            futureRowField: "retained"
+          }
+        ],
+        futureTopLevel: { retained: true }
+      })
+      const dump = await loadIndexBalanceDump(file, ChainKind.EVM)
+      expect(dump.purchasers?.[0].futureRowField).toBe("retained")
+      expect((dump as Record<string, unknown>).futureTopLevel).toEqual({
+        retained: true
+      })
+      expect(IndexBalanceDumpSchema.safeParse(dump).success).toBe(true)
+    })
+
+    it("reports chain, file, row, and field for malformed numeric data", async () => {
+      const file = write("ethereum.json", {
+        purchasers: [
+          {
+            address: `0x${"11".repeat(20)}`,
+            totalPretokens: "1.5"
+          }
+        ]
+      })
+      await expect(loadIndexBalanceDump(file, ChainKind.EVM)).rejects.toThrow(
+        new RegExp(
+          `Ethereum bootstrap file .*${Path.basename(file)}.*purchasers\\[0\\]\\.totalPretokens`
+        )
+      )
+    })
+
+    it("reports the indexed address field under Solana validation", async () => {
+      const file = write("solana.json", {
+        stakers: [{ address: "not-base58", pretokenYield: 1 }]
+      })
+      await expect(loadIndexBalanceDump(file, ChainKind.SVM)).rejects.toThrow(
+        /Solana bootstrap file .*stakers\[0\]\.address/
+      )
+    })
+
+    it("rejects malformed JSON before conversion", async () => {
+      const file = write("bad.json", "{")
+      await expect(loadIndexBalanceDump(file, ChainKind.EVM)).rejects.toThrow(
+        /Ethereum bootstrap file .*invalid JSON/
+      )
+    })
+  })
+
+  describe("conversion, merge, and batching boundaries", () => {
+    it("converts without batching, merges duplicate credits, then batches", () => {
+      const converted = convertImportSeedCredits(
+        {
+          purchasers: [
+            {
+              address: `0x${"22".repeat(20)}`,
+              totalPretokens: "1500000000"
+            }
+          ]
+        },
+        ChainKind.EVM
+      )
+      expect(converted.credits).toEqual([
+        { native_address: "22".repeat(20), wire_atomic: 1n }
+      ])
+      const merged = mergeImportSeedCredits(
+        [
+          converted.credits,
+          [
+            { native_address: "11".repeat(20), wire_atomic: 3n },
+            { native_address: "22".repeat(20), wire_atomic: 4n }
+          ]
+        ],
+        ChainKind.EVM
+      )
+      expect(merged).toEqual([
+        { native_address: "11".repeat(20), wire_atomic: 3n },
+        { native_address: "22".repeat(20), wire_atomic: 5n }
+      ])
+      expect(
+        batchImportSeedCredits(merged, {
+          chain: ChainKind.EVM,
+          batchSize: 1
+        }).map(batch => batch.credits.length)
+      ).toEqual([1, 1])
+    })
+
+    it("rejects unsafe numeric inputs and non-positive additive credits", () => {
+      expect(() =>
+        convertImportSeedCredits(
+          {
+            purchasers: [
+              {
+                address: `0x${"33".repeat(20)}`,
+                totalPretokens: Number.MAX_SAFE_INTEGER + 1
+              }
+            ]
+          },
+          ChainKind.EVM
+        )
+      ).toThrow(/non-negative safe integer/)
+      expect(() =>
+        mergeImportSeedCredits(
+          [[{ native_address: "33".repeat(20), wire_atomic: 0n }]],
+          ChainKind.EVM
+        )
+      ).toThrow(/wire_atomic must be positive/)
+    })
+
+    it("rejects wrong chain address widths before composing import Steps", () => {
+      expect(() =>
+        mergeImportSeedCredits(
+          [[{ native_address: "44".repeat(32), wire_atomic: 1n }]],
+          ChainKind.EVM
+        )
+      ).toThrow(/Ethereum importseed native_address must be 20 bytes/)
+      expect(() =>
+        mergeImportSeedCredits(
+          [[{ native_address: "55".repeat(20), wire_atomic: 1n }]],
+          ChainKind.SVM
+        )
+      ).toThrow(/Solana importseed native_address must be 32 bytes/)
+    })
+
+    it("rejects an additive merge above the on-chain asset maximum", () => {
+      const address = "66".repeat(20),
+        maximum = (1n << 62n) - 1n
+      expect(() =>
+        mergeImportSeedCredits(
+          [
+            [{ native_address: address, wire_atomic: maximum }],
+            [{ native_address: address, wire_atomic: 1n }]
+          ],
+          ChainKind.EVM
+        )
+      ).toThrow(/exceeds asset maximum/)
+    })
+  })
+
   describe("convertImportSeed", () => {
     it("batches an empty dump into zero batches", () => {
       const result = convertImportSeed(

@@ -25,6 +25,11 @@ export interface ClioRunnerConfig {
 /** Options for {@link ClioRunner.run}. */
 export interface ClioRunOptions<UseJson extends boolean = false> {
   json?: UseJson
+  /**
+   * Retry connection-level failures. Disable for additive actions whose
+   * delivery is ambiguous after a reset. Default `true`.
+   */
+  retryTransport?: boolean
 }
 
 /** JSON-mode run options, with an optional row constructor. */
@@ -72,7 +77,7 @@ export class ClioRunner {
   /** Run a clio command, returning parsed JSON. */
   run<T extends {}>(args: string[], options: ClioRunOptionsJson<T>): Promise<T>
   /** Run a clio command, returning raw stdout. */
-  run(args: string[], options?: { json?: false }): Promise<string>
+  run(args: string[], options?: ClioRunOptions<false>): Promise<string>
   async run(
     args: string[],
     options: ClioRunOptions | ClioRunOptionsJson<any> = { json: false }
@@ -84,17 +89,19 @@ export class ClioRunner {
       ...args
     ]
     log.debug("clio %s", fullArgs.join(" "))
-    // TRANSPORT retries only: a connection-level failure (refused / reset under
-    // host connection churn — the node itself keeps serving) never reached chain
-    // processing, so re-running is safe (a re-pushed duplicate surfaces as the
-    // benign `tx_duplicate`). A NON-transport error IS the result (rethrown).
+    // TRANSPORT retries only: callers normally tolerate connection churn, while
+    // additive/irreversible actions disable this because a reset after node
+    // acceptance makes delivery ambiguous. A NON-transport error is rethrown.
     // Every logical clio invocation — command line, outcome, duration — is
     // recorded into the running step's `Report.StepResult.extra`.
     const startedAtMs = Date.now(),
       command = [this.config.binary, ...fullArgs]
     try {
       const result = await retry(() => this.runOnce(fullArgs, options), {
-        maxAttempts: ClioRunner.TransportRetryAttempts,
+        maxAttempts:
+          options.retryTransport === false
+            ? 1
+            : ClioRunner.TransportRetryAttempts,
         delayMs: ClioRunner.TransportRetryDelayMs,
         label: `clio ${args[0] ?? ""} transport`,
         checkResult: negate(ClioRunner.isTransportFailure)
@@ -176,7 +183,7 @@ export namespace ClioRunner {
   export const TransportFailurePattern =
     /Failed http request to nodeop|Connection refused|Connection reset|couldn't connect to server/i
 
-  /** True when `error` is a connection-level clio failure (safe to re-run). */
+  /** True when `error` is a connection-level clio failure. */
   export function isTransportFailure(error: unknown): boolean {
     const candidate = error as { message?: unknown }
     return (
