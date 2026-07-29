@@ -249,8 +249,8 @@ export class SlashingScenario extends FlowScenario {
       "ProvisionDisputeOperators",
       "Provision the 3 SBP-less non-bootstrapped dispute batch operators",
       {},
-      Constants.DisputeOperators.map((account, index) => ({
-        account,
+      Constants.DisputeOperators.map((label, index) => ({
+        label,
         type: OperatorType.BATCH,
         ethereumHdIndex: Constants.DisputeOperatorEthereumHdBase + index,
         isBootstrapped: false
@@ -284,7 +284,8 @@ export class SlashingScenario extends FlowScenario {
           `force-eligible-${operator}`,
           `flip ${operator} eligible via opreg::processbatch`,
           {},
-          { account: operator, was_eligible: false, is_eligible: true }
+          operator,
+          { was_eligible: false, is_eligible: true }
         )
       ),
       ...Constants.DisputeOperators.map(operator =>

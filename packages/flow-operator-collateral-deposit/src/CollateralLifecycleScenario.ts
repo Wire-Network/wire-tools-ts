@@ -21,24 +21,31 @@ import { CollateralLifecycleScenarioConstants as Constants } from "./CollateralL
 const { SysioContractName, SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report
 
+/** The depositor's node-owner-generated chain account, resolved from the key store. */
+function depositorAccount(ctx: ClusterBuildContext): string {
+  return ctx.keyStore.assertOperator(Constants.DepositorLabel).account
+}
+
 /** The depositor's operator row on `sysio.opreg::operators` (a read). */
 async function readDepositorRow(
   ctx: ClusterBuildContext
 ): Promise<SysioContracts.SysioOpregOperatorEntryType> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.opreg)
-    .tables.operators.query({ limit: 100 })
-  return rows.find(row => row.account === Constants.DepositorAccount)
+  const account = depositorAccount(ctx),
+    { rows } = await ctx.wire
+      .getSysioContract(SysioContractName.opreg)
+      .tables.operators.query({ limit: 100 })
+  return rows.find(row => row.account === account)
 }
 
 /** The depositor's `wtdwqueue` rows (a read). */
 async function readWithdrawQueueRows(
   ctx: ClusterBuildContext
 ): Promise<SysioContracts.SysioOpregWithdrawRequestType[]> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.opreg)
-    .tables.wtdwqueue.query({ limit: 100 })
-  return rows.filter(row => row.account === Constants.DepositorAccount)
+  const account = depositorAccount(ctx),
+    { rows } = await ctx.wire
+      .getSysioContract(SysioContractName.opreg)
+      .tables.wtdwqueue.query({ limit: 100 })
+  return rows.filter(row => row.account === account)
 }
 
 /**
@@ -94,7 +101,7 @@ export class CollateralLifecycleScenario extends FlowScenario {
       {},
       [
         {
-          account: Constants.DepositorAccount,
+          label: Constants.DepositorLabel,
           type: OperatorType.BATCH,
           ethereumHdIndex: Constants.DepositorEthereumHdIndex,
           isBootstrapped: false,
@@ -112,9 +119,9 @@ export class CollateralLifecycleScenario extends FlowScenario {
       OperatorDaemonTool.planDaemonStart(
         Actor.BatchOperator,
         "start-depositor-daemon",
-        `start ${Constants.DepositorAccount}'s batch-operator daemon`,
+        `start ${Constants.DepositorLabel}'s batch-operator daemon`,
         {},
-        Constants.DepositorAccount
+        Constants.DepositorLabel
       )
     )
 
@@ -129,7 +136,7 @@ export class CollateralLifecycleScenario extends FlowScenario {
         "deposit-ethereum",
         `deposit ${Constants.BondAmount} wei ETH collateral`,
         { timeoutMs: 60_000 },
-        Constants.DepositorAccount,
+        Constants.DepositorLabel,
         OperatorType.BATCH,
         BigInt(Constants.EthereumTokenCode),
         Constants.BondAmount
@@ -169,7 +176,7 @@ export class CollateralLifecycleScenario extends FlowScenario {
         "deposit-solana",
         `deposit ${Constants.BondAmount} lamports SOL collateral`,
         { timeoutMs: 60_000 },
-        Constants.DepositorAccount,
+        Constants.DepositorLabel,
         OperatorType.BATCH,
         BigInt(Constants.SolanaTokenCode),
         Constants.BondAmount
@@ -211,7 +218,7 @@ export class CollateralLifecycleScenario extends FlowScenario {
         "withdraw-ethereum",
         `withdraw ${Constants.WithdrawAmount} wei of the ETH bond`,
         { timeoutMs: 60_000 },
-        Constants.DepositorAccount,
+        Constants.DepositorLabel,
         BigInt(Constants.EthereumTokenCode),
         Constants.WithdrawAmount
       ),
@@ -277,7 +284,7 @@ export class CollateralLifecycleScenario extends FlowScenario {
             async () =>
               (await EthereumCollateralTool.readDepositedByCode(
                 ctx,
-                Constants.DepositorAccount,
+                Constants.DepositorLabel,
                 BigInt(Constants.EthereumTokenCode)
               )) === Constants.ExpectedRemainingBalance,
             Constants.remitDeadlineMs(),

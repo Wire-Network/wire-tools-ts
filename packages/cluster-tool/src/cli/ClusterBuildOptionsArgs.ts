@@ -334,7 +334,7 @@ export function buildOptionShape(
     producerCount: leaf(CliDefault.producerCount, "producer account count"),
     batchOperatorCount: leaf(
       CliDefault.batchOperatorCount,
-      "batch operator count"
+      "batch operator count — ODD and divisible by 3 (3, 9, 15, 21) unless --operators-per-epoch OR --batch-op-groups is given; max 26"
     ),
     underwriterCount: leaf(CliDefault.underwriterCount, "underwriter count"),
     // ── epoch ──

@@ -20,8 +20,8 @@ describe("ClusterStateNode / ClusterState shape", () => {
     nodePath: "/cluster/data/bios",
     ports: { http: 8888, p2p: 9876 },
     producers: ["defproducera"],
-    batchOperatorAccount: null,
-    underwriterAccount: null
+    batchOperatorLabel: null,
+    underwriterLabel: null
   }
 
   const operatorNode: ClusterStateNode = {
@@ -30,8 +30,8 @@ describe("ClusterStateNode / ClusterState shape", () => {
     nodePath: "/cluster/data/node_01",
     ports: { http: 8889, p2p: 9877 },
     producers: [],
-    batchOperatorAccount: "batchop1",
-    underwriterAccount: null
+    batchOperatorLabel: "batchop1",
+    underwriterLabel: null
   }
 
   const state: ClusterState = {
@@ -51,9 +51,9 @@ describe("ClusterStateNode / ClusterState shape", () => {
     ])
   })
 
-  it("distinguishes a batch operator from an underwriter via batchOperatorAccount", () => {
-    expect(operatorNode.batchOperatorAccount).toBe("batchop1")
-    expect(operatorNode.underwriterAccount).toBeNull()
+  it("distinguishes a batch operator from an underwriter via batchOperatorLabel", () => {
+    expect(operatorNode.batchOperatorLabel).toBe("batchop1")
+    expect(operatorNode.underwriterLabel).toBeNull()
   })
 
   it("survives a JSON round-trip with no data loss (secret-free persistence)", () => {

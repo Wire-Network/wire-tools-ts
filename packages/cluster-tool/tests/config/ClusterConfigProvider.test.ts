@@ -21,6 +21,10 @@ import {
   ClusterConfigProvider
 } from "@wireio/cluster-tool/config"
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
+import {
+  fixtureResolveEnvironment,
+  type ResolveEnvironment
+} from "./resolveEnvironmentFixture.js"
 
 describe("ClusterConfigProvider", () => {
   describe("resolve", () => {
@@ -218,37 +222,74 @@ describe("ClusterConfigProvider", () => {
     })
   })
 
-  describe("resolve --bind-config classify/merge", () => {
-    const previousRegistry = process.env.WIRE_BIND_REGISTRY_PATH
-    let dir: string, buildPath: string
+  describe("resolve batch-operator roster lattice", () => {
+    let environment: ResolveEnvironment
 
     beforeEach(() => {
-      dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "bind-config-"))
-      process.env.WIRE_BIND_REGISTRY_PATH = Path.join(dir, "registry")
-      // resolveExecutables asserts nodeop/kiod/clio exist under buildPath/bin.
-      buildPath = Path.join(dir, "build")
-      Fs.mkdirSync(Path.join(buildPath, "bin"), { recursive: true })
-      ;["nodeop", "kiod", "clio"].forEach(bin =>
-        Fs.writeFileSync(Path.join(buildPath, "bin", bin), "")
-      )
+      environment = fixtureResolveEnvironment("batch-roster-")
     })
     afterEach(() => {
-      if (previousRegistry == null) delete process.env.WIRE_BIND_REGISTRY_PATH
-      else process.env.WIRE_BIND_REGISTRY_PATH = previousRegistry
-      Fs.rmSync(dir, { recursive: true, force: true })
+      environment.cleanup()
+    })
+
+    /** Base create options (fake host paths; binaries fixture-resolved). */
+    function rosterOptions(batchOperatorCount?: number) {
+      return {
+        clusterPath: Path.join(environment.rootPath, "cluster"),
+        buildPath: environment.buildPath,
+        ethereumPath: "/fake/eth",
+        solanaPath: "/fake/sol",
+        ...(batchOperatorCount == null ? {} : { batchOperatorCount })
+      }
+    }
+
+    // NO accept case drives a full resolve here: a 21-operator topology claims
+    // ~50 ports under the host-global bind lock, which starves every other
+    // suite's resolve. The default roster's accept path is exercised by every
+    // other `resolve` test in this file, and the admissible lattice is covered
+    // lock-free in ClusterBuildDefaultsEpochShape.
+
+    // 4/20 are even; 5/7 are odd but not 3-divisible; 6 is 3-divisible but even
+    // (an even quotient = an even group size, which breaks the strict-majority
+    // path-2 threshold). Every one used to bootstrap ~15 min and then revert in
+    // `schbatchgps` with "not enough available batch operators".
+    it.each([1, 4, 5, 7, 20])(
+      "rejects a roster of %i off the odd/3-divisible lattice",
+      async batchOperatorCount => {
+        await expect(
+          ClusterConfigProvider.resolve(rosterOptions(batchOperatorCount))
+        ).rejects.toThrow(/must be ODD and divisible by 3/)
+      }
+    )
+
+    // The lattice constants themselves are pinned in BatchOperatorSchedule.test.ts.
+
+    // The explicit-shape acceptance case (`6` with a 1 x 3 shape) is covered
+    // lock-free in BatchOperatorSchedule.test.ts — driving it through `resolve`
+    // claims a cluster's worth of ports under the host-global bind lock.
+  })
+
+  describe("resolve --bind-config classify/merge", () => {
+    let environment: ResolveEnvironment
+
+    beforeEach(() => {
+      environment = fixtureResolveEnvironment("bind-config-")
+    })
+    afterEach(() => {
+      environment.cleanup()
     })
 
     /** Write a JSON bind (config or partial override) to the temp dir. */
     function writeBindConfig(bind: unknown): string {
-      const file = Path.join(dir, "bind.json")
+      const file = Path.join(environment.rootPath, "bind.json")
       Fs.writeFileSync(file, JSON.stringify(bind))
       return file
     }
-    /** Base create options (fake host paths; binaries resolve off PATH). */
+    /** Base create options (fake host paths; binaries fixture-resolved). */
     function baseOptions(bindConfig: string, extra: object = {}) {
       return {
-        clusterPath: Path.join(dir, "cluster"),
-        buildPath,
+        clusterPath: Path.join(environment.rootPath, "cluster"),
+        buildPath: environment.buildPath,
         ethereumPath: "/fake/eth",
         solanaPath: "/fake/sol",
         bindConfig,

@@ -128,7 +128,7 @@ export namespace SolanaFundingTool {
   export interface AirdropInput extends StepInput {
     readonly kind: "SolanaFundingTool.AirdropInput"
     /** Operator whose SOL keypair is read from `ctx.outputs` and airdropped to. */
-    readonly operatorAccount: string
+    readonly operatorLabel: string
     /** Ensure the operator's SOL keypair holds at least this many lamports. */
     readonly floorLamports: bigint
   }
@@ -144,7 +144,7 @@ export namespace SolanaFundingTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    operatorAccount: string,
+    operatorLabel: string,
     floorLamports: bigint
   ): ClusterBuildStep<C, AirdropInput> {
     return ClusterBuildStep.create<C, AirdropInput>(
@@ -152,7 +152,7 @@ export namespace SolanaFundingTool {
       name,
       description,
       options,
-      { kind: "SolanaFundingTool.AirdropInput", operatorAccount, floorLamports },
+      { kind: "SolanaFundingTool.AirdropInput", operatorLabel, floorLamports },
       runAirdrop
     )
   }
@@ -164,7 +164,7 @@ export namespace SolanaFundingTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const operator = ctx.keyStore.assertOperator(input.operatorAccount)
+    const operator = ctx.keyStore.assertOperator(input.operatorLabel)
     const pubkey = solanaKeypair(operator.solana).publicKey
     const current = BigInt(await ctx.solana.getLamports(pubkey))
     if (current >= input.floorLamports) return
@@ -173,7 +173,7 @@ export namespace SolanaFundingTool {
     await confirmSignature(
       ctx.solana.connection,
       signature,
-      `SolanaFundingTool.planAirdrop ${input.operatorAccount}`
+      `SolanaFundingTool.planAirdrop ${input.operatorLabel}`
     )
   }
 
@@ -183,7 +183,7 @@ export namespace SolanaFundingTool {
   export interface MintSplInput extends StepInput {
     readonly kind: "SolanaFundingTool.MintSplInput"
     /** Operator whose SOL keypair / ATA is read from `ctx.outputs`. */
-    readonly operatorAccount: string
+    readonly operatorLabel: string
     /**
      * Token slug code — the config-level identity. The SPL mint ADDRESS is a
      * deploy artifact (`sol-mock-mints.json`) that does not exist when the step
@@ -206,7 +206,7 @@ export namespace SolanaFundingTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    operatorAccount: string,
+    operatorLabel: string,
     tokenCode: bigint,
     amount: bigint
   ): ClusterBuildStep<C, MintSplInput> {
@@ -215,7 +215,7 @@ export namespace SolanaFundingTool {
       name,
       description,
       options,
-      { kind: "SolanaFundingTool.MintSplInput", operatorAccount, tokenCode, amount },
+      { kind: "SolanaFundingTool.MintSplInput", operatorLabel, tokenCode, amount },
       runSplMint
     )
   }
@@ -228,7 +228,7 @@ export namespace SolanaFundingTool {
   ): Promise<void> {
     signal.throwIfAborted()
     Assert.ok(input.amount > 0n, "SolanaFundingTool.planSplMint: amount must be positive")
-    const operator = ctx.keyStore.assertOperator(input.operatorAccount)
+    const operator = ctx.keyStore.assertOperator(input.operatorLabel)
     const deployer = loadDeployerKeypair(ctx.config.dataPath)
     const mint = solMintAddress(ctx.config.dataPath, input.tokenCode)
     await mintMockSplToUser(

@@ -80,6 +80,7 @@ describe("Steps.keys", () => {
       mockSend.mockResolvedValueOnce({})
       const ctx = fixtureContext()
       ctx.keyStore.setOperator({
+        label: "batchop.a",
         account: "batchop.a",
         type: OperatorType.BATCH,
         wire: {

@@ -1,7 +1,10 @@
 import Fs from "node:fs"
-import Os from "node:os"
 import Path from "node:path"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
+import {
+  fixtureResolveEnvironment,
+  type ResolveEnvironment
+} from "../config/resolveEnvironmentFixture.js"
 
 /** A phase or group node — a group carries `children`, a phase is a leaf. */
 interface NamedNode {
@@ -18,19 +21,14 @@ function collectNames(children: ReadonlyArray<NamedNode>): string[] {
 }
 
 describe("ClusterBuildDefaults — external-outpost compose variant", () => {
-  const previousRegistry = process.env.WIRE_BIND_REGISTRY_PATH
-  let dir: string, buildPath: string, externalConfigFile: string
+  let environment: ResolveEnvironment, externalConfigFile: string
 
   beforeEach(() => {
-    dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "compose-variant-"))
-    process.env.WIRE_BIND_REGISTRY_PATH = Path.join(dir, "bind-registry")
-    // resolveExecutables asserts nodeop/kiod/clio exist under buildPath/bin.
-    buildPath = Path.join(dir, "build")
-    Fs.mkdirSync(Path.join(buildPath, "bin"), { recursive: true })
-    ;["nodeop", "kiod", "clio"].forEach(bin =>
-      Fs.writeFileSync(Path.join(buildPath, "bin", bin), "")
+    environment = fixtureResolveEnvironment("compose-variant-")
+    externalConfigFile = Path.join(
+      environment.rootPath,
+      "external-outpost.json"
     )
-    externalConfigFile = Path.join(dir, "external-outpost.json")
     Fs.writeFileSync(
       externalConfigFile,
       JSON.stringify({
@@ -45,15 +43,13 @@ describe("ClusterBuildDefaults — external-outpost compose variant", () => {
   })
 
   afterEach(() => {
-    if (previousRegistry == null) delete process.env.WIRE_BIND_REGISTRY_PATH
-    else process.env.WIRE_BIND_REGISTRY_PATH = previousRegistry
-    Fs.rmSync(dir, { recursive: true, force: true })
+    environment.cleanup()
   })
 
   function baseOptions() {
     return {
-      clusterPath: Path.join(dir, "cluster"),
-      buildPath,
+      clusterPath: Path.join(environment.rootPath, "cluster"),
+      buildPath: environment.buildPath,
       ethereumPath: "/fake/eth",
       solanaPath: "/fake/sol"
     }
