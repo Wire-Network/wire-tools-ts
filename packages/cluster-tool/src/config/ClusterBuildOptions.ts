@@ -78,4 +78,14 @@ export interface ClusterBuildOptions {
   // external inputs (file paths → `--bind-config` / `--external-outpost-config`)
   bindConfig?: string
   externalOutpostConfig?: string
+  /**
+   * Ethereum prelaunch balance dump imported into `sysio.dclaim` during
+   * cluster creation.
+   */
+  ethereumBootstrapJsonFile?: string
+  /**
+   * Solana prelaunch balance dump imported into `sysio.dclaim` during cluster
+   * creation.
+   */
+  solanaBootstrapJsonFile?: string
 }

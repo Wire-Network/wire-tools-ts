@@ -140,6 +140,12 @@ export namespace ClusterConfigProvider {
         options.signatureProvider,
         awsClusterNodeConfig
       ),
+      ethereumBootstrapJsonFile = resolveBootstrapJsonFile(
+        options.ethereumBootstrapJsonFile
+      ),
+      solanaBootstrapJsonFile = resolveBootstrapJsonFile(
+        options.solanaBootstrapJsonFile
+      ),
       externalOutposts = await loadExternalOutposts(
         options.externalOutpostConfig
       )
@@ -167,6 +173,8 @@ export namespace ClusterConfigProvider {
       terminateWindowMs: options.terminateWindowMs ?? null,
       ethereumPath: assertOption(options.ethereumPath, "ethereumPath"),
       solanaPath: assertOption(options.solanaPath, "solanaPath"),
+      ethereumBootstrapJsonFile,
+      solanaBootstrapJsonFile,
       bind,
       executables,
       report,
@@ -419,6 +427,18 @@ export namespace ClusterConfigProvider {
     // Explicit `null` (not absence): the slot is persisted to cluster-config.json,
     // where an `undefined` would DROP the key on serialize.
     return { ...options, ssm: options.ssm ?? null }
+  }
+
+  /**
+   * Resolve an optional prelaunch balance-dump path for persisted provenance.
+   * The file is intentionally not read here: `ClusterBuildDefaults.create`
+   * validates and converts it before composing any bootstrap phases.
+   *
+   * @param file - Caller-supplied path, or absence.
+   * @returns The absolute path, or `null`.
+   */
+  function resolveBootstrapJsonFile(file?: string): string {
+    return file == null ? null : Path.resolve(file)
   }
 
   /**

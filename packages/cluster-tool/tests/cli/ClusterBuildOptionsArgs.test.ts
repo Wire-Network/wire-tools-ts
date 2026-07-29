@@ -124,6 +124,8 @@ describe("flattenOptionLeaves + buildOptionShape", () => {
       expect.arrayContaining([
         "cluster-path",
         "build-path",
+        "ethereum-bootstrap-json-file",
+        "solana-bootstrap-json-file",
         "epoch-duration-sec",
         "force",
         "bind-all",
@@ -274,7 +276,10 @@ describe("WIRE_* environment seeding (the run-flow.mjs / e2e-gate contract)", ()
   })
 
   it("the environment (per-invocation operator intent) beats scenario defaults", () => {
-    const options = register({ clusterPath: "/tmp/scenario-cluster" }, environment)
+    const options = register(
+      { clusterPath: "/tmp/scenario-cluster" },
+      environment
+    )
     expect(options.get("cluster-path")?.default).toBe("/tmp/env-cluster")
   })
 
@@ -318,7 +323,9 @@ describe("toClusterBuildOptions reverse parse", () => {
       { "epoch-duration-sec": 60 },
       { requiredBatchOperatorCollateral }
     )
-    expect(options.requiredBatchOperatorCollateral).toEqual(requiredBatchOperatorCollateral)
+    expect(options.requiredBatchOperatorCollateral).toEqual(
+      requiredBatchOperatorCollateral
+    )
     // absent defaults stay absent — flags never set these leaves
     expect(options.requiredUnderwriterCollateral).toBeUndefined()
   })
@@ -335,6 +342,15 @@ describe("toClusterBuildOptions reverse parse", () => {
     expect(options.bind?.anvil?.port).toBeUndefined()
   })
 
+  it("preserves bootstrap inputs until the config provider resolves them", () => {
+    const options = toClusterBuildOptions({
+      "ethereum-bootstrap-json-file": "inputs/ethereum.json",
+      "solana-bootstrap-json-file": "inputs/solana.json"
+    })
+    expect(options.ethereumBootstrapJsonFile).toBe("inputs/ethereum.json")
+    expect(options.solanaBootstrapJsonFile).toBe("inputs/solana.json")
+  })
+
   it("coerces boolean flags", () => {
     expect(toClusterBuildOptions({ "bind-all": true }).bindAll).toBe(true)
     expect(toClusterBuildOptions({ "bind-all": false }).bindAll).toBe(false)
@@ -342,7 +358,8 @@ describe("toClusterBuildOptions reverse parse", () => {
       toClusterBuildOptions({ "enable-mock-reserves": true }).enableMockReserves
     ).toBe(true)
     expect(
-      toClusterBuildOptions({ "enable-mock-reserves": false }).enableMockReserves
+      toClusterBuildOptions({ "enable-mock-reserves": false })
+        .enableMockReserves
     ).toBe(false)
   })
 

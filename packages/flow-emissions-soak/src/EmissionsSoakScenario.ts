@@ -3,9 +3,13 @@ import { getLogger } from "@wireio/shared"
 import { SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
-  convertImportSeed,
+  DistributionClaimBootstrapResultKey,
+  DistributionClaimBootstrapSource,
+  convertImportSeedCredits,
+  distributionClaimBootstrapCredit,
   FlowScenario,
   formatWireAsset,
+  hasDistributionClaimBootstrapChain,
   pollUntil,
   Report,
   sleep,
@@ -13,14 +17,16 @@ import {
   verifyStep,
   type ClusterBuild,
   type ClusterBuildContext,
-  type ClusterBuildOptions
+  type ClusterBuildOptions,
+  type DistributionClaimBootstrapContribution,
+  type DistributionClaimBootstrapCore
 } from "@wireio/cluster-tool"
 import { EmissionsSoakScenarioConstants as Constants } from "./EmissionsSoakScenarioConstants.js"
 import {
   ClaimantIdentitiesKey,
-  EthereumSeedConversionKey,
+  ControlledClaimExpectationsKey,
   PreClaimBalancesKey,
-  toSeedConversionSummary
+  type ControlledClaimExpectations
 } from "./EmissionsSoakScenarioOutputs.js"
 import {
   buildControlledStakerIdentities,
@@ -69,10 +75,9 @@ async function readCapConfig(
 
 /**
  * Emissions + `sysio.dclaim` Payout Soak — bootstraps a new cluster (the
- * bootstrap seeds the emissions config + `dclaim::setconfig`), generates a
- * synthetic indexer dump in-flow (no committed fixtures, no live API call),
- * imports it via `sysio.dclaim::importseed`, then drives a long stretch of
- * synced epochs to verify:
+ * bootstrap seeds the emissions config and imports either configured indexer
+ * dumps or deterministic per-chain synthetic fallbacks, then drives a long
+ * stretch of synced epochs to verify:
  *
  *   (a) **Stability** — the chain stays synced for the configured duration
  *       (default 30 min at 60s epochs ⇒ ~30 epochs; `SOAK_DURATION_MS`
@@ -83,8 +88,9 @@ async function readCapConfig(
  *   (c) **importseed → link → claim** — controlled staker accounts (this flow
  *       holds their ETH wallets) complete AuthEx linking → an explicit
  *       `linkswept` sweeps `unmapped_tokens` into `pending_claims` → `claim`
- *       pays each staker its exact seeded WIRE. dclaim is pre-funded from
- *       `sysio` for the synthetic load (the importseed path never calls
+ *       pays each staker its exact final merged WIRE credit. dclaim is
+ *       pre-funded from `sysio` for those controlled obligations (importseed
+ *       never calls
  *       `fundclaim`; only the onreward path does).
  *
  * **Out of scope:** `sysio.system::fundclaim` cap semantics — that path fires
@@ -92,8 +98,7 @@ async function readCapConfig(
  * outpost emission track. `capital_shortfall_total` is asserted `== 0`
  * throughout (trivially true today because no `fundclaim` calls occur).
  *
- * Phases: `ConfigureEmissions` → `GenerateAndImport` → `SetupClaimers` →
- * `StabilityLoop` → `Claim`.
+ * Phases: `ConfigureEmissions` → `SetupClaimers` → `StabilityLoop` → `Claim`.
  */
 export class EmissionsSoakScenario extends FlowScenario {
   readonly name = "flow-emissions-soak"
@@ -107,39 +112,94 @@ export class EmissionsSoakScenario extends FlowScenario {
     underwriterCount: Constants.UnderwriterCount
   }
 
-  plan(cluster: ClusterBuild): void {
-    // Pure value generation (no chain side effects): the synthetic corpus is
-    // built here so the batch/staker step fan-out is known at registration
-    // time — one write step per importseed batch, one per claimer action.
+  override async prepareDistributionClaimBootstrap(
+    cluster: ClusterBuild,
+    core: DistributionClaimBootstrapCore
+  ): Promise<DistributionClaimBootstrapContribution> {
     const identities = buildControlledStakerIdentities(
-        Constants.ControlledStakerCount,
-        Constants.ControlledStakerAccountPrefix,
-        Constants.ControlledStakerEthereumHdIndexBase
+      Constants.ControlledStakerCount,
+      Constants.ControlledStakerAccountPrefix,
+      Constants.ControlledStakerEthereumHdIndexBase
+    )
+    cluster.context.outputs.set(ClaimantIdentitiesKey, identities)
+
+    const creditSets: DistributionClaimBootstrapContribution["creditSets"][number][] =
+      []
+    if (!hasDistributionClaimBootstrapChain(core, Constants.EthereumChain)) {
+      const conversion = convertImportSeedCredits(
+        buildSyntheticEthereumDump({
+          seed: Constants.SyntheticSeed,
+          purchaserCount: Constants.BulkEthereumPurchasers,
+          stakerCount: Constants.BulkEthereumStakers,
+          overlappingCount: Constants.BulkEthereumOverlapping,
+          yieldClaimedCount: Constants.BulkEthereumYieldClaimed
+        }),
+        Constants.EthereumChain
+      )
+      creditSets.push({
+        chain: Constants.EthereumChain,
+        source: DistributionClaimBootstrapSource.Synthetic,
+        credits: conversion.credits,
+        droppedDust: conversion.droppedDust
+      })
+    }
+    if (!hasDistributionClaimBootstrapChain(core, Constants.SolanaChain)) {
+      const conversion = convertImportSeedCredits(
+        buildSyntheticSolanaDump({
+          seed: Constants.SyntheticSeed + 1,
+          purchaserCount: Constants.BulkSolanaPurchasers,
+          stakerCount: Constants.BulkSolanaStakers
+        }),
+        Constants.SolanaChain
+      )
+      creditSets.push({
+        chain: Constants.SolanaChain,
+        source: DistributionClaimBootstrapSource.Synthetic,
+        credits: conversion.credits,
+        droppedDust: conversion.droppedDust
+      })
+    }
+    if (identities.length > 0) {
+      creditSets.push({
+        chain: Constants.EthereumChain,
+        source: DistributionClaimBootstrapSource.Controlled,
+        credits: identities.map(identity => ({
+          native_address: identity.addressHex,
+          wire_atomic: Constants.ControlledStakerCreditAtomic
+        })),
+        droppedDust: 0n
+      })
+    }
+    return { creditSets }
+  }
+
+  plan(cluster: ClusterBuild): void {
+    const identities = cluster.context.outputs.assert(ClaimantIdentitiesKey),
+      bootstrap = cluster.context.outputs.assert(
+        DistributionClaimBootstrapResultKey
       ),
-      ethereumDump = buildSyntheticEthereumDump({
-        seed: Constants.SyntheticSeed,
-        purchaserCount: Constants.BulkEthereumPurchasers,
-        stakerCount: Constants.BulkEthereumStakers,
-        overlappingCount: Constants.BulkEthereumOverlapping,
-        yieldClaimedCount: Constants.BulkEthereumYieldClaimed,
-        controlled: identities,
-        controlledSourceUnits: Constants.ControlledStakerSourceUnits
-      }),
-      solanaDump = buildSyntheticSolanaDump({
-        seed: Constants.SyntheticSeed + 1,
-        purchaserCount: Constants.BulkSolanaPurchasers,
-        stakerCount: Constants.BulkSolanaStakers
-      }),
-      ethereumConversion = toSeedConversionSummary(
-        convertImportSeed(ethereumDump, { chain: Constants.EthereumChain })
+      creditsByWireAccount = Object.fromEntries(
+        identities.map(identity => [
+          identity.wireAccount,
+          distributionClaimBootstrapCredit(
+            bootstrap,
+            Constants.EthereumChain,
+            identity.addressHex
+          )
+        ])
       ),
-      solanaConversion = toSeedConversionSummary(
-        convertImportSeed(solanaDump, { chain: Constants.SolanaChain })
-      ),
+      expectations: ControlledClaimExpectations = {
+        creditsByWireAccount,
+        preFundAtomic: Object.values(creditsByWireAccount).reduce(
+          (total, credit) => total + credit,
+          0n
+        )
+      },
       actionOptions = { timeoutMs: Constants.ActionStepTimeoutMs },
       soakOptions = {
         timeoutMs: Constants.SoakDurationMs + Constants.SoakTimeoutMarginMs
       }
+    cluster.context.outputs.set(ControlledClaimExpectationsKey, expectations)
 
     // ── 1. ConfigureEmissions — the bootstrap seeds every emissions/dclaim
     //       config this flow needs; verify it landed as expected. ──
@@ -178,15 +238,15 @@ export class EmissionsSoakScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "dclaim-config",
-        "capcfg exists with the import window open and a positive claim window",
+        "capcfg exists with the import window closed and a positive claim window",
         async ctx => {
           const capConfig = await readCapConfig(ctx)
           // The table serializes bool as 0/1; coerce so the assertion is on
           // the logical value regardless of clio's encoding shape.
           Assert.strictEqual(
             Boolean(capConfig.imported_complete),
-            false,
-            "import window must still be open at bootstrap"
+            true,
+            "import window must be finalized by the shared bootstrap"
           )
           Assert.ok(
             capConfig.claim_window_sec > 0,
@@ -210,83 +270,38 @@ export class EmissionsSoakScenario extends FlowScenario {
             "capital_shortfall_total must start at 0"
           )
         }
-      )
-    )
-
-    // ── 2. GenerateAndImport — seed dclaim from the synthetic dumps, one
-    //       write step per importseed batch, then close the import window. ──
-    ClusterBuildPhase.create(
-      cluster,
-      "GenerateAndImport",
-      "Convert the synthetic dumps and seed dclaim via importseed + importdone"
-    ).push(
-      EmissionsSoakScenarioSteps.planUnlockWallet(
-        Actor.Sysio,
-        "unlock-wallet-import",
-        "open + unlock the cluster wallet for the import burst",
-        actionOptions
-      ),
-      EmissionsSoakScenarioSteps.planPublishSeedData(
-        Actor.Sysio,
-        "publish-seed-data",
-        "publish the controlled-staker roster + converted importseed batches",
-        {},
-        identities,
-        ethereumConversion,
-        solanaConversion
       ),
       verifyStep(
         Actor.Sysio,
         "controlled-credits-exact",
-        "every controlled staker survives conversion with the exact atomic credit",
+        "every controlled staker has its exact final merged bootstrap credit",
         async ctx => {
           const roster = ctx.outputs.assert(ClaimantIdentitiesKey),
-            conversion = ctx.outputs.assert(EthereumSeedConversionKey),
-            credits = conversion.batches.flatMap(batch => batch.credits),
-            expectedAtomic = Constants.PerStakerClaimAtomic.toString()
-          roster.forEach(identity => {
-            const credit = credits.find(
-              candidate => candidate.native_address === identity.addressHex
+            finalBootstrap = ctx.outputs.assert(
+              DistributionClaimBootstrapResultKey
+            ),
+            finalExpectations = ctx.outputs.assert(
+              ControlledClaimExpectationsKey
             )
+          roster.forEach(identity => {
+            const credit = distributionClaimBootstrapCredit(
+                finalBootstrap,
+                Constants.EthereumChain,
+                identity.addressHex
+              ),
+              expected =
+                finalExpectations.creditsByWireAccount[identity.wireAccount]
             Assert.ok(
-              credit != null,
-              `controlled staker ${identity.wireAccount} missing from the importseed credits`
+              expected >= Constants.ControlledStakerCreditAtomic,
+              `controlled staker ${identity.wireAccount} lost its additive credit`
             )
             Assert.strictEqual(
-              credit.wire_atomic,
-              expectedAtomic,
+              credit,
+              expected,
               `controlled staker ${identity.wireAccount} credit mismatch`
             )
           })
         }
-      ),
-      ...ethereumConversion.batches.map((batch, index) =>
-        EmissionsSoakScenarioSteps.planImportSeedBatch(
-          Actor.Sysio,
-          `import-ethereum-batch-${index + 1}`,
-          `push importseed ETH batch ${index + 1}/${ethereumConversion.batches.length} (${batch.credits.length} credits)`,
-          actionOptions,
-          Constants.EthereumChain,
-          index,
-          batch.credits.length
-        )
-      ),
-      ...solanaConversion.batches.map((batch, index) =>
-        EmissionsSoakScenarioSteps.planImportSeedBatch(
-          Actor.Sysio,
-          `import-solana-batch-${index + 1}`,
-          `push importseed SOL batch ${index + 1}/${solanaConversion.batches.length} (${batch.credits.length} credits)`,
-          actionOptions,
-          Constants.SolanaChain,
-          index,
-          batch.credits.length
-        )
-      ),
-      EmissionsSoakScenarioSteps.planImportDone(
-        Actor.Sysio,
-        "import-done",
-        "close the import window (sysio.dclaim::importdone)",
-        actionOptions
       ),
       verifyStep(
         Actor.Sysio,
@@ -306,9 +321,9 @@ export class EmissionsSoakScenario extends FlowScenario {
       )
     )
 
-    // ── 3. SetupClaimers — pre-fund dclaim, provision each staker's WIRE
+    // ── 2. SetupClaimers — pre-fund dclaim, provision each staker's WIRE
     //       account, authex-link its ETH wallet, sweep its credit. ──
-    const preFundAsset = formatWireAsset(Constants.ClaimPreFundAtomic)
+    const preFundAsset = formatWireAsset(expectations.preFundAtomic)
     ClusterBuildPhase.create(
       cluster,
       "SetupClaimers",
@@ -385,7 +400,7 @@ export class EmissionsSoakScenario extends FlowScenario {
       )
     )
 
-    // ── 4. StabilityLoop — sample t5state across the soak window; monotonic
+    // ── 3. StabilityLoop — sample t5state across the soak window; monotonic
     //       accrual, zero shortfall, headroom respected. ──
     ClusterBuildPhase.create(
       cluster,
@@ -447,7 +462,7 @@ export class EmissionsSoakScenario extends FlowScenario {
       )
     )
 
-    // ── 5. Claim — snapshot balances, claim per staker, verify EXACT deltas
+    // ── 4. Claim — snapshot balances, claim per staker, verify EXACT deltas
     //       and a still-zero capital shortfall. ──
     ClusterBuildPhase.create(
       cluster,
@@ -490,18 +505,23 @@ export class EmissionsSoakScenario extends FlowScenario {
       verifyStep(
         Actor.User,
         "claim-deltas-exact",
-        `each staker's WIRE balance grows by exactly ${Constants.PerStakerClaimAtomic} atomic`,
+        "each staker's WIRE balance grows by its final merged bootstrap credit",
         async ctx => {
           const roster = ctx.outputs.assert(ClaimantIdentitiesKey),
-            preClaimBalances = ctx.outputs.assert(PreClaimBalancesKey)
+            preClaimBalances = ctx.outputs.assert(PreClaimBalancesKey),
+            finalExpectations = ctx.outputs.assert(
+              ControlledClaimExpectationsKey
+            )
           await Promise.all(
             roster.map(async identity => {
               const after = await ctx.wire.getWireBalance(identity.wireAccount),
-                delta = after - preClaimBalances[identity.wireAccount]
+                delta = after - preClaimBalances[identity.wireAccount],
+                expected =
+                  finalExpectations.creditsByWireAccount[identity.wireAccount]
               Assert.strictEqual(
                 delta,
-                Constants.PerStakerClaimAtomic,
-                `claim delta for ${identity.wireAccount}: ${delta} != ${Constants.PerStakerClaimAtomic}`
+                expected,
+                `claim delta for ${identity.wireAccount}: ${delta} != ${expected}`
               )
             })
           )
