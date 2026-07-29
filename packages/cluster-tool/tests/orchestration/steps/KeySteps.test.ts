@@ -187,6 +187,7 @@ describe("Steps.keys", () => {
       const ed = PrivateKey.generate(KeyType.ED)
       const ctx = fixtureContext()
       ctx.keyStore.setOperator({
+        label: "batchop.a",
         account: "batchop.a",
         type: OperatorType.BATCH,
         wire: {
