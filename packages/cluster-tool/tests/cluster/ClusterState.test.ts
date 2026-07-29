@@ -47,6 +47,7 @@ describe("ClusterState", () => {
       }
     })
     ctx.keyStore.setOperator({
+      label: BatchOperatorAccount,
       account: BatchOperatorAccount,
       type: OperatorType.BATCH,
       wire: {

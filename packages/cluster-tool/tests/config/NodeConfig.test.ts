@@ -31,9 +31,9 @@ describe("NodeConfig", () => {
       const operators = nodes.filter(n => n.role === NodeRole.operator)
       expect(operators).toHaveLength(4)
       expect(
-        operators.filter(n => n.batchOperatorAccount !== null)
+        operators.filter(n => n.batchOperatorLabel !== null)
       ).toHaveLength(3)
-      expect(operators.filter(n => n.underwriterAccount !== null)).toHaveLength(
+      expect(operators.filter(n => n.underwriterLabel !== null)).toHaveLength(
         1
       )
     })
@@ -50,11 +50,11 @@ describe("NodeConfig", () => {
 
     it("names operator accounts from the Constants generators", () => {
       const batchOps = nodes
-        .filter(n => n.batchOperatorAccount !== null)
-        .map(n => n.batchOperatorAccount)
+        .filter(n => n.batchOperatorLabel !== null)
+        .map(n => n.batchOperatorLabel)
       expect(batchOps).toContain("batchop.a")
       expect(
-        nodes.find(n => n.underwriterAccount !== null)?.underwriterAccount
+        nodes.find(n => n.underwriterLabel !== null)?.underwriterLabel
       ).toBe("uwrit.a")
     })
   })
@@ -79,15 +79,14 @@ describe("NodeConfig", () => {
       )
     })
 
-    it("renders operator config with read-mode + the operator account", () => {
-      const batchOp = nodes.find(n => n.batchOperatorAccount !== null)!
+    it("renders operator config with read-mode and WITHOUT an account line (daemon CLI args carry the generated account)", () => {
+      const batchOp = nodes.find(n => n.batchOperatorLabel !== null)!
       const ini = batchOp.ini.render()
       expect(ini).toContain(
         `read-mode = ${WireClient.FinalityType.irreversible}`
       )
-      expect(ini).toContain(
-        `batch-operator-account = ${batchOp.batchOperatorAccount}`
-      )
+      expect(ini).not.toContain("batch-operator-account")
+      expect(ini).not.toContain("underwriter-account")
     })
 
     it("lists every peer's p2p endpoint", () => {

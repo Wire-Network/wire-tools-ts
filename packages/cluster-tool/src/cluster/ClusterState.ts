@@ -48,7 +48,9 @@ export interface ClusterKeysNodeEntry {
  * `underwriterArgs`) build directly from them on relaunch.
  */
 export interface ClusterKeysOperatorEntry {
-  /** WIRE account name the operator was provisioned under. */
+  /** Deterministic provisioning label — the `ClusterKeyStore` key. */
+  label: string
+  /** WIRE account name ON CHAIN (node-owner-generated for batch/underwriter operators). */
   account: string
   /** Operator role (batch operator / underwriter / producer). */
   type: OperatorType
@@ -121,6 +123,7 @@ const ClusterKeysNodeEntrySchema: z.ZodType<ClusterKeysNodeEntry> = z.object({
 /** Schema for one provisioned operator's key record. */
 const ClusterKeysOperatorEntrySchema: z.ZodType<ClusterKeysOperatorEntry> =
   z.object({
+    label: z.string(),
     account: z.string(),
     type: OperatorTypeValueSchema,
     wire: WireKeyPairSchema,
@@ -201,8 +204,8 @@ export namespace ClusterState {
       nodePath: node.nodePath,
       ports: { http: node.ports.http, p2p: node.ports.p2p },
       producers: [...node.producers],
-      batchOperatorAccount: node.batchOperatorAccount,
-      underwriterAccount: node.underwriterAccount
+      batchOperatorLabel: node.batchOperatorLabel,
+      underwriterLabel: node.underwriterLabel
     }))
     return {
       createdAt: new Date().toISOString(),

@@ -193,10 +193,10 @@ export namespace KeySteps {
     // Batch-operator + underwriter keys (K1 wire + EM ethereum + ED solana).
     const operatorAccounts = [
       ...range(config.batchOperatorCount).map(index =>
-        Constants.batchOperatorAccountName(index)
+        Constants.batchOperatorLabel(index)
       ),
       ...range(config.underwriterCount).map(index =>
-        Constants.underwriterAccountName(index)
+        Constants.underwriterLabel(index)
       )
     ]
     operatorAccounts.forEach(account =>

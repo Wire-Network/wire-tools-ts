@@ -418,17 +418,17 @@ export namespace ExternalClusterConfigSteps {
     signal.throwIfAborted()
     const state = ClusterState.load(ctx.config),
       keys = ClusterState.loadKeys(ctx.config),
-      keyAccounts = new Set(keys.operators.map(operator => operator.account))
+      keyLabels = new Set(keys.operators.map(operator => operator.label))
     state.nodes
       .flatMap(node =>
-        [node.batchOperatorAccount, node.underwriterAccount].filter(
-          (account): account is string => account != null
+        [node.batchOperatorLabel, node.underwriterLabel].filter(
+          (label): label is string => label != null
         )
       )
-      .forEach(account =>
+      .forEach(label =>
         Assert.ok(
-          keyAccounts.has(account),
-          `create-external-config: operator ${account} is in cluster-state but missing from cluster-keys`
+          keyLabels.has(label),
+          `create-external-config: operator ${label} is in cluster-state but missing from cluster-keys`
         )
       )
   }

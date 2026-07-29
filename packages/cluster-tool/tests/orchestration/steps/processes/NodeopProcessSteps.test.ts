@@ -31,6 +31,7 @@ function operatorAccount(account: string, type: OperatorType): OperatorAccount {
     ),
     edPrivate = PrivateKey.generate(KeyType.ED)
   return {
+    label: account,
     account,
     type,
     wire: { type: KeyType.K1, publicKey: `PUB_K1_${account}`, privateKey: `PVT_K1_${account}` },
@@ -63,8 +64,8 @@ function testNode(
   index: number,
   name: string,
   producers: string[] = [],
-  batchOperatorAccount: string | null = null,
-  underwriterAccount: string | null = null
+  batchOperatorLabel: string | null = null,
+  underwriterLabel: string | null = null
 ): NodeConfig {
   return new NodeConfig(
     ctx.config,
@@ -74,8 +75,8 @@ function testNode(
     { http: 8_000 + index, p2p: 9_000 + index },
     producers,
     [],
-    batchOperatorAccount,
-    underwriterAccount
+    batchOperatorLabel,
+    underwriterLabel
   )
 }
 
@@ -188,11 +189,11 @@ describe("Steps.processes.nodeop", () => {
       expect(Steps.processes.nodeop.resolveOperator(ctx, node)).toBe(provisioned)
     })
 
-    it("throws when an operator node names no batch/underwriter account", () => {
+    it("throws when an operator node names no batch/underwriter label", () => {
       const ctx = fixtureContext()
       const node = testNode(ctx, NodeRole.operator, 4, "node_04")
       expect(() => Steps.processes.nodeop.resolveOperator(ctx, node)).toThrow(
-        /has no operator account/
+        /has no operator label/
       )
     })
 
@@ -230,7 +231,7 @@ describe("Steps.processes.nodeop", () => {
       ).toEqual([])
     })
 
-    it("builds batch-operator daemon args for an operator node with a batchOperatorAccount", () => {
+    it("builds batch-operator daemon args for an operator node with a batchOperatorLabel", () => {
       const ctx = fixtureContext()
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifactsFixture)
       const account = operatorAccount("batchopaaaa", OperatorType.BATCH)
@@ -246,7 +247,7 @@ describe("Steps.processes.nodeop", () => {
       )
     })
 
-    it("builds underwriter daemon args for an operator node with an underwriterAccount", () => {
+    it("builds underwriter daemon args for an operator node with an underwriterLabel", () => {
       const ctx = fixtureContext()
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifactsFixture)
       const account = operatorAccount("underwriteraaaa", OperatorType.UNDERWRITER)

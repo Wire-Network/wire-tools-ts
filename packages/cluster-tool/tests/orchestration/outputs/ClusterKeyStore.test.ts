@@ -22,6 +22,7 @@ function nodeKeys(index: number): ClusterKeyStore.NodeKeys {
 
 function operatorAccount(account: string, type: OperatorType): OperatorAccount {
   return {
+    label: account,
     account,
     type,
     wire: { type: KeyType.K1, publicKey: `PUB_K1_${account}`, privateKey: `PVT_K1_${account}` }
@@ -64,5 +65,41 @@ describe("ClusterKeyStore", () => {
       "defproducerb"
     ])
     expect(store.operatorsByType(OperatorType.UNDERWRITER)).toEqual([])
+  })
+})
+
+describe("ClusterKeyStore label keying", () => {
+  it("keys operators by label — a generated chain account is reachable only via its label", () => {
+    const store = new ClusterKeyStore().setOperator({
+      label: "batchop.a",
+      account: "wireno.x3f9k",
+      type: OperatorType.BATCH,
+      wire: { type: KeyType.K1, publicKey: "PUB_K1_a", privateKey: "PVT_K1_a" }
+    })
+    expect(store.assertOperator("batchop.a").account).toBe("wireno.x3f9k")
+    expect(store.operator("wireno.x3f9k")).toBeUndefined()
+  })
+
+  it("setOperator with the same label REPLACES the entry (sponsored-creation account write-back)", () => {
+    const store = new ClusterKeyStore()
+      .setOperator(operatorAccount("batchop.a", OperatorType.BATCH))
+      .setOperator({
+        ...operatorAccount("batchop.a", OperatorType.BATCH),
+        account: "wireno.q8m2c"
+      })
+    expect(store.operators.length).toBe(1)
+    expect(store.assertOperator("batchop.a").account).toBe("wireno.q8m2c")
+  })
+
+  it("operatorsByType sorts by label regardless of insertion order", () => {
+    const store = new ClusterKeyStore()
+      .setOperator(operatorAccount("batchop.c", OperatorType.BATCH))
+      .setOperator(operatorAccount("batchop.a", OperatorType.BATCH))
+      .setOperator(operatorAccount("batchop.b", OperatorType.BATCH))
+    expect(store.operatorsByType(OperatorType.BATCH).map(op => op.label)).toEqual([
+      "batchop.a",
+      "batchop.b",
+      "batchop.c"
+    ])
   })
 })

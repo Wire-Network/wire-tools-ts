@@ -15,7 +15,7 @@ export namespace TerminationScenarioConstants {
    * under the 12-character `sysio::newaccount` cap that slots next to the
    * bootstrap's `batchop.[a-i]` roster without colliding.
    */
-  export const DoomedOperatorAccount = "newop"
+  export const DoomedOperatorLabel = "newop"
   /**
    * Anvil-mnemonic HD index for the operator's ETH wallet — past every
    * bootstrap operator slot (batchops + underwriters), and inside anvil's
