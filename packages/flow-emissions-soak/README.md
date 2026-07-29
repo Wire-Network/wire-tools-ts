@@ -11,12 +11,9 @@ end-to-end.
    `payepoch`. Compute / capex / governance accounts receive their bps
    splits. `total_distributed` advances monotonically and stays bounded
    by `t5_distributable - t5_floor`.
-3. **importseed → link → claim** — a sample of synthetic staker
-   addresses (controlled in-test ETH wallets, seeded via
-   `sysio.dclaim::importseed`) complete AuthEx linking → `sysio.authex`
-   inline-calls `sysio.dclaim::linkswept` → `unmapped_tokens` row sweeps
-   into `pending_claims` → user `claim` drains the row and inline-transfers
-   WIRE from `sysio.dclaim` to the user.
+3. **importseed → link → claim** — controlled ETH wallets receive additive
+   bootstrap credits, complete AuthEx linking, explicitly call
+   `sysio.dclaim::linkswept`, and then claim the exact final merged amount.
 
 ## What it does NOT verify
 
@@ -46,22 +43,24 @@ Same as the other flow packages — see the repo-root README for the
 
 ## Test data
 
-This flow does **not** consume committed fixtures or the Wire Foundation
-index. Each run synthesizes an indexer dump in-test (`tests/syntheticDump.ts`)
-that matches the shape returned by:
+This flow never fetches the Wire Foundation index at run time and does not
+commit production dumps. For each chain independently it consumes a supplied
+bootstrap file when present; otherwise it generates a deterministic indexer
+dump matching the shape returned by:
 
 - `https://index.wire.foundation/opp/balances` (ETH)
 - `https://index.wire.foundation/opp/solana/balances` (SOL)
 
-The synthetic dump includes:
-- Controlled ETH stakers (test holds the wallets) — drives the
-  `importseed → linkswept → claim` path end-to-end.
+The flow-owned contribution includes:
+
+- Controlled ETH stakers (test holds the wallets), added atomically after
+  configured/synthetic conversion and before the shared merge and batching.
+  If a configured dump contains the same address, its amount is additive and
+  all claim/prefund expectations derive from the final merged result.
 - Bulk purchasers + stakers with overlapping addresses and partial
-  `yieldClaimed` rows — exercises the dedup + netting paths in
-  `convertImportSeed`.
+  `yieldClaimed` rows when Ethereum uses synthetic fallback.
 - A Solana bulk slice — verifies `importseed` accepts CHAIN_KIND_SOLANA
-  batches. (No SVM link/claim today; outpost-side reward emission is on
-  a separate track.)
+  batches when Solana uses synthetic fallback. (No SVM link/claim today.)
 
 Generation is deterministic given `SYNTHETIC_SEED` (default `1`). Bump
 the seed via env to surface non-deterministic bugs across runs.
@@ -78,7 +77,10 @@ node scripts/run-flow.mjs flow-emissions-soak \
   --cluster-path    /tmp/wire-flow-soak \
   --wire-build-path ../wire-sysio/build/release \
   --ethereum-path   ../wire-ethereum \
-  --solana-path     ../wire-solana
+  --solana-path     ../wire-solana \
+  -- \
+  --ethereum-bootstrap-json-file /secure/prelaunch/ethereum.json \
+  --solana-bootstrap-json-file   /secure/prelaunch/solana.json
 
 # In a second terminal — the mandatory six-probe heartbeat:
 node scripts/flow-heartbeat-monitor.mjs --cluster-path /tmp/wire-flow-soak
@@ -98,15 +100,10 @@ SOAK_DURATION_MS=$((30 * 60 * 1000)) node scripts/run-flow.mjs flow-emissions-so
 | `SYNTHETIC_SEED` | `1` | Seed for the synthetic dump PRNG (deterministic). |
 | `CONTROLLED_STAKER_COUNT` | `5` | Number of test-owned ETH wallets driving the link/claim path. |
 | `BULK_ETH_PURCHASERS` / `BULK_ETH_STAKERS` / `BULK_ETH_OVERLAPPING` / `BULK_ETH_YIELD_CLAIMED` | `40`/`40`/`8`/`8` | Synthetic ETH bulk-row counts. |
-| `BULK_SOL_PURCHASERS` / `BULK_SOL_STAKERS` | `20`/`20` | Synthetic SOL bulk-row counts. |
+| `BULK_SOL_PURCHASERS` / `BULK_SOL_STAKERS` | `20`/`20` | Synthetic SOL fallback bulk-row counts. |
 
 ## Status
 
-**Scaffold only.** The bootstrap wiring (`ClusterManager.ts` Phase 15b/c)
-is in place; the seed + sample-claim test bodies are stubbed as `it.todo`
-pending the regen of `@wireio/sdk-core` types against the
-post-PR-354 wire-sysio ABIs (`sysio.system::setemitcfg`, `fundclaim`,
-`sysio.dclaim::*`).
-
-The `convertImportSeed` helper has full unit-test coverage in this file
-that runs independently of the cluster.
+Implemented as a live flow. Conversion, merge, batching, and runner forwarding
+are covered by harness/script unit tests; end-to-end chain behavior is validated
+by this flow under the canonical runner and heartbeat monitor.

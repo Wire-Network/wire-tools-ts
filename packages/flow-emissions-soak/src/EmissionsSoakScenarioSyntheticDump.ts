@@ -7,9 +7,8 @@
 // conversion logic without ever touching the live API.
 //
 // The bulk generator is deterministic given a seed — useful for failure
-// reproduction. Controlled stakers derive from the shared Anvil mnemonic at
-// fixed HD indexes, so a step runner can re-derive a staker's wallet from its
-// index alone (no private-key material rides step inputs or the report).
+// reproduction. Controlled stakers are prepared as an independent additive
+// credit set, so synthetic fallback generation cannot suppress or double them.
 
 import { Keypair } from "@solana/web3.js"
 import { ethers } from "ethers"
@@ -30,6 +29,8 @@ const RandomChunkRange = 0x1_0000_0000
 const DefaultEthereumSeed = 1
 /** Default PRNG seed for the SOL dump. */
 const DefaultSolanaSeed = 2
+/** Seed-stable metadata timestamp; synthetic dumps are reproducible byte-for-byte. */
+const SyntheticGeneratedAt = "1970-01-01T00:00:00.000Z"
 /** Default ETH source-decimal magnitude floor (1 ETH-style unit, 18 decimals). */
 const DefaultEthereumMinimumSourceUnits = 1_000_000_000_000_000_000n
 /** Default SOL source-decimal magnitude floor (1 SOL-style unit, 9 decimals). */
@@ -82,6 +83,19 @@ function randomBigInt(rng: () => number, max: bigint): bigint {
 }
 
 /**
+ * Draw `byteLength` deterministic bytes from the seeded PRNG.
+ *
+ * @param rng - The seeded PRNG.
+ * @param byteLength - Number of random bytes to draw.
+ * @return The random bytes.
+ */
+function randomBytes(rng: () => number, byteLength: number): Uint8Array {
+  return Uint8Array.from({ length: byteLength }, () =>
+    Math.floor(rng() * ByteValueRange)
+  )
+}
+
+/**
  * Lowercase hex of `byteLength` random bytes (no `0x` prefix).
  *
  * @param rng - The seeded PRNG.
@@ -89,9 +103,7 @@ function randomBigInt(rng: () => number, max: bigint): bigint {
  * @return The hex string.
  */
 function randomBytesHex(rng: () => number, byteLength: number): string {
-  return Array.from({ length: byteLength }, () =>
-    Math.floor(rng() * ByteValueRange)
-  )
+  return [...randomBytes(rng, byteLength)]
     .map(byte => byte.toString(16).padStart(2, "0"))
     .join("")
 }
@@ -191,7 +203,7 @@ export function buildControlledStakerIdentities(
 export interface EthereumDumpOptions {
   /** Deterministic PRNG seed. Default: 1 (stable across runs). */
   seed?: number
-  /** Standalone purchaser rows (no overlap with stakers/controlled). */
+  /** Standalone purchaser rows (no overlap with stakers). */
   purchaserCount?: number
   /** Standalone staker rows (no overlap with purchasers/controlled). */
   stakerCount?: number
@@ -207,10 +219,6 @@ export interface EthereumDumpOptions {
    * survives conversion).
    */
   yieldClaimedCount?: number
-  /** Controlled stakers — appended as purchasers (no `yieldClaimed`). */
-  controlled?: ControlledStakerIdentity[]
-  /** Source-decimal (18) total for EVERY controlled staker's purchaser row. */
-  controlledSourceUnits?: bigint
   /**
    * Source-decimal magnitude floor for random amounts. Each random row falls
    * in roughly `[minSourceUnits, 100 * minSourceUnits)`. Default 1e18 so the
@@ -220,11 +228,10 @@ export interface EthereumDumpOptions {
 }
 
 /**
- * Build a synthetic ETH indexer dump (purchasers + stakers + overlap +
- * yield-claimed netting rows), with the controlled stakers appended as
- * purchasers so dedup logic never suppresses them.
+ * Build a synthetic ETH indexer dump containing purchasers, stakers, overlap,
+ * and yield-claimed netting rows.
  *
- * @param options - Row counts, seed, and the controlled-staker roster.
+ * @param options - Row counts and deterministic seed.
  * @return The indexer-shaped dump.
  */
 export function buildSyntheticEthereumDump(
@@ -274,14 +281,9 @@ export function buildSyntheticEthereumDump(
         }
       }
     ),
-    controlledPurchasers = (options.controlled ?? []).map(identity => ({
-      address: `0x${identity.addressHex}`,
-      totalPretokens: (options.controlledSourceUnits ?? 0n).toString()
-    })),
     purchasers = [
       ...standalonePurchasers,
-      ...overlappingRows.map(row => row.purchaser),
-      ...controlledPurchasers
+      ...overlappingRows.map(row => row.purchaser)
     ],
     stakers = [
       ...standaloneStakers,
@@ -291,7 +293,7 @@ export function buildSyntheticEthereumDump(
 
   return {
     metadata: {
-      generatedAt: new Date().toISOString(),
+      generatedAt: SyntheticGeneratedAt,
       totalMessages: purchasers.length + stakers.length,
       yieldDust: "0"
     },
@@ -330,7 +332,8 @@ export function buildSyntheticSolanaDump(
   const rng = mulberry32(options.seed ?? DefaultSolanaSeed),
     { minSourceUnits: minimumSourceUnits = DefaultSolanaMinimumSourceUnits } =
       options,
-    randomAddress = (): string => Keypair.generate().publicKey.toBase58(),
+    randomAddress = (): string =>
+      Keypair.fromSeed(randomBytes(rng, 32)).publicKey.toBase58(),
     randomAmount = (): bigint =>
       minimumSourceUnits +
       randomBigInt(rng, minimumSourceUnits * RandomAmountSpread)
@@ -349,7 +352,7 @@ export function buildSyntheticSolanaDump(
 
   return {
     metadata: {
-      generatedAt: new Date().toISOString(),
+      generatedAt: SyntheticGeneratedAt,
       totalMessages: purchasers.length + stakers.length
     },
     purchasers,

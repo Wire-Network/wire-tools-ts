@@ -65,23 +65,12 @@ export namespace EmissionsSoakScenarioConstants {
    * user (32), and the collateral-deposit flow's depositor (35).
    */
   export const ControlledStakerEthereumHdIndexBase = 40
-  /** Per controlled staker, source-decimal (18) amount on the ETH side (100e18). */
-  export const ControlledStakerSourceUnits = 100_000_000_000_000_000_000n
-  /** EVM source-decimal (1e18) → WIRE-atomic (1e9) conversion divisor. */
-  export const WireAtomicDivisor = 1_000_000_000n
   /**
-   * Exact WIRE atomic each controlled staker is seeded with (and must receive
-   * on claim): `ControlledStakerSourceUnits / 1e9`, zero dust by construction.
+   * Additive WIRE-atomic credit assigned to every controlled staker. Final
+   * claim expectations may be larger when a configured Ethereum dump already
+   * contains the same address.
    */
-  export const PerStakerClaimAtomic =
-    ControlledStakerSourceUnits / WireAtomicDivisor
-  /**
-   * WIRE atomic pre-funded from `sysio` to `sysio.dclaim` to cover every
-   * controlled-staker claim (the importseed path never calls `fundclaim`; only
-   * the onreward path does — a real launch pre-funds dclaim the same way).
-   */
-  export const ClaimPreFundAtomic =
-    PerStakerClaimAtomic * BigInt(ControlledStakerCount)
+  export const ControlledStakerCreditAtomic = 100_000_000_000n
   /** Memo on the dclaim pre-fund transfer. */
   export const PreFundMemo = "pre-fund for importseed claim payouts"
 

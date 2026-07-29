@@ -18,6 +18,21 @@ import {
 const log = getLogger(__filename)
 
 /**
+ * Normalize the process arguments pnpm appends to a flow package script.
+ * `run-flow.mjs` intentionally reinserts a pnpm delimiter; pnpm passes that
+ * literal token through to `node`, while yargs would otherwise treat it as the
+ * end of options and ignore every forwarded flow flag.
+ *
+ * @param args - Process arguments following the flow entrypoint.
+ * @returns A fresh array with at most one leading delimiter removed.
+ */
+export function normalizeFlowCLIArguments(
+  args: readonly string[]
+): string[] {
+  return args[0] === "--" ? args.slice(1) : [...args]
+}
+
+/**
  * The runner for a `flow-*` executable — the SAME `cluster → phase → step →
  * Report` machine the `wire-cluster-tool create` command runs, wrapped by a thin
  * yargs entry. `FlowCLI.create(SomeScenario)` builds an instance (context
@@ -34,7 +49,7 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
 
   private constructor(private readonly scenario: FlowScenario<C>) {
     this.yargs = applyClusterBuildOptionsArgs(
-      Yargs(process.argv.slice(2)),
+      Yargs(normalizeFlowCLIArguments(process.argv.slice(2))),
       scenario.defaults
     )
       .scriptName(scenario.name)
@@ -78,7 +93,8 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
       )
     const cluster = await ClusterBuildDefaults.create<C>(
       options,
-      this.scenario.createContext?.bind(this.scenario)
+      this.scenario.createContext?.bind(this.scenario),
+      this.scenario.prepareDistributionClaimBootstrap?.bind(this.scenario)
     )
     this.scenario.plan(cluster)
     // Name the report before launch — the renderers title with it

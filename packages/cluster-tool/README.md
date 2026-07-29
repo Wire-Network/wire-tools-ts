@@ -97,10 +97,28 @@ the path flags.
 | `--external-outpost-config <file>` | | — | bootstrap the depot against already-deployed REMOTE ETH+SOL outposts (requires `--underwriter-count 0`) |
 | `--cluster-build-options-file <file>` | | — | a whole `ClusterBuildOptions` JSON document (every option leaf + the collateral arrays + `signatureProvider.ssm`). Precedence: explicit flags > this file > `WIRE_*` env > defaults. Unknown keys / wrong types are hard errors naming the path; it may NOT carry `awsClusterNodeConfig` |
 | `--aws-cluster-node-config <file>` | | — | an `AWSClusterNodeConfig` JSON file (AWS account + every region secrets replicate to, plus its `ssm`) |
+| `--ethereum-bootstrap-json-file <file>` | | — | Ethereum prelaunch balance dump imported into `sysio.dclaim` |
+| `--solana-bootstrap-json-file <file>` | | — | Solana prelaunch balance dump imported into `sysio.dclaim` |
 | `--signature-provider-type` | | `KEY` | `KEY` (inline) / `SSM` / `KIOD` |
 | `--signature-provider-ssm '<json>'\|<file>` | | — | SSM secret-id pattern (required for `SSM`); beats the options file's `signatureProvider.ssm`, which beats `--aws-cluster-node-config`'s own `ssm` |
 | `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output |
+
+#### Distribution-claim bootstrap
+
+Each bootstrap flag is independently optional. During `create`, the harness
+reads each supplied JSON file once, validates the consumed indexer fields and
+native addresses, converts source amounts to WIRE atomic units, merges duplicate
+addresses, creates deterministic transaction-sized `importseed` Steps, and then
+invokes `importdone` exactly once. A supplied file that produces no eligible
+credit fails before the cluster launch.
+
+The resolved absolute source paths are persisted in `cluster-config.json` as
+provenance. `run` and `destroy` never reread the source files. With neither flag,
+ordinary cluster creation initializes `sysio.dclaim` but leaves its import
+window open. Flows may contribute additive credits before batching; the
+emissions soak uses configured data per chain when present and deterministic
+synthetic fallback only for a missing chain.
 
 ### `run` / `destroy`
 

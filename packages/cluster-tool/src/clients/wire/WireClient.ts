@@ -140,7 +140,9 @@ export class WireClient {
         data
       }),
       invoke: (data, options) =>
-        this.invoke(account, action, data, authorize(options), options)
+        this.invoke(account, action, data, authorize(options), options),
+      invokeViaFile: (data, options) =>
+        this.invokeViaFile(account, action, data, authorize(options), options)
     }
   }
 
@@ -190,7 +192,12 @@ export class WireClient {
           { json: true }
         )
     if (options.skipWait) return send()
-    return this.withFinality(label, send, options.finality)
+    return this.withFinality(
+      label,
+      send,
+      options.finality,
+      options.retryFinality
+    )
   }
 
   /**
@@ -244,22 +251,32 @@ export class WireClient {
     const label = `${account}::${action} (file)`,
       body = { actions: [{ account, name: action, authorization, data }] },
       send = async () => {
-        const file = Path.join(
-          Os.tmpdir(),
-          `wire-trx-${account}-${action}-${process.pid}-${Date.now()}.json`
+        const directory = await Fsp.mkdtemp(
+          Path.join(Os.tmpdir(), "wire-clio-transaction-")
         )
-        await Fsp.writeFile(file, JSON.stringify(body))
+        const file = Path.join(directory, "transaction.json")
         try {
+          await Fsp.writeFile(file, JSON.stringify(body), {
+            encoding: "utf8",
+            flag: "wx",
+            mode: 0o600
+          })
           return await this.runner.run<API.v1.SendTransactionResponse>(
             ["push", "transaction", "-j", file, ...this.expirationArgs],
             { json: true }
           )
         } finally {
           await Fsp.unlink(file).catch(() => {})
+          await Fsp.rmdir(directory).catch(() => {})
         }
       }
     if (options.skipWait) return send()
-    return this.withFinality(label, send, options.finality)
+    return this.withFinality(
+      label,
+      send,
+      options.finality,
+      options.retryFinality
+    )
   }
 
   /** Deploy + set ABI, waits for finality; idempotent redeploy is a settled no-op. */
@@ -625,7 +642,8 @@ export class WireClient {
   private withFinality<T extends WireClient.TransactionIdResponse>(
     label: string,
     send: () => Promise<T>,
-    finality: WireClient.FinalityType = WireClient.DefaultFinality
+    finality: WireClient.FinalityType = WireClient.DefaultFinality,
+    retryFinality = true
   ): Promise<T> {
     const budgetMs = scaleTimeoutMs(
         ProtocolTiming.irreversibilityBudgetMs(this.config.finalizerCount ?? 0)
@@ -978,6 +996,31 @@ export namespace WireClient {
     authorization?: PermissionLevelType[]
     skipWait?: boolean
     finality?: FinalityType
+    /**
+     * Resend after finality observation failure. Disable for additive or
+     * irreversible actions and reconcile their state instead. Default `true`.
+     */
+    retryFinality?: boolean
+    /**
+     * Retry connection-level clio failures. Disable when a resend could repeat
+     * an additive or irreversible action. Default `true`.
+     */
+    retryTransport?: boolean
+  }
+  /** Finality failure retaining the transaction identity for safe reconciliation. */
+  export class TransactionFinalityError extends Error {
+    constructor(
+      readonly label: string,
+      readonly transactionId: string,
+      readonly observedBlockNum: number | null,
+      options: ErrorOptions
+    ) {
+      super(
+        `${label}: transaction ${transactionId} did not reach irreversible finality`,
+        options
+      )
+      this.name = "TransactionFinalityError"
+    }
   }
   export type ContractOf<Name extends SysioContractName> = SysioContractMapping[Name]
   export type ActionName<Name extends SysioContractName> = Extract<
@@ -1016,6 +1059,14 @@ export namespace WireClient {
       options?: InvocationOptions
     ): ActionPayload<Name, Action>
     invoke(
+      data: ActionData<Name, Action>,
+      options?: InvocationOptions
+    ): Promise<API.v1.SendTransactionResponse>
+    /**
+     * Invoke through a temporary transaction file so bulk data never enters a
+     * process argument, debug log, or report extra.
+     */
+    invokeViaFile(
       data: ActionData<Name, Action>,
       options?: InvocationOptions
     ): Promise<API.v1.SendTransactionResponse>

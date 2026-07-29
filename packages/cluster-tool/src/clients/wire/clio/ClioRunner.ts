@@ -26,6 +26,11 @@ export interface ClioRunnerConfig {
 /** Options for {@link ClioRunner.run}. */
 export interface ClioRunOptions<UseJson extends boolean = false> {
   json?: UseJson
+  /**
+   * Retry connection-level failures. Disable for additive actions whose
+   * delivery is ambiguous after a reset. Default `true`.
+   */
+  retryTransport?: boolean
 }
 
 /** JSON-mode run options, with an optional row constructor. */
@@ -128,7 +133,10 @@ export class ClioRunner {
       command = maskSecretArgs([this.config.binary, ...fullArgs])
     try {
       const result = await retry(() => this.runOnce(fullArgs, options), {
-        maxAttempts: ClioRunner.TransportRetryAttempts,
+        maxAttempts:
+          options.retryTransport === false
+            ? 1
+            : ClioRunner.TransportRetryAttempts,
         delayMs: ClioRunner.TransportRetryDelayMs,
         label: `clio ${args[0] ?? ""} transport`,
         checkResult: negate(ClioRunner.isTransportFailure)
@@ -210,7 +218,7 @@ export namespace ClioRunner {
   export const TransportFailurePattern =
     /Failed http request to nodeop|Connection refused|Connection reset|couldn't connect to server/i
 
-  /** True when `error` is a connection-level clio failure (safe to re-run). */
+  /** True when `error` is a connection-level clio failure. */
   export function isTransportFailure(error: unknown): boolean {
     const candidate = error as ClioError
     return (
