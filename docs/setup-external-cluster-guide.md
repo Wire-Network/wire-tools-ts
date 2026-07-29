@@ -68,7 +68,10 @@ with `{`). SSM publishes each generated key to AWS Secrets Manager at create tim
 (requires AWS credentials). Every nodeop whose rendered `--signature-provider`
 specs use the `SSM:` scheme automatically enables
 `sysio::signature_provider_ssm_plugin` (without it, nodeop aborts startup with
-`plugin_config_exception 3110006`).
+`plugin_config_exception 3110006`). Each published parameter VALUE is the key's
+**chain-native** string — the form nodeop's ssm plugin parses — not the WIRE
+`PVT_…` form: `K1` → WIF, `EM` → `0x…` 32-byte hex, `ED` → base58 of the 64-byte
+secret, `BLS` → `PVT_BLS_…` (whose WIRE string IS its native form).
 
 > **Stop the cluster before Step 3.** `create-external-config` requires a stopped
 > cluster so it clones a consistent copy.
