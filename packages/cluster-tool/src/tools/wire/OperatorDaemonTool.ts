@@ -23,6 +23,7 @@ import {
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
 import { match } from "ts-pattern"
+import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { WireClient } from "../../clients/wire/WireClient.js"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
@@ -371,6 +372,10 @@ export namespace OperatorDaemonTool {
       ...pair(
         "--outpost-solana-cluster-identity",
         [SolanaClientId, network.solanaGenesisHash].join(",")
+      ),
+      ...pair(
+        "--outpost-solana-cluster-identity-probe-timeout-ms",
+        String(Constants.SOLANA_CLUSTER_IDENTITY_PROBE_TIMEOUT_MS)
       )
     ]
   }

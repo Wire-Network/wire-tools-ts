@@ -49,6 +49,10 @@ describe("Constants", () => {
     })
   })
 
+  it("pins the generated Solana identity probe timeout", () => {
+    expect(Constants.SOLANA_CLUSTER_IDENTITY_PROBE_TIMEOUT_MS).toBe(5_000)
+  })
+
   describe("EMISSION_CONFIG_DEFAULTS", () => {
     it("keeps the category split under 10000 bps", () => {
       const c = Constants.EMISSION_CONFIG_DEFAULTS

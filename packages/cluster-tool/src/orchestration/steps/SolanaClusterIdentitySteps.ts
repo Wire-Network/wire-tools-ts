@@ -2,6 +2,7 @@ import {
   SolanaGenesisHashSchema,
   type SolanaGenesisHash
 } from "@wireio/cluster-tool-shared"
+import { Constants } from "../../Constants.js"
 import { Report } from "../../report/Report.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import {
@@ -10,9 +11,6 @@ import {
 } from "../ClusterBuildStep.js"
 import type { StepInput } from "../StepRunner.js"
 import { SolanaClusterIdentityKey } from "../outputs/index.js"
-
-/** Maximum time to wait for the identity RPC before failing closed. */
-const GenesisHashRpcTimeoutMs = 10_000
 
 /**
  * Provision and verify the Solana genesis hash used by operator daemons.
@@ -184,10 +182,10 @@ export namespace SolanaClusterIdentitySteps {
         () =>
           reject(
             new Error(
-              `Solana getGenesisHash timed out after ${GenesisHashRpcTimeoutMs}ms`
+              `Solana getGenesisHash timed out after ${Constants.SOLANA_CLUSTER_IDENTITY_PROBE_TIMEOUT_MS}ms`
             )
         ),
-        GenesisHashRpcTimeoutMs
+        Constants.SOLANA_CLUSTER_IDENTITY_PROBE_TIMEOUT_MS
       )
       if (signal.aborted) onAbort()
     })

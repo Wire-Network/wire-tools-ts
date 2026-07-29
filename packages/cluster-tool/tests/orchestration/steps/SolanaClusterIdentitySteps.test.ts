@@ -166,9 +166,9 @@ describe("Steps.solanaClusterIdentity", () => {
           },
           signal
         )
-      ).rejects.toThrow(/getGenesisHash timed out after 10000ms/)
+      ).rejects.toThrow(/getGenesisHash timed out after 5000ms/)
 
-      await jest.advanceTimersByTimeAsync(10_000)
+      await jest.advanceTimersByTimeAsync(5_000)
       await resolution
       expect(ctx.outputs.has(SolanaClusterIdentityKey)).toBe(false)
     } finally {

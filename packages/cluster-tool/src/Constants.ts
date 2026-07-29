@@ -168,6 +168,12 @@ export namespace Constants {
     httpMaxResponseTimeMs: 990_000
   } as const
 
+  /**
+   * Timeout used by both trusted Solana identity provisioning and nodeop's
+   * generated per-connection identity probe configuration.
+   */
+  export const SOLANA_CLUSTER_IDENTITY_PROBE_TIMEOUT_MS = 5_000
+
   /** Plugins loaded for every node. */
   export const BASE_PLUGINS = [
     "sysio::net_plugin",

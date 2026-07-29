@@ -5,6 +5,7 @@ import { ethers } from "ethers"
 import { Keypair } from "@solana/web3.js"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
+import { Constants } from "@wireio/cluster-tool/Constants"
 import {
   NodeopProcess,
   ProcessManager
@@ -176,6 +177,9 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(args, "--outpost-solana-cluster-identity")).toEqual([
         `sol-default,${TestSolanaGenesisHash}`
       ])
+      expect(
+        valuesOf(args, "--outpost-solana-cluster-identity-probe-timeout-ms")
+      ).toEqual([String(Constants.SOLANA_CLUSTER_IDENTITY_PROBE_TIMEOUT_MS)])
       expect(valuesOf(args, "--ethereum-abi-file")).toEqual(artifacts.ethereumAbiFiles)
       expect(valuesOf(args, "--batch-sol-client-id")).toEqual(["sol-default"])
       expect(valuesOf(args, "--solana-idl-file")).toEqual([artifacts.solanaIdlFile])
@@ -273,6 +277,9 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(args, "--outpost-solana-cluster-identity")).toEqual([
         `sol-default,${TestSolanaGenesisHash}`
       ])
+      expect(
+        valuesOf(args, "--outpost-solana-cluster-identity-probe-timeout-ms")
+      ).toEqual([String(Constants.SOLANA_CLUSTER_IDENTITY_PROBE_TIMEOUT_MS)])
     })
 
     it("drops the external-debugging plugin AND --ext-debugging-server when the debugging server is disabled", () => {
