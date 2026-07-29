@@ -138,29 +138,30 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     NodeConfig.plan(ctx.config)
       .filter(node => node.role === NodeRole.operator)
       .forEach(node => {
-        const { batchOperatorAccount, underwriterAccount } = node,
-          account = batchOperatorAccount ?? underwriterAccount
+        const { batchOperatorLabel, underwriterLabel } = node,
+          label = batchOperatorLabel ?? underwriterLabel
         ctx.keyStore.setOperator({
-          account,
+          label,
+          account: label,
           type:
-            batchOperatorAccount != null
+            batchOperatorLabel != null
               ? OperatorType.BATCH
               : OperatorType.UNDERWRITER,
           wire: {
             type: KeyType.K1,
-            publicKey: `PUB_K1_${account}`,
-            privateKey: `PVT_K1_${account}`
+            publicKey: `PUB_K1_${label}`,
+            privateKey: `PVT_K1_${label}`
           },
           ethereum: {
             type: KeyType.EM,
-            publicKey: `PUB_EM_${account}`,
-            privateKey: `PVT_EM_${account}`,
+            publicKey: `PUB_EM_${label}`,
+            privateKey: `PVT_EM_${label}`,
             address: "0xabc0000000000000000000000000000000000a"
           },
           solana: {
             type: KeyType.ED,
-            publicKey: `PUB_ED_${account}`,
-            privateKey: `PVT_ED_${account}`
+            publicKey: `PUB_ED_${label}`,
+            privateKey: `PVT_ED_${label}`
           }
         })
       })
@@ -262,7 +263,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     expect(emitted.solana?.genesisHash).toBe(TestSolanaGenesisHash)
     const expectedAccounts = NodeConfig.plan(ctx.config)
       .filter(node => node.role === NodeRole.operator)
-      .map(node => node.batchOperatorAccount ?? node.underwriterAccount)
+      .map(node => node.batchOperatorLabel ?? node.underwriterLabel)
     expect(emitted.accounts.operators.map(op => op.accountName).sort()).toEqual(
       [...expectedAccounts].sort()
     )

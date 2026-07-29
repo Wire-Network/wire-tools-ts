@@ -34,6 +34,7 @@ function operatorAccount(account: string, type: OperatorType): OperatorAccount {
     ),
     edPrivate = PrivateKey.generate(KeyType.ED)
   return {
+    label: account,
     account,
     type,
     wire: { type: KeyType.K1, publicKey: `PUB_K1_${account}`, privateKey: `PVT_K1_${account}` },
@@ -104,7 +105,7 @@ describe("OperatorDaemonTool", () => {
       try {
         await OperatorDaemonTool.runDaemonStart(
           ctx,
-          { kind: "OperatorDaemonTool.StartDaemonInput", account: "batchopbbbb" },
+          { kind: "OperatorDaemonTool.StartDaemonInput", label: "batchopbbbb" },
           new AbortController().signal
         )
         // A flow rerun reuses the daemon's data dir, so this launch must go
