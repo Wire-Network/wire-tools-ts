@@ -16,6 +16,7 @@ import type {
   KeyPair,
   WireFinalizerKeyPair
 } from "../types/KeyPair.js"
+import { privateKeyFromNativeString } from "../utils/keyPairUtils.js"
 import { SSMClientProvider } from "./SSMClientProvider.js"
 
 const log = getLogger(__filename)
@@ -95,14 +96,18 @@ export namespace SignatureProviderConfigProvider {
   /**
    * `SSM` — fetch the private key from AWS SSM once (`GetParameter` +
    * `WithDecryption`), then assemble + verify exactly like `KEY` (full `KEY:`
-   * parity). The secret VALUE is never logged or echoed.
+   * parity). The parameter VALUE is the key's CHAIN-NATIVE string (what the
+   * publish steps put and what nodeop's ssm plugin parses — K1 WIF, EM 0x-hex,
+   * ED base58 of the 64-byte secret, BLS `PVT_BLS_…`); it is normalized to the
+   * WIRE `PVT_…` form at this boundary so the hydrated {@link KeyPair} carries
+   * the house format. The secret VALUE is never logged or echoed.
    */
   async function resolveSSM(
     config: SignatureProviderSSMConfig
   ): Promise<
     SignatureProviderSSMConfig & SignatureProviderResolutionKeyPair<KeyType>
   > {
-    const privateKey = await fetchSSMPrivateKey(
+    const nativePrivateKey = await fetchSSMPrivateKey(
       config.awsRegion,
       config.awsSecretId
     )
@@ -111,7 +116,7 @@ export namespace SignatureProviderConfigProvider {
       keyPair: assembleAndVerify(
         config.type,
         config.publicKey,
-        privateKey,
+        privateKeyFromNativeString(config.type, nativePrivateKey).toString(),
         config.proofOfPossession ?? null
       )
     }

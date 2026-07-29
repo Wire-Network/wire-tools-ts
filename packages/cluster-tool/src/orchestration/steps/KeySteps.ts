@@ -2,7 +2,7 @@ import Assert from "node:assert"
 import Path from "node:path"
 import { range } from "lodash"
 import { match } from "ts-pattern"
-import { KeyType } from "@wireio/sdk-core"
+import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { mapSeries } from "../../utils/asyncUtils.js"
 import { Constants } from "../../Constants.js"
@@ -291,7 +291,15 @@ export namespace KeySteps {
     )
   }
 
-  /** Named runner — read the private key from `ctx.keyStore` and `PutParameter` it (SecureString). */
+  /**
+   * Named runner — read the private key from `ctx.keyStore` and `PutParameter`
+   * its CHAIN-NATIVE string (SecureString). The stored key is the WIRE
+   * `PVT_<type>_…` form; the parameter value MUST be the native form
+   * (`toNativeString()`: K1 WIF, EM 0x-hex, ED base58 of the 64-byte secret,
+   * BLS `PVT_BLS_…`) — nodeop's ssm plugin parses the fetched value with the
+   * per-chain NATIVE parser (`from_native_string_to_private_key`), the same
+   * contract as the inline `KEY:` spec segment.
+   */
   export async function runPublishSignatureProviderKey<
     C extends ClusterBuildContext
   >(
@@ -314,7 +322,7 @@ export namespace KeySteps {
     await SSMClientProvider.putParameter(
       input.awsRegion,
       input.secretId,
-      privateKey
+      PrivateKey.from(privateKey).toNativeString()
     )
   }
 
