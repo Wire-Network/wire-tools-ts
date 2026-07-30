@@ -291,22 +291,18 @@ function toCredits(
   accumulator: Map<string, bigint>,
   divisor: bigint
 ): ImportSeedCreditConversion {
-  return [...accumulator.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .reduce<ImportSeedCreditConversion>(
-      (result, [native_address, total]) => {
-        const wire_atomic = total / divisor,
-          dust = total - wire_atomic * divisor
-        return {
-          credits:
-            wire_atomic > 0n
-              ? [...result.credits, { native_address, wire_atomic }]
-              : result.credits,
-          droppedDust: result.droppedDust + dust
-        }
-      },
-      { credits: [], droppedDust: 0n }
+  const credits: ImportSeedCredit[] = [],
+    entries = [...accumulator.entries()].sort(([left], [right]) =>
+      left.localeCompare(right)
     )
+  let droppedDust = 0n
+  entries.forEach(([native_address, total]) => {
+    const wire_atomic = total / divisor,
+      dust = total - wire_atomic * divisor
+    droppedDust += dust
+    if (wire_atomic > 0n) credits.push({ native_address, wire_atomic })
+  })
+  return { credits, droppedDust }
 }
 
 function chunked<T>(arr: T[], size: number): T[][] {
