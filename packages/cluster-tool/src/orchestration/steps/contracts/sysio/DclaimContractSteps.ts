@@ -1,8 +1,13 @@
 import Assert from "node:assert"
+
+import { z } from "zod"
+
 import { SysioContracts } from "@wireio/sdk-core"
+
 import { WireClient } from "../../../../clients/wire/WireClient.js"
 import { Report } from "../../../../report/Report.js"
 import {
+  ImportSeedChainKindSchema,
   serializeBatchForClio,
   type ImportSeedBatch,
   type ImportSeedChainKind
@@ -16,34 +21,43 @@ import {
 } from "../../../ClusterBuildStep.js"
 import {
   DistributionClaimBootstrapResultKey,
-  type DistributionClaimBootstrapSource
-} from "../../../outputs/DistributionClaimBootstrap.js"
-import type { StepInput } from "../../../StepRunner.js"
+  DistributionClaimBootstrapSourceSchema
+} from "../../../outputs/DistributionClaimBootstrapOutput.js"
 
 const { SysioContractName } = SysioContracts
 
 /** Steps for `sysio.dclaim` (distribution claims) actions. */
 export namespace DclaimContractSteps {
-  /** Compact per-chain totals copied into every batch's report input. */
-  export interface ImportSeedChainSummary {
-    readonly sources: readonly DistributionClaimBootstrapSource[]
-    readonly eligibleAddressCount: number
-    readonly batchCount: number
-    readonly totalAtomic: string
-    readonly droppedDust: string
-  }
+  /** Decimal non-negative-integer text carried in compact report inputs. */
+  const DecimalIntegerPattern = /^\d+$/
+
+  /** Runtime schema for compact per-chain totals copied into every batch's report input. */
+  export const ImportSeedChainSummarySchema = z.object({
+    sources: z.array(DistributionClaimBootstrapSourceSchema),
+    eligibleAddressCount: z.number().safe().int().positive(),
+    batchCount: z.number().safe().int().positive(),
+    totalAtomic: z.string().regex(DecimalIntegerPattern),
+    droppedDust: z.string().regex(DecimalIntegerPattern)
+  })
+  /** Compact per-chain totals — the shape of {@link ImportSeedChainSummarySchema}. */
+  export type ImportSeedChainSummary = z.infer<
+    typeof ImportSeedChainSummarySchema
+  >
 
   /**
-   * Compact input for one `importseed` Step. The bulk payload remains in
-   * `ctx.outputs` and is selected by chain plus batch index at run time.
+   * Runtime schema for one compact `importseed` Step input. The bulk payload
+   * remains in `ctx.outputs` and is selected by chain plus batch index at run
+   * time.
    */
-  export interface ImportSeedBatchInput extends StepInput {
-    readonly kind: "DclaimContractSteps.ImportSeedBatchInput"
-    readonly chain: ImportSeedChainKind
-    readonly batchIndex: number
-    readonly creditCount: number
-    readonly summary: ImportSeedChainSummary
-  }
+  export const ImportSeedBatchInputSchema = z.object({
+    kind: z.literal("DclaimContractSteps.ImportSeedBatchInput"),
+    chain: ImportSeedChainKindSchema,
+    batchIndex: z.number().safe().int().nonnegative(),
+    creditCount: z.number().safe().int().positive(),
+    summary: ImportSeedChainSummarySchema
+  })
+  /** Compact `importseed` Step input — the shape of {@link ImportSeedBatchInputSchema}. */
+  export type ImportSeedBatchInput = z.infer<typeof ImportSeedBatchInputSchema>
 
   /** `sysio.dclaim::setconfig` — initialize the `cap_config` singleton (idempotent). */
   export function planSetconfig<
@@ -101,18 +115,19 @@ export namespace DclaimContractSteps {
     creditCount: number,
     summary: ImportSeedChainSummary
   ): ClusterBuildStep<C, ImportSeedBatchInput> {
+    const input = ImportSeedBatchInputSchema.parse({
+      kind: "DclaimContractSteps.ImportSeedBatchInput",
+      chain,
+      batchIndex,
+      creditCount,
+      summary
+    })
     return ClusterBuildStep.create<C, ImportSeedBatchInput>(
       actor,
       name,
       description,
       options,
-      {
-        kind: "DclaimContractSteps.ImportSeedBatchInput",
-        chain,
-        batchIndex,
-        creditCount,
-        summary
-      },
+      input,
       runImportSeedBatch
     )
   }
@@ -148,12 +163,11 @@ export namespace DclaimContractSteps {
       input.creditCount,
       `distribution-claim bootstrap batch size changed: chain=${input.chain}, index=${input.batchIndex}`
     )
-    const dclaim = ctx.wire.getSysioContract(SysioContractName.dclaim)
-    const nextUnmappedId = await readNextUnmappedId(ctx)
+    const dclaim = ctx.wire.getSysioContract(SysioContractName.dclaim),
+      nextUnmappedId = await readNextUnmappedId(ctx)
     try {
-      await dclaim.actions.importseed.invokeViaFile(
-        serializeBatchForClio(batch),
-        { retryFinality: false, retryTransport: false }
+      await dclaim.actions.importseed.invokeViaFileOnce(
+        serializeBatchForClio(batch)
       )
     } catch (error) {
       if (
@@ -208,22 +222,11 @@ export namespace DclaimContractSteps {
     signal.throwIfAborted()
     const dclaim = ctx.wire.getSysioContract(SysioContractName.dclaim)
     try {
-      await dclaim.actions.importdone.invoke(
-        {},
-        { retryFinality: false, retryTransport: false }
-      )
+      await dclaim.actions.importdone.invokeOnce({})
     } catch (error) {
-      const { rows } = await dclaim.tables.capcfg
-        .query({ limit: 1 })
-        .catch(error => {
-          ctx.log.warn(
-            `dclaim importdone reconciliation query failed: ${errorMessage(error)}`
-          )
-          return { rows: [], more: false }
-        })
       if (
-        rows[0]?.imported_complete &&
-        (await isIrreversibleFinalityError(ctx, error))
+        (await isIrreversibleFinalityError(ctx, error)) &&
+        (await isImportComplete(ctx))
       )
         return
       throw error
@@ -245,44 +248,84 @@ export namespace DclaimContractSteps {
     firstUnmappedId: string
   ): Promise<boolean> {
     const expectedChain = abiChainKind(batch.chain)
-    const { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.dclaim)
-      .tables.unmapped.query({
-        lowerBound: firstUnmappedId,
-        limit: batch.credits.length
-      })
-      .catch(error => {
-        ctx.log.warn(
-          `dclaim importseed reconciliation query failed: ${errorMessage(error)}`
+    try {
+      const dclaim = ctx.wire.getSysioContract(SysioContractName.dclaim),
+        endUnmappedId = (
+          BigInt(firstUnmappedId) + BigInt(batch.credits.length)
+        ).toString(),
+        readPage = async (
+          lowerBound: string,
+          accumulated: SysioContracts.SysioDclaimUnmappedTokenType[]
+        ): Promise<SysioContracts.SysioDclaimUnmappedTokenType[]> => {
+          const page = await dclaim.tables.unmapped.query({
+              lowerBound,
+              upperBound: endUnmappedId,
+              limit: Math.max(batch.credits.length - accumulated.length, 1)
+            }),
+            rows = [...accumulated, ...page.rows]
+          if (!page.more || rows.length >= batch.credits.length) return rows
+          Assert.ok(
+            page.nextKey != null,
+            "dclaim importseed reconciliation page omitted next_key"
+          )
+          if (BigInt(page.nextKey) >= BigInt(endUnmappedId)) return rows
+          Assert.notEqual(
+            page.nextKey,
+            lowerBound,
+            "dclaim importseed reconciliation next_key did not advance"
+          )
+          return readPage(page.nextKey, rows)
+        },
+        rows = await readPage(firstUnmappedId, []),
+        rowsByAddress = new Map(
+          rows
+            .filter(row => isExpectedChainKind(row.chain_kind, expectedChain))
+            .map(row => [row.native_pubkey, row])
         )
-        return { rows: [], more: false }
+      return batch.credits.every(credit => {
+        const row = rowsByAddress.get(credit.native_address)
+        return row?.balance === formatWireAsset(credit.wire_atomic)
       })
-    const rowsByAddress = new Map(
-      rows
-        .filter(row => isExpectedChainKind(row.chain_kind, expectedChain))
-        .map(row => [row.native_pubkey, row])
-    )
-    return batch.credits.every(credit => {
-      const row = rowsByAddress.get(credit.native_address)
-      return row?.balance === formatWireAsset(credit.wire_atomic)
-    })
+    } catch (error) {
+      ctx.log.warn(
+        `dclaim importseed reconciliation query failed: ${errorMessage(error)}`
+      )
+      return false
+    }
   }
 
-  async function isIrreversibleFinalityError<
-    C extends ClusterBuildContext
-  >(ctx: C, error: unknown): Promise<boolean> {
+  async function isImportComplete<C extends ClusterBuildContext>(
+    ctx: C
+  ): Promise<boolean> {
+    try {
+      const { rows } = await ctx.wire
+        .getSysioContract(SysioContractName.dclaim)
+        .tables.capcfg.query({ limit: 1 })
+      return Boolean(rows[0]?.imported_complete)
+    } catch (error) {
+      ctx.log.warn(
+        `dclaim importdone reconciliation query failed: ${errorMessage(error)}`
+      )
+      return false
+    }
+  }
+
+  async function isIrreversibleFinalityError<C extends ClusterBuildContext>(
+    ctx: C,
+    error: unknown
+  ): Promise<boolean> {
     if (!(error instanceof WireClient.TransactionFinalityError)) return false
-    return ctx.wire
-      .isTransactionIrreversible(
+    try {
+      return await ctx.wire.isTransactionIrreversible(
         error.transactionId,
         error.observedBlockNum
       )
-      .catch(proofError => {
-        ctx.log.warn(
-          `dclaim transaction finality reconciliation failed: ${errorMessage(proofError)}`
-        )
-        return false
-      })
+    } catch (proofError) {
+      ctx.log.warn(
+        `dclaim transaction finality reconciliation failed: ${errorMessage(proofError)}`
+      )
+      return false
+    }
   }
 
   function abiChainKind(

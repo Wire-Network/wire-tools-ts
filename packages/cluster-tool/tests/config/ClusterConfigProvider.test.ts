@@ -581,18 +581,18 @@ describe("ClusterConfigProvider", () => {
       const bind = JSON.parse(JSON.stringify(PersistedFixture.bind)),
         config = await ClusterConfigProvider.resolve(
           baseOptions(writeBindConfig(bind), {
-            ethereumBootstrapJsonFile: "inputs/ethereum.json",
-            solanaBootstrapJsonFile: "inputs/solana.json"
+            ethereum: { bootstrapJsonFile: "inputs/ethereum.json" },
+            solana: { bootstrapJsonFile: "inputs/solana.json" }
           })
         )
       expect(config.bind.kiod.port).toBe(bind.kiod.port)
       expect(config.bind.nodeop.ports.bios.http).toBe(
         bind.nodeop.ports.bios.http
       )
-      expect(config.ethereumBootstrapJsonFile).toBe(
+      expect(config.ethereum.bootstrapJsonFile).toBe(
         Path.resolve("inputs/ethereum.json")
       )
-      expect(config.solanaBootstrapJsonFile).toBe(
+      expect(config.solana.bootstrapJsonFile).toBe(
         Path.resolve("inputs/solana.json")
       )
     })

@@ -69,15 +69,15 @@ describe("ClioRunner", () => {
       )
     })
 
-    it("does not retry an ambiguous transport failure when disabled", async () => {
-      const attempts = Path.join(dir, "attempts.txt")
-      const bin = makeScript(
-        "clio-reset.sh",
-        `echo attempt >> '${attempts}'; echo 'Connection reset by peer' >&2; exit 1`
-      )
+    it("runOnce does not retry an ambiguous transport failure", async () => {
+      const attempts = Path.join(dir, "attempts.txt"),
+        bin = makeScript(
+          "clio-reset.sh",
+          `echo attempt >> '${attempts}'; echo 'Connection reset by peer' >&2; exit 1`
+        )
 
       await expect(
-        new ClioRunner(config(bin)).run(["push"], { retryTransport: false })
+        new ClioRunner(config(bin)).runOnce(["push"])
       ).rejects.toThrow(/Connection reset by peer/)
       expect(Fs.readFileSync(attempts, "utf8").trim().split("\n")).toHaveLength(
         1

@@ -15,6 +15,18 @@ export interface LoggingOptions {
   fileFormat?: ClusterConfigLoggingFileFormat
 }
 
+/** Caller-facing Ethereum-chain options (the `Options` half of `ClusterConfigEthereum`). */
+export interface EthereumOptions {
+  /** Ethereum prelaunch balance dump imported into `sysio.dclaim` during cluster creation. */
+  bootstrapJsonFile?: string
+}
+
+/** Caller-facing Solana-chain options (the `Options` half of `ClusterConfigSolana`). */
+export interface SolanaOptions {
+  /** Solana prelaunch balance dump imported into `sysio.dclaim` during cluster creation. */
+  bootstrapJsonFile?: string
+}
+
 /**
  * Everything a caller may set when standing up a cluster (CLI or flow). All
  * fields optional; `ClusterConfigProvider.resolve` fills the rest. `bind` / `report` /
@@ -42,6 +54,9 @@ export interface ClusterBuildOptions {
   epochRetentionEnvelopeLogCount?: number
   warmupEpochs?: number
   cooldownEpochs?: number
+  // per-chain inputs
+  ethereum?: EthereumOptions
+  solana?: SolanaOptions
   // network binding
   bindAll?: boolean
   bind?: BindOptions
@@ -85,14 +100,4 @@ export interface ClusterBuildOptions {
   // external inputs (file paths → `--bind-config` / `--external-outpost-config`)
   bindConfig?: string
   externalOutpostConfig?: string
-  /**
-   * Ethereum prelaunch balance dump imported into `sysio.dclaim` during
-   * cluster creation.
-   */
-  ethereumBootstrapJsonFile?: string
-  /**
-   * Solana prelaunch balance dump imported into `sysio.dclaim` during cluster
-   * creation.
-   */
-  solanaBootstrapJsonFile?: string
 }

@@ -11,9 +11,14 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import { ChainKind } from "@wireio/opp-typescript-models"
+
+import { ZodError } from "zod"
+
 import {
   IndexBalanceDumpSchema,
+  ImportSeedBatchSchema,
+  ImportSeedChainKindSchema,
+  ImportSeedCreditSchema,
   batchImportSeedCredits,
   convertImportSeed,
   convertImportSeedCredits,
@@ -23,6 +28,7 @@ import {
   type ImportSeedBatch,
   type IndexBalanceDump
 } from "@wireio/cluster-tool/tools/wire"
+import { ChainKind } from "@wireio/opp-typescript-models"
 
 // ── Synthetic-dump fixture ─────────────────────────────────────────────────
 
@@ -177,6 +183,32 @@ function buildSyntheticEthereumDump(
 }
 
 describe("WireDclaimSeedTool", () => {
+  describe("importseed schemas", () => {
+    it("validates the hand-rolled credit and batch shapes", () => {
+      const credit = {
+        native_address: "aa".repeat(EthereumAddressByteLength),
+        wire_atomic: 1n
+      }
+      expect(ImportSeedCreditSchema.safeParse(credit).success).toBe(true)
+      expect(
+        ImportSeedCreditSchema.safeParse({ ...credit, wire_atomic: 0n }).success
+      ).toBe(false)
+      expect(
+        ImportSeedBatchSchema.safeParse({
+          chain: ChainKind.EVM,
+          credits: [credit]
+        }).success
+      ).toBe(true)
+      const invalidChains = [ChainKind.UNKNOWN, ChainKind.WIRE, 999, "2", {}]
+      invalidChains.forEach(chain => {
+        expect(ImportSeedChainKindSchema.safeParse(chain).success).toBe(false)
+        expect(
+          ImportSeedBatchSchema.safeParse({ chain, credits: [credit] }).success
+        ).toBe(false)
+      })
+    })
+  })
+
   describe("loadIndexBalanceDump", () => {
     let directory: string
 
@@ -231,6 +263,9 @@ describe("WireDclaimSeedTool", () => {
           `Ethereum bootstrap file .*${Path.basename(file)}.*purchasers\\[0\\]\\.totalPretokens`
         )
       )
+      await expect(
+        loadIndexBalanceDump(file, ChainKind.EVM)
+      ).rejects.toMatchObject({ cause: expect.any(ZodError) })
     })
 
     it("reports the indexed address field under Solana validation", async () => {
@@ -289,6 +324,7 @@ describe("WireDclaimSeedTool", () => {
     })
 
     it("rejects unsafe numeric inputs and non-positive additive credits", () => {
+      const invalidBatchSizes = [Number.NaN, Number.POSITIVE_INFINITY, 1.5]
       expect(() =>
         convertImportSeedCredits(
           {
@@ -308,6 +344,14 @@ describe("WireDclaimSeedTool", () => {
           ChainKind.EVM
         )
       ).toThrow(/wire_atomic must be positive/)
+      invalidBatchSizes.forEach(batchSize => {
+        expect(() =>
+          batchImportSeedCredits(
+            [{ native_address: "33".repeat(20), wire_atomic: 1n }],
+            { chain: ChainKind.EVM, batchSize }
+          )
+        ).toThrow(/batch size must be a positive safe integer/)
+      })
     })
 
     it("rejects wrong chain address widths before composing import Steps", () => {
@@ -461,7 +505,7 @@ describe("WireDclaimSeedTool", () => {
           },
           { chain: ChainKind.EVM, batchSize: 0 }
         )
-      ).toThrow(/batch size must be > 0/)
+      ).toThrow(/batch size must be a positive safe integer/)
     })
   })
 

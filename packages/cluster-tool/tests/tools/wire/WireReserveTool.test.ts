@@ -40,7 +40,7 @@ const EthereumChain = 100,
 /** A WireClient stub whose reserv/uwrit typed accessors serve the fixtures. */
 function stubWire(reserves: QuoteReserveFixture[], feeBps = 30): WireClient {
   const table = <Row>(rows: Row[]) => ({
-    query: async () => ({ rows, more: false })
+    query: async () => ({ rows, more: false, nextKey: null })
   })
   const clientByName = {
     [SysioContractName.reserv]: { tables: { reserves: table(reserves) } },

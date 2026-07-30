@@ -1,7 +1,9 @@
 import {
   ClusterConfigLoggingFileFormat,
   ClusterConfigReportFormat,
+  ClusterConfigEthereumSchema,
   ClusterConfigSchemaCodec,
+  ClusterConfigSolanaSchema,
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
   SignatureProviderType,
@@ -30,6 +32,8 @@ describe("ClusterConfig shape", () => {
     terminateWindowMs: null,
     ethereumPath: "/eth",
     solanaPath: "/sol",
+    ethereum: { bootstrapJsonFile: "/inputs/ethereum.json" },
+    solana: { bootstrapJsonFile: "/inputs/solana.json" },
     bind: {
       kiod: { address: "127.0.0.1", port: 8900 },
       nodeop: {
@@ -114,13 +118,15 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated).toEqual(config)
   })
 
-  it("loads a legacy config (no signatureProvider/awsClusterNodeConfig/externalOutposts/debuggingServerEnabled/enableMockReserves/deploymentKind/chainStateDbSizeMb) via schema defaults", () => {
+  it("loads a legacy config via schema defaults", () => {
     const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
     delete parsed.signatureProvider
     delete parsed.awsClusterNodeConfig
     delete parsed.externalOutposts
     delete parsed.debuggingServerEnabled
     delete parsed.enableMockReserves
+    delete parsed.ethereum
+    delete parsed.solana
     delete parsed.deploymentKind
     delete parsed.chainStateDbSizeMb
     const rehydrated = ClusterConfigSchemaCodec.deserialize(
@@ -134,11 +140,25 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.externalOutposts).toBeNull()
     expect(rehydrated.debuggingServerEnabled).toBe(true)
     expect(rehydrated.enableMockReserves).toBe(false)
+    expect(rehydrated.ethereum.bootstrapJsonFile).toBeNull()
+    expect(rehydrated.solana.bootstrapJsonFile).toBeNull()
     // A config predating either field loads as the CREATE shape: trace_api on
     // every role, and nodeop's own stock chain-state DB size.
     expect(rehydrated.deploymentKind).toBe(ClusterDeploymentKind.local)
     expect(rehydrated.chainStateDbSizeMb).toBe(DefaultChainStateDbSizeMb)
     expect(rehydrated.chainStateDbSizeMb).toBe(1_024)
+  })
+
+  it("validates and defaults the enclosed chain-specific configs", () => {
+    expect(ClusterConfigEthereumSchema.parse({})).toEqual({
+      bootstrapJsonFile: null
+    })
+    expect(ClusterConfigSolanaSchema.parse({})).toEqual({
+      bootstrapJsonFile: null
+    })
+    expect(
+      ClusterConfigEthereumSchema.safeParse({ bootstrapJsonFile: 1 }).success
+    ).toBe(false)
   })
 
   it("round-trips an EXTERNAL deploymentKind + an overridden chain-state DB size", () => {
