@@ -65,7 +65,13 @@ persists into `--cluster-path`:
 
 `--signature-provider-ssm` also accepts a **file path** (any value not starting
 with `{`). SSM publishes each generated key to AWS Secrets Manager at create time
-(requires AWS credentials).
+(requires AWS credentials). Every nodeop whose rendered `--signature-provider`
+specs use the `SSM:` scheme automatically enables
+`sysio::signature_provider_ssm_plugin` (without it, nodeop aborts startup with
+`plugin_config_exception 3110006`). Each published parameter VALUE is the key's
+**chain-native** string — the form nodeop's ssm plugin parses — not the WIRE
+`PVT_…` form: `K1` → WIF, `EM` → `0x…` 32-byte hex, `ED` → base58 of the 64-byte
+secret, `BLS` → `PVT_BLS_…` (whose WIRE string IS its native form).
 
 > **Stop the cluster before Step 3.** `create-external-config` requires a stopped
 > cluster so it clones a consistent copy.
@@ -97,6 +103,18 @@ static-IP) deployment, use **static IPv4 addresses in one subnet**:
 - The depot-side daemons (nodeop nodes, kiod, debugging server) typically **share
   one address** (one host/container) on distinct ports.
 - anvil and solana each get **their own address** (separate hosts/containers).
+- **Multi-host nodeop mesh**: to place nodeop instances on DIFFERENT hosts, give
+  each node its own `advertiseAddress` alongside its port pair — the address the
+  node advertises as its `p2p-server-address` and that every other node dials as
+  its `p2p-peer-address`. Nodes without one advertise the shared `nodeop.address`.
+  The listen address always stays `nodeop.address` (bind `0.0.0.0` per host and
+  advertise the host's routable address):
+
+  ```json
+  "bios":      { "http": 8788, "p2p": 8776, "advertiseAddress": "192.168.219.11" },
+  "producers": [{ "http": 8888, "p2p": 8887, "advertiseAddress": "192.168.219.12" }]
+  ```
+
 - **Cardinality must match the local topology**: `nodeop.ports.producers` /
   `batch` / `underwriters` lengths must equal the local cluster's producer /
   batch-operator / underwriter counts. `create-external-config` validates this and

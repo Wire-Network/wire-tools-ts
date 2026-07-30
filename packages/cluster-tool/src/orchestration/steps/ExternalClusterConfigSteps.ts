@@ -1038,14 +1038,27 @@ export namespace ExternalClusterConfigSteps {
     )
   }
 
-  /** Every bind address across the five daemons (for the stale-address scan). */
+  /**
+   * Every bind address across the five daemons — plus each nodeop's per-node
+   * advertise address, when bound (multi-host mesh) — for the stale-address scan.
+   */
   function bindAddresses(bind: ClusterConfig["bind"]): string[] {
+    const nodeopPorts = bind.nodeop.ports,
+      advertiseAddresses = [
+        nodeopPorts.bios,
+        ...nodeopPorts.producers,
+        ...nodeopPorts.batch,
+        ...nodeopPorts.underwriters
+      ]
+        .map(ports => ports.advertiseAddress)
+        .filter(address => address != null)
     return [
       bind.kiod.address,
       bind.nodeop.address,
       bind.anvil.address,
       bind.solana.address,
-      bind.debuggingServer.address
+      bind.debuggingServer.address,
+      ...advertiseAddresses
     ]
   }
 

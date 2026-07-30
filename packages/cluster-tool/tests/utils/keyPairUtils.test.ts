@@ -6,9 +6,11 @@ import {
   ethereumPrivateKeyFromWallet,
   ethereumPublicKeyFromWallet,
   ethereumSigner,
+  privateKeyFromNativeString,
   solanaKeypair,
   solanaSdkPrivateKey
 } from "@wireio/cluster-tool/utils"
+import { Constants } from "@wireio/cluster-tool/Constants"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import type { EthereumKeyPair, SolanaKeyPair } from "@wireio/cluster-tool/types"
 
@@ -33,6 +35,42 @@ function solanaFixture(): SolanaKeyPair {
 }
 
 describe("keyPairUtils", () => {
+  describe("privateKeyFromNativeString", () => {
+    it("round-trips every key type through toNativeString (K1 WIF / EM 0x-hex / ED base58 / BLS PVT_BLS_)", () => {
+      const k1 = PrivateKey.from(Constants.DEV_K1_PRIVATE_KEY),
+        em = ethereumPrivateKeyFromWallet(anvilWallet(0)),
+        ed = PrivateKey.generate(KeyType.ED),
+        bls = PrivateKey.from(Constants.DEV_BLS_PRIVATE_KEY)
+      // Inferred tuple types — an explicit PrivateKey annotation would force the
+      // sdk-core cjs + esm declaration flavors into one nominal type.
+      const roundTrips = [
+        [KeyType.K1, k1],
+        [KeyType.EM, em],
+        [KeyType.ED, ed],
+        [KeyType.BLS, bls]
+      ] as const
+      roundTrips.forEach(([type, privateKey]) =>
+        expect(
+          privateKeyFromNativeString(type, privateKey.toNativeString()).toString()
+        ).toBe(privateKey.toString())
+      )
+    })
+
+    it("accepts an EM hex value without the 0x prefix", () => {
+      const em = ethereumPrivateKeyFromWallet(anvilWallet(1)),
+        bareHex = em.toNativeString().slice(2)
+      expect(privateKeyFromNativeString(KeyType.EM, bareHex).toString()).toBe(
+        em.toString()
+      )
+    })
+
+    it("throws on an unsupported key type", () => {
+      expect(() => privateKeyFromNativeString(KeyType.R1, "anything")).toThrow(
+        /unsupported key type/
+      )
+    })
+  })
+
   // ── live ethers wallet → typed EM keys ──
   describe("ethereumPrivateKeyFromWallet", () => {
     it("derives a PVT_EM_ key deterministically per HD index", () => {

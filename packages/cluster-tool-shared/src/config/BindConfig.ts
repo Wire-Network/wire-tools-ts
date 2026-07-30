@@ -13,14 +13,22 @@ export enum BindConfigPortProtocol {
   udp = "udp"
 }
 
-/** One nodeop's `{ http, p2p }` listen ports. */
+/** One nodeop's per-node binding: `{ http, p2p }` listen ports + an optional advertise address. */
 export const BindConfigNodeopPortsSchema = z.object({
   /** HTTP (RPC) listen port. */
   http: z.number(),
   /** P2P listen port. */
-  p2p: z.number()
+  p2p: z.number(),
+  /**
+   * Optional per-node ADVERTISE address for a multi-host mesh: the address this
+   * node advertises as its `p2p-server-address` and that every OTHER node dials
+   * as its `p2p-peer-address`. Absent (the single-host default), the fleet-wide
+   * `nodeop.address` — mapped to its dialable form — advertises for every node.
+   * The LISTEN address always stays `nodeop.address`.
+   */
+  advertiseAddress: z.string().optional()
 })
-/** One nodeop's `{ http, p2p }` listen ports. */
+/** One nodeop's per-node binding — the shape of {@link BindConfigNodeopPortsSchema}. */
 export type BindConfigNodeopPorts = z.infer<typeof BindConfigNodeopPortsSchema>
 
 /** The full nodeop port set across the cluster (one pair per node, per role). */

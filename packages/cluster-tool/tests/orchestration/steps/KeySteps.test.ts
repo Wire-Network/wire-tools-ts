@@ -1,6 +1,7 @@
 import { OperatorType } from "@wireio/opp-typescript-models"
-import { KeyType } from "@wireio/sdk-core"
+import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import { SignatureProviderType } from "@wireio/cluster-tool-shared"
+import { Constants } from "@wireio/cluster-tool/Constants"
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
@@ -73,10 +74,77 @@ describe("Steps.keys", () => {
     })
   })
 
+  describe("planSignatureProviderKeyPublications", () => {
+    const config = fixtureConfig({
+      clusterPath: "/tmp/wire-cluster-pubs",
+      signatureProvider: {
+        type: SignatureProviderType.SSM,
+        ssm: {
+          awsRegion: "us-east-1",
+          awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
+        }
+      }
+    })
+
+    /** A registered orchestration child as the fake parent sees it (name only). */
+    interface RegisteredChild {
+      name: string
+    }
+
+    /** A minimal structural {@link ClusterBuildParent} capturing registrations. */
+    function fixtureParent() {
+      const children: RegisteredChild[] = [],
+        parent = {
+          context: fixtureContext(),
+          push(...nodes: RegisteredChild[]) {
+            children.push(...nodes)
+            return parent
+          }
+        }
+      return { parent, children }
+    }
+
+    it("composes the node-source phase: one step per producer-node key, self-registered", () => {
+      const { parent, children } = fixtureParent()
+      const phase = Steps.keys.planSignatureProviderKeyPublications(
+        parent as never,
+        "PublishNodeSignatureProviderKeys",
+        "publish node keys",
+        {},
+        config,
+        Steps.keys.SignatureKeySource.node
+      )
+      expect(children).toContain(phase)
+      expect(phase.name).toBe("PublishNodeSignatureProviderKeys")
+      // 1 producer node × (K1 + BLS) — operator publications are filtered OUT.
+      expect(phase.steps.map(step => step.name)).toEqual([
+        "publish-node_00-K1",
+        "publish-node_00-BLS"
+      ])
+    })
+
+    it("composes the operator-source phase: one step per operator key", () => {
+      const { parent } = fixtureParent()
+      const phase = Steps.keys.planSignatureProviderKeyPublications(
+        parent as never,
+        "PublishOperatorSignatureProviderKeys",
+        "publish operator keys",
+        {},
+        config,
+        Steps.keys.SignatureKeySource.operator
+      )
+      // (3 batch + 1 underwriter) × (K1 + EM + ED) = 12; no node publications.
+      expect(phase.steps).toHaveLength(12)
+      expect(
+        phase.steps.every(step => !step.name.startsWith("publish-node_"))
+      ).toBe(true)
+    })
+  })
+
   describe("runPublishSignatureProviderKey (jest SSM mock — no live AWS)", () => {
     beforeEach(() => mockSend.mockReset())
 
-    it("reads the operator's private key from the key store and PutParameters it", async () => {
+    it("PutParameters the operator K1 key's NATIVE string (WIF, not PVT_K1_)", async () => {
       mockSend.mockResolvedValueOnce({})
       const ctx = fixtureContext()
       ctx.keyStore.setOperator({
@@ -85,8 +153,8 @@ describe("Steps.keys", () => {
         type: OperatorType.BATCH,
         wire: {
           type: KeyType.K1,
-          publicKey: "PUB_K1_a",
-          privateKey: "PVT_K1_a"
+          publicKey: Constants.DEV_K1_PUBLIC_KEY,
+          privateKey: Constants.DEV_K1_PRIVATE_KEY
         }
       })
       const step = Steps.keys.planPublishSignatureProviderKey(
@@ -106,13 +174,53 @@ describe("Steps.keys", () => {
       await step.runner(ctx, step.input, new AbortController().signal)
       expect(lastCommandInput()).toEqual({
         Name: "/wire/c/batchop.a/K1",
-        Value: "PVT_K1_a",
+        Value: PrivateKey.from(Constants.DEV_K1_PRIVATE_KEY).toNativeString(),
         Type: "SecureString",
         Overwrite: true
       })
+      // K1 native = WIF — never the WIRE PVT_ form.
+      expect(lastCommandInput().Value).not.toMatch(/^PVT_/)
     })
 
-    it("reads a producer-node key from the key store by index", async () => {
+    it("PutParameters the operator ED key's NATIVE string (base58 64-byte secret)", async () => {
+      mockSend.mockResolvedValueOnce({})
+      const ed = PrivateKey.generate(KeyType.ED)
+      const ctx = fixtureContext()
+      ctx.keyStore.setOperator({
+        label: "batchop.a",
+        account: "batchop.a",
+        type: OperatorType.BATCH,
+        wire: {
+          type: KeyType.K1,
+          publicKey: Constants.DEV_K1_PUBLIC_KEY,
+          privateKey: Constants.DEV_K1_PRIVATE_KEY
+        },
+        solana: {
+          type: KeyType.ED,
+          publicKey: ed.toPublic().toString(),
+          privateKey: ed.toString()
+        }
+      })
+      const step = Steps.keys.planPublishSignatureProviderKey(
+        Report.Actor.Sysio,
+        "publish-batchop.a-ED",
+        "publish batchop.a ED",
+        {},
+        {
+          source: Steps.keys.SignatureKeySource.operator,
+          nodeIndex: 0,
+          account: "batchop.a",
+          keyType: KeyType.ED,
+          awsRegion: "us-east-1",
+          secretId: "/wire/c/batchop.a/ED"
+        }
+      )
+      await step.runner(ctx, step.input, new AbortController().signal)
+      expect(lastCommandInput().Value).toBe(ed.toNativeString())
+      expect(lastCommandInput().Value).not.toMatch(/^PVT_/)
+    })
+
+    it("PutParameters a producer-node BLS key's NATIVE string (PVT_BLS_ IS native)", async () => {
       mockSend.mockResolvedValueOnce({})
       const ctx = fixtureContext()
       ctx.keyStore.pushNodes({
@@ -120,14 +228,14 @@ describe("Steps.keys", () => {
         keys: {
           k1: {
             type: KeyType.K1,
-            publicKey: "PUB_K1_n0",
-            privateKey: "PVT_K1_n0"
+            publicKey: Constants.DEV_K1_PUBLIC_KEY,
+            privateKey: Constants.DEV_K1_PRIVATE_KEY
           },
           bls: {
             type: KeyType.BLS,
-            publicKey: "PUB_BLS_n0",
-            privateKey: "PVT_BLS_n0",
-            proofOfPossession: "POP_n0"
+            publicKey: Constants.DEV_BLS_PUBLIC_KEY,
+            privateKey: Constants.DEV_BLS_PRIVATE_KEY,
+            proofOfPossession: Constants.DEV_BLS_PROOF_OF_POSSESSION
           }
         }
       })
@@ -148,10 +256,12 @@ describe("Steps.keys", () => {
       await step.runner(ctx, step.input, new AbortController().signal)
       expect(lastCommandInput()).toEqual({
         Name: "/wire/c/node_00/BLS",
-        Value: "PVT_BLS_n0",
+        Value: PrivateKey.from(Constants.DEV_BLS_PRIVATE_KEY).toNativeString(),
         Type: "SecureString",
         Overwrite: true
       })
+      // BLS is the one type whose WIRE string IS its native form.
+      expect(lastCommandInput().Value).toMatch(/^PVT_BLS_/)
     })
   })
 })

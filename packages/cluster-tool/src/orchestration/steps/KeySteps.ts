@@ -2,7 +2,7 @@ import Assert from "node:assert"
 import Path from "node:path"
 import { range } from "lodash"
 import { match } from "ts-pattern"
-import { KeyType } from "@wireio/sdk-core"
+import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { mapSeries } from "../../utils/asyncUtils.js"
 import { Constants } from "../../Constants.js"
@@ -12,6 +12,8 @@ import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
 import { SSMClientProvider } from "../../config/SSMClientProvider.js"
 import { Report } from "../../report/Report.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
+import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
+import type { ClusterBuildParent } from "../ClusterBuildPhaseBase.js"
 import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
@@ -215,6 +217,52 @@ export namespace KeySteps {
   }
 
   /**
+   * Compose ONE publish phase for an SSM cluster — the `source`-class subset of
+   * {@link signatureProviderKeyPublications}, one step per key, self-registered
+   * on `parent`. `ClusterBuildDefaults` composes it at the point where the
+   * source's keys EXIST but their SSM-fetching consumers have NOT started:
+   * `node` keys right after `WalletAndKeys` (producer nodes fetch them from SSM
+   * at startup), `operator` keys right after operator provisioning (the
+   * operator daemons fetch theirs at startup). Publishing any later leaves the
+   * consumer's `SSM:<region>:<secretId>` spec pointing at a parameter that does
+   * not exist yet, aborting nodeop startup.
+   *
+   * @param parent - The build / group the phase self-registers on.
+   * @param name - The phase name.
+   * @param description - The phase description.
+   * @param options - Step options applied to every publish step.
+   * @param config - The resolved cluster config (SSM signature provider).
+   * @param source - Which key-store class this phase publishes.
+   * @returns The publish phase.
+   */
+  export function planSignatureProviderKeyPublications<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    config: ClusterConfig,
+    source: SignatureKeySource
+  ): ClusterBuildPhase<C> {
+    const phase = ClusterBuildPhase.create<C>(parent, name, description)
+    signatureProviderKeyPublications(config)
+      .filter(publication => publication.source === source)
+      .forEach(publication =>
+        phase.push(
+          planPublishSignatureProviderKey<C>(
+            Report.Actor.Sysio,
+            `publish-${publication.account}-${KeyType[publication.keyType]}`,
+            `publish ${publication.account} ${KeyType[publication.keyType]} key → SSM`,
+            options,
+            publication
+          )
+        )
+      )
+    return phase
+  }
+
+  /**
    * Plan the publication of ONE generated signing key to AWS SSM.
    *
    * @param actor - The report actor.
@@ -243,7 +291,15 @@ export namespace KeySteps {
     )
   }
 
-  /** Named runner — read the private key from `ctx.keyStore` and `PutParameter` it (SecureString). */
+  /**
+   * Named runner — read the private key from `ctx.keyStore` and `PutParameter`
+   * its CHAIN-NATIVE string (SecureString). The stored key is the WIRE
+   * `PVT_<type>_…` form; the parameter value MUST be the native form
+   * (`toNativeString()`: K1 WIF, EM 0x-hex, ED base58 of the 64-byte secret,
+   * BLS `PVT_BLS_…`) — nodeop's ssm plugin parses the fetched value with the
+   * per-chain NATIVE parser (`from_native_string_to_private_key`), the same
+   * contract as the inline `KEY:` spec segment.
+   */
   export async function runPublishSignatureProviderKey<
     C extends ClusterBuildContext
   >(
@@ -266,7 +322,7 @@ export namespace KeySteps {
     await SSMClientProvider.putParameter(
       input.awsRegion,
       input.secretId,
-      privateKey
+      PrivateKey.from(privateKey).toNativeString()
     )
   }
 
