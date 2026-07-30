@@ -126,6 +126,7 @@ describe("LoadProfile.resolve", () => {
   it("orders the presets by ascending intensity", () => {
     // Given: every preset in declared order.
     const levels = [
+        LoadLevel.smoke,
         LoadLevel.light,
         LoadLevel.moderate,
         LoadLevel.heavy,
@@ -221,5 +222,45 @@ describe("LoadProfile.iterationCount", () => {
         phaseTimeoutMs: 1_000
       })
     ).toBe(4)
+  })
+})
+
+describe("LoadProfile smoke preset", () => {
+  it("bounds the campaign to a short epoch window", () => {
+    // Given: the gate preset.
+    const profile = LoadProfile.resolve({ level: LoadLevel.smoke }),
+      iterations = LoadProfile.iterationCount(profile.ramp),
+      phasesPerIteration = 2,
+      campaignCeilingMs =
+        profile.ramp.phaseTimeoutMs * iterations * phasesPerIteration
+
+    // Then: two rungs and a ~8 minute ceiling. This is the load-bearing
+    // property — the r8 run showed the Ethereum outbound delivery reverting
+    // once an outbound BACKLOG accumulates (ETH-241), which is driven by
+    // epochs elapsed rather than ramp size, so the campaign must CONCLUDE
+    // early rather than merely run small.
+    expect(iterations).toBe(2)
+    expect(campaignCeilingMs).toBeLessThanOrEqual(600_000)
+  })
+
+  it("sets a byte gate above an idle envelope but within observed load", () => {
+    // Given: r8 measured ~698-byte idle envelopes and 2.7-4.5 KB under load.
+    const IdleEnvelopeBytes = 698,
+      ObservedLoadedBytes = 2_755,
+      profile = LoadProfile.resolve({ level: LoadLevel.smoke })
+
+    // Then: the gate discriminates real attestation packing from an idle
+    // envelope, while staying inside what this workload actually produces.
+    expect(profile.saturatedEnvelopeMinBytes).toBeGreaterThan(IdleEnvelopeBytes)
+    expect(profile.saturatedEnvelopeMinBytes).toBeLessThan(ObservedLoadedBytes)
+  })
+
+  it("is the least intense preset", () => {
+    const smoke = LoadProfile.resolve({ level: LoadLevel.smoke }),
+      light = LoadProfile.resolve({ level: LoadLevel.light })
+    expect(smoke.saturatedEnvelopeMinBytes).toBeLessThan(
+      light.saturatedEnvelopeMinBytes
+    )
+    expect(smoke.ramp.maxCount).toBeLessThan(light.ramp.maxCount)
   })
 })
