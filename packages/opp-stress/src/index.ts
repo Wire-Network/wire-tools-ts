@@ -1,6 +1,7 @@
 export * from "./boundedWorkload.js"
 export * from "./campaignSaturation.js"
 export * from "./envelopeMetrics.js"
+export * from "./LoadProfile.js"
 export * from "./phaseMetrics.js"
 export * from "./rampControllerConfig.js"
 export * from "./rampControllerTypes.js"

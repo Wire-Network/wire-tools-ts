@@ -299,6 +299,7 @@ link automatically on `pnpm install` when the siblings exist.
 | `WIRE_BUILD_PATH` | wire-sysio build dir (binaries + contract artifacts) |
 | `WIRE_ETH_PATH` / `WIRE_SOLANA_PATH` | Outpost repo roots |
 | `WIRE_FLOW_TIMEOUT_SCALE` | EXPLICIT operator override of flow timing (default 1, clamped [1,5]); no code derives it |
+| `WIRE_STRESS_LOAD_LEVEL` | EXPLICIT operator override of stress intensity — `light\|moderate\|heavy\|saturating` (`LoadProfile`). UNIFORM: the e2e gate sets it once in shared job env for every flow, NEVER per-flow. Unset preserves each consumer's own default (`flow-swap-stress-saturation` → `saturating`, its calibrated soak); an unrecognised value THROWS |
 | `WIRE_ETH_DEPLOYMENTS_PATH` | Per-cluster hardhat deployments dir (parallel-run isolation) |
 | `WIRE_BIND_REGISTRY_PATH` | Bind-registry dir override (tests sandbox it) |
 | `WIRE_SOLANA_VALIDATOR_VERBOSE` | `"1"` drops `--quiet` so program logs land in the process log |

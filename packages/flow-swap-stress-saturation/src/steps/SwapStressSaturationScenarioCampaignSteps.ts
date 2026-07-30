@@ -599,6 +599,8 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
                 epochEnd: PhaseEpochEnd,
                 endpointsType: retryRequest.endpointsType,
                 saturationStrategy: CampaignSaturationStrategy,
+                saturatedEnvelopeMinBytes:
+                  Constants.Ramp.SaturatedEnvelopeMinBytes,
                 baseline: phaseBaseline,
                 evidenceSink: persistence
               })

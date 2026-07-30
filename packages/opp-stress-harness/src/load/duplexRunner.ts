@@ -7,6 +7,7 @@ import {
   RunEvidenceEndpoint,
   runOppStressRamp,
   type EnvelopeRecordSource,
+  type LoadProfile,
   type OppEnvelopeSaturationWindow,
   type OppStressRampDeferredIterationObservation,
   type OppStressRampIterationInput,
@@ -21,7 +22,6 @@ import { runEthSwapLoad } from "./ethRunner.js"
 import type { EthSwapAmounts, EthSwapRoute } from "./ethSwap.js"
 import { runSwapLoad, type SwapLoadResult } from "./loadRunner.js"
 import type { LoadWalletFile } from "./loadWalletFile.js"
-import type { LoadProfile } from "./LoadProfile.js"
 import type { SwapAmounts, SwapRoute } from "./swapFromWire.js"
 
 const log = getLogger(__filename)

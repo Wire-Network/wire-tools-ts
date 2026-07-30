@@ -1,6 +1,10 @@
-import { MaxEnvelopeBytes, SaturatedEnvelopeMinBytes } from "@wireio/test-opp-stress"
+import {
+  LoadLevel,
+  LoadProfile,
+  MaxEnvelopeBytes,
+  SaturatedEnvelopeMinBytes
+} from "@wireio/test-opp-stress"
 
-import { LoadLevel, LoadProfile } from "@wireio/opp-stress-harness"
 
 describe("LoadProfile.resolve", () => {
   it("defaults to the moderate preset when no level is named", () => {
@@ -139,5 +143,83 @@ describe("LoadProfile.resolve", () => {
         profiles[index].ramp.maxCount
       )
     })
+  })
+})
+
+describe("LoadProfile.resolveLevel", () => {
+  it("returns the caller's fallback when the variable is unset", () => {
+    // Given: an environment naming no level.
+    // Then: each consumer's own historical default survives — the flow passes
+    // `saturating` so an untouched environment reproduces its calibrated soak.
+    expect(LoadProfile.resolveLevel({}, LoadLevel.saturating)).toBe(
+      LoadLevel.saturating
+    )
+    expect(LoadProfile.resolveLevel({})).toBe(LoadProfile.DefaultLevel)
+  })
+
+  it("treats an empty or whitespace value as unset", () => {
+    const environment = { [LoadProfile.LevelEnvVar]: "   " }
+    expect(LoadProfile.resolveLevel(environment, LoadLevel.heavy)).toBe(
+      LoadLevel.heavy
+    )
+  })
+
+  it("reads every named level, tolerating surrounding whitespace", () => {
+    Object.values(LoadLevel).forEach(level => {
+      expect(
+        LoadProfile.resolveLevel({ [LoadProfile.LevelEnvVar]: ` ${level} ` })
+      ).toBe(level)
+    })
+  })
+
+  it("THROWS on an unrecognised level rather than falling back", () => {
+    // A typo silently running a 512-account soak in CI is precisely the
+    // failure this control exists to prevent, so it must fail loudly.
+    expect(() =>
+      LoadProfile.resolveLevel({ [LoadProfile.LevelEnvVar]: "lite" })
+    ).toThrow(RangeError)
+  })
+
+  it("lets an explicit option beat the environment", () => {
+    const profile = LoadProfile.resolveFromEnvironment({
+      level: LoadLevel.light
+    })
+    expect(profile.level).toBe(LoadLevel.light)
+  })
+})
+
+describe("LoadProfile.iterationCount", () => {
+  it("counts the doubling steps up to the ceiling", () => {
+    // 48 -> 96 -> 192 -> 384 -> 512(clamped) is the calibrated soak's 5.
+    expect(
+      LoadProfile.iterationCount(LoadProfile.Presets[LoadLevel.saturating].ramp)
+    ).toBe(5)
+    // 12 -> 24 -> 48 -> 96 is light's 4.
+    expect(
+      LoadProfile.iterationCount(LoadProfile.Presets[LoadLevel.light].ramp)
+    ).toBe(4)
+  })
+
+  it("returns one when the ramp starts at its ceiling", () => {
+    expect(
+      LoadProfile.iterationCount({
+        initialCount: 64,
+        multiplier: 2,
+        maxCount: 64,
+        phaseTimeoutMs: 1_000
+      })
+    ).toBe(1)
+  })
+
+  it("terminates on a ceiling that is not a clean power of the multiplier", () => {
+    // 10 -> 30 -> 90 -> 100(clamped) — the clamp must still converge.
+    expect(
+      LoadProfile.iterationCount({
+        initialCount: 10,
+        multiplier: 3,
+        maxCount: 100,
+        phaseTimeoutMs: 1_000
+      })
+    ).toBe(4)
   })
 })

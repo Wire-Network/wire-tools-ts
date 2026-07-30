@@ -46,6 +46,13 @@ export interface OppPhaseMetricRequest {
   readonly endpointsType: DebugOutpostEndpointsType
   /** Saturation classifier; omission selects rollover. */
   readonly saturationStrategy?: OppEnvelopeSaturationStrategy
+  /**
+   * Minimum raw envelope bytes classified as saturated under `byte_threshold`;
+   * omission selects the engine's 95%-of-cap default. A campaign running at a
+   * lighter {@link LoadProfile} level lowers it so saturation is judged against
+   * THAT campaign's target rather than the protocol maximum.
+   */
+  readonly saturatedEnvelopeMinBytes?: number
   /** Caller-captured pre-phase membership and artifact correlation. */
   readonly baseline: OppPhaseMetricBaseline
   /** Explicit null disables artifact recording and ordinal allocation. */

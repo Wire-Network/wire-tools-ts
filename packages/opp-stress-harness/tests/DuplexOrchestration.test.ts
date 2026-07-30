@@ -1,7 +1,9 @@
 import type { APIClient } from "@wireio/sdk-core"
-import type {
-  EnvelopeMetricSnapshot,
-  EnvelopeRecordSource
+import {
+  LoadLevel,
+  LoadProfile,
+  type EnvelopeMetricSnapshot,
+  type EnvelopeRecordSource
 } from "@wireio/test-opp-stress"
 
 import type { SwapLoadResult } from "@wireio/opp-stress-harness"
@@ -79,8 +81,6 @@ jest.mock("@wireio/opp-stress-harness/load/ethRunner", () => {
 // Imported AFTER the mocks so duplexRunner binds the mocked runners.
 const {
   DuplexObservationEndpoint,
-  LoadLevel,
-  LoadProfile,
   runDuplexBurst,
   runDuplexIteration
 } = require("@wireio/opp-stress-harness")

@@ -3,6 +3,8 @@ import { APIClient, createClassicSigner, PrivateKey } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
 import {
   collectOppEnvelopeSaturationMetrics,
+  LoadLevel,
+  LoadProfile,
   type OppEnvelopeSaturationWindow,
   type OppStressRampResult
 } from "@wireio/test-opp-stress"
@@ -22,8 +24,6 @@ import {
   EthLoadWalletFileVersion,
   formatWireAsset,
   fundEthWallet,
-  LoadLevel,
-  LoadProfile,
   LoadWalletFileVersion,
   provisionLoadWallet,
   readEthLoadWalletFile,

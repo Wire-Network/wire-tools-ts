@@ -5,6 +5,7 @@ import {
   StressPrivateReserveCreateParams,
   SwapStressPhaseAmounts
 } from "@wireio/opp-swap-stress"
+import { LoadLevel, LoadProfile } from "@wireio/test-opp-stress"
 
 /**
  * Constants for the swap-stress saturation soak: the same-owner PRIVATE reserve
@@ -136,11 +137,37 @@ export namespace SwapStressSaturationScenarioConstants {
    * 384-account iteration on both Ethereum directions.
    */
   export namespace Ramp {
-    export const InitialCount = 48
-    export const Multiplier = 2
-    export const MaxCount = 512
-    export const PhaseTimeoutMs = 480_000
-    export const MaxIterationCount = 5
+    /**
+     * Resolved intensity for this run.
+     *
+     * Selected by `WIRE_STRESS_LOAD_LEVEL` — a UNIFORM operator override the
+     * e2e gate sets once in shared job env for every flow, never per-flow (see
+     * `e2e-tests-no-per-flow-env-customization.md`). The fallback is
+     * `saturating`, whose preset is byte-for-byte the calibrated soak this flow
+     * has always run, so an unset environment changes nothing.
+     *
+     * Only the ramp curve and the byte gate are taken from the profile — the
+     * two knobs the level exists to move. {@link Concurrency} stays this flow's
+     * own constant: the profile's workload describes the CLI's per-wallet swap
+     * batching, which is not this campaign's phase-concurrency semantics.
+     */
+    const Profile = LoadProfile.resolve({
+      level: LoadProfile.resolveLevel(process.env, LoadLevel.saturating)
+    })
+
+    export const Level = Profile.level
+    export const InitialCount = Profile.ramp.initialCount
+    export const Multiplier = Profile.ramp.multiplier
+    export const MaxCount = Profile.ramp.maxCount
+    export const PhaseTimeoutMs = Profile.ramp.phaseTimeoutMs
+    /** Derived from the curve so funding/provisioning can never drift from it. */
+    export const MaxIterationCount = LoadProfile.iterationCount(Profile.ramp)
+    /**
+     * Raw envelope bytes counted as saturated. At `saturating` this is the
+     * engine's 95%-of-cap default (unchanged); lighter levels lower it so the
+     * campaign measures ITS OWN target rather than the protocol maximum.
+     */
+    export const SaturatedEnvelopeMinBytes = Profile.saturatedEnvelopeMinBytes
     export const Concurrency = 4
     /** Every ramp iteration runs two phases (ETH→WIRE, then WIRE→ETH). */
     export const PhasesPerIteration = 2

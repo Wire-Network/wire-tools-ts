@@ -1,5 +1,7 @@
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import {
+  LoadLevel,
+  LoadProfile,
   RunEvidenceEndpoint,
   type EnvelopeMetricRecord,
   type EnvelopeMetricSnapshot,
@@ -9,8 +11,6 @@ import {
 import {
   DuplexRequiredEndpoints,
   EstimatedAttestationBytes,
-  LoadLevel,
-  LoadProfile,
   measureDuplexIteration,
   OutboundSampleIntervalMs,
   startOutboundSampling

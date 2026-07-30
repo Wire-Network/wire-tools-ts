@@ -61,7 +61,10 @@ export async function collectOppPhaseMetrics(
       epochEnd: request.epochEnd,
       ...(request.saturationStrategy === undefined
         ? {}
-        : { saturationStrategy: request.saturationStrategy })
+        : { saturationStrategy: request.saturationStrategy }),
+      ...(request.saturatedEnvelopeMinBytes === undefined
+        ? {}
+        : { saturatedEnvelopeMinBytes: request.saturatedEnvelopeMinBytes })
     }),
     selectedKeys = new Set(metrics.envelopes.map(envelope => envelope.key)),
     selectedPairs = integrity.valid

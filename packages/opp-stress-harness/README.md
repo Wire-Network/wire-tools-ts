@@ -58,6 +58,14 @@ wire-opp-stress duplex-run --load-level heavy \
 (a ceiling below the starting count, a multiplier of 1, a ratio outside the
 range) fail before any chain call.
 
+The presets live in `@wireio/test-opp-stress` (`LoadProfile`), not in this
+package, because the in-cluster `flow-swap-stress-saturation` campaign resolves
+its ramp and byte gate from the SAME table — so a CLI run and the flow are
+tunable by one vocabulary. The flow selects its level from the uniform
+`WIRE_STRESS_LOAD_LEVEL` environment variable (defaulting to `saturating`, its
+calibrated soak); this CLI selects with `--load-level` (defaulting to
+`moderate`).
+
 `saturation` also accepts `--load-level` / `--byte-target-ratio` so its
 `saturated` flag is judged against the same gate the ramp uses.
 
