@@ -297,18 +297,17 @@ function toCredits(
   accumulator: Map<string, bigint>,
   divisor: bigint
 ): ImportSeedCreditResult {
-  const credits: ImportSeedCredit[] = []
+  const credits: ImportSeedCredit[] = [],
+    entries = [...accumulator.entries()].sort(([left], [right]) =>
+      left.localeCompare(right)
+    )
   let droppedDust = 0n
-  const keys = [...accumulator.keys()].sort()
-  for (const addrHex of keys) {
-    const total = accumulator.get(addrHex)!
-    const atomic = total / divisor // BigInt floor division
-    const dust = total - atomic * divisor
+  entries.forEach(([native_address, total]) => {
+    const wire_atomic = total / divisor,
+      dust = total - wire_atomic * divisor
     droppedDust += dust
-    if (atomic > 0n) {
-      credits.push({ native_address: addrHex, wire_atomic: atomic })
-    }
-  }
+    if (wire_atomic > 0n) credits.push({ native_address, wire_atomic })
+  })
   return { credits, droppedDust }
 }
 
