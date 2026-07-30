@@ -120,7 +120,7 @@ export function hasDistributionClaimBootstrapChain(
  */
 export function finalizeDistributionClaimBootstrap(
   core: DistributionClaimBootstrapCore,
-  contribution: DistributionClaimBootstrapContribution | null = null
+  contribution: DistributionClaimBootstrapContribution = null
 ): DistributionClaimBootstrapResult {
   const validatedCore = DistributionClaimBootstrapCoreSchema.parse(core),
     validatedContribution =

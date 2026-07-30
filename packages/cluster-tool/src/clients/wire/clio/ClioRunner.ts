@@ -104,12 +104,24 @@ export class ClioRunner {
     )
   }
 
-  /** Run exactly one clio subprocess, returning parsed JSON. */
+  /**
+   * Run exactly one clio subprocess and parse its JSON response.
+   *
+   * @param args - Clio arguments excluding configured endpoint options.
+   * @param options - JSON parsing and recording options.
+   * @returns The parsed response without transport retries.
+   */
   runOnce<T extends {}>(
     args: string[],
     options: ClioRunOptionsJson<T>
   ): Promise<T>
-  /** Run exactly one clio subprocess, returning raw stdout. */
+  /**
+   * Run exactly one clio subprocess and return its raw output.
+   *
+   * @param args - Clio arguments excluding configured endpoint options.
+   * @param options - Raw-output and recording options.
+   * @returns Raw stdout without transport retries.
+   */
   runOnce(args: string[], options?: ClioRunOptions<false>): Promise<string>
   async runOnce(
     args: string[],
