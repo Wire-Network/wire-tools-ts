@@ -72,6 +72,15 @@ export type OppEnvelopeSaturationWindow = {
   readonly timestampEndMs?: number
   /** Saturation classifier; defaults to rollover for generic OPP stress. */
   readonly saturationStrategy?: OppEnvelopeSaturationStrategy
+  /**
+   * Minimum raw envelope bytes classified as saturated under `byte_threshold`;
+   * defaults to {@link SaturatedEnvelopeMinBytes} (95% of the cap).
+   *
+   * Lowering it measures a PARTIAL load target: a campaign that ramps to half
+   * the cap sets this to half the cap, so `saturated` reports whether THAT
+   * campaign's target was met rather than the protocol maximum.
+   */
+  readonly saturatedEnvelopeMinBytes?: number
 }
 
 /** Decoded OPP envelope metric used to decide whether one phase rolled over. */

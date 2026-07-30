@@ -134,7 +134,11 @@ function metricsFor(
   return {
     saturated:
       health.kind === OppEnvelopeTelemetryHealthKind.Healthy &&
-      saturatedByStrategy(window.saturationStrategy ?? "rollover", envelopes),
+      saturatedByStrategy(
+        window.saturationStrategy ?? "rollover",
+        envelopes,
+        window.saturatedEnvelopeMinBytes ?? SaturatedEnvelopeMinBytes
+      ),
     solanaOversized: envelopes.some(
       envelope =>
         envelope.endpointsType ===
@@ -166,15 +170,14 @@ function malformedRecords(
 
 function saturatedByStrategy(
   strategy: OppEnvelopeSaturationStrategy,
-  envelopes: readonly OppEnvelopeMetric[]
+  envelopes: readonly OppEnvelopeMetric[],
+  minBytes: number
 ): boolean {
   switch (strategy) {
     case "rollover":
       return envelopes.some(envelope => envelope.epochEnvelopeIndex > 0)
     case "byte_threshold":
-      return envelopes.some(
-        envelope => envelope.byteSize >= SaturatedEnvelopeMinBytes
-      )
+      return envelopes.some(envelope => envelope.byteSize >= minBytes)
     default:
       return assertNever(strategy)
   }

@@ -3,7 +3,8 @@ import { APIClient, createClassicSigner, PrivateKey } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
 import {
   collectOppEnvelopeSaturationMetrics,
-  type OppEnvelopeSaturationWindow
+  type OppEnvelopeSaturationWindow,
+  type OppStressRampResult
 } from "@wireio/test-opp-stress"
 import { JsonRpcProvider, Wallet } from "ethers"
 import Yargs from "yargs"
@@ -21,11 +22,14 @@ import {
   EthLoadWalletFileVersion,
   formatWireAsset,
   fundEthWallet,
+  LoadLevel,
+  LoadProfile,
   LoadWalletFileVersion,
   provisionLoadWallet,
   readEthLoadWalletFile,
   readLoadWalletFile,
   resolveGasPrice,
+  runDuplexCampaign,
   runEthSwapLoad,
   runSwapLoad,
   saveEthLoadWalletFile,
@@ -43,7 +47,11 @@ const log = getLogger("wire-opp-stress"),
   ByteThresholdStrategy = "byte_threshold" as const,
   NodeOwnerKeyEnv = "WIRE_NODE_OWNER_KEY",
   EthFunderKeyEnv = "WIRE_ETH_FUNDER_KEY",
-  FailureExitCode = 2
+  FailureExitCode = 2,
+  /** Duplex mode is the WIRE↔Ethereum bridge, so both chain slugs are fixed. */
+  DuplexEthereumChain = "ETHEREUM",
+  DuplexWireChain = "WIRE",
+  DuplexWireToken = "WIRE"
 
 /** Emit a line of output on stdout. */
 function emit(text: string): void {
@@ -78,6 +86,118 @@ function wireSigningClient(url: string, privateKey: string): APIClient {
   })
 }
 
+/** The load-level flag plus every individual leaf override, as parsed. */
+interface LoadProfileArgs {
+  /** Named preset; validated by yargs `choices`. */
+  readonly loadLevel: string
+  /** Overrides the preset's fraction-of-cap byte target. */
+  readonly byteTargetRatio?: number
+  /** Overrides the ramp's first account count. */
+  readonly rampInitial?: number
+  /** Overrides the ramp's per-iteration account multiplier. */
+  readonly rampMultiplier?: number
+  /** Overrides the ramp's account ceiling. */
+  readonly rampMax?: number
+  /** Overrides the ramp's per-phase timeout. */
+  readonly rampPhaseTimeoutMs?: number
+  /** Overrides swaps each wallet performs per iteration. */
+  readonly swapsPerWallet?: number
+  /** Overrides maximum swaps in flight per direction. */
+  readonly concurrency?: number
+}
+
+/**
+ * Resolve a named preset with any individual leaf overrides layered on.
+ *
+ * Unset leaves arrive as `undefined` and fall through to the preset via
+ * `LoadProfile.resolve`'s destructuring defaults.
+ *
+ * @param args Parsed level and override flags.
+ * @returns The validated profile.
+ */
+function toLoadProfile(args: LoadProfileArgs): LoadProfile {
+  return LoadProfile.resolve({
+    level: args.loadLevel as LoadLevel,
+    byteTargetRatio: args.byteTargetRatio,
+    ramp: {
+      initialCount: args.rampInitial,
+      multiplier: args.rampMultiplier,
+      maxCount: args.rampMax,
+      phaseTimeoutMs: args.rampPhaseTimeoutMs
+    },
+    workload: {
+      swapsPerWallet: args.swapsPerWallet,
+      concurrency: args.concurrency
+    }
+  })
+}
+
+/** Register the `--load-level` flag and every individual override on a command. */
+function loadProfileOptions<T>(builder: Yargs.Argv<T>) {
+  return builder
+    .option("load-level", {
+      type: "string",
+      choices: Object.values(LoadLevel),
+      default: LoadProfile.DefaultLevel,
+      describe: "Named intensity preset: byte target + ramp curve + workload"
+    })
+    .option("byte-target-ratio", {
+      type: "number",
+      describe: "Override the preset's envelope-cap fraction, in (0, 1]"
+    })
+    .option("ramp-initial", {
+      type: "number",
+      describe: "Override the ramp's first account count"
+    })
+    .option("ramp-multiplier", {
+      type: "number",
+      describe: "Override the ramp's account multiplier between iterations"
+    })
+    .option("ramp-max", {
+      type: "number",
+      describe: "Override the ramp's account ceiling"
+    })
+    .option("ramp-phase-timeout-ms", {
+      type: "number",
+      describe: "Override the ramp's per-phase timeout"
+    })
+    .option("swaps-per-wallet", {
+      type: "number",
+      describe: "Override swaps each wallet performs per iteration"
+    })
+    .option("concurrency", {
+      type: "number",
+      describe: "Override maximum swaps in flight, per direction"
+    })
+}
+
+/** Render a duplex campaign's terminal status and per-endpoint outcome. */
+function formatDuplexResult(result: OppStressRampResult): string {
+  const iterations = result.iterations
+    .map(
+      iteration =>
+        `  iteration ${iteration.iterationIndex} @ ${iteration.accountCount} accounts: ${iteration.kind}`
+    )
+    .join("\n")
+  return (
+    `status ${result.status} after ${result.iterations.length} iterations\n` +
+    `${iterations}\n` +
+    `saturated: [${result.saturatedEndpoints.join(", ")}]\n` +
+    `missing:   [${result.missingEndpoints.join(", ")}]`
+  )
+}
+
+/** Render a resolved profile as a one-line summary. */
+function formatLoadProfile(profile: LoadProfile): string {
+  const { ramp, workload } = profile
+  return (
+    `level=${profile.level} byteTarget=${profile.saturatedEnvelopeMinBytes}B ` +
+    `(${profile.byteTargetRatio}) ramp=${ramp.initialCount}` +
+    `x${ramp.multiplier}->${ramp.maxCount} phaseTimeout=${ramp.phaseTimeoutMs}ms ` +
+    `swapsPerWallet=${workload.swapsPerWallet} concurrency=${workload.concurrency}`
+  )
+}
+
 void Yargs(hideBin(process.argv))
   .scriptName("wire-opp-stress")
   .command(
@@ -88,17 +208,93 @@ void Yargs(hideBin(process.argv))
         .option("url", { type: "string", demandOption: true, describe: "WIRE depot HTTP RPC URL" })
         .option("epoch-start", { type: "number", describe: "Inclusive epoch lower bound" })
         .option("epoch-end", { type: "number", describe: "Inclusive epoch upper bound" })
+        .option("load-level", {
+          type: "string",
+          choices: Object.values(LoadLevel),
+          default: LoadProfile.DefaultLevel,
+          describe: "Preset supplying the byte target the `saturated` flag is judged against"
+        })
+        .option("byte-target-ratio", {
+          type: "number",
+          describe: "Override the preset's envelope-cap fraction, in (0, 1]"
+        })
         .option("json", { type: "boolean", default: false, describe: "Emit the full metrics object as JSON" }),
     argv =>
       guard("saturation", async () => {
         const source = chainEnvelopeSource(apiChainEnvelopeReader(new APIClient({ url: argv.url }))),
+          profile = toLoadProfile(argv),
           window: OppEnvelopeSaturationWindow = {
             saturationStrategy: ByteThresholdStrategy,
+            saturatedEnvelopeMinBytes: profile.saturatedEnvelopeMinBytes,
             ...(argv.epochStart === undefined ? {} : { epochStart: argv.epochStart }),
             ...(argv.epochEnd === undefined ? {} : { epochEnd: argv.epochEnd })
           },
           metrics = await collectOppEnvelopeSaturationMetrics(source, window)
         emit(argv.json ? JSON.stringify(metrics) : formatSaturationSummary(metrics))
+      })
+  )
+  .command(
+    "duplex-run",
+    "Ramp BOTH bridge directions at once so a loaded epochIn meets a loaded outbound envelope",
+    builder =>
+      loadProfileOptions(
+        builder
+          .option("url", { type: "string", demandOption: true, describe: "WIRE depot HTTP RPC URL" })
+          .option("eth-url", { type: "string", demandOption: true, describe: "Ethereum outpost JSON-RPC URL" })
+          .option("wallet-file", { type: "string", demandOption: true, describe: "WIRE wallet set from wire-provision" })
+          .option("eth-wallet-file", { type: "string", demandOption: true, describe: "Ethereum wallet set from eth-provision" })
+          .option("reserve-manager", { type: "string", demandOption: true, describe: "Deployed ReserveManager contract address" })
+          .option("wire-amount", { type: "string", default: "100000000", describe: "Source WIRE per WIRE→ETH swap, 9-decimal base units" })
+          .option("wire-target-token", { type: "string", default: "ETH", describe: "Destination token slug on the Ethereum outpost" })
+          .option("wire-target-reserve", { type: "string", default: "PRIMARY", describe: "Destination reserve slug for the WIRE→ETH leg" })
+          .option("value-wei", { type: "string", default: "100000000000000000", describe: "Source ETH per ETH→WIRE swap in wei (msg.value)" })
+          .option("src-token", { type: "string", default: "ETH", describe: "Native source token slug for the ETH→WIRE leg" })
+          .option("src-reserve", { type: "string", default: "PRIMARY", describe: "Source reserve slug for the ETH→WIRE leg" })
+          .option("wire-target-reserve-inbound", { type: "string", default: "PRIMARY", describe: "Destination reserve slug on WIRE for the ETH→WIRE leg" })
+          .option("target-amount", { type: "string", default: "1", describe: "Minimum destination amount on both legs; must be > 0" })
+          .option("tolerance-bps", { type: "number", default: 500, describe: "Variance tolerance in basis points, both legs" })
+          .option("json", { type: "boolean", default: false, describe: "Emit the campaign result as JSON" })
+      ),
+    argv =>
+      guard("duplex-run", async () => {
+        const profile = toLoadProfile(argv),
+          targetAmount = BigInt(argv.targetAmount)
+        log.info(`duplex-run ${formatLoadProfile(profile)}`)
+        const result = await runDuplexCampaign({
+          profile,
+          wire: {
+            url: argv.url,
+            wallets: readLoadWalletFile(argv.walletFile),
+            route: {
+              chain: DuplexEthereumChain,
+              token: argv.wireTargetToken,
+              reserve: argv.wireTargetReserve
+            },
+            amounts: {
+              wireAmount: BigInt(argv.wireAmount),
+              targetAmount,
+              toleranceBps: argv.toleranceBps
+            }
+          },
+          ethereum: {
+            url: argv.ethUrl,
+            reserveManager: argv.reserveManager,
+            wallets: readEthLoadWalletFile(argv.ethWalletFile),
+            route: {
+              sourceToken: argv.srcToken,
+              sourceReserve: argv.srcReserve,
+              targetChain: DuplexWireChain,
+              targetToken: DuplexWireToken,
+              targetReserve: argv.wireTargetReserveInbound
+            },
+            amounts: {
+              valueWei: BigInt(argv.valueWei),
+              targetAmount,
+              toleranceBps: argv.toleranceBps
+            }
+          }
+        })
+        emit(argv.json ? JSON.stringify(result) : formatDuplexResult(result))
       })
   )
   .command(

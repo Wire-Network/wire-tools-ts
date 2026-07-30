@@ -18,11 +18,95 @@ load commands and the observability commands pair up by direction:
 |---|---|---|---|
 | `wire-run` | WIRE→outpost (`swapfromwire`) | depot→outpost | `saturation` (envelope byte size) |
 | `eth-run` | ETH→WIRE (`requestSwap`) | outpost→depot | `throughput` (envelope count/epoch) |
+| `duplex-run` | both, concurrently | both | built in (ramps until both saturate) |
 
 A **successful** ETH→WIRE swap produces no depot→outpost envelope (the depot pays
 from reserves directly), so ETH-sourced load is invisible to `saturation` — use
 `throughput`. Inbound bytes are cleared after consensus, so `throughput` reports
 inbound *counts*, not sizes.
+
+## Loading level
+
+Every load command that ramps takes `--load-level`, a named preset that sets
+**both** the envelope-size target and the ramp aggressiveness. The two are
+coupled on purpose: a byte target is only reachable at a matching account count
+(~300-byte attestations need ~210 landing in one epoch per direction to fill the
+64KB cap), so raising one without the other yields a ramp that can never satisfy
+its own criterion.
+
+| Level | Byte target | Ramp (initial ×mult → max) | Phase timeout | Swaps/wallet | Concurrency |
+|---|---|---|---|---|---|
+| `light` | 25% of cap (16,384 B) | 12 ×2 → 96 | 240s | 1 | 4 |
+| `moderate` *(default)* | 50% (32,768 B) | 24 ×2 → 192 | 360s | 1 | 8 |
+| `heavy` | 75% (49,152 B) | 48 ×2 → 384 | 480s | 1 | 12 |
+| `saturating` | 95% (62,259 B) | 48 ×2 → 512 | 480s | 2 | 16 |
+
+`saturating` deliberately reproduces the in-cluster `flow-swap-stress-saturation`
+campaign's calibrated gate and curve, so a CLI run and the flow judge saturation
+identically.
+
+Every derived knob is individually overridable on top of the preset:
+
+```bash
+wire-opp-stress duplex-run --load-level heavy \
+  --ramp-max 1024 --byte-target-ratio 0.85 --concurrency 24
+```
+
+`--byte-target-ratio` (0, 1] · `--ramp-initial` · `--ramp-multiplier` ·
+`--ramp-max` · `--ramp-phase-timeout-ms` · `--swaps-per-wallet` ·
+`--concurrency`. Unset flags keep the preset's value; invalid combinations
+(a ceiling below the starting count, a multiplier of 1, a ratio outside the
+range) fail before any chain call.
+
+`saturation` also accepts `--load-level` / `--byte-target-ratio` so its
+`saturated` flag is judged against the same gate the ramp uses.
+
+## Bidirectional load — `duplex-run`
+
+`wire-run` and `eth-run` each load one direction. `duplex-run` ramps **both at
+once**, so a fully loaded inbound epoch meets a fully loaded outbound queue
+inside a single transaction — the condition `OPPInbound.epochIn` actually faces,
+since it dispatches the inbound envelope and then drains the outbound queue via
+its inline `emitOutboundEnvelope`.
+
+```bash
+wire-opp-stress duplex-run \
+  --url http://<depot-rpc> --eth-url http://<eth-rpc> \
+  --wallet-file ./wire-wallets.json \
+  --eth-wallet-file ./eth-wallets.json \
+  --reserve-manager <ReserveManager address> \
+  --load-level heavy
+```
+
+Both wallet sets come from the existing provisioning commands (`wire-provision`
+and `eth-provision`); the ramp drives the first N wallets of each per iteration
+and doubles N until both directions saturate, one breaks, or the ceiling is hit.
+
+### The two halves are measured differently
+
+Only one direction's envelope size is observable un-privileged, and the report
+labels them accordingly:
+
+- **depot→outpost — MEASURED.** `outenvelopes` is polled every 2s *during* each
+  burst and distinct envelopes accumulate by storage key. Sampling is required,
+  not incidental: the table is one-deep per outpost, so a single read after the
+  burst would miss every envelope the depot already rotated past. Saturation is
+  the peak sampled size crossing the level's byte gate.
+- **outpost→depot — INFERRED.** The depot clears an inbound envelope's bytes
+  once consensus is reached, so its size can never be read back over RPC.
+  Saturation is inferred from accepted swaps per epoch against a ~300-byte
+  mean attestation size. Load spread thin across several epochs correctly fails
+  the gate — filling *one* `epochIn` is the point.
+
+### Expect the ETH-241 wedge at higher levels
+
+Driving both halves to saturation is precisely the case that wedged the r7 soak:
+a packed inbound envelope plus a backlogged outbound queue needed ~93.6M gas in
+one `epochIn` against a 30M block limit (`OPP.emitOutboundEnvelope` does an
+O(remaining) storage shift plus a full-envelope SSTORE). Against an unpatched
+Ethereum outpost, `heavy`/`saturating` duplex runs are expected to stall the
+epoch rather than report saturation — that is the defect reproducing, not a
+harness fault. Use `light`/`moderate` to exercise the path below the cliff.
 
 ## Observability (un-privileged, read-only)
 
