@@ -468,7 +468,7 @@ export class SwapStressSaturationScenario extends FlowScenario<Context> {
     ClusterBuildPhase.create<Context>(
       cluster,
       "RunCampaign",
-      `Ramp ${Constants.Ramp.InitialCount}→${Constants.Ramp.MaxCount} accounts (×${Constants.Ramp.Multiplier}) until both Ethereum OPP directions saturate`
+      `Ramp ${Constants.Ramp.InitialCount}→${Constants.Ramp.MaxCount} accounts (×${Constants.Ramp.Multiplier}) at load level '${Constants.Ramp.Level}' until both Ethereum OPP directions saturate against a ${Constants.Ramp.SaturatedEnvelopeMinBytes}-byte envelope target`
     ).push(
       CampaignSteps.planRunCampaign<Context>(
         Actor.User,
