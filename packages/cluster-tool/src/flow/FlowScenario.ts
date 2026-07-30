@@ -7,7 +7,7 @@ import { ClusterBuildContext } from "../orchestration/ClusterBuildContext.js"
 import type {
   DistributionClaimBootstrapContribution,
   DistributionClaimBootstrapCore
-} from "../orchestration/outputs/DistributionClaimBootstrap.js"
+} from "../orchestration/outputs/DistributionClaimBootstrapOutput.js"
 
 /**
  * A `flow-*` scenario — the definition of one E2E flow, run by {@link FlowCLI}
@@ -49,12 +49,12 @@ export abstract class FlowScenario<
    *
    * @param cluster - Resolved cluster and flow context.
    * @param core - Configured-file credits already prepared by the harness.
-   * @returns Additive flow credit sets, or `null`.
+   * @returns Additive flow credit sets.
    */
   prepareDistributionClaimBootstrap?(
     cluster: ClusterBuild<C>,
     core: DistributionClaimBootstrapCore
-  ): Promise<DistributionClaimBootstrapContribution | null>
+  ): Promise<DistributionClaimBootstrapContribution>
 
   /**
    * Register the scenario's phases onto the (bootstrap-loaded) `cluster` via

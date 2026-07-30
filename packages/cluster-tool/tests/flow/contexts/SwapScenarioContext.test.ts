@@ -109,21 +109,25 @@ interface TableFixtures {
 
 /** A context whose `wire.getSysioContract` serves the fixtures (reads only). */
 function newContext(fixtures: TableFixtures): SwapScenarioContext {
-  const context = new SwapScenarioContext(fixtureConfig(), getLogger("swap-ctx-test"))
+  const context = new SwapScenarioContext(
+    fixtureConfig(),
+    getLogger("swap-ctx-test")
+  )
   const table = <Row>(rows: Row[]) => ({
-    query: async () => ({ rows, more: false })
+    query: async () => ({ rows, more: false, nextKey: null })
   })
   const clientByName = {
-    [SysioContractName.reserv]: { tables: { reserves: table(fixtures.reserves) } },
+    [SysioContractName.reserv]: {
+      tables: { reserves: table(fixtures.reserves) }
+    },
     [SysioContractName.uwrit]: {
       tables: { uwreqs: table(fixtures.uwreqs), locks: table(fixtures.locks) }
     }
   }
-  jest
-    .spyOn(context, "wire", "get")
-    .mockReturnValue({
-      getSysioContract: (name: SysioContracts.SysioContractName) => clientByName[name]
-    } as WireClient)
+  jest.spyOn(context, "wire", "get").mockReturnValue({
+    getSysioContract: (name: SysioContracts.SysioContractName) =>
+      clientByName[name]
+  } as WireClient)
   return context
 }
 
@@ -158,7 +162,11 @@ describe("SwapScenarioContext", () => {
       })
     ],
     locks: [
-      lockRow({ lock_id: 1, uwreq_id: 7, chain_code: { value: EthereumChain } }),
+      lockRow({
+        lock_id: 1,
+        uwreq_id: 7,
+        chain_code: { value: EthereumChain }
+      }),
       lockRow({ lock_id: 2, uwreq_id: 7, chain_code: { value: SolanaChain } }),
       lockRow({ lock_id: 3, uwreq_id: 9 })
     ]
@@ -217,7 +225,10 @@ describe("SwapScenarioContext", () => {
 
   describe("uwreq", () => {
     it("finds the request by its (source, destination) chain pair", async () => {
-      const request = await newContext(fixtures).uwreq(EthereumChain, SolanaChain)
+      const request = await newContext(fixtures).uwreq(
+        EthereumChain,
+        SolanaChain
+      )
       expect(request?.id).toBe(7)
     })
     it("is empty when the depot has not created the request", async () => {

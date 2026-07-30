@@ -1,6 +1,5 @@
 import Assert from "node:assert"
-import { getLogger } from "@wireio/shared"
-import { SysioContracts } from "@wireio/sdk-core"
+
 import {
   ClusterBuildPhase,
   DistributionClaimBootstrapResultKey,
@@ -21,6 +20,9 @@ import {
   type DistributionClaimBootstrapContribution,
   type DistributionClaimBootstrapCore
 } from "@wireio/cluster-tool"
+import { getLogger } from "@wireio/shared"
+import { SysioContracts } from "@wireio/sdk-core"
+
 import { EmissionsSoakScenarioConstants as Constants } from "./EmissionsSoakScenarioConstants.js"
 import {
   ClaimantIdentitiesKey,
@@ -138,7 +140,7 @@ export class EmissionsSoakScenario extends FlowScenario {
       )
       creditSets.push({
         chain: Constants.EthereumChain,
-        source: DistributionClaimBootstrapSource.Synthetic,
+        source: DistributionClaimBootstrapSource.synthetic,
         credits: conversion.credits,
         droppedDust: conversion.droppedDust
       })
@@ -154,7 +156,7 @@ export class EmissionsSoakScenario extends FlowScenario {
       )
       creditSets.push({
         chain: Constants.SolanaChain,
-        source: DistributionClaimBootstrapSource.Synthetic,
+        source: DistributionClaimBootstrapSource.synthetic,
         credits: conversion.credits,
         droppedDust: conversion.droppedDust
       })
@@ -162,7 +164,7 @@ export class EmissionsSoakScenario extends FlowScenario {
     if (identities.length > 0) {
       creditSets.push({
         chain: Constants.EthereumChain,
-        source: DistributionClaimBootstrapSource.Controlled,
+        source: DistributionClaimBootstrapSource.controlled,
         credits: identities.map(identity => ({
           native_address: identity.addressHex,
           wire_atomic: Constants.ControlledStakerCreditAtomic

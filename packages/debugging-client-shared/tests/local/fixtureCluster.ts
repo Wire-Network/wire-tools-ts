@@ -100,8 +100,8 @@ export function makeFixtureCluster(): FixtureCluster {
     terminateWindowMs: null,
     ethereumPath: "",
     solanaPath: "",
-    ethereumBootstrapJsonFile: null,
-    solanaBootstrapJsonFile: null,
+    ethereum: { bootstrapJsonFile: null },
+    solana: { bootstrapJsonFile: null },
     bind: {
       kiod: { address: "127.0.0.1", port: 0 },
       nodeop: {

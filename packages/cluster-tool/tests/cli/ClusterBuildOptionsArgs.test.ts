@@ -347,8 +347,8 @@ describe("toClusterBuildOptions reverse parse", () => {
       "ethereum-bootstrap-json-file": "inputs/ethereum.json",
       "solana-bootstrap-json-file": "inputs/solana.json"
     })
-    expect(options.ethereumBootstrapJsonFile).toBe("inputs/ethereum.json")
-    expect(options.solanaBootstrapJsonFile).toBe("inputs/solana.json")
+    expect(options.ethereum?.bootstrapJsonFile).toBe("inputs/ethereum.json")
+    expect(options.solana?.bootstrapJsonFile).toBe("inputs/solana.json")
   })
 
   it("coerces boolean flags", () => {

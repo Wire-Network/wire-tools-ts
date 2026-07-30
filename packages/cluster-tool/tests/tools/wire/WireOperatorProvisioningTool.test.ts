@@ -16,7 +16,9 @@ import { type ExternalOutpostConfig } from "@wireio/cluster-tool-shared"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 
 /** A minimal parent that captures pushed children (no context needed for structure). */
-function fakeParent<C extends ClusterBuildContext = ClusterBuildContext>(): ClusterBuildParent<C> {
+function fakeParent<
+  C extends ClusterBuildContext = ClusterBuildContext
+>(): ClusterBuildParent<C> {
   const parent: ClusterBuildParent<C> = {
     context: {} as C,
     push(..._children: ClusterBuildPhaseBase<C>[]) {
@@ -34,10 +36,26 @@ function firstPhaseStepKinds(group: ClusterBuildPhaseGroup): string[] {
 
 describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
   it("returns a parallel PhaseGroup with one Phase per operator", () => {
-    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "Create ops", "provision ops", {}, [
-      { label: "batchopaaaa", type: OperatorType.BATCH, ethereumHdIndex: 1, isBootstrapped: true },
-      { label: "uwritaaaaaa", type: OperatorType.UNDERWRITER, ethereumHdIndex: 2, isBootstrapped: false }
-    ])
+    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(
+      fakeParent(),
+      "Create ops",
+      "provision ops",
+      {},
+      [
+        {
+          label: "batchopaaaa",
+          type: OperatorType.BATCH,
+          ethereumHdIndex: 1,
+          isBootstrapped: true
+        },
+        {
+          label: "uwritaaaaaa",
+          type: OperatorType.UNDERWRITER,
+          ethereumHdIndex: 2,
+          isBootstrapped: false
+        }
+      ]
+    )
     expect(group.config.parallel).toBe(true)
     expect(group.children.length).toBe(2)
     expect(group.children.map(child => child.name)).toEqual([
@@ -68,9 +86,20 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
   })
 
   it("a bootstrap batch/uw Phase (no funding) sponsors the account, authex-links both chains, registers", () => {
-    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "ops", "ops", {}, [
-      { label: "batchopaaaa", type: OperatorType.BATCH, ethereumHdIndex: 1, isBootstrapped: true }
-    ])
+    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(
+      fakeParent(),
+      "ops",
+      "ops",
+      {},
+      [
+        {
+          label: "batchopaaaa",
+          type: OperatorType.BATCH,
+          ethereumHdIndex: 1,
+          isBootstrapped: true
+        }
+      ]
+    )
     const kinds = firstPhaseStepKinds(group)
     expect(kinds).toEqual([
       "WireOperatorProvisioningTool.MaterializeIdentityInput",
@@ -82,16 +111,22 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
   })
 
   it("a flow op WITH funding includes fund + airdrop steps", () => {
-    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "flow", "flow", {}, [
-      {
-        label: "depositoraaa",
-        type: OperatorType.BATCH,
-        ethereumHdIndex: 35,
-        isBootstrapped: false,
-        fundEthereumWei: 10n ** 18n,
-        airdropSolanaLamports: 5_000_000_000n
-      }
-    ])
+    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(
+      fakeParent(),
+      "flow",
+      "flow",
+      {},
+      [
+        {
+          label: "depositoraaa",
+          type: OperatorType.BATCH,
+          ethereumHdIndex: 35,
+          isBootstrapped: false,
+          fundEthereumWei: 10n ** 18n,
+          airdropSolanaLamports: 5_000_000_000n
+        }
+      ]
+    )
     const kinds = firstPhaseStepKinds(group)
     expect(kinds).toContain("WireOperatorProvisioningTool.FundEthereumInput")
     expect(kinds).toContain("WireOperatorProvisioningTool.AirdropSolanaInput")
@@ -156,7 +191,8 @@ function fakeSponsorContext(emitRow = true) {
               ...nonces.map(nonce => ({ nonce, username: GeneratedAccount }))
             ]
           : [],
-        more: false
+        more: false,
+        nextKey: null
       }))
   jest
     .spyOn(ctx.wire, "getSysioContract")
@@ -247,7 +283,9 @@ describe("WireOperatorProvisioningTool.runSponsoredAccountCreation", () => {
   it("propagates a failed sponsors read instead of treating it as 'no row yet'", async () => {
     const { ctx, sponsorsQuery } = fakeSponsorContext()
     sponsorsQuery.mockRejectedValueOnce(
-      new Error("Contract Table Query Exception: Table sponsors is not specified in the ABI")
+      new Error(
+        "Contract Table Query Exception: Table sponsors is not specified in the ABI"
+      )
     )
     await expect(
       WireOperatorProvisioningTool.runSponsoredAccountCreation(
@@ -334,10 +372,16 @@ describe("planOperatorAccountProvisioning — outpost-chain funding gate (H3)", 
       ethereum: { addressFile: "outpost-addrs.json", abiFiles: [], chainId: 1 },
       solana: { idlFile: "idl.json" }
     })
-    expect(kinds).not.toContain("WireOperatorProvisioningTool.FundEthereumInput")
-    expect(kinds).not.toContain("WireOperatorProvisioningTool.AirdropSolanaInput")
+    expect(kinds).not.toContain(
+      "WireOperatorProvisioningTool.FundEthereumInput"
+    )
+    expect(kinds).not.toContain(
+      "WireOperatorProvisioningTool.AirdropSolanaInput"
+    )
     // every depot-side step still runs.
-    expect(kinds).toContain("WireOperatorProvisioningTool.SponsoredAccountCreationInput")
+    expect(kinds).toContain(
+      "WireOperatorProvisioningTool.SponsoredAccountCreationInput"
+    )
     expect(kinds).toContain("WireOperatorProvisioningTool.RegistrationInput")
   })
 })

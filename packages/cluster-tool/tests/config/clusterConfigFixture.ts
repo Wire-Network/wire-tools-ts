@@ -46,8 +46,8 @@ export const PersistedFixture: ClusterConfig = {
   terminateWindowMs: null,
   ethereumPath: "/eth",
   solanaPath: "/sol",
-  ethereumBootstrapJsonFile: null,
-  solanaBootstrapJsonFile: null,
+  ethereum: { bootstrapJsonFile: null },
+  solana: { bootstrapJsonFile: null },
   bind: {
     kiod: { address: Address, port: BindConfigProvider.DefaultKiod },
     nodeop: {
