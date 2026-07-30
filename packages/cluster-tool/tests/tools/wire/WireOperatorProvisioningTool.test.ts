@@ -14,7 +14,9 @@ import {
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 
 /** A minimal parent that captures pushed children (no context needed for structure). */
-function fakeParent<C extends ClusterBuildContext = ClusterBuildContext>(): ClusterBuildParent<C> {
+function fakeParent<
+  C extends ClusterBuildContext = ClusterBuildContext
+>(): ClusterBuildParent<C> {
   const parent: ClusterBuildParent<C> = {
     context: {} as C,
     push(..._children: ClusterBuildPhaseBase<C>[]) {
@@ -25,17 +27,37 @@ function fakeParent<C extends ClusterBuildContext = ClusterBuildContext>(): Clus
 }
 
 /** The `input.kind` of every step in a group's first phase. */
-function firstPhaseStepKinds(group: { children: ReadonlyArray<ClusterBuildPhaseBase> }): string[] {
+function firstPhaseStepKinds(group: {
+  children: ReadonlyArray<ClusterBuildPhaseBase>
+}): string[] {
   const phase = group.children[0] as ClusterBuildPhase
-  return phase.steps.map(step => (step.input as { kind?: string } | null)?.kind ?? "")
+  return phase.steps.map(
+    step => (step.input as { kind?: string } | null)?.kind ?? ""
+  )
 }
 
 describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
   it("returns a parallel PhaseGroup with one Phase per operator", () => {
-    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "Create ops", "provision ops", {}, [
-      { label: "batchopaaaa", type: OperatorType.BATCH, ethereumHdIndex: 1, isBootstrapped: true },
-      { label: "uwritaaaaaa", type: OperatorType.UNDERWRITER, ethereumHdIndex: 2, isBootstrapped: false }
-    ])
+    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(
+      fakeParent(),
+      "Create ops",
+      "provision ops",
+      {},
+      [
+        {
+          label: "batchopaaaa",
+          type: OperatorType.BATCH,
+          ethereumHdIndex: 1,
+          isBootstrapped: true
+        },
+        {
+          label: "uwritaaaaaa",
+          type: OperatorType.UNDERWRITER,
+          ethereumHdIndex: 2,
+          isBootstrapped: false
+        }
+      ]
+    )
     expect(group.config.parallel).toBe(true)
     expect(group.children.length).toBe(2)
     expect(group.children.map(child => child.name)).toEqual([
@@ -45,9 +67,19 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
   })
 
   it("a producer Phase materializes from its node + creates the account with ITS key (no authex/register)", () => {
-    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "Producers", "producers", {}, [
-      { label: "defproducera", type: OperatorType.PRODUCER, producerNodeIndex: 0 }
-    ])
+    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(
+      fakeParent(),
+      "Producers",
+      "producers",
+      {},
+      [
+        {
+          label: "defproducera",
+          type: OperatorType.PRODUCER,
+          producerNodeIndex: 0
+        }
+      ]
+    )
     const kinds = firstPhaseStepKinds(group)
     expect(kinds).toEqual([
       "WireOperatorProvisioningTool.MaterializeProducerInput",
@@ -61,9 +93,20 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
   })
 
   it("a bootstrap batch/uw Phase (no funding) sponsors the account, authex-links both chains, registers", () => {
-    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "ops", "ops", {}, [
-      { label: "batchopaaaa", type: OperatorType.BATCH, ethereumHdIndex: 1, isBootstrapped: true }
-    ])
+    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(
+      fakeParent(),
+      "ops",
+      "ops",
+      {},
+      [
+        {
+          label: "batchopaaaa",
+          type: OperatorType.BATCH,
+          ethereumHdIndex: 1,
+          isBootstrapped: true
+        }
+      ]
+    )
     const kinds = firstPhaseStepKinds(group)
     expect(kinds).toEqual([
       "WireOperatorProvisioningTool.MaterializeIdentityInput",
@@ -75,16 +118,22 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
   })
 
   it("a flow op WITH funding includes fund + airdrop steps", () => {
-    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "flow", "flow", {}, [
-      {
-        label: "depositoraaa",
-        type: OperatorType.BATCH,
-        ethereumHdIndex: 35,
-        isBootstrapped: false,
-        fundEthereumWei: 10n ** 18n,
-        airdropSolanaLamports: 5_000_000_000n
-      }
-    ])
+    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(
+      fakeParent(),
+      "flow",
+      "flow",
+      {},
+      [
+        {
+          label: "depositoraaa",
+          type: OperatorType.BATCH,
+          ethereumHdIndex: 35,
+          isBootstrapped: false,
+          fundEthereumWei: 10n ** 18n,
+          airdropSolanaLamports: 5_000_000_000n
+        }
+      ]
+    )
     const kinds = firstPhaseStepKinds(group)
     expect(kinds).toContain("WireOperatorProvisioningTool.FundEthereumInput")
     expect(kinds).toContain("WireOperatorProvisioningTool.AirdropSolanaInput")
@@ -106,12 +155,15 @@ function seededKeyStore(): ClusterKeyStore {
 }
 
 /** A fake typed-contract ctx: `roa` sponsors query + newuser invoke, `opreg` regoperator invoke. */
-function fakeSponsorContext(sponsorRowsPerQuery: Array<Array<{ nonce: string; username: string }>>) {
+function fakeSponsorContext(
+  sponsorRowsPerQuery: Array<Array<{ nonce: string; username: string }>>
+) {
   const newuserInvoke = jest.fn().mockResolvedValue({}),
     regoperatorInvoke = jest.fn().mockResolvedValue({}),
     sponsorsQuery = jest.fn(async () => ({
       rows: sponsorRowsPerQuery.shift() ?? [],
-      more: false
+      more: false,
+      nextKey: null
     })),
     keyStore = seededKeyStore(),
     ctx = {
@@ -137,7 +189,10 @@ describe("WireOperatorProvisioningTool.runSponsoredAccountCreation", () => {
     ])
     await WireOperatorProvisioningTool.runSponsoredAccountCreation(
       ctx,
-      { kind: "WireOperatorProvisioningTool.SponsoredAccountCreationInput", label: OperatorLabel },
+      {
+        kind: "WireOperatorProvisioningTool.SponsoredAccountCreationInput",
+        label: OperatorLabel
+      },
       new AbortController().signal
     )
     expect(newuserInvoke).toHaveBeenCalledTimes(1)
@@ -164,11 +219,16 @@ describe("WireOperatorProvisioningTool.runSponsoredAccountCreation", () => {
     ])
     await WireOperatorProvisioningTool.runSponsoredAccountCreation(
       ctx,
-      { kind: "WireOperatorProvisioningTool.SponsoredAccountCreationInput", label: OperatorLabel },
+      {
+        kind: "WireOperatorProvisioningTool.SponsoredAccountCreationInput",
+        label: OperatorLabel
+      },
       new AbortController().signal
     )
     expect(newuserInvoke).not.toHaveBeenCalled()
-    expect(keyStore.assertOperator(OperatorLabel).account).toBe(GeneratedAccount)
+    expect(keyStore.assertOperator(OperatorLabel).account).toBe(
+      GeneratedAccount
+    )
   })
 
   it("treats a rejected sponsors read (never-written KV table) as no-row and still creates", async () => {
@@ -176,15 +236,22 @@ describe("WireOperatorProvisioningTool.runSponsoredAccountCreation", () => {
       [{ nonce: OperatorLabel, username: GeneratedAccount }]
     ])
     sponsorsQuery.mockRejectedValueOnce(
-      new Error("Contract Table Query Exception: Table sponsors is not specified in the ABI")
+      new Error(
+        "Contract Table Query Exception: Table sponsors is not specified in the ABI"
+      )
     )
     await WireOperatorProvisioningTool.runSponsoredAccountCreation(
       ctx,
-      { kind: "WireOperatorProvisioningTool.SponsoredAccountCreationInput", label: OperatorLabel },
+      {
+        kind: "WireOperatorProvisioningTool.SponsoredAccountCreationInput",
+        label: OperatorLabel
+      },
       new AbortController().signal
     )
     expect(newuserInvoke).toHaveBeenCalledTimes(1)
-    expect(keyStore.assertOperator(OperatorLabel).account).toBe(GeneratedAccount)
+    expect(keyStore.assertOperator(OperatorLabel).account).toBe(
+      GeneratedAccount
+    )
   })
 
   it("throws when no sponsors row exists for the nonce after newuser", async () => {
@@ -192,7 +259,10 @@ describe("WireOperatorProvisioningTool.runSponsoredAccountCreation", () => {
     await expect(
       WireOperatorProvisioningTool.runSponsoredAccountCreation(
         ctx,
-        { kind: "WireOperatorProvisioningTool.SponsoredAccountCreationInput", label: OperatorLabel },
+        {
+          kind: "WireOperatorProvisioningTool.SponsoredAccountCreationInput",
+          label: OperatorLabel
+        },
         new AbortController().signal
       )
     ).rejects.toThrow(/no sponsors row for nonce "batchopaaaa"/)
@@ -266,10 +336,16 @@ describe("planOperatorAccountProvisioning — outpost-chain funding gate (H3)", 
       ethereum: { addressFile: "outpost-addrs.json", abiFiles: [], chainId: 1 },
       solana: { idlFile: "idl.json" }
     })
-    expect(kinds).not.toContain("WireOperatorProvisioningTool.FundEthereumInput")
-    expect(kinds).not.toContain("WireOperatorProvisioningTool.AirdropSolanaInput")
+    expect(kinds).not.toContain(
+      "WireOperatorProvisioningTool.FundEthereumInput"
+    )
+    expect(kinds).not.toContain(
+      "WireOperatorProvisioningTool.AirdropSolanaInput"
+    )
     // every depot-side step still runs.
-    expect(kinds).toContain("WireOperatorProvisioningTool.SponsoredAccountCreationInput")
+    expect(kinds).toContain(
+      "WireOperatorProvisioningTool.SponsoredAccountCreationInput"
+    )
     expect(kinds).toContain("WireOperatorProvisioningTool.RegistrationInput")
   })
 })

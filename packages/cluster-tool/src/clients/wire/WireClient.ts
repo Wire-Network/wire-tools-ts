@@ -2,9 +2,18 @@ import Assert from "node:assert"
 import { promises as Fsp } from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+
 import { flatten } from "lodash"
 import { match } from "ts-pattern"
-import { getLogger, isNumber, isObject, isString } from "@wireio/shared"
+
+import {
+  getLogger,
+  guard as guardAsync,
+  isNumber,
+  isObject,
+  isString,
+  NestedError
+} from "@wireio/shared"
 import {
   API,
   APIClient,
@@ -122,8 +131,18 @@ export class WireClient {
       }),
       invoke: (data, options) =>
         this.invoke(account, action, data, authorize(options), options),
+      invokeOnce: (data, options) =>
+        this.invokeOnce(account, action, data, authorize(options), options),
       invokeViaFile: (data, options) =>
-        this.invokeViaFile(account, action, data, authorize(options), options)
+        this.invokeViaFile(account, action, data, authorize(options), options),
+      invokeViaFileOnce: (data, options) =>
+        this.invokeViaFileOnce(
+          account,
+          action,
+          data,
+          authorize(options),
+          options
+        )
     }
   }
 
@@ -159,16 +178,54 @@ export class WireClient {
       label = `${account}::${action}`,
       send = () =>
         this.runner.run<API.v1.SendTransactionResponse>(
-          ["push", "action", account, action, JSON.stringify(data), "-p", auth, "-j"],
-          { json: true, retryTransport: options.retryTransport }
+          [
+            "push",
+            "action",
+            account,
+            action,
+            JSON.stringify(data),
+            "-p",
+            auth,
+            "-j"
+          ],
+          { json: true }
         )
     if (options.skipWait) return send()
-    return this.withFinality(
-      label,
-      send,
-      options.finality,
-      options.retryFinality
-    )
+    return this.withFinality(label, send, options.finality)
+  }
+
+  /**
+   * Invoke a single action without transport or finality resends.
+   *
+   * The owning orchestration Step must reconcile an ambiguous outcome before
+   * deciding whether the action may be attempted again.
+   */
+  async invokeOnce<Action extends {}>(
+    account: string,
+    action: string,
+    data: Action,
+    authorization: PermissionLevelType[],
+    options: WireClient.InvocationOptions = {}
+  ): Promise<API.v1.SendTransactionResponse> {
+    const [{ actor, permission }] = authorization,
+      auth = `${actor}@${permission}`,
+      label = `${account}::${action}`,
+      send = () =>
+        this.runner.runOnce<API.v1.SendTransactionResponse>(
+          [
+            "push",
+            "action",
+            account,
+            action,
+            JSON.stringify(data),
+            "-p",
+            auth,
+            "-j"
+          ],
+          { json: true }
+        )
+    if (options.skipWait) return send()
+    return this.withFinalityOnce(label, send, options.finality)
   }
 
   /** Multi-action tx; variadic + flatten. Waits by default. */
@@ -201,33 +258,65 @@ export class WireClient {
   ): Promise<API.v1.SendTransactionResponse> {
     const label = `${account}::${action} (file)`,
       body = { actions: [{ account, name: action, authorization, data }] },
-      send = async () => {
-        const directory = await Fsp.mkdtemp(
-          Path.join(Os.tmpdir(), "wire-clio-transaction-")
-        )
-        const file = Path.join(directory, "transaction.json")
-        try {
-          await Fsp.writeFile(file, JSON.stringify(body), {
-            encoding: "utf8",
-            flag: "wx",
-            mode: 0o600
-          })
-          return await this.runner.run<API.v1.SendTransactionResponse>(
+      send = () =>
+        this.sendViaFile(body, file =>
+          this.runner.run<API.v1.SendTransactionResponse>(
             ["push", "transaction", "-j", file],
-            { json: true, retryTransport: options.retryTransport }
+            { json: true }
           )
-        } finally {
-          await Fsp.unlink(file).catch(() => {})
-          await Fsp.rmdir(directory).catch(() => {})
-        }
-      }
+        )
     if (options.skipWait) return send()
-    return this.withFinality(
-      label,
-      send,
-      options.finality,
-      options.retryFinality
-    )
+    return this.withFinality(label, send, options.finality)
+  }
+
+  /**
+   * Invoke through a temporary transaction file without transport or finality
+   * resends. The owning Step must reconcile any ambiguous finality outcome.
+   */
+  async invokeViaFileOnce<Action extends {}>(
+    account: string,
+    action: string,
+    data: Action,
+    authorization: PermissionLevelType[],
+    options: WireClient.InvocationOptions = {}
+  ): Promise<API.v1.SendTransactionResponse> {
+    const label = `${account}::${action} (file)`,
+      body = { actions: [{ account, name: action, authorization, data }] },
+      send = () =>
+        this.sendViaFile(body, file =>
+          this.runner.runOnce<API.v1.SendTransactionResponse>(
+            ["push", "transaction", "-j", file],
+            { json: true }
+          )
+        )
+    if (options.skipWait) return send()
+    return this.withFinalityOnce(label, send, options.finality)
+  }
+
+  private async sendViaFile(
+    body: { actions: unknown[] },
+    send: (file: string) => Promise<API.v1.SendTransactionResponse>
+  ): Promise<API.v1.SendTransactionResponse> {
+    const directory = await Fsp.mkdtemp(
+        Path.join(Os.tmpdir(), "wire-clio-transaction-")
+      ),
+      file = Path.join(directory, "transaction.json")
+    try {
+      await Fsp.writeFile(file, JSON.stringify(body), {
+        encoding: "utf8",
+        flag: "wx",
+        mode: 0o600
+      })
+      return await send(file)
+    } finally {
+      await guardAsync(
+        () => Fsp.rm(directory, { recursive: true, force: true }),
+        error =>
+          log.warn(
+            `Unable to remove temporary clio transaction directory ${directory}: ${errorText(error)}`
+          )
+      )
+    }
   }
 
   /** Deploy + set ABI, waits for finality; idempotent redeploy is a settled no-op. */
@@ -270,22 +359,16 @@ export class WireClient {
   activateFeature(
     featureDigest: string
   ): Promise<API.v1.SendTransactionResponse> {
-    return this.invoke(
-      "sysio",
-      "activate",
-      { feature_digest: featureDigest },
-      [{ actor: "sysio", permission: "active" }]
-    )
+    return this.invoke("sysio", "activate", { feature_digest: featureDigest }, [
+      { actor: "sysio", permission: "active" }
+    ])
   }
 
   /** Mark `account` privileged (sysio.bios::setpriv), waiting for irreversibility. */
   setPriv(account: string): Promise<API.v1.SendTransactionResponse> {
-    return this.invoke(
-      "sysio",
-      "setpriv",
-      { account, is_priv: 1 },
-      [{ actor: "sysio", permission: "active" }]
-    )
+    return this.invoke("sysio", "setpriv", { account, is_priv: 1 }, [
+      { actor: "sysio", permission: "active" }
+    ])
   }
 
   /**
@@ -321,7 +404,9 @@ export class WireClient {
       `get_supported_protocol_features failed: ${response.statusText}`
     )
     const features = await response.json()
-    return Array.isArray(features) ? (features as WireClient.ProtocolFeature[]) : []
+    return Array.isArray(features)
+      ? (features as WireClient.ProtocolFeature[])
+      : []
   }
 
   // ── RPC getters (v6 `.value` unwrap retained) ────────────────────────────
@@ -350,9 +435,19 @@ export class WireClient {
       ...(query.upperBound != null ? { upper_bound: query.upperBound } : {})
     } as any)
     const rows = (result.rows ?? []).map((row: any) =>
-      row != null && typeof row === "object" && "value" in row ? row.value : row
-    )
-    return { rows: rows as Row[], more: result.more ?? false }
+        row != null && typeof row === "object" && "value" in row
+          ? row.value
+          : row
+      ),
+      nextKey =
+        result.next_key == null || result.next_key === ""
+          ? null
+          : String(result.next_key)
+    return {
+      rows: rows as Row[],
+      more: Boolean(result.more),
+      nextKey
+    }
   }
 
   /** Real WIRE token balance (raw 9-decimal base units), or 0n when no row. */
@@ -371,31 +466,47 @@ export class WireClient {
   // Convenience getters delegate to the typed contract-table accessor
   // (prefer-typed-contract-table-accessors.md) — never a raw getTableRows.
   getOperators() {
-    return this.getSysioContract(SysioContractName.opreg).tables.operators.query()
+    return this.getSysioContract(
+      SysioContractName.opreg
+    ).tables.operators.query()
   }
   getWithdrawQueue() {
-    return this.getSysioContract(SysioContractName.opreg).tables.wtdwqueue.query()
+    return this.getSysioContract(
+      SysioContractName.opreg
+    ).tables.wtdwqueue.query()
   }
   getEpochState() {
-    return this.getSysioContract(SysioContractName.epoch).tables.epochstate.query()
+    return this.getSysioContract(
+      SysioContractName.epoch
+    ).tables.epochstate.query()
   }
   getEpochConfig() {
-    return this.getSysioContract(SysioContractName.epoch).tables.epochcfg.query()
+    return this.getSysioContract(
+      SysioContractName.epoch
+    ).tables.epochcfg.query()
   }
   getChains() {
     return this.getSysioContract(SysioContractName.chains).tables.chains.query()
   }
   getMessages() {
-    return this.getSysioContract(SysioContractName.msgch).tables.messages.query()
+    return this.getSysioContract(
+      SysioContractName.msgch
+    ).tables.messages.query()
   }
   getEnvelopes() {
-    return this.getSysioContract(SysioContractName.msgch).tables.envelopes.query()
+    return this.getSysioContract(
+      SysioContractName.msgch
+    ).tables.envelopes.query()
   }
   getAttestations() {
-    return this.getSysioContract(SysioContractName.msgch).tables.attestations.query()
+    return this.getSysioContract(
+      SysioContractName.msgch
+    ).tables.attestations.query()
   }
   getOutboundEnvelopes() {
-    return this.getSysioContract(SysioContractName.msgch).tables.outenvelopes.query()
+    return this.getSysioContract(
+      SysioContractName.msgch
+    ).tables.outenvelopes.query()
   }
   getUwRequests() {
     return this.getSysioContract(SysioContractName.uwrit).tables.uwreqs.query()
@@ -417,7 +528,9 @@ export class WireClient {
   }
 
   /** Fetch a block by number/id via /v1/chain/get_block. */
-  async getBlock(blockNumOrId: number | string): Promise<WireClient.GetBlockResponse> {
+  async getBlock(
+    blockNumOrId: number | string
+  ): Promise<WireClient.GetBlockResponse> {
     const resp = await fetch(`${this.config.nodeopUrl}/v1/chain/get_block`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -471,28 +584,39 @@ export class WireClient {
   private withFinality<T extends { transaction_id?: string }>(
     label: string,
     send: () => Promise<T>,
-    finality: WireClient.FinalityType = WireClient.DefaultFinality,
-    retryFinality = true
+    finality: WireClient.FinalityType = WireClient.DefaultFinality
   ): Promise<T> {
-    return retry(
-      async () => {
-        const result = await send(),
-          transactionId = WireClient.getTransactionId(result)
-        if (isString(transactionId) && isNotEmpty(transactionId))
-          await this.assertFinality(
-            transactionId,
-            label,
-            finality,
-            scaleTimeoutMs(WireClient.DefaultTimeoutMs)
-          )
-        return result
-      },
-      {
-        maxAttempts: retryFinality ? WireClient.FinalityMaxAttempts : 1,
-        delayMs: WireClient.FinalityRetryDelayMs,
-        label
-      }
-    )
+    return retry(() => this.sendAndAssertFinality(label, send, finality), {
+      maxAttempts: WireClient.FinalityMaxAttempts,
+      delayMs: WireClient.FinalityRetryDelayMs,
+      label
+    })
+  }
+
+  /** Push once and observe finality once without resending the transaction. */
+  private withFinalityOnce<T extends { transaction_id?: string }>(
+    label: string,
+    send: () => Promise<T>,
+    finality: WireClient.FinalityType = WireClient.DefaultFinality
+  ): Promise<T> {
+    return this.sendAndAssertFinality(label, send, finality)
+  }
+
+  private async sendAndAssertFinality<T extends { transaction_id?: string }>(
+    label: string,
+    send: () => Promise<T>,
+    finality: WireClient.FinalityType
+  ): Promise<T> {
+    const result = await send(),
+      transactionId = WireClient.getTransactionId(result)
+    if (isString(transactionId) && isNotEmpty(transactionId))
+      await this.assertFinality(
+        transactionId,
+        label,
+        finality,
+        scaleTimeoutMs(WireClient.DefaultTimeoutMs)
+      )
+    return result
   }
 
   /** Wait for `transactionId` to reach `finality`, throwing if forked out (drives re-push). */
@@ -507,7 +631,11 @@ export class WireClient {
       blockNum = await this.waitForTransactionInBlock(transactionId, timeoutMs)
       if (
         finality === WireClient.FinalityType.irreversible &&
-        !(await this.waitForTransactionIrreversible(transactionId, blockNum, timeoutMs))
+        !(await this.waitForTransactionIrreversible(
+          transactionId,
+          blockNum,
+          timeoutMs
+        ))
       )
         throw new Error("transaction did not reach irreversible finality")
     } catch (error) {
@@ -528,21 +656,23 @@ export class WireClient {
     transactionId: string,
     observedBlockNum: number | null = null
   ): Promise<boolean> {
-    const locatedBlockNum = await this.locateTransactionBlock(transactionId)
-    const candidates = [
-      ...new Set(
-        [locatedBlockNum, observedBlockNum].filter(
-          (blockNum): blockNum is number => blockNum != null
+    const locatedBlockNum = await this.locateTransactionBlock(transactionId),
+      candidates = [
+        ...new Set(
+          [locatedBlockNum, observedBlockNum].filter(
+            (blockNum): blockNum is number => blockNum != null
+          )
         )
+      ],
+      lib = (await this.getInfo()).last_irreversible_block_num,
+      blocks = await Promise.all(
+        candidates
+          .filter(blockNum => blockNum <= lib)
+          .map(blockNum => this.getBlock(blockNum))
       )
-    ]
-    const lib = (await this.getInfo()).last_irreversible_block_num
-    for (const blockNum of candidates) {
-      if (blockNum > lib) continue
-      const block = await this.getBlock(blockNum)
-      if (WireClient.blockContainsTransaction(block, transactionId)) return true
-    }
-    return false
+    return blocks.some(block =>
+      WireClient.blockContainsTransaction(block, transactionId)
+    )
   }
 
   /** Poll until a tx appears in a block; returns its block number. */
@@ -594,8 +724,10 @@ export class WireClient {
   }
 
   /** Resolve the block a tx currently sits at, or null (forked out / not applied). */
-  private async locateTransactionBlock(transactionId: string): Promise<number | null> {
-    const trace = await this.getTransaction(transactionId).catch(() => null)
+  private async locateTransactionBlock(
+    transactionId: string
+  ): Promise<number | null> {
+    const trace = await this.getTransaction(transactionId)
     return isObject(trace) && isNumber(trace.block_num) && trace.block_num > 0
       ? trace.block_num
       : null
@@ -614,13 +746,16 @@ export class WireClient {
         const lib = (await this.getInfo()).last_irreversible_block_num
         if (lib >= height) {
           const block = await this.getBlock(height)
-          if (WireClient.blockContainsTransaction(block, transactionId)) return true
+          if (WireClient.blockContainsTransaction(block, transactionId))
+            return true
           const relocated = await this.locateTransactionBlock(transactionId)
           if (relocated === null) return false
           height = relocated
         }
       } catch (err) {
-        log.debug(`waitForTransactionIrreversible(${transactionId}) poll error: ${errorText(err)}`)
+        log.debug(
+          `waitForTransactionIrreversible(${transactionId}) poll error: ${errorText(err)}`
+        )
       }
       await delay(WireClient.PollIntervalMs)
     }
@@ -643,33 +778,27 @@ export namespace WireClient {
     authorization?: PermissionLevelType[]
     skipWait?: boolean
     finality?: FinalityType
-    /**
-     * Resend after finality observation failure. Disable for additive or
-     * irreversible actions and reconcile their state instead. Default `true`.
-     */
-    retryFinality?: boolean
-    /**
-     * Retry connection-level clio failures. Disable when a resend could repeat
-     * an additive or irreversible action. Default `true`.
-     */
-    retryTransport?: boolean
   }
-  /** Finality failure retaining the transaction identity for safe reconciliation. */
-  export class TransactionFinalityError extends Error {
+  /** Finality failure retaining transaction identity for Step reconciliation. */
+  export class TransactionFinalityError extends NestedError {
     constructor(
       readonly label: string,
       readonly transactionId: string,
       readonly observedBlockNum: number | null,
-      options: ErrorOptions
+      options: { cause?: unknown } = {}
     ) {
       super(
         `${label}: transaction ${transactionId} did not reach irreversible finality`,
-        options
+        {
+          cause: options.cause,
+          context: { label, transactionId, observedBlockNum }
+        }
       )
       this.name = "TransactionFinalityError"
     }
   }
-  export type ContractOf<Name extends SysioContractName> = SysioContractMapping[Name]
+  export type ContractOf<Name extends SysioContractName> =
+    SysioContractMapping[Name]
   export type ActionName<Name extends SysioContractName> = Extract<
     keyof ContractOf<Name>["actions"],
     string
@@ -710,10 +839,26 @@ export namespace WireClient {
       options?: InvocationOptions
     ): Promise<API.v1.SendTransactionResponse>
     /**
+     * Invoke without transport or finality resends. The owning Step must
+     * reconcile ambiguous outcomes.
+     */
+    invokeOnce(
+      data: ActionData<Name, Action>,
+      options?: InvocationOptions
+    ): Promise<API.v1.SendTransactionResponse>
+    /**
      * Invoke through a temporary transaction file so bulk data never enters a
      * process argument, debug log, or report extra.
      */
     invokeViaFile(
+      data: ActionData<Name, Action>,
+      options?: InvocationOptions
+    ): Promise<API.v1.SendTransactionResponse>
+    /**
+     * Invoke through a temporary transaction file without transport or
+     * finality resends. The owning Step must reconcile ambiguous outcomes.
+     */
+    invokeViaFileOnce(
       data: ActionData<Name, Action>,
       options?: InvocationOptions
     ): Promise<API.v1.SendTransactionResponse>
@@ -727,12 +872,16 @@ export namespace WireClient {
   export interface TableQueryResult<Row> {
     rows: Row[]
     more: boolean
+    /** Lower bound for the next page, or `null` when the result is complete. */
+    nextKey: string | null
   }
   export interface TableQuery<
     Name extends SysioContractName,
     Table extends TableName<Name>
   > {
-    query(args?: TableQueryArgs): Promise<TableQueryResult<TableRow<Name, Table>>>
+    query(
+      args?: TableQueryArgs
+    ): Promise<TableQueryResult<TableRow<Name, Table>>>
   }
   export type SysioContractClient<Name extends SysioContractName> = {
     readonly actions: {

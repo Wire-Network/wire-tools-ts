@@ -36,22 +36,31 @@
 // 500KB transaction envelope.
 
 import Fs from "node:fs/promises"
+
 import { PublicKey } from "@solana/web3.js"
-import { ChainKind } from "@wireio/opp-typescript-models"
-import { SysioContracts } from "@wireio/sdk-core"
 import { z } from "zod"
+
+import { ChainKind } from "@wireio/opp-typescript-models"
+import { NestedError } from "@wireio/shared"
+import { SysioContracts } from "@wireio/sdk-core"
+
 import { abiEnumValue } from "../../utils/enumUtils.js"
 
 // ---------------------------------------------------------------------------
 // Chain kinds — the proto `ChainKind` subset importseed accepts (see
 // proto/sysio/opp/types/types.proto). importseed rejects unknown values.
 // ---------------------------------------------------------------------------
+/** Runtime schema for the proto `ChainKind` subset accepted by `importseed`. */
+export const ImportSeedChainKindSchema = z.union([
+  z.literal(ChainKind.EVM),
+  z.literal(ChainKind.SVM)
+])
 /** The chain kinds `importseed` accepts — a proto `ChainKind` subset. */
-export type ImportSeedChainKind = ChainKind.EVM | ChainKind.SVM
+export type ImportSeedChainKind = z.infer<typeof ImportSeedChainKindSchema>
 
 enum IndexBalanceSection {
-  Purchasers = "purchasers",
-  Stakers = "stakers"
+  purchasers = "purchasers",
+  stakers = "stakers"
 }
 
 /** Credits per `importseed` call — fits the 150ms / 500KB transaction envelope. */
@@ -116,20 +125,28 @@ export type IndexBalanceDump = z.infer<typeof IndexBalanceDumpSchema>
 // ---------------------------------------------------------------------------
 // importseed action payload shape
 // ---------------------------------------------------------------------------
-export interface ImportSeedCredit {
+/** Runtime schema for one converted `sysio.dclaim::importseed` credit. */
+export const ImportSeedCreditSchema = z.object({
   /**
    * Raw native address as a hex string (no `0x` prefix). The dclaim ABI
    * consumes this as `bytes`. ETH = 20 bytes, SOL = 32 bytes.
    */
-  native_address: string
+  native_address: z.string().regex(/^[0-9a-f]+$/),
   /** WIRE amount in atomic units (9 decimals). */
-  wire_atomic: bigint
-}
+  wire_atomic: z.bigint().positive()
+})
+/** One converted `sysio.dclaim::importseed` credit — the shape of {@link ImportSeedCreditSchema}. */
+export type ImportSeedCredit = z.infer<typeof ImportSeedCreditSchema>
 
-export interface ImportSeedBatch {
-  chain: ImportSeedChainKind
-  credits: ImportSeedCredit[]
-}
+/** Runtime schema for one transaction-sized `sysio.dclaim::importseed` batch. */
+export const ImportSeedBatchSchema = z.object({
+  /** Native chain shared by every credit in the batch. */
+  chain: ImportSeedChainKindSchema,
+  /** Converted WIRE-atomic credits carried by this action. */
+  credits: z.array(ImportSeedCreditSchema)
+})
+/** One transaction-sized `sysio.dclaim::importseed` batch — the shape of {@link ImportSeedBatchSchema}. */
+export type ImportSeedBatch = z.infer<typeof ImportSeedBatchSchema>
 
 /** Deterministic credits and conversion statistics before transaction batching. */
 export interface ImportSeedConversion {
@@ -160,11 +177,9 @@ function ethDecode(addr: string): Uint8Array {
   if (stripped.length !== 40 || !/^[0-9a-f]+$/.test(stripped)) {
     throw new Error(`invalid ethereum address: ${r(addr)}`)
   }
-  const out = new Uint8Array(20)
-  for (let i = 0; i < 20; i++) {
-    out[i] = parseInt(stripped.slice(i * 2, i * 2 + 2), 16)
-  }
-  return out
+  return Uint8Array.from({ length: 20 }, (_, index) =>
+    parseInt(stripped.slice(index * 2, index * 2 + 2), 16)
+  )
 }
 
 /** Decode a base58 Solana address to 32 raw bytes via @solana/web3.js. */
@@ -205,9 +220,7 @@ const CHAIN_CONFIG: Record<ImportSeedChainKind, ChainConfig> = {
 
 /** Lowercase-hex of raw bytes (no `0x` prefix). */
 function toHex(bytes: Uint8Array): string {
-  let s = ""
-  for (const b of bytes) s += b.toString(16).padStart(2, "0")
-  return s
+  return [...bytes].map(byte => byte.toString(16).padStart(2, "0")).join("")
 }
 
 function toBigInt(v: string | number | undefined, fallback = 0n): bigint {
@@ -249,16 +262,16 @@ function accumulate(
     }
     return toHex(b)
   }
-
-  for (const row of data.purchasers ?? []) {
+  const { purchasers = [], stakers = [] } = data
+  purchasers.forEach(row => {
     const key = decodeOrThrow(row.address)
     acc.set(key, (acc.get(key) ?? 0n) + toBigInt(row.totalPretokens))
-  }
-  for (const row of data.stakers ?? []) {
+  })
+  stakers.forEach(row => {
     const key = decodeOrThrow(row.address)
     const owed = toBigInt(row.pretokenYield) - toBigInt(row.yieldClaimed, 0n)
     if (owed > 0n) acc.set(key, (acc.get(key) ?? 0n) + owed)
-  }
+  })
   return acc
 }
 
@@ -273,26 +286,30 @@ function toCredits(
   accumulator: Map<string, bigint>,
   divisor: bigint
 ): { credits: ImportSeedCredit[]; droppedDust: bigint } {
-  const credits: ImportSeedCredit[] = []
-  let droppedDust = 0n
-  const keys = [...accumulator.keys()].sort()
-  for (const addrHex of keys) {
-    const total = accumulator.get(addrHex)!
-    const atomic = total / divisor // BigInt floor division
-    const dust = total - atomic * divisor
-    droppedDust += dust
-    if (atomic > 0n) {
-      credits.push({ native_address: addrHex, wire_atomic: atomic })
-    }
-  }
-  return { credits, droppedDust }
+  return [...accumulator.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .reduce<{ credits: ImportSeedCredit[]; droppedDust: bigint }>(
+      (result, [native_address, total]) => {
+        const wire_atomic = total / divisor,
+          dust = total - wire_atomic * divisor
+        return {
+          credits:
+            wire_atomic > 0n
+              ? [...result.credits, { native_address, wire_atomic }]
+              : result.credits,
+          droppedDust: result.droppedDust + dust
+        }
+      },
+      { credits: [], droppedDust: 0n }
+    )
 }
 
 function chunked<T>(arr: T[], size: number): T[][] {
-  if (size <= 0) throw new Error(`batch size must be > 0; got ${size}`)
-  const out: T[][] = []
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
-  return out
+  if (!Number.isSafeInteger(size) || size <= 0)
+    throw new Error(`batch size must be a positive safe integer; got ${size}`)
+  return Array.from({ length: Math.ceil(arr.length / size) }, (_, index) =>
+    arr.slice(index * size, (index + 1) * size)
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -329,28 +346,34 @@ export async function loadIndexBalanceDump(
   try {
     contents = await Fs.readFile(file, "utf8")
   } catch (error) {
-    throw new Error(
-      `${label} bootstrap file ${r(file)}: unable to read: ${errorMessage(error)}`,
-      { cause: error }
-    )
+    throw new NestedError(`${label} bootstrap file could not be read`, {
+      cause: error,
+      context: { file, chain }
+    })
   }
 
   let value: unknown
   try {
     value = JSON.parse(contents)
   } catch (error) {
-    throw new Error(
-      `${label} bootstrap file ${r(file)}: invalid JSON: ${errorMessage(error)}`,
-      { cause: error }
-    )
+    throw new NestedError(`${label} bootstrap file contains invalid JSON`, {
+      cause: error,
+      context: { file, chain }
+    })
   }
 
   const parsed = IndexBalanceDumpSchema.safeParse(value)
   if (!parsed.success) {
     const issue = parsed.error.issues[0]
-    throw new Error(
-      `${label} bootstrap file ${r(file)}: ${formatIssuePath(issue.path)}: ${issue.message}`
-    )
+    throw new NestedError(`${label} bootstrap file validation failed`, {
+      cause: parsed.error,
+      context: {
+        file,
+        chain,
+        field: formatIssuePath(issue.path),
+        issue: issue.message
+      }
+    })
   }
 
   const dump = parsed.data
@@ -425,40 +448,38 @@ export function mergeImportSeedCredits(
   }
   const expectedHexLength = cfg.addrLen * 2
   const merged = new Map<string, bigint>()
-  for (const credits of creditSets) {
-    for (const credit of credits) {
-      if (
-        credit.native_address.length !== expectedHexLength ||
-        !/^[0-9a-f]+$/.test(credit.native_address)
-      ) {
-        throw new Error(
-          `${chainLabel(chain)} importseed native_address must be ${cfg.addrLen} bytes of lowercase hex without 0x; got ${r(credit.native_address)}`
-        )
-      }
-      if (credit.wire_atomic <= 0n) {
-        throw new Error(
-          `importseed wire_atomic must be positive for ${r(credit.native_address)}; got ${credit.wire_atomic}`
-        )
-      }
-      merged.set(
-        credit.native_address,
-        (merged.get(credit.native_address) ?? 0n) + credit.wire_atomic
+  creditSets.flat().forEach(credit => {
+    if (
+      credit.native_address.length !== expectedHexLength ||
+      !/^[0-9a-f]+$/.test(credit.native_address)
+    ) {
+      throw new Error(
+        `${chainLabel(chain)} importseed native_address must be ${cfg.addrLen} bytes of lowercase hex without 0x; got ${r(credit.native_address)}`
       )
     }
-  }
+    if (credit.wire_atomic <= 0n) {
+      throw new Error(
+        `importseed wire_atomic must be positive for ${r(credit.native_address)}; got ${credit.wire_atomic}`
+      )
+    }
+    merged.set(
+      credit.native_address,
+      (merged.get(credit.native_address) ?? 0n) + credit.wire_atomic
+    )
+  })
   const credits = [...merged.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([native_address, wire_atomic]) => ({
       native_address,
       wire_atomic
     }))
-  for (const credit of credits) {
+  credits.forEach(credit => {
     if (credit.wire_atomic > MaxImportSeedWireAtomic) {
       throw new Error(
         `${chainLabel(chain)} importseed wire_atomic exceeds asset maximum for ${r(credit.native_address)}; got ${credit.wire_atomic}, maximum ${MaxImportSeedWireAtomic}`
       )
     }
-  }
+  })
   return credits
 }
 
@@ -532,15 +553,22 @@ function validateDumpAddresses(
           )
         }
       } catch (error) {
-        throw new Error(
-          `${chainLabel(chain)} bootstrap file ${r(file)}: ${section}[${index}].address: ${errorMessage(error)}`,
-          { cause: error }
+        throw new NestedError(
+          `${chainLabel(chain)} bootstrap file address validation failed`,
+          {
+            cause: error,
+            context: {
+              file,
+              chain,
+              field: `${section}[${index}].address`
+            }
+          }
         )
       }
     })
   }
-  validateRows(data.purchasers ?? [], IndexBalanceSection.Purchasers)
-  validateRows(data.stakers ?? [], IndexBalanceSection.Stakers)
+  validateRows(data.purchasers ?? [], IndexBalanceSection.purchasers)
+  validateRows(data.stakers ?? [], IndexBalanceSection.stakers)
 }
 
 function formatIssuePath(path: PropertyKey[]): string {
@@ -550,8 +578,4 @@ function formatIssuePath(path: PropertyKey[]): string {
     const property = String(segment)
     return result.length === 0 ? property : `${result}.${property}`
   }, "")
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

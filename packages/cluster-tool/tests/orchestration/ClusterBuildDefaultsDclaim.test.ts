@@ -30,16 +30,17 @@ function findPhaseOrNull(
   children: ReadonlyArray<ClusterBuildPhaseBase>,
   name: string
 ): ClusterBuildPhase {
-  for (const child of children) {
-    if (child.name === name && "steps" in child) {
-      return child as ClusterBuildPhase
-    }
-    if ("children" in child) {
-      const found = findPhaseOrNull((child as PhaseGroupLike).children, name)
-      if (found != null) return found
-    }
-  }
-  return null
+  return (
+    children
+      .map(child => {
+        if (child.name === name && "steps" in child)
+          return child as ClusterBuildPhase
+        return "children" in child
+          ? findPhaseOrNull((child as PhaseGroupLike).children, name)
+          : null
+      })
+      .find(phase => phase != null) ?? null
+  )
 }
 
 describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
@@ -88,7 +89,7 @@ describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
         creditSets: [
           {
             chain: ChainKind.EVM,
-            source: DistributionClaimBootstrapSource.Synthetic,
+            source: DistributionClaimBootstrapSource.synthetic,
             credits: [],
             droppedDust: 0n
           }
@@ -114,7 +115,7 @@ describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
     const cluster = await ClusterBuildDefaults.create(
       {
         ...baseOptions(),
-        ethereumBootstrapJsonFile: file
+        ethereum: { bootstrapJsonFile: file }
       },
       undefined,
       async (_cluster, core) => {
@@ -123,7 +124,7 @@ describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
           creditSets: [
             {
               chain: ChainKind.EVM,
-              source: DistributionClaimBootstrapSource.Controlled,
+              source: DistributionClaimBootstrapSource.controlled,
               credits: [{ native_address: "aa".repeat(20), wire_atomic: 3n }],
               droppedDust: 0n
             }
@@ -137,7 +138,7 @@ describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
     expect(result.chains[0].batches[0].credits).toEqual([
       { native_address: "aa".repeat(20), wire_atomic: 5n }
     ])
-    expect(cluster.config.ethereumBootstrapJsonFile).toBe(Path.resolve(file))
+    expect(cluster.config.ethereum.bootstrapJsonFile).toBe(Path.resolve(file))
     expect(
       findPhase(cluster.children, "DistributionClaims").steps.map(
         step => step.name
@@ -161,7 +162,7 @@ describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
     await expect(
       ClusterBuildDefaults.create({
         ...baseOptions(),
-        ethereumBootstrapJsonFile: file
+        ethereum: { bootstrapJsonFile: file }
       })
     ).rejects.toThrow(/Ethereum bootstrap file .*zero eligible credits/)
   })

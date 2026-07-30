@@ -3,7 +3,8 @@ import type { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { WireReserveTool } from "@wireio/cluster-tool/tools/wire"
 
 const { SysioContractName } = SysioContracts
-const { BpsTotal, cpOutput, splitWireFee, swapquote, varianceDrift } = WireReserveTool
+const { BpsTotal, cpOutput, splitWireFee, swapquote, varianceDrift } =
+  WireReserveTool
 
 /** The old dev-cluster fee the recorded SwapFeeMath assertions were baselined on. */
 const LegacySwapFeeBps = 10
@@ -26,7 +27,7 @@ const EthereumChain = 100,
 /** A WireClient stub whose reserv/uwrit typed accessors serve the fixtures. */
 function stubWire(reserves: QuoteReserveFixture[], feeBps = 30): WireClient {
   const table = <Row>(rows: Row[]) => ({
-    query: async () => ({ rows, more: false })
+    query: async () => ({ rows, more: false, nextKey: null })
   })
   const clientByName = {
     [SysioContractName.reserv]: { tables: { reserves: table(reserves) } },
@@ -37,7 +38,8 @@ function stubWire(reserves: QuoteReserveFixture[], feeBps = 30): WireClient {
     }
   }
   return {
-    getSysioContract: (name: SysioContracts.SysioContractName) => clientByName[name]
+    getSysioContract: (name: SysioContracts.SysioContractName) =>
+      clientByName[name]
   } as WireClient
 }
 
@@ -45,7 +47,9 @@ describe("WireReserveTool", () => {
   describe("cpOutput", () => {
     it("matches the depot's constant-product floor math", () => {
       // 1e10 books, 1e8 in → floor(1e10 × 1e8 / (1e10 + 1e8)) = 99_009_900
-      expect(cpOutput(10_000_000_000n, 10_000_000_000n, 100_000_000n)).toBe(99_009_900n)
+      expect(cpOutput(10_000_000_000n, 10_000_000_000n, 100_000_000n)).toBe(
+        99_009_900n
+      )
     })
     it("is 0n when any side is empty", () => {
       expect(cpOutput(0n, 10n, 5n)).toBe(0n)
@@ -63,7 +67,14 @@ describe("WireReserveTool", () => {
       expect(fee.emissionsShare).toBe(49_505n)
     })
     it("holds the exact-integer invariants across amounts", () => {
-      const amounts = [1n, 7n, 1_000_000n, 99_009_900n, 100_969_310n, 80_000_000_000n]
+      const amounts = [
+        1n,
+        7n,
+        1_000_000n,
+        99_009_900n,
+        100_969_310n,
+        80_000_000_000n
+      ]
       amounts.forEach(amount => {
         const fee = splitWireFee(amount, LegacySwapFeeBps)
         expect(fee.rewardShare + fee.emissionsShare).toBe(fee.fee)
@@ -115,27 +126,41 @@ describe("WireReserveTool", () => {
 
     it("is identity at exactly 9 decimals (lamports)", () => {
       expect(WireReserveTool.toDepot(10_000_000_000n, 9)).toBe(10_000_000_000n)
-      expect(WireReserveTool.fromDepot(10_000_000_000n, 9)).toBe(10_000_000_000n)
+      expect(WireReserveTool.fromDepot(10_000_000_000n, 9)).toBe(
+        10_000_000_000n
+      )
     })
 
     it("downscales an above-cap token (18-dec wei → ÷1e9, floored)", () => {
-      expect(WireReserveTool.toDepot(1_500_000_000_999_999_999n, 18)).toBe(1_500_000_000n)
+      expect(WireReserveTool.toDepot(1_500_000_000_999_999_999n, 18)).toBe(
+        1_500_000_000n
+      )
     })
 
     it("fromDepot upscales an above-cap token (18-dec wei → ×1e9)", () => {
-      expect(WireReserveTool.fromDepot(4_754_411_063n, 18)).toBe(4_754_411_063_000_000_000n)
+      expect(WireReserveTool.fromDepot(4_754_411_063n, 18)).toBe(
+        4_754_411_063_000_000_000n
+      )
     })
 
     it("rejects a zero / non-integer decimals argument", () => {
-      expect(() => WireReserveTool.toDepot(1n, 0)).toThrow(/invalid native decimals/)
-      expect(() => WireReserveTool.fromDepot(1n, 1.5)).toThrow(/invalid native decimals/)
-      expect(() => WireReserveTool.depotPrecision(-1)).toThrow(/invalid native decimals/)
+      expect(() => WireReserveTool.toDepot(1n, 0)).toThrow(
+        /invalid native decimals/
+      )
+      expect(() => WireReserveTool.fromDepot(1n, 1.5)).toThrow(
+        /invalid native decimals/
+      )
+      expect(() => WireReserveTool.depotPrecision(-1)).toThrow(
+        /invalid native decimals/
+      )
     })
   })
 
   describe("readFeeBps", () => {
     it("reads the live uwconfig singleton", async () => {
-      await expect(WireReserveTool.readFeeBps(stubWire([], 30))).resolves.toBe(30)
+      await expect(WireReserveTool.readFeeBps(stubWire([], 30))).resolves.toBe(
+        30
+      )
     })
   })
 
@@ -179,7 +204,9 @@ describe("WireReserveTool", () => {
         to: solanaTriple
       })
       // wireIntermediate = cp(1e10, 1e10, 1e8) = 99_009_900; then cp again.
-      expect(quote).toBe(cpOutput(10_000_000_000n, 10_000_000_000n, 99_009_900n))
+      expect(quote).toBe(
+        cpOutput(10_000_000_000n, 10_000_000_000n, 99_009_900n)
+      )
     })
     it("to-WIRE consults only the source book", async () => {
       const quote = await swapquote(stubWire(reserves), {
@@ -199,7 +226,11 @@ describe("WireReserveTool", () => {
     })
     it("WIRE → WIRE passes through 1:1", async () => {
       await expect(
-        swapquote(stubWire([]), { from: wireTriple, fromAmount: 42n, to: wireTriple })
+        swapquote(stubWire([]), {
+          from: wireTriple,
+          fromAmount: 42n,
+          to: wireTriple
+        })
       ).resolves.toBe(42n)
     })
     it("is 0n when a required reserve row is missing", async () => {

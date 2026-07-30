@@ -393,14 +393,18 @@ export function buildOptionShape(
       "path to an ExternalOutpostConfig JSON (ETH + SOL outposts already run on real chains)"
     ),
     // ── distribution-claim bootstrap inputs ──
-    ethereumBootstrapJsonFile: optionalLeaf(
-      OptionLeafType.string,
-      "path to the Ethereum prelaunch balance JSON imported into sysio.dclaim"
-    ),
-    solanaBootstrapJsonFile: optionalLeaf(
-      OptionLeafType.string,
-      "path to the Solana prelaunch balance JSON imported into sysio.dclaim"
-    ),
+    ethereum: {
+      bootstrapJsonFile: optionalLeaf(
+        OptionLeafType.string,
+        "path to the Ethereum prelaunch balance JSON imported into sysio.dclaim"
+      )
+    },
+    solana: {
+      bootstrapJsonFile: optionalLeaf(
+        OptionLeafType.string,
+        "path to the Solana prelaunch balance JSON imported into sysio.dclaim"
+      )
+    },
     // ── signature provider (how the cluster's own signing keys are handled) ──
     signatureProvider: {
       type: choicesLeaf(

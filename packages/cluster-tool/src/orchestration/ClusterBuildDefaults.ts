@@ -1,29 +1,30 @@
 import Assert from "node:assert"
+
+import { LAMPORTS_PER_SOL } from "@solana/web3.js"
+import { range } from "lodash"
+
 import type {
   ClusterConfig,
   CollateralRequirement
 } from "@wireio/cluster-tool-shared"
-import { range } from "lodash"
-import { LAMPORTS_PER_SOL } from "@solana/web3.js"
 import {
   ChainKind,
   NodeOwnerTier,
   OperatorType
 } from "@wireio/opp-typescript-models"
-import { type Logger } from "../logging/Logger.js"
 import { SysioContracts } from "@wireio/sdk-core"
+
 import { Constants } from "../Constants.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
+import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
+import { type Logger } from "../logging/Logger.js"
+import { Report } from "../report/Report.js"
+import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
 import {
   readNodeOwner,
   readNodeOwnerReg
 } from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
-import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
-import { verifyStep } from "./StepTools.js"
-import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
-
-import { Report } from "../report/Report.js"
 import { OperatorDaemonTool } from "../tools/wire/OperatorDaemonTool.js"
 import {
   convertImportSeedCredits,
@@ -31,19 +32,21 @@ import {
   type ImportSeedChainKind
 } from "../tools/wire/WireDclaimSeedTool.js"
 import { WireOperatorProvisioningTool } from "../tools/wire/WireOperatorProvisioningTool.js"
+import { mapSeries } from "../utils/asyncUtils.js"
 import { ClusterBuild } from "./ClusterBuild.js"
 import { ClusterBuildContext } from "./ClusterBuildContext.js"
 import { ClusterBuildPhase } from "./ClusterBuildPhase.js"
 import { ClusterBuildPhaseGroup } from "./ClusterBuildPhaseGroup.js"
-import { Steps } from "./steps/index.js"
-import { ContractSteps } from "./steps/ContractSteps.js"
 import {
   DistributionClaimBootstrapResultKey,
   DistributionClaimBootstrapSource,
   finalizeDistributionClaimBootstrap,
   type DistributionClaimBootstrapContribution,
   type DistributionClaimBootstrapCore
-} from "./outputs/DistributionClaimBootstrap.js"
+} from "./outputs/DistributionClaimBootstrapOutput.js"
+import { ContractSteps } from "./steps/ContractSteps.js"
+import { Steps } from "./steps/index.js"
+import { verifyStep } from "./StepTools.js"
 
 const { SysioContractName } = SysioContracts
 const { DeployMode } = ContractSteps
@@ -129,7 +132,7 @@ export namespace ClusterBuildDefaults {
     prepareDistributionClaimBootstrap?: (
       cluster: ClusterBuild<C>,
       core: DistributionClaimBootstrapCore
-    ) => Promise<DistributionClaimBootstrapContribution | null>
+    ) => Promise<DistributionClaimBootstrapContribution>
   ): Promise<ClusterBuild<C>> {
     const cluster = await ClusterBuild.create<C>(options, [], createContext)
     const core = await loadConfiguredDistributionClaimBootstrap(cluster.config)
@@ -937,33 +940,38 @@ export namespace ClusterBuildDefaults {
     config: ClusterConfig
   ): Promise<DistributionClaimBootstrapCore> {
     const configuredInputs: readonly ConfiguredDistributionClaimInput[] = [
-      {
-        chain: ChainKind.EVM,
-        file: config.ethereumBootstrapJsonFile
-      },
-      {
-        chain: ChainKind.SVM,
-        file: config.solanaBootstrapJsonFile
-      }
+      ...(config.ethereum.bootstrapJsonFile == null
+        ? []
+        : [
+            {
+              chain: ChainKind.EVM,
+              file: config.ethereum.bootstrapJsonFile
+            } satisfies ConfiguredDistributionClaimInput
+          ]),
+      ...(config.solana.bootstrapJsonFile == null
+        ? []
+        : [
+            {
+              chain: ChainKind.SVM,
+              file: config.solana.bootstrapJsonFile
+            } satisfies ConfiguredDistributionClaimInput
+          ])
     ]
-    const creditSets: DistributionClaimBootstrapCore["creditSets"][number][] =
-      []
-    for (const input of configuredInputs) {
-      if (input.file == null) continue
-      const dump = await loadIndexBalanceDump(input.file, input.chain)
-      const conversion = convertImportSeedCredits(dump, input.chain)
+    const creditSets = await mapSeries(configuredInputs, async input => {
+      const dump = await loadIndexBalanceDump(input.file, input.chain),
+        conversion = convertImportSeedCredits(dump, input.chain)
       if (conversion.credits.length === 0) {
         throw new Error(
           `${distributionClaimChainLabel(input.chain)} bootstrap file ${JSON.stringify(input.file)} produced zero eligible credits`
         )
       }
-      creditSets.push({
+      return {
         chain: input.chain,
-        source: DistributionClaimBootstrapSource.ConfiguredFile,
+        source: DistributionClaimBootstrapSource.configuredFile,
         credits: conversion.credits,
         droppedDust: conversion.droppedDust
-      })
-    }
+      }
+    })
     return { creditSets }
   }
 
@@ -1054,7 +1062,8 @@ export namespace ClusterBuildDefaults {
         config.terminateMaxConsecutiveMisses ??
         DefaultTerminateMaxConsecutiveMisses,
       terminate_max_pct_misses_24h:
-        config.terminateMaxPercentMisses24h ?? DefaultTerminateMaxPercentMisses24h,
+        config.terminateMaxPercentMisses24h ??
+        DefaultTerminateMaxPercentMisses24h,
       terminate_window_ms: config.terminateWindowMs ?? DefaultTerminateWindowMs,
       req_prod_collat: config.requiredProducerCollateral.map(toChainMinBond),
       req_batchop_collat:

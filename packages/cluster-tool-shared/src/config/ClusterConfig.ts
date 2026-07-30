@@ -1,5 +1,6 @@
-import { Level } from "@wireio/shared"
 import { z } from "zod"
+
+import { Level } from "@wireio/shared"
 
 import { SchemaCodec } from "../schema/index.js"
 import { ChainTokenAmountSchema } from "../types/ChainTokenAmount.js"
@@ -93,6 +94,32 @@ export type ClusterExecutablePaths = z.infer<
   typeof ClusterExecutablePathsSchema
 >
 
+/** Ethereum-chain-specific cluster configuration. */
+export const ClusterConfigEthereumSchema = z.object({
+  /**
+   * Absolute prelaunch balance-dump path used during `create`, or `null` when
+   * no Ethereum dclaim bootstrap input was supplied. Persisted as provenance;
+   * reload paths never reread the source file.
+   */
+  bootstrapJsonFile: z.string().nullable().default(null)
+})
+/** Ethereum-chain-specific cluster configuration — the shape of {@link ClusterConfigEthereumSchema}. */
+export type ClusterConfigEthereum = z.infer<
+  typeof ClusterConfigEthereumSchema
+>
+
+/** Solana-chain-specific cluster configuration. */
+export const ClusterConfigSolanaSchema = z.object({
+  /**
+   * Absolute prelaunch balance-dump path used during `create`, or `null` when
+   * no Solana dclaim bootstrap input was supplied. Persisted as provenance;
+   * reload paths never reread the source file.
+   */
+  bootstrapJsonFile: z.string().nullable().default(null)
+})
+/** Solana-chain-specific cluster configuration — the shape of {@link ClusterConfigSolanaSchema}. */
+export type ClusterConfigSolana = z.infer<typeof ClusterConfigSolanaSchema>
+
 /**
  * THE canonical cluster configuration — the plain JSON shape persisted to
  * `cluster-config.json` (`ClusterFiles.ConfigFilename`) and flowed through
@@ -160,17 +187,15 @@ export const ClusterConfigSchema = z.object({
   /** wire-solana repo root. */
   solanaPath: z.string(),
   /**
-   * Absolute Ethereum prelaunch balance-dump path used during `create`, or
-   * `null` when no Ethereum dclaim bootstrap input was supplied. Persisted as
-   * provenance; reload paths never reread the source file.
+   * Ethereum-chain-specific configuration. Schema-defaulted so pre-existing
+   * configs stay loadable.
    */
-  ethereumBootstrapJsonFile: z.string().nullable().default(null),
+  ethereum: ClusterConfigEthereumSchema.default({ bootstrapJsonFile: null }),
   /**
-   * Absolute Solana prelaunch balance-dump path used during `create`, or
-   * `null` when no Solana dclaim bootstrap input was supplied. Persisted as
-   * provenance; reload paths never reread the source file.
+   * Solana-chain-specific configuration. Schema-defaulted so pre-existing
+   * configs stay loadable.
    */
-  solanaBootstrapJsonFile: z.string().nullable().default(null),
+  solana: ClusterConfigSolanaSchema.default({ bootstrapJsonFile: null }),
   /** Resolved network binding for every daemon. */
   bind: BindConfigSchema,
   /** Resolved binary locations. */

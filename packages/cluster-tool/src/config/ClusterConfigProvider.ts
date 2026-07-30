@@ -110,7 +110,8 @@ export namespace ClusterConfigProvider {
     // Roster shape first: it is pure arithmetic, and rejecting here means an
     // illegal topology never claims a cluster's worth of ports (nor holds the
     // host-global bind lock) on its way to failing.
-    const batchOperatorCount = assertBatchOperatorSchedule(options),
+    const { ethereum = {}, solana = {} } = options,
+      batchOperatorCount = assertBatchOperatorSchedule(options),
       buildPath = assertOption(options.buildPath, "buildPath"),
       clusterPath = assertOption(options.clusterPath, "clusterPath"),
       bind = await resolveBind(options),
@@ -119,10 +120,10 @@ export namespace ClusterConfigProvider {
       logging = resolveLogging(options.logging),
       signatureProvider = resolveSignatureProvider(options.signatureProvider),
       ethereumBootstrapJsonFile = resolveBootstrapJsonFile(
-        options.ethereumBootstrapJsonFile
+        ethereum.bootstrapJsonFile
       ),
       solanaBootstrapJsonFile = resolveBootstrapJsonFile(
-        options.solanaBootstrapJsonFile
+        solana.bootstrapJsonFile
       ),
       externalOutposts = await loadExternalOutposts(
         options.externalOutpostConfig
@@ -150,8 +151,8 @@ export namespace ClusterConfigProvider {
       terminateWindowMs: options.terminateWindowMs ?? null,
       ethereumPath: assertOption(options.ethereumPath, "ethereumPath"),
       solanaPath: assertOption(options.solanaPath, "solanaPath"),
-      ethereumBootstrapJsonFile,
-      solanaBootstrapJsonFile,
+      ethereum: { bootstrapJsonFile: ethereumBootstrapJsonFile },
+      solana: { bootstrapJsonFile: solanaBootstrapJsonFile },
       bind,
       executables,
       report,
