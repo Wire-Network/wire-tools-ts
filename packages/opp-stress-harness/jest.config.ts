@@ -15,6 +15,7 @@ const config = {
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",
     "^@wireio/opp-stress-harness$": "<rootDir>/src/index",
+    "^@wireio/opp-stress-harness/(.*)$": "<rootDir>/src/$1",
     "^@wireio/test-opp-stress$": "<rootDir>/../opp-stress/src/index",
     "^@wireio/test-opp-stress/(.*)\\.js$": "<rootDir>/../opp-stress/src/$1",
     "^@wireio/test-opp-stress/(.*)$": "<rootDir>/../opp-stress/src/$1",

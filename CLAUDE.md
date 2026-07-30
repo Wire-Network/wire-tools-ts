@@ -21,7 +21,7 @@ Never use `npm` or `yarn`.
 ```bash
 pnpm install               # links workspace + sibling-repo packages
 pnpm build                 # tsc -b project references (incremental)
-pnpm test                  # build + jest across all 8 jest projects
+pnpm test                  # build + jest across all 11 jest projects
 pnpm --filter @wireio/cluster-tool test    # harness unit tests only
 pnpm clean                 # remove lib/ + tsbuildinfo everywhere
 
@@ -56,7 +56,10 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
 | `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize) |
-| `flow-*` (13 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and the six swap variants |
+| `flow-*` (14 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and the seven swap variants |
+| `opp-stress` (`@wireio/test-opp-stress`) | OPP stress ENGINE: ramp controller + saturation decision, envelope-metric projection over a pluggable `EnvelopeRecordSource`, run-evidence schema + verifier |
+| `opp-swap-stress` (`@wireio/opp-swap-stress`) | Swap-stress flow LOGIC: bounded bursts, phase runner, ramp campaign + saturation projection — consumed by `flow-swap-stress-saturation` |
+| `opp-stress-harness` (`@wireio/opp-stress-harness`) | Standalone **un-privileged** stress CLI (`wire-opp-stress`) for a live testnet — no cluster, no debug-artifact filesystem |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
 
@@ -105,10 +108,10 @@ One declarative model is shared by the `wire-cluster-tool` CLI and every flow:
 
 ## Testing
 
-- **`cluster-tool` + `debugging-*` keep jest** (`tests/` mirrors `src/`;
-  ts-jest; `NODE_OPTIONS=--experimental-vm-modules` is wired into the test
-  scripts for the ESM dynamic imports). Root `jest.config.ts` is
-  multi-project.
+- **`cluster-tool`, `debugging-*`, and the three `opp-*` stress packages keep
+  jest** (`tests/` mirrors `src/`; ts-jest;
+  `NODE_OPTIONS=--experimental-vm-modules` is wired into the test scripts for
+  the ESM dynamic imports). Root `jest.config.ts` is multi-project.
 - **`flow-*` packages have NO jest.** A flow is verified by RUNNING its built
   `lib/index.js` against a live cluster (its `test` script does exactly that) —
   launched via `scripts/run-flow.mjs` and watched via
@@ -180,9 +183,12 @@ to include `src/`, the barrel or path map is broken — fix it there.
    the cross-process wallet extension in `wire-libraries-ts` is the sole
    raw-hooks exception.
 
-## CLI Tool
+## CLI Tools
 
-`wire-cluster-tool` (bin from `cluster-tool`; alias `wtc`):
+The repo ships TWO bins: `wire-cluster-tool` (cluster lifecycle) and
+`wire-opp-stress` (un-privileged OPP stress against a LIVE testnet).
+
+### `wire-cluster-tool` (bin from `cluster-tool`; alias `wtc`):
 
 ```bash
 wire-cluster-tool create --cluster-path <dir> --build-path <wire-sysio-build> \
@@ -221,6 +227,31 @@ same mechanism it uses for `operatorsPerEpoch` / collateral) — never in `plan(
 The bootstrap seeds them during epoch 0; a flow's `plan()` phases always run AFTER
 `EpochBootstrap` advances epoch 0→1, and the depot gates `regreserve` to epoch 0,
 so `regreserve` can never be called from a flow phase.
+
+### `wire-opp-stress` (bin from `opp-stress-harness`)
+
+Un-privileged OPP stress + observability against a **live testnet** — no local
+cluster, no debug-artifact filesystem, no `clio`/`kiod` (everything signs
+client-side via `@wireio/sdk-core` / `ethers`):
+
+```bash
+wire-opp-stress saturation  --url <depot-rpc> [--load-level <level>]  # depot→outpost envelope BYTES
+wire-opp-stress throughput  --url <depot-rpc>                         # envelope COUNTS per epoch
+wire-opp-stress {wire,eth}-provision …                                # create + fund load wallets
+wire-opp-stress {wire,eth}-run …                                      # drive ONE direction
+wire-opp-stress duplex-run  --url … --eth-url … --load-level <level>  # ramp BOTH directions at once
+wire-opp-stress {wire,eth}-sweep …                                    # reclaim residual funds
+```
+
+`--load-level <light|moderate|heavy|saturating>` names a preset setting the
+envelope-size target AND the ramp curve together (they are coupled: a byte gate
+is only reachable at a matching account count); every derived leaf is
+individually overridable (`--byte-target-ratio`, `--ramp-*`, `--concurrency`, …).
+`duplex-run` loads both bridge halves concurrently so a saturated inbound epoch
+meets a saturated outbound queue in ONE `epochIn` — depot→outpost saturation is
+MEASURED (sampling the one-deep `outenvelopes` during the burst), outpost→depot
+is INFERRED (the depot clears inbound bytes at consensus, so its size is
+unreadable over RPC). See the package README.
 
 ## Key Architecture (`packages/cluster-tool/src/`)
 

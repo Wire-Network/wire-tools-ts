@@ -70,14 +70,6 @@ export type StressIdentities = {
   readonly wire: readonly StressWireIdentity[]
 }
 
-/** Options for deterministic stress identity generation. */
-export type StressIdentityOptions = {
-  /** Number of ETH/SOL identity pairs to generate. */
-  readonly count: number
-  /** First Anvil HD slot to allocate; defaults past every operator slot. */
-  readonly ethereumHdStartIndex?: number
-}
-
 /**
  * Generate deterministic ETH/SOL stress identities for package-local unit and flow tests.
  *
@@ -103,18 +95,6 @@ export function createStressIdentities(
       createWireIdentity(index)
     )
   }
-}
-
-/**
- * Generate deterministic ETH/SOL stress identities from an options object.
- *
- * @param options Count and optional ETH HD start slot.
- * @returns Stable ETH and SOL identities in index order.
- */
-export function createStressIdentitiesFromOptions(
-  options: StressIdentityOptions
-): StressIdentities {
-  return createStressIdentities(options.count, options.ethereumHdStartIndex)
 }
 
 function assertPositiveCount(count: number): void {
