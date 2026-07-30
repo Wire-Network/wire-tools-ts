@@ -28,6 +28,14 @@ export interface SolanaValidatorProgram {
   name: string
   programId: string
   soFile: string
+  /**
+   * When set, the program is added to genesis as an UPGRADEABLE program
+   * (`--upgradeable-program … <upgradeAuthority>`) so a `ProgramData` account
+   * exists with this pubkey as its upgrade authority — required by the
+   * integrated liqsol `initialize_global_config`. When omitted, the program is
+   * loaded non-upgradeable (`--bpf-program`).
+   */
+  upgradeAuthority?: string
 }
 
 /** Caller options for the solana-test-validator. */
@@ -152,11 +160,16 @@ export class SolanaValidatorProcess extends ManagedProcess {
       String(this.config.limitLedgerSizeShreds),
       ...(verbose ? [] : ["--quiet"]),
       ...(this.config.ledgerPath ? ["--ledger", this.config.ledgerPath] : []),
-      ...this.config.programs.flatMap(program => [
-        "--bpf-program",
-        program.programId,
-        program.soFile
-      ]),
+      ...this.config.programs.flatMap(program =>
+        program.upgradeAuthority
+          ? [
+              "--upgradeable-program",
+              program.programId,
+              program.soFile,
+              program.upgradeAuthority
+            ]
+          : ["--bpf-program", program.programId, program.soFile]
+      ),
       ...this.config.extraArgs
     ]
   }
