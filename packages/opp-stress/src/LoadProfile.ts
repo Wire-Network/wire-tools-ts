@@ -16,6 +16,7 @@ import type { OppStressRampConfig } from "./rampControllerTypes.js"
  * can never satisfy its own criterion.
  */
 export enum LoadLevel {
+  smoke = "smoke",
   light = "light",
   moderate = "moderate",
   heavy = "heavy",
@@ -109,6 +110,34 @@ export namespace LoadProfile {
    * gate while ETH-241 is open.
    */
   export const Presets: Readonly<Record<LoadLevel, LoadLevelPreset>> = {
+    /**
+     * Per-PR gate preset. Sized for EPOCHS ELAPSED, not accounts.
+     *
+     * The r8 live run (2026-07-30) showed the Ethereum outbound delivery
+     * reverting at `eth_estimateGas` once a backlog accumulates: `OPPInbound`
+     * failed on a 3,453-byte inbound envelope at epoch 22 — matching ETH-241's
+     * characterization (a ~3.4 KB inbound envelope plus a backlogged outbound
+     * queue needs ~93.6M gas against a 30M block limit). The trigger is the
+     * accumulated OUTBOUND queue, largely independent of ramp size, so a
+     * smaller ramp does not dodge it — only a SHORTER one does.
+     *
+     * Two rungs and a 120s phase ceiling bound the campaign to ~8 minutes so it
+     * concludes well before the backlog reaches the gas ceiling. The 2% byte
+     * target is deliberately modest: idle envelopes run ~698 bytes and loaded
+     * ones reached 2.7–4.5 KB in r8, so a 1,310-byte gate still requires real
+     * attestation packing while staying reachable. This is a CIRCULATION check,
+     * not a saturation measurement — use `saturating` for the real soak.
+     */
+    [LoadLevel.smoke]: {
+      byteTargetRatio: 0.02,
+      ramp: {
+        initialCount: 8,
+        multiplier: 2,
+        maxCount: 16,
+        phaseTimeoutMs: 120_000
+      },
+      workload: { swapsPerWallet: 1, concurrency: 4 }
+    },
     [LoadLevel.light]: {
       byteTargetRatio: 0.25,
       ramp: {
@@ -216,6 +245,7 @@ export namespace LoadProfile {
     if (raw === undefined || raw.trim().length === 0) return fallback
     const named = raw.trim()
     return match(named)
+      .with(LoadLevel.smoke, () => LoadLevel.smoke)
       .with(LoadLevel.light, () => LoadLevel.light)
       .with(LoadLevel.moderate, () => LoadLevel.moderate)
       .with(LoadLevel.heavy, () => LoadLevel.heavy)
