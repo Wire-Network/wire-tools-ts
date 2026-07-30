@@ -41,9 +41,9 @@ interface RecordedOption {
 /** A minimal `Argv` stand-in paired with the registrations it captured. */
 interface YargsRecorder {
   /** The `Argv`-typed facade handed to `applyClusterBuildOptionsArgs`. */
-  argv: Argv
+  readonly argv: Argv
   /** Every `.option(flag, config)` registration, keyed by flag. */
-  options: Map<string, RecordedOption>
+  readonly options: Map<string, RecordedOption>
 }
 
 /** A minimal `Argv` stand-in that records every `.option(flag, config)` call. */

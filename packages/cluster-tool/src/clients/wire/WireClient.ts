@@ -27,7 +27,7 @@ import { RecordingFetchProvider } from "./RecordingFetchProvider.js"
 import { ClioRunner } from "./clio/ClioRunner.js"
 import { WireWallet } from "./WireWallet.js"
 
-const log = getLogger("WireClient")
+const log = getLogger(__filename)
 
 // The contract registry is exported under the `SysioContracts` namespace; alias
 // the value + type locally so the generics below read cleanly (and the §17
@@ -36,14 +36,14 @@ const { SysioContractName, SysioContractDefinitions } = SysioContracts
 type SysioContractName = SysioContracts.SysioContractName
 type SysioContractMapping = SysioContracts.SysioContractMapping
 
-interface ClioTransactionAction<Action extends {}> {
+interface ClioTransactionAction<Action extends object> {
   readonly account: string
   readonly name: string
   readonly authorization: PermissionLevelType[]
   readonly data: Action
 }
 
-interface ClioTransactionBody<Action extends {}> {
+interface ClioTransactionBody<Action extends object> {
   readonly actions: ClioTransactionAction<Action>[]
 }
 
@@ -235,7 +235,7 @@ export class WireClient {
    * @param options - Invocation finality and authorization options.
    * @returns The single transaction submission response.
    */
-  async invokeOnce<Action extends {}>(
+  async invokeOnce<Action extends object>(
     account: string,
     action: string,
     data: Action,
@@ -336,7 +336,7 @@ export class WireClient {
    * @param options - Invocation finality and authorization options.
    * @returns The single transaction submission response.
    */
-  async invokeViaFileOnce<Action extends {}>(
+  async invokeViaFileOnce<Action extends object>(
     account: string,
     action: string,
     data: Action,
@@ -356,7 +356,7 @@ export class WireClient {
     return this.withFinalityOnce(label, send, options.finality)
   }
 
-  private async sendViaFile<Action extends {}>(
+  private async sendViaFile<Action extends object>(
     body: ClioTransactionBody<Action>,
     send: (file: string) => Promise<API.v1.SendTransactionResponse>
   ): Promise<API.v1.SendTransactionResponse> {
@@ -638,7 +638,7 @@ export class WireClient {
       .with({ status: 404 }, () => Promise.resolve(null))
       .otherwise(() => {
         throw new Error(`get_transaction(${id}) failed: HTTP ${resp.status}`)
-      })) as WireClient.GetTransactionResponse | null
+      })) as WireClient.GetTransactionResponse
   }
 
   /** Wait for head to advance past the current head. */
@@ -1180,13 +1180,17 @@ export namespace WireClient {
       args?: TableQueryArgs
     ): Promise<TableQueryResult<TableRow<Name, Table>>>
   }
+  /** Typed action invokers keyed by the generated contract action names. */
+  export type SysioContractActions<Name extends SysioContractName> = {
+    readonly [Action in ActionName<Name>]: ActionInvoker<Name, Action>
+  }
+  /** Typed table queries keyed by the generated contract table names. */
+  export type SysioContractTables<Name extends SysioContractName> = {
+    readonly [Table in TableName<Name>]: TableQuery<Name, Table>
+  }
   export interface SysioContractClient<Name extends SysioContractName> {
-    readonly actions: {
-      readonly [Action in ActionName<Name>]: ActionInvoker<Name, Action>
-    }
-    readonly tables: {
-      readonly [Table in TableName<Name>]: TableQuery<Name, Table>
-    }
+    readonly actions: SysioContractActions<Name>
+    readonly tables: SysioContractTables<Name>
   }
 
   // ── Finality ──
@@ -1377,7 +1381,7 @@ export namespace WireClient {
   export function getTransactionId(result: unknown): string {
     if (typeof result === "string") {
       try {
-        return JSON.parse(result)?.transaction_id ?? null
+        return JSON.parse(result)?.transaction_id
       } catch {
         const m = result.match(/"transaction_id"\s*:\s*"([a-f0-9]+)"/)
         return m ? m[1] : null

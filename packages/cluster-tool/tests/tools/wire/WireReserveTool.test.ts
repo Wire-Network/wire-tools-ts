@@ -19,7 +19,6 @@ const {
 /** The old dev-cluster fee the recorded SwapFeeMath assertions were baselined on. */
 const LegacySwapFeeBps = 10
 
-/** A minimal reserves row carrying only the fields swapquote consults. */
 interface QuoteReserveFixture {
   chain_code: SysioContracts.SysioReservSlugNameType
   token_code: SysioContracts.SysioReservSlugNameType
