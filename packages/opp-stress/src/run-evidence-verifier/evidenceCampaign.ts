@@ -24,7 +24,7 @@ import { recomputeEvidencePhase } from "./evidenceMetrics.js"
 import { RunEvidenceVerificationContext } from "./verifierIssues.js"
 
 /** Full independently recomputed iteration and campaign state. */
-export type EvidenceCampaignRecomputation = {
+export interface EvidenceCampaignRecomputation {
   readonly iterations: readonly RunEvidenceRecomputedIteration[]
   readonly endpoints: readonly RunEvidenceRecomputedEndpoint[]
 }

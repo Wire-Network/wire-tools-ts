@@ -1,3 +1,5 @@
+import { match } from "ts-pattern"
+
 import type { EnvelopeBaseline } from "@wireio/debugging-shared"
 import type { SwapStressPhaseEnvelopeMetrics } from "./phaseRunnerMetricTypes.js"
 import {
@@ -8,59 +10,82 @@ import {
   SwapStressTelemetryDegradedError,
   type SwapStressEnvelopeMetricCollector,
   type SwapStressMetricWindow,
+  type SwapStressMetricWindowIdentity,
   type SwapStressSyntheticEnvelopeMetricCollector,
   type SwapStressTelemetryDegradation,
   type SwapStressTelemetryDeps
 } from "./phaseRunnerTelemetry.js"
 
+/** `Extract` filter selecting the baseline-capture-failed degradation leg. */
+interface BaselineCaptureDegradationDiscriminator {
+  readonly kind: "baseline_capture_failed"
+}
+
+/** `Extract` filter selecting the deadline-exhausted degradation leg. */
+interface DeadlineDegradationDiscriminator {
+  readonly kind: "deadline_exhausted"
+}
+
 type BaselineCaptureDegradation = Extract<
   SwapStressTelemetryDegradation,
-  { readonly kind: "baseline_capture_failed" }
+  BaselineCaptureDegradationDiscriminator
 >
 type DeadlineDegradation = Extract<
   SwapStressTelemetryDegradation,
-  { readonly kind: "deadline_exhausted" }
+  DeadlineDegradationDiscriminator
 >
+
+/** Prepared telemetry for a synthetic, baseline-free collection. */
+interface PreparedSyntheticPhaseTelemetry {
+  /** Synthetic collection remains baseline-free. */
+  readonly telemetryKind: "synthetic"
+  /** Optional synthetic collector represented explicitly when absent. */
+  readonly collector: SwapStressSyntheticEnvelopeMetricCollector | null
+}
+
+/** Prepared telemetry for a real, baseline-correlated collection. */
+interface PreparedRealPhaseTelemetry {
+  /** Real collection requires one canonical pre-work baseline. */
+  readonly telemetryKind: "real"
+  /** Exact baseline object reused by every probe in the phase. */
+  readonly baseline: EnvelopeBaseline
+  /** Canonical real collector requiring the prepared baseline. */
+  readonly collector: SwapStressEnvelopeMetricCollector
+}
 
 /** Phase telemetry prepared before payout or workload construction. */
 export type PreparedPhaseTelemetry =
-  | {
-      /** Synthetic collection remains baseline-free. */
-      readonly telemetryKind: "synthetic"
-      /** Optional synthetic collector represented explicitly when absent. */
-      readonly collector: SwapStressSyntheticEnvelopeMetricCollector | null
-    }
-  | {
-      /** Real collection requires one canonical pre-work baseline. */
-      readonly telemetryKind: "real"
-      /** Exact baseline object reused by every probe in the phase. */
-      readonly baseline: EnvelopeBaseline
-      /** Canonical real collector requiring the prepared baseline. */
-      readonly collector: SwapStressEnvelopeMetricCollector
-    }
+  | PreparedSyntheticPhaseTelemetry
+  | PreparedRealPhaseTelemetry
 
 /** One prepared phase collection plus any terminal typed degradation. */
-export type PreparedPhaseMetricCollection = {
+export interface PreparedPhaseMetricCollection {
   /** Honest measured, pending, or unmeasured flow metrics. */
   readonly metrics: SwapStressPhaseEnvelopeMetrics
   /** Exact canonical terminal error, or null for nonterminal data. */
   readonly telemetryDegradation: SwapStressTelemetryDegradedError<DeadlineDegradation> | null
 }
 
+/** Preparation that produced a type-safe collector context. */
+interface PreparedPhaseTelemetrySuccess {
+  /** Preparation completed with a type-safe collector context. */
+  readonly kind: "prepared"
+  /** Baseline-free synthetic or baseline-bearing real telemetry. */
+  readonly telemetry: PreparedPhaseTelemetry
+}
+
+/** Preparation terminalized by a failed baseline capture. */
+interface PreparedPhaseTelemetryDegraded {
+  /** Canonical baseline capture returned a structured failure. */
+  readonly kind: "degraded"
+  /** Exact typed failure created only from the returned capture issues. */
+  readonly error: SwapStressTelemetryDegradedError<BaselineCaptureDegradation>
+}
+
 /** Exact outcome of preparing phase telemetry before workload construction. */
 export type PreparedPhaseTelemetryResult =
-  | {
-      /** Preparation completed with a type-safe collector context. */
-      readonly kind: "prepared"
-      /** Baseline-free synthetic or baseline-bearing real telemetry. */
-      readonly telemetry: PreparedPhaseTelemetry
-    }
-  | {
-      /** Canonical baseline capture returned a structured failure. */
-      readonly kind: "degraded"
-      /** Exact typed failure created only from the returned capture issues. */
-      readonly error: SwapStressTelemetryDegradedError<BaselineCaptureDegradation>
-    }
+  | PreparedPhaseTelemetrySuccess
+  | PreparedPhaseTelemetryDegraded
 
 /**
  * Prepare phase telemetry before any payout or workload side effect.
@@ -70,46 +95,39 @@ export type PreparedPhaseTelemetryResult =
  */
 export async function preparePhaseTelemetry(
   deps: SwapStressTelemetryDeps,
-  context: Pick<SwapStressMetricWindow, "phase" | "endpointsType">
+  context: SwapStressMetricWindowIdentity
 ): Promise<PreparedPhaseTelemetryResult> {
-  switch (deps.telemetryKind) {
-    case "synthetic":
-      return {
-        kind: "prepared",
-        telemetry: {
-          telemetryKind: "synthetic",
-          collector: deps.collectEnvelopeMetrics ?? null
-        }
+  return match(deps)
+    .with({ telemetryKind: "synthetic" }, syntheticDeps => ({
+      kind: "prepared" as const,
+      telemetry: {
+        telemetryKind: "synthetic" as const,
+        collector: syntheticDeps.collectEnvelopeMetrics ?? null
       }
-    case "real": {
-      const capture = await deps.captureEnvelopeBaseline()
-      switch (capture.kind) {
-        case "captured":
-          return {
-            kind: "prepared",
-            telemetry: {
-              telemetryKind: "real",
-              baseline: capture.baseline,
-              collector: deps.collectEnvelopeMetrics
-            }
+    }))
+    .with({ telemetryKind: "real" }, async realDeps => {
+      const capture = await realDeps.captureEnvelopeBaseline()
+      return match(capture)
+        .with({ kind: "captured" }, captured => ({
+          kind: "prepared" as const,
+          telemetry: {
+            telemetryKind: "real" as const,
+            baseline: captured.baseline,
+            collector: realDeps.collectEnvelopeMetrics
           }
-        case "failed":
-          return {
-            kind: "degraded",
-            error:
-              new SwapStressTelemetryDegradedError<BaselineCaptureDegradation>(
-                context.phase,
-                context.endpointsType,
-                { kind: "baseline_capture_failed", issues: capture.issues }
-              )
-          }
-        default:
-          return assertNeverBaselineCapture(capture)
-      }
-    }
-    default:
-      return assertNeverTelemetryDeps(deps)
-  }
+        }))
+        .with({ kind: "failed" }, failed => ({
+          kind: "degraded" as const,
+          error:
+            new SwapStressTelemetryDegradedError<BaselineCaptureDegradation>(
+              context.phase,
+              context.endpointsType,
+              { kind: "baseline_capture_failed", issues: failed.issues }
+            )
+        }))
+        .otherwise(value => assertNeverBaselineCapture(value))
+    })
+    .otherwise(value => assertNeverTelemetryDeps(value))
 }
 
 /**
@@ -122,44 +140,39 @@ export async function collectPreparedPhaseMetrics(
   prepared: PreparedPhaseTelemetry,
   window: SwapStressMetricWindow
 ): Promise<PreparedPhaseMetricCollection> {
-  switch (prepared.telemetryKind) {
-    case "synthetic":
-      return {
-        metrics:
-          prepared.collector === null
-            ? emptyMetrics(
-                window.phase,
-                window.endpointsType,
-                "collector_not_configured"
-              )
-            : await prepared.collector(window),
-        telemetryDegradation: null
-      }
-    case "real": {
-      const result = await prepared.collector({
+  return match(prepared)
+    .with({ telemetryKind: "synthetic" }, async syntheticPrepared => ({
+      metrics:
+        syntheticPrepared.collector === null
+          ? emptyMetrics(
+              window.phase,
+              window.endpointsType,
+              "collector_not_configured"
+            )
+          : await syntheticPrepared.collector(window),
+      telemetryDegradation: null
+    }))
+    .with({ telemetryKind: "real" }, async realPrepared => {
+      const result = await realPrepared.collector({
         ...window,
-        baseline: prepared.baseline
+        baseline: realPrepared.baseline
       })
-      switch (result.kind) {
-        case "measured":
-          return { metrics: result.metrics, telemetryDegradation: null }
-        case "pending":
-          return {
-            metrics: projectPendingOppPhaseMetrics(result.observation),
-            telemetryDegradation: null
-          }
-        case "degraded":
-          return {
-            metrics: degradedPhaseMetrics(result.error),
-            telemetryDegradation: result.error
-          }
-        default:
-          return assertNeverMetricCollection(result)
-      }
-    }
-    default:
-      return assertNeverPreparedTelemetry(prepared)
-  }
+      return match(result)
+        .with({ kind: "measured" }, measured => ({
+          metrics: measured.metrics,
+          telemetryDegradation: null
+        }))
+        .with({ kind: "pending" }, pending => ({
+          metrics: projectPendingOppPhaseMetrics(pending.observation),
+          telemetryDegradation: null
+        }))
+        .with({ kind: "degraded" }, degraded => ({
+          metrics: degradedPhaseMetrics(degraded.error),
+          telemetryDegradation: degraded.error
+        }))
+        .otherwise(value => assertNeverMetricCollection(value))
+    })
+    .otherwise(value => assertNeverPreparedTelemetry(value))
 }
 
 function degradedPhaseMetrics(

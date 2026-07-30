@@ -1,3 +1,5 @@
+import { match } from "ts-pattern"
+
 import {
   RampBreakageCategory,
   type OppStressRampObservationFields
@@ -5,9 +7,19 @@ import {
 
 import type { SwapStressIterationObservation } from "./phaseRunnerTypes.js"
 
+/**
+ * The endpoint fields the legacy scalar projection drops. Declared as an
+ * interface so the `Omit` key union below is DERIVED (`keyof`) rather than a
+ * hand-written literal union.
+ */
+interface DroppedObservationEndpointFields {
+  readonly saturatedEndpoints: OppStressRampObservationFields["saturatedEndpoints"]
+  readonly observedNonRequiredEndpoints: OppStressRampObservationFields["observedNonRequiredEndpoints"]
+}
+
 type CompatibilityFields = Omit<
   OppStressRampObservationFields,
-  "saturatedEndpoints" | "observedNonRequiredEndpoints"
+  keyof DroppedObservationEndpointFields
 >
 
 /** Project legacy scalar fields without requiring measured workload evidence. */
@@ -60,14 +72,10 @@ function breakageLabel(
     | RampBreakageCategory.Workload
     | RampBreakageCategory.TelemetryIntegrity
 ): string {
-  switch (category) {
-    case RampBreakageCategory.Workload:
-      return "workload"
-    case RampBreakageCategory.TelemetryIntegrity:
-      return "telemetry"
-    default:
-      return assertNever(category)
-  }
+  return match(category)
+    .with(RampBreakageCategory.Workload, () => "workload")
+    .with(RampBreakageCategory.TelemetryIntegrity, () => "telemetry")
+    .otherwise(value => assertNever(value))
 }
 
 function assertNever(value: never): never {

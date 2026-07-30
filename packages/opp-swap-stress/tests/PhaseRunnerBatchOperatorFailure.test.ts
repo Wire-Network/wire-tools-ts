@@ -3,6 +3,7 @@ import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import { createSwapStressPhaseRunner } from "@wireio/opp-swap-stress"
 import type {
   Phase2SwapRequest,
+  SwapStressPhase,
   SwapStressPhaseRunnerDeps,
   SwapStressReservePairSnapshot
 } from "@wireio/opp-swap-stress"
@@ -77,11 +78,19 @@ describe("createSwapStressPhaseRunner batch operator failures", () => {
   })
 })
 
-type TestDeps = SwapStressPhaseRunnerDeps & {
+/** Which phase (if any) the fake payout observer fails on. */
+interface PayoutObserverOptions {
+  readonly failingPhase: SwapStressPhase | null
+}
+
+/** The recorded Phase-2 submissions a test deps fixture exposes. */
+interface RecordedPhase2Requests {
   readonly phase2Requests: Phase2SwapRequest[]
 }
 
-type TestDepsOptions = {
+type TestDeps = SwapStressPhaseRunnerDeps & RecordedPhase2Requests
+
+interface TestDepsOptions {
   readonly phase1BatchOperatorFailure?: boolean
   readonly phase2BatchOperatorFailure?: boolean
   readonly phase2PayoutFailure?: boolean
@@ -170,9 +179,9 @@ function defaultReserveSnapshot(): SwapStressReservePairSnapshot {
   }
 }
 
-function payoutObserver(options: {
-  readonly failingPhase: "phase-1" | "phase-2" | null
-}): SwapStressPhaseRunnerDeps["recipientPayoutObserver"] {
+function payoutObserver(
+  options: PayoutObserverOptions
+): SwapStressPhaseRunnerDeps["recipientPayoutObserver"] {
   return {
     waitForPayouts: async request => {
       if (request.phase === options.failingPhase)

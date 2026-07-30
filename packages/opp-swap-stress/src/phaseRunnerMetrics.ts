@@ -1,9 +1,8 @@
+import { match } from "ts-pattern"
+
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import { OppEnvelopeTelemetryHealthKind } from "@wireio/test-opp-stress"
-import type {
-  HealthyOppEnvelopeTelemetryHealth,
-  OppPhaseEnvelopeMetrics
-} from "@wireio/test-opp-stress"
+import type { OppPhaseEnvelopeMetrics } from "@wireio/test-opp-stress"
 
 import type { BurstResult } from "./boundedBursts.js"
 import type {
@@ -19,7 +18,9 @@ import type {
   SwapStressPhase
 } from "./phaseRunnerTypes.js"
 import type {
+  SwapStressDegradedCollectionResult,
   SwapStressEnvelopeMetricCollectionResult,
+  SwapStressHealthyMetricNarrowing,
   SwapStressPendingPhaseObservation
 } from "./phaseRunnerTelemetry.js"
 
@@ -33,24 +34,30 @@ export function classifyOppPhaseMetrics(
   metrics: OppPhaseEnvelopeMetrics
 ): Exclude<
   SwapStressEnvelopeMetricCollectionResult,
-  { readonly kind: "degraded" }
+  SwapStressDegradedCollectionResult
 > {
   const health = metrics.health
-  switch (health.kind) {
-    case OppEnvelopeTelemetryHealthKind.Healthy:
-      return {
-        kind: "measured",
-        metrics: projectOppPhaseMetrics({ ...metrics, health })
-      }
-    case OppEnvelopeTelemetryHealthKind.Empty:
-    case OppEnvelopeTelemetryHealthKind.PendingPublication:
-      return {
-        kind: "pending",
-        observation: { ...metrics, saturated: false, health }
-      }
-    default:
-      return assertNeverHealth(health)
-  }
+  return match(health)
+    .with(
+      { kind: OppEnvelopeTelemetryHealthKind.Healthy },
+      healthyHealth => ({
+        kind: "measured" as const,
+        metrics: projectOppPhaseMetrics({ ...metrics, health: healthyHealth })
+      })
+    )
+    .with(
+      { kind: OppEnvelopeTelemetryHealthKind.Empty },
+      { kind: OppEnvelopeTelemetryHealthKind.PendingPublication },
+      retryableHealth => ({
+        kind: "pending" as const,
+        observation: {
+          ...metrics,
+          saturated: false as const,
+          health: retryableHealth
+        }
+      })
+    )
+    .otherwise(value => assertNeverHealth(value))
 }
 
 /**
@@ -59,12 +66,8 @@ export function classifyOppPhaseMetrics(
  * @returns A measured direct-flow branch preserving exact provenance.
  */
 export function projectOppPhaseMetrics(
-  metrics: OppPhaseEnvelopeMetrics & {
-    readonly health: HealthyOppEnvelopeTelemetryHealth
-  }
-): SwapStressMeasuredPhaseEnvelopeMetrics & {
-  readonly health: HealthyOppEnvelopeTelemetryHealth
-} {
+  metrics: OppPhaseEnvelopeMetrics & SwapStressHealthyMetricNarrowing
+): SwapStressMeasuredPhaseEnvelopeMetrics & SwapStressHealthyMetricNarrowing {
   const summary = {
       phase: metrics.phase,
       saturated: metrics.saturated,
@@ -85,22 +88,18 @@ export function projectOppPhaseMetrics(
       epochEnvelopeIndexes: metrics.epochEnvelopeIndexes,
       selectedArtifacts: metrics.selectedArtifacts
     }
-  switch (metrics.evidence.kind) {
-    case "not_recorded":
-      return {
-        ...summary,
-        provenance: { ...provenanceFields, evidence: metrics.evidence },
-        artifactRefs: []
-      }
-    case "recorded":
-      return {
-        ...summary,
-        provenance: { ...provenanceFields, evidence: metrics.evidence },
-        artifactRefs: metrics.evidence.artifactRefs
-      }
-    default:
-      return assertNever(metrics.evidence)
-  }
+  return match(metrics.evidence)
+    .with({ kind: "not_recorded" }, evidence => ({
+      ...summary,
+      provenance: { ...provenanceFields, evidence },
+      artifactRefs: [] as const
+    }))
+    .with({ kind: "recorded" }, evidence => ({
+      ...summary,
+      provenance: { ...provenanceFields, evidence },
+      artifactRefs: evidence.artifactRefs
+    }))
+    .otherwise(value => assertNever(value))
 }
 
 /**
@@ -131,22 +130,18 @@ export function projectPendingOppPhaseMetrics(
       epochEnvelopeIndexes: metrics.epochEnvelopeIndexes,
       selectedArtifacts: metrics.selectedArtifacts
     }
-  switch (metrics.evidence.kind) {
-    case "not_recorded":
-      return {
-        ...summary,
-        provenance: { ...provenanceFields, evidence: metrics.evidence },
-        artifactRefs: []
-      }
-    case "recorded":
-      return {
-        ...summary,
-        provenance: { ...provenanceFields, evidence: metrics.evidence },
-        artifactRefs: metrics.evidence.artifactRefs
-      }
-    default:
-      return assertNever(metrics.evidence)
-  }
+  return match(metrics.evidence)
+    .with({ kind: "not_recorded" }, evidence => ({
+      ...summary,
+      provenance: { ...provenanceFields, evidence },
+      artifactRefs: [] as const
+    }))
+    .with({ kind: "recorded" }, evidence => ({
+      ...summary,
+      provenance: { ...provenanceFields, evidence },
+      artifactRefs: evidence.artifactRefs
+    }))
+    .otherwise(value => assertNever(value))
 }
 
 /**

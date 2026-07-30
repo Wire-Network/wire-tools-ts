@@ -11,7 +11,7 @@ export type RampObservationRecord = Readonly<Record<string, unknown>>
 export function snapshotRampObservationData(
   input: unknown,
   expectedKeys: readonly string[]
-): RampObservationRecord | null {
+): RampObservationRecord {
   try {
     return snapshotRampObservationDataUnsafe(input, expectedKeys)
   } catch {
@@ -29,7 +29,7 @@ export function snapshotRampObservationData(
 export function snapshotRampObservationVariantData(
   input: unknown,
   expectedKeyVariants: readonly (readonly string[])[]
-): RampObservationRecord | null {
+): RampObservationRecord {
   try {
     return snapshotRampObservationVariantDataUnsafe(input, expectedKeyVariants)
   } catch {
@@ -40,14 +40,14 @@ export function snapshotRampObservationVariantData(
 function snapshotRampObservationDataUnsafe(
   input: unknown,
   expectedKeys: readonly string[]
-): RampObservationRecord | null {
+): RampObservationRecord {
   return snapshotRampObservationVariantDataUnsafe(input, [expectedKeys])
 }
 
 function snapshotRampObservationVariantDataUnsafe(
   input: unknown,
   expectedKeyVariants: readonly (readonly string[])[]
-): RampObservationRecord | null {
+): RampObservationRecord {
   if (typeof input !== "object" || input === null || Array.isArray(input))
     return null
   const prototype = Object.getPrototypeOf(input)

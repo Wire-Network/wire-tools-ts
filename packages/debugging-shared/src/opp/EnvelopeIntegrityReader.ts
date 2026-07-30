@@ -6,7 +6,6 @@ import {
   type EnvelopeBaselineCaptureResult,
   type EnvelopeIntegrityDependencies,
   type EnvelopeIntegrityFileError,
-  type EnvelopeIntegrityFileSystem,
   type EnvelopeIntegrityIssue,
   type EnvelopeIntegrityIssueSequence,
   type EnvelopeIntegrityResult
@@ -51,7 +50,7 @@ export async function captureEnvelopeBaseline(
   dependencies: EnvelopeIntegrityDependencies = {}
 ): Promise<EnvelopeBaselineCaptureResult> {
   const storageRoot = Path.resolve(storageDir),
-    fileSystem = dependencies.fileSystem ?? NodeEnvelopeIntegrityFileSystem,
+    { fileSystem = NodeEnvelopeIntegrityFileSystem } = dependencies,
     pinned = await pinEnvelopeStorageRoot(storageRoot, fileSystem)
   if (pinned.kind === "issue") return baselineFailure(pinned.issues)
   const scan = await scanEnvelopeSidecars(pinned.root.handle)
@@ -122,7 +121,7 @@ export async function readEnvelopeIntegrity(
   dependencies: EnvelopeIntegrityDependencies = {}
 ): Promise<EnvelopeIntegrityResult> {
   const storageRoot = Path.resolve(storageDir),
-    fileSystem = dependencies.fileSystem ?? NodeEnvelopeIntegrityFileSystem,
+    { fileSystem = NodeEnvelopeIntegrityFileSystem } = dependencies,
     pinned = await pinEnvelopeStorageRoot(storageRoot, fileSystem)
   if (pinned.kind === "issue") return rootFailure(pinned.issues)
   const scan = await scanEnvelopeSidecars(pinned.root.handle)

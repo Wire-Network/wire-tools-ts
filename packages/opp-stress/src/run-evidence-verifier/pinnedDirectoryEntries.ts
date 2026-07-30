@@ -40,7 +40,7 @@ export function lstatPinnedEntry(
   root: PinnedRunDirectory,
   relativePath: string,
   context: RunEvidenceVerificationContext
-): Fs.BigIntStats | null {
+): Fs.BigIntStats {
   const entry = pinnedEntry(root, relativePath, context)
   if (entry === null || !verifyPinnedDirectory(root, entry.parent, context))
     return null

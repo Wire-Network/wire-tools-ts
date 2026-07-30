@@ -39,7 +39,7 @@ export type StressRampResult =
   OppStressRampDeferredEvidenceResult<SwapStressObservationEvidence>
 
 /** Options for the saturation ramp controller. */
-export type StressRampOptions = {
+export interface StressRampOptions {
   /** Optional flow ramp configuration. */
   readonly config?: StressRampConfig
   /** Controller lifecycle clock. */

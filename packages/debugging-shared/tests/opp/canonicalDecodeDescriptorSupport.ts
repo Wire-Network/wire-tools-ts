@@ -6,8 +6,13 @@ import {
 } from "@protobuf-ts/runtime"
 import { Envelope } from "@wireio/opp-typescript-models"
 
+/** Discriminant selecting the map variant out of the `FieldInfo` union. */
+interface MapFieldDiscriminant {
+  kind: "map"
+}
+
 /** Descriptor for a map field's value slot (`kind: "scalar" | "enum" | "message"`). */
-type MapValueInfo = Extract<FieldInfo, { kind: "map" }>["V"]
+type MapValueInfo = Extract<FieldInfo, MapFieldDiscriminant>["V"]
 
 /** Field 6 (`epoch_index`) — a singular varint scalar in the real descriptor. */
 export const EpochIndexFieldNumber = 6,

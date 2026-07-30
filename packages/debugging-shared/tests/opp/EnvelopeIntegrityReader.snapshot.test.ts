@@ -125,13 +125,21 @@ describe("EnvelopeIntegrityReader anchored filename snapshots", () => {
   })
 })
 
+/** Mutable readdir accounting observed by the frozen-snapshot seam. */
+interface FrozenSnapshotObservations {
+  readdirCount: number
+}
+
+/** Frozen-root filesystem seam plus the counters the assertions read. */
+interface FrozenSnapshotSeam {
+  readonly fileSystem: EnvelopeIntegrityFileSystem
+  readonly observations: FrozenSnapshotObservations
+}
+
 function frozenSnapshotFileSystem(
   storageDir: string,
   mutateAfterFirstRead: () => void
-): {
-  readonly fileSystem: EnvelopeIntegrityFileSystem
-  readonly observations: { readdirCount: number }
-} {
+): FrozenSnapshotSeam {
   const frozenStat = Fs.lstatSync(storageDir, { bigint: true }),
     observations = { readdirCount: 0 },
     base = createNodeFileSystem({

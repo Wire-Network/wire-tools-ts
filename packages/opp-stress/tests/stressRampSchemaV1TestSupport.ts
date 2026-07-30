@@ -1,5 +1,7 @@
 import * as Fs from "node:fs"
 
+import { match } from "ts-pattern"
+
 import { createEnvelopeBaseline } from "@wireio/debugging-shared"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import {
@@ -25,14 +27,20 @@ import {
 } from "./run-evidence/runEvidencePersistenceTestSupport.js"
 
 /** Active real-persistence state used by one schema-v1 ramp test. */
-export type SchemaRampHarness = {
+export interface SchemaRampHarness {
   readonly workspace: PersistenceWorkspace
   readonly persistence: RunEvidencePersistence
   readonly cleanup: () => void
 }
 
+/** Deliberate breakage classification applied to one observation. */
+export interface SchemaObservationBreakage {
+  readonly category: RampBreakageCategory
+  readonly reason: string
+}
+
 /** Controls one artifact-backed callback observation. */
-export type SchemaObservationOptions = {
+export interface SchemaObservationOptions {
   readonly persistence: RunEvidencePersistence
   readonly workspace: PersistenceWorkspace
   readonly requiredEndpoints: readonly RunEvidenceEndpoint[]
@@ -43,10 +51,7 @@ export type SchemaObservationOptions = {
   readonly observationEndedAtMs?: number | bigint
   readonly phaseStartedAtMs?: RunEvidenceDecimal
   readonly phaseEndedAtMs?: RunEvidenceDecimal
-  readonly breakage?: {
-    readonly category: RampBreakageCategory
-    readonly reason: string
-  }
+  readonly breakage?: SchemaObservationBreakage
 }
 
 /** Allocate, capture configuration, and publish successful setup for a ramp. */
@@ -74,8 +79,7 @@ export async function createSchemaRampHarness(
 export async function schemaObservation(
   options: SchemaObservationOptions
 ): Promise<OppStressRampIterationObservation> {
-  const phaseStartedAtMs = options.phaseStartedAtMs ?? "103",
-    phaseEndedAtMs = options.phaseEndedAtMs ?? "104",
+  const { phaseStartedAtMs = "103", phaseEndedAtMs = "104" } = options,
     phases = await options.requiredEndpoints.reduce<
       Promise<readonly RunEvidencePhase[]>
     >(async (pending, endpoint, endpointIndex) => {
@@ -181,18 +185,24 @@ export async function schemaObservation(
 function endpointType(
   endpoint: RunEvidenceEndpoint
 ): DebugOutpostEndpointsType {
-  switch (endpoint) {
-    case RunEvidenceEndpoint.OutpostEthereumDepot:
-      return DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT
-    case RunEvidenceEndpoint.OutpostSolanaDepot:
-      return DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT
-    case RunEvidenceEndpoint.DepotOutpostEthereum:
-      return DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
-    case RunEvidenceEndpoint.DepotOutpostSolana:
-      return DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA
-    default:
-      return assertNever(endpoint)
-  }
+  return match(endpoint)
+    .with(
+      RunEvidenceEndpoint.OutpostEthereumDepot,
+      () => DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT
+    )
+    .with(
+      RunEvidenceEndpoint.OutpostSolanaDepot,
+      () => DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT
+    )
+    .with(
+      RunEvidenceEndpoint.DepotOutpostEthereum,
+      () => DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
+    )
+    .with(
+      RunEvidenceEndpoint.DepotOutpostSolana,
+      () => DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA
+    )
+    .otherwise(assertNever)
 }
 
 function assertNever(value: never): never {

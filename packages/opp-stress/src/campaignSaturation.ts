@@ -1,5 +1,5 @@
 /** Required and diagnostic endpoint aggregation across one OPP stress campaign. */
-export type CampaignSaturation = {
+export interface CampaignSaturation {
   /** Required endpoints saturated across completed iterations. */
   readonly saturatedEndpoints: readonly string[]
   /** Required endpoints still missing across the campaign. */
@@ -24,6 +24,14 @@ export function emptyCampaignSaturation(
   }
 }
 
+/** One iteration's endpoint observations merged into campaign aggregation. */
+interface CampaignSaturationObservation {
+  /** Endpoints this iteration observed as saturated. */
+  readonly saturatedEndpoints: CampaignSaturation["saturatedEndpoints"]
+  /** Non-required endpoints this iteration observed as diagnostic saturation. */
+  readonly observedNonRequiredEndpoints: CampaignSaturation["observedNonRequiredEndpoints"]
+}
+
 /**
  * Merge one iteration's endpoint observations into campaign-level aggregation.
  *
@@ -35,10 +43,7 @@ export function emptyCampaignSaturation(
 export function mergeCampaignSaturation(
   requiredEndpoints: readonly string[],
   prior: CampaignSaturation,
-  observation: {
-    readonly saturatedEndpoints: readonly string[]
-    readonly observedNonRequiredEndpoints: readonly string[]
-  }
+  observation: CampaignSaturationObservation
 ): CampaignSaturation {
   const saturatedSet = new Set([
       ...prior.saturatedEndpoints,

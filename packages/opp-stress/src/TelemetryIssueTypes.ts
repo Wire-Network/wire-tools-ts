@@ -1,7 +1,8 @@
 import type {
   EnvelopeIntegrityFileError,
   EnvelopeIntegrityFileIdentity,
-  EnvelopeIntegrityFileOperation
+  EnvelopeIntegrityFileOperation,
+  EnvelopeIntegrityInvalidKeyReason
 } from "@wireio/debugging-shared"
 
 /** Closed integrity-issue codes emitted by strict OPP envelope readers. */
@@ -67,40 +68,53 @@ export type OppEnvelopeTelemetryFileError = EnvelopeIntegrityFileError
 /** Exact JSON-safe strict-reader file identity retained in telemetry. */
 export type OppEnvelopeTelemetryFileIdentity = EnvelopeIntegrityFileIdentity
 
-type InvalidStorageKeyContext = {
+interface InvalidStorageKeyContext {
   readonly filename: string
-  readonly reason: "noncanonical_format" | "invalid_epoch" | "invalid_checksum"
+  readonly reason: EnvelopeIntegrityInvalidKeyReason
 }
-type UnknownEndpointContext = { readonly endpointKey: string }
-type SidecarPathContext = { readonly path: string }
-type SidecarReadContext = {
+interface UnknownEndpointContext {
+  readonly endpointKey: string
+}
+interface SidecarPathContext {
+  readonly path: string
+}
+interface SidecarReadContext {
   readonly path: string
   readonly error: OppEnvelopeTelemetryFileError
 }
-type SidecarChangedContext = {
+interface SidecarChangedContext {
   readonly path: string
   readonly before: OppEnvelopeTelemetryFileIdentity
   readonly after: OppEnvelopeTelemetryFileIdentity | null
   readonly error: OppEnvelopeTelemetryFileError | null
 }
-type SidecarDecodeContext = { readonly path: string; readonly reason: string }
-type DataHashContext = {
+interface SidecarDecodeContext {
+  readonly path: string
+  readonly reason: string
+}
+interface DataHashContext {
   readonly expectedHashPrefix: string
   readonly actualHashPrefix: string
   readonly actualSha256: string
 }
-type MetadataChecksumContext = {
+interface MetadataChecksumContext {
   readonly expectedChecksum: string
   readonly actualChecksum: string
 }
-type EpochContext = { readonly keyEpoch: number; readonly decodedEpoch: number }
-type EscapeContext = { readonly storageRoot: string; readonly path: string }
-type StorageErrorContext = {
+interface EpochContext {
+  readonly keyEpoch: number
+  readonly decodedEpoch: number
+}
+interface EscapeContext {
+  readonly storageRoot: string
+  readonly path: string
+}
+interface StorageErrorContext {
   readonly storageDir: string
   readonly error: OppEnvelopeTelemetryFileError
 }
 
-type TelemetryIssueContextByCode = {
+interface TelemetryIssueContextByCode {
   readonly [OppEnvelopeTelemetryIssueCode.InvalidStorageKey]: InvalidStorageKeyContext
   readonly [OppEnvelopeTelemetryIssueCode.UnknownEndpoint]: UnknownEndpointContext
   readonly [OppEnvelopeTelemetryIssueCode.MissingDataSidecar]: SidecarPathContext
@@ -128,11 +142,16 @@ type TelemetryIssueContextByCode = {
   readonly [OppEnvelopeTelemetryIssueCode.DirectoryScanFailed]: StorageErrorContext
 }
 
+/** One issue code paired with its exact structured context. */
+interface TelemetryIssueRecord<
+  Code extends keyof TelemetryIssueContextByCode
+> {
+  readonly code: Code
+  readonly baseKey: string
+  readonly context: TelemetryIssueContextByCode[Code]
+}
+
 /** JSON-safe integrity issue keyed by its candidate base key or `$storage`. */
 export type OppEnvelopeTelemetryIssue = {
-  readonly [Code in keyof TelemetryIssueContextByCode]: {
-    readonly code: Code
-    readonly baseKey: string
-    readonly context: TelemetryIssueContextByCode[Code]
-  }
+  readonly [Code in keyof TelemetryIssueContextByCode]: TelemetryIssueRecord<Code>
 }[keyof TelemetryIssueContextByCode]

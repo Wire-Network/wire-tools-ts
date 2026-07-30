@@ -29,7 +29,7 @@ const EmptyTelemetry = Object.freeze({
 })
 
 /** Store operations and snapshots required for one authoritative finalization. */
-export type RunEvidenceInfrastructureFinalizerContext = {
+export interface RunEvidenceInfrastructureFinalizerContext {
   readonly manifest: () => RunEvidenceManifest
   readonly iterations: () => readonly RunEvidenceIteration[]
   readonly iterationRefs: () => readonly RunEvidenceIterationRecordRef[]

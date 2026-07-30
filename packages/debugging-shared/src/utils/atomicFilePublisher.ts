@@ -22,13 +22,15 @@ const DefaultMode = 0o600,
     unlink: Fs.promises.unlink
   } satisfies AtomicFile.FileSystem
 
-type PublishOptions = {
+/** One create-or-replace publication request and its resolved collaborators. */
+interface PublishOptions {
   readonly request: AtomicFile.PublishRequest
   readonly dependencies: AtomicFile.Dependencies
   readonly createOnly: boolean
 }
 
-type FailureState = {
+/** Commit state carried from a failed operation into the typed failure. */
+interface FailureState {
   readonly operation: AtomicFileOperationError
   readonly committed: boolean
   readonly residualTempFile: string | null

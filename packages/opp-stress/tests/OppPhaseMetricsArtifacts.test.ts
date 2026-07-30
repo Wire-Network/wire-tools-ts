@@ -1,10 +1,7 @@
 import * as Fs from "node:fs"
 import * as Path from "node:path"
 
-import {
-  createEnvelopeBaseline,
-  oppDebuggingPath
-} from "@wireio/debugging-shared"
+import { createEnvelopeBaseline } from "@wireio/debugging-shared"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import {
   collectOppPhaseMetrics,

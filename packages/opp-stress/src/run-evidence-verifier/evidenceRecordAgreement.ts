@@ -11,7 +11,11 @@ import {
 import { RunEvidenceVerificationIssueCode } from "../runEvidenceVerifierTypes.js"
 import { RunEvidenceVerificationContext } from "./verifierIssues.js"
 
-type RecordRef = { readonly path: string; readonly sha256: string }
+/** Portable record path plus the full digest the manifest committed for it. */
+interface RecordRef {
+  readonly path: string
+  readonly sha256: string
+}
 
 /** Verify cross-record identity, lifecycle, endpoint, and chronology agreement. */
 export function verifyEvidenceRecordAgreement(

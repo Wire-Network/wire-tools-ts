@@ -500,7 +500,7 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
     config: ClusterConfig,
     startedAtMs: number,
     endedAtMs: number
-  ): string | null {
+  ): string {
     const failure = batchOperatorLogFiles(config)
       .map(filePath =>
         findBatchOperatorFailureInFile(filePath, startedAtMs, endedAtMs)
@@ -534,7 +534,7 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
     filePath: string,
     startedAtMs: number,
     endedAtMs: number
-  ): string | null {
+  ): string {
     const record = Fs.readFileSync(filePath, "utf-8")
       .split("\n")
       .map(line => parseJsonLogLine(line))

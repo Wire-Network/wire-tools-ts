@@ -2,6 +2,7 @@ import {
   EnvelopeIntegrityIssueCode,
   type EnvelopeIntegrityIssue
 } from "@wireio/debugging-shared"
+import { match } from "ts-pattern"
 
 import {
   OppEnvelopeTelemetryIssueCode,
@@ -17,160 +18,172 @@ import {
 export function mapEnvelopeIntegrityIssue(
   issue: EnvelopeIntegrityIssue
 ): OppEnvelopeTelemetryIssue {
-  switch (issue.code) {
-    case EnvelopeIntegrityIssueCode.InvalidStorageKey:
-      return {
-        code: OppEnvelopeTelemetryIssueCode.InvalidStorageKey,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.UnknownEndpoint:
-      return {
-        code: OppEnvelopeTelemetryIssueCode.UnknownEndpoint,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.MissingDataSidecar:
-      return {
-        code: OppEnvelopeTelemetryIssueCode.MissingDataSidecar,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.MissingMetadataSidecar:
-      return {
+  return match<EnvelopeIntegrityIssue, OppEnvelopeTelemetryIssue>(issue)
+    .with({ code: EnvelopeIntegrityIssueCode.InvalidStorageKey }, matched => ({
+      code: OppEnvelopeTelemetryIssueCode.InvalidStorageKey,
+      baseKey: matched.baseKey,
+      context: matched.context
+    }))
+    .with({ code: EnvelopeIntegrityIssueCode.UnknownEndpoint }, matched => ({
+      code: OppEnvelopeTelemetryIssueCode.UnknownEndpoint,
+      baseKey: matched.baseKey,
+      context: matched.context
+    }))
+    .with({ code: EnvelopeIntegrityIssueCode.MissingDataSidecar }, matched => ({
+      code: OppEnvelopeTelemetryIssueCode.MissingDataSidecar,
+      baseKey: matched.baseKey,
+      context: matched.context
+    }))
+    .with(
+      { code: EnvelopeIntegrityIssueCode.MissingMetadataSidecar },
+      matched => ({
         code: OppEnvelopeTelemetryIssueCode.MissingMetadataSidecar,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.DataSidecarSymlink:
-      return {
-        code: OppEnvelopeTelemetryIssueCode.DataSidecarSymlink,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.MetadataSidecarSymlink:
-      return {
+        baseKey: matched.baseKey,
+        context: matched.context
+      })
+    )
+    .with({ code: EnvelopeIntegrityIssueCode.DataSidecarSymlink }, matched => ({
+      code: OppEnvelopeTelemetryIssueCode.DataSidecarSymlink,
+      baseKey: matched.baseKey,
+      context: matched.context
+    }))
+    .with(
+      { code: EnvelopeIntegrityIssueCode.MetadataSidecarSymlink },
+      matched => ({
         code: OppEnvelopeTelemetryIssueCode.MetadataSidecarSymlink,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.DataSidecarNotRegular:
-      return {
+        baseKey: matched.baseKey,
+        context: matched.context
+      })
+    )
+    .with(
+      { code: EnvelopeIntegrityIssueCode.DataSidecarNotRegular },
+      matched => ({
         code: OppEnvelopeTelemetryIssueCode.DataSidecarNotRegular,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.MetadataSidecarNotRegular:
-      return {
+        baseKey: matched.baseKey,
+        context: matched.context
+      })
+    )
+    .with(
+      { code: EnvelopeIntegrityIssueCode.MetadataSidecarNotRegular },
+      matched => ({
         code: OppEnvelopeTelemetryIssueCode.MetadataSidecarNotRegular,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.DataReadFailed:
-      return {
-        code: OppEnvelopeTelemetryIssueCode.DataReadFailed,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.MetadataReadFailed:
-      return {
-        code: OppEnvelopeTelemetryIssueCode.MetadataReadFailed,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.DataSidecarChanged:
-      return {
-        code: OppEnvelopeTelemetryIssueCode.DataSidecarChanged,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.MetadataSidecarChanged:
-      return {
+        baseKey: matched.baseKey,
+        context: matched.context
+      })
+    )
+    .with({ code: EnvelopeIntegrityIssueCode.DataReadFailed }, matched => ({
+      code: OppEnvelopeTelemetryIssueCode.DataReadFailed,
+      baseKey: matched.baseKey,
+      context: matched.context
+    }))
+    .with({ code: EnvelopeIntegrityIssueCode.MetadataReadFailed }, matched => ({
+      code: OppEnvelopeTelemetryIssueCode.MetadataReadFailed,
+      baseKey: matched.baseKey,
+      context: matched.context
+    }))
+    .with({ code: EnvelopeIntegrityIssueCode.DataSidecarChanged }, matched => ({
+      code: OppEnvelopeTelemetryIssueCode.DataSidecarChanged,
+      baseKey: matched.baseKey,
+      context: matched.context
+    }))
+    .with(
+      { code: EnvelopeIntegrityIssueCode.MetadataSidecarChanged },
+      matched => ({
         code: OppEnvelopeTelemetryIssueCode.MetadataSidecarChanged,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.DataDecodeFailed:
-      return {
-        code: OppEnvelopeTelemetryIssueCode.DataDecodeFailed,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.MetadataDecodeFailed:
-      return {
+        baseKey: matched.baseKey,
+        context: matched.context
+      })
+    )
+    .with({ code: EnvelopeIntegrityIssueCode.DataDecodeFailed }, matched => ({
+      code: OppEnvelopeTelemetryIssueCode.DataDecodeFailed,
+      baseKey: matched.baseKey,
+      context: matched.context
+    }))
+    .with(
+      { code: EnvelopeIntegrityIssueCode.MetadataDecodeFailed },
+      matched => ({
         code: OppEnvelopeTelemetryIssueCode.MetadataDecodeFailed,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.DataHashMismatch:
-      return {
-        code: OppEnvelopeTelemetryIssueCode.DataHashMismatch,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.MetadataChecksumMismatch:
-      return {
+        baseKey: matched.baseKey,
+        context: matched.context
+      })
+    )
+    .with({ code: EnvelopeIntegrityIssueCode.DataHashMismatch }, matched => ({
+      code: OppEnvelopeTelemetryIssueCode.DataHashMismatch,
+      baseKey: matched.baseKey,
+      context: matched.context
+    }))
+    .with(
+      { code: EnvelopeIntegrityIssueCode.MetadataChecksumMismatch },
+      matched => ({
         code: OppEnvelopeTelemetryIssueCode.MetadataChecksumMismatch,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.EpochMismatch:
-      return {
-        code: OppEnvelopeTelemetryIssueCode.EpochMismatch,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.PathOutsideStorageRoot:
-      return {
+        baseKey: matched.baseKey,
+        context: matched.context
+      })
+    )
+    .with({ code: EnvelopeIntegrityIssueCode.EpochMismatch }, matched => ({
+      code: OppEnvelopeTelemetryIssueCode.EpochMismatch,
+      baseKey: matched.baseKey,
+      context: matched.context
+    }))
+    .with(
+      { code: EnvelopeIntegrityIssueCode.PathOutsideStorageRoot },
+      matched => ({
         code: OppEnvelopeTelemetryIssueCode.PathOutsideStorageRoot,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.StorageRootSymlink:
-      return {
-        code: OppEnvelopeTelemetryIssueCode.StorageRootSymlink,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.StorageAncestorSymlink:
-      return {
+        baseKey: matched.baseKey,
+        context: matched.context
+      })
+    )
+    .with({ code: EnvelopeIntegrityIssueCode.StorageRootSymlink }, matched => ({
+      code: OppEnvelopeTelemetryIssueCode.StorageRootSymlink,
+      baseKey: matched.baseKey,
+      context: matched.context
+    }))
+    .with(
+      { code: EnvelopeIntegrityIssueCode.StorageAncestorSymlink },
+      matched => ({
         code: OppEnvelopeTelemetryIssueCode.StorageAncestorSymlink,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.StorageRootNotDirectory:
-      return {
+        baseKey: matched.baseKey,
+        context: matched.context
+      })
+    )
+    .with(
+      { code: EnvelopeIntegrityIssueCode.StorageRootNotDirectory },
+      matched => ({
         code: OppEnvelopeTelemetryIssueCode.StorageRootNotDirectory,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.StorageRootChanged:
-      return {
-        code: OppEnvelopeTelemetryIssueCode.StorageRootChanged,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.StorageRootReadFailed:
-      return {
+        baseKey: matched.baseKey,
+        context: matched.context
+      })
+    )
+    .with({ code: EnvelopeIntegrityIssueCode.StorageRootChanged }, matched => ({
+      code: OppEnvelopeTelemetryIssueCode.StorageRootChanged,
+      baseKey: matched.baseKey,
+      context: matched.context
+    }))
+    .with(
+      { code: EnvelopeIntegrityIssueCode.StorageRootReadFailed },
+      matched => ({
         code: OppEnvelopeTelemetryIssueCode.StorageRootReadFailed,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.BaselineCaptureFailed:
-      return {
+        baseKey: matched.baseKey,
+        context: matched.context
+      })
+    )
+    .with(
+      { code: EnvelopeIntegrityIssueCode.BaselineCaptureFailed },
+      matched => ({
         code: OppEnvelopeTelemetryIssueCode.BaselineCaptureFailed,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    case EnvelopeIntegrityIssueCode.DirectoryScanFailed:
-      return {
+        baseKey: matched.baseKey,
+        context: matched.context
+      })
+    )
+    .with(
+      { code: EnvelopeIntegrityIssueCode.DirectoryScanFailed },
+      matched => ({
         code: OppEnvelopeTelemetryIssueCode.DirectoryScanFailed,
-        baseKey: issue.baseKey,
-        context: issue.context
-      }
-    default:
-      return assertNever(issue)
-  }
+        baseKey: matched.baseKey,
+        context: matched.context
+      })
+    )
+    .otherwise(value => assertNever(value))
 }
 
 function assertNever(value: never): never {

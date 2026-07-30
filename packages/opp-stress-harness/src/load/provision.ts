@@ -223,13 +223,42 @@ export async function provisionLoadWallet(
   return { ...key, account }
 }
 
+/**
+ * A resolved account name, or `null` when the chain surfaced none. This
+ * package compiles with `strictNullChecks`, so the nullable leg is a
+ * load-bearing part of the contract and is named rather than spelled inline
+ * at each return position.
+ */
+type ResolvedAccountName = string | null
+
+/** The processed-transaction leg carrying the `newuser` action traces. */
+interface ProcessedActionTraces {
+  action_traces?: readonly Record<string, unknown>[]
+}
+
+/** The push-transaction result leg this module reads traces out of. */
+interface PushTransactionResult {
+  processed?: ProcessedActionTraces
+}
+
+/** The `get_table_rows` response leg this module consumes. */
+interface TableRowsEnvelope {
+  rows?: readonly unknown[]
+}
+
+/** A v6 KV table row wrapper, whose flat row rides `value`. */
+interface KvRowWrapper {
+  value: unknown
+}
+
+/** The `sysio.roa` sponsors row leg carrying the sponsored account name. */
+interface SponsoredAccountRow {
+  username?: unknown
+}
+
 /** Read a minted account name back from the `newuser` action's return value. */
-function mintedAccountName(result: unknown): string | null {
-  const traces = (
-    result as {
-      processed?: { action_traces?: readonly Record<string, unknown>[] }
-    }
-  ).processed?.action_traces
+function mintedAccountName(result: unknown): ResolvedAccountName {
+  const traces = (result as PushTransactionResult).processed?.action_traces
   if (traces === undefined) return null
   const trace = traces.find(entry => "return_value_data" in entry)
   const value = trace?.["return_value_data"]
@@ -241,7 +270,7 @@ async function findSponsoredAccount(
   client: APIClient,
   creator: string,
   nonce: string
-): Promise<string | null> {
+): Promise<ResolvedAccountName> {
   const key = Name.from(nonce).value.toString()
   // Bounded KV lookup: sdk-core's typed overload demands a `type` discriminator
   // that does not apply to this raw-string bound, so normalize at the boundary.
@@ -254,15 +283,15 @@ async function findSponsoredAccount(
     limit: 1,
     json: true
   } as unknown as Parameters<APIClient["v1"]["chain"]["get_table_rows"]>[0])
-  const rows: readonly unknown[] =
-    (result as { rows?: readonly unknown[] }).rows ?? []
-  const row = rows
+  const { rows } = result as TableRowsEnvelope,
+    sponsorRows: readonly unknown[] = rows ?? []
+  const row = sponsorRows
     .map(entry =>
       entry !== null && typeof entry === "object" && "value" in entry
-        ? (entry as { value: unknown }).value
+        ? (entry as KvRowWrapper).value
         : entry
     )
     .find(entry => entry !== null && typeof entry === "object")
-  const username = (row as { username?: unknown } | undefined)?.username
+  const username = (row as SponsoredAccountRow | undefined)?.username
   return typeof username === "string" && username.length > 0 ? username : null
 }

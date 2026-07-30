@@ -5,7 +5,7 @@ import type {
 } from "./EnvelopeIntegrityReaderTypes.js"
 
 /** Retained descriptor and identity for one physical storage root. */
-export type PinnedEnvelopeStorageRoot = {
+export interface PinnedEnvelopeStorageRoot {
   readonly path: string
   readonly identity: EnvelopeIntegrityFileIdentity
   readonly components: readonly RootComponentIdentity[]
@@ -13,12 +13,23 @@ export type PinnedEnvelopeStorageRoot = {
 }
 
 /** Stable pathname identity retained for one root component. */
-export type RootComponentIdentity = {
+export interface RootComponentIdentity {
   readonly path: string
   readonly identity: EnvelopeIntegrityFileIdentity
 }
 
+/** Storage root pinned to a verified non-symlink physical directory. */
+export interface PinnedEnvelopeStorageRootResult {
+  readonly kind: "pinned"
+  readonly root: PinnedEnvelopeStorageRoot
+}
+
+/** Storage root rejected with ordered containment diagnostics. */
+export interface EnvelopeStorageRootIssueResult {
+  readonly kind: "issue"
+  readonly issues: EnvelopeIntegrityIssueSequence
+}
+
 /** Result of pinning a non-symlink storage root. */
 export type PinEnvelopeStorageRootResult =
-  | { readonly kind: "pinned"; readonly root: PinnedEnvelopeStorageRoot }
-  | { readonly kind: "issue"; readonly issues: EnvelopeIntegrityIssueSequence }
+  PinnedEnvelopeStorageRootResult | EnvelopeStorageRootIssueResult

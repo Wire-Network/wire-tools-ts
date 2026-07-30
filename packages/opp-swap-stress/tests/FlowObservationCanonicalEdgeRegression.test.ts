@@ -21,6 +21,7 @@ import {
 } from "@wireio/opp-swap-stress"
 import type {
   SwapStressIterationObservation,
+  SwapStressPhase,
   SwapStressPhaseResult
 } from "@wireio/opp-swap-stress"
 
@@ -165,7 +166,7 @@ function pendingPhase(result: EnvelopeIntegrityResult): SwapStressPhaseResult {
 }
 
 function measuredZeroPhase(
-  phase: "phase-1" | "phase-2",
+  phase: SwapStressPhase,
   endpoint: RunEvidenceEndpoint,
   saturated: boolean
 ): SwapStressPhaseResult {

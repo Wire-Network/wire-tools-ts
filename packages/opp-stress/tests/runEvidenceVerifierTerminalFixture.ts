@@ -15,15 +15,16 @@ import {
 import { verifierFixtureSha256 } from "./runEvidenceVerifierArtifactFixture.js"
 import type {
   BuiltVerifierRecords,
-  VerifierRecordBuildInput
+  VerifierRecordBuildInput,
+  VerifierRecordRef
 } from "./runEvidenceVerifierFixtureTypes.js"
 
 /** Write terminal evidence and return complete manifest-facing record state. */
 export function buildTerminalVerifierRecords(
   runDirectory: string,
   input: VerifierRecordBuildInput,
-  setupRef: { readonly path: string; readonly sha256: string },
-  iterationRefs: readonly { readonly path: string; readonly sha256: string }[],
+  setupRef: VerifierRecordRef,
+  iterationRefs: readonly VerifierRecordRef[],
   artifacts: BuiltVerifierRecords["artifacts"],
   saturatedEndpoints: readonly RunEvidenceEndpoint[],
   telemetry: BuiltVerifierRecords["telemetry"],
@@ -61,7 +62,7 @@ export function writeVerifierRecord(
   runDirectory: string,
   path: string,
   value: unknown
-): { readonly path: string; readonly sha256: string } {
+): VerifierRecordRef {
   const bytes = serializeRunEvidenceJson(value)
   Fs.writeFileSync(Path.join(runDirectory, path), bytes)
   return { path, sha256: verifierFixtureSha256(bytes) }
@@ -73,7 +74,7 @@ function terminalRecord(
   saturatedEndpoints: readonly RunEvidenceEndpoint[],
   missingEndpoints: readonly RunEvidenceEndpoint[],
   telemetry: BuiltVerifierRecords["telemetry"],
-  iterationRefs: readonly { readonly path: string; readonly sha256: string }[]
+  iterationRefs: readonly VerifierRecordRef[]
 ): unknown {
   const failed =
       lifecycle === RunEvidenceLifecycle.Failed ||

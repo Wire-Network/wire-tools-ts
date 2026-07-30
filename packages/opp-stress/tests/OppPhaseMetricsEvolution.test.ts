@@ -19,7 +19,7 @@ import {
   readJson
 } from "./run-evidence/runEvidencePersistenceTestSupport.js"
 
-type CollectionInput = {
+interface CollectionInput {
   readonly clusterPath: string
   readonly baseline: OppPhaseMetricBaseline
   readonly evidenceSink: RunEvidencePersistence

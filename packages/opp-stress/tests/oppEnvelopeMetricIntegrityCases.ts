@@ -13,7 +13,7 @@ import {
 } from "./oppEnvelopeMetricTestSupport.js"
 
 /** One real-disk integrity mutation and its exact projected issue. */
-export type MetricIntegrityCase = {
+export interface MetricIntegrityCase {
   readonly label: string
   readonly arrange: (storageDir: string) => OppEnvelopeTelemetryIssue
 }

@@ -30,7 +30,7 @@ const Sha256Pattern = /^[0-9a-f]{64}$/,
   LegacyIterationPattern = /^iteration-\d+\.json$/
 
 /** Parsed schema-v1 records for one completed ramp run. */
-export type ParsedRampEvidence = {
+export interface ParsedRampEvidence {
   readonly setup: RunEvidenceSetup
   readonly iterations: readonly RunEvidenceIteration[]
   readonly terminal: RunEvidenceTerminal
@@ -38,52 +38,55 @@ export type ParsedRampEvidence = {
 }
 
 /** Expected persisted and independently recomputed iteration decision. */
-export type RampIterationExpectation = {
+export interface RampIterationExpectation {
   readonly accountCount: number
   readonly outcome: RunEvidenceIterationOutcome
   readonly saturatedEndpoints: readonly RunEvidenceEndpoint[]
   readonly missingEndpoints: readonly RunEvidenceEndpoint[]
 }
 
+/** Expected clean terminal decision closing a generic ramp scenario. */
+export interface RampTerminalExpectation {
+  readonly lifecycle:
+    RunEvidenceLifecycle.Saturated | RunEvidenceLifecycle.Incomplete
+  readonly preserveCluster: boolean
+  readonly verdict:
+    | RunEvidenceVerificationVerdict.Saturated
+    | RunEvidenceVerificationVerdict.NonSuccess
+}
+
 /** Expected clean terminal decision for a generic ramp scenario. */
-export type RampEvidenceExpectation = {
+export interface RampEvidenceExpectation {
   readonly iterations: readonly RampIterationExpectation[]
-  readonly terminal: {
-    readonly lifecycle:
-      RunEvidenceLifecycle.Saturated | RunEvidenceLifecycle.Incomplete
-    readonly preserveCluster: boolean
-    readonly verdict:
-      | RunEvidenceVerificationVerdict.Saturated
-      | RunEvidenceVerificationVerdict.NonSuccess
-  }
+  readonly terminal: RampTerminalExpectation
 }
 
 /** Parsed records plus their independent verifier report. */
-export type VerifiedRampEvidence = ParsedRampEvidence & {
+export interface VerifiedRampEvidence extends ParsedRampEvidence {
   readonly report: RunEvidenceVerificationReport
 }
 
 /** Read every declared schema-v1 record through its public parser. @param runDirectory Completed run directory. @returns Typed lifecycle records. */
 export function readRampEvidence(runDirectory: string): ParsedRampEvidence {
-  const manifest = requireParsed(
+  const manifest = assertParsed(
       parseRunEvidenceManifest(
         readJson(Path.join(runDirectory, RunEvidencePath.Manifest))
       ),
       "manifest"
     ),
-    setup = requireParsed(
+    setup = assertParsed(
       parseRunEvidenceSetup(
         readJson(Path.join(runDirectory, RunEvidencePath.Setup))
       ),
       "setup"
     ),
     iterations = manifest.records.iterations.map(ref =>
-      requireParsed(
+      assertParsed(
         parseRunEvidenceIteration(readJson(Path.join(runDirectory, ref.path))),
         ref.path
       )
     ),
-    terminal = requireParsed(
+    terminal = assertParsed(
       parseRunEvidenceTerminal(
         readJson(Path.join(runDirectory, RunEvidencePath.Terminal))
       ),
@@ -249,7 +252,7 @@ function readJson(file: string): unknown {
   return JSON.parse(Fs.readFileSync(file, "utf8"))
 }
 
-function requireParsed<T>(parsed: RunEvidenceParseResult<T>, label: string): T {
+function assertParsed<T>(parsed: RunEvidenceParseResult<T>, label: string): T {
   if (!parsed.ok) throw new Error(`${label} must parse`)
   return parsed.value
 }

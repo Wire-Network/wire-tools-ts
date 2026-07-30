@@ -9,12 +9,12 @@ import {
   writeOppPair
 } from "./runEvidencePersistenceTestSupport.js"
 
-type PairPaths = {
+interface PairPaths {
   readonly dataFile: string
   readonly metadataFile: string
 }
 
-type ReplacementCase = {
+interface ReplacementCase {
   readonly label: string
   readonly replace: (workspace: PersistenceWorkspace, paths: PairPaths) => void
 }

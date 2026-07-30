@@ -6,10 +6,23 @@ import {
 import { produceCandidatePollingIssues } from "./pollingCandidateIssueProducers.js"
 import { produceRootPollingIssues } from "./pollingRootIssueProducers.js"
 
+/** Observation scope one producer-backed strict issue belongs to. */
+export enum PollableIntegrityIssueScopeKind {
+  candidate = "candidate",
+  storage = "storage"
+}
+
+/**
+ * Observation scope — derived from {@link PollableIntegrityIssueScopeKind} so
+ * the raw spellings stay assignable at fixture sites.
+ */
+export type PollableIntegrityIssueScope =
+  `${PollableIntegrityIssueScopeKind}`
+
 /** One producer-backed strict issue and its observation scope. */
-export type PollableIntegrityIssue = {
+export interface PollableIntegrityIssue {
   readonly name: string
-  readonly scope: "candidate" | "storage"
+  readonly scope: PollableIntegrityIssueScope
   readonly issue: OppEnvelopeTelemetryIssue
 }
 

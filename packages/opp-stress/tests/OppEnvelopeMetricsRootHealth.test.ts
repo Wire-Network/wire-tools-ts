@@ -131,10 +131,11 @@ describe("strict OPP envelope root health", () => {
   })
 })
 
-function compareIssueBaseKeys(
-  left: { readonly baseKey: string },
-  right: { readonly baseKey: string }
-): number {
+interface BaseKeyed {
+  readonly baseKey: string
+}
+
+function compareIssueBaseKeys(left: BaseKeyed, right: BaseKeyed): number {
   return left.baseKey < right.baseKey
     ? -1
     : left.baseKey > right.baseKey

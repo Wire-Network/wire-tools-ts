@@ -6,7 +6,7 @@ import type { RunEvidencePersistence } from "../runEvidencePersistence.js"
 import { NodeSourceFileSystem } from "./safeEvidenceSource.js"
 
 /** Fully resolved collaborators retained by one allocated persistence instance. */
-export type ResolvedPersistenceDependencies = {
+export interface ResolvedPersistenceDependencies {
   readonly randomUUID: () => string
   readonly runtime: RunEvidencePersistence.Runtime
   readonly sourceFileSystem: RunEvidencePersistence.SourceFileSystem

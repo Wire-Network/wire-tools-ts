@@ -81,7 +81,7 @@ function fileError(operation: string): Error {
 
 function issueOperations(
   result: Awaited<ReturnType<typeof readEnvelopeIntegrity>>
-): readonly (readonly [EnvelopeIntegrityIssueCode, string | null])[] {
+): readonly (readonly [EnvelopeIntegrityIssueCode, string])[] {
   return result.issues.map(issue => [
     issue.code,
     "error" in issue.context && issue.context.error !== null

@@ -12,12 +12,12 @@ import {
   type PersistenceWorkspace
 } from "./runEvidencePersistenceTestSupport.js"
 
-type CandidateSource = {
+interface CandidateSource {
   readonly sourceRoot: string
   readonly baseKey: string
 }
 
-type SourceCase = {
+interface SourceCase {
   readonly label: string
   readonly arrange: (workspace: PersistenceWorkspace) => CandidateSource
 }

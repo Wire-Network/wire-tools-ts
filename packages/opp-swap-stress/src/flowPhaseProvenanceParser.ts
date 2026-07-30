@@ -1,3 +1,5 @@
+import { match } from "ts-pattern"
+
 import { createEnvelopeBaseline } from "@wireio/debugging-shared"
 import {
   RunEvidenceSaturationStrategies,
@@ -20,9 +22,14 @@ type PhaseProvenance = Exclude<
   SwapStressPhaseEnvelopeMetrics["provenance"],
   null
 >
+/** `Extract` filter selecting the recorded leg of the generic phase evidence. */
+interface RecordedEvidenceDiscriminator {
+  readonly kind: "recorded"
+}
+
 type CapturedArtifacts = Extract<
   OppPhaseMetricEvidence,
-  { readonly kind: "recorded" }
+  RecordedEvidenceDiscriminator
 >["artifacts"]
 
 const StrictKeys = ["kind", "solanaOversized", "epochEnvelopeIndexes"] as const,
@@ -49,18 +56,20 @@ export function isSwapStressPhaseProvenance(
   envelopeCount: number
 ): value is PhaseProvenance {
   if (!isObservationRecord(value)) return false
-  switch (value.kind) {
-    case "strict_snapshot":
-      return (
+  return match(value.kind)
+    .with(
+      "strict_snapshot",
+      () =>
         hasExactObservationKeys(value, StrictKeys) &&
         typeof value.solanaOversized === "boolean" &&
         isCountArray(value.epochEnvelopeIndexes) &&
         value.epochEnvelopeIndexes.length === envelopeCount &&
         Array.isArray(artifactRefs) &&
         artifactRefs.length === 0
-      )
-    case "opp_phase":
-      return (
+    )
+    .with(
+      "opp_phase",
+      () =>
         hasExactObservationKeys(value, OppPhaseKeys) &&
         RunEvidenceSaturationStrategies.some(
           strategy => strategy === value.strategy
@@ -71,10 +80,8 @@ export function isSwapStressPhaseProvenance(
         value.epochEnvelopeIndexes.length === envelopeCount &&
         isSelectedArtifacts(value.selectedArtifacts) &&
         isMetricEvidence(value.evidence, artifactRefs)
-      )
-    default:
-      return false
-  }
+    )
+    .otherwise(() => false)
 }
 
 /**
@@ -88,14 +95,16 @@ export function isMetricEvidence(
   artifactRefs: unknown
 ): value is OppPhaseMetricEvidence {
   if (!isObservationRecord(value) || !Array.isArray(artifactRefs)) return false
-  switch (value.kind) {
-    case "not_recorded":
-      return (
+  const refs = artifactRefs
+  return match(value.kind)
+    .with(
+      "not_recorded",
+      () =>
         hasExactObservationKeys(value, ["kind", "baseline"]) &&
         isBaseline(value.baseline, false) &&
-        artifactRefs.length === 0
-      )
-    case "recorded":
+        refs.length === 0
+    )
+    .with("recorded", () => {
       const capturedRefs = capturedArtifactRefs(value.artifacts)
       return (
         hasExactObservationKeys(value, [
@@ -107,13 +116,12 @@ export function isMetricEvidence(
         isBaseline(value.baseline, true) &&
         capturedRefs !== null &&
         isStringArray(value.artifactRefs) &&
-        isStringArray(artifactRefs) &&
-        observationValuesEqual(value.artifactRefs, artifactRefs) &&
+        isStringArray(refs) &&
+        observationValuesEqual(value.artifactRefs, refs) &&
         observationValuesEqual(value.artifactRefs, capturedRefs)
       )
-    default:
-      return false
-  }
+    })
+    .otherwise(() => false)
 }
 
 /**
@@ -190,7 +198,15 @@ function isSelectedArtifacts(value: unknown): boolean {
   )
 }
 
-function capturedArtifactRefs(value: unknown): readonly string[] | null {
+/**
+ * The captured artifact ref paths, or `null` when the value is not a valid
+ * captured-artifact array. This package compiles with `strictNullChecks`, so
+ * the nullable leg is a load-bearing part of the contract and is named rather
+ * than spelled inline at the return position.
+ */
+type CapturedArtifactRefs = readonly string[] | null
+
+function capturedArtifactRefs(value: unknown): CapturedArtifactRefs {
   return isCapturedArtifacts(value)
     ? value.flatMap(artifact => [
         artifact.immutableRefs.data.path,

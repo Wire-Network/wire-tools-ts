@@ -41,7 +41,7 @@ describe("runChunkedBoundedWorkload", () => {
       runChunkedBoundedWorkload({
         requests: [],
         concurrency: 0,
-        submit: async request => request
+        submit: request => Promise.resolve(request)
       })
     ).rejects.toThrow(/concurrency must be positive/)
   })

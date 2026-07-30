@@ -14,6 +14,13 @@ type ChainRow = SystemContracts.SysioChainsChainRowType
 type ChainKind =
   | SystemContracts.SysioChainsChainkind
   | keyof typeof SystemContracts.SysioChainsChainkind
+/**
+ * An outbound depot→outpost direction, or `null` for the WIRE depot and any
+ * chain kind that has no outpost. This package compiles with
+ * `strictNullChecks`, so the nullable leg is a load-bearing part of the
+ * contract and is named rather than spelled inline at each return position.
+ */
+type ResolvedOutpostDirection = DebugOutpostEndpointsType | null
 
 /** Digits the debug storage key zero-pads the epoch index to. */
 const EpochKeyDigits = 8,
@@ -66,7 +73,7 @@ export interface ChainEnvelopeReader {
  */
 export function resolveOutpostDirection(
   kind: ChainKind
-): DebugOutpostEndpointsType | null {
+): ResolvedOutpostDirection {
   const normalized =
     typeof kind === "number" ? kind : SystemContracts.SysioChainsChainkind[kind]
   return OutpostDirectionByChainKind[normalized] ?? null

@@ -5,6 +5,27 @@ import type {
   EnvelopeIntegrityFileOperation
 } from "./EnvelopeIntegrityReaderTypes.js"
 
+/** Diagnostic properties read off an untrusted thrown value. */
+enum ErrorProperty {
+  name = "name",
+  message = "message",
+  code = "code"
+}
+
+/** Property that was present on the untrusted value. */
+interface PropertyFound {
+  readonly found: true
+  readonly value: unknown
+}
+
+/** Property that was absent from the untrusted value. */
+interface PropertyMissing {
+  readonly found: false
+}
+
+/** Total lookup outcome for one untrusted diagnostic property. */
+type ReadPropertyResult = PropertyFound | PropertyMissing
+
 /**
  * Normalize an unknown failure into JSON-safe string fields.
  * @param error Value thrown by an untrusted collaborator.
@@ -15,9 +36,9 @@ export function normalizeUnknownError(
   error: unknown,
   operation: EnvelopeIntegrityFileOperation
 ): EnvelopeIntegrityFileError {
-  const name = readProperty(error, "name"),
-    message = readProperty(error, "message"),
-    code = readProperty(error, "code")
+  const name = readProperty(error, ErrorProperty.name),
+    message = readProperty(error, ErrorProperty.message),
+    code = readProperty(error, ErrorProperty.code)
   return {
     name: name.found ? stringifyUnknown(name.value) : typeof error,
     code: code.found ? stringifyUnknown(code.value) : null,
@@ -34,7 +55,7 @@ export function normalizeUnknownError(
  * @returns String diagnostic that cannot retain BigInt, object, or symbol values.
  */
 export function unknownErrorMessage(error: unknown): string {
-  const message = readProperty(error, "message")
+  const message = readProperty(error, ErrorProperty.message)
   return message.found
     ? stringifyUnknown(message.value)
     : stringifyUnknown(error)
@@ -49,12 +70,7 @@ function stringifyUnknown(value: unknown): string {
   }
 }
 
-function readProperty(
-  value: unknown,
-  key: "name" | "message" | "code"
-):
-  | { readonly found: true; readonly value: unknown }
-  | { readonly found: false } {
+function readProperty(value: unknown, key: ErrorProperty): ReadPropertyResult {
   if (
     value === null ||
     (typeof value !== "object" && typeof value !== "function")

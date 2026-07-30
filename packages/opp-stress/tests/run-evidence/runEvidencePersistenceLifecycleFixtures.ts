@@ -10,7 +10,8 @@ import {
   RunEvidenceSaturationStrategy,
   RunEvidenceSchemaVersion,
   RunEvidenceSetupStatus,
-  RunEvidenceStage
+  RunEvidenceStage,
+  type RunEvidenceIterationRecordRef
 } from "@wireio/test-opp-stress"
 
 /** Required endpoint used by persistence lifecycle records. */
@@ -148,7 +149,7 @@ export function breakageIteration(iterationIndex: number) {
 /** Build a valid successful terminal from committed iteration refs. */
 export function terminalRecord(
   lifecycle: RunEvidenceLifecycle.Saturated | RunEvidenceLifecycle.Incomplete,
-  iterationRefs: readonly { readonly path: string; readonly sha256: string }[]
+  iterationRefs: readonly RunEvidenceIterationRecordRef[]
 ) {
   const saturated = lifecycle === RunEvidenceLifecycle.Saturated,
     telemetry = healthyTelemetry()
@@ -192,7 +193,7 @@ export function setupFailedTerminal() {
 
 /** Build a valid failed terminal from one or more committed iteration refs. */
 export function failedTerminal(
-  iterationRefs: readonly { readonly path: string; readonly sha256: string }[]
+  iterationRefs: readonly RunEvidenceIterationRecordRef[]
 ) {
   const telemetry = emptyTelemetry()
   return {

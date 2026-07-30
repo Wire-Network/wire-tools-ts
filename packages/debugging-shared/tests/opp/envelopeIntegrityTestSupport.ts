@@ -15,10 +15,12 @@ import type {
 } from "@wireio/debugging-shared"
 
 /** Canonical endpoint token used by strict-reader fixtures. */
-export const EndpointKey = "OUTPOST_ETHEREUM_DEPOT"
+export const EndpointKey = "OUTPOST_ETHEREUM_DEPOT",
+  /** Key epoch every fixture pair uses unless a test overrides it. */
+  DefaultFixtureEpoch = 42
 
 /** Complete on-disk pair and its expected validation values. */
-export type EnvelopePairFixture = {
+export interface EnvelopePairFixture {
   readonly baseKey: string
   readonly dataPath: string
   readonly metadataPath: string
@@ -28,7 +30,7 @@ export type EnvelopePairFixture = {
 }
 
 /** Overrides used to construct malformed or edge-case pairs. */
-export type EnvelopePairOptions = {
+export interface EnvelopePairOptions {
   readonly keyEpoch?: number
   readonly decodedEpoch?: number
   readonly epochEnvelopeIndex?: number
@@ -36,7 +38,7 @@ export type EnvelopePairOptions = {
 }
 
 /** Hooks around descriptor-bound reads for deterministic race tests. */
-export type EnvelopeFileSystemHooks = {
+export interface EnvelopeFileSystemHooks {
   readonly readdir?: (
     storageDir: string,
     read: () => Promise<readonly string[]>
@@ -51,7 +53,7 @@ export type EnvelopeFileSystemHooks = {
 }
 
 /** Descriptor-root stat hook context for deterministic verification faults. */
-export type EnvelopeRootStatHookContext = {
+export interface EnvelopeRootStatHookContext {
   readonly path: string
   readonly openCount: number
   readonly statCount: number
@@ -59,7 +61,7 @@ export type EnvelopeRootStatHookContext = {
 }
 
 /** Descriptor-root close hook context for deterministic close faults. */
-export type EnvelopeRootCloseHookContext = {
+export interface EnvelopeRootCloseHookContext {
   readonly path: string
   readonly openCount: number
   readonly close: () => Promise<void>
@@ -91,8 +93,8 @@ export function writeEnvelopePair(
   storageDir: string,
   options: EnvelopePairOptions = {}
 ): EnvelopePairFixture {
-  const keyEpoch = options.keyEpoch ?? 42,
-    decodedEpoch = options.decodedEpoch ?? keyEpoch,
+  const { keyEpoch = DefaultFixtureEpoch } = options,
+    { decodedEpoch = keyEpoch } = options,
     dataBytes = Buffer.from(
       Envelope.toBinary(
         Envelope.create({

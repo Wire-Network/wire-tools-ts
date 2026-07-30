@@ -4,6 +4,7 @@ import {
 } from "@wireio/test-opp-stress"
 import {
   runSaturationRamp,
+  type StressRampIterationInput,
   type SwapStressIterationObservation
 } from "@wireio/opp-swap-stress"
 
@@ -42,9 +43,7 @@ describe("runSaturationRamp", () => {
     // Given: workload breakage appears at the second count.
     const runIteration = async ({
       accountCount
-    }: {
-      readonly accountCount: number
-    }): Promise<SwapStressIterationObservation> =>
+    }: StressRampIterationInput): Promise<SwapStressIterationObservation> =>
       accountCount === RampFixtures.BreakageCount
         ? {
             kind: "breakage",

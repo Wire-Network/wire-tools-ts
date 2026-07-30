@@ -113,12 +113,15 @@ describe("real flow baseline polling", () => {
   })
 })
 
-function createFakeBaselineRuntime(
-  results: readonly EnvelopeBaselineCaptureResult[]
-): RealBaselinePollingRuntime & {
+/** Recorded call telemetry a fake baseline runtime exposes to assertions. */
+interface FakeBaselineRuntimeTelemetry {
   readonly attemptedAtMs: number[]
   readonly waitsMs: number[]
-} {
+}
+
+function createFakeBaselineRuntime(
+  results: readonly EnvelopeBaselineCaptureResult[]
+): RealBaselinePollingRuntime & FakeBaselineRuntimeTelemetry {
   let nowMs = 0,
     index = 0
   const attemptedAtMs: number[] = [],

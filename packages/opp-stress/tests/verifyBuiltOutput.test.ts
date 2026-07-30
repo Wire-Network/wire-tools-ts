@@ -127,7 +127,7 @@ process.stdout.write(JSON.stringify({
 }))
 `
 
-type DriverOutput = {
+interface DriverOutput {
   readonly events: readonly string[]
   readonly stdout: readonly string[]
   readonly stderr: readonly string[]

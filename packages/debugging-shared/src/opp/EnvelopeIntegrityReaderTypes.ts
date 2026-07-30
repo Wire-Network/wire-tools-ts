@@ -57,27 +57,76 @@ export enum EnvelopeIntegrityIssueCode {
   DirectoryScanFailed = "directory_scan_failed"
 }
 
+/**
+ * Closed filesystem stages a normalized diagnostic can be attributed to.
+ * Each value is the serialized `operation` retained by telemetry consumers.
+ */
+export enum EnvelopeIntegrityFileOperationKind {
+  /** Directory listing through a retained root descriptor. */
+  readdir = "readdir",
+  /** First no-follow open of a candidate sidecar. */
+  open = "open",
+  /** Descriptor stat taken before the payload read. */
+  stat_before_read = "stat_before_read",
+  /** Payload read through the retained descriptor. */
+  read = "read",
+  /** Descriptor stat taken after the payload read. */
+  stat_after_read = "stat_after_read",
+  /** Verification re-open of the same basename. */
+  verify_open = "verify_open",
+  /** Verification stat of the re-opened basename. */
+  verify_stat = "verify_stat",
+  /** Descriptor close of a candidate sidecar. */
+  close = "close",
+  /** Link-free inspection of one storage-root ancestor. */
+  ancestor_lstat = "ancestor_lstat",
+  /** Link-free inspection of the storage root itself. */
+  root_lstat = "root_lstat",
+  /** Physical canonicalization of the storage root. */
+  root_realpath = "root_realpath",
+  /** No-follow open of the storage root. */
+  root_open = "root_open",
+  /** Stat of the retained storage-root descriptor. */
+  root_stat = "root_stat",
+  /** Verification re-open of the storage root. */
+  root_verify_open = "root_verify_open",
+  /** Verification stat of the storage root. */
+  root_verify_stat = "root_verify_stat",
+  /** Close of the retained storage-root descriptor. */
+  root_close = "root_close"
+}
+
 /** Filesystem operation associated with a normalized diagnostic. */
 export type EnvelopeIntegrityFileOperation =
-  | "readdir"
-  | "open"
-  | "stat_before_read"
-  | "read"
-  | "stat_after_read"
-  | "verify_open"
-  | "verify_stat"
-  | "close"
-  | "ancestor_lstat"
-  | "root_lstat"
-  | "root_realpath"
-  | "root_open"
-  | "root_stat"
-  | "root_verify_open"
-  | "root_verify_stat"
-  | "root_close"
+  `${EnvelopeIntegrityFileOperationKind}`
+
+/** Closed reasons one discovered base key fails canonical key validation. */
+export enum EnvelopeIntegrityInvalidKeyReasonKind {
+  /** The key does not use the canonical epoch-endpoint-checksum geometry. */
+  noncanonical_format = "noncanonical_format",
+  /** The key carries a non-canonical zero-padded epoch prefix. */
+  invalid_epoch = "invalid_epoch",
+  /** The key carries a non-canonical checksum suffix. */
+  invalid_checksum = "invalid_checksum"
+}
+
+/** Serialized reason a discovered base key failed canonical validation. */
+export type EnvelopeIntegrityInvalidKeyReason =
+  `${EnvelopeIntegrityInvalidKeyReasonKind}`
+
+/** Closed sidecar members of one canonical envelope pair. */
+export enum EnvelopeSidecarKind {
+  /** Serialized envelope bytes. */
+  data = "data",
+  /** Serialized publication metadata bytes. */
+  metadata = "metadata"
+}
+
+/** Sidecar member of one canonical envelope pair. */
+export type EnvelopeSidecar = `${EnvelopeSidecarKind}`
 
 /** JSON-safe filesystem failure details for telemetry mapping. */
-export type EnvelopeIntegrityFileError = {
+export interface EnvelopeIntegrityFileError {
   readonly name: string
   readonly code: string | null
   readonly message: string
@@ -85,7 +134,7 @@ export type EnvelopeIntegrityFileError = {
 }
 
 /** JSON-safe file identity and drift fields captured around a read. */
-export type EnvelopeIntegrityFileIdentity = {
+export interface EnvelopeIntegrityFileIdentity {
   readonly dev: string
   readonly ino: string
   readonly mode: string
@@ -95,40 +144,53 @@ export type EnvelopeIntegrityFileIdentity = {
   readonly ctimeNs: string
 }
 
-type InvalidKeyContext = {
+interface InvalidKeyContext {
   readonly filename: string
-  readonly reason: "noncanonical_format" | "invalid_epoch" | "invalid_checksum"
+  readonly reason: EnvelopeIntegrityInvalidKeyReason
 }
-type EndpointContext = { readonly endpointKey: string }
-type PathContext = { readonly path: string }
-type ReadContext = {
+interface EndpointContext {
+  readonly endpointKey: string
+}
+interface PathContext {
+  readonly path: string
+}
+interface ReadContext {
   readonly path: string
   readonly error: EnvelopeIntegrityFileError
 }
-type ChangedContext = {
+interface ChangedContext {
   readonly path: string
   readonly before: EnvelopeIntegrityFileIdentity
   readonly after: EnvelopeIntegrityFileIdentity | null
   readonly error: EnvelopeIntegrityFileError | null
 }
-type DecodeContext = { readonly path: string; readonly reason: string }
-type HashContext = {
+interface DecodeContext {
+  readonly path: string
+  readonly reason: string
+}
+interface HashContext {
   readonly expectedHashPrefix: string
   readonly actualHashPrefix: string
   readonly actualSha256: string
 }
-type ChecksumContext = {
+interface ChecksumContext {
   readonly expectedChecksum: string
   readonly actualChecksum: string
 }
-type EpochContext = { readonly keyEpoch: number; readonly decodedEpoch: number }
-type EscapeContext = { readonly storageRoot: string; readonly path: string }
-type StorageContext = {
+interface EpochContext {
+  readonly keyEpoch: number
+  readonly decodedEpoch: number
+}
+interface EscapeContext {
+  readonly storageRoot: string
+  readonly path: string
+}
+interface StorageContext {
   readonly storageDir: string
   readonly error: EnvelopeIntegrityFileError
 }
 
-type IssueContextByCode = {
+interface IssueContextByCode {
   readonly [EnvelopeIntegrityIssueCode.InvalidStorageKey]: InvalidKeyContext
   readonly [EnvelopeIntegrityIssueCode.UnknownEndpoint]: EndpointContext
   readonly [EnvelopeIntegrityIssueCode.MissingDataSidecar]: PathContext
@@ -156,13 +218,18 @@ type IssueContextByCode = {
   readonly [EnvelopeIntegrityIssueCode.DirectoryScanFailed]: StorageContext
 }
 
+/** One code-correlated diagnostic and its exact structured context. */
+interface EnvelopeIntegrityIssueRecord<Code extends keyof IssueContextByCode> {
+  readonly code: Code
+  readonly baseKey: string
+  readonly context: IssueContextByCode[Code]
+}
+
 /** JSON-safe issue keyed by a candidate base key or the storage scope. */
 export type EnvelopeIntegrityIssue = {
-  readonly [Code in keyof IssueContextByCode]: {
-    readonly code: Code
-    readonly baseKey: string
-    readonly context: IssueContextByCode[Code]
-  }
+  readonly [
+    Code in keyof IssueContextByCode
+  ]: EnvelopeIntegrityIssueRecord<Code>
 }[keyof IssueContextByCode]
 
 /** Readonly issue sequence that statically retains at least one diagnostic. */
@@ -175,27 +242,35 @@ export type EnvelopeIntegrityIssueSequence = readonly [
 export type EnvelopeBaselineIdentity = `sha256:${string}`
 
 /** Captured union of all sidecar base keys visible before a phase. */
-export type EnvelopeBaseline = {
+export interface EnvelopeBaseline {
   readonly identity: EnvelopeBaselineIdentity
   readonly baseKeys: readonly string[]
 }
 
+/** Baseline capture that observed a stable all-key generation. */
+interface EnvelopeBaselineCaptured {
+  readonly kind: "captured"
+  readonly baseline: EnvelopeBaseline
+}
+
+/** Baseline capture that failed before producing an all-key generation. */
+interface EnvelopeBaselineCaptureFailed {
+  readonly kind: "failed"
+  readonly issues: EnvelopeIntegrityIssueSequence
+}
+
 /** Non-throwing result of pre-phase all-key discovery. */
 export type EnvelopeBaselineCaptureResult =
-  | { readonly kind: "captured"; readonly baseline: EnvelopeBaseline }
-  | {
-      readonly kind: "failed"
-      readonly issues: EnvelopeIntegrityIssueSequence
-    }
+  EnvelopeBaselineCaptured | EnvelopeBaselineCaptureFailed
 
 /** Canonical candidate awaiting one metadata-last publication sidecar. */
-export type PendingEnvelopePair = {
+export interface PendingEnvelopePair {
   readonly baseKey: string
-  readonly missingSidecar: "data" | "metadata"
+  readonly missingSidecar: EnvelopeSidecar
 }
 
 /** Strictly validated pair with exact source bytes and decoded projections. */
-export type ValidEnvelopePair = {
+export interface ValidEnvelopePair {
   readonly baseKey: string
   readonly epochIndex: number
   readonly endpointsType: DebugOutpostEndpointsType
@@ -210,17 +285,26 @@ export type ValidEnvelopePair = {
   readonly batchOpNames: readonly string[]
 }
 
-type CollectionFields = {
+interface CollectionFields {
   readonly candidates: readonly string[]
   readonly valid: readonly ValidEnvelopePair[]
   readonly pending: readonly PendingEnvelopePair[]
   readonly issues: readonly EnvelopeIntegrityIssue[]
 }
 
+/** Collection that completed every candidate validation. */
+interface EnvelopeIntegrityCollectedResult extends CollectionFields {
+  readonly kind: "collected"
+}
+
+/** Collection terminated by a storage-scope failure. */
+interface EnvelopeIntegrityScanFailedResult extends CollectionFields {
+  readonly kind: "scan_failed"
+}
+
 /** Deterministic non-throwing strict collection result. */
 export type EnvelopeIntegrityResult =
-  | ({ readonly kind: "collected" } & CollectionFields)
-  | ({ readonly kind: "scan_failed" } & CollectionFields)
+  EnvelopeIntegrityCollectedResult | EnvelopeIntegrityScanFailedResult
 
 /** BigInt stat fields required to prove stable regular-file identity. */
 export interface EnvelopeIntegrityFileStat {
@@ -265,6 +349,6 @@ export interface EnvelopeIntegrityFileSystem {
 }
 
 /** Optional strict-reader collaborators. */
-export type EnvelopeIntegrityDependencies = {
+export interface EnvelopeIntegrityDependencies {
   readonly fileSystem?: EnvelopeIntegrityFileSystem
 }

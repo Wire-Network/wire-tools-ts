@@ -22,7 +22,7 @@ export const MetricEndpointsType =
   DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT
 
 /** Written strict metric fixture and its canonical paths. */
-export type MetricEnvelopeFixture = {
+export interface MetricEnvelopeFixture {
   readonly baseKey: string
   readonly dataPath: string
   readonly metadataPath: string
@@ -31,7 +31,7 @@ export type MetricEnvelopeFixture = {
 }
 
 /** Overrides for one strict metric fixture. */
-export type MetricEnvelopeFixtureOptions = {
+export interface MetricEnvelopeFixtureOptions {
   readonly endpointsType?: DebugOutpostEndpointsType
   readonly keyEpoch?: number
   readonly decodedEpoch?: number
@@ -71,10 +71,13 @@ export function writeMetricEnvelopeFixture(
   epochEnvelopeIndex: number,
   options: MetricEnvelopeFixtureOptions = {}
 ): MetricEnvelopeFixture {
-  const endpointsType = options.endpointsType ?? MetricEndpointsType,
-    keyEpoch = options.keyEpoch ?? MetricEpoch,
-    decodedEpoch = options.decodedEpoch ?? keyEpoch,
-    payload = new Uint8Array(options.payloadSize ?? 0)
+  const {
+      endpointsType = MetricEndpointsType,
+      keyEpoch = MetricEpoch,
+      decodedEpoch = keyEpoch,
+      payloadSize = 0
+    } = options,
+    payload = new Uint8Array(payloadSize)
   payload.fill(1)
   const envelope = Envelope.create({
       epochIndex: decodedEpoch,

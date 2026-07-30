@@ -2,7 +2,12 @@ import type { APIClient } from "@wireio/sdk-core"
 
 import { apiChainEnvelopeReader } from "@wireio/opp-stress-harness"
 
-type TableRowsCall = { code: string; scope: string; table: string }
+/** The `get_table_rows` arguments each stubbed call records. */
+interface TableRowsCall {
+  code: string
+  scope: string
+  table: string
+}
 
 /** A minimal APIClient stub recording its `get_table_rows` calls. */
 function stubApi(

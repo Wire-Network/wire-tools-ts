@@ -1,9 +1,7 @@
 import { RunEvidenceSchemaVersion } from "./runEvidenceConstants.js"
 import type {
-  RampBreakageCategory,
   RunEvidenceClusterConfigState,
   RunEvidenceConfigUnavailableReason,
-  RunEvidenceEndpoint,
   RunEvidenceParseErrorCode,
   RunEvidenceParseResultKind,
   RunEvidencePath,
@@ -15,7 +13,7 @@ import type {
 export type RunEvidenceDecimal = `${bigint}`
 
 /** Absolute source paths required to reproduce a run. */
-export type RunEvidenceProvenance = {
+export interface RunEvidenceProvenance {
   /** Absolute normalized wire-sysio build path used by the run. */
   readonly wireBuildPath: string
   /** Absolute normalized wire-ethereum source path used by the run. */
@@ -25,7 +23,7 @@ export type RunEvidenceProvenance = {
 }
 
 /** Runtime identity captured with the manifest. */
-export type RunEvidenceRuntime = {
+export interface RunEvidenceRuntime {
   /** Node.js version that executed the run. */
   readonly nodeVersion: string
   /** Operating-system platform reported by Node.js. */
@@ -35,7 +33,7 @@ export type RunEvidenceRuntime = {
 }
 
 /** Ramp configuration persisted in the manifest. */
-export type RunEvidenceRampConfig = {
+export interface RunEvidenceRampConfig {
   /** Account count submitted by the first ramp iteration. */
   readonly initialCount: number
   /** Multiplicative account-count increase between iterations. */
@@ -46,29 +44,38 @@ export type RunEvidenceRampConfig = {
   readonly phaseTimeoutMs: number
 }
 
+/** Snapshot state before cluster configuration is created. */
+export interface RunEvidencePendingClusterConfigSnapshot {
+  /** State before cluster configuration is created. */
+  readonly kind: RunEvidenceClusterConfigState.Pending
+}
+
+/** Snapshot state after cluster configuration bytes are committed. */
+export interface RunEvidenceCapturedClusterConfigSnapshot {
+  /** State after cluster configuration bytes are committed. */
+  readonly kind: RunEvidenceClusterConfigState.Captured
+  /** Fixed run-relative config snapshot path. */
+  readonly path: RunEvidencePath.ClusterConfigSnapshot
+  /** Full lowercase SHA-256 digest of the committed snapshot bytes. */
+  readonly sha256: string
+}
+
+/** Snapshot state when setup failed before cluster configuration existed. */
+export interface RunEvidenceUnavailableClusterConfigSnapshot {
+  /** State when setup failed before cluster configuration existed. */
+  readonly kind: RunEvidenceClusterConfigState.Unavailable
+  /** Typed reason no cluster configuration snapshot can exist. */
+  readonly reason: RunEvidenceConfigUnavailableReason.ClusterConfigNotCreated
+}
+
 /** Lifecycle-discriminated state of the immutable cluster-config snapshot. */
 export type RunEvidenceClusterConfigSnapshot =
-  | {
-      /** State before cluster configuration is created. */
-      readonly kind: RunEvidenceClusterConfigState.Pending
-    }
-  | {
-      /** State after cluster configuration bytes are committed. */
-      readonly kind: RunEvidenceClusterConfigState.Captured
-      /** Fixed run-relative config snapshot path. */
-      readonly path: RunEvidencePath.ClusterConfigSnapshot
-      /** Full lowercase SHA-256 digest of the committed snapshot bytes. */
-      readonly sha256: string
-    }
-  | {
-      /** State when setup failed before cluster configuration existed. */
-      readonly kind: RunEvidenceClusterConfigState.Unavailable
-      /** Typed reason no cluster configuration snapshot can exist. */
-      readonly reason: RunEvidenceConfigUnavailableReason.ClusterConfigNotCreated
-    }
+  | RunEvidencePendingClusterConfigSnapshot
+  | RunEvidenceCapturedClusterConfigSnapshot
+  | RunEvidenceUnavailableClusterConfigSnapshot
 
 /** Relative path and digest of one immutable OPP artifact file. */
-export type RunEvidenceArtifactFile = {
+export interface RunEvidenceArtifactFile {
   /** Portable run-relative immutable artifact path. */
   readonly path: string
   /** Full lowercase SHA-256 digest of the committed artifact bytes. */
@@ -76,7 +83,7 @@ export type RunEvidenceArtifactFile = {
 }
 
 /** First committed immutable data and metadata references for one OPP key. */
-export type RunEvidenceImmutableArtifactRefs = {
+export interface RunEvidenceImmutableArtifactRefs {
   /** Immutable raw envelope-data file reference. */
   readonly data: RunEvidenceArtifactFile
   /** Immutable envelope-metadata file reference. */
@@ -84,7 +91,7 @@ export type RunEvidenceImmutableArtifactRefs = {
 }
 
 /** Manifest artifact entry used to recompute accepted OPP observations. */
-export type RunEvidenceArtifact = {
+export interface RunEvidenceArtifact {
   /** Canonical envelope storage key shared by the artifact pair. */
   readonly baseKey: string
   /** First immutable data and metadata refs retained for the key. */
@@ -98,13 +105,13 @@ export type RunEvidenceArtifact = {
 }
 
 /** Explicit setup state before setup.json has been committed. */
-export type RunEvidencePendingSetupRef = {
+export interface RunEvidencePendingSetupRef {
   /** Pending marker legal only for an initializing manifest. */
   readonly kind: RunEvidenceSetupRefState.Pending
 }
 
 /** Immutable setup.json reference after setup record commit. */
-export type RunEvidenceSetupRecordRef = {
+export interface RunEvidenceSetupRecordRef {
   /** Fixed setup record path. */
   readonly path: RunEvidencePath.Setup
   /** Full lowercase SHA-256 digest of committed setup record bytes. */
@@ -112,7 +119,7 @@ export type RunEvidenceSetupRecordRef = {
 }
 
 /** Immutable reference to one zero-based iteration record. */
-export type RunEvidenceIterationRecordRef = {
+export interface RunEvidenceIterationRecordRef {
   /** Fixed six-digit path for the referenced iteration index. */
   readonly path: `${RunEvidencePath.Iterations}/${string}.json`
   /** Full lowercase SHA-256 digest of committed iteration record bytes. */
@@ -120,7 +127,7 @@ export type RunEvidenceIterationRecordRef = {
 }
 
 /** Immutable terminal.json reference after terminal record commit. */
-export type RunEvidenceTerminalRecordRef = {
+export interface RunEvidenceTerminalRecordRef {
   /** Fixed terminal record path. */
   readonly path: RunEvidencePath.Terminal
   /** Full lowercase SHA-256 digest of committed terminal record bytes. */
@@ -128,7 +135,7 @@ export type RunEvidenceTerminalRecordRef = {
 }
 
 /** Record refs before setup has committed. */
-export type RunEvidenceInitializingRecordRefs = {
+export interface RunEvidenceInitializingRecordRefs {
   /** Explicit pending setup state. */
   readonly setup: RunEvidencePendingSetupRef
   /** No iteration can commit before setup. */
@@ -138,7 +145,7 @@ export type RunEvidenceInitializingRecordRefs = {
 }
 
 /** Record refs after setup has committed. */
-export type RunEvidenceCommittedRecordRefs = {
+export interface RunEvidenceCommittedRecordRefs {
   /** Immutable setup record ref. */
   readonly setup: RunEvidenceSetupRecordRef
   /** Contiguous immutable iteration record refs. */
@@ -152,7 +159,7 @@ export type RunEvidenceRecordRefs =
   RunEvidenceInitializingRecordRefs | RunEvidenceCommittedRecordRefs
 
 /** Typed reason an unknown value did not parse as clean schema v1. */
-export type RunEvidenceParseError = {
+export interface RunEvidenceParseError {
   /** Stable parse-failure discriminant. */
   readonly kind: RunEvidenceParseResultKind.Failure
   /** Schema record boundary that rejected the value. */
@@ -161,20 +168,25 @@ export type RunEvidenceParseError = {
   readonly code: RunEvidenceParseErrorCode
 }
 
+/** Successful schema-v1 parse of an unknown-boundary value. */
+interface RunEvidenceParseSuccess<T> {
+  /** Indicates successful schema parsing. */
+  readonly ok: true
+  /** Original value narrowed to its schema-v1 type. */
+  readonly value: T
+}
+
+/** Typed non-throwing schema-v1 parse failure. */
+interface RunEvidenceParseFailure {
+  /** Indicates typed schema parsing failure. */
+  readonly ok: false
+  /** Stable non-throwing parse error. */
+  readonly error: RunEvidenceParseError
+}
+
 /** Expected parse outcome for an unknown-boundary schema-v1 value. */
 export type RunEvidenceParseResult<T> =
-  | {
-      /** Indicates successful schema parsing. */
-      readonly ok: true
-      /** Original value narrowed to its schema-v1 type. */
-      readonly value: T
-    }
-  | {
-      /** Indicates typed schema parsing failure. */
-      readonly ok: false
-      /** Stable non-throwing parse error. */
-      readonly error: RunEvidenceParseError
-    }
+  RunEvidenceParseSuccess<T> | RunEvidenceParseFailure
 
 /** Schema version literal shared by every persisted record type. */
 export type RunEvidenceVersion = typeof RunEvidenceSchemaVersion

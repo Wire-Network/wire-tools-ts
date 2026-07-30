@@ -50,13 +50,18 @@ export function isOptionalEndpointSet(
   )
 }
 
-/** Validate required, saturated, missing, and per-endpoint decisions together. */
-export function hasConsistentEndpointDecision(decision: {
+/** Required, saturated, missing, and per-endpoint decisions of one checkpoint. */
+export interface EndpointDecision {
   readonly requiredEndpoints: readonly RunEvidenceEndpoint[]
   readonly saturatedEndpoints: readonly RunEvidenceEndpoint[]
   readonly missingEndpoints: readonly RunEvidenceEndpoint[]
   readonly endpointResults: readonly RunEvidenceEndpointResult[]
-}): boolean {
+}
+
+/** Validate required, saturated, missing, and per-endpoint decisions together. */
+export function hasConsistentEndpointDecision(
+  decision: EndpointDecision
+): boolean {
   const {
     requiredEndpoints,
     saturatedEndpoints,

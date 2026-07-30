@@ -111,11 +111,14 @@ describe("createSwapStressPhaseRunner phase metrics", () => {
   })
 })
 
-type TestDeps = SwapStressPhaseRunnerDeps & {
+/** The recorded Phase-2 submissions a test deps fixture exposes. */
+interface RecordedPhase2Requests {
   readonly phase2Requests: Phase2SwapRequest[]
 }
 
-type TestDepsOptions = {
+type TestDeps = SwapStressPhaseRunnerDeps & RecordedPhase2Requests
+
+interface TestDepsOptions {
   readonly events?: string[]
   readonly collectorConfigured?: boolean
   readonly phase1PayoutFailureReason?: string

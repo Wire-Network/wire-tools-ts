@@ -6,6 +6,7 @@ import type { RunEvidencePersistence } from "./runEvidencePersistence.js"
 import type {
   RampBreakageCategory,
   RunEvidenceEndpoint,
+  RunEvidenceIterationOutcome,
   RunEvidencePhase,
   RunEvidenceRampConfig
 } from "./runEvidenceTypes.js"
@@ -26,7 +27,7 @@ export namespace OppStressRampDefaults {
 export type OppStressRampConfig = RunEvidenceRampConfig
 
 /** Input passed to the caller's OPP workload iteration runner. */
-export type OppStressRampIterationInput = {
+export interface OppStressRampIterationInput {
   /** Zero-based iteration index. */
   readonly iterationIndex: number
   /** Account or request count for this iteration. */
@@ -35,8 +36,8 @@ export type OppStressRampIterationInput = {
   readonly phaseTimeoutMs: number
 }
 
-/** Todo13 compatibility fields retained in callback observations and results. */
-export type OppStressRampObservationFields = {
+/** Observation fields carried onto a controller summary unchanged. */
+export interface OppStressRampObservationSummaryFields {
   /** Workload phase that produced the observation. */
   readonly phase: string
   /** Workload observation start timestamp in Unix milliseconds. */
@@ -57,14 +58,23 @@ export type OppStressRampObservationFields = {
   readonly epochStart: number
   /** Inclusive epoch upper bound for the metrics window. */
   readonly epochEnd: number
+}
+
+/** Observation endpoint accounting the controller re-derives per iteration. */
+export interface OppStressRampObservationEndpointFields {
   /** Current required endpoints claimed saturated by this observation. */
   readonly saturatedEndpoints: readonly RunEvidenceEndpoint[]
   /** Non-required endpoints retained only for flow diagnostics. */
   readonly observedNonRequiredEndpoints: readonly string[]
 }
 
+/** Todo13 compatibility fields retained in callback observations and results. */
+export interface OppStressRampObservationFields
+  extends OppStressRampObservationSummaryFields,
+    OppStressRampObservationEndpointFields {}
+
 /** Exact endpoint-specific telemetry supplied in allocation order. */
-export type OppStressRampEndpointTelemetry = {
+export interface OppStressRampEndpointTelemetry {
   /** Canonical required endpoint. */
   readonly endpoint: RunEvidenceEndpoint
   /** Callback-owned telemetry; the controller owns saturation. */
@@ -72,7 +82,7 @@ export type OppStressRampEndpointTelemetry = {
 }
 
 /** Complete schema-native evidence supplied by a persisted callback. */
-export type OppStressRampObservationEvidence = {
+export interface OppStressRampObservationEvidence {
   /** Complete phases with real baseline and immutable artifact references. */
   readonly phases: readonly RunEvidencePhase[]
   /** Exactly one telemetry value per required endpoint in allocation order. */
@@ -82,44 +92,46 @@ export type OppStressRampObservationEvidence = {
 }
 
 /** Valid schema-v1 callback observation for a completed workload iteration. */
-export type OppStressRampCompletedObservation = OppStressRampObservationFields &
-  OppStressRampObservationEvidence & {
-    /** Completed callback discriminant. */
-    readonly kind: "completed"
-  }
+export interface OppStressRampCompletedObservation
+  extends OppStressRampObservationFields,
+    OppStressRampObservationEvidence {
+  /** Completed callback discriminant. */
+  readonly kind: "completed"
+}
 
 /** Valid schema-v1 callback observation for workload breakage. */
-export type OppStressRampBreakageObservation = OppStressRampObservationFields &
-  OppStressRampObservationEvidence & {
-    /** Breakage callback discriminant. */
-    readonly kind: "breakage"
-    /** Typed breakage classification. */
-    readonly breakageCategory: RampBreakageCategory
-    /** Non-empty explanation of the breakage. */
-    readonly breakageReason: string
-  }
+export interface OppStressRampBreakageObservation
+  extends OppStressRampObservationFields,
+    OppStressRampObservationEvidence {
+  /** Breakage callback discriminant. */
+  readonly kind: "breakage"
+  /** Typed breakage classification. */
+  readonly breakageCategory: RampBreakageCategory
+  /** Non-empty explanation of the breakage. */
+  readonly breakageReason: string
+}
 
 /** Exact rich runtime observation returned in schema-v1 mode. */
 export type OppStressRampIterationObservation =
   OppStressRampCompletedObservation | OppStressRampBreakageObservation
 
 /** Temporary Todo13 completed observation accepted only by deferred flow mode. */
-export type OppStressRampDeferredCompletedObservation =
-  OppStressRampObservationFields & {
-    /** Completed callback discriminant. */
-    readonly kind: "completed"
-  }
+export interface OppStressRampDeferredCompletedObservation
+  extends OppStressRampObservationFields {
+  /** Completed callback discriminant. */
+  readonly kind: "completed"
+}
 
 /** Temporary Todo13 breakage accepted only by deferred flow mode. */
-export type OppStressRampDeferredBreakageObservation =
-  OppStressRampObservationFields & {
-    /** Breakage callback discriminant. */
-    readonly kind: "breakage"
-    /** Typed breakage classification. */
-    readonly breakageCategory: RampBreakageCategory
-    /** Non-empty explanation of the breakage. */
-    readonly breakageReason: string
-  }
+export interface OppStressRampDeferredBreakageObservation
+  extends OppStressRampObservationFields {
+  /** Breakage callback discriminant. */
+  readonly kind: "breakage"
+  /** Typed breakage classification. */
+  readonly breakageCategory: RampBreakageCategory
+  /** Non-empty explanation of the breakage. */
+  readonly breakageReason: string
+}
 
 /** Temporary no-write callback union removed by the future flow migration. */
 export type OppStressRampDeferredIterationObservation =
@@ -132,19 +144,34 @@ export enum OppStressRampEvidenceModeKind {
   DeferredFlowMigration = "deferred_flow_migration"
 }
 
-/** Final OPP stress campaign status. */
-export type OppStressRampResultStatus =
-  | "saturated"
-  | "partial_saturation"
-  | "failed_before_saturation"
-  | "saturation_not_reached"
+/** Closed final statuses of an OPP stress campaign. */
+export enum OppStressRampResultStatusKind {
+  saturated = "saturated",
+  partial_saturation = "partial_saturation",
+  failed_before_saturation = "failed_before_saturation",
+  saturation_not_reached = "saturation_not_reached"
+}
 
-type OppStressRampEvidenceFields = {
+/** Final OPP stress campaign status. */
+export type OppStressRampResultStatus = `${OppStressRampResultStatusKind}`
+
+/** Per-iteration status: a campaign status or the not-saturated outcome. */
+export type OppStressRampEvidenceStatus =
+  | OppStressRampResultStatus
+  | `${RunEvidenceIterationOutcome.NotSaturated}`
+
+/** Non-breakage iteration outcomes recorded on a controller summary. */
+type SettledIterationOutcome = Exclude<
+  `${RunEvidenceIterationOutcome}`,
+  `${RunEvidenceIterationOutcome.Breakage}`
+>
+
+interface OppStressRampEvidenceFields {
   readonly iterationIndex: number
   readonly accountCount: number
   readonly startedAtMs: number
   readonly endedAtMs: number
-  readonly status: OppStressRampResultStatus | "not_saturated"
+  readonly status: OppStressRampEvidenceStatus
   readonly preserveCluster: boolean
   readonly config: OppStressRampConfig
   readonly saturatedEndpoints: readonly RunEvidenceEndpoint[]
@@ -152,42 +179,49 @@ type OppStressRampEvidenceFields = {
   readonly observedNonRequiredEndpoints: readonly string[]
 }
 
-type ObservationSummaryFields = Omit<
-  OppStressRampObservationFields,
-  "saturatedEndpoints" | "observedNonRequiredEndpoints"
->
+/** Controller summary fields shared by every callback-backed outcome. */
+interface ObservationBackedEvidenceFields
+  extends OppStressRampEvidenceFields,
+    OppStressRampObservationSummaryFields {
+  readonly observation: OppStressRampObservationFields
+}
+
+/** Callback-backed summary for an iteration that settled without breakage. */
+interface OppStressRampSettledObservationEvidence
+  extends ObservationBackedEvidenceFields {
+  readonly kind: SettledIterationOutcome
+}
+
+/** Callback-backed summary for an iteration that broke. */
+interface OppStressRampBrokenObservationEvidence
+  extends ObservationBackedEvidenceFields {
+  readonly kind: "breakage"
+  readonly breakageCategory: RampBreakageCategory
+  readonly breakageReason: string
+}
 
 /** Summary backed by a successfully parsed callback observation. */
 export type OppStressRampObservationBackedEvidence =
-  OppStressRampEvidenceFields &
-    ObservationSummaryFields & {
-      readonly observation: OppStressRampObservationFields
-    } & (
-      | { readonly kind: "not_saturated" | "saturated" }
-      | {
-          readonly kind: "breakage"
-          readonly breakageCategory: RampBreakageCategory
-          readonly breakageReason: string
-        }
-    )
+  | OppStressRampSettledObservationEvidence
+  | OppStressRampBrokenObservationEvidence
 
 /** Truthful controller failure summary when no callback observation exists. */
-export type OppStressRampBoundaryFailureEvidence =
-  OppStressRampEvidenceFields & {
-    readonly kind: "breakage"
-    readonly observation: null
-    readonly breakageCategory: RampBreakageCategory
-    readonly breakageReason: string
-    readonly telemetry: OppEnvelopeTelemetryHealth
-    readonly cause: unknown
-  }
+export interface OppStressRampBoundaryFailureEvidence
+  extends OppStressRampEvidenceFields {
+  readonly kind: "breakage"
+  readonly observation: null
+  readonly breakageCategory: RampBreakageCategory
+  readonly breakageReason: string
+  readonly telemetry: OppEnvelopeTelemetryHealth
+  readonly cause: unknown
+}
 
 /** Honest callback-backed or no-observation controller evidence union. */
 export type OppStressRampEvidence =
   OppStressRampObservationBackedEvidence | OppStressRampBoundaryFailureEvidence
 
 /** Final ramp result returned to an e2e flow. */
-export type OppStressRampResult = {
+export interface OppStressRampResult {
   readonly status: OppStressRampResultStatus
   readonly preserveCluster: boolean
   readonly iterations: readonly OppStressRampEvidence[]
@@ -196,13 +230,13 @@ export type OppStressRampResult = {
   readonly observedNonRequiredEndpoints: readonly string[]
 }
 
-type CommonRampOptions = {
+interface CommonRampOptions {
   /** Controller lifecycle clock, defaulting to Date.now. */
   readonly clock?: () => number
 }
 
 /** Options for real atomic schema-v1 persistence. */
-export type OppStressRampSchemaV1Options = CommonRampOptions & {
+export interface OppStressRampSchemaV1Options extends CommonRampOptions {
   /** Active persistence is the sole allocation and publication authority. */
   readonly evidenceMode: OppStressRampEvidenceModeKind.SchemaV1
   /** Active run that owns allocation identity and every atomic publication. */
@@ -214,7 +248,7 @@ export type OppStressRampSchemaV1Options = CommonRampOptions & {
 }
 
 /** Temporary flow-only no-write options retained until production migration. */
-export type OppStressRampDeferredOptions = CommonRampOptions & {
+export interface OppStressRampDeferredOptions extends CommonRampOptions {
   /** Explicitly disables all evidence filesystem writes. */
   readonly evidenceMode: OppStressRampEvidenceModeKind.DeferredFlowMigration
   /** Required canonical endpoint order supplied by the legacy flow. */

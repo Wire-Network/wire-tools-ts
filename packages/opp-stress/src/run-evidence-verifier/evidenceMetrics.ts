@@ -1,3 +1,5 @@
+import { match } from "ts-pattern"
+
 import {
   RunEvidenceEndpoint,
   RunEvidencePhaseStatus,
@@ -182,16 +184,14 @@ function saturationFor(
   strategy: RunEvidenceSaturationStrategy,
   artifacts: readonly VerifiedEvidenceArtifact[]
 ): boolean {
-  switch (strategy) {
-    case RunEvidenceSaturationStrategy.Rollover:
-      return artifacts.some(artifact => artifact.epochEnvelopeIndex > 0)
-    case RunEvidenceSaturationStrategy.ByteThreshold:
-      return artifacts.some(
-        artifact => artifact.byteSize >= SaturatedEnvelopeMinBytes
-      )
-    default:
-      return assertNever(strategy)
-  }
+  return match(strategy)
+    .with(RunEvidenceSaturationStrategy.Rollover, () =>
+      artifacts.some(artifact => artifact.epochEnvelopeIndex > 0)
+    )
+    .with(RunEvidenceSaturationStrategy.ByteThreshold, () =>
+      artifacts.some(artifact => artifact.byteSize >= SaturatedEnvelopeMinBytes)
+    )
+    .otherwise(value => assertNever(value))
 }
 
 function compareArtifacts(

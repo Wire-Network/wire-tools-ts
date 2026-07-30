@@ -39,10 +39,7 @@ describe("strict Ethereum all-legs evidence", () => {
       status: "saturated",
       saturatedEndpoints: [RequiredEndpointNames.OutpostEthereumDepot],
       missingEndpoints: [RequiredEndpointNames.DepotOutpostEthereum]
-    } satisfies Pick<
-      StressRampEvidence,
-      "status" | "saturatedEndpoints" | "missingEndpoints"
-    >
+    } satisfies StrictSaturatedEvidenceFields
 
     // When/Then: the local evidence guard rejects the impossible success shape.
     expect(() => assertStrictSaturatedEvidence(evidence)).toThrow(
@@ -76,11 +73,19 @@ function partialIteration(): SwapStressIterationObservation {
   }
 }
 
+/**
+ * The ramp-evidence fields the local saturated-shape guard reads. Each member
+ * is an indexed access on {@link StressRampEvidence}, so the contract tracks
+ * the real summary without a `Pick` key literal union.
+ */
+interface StrictSaturatedEvidenceFields {
+  readonly status: StressRampEvidence["status"]
+  readonly saturatedEndpoints: StressRampEvidence["saturatedEndpoints"]
+  readonly missingEndpoints: StressRampEvidence["missingEndpoints"]
+}
+
 function assertStrictSaturatedEvidence(
-  evidence: Pick<
-    StressRampEvidence,
-    "status" | "saturatedEndpoints" | "missingEndpoints"
-  >
+  evidence: StrictSaturatedEvidenceFields
 ): void {
   if (evidence.status === "saturated" && evidence.missingEndpoints.length > 0) {
     throw new Error("saturated evidence missing required Ethereum endpoints")

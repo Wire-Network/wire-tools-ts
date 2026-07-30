@@ -33,15 +33,14 @@ export function createVerifierFixture(
   const runDirectory = Fs.mkdtempSync(
       Path.join(Os.tmpdir(), "run-evidence-verifier-")
     ),
-    lifecycle = options.lifecycle ?? RunEvidenceLifecycle.Saturated,
-    requiredEndpoints = options.requiredEndpoints ?? [
-      RunEvidenceEndpoint.DepotOutpostEthereum
-    ],
-    phases =
-      options.phases ?? defaultVerifierPhases(lifecycle, requiredEndpoints),
-    initialCount = options.initialCount ?? 3,
-    maxCount = options.maxCount ?? initialCount,
-    accountCount = options.accountCount ?? initialCount
+    {
+      lifecycle = RunEvidenceLifecycle.Saturated,
+      requiredEndpoints = [RunEvidenceEndpoint.DepotOutpostEthereum],
+      phases = defaultVerifierPhases(lifecycle, requiredEndpoints),
+      initialCount = 3,
+      maxCount = initialCount,
+      accountCount = initialCount
+    } = options
   Fs.mkdirSync(Path.join(runDirectory, RunEvidencePath.Iterations))
   Fs.mkdirSync(Path.join(runDirectory, RunEvidencePath.Artifacts), {
     recursive: true

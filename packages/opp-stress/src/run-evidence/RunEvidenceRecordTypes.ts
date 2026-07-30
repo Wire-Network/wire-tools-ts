@@ -23,69 +23,68 @@ import type {
   RunEvidenceStage
 } from "./runEvidenceConstants.js"
 
-type BreakageFields = {
+interface BreakageFields {
   /** Typed category used to route and independently verify the breakage. */
   readonly breakageCategory: RampBreakageCategory
   /** Stable human-readable explanation retained with the typed category. */
   readonly breakageReason: string
 }
 
-type EndpointDecisionFields = {
+interface EndpointSetFields {
   /** Non-empty unique endpoints required for this controller decision. */
   readonly requiredEndpoints: readonly RunEvidenceEndpoint[]
   /** Required endpoints independently classified as saturated. */
   readonly saturatedEndpoints: readonly RunEvidenceEndpoint[]
   /** Required endpoints not independently classified as saturated. */
   readonly missingEndpoints: readonly RunEvidenceEndpoint[]
+}
+
+interface EndpointDecisionFields extends EndpointSetFields {
   /** One telemetry-backed result for every required endpoint. */
   readonly endpointResults: readonly RunEvidenceEndpointResult[]
   /** Aggregate telemetry health for the controller decision. */
   readonly telemetry: OppEnvelopeTelemetryHealth
 }
 
-type HealthyEndpointDecisionFields = Omit<
-  EndpointDecisionFields,
-  "endpointResults" | "telemetry"
-> & {
+interface HealthyEndpointDecisionFields extends EndpointSetFields {
   /** One healthy telemetry-backed result for every required endpoint. */
   readonly endpointResults: readonly RunEvidenceHealthyEndpointResult[]
   /** Healthy aggregate telemetry for a clean completed decision. */
   readonly telemetry: HealthyOppEnvelopeTelemetryHealth
 }
 
+interface SetupFields {
+  /** Clean schema version. */
+  readonly schemaVersion: RunEvidenceVersion
+  /** Standalone setup-stage discriminant. */
+  readonly stage: RunEvidenceStage.Setup
+  /** Controller timestamp immediately before setup starts. */
+  readonly startedAtMs: RunEvidenceDecimal
+  /** Controller timestamp immediately after setup resolves. */
+  readonly endedAtMs: RunEvidenceDecimal
+}
+
+/** Setup record for a run whose cluster configuration was created. */
+export interface RunEvidenceSucceededSetup extends SetupFields {
+  /** Successful setup outcome. */
+  readonly status: RunEvidenceSetupStatus.Succeeded
+  /** Confirms setup produced a cluster configuration snapshot. */
+  readonly clusterConfigCreated: true
+}
+
+/** Setup record for a run that broke before or during cluster creation. */
+export interface RunEvidenceFailedSetup extends SetupFields, BreakageFields {
+  /** Failed setup outcome. */
+  readonly status: RunEvidenceSetupStatus.Failed
+  /** Whether configuration committed before the setup failure. */
+  readonly clusterConfigCreated: boolean
+}
+
 /** Standalone setup lifecycle record; setup is never iteration zero. */
-export type RunEvidenceSetup =
-  | {
-      /** Clean schema version. */
-      readonly schemaVersion: RunEvidenceVersion
-      /** Standalone setup-stage discriminant. */
-      readonly stage: RunEvidenceStage.Setup
-      /** Successful setup outcome. */
-      readonly status: RunEvidenceSetupStatus.Succeeded
-      /** Controller timestamp immediately before setup starts. */
-      readonly startedAtMs: RunEvidenceDecimal
-      /** Controller timestamp immediately after setup succeeds. */
-      readonly endedAtMs: RunEvidenceDecimal
-      /** Confirms setup produced a cluster configuration snapshot. */
-      readonly clusterConfigCreated: true
-    }
-  | ({
-      /** Clean schema version. */
-      readonly schemaVersion: RunEvidenceVersion
-      /** Standalone setup-stage discriminant. */
-      readonly stage: RunEvidenceStage.Setup
-      /** Failed setup outcome. */
-      readonly status: RunEvidenceSetupStatus.Failed
-      /** Controller timestamp immediately before setup starts. */
-      readonly startedAtMs: RunEvidenceDecimal
-      /** Controller timestamp immediately after setup fails. */
-      readonly endedAtMs: RunEvidenceDecimal
-      /** Whether configuration committed before the setup failure. */
-      readonly clusterConfigCreated: boolean
-    } & BreakageFields)
+export type RunEvidenceSetup = RunEvidenceSucceededSetup | RunEvidenceFailedSetup
 
 /** Per-endpoint telemetry and saturation comparison target. */
-export type RunEvidenceEndpointResult = {
+export interface RunEvidenceEndpointResult {
   /** Canonical endpoint represented by this result. */
   readonly endpoint: RunEvidenceEndpoint
   /** Endpoint-specific telemetry observation. */
@@ -95,7 +94,7 @@ export type RunEvidenceEndpointResult = {
 }
 
 /** Per-endpoint result legal on a clean completed decision. */
-export type RunEvidenceHealthyEndpointResult = {
+export interface RunEvidenceHealthyEndpointResult {
   /** Canonical endpoint represented by this result. */
   readonly endpoint: RunEvidenceEndpoint
   /** Healthy endpoint-specific telemetry observation. */
@@ -105,7 +104,7 @@ export type RunEvidenceHealthyEndpointResult = {
 }
 
 /** Identity of the all-key baseline captured before phase submission. */
-export type RunEvidencePhaseBaseline = {
+export interface RunEvidencePhaseBaseline {
   /** Stable identity linking every observation to the same baseline. */
   readonly identity: EnvelopeBaselineIdentity
   /** Canonically sorted all-key membership captured before phase submission. */
@@ -117,7 +116,7 @@ export type RunEvidencePhaseBaseline = {
 }
 
 /** Observation bounds used to independently select a phase's artifacts. */
-export type RunEvidencePhaseWindow = {
+export interface RunEvidencePhaseWindow {
   /** Inclusive observational timestamp lower bound. */
   readonly startedAtMs: RunEvidenceDecimal
   /** Inclusive observational timestamp upper bound. */
@@ -129,7 +128,7 @@ export type RunEvidencePhaseWindow = {
 }
 
 /** Recorded phase values compared with independently recomputed metrics. */
-export type RunEvidencePhaseMetrics = {
+export interface RunEvidencePhaseMetrics {
   /** Successful workload transactions recorded for the phase. */
   readonly txSuccesses: number
   /** Failed workload transactions recorded for the phase. */
@@ -146,7 +145,7 @@ export type RunEvidencePhaseMetrics = {
   readonly saturated: boolean
 }
 
-type PhaseFields = {
+interface PhaseIdentityFields {
   /** Unique phase label within the iteration. */
   readonly label: string
   /** Canonical endpoint observed by the phase. */
@@ -159,26 +158,36 @@ type PhaseFields = {
   readonly window: RunEvidencePhaseWindow
   /** Immutable artifact refs used by this phase. */
   readonly artifactRefs: readonly string[]
-  /** Phase telemetry health and structured issues. */
-  readonly telemetry: OppEnvelopeTelemetryHealth
   /** Recorded metric and workload comparison targets. */
   readonly metrics: RunEvidencePhaseMetrics
 }
 
+interface PhaseFields extends PhaseIdentityFields {
+  /** Phase telemetry health and structured issues. */
+  readonly telemetry: OppEnvelopeTelemetryHealth
+}
+
+/** Clean completed evidence for one workload phase. */
+export interface RunEvidenceCompletedPhase extends PhaseIdentityFields {
+  /** Clean completed phase outcome. */
+  readonly status: RunEvidencePhaseStatus.Completed
+  /** Healthy telemetry required for a clean completed phase. */
+  readonly telemetry: HealthyOppEnvelopeTelemetryHealth
+}
+
+/** Typed breakage evidence for one workload phase. */
+export interface RunEvidenceBreakagePhase
+  extends PhaseFields,
+    BreakageFields {
+  /** Typed breakage phase outcome. */
+  readonly status: RunEvidencePhaseStatus.Breakage
+}
+
 /** Recomputable completed-or-breakage evidence for one workload phase. */
 export type RunEvidencePhase =
-  | (Omit<PhaseFields, "telemetry"> & {
-      /** Clean completed phase outcome. */
-      readonly status: RunEvidencePhaseStatus.Completed
-      /** Healthy telemetry required for a clean completed phase. */
-      readonly telemetry: HealthyOppEnvelopeTelemetryHealth
-    })
-  | (PhaseFields & {
-      /** Typed breakage phase outcome. */
-      readonly status: RunEvidencePhaseStatus.Breakage
-    } & BreakageFields)
+  RunEvidenceCompletedPhase | RunEvidenceBreakagePhase
 
-type IterationFields = {
+interface IterationFields {
   /** Clean schema version. */
   readonly schemaVersion: RunEvidenceVersion
   /** Iteration-stage discriminant. */
@@ -195,22 +204,30 @@ type IterationFields = {
   readonly phases: readonly RunEvidencePhase[]
 }
 
+/** Iteration record for a controller decision that settled without breakage. */
+export interface RunEvidenceSettledIteration
+  extends IterationFields,
+    HealthyEndpointDecisionFields {
+  /** Clean completed controller outcome. */
+  readonly outcome:
+    | RunEvidenceIterationOutcome.NotSaturated
+    | RunEvidenceIterationOutcome.Saturated
+}
+
+/** Iteration record for a controller decision that broke. */
+export interface RunEvidenceBrokenIteration
+  extends IterationFields,
+    EndpointDecisionFields,
+    BreakageFields {
+  /** Typed controller breakage outcome. */
+  readonly outcome: RunEvidenceIterationOutcome.Breakage
+}
+
 /** Schema-v1 completed-or-breakage record for one non-setup ramp iteration. */
 export type RunEvidenceIteration =
-  | (IterationFields &
-      HealthyEndpointDecisionFields & {
-        /** Clean completed controller outcome. */
-        readonly outcome:
-          | RunEvidenceIterationOutcome.NotSaturated
-          | RunEvidenceIterationOutcome.Saturated
-      })
-  | (IterationFields &
-      EndpointDecisionFields & {
-        /** Typed controller breakage outcome. */
-        readonly outcome: RunEvidenceIterationOutcome.Breakage
-      } & BreakageFields)
+  RunEvidenceSettledIteration | RunEvidenceBrokenIteration
 
-type TerminalFields = {
+interface TerminalFields {
   /** Clean schema version. */
   readonly schemaVersion: RunEvidenceVersion
   /** Terminal-stage discriminant. */
@@ -223,27 +240,41 @@ type TerminalFields = {
   readonly iterationRefs: readonly RunEvidenceIterationRecordRef[]
 }
 
+/** Terminal decision after every required endpoint saturated. */
+export interface RunEvidenceSaturatedTerminal
+  extends TerminalFields,
+    HealthyEndpointDecisionFields {
+  /** Successful all-endpoint saturation lifecycle. */
+  readonly lifecycle: RunEvidenceLifecycle.Saturated
+  /** Successful saturation permits cluster cleanup. */
+  readonly preserveCluster: false
+}
+
+/** Terminal decision after a clean run that did not saturate every endpoint. */
+export interface RunEvidenceIncompleteTerminal
+  extends TerminalFields,
+    HealthyEndpointDecisionFields {
+  /** Clean exact-max outcome that did not saturate every endpoint. */
+  readonly lifecycle: RunEvidenceLifecycle.Incomplete
+  /** Incomplete runs preserve the cluster for diagnosis. */
+  readonly preserveCluster: true
+}
+
+/** Terminal decision after setup or iteration breakage. */
+export interface RunEvidenceFailedTerminal
+  extends TerminalFields,
+    EndpointDecisionFields,
+    BreakageFields {
+  /** Setup or iteration breakage, orthogonal to established saturation. */
+  readonly lifecycle:
+    | RunEvidenceLifecycle.SetupFailed
+    | RunEvidenceLifecycle.Failed
+  /** Failed runs preserve the cluster even when every endpoint saturated. */
+  readonly preserveCluster: true
+}
+
 /** Schema-v1 controller terminal decision with variant-specific breakage data. */
 export type RunEvidenceTerminal =
-  | (TerminalFields &
-      HealthyEndpointDecisionFields & {
-        /** Successful all-endpoint saturation lifecycle. */
-        readonly lifecycle: RunEvidenceLifecycle.Saturated
-        /** Successful saturation permits cluster cleanup. */
-        readonly preserveCluster: false
-      })
-  | (TerminalFields &
-      HealthyEndpointDecisionFields & {
-        /** Clean exact-max outcome that did not saturate every endpoint. */
-        readonly lifecycle: RunEvidenceLifecycle.Incomplete
-        /** Incomplete runs preserve the cluster for diagnosis. */
-        readonly preserveCluster: true
-      })
-  | (TerminalFields &
-      EndpointDecisionFields & {
-        /** Setup or iteration breakage, orthogonal to established saturation. */
-        readonly lifecycle:
-          RunEvidenceLifecycle.SetupFailed | RunEvidenceLifecycle.Failed
-        /** Failed runs preserve the cluster even when every endpoint saturated. */
-        readonly preserveCluster: true
-      } & BreakageFields)
+  | RunEvidenceSaturatedTerminal
+  | RunEvidenceIncompleteTerminal
+  | RunEvidenceFailedTerminal

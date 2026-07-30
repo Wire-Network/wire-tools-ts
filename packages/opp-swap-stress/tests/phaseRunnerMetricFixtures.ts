@@ -5,16 +5,20 @@ import {
   type SwapStressMeasuredPhaseEnvelopeMetrics
 } from "@wireio/opp-swap-stress"
 
-type StrictSnapshotSummary = Pick<
-  SwapStressMeasuredPhaseEnvelopeMetrics,
-  | "phase"
-  | "saturated"
-  | "envelopeCount"
-  | "envelopeByteSizes"
-  | "endpoint"
-  | "epochStart"
-  | "epochEnd"
->
+/**
+ * The flat phase-summary fields a strict-snapshot fixture supplies. Each member
+ * is an indexed access on {@link SwapStressMeasuredPhaseEnvelopeMetrics}, so
+ * the fixture tracks the real metrics without a `Pick` key literal union.
+ */
+interface StrictSnapshotSummary {
+  readonly phase: SwapStressMeasuredPhaseEnvelopeMetrics["phase"]
+  readonly saturated: SwapStressMeasuredPhaseEnvelopeMetrics["saturated"]
+  readonly envelopeCount: SwapStressMeasuredPhaseEnvelopeMetrics["envelopeCount"]
+  readonly envelopeByteSizes: SwapStressMeasuredPhaseEnvelopeMetrics["envelopeByteSizes"]
+  readonly endpoint: SwapStressMeasuredPhaseEnvelopeMetrics["endpoint"]
+  readonly epochStart: SwapStressMeasuredPhaseEnvelopeMetrics["epochStart"]
+  readonly epochEnd: SwapStressMeasuredPhaseEnvelopeMetrics["epochEnd"]
+}
 
 /**
  * Build coherent measured strict-snapshot telemetry for typed flow fixtures.

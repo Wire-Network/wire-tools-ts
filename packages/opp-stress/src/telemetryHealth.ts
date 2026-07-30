@@ -11,7 +11,7 @@ import {
   isCandidateTelemetryIssue,
   isGlobalTelemetryIssue,
   parseTelemetryIssues,
-  requireTelemetryIssues
+  assertTelemetryIssues
 } from "./telemetryIssueParser.js"
 import type { OppEnvelopeTelemetryIssue } from "./TelemetryIssueTypes.js"
 import {
@@ -40,7 +40,7 @@ const HealthKeys = [
     OppEnvelopeTelemetryHealthKind.Degraded
   ] as const
 
-type ParsedHealth = {
+interface ParsedHealth {
   readonly kind: OppEnvelopeTelemetryHealthKind
   readonly retryable: boolean
   readonly counts: OppEnvelopeTelemetryCounts
@@ -141,7 +141,7 @@ function parsePending(parsed: ParsedHealth): PendingOppEnvelopeTelemetryHealth {
     kind: OppEnvelopeTelemetryHealthKind.PendingPublication,
     retryable: true,
     ...parsed.counts,
-    issues: requireTelemetryIssues(parsed.issues)
+    issues: assertTelemetryIssues(parsed.issues)
   }
 }
 
@@ -172,7 +172,7 @@ function parseDegraded(
 ): DegradedOppEnvelopeTelemetryHealth {
   if (parsed.retryable)
     throw invalid("health.retryable", "degraded cannot be retryable")
-  const issues = requireTelemetryIssues(parsed.issues)
+  const issues = assertTelemetryIssues(parsed.issues)
   if (!hasEmptyGlobalShape(parsed) && !hasPendingCandidateShape(parsed)) {
     throw invalid(
       "health",

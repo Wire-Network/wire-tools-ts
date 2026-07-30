@@ -1,19 +1,21 @@
 import type {
   OppStressRampConfig,
+  OppStressRampEvidenceStatus,
   OppStressRampIterationInput,
   OppStressRampResultStatus
 } from "./rampControllerTypes.js"
 import { OppStressRampEvidenceModeKind } from "./rampControllerTypes.js"
 import type {
   RampBreakageCategory,
-  RunEvidenceEndpoint
+  RunEvidenceEndpoint,
+  RunEvidenceIterationOutcome
 } from "./runEvidenceTypes.js"
 import type { OppEnvelopeTelemetryHealth } from "./envelopeMetricTypes.js"
 
 /** Completed generic deferred observation with one flow-owned evidence payload. */
-export type OppStressRampDeferredEvidenceCompletedObservation<
+export interface OppStressRampDeferredEvidenceCompletedObservation<
   TEvidence extends object
-> = {
+> {
   readonly kind: "completed"
   readonly saturatedEndpoints: readonly RunEvidenceEndpoint[]
   readonly observedNonRequiredEndpoints: readonly string[]
@@ -21,9 +23,9 @@ export type OppStressRampDeferredEvidenceCompletedObservation<
 }
 
 /** Breakage generic deferred observation with one flow-owned evidence payload. */
-export type OppStressRampDeferredEvidenceBreakageObservation<
+export interface OppStressRampDeferredEvidenceBreakageObservation<
   TEvidence extends object
-> = {
+> {
   readonly kind: "breakage"
   readonly saturatedEndpoints: readonly RunEvidenceEndpoint[]
   readonly observedNonRequiredEndpoints: readonly string[]
@@ -39,17 +41,29 @@ export type OppStressRampDeferredEvidenceIterationObservation<
   | OppStressRampDeferredEvidenceCompletedObservation<TEvidence>
   | OppStressRampDeferredEvidenceBreakageObservation<TEvidence>
 
-/** Canonical root facts supplied to a flow-owned evidence parser. */
-export type OppStressRampDeferredEvidenceParseContext = {
+/** Root facts every flow-owned evidence parser receives. */
+interface DeferredEvidenceParseContextFields {
   /** Parsed root saturation claims in canonical required-endpoint order. */
   readonly saturatedEndpoints: readonly RunEvidenceEndpoint[]
-} & (
-  | { readonly kind: "completed" }
-  | {
-      readonly kind: "breakage"
-      readonly breakageCategory: RampBreakageCategory
-    }
-)
+}
+
+/** Parser context for a completed generic deferred observation. */
+interface CompletedDeferredEvidenceParseContext
+  extends DeferredEvidenceParseContextFields {
+  readonly kind: "completed"
+}
+
+/** Parser context for a breakage generic deferred observation. */
+interface BreakageDeferredEvidenceParseContext
+  extends DeferredEvidenceParseContextFields {
+  readonly kind: "breakage"
+  readonly breakageCategory: RampBreakageCategory
+}
+
+/** Canonical root facts supplied to a flow-owned evidence parser. */
+export type OppStressRampDeferredEvidenceParseContext =
+  | CompletedDeferredEvidenceParseContext
+  | BreakageDeferredEvidenceParseContext
 
 /** Parser for one recursively snapshotted flow evidence payload. */
 export type OppStressRampDeferredEvidenceParser<TEvidence extends object> = (
@@ -58,7 +72,9 @@ export type OppStressRampDeferredEvidenceParser<TEvidence extends object> = (
 ) => TEvidence | null
 
 /** Explicit no-write options for generic callback evidence transport. */
-export type OppStressRampDeferredEvidenceOptions<TEvidence extends object> = {
+export interface OppStressRampDeferredEvidenceOptions<
+  TEvidence extends object
+> {
   readonly evidenceMode: OppStressRampEvidenceModeKind.DeferredFlowMigration
   readonly requiredEndpoints: readonly RunEvidenceEndpoint[]
   readonly config?: OppStressRampConfig
@@ -69,12 +85,13 @@ export type OppStressRampDeferredEvidenceOptions<TEvidence extends object> = {
   ) => Promise<OppStressRampDeferredEvidenceIterationObservation<TEvidence>>
 }
 
-type DeferredEvidenceSummaryFields = {
+/** Controller-owned identity and decision fields on every deferred summary. */
+export interface DeferredEvidenceSummaryFields {
   readonly iterationIndex: number
   readonly accountCount: number
   readonly startedAtMs: number
   readonly endedAtMs: number
-  readonly status: OppStressRampResultStatus | "not_saturated"
+  readonly status: OppStressRampEvidenceStatus
   readonly preserveCluster: boolean
   readonly config: OppStressRampConfig
   readonly saturatedEndpoints: readonly RunEvidenceEndpoint[]
@@ -82,33 +99,46 @@ type DeferredEvidenceSummaryFields = {
   readonly observedNonRequiredEndpoints: readonly string[]
 }
 
+/** Non-breakage iteration outcomes recorded on a generic deferred summary. */
+type SettledIterationOutcome = Exclude<
+  `${RunEvidenceIterationOutcome}`,
+  `${RunEvidenceIterationOutcome.Breakage}`
+>
+
+/** Generic deferred summary for an iteration that settled without breakage. */
+interface OppStressRampDeferredEvidenceSettledSummary<
+  TEvidence extends object
+> extends DeferredEvidenceSummaryFields {
+  readonly kind: SettledIterationOutcome
+  readonly observation: OppStressRampDeferredEvidenceCompletedObservation<TEvidence>
+}
+
+/** Generic deferred summary for an iteration that broke. */
+interface OppStressRampDeferredEvidenceBrokenSummary<TEvidence extends object>
+  extends DeferredEvidenceSummaryFields {
+  readonly kind: "breakage"
+  readonly observation: OppStressRampDeferredEvidenceBreakageObservation<TEvidence>
+  readonly breakageCategory: RampBreakageCategory
+  readonly breakageReason: string
+}
+
 /** Controller summary backed by a successfully parsed generic observation. */
 export type OppStressRampDeferredEvidenceObservationBackedSummary<
   TEvidence extends object
-> = DeferredEvidenceSummaryFields &
-  (
-    | {
-        readonly kind: "not_saturated" | "saturated"
-        readonly observation: OppStressRampDeferredEvidenceCompletedObservation<TEvidence>
-      }
-    | {
-        readonly kind: "breakage"
-        readonly observation: OppStressRampDeferredEvidenceBreakageObservation<TEvidence>
-        readonly breakageCategory: RampBreakageCategory
-        readonly breakageReason: string
-      }
-  )
+> =
+  | OppStressRampDeferredEvidenceSettledSummary<TEvidence>
+  | OppStressRampDeferredEvidenceBrokenSummary<TEvidence>
 
 /** Controller boundary failure produced before a generic observation exists. */
-export type OppStressRampDeferredEvidenceBoundaryFailureSummary =
-  DeferredEvidenceSummaryFields & {
-    readonly kind: "breakage"
-    readonly observation: null
-    readonly breakageCategory: RampBreakageCategory
-    readonly breakageReason: string
-    readonly telemetry: OppEnvelopeTelemetryHealth
-    readonly cause: unknown
-  }
+export interface OppStressRampDeferredEvidenceBoundaryFailureSummary
+  extends DeferredEvidenceSummaryFields {
+  readonly kind: "breakage"
+  readonly observation: null
+  readonly breakageCategory: RampBreakageCategory
+  readonly breakageReason: string
+  readonly telemetry: OppEnvelopeTelemetryHealth
+  readonly cause: unknown
+}
 
 /** Callback-backed or truthful no-observation generic iteration summary. */
 export type OppStressRampDeferredEvidenceSummary<TEvidence extends object> =
@@ -116,7 +146,9 @@ export type OppStressRampDeferredEvidenceSummary<TEvidence extends object> =
   | OppStressRampDeferredEvidenceBoundaryFailureSummary
 
 /** Final generic deferred ramp result with typed callback evidence. */
-export type OppStressRampDeferredEvidenceResult<TEvidence extends object> = {
+export interface OppStressRampDeferredEvidenceResult<
+  TEvidence extends object
+> {
   readonly status: OppStressRampResultStatus
   readonly preserveCluster: boolean
   readonly iterations: readonly OppStressRampDeferredEvidenceSummary<TEvidence>[]

@@ -6,6 +6,7 @@ import type {
 } from "@wireio/debugging-shared"
 import {
   createEnvelopeBaseline,
+  EnvelopeIntegrityFileOperationKind,
   EnvelopeIntegrityIssueCode,
   readEnvelopeIntegrity
 } from "@wireio/debugging-shared"
@@ -17,13 +18,20 @@ import {
   writeEnvelopePair
 } from "./envelopeIntegrityTestSupport.js"
 
-type FaultOperation =
-  | "stat_before_read"
-  | "read"
-  | "stat_after_read"
-  | "verify_open"
-  | "verify_stat"
-  | "close"
+/** Sidecar read stages this suite injects deterministic faults into. */
+type FaultOperation = `${
+  | EnvelopeIntegrityFileOperationKind.stat_before_read
+  | EnvelopeIntegrityFileOperationKind.read
+  | EnvelopeIntegrityFileOperationKind.stat_after_read
+  | EnvelopeIntegrityFileOperationKind.verify_open
+  | EnvelopeIntegrityFileOperationKind.verify_stat
+  | EnvelopeIntegrityFileOperationKind.close}`
+
+/** Injected fault targeting one open generation of a candidate sidecar. */
+interface SidecarFault {
+  readonly openCount: number
+  readonly operation: FaultOperation
+}
 
 function faultingFileSystem(
   target: string,
@@ -62,7 +70,7 @@ function faultingFileSystem(
 function wrapFaultHandle(
   handle: EnvelopeIntegrityFileHandle,
   targeted: boolean,
-  fault: { readonly openCount: number; readonly operation: FaultOperation }
+  fault: SidecarFault
 ): EnvelopeIntegrityFileHandle {
   let statCount = 0
   return {

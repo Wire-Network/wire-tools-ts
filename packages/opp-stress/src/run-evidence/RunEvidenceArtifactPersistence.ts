@@ -17,13 +17,13 @@ import { runningManifestWithArtifacts } from "./runEvidenceManifestBuilders.js"
 import {
   invalidPersistenceState,
   persistenceDecimal,
-  requirePersistenceDecimal
+  assertPersistenceDecimal
 } from "./runEvidencePersistenceValidation.js"
 
 /** Shared state operations required by ordinal-scoped artifact persistence. */
-export type RunEvidenceArtifactPersistenceContext = {
+export interface RunEvidenceArtifactPersistenceContext {
   readonly runDirectory: string
-  readonly requireOpen: () => void
+  readonly assertOpen: () => void
   readonly exclusive: <T>(action: () => Promise<T>) => Promise<T>
   readonly manifest: () => RunEvidenceManifest
   readonly artifact: (baseKey: string) => RunEvidenceArtifact | null
@@ -55,8 +55,8 @@ export class RunEvidenceArtifactPersistence {
   beginObservation(
     updatedAtMs: RunEvidenceDecimal
   ): RunEvidencePersistence.Observation {
-    this.context.requireOpen()
-    const canonicalUpdatedAtMs = requirePersistenceDecimal(updatedAtMs),
+    this.context.assertOpen()
+    const canonicalUpdatedAtMs = assertPersistenceDecimal(updatedAtMs),
       ordinal = persistenceDecimal(this.nextObservationOrdinal),
       captureArtifact = (request: RunEvidencePersistence.ArtifactCapture) =>
         this.captureArtifact(ordinal, canonicalUpdatedAtMs, request)
@@ -73,7 +73,7 @@ export class RunEvidenceArtifactPersistence {
       metadataBytes = Buffer.from(request.metadataBytes),
       artifact = validateOppArtifact(request.baseKey, dataBytes, metadataBytes)
     return this.context.exclusive(async () => {
-      this.context.requireOpen()
+      this.context.assertOpen()
       const manifest = this.context.manifest()
       if (manifest.lifecycle !== RunEvidenceLifecycle.Running)
         throw invalidPersistenceState(

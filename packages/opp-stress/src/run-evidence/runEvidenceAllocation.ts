@@ -30,7 +30,7 @@ export async function allocateRunEvidenceStore(
 ): Promise<RunEvidencePersistenceStore> {
   const resolved = resolvePersistenceDependencies(dependencies),
     runId = resolved.randomUUID()
-  requireCanonicalRunId(runId)
+  assertCanonicalRunId(runId)
   const allocation = await prepareRunDirectory(
       options.clusterPath,
       runId,
@@ -77,7 +77,7 @@ export async function allocateRunEvidenceStore(
  * Require the generated run identity to use canonical lowercase UUID-v4 form.
  * @param runId Generated identity to validate before filesystem allocation.
  */
-function requireCanonicalRunId(runId: string): void {
+function assertCanonicalRunId(runId: string): void {
   if (!CanonicalUuidV4.test(runId))
     throw new RunEvidencePersistenceError(
       RunEvidencePersistenceErrorCode.InvalidRunIdentity,

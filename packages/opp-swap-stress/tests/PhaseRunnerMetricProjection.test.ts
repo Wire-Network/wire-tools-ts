@@ -109,11 +109,14 @@ describe("phase runner metric projection", () => {
   })
 })
 
+/** The healthy-telemetry narrowing the projection input requires. */
+interface HealthyMetricNarrowing {
+  readonly health: HealthyOppEnvelopeTelemetryHealth
+}
+
 function genericMetrics(
   evidence: OppPhaseMetricEvidence
-): OppPhaseEnvelopeMetrics & {
-  readonly health: HealthyOppEnvelopeTelemetryHealth
-} {
+): OppPhaseEnvelopeMetrics & HealthyMetricNarrowing {
   return {
     phase: "phase-1",
     endpoint: RunEvidenceEndpoint.OutpostEthereumDepot,

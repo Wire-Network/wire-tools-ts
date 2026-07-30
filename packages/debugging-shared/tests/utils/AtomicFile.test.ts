@@ -13,20 +13,26 @@ import {
 
 const { AtomicFile } = DebuggingShared
 
+/** Handle operation this suite makes reject while publishing a temp file. */
+enum FileHandleFaultOperation {
+  write = "write",
+  sync = "sync"
+}
+
 function fileHandleFault(
-  operation: "write" | "sync"
+  operation: FileHandleFaultOperation
 ): Partial<DebuggingShared.AtomicFile.FileSystem> {
   return {
     open: async (file, flags, mode) => {
       const handle = await Fs.promises.open(file, flags, mode)
-      if (flags !== "wx") return handle
+      if (flags !== AtomicFile.OpenFlag.wx) return handle
       return {
         writeFile: data =>
-          operation === "write"
+          operation === FileHandleFaultOperation.write
             ? Promise.reject(atomicFileErrno("EIO"))
             : handle.writeFile(data),
         sync: () =>
-          operation === "sync"
+          operation === FileHandleFaultOperation.sync
             ? Promise.reject(atomicFileErrno("EIO"))
             : handle.sync(),
         close: () => handle.close()
@@ -171,8 +177,16 @@ describe("AtomicFile", () => {
   )
 
   it.each([
-    ["create", AtomicFile.Stage.TempWrite, fileHandleFault("write")],
-    ["replace", AtomicFile.Stage.FileSync, fileHandleFault("sync")],
+    [
+      "create",
+      AtomicFile.Stage.TempWrite,
+      fileHandleFault(FileHandleFaultOperation.write)
+    ],
+    [
+      "replace",
+      AtomicFile.Stage.FileSync,
+      fileHandleFault(FileHandleFaultOperation.sync)
+    ],
     [
       "create",
       AtomicFile.Stage.Link,

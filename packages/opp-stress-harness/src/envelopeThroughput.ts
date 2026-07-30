@@ -40,6 +40,22 @@ export interface ThroughputSnapshot {
   readonly epochs: readonly EpochEnvelopeCounts[]
 }
 
+/** Mutable per-epoch tally accumulated while classifying `envlog` rows. */
+interface EpochEnvelopeTally {
+  inbound: number
+  outbound: number
+}
+
+/** The `get_table_rows` response leg this reader consumes. */
+interface TableRowsEnvelope {
+  rows?: readonly unknown[]
+}
+
+/** A v6 KV `envlog` row wrapper, whose flat row rides `value`. */
+interface KvEnvelopeLogRowWrapper {
+  value: EnvelopeLogRow
+}
+
 /** Whether an endpoint kind is the WIRE depot. */
 function isWireKind(kind: EndpointKind): boolean {
   const normalized =
@@ -61,7 +77,7 @@ function isWireKind(kind: EndpointKind): boolean {
 export function classifyEnvelopeLog(
   rows: readonly EnvelopeLogRow[]
 ): ThroughputSnapshot {
-  const byEpoch = new Map<number, { inbound: number; outbound: number }>()
+  const byEpoch = new Map<number, EpochEnvelopeTally>()
   let totalInbound = 0,
     totalOutbound = 0
   rows.forEach(row => {
@@ -119,12 +135,12 @@ export async function readEnvelopeThroughput(
     limit: DefaultRowLimit,
     json: true
   } as Parameters<APIClient["v1"]["chain"]["get_table_rows"]>[0])
-  const rows: readonly unknown[] =
-    (result as { rows?: readonly unknown[] }).rows ?? []
+  const { rows } = result as TableRowsEnvelope,
+    logRows: readonly unknown[] = rows ?? []
   return classifyEnvelopeLog(
-    rows.map(row =>
+    logRows.map(row =>
       row !== null && typeof row === "object" && "value" in row
-        ? (row as { value: EnvelopeLogRow }).value
+        ? (row as KvEnvelopeLogRowWrapper).value
         : (row as EnvelopeLogRow)
     )
   )

@@ -93,12 +93,12 @@ export class RunEvidencePublicationCoordinator {
   }
 
   /** Return the exact cause that closed publication, or null while still open. */
-  failure(): unknown | null {
+  failure(): unknown {
     return this.fatalError
   }
 
   /** Throw the original terminal publication failure before any later operation. */
-  requireOpen(): void {
+  assertOpen(): void {
     if (this.fatalError !== null) throw this.fatalError
   }
 }

@@ -3,6 +3,8 @@ import * as Path from "node:path"
 
 import type { OppEnvelopeTelemetryIssue } from "@wireio/test-opp-stress"
 
+import type { EnvelopeSidecar } from "@wireio/debugging-shared"
+
 import {
   createPollingFileSystem,
   createProducerDirectory,
@@ -11,6 +13,24 @@ import {
   writePollingEnvelopePair,
   type PollingEnvelopePair
 } from "./pollingIntegrityProducerSupport.js"
+
+/** Shape a sidecar is replaced with to provoke a strict-reader issue. */
+enum SidecarShapeKind {
+  symlink = "symlink",
+  directory = "directory"
+}
+
+/** Fault injected around a sidecar's descriptor operations. */
+enum SidecarFaultKind {
+  read = "read",
+  changed = "changed"
+}
+
+/** Replacement shape — derived from {@link SidecarShapeKind}. */
+type SidecarShape = `${SidecarShapeKind}`
+
+/** Injected fault — derived from {@link SidecarFaultKind}. */
+type SidecarFault = `${SidecarFaultKind}`
 
 /**
  * Produce every candidate-scoped post-baseline issue through the strict reader.
@@ -65,7 +85,7 @@ async function produceUnknownEndpoint(): Promise<OppEnvelopeTelemetryIssue> {
 }
 
 async function produceMissingSidecar(
-  sidecar: "data" | "metadata"
+  sidecar: EnvelopeSidecar
 ): Promise<OppEnvelopeTelemetryIssue> {
   return withPair(`missing-${sidecar}`, async (storageDir, pair) => {
     Fs.rmSync(sidecarPath(pair, sidecar))
@@ -74,8 +94,8 @@ async function produceMissingSidecar(
 }
 
 async function produceSidecarShape(
-  sidecar: "data" | "metadata",
-  shape: "symlink" | "directory"
+  sidecar: EnvelopeSidecar,
+  shape: SidecarShape
 ): Promise<OppEnvelopeTelemetryIssue> {
   return withPair(`${sidecar}-${shape}`, async (storageDir, pair) => {
     const path = sidecarPath(pair, sidecar)
@@ -91,8 +111,8 @@ async function produceSidecarShape(
 }
 
 async function produceSidecarFault(
-  sidecar: "data" | "metadata",
-  fault: "read" | "changed"
+  sidecar: EnvelopeSidecar,
+  fault: SidecarFault
 ): Promise<OppEnvelopeTelemetryIssue> {
   return withPair(`${sidecar}-${fault}`, async (storageDir, pair) => {
     const target = Path.basename(sidecarPath(pair, sidecar)),
@@ -117,7 +137,7 @@ async function produceSidecarFault(
 }
 
 async function produceDecodeFailure(
-  sidecar: "data" | "metadata"
+  sidecar: EnvelopeSidecar
 ): Promise<OppEnvelopeTelemetryIssue> {
   return withPair(`${sidecar}-decode`, async (storageDir, pair) => {
     Fs.writeFileSync(sidecarPath(pair, sidecar), Buffer.from([0xff]))
@@ -180,7 +200,7 @@ async function withPair(
 
 function sidecarPath(
   pair: PollingEnvelopePair,
-  sidecar: "data" | "metadata"
+  sidecar: EnvelopeSidecar
 ): string {
   return sidecar === "data" ? pair.dataPath : pair.metadataPath
 }

@@ -22,14 +22,17 @@ import type {
   VerifierPhaseSpec
 } from "./runEvidenceVerifierFixtureTypes.js"
 
-/** Build the canonical manifest value for a fixture lifecycle. */
-export function buildVerifierManifest(input: {
+/** Manifest-shaping inputs for one generated verifier fixture. */
+export interface VerifierManifestInput {
   readonly lifecycle: RunEvidenceLifecycle
   readonly requiredEndpoints: readonly RunEvidenceEndpoint[]
   readonly initialCount: number
   readonly maxCount: number
   readonly records: BuiltVerifierRecords
-}): unknown {
+}
+
+/** Build the canonical manifest value for a fixture lifecycle. */
+export function buildVerifierManifest(input: VerifierManifestInput): unknown {
   return {
     schemaVersion: RunEvidenceSchemaVersion,
     runId: "12345678-1234-4abc-8def-123456789abc",

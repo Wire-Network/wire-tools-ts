@@ -61,10 +61,19 @@ export const SwapStressRequiredEndpoints: readonly RunEvidenceEndpoint[] = [
 ]
 
 /** Stress phases executed by the runner. */
-export type SwapStressPhase = "phase-1" | "phase-2"
+export enum SwapStressPhaseKind {
+  "phase-1" = "phase-1",
+  "phase-2" = "phase-2"
+}
+
+/**
+ * Stress phases executed by the runner — derived from
+ * {@link SwapStressPhaseKind} so the raw spellings stay assignable.
+ */
+export type SwapStressPhase = `${SwapStressPhaseKind}`
 
 /** Reserve row amounts read live before quote computation. */
-export type SwapStressReserveRowSnapshot = {
+export interface SwapStressReserveRowSnapshot {
   /** Chain-side reserve amount in depot frame. */
   readonly chain: bigint
   /** WIRE-side reserve amount. */
@@ -72,7 +81,7 @@ export type SwapStressReserveRowSnapshot = {
 }
 
 /** ETH public and SOL private reserve rows read as one live quote baseline. */
-export type SwapStressReservePairSnapshot = {
+export interface SwapStressReservePairSnapshot {
   /** ETH/PRIMARY live reserve row. */
   readonly ethereum: SwapStressReserveRowSnapshot
   /** SOLANA-USDCSOL/PRIVATE live reserve row. */
@@ -80,7 +89,7 @@ export type SwapStressReservePairSnapshot = {
 }
 
 /** Chain/token/private-reserve route codes for both stress phases. */
-export type SwapStressRouteCodes = {
+export interface SwapStressRouteCodes {
   /** ETHEREUM chain slug_name. */
   readonly ethereumChainCode: bigint
   /** ETH native token slug_name. */
@@ -100,7 +109,7 @@ export type SwapStressRouteCodes = {
 }
 
 /** Phase 2 WIRE-source swap request payload passed to the real submitter. */
-export type Phase2SwapRequest = {
+export interface Phase2SwapRequest {
   /** Stable burst index. */
   readonly index: number
   /** WIRE account that escrows the source amount. */
@@ -122,7 +131,7 @@ export type Phase2SwapRequest = {
 }
 
 /** Destination identity watched by a payout observer. */
-export type SwapStressPayoutTarget = {
+export interface SwapStressPayoutTarget {
   /** Stable burst identity index. */
   readonly index: number
   /** Chain-native destination address or public key. */
@@ -130,7 +139,7 @@ export type SwapStressPayoutTarget = {
 }
 
 /** Request passed to payout observers for one completed phase. */
-export type SwapStressPayoutObservationRequest = {
+export interface SwapStressPayoutObservationRequest {
   /** Phase whose remit payout is being observed. */
   readonly phase: SwapStressPhase
   /** Number of burst recipients that could receive payout. */
@@ -143,11 +152,15 @@ export type SwapStressPayoutObservationRequest = {
   readonly targets: readonly SwapStressPayoutTarget[]
 }
 
-/** Payout observation returned by a chain-specific balance watcher. */
-export type SwapStressPayoutObservation = SwapStressPayoutObservationRequest & {
+/** The observed-recipient tally a payout observation adds to its request. */
+interface SwapStressPayoutObservedCount {
   /** Number of recipients/accounts whose balance crossed the target floor. */
   readonly observedCount: number
 }
+
+/** Payout observation returned by a chain-specific balance watcher. */
+export type SwapStressPayoutObservation = SwapStressPayoutObservationRequest &
+  SwapStressPayoutObservedCount
 
 /** Chain-specific balance watcher for recipient or return payouts. */
 export interface SwapStressPayoutObserver {
@@ -172,7 +185,7 @@ export interface SwapStressPayoutObserver {
 }
 
 /** Request passed to the optional batch-operator failure probe after payout observation fails. */
-export type SwapStressBatchOperatorFailureRequest = {
+export interface SwapStressBatchOperatorFailureRequest {
   /** Phase whose payout failed to appear. */
   readonly phase: SwapStressPhase
   /** Inclusive phase start timestamp. */
@@ -184,13 +197,13 @@ export type SwapStressBatchOperatorFailureRequest = {
 }
 
 /** Clean phase evidence carried by completed and workload-breakage observations. */
-export type SwapStressCleanEvidence = {
+export interface SwapStressCleanEvidence {
   readonly phaseResults: readonly SwapStressPhaseResult[]
   readonly telemetryDegradation: null
 }
 
 /** Phase evidence carrying an exact terminal telemetry degradation. */
-export type SwapStressDegradedEvidence = {
+export interface SwapStressDegradedEvidence {
   readonly phaseResults: readonly SwapStressPhaseResult[]
   readonly telemetryDegradation: SwapStressTelemetryDegradation
 }
@@ -199,17 +212,25 @@ export type SwapStressDegradedEvidence = {
 export type SwapStressCompletedObservation =
   OppStressRampDeferredEvidenceCompletedObservation<SwapStressCleanEvidence>
 
+/** The workload-category narrowing of a breakage observation. */
+interface SwapStressWorkloadBreakageCategory {
+  readonly breakageCategory: RampBreakageCategory.Workload
+}
+
+/** The telemetry-integrity-category narrowing of a breakage observation. */
+interface SwapStressTelemetryBreakageCategory {
+  readonly breakageCategory: RampBreakageCategory.TelemetryIntegrity
+}
+
 /** Workload breakage observation with clean telemetry evidence. */
 export type SwapStressWorkloadBreakageObservation =
-  OppStressRampDeferredEvidenceBreakageObservation<SwapStressCleanEvidence> & {
-    readonly breakageCategory: RampBreakageCategory.Workload
-  }
+  OppStressRampDeferredEvidenceBreakageObservation<SwapStressCleanEvidence> &
+    SwapStressWorkloadBreakageCategory
 
 /** Telemetry-integrity breakage observation with exact degradation evidence. */
 export type SwapStressTelemetryBreakageObservation =
-  OppStressRampDeferredEvidenceBreakageObservation<SwapStressDegradedEvidence> & {
-    readonly breakageCategory: RampBreakageCategory.TelemetryIntegrity
-  }
+  OppStressRampDeferredEvidenceBreakageObservation<SwapStressDegradedEvidence> &
+    SwapStressTelemetryBreakageCategory
 
 /** Final observation-only callback contract for one flow iteration. */
 export type SwapStressIterationObservation =
@@ -222,7 +243,7 @@ export type SwapStressObservationEvidence =
   SwapStressCleanEvidence | SwapStressDegradedEvidence
 
 /** Nontelemetry collaborators required for one bidirectional stress iteration. */
-type SwapStressNonTelemetryPhaseRunnerDeps = {
+interface SwapStressNonTelemetryPhaseRunnerDeps {
   /** Route constants for private ETH <-> USDCSOL swaps. */
   readonly route: SwapStressRouteCodes
   /** Read live ACTIVE private reserve row snapshots. */
@@ -256,7 +277,7 @@ export type SwapStressPhaseRunnerDeps = SwapStressNonTelemetryPhaseRunnerDeps &
   SwapStressTelemetryDeps
 
 /** Minimal runner surface consumed by the future ramp/e2e todo. */
-export type SwapStressPhaseRunner = {
+export interface SwapStressPhaseRunner {
   /**
    * Run one bidirectional stress iteration.
    *

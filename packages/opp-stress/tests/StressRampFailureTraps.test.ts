@@ -75,7 +75,7 @@ describe("runOppStressRamp rejection traps", () => {
   })
 })
 
-type TrappedCause = {
+interface TrappedCause {
   readonly cause: unknown
   readonly calls: () => number
 }

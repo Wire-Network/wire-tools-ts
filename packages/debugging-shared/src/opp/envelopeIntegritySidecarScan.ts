@@ -1,19 +1,28 @@
-import type {
-  EnvelopeIntegrityDirectoryHandle,
-  EnvelopeIntegrityFileError
+import {
+  EnvelopeIntegrityFileOperationKind,
+  type EnvelopeIntegrityDirectoryHandle,
+  type EnvelopeIntegrityFileError
 } from "./EnvelopeIntegrityReaderTypes.js"
 import { EnvelopeRecordFile } from "./EnvelopeRecordReader.js"
 import { normalizeUnknownError } from "./envelopeIntegrityError.js"
 
+/** One complete sidecar-key generation discovered through the retained root. */
+interface EnvelopeSidecarScanned {
+  readonly kind: "scanned"
+  readonly baseKeys: readonly string[]
+  readonly filenames: ReadonlySet<string>
+  readonly snapshot: readonly string[]
+}
+
+/** Sidecar discovery terminated by a normalized readdir failure. */
+interface EnvelopeSidecarScanFailed {
+  readonly kind: "failed"
+  readonly error: EnvelopeIntegrityFileError
+}
+
 /** Result of scanning the union of envelope sidecar extensions. */
 export type EnvelopeSidecarScanResult =
-  | {
-      readonly kind: "scanned"
-      readonly baseKeys: readonly string[]
-      readonly filenames: ReadonlySet<string>
-      readonly snapshot: readonly string[]
-    }
-  | { readonly kind: "failed"; readonly error: EnvelopeIntegrityFileError }
+  EnvelopeSidecarScanned | EnvelopeSidecarScanFailed
 
 /**
  * Compare strings by JavaScript code units without locale state.
@@ -55,6 +64,12 @@ export async function scanEnvelopeSidecars(
       snapshot
     }
   } catch (error) {
-    return { kind: "failed", error: normalizeUnknownError(error, "readdir") }
+    return {
+      kind: "failed",
+      error: normalizeUnknownError(
+        error,
+        EnvelopeIntegrityFileOperationKind.readdir
+      )
+    }
   }
 }

@@ -24,7 +24,7 @@ const BaseKeyPattern =
   /^(?<epoch>\d{8})-(?<endpoint>[A-Z_]+)-(?<checksum>[0-9a-f]{16})$/
 
 /** Independently decoded immutable OPP pair used for metric recomputation. */
-export type VerifiedEvidenceArtifact = {
+export interface VerifiedEvidenceArtifact {
   readonly baseKey: string
   readonly dataRef: string
   readonly metadataRef: string
@@ -36,10 +36,17 @@ export type VerifiedEvidenceArtifact = {
 }
 
 /** Validated artifact map plus explicitly unproved later publisher claims. */
-export type VerifiedEvidenceArtifacts = {
+export interface VerifiedEvidenceArtifacts {
   readonly byBaseKey: ReadonlyMap<string, VerifiedEvidenceArtifact>
   readonly byRef: ReadonlyMap<string, VerifiedEvidenceArtifact>
   readonly publisherClaims: readonly RunEvidencePublisherClaim[]
+}
+
+/** Canonical OPP geometry decoded from an artifact base key. */
+interface ParsedArtifactBaseKey {
+  readonly epoch: number
+  readonly endpoint: RunEvidenceEndpoint
+  readonly checksum: string
 }
 
 /** Read and independently validate every manifest-declared OPP artifact pair. */
@@ -71,7 +78,7 @@ function verifyArtifact(
   root: PinnedRunDirectory,
   artifact: RunEvidenceArtifact,
   context: RunEvidenceVerificationContext
-): VerifiedEvidenceArtifact | null {
+): VerifiedEvidenceArtifact {
   const parsedKey = parseBaseKey(artifact.baseKey)
   if (parsedKey === null) {
     context.issue(
@@ -163,11 +170,7 @@ function verifyArtifact(
   }
 }
 
-function parseBaseKey(baseKey: string): {
-  readonly epoch: number
-  readonly endpoint: RunEvidenceEndpoint
-  readonly checksum: string
-} | null {
+function parseBaseKey(baseKey: string): ParsedArtifactBaseKey {
   const match = BaseKeyPattern.exec(baseKey),
     epochText = match?.groups?.["epoch"],
     endpointText = match?.groups?.["endpoint"],
@@ -184,7 +187,7 @@ function decodeEnvelope(
   bytes: Uint8Array,
   path: string,
   context: RunEvidenceVerificationContext
-): ReturnType<typeof Envelope.create> | null {
+): ReturnType<typeof Envelope.create> {
   try {
     return decodeCanonicalMessage(Envelope, bytes)
   } catch (error) {
@@ -202,7 +205,7 @@ function decodeMetadata(
   bytes: Uint8Array,
   path: string,
   context: RunEvidenceVerificationContext
-): ReturnType<typeof DebugEnvelopeMetadataRecord.create> | null {
+): ReturnType<typeof DebugEnvelopeMetadataRecord.create> {
   try {
     return decodeCanonicalMessage(DebugEnvelopeMetadataRecord, bytes)
   } catch (error) {

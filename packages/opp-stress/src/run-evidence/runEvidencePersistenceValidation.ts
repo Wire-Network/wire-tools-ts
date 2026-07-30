@@ -1,11 +1,10 @@
 import {
-  RunEvidenceClusterConfigState,
   RunEvidenceIterationOutcome,
   RunEvidenceLifecycle,
   RunEvidenceSetupStatus
 } from "./runEvidenceConstants.js"
 import type {
-  RunEvidenceClusterConfigSnapshot,
+  RunEvidenceCapturedClusterConfigSnapshot,
   RunEvidenceDecimal,
   RunEvidenceIterationRecordRef,
   RunEvidenceSetupRecordRef
@@ -28,13 +27,10 @@ import {
 } from "./runEvidenceLifecycleParser.js"
 
 /** Captured config variant required after successful setup. */
-export type PersistenceCapturedConfig = Extract<
-  RunEvidenceClusterConfigSnapshot,
-  { readonly kind: RunEvidenceClusterConfigState.Captured }
->
+export type PersistenceCapturedConfig = RunEvidenceCapturedClusterConfigSnapshot
 
 /** Controller state compared with a candidate terminal record. */
-export type TerminalAgreementInput = {
+export interface TerminalAgreementInput {
   readonly manifest: RunEvidenceManifest
   readonly setup: RunEvidenceSetup
   readonly iterationRefs: readonly RunEvidenceIterationRecordRef[]
@@ -43,14 +39,14 @@ export type TerminalAgreementInput = {
 }
 
 /** Parse and require a schema-v1 setup record. */
-export function requirePersistenceSetup(input: unknown): RunEvidenceSetup {
+export function assertPersistenceSetup(input: unknown): RunEvidenceSetup {
   const result = parseRunEvidenceSetup(canonicalBoundaryInput(input))
   if ("error" in result) throw invalidRecord("setup", result.error.code)
   return result.value
 }
 
 /** Parse and require a schema-v1 iteration record. */
-export function requirePersistenceIteration(
+export function assertPersistenceIteration(
   input: unknown
 ): RunEvidenceIteration {
   const result = parseRunEvidenceIteration(canonicalBoundaryInput(input))
@@ -59,7 +55,7 @@ export function requirePersistenceIteration(
 }
 
 /** Parse and require a schema-v1 terminal record. */
-export function requirePersistenceTerminal(
+export function assertPersistenceTerminal(
   input: unknown
 ): RunEvidenceTerminal {
   const result = parseRunEvidenceTerminal(canonicalBoundaryInput(input))
@@ -116,14 +112,14 @@ export function persistenceDecimal(value: bigint): RunEvidenceDecimal {
 }
 
 /** Require an unknown boundary value to be a canonical non-negative decimal. */
-export function requirePersistenceDecimal(value: unknown): RunEvidenceDecimal {
+export function assertPersistenceDecimal(value: unknown): RunEvidenceDecimal {
   if (typeof value !== "string" || !isRunEvidenceDecimal(value))
     throw invalidPersistenceState("timestamp is not a canonical decimal")
   return value
 }
 
 /** Require setup's config claim to match the immutable captured snapshot state. */
-export function requirePersistenceConfigAgreement(
+export function assertPersistenceConfigAgreement(
   setup: RunEvidenceSetup,
   config: PersistenceCapturedConfig | null
 ): void {
@@ -134,7 +130,7 @@ export function requirePersistenceConfigAgreement(
 }
 
 /** Require the captured config variant needed by successful setup. */
-export function requirePersistenceCapturedConfig(
+export function assertPersistenceCapturedConfig(
   config: PersistenceCapturedConfig | null
 ): PersistenceCapturedConfig {
   if (config === null)
@@ -143,7 +139,7 @@ export function requirePersistenceCapturedConfig(
 }
 
 /** Require a committed setup record from serialized store state. */
-export function requireCommittedPersistenceSetup(
+export function assertCommittedPersistenceSetup(
   setup: RunEvidenceSetup | null
 ): RunEvidenceSetup {
   if (setup === null)
@@ -152,7 +148,7 @@ export function requireCommittedPersistenceSetup(
 }
 
 /** Require a committed setup ref from serialized store state. */
-export function requireCommittedPersistenceSetupRef(
+export function assertCommittedPersistenceSetupRef(
   setupRef: RunEvidenceSetupRecordRef | null
 ): RunEvidenceSetupRecordRef {
   if (setupRef === null)
@@ -161,7 +157,7 @@ export function requireCommittedPersistenceSetupRef(
 }
 
 /** Require a record's endpoint order to equal allocation authority. */
-export function requirePersistenceEndpoints(
+export function assertPersistenceEndpoints(
   endpoints: readonly string[],
   manifest: RunEvidenceManifest
 ): void {
@@ -172,10 +168,10 @@ export function requirePersistenceEndpoints(
 }
 
 /** Require terminal start, refs, endpoints, and setup lifecycle agreement. */
-export function requirePersistenceTerminalAgreement(
+export function assertPersistenceTerminalAgreement(
   input: TerminalAgreementInput
 ): void {
-  requirePersistenceEndpoints(input.terminal.requiredEndpoints, input.manifest)
+  assertPersistenceEndpoints(input.terminal.requiredEndpoints, input.manifest)
   if (input.terminal.startedAtMs !== input.manifest.startedAtMs)
     throw invalidPersistenceState(
       "terminal start timestamp disagrees with allocation"
@@ -192,10 +188,10 @@ export function requirePersistenceTerminalAgreement(
     throw invalidPersistenceState(
       "terminal lifecycle disagrees with setup outcome"
     )
-  if (!setupFailed) requireTerminalIterationAgreement(input)
+  if (!setupFailed) assertTerminalIterationAgreement(input)
 }
 
-function requireTerminalIterationAgreement(
+function assertTerminalIterationAgreement(
   input: TerminalAgreementInput
 ): void {
   const lastIteration = input.iterations.at(-1)

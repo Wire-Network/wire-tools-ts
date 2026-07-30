@@ -119,14 +119,16 @@ describe("telemetry health count coherence", () => {
   })
 })
 
+interface HealthFixtureOverrides {
+  readonly retryable: boolean
+  readonly candidateCount?: number
+  readonly validCount?: number
+  readonly issues: readonly OppEnvelopeTelemetryIssue[]
+}
+
 function healthFixture(
   kind: OppEnvelopeTelemetryHealthKind,
-  overrides: {
-    readonly retryable: boolean
-    readonly candidateCount?: number
-    readonly validCount?: number
-    readonly issues: readonly OppEnvelopeTelemetryIssue[]
-  }
+  overrides: HealthFixtureOverrides
 ) {
   return {
     kind,

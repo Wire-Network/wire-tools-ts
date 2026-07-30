@@ -1,3 +1,5 @@
+import { match } from "ts-pattern"
+
 import {
   OppEnvelopeTelemetryHealthKind,
   OppStressRampInvalidObservationError,
@@ -123,33 +125,36 @@ function terminalTelemetry(
   observation: SwapStressTelemetryBreakageObservation
 ): DegradedOppEnvelopeTelemetryHealth {
   const degradation = observation.evidence.telemetryDegradation
-  switch (degradation.kind) {
-    case "deadline_exhausted":
-      return terminalizeHealth(degradation.observation.health)
-    case "baseline_capture_failed":
-      const [firstIssue, ...remainingIssues] = degradation.issues
-      return {
+  return match(degradation)
+    .with({ kind: "deadline_exhausted" }, deadline =>
+      terminalizeHealth(deadline.observation.health)
+    )
+    .with({ kind: "baseline_capture_failed" }, captureFailed => {
+      const [firstIssue, ...remainingIssues] = captureFailed.issues
+      const degraded: DegradedOppEnvelopeTelemetryHealth = {
         kind: OppEnvelopeTelemetryHealthKind.Degraded,
         retryable: false,
         candidateCount: 0,
         validCount: 0,
         filteredCount: 0,
-        issueCount: degradation.issues.length,
+        issueCount: captureFailed.issues.length,
         issues: [
           mapEnvelopeIntegrityIssue(firstIssue),
           ...remainingIssues.map(mapEnvelopeIntegrityIssue)
         ]
       }
-    default:
-      return assertNever(degradation)
-  }
+      return degraded
+    })
+    .otherwise(value => assertNever(value))
+}
+
+/** `Exclude` filter removing the healthy leg of a telemetry observation. */
+interface HealthyTelemetryDiscriminator {
+  readonly kind: OppEnvelopeTelemetryHealthKind.Healthy
 }
 
 function terminalizeHealth(
-  health: Exclude<
-    OppEnvelopeTelemetryHealth,
-    { readonly kind: OppEnvelopeTelemetryHealthKind.Healthy }
-  >
+  health: Exclude<OppEnvelopeTelemetryHealth, HealthyTelemetryDiscriminator>
 ): DegradedOppEnvelopeTelemetryHealth {
   const parsed = parseOppEnvelopeTelemetryHealth({
     ...health,

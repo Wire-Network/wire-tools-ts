@@ -11,13 +11,16 @@ import {
   type AtomicFilePublishMode
 } from "./atomicFileTestSupport.js"
 
+/** Handle operations replaced by an injected errno failure. */
+interface HandleFailures {
+  readonly write?: NodeJS.ErrnoException
+  readonly sync?: NodeJS.ErrnoException
+  readonly close?: NodeJS.ErrnoException
+}
+
 function wrappedHandle(
   handle: AtomicFile.FileHandle,
-  failures: Readonly<{
-    readonly write?: NodeJS.ErrnoException
-    readonly sync?: NodeJS.ErrnoException
-    readonly close?: NodeJS.ErrnoException
-  }>
+  failures: HandleFailures
 ): AtomicFile.FileHandle {
   return {
     writeFile: data =>

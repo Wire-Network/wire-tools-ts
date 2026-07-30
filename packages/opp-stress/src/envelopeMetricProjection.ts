@@ -1,6 +1,8 @@
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
+import { match } from "ts-pattern"
 
 import { mapEnvelopeIntegrityIssue } from "./envelopeTelemetryIssueMapper.js"
+import { RunEvidenceSaturationStrategy } from "./run-evidence/runEvidenceConstants.js"
 import {
   MaxEnvelopeBytes,
   SaturatedEnvelopeMinBytes,
@@ -173,14 +175,14 @@ function saturatedByStrategy(
   envelopes: readonly OppEnvelopeMetric[],
   minBytes: number
 ): boolean {
-  switch (strategy) {
-    case "rollover":
-      return envelopes.some(envelope => envelope.epochEnvelopeIndex > 0)
-    case "byte_threshold":
-      return envelopes.some(envelope => envelope.byteSize >= minBytes)
-    default:
-      return assertNever(strategy)
-  }
+  return match(strategy as RunEvidenceSaturationStrategy)
+    .with(RunEvidenceSaturationStrategy.Rollover, () =>
+      envelopes.some(envelope => envelope.epochEnvelopeIndex > 0)
+    )
+    .with(RunEvidenceSaturationStrategy.ByteThreshold, () =>
+      envelopes.some(envelope => envelope.byteSize >= minBytes)
+    )
+    .otherwise(value => assertNever(value))
 }
 
 function compareEnvelopeMetrics(

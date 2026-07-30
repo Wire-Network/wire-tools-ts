@@ -17,10 +17,19 @@ export namespace StressPrivateReserveCreateParams {
 }
 
 /** Private reserve side used to select the chain/token/reserve triple in callers. */
-export type StressPrivateReserveSide = "ethereum" | "solana"
+export enum StressPrivateReserveSideKind {
+  ethereum = "ethereum",
+  solana = "solana"
+}
+
+/**
+ * Private reserve side — derived from {@link StressPrivateReserveSideKind} so
+ * the raw spellings stay assignable at call sites.
+ */
+export type StressPrivateReserveSide = `${StressPrivateReserveSideKind}`
 
 /** Input passed to the real `sysio.reserv::matchreserve` push closure. */
-export type StressPrivateReserveMatchRequest = {
+export interface StressPrivateReserveMatchRequest {
   /** Private reserve row to match. */
   readonly side: StressPrivateReserveSide
   /** WIRE amount escrowed by the shared owner for this private reserve. */
@@ -42,7 +51,7 @@ export namespace StressPrivateReserveMatchRequests {
 }
 
 /** ACTIVE reserve amounts observed after the real create/match/ready handshake. */
-export type StressPrivateReserveSnapshot = {
+export interface StressPrivateReserveSnapshot {
   /** ETH-side depot-frame chain amount. */
   readonly ethereumDepotChainAmount: bigint
   /** ETH-side matched WIRE amount. */
@@ -54,7 +63,7 @@ export type StressPrivateReserveSnapshot = {
 }
 
 /** Real flow operations required for stress private-reserve setup. */
-export type StressPrivateReserveOrchestration = {
+export interface StressPrivateReserveOrchestration {
   /** Submit ReserveManager.create_reserve for ETH/PRIVATE with native ETH escrow. */
   readonly createEthereumPrivateReserve: (
     params: typeof StressPrivateReserveCreateParams
@@ -80,7 +89,7 @@ export type StressPrivateReserveOrchestration = {
 }
 
 /** Poll bounds for waiting on outpost-local ACTIVE records. */
-export type StressPrivateReserveActivePoll = {
+export interface StressPrivateReserveActivePoll {
   /** Maximum predicate checks before setup fails. */
   readonly maxAttempts: number
   /** Delay between failed checks. */
@@ -88,7 +97,7 @@ export type StressPrivateReserveActivePoll = {
 }
 
 /** Result of the stress private-reserve setup helper. */
-export type StressPrivateReserveSetupResult = {
+export interface StressPrivateReserveSetupResult {
   /** Ordered protocol stages completed by this setup helper. */
   readonly stages: readonly string[]
   /** ACTIVE pair amounts after RESERVE_READY reached both outposts. */
@@ -159,7 +168,7 @@ const DefaultActivePoll: StressPrivateReserveActivePoll = {
 async function waitForOutpostLocalPrivateRecordsActive(
   flow: StressPrivateReserveOrchestration
 ): Promise<void> {
-  const poll = flow.activePoll ?? DefaultActivePoll
+  const { activePoll: poll = DefaultActivePoll } = flow
   let attempts = 0
   while (attempts < poll.maxAttempts) {
     attempts += 1

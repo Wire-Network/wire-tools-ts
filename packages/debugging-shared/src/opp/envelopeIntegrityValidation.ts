@@ -12,6 +12,7 @@ import {
 } from "./EnvelopeStorageKey.js"
 import {
   EnvelopeIntegrityIssueCode,
+  EnvelopeSidecarKind,
   type EnvelopeIntegrityIssue
 } from "./EnvelopeIntegrityReaderTypes.js"
 import { EnvelopeRecordFile } from "./EnvelopeRecordReader.js"
@@ -24,6 +25,7 @@ import {
   sidecarReadIssue
 } from "./envelopeIntegrityIssues.js"
 import type {
+  EnvelopeCandidateIssue,
   EnvelopeCandidateValidationRequest,
   EnvelopeCandidateValidationResult
 } from "./envelopeIntegrityValidationTypes.js"
@@ -49,19 +51,28 @@ export async function validateEnvelopeCandidate(
   if (
     !request.filenames.has(`${request.baseKey}${EnvelopeRecordFile.DataExt}`)
   ) {
-    return pendingResult(request.baseKey, "data", data.path)
+    return pendingResult(request.baseKey, EnvelopeSidecarKind.data, data.path)
   }
   if (
     !request.filenames.has(
       `${request.baseKey}${EnvelopeRecordFile.MetadataExt}`
     )
   ) {
-    return pendingResult(request.baseKey, "metadata", metadata.path)
+    return pendingResult(
+      request.baseKey,
+      EnvelopeSidecarKind.metadata,
+      metadata.path
+    )
   }
 
   const dataRead = await readStableFile(data.basename, request.root.handle)
   if (dataRead.kind !== "bytes") {
-    return sidecarReadIssue(request.baseKey, "data", data.path, dataRead)
+    return sidecarReadIssue(
+      request.baseKey,
+      EnvelopeSidecarKind.data,
+      data.path,
+      dataRead
+    )
   }
   const metadataRead = await readStableFile(
     metadata.basename,
@@ -70,7 +81,7 @@ export async function validateEnvelopeCandidate(
   if (metadataRead.kind !== "bytes") {
     return sidecarReadIssue(
       request.baseKey,
-      "metadata",
+      EnvelopeSidecarKind.metadata,
       metadata.path,
       metadataRead
     )
@@ -161,8 +172,6 @@ export async function validateEnvelopeCandidate(
   }
 }
 
-function candidateIssue(
-  value: EnvelopeIntegrityIssue
-): Extract<EnvelopeCandidateValidationResult, { readonly kind: "issue" }> {
+function candidateIssue(value: EnvelopeIntegrityIssue): EnvelopeCandidateIssue {
   return { kind: "issue", issue: value }
 }

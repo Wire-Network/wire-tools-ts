@@ -20,7 +20,7 @@ import {
 } from "./runEvidencePersistenceTestSupport.js"
 import type { PersistenceWorkspace } from "./runEvidencePersistenceTestSupport.js"
 
-type StaleFinalComponentCase = {
+interface StaleFinalComponentCase {
   readonly label: string
   readonly followsAlias: boolean
   readonly install: (workspace: PersistenceWorkspace) => void

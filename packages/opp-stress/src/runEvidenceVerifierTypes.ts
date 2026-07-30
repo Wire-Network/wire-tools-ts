@@ -59,7 +59,7 @@ export enum RunEvidenceVerificationIssueCode {
 }
 
 /** One deterministic JSON-safe verifier issue. */
-export type RunEvidenceVerificationIssue = {
+export interface RunEvidenceVerificationIssue {
   /** Stable machine-readable defect code. */
   readonly code: RunEvidenceVerificationIssueCode
   /** Run-relative path or `$run` for a run-wide defect. */
@@ -69,7 +69,7 @@ export type RunEvidenceVerificationIssue = {
 }
 
 /** Independently recomputed metrics for one declared phase. */
-export type RunEvidenceRecomputedPhase = {
+export interface RunEvidenceRecomputedPhase {
   readonly label: string
   readonly endpoint: RunEvidenceEndpoint
   readonly envelopeCount: number
@@ -80,7 +80,7 @@ export type RunEvidenceRecomputedPhase = {
 }
 
 /** Independently recomputed result for one contiguous iteration. */
-export type RunEvidenceRecomputedIteration = {
+export interface RunEvidenceRecomputedIteration {
   readonly iterationIndex: number
   readonly accountCount: number
   readonly saturatedEndpoints: readonly RunEvidenceEndpoint[]
@@ -89,21 +89,21 @@ export type RunEvidenceRecomputedIteration = {
 }
 
 /** Independently recomputed campaign partition for one required endpoint. */
-export type RunEvidenceRecomputedEndpoint = {
+export interface RunEvidenceRecomputedEndpoint {
   readonly endpoint: RunEvidenceEndpoint
   readonly saturated: boolean
   readonly supportingPhases: readonly string[]
 }
 
 /** Structurally checked publisher claims that later immutable bytes cannot prove. */
-export type RunEvidencePublisherClaim = {
+export interface RunEvidencePublisherClaim {
   readonly baseKey: string
   readonly lastAcceptedObservationOrdinal: string
   readonly lastAcceptedBatchOpNames: readonly string[]
 }
 
 /** Complete JSON-safe offline verification report. */
-export type RunEvidenceVerificationReport = {
+export interface RunEvidenceVerificationReport {
   readonly schemaVersion: 1
   readonly runDirectory: string
   readonly valid: boolean

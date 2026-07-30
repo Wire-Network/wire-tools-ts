@@ -87,12 +87,17 @@ export function isPhases(value: unknown): value is readonly RunEvidencePhase[] {
   )
 }
 
-/** Require every current completed saturated phase to appear in cumulative claims. */
-export function hasConsistentSaturationPhaseCoverage(input: {
+/** Current phases weighed against the cumulative endpoint saturation claims. */
+export interface SaturationPhaseCoverageInput {
   readonly phases: readonly RunEvidencePhase[]
   readonly requiredEndpoints: readonly string[]
   readonly saturatedEndpoints: readonly string[]
-}): boolean {
+}
+
+/** Require every current completed saturated phase to appear in cumulative claims. */
+export function hasConsistentSaturationPhaseCoverage(
+  input: SaturationPhaseCoverageInput
+): boolean {
   return input.phases.every(
     phase =>
       phase.status !== RunEvidencePhaseStatus.Completed ||

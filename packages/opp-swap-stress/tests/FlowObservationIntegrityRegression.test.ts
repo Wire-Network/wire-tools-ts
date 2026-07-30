@@ -200,30 +200,33 @@ function emptyFileIdentity() {
   }
 }
 
-function recordedPhase(): {
+/** One selected phase alongside the full fixture set it came from. */
+interface SelectedPhaseFixture {
   readonly phaseResults: SwapStressPhaseResult[]
   readonly phase: SwapStressPhaseResult
-} {
+}
+
+/** One phase's payout alongside the full fixture set it came from. */
+interface SelectedPayoutFixture {
+  readonly phaseResults: SwapStressPhaseResult[]
+  readonly payout: NonNullable<SwapStressPhaseResult["payout"]>
+}
+
+function recordedPhase(): SelectedPhaseFixture {
   const phaseResults = richPhaseResults(),
     phase = phaseResults[0]
   if (phase === undefined) throw new Error("recorded phase fixture expected")
   return { phaseResults, phase }
 }
 
-function pendingPhase(): {
-  readonly phaseResults: SwapStressPhaseResult[]
-  readonly phase: SwapStressPhaseResult
-} {
+function pendingPhase(): SelectedPhaseFixture {
   const phaseResults = richPhaseResults(),
     phase = phaseResults[2]
   if (phase === undefined) throw new Error("pending phase fixture expected")
   return { phaseResults, phase }
 }
 
-function payoutPhase(): {
-  readonly phaseResults: SwapStressPhaseResult[]
-  readonly payout: NonNullable<SwapStressPhaseResult["payout"]>
-} {
+function payoutPhase(): SelectedPayoutFixture {
   const { phaseResults, phase } = recordedPhase()
   if (phase.payout === null) throw new Error("payout fixture expected")
   return { phaseResults, payout: phase.payout }

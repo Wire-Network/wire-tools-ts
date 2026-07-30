@@ -51,7 +51,7 @@ export function parseTelemetryIssues(
 }
 
 /** Require a nonempty issue tuple for pending or degraded health. */
-export function requireTelemetryIssues(
+export function assertTelemetryIssues(
   issues: readonly OppEnvelopeTelemetryIssue[]
 ): readonly [OppEnvelopeTelemetryIssue, ...OppEnvelopeTelemetryIssue[]] {
   const [firstIssue, ...remainingIssues] = issues

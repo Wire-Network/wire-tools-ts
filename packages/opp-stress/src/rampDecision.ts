@@ -3,8 +3,7 @@ import { OppStressRampInvalidObservationError } from "./rampObservation.js"
 import type {
   OppStressRampDeferredIterationObservation,
   OppStressRampHealthyEndpointTelemetry,
-  OppStressRampIterationObservation,
-  OppStressRampResultStatus
+  OppStressRampIterationObservation
 } from "./rampControllerTypes.js"
 import type { OppStressRampDeferredEvidenceIterationObservation } from "./rampDeferredEvidenceTypes.js"
 import {
@@ -17,29 +16,39 @@ import {
   type RunEvidencePhase
 } from "./runEvidenceTypes.js"
 import type { OppEnvelopeTelemetryHealth } from "./envelopeMetricTypes.js"
-import { requirePersistenceDecimal } from "./run-evidence/runEvidencePersistenceValidation.js"
+import { assertPersistenceDecimal } from "./run-evidence/runEvidencePersistenceValidation.js"
+
+/** Schema-v1 parsed observation paired with its controller mode. */
+export interface SchemaV1RampDecisionObservation {
+  readonly mode: "schema_v1"
+  readonly value: OppStressRampIterationObservation
+}
+
+/** No-payload deferred parsed observation paired with its controller mode. */
+export interface DeferredRampDecisionObservation {
+  readonly mode: "deferred_flow_migration"
+  readonly value: OppStressRampDeferredIterationObservation
+}
 
 /** Existing schema-v1 or no-payload deferred parsed observation. */
 export type LegacyRampDecisionObservation =
-  | {
-      readonly mode: "schema_v1"
-      readonly value: OppStressRampIterationObservation
-    }
-  | {
-      readonly mode: "deferred_flow_migration"
-      readonly value: OppStressRampDeferredIterationObservation
-    }
+  SchemaV1RampDecisionObservation | DeferredRampDecisionObservation
+
+/** Deferred parsed observation carrying generic caller-owned evidence. */
+export interface DeferredEvidenceRampDecisionObservation<
+  TEvidence extends object
+> {
+  readonly mode: "deferred_flow_migration"
+  readonly value: OppStressRampDeferredEvidenceIterationObservation<TEvidence>
+}
 
 /** Controller mode paired with its already parsed callback observation. */
 export type RampDecisionObservation<TEvidence extends object = object> =
   | LegacyRampDecisionObservation
-  | {
-      readonly mode: "deferred_flow_migration"
-      readonly value: OppStressRampDeferredEvidenceIterationObservation<TEvidence>
-    }
+  | DeferredEvidenceRampDecisionObservation<TEvidence>
 
 /** Inputs owned by the controller before one canonical classification. */
-export type RampDecisionInput<TEvidence extends object = object> = {
+export interface RampDecisionInput<TEvidence extends object = object> {
   readonly observation: RampDecisionObservation<TEvidence>
   readonly requiredEndpoints: readonly RunEvidenceEndpoint[]
   readonly priorSaturatedEndpoints: readonly RunEvidenceEndpoint[]
@@ -50,13 +59,13 @@ export type RampDecisionInput<TEvidence extends object = object> = {
   readonly controllerEndedAtMs: number
 }
 
-type SchemaDecisionEvidence = {
+interface SchemaDecisionEvidence {
   readonly phases: readonly RunEvidencePhase[]
   readonly endpointResults: readonly RunEvidenceEndpointResult[]
   readonly telemetry: OppEnvelopeTelemetryHealth
 }
 
-type RampDecisionFields = {
+interface RampDecisionFields {
   readonly outcome: RunEvidenceIterationOutcome
   readonly preserveCluster: boolean
   readonly requiredEndpoints: readonly RunEvidenceEndpoint[]
@@ -70,50 +79,64 @@ type RampDecisionFields = {
   readonly nextHealthyTelemetry: OppStressRampHealthyEndpointTelemetry
 }
 
-type RampFailureFields = {
+interface RampFailureFields {
   readonly breakageCategory: RampBreakageCategory
   readonly breakageReason: string
   readonly cause: unknown | null
 }
 
+/** Decision to run one more ramp iteration. */
+interface ContinueRampDecision extends RampDecisionFields {
+  readonly kind: "continue"
+  readonly outcome: RunEvidenceIterationOutcome.NotSaturated
+  readonly lifecycle: null
+  readonly status: null
+  readonly preserveCluster: true
+}
+
+/** Decision recording workload breakage before any saturation. */
+interface FailedRampDecision extends RampDecisionFields, RampFailureFields {
+  readonly kind: "failed"
+  readonly outcome: RunEvidenceIterationOutcome.Breakage
+  readonly lifecycle: RunEvidenceLifecycle.Failed
+  readonly status: "failed_before_saturation"
+  readonly preserveCluster: true
+}
+
+/** Decision recording that every required endpoint reached saturation. */
+interface SaturatedRampDecision extends RampDecisionFields {
+  readonly kind: "saturated"
+  readonly outcome: RunEvidenceIterationOutcome.Saturated
+  readonly lifecycle: RunEvidenceLifecycle.Saturated
+  readonly status: "saturated"
+  readonly preserveCluster: false
+}
+
+/** Decision recording partial saturation at the account-count ceiling. */
+interface PartialSaturationRampDecision extends RampDecisionFields {
+  readonly kind: "partial_saturation"
+  readonly outcome: RunEvidenceIterationOutcome.NotSaturated
+  readonly lifecycle: RunEvidenceLifecycle.Incomplete
+  readonly status: "partial_saturation"
+  readonly preserveCluster: true
+}
+
+/** Decision recording no saturation at the account-count ceiling. */
+interface SaturationNotReachedRampDecision extends RampDecisionFields {
+  readonly kind: "saturation_not_reached"
+  readonly outcome: RunEvidenceIterationOutcome.NotSaturated
+  readonly lifecycle: RunEvidenceLifecycle.Incomplete
+  readonly status: "saturation_not_reached"
+  readonly preserveCluster: true
+}
+
 /** Exhaustive canonical outcome shared by persistence and returned status. */
 export type CanonicalRampDecision =
-  | (RampDecisionFields & {
-      readonly kind: "continue"
-      readonly outcome: RunEvidenceIterationOutcome.NotSaturated
-      readonly lifecycle: null
-      readonly status: null
-      readonly preserveCluster: true
-    })
-  | (RampDecisionFields &
-      RampFailureFields & {
-        readonly kind: "failed"
-        readonly outcome: RunEvidenceIterationOutcome.Breakage
-        readonly lifecycle: RunEvidenceLifecycle.Failed
-        readonly status: "failed_before_saturation"
-        readonly preserveCluster: true
-      })
-  | (RampDecisionFields & {
-      readonly kind: "saturated"
-      readonly outcome: RunEvidenceIterationOutcome.Saturated
-      readonly lifecycle: RunEvidenceLifecycle.Saturated
-      readonly status: "saturated"
-      readonly preserveCluster: false
-    })
-  | (RampDecisionFields & {
-      readonly kind: "partial_saturation"
-      readonly outcome: RunEvidenceIterationOutcome.NotSaturated
-      readonly lifecycle: RunEvidenceLifecycle.Incomplete
-      readonly status: "partial_saturation"
-      readonly preserveCluster: true
-    })
-  | (RampDecisionFields & {
-      readonly kind: "saturation_not_reached"
-      readonly outcome: RunEvidenceIterationOutcome.NotSaturated
-      readonly lifecycle: RunEvidenceLifecycle.Incomplete
-      readonly status: "saturation_not_reached"
-      readonly preserveCluster: true
-    })
+  | ContinueRampDecision
+  | FailedRampDecision
+  | SaturatedRampDecision
+  | PartialSaturationRampDecision
+  | SaturationNotReachedRampDecision
 
 /** Apply breakage, saturation, exact-max, then continue precedence once. */
 export function decideRampIteration<TEvidence extends object = object>(
@@ -190,13 +213,16 @@ export function decideRampIteration<TEvidence extends object = object>(
   }
 }
 
+/** Schema evidence plus the telemetry map carried into the next iteration. */
+interface SchemaDecisionEvidenceResult {
+  readonly evidence: SchemaDecisionEvidence | null
+  readonly nextHealthyTelemetry: OppStressRampHealthyEndpointTelemetry
+}
+
 function schemaDecisionEvidence(
   input: RampDecisionInput,
   saturatedEndpoints: readonly RunEvidenceEndpoint[]
-): {
-  readonly evidence: SchemaDecisionEvidence | null
-  readonly nextHealthyTelemetry: OppStressRampHealthyEndpointTelemetry
-} {
+): SchemaDecisionEvidenceResult {
   if (input.observation.mode === "deferred_flow_migration")
     return {
       evidence: null,
@@ -239,5 +265,5 @@ function schemaDecisionEvidence(
 }
 
 function controllerDecimal(value: number): RunEvidenceDecimal {
-  return requirePersistenceDecimal(value.toString(10))
+  return assertPersistenceDecimal(value.toString(10))
 }

@@ -5,18 +5,31 @@ import type {
 } from "./EnvelopeIntegrityReaderTypes.js"
 import type { PinnedEnvelopeStorageRoot } from "./envelopeIntegrityRootTypes.js"
 
+/** Candidate whose pair validated against every strict integrity rule. */
+export interface EnvelopeCandidateValid {
+  readonly kind: "valid"
+  readonly value: ValidEnvelopePair
+}
+
+/** Candidate awaiting its metadata-last publication sidecar. */
+export interface EnvelopeCandidatePending {
+  readonly kind: "pending"
+  readonly value: PendingEnvelopePair
+  readonly issue: EnvelopeIntegrityIssue
+}
+
+/** Candidate rejected with one correlated diagnostic. */
+export interface EnvelopeCandidateIssue {
+  readonly kind: "issue"
+  readonly issue: EnvelopeIntegrityIssue
+}
+
 /** Internal one-candidate validation outcome consumed by the bounded pool. */
 export type EnvelopeCandidateValidationResult =
-  | { readonly kind: "valid"; readonly value: ValidEnvelopePair }
-  | {
-      readonly kind: "pending"
-      readonly value: PendingEnvelopePair
-      readonly issue: EnvelopeIntegrityIssue
-    }
-  | { readonly kind: "issue"; readonly issue: EnvelopeIntegrityIssue }
+  EnvelopeCandidateValid | EnvelopeCandidatePending | EnvelopeCandidateIssue
 
 /** Inputs shared by one canonical candidate validation. */
-export type EnvelopeCandidateValidationRequest = {
+export interface EnvelopeCandidateValidationRequest {
   readonly root: PinnedEnvelopeStorageRoot
   readonly baseKey: string
   readonly filenames: ReadonlySet<string>

@@ -34,7 +34,7 @@ async function runIteration(
   deps: SwapStressPhaseRunnerDeps,
   count: number
 ): Promise<SwapStressIterationObservation> {
-  const clock = deps.clock ?? Date.now
+  const { clock = Date.now } = deps
   try {
     assertPositiveCount(count)
     const identities = (deps.createIdentities ?? createStressIdentities)(count),

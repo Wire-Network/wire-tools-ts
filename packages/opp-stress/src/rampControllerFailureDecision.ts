@@ -7,7 +7,7 @@ import {
 import type { CanonicalRampDecision } from "./rampDecision.js"
 import type { OppStressRampHealthyEndpointTelemetry } from "./rampControllerTypes.js"
 import { OppStressRampInvalidObservationError } from "./rampObservation.js"
-import { requirePersistenceDecimal } from "./run-evidence/runEvidencePersistenceValidation.js"
+import { assertPersistenceDecimal } from "./run-evidence/runEvidencePersistenceValidation.js"
 import {
   RampBreakageCategory,
   RunEvidenceIterationOutcome,
@@ -25,35 +25,50 @@ const EmptyTelemetry: EmptyOppEnvelopeTelemetryHealth = Object.freeze({
   issues: Object.freeze([])
 })
 
+/** Failure classified by a degraded telemetry-integrity observation. */
+interface TelemetryIntegrityFailureClassification {
+  readonly category: RampBreakageCategory.TelemetryIntegrity
+  readonly telemetry: DegradedOppEnvelopeTelemetryHealth
+}
+
+/** Failure classified without any telemetry observation to carry. */
+interface UnobservedFailureClassification {
+  readonly category:
+    | RampBreakageCategory.Infrastructure
+    | RampBreakageCategory.InvalidObservation
+  readonly telemetry: null
+}
+
 type ControllerFailureClassification =
-  | {
-      readonly category: RampBreakageCategory.TelemetryIntegrity
-      readonly telemetry: DegradedOppEnvelopeTelemetryHealth
-    }
-  | {
-      readonly category:
-        | RampBreakageCategory.Infrastructure
-        | RampBreakageCategory.InvalidObservation
-      readonly telemetry: null
-    }
+  | TelemetryIntegrityFailureClassification
+  | UnobservedFailureClassification
+
+/** Endpoint, clock, and cause inputs shared by every controller failure. */
+interface RampControllerFailureDecisionFields {
+  readonly requiredEndpoints: readonly RunEvidenceEndpoint[]
+  readonly priorSaturatedEndpoints: readonly RunEvidenceEndpoint[]
+  readonly priorHealthyTelemetry: OppStressRampHealthyEndpointTelemetry
+  readonly controllerStartedAtMs: number
+  readonly controllerEndedAtMs: number
+  readonly reason: string
+  readonly cause: unknown
+}
 
 /** Inputs for a truthful no-observation controller failure decision. */
 export type RampControllerFailureDecisionInput =
-  ControllerFailureClassification & {
-    readonly requiredEndpoints: readonly RunEvidenceEndpoint[]
-    readonly priorSaturatedEndpoints: readonly RunEvidenceEndpoint[]
-    readonly priorHealthyTelemetry: OppStressRampHealthyEndpointTelemetry
-    readonly controllerStartedAtMs: number
-    readonly controllerEndedAtMs: number
-    readonly reason: string
-    readonly cause: unknown
-  }
+  ControllerFailureClassification & RampControllerFailureDecisionFields
+
+/** Discriminant selecting the failed arm of the canonical ramp decision. */
+interface FailedRampDecisionDiscriminant {
+  readonly kind: "failed"
+}
 
 /** Build the canonical failed decision for a callback-boundary failure. */
 export function decideRampControllerFailure(
   input: RampControllerFailureDecisionInput
-): Extract<CanonicalRampDecision, { readonly kind: "failed" }> {
-  const saturatedEndpoints = input.requiredEndpoints.filter(endpoint =>
+): Extract<CanonicalRampDecision, FailedRampDecisionDiscriminant> {
+  const { telemetry: classifiedTelemetry } = input,
+    saturatedEndpoints = input.requiredEndpoints.filter(endpoint =>
       input.priorSaturatedEndpoints.includes(endpoint)
     ),
     missingEndpoints = input.requiredEndpoints.filter(
@@ -69,7 +84,8 @@ export function decideRampControllerFailure(
         )
       return { endpoint, telemetry, saturated: true }
     }),
-    telemetry: OppEnvelopeTelemetryHealth = input.telemetry ?? EmptyTelemetry
+    telemetry: OppEnvelopeTelemetryHealth =
+      classifiedTelemetry ?? EmptyTelemetry
   return {
     kind: "failed",
     outcome: RunEvidenceIterationOutcome.Breakage,
@@ -79,10 +95,10 @@ export function decideRampControllerFailure(
     requiredEndpoints: input.requiredEndpoints,
     saturatedEndpoints,
     missingEndpoints,
-    startedAtMs: requirePersistenceDecimal(
+    startedAtMs: assertPersistenceDecimal(
       input.controllerStartedAtMs.toString(10)
     ),
-    endedAtMs: requirePersistenceDecimal(
+    endedAtMs: assertPersistenceDecimal(
       input.controllerEndedAtMs.toString(10)
     ),
     controllerStartedAtMs: input.controllerStartedAtMs,

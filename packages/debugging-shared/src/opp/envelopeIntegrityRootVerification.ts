@@ -1,8 +1,9 @@
-import type {
-  EnvelopeIntegrityFileIdentity,
-  EnvelopeIntegrityFileSystem,
-  EnvelopeIntegrityIssue,
-  EnvelopeIntegrityIssueSequence
+import {
+  EnvelopeIntegrityFileOperationKind,
+  type EnvelopeIntegrityFileIdentity,
+  type EnvelopeIntegrityFileSystem,
+  type EnvelopeIntegrityIssue,
+  type EnvelopeIntegrityIssueSequence
 } from "./EnvelopeIntegrityReaderTypes.js"
 import { normalizeUnknownError } from "./envelopeIntegrityError.js"
 import { fileIdentity, sameIdentity } from "./envelopeIntegrityFileIdentity.js"
@@ -22,7 +23,7 @@ import type { PinnedEnvelopeStorageRoot } from "./envelopeIntegrityRootTypes.js"
 export async function verifyEnvelopeStorageRoot(
   root: PinnedEnvelopeStorageRoot,
   fileSystem: EnvelopeIntegrityFileSystem
-): Promise<EnvelopeIntegrityIssueSequence | null> {
+): Promise<EnvelopeIntegrityIssueSequence> {
   try {
     const retained = fileIdentity(await root.handle.stat())
     if (!sameIdentity(root.identity, retained)) {
@@ -33,7 +34,10 @@ export async function verifyEnvelopeStorageRoot(
       root.path,
       root.identity,
       null,
-      normalizeUnknownError(error, "root_verify_stat")
+      normalizeUnknownError(
+        error,
+        EnvelopeIntegrityFileOperationKind.root_verify_stat
+      )
     ).issues
   }
 
@@ -56,7 +60,7 @@ export async function verifyEnvelopeStorageRoot(
 async function verifyRootComponents(
   root: PinnedEnvelopeStorageRoot,
   fileSystem: EnvelopeIntegrityFileSystem
-): Promise<EnvelopeIntegrityIssueSequence | null> {
+): Promise<EnvelopeIntegrityIssueSequence> {
   const changed = await Promise.all(
     root.components.map(async component => {
       try {

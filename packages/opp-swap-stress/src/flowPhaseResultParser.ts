@@ -1,3 +1,5 @@
+import { match } from "ts-pattern"
+
 import { OppEnvelopeTelemetryHealthKind } from "@wireio/test-opp-stress"
 
 import type { SwapStressPhaseResult } from "./phaseRunnerMetricTypes.js"
@@ -34,9 +36,13 @@ const ObservedKeys = [
   ] as const,
   UnmeasuredKeys = [...ObservedKeys, "unmeasuredReason"] as const
 
-type ObservedPhaseRecord = Readonly<Record<string, unknown>> & {
+/** The envelope tally an observed phase record is narrowed to carry. */
+interface ObservedPhaseEnvelopeCount {
   readonly envelopeCount: number
 }
+
+type ObservedPhaseRecord = Readonly<Record<string, unknown>> &
+  ObservedPhaseEnvelopeCount
 
 /**
  * Validate one exact measured, pending, or unmeasured phase result.
@@ -47,16 +53,11 @@ export function isSwapStressPhaseResult(
   value: unknown
 ): value is SwapStressPhaseResult {
   if (!isObservationRecord(value)) return false
-  switch (value.measurement) {
-    case "measured":
-      return hasObservedShape(value) && isMeasured(value)
-    case "pending":
-      return hasObservedShape(value) && isPending(value)
-    case "unmeasured":
-      return hasUnmeasuredShape(value)
-    default:
-      return false
-  }
+  return match(value.measurement)
+    .with("measured", () => hasObservedShape(value) && isMeasured(value))
+    .with("pending", () => hasObservedShape(value) && isPending(value))
+    .with("unmeasured", () => hasUnmeasuredShape(value))
+    .otherwise(() => false)
 }
 
 function hasObservedShape(

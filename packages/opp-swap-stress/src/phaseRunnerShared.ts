@@ -16,6 +16,14 @@ export function minimumTargetAmount(targetAmounts: readonly bigint[]): bigint {
 }
 
 /**
+ * A detected batch-operator failure reason, or `null` when no probe is
+ * configured or none matched. This package compiles with `strictNullChecks`,
+ * so the nullable leg is a load-bearing part of the contract and is named
+ * rather than spelled inline at the return position.
+ */
+type DetectedBatchOperatorFailure = string | null
+
+/**
  * Run the optional batch-operator failure probe for a payout failure.
  *
  * @param deps Phase runner dependencies containing the optional probe.
@@ -31,7 +39,7 @@ export async function detectBatchOperatorFailure(
   startedAtMs: number,
   endedAtMs: number,
   payoutFailureReason: string
-): Promise<string | null> {
+): Promise<DetectedBatchOperatorFailure> {
   return deps.batchOperatorFailureProbe === undefined
     ? null
     : deps.batchOperatorFailureProbe({

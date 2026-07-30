@@ -9,6 +9,12 @@ import {
   type SwapRoute
 } from "./swapFromWire.js"
 
+/** The wallet member the round-major load helpers key ordering on. */
+export interface IndexedWallet {
+  /** Zero-based wallet index within the provisioned set. */
+  readonly index: number
+}
+
 /** One wallet's swap in one round of a load run. */
 export interface RoundRequest<Wallet> {
   /** Wallet performing the swap. */
@@ -51,7 +57,7 @@ export interface SwapFailure {
  * @param swapsPerWallet Swaps each wallet performs.
  * @returns Requests ordered round-major.
  */
-export function buildRoundMajorRequests<Wallet extends { readonly index: number }>(
+export function buildRoundMajorRequests<Wallet extends IndexedWallet>(
   wallets: readonly Wallet[],
   swapsPerWallet: number
 ): readonly RoundRequest<Wallet>[] {
@@ -75,7 +81,7 @@ export function buildRoundMajorRequests<Wallet extends { readonly index: number 
  * @param identityOf Human identity for a wallet, used in failure reporting.
  * @returns Submitted count, accepted ids, and detailed failures.
  */
-export async function runSwaps<Wallet extends { readonly index: number }>(
+export async function runSwaps<Wallet extends IndexedWallet>(
   requests: readonly RoundRequest<Wallet>[],
   concurrency: number,
   submit: (request: RoundRequest<Wallet>) => Promise<string>,

@@ -1,3 +1,4 @@
+import { match } from "ts-pattern"
 import {
   OppEnvelopeTelemetryHealthKind,
   OppEnvelopeTelemetryHealthParseError,
@@ -17,6 +18,14 @@ import {
 } from "./observationParserSupport.js"
 
 /**
+ * Parsed telemetry health, or `null` when the public parser rejected the
+ * candidate. This package compiles with `strictNullChecks`, so the nullable
+ * leg is a load-bearing part of the contract and is named rather than spelled
+ * inline at the return position.
+ */
+type ParsedOppEnvelopeTelemetryHealth = OppEnvelopeTelemetryHealth | null
+
+/**
  * Parse exact OPP telemetry health, or return null for a known parse failure.
  *
  * Generic over any OPP telemetry observation (no swap-scenario coupling), so it
@@ -27,7 +36,7 @@ import {
  */
 export function parsedHealth(
   value: unknown
-): OppEnvelopeTelemetryHealth | null {
+): ParsedOppEnvelopeTelemetryHealth {
   try {
     return parseOppEnvelopeTelemetryHealth(value)
   } catch (error) {
@@ -51,16 +60,18 @@ export function isMalformedRecords(
 ): value is readonly MalformedOppEnvelopeRecord[] {
   const issues: readonly OppEnvelopeTelemetryIssue[] = health.issues
   if (!Array.isArray(value)) return false
-  switch (health.kind) {
-    case OppEnvelopeTelemetryHealthKind.PendingPublication:
-      break
-    case OppEnvelopeTelemetryHealthKind.Empty:
-    case OppEnvelopeTelemetryHealthKind.Healthy:
-    case OppEnvelopeTelemetryHealthKind.Degraded:
-      return value.length === 0
-    default:
-      return assertNeverHealth(health)
-  }
+  // `null` marks the one kind (PendingPublication) whose records are compared
+  // against the issue set below; every other kind resolves here.
+  const kindResult = match(health.kind)
+    .with(OppEnvelopeTelemetryHealthKind.PendingPublication, () => null)
+    .with(
+      OppEnvelopeTelemetryHealthKind.Empty,
+      OppEnvelopeTelemetryHealthKind.Healthy,
+      OppEnvelopeTelemetryHealthKind.Degraded,
+      () => value.length === 0
+    )
+    .otherwise(kind => assertNeverHealth(kind))
+  if (kindResult !== null) return kindResult
   if (value.length !== issues.length) return false
   const unmatchedIssues = [...issues]
   return value.every(record => {

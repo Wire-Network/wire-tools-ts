@@ -15,7 +15,7 @@ import {
 } from "@wireio/test-opp-stress"
 
 /** Artifact-pair inputs used by verifier evidence fixtures. */
-export type VerifierArtifactInput = {
+export interface VerifierArtifactInput {
   readonly endpoint: RunEvidenceEndpoint
   readonly epoch: number
   readonly epochEnvelopeIndex: number
@@ -24,7 +24,7 @@ export type VerifierArtifactInput = {
 }
 
 /** Exact fixture artifact entry and its pair refs. */
-export type VerifierArtifactFixture = {
+export interface VerifierArtifactFixture {
   readonly artifact: RunEvidenceArtifact
   readonly refs: readonly [string, string]
   readonly byteSize: number

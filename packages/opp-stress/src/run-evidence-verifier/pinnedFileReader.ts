@@ -13,7 +13,8 @@ import {
 } from "./pinnedPathSupport.js"
 import { RunEvidenceVerificationContext } from "./verifierIssues.js"
 
-type PinnedEvidenceFile = {
+/** One anchored evidence file plus the identity captured before opening it. */
+interface PinnedEvidenceFile {
   readonly anchoredPath: string
   readonly relativePath: string
   readonly before: Fs.BigIntStats
@@ -24,7 +25,7 @@ export function readPinnedFile(
   root: PinnedRunDirectory,
   relativePath: string,
   context: RunEvidenceVerificationContext
-): Buffer | null {
+): Buffer {
   const entry = pinnedEntry(root, relativePath, context)
   if (
     entry === null ||
@@ -60,7 +61,7 @@ function descriptorRead(
   root: PinnedRunDirectory,
   file: PinnedEvidenceFile,
   context: RunEvidenceVerificationContext
-): Buffer | null {
+): Buffer {
   const { anchoredPath, relativePath, before } = file
   let descriptor: number | null = null
   try {

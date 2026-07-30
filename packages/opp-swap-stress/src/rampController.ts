@@ -44,10 +44,13 @@ export async function runSaturationRamp(
   })
 }
 
+/** The required-persistence narrowing of the ramp options. */
+interface RequiredRampPersistence {
+  readonly persistence: NonNullable<StressRampOptions["persistence"]>
+}
+
 async function runPersistedSaturationRamp(
-  options: StressRampOptions & {
-    readonly persistence: NonNullable<StressRampOptions["persistence"]>
-  }
+  options: StressRampOptions & RequiredRampPersistence
 ): Promise<StressRampResult> {
   const observations = new Map<number, Awaited<ReturnType<typeof options.runIteration>>>()
   const result = await runOppStressRamp({

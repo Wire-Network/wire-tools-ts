@@ -102,7 +102,7 @@ describe("runOppStressRamp observation reflection traps", () => {
 
 type TrapCounts = readonly [number, number, number]
 
-type TrappedObservation = {
+interface TrappedObservation {
   readonly value: OppStressRampIterationObservation
   readonly counts: () => TrapCounts
 }

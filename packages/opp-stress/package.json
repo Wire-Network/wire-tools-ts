@@ -16,7 +16,8 @@
   },
   "dependencies": {
     "@wireio/debugging-shared": "workspace:*",
-    "@wireio/opp-typescript-models": "^1.0.26"
+    "@wireio/opp-typescript-models": "^1.0.26",
+    "ts-pattern": "^5.9.0"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

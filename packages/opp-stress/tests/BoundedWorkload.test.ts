@@ -86,7 +86,7 @@ describe("runBoundedWorkload", () => {
   })
 })
 
-type Gate = {
+interface Gate {
   readonly promise: Promise<void>
   readonly resolve: () => void
 }

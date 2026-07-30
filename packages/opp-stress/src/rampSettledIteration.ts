@@ -1,9 +1,21 @@
 import type { OppStressRampIterationInput } from "./rampControllerTypes.js"
 
+/** Callback invocation that resolved with an uninterpreted observation. */
+interface ResolvedRampIteration {
+  readonly kind: "resolved"
+  readonly value: unknown
+}
+
+/** Callback invocation that rejected with an exact retained cause. */
+interface RejectedRampIteration {
+  readonly kind: "rejected"
+  readonly cause: unknown
+}
+
 /** Resolution state of one callback invocation at the controller boundary. */
 export type SettledRampIteration =
-  | { readonly kind: "resolved"; readonly value: unknown }
-  | { readonly kind: "rejected"; readonly cause: unknown }
+  | ResolvedRampIteration
+  | RejectedRampIteration
 
 /**
  * Capture callback resolution without interpreting its returned observation.

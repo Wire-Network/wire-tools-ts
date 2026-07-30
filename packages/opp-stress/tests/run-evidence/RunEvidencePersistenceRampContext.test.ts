@@ -18,7 +18,7 @@ describe("RunEvidencePersistence active ramp context", () => {
       persistence = await allocateRunningPersistence(workspace)
     try {
       // When: the controller synchronously requires its active context.
-      const context = persistence.requireActiveRampContext()
+      const context = persistence.assertActiveRampContext()
       // Then: only frozen allocation authority is exposed.
       expect(context).toEqual({
         startedAtMs: "100",
@@ -49,20 +49,20 @@ describe("RunEvidencePersistence active ramp context", () => {
       active = await allocateRunningPersistence(activeWorkspace)
     try {
       // When: readiness is required outside the fresh-running state.
-      expect(() => unready.requireActiveRampContext()).toThrow(
+      expect(() => unready.assertActiveRampContext()).toThrow(
         expect.objectContaining({
           code: RunEvidencePersistenceErrorCode.InvalidState
         })
       )
       const publication = active.publishIteration(breakageIteration(0))
-      expect(() => active.requireActiveRampContext()).toThrow(
+      expect(() => active.assertActiveRampContext()).toThrow(
         expect.objectContaining({
           code: RunEvidencePersistenceErrorCode.InvalidState
         })
       )
       await publication
       // Then: queued and committed iterations make a second controller start invalid.
-      expect(() => active.requireActiveRampContext()).toThrow(
+      expect(() => active.assertActiveRampContext()).toThrow(
         expect.objectContaining({
           code: RunEvidencePersistenceErrorCode.InvalidState
         })

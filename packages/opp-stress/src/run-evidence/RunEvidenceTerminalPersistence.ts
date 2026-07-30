@@ -13,21 +13,20 @@ import type {
 import type { RunEvidenceManifest } from "./RunEvidenceManifestTypes.js"
 import type {
   RunEvidenceIteration,
-  RunEvidenceSetup,
-  RunEvidenceTerminal
+  RunEvidenceSetup
 } from "./RunEvidenceRecordTypes.js"
 import { terminalManifest } from "./runEvidenceManifestBuilders.js"
 import type { RunEvidencePublicationCoordinator } from "./RunEvidencePublicationCoordinator.js"
 import {
   invalidPersistenceState,
-  requireCommittedPersistenceSetup,
-  requireCommittedPersistenceSetupRef,
-  requirePersistenceTerminal,
-  requirePersistenceTerminalAgreement
+  assertCommittedPersistenceSetup,
+  assertCommittedPersistenceSetupRef,
+  assertPersistenceTerminal,
+  assertPersistenceTerminalAgreement
 } from "./runEvidencePersistenceValidation.js"
 
 /** Mutable store state required to publish one terminal decision atomically. */
-export type RunEvidenceTerminalPersistenceContext = {
+export interface RunEvidenceTerminalPersistenceContext {
   readonly runDirectory: string
   readonly coordinator: RunEvidencePublicationCoordinator
   readonly manifest: () => RunEvidenceManifest
@@ -50,15 +49,15 @@ export function publishRunEvidenceTerminal(
   input: unknown
 ): Promise<RunEvidenceTerminalRecordRef> {
   return context.coordinator.exclusive(async () => {
-    context.coordinator.requireOpen()
+    context.coordinator.assertOpen()
     if (context.terminalRef() !== null)
       throw invalidPersistenceState("terminal.json is already committed")
-    const terminal = requirePersistenceTerminal(input),
-      setup = requireCommittedPersistenceSetup(context.setup()),
-      setupRef = requireCommittedPersistenceSetupRef(context.setupRef()),
+    const terminal = assertPersistenceTerminal(input),
+      setup = assertCommittedPersistenceSetup(context.setup()),
+      setupRef = assertCommittedPersistenceSetupRef(context.setupRef()),
       iterationRefs = context.iterationRefs(),
       iterations = context.iterations()
-    requirePersistenceTerminalAgreement({
+    assertPersistenceTerminalAgreement({
       manifest: context.manifest(),
       setup,
       iterationRefs,

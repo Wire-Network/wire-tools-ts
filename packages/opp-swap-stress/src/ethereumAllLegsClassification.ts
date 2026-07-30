@@ -15,11 +15,21 @@ export const DiagnosticSaturationEndpoints = [
 ]
 
 /** Final all-legs classification status derived from decoded OPP debug evidence. */
+export enum EthereumAllLegsSaturationStatusKind {
+  saturated = "saturated",
+  partial_saturation = "partial_saturation",
+  saturation_not_reached = "saturation_not_reached"
+}
+
+/**
+ * Final all-legs classification status — derived from
+ * {@link EthereumAllLegsSaturationStatusKind} so raw spellings stay assignable.
+ */
 export type EthereumAllLegsSaturationStatus =
-  "saturated" | "partial_saturation" | "saturation_not_reached"
+  `${EthereumAllLegsSaturationStatusKind}`
 
 /** Strict Ethereum all-legs saturation classification for one ramp campaign slice. */
-export type EthereumAllLegsSaturationClassification = {
+export interface EthereumAllLegsSaturationClassification {
   /** Final status for the observed phase evidence. */
   readonly status: EthereumAllLegsSaturationStatus
   /** Required Ethereum endpoints that saturated. */

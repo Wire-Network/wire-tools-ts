@@ -27,17 +27,35 @@ type HasExactKeys<Source, Expected> = [keyof Source] extends [Expected]
 type ExplicitUndefined<Source, Key extends keyof Source> = Omit<Source, Key> & {
   readonly [Field in Key]: undefined
 }
+/** `Extract` filter selecting the degraded collection leg. */
+interface DegradedResultDiscriminator {
+  readonly kind: "degraded"
+}
+
+/** `Extract` filter selecting the baseline-capture-failed degradation leg. */
+interface BaselineCaptureDiscriminator {
+  readonly kind: "baseline_capture_failed"
+}
+
 type DegradedResult = Extract<
   SwapStressEnvelopeMetricCollectionResult,
-  { readonly kind: "degraded" }
+  DegradedResultDiscriminator
 >
 type BaselineCaptureDegradation = Extract<
   SwapStressTelemetryDegradation,
-  { readonly kind: "baseline_capture_failed" }
+  BaselineCaptureDiscriminator
 >
 type BaselineCaptureError =
   SwapStressTelemetryDegradedError<BaselineCaptureDegradation>
-type MeasuredCandidate<Health> = {
+
+/** Strict-snapshot provenance a measured candidate carries. */
+interface MeasuredCandidateProvenance {
+  readonly kind: "strict_snapshot"
+  readonly solanaOversized: false
+  readonly epochEnvelopeIndexes: readonly [0]
+}
+
+interface MeasuredCandidate<Health> {
   readonly measurement: "measured"
   readonly phase: "phase-1"
   readonly saturated: true
@@ -49,11 +67,83 @@ type MeasuredCandidate<Health> = {
   readonly health: Health
   readonly malformedRecords: readonly []
   readonly artifactRefs: readonly []
-  readonly provenance: {
-    readonly kind: "strict_snapshot"
-    readonly solanaOversized: false
-    readonly epochEnvelopeIndexes: readonly [0]
-  }
+  readonly provenance: MeasuredCandidateProvenance
+}
+
+/** Synthetic deps illegally carrying the real capture hook. */
+interface SyntheticDepsWithCapture {
+  readonly telemetryKind: "synthetic"
+  readonly captureEnvelopeBaseline: SwapStressRealTelemetryDeps["captureEnvelopeBaseline"]
+}
+
+/** The retryable-health narrowing a projection input must NOT accept. */
+interface PendingHealthNarrowing {
+  readonly health: PendingOppEnvelopeTelemetryHealth
+}
+
+/** Degraded shape whose error is a bare `Error`. */
+interface DegradedWithBareError {
+  readonly kind: "degraded"
+  readonly error: Error
+}
+
+/** Degraded shape whose error is a string. */
+interface DegradedWithStringError {
+  readonly kind: "degraded"
+  readonly error: string
+}
+
+/** Degraded shape whose error is the baseline-capture-typed error. */
+interface DegradedWithBaselineCaptureError {
+  readonly kind: "degraded"
+  readonly error: BaselineCaptureError
+}
+
+/** Degraded shape whose error is absent. */
+interface DegradedWithUndefinedError {
+  readonly kind: "degraded"
+  readonly error: undefined
+}
+
+/** Baseline-capture degradation carrying a single issue instead of a sequence. */
+interface BaselineCaptureWithSingleIssue {
+  readonly kind: "baseline_capture_failed"
+  readonly issue: EnvelopeIntegrityIssue
+}
+
+/** Baseline-capture degradation carrying an empty issue sequence. */
+interface BaselineCaptureWithNoIssues {
+  readonly kind: "baseline_capture_failed"
+  readonly issues: readonly []
+}
+
+/** Deadline degradation carrying no final observation. */
+interface DeadlineWithUndefinedObservation {
+  readonly kind: "deadline_exhausted"
+  readonly observation: undefined
+}
+
+/**
+ * The exact key set the telemetry deps surfaces pin. Declared as an interface
+ * so each proof's key union is DERIVED (`keyof`) rather than re-spelled.
+ */
+interface TelemetryDepsSurfaceKeys {
+  readonly telemetryKind: never
+  readonly captureEnvelopeBaseline: never
+  readonly collectEnvelopeMetrics: never
+}
+
+/** The exact key set a baseline-capture degradation pins. */
+interface BaselineCaptureDegradationKeys {
+  readonly kind: never
+  readonly issues: never
+}
+
+/** The measurement discriminants the phase-metrics union pins. */
+enum ExpectedMeasurementKind {
+  measured = "measured",
+  pending = "pending",
+  unmeasured = "unmeasured"
 }
 const contractProofs: readonly [
   IsAssignable<
@@ -68,34 +158,14 @@ const contractProofs: readonly [
     Omit<SwapStressEnvelopeMetricRequest, "baseline">,
     SwapStressEnvelopeMetricRequest
   >,
+  IsAssignable<SyntheticDepsWithCapture, SwapStressSyntheticTelemetryDeps>,
   IsAssignable<
-    {
-      readonly telemetryKind: "synthetic"
-      readonly captureEnvelopeBaseline: SwapStressRealTelemetryDeps["captureEnvelopeBaseline"]
-    },
-    SwapStressSyntheticTelemetryDeps
-  >,
-  IsAssignable<
-    OppPhaseEnvelopeMetrics & {
-      readonly health: PendingOppEnvelopeTelemetryHealth
-    },
+    OppPhaseEnvelopeMetrics & PendingHealthNarrowing,
     Parameters<typeof projectOppPhaseMetrics>[0]
   >,
-  IsAssignable<
-    { readonly kind: "degraded"; readonly error: Error },
-    DegradedResult
-  >,
-  IsAssignable<
-    { readonly kind: "degraded"; readonly error: string },
-    DegradedResult
-  >,
-  IsAssignable<
-    {
-      readonly kind: "degraded"
-      readonly error: BaselineCaptureError
-    },
-    DegradedResult
-  >,
+  IsAssignable<DegradedWithBareError, DegradedResult>,
+  IsAssignable<DegradedWithStringError, DegradedResult>,
+  IsAssignable<DegradedWithBaselineCaptureError, DegradedResult>,
   IsAssignable<
     ExplicitUndefined<SwapStressEnvelopeMetricRequest, "baseline">,
     SwapStressEnvelopeMetricRequest
@@ -113,31 +183,13 @@ const contractProofs: readonly [
     undefined,
     ConstructorParameters<typeof SwapStressTelemetryDegradedError>[2]
   >,
+  IsAssignable<BaselineCaptureWithSingleIssue, SwapStressTelemetryDegradation>,
+  IsAssignable<BaselineCaptureWithNoIssues, SwapStressTelemetryDegradation>,
   IsAssignable<
-    {
-      readonly kind: "baseline_capture_failed"
-      readonly issue: EnvelopeIntegrityIssue
-    },
+    DeadlineWithUndefinedObservation,
     SwapStressTelemetryDegradation
   >,
-  IsAssignable<
-    {
-      readonly kind: "baseline_capture_failed"
-      readonly issues: readonly []
-    },
-    SwapStressTelemetryDegradation
-  >,
-  IsAssignable<
-    {
-      readonly kind: "deadline_exhausted"
-      readonly observation: undefined
-    },
-    SwapStressTelemetryDegradation
-  >,
-  IsAssignable<
-    { readonly kind: "degraded"; readonly error: undefined },
-    DegradedResult
-  >,
+  IsAssignable<DegradedWithUndefinedError, DegradedResult>,
   IsAssignable<
     MeasuredCandidate<EmptyOppEnvelopeTelemetryHealth>,
     SwapStressMeasuredPhaseEnvelopeMetrics
@@ -169,23 +221,20 @@ const contractProofs: readonly [
 ]
 
 const exactSurfaceProofs: readonly [
-  HasExactKeys<
-    SwapStressRealTelemetryDeps,
-    "telemetryKind" | "captureEnvelopeBaseline" | "collectEnvelopeMetrics"
-  >,
+  HasExactKeys<SwapStressRealTelemetryDeps, keyof TelemetryDepsSurfaceKeys>,
   HasExactKeys<
     SwapStressSyntheticTelemetryDeps,
-    "telemetryKind" | "captureEnvelopeBaseline" | "collectEnvelopeMetrics"
+    keyof TelemetryDepsSurfaceKeys
   >,
   IsAssignable<
     SwapStressPhaseEnvelopeMetrics["measurement"],
-    "measured" | "pending" | "unmeasured"
+    `${ExpectedMeasurementKind}`
   >,
   IsAssignable<
-    "measured" | "pending" | "unmeasured",
+    `${ExpectedMeasurementKind}`,
     SwapStressPhaseEnvelopeMetrics["measurement"]
   >,
-  HasExactKeys<BaselineCaptureDegradation, "kind" | "issues">
+  HasExactKeys<BaselineCaptureDegradation, keyof BaselineCaptureDegradationKeys>
 ] = [true, true, true, true, true]
 
 describe("phase runner telemetry compiler contracts", () => {

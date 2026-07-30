@@ -1,3 +1,5 @@
+import { match } from "ts-pattern"
+
 import type {
   OppStressRampDeferredEvidenceBreakageObservation,
   OppStressRampDeferredEvidenceCompletedObservation,
@@ -53,18 +55,18 @@ export function parseOppStressRampDeferredEvidenceObservation<
   ])
   if (record === null)
     return invalid("value must be an exact completed or breakage variant")
-  switch (record.kind) {
-    case "completed":
+  return match(record.kind)
+    .with("completed", () => {
       if (Reflect.ownKeys(record).length !== CompletedKeys.length)
         return invalid("completed observation has breakage fields")
       return completedObservation(record, requiredEndpoints, parseEvidence)
-    case "breakage":
+    })
+    .with("breakage", () => {
       if (Reflect.ownKeys(record).length !== BreakageKeys.length)
         return invalid("breakage observation is missing classification fields")
       return breakageObservation(record, requiredEndpoints, parseEvidence)
-    default:
-      return invalid("kind must be completed or breakage")
-  }
+    })
+    .otherwise(() => invalid("kind must be completed or breakage"))
 }
 
 function completedObservation<TEvidence extends object>(

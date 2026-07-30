@@ -9,9 +9,7 @@ import {
   RunEvidenceSetupStatus
 } from "./runEvidenceConstants.js"
 import type {
-  RunEvidenceArtifact,
   RunEvidenceArtifactFile,
-  RunEvidenceClusterConfigSnapshot,
   RunEvidenceDecimal,
   RunEvidenceIterationRecordRef,
   RunEvidenceSetupRecordRef,
@@ -20,8 +18,7 @@ import type {
 import type { RunEvidenceManifest } from "./RunEvidenceManifestTypes.js"
 import type {
   RunEvidenceIteration,
-  RunEvidenceSetup,
-  RunEvidenceTerminal
+  RunEvidenceSetup
 } from "./RunEvidenceRecordTypes.js"
 import { runningManifestAfterIteration } from "./runEvidenceManifestBuilders.js"
 import {
@@ -36,14 +33,14 @@ import { publishRunEvidenceTerminal } from "./RunEvidenceTerminalPersistence.js"
 import type { ResolvedPersistenceDependencies } from "./runEvidencePersistenceDependencies.js"
 import {
   invalidPersistenceState,
-  requireCommittedPersistenceSetup,
-  requirePersistenceEndpoints,
-  requirePersistenceIteration,
+  assertCommittedPersistenceSetup,
+  assertPersistenceEndpoints,
+  assertPersistenceIteration,
   type PersistenceCapturedConfig
 } from "./runEvidencePersistenceValidation.js"
 
 /** Immutable construction state for one allocated persistence store. */
-export type RunEvidencePersistenceStoreOptions = {
+export interface RunEvidencePersistenceStoreOptions {
   readonly runDirectory: string
   readonly clusterPath: string
   readonly manifest: RunEvidenceManifest
@@ -87,7 +84,7 @@ export class RunEvidencePersistenceStore {
     )
     const artifactContext: RunEvidenceArtifactPersistenceContext = {
       runDirectory: options.runDirectory,
-      requireOpen: () => this.coordinator.requireOpen(),
+      assertOpen: () => this.coordinator.assertOpen(),
       exclusive: action => this.coordinator.exclusive(action),
       manifest: () => this.manifest,
       artifact: baseKey => this.artifactRegistry.get(baseKey),
@@ -144,9 +141,9 @@ export class RunEvidencePersistenceStore {
   /** Publish the next contiguous immutable iteration and manifest checkpoint. */
   publishIteration(input: unknown): Promise<RunEvidenceIterationRecordRef> {
     return this.coordinator.exclusive(async () => {
-      this.coordinator.requireOpen()
-      const iteration = requirePersistenceIteration(input),
-        setup = requireCommittedPersistenceSetup(this.setup)
+      this.coordinator.assertOpen()
+      const iteration = assertPersistenceIteration(input),
+        setup = assertCommittedPersistenceSetup(this.setup)
       if (setup.status !== RunEvidenceSetupStatus.Succeeded || this.terminalRef)
         throw invalidPersistenceState(
           "iteration publication requires an active successful setup"
@@ -155,7 +152,7 @@ export class RunEvidencePersistenceStore {
         throw invalidPersistenceState(
           "iteration index must be the next contiguous index"
         )
-      requirePersistenceEndpoints(iteration.requiredEndpoints, this.manifest)
+      assertPersistenceEndpoints(iteration.requiredEndpoints, this.manifest)
       const path = `${RunEvidencePath.Iterations}/${String(
           iteration.iterationIndex
         ).padStart(6, "0")}.json` as const,
@@ -215,8 +212,8 @@ export class RunEvidencePersistenceStore {
   }
 
   /** Require fresh successful setup and return frozen allocation authority. */
-  requireActiveRampContext(): RunEvidencePersistence.ActiveRampContext {
-    this.coordinator.requireOpen()
+  assertActiveRampContext(): RunEvidencePersistence.ActiveRampContext {
+    this.coordinator.assertOpen()
     return activeRampContext({
       manifest: this.manifest,
       setup: this.setup,

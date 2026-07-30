@@ -16,7 +16,7 @@ export class RunEvidenceArtifactRegistry {
   ) {}
 
   /** @return Current accepted entry for a base key, or null before acceptance. */
-  get(baseKey: string): RunEvidenceArtifact | null {
+  get(baseKey: string): RunEvidenceArtifact {
     return this.entries.get(baseKey) ?? null
   }
 

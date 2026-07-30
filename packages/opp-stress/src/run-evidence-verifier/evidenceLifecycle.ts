@@ -1,3 +1,5 @@
+import { match } from "ts-pattern"
+
 import {
   RunEvidenceIterationOutcome,
   RunEvidenceLifecycle,
@@ -94,10 +96,10 @@ function verifyLifecycleVariant(
   context: RunEvidenceVerificationContext
 ): void {
   const last = iterations.at(-1)
-  switch (manifest.lifecycle) {
-    case RunEvidenceLifecycle.Initializing:
-      return
-    case RunEvidenceLifecycle.Running:
+  match(manifest)
+    // An initializing manifest carries no campaign state to disagree with.
+    .with({ lifecycle: RunEvidenceLifecycle.Initializing }, () => undefined)
+    .with({ lifecycle: RunEvidenceLifecycle.Running }, () => {
       if (
         terminal !== null ||
         missing.length === 0 ||
@@ -107,8 +109,8 @@ function verifyLifecycleVariant(
           context,
           "running evidence already has a terminal condition"
         )
-      return
-    case RunEvidenceLifecycle.SetupFailed:
+    })
+    .with({ lifecycle: RunEvidenceLifecycle.SetupFailed }, () => {
       if (
         setup?.status !== RunEvidenceSetupStatus.Failed ||
         iterations.length !== 0 ||
@@ -118,8 +120,8 @@ function verifyLifecycleVariant(
           context,
           "setup-failed evidence does not end at failed setup"
         )
-      return
-    case RunEvidenceLifecycle.Failed:
+    })
+    .with({ lifecycle: RunEvidenceLifecycle.Failed }, () => {
       if (
         last?.outcome !== RunEvidenceIterationOutcome.Breakage ||
         terminal?.lifecycle !== RunEvidenceLifecycle.Failed
@@ -128,10 +130,10 @@ function verifyLifecycleVariant(
           context,
           "failed evidence does not end at iteration breakage"
         )
-      return
-    case RunEvidenceLifecycle.Incomplete:
+    })
+    .with({ lifecycle: RunEvidenceLifecycle.Incomplete }, incomplete => {
       if (
-        last?.accountCount !== manifest.rampConfig.maxCount ||
+        last?.accountCount !== incomplete.rampConfig.maxCount ||
         missing.length === 0 ||
         terminal?.lifecycle !== RunEvidenceLifecycle.Incomplete
       )
@@ -139,8 +141,8 @@ function verifyLifecycleVariant(
           context,
           "incomplete evidence is not exact-max with missing endpoints"
         )
-      return
-    case RunEvidenceLifecycle.Saturated:
+    })
+    .with({ lifecycle: RunEvidenceLifecycle.Saturated }, () => {
       if (
         missing.length !== 0 ||
         terminal?.lifecycle !== RunEvidenceLifecycle.Saturated ||
@@ -150,10 +152,8 @@ function verifyLifecycleVariant(
           context,
           "saturated evidence lacks all-endpoint completed phases"
         )
-      return
-    default:
-      return assertNever(manifest)
-  }
+    })
+    .otherwise(value => assertNever(value))
 }
 
 function lifecycleIssue(

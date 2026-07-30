@@ -10,7 +10,6 @@ import {
   RunEvidenceClusterConfigState,
   RunEvidenceLifecycle,
   RunEvidencePath,
-  RunEvidenceSetupStatus,
   type RunEvidenceIteration,
   type RunEvidenceManifest,
   type RunEvidenceParseResult,
@@ -25,7 +24,7 @@ import { verifyEvidenceRecordAgreement } from "./evidenceRecordAgreement.js"
 import { RunEvidenceVerificationContext } from "./verifierIssues.js"
 
 /** Parsed schema-v1 records loaded from exact canonical bytes. */
-export type LoadedRunEvidence = {
+export interface LoadedRunEvidence {
   readonly manifest: RunEvidenceManifest
   readonly setup: RunEvidenceSetup | null
   readonly iterations: readonly RunEvidenceIteration[]
@@ -36,7 +35,7 @@ export type LoadedRunEvidence = {
 export function loadRunEvidenceManifest(
   root: PinnedRunDirectory,
   context: RunEvidenceVerificationContext
-): RunEvidenceManifest | null {
+): RunEvidenceManifest {
   const loaded = readCanonicalRecord(
     root,
     RunEvidencePath.Manifest,
@@ -104,7 +103,17 @@ export function loadDeclaredRunEvidence(
   return { manifest, setup, iterations, terminal }
 }
 
-type RecordRef = { readonly path: string; readonly sha256: string }
+/** Portable record path plus the full digest the manifest committed for it. */
+interface RecordRef {
+  readonly path: string
+  readonly sha256: string
+}
+
+/** Parsed record value alongside the exact canonical bytes it was read from. */
+interface CanonicalRecord<T> {
+  readonly value: T
+  readonly bytes: Buffer
+}
 
 function readReferencedRecord<T>(
   root: PinnedRunDirectory,
@@ -112,7 +121,7 @@ function readReferencedRecord<T>(
   parser: (value: unknown) => RunEvidenceParseResult<T>,
   issueCode: RunEvidenceVerificationIssueCode,
   context: RunEvidenceVerificationContext
-): T | null {
+): T {
   const loaded = readCanonicalRecord(root, ref.path, parser, issueCode, context)
   if (loaded !== null && sha256(loaded.bytes) !== ref.sha256)
     context.issue(
@@ -129,7 +138,7 @@ function readCanonicalRecord<T>(
   parser: (value: unknown) => RunEvidenceParseResult<T>,
   issueCode: RunEvidenceVerificationIssueCode,
   context: RunEvidenceVerificationContext
-): { readonly value: T; readonly bytes: Buffer } | null {
+): CanonicalRecord<T> {
   const bytes = readPinnedFile(root, path, context)
   if (bytes === null) return null
   let input: unknown

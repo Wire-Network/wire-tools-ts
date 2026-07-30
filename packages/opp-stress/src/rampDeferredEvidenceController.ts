@@ -29,7 +29,7 @@ import { settleRampIteration } from "./rampSettledIteration.js"
 import { RampBreakageCategory } from "./runEvidenceTypes.js"
 import type { RunEvidenceEndpoint } from "./runEvidenceTypes.js"
 
-type DeferredEvidenceRuntime<TEvidence extends object> = {
+interface DeferredEvidenceRuntime<TEvidence extends object> {
   readonly config: OppStressRampConfig
   readonly requiredEndpoints: readonly RunEvidenceEndpoint[]
   readonly clock: () => number
@@ -37,12 +37,12 @@ type DeferredEvidenceRuntime<TEvidence extends object> = {
   readonly runIteration: OppStressRampDeferredEvidenceOptions<TEvidence>["runIteration"]
 }
 
-type DeferredEvidenceState<TEvidence extends object> =
-  DeferredEvidenceSummaryState & {
-    readonly priorIterations: readonly OppStressRampDeferredEvidenceSummary<TEvidence>[]
-    readonly priorSaturatedEndpoints: readonly RunEvidenceEndpoint[]
-    readonly priorHealthyTelemetry: OppStressRampHealthyEndpointTelemetry
-  }
+interface DeferredEvidenceState<TEvidence extends object>
+  extends DeferredEvidenceSummaryState {
+  readonly priorIterations: readonly OppStressRampDeferredEvidenceSummary<TEvidence>[]
+  readonly priorSaturatedEndpoints: readonly RunEvidenceEndpoint[]
+  readonly priorHealthyTelemetry: OppStressRampHealthyEndpointTelemetry
+}
 
 /**
  * Run the explicit no-write generic deferred controller path.
@@ -66,7 +66,7 @@ export function runOppStressRampDeferredEvidence<TEvidence extends object>(
 function resolveRuntime<TEvidence extends object>(
   options: OppStressRampDeferredEvidenceOptions<TEvidence>
 ): DeferredEvidenceRuntime<TEvidence> {
-  const config = options.config ?? defaultRampConfig()
+  const { config = defaultRampConfig() } = options
   assertRampConfig(config)
   return {
     config,

@@ -1,3 +1,5 @@
+import { match } from "ts-pattern"
+
 import {
   RampBreakageCategory,
   type RunEvidenceEndpoint,
@@ -17,6 +19,14 @@ import { isSwapStressPhaseResult } from "./flowPhaseResultParser.js"
 import { isSwapStressTelemetryDegradation } from "./flowTelemetryDegradationParser.js"
 
 /**
+ * Parsed flow evidence, or `null` when the candidate is invalid. This package
+ * compiles with `strictNullChecks`, so the nullable leg is a load-bearing part
+ * of the contract and is named rather than spelled inline at the return
+ * position.
+ */
+type ParsedSwapStressObservationEvidence = SwapStressObservationEvidence | null
+
+/**
  * Parse exact recursively snapshotted flow evidence for generic deferred mode.
  * @param input Unknown flow evidence candidate.
  * @param context Parsed generic root discriminant and breakage category.
@@ -25,7 +35,7 @@ import { isSwapStressTelemetryDegradation } from "./flowTelemetryDegradationPars
 export function parseSwapStressObservationEvidence(
   input: unknown,
   context: OppStressRampDeferredEvidenceParseContext
-): SwapStressObservationEvidence | null {
+): ParsedSwapStressObservationEvidence {
   if (
     !isObservationRecord(input) ||
     !hasExactObservationKeys(input, ["phaseResults", "telemetryDegradation"]) ||
@@ -34,39 +44,42 @@ export function parseSwapStressObservationEvidence(
     !hasCoherentSaturation(input.phaseResults, context.saturatedEndpoints)
   )
     return null
-  switch (context.kind) {
-    case "completed":
-      return input.telemetryDegradation === null
+  const phaseResults = input.phaseResults
+  return match(context)
+    .with({ kind: "completed" }, () =>
+      input.telemetryDegradation === null
         ? {
-            phaseResults: [...input.phaseResults],
+            phaseResults: [...phaseResults],
             telemetryDegradation: null
           }
         : null
-    case "breakage":
-      switch (context.breakageCategory) {
-        case RampBreakageCategory.Workload:
-          return input.telemetryDegradation === null
+    )
+    .with({ kind: "breakage" }, breakage =>
+      match(breakage.breakageCategory)
+        .with(RampBreakageCategory.Workload, () =>
+          input.telemetryDegradation === null
             ? {
-                phaseResults: [...input.phaseResults],
+                phaseResults: [...phaseResults],
                 telemetryDegradation: null
               }
             : null
-        case RampBreakageCategory.TelemetryIntegrity:
-          return isSwapStressTelemetryDegradation(input.telemetryDegradation)
+        )
+        .with(RampBreakageCategory.TelemetryIntegrity, () =>
+          isSwapStressTelemetryDegradation(input.telemetryDegradation)
             ? {
-                phaseResults: [...input.phaseResults],
+                phaseResults: [...phaseResults],
                 telemetryDegradation: input.telemetryDegradation
               }
             : null
-        case RampBreakageCategory.InvalidObservation:
-        case RampBreakageCategory.Infrastructure:
-          return null
-        default:
-          return assertNever(context.breakageCategory)
-      }
-    default:
-      return assertNever(context)
-  }
+        )
+        .with(
+          RampBreakageCategory.InvalidObservation,
+          RampBreakageCategory.Infrastructure,
+          () => null
+        )
+        .otherwise(value => assertNever(value))
+    )
+    .otherwise(value => assertNever(value))
 }
 
 function hasCoherentSaturation(

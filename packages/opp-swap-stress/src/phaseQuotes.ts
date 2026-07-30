@@ -9,11 +9,21 @@ import type {
 } from "./phaseRunnerTypes.js"
 
 /** Constant-product quote for one stress phase. */
-export type SwapStressPhaseQuote = {
+export interface SwapStressPhaseQuote {
   /** WIRE amount produced by the source reserve leg. */
   readonly wireIntermediate: bigint
   /** Destination-chain target amount produced by the destination reserve leg. */
   readonly targetAmount: bigint
+}
+
+/** Reduction state while quoting a phase's successive target amounts. */
+interface SwapStressQuoteReduction {
+  /** Target amounts accumulated in submission order. */
+  readonly targets: readonly bigint[]
+  /** Running chain-side reserve amount after each simulated swap. */
+  readonly chain: bigint
+  /** Running WIRE-side reserve amount after each simulated swap. */
+  readonly wire: bigint
 }
 
 /**
@@ -49,16 +59,8 @@ export function quoteSwapStressPhase1Targets(
   count: number
 ): readonly bigint[] {
   const sourceAmount = SwapStressPhaseAmounts.Phase1SourceDepotUnits,
-    targets = Array.from({ length: count }).reduce<{
-      readonly targets: readonly bigint[]
-      readonly chain: bigint
-      readonly wire: bigint
-    }>(
-      (state): {
-        readonly targets: readonly bigint[]
-        readonly chain: bigint
-        readonly wire: bigint
-      } => {
+    targets = Array.from({ length: count }).reduce<SwapStressQuoteReduction>(
+      (state): SwapStressQuoteReduction => {
         const targetAmount = cpOutput(state.chain, state.wire, sourceAmount)
         if (targetAmount <= 0n)
           throw new SwapStressImpossibleQuoteError("phase-1")
@@ -107,16 +109,8 @@ export function quoteSwapStressPhase2Targets(
   count: number
 ): readonly bigint[] {
   const sourceAmount = SwapStressPhaseAmounts.Phase2SourceWireUnits,
-    targets = Array.from({ length: count }).reduce<{
-      readonly targets: readonly bigint[]
-      readonly wire: bigint
-      readonly chain: bigint
-    }>(
-      (state): {
-        readonly targets: readonly bigint[]
-        readonly wire: bigint
-        readonly chain: bigint
-      } => {
+    targets = Array.from({ length: count }).reduce<SwapStressQuoteReduction>(
+      (state): SwapStressQuoteReduction => {
         const targetAmount = cpOutput(state.wire, state.chain, sourceAmount)
         if (targetAmount <= 0n)
           throw new SwapStressImpossibleQuoteError("phase-2")

@@ -18,15 +18,15 @@ import { runningManifestAfterSetup } from "./runEvidenceManifestBuilders.js"
 import type { RunEvidencePublicationCoordinator } from "./RunEvidencePublicationCoordinator.js"
 import {
   invalidPersistenceState,
-  requirePersistenceCapturedConfig,
-  requirePersistenceConfigAgreement,
-  requirePersistenceSetup,
+  assertPersistenceCapturedConfig,
+  assertPersistenceConfigAgreement,
+  assertPersistenceSetup,
   type PersistenceCapturedConfig
 } from "./runEvidencePersistenceValidation.js"
 import { readStableSourceFile } from "./safeEvidenceSource.js"
 
 /** Store-owned setup state and publication operations used by this collaborator. */
-export type RunEvidenceSetupPersistenceContext = {
+export interface RunEvidenceSetupPersistenceContext {
   readonly runDirectory: string
   readonly clusterPath: string
   readonly sourceFileSystem: RunEvidencePersistence.SourceFileSystem
@@ -50,7 +50,7 @@ export class RunEvidenceSetupPersistence {
   /** @return Immutable reference to the exact captured cluster-config bytes. */
   captureClusterConfig(): Promise<RunEvidenceArtifactFile> {
     return this.context.coordinator.exclusive(async () => {
-      this.context.coordinator.requireOpen()
+      this.context.coordinator.assertOpen()
       if (this.context.config() !== null || this.context.setup() !== null)
         throw invalidPersistenceState(
           "cluster config capture is no longer available"
@@ -80,12 +80,12 @@ export class RunEvidenceSetupPersistence {
    */
   publishSetup(input: unknown): Promise<RunEvidenceSetupRecordRef> {
     return this.context.coordinator.exclusive(async () => {
-      this.context.coordinator.requireOpen()
+      this.context.coordinator.assertOpen()
       if (this.context.setup() !== null)
         throw invalidPersistenceState("setup.json is already committed")
-      const setup = requirePersistenceSetup(input),
+      const setup = assertPersistenceSetup(input),
         config = this.context.config()
-      requirePersistenceConfigAgreement(setup, config)
+      assertPersistenceConfigAgreement(setup, config)
       const bytes = canonicalEvidenceJson(setup),
         setupRef: RunEvidenceSetupRecordRef = {
           path: RunEvidencePath.Setup,
@@ -101,7 +101,7 @@ export class RunEvidenceSetupPersistence {
           manifest: this.context.manifest(),
           setup,
           setupRef,
-          config: requirePersistenceCapturedConfig(config)
+          config: assertPersistenceCapturedConfig(config)
         })
         await this.context.coordinator.replaceAfterImmutable(next)
       }

@@ -11,7 +11,6 @@ import {
   RunEvidencePhaseStatus,
   RunEvidenceSaturationStrategy,
   RunEvidenceSchemaVersion,
-  RunEvidenceSetupStatus,
   RunEvidenceStage,
   parseRunEvidenceIteration,
   type OppEnvelopeTelemetryHealth

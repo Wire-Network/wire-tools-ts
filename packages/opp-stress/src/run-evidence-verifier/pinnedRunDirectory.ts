@@ -21,7 +21,7 @@ const DirectoryOpenFlags =
 export function pinRunDirectory(
   runDirectory: string,
   context: RunEvidenceVerificationContext
-): PinnedRunDirectory | null {
+): PinnedRunDirectory {
   if (
     !Path.isAbsolute(runDirectory) ||
     Path.resolve(runDirectory) !== runDirectory
@@ -83,7 +83,7 @@ export function pinRunDirectory(
 function inspectExplicitRoot(
   runDirectory: string,
   context: RunEvidenceVerificationContext
-): Fs.BigIntStats | null {
+): Fs.BigIntStats {
   let stat: Fs.BigIntStats
   try {
     stat = Fs.lstatSync(runDirectory, { bigint: true })

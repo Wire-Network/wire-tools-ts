@@ -16,7 +16,6 @@ import {
   completedPhase,
   degradedTelemetry,
   EvidenceEndpoint,
-  healthyTelemetry,
   saturatedIteration,
   saturatedTerminal,
   withoutKey

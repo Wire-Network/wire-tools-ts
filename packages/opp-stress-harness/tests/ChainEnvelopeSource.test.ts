@@ -13,7 +13,6 @@ import {
 } from "@wireio/opp-stress-harness"
 
 const EthereumChainCode = 111,
-  SolanaChainCode = 222,
   UnregisteredChainCode = 999,
   EnvelopeHash =
     "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",

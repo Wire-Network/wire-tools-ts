@@ -1,3 +1,5 @@
+import { match } from "ts-pattern"
+
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import {
   RampBreakageCategory,
@@ -19,7 +21,7 @@ import type {
 
 export { burstReason, errorMessage } from "./phaseRunnerFallbacks.js"
 
-export type PhaseRun = {
+export interface PhaseRun {
   readonly burst: BurstResult
   readonly result: SwapStressPhaseResult
   readonly payoutFailureReason: string | null
@@ -47,7 +49,7 @@ export function complete(
 }
 
 /** Inputs for one workload or telemetry-integrity breakage observation. */
-export type SwapStressBreakageInput = {
+export interface SwapStressBreakageInput {
   readonly phaseResults: readonly SwapStressPhaseResult[]
   readonly reason: string
   readonly degradation: SwapStressTelemetryDegradation | null
@@ -94,16 +96,20 @@ export function breakage(
 function canonicalEndpoint(
   endpoint: DebugOutpostEndpointsType
 ): RunEvidenceEndpoint {
-  switch (endpoint) {
-    case DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT:
-      return RunEvidenceEndpoint.OutpostEthereumDepot
-    case DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM:
-      return RunEvidenceEndpoint.DepotOutpostEthereum
-    default:
+  return match(endpoint)
+    .with(
+      DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT,
+      () => RunEvidenceEndpoint.OutpostEthereumDepot
+    )
+    .with(
+      DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM,
+      () => RunEvidenceEndpoint.DepotOutpostEthereum
+    )
+    .otherwise(() => {
       throw new TypeError(
         `Unexpected required Ethereum endpoint: ${DebugOutpostEndpointsType[endpoint]}`
       )
-  }
+    })
 }
 
 function endpointName(endpoint: DebugOutpostEndpointsType): string {

@@ -3,7 +3,6 @@ import * as Fs from "node:fs"
 import {
   OppStressRampEvidenceModeKind,
   RampBreakageCategory,
-  RunEvidenceEndpoint,
   runOppStressRamp
 } from "@wireio/test-opp-stress"
 import type {
@@ -33,6 +32,42 @@ type Equal<Left, Right> =
 
 type Assert<Condition extends true> = Condition
 
+/** Exact key set a completed generic deferred observation must expose. */
+enum CompletedObservationKey {
+  kind = "kind",
+  saturatedEndpoints = "saturatedEndpoints",
+  observedNonRequiredEndpoints = "observedNonRequiredEndpoints",
+  evidence = "evidence"
+}
+
+/** Exact key set a breakage generic deferred observation must expose. */
+enum BreakageObservationKey {
+  kind = "kind",
+  saturatedEndpoints = "saturatedEndpoints",
+  observedNonRequiredEndpoints = "observedNonRequiredEndpoints",
+  evidence = "evidence",
+  breakageCategory = "breakageCategory",
+  breakageReason = "breakageReason"
+}
+
+/** Controller-owned keys a generic deferred observation must never carry. */
+enum ForbiddenObservationKey {
+  iterationIndex = "iterationIndex",
+  accountCount = "accountCount",
+  startedAtMs = "startedAtMs",
+  endedAtMs = "endedAtMs",
+  status = "status",
+  preserveCluster = "preserveCluster",
+  missingEndpoints = "missingEndpoints",
+  lifecycle = "lifecycle"
+}
+
+/** Exact discriminants a generic deferred observation may carry. */
+enum DeferredObservationKind {
+  completed = "completed",
+  breakage = "breakage"
+}
+
 type CompletedObservation =
   OppStressRampDeferredEvidenceCompletedObservation<TestEvidence>
 type BreakageObservation =
@@ -41,43 +76,16 @@ type Observation =
   OppStressRampDeferredEvidenceIterationObservation<TestEvidence>
 
 const CompletedKeysProof: Assert<
-    Equal<
-      keyof CompletedObservation,
-      | "kind"
-      | "saturatedEndpoints"
-      | "observedNonRequiredEndpoints"
-      | "evidence"
-    >
+    Equal<keyof CompletedObservation, `${CompletedObservationKey}`>
   > = true,
   BreakageKeysProof: Assert<
-    Equal<
-      keyof BreakageObservation,
-      | "kind"
-      | "saturatedEndpoints"
-      | "observedNonRequiredEndpoints"
-      | "evidence"
-      | "breakageCategory"
-      | "breakageReason"
-    >
+    Equal<keyof BreakageObservation, `${BreakageObservationKey}`>
   > = true,
   ForbiddenKeysProof: Assert<
-    Equal<
-      Extract<
-        keyof Observation,
-        | "iterationIndex"
-        | "accountCount"
-        | "startedAtMs"
-        | "endedAtMs"
-        | "status"
-        | "preserveCluster"
-        | "missingEndpoints"
-        | "lifecycle"
-      >,
-      never
-    >
+    Equal<Extract<keyof Observation, `${ForbiddenObservationKey}`>, never>
   > = true,
   ObservationKindsProof: Assert<
-    Equal<Observation["kind"], "completed" | "breakage">
+    Equal<Observation["kind"], `${DeferredObservationKind}`>
   > = true,
   BreakageCategoryRequiredProof: Assert<
     Equal<

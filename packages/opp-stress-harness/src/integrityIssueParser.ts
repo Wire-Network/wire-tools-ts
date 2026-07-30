@@ -1,3 +1,4 @@
+import { match } from "ts-pattern"
 import {
   EnvelopeIntegrityIssueCode,
   type EnvelopeIntegrityIssue
@@ -46,38 +47,42 @@ export function isEnvelopeIntegrityIssue(
   )
     return false
   const context = value.context
-  switch (value.code) {
-    case EnvelopeIntegrityIssueCode.InvalidStorageKey:
-      return (
-        hasExactObservationKeys(context, ["filename", "reason"]) &&
-        isObservationString(context.filename) &&
-        (context.reason === "noncanonical_format" ||
-          context.reason === "invalid_epoch" ||
-          context.reason === "invalid_checksum")
-      )
-    case EnvelopeIntegrityIssueCode.UnknownEndpoint:
-      return exactStringContext(context, "endpointKey")
-    case EnvelopeIntegrityIssueCode.MissingDataSidecar:
-    case EnvelopeIntegrityIssueCode.MissingMetadataSidecar:
-    case EnvelopeIntegrityIssueCode.DataSidecarNotRegular:
-    case EnvelopeIntegrityIssueCode.MetadataSidecarNotRegular:
-    case EnvelopeIntegrityIssueCode.StorageRootSymlink:
-    case EnvelopeIntegrityIssueCode.StorageAncestorSymlink:
-    case EnvelopeIntegrityIssueCode.StorageRootNotDirectory:
-      return exactStringContext(context, "path")
-    case EnvelopeIntegrityIssueCode.DataSidecarSymlink:
-    case EnvelopeIntegrityIssueCode.MetadataSidecarSymlink:
-    case EnvelopeIntegrityIssueCode.DataReadFailed:
-    case EnvelopeIntegrityIssueCode.MetadataReadFailed:
-    case EnvelopeIntegrityIssueCode.StorageRootReadFailed:
-      return (
+  return match(value.code)
+    .with(EnvelopeIntegrityIssueCode.InvalidStorageKey, () => (
+      hasExactObservationKeys(context, ["filename", "reason"]) &&
+      isObservationString(context.filename) &&
+      (context.reason === "noncanonical_format" ||
+        context.reason === "invalid_epoch" ||
+        context.reason === "invalid_checksum")
+    ))
+    .with(EnvelopeIntegrityIssueCode.UnknownEndpoint, () =>
+      exactStringContext(context, "endpointKey")
+    )
+    .with(
+      EnvelopeIntegrityIssueCode.MissingDataSidecar,
+      EnvelopeIntegrityIssueCode.MissingMetadataSidecar,
+      EnvelopeIntegrityIssueCode.DataSidecarNotRegular,
+      EnvelopeIntegrityIssueCode.MetadataSidecarNotRegular,
+      EnvelopeIntegrityIssueCode.StorageRootSymlink,
+      EnvelopeIntegrityIssueCode.StorageAncestorSymlink,
+      EnvelopeIntegrityIssueCode.StorageRootNotDirectory,
+      () => exactStringContext(context, "path")
+    )
+    .with(
+      EnvelopeIntegrityIssueCode.DataSidecarSymlink,
+      EnvelopeIntegrityIssueCode.MetadataSidecarSymlink,
+      EnvelopeIntegrityIssueCode.DataReadFailed,
+      EnvelopeIntegrityIssueCode.MetadataReadFailed,
+      EnvelopeIntegrityIssueCode.StorageRootReadFailed,
+      () =>
         hasExactObservationKeys(context, ["path", "error"]) &&
         isObservationString(context.path) &&
         isFileError(context.error)
-      )
-    case EnvelopeIntegrityIssueCode.DataSidecarChanged:
-    case EnvelopeIntegrityIssueCode.MetadataSidecarChanged:
-      return (
+    )
+    .with(
+      EnvelopeIntegrityIssueCode.DataSidecarChanged,
+      EnvelopeIntegrityIssueCode.MetadataSidecarChanged,
+      () =>
         hasExactObservationKeys(context, [
           "path",
           "before",
@@ -88,9 +93,10 @@ export function isEnvelopeIntegrityIssue(
         isFileIdentity(context.before) &&
         (context.after === null || isFileIdentity(context.after)) &&
         (context.error === null || isFileError(context.error))
-      )
-    case EnvelopeIntegrityIssueCode.StorageRootChanged:
-      return (
+    )
+    .with(
+      EnvelopeIntegrityIssueCode.StorageRootChanged,
+      () =>
         hasExactObservationKeys(context, [
           "path",
           "before",
@@ -102,40 +108,44 @@ export function isEnvelopeIntegrityIssue(
           isEmptyFileIdentity(context.before)) &&
         (context.after === null || isFileIdentity(context.after)) &&
         (context.error === null || isFileError(context.error))
-      )
-    case EnvelopeIntegrityIssueCode.DataDecodeFailed:
-    case EnvelopeIntegrityIssueCode.MetadataDecodeFailed:
-      return (
+    )
+    .with(
+      EnvelopeIntegrityIssueCode.DataDecodeFailed,
+      EnvelopeIntegrityIssueCode.MetadataDecodeFailed,
+      () =>
         hasExactObservationKeys(context, ["path", "reason"]) &&
         isObservationString(context.path) &&
         isObservationString(context.reason)
-      )
-    case EnvelopeIntegrityIssueCode.DataHashMismatch:
-      return exactStrings(context, [
+    )
+    .with(EnvelopeIntegrityIssueCode.DataHashMismatch, () =>
+      exactStrings(context, [
         "expectedHashPrefix",
         "actualHashPrefix",
         "actualSha256"
       ])
-    case EnvelopeIntegrityIssueCode.MetadataChecksumMismatch:
-      return exactStrings(context, ["expectedChecksum", "actualChecksum"])
-    case EnvelopeIntegrityIssueCode.EpochMismatch:
-      return (
+    )
+    .with(EnvelopeIntegrityIssueCode.MetadataChecksumMismatch, () =>
+      exactStrings(context, ["expectedChecksum", "actualChecksum"])
+    )
+    .with(
+      EnvelopeIntegrityIssueCode.EpochMismatch,
+      () =>
         hasExactObservationKeys(context, ["keyEpoch", "decodedEpoch"]) &&
         isObservationCount(context.keyEpoch) &&
         isObservationCount(context.decodedEpoch)
-      )
-    case EnvelopeIntegrityIssueCode.PathOutsideStorageRoot:
-      return exactStrings(context, ["storageRoot", "path"])
-    case EnvelopeIntegrityIssueCode.BaselineCaptureFailed:
-    case EnvelopeIntegrityIssueCode.DirectoryScanFailed:
-      return (
+    )
+    .with(EnvelopeIntegrityIssueCode.PathOutsideStorageRoot, () =>
+      exactStrings(context, ["storageRoot", "path"])
+    )
+    .with(
+      EnvelopeIntegrityIssueCode.BaselineCaptureFailed,
+      EnvelopeIntegrityIssueCode.DirectoryScanFailed,
+      () =>
         hasExactObservationKeys(context, ["storageDir", "error"]) &&
         isObservationString(context.storageDir) &&
         isFileError(context.error)
-      )
-    default:
-      return false
-  }
+    )
+    .otherwise(() => false)
 }
 
 function isFileError(value: unknown): boolean {

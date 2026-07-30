@@ -1,7 +1,7 @@
 import type { ethers } from "ethers"
 
 /** Single ETH-source swap request in a stress burst. */
-export type EthereumBurstSwapRequest = {
+export interface EthereumBurstSwapRequest {
   /** Stable burst index used for telemetry. */
   readonly index: number
   /** Source token slug_name as bigint. */
@@ -25,7 +25,7 @@ export type EthereumBurstSwapRequest = {
 }
 
 /** Minimal mined receipt shape captured from an Ethereum tx. */
-export type EthereumBurstReceipt = {
+export interface EthereumBurstReceipt {
   /** Receipt status from the EVM transaction. */
   readonly status: number | null
   /** Mined transaction hash. */
@@ -37,15 +37,23 @@ export type EthereumBurstReceipt = {
 }
 
 /** Minimal transaction response shape required by ETH burst submission. */
-export type EthereumBurstTransaction = {
+export interface EthereumBurstTransaction {
   /** Wait for the transaction receipt. */
   readonly wait: (
     confirmations?: number
   ) => Promise<EthereumBurstReceipt | null>
 }
 
+/** Native-value + explicit-nonce legs of a burst `requestSwap` override. */
+export interface EthereumBurstSwapOverride {
+  /** Native ETH source amount forwarded as `msg.value`. */
+  readonly value: bigint
+  /** Explicit nonce so a burst's transactions cannot collide. */
+  readonly nonce: number
+}
+
 /** Mockable ReserveManager requestSwap surface for ETH bursts. */
-export type EthereumBurstReserveManager = {
+export interface EthereumBurstReserveManager {
   /** Submit a native ETH requestSwap call with explicit nonce override. */
   readonly requestSwap: (
     sourceTokenCode: bigint,
@@ -56,15 +64,12 @@ export type EthereumBurstReserveManager = {
     targetRecipient: Uint8Array,
     targetAmount: bigint,
     targetToleranceBps: number,
-    overrides: ethers.Overrides & {
-      readonly value: bigint
-      readonly nonce: number
-    }
+    overrides: ethers.Overrides & EthereumBurstSwapOverride
   ) => Promise<EthereumBurstTransaction>
 }
 
 /** Successful burst submission telemetry. */
-export type BurstSuccess = {
+export interface BurstSuccess {
   /** Stable request index. */
   readonly index: number
   /** Explicit nonce for ETH submissions, or null for Solana/SPL submissions. */
@@ -78,7 +83,7 @@ export type BurstSuccess = {
 }
 
 /** Failed burst submission telemetry. */
-export type BurstFailure = {
+export interface BurstFailure {
   /** Stable request index. */
   readonly index: number
   /** Explicit nonce for ETH submissions, or null for Solana/SPL submissions. */
@@ -88,7 +93,7 @@ export type BurstFailure = {
 }
 
 /** Bounded burst telemetry returned to the iteration classifier. */
-export type BurstResult = {
+export interface BurstResult {
   /** Successful request submissions. */
   readonly successes: readonly BurstSuccess[]
   /** Failed request submissions; any entry classifies the iteration as breakage. */
@@ -96,7 +101,7 @@ export type BurstResult = {
 }
 
 /** Options for native ETH burst submission. */
-export type EthereumBurstOptions = {
+export interface EthereumBurstOptions {
   /** ReserveManager surface bound to the source wallet. */
   readonly reserveManager: EthereumBurstReserveManager
   /** Requests to submit. */
@@ -108,7 +113,7 @@ export type EthereumBurstOptions = {
 }
 
 /** Solana/SPL request wrapper used by the inverse-route burst helper. */
-export type SolanaBurstRequest<Request> = {
+export interface SolanaBurstRequest<Request> {
   /** Stable request index. */
   readonly index: number
   /** Route-specific Solana or SPL request payload. */
@@ -116,7 +121,7 @@ export type SolanaBurstRequest<Request> = {
 }
 
 /** Options for bounded Solana/SPL or inverse route submission. */
-export type SolanaBurstOptions<Request> = {
+export interface SolanaBurstOptions<Request> {
   /** Requests to submit. */
   readonly requests: readonly SolanaBurstRequest<Request>[]
   /** Max in-flight Solana/SPL transactions. */

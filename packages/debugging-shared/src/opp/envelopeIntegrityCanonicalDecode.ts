@@ -13,8 +13,13 @@ const MapEntryKeyFieldNumber = 1,
   /** Protobuf map entries always encode the value as field number 2. */
   MapEntryValueFieldNumber = 2
 
+/** Discriminant selecting the map variant out of the `FieldInfo` union. */
+interface MapFieldDiscriminant {
+  kind: "map"
+}
+
 /** Descriptor shape for a `kind: "map"` field. */
-type MapFieldInfo = Extract<FieldInfo, { kind: "map" }>
+type MapFieldInfo = Extract<FieldInfo, MapFieldDiscriminant>
 
 /**
  * Wire type each protobuf scalar type encodes as when written as a single value.

@@ -1,16 +1,15 @@
 import type { CanonicalRampDecision } from "./rampDecision.js"
 import type {
+  DeferredEvidenceSummaryFields,
   OppStressRampDeferredEvidenceIterationObservation,
   OppStressRampDeferredEvidenceSummary
 } from "./rampDeferredEvidenceTypes.js"
 import { mergeRampDiagnostics } from "./rampIterationSummary.js"
 import type { OppStressRampConfig } from "./rampControllerTypes.js"
-import type { OppStressRampResultStatus } from "./rampControllerTypes.js"
 import { RunEvidenceIterationOutcome } from "./runEvidenceTypes.js"
-import type { RunEvidenceEndpoint } from "./runEvidenceTypes.js"
 
 /** Generic deferred state needed to stamp one controller-owned summary. */
-export type DeferredEvidenceSummaryState = {
+export interface DeferredEvidenceSummaryState {
   readonly iterationIndex: number
   readonly accountCount: number
   readonly observedNonRequiredEndpoints: readonly string[]
@@ -37,18 +36,7 @@ export function deferredEvidenceIterationSummary<TEvidence extends object>(
             state.observedNonRequiredEndpoints,
             observation.observedNonRequiredEndpoints
           ),
-    fields: {
-      readonly iterationIndex: number
-      readonly accountCount: number
-      readonly startedAtMs: number
-      readonly endedAtMs: number
-      readonly status: OppStressRampResultStatus | "not_saturated"
-      readonly preserveCluster: boolean
-      readonly config: OppStressRampConfig
-      readonly saturatedEndpoints: readonly RunEvidenceEndpoint[]
-      readonly missingEndpoints: readonly RunEvidenceEndpoint[]
-      readonly observedNonRequiredEndpoints: readonly string[]
-    } = {
+    fields: DeferredEvidenceSummaryFields = {
       iterationIndex: state.iterationIndex,
       accountCount: state.accountCount,
       startedAtMs: decision.controllerStartedAtMs,

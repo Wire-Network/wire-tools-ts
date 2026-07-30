@@ -1,6 +1,7 @@
 import * as Fs from "node:fs"
 import * as Path from "node:path"
 
+import type { EnvelopeSidecar } from "@wireio/debugging-shared"
 import {
   DebugEnvelopeMetadataRecord,
   Envelope
@@ -184,7 +185,7 @@ describe("run evidence verifier raw artifact integrity", () => {
 
 })
 
-function artifactSide(runDirectory: string, side: "data" | "metadata") {
+function artifactSide(runDirectory: string, side: EnvelopeSidecar) {
   const manifest = readVerifierJson(runDirectory, RunEvidencePath.Manifest),
     artifact = recordValue(arrayField(manifest, "artifacts")[0]),
     refs = objectField(artifact, "firstImmutableRefs")
@@ -193,7 +194,7 @@ function artifactSide(runDirectory: string, side: "data" | "metadata") {
 
 function updateArtifactDigest(
   runDirectory: string,
-  side: "data" | "metadata",
+  side: EnvelopeSidecar,
   bytes: Uint8Array
 ): void {
   const manifest = readVerifierJson(runDirectory, RunEvidencePath.Manifest),

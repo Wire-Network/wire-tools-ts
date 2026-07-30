@@ -13,7 +13,7 @@ export enum OppEnvelopeTelemetryHealthKind {
 }
 
 /** Candidate-accounting counts shared by non-empty telemetry health states. */
-export type OppEnvelopeTelemetryCounts = {
+export interface OppEnvelopeTelemetryCounts {
   /** Number of post-baseline candidate base keys discovered. */
   readonly candidateCount: number
   /** Number of candidates that passed strict integrity validation. */
@@ -25,7 +25,7 @@ export type OppEnvelopeTelemetryCounts = {
 }
 
 /** Retryable observation made before any candidate envelope is available. */
-export type EmptyOppEnvelopeTelemetryHealth = {
+export interface EmptyOppEnvelopeTelemetryHealth {
   /** Empty-state discriminant. */
   readonly kind: OppEnvelopeTelemetryHealthKind.Empty
   /** Empty observations are retryable before the approved deadline. */
@@ -43,7 +43,8 @@ export type EmptyOppEnvelopeTelemetryHealth = {
 }
 
 /** Retryable observation containing at least one incomplete or invalid candidate. */
-export type PendingOppEnvelopeTelemetryHealth = OppEnvelopeTelemetryCounts & {
+export interface PendingOppEnvelopeTelemetryHealth
+  extends OppEnvelopeTelemetryCounts {
   /** Pending-publication discriminant. */
   readonly kind: OppEnvelopeTelemetryHealthKind.PendingPublication
   /** Pending observations are retryable before the approved deadline. */
@@ -56,10 +57,8 @@ export type PendingOppEnvelopeTelemetryHealth = OppEnvelopeTelemetryCounts & {
 }
 
 /** Complete observation in which every candidate is valid or intentionally filtered. */
-export type HealthyOppEnvelopeTelemetryHealth = Omit<
-  OppEnvelopeTelemetryCounts,
-  "issueCount"
-> & {
+export interface HealthyOppEnvelopeTelemetryHealth
+  extends Omit<OppEnvelopeTelemetryCounts, "issueCount"> {
   /** Healthy-state discriminant. */
   readonly kind: OppEnvelopeTelemetryHealthKind.Healthy
   /** Healthy observations need no retry. */
@@ -71,7 +70,8 @@ export type HealthyOppEnvelopeTelemetryHealth = Omit<
 }
 
 /** Terminal deadline-policy result for a persistent empty or pending observation. */
-export type DegradedOppEnvelopeTelemetryHealth = OppEnvelopeTelemetryCounts & {
+export interface DegradedOppEnvelopeTelemetryHealth
+  extends OppEnvelopeTelemetryCounts {
   /** Degraded-state discriminant. */
   readonly kind: OppEnvelopeTelemetryHealthKind.Degraded
   /** Degraded results are terminal and not retryable. */

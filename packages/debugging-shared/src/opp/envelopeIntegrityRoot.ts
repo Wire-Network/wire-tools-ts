@@ -1,10 +1,10 @@
 import * as Path from "node:path"
 
 import {
+  EnvelopeIntegrityFileOperationKind,
   EnvelopeIntegrityIssueCode,
   type EnvelopeIntegrityDirectoryHandle,
   type EnvelopeIntegrityFileError,
-  type EnvelopeIntegrityFileIdentity,
   type EnvelopeIntegrityFileSystem,
   type EnvelopeIntegrityIssue,
   type EnvelopeIntegrityIssueSequence
@@ -17,9 +17,9 @@ import {
   rootReadIssue
 } from "./envelopeIntegrityIssues.js"
 import type {
+  EnvelopeStorageRootIssueResult,
   PinEnvelopeStorageRootResult,
-  PinnedEnvelopeStorageRoot,
-  RootComponentIdentity
+  PinnedEnvelopeStorageRoot
 } from "./envelopeIntegrityRootTypes.js"
 
 export type { PinnedEnvelopeStorageRoot } from "./envelopeIntegrityRootTypes.js"
@@ -53,7 +53,9 @@ export async function pinEnvelopeStorageRoot(
             index,
             error: normalizeUnknownError(
               error,
-              index === components.length - 1 ? "root_lstat" : "ancestor_lstat"
+              index === components.length - 1
+                ? EnvelopeIntegrityFileOperationKind.root_lstat
+                : EnvelopeIntegrityFileOperationKind.ancestor_lstat
             )
           }
         }
@@ -95,7 +97,10 @@ export async function pinEnvelopeStorageRoot(
     return rootReadIssue(
       storageRoot,
       storageRoot,
-      normalizeUnknownError(error, "root_realpath")
+      normalizeUnknownError(
+        error,
+        EnvelopeIntegrityFileOperationKind.root_realpath
+      )
     )
   }
 
@@ -111,7 +116,7 @@ export async function pinEnvelopeStorageRoot(
     return rootReadIssue(
       storageRoot,
       storageRoot,
-      normalizeUnknownError(error, "root_open")
+      normalizeUnknownError(error, EnvelopeIntegrityFileOperationKind.root_open)
     )
   }
   try {
@@ -154,7 +159,10 @@ export async function pinEnvelopeStorageRoot(
       rootReadIssue(
         storageRoot,
         storageRoot,
-        normalizeUnknownError(error, "root_stat")
+        normalizeUnknownError(
+          error,
+          EnvelopeIntegrityFileOperationKind.root_stat
+        )
       ).issues
     )
   }
@@ -167,7 +175,7 @@ export async function pinEnvelopeStorageRoot(
  */
 export async function closeEnvelopeStorageRoot(
   root: PinnedEnvelopeStorageRoot
-): Promise<EnvelopeIntegrityIssue | null> {
+): Promise<EnvelopeIntegrityIssue> {
   const error = await closeRootHandle(root.handle)
   if (error === null) return null
   const [issue] = rootReadIssue(root.path, root.path, error).issues
@@ -202,17 +210,20 @@ async function closePinFailure(
 
 async function closeRootHandle(
   handle: EnvelopeIntegrityDirectoryHandle
-): Promise<EnvelopeIntegrityFileError | null> {
+): Promise<EnvelopeIntegrityFileError> {
   try {
     await handle.close()
     return null
   } catch (error) {
-    return normalizeUnknownError(error, "root_close")
+    return normalizeUnknownError(
+      error,
+      EnvelopeIntegrityFileOperationKind.root_close
+    )
   }
 }
 
 function pinIssue(
   issue: EnvelopeIntegrityIssue
-): Extract<PinEnvelopeStorageRootResult, { readonly kind: "issue" }> {
+): EnvelopeStorageRootIssueResult {
   return { kind: "issue", issues: [issue] }
 }

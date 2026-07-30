@@ -5,7 +5,7 @@ import { RunEvidenceVerificationIssueCode } from "../runEvidenceVerifierTypes.js
 import { RunEvidenceVerificationContext } from "./verifierIssues.js"
 
 /** Exact decimal-string filesystem identity captured from bigint stat fields. */
-export type VerifierFileIdentity = {
+export interface VerifierFileIdentity {
   readonly dev: string
   readonly ino: string
   readonly mode: string
@@ -16,7 +16,7 @@ export type VerifierFileIdentity = {
 }
 
 /** One held no-follow directory descriptor and its anchored parent entry. */
-export type PinnedDirectory = {
+export interface PinnedDirectory {
   readonly relativePath: string
   readonly descriptor: number
   readonly identity: VerifierFileIdentity
@@ -25,11 +25,17 @@ export type PinnedDirectory = {
 }
 
 /** Descriptor-rooted run tree used by every verifier operation. */
-export type PinnedRunDirectory = {
+export interface PinnedRunDirectory {
   readonly path: string
   readonly root: PinnedDirectory
   readonly directories: Map<string, PinnedDirectory>
   readonly openedDirectories: PinnedDirectory[]
+}
+
+/** Held parent directory plus basename resolved for one portable entry. */
+export interface PinnedDirectoryEntry {
+  readonly parent: PinnedDirectory
+  readonly basename: string
 }
 
 /** Validate and resolve a portable reference for diagnostics only. */
@@ -37,7 +43,7 @@ export function containedRunPath(
   root: PinnedRunDirectory,
   relativePath: string,
   context: RunEvidenceVerificationContext
-): string | null {
+): string {
   if (!isPortableRunPath(relativePath)) {
     context.issue(
       RunEvidenceVerificationIssueCode.PathOutsideRun,
@@ -54,7 +60,7 @@ export function pinnedEntry(
   root: PinnedRunDirectory,
   relativePath: string,
   context: RunEvidenceVerificationContext
-): { readonly parent: PinnedDirectory; readonly basename: string } | null {
+): PinnedDirectoryEntry {
   if (containedRunPath(root, relativePath, context) === null) return null
   const directory = Path.posix.dirname(relativePath),
     parent = root.directories.get(directory === "." ? "" : directory)

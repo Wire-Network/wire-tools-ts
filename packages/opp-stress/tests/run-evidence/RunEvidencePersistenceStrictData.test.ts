@@ -28,7 +28,7 @@ import {
   UnknownProtobufExploitByteLength
 } from "../unknownProtobufFieldTestSupport.js"
 
-type StrictBypassCase = {
+interface StrictBypassCase {
   readonly label: string
   readonly dataBytes: Buffer
   readonly metadataBytes?: Buffer

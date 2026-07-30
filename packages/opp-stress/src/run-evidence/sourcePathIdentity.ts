@@ -6,20 +6,21 @@ import {
   RunEvidencePersistenceErrorCode
 } from "./RunEvidencePersistenceError.js"
 
-type PathIdentity = {
+/** One retained path component plus the identity captured for it. */
+interface PathIdentity {
   readonly path: string
   readonly stat: RunEvidencePersistence.SourceStat
 }
 
 /** Canonical directory path plus every retained component identity. */
-export type CanonicalDirectorySnapshot = {
+export interface CanonicalDirectorySnapshot {
   readonly path: string
   readonly stat: RunEvidencePersistence.SourceStat
   readonly components: readonly PathIdentity[]
 }
 
 /** Canonical regular-file pathname identity retained across descriptor reads. */
-export type CanonicalFileSnapshot = {
+export interface CanonicalFileSnapshot {
   readonly path: string
   readonly realPath: string
   readonly stat: RunEvidencePersistence.SourceStat

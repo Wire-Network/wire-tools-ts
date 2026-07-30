@@ -2,7 +2,8 @@ import { createEnvelopeBaseline } from "@wireio/debugging-shared"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import {
   createSwapStressPhaseRunner,
-  SwapStressTelemetryDegradedError
+  SwapStressTelemetryDegradedError,
+  type SwapStressPhase
 } from "@wireio/opp-swap-stress"
 
 import {
@@ -97,7 +98,7 @@ describe("phase runner telemetry classification boundary", () => {
 })
 
 function typedTelemetryError(
-  phase: "phase-1" | "phase-2"
+  phase: SwapStressPhase
 ): SwapStressTelemetryDegradedError {
   return new SwapStressTelemetryDegradedError(
     phase,

@@ -6,7 +6,7 @@ import type { RunEvidenceSetup } from "./RunEvidenceRecordTypes.js"
 import { invalidPersistenceState } from "./runEvidencePersistenceValidation.js"
 
 /** State needed to prove a fresh successful setup is ready for one ramp. */
-export type ActiveRampContextState = {
+export interface ActiveRampContextState {
   readonly manifest: RunEvidenceManifest
   readonly setup: RunEvidenceSetup | null
   readonly idle: boolean

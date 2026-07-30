@@ -1,5 +1,5 @@
 /** Request submitted by a bounded OPP stress workload. */
-export type BoundedWorkloadRequest<Request> = {
+export interface BoundedWorkloadRequest<Request> {
   /** Stable request index used for telemetry. */
   readonly index: number
   /** Workload-specific request payload. */
@@ -7,7 +7,7 @@ export type BoundedWorkloadRequest<Request> = {
 }
 
 /** Successful bounded workload submission. */
-export type BoundedWorkloadSuccess<Result> = {
+export interface BoundedWorkloadSuccess<Result> {
   /** Stable request index. */
   readonly index: number
   /** Submitted transaction id, signature, or caller-provided success result. */
@@ -15,7 +15,7 @@ export type BoundedWorkloadSuccess<Result> = {
 }
 
 /** Failed bounded workload submission. */
-export type BoundedWorkloadFailure = {
+export interface BoundedWorkloadFailure {
   /** Stable request index. */
   readonly index: number
   /** Failure reason captured without stopping sibling submissions. */
@@ -23,7 +23,7 @@ export type BoundedWorkloadFailure = {
 }
 
 /** Telemetry from one concurrency-only workload burst. */
-export type BoundedWorkloadResult<Result> = {
+export interface BoundedWorkloadResult<Result> {
   /** Successful submissions in request order. */
   readonly successes: readonly BoundedWorkloadSuccess<Result>[]
   /** Failed submissions in request order. */
@@ -31,7 +31,7 @@ export type BoundedWorkloadResult<Result> = {
 }
 
 /** Options for bounded workload execution. */
-export type BoundedWorkloadOptions<Request, Result> = {
+export interface BoundedWorkloadOptions<Request, Result> {
   /** Requests to submit immediately, bounded only by `concurrency`. */
   readonly requests: readonly Request[]
   /** Maximum in-flight submissions. This is the only execution bound. */
@@ -40,12 +40,26 @@ export type BoundedWorkloadOptions<Request, Result> = {
   readonly submit: (request: Request, index: number) => Promise<Result>
 }
 
+/** One submission that resolved with its caller-provided success result. */
+interface WorkloadItemSuccess<Result> {
+  readonly kind: "success"
+  readonly success: BoundedWorkloadSuccess<Result>
+}
+
+/** One submission that rejected without stopping sibling submissions. */
+interface WorkloadItemFailure {
+  readonly kind: "failure"
+  readonly failure: BoundedWorkloadFailure
+}
+
 type WorkloadItemResult<Result> =
-  | {
-      readonly kind: "success"
-      readonly success: BoundedWorkloadSuccess<Result>
-    }
-  | { readonly kind: "failure"; readonly failure: BoundedWorkloadFailure }
+  | WorkloadItemSuccess<Result>
+  | WorkloadItemFailure
+
+/** Shared mutable cursor handing the next work item to each worker. */
+interface WorkloadCursor {
+  value: number
+}
 
 /**
  * Submit every request with bounded in-flight concurrency only.
@@ -107,7 +121,7 @@ async function runConcurrent<Item, Result>(
 async function runWorker<Item, Result>(
   items: readonly Item[],
   worker: (item: Item) => Promise<Result>,
-  nextIndex: { value: number },
+  nextIndex: WorkloadCursor,
   results: Result[]
 ): Promise<void> {
   const index = nextIndex.value
@@ -124,22 +138,13 @@ function collectResults<Result>(
   return {
     successes: results
       .filter(
-        (
-          result
-        ): result is Extract<
-          WorkloadItemResult<Result>,
-          { readonly kind: "success" }
-        > => result.kind === "success"
+        (result): result is WorkloadItemSuccess<Result> =>
+          result.kind === "success"
       )
       .map(result => result.success),
     failures: results
       .filter(
-        (
-          result
-        ): result is Extract<
-          WorkloadItemResult<Result>,
-          { readonly kind: "failure" }
-        > => result.kind === "failure"
+        (result): result is WorkloadItemFailure => result.kind === "failure"
       )
       .map(result => result.failure)
   }

@@ -16,7 +16,13 @@ import {
   successfulSetup
 } from "./runEvidencePersistenceTestSupport.js"
 
-type FaultCase = {
+/** Closed atomic-publication handle methods a fault case can poison. */
+enum FaultHandleMethod {
+  writeFile = "writeFile",
+  sync = "sync"
+}
+
+interface FaultCase {
   readonly label: string
   readonly stage: AtomicFile.Stage
   readonly committed: boolean
@@ -29,7 +35,7 @@ const fault = (code: string): NodeJS.ErrnoException =>
     Object.assign(new Error(code), { code }),
   fileHandleFault = (
     enabled: () => boolean,
-    method: "writeFile" | "sync"
+    method: `${FaultHandleMethod}`
   ): Partial<AtomicFile.FileSystem> => ({
     open: async (file, flags, mode) => {
       const handle = await Fs.promises.open(file, flags, mode)

@@ -17,7 +17,7 @@ import {
 } from "./phaseRunnerTelemetryTestSupport.js"
 import { producePollableIntegrityIssues } from "./realMetricPollingIssueFixtures.js"
 
-type NonHealthyCase = {
+interface NonHealthyCase {
   readonly name: string
   readonly observation: SwapStressPendingPhaseObservation
 }
@@ -77,14 +77,17 @@ export async function createNonHealthyCases(): Promise<
 }
 
 /** Deterministic fake runtime recording every collection timestamp and wait. */
-export function createFakePollingRuntime(
-  results: readonly StrictSnapshotResult[]
-): RealMetricPollingRuntime & {
+/** Recorded call telemetry a fake polling runtime exposes to assertions. */
+interface FakePollingRuntimeTelemetry {
   readonly attemptedAtMs: number[]
   readonly waitsMs: number[]
   readonly requests: SwapStressEnvelopeMetricRequest[]
   readonly returnedResults: StrictSnapshotResult[]
-} {
+}
+
+export function createFakePollingRuntime(
+  results: readonly StrictSnapshotResult[]
+): RealMetricPollingRuntime & FakePollingRuntimeTelemetry {
   let nowMs = 0,
     index = 0
   const attemptedAtMs: number[] = [],

@@ -20,7 +20,7 @@ export function pinNestedDirectory(
   root: PinnedRunDirectory,
   relativePath: string,
   context: RunEvidenceVerificationContext
-): PinnedDirectory | null {
+): PinnedDirectory {
   const parentPath = Path.posix.dirname(relativePath),
     parent = root.directories.get(parentPath === "." ? "" : parentPath),
     basename = Path.posix.basename(relativePath)

@@ -335,8 +335,17 @@ export namespace SwapStressSaturationScenarioReserveSteps {
     const account = await (
       program.account as Record<string, anchor.AccountClient<anchor.Idl>>
     ).reserve.fetch(reservePda)
-    const status = (account as { status?: unknown }).status
+    const status = (account as SolanaReserveAccountStatusProbe).status
     return typeof status === "object" && status !== null && "active" in status
+  }
+
+  /**
+   * The only member of the fetched SOL Reserve PDA this flow probes — anchor
+   * decodes `status` as a tagged union whose IDL shape is not consumable here,
+   * so it stays an existential the `"active" in status` check narrows.
+   */
+  interface SolanaReserveAccountStatusProbe {
+    status?: unknown
   }
 
   /**

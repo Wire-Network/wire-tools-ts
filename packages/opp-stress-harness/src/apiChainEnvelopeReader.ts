@@ -61,14 +61,24 @@ async function readTable<T>(
     limit: DefaultRowLimit,
     json: true
   } as Parameters<APIClient["v1"]["chain"]["get_table_rows"]>[0])
-  const rows: readonly unknown[] = (result as { rows?: readonly unknown[] })
-    .rows ?? []
-  return rows.map(unwrapKvRow) as readonly T[]
+  const { rows } = result as TableRowsEnvelope,
+    tableRows: readonly unknown[] = rows ?? []
+  return tableRows.map(unwrapKvRow) as readonly T[]
+}
+
+/** The `get_table_rows` response leg this reader consumes. */
+interface TableRowsEnvelope {
+  rows?: readonly unknown[]
+}
+
+/** A v6 KV table row wrapper, whose flat row rides `value`. */
+interface KvRowWrapper {
+  value: unknown
 }
 
 /** Unwrap a v6 KV `{ key, value }` row to its flat `value`; pass others through. */
 function unwrapKvRow(row: unknown): unknown {
   return row !== null && typeof row === "object" && "value" in row
-    ? (row as { value: unknown }).value
+    ? (row as KvRowWrapper).value
     : row
 }

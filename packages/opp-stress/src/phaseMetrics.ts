@@ -4,6 +4,7 @@ import {
   type ValidEnvelopePair
 } from "@wireio/debugging-shared"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
+import { match } from "ts-pattern"
 
 import { projectOppEnvelopeSaturationMetrics } from "./envelopeRecordSource.js"
 import type { OppEnvelopeSaturationStrategy } from "./envelopeMetrics.js"
@@ -172,14 +173,16 @@ function isRunEvidenceEndpoint(value: string): value is RunEvidenceEndpoint {
 function canonicalStrategy(
   strategy: OppEnvelopeSaturationStrategy
 ): RunEvidenceSaturationStrategy {
-  switch (strategy) {
-    case "rollover":
-      return RunEvidenceSaturationStrategy.Rollover
-    case "byte_threshold":
-      return RunEvidenceSaturationStrategy.ByteThreshold
-    default:
-      return assertNever(strategy)
-  }
+  return match(strategy as RunEvidenceSaturationStrategy)
+    .with(
+      RunEvidenceSaturationStrategy.Rollover,
+      () => RunEvidenceSaturationStrategy.Rollover
+    )
+    .with(
+      RunEvidenceSaturationStrategy.ByteThreshold,
+      () => RunEvidenceSaturationStrategy.ByteThreshold
+    )
+    .otherwise(value => assertNever(value))
 }
 
 function assertNever(value: never): never {

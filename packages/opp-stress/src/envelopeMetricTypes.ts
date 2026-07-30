@@ -4,6 +4,7 @@ import type {
 } from "@wireio/debugging-shared"
 import type { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 
+import type { RunEvidenceSaturationStrategy } from "./run-evidence/runEvidenceConstants.js"
 import type { OppEnvelopeTelemetryObservation } from "./TelemetryHealthTypes.js"
 import type { OppEnvelopeTelemetryIssue } from "./TelemetryIssueTypes.js"
 
@@ -24,16 +25,26 @@ export const SolanaRawTransactionBytesMax = 1_232
  * supply records without fabricating filesystem-only provenance (sidecar bytes,
  * sha256, mtimes). `dataBytes.byteLength` is the saturation signal.
  */
-export type EnvelopeMetricRecord = Pick<
-  ValidEnvelopePair,
-  | "baseKey"
-  | "epochIndex"
-  | "endpointsType"
-  | "checksum"
-  | "epochEnvelopeIndex"
-  | "dataBytes"
-  | "batchOpNames"
->
+export interface EnvelopeMetricRecord {
+  readonly baseKey: ValidEnvelopePair["baseKey"]
+  readonly epochIndex: ValidEnvelopePair["epochIndex"]
+  readonly endpointsType: ValidEnvelopePair["endpointsType"]
+  readonly checksum: ValidEnvelopePair["checksum"]
+  readonly epochEnvelopeIndex: ValidEnvelopePair["epochEnvelopeIndex"]
+  readonly dataBytes: ValidEnvelopePair["dataBytes"]
+  readonly batchOpNames: ValidEnvelopePair["batchOpNames"]
+}
+
+/** Closed outcomes of one envelope record source read. */
+export enum EnvelopeMetricSnapshotKind {
+  /** The source completed every candidate validation it attempted. */
+  collected = "collected",
+  /** The source failed to read its backing store. */
+  source_failed = "source_failed"
+}
+
+/** Serialized outcome of one envelope record source read. */
+export type EnvelopeMetricSnapshotOutcome = `${EnvelopeMetricSnapshotKind}`
 
 /**
  * One source's confirmed envelope records plus candidate/issue accounting.
@@ -44,9 +55,9 @@ export type EnvelopeMetricRecord = Pick<
  * and issue accounting did. A non-filesystem source reports `candidateCount`
  * as its records length and yields no `issues`.
  */
-export type EnvelopeMetricSnapshot = {
+export interface EnvelopeMetricSnapshot {
   /** Whether the source produced records or failed to read its backing store. */
-  readonly kind: "collected" | "source_failed"
+  readonly kind: EnvelopeMetricSnapshotOutcome
   /** Confirmed records in source order; projection sorts deterministically. */
   readonly records: readonly EnvelopeMetricRecord[]
   /** Candidates the source considered, for telemetry health accounting. */
@@ -56,10 +67,10 @@ export type EnvelopeMetricSnapshot = {
 }
 
 /** OPP envelope saturation classification strategy. */
-export type OppEnvelopeSaturationStrategy = "rollover" | "byte_threshold"
+export type OppEnvelopeSaturationStrategy = `${RunEvidenceSaturationStrategy}`
 
 /** Inclusive filters for one OPP stress phase's envelope collection window. */
-export type OppEnvelopeSaturationWindow = {
+export interface OppEnvelopeSaturationWindow {
   /** Direction to count; omit or use UNKNOWN to include every direction. */
   readonly endpointsType?: DebugOutpostEndpointsType
   /** Inclusive epoch lower bound. */
@@ -84,7 +95,7 @@ export type OppEnvelopeSaturationWindow = {
 }
 
 /** Decoded OPP envelope metric used to decide whether one phase rolled over. */
-export type OppEnvelopeMetric = {
+export interface OppEnvelopeMetric {
   /** Storage key without `.data` / `.metadata`. */
   readonly key: string
   /** Source-side epoch index parsed from the storage key. */
@@ -104,7 +115,7 @@ export type OppEnvelopeMetric = {
 }
 
 /** Candidate issue summary with its complete structured diagnostic. */
-export type MalformedOppEnvelopeRecord = {
+export interface MalformedOppEnvelopeRecord {
   /** Candidate base key, including an empty malformed key when discovered. */
   readonly key: string
   /** Exact serialized issue code without a policy-message prefix. */
@@ -114,7 +125,7 @@ export type MalformedOppEnvelopeRecord = {
 }
 
 /** Envelope saturation metrics for one OPP stress phase and direction/window. */
-export type OppEnvelopeSaturationMetrics = {
+export interface OppEnvelopeSaturationMetrics {
   /** Whether matching records satisfy the selected saturation strategy. */
   readonly saturated: boolean
   /** Whether any matching Solana destination envelope exceeds the raw transaction byte cap. */

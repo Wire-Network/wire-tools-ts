@@ -10,7 +10,7 @@ import type {
 
 import type { SwapStressPayoutObservation } from "./phaseRunnerTypes.js"
 
-type MetricSummary = {
+interface MetricSummary {
   readonly phase: string
   readonly saturated: boolean
   readonly envelopeCount: number
@@ -20,101 +20,152 @@ type MetricSummary = {
   readonly epochEnd: RunEvidenceDecimal
 }
 
+/** `Extract` filter selecting the recorded leg of the generic phase evidence. */
+interface RecordedEvidenceDiscriminator {
+  readonly kind: "recorded"
+}
+
+/** `Extract` filter selecting the correlation-only leg of the phase evidence. */
+interface NotRecordedEvidenceDiscriminator {
+  readonly kind: "not_recorded"
+}
+
 type RecordedEvidence = Extract<
   OppPhaseMetricEvidence,
-  { readonly kind: "recorded" }
+  RecordedEvidenceDiscriminator
 >
 
 type NotRecordedEvidence = Extract<
   OppPhaseMetricEvidence,
-  { readonly kind: "not_recorded" }
+  NotRecordedEvidenceDiscriminator
 >
 
-type OppPhaseProjectionFields = Pick<
-  OppPhaseEnvelopeMetrics,
-  | "strategy"
-  | "window"
-  | "solanaOversized"
-  | "epochEnvelopeIndexes"
-  | "selectedArtifacts"
->
+/**
+ * The `OppPhaseEnvelopeMetrics` fields a swap-stress phase provenance projects.
+ * Each member type is an indexed access on the generated metrics interface, so
+ * the projection tracks it without re-spelling a `Pick` key literal union.
+ */
+interface OppPhaseProjectionFields {
+  readonly strategy: OppPhaseEnvelopeMetrics["strategy"]
+  readonly window: OppPhaseEnvelopeMetrics["window"]
+  readonly solanaOversized: OppPhaseEnvelopeMetrics["solanaOversized"]
+  readonly epochEnvelopeIndexes: OppPhaseEnvelopeMetrics["epochEnvelopeIndexes"]
+  readonly selectedArtifacts: OppPhaseEnvelopeMetrics["selectedArtifacts"]
+}
+
+/** The generic-phase provenance discriminator and its evidence leg. */
+interface OppPhaseProvenanceEvidence<
+  Evidence extends OppPhaseMetricEvidence
+> {
+  readonly kind: "opp_phase"
+  readonly evidence: Evidence
+}
 
 type OppPhaseProvenance<Evidence extends OppPhaseMetricEvidence> =
-  OppPhaseProjectionFields & {
-    readonly kind: "opp_phase"
-    readonly evidence: Evidence
-  }
+  OppPhaseProjectionFields & OppPhaseProvenanceEvidence<Evidence>
 
-type StrictSnapshotProvenance = {
+interface StrictSnapshotProvenance {
   readonly kind: "strict_snapshot"
   readonly solanaOversized: boolean
   readonly epochEnvelopeIndexes: readonly number[]
 }
 
-/** Direct-flow metrics backed by an actual strict telemetry observation. */
-export type SwapStressMeasuredPhaseEnvelopeMetrics = MetricSummary & {
+/** The measured-observation fields layered over the shared metric summary. */
+interface MeasuredPhaseEnvelopeFields {
   /** Confirms that telemetry collection produced an observation. */
   readonly measurement: "measured"
   /** Exact healthy strict-reader candidate accounting. */
   readonly health: HealthyOppEnvelopeTelemetryHealth
   /** Exact malformed candidate summaries from the strict projection. */
   readonly malformedRecords: readonly MalformedOppEnvelopeRecord[]
-} & (
-    | {
-        /** Current strict snapshot provenance without baseline or evidence claims. */
-        readonly provenance: StrictSnapshotProvenance
-        /** Strict snapshots do not capture immutable run-evidence artifacts. */
-        readonly artifactRefs: readonly []
-      }
-    | {
-        /** Generic phase provenance with baseline correlation only. */
-        readonly provenance: OppPhaseProvenance<NotRecordedEvidence>
-        /** Baseline refs remain nested and are not phase-captured artifacts. */
-        readonly artifactRefs: readonly []
-      }
-    | {
-        /** Generic phase provenance with complete recorded evidence. */
-        readonly provenance: OppPhaseProvenance<RecordedEvidence>
-        /** Ordered immutable refs captured for this observation. */
-        readonly artifactRefs: RecordedEvidence["artifactRefs"]
-      }
+}
+
+/** Measured variant backed by a current strict snapshot. */
+interface MeasuredStrictSnapshotProvenanceFields {
+  /** Current strict snapshot provenance without baseline or evidence claims. */
+  readonly provenance: StrictSnapshotProvenance
+  /** Strict snapshots do not capture immutable run-evidence artifacts. */
+  readonly artifactRefs: readonly []
+}
+
+/** Measured variant carrying baseline correlation only. */
+interface MeasuredCorrelationProvenanceFields {
+  /** Generic phase provenance with baseline correlation only. */
+  readonly provenance: OppPhaseProvenance<NotRecordedEvidence>
+  /** Baseline refs remain nested and are not phase-captured artifacts. */
+  readonly artifactRefs: readonly []
+}
+
+/** Measured variant carrying complete recorded evidence. */
+interface MeasuredRecordedProvenanceFields {
+  /** Generic phase provenance with complete recorded evidence. */
+  readonly provenance: OppPhaseProvenance<RecordedEvidence>
+  /** Ordered immutable refs captured for this observation. */
+  readonly artifactRefs: RecordedEvidence["artifactRefs"]
+}
+
+/** Direct-flow metrics backed by an actual strict telemetry observation. */
+export type SwapStressMeasuredPhaseEnvelopeMetrics = MetricSummary &
+  MeasuredPhaseEnvelopeFields &
+  (
+    | MeasuredStrictSnapshotProvenanceFields
+    | MeasuredCorrelationProvenanceFields
+    | MeasuredRecordedProvenanceFields
   )
 
-/** Retryable canonical telemetry retained without claiming measurement completion. */
-export type SwapStressPendingPhaseEnvelopeMetrics = Omit<
-  MetricSummary,
-  "saturated"
-> & {
+/** The pending-observation fields layered over the shared metric summary. */
+interface PendingPhaseEnvelopeFields {
   /** Confirms that canonical collection has not reached healthy completion. */
   readonly measurement: "pending"
   /** Pending publication cannot establish terminal saturation. */
   readonly saturated: false
   /** Exact retryable strict-reader health from the canonical observation. */
   readonly health:
-    EmptyOppEnvelopeTelemetryHealth | PendingOppEnvelopeTelemetryHealth
+    | EmptyOppEnvelopeTelemetryHealth
+    | PendingOppEnvelopeTelemetryHealth
   /** Exact malformed candidate summaries from the strict projection. */
   readonly malformedRecords: readonly MalformedOppEnvelopeRecord[]
-} & (
-    | {
-        /** Generic pending provenance retaining baseline correlation. */
-        readonly provenance: OppPhaseProvenance<NotRecordedEvidence>
-        /** Correlation-only pending evidence does not claim captured artifacts. */
-        readonly artifactRefs: readonly []
-      }
-    | {
-        /** Generic pending provenance retaining its recorded observation. */
-        readonly provenance: OppPhaseProvenance<RecordedEvidence>
-        /** Ordered immutable refs captured for the pending observation. */
-        readonly artifactRefs: RecordedEvidence["artifactRefs"]
-      }
-  )
+}
+
+/** Pending variant retaining baseline correlation only. */
+interface PendingCorrelationProvenanceFields {
+  /** Generic pending provenance retaining baseline correlation. */
+  readonly provenance: OppPhaseProvenance<NotRecordedEvidence>
+  /** Correlation-only pending evidence does not claim captured artifacts. */
+  readonly artifactRefs: readonly []
+}
+
+/** Pending variant retaining its recorded observation. */
+interface PendingRecordedProvenanceFields {
+  /** Generic pending provenance retaining its recorded observation. */
+  readonly provenance: OppPhaseProvenance<RecordedEvidence>
+  /** Ordered immutable refs captured for the pending observation. */
+  readonly artifactRefs: RecordedEvidence["artifactRefs"]
+}
+
+/** Retryable canonical telemetry retained without claiming measurement completion. */
+export type SwapStressPendingPhaseEnvelopeMetrics = Omit<
+  MetricSummary,
+  "saturated"
+> &
+  PendingPhaseEnvelopeFields &
+  (PendingCorrelationProvenanceFields | PendingRecordedProvenanceFields)
 
 /** Why direct-flow telemetry has no measured observation. */
-export type SwapStressUnmeasuredReason =
-  "collector_not_configured" | "collection_failed" | "phase_not_run"
+export enum SwapStressUnmeasuredReasonKind {
+  collector_not_configured = "collector_not_configured",
+  collection_failed = "collection_failed",
+  phase_not_run = "phase_not_run"
+}
+
+/**
+ * Why direct-flow telemetry has no measured observation — derived from
+ * {@link SwapStressUnmeasuredReasonKind} so raw spellings stay assignable.
+ */
+export type SwapStressUnmeasuredReason = `${SwapStressUnmeasuredReasonKind}`
 
 /** Explicit zero summary for a phase with no telemetry observation. */
-export type SwapStressUnmeasuredPhaseEnvelopeMetrics = {
+export interface SwapStressUnmeasuredPhaseEnvelopeMetrics {
   /** Confirms that no telemetry observation exists. */
   readonly measurement: "unmeasured"
   /** Exact reason no observation exists. */
@@ -149,8 +200,8 @@ export type SwapStressPhaseEnvelopeMetrics =
   | SwapStressPendingPhaseEnvelopeMetrics
   | SwapStressUnmeasuredPhaseEnvelopeMetrics
 
-/** Per-phase telemetry retained by the phase runner outcome. */
-export type SwapStressPhaseResult = SwapStressPhaseEnvelopeMetrics & {
+/** The per-phase runner fields layered over the phase telemetry metrics. */
+interface SwapStressPhaseResultFields {
   /** Phase transaction successes. */
   readonly txSuccesses: number
   /** Phase transaction failures. */
@@ -162,3 +213,7 @@ export type SwapStressPhaseResult = SwapStressPhaseEnvelopeMetrics & {
   /** Observed remit payouts for the phase. */
   readonly payout: SwapStressPayoutObservation | null
 }
+
+/** Per-phase telemetry retained by the phase runner outcome. */
+export type SwapStressPhaseResult = SwapStressPhaseEnvelopeMetrics &
+  SwapStressPhaseResultFields

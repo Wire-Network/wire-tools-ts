@@ -1,3 +1,5 @@
+import { match } from "ts-pattern"
+
 import {
   OppEnvelopeTelemetryHealthKind,
   RunEvidenceEndpoints,
@@ -29,20 +31,20 @@ export function isSwapStressTelemetryDegradation(
   value: unknown
 ): value is SwapStressTelemetryDegradation {
   if (!isObservationRecord(value)) return false
-  switch (value.kind) {
-    case "baseline_capture_failed":
-      return (
+  return match(value.kind)
+    .with(
+      "baseline_capture_failed",
+      () =>
         hasExactObservationKeys(value, ["kind", "issues"]) &&
         isEnvelopeIntegrityIssueSequence(value.issues)
-      )
-    case "deadline_exhausted":
-      return (
+    )
+    .with(
+      "deadline_exhausted",
+      () =>
         hasExactObservationKeys(value, ["kind", "observation"]) &&
         isPendingObservation(value.observation)
-      )
-    default:
-      return false
-  }
+    )
+    .otherwise(() => false)
 }
 
 function isEnvelopeIntegrityIssueSequence(
@@ -103,27 +105,36 @@ function isPendingObservation(
   )
 }
 
-function evidenceArtifactRefs(value: unknown): readonly string[] | null {
+/**
+ * The evidence artifact refs, or `null` when the candidate is not valid
+ * evidence. This package compiles with `strictNullChecks`, so the nullable leg
+ * is a load-bearing part of the contract and is named rather than spelled
+ * inline at the return position.
+ */
+type EvidenceArtifactRefs = readonly string[] | null
+
+function evidenceArtifactRefs(value: unknown): EvidenceArtifactRefs {
   if (!isObservationRecord(value)) return null
-  switch (value.kind) {
-    case "not_recorded":
-      return []
-    case "recorded":
-      return Array.isArray(value.artifactRefs) ? value.artifactRefs : null
-    default:
-      return null
-  }
+  return match(value.kind)
+    .with("not_recorded", () => [])
+    .with("recorded", () =>
+      Array.isArray(value.artifactRefs) ? value.artifactRefs : null
+    )
+    .otherwise(() => null)
+}
+
+/** `Extract` filter selecting the retryable legs of a telemetry observation. */
+interface RetryableTelemetryDiscriminator {
+  readonly kind:
+    | OppEnvelopeTelemetryHealthKind.Empty
+    | OppEnvelopeTelemetryHealthKind.PendingPublication
 }
 
 function isPendingHealth(
   health: OppEnvelopeTelemetryHealth | null
 ): health is Extract<
   OppEnvelopeTelemetryHealth,
-  {
-    readonly kind:
-      | OppEnvelopeTelemetryHealthKind.Empty
-      | OppEnvelopeTelemetryHealthKind.PendingPublication
-  }
+  RetryableTelemetryDiscriminator
 > {
   return (
     health?.kind === OppEnvelopeTelemetryHealthKind.Empty ||

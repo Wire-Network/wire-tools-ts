@@ -7,7 +7,8 @@ import {
 import {
   createNodeFileSystem,
   createStorageDir,
-  removeStorageDir
+  removeStorageDir,
+  type EnvelopeRootCloseHookContext
 } from "./envelopeIntegrityTestSupport.js"
 
 describe("EnvelopeIntegrityReader baseline close ordering", () => {
@@ -114,10 +115,7 @@ function failRetainedClose(
 async function failFirstClose({
   openCount,
   close
-}: {
-  readonly openCount: number
-  readonly close: () => Promise<void>
-}): Promise<void> {
+}: EnvelopeRootCloseHookContext): Promise<void> {
   await close()
   if (openCount === 1) throw fileError("root_close")
 }
@@ -151,7 +149,7 @@ function fileError(operation: string): Error {
 
 function failedIssueOperations(
   result: Awaited<ReturnType<typeof captureEnvelopeBaseline>>
-): readonly (readonly [EnvelopeIntegrityIssueCode, string | null])[] {
+): readonly (readonly [EnvelopeIntegrityIssueCode, string])[] {
   if (result.kind === "captured") return []
   return result.issues.map(issue => [
     issue.code,

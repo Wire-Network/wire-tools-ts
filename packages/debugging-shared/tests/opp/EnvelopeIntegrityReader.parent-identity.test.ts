@@ -87,7 +87,8 @@ describe("EnvelopeIntegrityReader ancestor identity", () => {
   )
 })
 
-type NestedStorageFixture = {
+/** Container, intermediate parent, and leaf storage directory paths. */
+interface NestedStorageFixture {
   readonly container: string
   readonly parent: string
   readonly storageDir: string

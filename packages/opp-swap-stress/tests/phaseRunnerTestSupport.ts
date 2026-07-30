@@ -7,29 +7,45 @@ import {
 
 import { strictSnapshotMetrics } from "./phaseRunnerMetricFixtures.js"
 
-type RecordingPayoutObserver =
-  SwapStressPhaseRunnerDeps["recipientPayoutObserver"] & {
-    readonly preparedRequests: Parameters<
-      SwapStressPhaseRunnerDeps["recipientPayoutObserver"]["waitForPayouts"]
-    >[0][]
-    readonly observedRequests: Parameters<
-      SwapStressPhaseRunnerDeps["recipientPayoutObserver"]["waitForPayouts"]
-    >[0][]
-  }
+/** The prepared/observed request logs a recording payout observer accumulates. */
+interface RecordedPayoutRequests {
+  readonly preparedRequests: Parameters<
+    SwapStressPhaseRunnerDeps["recipientPayoutObserver"]["waitForPayouts"]
+  >[0][]
+  readonly observedRequests: Parameters<
+    SwapStressPhaseRunnerDeps["recipientPayoutObserver"]["waitForPayouts"]
+  >[0][]
+}
 
-export type PhaseRunnerTestDeps = Extract<
-  SwapStressPhaseRunnerDeps,
-  { readonly telemetryKind: "synthetic" }
-> & {
-  readonly payoutObservers: {
-    readonly recipient: RecordingPayoutObserver
-    readonly return: RecordingPayoutObserver
-  }
+type RecordingPayoutObserver =
+  SwapStressPhaseRunnerDeps["recipientPayoutObserver"] &
+    RecordedPayoutRequests
+
+/** `Extract` filter selecting the synthetic-telemetry phase-runner deps. */
+interface SyntheticTelemetryDiscriminator {
+  readonly telemetryKind: "synthetic"
+}
+
+/** Both recording payout observers a phase-runner fixture installs. */
+interface RecordingPayoutObservers {
+  readonly recipient: RecordingPayoutObserver
+  readonly return: RecordingPayoutObserver
+}
+
+/** The recorded call logs a synthetic phase-runner fixture exposes. */
+interface PhaseRunnerTestRecordings {
+  readonly payoutObservers: RecordingPayoutObservers
   readonly phase2Requests: Phase2SwapRequest[]
   readonly ethereumNonceReservationCounts: Array<number | undefined>
 }
 
-type TestDepsOptions = {
+export type PhaseRunnerTestDeps = Extract<
+  SwapStressPhaseRunnerDeps,
+  SyntheticTelemetryDiscriminator
+> &
+  PhaseRunnerTestRecordings
+
+interface TestDepsOptions {
   readonly phase1FailureReason?: string
   readonly phase1MetricsSaturated?: boolean
   readonly phase1DestinationMetricsSaturated?: boolean

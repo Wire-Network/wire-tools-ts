@@ -115,15 +115,15 @@ describe("OPP stress ramp observation contract", () => {
 
   it("normalizes duplicate diagnostics without mutating the callback value", async () => {
     // Given: diagnostic labels repeat in first-occurrence order.
-    const evidenceDir = makeEvidenceDir("diagnostic-dedupe"),
-      input = {
-        ...completedObservation(),
-        observedNonRequiredEndpoints: [
-          "diagnostic-b",
-          "diagnostic-a",
-          "diagnostic-b"
-        ]
-      }
+    makeEvidenceDir("diagnostic-dedupe")
+    const input = {
+      ...completedObservation(),
+      observedNonRequiredEndpoints: [
+        "diagnostic-b",
+        "diagnostic-a",
+        "diagnostic-b"
+      ]
+    }
 
     // When: the observation crosses the controller boundary.
     const result = await runOppStressRamp({
@@ -152,7 +152,7 @@ describe("OPP stress ramp observation contract", () => {
 
   it("orders cumulative saturation by requirements and diagnostics by first sighting", async () => {
     // Given: two observations saturate required endpoints in reverse campaign order.
-    const evidenceDir = makeEvidenceDir("campaign-order")
+    makeEvidenceDir("campaign-order")
 
     // When: the controller merges both observations.
     const result = await runOppStressRamp({
@@ -188,7 +188,7 @@ describe("OPP stress ramp observation contract", () => {
 
   it("retains prior saturation when a later observation breaks", async () => {
     // Given: one endpoint saturates before a later breakage.
-    const evidenceDir = makeEvidenceDir("breakage-after-prior")
+    makeEvidenceDir("breakage-after-prior")
 
     // When: the second observation reports breakage without new saturation.
     const result = await runOppStressRamp({
@@ -216,7 +216,7 @@ describe("OPP stress ramp observation contract", () => {
 
   it("classifies breakage as failure even when it reports all endpoints saturated", async () => {
     // Given: a breakage observation also reports complete endpoint saturation.
-    const evidenceDir = makeEvidenceDir("breakage-all")
+    makeEvidenceDir("breakage-all")
 
     // When: the controller merges saturation before terminal classification.
     const result = await runOppStressRamp({

@@ -31,17 +31,41 @@ export namespace AtomicFile {
     DirectoryClose = "directory-close"
   }
 
+  /** Open flags the publisher uses for temp creation and parent-directory sync. */
+  export enum OpenFlag {
+    /** Read-only open of the destination's parent directory. */
+    r = "r",
+    /** Exclusive create of the same-directory temporary file. */
+    wx = "wx"
+  }
+
+  /** Serialized open flag accepted by an injected filesystem. */
+  export type OpenFlagName = `${OpenFlag}`
+
   /** File-handle operations required by the publisher and fault injectors. */
-  export type FileHandle = Pick<NodeFileHandle, "writeFile" | "sync" | "close">
+  export interface FileHandle {
+    /** Write the complete payload through the retained descriptor. */
+    writeFile: NodeFileHandle["writeFile"]
+    /** Flush the descriptor's data and metadata to durable storage. */
+    sync: NodeFileHandle["sync"]
+    /** Release the retained descriptor. */
+    close: NodeFileHandle["close"]
+  }
+
+  /** Directory-entry stat fields required to reject symlinked publication paths. */
+  export interface EntryStat {
+    /** Whether the inspected pathname is a symbolic link. */
+    isSymbolicLink: Fs.Stats["isSymbolicLink"]
+  }
 
   /** Injectable filesystem operations used for deterministic failures and races. */
   export interface FileSystem {
     /** Inspect a directory entry without following symbolic links. */
-    readonly lstat: (file: string) => Promise<Pick<Fs.Stats, "isSymbolicLink">>
+    readonly lstat: (file: string) => Promise<EntryStat>
     /** Open a temporary file exclusively or a parent directory read-only. */
     readonly open: (
       file: string,
-      flags: "r" | "wx",
+      flags: OpenFlagName,
       mode?: number
     ) => Promise<FileHandle>
     /** Atomically create a hard link without replacing the destination. */

@@ -143,15 +143,18 @@ function makeStorageDir(label: string): string {
   return storageDir
 }
 
+/** Per-fixture overrides for one written envelope pair. */
+interface EnvelopeFixtureOptions {
+  readonly endpointsType?: DebugOutpostEndpointsType
+  readonly payloadSize?: number
+}
+
 function writeEnvelopeFixture(
   storageDir: string,
   epochEnvelopeIndex: number,
-  options: {
-    readonly endpointsType?: DebugOutpostEndpointsType
-    readonly payloadSize?: number
-  } = {}
+  options: EnvelopeFixtureOptions = {}
 ): void {
-  const payloadSize = options.payloadSize ?? 0,
+  const { payloadSize = 0 } = options,
     payload = new Uint8Array(payloadSize)
   payload.fill(1)
   const includePayload =
@@ -184,8 +187,7 @@ function writeEnvelopeFixture(
       .update(Buffer.from(bytes))
       .digest("hex")
       .substring(0, EnvelopeMetricFixtures.ChecksumHexChars),
-    endpointsType =
-      options.endpointsType ?? EnvelopeMetricFixtures.EndpointsType,
+    { endpointsType = EnvelopeMetricFixtures.EndpointsType } = options,
     endpointsKey = endpointsTypeToKey(endpointsType),
     epochStr = String(EnvelopeMetricFixtures.EpochIndex).padStart(
       EnvelopeMetricFixtures.EpochIndexPadWidth,

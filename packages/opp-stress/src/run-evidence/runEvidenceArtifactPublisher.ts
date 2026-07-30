@@ -15,7 +15,7 @@ type ImmutablePublisher = (
 ) => Promise<AtomicFile.PublishResult>
 
 /** Complete immutable-pair publication request for one first observation. */
-export type FirstOppArtifactPublication = {
+export interface FirstOppArtifactPublication {
   readonly runDirectory: string
   readonly observationOrdinal: RunEvidenceDecimal
   readonly artifact: ValidatedOppArtifact

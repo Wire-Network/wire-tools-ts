@@ -41,9 +41,11 @@ import {
   type ProvisionOptions,
   type SweepResult
 } from "./load/index.js"
+import { getStdoutLogger } from "./logger.js"
 import { formatSaturationSummary } from "./saturationReport.js"
 
 const log = getLogger("wire-opp-stress"),
+  stdout = getStdoutLogger(),
   ByteThresholdStrategy = "byte_threshold" as const,
   NodeOwnerKeyEnv = "WIRE_NODE_OWNER_KEY",
   EthFunderKeyEnv = "WIRE_ETH_FUNDER_KEY",
@@ -53,9 +55,9 @@ const log = getLogger("wire-opp-stress"),
   DuplexWireChain = "WIRE",
   DuplexWireToken = "WIRE"
 
-/** Emit a line of output on stdout. */
+/** Emit a line of CLI DATA output on the clean stdout channel. */
 function emit(text: string): void {
-  process.stdout.write(`${text}\n`)
+  stdout.info(text)
 }
 
 /** Run a command body, converting any failure into a logged non-zero exit. */
@@ -394,7 +396,9 @@ void Yargs(hideBin(process.argv))
     argv =>
       guard("wire-sweep", async () => {
         const file = readLoadWalletFile(argv.walletFile),
-          destination = argv.to ?? file.funder,
+          { to } = argv,
+          { funder } = file,
+          destination = to ?? funder,
           results = await file.wallets.reduce<Promise<readonly SweepResult[]>>(
             async (pending, wallet) => [...(await pending), await sweepLoadWallet(argv.url, wallet, destination)],
             Promise.resolve([])
@@ -487,7 +491,9 @@ void Yargs(hideBin(process.argv))
       guard("eth-sweep", async () => {
         const file = readEthLoadWalletFile(argv.walletFile),
           provider = new JsonRpcProvider(argv.ethUrl),
-          destination = argv.to ?? file.funder,
+          { to } = argv,
+          { funder } = file,
+          destination = to ?? funder,
           gasPrice = await resolveGasPrice(provider),
           results = await file.wallets.reduce<Promise<readonly EthSweepResult[]>>(
             async (pending, wallet) => [...(await pending), await sweepEthWallet(provider, wallet, destination, gasPrice)],

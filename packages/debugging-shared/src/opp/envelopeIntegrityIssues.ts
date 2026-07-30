@@ -2,20 +2,31 @@ import * as Path from "node:path"
 
 import { EnvelopeStorageKeyValidationIssue } from "./EnvelopeStorageKey.js"
 import {
+  EnvelopeIntegrityInvalidKeyReasonKind,
   EnvelopeIntegrityIssueCode,
+  EnvelopeSidecarKind,
   type EnvelopeIntegrityFileError,
   type EnvelopeIntegrityFileIdentity,
   type EnvelopeIntegrityIssue,
-  type EnvelopeIntegrityIssueSequence
+  type EnvelopeSidecar
 } from "./EnvelopeIntegrityReaderTypes.js"
 import { unknownErrorMessage } from "./envelopeIntegrityError.js"
 import type {
+  EnvelopeCandidateIssue,
   EnvelopeCandidateValidationRequest,
   EnvelopeCandidateValidationResult
 } from "./envelopeIntegrityValidationTypes.js"
-import type { StableFileReadResult } from "./envelopeIntegrityFileSystem.js"
+import type { FailedStableFileReadResult } from "./envelopeIntegrityFileSystem.js"
+import type { EnvelopeStorageRootIssueResult } from "./envelopeIntegrityRootTypes.js"
 
 const StorageScopeBaseKey = "$storage"
+
+/** Resolved sidecar path contained by the pinned lexical storage root. */
+interface ContainedSidecarPath {
+  readonly kind: "path"
+  readonly path: string
+  readonly basename: string
+}
 
 /**
  * Build one normalized storage-root I/O issue.
@@ -28,7 +39,7 @@ export function rootReadIssue(
   storageRoot: string,
   path: string,
   error: EnvelopeIntegrityFileError
-): { readonly kind: "issue"; readonly issues: EnvelopeIntegrityIssueSequence } {
+): EnvelopeStorageRootIssueResult {
   return {
     kind: "issue",
     issues: [
@@ -54,7 +65,7 @@ export function rootChangedIssue(
   before: EnvelopeIntegrityFileIdentity,
   after: EnvelopeIntegrityFileIdentity | null,
   error: EnvelopeIntegrityFileError | null
-): { readonly kind: "issue"; readonly issues: EnvelopeIntegrityIssueSequence } {
+): EnvelopeStorageRootIssueResult {
   return {
     kind: "issue",
     issues: [
@@ -92,9 +103,7 @@ export function emptyFileIdentity(): EnvelopeIntegrityFileIdentity {
 export function resolveCandidateSidecarPath(
   request: EnvelopeCandidateValidationRequest,
   extension: string
-):
-  | { readonly kind: "path"; readonly path: string; readonly basename: string }
-  | Extract<EnvelopeCandidateValidationResult, { readonly kind: "issue" }> {
+): ContainedSidecarPath | EnvelopeCandidateIssue {
   const basename = `${request.baseKey}${extension}`,
     path = Path.resolve(request.root.path, basename)
   return Path.basename(basename) !== basename ||
@@ -127,10 +136,10 @@ export function invalidKeyResult(
   }
   const reason =
     validationIssue === EnvelopeStorageKeyValidationIssue.Epoch
-      ? "invalid_epoch"
+      ? EnvelopeIntegrityInvalidKeyReasonKind.invalid_epoch
       : validationIssue === EnvelopeStorageKeyValidationIssue.Checksum
-        ? "invalid_checksum"
-        : "noncanonical_format"
+        ? EnvelopeIntegrityInvalidKeyReasonKind.invalid_checksum
+        : EnvelopeIntegrityInvalidKeyReasonKind.noncanonical_format
   return issue({
     code: EnvelopeIntegrityIssueCode.InvalidStorageKey,
     baseKey,
@@ -147,11 +156,11 @@ export function invalidKeyResult(
  */
 export function pendingResult(
   baseKey: string,
-  missingSidecar: "data" | "metadata",
+  missingSidecar: EnvelopeSidecar,
   path: string
 ): EnvelopeCandidateValidationResult {
   const code =
-    missingSidecar === "data"
+    missingSidecar === EnvelopeSidecarKind.data
       ? EnvelopeIntegrityIssueCode.MissingDataSidecar
       : EnvelopeIntegrityIssueCode.MissingMetadataSidecar
   return {
@@ -171,14 +180,14 @@ export function pendingResult(
  */
 export function sidecarReadIssue(
   baseKey: string,
-  sidecar: "data" | "metadata",
+  sidecar: EnvelopeSidecar,
   path: string,
-  result: Exclude<StableFileReadResult, { readonly kind: "bytes" }>
+  result: FailedStableFileReadResult
 ): EnvelopeCandidateValidationResult {
   if (result.kind === "symlink") {
     return issue({
       code:
-        sidecar === "data"
+        sidecar === EnvelopeSidecarKind.data
           ? EnvelopeIntegrityIssueCode.DataSidecarSymlink
           : EnvelopeIntegrityIssueCode.MetadataSidecarSymlink,
       baseKey,
@@ -188,7 +197,7 @@ export function sidecarReadIssue(
   if (result.kind === "not_regular") {
     return issue({
       code:
-        sidecar === "data"
+        sidecar === EnvelopeSidecarKind.data
           ? EnvelopeIntegrityIssueCode.DataSidecarNotRegular
           : EnvelopeIntegrityIssueCode.MetadataSidecarNotRegular,
       baseKey,
@@ -198,7 +207,7 @@ export function sidecarReadIssue(
   if (result.kind === "changed") {
     return issue({
       code:
-        sidecar === "data"
+        sidecar === EnvelopeSidecarKind.data
           ? EnvelopeIntegrityIssueCode.DataSidecarChanged
           : EnvelopeIntegrityIssueCode.MetadataSidecarChanged,
       baseKey,
@@ -212,7 +221,7 @@ export function sidecarReadIssue(
   }
   return issue({
     code:
-      sidecar === "data"
+      sidecar === EnvelopeSidecarKind.data
         ? EnvelopeIntegrityIssueCode.DataReadFailed
         : EnvelopeIntegrityIssueCode.MetadataReadFailed,
     baseKey,
@@ -246,8 +255,6 @@ export function decodeIssueResult(
   })
 }
 
-function issue(
-  value: EnvelopeIntegrityIssue
-): Extract<EnvelopeCandidateValidationResult, { readonly kind: "issue" }> {
+function issue(value: EnvelopeIntegrityIssue): EnvelopeCandidateIssue {
   return { kind: "issue", issue: value }
 }

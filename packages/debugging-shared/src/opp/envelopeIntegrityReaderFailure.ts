@@ -74,7 +74,7 @@ export function rootFailure(
  */
 export function nonEmptyIssues(
   issues: readonly EnvelopeIntegrityIssue[]
-): EnvelopeIntegrityIssueSequence | null {
+): EnvelopeIntegrityIssueSequence {
   const [first, ...rest] = issues
   return first === undefined ? null : [first, ...rest]
 }

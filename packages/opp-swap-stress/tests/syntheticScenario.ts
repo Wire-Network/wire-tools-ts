@@ -22,13 +22,13 @@ export const TestRampConfig: StressRampConfig = {
 }
 
 /** Synthetic scenario controls for deterministic no-env ramp tests. */
-export type ScenarioOptions = {
+export interface ScenarioOptions {
   readonly saturationCount: number | null
   readonly phase1FailureReason?: string
 }
 
 /** Synthetic scenario surface consumed by ramp-controller tests. */
-export type Scenario = {
+export interface Scenario {
   readonly runIteration: (
     input: StressRampIterationInput
   ) => Promise<SwapStressIterationObservation>

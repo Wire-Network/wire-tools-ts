@@ -1,7 +1,4 @@
-import {
-  RampBreakageCategory,
-  RunEvidenceEndpoint
-} from "@wireio/test-opp-stress"
+import { RampBreakageCategory } from "@wireio/test-opp-stress"
 import { runSaturationRamp } from "@wireio/opp-swap-stress"
 import type { SwapStressTelemetryBreakageObservation } from "@wireio/opp-swap-stress"
 
@@ -12,11 +9,7 @@ const Config = {
     multiplier: 2,
     maxCount: 1,
     phaseTimeoutMs: 30_000
-  } as const,
-  RequiredEndpoints = [
-    RunEvidenceEndpoint.OutpostEthereumDepot,
-    RunEvidenceEndpoint.DepotOutpostEthereum
-  ] as const
+  } as const
 
 describe("flow observation telemetry degradation", () => {
   it("retains every ordered failed-baseline issue", async () => {

@@ -25,10 +25,6 @@ import type {
   RunEvidenceTerminal
 } from "./run-evidence/RunEvidenceRecordTypes.js"
 import { allocateRunEvidenceStore } from "./run-evidence/runEvidenceAllocation.js"
-import {
-  RunEvidencePersistenceError,
-  RunEvidencePersistenceErrorCode
-} from "./run-evidence/RunEvidencePersistenceError.js"
 import type { RunEvidencePersistenceStore } from "./run-evidence/RunEvidencePersistenceStore.js"
 
 /** Public facade for one isolated, atomic schema-v1 run-evidence directory. */
@@ -109,22 +105,30 @@ export class RunEvidencePersistence {
   }
 
   /** @return Frozen allocation authority for a fresh successfully set up ramp. */
-  requireActiveRampContext(): RunEvidencePersistence.ActiveRampContext {
-    return this.store.requireActiveRampContext()
+  assertActiveRampContext(): RunEvidencePersistence.ActiveRampContext {
+    return this.store.assertActiveRampContext()
   }
 }
 
 /** Public option, dependency, and observation contracts for the persistence facade. */
 export namespace RunEvidencePersistence {
+  /** Closed open modes accepted by the injectable source filesystem. */
+  export enum SourceOpenFlagKind {
+    r = "r"
+  }
+
+  /** Open mode accepted by the injectable source filesystem. */
+  export type SourceOpenFlag = `${SourceOpenFlagKind}`
+
   /** Exact normal-exit failure retained by canonical infrastructure finalization. */
-  export type InfrastructureFailureInput = {
+  export interface InfrastructureFailureInput {
     readonly endedAtMs: RunEvidenceDecimal
     readonly reason: string
     readonly cause: unknown
   }
 
   /** Canonically committed infrastructure failure and its exact source cause. */
-  export type TerminalizedInfrastructureFailure = {
+  export interface TerminalizedInfrastructureFailure {
     readonly kind: "terminalized"
     readonly lifecycle: RunEvidenceLifecycle.Failed
     readonly preserveCluster: true
@@ -137,7 +141,7 @@ export namespace RunEvidencePersistence {
   }
 
   /** Explicit state when atomic publication cannot truthfully continue. */
-  export type FailClosedResult = {
+  export interface FailClosedResult {
     readonly kind: "fail_closed"
     readonly lifecycle: RunEvidenceLifecycle
     readonly preserveCluster: true
@@ -158,7 +162,7 @@ export namespace RunEvidencePersistence {
   }
 
   /** Narrow immutable allocation authority consumed by the ramp controller. */
-  export type ActiveRampContext = {
+  export interface ActiveRampContext {
     /** Run-allocation timestamp used as terminal lifecycle start. */
     readonly startedAtMs: RunEvidenceDecimal
     /** Allocation-owned ramp configuration. */
@@ -175,17 +179,16 @@ export namespace RunEvidencePersistence {
   }
 
   /** Stable source stat fields required to detect path and in-read mutation. */
-  export type SourceStat = Pick<
-    Stats,
-    | "dev"
-    | "ino"
-    | "size"
-    | "mtimeMs"
-    | "ctimeMs"
-    | "isFile"
-    | "isDirectory"
-    | "isSymbolicLink"
-  >
+  export interface SourceStat {
+    dev: Stats["dev"]
+    ino: Stats["ino"]
+    size: Stats["size"]
+    mtimeMs: Stats["mtimeMs"]
+    ctimeMs: Stats["ctimeMs"]
+    isFile: Stats["isFile"]
+    isDirectory: Stats["isDirectory"]
+    isSymbolicLink: Stats["isSymbolicLink"]
+  }
 
   /** Stable source handle operations required by safe exact-byte capture. */
   export interface SourceFileHandle {
@@ -194,17 +197,23 @@ export namespace RunEvidencePersistence {
     readonly close: () => Promise<void>
   }
 
+  /** Directory-creation options accepted by the injectable source filesystem. */
+  export interface SourceMkdirOptions {
+    readonly recursive?: boolean
+    readonly mode?: number
+  }
+
   /** Injectable source filesystem used for deterministic mutation and path tests. */
   export interface SourceFileSystem {
     readonly lstat: (file: string) => Promise<SourceStat>
     readonly realpath: (file: string) => Promise<string>
     readonly open: (
       file: string,
-      flags: number | "r"
+      flags: number | SourceOpenFlag
     ) => Promise<SourceFileHandle | FileHandle>
     readonly mkdir: (
       directory: string,
-      options: { readonly recursive?: boolean; readonly mode?: number }
+      options: SourceMkdirOptions
     ) => Promise<void>
   }
 

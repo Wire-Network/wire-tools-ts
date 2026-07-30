@@ -6,7 +6,7 @@ import type {
 const NonNegativeDecimalPattern = /^(0|[1-9][0-9]*)$/
 
 /** Inputs required to construct one schema-valid phase observation window. */
-export type OppPhaseWindowInput = {
+export interface OppPhaseWindowInput {
   readonly startedAtMs: RunEvidenceDecimal
   readonly endedAtMs: RunEvidenceDecimal
   readonly epochStart: number

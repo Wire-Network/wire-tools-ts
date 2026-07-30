@@ -35,10 +35,21 @@ export enum EnvelopeStorageKeyValidationIssue {
   Checksum = "checksum"
 }
 
+/** Canonical key whose every component parsed and validated. */
+export interface ValidEnvelopeStorageKey {
+  readonly kind: "valid"
+  readonly value: ParsedEnvelopeStorageKey
+}
+
+/** Non-canonical key reported with the component that failed. */
+export interface InvalidEnvelopeStorageKey {
+  readonly kind: "invalid"
+  readonly issue: EnvelopeStorageKeyValidationIssue
+}
+
 /** Typed outcome of validating a canonical envelope storage key. */
 export type EnvelopeStorageKeyValidationResult =
-  | { readonly kind: "valid"; readonly value: ParsedEnvelopeStorageKey }
-  | { readonly kind: "invalid"; readonly issue: EnvelopeStorageKeyValidationIssue }
+  ValidEnvelopeStorageKey | InvalidEnvelopeStorageKey
 
 /**
  * Parse a storage key of the form `"<epochIndex>-<endpointsKey>-<checksum>"`.

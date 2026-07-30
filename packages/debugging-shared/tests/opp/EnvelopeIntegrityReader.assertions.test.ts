@@ -2,10 +2,9 @@ import { createHash } from "node:crypto"
 import * as Fs from "node:fs"
 import * as Path from "node:path"
 
-import {
-  DebugEnvelopeMetadataRecord,
-  Envelope
-} from "@wireio/opp-typescript-models"
+import { WireType } from "@protobuf-ts/runtime"
+import { DebugEnvelopeMetadataRecord } from "@wireio/opp-typescript-models"
+import { match } from "ts-pattern"
 import {
   createEnvelopeBaseline,
   EnvelopeIntegrityIssueCode,
@@ -236,10 +235,15 @@ describe("EnvelopeIntegrityReader exact integrity failures", () => {
 
 type RewritableEnvelopePair = ReturnType<typeof writeEnvelopePair>
 
+/** Base key of a pair republished under a freshly computed digest. */
+interface RewrittenEnvelopePair {
+  readonly baseKey: string
+}
+
 function rewriteDataPair(
   pair: RewritableEnvelopePair,
   dataBytes: Buffer
-): { readonly baseKey: string } {
+): RewrittenEnvelopePair {
   const sha256 = createHash("sha256").update(dataBytes).digest("hex"),
     baseKey = pair.baseKey.replace(/[0-9a-f]{16}$/, sha256.slice(0, 16)),
     dataPath = Path.join(Path.dirname(pair.dataPath), `${baseKey}.data`),
@@ -261,18 +265,16 @@ function rewriteDataPair(
 
 function encodedUnknownField(wireType: number): Buffer {
   const tag = encodeVarint((500 << 3) | wireType)
-  switch (wireType) {
-    case 0:
-      return Buffer.concat([tag, Buffer.from([1])])
-    case 1:
-      return Buffer.concat([tag, Buffer.alloc(8)])
-    case 2:
-      return Buffer.concat([tag, Buffer.from([1, 1])])
-    case 5:
-      return Buffer.concat([tag, Buffer.alloc(4)])
-    default:
+  return match(wireType)
+    .with(WireType.Varint, () => Buffer.concat([tag, Buffer.from([1])]))
+    .with(WireType.Bit64, () => Buffer.concat([tag, Buffer.alloc(8)]))
+    .with(WireType.LengthDelimited, () =>
+      Buffer.concat([tag, Buffer.from([1, 1])])
+    )
+    .with(WireType.Bit32, () => Buffer.concat([tag, Buffer.alloc(4)]))
+    .otherwise(() => {
       throw new Error(`unsupported test wire type ${wireType}`)
-  }
+    })
 }
 
 function encodeVarint(value: number): Buffer {

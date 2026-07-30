@@ -5,7 +5,6 @@ const SourceDir = Path.resolve(__dirname, "../src"),
   ForbiddenDependencyPatterns = [
     ["private node_modules", /node_modules/],
     ["runtime createRequire", /\bcreateRequire\b/],
-    ["undeclared ts-pattern", /ts-pattern/],
     ["cross-package relative import", /from\s+["']\.\.\/\.\.\//]
   ] as const
 

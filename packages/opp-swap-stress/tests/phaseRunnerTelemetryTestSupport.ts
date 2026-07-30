@@ -26,17 +26,26 @@ export {
   orderedBaselineCaptureIssues
 } from "./phaseRunnerBaselineCaptureTestSupport.js"
 
-/** Real phase-runner fixture with observable prepared telemetry boundaries. */
-export type PhaseTelemetryTestDeps = Extract<
-  SwapStressPhaseRunnerDeps,
-  { readonly telemetryKind: "real" }
-> & {
+/** `Extract` filter selecting the real-telemetry phase-runner deps. */
+interface RealTelemetryDiscriminator {
+  readonly telemetryKind: "real"
+}
+
+/** The recorded Phase-2 submissions the telemetry fixture exposes. */
+interface RecordedPhase2Requests {
   /** Phase-2 submissions prove whether terminal Phase-1 degradation stopped work. */
   readonly phase2Requests: Phase2SwapRequest[]
 }
 
+/** Real phase-runner fixture with observable prepared telemetry boundaries. */
+export type PhaseTelemetryTestDeps = Extract<
+  SwapStressPhaseRunnerDeps,
+  RealTelemetryDiscriminator
+> &
+  RecordedPhase2Requests
+
 /** Controls for deterministic canonical phase telemetry tests. */
-export type PhaseTelemetryTestOptions = {
+export interface PhaseTelemetryTestOptions {
   /** Optional event recorder for ordering assertions. */
   readonly events?: string[]
   /** Optional Phase-1 payout observer failure. */

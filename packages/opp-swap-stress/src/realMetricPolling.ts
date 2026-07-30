@@ -1,14 +1,18 @@
+import { match } from "ts-pattern"
+
 import type { EnvelopeBaselineCaptureResult } from "@wireio/debugging-shared"
 
 import type {
+  SwapStressDegradedCollectionResult,
   SwapStressEnvelopeMetricCollectionResult,
-  SwapStressEnvelopeMetricRequest
+  SwapStressEnvelopeMetricRequest,
+  SwapStressPendingPhaseObservation
 } from "./phaseRunnerTelemetry.js"
 import { SwapStressTelemetryDegradedError } from "./phaseRunnerTelemetry.js"
 
 type RealMetricSnapshotResult = Exclude<
   SwapStressEnvelopeMetricCollectionResult,
-  { readonly kind: "degraded" }
+  SwapStressDegradedCollectionResult
 >
 
 /** Fixed real-flow strict metric polling policy. */
@@ -20,7 +24,7 @@ export namespace RealFlowMetricPolling {
 }
 
 /** Clock, wait, and one-shot strict collector used by real metric polling. */
-export type RealMetricPollingRuntime = {
+export interface RealMetricPollingRuntime {
   /** Return the current monotonic policy time in milliseconds. */
   readonly now: () => number
   /** Advance or await policy time without owning a timeout configuration. */
@@ -32,7 +36,7 @@ export type RealMetricPollingRuntime = {
 }
 
 /** Clock, wait, and one-shot strict capture used by real baseline polling. */
-export type RealBaselinePollingRuntime = {
+export interface RealBaselinePollingRuntime {
   /** Return the current monotonic policy time in milliseconds. */
   readonly now: () => number
   /** Advance or await policy time without owning a timeout configuration. */
@@ -54,22 +58,21 @@ export async function pollRealFlowBaseline(
   let result = await runtime.capture()
 
   while (true) {
-    switch (result.kind) {
-      case "captured":
-        return result
-      case "failed": {
+    // `null` means "keep polling"; a `settled` wrapper carries the terminal result.
+    const outcome = await match(result)
+      .with({ kind: "captured" }, captured => ({ settled: captured }))
+      .with({ kind: "failed" }, async failed => {
         const remainingMs = deadlineAtMs - runtime.now()
-        if (remainingMs <= 0) return result
+        if (remainingMs <= 0) return { settled: failed }
         await runtime.wait(
           Math.min(RealFlowMetricPolling.LongPollIntervalMs, remainingMs)
         )
-        if (runtime.now() >= deadlineAtMs) return result
+        if (runtime.now() >= deadlineAtMs) return { settled: failed }
         result = await runtime.capture()
-        break
-      }
-      default:
-        return assertNeverBaselineCapture(result)
-    }
+        return null
+      })
+      .otherwise(value => assertNeverBaselineCapture(value))
+    if (outcome !== null) return outcome.settled
   }
 }
 
@@ -88,35 +91,30 @@ export async function pollRealFlowMetrics(
   let result = await runtime.collect(request)
 
   while (true) {
-    switch (result.kind) {
-      case "measured":
-        return result
-      case "pending": {
+    // `null` means "keep polling"; a `settled` wrapper carries the terminal result.
+    const outcome = await match(result)
+      .with({ kind: "measured" }, measured => ({ settled: measured }))
+      .with({ kind: "pending" }, async pending => {
         const remainingMs = deadlineAtMs - runtime.now()
-        if (remainingMs <= 0) return terminalResult(request, result.observation)
+        if (remainingMs <= 0)
+          return { settled: terminalResult(request, pending.observation) }
         await runtime.wait(
           Math.min(RealFlowMetricPolling.LongPollIntervalMs, remainingMs)
         )
         if (runtime.now() >= deadlineAtMs)
-          return terminalResult(request, result.observation)
+          return { settled: terminalResult(request, pending.observation) }
         result = await runtime.collect(request)
-        break
-      }
-      default:
-        return assertNever(result)
-    }
+        return null
+      })
+      .otherwise(value => assertNever(value))
+    if (outcome !== null) return outcome.settled
   }
 }
 
 function terminalResult(
   request: SwapStressEnvelopeMetricRequest,
-  observation: Extract<RealMetricSnapshotResult, { readonly kind: "pending" }>[
-    "observation"
-  ]
-): Extract<
-  SwapStressEnvelopeMetricCollectionResult,
-  { readonly kind: "degraded" }
-> {
+  observation: SwapStressPendingPhaseObservation
+): SwapStressDegradedCollectionResult {
   return {
     kind: "degraded",
     error: new SwapStressTelemetryDegradedError(

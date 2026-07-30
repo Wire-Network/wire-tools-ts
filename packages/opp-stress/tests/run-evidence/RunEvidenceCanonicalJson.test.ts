@@ -1,5 +1,10 @@
 import { serializeRunEvidenceJson } from "@wireio/test-opp-stress"
 
+/** Self-referential value used to exercise cycle rejection. */
+interface CyclicValue {
+  self?: unknown
+}
+
 describe("RunEvidence canonical JSON", () => {
   it("T8-R1-CANONICAL-JSON-ACCESSOR rejects a getter without invoking it", () => {
     // Given: an enumerable own getter whose value changes on every access.
@@ -55,7 +60,7 @@ describe("RunEvidence canonical JSON", () => {
         value: 1
       }),
       sparse = new Array<unknown>(1),
-      cyclic: { self?: unknown } = {}
+      cyclic: CyclicValue = {}
     cyclic.self = cyclic
     // When/Then: accepted bytes are stable and hidden graph shapes reject.
     expect(serializeRunEvidenceJson(accepted)).toEqual(

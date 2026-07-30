@@ -19,7 +19,7 @@ import {
 } from "./RunEvidencePersistenceError.js"
 
 /** Stable validated source bytes and names for one canonical OPP artifact pair. */
-export type ValidatedOppArtifact = {
+export interface ValidatedOppArtifact {
   readonly baseKey: string
   readonly dataBytes: Buffer
   readonly metadataBytes: Buffer
@@ -28,14 +28,27 @@ export type ValidatedOppArtifact = {
   readonly batchOpNames: readonly string[]
 }
 
+/** First accepted observation of a base key with no prior entry. */
+interface NewArtifactAcceptance {
+  readonly kind: "new"
+}
+
+/** Observation superseded by an already-accepted later ordinal. */
+interface StaleArtifactAcceptance {
+  readonly kind: "stale"
+}
+
+/** Metadata evolution accepted onto the existing immutable pair. */
+interface AdvanceArtifactAcceptance {
+  readonly kind: "advance"
+  readonly entry: RunEvidenceArtifact
+}
+
 /** Accepted state transition for one validated artifact observation. */
 export type ArtifactAcceptance =
-  | { readonly kind: "new" }
-  | { readonly kind: "stale" }
-  | {
-      readonly kind: "advance"
-      readonly entry: RunEvidenceArtifact
-    }
+  | NewArtifactAcceptance
+  | StaleArtifactAcceptance
+  | AdvanceArtifactAcceptance
 
 /** Validate exact OPP envelope semantics, digest, metadata, and operator names. */
 export function validateOppArtifact(

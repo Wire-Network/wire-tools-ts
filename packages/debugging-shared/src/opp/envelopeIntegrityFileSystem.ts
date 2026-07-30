@@ -1,37 +1,79 @@
 import * as Fs from "node:fs"
 import * as Path from "node:path"
 
-import type {
-  EnvelopeIntegrityDirectoryHandle,
-  EnvelopeIntegrityFileError,
-  EnvelopeIntegrityFileHandle,
-  EnvelopeIntegrityFileIdentity,
-  EnvelopeIntegrityFileOperation,
-  EnvelopeIntegrityFileStat,
-  EnvelopeIntegrityFileSystem
+import {
+  EnvelopeIntegrityFileOperationKind,
+  type EnvelopeIntegrityDirectoryHandle,
+  type EnvelopeIntegrityFileError,
+  type EnvelopeIntegrityFileHandle,
+  type EnvelopeIntegrityFileIdentity,
+  type EnvelopeIntegrityFileStat,
+  type EnvelopeIntegrityFileSystem
 } from "./EnvelopeIntegrityReaderTypes.js"
 import { normalizeUnknownError } from "./envelopeIntegrityError.js"
 import { fileIdentity, sameIdentity } from "./envelopeIntegrityFileIdentity.js"
 
+/** Stable bytes read through one descriptor that never changed identity. */
+interface StableFileBytes {
+  readonly kind: "bytes"
+  readonly bytes: Buffer
+  readonly mtimeNs: string
+}
+
+/** Candidate sidecar rejected because the pathname is a symbolic link. */
+interface StableFileSymlink {
+  readonly kind: "symlink"
+  readonly error: EnvelopeIntegrityFileError
+}
+
+/** Candidate sidecar rejected because it is not a regular file. */
+interface StableFileNotRegular {
+  readonly kind: "not_regular"
+}
+
+/** Candidate sidecar whose identity or stat state moved during the read. */
+interface StableFileChanged {
+  readonly kind: "changed"
+  readonly before: EnvelopeIntegrityFileIdentity
+  readonly after: EnvelopeIntegrityFileIdentity | null
+  readonly error: EnvelopeIntegrityFileError | null
+}
+
+/** Candidate sidecar whose read failed with a normalized filesystem error. */
+interface StableFileFailed {
+  readonly kind: "failed"
+  readonly error: EnvelopeIntegrityFileError
+}
+
 /** Stable descriptor-bound bytes or a structured filesystem outcome. */
 export type StableFileReadResult =
-  | {
-      readonly kind: "bytes"
-      readonly bytes: Buffer
-      readonly mtimeNs: string
-    }
-  | {
-      readonly kind: "symlink"
-      readonly error: EnvelopeIntegrityFileError
-    }
-  | { readonly kind: "not_regular" }
-  | {
-      readonly kind: "changed"
-      readonly before: EnvelopeIntegrityFileIdentity
-      readonly after: EnvelopeIntegrityFileIdentity | null
-      readonly error: EnvelopeIntegrityFileError | null
-    }
-  | { readonly kind: "failed"; readonly error: EnvelopeIntegrityFileError }
+  | StableFileBytes
+  | StableFileSymlink
+  | StableFileNotRegular
+  | StableFileChanged
+  | StableFileFailed
+
+/** Stable-read outcome that yielded no bytes for the candidate sidecar. */
+export type FailedStableFileReadResult =
+  | StableFileSymlink
+  | StableFileNotRegular
+  | StableFileChanged
+  | StableFileFailed
+
+/** Descriptor stat that observed a live file identity. */
+interface StatFileObserved {
+  readonly kind: "stat"
+  readonly stat: EnvelopeIntegrityFileStat
+}
+
+/** Descriptor stat outcome consumed by one stable read. */
+type StatFileResult = StatFileObserved | StableFileFailed
+
+/** Descriptor stat stages of one stable read. */
+type StatFileOperation =
+  | EnvelopeIntegrityFileOperationKind.stat_before_read
+  | EnvelopeIntegrityFileOperationKind.stat_after_read
+  | EnvelopeIntegrityFileOperationKind.verify_stat
 
 /** Real Node filesystem adapter with no-follow sidecar opens. */
 export const NodeEnvelopeIntegrityFileSystem: EnvelopeIntegrityFileSystem = {
@@ -97,7 +139,10 @@ export async function readStableFile(
   try {
     handle = await root.openChild(basename)
   } catch (error) {
-    const normalized = normalizeUnknownError(error, "open")
+    const normalized = normalizeUnknownError(
+      error,
+      EnvelopeIntegrityFileOperationKind.open
+    )
     return normalized.code === "ELOOP"
       ? { kind: "symlink", error: normalized }
       : { kind: "failed", error: normalized }
@@ -113,7 +158,10 @@ async function readOpenedFile(
   handle: EnvelopeIntegrityFileHandle,
   root: EnvelopeIntegrityDirectoryHandle
 ): Promise<StableFileReadResult> {
-  const before = await statFile(handle, "stat_before_read")
+  const before = await statFile(
+    handle,
+    EnvelopeIntegrityFileOperationKind.stat_before_read
+  )
   if (before.kind === "failed") return before
   if (!before.stat.isFile()) return { kind: "not_regular" }
 
@@ -121,10 +169,19 @@ async function readOpenedFile(
   try {
     bytes = await handle.readFile()
   } catch (error) {
-    return { kind: "failed", error: normalizeUnknownError(error, "read") }
+    return {
+      kind: "failed",
+      error: normalizeUnknownError(
+        error,
+        EnvelopeIntegrityFileOperationKind.read
+      )
+    }
   }
 
-  const after = await statFile(handle, "stat_after_read"),
+  const after = await statFile(
+      handle,
+      EnvelopeIntegrityFileOperationKind.stat_after_read
+    ),
     beforeIdentity = fileIdentity(before.stat)
   if (after.kind === "failed") return after
   const afterIdentity = fileIdentity(after.stat)
@@ -153,10 +210,16 @@ async function verifyCurrentChild(
       kind: "changed",
       before,
       after: null,
-      error: normalizeUnknownError(error, "verify_open")
+      error: normalizeUnknownError(
+        error,
+        EnvelopeIntegrityFileOperationKind.verify_open
+      )
     }
   }
-  const current = await statFile(handle, "verify_stat"),
+  const current = await statFile(
+      handle,
+      EnvelopeIntegrityFileOperationKind.verify_stat
+    ),
     closeError = await closeFile(handle)
   if (current.kind === "failed") {
     return { kind: "changed", before, after: null, error: current.error }
@@ -170,14 +233,8 @@ async function verifyCurrentChild(
 
 async function statFile(
   handle: EnvelopeIntegrityFileHandle,
-  operation: Extract<
-    EnvelopeIntegrityFileOperation,
-    "stat_before_read" | "stat_after_read" | "verify_stat"
-  >
-): Promise<
-  | { readonly kind: "stat"; readonly stat: EnvelopeIntegrityFileStat }
-  | { readonly kind: "failed"; readonly error: EnvelopeIntegrityFileError }
-> {
+  operation: StatFileOperation
+): Promise<StatFileResult> {
   try {
     return { kind: "stat", stat: await handle.stat() }
   } catch (error) {
@@ -187,11 +244,14 @@ async function statFile(
 
 async function closeFile(
   handle: EnvelopeIntegrityFileHandle
-): Promise<EnvelopeIntegrityFileError | null> {
+): Promise<EnvelopeIntegrityFileError> {
   try {
     await handle.close()
     return null
   } catch (error) {
-    return normalizeUnknownError(error, "close")
+    return normalizeUnknownError(
+      error,
+      EnvelopeIntegrityFileOperationKind.close
+    )
   }
 }

@@ -35,7 +35,7 @@ import {
 import { parseRunEvidenceManifest } from "./runEvidenceManifestParser.js"
 
 /** Inputs that become the immutable identity fields of an initial manifest. */
-export type InitialManifestInput = {
+export interface InitialManifestInput {
   readonly runId: string
   readonly startedAtMs: RunEvidenceDecimal
   readonly clusterPath: string
@@ -47,7 +47,7 @@ export type InitialManifestInput = {
 }
 
 /** Successful setup inputs required to enter the running lifecycle. */
-export type RunningSetupInput = {
+export interface RunningSetupInput {
   readonly manifest: RunEvidenceManifest
   readonly setup: RunEvidenceSetup
   readonly setupRef: RunEvidenceSetupRecordRef
@@ -55,7 +55,7 @@ export type RunningSetupInput = {
 }
 
 /** Terminal decision and immutable refs required for a terminal checkpoint. */
-export type TerminalManifestInput = {
+export interface TerminalManifestInput {
   readonly manifest: RunEvidenceManifest
   readonly setup: RunEvidenceSetup
   readonly setupRef: RunEvidenceSetupRecordRef
@@ -70,7 +70,7 @@ export type TerminalManifestInput = {
 export function initialManifest(
   input: InitialManifestInput
 ): RunEvidenceManifest {
-  return requireManifest({
+  return assertManifest({
     schemaVersion: RunEvidenceSchemaVersion,
     runId: input.runId,
     lifecycle: RunEvidenceLifecycle.Initializing,
@@ -99,7 +99,7 @@ export function initialManifest(
 export function runningManifestAfterSetup(
   input: RunningSetupInput
 ): RunEvidenceManifest {
-  return requireManifest({
+  return assertManifest({
     ...input.manifest,
     lifecycle: RunEvidenceLifecycle.Running,
     updatedAtMs: maxDecimal(input.manifest.updatedAtMs, input.setup.endedAtMs),
@@ -125,7 +125,7 @@ export function runningManifestAfterIteration(
           missingEndpoints: manifest.missingEndpoints,
           telemetry: manifest.telemetry
         }
-  return requireManifest({
+  return assertManifest({
     ...manifest,
     ...decision,
     updatedAtMs: maxDecimal(manifest.updatedAtMs, iteration.endedAtMs),
@@ -142,7 +142,7 @@ export function runningManifestWithArtifacts(
   artifacts: readonly RunEvidenceArtifact[],
   updatedAtMs: RunEvidenceDecimal
 ): RunEvidenceManifest {
-  return requireManifest({
+  return assertManifest({
     ...manifest,
     updatedAtMs: maxDecimal(manifest.updatedAtMs, updatedAtMs),
     artifacts
@@ -156,7 +156,7 @@ export function terminalManifest(
   const terminalTelemetry:
     OppEnvelopeTelemetryHealth | HealthyOppEnvelopeTelemetryHealth =
     input.terminal.telemetry
-  return requireManifest({
+  return assertManifest({
     ...input.manifest,
     lifecycle: input.terminal.lifecycle,
     updatedAtMs: maxDecimal(
@@ -187,7 +187,7 @@ export function terminalManifest(
   })
 }
 
-function requireManifest(value: unknown): RunEvidenceManifest {
+function assertManifest(value: unknown): RunEvidenceManifest {
   const parsed = parseRunEvidenceManifest(value)
   if ("error" in parsed)
     throw new RunEvidencePersistenceError(

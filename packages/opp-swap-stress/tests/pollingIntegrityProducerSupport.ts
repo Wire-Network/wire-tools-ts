@@ -21,10 +21,12 @@ import {
   type OppEnvelopeTelemetryIssue
 } from "@wireio/test-opp-stress"
 
-const EndpointKey = "OUTPOST_ETHEREUM_DEPOT"
+const EndpointKey = "OUTPOST_ETHEREUM_DEPOT",
+  /** Epoch every canonical producer pair is written at unless overridden. */
+  DefaultDecodedEpoch = 7
 
 /** Canonical pair used to drive strict-reader issue producers. */
-export type PollingEnvelopePair = {
+export interface PollingEnvelopePair {
   readonly baseKey: string
   readonly dataPath: string
   readonly metadataPath: string
@@ -34,14 +36,14 @@ export type PollingEnvelopePair = {
 }
 
 /** Typed overrides for one canonical producer pair. */
-export type PollingEnvelopePairOptions = {
+export interface PollingEnvelopePairOptions {
   readonly decodedEpoch?: number
   readonly keyEpoch?: number
   readonly metadataChecksum?: bigint
 }
 
 /** Mutable filesystem hooks applied around the real descriptor operations. */
-export type PollingFileSystemHooks = {
+export interface PollingFileSystemHooks {
   readonly readdir?: (
     path: string,
     read: () => Promise<readonly string[]>
@@ -72,8 +74,8 @@ export function writePollingEnvelopePair(
   storageDir: string,
   options: PollingEnvelopePairOptions = {}
 ): PollingEnvelopePair {
-  const decodedEpoch = options.decodedEpoch ?? 7,
-    keyEpoch = options.keyEpoch ?? decodedEpoch,
+  const { decodedEpoch = DefaultDecodedEpoch } = options,
+    { keyEpoch = decodedEpoch } = options,
     dataBytes = Buffer.from(
       Envelope.toBinary(
         Envelope.create({

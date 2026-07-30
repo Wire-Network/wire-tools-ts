@@ -20,7 +20,7 @@ import type {
 } from "./runEvidenceTypes.js"
 
 /** Baseline membership plus artifacts already persisted before phase work. */
-export type OppPhaseMetricBaseline = EnvelopeBaseline & {
+export interface OppPhaseMetricBaseline extends EnvelopeBaseline {
   readonly artifactRefs: RunEvidencePhaseBaseline["artifactRefs"]
 }
 
@@ -31,7 +31,7 @@ export type OppPhaseEvidenceSink = Pick<
 >
 
 /** Strict envelope collector request for a named OPP workload phase. */
-export type OppPhaseMetricRequest = {
+export interface OppPhaseMetricRequest {
   /** Phase whose observation window is measured. */
   readonly phase: string
   /** Inclusive observational phase start as a precision-safe decimal. */
@@ -53,7 +53,7 @@ export type OppPhaseMetricRequest = {
 }
 
 /** Stable source diagnostics for one pair selected into phase metrics. */
-export type OppPhaseSelectedArtifact = {
+export interface OppPhaseSelectedArtifact {
   /** Canonical OPP sidecar base key. */
   readonly baseKey: string
   /** Source-side epoch parsed from the base key. */
@@ -69,7 +69,7 @@ export type OppPhaseSelectedArtifact = {
 }
 
 /** First immutable refs returned for one selected OPP pair. */
-export type OppPhaseCapturedArtifact = {
+export interface OppPhaseCapturedArtifact {
   /** Canonical OPP sidecar base key. */
   readonly baseKey: string
   /** Complete immutable data and metadata path/hash references. */
@@ -77,34 +77,40 @@ export type OppPhaseCapturedArtifact = {
 }
 
 /** Baseline correlation returned when no evidence sink is present. */
-export type OppPhaseBaselineReference = {
+export interface OppPhaseBaselineReference {
   /** Content identity shared by every probe using this baseline. */
   readonly identity: EnvelopeBaselineIdentity
   /** Immutable artifacts already represented by the baseline. */
   readonly artifactRefs: readonly string[]
 }
 
+/** Correlation-only evidence produced when no observation was allocated. */
+interface OppPhaseUnrecordedEvidence {
+  /** No observation was allocated and no artifact refs were fabricated. */
+  readonly kind: "not_recorded"
+  /** Caller-provided baseline correlation without an ordinal. */
+  readonly baseline: OppPhaseBaselineReference
+}
+
+/** Recorded evidence carrying an allocated ordinal and immutable artifacts. */
+interface OppPhaseRecordedEvidence {
+  /** A real observation ordinal was allocated before strict scanning. */
+  readonly kind: "recorded"
+  /** Schema-assignable baseline and observation identity. */
+  readonly baseline: RunEvidencePhaseBaseline
+  /** Grouped full immutable refs in metric order. */
+  readonly artifacts: readonly OppPhaseCapturedArtifact[]
+  /** Data then metadata paths for each captured artifact in metric order. */
+  readonly artifactRefs: readonly string[]
+}
+
 /** Recorded or correlation-only evidence for one metric observation. */
 export type OppPhaseMetricEvidence =
-  | {
-      /** No observation was allocated and no artifact refs were fabricated. */
-      readonly kind: "not_recorded"
-      /** Caller-provided baseline correlation without an ordinal. */
-      readonly baseline: OppPhaseBaselineReference
-    }
-  | {
-      /** A real observation ordinal was allocated before strict scanning. */
-      readonly kind: "recorded"
-      /** Schema-assignable baseline and observation identity. */
-      readonly baseline: RunEvidencePhaseBaseline
-      /** Grouped full immutable refs in metric order. */
-      readonly artifacts: readonly OppPhaseCapturedArtifact[]
-      /** Data then metadata paths for each captured artifact in metric order. */
-      readonly artifactRefs: readonly string[]
-    }
+  | OppPhaseUnrecordedEvidence
+  | OppPhaseRecordedEvidence
 
 /** Complete generic phase metrics and independent verification inputs. */
-export type OppPhaseEnvelopeMetrics = {
+export interface OppPhaseEnvelopeMetrics {
   /** Phase label these metrics describe. */
   readonly phase: string
   /** Canonical endpoint label persisted in run evidence. */

@@ -1,23 +1,19 @@
-import { runBoundedWorkload } from "@wireio/test-opp-stress"
+import {
+  runBoundedWorkload,
+  type BoundedWorkloadResult
+} from "@wireio/test-opp-stress"
 
-type BurstWorkloadItem<Request> = {
+/** One request paired with its position in the WHOLE burst, not its chunk. */
+interface BurstWorkloadItem<Request> {
   readonly workloadIndex: number
   readonly request: Request
 }
 
-type ChunkedWorkloadSuccess<Result> = {
-  readonly index: number
-  readonly id: Result
-}
-
-type ChunkedWorkloadFailure = {
-  readonly index: number
-  readonly reason: string
-}
-
-type ChunkedWorkloadResult<Result> = {
-  readonly successes: readonly ChunkedWorkloadSuccess<Result>[]
-  readonly failures: readonly ChunkedWorkloadFailure[]
+/** Requests, per-chunk concurrency, and the indexed submitter. */
+interface ChunkedBoundedWorkloadOptions<Request, Result> {
+  readonly requests: readonly Request[]
+  readonly concurrency: number
+  readonly submit: (request: Request, index: number) => Promise<Result>
 }
 
 /**
@@ -26,11 +22,9 @@ type ChunkedWorkloadResult<Result> = {
  * @param options Requests, per-chunk concurrency, and indexed submitter.
  * @returns Success and failure telemetry keyed to original request positions.
  */
-export async function runChunkedBoundedWorkload<Request, Result>(options: {
-  readonly requests: readonly Request[]
-  readonly concurrency: number
-  readonly submit: (request: Request, index: number) => Promise<Result>
-}): Promise<ChunkedWorkloadResult<Result>> {
+export async function runChunkedBoundedWorkload<Request, Result>(
+  options: ChunkedBoundedWorkloadOptions<Request, Result>
+): Promise<BoundedWorkloadResult<Result>> {
   assertPositiveInteger(options.concurrency, "burst concurrency")
   const chunks = chunk(
     options.requests.map((request, workloadIndex) => ({
@@ -39,7 +33,7 @@ export async function runChunkedBoundedWorkload<Request, Result>(options: {
     })),
     options.concurrency
   )
-  return chunks.reduce<Promise<ChunkedWorkloadResult<Result>>>(
+  return chunks.reduce<Promise<BoundedWorkloadResult<Result>>>(
     async (prior, nextChunk) =>
       mergeChunkResults(
         await prior,
@@ -55,13 +49,10 @@ export async function runChunkedBoundedWorkload<Request, Result>(options: {
 }
 
 function mergeChunkResults<Request, Result>(
-  prior: ChunkedWorkloadResult<Result>,
-  next: {
-    readonly successes: readonly { readonly index: number; readonly id: Result }[]
-    readonly failures: readonly { readonly index: number; readonly reason: string }[]
-  },
+  prior: BoundedWorkloadResult<Result>,
+  next: BoundedWorkloadResult<Result>,
   chunkItems: readonly BurstWorkloadItem<Request>[]
-): ChunkedWorkloadResult<Result> {
+): BoundedWorkloadResult<Result> {
   return {
     successes: [
       ...prior.successes,

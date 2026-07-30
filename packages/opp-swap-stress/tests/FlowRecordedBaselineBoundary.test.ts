@@ -11,7 +11,7 @@ import type {
 
 import { richPhaseResults } from "./flowObservationContractTestSupport.js"
 
-type InvalidRecordedBaselineCase = {
+interface InvalidRecordedBaselineCase {
   readonly description: string
   readonly mutate: (baseline: object) => void
 }

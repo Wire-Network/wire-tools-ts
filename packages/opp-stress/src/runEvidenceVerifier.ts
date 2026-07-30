@@ -1,3 +1,5 @@
+import { match } from "ts-pattern"
+
 import { RunEvidenceLifecycle } from "./runEvidenceTypes.js"
 import {
   RunEvidenceVerificationVerdict,
@@ -21,6 +23,15 @@ const EvidenceLimitations = [
   "historical candidate completeness, filtered valid candidates, and telemetry issue occurrence are unauthenticated publisher snapshot claims because only selected valid immutable pairs are retained and the manifest has no external trust root"
 ] as const
 
+/** Records recomputed inside the pinned run directory before it is closed. */
+interface VerifiedRunEvidence {
+  readonly manifest: NonNullable<ReturnType<typeof loadRunEvidenceManifest>>
+  readonly recomputed: ReturnType<typeof recomputeEvidenceCampaign>
+  readonly publisherClaims: ReturnType<
+    typeof verifyEvidenceArtifacts
+  >["publisherClaims"]
+}
+
 /**
  * Independently verify one explicit schema-v1 evidence run without network or
  * mutable cluster/provenance reads.
@@ -34,13 +45,7 @@ export function verifyRunEvidence(
   const context = new RunEvidenceVerificationContext(),
     root = pinRunDirectory(runDirectory, context)
   if (root === null) return emptyReport(runDirectory, context)
-  let verified: {
-    readonly manifest: NonNullable<ReturnType<typeof loadRunEvidenceManifest>>
-    readonly recomputed: ReturnType<typeof recomputeEvidenceCampaign>
-    readonly publisherClaims: ReturnType<
-      typeof verifyEvidenceArtifacts
-    >["publisherClaims"]
-  } | null = null
+  let verified: VerifiedRunEvidence | null = null
   try {
     const manifest = loadRunEvidenceManifest(root, context)
     if (manifest !== null) {
@@ -111,19 +116,23 @@ function emptyReport(
 function verdictFor(
   lifecycle: RunEvidenceLifecycle
 ): RunEvidenceVerificationVerdict {
-  switch (lifecycle) {
-    case RunEvidenceLifecycle.Initializing:
-    case RunEvidenceLifecycle.Running:
-      return RunEvidenceVerificationVerdict.InProgress
-    case RunEvidenceLifecycle.SetupFailed:
-    case RunEvidenceLifecycle.Failed:
-    case RunEvidenceLifecycle.Incomplete:
-      return RunEvidenceVerificationVerdict.NonSuccess
-    case RunEvidenceLifecycle.Saturated:
-      return RunEvidenceVerificationVerdict.Saturated
-    default:
-      return assertNever(lifecycle)
-  }
+  return match(lifecycle)
+    .with(
+      RunEvidenceLifecycle.Initializing,
+      RunEvidenceLifecycle.Running,
+      () => RunEvidenceVerificationVerdict.InProgress
+    )
+    .with(
+      RunEvidenceLifecycle.SetupFailed,
+      RunEvidenceLifecycle.Failed,
+      RunEvidenceLifecycle.Incomplete,
+      () => RunEvidenceVerificationVerdict.NonSuccess
+    )
+    .with(
+      RunEvidenceLifecycle.Saturated,
+      () => RunEvidenceVerificationVerdict.Saturated
+    )
+    .otherwise(value => assertNever(value))
 }
 
 function assertNever(value: never): never {

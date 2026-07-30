@@ -31,13 +31,14 @@ export const NodeSourceFileSystem: RunEvidencePersistence.SourceFileSystem = {
 }
 
 /** Canonical cluster identity and fixed external run directory. */
-export type RunDirectoryAllocation = {
+export interface RunDirectoryAllocation {
   readonly clusterPath: string
   readonly runDirectory: string
   readonly revalidateClusterPath: () => Promise<void>
 }
 
-type IntendedClusterPath = {
+/** Intended cluster path plus its retained ancestor identities. */
+interface IntendedClusterPath {
   readonly path: string
   readonly stat: RunEvidencePersistence.SourceStat | null
   readonly ancestors: CanonicalDirectorySnapshot

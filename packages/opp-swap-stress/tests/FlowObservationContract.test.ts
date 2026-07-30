@@ -20,27 +20,45 @@ type Equal<Left, Right> =
 
 type Assert<Condition extends true> = Condition
 
+/**
+ * Legacy scalar keys the flow observation contract must NOT carry. Declared as
+ * an interface so the proof's key union is DERIVED (`keyof`) rather than a
+ * hand-written literal union; `never` members mark "this key must not exist".
+ */
+interface ForbiddenObservationKeys {
+  readonly iterationIndex: never
+  readonly accountCount: never
+  readonly startedAtMs: never
+  readonly endedAtMs: never
+  readonly status: never
+  readonly preserveCluster: never
+  readonly missingEndpoints: never
+  readonly lifecycle: never
+  readonly phase: never
+  readonly txSuccesses: never
+  readonly txFailures: never
+}
+
+/** The observation kinds the flow contract pins, independent of the source type. */
+enum ExpectedObservationKind {
+  completed = "completed",
+  breakage = "breakage"
+}
+
 const ForbiddenObservationKeysProof: Assert<
     Equal<
       Extract<
         keyof SwapStressIterationObservation,
-        | "iterationIndex"
-        | "accountCount"
-        | "startedAtMs"
-        | "endedAtMs"
-        | "status"
-        | "preserveCluster"
-        | "missingEndpoints"
-        | "lifecycle"
-        | "phase"
-        | "txSuccesses"
-        | "txFailures"
+        keyof ForbiddenObservationKeys
       >,
       never
     >
   > = true,
   ObservationKindsProof: Assert<
-    Equal<SwapStressIterationObservation["kind"], "completed" | "breakage">
+    Equal<
+      SwapStressIterationObservation["kind"],
+      `${ExpectedObservationKind}`
+    >
   > = true
 
 describe("swap stress observation transport", () => {

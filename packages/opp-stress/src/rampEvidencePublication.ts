@@ -13,12 +13,17 @@ import {
   type RunEvidenceTerminal
 } from "./runEvidenceTypes.js"
 
+/** Discriminant selecting the continue arm of the canonical ramp decision. */
+interface ContinueRampDecisionDiscriminant {
+  readonly kind: "continue"
+}
+
 /** Build, parse, and atomically publish one schema-v1 iteration when active. */
 export async function publishRampIteration(
   runtime: RampRuntime,
   state: RampState,
   decision: CanonicalRampDecision
-): Promise<RunEvidenceIterationRecordRef | null> {
+): Promise<RunEvidenceIterationRecordRef> {
   if (
     runtime.mode === OppStressRampEvidenceModeKind.DeferredFlowMigration ||
     runtime.persistence === null
@@ -30,7 +35,7 @@ export async function publishRampIteration(
 /** Build, parse, and atomically publish the terminal from the same decision. */
 export async function publishRampTerminal(
   runtime: RampRuntime,
-  decision: Exclude<CanonicalRampDecision, { readonly kind: "continue" }>,
+  decision: Exclude<CanonicalRampDecision, ContinueRampDecisionDiscriminant>,
   iterationRefs: readonly RunEvidenceIterationRecordRef[]
 ): Promise<void> {
   if (
@@ -51,7 +56,7 @@ function iterationRecord(
   state: RampState,
   decision: CanonicalRampDecision
 ): RunEvidenceIteration {
-  const schema = requireSchemaEvidence(decision),
+  const schema = assertSchemaEvidence(decision),
     base = {
       schemaVersion: RunEvidenceSchemaVersion,
       stage: RunEvidenceStage.Iteration,
@@ -85,10 +90,10 @@ function iterationRecord(
 
 function terminalRecord(
   allocationStartedAtMs: RunEvidenceDecimal,
-  decision: Exclude<CanonicalRampDecision, { readonly kind: "continue" }>,
+  decision: Exclude<CanonicalRampDecision, ContinueRampDecisionDiscriminant>,
   iterationRefs: readonly RunEvidenceIterationRecordRef[]
 ): RunEvidenceTerminal {
-  const schema = requireSchemaEvidence(decision),
+  const schema = assertSchemaEvidence(decision),
     base = {
       schemaVersion: RunEvidenceSchemaVersion,
       stage: RunEvidenceStage.Terminal,
@@ -119,7 +124,7 @@ function terminalRecord(
   return parsed.value
 }
 
-function requireSchemaEvidence(
+function assertSchemaEvidence(
   decision: CanonicalRampDecision
 ): NonNullable<CanonicalRampDecision["schemaEvidence"]> {
   if (decision.schemaEvidence === null)

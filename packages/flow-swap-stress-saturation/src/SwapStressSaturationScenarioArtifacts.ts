@@ -25,6 +25,23 @@ export namespace SwapStressSaturationScenarioArtifacts {
   export const ReserveManagerContractName = "ReserveManager"
 
   /**
+   * The native-value leg of the payable `create_reserve` overrides — the
+   * `msg.value` the reserve is seeded with, intersected over
+   * `ethers.Overrides` at the call signature.
+   */
+  export interface ReserveManagerNativeValueOverride {
+    value: bigint
+  }
+
+  /**
+   * The `ReserveManager.getReserve` local-record read result — only the
+   * `status` word this flow asserts on.
+   */
+  export interface ReserveManagerReserveRecord {
+    status: bigint
+  }
+
+  /**
    * Structural surface of the `ReserveManager` members this flow binds beyond
    * the harness's swap surface: the payable native `create_reserve` write and
    * the `getReserve` local-record read — plus the inherited `requestSwap`
@@ -45,12 +62,12 @@ export namespace SwapStressSaturationScenarioArtifacts {
       description: string,
       isPrivate: boolean,
       creatorPubKey: string,
-      overrides: ethers.Overrides & { value: bigint }
+      overrides: ethers.Overrides & ReserveManagerNativeValueOverride
     ) => Promise<ethers.ContractTransactionResponse>
     getReserve: (
       tokenCode: bigint,
       reserveCode: bigint
-    ) => Promise<{ status: bigint }>
+    ) => Promise<ReserveManagerReserveRecord>
   }
 
   /**

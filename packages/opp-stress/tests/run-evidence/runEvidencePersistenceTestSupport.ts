@@ -34,7 +34,7 @@ export const TestDataBytes = Buffer.from(
 )
 
 /** Temporary roots and fixed source paths for one persistence scenario. */
-export type PersistenceWorkspace = {
+export interface PersistenceWorkspace {
   readonly root: string
   readonly evidenceRoot: string
   readonly clusterPath: string

@@ -6,7 +6,7 @@ import type {
 import { RequiredEndpoints } from "./stressRampContractTestSupport.js"
 
 /** Minimal typed payload used to exercise generic deferred transport. */
-export type TestEvidence = {
+export interface TestEvidence {
   readonly phaseResults: readonly string[]
 }
 
@@ -26,7 +26,7 @@ export function completedEvidenceObservation(
 export function parseTestEvidence(
   input: unknown,
   _context: OppStressRampDeferredEvidenceParseContext
-): TestEvidence | null {
+): TestEvidence {
   if (!isRecord(input) || !hasExactKeys(input, ["phaseResults"])) return null
   const phaseResults = input.phaseResults
   return Array.isArray(phaseResults) &&

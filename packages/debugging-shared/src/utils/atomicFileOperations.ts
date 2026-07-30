@@ -84,7 +84,11 @@ export async function writeAtomicTemp(
     handle: AtomicFile.FileHandle | null = null,
     failure: AtomicFileOperationError | null = null
   try {
-    handle = await context.fileSystem.open(context.tempFile, "wx", mode)
+    handle = await context.fileSystem.open(
+      context.tempFile,
+      AtomicFile.OpenFlag.wx,
+      mode
+    )
     stage = AtomicFile.Stage.TempWrite
     await handle.writeFile(data)
     stage = AtomicFile.Stage.FileSync
@@ -111,7 +115,7 @@ export async function writeAtomicTemp(
  */
 export async function removeAtomicTemp(
   context: AtomicFileContext
-): Promise<unknown | null> {
+): Promise<unknown> {
   try {
     await context.fileSystem.unlink(context.tempFile)
     return null
@@ -129,7 +133,10 @@ export async function syncAtomicParent(
 ): Promise<void> {
   let handle: AtomicFile.FileHandle
   try {
-    handle = await context.fileSystem.open(Path.dirname(context.finalFile), "r")
+    handle = await context.fileSystem.open(
+      Path.dirname(context.finalFile),
+      AtomicFile.OpenFlag.r
+    )
   } catch (error) {
     throw new AtomicFileOperationError(AtomicFile.Stage.DirectoryOpen, error)
   }

@@ -27,7 +27,7 @@ export namespace StressIdentityDefaults {
 }
 
 /** Deterministic Ethereum stress identity derived from Anvil's mnemonic. */
-export type StressEthereumIdentity = {
+export interface StressEthereumIdentity {
   /** Zero-based stress identity index. */
   readonly index: number
   /** Anvil mnemonic HD slot used for this identity. */
@@ -39,7 +39,7 @@ export type StressEthereumIdentity = {
 }
 
 /** Deterministic Solana stress identity derived from a domain-separated seed. */
-export type StressSolanaIdentity = {
+export interface StressSolanaIdentity {
   /** Zero-based stress identity index. */
   readonly index: number
   /** Base58 Solana public key derived for this identity. */
@@ -51,7 +51,7 @@ export type StressSolanaIdentity = {
 }
 
 /** Deterministic WIRE recipient account used by ETH-to-WIRE stress swaps. */
-export type StressWireIdentity = {
+export interface StressWireIdentity {
   /** Zero-based stress identity index. */
   readonly index: number
   /** WIRE account name that receives direct depot payout. */
@@ -61,7 +61,7 @@ export type StressWireIdentity = {
 }
 
 /** Paired deterministic identities for one stress batch. */
-export type StressIdentities = {
+export interface StressIdentities {
   /** Ethereum identities in index order. */
   readonly ethereum: readonly StressEthereumIdentity[]
   /** Solana identities in index order. */
