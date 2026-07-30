@@ -35,6 +35,21 @@ const { SysioContractName, SysioContractDefinitions } = SysioContracts
 type SysioContractName = SysioContracts.SysioContractName
 type SysioContractMapping = SysioContracts.SysioContractMapping
 
+interface ClioTransactionAction<Action extends {}> {
+  readonly account: string
+  readonly name: string
+  readonly authorization: PermissionLevelType[]
+  readonly data: Action
+}
+
+interface ClioTransactionBody<Action extends {}> {
+  readonly actions: ClioTransactionAction<Action>[]
+}
+
+interface TransactionFinalityErrorOptions {
+  readonly cause?: unknown
+}
+
 /** Caller config for the WIRE client (clio binary + node/wallet URLs). */
 export interface WireClientConfig {
   readonly clusterPath: string
@@ -199,6 +214,13 @@ export class WireClient {
    *
    * The owning orchestration Step must reconcile an ambiguous outcome before
    * deciding whether the action may be attempted again.
+   *
+   * @param account - Contract account receiving the action.
+   * @param action - Contract action name.
+   * @param data - Typed action payload.
+   * @param authorization - Permission levels authorizing the action.
+   * @param options - Invocation finality and authorization options.
+   * @returns The single transaction submission response.
    */
   async invokeOnce<Action extends {}>(
     account: string,
@@ -272,6 +294,13 @@ export class WireClient {
   /**
    * Invoke through a temporary transaction file without transport or finality
    * resends. The owning Step must reconcile any ambiguous finality outcome.
+   *
+   * @param account - Contract account receiving the action.
+   * @param action - Contract action name.
+   * @param data - Typed action payload written to the temporary file.
+   * @param authorization - Permission levels authorizing the action.
+   * @param options - Invocation finality and authorization options.
+   * @returns The single transaction submission response.
    */
   async invokeViaFileOnce<Action extends {}>(
     account: string,
@@ -293,8 +322,8 @@ export class WireClient {
     return this.withFinalityOnce(label, send, options.finality)
   }
 
-  private async sendViaFile(
-    body: { actions: unknown[] },
+  private async sendViaFile<Action extends {}>(
+    body: ClioTransactionBody<Action>,
     send: (file: string) => Promise<API.v1.SendTransactionResponse>
   ): Promise<API.v1.SendTransactionResponse> {
     const directory = await Fsp.mkdtemp(
@@ -651,10 +680,14 @@ export class WireClient {
   /**
    * Prove that `transactionId` is present in a canonical block at or below
    * LIB. A known observed block is checked even when trace lookup is absent.
+   *
+   * @param transactionId - Exact submitted transaction id to prove.
+   * @param observedBlockNum - Block observed before finality became ambiguous.
+   * @returns Whether the transaction is present in a canonical irreversible block.
    */
   async isTransactionIrreversible(
     transactionId: string,
-    observedBlockNum: number | null = null
+    observedBlockNum: number = null
   ): Promise<boolean> {
     const locatedBlockNum = await this.locateTransactionBlock(transactionId),
       candidates = [
@@ -784,8 +817,8 @@ export namespace WireClient {
     constructor(
       readonly label: string,
       readonly transactionId: string,
-      readonly observedBlockNum: number | null,
-      options: { cause?: unknown } = {}
+      readonly observedBlockNum: number,
+      options: TransactionFinalityErrorOptions = {}
     ) {
       super(
         `${label}: transaction ${transactionId} did not reach irreversible finality`,
@@ -873,7 +906,7 @@ export namespace WireClient {
     rows: Row[]
     more: boolean
     /** Lower bound for the next page, or `null` when the result is complete. */
-    nextKey: string | null
+    nextKey: string
   }
   export interface TableQuery<
     Name extends SysioContractName,
