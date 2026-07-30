@@ -105,9 +105,13 @@ interface EthereumDumpOptions {
    */
   yieldClaimedCount?: number
   /** Controlled addresses — appended as purchasers (no `yieldClaimed`). */
-  controlled?: { addressHex: string }[]
+  controlled?: ControlledEthereumAddress[]
   /** Source-decimal (18) total for EVERY controlled purchaser row. */
   controlledSourceUnits?: bigint
+}
+
+interface ControlledEthereumAddress {
+  readonly addressHex: string
 }
 
 /**

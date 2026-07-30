@@ -10,8 +10,25 @@ import { StepExtraRecorder } from "../../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../../utils/asyncUtils.js"
 import { isNotEmpty } from "../../../utils/predicateUtils.js"
 
-const log = getLogger("ClioRunner")
+const log = getLogger(__filename)
 const execFileAsync = promisify(execFile)
+
+interface MessageCandidate {
+  message?: unknown
+}
+
+interface ClioReceiptCandidate {
+  status?: unknown
+}
+
+interface ClioProcessedCandidate {
+  receipt?: ClioReceiptCandidate
+}
+
+interface ClioTransactionCandidate {
+  transaction_id?: unknown
+  processed?: ClioProcessedCandidate
+}
 
 /**
  * Caller config for the clio transport. `nodeopUrl` / `kiodUrl` (renamed from
@@ -31,7 +48,8 @@ export interface ClioRunOptions<UseJson extends boolean = false> {
 }
 
 /** JSON-mode run options, with an optional row constructor. */
-export interface ClioRunOptionsJson<T extends {}> extends ClioRunOptions<true> {
+export interface ClioRunOptionsJson<T extends object>
+  extends ClioRunOptions<true> {
   ctor?: new (data: any) => T
 }
 
@@ -51,7 +69,7 @@ export function enrichClioError(
   stdout: string,
   stderr: string
 ): unknown {
-  const candidate = error as { message?: unknown }
+  const candidate = error as MessageCandidate
   if (
     candidate != null &&
     typeof candidate === "object" &&
@@ -73,7 +91,10 @@ export class ClioRunner {
   constructor(readonly config: ClioRunnerConfig) {}
 
   /** Run a clio command with transport retries, returning parsed JSON. */
-  run<T extends {}>(args: string[], options: ClioRunOptionsJson<T>): Promise<T>
+  run<T extends object>(
+    args: string[],
+    options: ClioRunOptionsJson<T>
+  ): Promise<T>
   /** Run a clio command with transport retries, returning raw stdout. */
   run(args: string[], options?: ClioRunOptions<false>): Promise<string>
   async run(
@@ -97,7 +118,7 @@ export class ClioRunner {
    * @param options - JSON parsing and recording options.
    * @returns The parsed response without transport retries.
    */
-  runOnce<T extends {}>(
+  runOnce<T extends object>(
     args: string[],
     options: ClioRunOptionsJson<T>
   ): Promise<T>
@@ -218,7 +239,7 @@ export namespace ClioRunner {
 
   /** True when `error` matches a connection-level clio failure signature. */
   export function isTransportFailure(error: unknown): boolean {
-    const candidate = error as { message?: unknown }
+    const candidate = error as MessageCandidate
     return (
       candidate != null &&
       typeof candidate === "object" &&
@@ -262,10 +283,7 @@ export namespace ClioRunner {
    */
   export function summarizeResult(result: unknown): unknown {
     if (result != null && typeof result === "object") {
-      const candidate = result as {
-        transaction_id?: unknown
-        processed?: { receipt?: { status?: unknown } }
-      }
+      const candidate = result as ClioTransactionCandidate
       if (typeof candidate.transaction_id === "string") {
         return {
           transaction_id: candidate.transaction_id,

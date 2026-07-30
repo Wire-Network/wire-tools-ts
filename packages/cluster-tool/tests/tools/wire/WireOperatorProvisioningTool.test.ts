@@ -13,6 +13,34 @@ import {
 } from "@wireio/cluster-tool/orchestration"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 
+interface PhaseGroupFixture {
+  readonly children: ReadonlyArray<ClusterBuildPhaseBase>
+}
+
+interface StepInputFixture {
+  readonly kind?: string
+}
+
+interface SponsorRowFixture {
+  readonly nonce: string
+  readonly username: string
+}
+
+interface EthereumExternalOutpostFixture {
+  readonly addressFile: string
+  readonly abiFiles: string[]
+  readonly chainId: number
+}
+
+interface SolanaExternalOutpostFixture {
+  readonly idlFile: string
+}
+
+interface ExternalOutpostsFixture {
+  readonly ethereum: EthereumExternalOutpostFixture
+  readonly solana: SolanaExternalOutpostFixture
+}
+
 /** A minimal parent that captures pushed children (no context needed for structure). */
 function fakeParent<
   C extends ClusterBuildContext = ClusterBuildContext
@@ -27,12 +55,10 @@ function fakeParent<
 }
 
 /** The `input.kind` of every step in a group's first phase. */
-function firstPhaseStepKinds(group: {
-  children: ReadonlyArray<ClusterBuildPhaseBase>
-}): string[] {
+function firstPhaseStepKinds(group: PhaseGroupFixture): string[] {
   const phase = group.children[0] as ClusterBuildPhase
   return phase.steps.map(
-    step => (step.input as { kind?: string } | null)?.kind ?? ""
+    step => (step.input as StepInputFixture)?.kind ?? ""
   )
 }
 
@@ -156,7 +182,7 @@ function seededKeyStore(): ClusterKeyStore {
 
 /** A fake typed-contract ctx: `roa` sponsors query + newuser invoke, `opreg` regoperator invoke. */
 function fakeSponsorContext(
-  sponsorRowsPerQuery: Array<Array<{ nonce: string; username: string }>>
+  sponsorRowsPerQuery: SponsorRowFixture[][]
 ) {
   const newuserInvoke = jest.fn().mockResolvedValue({}),
     regoperatorInvoke = jest.fn().mockResolvedValue({}),
@@ -308,10 +334,9 @@ describe("planOperatorAccountProvisioning — outpost-chain funding gate (H3)", 
   }
 
   /** Provision a funded batch op over a REAL context (the gate reads config). */
-  function fundedKinds(externalOutposts?: {
-    ethereum: { addressFile: string; abiFiles: string[]; chainId: number }
-    solana: { idlFile: string }
-  }): string[] {
+  function fundedKinds(
+    externalOutposts?: ExternalOutpostsFixture
+  ): string[] {
     const cluster = ClusterBuild.forContext(
       fixtureContext(externalOutposts != null ? { externalOutposts } : {})
     )

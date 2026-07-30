@@ -10,10 +10,14 @@ const { BpsTotal, cpOutput, splitWireFee, swapquote, varianceDrift } =
 const LegacySwapFeeBps = 10
 
 /** A minimal reserves row carrying only the fields swapquote consults. */
+interface QuoteCodeFixture {
+  readonly value: number
+}
+
 interface QuoteReserveFixture {
-  chain_code: { value: number }
-  token_code: { value: number }
-  reserve_code: { value: number }
+  chain_code: QuoteCodeFixture
+  token_code: QuoteCodeFixture
+  reserve_code: QuoteCodeFixture
   reserve_chain_amount: number
   reserve_wire_amount: number
 }

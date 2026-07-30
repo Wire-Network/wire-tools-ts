@@ -30,11 +30,13 @@ interface RecordedOption {
   alias?: string
 }
 
+interface YargsRecorder {
+  readonly argv: Argv
+  readonly options: Map<string, RecordedOption>
+}
+
 /** A minimal `Argv` stand-in that records every `.option(flag, config)` call. */
-function createYargsRecorder(): {
-  argv: Argv
-  options: Map<string, RecordedOption>
-} {
+function createYargsRecorder(): YargsRecorder {
   const options = new Map<string, RecordedOption>(),
     recorder = {
       option(flag: string, config: RecordedOption) {

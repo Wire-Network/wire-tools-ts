@@ -26,7 +26,7 @@ import { RecordingFetchProvider } from "./RecordingFetchProvider.js"
 import { ClioRunner } from "./clio/ClioRunner.js"
 import { WireWallet } from "./WireWallet.js"
 
-const log = getLogger("WireClient")
+const log = getLogger(__filename)
 
 // The contract registry is exported under the `SysioContracts` namespace; alias
 // the value + type locally so the generics below read cleanly (and the §17
@@ -35,19 +35,27 @@ const { SysioContractName, SysioContractDefinitions } = SysioContracts
 type SysioContractName = SysioContracts.SysioContractName
 type SysioContractMapping = SysioContracts.SysioContractMapping
 
-interface ClioTransactionAction<Action extends {}> {
+interface ClioTransactionAction<Action extends object> {
   readonly account: string
   readonly name: string
   readonly authorization: PermissionLevelType[]
   readonly data: Action
 }
 
-interface ClioTransactionBody<Action extends {}> {
+interface ClioTransactionBody<Action extends object> {
   readonly actions: ClioTransactionAction<Action>[]
 }
 
 interface TransactionFinalityErrorOptions {
   readonly cause?: unknown
+}
+
+interface TransactionResponseLike {
+  readonly transaction_id?: string
+}
+
+interface TransactionIdResponse {
+  readonly transaction_id: string
 }
 
 /** Caller config for the WIRE client (clio binary + node/wallet URLs). */
@@ -181,7 +189,7 @@ export class WireClient {
   // ── Actions / transactions ───────────────────────────────────────────────
 
   /** Single typed action; waits for finality by default (`skipWait` to fire-and-forget). */
-  async invoke<Action extends {}>(
+  async invoke<Action extends object>(
     account: string,
     action: string,
     data: Action,
@@ -222,7 +230,7 @@ export class WireClient {
    * @param options - Invocation finality and authorization options.
    * @returns The single transaction submission response.
    */
-  async invokeOnce<Action extends {}>(
+  async invokeOnce<Action extends object>(
     account: string,
     action: string,
     data: Action,
@@ -271,7 +279,7 @@ export class WireClient {
    * `sysio.roa::setsyscode`'s wasm hex) that would exceed the command-line arg
    * limit (E2BIG). Waits for finality by default.
    */
-  async invokeViaFile<Action extends {}>(
+  async invokeViaFile<Action extends object>(
     account: string,
     action: string,
     data: Action,
@@ -302,7 +310,7 @@ export class WireClient {
    * @param options - Invocation finality and authorization options.
    * @returns The single transaction submission response.
    */
-  async invokeViaFileOnce<Action extends {}>(
+  async invokeViaFileOnce<Action extends object>(
     account: string,
     action: string,
     data: Action,
@@ -322,7 +330,7 @@ export class WireClient {
     return this.withFinalityOnce(label, send, options.finality)
   }
 
-  private async sendViaFile<Action extends {}>(
+  private async sendViaFile<Action extends object>(
     body: ClioTransactionBody<Action>,
     send: (file: string) => Promise<API.v1.SendTransactionResponse>
   ): Promise<API.v1.SendTransactionResponse> {
@@ -573,7 +581,7 @@ export class WireClient {
   /** Fetch a transaction trace via /v1/trace_api/get_transaction_trace. */
   async getTransaction(
     id: string
-  ): Promise<WireClient.GetTransactionResponse | null> {
+  ): Promise<WireClient.GetTransactionResponse> {
     const resp = await fetch(
       `${this.config.nodeopUrl}/v1/trace_api/get_transaction_trace`,
       {
@@ -587,7 +595,7 @@ export class WireClient {
       .with({ status: 404 }, () => Promise.resolve(null))
       .otherwise(() => {
         throw new Error(`get_transaction(${id}) failed: HTTP ${resp.status}`)
-      })) as WireClient.GetTransactionResponse | null
+      })) as WireClient.GetTransactionResponse
   }
 
   /** Wait for head to advance past the current head. */
@@ -610,7 +618,7 @@ export class WireClient {
   }
 
   /** Push (via `send`), wait to `finality` (default irreversible), re-push on fork-out. */
-  private withFinality<T extends { transaction_id?: string }>(
+  private withFinality<T extends TransactionResponseLike>(
     label: string,
     send: () => Promise<T>,
     finality: WireClient.FinalityType = WireClient.DefaultFinality
@@ -623,7 +631,7 @@ export class WireClient {
   }
 
   /** Push once and observe finality once without resending the transaction. */
-  private withFinalityOnce<T extends { transaction_id?: string }>(
+  private withFinalityOnce<T extends TransactionResponseLike>(
     label: string,
     send: () => Promise<T>,
     finality: WireClient.FinalityType = WireClient.DefaultFinality
@@ -631,7 +639,7 @@ export class WireClient {
     return this.sendAndAssertFinality(label, send, finality)
   }
 
-  private async sendAndAssertFinality<T extends { transaction_id?: string }>(
+  private async sendAndAssertFinality<T extends TransactionResponseLike>(
     label: string,
     send: () => Promise<T>,
     finality: WireClient.FinalityType
@@ -759,7 +767,7 @@ export class WireClient {
   /** Resolve the block a tx currently sits at, or null (forked out / not applied). */
   private async locateTransactionBlock(
     transactionId: string
-  ): Promise<number | null> {
+  ): Promise<number> {
     const trace = await this.getTransaction(transactionId)
     return isObject(trace) && isNumber(trace.block_num) && trace.block_num > 0
       ? trace.block_num
@@ -916,13 +924,17 @@ export namespace WireClient {
       args?: TableQueryArgs
     ): Promise<TableQueryResult<TableRow<Name, Table>>>
   }
-  export type SysioContractClient<Name extends SysioContractName> = {
-    readonly actions: {
-      readonly [Action in ActionName<Name>]: ActionInvoker<Name, Action>
-    }
-    readonly tables: {
-      readonly [Table in TableName<Name>]: TableQuery<Name, Table>
-    }
+  /** Typed action invokers keyed by the generated contract action names. */
+  export type SysioContractActions<Name extends SysioContractName> = {
+    readonly [Action in ActionName<Name>]: ActionInvoker<Name, Action>
+  }
+  /** Typed table queries keyed by the generated contract table names. */
+  export type SysioContractTables<Name extends SysioContractName> = {
+    readonly [Table in TableName<Name>]: TableQuery<Name, Table>
+  }
+  export interface SysioContractClient<Name extends SysioContractName> {
+    readonly actions: SysioContractActions<Name>
+    readonly tables: SysioContractTables<Name>
   }
 
   // ── Finality ──
@@ -1000,17 +1012,17 @@ export namespace WireClient {
   }
 
   /** Extract `transaction_id` from a clio JSON response. */
-  export function getTransactionId(result: unknown): string | null {
+  export function getTransactionId(result: unknown): string {
     if (typeof result === "string") {
       try {
-        return JSON.parse(result)?.transaction_id ?? null
+        return JSON.parse(result)?.transaction_id
       } catch {
         const m = result.match(/"transaction_id"\s*:\s*"([a-f0-9]+)"/)
         return m ? m[1] : null
       }
     }
     if (result && typeof result === "object" && "transaction_id" in result)
-      return (result as { transaction_id: string }).transaction_id
+      return (result as TransactionIdResponse).transaction_id
     return null
   }
 

@@ -68,6 +68,11 @@ const DefaultImportSeedBatchSize = 10_000
 /** `asset::max_amount`, enforced when dclaim constructs the claim balance. */
 const MaxImportSeedWireAtomic = (1n << 62n) - 1n
 
+interface ImportSeedCreditConversion {
+  readonly credits: ImportSeedCredit[]
+  readonly droppedDust: bigint
+}
+
 // ---------------------------------------------------------------------------
 // Index data shape
 // ---------------------------------------------------------------------------
@@ -285,10 +290,10 @@ function accumulate(
 function toCredits(
   accumulator: Map<string, bigint>,
   divisor: bigint
-): { credits: ImportSeedCredit[]; droppedDust: bigint } {
+): ImportSeedCreditConversion {
   return [...accumulator.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
-    .reduce<{ credits: ImportSeedCredit[]; droppedDust: bigint }>(
+    .reduce<ImportSeedCreditConversion>(
       (result, [native_address, total]) => {
         const wire_atomic = total / divisor,
           dust = total - wire_atomic * divisor
