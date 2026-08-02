@@ -872,7 +872,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    underwriterLabels: string[],
+    underwriterAccounts: string[],
     collateral: UnderwriterCollateralMatrix
   ): ClusterBuildStep<SwapScenarioContext, null> {
     collateral.forEach(entries =>
@@ -894,9 +894,9 @@ export namespace SwapNonNativeScenarioTokenSteps {
             const { rows } = await ctx.wire
               .getSysioContract(SysioContractName.opreg)
               .tables.operators.query({ limit: 100 })
-            return underwriterLabels.every((label, index) => {
-              const account = ctx.keyStore.assertOperator(label).account,
-                operator = rows.find(row => row.account === account)
+            return underwriterAccounts.every((account, index) => {
+              const chainAccount = ctx.keyStore.assertOperator(account).chainAccount,
+                operator = rows.find(row => row.account === chainAccount)
               if (operator == null) return false
               return collateral[index].every(entry =>
                 operator.balances.some(

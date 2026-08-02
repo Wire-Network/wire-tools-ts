@@ -148,8 +148,8 @@ describe("Steps.keys", () => {
       mockSend.mockResolvedValueOnce({})
       const ctx = fixtureContext()
       ctx.keyStore.setOperator({
-        label: "batchop.a",
         account: "batchop.a",
+        chainAccount: "wireno.x3f9k",
         type: OperatorType.BATCH,
         wire: {
           type: KeyType.K1,
@@ -187,8 +187,8 @@ describe("Steps.keys", () => {
       const ed = PrivateKey.generate(KeyType.ED)
       const ctx = fixtureContext()
       ctx.keyStore.setOperator({
-        label: "batchop.a",
         account: "batchop.a",
+        chainAccount: "wireno.x3f9k",
         type: OperatorType.BATCH,
         wire: {
           type: KeyType.K1,

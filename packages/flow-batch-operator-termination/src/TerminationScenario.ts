@@ -40,18 +40,18 @@ const { Actor } = Report
  */
 const PostDepositEthereumWeiKey = outputKey<bigint>(
   "TerminationScenario.postDepositEthereumWei",
-  `${Constants.DoomedOperatorLabel}'s ETH wallet balance (wei) after both bonds landed`
+  `${Constants.DoomedOperatorAccount}'s ETH wallet balance (wei) after both bonds landed`
 )
 
 /** The SOL counterpart of {@link PostDepositEthereumWeiKey} (lamports). */
 const PostDepositSolanaLamportsKey = outputKey<number>(
   "TerminationScenario.postDepositSolanaLamports",
-  `${Constants.DoomedOperatorLabel}'s SOL wallet balance (lamports) after both bonds landed`
+  `${Constants.DoomedOperatorAccount}'s SOL wallet balance (lamports) after both bonds landed`
 )
 
 /** The doomed operator's node-owner-generated chain account, resolved from the key store. */
 function doomedOperatorAccount(ctx: ClusterBuildContext): string {
-  return ctx.keyStore.assertOperator(Constants.DoomedOperatorLabel).account
+  return ctx.keyStore.assertOperator(Constants.DoomedOperatorAccount).chainAccount
 }
 
 /** The doomed operator's row on `sysio.opreg::operators` (a read). */
@@ -121,7 +121,7 @@ interface SolanaAccountClient {
 async function readSolanaCollateralLedger(
   ctx: ClusterBuildContext
 ): Promise<SolanaCollateralLedgerEntry[]> {
-  const operator = ctx.keyStore.assertOperator(Constants.DoomedOperatorLabel)
+  const operator = ctx.keyStore.assertOperator(Constants.DoomedOperatorAccount)
   const program = SolanaCollateralTool.loadOppOutpostProgram(
     ctx,
     solanaKeypair(operator.solana)
@@ -283,7 +283,7 @@ export class TerminationScenario extends FlowScenario {
       {},
       [
         {
-          label: Constants.DoomedOperatorLabel,
+          account: Constants.DoomedOperatorAccount,
           type: OperatorType.BATCH,
           ethereumHdIndex: Constants.DoomedOperatorEthereumHdIndex,
           isBootstrapped: false,
@@ -306,11 +306,11 @@ export class TerminationScenario extends FlowScenario {
           const operator = await readDoomedOperatorRow(ctx)
           Assert.ok(
             operator != null,
-            `${Constants.DoomedOperatorLabel} missing from sysio.opreg::operators`
+            `${Constants.DoomedOperatorAccount} missing from sysio.opreg::operators`
           )
           Assert.ok(
             !operator.is_bootstrapped,
-            `${Constants.DoomedOperatorLabel} registered bootstrapped — it would bypass termination`
+            `${Constants.DoomedOperatorAccount} registered bootstrapped — it would bypass termination`
           )
           Assert.ok(
             matchesProtoEnum(
@@ -318,7 +318,7 @@ export class TerminationScenario extends FlowScenario {
               SysioOpregOperatorstatus,
               SysioOpregOperatorstatus.OPERATOR_STATUS_UNKNOWN
             ),
-            `${Constants.DoomedOperatorLabel} status not UNKNOWN (got ${operator.status})`
+            `${Constants.DoomedOperatorAccount} status not UNKNOWN (got ${operator.status})`
           )
         },
         quickStepOptions
@@ -336,7 +336,7 @@ export class TerminationScenario extends FlowScenario {
         "deposit-ethereum",
         `deposit ${Constants.EthereumBondAmount} wei ETH collateral`,
         depositStepOptions,
-        Constants.DoomedOperatorLabel,
+        Constants.DoomedOperatorAccount,
         OperatorType.BATCH,
         BigInt(Constants.EthereumTokenCode),
         Constants.EthereumBondAmount
@@ -377,7 +377,7 @@ export class TerminationScenario extends FlowScenario {
                 SysioOpregOperatorstatus,
                 SysioOpregOperatorstatus.OPERATOR_STATUS_UNKNOWN
               ),
-            `${Constants.DoomedOperatorLabel} flipped past UNKNOWN on the ETH bond alone (got ${operator?.status})`
+            `${Constants.DoomedOperatorAccount} flipped past UNKNOWN on the ETH bond alone (got ${operator?.status})`
           )
         },
         quickStepOptions
@@ -395,7 +395,7 @@ export class TerminationScenario extends FlowScenario {
         "deposit-solana",
         `deposit ${Constants.SolanaBondAmount} lamports SOL collateral`,
         depositStepOptions,
-        Constants.DoomedOperatorLabel,
+        Constants.DoomedOperatorAccount,
         OperatorType.BATCH,
         BigInt(Constants.SolanaTokenCode),
         Constants.SolanaBondAmount
@@ -430,7 +430,7 @@ export class TerminationScenario extends FlowScenario {
         "capture the operator's post-deposit ETH + SOL wallet balances (remit-exactness baselines)",
         async ctx => {
           const operator = ctx.keyStore.assertOperator(
-            Constants.DoomedOperatorLabel
+            Constants.DoomedOperatorAccount
           )
           const wei = await ctx.ethereum.getBalance(operator.ethereum.address)
           const lamports = await ctx.solana.getLamports(
@@ -456,7 +456,7 @@ export class TerminationScenario extends FlowScenario {
         "operator rides into epochstate.batch_op_groups via advance's new-tail computation",
         async ctx => {
           await pollUntil(
-            `${Constants.DoomedOperatorLabel} appears in epochstate.batch_op_groups`,
+            `${Constants.DoomedOperatorAccount} appears in epochstate.batch_op_groups`,
             async () => {
               try {
                 const account = doomedOperatorAccount(ctx),
@@ -493,7 +493,7 @@ export class TerminationScenario extends FlowScenario {
         `status flips TERMINATED after ≥${Constants.TerminateMaxConsecutiveMisses} consecutive missed scheduled epochs`,
         async ctx => {
           await pollUntil(
-            `${Constants.DoomedOperatorLabel} status flips to TERMINATED`,
+            `${Constants.DoomedOperatorAccount} status flips to TERMINATED`,
             async () => {
               const operator = await readDoomedOperatorRow(ctx)
               return (
@@ -519,7 +519,7 @@ export class TerminationScenario extends FlowScenario {
           const operator = await readDoomedOperatorRow(ctx)
           Assert.ok(
             operator != null,
-            `${Constants.DoomedOperatorLabel} missing from sysio.opreg::operators`
+            `${Constants.DoomedOperatorAccount} missing from sysio.opreg::operators`
           )
           Assert.ok(
             matchesProtoEnum(
@@ -527,7 +527,7 @@ export class TerminationScenario extends FlowScenario {
               SysioOpregOperatorstatus,
               SysioOpregOperatorstatus.OPERATOR_STATUS_TERMINATED
             ),
-            `${Constants.DoomedOperatorLabel} status not TERMINATED (got ${operator.status})`
+            `${Constants.DoomedOperatorAccount} status not TERMINATED (got ${operator.status})`
           )
           Assert.ok(
             Number(operator.terminated_at) > 0,
@@ -579,7 +579,7 @@ export class TerminationScenario extends FlowScenario {
             async () =>
               (await EthereumCollateralTool.readDepositedByCode(
                 ctx,
-                Constants.DoomedOperatorLabel,
+                Constants.DoomedOperatorAccount,
                 BigInt(Constants.EthereumTokenCode)
               )) === 0n,
             Constants.remitDeadlineMs(),
@@ -599,7 +599,7 @@ export class TerminationScenario extends FlowScenario {
           // different amount than the depot encoded into the attestation.
           const baseline = ctx.outputs.assert(PostDepositEthereumWeiKey)
           const operator = ctx.keyStore.assertOperator(
-            Constants.DoomedOperatorLabel
+            Constants.DoomedOperatorAccount
           )
           await pollUntil(
             `operator ETH wallet credited exactly ${Constants.EthereumBondAmount} wei`,
@@ -623,7 +623,7 @@ export class TerminationScenario extends FlowScenario {
           // lamport delta is purely the bond amount.
           const baseline = ctx.outputs.assert(PostDepositSolanaLamportsKey)
           const operator = ctx.keyStore.assertOperator(
-            Constants.DoomedOperatorLabel
+            Constants.DoomedOperatorAccount
           )
           const operatorPublicKey = solanaKeypair(operator.solana).publicKey
           await pollUntil(
@@ -644,7 +644,7 @@ export class TerminationScenario extends FlowScenario {
         "the outpost's collateral_by_code ledger row for the operator is pruned or 0",
         async ctx => {
           const operator = ctx.keyStore.assertOperator(
-            Constants.DoomedOperatorLabel
+            Constants.DoomedOperatorAccount
           )
           const operatorPublicKey = solanaKeypair(operator.solana).publicKey
           const solanaTokenCode = BigInt(Constants.SolanaTokenCode)

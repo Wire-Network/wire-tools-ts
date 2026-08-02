@@ -418,17 +418,17 @@ export namespace ExternalClusterConfigSteps {
     signal.throwIfAborted()
     const state = ClusterState.load(ctx.config),
       keys = ClusterState.loadKeys(ctx.config),
-      keyLabels = new Set(keys.operators.map(operator => operator.label))
+      keyAccounts = new Set(keys.operators.map(operator => operator.account))
     state.nodes
       .flatMap(node =>
-        [node.batchOperatorLabel, node.underwriterLabel].filter(
-          (label): label is string => label != null
+        [node.batchOperatorAccount, node.underwriterAccount].filter(
+          (account): account is string => account != null
         )
       )
-      .forEach(label =>
+      .forEach(account =>
         Assert.ok(
-          keyLabels.has(label),
-          `create-external-config: operator ${label} is in cluster-state but missing from cluster-keys`
+          keyAccounts.has(account),
+          `create-external-config: operator ${account} is in cluster-state but missing from cluster-keys`
         )
       )
   }
@@ -787,10 +787,13 @@ export namespace ExternalClusterConfigSteps {
     provider: ClusterSignatureProviderConfig,
     cluster: string
   ): ExternalClusterConfigAccount {
+    // The SSM secret id is keyed by the DURABLE handle (what `KeySteps`
+    // PutParameter'd); `accountName` is the ON-CHAIN name the deployed daemon
+    // acts as. Two different values — do not collapse them.
     const providerFor = (keyPair: KeyPair): SignatureProviderConfig =>
       keyProviderFor(keyPair, operator.account, provider, cluster)
     return {
-      accountName: operator.account,
+      accountName: operator.chainAccount,
       type: operator.type,
       keyProviders: [
         providerFor(operator.wire),
