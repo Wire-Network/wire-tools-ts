@@ -69,14 +69,14 @@ function readFromWireUwreq(ctx: SwapScenarioContext) {
 /** Whether every `accounts` entry is `OPERATOR_STATUS_ACTIVE` on `sysio.opreg` (a read). */
 async function readAllOperatorsActive(
   ctx: SwapScenarioContext,
-  labels: string[]
+  accounts: string[]
 ): Promise<boolean> {
   const { rows } = await ctx.wire
     .getSysioContract(SysioContractName.opreg)
     .tables.operators.query({ limit: 100 })
-  return labels.every(label => {
-    const account = ctx.keyStore.assertOperator(label).account,
-      operator = rows.find(row => row.account === account)
+  return accounts.every(account => {
+    const chainAccount = ctx.keyStore.assertOperator(account).chainAccount,
+      operator = rows.find(row => row.account === chainAccount)
     return (
       operator != null &&
       matchesProtoEnum(
@@ -151,9 +151,9 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
 
   plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const config = cluster.context.config,
-      underwriterLabels = Array.from(
+      underwriterAccounts = Array.from(
         { length: config.underwriterCount },
-        (_, index) => HarnessConstants.underwriterLabel(index)
+        (_, index) => HarnessConstants.underwriterAccount(index)
       ),
       writeStepOptions = { timeoutMs: 60_000 },
       relayStepOptions = {
@@ -208,7 +208,7 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
       "UnderwriterCollateral",
       "Bond the default underwriter collateral on both outposts",
       writeStepOptions,
-      underwriterLabels,
+      underwriterAccounts,
       WireUnderwriterTool.load(null, config.underwriterCount)
     )
     ClusterBuildPhase.create(
@@ -219,11 +219,11 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
       verifyStep<SwapScenarioContext>(
         Actor.Sysio,
         "underwriters-active",
-        `underwriters (${underwriterLabels.join(", ")}) become OPERATOR_STATUS_ACTIVE`,
+        `underwriters (${underwriterAccounts.join(", ")}) become OPERATOR_STATUS_ACTIVE`,
         async ctx => {
           await pollUntil(
             "every underwriter ACTIVE on sysio.opreg",
-            () => readAllOperatorsActive(ctx, underwriterLabels),
+            () => readAllOperatorsActive(ctx, underwriterAccounts),
             Constants.relayDeadlineMs(),
             Constants.PollIntervalMs
           )

@@ -26,8 +26,8 @@ const log = getLogger(__filename)
  * dev K1 + BLS block-signing keys (matching genesis).
  */
 const BiosOperator: OperatorAccount = {
-  label: NodeConfig.BiosProducer,
   account: NodeConfig.BiosProducer,
+  chainAccount: NodeConfig.BiosProducer,
   type: OperatorType.PRODUCER,
   wire: {
     type: KeyType.K1,
@@ -209,7 +209,7 @@ export namespace NodeopProcessSteps {
     return match(node.role)
       .with(NodeRole.bios, () => BiosOperator)
       .with(NodeRole.producer, () => producerOperator(ctx, node))
-      .otherwise(() => ctx.keyStore.assertOperator(assertOperatorLabel(node)))
+      .otherwise(() => ctx.keyStore.assertOperator(assertOperatorAccount(node)))
   }
 
   /** A producer node's OperatorAccount — its first hosted account + the node-shared keys. */
@@ -218,25 +218,27 @@ export namespace NodeopProcessSteps {
     node: NodeConfig
   ): OperatorAccount {
     const nodeKeys = ctx.keyStore.node(node.index),
+      // A producer never goes through `roa::newuser`, so its handle IS its
+      // on-chain name.
       account = node.producers[0] ?? node.name
     return {
-      label: account,
       account,
+      chainAccount: account,
       type: OperatorType.PRODUCER,
       wire: nodeKeys.keys.k1,
       bls: nodeKeys.keys.bls
     }
   }
 
-  /** Assert an operator node names its batch / underwriter provisioning label. */
-  function assertOperatorLabel(node: NodeConfig): string {
-    const { batchOperatorLabel, underwriterLabel } = node,
-      label = batchOperatorLabel ?? underwriterLabel
+  /** Assert an operator node names the durable batch / underwriter account handle it acts for. */
+  function assertOperatorAccount(node: NodeConfig): string {
+    const { batchOperatorAccount, underwriterAccount } = node,
+      account = batchOperatorAccount ?? underwriterAccount
     Assert.ok(
-      label != null,
-      `nodeop start: operator node ${node.name} has no operator label`
+      account != null,
+      `nodeop start: operator node ${node.name} has no operator account handle`
     )
-    return label
+    return account
   }
 
   /**
@@ -255,7 +257,7 @@ export namespace NodeopProcessSteps {
     const artifacts = ctx.outputs.assert(OperatorDaemonArtifactsKey),
       network = OperatorDaemonTool.networkFromConfig(ctx.config),
       keySourceFor = ClusterConfigProvider.signatureProviderSource(ctx.config)
-    return node.batchOperatorLabel != null
+    return node.batchOperatorAccount != null
       ? OperatorDaemonTool.batchOperatorArgs(operator, artifacts, network, keySourceFor)
       : OperatorDaemonTool.underwriterArgs(operator, artifacts, network, keySourceFor)
   }

@@ -10,7 +10,8 @@ import { OperatorAccount } from "./OperatorAccount.js"
  * provisioned {@link OperatorAccount} (producer / batch operator / underwriter /
  * flow-provisioned), **accumulated as accounts are provisioned**: bootstrap
  * key-gen pushes the node sets, and every provisioning Phase's materialize step
- * {@link setOperator}s its account. There is no other place keys live —
+ * {@link setOperator}s its account, keyed by the durable `account` handle (never
+ * by the generated `chainAccount`). There is no other place keys live —
  * consensus steps, node start (signature providers), authex links, deposit
  * tools, and daemon config all resolve from here.
  */
@@ -50,42 +51,42 @@ export class ClusterKeyStore {
     return nodeKeys
   }
 
-  /** Add or replace a provisioned operator account, keyed by its `label` (chainable). */
+  /** Add or replace a provisioned operator account, keyed by its durable `account` handle (chainable). */
   setOperator(operator: OperatorAccount): this {
-    this.operatorMap.set(operator.label, operator)
+    this.operatorMap.set(operator.account, operator)
     return this
   }
 
-  /** A provisioned operator account by `label`, or nothing when absent (see {@link assertOperator}). */
-  operator(label: string): OperatorAccount {
-    return this.operatorMap.get(label)
+  /** A provisioned operator by its durable `account` handle, or nothing when absent (see {@link assertOperator}). */
+  operator(account: string): OperatorAccount {
+    return this.operatorMap.get(account)
   }
 
   /**
-   * A provisioned operator account by `label` — throws when the operator hasn't
-   * been provisioned (its materialize step hasn't run).
+   * A provisioned operator by its durable `account` handle — throws when the
+   * operator hasn't been provisioned (its materialize step hasn't run).
    *
-   * @param label - The operator's deterministic provisioning label.
-   * @returns The operator's label + account + keys.
+   * @param account - The operator's durable handle (NOT its `chainAccount`).
+   * @returns The operator's account + chainAccount + keys.
    */
-  assertOperator(label: string): OperatorAccount {
-    const operator = this.operatorMap.get(label)
+  assertOperator(account: string): OperatorAccount {
+    const operator = this.operatorMap.get(account)
     Assert.ok(
       operator != null,
-      `ClusterKeyStore: operator "${label}" has not been provisioned (no materialize step ran for it)`
+      `ClusterKeyStore: operator "${account}" has not been provisioned (no materialize step ran for it)`
     )
     return operator
   }
 
   /**
-   * Every provisioned operator of `type`, sorted by `label`. Sorting (not
+   * Every provisioned operator of `type`, sorted by `account`. Sorting (not
    * insertion order) keeps the listing deterministic — provisioning phases run
    * in parallel, so completion order varies run to run.
    */
   operatorsByType(type: OperatorType): OperatorAccount[] {
     return this.operators
       .filter(operator => operator.type === type)
-      .sort((a, b) => a.label.localeCompare(b.label))
+      .sort((a, b) => a.account.localeCompare(b.account))
   }
 }
 

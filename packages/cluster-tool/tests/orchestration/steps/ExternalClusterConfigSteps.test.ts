@@ -124,30 +124,30 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     NodeConfig.plan(ctx.config)
       .filter(node => node.role === NodeRole.operator)
       .forEach(node => {
-        const { batchOperatorLabel, underwriterLabel } = node,
-          label = batchOperatorLabel ?? underwriterLabel
+        const { batchOperatorAccount, underwriterAccount } = node,
+          account = batchOperatorAccount ?? underwriterAccount
         ctx.keyStore.setOperator({
-          label,
-          account: label,
+          account,
+          chainAccount: `wireno.${account.replace(/[^a-z1-5]/g, "")}`,
           type:
-            batchOperatorLabel != null
+            batchOperatorAccount != null
               ? OperatorType.BATCH
               : OperatorType.UNDERWRITER,
           wire: {
             type: KeyType.K1,
-            publicKey: `PUB_K1_${label}`,
-            privateKey: `PVT_K1_${label}`
+            publicKey: `PUB_K1_${account}`,
+            privateKey: `PVT_K1_${account}`
           },
           ethereum: {
             type: KeyType.EM,
-            publicKey: `PUB_EM_${label}`,
-            privateKey: `PVT_EM_${label}`,
+            publicKey: `PUB_EM_${account}`,
+            privateKey: `PVT_EM_${account}`,
             address: "0xabc0000000000000000000000000000000000a"
           },
           solana: {
             type: KeyType.ED,
-            publicKey: `PUB_ED_${label}`,
-            privateKey: `PVT_ED_${label}`
+            publicKey: `PUB_ED_${account}`,
+            privateKey: `PVT_ED_${account}`
           }
         })
       })
@@ -198,11 +198,26 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     )
   }
 
+  /**
+   * The persisted `cluster-keys.json` record an emitted `accountName` came from.
+   * `accountName` is the operator's ON-CHAIN name while the SSM secret id and
+   * the fixture's key material are keyed by the DURABLE handle — so every
+   * assertion that needs the handle resolves it through this map.
+   */
+  function keyEntryFor(accountName: string) {
+    const entry = ClusterState.loadKeys(runContext().config).operators.find(
+      operator => operator.chainAccount === accountName
+    )
+    expect(entry).toBeDefined()
+    return entry
+  }
+
   /** Inject a BLS key onto the first cluster-keys operator (operators normally carry none). */
   function injectOperatorBls() {
     const config = runContext().config,
       keys = ClusterState.loadKeys(config),
       account = keys.operators[0].account,
+      chainAccount = keys.operators[0].chainAccount,
       privateKey = "PVT_BLS_op",
       proofOfPossession = "SIG_BLS_op"
     keys.operators[0].bls = {
@@ -212,7 +227,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       proofOfPossession
     }
     ClusterState.saveKeys(config, keys)
-    return { account, privateKey, proofOfPossession }
+    return { account, chainAccount, privateKey, proofOfPossession }
   }
 
   beforeEach(() => {
@@ -245,12 +260,20 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     )
     expect(emitted.wire.epochDurationSec).toBe(ctx.config.epochDurationSec)
     expect(emitted.bindings.kiod.port).toBe(externalBind.kiod.port)
-    const expectedAccounts = NodeConfig.plan(ctx.config)
-      .filter(node => node.role === NodeRole.operator)
-      .map(node => node.batchOperatorLabel ?? node.underwriterLabel)
+    // `accountName` is the operator's ON-CHAIN name (`chainAccount`), never the
+    // durable handle the node config and the SSM secret id are keyed by.
+    const persisted = ClusterState.loadKeys(ctx.config).operators,
+      expectedChainAccounts = persisted.map(operator => operator.chainAccount),
+      handles = NodeConfig.plan(ctx.config)
+        .filter(node => node.role === NodeRole.operator)
+        .map(node => node.batchOperatorAccount ?? node.underwriterAccount)
     expect(emitted.accounts.operators.map(op => op.accountName).sort()).toEqual(
-      [...expectedAccounts].sort()
+      [...expectedChainAccounts].sort()
     )
+    expect(persisted.map(operator => operator.account).sort()).toEqual(
+      [...handles].sort()
+    )
+    expect(expectedChainAccounts.sort()).not.toEqual([...handles].sort())
 
     // The re-rendered config.ini files carry the EXTERNAL bios http port.
     const iniText = findFiles(externalDir, "config.ini")
@@ -375,7 +398,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       op.keyProviders.forEach(provider =>
         expect(provider).toMatchObject({
           providerType: SignatureProviderType.KEY,
-          privateKey: `PVT_${KeyType[provider.type]}_${op.accountName}`
+          privateKey: `PVT_${KeyType[provider.type]}_${keyEntryFor(op.accountName).account}`
         })
       )
     )
@@ -392,7 +415,9 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
           awsRegion: SsmRegion,
           awsSecretId: ClusterConfigProvider.toSecretId(SsmSecretIdPattern, {
             cluster: SourceClusterLabel,
-            account: op.accountName,
+            // The secret id is keyed by the DURABLE handle — what `KeySteps`
+            // PutParameter'd — NOT by the emitted on-chain `accountName`.
+            account: keyEntryFor(op.accountName).account,
             keyType: KeyType[provider.type]
           })
         })
@@ -428,7 +453,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     const injected = injectOperatorBls(),
       emitted = await emitWithProvider(KeyProvider),
       op = emitted.accounts.operators.find(
-        entry => entry.accountName === injected.account
+        entry => entry.accountName === injected.chainAccount
       ),
       blsProvider = op.keyProviders.find(
         provider => provider.type === KeyType.BLS
@@ -444,7 +469,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     const injected = injectOperatorBls(),
       emitted = await emitWithProvider(KiodProvider),
       op = emitted.accounts.operators.find(
-        entry => entry.accountName === injected.account
+        entry => entry.accountName === injected.chainAccount
       ),
       blsProvider = op.keyProviders.find(
         provider => provider.type === KeyType.BLS
