@@ -57,14 +57,14 @@ const log = getLogger(__filename)
  */
 async function underwritersActive(
   ctx: SwapScenarioContext,
-  labels: string[]
+  accounts: string[]
 ): Promise<boolean> {
   const { rows } = await ctx.wire
     .getSysioContract(SysioContractName.opreg)
     .tables.operators.query({ limit: Constants.OperatorTableRowLimit })
-  return labels.every(label => {
-    const account = ctx.keyStore.assertOperator(label).account,
-      operator = rows.find(row => row.account === account)
+  return accounts.every(account => {
+    const chainAccount = ctx.keyStore.assertOperator(account).chainAccount,
+      operator = rows.find(row => row.account === chainAccount)
     return (
       operator != null &&
       matchesProtoEnum(
@@ -307,9 +307,9 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
 
   plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const config = cluster.context.config,
-      underwriterLabels = Array.from(
+      underwriterAccounts = Array.from(
         { length: config.underwriterCount },
-        (_, index) => HarnessConstants.underwriterLabel(index)
+        (_, index) => HarnessConstants.underwriterAccount(index)
       ),
       writeOptions = { timeoutMs: Constants.WriteTimeoutMs },
       activeStepOptions = {
@@ -396,7 +396,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
       "UnderwriterCollateral",
       "Bond default underwriter collateral on both outpost chains",
       writeOptions,
-      underwriterLabels,
+      underwriterAccounts,
       WireUnderwriterTool.load(null, config.underwriterCount)
     )
     ClusterBuildPhase.create(
@@ -411,7 +411,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
         async ctx => {
           await pollUntil(
             "every underwriter OPERATOR_STATUS_ACTIVE",
-            () => underwritersActive(ctx, underwriterLabels),
+            () => underwritersActive(ctx, underwriterAccounts),
             Constants.relayDeadlineMs(),
             Constants.LongPollIntervalMs
           )

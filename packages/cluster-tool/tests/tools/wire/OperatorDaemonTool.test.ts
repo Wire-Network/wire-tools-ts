@@ -33,8 +33,8 @@ function operatorAccount(account: string, type: OperatorType): OperatorAccount {
     ),
     edPrivate = PrivateKey.generate(KeyType.ED)
   return {
-    label: account,
     account,
+    chainAccount: `wireno.${account}`,
     type,
     wire: { type: KeyType.K1, publicKey: `PUB_K1_${account}`, privateKey: `PVT_K1_${account}` },
     ethereum: ethereumKeyPairFromWallet(wallet),
@@ -93,7 +93,7 @@ describe("OperatorDaemonTool", () => {
       try {
         await OperatorDaemonTool.runDaemonStart(
           ctx,
-          { kind: "OperatorDaemonTool.StartDaemonInput", label: "batchopbbbb" },
+          { kind: "OperatorDaemonTool.StartDaemonInput", account: "batchopbbbb" },
           new AbortController().signal
         )
         // A flow rerun reuses the daemon's data dir, so this launch must go
@@ -145,21 +145,26 @@ describe("OperatorDaemonTool", () => {
       )
       // + the ETH and SOL outpost providers, named per-operator
       expect(providers.length).toBe(3)
-      expect(providers[1]).toMatch(/^eth-batchopaaaa,ethereum,ethereum,0x[0-9a-fA-F]{128},KEY:0x/)
-      expect(providers[2]).toMatch(/^sol-batchopaaaa,solana,solana,/)
+      // Provider NAMES are built from the CHAIN account, not the durable handle.
+      expect(providers[1]).toMatch(/^eth-wireno\.batchopaaaa,ethereum,ethereum,0x[0-9a-fA-F]{128},KEY:0x/)
+      expect(providers[2]).toMatch(/^sol-wireno\.batchopaaaa,solana,solana,/)
     })
 
     it("configures the batch plugin + both outpost clients + artifacts", () => {
       expect(valuesOf(args, "--batch-enabled")).toEqual(["true"])
-      expect(valuesOf(args, "--batch-operator-account")).toEqual(["batchopaaaa"])
+      // The depot matches this argv against `sysio.opreg::operators`, which is
+      // keyed by the ON-CHAIN account — passing the handle would start a daemon
+      // that silently matches no operator row.
+      expect(valuesOf(args, "--batch-operator-account")).toEqual([operator.chainAccount])
+      expect(valuesOf(args, "--batch-operator-account")).not.toEqual([operator.account])
       expect(valuesOf(args, "--batch-epoch-poll-ms")).toEqual([String(OperatorDaemonTool.BatchEpochPollMs)])
       expect(valuesOf(args, "--batch-delivery-timeout-ms")).toEqual([String(OperatorDaemonTool.BatchDeliveryTimeoutMs)])
       expect(valuesOf(args, "--ext-debugging-server")).toEqual([network.debuggingServerUrl])
       expect(valuesOf(args, "--outpost-ethereum-client")).toEqual([
-        `eth-default,eth-batchopaaaa,${network.ethereumRpcUrl},31337`
+        `eth-default,eth-${operator.chainAccount},${network.ethereumRpcUrl},31337`
       ])
       expect(valuesOf(args, "--outpost-solana-client")).toEqual([
-        `sol-default,sol-batchopaaaa,${network.solanaRpcUrl}`
+        `sol-default,sol-${operator.chainAccount},${network.solanaRpcUrl}`
       ])
       expect(valuesOf(args, "--ethereum-abi-file")).toEqual(artifacts.ethereumAbiFiles)
       expect(valuesOf(args, "--batch-sol-client-id")).toEqual(["sol-default"])
@@ -222,7 +227,7 @@ describe("OperatorDaemonTool", () => {
           ssmKeySourceFor
         ),
         solProvider = valuesOf(ssmArgs, "--signature-provider").find(provider =>
-          provider.startsWith(`sol-${operator.account}`)
+          provider.startsWith(`sol-${operator.chainAccount}`)
         )
       expect(solProvider).toMatch(/,SSM:us-east-1:/)
       expect(solProvider).not.toMatch(/,KEY:/)
@@ -248,7 +253,9 @@ describe("OperatorDaemonTool", () => {
     it("loads the underwriter plugin set + source-deposit verification targets", () => {
       expect(valuesOf(args, "--plugin")).toEqual([...OperatorDaemonTool.UnderwriterPlugins])
       expect(valuesOf(args, "--underwriter-enabled")).toEqual(["true"])
-      expect(valuesOf(args, "--underwriter-account")).toEqual(["uwritaaaaaa"])
+      // Same chain-boundary rule as `--batch-operator-account`.
+      expect(valuesOf(args, "--underwriter-account")).toEqual([operator.chainAccount])
+      expect(valuesOf(args, "--underwriter-account")).not.toEqual([operator.account])
       expect(valuesOf(args, "--underwriter-eth-source-deposit-function")).toEqual(["requestSwap"])
       expect(valuesOf(args, "--underwriter-sol-source-deposit-instruction")).toEqual(["request_swap"])
       expect(valuesOf(args, "--solana-idl-file")).toEqual([artifacts.solanaIdlFile])

@@ -63,16 +63,16 @@ describe("collectPidSources", () => {
       name: string,
       nodePath: string,
       role: ClusterStateNodeRole,
-      batchOperatorLabel: string | null = null,
-      underwriterLabel: string | null = null
+      batchOperatorAccount: string | null = null,
+      underwriterAccount: string | null = null
     ): ClusterStateNode => ({
       name,
       role,
       nodePath,
       ports: { http: 0, p2p: 0 },
       producers: [],
-      batchOperatorLabel,
-      underwriterLabel
+      batchOperatorAccount,
+      underwriterAccount
     })
 
     const state: ClusterState = {

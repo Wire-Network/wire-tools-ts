@@ -65,8 +65,8 @@ interface NodeDescriptor {
   name: string
   ports: BindConfigNodeopPorts
   producers: readonly string[]
-  batchOperatorLabel: string | null
-  underwriterLabel: string | null
+  batchOperatorAccount: string | null
+  underwriterAccount: string | null
 }
 
 /**
@@ -87,8 +87,8 @@ export class NodeConfig {
     readonly ports: BindConfigNodeopPorts,
     readonly producers: readonly string[],
     readonly peerEndpoints: readonly string[],
-    readonly batchOperatorLabel: string | null = null,
-    readonly underwriterLabel: string | null = null
+    readonly batchOperatorAccount: string | null = null,
+    readonly underwriterAccount: string | null = null
   ) {
     this.ini = new NodeConfigIniRenderer(this)
     this.logging = new NodeConfigLoggingRenderer(this)
@@ -112,8 +112,8 @@ export class NodeConfig {
    * Plan every node in the cluster from its resolved binding: a bios node, one
    * producer node per `bind.nodeop.ports.producers[]` (with the defproducer
    * names round-robin-distributed), and one operator node per batch-op /
-   * underwriter port pair (associated by its provisioning LABEL — the chain
-   * account is generated at provisioning time and resolved from the key
+   * underwriter port pair (associated by its durable ACCOUNT handle — the
+   * `chainAccount` is generated at provisioning time and resolved from the key
    * store). Peer endpoints are every other node's advertised p2p endpoint —
    * each node's own `ports.advertiseAddress` when bound (multi-host mesh),
    * else the shared dialable bind address.
@@ -132,8 +132,8 @@ export class NodeConfig {
           name: NodeConfig.BiosName,
           ports: nodeopPorts.bios,
           producers: [NodeConfig.BiosProducer],
-          batchOperatorLabel: null,
-          underwriterLabel: null
+          batchOperatorAccount: null,
+          underwriterAccount: null
         }
       ]
 
@@ -146,8 +146,8 @@ export class NodeConfig {
         producers: producerNames.filter(
           (_, i) => producerNodeCount > 0 && i % producerNodeCount === k
         ),
-        batchOperatorLabel: null,
-        underwriterLabel: null
+        batchOperatorAccount: null,
+        underwriterAccount: null
       })
     )
 
@@ -159,8 +159,8 @@ export class NodeConfig {
         name: nodeName(opIndex - 1),
         ports,
         producers: [],
-        batchOperatorLabel: Constants.batchOperatorLabel(k),
-        underwriterLabel: null
+        batchOperatorAccount: Constants.batchOperatorAccount(k),
+        underwriterAccount: null
       })
     )
     nodeopPorts.underwriters.forEach((ports, k) =>
@@ -170,8 +170,8 @@ export class NodeConfig {
         name: nodeName(opIndex - 1),
         ports,
         producers: [],
-        batchOperatorLabel: null,
-        underwriterLabel: Constants.underwriterLabel(k)
+        batchOperatorAccount: null,
+        underwriterAccount: Constants.underwriterAccount(k)
       })
     )
 
@@ -190,8 +190,8 @@ export class NodeConfig {
               other =>
                 `${NodeConfig.advertiseAddressFor(cluster, other.ports)}:${other.ports.p2p}`
             ),
-          d.batchOperatorLabel,
-          d.underwriterLabel
+          d.batchOperatorAccount,
+          d.underwriterAccount
         )
     )
   }

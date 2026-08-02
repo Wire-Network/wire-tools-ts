@@ -104,8 +104,8 @@ const stubState: ClusterState = {
       nodePath: "/cluster/data/node_bios",
       ports: { http: 8888, p2p: 9876 },
       producers: ["sysio"],
-      batchOperatorLabel: null,
-      underwriterLabel: null
+      batchOperatorAccount: null,
+      underwriterAccount: null
     }
   ],
   walletPath: "/cluster/wallet",

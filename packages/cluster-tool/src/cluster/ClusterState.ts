@@ -15,6 +15,7 @@ import {
   type ClusterStateNode
 } from "@wireio/cluster-tool-shared"
 import { NodeConfig, NodeRole } from "../config/NodeConfig.js"
+import { isNotEmpty } from "../utils/predicateUtils.js"
 import type { ClusterBuildContext } from "../orchestration/ClusterBuildContext.js"
 import { ClusterKeyStore } from "../orchestration/outputs/ClusterKeyStore.js"
 import { OperatorDaemonArtifactsKey } from "../orchestration/outputs/OperatorDaemonArtifacts.js"
@@ -48,10 +49,10 @@ export interface ClusterKeysNodeEntry {
  * `underwriterArgs`) build directly from them on relaunch.
  */
 export interface ClusterKeysOperatorEntry {
-  /** Deterministic provisioning label — the `ClusterKeyStore` key. */
-  label: string
-  /** WIRE account name ON CHAIN (node-owner-generated for batch/underwriter operators). */
+  /** Durable operator handle — the `ClusterKeyStore` key + SSM secret-id `{account}` segment. */
   account: string
+  /** WIRE account name ON CHAIN (node-owner-generated for batch/underwriter operators). */
+  chainAccount: string
   /** Operator role (batch operator / underwriter / producer). */
   type: OperatorType
   /** The operator's WIRE (K1) signing key. */
@@ -123,8 +124,8 @@ const ClusterKeysNodeEntrySchema: z.ZodType<ClusterKeysNodeEntry> = z.object({
 /** Schema for one provisioned operator's key record. */
 const ClusterKeysOperatorEntrySchema: z.ZodType<ClusterKeysOperatorEntry> =
   z.object({
-    label: z.string(),
     account: z.string(),
+    chainAccount: z.string(),
     type: OperatorTypeValueSchema,
     wire: WireKeyPairSchema,
     bls: WireFinalizerKeyPairSchema.optional(),
@@ -204,8 +205,8 @@ export namespace ClusterState {
       nodePath: node.nodePath,
       ports: { http: node.ports.http, p2p: node.ports.p2p },
       producers: [...node.producers],
-      batchOperatorLabel: node.batchOperatorLabel,
-      underwriterLabel: node.underwriterLabel
+      batchOperatorAccount: node.batchOperatorAccount,
+      underwriterAccount: node.underwriterAccount
     }))
     return {
       createdAt: new Date().toISOString(),
@@ -246,7 +247,17 @@ export namespace ClusterState {
         k1: nodeKeys.keys.k1,
         bls: nodeKeys.keys.bls
       })),
-      operators: ctx.keyStore.operators.map(operator => ({ ...operator }))
+      // Every persisted operator carries its on-chain name: `chainAccount` is
+      // optional on `OperatorAccount` only for the window between an OPP
+      // operator's materialize and sponsored-creation steps, both of which run
+      // long before this capture.
+      operators: ctx.keyStore.operators.map(operator => {
+        Assert.ok(
+          isNotEmpty(operator.chainAccount),
+          `ClusterState.captureKeys: operator ${operator.account} has no chainAccount — its sponsored-creation step did not run`
+        )
+        return { ...operator, chainAccount: operator.chainAccount }
+      })
     }
   }
 
