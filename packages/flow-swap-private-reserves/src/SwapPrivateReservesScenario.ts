@@ -224,7 +224,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
     // resolved config plan (this scenario's defaults: ETH + SOL + USDCSOL).
     const underwriterAccounts = Array.from(
       { length: cluster.config.underwriterCount },
-      (_, index) => HarnessConstants.underwriterLabel(index)
+      (_, index) => HarnessConstants.underwriterAccount(index)
     )
     WireUnderwriterTool.planCollateralDeposit(
       cluster,
@@ -533,15 +533,15 @@ async function runVerifyWireChainProducing(ctx: Context): Promise<void> {
 
 /** Old "uwrit.a becomes ACTIVE (deposits credit)" — poll the operator row. */
 async function runVerifyUnderwriterActive(ctx: Context): Promise<void> {
-  const label = HarnessConstants.underwriterLabel(0),
-    account = ctx.keyStore.assertOperator(label).account
+  const account = HarnessConstants.underwriterAccount(0),
+    chainAccount = ctx.keyStore.assertOperator(account).chainAccount
   await pollUntil(
-    `${label} (${account}) ACTIVE`,
+    `${account} (${chainAccount}) ACTIVE`,
     async () => {
       const { rows } = await ctx.wire
         .getSysioContract(SysioContractName.opreg)
         .tables.operators.query()
-      const underwriter = rows.find(row => row.account === account)
+      const underwriter = rows.find(row => row.account === chainAccount)
       return (
         underwriter != null &&
         matchesProtoEnum(

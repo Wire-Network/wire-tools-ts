@@ -98,7 +98,9 @@ export namespace ConsensusSteps {
     const producers = ctx.keyStore.operatorsByType(OperatorType.PRODUCER)
     Assert.ok(producers.length > 0, "setProducerKeys: no producer operators provisioned")
     const schedule = producers.map(producer => ({
-      producer_name: producer.account,
+      // An on-chain schedule entry — the ON-CHAIN name (for producers it equals
+      // the durable handle, but the chain boundary decides the field).
+      producer_name: producer.chainAccount,
       block_signing_key: producer.wire.publicKey
     }))
     await ctx.wire

@@ -86,7 +86,7 @@ export namespace EthereumCollateralTool {
   export interface DepositInput extends StepInput {
     readonly kind: "EthereumCollateralTool.DepositInput"
     /** Operator whose identity is read from `ctx.outputs`. */
-    readonly operatorLabel: string
+    readonly operatorAccount: string
     readonly operatorType: OperatorType
     /** 8-byte slug_name (`uint64`) of the deposited token (native `ETH`). */
     readonly tokenCode: bigint
@@ -102,7 +102,7 @@ export namespace EthereumCollateralTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    operatorLabel: string,
+    operatorAccount: string,
     operatorType: OperatorType,
     tokenCode: bigint,
     amount: bigint
@@ -114,7 +114,7 @@ export namespace EthereumCollateralTool {
       options,
       {
         kind: "EthereumCollateralTool.DepositInput",
-        operatorLabel,
+        operatorAccount,
         operatorType,
         tokenCode,
         amount
@@ -134,7 +134,7 @@ export namespace EthereumCollateralTool {
       input.amount > 0n,
       "EthereumCollateralTool.planDeposit: amount must be positive"
     )
-    const operator = ctx.keyStore.assertOperator(input.operatorLabel)
+    const operator = ctx.keyStore.assertOperator(input.operatorAccount)
     const compressedPubkey = ethereumCompressedPubkey(operator.ethereum)
     Assert.ok(
       compressedPubkey.byteLength === 33,
@@ -169,7 +169,7 @@ export namespace EthereumCollateralTool {
   export interface WithdrawInput extends StepInput {
     readonly kind: "EthereumCollateralTool.WithdrawInput"
     /** Operator whose identity is resolved from `ctx.keyStore`. */
-    readonly operatorLabel: string
+    readonly operatorAccount: string
     /** 8-byte slug_name (`uint64`) of the token to release. */
     readonly tokenCode: bigint
     /** Wei to release (must not exceed the escrowed collateral). */
@@ -189,7 +189,7 @@ export namespace EthereumCollateralTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    operatorLabel: string,
+    operatorAccount: string,
     tokenCode: bigint,
     amount: bigint
   ): ClusterBuildStep<C, WithdrawInput> {
@@ -200,7 +200,7 @@ export namespace EthereumCollateralTool {
       options,
       {
         kind: "EthereumCollateralTool.WithdrawInput",
-        operatorLabel,
+        operatorAccount,
         tokenCode,
         amount
       },
@@ -219,7 +219,7 @@ export namespace EthereumCollateralTool {
       input.amount > 0n,
       "EthereumCollateralTool.planWithdrawal: amount must be positive"
     )
-    const operator = ctx.keyStore.assertOperator(input.operatorLabel)
+    const operator = ctx.keyStore.assertOperator(input.operatorAccount)
     const registry = loadOperatorRegistry(
       ctx,
       ethereumSigner(operator.ethereum, ctx.ethereum.provider)
@@ -245,10 +245,10 @@ export namespace EthereumCollateralTool {
    */
   export async function readDepositedByCode<C extends ClusterBuildContext>(
     ctx: C,
-    operatorLabel: string,
+    operatorAccount: string,
     tokenCode: bigint
   ): Promise<bigint> {
-    const operator = ctx.keyStore.assertOperator(operatorLabel)
+    const operator = ctx.keyStore.assertOperator(operatorAccount)
     const registry = loadOperatorRegistry(
       ctx,
       ethereumSigner(operator.ethereum, ctx.ethereum.provider)
@@ -261,7 +261,7 @@ export namespace EthereumCollateralTool {
   /** Input for {@link planErc20Approval} — one ERC-20 allowance write. */
   export interface ApproveErc20Input extends StepInput {
     readonly kind: "EthereumCollateralTool.ApproveErc20Input"
-    readonly operatorLabel: string
+    readonly operatorAccount: string
     /**
      * Mock token NAME (`"USDC"` / `"USDT"` / `"LIQETH"`) — the config-level
      * identity. Token + OperatorRegistry ADDRESSES are deploy artifacts that
@@ -279,7 +279,7 @@ export namespace EthereumCollateralTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    operatorLabel: string,
+    operatorAccount: string,
     tokenName: string,
     amount: bigint
   ): ClusterBuildStep<C, ApproveErc20Input> {
@@ -290,7 +290,7 @@ export namespace EthereumCollateralTool {
       options,
       {
         kind: "EthereumCollateralTool.ApproveErc20Input",
-        operatorLabel,
+        operatorAccount,
         tokenName,
         amount
       },
@@ -305,7 +305,7 @@ export namespace EthereumCollateralTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const operator = ctx.keyStore.assertOperator(input.operatorLabel)
+    const operator = ctx.keyStore.assertOperator(input.operatorAccount)
     const tokenAddress = mockErc20Address(
       ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
       input.tokenName
@@ -336,7 +336,7 @@ export namespace EthereumCollateralTool {
   /** Input for {@link planNonNativeDeposit} — one ERC-20 collateral deposit write. */
   export interface DepositNonNativeInput extends StepInput {
     readonly kind: "EthereumCollateralTool.DepositNonNativeInput"
-    readonly operatorLabel: string
+    readonly operatorAccount: string
     readonly chainCode: bigint
     readonly tokenCode: bigint
     readonly reserveCode: bigint
@@ -355,7 +355,7 @@ export namespace EthereumCollateralTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    operatorLabel: string,
+    operatorAccount: string,
     chainCode: bigint,
     tokenCode: bigint,
     reserveCode: bigint,
@@ -369,7 +369,7 @@ export namespace EthereumCollateralTool {
       options,
       {
         kind: "EthereumCollateralTool.DepositNonNativeInput",
-        operatorLabel,
+        operatorAccount,
         chainCode,
         tokenCode,
         reserveCode,
@@ -405,7 +405,7 @@ export namespace EthereumCollateralTool {
       input.amount > 0n,
       "EthereumCollateralTool.planNonNativeDeposit: amount must be positive"
     )
-    const operator = ctx.keyStore.assertOperator(input.operatorLabel)
+    const operator = ctx.keyStore.assertOperator(input.operatorAccount)
     const registry = loadOperatorRegistry(
       ctx,
       ethereumSigner(operator.ethereum, ctx.ethereum.provider)
@@ -426,7 +426,7 @@ export namespace EthereumCollateralTool {
       {
         maxAttempts: NonNativeDepositAttempts,
         delayMs: NonNativeDepositRetryDelayMs,
-        label: `depositNonNative dry-run (${input.operatorLabel})`
+        label: `depositNonNative dry-run (${input.operatorAccount})`
       }
     ).catch(error => {
       throw new NestedError(

@@ -14,13 +14,13 @@ describe("Constants", () => {
 
   describe("account-name generators", () => {
     it("names batch operators by letter and wraps at 26", () => {
-      expect(Constants.batchOperatorLabel(0)).toBe("batchop.a")
-      expect(Constants.batchOperatorLabel(1)).toBe("batchop.b")
-      expect(Constants.batchOperatorLabel(26)).toBe("batchop.a")
+      expect(Constants.batchOperatorAccount(0)).toBe("batchop.a")
+      expect(Constants.batchOperatorAccount(1)).toBe("batchop.b")
+      expect(Constants.batchOperatorAccount(26)).toBe("batchop.a")
     })
     it("names underwriters by letter", () => {
-      expect(Constants.underwriterLabel(0)).toBe("uwrit.a")
-      expect(Constants.underwriterLabel(1)).toBe("uwrit.b")
+      expect(Constants.underwriterAccount(0)).toBe("uwrit.a")
+      expect(Constants.underwriterAccount(1)).toBe("uwrit.b")
     })
   })
 

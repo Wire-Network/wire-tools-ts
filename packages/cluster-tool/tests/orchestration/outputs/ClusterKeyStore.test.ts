@@ -22,8 +22,8 @@ function nodeKeys(index: number): ClusterKeyStore.NodeKeys {
 
 function operatorAccount(account: string, type: OperatorType): OperatorAccount {
   return {
-    label: account,
     account,
+    chainAccount: account,
     type,
     wire: { type: KeyType.K1, publicKey: `PUB_K1_${account}`, privateKey: `PVT_K1_${account}` }
   }
@@ -68,35 +68,47 @@ describe("ClusterKeyStore", () => {
   })
 })
 
-describe("ClusterKeyStore label keying", () => {
-  it("keys operators by label — a generated chain account is reachable only via its label", () => {
+describe("ClusterKeyStore account-handle keying", () => {
+  it("keys operators by the DURABLE handle — the generated chainAccount is not a key", () => {
     const store = new ClusterKeyStore().setOperator({
-      label: "batchop.a",
-      account: "wireno.x3f9k",
+      account: "batchop.a",
+      chainAccount: "wireno.x3f9k",
       type: OperatorType.BATCH,
       wire: { type: KeyType.K1, publicKey: "PUB_K1_a", privateKey: "PVT_K1_a" }
     })
-    expect(store.assertOperator("batchop.a").account).toBe("wireno.x3f9k")
+    expect(store.assertOperator("batchop.a").chainAccount).toBe("wireno.x3f9k")
     expect(store.operator("wireno.x3f9k")).toBeUndefined()
   })
 
-  it("setOperator with the same label REPLACES the entry (sponsored-creation account write-back)", () => {
+  it("a materialized operator carries NO chainAccount until sponsored creation runs", () => {
+    const store = new ClusterKeyStore().setOperator({
+      account: "batchop.a",
+      type: OperatorType.BATCH,
+      wire: { type: KeyType.K1, publicKey: "PUB_K1_a", privateKey: "PVT_K1_a" }
+    })
+    expect(store.assertOperator("batchop.a").account).toBe("batchop.a")
+    expect(store.assertOperator("batchop.a").chainAccount).toBeUndefined()
+  })
+
+  it("setOperator with the same handle REPLACES the entry (sponsored-creation chainAccount write-back)", () => {
     const store = new ClusterKeyStore()
       .setOperator(operatorAccount("batchop.a", OperatorType.BATCH))
       .setOperator({
         ...operatorAccount("batchop.a", OperatorType.BATCH),
-        account: "wireno.q8m2c"
+        chainAccount: "wireno.q8m2c"
       })
     expect(store.operators.length).toBe(1)
-    expect(store.assertOperator("batchop.a").account).toBe("wireno.q8m2c")
+    // The write-back changes ONLY the chain account — the handle is the key.
+    expect(store.assertOperator("batchop.a").chainAccount).toBe("wireno.q8m2c")
+    expect(store.assertOperator("batchop.a").account).toBe("batchop.a")
   })
 
-  it("operatorsByType sorts by label regardless of insertion order", () => {
+  it("operatorsByType sorts by the durable handle regardless of insertion order", () => {
     const store = new ClusterKeyStore()
       .setOperator(operatorAccount("batchop.c", OperatorType.BATCH))
       .setOperator(operatorAccount("batchop.a", OperatorType.BATCH))
       .setOperator(operatorAccount("batchop.b", OperatorType.BATCH))
-    expect(store.operatorsByType(OperatorType.BATCH).map(op => op.label)).toEqual([
+    expect(store.operatorsByType(OperatorType.BATCH).map(op => op.account)).toEqual([
       "batchop.a",
       "batchop.b",
       "batchop.c"

@@ -171,12 +171,12 @@ describe("BatchOperatorSchedule.resolve", () => {
       const max = MaxBatchOperatorRoster
       expect(() => resolve(max, 1, 1)).not.toThrow()
       const names = Array.from({ length: max }, (_, index) =>
-        Constants.batchOperatorLabel(index)
+        Constants.batchOperatorAccount(index)
       )
       expect(new Set(names).size).toBe(max)
       // One past the cap is exactly where the collision starts.
-      expect(Constants.batchOperatorLabel(max)).toBe(
-        Constants.batchOperatorLabel(0)
+      expect(Constants.batchOperatorAccount(max)).toBe(
+        Constants.batchOperatorAccount(0)
       )
     })
 
