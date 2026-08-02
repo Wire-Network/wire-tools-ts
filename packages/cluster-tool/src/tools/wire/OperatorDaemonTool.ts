@@ -328,8 +328,8 @@ export namespace OperatorDaemonTool {
     network: OperatorDaemonNetwork,
     keySourceFor: ClusterConfigProvider.SignatureProviderSourceFor
   ): string[] {
-    const ethereumProvider = `eth-${operator.account}`,
-      solanaProvider = `sol-${operator.account}`
+    const ethereumProvider = `eth-${operator.chainAccount}`,
+      solanaProvider = `sol-${operator.chainAccount}`
     return [
       ...pair(
         "--signature-provider",
@@ -369,7 +369,8 @@ export namespace OperatorDaemonTool {
   /**
    * The full extra-arg block for a BATCH OPERATOR daemon: read-mode + plugins +
    * the operator's own WIRE signature provider (its unique `wire` K1 — the
-   * account's active key) + batch plugin config + both outpost client specs.
+   * `chainAccount`'s active key) + batch plugin config + both outpost client
+   * specs.
    */
   export function batchOperatorArgs(
     operator: OperatorAccount,
@@ -394,7 +395,7 @@ export namespace OperatorDaemonTool {
         )
       ),
       ...pair("--batch-enabled", "true"),
-      ...pair("--batch-operator-account", operator.account),
+      ...pair("--batch-operator-account", operator.chainAccount),
       ...pair("--batch-epoch-poll-ms", String(BatchEpochPollMs)),
       ...pair(
         "--batch-delivery-timeout-ms",
@@ -461,7 +462,7 @@ export namespace OperatorDaemonTool {
         )
       ),
       ...pair("--underwriter-enabled", "true"),
-      ...pair("--underwriter-account", operator.account),
+      ...pair("--underwriter-account", operator.chainAccount),
       ...pair(
         "--underwriter-action-timeout-ms",
         String(scaleTimeoutMs(UnderwriterActionTimeoutMs))
@@ -529,17 +530,20 @@ export namespace OperatorDaemonTool {
 
   /**
    * The process label + node-dir name for an operator's daemon, keyed by the
-   * operator's provisioning LABEL (deterministic + human-navigable; the chain
-   * account is node-owner-generated).
+   * operator's durable ACCOUNT handle (deterministic + human-navigable; the
+   * `chainAccount` is node-owner-generated and not path-safe to rely on).
+   *
+   * @param account - The operator's durable handle (`batchop.a`, …).
+   * @returns The `node_<account>` process label / directory name.
    */
-  export function daemonNodeName(label: string): string {
-    return `node_${label}`
+  export function daemonNodeName(account: string): string {
+    return `node_${account}`
   }
 
   /** Input for {@link planDaemonStart}. */
   export interface StartDaemonInput extends StepInput {
     readonly kind: "OperatorDaemonTool.StartDaemonInput"
-    readonly label: string
+    readonly account: string
   }
 
   /**
@@ -559,14 +563,14 @@ export namespace OperatorDaemonTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    label: string
+    account: string
   ): ClusterBuildStep<C, StartDaemonInput> {
     return ClusterBuildStep.create<C, StartDaemonInput>(
       actor,
       name,
       description,
       options,
-      { kind: "OperatorDaemonTool.StartDaemonInput", label },
+      { kind: "OperatorDaemonTool.StartDaemonInput", account },
       runDaemonStart
     )
   }
@@ -578,10 +582,10 @@ export namespace OperatorDaemonTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const nodeName = daemonNodeName(input.label)
+    const nodeName = daemonNodeName(input.account)
     if (ctx.processManager.get(nodeName) != null) return
 
-    const operator = ctx.keyStore.assertOperator(input.label),
+    const operator = ctx.keyStore.assertOperator(input.account),
       artifacts = ctx.outputs.assert(OperatorDaemonArtifactsKey),
       network = networkFromConfig(ctx.config),
       keySourceFor = ClusterConfigProvider.signatureProviderSource(ctx.config),
@@ -594,7 +598,7 @@ export namespace OperatorDaemonTool {
         )
         .otherwise(() => {
           throw new Error(
-            `startDaemon: ${input.label} is a ${OperatorType[operator.type]}, not an OPP operator`
+            `startDaemon: ${input.account} is a ${OperatorType[operator.type]}, not an OPP operator`
           )
         })
 
@@ -611,7 +615,7 @@ export namespace OperatorDaemonTool {
       extraArgs: daemonArgs
     })
     ctx.log.info(
-      `[operator-daemon] ${input.label} (${operator.account}) daemon up (${nodeName}, http=${ports.http})`
+      `[operator-daemon] ${input.account} (${operator.chainAccount}) daemon up (${nodeName}, http=${ports.http})`
     )
   }
 
@@ -620,8 +624,8 @@ export namespace OperatorDaemonTool {
 
   /**
    * Compose the daemon's {@link NodeConfig}: a non-producing operator node named
-   * for the operator's label, peered to every producer node, on the resolved
-   * `ports`.
+   * for the operator's durable account handle, peered to every producer node, on
+   * the resolved `ports`.
    */
   function daemonNodeConfig(
     config: ClusterConfig,
@@ -637,12 +641,12 @@ export namespace OperatorDaemonTool {
       config,
       NodeRole.operator,
       AdHocDaemonNodeIndex,
-      daemonNodeName(operator.label),
+      daemonNodeName(operator.account),
       ports,
       [],
       producerPeers,
-      isBatchOperator ? operator.label : null,
-      isBatchOperator ? null : operator.label
+      isBatchOperator ? operator.account : null,
+      isBatchOperator ? null : operator.account
     )
   }
 }

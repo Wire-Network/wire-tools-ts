@@ -38,8 +38,8 @@ describe("ProcessLivenessStream over WS", () => {
       nodePath: nodeDir,
       ports: { http: 0, p2p: 0 },
       producers: [],
-      batchOperatorLabel: null,
-      underwriterLabel: null
+      batchOperatorAccount: null,
+      underwriterAccount: null
     }
     const state: ClusterState = {
       createdAt: new Date().toISOString(),

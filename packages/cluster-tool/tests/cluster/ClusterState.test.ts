@@ -8,8 +8,10 @@ import { ClusterState } from "@wireio/cluster-tool"
 import { ClusterKeyStore } from "@wireio/cluster-tool/orchestration/outputs"
 import { fixtureContext } from "../config/clusterBuildContextFixture.js"
 
-/** A fully-keyed batch-operator account — carries wire + ethereum + solana keys. */
+/** A fully-keyed batch-operator handle — carries wire + ethereum + solana keys. */
 const BatchOperatorAccount = "batchopaaaa"
+/** The node-owner-generated chain account the sponsored-creation step adopts. */
+const BatchOperatorChainAccount = "wireno.x3f9k"
 
 describe("ClusterState", () => {
   let dir: string
@@ -47,8 +49,8 @@ describe("ClusterState", () => {
       }
     })
     ctx.keyStore.setOperator({
-      label: BatchOperatorAccount,
       account: BatchOperatorAccount,
+      chainAccount: BatchOperatorChainAccount,
       type: OperatorType.BATCH,
       wire: {
         type: KeyType.K1,
@@ -144,6 +146,8 @@ describe("ClusterState", () => {
       const operator = loaded.operators.find(
         entry => entry.account === BatchOperatorAccount
       )
+      // The persisted record keeps BOTH identities distinct.
+      expect(operator?.chainAccount).toBe(BatchOperatorChainAccount)
       expect(operator?.ethereum?.address).toBe(
         "0xabc0000000000000000000000000000000000a"
       )
@@ -174,6 +178,34 @@ describe("ClusterState", () => {
       const ctx = seededContext()
       expect(() => ClusterState.loadKeys(ctx.config)).toThrow(/not found/)
     })
+
+    it("refuses to capture an operator whose sponsored-creation step never ran", () => {
+      const ctx = seededContext()
+      // Re-set the operator WITHOUT a chainAccount — the materialize-only state.
+      const { chainAccount: _dropped, ...materialized } =
+        ctx.keyStore.assertOperator(BatchOperatorAccount)
+      ctx.keyStore.setOperator(materialized)
+      expect(() => ClusterState.captureKeys(ctx)).toThrow(
+        /has no chainAccount/
+      )
+    })
+
+    it("REJECTS a legacy label/account-shaped operator record — no back-compat shim", () => {
+      const ctx = seededContext()
+      ClusterState.saveKeys(ctx.config, ClusterState.captureKeys(ctx))
+      const keysFile = ClusterState.keysFilePath(ctx.config),
+        legacy = JSON.parse(Fs.readFileSync(keysFile, "utf8"))
+      legacy.operators = legacy.operators.map(
+        ({ account, chainAccount, ...rest }) => ({
+          label: account,
+          account: chainAccount,
+          ...rest
+        })
+      )
+      Fs.writeFileSync(keysFile, JSON.stringify(legacy))
+      // A cluster-keys.json written before the rename is not a supported input.
+      expect(() => ClusterState.loadKeys(ctx.config)).toThrow(/chainAccount/)
+    })
   })
 
   describe("rehydrate", () => {
@@ -183,7 +215,10 @@ describe("ClusterState", () => {
         store = new ClusterKeyStore()
       ClusterState.rehydrate(store, keys)
       expect(store.node(0).keys.k1.publicKey).toBe("PUB_K1_node0")
+      // The store is keyed by the DURABLE handle, never the chain account.
+      expect(store.operator(BatchOperatorChainAccount)).toBeUndefined()
       const operator = store.assertOperator(BatchOperatorAccount)
+      expect(operator.chainAccount).toBe(BatchOperatorChainAccount)
       expect(operator.ethereum?.address).toBe(
         "0xabc0000000000000000000000000000000000a"
       )

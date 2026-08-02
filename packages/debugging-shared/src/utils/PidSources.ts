@@ -41,14 +41,14 @@ export namespace PidSources {
  * Kind for a `ClusterStateNode` based on its role: `bios` → {@link
  * PidSourceKind.Bios}, `producer` → {@link PidSourceKind.Producer}, and
  * `operator` → {@link PidSourceKind.BatchOperator} when the node has a
- * `batchOperatorLabel`, otherwise {@link PidSourceKind.Underwriter}.
+ * `batchOperatorAccount`, otherwise {@link PidSourceKind.Underwriter}.
  */
 function kindForNode(node: ClusterStateNode): PidSourceKind {
   return match(node.role)
     .with(ClusterStateNodeRole.bios, () => PidSourceKind.Bios)
     .with(ClusterStateNodeRole.producer, () => PidSourceKind.Producer)
     .with(ClusterStateNodeRole.operator, () =>
-      node.batchOperatorLabel != null
+      node.batchOperatorAccount != null
         ? PidSourceKind.BatchOperator
         : PidSourceKind.Underwriter
     )
