@@ -7,7 +7,8 @@ import {
   HandlerURIType,
   HandlerTypeMappings,
   InferredHandlerType,
-  TO_JSON_OPTIONS
+  TO_JSON_OPTIONS,
+  type HandlerTypeMappingTable
 } from "@wireio/debugging-shared"
 import { isObject } from "@wireio/shared"
 import { log } from "./logging/index.js"
@@ -199,12 +200,14 @@ export namespace JsonRPC {
     }
 
     try {
-      const protoEntry = (
-        HandlerTypeMappings as Record<
-          string,
-          [IMessageType<any>, IMessageType<any>] | undefined
-        >
-      )[body.method]
+      // Absent for the plain-JSON methods — the else-branch below carries them.
+      // The key guard derives from the table itself, so a method added to /
+      // removed from `HandlerTypeMappings` propagates here. The pair is then
+      // widened to the uniform `MessageType<any>` shape: this lookup is keyed
+      // by a RUNTIME string, so the precise per-method pair is a union whose
+      // `toJson` would demand the intersection of all three response types.
+      const protoEntry: readonly [IMessageType<any>, IMessageType<any>] =
+        HandlerTypeMappings[body.method as keyof HandlerTypeMappingTable]
 
       let result: unknown
       if (protoEntry) {

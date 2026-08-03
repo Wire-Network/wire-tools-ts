@@ -22,7 +22,7 @@ const { SysioContractName, SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report
 
 /** The depositor's node-owner-generated chain account, resolved from the key store. */
-function depositorAccount(ctx: ClusterBuildContext): string {
+function depositorChainAccount(ctx: ClusterBuildContext): string {
   return ctx.keyStore.assertOperator(Constants.DepositorAccount).chainAccount
 }
 
@@ -30,22 +30,22 @@ function depositorAccount(ctx: ClusterBuildContext): string {
 async function readDepositorRow(
   ctx: ClusterBuildContext
 ): Promise<SysioContracts.SysioOpregOperatorEntryType> {
-  const account = depositorAccount(ctx),
+  const chainAccount = depositorChainAccount(ctx),
     { rows } = await ctx.wire
       .getSysioContract(SysioContractName.opreg)
       .tables.operators.query({ limit: 100 })
-  return rows.find(row => row.account === account)
+  return rows.find(row => row.account === chainAccount)
 }
 
 /** The depositor's `wtdwqueue` rows (a read). */
 async function readWithdrawQueueRows(
   ctx: ClusterBuildContext
 ): Promise<SysioContracts.SysioOpregWithdrawRequestType[]> {
-  const account = depositorAccount(ctx),
+  const chainAccount = depositorChainAccount(ctx),
     { rows } = await ctx.wire
       .getSysioContract(SysioContractName.opreg)
       .tables.wtdwqueue.query({ limit: 100 })
-  return rows.filter(row => row.account === account)
+  return rows.filter(row => row.account === chainAccount)
 }
 
 /**

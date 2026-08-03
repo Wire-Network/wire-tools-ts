@@ -1,16 +1,20 @@
 import { OperatorType } from "@wireio/opp-typescript-models"
-import { KeyType, Name } from "@wireio/sdk-core"
+import { KeyType, Name, SysioContracts } from "@wireio/sdk-core"
 import { WireOperatorProvisioningTool } from "@wireio/cluster-tool/tools/wire"
 import { Report } from "@wireio/cluster-tool/report"
 import { Constants } from "@wireio/cluster-tool/Constants"
+import type { WireClient } from "@wireio/cluster-tool/clients/wire"
 import {
   ClusterBuild,
   ClusterBuildPhase,
   ClusterKeyStore,
   type ClusterBuildContext,
   type ClusterBuildParent,
-  type ClusterBuildPhaseBase
+  type ClusterBuildPhaseBase,
+  type ClusterBuildPhaseGroup,
+  type StepInput
 } from "@wireio/cluster-tool/orchestration"
+import { type ExternalOutpostConfig } from "@wireio/cluster-tool-shared"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 
 /** A minimal parent that captures pushed children (no context needed for structure). */
@@ -25,9 +29,9 @@ function fakeParent<C extends ClusterBuildContext = ClusterBuildContext>(): Clus
 }
 
 /** The `input.kind` of every step in a group's first phase. */
-function firstPhaseStepKinds(group: { children: ReadonlyArray<ClusterBuildPhaseBase> }): string[] {
+function firstPhaseStepKinds(group: ClusterBuildPhaseGroup): string[] {
   const phase = group.children[0] as ClusterBuildPhase
-  return phase.steps.map(step => (step.input as { kind?: string } | null)?.kind ?? "")
+  return phase.steps.map(step => (step.input as StepInput)?.kind ?? "")
 }
 
 describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
@@ -115,15 +119,15 @@ function fakeSponsorContext(emitRow = true) {
   const nonces: string[] = [],
     newuserInvoke = jest.fn(
       async (
-        data: { creator: string; nonce: string; pubkey: string },
-        _options: { authorization: Array<{ actor: string; permission: string }> }
+        data: SysioContracts.SysioRoaNewuserAction,
+        _options: WireClient.InvocationOptions
       ) => {
         nonces.push(data.nonce)
         return {}
       }
     ),
     regoperatorInvoke = jest.fn().mockResolvedValue({}),
-    sponsorsQuery = jest.fn(async (args: { scope: string; limit: number }) => ({
+    sponsorsQuery = jest.fn(async (args: WireClient.TableQueryArgs) => ({
       scope: args.scope,
       rows: emitRow
         ? nonces.map(nonce => ({ nonce, username: GeneratedAccount }))
@@ -281,10 +285,7 @@ describe("planOperatorAccountProvisioning — outpost-chain funding gate (H3)", 
   }
 
   /** Provision a funded batch op over a REAL context (the gate reads config). */
-  function fundedKinds(externalOutposts?: {
-    ethereum: { addressFile: string; abiFiles: string[]; chainId: number }
-    solana: { idlFile: string }
-  }): string[] {
+  function fundedKinds(externalOutposts?: ExternalOutpostConfig): string[] {
     const cluster = ClusterBuild.forContext(
       fixtureContext(externalOutposts != null ? { externalOutposts } : {})
     )

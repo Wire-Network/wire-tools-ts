@@ -145,7 +145,7 @@ export class WireClient {
   // ── Actions / transactions ───────────────────────────────────────────────
 
   /** Single typed action; waits for finality by default (`skipWait` to fire-and-forget). */
-  async invoke<Action extends {}>(
+  async invoke<Action extends object>(
     account: string,
     action: string,
     data: Action,
@@ -185,7 +185,7 @@ export class WireClient {
    * `sysio.roa::setsyscode`'s wasm hex) that would exceed the command-line arg
    * limit (E2BIG). Waits for finality by default.
    */
-  async invokeViaFile<Action extends {}>(
+  async invokeViaFile<Action extends object>(
     account: string,
     action: string,
     data: Action,
@@ -414,7 +414,7 @@ export class WireClient {
   /** Fetch a transaction trace via /v1/trace_api/get_transaction_trace. */
   async getTransaction(
     id: string
-  ): Promise<WireClient.GetTransactionResponse | null> {
+  ): Promise<WireClient.GetTransactionResponse> {
     const resp = await fetch(
       `${this.config.nodeopUrl}/v1/trace_api/get_transaction_trace`,
       {
@@ -451,7 +451,7 @@ export class WireClient {
   }
 
   /** Push (via `send`), wait to `finality` (default irreversible), re-push on fork-out. */
-  private withFinality<T extends { transaction_id?: string }>(
+  private withFinality<T extends WireClient.TransactionIdResponse>(
     label: string,
     send: () => Promise<T>,
     finality: WireClient.FinalityType = WireClient.DefaultFinality
@@ -541,7 +541,7 @@ export class WireClient {
   }
 
   /** Resolve the block a tx currently sits at, or null (forked out / not applied). */
-  private async locateTransactionBlock(transactionId: string): Promise<number | null> {
+  private async locateTransactionBlock(transactionId: string): Promise<number> {
     const trace = await this.getTransaction(transactionId).catch(() => null)
     return isObject(trace) && isNumber(trace.block_num) && trace.block_num > 0
       ? trace.block_num
@@ -648,7 +648,7 @@ export namespace WireClient {
   > {
     query(args?: TableQueryArgs): Promise<TableQueryResult<TableRow<Name, Table>>>
   }
-  export type SysioContractClient<Name extends SysioContractName> = {
+  export interface SysioContractClient<Name extends SysioContractName> {
     readonly actions: {
       readonly [Action in ActionName<Name>]: ActionInvoker<Name, Action>
     }
@@ -731,8 +731,17 @@ export namespace WireClient {
     block_time: string
   }
 
+  /**
+   * Any push/transaction response carrying the chain's transaction id — the ONE
+   * field the finality waiters read. {@link WireClient.withFinality} constrains
+   * its send result on it; {@link getTransactionId} extracts it.
+   */
+  export interface TransactionIdResponse {
+    transaction_id?: string
+  }
+
   /** Extract `transaction_id` from a clio JSON response. */
-  export function getTransactionId(result: unknown): string | null {
+  export function getTransactionId(result: unknown): string {
     if (typeof result === "string") {
       try {
         return JSON.parse(result)?.transaction_id ?? null
@@ -742,7 +751,7 @@ export namespace WireClient {
       }
     }
     if (result && typeof result === "object" && "transaction_id" in result)
-      return (result as { transaction_id: string }).transaction_id
+      return (result as TransactionIdResponse).transaction_id
     return null
   }
 

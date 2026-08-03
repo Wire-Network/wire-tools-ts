@@ -16,7 +16,7 @@ export async function retrievePubKey(address: string): Promise<string> {
   return pubKey
 }
 
-function getStoredPubKey(address: string): string | null {
+function getStoredPubKey(address: string): string {
   const keys = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}")
   return keys[address] || null
 }

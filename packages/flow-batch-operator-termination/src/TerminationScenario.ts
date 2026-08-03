@@ -50,7 +50,7 @@ const PostDepositSolanaLamportsKey = outputKey<number>(
 )
 
 /** The doomed operator's node-owner-generated chain account, resolved from the key store. */
-function doomedOperatorAccount(ctx: ClusterBuildContext): string {
+function doomedOperatorChainAccount(ctx: ClusterBuildContext): string {
   return ctx.keyStore.assertOperator(Constants.DoomedOperatorAccount).chainAccount
 }
 
@@ -58,11 +58,11 @@ function doomedOperatorAccount(ctx: ClusterBuildContext): string {
 async function readDoomedOperatorRow(
   ctx: ClusterBuildContext
 ): Promise<SysioContracts.SysioOpregOperatorEntryType> {
-  const account = doomedOperatorAccount(ctx),
+  const chainAccount = doomedOperatorChainAccount(ctx),
     { rows } = await ctx.wire
       .getSysioContract(SysioContractName.opreg)
       .tables.operators.query({ limit: Constants.OperatorsQueryLimit })
-  return rows.find(row => row.account === account)
+  return rows.find(row => row.account === chainAccount)
 }
 
 /** The sliding-window schedule groups from the `sysio.epoch::epochstate` singleton (a read). */
@@ -459,11 +459,11 @@ export class TerminationScenario extends FlowScenario {
             `${Constants.DoomedOperatorAccount} appears in epochstate.batch_op_groups`,
             async () => {
               try {
-                const account = doomedOperatorAccount(ctx),
+                const chainAccount = doomedOperatorChainAccount(ctx),
                   groups = await readScheduleGroups(ctx)
                 return groups.some(
                   members =>
-                    Array.isArray(members) && members.includes(account)
+                    Array.isArray(members) && members.includes(chainAccount)
                 )
               } catch (error) {
                 // Transient RPC failure mid-advance — log it and keep polling.

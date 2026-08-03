@@ -1,8 +1,14 @@
 import { OutputStore, outputKey } from "@wireio/cluster-tool/orchestration"
 
+/** The object payload the store round-trips under a typed `OutputKey`. */
+interface ObjectOutput {
+  /** Opaque identifier asserted across the round-trip. */
+  id: string
+}
+
 describe("OutputStore", () => {
   const countKey = outputKey<number>("count", "a count")
-  const objectKey = outputKey<{ id: string }>("obj", "an object")
+  const objectKey = outputKey<ObjectOutput>("obj", "an object")
 
   it("set/get round-trips a typed value (null when absent)", () => {
     const store = new OutputStore()

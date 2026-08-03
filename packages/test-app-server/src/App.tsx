@@ -7,12 +7,15 @@ import { ToastProvider } from "./components/Toast"
 import { WireChain } from "./types"
 import { getSelectedChain, selectChain } from "./services/chain"
 
+/** The account picked on the connect screen, carried into `/create-link`. */
+interface LinkParams {
+  username: string
+  address: string
+}
+
 export default function App() {
   const [chain, setChain] = useState<WireChain>(getSelectedChain())
-  const [linkParams, setLinkParams] = useState<{
-    username: string
-    address: string
-  } | null>(null)
+  const [linkParams, setLinkParams] = useState<LinkParams | null>(null)
   const navigate = useNavigate()
 
   const handleChainChange = useCallback((c: WireChain) => {
