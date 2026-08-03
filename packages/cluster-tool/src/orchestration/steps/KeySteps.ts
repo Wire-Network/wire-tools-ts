@@ -18,7 +18,8 @@ import { SSMClientProvider } from "../../config/SSMClientProvider.js"
 import { getLogger } from "../../logging/Logger.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
-import type { KeyPair } from "../../types/KeyPair.js"
+import type { KeyPair, SigningKeySet } from "../../types/KeyPair.js"
+import { isNotEmpty } from "../../utils/predicateUtils.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
 import type { ClusterBuildParent } from "../ClusterBuildPhaseBase.js"
@@ -28,7 +29,6 @@ import {
 } from "../ClusterBuildStep.js"
 import { ClusterKeyStore } from "../outputs/ClusterKeyStore.js"
 import { EthereumMnemonicKey } from "../outputs/EthereumMnemonicOutput.js"
-import type { OperatorAccount } from "../outputs/OperatorAccount.js"
 import type { StepInput } from "../StepRunner.js"
 import { EthereumOutpostBootstrapper } from "../ethereum/EthereumOutpostBootstrapper.js"
 
@@ -174,16 +174,33 @@ export namespace KeySteps {
     signal.throwIfAborted()
     const wallet = await ctx.wire.wallet.getOrCreate(),
       nodeKeys = ctx.keyStore.nodes.flatMap(node => [
-        node.keys.k1.privateKey,
-        node.keys.bls.privateKey
-      ])
-    // BIOS dev keys + the generated producer node keys. Each batch/underwriter
-    // operator's UNIQUE wire key is imported by its own materialize step.
-    await wallet.addPrivateKey(
-      Constants.DEV_K1_PRIVATE_KEY,
-      Constants.DEV_BLS_PRIVATE_KEY,
-      ...nodeKeys
-    )
+        node.keys.wire.privateKey,
+        node.keys.wireFinalizer.privateKey
+      ]),
+      // The GENESIS identities, from the key store rather than the dev
+      // constants. Under SSM `resolveWithBiosKeys` GENERATES these, and
+      // `genesis.initial_key` carries the generated public half — so importing
+      // `DEV_K1_PRIVATE_KEY` here left the wallet unable to sign as `sysio` for
+      // every bootstrap action (setcode, feature activation, setprodkeys) or as
+      // the node owner for `roa::newuser`. Under KEY/KIOD the seeded values ARE
+      // the dev keys, so this is byte-identical there.
+      genesisKeys = [NodeConfig.BiosName, Constants.BOOTSTRAP_NODE_OWNER]
+        .map(label => ctx.keyStore.operator(label))
+        .filter(identity => identity != null)
+        .flatMap(identity =>
+          [identity.wire?.privateKey, identity.wireFinalizer?.privateKey].filter(
+            isNotEmpty
+          )
+        )
+    // DEDUPED: `kiod` rejects a re-import with `key_exist_exception`, and the
+    // genesis identities legitimately SHARE a key under KEY/KIOD —
+    // `resolveWithBiosKeys` hands back the same dev pair for both the bios node
+    // and the bootstrap node owner. Under SSM they are distinct generated keys,
+    // so the set is a no-op there.
+    //
+    // Each batch/underwriter operator's UNIQUE wire key is imported by its own
+    // materialize step.
+    await wallet.addPrivateKey(...new Set([...genesisKeys, ...nodeKeys]))
   }
 
   // ── D21 adopt-existing (the GENERATION seam) ───────────────────────────────
@@ -257,7 +274,7 @@ export namespace KeySteps {
     nodeName: string,
     purpose: string
   ): Promise<ClusterKeyStore.ProducerKeySet> {
-    const [k1, bls] = await Promise.all([
+    const [wire, wireFinalizer] = await Promise.all([
       adoptOrCreateSignatureProviderKey(config, KeyType.K1, nodeName, keyContext, {
         purpose: `${purpose} — block signing (K1)`
       }),
@@ -265,7 +282,7 @@ export namespace KeySteps {
         purpose: `${purpose} — finalizer (BLS)`
       })
     ])
-    return { k1, bls }
+    return { wire, wireFinalizer }
   }
 
   /**
@@ -329,12 +346,51 @@ export namespace KeySteps {
     operator = "operator"
   }
 
+  /**
+   * WHEN a key is published, which is independent of WHERE it lives.
+   *
+   * Conflating the two is what made the bios failure possible: the genesis
+   * identity's keys live in the operator map, but they must be in SSM before
+   * the bios node starts — and the operator publish phase composes long after
+   * it. `SignatureKeySource` answers "which keystore"; this answers "which
+   * phase", and a row needs both.
+   */
+  export enum SignatureKeyPublishPhase {
+    /** Before `BiosNode` — every key a nodeop fetches at startup. */
+    beforeNodes = "beforeNodes",
+    /** After operator provisioning — keys that do not exist until then. */
+    afterOperators = "afterOperators"
+  }
+
+  /**
+   * One identity whose keys are published to SSM — the walker's unit.
+   *
+   * `source` says only WHERE the identity's key set lives (the node list vs the
+   * operator map); `label` is the secret-id `{account}` segment the daemon
+   * renders. The two differ for the genesis identity, which is precisely the
+   * case a single per-kind walker used to lose.
+   */
+  interface SignatureProviderKeyIdentity {
+    /** Secret-id `{account}` segment — a node name or an operator handle. */
+    label: string
+    /** Which keystore holds the identity's key set. */
+    source: SignatureKeySource
+    /** Producer-node topology index (only meaningful when `source === node`). */
+    nodeIndex: number
+    /** Which publish phase this identity's keys belong to. */
+    publishPhase: SignatureKeyPublishPhase
+    /** Every curve this identity publishes. */
+    keyTypes: readonly KeyType[]
+  }
+
   /** One signing key to publish to SSM — metadata ONLY (never key material). */
   export interface SignatureProviderKeyPublication {
     /** The store the runner reads the private key from. */
     source: SignatureKeySource
     /** Producer-node topology index (used when `source === node`). */
     nodeIndex: number
+    /** Which publish phase this key belongs to (independent of `source`). */
+    publishPhase: SignatureKeyPublishPhase
     /** The key's label (node name or operator label) — the secret-id `{account}`. */
     label: string
     /** The key's curve — selects which key of the source. */
@@ -365,11 +421,15 @@ export namespace KeySteps {
 
   /**
    * Enumerate every generated signing key to publish for an SSM cluster —
-   * plan-time fan-out from the config's counts: one entry per producer-node
-   * K1/BLS and per batch/underwriter operator K1(wire)/EM(ethereum)/ED(solana).
-   * The bios genesis key is a bootstrap dev key (not SSM-managed) and is
-   * excluded. Each entry carries its pre-rendered `secretId` (never key
-   * material); the runner reads the private key from `ctx.keyStore`.
+   * plan-time fan-out over {@link SignatureProviderKeyIdentity} rows: the
+   * genesis identity (bios K1/BLS) and the bootstrap node owner (K1), every
+   * producer node (K1/BLS), and every batch/underwriter operator
+   * (K1 wire / EM ethereum / ED solana).
+   *
+   * Under SSM the bios node is NOT exempt — it renders `SSM:` specs like any
+   * other node, so its keys MUST be published or it cannot start. Each entry
+   * carries its pre-rendered `secretId` (never key material); the runner reads
+   * the private key from `ctx.keyStore`.
    *
    * @param config - The resolved cluster config (SSM signature provider).
    * @returns The per-key publications.
@@ -389,44 +449,69 @@ export namespace KeySteps {
           keyType: KeyType[keyType],
           version: ssm.version
         }),
-      publications: SignatureProviderKeyPublication[] = []
-    // Producer-node signing keys (K1 + BLS per node).
-    producerNodes(config).forEach(node =>
-      ([KeyType.K1, KeyType.BLS] as const).forEach(keyType =>
-        publications.push({
-          source: SignatureKeySource.node,
-          nodeIndex: node.index,
-          label: node.name,
-          keyType,
-          awsRegions,
-          secretId: renderSecretId(node.name, keyType),
-          version: ssm.version
-        })
-      )
-    )
-    // Batch-operator + underwriter keys (K1 wire + EM ethereum + ED solana).
-    const operatorLabels = [
-      ...range(config.batchOperatorCount).map(index =>
-        Constants.batchOperatorLabel(index)
-      ),
-      ...range(config.underwriterCount).map(index =>
-        Constants.underwriterLabel(index)
-      )
-    ]
-    operatorLabels.forEach(label =>
-      ([KeyType.K1, KeyType.EM, KeyType.ED] as const).forEach(keyType =>
-        publications.push({
+      // ONE enumeration of every identity that renders a `--signature-provider`
+      // spec. Adding a row is the ONLY way to add a published key, so an
+      // identity cannot be silently omitted the way the bios node was: it
+      // renders `SSM:/…/node_bios/{K1,BLS}` from `node.name`, but the walker
+      // enumerated producers only, so nothing ever wrote those parameters and
+      // the bios daemon could not start on any SSM cluster.
+      identities: SignatureProviderKeyIdentity[] = [
+        // The genesis identity — bios block signing + finality. Its keys live in
+        // the OPERATOR map (not `keyStore.nodes`, which `ConsensusSteps` turns
+        // into the finalizer policy — a bios entry there would shift the
+        // threshold), while its secret-id segment is the NODE name the daemon
+        // renders. That split is exactly why it needs an explicit row.
+        {
+          label: NodeConfig.BiosName,
           source: SignatureKeySource.operator,
           nodeIndex: 0,
+          publishPhase: SignatureKeyPublishPhase.beforeNodes,
+          keyTypes: [KeyType.K1, KeyType.BLS]
+        },
+        // The bootstrap node owner — signs `roa::newuser` for every operator.
+        {
+          label: Constants.BOOTSTRAP_NODE_OWNER,
+          source: SignatureKeySource.operator,
+          nodeIndex: 0,
+          publishPhase: SignatureKeyPublishPhase.beforeNodes,
+          keyTypes: [KeyType.K1]
+        },
+        // Producer nodes — block signing + finality, keys in `keyStore.nodes`.
+        ...producerNodes(config).map(node => ({
+          label: node.name,
+          source: SignatureKeySource.node,
+          nodeIndex: node.index,
+          publishPhase: SignatureKeyPublishPhase.beforeNodes,
+          keyTypes: [KeyType.K1, KeyType.BLS]
+        })),
+        // Batch operators + underwriters — wire + both outpost curves.
+        ...[
+          ...range(config.batchOperatorCount).map(index =>
+            Constants.batchOperatorLabel(index)
+          ),
+          ...range(config.underwriterCount).map(index =>
+            Constants.underwriterLabel(index)
+          )
+        ].map(label => ({
           label,
-          keyType,
-          awsRegions,
-          secretId: renderSecretId(label, keyType),
-          version: ssm.version
-        })
-      )
+          source: SignatureKeySource.operator,
+          nodeIndex: 0,
+          publishPhase: SignatureKeyPublishPhase.afterOperators,
+          keyTypes: [KeyType.K1, KeyType.EM, KeyType.ED]
+        }))
+      ]
+    return identities.flatMap(identity =>
+      identity.keyTypes.map(keyType => ({
+        source: identity.source,
+        nodeIndex: identity.nodeIndex,
+        publishPhase: identity.publishPhase,
+        label: identity.label,
+        keyType,
+        awsRegions,
+        secretId: renderSecretId(identity.label, keyType),
+        version: ssm.version
+      }))
     )
-    return publications
   }
 
   /**
@@ -456,11 +541,11 @@ export namespace KeySteps {
     description: string,
     options: ClusterBuildStepOptions,
     config: ClusterConfig,
-    source: SignatureKeySource
+    publishPhase: SignatureKeyPublishPhase
   ): ClusterBuildPhase<C> {
     const phase = ClusterBuildPhase.create<C>(parent, name, description)
     signatureProviderKeyPublications(config)
-      .filter(publication => publication.source === source)
+      .filter(publication => publication.publishPhase === publishPhase)
       .forEach(publication =>
         phase.push(
           planPublishSignatureProviderKey<C>(
@@ -533,17 +618,16 @@ export namespace KeySteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const privateKey = match(input.source)
-      .with(SignatureKeySource.node, () =>
-        nodePrivateKey(ctx.keyStore.node(input.nodeIndex).keys, input.keyType)
-      )
-      .with(SignatureKeySource.operator, () =>
-        operatorPrivateKey(
-          ctx.keyStore.assertOperator(input.label),
-          input.keyType
+    // ONE resolver over ONE shape: a node's key set and an operator account are
+    // both `SigningKeySet`s, so `source` selects only WHERE the identity lives,
+    // never how its curves are read.
+    const identity: SigningKeySet = match(input.source)
+        .with(SignatureKeySource.node, () => ctx.keyStore.node(input.nodeIndex).keys)
+        .with(SignatureKeySource.operator, () =>
+          ctx.keyStore.assertOperator(input.label)
         )
-      )
-      .exhaustive()
+        .exhaustive(),
+      privateKey = identityPrivateKey(identity, input.keyType, input.label)
     const nativePrivateKey = PrivateKey.from(privateKey).toNativeString(),
       tags: Tag[] =
         input.version != null
@@ -570,41 +654,33 @@ export namespace KeySteps {
   }
 
   /** The private key of a producer-node key set for `keyType` (K1 / BLS). */
-  function nodePrivateKey(
-    keys: ClusterKeyStore.ProducerKeySet,
-    keyType: KeyType
+  function identityPrivateKey(
+    identity: SigningKeySet,
+    keyType: KeyType,
+    label: string
   ): string {
+    const assertPresent = <T>(key: T, curve: string): T => {
+      Assert.ok(key != null, `KeySteps: ${label} has no ${curve} key`)
+      return key
+    }
     return match(keyType)
-      .with(KeyType.K1, () => keys.k1.privateKey)
-      .with(KeyType.BLS, () => keys.bls.privateKey)
+      .with(KeyType.K1, () => identity.wire.privateKey)
+      .with(
+        KeyType.BLS,
+        () => assertPresent(identity.wireFinalizer, "wireFinalizer").privateKey
+      )
+      .with(
+        KeyType.EM,
+        () => assertPresent(identity.ethereum, "ethereum").privateKey
+      )
+      .with(
+        KeyType.ED,
+        () => assertPresent(identity.solana, "solana").privateKey
+      )
       .otherwise(() => {
-        throw new Error(`KeySteps: producer node has no ${KeyType[keyType]} key`)
+        throw new Error(`KeySteps: ${label} has no ${KeyType[keyType]} key`)
       })
   }
 
   /** The private key of an operator for `keyType` (K1 wire / EM ethereum / ED solana). */
-  function operatorPrivateKey(
-    operator: OperatorAccount,
-    keyType: KeyType
-  ): string {
-    return match(keyType)
-      .with(KeyType.K1, () => operator.wire.privateKey)
-      .with(KeyType.EM, () => {
-        Assert.ok(
-          operator.ethereum != null,
-          `KeySteps: operator ${operator.label} has no ethereum key`
-        )
-        return operator.ethereum.privateKey
-      })
-      .with(KeyType.ED, () => {
-        Assert.ok(
-          operator.solana != null,
-          `KeySteps: operator ${operator.label} has no solana key`
-        )
-        return operator.solana.privateKey
-      })
-      .otherwise(() => {
-        throw new Error(`KeySteps: operator has no ${KeyType[keyType]} key`)
-      })
-  }
 }

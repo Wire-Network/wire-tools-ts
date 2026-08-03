@@ -196,10 +196,10 @@ export namespace ClusterBuildDefaults {
       Steps.keys.planSignatureProviderKeyPublications<C>(
         prerequisites,
         "PublishNodeSignatureProviderKeys",
-        "Publish each producer-node signing key to AWS SSM",
+        "Publish the genesis + producer-node signing keys to AWS SSM",
         {},
         config,
-        Steps.keys.SignatureKeySource.node
+        Steps.keys.SignatureKeyPublishPhase.beforeNodes
       )
     }
     ClusterBuildPhase.create<C>(
@@ -845,7 +845,7 @@ export namespace ClusterBuildDefaults {
         "Publish each operator signing key to AWS SSM",
         {},
         config,
-        Steps.keys.SignatureKeySource.operator
+        Steps.keys.SignatureKeyPublishPhase.afterOperators
       )
     }
 

@@ -156,7 +156,7 @@ describe("Steps.processes.nodeop", () => {
       const ctx = fixtureContext()
       const node = testNode(ctx, NodeRole.bios, 0, "bios")
       const operator = Steps.processes.nodeop.resolveOperator(ctx, node)
-      expect(operator.label).toBe(NodeConfig.BiosProducer)
+      expect(operator.label).toBe(NodeConfig.BiosName)
       expect(operator.type).toBe(OperatorType.PRODUCER)
       expect(operator.wire.type).toBe(KeyType.K1)
       expect(operator.wireFinalizer?.type).toBe(KeyType.BLS)
@@ -168,7 +168,7 @@ describe("Steps.processes.nodeop", () => {
       // GENERATED bios keys — not the dev pair — reach the nodeop args.
       const ctx = fixtureContext(),
         seeded: OperatorAccount = {
-          label: NodeConfig.BiosProducer,
+          label: NodeConfig.BiosName,
           account: NodeConfig.BiosProducer,
           type: OperatorType.UNKNOWN,
           wire: {
@@ -193,8 +193,8 @@ describe("Steps.processes.nodeop", () => {
       ctx.keyStore.pushNodes({
         index: 1,
         keys: {
-          k1: { type: KeyType.K1, publicKey: "PUB_K1_node1", privateKey: "PVT_K1_node1" },
-          bls: {
+          wire: { type: KeyType.K1, publicKey: "PUB_K1_node1", privateKey: "PVT_K1_node1" },
+          wireFinalizer: {
             type: KeyType.BLS,
             publicKey: "PUB_BLS_node1",
             privateKey: "PVT_BLS_node1",
@@ -251,7 +251,7 @@ describe("Steps.processes.nodeop", () => {
         Steps.processes.nodeop.resolveOperatorDaemonArgs(
           ctx,
           node,
-          operatorAccount(NodeConfig.BiosProducer, OperatorType.PRODUCER)
+          operatorAccount(NodeConfig.BiosName, OperatorType.PRODUCER)
         )
       ).toEqual([])
     })

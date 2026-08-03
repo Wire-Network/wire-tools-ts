@@ -250,7 +250,7 @@ describe("KeyGenerator", () => {
 })
 
 describe("keygen extra records", () => {
-  it("create(ED) records an sdk-core keygen entry with purpose + full pair", async () => {
+  it("create(ED) records the keygen IDENTITY — public half only, never the secret", async () => {
     const { StepExtraRecorder } = await import("@wireio/cluster-tool/report")
     const context = KeyGenerator.context("/usr/bin/clio", "/build", AnvilMnemonic)
     const recorder = new StepExtraRecorder()
@@ -263,9 +263,27 @@ describe("keygen extra records", () => {
         kind: "keygen",
         keyType: "ED",
         purpose: "operator x — solana key",
-        keyPair: { type: KeyType.ED, publicKey: pair.publicKey, privateKey: pair.privateKey }
+        type: KeyType.ED,
+        publicKey: pair.publicKey
       }
     ])
+  })
+
+  it("NEVER lands a private key in a keygen extra record, for any curve", async () => {
+    const { StepExtraRecorder } = await import("@wireio/cluster-tool/report")
+    const { findKeyMaterial } = await import("@wireio/cluster-tool-shared")
+    const context = KeyGenerator.context("/usr/bin/clio", "/build", AnvilMnemonic)
+    const recorder = new StepExtraRecorder()
+    const pair = await StepExtraRecorder.runWith(recorder, () =>
+      KeyGenerator.create(KeyType.ED, context, { purpose: "leak guard" })
+    )
+    // The recorder's payload is what the Report renderers serialize verbatim
+    // into cluster-build.{csv,md,html} — a real run's reports were VERIFIED to
+    // carry 15 PVT_ keys before this was fixed. Assert against the ONE shared
+    // pattern set so a new secret encoding is caught here too.
+    const serialized = JSON.stringify(recorder.calls)
+    expect(serialized).not.toContain(pair.privateKey)
+    expect(findKeyMaterial(serialized)).toEqual([])
   })
 
   it("create(EM) records the ethers derivation path", async () => {

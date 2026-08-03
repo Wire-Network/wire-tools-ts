@@ -42,12 +42,12 @@ describe("ClusterState", () => {
     ctx.keyStore.pushNodes({
       index: 0,
       keys: {
-        k1: {
+        wire: {
           type: KeyType.K1,
           publicKey: "PUB_K1_node0",
           privateKey: "PVT_K1_node0"
         },
-        bls: {
+        wireFinalizer: {
           type: KeyType.BLS,
           publicKey: "PUB_BLS_node0",
           privateKey: "PVT_BLS_node0",
@@ -231,9 +231,9 @@ describe("ClusterState", () => {
         )
       // Node keys are keyed by the node NAME — the same `{account}` segment
       // `KeySteps.signatureProviderKeyPublications` publishes them under.
-      expect(node.k1.privateKey).toBeUndefined()
-      expect(node.k1.awsSecretId).toBe("/wire/test/node_00/K1")
-      expect(node.bls.awsSecretId).toBe("/wire/test/node_00/BLS")
+      expect(node.wire.privateKey).toBeUndefined()
+      expect(node.wire.awsSecretId).toBe("/wire/test/node_00/K1")
+      expect(node.wireFinalizer.awsSecretId).toBe("/wire/test/node_00/BLS")
       // Operator keys are keyed by the DURABLE handle, never the chain account.
       expect(operator?.wire.privateKey).toBeUndefined()
       expect(operator?.wire.awsSecretId).toBe(
@@ -254,11 +254,11 @@ describe("ClusterState", () => {
         )
       // ExternalClusterConfigSteps.keyProviderFor + the genesis finalizer key
       // read these regardless of who holds the secret.
-      expect(keys.nodes[0].bls.proofOfPossession).toBe("SIG_BLS_node0")
+      expect(keys.nodes[0].wireFinalizer.proofOfPossession).toBe("SIG_BLS_node0")
       expect(operator?.ethereum?.address).toBe(
         "0xabc0000000000000000000000000000000000a"
       )
-      expect(keys.nodes[0].k1.publicKey).toBe("PUB_K1_node0")
+      expect(keys.nodes[0].wire.publicKey).toBe("PUB_K1_node0")
     })
 
     it("HARD GATE — the serialized cluster-keys.json carries ZERO key material", () => {
@@ -281,8 +281,8 @@ describe("ClusterState", () => {
     it("KEY mode is unchanged — the plaintext key material still persists", () => {
       const ctx = seededContext(),
         keys = ClusterState.captureKeys(ctx)
-      expect(keys.nodes[0].k1.privateKey).toBe("PVT_K1_node0")
-      expect(keys.nodes[0].k1.awsSecretId).toBeUndefined()
+      expect(keys.nodes[0].wire.privateKey).toBe("PVT_K1_node0")
+      expect(keys.nodes[0].wire.awsSecretId).toBeUndefined()
       expect(
         keys.operators.find(entry => entry.account === BatchOperatorAccount)
           ?.wire.privateKey
@@ -294,7 +294,7 @@ describe("ClusterState", () => {
       ClusterState.saveKeys(ctx.config, ClusterState.captureKeys(ctx))
       const keysFile = ClusterState.keysFilePath(ctx.config),
         leaked = JSON.parse(Fs.readFileSync(keysFile, "utf8"))
-      leaked.nodes[0].k1.privateKey = "PVT_K1_node0"
+      leaked.nodes[0].wire.privateKey = "PVT_K1_node0"
       Fs.writeFileSync(keysFile, JSON.stringify(leaked))
       expect(() => ClusterState.loadKeys(ctx.config)).toThrow(
         /EXACTLY ONE custody form/
@@ -306,7 +306,7 @@ describe("ClusterState", () => {
       ClusterState.saveKeys(ctx.config, ClusterState.captureKeys(ctx))
       const keysFile = ClusterState.keysFilePath(ctx.config),
         orphaned = JSON.parse(Fs.readFileSync(keysFile, "utf8"))
-      delete orphaned.nodes[0].k1.privateKey
+      delete orphaned.nodes[0].wire.privateKey
       Fs.writeFileSync(keysFile, JSON.stringify(orphaned))
       expect(() => ClusterState.loadKeys(ctx.config)).toThrow(
         /EXACTLY ONE custody form/
@@ -320,7 +320,7 @@ describe("ClusterState", () => {
         keys = ClusterState.captureKeys(ctx),
         store = new ClusterKeyStore()
       ClusterState.rehydrate(store, keys)
-      expect(store.node(0).keys.k1.publicKey).toBe("PUB_K1_node0")
+      expect(store.node(0).keys.wire.publicKey).toBe("PUB_K1_node0")
       // The store is keyed by the DURABLE handle, never the chain account.
       expect(store.operator(BatchOperatorAccount)).toBeUndefined()
       const operator = store.assertOperator(BatchOperatorLabel)

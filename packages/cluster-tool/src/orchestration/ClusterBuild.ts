@@ -40,7 +40,11 @@ function seedGenesisAccounts(
 ): void {
   context.keyStore
     .setOperator({
-      label: NodeConfig.BiosProducer,
+      // HANDLE is the bios NODE name — the segment its `--signature-provider`
+      // spec renders and the segment its keys are published under. ACCOUNT is
+      // the on-chain `sysio`. Keying this by the account was what put the
+      // genesis identity out of reach of the publication walker.
+      label: NodeConfig.BiosName,
       account: NodeConfig.BiosProducer,
       type: OperatorType.UNKNOWN,
       wire: resolved.biosWire,

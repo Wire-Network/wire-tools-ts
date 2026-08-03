@@ -63,3 +63,28 @@ export type WireFinalizerKeyPair = KeyPair<KeyType.BLS>
 export type EthereumKeyPair = KeyPair<KeyType.EM>
 /** Solana (Ed25519 / ED) key pair (`PUB_ED_…` / `PVT_ED_…`). */
 export type SolanaKeyPair = KeyPair<KeyType.ED>
+
+/**
+ * The per-curve key members a SIGNING IDENTITY carries.
+ *
+ * ONE shape for both identity kinds: `ClusterKeyStore.ProducerKeySet` (a node's
+ * `wire` + `wireFinalizer`) and `OperatorAccount` (an operator's `wire` plus
+ * whichever outpost curves it is bonded on) are both structurally assignable,
+ * so ONE resolver and ONE publication walker cover every identity that renders
+ * a `--signature-provider` spec.
+ *
+ * They were previously two shapes with two vocabularies (`{k1, bls}` vs
+ * `{wire, wireFinalizer}`), which is what let the bios identity fall between
+ * them — stored as an operator, published as a node, and therefore published by
+ * neither walker.
+ */
+export interface SigningKeySet {
+  /** WIRE block-signing key — every identity has one. */
+  readonly wire: WireKeyPair
+  /** WIRE finality key — nodes and the genesis identity; absent on batch/underwriter operators. */
+  readonly wireFinalizer?: WireFinalizerKeyPair
+  /** Ethereum key — operators bonded on the ETH outpost. */
+  readonly ethereum?: EthereumKeyPair
+  /** Solana key — operators bonded on the SOL outpost. */
+  readonly solana?: SolanaKeyPair
+}

@@ -6,6 +6,7 @@ import { negate } from "lodash"
 import { StepExtraRecorder } from "../../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../../utils/asyncUtils.js"
 import { isNotEmpty } from "../../../utils/predicateUtils.js"
+import { maskSecretArgs } from "../../../utils/secretUtils.js"
 
 const log = getLogger("ClioRunner")
 const execFileAsync = promisify(execFile)
@@ -104,7 +105,10 @@ export class ClioRunner {
     // Every logical clio invocation — command line, outcome, duration — is
     // recorded into the running step's `Report.StepResult.extra`.
     const startedAtMs = Date.now(),
-      command = [this.config.binary, ...fullArgs]
+      // MASKED, not raw: this array is serialized verbatim into the Report, and
+      // `wallet import --private-key …` / `wallet unlock --password …` carry the
+      // secret in argv. The executable and every other argument survive intact.
+      command = maskSecretArgs([this.config.binary, ...fullArgs])
     try {
       const result = await retry(() => this.runOnce(fullArgs, options), {
         maxAttempts: ClioRunner.TransportRetryAttempts,
