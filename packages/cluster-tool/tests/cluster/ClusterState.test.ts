@@ -3,6 +3,12 @@ import Os from "node:os"
 import Path from "node:path"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
+import {
+  AWSAccountName,
+  findKeyMaterial,
+  SignatureProviderType,
+  type ClusterConfig
+} from "@wireio/cluster-tool-shared"
 
 import { ClusterState } from "@wireio/cluster-tool"
 import { ClusterKeyStore } from "@wireio/cluster-tool/orchestration/outputs"
@@ -26,11 +32,12 @@ describe("ClusterState", () => {
 
   /** A real `ClusterBuildContext` rooted at the temp dir, seeded with a node
    *  key set + a fully-keyed batch-operator account. */
-  function seededContext() {
+  function seededContext(overrides: Partial<ClusterConfig> = {}) {
     const ctx = fixtureContext({
       clusterPath: dir,
       dataPath: Path.join(dir, "data"),
-      walletPath: Path.join(dir, "wallet")
+      walletPath: Path.join(dir, "wallet"),
+      ...overrides
     })
     ctx.keyStore.pushNodes({
       index: 0,
@@ -187,6 +194,124 @@ describe("ClusterState", () => {
       expect(() => ClusterState.captureKeys(ctx)).toThrow(/has no account/)
     })
 
+  })
+
+  describe("§5.6 — an SSM cluster persists key REFERENCES, never key material", () => {
+    /** Every region a key is replicated to (no primary). */
+    const SSMRegions = ["us-east-1", "eu-west-1"]
+
+    /** The SSM overrides layered onto the temp-dir fixture. */
+    function ssmOverrides(): Partial<ClusterConfig> {
+      return {
+        signatureProvider: {
+          type: SignatureProviderType.SSM,
+          ssm: {
+            awsRegions: SSMRegions,
+            awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
+          }
+        },
+        awsClusterNodeConfig: {
+          account: AWSAccountName.test,
+          regions: SSMRegions,
+          ssm: null
+        }
+      }
+    }
+
+    /** The seeded temp-dir context, resolved under an SSM signature provider. */
+    function ssmContext() {
+      return seededContext(ssmOverrides())
+    }
+
+    it("swaps every privateKey for the awsSecretId its publish step put it under", () => {
+      const keys = ClusterState.captureKeys(ssmContext()),
+        node = keys.nodes[0],
+        operator = keys.operators.find(
+          entry => entry.account === BatchOperatorAccount
+        )
+      // Node keys are keyed by the node NAME — the same `{account}` segment
+      // `KeySteps.signatureProviderKeyPublications` publishes them under.
+      expect(node.k1.privateKey).toBeUndefined()
+      expect(node.k1.awsSecretId).toBe("/wire/test/node_00/K1")
+      expect(node.bls.awsSecretId).toBe("/wire/test/node_00/BLS")
+      // Operator keys are keyed by the DURABLE handle, never the chain account.
+      expect(operator?.wire.privateKey).toBeUndefined()
+      expect(operator?.wire.awsSecretId).toBe(
+        `/wire/test/${BatchOperatorLabel}/K1`
+      )
+      expect(operator?.ethereum?.awsSecretId).toBe(
+        `/wire/test/${BatchOperatorLabel}/EM`
+      )
+      expect(operator?.solana?.awsSecretId).toBe(
+        `/wire/test/${BatchOperatorLabel}/ED`
+      )
+    })
+
+    it("RETAINS the non-secret per-curve members (BLS proof, EM address)", () => {
+      const keys = ClusterState.captureKeys(ssmContext()),
+        operator = keys.operators.find(
+          entry => entry.account === BatchOperatorAccount
+        )
+      // ExternalClusterConfigSteps.keyProviderFor + the genesis finalizer key
+      // read these regardless of who holds the secret.
+      expect(keys.nodes[0].bls.proofOfPossession).toBe("SIG_BLS_node0")
+      expect(operator?.ethereum?.address).toBe(
+        "0xabc0000000000000000000000000000000000a"
+      )
+      expect(keys.nodes[0].k1.publicKey).toBe("PUB_K1_node0")
+    })
+
+    it("HARD GATE — the serialized cluster-keys.json carries ZERO key material", () => {
+      const ctx = ssmContext()
+      ClusterState.saveKeys(ctx.config, ClusterState.captureKeys(ctx))
+      const raw = Fs.readFileSync(ClusterState.keysFilePath(ctx.config), "utf8")
+      expect(raw).not.toContain("privateKey")
+      expect(raw).not.toContain("PVT_")
+      // The ONE key-material signature set — never re-spelled here.
+      expect(findKeyMaterial(raw)).toEqual([])
+    })
+
+    it("round-trips the refs-only payload through the schema", () => {
+      const ctx = ssmContext(),
+        keys = ClusterState.captureKeys(ctx)
+      ClusterState.saveKeys(ctx.config, keys)
+      expect(ClusterState.loadKeys(ctx.config)).toEqual(keys)
+    })
+
+    it("KEY mode is unchanged — the plaintext key material still persists", () => {
+      const ctx = seededContext(),
+        keys = ClusterState.captureKeys(ctx)
+      expect(keys.nodes[0].k1.privateKey).toBe("PVT_K1_node0")
+      expect(keys.nodes[0].k1.awsSecretId).toBeUndefined()
+      expect(
+        keys.operators.find(entry => entry.account === BatchOperatorAccount)
+          ?.wire.privateKey
+      ).toBe(`PVT_K1_${BatchOperatorLabel}`)
+    })
+
+    it("REJECTS a record carrying BOTH custody forms — that is a leaked secret", () => {
+      const ctx = ssmContext()
+      ClusterState.saveKeys(ctx.config, ClusterState.captureKeys(ctx))
+      const keysFile = ClusterState.keysFilePath(ctx.config),
+        leaked = JSON.parse(Fs.readFileSync(keysFile, "utf8"))
+      leaked.nodes[0].k1.privateKey = "PVT_K1_node0"
+      Fs.writeFileSync(keysFile, JSON.stringify(leaked))
+      expect(() => ClusterState.loadKeys(ctx.config)).toThrow(
+        /EXACTLY ONE custody form/
+      )
+    })
+
+    it("REJECTS a record carrying NEITHER custody form — nothing could sign with it", () => {
+      const ctx = seededContext()
+      ClusterState.saveKeys(ctx.config, ClusterState.captureKeys(ctx))
+      const keysFile = ClusterState.keysFilePath(ctx.config),
+        orphaned = JSON.parse(Fs.readFileSync(keysFile, "utf8"))
+      delete orphaned.nodes[0].k1.privateKey
+      Fs.writeFileSync(keysFile, JSON.stringify(orphaned))
+      expect(() => ClusterState.loadKeys(ctx.config)).toThrow(
+        /EXACTLY ONE custody form/
+      )
+    })
   })
 
   describe("rehydrate", () => {

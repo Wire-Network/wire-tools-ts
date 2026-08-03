@@ -39,7 +39,7 @@ const OperatorTypeCodec = z.codec(
  * One account in an {@link ExternalClusterConfig} — its WIRE account name, its
  * operator type (proto enum; JSON carries the member NAME via
  * {@link OperatorTypeCodec}), and its heterogeneous signing-key providers (one
- * per curve the account signs with: wire/bls/ethereum/solana).
+ * per curve the account signs with: wire/wireFinalizer/ethereum/solana).
  */
 export const ExternalClusterConfigAccountSchema = z.object({
   /** The WIRE account name. */

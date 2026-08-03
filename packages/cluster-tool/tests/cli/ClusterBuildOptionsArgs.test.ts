@@ -2,16 +2,24 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import type { Argv } from "yargs"
-import { SignatureProviderType } from "@wireio/cluster-tool-shared"
+import { AWSAccountName, SignatureProviderType } from "@wireio/cluster-tool-shared"
 import {
   applyClusterBuildOptionsArgs,
+  AWSClusterNodeConfigFlag,
   buildOptionShape,
+  ClusterBuildOptionsFileFlag,
+  ClusterPathFlag,
   environmentPathDefaults,
   flattenOptionLeaves,
-  mergeSignatureProviderSsm,
+  hasCommandLineFlag,
+  loadClusterBuildOptionsFile,
+  mergeAWSClusterNodeConfig,
+  mergeSignatureProviderSSM,
   OptionLeafType,
+  readCommandLineFlag,
+  toAWSClusterNodeConfig,
   toClusterBuildOptions,
-  toClusterSignatureProviderSsmOptions,
+  toAWSSSMSignatureProviderOptions,
   toFlag,
   type OptionLeaf
 } from "@wireio/cluster-tool/cli/ClusterBuildOptionsArgs"
@@ -400,55 +408,329 @@ describe("register → parse round-trip", () => {
   })
 })
 
-const SsmJson =
-  '{"awsRegion":"us-east-1","awsSecretIdPattern":"/wire/{cluster}/{account}/{keyType}"}'
-const SsmFlag = "signature-provider-ssm"
+const SecretIdPattern = "/wire/{cluster}/{account}/{keyType}"
+const SSMJson = `{"awsSecretIdPattern":"${SecretIdPattern}"}`
+const SSMFlag = "signature-provider-ssm"
 
-describe("toClusterSignatureProviderSsmOptions", () => {
-  it("parses inline JSON", () => {
-    const ssm = toClusterSignatureProviderSsmOptions({ [SsmFlag]: SsmJson })
-    expect(ssm?.awsRegion).toBe("us-east-1")
-    expect(ssm?.awsSecretIdPattern).toBe("/wire/{cluster}/{account}/{keyType}")
+describe("toAWSSSMSignatureProviderOptions", () => {
+  it("parses inline JSON (regions are DERIVED, never authored here)", () => {
+    const ssm = toAWSSSMSignatureProviderOptions({ [SSMFlag]: SSMJson })
+    expect(ssm?.awsSecretIdPattern).toBe(SecretIdPattern)
+    expect(ssm?.awsRegions).toBeUndefined()
+  })
+
+  it("parses the OPTIONAL version token value", () => {
+    const ssm = toAWSSSMSignatureProviderOptions({
+      [SSMFlag]: `{"awsSecretIdPattern":"${SecretIdPattern}/{version}","version":"v3"}`
+    })
+    expect(ssm?.version).toBe("v3")
   })
 
   it("parses a file path", () => {
     const dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "ssm-opts-")),
       file = Path.join(dir, "ssm.json")
-    Fs.writeFileSync(file, SsmJson)
+    Fs.writeFileSync(file, SSMJson)
     try {
       expect(
-        toClusterSignatureProviderSsmOptions({ [SsmFlag]: file })?.awsRegion
-      ).toBe("us-east-1")
+        toAWSSSMSignatureProviderOptions({ [SSMFlag]: file })
+          ?.awsSecretIdPattern
+      ).toBe(SecretIdPattern)
     } finally {
       Fs.rmSync(dir, { recursive: true, force: true })
     }
   })
 
   it("returns null when the flag is absent", () => {
-    expect(toClusterSignatureProviderSsmOptions({})).toBeNull()
+    expect(toAWSSSMSignatureProviderOptions({})).toBeNull()
   })
 
   it("throws on a malformed SSM payload (missing awsSecretIdPattern)", () => {
     expect(() =>
-      toClusterSignatureProviderSsmOptions({ [SsmFlag]: '{"awsRegion":"x"}' })
+      toAWSSSMSignatureProviderOptions({
+        [SSMFlag]: '{"awsRegions":["us-east-1"]}'
+      })
     ).toThrow()
   })
 })
 
-describe("mergeSignatureProviderSsm", () => {
-  it("is a no-op when the flag is absent", () => {
+describe("mergeSignatureProviderSSM", () => {
+  it("is a no-op when no source carries settings", () => {
     const options = { signatureProvider: { type: SignatureProviderType.SSM } }
     expect(
-      mergeSignatureProviderSsm(options, {}).signatureProvider?.ssm
+      mergeSignatureProviderSSM(options, {}).signatureProvider?.ssm
     ).toBeUndefined()
   })
 
   it("merges the SSM payload into signatureProvider.ssm", () => {
     const options = { signatureProvider: { type: SignatureProviderType.SSM } },
-      merged = mergeSignatureProviderSsm(options, { [SsmFlag]: SsmJson })
-    expect(merged.signatureProvider?.ssm?.awsRegion).toBe("us-east-1")
+      merged = mergeSignatureProviderSSM(options, { [SSMFlag]: SSMJson })
     expect(merged.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
-      "/wire/{cluster}/{account}/{keyType}"
+      SecretIdPattern
     )
+  })
+
+  it("falls back to the options-file document's signatureProvider.ssm", () => {
+    const merged = mergeSignatureProviderSSM({}, {}, {
+      signatureProvider: {
+        ssm: { awsSecretIdPattern: "/from/{cluster}/{account}/{keyType}" }
+      }
+    })
+    expect(merged.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
+      "/from/{cluster}/{account}/{keyType}"
+    )
+  })
+
+  it("falls back LAST to the awsClusterNodeConfig's own ssm", () => {
+    const merged = mergeSignatureProviderSSM(
+      {
+        awsClusterNodeConfig: {
+          account: AWSAccountName.dev,
+          regions: ["us-east-1"],
+          ssm: { awsSecretIdPattern: "/node-config/{account}/{keyType}" }
+        }
+      },
+      {}
+    )
+    expect(merged.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
+      "/node-config/{account}/{keyType}"
+    )
+  })
+
+  it("prefers the flag over the file, and the file over the node config", () => {
+    const fileOptions = {
+        signatureProvider: { ssm: { awsSecretIdPattern: "/file/{account}" } }
+      },
+      nodeConfigOptions = {
+        awsClusterNodeConfig: {
+          account: AWSAccountName.dev,
+          regions: ["us-east-1"],
+          ssm: { awsSecretIdPattern: "/node-config/{account}" }
+        }
+      }
+    expect(
+      mergeSignatureProviderSSM(
+        { ...nodeConfigOptions },
+        { [SSMFlag]: SSMJson },
+        fileOptions
+      ).signatureProvider?.ssm?.awsSecretIdPattern
+    ).toBe(SecretIdPattern)
+    expect(
+      mergeSignatureProviderSSM({ ...nodeConfigOptions }, {}, fileOptions)
+        .signatureProvider?.ssm?.awsSecretIdPattern
+    ).toBe("/file/{account}")
+  })
+})
+
+describe("raw command-line reads", () => {
+  it("readCommandLineFlag reads both `--flag value` and `--flag=value`", () => {
+    expect(
+      readCommandLineFlag(["create", "--cluster-path", "/tmp/a"], ClusterPathFlag)
+    ).toBe("/tmp/a")
+    expect(
+      readCommandLineFlag(["create", "--cluster-path=/tmp/b"], ClusterPathFlag)
+    ).toBe("/tmp/b")
+  })
+
+  it("readCommandLineFlag returns null when the flag is absent", () => {
+    expect(readCommandLineFlag(["create", "-d", "/tmp/a"], ClusterPathFlag)).toBeNull()
+  })
+
+  it("hasCommandLineFlag sees the long form, the `=` form, and the short alias", () => {
+    expect(hasCommandLineFlag(["--cluster-path", "/x"], ClusterPathFlag)).toBe(true)
+    expect(hasCommandLineFlag(["--cluster-path=/x"], ClusterPathFlag)).toBe(true)
+    expect(hasCommandLineFlag(["-d", "/x"], ClusterPathFlag)).toBe(true)
+    expect(hasCommandLineFlag(["-d=/x"], ClusterPathFlag)).toBe(true)
+  })
+
+  it("hasCommandLineFlag is false for a flag that only arrives as a yargs default", () => {
+    expect(hasCommandLineFlag(["create", "--force"], ClusterPathFlag)).toBe(false)
+  })
+})
+
+describe("--cluster-build-options-file", () => {
+  let dir: string
+
+  beforeEach(() => {
+    dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "build-options-"))
+  })
+
+  afterEach(() => {
+    Fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  /** Write `document` to a temp file and return its path. */
+  function writeDocument(document: unknown): string {
+    const file = Path.join(dir, "cluster-build-options.json")
+    Fs.writeFileSync(file, JSON.stringify(document))
+    return file
+  }
+
+  it("is registered as an out-of-shape string option (so --strict accepts it)", () => {
+    const options = register()
+    expect(options.get(ClusterBuildOptionsFileFlag)).toMatchObject({
+      type: "string"
+    })
+    expect(options.get(AWSClusterNodeConfigFlag)).toMatchObject({
+      type: "string"
+    })
+  })
+
+  it("loads scalar leaves at every depth, re-nested", () => {
+    const loaded = loadClusterBuildOptionsFile(
+      writeDocument({
+        clusterPath: "/tmp/doc-cluster",
+        epochDurationSec: 30,
+        bindAll: true,
+        bind: { kiod: { port: 1234 }, nodeop: { ports: { bios: { http: 5555 } } } },
+        logging: { levels: { console: "debug" } }
+      })
+    )
+    expect(loaded.clusterPath).toBe("/tmp/doc-cluster")
+    expect(loaded.epochDurationSec).toBe(30)
+    expect(loaded.bindAll).toBe(true)
+    expect(loaded.bind?.kiod?.port).toBe(1234)
+    expect(loaded.bind?.nodeop?.ports?.bios?.http).toBe(5555)
+    expect(loaded.logging?.levels?.console).toBe("debug")
+  })
+
+  it("sizes the bind node-port arrays from the document's own counts", () => {
+    const loaded = loadClusterBuildOptionsFile(
+      writeDocument({
+        nodeCount: 2,
+        bind: { nodeop: { ports: { producers: [{ http: 7000 }, { http: 7001 }] } } }
+      })
+    )
+    expect(loaded.bind?.nodeop?.ports?.producers?.[1]?.http).toBe(7001)
+  })
+
+  it("carries the flag-less collateral arrays through their shared schemas", () => {
+    const loaded = loadClusterBuildOptionsFile(
+      writeDocument({
+        requiredBatchOperatorCollateral: [
+          { chainCode: 11, tokenCode: 22, minimumBond: 2_000_000 }
+        ]
+      })
+    )
+    expect(loaded.requiredBatchOperatorCollateral).toEqual([
+      { chainCode: 11, tokenCode: 22, minimumBond: 2_000_000 }
+    ])
+  })
+
+  it("codec-validates the out-of-shape signatureProvider.ssm", () => {
+    const loaded = loadClusterBuildOptionsFile(
+      writeDocument({
+        signatureProvider: {
+          type: SignatureProviderType.SSM,
+          ssm: { awsSecretIdPattern: SecretIdPattern }
+        }
+      })
+    )
+    expect(loaded.signatureProvider?.type).toBe(SignatureProviderType.SSM)
+    expect(loaded.signatureProvider?.ssm?.awsSecretIdPattern).toBe(SecretIdPattern)
+  })
+
+  it("rejects an unknown option, naming its dotted path", () => {
+    expect(() =>
+      loadClusterBuildOptionsFile(writeDocument({ bind: { kiod: { prot: 1 } } }))
+    ).toThrow(/unknown option "bind\.kiod\.prot"/)
+    expect(() =>
+      loadClusterBuildOptionsFile(writeDocument({ nope: 1 }))
+    ).toThrow(/unknown option "nope"/)
+  })
+
+  it("rejects a wrongly-typed leaf, naming its dotted path and the expected type", () => {
+    expect(() =>
+      loadClusterBuildOptionsFile(writeDocument({ epochDurationSec: "60" }))
+    ).toThrow(/"epochDurationSec" must be a number/)
+    expect(() =>
+      loadClusterBuildOptionsFile(writeDocument({ force: {} }))
+    ).toThrow(/"force" must be a boolean/)
+  })
+
+  it("rejects a value outside a choices-constrained leaf", () => {
+    expect(() =>
+      loadClusterBuildOptionsFile(
+        writeDocument({ signatureProvider: { type: "VAULT" } })
+      )
+    ).toThrow(/"signatureProvider\.type" must be one of/)
+  })
+
+  it("rejects awsClusterNodeConfig, pointing at its own flag", () => {
+    expect(() =>
+      loadClusterBuildOptionsFile(
+        writeDocument({ awsClusterNodeConfig: { account: "dev", regions: ["us-east-1"] } })
+      )
+    ).toThrow(new RegExp(`--${AWSClusterNodeConfigFlag}`))
+  })
+
+  it("rejects a non-object document root and invalid JSON", () => {
+    expect(() => loadClusterBuildOptionsFile(writeDocument([1, 2]))).toThrow(
+      /document root must be a JSON object/
+    )
+    const badFile = Path.join(dir, "bad.json")
+    Fs.writeFileSync(badFile, "{not json")
+    expect(() => loadClusterBuildOptionsFile(badFile)).toThrow(
+      /could not be read as JSON/
+    )
+  })
+
+  it("rejects a non-integer topology count before the shape is built", () => {
+    expect(() =>
+      loadClusterBuildOptionsFile(writeDocument({ nodeCount: 1.5 }))
+    ).toThrow(/"nodeCount" must be a non-negative integer/)
+  })
+})
+
+describe("--aws-cluster-node-config", () => {
+  let dir: string
+
+  beforeEach(() => {
+    dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "aws-node-config-"))
+  })
+
+  afterEach(() => {
+    Fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  /** Write an `AWSClusterNodeConfig` document and return its path. */
+  function writeNodeConfig(document: unknown): string {
+    const file = Path.join(dir, "aws-cluster-node-config.json")
+    Fs.writeFileSync(file, JSON.stringify(document))
+    return file
+  }
+
+  it("returns null when the flag is absent", () => {
+    expect(toAWSClusterNodeConfig({})).toBeNull()
+  })
+
+  it("deserializes the file through the shared AWSClusterNodeConfig codec", () => {
+    const file = writeNodeConfig({
+      account: AWSAccountName.dev,
+      regions: ["us-east-1", "eu-west-1"]
+    })
+    const config = toAWSClusterNodeConfig({ [AWSClusterNodeConfigFlag]: file })
+    expect(config?.account).toBe(AWSAccountName.dev)
+    expect(config?.regions).toEqual(["us-east-1", "eu-west-1"])
+    // schema default — the slot round-trips through JSON as an explicit null
+    expect(config?.ssm).toBeNull()
+  })
+
+  it("throws on a malformed node config (no regions)", () => {
+    const file = writeNodeConfig({ account: AWSAccountName.dev, regions: [] })
+    expect(() =>
+      toAWSClusterNodeConfig({ [AWSClusterNodeConfigFlag]: file })
+    ).toThrow()
+  })
+
+  it("mergeAWSClusterNodeConfig fills options.awsClusterNodeConfig (no-op when absent)", () => {
+    const file = writeNodeConfig({
+      account: AWSAccountName.test,
+      regions: ["us-east-1"]
+    })
+    expect(
+      mergeAWSClusterNodeConfig({}, { [AWSClusterNodeConfigFlag]: file })
+        .awsClusterNodeConfig?.account
+    ).toBe(AWSAccountName.test)
+    expect(mergeAWSClusterNodeConfig({}, {}).awsClusterNodeConfig).toBeUndefined()
   })
 })

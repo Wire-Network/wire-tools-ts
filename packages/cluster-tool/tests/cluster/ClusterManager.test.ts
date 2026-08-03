@@ -2,12 +2,38 @@ import { spawn } from "node:child_process"
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+import {
+  AWSAccountName,
+  ClusterFiles,
+  SignatureProviderType,
+  type ClusterConfig
+} from "@wireio/cluster-tool-shared"
 import { PidSources } from "@wireio/debugging-shared"
 import { Deferred, guard } from "@wireio/shared"
 import { ClusterManager } from "@wireio/cluster-tool"
 import { ProcessSignalName } from "@wireio/cluster-tool/cluster/processes"
-import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
+import {
+  ClusterConfigProvider,
+  SSMClientProvider
+} from "@wireio/cluster-tool/config"
 import { fixtureConfig } from "../config/clusterConfigFixture.js"
+
+const mockSend = jest.fn()
+// A DeleteParameterCommand that EXPLODES if anything ever constructs one — the
+// mock itself is the tripwire for a regression that re-introduces deletion.
+const mockDeleteParameterCommand = jest.fn().mockImplementation(() => {
+  throw new Error("destroy must NEVER construct a DeleteParameterCommand")
+})
+jest.mock("@aws-sdk/client-ssm", () => ({
+  SSMClient: jest.fn().mockImplementation(() => ({ send: mockSend })),
+  GetParameterCommand: jest
+    .fn()
+    .mockImplementation((input: unknown) => ({ kind: "GetParameter", input })),
+  PutParameterCommand: jest
+    .fn()
+    .mockImplementation((input: unknown) => ({ kind: "PutParameter", input })),
+  DeleteParameterCommand: mockDeleteParameterCommand
+}))
 
 describe("ClusterManager.assertClusterStopped", () => {
   let dir: string
@@ -205,5 +231,70 @@ describe("ClusterManager.destroy", () => {
     )
     await expect(ClusterManager.destroy(destroyConfig())).resolves.toBeUndefined()
     expect(Fs.existsSync(destroyRoot)).toBe(false)
+  })
+
+  describe("D21 — destroy NEVER deletes an SSM secret", () => {
+    /** Every region a key is replicated to (no primary). */
+    const SSMRegions = ["us-east-1", "eu-west-1"]
+
+    /** The shared-root config, resolved under an SSM signature provider. */
+    function ssmDestroyConfig(overrides: Partial<ClusterConfig> = {}) {
+      return fixtureConfig({
+        clusterPath: destroyRoot,
+        dataPath: Path.join(destroyRoot, "data"),
+        signatureProvider: {
+          type: SignatureProviderType.SSM,
+          ssm: {
+            awsRegions: SSMRegions,
+            awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
+          }
+        },
+        awsClusterNodeConfig: {
+          account: AWSAccountName.test,
+          regions: SSMRegions,
+          ssm: null
+        },
+        ...overrides
+      })
+    }
+
+    beforeEach(() => {
+      mockSend.mockReset()
+      mockDeleteParameterCommand.mockClear()
+    })
+
+    it("issues ZERO DeleteParameter calls — a published parameter is the account's key identity", async () => {
+      await expect(
+        ClusterManager.destroy(ssmDestroyConfig())
+      ).resolves.toBeUndefined()
+      // Nothing was constructed, and nothing was sent to AWS at all.
+      expect(mockDeleteParameterCommand).not.toHaveBeenCalled()
+      expect(mockSend).not.toHaveBeenCalled()
+      expect(Fs.existsSync(destroyRoot)).toBe(false)
+    })
+
+    it("the provider exposes no delete surface for a regression to reach for", () => {
+      expect(SSMClientProvider).not.toHaveProperty("deleteParameter")
+    })
+
+    it("removes the cluster directory even with NO cluster-keys.json", async () => {
+      expect(
+        Fs.existsSync(Path.join(destroyRoot, ClusterFiles.KeysFilename))
+      ).toBe(false)
+      await expect(
+        ClusterManager.destroy(ssmDestroyConfig())
+      ).resolves.toBeUndefined()
+      expect(Fs.existsSync(destroyRoot)).toBe(false)
+    })
+
+    it("removes the cluster directory even when the ids cannot be rendered", async () => {
+      // A half-built cluster: `create` aborted before the AWS placement
+      // resolved, so `signatureProviderKeyPublications` throws. The guarded
+      // rendering must degrade to a warning, never strand the directory.
+      await expect(
+        ClusterManager.destroy(ssmDestroyConfig({ awsClusterNodeConfig: null }))
+      ).resolves.toBeUndefined()
+      expect(Fs.existsSync(destroyRoot)).toBe(false)
+    })
   })
 })
