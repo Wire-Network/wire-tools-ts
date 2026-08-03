@@ -302,7 +302,7 @@ export namespace WireUnderwriterTool {
    *   * WIRE → skipped (no outpost deposit path today).
    *
    * The deposit Steps resolve the operator identity from `ctx.keyStore` by its
-   * durable account handle ({@link ClusterKeyStore.assertOperator}); the
+   * durable `label` handle ({@link ClusterKeyStore.assertOperator}); the
    * operators are ASSUMED already provisioned
    * (bootstrap / flow `beforeAll` concern). Self-registers on `parent`.
    *
@@ -310,11 +310,11 @@ export namespace WireUnderwriterTool {
    * @param name - Short PhaseGroup name.
    * @param description - Human-readable description.
    * @param options - Step option overrides threaded to every deposit Step.
-   * @param underwriterAccounts - Underwriter durable account handles (`ClusterKeyStore` keys), one per collateral plan entry.
+   * @param underwriterLabels - Underwriter durable `label` handles (`ClusterKeyStore` keys), one per collateral plan entry.
    * @param collateral - Per-underwriter collateral plan (from {@link load}); its
-   *   length MUST equal `underwriterAccounts.length`.
+   *   length MUST equal `underwriterLabels.length`.
    * @returns The self-registered deposit PhaseGroup.
-   * @throws If `collateral.length !== underwriterAccounts.length`.
+   * @throws If `collateral.length !== underwriterLabels.length`.
    */
   export function planCollateralDeposit<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -323,24 +323,24 @@ export namespace WireUnderwriterTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    underwriterAccounts: string[],
+    underwriterLabels: string[],
     collateral: ChainTokenAmount[][]
   ): ClusterBuildPhaseGroup<C> {
     Assert.ok(
-      collateral.length === underwriterAccounts.length,
+      collateral.length === underwriterLabels.length,
       `WireUnderwriterTool.planCollateralDeposit: collateral plan length (${collateral.length}) ` +
-        `must equal underwriter count (${underwriterAccounts.length})`
+        `must equal underwriter count (${underwriterLabels.length})`
     )
     const config = parent.context.config
     const group = ClusterBuildPhaseGroup.create<C>(parent, name, description)
-    underwriterAccounts.forEach((account, index) => {
+    underwriterLabels.forEach((underwriterLabel, index) => {
       const steps = collateral[index].flatMap(entry =>
-        planDepositStepsForEntry<C>(config, options, account, entry)
+        planDepositStepsForEntry<C>(config, options, underwriterLabel, entry)
       )
       ClusterBuildPhase.create<C>(
         group,
-        `${account}-collateral`,
-        `underwriter ${account} collateral deposits`,
+        `${underwriterLabel}-collateral`,
+        `underwriter ${underwriterLabel} collateral deposits`,
         steps
       )
     })
@@ -441,7 +441,7 @@ function parseChainTokenAmountJson(raw: unknown): ChainTokenAmount {
 function planDepositStepsForEntry<C extends ClusterBuildContext>(
   config: ClusterConfig,
   options: ClusterBuildStepOptions,
-  account: string,
+  underwriterLabel: string,
   entry: ChainTokenAmount
 ): ClusterBuildStep.Any<C>[] {
   Assert.ok(
@@ -463,7 +463,7 @@ function planDepositStepsForEntry<C extends ClusterBuildContext>(
     .with({ chainKind: ChainKind.EVM, tokenKind: TokenKind.NATIVE }, () =>
       planEthereumNativeSteps<C>(
         options,
-        account,
+        underwriterLabel,
         chainName,
         tokenName,
         tokenCode,
@@ -473,7 +473,7 @@ function planDepositStepsForEntry<C extends ClusterBuildContext>(
     .with({ chainKind: ChainKind.EVM }, () =>
       planEthereumNonNativeSteps<C>(
         options,
-        account,
+        underwriterLabel,
         chainName,
         tokenName,
         chainCode,
@@ -484,7 +484,7 @@ function planDepositStepsForEntry<C extends ClusterBuildContext>(
     .with({ chainKind: ChainKind.SVM, tokenKind: TokenKind.NATIVE }, () =>
       planSolanaNativeSteps<C>(
         options,
-        account,
+        underwriterLabel,
         chainName,
         tokenName,
         tokenCode,
@@ -494,7 +494,7 @@ function planDepositStepsForEntry<C extends ClusterBuildContext>(
     .with({ chainKind: ChainKind.SVM }, () =>
       planSolanaNonNativeSteps<C>(
         options,
-        account,
+        underwriterLabel,
         chainName,
         tokenName,
         chainCode,
@@ -506,14 +506,14 @@ function planDepositStepsForEntry<C extends ClusterBuildContext>(
       // WIRE collateral has no outpost-side deposit path today — the
       // OPP-attestation deposit credits live on external chains by construction.
       log.info(
-        `[WireUnderwriterTool] ${account}: skipping WIRE/${tokenName} entry — ` +
+        `[WireUnderwriterTool] ${underwriterLabel}: skipping WIRE/${tokenName} entry — ` +
           `no WIRE-native underwriter collateral deposit path yet`
       )
       return [] as ClusterBuildStep.Any<C>[]
     })
     .otherwise(() => {
       log.warn(
-        `[WireUnderwriterTool] ${account}: skipping unsupported chain ${chainName}/${tokenName}`
+        `[WireUnderwriterTool] ${underwriterLabel}: skipping unsupported chain ${chainName}/${tokenName}`
       )
       return [] as ClusterBuildStep.Any<C>[]
     })
@@ -522,7 +522,7 @@ function planDepositStepsForEntry<C extends ClusterBuildContext>(
 /** EVM native deposit — one `OperatorRegistry.deposit` write. */
 function planEthereumNativeSteps<C extends ClusterBuildContext>(
   options: ClusterBuildStepOptions,
-  account: string,
+  underwriterLabel: string,
   chainName: string,
   tokenName: string,
   tokenCode: bigint,
@@ -531,10 +531,10 @@ function planEthereumNativeSteps<C extends ClusterBuildContext>(
   return [
     EthereumCollateralTool.planDeposit<C>(
       Report.Actor.Underwriter,
-      `${account}-${chainName}-${tokenName}-deposit`,
+      `${underwriterLabel}-${chainName}-${tokenName}-deposit`,
       `deposit ${amount} ${tokenName} on ${chainName} (native)`,
       options,
-      account,
+      underwriterLabel,
       OperatorType.UNDERWRITER,
       tokenCode,
       amount
@@ -551,7 +551,7 @@ function planEthereumNativeSteps<C extends ClusterBuildContext>(
  */
 function planEthereumNonNativeSteps<C extends ClusterBuildContext>(
   options: ClusterBuildStepOptions,
-  account: string,
+  underwriterLabel: string,
   chainName: string,
   tokenName: string,
   chainCode: bigint,
@@ -561,28 +561,28 @@ function planEthereumNonNativeSteps<C extends ClusterBuildContext>(
   return [
     EthereumFundingTool.planErc20Mint<C>(
       Report.Actor.Underwriter,
-      `${account}-${tokenName}-mint`,
-      `mint ${amount} mock ${tokenName} to ${account}`,
+      `${underwriterLabel}-${tokenName}-mint`,
+      `mint ${amount} mock ${tokenName} to ${underwriterLabel}`,
       options,
-      account,
+      underwriterLabel,
       tokenName,
       amount
     ),
     EthereumCollateralTool.planErc20Approval<C>(
       Report.Actor.Underwriter,
-      `${account}-${tokenName}-approve`,
+      `${underwriterLabel}-${tokenName}-approve`,
       `approve ${amount} ${tokenName} to OperatorRegistry`,
       options,
-      account,
+      underwriterLabel,
       tokenName,
       amount
     ),
     EthereumCollateralTool.planNonNativeDeposit<C>(
       Report.Actor.Underwriter,
-      `${account}-${chainName}-${tokenName}-deposit`,
+      `${underwriterLabel}-${chainName}-${tokenName}-deposit`,
       `deposit ${amount} ${tokenName} on ${chainName} (ERC-20)`,
       options,
-      account,
+      underwriterLabel,
       chainCode,
       tokenCode,
       WireUnderwriterTool.PrimaryReserveCode,
@@ -595,7 +595,7 @@ function planEthereumNonNativeSteps<C extends ClusterBuildContext>(
 /** SVM native deposit — airdrop the escrow, then one `opp-outpost::deposit` write. */
 function planSolanaNativeSteps<C extends ClusterBuildContext>(
   options: ClusterBuildStepOptions,
-  account: string,
+  underwriterLabel: string,
   chainName: string,
   tokenName: string,
   tokenCode: bigint,
@@ -604,18 +604,18 @@ function planSolanaNativeSteps<C extends ClusterBuildContext>(
   return [
     SolanaFundingTool.planAirdrop<C>(
       Report.Actor.Underwriter,
-      `${account}-${chainName}-airdrop`,
-      `fund ${account} SOL keypair for the ${tokenName} deposit`,
+      `${underwriterLabel}-${chainName}-airdrop`,
+      `fund ${underwriterLabel} SOL keypair for the ${tokenName} deposit`,
       options,
-      account,
+      underwriterLabel,
       amount + WireUnderwriterTool.SolAirdropHeadroomLamports
     ),
     SolanaCollateralTool.planDeposit<C>(
       Report.Actor.Underwriter,
-      `${account}-${chainName}-${tokenName}-deposit`,
+      `${underwriterLabel}-${chainName}-${tokenName}-deposit`,
       `deposit ${amount} ${tokenName} on ${chainName} (native)`,
       options,
-      account,
+      underwriterLabel,
       OperatorType.UNDERWRITER,
       tokenCode,
       amount
@@ -631,7 +631,7 @@ function planSolanaNativeSteps<C extends ClusterBuildContext>(
  */
 function planSolanaNonNativeSteps<C extends ClusterBuildContext>(
   options: ClusterBuildStepOptions,
-  account: string,
+  underwriterLabel: string,
   chainName: string,
   tokenName: string,
   chainCode: bigint,
@@ -641,27 +641,27 @@ function planSolanaNonNativeSteps<C extends ClusterBuildContext>(
   return [
     SolanaFundingTool.planAirdrop<C>(
       Report.Actor.Underwriter,
-      `${account}-${chainName}-airdrop`,
-      `fund ${account} SOL keypair for the ${tokenName} deposit`,
+      `${underwriterLabel}-${chainName}-airdrop`,
+      `fund ${underwriterLabel} SOL keypair for the ${tokenName} deposit`,
       options,
-      account,
+      underwriterLabel,
       amount + WireUnderwriterTool.SolAirdropHeadroomLamports
     ),
     SolanaFundingTool.planSplMint<C>(
       Report.Actor.Underwriter,
-      `${account}-${tokenName}-mint`,
-      `mint ${amount} mock ${tokenName} to ${account}`,
+      `${underwriterLabel}-${tokenName}-mint`,
+      `mint ${amount} mock ${tokenName} to ${underwriterLabel}`,
       options,
-      account,
+      underwriterLabel,
       tokenCode,
       amount
     ),
     SolanaCollateralTool.planNonNativeDeposit<C>(
       Report.Actor.Underwriter,
-      `${account}-${chainName}-${tokenName}-deposit`,
+      `${underwriterLabel}-${chainName}-${tokenName}-deposit`,
       `deposit ${amount} ${tokenName} on ${chainName} (SPL)`,
       options,
-      account,
+      underwriterLabel,
       chainCode,
       tokenCode,
       WireUnderwriterTool.PrimaryReserveCode,

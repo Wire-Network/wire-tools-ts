@@ -3,9 +3,9 @@
  * `opp-outpost::deposit` / `deposit_non_native` collateral writes. Every Anchor
  * WRITE is its OWN {@link ClusterBuildStep} so the `Report` records it:
  * {@link planDeposit} (native SOL) and {@link planNonNativeDeposit} (SPL). Each runner
- * reads the operator identity from `ctx.outputs`, builds the `opp_outpost`
- * program bound to the operator's keypair, resolves the program PDAs, and submits
- * exactly ONE deposit ix. PDA derivation + IDL/program loading are pure value
+ * resolves the operator identity from `ctx.keyStore` by its durable `label`,
+ * builds the `opp_outpost` program bound to the operator's keypair, resolves the
+ * program PDAs, and submits exactly ONE deposit ix. PDA derivation + IDL/program loading are pure value
  * helpers used INSIDE the runners.
  */
 
@@ -49,8 +49,8 @@ export namespace SolanaCollateralTool {
   /** Input for {@link planDeposit} — one native-SOL collateral deposit write. */
   export interface DepositInput extends StepInput {
     readonly kind: "SolanaCollateralTool.DepositInput"
-    /** Operator whose identity is read from `ctx.outputs`. */
-    readonly operatorAccount: string
+    /** Operator's durable `label` handle — resolved from `ctx.keyStore` (NOT its on-chain `account`). */
+    readonly operatorLabel: string
     readonly operatorType: OperatorType
     /** 8-byte slug_name (`uint64`) of the deposited token (native `SOL`). */
     readonly tokenCode: bigint
@@ -64,7 +64,7 @@ export namespace SolanaCollateralTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    operatorAccount: string,
+    operatorLabel: string,
     operatorType: OperatorType,
     tokenCode: bigint,
     amount: bigint
@@ -76,7 +76,7 @@ export namespace SolanaCollateralTool {
       options,
       {
         kind: "SolanaCollateralTool.DepositInput",
-        operatorAccount,
+        operatorLabel,
         operatorType,
         tokenCode,
         amount
@@ -93,7 +93,7 @@ export namespace SolanaCollateralTool {
   ): Promise<void> {
     signal.throwIfAborted()
     Assert.ok(input.amount > 0n, "SolanaCollateralTool.planDeposit: amount must be positive")
-    const operator = ctx.keyStore.assertOperator(input.operatorAccount)
+    const operator = ctx.keyStore.assertOperator(input.operatorLabel)
     const keypair = solanaKeypair(operator.solana)
     const program = loadOppOutpostProgram(ctx, keypair)
     const programId = program.programId
@@ -126,7 +126,8 @@ export namespace SolanaCollateralTool {
   /** Input for {@link planNonNativeDeposit} — one SPL collateral deposit write. */
   export interface DepositNonNativeInput extends StepInput {
     readonly kind: "SolanaCollateralTool.DepositNonNativeInput"
-    readonly operatorAccount: string
+    /** Operator's durable `label` handle — resolved from `ctx.keyStore` (NOT its on-chain `account`). */
+    readonly operatorLabel: string
     readonly chainCode: bigint
     /**
      * Token slug code — the config-level identity. The SPL mint ADDRESS is a
@@ -145,7 +146,7 @@ export namespace SolanaCollateralTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    operatorAccount: string,
+    operatorLabel: string,
     chainCode: bigint,
     tokenCode: bigint,
     reserveCode: bigint,
@@ -159,7 +160,7 @@ export namespace SolanaCollateralTool {
       options,
       {
         kind: "SolanaCollateralTool.DepositNonNativeInput",
-        operatorAccount,
+        operatorLabel,
         chainCode,
         tokenCode,
         reserveCode,
@@ -178,7 +179,7 @@ export namespace SolanaCollateralTool {
   ): Promise<void> {
     signal.throwIfAborted()
     Assert.ok(input.amount > 0n, "SolanaCollateralTool.planNonNativeDeposit: amount must be positive")
-    const operator = ctx.keyStore.assertOperator(input.operatorAccount)
+    const operator = ctx.keyStore.assertOperator(input.operatorLabel)
     const keypair = solanaKeypair(operator.solana)
     const program = loadOppOutpostProgram(ctx, keypair)
     const programId = program.programId
