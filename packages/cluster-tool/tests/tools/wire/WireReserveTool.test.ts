@@ -21,9 +21,9 @@ const LegacySwapFeeBps = 10
 
 /** A minimal reserves row carrying only the fields swapquote consults. */
 interface QuoteReserveFixture {
-  chain_code: { value: number }
-  token_code: { value: number }
-  reserve_code: { value: number }
+  chain_code: SysioContracts.SysioReservSlugNameType
+  token_code: SysioContracts.SysioReservSlugNameType
+  reserve_code: SysioContracts.SysioReservSlugNameType
   reserve_chain_amount: number
   reserve_wire_amount: number
   connector_weight_bps: number

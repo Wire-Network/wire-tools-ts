@@ -18,8 +18,8 @@ export function outputKey<T>(name: string, description: string): OutputKey<T> {
 
 /**
  * Typed cross-step store — replaces a `Map<string, unknown>` + `as T` casts at
- * every call site. `get` returns `T | null` (null over undefined); `assert`
- * throws when the key is absent.
+ * every call site. `get` returns the stored value, or null when absent (null
+ * over undefined); `assert` throws when the key is absent.
  */
 export class OutputStore {
   private readonly values = new Map<string, unknown>()
@@ -31,7 +31,7 @@ export class OutputStore {
   }
 
   /** The stored value, or null when absent. */
-  get<T>(key: OutputKey<T>): T | null {
+  get<T>(key: OutputKey<T>): T {
     return this.values.has(key.name) ? (this.values.get(key.name) as T) : null
   }
 

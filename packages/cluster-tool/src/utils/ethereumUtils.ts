@@ -147,6 +147,33 @@ export function clearNonceCache(address: string): void {
 }
 
 /**
+ * The reason-bearing fields an `ethers` (or arbitrary) error may carry, read
+ * duck-typed by {@link ethereumRevertReason}: ethers fills `reason` from a
+ * decoded `require(cond, "msg")` and `shortMessage` from its own error
+ * taxonomy. All optional — an arbitrary thrown value carries none of them.
+ */
+export interface EthereumRevertError {
+  reason?: string
+  shortMessage?: string
+  message?: string
+}
+
+/**
+ * `ethers` call overrides whose native value (`msg.value`) is a `bigint` — the
+ * harness's canonical amount shape, narrowed from ethers' own
+ * `BigNumberish`-widened `value`. Optional here;
+ * {@link EthereumPayableOverrides} requires it.
+ */
+export interface EthereumValueOverrides extends ethers.Overrides {
+  value?: bigint
+}
+
+/** {@link EthereumValueOverrides} for a call that MUST send native value. */
+export interface EthereumPayableOverrides extends EthereumValueOverrides {
+  value: bigint
+}
+
+/**
  * The most specific human-readable reason an ethers error carries: the decoded
  * `require(cond, "msg")` `reason` when present, else ethers' `shortMessage`,
  * else the plain `message`, else the stringified error. Use when surfacing a
@@ -157,6 +184,6 @@ export function clearNonceCache(address: string): void {
  * @returns The best available reason string.
  */
 export function ethereumRevertReason(error: unknown): string {
-  const decoded = error as { reason?: string; shortMessage?: string; message?: string }
+  const decoded = error as EthereumRevertError
   return decoded?.reason ?? decoded?.shortMessage ?? decoded?.message ?? String(error)
 }

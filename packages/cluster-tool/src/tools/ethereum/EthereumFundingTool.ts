@@ -203,6 +203,15 @@ const MintWithBalanceAbi: ethers.InterfaceAbi = [
 ]
 
 /**
+ * The typed view over {@link MintWithBalanceAbi}: a {@link MintableErc20} that
+ * also exposes the `balanceOf` read the top-up path needs to mint only the
+ * shortfall.
+ */
+interface MintableErc20WithBalance extends MintableErc20 {
+  balanceOf: (address: string) => Promise<bigint>
+}
+
+/**
  * EthereumFundingTool — Step factories for the mock-token funding WRITES the
  * underwriter collateral flow needs before an ERC-20 `depositNonNative`. Every
  * WRITE is its OWN {@link ClusterBuildStep} so the `Report` records it; the
@@ -276,9 +285,11 @@ export namespace EthereumFundingTool {
       ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
       input.tokenName
     )
-    const token = contractView<
-      MintableErc20 & { balanceOf: (address: string) => Promise<bigint> }
-    >(tokenAddress, MintWithBalanceAbi, signer)
+    const token = contractView<MintableErc20WithBalance>(
+      tokenAddress,
+      MintWithBalanceAbi,
+      signer
+    )
     const current = await token.balanceOf(signer.address)
     if (current >= input.amount) return
     await mintMockErc20ToUser(token, signer.address, input.amount - current)

@@ -8,7 +8,7 @@ import {
   parseEnvelopeStorageKey,
   plainify,
   resolveEndpointsType,
-  type DebugOPPEnvelopeRecord,
+  type DebugOPPEpochEnvelopeRecord,
   type EnvelopeEvent
 } from "@wireio/debugging-shared"
 import {
@@ -104,7 +104,7 @@ export class EnvelopeWatchStream implements ServerSideStream<EnvelopeEvent> {
 
   private async readPair(
     baseKey: string
-  ): Promise<{ epoch: number; record: DebugOPPEnvelopeRecord } | null> {
+  ): Promise<DebugOPPEpochEnvelopeRecord> {
     const parsed = parseEnvelopeStorageKey(baseKey)
     if (!parsed) return null
     const dataPath = Path.join(

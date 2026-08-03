@@ -64,7 +64,7 @@ export function mkdirs(path: string): string {
  * @param command - Executable name to resolve (e.g. `"anvil"`).
  * @returns The resolved absolute path, or `null` if not on `PATH`.
  */
-export async function which(command: string): Promise<string | null> {
+export async function which(command: string): Promise<string> {
   return (await zxWhich(command, { nothrow: true })) ?? null
 }
 

@@ -10,6 +10,12 @@ import { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { Localhost } from "@wireio/cluster-tool/utils"
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
 
+/** One `loggers[]` entry of a rendered nodeop `logging.json`. */
+interface RenderedLogger {
+  /** The nodeop logger's name (`producer_plugin`, …). */
+  name: string
+}
+
 describe("NodeConfig", () => {
   describe("producerName", () => {
     it("names the first 26 producers defproducera..z", () => {
@@ -166,7 +172,7 @@ describe("NodeConfig", () => {
       expect(parsed.sinks).toHaveLength(2)
       expect(
         parsed.loggers.some(
-          (logger: { name: string }) => logger.name === "producer_plugin"
+          (logger: RenderedLogger) => logger.name === "producer_plugin"
         )
       ).toBe(true)
     })

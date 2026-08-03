@@ -19,9 +19,11 @@ import Fs from "node:fs"
 
 import type {
   ChainTokenAmount,
+  ChainTokenAmountSchema,
   ClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { match } from "ts-pattern"
+import type { z } from "zod"
 
 import {
   ChainKind,
@@ -83,6 +85,17 @@ export namespace WireUnderwriterTool {
   export const DefaultAmount: bigint = 1_000_000_000n
 
   /**
+   * One {@link DefaultPairs} entry: a `(chain_code, token_code)` slug_name pair
+   * plus the {@link ChainKind} that selects the per-chain deposit backend.
+   */
+  export interface DefaultCollateralPair {
+    chainCode: number
+    tokenCode: number
+    /** Discriminant the per-chain deposit dispatch matches on. */
+    chainKind: ChainKind
+  }
+
+  /**
    * Default (chain_code, token_code) slug_name pairs deposited to every
    * underwriter when no `--underwriter-collateral-json-file` is supplied.
    * Tracks the integrated-outpost set; if a new outpost is added (Sui, etc.),
@@ -90,12 +103,7 @@ export namespace WireUnderwriterTool {
    * deposits cover it without requiring every caller to specify a config
    * file.
    */
-  export const DefaultPairs: ReadonlyArray<{
-    chainCode: number
-    tokenCode: number
-    /** Discriminant the per-chain deposit dispatch matches on. */
-    chainKind: ChainKind
-  }> = [
+  export const DefaultPairs: ReadonlyArray<DefaultCollateralPair> = [
     {
       chainCode: SlugName.from("WIRE"),
       tokenCode: SlugName.from("WIRE"),
@@ -394,6 +402,14 @@ function tokenKindForCodename(tokenCode: number): TokenKind {
 }
 
 /**
+ * The `cluster-config.json` JSON form of a {@link ChainTokenAmount} — the zod
+ * INPUT side of `ChainTokenAmountSchema`, whose `amount` is still the raw
+ * proto-JSON value `TokenAmount.fromJson` accepts. DERIVED from the shared
+ * schema, never re-declared, so a schema change lands here through the compiler.
+ */
+type ChainTokenAmountJson = z.input<typeof ChainTokenAmountSchema>
+
+/**
  * Parse one entry of the `cluster-config.json`-shaped `ChainTokenAmount`
  * JSON form back into the harness-local in-memory shape: `chain_code`
  * passes through as a plain `number`, `amount` is rehydrated through
@@ -406,7 +422,7 @@ function parseChainTokenAmountJson(raw: unknown): ChainTokenAmount {
     raw && typeof raw === "object" && "chain_code" in raw && "amount" in raw,
     "ChainTokenAmount JSON must be a `{chain_code, amount}` object literal"
   )
-  const r = raw as { chain_code: number; amount: unknown }
+  const r = raw as ChainTokenAmountJson
   return {
     chain_code: r.chain_code,
     amount: TokenAmount.fromJson(

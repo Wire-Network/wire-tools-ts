@@ -2,11 +2,18 @@ import {
   ClusterBuild,
   ClusterBuildContext,
   ClusterBuildPhase,
-  ClusterBuildStep, pollUntil } from "@wireio/cluster-tool/orchestration"
+  ClusterBuildStep, pollUntil, type StepInput } from "@wireio/cluster-tool/orchestration"
 import { getLogger } from "@wireio/cluster-tool/logging"
 import { Report } from "@wireio/cluster-tool/report"
 import { sleep } from "@wireio/cluster-tool/utils"
 import { fixtureConfig } from "../config/clusterConfigFixture.js"
+
+/** The typed input the capture test threads through a step into its StepResult. */
+interface CaptureStepInput extends StepInput {
+  readonly kind: "T"
+  /** An arbitrary payload value asserted verbatim in the StepResult. */
+  v: number
+}
 
 function newBuild(): ClusterBuild {
   return ClusterBuild.forContext(
@@ -141,7 +148,7 @@ describe("ClusterBuildPhase executor", () => {
   })
 
   it("captures actor + typed input into the StepResult", async () => {
-    const step = ClusterBuildStep.create<ClusterBuildContext, { kind: "T"; v: number }>(
+    const step = ClusterBuildStep.create<ClusterBuildContext, CaptureStepInput>(
       Report.Actor.User,
       "s",
       "s",
