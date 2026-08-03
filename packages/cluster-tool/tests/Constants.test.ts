@@ -66,6 +66,7 @@ describe("ProtocolTiming", () => {
     expect(ProtocolTiming.CollateralVerifyBudgetMs).toBe(360_000)
     expect(ProtocolTiming.SingleHopBudgetMs).toBe(420_000)
     expect(ProtocolTiming.DoubleHopBudgetMs).toBe(840_000)
+    expect(ProtocolTiming.PollDeadlineBufferMs).toBe(30_000)
   })
 
   it("orders the classes: collateral < single hop < double hop = 2x single", () => {

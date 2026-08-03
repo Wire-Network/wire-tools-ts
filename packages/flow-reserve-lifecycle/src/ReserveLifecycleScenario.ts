@@ -5,6 +5,7 @@ import {
   ClusterBuildPhase,
   EthereumLocalReserveStatus,
   FlowScenario,
+  ProtocolTiming,
   Report,
   SwapUserIdentities,
   containsSwapRevert,
@@ -141,13 +142,13 @@ export class ReserveLifecycleScenario extends FlowScenario {
 
   plan(cluster: ClusterBuild): void {
     const relayStepOptions = {
-        timeoutMs: Constants.RelayDeadlineMs + Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.RelayDeadlineMs + ProtocolTiming.PollDeadlineBufferMs
       },
       readyStepOptions = {
-        timeoutMs: Constants.ReadyDeadlineMs + Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.ReadyDeadlineMs + ProtocolTiming.PollDeadlineBufferMs
       },
       windowStepOptions = {
-        timeoutMs: Constants.NoUwreqWindowMs + Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.NoUwreqWindowMs + ProtocolTiming.PollDeadlineBufferMs
       },
       ethereumWriteOptions = {
         timeoutMs: Constants.EthereumWriteStepTimeoutMs
