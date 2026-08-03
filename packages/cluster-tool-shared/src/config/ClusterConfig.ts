@@ -94,6 +94,35 @@ export type ClusterExecutablePaths = z.infer<
 >
 
 /**
+ * Ethereum-chain-specific cluster configuration. Empty today — the dedicated
+ * nesting point for current and future Ethereum-only options, mirroring
+ * {@link ClusterConfigSolanaSchema}.
+ */
+export const ClusterConfigEthereumSchema = z.object({})
+/** Ethereum-chain-specific cluster configuration — the shape of {@link ClusterConfigEthereumSchema}. */
+export type ClusterConfigEthereum = z.infer<typeof ClusterConfigEthereumSchema>
+
+/**
+ * Solana-chain-specific cluster configuration — the dedicated nesting point
+ * for current and future Solana-only options.
+ */
+export const ClusterConfigSolanaSchema = z.object({
+  /**
+   * Warp the solana-test-validator past Solana epoch 3 at launch, so a flow
+   * driving the liqsol yield pipeline can run — `dev_seed_staker_yield` is
+   * gated on `Clock.epoch >= 3` (`MIN_SEED_EPOCH`: the credited epoch is
+   * `Clock.epoch - 2` and must be ≥ the launch epoch). Off for every flow
+   * except `flow-yield-distribution`, which opts in via its scenario
+   * `defaults`: the warp puts the Solana chain clock ~80 minutes ahead of real
+   * time — a non-production clock condition no other flow needs, so none may
+   * silently inherit it.
+   */
+  epochWarp: z.boolean().default(false)
+})
+/** Solana-chain-specific cluster configuration — the shape of {@link ClusterConfigSolanaSchema}. */
+export type ClusterConfigSolana = z.infer<typeof ClusterConfigSolanaSchema>
+
+/**
  * THE canonical cluster configuration — the plain JSON shape persisted to
  * `cluster-config.json` (`ClusterFiles.ConfigFilename`) and flowed through
  * the harness at runtime. `ClusterConfigProvider` (cluster-tool) resolves,
@@ -159,6 +188,17 @@ export const ClusterConfigSchema = z.object({
   ethereumPath: z.string(),
   /** wire-solana repo root. */
   solanaPath: z.string(),
+  /**
+   * Ethereum-chain-specific configuration (empty today — the nesting point for
+   * future Ethereum-only options). Schema-defaulted so pre-existing configs
+   * stay loadable.
+   */
+  ethereum: ClusterConfigEthereumSchema.default({}),
+  /**
+   * Solana-chain-specific configuration (`epochWarp`, …). Schema-defaulted so
+   * pre-existing configs stay loadable.
+   */
+  solana: ClusterConfigSolanaSchema.default({ epochWarp: false }),
   /** Resolved network binding for every daemon. */
   bind: BindConfigSchema,
   /** Resolved binary locations. */

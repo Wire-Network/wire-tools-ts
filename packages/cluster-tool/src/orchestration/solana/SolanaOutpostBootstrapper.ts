@@ -54,9 +54,9 @@ export interface SolanaOutpostBootstrapperConfig {
  * (+ envelope-log + reserve) PDAs against the already-loaded `liqsol_core`
  * program (which hosts the OPP outpost interface), seed the native-SOL
  * reserve, and (when a cluster data path is given) provision mock SPL
- * reserves. The program is deployed via `--bpf-program` at validator launch;
- * per-epoch `EpochDeliveries` PDAs are allocated lazily by the batch operator
- * on first delivery.
+ * reserves. The program is deployed upgradeable at validator launch (its
+ * upgrade authority == the outpost `admin`); per-epoch `EpochDeliveries` PDAs
+ * are allocated lazily by the batch operator on first delivery.
  *
  * Test-cluster custody priming (`provisionSplReserves`) lives HERE in the
  * harness, never in `wire-solana`'s deploy scripts.
@@ -66,6 +66,8 @@ export class SolanaOutpostBootstrapper {
   private readonly connection: Connection
   /** OPP outpost program id (resolved from the program keypair file), or null when absent. */
   programId: PublicKey | null = null
+  /** liqsol `global_config` PDA, resolved in `ensureGlobalConfig`. */
+  private globalConfigPda: PublicKey | null = null
 
   constructor(options: SolanaOutpostBootstrapperOptions) {
     Assert.ok(options.solanaPath, "SolanaOutpostBootstrapper: solanaPath is required")
@@ -75,7 +77,9 @@ export class SolanaOutpostBootstrapper {
       rpcUrl: options.rpcUrl,
       deployerKeypairFile:
         options.deployerKeypairFile ??
-        SolanaOutpostBootstrapper.defaultDeployerKeypairFile(),
+        (options.clusterDataPath != null
+          ? SolanaFundingTool.deployerKeypairFile(options.clusterDataPath)
+          : SolanaOutpostBootstrapper.defaultDeployerKeypairFile()),
       programKeypairFile:
         options.programKeypairFile ??
         SolanaOutpostProgramTool.programKeypairFile(options.solanaPath),
@@ -141,7 +145,7 @@ export class SolanaOutpostBootstrapper {
         log.info("OPP outpost program is loaded on the validator")
       else
         log.warn(
-          "OPP outpost program not found on validator — it should be deployed via --bpf-program"
+          "OPP outpost program not found on validator — it should be deployed upgradeable at launch"
         )
     }
 
@@ -184,7 +188,7 @@ export class SolanaOutpostBootstrapper {
     }
     if (this.config.clusterDataPath != null) {
       mkdirs(this.config.clusterDataPath)
-      const persistedFile = Path.join(this.config.clusterDataPath, "sol-deployer-keypair.json")
+      const persistedFile = SolanaFundingTool.deployerKeypairFile(this.config.clusterDataPath)
       Fs.writeFileSync(persistedFile, JSON.stringify(Array.from(deployer.secretKey)))
       log.info(`persisted SOL deployer keypair to ${persistedFile}`)
     }
@@ -252,6 +256,10 @@ export class SolanaOutpostBootstrapper {
     const idl = JSON.parse(Fs.readFileSync(idlFile, "utf8"))
     const program = new anchor.Program(idl, provider)
 
+    // The OPP admin ops are gated by the liqsol `global_config`
+    // (`has_one = admin`), which must be initialized once before the outpost.
+    await this.ensureGlobalConfig(deployer, program)
+
     // `initialize_outpost` takes only the outpost's `chain_code`
     // (SOL ⇒ "SOLANA"_c) — consensus thresholds are derived on-the-fly per
     // `epoch_in` and the epoch duration is propagated via the
@@ -261,7 +269,7 @@ export class SolanaOutpostBootstrapper {
     const initializeTransaction = await program.methods
       .initializeOutpost(solanaChainCode)
       .accounts({
-        authority: deployer.publicKey,
+        ...this.getAdminAccounts(deployer),
         config: configPda,
         outboundMessageBuffer: outboundMessageBufferPda,
         operatorRegistry: operatorRegistryPda,
@@ -280,7 +288,7 @@ export class SolanaOutpostBootstrapper {
     const solTokenCode = new anchor.BN(SlugName.from(SolanaOutpostBootstrapper.SolTokenCodename))
     const setTokenAddressTransaction = await program.methods
       .setTokenAddress(solTokenCode, anchor.web3.PublicKey.default)
-      .accounts({ authority: deployer.publicKey, config: configPda })
+      .accounts({ ...this.getAdminAccounts(deployer), config: configPda })
       .signers([deployer])
       .transaction()
     await this.runSimpleAuthorityInstruction(deployer, setTokenAddressTransaction, "set_token_address")
@@ -293,7 +301,7 @@ export class SolanaOutpostBootstrapper {
     // `create_reserve_native` and every SOL swap path can frame-convert.
     const setSolPrecisionTransaction = await program.methods
       .setTokenPrecision(solTokenCode, SolanaOutpostBootstrapper.SolTokenDecimals)
-      .accounts({ authority: deployer.publicKey, config: configPda })
+      .accounts({ ...this.getAdminAccounts(deployer), config: configPda })
       .signers([deployer])
       .transaction()
     await this.runSimpleAuthorityInstruction(
@@ -311,7 +319,7 @@ export class SolanaOutpostBootstrapper {
       .initReserve()
       .accounts({
         payer: deployer.publicKey,
-        authority: deployer.publicKey,
+        ...this.getAdminAccounts(deployer),
         config: configPda,
         reserveAggregate: reserveAggregatePda,
         systemProgram: anchor.web3.SystemProgram.programId
@@ -346,7 +354,7 @@ export class SolanaOutpostBootstrapper {
       )
       .accounts({
         payer: deployer.publicKey,
-        authority: deployer.publicKey,
+        ...this.getAdminAccounts(deployer),
         config: configPda,
         reserve: solReservePda,
         systemProgram: anchor.web3.SystemProgram.programId
@@ -414,7 +422,7 @@ export class SolanaOutpostBootstrapper {
 
         const setAddressTransaction = await program.methods
           .setTokenAddress(codeBigNumber, mint)
-          .accounts({ authority: deployer.publicKey, config: configPda })
+          .accounts({ ...this.getAdminAccounts(deployer), config: configPda })
           .signers([deployer])
           .transaction()
         await this.runSimpleAuthorityInstruction(
@@ -425,7 +433,7 @@ export class SolanaOutpostBootstrapper {
 
         const setPrecisionTransaction = await program.methods
           .setTokenPrecision(codeBigNumber, specification.decimals)
-          .accounts({ authority: deployer.publicKey, config: configPda })
+          .accounts({ ...this.getAdminAccounts(deployer), config: configPda })
           .signers([deployer])
           .transaction()
         await this.runSimpleAuthorityInstruction(
@@ -459,12 +467,12 @@ export class SolanaOutpostBootstrapper {
           )
           .accounts({
             payer: deployer.publicKey,
-            authority: deployer.publicKey,
+            ...this.getAdminAccounts(deployer),
             config: configPda,
             reserve: reservePda,
             reserveVault: reserveVaultPda,
             mint,
-            authorityAta: deployerAta,
+            adminAta: deployerAta,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: anchor.web3.SystemProgram.programId,
             rent: anchor.web3.SYSVAR_RENT_PUBKEY
@@ -486,6 +494,68 @@ export class SolanaOutpostBootstrapper {
     const persistedFile = Path.join(clusterDataPath, "sol-mock-mints.json")
     Fs.writeFileSync(persistedFile, JSON.stringify(persisted, null, 2))
     log.info(`[solana] persisted ${persisted.length} mock SPL mint(s) to ${persistedFile}`)
+  }
+
+  /**
+   * The signer/authority accounts every OPP admin instruction shares: the
+   * liqsol program takes `admin` + the gating `global_config` PDA
+   * (`has_one = admin`).
+   *
+   * @param deployer - the deployer keypair (the outpost `admin`).
+   * @return the account fragment to spread into an admin instruction's `.accounts`.
+   */
+  private getAdminAccounts(
+    deployer: Keypair
+  ): SolanaOutpostBootstrapper.AdminAccounts {
+    Assert.ok(
+      this.globalConfigPda != null,
+      "getAdminAccounts: global_config not initialized"
+    )
+    return { admin: deployer.publicKey, globalConfig: this.globalConfigPda }
+  }
+
+  /**
+   * Initialize the liqsol `global_config` PDA (idempotent) so its `admin` is set
+   * to the program's on-chain upgrade authority — which the validator launched
+   * as this same `deployer`. Every OPP admin op then passes `admin = deployer`
+   * and `global_config` to satisfy the `has_one = admin` gate.
+   *
+   * @param deployer - the deployer keypair (== program upgrade authority).
+   * @param program - the liqsol Anchor program bound to the deployer.
+   */
+  private async ensureGlobalConfig(
+    deployer: Keypair,
+    program: anchor.Program<anchor.Idl>
+  ): Promise<void> {
+    const programId = this.programId
+    Assert.ok(programId != null, "ensureGlobalConfig: programId required")
+    const [globalConfig] = PublicKey.findProgramAddressSync(
+      [Buffer.from(SolanaOutpostBootstrapper.PdaSeed.GlobalConfig)],
+      programId
+    )
+    this.globalConfigPda = globalConfig
+    const existing = await this.connection.getAccountInfo(globalConfig)
+    if (existing != null && existing.data.length > 0) {
+      log.info("liqsol global_config already initialized")
+      return
+    }
+    const [programData] = PublicKey.findProgramAddressSync(
+      [programId.toBuffer()],
+      SolanaOutpostBootstrapper.BpfLoaderUpgradeableProgramId
+    )
+    const transaction = await program.methods
+      .initializeGlobalConfig()
+      .accounts({
+        globalConfig,
+        payer: deployer.publicKey,
+        program: programId,
+        programData,
+        systemProgram: anchor.web3.SystemProgram.programId
+      })
+      .signers([deployer])
+      .transaction()
+    await this.runSimpleAuthorityInstruction(deployer, transaction, "initialize_global_config")
+    log.info(`liqsol global_config initialized (admin=${deployer.publicKey.toBase58()})`)
   }
 
   /**
@@ -540,6 +610,35 @@ export namespace SolanaOutpostBootstrapper {
     export const ReserveAggregate = "reserve_aggregate"
     export const Reserve = "reserve"
     export const ReserveVault = "reserve_vault"
+    /** liqsol `GlobalConfig` admin-gate PDA (`has_one = admin`) — shared with the staking surface. */
+    export const GlobalConfig = "global_config"
+    /** Outpost `GlobalState` singleton PDA. */
+    export const OutpostGlobalState = "outpost_global_state"
+    /** `TokenPurchaseHistory` yield-ring PDA. */
+    export const TokenPurchaseHistory = "token_purchase_history"
+    /** Per-staker `OutpostAccount` PDA prefix (`[b"outpost_account", staker]`). */
+    export const OutpostAccount = "outpost_account"
+  }
+
+  /**
+   * BPF upgradeable-loader program id — owner of every upgradeable program's
+   * `ProgramData` account, from which `initialize_global_config` proves the
+   * caller is the program's on-chain upgrade authority.
+   */
+  export const BpfLoaderUpgradeableProgramId = new PublicKey(
+    "BPFLoaderUpgradeab1e11111111111111111111111"
+  )
+
+  /**
+   * The shared signer/gating accounts every OPP admin instruction takes: the
+   * liqsol program's `admin` + the `global_config` PDA it checks `has_one`
+   * against. Spread into an admin instruction's `.accounts({ ... })`.
+   */
+  export interface AdminAccounts {
+    /** The outpost admin (== the deployer / program upgrade authority). */
+    admin: PublicKey
+    /** The gating `global_config` PDA (`has_one = admin`). */
+    globalConfig: PublicKey
   }
 
   /**

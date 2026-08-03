@@ -91,6 +91,48 @@ describe("SolanaFundingTool step factories", () => {
   })
 })
 
+describe("SolanaFundingTool deployer keypair identity", () => {
+  let dataPath: string
+  beforeEach(() => {
+    dataPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "sol-deployer-"))
+  })
+  afterEach(() => {
+    Fs.rmSync(dataPath, { recursive: true, force: true })
+  })
+
+  it("deployerKeypairFile joins the documented filename under the data dir", () => {
+    expect(SolanaFundingTool.deployerKeypairFile(dataPath)).toBe(
+      Path.join(dataPath, SolanaFundingTool.DeployerKeypairFilename)
+    )
+  })
+
+  it("createDeployerKeypair persists the keypair on first call", () => {
+    const keypairFile = SolanaFundingTool.deployerKeypairFile(dataPath)
+    expect(Fs.existsSync(keypairFile)).toBe(false)
+    const deployer = SolanaFundingTool.createDeployerKeypair(dataPath)
+    expect(Fs.existsSync(keypairFile)).toBe(true)
+    // The persisted secret round-trips through the load path as the SAME identity.
+    expect(
+      SolanaFundingTool.loadDeployerKeypair(dataPath).publicKey.toBase58()
+    ).toBe(deployer.publicKey.toBase58())
+  })
+
+  it("createDeployerKeypair is idempotent — a second call returns the SAME identity", () => {
+    const first = SolanaFundingTool.createDeployerKeypair(dataPath)
+    const second = SolanaFundingTool.createDeployerKeypair(dataPath)
+    expect(second.publicKey.toBase58()).toBe(first.publicKey.toBase58())
+  })
+
+  it("createDeployerKeypair creates missing parent directories", () => {
+    const nested = Path.join(dataPath, "nested", "data")
+    const deployer = SolanaFundingTool.createDeployerKeypair(nested)
+    expect(
+      Fs.existsSync(SolanaFundingTool.deployerKeypairFile(nested))
+    ).toBe(true)
+    expect(deployer.publicKey).toBeDefined()
+  })
+})
+
 describe("SolanaFundingTool.solMintAddress", () => {
   let dataPath: string
   beforeAll(() => {

@@ -201,9 +201,13 @@ secret-id pattern), plus `--external-outpost-config <file>` (bootstrap the depot
 against already-deployed REMOTE ETH+SOL outposts — no local anvil/validator),
 `--bind-config <file>` (a complete `BindConfig` used verbatim, or a partial
 override merged over the resolved defaults; a remote anvil/solana address
-requires `--external-outpost-config`), and `--enable-mock-reserves` (default
+requires `--external-outpost-config`), `--enable-mock-reserves` (default
 off — seed the 8 mock (chain, token) PRIMARY reserves at bootstrap; a real /
-external depot leaves these unseeded); `package` writes one `<node>.<ext>` per
+external depot leaves these unseeded), and `--solana-epoch-warp` (default off —
+warp the solana-test-validator past Solana epoch 3 for the liqsol
+staking-yield pipeline gate; the warp puts the Solana clock ~80 min ahead of
+real time, so only `flow-yield-distribution` opts in via its scenario
+`defaults`); `package` writes one `<node>.<ext>` per
 node under `<cluster>/packages/` (a hand-off artifact for a multihost environment
 with distinct compute + storage — S3/EC2, GCS, or any other, loosely coupled).
 `create-external-config` clones a CREATED, STOPPED local cluster into a deployable

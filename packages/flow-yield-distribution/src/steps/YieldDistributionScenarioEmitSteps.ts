@@ -1,25 +1,28 @@
 /**
  * YieldDistributionScenarioEmitSteps — Step factories for the flow's synthetic
- * STAKING_REWARD writes. Every emit is its OWN {@link ClusterBuildStep} so the
- * `Report` records it: {@link YieldDistributionScenarioEmitSteps.ethereumEmit}
+ * STAKING_REWARD writes. Every WRITE is its OWN {@link ClusterBuildStep} so the
+ * `Report` records it: {@link YieldDistributionScenarioEmitSteps.planEthereumEmit}
  * (one `MockYieldEmitter.emitYield(...)` tx), {@link
- * YieldDistributionScenarioEmitSteps.ethereumEmitReplay} (the SAME
+ * YieldDistributionScenarioEmitSteps.planEthereumEmitReplay} (the SAME
  * `external_epoch_ref` re-emitted — the emitter's per-staker monotonic check
- * MUST revert it), and {@link YieldDistributionScenarioEmitSteps.solanaEmit}
- * (one `opp_outpost::add_attestation` ix). Emitter / program / keypair loading
+ * MUST revert it), {@link YieldDistributionScenarioEmitSteps.planSolanaSeedYield}
+ * (one `liqsol_core::dev_seed_staker_yield` tx), and {@link
+ * YieldDistributionScenarioEmitSteps.planSolanaFlushYield} (one
+ * `liqsol_core::flush_staking_yield` tx). Emitter / program / keypair loading
  * are pure value helpers executed INSIDE the runners.
  */
 
 import Assert from "node:assert"
 import { ethers } from "ethers"
-import { Keypair } from "@solana/web3.js"
+import { Keypair, PublicKey } from "@solana/web3.js"
 import {
   EthereumCollateralTool,
   Report,
   SolanaCollateralTool,
   SolanaFundingTool,
-  emitSolanaYield,
+  devSeedStakerYield,
   emitYieldBatch,
+  flushStakingYield,
   loadMockYieldEmitter,
   ClusterBuildStep,
   type ClusterBuildContext,
@@ -224,106 +227,138 @@ export namespace YieldDistributionScenarioEmitSteps {
     )
   }
 
-  // ── Step: SOL-side STAKING_REWARD (`opp_outpost::add_attestation`) ────────
+  // ── Steps: SOL-side STAKING_REWARD (dev seed, then the real flush) ────────
 
-  /** Input for {@link planSolanaEmit} — one `opp_outpost::add_attestation` write. */
-  export interface SolanaEmitInput extends StepInput {
-    readonly kind: "YieldDistributionScenarioEmitSteps.SolanaEmitInput"
-    /** WIRE account the depot credits — `""` parks the reward in `unmapped`. */
-    readonly wireAccount: string
-    /** Reward in lamports. */
+  /** Input for {@link planSolanaSeedYield} — one `dev_seed_staker_yield` write. */
+  export interface SolanaSeedYieldInput extends StepInput {
+    readonly kind: "YieldDistributionScenarioEmitSteps.SolanaSeedYieldInput"
+    /**
+     * Output key the runner publishes the FRESH staker's SOL pubkey into: the
+     * flush step derives the staker's `OutpostAccount` PDA from it, and the
+     * downstream verify matches the depot's `unmapped` row by the staker's
+     * native address (its 32 raw bytes → dclaim's lowercase-hex
+     * `native_pubkey`) rather than by a fixed epoch ref.
+     */
+    readonly stakerAddressKey: OutputKey<PublicKey>
+    /** Reward in lamports, seeded as the WIRE yield the flush emits verbatim. */
     readonly rewardAmount: bigint
-    /** Informational share-in-bps. */
-    readonly shareBps: number
-    /** SlugName-packed chain code of the Solana outpost. */
-    readonly chainCode: bigint
-    /** SlugName-packed token code of the reward token. */
-    readonly tokenCode: bigint
-    /** Monotonic-per-staker reference the depot dedupes against. */
-    readonly externalEpochRef: bigint
-    /** Informational WIRE epoch index. */
-    readonly rewardEpochIndex: number
   }
 
   /**
-   * A single SOL-side STAKING_REWARD pushed through
-   * `opp_outpost::add_attestation`, signed by the outpost deployer keypair
-   * (`OutpostConfig.authority`). The staker is a FRESH keypair generated inside
-   * the runner — it has no authex link, so the depot parks the credit in
-   * `unmapped` (the flow's count-based verify needs no cross-step identity).
+   * Seed a FRESH staker's on-chain yield state via the dev-only
+   * `liqsol_core::dev_seed_staker_yield`, signed by the SOL deployer keypair
+   * (`global_config.admin`). The staker keypair is generated inside the
+   * runner — it has no authex link, so the follow-up flush's reward parks in
+   * `unmapped` keyed by the staker's native SOL address, which the runner
+   * publishes to `stakerAddressKey` for {@link planSolanaFlushYield} and the
+   * downstream verify step.
    *
    * @param actor - The narrative subject (the Solana outpost emits).
    * @param name - Step name (report row).
    * @param description - One-line description.
    * @param options - Per-step tuning (e.g. `timeoutMs`).
-   * @param wireAccount - WIRE account to credit (`""` → unmapped park).
-   * @param rewardAmount - Reward in lamports.
-   * @param shareBps - Informational share-in-bps.
-   * @param chainCode - SlugName-packed Solana chain code.
-   * @param tokenCode - SlugName-packed reward token code.
-   * @param externalEpochRef - Monotonic-per-staker reference.
-   * @param rewardEpochIndex - Informational WIRE epoch index.
+   * @param stakerAddressKey - Output key the runner publishes the fresh staker's SOL pubkey into.
+   * @param rewardAmount - Reward in lamports (seeded as the WIRE yield).
    * @returns The definition step.
    */
-  export function planSolanaEmit<
+  export function planSolanaSeedYield<
     C extends ClusterBuildContext = ClusterBuildContext
   >(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    wireAccount: string,
-    rewardAmount: bigint,
-    shareBps: number,
-    chainCode: bigint,
-    tokenCode: bigint,
-    externalEpochRef: bigint,
-    rewardEpochIndex: number
-  ): ClusterBuildStep<C, SolanaEmitInput> {
-    return ClusterBuildStep.create<C, SolanaEmitInput>(
+    stakerAddressKey: OutputKey<PublicKey>,
+    rewardAmount: bigint
+  ): ClusterBuildStep<C, SolanaSeedYieldInput> {
+    return ClusterBuildStep.create<C, SolanaSeedYieldInput>(
       actor,
       name,
       description,
       options,
       {
-        kind: "YieldDistributionScenarioEmitSteps.SolanaEmitInput",
-        wireAccount,
-        rewardAmount,
-        shareBps,
-        chainCode,
-        tokenCode,
-        externalEpochRef,
-        rewardEpochIndex
+        kind: "YieldDistributionScenarioEmitSteps.SolanaSeedYieldInput",
+        stakerAddressKey,
+        rewardAmount
       },
-      runSolanaEmit
+      runSolanaSeedYield
     )
   }
 
-  /** Named runner — ONE `opp_outpost::add_attestation` ix for a new unlinked staker. */
-  export async function runSolanaEmit<C extends ClusterBuildContext>(
+  /** Named runner — ONE `dev_seed_staker_yield` tx for a new unlinked staker. */
+  export async function runSolanaSeedYield<C extends ClusterBuildContext>(
     ctx: C,
-    input: SolanaEmitInput,
+    input: SolanaSeedYieldInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
     const staker = Keypair.generate()
+    ctx.outputs.set(input.stakerAddressKey, staker.publicKey)
     const authority = SolanaFundingTool.loadDeployerKeypair(ctx.config.dataPath)
     const program = SolanaCollateralTool.loadOppOutpostProgram(ctx, authority)
-    await emitSolanaYield(
+    await devSeedStakerYield(
       ctx.solana.connection,
       program,
       authority,
-      {
-        staker: staker.publicKey,
-        wireAccount: input.wireAccount,
-        rewardAmount: input.rewardAmount,
-        shareBps: input.shareBps
-      },
-      input.chainCode,
-      input.tokenCode,
-      input.externalEpochRef,
-      input.rewardEpochIndex
+      staker.publicKey,
+      input.rewardAmount
     )
+  }
+
+  /** Input for {@link planSolanaFlushYield} — one `flush_staking_yield` crank. */
+  export interface SolanaFlushYieldInput extends StepInput {
+    readonly kind: "YieldDistributionScenarioEmitSteps.SolanaFlushYieldInput"
+    /** Output key holding the seeded staker's SOL pubkey (published by {@link runSolanaSeedYield}). */
+    readonly stakerAddressKey: OutputKey<PublicKey>
+  }
+
+  /**
+   * Crank `liqsol_core::flush_staking_yield` for the staker
+   * {@link planSolanaSeedYield} seeded — the program itself packs the real
+   * `StakingReward` into the outbound buffer (the exact path a production
+   * yield-aware Solana contract exercises), signed by the SOL deployer keypair
+   * as the permissionless `cranker`.
+   *
+   * @param actor - The narrative subject (the Solana outpost emits).
+   * @param name - Step name (report row).
+   * @param description - One-line description.
+   * @param options - Per-step tuning (e.g. `timeoutMs`).
+   * @param stakerAddressKey - Output key holding the seeded staker's SOL pubkey.
+   * @returns The definition step.
+   */
+  export function planSolanaFlushYield<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    stakerAddressKey: OutputKey<PublicKey>
+  ): ClusterBuildStep<C, SolanaFlushYieldInput> {
+    return ClusterBuildStep.create<C, SolanaFlushYieldInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "YieldDistributionScenarioEmitSteps.SolanaFlushYieldInput",
+        stakerAddressKey
+      },
+      runSolanaFlushYield
+    )
+  }
+
+  /** Named runner — ONE `flush_staking_yield` crank emitting the StakingReward. */
+  export async function runSolanaFlushYield<C extends ClusterBuildContext>(
+    ctx: C,
+    input: SolanaFlushYieldInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const staker = ctx.outputs.assert(input.stakerAddressKey)
+    const authority = SolanaFundingTool.loadDeployerKeypair(ctx.config.dataPath)
+    const program = SolanaCollateralTool.loadOppOutpostProgram(ctx, authority)
+    await flushStakingYield(ctx.solana.connection, program, authority, staker)
   }
 
   // ── value helpers (artifact loads — executed INSIDE runners) ──────────────

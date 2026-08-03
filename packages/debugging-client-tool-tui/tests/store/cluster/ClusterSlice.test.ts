@@ -40,6 +40,8 @@ const stubConfig: ClusterConfig = {
   terminateWindowMs: null,
   ethereumPath: "/eth",
   solanaPath: "/sol",
+  ethereum: {},
+  solana: { epochWarp: false },
   bind: {
     kiod: { address: "127.0.0.1", port: 8900 },
     nodeop: {

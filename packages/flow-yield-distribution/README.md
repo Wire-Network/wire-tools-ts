@@ -4,9 +4,10 @@ Validates the cross-chain yield-distribution path end-to-end against a
 fresh cluster:
 
 ```
-MockYieldEmitter.sol::emitYield     (ETH outpost — Solidity fake)
-opp_outpost::add_attestation        (SOL outpost — existing CPI target)
-  → STAKING_REWARD attestation
+MockYieldEmitter.sol::emitYield          (ETH outpost — Solidity fake)
+liqsol_core::dev_seed_staker_yield       (SOL outpost — seed yield state, dev build)
+liqsol_core::flush_staking_yield         (SOL outpost — program packs the reward)
+  → STAKING_REWARD into the outbound buffer
   → batch operator ferries via OPP envelope
   → sysio.msgch dispatches as
     sysio.dclaim::onreward
@@ -30,15 +31,32 @@ Asserts:
 
 ## Solana side note
 
-Production-shaped Solana yield will eventually live in a separate
-liqsol-side staking contract that CPI-calls
-`opp_outpost::add_attestation`. We skip standing up a separate Anchor
-program here because `add_attestation` is already the exact CPI target
-— the test signs as the outpost's deployer authority (the
-`OutpostConfig.authority` set during Phase 10b bootstrap) and routes
-attestations through that path directly. The ETH side stands up
-`MockYieldEmitter.sol` as a separate fake because StakingManager.sol is
-currently a rename-only placeholder with no STAKING_REWARD path.
+The SOL side drives the folded `liqsol_core` outpost's REAL yield pipeline
+rather than hand-injecting a synthetic attestation — as TWO Report-validated
+Steps (one write per Step): `seed-solana-staker-yield` seeds a staker's
+on-chain yield state via the dev-only `liqsol_core::dev_seed_staker_yield`
+(compiled under `--features development`), then `flush-solana-staking-yield`
+cranks `liqsol_core::flush_staking_yield` so the program itself packs the
+`StakingReward` into the outbound buffer — the exact path a production
+yield-aware Solana contract exercises. Both instructions are signed by the SOL
+outpost deployer keypair (`global_config.admin`, which is also the flush
+`cranker`). Because the program derives its own reward ref, the depot row is
+matched by the staker's native SOL address (not a fixed `external_epoch_ref`).
+
+The dev seed is gated on the Solana clock having reached epoch 3
+(`MIN_SEED_EPOCH` — the credited epoch is `Clock.epoch - 2` and must be ≥ the
+launch epoch), so this flow's scenario `defaults` set
+`solana: { epochWarp: true }` — the validator launches warped just past the epoch-3
+boundary. The warp puts the Solana chain clock ~80 minutes ahead of real time,
+a non-production condition no other flow needs, so no other flow enables it.
+
+Requires the `--features development` `liqsol_core` build (wired into the e2e
+gate by wire-solana's `BUILD.bazel`), since a plain `anchor build` omits
+`dev_seed_staker_yield` from both the `.so` and the IDL.
+
+The ETH side still stands up `MockYieldEmitter.sol` as a separate fake because
+StakingManager.sol is currently a rename-only placeholder with no
+STAKING_REWARD path.
 
 ## Running
 

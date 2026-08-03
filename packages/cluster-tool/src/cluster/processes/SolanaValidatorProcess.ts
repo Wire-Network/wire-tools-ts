@@ -28,6 +28,14 @@ export interface SolanaValidatorProgram {
   name: string
   programId: string
   soFile: string
+  /**
+   * When set, the program is added to genesis as an UPGRADEABLE program
+   * (`--upgradeable-program … <upgradeAuthority>`) so a `ProgramData` account
+   * exists with this pubkey as its upgrade authority — required by the
+   * integrated liqsol `initialize_global_config`. When omitted, the program is
+   * loaded non-upgradeable (`--bpf-program`).
+   */
+  upgradeAuthority?: string
 }
 
 /** Caller options for the solana-test-validator. */
@@ -70,6 +78,15 @@ export interface SolanaValidatorOptions {
   binary?: string
   /** Programs to deploy on startup (`--bpf-program`). */
   programs?: SolanaValidatorProgram[]
+  /**
+   * Warp the validator's genesis clock past Solana epoch 3
+   * (`--slots-per-epoch` {@link SolanaValidatorProcess.EpochWarpSlotsPerEpoch}
+   * + `--warp-slot` {@link SolanaValidatorProcess.EpochWarpSlot}). Off by
+   * default — the warp puts the Solana chain clock ~80 minutes ahead of real
+   * time, so only a cluster that needs the liqsol staking-yield epoch gate
+   * opts in; see `ClusterConfig.solana.epochWarp` (`ClusterConfigSolana`).
+   */
+  epochWarp?: boolean
   /** Additional CLI flags. */
   extraArgs?: string[]
 }
@@ -115,6 +132,7 @@ export class SolanaValidatorProcess extends ManagedProcess {
         SolanaValidatorProcess.DefaultLimitLedgerSizeShreds,
       binary,
       programs: options.programs ?? [],
+      epochWarp: options.epochWarp ?? false,
       extraArgs: options.extraArgs ?? []
     }
     return new SolanaValidatorProcess(manager, config)
@@ -152,11 +170,24 @@ export class SolanaValidatorProcess extends ManagedProcess {
       String(this.config.limitLedgerSizeShreds),
       ...(verbose ? [] : ["--quiet"]),
       ...(this.config.ledgerPath ? ["--ledger", this.config.ledgerPath] : []),
-      ...this.config.programs.flatMap(program => [
-        "--bpf-program",
-        program.programId,
-        program.soFile
-      ]),
+      ...this.config.programs.flatMap(program =>
+        program.upgradeAuthority
+          ? [
+              "--upgradeable-program",
+              program.programId,
+              program.soFile,
+              program.upgradeAuthority
+            ]
+          : ["--bpf-program", program.programId, program.soFile]
+      ),
+      ...(this.config.epochWarp
+        ? [
+            "--slots-per-epoch",
+            String(SolanaValidatorProcess.EpochWarpSlotsPerEpoch),
+            "--warp-slot",
+            String(SolanaValidatorProcess.EpochWarpSlot)
+          ]
+        : []),
       ...this.config.extraArgs
     ]
   }
@@ -279,6 +310,26 @@ export namespace SolanaValidatorProcess {
    * traffic reaches it; lowering it re-introduces mid-run history loss.
    */
   export const DefaultLimitLedgerSizeShreds = 200_000_000
+  /**
+   * `--slots-per-epoch` used when {@link SolanaValidatorOptions.epochWarp} is
+   * set — epochs stretched so a whole flow (the `dev_seed_staker_yield`
+   * seeding plus the `flush_staking_yield` crank) lands inside ONE Solana
+   * epoch: the emitted reward's `external_epoch_ref` derives from the Solana
+   * epoch, so a mid-flow rollover would move the ref out from under the
+   * depot's dedupe check.
+   */
+  export const EpochWarpSlotsPerEpoch = 4_096
+  /**
+   * `--warp-slot` target used when {@link SolanaValidatorOptions.epochWarp} is
+   * set — just past the epoch-3 boundary (3 × 4096 = 12 288), satisfying the
+   * `dev_seed_staker_yield` `MIN_SEED_EPOCH = 3` gate (the credited epoch is
+   * `Clock.epoch - 2` and must be ≥ the launch epoch). It MUST land inside
+   * epoch 3 exactly: a single-node test-validator can build epoch 3's leader
+   * schedule from genesis stakes and keep producing, but warping straight
+   * into epoch 4+ leaves it unable to derive the schedule and it never
+   * produces a block.
+   */
+  export const EpochWarpSlot = 12_300
   /** Subpath (under the cluster data dir) for the validator ledger. */
   export const LedgerSubpath = "solana-ledger"
 }

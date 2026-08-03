@@ -28,6 +28,8 @@ describe("ClusterConfig shape", () => {
     terminateWindowMs: null,
     ethereumPath: "/eth",
     solanaPath: "/sol",
+    ethereum: {},
+    solana: { epochWarp: false },
     bind: {
       kiod: { address: "127.0.0.1", port: 8900 },
       nodeop: {
@@ -124,6 +126,26 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.externalOutposts).toBeNull()
     expect(rehydrated.debuggingServerEnabled).toBe(true)
     expect(rehydrated.enableMockReserves).toBe(false)
+  })
+
+  it("defaults the per-chain sections (ethereum/solana) for a legacy config", () => {
+    const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    delete parsed.ethereum
+    delete parsed.solana
+    const rehydrated = ClusterConfigSchemaCodec.deserialize(
+      JSON.stringify(parsed)
+    )
+    expect(rehydrated.ethereum).toEqual({})
+    expect(rehydrated.solana).toEqual({ epochWarp: false })
+  })
+
+  it("fills epochWarp inside a present-but-partial solana section", () => {
+    const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    parsed.solana = {}
+    const rehydrated = ClusterConfigSchemaCodec.deserialize(
+      JSON.stringify(parsed)
+    )
+    expect(rehydrated.solana.epochWarp).toBe(false)
   })
 
   it("defaults the epoch-group + termination overrides to null for a legacy config", () => {
