@@ -59,7 +59,7 @@ export function indexEnvelopesByEndpoint(
  * The most-recent `receivedAt` across every envelope in this epoch — what
  * the panel labels `updated_timestamp`. Returns null for an empty epoch.
  */
-export function epochUpdatedAt(epoch: DebugOPPEpochRecord): number | null {
+export function epochUpdatedAt(epoch: DebugOPPEpochRecord): number {
   if (epoch.envelopes.length === 0) return null
   return epoch.envelopes.reduce((acc, env) => Math.max(acc, env.receivedAt), 0)
 }

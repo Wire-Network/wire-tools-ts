@@ -26,6 +26,19 @@ export interface DebugOPPEnvelopeRecord {
   receivedAt: number
 }
 
+/**
+ * One decoded envelope record paired with the epoch its storage key was filed
+ * under — what every `.data`/`.metadata` reader produces per pair, BEFORE the
+ * per-epoch grouping. Contrast {@link DebugOPPEpochRecord}, which carries ALL
+ * envelopes observed for one epoch.
+ */
+export interface DebugOPPEpochEnvelopeRecord {
+  /** Epoch index parsed from the storage key's zero-padded prefix. */
+  epoch: number
+  /** The decoded, plainified envelope record. */
+  record: DebugOPPEnvelopeRecord
+}
+
 /** Per-epoch cache entry. Multiple envelopes per epoch under fraud scenarios. */
 export interface DebugOPPEpochRecord {
   epoch: number
@@ -41,17 +54,16 @@ export enum EnvelopeEventKind {
 }
 
 /**
- * Stream event for the `EnvelopeWatch` subscription. Hydration arrives in
- * its own kind so the consumer can choose to bulk-dispatch the initial set
- * vs. append individual records once the stream is live.
+ * Stream event for the `EnvelopeWatch` subscription — the
+ * {@link DebugOPPEpochEnvelopeRecord} the reader produced, tagged with how the
+ * subscriber came by it. Hydration arrives in its own kind so the consumer can
+ * choose to bulk-dispatch the initial set vs. append individual records once
+ * the stream is live. The `(epoch, record)` pair is INHERITED, never
+ * re-declared, so the two shapes cannot drift.
  */
-export interface EnvelopeEvent {
+export interface EnvelopeEvent extends DebugOPPEpochEnvelopeRecord {
   /** Whether the record predates the subscription or was observed live. */
   kind: EnvelopeEventKind
-  /** Epoch index of the envelope's source side. */
-  epoch: number
-  /** Plainified envelope record. */
-  record: DebugOPPEnvelopeRecord
 }
 
 /** Empty params object for the `EnvelopeWatch` stream subscription. */

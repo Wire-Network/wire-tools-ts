@@ -54,7 +54,7 @@ export const selectEpochByNumber =
  * affordance to compute `epochEnd = oldest - 1` for the next batch of
  * historical envelopes. Returns `null` when the cache is empty.
  */
-export const selectOldestEpochIndex = (state: RootState): number | null => {
+export const selectOldestEpochIndex = (state: RootState): number => {
   const opp = state[SliceName.OPP]
   return opp.epochOrder.length === 0 ? null : opp.epochOrder[0]
 }

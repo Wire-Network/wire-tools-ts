@@ -29,7 +29,7 @@ export class RecordingConnection extends Connection {
     // Every web3.js call funnels through the connection's private
     // `_rpcRequest`; wrapping it here captures the READ surface (the rich
     // overrides below own the send-class methods, so those skip this wrap).
-    const self = this as unknown as { _rpcRequest: RecordingConnection.RpcRequest }
+    const self = this as unknown as RecordingConnection.RpcRequestTransport
     const original = self._rpcRequest.bind(this)
     self._rpcRequest = async (method, args) => {
       if (!RecordingConnection.RichlyRecordedMethods.has(method)) {
@@ -115,6 +115,15 @@ export class RecordingConnection extends Connection {
 export namespace RecordingConnection {
   /** The private web3.js RPC transport shape the read wrap intercepts. */
   export type RpcRequest = (method: string, args: unknown[]) => Promise<unknown>
+
+  /**
+   * The private `_rpcRequest` slot on a web3.js `Connection` — the transport the
+   * constructor's read wrap reads and replaces. Not part of web3.js's public
+   * types, hence the structural view.
+   */
+  export interface RpcRequestTransport {
+    _rpcRequest: RpcRequest
+  }
 
   /**
    * Raw RPC method names the rich overrides (sendTransaction /

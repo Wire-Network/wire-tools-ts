@@ -841,16 +841,16 @@ export namespace SlashingScenarioDisputeSteps {
       dispute.candidates.length >= Constants.DisputeOperators.length,
       `expected >= ${Constants.DisputeOperators.length} dispute candidates, got ${dispute.candidates.length}`
     )
-    const canonicalAccount = ctx.keyStore.assertOperator(
+    const canonicalChainAccount = ctx.keyStore.assertOperator(
       Constants.CanonicalOperator
     ).chainAccount
     const canonicalChecksum = candidateChecksumForOperator(
       dispute.candidates,
-      canonicalAccount
+      canonicalChainAccount
     )
     Assert.ok(
       isNotEmpty(canonicalChecksum),
-      `no candidate checksum delivered by ${Constants.CanonicalOperator} (${canonicalAccount})`
+      `no candidate checksum delivered by ${Constants.CanonicalOperator} (${canonicalChainAccount})`
     )
     ctx.outputs.set(DisputeResolutionKey, {
       disputeId: Number(dispute.id),

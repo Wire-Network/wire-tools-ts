@@ -9,7 +9,8 @@ import {
   EnvelopeListEntry,
   DebugOutpostEndpointsType,
   DebugEnvelopeMetadataRecord,
-  Envelope
+  Envelope,
+  type GetEnvelopeResponse
 } from "@wireio/opp-typescript-models"
 
 import {
@@ -288,7 +289,7 @@ interface ParsedStorageKey {
  *
  * @example parseStorageKey("00000042-OUTPOST_ETHEREUM_DEPOT-abc123def4567890")
  */
-function parseStorageKey(key: string): ParsedStorageKey | null {
+function parseStorageKey(key: string): ParsedStorageKey {
   const firstDash = key.indexOf("-")
   if (firstDash < 0) return null
   const lastDash = key.lastIndexOf("-")
@@ -322,6 +323,10 @@ function resolveEndpointsType(endpointsKey: string): DebugOutpostEndpointsType {
 /**
  * Resolve a single `.data` filename into a populated `EnvelopeListEntry`,
  * or `null` if the key is malformed or fails the filter predicate.
+ *
+ * `filterParsed` is invoked BEFORE the malformed-key guard below, so a
+ * malformed key hands it the `null` parse result — hence the `| null` on its
+ * parameter. Do not narrow it away.
  */
 async function resolveListEntry(
   dataFile: string,
@@ -329,7 +334,7 @@ async function resolveListEntry(
   filterParsed: (parsed: ParsedStorageKey | null) => boolean,
   timestampStart: number | bigint,
   timestampEnd: number | bigint
-): Promise<EnvelopeListEntry | null> {
+): Promise<EnvelopeListEntry> {
   const parsed = parseStorageKey(dataFile.replace(StorageFile.Data, ""))
   if (!filterParsed(parsed) || !parsed) return null
 
@@ -364,13 +369,13 @@ async function resolveListEntry(
 
 /**
  * Load an existing metadata record and append `batchOpName` if missing;
- * otherwise initialize a fresh record with a BigInt-packed checksum.
+ * otherwise initialize a new record with a BigInt-packed checksum.
  */
 async function readOrInitMetadata(
   metadataFile: string,
   checksum: string,
   batchOpName: string
-): Promise<{ checksum: bigint; batchOpNames: string[] }> {
+): Promise<DebugEnvelopeMetadataRecord> {
   try {
     const existingBytes = await Fs.promises.readFile(metadataFile)
     const decoded = DebugEnvelopeMetadataRecord.fromBinary(existingBytes)
@@ -397,10 +402,26 @@ async function readMetadataBatchOpNames(
   }
 }
 
+/**
+ * The metadata fields the `EnvelopeGet` response echoes back. Both members are
+ * DERIVED by indexed access from the generated {@link GetEnvelopeResponse}
+ * (`checksum` is proto field 4, `batchOpNames` field 5) rather than
+ * re-declared, so a proto rename or type change lands here through the
+ * compiler. Distinct from the stored {@link DebugEnvelopeMetadataRecord}:
+ * `checksum` is rendered as its hex STRING here, not the record's packed
+ * `bigint`.
+ */
+interface EnvelopeMetadataSummary {
+  /** Batch-operator names that delivered this envelope. */
+  batchOpNames: GetEnvelopeResponse["batchOpNames"]
+  /** Hex rendering of the stored checksum; empty when metadata is missing. */
+  checksum: GetEnvelopeResponse["checksum"]
+}
+
 /** Read both batchOp names and checksum in one pass. */
 async function readMetadataSummary(
   metadataPath: string
-): Promise<{ batchOpNames: string[]; checksum: string }> {
+): Promise<EnvelopeMetadataSummary> {
   try {
     const metaBytes = await Fs.promises.readFile(metadataPath)
     const meta = DebugEnvelopeMetadataRecord.fromBinary(metaBytes)

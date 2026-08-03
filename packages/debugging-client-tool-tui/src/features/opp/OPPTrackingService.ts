@@ -93,7 +93,7 @@ export class OPPTrackingService implements Service {
   async loadOlder(
     oldestKnownEpoch: number,
     chunkSize: number = OPPTrackingService.LoadOlderChunkSize
-  ): Promise<number | null> {
+  ): Promise<number> {
     if (!this.client || !this.redux) return null
     if (oldestKnownEpoch <= 0) return null
     const epochEnd = oldestKnownEpoch - 1,
