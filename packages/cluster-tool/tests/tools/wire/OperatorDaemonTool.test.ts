@@ -92,7 +92,7 @@ describe("OperatorDaemonTool", () => {
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifacts)
       const recoverySpy = jest
         .spyOn(NodeopProcess, "startWithRecovery")
-        .mockResolvedValue(undefined as unknown as NodeopProcess)
+        .mockResolvedValue(undefined)
       try {
         await OperatorDaemonTool.runDaemonStart(
           ctx,

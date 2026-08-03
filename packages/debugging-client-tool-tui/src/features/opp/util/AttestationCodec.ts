@@ -78,13 +78,39 @@ export interface DecodedAttestationMessage {
   value: unknown
 }
 
+/**
+ * Every encoding an attestation's `data` can carry by the time it reaches the
+ * UI: the `Uint8Array` off the wire, the base64 string a JSON round-trip
+ * produces, or the `{ type: "Buffer", data: number[] }` a `Buffer.toJSON()`
+ * leaves behind. {@link bytesFor} normalizes all three.
+ */
+export type SerializedAttestationData =
+  | AttestationEntry["data"]
+  | string
+  | BufferJsonCandidate
+
+/**
+ * An {@link AttestationEntry} as it reaches the UI — the generated type with
+ * ONLY `data` widened to {@link SerializedAttestationData}. Derived from the
+ * generated entry rather than re-declared, so every other field stays sourced
+ * from the proto; a real `AttestationEntry` satisfies it unchanged.
+ *
+ * This widening is the actual runtime contract: a Redux round-trip serializes
+ * `data` to base64, which is why {@link decodeAttestation} has always handled
+ * the string form.
+ */
+export interface SerializedAttestationEntry
+  extends Omit<AttestationEntry, "data"> {
+  data: SerializedAttestationData
+}
+
 /** Fallback outcome — the entry is rendered as-is, with why the decode was skipped. */
 export interface RawAttestationFallback {
   kind: "raw"
   /** Human-readable reason the typed decode did not happen. */
   reason: string
   /** The undecoded entry, straight off the Redux-backed envelope. */
-  entry: AttestationEntry
+  entry: SerializedAttestationEntry
 }
 
 /**
@@ -107,7 +133,9 @@ export type DecodedAttestation =
  *
  * @param entry attestation entry from the Redux-backed `Envelope`
  */
-export function decodeAttestation(entry: AttestationEntry): DecodedAttestation {
+export function decodeAttestation(
+  entry: SerializedAttestationEntry
+): DecodedAttestation {
   const decoder = AttestationDecoders[entry.type as AttestationType]
   if (!decoder) {
     return {

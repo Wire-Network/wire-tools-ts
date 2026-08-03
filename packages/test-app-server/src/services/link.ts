@@ -21,7 +21,7 @@ export async function checkLinkStatus(
   })
 
   if (response.rows.length > 0) {
-    return response.rows[0] as unknown as AuthLink
+    return response.rows[0] as AuthLink
   }
   return null
 }

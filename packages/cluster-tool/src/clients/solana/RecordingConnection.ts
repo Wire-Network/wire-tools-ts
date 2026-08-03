@@ -11,6 +11,18 @@ import {
 } from "@solana/web3.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 
+declare module "@solana/web3.js" {
+  interface Connection {
+    /**
+     * web3.js's JSON-RPC transport — every call on a `Connection` funnels
+     * through it, but its own typings mark it private, so consumers cannot see
+     * it. Declared here (a real member, merely undeclared upstream) so wrapping
+     * it is ordinary typed code instead of an assertion into an invented shape.
+     */
+    _rpcRequest(method: string, args: unknown[]): Promise<unknown>
+  }
+}
+
 /**
  * A `@solana/web3.js` `Connection` that records every transaction submission
  * and airdrop into the running step's `Report.StepResult.extra` (via
@@ -29,9 +41,8 @@ export class RecordingConnection extends Connection {
     // Every web3.js call funnels through the connection's private
     // `_rpcRequest`; wrapping it here captures the READ surface (the rich
     // overrides below own the send-class methods, so those skip this wrap).
-    const self = this as unknown as RecordingConnection.RpcRequestTransport
-    const original = self._rpcRequest.bind(this)
-    self._rpcRequest = async (method, args) => {
+    const original = this._rpcRequest.bind(this)
+    this._rpcRequest = async (method, args) => {
       if (!RecordingConnection.RichlyRecordedMethods.has(method)) {
         StepExtraRecorder.record({ client: "solana", kind: "rpc", method, args })
       }
@@ -113,18 +124,6 @@ export class RecordingConnection extends Connection {
 }
 
 export namespace RecordingConnection {
-  /** The private web3.js RPC transport shape the read wrap intercepts. */
-  export type RpcRequest = (method: string, args: unknown[]) => Promise<unknown>
-
-  /**
-   * The private `_rpcRequest` slot on a web3.js `Connection` — the transport the
-   * constructor's read wrap reads and replaces. Not part of web3.js's public
-   * types, hence the structural view.
-   */
-  export interface RpcRequestTransport {
-    _rpcRequest: RpcRequest
-  }
-
   /**
    * Raw RPC method names the rich overrides (sendTransaction /
    * sendRawTransaction / requestAirdrop) already record with decoded

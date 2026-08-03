@@ -1,9 +1,8 @@
 import Fs from "node:fs"
 import Path from "node:path"
 import { OperatorType } from "@wireio/opp-typescript-models"
-import { KeyType } from "@wireio/sdk-core"
+import { KeyType, SysioContracts } from "@wireio/sdk-core"
 import { Constants, ProtocolTiming } from "@wireio/cluster-tool"
-import type { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 import { NodeConfig } from "@wireio/cluster-tool/config"
 import { ClusterBuildDefaults, Steps } from "@wireio/cluster-tool/orchestration"
@@ -11,20 +10,7 @@ import {
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
-
-/** A phase or group node — a group carries `children`, a phase is a leaf. */
-interface NamedNode {
-  name: string
-  children?: ReadonlyArray<NamedNode>
-}
-
-/** Every phase/group name in a built cluster, recursively (tree order). */
-function collectNames(children: ReadonlyArray<NamedNode>): string[] {
-  return children.flatMap(child => [
-    child.name,
-    ...(child.children ? collectNames(child.children) : [])
-  ])
-}
+import { collectPhaseNames } from "./clusterBuildFixture.js"
 
 /** One `finalizer_policy` entry as `bios::setfinalizer` receives it. */
 interface FinalizerEntry {
@@ -90,7 +76,7 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
   describe("bootstrap success gates", () => {
     it("LOCAL mode gates on the depot advancing past the bootstrap epoch", async () => {
       const cluster = await ClusterBuildDefaults.create(baseOptions()),
-        names = collectNames(cluster.children as unknown as NamedNode[])
+        names = collectPhaseNames(cluster.children)
       expect(names).toContain("EpochBootstrap")
       // unconditional, and directly after the bootstrap phase
       expect(names.indexOf("EpochAdvance")).toBe(
@@ -102,7 +88,7 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
 
     it("EXTERNAL mode gates on head advance + a queued outbound envelope per outpost", async () => {
       const cluster = await ClusterBuildDefaults.create(externalOptions()),
-        names = collectNames(cluster.children as unknown as NamedNode[])
+        names = collectPhaseNames(cluster.children)
       expect(names).toContain("HeadBlockAdvance")
       expect(names).toContain("OutboundEnvelopesQueued")
       // there is no local chain to advance an epoch on
@@ -174,20 +160,18 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
           }
         }
       })
-      const invoke = jest.fn().mockResolvedValue(undefined),
-        // A minimal typed-contract-client stand-in: the runner only reaches
-        // `getSysioContract(bios).actions.setfinalizer.invoke`. Installed as an
-        // OWN accessor on this throwaway context (never a prototype spy), so no
-        // other instance or test can see it.
-        wireStub = {
-          getSysioContract: () => ({
-            actions: { setfinalizer: { invoke } }
-          })
-        } as unknown as WireClient
-      Object.defineProperty(ctx, "wire", {
-        get: () => wireStub,
-        configurable: true
-      })
+      // The REAL typed contract client, with only the network call doubled.
+      // `getSysioContract` mints a fresh Proxy (and a fresh invoker cache) per
+      // call, so the client the runner would build is not the one spied here —
+      // hence `getSysioContract` is ALSO pinned to this instance. Both spies are
+      // typed against the real members; nothing is stubbed structurally.
+      const contract = ctx.wire.getSysioContract(
+          SysioContracts.SysioContractName.bios
+        ),
+        invoke = jest
+          .spyOn(contract.actions.setfinalizer, "invoke")
+          .mockResolvedValue(undefined)
+      jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
       await Steps.consensus.runSetFinalizer(
         ctx,
         null,

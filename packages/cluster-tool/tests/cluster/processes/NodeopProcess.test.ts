@@ -499,23 +499,14 @@ describe("NodeopProcess", () => {
       // relaunch (which stays up) counts as ready. The dirty first boot dies
       // instantly and fails via the dead-child fast path regardless of any
       // verify race.
-      interface VerifyReadyProbe {
-        verifyReady(): Promise<boolean>
-      }
-      // `verifyReady` is `protected` on `NodeopProcess` — TS's structural
-      // typing treats a protected member as only assignable within its
-      // declaring class hierarchy, so a direct `as VerifyReadyProbe` doesn't
-      // typecheck; bridging through `unknown` is the standard way to spy on
-      // a protected method from a test.
-      const proto = NodeopProcess.prototype as unknown as VerifyReadyProbe
-      readySpy = jest.spyOn(proto, "verifyReady").mockImplementation(function (
-        this: NodeopProcess
-      ) {
-        return Promise.resolve(
-          this.isRunning &&
-            this.args.includes(NodeopProcess.HardReplayBlockchainFlag)
-        )
-      })
+      readySpy = jest
+        .spyOn(NodeopProcess.prototype, "verifyReady")
+        .mockImplementation(function (this: NodeopProcess) {
+          return Promise.resolve(
+            this.isRunning &&
+              this.args.includes(NodeopProcess.HardReplayBlockchainFlag)
+          )
+        })
     })
     afterAll(() => {
       readySpy.mockRestore()

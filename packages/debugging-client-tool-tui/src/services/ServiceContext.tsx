@@ -40,7 +40,14 @@ export function useServices<T extends readonly Service[]>(
   ...ids: { [K in keyof T]: string }
 ): T {
   const manager = useServiceManager()
-  return ids.map(id => manager.get(id)) as unknown as T
+  // `.map` erases tuple LENGTH, so the result is re-typed as the caller's arity
+  // before the per-slot narrowing. The slot types are the caller's declaration
+  // either way — `get` is keyed by a runtime string, exactly like the
+  // single-service `useService<T>` above.
+  const services = ids.map(id => manager.get(id)) as {
+    [K in keyof T]: Service
+  }
+  return services as T
 }
 
 /** Provider props — expose the manager so tests can inject a mock. */

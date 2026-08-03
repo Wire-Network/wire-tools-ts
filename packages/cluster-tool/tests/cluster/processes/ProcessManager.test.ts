@@ -28,7 +28,7 @@ class FakeProcess extends ManagedProcess {
   get args(): string[] {
     return this.argv
   }
-  protected verifyReady(): Promise<boolean> {
+  verifyReady(): Promise<boolean> {
     return Promise.resolve(this.ready)
   }
   protected get verifyTimeoutMs(): number {
