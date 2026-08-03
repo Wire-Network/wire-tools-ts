@@ -119,8 +119,8 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     ctx.keyStore.pushNodes({
       index: 0,
       keys: {
-        k1: { type: KeyType.K1, publicKey: "PUB_K1_n0", privateKey: "PVT_K1_n0" },
-        bls: {
+        wire: { type: KeyType.K1, publicKey: "PUB_K1_n0", privateKey: "PVT_K1_n0" },
+        wireFinalizer: {
           type: KeyType.BLS,
           publicKey: "PUB_BLS_n0",
           privateKey: "PVT_BLS_n0",
