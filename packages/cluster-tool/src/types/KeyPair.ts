@@ -1,13 +1,28 @@
 import { KeyType } from "@wireio/sdk-core"
 
 /**
- * The curve-agnostic members every {@link KeyPair} carries — the curve tag plus
- * the Wire-canonical key strings.
+ * The curve-agnostic members every {@link KeyPair} carries — the curve tag, the
+ * Wire-canonical public key, and EXACTLY ONE custody form for the secret.
+ *
+ * Custody is a real runtime alternative, not an optionality convenience:
+ * - `privateKey` — the Wire-canonical key material itself. Present in memory
+ *   for every key the run generates OR adopts, and the persisted form under a
+ *   `KEY` / `KIOD` signature provider.
+ * - `awsSecretId` — the SSM parameter id the key material lives under. The
+ *   persisted form under an `SSM` signature provider, where `cluster-keys.json`
+ *   carries NO key material at all (§5.6) and a rehydrated pair is refs-only:
+ *   the daemon's `--signature-provider …,SSM:<id>` spec is what fetches the key
+ *   at startup, so nothing downstream of `ClusterState.loadKeys` may read
+ *   `privateKey`.
+ *
+ * `ClusterState`'s per-curve schemas enforce the exactly-one rule on the
+ * persisted records; in memory both slots are simply absent-able.
  */
 export interface KeyPairCommon<T extends KeyType = KeyType> {
   readonly type: T
   readonly publicKey: string
-  readonly privateKey: string
+  readonly privateKey?: string
+  readonly awsSecretId?: string
 }
 
 /** The BLS-only {@link KeyPair} extension: the finalizer key's proof of possession. */

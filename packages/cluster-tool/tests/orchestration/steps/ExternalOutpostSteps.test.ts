@@ -4,6 +4,7 @@ import Path from "node:path"
 import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { OperatorDaemonArtifactsKey } from "@wireio/cluster-tool/orchestration/outputs"
+import { Report } from "@wireio/cluster-tool/report"
 import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 
@@ -136,5 +137,114 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
     await expect(
       Steps.externalOutpost.runPublishArtifacts(ctx, null, signal)
     ).rejects.toThrow(/missing the 'commit_underwrite' instruction/)
+  })
+
+  describe("outbound-envelope bootstrap gate", () => {
+    const EthereumChainCode = 101,
+      SolanaChainCode = 202,
+      DepotChainCode = 1
+
+    /** A `sysio.chains::chains` row, wrapped exactly as the typed accessor yields it. */
+    function chainRow(code: number, isDepot: boolean) {
+      return { code: { value: code }, is_depot: isDepot }
+    }
+
+    /**
+     * A context whose `wire` answers `getChains` / `getOutboundEnvelopes` /
+     * `getEnvelopes` from the supplied rows — installed as an OWN accessor on a
+     * throwaway context, never a prototype spy.
+     */
+    function gateContext(outboundChainCodes: number[]) {
+      const ctx = externalContext(),
+        wireStub = {
+          getChains: async () => ({
+            rows: [
+              chainRow(DepotChainCode, true),
+              chainRow(EthereumChainCode, false),
+              chainRow(SolanaChainCode, false)
+            ]
+          }),
+          getOutboundEnvelopes: async () => ({
+            rows: outboundChainCodes.map(chain_code => ({ chain_code }))
+          }),
+          getEnvelopes: async () => ({ rows: [] })
+        }
+      Object.defineProperty(ctx, "wire", {
+        get: () => wireStub,
+        configurable: true
+      })
+      return ctx
+    }
+
+    it("passes once EVERY registered (non-depot) chain has a queued outbound envelope", async () => {
+      await expect(
+        Steps.externalOutpost.runOutboundEnvelopesQueued(
+          gateContext([EthereumChainCode, SolanaChainCode]),
+          signal
+        )
+      ).resolves.toBeUndefined()
+    })
+
+    it("enriches a failed gate with the expected outposts, preserving the cause", async () => {
+      // A rejecting `outenvelopes` read propagates straight out of the poll —
+      // the fast path through the same catch a timeout takes.
+      const ctx = externalContext(),
+        cause = new Error("outenvelopes read failed")
+      Object.defineProperty(ctx, "wire", {
+        get: () => ({
+          getChains: async () => ({
+            rows: [
+              chainRow(DepotChainCode, true),
+              chainRow(EthereumChainCode, false)
+            ]
+          }),
+          getOutboundEnvelopes: async () => {
+            throw cause
+          },
+          getEnvelopes: async () => ({ rows: [] })
+        }),
+        configurable: true
+      })
+      await expect(
+        Steps.externalOutpost.runOutboundEnvelopesQueued(ctx, signal)
+      ).rejects.toThrow(
+        /queued no outbound envelope for every registered outpost/
+      )
+      await expect(
+        Steps.externalOutpost
+          .runOutboundEnvelopesQueued(ctx, signal)
+          .catch((error: Error) => error.message)
+      ).resolves.toContain(String(EthereumChainCode))
+    })
+
+    it("fails fast when the chains registry names no outpost at all", async () => {
+      const ctx = externalContext()
+      Object.defineProperty(ctx, "wire", {
+        get: () => ({ getChains: async () => ({ rows: [] }) }),
+        configurable: true
+      })
+      await expect(
+        Steps.externalOutpost.runOutboundEnvelopesQueued(ctx, signal)
+      ).rejects.toThrow(/no registered outpost \(non-depot\) chain/)
+    })
+
+    it("pins the step ceiling ABOVE its inner poll budget", () => {
+      expect(
+        Steps.externalOutpost.OutboundEnvelopesTimeoutMs
+      ).toBeGreaterThan(Steps.externalOutpost.OutboundEnvelopesPollBudgetMs)
+    })
+
+    it("planOutboundEnvelopesQueued defaults its ceiling to the named constant", () => {
+      const step = Steps.externalOutpost.planOutboundEnvelopesQueued(
+        Report.Actor.Sysio,
+        "verify-outbound-envelopes",
+        "every registered outpost has a queued outbound envelope"
+      )
+      expect(step.options.timeoutMs).toBe(
+        Steps.externalOutpost.OutboundEnvelopesTimeoutMs
+      )
+      expect(step.input).toBeNull()
+      expect(typeof step.runner).toBe("function")
+    })
   })
 })

@@ -58,7 +58,10 @@ describe("ClusterBuildDefaults — external-outpost compose variant", () => {
   it("omits the local outpost deploys + adds the liveness phase in external mode", async () => {
     const cluster = await ClusterBuildDefaults.create({
       ...baseOptions(),
-      externalOutpostConfig: externalConfigFile
+      externalOutpostConfig: externalConfigFile,
+      // External mode has no local outpost to bond underwriter collateral on,
+      // so `ClusterConfigProvider.resolve` demands an EXPLICIT zero.
+      underwriterCount: 0
     })
     const names = collectNames(cluster.children as unknown as NamedNode[])
     expect(names).toContain("MaterializeExternalOutposts")

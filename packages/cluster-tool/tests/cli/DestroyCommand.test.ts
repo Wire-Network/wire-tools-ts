@@ -6,9 +6,14 @@ import type { Argv } from "yargs"
 import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
 import { PersistedFixture } from "../config/clusterConfigFixture.js"
 
-const destroyMock = jest.fn()
-
 // Preserve every other `ClusterManager` member — only `destroy` is faked.
+//
+// The fake is minted INSIDE the factory and bound below — never captured from a
+// module-level `const`. `@wireio/cluster-tool`'s root barrel re-exports this
+// module, so the factory runs while THIS file's own imports are still
+// executing, and a captured binding would be read inside its temporal dead zone
+// (jest's documented "a module factory may not reference out-of-scope
+// variables" rule).
 jest.mock("@wireio/cluster-tool/cluster/ClusterManager", () => ({
   ClusterManager: {
     ...(
@@ -16,12 +21,15 @@ jest.mock("@wireio/cluster-tool/cluster/ClusterManager", () => ({
         "@wireio/cluster-tool/cluster/ClusterManager"
       ) as typeof import("@wireio/cluster-tool/cluster/ClusterManager")
     ).ClusterManager,
-    destroy: destroyMock
+    destroy: jest.fn()
   }
 }))
 
 import { ClusterCommand } from "@wireio/cluster-tool/cli/ClusterCommand"
 import { createDestroyCommand } from "@wireio/cluster-tool/cli/DestroyCommand"
+import { ClusterManager } from "@wireio/cluster-tool/cluster/ClusterManager"
+
+const destroyMock = ClusterManager.destroy as jest.Mock
 
 /** The recorder pair returned by {@link createYargsRecorder}. */
 interface YargsRecorder {

@@ -3,6 +3,7 @@ import Http from "node:http"
 import Os from "node:os"
 import Path from "node:path"
 import {
+  AWSAccountName,
   SignatureProviderType,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
@@ -81,7 +82,7 @@ describe("NodeopProcess", () => {
       label: account,
       type: OperatorType.PRODUCER,
       wire: { type: KeyType.K1, publicKey: "PUB_K1_p", privateKey: "PVT_K1_s" },
-      bls: {
+      wireFinalizer: {
         type: KeyType.BLS,
         publicKey: "PUB_BLS_p",
         privateKey: "PVT_BLS_s",
@@ -117,7 +118,7 @@ describe("NodeopProcess", () => {
     ).rejects.toThrow(/genesis/)
   })
 
-  it("requires a producer OperatorAccount (wire + bls) for a producing node", async () => {
+  it("requires a producer OperatorAccount (wire + wireFinalizer) for a producing node", async () => {
     await expect(
       NodeopProcess.create(manager, {
         node: node("keyless", NodeRole.producer, ["sysio"])
@@ -197,7 +198,7 @@ describe("NodeopProcess", () => {
   })
 
   describe("signature-provider scheme plugins", () => {
-    const SsmPlugin =
+    const SSMPlugin =
       NodeopProcess.SignatureProviderSchemePlugins[SignatureProviderType.SSM]
 
     /** The fixture cluster re-aimed at an SSM signature provider. */
@@ -209,20 +210,36 @@ describe("NodeopProcess", () => {
         signatureProvider: {
           type: SignatureProviderType.SSM,
           ssm: {
-            awsRegion: "us-east-1",
+            awsRegions: ["us-east-1"],
             awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
           }
+        },
+        awsClusterNodeConfig: {
+          account: AWSAccountName.dev,
+          regions: ["us-east-1"],
+          ssm: null
         }
       })
     }
 
-    it("requiredSignatureProviderPlugins maps an SSM spec to the ssm plugin", () => {
+    it("requiredSignatureProviderPlugins maps a REGION-LESS SSM spec to the ssm plugin", () => {
+      expect(
+        NodeopProcess.requiredSignatureProviderPlugins([
+          NodeopProcess.SignatureProviderFlag,
+          "name,wire,wire,PUB_K1_p,SSM:/wire/c/a/K1"
+        ])
+      ).toEqual([SSMPlugin])
+    })
+
+    it("requiredSignatureProviderPlugins still maps the explicit-region SSM form", () => {
+      // The depot plugin accepts `<region>:<name>` too — scheme detection reads
+      // the leading token either way.
       expect(
         NodeopProcess.requiredSignatureProviderPlugins([
           NodeopProcess.SignatureProviderFlag,
           "name,wire,wire,PUB_K1_p,SSM:us-east-1:/wire/c/a/K1"
         ])
-      ).toEqual([SsmPlugin])
+      ).toEqual([SSMPlugin])
     })
 
     it("requiredSignatureProviderPlugins is empty for KEY / KIOD specs and non-spec args", () => {
@@ -239,20 +256,20 @@ describe("NodeopProcess", () => {
     })
 
     it("requiredSignatureProviderPlugins dedupes and skips already-enabled plugins", () => {
-      const twoSsmSpecs = [
+      const twoSSMSpecs = [
         NodeopProcess.SignatureProviderFlag,
-        "a,wire,wire,P1,SSM:r:/s1",
+        "a,wire,wire,P1,SSM:/s1",
         NodeopProcess.SignatureProviderFlag,
-        "b,wire,wire_bls,P2,SSM:r:/s2"
+        "b,wire,wire_bls,P2,SSM:/s2"
       ]
       expect(
-        NodeopProcess.requiredSignatureProviderPlugins(twoSsmSpecs)
-      ).toEqual([SsmPlugin])
+        NodeopProcess.requiredSignatureProviderPlugins(twoSSMSpecs)
+      ).toEqual([SSMPlugin])
       expect(
         NodeopProcess.requiredSignatureProviderPlugins([
-          ...twoSsmSpecs,
+          ...twoSSMSpecs,
           NodeopProcess.PluginFlag,
-          SsmPlugin
+          SSMPlugin
         ])
       ).toEqual([])
     })
@@ -272,14 +289,17 @@ describe("NodeopProcess", () => {
         operator: producerOperator("sysio")
       })
       expect(nodeop.args).toEqual(
-        expect.arrayContaining([NodeopProcess.PluginFlag, SsmPlugin])
+        expect.arrayContaining([NodeopProcess.PluginFlag, SSMPlugin])
       )
-      expect(nodeop.args.some(arg => arg.includes("SSM:us-east-1:"))).toBe(true)
+      // REGION-LESS, `{cluster}` = the AWS account (`dev`), not the cluster dir.
+      expect(nodeop.args.some(arg => arg.includes("SSM:/wire/dev/"))).toBe(true)
+      expect(nodeop.args.some(arg => arg.includes("SSM::"))).toBe(false)
     })
 
-    it("an SSM cluster's bios node stays on the inline dev KEY (no ssm plugin)", async () => {
-      const bios = new NodeConfig(
-        ssmCluster(),
+    /** The bios node planned over `cluster`. */
+    function biosNode(cluster: ClusterConfig): NodeConfig {
+      return new NodeConfig(
+        cluster,
         NodeRole.bios,
         NodeConfig.BiosIndex,
         NodeConfig.BiosName,
@@ -287,11 +307,40 @@ describe("NodeopProcess", () => {
         [NodeConfig.BiosProducer],
         []
       )
+    }
+
+    it("an SSM cluster's bios node fetches its GENERATED genesis keys from SSM", async () => {
+      // Under SSM the bios key is generated (or adopted) at config resolution
+      // like any other node key — it is NOT exempt from the provider source.
       const nodeop = await NodeopProcess.create(manager, {
-        node: bios,
+        node: biosNode(ssmCluster()),
         operator: producerOperator(NodeConfig.BiosProducer)
       })
-      expect(nodeop.args).not.toContain(SsmPlugin)
+      expect(nodeop.args).toEqual(
+        expect.arrayContaining([NodeopProcess.PluginFlag, SSMPlugin])
+      )
+      // `{account}` is the NODE NAME, and the spec stays REGION-LESS.
+      expect(
+        nodeop.args.some(arg =>
+          arg.includes(`SSM:/wire/dev/${NodeConfig.BiosName}/`)
+        )
+      ).toBe(true)
+      expect(nodeop.args.some(arg => arg.includes("SSM::"))).toBe(false)
+    })
+
+    it("a KIOD cluster's bios node keeps the INLINE dev KEY spec (never a kiod lookup)", async () => {
+      const kiodCluster = fixtureConfig({
+        clusterPath: dir,
+        dataPath: Path.join(dir, "data"),
+        executables: { ...PersistedFixture.executables, nodeop: "/bin/true" },
+        signatureProvider: { type: SignatureProviderType.KIOD, ssm: null }
+      })
+      const nodeop = await NodeopProcess.create(manager, {
+        node: biosNode(kiodCluster),
+        operator: producerOperator(NodeConfig.BiosProducer)
+      })
+      expect(nodeop.args.some(arg => arg.includes("KEY:PVT_K1_"))).toBe(true)
+      expect(nodeop.args.some(arg => arg.includes("KIOD:"))).toBe(false)
     })
 
     it("a KEY cluster never enables the ssm plugin", async () => {
@@ -299,7 +348,7 @@ describe("NodeopProcess", () => {
         node: node("key-producer", NodeRole.producer, ["sysio"]),
         operator: producerOperator("sysio")
       })
-      expect(nodeop.args).not.toContain(SsmPlugin)
+      expect(nodeop.args).not.toContain(SSMPlugin)
     })
 
     it("detects an SSM spec arriving via extraArgs (operator daemons)", async () => {
@@ -307,11 +356,11 @@ describe("NodeopProcess", () => {
         node: node("ssm-daemon", NodeRole.operator),
         extraArgs: [
           NodeopProcess.SignatureProviderFlag,
-          "op,ethereum,ethereum,0xPUB,SSM:us-east-1:/wire/c/op/EM"
+          "op,ethereum,ethereum,0xPUB,SSM:/wire/c/op/EM"
         ]
       })
       expect(nodeop.args).toEqual(
-        expect.arrayContaining([NodeopProcess.PluginFlag, SsmPlugin])
+        expect.arrayContaining([NodeopProcess.PluginFlag, SSMPlugin])
       )
     })
   })

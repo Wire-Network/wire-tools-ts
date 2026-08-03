@@ -10,12 +10,12 @@ import {
   type ClusterSignatureProviderConfig
 } from "@wireio/cluster-tool-shared"
 import { Constants } from "../../Constants.js"
-import { getLogger } from "../../logging/Logger.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import {
   ethereumKeyPairFromWallet,
   ethereumSdkPrivateKey,
   ethereumUncompressedPublicKeyHex,
+  solanaNativePublicKey,
   solanaSdkPrivateKey
 } from "../../utils/keyPairUtils.js"
 import type {
@@ -25,9 +25,7 @@ import type {
   WireFinalizerKeyPair,
   WireKeyPair
 } from "../../types/KeyPair.js"
-import type { ClusterKeyStore } from "../../orchestration/outputs/ClusterKeyStore.js"
 
-const log = getLogger("KeyGenerator")
 const execFileAsync = promisify(execFile)
 
 /** Extract a single regex capture from command output, or throw with the output. */
@@ -187,23 +185,6 @@ export namespace KeyGenerator {
       })
   }
 
-  /** Generate a producer node's composite K1 + BLS key set, in parallel. */
-  export async function createProducerKeySet(
-    context: Context,
-    purpose?: string
-  ): Promise<ClusterKeyStore.ProducerKeySet> {
-    log.debug("generating producer node key set")
-    const [k1, bls] = await Promise.all([
-      create(KeyType.K1, context, {
-        purpose: purpose != null ? `${purpose} — block signing (K1)` : undefined
-      }),
-      create(KeyType.BLS, context, {
-        purpose: purpose != null ? `${purpose} — finalizer (BLS)` : undefined
-      })
-    ])
-    return { k1, bls }
-  }
-
   // ── private per-curve backends ────────────────────────────────────────────
 
   /** K1 (secp256k1) via `clio create key --k1 --to-console`. */
@@ -262,14 +243,13 @@ export namespace KeyGenerator {
 
   /**
    * Where a rendered `--signature-provider` spec sources its private key: `KEY`
-   * (inline private key), `SSM` (region + rendered secret id), or `KIOD` (a kiod
-   * wallet URL). Rendered as the spec's final segment by {@link toProviderSegment}.
+   * (inline private key), `SSM` (a rendered secret id — REGION-LESS), or `KIOD`
+   * (a kiod wallet URL). Rendered as the spec's final segment by
+   * {@link toProviderSegment}.
    */
   export interface SignatureProviderSource {
     /** The provider type. */
     type: SignatureProviderType
-    /** AWS region (SSM only). */
-    awsRegion?: string
     /** Rendered SSM secret id for this key (SSM only). */
     awsSecretId?: string
     /** kiod wallet URL (KIOD only). */
@@ -283,8 +263,8 @@ export namespace KeyGenerator {
 
   /**
    * Build the {@link SignatureProviderSource} for a cluster's signature-provider
-   * config: `KEY` → inline; `SSM` → region + the pre-rendered per-key
-   * `secretId`; `KIOD` → the `kiodUrl`.
+   * config: `KEY` → inline; `SSM` → the pre-rendered per-key `secretId` (no
+   * region — the spec is region-less); `KIOD` → the `kiodUrl`.
    *
    * @param providerConfig - The cluster signature-provider config.
    * @param secretId - The rendered SSM secret id for this key (SSM only).
@@ -305,7 +285,6 @@ export namespace KeyGenerator {
         )
         return {
           type: SignatureProviderType.SSM,
-          awsRegion: providerConfig.ssm.awsRegion,
           awsSecretId: secretId
         }
       })
@@ -318,21 +297,34 @@ export namespace KeyGenerator {
 
   /**
    * Render the final `<provider>:<…>` segment of a signature-provider spec:
-   * `KEY:<privateKey>` (inline — the default), `SSM:<region>:<secretId>`, or
+   * `KEY:<privateKey>` (inline — the default), `SSM:<secretId>`, or
    * `KIOD:<url>`. The C++ `signature_provider_manager_plugin` parses every form.
+   *
+   * The SSM form is REGION-LESS — ONE colon. `ssm_signature_provider.cpp`'s
+   * `parse_ssm_spec` accepts an ARN, an explicit `<region>:<parameter-name>`, or
+   * a region-less `<parameter-name>` whose region resolves from the AWS
+   * environment chain; it REJECTS a leading colon (`SSM::<param>` → "has empty
+   * region; drop the leading ':'"). There is no primary region to name, so the
+   * region-less form is the one this harness renders.
+   *
+   * `keyMaterial` is a THUNK, and only the `KEY` arm calls it: under SSM custody
+   * a pair rehydrated by `ClusterState.loadKeys` carries `awsSecretId` and NO
+   * `privateKey`, and the EM / ED key-material derivations throw on an absent
+   * secret. Evaluating it eagerly would crash `wire-cluster-tool run` on an SSM
+   * cluster while building a spec that never needed the key in the first place.
    */
   function toProviderSegment(
     source: SignatureProviderSource,
-    keyMaterial: string
+    keyMaterial: () => string
   ): string {
     return match(source.type)
-      .with(SignatureProviderType.KEY, () => `KEY:${keyMaterial}`)
+      .with(SignatureProviderType.KEY, () => `KEY:${keyMaterial()}`)
       .with(SignatureProviderType.SSM, () => {
         Assert.ok(
-          source.awsRegion != null && source.awsSecretId != null,
-          "KeyGenerator.toProviderSegment: an SSM source requires awsRegion + awsSecretId"
+          source.awsSecretId != null,
+          "KeyGenerator.toProviderSegment: an SSM source requires awsSecretId"
         )
-        return `SSM:${source.awsRegion}:${source.awsSecretId}`
+        return `SSM:${source.awsSecretId}`
       })
       .with(SignatureProviderType.KIOD, () => {
         Assert.ok(
@@ -403,7 +395,7 @@ export namespace KeyGenerator {
     pair: KeyPair,
     source: SignatureProviderSource
   ): string {
-    return `wire-${pair.publicKey},wire,wire,${pair.publicKey},${toProviderSegment(source, pair.privateKey)}`
+    return `wire-${pair.publicKey},wire,wire,${pair.publicKey},${toProviderSegment(source, () => pair.privateKey)}`
   }
 
   /** BLS finalizer provider spec (private — dispatched by {@link toSignatureProvider}). */
@@ -411,12 +403,14 @@ export namespace KeyGenerator {
     pair: KeyPair,
     source: SignatureProviderSource
   ): string {
-    return `wire-bls-${pair.publicKey},wire,wire_bls,${pair.publicKey},${toProviderSegment(source, pair.privateKey)}`
+    return `wire-bls-${pair.publicKey},wire,wire_bls,${pair.publicKey},${toProviderSegment(source, () => pair.privateKey)}`
   }
 
   /**
    * EM (ethereum outpost) provider spec — 64-byte uncompressed public key
-   * (`0x` + 128 hex, no `04` marker) + the provider-sourced key segment.
+   * (`0x` + 128 hex, no `04` marker) + the provider-sourced key segment. The
+   * public key comes off the STORED pair, so the spec renders under SSM custody
+   * where there is no `privateKey` to derive it from.
    */
   function toSignatureProviderEM(
     pair: EthereumKeyPair,
@@ -428,7 +422,9 @@ export namespace KeyGenerator {
       "ethereum",
       "ethereum",
       ethereumUncompressedPublicKeyHex(pair),
-      toProviderSegment(source, ethereumSdkPrivateKey(pair).toNativeString())
+      toProviderSegment(source, () =>
+        ethereumSdkPrivateKey(pair).toNativeString()
+      )
     ].join(",")
   }
 
@@ -438,13 +434,12 @@ export namespace KeyGenerator {
     providerName: string,
     source: SignatureProviderSource
   ): string {
-    const privateKey = solanaSdkPrivateKey(pair)
     return [
       providerName,
       "solana",
       "solana",
-      privateKey.toPublic().toNativeString(),
-      toProviderSegment(source, privateKey.toNativeString())
+      solanaNativePublicKey(pair),
+      toProviderSegment(source, () => solanaSdkPrivateKey(pair).toNativeString())
     ].join(",")
   }
 

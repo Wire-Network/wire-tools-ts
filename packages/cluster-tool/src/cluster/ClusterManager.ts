@@ -6,9 +6,9 @@ import {
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { PidSources, pidIsAlive, readPid } from "@wireio/debugging-shared"
+import { getValue } from "@wireio/shared"
 import { ProtocolTiming } from "../Constants.js"
 import { BindConfigProvider } from "../config/BindConfigProvider.js"
-import { SSMClientProvider } from "../config/SSMClientProvider.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 import { ClusterConfigProvider } from "../config/ClusterConfigProvider.js"
 import { NodeConfig, NodeRole } from "../config/NodeConfig.js"
@@ -45,20 +45,6 @@ export namespace ClusterManager {
   const NodeConfigFilename = "config.ini"
   /** Per-node nodeop logging config filename. */
   const NodeLoggingFilename = "logging.json"
-
-  /**
-   * Epoch-advance liveness budget as a count of effective-epoch windows. At the
-   * default 60s epoch this is 3 × (60 + 30)s = 270s — ≥ the ~4min a *resumed*
-   * cluster can need to restart OPP circulation before `current_epoch_index`
-   * advances. A healthy cluster still passes in ~1 epoch (the poll returns the
-   * moment the index moves), so the larger ceiling adds no wall clock to a
-   * healthy run — it only keeps a slow restart from failing a live cluster.
-   */
-  export const EpochVerifyEpochCount = 3
-  /** Poll gap for the epoch-advance liveness verify (ms). */
-  export const EpochVerifyPollIntervalMs = 1_000
-  /** Local ms-per-second conversion (each flow's own `ScenarioConstants` carries the same literal). */
-  export const MsPerSecond = 1_000
 
   /**
    * Create + bootstrap a cluster: resolve `options`, write the cluster files,
@@ -428,9 +414,9 @@ export namespace ClusterManager {
     const { rows: startRows } = await ctx.wire.getEpochState(),
       startEpochIndex = startRows[0]?.current_epoch_index ?? 0,
       budgetMs =
-        EpochVerifyEpochCount *
+        ProtocolTiming.EpochVerifyEpochCount *
         ProtocolTiming.effectiveEpochSec(config.epochDurationSec) *
-        MsPerSecond
+        ProtocolTiming.MsPerSecond
     try {
       await pollUntil(
         `sysio.epoch current_epoch_index advances past ${startEpochIndex}`,
@@ -446,7 +432,7 @@ export namespace ClusterManager {
           }
         },
         budgetMs,
-        EpochVerifyPollIntervalMs
+        ProtocolTiming.EpochVerifyPollIntervalMs
       )
     } catch (error) {
       log.error(
@@ -472,36 +458,51 @@ export namespace ClusterManager {
     ProcessManager.get().initialize()
     await stop(true)
     if (config.signatureProvider.type === SignatureProviderType.SSM) {
-      await cleanupSignatureProviderKeys(config)
+      cleanupSignatureProviderKeys(config)
     }
     Fs.rmSync(config.clusterPath, { recursive: true, force: true })
   }
 
+  /** Empty publication list — the guarded fallback when ids cannot be rendered. */
+  const NoSignatureProviderKeyPublications: Steps.keys.SignatureProviderKeyPublication[] =
+    []
+
   /**
-   * Best-effort delete of every published SSM parameter — ids re-rendered
-   * deterministically from the persisted pattern × accounts × key types (guard +
-   * log per the never-swallow rule; NEVER blocks destroy).
+   * Log — and NEVER delete — every SSM parameter an SSM cluster published.
+   *
+   * `destroy` NEVER deletes an SSM secret, full stop. A published parameter is
+   * the AWS ACCOUNT's DURABLE key identity: the next `create` in that account
+   * ADOPTS it (`KeySteps.adoptOrCreateSignatureProviderKey`), which is what
+   * keeps a re-created cluster's on-chain authorities, authex links and emitted
+   * external config pointing at the SAME keys. Deleting on destroy would defeat
+   * adoption entirely — the second create would mint fresh keys and orphan every
+   * consumer that still trusts the old ones.
+   *
+   * The ids are rendered and logged so an operator who genuinely wants them gone
+   * can sweep them by hand, with the regions named.
    *
    * @param config - The cluster config (SSM signature provider).
    */
-  async function cleanupSignatureProviderKeys(
-    config: ClusterConfig
-  ): Promise<void> {
-    const region = config.signatureProvider.ssm?.awsRegion
-    if (region == null) return
-    await eachSeries(
-      Steps.keys.signatureProviderKeyPublications(config),
-      async publication => {
-        try {
-          await SSMClientProvider.deleteParameter(region, publication.secretId)
-        } catch (error) {
-          log.warn(
-            `[cluster] destroy: SSM DeleteParameter ${publication.secretId} failed (best-effort): ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          )
-        }
-      }
+  function cleanupSignatureProviderKeys(config: ClusterConfig): void {
+    if (config.signatureProvider.ssm == null) return
+    // A half-built cluster — `create` aborted before the AWS placement resolved,
+    // so there is no `cluster-keys.json` and no renderable id set — must STILL
+    // have its directory removed. The rendering is guarded so its failure is a
+    // warning, never a throw that strands the directory.
+    const publications = getValue(
+      () => Steps.keys.signatureProviderKeyPublications(config),
+      NoSignatureProviderKeyPublications,
+      error =>
+        log.warn(
+          `[cluster] destroy: could not render the retained SSM ids (half-built cluster?): ${error.message}`
+        )
+    )
+    publications.forEach(publication =>
+      log.info(
+        `[cluster] destroy: RETAINING SSM parameter ${publication.secretId} in ${publication.awsRegions.join(
+          ", "
+        )} — destroy never deletes a secret; the next create in this AWS account adopts it`
+      )
     )
   }
 }
