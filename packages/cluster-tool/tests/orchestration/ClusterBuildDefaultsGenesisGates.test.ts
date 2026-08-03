@@ -126,7 +126,7 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
     it("seeds the bios producer + the bootstrap node owner as key-store OPERATORS", async () => {
       const { keyStore } = (await ClusterBuildDefaults.create(baseOptions()))
         .context
-      const bios = keyStore.assertOperator(NodeConfig.BiosProducer),
+      const bios = keyStore.assertOperator(NodeConfig.BiosName),
         nodeOwner = keyStore.assertOperator(Constants.BOOTSTRAP_NODE_OWNER)
       // KEY mode → the well-known dev bios pair, byte-identical to history
       expect(bios.wire.publicKey).toBe(KeyGenerator.BiosK1Key.publicKey)
@@ -148,7 +148,7 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
       // `ConsensusSteps.runSetProducerKeys` builds `setprodkeys` from this list.
       expect(keyStore.operatorsByType(OperatorType.PRODUCER)).toHaveLength(0)
       expect(
-        keyStore.assertOperator(NodeConfig.BiosProducer).type
+        keyStore.assertOperator(NodeConfig.BiosName).type
       ).toBe(OperatorType.UNKNOWN)
       expect(
         keyStore.assertOperator(Constants.BOOTSTRAP_NODE_OWNER).type
@@ -161,12 +161,12 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
       ctx.keyStore.pushNodes({
         index: 0,
         keys: {
-          k1: {
+          wire: {
             type: KeyType.K1,
             publicKey: "PUB_K1_n0",
             privateKey: "PVT_K1_n0"
           },
-          bls: {
+          wireFinalizer: {
             type: KeyType.BLS,
             publicKey: "PUB_BLS_n0",
             privateKey: "PVT_BLS_n0",

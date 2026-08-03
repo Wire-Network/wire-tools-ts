@@ -32,7 +32,7 @@ const log = getLogger(__filename)
  * cluster is a `KEY`-mode dev-key cluster by definition, so these ARE its keys.
  */
 const BiosOperator: OperatorAccount = {
-  label: NodeConfig.BiosProducer,
+  label: NodeConfig.BiosName,
   account: NodeConfig.BiosProducer,
   type: OperatorType.PRODUCER,
   wire: {
@@ -219,7 +219,7 @@ export namespace NodeopProcessSteps {
     return match(node.role)
       .with(
         NodeRole.bios,
-        () => ctx.keyStore.operator(NodeConfig.BiosProducer) ?? BiosOperator
+        () => ctx.keyStore.operator(NodeConfig.BiosName) ?? BiosOperator
       )
       .with(NodeRole.producer, () => producerOperator(ctx, node))
       .otherwise(() => ctx.keyStore.assertOperator(assertOperatorLabel(node)))
@@ -238,8 +238,8 @@ export namespace NodeopProcessSteps {
       account,
       label: account,
       type: OperatorType.PRODUCER,
-      wire: nodeKeys.keys.k1,
-      wireFinalizer: nodeKeys.keys.bls
+      wire: nodeKeys.keys.wire,
+      wireFinalizer: nodeKeys.keys.wireFinalizer
     }
   }
 

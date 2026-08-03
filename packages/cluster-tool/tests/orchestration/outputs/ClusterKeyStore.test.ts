@@ -9,8 +9,8 @@ function nodeKeys(index: number): ClusterKeyStore.NodeKeys {
   return {
     index,
     keys: {
-      k1: { type: KeyType.K1, publicKey: `PUB_K1_node${index}`, privateKey: `PVT_K1_node${index}` },
-      bls: {
+      wire: { type: KeyType.K1, publicKey: `PUB_K1_node${index}`, privateKey: `PVT_K1_node${index}` },
+      wireFinalizer: {
         type: KeyType.BLS,
         publicKey: `PUB_BLS_node${index}`,
         privateKey: `PVT_BLS_node${index}`,
@@ -33,7 +33,7 @@ describe("ClusterKeyStore", () => {
   it("accumulates node key sets and resolves them by index", () => {
     const store = new ClusterKeyStore().pushNodes(nodeKeys(0), nodeKeys(1))
     expect(store.nodes.length).toBe(2)
-    expect(store.node(1).keys.k1.publicKey).toBe("PUB_K1_node1")
+    expect(store.node(1).keys.wire.publicKey).toBe("PUB_K1_node1")
     expect(() => store.node(9)).toThrow(/no generated keys for producer node 9/)
   })
 

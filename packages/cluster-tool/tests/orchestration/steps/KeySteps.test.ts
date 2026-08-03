@@ -11,7 +11,7 @@ import {
 } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
-import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
+import { ClusterConfigProvider, NodeConfig } from "@wireio/cluster-tool/config"
 import {
   EthereumMnemonicKey,
   EthereumOutpostBootstrapper,
@@ -219,11 +219,60 @@ describe("Steps.keys", () => {
     const config = ssmConfig(),
       publications = Steps.keys.signatureProviderKeyPublications(config)
 
-    it("enumerates K1+BLS per producer node and K1+EM+ED per operator (bios excluded)", () => {
-      // Fixture topology: 1 producer node (→ K1+BLS = 2) + (3 batch + 1
-      // underwriter) operators × 3 (K1+EM+ED) = 12, total 14. A bios inclusion
-      // would make it 16 — the count pins bios exclusion.
-      expect(publications).toHaveLength(14)
+    it("enumerates the GENESIS identity, every producer node, and every operator", () => {
+      // Fixture topology: bios K1+BLS (2) + node owner K1 (1) + 1 producer node
+      // K1+BLS (2) + (3 batch + 1 underwriter) operators × 3 K1/EM/ED (12) = 17.
+      expect(publications).toHaveLength(17)
+    })
+
+    it("PUBLISHES the bios keys — under SSM the bios node renders SSM: specs and cannot start without them", () => {
+      // The regression this pins: the walker enumerated producer nodes only,
+      // while the bios daemon renders `SSM:/…/node_bios/{K1,BLS}` from
+      // `node.name`. Nothing wrote those parameters, so the bios node could
+      // never start on ANY SSM cluster — first run or thousandth.
+      const biosKeys = publications.filter(
+        publication => publication.label === NodeConfig.BiosName
+      )
+      expect(biosKeys.map(publication => publication.keyType).sort()).toEqual(
+        [KeyType.K1, KeyType.BLS].sort()
+      )
+      expect(biosKeys.map(publication => publication.secretId)).toEqual(
+        expect.arrayContaining([
+          `/wire/test/${NodeConfig.BiosName}/K1`,
+          `/wire/test/${NodeConfig.BiosName}/BLS`
+        ])
+      )
+    })
+
+    it("PUBLISHES the bootstrap node owner's K1 — it signs roa::newuser for every operator", () => {
+      const ownerKeys = publications.filter(
+        publication => publication.label === Constants.BOOTSTRAP_NODE_OWNER
+      )
+      expect(ownerKeys).toHaveLength(1)
+      expect(ownerKeys[0].keyType).toBe(KeyType.K1)
+    })
+
+    it("every rendered daemon secret id has a matching publication (the cross-check that catches an omitted identity)", () => {
+      // Whatever a node's `--signature-provider` resolves to MUST have been
+      // published. This is the invariant, independent of which identities the
+      // walker happens to enumerate today.
+      const publishedIds = new Set(
+        publications.map(publication => publication.secretId)
+      )
+      const sourceFor = ClusterConfigProvider.signatureProviderSource(config),
+        // Only a PRODUCING node renders `--signature-provider` specs; a
+        // batch/underwriter node carries no producers and fetches no node key.
+        producingNodes = NodeConfig.plan(config).filter(
+          node => node.producers.length > 0
+        )
+      expect(producingNodes.length).toBeGreaterThan(0)
+      producingNodes.forEach(node =>
+        [KeyType.K1, KeyType.BLS].forEach(keyType =>
+          expect(publishedIds).toContain(
+            sourceFor(node.name, keyType).awsSecretId
+          )
+        )
+      )
     })
 
     it("keys each secret id by the AWS ACCOUNT, not the cluster-path basename", () => {
@@ -304,7 +353,7 @@ describe("Steps.keys", () => {
       return { parent, children }
     }
 
-    it("composes the node-source phase: one step per producer-node key, self-registered", () => {
+    it("composes the beforeNodes phase: every key a nodeop fetches at startup, self-registered", () => {
       const { parent, children } = fixtureParent()
       const phase = Steps.keys.planSignatureProviderKeyPublications(
         parent as never,
@@ -312,12 +361,18 @@ describe("Steps.keys", () => {
         "publish node keys",
         {},
         config,
-        Steps.keys.SignatureKeySource.node
+        Steps.keys.SignatureKeyPublishPhase.beforeNodes
       )
       expect(children).toContain(phase)
       expect(phase.name).toBe("PublishNodeSignatureProviderKeys")
-      // 1 producer node × (K1 + BLS) — operator publications are filtered OUT.
+      // Genesis (bios K1+BLS, node owner K1) + 1 producer node (K1+BLS).
+      // The bios entries MUST be here and not in the operator phase: that phase
+      // composes after BiosNode has already started, so publishing them there
+      // would leave the bios daemon fetching parameters that do not yet exist.
       expect(phase.steps.map(step => step.name)).toEqual([
+        "publish-node_bios-K1",
+        "publish-node_bios-BLS",
+        "publish-wireno-K1",
         "publish-node_00-K1",
         "publish-node_00-BLS"
       ])
@@ -331,7 +386,7 @@ describe("Steps.keys", () => {
         "publish operator keys",
         {},
         config,
-        Steps.keys.SignatureKeySource.operator
+        Steps.keys.SignatureKeyPublishPhase.afterOperators
       )
       // (3 batch + 1 underwriter) × (K1 + EM + ED) = 12; no node publications.
       expect(phase.steps).toHaveLength(12)
@@ -348,7 +403,7 @@ describe("Steps.keys", () => {
         "publish operator keys",
         {},
         config,
-        Steps.keys.SignatureKeySource.operator
+        Steps.keys.SignatureKeyPublishPhase.afterOperators
       )
       // Whether a region already holds a parameter is a RUNTIME fact the runner
       // discovers per region — an input flag would be decided before any key
@@ -497,8 +552,8 @@ describe("Steps.keys", () => {
       expect(Steps.keys.ethereumMnemonic(ctx)).toBe(
         EthereumOutpostBootstrapper.AnvilMnemonic
       )
-      expect(ctx.keyStore.node(0).keys.k1.privateKey).toMatch(/^PVT_K1_/)
-      expect(ctx.keyStore.node(0).keys.bls.proofOfPossession).toBe(
+      expect(ctx.keyStore.node(0).keys.wire.privateKey).toMatch(/^PVT_K1_/)
+      expect(ctx.keyStore.node(0).keys.wireFinalizer.proofOfPossession).toBe(
         Constants.DEV_BLS_PROOF_OF_POSSESSION
       )
     })
@@ -533,8 +588,8 @@ describe("Steps.keys", () => {
         null,
         new AbortController().signal
       )
-      expect(ctx.keyStore.node(0).keys.k1.privateKey).toBe(k1.toString())
-      expect(ctx.keyStore.node(0).keys.bls.privateKey).toBe(
+      expect(ctx.keyStore.node(0).keys.wire.privateKey).toBe(k1.toString())
+      expect(ctx.keyStore.node(0).keys.wireFinalizer.privateKey).toBe(
         Constants.DEV_BLS_PRIVATE_KEY
       )
       // Adoption reads; it never writes.
@@ -597,6 +652,7 @@ describe("Steps.keys", () => {
       return {
         source: Steps.keys.SignatureKeySource.operator,
         nodeIndex: 0,
+        publishPhase: Steps.keys.SignatureKeyPublishPhase.afterOperators,
         label: "batchop.a",
         keyType: KeyType.K1,
         awsRegions: SSMRegions,
@@ -746,6 +802,7 @@ describe("Steps.keys", () => {
         {
           source: Steps.keys.SignatureKeySource.operator,
           nodeIndex: 0,
+          publishPhase: Steps.keys.SignatureKeyPublishPhase.afterOperators,
           label: "batchop.a",
           keyType: KeyType.ED,
           awsRegions: SSMRegions,
@@ -764,12 +821,12 @@ describe("Steps.keys", () => {
       ctx.keyStore.pushNodes({
         index: 0,
         keys: {
-          k1: {
+          wire: {
             type: KeyType.K1,
             publicKey: Constants.DEV_K1_PUBLIC_KEY,
             privateKey: Constants.DEV_K1_PRIVATE_KEY
           },
-          bls: {
+          wireFinalizer: {
             type: KeyType.BLS,
             publicKey: Constants.DEV_BLS_PUBLIC_KEY,
             privateKey: Constants.DEV_BLS_PRIVATE_KEY,
@@ -785,6 +842,7 @@ describe("Steps.keys", () => {
         {
           source: Steps.keys.SignatureKeySource.node,
           nodeIndex: 0,
+          publishPhase: Steps.keys.SignatureKeyPublishPhase.beforeNodes,
           label: "node_00",
           keyType: KeyType.BLS,
           awsRegions: SSMRegions,
@@ -813,12 +871,12 @@ describe("Steps.keys", () => {
       ctx.keyStore.pushNodes({
         index: 0,
         keys: {
-          k1: {
+          wire: {
             type: KeyType.K1,
             publicKey: Constants.DEV_K1_PUBLIC_KEY,
             privateKey: Constants.DEV_K1_PRIVATE_KEY
           },
-          bls: {
+          wireFinalizer: {
             type: KeyType.BLS,
             publicKey: bls.toPublic().toString(),
             privateKey: bls.toString(),
@@ -834,6 +892,7 @@ describe("Steps.keys", () => {
         {
           source: Steps.keys.SignatureKeySource.node,
           nodeIndex: 0,
+          publishPhase: Steps.keys.SignatureKeyPublishPhase.beforeNodes,
           label: "node_00",
           keyType: KeyType.BLS,
           awsRegions: SSMRegions,
