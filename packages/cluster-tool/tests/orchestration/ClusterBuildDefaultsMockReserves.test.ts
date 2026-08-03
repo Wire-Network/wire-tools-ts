@@ -5,19 +5,7 @@ import {
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
 
-/** A phase or group node — a group carries `children`, a phase is a leaf. */
-interface NamedNode {
-  name: string
-  children?: ReadonlyArray<NamedNode>
-}
-
-/** Every phase/group name in a built cluster, recursively (tree order). */
-function collectNames(children: ReadonlyArray<NamedNode>): string[] {
-  return children.flatMap(child => [
-    child.name,
-    ...(child.children ? collectNames(child.children) : [])
-  ])
-}
+import { collectPhaseNames } from "./clusterBuildFixture.js"
 
 describe("ClusterBuildDefaults — mock-reserve gating", () => {
   let environment: ResolveEnvironment
@@ -41,7 +29,7 @@ describe("ClusterBuildDefaults — mock-reserve gating", () => {
 
   it("omits the MockReserves phase by default (no --enable-mock-reserves)", async () => {
     const cluster = await ClusterBuildDefaults.create(baseOptions())
-    const names = collectNames(cluster.children as unknown as NamedNode[])
+    const names = collectPhaseNames(cluster.children)
     expect(names).toContain("Registry")
     expect(names).not.toContain("MockReserves")
   })
@@ -51,7 +39,7 @@ describe("ClusterBuildDefaults — mock-reserve gating", () => {
       ...baseOptions(),
       enableMockReserves: true
     })
-    const names = collectNames(cluster.children as unknown as NamedNode[])
+    const names = collectPhaseNames(cluster.children)
     expect(names).toContain("MockReserves")
     // gated phase is registered directly after the Registry phase, pre-EpochBootstrap
     expect(names.indexOf("MockReserves")).toBe(names.indexOf("Registry") + 1)

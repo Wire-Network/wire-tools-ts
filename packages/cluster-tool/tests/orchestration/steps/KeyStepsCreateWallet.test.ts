@@ -1,3 +1,4 @@
+import { jest } from "@jest/globals"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
 import { Constants } from "@wireio/cluster-tool/Constants"
@@ -27,26 +28,34 @@ function finalizerKey(tag: string) {
 }
 
 /**
- * A context whose wallet RECORDS the keys it is asked to import, so the test
- * asserts on the exact argument list `runCreateWallet` produces.
+ * A context whose wallet records what it is asked to import.
+ *
+ * Spied on the REAL {@link WireWallet} rather than substituted: `getOrCreate`
+ * and `addPrivateKey` both return `Promise<WireWallet>` and the instance itself
+ * is one, so the doubles stay fully compiler-checked — no cast, no ad-hoc
+ * stand-in shape, and a signature change breaks this test instead of silently
+ * passing.
  */
 function walletContext() {
-  const imported: string[] = [],
-    ctx = fixtureContext()
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test double for the clio-backed wallet
-  ;(ctx.wire as any).wallet = {
-    getOrCreate: async () => ({
-      addPrivateKey: async (...keys: string[]) => {
-        imported.push(...keys)
-      }
-    })
-  }
-  return { ctx, imported }
+  const ctx = fixtureContext(),
+    { wallet } = ctx.wire
+  jest.spyOn(wallet, "getOrCreate").mockResolvedValue(wallet)
+  const addPrivateKey = jest
+    .spyOn(wallet, "addPrivateKey")
+    .mockResolvedValue(wallet)
+  return { ctx, addPrivateKey }
+}
+
+/** Every private key handed to `addPrivateKey`, across all calls, flattened. */
+function importedKeys(
+  addPrivateKey: ReturnType<typeof walletContext>["addPrivateKey"]
+): string[] {
+  return addPrivateKey.mock.calls.flat(2)
 }
 
 describe("KeySteps.runCreateWallet", () => {
   it("imports the SEEDED genesis keys, not the dev constants", async () => {
-    const { ctx, imported } = walletContext()
+    const { ctx, addPrivateKey } = walletContext()
     ctx.keyStore
       .setOperator({
         label: NodeConfig.BiosName,
@@ -67,6 +76,7 @@ describe("KeySteps.runCreateWallet", () => {
     // Under SSM these are GENERATED and `genesis.initial_key` carries the
     // generated public half — importing `DEV_K1_PRIVATE_KEY` instead left the
     // wallet unable to sign as `sysio` or as the node owner.
+    const imported = importedKeys(addPrivateKey)
     expect(imported).toEqual(
       expect.arrayContaining(["PVT_K1_bios", "PVT_BLS_bios", "PVT_K1_owner"])
     )
@@ -74,7 +84,7 @@ describe("KeySteps.runCreateWallet", () => {
   })
 
   it("DEDUPES — the genesis identities share one key under KEY/KIOD and kiod rejects a re-import", async () => {
-    const { ctx, imported } = walletContext()
+    const { ctx, addPrivateKey } = walletContext()
     // `ClusterConfigProvider.resolveWithBiosKeys` hands back the SAME dev pair
     // for the bios node and the bootstrap node owner under KEY/KIOD. Importing
     // it twice makes clio fail the whole bootstrap with
@@ -98,12 +108,13 @@ describe("KeySteps.runCreateWallet", () => {
 
     await Steps.keys.runCreateWallet(ctx, null, signal)
 
+    const imported = importedKeys(addPrivateKey)
     expect(imported).toContain("PVT_K1_shared")
     expect(new Set(imported).size).toBe(imported.length)
   })
 
   it("also dedupes a node key that repeats a genesis key", async () => {
-    const { ctx, imported } = walletContext()
+    const { ctx, addPrivateKey } = walletContext()
     const shared = wireKey("both")
     ctx.keyStore.setOperator({
       label: NodeConfig.BiosName,
@@ -119,6 +130,7 @@ describe("KeySteps.runCreateWallet", () => {
 
     await Steps.keys.runCreateWallet(ctx, null, signal)
 
+    const imported = importedKeys(addPrivateKey)
     expect(new Set(imported).size).toBe(imported.length)
   })
 })

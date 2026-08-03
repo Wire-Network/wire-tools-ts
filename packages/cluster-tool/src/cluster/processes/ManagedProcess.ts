@@ -69,8 +69,15 @@ export abstract class ManagedProcess {
     return {}
   }
 
-  /** Health gate polled after spawn; default = up immediately. */
-  protected verifyReady(): Promise<boolean> {
+  /**
+   * Health gate polled after spawn; default = up immediately.
+   *
+   * Public so a test can `jest.spyOn` it against the real class — TS admits a
+   * protected member only inside its own hierarchy, so a protected probe can
+   * only be doubled by asserting the prototype into an invented shape. It is
+   * also a legitimate query: "is this daemon up?" is not internal state.
+   */
+  verifyReady(): Promise<boolean> {
     return Promise.resolve(true)
   }
 

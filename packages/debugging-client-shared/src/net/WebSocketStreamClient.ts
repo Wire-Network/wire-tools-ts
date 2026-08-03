@@ -114,7 +114,7 @@ export class WebSocketStreamClient {
       ackResolve,
       ackReject
     }
-    this.subs.set(id, record as unknown as ActiveSubscription<StreamTopic>)
+    this.subs.set(id, record as ActiveSubscription<StreamTopic>)
     const subscribeFrame: SubscribeFrame<T> = {
       type: StreamFrameType.Subscribe,
       id,

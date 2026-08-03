@@ -10,6 +10,7 @@ import {
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
+import { collectPhaseNames } from "./clusterBuildFixture.js"
 
 const mockSend = jest.fn()
 // An SSM cluster ADOPTS its genesis keys from their parameters during config
@@ -52,19 +53,6 @@ function publishedKey(secretId: string): string {
   ).toNativeString()
 }
 
-/** A phase or group node — a group carries `children`, a phase is a leaf. */
-interface NamedNode {
-  name: string
-  children?: ReadonlyArray<NamedNode>
-}
-
-/** Every phase/group name in a built cluster, recursively (tree order). */
-function collectNames(children: ReadonlyArray<NamedNode>): string[] {
-  return children.flatMap(child => [
-    child.name,
-    ...(child.children ? collectNames(child.children) : [])
-  ])
-}
 
 describe("ClusterBuildDefaults — SSM signature-provider key-publication gating", () => {
   let environment: ResolveEnvironment
@@ -115,14 +103,14 @@ describe("ClusterBuildDefaults — SSM signature-provider key-publication gating
 
   it("omits both publish phases under the default KEY provider", async () => {
     const cluster = await ClusterBuildDefaults.create(baseOptions())
-    const names = collectNames(cluster.children as unknown as NamedNode[])
+    const names = collectPhaseNames(cluster.children)
     expect(names).not.toContain("PublishNodeSignatureProviderKeys")
     expect(names).not.toContain("PublishOperatorSignatureProviderKeys")
   })
 
   it("publishes node keys AFTER WalletAndKeys and BEFORE any node starts (SSM)", async () => {
     const cluster = await ClusterBuildDefaults.create(ssmOptions())
-    const names = collectNames(cluster.children as unknown as NamedNode[])
+    const names = collectPhaseNames(cluster.children)
     const publishIndex = names.indexOf("PublishNodeSignatureProviderKeys")
     expect(publishIndex).toBe(names.indexOf("WalletAndKeys") + 1)
     // The consumers — the SSM-spec'd producer nodes — start strictly after.
@@ -132,7 +120,7 @@ describe("ClusterBuildDefaults — SSM signature-provider key-publication gating
 
   it("publishes operator keys AFTER provisioning and BEFORE the operator daemons start (SSM)", async () => {
     const cluster = await ClusterBuildDefaults.create(ssmOptions())
-    const names = collectNames(cluster.children as unknown as NamedNode[])
+    const names = collectPhaseNames(cluster.children)
     const publishIndex = names.indexOf("PublishOperatorSignatureProviderKeys")
     expect(publishIndex).toBeGreaterThan(names.indexOf("Create batchops & uws"))
     expect(publishIndex).toBeLessThan(names.indexOf("OperatorNodes"))

@@ -87,8 +87,8 @@ export function flattenAttestations(
 
 /** Reverse-map `AttestationType` numeric values to their named label. */
 function attestationTypeName(type: AttestationType | number): string {
-  const reverse = AttestationType as unknown as Record<number, string>
-  return reverse[type] ?? `TYPE_${type}`
+  // Numeric enums carry their own reverse map — no projection, no cast.
+  return AttestationType[type] ?? `TYPE_${type}`
 }
 
 /**

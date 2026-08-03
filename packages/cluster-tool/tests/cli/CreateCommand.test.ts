@@ -49,7 +49,7 @@ function createYargsRecorder(): YargsRecorder {
         return recorder
       }
     }
-  return { argv: recorder as unknown as Argv, options }
+  return { argv: recorder as Argv, options }
 }
 
 describe("createCreateCommand", () => {

@@ -120,7 +120,9 @@ export namespace KeyGenerator {
     context: Context,
     options: CreateOptions = {}
   ): Promise<KeyPair<T>> {
-    const keyPair = (await createByType(type, context, options)) as unknown as KeyPair<T>
+    // The ONE cast, at the dispatch point — TS cannot correlate the runtime
+    // `match` arm inside `createByType` with the generic `T`.
+    const keyPair = (await createByType(type, context, options)) as KeyPair<T>
     recordKeygen(type, context, options, keyPair)
     return keyPair
   }

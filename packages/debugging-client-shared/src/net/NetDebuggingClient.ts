@@ -36,6 +36,27 @@ import { JsonRPCClient } from "../rpc/JsonRPCClient.js"
 import { DebuggingSubscription } from "../subscriptions/index.js"
 import { WebSocketStreamClient } from "./WebSocketStreamClient.js"
 
+/**
+ * The ONE protobuf-ts JSON-boundary site: re-read an RPC response as the
+ * `JsonValue` it actually is on the wire.
+ *
+ * `JsonRPCClient.invoke` is typed from `ApiPaths`' handler-type mapping, so its
+ * inferred type is the protobuf-ts MESSAGE interface (real `bigint` /
+ * `Uint8Array` field types) — but the value that crossed the socket is plain
+ * parsed JSON. The two are genuinely incompatible in both directions (a
+ * `bigint` field has no `JsonValue` member), which is why the parameter is
+ * widened to `object`: every message interface IS one, and `JsonObject` is a
+ * subtype of it, so the narrowing is a single checked assertion rather than an
+ * erasure. The generated `fromJson` immediately downstream is what validates
+ * the shape (`never-rewrap-generated-proto-types`).
+ *
+ * @param value - The parsed JSON body `invoke` returned.
+ * @returns The same value, typed for the generated `fromJson`.
+ */
+function asJsonValue(value: object): JsonValue {
+  return value as JsonValue
+}
+
 /** Caller-facing knobs for {@link NetDebuggingClient.create}. */
 export interface NetDebuggingClientOptions {
   /** Server base URL, e.g. `"http://localhost:9876"`. */
@@ -200,7 +221,7 @@ export class NetDebuggingClient extends DebuggingClient {
     // structurally incompatible (bigint has no JsonValue member), so a
     // single-step assertion doesn't typecheck either direction.
     return ListEnvelopesResponse.fromJson(
-      json as unknown as JsonValue,
+      asJsonValue(json),
       FROM_JSON_OPTIONS
     )
   }
@@ -210,7 +231,7 @@ export class NetDebuggingClient extends DebuggingClient {
       json = await this.oppRpc.invoke(ApiPaths.OPP.Methods.EnvelopeGet, params)
     // Same protobuf-ts JSON-boundary mismatch as `listEnvelopes` above.
     return GetEnvelopeResponse.fromJson(
-      json as unknown as JsonValue,
+      asJsonValue(json),
       FROM_JSON_OPTIONS
     )
   }
