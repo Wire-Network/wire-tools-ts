@@ -48,7 +48,7 @@ import {
 } from "../../orchestration/ClusterBuildStep.js"
 import type { ClusterBuildParent } from "../../orchestration/ClusterBuildPhaseBase.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
-import { EthereumOutpostBootstrapper } from "../../orchestration/ethereum/EthereumOutpostBootstrapper.js"
+import { KeySteps } from "../../orchestration/steps/KeySteps.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import {
@@ -335,22 +335,42 @@ export namespace WireOperatorProvisioningTool {
       input.label.length > 0 && input.label.length <= 12,
       `materializeIdentity: operator handle "${input.label}" must be 1..12 chars (it is a node-directory and SSM path segment)`
     )
+    // EM keys derive from the run's mnemonic: the CLUSTER-SCOPED one an SSM
+    // cluster generated in `KeySteps.runGenerateNodeKeys`, else the published
+    // anvil mnemonic (KEY / KIOD — every flow keeps its byte-identical wallets).
     const keyContext = KeyGenerator.context(
       ctx.config.executables.clio,
       ctx.config.buildPath,
-      EthereumOutpostBootstrapper.AnvilMnemonic
+      KeySteps.ethereumMnemonic(ctx)
     )
+    // D21 — a key the AWS account already owns is ADOPTED, never regenerated,
+    // and the read has to happen HERE: the very next steps set this account's
+    // ON-CHAIN authority (`roa::newuser`) and both authex links from these keys.
     const [wire, solana, ethereum] = await Promise.all([
-      KeyGenerator.create(KeyType.K1, keyContext, {
-        purpose: `operator ${input.label} — WIRE account key (K1)`
-      }),
-      KeyGenerator.create(KeyType.ED, keyContext, {
-        purpose: `operator ${input.label} — solana outpost key (ED)`
-      }),
-      KeyGenerator.create(KeyType.EM, keyContext, {
-        ethereumHdIndex: input.ethereumHdIndex,
-        purpose: `operator ${input.label} — ethereum outpost key (EM)`
-      })
+      KeySteps.adoptOrCreateSignatureProviderKey(
+        ctx.config,
+        KeyType.K1,
+        input.label,
+        keyContext,
+        { purpose: `operator ${input.label} — WIRE account key (K1)` }
+      ),
+      KeySteps.adoptOrCreateSignatureProviderKey(
+        ctx.config,
+        KeyType.ED,
+        input.label,
+        keyContext,
+        { purpose: `operator ${input.label} — solana outpost key (ED)` }
+      ),
+      KeySteps.adoptOrCreateSignatureProviderKey(
+        ctx.config,
+        KeyType.EM,
+        input.label,
+        keyContext,
+        {
+          ethereumHdIndex: input.ethereumHdIndex,
+          purpose: `operator ${input.label} — ethereum outpost key (EM)`
+        }
+      )
     ])
     // Import the operator's unique wire key so kiod can sign `account@active`
     // (authex links, registration, and any operator-signed flow actions).
@@ -421,7 +441,7 @@ export namespace WireOperatorProvisioningTool {
       account: input.label,
       type: OperatorType.PRODUCER,
       wire: nodeKeys.keys.k1,
-      bls: nodeKeys.keys.bls
+      wireFinalizer: nodeKeys.keys.bls
     })
     // Descriptive payload only — the full pairs live under the step that
     // GENERATED them (generate-keys); here we just say whose set this is.

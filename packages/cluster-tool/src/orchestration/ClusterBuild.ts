@@ -1,7 +1,10 @@
 import type { ClusterConfig } from "@wireio/cluster-tool-shared"
+import { OperatorType } from "@wireio/opp-typescript-models"
+import { Constants } from "../Constants.js"
 import { eachSeries } from "../utils/asyncUtils.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 import { ClusterConfigProvider } from "../config/ClusterConfigProvider.js"
+import { NodeConfig } from "../config/NodeConfig.js"
 import { getLogger, type Logger } from "../logging/Logger.js"
 import { Report } from "../report/Report.js"
 import { ReportRendererRegistry } from "../report/ReportRendererRegistry.js"
@@ -10,6 +13,46 @@ import {
   ClusterBuildPhaseBase,
   type ClusterBuildParent
 } from "./ClusterBuildPhaseBase.js"
+
+/**
+ * Seed the key store with the two accounts whose key material exists BEFORE any
+ * step runs — the bios node's genesis producer (`sysio`) and the bootstrap node
+ * owner (`wireno`). Both are resolved at CONFIG time by
+ * {@link ClusterConfigProvider.resolveWithBiosKeys} because `genesis.json` and
+ * every `config.ini` are written before `build()` runs, and the first
+ * `roa::newuser` signs as the node owner out of the kiod wallet.
+ *
+ * `setOperator`, NEVER `pushNodes`: `ConsensusSteps.runSetFinalizer` builds the
+ * genesis finalizer policy from `keyStore.nodes` with `threshold = ⌊2n/3⌋ + 1`,
+ * so a bios entry there would silently add a finalizer and shift consensus.
+ *
+ * Both entries carry {@link OperatorType.UNKNOWN}, NOT `PRODUCER`: neither
+ * account is a registered OPP operator, and `ConsensusSteps.runSetProducerKeys`
+ * builds the `setprodkeys` schedule from
+ * `keyStore.operatorsByType(OperatorType.PRODUCER)` — a `PRODUCER`-typed entry
+ * here would put `sysio` / `wireno` in the on-chain producer schedule. Nothing
+ * that consumes these two entries (`NodeopProcessSteps.resolveOperator`,
+ * `NodeopProcess.buildArgs`, the wallet import) reads `type`.
+ */
+function seedGenesisAccounts(
+  context: ClusterBuildContext,
+  resolved: ClusterConfigProvider.ClusterConfigWithBiosKeys
+): void {
+  context.keyStore
+    .setOperator({
+      label: NodeConfig.BiosProducer,
+      account: NodeConfig.BiosProducer,
+      type: OperatorType.UNKNOWN,
+      wire: resolved.biosWire,
+      wireFinalizer: resolved.biosFinalizer
+    })
+    .setOperator({
+      label: Constants.BOOTSTRAP_NODE_OWNER,
+      account: Constants.BOOTSTRAP_NODE_OWNER,
+      type: OperatorType.UNKNOWN,
+      wire: resolved.nodeOwnerWire
+    })
+}
 
 /**
  * The CDK-like engine + the phase-tree root. Phases and phase-groups self-register
@@ -52,8 +95,11 @@ export class ClusterBuild<
   }
 
   /**
-   * Async factory — resolves options → {@link ClusterConfig}, builds the context
-   * (the flow's `C` via `createContext`, default base), pre-registers `children`.
+   * Async factory — resolves options → {@link ClusterConfig} **plus its
+   * genesis-time key material** ({@link ClusterConfigProvider.resolveWithBiosKeys}
+   * — the ONE consumer of that entry point), builds the context (the flow's `C`
+   * via `createContext`, default base), seeds the bios + node-owner accounts
+   * into its key store, and pre-registers `children`.
    *
    * @param options - Caller options.
    * @param children - Phases / groups to pre-register.
@@ -64,11 +110,13 @@ export class ClusterBuild<
     children: ClusterBuildPhaseBase<C>[] = [],
     createContext?: (config: ClusterConfig, log: Logger) => C
   ): Promise<ClusterBuild<C>> {
-    const config = await ClusterConfigProvider.resolve(options),
+    const resolved = await ClusterConfigProvider.resolveWithBiosKeys(options),
+      { config } = resolved,
       log = getLogger(config.report.basename),
       context = createContext
         ? createContext(config, log)
         : (new ClusterBuildContext(config, log) as C)
+    seedGenesisAccounts(context, resolved)
     return ClusterBuild.forContext(context, children)
   }
 

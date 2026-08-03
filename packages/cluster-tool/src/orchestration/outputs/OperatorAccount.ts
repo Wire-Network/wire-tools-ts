@@ -39,7 +39,8 @@ import type {
  *   wallet so `account@active` signs); a producer carries its NODE's key —
  *   sibling producer accounts on the same node share the SAME `wire` (accurate:
  *   the node signs blocks for all of them with that one key).
- * - `bls` — producers: the node's finality key (shared with siblings likewise).
+ * - `wireFinalizer` — producers: the node's finality key (shared with siblings
+ *   likewise).
  * - `ethereum` (EM) / `solana` (ED) — OPP operators (batch / underwriter): the
  *   authex-link + outpost signing keys.
  *
@@ -52,7 +53,7 @@ export interface OperatorAccount {
   readonly account?: string
   readonly type: OperatorType
   readonly wire: WireKeyPair
-  readonly bls?: WireFinalizerKeyPair
+  readonly wireFinalizer?: WireFinalizerKeyPair
   readonly ethereum?: EthereumKeyPair
   readonly solana?: SolanaKeyPair
 }

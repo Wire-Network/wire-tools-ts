@@ -7,9 +7,9 @@ import {
 import { range } from "lodash"
 import { LAMPORTS_PER_SOL } from "@solana/web3.js"
 import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
-import { type Logger } from "../logging/Logger.js"
+import { getLogger, type Logger } from "../logging/Logger.js"
 import { SysioContracts } from "@wireio/sdk-core"
-import { Constants } from "../Constants.js"
+import { Constants, ProtocolTiming } from "../Constants.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
 import {
@@ -17,7 +17,7 @@ import {
   readNodeOwnerReg
 } from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
 import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
-import { verifyStep } from "./StepTools.js"
+import { pollUntil, verifyStep } from "./StepTools.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 
 import { Report } from "../report/Report.js"
@@ -30,9 +30,19 @@ import { ClusterBuildPhaseGroup } from "./ClusterBuildPhaseGroup.js"
 import { Steps } from "./steps/index.js"
 import { ContractSteps } from "./steps/ContractSteps.js"
 
+const log = getLogger(__filename)
+
 const { SysioContractName } = SysioContracts
 const { DeployMode } = ContractSteps
 const { Actor } = Report
+
+/**
+ * Epoch index the LOCAL bootstrap gate waits for. `sysio.msgch::bootstrap`
+ * takes the chain 0 → 1 inline, so reaching 2 is the first index that can only
+ * come from `sysio.epoch::advance` firing on its own cadence — i.e. the depot
+ * is circulating epochs, not merely bootstrapped.
+ */
+const EpochAdvanceTargetIndex = 2
 
 /** The initial SYS supply + per-producer grant (core resource token). */
 const InitialSysSupply = "1000000000.0000 SYS"
@@ -114,6 +124,12 @@ export namespace ClusterBuildDefaults {
     cluster: ClusterBuild<C>
   ): void {
     const config = cluster.context.config,
+      // Seeded by `ClusterBuild.create` from
+      // `ClusterConfigProvider.resolveWithBiosKeys` — its `wire` key IS the
+      // bootstrap node owner's account authority.
+      nodeOwner = cluster.context.keyStore.assertOperator(
+        Constants.BOOTSTRAP_NODE_OWNER
+      ),
       producers = range(config.producerCount).map(index => producerName(index)),
       batchOperators = range(config.batchOperatorCount).map(index =>
         Constants.batchOperatorLabel(index)
@@ -169,10 +185,13 @@ export namespace ClusterBuildDefaults {
         {}
       )
     )
-    // SSM mode: publish the just-generated producer-node keys BEFORE any node
-    // consumes them — a producer's `--signature-provider ...SSM:` spec fetches
-    // its private key from SSM at nodeop startup, so publication must precede
-    // the ProducerNodes starts (the bios node stays on the inline dev KEY spec).
+    // SSM mode: publish the node signing keys BEFORE any node consumes them — a
+    // node's `--signature-provider ...SSM:` spec fetches its private key from
+    // SSM at nodeop startup, so publication must precede the BiosNode AND
+    // ProducerNodes starts. Under SSM the bios node is NOT exempt: its genesis
+    // keys are generated (or adopted) at config resolution like any other node
+    // key and its specs render `SSM:` too — only KEY / KIOD keep the inline
+    // dev-key spec.
     if (config.signatureProvider.type === SignatureProviderType.SSM) {
       Steps.keys.planSignatureProviderKeyPublications<C>(
         prerequisites,
@@ -588,7 +607,12 @@ export namespace ClusterBuildDefaults {
         {},
         {
           account: Constants.BOOTSTRAP_NODE_OWNER,
-          pubkey: Constants.DEV_K1_PUBLIC_KEY,
+          // The account AUTHORITY — `newnameduser` sets this as the new
+          // account's owner/active key, and every subsequent action signed as
+          // BOOTSTRAP_NODE_OWNER (`roa::newuser` for every operator account,
+          // `roa::addpolicy`) is authorized by it. Its private half is imported
+          // into the kiod wallet by `KeySteps.runCreateWallet`.
+          pubkey: nodeOwner.wire.publicKey,
           tier: NodeOwnerTier.T1
         }
       ),
@@ -601,7 +625,12 @@ export namespace ClusterBuildDefaults {
           owner: Constants.BOOTSTRAP_NODE_OWNER,
           tier: NodeOwnerTier.T1,
           eth_pub_key: AuthExLinkTool.newEthereumPubEm(),
-          wire_pub_key: Constants.DEV_K1_PUBLIC_KEY
+          // NOT a free-form payload field: `sysio.roa::nodeownreg` runs
+          // `active_key_matches(owner, wire_pub_key)` and soft-fails the claim
+          // with ACCOUNT_KEY_MISMATCH (a REJECTED audit row, no revert) unless
+          // this key can satisfy the account's `active` authority BY ITSELF —
+          // i.e. it must be exactly the `newnameduser.pubkey` above.
+          wire_pub_key: nodeOwner.wire.publicKey
         }
       ),
       // nodeownreg SOFT-FAILS claim-payload problems into an audit row; a
@@ -884,8 +913,11 @@ export namespace ClusterBuildDefaults {
       )
     )
 
-    // External-outpost success gate: no local chain to advance an epoch on, so
-    // prove the depot is producing blocks (head advance) — plan §5.3.
+    // Bootstrap success gate. LOCAL mode watches the depot's own epoch advance
+    // past the bootstrap epoch; EXTERNAL mode has no local chain to advance an
+    // epoch on, so it proves the depot is producing blocks (head advance) AND
+    // that the bootstrap actually queued an outbound envelope for every
+    // registered outpost.
     if (isExternalOutpost) {
       ClusterBuildPhase.create<C>(
         postContractDeployment,
@@ -899,7 +931,84 @@ export namespace ClusterBuildDefaults {
           {}
         )
       )
+      ClusterBuildPhase.create<C>(
+        postContractDeployment,
+        "OutboundEnvelopesQueued",
+        "Verify an outbound envelope is queued per registered outpost (external-outpost OPP gate)"
+      ).push(
+        Steps.externalOutpost.planOutboundEnvelopesQueued<C>(
+          Actor.Sysio,
+          "verify-outbound-envelopes",
+          "every registered outpost has a queued outbound envelope",
+          { timeoutMs: Steps.externalOutpost.OutboundEnvelopesTimeoutMs }
+        )
+      )
+    } else {
+      ClusterBuildPhase.create<C>(
+        postContractDeployment,
+        "EpochAdvance",
+        "Verify the depot advances past the bootstrap epoch"
+      ).push(
+        verifyStep<C>(
+          Actor.Sysio,
+          "verify-epoch-advance",
+          `sysio.epoch current_epoch_index reaches ${EpochAdvanceTargetIndex}`,
+          runEpochAdvance
+        )
+      )
     }
+  }
+
+  /**
+   * The epoch-advance gate's budget — {@link ProtocolTiming.EpochVerifyEpochCount}
+   * effective-epoch windows, the SAME envelope `ClusterManager.run`'s post-relaunch
+   * liveness check uses (one constant, two call sites; no new literal).
+   *
+   * @param config - The resolved cluster config (its `epochDurationSec`).
+   * @returns The budget in ms.
+   */
+  export function epochAdvanceBudgetMs(config: ClusterConfig): number {
+    return (
+      ProtocolTiming.EpochVerifyEpochCount *
+      ProtocolTiming.effectiveEpochSec(config.epochDurationSec) *
+      ProtocolTiming.MsPerSecond
+    )
+  }
+
+  /**
+   * Named runner — poll `sysio.epoch::epochstate` until the depot has advanced
+   * PAST the bootstrap epoch. `msgch::bootstrap` takes the chain 0 → 1 inline;
+   * reaching {@link EpochAdvanceTargetIndex} proves `sysio.epoch::advance` then
+   * fired on its own cadence, i.e. OPP is circulating and not merely bootstrapped.
+   *
+   * The poll owns the whole budget (no step ceiling), mirroring
+   * `ExternalOutpostSteps.runHeadBlockAdvance` — one owner, so the Report carries
+   * `pollUntil`'s precise timeout message rather than a racing step abort.
+   *
+   * @param ctx - The build context.
+   * @param signal - Abort signal.
+   */
+  export async function runEpochAdvance<C extends ClusterBuildContext>(
+    ctx: C,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await pollUntil(
+      `sysio.epoch current_epoch_index reaches ${EpochAdvanceTargetIndex}`,
+      async () => {
+        try {
+          const { rows } = await ctx.wire.getEpochState()
+          return (rows[0]?.current_epoch_index ?? 0) >= EpochAdvanceTargetIndex
+        } catch (error) {
+          log.debug(
+            `[cluster] epoch-state read transient: ${error instanceof Error ? error.message : String(error)}`
+          )
+          return false
+        }
+      },
+      epochAdvanceBudgetMs(ctx.config),
+      ProtocolTiming.EpochVerifyPollIntervalMs
+    )
   }
 
   /**

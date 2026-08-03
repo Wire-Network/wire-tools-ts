@@ -116,7 +116,7 @@ export function createNodeopTuningDefaultOptions(
  * already describe it (never a flat primitive bag): the planned {@link NodeConfig}
  * (which carries its `cluster: ClusterConfig` — name, role, ports, peers,
  * producers, node dir, binaries, bind address, genesis), the {@link OperatorAccount}
- * the node acts for (a producer's carries the node-shared `wire`+`bls` signing
+ * the node acts for (a producer's carries the node-shared `wire`+`wireFinalizer` signing
  * keys; a batch/underwriter's carries `wire`+`ethereum`+`solana`; the bios node's
  * is the genesis producer with the dev keys), the typed
  * {@link NodeopTuningOptions}, and any OPP daemon extra args (operator nodes).
@@ -180,8 +180,8 @@ export class NodeopProcess extends ManagedProcess {
     )
     Assert.ok(
       node.producers.length === 0 ||
-        (options.operator != null && options.operator.bls != null),
-      `nodeop ${node.name}: a producing node requires a producer OperatorAccount (wire + bls keys)`
+        (options.operator != null && options.operator.wireFinalizer != null),
+      `nodeop ${node.name}: a producing node requires a producer OperatorAccount (wire + wireFinalizer keys)`
     )
     mkdirs(node.nodePath)
     const config: NodeopConfig = {
@@ -327,9 +327,10 @@ export namespace NodeopProcess {
   /**
    * The scheme of a rendered `--signature-provider` spec value — the leading
    * token of its final `<SCHEME>:<data>` segment
-   * (`<name>,<chain>,<type>,<pub>,SSM:<region>:<id>` → `SSM`). A spec whose
-   * final segment is not `<SCHEME>:<data>`-shaped yields a token no scheme map
-   * contains — callers treat that as "no optional plugin required".
+   * (`<name>,<chain>,<type>,<pub>,SSM:<id>` → `SSM`; the SSM form the harness
+   * renders is region-less). A spec whose final segment is not
+   * `<SCHEME>:<data>`-shaped yields a token no scheme map contains — callers
+   * treat that as "no optional plugin required".
    */
   function signatureProviderScheme(spec: string): string {
     return last(spec.split(",")).split(":")[0]
@@ -374,19 +375,27 @@ export namespace NodeopProcess {
     const { node, operator, tuning } = config,
       cluster = node.cluster,
       listen = cluster.bind.nodeop.address,
-      // The bios genesis key is a bootstrap dev key (inline KEY always, never
-      // SSM-managed); every other producing node's signing keys use the
-      // cluster's provider source (SSM:/KIOD: render correctly; KEY byte-identical).
+      // Under KEY / KIOD the bios genesis key is the well-known dev pair and its
+      // spec is rendered INLINE (`KEY:<private>`) — byte-identical to every
+      // historical cluster, and never a kiod lookup for a key the wallet gets
+      // imported anyway. Under SSM the bios key is GENERATED (or adopted) like
+      // any other node key, so it uses the cluster's provider source and the
+      // node fetches it from SSM at startup, exactly as producer nodes do.
       baseKeySourceFor = ClusterConfigProvider.signatureProviderSource(cluster),
+      isInlineBios =
+        node.role === NodeRole.bios &&
+        cluster.signatureProvider.type !== SignatureProviderType.SSM,
       keySourceFor = (
         account: string,
         keyType: KeyType
       ): KeyGenerator.SignatureProviderSource =>
-        node.role === NodeRole.bios
+        isInlineBios
           ? KeyGenerator.DefaultKeySource
           : baseKeySourceFor(account, keyType),
       isProducing =
-        node.producers.length > 0 && operator != null && operator.bls != null
+        node.producers.length > 0 &&
+        operator != null &&
+        operator.wireFinalizer != null
     const args = [
       cluster.executables.nodeop,
       ...pair("--blocks-dir", tuning.blocksPath),
@@ -412,7 +421,7 @@ export namespace NodeopProcess {
             ...pair(
               SignatureProviderFlag,
               KeyGenerator.toSignatureProvider(
-                operator.bls,
+                operator.wireFinalizer,
                 undefined,
                 keySourceFor(node.name, KeyType.BLS)
               )

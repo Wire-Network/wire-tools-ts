@@ -10,10 +10,12 @@ import {
   ClusterStateNodeRole,
   ClusterStateSchemaCodec,
   SchemaCodec,
+  SignatureProviderType,
   type ClusterConfig,
   type ClusterState as ClusterStateSnapshot,
   type ClusterStateNode
 } from "@wireio/cluster-tool-shared"
+import { ClusterConfigProvider } from "../config/ClusterConfigProvider.js"
 import { NodeConfig, NodeRole } from "../config/NodeConfig.js"
 import { isNotEmpty } from "../utils/predicateUtils.js"
 import type { ClusterBuildContext } from "../orchestration/ClusterBuildContext.js"
@@ -21,6 +23,7 @@ import { ClusterKeyStore } from "../orchestration/outputs/ClusterKeyStore.js"
 import { OperatorDaemonArtifactsKey } from "../orchestration/outputs/OperatorDaemonArtifacts.js"
 import type {
   EthereumKeyPair,
+  KeyPair,
   SolanaKeyPair,
   WireFinalizerKeyPair,
   WireKeyPair
@@ -44,7 +47,7 @@ export interface ClusterKeysNodeEntry {
 /**
  * One provisioned operator's on-disk key record in `cluster-keys.json` — the
  * persisted mirror of {@link OperatorAccount}. Carries the operator's
- * `ethereum` / `solana` keys too (not just `wire`/`bls`) — the daemon
+ * `ethereum` / `solana` keys too (not just `wire`/`wireFinalizer`) — the daemon
  * `--signature-provider` args (`OperatorDaemonTool.batchOperatorArgs` /
  * `underwriterArgs`) build directly from them on relaunch.
  */
@@ -66,7 +69,7 @@ export interface ClusterKeysOperatorEntry {
   /** The operator's WIRE (K1) signing key. */
   wire: WireKeyPair
   /** Finality (BLS) key — producers only. */
-  bls?: WireFinalizerKeyPair
+  wireFinalizer?: WireFinalizerKeyPair
   /** Ethereum (secp256k1) key — operators bonded on the ETH outpost. */
   ethereum?: EthereumKeyPair
   /** Solana (ed25519) key — operators bonded on the SOL outpost. */
@@ -87,35 +90,81 @@ export interface ClusterKeys {
   operators: ClusterKeysOperatorEntry[]
 }
 
+/**
+ * The custody members every persisted key record carries. They are mutually
+ * exclusive alternatives, not two optional extras — see
+ * {@link hasSingleCustodyForm}.
+ */
+const keyCustodyShape = {
+  /** The Wire-canonical key material (KEY / KIOD clusters). */
+  privateKey: z.string().optional(),
+  /** The SSM parameter id the key material lives under (SSM clusters). */
+  awsSecretId: z.string().optional()
+}
+
+/** The custody members a persisted key record is validated on. */
+interface PersistedKeyCustody {
+  /** The Wire-canonical key material, when the record carries it. */
+  privateKey?: string
+  /** The SSM parameter id, when the record references it instead. */
+  awsSecretId?: string
+}
+
+/**
+ * EXACTLY ONE custody form per record — key material XOR an SSM reference.
+ * BOTH means an SSM cluster leaked plaintext into `cluster-keys.json` (§5.6);
+ * NEITHER means a record nothing can sign with.
+ */
+function hasSingleCustodyForm(record: PersistedKeyCustody): boolean {
+  return (record.privateKey != null) !== (record.awsSecretId != null)
+}
+
+/** Why {@link hasSingleCustodyForm} rejected a record. */
+const SingleCustodyFormMessage =
+  "a persisted key record carries EXACTLY ONE custody form — privateKey (KEY/KIOD) or awsSecretId (SSM), never both and never neither"
+
 /** Schema validating a WIRE (K1) key pair record against the grandfathered `WireKeyPair`. */
-const WireKeyPairSchema: z.ZodType<WireKeyPair> = z.object({
-  type: z.literal(KeyType.K1),
-  publicKey: z.string(),
-  privateKey: z.string()
-})
+const WireKeyPairSchema: z.ZodType<WireKeyPair> = z
+  .object({
+    type: z.literal(KeyType.K1),
+    publicKey: z.string(),
+    ...keyCustodyShape
+  })
+  .refine(hasSingleCustodyForm, SingleCustodyFormMessage)
 
-/** Schema validating a finalizer (BLS) key pair record. */
-const WireFinalizerKeyPairSchema: z.ZodType<WireFinalizerKeyPair> = z.object({
-  type: z.literal(KeyType.BLS),
-  publicKey: z.string(),
-  privateKey: z.string(),
-  proofOfPossession: z.string()
-})
+/** Schema validating a finalizer (BLS) key pair record. The proof of possession
+ *  is a NON-SECRET member and rides BOTH custody variants — genesis
+ *  `initial_finalizer_key` and `ConsensusSteps.runSetFinalizer` read it whether
+ *  or not the private key is local. */
+const WireFinalizerKeyPairSchema: z.ZodType<WireFinalizerKeyPair> = z
+  .object({
+    type: z.literal(KeyType.BLS),
+    publicKey: z.string(),
+    proofOfPossession: z.string(),
+    ...keyCustodyShape
+  })
+  .refine(hasSingleCustodyForm, SingleCustodyFormMessage)
 
-/** Schema validating an Ethereum (EM) key pair record. */
-const EthereumKeyPairSchema: z.ZodType<EthereumKeyPair> = z.object({
-  type: z.literal(KeyType.EM),
-  publicKey: z.string(),
-  privateKey: z.string(),
-  address: z.string()
-})
+/** Schema validating an Ethereum (EM) key pair record. `address` is NON-SECRET
+ *  and rides BOTH custody variants — every ETH funding / collateral read uses
+ *  it, and `ExternalClusterConfigSteps` emits from the same record. */
+const EthereumKeyPairSchema: z.ZodType<EthereumKeyPair> = z
+  .object({
+    type: z.literal(KeyType.EM),
+    publicKey: z.string(),
+    address: z.string(),
+    ...keyCustodyShape
+  })
+  .refine(hasSingleCustodyForm, SingleCustodyFormMessage)
 
 /** Schema validating a Solana (ED) key pair record. */
-const SolanaKeyPairSchema: z.ZodType<SolanaKeyPair> = z.object({
-  type: z.literal(KeyType.ED),
-  publicKey: z.string(),
-  privateKey: z.string()
-})
+const SolanaKeyPairSchema: z.ZodType<SolanaKeyPair> = z
+  .object({
+    type: z.literal(KeyType.ED),
+    publicKey: z.string(),
+    ...keyCustodyShape
+  })
+  .refine(hasSingleCustodyForm, SingleCustodyFormMessage)
 
 /** The persisted `OperatorType` value (numeric, as stored in `cluster-keys.json`). */
 const OperatorTypeValueSchema = z.custom<OperatorType>(
@@ -136,7 +185,7 @@ const ClusterKeysOperatorEntrySchema: z.ZodType<ClusterKeysOperatorEntry> =
     account: z.string(),
     type: OperatorTypeValueSchema,
     wire: WireKeyPairSchema,
-    bls: WireFinalizerKeyPairSchema.optional(),
+    wireFinalizer: WireFinalizerKeyPairSchema.optional(),
     ethereum: EthereumKeyPairSchema.optional(),
     solana: SolanaKeyPairSchema.optional()
   })
@@ -239,22 +288,92 @@ export namespace ClusterState {
     }
   }
 
+  /** Projects a stored key pair into the custody form `cluster-keys.json` persists. */
+  type PersistedKeyCustodyProjection = <T extends KeyType>(
+    account: string,
+    keyPair: KeyPair<T>
+  ) => KeyPair<T>
+
+  /** KEY / KIOD: the pair persists verbatim, plaintext `privateKey` included. */
+  const retainKeyMaterial: PersistedKeyCustodyProjection = (_account, keyPair) =>
+    keyPair
+
+  /**
+   * The custody projection `config` persists key records under (§5.6).
+   *
+   * Under `SSM` the plaintext `privateKey` is REPLACED by the `awsSecretId` its
+   * publish step put it under, so an SSM cluster's `cluster-keys.json` carries
+   * no key material at all — the daemons' `SSM:<id>` specs fetch it at startup.
+   * Under `KEY` / `KIOD` the pair persists unchanged.
+   *
+   * Every NON-SECRET per-curve member (BLS `proofOfPossession`, EM `address`)
+   * survives both variants: `ExternalClusterConfigSteps.keyProviderFor`, the
+   * genesis finalizer key, and the ETH funding/collateral reads all consume them
+   * regardless of who holds the secret.
+   *
+   * The id is rendered through `ClusterConfigProvider.signatureProviderSource`,
+   * the same renderer `KeySteps` publishes and adopts through, so a persisted
+   * ref can never point at an id that was never published.
+   */
+  function keyCustodyFor(config: ClusterConfig): PersistedKeyCustodyProjection {
+    if (config.signatureProvider.type !== SignatureProviderType.SSM) {
+      return retainKeyMaterial
+    }
+    const sourceFor = ClusterConfigProvider.signatureProviderSource(config)
+    return <T extends KeyType>(account: string, keyPair: KeyPair<T>) => {
+      const { privateKey: _material, ...custodyFree } = keyPair
+      // The ONE cast — TS cannot relate a spread of `Omit<KeyPair<T>, …>` back
+      // to the generic `KeyPair<T>` its conditional extension is keyed on.
+      return {
+        ...custodyFree,
+        awsSecretId: sourceFor(account, keyPair.type).awsSecretId
+      } as unknown as KeyPair<T>
+    }
+  }
+
+  /**
+   * Producer node NAME by key-store node index — the secret-id `{account}`
+   * segment `KeySteps.signatureProviderKeyPublications` publishes that node's
+   * keys under, resolved from the SAME `NodeConfig.plan` both derive from so
+   * the persisted refs and the published ids can never drift.
+   */
+  function producerNodeNames(config: ClusterConfig): Map<number, string> {
+    return new Map(
+      NodeConfig.plan(config)
+        .filter(node => node.role === NodeRole.producer)
+        .map(node => [node.index, node.name] as const)
+    )
+  }
+
   /**
    * Build the `cluster-keys.json` payload from a finished build's
    * `ctx.keyStore` — every generated producer-node key set plus every
    * provisioned operator record (with its full key set, including
    * `ethereum` / `solana` when present).
    *
+   * Key CUSTODY follows the cluster's signature provider: plaintext under
+   * `KEY` / `KIOD`, SSM refs only under `SSM` (see {@link keyCustodyFor}).
+   *
    * @param ctx - The build's context (holds `keyStore`).
-   * @returns The key-material payload.
+   * @returns The key payload, in the custody form the provider dictates.
    */
   export function captureKeys(ctx: ClusterBuildContext): ClusterKeys {
+    const { config } = ctx,
+      toCustody = keyCustodyFor(config),
+      nodeNames = producerNodeNames(config)
     return {
-      nodes: ctx.keyStore.nodes.map(nodeKeys => ({
-        index: nodeKeys.index,
-        k1: nodeKeys.keys.k1,
-        bls: nodeKeys.keys.bls
-      })),
+      nodes: ctx.keyStore.nodes.map(nodeKeys => {
+        const nodeName = nodeNames.get(nodeKeys.index)
+        Assert.ok(
+          isNotEmpty(nodeName),
+          `ClusterState.captureKeys: no producer node planned at index ${nodeKeys.index}`
+        )
+        return {
+          index: nodeKeys.index,
+          k1: toCustody(nodeName, nodeKeys.keys.k1),
+          bls: toCustody(nodeName, nodeKeys.keys.bls)
+        }
+      }),
       // Every persisted operator carries its on-chain name: `account` is
       // optional on `OperatorAccount` only for the window between an OPP
       // operator's materialize and sponsored-creation steps, both of which run
@@ -264,7 +383,24 @@ export namespace ClusterState {
           isNotEmpty(operator.account),
           `ClusterState.captureKeys: operator ${operator.label} has no account — its sponsored-creation step did not run`
         )
-        return { ...operator, account: operator.account }
+        // Custody is keyed by the DURABLE `label`, never the on-chain
+        // `account` — the label is the secret-id `{account}` segment the keys
+        // were published under.
+        const { label, account } = operator
+        return {
+          ...operator,
+          account,
+          wire: toCustody(label, operator.wire),
+          ...(operator.wireFinalizer != null
+            ? { wireFinalizer: toCustody(label, operator.wireFinalizer) }
+            : {}),
+          ...(operator.ethereum != null
+            ? { ethereum: toCustody(label, operator.ethereum) }
+            : {}),
+          ...(operator.solana != null
+            ? { solana: toCustody(label, operator.solana) }
+            : {})
+        }
       })
     }
   }

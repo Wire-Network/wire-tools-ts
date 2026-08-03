@@ -3,6 +3,7 @@ import { z } from "zod"
 
 import { SchemaCodec } from "../schema/index.js"
 import { ChainTokenAmountSchema } from "../types/ChainTokenAmount.js"
+import { AWSClusterNodeConfigSchema } from "./AWSClusterNodeConfig.js"
 import { BindConfigSchema } from "./BindConfig.js"
 import { ClusterSignatureProviderConfigSchema } from "./SignatureProviderConfig.js"
 import { ExternalOutpostConfigSchema } from "./ExternalOutpostConfig.js"
@@ -180,6 +181,14 @@ export const ClusterConfigSchema = z.object({
    */
   underwriterCollateral: z.array(z.array(ChainTokenAmountSchema)).nullable(),
   /**
+   * Genesis block-signing K1 public key (`genesis.json`'s `initial_key`) — the
+   * bios node's authority. Under `KEY` / `KIOD` this is the well-known dev bios
+   * key (byte-identical to every historical cluster); under `SSM` it is the
+   * generated-or-adopted bios K1, which necessarily yields a DIFFERENT chain id.
+   * Schema-defaulted to `null` so pre-existing configs stay loadable.
+   */
+  initialKey: z.string().nullable().default(null),
+  /**
    * Genesis finalizer BLS public key, or `null` before key provisioning has
    * produced one. `null` (not absence) so the slot round-trips through JSON.
    */
@@ -190,6 +199,14 @@ export const ClusterConfigSchema = z.object({
    * configs stay loadable.
    */
   signatureProvider: ClusterSignatureProviderConfigSchema,
+  /**
+   * The cluster's AWS placement — the account its nodes run in, every region its
+   * secrets are replicated to, and the SSM publish settings — or `null` when the
+   * cluster has none. REQUIRED when `signatureProvider.type` is `SSM`: it
+   * sources the secret-id `{cluster}` segment and the region set. Schema-defaulted
+   * to `null` so pre-existing configs stay loadable.
+   */
+  awsClusterNodeConfig: AWSClusterNodeConfigSchema.nullable().default(null),
   /**
    * Already-deployed outposts to run against (external-outpost mode), or `null`
    * for the standard local-anvil/local-solana bootstrap. Schema-defaulted to
