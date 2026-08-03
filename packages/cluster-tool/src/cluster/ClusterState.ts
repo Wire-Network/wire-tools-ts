@@ -38,10 +38,10 @@ import { SolanaValidatorProcess } from "./processes/SolanaValidatorProcess.js"
 export interface ClusterKeysNodeEntry {
   /** The producer node's topology index (matches `ClusterKeyStore.NodeKeys.index`). */
   index: number
-  /** The node's WIRE block-signing (K1) key. */
-  k1: WireKeyPair
-  /** The node's finality (BLS) key. */
-  bls: WireFinalizerKeyPair
+  /** The node's WIRE block-signing key (network-named, matching an operator's). */
+  wire: WireKeyPair
+  /** The node's WIRE finality key (network-named, matching an operator's). */
+  wireFinalizer: WireFinalizerKeyPair
 }
 
 /**
@@ -174,8 +174,8 @@ const OperatorTypeValueSchema = z.custom<OperatorType>(
 /** Schema for one producer node's key record. */
 const ClusterKeysNodeEntrySchema: z.ZodType<ClusterKeysNodeEntry> = z.object({
   index: z.number(),
-  k1: WireKeyPairSchema,
-  bls: WireFinalizerKeyPairSchema
+  wire: WireKeyPairSchema,
+  wireFinalizer: WireFinalizerKeyPairSchema
 })
 
 /** Schema for one provisioned operator's key record. */
@@ -370,8 +370,8 @@ export namespace ClusterState {
         )
         return {
           index: nodeKeys.index,
-          k1: toCustody(nodeName, nodeKeys.keys.k1),
-          bls: toCustody(nodeName, nodeKeys.keys.bls)
+          wire: toCustody(nodeName, nodeKeys.keys.wire),
+          wireFinalizer: toCustody(nodeName, nodeKeys.keys.wireFinalizer)
         }
       }),
       // Every persisted operator carries its on-chain name: `account` is
@@ -471,7 +471,7 @@ export namespace ClusterState {
     keyStore.pushNodes(
       ...keys.nodes.map(entry => ({
         index: entry.index,
-        keys: { k1: entry.k1, bls: entry.bls }
+        keys: { wire: entry.wire, wireFinalizer: entry.wireFinalizer }
       }))
     )
     keys.operators.forEach(entry => keyStore.setOperator(entry))

@@ -93,8 +93,17 @@ export class ClusterKeyStore {
 export namespace ClusterKeyStore {
   /** A producer node's WIRE block-signing (K1) + finality (BLS) keys. */
   export interface ProducerKeySet {
-    readonly k1: WireKeyPair
-    readonly bls: WireFinalizerKeyPair
+    /**
+     * The node's WIRE block-signing key — the same concept as
+     * {@link OperatorAccount.wire}, named identically on purpose: a node's
+     * signing identity and an operator's are ONE shape, so one resolver and one
+     * publication walker cover both. The former curve-named `k1`/`bls` is what
+     * made the bios identity a special case (stored as an operator, published
+     * as a node) and produced two SSM blockers.
+     */
+    readonly wire: WireKeyPair
+    /** The node's WIRE finality key — same concept as {@link OperatorAccount.wireFinalizer}. */
+    readonly wireFinalizer: WireFinalizerKeyPair
   }
 
   /** One producer node's key set + its topology index. */

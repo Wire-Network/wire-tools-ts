@@ -136,7 +136,7 @@ export namespace ClusterManager {
   >(build: ClusterBuild<C>): Promise<Report> {
     const config = build.config
     ProcessManager.setClusterPath(config.clusterPath)
-    writeClusterFiles(config)
+    await writeClusterFiles(config)
     await ClusterConfigProvider.save(config)
     log.info(
       `[cluster] filesystem ready at ${config.clusterPath}; running build`
@@ -196,26 +196,44 @@ export namespace ClusterManager {
     }
   }
 
-  /** Write dirs, the shared genesis, and per-node config/logging from the plan. */
-  function writeClusterFiles(config: ClusterConfig): void {
+  /**
+   * Write dirs, the shared genesis, and per-node config/logging from the plan.
+   *
+   * Async because {@link launch} is, and the seam is already there — the very
+   * next statement awaits {@link ClusterConfigProvider.save}. At the
+   * mainnet/testnet topology `NodeConfig.plan` yields ~48 nodes, so the
+   * per-node pair is ~96 writes with no ordering relationship to one another;
+   * issuing them concurrently keeps them off the event loop instead of
+   * serializing every one behind the next.
+   *
+   * Directory creation stays SYNCHRONOUS on purpose: `mkdirs` returns its path
+   * and is shared by 19 call sites, so forking an async variant would ripple
+   * for no gain — the mkdir is the cheap half, and every write below depends
+   * on its directory already existing.
+   */
+  async function writeClusterFiles(config: ClusterConfig): Promise<void> {
     mkdirs(config.dataPath)
     mkdirs(config.walletPath)
     mkdirs(config.report.path)
-    Fs.writeFileSync(
+    await Fs.promises.writeFile(
       ClusterConfigProvider.genesisFile(config),
       ClusterConfigProvider.genesisRenderer(config).render()
     )
-    NodeConfig.plan(config).forEach(node => {
-      mkdirs(node.nodePath)
-      Fs.writeFileSync(
-        Path.join(node.nodePath, NodeConfigFilename),
-        node.ini.render()
-      )
-      Fs.writeFileSync(
-        Path.join(node.nodePath, NodeLoggingFilename),
-        node.logging.render()
-      )
-    })
+    await Promise.all(
+      NodeConfig.plan(config).map(async node => {
+        mkdirs(node.nodePath)
+        await Promise.all([
+          Fs.promises.writeFile(
+            Path.join(node.nodePath, NodeConfigFilename),
+            node.ini.render()
+          ),
+          Fs.promises.writeFile(
+            Path.join(node.nodePath, NodeLoggingFilename),
+            node.logging.render()
+          )
+        ])
+      })
+    )
   }
 
   /**

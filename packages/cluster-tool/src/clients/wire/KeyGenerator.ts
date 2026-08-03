@@ -126,10 +126,20 @@ export namespace KeyGenerator {
   }
 
   /**
-   * Land the generated pair in the running step's `extra`: the FULL key
-   * material (dev-cluster keys — the cluster state persists them anyway),
-   * what it is for, and HOW it was generated — the exact command line for
+   * Land the generated key's IDENTITY in the running step's `extra`: the public
+   * half, what it is for, and HOW it was generated — the exact command line for
    * the `clio` / `sys-util` backends, the library + derivation otherwise.
+   *
+   * The PRIVATE half is deliberately absent. The Report renderers serialize
+   * `extra` verbatim into `<cluster>/reports/cluster-build.{csv,md,html}`, and
+   * those reports are read far outside the cluster directory — CI forensics
+   * artifacts, hand-off bundles. An earlier revision recorded the whole
+   * `keyPair` on the reasoning that "the cluster state persists them anyway";
+   * that was never a good reason and is FALSE under SSM, where `cluster-keys.json`
+   * is refs-only by construction and the Report was the one remaining plaintext
+   * copy. Everything a reader legitimately needs to correlate a key — the public
+   * half, the BLS proof of possession, the EM address — is recorded; the secret
+   * lives only in SSM (or the keystore under KEY/KIOD).
    */
   function recordKeygen(
     type: KeyType,
@@ -155,11 +165,16 @@ export namespace KeyGenerator {
         derivation: `${EthereumDerivationPath}${options.ethereumHdIndex}`
       }))
       .otherwise(() => ({ client: "sdk-core", kind: "keygen" }))
+    // Drop the secret, keep everything else — the same projection
+    // `ClusterState.keyCustodyFor` uses, so every NON-secret per-curve member
+    // (BLS `proofOfPossession`, EM `address`) survives without narrowing a
+    // conditional `KeyPair<T>` that TS cannot discriminate on `.type`.
+    const { privateKey: _material, ...identity } = keyPair
     StepExtraRecorder.record({
       ...mechanism,
       keyType: KeyType[type],
       purpose: options.purpose ?? null,
-      keyPair
+      ...identity
     })
   }
 
