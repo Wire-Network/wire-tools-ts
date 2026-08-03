@@ -91,6 +91,4 @@ export namespace NodeOwnerNftScenarioConstants {
   export const CommitPathDeadlineMs = ProtocolTiming.SingleHopBudgetMs
   /** Poll gap while waiting for the commit-path depot rows. */
   export const CommitPathPollIntervalMs = 5_000
-  /** Ceiling margin the commit-path verify step carries above its inner poll deadline. */
-  export const PollDeadlineBufferMs = ProtocolTiming.PollDeadlineBufferMs
 }

@@ -7,6 +7,7 @@ import {
   NodeOwnerRejectReason,
   NodeOwnerTier,
   pollUntil,
+  ProtocolTiming,
   readNodeOwner,
   readNodeOwnerReg,
   Report,
@@ -524,7 +525,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
         "confirmed-commit-path",
         "nodeowners row lands via the OPP hop; audit status CONFIRMED",
         verifyCommitPathConfirmed,
-        { timeoutMs: Constants.CommitPathDeadlineMs + Constants.PollDeadlineBufferMs }
+        { timeoutMs: Constants.CommitPathDeadlineMs + ProtocolTiming.PollDeadlineBufferMs }
       )
     )
   }
