@@ -56,8 +56,8 @@ export namespace ConsensusSteps {
     const finalizers = nodes.map((node, index) => ({
       description: `finalizer-${index}`,
       weight: 1,
-      public_key: node.keys.bls.publicKey,
-      pop: node.keys.bls.proofOfPossession
+      public_key: node.keys.wireFinalizer.publicKey,
+      pop: node.keys.wireFinalizer.proofOfPossession
     }))
     const threshold = Math.floor((finalizers.length * 2) / 3) + 1
     await ctx.wire

@@ -440,8 +440,8 @@ export namespace WireOperatorProvisioningTool {
       label: input.label,
       account: input.label,
       type: OperatorType.PRODUCER,
-      wire: nodeKeys.keys.k1,
-      wireFinalizer: nodeKeys.keys.bls
+      wire: nodeKeys.keys.wire,
+      wireFinalizer: nodeKeys.keys.wireFinalizer
     })
     // Descriptive payload only — the full pairs live under the step that
     // GENERATED them (generate-keys); here we just say whose set this is.
@@ -449,12 +449,12 @@ export namespace WireOperatorProvisioningTool {
       `producer ${input.label} assumes node_${String(input.producerNodeIndex).padStart(2, "0")}'s signing set`,
       {
         label: input.label,
-        wirePublicKey: nodeKeys.keys.k1.publicKey,
-        blsPublicKey: nodeKeys.keys.bls.publicKey
+        wirePublicKey: nodeKeys.keys.wire.publicKey,
+        blsPublicKey: nodeKeys.keys.wireFinalizer.publicKey
       }
     )
     log.info(
-      `[provision] producer ${input.label} — node ${input.producerNodeIndex} (K1 ${nodeKeys.keys.k1.publicKey})`
+      `[provision] producer ${input.label} — node ${input.producerNodeIndex} (K1 ${nodeKeys.keys.wire.publicKey})`
     )
   }
 

@@ -8,6 +8,7 @@ import { Deferred, getValue } from "@wireio/shared"
 import { getLogger, type Logger } from "../../logging/Logger.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { scaleTimeoutMs, sleep } from "../../utils/asyncUtils.js"
+import { maskSecretArgs } from "../../utils/secretUtils.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { ProcessManager } from "./ProcessManager.js"
 import { ProcessSignalName } from "./ProcessSignals.js"
@@ -150,13 +151,16 @@ export abstract class ManagedProcess {
   async start(): Promise<this> {
     Assert.ok(!this.child, `${this.label} already started`)
     this.log.info(`spawning ${this.exe} ${this.args.join(" ")}`)
-    // The step that starts a process gets the FULL spawn in its extra — the
-    // executable + argv is the step's payload, same as a clio command line.
+    // The step that starts a process gets the spawn in its extra — the
+    // executable + argv is the step's payload, same as a clio command line —
+    // with secrets MASKED: under KEY/KIOD a nodeop argv carries inline
+    // `--signature-provider <pubkey>=KEY:PVT_…`, and the Report is rendered far
+    // outside the cluster directory.
     StepExtraRecorder.record({
       client: "process",
       kind: "spawn",
       label: this.label,
-      command: [this.exe, ...this.args],
+      command: maskSecretArgs([this.exe, ...this.args]),
       cwd: this.cwd
     })
     const child = spawn(this.exe, this.args, {
