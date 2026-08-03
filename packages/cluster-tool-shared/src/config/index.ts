@@ -1,3 +1,4 @@
+export * from "./AWSClusterNodeConfig.js"
 export * from "./BindConfig.js"
 export * from "./ClusterConfig.js"
 export * from "./ExternalClusterConfig.js"

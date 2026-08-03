@@ -149,14 +149,43 @@ describe("Steps.processes.nodeop", () => {
   })
 
   describe("resolveOperator (exported for ClusterManager.run reuse)", () => {
-    it("bios node resolves the genesis producer's dev K1+BLS keys", () => {
+    it("bios node falls back to the dev K1+BLS keys when the key store has no bios entry", () => {
+      // A cluster directory written before `ClusterBuild.create` seeded the
+      // bios account — such a cluster is a KEY-mode dev-key cluster by
+      // definition, so the dev pair IS its genesis material.
       const ctx = fixtureContext()
       const node = testNode(ctx, NodeRole.bios, 0, "bios")
       const operator = Steps.processes.nodeop.resolveOperator(ctx, node)
       expect(operator.label).toBe(NodeConfig.BiosProducer)
       expect(operator.type).toBe(OperatorType.PRODUCER)
       expect(operator.wire.type).toBe(KeyType.K1)
-      expect(operator.bls?.type).toBe(KeyType.BLS)
+      expect(operator.wireFinalizer?.type).toBe(KeyType.BLS)
+    })
+
+    it("bios node prefers the SEEDED genesis account from ctx.keyStore", () => {
+      // `ClusterBuild.create` seeds this from
+      // `ClusterConfigProvider.resolveWithBiosKeys`, so an SSM cluster's
+      // GENERATED bios keys — not the dev pair — reach the nodeop args.
+      const ctx = fixtureContext(),
+        seeded: OperatorAccount = {
+          label: NodeConfig.BiosProducer,
+          account: NodeConfig.BiosProducer,
+          type: OperatorType.UNKNOWN,
+          wire: {
+            type: KeyType.K1,
+            publicKey: "PUB_K1_generatedBios",
+            privateKey: "PVT_K1_generatedBios"
+          },
+          wireFinalizer: {
+            type: KeyType.BLS,
+            publicKey: "PUB_BLS_generatedBios",
+            privateKey: "PVT_BLS_generatedBios",
+            proofOfPossession: "SIG_BLS_generatedBios"
+          }
+        }
+      ctx.keyStore.setOperator(seeded)
+      const node = testNode(ctx, NodeRole.bios, 0, "bios")
+      expect(Steps.processes.nodeop.resolveOperator(ctx, node)).toBe(seeded)
     })
 
     it("producer node resolves its NODE-shared K1+BLS keys from ctx.keyStore", () => {
@@ -178,7 +207,7 @@ describe("Steps.processes.nodeop", () => {
       expect(operator.label).toBe("defproducera")
       expect(operator.type).toBe(OperatorType.PRODUCER)
       expect(operator.wire.publicKey).toBe("PUB_K1_node1")
-      expect(operator.bls?.publicKey).toBe("PUB_BLS_node1")
+      expect(operator.wireFinalizer?.publicKey).toBe("PUB_BLS_node1")
     })
 
     it("operator node (batch operator) resolves the provisioned account from ctx.keyStore", () => {

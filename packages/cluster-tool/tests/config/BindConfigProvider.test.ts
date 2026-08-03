@@ -286,6 +286,29 @@ describe("BindConfigProvider", () => {
     })
   })
 
+  describe("clearPortLocks", () => {
+    it("releases the in-process lock so a registry-vetted port can be re-acquired as a PIN", async () => {
+      const picked = await BindConfigProvider.findAvailable(
+        BindConfigProvider.DefaultKiod
+      )
+      // findAvailable LOCKED it — asking for exactly that port is now refused,
+      // even though nothing on the OS holds it. This is the trap that makes a
+      // find-then-pin sequence fail deterministically.
+      expect(allocator.locked.has(picked)).toBe(true)
+      expect(await BindConfigProvider.isPortAvailable(picked)).toBe(false)
+
+      await BindConfigProvider.clearPortLocks()
+      expect(await BindConfigProvider.isPortAvailable(picked)).toBe(true)
+    })
+
+    it("drops ONLY the in-process locks — a genuinely taken port stays unavailable", async () => {
+      const port = 6544
+      allocator.markTaken(port)
+      await BindConfigProvider.clearPortLocks()
+      expect(await BindConfigProvider.isPortAvailable(port)).toBe(false)
+    })
+  })
+
   describe("validate", () => {
     it("is true when every resolved port is free", async () => {
       const config = await BindConfigProvider.resolve({}, {})

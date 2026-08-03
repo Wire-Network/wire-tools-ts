@@ -360,6 +360,25 @@ export namespace ProtocolTiming {
   export const PollDeadlineBufferMs = 30_000
 
   /**
+   * Epoch-advance liveness budget as a count of effective-epoch windows. At the
+   * default 60s epoch this is 3 × (60 + 30)s = 270s — ≥ the ~4min a *resumed*
+   * cluster can need to restart OPP circulation before `current_epoch_index`
+   * advances. A healthy cluster still passes in ~1 epoch (the poll returns the
+   * moment the index moves), so the larger ceiling adds no wall clock to a
+   * healthy run — it only keeps a slow restart from failing a live cluster.
+   *
+   * ONE envelope, two owners: `ClusterManager.run`'s post-relaunch liveness
+   * check and `ClusterBuildDefaults`' bootstrap epoch-advance gate.
+   */
+  export const EpochVerifyEpochCount = 3
+
+  /** Poll gap for the epoch-advance liveness verify (ms). */
+  export const EpochVerifyPollIntervalMs = 1_000
+
+  /** Seconds → milliseconds, the conversion every epoch-derived budget applies. */
+  export const MsPerSecond = 1_000
+
+  /**
    * Effective per-epoch duration for N-epoch deadlines (s): the nominal
    * duration plus the maximum delivery extension, so an N-epoch budget
    * survives N consecutively-extended epochs.

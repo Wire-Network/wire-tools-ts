@@ -1,5 +1,6 @@
 import { KeyType } from "@wireio/sdk-core"
 import {
+  AWSSSMSignatureProviderOptionsSchema,
   ClusterSignatureProviderConfigSchema,
   SignatureProviderConfigSchema,
   SignatureProviderType,
@@ -25,15 +26,29 @@ describe("SignatureProviderConfigSchema", () => {
     expect(SignatureProviderConfigSchema.safeParse(config).success).toBe(true)
   })
 
-  it("accepts an SSM provider with region + secret id", () => {
+  it("accepts an SSM provider with replication regions + secret id", () => {
     const config = {
       providerType: SignatureProviderType.SSM,
       type: KeyType.K1,
       publicKey: "PUB_K1_x",
-      awsRegion: "us-east-1",
+      awsRegions: ["us-east-1", "eu-west-1"],
       awsSecretId: "/wire/keys/x"
     }
     expect(SignatureProviderConfigSchema.safeParse(config).success).toBe(true)
+  })
+
+  it("rejects an SSM provider whose awsRegions is empty or absent", () => {
+    const base = {
+      providerType: SignatureProviderType.SSM,
+      type: KeyType.K1,
+      publicKey: "PUB_K1_x",
+      awsSecretId: "/wire/keys/x"
+    }
+    expect(SignatureProviderConfigSchema.safeParse(base).success).toBe(false)
+    expect(
+      SignatureProviderConfigSchema.safeParse({ ...base, awsRegions: [] })
+        .success
+    ).toBe(false)
   })
 
   it("accepts a KIOD provider (material-less)", () => {
@@ -106,17 +121,62 @@ describe("ClusterSignatureProviderConfigSchema", () => {
     expect(
       ClusterSignatureProviderConfigSchema.safeParse({
         type: SignatureProviderType.SSM,
-        ssm: {
-          awsRegion: "us-east-1",
-          awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
-        }
+        ssm: { awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}" }
       }).success
     ).toBe(true)
+    // awsSecretIdPattern is the ONE required member.
     expect(
       ClusterSignatureProviderConfigSchema.safeParse({
         type: SignatureProviderType.SSM,
-        ssm: { awsRegion: "us-east-1" }
+        ssm: { awsRegions: ["us-east-1"] }
       }).success
     ).toBe(false)
+  })
+})
+
+describe("AWSSSMSignatureProviderOptionsSchema", () => {
+  it("leaves awsRegions + version optional (both derived / opt-in)", () => {
+    const parsed = AWSSSMSignatureProviderOptionsSchema.parse({
+      awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
+    })
+    expect(parsed.awsRegions).toBeUndefined()
+    expect(parsed.version).toBeUndefined()
+  })
+
+  it("accepts an explicitly authored awsRegions + version", () => {
+    expect(
+      AWSSSMSignatureProviderOptionsSchema.parse({
+        awsRegions: ["us-east-1", "eu-west-1"],
+        awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}/{version}",
+        version: "v2"
+      })
+    ).toEqual({
+      awsRegions: ["us-east-1", "eu-west-1"],
+      awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}/{version}",
+      version: "v2"
+    })
+  })
+
+  it("rejects an empty awsRegions array and an empty version", () => {
+    expect(
+      AWSSSMSignatureProviderOptionsSchema.safeParse({
+        awsSecretIdPattern: "/p",
+        awsRegions: []
+      }).success
+    ).toBe(false)
+    expect(
+      AWSSSMSignatureProviderOptionsSchema.safeParse({
+        awsSecretIdPattern: "/p",
+        version: ""
+      }).success
+    ).toBe(false)
+  })
+
+  it("does NOT validate the pattern's shape (canonical-form checks live in resolve)", () => {
+    expect(
+      AWSSSMSignatureProviderOptionsSchema.safeParse({
+        awsSecretIdPattern: "p"
+      }).success
+    ).toBe(true)
   })
 })

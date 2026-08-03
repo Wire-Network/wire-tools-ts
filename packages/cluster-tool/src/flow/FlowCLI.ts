@@ -1,7 +1,7 @@
 import Yargs, { type Argv } from "yargs"
 import {
   applyClusterBuildOptionsArgs,
-  mergeSignatureProviderSsm,
+  mergeSignatureProviderSSM,
   toClusterBuildOptions
 } from "../cli/ClusterBuildOptionsArgs.js"
 import { ClusterManager } from "../cluster/ClusterManager.js"
@@ -72,7 +72,7 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
     // Scenario defaults supply the non-flag leaves (collateral object-arrays)
     // that can't ride the argv surface.
     const argv = await this.yargs.parseAsync(),
-      options = mergeSignatureProviderSsm(
+      options = mergeSignatureProviderSSM(
         toClusterBuildOptions(argv, this.scenario.defaults),
         argv
       )

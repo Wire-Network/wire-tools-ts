@@ -87,8 +87,10 @@ const stubConfig: ClusterConfig = {
   requiredUnderwriterCollateral: [],
   requiredProducerCollateral: [],
   underwriterCollateral: null,
+  initialKey: null,
   initialFinalizerKey: null,
   signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
+  awsClusterNodeConfig: null,
   externalOutposts: null,
   debuggingServerEnabled: true,
   enableMockReserves: false
