@@ -269,7 +269,7 @@ export class SolanaOutpostBootstrapper {
     const initializeTransaction = await program.methods
       .initializeOutpost(solanaChainCode)
       .accounts({
-        ...this.oppAdminAccounts(deployer),
+        ...this.getAdminAccounts(deployer),
         config: configPda,
         outboundMessageBuffer: outboundMessageBufferPda,
         operatorRegistry: operatorRegistryPda,
@@ -288,7 +288,7 @@ export class SolanaOutpostBootstrapper {
     const solTokenCode = new anchor.BN(SlugName.from(SolanaOutpostBootstrapper.SolTokenCodename))
     const setTokenAddressTransaction = await program.methods
       .setTokenAddress(solTokenCode, anchor.web3.PublicKey.default)
-      .accounts({ ...this.oppAdminAccounts(deployer), config: configPda })
+      .accounts({ ...this.getAdminAccounts(deployer), config: configPda })
       .signers([deployer])
       .transaction()
     await this.runSimpleAuthorityInstruction(deployer, setTokenAddressTransaction, "set_token_address")
@@ -301,7 +301,7 @@ export class SolanaOutpostBootstrapper {
     // `create_reserve_native` and every SOL swap path can frame-convert.
     const setSolPrecisionTransaction = await program.methods
       .setTokenPrecision(solTokenCode, SolanaOutpostBootstrapper.SolTokenDecimals)
-      .accounts({ ...this.oppAdminAccounts(deployer), config: configPda })
+      .accounts({ ...this.getAdminAccounts(deployer), config: configPda })
       .signers([deployer])
       .transaction()
     await this.runSimpleAuthorityInstruction(
@@ -319,7 +319,7 @@ export class SolanaOutpostBootstrapper {
       .initReserve()
       .accounts({
         payer: deployer.publicKey,
-        ...this.oppAdminAccounts(deployer),
+        ...this.getAdminAccounts(deployer),
         config: configPda,
         reserveAggregate: reserveAggregatePda,
         systemProgram: anchor.web3.SystemProgram.programId
@@ -354,7 +354,7 @@ export class SolanaOutpostBootstrapper {
       )
       .accounts({
         payer: deployer.publicKey,
-        ...this.oppAdminAccounts(deployer),
+        ...this.getAdminAccounts(deployer),
         config: configPda,
         reserve: solReservePda,
         systemProgram: anchor.web3.SystemProgram.programId
@@ -422,7 +422,7 @@ export class SolanaOutpostBootstrapper {
 
         const setAddressTransaction = await program.methods
           .setTokenAddress(codeBigNumber, mint)
-          .accounts({ ...this.oppAdminAccounts(deployer), config: configPda })
+          .accounts({ ...this.getAdminAccounts(deployer), config: configPda })
           .signers([deployer])
           .transaction()
         await this.runSimpleAuthorityInstruction(
@@ -433,7 +433,7 @@ export class SolanaOutpostBootstrapper {
 
         const setPrecisionTransaction = await program.methods
           .setTokenPrecision(codeBigNumber, specification.decimals)
-          .accounts({ ...this.oppAdminAccounts(deployer), config: configPda })
+          .accounts({ ...this.getAdminAccounts(deployer), config: configPda })
           .signers([deployer])
           .transaction()
         await this.runSimpleAuthorityInstruction(
@@ -467,7 +467,7 @@ export class SolanaOutpostBootstrapper {
           )
           .accounts({
             payer: deployer.publicKey,
-            ...this.oppAdminAccounts(deployer),
+            ...this.getAdminAccounts(deployer),
             config: configPda,
             reserve: reservePda,
             reserveVault: reserveVaultPda,
@@ -504,12 +504,12 @@ export class SolanaOutpostBootstrapper {
    * @param deployer - the deployer keypair (the outpost `admin`).
    * @return the account fragment to spread into an admin instruction's `.accounts`.
    */
-  private oppAdminAccounts(
+  private getAdminAccounts(
     deployer: Keypair
-  ): SolanaOutpostBootstrapper.OppAdminAccounts {
+  ): SolanaOutpostBootstrapper.AdminAccounts {
     Assert.ok(
       this.globalConfigPda != null,
-      "oppAdminAccounts: global_config not initialized"
+      "getAdminAccounts: global_config not initialized"
     )
     return { admin: deployer.publicKey, globalConfig: this.globalConfigPda }
   }
@@ -632,7 +632,7 @@ export namespace SolanaOutpostBootstrapper {
    * liqsol program's `admin` + the `global_config` PDA it checks `has_one`
    * against. Spread into an admin instruction's `.accounts({ ... })`.
    */
-  export interface OppAdminAccounts {
+  export interface AdminAccounts {
     /** The outpost admin (== the deployer / program upgrade authority). */
     admin: PublicKey
     /** The gating `global_config` PDA (`has_one = admin`). */
