@@ -100,7 +100,7 @@ export namespace ConsensusSteps {
     const schedule = producers.map(producer => ({
       // An on-chain schedule entry — the ON-CHAIN name (for producers it equals
       // the durable handle, but the chain boundary decides the field).
-      producer_name: producer.chainAccount,
+      producer_name: producer.account,
       block_signing_key: producer.wire.publicKey
     }))
     await ctx.wire

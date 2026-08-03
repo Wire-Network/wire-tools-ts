@@ -222,16 +222,16 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
     // ── 1. Underwriter collateral (the old harness's bootstrap deposits) ──
     // One Phase per underwriter, one Step per (chain, token) bond, from the
     // resolved config plan (this scenario's defaults: ETH + SOL + USDCSOL).
-    const underwriterAccounts = Array.from(
+    const underwriterLabels = Array.from(
       { length: cluster.config.underwriterCount },
-      (_, index) => HarnessConstants.underwriterAccount(index)
+      (_, index) => HarnessConstants.underwriterLabel(index)
     )
     WireUnderwriterTool.planCollateralDeposit(
       cluster,
       "UnderwriterCollateral",
       "Underwriters bond collateral on every leg the swap matrix touches",
       writeOptions,
-      underwriterAccounts,
+      underwriterLabels,
       cluster.config.underwriterCollateral ??
         WireUnderwriterTool.load(null, cluster.config.underwriterCount)
     )
@@ -252,7 +252,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
       verifyStep<Context>(
         Actor.Underwriter,
         "underwriter-active",
-        `${underwriterAccounts[0]} becomes ACTIVE (deposits credit)`,
+        `${underwriterLabels[0]} becomes ACTIVE (deposits credit)`,
         runVerifyUnderwriterActive,
         uwreqOptions
       )
@@ -533,15 +533,15 @@ async function runVerifyWireChainProducing(ctx: Context): Promise<void> {
 
 /** Old "uwrit.a becomes ACTIVE (deposits credit)" — poll the operator row. */
 async function runVerifyUnderwriterActive(ctx: Context): Promise<void> {
-  const account = HarnessConstants.underwriterAccount(0),
-    chainAccount = ctx.keyStore.assertOperator(account).chainAccount
+  const label = HarnessConstants.underwriterLabel(0),
+    account = ctx.keyStore.assertOperator(label).account
   await pollUntil(
-    `${account} (${chainAccount}) ACTIVE`,
+    `${label} (${account}) ACTIVE`,
     async () => {
       const { rows } = await ctx.wire
         .getSysioContract(SysioContractName.opreg)
         .tables.operators.query()
-      const underwriter = rows.find(row => row.account === chainAccount)
+      const underwriter = rows.find(row => row.account === account)
       return (
         underwriter != null &&
         matchesProtoEnum(

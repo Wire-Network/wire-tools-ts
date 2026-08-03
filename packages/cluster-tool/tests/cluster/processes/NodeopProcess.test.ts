@@ -78,7 +78,7 @@ describe("NodeopProcess", () => {
   function producerOperator(account: string): OperatorAccount {
     return {
       account,
-      chainAccount: account,
+      label: account,
       type: OperatorType.PRODUCER,
       wire: { type: KeyType.K1, publicKey: "PUB_K1_p", privateKey: "PVT_K1_s" },
       bls: {

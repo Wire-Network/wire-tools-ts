@@ -242,26 +242,27 @@ export namespace Constants {
   const LowercaseAlphabet = "abcdefghijklmnopqrstuvwxyz"
 
   /**
-   * Batch-operator durable account handle for an index — `batchop.<letter>`.
-   * The handle is the operator's `ClusterKeyStore` key and its SSM secret-id
-   * `{account}` segment — the CHAIN account name is node-owner-generated
-   * (`wireno.<suffix>`, `OperatorAccount.chainAccount`), not this value.
+   * Batch-operator durable harness LABEL for an index — `batchop.<letter>`.
+   * The label is the operator's `ClusterKeyStore` key and its SSM secret-id
+   * `{account}` segment. It does NOT exist on chain — the on-chain account name
+   * is node-owner-generated (`wireno.<random>`, `OperatorAccount.account`), and
+   * its suffix is nonce-derived entropy, so it cannot be requested.
    *
    * @param index - Zero-based operator index.
-   * @returns The handle (e.g. `batchOperatorAccount(0)` → `"batchop.a"`).
+   * @returns The label (e.g. `batchOperatorLabel(0)` → `"batchop.a"`).
    */
-  export function batchOperatorAccount(index: number): string {
+  export function batchOperatorLabel(index: number): string {
     return `batchop.${LowercaseAlphabet[index % LowercaseAlphabet.length]}`
   }
 
   /**
-   * Underwriter durable account handle for an index — `uwrit.<letter>`. Same
-   * handle-vs-generated-`chainAccount` split as {@link batchOperatorAccount}.
+   * Underwriter durable harness LABEL for an index — `uwrit.<letter>`. Same
+   * label-vs-generated-`account` split as {@link batchOperatorLabel}.
    *
    * @param index - Zero-based underwriter index.
-   * @returns The handle (e.g. `underwriterAccount(1)` → `"uwrit.b"`).
+   * @returns The label (e.g. `underwriterLabel(1)` → `"uwrit.b"`).
    */
-  export function underwriterAccount(index: number): string {
+  export function underwriterLabel(index: number): string {
     return `uwrit.${LowercaseAlphabet[index % LowercaseAlphabet.length]}`
   }
 

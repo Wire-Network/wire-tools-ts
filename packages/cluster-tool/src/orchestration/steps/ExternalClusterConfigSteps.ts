@@ -171,7 +171,7 @@ export namespace ExternalClusterConfigSteps {
         planVerifyOperatorAccounts(
           actor,
           "verify-operator-accounts",
-          "every state operator account is present in cluster-keys",
+          "every state operator label is present in cluster-keys",
           options
         ),
         planVerifySolanaDynamicRange(
@@ -410,7 +410,7 @@ export namespace ExternalClusterConfigSteps {
     )
   }
 
-  /** Named runner — every state operator account is present in cluster-keys.json. */
+  /** Named runner — every state operator label is present in cluster-keys.json. */
   export async function runVerifyOperatorAccounts<C extends ClusterBuildContext>(
     ctx: C,
     signal: AbortSignal
@@ -418,17 +418,17 @@ export namespace ExternalClusterConfigSteps {
     signal.throwIfAborted()
     const state = ClusterState.load(ctx.config),
       keys = ClusterState.loadKeys(ctx.config),
-      keyAccounts = new Set(keys.operators.map(operator => operator.account))
+      keyLabels = new Set(keys.operators.map(operator => operator.label))
     state.nodes
       .flatMap(node =>
-        [node.batchOperatorAccount, node.underwriterAccount].filter(
-          (account): account is string => account != null
+        [node.batchOperatorLabel, node.underwriterLabel].filter(
+          (label): label is string => label != null
         )
       )
-      .forEach(account =>
+      .forEach(label =>
         Assert.ok(
-          keyAccounts.has(account),
-          `create-external-config: operator ${account} is in cluster-state but missing from cluster-keys`
+          keyLabels.has(label),
+          `create-external-config: operator ${label} is in cluster-state but missing from cluster-keys`
         )
       )
   }
@@ -791,9 +791,9 @@ export namespace ExternalClusterConfigSteps {
     // PutParameter'd); `accountName` is the ON-CHAIN name the deployed daemon
     // acts as. Two different values — do not collapse them.
     const providerFor = (keyPair: KeyPair): SignatureProviderConfig =>
-      keyProviderFor(keyPair, operator.account, provider, cluster)
+      keyProviderFor(keyPair, operator.label, provider, cluster)
     return {
-      accountName: operator.chainAccount,
+      accountName: operator.account,
       type: operator.type,
       keyProviders: [
         providerFor(operator.wire),
@@ -833,14 +833,14 @@ export namespace ExternalClusterConfigSteps {
    * dangling ref.
    *
    * @param keyPair - The stored key pair.
-   * @param account - The operator account (the secret-id `{account}`).
+   * @param label - The operator label (the secret-id `{account}`).
    * @param provider - The source cluster's signature-provider config.
    * @param cluster - The source cluster label (the secret-id `{cluster}`).
    * @returns The provider entry for this key.
    */
   function keyProviderFor(
     keyPair: KeyPair,
-    account: string,
+    label: string,
     provider: ClusterSignatureProviderConfig,
     cluster: string
   ): SignatureProviderConfig {
@@ -870,7 +870,7 @@ export namespace ExternalClusterConfigSteps {
         )
         Assert.ok(
           OperatorSsmKeyTypes.includes(keyPair.type),
-          `create-external-config: operator key ${KeyType[keyPair.type]} is not SSM-published (operators publish K1/EM/ED only) — refusing a dangling SSM ref for ${account}`
+          `create-external-config: operator key ${KeyType[keyPair.type]} is not SSM-published (operators publish K1/EM/ED only) — refusing a dangling SSM ref for ${label}`
         )
         return {
           providerType: SignatureProviderType.SSM,
@@ -878,7 +878,7 @@ export namespace ExternalClusterConfigSteps {
           awsRegion: ssm.awsRegion,
           awsSecretId: ClusterConfigProvider.toSecretId(ssm.awsSecretIdPattern, {
             cluster,
-            account,
+            account: label,
             keyType: KeyType[keyPair.type]
           })
         }

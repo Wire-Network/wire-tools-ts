@@ -2,6 +2,7 @@ import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import { SignatureProviderType } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
+import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
@@ -59,7 +60,7 @@ describe("Steps.keys", () => {
     it("renders each secret id from the pattern and carries NO key material", () => {
       const batchK1 = publications.find(
         publication =>
-          publication.account === "batchop.a" &&
+          publication.label === "batchop.a" &&
           publication.keyType === KeyType.K1
       )
       expect(batchK1?.secretId).toBe("/wire/wire-cluster-pubs/batchop.a/K1")
@@ -141,6 +142,64 @@ describe("Steps.keys", () => {
     })
   })
 
+  describe("SSM secret-id round-trip (publication ↔ consumption)", () => {
+    const config = fixtureConfig({
+        clusterPath: "/tmp/wire-cluster-roundtrip",
+        signatureProvider: {
+          type: SignatureProviderType.SSM,
+          ssm: {
+            awsRegion: "us-east-1",
+            awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
+          }
+        }
+      }),
+      publications = Steps.keys.signatureProviderKeyPublications(config),
+      keySourceFor = ClusterConfigProvider.signatureProviderSource(config),
+      // Opaque, node-owner-generated, and only in existence mid-build. A secret
+      // id rendered from THIS is the exact defect present on master.
+      GeneratedAccount = "wireno.x3f9k"
+
+    it("an OPERATOR daemon resolves the very id publication wrote", () => {
+      const label = Constants.batchOperatorLabel(0),
+        published = publications.find(
+          publication =>
+            publication.label === label && publication.keyType === KeyType.K1
+        )
+      expect(published.secretId).toBeDefined()
+      expect(keySourceFor(label, KeyType.K1).awsSecretId).toBe(
+        published.secretId
+      )
+    })
+
+    it("a PRODUCER node resolves the very id publication wrote", () => {
+      const published = publications.find(
+        publication =>
+          publication.source === Steps.keys.SignatureKeySource.node &&
+          publication.keyType === KeyType.BLS
+      )
+      expect(published.secretId).toBeDefined()
+      expect(keySourceFor(published.label, KeyType.BLS).awsSecretId).toBe(
+        published.secretId
+      )
+    })
+
+    it("NEVER resolves an operator's key from its generated chain account", () => {
+      // The regression this pins is silent and expensive: publication writes
+      // `/wire/<cluster>/batchop.a/K1` while a consumer rendering from the
+      // chain account reads `/wire/<cluster>/wireno.x3f9k/K1` — ParameterNotFound
+      // at daemon start, invisible under KEY mode (the default), fatal on a
+      // real SSM cluster.
+      const published = publications.find(
+        publication =>
+          publication.label === Constants.batchOperatorLabel(0) &&
+          publication.keyType === KeyType.K1
+      )
+      expect(keySourceFor(GeneratedAccount, KeyType.K1).awsSecretId).not.toBe(
+        published.secretId
+      )
+    })
+  })
+
   describe("runPublishSignatureProviderKey (jest SSM mock — no live AWS)", () => {
     beforeEach(() => mockSend.mockReset())
 
@@ -148,8 +207,8 @@ describe("Steps.keys", () => {
       mockSend.mockResolvedValueOnce({})
       const ctx = fixtureContext()
       ctx.keyStore.setOperator({
-        account: "batchop.a",
-        chainAccount: "wireno.x3f9k",
+        label: "batchop.a",
+        account: "wireno.x3f9k",
         type: OperatorType.BATCH,
         wire: {
           type: KeyType.K1,
@@ -165,7 +224,7 @@ describe("Steps.keys", () => {
         {
           source: Steps.keys.SignatureKeySource.operator,
           nodeIndex: 0,
-          account: "batchop.a",
+          label: "batchop.a",
           keyType: KeyType.K1,
           awsRegion: "us-east-1",
           secretId: "/wire/c/batchop.a/K1"
@@ -187,8 +246,8 @@ describe("Steps.keys", () => {
       const ed = PrivateKey.generate(KeyType.ED)
       const ctx = fixtureContext()
       ctx.keyStore.setOperator({
-        account: "batchop.a",
-        chainAccount: "wireno.x3f9k",
+        label: "batchop.a",
+        account: "wireno.x3f9k",
         type: OperatorType.BATCH,
         wire: {
           type: KeyType.K1,
@@ -209,7 +268,7 @@ describe("Steps.keys", () => {
         {
           source: Steps.keys.SignatureKeySource.operator,
           nodeIndex: 0,
-          account: "batchop.a",
+          label: "batchop.a",
           keyType: KeyType.ED,
           awsRegion: "us-east-1",
           secretId: "/wire/c/batchop.a/ED"
@@ -247,7 +306,7 @@ describe("Steps.keys", () => {
         {
           source: Steps.keys.SignatureKeySource.node,
           nodeIndex: 0,
-          account: "node_00",
+          label: "node_00",
           keyType: KeyType.BLS,
           awsRegion: "us-east-1",
           secretId: "/wire/c/node_00/BLS"

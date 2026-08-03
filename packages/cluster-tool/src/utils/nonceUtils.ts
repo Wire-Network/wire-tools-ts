@@ -23,9 +23,11 @@ const SponsorNonceLength = 12
  * `<nodeOwner>.<suffix>` account name, and `sysio.roa` hard-rejects a nonce the
  * creator has already used (`"Sponsor entry for this nonce already exists"`) —
  * so it is NEVER an operator's durable handle and is never persisted. Each byte
- * of {@link secureRandom} maps into {@link SponsorNonceAlphabet} by modulo; the
- * resulting ~0.05-bit bias across 31 symbols is immaterial when uniqueness is
- * only required per creator across a few dozen draws.
+ * of {@link secureRandom} maps into {@link SponsorNonceAlphabet} by modulo, and
+ * `256 = 8 × 31 + 8` does not divide evenly: the FIRST 8 symbols (`a`–`h`) are
+ * drawn with probability 9/256 and the other 23 (`i`–`5`) with 8/256 — a 12.5%
+ * relative over-representation of those 8. Immaterial here, where uniqueness is
+ * only required per creator across at most a few dozen draws.
  *
  * @returns A 12-character `[a-z1-5]` nonce, asserted valid as a WIRE `name`.
  */
