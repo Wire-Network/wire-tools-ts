@@ -180,7 +180,7 @@ export class SolanaValidatorProcess extends ManagedProcess {
 
   /** Ready only once the endpoint answers AND ≥1 slot has been produced (an
    *  airdrop before the first slot times out). */
-  protected async verifyReady(): Promise<boolean> {
+  async verifyReady(): Promise<boolean> {
     if (!(await probeEndpoint(this.rpcUrl))) return false
     try {
       const slot = await new Connection(

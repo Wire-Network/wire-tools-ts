@@ -121,7 +121,7 @@ export class AnvilProcess extends ManagedProcess {
     return AnvilProcess.StartupTimeoutMs
   }
 
-  protected verifyReady(): Promise<boolean> {
+  verifyReady(): Promise<boolean> {
     return probeEndpoint(this.rpcUrl)
   }
 

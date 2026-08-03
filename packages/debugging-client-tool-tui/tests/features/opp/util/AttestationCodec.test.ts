@@ -62,7 +62,7 @@ describe("decodeAttestation", () => {
         type: AttestationType.BATCH_OPERATOR_GROUPS,
         dataSize: bytes.length,
         data: Buffer.from(bytes).toString("base64")
-      } as unknown as AttestationEntry
+      }
     const result = decodeAttestation(entry)
     expect(result.kind).toBe("decoded")
   })
@@ -103,7 +103,7 @@ describe("decodeAttestation", () => {
         type: AttestationType.BATCH_OPERATOR_GROUPS,
         dataSize: bytes.length,
         data: bufferShape
-      } as unknown as AttestationEntry
+      }
     const result = decodeAttestation(entry)
     expect(result.kind).toBe("decoded")
   })

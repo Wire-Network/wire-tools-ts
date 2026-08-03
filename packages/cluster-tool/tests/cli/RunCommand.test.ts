@@ -56,7 +56,7 @@ function createYargsRecorder(): YargsRecorder {
         return recorder
       }
     }
-  return { argv: recorder as unknown as Argv, options }
+  return { argv: recorder as Argv, options }
 }
 
 /** Flush pending microtasks so async code past an already-resolved `await`

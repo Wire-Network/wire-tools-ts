@@ -51,9 +51,9 @@ describe("ClusterManager.launch — daemon stop", () => {
       config,
       build: async () => {
         order.push("build")
-        return { succeeded } as unknown as Report
+        return { succeeded } as Report
       }
-    } as unknown as ClusterBuild
+    } as ClusterBuild
   }
 
   it("stops the daemons after producing the Report", async () => {
@@ -95,13 +95,11 @@ describe("ClusterManager.launch — daemon stop", () => {
         order.push("stopAll")
       })
     const failure = new Error("orchestration blew up"),
-      build = {
-        config: buildStub().config,
-        build: async () => {
-          order.push("build")
-          throw failure
-        }
-      } as unknown as ClusterBuild
+      build = buildStub()
+    jest.spyOn(build, "build").mockImplementation(async () => {
+      order.push("build")
+      throw failure
+    })
 
     await expect(ClusterManager.launch(build)).rejects.toBe(failure)
     expect(stopAll).toHaveBeenCalledTimes(1)
@@ -113,12 +111,8 @@ describe("ClusterManager.launch — daemon stop", () => {
       .spyOn(ProcessManager.get(), "stopAll")
       .mockRejectedValue(new Error("stopAll blew up"))
     const failure = new Error("orchestration blew up"),
-      build = {
-        config: buildStub().config,
-        build: async () => {
-          throw failure
-        }
-      } as unknown as ClusterBuild
+      build = buildStub()
+    jest.spyOn(build, "build").mockRejectedValue(failure)
 
     // The stop swallows its own error, so the ORIGINAL cause still surfaces.
     await expect(ClusterManager.launch(build)).rejects.toBe(failure)

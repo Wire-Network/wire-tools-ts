@@ -10,8 +10,8 @@ import { ethers } from "ethers"
  * proxies); `View` just names the typed subset the harness calls. The
  * intersection with `ethers.BaseContract` keeps the instance assignable to
  * BaseContract consumers ({@link resolveLatestNonce}) with no re-cast — every
- * scattered `new ethers.Contract(...) as unknown as X` / `x as unknown as
- * ethers.BaseContract` pair collapses into this single cast site.
+ * scattered per-contract `new ethers.Contract(...)` assertion collapses into
+ * this single cast site.
  *
  * @param address - Deployed contract address.
  * @param abi - Contract ABI (hardhat artifact `abi` or a fragment list).
@@ -23,7 +23,7 @@ export function contractView<View extends object>(
   abi: ethers.InterfaceAbi,
   runner: ethers.ContractRunner
 ): View & ethers.BaseContract {
-  return new ethers.Contract(address, abi, runner) as unknown as View &
+  return new ethers.Contract(address, abi, runner) as View &
     ethers.BaseContract
 }
 

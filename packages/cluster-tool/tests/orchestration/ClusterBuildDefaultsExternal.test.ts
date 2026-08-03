@@ -5,20 +5,7 @@ import {
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
-
-/** A phase or group node — a group carries `children`, a phase is a leaf. */
-interface NamedNode {
-  name: string
-  children?: ReadonlyArray<NamedNode>
-}
-
-/** Every phase/group name in a built cluster, recursively. */
-function collectNames(children: ReadonlyArray<NamedNode>): string[] {
-  return children.flatMap(child => [
-    child.name,
-    ...(child.children ? collectNames(child.children) : [])
-  ])
-}
+import { collectPhaseNames } from "./clusterBuildFixture.js"
 
 describe("ClusterBuildDefaults — external-outpost compose variant", () => {
   let environment: ResolveEnvironment, externalConfigFile: string
@@ -63,7 +50,7 @@ describe("ClusterBuildDefaults — external-outpost compose variant", () => {
       // so `ClusterConfigProvider.resolve` demands an EXPLICIT zero.
       underwriterCount: 0
     })
-    const names = collectNames(cluster.children as unknown as NamedNode[])
+    const names = collectPhaseNames(cluster.children)
     expect(names).toContain("MaterializeExternalOutposts")
     expect(names).toContain("HeadBlockAdvance")
     expect(names).not.toContain("EthereumOutpost")
@@ -72,7 +59,7 @@ describe("ClusterBuildDefaults — external-outpost compose variant", () => {
 
   it("keeps the local outpost deploys + no liveness phase in local mode", async () => {
     const cluster = await ClusterBuildDefaults.create(baseOptions())
-    const names = collectNames(cluster.children as unknown as NamedNode[])
+    const names = collectPhaseNames(cluster.children)
     expect(names).toContain("EthereumOutpost")
     expect(names).toContain("SolanaOutpost")
     expect(names).not.toContain("MaterializeExternalOutposts")
