@@ -100,7 +100,7 @@ export class KiodProcess extends ManagedProcess {
     return KiodProcess.StartupTimeoutMs
   }
 
-  protected verifyReady(): Promise<boolean> {
+  verifyReady(): Promise<boolean> {
     return probeEndpoint(`${this.httpUrl}${KiodProcess.HealthCheckPath}`)
   }
 

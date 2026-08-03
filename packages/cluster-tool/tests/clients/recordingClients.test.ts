@@ -151,11 +151,11 @@ describe("read-path recording", () => {
     // no live validator is needed and the transport never hangs.
     const offlineFetch = (async () => {
       throw new Error("offline fixture")
-    }) as unknown as typeof fetch
+    }) as typeof fetch
     const connection = new RecordingConnection("http://127.0.0.1:1", {
       fetch: offlineFetch
     })
-    const transport = connection as unknown as RecordingConnection.RpcRequestTransport
+    const transport = connection
     const recorder = new StepExtraRecorder()
     await StepExtraRecorder.runWith(recorder, async () => {
       await transport

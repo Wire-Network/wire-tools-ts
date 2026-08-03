@@ -100,7 +100,7 @@ export class WireClient {
       tables: guard("table", def.tables, queries, member =>
         this.tableQuery(def.account, member)
       )
-    } as unknown as WireClient.SysioContractClient<Name>
+    } as WireClient.SysioContractClient<Name>
   }
 
   private actionInvoker(
@@ -309,9 +309,26 @@ export class WireClient {
 
   // ── RPC getters (v6 `.value` unwrap retained) ────────────────────────────
 
-  /** GET /v1/chain/get_info. */
-  getInfo(): Promise<WireClient.GetInfoResponse> {
-    return this.api.v1.chain.get_info() as unknown as Promise<WireClient.GetInfoResponse>
+  /**
+   * GET /v1/chain/get_info, projected onto plain JSON scalars.
+   *
+   * sdk-core answers with its rich `Struct` shape (`Checksum256`, `UInt32`,
+   * `TimePoint`, `Name`), so every field is CONVERTED here rather than
+   * asserted: the harness compares chain ids as strings and does arithmetic on
+   * block numbers, and an assertion would have handed those call sites wrapper
+   * objects that merely LOOK right through template interpolation.
+   */
+  async getInfo(): Promise<WireClient.GetInfoResponse> {
+    const info = await this.api.v1.chain.get_info()
+    return {
+      server_version: info.server_version,
+      chain_id: String(info.chain_id),
+      head_block_num: Number(info.head_block_num),
+      last_irreversible_block_num: Number(info.last_irreversible_block_num),
+      head_block_time: String(info.head_block_time),
+      head_block_id: String(info.head_block_id),
+      head_block_producer: String(info.head_block_producer)
+    }
   }
 
   /**
@@ -344,7 +361,7 @@ export class WireClient {
       "sysio.token",
       account,
       "WIRE"
-    )) as unknown as Asset[]
+    )) as Asset[]
     if (!rows || rows.length === 0) return 0n
     const [amount] = rows[0].toString().split(" ")
     const [whole, frac = ""] = amount.split(".")

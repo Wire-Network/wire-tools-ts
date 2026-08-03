@@ -39,7 +39,7 @@ describe("Steps.processes.debuggingServer", () => {
     }
     const createSpy = jest
       .spyOn(DebuggingServer, "create")
-      .mockResolvedValue(fakeServer as unknown as DebuggingServer)
+      .mockResolvedValue(fakeServer as DebuggingServer)
     try {
       await Steps.processes.debuggingServer.runStart(
         ctx,

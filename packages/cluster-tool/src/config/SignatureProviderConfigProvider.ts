@@ -73,7 +73,7 @@ export namespace SignatureProviderConfigProvider {
         resolveKIOD(cfg)
       )
       .exhaustive()
-    return resolution as unknown as SignatureProviderResolution<T, K>
+    return resolution as SignatureProviderResolution<T, K>
   }
 
   /** `KEY` — the private key is inline; assemble + verify against the pinned public key. */
