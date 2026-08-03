@@ -12,7 +12,10 @@ import {
 import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
-import { SignatureProviderType } from "@wireio/cluster-tool-shared"
+import {
+  AWSAccountName,
+  SignatureProviderType
+} from "@wireio/cluster-tool-shared"
 import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
 import {
   OperatorDaemonArtifactsKey,
@@ -214,9 +217,14 @@ describe("OperatorDaemonTool", () => {
             signatureProvider: {
               type: SignatureProviderType.SSM,
               ssm: {
-                awsRegion: "us-east-1",
+                awsRegions: ["us-east-1"],
                 awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
               }
+            },
+            awsClusterNodeConfig: {
+              account: AWSAccountName.dev,
+              regions: ["us-east-1"],
+              ssm: null
             }
           })
         ),
@@ -229,7 +237,8 @@ describe("OperatorDaemonTool", () => {
         solProvider = valuesOf(ssmArgs, "--signature-provider").find(provider =>
           provider.startsWith(`sol-${operator.account}`)
         )
-      expect(solProvider).toMatch(/,SSM:us-east-1:/)
+      // REGION-LESS spec — `SSM:` then the id, ONE colon (`{cluster}` = `dev`).
+      expect(solProvider).toMatch(/,SSM:\/wire\/dev\//)
       expect(solProvider).not.toMatch(/,KEY:/)
     })
   })

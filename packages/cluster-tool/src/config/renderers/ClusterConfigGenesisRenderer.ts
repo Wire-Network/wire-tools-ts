@@ -3,10 +3,17 @@ import { Constants } from "../../Constants.js"
 import type { Renderer } from "../../utils/Renderer.js"
 
 /**
- * Renders `genesis.json` (ports the former `cluster/genesis.ts`). Uses the dev
- * K1 public key as `initial_key`, the cluster's optional finalizer key, and the
- * cluster_manager CPU overrides in `initial_configuration`. `new Date()` is the
- * real harness path (genesis timestamp).
+ * Renders `genesis.json` (ports the former `cluster/genesis.ts`). The genesis
+ * authority comes from the CONFIG — `initialKey` (bios K1) + the optional
+ * `initialFinalizerKey` (bios BLS), both resolved by
+ * `ClusterConfigProvider.resolveWithBiosKeys` before this renderer runs — plus
+ * the cluster_manager CPU overrides in `initial_configuration`. `new Date()` is
+ * the real harness path (genesis timestamp).
+ *
+ * NOTE: `initial_key` is part of the chain's identity. A `KEY` / `KIOD` cluster
+ * renders the well-known dev bios key and therefore the historical chain id; an
+ * `SSM` cluster renders its generated-or-adopted bios key and necessarily gets a
+ * DIFFERENT chain id.
  */
 export class ClusterConfigGenesisRenderer implements Renderer {
   constructor(private readonly config: ClusterConfig) {}
@@ -15,7 +22,7 @@ export class ClusterConfigGenesisRenderer implements Renderer {
     return JSON.stringify(
       {
         initial_timestamp: new Date().toISOString().replace("Z", ""),
-        initial_key: Constants.DEV_K1_PUBLIC_KEY,
+        initial_key: this.config.initialKey,
         ...(this.config.initialFinalizerKey
           ? { initial_finalizer_key: this.config.initialFinalizerKey }
           : {}),

@@ -57,16 +57,6 @@ async function getPort(...args: GetPortParameters): Promise<number> {
 }
 
 /**
- * Drop `get-port`'s in-process port locks so a subsequent check re-probes true OS
- * bindability. Used by {@link BindConfigProvider.validate} to re-verify the
- * already-resolved (therefore already-locked) ports.
- */
-async function clearPortLocks(): Promise<void> {
-  const mod = await importGetPortModule()
-  mod.clearLockedPorts()
-}
-
-/**
  * Resolves, validates, and registers cluster network bindings — the behavior
  * half of the plain-data `BindConfig` shape (`@wireio/cluster-tool-shared`).
  * Merges the resolver, the per-daemon defaults, and the cross-process port
@@ -527,11 +517,32 @@ export namespace BindConfigProvider {
   }
 
   /**
+   * Drop `get-port`'s in-process port locks so a subsequent check re-probes
+   * true OS bindability.
+   *
+   * Every picker here — {@link findAvailable}, {@link isPortAvailable},
+   * {@link resolve} — LOCKS whatever port it hands back, as get-port's
+   * collision avoidance. That lock is per-process and invisible to the OS, so
+   * a port this process legitimately reserved reads as "taken" to its own
+   * later probes. Callers that must RE-acquire a port they already resolved
+   * — {@link validate} re-verifying a resolved binding, or a caller feeding a
+   * registry-vetted port back in as a PIN — clear the locks first.
+   *
+   * Cross-process safety is unaffected: the file registry
+   * ({@link readRegistryPortExclusions}) is the cross-process guard, and it is
+   * untouched by this call.
+   */
+  export async function clearPortLocks(): Promise<void> {
+    const mod = await importGetPortModule()
+    mod.clearLockedPorts()
+  }
+
+  /**
    * True if `port` is bindable right now, via `get-port` (asks it for exactly
    * `port`; a differing result means `port` is taken or already locked in
    * get-port's cache). NOTE: a `true` result LOCKS `port` in get-port's
    * in-process cache (its collision-avoidance) — to re-check an already-resolved
-   * port, call `clearPortLocks()` first (see {@link BindConfigProvider.validate}).
+   * port, call {@link clearPortLocks} first (see {@link BindConfigProvider.validate}).
    *
    * @param port - Port to probe.
    * @returns Whether the port is free.

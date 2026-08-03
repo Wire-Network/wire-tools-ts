@@ -5,6 +5,8 @@ import Path from "node:path"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
 import {
+  AWSAccountName,
+  type AWSClusterNodeConfig,
   type ClusterSignatureProviderConfig,
   ExternalClusterConfigSchemaCodec,
   SignatureProviderType
@@ -36,14 +38,21 @@ const External = Steps.externalClusterConfig,
     type: SignatureProviderType.KIOD,
     ssm: null
   },
-  SsmRegion = "us-east-1",
-  SsmSecretIdPattern = "/wire/{cluster}/{account}/{keyType}",
-  SsmProvider: ClusterSignatureProviderConfig = {
+  SSMRegions = ["us-east-1", "eu-west-1"],
+  SSMSecretIdPattern = "/wire/{cluster}/{account}/{keyType}",
+  SSMProvider: ClusterSignatureProviderConfig = {
     type: SignatureProviderType.SSM,
-    ssm: { awsRegion: SsmRegion, awsSecretIdPattern: SsmSecretIdPattern }
+    ssm: { awsRegions: SSMRegions, awsSecretIdPattern: SSMSecretIdPattern }
   },
-  // basename(localDir) — the SSM `{cluster}` create published under (localDir = root/local).
-  SourceClusterLabel = "local"
+  // The SOURCE cluster's AWS placement — `{cluster}` renders its ACCOUNT.
+  SourceAWSClusterNodeConfig: AWSClusterNodeConfig = {
+    account: AWSAccountName.test,
+    regions: SSMRegions,
+    ssm: null
+  },
+  // The SSM `{cluster}` create published under — the AWS account, NOT
+  // basename(localDir).
+  SourceClusterLabel = AWSAccountName.test
 
 /** Deep-clone a bind shape, shifting every numeric port by `delta` (addresses unchanged). */
 function shiftPorts(value: unknown, delta: number): unknown {
@@ -169,7 +178,13 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       clusterPath: localDir,
       dataPath: Path.join(localDir, "data"),
       walletPath: Path.join(localDir, "wallet"),
-      signatureProvider
+      signatureProvider,
+      // `resolve` makes the AWS placement REQUIRED under SSM (it sources the
+      // secret-id `{cluster}`); KEY / KIOD clusters carry none.
+      awsClusterNodeConfig:
+        signatureProvider.type === SignatureProviderType.SSM
+          ? SourceAWSClusterNodeConfig
+          : null
     })
     ctx.outputs.set(External.ParamsKey, {
       externalClusterPath: externalDir,
@@ -212,15 +227,15 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     return entry
   }
 
-  /** Inject a BLS key onto the first cluster-keys operator (operators normally carry none). */
-  function injectOperatorBls() {
+  /** Inject a `wireFinalizer` key onto the first cluster-keys operator (operators normally carry none). */
+  function injectOperatorWireFinalizer() {
     const config = runContext().config,
       keys = ClusterState.loadKeys(config),
       label = keys.operators[0].label,
       account = keys.operators[0].account,
       privateKey = "PVT_BLS_op",
       proofOfPossession = "SIG_BLS_op"
-    keys.operators[0].bls = {
+    keys.operators[0].wireFinalizer = {
       type: KeyType.BLS,
       publicKey: "PUB_BLS_op",
       privateKey,
@@ -404,16 +419,17 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     )
   })
 
-  it("emits SSM providers (region + reconstructed awsSecretId, ZERO plaintext)", async () => {
-    const emitted = await emitWithProvider(SsmProvider)
+  it("emits SSM providers (replication regions + reconstructed awsSecretId, ZERO plaintext)", async () => {
+    const emitted = await emitWithProvider(SSMProvider)
     expect(emitted.accounts.operators.length).toBeGreaterThan(0)
     emitted.accounts.operators.forEach(op =>
       op.keyProviders.forEach(provider => {
         // The emitted id EXACTLY equals what create's KeySteps PutParameter'd.
         expect(provider).toMatchObject({
           providerType: SignatureProviderType.SSM,
-          awsRegion: SsmRegion,
-          awsSecretId: ClusterConfigProvider.toSecretId(SsmSecretIdPattern, {
+          awsRegions: SSMRegions,
+          awsSecretId: ClusterConfigProvider.toSecretId(SSMSecretIdPattern, {
+            // `{cluster}` is the source cluster's AWS ACCOUNT, not its dir name.
             cluster: SourceClusterLabel,
             // The `{account}` pattern token RENDERS the DURABLE handle — what
             // `KeySteps` PutParameter'd — NOT the emitted on-chain `accountName`.
@@ -441,7 +457,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
         expect(provider.publicKey.length).toBeGreaterThan(0)
         expect(provider).not.toHaveProperty("privateKey")
         expect(provider).not.toHaveProperty("awsSecretId")
-        expect(provider).not.toHaveProperty("awsRegion")
+        expect(provider).not.toHaveProperty("awsRegions")
       })
     )
     const fileText = Fs.readFileSync(externalConfigFile(), "utf-8")
@@ -450,7 +466,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   })
 
   it("preserves a BLS proofOfPossession under KEY", async () => {
-    const injected = injectOperatorBls(),
+    const injected = injectOperatorWireFinalizer(),
       emitted = await emitWithProvider(KeyProvider),
       op = emitted.accounts.operators.find(
         entry => entry.accountName === injected.account
@@ -466,7 +482,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   })
 
   it("preserves a BLS proofOfPossession under KIOD (material-less)", async () => {
-    const injected = injectOperatorBls(),
+    const injected = injectOperatorWireFinalizer(),
       emitted = await emitWithProvider(KiodProvider),
       op = emitted.accounts.operators.find(
         entry => entry.accountName === injected.account
@@ -482,8 +498,8 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   })
 
   it("refuses a dangling SSM ref for an operator BLS key (covered-set guard)", async () => {
-    injectOperatorBls()
-    const ctx = runContext(externalBindFile, SsmProvider)
+    injectOperatorWireFinalizer()
+    const ctx = runContext(externalBindFile, SSMProvider)
     await External.runLoadExternalBind(ctx, null, signal)
     await External.runClone(ctx, null, signal)
     await External.runRebind(ctx, null, signal)

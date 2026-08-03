@@ -1,4 +1,9 @@
 import {
+  AWSAccountName,
+  SignatureProviderType
+} from "@wireio/cluster-tool-shared"
+import { Constants } from "@wireio/cluster-tool"
+import {
   NodeConfig,
   NodeConfigIniRenderer,
   NodeRole,
@@ -146,6 +151,36 @@ describe("NodeConfig", () => {
       )
     })
 
+    it("renders the bios signature-provider byte-identically to the historical dev spec under KEY", () => {
+      const bios = nodes.find(n => n.role === NodeRole.bios)!
+      expect(bios.ini.render()).toContain(
+        `signature-provider = ${Constants.devSignatureProvider()}`
+      )
+    })
+
+    it("renders the bios signature-provider as a REGION-LESS SSM spec under SSM", () => {
+      const ssmCluster = fixtureConfig({
+          initialKey: "PUB_K1_generatedBiosBlockSigningKey",
+          signatureProvider: {
+            type: SignatureProviderType.SSM,
+            ssm: {
+              awsRegions: ["us-east-1"],
+              awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
+            }
+          },
+          awsClusterNodeConfig: {
+            account: AWSAccountName.dev,
+            regions: ["us-east-1"],
+            ssm: null
+          }
+        }),
+        bios = NodeConfig.plan(ssmCluster).find(n => n.role === NodeRole.bios)!
+      // `{account}` is the NODE NAME — the same segment NodeopProcess.buildArgs renders.
+      expect(bios.ini.render()).toContain(
+        `signature-provider = wire-PUB_K1_generatedBiosBlockSigningKey,wire,wire,PUB_K1_generatedBiosBlockSigningKey,SSM:/wire/${AWSAccountName.dev}/${NodeConfig.BiosName}/K1`
+      )
+    })
+
     it("renders operator config with read-mode and WITHOUT an account line (daemon CLI args carry the generated account)", () => {
       const batchOp = nodes.find(n => n.batchOperatorLabel !== null)!
       const ini = batchOp.ini.render()
@@ -187,9 +222,28 @@ describe("NodeConfig", () => {
       expect(genesis.initial_configuration.max_block_cpu_usage).toBe(400_000)
     })
 
+    it("takes initial_key + initial_finalizer_key from the CONFIG, not a constant", () => {
+      // An SSM cluster's bios keys are GENERATED at config resolution, so the
+      // genesis authority — and therefore the chain id — follows the config.
+      const genesis = JSON.parse(
+        ClusterConfigProvider.genesisRenderer(
+          fixtureConfig({
+            initialKey: "PUB_K1_generatedBiosBlockSigningKey",
+            initialFinalizerKey: "PUB_BLS_generatedBiosFinalizerKey"
+          })
+        ).render()
+      )
+      expect(genesis.initial_key).toBe("PUB_K1_generatedBiosBlockSigningKey")
+      expect(genesis.initial_finalizer_key).toBe(
+        "PUB_BLS_generatedBiosFinalizerKey"
+      )
+    })
+
     it("omits initial_finalizer_key when none is set", () => {
       const genesis = JSON.parse(
-        ClusterConfigProvider.genesisRenderer(fixtureConfig()).render()
+        ClusterConfigProvider.genesisRenderer(
+          fixtureConfig({ initialFinalizerKey: null })
+        ).render()
       )
       expect(genesis.initial_finalizer_key).toBeUndefined()
     })

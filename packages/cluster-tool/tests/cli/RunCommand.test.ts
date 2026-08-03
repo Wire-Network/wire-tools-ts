@@ -7,11 +7,16 @@ import { Deferred } from "@wireio/shared"
 import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
 import { PersistedFixture } from "../config/clusterConfigFixture.js"
 
-const runMock = jest.fn()
-
 // Preserve every other `ClusterManager` member (create/launch/stop/destroy) via
 // the real module — only `run` is faked, mirroring the established
 // `jest.requireActual` spread pattern (see BindConfigProvider.test.ts's netUtils mock).
+//
+// Each fake is minted INSIDE its factory and bound below — never captured from
+// a module-level `const`. `@wireio/cluster-tool`'s root barrel re-exports both
+// of these modules, so the factories run while THIS file's own imports are
+// still executing, and a captured binding would be read inside its temporal
+// dead zone (jest's documented "a module factory may not reference out-of-scope
+// variables" rule).
 jest.mock("@wireio/cluster-tool/cluster/ClusterManager", () => ({
   ClusterManager: {
     ...(
@@ -19,17 +24,21 @@ jest.mock("@wireio/cluster-tool/cluster/ClusterManager", () => ({
         "@wireio/cluster-tool/cluster/ClusterManager"
       ) as typeof import("@wireio/cluster-tool/cluster/ClusterManager")
     ).ClusterManager,
-    run: runMock
+    run: jest.fn()
   }
 }))
 
-const createKeepAliveMock = jest.fn()
 jest.mock("@wireio/cluster-tool/cluster/ClusterKeepAlive", () => ({
-  ClusterKeepAlive: { create: createKeepAliveMock }
+  ClusterKeepAlive: { create: jest.fn() }
 }))
 
 import { ClusterCommand } from "@wireio/cluster-tool/cli/ClusterCommand"
 import { createRunCommand } from "@wireio/cluster-tool/cli/RunCommand"
+import { ClusterKeepAlive } from "@wireio/cluster-tool/cluster/ClusterKeepAlive"
+import { ClusterManager } from "@wireio/cluster-tool/cluster/ClusterManager"
+
+const runMock = ClusterManager.run as jest.Mock,
+  createKeepAliveMock = ClusterKeepAlive.create as jest.Mock
 
 /** The recorder pair returned by {@link createYargsRecorder}. */
 interface YargsRecorder {

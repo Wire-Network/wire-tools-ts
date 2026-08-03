@@ -13,9 +13,13 @@ import { createRunCommand } from "./RunCommand.js"
  * "Framework-Native Dispatch"; yargs dispatches, this function does not.
  */
 export function main(argv: string[] = process.argv.slice(2)): Promise<unknown> {
-  return Yargs(argv.filter(arg => !arg.startsWith("--inspect")))
+  // `create` pre-scans this SAME filtered array for `--cluster-build-options-file`
+  // (its document seeds every other flag's default, so it must be read before
+  // yargs parses) — hence one binding, handed to both Yargs and the command.
+  const commandLine = argv.filter(arg => !arg.startsWith("--inspect"))
+  return Yargs(commandLine)
     .scriptName("wire-cluster-tool")
-    .command(createCreateCommand())
+    .command(createCreateCommand(commandLine))
     .command(createRunCommand())
     .command(createDestroyCommand())
     .command(createPackageCommand())
