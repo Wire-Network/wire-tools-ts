@@ -10,12 +10,13 @@ import { ProtocolTiming } from "@wireio/cluster-tool"
  */
 export namespace TerminationScenarioConstants {
   /**
-   * The flow's DOOMED non-bootstrapped batch operator (provisioned by the
-   * scenario; its daemon is deliberately never started). A short name well
-   * under the 12-character `sysio::newaccount` cap that slots next to the
-   * bootstrap's `batchop.[a-i]` roster without colliding.
+   * The flow's DOOMED non-bootstrapped batch operator's durable harness `label`
+   * handle (provisioned by the scenario; its daemon is deliberately never
+   * started). Harness-side only — its on-chain `account` is node-owner-generated
+   * (`wireno.<random>`). Slots next to the bootstrap's `batchop.[a-i]` roster
+   * without colliding.
    */
-  export const DoomedOperatorAccount = "newop"
+  export const DoomedOperatorLabel = "newop"
   /**
    * Anvil-mnemonic HD index for the operator's ETH wallet — past every
    * bootstrap operator slot (batchops + underwriters), and inside anvil's

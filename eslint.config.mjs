@@ -172,7 +172,6 @@ const BanBareErrorInHandler = {
     "A bare Error in an error handler (mapLeft/ifLeft/catch/recoverWith/onFailure) SWALLOWS the handled error — throw a NestedError with { cause } (nested-error-preserve-cause.md)."
 }
 
-// One config block per exemption signature: a debt file keeps every ban
 // Every ban applies to EVERY file — there is no exemption list, no ratchet and
 // no per-file downgrade (no-grandfathered-lint-debt.md). A class is banned only
 // once the tree is clean of it.

@@ -16,7 +16,7 @@ describe("EthereumFundingTool step factories", () => {
       expect(step.actor).toBe(Report.Actor.Underwriter)
       expect(step.name).toBe("uwa-usdc-mint")
       expect(step.input.kind).toBe("EthereumFundingTool.MintErc20Input")
-      expect(step.input.operatorAccount).toBe("uwa")
+      expect(step.input.operatorLabel).toBe("uwa")
       expect(step.input.tokenName).toBe("USDC")
       expect(step.input.amount).toBe(42n)
     })
