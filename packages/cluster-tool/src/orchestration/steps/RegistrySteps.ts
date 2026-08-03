@@ -13,6 +13,7 @@ import {
   type ClusterBuildStepOptions
 } from "../ClusterBuildStep.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
+import type { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
 import { ReservContractSteps } from "./contracts/sysio/ReservContractSteps.js"
 
 const {
@@ -347,7 +348,7 @@ export namespace RegistrySteps {
     codename: string,
     symbolName: string,
     description: string,
-    address: { kind: SysioContracts.SysioTokensChainkind; address: string }
+    address: SysioContracts.SysioTokensChainaddressType
   ): SysioContracts.SysioTokensRegtokenAction {
     return {
       kind: SysioTokensTokenkind.TOKEN_KIND_LIQ,
@@ -363,7 +364,7 @@ export namespace RegistrySteps {
     codename: string,
     symbolName: string,
     description: string,
-    address: { kind: SysioContracts.SysioTokensChainkind; address: string }
+    address: SysioContracts.SysioTokensChainaddressType
   ): SysioContracts.SysioTokensRegtokenAction {
     return {
       kind: SysioTokensTokenkind.TOKEN_KIND_ERC20,
@@ -379,7 +380,7 @@ export namespace RegistrySteps {
     codename: string,
     symbolName: string,
     description: string,
-    address: { kind: SysioContracts.SysioTokensChainkind; address: string }
+    address: SysioContracts.SysioTokensChainaddressType
   ): SysioContracts.SysioTokensRegtokenAction {
     return {
       kind: SysioTokensTokenkind.TOKEN_KIND_SPL,
@@ -416,11 +417,9 @@ export namespace RegistrySteps {
    */
   function readSolanaMints(file: string): Record<string, string> {
     if (!Fs.existsSync(file)) return {}
-    const rows = JSON.parse(Fs.readFileSync(file, "utf-8")) as Array<{
-      code: number
-      mint: string
-      decimals: number
-    }>
+    const rows = JSON.parse(
+      Fs.readFileSync(file, "utf-8")
+    ) as SolanaFundingTool.SolMockMint[]
     const out: Record<string, string> = {}
     rows.forEach(row => {
       ;["USDC", "USDT", "LIQSOL"].forEach(codename => {

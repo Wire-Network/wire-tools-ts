@@ -10,10 +10,12 @@
 //    tsconfig.base.json) — no rule below assumes strict-null semantics, and
 //    `eqeqeq` allows `!= null` (the sanctioned both-nullish guard).
 //  - Syntactic rules only (no type-checked linting).
-//  - `error` means the class is BANNED and the tree is clean of it;
-//    pre-existing debt is grandfathered per-FILE (see the ratchet block) —
-//    prefer-null-over-undefined.md forbids sweeping untouched code, so the
-//    list burns down as files are touched, never via a bulk sweep.
+//  - `error` means the class is BANNED and the tree is clean of it — for
+//    EVERY file, with no debt list, no ratchet and no per-file exemption
+//    (no-grandfathered-lint-debt.md). Two grandfather lists (68 entries) were
+//    removed on 2026-08-03 after one of them silently hid five NEW violations
+//    added to a file it exempted; banning a class now means fixing every
+//    occurrence in the same change.
 //
 // Deliberately NOT enforced here (and why):
 //  - `new Promise` (STYLE.md prefers Deferred.useCallback for promisifying
@@ -170,89 +172,10 @@ const BanBareErrorInHandler = {
     "A bare Error in an error handler (mapLeft/ifLeft/catch/recoverWith/onFailure) SWALLOWS the handled error — throw a NestedError with { cause } (nested-error-preserve-cause.md)."
 }
 
-// Pre-existing `| null` return-type debt, grandfathered — prefer-null forbids
-// sweeping untouched files. RATCHET: when you touch one of these files, clean
-// its return types and DELETE its entry. Never add an entry.
-const NullUnionReturnDebtFiles = [
-  "packages/cluster-tool/src/clients/solana/SolanaClient.ts",
-  "packages/cluster-tool/src/clients/wire/WireClient.ts",
-  "packages/cluster-tool/src/clients/wire/WireWallet.ts",
-  "packages/cluster-tool/src/orchestration/ClusterBuildPhase.ts",
-  "packages/cluster-tool/src/orchestration/OutputStore.ts",
-  "packages/cluster-tool/src/report/tools/StepExtraRecorder.ts",
-  "packages/cluster-tool/src/utils/fsUtils.ts",
-  "packages/debugging-client-tool-tui/src/cli.ts",
-  "packages/debugging-client-tool-tui/src/features/opp/OPPTrackingService.ts",
-  "packages/debugging-client-tool-tui/src/features/opp/util/EpochSummary.ts",
-  "packages/debugging-client-tool-tui/src/store/opp/OPPSelectors.ts",
-  "packages/debugging-server/src/routes/opp/OPPRoutes.ts",
-  "packages/debugging-shared/src/opp/EnvelopeStorageKey.ts",
-  "packages/debugging-shared/src/utils/ProtobufHelpers.ts",
-  "packages/test-app-server/src/services/key.ts",
-  "packages/test-app-server/src/services/link.ts",
-  "packages/cluster-tool/src/clients/wire/RecordingFetchProvider.ts",
-  "packages/debugging-client-tool-tui/src/features/opp/util/AttestationCodec.ts",
-  "packages/debugging-client-tool-tui/src/features/process-monitor/util/lineRender.tsx",
-  "packages/debugging-server/src/streams/EnvelopeWatchStream.ts",
-  "packages/debugging-shared/src/opp/EnvelopeRecordReader.ts"
-]
-
-// Pre-existing inline-object-type debt, grandfathered under the same ratchet:
-// touch a file → name its object types → DELETE its entry. Never add one.
-const InlineTypeLiteralDebtFiles = [
-  "packages/cluster-tool/src/clients/solana/RecordingConnection.ts",
-  "packages/cluster-tool/src/clients/wire/RecordingFetchProvider.ts",
-  "packages/cluster-tool/src/clients/wire/WireClient.ts",
-  "packages/cluster-tool/src/clients/wire/WireWallet.ts",
-  "packages/cluster-tool/src/clients/wire/clio/ClioRunner.ts",
-  "packages/cluster-tool/src/orchestration/steps/RegistrySteps.ts",
-  "packages/cluster-tool/src/tools/ethereum/EthereumFundingTool.ts",
-  "packages/cluster-tool/src/tools/ethereum/EthereumNodeOwnerNftTool.ts",
-  "packages/cluster-tool/src/tools/ethereum/EthereumSwapTool.ts",
-  "packages/cluster-tool/src/tools/wire/WireDclaimSeedTool.ts",
-  "packages/cluster-tool/src/tools/wire/WireUnderwriterTool.ts",
-  "packages/cluster-tool/src/types/KeyPair.ts",
-  "packages/cluster-tool/src/utils/ethereumUtils.ts",
-  "packages/cluster-tool/tests/cli/ClusterBuildOptionsArgs.test.ts",
-  "packages/cluster-tool/tests/clients/recordingClients.test.ts",
-  "packages/cluster-tool/tests/config/NodeConfig.test.ts",
-  "packages/cluster-tool/tests/orchestration/ClusterBuildPhase.test.ts",
-  "packages/cluster-tool/tests/orchestration/OutputStore.test.ts",
-  "packages/cluster-tool/tests/report/StepExtraRecorder.test.ts",
-  "packages/cluster-tool/tests/tools/solana/SolanaOutpostProgramTool.test.ts",
-  "packages/cluster-tool/tests/tools/wire/WireDclaimSeedTool.test.ts",
-  "packages/cluster-tool/tests/tools/wire/WireOperatorProvisioningTool.test.ts",
-  "packages/cluster-tool/tests/tools/wire/WireReserveTool.test.ts",
-  "packages/cluster-tool/tests/tools/wire/WireUnderwriterTool.test.ts",
-  "packages/debugging-client-shared/tests/subscriptions/DebuggingSubscription.test.ts",
-  "packages/debugging-client-tool-tui/src/cli.ts",
-  "packages/debugging-client-tool-tui/src/components/PanelComponent.ts",
-  "packages/debugging-client-tool-tui/src/components/StatusBarComponent.ts",
-  "packages/debugging-client-tool-tui/src/features/opp/panels/EpochTrackerPanel.tsx",
-  "packages/debugging-client-tool-tui/src/features/opp/routes/EpochDetailRoute.tsx",
-  "packages/debugging-client-tool-tui/src/features/opp/util/AttestationCodec.ts",
-  "packages/debugging-client-tool-tui/src/features/process-monitor/panels/LogViewerJSONLine.tsx",
-  "packages/debugging-client-tool-tui/src/features/process-monitor/panels/ProcessMonitorPanel.tsx",
-  "packages/debugging-client-tool-tui/tests/components/modals/ExitConfirmModal.test.tsx",
-  "packages/debugging-client-tool-tui/tests/features/process-monitor/panels/LogViewerJSONLine.test.tsx",
-  "packages/debugging-client-tool-tui/tests/features/process-monitor/panels/LogViewerTextLine.test.tsx",
-  "packages/debugging-client-tool-tui/tests/hooks/useMultiKeyTrigger.test.tsx",
-  "packages/debugging-client-tool-tui/tests/logging/LoggingManager.test.ts",
-  "packages/debugging-client-tool-tui/tests/store/middleware/createReduxFileLogger.test.ts",
-  "packages/debugging-server/src/routes/opp/OPPRoutes.ts",
-  "packages/debugging-server/src/streams/EnvelopeWatchStream.ts",
-  "packages/debugging-shared/src/opp/EnvelopeRecordReader.ts",
-  "packages/debugging-shared/src/rpc/Paths.ts",
-  "packages/flow-reserve-lifecycle/src/steps/ReserveLifecycleScenarioReserveSteps.ts",
-  "packages/flow-swap-private-reserves/src/SwapPrivateReservesScenarioArtifacts.ts",
-  "packages/flow-swap-private-reserves/src/steps/SwapPrivateReservesScenarioReserveSteps.ts",
-  "packages/test-app-server/src/App.tsx",
-  "packages/test-app-server/src/components/Toast.tsx"
-]
-
 // One config block per exemption signature: a debt file keeps every ban
-// EXCEPT the one(s) it is grandfathered for. Computed, so the two ratchet
-// lists compose without a hand-maintained matrix.
+// Every ban applies to EVERY file — there is no exemption list, no ratchet and
+// no per-file downgrade (no-grandfathered-lint-debt.md). A class is banned only
+// once the tree is clean of it.
 const AllBans = [
   BanSwitch,
   BanInlineIife,
@@ -265,32 +188,6 @@ const AllBans = [
   BanErrorMessageRestring,
   BanBareErrorInHandler
 ]
-const debtExemptionBlocks = (() => {
-  const exemptionsByFile = new Map()
-  NullUnionReturnDebtFiles.forEach(file =>
-    exemptionsByFile.set(file, new Set([BanNullUnionReturn.selector]))
-  )
-  InlineTypeLiteralDebtFiles.forEach(file => {
-    if (!exemptionsByFile.has(file)) exemptionsByFile.set(file, new Set())
-    exemptionsByFile.get(file).add(BanInlineTypeLiteral.selector)
-  })
-  const filesBySignature = new Map()
-  exemptionsByFile.forEach((exempted, file) => {
-    const signature = [...exempted].sort().join("|")
-    if (!filesBySignature.has(signature)) filesBySignature.set(signature, [])
-    filesBySignature.get(signature).push(file)
-  })
-  return [...filesBySignature.entries()].map(([signature, files]) => ({
-    files,
-    rules: {
-      "no-restricted-syntax": [
-        "error",
-        ...AllBans.filter(ban => !signature.includes(ban.selector))
-      ]
-    }
-  }))
-})()
-
 export default tseslint.config(
   {
     ignores: [
@@ -403,7 +300,6 @@ export default tseslint.config(
       "no-var": "error"
     }
   },
-  ...debtExemptionBlocks,
   {
     // CLI bin entry points (console IS the user interface —
     // use-logging-framework.md carve-out) and the test-app-server's BROWSER

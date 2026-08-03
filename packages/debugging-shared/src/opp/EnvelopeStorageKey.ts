@@ -26,7 +26,7 @@ export interface ParsedEnvelopeStorageKey {
  */
 export function parseEnvelopeStorageKey(
   key: string
-): ParsedEnvelopeStorageKey | null {
+): ParsedEnvelopeStorageKey {
   const firstDash = key.indexOf("-")
   if (firstDash < 0) return null
   const lastDash = key.lastIndexOf("-")

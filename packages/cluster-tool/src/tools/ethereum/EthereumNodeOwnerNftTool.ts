@@ -33,7 +33,11 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { NodeOwnerTier, type WireKey } from "@wireio/opp-typescript-models"
 
 import type { WireClient } from "../../clients/wire/WireClient.js"
-import { loadOutpostContract } from "../../utils/ethereumUtils.js"
+import {
+  loadOutpostContract,
+  type EthereumValueOverrides
+} from "../../utils/ethereumUtils.js"
+import type { ClioError } from "../../clients/wire/clio/ClioRunner.js"
 
 // Tier IDs accepted by sysio.roa::nodeownreg (matches MockWireNodes NodeInfo). The canonical enum
 // lives in the OPP protobuf models (sysio.opp.types.NodeOwnerTier: T1=1, T2=2, T3=3); re-exported
@@ -61,7 +65,7 @@ export interface MockWireNodesContract extends ethers.BaseContract {
   mint: (
     id: bigint | number,
     amount: bigint | number,
-    overrides?: ethers.Overrides & { value?: bigint }
+    overrides?: EthereumValueOverrides
   ) => Promise<ethers.ContractTransactionResponse>
   viewTotalSupply: (id: bigint | number) => Promise<bigint>
   viewMaxSupply: (id: bigint | number) => Promise<bigint>
@@ -258,7 +262,7 @@ export async function pushNodeOwnerReg(
     // child_process.exec wraps clio failures with `Error("Command failed: <cmd>")` and stuffs clio's
     // `-j` JSON output on `err.stdout`. Surface the underlying sysio_assert_message so callers can
     // match the actual hard-abort reason (invalid tier / non-EM key) with `rejects.toThrow(/.../)`.
-    const stdout = (err as { stdout?: string })?.stdout ?? ""
+    const stdout = (err as ClioError)?.stdout ?? ""
     const m = /assertion failure with message: ([^"\n]+)/.exec(stdout)
     if (m) {
       throw new Error(`nodeownreg failed: ${m[1]}`, { cause: err })
