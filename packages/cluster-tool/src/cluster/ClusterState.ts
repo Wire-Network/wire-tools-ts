@@ -49,10 +49,18 @@ export interface ClusterKeysNodeEntry {
  * `underwriterArgs`) build directly from them on relaunch.
  */
 export interface ClusterKeysOperatorEntry {
-  /** Durable operator handle — the `ClusterKeyStore` key + SSM secret-id `{account}` segment. */
+  /**
+   * Durable harness handle (`batchop.a`) — the `ClusterKeyStore` key and the SSM
+   * secret-id `{account}` segment. Deterministic and known at plan time; it does
+   * NOT exist on chain.
+   */
+  label: string
+  /**
+   * WIRE account name ON CHAIN — `wireno.<random>` for batch/underwriter
+   * operators (node-owner-sponsored; the suffix is nonce-derived entropy and is
+   * not choosable), the deterministic `defproducer*` name for producers.
+   */
   account: string
-  /** WIRE account name ON CHAIN (node-owner-generated for batch/underwriter operators). */
-  chainAccount: string
   /** Operator role (batch operator / underwriter / producer). */
   type: OperatorType
   /** The operator's WIRE (K1) signing key. */
@@ -67,7 +75,7 @@ export interface ClusterKeysOperatorEntry {
 
 /**
  * The full `cluster-keys.json` payload — every producer node's key set plus
- * every provisioned operator account. `cluster-tool`-private: written 0600 by
+ * every provisioned operator record. `cluster-tool`-private: written 0600 by
  * {@link ClusterState.saveKeys}, read only by `ClusterManager.run` (via
  * {@link ClusterState.loadKeys} + {@link ClusterState.rehydrate}). Never
  * served over the debugging-server RPC surface.
@@ -75,7 +83,7 @@ export interface ClusterKeysOperatorEntry {
 export interface ClusterKeys {
   /** Every generated producer-node key set. */
   nodes: ClusterKeysNodeEntry[]
-  /** Every provisioned operator account. */
+  /** Every provisioned operator record. */
   operators: ClusterKeysOperatorEntry[]
 }
 
@@ -124,8 +132,8 @@ const ClusterKeysNodeEntrySchema: z.ZodType<ClusterKeysNodeEntry> = z.object({
 /** Schema for one provisioned operator's key record. */
 const ClusterKeysOperatorEntrySchema: z.ZodType<ClusterKeysOperatorEntry> =
   z.object({
+    label: z.string(),
     account: z.string(),
-    chainAccount: z.string(),
     type: OperatorTypeValueSchema,
     wire: WireKeyPairSchema,
     bls: WireFinalizerKeyPairSchema.optional(),
@@ -205,8 +213,8 @@ export namespace ClusterState {
       nodePath: node.nodePath,
       ports: { http: node.ports.http, p2p: node.ports.p2p },
       producers: [...node.producers],
-      batchOperatorAccount: node.batchOperatorAccount,
-      underwriterAccount: node.underwriterAccount
+      batchOperatorLabel: node.batchOperatorLabel,
+      underwriterLabel: node.underwriterLabel
     }))
     return {
       createdAt: new Date().toISOString(),
@@ -234,7 +242,7 @@ export namespace ClusterState {
   /**
    * Build the `cluster-keys.json` payload from a finished build's
    * `ctx.keyStore` — every generated producer-node key set plus every
-   * provisioned operator account (with its full key set, including
+   * provisioned operator record (with its full key set, including
    * `ethereum` / `solana` when present).
    *
    * @param ctx - The build's context (holds `keyStore`).
@@ -247,16 +255,16 @@ export namespace ClusterState {
         k1: nodeKeys.keys.k1,
         bls: nodeKeys.keys.bls
       })),
-      // Every persisted operator carries its on-chain name: `chainAccount` is
+      // Every persisted operator carries its on-chain name: `account` is
       // optional on `OperatorAccount` only for the window between an OPP
       // operator's materialize and sponsored-creation steps, both of which run
       // long before this capture.
       operators: ctx.keyStore.operators.map(operator => {
         Assert.ok(
-          isNotEmpty(operator.chainAccount),
-          `ClusterState.captureKeys: operator ${operator.account} has no chainAccount — its sponsored-creation step did not run`
+          isNotEmpty(operator.account),
+          `ClusterState.captureKeys: operator ${operator.label} has no account — its sponsored-creation step did not run`
         )
-        return { ...operator, chainAccount: operator.chainAccount }
+        return { ...operator, account: operator.account }
       })
     }
   }
@@ -313,7 +321,7 @@ export namespace ClusterState {
 
   /**
    * Repopulate a fresh {@link ClusterKeyStore} from a loaded {@link ClusterKeys}
-   * payload — every node key set + every operator account, so relaunch-time
+   * payload — every node key set + every operator label, so relaunch-time
    * operator/daemon-arg resolution (`NodeopProcessSteps.resolveOperator` /
    * `resolveOperatorDaemonArgs`) works unchanged against the rehydrated store.
    *

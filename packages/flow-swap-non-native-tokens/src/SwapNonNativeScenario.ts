@@ -319,15 +319,15 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
 
   plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const config = cluster.context.config
-    const underwriterAccounts = Array.from(
+    const underwriterLabels = Array.from(
       { length: config.underwriterCount },
-      (_, index) => HarnessConstants.underwriterAccount(index)
+      (_, index) => HarnessConstants.underwriterLabel(index)
     )
     const collateral = config.underwriterCollateral
     Assert.ok(
-      collateral != null && collateral.length === underwriterAccounts.length,
+      collateral != null && collateral.length === underwriterLabels.length,
       `flow-swap-non-native-tokens: expected a collateral matrix for ` +
-        `${underwriterAccounts.length} underwriter(s), got ${collateral?.length ?? 0}`
+        `${underwriterLabels.length} underwriter(s), got ${collateral?.length ?? 0}`
     )
 
     // ── 1. Bond every (chain, token) leg the swap matrix touches ──
@@ -336,7 +336,7 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
       "UnderwriterCollateral",
       "Bond the per-leg underwriter collateral for the swap matrix",
       WriteStepOptions,
-      underwriterAccounts,
+      underwriterLabels,
       collateral
     )
 
@@ -443,7 +443,7 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
         "bonds-relayed",
         "sysio.opreg balance rows exist for every collateral leg",
         RemitStepOptions,
-        underwriterAccounts,
+        underwriterLabels,
         collateral
       )
     )

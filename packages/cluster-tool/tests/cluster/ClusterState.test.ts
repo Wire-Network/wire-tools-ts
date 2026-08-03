@@ -9,9 +9,9 @@ import { ClusterKeyStore } from "@wireio/cluster-tool/orchestration/outputs"
 import { fixtureContext } from "../config/clusterBuildContextFixture.js"
 
 /** A fully-keyed batch-operator handle — carries wire + ethereum + solana keys. */
-const BatchOperatorAccount = "batchopaaaa"
+const BatchOperatorLabel = "batchopaaaa"
 /** The node-owner-generated chain account the sponsored-creation step adopts. */
-const BatchOperatorChainAccount = "wireno.x3f9k"
+const BatchOperatorAccount = "wireno.x3f9k"
 
 describe("ClusterState", () => {
   let dir: string
@@ -49,24 +49,24 @@ describe("ClusterState", () => {
       }
     })
     ctx.keyStore.setOperator({
+      label: BatchOperatorLabel,
       account: BatchOperatorAccount,
-      chainAccount: BatchOperatorChainAccount,
       type: OperatorType.BATCH,
       wire: {
         type: KeyType.K1,
-        publicKey: `PUB_K1_${BatchOperatorAccount}`,
-        privateKey: `PVT_K1_${BatchOperatorAccount}`
+        publicKey: `PUB_K1_${BatchOperatorLabel}`,
+        privateKey: `PVT_K1_${BatchOperatorLabel}`
       },
       ethereum: {
         type: KeyType.EM,
-        publicKey: `PUB_EM_${BatchOperatorAccount}`,
-        privateKey: `PVT_EM_${BatchOperatorAccount}`,
+        publicKey: `PUB_EM_${BatchOperatorLabel}`,
+        privateKey: `PVT_EM_${BatchOperatorLabel}`,
         address: "0xabc0000000000000000000000000000000000a"
       },
       solana: {
         type: KeyType.ED,
-        publicKey: `PUB_ED_${BatchOperatorAccount}`,
-        privateKey: `PVT_ED_${BatchOperatorAccount}`
+        publicKey: `PUB_ED_${BatchOperatorLabel}`,
+        privateKey: `PVT_ED_${BatchOperatorLabel}`
       }
     })
     return ctx
@@ -89,7 +89,6 @@ describe("ClusterState", () => {
       const ctx = seededContext()
       const raw = JSON.stringify(ClusterState.capture(ctx))
       expect(raw).not.toContain("PVT_")
-      expect(raw).not.toContain(BatchOperatorAccount)
     })
 
     it("nulls the anvil state + solana ledger paths in external-outpost mode", () => {
@@ -144,15 +143,15 @@ describe("ClusterState", () => {
       const loaded = ClusterState.loadKeys(ctx.config)
       expect(loaded).toEqual(keys)
       const operator = loaded.operators.find(
-        entry => entry.account === BatchOperatorAccount
+        entry => entry.label === BatchOperatorLabel
       )
       // The persisted record keeps BOTH identities distinct.
-      expect(operator?.chainAccount).toBe(BatchOperatorChainAccount)
+      expect(operator?.account).toBe(BatchOperatorAccount)
       expect(operator?.ethereum?.address).toBe(
         "0xabc0000000000000000000000000000000000a"
       )
-      expect(operator?.solana?.publicKey).toBe(`PUB_ED_${BatchOperatorAccount}`)
-      expect(operator?.wire.privateKey).toBe(`PVT_K1_${BatchOperatorAccount}`)
+      expect(operator?.solana?.publicKey).toBe(`PUB_ED_${BatchOperatorLabel}`)
+      expect(operator?.wire.privateKey).toBe(`PVT_K1_${BatchOperatorLabel}`)
     })
 
     it("writes cluster-keys.json with file mode 0600", () => {
@@ -181,31 +180,13 @@ describe("ClusterState", () => {
 
     it("refuses to capture an operator whose sponsored-creation step never ran", () => {
       const ctx = seededContext()
-      // Re-set the operator WITHOUT a chainAccount — the materialize-only state.
-      const { chainAccount: _dropped, ...materialized } =
-        ctx.keyStore.assertOperator(BatchOperatorAccount)
+      // Re-set the operator WITHOUT an `account` — the materialize-only state.
+      const { account: _dropped, ...materialized } =
+        ctx.keyStore.assertOperator(BatchOperatorLabel)
       ctx.keyStore.setOperator(materialized)
-      expect(() => ClusterState.captureKeys(ctx)).toThrow(
-        /has no chainAccount/
-      )
+      expect(() => ClusterState.captureKeys(ctx)).toThrow(/has no account/)
     })
 
-    it("REJECTS a legacy label/account-shaped operator record — no back-compat shim", () => {
-      const ctx = seededContext()
-      ClusterState.saveKeys(ctx.config, ClusterState.captureKeys(ctx))
-      const keysFile = ClusterState.keysFilePath(ctx.config),
-        legacy = JSON.parse(Fs.readFileSync(keysFile, "utf8"))
-      legacy.operators = legacy.operators.map(
-        ({ account, chainAccount, ...rest }) => ({
-          label: account,
-          account: chainAccount,
-          ...rest
-        })
-      )
-      Fs.writeFileSync(keysFile, JSON.stringify(legacy))
-      // A cluster-keys.json written before the rename is not a supported input.
-      expect(() => ClusterState.loadKeys(ctx.config)).toThrow(/chainAccount/)
-    })
   })
 
   describe("rehydrate", () => {
@@ -216,13 +197,13 @@ describe("ClusterState", () => {
       ClusterState.rehydrate(store, keys)
       expect(store.node(0).keys.k1.publicKey).toBe("PUB_K1_node0")
       // The store is keyed by the DURABLE handle, never the chain account.
-      expect(store.operator(BatchOperatorChainAccount)).toBeUndefined()
-      const operator = store.assertOperator(BatchOperatorAccount)
-      expect(operator.chainAccount).toBe(BatchOperatorChainAccount)
+      expect(store.operator(BatchOperatorAccount)).toBeUndefined()
+      const operator = store.assertOperator(BatchOperatorLabel)
+      expect(operator.account).toBe(BatchOperatorAccount)
       expect(operator.ethereum?.address).toBe(
         "0xabc0000000000000000000000000000000000a"
       )
-      expect(operator.solana?.publicKey).toBe(`PUB_ED_${BatchOperatorAccount}`)
+      expect(operator.solana?.publicKey).toBe(`PUB_ED_${BatchOperatorLabel}`)
     })
   })
 })

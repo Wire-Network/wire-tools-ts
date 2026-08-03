@@ -116,10 +116,10 @@ export namespace ClusterBuildDefaults {
     const config = cluster.context.config,
       producers = range(config.producerCount).map(index => producerName(index)),
       batchOperators = range(config.batchOperatorCount).map(index =>
-        Constants.batchOperatorAccount(index)
+        Constants.batchOperatorLabel(index)
       ),
       underwriters = range(config.underwriterCount).map(index =>
-        Constants.underwriterAccount(index)
+        Constants.underwriterLabel(index)
       ),
       producerNodes = NodeConfig.plan(config).filter(
         node => node.role === NodeRole.producer
@@ -336,8 +336,8 @@ export namespace ClusterBuildDefaults {
       "Producers",
       "Provision producer operators (account + node-shared identity)",
       {},
-      producers.map((account, index) => ({
-        account,
+      producers.map((label, index) => ({
+        label,
         type: OperatorType.PRODUCER,
         producerNodeIndex: producerNodeCount > 0 ? index % producerNodeCount : 0
       }))
@@ -788,8 +788,8 @@ export namespace ClusterBuildDefaults {
       "Provision the bootstrapped batch operators + underwriters",
       {},
       [
-        ...batchOperators.map((account, index) => ({
-          account,
+        ...batchOperators.map((label, index) => ({
+          label,
           type: OperatorType.BATCH,
           ethereumHdIndex: index + 1,
           isBootstrapped: true,
@@ -797,8 +797,8 @@ export namespace ClusterBuildDefaults {
           // needs none — anvil prefunds the operator HD accounts).
           airdropSolanaLamports: BatchOperatorAirdropLamports
         })),
-        ...underwriters.map((account, index) => ({
-          account,
+        ...underwriters.map((label, index) => ({
+          label,
           type: OperatorType.UNDERWRITER,
           ethereumHdIndex: config.batchOperatorCount + index + 1,
           isBootstrapped: false
@@ -830,7 +830,7 @@ export namespace ClusterBuildDefaults {
       .filter(node => node.role === NodeRole.operator)
       .forEach(node => {
         const actor =
-          node.batchOperatorAccount != null
+          node.batchOperatorLabel != null
             ? Actor.BatchOperator
             : Actor.Underwriter
         ClusterBuildPhase.create<C>(

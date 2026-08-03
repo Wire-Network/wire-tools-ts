@@ -37,8 +37,8 @@ function firstPhaseStepKinds(group: ClusterBuildPhaseGroup): string[] {
 describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
   it("returns a parallel PhaseGroup with one Phase per operator", () => {
     const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "Create ops", "provision ops", {}, [
-      { account: "batchopaaaa", type: OperatorType.BATCH, ethereumHdIndex: 1, isBootstrapped: true },
-      { account: "uwritaaaaaa", type: OperatorType.UNDERWRITER, ethereumHdIndex: 2, isBootstrapped: false }
+      { label: "batchopaaaa", type: OperatorType.BATCH, ethereumHdIndex: 1, isBootstrapped: true },
+      { label: "uwritaaaaaa", type: OperatorType.UNDERWRITER, ethereumHdIndex: 2, isBootstrapped: false }
     ])
     expect(group.config.parallel).toBe(true)
     expect(group.children.length).toBe(2)
@@ -50,7 +50,7 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
 
   it("a producer Phase materializes from its node + creates the account with ITS key (no authex/register)", () => {
     const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "Producers", "producers", {}, [
-      { account: "defproducera", type: OperatorType.PRODUCER, producerNodeIndex: 0 }
+      { label: "defproducera", type: OperatorType.PRODUCER, producerNodeIndex: 0 }
     ])
     const kinds = firstPhaseStepKinds(group)
     expect(kinds).toEqual([
@@ -66,7 +66,7 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
 
   it("a bootstrap batch/uw Phase (no funding) sponsors the account, authex-links both chains, registers", () => {
     const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "ops", "ops", {}, [
-      { account: "batchopaaaa", type: OperatorType.BATCH, ethereumHdIndex: 1, isBootstrapped: true }
+      { label: "batchopaaaa", type: OperatorType.BATCH, ethereumHdIndex: 1, isBootstrapped: true }
     ])
     const kinds = firstPhaseStepKinds(group)
     expect(kinds).toEqual([
@@ -81,7 +81,7 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
   it("a flow op WITH funding includes fund + airdrop steps", () => {
     const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "flow", "flow", {}, [
       {
-        account: "depositoraaa",
+        label: "depositoraaa",
         type: OperatorType.BATCH,
         ethereumHdIndex: 35,
         isBootstrapped: false,
@@ -99,11 +99,15 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
 const GeneratedAccount = "wireno.x3f9k"
 /** The operator's DURABLE handle — the keystore key, never the sponsor nonce. */
 const OperatorHandle = "batchopaaaa"
+/** A FOREIGN sponsors row's nonce — never the one this operator's `newuser` minted. */
+const DecoyNonce = "zzzzzzzzzzzz"
+/** The account the foreign row carries — adopting it means the nonce predicate never ran. */
+const DecoyAccount = "wireno.decoy"
 
 /** Seed a key store holding one materialized (pre-creation) OPP operator. */
 function seededKeyStore(): ClusterKeyStore {
   return new ClusterKeyStore().setOperator({
-    account: OperatorHandle,
+    label: OperatorHandle,
     type: OperatorType.BATCH,
     wire: { type: KeyType.K1, publicKey: "PUB_K1_op", privateKey: "PVT_K1_op" }
   })
@@ -111,9 +115,12 @@ function seededKeyStore(): ClusterKeyStore {
 
 /**
  * A fake typed-contract ctx whose `sponsors` table behaves like the depot: a row
- * appears ONLY for a nonce that `newuser` was actually called with. `emitRow`
- * off makes every read miss, which is how the "no row after newuser" case is
- * exercised without contriving a nonce value.
+ * appears ONLY for a nonce that `newuser` was actually called with, AHEAD of it
+ * a foreign operator's row (the roster is shared, scoped to the node owner) so
+ * the read-back's nonce predicate is genuinely exercised — a read that returned
+ * `rows[0]` would adopt {@link DecoyAccount}. `emitRow` off makes every read
+ * miss, which is how the "no row after newuser" case is exercised without
+ * contriving a nonce value.
  */
 function fakeSponsorContext(emitRow = true) {
   const nonces: string[] = [],
@@ -130,7 +137,10 @@ function fakeSponsorContext(emitRow = true) {
     sponsorsQuery = jest.fn(async (args: WireClient.TableQueryArgs) => ({
       scope: args.scope,
       rows: emitRow
-        ? nonces.map(nonce => ({ nonce, username: GeneratedAccount }))
+        ? [
+            { nonce: DecoyNonce, username: DecoyAccount },
+            ...nonces.map(nonce => ({ nonce, username: GeneratedAccount }))
+          ]
         : [],
       more: false
     })),
@@ -153,11 +163,11 @@ function fakeSponsorContext(emitRow = true) {
 /** The step input every sponsored-creation test drives the runner with. */
 const SponsoredInput = {
   kind: "WireOperatorProvisioningTool.SponsoredAccountCreationInput" as const,
-  account: OperatorHandle
+  label: OperatorHandle
 }
 
 describe("WireOperatorProvisioningTool.runSponsoredAccountCreation", () => {
-  it("invokes roa::newuser as the node owner and adopts the generated name into chainAccount", async () => {
+  it("invokes roa::newuser as the node owner and adopts the generated name into account", async () => {
     const { ctx, keyStore, newuserInvoke } = fakeSponsorContext()
     await WireOperatorProvisioningTool.runSponsoredAccountCreation(
       ctx,
@@ -174,9 +184,9 @@ describe("WireOperatorProvisioningTool.runSponsoredAccountCreation", () => {
       ]
     })
     const operator = keyStore.assertOperator(OperatorHandle)
-    // The read-back lands on chainAccount; the durable handle is untouched.
-    expect(operator.chainAccount).toBe(GeneratedAccount)
-    expect(operator.account).toBe(OperatorHandle)
+    // The read-back lands on account; the durable handle is untouched.
+    expect(operator.account).toBe(GeneratedAccount)
+    expect(operator.label).toBe(OperatorHandle)
   })
 
   it("passes a FRESH single-use nonce — never the operator's durable handle", async () => {
@@ -209,7 +219,7 @@ describe("WireOperatorProvisioningTool.runSponsoredAccountCreation", () => {
   })
 
   it("reads the sponsors table back BY THE MINTED NONCE, with an explicit row limit", async () => {
-    const { ctx, sponsorsQuery } = fakeSponsorContext()
+    const { ctx, keyStore, sponsorsQuery } = fakeSponsorContext()
     await WireOperatorProvisioningTool.runSponsoredAccountCreation(
       ctx,
       SponsoredInput,
@@ -220,6 +230,12 @@ describe("WireOperatorProvisioningTool.runSponsoredAccountCreation", () => {
     const [args] = sponsorsQuery.mock.calls[0]
     expect(args.scope).toBe(Constants.BOOTSTRAP_NODE_OWNER)
     expect(args.limit).toBeGreaterThan(0)
+    // The foreign row precedes this operator's in the returned page, so the
+    // adopted account proves the NONCE selected the row — a read that took
+    // `rows[0]` (or dropped the predicate) would have adopted the decoy.
+    const operator = keyStore.assertOperator(OperatorHandle)
+    expect(operator.account).toBe(GeneratedAccount)
+    expect(operator.account).not.toBe(DecoyAccount)
   })
 
   it("propagates a failed sponsors read instead of treating it as 'no row yet'", async () => {
@@ -249,34 +265,36 @@ describe("WireOperatorProvisioningTool.runSponsoredAccountCreation", () => {
 })
 
 describe("WireOperatorProvisioningTool.runRegistration", () => {
-  it("registers the operator's RESOLVED chainAccount, not its durable handle", async () => {
+  it("registers the operator's RESOLVED account, not its durable handle", async () => {
     const { ctx, keyStore, regoperatorInvoke } = fakeSponsorContext()
     keyStore.setOperator({
       ...keyStore.assertOperator(OperatorHandle),
-      chainAccount: GeneratedAccount
+      account: GeneratedAccount
     })
     await WireOperatorProvisioningTool.runRegistration(
       ctx,
       {
         kind: "WireOperatorProvisioningTool.RegistrationInput",
-        account: OperatorHandle,
+        label: OperatorHandle,
         type: OperatorType.BATCH,
         isBootstrapped: true
       },
       new AbortController().signal
     )
     expect(regoperatorInvoke).toHaveBeenCalledTimes(1)
+    // `account:` is the GENERATED ABI field on `opreg::regoperator` — it never
+    // renames with the harness, and it carries the on-chain account.
     const [data] = regoperatorInvoke.mock.calls[0]
     expect(data.account).toBe(GeneratedAccount)
     expect(data.account).not.toBe(OperatorHandle)
     expect(data.is_bootstrapped).toBe(true)
-    expect(data.type).toBeDefined()
+    expect(data.type).toBe(SysioContracts.SysioOpregOperatortype.OPERATOR_TYPE_BATCH)
   })
 })
 
 describe("planOperatorAccountProvisioning — outpost-chain funding gate (H3)", () => {
   const FundedSpec = {
-    account: "depositoraaa",
+    label: "depositoraaa",
     type: OperatorType.BATCH,
     ethereumHdIndex: 35,
     isBootstrapped: false,

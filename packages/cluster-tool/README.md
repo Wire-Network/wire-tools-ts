@@ -81,7 +81,7 @@ the path flags.
 | `--build-path` | | **required** | `wire-sysio` build dir (with `bin/nodeop`) |
 | `--ethereum-path` | | **required** | `wire-ethereum` repo (anvil + outpost deploy) |
 | `--solana-path` | | **required** | `wire-solana` repo (`solana-test-validator` + `opp-outpost`) |
-| `--force` | | `false` | overwrite an existing cluster directory |
+| `--force` | | `false` | replace an existing cluster directory. `create` REQUIRES this when `--cluster-path` already exists — it fails fast otherwise rather than overlaying a new cluster onto the old one's chain state. Refuses while the existing cluster's daemons are still live. |
 | `--node-count` | `-n` | `1` | producer node **processes** |
 | `--producer-count` | `-p` | `21` | producer **accounts** registered on-chain |
 | `--batch-operator-count` | `-b` | `3` | batch operators |

@@ -37,9 +37,9 @@ describe("NodeConfig", () => {
       const operators = nodes.filter(n => n.role === NodeRole.operator)
       expect(operators).toHaveLength(4)
       expect(
-        operators.filter(n => n.batchOperatorAccount !== null)
+        operators.filter(n => n.batchOperatorLabel !== null)
       ).toHaveLength(3)
-      expect(operators.filter(n => n.underwriterAccount !== null)).toHaveLength(
+      expect(operators.filter(n => n.underwriterLabel !== null)).toHaveLength(
         1
       )
     })
@@ -54,13 +54,13 @@ describe("NodeConfig", () => {
       expect(producer?.producers[0]).toBe("defproducera")
     })
 
-    it("names operator accounts from the Constants generators", () => {
+    it("names operator labels from the Constants generators", () => {
       const batchOps = nodes
-        .filter(n => n.batchOperatorAccount !== null)
-        .map(n => n.batchOperatorAccount)
+        .filter(n => n.batchOperatorLabel !== null)
+        .map(n => n.batchOperatorLabel)
       expect(batchOps).toContain("batchop.a")
       expect(
-        nodes.find(n => n.underwriterAccount !== null)?.underwriterAccount
+        nodes.find(n => n.underwriterLabel !== null)?.underwriterLabel
       ).toBe("uwrit.a")
     })
   })
@@ -147,7 +147,7 @@ describe("NodeConfig", () => {
     })
 
     it("renders operator config with read-mode and WITHOUT an account line (daemon CLI args carry the generated account)", () => {
-      const batchOp = nodes.find(n => n.batchOperatorAccount !== null)!
+      const batchOp = nodes.find(n => n.batchOperatorLabel !== null)!
       const ini = batchOp.ini.render()
       expect(ini).toContain(
         `read-mode = ${WireClient.FinalityType.irreversible}`

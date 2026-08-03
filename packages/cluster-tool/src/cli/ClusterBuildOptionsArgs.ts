@@ -328,7 +328,10 @@ export function buildOptionShape(
     buildPath: requiredLeaf(OptionLeafType.string, "wire-sysio build dir"),
     ethereumPath: requiredLeaf(OptionLeafType.string, "wire-ethereum repo"),
     solanaPath: requiredLeaf(OptionLeafType.string, "wire-solana repo"),
-    force: leaf(false, "overwrite an existing cluster directory"),
+    force: leaf(
+      false,
+      "replace an existing cluster directory (required when --cluster-path already exists; refuses while its daemons are live)"
+    ),
     // ── topology ──
     nodeCount: leaf(CliDefault.nodeCount, "producer node process count"),
     producerCount: leaf(CliDefault.producerCount, "producer account count"),
