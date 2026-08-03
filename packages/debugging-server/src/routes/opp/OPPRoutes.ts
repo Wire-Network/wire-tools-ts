@@ -81,10 +81,7 @@ export namespace OPPRoutes {
         const { batchOpName, endpointsType } = reqMessage
 
         // 1. protobuf `bytes` fields serialize as base64 in JSON encoding
-        const envelopeBytes = Buffer.from(
-          envelopeData as unknown as string,
-          "base64"
-        )
+        const envelopeBytes = Buffer.from(envelopeData, "base64")
 
         // 2. Data checksum (sha256 of the raw envelope bytes, truncated)
         const checksum = createHash("sha256")

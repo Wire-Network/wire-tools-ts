@@ -327,7 +327,7 @@ export namespace ClusterState {
       return {
         ...custodyFree,
         awsSecretId: sourceFor(account, keyPair.type).awsSecretId
-      } as unknown as KeyPair<T>
+      } as KeyPair<T>
     }
   }
 

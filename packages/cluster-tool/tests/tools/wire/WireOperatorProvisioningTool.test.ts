@@ -3,11 +3,9 @@ import { KeyType, Name, SysioContracts } from "@wireio/sdk-core"
 import { WireOperatorProvisioningTool } from "@wireio/cluster-tool/tools/wire"
 import { Report } from "@wireio/cluster-tool/report"
 import { Constants } from "@wireio/cluster-tool/Constants"
-import type { WireClient } from "@wireio/cluster-tool/clients/wire"
 import {
   ClusterBuild,
   ClusterBuildPhase,
-  ClusterKeyStore,
   type ClusterBuildContext,
   type ClusterBuildParent,
   type ClusterBuildPhaseBase,
@@ -104,59 +102,61 @@ const DecoyNonce = "zzzzzzzzzzzz"
 /** The account the foreign row carries — adopting it means the nonce predicate never ran. */
 const DecoyAccount = "wireno.decoy"
 
-/** Seed a key store holding one materialized (pre-creation) OPP operator. */
-function seededKeyStore(): ClusterKeyStore {
-  return new ClusterKeyStore().setOperator({
+/**
+ * A REAL {@link ClusterBuildContext} whose `sponsors` table behaves like the
+ * depot: a row appears ONLY for a nonce that `newuser` was actually called
+ * with, AHEAD of it a foreign operator's row (the roster is shared, scoped to
+ * the node owner) so the read-back's nonce predicate is genuinely exercised — a
+ * read that returned `rows[0]` would adopt {@link DecoyAccount}. `emitRow` off
+ * makes every read miss, which is how the "no row after newuser" case is
+ * exercised without contriving a nonce value.
+ *
+ * Every double is a `jest.spyOn` against the real member it replaces, so the
+ * doubled signatures are the shipped ones — a contract-client or key-store
+ * change breaks this fixture instead of sliding past a hand-built stand-in.
+ * `getSysioContract` mints a fresh Proxy (and a fresh invoker cache) per call,
+ * so the two clients spied here are ALSO pinned as its return values.
+ */
+function fakeSponsorContext(emitRow = true) {
+  const nonces: string[] = [],
+    ctx = fixtureContext(),
+    { keyStore } = ctx
+  keyStore.setOperator({
     label: OperatorHandle,
     type: OperatorType.BATCH,
     wire: { type: KeyType.K1, publicKey: "PUB_K1_op", privateKey: "PVT_K1_op" }
   })
-}
 
-/**
- * A fake typed-contract ctx whose `sponsors` table behaves like the depot: a row
- * appears ONLY for a nonce that `newuser` was actually called with, AHEAD of it
- * a foreign operator's row (the roster is shared, scoped to the node owner) so
- * the read-back's nonce predicate is genuinely exercised — a read that returned
- * `rows[0]` would adopt {@link DecoyAccount}. `emitRow` off makes every read
- * miss, which is how the "no row after newuser" case is exercised without
- * contriving a nonce value.
- */
-function fakeSponsorContext(emitRow = true) {
-  const nonces: string[] = [],
-    newuserInvoke = jest.fn(
-      async (
-        data: SysioContracts.SysioRoaNewuserAction,
-        _options: WireClient.InvocationOptions
-      ) => {
-        nonces.push(data.nonce)
-        return {}
-      }
+  const roa = ctx.wire.getSysioContract(SysioContracts.SysioContractName.roa),
+    opreg = ctx.wire.getSysioContract(
+      SysioContracts.SysioContractName.opreg
     ),
-    regoperatorInvoke = jest.fn().mockResolvedValue({}),
-    sponsorsQuery = jest.fn(async (args: WireClient.TableQueryArgs) => ({
-      scope: args.scope,
-      rows: emitRow
-        ? [
-            { nonce: DecoyNonce, username: DecoyAccount },
-            ...nonces.map(nonce => ({ nonce, username: GeneratedAccount }))
-          ]
-        : [],
-      more: false
-    })),
-    keyStore = seededKeyStore(),
-    ctx = {
-      keyStore,
-      wire: {
-        getSysioContract: (name: string) =>
-          name === "roa"
-            ? {
-                actions: { newuser: { invoke: newuserInvoke } },
-                tables: { sponsors: { query: sponsorsQuery } }
-              }
-            : { actions: { regoperator: { invoke: regoperatorInvoke } } }
-      }
-    } as unknown as ClusterBuildContext
+    newuserInvoke = jest
+      .spyOn(roa.actions.newuser, "invoke")
+      .mockImplementation(async data => {
+        nonces.push(data.nonce)
+        return undefined
+      }),
+    regoperatorInvoke = jest
+      .spyOn(opreg.actions.regoperator, "invoke")
+      .mockResolvedValue(undefined),
+    sponsorsQuery = jest
+      .spyOn(roa.tables.sponsors, "query")
+      .mockImplementation(async args => ({
+        scope: args.scope,
+        rows: emitRow
+          ? [
+              { nonce: DecoyNonce, username: DecoyAccount },
+              ...nonces.map(nonce => ({ nonce, username: GeneratedAccount }))
+            ]
+          : [],
+        more: false
+      }))
+  jest
+    .spyOn(ctx.wire, "getSysioContract")
+    .mockImplementation(name =>
+      name === SysioContracts.SysioContractName.roa ? roa : opreg
+    )
   return { ctx, keyStore, nonces, newuserInvoke, regoperatorInvoke, sponsorsQuery }
 }
 

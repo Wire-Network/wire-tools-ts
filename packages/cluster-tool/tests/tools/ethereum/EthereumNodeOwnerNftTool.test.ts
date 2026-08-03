@@ -80,7 +80,7 @@ describe("EthereumNodeOwnerNftTool.commitNode", () => {
         calls.push(args)
         return { wait: async () => receipt }
       }
-    } as unknown as BarContract
+    } as BarContract
     return { contract, calls }
   }
 

@@ -124,7 +124,7 @@ export function keyPairFromPrivate<T extends KeyType>(
           }) as KeyPair
       )
   // The ONE cast — TS cannot correlate the runtime `match` arm with `T`.
-  return keyPair as unknown as KeyPair<T>
+  return keyPair as KeyPair<T>
 }
 
 // ── stored EthereumKeyPair → live objects ───────────────────────────────────

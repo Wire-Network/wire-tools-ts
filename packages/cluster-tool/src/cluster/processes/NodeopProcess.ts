@@ -228,7 +228,7 @@ export class NodeopProcess extends ManagedProcess {
     return NodeopProcess.StartupTimeoutMs
   }
 
-  protected verifyReady(): Promise<boolean> {
+  verifyReady(): Promise<boolean> {
     return probeEndpoint(`${this.httpUrl}${NodeopProcess.HealthCheckPath}`)
   }
 
