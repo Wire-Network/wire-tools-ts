@@ -68,6 +68,18 @@ const MinFromWireAmount = 100_000_000
  */
 const FromWireRevertFeeBps = 10
 /**
+ * Nodeop processes started concurrently within a node-start group.
+ *
+ * Node starts are bounded — NOT unbounded — because every node joins the same
+ * p2p mesh and begins syncing the moment it comes up. Starting a whole wave at
+ * once (43 nodes landed within 6ms at a 21-producer topology) starves the
+ * producers' vote propagation: QCs stop forming, LIB freezes while head keeps
+ * advancing, and the next `pushActionAndWait` at irreversible finality hangs
+ * until its transaction expires. Raising this trades bootstrap wall-clock for
+ * that risk.
+ */
+const NodeStartConcurrency = 4
+/**
  * Epochs a PENDING uwreq may wait for its underwriter race before
  * `sysio.uwrit::pruneuwreqs` expires it (refund/revert + EXPIRED). Mirrors
  * the contract default; flow races resolve within an epoch, so the timeout
@@ -219,7 +231,7 @@ export namespace ClusterBuildDefaults {
       prerequisites,
       "ProducerNodes",
       "Start producer nodes",
-      { parallel: true }
+      { parallel: true, concurrency: NodeStartConcurrency }
     )
     producerNodes.forEach(node =>
       ClusterBuildPhase.create<C>(
@@ -853,7 +865,7 @@ export namespace ClusterBuildDefaults {
       postContractDeployment,
       "OperatorNodes",
       "Start operator nodes",
-      { parallel: true }
+      { parallel: true, concurrency: NodeStartConcurrency }
     )
     NodeConfig.plan(config)
       .filter(node => node.role === NodeRole.operator)
