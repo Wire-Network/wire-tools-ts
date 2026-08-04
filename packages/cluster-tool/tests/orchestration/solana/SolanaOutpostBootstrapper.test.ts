@@ -31,6 +31,23 @@ describe("SolanaOutpostBootstrapper.SplReserveSpecifications", () => {
   })
 })
 
+describe("SolanaOutpostBootstrapper.PdaSeed", () => {
+  it("carries the liqsol global_config seed matching the on-chain program", () => {
+    // MUST match wire-solana/programs/liqsol-core/src/states/global_config.rs
+    // (`GlobalConfig::SEEDS`) — every OPP admin instruction derives the gate PDA
+    // from it, so a drift here fails `has_one = admin` on-chain.
+    expect(SolanaOutpostBootstrapper.PdaSeed.GlobalConfig).toBe("global_config")
+  })
+})
+
+describe("SolanaOutpostBootstrapper.BpfLoaderUpgradeableProgramId", () => {
+  it("is the canonical upgradeable-loader id (parent of every ProgramData PDA)", () => {
+    expect(SolanaOutpostBootstrapper.BpfLoaderUpgradeableProgramId.toBase58()).toBe(
+      "BPFLoaderUpgradeab1e11111111111111111111111"
+    )
+  })
+})
+
 describe("SolanaOutpostBootstrapper constructor", () => {
   let rpcUrl: string
   beforeAll(async () => {

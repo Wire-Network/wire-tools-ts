@@ -39,6 +39,11 @@ import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 const OUTPOST_CONFIG_SEED = Buffer.from("outpost_config")
 /** Seed for the `OutboundMessageBuffer` singleton PDA. */
 const OUTBOUND_MESSAGE_BUFFER_SEED = Buffer.from("outbound_message_buffer")
+/** Seed for the liqsol `GlobalConfig` admin-gate PDA (mirrors
+ *  `wire-solana/programs/liqsol-core/src/states/global_config.rs`'s
+ *  `GlobalConfig::SEEDS`). `add_attestation` checks `has_one = admin`
+ *  against it, so every caller must pass it. */
+const GLOBAL_CONFIG_SEED = Buffer.from("global_config")
 
 /** Per-staker entry in an `emitYieldBatch` invocation. Mirrors the ETH
  *  side's `YieldEntry` shape for ergonomic symmetry across the two
@@ -149,6 +154,10 @@ export async function emitSolanaYield(
     [OUTBOUND_MESSAGE_BUFFER_SEED],
     programId
   )
+  const [globalConfigPda] = PublicKey.findProgramAddressSync(
+    [GLOBAL_CONFIG_SEED],
+    programId
+  )
 
   // `add_attestation`'s `AttestationType` arg is declared in the IDL as a
   // unit enum, but the proto-generated Rust enum carries a custom Borsh
@@ -181,12 +190,16 @@ export async function emitSolanaYield(
   ixData.writeUInt32LE(dataBuf.length, off); off += 4
   dataBuf.copy(ixData, off)
 
-  // `AddAttestation` declares exactly 3 accounts (authority, config,
-  // outbound_message_buffer) — the keys below must match that list.
+  // `AddAttestation` declares exactly 4 accounts, IN THIS ORDER (admin,
+  // global_config, config, outbound_message_buffer) — the keys below must match
+  // that list. `global_config` is the liqsol admin gate (`has_one = admin`):
+  // the signer here is the deployer the validator installed as the program's
+  // upgrade authority, which `initialize_global_config` recorded as `admin`.
   const ix = new TransactionInstruction({
     programId,
     keys: [
       { pubkey: authority.publicKey,         isSigner: true,  isWritable: true  },
+      { pubkey: globalConfigPda,             isSigner: false, isWritable: false },
       { pubkey: configPda,                   isSigner: false, isWritable: false },
       { pubkey: outboundMessageBufferPda,    isSigner: false, isWritable: true  }
     ],
