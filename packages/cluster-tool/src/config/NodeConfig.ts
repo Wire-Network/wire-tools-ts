@@ -205,6 +205,45 @@ export namespace NodeConfig {
   /** The producer the bios node runs. */
   export const BiosProducer = "sysio"
 
+  /** The bios node's contribution to the loopback peer allowance. */
+  export const BiosNodeCount = 1
+
+  /** Extra loopback inbound slots for flow-provisioned ad-hoc daemons. */
+  export const AdHocDaemonPeerHeadroom = 3
+
+  /**
+   * How many cluster peers ONE node must tolerate: the whole planned topology
+   * (bios + producer nodes + batch operators + underwriters) plus headroom for
+   * flow-provisioned ad-hoc daemons.
+   *
+   * Every node is wired to every other (a full mesh on loopback), so this is
+   * the bound for BOTH `--p2p-max-nodes-per-host` and `--max-clients`. Capping
+   * either BELOW the mesh size is silently fatal at scale: `max-clients` limits
+   * INBOUND p2p connections, so a fixed cap smaller than the peer count makes
+   * each node refuse the surplus dials. The mesh never fully forms, blocks
+   * route the long way, propagation latency explodes, and finalizers fall
+   * outside their voting window — they can then only vote WEAK, no quorum
+   * certificate forms, and LIB freezes while head keeps advancing. Every
+   * `pushActionAndWait` at irreversible finality then hangs forever.
+   *
+   * (2026-08-04: a 21-producer/21-batch-op create wired 43 peers per node
+   * against a fixed `max-clients = 25`; LIB froze at 546 with head past 600
+   * and the bootstrap died in `BringUpAccounts`. Small clusters hid it — at 1
+   * producer the mesh is ~2 connections.)
+   *
+   * @param cluster - The resolved cluster config (carries the topology counts).
+   * @returns The per-node peer capacity.
+   */
+  export function peerCapacity(cluster: ClusterConfig): number {
+    return (
+      cluster.nodeCount +
+      cluster.batchOperatorCount +
+      cluster.underwriterCount +
+      BiosNodeCount +
+      AdHocDaemonPeerHeadroom
+    )
+  }
+
   /**
    * The advertised (dialable) address for one node's binding: its per-node
    * `advertiseAddress` when bound (multi-host mesh), else the fleet-wide
