@@ -1,8 +1,11 @@
 import {
   ClusterBuild,
   ClusterBuildContext,
+  ClusterBuildFailureMode,
   ClusterBuildPhase,
-  ClusterBuildStep, pollUntil } from "@wireio/cluster-tool/orchestration"
+  ClusterBuildStep,
+  pollUntil
+} from "@wireio/cluster-tool/orchestration"
 import { getLogger } from "@wireio/cluster-tool/logging"
 import { Report } from "@wireio/cluster-tool/report"
 import { sleep } from "@wireio/cluster-tool/utils"
@@ -15,14 +18,28 @@ function newBuild(): ClusterBuild {
 }
 
 const ok = (order: string[], name: string) =>
-  ClusterBuildStep.create(Report.Actor.Sysio, name, name, {}, null, async () => {
-    order.push(name)
-  })
+  ClusterBuildStep.create(
+    Report.Actor.Sysio,
+    name,
+    name,
+    {},
+    null,
+    async () => {
+      order.push(name)
+    }
+  )
 
 const fail = (name: string) =>
-  ClusterBuildStep.create(Report.Actor.Sysio, name, name, {}, null, async () => {
-    throw new Error(`${name} boom`)
-  })
+  ClusterBuildStep.create(
+    Report.Actor.Sysio,
+    name,
+    name,
+    {},
+    null,
+    async () => {
+      throw new Error(`${name} boom`)
+    }
+  )
 
 /** Run a phase to its single Report.Phase node (the base returns Node[]). */
 const runOne = (phase: ClusterBuildPhase): Promise<Report.Phase> =>
@@ -66,19 +83,68 @@ describe("ClusterBuildPhase executor", () => {
     expect(result.succeeded).toBe(false)
   })
 
+  it("collects independent step failures without skipping the tail", async () => {
+    const order: string[] = []
+    const phase = ClusterBuildPhase.create(newBuild(), "P", "d", [], {
+      failureMode: ClusterBuildFailureMode.collect
+    }).push(ok(order, "a"), fail("b"), ok(order, "c"))
+    const result = await runOne(phase)
+    expect(order).toEqual(["a", "c"])
+    expect(result.steps.map(step => step.status)).toEqual([
+      Report.StepStatus.ok,
+      Report.StepStatus.failed,
+      Report.StepStatus.ok
+    ])
+  })
+
+  it("does not abort parallel siblings in collect mode", async () => {
+    const order: string[] = [],
+      delayed = ClusterBuildStep.create(
+        Report.Actor.Sysio,
+        "delayed",
+        "delayed",
+        {},
+        null,
+        async (_context, _input, signal) => {
+          await sleep(10)
+          signal.throwIfAborted()
+          order.push("delayed")
+        }
+      ),
+      phase = ClusterBuildPhase.create(newBuild(), "P", "d", [], {
+        parallelize: true,
+        failureMode: ClusterBuildFailureMode.collect
+      }).push(fail("immediate"), delayed)
+    const result = await runOne(phase)
+    expect(order).toEqual(["delayed"])
+    expect(result.steps.map(step => step.status)).toEqual([
+      Report.StepStatus.failed,
+      Report.StepStatus.ok
+    ])
+  })
+
   it("runs steps in parallel when parallelize", async () => {
     const order: string[] = []
     const timed = (name: string, ms: number) =>
-      ClusterBuildStep.create(Report.Actor.Sysio, name, name, {}, null, async () => {
-        await sleep(ms)
-        order.push(name)
-      })
+      ClusterBuildStep.create(
+        Report.Actor.Sysio,
+        name,
+        name,
+        {},
+        null,
+        async () => {
+          await sleep(ms)
+          order.push(name)
+        }
+      )
     const phase = ClusterBuildPhase.create(newBuild(), "P", "d", [], {
       parallelize: true
     }).push(timed("slow", 40), timed("fast", 5))
     const result = await runOne(phase)
     expect(order).toEqual(["fast", "slow"]) // started together; fast lands first
-    expect(result.steps.every(step => step.status === Report.StepStatus.ok)).toBe(true)
+    expect(
+      result.steps.every(step => step.status === Report.StepStatus.ok)
+    ).toBe(true)
   })
 
   it("fails a step that exceeds its timeout", async () => {
@@ -141,14 +207,10 @@ describe("ClusterBuildPhase executor", () => {
   })
 
   it("captures actor + typed input into the StepResult", async () => {
-    const step = ClusterBuildStep.create<ClusterBuildContext, { kind: "T"; v: number }>(
-      Report.Actor.User,
-      "s",
-      "s",
-      {},
-      { kind: "T", v: 7 },
-      async () => {}
-    )
+    const step = ClusterBuildStep.create<
+      ClusterBuildContext,
+      { kind: "T"; v: number }
+    >(Report.Actor.User, "s", "s", {}, { kind: "T", v: 7 }, async () => {})
     const phase = ClusterBuildPhase.create(newBuild(), "P", "d").push(step)
     const result = await runOne(phase)
     expect(result.steps[0].actor).toBe(Report.Actor.User)
@@ -164,7 +226,12 @@ describe("step timeout scaling (WIRE_FLOW_TIMEOUT_SCALE)", () => {
   it("a step ceiling stretches by the flow-wide scale", async () => {
     process.env[pollUntil.TimeoutScaleEnvVar] = "3"
     const build = newBuild()
-    const phase = ClusterBuildPhase.create(build, "P", "scaled ceiling", []).push(
+    const phase = ClusterBuildPhase.create(
+      build,
+      "P",
+      "scaled ceiling",
+      []
+    ).push(
       ClusterBuildStep.create(
         Report.Actor.Sysio,
         "slow-but-fine",
@@ -177,12 +244,19 @@ describe("step timeout scaling (WIRE_FLOW_TIMEOUT_SCALE)", () => {
       )
     )
     const nodes = await phase.run(new AbortController().signal)
-    expect((nodes[0] as Report.Phase).steps[0].status).toBe(Report.StepStatus.ok)
+    expect((nodes[0] as Report.Phase).steps[0].status).toBe(
+      Report.StepStatus.ok
+    )
   })
 
   it("without the scale the same step times out (control)", async () => {
     const build = newBuild()
-    const phase = ClusterBuildPhase.create(build, "P", "unscaled ceiling", []).push(
+    const phase = ClusterBuildPhase.create(
+      build,
+      "P",
+      "unscaled ceiling",
+      []
+    ).push(
       ClusterBuildStep.create(
         Report.Actor.Sysio,
         "too-slow",
@@ -200,4 +274,3 @@ describe("step timeout scaling (WIRE_FLOW_TIMEOUT_SCALE)", () => {
     expect(step.error?.message).toContain("step exceeded")
   })
 })
-
