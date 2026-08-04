@@ -8,7 +8,7 @@ import {
 } from "@wireio/cluster-tool/config"
 import { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { Localhost } from "@wireio/cluster-tool/utils"
-import { fixtureConfig } from "./clusterConfigFixture.js"
+import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
 
 describe("NodeConfig", () => {
   describe("producerName", () => {
@@ -31,9 +31,9 @@ describe("NodeConfig", () => {
       const operators = nodes.filter(n => n.role === NodeRole.operator)
       expect(operators).toHaveLength(4)
       expect(
-        operators.filter(n => n.batchOperatorAccount !== null)
+        operators.filter(n => n.batchOperatorLabel !== null)
       ).toHaveLength(3)
-      expect(operators.filter(n => n.underwriterAccount !== null)).toHaveLength(
+      expect(operators.filter(n => n.underwriterLabel !== null)).toHaveLength(
         1
       )
     })
@@ -50,12 +50,73 @@ describe("NodeConfig", () => {
 
     it("names operator accounts from the Constants generators", () => {
       const batchOps = nodes
-        .filter(n => n.batchOperatorAccount !== null)
-        .map(n => n.batchOperatorAccount)
+        .filter(n => n.batchOperatorLabel !== null)
+        .map(n => n.batchOperatorLabel)
       expect(batchOps).toContain("batchop.a")
       expect(
-        nodes.find(n => n.underwriterAccount !== null)?.underwriterAccount
+        nodes.find(n => n.underwriterLabel !== null)?.underwriterLabel
       ).toBe("uwrit.a")
+    })
+  })
+
+  describe("multi-host advertise addresses", () => {
+    const ProducerAdvertiseAddress = "10.0.0.11"
+    const meshed = fixtureConfig({
+      bind: {
+        ...PersistedFixture.bind,
+        nodeop: {
+          ...PersistedFixture.bind.nodeop,
+          ports: {
+            ...PersistedFixture.bind.nodeop.ports,
+            producers: [
+              {
+                ...PersistedFixture.bind.nodeop.ports.producers[0],
+                advertiseAddress: ProducerAdvertiseAddress
+              }
+            ]
+          }
+        }
+      }
+    })
+    const nodes = NodeConfig.plan(meshed)
+
+    it("advertiseAddressFor prefers the per-node address, else the dialable bind address", () => {
+      expect(
+        NodeConfig.advertiseAddressFor(
+          meshed,
+          meshed.bind.nodeop.ports.producers[0]
+        )
+      ).toBe(ProducerAdvertiseAddress)
+      expect(
+        NodeConfig.advertiseAddressFor(meshed, meshed.bind.nodeop.ports.bios)
+      ).toBe(Localhost)
+    })
+
+    it("each node advertises its own address", () => {
+      expect(
+        nodes.find(n => n.role === NodeRole.producer)?.advertiseAddress
+      ).toBe(ProducerAdvertiseAddress)
+      expect(nodes[0].advertiseAddress).toBe(Localhost)
+    })
+
+    it("peers dial the producer at its advertised address; every other peer stays on the shared address", () => {
+      const producerP2p = meshed.bind.nodeop.ports.producers[0].p2p,
+        bios = nodes[0]
+      expect(bios.peerEndpoints).toContain(
+        `${ProducerAdvertiseAddress}:${producerP2p}`
+      )
+      bios.peerEndpoints
+        .filter(endpoint => !endpoint.startsWith(ProducerAdvertiseAddress))
+        .forEach(endpoint =>
+          expect(endpoint.startsWith(`${Localhost}:`)).toBe(true)
+        )
+    })
+
+    it("renders the advertised p2p-server-address into the node ini", () => {
+      const producer = nodes.find(n => n.role === NodeRole.producer)!
+      expect(producer.ini.render()).toContain(
+        `p2p-server-address = ${ProducerAdvertiseAddress}:${producer.ports.p2p}`
+      )
     })
   })
 
@@ -79,15 +140,14 @@ describe("NodeConfig", () => {
       )
     })
 
-    it("renders operator config with read-mode + the operator account", () => {
-      const batchOp = nodes.find(n => n.batchOperatorAccount !== null)!
+    it("renders operator config with read-mode and WITHOUT an account line (daemon CLI args carry the generated account)", () => {
+      const batchOp = nodes.find(n => n.batchOperatorLabel !== null)!
       const ini = batchOp.ini.render()
       expect(ini).toContain(
         `read-mode = ${WireClient.FinalityType.irreversible}`
       )
-      expect(ini).toContain(
-        `batch-operator-account = ${batchOp.batchOperatorAccount}`
-      )
+      expect(ini).not.toContain("batch-operator-account")
+      expect(ini).not.toContain("underwriter-account")
     })
 
     it("lists every peer's p2p endpoint", () => {

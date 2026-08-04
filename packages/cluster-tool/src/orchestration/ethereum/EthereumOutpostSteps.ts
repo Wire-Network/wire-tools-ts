@@ -1,6 +1,6 @@
 import Path from "node:path"
 import { Report } from "../../report/Report.js"
-import { Localhost, toURL } from "../../utils/netUtils.js"
+import { toDialAddress, toURL } from "../../utils/netUtils.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import {
   ClusterBuildStep,
@@ -51,7 +51,10 @@ export namespace EthereumOutpostSteps {
     await new EthereumOutpostBootstrapper({
       ethereumPath: ctx.config.ethereumPath,
       anvilDataPath: Path.join(ctx.config.dataPath, AnvilDataSubpath),
-      rpcUrl: toURL(ctx.config.bind.anvil.port, Localhost),
+      rpcUrl: toURL(
+        ctx.config.bind.anvil.port,
+        toDialAddress(ctx.config.bind.anvil.address)
+      ),
       deploymentsPath: ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
     }).bootstrap()
   }

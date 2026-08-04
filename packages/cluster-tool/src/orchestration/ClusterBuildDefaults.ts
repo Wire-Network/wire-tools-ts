@@ -1,7 +1,8 @@
 import Assert from "node:assert"
-import type {
-  ClusterConfig,
-  CollateralRequirement
+import {
+  SignatureProviderType,
+  type ClusterConfig,
+  type CollateralRequirement
 } from "@wireio/cluster-tool-shared"
 import { range } from "lodash"
 import { LAMPORTS_PER_SOL } from "@solana/web3.js"
@@ -9,6 +10,7 @@ import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
 import { type Logger } from "../logging/Logger.js"
 import { SysioContracts } from "@wireio/sdk-core"
 import { Constants } from "../Constants.js"
+import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
 import {
   readNodeOwner,
@@ -55,8 +57,27 @@ const MinFromWireAmount = 100_000_000
  * flows never pay it and system-caused reverts refund in full.
  */
 const FromWireRevertFeeBps = 10
+/**
+ * Epochs a PENDING uwreq may wait for its underwriter race before
+ * `sysio.uwrit::pruneuwreqs` expires it (refund/revert + EXPIRED). Mirrors
+ * the contract default; flow races resolve within an epoch, so the timeout
+ * only fires for genuinely abandoned requests (SEC-129 / WSA-223).
+ */
+const UwreqPendingTimeoutEpochs = 10
+/**
+ * Epochs a terminal (COMPLETED / REJECTED / EXPIRED) uwreq row is retained
+ * for audit before `sysio.uwrit::pruneuwreqs` erases it. Mirrors the
+ * contract default (SEC-129 / WSA-223).
+ */
+const UwreqRetentionEpochs = 10
 /** Epoch envelope-log retention. */
 const EnvelopeLogRetentionEpochs = 10
+/** Dev-default `terminate_max_consecutive_misses` (per-flow overridable via ClusterConfig). */
+const DefaultTerminateMaxConsecutiveMisses = 5
+/** Dev-default `terminate_max_pct_misses_24h` (per-flow overridable via ClusterConfig). */
+const DefaultTerminateMaxPercentMisses24h = 5
+/** Dev-default `terminate_window_ms` — 24h (per-flow overridable via ClusterConfig). */
+const DefaultTerminateWindowMs = 24 * 60 * 60 * 1000
 /**
  * Lamports airdropped to each bootstrapped batch operator's SOL keypair — their
  * daemons PAY the fees on every `epoch_in` delivery, every epoch, for the whole
@@ -95,15 +116,20 @@ export namespace ClusterBuildDefaults {
     const config = cluster.context.config,
       producers = range(config.producerCount).map(index => producerName(index)),
       batchOperators = range(config.batchOperatorCount).map(index =>
-        Constants.batchOperatorAccountName(index)
+        Constants.batchOperatorLabel(index)
       ),
       underwriters = range(config.underwriterCount).map(index =>
-        Constants.underwriterAccountName(index)
+        Constants.underwriterLabel(index)
       ),
       producerNodes = NodeConfig.plan(config).filter(
         node => node.role === NodeRole.producer
       ),
-      producerNodeCount = producerNodes.length
+      producerNodeCount = producerNodes.length,
+      // External-outpost mode: the ETH + SOL outposts already run on real chains
+      // (`config.externalOutposts`), so skip the local anvil/validator starts +
+      // outpost deploys and publish the operator-daemon artifacts from the
+      // external config instead (verifying the endpoints are reachable).
+      isExternalOutpost = config.externalOutposts != null
 
     // ═══ Cluster Prerequisites — processes, keys, contracts, registry, producers ═══
     const prerequisites = ClusterBuildPhaseGroup.create<C>(
@@ -143,6 +169,20 @@ export namespace ClusterBuildDefaults {
         {}
       )
     )
+    // SSM mode: publish the just-generated producer-node keys BEFORE any node
+    // consumes them — a producer's `--signature-provider ...SSM:` spec fetches
+    // its private key from SSM at nodeop startup, so publication must precede
+    // the ProducerNodes starts (the bios node stays on the inline dev KEY spec).
+    if (config.signatureProvider.type === SignatureProviderType.SSM) {
+      Steps.keys.planSignatureProviderKeyPublications<C>(
+        prerequisites,
+        "PublishNodeSignatureProviderKeys",
+        "Publish each producer-node signing key to AWS SSM",
+        {},
+        config,
+        Steps.keys.SignatureKeySource.node
+      )
+    }
     ClusterBuildPhase.create<C>(
       prerequisites,
       "BiosNode",
@@ -296,8 +336,8 @@ export namespace ClusterBuildDefaults {
       "Producers",
       "Provision producer operators (account + node-shared identity)",
       {},
-      producers.map((account, index) => ({
-        account,
+      producers.map((label, index) => ({
+        label,
         type: OperatorType.PRODUCER,
         producerNodeIndex: producerNodeCount > 0 ? index % producerNodeCount : 0
       }))
@@ -583,63 +623,106 @@ export namespace ClusterBuildDefaults {
       )
     )
 
-    // ── outpost deploys (own the run anvil + validator) ──
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "EthereumOutpost",
-      "Deploy the Ethereum outpost"
-    ).push(
-      Steps.processes.anvil.planStart<C>(
-        Actor.EthereumOutpost,
-        "start-anvil",
-        "start the run-time anvil (instamine)",
-        {}
-      ),
-      Steps.ethereumOutpost.planDeploy<C>(
-        Actor.EthereumOutpost,
-        "deploy-ethereum",
-        "deploy + seed the Ethereum outpost",
-        { timeoutMs: 900_000 }
-      ),
-      Steps.processes.anvil.planEnableIntervalMining<C>(
-        Actor.EthereumOutpost,
-        "enable-interval-mining",
-        "switch anvil to interval mining",
-        {}
+    // ── outpost deploys (own the run anvil + validator) — OR, in external mode,
+    //    verify the already-running remote outpost endpoints instead ──
+    if (isExternalOutpost) {
+      ClusterBuildPhase.create<C>(
+        prerequisites,
+        "MaterializeExternalOutposts",
+        "Materialize the external outpost artifacts + verify the endpoints"
+      ).push(
+        // REPLACES the omitted ETH/SOL deploy phases: copy the config-referenced
+        // files into the canonical data dir so every downstream reader is unchanged.
+        Steps.externalOutpost.planMaterialize<C>(
+          Actor.Sysio,
+          "materialize-external-artifacts",
+          "copy the external-outpost config files into the canonical data dir",
+          {}
+        ),
+        Steps.externalOutpost.planVerifyEthereumEndpoint<C>(
+          Actor.EthereumOutpost,
+          "verify-ethereum-endpoint",
+          "the external Ethereum RPC reports the configured chain id",
+          {}
+        ),
+        Steps.externalOutpost.planVerifySolanaEndpoint<C>(
+          Actor.SolanaOutpost,
+          "verify-solana-endpoint",
+          "the external Solana RPC responds to getVersion",
+          {}
+        )
       )
-    )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "SolanaOutpost",
-      "Deploy the Solana outpost"
-    ).push(
-      Steps.processes.solanaValidator.planStart<C>(
-        Actor.SolanaOutpost,
-        "start-validator",
-        "start solana-test-validator + liqsol_core (OPP outpost)",
-        {}
-      ),
-      Steps.solanaOutpost.planDeploy<C>(
-        Actor.SolanaOutpost,
-        "deploy-solana",
-        "init PDAs + provision SPL reserves",
-        { timeoutMs: 900_000 }
+    } else {
+      ClusterBuildPhase.create<C>(
+        prerequisites,
+        "EthereumOutpost",
+        "Deploy the Ethereum outpost"
+      ).push(
+        Steps.processes.anvil.planStart<C>(
+          Actor.EthereumOutpost,
+          "start-anvil",
+          "start the run-time anvil (instamine)",
+          {}
+        ),
+        Steps.ethereumOutpost.planDeploy<C>(
+          Actor.EthereumOutpost,
+          "deploy-ethereum",
+          "deploy + seed the Ethereum outpost",
+          { timeoutMs: 900_000 }
+        ),
+        Steps.processes.anvil.planEnableIntervalMining<C>(
+          Actor.EthereumOutpost,
+          "enable-interval-mining",
+          "switch anvil to interval mining",
+          {}
+        )
       )
-    )
+      ClusterBuildPhase.create<C>(
+        prerequisites,
+        "SolanaOutpost",
+        "Deploy the Solana outpost"
+      ).push(
+        Steps.processes.solanaValidator.planStart<C>(
+          Actor.SolanaOutpost,
+          "start-validator",
+          "start solana-test-validator + liqsol_core (OPP outpost)",
+          {}
+        ),
+        Steps.solanaOutpost.planDeploy<C>(
+          Actor.SolanaOutpost,
+          "deploy-solana",
+          "init PDAs + provision SPL reserves",
+          { timeoutMs: 900_000 }
+        )
+      )
+    }
 
-    // ── registry + underwriter config ──
+    // ── registry + optional mock reserves + underwriter config ──
     ClusterBuildPhase.create<C>(
       prerequisites,
       "Registry",
-      "Seed chains + tokens + reserves"
+      "Seed chains + tokens"
     ).push(
       Steps.registry.planSeedRegistry<C>(
         Actor.Sysio,
         "seed-registry",
-        "register chains, tokens, chain-tokens, reserves",
+        "register chains, tokens, chain-tokens",
         {}
       )
     )
+    // Mock (chain, token) PRIMARY reserves — opt-in via `--enable-mock-reserves`
+    // (default off, so a real / external depot never gets fake reserves). Seeded
+    // HERE, pre-EpochBootstrap, because the contract gates `regreserve` to the
+    // epoch-0 bootstrap window — a flow phase (which always runs after epoch
+    // 0→1) could never seed them.
+    if (config.enableMockReserves) {
+      Steps.registry.planMockReserves<C>(
+        prerequisites,
+        "MockReserves",
+        "Seed the 8 mock (chain, token) PRIMARY reserves",
+        {}
+      )
+    }
     ClusterBuildPhase.create<C>(
       prerequisites,
       "UnderwriterConfig",
@@ -654,7 +737,9 @@ export namespace ClusterBuildDefaults {
           fee_bps: SwapFeeBps,
           collateral_lock_duration_ms: CollateralLockDurationMs,
           min_fromwire_amount: MinFromWireAmount,
-          fromwire_revert_fee_bps: FromWireRevertFeeBps
+          fromwire_revert_fee_bps: FromWireRevertFeeBps,
+          uwreq_pending_timeout_epochs: UwreqPendingTimeoutEpochs,
+          uwreq_retention_epochs: UwreqRetentionEpochs
         }
       )
     )
@@ -680,12 +765,19 @@ export namespace ClusterBuildDefaults {
         "start the in-process OPP debugging server",
         {}
       ),
-      OperatorDaemonTool.planArtifactPreparation<C>(
-        Actor.Sysio,
-        "prepare-daemon-artifacts",
-        "write ETH ABI + SOL IDL artifacts for operator daemons",
-        {}
-      )
+      isExternalOutpost
+        ? Steps.externalOutpost.planPublishArtifacts<C>(
+            Actor.Sysio,
+            "publish-external-artifacts",
+            "publish ETH ABI + SOL IDL daemon artifacts from the external-outpost config",
+            {}
+          )
+        : OperatorDaemonTool.planArtifactPreparation<C>(
+            Actor.Sysio,
+            "prepare-daemon-artifacts",
+            "write ETH ABI + SOL IDL artifacts for operator daemons",
+            {}
+          )
     )
 
     // Bootstrapped batch operators + underwriters via the ONE mechanism (no funding —
@@ -696,8 +788,8 @@ export namespace ClusterBuildDefaults {
       "Provision the bootstrapped batch operators + underwriters",
       {},
       [
-        ...batchOperators.map((account, index) => ({
-          account,
+        ...batchOperators.map((label, index) => ({
+          label,
           type: OperatorType.BATCH,
           ethereumHdIndex: index + 1,
           isBootstrapped: true,
@@ -705,14 +797,28 @@ export namespace ClusterBuildDefaults {
           // needs none — anvil prefunds the operator HD accounts).
           airdropSolanaLamports: BatchOperatorAirdropLamports
         })),
-        ...underwriters.map((account, index) => ({
-          account,
+        ...underwriters.map((label, index) => ({
+          label,
           type: OperatorType.UNDERWRITER,
           ethereumHdIndex: config.batchOperatorCount + index + 1,
           isBootstrapped: false
         }))
       ]
     )
+
+    // SSM mode: publish the just-provisioned operator keys BEFORE the operator
+    // daemons start — their wire/ethereum/solana `--signature-provider ...SSM:`
+    // specs fetch the private keys from SSM at nodeop startup.
+    if (config.signatureProvider.type === SignatureProviderType.SSM) {
+      Steps.keys.planSignatureProviderKeyPublications<C>(
+        postContractDeployment,
+        "PublishOperatorSignatureProviderKeys",
+        "Publish each operator signing key to AWS SSM",
+        {},
+        config,
+        Steps.keys.SignatureKeySource.operator
+      )
+    }
 
     const operatorNodeGroup = ClusterBuildPhaseGroup.create<C>(
       postContractDeployment,
@@ -724,7 +830,7 @@ export namespace ClusterBuildDefaults {
       .filter(node => node.role === NodeRole.operator)
       .forEach(node => {
         const actor =
-          node.batchOperatorAccount != null
+          node.batchOperatorLabel != null
             ? Actor.BatchOperator
             : Actor.Underwriter
         ClusterBuildPhase.create<C>(
@@ -768,23 +874,56 @@ export namespace ClusterBuildDefaults {
         { timeoutMs: 300_000 }
       )
     )
+
+    // External-outpost success gate: no local chain to advance an epoch on, so
+    // prove the depot is producing blocks (head advance) — plan §5.3.
+    if (isExternalOutpost) {
+      ClusterBuildPhase.create<C>(
+        postContractDeployment,
+        "HeadBlockAdvance",
+        "Verify the depot head block advances (external-outpost success gate)"
+      ).push(
+        Steps.externalOutpost.planHeadBlockAdvance<C>(
+          Actor.Sysio,
+          "verify-head-advance",
+          "the depot head block advances (external-outpost liveness)",
+          {}
+        )
+      )
+    }
   }
 
-  /** The `sysio.epoch::setconfig` data, derived from the batch-operator topology. */
-  function epochConfig(
+  /**
+   * The `sysio.epoch::setconfig` data, derived from the batch-operator topology.
+   *
+   * The shape itself comes from {@link BatchOperatorSchedule.resolve} — the ONE
+   * place it is derived and validated, shared with
+   * `ClusterConfigProvider.resolve` so this step can never emit a shape the
+   * CLI/flow boundary would have accepted differently (or vice versa).
+   *
+   * Exported (a pure value helper, not a Step) so the spec is unit-testable
+   * without standing up a cluster.
+   *
+   * @param config - The resolved cluster config (topology + epoch overrides).
+   * @returns The `epoch::setconfig` action data.
+   * @throws If the resulting group shape violates the spec.
+   */
+  export function epochConfig(
     config: ClusterConfig
   ): SysioContracts.SysioEpochSetconfigAction {
-    const batchOpGroups = Math.min(3, config.batchOperatorCount),
-      operatorsPerEpoch =
-        batchOpGroups > 0
-          ? Math.ceil(config.batchOperatorCount / batchOpGroups)
-          : 1
+    const { operatorsPerEpoch, batchOpGroups, batchOperatorMinimumActive } =
+      BatchOperatorSchedule.resolve({
+        batchOperatorCount: config.batchOperatorCount,
+        operatorsPerEpoch: config.operatorsPerEpoch,
+        batchOpGroups: config.batchOpGroups
+      })
     return {
       epoch_duration_sec: config.epochDurationSec,
       operators_per_epoch: operatorsPerEpoch,
-      batch_operator_minimum_active: operatorsPerEpoch * batchOpGroups,
+      batch_operator_minimum_active: batchOperatorMinimumActive,
       batch_op_groups: batchOpGroups,
-      epoch_retention_envelope_log_count: EnvelopeLogRetentionEpochs
+      epoch_retention_envelope_log_count:
+        config.epochRetentionEnvelopeLogCount ?? EnvelopeLogRetentionEpochs
     }
   }
 
@@ -809,9 +948,12 @@ export namespace ClusterBuildDefaults {
       max_available_batch_ops: 63,
       max_available_underwriters: 21,
       terminate_prune_delay_ms: 600_000,
-      terminate_max_consecutive_misses: 5,
-      terminate_max_pct_misses_24h: 5,
-      terminate_window_ms: 24 * 60 * 60 * 1000,
+      terminate_max_consecutive_misses:
+        config.terminateMaxConsecutiveMisses ??
+        DefaultTerminateMaxConsecutiveMisses,
+      terminate_max_pct_misses_24h:
+        config.terminateMaxPercentMisses24h ?? DefaultTerminateMaxPercentMisses24h,
+      terminate_window_ms: config.terminateWindowMs ?? DefaultTerminateWindowMs,
       req_prod_collat: config.requiredProducerCollateral.map(toChainMinBond),
       req_batchop_collat:
         config.requiredBatchOperatorCollateral.map(toChainMinBond),

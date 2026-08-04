@@ -69,13 +69,14 @@ function readFromWireUwreq(ctx: SwapScenarioContext) {
 /** Whether every `accounts` entry is `OPERATOR_STATUS_ACTIVE` on `sysio.opreg` (a read). */
 async function readAllOperatorsActive(
   ctx: SwapScenarioContext,
-  accounts: string[]
+  labels: string[]
 ): Promise<boolean> {
   const { rows } = await ctx.wire
     .getSysioContract(SysioContractName.opreg)
     .tables.operators.query({ limit: 100 })
-  return accounts.every(account => {
-    const operator = rows.find(row => row.account === account)
+  return labels.every(label => {
+    const account = ctx.keyStore.assertOperator(label).account,
+      operator = rows.find(row => row.account === account)
     return (
       operator != null &&
       matchesProtoEnum(
@@ -120,6 +121,9 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
     "Swap FROM WIRE (WIRE depot → Solana): queued escrow, single-leg underwriting, SOL payout, rewards drain"
 
   override readonly defaults: ClusterBuildOptions = {
+    // Seed the mock (chain, token) PRIMARY reserves this flow reads — `regreserve`
+    // is epoch-0-gated by the depot, so it must ride the bootstrap, not a flow phase.
+    enableMockReserves: true,
     epochDurationSec: Constants.EpochDurationSec,
     // ACTIVE gates on real bonds on EVERY registered outpost chain, so the
     // flow's underwriter-activation assertion is meaningful.
@@ -147,9 +151,9 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
 
   plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const config = cluster.context.config,
-      underwriterAccounts = Array.from(
+      underwriterLabels = Array.from(
         { length: config.underwriterCount },
-        (_, index) => HarnessConstants.underwriterAccountName(index)
+        (_, index) => HarnessConstants.underwriterLabel(index)
       ),
       writeStepOptions = { timeoutMs: 60_000 },
       relayStepOptions = {
@@ -204,7 +208,7 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
       "UnderwriterCollateral",
       "Bond the default underwriter collateral on both outposts",
       writeStepOptions,
-      underwriterAccounts,
+      underwriterLabels,
       WireUnderwriterTool.load(null, config.underwriterCount)
     )
     ClusterBuildPhase.create(
@@ -215,11 +219,11 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
       verifyStep<SwapScenarioContext>(
         Actor.Sysio,
         "underwriters-active",
-        `underwriters (${underwriterAccounts.join(", ")}) become OPERATOR_STATUS_ACTIVE`,
+        `underwriters (${underwriterLabels.join(", ")}) become OPERATOR_STATUS_ACTIVE`,
         async ctx => {
           await pollUntil(
             "every underwriter ACTIVE on sysio.opreg",
-            () => readAllOperatorsActive(ctx, underwriterAccounts),
+            () => readAllOperatorsActive(ctx, underwriterLabels),
             Constants.relayDeadlineMs(),
             Constants.PollIntervalMs
           )

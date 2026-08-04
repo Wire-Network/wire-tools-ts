@@ -27,7 +27,7 @@ export namespace DebuggingServerSteps {
     return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runStart)
   }
 
-  /** Named runner — `DebuggingServer.create({port, clusterPath})` + `planStart()`. */
+  /** Named runner — `DebuggingServer.create({host, port, clusterPath})` + `start()`. */
   export async function runStart<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,
@@ -36,6 +36,10 @@ export namespace DebuggingServerSteps {
     signal.throwIfAborted()
     if (ctx.outputs.has(DebuggingServerKey)) return
     const server = await DebuggingServer.create({
+      // Bind the CONFIGURED address (like kiod/nodeop), not the 127.0.0.1 default —
+      // otherwise operator daemons dialing `bind.debuggingServer.address` (e.g. a
+      // container's static IP) can't reach the server on loopback.
+      host: ctx.config.bind.debuggingServer.address,
       port: ctx.config.bind.debuggingServer.port,
       clusterPath: ctx.config.clusterPath
     })

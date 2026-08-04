@@ -2,10 +2,14 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import { match } from "ts-pattern"
+import { z } from "zod"
 import { OperatorType } from "@wireio/opp-typescript-models"
+import { KeyType } from "@wireio/sdk-core"
 import {
   ClusterFiles,
   ClusterStateNodeRole,
+  ClusterStateSchemaCodec,
+  SchemaCodec,
   type ClusterConfig,
   type ClusterState as ClusterStateSnapshot,
   type ClusterStateNode
@@ -44,7 +48,9 @@ export interface ClusterKeysNodeEntry {
  * `underwriterArgs`) build directly from them on relaunch.
  */
 export interface ClusterKeysOperatorEntry {
-  /** WIRE account name the operator was provisioned under. */
+  /** Deterministic provisioning label — the `ClusterKeyStore` key. */
+  label: string
+  /** WIRE account name ON CHAIN (node-owner-generated for batch/underwriter operators). */
   account: string
   /** Operator role (batch operator / underwriter / producer). */
   type: OperatorType
@@ -71,6 +77,69 @@ export interface ClusterKeys {
   /** Every provisioned operator account. */
   operators: ClusterKeysOperatorEntry[]
 }
+
+/** Schema validating a WIRE (K1) key pair record against the grandfathered `WireKeyPair`. */
+const WireKeyPairSchema: z.ZodType<WireKeyPair> = z.object({
+  type: z.literal(KeyType.K1),
+  publicKey: z.string(),
+  privateKey: z.string()
+})
+
+/** Schema validating a finalizer (BLS) key pair record. */
+const WireFinalizerKeyPairSchema: z.ZodType<WireFinalizerKeyPair> = z.object({
+  type: z.literal(KeyType.BLS),
+  publicKey: z.string(),
+  privateKey: z.string(),
+  proofOfPossession: z.string()
+})
+
+/** Schema validating an Ethereum (EM) key pair record. */
+const EthereumKeyPairSchema: z.ZodType<EthereumKeyPair> = z.object({
+  type: z.literal(KeyType.EM),
+  publicKey: z.string(),
+  privateKey: z.string(),
+  address: z.string()
+})
+
+/** Schema validating a Solana (ED) key pair record. */
+const SolanaKeyPairSchema: z.ZodType<SolanaKeyPair> = z.object({
+  type: z.literal(KeyType.ED),
+  publicKey: z.string(),
+  privateKey: z.string()
+})
+
+/** The persisted `OperatorType` value (numeric, as stored in `cluster-keys.json`). */
+const OperatorTypeValueSchema = z.custom<OperatorType>(
+  value => typeof value === "number"
+)
+
+/** Schema for one producer node's key record. */
+const ClusterKeysNodeEntrySchema: z.ZodType<ClusterKeysNodeEntry> = z.object({
+  index: z.number(),
+  k1: WireKeyPairSchema,
+  bls: WireFinalizerKeyPairSchema
+})
+
+/** Schema for one provisioned operator's key record. */
+const ClusterKeysOperatorEntrySchema: z.ZodType<ClusterKeysOperatorEntry> =
+  z.object({
+    label: z.string(),
+    account: z.string(),
+    type: OperatorTypeValueSchema,
+    wire: WireKeyPairSchema,
+    bls: WireFinalizerKeyPairSchema.optional(),
+    ethereum: EthereumKeyPairSchema.optional(),
+    solana: SolanaKeyPairSchema.optional()
+  })
+
+/** Schema for the full `cluster-keys.json` payload. */
+const ClusterKeysSchema: z.ZodType<ClusterKeys> = z.object({
+  nodes: z.array(ClusterKeysNodeEntrySchema),
+  operators: z.array(ClusterKeysOperatorEntrySchema)
+})
+
+/** Validated codec for `cluster-keys.json` (the 0600 handling stays on the writer). */
+const ClusterKeysSchemaCodec = SchemaCodec.create<ClusterKeys>(ClusterKeysSchema)
 
 /** `NodeRole` (cluster-tool) → `ClusterStateNodeRole` (debugging-shared) —
  *  distinct nominal string enums with identical values; bridged by value via
@@ -135,22 +204,27 @@ export namespace ClusterState {
       nodePath: node.nodePath,
       ports: { http: node.ports.http, p2p: node.ports.p2p },
       producers: [...node.producers],
-      batchOperatorAccount: node.batchOperatorAccount,
-      underwriterAccount: node.underwriterAccount
+      batchOperatorLabel: node.batchOperatorLabel,
+      underwriterLabel: node.underwriterLabel
     }))
     return {
       createdAt: new Date().toISOString(),
       nodes,
       walletPath: config.walletPath,
-      anvilStateFile: Path.join(
-        config.dataPath,
-        AnvilProcess.StateSubpath,
-        AnvilProcess.StateFilename
-      ),
-      solanaLedgerPath: Path.join(
-        config.dataPath,
-        SolanaValidatorProcess.LedgerSubpath
-      ),
+      // External-outpost clusters run no local anvil / solana-test-validator, so
+      // there is no anvil state file or solana ledger to record.
+      anvilStateFile:
+        config.externalOutposts != null
+          ? null
+          : Path.join(
+              config.dataPath,
+              AnvilProcess.StateSubpath,
+              AnvilProcess.StateFilename
+            ),
+      solanaLedgerPath:
+        config.externalOutposts != null
+          ? null
+          : Path.join(config.dataPath, SolanaValidatorProcess.LedgerSubpath),
       solanaIdlFile:
         ctx.outputs.get(OperatorDaemonArtifactsKey)?.solanaIdlFile ?? null
     }
@@ -176,12 +250,15 @@ export namespace ClusterState {
     }
   }
 
-  /** Write `state` to {@link stateFilePath}. */
+  /** Write `state` to {@link stateFilePath} (validated via `ClusterStateSchemaCodec`). */
   export function save(
     config: ClusterConfig,
     state: ClusterStateSnapshot
   ): void {
-    Fs.writeFileSync(stateFilePath(config), JSON.stringify(state, null, 2))
+    Fs.writeFileSync(
+      stateFilePath(config),
+      ClusterStateSchemaCodec.serialize(state)
+    )
   }
 
   /** Write `keys` to {@link keysFilePath}, then enforce {@link KeysFileMode} — `writeFileSync`'s
@@ -189,7 +266,7 @@ export namespace ClusterState {
    *  existing file needs the explicit `chmodSync` to guarantee 0600. */
   export function saveKeys(config: ClusterConfig, keys: ClusterKeys): void {
     const file = keysFilePath(config)
-    Fs.writeFileSync(file, JSON.stringify(keys, null, 2), {
+    Fs.writeFileSync(file, ClusterKeysSchemaCodec.serialize(keys), {
       mode: KeysFileMode
     })
     Fs.chmodSync(file, KeysFileMode)
@@ -206,7 +283,7 @@ export namespace ClusterState {
       Fs.existsSync(file),
       `ClusterState.load: ${file} not found — run "wire-cluster-tool create" first`
     )
-    return JSON.parse(Fs.readFileSync(file, "utf8")) as ClusterStateSnapshot
+    return ClusterStateSchemaCodec.deserialize(Fs.readFileSync(file, "utf8"))
   }
 
   /**
@@ -220,7 +297,7 @@ export namespace ClusterState {
       Fs.existsSync(file),
       `ClusterState.loadKeys: ${file} not found — run "wire-cluster-tool create" first`
     )
-    return JSON.parse(Fs.readFileSync(file, "utf8")) as ClusterKeys
+    return ClusterKeysSchemaCodec.deserialize(Fs.readFileSync(file, "utf8"))
   }
 
   /**

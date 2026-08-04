@@ -1,11 +1,15 @@
 import Assert from "node:assert"
-import type { ClusterConfig } from "@wireio/cluster-tool-shared"
+import {
+  SignatureProviderType,
+  type ClusterConfig
+} from "@wireio/cluster-tool-shared"
+import { KeyType } from "@wireio/sdk-core"
 import { execFile } from "node:child_process"
 import Fs from "node:fs"
 import Path from "node:path"
 import { promisify } from "node:util"
 import { asOption } from "@3fv/prelude-ts"
-import { defaults } from "lodash"
+import { defaults, last } from "lodash"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import type { WireClient } from "../../clients/wire/WireClient.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
@@ -14,7 +18,7 @@ import { getLogger } from "../../logging/Logger.js"
 import type { OperatorAccount } from "../../orchestration/outputs/OperatorAccount.js"
 import { probeEndpoint } from "../../utils/asyncUtils.js"
 import { existsAsync, mkdirs } from "../../utils/fsUtils.js"
-import { Localhost, toURL } from "../../utils/netUtils.js"
+import { toDialAddress, toURL } from "../../utils/netUtils.js"
 import { ManagedProcess } from "./ManagedProcess.js"
 import type { ProcessManager } from "./ProcessManager.js"
 
@@ -37,7 +41,7 @@ const TrailingPlugins = [
 const pair = (flag: string, value: string): [string, string] => [flag, value]
 /** `--plugin` expansion helper (readonly-array friendly). */
 const pluginArgs = (plugins: readonly string[]): string[] =>
-  plugins.flatMap(plugin => pair("--plugin", plugin))
+  plugins.flatMap(plugin => pair(NodeopProcess.PluginFlag, plugin))
 
 const execFileAsync = promisify(execFile)
 /** `--help` text per nodeop binary — probed once, shared by every node (capability detection). */
@@ -244,9 +248,12 @@ export class NodeopProcess extends ManagedProcess {
     )
   }
 
-  /** Loopback dial URL for this node's HTTP API. */
+  /** Dial URL for this node's HTTP API — the bind address mapped through {@link toDialAddress}. */
   get httpUrl(): string {
-    return toURL(this.config.node.ports.http, Localhost)
+    return toURL(
+      this.config.node.ports.http,
+      toDialAddress(this.config.node.cluster.bind.nodeop.address)
+    )
   }
 
   /**
@@ -299,6 +306,62 @@ export namespace NodeopProcess {
   export const PausedPath = "/v1/producer/paused" as const
   /** Per-request timeout for {@link resumeProduction} (ms). */
   export const ResumeProductionTimeoutMs = 5_000
+  /** The nodeop `--plugin` flag (appended per plugin; scanned by {@link requiredSignatureProviderPlugins}). */
+  export const PluginFlag = "--plugin"
+  /** The nodeop `--signature-provider` flag (scanned by {@link requiredSignatureProviderPlugins}). */
+  export const SignatureProviderFlag = "--signature-provider"
+  /**
+   * Optional nodeop plugins by signature-provider SCHEME. `KEY` / `KIOD` are
+   * built into `sysio::signature_provider_manager_plugin`; an `SSM:` spec
+   * resolves through `sysio::signature_provider_ssm_plugin`, which must be
+   * ENABLED via `--plugin` — otherwise provider creation aborts startup with
+   * `plugin_config_exception (3110006): Signature-provider scheme "SSM" is
+   * provided by plugin "sysio::signature_provider_ssm_plugin"`.
+   */
+  export const SignatureProviderSchemePlugins: Partial<
+    Record<SignatureProviderType, string>
+  > = {
+    [SignatureProviderType.SSM]: "sysio::signature_provider_ssm_plugin"
+  }
+
+  /**
+   * The scheme of a rendered `--signature-provider` spec value — the leading
+   * token of its final `<SCHEME>:<data>` segment
+   * (`<name>,<chain>,<type>,<pub>,SSM:<region>:<id>` → `SSM`). A spec whose
+   * final segment is not `<SCHEME>:<data>`-shaped yields a token no scheme map
+   * contains — callers treat that as "no optional plugin required".
+   */
+  function signatureProviderScheme(spec: string): string {
+    return last(spec.split(",")).split(":")[0]
+  }
+
+  /**
+   * The optional signature-provider plugins `args` requires but does not yet
+   * enable: every `--signature-provider` value's scheme is mapped through
+   * {@link SignatureProviderSchemePlugins}, minus plugins already present after
+   * a `--plugin` flag. {@link buildArgs} appends these so an SSM cluster's
+   * nodeop (producing nodes AND OPP operator daemons — their specs arrive via
+   * `extraArgs`) loads `sysio::signature_provider_ssm_plugin`.
+   *
+   * @param args - The composed argv to scan.
+   * @returns The missing `--plugin` values, deduplicated, in scan order.
+   */
+  export function requiredSignatureProviderPlugins(
+    args: readonly string[]
+  ): string[] {
+    const valuesAfter = (flag: string): string[] =>
+        args.flatMap((arg, index) => (arg === flag ? [args[index + 1]] : [])),
+      enabled = new Set(valuesAfter(PluginFlag)),
+      required = valuesAfter(SignatureProviderFlag)
+        .map(
+          spec =>
+            SignatureProviderSchemePlugins[
+              signatureProviderScheme(spec) as SignatureProviderType
+            ]
+        )
+        .filter(plugin => plugin != null && !enabled.has(plugin))
+    return [...new Set(required)]
+  }
 
   /**
    * Build the full nodeop command-line (binary + args), matching the Python
@@ -311,13 +374,27 @@ export namespace NodeopProcess {
     const { node, operator, tuning } = config,
       cluster = node.cluster,
       listen = cluster.bind.nodeop.address,
+      // The bios genesis key is a bootstrap dev key (inline KEY always, never
+      // SSM-managed); every other producing node's signing keys use the
+      // cluster's provider source (SSM:/KIOD: render correctly; KEY byte-identical).
+      baseKeySourceFor = ClusterConfigProvider.signatureProviderSource(cluster),
+      keySourceFor = (
+        account: string,
+        keyType: KeyType
+      ): KeyGenerator.SignatureProviderSource =>
+        node.role === NodeRole.bios
+          ? KeyGenerator.DefaultKeySource
+          : baseKeySourceFor(account, keyType),
       isProducing =
         node.producers.length > 0 && operator != null && operator.bls != null
-    return [
+    const args = [
       cluster.executables.nodeop,
       ...pair("--blocks-dir", tuning.blocksPath),
       ...pair("--p2p-listen-endpoint", `${listen}:${node.ports.p2p}`),
-      ...pair("--p2p-server-address", `${Localhost}:${node.ports.p2p}`),
+      ...pair(
+        "--p2p-server-address",
+        `${node.advertiseAddress}:${node.ports.p2p}`
+      ),
       ...node.peerEndpoints.flatMap(peer => pair("--p2p-peer-address", peer)),
       ...(node.role === NodeRole.bios ? ["--enable-stale-production"] : []),
       ...pluginArgs(AlwaysOnPlugins),
@@ -325,12 +402,20 @@ export namespace NodeopProcess {
         ? [
             ...pluginArgs(ProducerPlugins),
             ...pair(
-              "--signature-provider",
-              KeyGenerator.toSignatureProvider(operator.wire)
+              SignatureProviderFlag,
+              KeyGenerator.toSignatureProvider(
+                operator.wire,
+                undefined,
+                keySourceFor(node.name, KeyType.K1)
+              )
             ),
             ...pair(
-              "--signature-provider",
-              KeyGenerator.toSignatureProvider(operator.bls)
+              SignatureProviderFlag,
+              KeyGenerator.toSignatureProvider(
+                operator.bls,
+                undefined,
+                keySourceFor(node.name, KeyType.BLS)
+              )
             ),
             ...node.producers.flatMap(name => pair("--producer-name", name))
           ]
@@ -364,6 +449,10 @@ export namespace NodeopProcess {
       ...pair("--http-server-address", `${listen}:${node.ports.http}`),
       ...config.extraArgs
     ]
+    // A --signature-provider spec's scheme may require an optional nodeop
+    // plugin (SSM today) — scan the COMPOSED argv (extraArgs included, so
+    // operator-daemon specs are covered) and enable what's missing.
+    return [...args, ...pluginArgs(requiredSignatureProviderPlugins(args))]
   }
 
   /**

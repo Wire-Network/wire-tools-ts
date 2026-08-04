@@ -1,5 +1,7 @@
 import {
   BindConfigPortProtocol,
+  BindConfigSchemaCodec,
+  BindOptionsSchema,
   type BindConfig,
   type BindConfigPortRange,
   type BindDaemonOptions,
@@ -144,5 +146,99 @@ describe("BindOverrides<T>", () => {
       kiod: { address: "127.0.0.1", port: 8900 }
     }
     expect(partialResolved.kiod.port).toBe(8900)
+  })
+})
+
+describe("BindConfigSchemaCodec + BindOptionsSchema", () => {
+  const bind: BindConfig = {
+    kiod: { address: "127.0.0.1", port: 8900 },
+    nodeop: {
+      address: "127.0.0.1",
+      ports: {
+        bios: { http: 8888, p2p: 9876 },
+        producers: [{ http: 8988, p2p: 9976 }],
+        batch: [],
+        underwriters: []
+      }
+    },
+    anvil: { address: "127.0.0.1", port: 8545 },
+    solana: {
+      address: "127.0.0.1",
+      ports: {
+        http: 8899,
+        faucet: 9900,
+        gossip: 8001,
+        dynamicRange: { first: 8100, last: 8200 }
+      }
+    },
+    debuggingServer: { address: "127.0.0.1", port: 9901 }
+  }
+
+  it("round-trips a complete BindConfig through the codec", () => {
+    expect(BindConfigSchemaCodec.deserialize(BindConfigSchemaCodec.serialize(bind))).toEqual(bind)
+  })
+
+  it("check() classifies a complete config as complete and a partial one as not", () => {
+    expect(BindConfigSchemaCodec.check(bind)).toBe(true)
+    expect(BindConfigSchemaCodec.check({ kiod: bind.kiod })).toBe(false)
+  })
+
+  it("BindOptionsSchema accepts partial overrides (single leaf, per-node array)", () => {
+    expect(BindOptionsSchema.safeParse({ anvil: { port: 9000 } }).success).toBe(true)
+    expect(
+      BindOptionsSchema.safeParse({
+        nodeop: { ports: { producers: [{ http: 1 }, {}] } }
+      }).success
+    ).toBe(true)
+    expect(BindOptionsSchema.safeParse({}).success).toBe(true)
+  })
+
+  it("BindOptionsSchema rejects a wrong-typed field", () => {
+    expect(BindOptionsSchema.safeParse({ anvil: { port: "nope" } }).success).toBe(false)
+  })
+
+  describe("per-node advertiseAddress (multi-host mesh)", () => {
+    const AdvertiseAddress = "10.0.0.11"
+    const meshed: BindConfig = {
+      ...bind,
+      nodeop: {
+        ...bind.nodeop,
+        ports: {
+          ...bind.nodeop.ports,
+          producers: [{ http: 8988, p2p: 9976, advertiseAddress: AdvertiseAddress }]
+        }
+      }
+    }
+
+    it("round-trips a per-node advertiseAddress through the codec", () => {
+      const roundTripped = BindConfigSchemaCodec.deserialize(
+        BindConfigSchemaCodec.serialize(meshed)
+      )
+      expect(roundTripped).toEqual(meshed)
+      expect(roundTripped.nodeop.ports.producers[0].advertiseAddress).toBe(
+        AdvertiseAddress
+      )
+      expect(BindConfigSchemaCodec.check(meshed)).toBe(true)
+    })
+
+    it("a legacy config without advertiseAddress parses with the field absent", () => {
+      const roundTripped = BindConfigSchemaCodec.deserialize(
+        BindConfigSchemaCodec.serialize(bind)
+      )
+      expect(roundTripped.nodeop.ports.producers[0].advertiseAddress).toBeUndefined()
+    })
+
+    it("BindOptionsSchema accepts a per-node advertiseAddress override and rejects a wrong type", () => {
+      expect(
+        BindOptionsSchema.safeParse({
+          nodeop: { ports: { bios: { advertiseAddress: AdvertiseAddress } } }
+        }).success
+      ).toBe(true)
+      expect(
+        BindOptionsSchema.safeParse({
+          nodeop: { ports: { bios: { advertiseAddress: 42 } } }
+        }).success
+      ).toBe(false)
+    })
   })
 })

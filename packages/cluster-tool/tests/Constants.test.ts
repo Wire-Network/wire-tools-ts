@@ -14,13 +14,13 @@ describe("Constants", () => {
 
   describe("account-name generators", () => {
     it("names batch operators by letter and wraps at 26", () => {
-      expect(Constants.batchOperatorAccountName(0)).toBe("batchop.a")
-      expect(Constants.batchOperatorAccountName(1)).toBe("batchop.b")
-      expect(Constants.batchOperatorAccountName(26)).toBe("batchop.a")
+      expect(Constants.batchOperatorLabel(0)).toBe("batchop.a")
+      expect(Constants.batchOperatorLabel(1)).toBe("batchop.b")
+      expect(Constants.batchOperatorLabel(26)).toBe("batchop.a")
     })
     it("names underwriters by letter", () => {
-      expect(Constants.underwriterAccountName(0)).toBe("uwrit.a")
-      expect(Constants.underwriterAccountName(1)).toBe("uwrit.b")
+      expect(Constants.underwriterLabel(0)).toBe("uwrit.a")
+      expect(Constants.underwriterLabel(1)).toBe("uwrit.b")
     })
   })
 
@@ -66,6 +66,7 @@ describe("ProtocolTiming", () => {
     expect(ProtocolTiming.CollateralVerifyBudgetMs).toBe(360_000)
     expect(ProtocolTiming.SingleHopBudgetMs).toBe(420_000)
     expect(ProtocolTiming.DoubleHopBudgetMs).toBe(840_000)
+    expect(ProtocolTiming.PollDeadlineBufferMs).toBe(30_000)
   })
 
   it("orders the classes: collateral < single hop < double hop = 2x single", () => {

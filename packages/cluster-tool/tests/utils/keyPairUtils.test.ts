@@ -1,14 +1,18 @@
 import { ethers } from "ethers"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
+import { WireKeyType } from "@wireio/opp-typescript-models"
 import {
   ethereumCompressedPubkey,
   ethereumKeyPairFromWallet,
   ethereumPrivateKeyFromWallet,
   ethereumPublicKeyFromWallet,
   ethereumSigner,
+  privateKeyFromNativeString,
   solanaKeypair,
-  solanaSdkPrivateKey
+  solanaSdkPrivateKey,
+  wireKeyFromPublicKey
 } from "@wireio/cluster-tool/utils"
+import { Constants } from "@wireio/cluster-tool/Constants"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import type { EthereumKeyPair, SolanaKeyPair } from "@wireio/cluster-tool/types"
 
@@ -33,6 +37,42 @@ function solanaFixture(): SolanaKeyPair {
 }
 
 describe("keyPairUtils", () => {
+  describe("privateKeyFromNativeString", () => {
+    it("round-trips every key type through toNativeString (K1 WIF / EM 0x-hex / ED base58 / BLS PVT_BLS_)", () => {
+      const k1 = PrivateKey.from(Constants.DEV_K1_PRIVATE_KEY),
+        em = ethereumPrivateKeyFromWallet(anvilWallet(0)),
+        ed = PrivateKey.generate(KeyType.ED),
+        bls = PrivateKey.from(Constants.DEV_BLS_PRIVATE_KEY)
+      // Inferred tuple types — an explicit PrivateKey annotation would force the
+      // sdk-core cjs + esm declaration flavors into one nominal type.
+      const roundTrips = [
+        [KeyType.K1, k1],
+        [KeyType.EM, em],
+        [KeyType.ED, ed],
+        [KeyType.BLS, bls]
+      ] as const
+      roundTrips.forEach(([type, privateKey]) =>
+        expect(
+          privateKeyFromNativeString(type, privateKey.toNativeString()).toString()
+        ).toBe(privateKey.toString())
+      )
+    })
+
+    it("accepts an EM hex value without the 0x prefix", () => {
+      const em = ethereumPrivateKeyFromWallet(anvilWallet(1)),
+        bareHex = em.toNativeString().slice(2)
+      expect(privateKeyFromNativeString(KeyType.EM, bareHex).toString()).toBe(
+        em.toString()
+      )
+    })
+
+    it("throws on an unsupported key type", () => {
+      expect(() => privateKeyFromNativeString(KeyType.R1, "anything")).toThrow(
+        /unsupported key type/
+      )
+    })
+  })
+
   // ── live ethers wallet → typed EM keys ──
   describe("ethereumPrivateKeyFromWallet", () => {
     it("derives a PVT_EM_ key deterministically per HD index", () => {
@@ -112,6 +152,40 @@ describe("keyPairUtils", () => {
         solanaKeypair(fixture).publicKey.toBase58()
       )
       expect(keypair.secretKey.length).toBe(64)
+    })
+  })
+
+  // ── Wire public key → OPP proto WireKey ──
+  describe("wireKeyFromPublicKey", () => {
+    it("maps every account-authority key type to its proto variant with the raw point bytes", () => {
+      const cases = [
+        { type: KeyType.K1, size: 33, wireKeyType: WireKeyType.K1 },
+        { type: KeyType.R1, size: 33, wireKeyType: WireKeyType.R1 },
+        { type: KeyType.EM, size: 33, wireKeyType: WireKeyType.EM },
+        { type: KeyType.ED, size: 32, wireKeyType: WireKeyType.ED }
+      ] as const
+      cases.forEach(({ type, size, wireKeyType }) => {
+        const compressed = new Uint8Array(size).fill(7),
+          wireKey = wireKeyFromPublicKey({ type, compressed })
+        expect(wireKey.keyType).toBe(wireKeyType)
+        expect(wireKey.key).toEqual(compressed)
+      })
+    })
+
+    it("parses the PUB_* string form (an anvil wallet's EM key round-trips)", () => {
+      const publicKey = ethereumPublicKeyFromWallet(anvilWallet(3)),
+        wireKey = wireKeyFromPublicKey(publicKey.toString())
+      expect(wireKey.keyType).toBe(WireKeyType.EM)
+      expect(wireKey.key).toEqual(publicKey.data.array)
+    })
+
+    it("throws for key types unusable as an account authority (WA, BLS)", () => {
+      expect(() =>
+        wireKeyFromPublicKey({ type: KeyType.WA, compressed: new Uint8Array(33) })
+      ).toThrow(/not a Wire account-authority key type/)
+      expect(() =>
+        wireKeyFromPublicKey({ type: KeyType.BLS, compressed: new Uint8Array(96) })
+      ).toThrow(/not a Wire account-authority key type/)
     })
   })
 })

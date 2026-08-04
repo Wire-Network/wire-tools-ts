@@ -3,6 +3,7 @@ import type {
   ChainTokenAmount,
   ClusterConfigLoggingFileFormat,
   ClusterConfigLoggingLevels,
+  ClusterSignatureProviderOptions,
   CollateralRequirement
 } from "@wireio/cluster-tool-shared"
 import type { Report } from "../report/Report.js"
@@ -32,11 +33,26 @@ export interface ClusterBuildOptions {
   underwriterCount?: number
   // epoch
   epochDurationSec?: number
+  /** `operators_per_epoch` (batch-op group SIZE) — omit to derive from `batchOperatorCount`. */
+  operatorsPerEpoch?: number
+  /** `batch_op_groups` (group COUNT) — omit to derive from `batchOperatorCount`. */
+  batchOpGroups?: number
+  /** `epoch_retention_envelope_log_count` — omit for the bootstrap default. */
+  epochRetentionEnvelopeLogCount?: number
   warmupEpochs?: number
   cooldownEpochs?: number
   // network binding
   bindAll?: boolean
   bind?: BindOptions
+  // mock data seeding
+  /**
+   * Seed the 8 mock (chain, token) PRIMARY reserves at bootstrap
+   * (`--enable-mock-reserves`). Default `false` at every layer — an
+   * external / real-world depot gets NO fake reserves unless a caller (or a
+   * flow's scenario `defaults`) opts in. The depot contract gates `regreserve`
+   * to the bootstrap window (epoch 0), so this only ever seeds pre-EpochBootstrap.
+   */
+  enableMockReserves?: boolean
   // termination tuning
   terminateMaxConsecutiveMisses?: number
   terminateMaxPercentMisses24h?: number
@@ -49,4 +65,9 @@ export interface ClusterBuildOptions {
   // outputs
   report?: Report.Options
   logging?: LoggingOptions
+  // signature provider — how the cluster's own signing keys are handled (default KEY)
+  signatureProvider?: ClusterSignatureProviderOptions
+  // external inputs (file paths → `--bind-config` / `--external-outpost-config`)
+  bindConfig?: string
+  externalOutpostConfig?: string
 }

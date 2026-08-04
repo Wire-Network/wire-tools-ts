@@ -5,6 +5,7 @@ import type {
 import { range } from "lodash"
 import { Constants } from "../Constants.js"
 import type { Renderer } from "../utils/Renderer.js"
+import { toDialAddress } from "../utils/netUtils.js"
 
 import { NodeConfigIniRenderer } from "./renderers/NodeConfigIniRenderer.js"
 import { NodeConfigLoggingRenderer } from "./renderers/NodeConfigLoggingRenderer.js"
@@ -64,8 +65,8 @@ interface NodeDescriptor {
   name: string
   ports: BindConfigNodeopPorts
   producers: readonly string[]
-  batchOperatorAccount: string | null
-  underwriterAccount: string | null
+  batchOperatorLabel: string | null
+  underwriterLabel: string | null
 }
 
 /**
@@ -86,8 +87,8 @@ export class NodeConfig {
     readonly ports: BindConfigNodeopPorts,
     readonly producers: readonly string[],
     readonly peerEndpoints: readonly string[],
-    readonly batchOperatorAccount: string | null = null,
-    readonly underwriterAccount: string | null = null
+    readonly batchOperatorLabel: string | null = null,
+    readonly underwriterLabel: string | null = null
   ) {
     this.ini = new NodeConfigIniRenderer(this)
     this.logging = new NodeConfigLoggingRenderer(this)
@@ -99,18 +100,29 @@ export class NodeConfig {
   }
 
   /**
+   * The address THIS node advertises (its `p2p-server-address`, and what peers
+   * dial): the per-node `ports.advertiseAddress` when bound (multi-host mesh),
+   * else the fleet-wide bind address mapped through `toDialAddress`.
+   */
+  get advertiseAddress(): string {
+    return NodeConfig.advertiseAddressFor(this.cluster, this.ports)
+  }
+
+  /**
    * Plan every node in the cluster from its resolved binding: a bios node, one
    * producer node per `bind.nodeop.ports.producers[]` (with the defproducer
    * names round-robin-distributed), and one operator node per batch-op /
-   * underwriter port pair. Peer endpoints are every other node's advertised
-   * p2p endpoint.
+   * underwriter port pair (associated by its provisioning LABEL — the chain
+   * account is generated at provisioning time and resolved from the key
+   * store). Peer endpoints are every other node's advertised p2p endpoint —
+   * each node's own `ports.advertiseAddress` when bound (multi-host mesh),
+   * else the shared dialable bind address.
    *
    * @param cluster - The resolved cluster config.
    * @returns The planned nodes, bios first.
    */
   static plan(cluster: ClusterConfig): NodeConfig[] {
     const nodeopPorts = cluster.bind.nodeop.ports,
-      advertise = NodeConfigIniRenderer.Loopback,
       producerNodeCount = nodeopPorts.producers.length,
       producerNames = range(cluster.producerCount).map(i => producerName(i)),
       descriptors: NodeDescriptor[] = [
@@ -120,8 +132,8 @@ export class NodeConfig {
           name: NodeConfig.BiosName,
           ports: nodeopPorts.bios,
           producers: [NodeConfig.BiosProducer],
-          batchOperatorAccount: null,
-          underwriterAccount: null
+          batchOperatorLabel: null,
+          underwriterLabel: null
         }
       ]
 
@@ -134,8 +146,8 @@ export class NodeConfig {
         producers: producerNames.filter(
           (_, i) => producerNodeCount > 0 && i % producerNodeCount === k
         ),
-        batchOperatorAccount: null,
-        underwriterAccount: null
+        batchOperatorLabel: null,
+        underwriterLabel: null
       })
     )
 
@@ -147,8 +159,8 @@ export class NodeConfig {
         name: nodeName(opIndex - 1),
         ports,
         producers: [],
-        batchOperatorAccount: Constants.batchOperatorAccountName(k),
-        underwriterAccount: null
+        batchOperatorLabel: Constants.batchOperatorLabel(k),
+        underwriterLabel: null
       })
     )
     nodeopPorts.underwriters.forEach((ports, k) =>
@@ -158,8 +170,8 @@ export class NodeConfig {
         name: nodeName(opIndex - 1),
         ports,
         producers: [],
-        batchOperatorAccount: null,
-        underwriterAccount: Constants.underwriterAccountName(k)
+        batchOperatorLabel: null,
+        underwriterLabel: Constants.underwriterLabel(k)
       })
     )
 
@@ -174,9 +186,12 @@ export class NodeConfig {
           d.producers,
           descriptors
             .filter(other => other.name !== d.name)
-            .map(other => `${advertise}:${other.ports.p2p}`),
-          d.batchOperatorAccount,
-          d.underwriterAccount
+            .map(
+              other =>
+                `${NodeConfig.advertiseAddressFor(cluster, other.ports)}:${other.ports.p2p}`
+            ),
+          d.batchOperatorLabel,
+          d.underwriterLabel
         )
     )
   }
@@ -189,4 +204,20 @@ export namespace NodeConfig {
   export const BiosName = "node_bios"
   /** The producer the bios node runs. */
   export const BiosProducer = "sysio"
+
+  /**
+   * The advertised (dialable) address for one node's binding: its per-node
+   * `advertiseAddress` when bound (multi-host mesh), else the fleet-wide
+   * `cluster.bind.nodeop.address` mapped through `toDialAddress`.
+   *
+   * @param cluster - The resolved cluster config (fleet-wide bind address).
+   * @param ports - The node's binding (may pin a per-node advertise address).
+   * @returns The address peers dial / the node advertises.
+   */
+  export function advertiseAddressFor(
+    cluster: ClusterConfig,
+    ports: BindConfigNodeopPorts
+  ): string {
+    return ports.advertiseAddress ?? toDialAddress(cluster.bind.nodeop.address)
+  }
 }

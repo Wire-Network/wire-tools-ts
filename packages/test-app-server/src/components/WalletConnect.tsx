@@ -76,7 +76,7 @@ export default function WalletConnect({ chain, onProceedToLink }: Props) {
     try {
       const accts = await walletService.requestAccounts()
       setAccounts(accts)
-    } catch (e: any) {
+    } catch (e) {
       alert(e.message)
     }
   }

@@ -1,12 +1,16 @@
 import { ethers } from "ethers"
 import { Keypair } from "@solana/web3.js"
+import { match } from "ts-pattern"
 import {
+  Base58,
   Bytes,
   getCompressedPublicKey,
   KeyType,
   PrivateKey,
-  PublicKey
+  PublicKey,
+  type PublicKeyType
 } from "@wireio/sdk-core"
+import { WireKey, WireKeyType } from "@wireio/opp-typescript-models"
 import type { EthereumKeyPair, SolanaKeyPair } from "../types/KeyPair.js"
 
 /**
@@ -17,6 +21,47 @@ import type { EthereumKeyPair, SolanaKeyPair } from "../types/KeyPair.js"
  * pair from a live ethers wallet. This is DERIVATION only — key GENERATION is the
  * separate concern owned by `KeyGenerator` (see `one-generic-facade-per-concept`).
  */
+
+// ── chain-native private-key string → sdk-core PrivateKey ───────────────────
+
+/**
+ * The sdk-core {@link PrivateKey} parsed from a key's CHAIN-NATIVE string — the
+ * exact inverse of `PrivateKey.toNativeString()`, matching what libfc's
+ * `from_native_string_to_private_key` parses per type: `K1` WIF, `EM` 0x-hex of
+ * the 32-byte secret, `ED` base58 of the 64-byte libsodium secret, `BLS`
+ * `PVT_BLS_…` (its WIRE string IS the native form). One generic entry over the
+ * closed {@link KeyType} set. Promotion candidate: belongs beside
+ * `toNativeString` in `@wireio/sdk-core` on its next roll.
+ *
+ * @param type - The key's curve.
+ * @param native - The chain-native private-key string.
+ * @returns The parsed private key.
+ */
+export function privateKeyFromNativeString(
+  type: KeyType,
+  native: string
+): PrivateKey {
+  return match(type)
+    .with(KeyType.K1, () => PrivateKey.from(native))
+    .with(KeyType.BLS, () => PrivateKey.from(native))
+    .with(KeyType.EM, () =>
+      PrivateKey.regenerate(
+        KeyType.EM,
+        Bytes.fromString(
+          native.startsWith("0x") ? native.slice(2) : native,
+          "hex"
+        )
+      )
+    )
+    .with(KeyType.ED, () =>
+      PrivateKey.regenerate(KeyType.ED, Base58.decode(native))
+    )
+    .otherwise(() => {
+      throw new Error(
+        `privateKeyFromNativeString: unsupported key type ${KeyType[type] ?? type}`
+      )
+    })
+}
 
 // ── stored EthereumKeyPair → live objects ───────────────────────────────────
 
@@ -96,4 +141,34 @@ export function solanaSdkPrivateKey(solana: SolanaKeyPair): PrivateKey {
 /** A web3.js Keypair reconstructed from an ED key pair. */
 export function solanaKeypair(solana: SolanaKeyPair): Keypair {
   return Keypair.fromSecretKey(solanaSdkPrivateKey(solana).data.array)
+}
+
+// ── Wire public key → OPP proto WireKey ─────────────────────────────────────
+
+/**
+ * The OPP proto `WireKey` (variant discriminant + raw point bytes, no
+ * variant-index prefix) of a Wire public key — the shape attestation payloads
+ * (e.g. `NodeOwnerRegistration.wire_pub_key`) carry an account owner/active
+ * authority in. Accepts every key type usable as an account authority
+ * (K1/R1/EM ride the 33-byte compressed secp256k1 point, ED the 32-byte
+ * ed25519 point) and throws on the rest (WA/BLS — the depot's
+ * `public_key_from_wire_key` rejects them as account keys).
+ *
+ * @param publicKey - The Wire public key in any {@link PublicKey.from} representation
+ *   (a `PUB_*` string, an sdk-core instance, or `{ type, compressed }`).
+ * @returns The proto `WireKey` message.
+ */
+export function wireKeyFromPublicKey(publicKey: PublicKeyType): WireKey {
+  const parsed = PublicKey.from(publicKey),
+    keyType = match(parsed.type)
+      .with(KeyType.K1, () => WireKeyType.K1)
+      .with(KeyType.R1, () => WireKeyType.R1)
+      .with(KeyType.EM, () => WireKeyType.EM)
+      .with(KeyType.ED, () => WireKeyType.ED)
+      .otherwise(() => {
+        throw new Error(
+          `wireKeyFromPublicKey: ${parsed.type} is not a Wire account-authority key type`
+        )
+      })
+  return WireKey.create({ keyType, key: parsed.data.array })
 }

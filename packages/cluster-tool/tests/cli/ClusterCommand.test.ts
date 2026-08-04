@@ -7,9 +7,13 @@ describe("ClusterCommand", () => {
     })
   })
 
-  it("carries exactly the three CLI commands", () => {
+  it("carries the CLI commands (create / run / destroy / package / create-external-config)", () => {
     expect(Object.values(ClusterCommand).sort()).toEqual(
-      ["create", "destroy", "run"].sort()
+      ["create", "create-external-config", "destroy", "package", "run"].sort()
     )
+  })
+
+  it("exposes the quoted create-external-config member via bracket access", () => {
+    expect(ClusterCommand["create-external-config"]).toBe("create-external-config")
   })
 })

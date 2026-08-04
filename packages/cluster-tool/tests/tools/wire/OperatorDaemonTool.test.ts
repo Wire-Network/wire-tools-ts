@@ -10,6 +10,9 @@ import {
   ProcessManager
 } from "@wireio/cluster-tool/cluster/processes"
 import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
+import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
+import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
+import { SignatureProviderType } from "@wireio/cluster-tool-shared"
 import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
 import {
   OperatorDaemonArtifactsKey,
@@ -17,6 +20,7 @@ import {
   type OperatorDaemonArtifacts
 } from "@wireio/cluster-tool/orchestration/outputs"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
+import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
 
 /** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
@@ -30,6 +34,7 @@ function operatorAccount(account: string, type: OperatorType): OperatorAccount {
     ),
     edPrivate = PrivateKey.generate(KeyType.ED)
   return {
+    label: account,
     account,
     type,
     wire: {
@@ -66,13 +71,20 @@ const network: OperatorDaemonTool.OperatorDaemonNetwork = {
   ethereumRpcUrl: "http://127.0.0.1:8545",
   ethereumChainId: 31_337,
   solanaRpcUrl: "http://127.0.0.1:8899",
-  debuggingServerUrl: "http://127.0.0.1:9901"
+  debuggingServerUrl: "http://127.0.0.1:9901",
+  debuggingServerEnabled: true
 }
 
 /** The value following `flag` (each occurrence). */
 function valuesOf(args: string[], flag: string): string[] {
   return args.flatMap((arg, index) => (arg === flag ? [args[index + 1]] : []))
 }
+
+/**
+ * These daemon-arg assertions pin the byte-identical KEY (default) source; the
+ * SSM/KIOD source rendering is covered by the signature-provider tests.
+ */
+const keySourceFor = () => KeyGenerator.DefaultKeySource
 
 describe("OperatorDaemonTool", () => {
   describe("runDaemonStart", () => {
@@ -90,10 +102,7 @@ describe("OperatorDaemonTool", () => {
       try {
         await OperatorDaemonTool.runDaemonStart(
           ctx,
-          {
-            kind: "OperatorDaemonTool.StartDaemonInput",
-            account: "batchopbbbb"
-          },
+          { kind: "OperatorDaemonTool.StartDaemonInput", label: "batchopbbbb" },
           new AbortController().signal
         )
         // A flow rerun reuses the daemon's data dir, so this launch must go
@@ -120,7 +129,8 @@ describe("OperatorDaemonTool", () => {
     const args = OperatorDaemonTool.batchOperatorArgs(
       operator,
       artifacts,
-      network
+      network,
+      keySourceFor
     )
 
     it("loads the batch plugin set at irreversible read-mode", () => {
@@ -128,6 +138,24 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(args, "--plugin")).toEqual([
         ...OperatorDaemonTool.BatchOperatorPlugins
       ])
+    })
+
+    it("drops the external-debugging plugin AND --ext-debugging-server when the debugging server is disabled", () => {
+      const disabledArgs = OperatorDaemonTool.batchOperatorArgs(
+        operator,
+        artifacts,
+        { ...network, debuggingServerEnabled: false },
+        keySourceFor
+      )
+      expect(valuesOf(disabledArgs, "--plugin")).toEqual(
+        OperatorDaemonTool.BatchOperatorPlugins.filter(
+          plugin => plugin !== OperatorDaemonTool.ExternalDebuggingPlugin
+        )
+      )
+      expect(valuesOf(disabledArgs, "--plugin")).not.toContain(
+        OperatorDaemonTool.ExternalDebuggingPlugin
+      )
+      expect(valuesOf(disabledArgs, "--ext-debugging-server")).toEqual([])
     })
 
     it("signs WIRE with the operator's OWN unique wire key (account active)", () => {
@@ -204,9 +232,38 @@ describe("OperatorDaemonTool", () => {
         OperatorDaemonTool.batchOperatorArgs(
           operatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER),
           artifacts,
-          network
+          network,
+          keySourceFor
         )
       ).toThrow(/not a batch operator/)
+    })
+
+    it("renders the operator's SOLANA (ED) provider as SSM under an SSM cluster", () => {
+      // H6: the ED key must obtain its SSM source (not render inline KEY), or
+      // the published ED param is orphaned and SSM isolation is defeated.
+      const ssmKeySourceFor = ClusterConfigProvider.signatureProviderSource(
+          fixtureConfig({
+            clusterPath: "/tmp/wire-ssm",
+            signatureProvider: {
+              type: SignatureProviderType.SSM,
+              ssm: {
+                awsRegion: "us-east-1",
+                awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
+              }
+            }
+          })
+        ),
+        ssmArgs = OperatorDaemonTool.batchOperatorArgs(
+          operator,
+          artifacts,
+          network,
+          ssmKeySourceFor
+        ),
+        solProvider = valuesOf(ssmArgs, "--signature-provider").find(provider =>
+          provider.startsWith(`sol-${operator.account}`)
+        )
+      expect(solProvider).toMatch(/,SSM:us-east-1:/)
+      expect(solProvider).not.toMatch(/,KEY:/)
     })
   })
 
@@ -215,7 +272,8 @@ describe("OperatorDaemonTool", () => {
     const args = OperatorDaemonTool.underwriterArgs(
       operator,
       artifacts,
-      network
+      network,
+      keySourceFor
     )
 
     it("passes the SCALED action timeout (flow timing scale reaches the daemon)", () => {
@@ -224,7 +282,8 @@ describe("OperatorDaemonTool", () => {
         const scaled = OperatorDaemonTool.underwriterArgs(
           operator,
           artifacts,
-          network
+          network,
+          keySourceFor
         )
         expect(valuesOf(scaled, "--underwriter-action-timeout-ms")).toEqual([
           String(OperatorDaemonTool.UnderwriterActionTimeoutMs * 4)
@@ -261,7 +320,8 @@ describe("OperatorDaemonTool", () => {
       const secondArgs = OperatorDaemonTool.underwriterArgs(
         operatorAccount("uwritbbbbbb", OperatorType.UNDERWRITER),
         artifacts,
-        network
+        network,
+        keySourceFor
       )
       expect(valuesOf(args, "--signature-provider")[1]).toMatch(/^eth-default,/)
       expect(valuesOf(secondArgs, "--signature-provider")[1]).toMatch(
@@ -270,6 +330,21 @@ describe("OperatorDaemonTool", () => {
       expect(
         valuesOf(secondArgs, "--outpost-ethereum-client-config-file")
       ).toEqual(valuesOf(args, "--outpost-ethereum-client-config-file"))
+    })
+
+    it("drops the external-debugging plugin AND --ext-debugging-server when the debugging server is disabled", () => {
+      const disabledArgs = OperatorDaemonTool.underwriterArgs(
+        operator,
+        artifacts,
+        { ...network, debuggingServerEnabled: false },
+        keySourceFor
+      )
+      expect(valuesOf(disabledArgs, "--plugin")).toEqual(
+        OperatorDaemonTool.UnderwriterPlugins.filter(
+          plugin => plugin !== OperatorDaemonTool.ExternalDebuggingPlugin
+        )
+      )
+      expect(valuesOf(disabledArgs, "--ext-debugging-server")).toEqual([])
     })
 
     it("wires each outpost with one consolidated per-chain CSV spec", () => {
@@ -388,14 +463,16 @@ describe("OperatorDaemonTool", () => {
           Fs.readFileSync(prepared.ethereumClientConfigurationFile, "utf-8")
         )
       ).toEqual({
-        version: 1,
+        schema_version: 1,
         clients: [
           {
-            client_id: "eth-default",
-            signature_provider_id: "eth-default",
-            rpc_url: OperatorDaemonTool.networkFromConfig(ctx.config)
-              .ethereumRpcUrl,
-            chain_id: "31337"
+            connection: {
+              client_id: "eth-default",
+              signature_provider_id: "eth-default",
+              rpc_url: OperatorDaemonTool.networkFromConfig(ctx.config)
+                .ethereumRpcUrl
+            },
+            chain_id: 31_337
           }
         ]
       })
@@ -414,7 +491,7 @@ describe("OperatorDaemonTool", () => {
       expect(
         JSON.parse(
           Fs.readFileSync(prepared.ethereumClientConfigurationFile, "utf-8")
-        ).clients[0].signature_provider_id
+        ).clients[0].connection.signature_provider_id
       ).toBe("eth-default")
     })
 

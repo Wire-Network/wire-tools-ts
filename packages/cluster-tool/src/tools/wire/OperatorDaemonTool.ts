@@ -15,11 +15,12 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
-import type {
-  BindConfigNodeopPorts,
-  ClusterConfig
+import {
+  type BindConfigNodeopPorts,
+  type ClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
+import { KeyType } from "@wireio/sdk-core"
 import { match } from "ts-pattern"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { WireClient } from "../../clients/wire/WireClient.js"
@@ -45,15 +46,20 @@ import { EthereumClientConfiguration } from "../ethereum/EthereumClientConfigura
 import { SolanaOutpostProgramTool } from "../solana/SolanaOutpostProgramTool.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { scaleTimeoutMs } from "../../utils/asyncUtils.js"
-import { Localhost, toURL } from "../../utils/netUtils.js"
+import { toDialAddress, toURL } from "../../utils/netUtils.js"
 
 export namespace OperatorDaemonTool {
   // ── plugin sets ────────────────────────────────────────────────────────────
 
+  /** The OPP-debugging sink plugin — reports OPP envelope artifacts to the
+   *  external debugging server; dropped from a daemon's plugin set when the
+   *  cluster's debugging server is disabled (`debuggingServerEnabled === false`). */
+  export const ExternalDebuggingPlugin = "sysio::external_debugging_plugin"
+
   /** Plugins a batch-operator daemon loads. */
   export const BatchOperatorPlugins = [
     "sysio::batch_operator_plugin",
-    "sysio::external_debugging_plugin",
+    ExternalDebuggingPlugin,
     "sysio::outpost_ethereum_client_plugin",
     "sysio::outpost_solana_client_plugin",
     "sysio::cron_plugin"
@@ -64,9 +70,18 @@ export namespace OperatorDaemonTool {
     "sysio::underwriter_plugin",
     "sysio::outpost_ethereum_client_plugin",
     "sysio::outpost_solana_client_plugin",
-    "sysio::external_debugging_plugin",
+    ExternalDebuggingPlugin,
     "sysio::cron_plugin"
   ] as const
+
+  /** `plugins` with the external-debugging sink removed when the server is off. */
+  const debuggingGatedPlugins = (
+    plugins: readonly string[],
+    debuggingServerEnabled: boolean
+  ): readonly string[] =>
+    debuggingServerEnabled
+      ? plugins
+      : plugins.filter(plugin => plugin !== ExternalDebuggingPlugin)
 
   // ── daemon tuning + protocol constants ────────────────────────────────────
 
@@ -136,6 +151,7 @@ export namespace OperatorDaemonTool {
     readonly ethereumChainId: number
     readonly solanaRpcUrl: string
     readonly debuggingServerUrl: string
+    readonly debuggingServerEnabled: boolean
   }
 
   /** Resolve the daemon network endpoints from the resolved cluster config. */
@@ -143,10 +159,23 @@ export namespace OperatorDaemonTool {
     config: ClusterConfig
   ): OperatorDaemonNetwork {
     return {
-      ethereumRpcUrl: toURL(config.bind.anvil.port, Localhost),
-      ethereumChainId: AnvilProcess.DefaultChainId,
-      solanaRpcUrl: toURL(config.bind.solana.ports.http, Localhost),
-      debuggingServerUrl: toURL(config.bind.debuggingServer.port, Localhost)
+      ethereumRpcUrl: toURL(
+        config.bind.anvil.port,
+        toDialAddress(config.bind.anvil.address)
+      ),
+      // External-outpost mode carries the REAL chain id; else the anvil default.
+      ethereumChainId:
+        config.externalOutposts?.ethereum.chainId ??
+        AnvilProcess.DefaultChainId,
+      solanaRpcUrl: toURL(
+        config.bind.solana.ports.http,
+        toDialAddress(config.bind.solana.address)
+      ),
+      debuggingServerUrl: toURL(
+        config.bind.debuggingServer.port,
+        toDialAddress(config.bind.debuggingServer.address)
+      ),
+      debuggingServerEnabled: config.debuggingServerEnabled !== false
     }
   }
 
@@ -266,11 +295,12 @@ export namespace OperatorDaemonTool {
         dataPath,
         EthereumClientConfigurationFilename
       ),
+      network = networkFromConfig(ctx.config),
       ethereumClientConfiguration = EthereumClientConfiguration.create({
         clientId: EthereumClientId,
         signatureProviderId: EthereumSignatureProviderId,
-        rpcUrl: networkFromConfig(ctx.config).ethereumRpcUrl,
-        chainId: AnvilProcess.DefaultChainId
+        rpcUrl: network.ethereumRpcUrl,
+        chainId: network.ethereumChainId
       })
     Fs.writeFileSync(
       ethereumClientConfigurationFile,
@@ -321,14 +351,19 @@ export namespace OperatorDaemonTool {
   function outpostClientArgs(
     operator: OperatorAccount,
     artifacts: OperatorDaemonArtifacts,
-    network: OperatorDaemonNetwork
+    network: OperatorDaemonNetwork,
+    keySourceFor: ClusterConfigProvider.SignatureProviderSourceFor
   ): string[] {
     const ethereumProvider = EthereumSignatureProviderId,
       solanaProvider = `sol-${operator.account}`
     return [
       ...pair(
         "--signature-provider",
-        KeyGenerator.toSignatureProvider(operator.ethereum, ethereumProvider)
+        KeyGenerator.toSignatureProvider(
+          operator.ethereum,
+          ethereumProvider,
+          keySourceFor(operator.account, KeyType.EM)
+        )
       ),
       ...pair(
         "--outpost-ethereum-client-config-file",
@@ -339,7 +374,11 @@ export namespace OperatorDaemonTool {
       ),
       ...pair(
         "--signature-provider",
-        KeyGenerator.toSignatureProvider(operator.solana, solanaProvider)
+        KeyGenerator.toSignatureProvider(
+          operator.solana,
+          solanaProvider,
+          keySourceFor(operator.account, KeyType.ED)
+        )
       ),
       ...pair(
         "--outpost-solana-client",
@@ -356,7 +395,8 @@ export namespace OperatorDaemonTool {
   export function batchOperatorArgs(
     operator: OperatorAccount,
     artifacts: OperatorDaemonArtifacts,
-    network: OperatorDaemonNetwork
+    network: OperatorDaemonNetwork,
+    keySourceFor: ClusterConfigProvider.SignatureProviderSourceFor
   ): string[] {
     Assert.ok(
       operator.type === OperatorType.BATCH,
@@ -365,10 +405,19 @@ export namespace OperatorDaemonTool {
     assertOutpostKeys(operator)
     return [
       ...pair("--read-mode", WireClient.FinalityType.irreversible),
-      ...pluginArgs(BatchOperatorPlugins),
+      ...pluginArgs(
+        debuggingGatedPlugins(
+          BatchOperatorPlugins,
+          network.debuggingServerEnabled
+        )
+      ),
       ...pair(
         "--signature-provider",
-        KeyGenerator.toSignatureProvider(operator.wire)
+        KeyGenerator.toSignatureProvider(
+          operator.wire,
+          undefined,
+          keySourceFor(operator.account, KeyType.K1)
+        )
       ),
       ...pair("--batch-enabled", "true"),
       ...pair("--batch-operator-account", operator.account),
@@ -377,8 +426,10 @@ export namespace OperatorDaemonTool {
         "--batch-delivery-timeout-ms",
         String(scaleTimeoutMs(BatchDeliveryTimeoutMs))
       ),
-      ...pair("--ext-debugging-server", network.debuggingServerUrl),
-      ...outpostClientArgs(operator, artifacts, network),
+      ...(network.debuggingServerEnabled
+        ? pair("--ext-debugging-server", network.debuggingServerUrl)
+        : []),
+      ...outpostClientArgs(operator, artifacts, network, keySourceFor),
       // Per-chain outpost bindings (repeatable CSV specs; replaced the removed
       // --batch-eth-{client-id,opp-addr,opp-inbound-addr} / --batch-sol-program-id —
       // the EVM RPC client is auto-selected by matching the chains row's
@@ -416,7 +467,8 @@ export namespace OperatorDaemonTool {
   export function underwriterArgs(
     operator: OperatorAccount,
     artifacts: OperatorDaemonArtifacts,
-    network: OperatorDaemonNetwork
+    network: OperatorDaemonNetwork,
+    keySourceFor: ClusterConfigProvider.SignatureProviderSourceFor
   ): string[] {
     Assert.ok(
       operator.type === OperatorType.UNDERWRITER,
@@ -425,10 +477,19 @@ export namespace OperatorDaemonTool {
     assertOutpostKeys(operator)
     return [
       ...pair("--read-mode", WireClient.FinalityType.irreversible),
-      ...pluginArgs(UnderwriterPlugins),
+      ...pluginArgs(
+        debuggingGatedPlugins(
+          UnderwriterPlugins,
+          network.debuggingServerEnabled
+        )
+      ),
       ...pair(
         "--signature-provider",
-        KeyGenerator.toSignatureProvider(operator.wire)
+        KeyGenerator.toSignatureProvider(
+          operator.wire,
+          undefined,
+          keySourceFor(operator.account, KeyType.K1)
+        )
       ),
       ...pair("--underwriter-enabled", "true"),
       ...pair("--underwriter-account", operator.account),
@@ -436,8 +497,10 @@ export namespace OperatorDaemonTool {
         "--underwriter-action-timeout-ms",
         String(scaleTimeoutMs(UnderwriterActionTimeoutMs))
       ),
-      ...pair("--ext-debugging-server", network.debuggingServerUrl),
-      ...outpostClientArgs(operator, artifacts, network),
+      ...(network.debuggingServerEnabled
+        ? pair("--ext-debugging-server", network.debuggingServerUrl)
+        : []),
+      ...outpostClientArgs(operator, artifacts, network, keySourceFor),
       // Per-chain outpost wiring (repeatable CSV specs; replaced the removed
       // --underwriter-eth-opreg-addr / --underwriter-{eth,sol}-client-id):
       //   EVM: <chain_code>,<client_id>,<operator_registry_addr>,<source_deposit_contract_addr>
@@ -495,15 +558,19 @@ export namespace OperatorDaemonTool {
   /** Preferred p2p port for an ad-hoc (flow-provisioned) operator daemon. */
   export const PreferredDaemonP2pPort = 9976
 
-  /** The process label + node-dir name for an operator's daemon. */
-  export function daemonNodeName(account: string): string {
-    return `node_${account}`
+  /**
+   * The process label + node-dir name for an operator's daemon, keyed by the
+   * operator's provisioning LABEL (deterministic + human-navigable; the chain
+   * account is node-owner-generated).
+   */
+  export function daemonNodeName(label: string): string {
+    return `node_${label}`
   }
 
   /** Input for {@link planDaemonStart}. */
   export interface StartDaemonInput extends StepInput {
     readonly kind: "OperatorDaemonTool.StartDaemonInput"
-    readonly account: string
+    readonly label: string
   }
 
   /**
@@ -523,14 +590,14 @@ export namespace OperatorDaemonTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    account: string
+    label: string
   ): ClusterBuildStep<C, StartDaemonInput> {
     return ClusterBuildStep.create<C, StartDaemonInput>(
       actor,
       name,
       description,
       options,
-      { kind: "OperatorDaemonTool.StartDaemonInput", account },
+      { kind: "OperatorDaemonTool.StartDaemonInput", label },
       runDaemonStart
     )
   }
@@ -542,22 +609,23 @@ export namespace OperatorDaemonTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const nodeName = daemonNodeName(input.account)
+    const nodeName = daemonNodeName(input.label)
     if (ctx.processManager.get(nodeName) != null) return
 
-    const operator = ctx.keyStore.assertOperator(input.account),
+    const operator = ctx.keyStore.assertOperator(input.label),
       artifacts = ctx.outputs.assert(OperatorDaemonArtifactsKey),
       network = networkFromConfig(ctx.config),
+      keySourceFor = ClusterConfigProvider.signatureProviderSource(ctx.config),
       daemonArgs = match(operator.type)
         .with(OperatorType.BATCH, () =>
-          batchOperatorArgs(operator, artifacts, network)
+          batchOperatorArgs(operator, artifacts, network, keySourceFor)
         )
         .with(OperatorType.UNDERWRITER, () =>
-          underwriterArgs(operator, artifacts, network)
+          underwriterArgs(operator, artifacts, network, keySourceFor)
         )
         .otherwise(() => {
           throw new Error(
-            `startDaemon: ${input.account} is a ${OperatorType[operator.type]}, not an OPP operator`
+            `startDaemon: ${input.label} is a ${OperatorType[operator.type]}, not an OPP operator`
           )
         })
 
@@ -574,7 +642,7 @@ export namespace OperatorDaemonTool {
       extraArgs: daemonArgs
     })
     ctx.log.info(
-      `[operator-daemon] ${input.account} daemon up (${nodeName}, http=${ports.http})`
+      `[operator-daemon] ${input.label} (${operator.account}) daemon up (${nodeName}, http=${ports.http})`
     )
   }
 
@@ -583,7 +651,8 @@ export namespace OperatorDaemonTool {
 
   /**
    * Compose the daemon's {@link NodeConfig}: a non-producing operator node named
-   * for the account, peered to every producer node, on the resolved `ports`.
+   * for the operator's label, peered to every producer node, on the resolved
+   * `ports`.
    */
   function daemonNodeConfig(
     config: ClusterConfig,
@@ -592,18 +661,19 @@ export namespace OperatorDaemonTool {
   ): NodeConfig {
     const isBatchOperator = operator.type === OperatorType.BATCH,
       producerPeers = config.bind.nodeop.ports.producers.map(
-        producerPorts => `${Localhost}:${producerPorts.p2p}`
+        producerPorts =>
+          `${NodeConfig.advertiseAddressFor(config, producerPorts)}:${producerPorts.p2p}`
       )
     return new NodeConfig(
       config,
       NodeRole.operator,
       AdHocDaemonNodeIndex,
-      daemonNodeName(operator.account),
+      daemonNodeName(operator.label),
       ports,
       [],
       producerPeers,
-      isBatchOperator ? operator.account : null,
-      isBatchOperator ? null : operator.account
+      isBatchOperator ? operator.label : null,
+      isBatchOperator ? null : operator.label
     )
   }
 }

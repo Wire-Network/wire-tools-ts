@@ -58,6 +58,11 @@ export class EthereumClient {
     return this.provider.getBalance(address)
   }
 
+  /** The chain id the connected RPC endpoint reports (endpoint-liveness probe). */
+  async chainId(): Promise<number> {
+    return Number((await this.provider.getNetwork()).chainId)
+  }
+
   /** Mine `blocks` blocks (anvil `evm_mine`). */
   async mine(blocks = 1): Promise<void> {
     await Promise.all(
@@ -77,14 +82,6 @@ export class EthereumClient {
     fromBlock = 0
   ): Promise<ethers.EventLog[]> {
     return this.queryEvents(opp, EthereumClient.OppEnvelopeEvent, fromBlock)
-  }
-
-  /** Query `OPPEpoch` events from a contract. */
-  getOPPEpochs(
-    opp: ethers.Contract,
-    fromBlock = 0
-  ): Promise<ethers.EventLog[]> {
-    return this.queryEvents(opp, EthereumClient.OppEpochEvent, fromBlock)
   }
 
   private async queryEvents(
@@ -108,6 +105,4 @@ export namespace EthereumClient {
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
   /** OPP envelope event name on the outpost contract. */
   export const OppEnvelopeEvent = "OPPEnvelope"
-  /** OPP epoch event name on the outpost contract. */
-  export const OppEpochEvent = "OPPEpoch"
 }

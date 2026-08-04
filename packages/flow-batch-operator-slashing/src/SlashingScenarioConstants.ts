@@ -28,24 +28,56 @@ export namespace SlashingScenarioConstants {
   export const EpochBoundaryMarginMs = 2_000
 
   /**
-   * Bootstrapped batch operators provisioned by the harness — enough to keep
-   * the rest of the network healthy while the dispute operators drive the
-   * contested outpost.
+   * The three batch operators whose divergent deliveries form the split. The
+   * operator delivering the canonical tag is the one the Tier-1 owners vote
+   * for; the other two are slashed. They are provisioned SBP-less (no daemon)
+   * and non-bootstrapped, so the flow fully controls their deliveries.
    */
-  export const BootstrapBatchOperatorCount = 9
+  export const DisputeOperators = ["dispop.a", "dispop.b", "dispop.c"] as const
+  /** Group SIZE the dispute needs — three divergent deliveries, no majority. */
+  export const DisputeOperatorCount = DisputeOperators.length
   /**
-   * Disable the miss-based termination ladder for the run. The dispute
-   * operators are SBP-less and only deliver when the flow injects an envelope,
-   * so across the multi-epoch dispute (vote + tally + resolve) they would
-   * otherwise accrue enough scheduled-and-missed epochs to trip `termcheck`
-   * and flip SLASHED → TERMINATED before the dispute lands — making the slash
-   * a no-op on an already-terminated operator. Termination is exercised by
-   * flow-batch-operator-termination; THIS flow verifies the dispute-driven
-   * slash, which is independent of the miss ladder.
+   * Bootstrapped batch operators provisioned by the harness — exactly
+   * {@link DisputeOperators}.length, because the scenario states the group
+   * shape EXPLICITLY (`operatorsPerEpoch` + `batchOpGroups` in its `defaults`)
+   * and the bootstrap's `sysio.epoch::schbatchgps` asserts the ACTIVE pool can
+   * fill that shape: `operators_per_epoch x batch_op_groups` operators must
+   * exist when it runs. A smaller roster reverts the bootstrap with "not enough
+   * available batch operators for group assignment".
+   *
+   * These bootstrapped operators do NOT stay in the group: once the flow flips
+   * the SBP-less dispute operators ACTIVE it re-materializes the rotation with a
+   * fresh `schbatchgps`, which sorts non-bootstrapped first — so the three
+   * `dispop.*` fill the sole group and these fall outside it, exactly as the
+   * hand-off in `SlashingScenario.plan` describes. They keep the network
+   * relaying until that hand-off.
+   *
+   * (This was 1 while the shape was DERIVED from the roster — one operator then
+   * produced the wanted single group. The shape is explicit now, so 1 only
+   * starves the group; `batch_op_groups` still comes from
+   * {@link DisputeBatchOperatorGroupCount}, which wire-sysio #529 pins after
+   * materialization.)
    */
-  export const TerminateMaxConsecutiveMisses = 100_000
-  /** Companion miss-percentage threshold — effectively disabled (see above). */
-  export const TerminateMaxPercentMisses24h = 100
+  export const BootstrapBatchOperatorCount = DisputeOperatorCount
+  /**
+   * Loosest VALID termination thresholds for the run. Termination CANNOT be
+   * fully disabled — the depot contract (`sysio.opreg::setconfig`) caps
+   * `terminate_max_consecutive_misses` at [1, 5] and `terminate_max_pct_misses_24h`
+   * at [1, 99] — so these are the max the contract allows. The dispute operators
+   * are SBP-less and only deliver when the flow injects an envelope; across the
+   * critical window the epoch FREEZES (the sole active group isn't delivering, so
+   * depot consensus can't advance) and then PAUSES (opendispute), so `advance` —
+   * and thus `recorddel` miss-recording — does not run during settle / vote /
+   * tally / resolve. The dispute ops therefore never accrue 5 consecutive missed
+   * ADVANCES, so at the loosest valid thresholds they don't trip `termcheck`
+   * before the slash lands (which would make the slash a no-op on an
+   * already-TERMINATED operator). Termination itself is exercised by
+   * flow-batch-operator-termination; THIS flow verifies the dispute-driven slash,
+   * independent of the miss ladder.
+   */
+  export const TerminateMaxConsecutiveMisses = 5
+  /** Companion miss-percentage threshold — the max the contract allows (see above). */
+  export const TerminateMaxPercentMisses24h = 99
 
   /**
    * Tier-1 node owners provisioned as the dispute electorate. Names MUST be
@@ -57,13 +89,7 @@ export namespace SlashingScenarioConstants {
    */
   export const Tier1VoterNames = ["voter1", "voter2", "voter3"] as const
 
-  /**
-   * The three batch operators whose divergent deliveries form the split. The
-   * operator delivering the canonical tag is the one the Tier-1 owners vote
-   * for; the other two are slashed. They are provisioned SBP-less (no daemon)
-   * and non-bootstrapped, so the flow fully controls their deliveries.
-   */
-  export const DisputeOperators = ["dispop.a", "dispop.b", "dispop.c"] as const
+
   /** The operator delivering the canonical checksum (NOT slashed). */
   export const CanonicalOperator = DisputeOperators[0]
   /** The operators delivering the non-canonical checksums (slashed). */

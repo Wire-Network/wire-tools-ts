@@ -1,7 +1,10 @@
 import { AccountSteps } from "./AccountSteps.js"
+import { ClusterPackageSteps } from "./ClusterPackageSteps.js"
 import { ClusterStateSteps } from "./ClusterStateSteps.js"
 import { ConsensusSteps } from "./ConsensusSteps.js"
 import { ContractSteps } from "./ContractSteps.js"
+import { ExternalClusterConfigSteps } from "./ExternalClusterConfigSteps.js"
+import { ExternalOutpostSteps } from "./ExternalOutpostSteps.js"
 import { KeySteps } from "./KeySteps.js"
 import { OperatorSteps } from "./OperatorSteps.js"
 import { ProtocolSteps } from "./ProtocolSteps.js"
@@ -34,7 +37,13 @@ export namespace Steps {
   export import consensus = ConsensusSteps
   export import contract = ContractSteps
   export import ethereumOutpost = EthereumOutpostSteps
+  /** External-outpost artifact publishing (external-outpost clusters). */
+  export import externalOutpost = ExternalOutpostSteps
+  /** The `create-external-config` five-stage clone/rebind/emit pipeline. */
+  export import externalClusterConfig = ExternalClusterConfigSteps
   export import keys = KeySteps
+  /** Per-node archive steps for the `package` command. */
+  export import clusterPackage = ClusterPackageSteps
   export import operator = OperatorSteps
   export import protocol = ProtocolSteps
   export import registry = RegistrySteps

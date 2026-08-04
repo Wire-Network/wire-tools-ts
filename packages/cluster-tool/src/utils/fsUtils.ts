@@ -14,11 +14,18 @@ const log = getLogger(__filename)
  * wedge the resource. `realpath: false` lets the lock target not pre-exist.
  *
  * Changing these tunes how long a contending process blocks before giving up
- * (retries) and how long a dead holder's lock survives (stale).
+ * (retries) and how long a dead holder's lock survives (stale). The ~25s
+ * cumulative retry budget (`retries: 8`) is sized for the WORST short-section
+ * holder under contention: a solana dynamic-range pick TCP+UDP-probes a
+ * 64-port window while holding the port lock (seconds on a loaded host), and
+ * the full jest run puts all 8 projects' port-resolving tests behind the SAME
+ * host-global lock — the previous ~6s budget failed a rotating victim test
+ * with `Lock file is already being held` (e2e gate run 30399635199 + local
+ * pre-commit runs).
  */
 const FileLockOptions: LockOptions = {
   realpath: false,
-  retries: { retries: 5, factor: 2, minTimeout: 100 },
+  retries: { retries: 8, factor: 2, minTimeout: 100 },
   stale: 10_000
 }
 

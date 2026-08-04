@@ -1,7 +1,9 @@
 import * as Fs from "node:fs"
 import * as Path from "node:path"
 import {
+  ClusterConfigSchemaCodec,
   ClusterFiles,
+  ClusterStateSchemaCodec,
   type ClusterConfig,
   type ClusterState
 } from "@wireio/cluster-tool-shared"
@@ -9,6 +11,7 @@ import { createHash } from "node:crypto"
 
 import Bluebird from "bluebird"
 import { match } from "ts-pattern"
+import { NestedError } from "@wireio/shared"
 
 import {
   EnvelopeEventKind,
@@ -131,14 +134,14 @@ export class LocalFileDebuggingClient extends DebuggingClient {
         ClusterFiles.ConfigFilename
       ),
       raw = await Fs.promises.readFile(file, "utf8")
-    return JSON.parse(raw) as ClusterConfig
+    return ClusterConfigSchemaCodec.deserialize(raw)
   }
 
   async getClusterState(): Promise<ClusterState> {
     const file = Path.join(this.config.clusterPath, ClusterFiles.StateFilename)
     if (!Fs.existsSync(file)) return null
     const raw = await Fs.promises.readFile(file, "utf8")
-    return JSON.parse(raw) as ClusterState
+    return ClusterStateSchemaCodec.deserialize(raw)
   }
 
   // -------------------------------------------------------------------------
@@ -211,9 +214,9 @@ export class LocalFileDebuggingClient extends DebuggingClient {
     let envelopeData: Uint8Array
     try {
       envelopeData = await Fs.promises.readFile(dataPath)
-    } catch (err: any) {
+    } catch (err) {
       if (err.code === "ENOENT") {
-        throw new Error(`Envelope not found: ${key}`)
+        throw new NestedError(`Envelope not found: ${key}`, { cause: err })
       }
       throw err
     }
@@ -290,7 +293,7 @@ export class LocalFileDebuggingClient extends DebuggingClient {
     let dataExisted = false
     try {
       await Fs.promises.writeFile(dataFile, envelopeBytes, { flag: "wx" })
-    } catch (err: any) {
+    } catch (err) {
       if (err.code === "EEXIST") {
         dataExisted = true
       } else {

@@ -38,6 +38,7 @@ export namespace SolanaValidatorProcessSteps {
     const soFile = SolanaOutpostProgramTool.programSoFile(ctx.config.solanaPath)
 
     const validator = await SolanaValidatorProcess.create(ctx.processManager, {
+      address: ctx.config.bind.solana.address,
       rpcPort: ctx.config.bind.solana.ports.http,
       faucetPort: ctx.config.bind.solana.ports.faucet,
       gossipPort: ctx.config.bind.solana.ports.gossip,

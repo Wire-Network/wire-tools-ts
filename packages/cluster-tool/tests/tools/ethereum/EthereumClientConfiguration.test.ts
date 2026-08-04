@@ -28,13 +28,15 @@ function fileWith(
 describe("EthereumClientConfiguration", () => {
   it("creates the unified schema without a policy so nodeop applies permissive defaults", () => {
     expect(EthereumClientConfiguration.create(BaseOptions)).toEqual({
-      version: 1,
+      schema_version: 1,
       clients: [
         {
-          client_id: "eth-default",
-          signature_provider_id: "eth-batchopaaaa",
-          rpc_url: "http://127.0.0.1:8545",
-          chain_id: "31337"
+          connection: {
+            client_id: "eth-default",
+            signature_provider_id: "eth-batchopaaaa",
+            rpc_url: "http://127.0.0.1:8545"
+          },
+          chain_id: 31_337
         }
       ]
     })
@@ -54,7 +56,7 @@ describe("EthereumClientConfiguration", () => {
       EthereumClientConfiguration.create({
         ...BaseOptions,
         clientId: "a".repeat(64)
-      }).clients[0].client_id
+      }).clients[0].connection.client_id
     ).toHaveLength(64)
     expect(() =>
       EthereumClientConfiguration.create({ ...BaseOptions, clientId: "" })
@@ -76,10 +78,19 @@ describe("EthereumClientConfiguration", () => {
         ...BaseOptions,
         rpcUrl: "ws://127.0.0.1:8545"
       })
-    ).toThrow(/rpc_url must use http or https/)
+    ).toThrow(/rpc_url must use http or https with a host and no fragment/)
+    expect(() =>
+      EthereumClientConfiguration.create({
+        ...BaseOptions,
+        rpcUrl: "http://127.0.0.1:8545/#secret"
+      })
+    ).toThrow(/rpc_url must use http or https with a host and no fragment/)
+    expect(() =>
+      EthereumClientConfiguration.create({ ...BaseOptions, chainId: 0 })
+    ).toThrow(/chain_id must be a positive uint32/)
     expect(() =>
       EthereumClientConfiguration.create({ ...BaseOptions, chainId: 2 ** 32 })
-    ).toThrow(/chain_id exceeds its supported domain/)
+    ).toThrow(/chain_id must be a positive uint32/)
   })
 
   it("rejects non-canonical, overflowing, and inconsistent finite policies", () => {
@@ -128,8 +139,8 @@ describe("EthereumClientConfiguration", () => {
   it("rejects a wrong schema version or client count", () => {
     const file = EthereumClientConfiguration.create(BaseOptions)
     expect(() =>
-      EthereumClientConfiguration.assertValid({ ...file, version: 2 })
-    ).toThrow(/version must be 1/)
+      EthereumClientConfiguration.assertValid({ ...file, schema_version: 2 })
+    ).toThrow(/schema_version must be 1/)
     expect(() =>
       EthereumClientConfiguration.assertValid({ ...file, clients: [] })
     ).toThrow(/must contain exactly one client/)

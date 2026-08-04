@@ -5,6 +5,7 @@ import {
   ClusterBuildPhase,
   EthereumLocalReserveStatus,
   FlowScenario,
+  ProtocolTiming,
   Report,
   SwapUserIdentities,
   containsSwapRevert,
@@ -121,6 +122,9 @@ export class ReserveLifecycleScenario extends FlowScenario {
     "Gated reserve create→match lifecycle + private-reserve exclusions (ETH-side)"
 
   override readonly defaults: ClusterBuildOptions = {
+    // Seed the mock (chain, token) PRIMARY reserves this flow reads — `regreserve`
+    // is epoch-0-gated by the depot, so it must ride the bootstrap, not a flow phase.
+    enableMockReserves: true,
     epochDurationSec: Constants.EpochDurationSec,
     requiredUnderwriterCollateral: [
       {
@@ -138,13 +142,13 @@ export class ReserveLifecycleScenario extends FlowScenario {
 
   plan(cluster: ClusterBuild): void {
     const relayStepOptions = {
-        timeoutMs: Constants.RelayDeadlineMs + Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.RelayDeadlineMs + ProtocolTiming.PollDeadlineBufferMs
       },
       readyStepOptions = {
-        timeoutMs: Constants.ReadyDeadlineMs + Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.ReadyDeadlineMs + ProtocolTiming.PollDeadlineBufferMs
       },
       windowStepOptions = {
-        timeoutMs: Constants.NoUwreqWindowMs + Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.NoUwreqWindowMs + ProtocolTiming.PollDeadlineBufferMs
       },
       ethereumWriteOptions = {
         timeoutMs: Constants.EthereumWriteStepTimeoutMs

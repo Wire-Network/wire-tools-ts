@@ -188,7 +188,7 @@ function inspectToPlainObject(
           }))
         }))
       }
-    } catch (err: any) {
+    } catch (err) {
       obj.envelopeDecodeError = err.message
     }
   }

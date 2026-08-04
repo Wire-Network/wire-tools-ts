@@ -32,10 +32,7 @@ export class NodeConfigIniRenderer implements Renderer {
         ...plugins.map(plugin => kv("plugin", plugin)),
         "",
         kv("p2p-listen-endpoint", `${listen}:${node.ports.p2p}`),
-        kv(
-          "p2p-server-address",
-          `${NodeConfigIniRenderer.Loopback}:${node.ports.p2p}`
-        ),
+        kv("p2p-server-address", `${node.advertiseAddress}:${node.ports.p2p}`),
         kv("http-server-address", `${listen}:${node.ports.http}`),
         ...node.peerEndpoints.map(ep => kv("p2p-peer-address", ep)),
         "",
@@ -55,14 +52,12 @@ export class NodeConfigIniRenderer implements Renderer {
         kv("max-clients", extraArgs.maxClients),
         kv("connection-cleanup-period", extraArgs.connectionCleanupPeriod),
         kv("http-max-response-time-ms", extraArgs.httpMaxResponseTimeMs),
+        // The operator's `batch-operator-account` / `underwriter-account` is
+        // NOT rendered here: the chain account is node-owner-generated at
+        // provisioning time, so it rides the daemon CLI args
+        // (`OperatorDaemonTool`) resolved from the key store at start.
         ...(isOperator
           ? [kv("read-mode", WireClient.FinalityType.irreversible)]
-          : []),
-        ...(isOperator && node.batchOperatorAccount
-          ? [kv("batch-operator-account", node.batchOperatorAccount)]
-          : []),
-        ...(isOperator && node.underwriterAccount
-          ? [kv("underwriter-account", node.underwriterAccount)]
           : []),
         ...NodeConfigIniRenderer.HttpInsecureLines,
         ""
