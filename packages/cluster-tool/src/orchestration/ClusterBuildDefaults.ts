@@ -108,6 +108,31 @@ const DefaultTerminateWindowMs = 24 * 60 * 60 * 1000
  */
 const BatchOperatorAirdropLamports = 100n * BigInt(LAMPORTS_PER_SOL)
 
+/** Wei per ether — the ETH counterpart of `LAMPORTS_PER_SOL`. */
+const WeiPerEther = 10n ** 18n
+
+/**
+ * Wei seeded into each bootstrapped operator's ETH wallet under SSM — the exact
+ * ETH analogue of {@link BatchOperatorAirdropLamports}: their daemons PAY the gas
+ * on every outbound delivery to the Ethereum outpost, every epoch, for the whole
+ * run.
+ *
+ * Only needed under SSM. Under KEY the operator EM keys derive from
+ * `EthereumOutpostBootstrapper.AnvilMnemonic`, whose HD accounts anvil prefunds;
+ * under SSM they derive from a GENERATED cluster mnemonic (`KeySteps.ethereumMnemonic`)
+ * that anvil has never heard of, so every wallet starts at ZERO.
+ *
+ * An unfunded fee payer does not fail loudly — the daemon's outbound tx is rejected
+ * by the RPC with `-32003 'Out of gas: gas required exceeds allowance: 0'`, the ETH
+ * outpost's `latestOutboundEnvelope` is never written, the depot reads back
+ * `epoch_=0` forever, and the epoch stalls at 1 with SOL circulating normally
+ * (measured 2026-08-04: 98 such rejections, all EVM, zero SVM).
+ *
+ * Sized as a GAS budget, never collateral — the bootstrap performs no ETH
+ * collateral deposits for these operators.
+ */
+const BatchOperatorEthereumFundingWei = 10n * WeiPerEther
+
 /**
  * Builds a {@link ClusterBuild} pre-loaded with the full bootstrap, organized into
  * two top-level phase groups: **Cluster Prerequisites** (processes, keys, system +
@@ -821,8 +846,10 @@ export namespace ClusterBuildDefaults {
           )
     )
 
-    // Bootstrapped batch operators + underwriters via the ONE mechanism (no funding —
-    // deposit flows provision their own non-bootstrapped ops with funding).
+    // Bootstrapped batch operators + underwriters via the ONE mechanism. Fee-payer
+    // funding only — deposit flows provision their own non-bootstrapped ops with
+    // collateral funding on top.
+    const isSSM = config.signatureProvider.type === SignatureProviderType.SSM
     WireOperatorProvisioningTool.planOperatorAccountProvisioning<C>(
       postContractDeployment,
       "Create batchops & uws",
@@ -834,15 +861,19 @@ export namespace ClusterBuildDefaults {
           type: OperatorType.BATCH,
           ethereumHdIndex: index + 1,
           isBootstrapped: true,
-          // Fee-payer funding for the daemon's per-epoch SOL deliveries (ETH
-          // needs none — anvil prefunds the operator HD accounts).
-          airdropSolanaLamports: BatchOperatorAirdropLamports
+          // Fee-payer funding for the daemon's per-epoch deliveries on BOTH
+          // chains. ETH is SSM-only: under KEY the EM keys come off the anvil
+          // mnemonic and are prefunded, under SSM they come off a generated
+          // mnemonic anvil never funded. See BatchOperatorEthereumFundingWei.
+          airdropSolanaLamports: BatchOperatorAirdropLamports,
+          ...(isSSM ? { fundEthereumWei: BatchOperatorEthereumFundingWei } : {})
         })),
         ...underwriters.map((label, index) => ({
           label,
           type: OperatorType.UNDERWRITER,
           ethereumHdIndex: config.batchOperatorCount + index + 1,
-          isBootstrapped: false
+          isBootstrapped: false,
+          ...(isSSM ? { fundEthereumWei: BatchOperatorEthereumFundingWei } : {})
         }))
       ]
     )
