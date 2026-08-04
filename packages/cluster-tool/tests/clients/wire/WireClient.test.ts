@@ -25,6 +25,110 @@ describe("WireClient", () => {
     }
   })
 
+  // The regression suite for the 2026-08-04 double-push: a finality wait that
+  // does not resolve must NEVER re-send. `newaccount` failed loudly then; a
+  // re-pushed transfer/deposit would have succeeded twice, silently.
+  describe("withFinality re-push safety (via createAccount)", () => {
+    const TransactionId = "a400888817429491c0ba8bfbb9d36f8439ad8577dc4e335a61b"
+
+    /** A client whose push succeeds and whose inclusion wait never resolves. */
+    function clientWithUnresolvedWait() {
+      const client = new WireClient(config),
+        send = jest
+          .spyOn(client["runner"], "run")
+          .mockResolvedValue({ transaction_id: TransactionId } as never)
+      jest
+        .spyOn(client, "waitForTransactionInBlock")
+        .mockRejectedValue(new Error("not found in blocks 1–6 within 60000ms"))
+      return { client, send }
+    }
+
+    /** `get_info` with a head time `offsetSec` from now (drives expiry). */
+    function infoAt(offsetSec: number) {
+      return {
+        last_irreversible_block_num: 10,
+        head_block_time: new Date(Date.now() + offsetSec * 1000)
+          .toISOString()
+          .replace("Z", "")
+      } as never
+    }
+
+    afterEach(() => jest.restoreAllMocks())
+
+    it("does NOT re-push when the transaction is still applied", async () => {
+      const { client, send } = clientWithUnresolvedWait()
+      // The re-read LOCATES it — exactly run-5's case (the account existed).
+      jest
+        .spyOn(client, "getTransaction")
+        .mockResolvedValue({ block_num: 268 } as never)
+      jest.spyOn(client, "getInfo").mockResolvedValue(infoAt(0))
+
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/NOT re-pushed/)
+      expect(send).toHaveBeenCalledTimes(1)
+    })
+
+    it("does NOT re-push when the re-read itself FAILED", async () => {
+      const { client, send } = clientWithUnresolvedWait()
+      // A trace-api 500 / socket reset is "could not ask", NOT "it is gone".
+      // Laundering this into a fork-out is what re-pushed an applied tx.
+      jest
+        .spyOn(client, "getTransaction")
+        .mockRejectedValue(new Error("HTTP 500"))
+      jest.spyOn(client, "getInfo").mockResolvedValue(infoAt(0))
+
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/NOT re-pushed/)
+      expect(send).toHaveBeenCalledTimes(1)
+    })
+
+    it("does NOT re-push while the transaction could still be included", async () => {
+      const { client, send } = clientWithUnresolvedWait()
+      // Absent, but the TAPOS window is still OPEN — absence alone is not proof.
+      jest.spyOn(client, "getTransaction").mockResolvedValue(null as never)
+      jest.spyOn(client, "getInfo").mockResolvedValue(infoAt(0))
+
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/NOT re-pushed/)
+      expect(send).toHaveBeenCalledTimes(1)
+    })
+
+    it("DOES re-push once the expiration window has closed while absent", async () => {
+      const { client, send } = clientWithUnresolvedWait()
+      // Absent AND head time is past pushedAt + TransactionExpirationSec, so
+      // it can never be included — the one state where re-push is provably safe.
+      jest.spyOn(client, "getTransaction").mockResolvedValue(null as never)
+      jest
+        .spyOn(client, "getInfo")
+        .mockResolvedValue(infoAt(WireClient.TransactionExpirationSec + 60))
+
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).rejects.toThrow(/can never apply/)
+      expect(send.mock.calls.length).toBeGreaterThan(1)
+      expect(send).toHaveBeenCalledTimes(WireClient.FinalityMaxAttempts)
+    })
+
+    it("skips the wait entirely for the settled-no-op sentinel", async () => {
+      const client = new WireClient(config),
+        send = jest.spyOn(client["runner"], "run").mockResolvedValue({
+          transaction_id: WireClient.NoTransactionSentTransactionId
+        } as never),
+        wait = jest.spyOn(client, "waitForTransactionInBlock")
+
+      await expect(
+        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
+      ).resolves.toBeDefined()
+      expect(send).toHaveBeenCalledTimes(1)
+      // Previously this polled a FAKE id for the whole budget, then re-ran the
+      // command up to FinalityMaxAttempts times on an idempotent redeploy.
+      expect(wait).not.toHaveBeenCalled()
+    })
+  })
+
   describe("getSysioContract proxy", () => {
     const epochClient = () =>
       new WireClient(config).getSysioContract(
