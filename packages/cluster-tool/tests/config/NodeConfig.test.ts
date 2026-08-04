@@ -32,6 +32,58 @@ describe("NodeConfig", () => {
     })
   })
 
+  describe("peerCapacity", () => {
+    it("sums the whole planned topology plus bios and ad-hoc headroom", () => {
+      const capacity = NodeConfig.peerCapacity(
+        fixtureConfig({
+          nodeCount: 21,
+          batchOperatorCount: 21,
+          underwriterCount: 1
+        })
+      )
+      expect(capacity).toBe(
+        21 +
+          21 +
+          1 +
+          NodeConfig.BiosNodeCount +
+          NodeConfig.AdHocDaemonPeerHeadroom
+      )
+    })
+
+    it("covers the full mesh every node is wired into", () => {
+      // Each node dials every OTHER node, so the capacity must be at least the
+      // peer count — a cap below it makes nodes refuse the surplus inbound
+      // dials, which freezes LIB (the 2026-08-04 21-producer create).
+      const config = fixtureConfig({
+        nodeCount: 21,
+        batchOperatorCount: 21,
+        underwriterCount: 1
+      })
+      const totalNodes =
+        config.nodeCount +
+        config.batchOperatorCount +
+        config.underwriterCount +
+        NodeConfig.BiosNodeCount
+      expect(NodeConfig.peerCapacity(config)).toBeGreaterThanOrEqual(
+        totalNodes - 1
+      )
+    })
+
+    it("scales down to the single-producer dev topology", () => {
+      expect(
+        NodeConfig.peerCapacity(
+          fixtureConfig({
+            nodeCount: 1,
+            batchOperatorCount: 3,
+            underwriterCount: 1
+          })
+        )
+      ).toBe(
+        1 + 3 + 1 + NodeConfig.BiosNodeCount + NodeConfig.AdHocDaemonPeerHeadroom
+      )
+    })
+  })
+
   describe("plan", () => {
     const nodes = NodeConfig.plan(fixtureConfig())
 

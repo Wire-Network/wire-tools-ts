@@ -84,11 +84,14 @@ export interface NodeopTuningConfig extends Required<NodeopTuningOptions> {}
 
 /**
  * Resolve the tuning defaults for `cluster` (see the companion-namespace
- * constants). `p2pMaxNodesPerHost` is topology-derived: EVERY cluster node lives
- * on loopback, so each node must accept inbound connections from the whole
- * planned topology (bios + producers + operators) plus headroom for
- * flow-provisioned ad-hoc daemons — a limit of 1 leaves late-joining nodes
- * unable to sync (their dials get "Peer closed connection").
+ * constants). `p2pMaxNodesPerHost` AND `maxClients` are both topology-derived
+ * from {@link NodeConfig.peerCapacity}: EVERY cluster node lives on loopback in
+ * a full mesh, so each must accept inbound connections from the whole planned
+ * topology (bios + producers + operators) plus headroom for flow-provisioned
+ * ad-hoc daemons. A `p2pMaxNodesPerHost` of 1 leaves late-joining nodes unable
+ * to sync ("Peer closed connection"); a `maxClients` below the mesh size makes
+ * every node refuse the surplus dials, which freezes LIB at scale (see
+ * {@link NodeConfig.peerCapacity} for the full failure chain).
  */
 export function createNodeopTuningDefaultOptions(
   cluster: ClusterConfig
@@ -98,13 +101,8 @@ export function createNodeopTuningDefaultOptions(
     voteThreads: NodeopProcess.DefaultVoteThreads,
     maxTransactionTime: NodeopProcess.DefaultMaxTransactionTime,
     abiSerializerMaxTimeMs: NodeopProcess.DefaultAbiSerializerMaxTimeMs,
-    p2pMaxNodesPerHost:
-      cluster.nodeCount +
-      cluster.batchOperatorCount +
-      cluster.underwriterCount +
-      NodeopProcess.BiosNodeCount +
-      NodeopProcess.AdHocDaemonPeerHeadroom,
-    maxClients: NodeopProcess.DefaultMaxClients,
+    p2pMaxNodesPerHost: NodeConfig.peerCapacity(cluster),
+    maxClients: NodeConfig.peerCapacity(cluster),
     connectionCleanupPeriodSec: NodeopProcess.DefaultConnectionCleanupPeriodSec,
     httpMaxResponseTimeMs: NodeopProcess.DefaultHttpMaxResponseTimeMs,
     contractsConsole: true
@@ -277,11 +275,6 @@ export namespace NodeopProcess {
   export const DefaultVoteThreads = 4
   export const DefaultMaxTransactionTime = -1
   export const DefaultAbiSerializerMaxTimeMs = 990_000
-  /** The bios node's contribution to the loopback peer allowance. */
-  export const BiosNodeCount = 1
-  /** Extra loopback inbound slots for flow-provisioned ad-hoc daemons. */
-  export const AdHocDaemonPeerHeadroom = 3
-  export const DefaultMaxClients = 25
   export const DefaultConnectionCleanupPeriodSec = 15
   export const DefaultHttpMaxResponseTimeMs = 990_000
   export const StartupTimeoutMs = 180_000
