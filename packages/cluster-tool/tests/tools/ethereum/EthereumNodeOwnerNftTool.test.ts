@@ -4,6 +4,8 @@ import Path from "node:path"
 import { ethers } from "ethers"
 import { NodeOwnerTier, WireKey, WireKeyType } from "@wireio/opp-typescript-models"
 import { commitNode, loadBar, type BarContract } from "@wireio/cluster-tool/tools/ethereum"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
+import { toURL } from "@wireio/cluster-tool/utils"
 
 /** A syntactically-valid deployed address for the fixture map. */
 const BAR_ADDRESS = "0x00000000000000000000000000000000000000b1"
@@ -66,25 +68,54 @@ describe("EthereumNodeOwnerNftTool.commitNode", () => {
     key: new Uint8Array(33).fill(2)
   })
 
+  /** The on-chain tx count `getTransactionCount` is answered with. */
+  const NonceSeed = 11
+
+  let rpcUrl: string
+  beforeAll(async () => {
+    rpcUrl = toURL(
+      await BindConfigProvider.findAvailable(BindConfigProvider.DefaultAnvil)
+    )
+  })
+
   /** A stubbed `BarContract` plus the arg lists its `commitNode` recorded. */
   interface StubBar {
     contract: BarContract
     calls: unknown[][]
   }
 
-  /** Stub `BarContract` recording forwarded args; `tx.wait()` resolves `receipt`. */
+  /**
+   * `BarContract` recording forwarded args; `tx.wait()` resolves `receipt`.
+   *
+   * The runner is a REAL `ethers.Wallet` on a REAL provider, because
+   * `commitNode` resolves its nonce through `resolveLatestNonce`, which reads
+   * `contract.runner` as a Signer and its Provider. Only the chain round-trip
+   * is spied — a fresh random wallet per call also keeps the module-level
+   * nonce counter from leaking between tests.
+   */
   function stubBar(receipt: unknown): StubBar {
-    const calls: unknown[][] = []
+    const calls: unknown[][] = [],
+      provider = new ethers.JsonRpcProvider(rpcUrl),
+      wallet = ethers.Wallet.createRandom().connect(provider)
+    jest.spyOn(provider, "getTransactionCount").mockResolvedValue(NonceSeed)
     const contract = {
       commitNode: async (...args: unknown[]) => {
         calls.push(args)
         return { wait: async () => receipt }
       }
     } as BarContract
+    // `runner` is readonly on `BaseContract`, so the real signer is installed
+    // rather than declared inline — a literal carrying it no longer overlaps
+    // `BarContract` at all, and widening the cast to hide that is exactly what
+    // this sweep removed.
+    Object.defineProperty(contract, "runner", {
+      value: wallet,
+      configurable: true
+    })
     return { contract, calls }
   }
 
-  it("forwards the claim args in order and returns the mined receipt", async () => {
+  it("forwards the claim args in order, pins the nonce, and returns the mined receipt", async () => {
     const receipt = { status: 1 }
     const { contract, calls } = stubBar(receipt)
     const result = await commitNode(
@@ -95,8 +126,17 @@ describe("EthereumNodeOwnerNftTool.commitNode", () => {
       DEPOSITOR_PUBLIC_KEY
     )
     expect(result).toBe(receipt)
+    // The trailing overrides carry an EXPLICIT nonce: `commitNode` shares the
+    // deployer signer with the rest of the harness, so letting ethers resolve
+    // the nonce itself races concurrent submissions and fails NONCE_EXPIRED.
     expect(calls).toEqual([
-      [NodeOwnerTier.T1, WIRE_ACCOUNT_NAME, wireKey, DEPOSITOR_PUBLIC_KEY]
+      [
+        NodeOwnerTier.T1,
+        WIRE_ACCOUNT_NAME,
+        wireKey,
+        DEPOSITOR_PUBLIC_KEY,
+        { nonce: NonceSeed }
+      ]
     ])
   })
 
