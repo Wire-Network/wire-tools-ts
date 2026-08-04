@@ -29,12 +29,19 @@ on it. `wire-cluster-tool` owns the full lifecycle:
 | `destroy` | Stop every process and remove the cluster directory. **Published SSM keys are NEVER deleted** — they are logged and retained (see below). |
 | `package` | Archive each node's full config tree (+ `genesis.json`) into `<cluster>/packages/<node>.<ext>` — the multihost hand-off artifact (post-`create`). |
 | `create-external-config` | Clone a created, stopped local cluster into a deployable external directory with a different `BindConfig` merged in + emit its self-described `external-cluster-config.json`. |
+| `readiness` | Run a connected, read-only swap or stake preflight against an existing Wire/Ethereum/Solana network group. |
 
 The cluster directory is the **single source of truth**: executable paths,
 ports, key material, node layout, deployed contract addresses. `run` never
 re-resolves ports or re-derives keys from scratch — it replays the persisted
 config and re-derives the node topology deterministically via
 `NodeConfig.plan(config)`, the exact call `create`'s steps make.
+
+`readiness` is the remote-cluster exception: it does not own a cluster
+directory or mutate chain state. It resolves an existing network group from a
+Wire chain id or explicit RPCs, composes `Steps.readiness` through
+`ReadinessPhaseGroups`, and returns the normal Report plus a stable JSON
+projection. See [the operator guide](../../docs/cluster-readiness.md).
 
 ### What gets spawned
 
@@ -60,8 +67,10 @@ pnpm install
 pnpm --filter @wireio/cluster-tool build
 ```
 
-The `wire-cluster-tool` bin is linked into `node_modules/.bin/`. Invoke via
-`pnpm exec wire-cluster-tool …` or `pnpm wire-cluster-tool …`.
+From this workspace, invoke the built binary with
+`pnpm --filter @wireio/cluster-tool exec ./bin/wire-cluster-tool …`. When the
+package is installed as a dependency, its `wire-cluster-tool` and `wtc` bins
+are linked into the consuming project's `node_modules/.bin/`.
 
 ---
 
