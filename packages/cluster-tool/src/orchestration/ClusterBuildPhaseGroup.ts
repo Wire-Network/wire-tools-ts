@@ -1,3 +1,4 @@
+import Bluebird from "bluebird"
 import { defaults } from "lodash"
 import { match } from "ts-pattern"
 import { eachSeries } from "../utils/asyncUtils.js"
@@ -12,6 +13,18 @@ import {
 export interface ClusterBuildPhaseGroupOptions {
   /** Run children concurrently instead of in series. Defaults to `false`. */
   parallel?: boolean
+  /**
+   * Max children in flight when `parallel` — the Bluebird `map` concurrency.
+   * Defaults to {@link ClusterBuildPhaseGroup.UnboundedConcurrency} (every child
+   * at once, matching a bare `Promise.all`).
+   *
+   * Bound it when the children contend for a shared external resource that
+   * degrades under a thundering herd rather than merely queueing — starting N
+   * chain nodes is the motivating case: they all join one p2p mesh and sync
+   * simultaneously, which starves the producers' vote propagation and can
+   * freeze finality outright.
+   */
+  concurrency?: number
 }
 
 /** Resolved {@link ClusterBuildPhaseGroup} config. */
@@ -88,12 +101,14 @@ export class ClusterBuildPhaseGroup<
     try {
       const children = await match(this.config.parallel)
         .with(true, async () => {
-          const results = await Promise.all(
-            this.childList.map(async child => {
+          const results = await Bluebird.map(
+            this.childList,
+            async child => {
               const nodes = await child.run(controller.signal)
               if (nodes.some(node => !node.succeeded)) controller.abort()
               return nodes
-            })
+            },
+            { concurrency: this.config.concurrency }
           )
           return results.flat()
         })
@@ -128,6 +143,15 @@ export class ClusterBuildPhaseGroup<
 }
 
 export namespace ClusterBuildPhaseGroup {
+  /**
+   * Every child in flight at once — the `concurrency` default, preserving the
+   * `Promise.all` semantics parallel groups had before the option existed.
+   */
+  export const UnboundedConcurrency = Infinity
+
   /** Config defaults — groups run **sequentially** unless `parallel` is set. */
-  export const ConfigDefaults: ClusterBuildPhaseGroupConfig = { parallel: false }
+  export const ConfigDefaults: ClusterBuildPhaseGroupConfig = {
+    parallel: false,
+    concurrency: UnboundedConcurrency
+  }
 }

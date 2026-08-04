@@ -157,11 +157,35 @@ export class WireClient {
       label = `${account}::${action}`,
       send = () =>
         this.runner.run<API.v1.SendTransactionResponse>(
-          ["push", "action", account, action, JSON.stringify(data), "-p", auth, "-j"],
+          [
+            "push",
+            "action",
+            account,
+            action,
+            JSON.stringify(data),
+            "-p",
+            auth,
+            "-j",
+            ...this.expirationArgs
+          ],
           { json: true }
         )
     if (options.skipWait) return send()
     return this.withFinality(label, send, options.finality)
+  }
+
+  /**
+   * clio's `--expiration` args for every pushed transaction.
+   *
+   * clio defaults to 30s, which is the window between SIGNING and INCLUSION —
+   * not execution. On a large cluster a push lands on whichever node the client
+   * dials, and that node must relay it to whichever of the N producers is
+   * currently producing. When block propagation degrades the tx can expire
+   * unincluded, surfacing as `expired_tx_exception` rather than anything that
+   * names the real cause. See {@link WireClient.TransactionExpirationSec}.
+   */
+  private get expirationArgs(): string[] {
+    return ["--expiration", String(WireClient.TransactionExpirationSec)]
   }
 
   /** Multi-action tx; variadic + flatten. Waits by default. */
@@ -174,7 +198,13 @@ export class WireClient {
       label = actions.map(a => `${a.account}::${a.name}`).join(","),
       send = () =>
         this.runner.run<API.v1.SendTransactionResponse>(
-          ["push", "transaction", "-j", JSON.stringify({ actions })],
+          [
+            "push",
+            "transaction",
+            "-j",
+            JSON.stringify({ actions }),
+            ...this.expirationArgs
+          ],
           { json: true }
         )
     return this.withFinality(label, send)
@@ -202,7 +232,7 @@ export class WireClient {
         await Fsp.writeFile(file, JSON.stringify(body))
         try {
           return await this.runner.run<API.v1.SendTransactionResponse>(
-            ["push", "transaction", "-j", file],
+            ["push", "transaction", "-j", file, ...this.expirationArgs],
             { json: true }
           )
         } finally {
@@ -681,6 +711,20 @@ export namespace WireClient {
     irreversible = "irreversible"
   }
   export const DefaultFinality = FinalityType.irreversible
+
+  /**
+   * Seconds before a pushed transaction expires (clio `--expiration`).
+   *
+   * clio's own default is 30s. That is ample when the dialed node is producing,
+   * but a cluster push must relay to whichever of N producers currently holds
+   * the slot, so the inclusion window scales with topology and with any
+   * propagation hiccup. 30s left no margin: a 21-producer bootstrap lost
+   * `sysio.epoch::schbatchgps` to `expired_tx_exception` — a failure that names
+   * the timer, not the cause. Sized well above the observed worst case; a tx
+   * that cannot be included in this long has a real problem to diagnose, and
+   * the surrounding finality wait bounds the step regardless.
+   */
+  export const TransactionExpirationSec = 120
   export const FinalityMaxAttempts = 3
   export const FinalityRetryDelayMs = 1_000
   export const DefaultTimeoutMs = 60_000

@@ -4,6 +4,7 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import {
+  ClioRunner,
   WireClient,
   type WireClientConfig
 } from "@wireio/cluster-tool/clients/wire"
@@ -69,6 +70,39 @@ describe("WireClient", () => {
           core: Constants.CORE_SYMBOL_SPECIFICATION
         })
       expect(payload.account).toBe("sysio")
+    })
+  })
+
+  describe("transaction expiration", () => {
+    it("pins an expiration well above clio's 30s default", () => {
+      // clio's default is the SIGN->INCLUSION window, not execution. On a large
+      // cluster the push must relay to whichever producer holds the slot, so 30s
+      // left no margin and a bootstrap lost schbatchgps to expired_tx_exception.
+      expect(WireClient.TransactionExpirationSec).toBeGreaterThan(30)
+    })
+
+    it("passes --expiration on every pushed action", async () => {
+      const client = new WireClient(config)
+      const args: string[][] = []
+      jest
+        .spyOn(ClioRunner.prototype, "run")
+        .mockImplementation(async (runArgs: string[]) => {
+          args.push(runArgs)
+          return { transaction_id: "abc" } as never
+        })
+      await client.invoke(
+        "sysio.epoch",
+        "schbatchgps",
+        {},
+        [{ actor: "sysio.epoch", permission: "active" }],
+        { skipWait: true }
+      )
+      expect(args[0]).toEqual(
+        expect.arrayContaining([
+          "--expiration",
+          String(WireClient.TransactionExpirationSec)
+        ])
+      )
     })
   })
 
