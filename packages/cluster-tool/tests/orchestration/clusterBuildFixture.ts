@@ -1,4 +1,5 @@
 import {
+  ClusterBuildPhase,
   ClusterBuildPhaseGroup,
   type ClusterBuildContext,
   type ClusterBuildPhaseBase
@@ -29,4 +30,28 @@ export function collectPhaseNames<C extends ClusterBuildContext>(
       ? collectPhaseNames(child.children)
       : [])
   ])
+}
+
+/**
+ * Every STEP name in a built cluster tree, in registration order — the
+ * step-level companion to {@link collectPhaseNames}, recursing through groups
+ * and reading each phase's public `steps`.
+ *
+ * Some composition is only observable at step granularity: a conditionally
+ * composed step (an operator's ETH funding) lives INSIDE an
+ * always-present phase, so a phase-name assertion cannot see it.
+ *
+ * @param children - The build's (or a group's) registered children.
+ * @returns Every descendant step name, in registration order.
+ */
+export function collectStepNames<C extends ClusterBuildContext>(
+  children: ReadonlyArray<ClusterBuildPhaseBase<C>>
+): string[] {
+  return children.flatMap(child =>
+    child instanceof ClusterBuildPhaseGroup
+      ? collectStepNames(child.children)
+      : child instanceof ClusterBuildPhase
+        ? child.steps.map(step => step.name)
+        : []
+  )
 }
