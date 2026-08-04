@@ -65,7 +65,11 @@ export class ClusterBuildContext<
       kiodUrl: toURL(
         this.config.bind.kiod.port,
         toDialAddress(this.config.bind.kiod.address)
-      )
+      ),
+      // Producers ARE the genesis finalizer policy (ConsensusSteps builds it
+      // from exactly this set), and the set's size drives how long a Savanna
+      // quorum round takes — so it sizes the irreversibility budget.
+      finalizerCount: this.config.producerCount
     }))
   }
 

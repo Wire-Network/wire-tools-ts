@@ -339,11 +339,60 @@ export namespace Constants {
  * undershot one fails healthy runs at the envelope's tail. There is NO
  * concurrency-derived scaling — concurrency reduces total wall clock, it does
  * not define protocol latency.
+ *
+ * TOPOLOGY is a different thing and IS a legitimate input: the finalizer-set
+ * size genuinely determines how long one Savanna quorum round takes, because
+ * every finalizer's vote has to propagate and aggregate. That is the protocol's
+ * own latency, not a measure of parallel work — see
+ * {@link ProtocolTiming.irreversibilityBudgetMs}, the only budget here that
+ * takes a parameter.
  */
 export namespace ProtocolTiming {
   /** Max extension an epoch can run past `epoch_duration_sec` while a
    *  scheduled batch operator has yet to deliver (s). */
   export const EpochExtensionMaxSec = 30
+
+  /**
+   * Irreversibility floor (ms) — the budget on a single-finalizer cluster.
+   *
+   * Sized so dev/flow topologies keep essentially the previous flat 60s
+   * behaviour: every `flow-*` bootstrap runs a handful of finalizers, so this
+   * floor plus a few increments lands within seconds of the old value.
+   */
+  export const IrreversibilityBaseMs = 60_000
+
+  /**
+   * Per-finalizer increment on the irreversibility budget (ms).
+   *
+   * TOPOLOGY-derived, not concurrency-derived — the distinction is why this is
+   * permitted where the namespace note bans scaling. Savanna finalizes on a
+   * quorum certificate: every finalizer's vote must propagate and aggregate, so
+   * one finalization round's wall clock genuinely grows with the SIZE OF THE
+   * FINALIZER SET. That is a property of the protocol, not of how much work the
+   * harness runs in parallel.
+   *
+   * Calibrated against a measured step: on 2026-08-04 a 21-finalizer cluster
+   * took **49.4 s** to reach irreversibility on `create-roa` — the step right
+   * before `create-acct` blew the flat 60 s budget and killed the run. 21
+   * finalizers here yields 186 s, ~3.7x the observed latency, the margin an
+   * envelope-top budget wants. Polls return the moment LIB passes the block, so
+   * the ceiling costs a healthy run nothing.
+   */
+  export const IrreversibilityPerFinalizerMs = 6_000
+
+  /**
+   * The irreversibility budget for a cluster with `finalizerCount` finalizers.
+   *
+   * @param finalizerCount - Finalizers in the genesis policy (the producer
+   *   nodes — `ConsensusSteps` builds the policy from exactly that set).
+   * @returns Wall-clock budget for one transaction to reach LIB (ms).
+   */
+  export function irreversibilityBudgetMs(finalizerCount: number): number {
+    return (
+      IrreversibilityBaseMs +
+      Math.max(finalizerCount, 1) * IrreversibilityPerFinalizerMs
+    )
+  }
 
   /** Collateral deposit + depot verification (ms) — 6-minute envelope top. */
   export const CollateralVerifyBudgetMs = 360_000
