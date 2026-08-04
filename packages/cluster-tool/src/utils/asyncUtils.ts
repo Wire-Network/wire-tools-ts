@@ -110,6 +110,41 @@ export function sleep(ms: number): Promise<void> {
   return Deferred.delay(ms)
 }
 
+/** Per-key tail of the serialization chain (see {@link serialize}). */
+const serialQueues = new Map<string, Promise<unknown>>()
+
+/**
+ * Run `work` only after every earlier `serialize` call sharing `key` has
+ * SETTLED — an in-process serialization point for a resource that cannot be
+ * used concurrently, even though its callers legitimately run in parallel.
+ *
+ * The motivating resource is a single ETH signer: parallel steps that each
+ * `sendTransaction` from ONE account race on the nonce, because each call reads
+ * the same pending nonce before any of them lands. The RPC rejects the losers
+ * with `REPLACEMENT_UNDERPRICED` / `nonce too low` — a failure that scales with
+ * parallelism, so it hides completely at a flow's 1-3 operators and appears at a
+ * cluster's 22 (measured 2026-08-04: 4 of 21 funding steps).
+ *
+ * Prefer this over widening the caller's phase to sequential: the OTHER steps in
+ * those phases are genuinely parallel-safe, and serializing the phase would pay
+ * the cost on all of them.
+ *
+ * A rejected predecessor never stalls the queue (`then(work, work)`) and never
+ * surfaces as an unhandled rejection — each caller still sees its OWN outcome.
+ *
+ * @param key - Names the shared resource; callers with different keys never wait.
+ * @param work - The critical section.
+ * @returns `work`'s result — its rejection propagates to THIS caller only.
+ */
+export function serialize<T>(key: string, work: () => Promise<T>): Promise<T> {
+  const next = (serialQueues.get(key) ?? Promise.resolve()).then(work, work)
+  serialQueues.set(
+    key,
+    next.catch(() => undefined)
+  )
+  return next
+}
+
 /**
  * Single liveness probe — true if the endpoint answers, false if unreachable.
  *

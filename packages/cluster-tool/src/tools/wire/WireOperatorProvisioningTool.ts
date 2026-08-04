@@ -37,6 +37,7 @@ import { match } from "ts-pattern"
 import { getLogger } from "@wireio/shared"
 import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
+import { serialize } from "../../utils/asyncUtils.js"
 import { abiEnumValue } from "../../utils/enumUtils.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
@@ -64,6 +65,11 @@ const log = getLogger(__filename)
 export namespace WireOperatorProvisioningTool {
   /** Default wei seeded into a flow operator's ETH wallet (covers a deposit + gas). */
   export const DefaultEthereumFundWei = 10n ** 18n // 1 ETH
+  /**
+   * Serialization key for ETH funding sends — they all share ONE anvil signer,
+   * so they share one nonce sequence. See {@link runEthereumFunding}.
+   */
+  const EthereumFundingQueueKey = "WireOperatorProvisioningTool.ethereumFunding"
   /** Default lamports airdropped to a flow operator's SOL keypair. */
   export const DefaultSolanaAirdropLamports = 5n * BigInt(LAMPORTS_PER_SOL)
   /** Creator account for provisioned operator accounts. */
@@ -708,11 +714,17 @@ export namespace WireOperatorProvisioningTool {
   ): Promise<void> {
     signal.throwIfAborted()
     const operator = ctx.keyStore.assertOperator(input.label)
-    const response = await ctx.ethereum.wallet.signer.sendTransaction({
-      to: operator.ethereum.address,
-      value: input.wei
+    // SERIALIZED: every operator funds from the SAME anvil signer, and the
+    // operator phases run in parallel — concurrent sends read one pending nonce
+    // and the losers are rejected `REPLACEMENT_UNDERPRICED`. The wait is inside
+    // the critical section so the nonce has advanced before the next send.
+    await serialize(EthereumFundingQueueKey, async () => {
+      const response = await ctx.ethereum.wallet.signer.sendTransaction({
+        to: operator.ethereum.address,
+        value: input.wei
+      })
+      await response.wait()
     })
-    await response.wait()
   }
 
   // ── Step: airdrop SOL to the operator keypair (write) ────────────────────
