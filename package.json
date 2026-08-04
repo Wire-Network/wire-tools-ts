@@ -41,6 +41,11 @@
     "node": ">=22"
   },
   "resolutions": {
+    "@aws-sdk/client-firehose": "3.1102.0",
+    "@aws-sdk/client-kms": "3.1102.0",
+    "@aws-sdk/client-sns": "3.1102.0",
+    "@aws-sdk/client-ssm": "3.1102.0",
+    "@aws-sdk/client-sts": "3.1102.0",
     "@types/proper-lockfile": "4.1.4",
     "uuid": "11",
     "get-port": "7.2.0",
