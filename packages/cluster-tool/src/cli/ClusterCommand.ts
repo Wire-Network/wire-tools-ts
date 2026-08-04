@@ -15,6 +15,8 @@ export enum ClusterCommand {
   destroy = "destroy",
   /** Package each node's config tree into a per-node archive (post-`create`). */
   package = "package",
+  /** Run a connected, read-only feature readiness preflight. */
+  readiness = "readiness",
   /**
    * Clone a created local cluster into a deployable external cluster directory
    * (external `BindConfig` merged in) + emit its `ExternalClusterConfig`. Quoted
