@@ -6,7 +6,7 @@ import type { WireKeyPair } from "../../types/KeyPair.js"
 import type { Renderer } from "../../utils/Renderer.js"
 import { Localhost } from "../../utils/netUtils.js"
 import { ClusterConfigProvider } from "../ClusterConfigProvider.js"
-import { NodeRole, type NodeConfig } from "../NodeConfig.js"
+import { NodeConfig, NodeRole } from "../NodeConfig.js"
 
 /**
  * Renders a nodeop `config.ini` (folds the former `cluster/Config.ts`
@@ -58,7 +58,12 @@ export class NodeConfigIniRenderer implements Renderer {
         kv("vote-threads", extraArgs.voteThreads),
         kv("max-transaction-time", extraArgs.maxTransactionTime),
         kv("abi-serializer-max-time-ms", extraArgs.abiSerializerMaxTimeMs),
-        kv("max-clients", extraArgs.maxClients),
+        // Topology-derived, NOT a fixed cap: every node is meshed with every
+        // other, so a `max-clients` below the mesh size makes each node refuse
+        // the surplus inbound dials and LIB freezes at scale. See
+        // NodeConfig.peerCapacity.
+        kv("max-clients", NodeConfig.peerCapacity(node.cluster)),
+        kv("p2p-max-nodes-per-host", NodeConfig.peerCapacity(node.cluster)),
         kv("connection-cleanup-period", extraArgs.connectionCleanupPeriod),
         kv("http-max-response-time-ms", extraArgs.httpMaxResponseTimeMs),
         // The operator's `batch-operator-account` / `underwriter-account` is

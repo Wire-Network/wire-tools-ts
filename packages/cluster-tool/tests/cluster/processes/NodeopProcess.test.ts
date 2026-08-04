@@ -385,13 +385,22 @@ describe("NodeopProcess", () => {
     })
     // 1 producer node + 3 batch ops + 1 underwriter + bios + ad-hoc headroom
     const allowance =
-      1 +
-      3 +
-      1 +
-      NodeopProcess.BiosNodeCount +
-      NodeopProcess.AdHocDaemonPeerHeadroom
+      1 + 3 + 1 + NodeConfig.BiosNodeCount + NodeConfig.AdHocDaemonPeerHeadroom
     expect(nodeop.args).toEqual(
       expect.arrayContaining(["--p2p-max-nodes-per-host", String(allowance)])
+    )
+  })
+
+  it("caps max-clients at the SAME topology-derived peer capacity", async () => {
+    // A fixed cap below the mesh size makes each node refuse the surplus
+    // inbound dials; the mesh never forms and LIB freezes at scale.
+    const nodeop = await NodeopProcess.create(manager, {
+      node: node("meshed", NodeRole.operator)
+    })
+    const allowance =
+      1 + 3 + 1 + NodeConfig.BiosNodeCount + NodeConfig.AdHocDaemonPeerHeadroom
+    expect(nodeop.args).toEqual(
+      expect.arrayContaining(["--max-clients", String(allowance)])
     )
   })
 

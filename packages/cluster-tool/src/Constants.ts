@@ -163,7 +163,6 @@ export namespace Constants {
     voteThreads: 4,
     maxTransactionTime: -1,
     abiSerializerMaxTimeMs: 990_000,
-    maxClients: 25,
     connectionCleanupPeriod: 15,
     httpMaxResponseTimeMs: 990_000
   } as const
