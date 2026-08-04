@@ -35,6 +35,7 @@ import { NodeOwnerTier, type WireKey } from "@wireio/opp-typescript-models"
 import type { WireClient } from "../../clients/wire/WireClient.js"
 import {
   loadOutpostContract,
+  resolveLatestNonce,
   type EthereumValueOverrides
 } from "../../utils/ethereumUtils.js"
 import type { ClioError } from "../../clients/wire/clio/ClioRunner.js"
@@ -72,7 +73,8 @@ export interface MockWireNodesContract extends ethers.BaseContract {
   balanceOf: (account: string, id: bigint | number) => Promise<bigint>
   setApprovalForAll: (
     operator: string,
-    approved: boolean
+    approved: boolean,
+    overrides?: ethers.Overrides
   ) => Promise<ethers.ContractTransactionResponse>
   isApprovedForAll: (account: string, operator: string) => Promise<boolean>
   getAddress: () => Promise<string>
@@ -109,9 +111,10 @@ export async function mintNodeNFT(
   tier: NodeOwnerTier,
   amount: number = 1
 ): Promise<ethers.ContractTransactionReceipt> {
-  const value = ethers.parseEther(String(amount))
-  const tx = await contract.mint(tier, amount, { value })
-  const receipt = await tx.wait()
+  const value = ethers.parseEther(String(amount)),
+    nonce = await resolveLatestNonce(contract)
+  const tx = await contract.mint(tier, amount, { value, nonce })
+  const receipt = await tx.wait(1)
   Assert.ok(receipt, "mintNodeNFT: receipt is null")
   return receipt
 }
@@ -131,8 +134,9 @@ export async function approveNodeEscrow(
   contract: MockWireNodesContract,
   barAddress: string
 ): Promise<ethers.ContractTransactionReceipt> {
-  const tx = await contract.setApprovalForAll(barAddress, true)
-  const receipt = await tx.wait()
+  const nonce = await resolveLatestNonce(contract)
+  const tx = await contract.setApprovalForAll(barAddress, true, { nonce })
+  const receipt = await tx.wait(1)
   Assert.ok(receipt, "approveNodeEscrow: receipt is null")
   return receipt
 }
@@ -193,13 +197,15 @@ export async function commitNode(
   wirePublicKey: WireKey,
   depositorPublicKey: string
 ): Promise<ethers.ContractTransactionReceipt> {
+  const nonce = await resolveLatestNonce(contract)
   const tx = await contract.commitNode(
     tier,
     wireAccountName,
     wirePublicKey,
-    depositorPublicKey
+    depositorPublicKey,
+    { nonce }
   )
-  const receipt = await tx.wait()
+  const receipt = await tx.wait(1)
   Assert.ok(receipt, "commitNode: receipt is null")
   return receipt
 }
