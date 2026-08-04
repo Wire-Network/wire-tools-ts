@@ -1,4 +1,4 @@
-import type { ClusterBuildContext } from "./ClusterBuildContext.js"
+import type { OrchestrationContext } from "./OrchestrationContext.js"
 
 /**
  * Marker base for every step's typed input. The `kind` string namespaces the
@@ -15,6 +15,6 @@ export interface StepInput {
  * state (cross-step values flow through `ctx.outputs`).
  */
 export type StepRunner<
-  C extends ClusterBuildContext,
+  C extends OrchestrationContext,
   I extends StepInput | null
 > = (context: C, input: I, signal: AbortSignal) => Promise<void>
