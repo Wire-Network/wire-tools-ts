@@ -55,3 +55,4 @@ yarn-error.log*
 
 # JUnit test-result output (CI artifact)
 /reports/
+/readiness-reports/

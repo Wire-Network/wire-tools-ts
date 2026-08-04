@@ -193,7 +193,16 @@ wire-cluster-tool -d <dir> package --package-type zip   # per-node archives (pos
 wire-cluster-tool create-external-config \              # clone → deployable external dir + emit its ExternalClusterConfig
   --local-cluster-path <created-dir> --external-cluster-path <new-dir> \
   --external-bind-config <bind.json>
+pnpm --filter @wireio/cluster-tool exec ./bin/wire-cluster-tool readiness \
+  --feature swap --wire-chain-id <chain-id> # read-only remote preflight
 ```
+
+`readiness` composes `Steps.readiness` through `ReadinessPhaseGroups` on the
+same `ClusterBuild`/Report engine. Its `collect` failure mode is explicit and
+local to diagnostic suites; existing bootstrap and FlowScenario plans remain
+fail-fast. The manual command is the only entrypoint for now. Future GHA/E2E
+integration must compose these PhaseGroups rather than duplicate checks. See
+`docs/cluster-readiness.md`.
 
 `create` also carries `--signature-provider-type <KEY|SSM|KIOD>` (default KEY)
 and `--signature-provider-ssm '<inline-json>'|<file>` (the SSM region +
@@ -229,6 +238,9 @@ so `regreserve` can never be called from a flow phase.
   `ClusterBuildDefaults` (bootstrap phases), `steps/` palette, per-chain
   outpost bootstrappers, `outputs/` (typed cross-step values incl.
   `OperatorAccount`, `ClusterKeyStore`).
+- **`readiness/`** — connected read-only context, endpoint discovery, stable
+  JSON projection, terminal renderer, and tar.gz export. Readiness actions
+  themselves remain named Steps under `orchestration/steps/`.
 - **`cluster/`** — slim `ClusterManager` (dirs/launch/destroy) +
   `processes/`: construction-safe `ManagedProcess` base (self-registers,
   graceful stop with cleared escalation timer) and
