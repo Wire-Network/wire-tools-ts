@@ -38,6 +38,8 @@ function secureStringResponse(value: string): Record<string, unknown> {
 /** The client config `SSMClient` is constructed with (region omitted = ambient). */
 interface SSMClientConfig {
   region?: string
+  retryMode?: string
+  maxAttempts?: number
 }
 
 /** The client config `SSMClient` was constructed with for `region`'s cache entry. */
@@ -218,9 +220,26 @@ describe("SSMClientProvider (jest module mock — no live AWS)", () => {
       )
       expect(value).toBe("ambient-secret")
       // `region: ""` would be a bad endpoint — the key must be absent entirely.
-      expect(clientConfigFor(SSMClientProvider.AmbientRegion)).toEqual({})
+      expect(clientConfigFor(SSMClientProvider.AmbientRegion)).not.toHaveProperty(
+        "region"
+      )
       // A pinned region still pins.
-      expect(clientConfigFor("us-east-1")).toEqual({ region: "us-east-1" })
+      expect(clientConfigFor("us-east-1")).toMatchObject({
+        region: "us-east-1"
+      })
+    })
+
+    it("gives every client ADAPTIVE retry so a publication burst is paced, not dropped", async () => {
+      mockSend.mockResolvedValueOnce(secureStringResponse("s"))
+      await SSMClientProvider.getParameter("us-east-1", "/wire/keys/a")
+      // A 21-producer cluster publishes >100 parameters back-to-back; Parameter
+      // Store answers "Rate exceeded" and the SDK default (standard, 3 attempts)
+      // loses the burst, aborting the build AFTER the platform is built.
+      // `adaptive` adds the client-side rate limiter that paces the whole client.
+      expect(clientConfigFor("us-east-1")).toMatchObject({
+        retryMode: "adaptive",
+        maxAttempts: 10
+      })
     })
 
     it("names the ambient region in a not-found diagnostic (never an empty string)", async () => {

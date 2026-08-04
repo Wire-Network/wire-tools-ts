@@ -68,6 +68,21 @@ export namespace SSMClientProvider {
   /** How the ambient region is named in diagnostics (it has no region name). */
   const AmbientRegionLabel = "the ambient AWS region"
 
+  /**
+   * SDK retry mode for every SSM client. `adaptive` layers a client-side rate
+   * limiter over `standard`'s jittered backoff, so a throttled burst slows the
+   * CLIENT rather than each call retrying blindly against the same limit.
+   */
+  const AdaptiveRetryMode = "adaptive"
+
+  /**
+   * Attempts per SSM call. Raised well above the SDK default of 3: key
+   * publication is a long burst against Parameter Store's shared throughput,
+   * and a throttle mid-run aborts the whole cluster build after the platform
+   * has already been built.
+   */
+  const MaxRetryAttempts = 10
+
   /** Per-region `SSMClient` cache (mirrors the C++ `region_client_cache`). */
   const ssmClientsByRegion = new Map<string, SSMClient>()
 
@@ -91,7 +106,18 @@ export namespace SSMClientProvider {
     const { SSMClient } = await importSSMModule()
     // An AmbientRegion client OMITS `region` entirely so the SDK's own resolver
     // chain supplies it — passing "" would be a bad endpoint.
-    const client = new SSMClient(region === AmbientRegion ? {} : { region })
+    const client = new SSMClient({
+      ...(region === AmbientRegion ? {} : { region }),
+      // Publication emits ONE PutParameter per (identity, keyType, region) with
+      // no pacing — a 21-producer / 21-batch-operator cluster is >100 calls
+      // back-to-back, which Parameter Store throttles ("Rate exceeded"). The
+      // SDK default (`standard`, 3 attempts) retries each call in isolation and
+      // still loses a sustained burst; ADAPTIVE additionally maintains a
+      // client-side rate limiter that slows the whole client in response to
+      // throttling, which is what a burst needs.
+      retryMode: AdaptiveRetryMode,
+      maxAttempts: MaxRetryAttempts
+    })
     ssmClientsByRegion.set(region, client)
     return client
   }
