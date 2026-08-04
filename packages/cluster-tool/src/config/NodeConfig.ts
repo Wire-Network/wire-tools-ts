@@ -2,7 +2,9 @@ import type {
   BindConfigNodeopPorts,
   ClusterConfig
 } from "@wireio/cluster-tool-shared"
+import { asOption } from "@3fv/prelude-ts"
 import { range } from "lodash"
+import { match } from "ts-pattern"
 import { Constants } from "../Constants.js"
 import type { Renderer } from "../utils/Renderer.js"
 import { toDialAddress } from "../utils/netUtils.js"
@@ -175,6 +177,18 @@ export class NodeConfig {
       })
     )
 
+    // The MESH is the block-producing set only (bios + producers). Operator
+    // nodes attach to it at a single point instead of joining it — see
+    // `peersFor`.
+    const meshDescriptors = descriptors.filter(
+        node => node.role !== NodeRole.operator
+      ),
+      // Operators' single attachment point. Falls back to the bios node when a
+      // cluster has no producer nodes at all, so an operator is never peerless.
+      operatorUplink = asOption(
+        descriptors.find(node => node.role === NodeRole.producer)
+      ).getOrElse(meshDescriptors[0])
+
     return descriptors.map(
       d =>
         new NodeConfig(
@@ -184,17 +198,50 @@ export class NodeConfig {
           d.name,
           d.ports,
           d.producers,
-          descriptors
-            .filter(other => other.name !== d.name)
-            .map(
-              other =>
-                `${NodeConfig.advertiseAddressFor(cluster, other.ports)}:${other.ports.p2p}`
-            ),
+          peersFor(d, meshDescriptors, operatorUplink).map(
+            other =>
+              `${NodeConfig.advertiseAddressFor(cluster, other.ports)}:${other.ports.p2p}`
+          ),
           d.batchOperatorLabel,
           d.underwriterLabel
         )
     )
   }
+}
+
+/**
+ * The p2p peers ONE node dials — a mesh of PRODUCERS with operators hanging
+ * off it, never one flat mesh of everything.
+ *
+ * - **bios / producer** → every other mesh member (the block-producing set).
+ * - **operator** → exactly ONE producer (`operatorUplink`).
+ *
+ * Operators are excluded from the mesh because p2p flooding is O(N²) in mesh
+ * size, and operator nodes produce nothing — they only need a view of the chain
+ * and a path to submit. Meshing them bought nothing and cost quadratically: at a
+ * 21-producer/22-operator topology a full mesh is 43 peers per node and 946
+ * connections, which drove block-relay latency to 28–45s ON LOOPBACK with the
+ * host 83% idle. Blocks then arrived outside the finalizer voting window, so
+ * finalizers could only vote WEAK, no quorum certificate formed, and LIB froze
+ * while head kept advancing — reproduced on four consecutive 21-producer
+ * bootstraps (2026-08-04). Restricting the mesh to producers takes it to 22
+ * members and leaves each operator with one link.
+ *
+ * @param node - The node whose peers are being resolved.
+ * @param meshDescriptors - Every mesh member (bios + producers).
+ * @param operatorUplink - The producer an operator attaches to.
+ * @returns The descriptors this node dials.
+ */
+function peersFor(
+  node: NodeDescriptor,
+  meshDescriptors: NodeDescriptor[],
+  operatorUplink: NodeDescriptor
+): NodeDescriptor[] {
+  return match(node.role)
+    .with(NodeRole.operator, () =>
+      operatorUplink != null ? [operatorUplink] : []
+    )
+    .otherwise(() => meshDescriptors.filter(other => other.name !== node.name))
 }
 
 export namespace NodeConfig {
