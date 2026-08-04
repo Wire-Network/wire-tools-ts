@@ -144,3 +144,93 @@ describe("Report.write", () => {
     expect(html).toContain("cluster-build: FAILED")
   })
 })
+
+describe("Report.title verdicts", () => {
+  it("all-ok → SUCCESS", () => {
+    expect(Report.title(createSuccessReport())).toBe(
+      `cluster-build: ${Report.Verdict.SUCCESS}`
+    )
+  })
+
+  it("a failed step → FAILED", () => {
+    expect(Report.title(createFailureReport())).toBe(
+      `cluster-build: ${Report.Verdict.FAILED}`
+    )
+  })
+
+  it("interrupted wins over succeeded — a killed run is never a SUCCESS", () => {
+    const report = createSuccessReport()
+    report.interrupted = true
+    expect(report.succeeded).toBe(true) // the completed phases really did pass…
+    expect(Report.title(report)).toBe(
+      `cluster-build: ${Report.Verdict.INTERRUPTED}`
+    ) // …but the RUN did not finish
+  })
+
+  it("an EMPTY interrupted report is not a SUCCESS either", () => {
+    const report = new Report()
+    report.interrupted = true
+    expect(report.succeeded).toBe(true) // every() over zero nodes is vacuously true
+    expect(Report.title(report)).toBe(
+      `cluster-build: ${Report.Verdict.INTERRUPTED}`
+    )
+  })
+})
+
+describe("Report.writeSync", () => {
+  let dir: string
+  beforeAll(() => {
+    dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "report-sync-"))
+  })
+  afterAll(() => {
+    Fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it("renders every configured format, creating the directory", () => {
+    const nested = Path.join(dir, "reports")
+    createFailureReport().writeSync(
+      {
+        path: nested,
+        basename: "run",
+        formats: [Report.Format.csv, Report.Format.md, Report.Format.html]
+      },
+      ReportRendererRegistry.createDefault()
+    )
+    expect(Fs.readFileSync(Path.join(nested, "run.csv"), "utf8").split("\n")[0]).toBe(
+      "path,phase,step,actor,status,startedAt,durationMs,error,extra"
+    )
+    expect(Fs.readFileSync(Path.join(nested, "run.md"), "utf8")).toContain(
+      "# cluster-build: FAILED"
+    )
+    expect(Fs.readFileSync(Path.join(nested, "run.html"), "utf8")).toContain(
+      "<!doctype html>"
+    )
+  })
+
+  it("produces byte-identical output to the async write", async () => {
+    // ONE report instance — the fixture stamps `startedAt` at build time, so two
+    // instances differ by a millisecond and would fail for the wrong reason.
+    const report = createSuccessReport(),
+      asyncDir = Path.join(dir, "async"),
+      syncDir = Path.join(dir, "sync"),
+      config = (path: string) => ({
+        path,
+        basename: "run",
+        formats: [Report.Format.csv]
+      })
+    await report.write(config(asyncDir), ReportRendererRegistry.createDefault())
+    report.writeSync(config(syncDir), ReportRendererRegistry.createDefault())
+    expect(Fs.readFileSync(Path.join(syncDir, "run.csv"), "utf8")).toBe(
+      Fs.readFileSync(Path.join(asyncDir, "run.csv"), "utf8")
+    )
+  })
+
+  it("throws when a configured format has no renderer", () => {
+    expect(() =>
+      createSuccessReport().writeSync(
+        { path: dir, basename: "run", formats: [Report.Format.csv] },
+        new ReportRendererRegistry(new Map())
+      )
+    ).toThrow(/No ReportRenderer registered/)
+  })
+})
