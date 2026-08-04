@@ -3,9 +3,11 @@ import {
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool"
+import { Level } from "@wireio/shared"
 import {
   NodeConfig,
   NodeConfigIniRenderer,
+  NodeConfigLoggingRenderer,
   NodeRole,
   producerName,
   BindConfigProvider,
@@ -19,6 +21,8 @@ import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
 interface RenderedLogger {
   /** The nodeop logger's name (`producer_plugin`, …). */
   name: string
+  /** The `fc::log_level` spelling nodeop filters this logger at. */
+  level: string
 }
 
 describe("NodeConfig", () => {
@@ -292,6 +296,88 @@ describe("NodeConfig", () => {
           (logger: RenderedLogger) => logger.name === "producer_plugin"
         )
       ).toBe(true)
+    })
+
+    it("takes every logger's level from logging.levels.console", () => {
+      const node = NodeConfig.plan(
+        fixtureConfig({
+          logging: {
+            ...PersistedFixture.logging,
+            levels: { console: Level.warn, file: Level.debug }
+          }
+        })
+      )[0]
+      const { loggers } = JSON.parse(node.logging.render())
+      expect(loggers.length).toBeGreaterThan(0)
+      loggers.forEach((logger: RenderedLogger) =>
+        expect(logger.level).toBe(
+          NodeConfigLoggingRenderer.NodeopLogLevel.warn
+        )
+      )
+    })
+
+    // The regression pin for the 2026-08-04 log flood: `net_plugin_impl` at
+    // `debug` on a 43-identity mesh logs every block send/receive/vote/nack
+    // from every node. It was HARDCODED to debug regardless of config, which
+    // exhausted the runner's socket buffers (run 3, `write ENOBUFS`) and then
+    // OOM'd the harness at a 4GB V8 heap in StreamBase::Writev (run 6).
+    it("does NOT pin net_plugin_impl to debug when the cluster asks for info", () => {
+      const node = NodeConfig.plan(
+        fixtureConfig({
+          logging: {
+            ...PersistedFixture.logging,
+            levels: { console: Level.info, file: Level.debug }
+          }
+        })
+      )[0]
+      const { loggers } = JSON.parse(node.logging.render()),
+        netPlugin = loggers.find(
+          (logger: RenderedLogger) => logger.name === "net_plugin_impl"
+        )
+      expect(netPlugin).toBeDefined()
+      expect(netPlugin.level).toBe(
+        NodeConfigLoggingRenderer.NodeopLogLevel.info
+      )
+    })
+  })
+
+  describe("NodeConfigLoggingRenderer.toNodeopLevel", () => {
+    // fc declares neither `trace` nor `fatal`; from_variant(log_level&) THROWS
+    // on an unrecognized spelling, so a raw hand-off kills the node at startup.
+    it("maps the two levels fc does not declare onto ones it does", () => {
+      expect(NodeConfigLoggingRenderer.toNodeopLevel(Level.trace)).toBe(
+        NodeConfigLoggingRenderer.NodeopLogLevel.all
+      )
+      expect(NodeConfigLoggingRenderer.toNodeopLevel(Level.fatal)).toBe(
+        NodeConfigLoggingRenderer.NodeopLogLevel.error
+      )
+    })
+
+    it("passes through the four levels both enums share", () => {
+      const { NodeopLogLevel } = NodeConfigLoggingRenderer
+      expect(NodeConfigLoggingRenderer.toNodeopLevel(Level.debug)).toBe(
+        NodeopLogLevel.debug
+      )
+      expect(NodeConfigLoggingRenderer.toNodeopLevel(Level.info)).toBe(
+        NodeopLogLevel.info
+      )
+      expect(NodeConfigLoggingRenderer.toNodeopLevel(Level.warn)).toBe(
+        NodeopLogLevel.warn
+      )
+      expect(NodeConfigLoggingRenderer.toNodeopLevel(Level.error)).toBe(
+        NodeopLogLevel.error
+      )
+    })
+
+    it("only ever yields a spelling fc::log_level declares", () => {
+      const declared = Object.values(
+        NodeConfigLoggingRenderer.NodeopLogLevel
+      ) as string[]
+      Object.values(Level).forEach(level =>
+        expect(declared).toContain(
+          NodeConfigLoggingRenderer.toNodeopLevel(level)
+        )
+      )
     })
   })
 
