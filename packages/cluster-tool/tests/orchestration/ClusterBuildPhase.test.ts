@@ -88,6 +88,42 @@ describe("ClusterBuildPhase executor", () => {
     expect(result.steps.every(step => step.status === Report.StepStatus.ok)).toBe(true)
   })
 
+  it("caps steps in flight at `concurrency` when parallelize", async () => {
+    let inFlight = 0
+    let peakInFlight = 0
+    const tracked = (name: string) =>
+      ClusterBuildStep.create(Report.Actor.Sysio, name, name, {}, null, async () => {
+        inFlight += 1
+        peakInFlight = Math.max(peakInFlight, inFlight)
+        await sleep(10)
+        inFlight -= 1
+      })
+    const phase = ClusterBuildPhase.create(newBuild(), "P", "d", [], {
+      parallelize: true,
+      concurrency: 2
+    }).push(tracked("a"), tracked("b"), tracked("c"), tracked("d"))
+    const result = await runOne(phase)
+    expect(peakInFlight).toBe(2)
+    expect(result.steps.every(step => step.status === Report.StepStatus.ok)).toBe(true)
+  })
+
+  it("leaves parallelize unbounded when no concurrency is given", async () => {
+    let inFlight = 0
+    let peakInFlight = 0
+    const tracked = (name: string) =>
+      ClusterBuildStep.create(Report.Actor.Sysio, name, name, {}, null, async () => {
+        inFlight += 1
+        peakInFlight = Math.max(peakInFlight, inFlight)
+        await sleep(10)
+        inFlight -= 1
+      })
+    const phase = ClusterBuildPhase.create(newBuild(), "P", "d", [], {
+      parallelize: true
+    }).push(tracked("a"), tracked("b"), tracked("c"), tracked("d"))
+    await runOne(phase)
+    expect(peakInFlight).toBe(4) // all at once — unchanged from Promise.all
+  })
+
   it("fails a step that exceeds its timeout", async () => {
     const slow = ClusterBuildStep.create(
       Report.Actor.Sysio,

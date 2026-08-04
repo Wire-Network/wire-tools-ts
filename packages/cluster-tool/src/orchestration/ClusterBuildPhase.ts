@@ -1,4 +1,5 @@
 import { performance } from "node:perf_hooks"
+import Bluebird from "bluebird"
 import { match } from "ts-pattern"
 import { eachSeries } from "../utils/asyncUtils.js"
 import { pollUntil } from "./StepTools.js"
@@ -14,8 +15,16 @@ import { ClusterBuildStep, type ClusterBuildTaskOptions } from "./ClusterBuildSt
 /** Per-phase tuning (extends the shared base). `timeoutMs` is applied to each
  *  step lacking its own. */
 export interface ClusterBuildPhaseOptions extends ClusterBuildTaskOptions {
-  /** Run steps with `Promise.all` (shared AbortController) instead of in series. */
+  /** Run steps concurrently (shared AbortController) instead of in series. */
   parallelize?: boolean
+  /**
+   * Max steps in flight when `parallelize` — the Bluebird `map` concurrency.
+   * Defaults to {@link ClusterBuildPhase.UnboundedConcurrency} (every step at
+   * once, matching a bare `Promise.all`). Bound it when the steps contend for a
+   * shared external resource that degrades under a thundering herd — see
+   * {@link ClusterBuildPhaseGroupOptions.concurrency} for the motivating case.
+   */
+  concurrency?: number
 }
 
 /**
@@ -86,8 +95,13 @@ export class ClusterBuildPhase<
     try {
       await match(this.options.parallelize ?? false)
         .with(true, async () => {
-          const results = await Promise.all(
-            this.stepList.map(step => this.runStep(step, controller))
+          const results = await Bluebird.map(
+            this.stepList,
+            step => this.runStep(step, controller),
+            {
+              concurrency:
+                this.options.concurrency ?? ClusterBuildPhase.UnboundedConcurrency
+            }
           )
           builder.push(...results)
         })
@@ -100,7 +114,13 @@ export class ClusterBuildPhase<
     } finally {
       signal.removeEventListener("abort", onAbort)
     }
-    return [builder.build()]
+    const phase = builder.build()
+    // Record the finished phase on the shared context BEFORE returning it: the
+    // caller nests it into a group node that only reaches the root Report when
+    // the whole top-level child returns, so this flat list is the only narrative
+    // a run killed mid-group leaves behind (see `ClusterBuildContext.completedPhases`).
+    this.context.completedPhases.push(phase)
+    return [phase]
   }
 
   /**
@@ -189,4 +209,12 @@ function runWithTimeout(
   return Promise.race([body(controller.signal), timer]).finally(() =>
     clearTimeout(handle)
   )
+}
+
+export namespace ClusterBuildPhase {
+  /**
+   * Every step in flight at once — the `concurrency` default, preserving the
+   * `Promise.all` semantics parallelized phases had before the option existed.
+   */
+  export const UnboundedConcurrency = Infinity
 }

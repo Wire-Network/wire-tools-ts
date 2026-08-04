@@ -101,8 +101,38 @@ describe("NodeConfig", () => {
       )
     })
 
-    it("gives each node peer endpoints to every other node", () => {
-      nodes.forEach(n => expect(n.peerEndpoints).toHaveLength(nodes.length - 1))
+    it("meshes ONLY the producing set — bios + producers peer with each other", () => {
+      const mesh = nodes.filter(n => n.role !== NodeRole.operator)
+      mesh.forEach(n =>
+        expect(n.peerEndpoints).toHaveLength(mesh.length - 1)
+      )
+    })
+
+    it("attaches each operator to exactly ONE producer, not the mesh", () => {
+      // Operators produce nothing; meshing them makes p2p flooding O(N^2) in a
+      // set that only needs a view of the chain. A full mesh at 21 producers /
+      // 22 operators drove block relay to 28-45s on loopback and froze LIB.
+      const producer = nodes.find(n => n.role === NodeRole.producer)!,
+        producerEndpoint = `${producer.advertiseAddress}:${producer.ports.p2p}`
+      nodes
+        .filter(n => n.role === NodeRole.operator)
+        .forEach(operator => {
+          expect(operator.peerEndpoints).toHaveLength(1)
+          expect(operator.peerEndpoints[0]).toBe(producerEndpoint)
+        })
+    })
+
+    it("keeps operators OUT of every mesh member's peer list", () => {
+      const operatorEndpoints = nodes
+        .filter(n => n.role === NodeRole.operator)
+        .map(n => `${n.advertiseAddress}:${n.ports.p2p}`)
+      nodes
+        .filter(n => n.role !== NodeRole.operator)
+        .forEach(meshNode =>
+          operatorEndpoints.forEach(endpoint =>
+            expect(meshNode.peerEndpoints).not.toContain(endpoint)
+          )
+        )
     })
 
     it("distributes the defproducer names onto the producer node", () => {
