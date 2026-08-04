@@ -70,6 +70,18 @@ const UwreqPendingTimeoutEpochs = 10
  * contract default (SEC-129 / WSA-223).
  */
 const UwreqRetentionEpochs = 10
+/**
+ * Stage 2 of the swap-fee split: the share of each fee's rewards pool routed to
+ * the `sysio` emissions treasury instead of the batch-operator rewards bucket.
+ * Mirrors `sysio.reserv::DEFAULT_FEE_EMISSIONS_SHARE_BPS`.
+ *
+ * Zero keeps every swap fee inside `sysio.reserv` custody at settlement (the
+ * underwriter half as a `uwfees` accrual, the rest in the rewards bucket), which
+ * is what the swap flows' custody assertions expect. Raising it makes exactly
+ * that share leave custody per settlement.
+ */
+const FeeEmissionsShareBps = 0
+
 /** Epoch envelope-log retention. */
 const EnvelopeLogRetentionEpochs = 10
 /** Dev-default `terminate_max_consecutive_misses` (per-flow overridable via ClusterConfig). */
@@ -741,6 +753,19 @@ export namespace ClusterBuildDefaults {
           uwreq_pending_timeout_epochs: UwreqPendingTimeoutEpochs,
           uwreq_retention_epochs: UwreqRetentionEpochs
         }
+      )
+    )
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "ReserveConfig",
+      "Configure sysio.reserv fee routing"
+    ).push(
+      Steps.contracts.sysio.reserv.planSetconfig<C>(
+        Actor.Sysio,
+        "configure-reserv",
+        "set the swap-fee routing config",
+        {},
+        { fee_emissions_share_bps: FeeEmissionsShareBps }
       )
     )
 

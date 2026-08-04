@@ -406,9 +406,10 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
             "destination reserve chain side pays out the target amount"
           )
           // The w hop is internal, but the fee is skimmed inside it — so
-          // Σ reserve_wire_amount across the pair drops by exactly the fee
-          // (the emissions half leaves custody, the rewards half moves to
-          // the bucket).
+          // Σ reserve_wire_amount across the pair drops by exactly the fee.
+          // The fee itself stays in `sysio.reserv` custody, split between the
+          // winning underwriter's `uwfees` accrual and the rewards bucket; it
+          // leaves the reserve ROWS, not the contract's balance.
           Assert.strictEqual(
             src.wire + dst.wire,
             booksBefore.src.wire + booksBefore.dst.wire - phaseAFee.fee,
@@ -427,6 +428,28 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
             locks.length,
             2,
             "exactly two persistent locks back the UWREQ"
+          )
+
+          // The winner is PAID for the assurance: half the WIRE-leg fee accrues
+          // to their `sysio.reserv::uwfees` row at settlement, claimable on
+          // their own schedule via `claimuwfee`. PhaseA is this cluster's FIRST
+          // settled swap, so the whole balance is this swap's share.
+          const { winner } = request
+          Assert.ok(winner, "the confirmed UWREQ must name a winning underwriter")
+          const accrual = await ctx.underwriterFees(winner)
+          Assert.ok(
+            accrual,
+            `the winning underwriter ${winner} must have a uwfees accrual row`
+          )
+          Assert.strictEqual(
+            BigInt(accrual.balance),
+            phaseAFee.underwriterShare,
+            "the winner's unclaimed accrual must equal the underwriter half of the WIRE-leg fee"
+          )
+          Assert.strictEqual(
+            BigInt(accrual.lifetime_claimed),
+            0n,
+            "nothing is claimed until the underwriter calls claimuwfee"
           )
         }
       ),
