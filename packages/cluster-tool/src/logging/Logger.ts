@@ -9,6 +9,7 @@ import {
   type LogRecord
 } from "@wireio/shared"
 import { LogFileAppender } from "./LogFileAppender.js"
+import { StdoutAppender } from "./StdoutAppender.js"
 
 export type { Logger }
 
@@ -23,6 +24,13 @@ export type { Logger }
  */
 export function getLogger(categoryOrFilename: string): Logger {
   return sharedGetLogger(categoryOrFilename)
+}
+
+/** Return a framework logger whose raw messages are written only to stdout. */
+export function getStdoutLogger(): Logger {
+  return sharedGetLogger(StdoutAppender.Category, {
+    overrideAppenders: [new StdoutAppender()]
+  })
 }
 
 /**
