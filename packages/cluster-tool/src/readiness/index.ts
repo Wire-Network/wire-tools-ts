@@ -1,5 +1,6 @@
 export * from "./ReadinessConfig.js"
 export * from "./ReadinessContext.js"
+export * from "./ReadinessDeploymentProfileResolver.js"
 export * from "./ReadinessEndpointResolver.js"
 export * from "./ReadinessOutputs.js"
 export * from "./ReadinessReportProjector.js"

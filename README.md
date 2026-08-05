@@ -145,12 +145,14 @@ Report engine as the flow harness:
 ```bash
 corepack pnpm --filter @wireio/cluster-tool exec ./bin/wire-cluster-tool readiness \
   --feature swap \
-  --wire-chain-id <wire-chain-id>
+  --outpost-deployment-profile-file <outpost-deployment-profile.json>
 ```
 
-Use `--wire-rpc`, `--ethereum-rpc`, and `--solana-rpc` immediately after a
-sandbox respin when catalog records are not yet published. Add `--export` for a
-gitignored tar.gz containing the JSON result and native Report HTML. See
+The profile supplies immutable deployment identity; mutable endpoint discovery
+remains separate. Use `--wire-rpc`, `--ethereum-rpc`, and `--solana-rpc`
+immediately after a sandbox respin when catalog records are not yet published.
+Add `--export` for a gitignored tar.gz containing the JSON result and native
+Report HTML. See
 [`docs/cluster-readiness.md`](docs/cluster-readiness.md) for the complete check
 surface, verdict semantics, and transactional proof boundary.
 

@@ -426,7 +426,7 @@ export async function runWireIdentity(
 ): Promise<void> {
   signal.throwIfAborted()
   await runReadinessAssertion(context, input, async () => {
-    assertEndpoint(context, ClusterReadinessEndpointKind.wire)
+    context.assertEndpoint(ClusterReadinessEndpointKind.wire)
     const info = await context.wireApi.v1.chain.get_info(),
       observed = info.chain_id.toString(),
       endpoint = context.endpoint(ClusterReadinessEndpointKind.wire),
@@ -458,7 +458,7 @@ export async function runWireHeadAdvancement(
   signal: AbortSignal
 ): Promise<void> {
   await runReadinessAssertion(context, input, async () => {
-    assertEndpoint(context, ClusterReadinessEndpointKind.wire)
+    context.assertEndpoint(ClusterReadinessEndpointKind.wire)
     const { initial, followUp } = await observeAdvancement(
       "Wire",
       async () =>
@@ -481,7 +481,7 @@ export async function runWireHeadFreshness(
 ): Promise<void> {
   signal.throwIfAborted()
   await runReadinessAssertion(context, input, async () => {
-    assertEndpoint(context, ClusterReadinessEndpointKind.wire)
+    context.assertEndpoint(ClusterReadinessEndpointKind.wire)
     const value = (
         await context.wireApi.v1.chain.get_info()
       ).head_block_time.toString(),
@@ -512,8 +512,7 @@ export async function runEthereumIdentity(
 ): Promise<void> {
   signal.throwIfAborted()
   await runReadinessAssertion(context, input, async () => {
-    const endpoint = assertEndpoint(
-        context,
+    const endpoint = context.assertEndpoint(
         ClusterReadinessEndpointKind.ethereum
       ),
       raw = await context.jsonRpc<string>(endpoint.url, "eth_chainId", []),
@@ -542,8 +541,7 @@ export async function runEthereumHeadAdvancement(
   signal: AbortSignal
 ): Promise<void> {
   await runReadinessAssertion(context, input, async () => {
-    const endpoint = assertEndpoint(
-        context,
+    const endpoint = context.assertEndpoint(
         ClusterReadinessEndpointKind.ethereum
       ),
       { initial, followUp } = await observeAdvancement(
@@ -571,8 +569,7 @@ export async function runSolanaIdentity(
 ): Promise<void> {
   signal.throwIfAborted()
   await runReadinessAssertion(context, input, async () => {
-    const endpoint = assertEndpoint(
-        context,
+    const endpoint = context.assertEndpoint(
         ClusterReadinessEndpointKind.solana
       ),
       health = await context.jsonRpc<string>(endpoint.url, "getHealth", []),
@@ -603,8 +600,7 @@ export async function runSolanaSlotAdvancement(
   signal: AbortSignal
 ): Promise<void> {
   await runReadinessAssertion(context, input, async () => {
-    const endpoint = assertEndpoint(
-        context,
+    const endpoint = context.assertEndpoint(
         ClusterReadinessEndpointKind.solana
       ),
       { initial, followUp } = await observeAdvancement(
@@ -652,7 +648,7 @@ export async function runWireContracts(
 ): Promise<void> {
   signal.throwIfAborted()
   await runReadinessAssertion(context, input, async () => {
-    assertEndpoint(context, ClusterReadinessEndpointKind.wire)
+    context.assertEndpoint(ClusterReadinessEndpointKind.wire)
     const failures = (
       await Promise.all(
         RequiredSwapContracts.map(async contract => {
@@ -832,15 +828,6 @@ export async function runStakeLifecycle(
       ClusterReadinessReasonCode["protocol-unavailable"]
     )
   })
-}
-
-function assertEndpoint(
-  context: ReadinessContext,
-  kind: ClusterReadinessEndpointKind
-) {
-  const endpoint = context.endpoint(kind)
-  if (!endpoint) throw new Error(`${kind} endpoint is missing`)
-  return endpoint
 }
 
 async function observeAdvancement(

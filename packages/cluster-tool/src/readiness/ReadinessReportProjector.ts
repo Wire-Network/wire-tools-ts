@@ -19,10 +19,13 @@ const RequiredClusterChecks = [
   ClusterReadinessCheckId["wire.identity"],
   ClusterReadinessCheckId["wire.head-advancement"],
   ClusterReadinessCheckId["wire.head-freshness"],
+  ClusterReadinessCheckId["wire.deployment-profile"],
   ClusterReadinessCheckId["ethereum.identity"],
   ClusterReadinessCheckId["ethereum.head-advancement"],
+  ClusterReadinessCheckId["ethereum.deployment-profile"],
   ClusterReadinessCheckId["solana.identity"],
-  ClusterReadinessCheckId["solana.slot-advancement"]
+  ClusterReadinessCheckId["solana.slot-advancement"],
+  ClusterReadinessCheckId["solana.deployment-profile"]
 ]
 
 const RequiredSwapChecks = [

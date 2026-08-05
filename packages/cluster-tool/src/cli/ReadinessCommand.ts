@@ -10,6 +10,7 @@ import { StdoutAppender } from "../logging/StdoutAppender.js"
 import { ClusterBuild } from "../orchestration/ClusterBuild.js"
 import { ReadinessPhaseGroups } from "../orchestration/ReadinessPhaseGroups.js"
 import { ReadinessContext } from "../readiness/ReadinessContext.js"
+import { resolveReadinessDeploymentProfile } from "../readiness/ReadinessDeploymentProfileResolver.js"
 import { resolveReadinessConfig } from "../readiness/ReadinessEndpointResolver.js"
 import { ReadinessReportExporter } from "../readiness/ReadinessReportExporter.js"
 import { projectReadinessReport } from "../readiness/ReadinessReportProjector.js"
@@ -20,22 +21,41 @@ const stdout = getStdoutLogger()
 
 /** Parsed arguments for the connected readiness command. */
 export interface ReadinessArgv {
+  /** Product surface to inspect. */
   feature: ClusterReadinessFeature
+  /** Expected Wire chain identity used for endpoint discovery. */
   wireChainId?: string
+  /** Immutable outpost deployment-profile JSON file. */
+  outpostDeploymentProfileFile: string
+  /** Explicit Wire RPC override. */
   wireRpc?: string
+  /** Explicit Ethereum JSON-RPC override. */
   ethereumRpc?: string
+  /** Explicit Solana JSON-RPC override. */
   solanaRpc?: string
+  /** Optional Hyperion base URL override. */
   hyperionUrl?: string
+  /** Mutable endpoint catalog URL override. */
   catalogUrl?: string
+  /** Maximum head-advancement observation window. */
   observationMs?: number
+  /** Per-request timeout. */
   timeoutMs?: number
+  /** Emit stable JSON instead of the terminal renderer. */
   json: boolean
+  /** Enable ANSI color in terminal output. */
   color: boolean
+  /** Export JSON and native HTML reports as a tar archive. */
   export: boolean
+  /** Optional archive destination directory. */
   exportDir?: string
 }
 
-/** Create the manual connected-readiness yargs command. */
+/**
+ * Create the manual connected-readiness yargs command.
+ *
+ * @return Yargs command module for connected readiness.
+ */
 export function createReadinessCommand() {
   return {
     command: ClusterCommand.readiness,
@@ -51,6 +71,11 @@ export function createReadinessCommand() {
         .option("wire-chain-id", {
           type: "string",
           describe: "Expected Wire chain id used for endpoint discovery"
+        })
+        .option("outpost-deployment-profile-file", {
+          type: "string",
+          describe:
+            "Immutable outpost deployment-profile JSON used for exact verification"
         })
         .option("wire-rpc", {
           type: "string",
@@ -101,8 +126,8 @@ export function createReadinessCommand() {
           describe: "Archive destination; defaults to ./readiness-reports"
         })
         .check(args => {
-          if (!args.wireChainId && !args.wireRpc)
-            throw new Error("Provide either --wire-chain-id or --wire-rpc")
+          if (!args.outpostDeploymentProfileFile)
+            throw new Error("Provide --outpost-deployment-profile-file")
           return true
         }),
     handler: async (args: ReadinessArgv) => {
@@ -112,13 +137,22 @@ export function createReadinessCommand() {
   }
 }
 
-/** Execute one manual readiness run and return its process verdict. */
+/**
+ * Execute one manual readiness run and return its process verdict.
+ *
+ * @param args Parsed readiness command arguments.
+ * @return Readiness reports, optional archive path, and process exit code.
+ */
 export async function runReadiness(args: ReadinessArgv) {
   const startedAt = new Date(),
     basename = `readiness-${startedAt.getTime()}`,
+    outpostDeploymentProfile = resolveReadinessDeploymentProfile(
+      args.outpostDeploymentProfileFile
+    ),
     config = await resolveReadinessConfig({
       feature: args.feature,
       wireChainId: args.wireChainId,
+      outpostDeploymentProfile,
       wireRpc: args.wireRpc,
       ethereumRpc: args.ethereumRpc,
       solanaRpc: args.solanaRpc,

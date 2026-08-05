@@ -2,16 +2,20 @@ import { APIClient, contracts } from "@wireio/sdk-core"
 import {
   type ClusterReadinessCheck,
   ClusterReadinessCheckStatus,
+  type ClusterReadinessEndpoint,
   ClusterReadinessEndpointKind,
+  ClusterReadinessReasonCode,
   type ClusterSwapRouteReadiness
 } from "@wireio/cluster-tool-shared"
-import { NestedError } from "@wireio/shared"
+import { getLogger, NestedError } from "@wireio/shared"
 
 import type { Logger } from "../logging/Logger.js"
 import { OrchestrationContext } from "../orchestration/OrchestrationContext.js"
 import { Report } from "../report/Report.js"
 import type { ReadinessConfig } from "./ReadinessConfig.js"
 import { ReadinessOutputs } from "./ReadinessOutputs.js"
+
+const log = getLogger(__filename)
 
 interface JsonRpcError {
   code?: number
@@ -36,13 +40,13 @@ export class ReadinessContext extends OrchestrationContext<ReadinessConfig> {
   /** Creates a connected readiness context without wallets or signers. */
   constructor(
     config: ReadinessConfig,
-    log: Logger,
+    logger: Logger,
     readonly request: typeof fetch = globalThis.fetch
   ) {
-    super(config, log)
+    super(config, logger)
     const wire = this.endpoint(ClusterReadinessEndpointKind.wire)
     this.wireApi = new APIClient({
-      url: wire?.url ?? "http://127.0.0.1",
+      url: wire?.url ?? ReadinessContext.MissingWireEndpointUrl,
       fetch: request,
       timeoutMs: config.timeoutMs
     })
@@ -51,11 +55,33 @@ export class ReadinessContext extends OrchestrationContext<ReadinessConfig> {
     this.outputs.set(ReadinessOutputs.routes, [])
   }
 
-  /** Return a selected endpoint by role. */
-  endpoint(kind: ClusterReadinessEndpointKind) {
+  /**
+   * Return a selected endpoint by role.
+   *
+   * @param kind Endpoint role to select.
+   * @return Selected endpoint when discovery found one.
+   */
+  endpoint(kind: ClusterReadinessEndpointKind): ClusterReadinessEndpoint {
     return (
       this.config.endpoints.find(endpoint => endpoint.kind === kind) ?? null
     )
+  }
+
+  /**
+   * Return a selected endpoint or fail the current readiness assertion.
+   *
+   * @param kind Required endpoint role.
+   * @return Selected endpoint.
+   */
+  assertEndpoint(kind: ClusterReadinessEndpointKind): ClusterReadinessEndpoint {
+    const endpoint = this.endpoint(kind)
+    if (!endpoint) {
+      throw new ReadinessAssertionError(
+        `${kind} endpoint is missing`,
+        ClusterReadinessReasonCode["configuration-incomplete"]
+      )
+    }
+    return endpoint
   }
 
   /** Append one readiness result and record its structured evidence on the Step. */
@@ -109,6 +135,9 @@ export class ReadinessContext extends OrchestrationContext<ReadinessConfig> {
       }
       return (await response.json()) as T
     } catch (error: unknown) {
+      log.error(
+        `Readiness request failed for ${url}: ${error instanceof Error ? error.message : String(error)}`
+      )
       throw new NestedError(`Request failed: ${url}`, {
         cause: error,
         context: { method: init.method ?? "GET" }
@@ -117,6 +146,12 @@ export class ReadinessContext extends OrchestrationContext<ReadinessConfig> {
       clearTimeout(timeout)
     }
   }
+}
+
+/** Runtime constants for the connected readiness context. */
+export namespace ReadinessContext {
+  /** Non-routable placeholder used before the required-endpoint check runs. */
+  export const MissingWireEndpointUrl = "http://example.invalid"
 }
 
 /** Readiness assertion output returned by successful check operations. */

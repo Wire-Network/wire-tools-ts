@@ -38,10 +38,11 @@ config and re-derives the node topology deterministically via
 `NodeConfig.plan(config)`, the exact call `create`'s steps make.
 
 `readiness` is the remote-cluster exception: it does not own a cluster
-directory or mutate chain state. It resolves an existing network group from a
-Wire chain id or explicit RPCs, composes `Steps.readiness` through
-`ReadinessPhaseGroups`, and returns the normal Report plus a stable JSON
-projection. See [the operator guide](../../docs/cluster-readiness.md).
+directory or mutate chain state. It resolves an existing network group from an
+immutable outpost deployment profile plus a separate endpoint catalog or
+explicit RPCs, composes `Steps.readiness` through `ReadinessPhaseGroups`, and
+returns the normal Report plus a stable JSON projection. See
+[the operator guide](../../docs/cluster-readiness.md).
 
 ### What gets spawned
 

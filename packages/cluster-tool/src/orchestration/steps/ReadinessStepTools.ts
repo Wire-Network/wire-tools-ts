@@ -3,7 +3,7 @@ import {
   ClusterReadinessCheckStatus,
   type ClusterReadinessReasonCode
 } from "@wireio/cluster-tool-shared"
-import { NestedError } from "@wireio/shared"
+import { getLogger, NestedError } from "@wireio/shared"
 
 import {
   ReadinessAssertionError,
@@ -13,6 +13,8 @@ import {
 } from "../../readiness/ReadinessContext.js"
 import type { StepInput } from "../StepRunner.js"
 
+const log = getLogger(__filename)
+
 /** Common metadata carried by every readiness check Step. */
 export interface ReadinessCheckStepInput extends StepInput {
   readonly id: ClusterReadinessCheck["id"]
@@ -21,7 +23,14 @@ export interface ReadinessCheckStepInput extends StepInput {
   readonly failureReason: ClusterReadinessReasonCode
 }
 
-/** Execute one assertion, record its result, and throw only for blockers. */
+/**
+ * Execute one assertion, record its result, and throw only for blockers.
+ *
+ * @param context Connected readiness orchestration context.
+ * @param input Stable check metadata and failure policy.
+ * @param operation Read-only assertion operation.
+ * @return Promise settled after the result is recorded.
+ */
 export async function runReadinessAssertion<I extends ReadinessCheckStepInput>(
   context: ReadinessContext,
   input: I,
@@ -50,6 +59,7 @@ export async function runReadinessAssertion<I extends ReadinessCheckStepInput>(
           ? { evidence: assertionError.evidence }
           : {})
       }
+    log.warn(`Readiness check ${input.id} failed: ${detail}`)
     context.recordCheck(result)
     if (input.blocking) {
       throw new NestedError(detail, {
