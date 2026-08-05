@@ -1,38 +1,67 @@
 import Assert from "node:assert"
+
+import { LAMPORTS_PER_SOL } from "@solana/web3.js"
+import { range } from "lodash"
+
 import {
   SignatureProviderType,
   type ClusterConfig,
   type CollateralRequirement
 } from "@wireio/cluster-tool-shared"
-import { range } from "lodash"
-import { LAMPORTS_PER_SOL } from "@solana/web3.js"
-import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
-import { type Logger } from "../logging/Logger.js"
+import {
+  ChainKind,
+  NodeOwnerTier,
+  OperatorType
+} from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
+
 import { Constants } from "../Constants.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
+import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
+import { type Logger } from "../logging/Logger.js"
+import { Report } from "../report/Report.js"
+import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
 import {
   readNodeOwner,
   readNodeOwnerReg
 } from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
-import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
-import { verifyStep } from "./StepTools.js"
-import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
-
-import { Report } from "../report/Report.js"
 import { OperatorDaemonTool } from "../tools/wire/OperatorDaemonTool.js"
+import {
+  convertImportSeedCredits,
+  loadIndexBalanceDump,
+  type ImportSeedChainKind
+} from "../tools/wire/WireDclaimSeedTool.js"
 import { WireOperatorProvisioningTool } from "../tools/wire/WireOperatorProvisioningTool.js"
+import { mapSeries } from "../utils/asyncUtils.js"
 import { ClusterBuild } from "./ClusterBuild.js"
 import { ClusterBuildContext } from "./ClusterBuildContext.js"
 import { ClusterBuildPhase } from "./ClusterBuildPhase.js"
 import { ClusterBuildPhaseGroup } from "./ClusterBuildPhaseGroup.js"
-import { Steps } from "./steps/index.js"
+import {
+  DistributionClaimBootstrapResultKey,
+  DistributionClaimBootstrapSource,
+  finalizeDistributionClaimBootstrap,
+  type DistributionClaimBootstrapContribution,
+  type DistributionClaimBootstrapCore
+} from "./outputs/DistributionClaimBootstrapOutput.js"
 import { ContractSteps } from "./steps/ContractSteps.js"
+import { Steps } from "./steps/index.js"
+import { verifyStep } from "./StepTools.js"
 
 const { SysioContractName } = SysioContracts
 const { DeployMode } = ContractSteps
 const { Actor } = Report
+
+enum DistributionClaimChainLabel {
+  Ethereum = "Ethereum",
+  Solana = "Solana"
+}
+
+interface ConfiguredDistributionClaimInput {
+  readonly chain: ImportSeedChainKind
+  readonly file: string
+}
 
 /** The initial SYS supply + per-producer grant (core resource token). */
 const InitialSysSupply = "1000000000.0000 SYS"
@@ -97,14 +126,35 @@ const BatchOperatorAirdropLamports = 100n * BigInt(LAMPORTS_PER_SOL)
  * `create` command runs `create(options).build()`.
  */
 export namespace ClusterBuildDefaults {
-  /** Resolve config + context, compose the bootstrap phases, return the build. */
+  /**
+   * Resolve config and context, prepare the complete distribution-claim input,
+   * then compose the bootstrap phases. The optional flow hook runs after
+   * configured files are validated and before composition; its credit sets are
+   * additive to configured-file sets and cannot replace them.
+   *
+   * @param options - Cluster creation and persisted configuration options.
+   * @param createContext - Optional factory for a flow-specific build context.
+   * @param prepareDistributionClaimBootstrap - Optional flow hook contributing
+   *   additional validated credit sets before the import Steps are composed.
+   * @returns The fully composed cluster build.
+   */
   export async function create<
     C extends ClusterBuildContext = ClusterBuildContext
   >(
     options: ClusterBuildOptions = {},
-    createContext?: (config: ClusterConfig, log: Logger) => C
+    createContext?: (config: ClusterConfig, log: Logger) => C,
+    prepareDistributionClaimBootstrap?: (
+      cluster: ClusterBuild<C>,
+      core: DistributionClaimBootstrapCore
+    ) => Promise<DistributionClaimBootstrapContribution>
   ): Promise<ClusterBuild<C>> {
     const cluster = await ClusterBuild.create<C>(options, [], createContext)
+    const core = await loadConfiguredDistributionClaimBootstrap(cluster.config)
+    const contribution =
+      (await prepareDistributionClaimBootstrap?.(cluster, core)) ?? null
+    const result = finalizeDistributionClaimBootstrap(core, contribution)
+    cluster.context.outputs.set(DistributionClaimBootstrapResultKey, result)
+    logDistributionClaimBootstrap(cluster.context.log, result)
     compose(cluster)
     return cluster
   }
@@ -548,11 +598,12 @@ export namespace ClusterBuildDefaults {
         {}
       )
     )
-    ClusterBuildPhase.create<C>(
+    const distributionClaims = ClusterBuildPhase.create<C>(
       prerequisites,
       "DistributionClaims",
-      "Initialize sysio.dclaim"
-    ).push(
+      "Initialize and optionally seed sysio.dclaim"
+    )
+    distributionClaims.push(
       Steps.contracts.sysio.dclaim.planSetconfig<C>(
         Actor.Sysio,
         "init-dclaim",
@@ -560,6 +611,42 @@ export namespace ClusterBuildDefaults {
         {}
       )
     )
+    const bootstrap = cluster.context.outputs.assert(
+      DistributionClaimBootstrapResultKey
+    )
+    bootstrap.chains.forEach(chainResult => {
+      const chain = distributionClaimChainLabel(chainResult.chain).toLowerCase()
+      chainResult.batches.forEach((batch, batchIndex) => {
+        distributionClaims.push(
+          Steps.contracts.sysio.dclaim.planImportSeedBatch<C>(
+            Actor.Sysio,
+            `import-dclaim-${chain}-${batchIndex + 1}`,
+            `import ${chain} dclaim batch ${batchIndex + 1}/${chainResult.batches.length}`,
+            {},
+            chainResult.chain,
+            batchIndex,
+            batch.credits.length,
+            {
+              sources: chainResult.sources,
+              eligibleAddressCount: chainResult.eligibleAddressCount,
+              batchCount: chainResult.batches.length,
+              totalAtomic: chainResult.totalAtomic.toString(),
+              droppedDust: chainResult.droppedDust.toString()
+            }
+          )
+        )
+      })
+    })
+    if (bootstrap.chains.length > 0) {
+      distributionClaims.push(
+        Steps.contracts.sysio.dclaim.planImportDone<C>(
+          Actor.Sysio,
+          "finalize-dclaim-import",
+          "close the dclaim import window",
+          {}
+        )
+      )
+    }
 
     // ── the bootstrap node owner (issues every subsequent resource policy) ──
     // Mirrors the OPP NFT-claim depot path (`newnameduser` + `nodeownreg`, the
@@ -893,6 +980,73 @@ export namespace ClusterBuildDefaults {
     }
   }
 
+  async function loadConfiguredDistributionClaimBootstrap(
+    config: ClusterConfig
+  ): Promise<DistributionClaimBootstrapCore> {
+    const configuredInputs: readonly ConfiguredDistributionClaimInput[] = [
+      ...(config.ethereum.bootstrapJsonFile == null
+        ? []
+        : [
+            {
+              chain: ChainKind.EVM,
+              file: config.ethereum.bootstrapJsonFile
+            } satisfies ConfiguredDistributionClaimInput
+          ]),
+      ...(config.solana.bootstrapJsonFile == null
+        ? []
+        : [
+            {
+              chain: ChainKind.SVM,
+              file: config.solana.bootstrapJsonFile
+            } satisfies ConfiguredDistributionClaimInput
+          ])
+    ]
+    const creditSets = await mapSeries(configuredInputs, async input => {
+      const dump = await loadIndexBalanceDump(input.file, input.chain),
+        conversion = convertImportSeedCredits(dump, input.chain)
+      if (conversion.credits.length === 0) {
+        throw new Error(
+          `${distributionClaimChainLabel(input.chain)} bootstrap file ${JSON.stringify(input.file)} produced zero eligible credits`
+        )
+      }
+      return {
+        chain: input.chain,
+        source: DistributionClaimBootstrapSource.configuredFile,
+        credits: conversion.credits,
+        droppedDust: conversion.droppedDust
+      }
+    })
+    return { creditSets }
+  }
+
+  function logDistributionClaimBootstrap(
+    log: Logger,
+    result: ReturnType<typeof finalizeDistributionClaimBootstrap>
+  ): void {
+    if (result.chains.length === 0) {
+      log.info(
+        "[dclaim bootstrap] no credits supplied; import window remains open"
+      )
+      return
+    }
+    result.chains.forEach(chain => {
+      log.info(
+        `[dclaim bootstrap] ${distributionClaimChainLabel(chain.chain)} ` +
+          `sources=${chain.sources.join(",")} addresses=${chain.eligibleAddressCount} ` +
+          `batches=${chain.batches.length} totalAtomic=${chain.totalAtomic} ` +
+          `droppedDust=${chain.droppedDust}`
+      )
+    })
+  }
+
+  function distributionClaimChainLabel(
+    chain: ImportSeedChainKind
+  ): DistributionClaimChainLabel {
+    return chain === ChainKind.EVM
+      ? DistributionClaimChainLabel.Ethereum
+      : DistributionClaimChainLabel.Solana
+  }
+
   /**
    * The `sysio.epoch::setconfig` data, derived from the batch-operator topology.
    *
@@ -952,7 +1106,8 @@ export namespace ClusterBuildDefaults {
         config.terminateMaxConsecutiveMisses ??
         DefaultTerminateMaxConsecutiveMisses,
       terminate_max_pct_misses_24h:
-        config.terminateMaxPercentMisses24h ?? DefaultTerminateMaxPercentMisses24h,
+        config.terminateMaxPercentMisses24h ??
+        DefaultTerminateMaxPercentMisses24h,
       terminate_window_ms: config.terminateWindowMs ?? DefaultTerminateWindowMs,
       req_prod_collat: config.requiredProducerCollateral.map(toChainMinBond),
       req_batchop_collat:

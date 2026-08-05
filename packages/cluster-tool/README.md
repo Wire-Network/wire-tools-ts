@@ -94,10 +94,28 @@ the path flags.
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config <file>` | | — | a `BindConfig` JSON: complete → verbatim (no probing), partial → merged over resolved defaults (CLI > file > defaults) |
 | `--external-outpost-config <file>` | | — | bootstrap the depot against already-deployed REMOTE ETH+SOL outposts |
+| `--ethereum-bootstrap-json-file <file>` | | — | Ethereum prelaunch balance dump imported into `sysio.dclaim` |
+| `--solana-bootstrap-json-file <file>` | | — | Solana prelaunch balance dump imported into `sysio.dclaim` |
 | `--signature-provider-type` | | `KEY` | `KEY` (inline) / `SSM` / `KIOD` |
 | `--signature-provider-ssm '<json>'\|<file>` | | — | SSM region + secret-id pattern (required for `SSM`) |
 | `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink log levels |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output |
+
+#### Distribution-claim bootstrap
+
+Each bootstrap flag is independently optional. During `create`, the harness
+reads each supplied JSON file once, validates the consumed indexer fields and
+native addresses, converts source amounts to WIRE atomic units, merges duplicate
+addresses, creates deterministic transaction-sized `importseed` Steps, and then
+invokes `importdone` exactly once. A supplied file that produces no eligible
+credit fails before the cluster launch.
+
+The resolved absolute source paths are persisted in `cluster-config.json` as
+provenance. `run` and `destroy` never reread the source files. With neither flag,
+ordinary cluster creation initializes `sysio.dclaim` but leaves its import
+window open. Flows may contribute additive credits before batching; the
+emissions soak uses configured data per chain when present and deterministic
+synthetic fallback only for a missing chain.
 
 ### `run` / `destroy`
 

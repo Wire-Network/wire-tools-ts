@@ -1,7 +1,9 @@
 import {
   ClusterConfigLoggingFileFormat,
   ClusterConfigReportFormat,
+  ClusterConfigEthereumSchema,
   ClusterConfigSchemaCodec,
+  ClusterConfigSolanaSchema,
   SignatureProviderType,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
@@ -28,6 +30,8 @@ describe("ClusterConfig shape", () => {
     terminateWindowMs: null,
     ethereumPath: "/eth",
     solanaPath: "/sol",
+    ethereum: { bootstrapJsonFile: "/inputs/ethereum.json" },
+    solana: { bootstrapJsonFile: "/inputs/solana.json" },
     bind: {
       kiod: { address: "127.0.0.1", port: 8900 },
       nodeop: {
@@ -108,12 +112,14 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated).toEqual(config)
   })
 
-  it("loads a legacy config (no signatureProvider/externalOutposts/debuggingServerEnabled/enableMockReserves) via schema defaults", () => {
+  it("loads a legacy config via schema defaults", () => {
     const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
     delete parsed.signatureProvider
     delete parsed.externalOutposts
     delete parsed.debuggingServerEnabled
     delete parsed.enableMockReserves
+    delete parsed.ethereum
+    delete parsed.solana
     const rehydrated = ClusterConfigSchemaCodec.deserialize(
       JSON.stringify(parsed)
     )
@@ -124,6 +130,20 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.externalOutposts).toBeNull()
     expect(rehydrated.debuggingServerEnabled).toBe(true)
     expect(rehydrated.enableMockReserves).toBe(false)
+    expect(rehydrated.ethereum.bootstrapJsonFile).toBeNull()
+    expect(rehydrated.solana.bootstrapJsonFile).toBeNull()
+  })
+
+  it("validates and defaults the enclosed chain-specific configs", () => {
+    expect(ClusterConfigEthereumSchema.parse({})).toEqual({
+      bootstrapJsonFile: null
+    })
+    expect(ClusterConfigSolanaSchema.parse({})).toEqual({
+      bootstrapJsonFile: null
+    })
+    expect(
+      ClusterConfigEthereumSchema.safeParse({ bootstrapJsonFile: 1 }).success
+    ).toBe(false)
   })
 
   it("defaults the epoch-group + termination overrides to null for a legacy config", () => {

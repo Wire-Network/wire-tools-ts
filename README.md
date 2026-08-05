@@ -159,7 +159,7 @@ and every live run is paired with the heartbeat monitor (see
 [Monitoring a live flow run](#monitoring-a-live-flow-run) below).
 
 ```bash
-# Usage: ./scripts/run-flow.mjs [name-or-pattern] [options]
+# Usage: ./scripts/run-flow.mjs [name-or-pattern] [runner-options] [-- flow-options]
 
 # Interactive picker over every packages/flow-* (no argument):
 ./scripts/run-flow.mjs \
@@ -173,12 +173,18 @@ and every live run is paired with the heartbeat monitor (see
 
 # Regex — 1 match runs it, multiple matches drop into a scoped picker:
 ./scripts/run-flow.mjs swap --wire-build-path … --ethereum-path … --solana-path …
+
+# Forward flow CLI options after a literal delimiter:
+./scripts/run-flow.mjs flow-emissions-soak \
+  --wire-build-path … --ethereum-path … --solana-path … \
+  -- --ethereum-bootstrap-json-file /inputs/ethereum.json
 ```
 
 Each `--wire-build-path` / `--ethereum-path` / `--solana-path` flag falls back to
 its env var (`WIRE_BUILD_PATH` / `WIRE_ETH_PATH` / `WIRE_SOLANA_PATH`); one of the
 two is required. `--cluster-path` (env `WIRE_CLUSTER_PATH`) is optional — omit it
-and the harness picks a fresh temp dir.
+and the harness picks a fresh temp dir. Tokens after the first literal `--` are
+forwarded unchanged to the selected flow CLI.
 
 ### Option B — `pnpm --filter` directly (what Option A runs under the hood)
 
@@ -293,6 +299,8 @@ command comes first).
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, `--bind-nodeop-ports-bios-http`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults) |
 | `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file: bootstrap the depot against already-deployed REMOTE ETH+SOL outposts (skips the local anvil/validator + outpost deploys) |
+| `--ethereum-bootstrap-json-file` | | — | Ethereum prelaunch balance dump to validate, convert, and import into `sysio.dclaim` during `create` |
+| `--solana-bootstrap-json-file` | | — | Solana prelaunch balance dump to validate, convert, and import into `sysio.dclaim` during `create` |
 | `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink log levels |
 | `--logging-file-format` | | `jsonl` | log file format: `text` or `jsonl` |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output location |

@@ -110,7 +110,8 @@ export namespace ClusterConfigProvider {
     // Roster shape first: it is pure arithmetic, and rejecting here means an
     // illegal topology never claims a cluster's worth of ports (nor holds the
     // host-global bind lock) on its way to failing.
-    const batchOperatorCount = assertBatchOperatorSchedule(options),
+    const { ethereum = {}, solana = {} } = options,
+      batchOperatorCount = assertBatchOperatorSchedule(options),
       buildPath = assertOption(options.buildPath, "buildPath"),
       clusterPath = assertOption(options.clusterPath, "clusterPath"),
       bind = await resolveBind(options),
@@ -118,6 +119,12 @@ export namespace ClusterConfigProvider {
       report = resolveReport(options.report, clusterPath),
       logging = resolveLogging(options.logging),
       signatureProvider = resolveSignatureProvider(options.signatureProvider),
+      ethereumBootstrapJsonFile = resolveBootstrapJsonFile(
+        ethereum.bootstrapJsonFile
+      ),
+      solanaBootstrapJsonFile = resolveBootstrapJsonFile(
+        solana.bootstrapJsonFile
+      ),
       externalOutposts = await loadExternalOutposts(
         options.externalOutpostConfig
       )
@@ -144,6 +151,8 @@ export namespace ClusterConfigProvider {
       terminateWindowMs: options.terminateWindowMs ?? null,
       ethereumPath: assertOption(options.ethereumPath, "ethereumPath"),
       solanaPath: assertOption(options.solanaPath, "solanaPath"),
+      ethereum: { bootstrapJsonFile: ethereumBootstrapJsonFile },
+      solana: { bootstrapJsonFile: solanaBootstrapJsonFile },
       bind,
       executables,
       report,
@@ -162,6 +171,18 @@ export namespace ClusterConfigProvider {
       debuggingServerEnabled: true,
       enableMockReserves: options.enableMockReserves ?? false
     }
+  }
+
+  /**
+   * Resolve an optional prelaunch balance-dump path for persisted provenance.
+   * The file is intentionally not read here: `ClusterBuildDefaults.create`
+   * validates and converts it before composing any bootstrap phases.
+   *
+   * @param file - Caller-supplied path, or absence.
+   * @returns The absolute path, or `null`.
+   */
+  function resolveBootstrapJsonFile(file?: string): string {
+    return file == null ? null : Path.resolve(file)
   }
 
   /**

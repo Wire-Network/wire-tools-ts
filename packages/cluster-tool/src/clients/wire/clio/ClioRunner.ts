@@ -1,14 +1,34 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
+
 import { asOption } from "@3fv/prelude-ts"
-import { getLogger } from "@wireio/shared"
 import { negate } from "lodash"
+
+import { getLogger } from "@wireio/shared"
+
 import { StepExtraRecorder } from "../../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../../utils/asyncUtils.js"
 import { isNotEmpty } from "../../../utils/predicateUtils.js"
 
-const log = getLogger("ClioRunner")
+const log = getLogger(__filename)
 const execFileAsync = promisify(execFile)
+
+interface MessageCandidate {
+  message?: unknown
+}
+
+interface ClioReceiptCandidate {
+  status?: unknown
+}
+
+interface ClioProcessedCandidate {
+  receipt?: ClioReceiptCandidate
+}
+
+interface ClioTransactionCandidate {
+  transaction_id?: unknown
+  processed?: ClioProcessedCandidate
+}
 
 /**
  * Caller config for the clio transport. `nodeopUrl` / `kiodUrl` (renamed from
@@ -28,7 +48,8 @@ export interface ClioRunOptions<UseJson extends boolean = false> {
 }
 
 /** JSON-mode run options, with an optional row constructor. */
-export interface ClioRunOptionsJson<T extends {}> extends ClioRunOptions<true> {
+export interface ClioRunOptionsJson<T extends object>
+  extends ClioRunOptions<true> {
   ctor?: new (data: any) => T
 }
 
@@ -48,7 +69,7 @@ export function enrichClioError(
   stdout: string,
   stderr: string
 ): unknown {
-  const candidate = error as { message?: unknown }
+  const candidate = error as MessageCandidate
   if (
     candidate != null &&
     typeof candidate === "object" &&
@@ -69,13 +90,59 @@ export function enrichClioError(
 export class ClioRunner {
   constructor(readonly config: ClioRunnerConfig) {}
 
-  /** Run a clio command, returning parsed JSON. */
-  run<T extends {}>(args: string[], options: ClioRunOptionsJson<T>): Promise<T>
-  /** Run a clio command, returning raw stdout. */
-  run(args: string[], options?: { json?: false }): Promise<string>
+  /** Run a clio command with transport retries, returning parsed JSON. */
+  run<T extends object>(
+    args: string[],
+    options: ClioRunOptionsJson<T>
+  ): Promise<T>
+  /** Run a clio command with transport retries, returning raw stdout. */
+  run(args: string[], options?: ClioRunOptions<false>): Promise<string>
   async run(
     args: string[],
     options: ClioRunOptions | ClioRunOptionsJson<any> = { json: false }
+  ): Promise<any> {
+    return this.runRecorded(args, options, fullArgs =>
+      retry(() => this.executeOnce(fullArgs, options), {
+        maxAttempts: ClioRunner.TransportRetryAttempts,
+        delayMs: ClioRunner.TransportRetryDelayMs,
+        label: `clio ${args[0] ?? ""} transport`,
+        checkResult: negate(ClioRunner.isTransportFailure)
+      })
+    )
+  }
+
+  /**
+   * Run exactly one clio subprocess and parse its JSON response.
+   *
+   * @param args - Clio arguments excluding configured endpoint options.
+   * @param options - JSON parsing and recording options.
+   * @returns The parsed response without transport retries.
+   */
+  runOnce<T extends object>(
+    args: string[],
+    options: ClioRunOptionsJson<T>
+  ): Promise<T>
+  /**
+   * Run exactly one clio subprocess and return its raw output.
+   *
+   * @param args - Clio arguments excluding configured endpoint options.
+   * @param options - Raw-output and recording options.
+   * @returns Raw stdout without transport retries.
+   */
+  runOnce(args: string[], options?: ClioRunOptions<false>): Promise<string>
+  async runOnce(
+    args: string[],
+    options: ClioRunOptions | ClioRunOptionsJson<any> = { json: false }
+  ): Promise<any> {
+    return this.runRecorded(args, options, fullArgs =>
+      this.executeOnce(fullArgs, options)
+    )
+  }
+
+  private async runRecorded(
+    args: string[],
+    options: ClioRunOptions | ClioRunOptionsJson<any>,
+    execute: (fullArgs: string[]) => Promise<any>
   ): Promise<any> {
     const fullArgs = [
       "-u",
@@ -84,21 +151,12 @@ export class ClioRunner {
       ...args
     ]
     log.debug("clio %s", fullArgs.join(" "))
-    // TRANSPORT retries only: a connection-level failure (refused / reset under
-    // host connection churn — the node itself keeps serving) never reached chain
-    // processing, so re-running is safe (a re-pushed duplicate surfaces as the
-    // benign `tx_duplicate`). A NON-transport error IS the result (rethrown).
     // Every logical clio invocation — command line, outcome, duration — is
     // recorded into the running step's `Report.StepResult.extra`.
     const startedAtMs = Date.now(),
       command = [this.config.binary, ...fullArgs]
     try {
-      const result = await retry(() => this.runOnce(fullArgs, options), {
-        maxAttempts: ClioRunner.TransportRetryAttempts,
-        delayMs: ClioRunner.TransportRetryDelayMs,
-        label: `clio ${args[0] ?? ""} transport`,
-        checkResult: negate(ClioRunner.isTransportFailure)
-      })
+      const result = await execute(fullArgs)
       StepExtraRecorder.record({
         client: "clio",
         kind: "cli",
@@ -123,16 +181,19 @@ export class ClioRunner {
     }
   }
 
-  /** One clio subprocess execution (the retry loop above owns transport failures). */
-  private async runOnce(
+  private async executeOnce(
     fullArgs: string[],
     options: ClioRunOptions | ClioRunOptionsJson<any>
   ): Promise<any> {
     try {
-      const { stdout, stderr } = await execFileAsync(this.config.binary, fullArgs, {
-        maxBuffer: ClioRunner.MaxBuffer,
-        timeout: ClioRunner.CommandTimeoutMs
-      })
+      const { stdout, stderr } = await execFileAsync(
+        this.config.binary,
+        fullArgs,
+        {
+          maxBuffer: ClioRunner.MaxBuffer,
+          timeout: ClioRunner.CommandTimeoutMs
+        }
+      )
       asOption(stderr)
         .filter(isNotEmpty)
         .match({
@@ -167,7 +228,7 @@ export namespace ClioRunner {
   export const MaxBuffer = 10 * 1_024 * 1_024
   /** Timeout for a single clio command (ms). */
   export const CommandTimeoutMs = 30_000
-  /** Attempts for CONNECTION-level failures (the node keeps serving; churn transient). */
+  /** Attempts used by the retrying {@link ClioRunner.run} transport policy. */
   export const TransportRetryAttempts = 4
   /** Delay between transport retries (ms). */
   export const TransportRetryDelayMs = 1_500
@@ -176,9 +237,9 @@ export namespace ClioRunner {
   export const TransportFailurePattern =
     /Failed http request to nodeop|Connection refused|Connection reset|couldn't connect to server/i
 
-  /** True when `error` is a connection-level clio failure (safe to re-run). */
+  /** True when `error` matches a connection-level clio failure signature. */
   export function isTransportFailure(error: unknown): boolean {
-    const candidate = error as { message?: unknown }
+    const candidate = error as MessageCandidate
     return (
       candidate != null &&
       typeof candidate === "object" &&
@@ -222,10 +283,7 @@ export namespace ClioRunner {
    */
   export function summarizeResult(result: unknown): unknown {
     if (result != null && typeof result === "object") {
-      const candidate = result as {
-        transaction_id?: unknown
-        processed?: { receipt?: { status?: unknown } }
-      }
+      const candidate = result as ClioTransactionCandidate
       if (typeof candidate.transaction_id === "string") {
         return {
           transaction_id: candidate.transaction_id,
