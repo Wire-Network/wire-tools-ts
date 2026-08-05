@@ -65,13 +65,52 @@ export const KeyMaterialPatterns: readonly KeyMaterialPattern[] = [
   }
 ] as const
 
+/** What a scrubbed `--signature-provider` spec's key is replaced with. */
+export const RedactedKeyMarker = "<redacted>"
+
 /**
- * Every {@link KeyMaterialPatterns} entry that matches `text`. An empty result
- * is the proof that `text` carries no secret.
+ * The signature set for scanning FREE-FORM LOGS, where {@link KeyMaterialPatterns}
+ * is unsound.
+ *
+ * A log is mostly hashes, and a 32-byte hex string is a private key or a block
+ * hash by shape alone — nothing distinguishes them. Measured on one real
+ * cluster-create log: 1049 hits for the naked-hex entry, of which **800 were
+ * `Block Hash:`, 162 `Transaction:`, 50 anvil's published dev constants, and ~37
+ * substrings of 128-hex PUBLIC keys. Zero were secret.** A gate at that
+ * signal-to-noise ratio reports nothing usable.
+ *
+ * In a log a real secret only ever appears as the key half of a
+ * `--signature-provider` spec, so THAT is what is matched — and it catches every
+ * encoding the spec carries (`PVT_K1_…`, `PVT_BLS_…`, `0x…` for EM, bare base58
+ * for ED: 19 of 19 on the same log, where matching `KEY:0x` alone caught 5).
+ *
+ * The marker exclusion is load-bearing: the collector rewrites secrets to
+ * `KEY:${RedactedKeyMarker}`, so a pattern without it flags its own output —
+ * 19 hits on a log whose every secret was successfully removed.
+ *
+ * This set is for LOGS only. {@link KeyMaterialPatterns} remains the gate for
+ * persisted artifacts, where a bare `PVT_…` with no spec around it is exactly
+ * the shape that must never ship.
+ */
+export const KeySpecPatterns: readonly KeyMaterialPattern[] = [
+  {
+    name: "unredacted --signature-provider key (KEY:<private>)",
+    pattern: new RegExp(`KEY:(?!${RedactedKeyMarker})[^,"\\s]+`)
+  }
+] as const
+
+/**
+ * Every entry of `patterns` that matches `text`. An empty result is the proof
+ * that `text` carries no secret of the kinds that set describes.
  *
  * @param text - The serialized artifact to scan.
+ * @param patterns - The signature set (defaults to the persisted-artifact set;
+ *   pass {@link KeySpecPatterns} for free-form logs).
  * @returns The matching signatures (empty when the text is plaintext-free).
  */
-export function findKeyMaterial(text: string): KeyMaterialPattern[] {
-  return KeyMaterialPatterns.filter(entry => entry.pattern.test(text))
+export function findKeyMaterial(
+  text: string,
+  patterns: readonly KeyMaterialPattern[] = KeyMaterialPatterns
+): KeyMaterialPattern[] {
+  return patterns.filter(entry => entry.pattern.test(text))
 }
