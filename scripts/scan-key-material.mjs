@@ -9,10 +9,15 @@
  * never drift apart.
  *
  * Usage:
- *   ./scripts/scan-key-material.mjs [--ignore <relative-path>]... <dir> [<dir>...]
+ *   ./scripts/scan-key-material.mjs [--ignore <relative-path>]... [--patterns <set>] <dir> [<dir>...]
  *
  * Options:
  *   --ignore <path>   Skip a subtree, RELATIVE to each scan root. Repeatable.
+ *   --patterns <set>  Signature set: `artifacts` (default — every persisted
+ *                     secret shape) or `key-specs` (LOGS: only an unredacted
+ *                     `KEY:<private>` spec). Use `key-specs` on free-form logs,
+ *                     where a 32-byte hex value is a block hash far more often
+ *                     than a key and the artifact set reports ~1000 non-secrets.
  *                     For the LOCAL-CHAIN artifacts (anvil state, the solana
  *                     ledger, the ethereum deployment records): they hold
  *                     well-known dev-account keys that are public by
@@ -73,7 +78,11 @@ if (!fs.existsSync(sharedFile)) {
   echo(chalk.red(`cluster-tool-shared build not found at ${sharedFile} — run pnpm build.`))
   process.exit(2)
 }
-const { findKeyMaterial } = require(sharedFile)
+const { findKeyMaterial, KeyMaterialPatterns, KeySpecPatterns } =
+  require(sharedFile)
+
+/** The signature set named by `--patterns` (default: the artifact set). */
+const PatternSets = { artifacts: KeyMaterialPatterns, "key-specs": KeySpecPatterns }
 
 /** Every file under `dir`, depth-first. Symlinks are NOT followed. */
 function* walk(dir) {
@@ -109,7 +118,8 @@ function scanFile(file) {
       // text-encoded key, and decoding it yields only mojibake.
       if (first && chunk.includes(NulByte)) return found
       first = false
-      for (const pattern of findKeyMaterial(carry + chunk)) found.add(pattern.name)
+      for (const pattern of findKeyMaterial(carry + chunk, patterns))
+        found.add(pattern.name)
       carry = chunk.slice(-OverlapBytes)
       position += read
     }
@@ -119,11 +129,17 @@ function scanFile(file) {
   return found
 }
 
+const patternSetName = String(argv.patterns ?? "artifacts")
+const patterns = PatternSets[patternSetName]
+if (patterns == null) {
+  echo(chalk.red(`scan-key-material: unknown --patterns '${patternSetName}' (expected: ${Object.keys(PatternSets).join(" | ")})`))
+  process.exit(2)
+}
 const ignores = [argv.ignore ?? []].flat().filter(value => typeof value === "string")
 const roots = argv._.map(String)
 
 if (roots.length === 0) {
-  echo(chalk.red("usage: scan-key-material.mjs [--ignore <path>]... <dir> [<dir>...]"))
+  echo(chalk.red("usage: scan-key-material.mjs [--ignore <path>]... [--patterns artifacts|key-specs] <dir> [<dir>...]"))
   process.exit(2)
 }
 
