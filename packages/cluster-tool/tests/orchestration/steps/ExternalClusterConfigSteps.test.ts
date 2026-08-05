@@ -403,7 +403,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     await External.runLoadExternalBind(ctx, null, signal)
     await expect(
       External.runVerifyNoDuplicatePorts(ctx, signal)
-    ).rejects.toThrow(/duplicate ports/)
+    ).rejects.toThrow(/binds the same port twice on one host/)
   })
 
   it("emits KEY providers with inline plaintext private keys (unchanged)", async () => {
