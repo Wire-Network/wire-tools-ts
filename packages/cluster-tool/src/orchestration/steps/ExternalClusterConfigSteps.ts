@@ -808,7 +808,7 @@ export namespace ExternalClusterConfigSteps {
     // PutParameter'd); `accountName` is the ON-CHAIN name the deployed daemon
     // acts as. Two different values — do not collapse them.
     const providerFor = (keyPair: KeyPair): SignatureProviderConfig =>
-      keyProviderFor(keyPair, operator.label, provider, lookup)
+      keyProviderFor(keyPair, operator.publicationLabel, provider, lookup)
     return {
       accountName: operator.account,
       type: operator.type,
@@ -864,20 +864,17 @@ export namespace ExternalClusterConfigSteps {
           config.awsClusterNodeConfig != null,
           "create-external-config: SSM signature provider requires awsClusterNodeConfig (the secret-id {cluster} source)"
         )
-        // Identity → parameter comes from `ClusterConfigProvider`, the SAME
-        // resolver `signatureProviderSource` renders every other consumer's id
-        // through. Emit must not carry its own copy: a private mapping here is
-        // how `cluster-keys.json` came to ship producer refs the walker never
-        // published while the emitted config carried the right ones.
-        const publicationLabel = ClusterConfigProvider.publicationLabelFor(config),
-          index = new Map(
-            KeySteps.signatureProviderKeyPublications(config).map(row => [
-              publicationKey(row.label, row.keyType),
-              row
-            ])
-          )
-        return (label, keyType) =>
-          index.get(publicationKey(publicationLabel(label), keyType))
+        // Callers pass the RECORDED `publicationLabel`, so this is a plain
+        // lookup — no mapping lives here. Emit deriving its own producer→node
+        // relationship is what made `cluster-keys.json` and the emitted config
+        // disagree about the same key.
+        const index = new Map(
+          KeySteps.signatureProviderKeyPublications(config).map(row => [
+            publicationKey(row.label, row.keyType),
+            row
+          ])
+        )
+        return (label, keyType) => index.get(publicationKey(label, keyType))
       })
       .otherwise((): SSMPublicationLookup => () => undefined)
   }
