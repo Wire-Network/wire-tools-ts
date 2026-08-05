@@ -50,6 +50,20 @@ import type {
  */
 export interface OperatorAccount {
   readonly label: string
+  /**
+   * The label whose signature-provider parameter holds this identity's keys.
+   *
+   * Its own `label` for every identity that OWNS its keys; the hosting NODE's
+   * name for a producer account, which signs with the node's shared set. It is
+   * a FACT recorded where the key set is assigned — never re-derived from the
+   * topology, because "which node hosts this account name" and "whose key set
+   * did this account actually receive" are two different questions, and a
+   * mapping that answers the first can render a real-but-WRONG parameter.
+   *
+   * Required so a new identity cannot silently inherit a fallback: the answer
+   * is known at the moment the keys are handed over, and nowhere else.
+   */
+  readonly publicationLabel: string
   readonly account?: string
   readonly type: OperatorType
   readonly wire: WireKeyPair

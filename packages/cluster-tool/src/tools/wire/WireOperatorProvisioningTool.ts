@@ -50,6 +50,7 @@ import {
 import type { ClusterBuildParent } from "../../orchestration/ClusterBuildPhaseBase.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { KeySteps } from "../../orchestration/steps/KeySteps.js"
+import { isNotEmpty } from "../../utils/predicateUtils.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import {
@@ -97,6 +98,8 @@ export namespace WireOperatorProvisioningTool {
     readonly type: OperatorType
     /** Producer: index of the producer NODE whose K1+BLS this label shares. */
     readonly producerNodeIndex?: number
+    /** Producer: NAME of that node — the label its keys are published under. */
+    readonly producerNodeName?: string
     /** Batch / underwriter: anvil-mnemonic HD index for the operator's ETH wallet. */
     readonly ethereumHdIndex?: number
     /** Batch / underwriter: `regoperator` bootstrapped flag (default `true`). */
@@ -162,10 +165,14 @@ export namespace WireOperatorProvisioningTool {
     spec: OperatorProvisioningSpec,
     options: ClusterBuildStepOptions
   ): ClusterBuildPhase<C> {
-    const { label, producerNodeIndex } = spec
+    const { label, producerNodeIndex, producerNodeName } = spec
     Assert.ok(
       producerNodeIndex != null,
       `provision producer ${label}: producerNodeIndex is required`
+    )
+    Assert.ok(
+      isNotEmpty(producerNodeName),
+      `provision producer ${label}: producerNodeName is required — it is the label this account's keys are published under`
     )
     return ClusterBuildPhase.create<C>(group, `Provision ${label}`, `provision producer ${label}`, [
       planProducerMaterialization<C>(
@@ -174,7 +181,8 @@ export namespace WireOperatorProvisioningTool {
         `materialize producer ${label} identity from node ${producerNodeIndex}`,
         options,
         label,
-        producerNodeIndex
+        producerNodeIndex,
+        producerNodeName
       ),
       planAccountCreation<C>(
         Report.Actor.Producer,
@@ -386,6 +394,8 @@ export namespace WireOperatorProvisioningTool {
     // depot-generated name — `label` is the durable handle from here on.
     ctx.keyStore.setOperator({
       label: input.label,
+      // An OPP operator owns its generated keys — published under its own handle.
+      publicationLabel: input.label,
       type: input.type,
       wire,
       ethereum,
@@ -403,6 +413,8 @@ export namespace WireOperatorProvisioningTool {
     readonly kind: "WireOperatorProvisioningTool.MaterializeProducerInput"
     readonly label: string
     readonly producerNodeIndex: number
+    /** The hosting node's NAME — recorded as the account's `publicationLabel`. */
+    readonly producerNodeName: string
   }
 
   /**
@@ -416,7 +428,8 @@ export namespace WireOperatorProvisioningTool {
     description: string,
     options: ClusterBuildStepOptions,
     label: string,
-    producerNodeIndex: number
+    producerNodeIndex: number,
+    producerNodeName: string
   ): ClusterBuildStep<C, MaterializeProducerInput> {
     return ClusterBuildStep.create<C, MaterializeProducerInput>(
       actor,
@@ -426,7 +439,8 @@ export namespace WireOperatorProvisioningTool {
       {
         kind: "WireOperatorProvisioningTool.MaterializeProducerInput",
         label,
-        producerNodeIndex
+        producerNodeIndex,
+        producerNodeName
       },
       runProducerMaterialization
     )
@@ -444,6 +458,9 @@ export namespace WireOperatorProvisioningTool {
     // handle — `account` equals `label` from materialization onward.
     ctx.keyStore.setOperator({
       label: input.label,
+      // The keys just read belong to the NODE and are published under its name —
+      // recorded HERE, where the hand-over happens, so nothing re-derives it.
+      publicationLabel: input.producerNodeName,
       account: input.label,
       type: OperatorType.PRODUCER,
       wire: nodeKeys.keys.wire,

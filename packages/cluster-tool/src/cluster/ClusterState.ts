@@ -53,11 +53,20 @@ export interface ClusterKeysNodeEntry {
  */
 export interface ClusterKeysOperatorEntry {
   /**
-   * Durable harness handle (`batchop.a`) — the `ClusterKeyStore` key and the SSM
-   * secret-id `{account}` segment. Deterministic and known at plan time; it does
-   * NOT exist on chain.
+   * Durable harness handle (`batchop.a`) — the `ClusterKeyStore` key.
+   * Deterministic and known at plan time; it does NOT exist on chain.
+   *
+   * NOT necessarily the SSM secret-id `{account}` segment: a producer account
+   * signs with its NODE's key set, so its parameter is keyed by the node. Use
+   * {@link ClusterKeysOperatorEntry.publicationLabel} for that.
    */
   label: string
+  /**
+   * The label whose signature-provider parameter holds this record's keys — the
+   * SSM secret-id `{account}` segment. Equals `label` for every identity that
+   * owns its keys; the hosting NODE's name for a producer account.
+   */
+  publicationLabel: string
   /**
    * WIRE account name ON CHAIN — `wireno.<random>` for batch/underwriter
    * operators (node-owner-sponsored; the suffix is nonce-derived entropy and is
@@ -182,6 +191,7 @@ const ClusterKeysNodeEntrySchema: z.ZodType<ClusterKeysNodeEntry> = z.object({
 const ClusterKeysOperatorEntrySchema: z.ZodType<ClusterKeysOperatorEntry> =
   z.object({
     label: z.string(),
+    publicationLabel: z.string(),
     account: z.string(),
     type: OperatorTypeValueSchema,
     wire: WireKeyPairSchema,
@@ -383,22 +393,23 @@ export namespace ClusterState {
           isNotEmpty(operator.account),
           `ClusterState.captureKeys: operator ${operator.label} has no account — its sponsored-creation step did not run`
         )
-        // Custody is keyed by the DURABLE `label`, never the on-chain
-        // `account` — the label is the secret-id `{account}` segment the keys
-        // were published under.
-        const { label, account } = operator
+        // Custody is keyed by the RECORDED `publicationLabel` — the label whose
+        // parameter actually holds these keys. For most identities that is
+        // their own handle; for a producer account it is its NODE, because the
+        // pair it signs with belongs to the node and is published once there.
+        const { publicationLabel, account } = operator
         return {
           ...operator,
           account,
-          wire: toCustody(label, operator.wire),
+          wire: toCustody(publicationLabel, operator.wire),
           ...(operator.wireFinalizer != null
-            ? { wireFinalizer: toCustody(label, operator.wireFinalizer) }
+            ? { wireFinalizer: toCustody(publicationLabel, operator.wireFinalizer) }
             : {}),
           ...(operator.ethereum != null
-            ? { ethereum: toCustody(label, operator.ethereum) }
+            ? { ethereum: toCustody(publicationLabel, operator.ethereum) }
             : {}),
           ...(operator.solana != null
-            ? { solana: toCustody(label, operator.solana) }
+            ? { solana: toCustody(publicationLabel, operator.solana) }
             : {})
         }
       })

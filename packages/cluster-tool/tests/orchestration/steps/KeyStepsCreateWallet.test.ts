@@ -59,6 +59,7 @@ describe("KeySteps.runCreateWallet", () => {
     ctx.keyStore
       .setOperator({
         label: NodeConfig.BiosName,
+        publicationLabel: NodeConfig.BiosName,
         account: NodeConfig.BiosProducer,
         type: OperatorType.UNKNOWN,
         wire: wireKey("bios"),
@@ -66,6 +67,7 @@ describe("KeySteps.runCreateWallet", () => {
       })
       .setOperator({
         label: Constants.BOOTSTRAP_NODE_OWNER,
+        publicationLabel: Constants.BOOTSTRAP_NODE_OWNER,
         account: Constants.BOOTSTRAP_NODE_OWNER,
         type: OperatorType.UNKNOWN,
         wire: wireKey("owner")
@@ -94,6 +96,7 @@ describe("KeySteps.runCreateWallet", () => {
     ctx.keyStore
       .setOperator({
         label: NodeConfig.BiosName,
+        publicationLabel: NodeConfig.BiosName,
         account: NodeConfig.BiosProducer,
         type: OperatorType.UNKNOWN,
         wire: shared,
@@ -101,6 +104,7 @@ describe("KeySteps.runCreateWallet", () => {
       })
       .setOperator({
         label: Constants.BOOTSTRAP_NODE_OWNER,
+        publicationLabel: Constants.BOOTSTRAP_NODE_OWNER,
         account: Constants.BOOTSTRAP_NODE_OWNER,
         type: OperatorType.UNKNOWN,
         wire: shared
@@ -118,6 +122,7 @@ describe("KeySteps.runCreateWallet", () => {
     const shared = wireKey("both")
     ctx.keyStore.setOperator({
       label: NodeConfig.BiosName,
+      publicationLabel: NodeConfig.BiosName,
       account: NodeConfig.BiosProducer,
       type: OperatorType.UNKNOWN,
       wire: shared,
