@@ -55,18 +55,18 @@ describe("WireReserveTool", () => {
   })
 
   describe("splitWireFee (the recorded SwapFeeMath assertions)", () => {
-    it("0.1% fee with the 50/50 split (legacy 10 bps baseline)", () => {
+    it("0.1% fee with the 50/50 underwriter / batch-operator split", () => {
       const fee = splitWireFee(99_009_900n, LegacySwapFeeBps)
       expect(fee.fee).toBe(99_009n)
       expect(fee.net).toBe(98_910_891n)
-      expect(fee.rewardShare).toBe(49_504n)
-      expect(fee.emissionsShare).toBe(49_505n)
+      expect(fee.underwriterShare).toBe(49_504n)
+      expect(fee.rewardShare).toBe(49_505n)
     })
     it("holds the exact-integer invariants across amounts", () => {
       const amounts = [1n, 7n, 1_000_000n, 99_009_900n, 100_969_310n, 80_000_000_000n]
       amounts.forEach(amount => {
         const fee = splitWireFee(amount, LegacySwapFeeBps)
-        expect(fee.rewardShare + fee.emissionsShare).toBe(fee.fee)
+        expect(fee.underwriterShare + fee.rewardShare).toBe(fee.fee)
         expect(fee.net + fee.fee).toBe(amount)
       })
     })
@@ -74,22 +74,110 @@ describe("WireReserveTool", () => {
       expect(splitWireFee(5_000n, LegacySwapFeeBps).fee).toBe(5n)
       expect(splitWireFee(5_001n, LegacySwapFeeBps).fee).toBe(5n)
     })
-    it("honours an explicit fee + reward share", () => {
+    it("honours an explicit fee + underwriter share", () => {
       const fee = splitWireFee(1_000_000n, 100, BpsTotal)
       expect(fee.fee).toBe(10_000n)
-      expect(fee.rewardShare).toBe(10_000n)
-      expect(fee.emissionsShare).toBe(0n)
+      expect(fee.underwriterShare).toBe(10_000n)
+      expect(fee.rewardShare).toBe(0n)
       expect(fee.net).toBe(990_000n)
+    })
+    it("a zero underwriter share sends the whole fee to rewards (the revert path)", () => {
+      // `sysio.reserv::refundwire` passes 0 — a revert has no winning
+      // underwriter, so nothing accrues to `uwfees`.
+      const fee = splitWireFee(1_000_000n, 100, 0)
+      expect(fee.fee).toBe(10_000n)
+      expect(fee.underwriterShare).toBe(0n)
+      expect(fee.rewardShare).toBe(10_000n)
+    })
+    it("defaults to a zero emissions share — no fee leaves custody", () => {
+      const fee = splitWireFee(1_000_000n, 1_000)
+      expect(fee.emissionsShare).toBe(0n)
+      expect(fee.underwriterShare).toBe(50_000n)
+      expect(fee.rewardShare).toBe(50_000n)
+    })
+    it("the emissions share divides the REWARDS POOL, not the whole fee", () => {
+      // fee 100_000 → underwriter 50_000, pool 50_000; 40% OF THE POOL = 20_000.
+      const fee = splitWireFee(1_000_000n, 1_000, 5_000, 4_000)
+      expect(fee.underwriterShare).toBe(50_000n)
+      expect(fee.emissionsShare).toBe(20_000n)
+      expect(fee.rewardShare).toBe(30_000n)
+    })
+    it("a full emissions share leaves batch operators nothing, underwriter untouched", () => {
+      const fee = splitWireFee(1_000_000n, 1_000, 5_000, BpsTotal)
+      expect(fee.underwriterShare).toBe(50_000n)
+      expect(fee.emissionsShare).toBe(50_000n)
+      expect(fee.rewardShare).toBe(0n)
+    })
+    it("charges each participating reserve's owner fee off the same gross leg", () => {
+      // WIRE-281 "per reserve": a chain-to-chain swap pays THREE fees. All rates
+      // apply to the gross leg, so they are additive and order-independent.
+      // 1_000_000 leg: network 10% = 100_000; src 1% = 10_000; dst 2% = 20_000.
+      const fee = splitWireFee(1_000_000n, 1_000, 5_000, 0, 100, 200)
+      expect(fee.srcReserveShare).toBe(10_000n)
+      expect(fee.dstReserveShare).toBe(20_000n)
+      expect(fee.underwriterShare).toBe(50_000n)
+      expect(fee.rewardShare).toBe(50_000n)
+      expect(fee.fee).toBe(130_000n)
+      expect(fee.net).toBe(870_000n)
+    })
+    it("a single-reserve path charges only its own side", () => {
+      // paywire: source reserve only. applyfromwire: destination only.
+      const source = splitWireFee(1_000_000n, 1_000, 5_000, 0, 100, 0)
+      expect(source.srcReserveShare).toBe(10_000n)
+      expect(source.dstReserveShare).toBe(0n)
+      const destination = splitWireFee(1_000_000n, 1_000, 5_000, 0, 0, 200)
+      expect(destination.srcReserveShare).toBe(0n)
+      expect(destination.dstReserveShare).toBe(20_000n)
+    })
+    it("defaults both reserve rates to zero — a fee-free reserve pair", () => {
+      const fee = splitWireFee(1_000_000n, 1_000, 5_000)
+      expect(fee.srcReserveShare).toBe(0n)
+      expect(fee.dstReserveShare).toBe(0n)
+      expect(fee.fee).toBe(100_000n)
+    })
+    it("saturates net at zero rather than going negative when rates fill the leg", () => {
+      const fee = splitWireFee(1_000n, BpsTotal, 5_000, 0, BpsTotal, BpsTotal)
+      expect(fee.net).toBe(0n)
+    })
+    it("holds five-way conservation with reserve fees stacked on", () => {
+      const amounts = [1n, 7n, 999n, 1_000_003n, 1_000_000_000_000n]
+      amounts.forEach(amount => {
+        const fee = splitWireFee(amount, 137, 5_000, 3_333, 97, 211)
+        expect(
+          fee.underwriterShare +
+            fee.rewardShare +
+            fee.emissionsShare +
+            fee.srcReserveShare +
+            fee.dstReserveShare
+        ).toBe(fee.fee)
+        expect(fee.net + fee.fee).toBe(amount)
+      })
+    })
+    it("holds three-way conservation across odd amounts and shares", () => {
+      const emissionsShares = [0, 1, 3_333, 5_000, 9_999, BpsTotal],
+        amounts = [1n, 7n, 999n, 1_000_003n, 1_000_000_000_000n]
+      emissionsShares.forEach(emissions =>
+        amounts.forEach(amount => {
+          const fee = splitWireFee(amount, 137, 5_000, emissions)
+          expect(
+            fee.underwriterShare + fee.rewardShare + fee.emissionsShare
+          ).toBe(fee.fee)
+          expect(fee.net + fee.fee).toBe(amount)
+        })
+      )
     })
     it("clamps bps into [0, 10000]", () => {
       expect(splitWireFee(1_000n, -5).fee).toBe(0n)
       expect(splitWireFee(1_000n, 20_000).fee).toBe(1_000n)
+      // The share bps clamp the same way, on both ends.
+      expect(splitWireFee(1_000_000n, BpsTotal, -5).underwriterShare).toBe(0n)
+      expect(splitWireFee(1_000_000n, BpsTotal, 20_000).underwriterShare).toBe(1_000_000n)
     })
     it("zero amount yields all-zero shares", () => {
       const fee = splitWireFee(0n, LegacySwapFeeBps)
       expect(fee.fee).toBe(0n)
+      expect(fee.underwriterShare).toBe(0n)
       expect(fee.rewardShare).toBe(0n)
-      expect(fee.emissionsShare).toBe(0n)
       expect(fee.net).toBe(0n)
     })
   })

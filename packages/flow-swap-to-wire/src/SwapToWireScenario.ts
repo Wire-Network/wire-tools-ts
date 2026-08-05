@@ -457,7 +457,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
             .set(SwapToWireScenario.Output.target, target)
             .set(
               SwapToWireScenario.Output.wireLegFee,
-              WireReserveTool.splitWireFee(target, feeBps).fee
+              WireReserveTool.splitWireFee(target, feeBps)
             )
           log.info(
             `[SwapToWire] curve target = ${target} WIRE base units (fee_bps=${feeBps})`
@@ -595,7 +595,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
               SwapToWireScenario.Output.bookBefore
             ),
             target = ctx.outputs.assert(SwapToWireScenario.Output.target),
-            fee = ctx.outputs.assert(SwapToWireScenario.Output.wireLegFee)
+            { fee } = ctx.outputs.assert(SwapToWireScenario.Output.wireLegFee)
           const book = await ctx.reserveBook(
             Constants.EthereumChainCode,
             Constants.EthereumTokenCode,
@@ -614,19 +614,22 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
       verifyStep<SwapScenarioContext>(
         Actor.Sysio,
         "custody-settled",
-        "sysio.reserv custody drains to before − target − fee (rewards bucket drained)",
+        "sysio.reserv custody drains to before − target − the rewards half of the fee",
         async ctx => {
-          // The recipient's payout leaves `sysio.reserv`, and so does the FULL
-          // WIRE-leg fee — the emissions half at emit (#414) and, as of #425,
-          // the rewards half drained each epoch by payepoch
-          // (sysio.reserv::drainrewards). The drain can land just after emit,
-          // so poll until custody settles at the fully-drained value.
+          // The recipient's payout leaves `sysio.reserv`. Of the WIRE-leg fee,
+          // only the batch-operator rewards half follows it out — drained each
+          // epoch by payepoch (sysio.reserv::drainrewards). The winning
+          // underwriter's half stays in custody as a `uwfees` accrual until that
+          // account calls `claimuwfee`, which this flow never does. The drain
+          // can land just after emit, so poll until custody settles.
           const custodyBefore = ctx.outputs.assert(
               SwapToWireScenario.Output.custodyBefore
             ),
             target = ctx.outputs.assert(SwapToWireScenario.Output.target),
-            fee = ctx.outputs.assert(SwapToWireScenario.Output.wireLegFee),
-            expectedCustody = custodyBefore - target - fee
+            { rewardShare } = ctx.outputs.assert(
+              SwapToWireScenario.Output.wireLegFee
+            ),
+            expectedCustody = custodyBefore - target - rewardShare
           await pollUntil(
             "rewards bucket drained from sysio.reserv custody",
             async () =>
@@ -728,10 +731,15 @@ export namespace SwapToWireScenario {
       "swapToWire.target",
       "single-reserve cp_output WIRE target"
     )
-    /** The predicted WIRE-leg fee on the target (from the live uwconfig fee_bps). */
-    export const wireLegFee = outputKey<bigint>(
+    /**
+     * The predicted WIRE-leg fee decomposition on the target (from the live
+     * uwconfig fee_bps). The whole `fee` leaves the source reserve's WIRE side;
+     * only `rewardShare` ever leaves `sysio.reserv` CUSTODY (at the payepoch
+     * drain) — the underwriter half stays until that account claims it.
+     */
+    export const wireLegFee = outputKey<WireReserveTool.WireFee>(
       "swapToWire.wireLegFee",
-      "WIRE-leg fee charged on the gross target"
+      "WIRE-leg fee decomposition charged on the gross target"
     )
     /** The ETHEREUM/ETH/PRIMARY book snapshot taken at quote time. */
     export const bookBefore = outputKey<ReserveBook>(
