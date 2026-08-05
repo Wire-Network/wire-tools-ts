@@ -53,10 +53,12 @@ const MinFromWireAmount = 100_000_000
 /**
  * Fee (bps of the escrow) forfeited on caller-fault drain-time reverts of
  * queued `swapfromwire` rows (zero quote / missed variance at `drainfwq`),
- * routed like the settlement fee. Mirrors the contract default; happy-path
- * flows never pay it and system-caused reverts refund in full.
+ * routed like the settlement fee. Mirrors the contract default — the 5% launch
+ * value — so a cluster prices revert churn the way the network will. Happy-path
+ * flows never pay it and system-caused reverts refund in full, so no flow's
+ * economics depend on this number.
  */
-const FromWireRevertFeeBps = 10
+const FromWireRevertFeeBps = 500
 /**
  * Epochs a PENDING uwreq may wait for its underwriter race before
  * `sysio.uwrit::pruneuwreqs` expires it (refund/revert + EXPIRED). Mirrors
