@@ -38,6 +38,7 @@ import {
 } from "../ClusterBuildStep.js"
 import { outputKey, type OutputKey } from "../OutputStore.js"
 import { verifyStep } from "../StepTools.js"
+import { KeySteps } from "./KeySteps.js"
 import { Report } from "../../report/Report.js"
 
 /**
@@ -760,16 +761,16 @@ export namespace ExternalClusterConfigSteps {
       // ids were PutParameter'd at CREATE time under the SOURCE cluster's AWS
       // account — reconstruct against ctx.config (source), NOT merged (external root).
       provider = ctx.config.signatureProvider,
-      // The secret-id `{cluster}` segment is the SOURCE cluster's AWS ACCOUNT
-      // (dev|test|prod) — what create's KeySteps PutParameter'd under — never
-      // the cluster-path basename. Absent under KEY/KIOD (unused there).
-      cluster = ctx.config.awsClusterNodeConfig?.account,
+      // What create ACTUALLY published, from the walker that published it — the
+      // emitted refs are those rows verbatim, so a ref can never name a
+      // parameter that does not exist. Empty under KEY / KIOD.
+      publications = ssmPublicationIndex(ctx.config),
       solana = solanaSection(merged),
       external: ExternalClusterConfig = {
         bindings: externalBind,
         accounts: {
           operators: keys.operators.map(operator =>
-            toAccount(operator, provider, cluster)
+            toAccount(operator, provider, publications)
           )
         },
         wire: {
@@ -801,13 +802,13 @@ export namespace ExternalClusterConfigSteps {
   function toAccount(
     operator: ClusterKeysOperatorEntry,
     provider: ClusterSignatureProviderConfig,
-    cluster: string
+    publications: SSMPublicationIndex
   ): ExternalClusterConfigAccount {
     // The SSM secret id is keyed by the DURABLE handle (what `KeySteps`
     // PutParameter'd); `accountName` is the ON-CHAIN name the deployed daemon
     // acts as. Two different values — do not collapse them.
     const providerFor = (keyPair: KeyPair): SignatureProviderConfig =>
-      keyProviderFor(keyPair, operator.label, provider, cluster)
+      keyProviderFor(keyPair, operator.label, provider, publications)
     return {
       accountName: operator.account,
       type: operator.type,
@@ -823,45 +824,82 @@ export namespace ExternalClusterConfigSteps {
   }
 
   /**
-   * The operator key curves published to SSM at create time
-   * (`KeySteps.signatureProviderKeyPublications`: K1 wire / EM ethereum / ED
-   * solana — NEVER operator BLS; BLS is a producer-NODE key and external-config
-   * emits OPERATORS). The SSM emit branch guards this set so an emitted
-   * `awsSecretId` never references a parameter create did not publish.
+   * Every key create PUBLISHED to SSM, indexed by `<label>/<KeyType>` — the ONE
+   * authority for "does this parameter exist", built from the SAME
+   * {@link KeySteps.signatureProviderKeyPublications} walker that wrote them.
    */
-  const OperatorSSMKeyTypes: readonly KeyType[] = [
-    KeyType.K1,
-    KeyType.EM,
-    KeyType.ED
-  ]
+  type SSMPublicationIndex = Map<
+    string,
+    KeySteps.SignatureProviderKeyPublication
+  >
+
+  /** The {@link SSMPublicationIndex} key for one identity's curve. */
+  function publicationKey(label: string, keyType: KeyType): string {
+    return `${label}/${KeyType[keyType]}`
+  }
+
+  /**
+   * Index the SOURCE cluster's SSM publications; EMPTY under KEY / KIOD (nothing
+   * was published, and nothing consults it).
+   *
+   * Deriving the covered set — rather than re-stating a curve list at the emit
+   * site — is what makes the guard true by construction. The operator map is NOT
+   * homogeneous: batch operators and underwriters publish K1/EM/ED, the genesis
+   * identity (`node_bios`) publishes K1/BLS, and the bootstrap node owner
+   * publishes K1 alone. A hand-maintained "operators publish K1/EM/ED" set is
+   * right for the first class and wrong for the other two — it refused the
+   * genesis identity's BLS, a parameter create had genuinely published, and
+   * failed every SSM `create-external-config` at the Emit stage.
+   *
+   * @param config - The SOURCE cluster's resolved config.
+   * @returns The published `(label, keyType)` → publication index.
+   */
+  function ssmPublicationIndex(config: ClusterConfig): SSMPublicationIndex {
+    return match(config.signatureProvider.type)
+      .with(SignatureProviderType.SSM, () => {
+        Assert.ok(
+          config.awsClusterNodeConfig != null,
+          "create-external-config: SSM signature provider requires awsClusterNodeConfig (the secret-id {cluster} source)"
+        )
+        return new Map(
+          KeySteps.signatureProviderKeyPublications(config).map(publication => [
+            publicationKey(publication.label, publication.keyType),
+            publication
+          ])
+        )
+      })
+      .otherwise(
+        () => new Map<string, KeySteps.SignatureProviderKeyPublication>()
+      )
+  }
 
   /**
    * Build a signature-provider config from a stored operator key pair, reflecting
    * the SOURCE cluster's provider type:
    * - `KEY`  → inline plaintext `privateKey` (byte-identical to a KEY cluster's keys).
-   * - `SSM`  → the informational replication regions + a rendered `awsSecretId`
-   *   ref (NO private key); the id is reconstructed DETERMINISTICALLY via the
-   *   same `ClusterConfigProvider.toSecretId(pattern, {cluster, account,
-   *   keyType, version})` `KeySteps` PutParameter'd at create time.
+   * - `SSM`  → the replication regions + `awsSecretId` taken VERBATIM from the
+   *   publication row create wrote (NO private key), so the emitted ref is the
+   *   published parameter by construction rather than by two render sites
+   *   agreeing.
    * - `KIOD` → material-less (`publicKey` + BLS proof only); hydration is deferred.
    *
    * A BLS pair carries its `proofOfPossession` in every mode (required by the
-   * union). Under `SSM` the key's curve MUST be in {@link OperatorSSMKeyTypes} —
-   * an out-of-set curve (e.g. operator BLS) is refused rather than emitted as a
-   * dangling ref.
+   * union). Under `SSM` the `(label, curve)` MUST appear in
+   * {@link ssmPublicationIndex} — an unpublished pair is refused rather than
+   * emitted as a dangling ref.
    *
    * @param keyPair - The stored key pair.
    * @param label - The operator label (the secret-id `{account}`).
    * @param provider - The source cluster's signature-provider config.
-   * @param cluster - The source cluster's AWS account name (the secret-id
-   *   `{cluster}`); absent under KEY / KIOD, where it is unused.
+   * @param publications - The source cluster's SSM publication index; empty
+   *   under KEY / KIOD, where it is unused.
    * @returns The provider entry for this key.
    */
   function keyProviderFor(
     keyPair: KeyPair,
     label: string,
     provider: ClusterSignatureProviderConfig,
-    cluster: string
+    publications: SSMPublicationIndex
   ): SignatureProviderConfig {
     const base = {
       type: keyPair.type,
@@ -882,29 +920,20 @@ export namespace ExternalClusterConfigSteps {
         })
       )
       .with(SignatureProviderType.SSM, (): SignatureProviderConfig => {
-        const ssm = provider.ssm
         Assert.ok(
-          ssm != null,
+          provider.ssm != null,
           "create-external-config: SSM signature provider requires ssm settings"
         )
+        const published = publications.get(publicationKey(label, keyPair.type))
         Assert.ok(
-          cluster != null,
-          "create-external-config: SSM signature provider requires awsClusterNodeConfig (the secret-id {cluster} source)"
-        )
-        Assert.ok(
-          OperatorSSMKeyTypes.includes(keyPair.type),
-          `create-external-config: operator key ${KeyType[keyPair.type]} is not SSM-published (operators publish K1/EM/ED only) — refusing a dangling SSM ref for ${label}`
+          published != null,
+          `create-external-config: ${label} key ${KeyType[keyPair.type]} is not SSM-published — create wrote no such parameter; refusing a dangling SSM ref`
         )
         return {
           providerType: SignatureProviderType.SSM,
           ...base,
-          awsRegions: ssm.awsRegions,
-          awsSecretId: ClusterConfigProvider.toSecretId(ssm.awsSecretIdPattern, {
-            cluster,
-            account: label,
-            keyType: KeyType[keyPair.type],
-            version: ssm.version
-          })
+          awsRegions: published.awsRegions,
+          awsSecretId: published.secretId
         }
       })
       .with(
