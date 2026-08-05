@@ -235,6 +235,7 @@ After `create`:
     ├── anvil/                    # anvil state          (local ETH outpost only)
     ├── solana-ledger/            # validator ledger      (local SOL outpost only)
     ├── eth-abis/                 # address-embedded outpost ABIs
+    ├── ethereum-client.json      # shared Ethereum client config for operator daemons
     ├── solana-idls/              # liqsol_core (opp-outpost) IDL
     ├── ethereum-deployments/     # outpost-addrs.json
     └── opp-debugging/            # OPP envelope .data / .metadata pairs
@@ -243,6 +244,25 @@ After `create`:
 In external-outpost mode no local `anvil` / `solana-ledger` state is written
 (`cluster-state.json` records them as `null`); the operator-daemon artifacts come
 from the `--external-outpost-config` instead.
+
+### Generated Ethereum client configuration
+
+Artifact preparation writes one `data/ethereum-client.json`, and every operator
+daemon passes it through `--outpost-ethereum-client-config-file`. The
+protobuf-JSON document uses `schema_version: 1`, nests the stable `eth-default`
+client and signature-provider ids under `connection`, and records `chain_id` as
+a number. Signature-provider ids are process-local, so each daemon can register
+its own Ethereum private key as `eth-default` while safely sharing the same
+client configuration file. Daemon argument builders remain pure and reuse the
+artifact on create, run, restart, and flow-provisioned starts.
+
+Generated development-cluster files omit `transaction_policy`. Nodeop therefore
+assigns its maximum-`uint256` default caps, preserving the pre-policy behavior
+for local clusters. The schema supports an explicit nested policy when finite
+cluster limits are wanted later. Bios and producer-only nodes receive neither an
+Ethereum signing client nor an orphaned client-config option.
+
+Production policy selection happens outside `wire-tools-ts`.
 
 ---
 
