@@ -26,7 +26,7 @@ import {
 } from "../../cluster/ClusterState.js"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
-import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
+import { NodeConfig } from "../../config/NodeConfig.js"
 import { OperatorDaemonTool } from "../../tools/wire/OperatorDaemonTool.js"
 import type { KeyPair, WireFinalizerKeyPair } from "../../types/KeyPair.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
@@ -764,13 +764,13 @@ export namespace ExternalClusterConfigSteps {
       // What create ACTUALLY published, from the walker that published it — the
       // emitted refs are those rows verbatim, so a ref can never name a
       // parameter that does not exist. Empty under KEY / KIOD.
-      publications = ssmPublicationIndex(ctx.config),
+      lookup = ssmPublicationLookup(ctx.config),
       solana = solanaSection(merged),
       external: ExternalClusterConfig = {
         bindings: externalBind,
         accounts: {
           operators: keys.operators.map(operator =>
-            toAccount(operator, provider, publications)
+            toAccount(operator, provider, lookup)
           )
         },
         wire: {
@@ -802,13 +802,13 @@ export namespace ExternalClusterConfigSteps {
   function toAccount(
     operator: ClusterKeysOperatorEntry,
     provider: ClusterSignatureProviderConfig,
-    publications: SSMPublicationIndex
+    lookup: SSMPublicationLookup
   ): ExternalClusterConfigAccount {
     // The SSM secret id is keyed by the DURABLE handle (what `KeySteps`
     // PutParameter'd); `accountName` is the ON-CHAIN name the deployed daemon
     // acts as. Two different values — do not collapse them.
     const providerFor = (keyPair: KeyPair): SignatureProviderConfig =>
-      keyProviderFor(keyPair, operator.label, provider, publications)
+      keyProviderFor(keyPair, operator.label, provider, lookup)
     return {
       accountName: operator.account,
       type: operator.type,
@@ -828,19 +828,22 @@ export namespace ExternalClusterConfigSteps {
    * authority for "does this parameter exist", built from the SAME
    * {@link KeySteps.signatureProviderKeyPublications} walker that wrote them.
    */
-  type SSMPublicationIndex = Map<
-    string,
-    KeySteps.SignatureProviderKeyPublication
-  >
+  type SSMPublicationLookup = (
+    label: string,
+    keyType: KeyType
+  ) => KeySteps.SignatureProviderKeyPublication
 
-  /** The {@link SSMPublicationIndex} key for one identity's curve. */
+  /** Separator for the `<label>/<KeyType>` publication-index key. */
+  const PublicationKeySeparator = "/"
+
+  /** The publication-index key for one identity's curve. */
   function publicationKey(label: string, keyType: KeyType): string {
-    return `${label}/${KeyType[keyType]}`
+    return [label, KeyType[keyType]].join(PublicationKeySeparator)
   }
 
   /**
-   * Index the SOURCE cluster's SSM publications; EMPTY under KEY / KIOD (nothing
-   * was published, and nothing consults it).
+   * Resolve an identity's curve to the publication create wrote for it; yields
+   * nothing under KEY / KIOD (nothing was published, and nothing consults it).
    *
    * Deriving the covered set — rather than re-stating a curve list at the emit
    * site — is what makes the guard true by construction. The operator map is NOT
@@ -852,48 +855,31 @@ export namespace ExternalClusterConfigSteps {
    * failed every SSM `create-external-config` at the Emit stage.
    *
    * @param config - The SOURCE cluster's resolved config.
-   * @returns The published `(label, keyType)` → publication index.
+   * @returns A resolver from `(identity label, curve)` to its publication.
    */
-  function ssmPublicationIndex(config: ClusterConfig): SSMPublicationIndex {
+  function ssmPublicationLookup(config: ClusterConfig): SSMPublicationLookup {
     return match(config.signatureProvider.type)
-      .with(SignatureProviderType.SSM, () => {
+      .with(SignatureProviderType.SSM, (): SSMPublicationLookup => {
         Assert.ok(
           config.awsClusterNodeConfig != null,
           "create-external-config: SSM signature provider requires awsClusterNodeConfig (the secret-id {cluster} source)"
         )
-        const rows = KeySteps.signatureProviderKeyPublications(config),
-          index: SSMPublicationIndex = new Map(
-            rows.map(row => [publicationKey(row.label, row.keyType), row])
+        // Identity → parameter comes from `ClusterConfigProvider`, the SAME
+        // resolver `signatureProviderSource` renders every other consumer's id
+        // through. Emit must not carry its own copy: a private mapping here is
+        // how `cluster-keys.json` came to ship producer refs the walker never
+        // published while the emitted config carried the right ones.
+        const publicationLabel = ClusterConfigProvider.publicationLabelFor(config),
+          index = new Map(
+            KeySteps.signatureProviderKeyPublications(config).map(row => [
+              publicationKey(row.label, row.keyType),
+              row
+            ])
           )
-        // A producer ACCOUNT signs with its hosting NODE's key set — sibling
-        // producers on one node deliberately share one pair — so those keys are
-        // published ONCE, under the NODE name. Alias every producer account onto
-        // its node's rows so its refs (K1 and, critically, the BLS finality key)
-        // resolve to that one published pair instead of being refused for
-        // lacking a per-account parameter that by design never existed.
-        //
-        // The aliased curves come from the node's OWN rows, never a restated
-        // list — whatever the walker publishes for a node is what a producer on
-        // it can reference, and it stays that way when the walker changes.
-        NodeConfig.plan(config)
-          .filter(node => node.role === NodeRole.producer)
-          .forEach(node => {
-            const nodeRows = rows.filter(row => row.label === node.name)
-            Assert.ok(
-              nodeRows.length > 0,
-              `create-external-config: producer node ${node.name} has no SSM publications — cannot resolve the refs of the producer accounts it hosts (${node.producers.join(", ")})`
-            )
-            node.producers.forEach(producer =>
-              nodeRows.forEach(row =>
-                index.set(publicationKey(producer, row.keyType), row)
-              )
-            )
-          })
-        return index
+        return (label, keyType) =>
+          index.get(publicationKey(publicationLabel(label), keyType))
       })
-      .otherwise(
-        () => new Map<string, KeySteps.SignatureProviderKeyPublication>()
-      )
+      .otherwise((): SSMPublicationLookup => () => undefined)
   }
 
   /**
@@ -914,15 +900,15 @@ export namespace ExternalClusterConfigSteps {
    * @param keyPair - The stored key pair.
    * @param label - The operator label (the secret-id `{account}`).
    * @param provider - The source cluster's signature-provider config.
-   * @param publications - The source cluster's SSM publication index; empty
-   *   under KEY / KIOD, where it is unused.
+   * @param lookup - Resolves an identity's curve to the publication create
+   *   wrote for it; yields nothing under KEY / KIOD, where it is unused.
    * @returns The provider entry for this key.
    */
   function keyProviderFor(
     keyPair: KeyPair,
     label: string,
     provider: ClusterSignatureProviderConfig,
-    publications: SSMPublicationIndex
+    lookup: SSMPublicationLookup
   ): SignatureProviderConfig {
     const base = {
       type: keyPair.type,
@@ -947,7 +933,7 @@ export namespace ExternalClusterConfigSteps {
           provider.ssm != null,
           "create-external-config: SSM signature provider requires ssm settings"
         )
-        const published = publications.get(publicationKey(label, keyPair.type))
+        const published = lookup(label, keyPair.type)
         Assert.ok(
           published != null,
           `create-external-config: ${label} key ${KeyType[keyPair.type]} is not SSM-published — create wrote no such parameter; refusing a dangling SSM ref`

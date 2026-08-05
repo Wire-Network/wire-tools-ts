@@ -228,6 +228,18 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   }
 
   /**
+   * The SSM id `create` publishes a label's curve under. Injected records use
+   * SSM CUSTODY FORM — `awsSecretId`, never `privateKey` — because that is what
+   * a real SSM create persists (`ClusterState.keyCustodyFor`), and the schema
+   * admits exactly one custody form. Injecting KEY-shaped records under an SSM
+   * provider is a shape no cluster ever produces, and it is what hid the
+   * producer-ref defect.
+   */
+  function secretId(label: string, keyType: KeyType): string {
+    return `/wire/${SourceClusterLabel}/${label}/${KeyType[keyType]}`
+  }
+
+  /**
    * Append the two GENESIS identities `ClusterBuild.seedGenesisAccounts` puts in
    * the operator map — the bios node (K1 + BLS) and the bootstrap node owner
    * (K1 alone) — to the persisted cluster keys.
@@ -248,13 +260,13 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
         wire: {
           type: KeyType.K1,
           publicKey: "PUB_K1_bios",
-          privateKey: "PVT_K1_bios"
+          awsSecretId: secretId(NodeConfig.BiosName, KeyType.K1)
         },
         wireFinalizer: {
           type: KeyType.BLS,
           publicKey: "PUB_BLS_bios",
-          privateKey: "PVT_BLS_bios",
-          proofOfPossession: "SIG_BLS_bios"
+          proofOfPossession: "SIG_BLS_bios",
+          awsSecretId: secretId(NodeConfig.BiosName, KeyType.BLS)
         }
       },
       {
@@ -264,7 +276,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
         wire: {
           type: KeyType.K1,
           publicKey: "PUB_K1_owner",
-          privateKey: "PVT_K1_owner"
+          awsSecretId: secretId(Constants.BOOTSTRAP_NODE_OWNER, KeyType.K1)
         }
       }
     )
@@ -294,8 +306,17 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
         label: producer,
         account: producer,
         type: OperatorType.PRODUCER,
-        wire: nodeKeys.wire,
-        wireFinalizer: nodeKeys.wireFinalizer
+        wire: {
+          type: KeyType.K1,
+          publicKey: nodeKeys.wire.publicKey,
+          awsSecretId: secretId(node.name, KeyType.K1)
+        },
+        wireFinalizer: {
+          type: KeyType.BLS,
+          publicKey: nodeKeys.wireFinalizer.publicKey,
+          proofOfPossession: nodeKeys.wireFinalizer.proofOfPossession,
+          awsSecretId: secretId(node.name, KeyType.BLS)
+        }
       })
     )
     ClusterState.saveKeys(config, keys)
