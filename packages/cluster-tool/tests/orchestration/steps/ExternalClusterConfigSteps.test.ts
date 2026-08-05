@@ -271,6 +271,37 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     ClusterState.saveKeys(config, keys)
   }
 
+  /**
+   * Append the PRODUCER operator accounts `runProducerMaterialization` puts in
+   * the operator map — each carrying its hosting NODE's `wire` + `wireFinalizer`
+   * (sibling producers on one node share the same pair, by design).
+   *
+   * Their keys are published under the NODE name (`node_00`), never under the
+   * producer account, so the emit side must resolve producer → node or every
+   * producer K1 **and BLS** ref is refused.
+   *
+   * @returns The producer account names seeded, and their hosting node's name.
+   */
+  function injectProducerAccounts() {
+    const config = runContext().config,
+      keys = ClusterState.loadKeys(config),
+      node = NodeConfig.plan(config).find(
+        planned => planned.role === NodeRole.producer
+      ),
+      nodeKeys = keys.nodes.find(entry => entry.index === node.index)
+    node.producers.forEach(producer =>
+      keys.operators.push({
+        label: producer,
+        account: producer,
+        type: OperatorType.PRODUCER,
+        wire: nodeKeys.wire,
+        wireFinalizer: nodeKeys.wireFinalizer
+      })
+    )
+    ClusterState.saveKeys(config, keys)
+    return { producers: node.producers, nodeName: node.name }
+  }
+
   /** Inject a `wireFinalizer` key onto the first cluster-keys operator (operators normally carry none). */
   function injectOperatorWireFinalizer() {
     const config = runContext().config,
@@ -580,11 +611,39 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     ])
   })
 
+  // A producer ACCOUNT carries its hosting node's K1 + BLS (siblings share one
+  // pair), but the keys are published under the NODE name. Both refs — and the
+  // BLS one especially, it is the finality key — must resolve to the node's
+  // published parameter rather than be refused for lacking a producer-account
+  // parameter that by design never existed.
+  it("resolves producer-account refs (K1 AND BLS) to their node's published ids", async () => {
+    const { producers, nodeName } = injectProducerAccounts(),
+      emitted = await emitWithProvider(SSMProvider)
+    expect(producers.length).toBeGreaterThan(0)
+    producers.forEach(producer => {
+      const op = emitted.accounts.operators.find(
+          entry => entry.accountName === producer
+        ),
+        secretIds = op.keyProviders
+          .flatMap(provider =>
+            provider.providerType === SignatureProviderType.SSM
+              ? [provider.awsSecretId]
+              : []
+          )
+          .sort()
+      expect(secretIds).toEqual([
+        `/wire/test/${nodeName}/BLS`,
+        `/wire/test/${nodeName}/K1`
+      ])
+    })
+  })
+
   // The guard is DERIVED from the publication walker, so it must track the
   // walker rather than a curve list: every emitted ref exists in it, and every
   // publication is reachable by the handle+curve the emit side looks up with.
   it("emits only refs the publication walker actually wrote", async () => {
     injectGenesisAccounts()
+    injectProducerAccounts()
     const emitted = await emitWithProvider(SSMProvider),
       published = new Set(
         Steps.keys
