@@ -80,6 +80,7 @@ describe("NodeopProcess", () => {
     return {
       account,
       label: account,
+      publicationLabel: account,
       type: OperatorType.PRODUCER,
       wire: { type: KeyType.K1, publicKey: "PUB_K1_p", privateKey: "PVT_K1_s" },
       wireFinalizer: {

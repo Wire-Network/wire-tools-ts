@@ -52,7 +52,7 @@ import type {
 // every reference on both sides is read inside a function body, never at
 // module-init, so whichever module loads first the other is complete by the
 // time a value is dereferenced.
-import { NodeConfig, NodeRole } from "./NodeConfig.js"
+import { NodeConfig } from "./NodeConfig.js"
 import { SSMClientProvider } from "./SSMClientProvider.js"
 import { ClusterConfigGenesisRenderer } from "./renderers/ClusterConfigGenesisRenderer.js"
 
@@ -850,51 +850,10 @@ export namespace ClusterConfigProvider {
    * @param config - The resolved cluster config.
    * @returns A `(account, keyType) => source` builder.
    */
-  /**
-   * Resolve an identity label to the label whose SSM parameter actually holds
-   * its keys — identity and parameter are NOT one-to-one.
-   *
-   * A producer ACCOUNT signs with its hosting NODE's key set:
-   * `runProducerMaterialization` hands the account the node's K1 + BLS objects,
-   * deliberately shared by every producer account that node hosts. That pair is
-   * therefore published ONCE, under the node name, and every account signing
-   * with it resolves the same parameter. Publishing per account would write the
-   * SAME private key under N ids — N rotation points for one key, and no
-   * cross-id divergence check exists. Every other identity (nodes, the genesis
-   * identity, the bootstrap node owner, batch operators, underwriters)
-   * publishes under its own label and passes through unchanged.
-   *
-   * This is the ONE home for that mapping. Splitting it across consumers is
-   * exactly what shipped `/wire/<account>/defproducera/{K1,BLS}` refs into
-   * `cluster-keys.json` while the emitted external config carried the correct
-   * node-keyed id for the very same key.
-   *
-   * @param config - The resolved cluster config.
-   * @returns A resolver from an identity label to its publication label.
-   */
-  export function publicationLabelFor(
-    config: ClusterConfig
-  ): (label: string) => string {
-    const hostingNode = new Map(
-      NodeConfig.plan(config)
-        .filter(node => node.role === NodeRole.producer)
-        .flatMap(node =>
-          node.producers.map((producer): [string, string] => [
-            producer,
-            node.name
-          ])
-        )
-    )
-    return label => hostingNode.get(label) ?? label
-  }
-
   export function signatureProviderSource(
     config: ClusterConfig
   ): SignatureProviderSourceFor {
     const provider = config.signatureProvider,
-      // Identity → parameter, resolved HERE so no consumer can render an id the
-      // walker never published (see `publicationLabelFor`).
-      publicationLabel = publicationLabelFor(config),
       kiodUrl = toURL(
         config.bind.kiod.port,
         toDialAddress(config.bind.kiod.address)
@@ -905,7 +864,7 @@ export namespace ClusterConfigProvider {
         provider.type === SignatureProviderType.SSM
           ? toSecretId(provider.ssm.awsSecretIdPattern, {
               cluster: assertAWSAccountName(config),
-              account: publicationLabel(account),
+              account,
               keyType: KeyType[keyType],
               version: provider.ssm.version
             })

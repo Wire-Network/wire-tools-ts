@@ -37,6 +37,7 @@ function operatorAccount(label: string, type: OperatorType): OperatorAccount {
     edPrivate = PrivateKey.generate(KeyType.ED)
   return {
     label,
+    publicationLabel: label,
     account: `wireno.${label}`,
     type,
     wire: { type: KeyType.K1, publicKey: `PUB_K1_${label}`, privateKey: `PVT_K1_${label}` },
