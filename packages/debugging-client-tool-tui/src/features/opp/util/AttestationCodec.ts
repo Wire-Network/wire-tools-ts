@@ -35,9 +35,9 @@ interface AttestationMessageType {
 /**
  * Single source of truth mapping every `AttestationType` enum value → the
  * `MessageType` that knows how to decode its `data` bytes. Unmapped values
- * (e.g. `UNSPECIFIED`, the few `STAKE`/`UNSTAKE` / pre-launch names for
- * which no companion class is exported by the generated package) fall
- * through to a raw-record render in the panel — no decode is attempted.
+ * (for example `UNSPECIFIED`, or retired/reserved wire slots 3001 and 3002
+ * arriving from historical data) fall through to a raw-record render in the
+ * panel — no decode is attempted.
  *
  * Keep the keys aligned with `AttestationType`'s identifiers; renames in the
  * generated package surface as compile errors here.
