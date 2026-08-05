@@ -1,7 +1,9 @@
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import {
   findKeyMaterial,
-  KeyMaterialPatterns
+  KeyMaterialPatterns,
+  KeySpecPatterns,
+  RedactedKeyMarker
 } from "@wireio/cluster-tool-shared"
 
 /** anvil account #0's PUBLISHED private key — a real 0x + 64-hex secret. */
@@ -125,5 +127,56 @@ describe("KeyMaterialPatterns", () => {
     expect(matched.map(entry => entry.name)).toContain(
       "0x-prefixed 32-byte hex private key"
     )
+  })
+
+  describe("KeySpecPatterns — the LOG set", () => {
+    /** A `--signature-provider` spec whose key half is `key`. */
+    const spec = (key: string) => `signature-provider = n,wire,wire,PUB,KEY:${key},`
+
+    // A log's secrets only ever appear as a spec's key half — but that half is
+    // a DIFFERENT encoding per curve, so matching one of them is not matching
+    // the set. Measured on a real cluster log: `KEY:0x` alone caught 5 of 19.
+    it.each([
+      ["WIRE K1", "PVT_K1_2bfGi9rYsXQSXXTvJbDAPhHLQUojjaNLzVzsPaZBAmY5B8Q3Vd"],
+      ["BLS finality", "PVT_BLS_qLZAiFhWQm3RLtWkPqjbP3ihgjnHrHZ4CXqLmDkJlsHNxHFOK"],
+      ["Ethereum EM", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"],
+      ["Solana ED (bare base58)", "34gGB7U7ZgAC5s46VTkHj3E1sfBRWxTLuUHtRcTNBqRtLKZ8VoZFnR9sJ6vFhKtN"]
+    ])("catches an unredacted %s key", (_curve, key) => {
+      expect(findKeyMaterial(spec(key), KeySpecPatterns)).toHaveLength(1)
+    })
+
+    // The collector rewrites secrets to `KEY:<redacted>`. Without the marker
+    // exclusion the set flags its OWN output — 19 hits on a real log whose
+    // every secret had been successfully removed.
+    it("does NOT flag a spec the collector already redacted", () => {
+      expect(
+        findKeyMaterial(spec(RedactedKeyMarker), KeySpecPatterns)
+      ).toEqual([])
+    })
+
+    // Why this set exists: on one real cluster-create log the artifact set
+    // reported 1049 naked-hex hits, of which 800 were block hashes, 162
+    // transaction hashes and 50 anvil's published constants — none secret.
+    it.each([
+      ["a block hash", "Block Hash: 0x9d9031e97dd78ff8c15aa86939de9b1e791066a0224e331bc962a2099a7b1f04"],
+      ["a transaction hash", "Transaction: 0xeef89eb907aa1e8757a7d92ef22efa4081596be39d32a96e55f29ea177738c5d"],
+      ["prose that looks like a mnemonic", "the cluster will now start and then wait until every single node has fully joined"]
+    ])("ignores %s in a log", (_what, line) => {
+      expect(findKeyMaterial(line, KeySpecPatterns)).toEqual([])
+    })
+
+    // The artifact set stays the gate for PERSISTED shapes: a bare `PVT_…` with
+    // no spec around it is exactly what must never ship inside a tarball, and
+    // the log set cannot see it. Narrowing one must never narrow the other.
+    it("the ARTIFACT set still catches a bare key the log set cannot", () => {
+      const bare = "PVT_K1_2bfGi9rYsXQSXXTvJbDAPhHLQUojjaNLzVzsPaZBAmY5B8Q3Vd"
+      expect(findKeyMaterial(bare, KeySpecPatterns)).toEqual([])
+      expect(findKeyMaterial(bare, KeyMaterialPatterns).length).toBeGreaterThan(0)
+    })
+
+    it("defaults to the artifact set when no set is named", () => {
+      const bare = "PVT_K1_2bfGi9rYsXQSXXTvJbDAPhHLQUojjaNLzVzsPaZBAmY5B8Q3Vd"
+      expect(findKeyMaterial(bare)).toEqual(findKeyMaterial(bare, KeyMaterialPatterns))
+    })
   })
 })
