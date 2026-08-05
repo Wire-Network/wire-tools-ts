@@ -26,7 +26,7 @@ import {
 } from "../../cluster/ClusterState.js"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
-import { NodeConfig } from "../../config/NodeConfig.js"
+import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
 import { OperatorDaemonTool } from "../../tools/wire/OperatorDaemonTool.js"
 import type { KeyPair, WireFinalizerKeyPair } from "../../types/KeyPair.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
@@ -861,12 +861,35 @@ export namespace ExternalClusterConfigSteps {
           config.awsClusterNodeConfig != null,
           "create-external-config: SSM signature provider requires awsClusterNodeConfig (the secret-id {cluster} source)"
         )
-        return new Map(
-          KeySteps.signatureProviderKeyPublications(config).map(publication => [
-            publicationKey(publication.label, publication.keyType),
-            publication
-          ])
-        )
+        const rows = KeySteps.signatureProviderKeyPublications(config),
+          index: SSMPublicationIndex = new Map(
+            rows.map(row => [publicationKey(row.label, row.keyType), row])
+          )
+        // A producer ACCOUNT signs with its hosting NODE's key set — sibling
+        // producers on one node deliberately share one pair — so those keys are
+        // published ONCE, under the NODE name. Alias every producer account onto
+        // its node's rows so its refs (K1 and, critically, the BLS finality key)
+        // resolve to that one published pair instead of being refused for
+        // lacking a per-account parameter that by design never existed.
+        //
+        // The aliased curves come from the node's OWN rows, never a restated
+        // list — whatever the walker publishes for a node is what a producer on
+        // it can reference, and it stays that way when the walker changes.
+        NodeConfig.plan(config)
+          .filter(node => node.role === NodeRole.producer)
+          .forEach(node => {
+            const nodeRows = rows.filter(row => row.label === node.name)
+            Assert.ok(
+              nodeRows.length > 0,
+              `create-external-config: producer node ${node.name} has no SSM publications — cannot resolve the refs of the producer accounts it hosts (${node.producers.join(", ")})`
+            )
+            node.producers.forEach(producer =>
+              nodeRows.forEach(row =>
+                index.set(publicationKey(producer, row.keyType), row)
+              )
+            )
+          })
+        return index
       })
       .otherwise(
         () => new Map<string, KeySteps.SignatureProviderKeyPublication>()
