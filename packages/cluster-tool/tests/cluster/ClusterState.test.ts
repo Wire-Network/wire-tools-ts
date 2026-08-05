@@ -11,6 +11,7 @@ import {
 } from "@wireio/cluster-tool-shared"
 
 import { ClusterState } from "@wireio/cluster-tool"
+import { NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
 import { ClusterKeyStore } from "@wireio/cluster-tool/orchestration/outputs"
 import { fixtureContext } from "../config/clusterBuildContextFixture.js"
 
@@ -245,6 +246,35 @@ describe("ClusterState", () => {
       expect(operator?.solana?.awsSecretId).toBe(
         `/wire/test/${BatchOperatorLabel}/ED`
       )
+    })
+
+    // A producer ACCOUNT signs with its hosting NODE's key set, so that pair is
+    // published ONCE under the node. Persisting the ref under the ACCOUNT wrote
+    // ids the walker never published — 21 accounts × K1+BLS on the target
+    // topology, every BLS a finality key — and `runClone` ships the file into
+    // the external deployment, where it contradicted external-cluster-config's
+    // (correct) node-keyed ref for the SAME key.
+    it("keys a producer account's refs by its NODE, not the account", () => {
+      const ctx = ssmContext(),
+        node = NodeConfig.plan(ctx.config).find(
+          planned => planned.role === NodeRole.producer
+        ),
+        producer = node.producers[0],
+        nodeKeys = ctx.keyStore.node(node.index)
+      ctx.keyStore.setOperator({
+        label: producer,
+        account: producer,
+        type: OperatorType.PRODUCER,
+        wire: nodeKeys.keys.wire,
+        wireFinalizer: nodeKeys.keys.wireFinalizer
+      })
+      const entry = ClusterState.captureKeys(ctx).operators.find(
+        record => record.account === producer
+      )
+      expect(entry.wire.awsSecretId).toBe(`/wire/test/${node.name}/K1`)
+      expect(entry.wireFinalizer.awsSecretId).toBe(`/wire/test/${node.name}/BLS`)
+      expect(entry.wire.privateKey).toBeUndefined()
+      expect(entry.wireFinalizer.privateKey).toBeUndefined()
     })
 
     it("RETAINS the non-secret per-curve members (BLS proof, EM address)", () => {
