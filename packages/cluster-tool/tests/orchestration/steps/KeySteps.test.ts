@@ -666,6 +666,7 @@ describe("Steps.keys", () => {
       const ctx = fixtureContext()
       ctx.keyStore.setOperator({
         label: "batchop.a",
+        publicationLabel: "batchop.a",
         account: "wireno.x3f9k",
         type: OperatorType.BATCH,
         wire: {
@@ -781,6 +782,7 @@ describe("Steps.keys", () => {
         ctx = fixtureContext()
       ctx.keyStore.setOperator({
         label: "batchop.a",
+        publicationLabel: "batchop.a",
         account: "wireno.x3f9k",
         type: OperatorType.BATCH,
         wire: {

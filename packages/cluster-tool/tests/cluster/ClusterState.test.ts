@@ -58,6 +58,7 @@ describe("ClusterState", () => {
     })
     ctx.keyStore.setOperator({
       label: BatchOperatorLabel,
+      publicationLabel: BatchOperatorLabel,
       account: BatchOperatorAccount,
       type: OperatorType.BATCH,
       wire: {
@@ -263,6 +264,7 @@ describe("ClusterState", () => {
         nodeKeys = ctx.keyStore.node(node.index)
       ctx.keyStore.setOperator({
         label: producer,
+        publicationLabel: node.name,
         account: producer,
         type: OperatorType.PRODUCER,
         wire: nodeKeys.keys.wire,

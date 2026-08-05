@@ -48,7 +48,12 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
 
   it("a producer Phase materializes from its node + creates the account with ITS key (no authex/register)", () => {
     const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "Producers", "producers", {}, [
-      { label: "defproducera", type: OperatorType.PRODUCER, producerNodeIndex: 0 }
+      {
+        label: "defproducera",
+        type: OperatorType.PRODUCER,
+        producerNodeIndex: 0,
+        producerNodeName: "node_00"
+      }
     ])
     const kinds = firstPhaseStepKinds(group)
     expect(kinds).toEqual([
@@ -123,6 +128,7 @@ function fakeSponsorContext(emitRow = true) {
     { keyStore } = ctx
   keyStore.setOperator({
     label: OperatorHandle,
+    publicationLabel: OperatorHandle,
     type: OperatorType.BATCH,
     wire: { type: KeyType.K1, publicKey: "PUB_K1_op", privateKey: "PVT_K1_op" }
   })

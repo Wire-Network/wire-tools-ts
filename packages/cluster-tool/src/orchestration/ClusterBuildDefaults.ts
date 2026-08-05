@@ -177,7 +177,6 @@ export namespace ClusterBuildDefaults {
       producerNodes = NodeConfig.plan(config).filter(
         node => node.role === NodeRole.producer
       ),
-      producerNodeCount = producerNodes.length,
       // External-outpost mode: the ETH + SOL outposts already run on real chains
       // (`config.externalOutposts`), so skip the local anvil/validator starts +
       // outpost deploys and publish the operator-daemon artifacts from the
@@ -392,11 +391,17 @@ export namespace ClusterBuildDefaults {
       "Producers",
       "Provision producer operators (account + node-shared identity)",
       {},
-      producers.map((label, index) => ({
-        label,
-        type: OperatorType.PRODUCER,
-        producerNodeIndex: producerNodeCount > 0 ? index % producerNodeCount : 0
-      }))
+      // The hosting node comes from `NodeConfig.plan` — the ONE author of the
+      // producer→node assignment. Re-deriving `index % producerNodeCount` here
+      // made a second copy that had to agree with it by hand.
+      producerNodes.flatMap(node =>
+        node.producers.map(label => ({
+          label,
+          type: OperatorType.PRODUCER,
+          producerNodeIndex: node.index,
+          producerNodeName: node.name
+        }))
+      )
     )
     ClusterBuildPhase.create<C>(
       prerequisites,

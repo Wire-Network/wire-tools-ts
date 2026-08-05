@@ -33,6 +33,7 @@ const log = getLogger(__filename)
  */
 const BiosOperator: OperatorAccount = {
   label: NodeConfig.BiosName,
+  publicationLabel: NodeConfig.BiosName,
   account: NodeConfig.BiosProducer,
   type: OperatorType.PRODUCER,
   wire: {
@@ -237,6 +238,8 @@ export namespace NodeopProcessSteps {
     return {
       account,
       label: account,
+      // These are the NODE's keys; they are published under the node's name.
+      publicationLabel: node.name,
       type: OperatorType.PRODUCER,
       wire: nodeKeys.keys.wire,
       wireFinalizer: nodeKeys.keys.wireFinalizer

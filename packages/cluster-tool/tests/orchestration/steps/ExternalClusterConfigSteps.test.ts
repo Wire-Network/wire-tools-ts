@@ -137,6 +137,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
           label = batchOperatorLabel ?? underwriterLabel
         ctx.keyStore.setOperator({
           label,
+          publicationLabel: label,
           account: `wireno.${label.replace(/[^a-z1-5]/g, "")}`,
           type:
             batchOperatorLabel != null
@@ -255,6 +256,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     keys.operators.push(
       {
         label: NodeConfig.BiosName,
+        publicationLabel: NodeConfig.BiosName,
         account: NodeConfig.BiosProducer,
         type: OperatorType.UNKNOWN,
         wire: {
@@ -271,6 +273,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       },
       {
         label: Constants.BOOTSTRAP_NODE_OWNER,
+        publicationLabel: Constants.BOOTSTRAP_NODE_OWNER,
         account: Constants.BOOTSTRAP_NODE_OWNER,
         type: OperatorType.UNKNOWN,
         wire: {
@@ -304,6 +307,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     node.producers.forEach(producer =>
       keys.operators.push({
         label: producer,
+        publicationLabel: node.name,
         account: producer,
         type: OperatorType.PRODUCER,
         wire: {

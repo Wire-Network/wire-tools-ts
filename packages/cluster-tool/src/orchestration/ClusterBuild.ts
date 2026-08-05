@@ -46,6 +46,7 @@ function seedGenesisAccounts(
       // the on-chain `sysio`. Keying this by the account was what put the
       // genesis identity out of reach of the publication walker.
       label: NodeConfig.BiosName,
+      publicationLabel: NodeConfig.BiosName,
       account: NodeConfig.BiosProducer,
       type: OperatorType.UNKNOWN,
       wire: resolved.biosWire,
@@ -53,6 +54,7 @@ function seedGenesisAccounts(
     })
     .setOperator({
       label: Constants.BOOTSTRAP_NODE_OWNER,
+      publicationLabel: Constants.BOOTSTRAP_NODE_OWNER,
       account: Constants.BOOTSTRAP_NODE_OWNER,
       type: OperatorType.UNKNOWN,
       wire: resolved.nodeOwnerWire

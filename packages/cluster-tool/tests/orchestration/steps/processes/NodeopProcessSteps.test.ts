@@ -35,6 +35,7 @@ function operatorAccount(label: string, type: OperatorType): OperatorAccount {
     edPrivate = PrivateKey.generate(KeyType.ED)
   return {
     label,
+    publicationLabel: label,
     account: `wireno.${label}`,
     type,
     wire: { type: KeyType.K1, publicKey: `PUB_K1_${label}`, privateKey: `PVT_K1_${label}` },
@@ -169,6 +170,7 @@ describe("Steps.processes.nodeop", () => {
       const ctx = fixtureContext(),
         seeded: OperatorAccount = {
           label: NodeConfig.BiosName,
+          publicationLabel: NodeConfig.BiosName,
           account: NodeConfig.BiosProducer,
           type: OperatorType.UNKNOWN,
           wire: {

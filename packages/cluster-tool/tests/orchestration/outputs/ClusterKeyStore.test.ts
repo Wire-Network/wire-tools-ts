@@ -23,6 +23,7 @@ function nodeKeys(index: number): ClusterKeyStore.NodeKeys {
 function operatorAccount(label: string, type: OperatorType): OperatorAccount {
   return {
     label,
+    publicationLabel: label,
     account: `wireno.${label}`,
     type,
     wire: { type: KeyType.K1, publicKey: `PUB_K1_${label}`, privateKey: `PVT_K1_${label}` }
@@ -72,6 +73,7 @@ describe("ClusterKeyStore account-handle keying", () => {
   it("keys operators by the DURABLE handle — the generated account is not a key", () => {
     const store = new ClusterKeyStore().setOperator({
       label: "batchop.a",
+      publicationLabel: "batchop.a",
       account: "wireno.x3f9k",
       type: OperatorType.BATCH,
       wire: { type: KeyType.K1, publicKey: "PUB_K1_a", privateKey: "PVT_K1_a" }
@@ -83,6 +85,7 @@ describe("ClusterKeyStore account-handle keying", () => {
   it("setOperator must not default account := label (materialized, pre-sponsored-creation)", () => {
     const store = new ClusterKeyStore().setOperator({
       label: "batchop.a",
+      publicationLabel: "batchop.a",
       type: OperatorType.BATCH,
       wire: { type: KeyType.K1, publicKey: "PUB_K1_a", privateKey: "PVT_K1_a" }
     })
