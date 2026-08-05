@@ -66,7 +66,7 @@ function readFromWireUwreq(ctx: SwapScenarioContext) {
   return ctx.uwreq(Constants.WireChainCode, Constants.SolanaChainCode)
 }
 
-/** Whether every `accounts` entry is `OPERATOR_STATUS_ACTIVE` on `sysio.opreg` (a read). */
+/** Whether every `labels` entry is `OPERATOR_STATUS_ACTIVE` on `sysio.opreg` (a read). */
 async function readAllOperatorsActive(
   ctx: SwapScenarioContext,
   labels: string[]

@@ -69,6 +69,24 @@ export const AttestationDecoders: Partial<
   [AttestationType.DEPOSIT_REVERT]: DepositRevert
 }
 
+/** Successful decode — the typed message the UI pretty-prints. */
+export interface DecodedAttestationMessage {
+  kind: "decoded"
+  /** Proto `typeName` of the `MessageType` that decoded the entry. */
+  typeName: string
+  /** The decoded message instance — its concrete class varies per attestation type. */
+  value: unknown
+}
+
+/** Fallback outcome — the entry is rendered as-is, with why the decode was skipped. */
+export interface RawAttestationFallback {
+  kind: "raw"
+  /** Human-readable reason the typed decode did not happen. */
+  reason: string
+  /** The undecoded entry, straight off the Redux-backed envelope. */
+  entry: AttestationEntry
+}
+
 /**
  * Result of decoding one attestation entry. `kind` discriminates the two
  * outcomes for the UI — a successful decode renders the typed message
@@ -76,8 +94,8 @@ export const AttestationDecoders: Partial<
  * still sees something.
  */
 export type DecodedAttestation =
-  | { kind: "decoded"; typeName: string; value: unknown }
-  | { kind: "raw"; reason: string; entry: AttestationEntry }
+  | DecodedAttestationMessage
+  | RawAttestationFallback
 
 /**
  * Decode an attestation entry's `data` bytes via the type-matched
@@ -119,6 +137,16 @@ export function decodeAttestation(entry: AttestationEntry): DecodedAttestation {
 }
 
 /**
+ * An object that MIGHT be the `Buffer.toJSON()` form
+ * (`{ type: "Buffer", data: number[] }`). Both members are `unknown` because
+ * the value arrives untrusted from Redux — {@link bytesFor} narrows them.
+ */
+interface BufferJsonCandidate {
+  type?: unknown
+  data?: unknown
+}
+
+/**
  * Coerce the entry's `data` to a `Uint8Array`. Three accepted shapes:
  *
  *   - `Uint8Array` / `Buffer` — direct passthrough.
@@ -130,7 +158,7 @@ export function decodeAttestation(entry: AttestationEntry): DecodedAttestation {
  *
  * Unknown shapes return `null` so the caller can degrade to a raw render.
  */
-function bytesFor(data: unknown): Uint8Array | null {
+function bytesFor(data: unknown): Uint8Array {
   if (data instanceof Uint8Array) return data
   if (typeof data === "string") {
     try {
@@ -140,7 +168,7 @@ function bytesFor(data: unknown): Uint8Array | null {
     }
   }
   if (typeof data === "object" && data !== null) {
-    const obj = data as { type?: unknown; data?: unknown }
+    const obj = data as BufferJsonCandidate
     if (obj.type === "Buffer" && Array.isArray(obj.data)) {
       return Uint8Array.from(obj.data as number[])
     }

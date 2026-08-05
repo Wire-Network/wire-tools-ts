@@ -28,8 +28,21 @@ export interface ClioRunOptions<UseJson extends boolean = false> {
 }
 
 /** JSON-mode run options, with an optional row constructor. */
-export interface ClioRunOptionsJson<T extends {}> extends ClioRunOptions<true> {
+export interface ClioRunOptionsJson<T extends object> extends ClioRunOptions<true> {
   ctor?: new (data: any) => T
+}
+
+/**
+ * The duck-typed shape of a failed clio invocation: node's `execFile` rejection
+ * carries `message` plus the child's captured streams. Read structurally (NOT
+ * `instanceof Error`) — jest gives each module registry its own `Error` global,
+ * so a cross-realm `instanceof` is false. Every member stays optional and every
+ * read stays guarded: an arbitrary thrown value may carry none of them.
+ */
+export interface ClioError {
+  message?: string
+  stdout?: string
+  stderr?: string
 }
 
 /**
@@ -48,7 +61,7 @@ export function enrichClioError(
   stdout: string,
   stderr: string
 ): unknown {
-  const candidate = error as { message?: unknown }
+  const candidate = error as ClioError
   if (
     candidate != null &&
     typeof candidate === "object" &&
@@ -70,9 +83,9 @@ export class ClioRunner {
   constructor(readonly config: ClioRunnerConfig) {}
 
   /** Run a clio command, returning parsed JSON. */
-  run<T extends {}>(args: string[], options: ClioRunOptionsJson<T>): Promise<T>
+  run<T extends object>(args: string[], options: ClioRunOptionsJson<T>): Promise<T>
   /** Run a clio command, returning raw stdout. */
-  run(args: string[], options?: { json?: false }): Promise<string>
+  run(args: string[], options?: ClioRunOptions): Promise<string>
   async run(
     args: string[],
     options: ClioRunOptions | ClioRunOptionsJson<any> = { json: false }
@@ -178,7 +191,7 @@ export namespace ClioRunner {
 
   /** True when `error` is a connection-level clio failure (safe to re-run). */
   export function isTransportFailure(error: unknown): boolean {
-    const candidate = error as { message?: unknown }
+    const candidate = error as ClioError
     return (
       candidate != null &&
       typeof candidate === "object" &&
@@ -215,6 +228,29 @@ export namespace ClioRunner {
       : value
   }
 
+  /** The `receipt` slice of a clio transaction response (`processed.receipt`). */
+  export interface TransactionReceipt {
+    /** Chain execution status of the receipt, e.g. `"executed"`. */
+    status?: string
+  }
+
+  /** The `processed` slice of a clio transaction response. */
+  export interface TransactionProcessed {
+    receipt?: TransactionReceipt
+  }
+
+  /**
+   * The clio `-j` transaction-response fields {@link summarizeResult} keeps —
+   * the same `transaction_id` field `WireClient.TransactionIdResponse`
+   * carries, plus the receipt status. Every member is optional and read behind
+   * a runtime `typeof` guard: this shape is duck-typed onto ARBITRARY clio
+   * JSON, so a non-transaction response simply fails the guard.
+   */
+  export interface TransactionResult {
+    transaction_id?: string
+    processed?: TransactionProcessed
+  }
+
   /**
    * The `extra`-record view of a clio result: a transaction response keeps its
    * id + receipt status; anything else is its (truncated) string form. The
@@ -222,10 +258,7 @@ export namespace ClioRunner {
    */
   export function summarizeResult(result: unknown): unknown {
     if (result != null && typeof result === "object") {
-      const candidate = result as {
-        transaction_id?: unknown
-        processed?: { receipt?: { status?: unknown } }
-      }
+      const candidate = result as TransactionResult
       if (typeof candidate.transaction_id === "string") {
         return {
           transaction_id: candidate.transaction_id,

@@ -218,17 +218,19 @@ export namespace NodeopProcessSteps {
     node: NodeConfig
   ): OperatorAccount {
     const nodeKeys = ctx.keyStore.node(node.index),
+      // A producer never goes through `roa::newuser`, so its handle IS its
+      // on-chain name.
       account = node.producers[0] ?? node.name
     return {
-      label: account,
       account,
+      label: account,
       type: OperatorType.PRODUCER,
       wire: nodeKeys.keys.k1,
       bls: nodeKeys.keys.bls
     }
   }
 
-  /** Assert an operator node names its batch / underwriter provisioning label. */
+  /** Assert an operator node names the durable batch / underwriter `label` it acts for. */
   function assertOperatorLabel(node: NodeConfig): string {
     const { batchOperatorLabel, underwriterLabel } = node,
       label = batchOperatorLabel ?? underwriterLabel

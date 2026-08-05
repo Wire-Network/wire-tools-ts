@@ -68,6 +68,9 @@ export namespace ClusterManager {
    * here so every `Steps.processes.*` step can get-or-create against it.
    */
   export async function create(options: ClusterBuildOptions): Promise<Report> {
+    // The cluster path must be absent, or `--force` must authorize replacing
+    // it — enforced BEFORE anything is resolved, bound, or written.
+    prepareClusterPath(options)
     // SSM mode: the key-publication phases are composed INSIDE the default
     // build (`PublishNodeSignatureProviderKeys` after WalletAndKeys,
     // `PublishOperatorSignatureProviderKeys` after operator provisioning) —
@@ -87,6 +90,42 @@ export namespace ClusterManager {
       )
     )
     return launch(build)
+  }
+
+  /**
+   * Enforce {@link create}'s cluster-path precondition: the path is ABSENT, or
+   * `--force` authorizes replacing it. An existing path without `--force` is a
+   * hard error — never a silent overlay, which would inherit the previous
+   * cluster's block logs, chain state and stale pidfiles under a freshly
+   * written `genesis.json` and `cluster-config.json`.
+   *
+   * With `--force` the directory is removed outright — but never while its
+   * daemons are still LIVE: deleting a running cluster's directory orphans its
+   * nodeop / kiod / anvil / solana-test-validator processes, which keep holding
+   * their ports and then collide with the new cluster's port resolution — a
+   * failure whose symptom (an unrelated port claim failing much later) points
+   * nowhere near here.
+   *
+   * @param options - The create options — `clusterPath` names the directory,
+   *   `force` authorizes replacing it when it already exists.
+   * @throws If the path exists without `force`, or if any pidfile under the
+   *   existing cluster's `data/` names a live pid.
+   */
+  export function prepareClusterPath(options: ClusterBuildOptions): void {
+    const { force, clusterPath } = options
+    if (!Fs.existsSync(clusterPath)) return
+    Assert.ok(
+      force,
+      `cluster directory already exists at ${clusterPath} — pass --force to replace it`
+    )
+    assertNoLivePids(
+      clusterPath,
+      Path.join(clusterPath, ClusterConfigProvider.DataSubpath)
+    )
+    Fs.rmSync(clusterPath, { recursive: true, force: true })
+    log.info(
+      `[cluster] force: removed pre-existing cluster path ${clusterPath}`
+    )
   }
 
   /**
@@ -194,18 +233,22 @@ export namespace ClusterManager {
   }
 
   /**
-   * Refuse to relaunch a still-live cluster: scan every pidfile under every
-   * subdirectory of `config.dataPath` and throw, naming every pid that is
-   * still alive. Pid parsing + the kernel probe ride debugging-shared's
-   * {@link readPid} / {@link pidIsAlive} — the same primitives the debugging
-   * surface monitors with. Called at the top of {@link run}, before anything
-   * is started or swept.
+   * Scan every pidfile under every subdirectory of `dataPath` and throw, naming
+   * every pid that is still alive. Pid parsing + the kernel probe ride
+   * debugging-shared's {@link readPid} / {@link pidIsAlive} — the same
+   * primitives the debugging surface monitors with. The ONE implementation
+   * behind both live-cluster gates: {@link assertClusterStopped} (relaunch) and
+   * {@link prepareClusterPath} (`create --force`), which has only the
+   * caller's paths — never a resolved `ClusterConfig`.
    *
-   * @param config - The cluster config to check.
-   * @throws If any pidfile under `config.dataPath` names a live pid.
+   * @param clusterPath - The cluster root, named in the failure message.
+   * @param dataPath - The cluster's data dir holding the per-daemon pidfiles.
+   * @throws If any pidfile under `dataPath` names a live pid.
    */
-  export function assertClusterStopped(config: ClusterConfig): void {
-    const { dataPath } = config
+  function assertNoLivePids(
+    clusterPath: ClusterConfig["clusterPath"],
+    dataPath: ClusterConfig["dataPath"]
+  ): void {
     if (!Fs.existsSync(dataPath)) return
     const livePids = Fs.readdirSync(dataPath, { withFileTypes: true })
       .filter(entry => entry.isDirectory())
@@ -219,8 +262,20 @@ export namespace ClusterManager {
       .filter(pid => pidIsAlive(pid))
     Assert.ok(
       livePids.length === 0,
-      `cluster at ${config.clusterPath} appears to be running (live pid(s): ${livePids.join(", ")}) — stop it first`
+      `cluster at ${clusterPath} appears to be running (live pid(s): ${livePids.join(", ")}) — stop it first`
     )
+  }
+
+  /**
+   * Refuse to relaunch a still-live cluster — delegates the pidfile scan to
+   * {@link assertNoLivePids}. Called at the top of {@link run}, before anything
+   * is started or swept.
+   *
+   * @param config - The cluster config to check.
+   * @throws If any pidfile under `config.dataPath` names a live pid.
+   */
+  export function assertClusterStopped(config: ClusterConfig): void {
+    assertNoLivePids(config.clusterPath, config.dataPath)
   }
 
   /**

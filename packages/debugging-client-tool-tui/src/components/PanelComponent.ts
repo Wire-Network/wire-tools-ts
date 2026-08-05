@@ -1,6 +1,7 @@
 import React from "react"
 
-export type PanelComponentProps = React.PropsWithChildren<{}>
+/** Props every panel accepts — children only; the shell owns the geometry. */
+export type PanelComponentProps = React.PropsWithChildren
 
 /**
  * A resizable region in the main layout that hosts a React subtree.

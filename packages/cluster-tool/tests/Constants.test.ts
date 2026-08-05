@@ -12,7 +12,7 @@ describe("Constants", () => {
     })
   })
 
-  describe("account-name generators", () => {
+  describe("operator-label generators", () => {
     it("names batch operators by letter and wraps at 26", () => {
       expect(Constants.batchOperatorLabel(0)).toBe("batchop.a")
       expect(Constants.batchOperatorLabel(1)).toBe("batchop.b")

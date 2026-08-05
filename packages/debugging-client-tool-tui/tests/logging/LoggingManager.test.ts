@@ -58,9 +58,7 @@ describe("LoggingManager.getLogger after configure", () => {
   })
 
   it("getGlobalLogger uses the `tui` category", () => {
-    const log = LoggingManager.getGlobalLogger() as unknown as {
-      category: string
-    }
+    const log = LoggingManager.getGlobalLogger()
     expect(log.category).toBe(LoggingManager.GlobalCategory)
   })
 })

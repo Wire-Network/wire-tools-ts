@@ -213,6 +213,17 @@ function accumulate(
 }
 
 /**
+ * What {@link toCredits} produces: the floored per-address credit list plus the
+ * sub-atomic dust the flooring dropped. Both roll up into
+ * {@link ImportSeedResult}.
+ */
+interface ImportSeedCreditResult {
+  credits: ImportSeedCredit[]
+  /** Sub-atomic units dropped by the floor in `wire_atomic = total / divisor`. */
+  droppedDust: bigint
+}
+
+/**
  * Convert raw `Map<addressHex, total>` into floored WIRE-atomic credits.
  * Returns the credit list and the sub-atomic dust dropped by flooring.
  *
@@ -222,7 +233,7 @@ function accumulate(
 function toCredits(
   accumulator: Map<string, bigint>,
   divisor: bigint
-): { credits: ImportSeedCredit[]; droppedDust: bigint } {
+): ImportSeedCreditResult {
   const credits: ImportSeedCredit[] = []
   let droppedDust = 0n
   const keys = [...accumulator.keys()].sort()

@@ -31,7 +31,7 @@ const {
 const { Actor } = Report
 const log = getLogger(__filename)
 
-/** An operator's row on `sysio.opreg::operators` by provisioning label (a read). */
+/** An operator's row on `sysio.opreg::operators` by durable `label` handle (a read). */
 async function readUnderwriterRow(
   ctx: ClusterBuildContext,
   label: string

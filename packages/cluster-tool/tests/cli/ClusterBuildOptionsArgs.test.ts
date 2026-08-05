@@ -30,11 +30,16 @@ interface RecordedOption {
   alias?: string
 }
 
-/** A minimal `Argv` stand-in that records every `.option(flag, config)` call. */
-function createYargsRecorder(): {
+/** A minimal `Argv` stand-in paired with the registrations it captured. */
+interface YargsRecorder {
+  /** The `Argv`-typed facade handed to `applyClusterBuildOptionsArgs`. */
   argv: Argv
+  /** Every `.option(flag, config)` registration, keyed by flag. */
   options: Map<string, RecordedOption>
-} {
+}
+
+/** A minimal `Argv` stand-in that records every `.option(flag, config)` call. */
+function createYargsRecorder(): YargsRecorder {
   const options = new Map<string, RecordedOption>(),
     recorder = {
       option(flag: string, config: RecordedOption) {

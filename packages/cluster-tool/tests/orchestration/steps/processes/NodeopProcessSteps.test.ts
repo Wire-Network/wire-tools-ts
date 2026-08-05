@@ -20,21 +20,24 @@ import { fixtureContext } from "../../../config/clusterBuildContextFixture.js"
 const AnvilMnemonic = "test test test test test test test test test test test junk"
 
 /**
- * A fully-keyed OperatorAccount fixture for the given account/type — REAL
+ * A fully-keyed OperatorAccount fixture for the given label/type — REAL
  * (decodable) ethereum + solana keys, since `resolveOperatorDaemonArgs`
- * threads them through `KeyGenerator.toSignatureProvider`.
+ * threads them through `KeyGenerator.toSignatureProvider`. `account` is the
+ * DISTINCT `roa::newuser`-generated chain name, never the durable handle: a
+ * fixture where the two are the same string cannot fail on a label/account
+ * swap at a chain boundary (mirrors the helper in `OperatorDaemonTool.test.ts`).
  */
-function operatorAccount(account: string, type: OperatorType): OperatorAccount {
+function operatorAccount(label: string, type: OperatorType): OperatorAccount {
   const wallet = ethers.HDNodeWallet.fromMnemonic(
       ethers.Mnemonic.fromPhrase(AnvilMnemonic),
       "m/44'/60'/0'/0/1"
     ),
     edPrivate = PrivateKey.generate(KeyType.ED)
   return {
-    label: account,
-    account,
+    label,
+    account: `wireno.${label}`,
     type,
-    wire: { type: KeyType.K1, publicKey: `PUB_K1_${account}`, privateKey: `PVT_K1_${account}` },
+    wire: { type: KeyType.K1, publicKey: `PUB_K1_${label}`, privateKey: `PVT_K1_${label}` },
     ethereum: ethereumKeyPairFromWallet(wallet),
     solana: {
       type: KeyType.ED,
@@ -78,6 +81,11 @@ function testNode(
     batchOperatorLabel,
     underwriterLabel
   )
+}
+
+/** The value following `flag` (each occurrence) — mirrors the local helper in `OperatorDaemonTool.test.ts`. */
+function valuesOf(args: string[], flag: string): string[] {
+  return args.flatMap((arg, index) => (arg === flag ? [args[index + 1]] : []))
 }
 
 describe("Steps.processes.nodeop", () => {
@@ -145,7 +153,7 @@ describe("Steps.processes.nodeop", () => {
       const ctx = fixtureContext()
       const node = testNode(ctx, NodeRole.bios, 0, "bios")
       const operator = Steps.processes.nodeop.resolveOperator(ctx, node)
-      expect(operator.account).toBe(NodeConfig.BiosProducer)
+      expect(operator.label).toBe(NodeConfig.BiosProducer)
       expect(operator.type).toBe(OperatorType.PRODUCER)
       expect(operator.wire.type).toBe(KeyType.K1)
       expect(operator.bls?.type).toBe(KeyType.BLS)
@@ -167,7 +175,7 @@ describe("Steps.processes.nodeop", () => {
       })
       const node = testNode(ctx, NodeRole.producer, 1, "node_01", ["defproducera"])
       const operator = Steps.processes.nodeop.resolveOperator(ctx, node)
-      expect(operator.account).toBe("defproducera")
+      expect(operator.label).toBe("defproducera")
       expect(operator.type).toBe(OperatorType.PRODUCER)
       expect(operator.wire.publicKey).toBe("PUB_K1_node1")
       expect(operator.bls?.publicKey).toBe("PUB_BLS_node1")
@@ -197,7 +205,7 @@ describe("Steps.processes.nodeop", () => {
       )
     })
 
-    it("throws when the named operator account has not been provisioned in ctx.keyStore", () => {
+    it("throws when the named operator label has not been provisioned in ctx.keyStore", () => {
       const ctx = fixtureContext()
       const node = testNode(ctx, NodeRole.operator, 5, "node_05", [], "unprovisioned")
       expect(() => Steps.processes.nodeop.resolveOperator(ctx, node)).toThrow(
@@ -242,9 +250,14 @@ describe("Steps.processes.nodeop", () => {
           "--batch-enabled",
           "true",
           "--batch-operator-account",
-          "batchopaaaa"
+          "wireno.batchopaaaa"
         ])
       )
+      // The depot matches this argv against `sysio.opreg::operators`, which is
+      // keyed by the ON-CHAIN account — passing the handle would start a daemon
+      // that silently matches no operator row.
+      expect(valuesOf(args, "--batch-operator-account")).toEqual([account.account])
+      expect(valuesOf(args, "--batch-operator-account")).not.toEqual([account.label])
     })
 
     it("builds underwriter daemon args for an operator node with an underwriterLabel", () => {
@@ -258,9 +271,12 @@ describe("Steps.processes.nodeop", () => {
           "--underwriter-enabled",
           "true",
           "--underwriter-account",
-          "underwriteraaaa"
+          "wireno.underwriteraaaa"
         ])
       )
+      // Same chain-boundary rule as `--batch-operator-account`.
+      expect(valuesOf(args, "--underwriter-account")).toEqual([account.account])
+      expect(valuesOf(args, "--underwriter-account")).not.toEqual([account.label])
     })
 
     it("throws when the operator daemon artifacts have not been prepared yet", () => {

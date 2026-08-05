@@ -3,7 +3,7 @@ import { Hash, KeyType, PrivateKey } from "@wireio/sdk-core"
 
 /**
  * Cross-cutting harness constants — development keys, system-account names,
- * token / ROA parameters, contract paths, plugin sets, operator-label
+ * token / ROA parameters, contract paths, plugin sets, operator-account-handle
  * generators, and the emissions config defaults. Ported from the former
  * the former `cluster/constants.ts`; network ports are NOT here — they live on
  * `config/BindConfigProvider.ts`, which owns binding.
@@ -238,14 +238,15 @@ export namespace Constants {
     "sysio::outpost_solana_client_plugin"
   ] as const
 
-  /** Lowercase ASCII alphabet — single-character operator-label suffixes (wraps via modulo). */
+  /** Lowercase ASCII alphabet — single-character operator-account suffixes (wraps via modulo). */
   const LowercaseAlphabet = "abcdefghijklmnopqrstuvwxyz"
 
   /**
-   * Batch-operator provisioning label for an index — `batchop.<letter>`. The
-   * label is the operator's `ClusterKeyStore` key AND its `sysio.roa::newuser`
-   * sponsor nonce — the CHAIN account name is node-owner-generated
-   * (`wireno.<suffix>`), not this value.
+   * Batch-operator durable harness LABEL for an index — `batchop.<letter>`.
+   * The label is the operator's `ClusterKeyStore` key and its SSM secret-id
+   * `{account}` segment. It does NOT exist on chain — the on-chain account name
+   * is node-owner-generated (`wireno.<random>`, `OperatorAccount.account`), and
+   * its suffix is nonce-derived entropy, so it cannot be requested.
    *
    * @param index - Zero-based operator index.
    * @returns The label (e.g. `batchOperatorLabel(0)` → `"batchop.a"`).
@@ -255,8 +256,8 @@ export namespace Constants {
   }
 
   /**
-   * Underwriter provisioning label for an index — `uwrit.<letter>`. Same
-   * label-vs-generated-account split as {@link batchOperatorLabel}.
+   * Underwriter durable harness LABEL for an index — `uwrit.<letter>`. Same
+   * label-vs-generated-`account` split as {@link batchOperatorLabel}.
    *
    * @param index - Zero-based underwriter index.
    * @returns The label (e.g. `underwriterLabel(1)` → `"uwrit.b"`).

@@ -16,6 +16,6 @@ import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
  */
 export function endpointsTypeToKey(
   type: DebugOutpostEndpointsType
-): string | null {
+): string {
   return asOption(DebugOutpostEndpointsType[type]).filter(isString).getOrNull()
 }

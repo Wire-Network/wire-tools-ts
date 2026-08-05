@@ -48,11 +48,11 @@ const log = getLogger(__filename)
 // ── Reads (execute freely inside verify-step runners) ───────────────────────
 
 /**
- * Whether EVERY account in `accounts` has an `sysio.opreg::operators` row in
+ * Whether every `labels` entry has an `sysio.opreg::operators` row in
  * `OPERATOR_STATUS_ACTIVE` (a read).
  *
  * @param ctx - The scenario context.
- * @param accounts - The underwriter WIRE account names to check.
+ * @param labels - The underwriters' durable harness `label` handles to check.
  * @returns Whether the whole roster is ACTIVE.
  */
 async function underwritersActive(

@@ -222,7 +222,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
     // ── 1. Underwriter collateral (the old harness's bootstrap deposits) ──
     // One Phase per underwriter, one Step per (chain, token) bond, from the
     // resolved config plan (this scenario's defaults: ETH + SOL + USDCSOL).
-    const underwriterAccounts = Array.from(
+    const underwriterLabels = Array.from(
       { length: cluster.config.underwriterCount },
       (_, index) => HarnessConstants.underwriterLabel(index)
     )
@@ -231,7 +231,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
       "UnderwriterCollateral",
       "Underwriters bond collateral on every leg the swap matrix touches",
       writeOptions,
-      underwriterAccounts,
+      underwriterLabels,
       cluster.config.underwriterCollateral ??
         WireUnderwriterTool.load(null, cluster.config.underwriterCount)
     )
@@ -252,7 +252,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
       verifyStep<Context>(
         Actor.Underwriter,
         "underwriter-active",
-        `${underwriterAccounts[0]} becomes ACTIVE (deposits credit)`,
+        `${underwriterLabels[0]} becomes ACTIVE (deposits credit)`,
         runVerifyUnderwriterActive,
         uwreqOptions
       )

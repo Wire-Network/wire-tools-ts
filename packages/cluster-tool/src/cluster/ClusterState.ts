@@ -15,6 +15,7 @@ import {
   type ClusterStateNode
 } from "@wireio/cluster-tool-shared"
 import { NodeConfig, NodeRole } from "../config/NodeConfig.js"
+import { isNotEmpty } from "../utils/predicateUtils.js"
 import type { ClusterBuildContext } from "../orchestration/ClusterBuildContext.js"
 import { ClusterKeyStore } from "../orchestration/outputs/ClusterKeyStore.js"
 import { OperatorDaemonArtifactsKey } from "../orchestration/outputs/OperatorDaemonArtifacts.js"
@@ -48,9 +49,17 @@ export interface ClusterKeysNodeEntry {
  * `underwriterArgs`) build directly from them on relaunch.
  */
 export interface ClusterKeysOperatorEntry {
-  /** Deterministic provisioning label — the `ClusterKeyStore` key. */
+  /**
+   * Durable harness handle (`batchop.a`) — the `ClusterKeyStore` key and the SSM
+   * secret-id `{account}` segment. Deterministic and known at plan time; it does
+   * NOT exist on chain.
+   */
   label: string
-  /** WIRE account name ON CHAIN (node-owner-generated for batch/underwriter operators). */
+  /**
+   * WIRE account name ON CHAIN — `wireno.<random>` for batch/underwriter
+   * operators (node-owner-sponsored; the suffix is nonce-derived entropy and is
+   * not choosable), the deterministic `defproducer*` name for producers.
+   */
   account: string
   /** Operator role (batch operator / underwriter / producer). */
   type: OperatorType
@@ -66,7 +75,7 @@ export interface ClusterKeysOperatorEntry {
 
 /**
  * The full `cluster-keys.json` payload — every producer node's key set plus
- * every provisioned operator account. `cluster-tool`-private: written 0600 by
+ * every provisioned operator record. `cluster-tool`-private: written 0600 by
  * {@link ClusterState.saveKeys}, read only by `ClusterManager.run` (via
  * {@link ClusterState.loadKeys} + {@link ClusterState.rehydrate}). Never
  * served over the debugging-server RPC surface.
@@ -74,7 +83,7 @@ export interface ClusterKeysOperatorEntry {
 export interface ClusterKeys {
   /** Every generated producer-node key set. */
   nodes: ClusterKeysNodeEntry[]
-  /** Every provisioned operator account. */
+  /** Every provisioned operator record. */
   operators: ClusterKeysOperatorEntry[]
 }
 
@@ -233,7 +242,7 @@ export namespace ClusterState {
   /**
    * Build the `cluster-keys.json` payload from a finished build's
    * `ctx.keyStore` — every generated producer-node key set plus every
-   * provisioned operator account (with its full key set, including
+   * provisioned operator record (with its full key set, including
    * `ethereum` / `solana` when present).
    *
    * @param ctx - The build's context (holds `keyStore`).
@@ -246,7 +255,17 @@ export namespace ClusterState {
         k1: nodeKeys.keys.k1,
         bls: nodeKeys.keys.bls
       })),
-      operators: ctx.keyStore.operators.map(operator => ({ ...operator }))
+      // Every persisted operator carries its on-chain name: `account` is
+      // optional on `OperatorAccount` only for the window between an OPP
+      // operator's materialize and sponsored-creation steps, both of which run
+      // long before this capture.
+      operators: ctx.keyStore.operators.map(operator => {
+        Assert.ok(
+          isNotEmpty(operator.account),
+          `ClusterState.captureKeys: operator ${operator.label} has no account — its sponsored-creation step did not run`
+        )
+        return { ...operator, account: operator.account }
+      })
     }
   }
 
@@ -302,7 +321,7 @@ export namespace ClusterState {
 
   /**
    * Repopulate a fresh {@link ClusterKeyStore} from a loaded {@link ClusterKeys}
-   * payload — every node key set + every operator account, so relaunch-time
+   * payload — every node key set + every operator label, so relaunch-time
    * operator/daemon-arg resolution (`NodeopProcessSteps.resolveOperator` /
    * `resolveOperatorDaemonArgs`) works unchanged against the rehydrated store.
    *

@@ -112,8 +112,8 @@ export class NodeConfig {
    * Plan every node in the cluster from its resolved binding: a bios node, one
    * producer node per `bind.nodeop.ports.producers[]` (with the defproducer
    * names round-robin-distributed), and one operator node per batch-op /
-   * underwriter port pair (associated by its provisioning LABEL — the chain
-   * account is generated at provisioning time and resolved from the key
+   * underwriter port pair (associated by its durable `label` handle — the
+   * `account` is generated at provisioning time and resolved from the key
    * store). Peer endpoints are every other node's advertised p2p endpoint —
    * each node's own `ports.advertiseAddress` when bound (multi-host mesh),
    * else the shared dialable bind address.

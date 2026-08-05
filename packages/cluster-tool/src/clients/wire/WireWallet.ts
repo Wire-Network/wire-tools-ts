@@ -6,7 +6,7 @@ import { getLogger } from "@wireio/shared"
 import { eachSeries } from "../../utils/asyncUtils.js"
 import { isNotEmpty } from "../../utils/predicateUtils.js"
 import { mkdirs } from "../../utils/fsUtils.js"
-import { ClioRunner } from "./clio/ClioRunner.js"
+import { ClioRunner, type ClioError } from "./clio/ClioRunner.js"
 
 const log = getLogger("WireWallet")
 
@@ -39,7 +39,7 @@ export class WireWallet {
   }
 
   /** The captured wallet password, or null if none has been created/persisted. */
-  get password(): string | null {
+  get password(): string {
     return this.passwordInternal
   }
 
@@ -150,7 +150,7 @@ export namespace WireWallet {
 
   /** A clio error's message (`message ?? stderr ?? ""`) — every catch reads it through here. */
   export function errorMessage(error: unknown): string {
-    return asOption(error as { message?: unknown; stderr?: unknown })
+    return asOption(error as ClioError)
       .map(e => String(e?.message ?? e?.stderr ?? ""))
       .getOrElse("")
   }

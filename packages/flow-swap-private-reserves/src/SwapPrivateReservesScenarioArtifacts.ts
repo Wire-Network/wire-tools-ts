@@ -8,6 +8,8 @@ import {
   EthereumCollateralTool,
   SolanaOutpostBootstrapper,
   type ClusterBuildContext,
+  type EthereumLocalReserveRecord,
+  type EthereumPayableOverrides,
   ClusterConfigProvider
 } from "@wireio/cluster-tool"
 import { SwapPrivateReservesScenarioConstants as Constants } from "./SwapPrivateReservesScenarioConstants.js"
@@ -42,12 +44,12 @@ export namespace SwapPrivateReservesScenarioArtifacts {
       description: string,
       isPrivate: boolean,
       creatorPubKey: string,
-      overrides: ethers.Overrides & { value: bigint }
+      overrides: EthereumPayableOverrides
     ) => Promise<ethers.ContractTransactionResponse>
     getReserve: (
       tokenCode: bigint,
       reserveCode: bigint
-    ) => Promise<{ status: bigint }>
+    ) => Promise<EthereumLocalReserveRecord>
   }
 
   /**

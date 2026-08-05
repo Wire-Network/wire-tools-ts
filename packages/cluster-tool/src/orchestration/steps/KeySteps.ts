@@ -61,7 +61,7 @@ export namespace KeySteps {
     )
     // Producer NODE signing sets (K1+BLS per node), pushed into THE key store.
     // Operator identities (producer / batch / underwriter accounts) accumulate
-    // into the same store per-account as their provisioning phases materialize
+    // into the same store per-label as their provisioning phases materialize
     // them — producers referencing their node's set from here.
     const nodes: ClusterKeyStore.NodeKeys[] = await mapSeries(
       range(ctx.config.nodeCount),
@@ -132,8 +132,8 @@ export namespace KeySteps {
     source: SignatureKeySource
     /** Producer-node topology index (used when `source === node`). */
     nodeIndex: number
-    /** The key's account (node name or operator account) — the secret-id `{account}`. */
-    account: string
+    /** The key's label (node name or operator label) — the secret-id `{account}`. */
+    label: string
     /** The key's curve — selects which key of the source. */
     keyType: KeyType
     /** AWS region the parameter is published under. */
@@ -170,10 +170,10 @@ export namespace KeySteps {
       "KeySteps.signatureProviderKeyPublications: SSM signature provider requires ssm settings"
     )
     const cluster = Path.basename(config.clusterPath),
-      renderSecretId = (account: string, keyType: KeyType): string =>
+      renderSecretId = (label: string, keyType: KeyType): string =>
         ClusterConfigProvider.toSecretId(ssm.awsSecretIdPattern, {
           cluster,
-          account,
+          account: label,
           keyType: KeyType[keyType]
         }),
       publications: SignatureProviderKeyPublication[] = []
@@ -185,7 +185,7 @@ export namespace KeySteps {
           publications.push({
             source: SignatureKeySource.node,
             nodeIndex: node.index,
-            account: node.name,
+            label: node.name,
             keyType,
             awsRegion: ssm.awsRegion,
             secretId: renderSecretId(node.name, keyType)
@@ -193,7 +193,7 @@ export namespace KeySteps {
         )
       )
     // Batch-operator + underwriter keys (K1 wire + EM ethereum + ED solana).
-    const operatorAccounts = [
+    const operatorLabels = [
       ...range(config.batchOperatorCount).map(index =>
         Constants.batchOperatorLabel(index)
       ),
@@ -201,15 +201,15 @@ export namespace KeySteps {
         Constants.underwriterLabel(index)
       )
     ]
-    operatorAccounts.forEach(account =>
+    operatorLabels.forEach(label =>
       ([KeyType.K1, KeyType.EM, KeyType.ED] as const).forEach(keyType =>
         publications.push({
           source: SignatureKeySource.operator,
           nodeIndex: 0,
-          account,
+          label,
           keyType,
           awsRegion: ssm.awsRegion,
-          secretId: renderSecretId(account, keyType)
+          secretId: renderSecretId(label, keyType)
         })
       )
     )
@@ -252,8 +252,8 @@ export namespace KeySteps {
         phase.push(
           planPublishSignatureProviderKey<C>(
             Report.Actor.Sysio,
-            `publish-${publication.account}-${KeyType[publication.keyType]}`,
-            `publish ${publication.account} ${KeyType[publication.keyType]} key → SSM`,
+            `publish-${publication.label}-${KeyType[publication.keyType]}`,
+            `publish ${publication.label} ${KeyType[publication.keyType]} key → SSM`,
             options,
             publication
           )
@@ -314,7 +314,7 @@ export namespace KeySteps {
       )
       .with(SignatureKeySource.operator, () =>
         operatorPrivateKey(
-          ctx.keyStore.assertOperator(input.account),
+          ctx.keyStore.assertOperator(input.label),
           input.keyType
         )
       )
@@ -339,7 +339,7 @@ export namespace KeySteps {
       })
   }
 
-  /** The private key of an operator account for `keyType` (K1 wire / EM ethereum / ED solana). */
+  /** The private key of an operator for `keyType` (K1 wire / EM ethereum / ED solana). */
   function operatorPrivateKey(
     operator: OperatorAccount,
     keyType: KeyType
@@ -349,14 +349,14 @@ export namespace KeySteps {
       .with(KeyType.EM, () => {
         Assert.ok(
           operator.ethereum != null,
-          `KeySteps: operator ${operator.account} has no ethereum key`
+          `KeySteps: operator ${operator.label} has no ethereum key`
         )
         return operator.ethereum.privateKey
       })
       .with(KeyType.ED, () => {
         Assert.ok(
           operator.solana != null,
-          `KeySteps: operator ${operator.account} has no solana key`
+          `KeySteps: operator ${operator.label} has no solana key`
         )
         return operator.solana.privateKey
       })

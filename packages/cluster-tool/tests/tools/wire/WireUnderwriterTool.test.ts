@@ -9,7 +9,8 @@ import {
   ClusterBuild,
   ClusterBuildContext,
   ClusterBuildPhase,
-  ClusterBuildPhaseGroup
+  ClusterBuildPhaseGroup,
+  type StepInput
 } from "@wireio/cluster-tool/orchestration"
 import { getLogger } from "@wireio/cluster-tool/logging"
 import { Report } from "@wireio/cluster-tool/report"
@@ -45,7 +46,7 @@ function entry(
 /** The step input kinds of a group's Nth child phase (a `ClusterBuildPhase`). */
 function stepKinds(group: ClusterBuildPhaseGroup, index: number): string[] {
   return (group.children[index] as ClusterBuildPhase).steps.map(
-    step => (step.input as { kind: string }).kind
+    step => (step.input as StepInput).kind
   )
 }
 

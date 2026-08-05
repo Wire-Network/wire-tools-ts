@@ -19,6 +19,14 @@ interface RecordedFetchRequest {
   body: string | null
 }
 
+/** One instruction as recorded by `RecordingConnection.toTransactionCall`. */
+interface RecordedInstruction {
+  /** Base58 program id the instruction targets. */
+  programId: string
+  /** Base64-encoded instruction data. */
+  dataBase64: string
+}
+
 describe("RecordingJsonRpcProvider.shouldRecord", () => {
   it("records tx submissions + anvil admin methods only", () => {
     expect(RecordingJsonRpcProvider.shouldRecord("eth_sendRawTransaction")).toBe(true)
@@ -47,7 +55,7 @@ describe("RecordingJsonRpcProvider.toCall", () => {
     })
     const call = RecordingJsonRpcProvider.toCall("eth_sendRawTransaction", [raw])
     expect(call.client).toBe("ethereum")
-    const transaction = call.transaction as { to: string; value: string }
+    const transaction = call.transaction as ethers.TransactionLike<string>
     expect(transaction.to).toBe("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
     expect(transaction.value).toBe("12345")
   })
@@ -74,7 +82,7 @@ describe("RecordingConnection.toTransactionCall", () => {
     const call = RecordingConnection.toTransactionCall(transaction)
     expect(call.client).toBe("solana")
     expect(call.kind).toBe("transaction")
-    const instructions = call.instructions as Array<{ programId: string }>
+    const instructions = call.instructions as RecordedInstruction[]
     expect(instructions).toHaveLength(1)
     expect(instructions[0].programId).toBe(SystemProgram.programId.toBase58())
   })
@@ -147,9 +155,7 @@ describe("read-path recording", () => {
     const connection = new RecordingConnection("http://127.0.0.1:1", {
       fetch: offlineFetch
     })
-    const transport = connection as unknown as {
-      _rpcRequest: (method: string, args: unknown[]) => Promise<unknown>
-    }
+    const transport = connection as unknown as RecordingConnection.RpcRequestTransport
     const recorder = new StepExtraRecorder()
     await StepExtraRecorder.runWith(recorder, async () => {
       await transport

@@ -128,7 +128,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
           label = batchOperatorLabel ?? underwriterLabel
         ctx.keyStore.setOperator({
           label,
-          account: label,
+          account: `wireno.${label.replace(/[^a-z1-5]/g, "")}`,
           type:
             batchOperatorLabel != null
               ? OperatorType.BATCH
@@ -198,10 +198,25 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     )
   }
 
+  /**
+   * The persisted `cluster-keys.json` record an emitted `accountName` came from.
+   * `accountName` is the operator's ON-CHAIN name while the SSM secret id and
+   * the fixture's key material are keyed by the DURABLE handle — so every
+   * assertion that needs the handle resolves it through this map.
+   */
+  function keyEntryFor(accountName: string) {
+    const entry = ClusterState.loadKeys(runContext().config).operators.find(
+      operator => operator.account === accountName
+    )
+    expect(entry).toBeDefined()
+    return entry
+  }
+
   /** Inject a BLS key onto the first cluster-keys operator (operators normally carry none). */
   function injectOperatorBls() {
     const config = runContext().config,
       keys = ClusterState.loadKeys(config),
+      label = keys.operators[0].label,
       account = keys.operators[0].account,
       privateKey = "PVT_BLS_op",
       proofOfPossession = "SIG_BLS_op"
@@ -212,7 +227,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       proofOfPossession
     }
     ClusterState.saveKeys(config, keys)
-    return { account, privateKey, proofOfPossession }
+    return { label, account, privateKey, proofOfPossession }
   }
 
   beforeEach(() => {
@@ -245,12 +260,20 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     )
     expect(emitted.wire.epochDurationSec).toBe(ctx.config.epochDurationSec)
     expect(emitted.bindings.kiod.port).toBe(externalBind.kiod.port)
-    const expectedAccounts = NodeConfig.plan(ctx.config)
-      .filter(node => node.role === NodeRole.operator)
-      .map(node => node.batchOperatorLabel ?? node.underwriterLabel)
+    // `accountName` is the operator's ON-CHAIN name (`account`), never the
+    // durable handle the node config and the SSM secret id are keyed by.
+    const persisted = ClusterState.loadKeys(ctx.config).operators,
+      expectedAccounts = persisted.map(operator => operator.account),
+      handles = NodeConfig.plan(ctx.config)
+        .filter(node => node.role === NodeRole.operator)
+        .map(node => node.batchOperatorLabel ?? node.underwriterLabel)
     expect(emitted.accounts.operators.map(op => op.accountName).sort()).toEqual(
       [...expectedAccounts].sort()
     )
+    expect(persisted.map(operator => operator.label).sort()).toEqual(
+      [...handles].sort()
+    )
+    expect(expectedAccounts.sort()).not.toEqual([...handles].sort())
 
     // The re-rendered config.ini files carry the EXTERNAL bios http port.
     const iniText = findFiles(externalDir, "config.ini")
@@ -375,7 +398,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       op.keyProviders.forEach(provider =>
         expect(provider).toMatchObject({
           providerType: SignatureProviderType.KEY,
-          privateKey: `PVT_${KeyType[provider.type]}_${op.accountName}`
+          privateKey: `PVT_${KeyType[provider.type]}_${keyEntryFor(op.accountName).label}`
         })
       )
     )
@@ -392,7 +415,9 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
           awsRegion: SsmRegion,
           awsSecretId: ClusterConfigProvider.toSecretId(SsmSecretIdPattern, {
             cluster: SourceClusterLabel,
-            account: op.accountName,
+            // The `{account}` pattern token RENDERS the DURABLE handle — what
+            // `KeySteps` PutParameter'd — NOT the emitted on-chain `accountName`.
+            account: keyEntryFor(op.accountName).label,
             keyType: KeyType[provider.type]
           })
         })

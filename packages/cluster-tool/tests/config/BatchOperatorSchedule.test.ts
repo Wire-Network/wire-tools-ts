@@ -159,15 +159,15 @@ describe("BatchOperatorSchedule.resolve", () => {
       })
     })
 
-    it("rejects a roster past the harness account-name space", () => {
-      // 27 IS a legal depot shape (9 x 3) but `batchOperatorAccountName` wraps
-      // modulo 26, so operator 27 would reuse `batchop.a`.
+    it("rejects a roster past the harness label space", () => {
+      // 27 IS a legal depot shape (9 x 3) but `Constants.batchOperatorLabel`
+      // wraps modulo 26, so operator 27 would reuse the `batchop.a` handle.
       expect(() => resolve(27)).toThrow(
         /batchOperatorCount: batch-operator-count exceeds the harness ceiling of 26/
       )
     })
 
-    it("gives every operator in the largest accepted roster a UNIQUE account", () => {
+    it("gives every operator in the largest accepted roster a UNIQUE label", () => {
       const max = MaxBatchOperatorRoster
       expect(() => resolve(max, 1, 1)).not.toThrow()
       const names = Array.from({ length: max }, (_, index) =>

@@ -3,20 +3,18 @@ import {
   LogViewerJSONLine,
   jsonColumnBoundaries,
   nextColumnOffset,
-  prevColumnOffset
+  prevColumnOffset,
+  type LogViewerJSONLineProps
 } from "@wireio/debugging-client-tool-tui/features/process-monitor/panels/LogViewerJSONLine.js"
+
+import type { RenderedTextProps } from "./RenderedTextProps.js"
 
 const SampleLine =
   '{"ts":"2026-04-27T19:58:15.417594Z","lvl":"debug","thread":"nodeop","logger":"default","file":"/.../x.cpp","line":426,"func":"plugin_initialize","msg":"Registering signature provider"}'
 
 /** Shorthand: invoke the renderer with default test props. */
 function render(
-  overrides: Partial<{
-    line: string
-    horizontalOffset: number
-    highlight: string
-    locationVisible: boolean
-  }> = {}
+  overrides: Partial<LogViewerJSONLineProps> = {}
 ): React.ReactElement {
   return LogViewerJSONLine({
     line: SampleLine,
@@ -57,11 +55,11 @@ describe("LogViewerJSONLine", () => {
   })
 
   it("renders the parsed row with truncate-end wrap mode", () => {
-    expect((render().props as { wrap?: string }).wrap).toBe("truncate-end")
+    expect((render().props as RenderedTextProps).wrap).toBe("truncate-end")
   })
 
   it("renders the malformed-line fallback with truncate-end wrap mode", () => {
-    expect((render({ line: "not json" }).props as { wrap?: string }).wrap).toBe(
+    expect((render({ line: "not json" }).props as RenderedTextProps).wrap).toBe(
       "truncate-end"
     )
   })
