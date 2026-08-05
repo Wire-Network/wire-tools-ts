@@ -497,16 +497,29 @@ export namespace ExternalClusterConfigSteps {
     )
   }
 
-  /** Named runner — no port appears twice across the whole external bind config. */
+  /**
+   * Named runner — no HOST binds the same port twice.
+   *
+   * Scoped per host, not globally: an external cluster puts every nodeop on its
+   * own machine, so all 43 of them correctly bind the standard `8888`/`9876`.
+   * A global-uniqueness check calls that a collision and makes a valid
+   * multi-host deployment unrepresentable — it rejected a correct 43-identity
+   * bind config on 2026-08-04, after the bootstrap itself had fully succeeded.
+   */
   export async function runVerifyNoDuplicatePorts<C extends ClusterBuildContext>(
     ctx: C,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const allPorts = BindConfigProvider.allPorts(ctx.outputs.assert(ExternalBindKey))
+    const bindings = BindConfigProvider.allPortBindings(
+        ctx.outputs.assert(ExternalBindKey)
+      ),
+      duplicates = bindings.filter(
+        (binding, index) => bindings.indexOf(binding) !== index
+      )
     Assert.ok(
-      new Set(allPorts).size === allPorts.length,
-      "create-external-config: the external bind config has duplicate ports"
+      duplicates.length === 0,
+      `create-external-config: the external bind config binds the same port twice on one host: ${[...new Set(duplicates)].join(", ")}`
     )
   }
 

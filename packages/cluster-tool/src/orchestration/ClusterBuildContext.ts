@@ -66,9 +66,11 @@ export class ClusterBuildContext<
         this.config.bind.kiod.port,
         toDialAddress(this.config.bind.kiod.address)
       ),
-      // Producers ARE the genesis finalizer policy (ConsensusSteps builds it
-      // from exactly this set), and the set's size drives how long a Savanna
-      // quorum round takes — so it sizes the irreversibility budget.
+      // `producerCount` is the intended input for this tool's budget sizing.
+      // Note it is the producer ACCOUNT count, which is not always the producer
+      // NODE count the genesis finalizer policy is built from (`NodeConfig.plan`
+      // fans accounts round-robin across nodes) — the budget is an envelope, not
+      // an exact model, and this is the knob the tool sizes against.
       finalizerCount: this.config.producerCount
     }))
   }

@@ -213,6 +213,81 @@ describe("BindConfigProvider", () => {
       expect(ports.every(port => port > 0)).toBe(true)
     })
 
+    // Uniqueness is a per-HOST property. A multi-host external cluster puts
+    // every nodeop on its own machine, so all of them correctly bind the
+    // standard ports — a global-uniqueness check calls that a collision and
+    // makes a valid deployment unrepresentable. It rejected a correct
+    // 43-identity bind config on 2026-08-04, AFTER the bootstrap had passed.
+    describe("allPortBindings", () => {
+      it("accepts the same port on DIFFERENT advertised hosts", async () => {
+        const config = await BindConfigProvider.resolve(
+            {},
+            { producerCount: 2, batchOperatorCount: 1, underwriterCount: 0 }
+          ),
+          // The external shape: one shared LISTEN address, per-node ADVERTISE
+          // addresses, every node on the standard ports.
+          external = {
+            ...config,
+            nodeop: {
+              ...config.nodeop,
+              ports: {
+                ...config.nodeop.ports,
+                producers: config.nodeop.ports.producers.map((port, index) => ({
+                  ...port,
+                  http: 8888,
+                  p2p: 9876,
+                  advertiseAddress: `10.60.1.${index + 10}`
+                }))
+              }
+            }
+          }
+        const flat = BindConfigProvider.allPorts(external),
+          scoped = BindConfigProvider.allPortBindings(external)
+        // The old global check sees a collision …
+        expect(new Set(flat).size).toBeLessThan(flat.length)
+        // … the host-scoped one does not.
+        expect(new Set(scoped).size).toBe(scoped.length)
+      })
+
+      it("still REJECTS the same port twice on ONE advertised host", async () => {
+        const config = await BindConfigProvider.resolve(
+            {},
+            { producerCount: 2, batchOperatorCount: 0, underwriterCount: 0 }
+          ),
+          collided = {
+            ...config,
+            nodeop: {
+              ...config.nodeop,
+              ports: {
+                ...config.nodeop.ports,
+                // Both producers on the SAME host AND the same ports — a real
+                // collision the check must keep catching.
+                producers: config.nodeop.ports.producers.map(port => ({
+                  ...port,
+                  http: 8888,
+                  p2p: 9876,
+                  advertiseAddress: "10.60.1.10"
+                }))
+              }
+            }
+          }
+        const scoped = BindConfigProvider.allPortBindings(collided)
+        expect(new Set(scoped).size).toBeLessThan(scoped.length)
+      })
+
+      it("falls back to the shared listen address when none is advertised", async () => {
+        // Single-host local cluster: no advertiseAddress, so every node shares
+        // one key and global uniqueness is restored — which is correct there.
+        const config = await BindConfigProvider.resolve(
+            {},
+            { producerCount: 2, batchOperatorCount: 2, underwriterCount: 1 }
+          ),
+          scoped = BindConfigProvider.allPortBindings(config)
+        expect(new Set(scoped).size).toBe(scoped.length)
+        expect(scoped.every(key => key.includes(":"))).toBe(true)
+      })
+    })
+
     it("binds every address to the bind-all address when bindAll is set", async () => {
       const config = await BindConfigProvider.resolve({}, { bindAll: true })
       expect(config.kiod.address).toBe(ListenAllAddress)
