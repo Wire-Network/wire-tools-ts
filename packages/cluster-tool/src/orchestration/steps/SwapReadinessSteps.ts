@@ -327,7 +327,6 @@ export async function runActiveUnderwriters(
         .map(row => readinessSlug(row.code)),
       activeUnderwriters = operatorsResult.rows.filter(
         operator =>
-          operator.is_bootstrapped &&
           readinessEnumMatches(
             operator.type,
             SysioOpregOperatortype.OPERATOR_TYPE_UNDERWRITER,
