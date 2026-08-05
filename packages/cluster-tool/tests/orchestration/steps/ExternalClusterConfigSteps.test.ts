@@ -11,7 +11,7 @@ import {
   ExternalClusterConfigSchemaCodec,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
-import { ClusterState } from "@wireio/cluster-tool"
+import { ClusterState, Constants } from "@wireio/cluster-tool"
 import {
   ClusterConfigProvider,
   NodeConfig,
@@ -225,6 +225,50 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     )
     expect(entry).toBeDefined()
     return entry
+  }
+
+  /**
+   * Append the two GENESIS identities `ClusterBuild.seedGenesisAccounts` puts in
+   * the operator map — the bios node (K1 + BLS) and the bootstrap node owner
+   * (K1 alone) — to the persisted cluster keys.
+   *
+   * They are the reason the emit guard cannot be a flat curve list: they live in
+   * the operator map like every batch operator but publish DIFFERENT curves, so
+   * a "operators publish K1/EM/ED" set refuses the bios BLS that create really
+   * did publish.
+   */
+  function injectGenesisAccounts() {
+    const config = runContext().config,
+      keys = ClusterState.loadKeys(config)
+    keys.operators.push(
+      {
+        label: NodeConfig.BiosName,
+        account: NodeConfig.BiosProducer,
+        type: OperatorType.UNKNOWN,
+        wire: {
+          type: KeyType.K1,
+          publicKey: "PUB_K1_bios",
+          privateKey: "PVT_K1_bios"
+        },
+        wireFinalizer: {
+          type: KeyType.BLS,
+          publicKey: "PUB_BLS_bios",
+          privateKey: "PVT_BLS_bios",
+          proofOfPossession: "SIG_BLS_bios"
+        }
+      },
+      {
+        label: Constants.BOOTSTRAP_NODE_OWNER,
+        account: Constants.BOOTSTRAP_NODE_OWNER,
+        type: OperatorType.UNKNOWN,
+        wire: {
+          type: KeyType.K1,
+          publicKey: "PUB_K1_owner",
+          privateKey: "PVT_K1_owner"
+        }
+      }
+    )
+    ClusterState.saveKeys(config, keys)
   }
 
   /** Inject a `wireFinalizer` key onto the first cluster-keys operator (operators normally carry none). */
@@ -505,6 +549,67 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     await External.runRebind(ctx, null, signal)
     await expect(External.runEmit(ctx, null, signal)).rejects.toThrow(
       /not SSM-published/
+    )
+  })
+
+  // The genesis identities are in the operator map but publish DIFFERENT curves
+  // than a batch operator (bios K1+BLS, node owner K1). Emit refused the bios
+  // BLS — a parameter create HAD published — so every SSM create-external-config
+  // died at Emit. The fixture never seeded them, which is why nothing caught it.
+  it("emits the genesis identities' SSM refs (bios K1+BLS, node owner K1)", async () => {
+    injectGenesisAccounts()
+    const emitted = await emitWithProvider(SSMProvider),
+      secretIdsFor = (accountName: string) =>
+        emitted.accounts.operators
+          .find(op => op.accountName === accountName)
+          .keyProviders.flatMap(provider =>
+            provider.providerType === SignatureProviderType.SSM
+              ? [provider.awsSecretId]
+              : []
+          )
+          .sort()
+
+    // Exactly the ids KeySteps PutParameter'd — `{account}` is the durable
+    // HANDLE (`node_bios`), never the on-chain account (`sysio`).
+    expect(secretIdsFor(NodeConfig.BiosProducer)).toEqual([
+      "/wire/test/node_bios/BLS",
+      "/wire/test/node_bios/K1"
+    ])
+    expect(secretIdsFor(Constants.BOOTSTRAP_NODE_OWNER)).toEqual([
+      "/wire/test/wireno/K1"
+    ])
+  })
+
+  // The guard is DERIVED from the publication walker, so it must track the
+  // walker rather than a curve list: every emitted ref exists in it, and every
+  // publication is reachable by the handle+curve the emit side looks up with.
+  it("emits only refs the publication walker actually wrote", async () => {
+    injectGenesisAccounts()
+    const emitted = await emitWithProvider(SSMProvider),
+      published = new Set(
+        Steps.keys
+          .signatureProviderKeyPublications(
+            runContext(externalBindFile, SSMProvider).config
+          )
+          .map(publication => publication.secretId)
+      )
+    expect(published.size).toBeGreaterThan(0)
+    const emittedSecretIds = emitted.accounts.operators.flatMap(op =>
+        op.keyProviders.flatMap(provider =>
+          provider.providerType === SignatureProviderType.SSM
+            ? [provider.awsSecretId]
+            : []
+        )
+      ),
+      emittedProviderCount = emitted.accounts.operators.reduce(
+        (total, op) => total + op.keyProviders.length,
+        0
+      )
+    // Every emitted provider is an SSM ref…
+    expect(emittedSecretIds.length).toBe(emittedProviderCount)
+    // …and every one of them names a parameter create actually wrote.
+    emittedSecretIds.forEach(secretId =>
+      expect(published).toContain(secretId)
     )
   })
 })
