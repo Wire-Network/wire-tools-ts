@@ -8,6 +8,7 @@ import { ExternalClusterConfigSteps } from "./ExternalClusterConfigSteps.js"
 import { ExternalOutpostSteps } from "./ExternalOutpostSteps.js"
 import { KeySteps } from "./KeySteps.js"
 import { OperatorSteps } from "./OperatorSteps.js"
+import { OutpostDeploymentReadinessSteps } from "./OutpostDeploymentReadinessSteps.js"
 import { ProtocolSteps } from "./ProtocolSteps.js"
 import { RegistrySteps } from "./RegistrySteps.js"
 import { StartScriptSteps } from "./StartScriptSteps.js"
@@ -32,6 +33,8 @@ export namespace Steps {
   export namespace readiness {
     /** Network-group and protocol-baseline checks. */
     export import cluster = ClusterReadinessSteps
+    /** Exact deployed outpost identity checks. */
+    export import outpostDeployment = OutpostDeploymentReadinessSteps
     /** Public-swap infrastructure checks. */
     export import swap = SwapReadinessSteps
   }

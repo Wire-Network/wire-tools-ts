@@ -24,6 +24,7 @@ export namespace ReadinessPhaseGroups {
 
     planDiscovery(readiness)
     planClusterHealth(readiness)
+    planOutpostDeployment(readiness)
     if (feature === ClusterReadinessFeature.swap) {
       planWireConfiguration(readiness)
       planSwap(readiness)
@@ -31,6 +32,40 @@ export namespace ReadinessPhaseGroups {
 
     return readiness
   }
+}
+
+function planOutpostDeployment(
+  parent: ClusterBuildParent<ReadinessContext>
+): void {
+  ClusterBuildPhase.create<ReadinessContext>(
+    parent,
+    "Outpost deployment",
+    "Verify the immutable Wire, Ethereum, and Solana deployment profile",
+    [
+      Steps.readiness.outpostDeployment.planWireDeploymentProfile(
+        Report.Actor.Sysio,
+        "wire-deployment-profile",
+        "Verify the Wire chain bound to the deployment profile",
+        {}
+      ),
+      Steps.readiness.outpostDeployment.planEthereumDeploymentProfile(
+        Report.Actor.EthereumOutpost,
+        "ethereum-deployment-profile",
+        "Verify exact Ethereum proxy implementations and runtime code",
+        {}
+      ),
+      Steps.readiness.outpostDeployment.planSolanaDeploymentProfile(
+        Report.Actor.SolanaOutpost,
+        "solana-deployment-profile",
+        "Verify exact Solana ProgramData identity",
+        {}
+      )
+    ],
+    {
+      parallelize: true,
+      failureMode: ClusterBuildFailureMode.collect
+    }
+  )
 }
 
 function planDiscovery(parent: ClusterBuildParent<ReadinessContext>): void {

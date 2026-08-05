@@ -5,10 +5,12 @@ import {
   ClusterReadinessEndpointSource,
   ClusterReadinessFeature
 } from "@wireio/cluster-tool-shared"
-import { NestedError } from "@wireio/shared"
+import { getLogger, NestedError } from "@wireio/shared"
 import { match } from "ts-pattern"
 
 import { ReadinessConfig, type ReadinessOptions } from "./ReadinessConfig.js"
+
+const log = getLogger(__filename)
 
 interface CatalogEndpointRecord {
   id?: number
@@ -51,8 +53,28 @@ export async function resolveReadinessConfig(
   options: ReadinessOptions,
   request: typeof fetch = globalThis.fetch
 ): Promise<ReadinessConfig> {
-  if (!options.wireChainId && !options.wireRpc) {
-    throw new Error("Provide either wireChainId or wireRpc")
+  if (
+    !options.wireChainId &&
+    !options.wireRpc &&
+    !options.outpostDeploymentProfile
+  ) {
+    throw new Error(
+      "Provide wireChainId, wireRpc, or an outpostDeploymentProfile"
+    )
+  }
+
+  const explicitWireChainId = normalizedWireChainId(options.wireChainId),
+    profileWireChainId = normalizedWireChainId(
+      options.outpostDeploymentProfile?.wire.chainId
+    )
+  if (
+    explicitWireChainId &&
+    profileWireChainId &&
+    explicitWireChainId !== profileWireChainId
+  ) {
+    throw new Error(
+      `wireChainId ${explicitWireChainId} does not match deployment profile ${profileWireChainId}`
+    )
   }
 
   const timeoutMs = positiveInteger(
@@ -60,7 +82,7 @@ export async function resolveReadinessConfig(
       ReadinessConfig.DefaultTimeoutMs,
       "timeoutMs"
     ),
-    requestedWireChainId = normalizedWireChainId(options.wireChainId),
+    requestedWireChainId = explicitWireChainId ?? profileWireChainId,
     explicitWireRpc = optionalUrl(options.wireRpc, "wireRpc"),
     observation =
       !requestedWireChainId && explicitWireRpc
@@ -82,6 +104,7 @@ export async function resolveReadinessConfig(
     feature: options.feature ?? ClusterReadinessFeature.swap,
     catalogUrl,
     requestedWireChainId,
+    outpostDeploymentProfile: options.outpostDeploymentProfile,
     endpoints: selectEndpoints(options, catalog.records),
     catalogRecordCount: catalog.records.length,
     catalogErrors: [
@@ -111,6 +134,9 @@ async function observeWireChainId(
     }).v1.chain.get_info()
     return { chainId: info.chain_id.toString().toLowerCase(), error: null }
   } catch (error: unknown) {
+    log.warn(
+      `Wire chain-id discovery failed: ${error instanceof Error ? error.message : String(error)}`
+    )
     return {
       chainId: null,
       error: `Wire chain-id discovery failed: ${error instanceof Error ? error.message : String(error)}`
@@ -176,6 +202,9 @@ async function captureCatalog(
   try {
     return { records: await operation(), error: null }
   } catch (error: unknown) {
+    log.warn(
+      `Endpoint-catalog discovery failed: ${error instanceof Error ? error.message : String(error)}`
+    )
     return {
       records: [],
       error: error instanceof Error ? error.message : String(error)

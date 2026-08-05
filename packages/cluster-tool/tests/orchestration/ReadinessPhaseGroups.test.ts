@@ -7,6 +7,7 @@ import {
   ReadinessPhaseGroups
 } from "@wireio/cluster-tool/orchestration"
 import { ReadinessContext } from "@wireio/cluster-tool/readiness"
+import { createReadinessDeploymentProfileFixture } from "../readiness/readinessProfileFixture.js"
 
 function buildFor(feature: ClusterReadinessFeature) {
   const context = new ReadinessContext(
@@ -14,6 +15,7 @@ function buildFor(feature: ClusterReadinessFeature) {
         feature,
         catalogUrl: "https://catalog.example",
         requestedWireChainId: "a".repeat(64),
+        outpostDeploymentProfile: createReadinessDeploymentProfileFixture(),
         endpoints: [],
         catalogRecordCount: 0,
         catalogErrors: [],
@@ -37,6 +39,7 @@ describe("ReadinessPhaseGroups", () => {
     expect(phases.map(phase => phase.name)).toEqual([
       "Endpoint discovery",
       "Cluster health",
+      "Outpost deployment",
       "Swap protocol configuration",
       "Swap infrastructure",
       "Swap routes"
@@ -48,7 +51,7 @@ describe("ReadinessPhaseGroups", () => {
             phase instanceof ClusterBuildPhase
         )
         .flatMap(phase => phase.steps)
-    ).toHaveLength(21)
+    ).toHaveLength(24)
   })
 
   it("keeps stake present but intentionally nonfunctional", () => {
@@ -64,6 +67,7 @@ describe("ReadinessPhaseGroups", () => {
     expect(phases.map(phase => phase.name)).toEqual([
       "Endpoint discovery",
       "Cluster health",
+      "Outpost deployment",
       "Stake protocol"
     ])
     expect(stepNames).toContain("stake-lifecycle")

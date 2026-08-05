@@ -1,5 +1,6 @@
 import { ClusterReadinessEndpointSource } from "@wireio/cluster-tool-shared"
 import { resolveReadinessConfig } from "@wireio/cluster-tool/readiness"
+import { createReadinessDeploymentProfileFixture } from "./readinessProfileFixture.js"
 
 const WireChainId = "a".repeat(64)
 
@@ -139,9 +140,33 @@ describe("resolveReadinessConfig", () => {
     expect(config.catalogErrors.join(" ")).toMatch(/offline/)
   })
 
-  it("requires either a Wire chain id or RPC", async () => {
+  it("uses a deployment profile as the network-group identity", async () => {
+    const profile = createReadinessDeploymentProfileFixture(),
+      request = jest.fn(async () =>
+        Response.json([])
+      ) as unknown as typeof fetch,
+      config = await resolveReadinessConfig(
+        { outpostDeploymentProfile: profile, report },
+        request
+      )
+
+    expect(config.requestedWireChainId).toBe(profile.wire.chainId)
+    expect(config.outpostDeploymentProfile).toBe(profile)
+  })
+
+  it("rejects a Wire chain id that conflicts with the deployment profile", async () => {
+    await expect(
+      resolveReadinessConfig({
+        wireChainId: "b".repeat(64),
+        outpostDeploymentProfile: createReadinessDeploymentProfileFixture(),
+        report
+      })
+    ).rejects.toThrow(/does not match deployment profile/)
+  })
+
+  it("requires a Wire identity source", async () => {
     await expect(resolveReadinessConfig({ report })).rejects.toThrow(
-      /wireChainId or wireRpc/
+      /wireChainId, wireRpc, or an outpostDeploymentProfile/
     )
   })
 })

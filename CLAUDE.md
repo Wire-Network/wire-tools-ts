@@ -252,13 +252,16 @@ wire-cluster-tool create-external-config \              # clone → deployable e
   --local-cluster-path <created-dir> --external-cluster-path <new-dir> \
   --external-bind-config <bind.json>
 pnpm --filter @wireio/cluster-tool exec ./bin/wire-cluster-tool readiness \
-  --feature swap --wire-chain-id <chain-id> # read-only remote preflight
+  --feature swap \
+  --outpost-deployment-profile-file <profile.json> # read-only remote preflight
 ```
 
 `readiness` composes `Steps.readiness` through `ReadinessPhaseGroups` on the
 same `ClusterBuild`/Report engine. Its `collect` failure mode is explicit and
 local to diagnostic suites; existing bootstrap and FlowScenario plans remain
-fail-fast. The manual command is the only entrypoint for now. Future GHA/E2E
+fail-fast. It verifies immutable outpost deployment identity through
+`@wireio/sdk-outpost`; mutable RPC catalog data remains separate. The manual
+command is the only entrypoint for now. Future GHA/E2E
 integration must compose these PhaseGroups rather than duplicate checks. See
 `docs/cluster-readiness.md`.
 

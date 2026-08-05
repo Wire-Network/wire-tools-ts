@@ -14,13 +14,14 @@ Build the existing CLI once from the repository root:
 corepack pnpm --filter @wireio/cluster-tool build
 ```
 
-When the endpoint catalog knows the complete network group, the Wire chain id
-is the only required input:
+Every run requires the immutable deployment profile emitted for that exact
+deployment. When the endpoint catalog knows the network group, the profile is
+the only identity input:
 
 ```bash
 corepack pnpm --filter @wireio/cluster-tool exec ./bin/wire-cluster-tool readiness \
   --feature swap \
-  --wire-chain-id <64-character-wire-chain-id>
+  --outpost-deployment-profile-file <outpost-deployment-profile.json>
 ```
 
 An operator can instead supply the Wire RPC and let the command discover its
@@ -30,6 +31,7 @@ reliable form immediately after a sandbox respin:
 ```bash
 corepack pnpm --filter @wireio/cluster-tool exec ./bin/wire-cluster-tool readiness \
   --feature swap \
+  --outpost-deployment-profile-file <outpost-deployment-profile.json> \
   --wire-rpc https://api-sim2.sandbox.wire-dev.com \
   --ethereum-rpc https://ethereum-sim2.sandbox.wire-dev.com \
   --solana-rpc https://solana-sim2.sandbox.wire-dev.com
@@ -72,6 +74,8 @@ Every run includes the network-group baseline:
 - exact Wire chain identity, current head time, and observed block advancement;
 - Ethereum chain identity and observed block advancement;
 - Solana health, genesis identity, and observed slot advancement;
+- exact Wire binding, Ethereum EIP-1967 implementations/code hashes, and Solana
+  upgradeable-loader ProgramData/hash identity from the deployment profile;
 - optional Hyperion health.
 
 The swap suite then checks:
@@ -114,13 +118,12 @@ circulation, destination settlement, balance reconciliation, idempotent retry,
 or `SWAP_REVERT` refund behavior. Those require the later opt-in funded canary
 using the existing swap FlowScenario architecture.
 
-The MVP also does not depend on the unreleased `@wireio/sdk-outpost` package.
-That keeps arbitrary live clusters testable from RPCs alone. Once the package
-is released and a Wire chain matches its immutable deployment catalog, add a
-read-only readiness Step that verifies the cataloged Ethereum contracts and
-Solana programs. An uncataloged chain must remain testable and report the
-missing SDK enrichment explicitly; SDK publication must not become a command
-startup dependency.
+Readiness consumes `@wireio/sdk-outpost` as the typed compatibility boundary.
+The immutable profile carries deployment identity and exact live runtime
+fingerprints; the endpoint catalog remains a separate mutable routing concern.
+A same-code respin creates a new profile without an artifact or SDK release.
+Contract/program binary changes require producer-artifact releases and a new
+profile; ABI/IDL changes additionally require an `sdk-outpost` release.
 
 The readiness reason codes are the operator-report vocabulary in
 `cluster-tool-shared`. They intentionally align with Hub feature-gate language,
@@ -138,8 +141,8 @@ unavailable. Swap and stake can be selected independently.
 
 The implementation is deliberately reusable:
 
-- `Steps.readiness.cluster` and `Steps.readiness.swap` own named, typed,
-  read-only Step factories and runners;
+- `Steps.readiness.cluster`, `Steps.readiness.outpostDeployment`, and
+  `Steps.readiness.swap` own named, typed, read-only Step factories and runners;
 - `ReadinessPhaseGroups.plan(...)` composes those Steps;
 - `ReadinessContext` owns endpoint selection, `sdk-core` clients, and typed
   outputs;

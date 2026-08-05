@@ -48,6 +48,7 @@ function isDirectory(dirPath) {
 const localOverrides = isDirectory(wireLibPackagesPath)
   ? {
       "@wireio/sdk-core": `${wireLibPackagesPath}/sdk-core`,
+      "@wireio/sdk-outpost": `${wireLibPackagesPath}/sdk-outpost`,
       "@wireio/shared": `${wireLibPackagesPath}/shared`,
       "@wireio/shared-node": `${wireLibPackagesPath}/shared-node`,
       "@wireio/shared-web": `${wireLibPackagesPath}/shared-web`,
