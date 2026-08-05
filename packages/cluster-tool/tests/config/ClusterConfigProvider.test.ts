@@ -10,7 +10,9 @@ import { KeyType } from "@wireio/sdk-core"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 import {
   BindConfigProvider,
-  ClusterConfigProvider
+  ClusterConfigProvider,
+  NodeConfig,
+  NodeRole
 } from "@wireio/cluster-tool/config"
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
 import {
@@ -219,6 +221,92 @@ describe("ClusterConfigProvider", () => {
         "eu-west-1"
       ])
       expect(round.externalOutposts?.ethereum.chainId).toBe(1)
+    })
+  })
+
+  describe("publicationLabelFor", () => {
+    /**
+     * A topology whose producer accounts fan round-robin across THREE producer
+     * nodes. `NodeConfig.plan` derives producer nodes from the BIND's
+     * `nodeop.ports.producers[]`, not from `nodeCount`, so the fixture's single
+     * producer entry is widened by REBALANCING its already-resolved batch
+     * entries — never by inventing port numbers the bind registry never issued.
+     */
+    function spreadConfig(producerCount: number) {
+      const bind = structuredClone(PersistedFixture.bind),
+        { ports } = bind.nodeop
+      ports.producers = [...ports.producers, ...ports.batch.slice(0, 2)]
+      ports.batch = ports.batch.slice(2)
+      return fixtureConfig({
+        producerCount,
+        nodeCount: ports.producers.length,
+        batchOperatorCount: ports.batch.length,
+        underwriterCount: ports.underwriters.length,
+        bind
+      })
+    }
+
+    it("maps every producer ACCOUNT to the NODE hosting it, across all nodes", () => {
+      // The pair is node-scoped and shared by the accounts a node hosts, so the
+      // mapping must follow `NodeConfig.plan`'s round-robin — not just resolve
+      // every account to the first node.
+      const config = spreadConfig(6),
+        label = ClusterConfigProvider.publicationLabelFor(config),
+        producerNodes = NodeConfig.plan(config).filter(
+          node => node.role === NodeRole.producer
+        )
+      expect(producerNodes.length).toBe(3)
+      producerNodes.forEach(node => {
+        expect(node.producers.length).toBeGreaterThan(0)
+        node.producers.forEach(producer =>
+          expect(label(producer)).toBe(node.name)
+        )
+      })
+      // Distinct nodes really are distinguished — a mapping that collapsed to
+      // one node would pass the per-node loop above only if there were one.
+      expect(new Set(producerNodes.map(node => label(node.producers[0]))).size)
+        .toBe(3)
+    })
+
+    it("passes every non-producer identity through unchanged", () => {
+      const label = ClusterConfigProvider.publicationLabelFor(spreadConfig(6))
+      // Nodes, the genesis identity, the bootstrap node owner, and OPP
+      // operators each own their parameter — only producer ACCOUNTS redirect.
+      ;["node_00", NodeConfig.BiosName, "wireno", "batchop.a", "uwrit.a"].forEach(
+        identity => expect(label(identity)).toBe(identity)
+      )
+    })
+
+    it("a producer account's rendered secret id is its NODE's id", () => {
+      const spread = spreadConfig(6),
+        config = fixtureConfig({
+          producerCount: 6,
+          nodeCount: spread.nodeCount,
+          batchOperatorCount: spread.batchOperatorCount,
+          underwriterCount: spread.underwriterCount,
+          bind: spread.bind,
+          signatureProvider: {
+            type: SignatureProviderType.SSM,
+            ssm: {
+              awsRegions: ["us-east-1"],
+              awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
+            }
+          },
+          awsClusterNodeConfig: {
+            account: AWSAccountName.test,
+            regions: ["us-east-1"],
+            ssm: null
+          }
+        }),
+        node = NodeConfig.plan(config).find(
+          planned => planned.role === NodeRole.producer
+        ),
+        source = ClusterConfigProvider.signatureProviderSource(config)
+      // The BLS finality key especially — it is published once, under the node.
+      expect(source(node.producers[0], KeyType.BLS)).toEqual({
+        type: SignatureProviderType.SSM,
+        awsSecretId: `/wire/test/${node.name}/BLS`
+      })
     })
   })
 
