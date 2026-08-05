@@ -293,7 +293,7 @@ command comes first).
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, `--bind-nodeop-ports-bios-http`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults) |
 | `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file: bootstrap the depot against already-deployed REMOTE ETH+SOL outposts (skips the local anvil/validator + outpost deploys) |
-| `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink log levels |
+| `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--logging-file-format` | | `jsonl` | log file format: `text` or `jsonl` |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output location |
 

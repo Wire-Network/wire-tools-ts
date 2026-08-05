@@ -372,6 +372,57 @@ export namespace BindConfigProvider {
   }
 
   /**
+   * Every claimed port QUALIFIED BY THE HOST that binds it, as `host:port`.
+   *
+   * Uniqueness is a per-HOST property, never a global one, and conflating the
+   * two makes a valid multi-host deployment unrepresentable. On a local cluster
+   * every daemon shares one machine, so {@link allPorts} being globally distinct
+   * happens to be the same statement. On an EXTERNAL cluster it is not: each
+   * nodeop runs on its own host and every one of them correctly binds the
+   * standard `8888`/`9876`.
+   *
+   * A 43-identity external bind config (21 producers on `10.60.1.x`, 21 batch
+   * operators on `10.60.2.x`, 1 underwriter on `10.60.3.x`) is exactly that
+   * shape, and a global-uniqueness check rejects it — which is what failed
+   * `create-external-config` on 2026-08-04 after the bootstrap itself passed.
+   *
+   * Per-node ports are scoped by the node's `advertiseAddress` (where it is
+   * REACHED); the singleton daemons by their own bind address.
+   *
+   * @param config - The resolved binding.
+   * @returns One `host:port` key per claimed port.
+   */
+  export function allPortBindings(config: BindConfig): string[] {
+    const np = config.nodeop.ports,
+      dynamicRange = config.solana.ports.dynamicRange,
+      at = (host: string, port: number) => `${host}:${port}`,
+      // A node's ports belong to the host it advertises; when a bind config
+      // omits it (single-host local clusters), the shared nodeop bind address
+      // is the honest answer and global uniqueness is restored for free.
+      nodeAt = (node: BindConfigNodeopPorts) =>
+        [node.http, node.p2p].map(port =>
+          at(node.advertiseAddress ?? config.nodeop.address, port)
+        ),
+      flat = (nodes: BindConfigNodeopPorts[]) => nodes.flatMap(nodeAt)
+    return [
+      at(config.kiod.address, config.kiod.port),
+      ...nodeAt(np.bios),
+      ...flat(np.producers),
+      ...flat(np.batch),
+      ...flat(np.underwriters),
+      at(config.anvil.address, config.anvil.port),
+      ...[
+        config.solana.ports.http,
+        config.solana.ports.http + SolanaWsPortOffset,
+        config.solana.ports.faucet,
+        config.solana.ports.gossip,
+        ...range(dynamicRange.first, dynamicRange.last + 1)
+      ].map(port => at(config.solana.address, port)),
+      at(config.debuggingServer.address, config.debuggingServer.port)
+    ]
+  }
+
+  /**
    * True iff every port of an already-resolved binding is currently free.
    *
    * @param config - The resolved binding to re-probe.

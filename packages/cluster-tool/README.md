@@ -26,7 +26,7 @@ on it. `wire-cluster-tool` owns the full lifecycle:
 |---|---|
 | `create` | Resolve config, build the directory layout, generate keys + genesis + node configs, bootstrap every chain (WIRE system contracts, OPP contracts on anvil, `opp-outpost` on solana), persist `cluster-config.json` / `cluster-state.json` / `cluster-keys.json`, then exit. |
 | `run` | Rehydrate keys from `cluster-keys.json`, RE-DERIVE topology from the config (never a stored launch command), relaunch `kiod` + every node, gate on liveness, block until Ctrl+C. |
-| `destroy` | Stop every process, best-effort clean up published SSM keys, remove the cluster directory. |
+| `destroy` | Stop every process and remove the cluster directory. **Published SSM keys are NEVER deleted** — they are logged and retained (see below). |
 | `package` | Archive each node's full config tree (+ `genesis.json`) into `<cluster>/packages/<node>.<ext>` — the multihost hand-off artifact (post-`create`). |
 | `create-external-config` | Clone a created, stopped local cluster into a deployable external directory with a different `BindConfig` merged in + emit its self-described `external-cluster-config.json`. |
 
@@ -98,14 +98,24 @@ the path flags.
 | `--aws-cluster-node-config <file>` | | — | an `AWSClusterNodeConfig` JSON file (AWS account + every region secrets replicate to, plus its `ssm`) |
 | `--signature-provider-type` | | `KEY` | `KEY` (inline) / `SSM` / `KIOD` |
 | `--signature-provider-ssm '<json>'\|<file>` | | — | SSM secret-id pattern (required for `SSM`); beats the options file's `signatureProvider.ssm`, which beats `--aws-cluster-node-config`'s own `ssm` |
-| `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink log levels |
+| `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output |
 
 ### `run` / `destroy`
 
 Both take only `--cluster-path` (`-d`). `run` blocks until Ctrl+C (clean
-shutdown); `destroy` stops every daemon, deletes published SSM keys under the
-`SSM` provider (best-effort), and removes the directory.
+shutdown); `destroy` stops every daemon and removes the directory.
+
+**`destroy` NEVER deletes a published SSM key — full stop.** Under the `SSM`
+provider it LOGS every parameter id it is deliberately retaining and leaves the
+SecureStrings in place. They are the account's durable key identity: the next
+`create` ADOPTS an existing parameter instead of reminting it, which is what
+makes re-creating a cluster in the same account idempotent. A parameter with no
+live cluster is therefore not an orphan. Removing one is an explicit,
+out-of-band act — delete it yourself, in EVERY region it was replicated to (a
+partial delete resurrects the old key via cross-region adoption). The CI role is
+not granted `ssm:DeleteParameter` at all, so the workflow has no code path that
+could remove a signing key even by accident.
 
 ### `package`
 
@@ -327,7 +337,7 @@ repo `CLAUDE.md` / `STYLE.md`).
 - **`--signature-provider-type SSM` fails at create** — publishing writes to AWS
   SSM Parameter Store and needs valid AWS credentials in the environment; the
   logged error carries the parameter id + region (never the secret value).
-  `destroy` deletes the published keys best-effort.
+  `destroy` does NOT delete the published keys — it logs and retains them.
 - **`--bind-config` rejected** — the file failed validation: a complete
   `BindConfig` must match the cluster topology (one entry per node/role); a
   remote `anvil`/`solana` address requires `--external-outpost-config`. The error
