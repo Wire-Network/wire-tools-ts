@@ -472,7 +472,7 @@ export class SolanaOutpostBootstrapper {
             reserve: reservePda,
             reserveVault: reserveVaultPda,
             mint,
-            authorityAta: deployerAta,
+            adminAta: deployerAta,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: anchor.web3.SystemProgram.programId,
             rent: anchor.web3.SYSVAR_RENT_PUBKEY
