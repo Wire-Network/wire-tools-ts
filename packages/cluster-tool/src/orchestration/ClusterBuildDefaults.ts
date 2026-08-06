@@ -541,6 +541,15 @@ export namespace ClusterBuildDefaults {
         {},
         Constants.EMISSION_CONFIG_DEFAULTS
       ),
+      // Anchors node-owner vesting. Without it every `claimnodedis` aborts with
+      // "emission state not initialized", so node owners register successfully but can
+      // never claim. Reads the emission config, so it must follow `set-emit-config`.
+      Steps.contracts.sysio.system.planSetinittime<C>(
+        Actor.Sysio,
+        "set-node-rewards-start",
+        "anchor node-owner vesting at chain head time",
+        {}
+      ),
       Steps.contracts.sysio.system.planInitt5<C>(
         Actor.Sysio,
         "init-t5",
