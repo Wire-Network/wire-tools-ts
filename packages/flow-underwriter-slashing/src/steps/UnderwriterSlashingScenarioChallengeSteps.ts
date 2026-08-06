@@ -131,7 +131,9 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
   /**
    * Poll until the challenge reaches `verdict`. The tally, slash, sweep (or
    * hold-clear) and bond payout all ride ONE `chkuwchal` transaction, so once
-   * the verdict lands every consequence asserted afterwards is final.
+   * the verdict lands every consequence asserted afterwards is final. The
+   * verdict cell rides the ABI `enums` extension, so the RPC serializes it as
+   * the NAME spelling — match via {@link matchesProtoEnum}, never `Number()`.
    */
   export async function awaitVerdict(
     ctx: SwapScenarioContext,
@@ -142,7 +144,10 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
       `challenge ${chalId} reaches verdict ${SysioChalgUwchalVerdict[verdict]}`,
       async () => {
         const challenge = await readUwchal(ctx, chalId)
-        return challenge != null && Number(challenge.verdict) === verdict
+        return (
+          challenge != null &&
+          matchesProtoEnum(challenge.verdict, SysioChalgUwchalVerdict, verdict)
+        )
       },
       Constants.ResolveDeadlineMs,
       Constants.LongPollIntervalMs
