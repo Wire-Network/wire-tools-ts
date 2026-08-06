@@ -296,9 +296,14 @@ export namespace Constants {
 
   /** Default emissions config used by bootstrap (mirrors the realistic test fixture). */
   export const EMISSION_CONFIG_DEFAULTS: EmissionConfig = {
-    t1_allocation: 7_500_000_000_000_000,
-    t2_allocation: 15_000_000_000_000_000,
-    t3_allocation: 30_000_000_000_000_000,
+    // Node-owner allocations are PER OWNER, not per tier. `addnodeowner` copies the
+    // tier's value verbatim into that one owner's `nodedist` row, so a tier's total
+    // exposure is this value times the tier cap (21 / 84 / 1000 — the `TN_MAX_NODE_OWNERS`
+    // constants in wire-sysio `emissions.hpp`). At these values the three tiers commit
+    // 341,500,000 WIRE against the 1,000,000,000 WIRE supply issued at bootstrap.
+    t1_allocation: 7_500_000_000_000_000, // 7,500,000 WIRE x 1e9
+    t2_allocation: 1_000_000_000_000_000, // 1,000,000 WIRE x 1e9
+    t3_allocation: 100_000_000_000_000, // 100,000 WIRE x 1e9
     t1_duration: 12 * 30 * 24 * 60 * 60,
     t2_duration: 24 * 30 * 24 * 60 * 60,
     t3_duration: 36 * 30 * 24 * 60 * 60,

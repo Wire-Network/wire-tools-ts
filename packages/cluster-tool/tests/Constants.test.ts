@@ -58,6 +58,37 @@ describe("Constants", () => {
       expect(c.producer_bps + c.batch_op_bps).toBe(10_000)
     })
   })
+
+  describe("EMISSION_CONFIG_DEFAULTS", () => {
+    // Tier caps are TN_MAX_NODE_OWNERS in wire-sysio
+    // contracts/sysio.system/include/sysio.system/emissions.hpp.
+    const T1Cap = 21
+    const T2Cap = 84
+    const T3Cap = 1000
+    /** 1,000,000,000 WIRE x 1e9 subunits — the supply issued to `sysio` at bootstrap. */
+    const WireSupplySubunits = 1_000_000_000_000_000_000
+
+    it("sets tier allocations PER OWNER, not per tier", () => {
+      expect(Constants.EMISSION_CONFIG_DEFAULTS.t1_allocation).toBe(7_500_000_000_000_000)
+      expect(Constants.EMISSION_CONFIG_DEFAULTS.t2_allocation).toBe(1_000_000_000_000_000)
+      expect(Constants.EMISSION_CONFIG_DEFAULTS.t3_allocation).toBe(100_000_000_000_000)
+    })
+
+    it("commits 341,500,000 WIRE at tier caps, inside the WIRE supply", () => {
+      const { t1_allocation, t2_allocation, t3_allocation } =
+        Constants.EMISSION_CONFIG_DEFAULTS
+      const committed =
+        t1_allocation * T1Cap + t2_allocation * T2Cap + t3_allocation * T3Cap
+      expect(committed).toBe(341_500_000_000_000_000)
+      expect(committed).toBeLessThan(WireSupplySubunits)
+    })
+
+    it("vests over 12 / 24 / 36 months on a 30-day month", () => {
+      expect(Constants.EMISSION_CONFIG_DEFAULTS.t1_duration).toBe(31_104_000)
+      expect(Constants.EMISSION_CONFIG_DEFAULTS.t2_duration).toBe(62_208_000)
+      expect(Constants.EMISSION_CONFIG_DEFAULTS.t3_duration).toBe(93_312_000)
+    })
+  })
 })
 
 describe("ProtocolTiming", () => {
