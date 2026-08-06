@@ -143,10 +143,20 @@ export class SolanaValidatorProcess extends ManagedProcess {
   }
 
   get args(): string[] {
-    // `--quiet` suppresses program `msg!()` output; disable it (verbose) so
-    // on-chain log lines land in the process log when debugging.
+    // `--quiet` suppresses program `msg!()` output, which is the ONLY record of
+    // why an OPP handler took its log-and-skip path. Verbose is therefore the
+    // DEFAULT, per the manifest rule `no-quiet-silent-on-dev-test-tools.md`
+    // ("never pass --quiet to a dev/test daemon; route volume to a log FILE
+    // instead" — which is exactly where this goes). Opt INTO silence with
+    // `WIRE_SOLANA_VALIDATOR_QUIET=1`.
+    //
+    // This was inverted (quiet by default, verbose opt-in) and it cost a real
+    // diagnosis: e2e run 31095616576's `flow-batch-operator-termination`
+    // failed with a SOL WITHDRAW_REMIT that never settled, and the 1.3GB
+    // cluster log contained ZERO `opp_outpost:` lines — the skip reason had
+    // been discarded at the source.
     const verbose =
-      process.env[SolanaValidatorProcess.VerboseEnvironmentVariable] === "1"
+      process.env[SolanaValidatorProcess.QuietEnvironmentVariable] !== "1"
     return [
       "--rpc-port",
       String(this.config.rpcPort),
@@ -274,8 +284,14 @@ export namespace SolanaValidatorProcess {
    * pays this ceiling.
    */
   export const StartupTimeoutMs = 480_000
-  /** Env var that, when `"1"`, drops `--quiet` so program logs are captured. */
-  export const VerboseEnvironmentVariable = "WIRE_SOLANA_VALIDATOR_VERBOSE"
+  /**
+   * Env var that, when `"1"`, ADDS `--quiet` and so discards program `msg!()`
+   * output. Off by default — program logs are the only record of why an OPP
+   * handler log-and-skipped, and silencing a dev/test daemon is what
+   * `no-quiet-silent-on-dev-test-tools.md` forbids. Set it only when validator
+   * log volume is genuinely the problem and you do not need on-chain traces.
+   */
+  export const QuietEnvironmentVariable = "WIRE_SOLANA_VALIDATOR_QUIET"
   /**
    * Lines of `<ledger>/validator.log` surfaced in a startup-failure error —
    * agave's panic/bind-error detail lands there, not on the captured stdio.

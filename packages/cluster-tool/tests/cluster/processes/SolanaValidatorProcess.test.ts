@@ -18,24 +18,23 @@ describe("SolanaValidatorProcess", () => {
   })
   afterEach(async () => {
     await manager.stopAll()
-    delete process.env[SolanaValidatorProcess.VerboseEnvironmentVariable]
+    delete process.env[SolanaValidatorProcess.QuietEnvironmentVariable]
   })
   afterAll(() => {
     Fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  it("builds the validator argv with --quiet by default + loopback URLs", async () => {
+  it("builds the validator argv VERBOSE by default (no --quiet) + loopback URLs", async () => {
     const validator = await SolanaValidatorProcess.create(manager, {
       binary: "/bin/true"
     })
     expect(validator.args).toEqual(
-      expect.arrayContaining([
-        "--rpc-port",
-        "--faucet-port",
-        "--gossip-port",
-        "--quiet"
-      ])
+      expect.arrayContaining(["--rpc-port", "--faucet-port", "--gossip-port"])
     )
+    // Program `msg!()` output is the only record of why an OPP handler
+    // log-and-skipped — never silenced by default
+    // (`no-quiet-silent-on-dev-test-tools.md`).
+    expect(validator.args).not.toContain("--quiet")
     expect(validator.rpcUrl).toContain(Localhost)
     expect(validator.wsUrl).toMatch(/^ws:\/\//)
   })
@@ -106,8 +105,16 @@ describe("SolanaValidatorProcess", () => {
     expect(validator.args).not.toContain("--bpf-program")
   })
 
-  it("drops --quiet when the verbose env var is set", async () => {
-    process.env[SolanaValidatorProcess.VerboseEnvironmentVariable] = "1"
+  it("adds --quiet only when the opt-in quiet env var is set", async () => {
+    process.env[SolanaValidatorProcess.QuietEnvironmentVariable] = "1"
+    const validator = await SolanaValidatorProcess.create(manager, {
+      binary: "/bin/true"
+    })
+    expect(validator.args).toContain("--quiet")
+  })
+
+  it("ignores a non-'1' value of the quiet env var (stays verbose)", async () => {
+    process.env[SolanaValidatorProcess.QuietEnvironmentVariable] = "true"
     const validator = await SolanaValidatorProcess.create(manager, {
       binary: "/bin/true"
     })
