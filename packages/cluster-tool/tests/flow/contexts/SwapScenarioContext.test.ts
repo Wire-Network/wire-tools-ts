@@ -90,6 +90,7 @@ function lockRow(
     amount: 0,
     created_at_ms: 0,
     expires_at_ms: 0,
+    challenge_id: 0,
     ...overrides
   }
 }
