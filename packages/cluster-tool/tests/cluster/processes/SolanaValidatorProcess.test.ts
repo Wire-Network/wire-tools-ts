@@ -121,6 +121,32 @@ describe("SolanaValidatorProcess", () => {
     expect(validator.args).not.toContain("--quiet")
   })
 
+  // Program `msg!()` output is gated by RUST_LOG, NOT by --quiet: agave's
+  // default filter omits `stable_log` entirely, which is why dropping --quiet
+  // alone still produced a validator.log with zero `Program log:` lines.
+  it("enables agave's program-log target via RUST_LOG by default", async () => {
+    const validator = await SolanaValidatorProcess.create(manager, {
+      binary: "/bin/true"
+    })
+    expect(validator.env.RUST_LOG).toBe(
+      SolanaValidatorProcess.ProgramLogRustLog
+    )
+  })
+
+  it("defers to an explicit RUST_LOG from the environment", async () => {
+    const previous = process.env.RUST_LOG
+    process.env.RUST_LOG = "warn"
+    try {
+      const validator = await SolanaValidatorProcess.create(manager, {
+        binary: "/bin/true"
+      })
+      expect(validator.env.RUST_LOG).toBeUndefined()
+    } finally {
+      if (previous === undefined) delete process.env.RUST_LOG
+      else process.env.RUST_LOG = previous
+    }
+  })
+
   it("passes an explicit --dynamic-port-range window verbatim", async () => {
     const validator = await SolanaValidatorProcess.create(manager, {
       binary: "/bin/true",

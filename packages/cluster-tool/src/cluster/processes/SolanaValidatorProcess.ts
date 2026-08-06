@@ -142,13 +142,35 @@ export class SolanaValidatorProcess extends ManagedProcess {
     return this.config.binary
   }
 
+  /**
+   * Enable agave's program-log target so on-chain `msg!()` output reaches
+   * `<ledger>/validator.log`.
+   *
+   * `--quiet` does NOT control this — it only trims console progress output.
+   * Program logs are emitted by `solana_runtime::message_processor::stable_log`
+   * at DEBUG, and agave's default filter omits that target entirely, so the
+   * flag alone yields a 108MB validator.log containing zero `Program log:`
+   * lines (verified on e2e run 31103866070).
+   *
+   * This matters because an OPP handler's log-and-skip is a SUCCESSFUL
+   * transaction: nothing surfaces it as an error, and its `msg!()` reason is
+   * the only record of which precondition failed. Scoped to the one target so
+   * the log does not balloon with unrelated debug traffic, and only when the
+   * caller has not already pinned `RUST_LOG`.
+   */
+  get env(): Record<string, string> {
+    return process.env.RUST_LOG
+      ? {}
+      : { RUST_LOG: SolanaValidatorProcess.ProgramLogRustLog }
+  }
+
   get args(): string[] {
-    // `--quiet` suppresses program `msg!()` output, which is the ONLY record of
-    // why an OPP handler took its log-and-skip path. Verbose is therefore the
-    // DEFAULT, per the manifest rule `no-quiet-silent-on-dev-test-tools.md`
-    // ("never pass --quiet to a dev/test daemon; route volume to a log FILE
-    // instead" — which is exactly where this goes). Opt INTO silence with
-    // `WIRE_SOLANA_VALIDATOR_QUIET=1`.
+    // Never silence a dev/test daemon by default, per the manifest rule
+    // `no-quiet-silent-on-dev-test-tools.md` ("if output volume is a concern,
+    // route it to a log FILE — never suppress it"), which is exactly where
+    // agave's output goes. Opt INTO silence with
+    // `WIRE_SOLANA_VALIDATOR_QUIET=1`. NOTE: this flag does not gate program
+    // logs — see {@link env}.
     //
     // This was inverted (quiet by default, verbose opt-in) and it cost a real
     // diagnosis: e2e run 31095616576's `flow-batch-operator-termination`
@@ -285,13 +307,21 @@ export namespace SolanaValidatorProcess {
    */
   export const StartupTimeoutMs = 480_000
   /**
-   * Env var that, when `"1"`, ADDS `--quiet` and so discards program `msg!()`
-   * output. Off by default — program logs are the only record of why an OPP
-   * handler log-and-skipped, and silencing a dev/test daemon is what
-   * `no-quiet-silent-on-dev-test-tools.md` forbids. Set it only when validator
-   * log volume is genuinely the problem and you do not need on-chain traces.
+   * Env var that, when `"1"`, ADDS `--quiet`. Off by default — silencing a
+   * dev/test daemon is what `no-quiet-silent-on-dev-test-tools.md` forbids.
+   * Note this trims console progress output only; program logs are gated by
+   * {@link ProgramLogRustLog}, not by this flag.
    */
   export const QuietEnvironmentVariable = "WIRE_SOLANA_VALIDATOR_QUIET"
+  /**
+   * `RUST_LOG` filter enabling agave's program-log target, so on-chain
+   * `msg!()` lines land in `<ledger>/validator.log`. Narrowly scoped: widening
+   * it (e.g. bare `debug`) buries the run in unrelated validator traffic — the
+   * log is already ~100MB at default verbosity. An explicit `RUST_LOG` in the
+   * environment wins over this default.
+   */
+  export const ProgramLogRustLog =
+    "solana_runtime::message_processor::stable_log=debug"
   /**
    * Lines of `<ledger>/validator.log` surfaced in a startup-failure error —
    * agave's panic/bind-error detail lands there, not on the captured stdio.

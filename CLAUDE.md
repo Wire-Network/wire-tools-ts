@@ -270,7 +270,8 @@ link automatically on `pnpm install` when the siblings exist.
 | `WIRE_FLOW_TIMEOUT_SCALE` | EXPLICIT operator override of flow timing (default 1, clamped [1,5]); no code derives it |
 | `WIRE_ETH_DEPLOYMENTS_PATH` | Per-cluster hardhat deployments dir (parallel-run isolation) |
 | `WIRE_BIND_REGISTRY_PATH` | Bind-registry dir override (tests sandbox it) |
-| `WIRE_SOLANA_VALIDATOR_QUIET` | `"1"` ADDS `--quiet`, discarding program `msg!()` output. Off by default — program logs are the only record of why an OPP handler log-and-skipped (`no-quiet-silent-on-dev-test-tools.md`) |
+| `WIRE_SOLANA_VALIDATOR_QUIET` | `"1"` ADDS `--quiet` (console progress only). Off by default per `no-quiet-silent-on-dev-test-tools.md` |
+| `RUST_LOG` | Passed through to `solana-test-validator`; when unset the harness enables agave's program-log target so on-chain `msg!()` reaches `<ledger>/validator.log` |
 | `LOG_LEVEL` | Logging verbosity (default `info`) |
 
 ## How future sessions should design and produce code here
