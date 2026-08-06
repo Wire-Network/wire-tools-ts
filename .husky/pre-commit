@@ -1,1 +1,20 @@
+# Run the gate under the mise-pinned toolchain when mise is available.
+#
+# The pinned Node (wire-platform/mise.toml) is REQUIRED, not preferred: jest's
+# `require(ESM)` needs the synchronous vm module APIs added in 24.9 to load
+# ESM-only deps (`yargs`) from this repo's CommonJS test bundles. On an older
+# Node the whole suite dies with "Must use import to load ES Module".
+#
+# Going through `mise exec` rather than trusting the ambient PATH is what makes
+# that pin actually bind here: a shell activated BEFORE the pin changed keeps
+# the old version's install dir ahead of mise's shims in PATH, so a stale
+# session would otherwise run the gate on the wrong Node and fail with an error
+# that looks nothing like a toolchain problem.
+#
+# Falls through to a bare run when mise is absent, so the hook never becomes a
+# hard dependency on it.
+if command -v mise >/dev/null 2>&1; then
+  exec mise exec -- sh -c 'pnpm lint && pnpm test'
+fi
+
 pnpm lint && pnpm test
