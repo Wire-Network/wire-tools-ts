@@ -195,18 +195,18 @@ wire-cluster-tool create-external-config \              # clone → deployable e
   --external-bind-config <bind.json>
 pnpm --filter @wireio/cluster-tool exec ./bin/wire-cluster-tool readiness \
   --feature swap \
-  --outpost-deployment-profile-file <profile.json> # read-only remote preflight
+  --wire-chain-id <64-character-wire-chain-id> # read-only remote preflight
 ```
 
 `readiness` composes `Steps.readiness` through `ReadinessPhaseGroups` on the
 same `ClusterBuild`/Report engine. Its `collect` failure mode is explicit and
 local to diagnostic suites; existing bootstrap and FlowScenario plans remain
-fail-fast. It verifies immutable outpost deployment identity through
-`@wireio/sdk-outpost`; mutable RPC catalog data remains separate. Swap readiness
-keeps every advertised public reserve visible, validates exact external custody,
-and computes collateral availability after locks and pending withdrawals. The
-manual command is the only entrypoint for now. Future GHA/E2E
-integration must compose these PhaseGroups rather than duplicate checks. See
+fail-fast. A Wire chain id resolves the network group's RPCs through the mutable
+endpoint catalog. An optional deployment profile enables exact outpost identity
+and custody verification through `@wireio/sdk-outpost`. Swap readiness keeps
+every advertised public reserve visible and computes collateral availability
+after locks and pending withdrawals. The manual command is the only entrypoint.
+It is not integrated with flows, bootstrap, the Hub, or CI. See
 `docs/cluster-readiness.md`.
 
 `create` also carries `--signature-provider-type <KEY|SSM|KIOD>` (default KEY)

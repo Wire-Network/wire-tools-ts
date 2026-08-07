@@ -25,8 +25,8 @@ export interface ReadinessArgv {
   feature: ClusterReadinessFeature
   /** Expected Wire chain identity used for endpoint discovery. */
   wireChainId?: string
-  /** Immutable outpost deployment-profile JSON file. */
-  outpostDeploymentProfileFile: string
+  /** Optional immutable profile for strict deployment and custody verification. */
+  outpostDeploymentProfileFile?: string
   /** Explicit Wire RPC override. */
   wireRpc?: string
   /** Explicit Ethereum JSON-RPC override. */
@@ -75,7 +75,7 @@ export function createReadinessCommand() {
         .option("outpost-deployment-profile-file", {
           type: "string",
           describe:
-            "Immutable outpost deployment-profile JSON used for exact verification"
+            "Optional immutable profile for exact deployment and custody verification"
         })
         .option("wire-rpc", {
           type: "string",
@@ -126,8 +126,8 @@ export function createReadinessCommand() {
           describe: "Archive destination; defaults to ./readiness-reports"
         })
         .check(args => {
-          if (!args.outpostDeploymentProfileFile)
-            throw new Error("Provide --outpost-deployment-profile-file")
+          if (!args.wireChainId && !args.wireRpc)
+            throw new Error("Provide --wire-chain-id or --wire-rpc")
           return true
         }),
     handler: async (args: ReadinessArgv) => {
@@ -146,13 +146,16 @@ export function createReadinessCommand() {
 export async function runReadiness(args: ReadinessArgv) {
   const startedAt = new Date(),
     basename = `readiness-${startedAt.getTime()}`,
-    outpostDeploymentProfile = resolveReadinessDeploymentProfile(
-      args.outpostDeploymentProfileFile
-    ),
     config = await resolveReadinessConfig({
       feature: args.feature,
       wireChainId: args.wireChainId,
-      outpostDeploymentProfile,
+      ...(args.outpostDeploymentProfileFile
+        ? {
+            outpostDeploymentProfile: resolveReadinessDeploymentProfile(
+              args.outpostDeploymentProfileFile
+            )
+          }
+        : {}),
       wireRpc: args.wireRpc,
       ethereumRpc: args.ethereumRpc,
       solanaRpc: args.solanaRpc,

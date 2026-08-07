@@ -145,17 +145,17 @@ Report engine as the flow harness:
 ```bash
 corepack pnpm --filter @wireio/cluster-tool exec ./bin/wire-cluster-tool readiness \
   --feature swap \
-  --outpost-deployment-profile-file <outpost-deployment-profile.json>
+  --wire-chain-id <64-character-wire-chain-id>
 ```
 
-The profile supplies immutable deployment identity; mutable endpoint discovery
-remains separate. Use `--wire-rpc`, `--ethereum-rpc`, and `--solana-rpc`
-immediately after a sandbox respin when catalog records are not yet published.
-Add `--export` for a gitignored tar.gz containing the JSON result and native
-Report HTML. The swap preflight keeps every advertised public reserve in the
-route matrix, fails zero-depth rows explicitly, checks live Ethereum/Solana
-custody alignment, and subtracts locks plus pending withdrawals from available
-underwriter collateral. See
+The Network API catalog supplies the network group's RPCs. Use explicit RPC
+overrides immediately after a sandbox respin when catalog records are not yet
+published. Add `--outpost-deployment-profile-file <profile.json>` only for
+strict deployment-identity and external-custody checks. Add `--export` for a
+gitignored tar.gz containing the JSON result and native Report HTML. The swap
+preflight keeps every advertised public reserve in the route matrix, fails
+zero-depth rows explicitly, and subtracts locks plus pending withdrawals from
+available underwriter collateral. See
 [`docs/cluster-readiness.md`](docs/cluster-readiness.md) for the complete check
 surface, verdict semantics, and transactional proof boundary.
 
