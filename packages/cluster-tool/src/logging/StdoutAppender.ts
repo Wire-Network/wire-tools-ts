@@ -29,4 +29,9 @@ export namespace StdoutAppender {
    * channel; changing this string re-routes that channel.
    */
   export const Category = "stdout"
+
+  /** Whether raw stdout is an ANSI-capable terminal with color enabled. */
+  export function supportsColor(): boolean {
+    return Boolean(process.stdout.isTTY && !process.env.NO_COLOR)
+  }
 }

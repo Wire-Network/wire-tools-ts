@@ -136,6 +136,29 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 
 Flow packages depend on the harness via `workspace:*`.
 
+## Checking a deployed cluster
+
+The existing `wire-cluster-tool` binary includes a manual, read-only readiness
+command for remote network groups. It uses the same Steps, PhaseGroups, and
+Report engine as the flow harness:
+
+```bash
+corepack pnpm --filter @wireio/cluster-tool exec ./bin/wire-cluster-tool readiness \
+  --feature swap \
+  --wire-chain-id <64-character-wire-chain-id>
+```
+
+The Network API catalog supplies the network group's RPCs. Use explicit RPC
+overrides immediately after a sandbox respin when catalog records are not yet
+published. Add `--outpost-deployment-profile-file <profile.json>` only for
+strict deployment-identity and external-custody checks. Add `--export` for a
+gitignored tar.gz containing the JSON result and native Report HTML. The swap
+preflight keeps every advertised public reserve in the route matrix, fails
+zero-depth rows explicitly, and subtracts locks plus pending withdrawals from
+available underwriter collateral. See
+[`docs/cluster-readiness.md`](docs/cluster-readiness.md) for the complete check
+surface, verdict semantics, and transactional proof boundary.
+
 ## Running flows
 
 Every flow needs three paths into the sibling repos, supplied as env vars (or as

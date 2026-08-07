@@ -7,8 +7,11 @@ import { ExternalClusterConfigSteps } from "./ExternalClusterConfigSteps.js"
 import { ExternalOutpostSteps } from "./ExternalOutpostSteps.js"
 import { KeySteps } from "./KeySteps.js"
 import { OperatorSteps } from "./OperatorSteps.js"
+import { OutpostDeploymentReadinessSteps } from "./OutpostDeploymentReadinessSteps.js"
 import { ProtocolSteps } from "./ProtocolSteps.js"
 import { RegistrySteps } from "./RegistrySteps.js"
+import { ClusterReadinessSteps } from "./ClusterReadinessSteps.js"
+import { SwapReadinessSteps } from "./SwapReadinessSteps.js"
 import { EthereumOutpostSteps } from "../ethereum/EthereumOutpostSteps.js"
 import { SolanaOutpostSteps } from "../solana/SolanaOutpostSteps.js"
 import { SysioContractSteps } from "./contracts/sysio/index.js"
@@ -24,6 +27,16 @@ import { ProcessSteps } from "./processes/index.js"
  * registry seeding, outpost deploys) that orchestrate several calls.
  */
 export namespace Steps {
+  /** Read-only readiness checks shared by manual runs and FlowScenarios. */
+  export namespace readiness {
+    /** Network-group and protocol-baseline checks. */
+    export import cluster = ClusterReadinessSteps
+    /** Exact deployed outpost identity checks. */
+    export import outpostDeployment = OutpostDeploymentReadinessSteps
+    /** Public-swap infrastructure checks. */
+    export import swap = SwapReadinessSteps
+  }
+
   /** Step-layer mirror of the `sysio.*` contracts: `Steps.contracts.sysio.<contract>.<action>`. */
   export namespace contracts {
     export import sysio = SysioContractSteps

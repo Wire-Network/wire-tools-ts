@@ -1,6 +1,6 @@
 import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { Keypair } from "@solana/web3.js"
-import { EventEmitter } from "eventemitter3"
+import type { EventEmitter } from "eventemitter3"
 import { asOption } from "@3fv/prelude-ts"
 import { EthereumClient } from "../clients/ethereum/EthereumClient.js"
 import { SolanaClient } from "../clients/solana/SolanaClient.js"
@@ -10,7 +10,7 @@ import { ProcessManager } from "../cluster/processes/ProcessManager.js"
 
 import type { Logger } from "../logging/Logger.js"
 import { toDialAddress, toURL } from "../utils/netUtils.js"
-import { OutputStore } from "./OutputStore.js"
+import { OrchestrationContext } from "./OrchestrationContext.js"
 import {
   ClusterKeyStore,
   ClusterKeyStoreKey
@@ -28,19 +28,13 @@ import {
  */
 export class ClusterBuildContext<
   Events extends EventEmitter.ValidEventTypes = string
-> extends EventEmitter<Events> {
-  /** Typed cross-step value store. */
-  readonly outputs = new OutputStore()
-
+> extends OrchestrationContext<ClusterConfig, Events> {
   private wireClient: WireClient | null = null
   private ethereumClient: EthereumClient | null = null
   private solanaClient: SolanaClient | null = null
 
-  constructor(
-    readonly config: ClusterConfig,
-    readonly log: Logger
-  ) {
-    super()
+  constructor(config: ClusterConfig, log: Logger) {
+    super(config, log)
   }
 
   /** The WIRE client (clio + RPC), bound to the cluster's nodeop/kiod. */
