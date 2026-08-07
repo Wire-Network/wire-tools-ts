@@ -76,15 +76,23 @@ function swapquote(books: Books, sourceAmount: bigint): bigint {
  *
  * 1. **ChallengeRejected (commitment B).** The challenger files + escrows the
  *    bond; all three Tier-1 voters ballot REJECT_FORFEIT; `chkuwchal` resolves
- *    REJECTED_FORFEIT — the bond lands on the wrongly-challenged underwriter,
- *    the lock holds clear, the operator stays ACTIVE, and the collateral is
- *    untouched.
+ *    REJECTED_FORFEIT — the bond is CREDITED to the wrongly-challenged
+ *    underwriter, the lock holds clear, the operator stays ACTIVE, and the
+ *    collateral is untouched. The underwriter then pulls the forfeit via
+ *    `claimbond`.
  * 2. **ChallengeUpheld (commitment A).** Same filing; three UPHOLD ballots;
  *    `chkuwchal` resolves UPHELD — the underwriter flips SLASHED, the locks
  *    sweep through `releaselock`'s deferred-slash branch (locked collateral
- *    debited, outbound SLASH attestations queued), the uwreq completes, the
- *    bond returns to the challenger, and `sysio.chalg` ends with zero WIRE
- *    custody.
+ *    debited, outbound SLASH attestations queued), the uwreq completes, and the
+ *    bond is credited back to the challenger, who pulls it via `claimbond`.
+ *    Only then does `sysio.chalg` reach zero WIRE custody.
+ *
+ * Bonds are CREDITED at resolution and moved only by `claimbond`, so each
+ * verdict is asserted twice: once that resolution moved no WIRE (the credit
+ * exists, balances are unchanged), and once that the pull delivered it. That
+ * split is the point — `chkuwchal` can run inline under the epoch tick, where
+ * `sysio.token::transfer`'s `require_recipient(to)` would run the recipient's
+ * own code and let it abort epoch advancement.
  */
 export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContext> {
   readonly name = "flow-underwriter-slashing"
@@ -326,7 +334,7 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
       verifyStep(
         Actor.Sysio,
         "challenge-b-rejected",
-        "verdict REJECTED_FORFEIT: bond to the underwriter; holds clear; operator ACTIVE; uwreq still CONFIRMED",
+        "verdict REJECTED_FORFEIT: bond CREDITED to the underwriter (no transfer); holds clear; operator ACTIVE; uwreq still CONFIRMED",
         async (ctx: SwapScenarioContext) => {
           const chalId = ctx.outputs.assert(Outputs.challengeBId)
           await ChallengeSteps.awaitVerdict(
@@ -340,12 +348,23 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
             underwriterBefore = ctx.outputs.assert(
               Outputs.underwriterBalanceBeforeB
             )
-          // Forfeiture is explicit council judgment — the bond lands on the
-          // wrongly-challenged underwriter, to the unit.
+          // Forfeiture is explicit council judgment — the bond is credited to
+          // the wrongly-challenged underwriter, to the unit. Resolution moves
+          // no WIRE: the crank can run under the epoch tick, where a transfer
+          // would execute the recipient's notification handler and let it
+          // abort epoch advancement. Custody stays with chalg until the pull.
+          Assert.strictEqual(
+            await ChallengeSteps.readBondCredit(
+              ctx,
+              commitment.underwriterAccount
+            ),
+            bond,
+            "a rejected-with-forfeit challenge credits the underwriter the whole bond"
+          )
           Assert.strictEqual(
             await ctx.wire.getWireBalance(commitment.underwriterAccount),
-            underwriterBefore + bond,
-            "the forfeited bond credits the wrongly-challenged underwriter exactly"
+            underwriterBefore,
+            "resolution alone must not move WIRE — the credit is claimed, not pushed"
           )
           // No fault: the operator stands, the locks persist unheld to their
           // natural expiry, the commitment stays CONFIRMED.
@@ -375,7 +394,32 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
             )
           )
           log.info(
-            `[uwchal] challenge ${chalId} REJECTED_FORFEIT — bond ${bond} to ${commitment.underwriterAccount}`
+            `[uwchal] challenge ${chalId} REJECTED_FORFEIT — bond ${bond} credited to ${commitment.underwriterAccount}`
+          )
+        },
+        resolveStepOptions
+      ),
+      ChallengeSteps.planClaimbond(
+        Actor.User,
+        "claim-forfeited-bond",
+        "the wrongly-challenged underwriter pulls its forfeited bond out of chalg custody",
+        requestStepOptions,
+        Outputs.commitmentB
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "challenge-b-forfeit-paid",
+        "the forfeited bond lands on the underwriter exactly, once claimed",
+        async (ctx: SwapScenarioContext) => {
+          const commitment = ctx.outputs.assert(Outputs.commitmentB),
+            bond = ctx.outputs.assert(Outputs.challengeBBond),
+            underwriterBefore = ctx.outputs.assert(
+              Outputs.underwriterBalanceBeforeB
+            )
+          Assert.strictEqual(
+            await ctx.wire.getWireBalance(commitment.underwriterAccount),
+            underwriterBefore + bond,
+            "the claimed forfeit lands on the wrongly-challenged underwriter exactly"
           )
         },
         resolveStepOptions
@@ -478,24 +522,56 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
             ),
             "an upheld challenge finalizes the uwreq COMPLETED"
           )
-          // Refund: an upheld challenge returns the bond — the challenger's
-          // balance is restored to its pre-filing snapshot exactly.
+          // Refund: an upheld challenge credits the bond back. As with the
+          // forfeit, resolution moves no WIRE — the challenger is still down
+          // the escrow until it pulls.
+          Assert.strictEqual(
+            await ChallengeSteps.readBondCredit(
+              ctx,
+              Constants.ChallengerAccount
+            ),
+            bond,
+            "an upheld challenge credits the whole bond back to the challenger"
+          )
+          Assert.strictEqual(
+            await ctx.wire.getWireBalance(Constants.ChallengerAccount),
+            challengerBefore - bond,
+            "resolution alone must not move WIRE — the refund is claimed, not pushed"
+          )
+          log.info(
+            `[uwchal] challenge ${chalId} UPHELD — ${commitment.underwriterAccount} SLASHED, bond ${bond} credited back`
+          )
+        },
+        resolveStepOptions
+      ),
+      ChallengeSteps.planClaimbond(
+        Actor.User,
+        "claim-refunded-bond",
+        "the challenger pulls its refunded bond out of chalg custody",
+        requestStepOptions,
+        Constants.ChallengerAccount
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "challenge-a-refund-paid",
+        "the refund restores the challenger exactly; both bonds settled, chalg custody zero",
+        async (ctx: SwapScenarioContext) => {
+          const challengerBefore = ctx.outputs.assert(
+            Outputs.challengerBalanceBeforeA
+          )
           Assert.strictEqual(
             await ctx.wire.getWireBalance(Constants.ChallengerAccount),
             challengerBefore,
-            "the upheld challenge refunds the bond — challenger made whole"
+            "the claimed refund makes the challenger whole"
           )
-          // Custody: both bonds resolved (one forfeited, one refunded) —
-          // sysio.chalg escrows nothing at rest.
+          // Custody: both bonds resolved AND claimed (one forfeited, one
+          // refunded) — sysio.chalg escrows nothing at rest.
           Assert.strictEqual(
             await ctx.wire.getWireBalance(
               SysioContractAccount[SysioContractName.chalg]
             ),
             0n,
             "sysio.chalg ends the flow with zero WIRE custody"
-          )
-          log.info(
-            `[uwchal] challenge ${chalId} UPHELD — ${commitment.underwriterAccount} SLASHED, bond ${bond} refunded`
           )
         },
         resolveStepOptions

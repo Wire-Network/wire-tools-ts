@@ -117,6 +117,26 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
     return rows.find(challenge => Number(challenge.id) === chalId)
   }
 
+  /**
+   * The WIRE `sysio.chalg` still owes `account` from resolved challenges —
+   * its `bondcredits` row, or 0n when none exists.
+   *
+   * Resolution CREDITS the bond rather than transferring it: `chkuwchal` can
+   * run inline under the epoch tick, where `sysio.token::transfer`'s
+   * `require_recipient(to)` would execute the recipient's own code and let it
+   * abort epoch advancement. The WIRE moves only in `claimbond`.
+   */
+  export async function readBondCredit(
+    ctx: SwapScenarioContext,
+    account: string
+  ): Promise<bigint> {
+    const { rows } = await ctx.wire
+      .getSysioContract(SysioContractName.chalg)
+      .tables.bondcredits.query()
+    const row = rows.find(credit => credit.account === account)
+    return row == null ? 0n : BigInt(row.amount)
+  }
+
   /** The `sysio.opreg::operators` row by ON-CHAIN account name. */
   export async function readOperatorRow(
     ctx: SwapScenarioContext,
@@ -130,8 +150,10 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
 
   /**
    * Poll until the challenge reaches `verdict`. The tally, slash, sweep (or
-   * hold-clear) and bond payout all ride ONE `chkuwchal` transaction, so once
-   * the verdict lands every consequence asserted afterwards is final. The
+   * hold-clear), row compaction and bond CREDIT all ride ONE `chkuwchal`
+   * transaction, so once the verdict lands every consequence asserted
+   * afterwards is final — except the bond's delivery, which is a separate pull
+   * ({@link planClaimbond}). The
    * verdict cell rides the ABI `enums` extension, so the RPC serializes it as
    * the NAME spelling — match via {@link matchesProtoEnum}, never `Number()`.
    */
@@ -424,5 +446,82 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
           ]
         }
       )
+  }
+
+  // ── Step: sysio.chalg::claimbond (write — the recipient's own pull) ───────
+
+  /** Input for {@link planClaimbond}. */
+  export interface ClaimbondInput extends StepInput {
+    readonly kind: "UnderwriterSlashingScenarioChallengeSteps.ClaimbondInput"
+  }
+
+  /**
+   * `sysio.chalg::claimbond` — the recipient pulls its resolved bond out of
+   * chalg custody. This is the ONLY step in the flow where a resolved bond
+   * actually moves: `chkuwchal` credits a claimable balance instead of
+   * transferring, because the tally can run inline under the epoch tick
+   * (`sysio.epoch::advance` -> `sysio.uwrit::chklocks` -> `chkuwchal`) where
+   * `sysio.token::transfer`'s `require_recipient(to)` would run the
+   * recipient's own code and hand it a lever on epoch advancement.
+   *
+   * `recipient` is either a literal account (the challenger, known when the
+   * plan is built) or the commitment whose winning underwriter is owed the
+   * forfeit (resolved from `ctx.outputs` at run time, like the challenge id).
+   */
+  export function planClaimbond(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    recipient: string | OutputKey<Outputs.ChallengedCommitment>
+  ): ClusterBuildStep<SwapScenarioContext, ClaimbondInput> {
+    return ClusterBuildStep.create<SwapScenarioContext, ClaimbondInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "UnderwriterSlashingScenarioChallengeSteps.ClaimbondInput" },
+      async (ctx, input, signal) => runClaimbond(ctx, input, signal, recipient)
+    )
+  }
+
+  /** Named runner body for {@link planClaimbond}. */
+  export async function runClaimbond(
+    ctx: SwapScenarioContext,
+    input: ClaimbondInput,
+    signal: AbortSignal,
+    recipient: string | OutputKey<Outputs.ChallengedCommitment>
+  ): Promise<void> {
+    signal.throwIfAborted()
+    // `OutputKey` is an object, so the literal-vs-key discrimination is total.
+    const account =
+      typeof recipient === "string"
+        ? recipient
+        : ctx.outputs.assert(recipient).underwriterAccount
+    const credit = await readBondCredit(ctx, account),
+      balanceBefore = await ctx.wire.getWireBalance(account)
+    Assert.ok(
+      credit > 0n,
+      `claimbond: ${account} has no claimable bond credit to pull`
+    )
+
+    await ctx.wire
+      .getSysioContract(SysioContractName.chalg)
+      .actions.claimbond.invoke(
+        { account },
+        { authorization: [{ actor: account, permission: ActivePermission }] }
+      )
+
+    Assert.strictEqual(
+      await ctx.wire.getWireBalance(account),
+      balanceBefore + credit,
+      "claimbond pays out the whole credited balance"
+    )
+    Assert.strictEqual(
+      await readBondCredit(ctx, account),
+      0n,
+      "claimbond erases the credit row it paid out"
+    )
+    log.info(`[uwchal] ${account} claimed bond credit ${credit}`)
   }
 }
