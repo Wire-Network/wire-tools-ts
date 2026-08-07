@@ -44,14 +44,14 @@ describe("ReadinessPhaseGroups", () => {
       "Swap infrastructure",
       "Swap routes"
     ])
-    expect(
-      phases
-        .filter(
-          (phase): phase is ClusterBuildPhase<ReadinessContext> =>
-            phase instanceof ClusterBuildPhase
-        )
-        .flatMap(phase => phase.steps)
-    ).toHaveLength(24)
+    const stepNames = phases
+      .filter(
+        (phase): phase is ClusterBuildPhase<ReadinessContext> =>
+          phase instanceof ClusterBuildPhase
+      )
+      .flatMap(phase => phase.steps.map(step => step.name))
+    expect(stepNames).toHaveLength(25)
+    expect(stepNames).toContain("external-custody")
   })
 
   it("keeps stake present but intentionally nonfunctional", () => {

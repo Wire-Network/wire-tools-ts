@@ -211,16 +211,22 @@ function planSwap(parent: ClusterBuildParent<ReadinessContext>): void {
         "Verify public reserve assets exist on their external chains",
         {}
       ),
+      Steps.readiness.swap.planExternalCustody(
+        Report.Actor.Sysio,
+        "external-custody",
+        "Verify each advertised reserve is configured and funded in external custody",
+        {}
+      ),
       Steps.readiness.swap.planAssetRegistry(
         Report.Actor.Sysio,
         "asset-registry",
-        "Verify funded reserves have active token bindings",
+        "Verify advertised reserves have active token bindings",
         {}
       ),
       Steps.readiness.swap.planPublicReserves(
         Report.Actor.Sysio,
         "public-reserves",
-        "Verify public depot books are funded across active chains",
+        "Verify every advertised public depot book has positive liquidity",
         {}
       ),
       Steps.readiness.swap.planRequestBacklog(

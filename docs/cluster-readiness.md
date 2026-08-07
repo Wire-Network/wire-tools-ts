@@ -88,11 +88,21 @@ It reads the typed `sdk-core` system-contract clients for the remaining
 depot-state checks:
 
 - valid underwriting fees, collateral lock duration, and WIRE-origin minimum;
-- at least one `ACTIVE` underwriter satisfying every configured collateral
-  minimum for every active external chain;
-- deployed bytecode or mint accounts for non-native public reserve assets;
-- active chain-token bindings for every funded public reserve;
-- funded, active, non-private reserve books covering both EVM and SVM;
+- a positive collateral requirement for every advertised `(chain, token)`
+  bucket, with available balance computed as raw collateral minus active locks
+  and pending withdrawals;
+- at least one `ACTIVE` underwriter that covers every bucket on each direct
+  route and both legs of each cross-outpost route;
+- deployed bytecode or mint accounts for every advertised non-native public
+  reserve asset;
+- active chain-token bindings for every advertised public reserve, including
+  zero-depth rows that would otherwise disappear from a funded-only filter;
+- positive WIRE and external-token depot depth for every active, non-private
+  reserve book, with coverage across both EVM and SVM;
+- exact external custody alignment for every advertised reserve: Ethereum
+  `ReserveManager` or Solana `liqsol_core` token mapping, precision, initialized
+  and active local reserve identity, custody mint/address, positive custody
+  balance, and positive local reserve amount;
 - every directional external-to-WIRE, WIRE-to-external, and cross-outpost route
   constructible from live registry state;
 - a positive deterministic quote for every route using the canonical
@@ -113,10 +123,13 @@ The JSON report separates:
 - `swapReady`: always `false` until a funded transaction canary settles;
 - per-route `preflightReady` and `transactionallyVerified` evidence.
 
-A green read-only preflight does **not** prove external custody, OPP daemon
-circulation, destination settlement, balance reconciliation, idempotent retry,
-or `SWAP_REVERT` refund behavior. Those require the later opt-in funded canary
-using the existing swap FlowScenario architecture.
+A green read-only preflight proves the external custody configuration and
+funding snapshot visible through the selected RPCs. It does **not** provision or
+prove a disposable test wallet's gas/token balances, ERC-20 allowances, Solana
+associated token accounts, OPP daemon circulation, destination settlement,
+balance reconciliation, retry/idempotency, terminal Solana payout behavior, or
+the durable/partial `SWAP_REVERT` refund lifecycle. Those require an opt-in
+funded canary using the existing swap FlowScenario architecture.
 
 Readiness consumes `@wireio/sdk-outpost` as the typed compatibility boundary.
 The immutable profile carries deployment identity and exact live runtime

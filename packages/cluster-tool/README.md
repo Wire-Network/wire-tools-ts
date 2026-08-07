@@ -44,6 +44,11 @@ explicit RPCs, composes `Steps.readiness` through `ReadinessPhaseGroups`, and
 returns the normal Report plus a stable JSON projection. See
 [the operator guide](../../docs/cluster-readiness.md).
 
+Swap readiness validates every advertised public reserve, including zero-depth
+rows, against depot token bindings, available underwriter collateral, exact
+external custody configuration, and positive custody/local-reserve balances.
+Funded wallet execution and terminal settlement remain FlowScenario canaries.
+
 ### What gets spawned
 
 - `kiod` — WIRE wallet daemon.

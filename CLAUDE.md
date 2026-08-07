@@ -202,8 +202,10 @@ pnpm --filter @wireio/cluster-tool exec ./bin/wire-cluster-tool readiness \
 same `ClusterBuild`/Report engine. Its `collect` failure mode is explicit and
 local to diagnostic suites; existing bootstrap and FlowScenario plans remain
 fail-fast. It verifies immutable outpost deployment identity through
-`@wireio/sdk-outpost`; mutable RPC catalog data remains separate. The manual
-command is the only entrypoint for now. Future GHA/E2E
+`@wireio/sdk-outpost`; mutable RPC catalog data remains separate. Swap readiness
+keeps every advertised public reserve visible, validates exact external custody,
+and computes collateral availability after locks and pending withdrawals. The
+manual command is the only entrypoint for now. Future GHA/E2E
 integration must compose these PhaseGroups rather than duplicate checks. See
 `docs/cluster-readiness.md`.
 

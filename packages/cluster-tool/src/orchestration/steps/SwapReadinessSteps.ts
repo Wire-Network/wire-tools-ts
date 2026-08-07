@@ -1,4 +1,5 @@
 import { Base58, SysioContracts } from "@wireio/sdk-core"
+import { getLogger } from "@wireio/shared"
 import {
   ClusterReadinessArea,
   ClusterReadinessCheckId,
@@ -8,6 +9,10 @@ import {
 } from "@wireio/cluster-tool-shared"
 
 import {
+  ExternalReserveCustodyReader,
+  type SolanaAccountInfoResponse
+} from "../../readiness/ExternalReserveCustodyReader.js"
+import {
   ReadinessAssertionError,
   ReadinessContext
 } from "../../readiness/ReadinessContext.js"
@@ -16,7 +21,9 @@ import { ReadinessOutputs } from "../../readiness/ReadinessOutputs.js"
 import {
   ReadinessMaxTableRows,
   readinessBoundedQuery,
+  readinessErrorMessage,
   readinessEnumMatches,
+  readinessReserveLabel,
   readinessSlug,
   readinessSlugValue
 } from "../../readiness/readinessUtils.js"
@@ -31,13 +38,18 @@ import {
   type ReadinessCheckStepInput
 } from "./ReadinessStepTools.js"
 
-const {
-  SysioChainsChainkind,
-  SysioOpregOperatorstatus,
-  SysioOpregOperatortype,
-  SysioReservReservestatus,
-  SysioUwritUnderwriterequeststatus
-} = SysioContracts
+const log = getLogger(__filename),
+  EthereumRpcMethod = { getCode: "eth_getCode" } as const,
+  EthereumBlockTag = { latest: "latest" } as const,
+  SolanaRpcMethod = { getAccountInfo: "getAccountInfo" } as const,
+  SolanaEncoding = { base64: "base64" } as const,
+  {
+    SysioChainsChainkind,
+    SysioOpregOperatorstatus,
+    SysioOpregOperatortype,
+    SysioReservReservestatus,
+    SysioUwritUnderwriterequeststatus
+  } = SysioContracts
 
 interface SwapReadinessInput extends ReadinessCheckStepInput {
   readonly kind: "SwapReadinessSteps.Input"
@@ -51,9 +63,10 @@ interface ExternalAssetProbe {
   readonly error?: string
 }
 
-interface SolanaAccountInfoResponse {
-  readonly value?: unknown
-}
+type CollateralBucketRow =
+  | SysioContracts.SysioOpregBalanceEntryType
+  | SysioContracts.SysioUwritLockEntryType
+  | SysioContracts.SysioOpregWithdrawRequestType
 
 /** Swap-specific read-only Step factories composed by readiness PhaseGroups. */
 export namespace SwapReadinessSteps {
@@ -111,7 +124,25 @@ export namespace SwapReadinessSteps {
     )
   }
 
-  /** Validate active token bindings for funded public reserves. */
+  /** Validate external reserve mirrors, token mappings, precision, and custody. */
+  export function planExternalCustody(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ) {
+    return plan(
+      actor,
+      name,
+      description,
+      options,
+      ClusterReadinessCheckId["swap.external-custody"],
+      ClusterReadinessReasonCode["configuration-incomplete"],
+      runExternalCustody
+    )
+  }
+
+  /** Validate active token bindings for advertised public reserves. */
   export function planAssetRegistry(
     actor: Report.Actor,
     name: string,
@@ -129,7 +160,7 @@ export namespace SwapReadinessSteps {
     )
   }
 
-  /** Validate funded public liquidity on every external chain. */
+  /** Validate positive liquidity for every advertised public reserve. */
   export function planPublicReserves(
     actor: Report.Actor,
     name: string,
@@ -282,7 +313,15 @@ export async function runActiveUnderwriters(
 ): Promise<void> {
   signal.throwIfAborted()
   await runReadinessAssertion(context, input, async () => {
-    const [configResult, operatorsResult, chainsResult] = await Promise.all([
+    const [
+        configResult,
+        operatorsResult,
+        chainsResult,
+        chainTokensResult,
+        reservesResult,
+        locksResult,
+        withdrawalsResult
+      ] = await Promise.all([
         readinessBoundedQuery(
           context.wireSystem.opreg.tables.opconfig.query({
             limit: ReadinessMaxTableRows
@@ -300,6 +339,30 @@ export async function runActiveUnderwriters(
             limit: ReadinessMaxTableRows
           }),
           "sysio.chains::chains"
+        ),
+        readinessBoundedQuery(
+          context.wireSystem.tokens.tables.chaintokens.query({
+            limit: ReadinessMaxTableRows
+          }),
+          "sysio.tokens::chaintokens"
+        ),
+        readinessBoundedQuery(
+          context.wireSystem.reserv.tables.reserves.query({
+            limit: ReadinessMaxTableRows
+          }),
+          "sysio.reserv::reserves"
+        ),
+        readinessBoundedQuery(
+          context.wireSystem.uwrit.tables.locks.query({
+            limit: ReadinessMaxTableRows
+          }),
+          "sysio.uwrit::locks"
+        ),
+        readinessBoundedQuery(
+          context.wireSystem.opreg.tables.wtdwqueue.query({
+            limit: ReadinessMaxTableRows
+          }),
+          "sysio.opreg::wtdwqueue"
         )
       ]),
       config = configResult.rows[0]
@@ -310,21 +373,23 @@ export async function runActiveUnderwriters(
       externalChains = chainsResult.rows.filter(
         row => row.active && isExternalChain(row)
       ),
-      externalChainCodes = externalChains.map(row =>
-        readinessSlugValue(row.code)
-      ),
-      missingRequirementCodes = externalChainCodes.filter(
-        chainCode =>
-          !requirements.some(
-            requirement =>
-              readinessSlugValue(requirement.chain_code) === chainCode
+      advertisedReserves = eligibleReserves(
+        activePublicReserves(reservesResult.rows).filter(reserve =>
+          externalChains.some(
+            chain =>
+              readinessSlugValue(chain.code) ===
+              readinessSlugValue(reserve.chain_code)
           )
+        ),
+        chainTokensResult.rows
       ),
-      missingRequirementChains = externalChains
-        .filter(row =>
-          missingRequirementCodes.includes(readinessSlugValue(row.code))
-        )
-        .map(row => readinessSlug(row.code)),
+      advertisedBuckets = advertisedReserves.filter(
+        (reserve, index, all) =>
+          all.findIndex(
+            candidate =>
+              collateralBucketKey(candidate) === collateralBucketKey(reserve)
+          ) === index
+      ),
       activeUnderwriters = operatorsResult.rows.filter(
         operator =>
           readinessEnumMatches(
@@ -338,59 +403,143 @@ export async function runActiveUnderwriters(
             "OPERATOR_STATUS_ACTIVE"
           )
       ),
-      collateralized = activeUnderwriters.filter(operator =>
-        requirements.every(requirement => {
-          const balance = operator.balances.find(
+      buckets = advertisedBuckets.map(reserve => {
+        const requirement = requirements.find(
             candidate =>
               readinessSlugValue(candidate.chain_code) ===
-                readinessSlugValue(requirement.chain_code) &&
+                readinessSlugValue(reserve.chain_code) &&
               readinessSlugValue(candidate.token_code) ===
-                readinessSlugValue(requirement.token_code)
-          )
-          return (
-            balance != null &&
-            BigInt(balance.balance) >= BigInt(requirement.min_bond)
-          )
-        })
+                readinessSlugValue(reserve.token_code)
+          ),
+          minimum = requirement ? BigInt(requirement.min_bond) : 0n,
+          accounts =
+            minimum > 0n
+              ? activeUnderwriters
+                  .filter(
+                    operator =>
+                      availableCollateral(
+                        operator,
+                        reserve,
+                        locksResult.rows,
+                        withdrawalsResult.rows
+                      ) >= minimum
+                  )
+                  .map(operator => operator.account)
+              : [],
+          issues = [
+            !requirement ? "collateral requirement is missing" : null,
+            requirement && minimum <= 0n
+              ? "collateral requirement is not positive"
+              : null,
+            requirement && minimum > 0n && accounts.length === 0
+              ? "no ACTIVE underwriter has sufficient available collateral"
+              : null
+          ].filter((issue): issue is string => issue != null)
+        return {
+          chainCode: readinessSlugValue(reserve.chain_code),
+          tokenCode: readinessSlugValue(reserve.token_code),
+          label: `${readinessSlug(reserve.chain_code)}/${readinessSlug(reserve.token_code)}`,
+          minimum: minimum.toString(),
+          accounts,
+          ready: issues.length === 0,
+          issues
+        }
+      }),
+      fullCoverageAccounts = activeUnderwriters
+        .map(operator => operator.account)
+        .filter(account =>
+          buckets.every(bucket => bucket.accounts.includes(account))
+        ),
+      configurationFailures = buckets.filter(bucket =>
+        bucket.issues.some(issue => issue.includes("requirement"))
       )
 
+    context.outputs.set(ReadinessOutputs.collateralBuckets, buckets)
+
     if (
-      requirements.length === 0 ||
-      requirements.some(requirement => BigInt(requirement.min_bond) <= 0n) ||
-      missingRequirementCodes.length > 0 ||
+      advertisedBuckets.length === 0 ||
+      configurationFailures.length > 0 ||
       config.max_available_underwriters <= 0
     ) {
       throw new ReadinessAssertionError(
-        missingRequirementChains.length > 0
-          ? `Underwriter collateral requirements are missing for ${missingRequirementChains.join(", ")}`
-          : "The underwriter collateral matrix is empty, invalid, or disabled",
+        configurationFailures.length > 0
+          ? `Underwriter collateral requirements are incomplete for ${configurationFailures.map(bucket => bucket.label).join(", ")}`
+          : "The advertised collateral matrix is empty or underwriting is disabled",
         ClusterReadinessReasonCode["configuration-incomplete"],
         {
-          requirementCount: requirements.length,
-          missingRequirementChainCodes: missingRequirementCodes,
-          missingRequirementChains,
+          advertisedBuckets: buckets,
           maxAvailableUnderwriters: config.max_available_underwriters
         }
       )
     }
-    if (collateralized.length === 0) {
+    if (fullCoverageAccounts.length === 0) {
       throw new ReadinessAssertionError(
-        "No ACTIVE underwriter satisfies every configured collateral minimum",
+        "No ACTIVE underwriter has sufficient available collateral for every advertised token bucket",
         ClusterReadinessReasonCode["liquidity-unavailable"],
         {
-          requiredCollateralEntries: requirements.length,
+          advertisedBuckets: buckets,
           activeUnderwriters: activeUnderwriters.map(
             operator => operator.account
-          )
+          ),
+          activeLocks: locksResult.rows.length,
+          pendingWithdrawals: withdrawalsResult.rows.length
         }
       )
     }
     return {
-      detail: `${collateralized.length} ACTIVE underwriter(s) satisfy the full collateral matrix`,
+      detail: `${fullCoverageAccounts.length} ACTIVE underwriter(s) can serve every advertised token bucket after locks and pending withdrawals`,
       evidence: {
-        accounts: collateralized.map(operator => operator.account),
-        requiredCollateralEntries: requirements.length
+        accounts: fullCoverageAccounts,
+        advertisedBuckets: buckets,
+        activeLocks: locksResult.rows.length,
+        pendingWithdrawals: withdrawalsResult.rows.length
       }
+    }
+  })
+}
+
+/** Run external reserve-mirror and custody-funding validation. */
+export async function runExternalCustody(
+  context: ReadinessContext,
+  input: SwapReadinessInput,
+  signal: AbortSignal
+): Promise<void> {
+  signal.throwIfAborted()
+  await runReadinessAssertion(context, input, async () => {
+    const state = await readReserveState(context),
+      advertised = eligibleReserves(
+        activePublicReserves(state.reserves),
+        state.chainTokens
+      ),
+      probes = await ExternalReserveCustodyReader.read(context, {
+        ...state,
+        reserves: advertised
+      }),
+      configurationFailures = probes.filter(probe => !probe.configured),
+      fundingFailures = probes.filter(
+        probe => probe.configured && !probe.funded
+      )
+
+    context.outputs.set(ReadinessOutputs.externalCustodyReserves, probes)
+    if (probes.length === 0 || configurationFailures.length > 0) {
+      throw new ReadinessAssertionError(
+        configurationFailures.length > 0
+          ? `External custody configuration failed for ${configurationFailures.map(probe => probe.label).join(", ")}`
+          : "No advertised public reserve is available for external custody validation",
+        ClusterReadinessReasonCode["configuration-incomplete"],
+        { reserves: probes }
+      )
+    }
+    if (fundingFailures.length > 0) {
+      throw new ReadinessAssertionError(
+        `External custody is unfunded for ${fundingFailures.map(probe => probe.label).join(", ")}`,
+        ClusterReadinessReasonCode["liquidity-unavailable"],
+        { reserves: probes }
+      )
+    }
+    return {
+      detail: `${probes.length} advertised public reserve(s) have aligned, funded external custody`,
+      evidence: { reserves: probes }
     }
   })
 }
@@ -403,8 +552,8 @@ export async function runExternalAssets(
 ): Promise<void> {
   signal.throwIfAborted()
   await runReadinessAssertion(context, input, async () => {
-    const { chains, tokens, reserves } = await readReserveState(context),
-      publicAssets = fundedPublicReserves(reserves),
+    const { chains, chainTokens, reserves } = await readReserveState(context),
+      publicAssets = activePublicReserves(reserves),
       ethereum = context.endpoint(ClusterReadinessEndpointKind.ethereum),
       solana = context.endpoint(ClusterReadinessEndpointKind.solana),
       probes = await Promise.all(
@@ -415,7 +564,7 @@ export async function runExternalAssets(
                 readinessSlugValue(candidate.code) ===
                   readinessSlugValue(reserve.chain_code)
             ),
-            token = tokens.find(
+            token = chainTokens.find(
               candidate =>
                 candidate.active &&
                 readinessSlugValue(candidate.chain_code) ===
@@ -454,14 +603,18 @@ export async function runExternalAssets(
             try {
               const code = await context.jsonRpc<string>(
                 ethereum.url,
-                "eth_getCode",
-                [normalized, "latest"]
+                EthereumRpcMethod.getCode,
+                [normalized, EthereumBlockTag.latest]
               )
               return code === "0x"
                 ? failedAsset(label, normalized, "no EVM bytecode is deployed")
                 : { label, native: false, address: normalized, deployed: true }
             } catch (error) {
-              return failedAsset(label, normalized, errorMessage(error))
+              const message = readinessErrorMessage(error)
+              log.warn(
+                `Ethereum asset deployment probe failed for ${label}: ${message}`
+              )
+              return failedAsset(label, normalized, message)
             }
           }
 
@@ -480,8 +633,8 @@ export async function runExternalAssets(
             try {
               const account = await context.jsonRpc<SolanaAccountInfoResponse>(
                 solana.url,
-                "getAccountInfo",
-                [publicKey, { encoding: "base64" }]
+                SolanaRpcMethod.getAccountInfo,
+                [publicKey, { encoding: SolanaEncoding.base64 }]
               )
               return account.value == null
                 ? failedAsset(
@@ -491,7 +644,11 @@ export async function runExternalAssets(
                   )
                 : { label, native: false, address: publicKey, deployed: true }
             } catch (error) {
-              return failedAsset(label, publicKey, errorMessage(error))
+              const message = readinessErrorMessage(error)
+              log.warn(
+                `Solana asset deployment probe failed for ${label}: ${message}`
+              )
+              return failedAsset(label, publicKey, message)
             }
           }
 
@@ -504,7 +661,7 @@ export async function runExternalAssets(
       throw new ReadinessAssertionError(
         failures.length > 0
           ? `External asset deployment validation failed: ${failures.map(probe => `${probe.label}: ${probe.error}`).join("; ")}`
-          : "No funded public reserve assets are available for deployment validation",
+          : "No advertised public reserve assets are available for deployment validation",
         ClusterReadinessReasonCode["deployment-incomplete"],
         { assets: probes }
       )
@@ -516,7 +673,7 @@ export async function runExternalAssets(
   })
 }
 
-/** Run funded-reserve token-binding validation. */
+/** Run advertised-reserve token-binding validation. */
 export async function runAssetRegistry(
   context: ReadinessContext,
   input: SwapReadinessInput,
@@ -524,15 +681,15 @@ export async function runAssetRegistry(
 ): Promise<void> {
   signal.throwIfAborted()
   await runReadinessAssertion(context, input, async () => {
-    const { tokens, reserves } = await readReserveState(context),
-      funded = fundedPublicReserves(reserves),
-      eligible = eligibleReserves(funded, tokens),
-      unbound = funded.filter(reserve => !eligible.includes(reserve))
-    if (funded.length === 0 || unbound.length > 0) {
+    const { chainTokens, reserves } = await readReserveState(context),
+      advertised = activePublicReserves(reserves),
+      eligible = eligibleReserves(advertised, chainTokens),
+      unbound = advertised.filter(reserve => !eligible.includes(reserve))
+    if (advertised.length === 0 || unbound.length > 0) {
       throw new ReadinessAssertionError(
         unbound.length > 0
-          ? `${unbound.length} funded public reserve(s) lack an active chain-token binding`
-          : "No funded public reserve assets are registered",
+          ? `${unbound.length} advertised public reserve(s) lack an active chain-token binding`
+          : "No advertised public reserve assets are registered",
         ClusterReadinessReasonCode["asset-unavailable"],
         {
           unbound: unbound.map(
@@ -543,7 +700,7 @@ export async function runAssetRegistry(
       )
     }
     return {
-      detail: `${eligible.length} funded public reserve asset(s) have active chain-token bindings`,
+      detail: `${eligible.length} advertised public reserve asset(s) have active chain-token bindings`,
       evidence: { eligibleAssets: eligible.length }
     }
   })
@@ -557,7 +714,7 @@ export async function runPublicReserves(
 ): Promise<void> {
   signal.throwIfAborted()
   await runReadinessAssertion(context, input, async () => {
-    const { chains, tokens, reserves } = await readReserveState(context),
+    const { chains, chainTokens, reserves } = await readReserveState(context),
       externalChains = chains.filter(row => row.active && isExternalChain(row)),
       hasEthereum = externalChains.some(row =>
         readinessEnumMatches(
@@ -574,8 +731,12 @@ export async function runPublicReserves(
         )
       ),
       publicActive = activePublicReserves(reserves),
-      funded = fundedPublicReserves(reserves),
-      eligible = eligibleReserves(funded, tokens),
+      eligible = eligibleReserves(publicActive, chainTokens),
+      zeroDepth = publicActive.filter(
+        reserve =>
+          BigInt(reserve.reserve_chain_amount) <= 0n ||
+          BigInt(reserve.reserve_wire_amount) <= 0n
+      ),
       missing = externalChains
         .filter(
           chain =>
@@ -587,20 +748,32 @@ export async function runPublicReserves(
         )
         .map(chain => readinessSlug(chain.code))
 
-    if (!hasEthereum || !hasSolana || missing.length > 0) {
+    if (
+      !hasEthereum ||
+      !hasSolana ||
+      publicActive.length === 0 ||
+      missing.length > 0 ||
+      zeroDepth.length > 0
+    ) {
       throw new ReadinessAssertionError(
-        missing.length > 0
-          ? `No funded public reserve is available for ${missing.join(", ")}`
-          : "Both active EVM and SVM chain rows are required for cross-chain swaps",
+        !hasEthereum || !hasSolana
+          ? "Both active EVM and SVM chain rows are required for cross-chain swaps"
+          : publicActive.length === 0
+            ? "No advertised public reserve is registered"
+            : missing.length > 0
+              ? `No advertised public reserve is available for ${missing.join(", ")}`
+              : `Advertised public reserves have zero liquidity: ${zeroDepth.map(readinessReserveLabel).join(", ")}`,
         ClusterReadinessReasonCode["liquidity-unavailable"],
-        { missingChainLiquidity: missing }
+        {
+          missingChainLiquidity: missing,
+          zeroDepthReserves: zeroDepth.map(readinessReserveLabel)
+        }
       )
     }
     return {
-      detail: `${eligible.length} funded public reserve(s) cover every active external chain`,
+      detail: `${eligible.length} advertised public reserve(s) have positive depot depth and cover every active external chain`,
       evidence: {
         activePublic: publicActive.length,
-        funded: funded.length,
         eligible: eligible.length
       }
     }
@@ -644,12 +817,13 @@ export async function runRouteQuotes(
       throw new ReadinessAssertionError(
         routes.length === 0
           ? "No constructed route is available for quote validation"
-          : `${failed.length} directional route(s) return a zero quote at the read-only probe size`,
+          : `${failed.length} directional route(s) fail infrastructure preflight or return a zero quote`,
         ClusterReadinessReasonCode["liquidity-unavailable"],
         {
-          failedRoutes: failed.map(
-            route => `${route.source} -> ${route.destination}`
-          )
+          failedRoutes: failed.map(route => ({
+            route: `${route.source} -> ${route.destination}`,
+            detail: route.detail
+          }))
         }
       )
     }
@@ -726,7 +900,7 @@ export async function runRequestBacklog(
 }
 
 async function readReserveState(context: ReadinessContext) {
-  const [chains, tokens, reserves] = await Promise.all([
+  const [chains, chainTokens, tokens, reserves] = await Promise.all([
     readinessBoundedQuery(
       context.wireSystem.chains.tables.chains.query({
         limit: ReadinessMaxTableRows
@@ -740,13 +914,24 @@ async function readReserveState(context: ReadinessContext) {
       "sysio.tokens::chaintokens"
     ),
     readinessBoundedQuery(
+      context.wireSystem.tokens.tables.tokens.query({
+        limit: ReadinessMaxTableRows
+      }),
+      "sysio.tokens::tokens"
+    ),
+    readinessBoundedQuery(
       context.wireSystem.reserv.tables.reserves.query({
         limit: ReadinessMaxTableRows
       }),
       "sysio.reserv::reserves"
     )
   ])
-  return { chains: chains.rows, tokens: tokens.rows, reserves: reserves.rows }
+  return {
+    chains: chains.rows,
+    chainTokens: chainTokens.rows,
+    tokens: tokens.rows,
+    reserves: reserves.rows
+  }
 }
 
 function isExternalChain(row: SysioContracts.SysioChainsChainRowType): boolean {
@@ -778,16 +963,6 @@ function activePublicReserves(
   )
 }
 
-function fundedPublicReserves(
-  reserves: SysioContracts.SysioReservReserveRowType[]
-) {
-  return activePublicReserves(reserves).filter(
-    reserve =>
-      BigInt(reserve.reserve_chain_amount) > 0n &&
-      BigInt(reserve.reserve_wire_amount) > 0n
-  )
-}
-
 function eligibleReserves(
   reserves: SysioContracts.SysioReservReserveRowType[],
   tokens: SysioContracts.SysioTokensChainTokenRowType[]
@@ -804,11 +979,45 @@ function eligibleReserves(
   )
 }
 
+function collateralBucketKey(
+  reserve: SysioContracts.SysioReservReserveRowType
+): string {
+  return `${readinessSlugValue(reserve.chain_code)}/${readinessSlugValue(reserve.token_code)}`
+}
+
+function availableCollateral(
+  operator: SysioContracts.SysioOpregOperatorEntryType,
+  reserve: SysioContracts.SysioReservReserveRowType,
+  locks: SysioContracts.SysioUwritLockEntryType[],
+  withdrawals: SysioContracts.SysioOpregWithdrawRequestType[]
+): bigint {
+  const matchesBucket = (candidate: CollateralBucketRow) =>
+      readinessSlugValue(candidate.chain_code) ===
+        readinessSlugValue(reserve.chain_code) &&
+      readinessSlugValue(candidate.token_code) ===
+        readinessSlugValue(reserve.token_code),
+    balance = operator.balances.find(matchesBucket),
+    locked = locks
+      .filter(
+        lock => lock.underwriter === operator.account && matchesBucket(lock)
+      )
+      .reduce((total, lock) => total + BigInt(lock.amount), 0n),
+    pending = withdrawals
+      .filter(
+        withdrawal =>
+          withdrawal.account === operator.account && matchesBucket(withdrawal)
+      )
+      .reduce((total, withdrawal) => total + BigInt(withdrawal.amount), 0n),
+    raw = BigInt(balance?.balance ?? 0),
+    reserved = locked + pending
+  return raw > reserved ? raw - reserved : 0n
+}
+
 async function buildRoutes(
   context: ReadinessContext
 ): Promise<ClusterSwapRouteReadiness[]> {
-  const { chains, tokens, reserves } = await readReserveState(context),
-    eligible = eligibleReserves(fundedPublicReserves(reserves), tokens),
+  const { chains, chainTokens, reserves } = await readReserveState(context),
+    eligible = eligibleReserves(activePublicReserves(reserves), chainTokens),
     label = (reserve: SysioContracts.SysioReservReserveRowType) => {
       const chain = chains.find(
         candidate =>
@@ -817,70 +1026,137 @@ async function buildRoutes(
       )
       return `${readinessSlug(reserve.token_code)} on ${chain?.name ?? readinessSlug(reserve.chain_code)}`
     },
-    routes: ClusterSwapRouteReadiness[] = []
-
-  for (const reserve of eligible) {
-    const external = label(reserve),
-      chainDepth = BigInt(reserve.reserve_chain_amount),
-      wireDepth = BigInt(reserve.reserve_wire_amount),
-      chainProbe = probeAmount(
-        chainDepth,
-        ReadinessConfig.QuoteProbeDepthDivisor
-      ),
-      wireProbe = probeAmount(
-        wireDepth,
-        ReadinessConfig.QuoteProbeDepthDivisor
-      ),
-      toWireQuote = WireReserveTool.cpOutput(chainDepth, wireDepth, chainProbe),
-      fromWireQuote = WireReserveTool.cpOutput(wireDepth, chainDepth, wireProbe)
-    routes.push(
-      route(external, "WIRE", chainProbe, toWireQuote),
-      route("WIRE", external, wireProbe, fromWireQuote)
-    )
-  }
-
-  for (const source of eligible) {
-    for (const destination of eligible) {
-      if (
-        readinessSlugValue(source.chain_code) ===
-        readinessSlugValue(destination.chain_code)
-      )
-        continue
-      const sourceProbe = probeAmount(
-          BigInt(source.reserve_chain_amount),
+    direct = eligible.flatMap(reserve => {
+      const external = label(reserve),
+        chainDepth = BigInt(reserve.reserve_chain_amount),
+        wireDepth = BigInt(reserve.reserve_wire_amount),
+        chainProbe = probeAmount(
+          chainDepth,
           ReadinessConfig.QuoteProbeDepthDivisor
         ),
-        wireIntermediate = WireReserveTool.cpOutput(
-          BigInt(source.reserve_chain_amount),
-          BigInt(source.reserve_wire_amount),
-          sourceProbe
+        wireProbe = probeAmount(
+          wireDepth,
+          ReadinessConfig.QuoteProbeDepthDivisor
         ),
-        target = WireReserveTool.cpOutput(
-          BigInt(destination.reserve_wire_amount),
-          BigInt(destination.reserve_chain_amount),
-          wireIntermediate
+        toWireQuote = WireReserveTool.cpOutput(
+          chainDepth,
+          wireDepth,
+          chainProbe
+        ),
+        fromWireQuote = WireReserveTool.cpOutput(
+          wireDepth,
+          chainDepth,
+          wireProbe
         )
-      routes.push(route(label(source), label(destination), sourceProbe, target))
-    }
-  }
-  return routes
+      return [
+        route(context, external, "WIRE", chainProbe, toWireQuote, [reserve]),
+        route(context, "WIRE", external, wireProbe, fromWireQuote, [reserve])
+      ]
+    }),
+    crossChain = eligible.flatMap(source =>
+      eligible
+        .filter(
+          destination =>
+            readinessSlugValue(source.chain_code) !==
+            readinessSlugValue(destination.chain_code)
+        )
+        .map(destination => {
+          const sourceProbe = probeAmount(
+              BigInt(source.reserve_chain_amount),
+              ReadinessConfig.QuoteProbeDepthDivisor
+            ),
+            wireIntermediate = WireReserveTool.cpOutput(
+              BigInt(source.reserve_chain_amount),
+              BigInt(source.reserve_wire_amount),
+              sourceProbe
+            ),
+            target = WireReserveTool.cpOutput(
+              BigInt(destination.reserve_wire_amount),
+              BigInt(destination.reserve_chain_amount),
+              wireIntermediate
+            )
+          return route(
+            context,
+            label(source),
+            label(destination),
+            sourceProbe,
+            target,
+            [source, destination]
+          )
+        })
+    )
+  return [...direct, ...crossChain]
 }
 
 function route(
+  context: ReadinessContext,
   source: string,
   destination: string,
   sourceAmount: bigint,
-  destinationAmount: bigint
+  destinationAmount: bigint,
+  reserves: SysioContracts.SysioReservReserveRowType[]
 ): ClusterSwapRouteReadiness {
+  const custody = context.outputs.assert(
+      ReadinessOutputs.externalCustodyReserves
+    ),
+    buckets = context.outputs.assert(ReadinessOutputs.collateralBuckets),
+    custodyIssues = reserves.flatMap(reserve => {
+      const evidence = custody.find(
+        candidate =>
+          candidate.chainCode === readinessSlugValue(reserve.chain_code) &&
+          candidate.tokenCode === readinessSlugValue(reserve.token_code) &&
+          candidate.reserveCode === readinessSlugValue(reserve.reserve_code)
+      )
+      return evidence?.ready
+        ? []
+        : [
+            evidence
+              ? `${evidence.label}: ${evidence.issues.join(", ")}`
+              : `${readinessReserveLabel(reserve)}: custody evidence is unavailable`
+          ]
+    }),
+    routeBuckets = reserves.map(reserve =>
+      buckets.find(
+        candidate =>
+          candidate.chainCode === readinessSlugValue(reserve.chain_code) &&
+          candidate.tokenCode === readinessSlugValue(reserve.token_code)
+      )
+    ),
+    commonUnderwriters = routeBuckets.reduce<string[]>(
+      (accounts, bucket, index) =>
+        index === 0
+          ? (bucket?.accounts ?? [])
+          : accounts.filter(account => bucket?.accounts.includes(account)),
+      []
+    ),
+    collateralIssues = [
+      ...routeBuckets.flatMap((bucket, index) =>
+        bucket
+          ? bucket.ready
+            ? []
+            : [`${bucket.label}: ${bucket.issues.join(", ")}`]
+          : [
+              `${readinessReserveLabel(reserves[index])}: collateral evidence is unavailable`
+            ]
+      ),
+      routeBuckets.length > 1 && commonUnderwriters.length === 0
+        ? "no single ACTIVE underwriter can cover both route legs"
+        : null
+    ].filter((issue): issue is string => issue != null),
+    quoteIssues =
+      destinationAmount > 0n ? [] : ["canonical depot quote returned zero"],
+    issues = [...custodyIssues, ...collateralIssues, ...quoteIssues]
   return {
     source,
     destination,
-    preflightReady: destinationAmount > 0n,
+    preflightReady: issues.length === 0,
     quotedSourceAmount: sourceAmount.toString(),
     quotedDestinationAmount: destinationAmount.toString(),
     transactionallyVerified: false,
     detail:
-      "Live registry and depot depth quote positively; external custody, daemon circulation, and settlement require a canary"
+      issues.length === 0
+        ? "Registry, depot quote, external custody, and available underwriter collateral pass; daemon circulation and settlement require a canary"
+        : `Blocked: ${issues.join("; ")}`
   }
 }
 
@@ -895,10 +1171,6 @@ function failedAsset(
   error: string
 ): ExternalAssetProbe {
   return { label, native: false, address, deployed: false, error }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 function solanaPublicKey(address: string): string {

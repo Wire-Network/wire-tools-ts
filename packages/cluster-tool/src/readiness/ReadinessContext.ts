@@ -53,6 +53,8 @@ export class ReadinessContext extends OrchestrationContext<ReadinessConfig> {
     this.wireSystem = contracts.sysio.createClient({ client: this.wireApi })
     this.outputs.set(ReadinessOutputs.checks, [])
     this.outputs.set(ReadinessOutputs.routes, [])
+    this.outputs.set(ReadinessOutputs.collateralBuckets, [])
+    this.outputs.set(ReadinessOutputs.externalCustodyReserves, [])
   }
 
   /**
