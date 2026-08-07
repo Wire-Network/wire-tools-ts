@@ -35,6 +35,7 @@ const RequiredSwapChecks = [
   ClusterReadinessCheckId["swap.underwriting-config"],
   ClusterReadinessCheckId["swap.active-underwriters"],
   ClusterReadinessCheckId["swap.external-assets"],
+  ClusterReadinessCheckId["swap.external-custody"],
   ClusterReadinessCheckId["swap.asset-registry"],
   ClusterReadinessCheckId["swap.public-reserves"],
   ClusterReadinessCheckId["swap.route-registry"],

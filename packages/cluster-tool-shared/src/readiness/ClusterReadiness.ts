@@ -56,6 +56,7 @@ export enum ClusterReadinessCheckId {
   "swap.underwriting-config" = "swap.underwriting-config",
   "swap.active-underwriters" = "swap.active-underwriters",
   "swap.external-assets" = "swap.external-assets",
+  "swap.external-custody" = "swap.external-custody",
   "swap.asset-registry" = "swap.asset-registry",
   "swap.public-reserves" = "swap.public-reserves",
   "swap.route-registry" = "swap.route-registry",

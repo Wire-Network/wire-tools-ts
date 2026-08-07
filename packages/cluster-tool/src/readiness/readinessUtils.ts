@@ -1,7 +1,12 @@
-import { SlugName } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 
 /** Maximum rows accepted by one readiness table scan. */
 export const ReadinessMaxTableRows = 1_000
+
+/** Convert an arbitrary caught value into its diagnostic message. */
+export function readinessErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 
 interface SlugValue {
   value: number | string
@@ -30,6 +35,13 @@ export function readinessSlugValue(value: SlugValue): number {
 /** Human-readable value of a generated slug cell. */
 export function readinessSlug(value: SlugValue): string {
   return SlugName.toString(readinessSlugValue(value))
+}
+
+/** Human-readable chain/token/reserve triple for readiness diagnostics. */
+export function readinessReserveLabel(
+  reserve: SysioContracts.SysioReservReserveRowType
+): string {
+  return `${readinessSlug(reserve.chain_code)}/${readinessSlug(reserve.token_code)}/${readinessSlug(reserve.reserve_code)}`
 }
 
 /** Reject a truncated bounded table scan. */

@@ -152,7 +152,10 @@ The profile supplies immutable deployment identity; mutable endpoint discovery
 remains separate. Use `--wire-rpc`, `--ethereum-rpc`, and `--solana-rpc`
 immediately after a sandbox respin when catalog records are not yet published.
 Add `--export` for a gitignored tar.gz containing the JSON result and native
-Report HTML. See
+Report HTML. The swap preflight keeps every advertised public reserve in the
+route matrix, fails zero-depth rows explicitly, checks live Ethereum/Solana
+custody alignment, and subtracts locks plus pending withdrawals from available
+underwriter collateral. See
 [`docs/cluster-readiness.md`](docs/cluster-readiness.md) for the complete check
 surface, verdict semantics, and transactional proof boundary.
 

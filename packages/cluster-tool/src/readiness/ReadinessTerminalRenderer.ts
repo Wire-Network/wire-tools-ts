@@ -27,6 +27,7 @@ const CheckLabels: Record<ClusterReadinessCheckId, string> = {
   "swap.underwriting-config": "Underwriting policy",
   "swap.active-underwriters": "Underwriter collateral",
   "swap.external-assets": "External token deployments",
+  "swap.external-custody": "External reserve custody",
   "swap.asset-registry": "Public asset registry",
   "swap.public-reserves": "Public reserve funding",
   "swap.route-registry": "Directional route coverage",
