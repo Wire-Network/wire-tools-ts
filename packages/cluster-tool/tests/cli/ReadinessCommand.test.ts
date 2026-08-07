@@ -42,7 +42,7 @@ describe("createReadinessCommand", () => {
     expect(typeof command.handler).toBe("function")
   })
 
-  it("registers and requires the immutable deployment-profile file", () => {
+  it("requires only a Wire chain id or explicit Wire RPC", () => {
     const command = createReadinessCommand(),
       recorder = createYargsRecorder(),
       baseArgs: Partial<ReadinessArgv> = {
@@ -58,15 +58,21 @@ describe("createReadinessCommand", () => {
     ).toMatchObject({
       type: "string",
       describe:
-        "Immutable outpost deployment-profile JSON used for exact verification"
+        "Optional immutable profile for exact deployment and custody verification"
     })
     expect(() => recorder.validate(baseArgs)).toThrow(
-      "Provide --outpost-deployment-profile-file"
+      "Provide --wire-chain-id or --wire-rpc"
     )
     expect(
       recorder.validate({
         ...baseArgs,
-        outpostDeploymentProfileFile: "/tmp/outpost-deployment-profile.json"
+        wireChainId: "a".repeat(64)
+      })
+    ).toBe(true)
+    expect(
+      recorder.validate({
+        ...baseArgs,
+        wireRpc: "https://wire.example"
       })
     ).toBe(true)
   })

@@ -53,14 +53,8 @@ export async function resolveReadinessConfig(
   options: ReadinessOptions,
   request: typeof fetch = globalThis.fetch
 ): Promise<ReadinessConfig> {
-  if (
-    !options.wireChainId &&
-    !options.wireRpc &&
-    !options.outpostDeploymentProfile
-  ) {
-    throw new Error(
-      "Provide wireChainId, wireRpc, or an outpostDeploymentProfile"
-    )
+  if (!options.wireChainId && !options.wireRpc) {
+    throw new Error("Provide wireChainId or wireRpc")
   }
 
   const explicitWireChainId = normalizedWireChainId(options.wireChainId),

@@ -129,7 +129,8 @@ export namespace SwapReadinessSteps {
     actor: Report.Actor,
     name: string,
     description: string,
-    options: ClusterBuildStepOptions
+    options: ClusterBuildStepOptions,
+    blocking: boolean
   ) {
     return plan(
       actor,
@@ -138,7 +139,8 @@ export namespace SwapReadinessSteps {
       options,
       ClusterReadinessCheckId["swap.external-custody"],
       ClusterReadinessReasonCode["configuration-incomplete"],
-      runExternalCustody
+      runExternalCustody,
+      blocking
     )
   }
 
@@ -244,7 +246,8 @@ function plan(
     context: ReadinessContext,
     input: SwapReadinessInput,
     signal: AbortSignal
-  ) => Promise<void>
+  ) => Promise<void>,
+  blocking = true
 ): ClusterBuildStep<ReadinessContext, SwapReadinessInput> {
   return ClusterBuildStep.create(
     actor,
@@ -255,7 +258,7 @@ function plan(
       kind: "SwapReadinessSteps.Input",
       id,
       area: ClusterReadinessArea.swap,
-      blocking: true,
+      blocking,
       failureReason
     },
     runner

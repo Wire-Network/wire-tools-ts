@@ -19,12 +19,15 @@ const RequiredClusterChecks = [
   ClusterReadinessCheckId["wire.identity"],
   ClusterReadinessCheckId["wire.head-advancement"],
   ClusterReadinessCheckId["wire.head-freshness"],
-  ClusterReadinessCheckId["wire.deployment-profile"],
   ClusterReadinessCheckId["ethereum.identity"],
   ClusterReadinessCheckId["ethereum.head-advancement"],
-  ClusterReadinessCheckId["ethereum.deployment-profile"],
   ClusterReadinessCheckId["solana.identity"],
-  ClusterReadinessCheckId["solana.slot-advancement"],
+  ClusterReadinessCheckId["solana.slot-advancement"]
+]
+
+const StrictDeploymentChecks = [
+  ClusterReadinessCheckId["wire.deployment-profile"],
+  ClusterReadinessCheckId["ethereum.deployment-profile"],
   ClusterReadinessCheckId["solana.deployment-profile"]
 ]
 
@@ -35,7 +38,6 @@ const RequiredSwapChecks = [
   ClusterReadinessCheckId["swap.underwriting-config"],
   ClusterReadinessCheckId["swap.active-underwriters"],
   ClusterReadinessCheckId["swap.external-assets"],
-  ClusterReadinessCheckId["swap.external-custody"],
   ClusterReadinessCheckId["swap.asset-registry"],
   ClusterReadinessCheckId["swap.public-reserves"],
   ClusterReadinessCheckId["swap.route-registry"],
@@ -61,11 +63,22 @@ export function projectReadinessReport(
         checkOrder.indexOf(left.id) - checkOrder.indexOf(right.id)
     ),
     feature = context.config.feature,
-    clusterLive = requiredChecksPassed(checks, RequiredClusterChecks),
-    featureChecks =
+    strictDeployment = context.config.outpostDeploymentProfile != null,
+    clusterChecks = strictDeployment
+      ? [...RequiredClusterChecks, ...StrictDeploymentChecks]
+      : RequiredClusterChecks,
+    clusterLive = requiredChecksPassed(checks, clusterChecks),
+    baseFeatureChecks =
       feature === ClusterReadinessFeature.swap
         ? RequiredSwapChecks
         : [ClusterReadinessCheckId["stake.lifecycle"]],
+    featureChecks =
+      feature === ClusterReadinessFeature.swap && strictDeployment
+        ? [
+            ...baseFeatureChecks,
+            ClusterReadinessCheckId["swap.external-custody"]
+          ]
+        : baseFeatureChecks,
     featurePreflightReady =
       clusterLive && requiredChecksPassed(checks, featureChecks),
     featureState = featurePreflightReady

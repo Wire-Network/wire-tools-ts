@@ -140,13 +140,17 @@ describe("resolveReadinessConfig", () => {
     expect(config.catalogErrors.join(" ")).toMatch(/offline/)
   })
 
-  it("uses a deployment profile as the network-group identity", async () => {
+  it("retains an optional deployment profile alongside a Wire chain id", async () => {
     const profile = createReadinessDeploymentProfileFixture(),
       request = jest.fn(async () =>
         Response.json([])
       ) as unknown as typeof fetch,
       config = await resolveReadinessConfig(
-        { outpostDeploymentProfile: profile, report },
+        {
+          wireChainId: profile.wire.chainId,
+          outpostDeploymentProfile: profile,
+          report
+        },
         request
       )
 
@@ -166,7 +170,13 @@ describe("resolveReadinessConfig", () => {
 
   it("requires a Wire identity source", async () => {
     await expect(resolveReadinessConfig({ report })).rejects.toThrow(
-      /wireChainId, wireRpc, or an outpostDeploymentProfile/
+      /wireChainId or wireRpc/
     )
+    await expect(
+      resolveReadinessConfig({
+        outpostDeploymentProfile: createReadinessDeploymentProfileFixture(),
+        report
+      })
+    ).rejects.toThrow(/wireChainId or wireRpc/)
   })
 })

@@ -251,12 +251,13 @@ function activeUnderwritersStep() {
   )
 }
 
-function externalCustodyStep() {
+function externalCustodyStep(blocking = true) {
   return Steps.readiness.swap.planExternalCustody(
     Report.Actor.Sysio,
     "external-custody",
     "Verify every advertised external reserve",
-    {}
+    {},
+    blocking
   )
 }
 
@@ -539,6 +540,35 @@ describe("SwapReadinessSteps", () => {
     expect(context.outputs.assert(ReadinessOutputs.checks)).toEqual([
       expect.objectContaining({
         status: ClusterReadinessCheckStatus.fail,
+        evidence: { reserves: [failedProbe] }
+      })
+    ])
+  })
+
+  it("reports unavailable address-book custody checks as advisory", async () => {
+    const context = readinessContext({}),
+      failedProbe = {
+        chainCode: EthereumChainCode.value,
+        tokenCode: EthereumTokenCode.value,
+        reserveCode: PrimaryReserveCode.value,
+        label: "ETHEREUM/ETH/PRIMARY",
+        configured: false,
+        funded: false,
+        ready: false,
+        issues: ["outpost deployment profile is missing"],
+        balance: "0"
+      },
+      step = externalCustodyStep(false)
+
+    jest
+      .spyOn(ExternalReserveCustodyReader, "read")
+      .mockResolvedValue([failedProbe])
+
+    await step.runner(context, step.input, new AbortController().signal)
+    expect(context.outputs.assert(ReadinessOutputs.checks)).toEqual([
+      expect.objectContaining({
+        status: ClusterReadinessCheckStatus.advisory,
+        blocking: false,
         evidence: { reserves: [failedProbe] }
       })
     ])

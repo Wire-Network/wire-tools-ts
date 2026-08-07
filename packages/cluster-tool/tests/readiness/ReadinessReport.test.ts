@@ -18,14 +18,21 @@ import {
   projectReadinessReport
 } from "@wireio/cluster-tool/readiness"
 
+import { createReadinessDeploymentProfileFixture } from "./readinessProfileFixture.js"
+
 const WireChainId = "b".repeat(64)
 
-function readyContext(): ReadinessContext {
+function readyContext(strict = false): ReadinessContext {
   const context = new ReadinessContext(
     {
       feature: ClusterReadinessFeature.swap,
       catalogUrl: "https://catalog.example",
       requestedWireChainId: WireChainId,
+      ...(strict
+        ? {
+            outpostDeploymentProfile: createReadinessDeploymentProfileFixture()
+          }
+        : {}),
       endpoints: [],
       catalogRecordCount: 0,
       catalogErrors: [],
@@ -39,7 +46,12 @@ function readyContext(): ReadinessContext {
     id =>
       id !== ClusterReadinessCheckId["discovery.endpoint-catalog"] &&
       id !== ClusterReadinessCheckId["hyperion.health"] &&
-      id !== ClusterReadinessCheckId["stake.lifecycle"]
+      id !== ClusterReadinessCheckId["stake.lifecycle"] &&
+      (strict ||
+        (id !== ClusterReadinessCheckId["wire.deployment-profile"] &&
+          id !== ClusterReadinessCheckId["ethereum.deployment-profile"] &&
+          id !== ClusterReadinessCheckId["solana.deployment-profile"] &&
+          id !== ClusterReadinessCheckId["swap.external-custody"]))
   )
   context.outputs.set(
     ReadinessOutputs.checks,
@@ -73,6 +85,30 @@ describe("readiness reports", () => {
     expect(new ReadinessTerminalRenderer(projected).render()).toContain(
       "CANARY NOT RUN"
     )
+    expect(new ReadinessTerminalRenderer(projected).render()).toContain(
+      "no deployment profile was supplied"
+    )
+  })
+
+  it("requires exact deployment and custody checks when a profile is supplied", () => {
+    const context = readyContext(true)
+    context.outputs.set(
+      ReadinessOutputs.checks,
+      context.outputs
+        .assert(ReadinessOutputs.checks)
+        .filter(
+          check => check.id !== ClusterReadinessCheckId["swap.external-custody"]
+        )
+    )
+
+    const projected = projectReadinessReport(
+      context,
+      new Report(),
+      new Date("2026-08-04T12:00:00.000Z"),
+      new Date("2026-08-04T12:00:01.000Z")
+    )
+
+    expect(projected.summary.swapPreflightReady).toBe(false)
   })
 
   it("fails closed when one required check is absent", () => {

@@ -24,7 +24,9 @@ export namespace ReadinessPhaseGroups {
 
     planDiscovery(readiness)
     planClusterHealth(readiness)
-    planOutpostDeployment(readiness)
+    if (readiness.context.config.outpostDeploymentProfile) {
+      planOutpostDeployment(readiness)
+    }
     if (feature === ClusterReadinessFeature.swap) {
       planWireConfiguration(readiness)
       planSwap(readiness)
@@ -215,7 +217,8 @@ function planSwap(parent: ClusterBuildParent<ReadinessContext>): void {
         Report.Actor.Sysio,
         "external-custody",
         "Verify each advertised reserve is configured and funded in external custody",
-        {}
+        {},
+        parent.context.config.outpostDeploymentProfile != null
       ),
       Steps.readiness.swap.planAssetRegistry(
         Report.Actor.Sysio,

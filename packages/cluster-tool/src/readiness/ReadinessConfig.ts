@@ -13,7 +13,7 @@ export interface ReadinessOptions {
   feature?: ClusterReadinessFeature
   /** Expected 64-character Wire chain id. */
   wireChainId?: string
-  /** Immutable identity of the deployed Wire, Ethereum, and Solana outposts. */
+  /** Optional immutable identity for strict outpost deployment verification. */
   outpostDeploymentProfile?: OutpostDeploymentProfile
   /** Explicit Wire RPC override. */
   wireRpc?: string
@@ -41,7 +41,7 @@ export interface ReadinessConfig extends OrchestrationConfig {
   catalogUrl: string
   /** Expected Wire chain identity, when one was requested. */
   requestedWireChainId: string | null
-  /** Immutable identity of the deployed Wire, Ethereum, and Solana outposts. */
+  /** Optional immutable identity for strict outpost deployment verification. */
   outpostDeploymentProfile?: OutpostDeploymentProfile
   /** Selected live endpoints grouped by chain role. */
   endpoints: ClusterReadinessEndpoint[]

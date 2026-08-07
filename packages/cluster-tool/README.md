@@ -38,16 +38,17 @@ config and re-derives the node topology deterministically via
 `NodeConfig.plan(config)`, the exact call `create`'s steps make.
 
 `readiness` is the remote-cluster exception: it does not own a cluster
-directory or mutate chain state. It resolves an existing network group from an
-immutable outpost deployment profile plus a separate endpoint catalog or
-explicit RPCs, composes `Steps.readiness` through `ReadinessPhaseGroups`, and
-returns the normal Report plus a stable JSON projection. See
+directory or mutate chain state. It resolves an existing network group from a
+Wire chain id through the endpoint catalog, or from explicit RPCs, composes
+`Steps.readiness` through `ReadinessPhaseGroups`, and returns the normal Report
+plus a stable JSON projection. See
 [the operator guide](../../docs/cluster-readiness.md).
 
 Swap readiness validates every advertised public reserve, including zero-depth
-rows, against depot token bindings, available underwriter collateral, exact
-external custody configuration, and positive custody/local-reserve balances.
-Funded wallet execution and terminal settlement remain FlowScenario canaries.
+rows, against depot token bindings and available underwriter collateral. An
+optional deployment profile adds exact external custody and deployment-identity
+verification. Funded wallet execution and terminal settlement are not part of
+this manual command.
 
 ### What gets spawned
 

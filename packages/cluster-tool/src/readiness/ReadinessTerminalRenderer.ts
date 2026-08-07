@@ -154,7 +154,7 @@ export class ReadinessTerminalRenderer {
     lines.push(
       "",
       paint(color, `${Ansi.bold}${Ansi.yellow}`, "PROOF BOUNDARY"),
-      `  ${proofBoundary(report.feature)}`,
+      `  ${proofBoundary(report)}`,
       "",
       report.summary.featurePreflightReady
         ? paint(
@@ -247,8 +247,16 @@ function routeCoverageLines(
   return lines
 }
 
-function proofBoundary(feature: ClusterReadinessFeature): string {
-  return feature === ClusterReadinessFeature.swap
-    ? "Read-only evidence does not prove external custody, OPP daemon circulation, final settlement, or SWAP_REVERT refunds; those require a funded canary."
-    : "Staking is intentionally nonfunctional until a canonical cross-chain LIQ lifecycle is deployed and proven."
+function proofBoundary(report: ClusterReadinessReport): string {
+  if (report.feature !== ClusterReadinessFeature.swap) {
+    return "Staking is intentionally nonfunctional until a canonical cross-chain LIQ lifecycle is deployed and proven."
+  }
+  const externalCustodyChecked = report.checks.some(
+    check =>
+      check.id === ClusterReadinessCheckId["swap.external-custody"] &&
+      check.status === ClusterReadinessCheckStatus.pass
+  )
+  return externalCustodyChecked
+    ? "Read-only evidence includes exact deployment identity and the current external custody snapshot. OPP daemon circulation, final settlement, and SWAP_REVERT refunds still require a funded canary."
+    : "Exact outpost deployment identity and external custody were not checked because no deployment profile was supplied. OPP daemon circulation, final settlement, and SWAP_REVERT refunds require a funded canary."
 }
