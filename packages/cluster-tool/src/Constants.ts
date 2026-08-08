@@ -351,6 +351,14 @@ export namespace ProtocolTiming {
   export const DoubleHopBudgetMs = 840_000
 
   /**
+   * Ceiling margin a verify step carries ABOVE its inner poll deadline (ms),
+   * so the step's own timeout never races the poll it wraps (finality waits +
+   * the final post-poll reads fit inside the margin). Shared by every flow
+   * that pairs a `pollUntil` deadline with an enclosing step timeout.
+   */
+  export const PollDeadlineBufferMs = 30_000
+
+  /**
    * Effective per-epoch duration for N-epoch deadlines (s): the nominal
    * duration plus the maximum delivery extension, so an N-epoch budget
    * survives N consecutively-extended epochs.

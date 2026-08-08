@@ -13,11 +13,9 @@
  */
 
 import Assert from "node:assert"
-import Fs from "node:fs"
-import Path from "node:path"
 import { ethers } from "ethers"
 
-import { contractView, resolveLatestNonce } from "../../utils/ethereumUtils.js"
+import { loadOutpostContract, resolveLatestNonce } from "../../utils/ethereumUtils.js"
 
 /**
  * Minimal `ethers` surface of `MockYieldEmitter.sol`. Typed structurally
@@ -80,29 +78,13 @@ export function loadMockYieldEmitter(
   outpostAddrs: Record<string, string>,
   signer: ethers.Signer
 ): MockYieldEmitterContract {
-  const addr = outpostAddrs.MockYieldEmitter
-  Assert.ok(
-    addr && /^0x[0-9a-fA-F]{40}$/.test(addr),
-    `EthYieldEmitterTool: MockYieldEmitter not in outpost-addrs.json (got ${addr}). ` +
-      `Did wire-ethereum's deployLocal.ts run with the contract enabled?`
-  )
-
-  const artifactPath = Path.join(
+  return loadOutpostContract<MockYieldEmitterContract>(
     ethereumPath,
-    "artifacts",
-    "contracts",
-    "test",
-    "outpost",
-    "MockYieldEmitter.sol",
-    "MockYieldEmitter.json"
+    outpostAddrs,
+    "MockYieldEmitter",
+    ["test", "outpost"],
+    signer
   )
-  Assert.ok(
-    Fs.existsSync(artifactPath),
-    `EthYieldEmitterTool: artifact not found at ${artifactPath}. ` +
-      `Run \`npx hardhat compile\` in wire-ethereum first.`
-  )
-  const artifact = JSON.parse(Fs.readFileSync(artifactPath, "utf-8"))
-  return contractView<MockYieldEmitterContract>(addr, artifact.abi, signer)
 }
 
 /**

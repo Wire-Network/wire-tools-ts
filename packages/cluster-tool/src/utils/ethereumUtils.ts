@@ -1,4 +1,6 @@
 import Assert from "node:assert"
+import Fs from "node:fs"
+import Path from "node:path"
 import { ethers } from "ethers"
 
 /**
@@ -23,6 +25,56 @@ export function contractView<View extends object>(
 ): View & ethers.BaseContract {
   return new ethers.Contract(address, abi, runner) as unknown as View &
     ethers.BaseContract
+}
+
+/** Shape of a deployed 20-byte EVM address (`0x` + 40 hex chars). */
+export const EvmAddressPattern = /^0x[0-9a-fA-F]{40}$/
+
+/**
+ * Load a deployed outpost contract from the run's wire-ethereum deploy
+ * artifacts: resolve its address from the `outpost-addrs.json` map (written by
+ * `deployLocal.ts`), read the hardhat-emitted ABI artifact under
+ * `<ethereumPath>/artifacts/contracts/<...artifactSubpath>/<contractName>.sol/
+ * <contractName>.json`, and bind it to `signer` via {@link contractView}. The
+ * ONE artifact-loading path every per-contract loader (`loadBar`,
+ * `loadMockWireNodes`, `loadMockYieldEmitter`, …) delegates to.
+ *
+ * @param ethereumPath - The wire-ethereum repo root (artifact tree parent).
+ * @param outpostAddrs - The `outpost-addrs.json` address map.
+ * @param contractName - The contract's name — its `outpostAddrs` key AND its `<Name>.sol/<Name>.json` artifact basename.
+ * @param artifactSubpath - Directory segments under `artifacts/contracts` holding the contract's artifact dir.
+ * @param signer - Signer the returned surface is bound to.
+ * @returns The signer-bound contract surface, typed as `View`.
+ */
+export function loadOutpostContract<View extends object>(
+  ethereumPath: string,
+  outpostAddrs: Record<string, string>,
+  contractName: string,
+  artifactSubpath: string[],
+  signer: ethers.Signer
+): View & ethers.BaseContract {
+  const addr = outpostAddrs[contractName]
+  Assert.ok(
+    addr && EvmAddressPattern.test(addr),
+    `loadOutpostContract: ${contractName} not in outpost-addrs.json (got ${addr}). ` +
+      `Did wire-ethereum's deployLocal.ts run with the contract enabled?`
+  )
+
+  const artifactPath = Path.join(
+    ethereumPath,
+    "artifacts",
+    "contracts",
+    ...artifactSubpath,
+    `${contractName}.sol`,
+    `${contractName}.json`
+  )
+  Assert.ok(
+    Fs.existsSync(artifactPath),
+    `loadOutpostContract: artifact not found at ${artifactPath}. ` +
+      `Run \`npx hardhat compile\` in wire-ethereum first.`
+  )
+  const artifact = JSON.parse(Fs.readFileSync(artifactPath, "utf-8"))
+  return contractView<View>(addr, artifact.abi, signer)
 }
 
 /**

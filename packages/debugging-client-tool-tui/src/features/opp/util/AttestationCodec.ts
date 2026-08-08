@@ -6,7 +6,7 @@ import {
   ChallengeOperatorHash,
   ChallengeRequest,
   DepositRevert,
-  NodeOwnerReg,
+  NodeOwnerRegistration,
   OperatorAction,
   Operators,
   PretokenPurchase,
@@ -57,7 +57,10 @@ export const AttestationDecoders: Partial<
   [AttestationType.CHALLENGE_REQUEST]: ChallengeRequest,
   [AttestationType.OPERATORS]: Operators,
   [AttestationType.BATCH_OPERATOR_GROUPS]: BatchOperatorGroups,
-  [AttestationType.NODE_OWNER_REG]: NodeOwnerReg,
+  // The FULL registration payload (actor, keys, account, tier) — what BAR's
+  // commitNode emits and sysio.msgch's dispatch_node_owner_reg decodes; the
+  // legacy 3-field NodeOwnerReg message is no longer emitted by any outpost.
+  [AttestationType.NODE_OWNER_REG]: NodeOwnerRegistration,
   [AttestationType.STAKING_REWARD]: StakingReward,
   [AttestationType.STAKE_RESULT]: StakeResult,
   [AttestationType.ATTESTATION_PROCESSING_ERROR]: AttestationProcessingError,

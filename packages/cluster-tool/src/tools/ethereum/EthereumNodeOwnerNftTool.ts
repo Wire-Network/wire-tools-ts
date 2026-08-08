@@ -1,7 +1,7 @@
 /**
  * NodeOwnerNFTTool — helpers for the flow-node-owner-nft test.
  *
- * Wraps two surfaces:
+ * Wraps three surfaces:
  *
  *   - MockWireNodes.sol (wire-ethereum `contracts/test/outpost/`):
  *     ERC-1155 stand-in for the production WireNodes NFT
@@ -9,25 +9,31 @@
  *     `1 ether` mint price so anvil can drive it without a Chainlink
  *     fixture.
  *
+ *   - BAR.sol `commitNode` (wire-ethereum `contracts/outpost/`): the
+ *     PRODUCTION claim entry point. Draws claims from BAR's canonical
+ *     WireNodes contract and escrows the committed unit in BAR (one unit
+ *     backs at most one registration; the committer must approve BAR as
+ *     an ERC-1155 operator first). Emits the full NODE_OWNER_REG
+ *     `NodeOwnerRegistration` attestation via OPP, which the depot
+ *     (`sysio.msgch::dispatch_node_owner_reg`) consumes end-to-end.
+ *
  *   - sysio.roa create-in-flow node-owner registration (wire-sysio):
- *     the production depot (sysio.msgch) decodes an inbound OPP
- *     NodeOwnerRegistration and inline-sends sysio.roa::newnameduser
- *     (create the account from the claim's Wire key) then
- *     sysio.roa::nodeownreg (register + inline-record the depositor's
- *     ETH link in sysio.authex). This flow drives those two roa actions
- *     directly (as the depot inline-sends them) — matching the patch's
- *     own integration test (tests/nodeownreg_test.py).
+ *     the two actions the depot inline-sends when an inbound
+ *     NodeOwnerRegistration decodes — sysio.roa::newnameduser (create
+ *     the account from the claim's Wire key) then sysio.roa::nodeownreg
+ *     (register + inline-record the depositor's ETH link in
+ *     sysio.authex). The flow's soft-fail / hard-abort probes drive
+ *     these directly (as the depot inline-sends them); the commit path
+ *     above exercises the same pair through the real OPP hop.
  */
 
 import Assert from "node:assert"
-import Fs from "node:fs"
-import Path from "node:path"
 import { ethers } from "ethers"
 import { SysioContracts } from "@wireio/sdk-core"
-import { NodeOwnerTier } from "@wireio/opp-typescript-models"
+import { NodeOwnerTier, type WireKey } from "@wireio/opp-typescript-models"
 
 import type { WireClient } from "../../clients/wire/WireClient.js"
-import { contractView } from "../../utils/ethereumUtils.js"
+import { loadOutpostContract } from "../../utils/ethereumUtils.js"
 
 // Tier IDs accepted by sysio.roa::nodeownreg (matches MockWireNodes NodeInfo). The canonical enum
 // lives in the OPP protobuf models (sysio.opp.types.NodeOwnerTier: T1=1, T2=2, T3=3); re-exported
@@ -60,43 +66,31 @@ export interface MockWireNodesContract extends ethers.BaseContract {
   viewTotalSupply: (id: bigint | number) => Promise<bigint>
   viewMaxSupply: (id: bigint | number) => Promise<bigint>
   balanceOf: (account: string, id: bigint | number) => Promise<bigint>
+  setApprovalForAll: (
+    operator: string,
+    approved: boolean
+  ) => Promise<ethers.ContractTransactionResponse>
+  isApprovedForAll: (account: string, operator: string) => Promise<boolean>
   getAddress: () => Promise<string>
 }
 
 /**
- * Load the hardhat-emitted `MockWireNodes.json` artifact from
- * wire-ethereum and look up its deployed address from the matching
- * `outpost-addrs.json`. Mirrors `loadMockYieldEmitter` exactly so
- * callers can read both off the same `outpostAddrs` map.
+ * Load the deployed `MockWireNodes` fixture from the run's wire-ethereum
+ * deploy artifacts (`outpost-addrs.json` + the hardhat artifact), bound to
+ * `signer`.
  */
 export function loadMockWireNodes(
   ethereumPath: string,
   outpostAddrs: Record<string, string>,
   signer: ethers.Signer
 ): MockWireNodesContract {
-  const addr = outpostAddrs.MockWireNodes
-  Assert.ok(
-    addr && /^0x[0-9a-fA-F]{40}$/.test(addr),
-    `NodeOwnerNFTTool: MockWireNodes not in outpost-addrs.json (got ${addr}). ` +
-      `Did wire-ethereum's deployLocal.ts run with the contract enabled?`
-  )
-
-  const artifactPath = Path.join(
+  return loadOutpostContract<MockWireNodesContract>(
     ethereumPath,
-    "artifacts",
-    "contracts",
-    "test",
-    "outpost",
-    "MockWireNodes.sol",
-    "MockWireNodes.json"
+    outpostAddrs,
+    "MockWireNodes",
+    ["test", "outpost"],
+    signer
   )
-  Assert.ok(
-    Fs.existsSync(artifactPath),
-    `NodeOwnerNFTTool: artifact not found at ${artifactPath}. ` +
-      `Run \`npx hardhat compile\` in wire-ethereum first.`
-  )
-  const artifact = JSON.parse(Fs.readFileSync(artifactPath, "utf-8"))
-  return contractView<MockWireNodesContract>(addr, artifact.abi, signer)
 }
 
 /**
@@ -115,6 +109,94 @@ export async function mintNodeNFT(
   const tx = await contract.mint(tier, amount, { value })
   const receipt = await tx.wait()
   Assert.ok(receipt, "mintNodeNFT: receipt is null")
+  return receipt
+}
+
+/**
+ * One-time ERC-1155 operator approval so BAR can pull the committed unit
+ * into escrow. `BAR.commitNode` consumes the claimed unit (escrows it in
+ * BAR before the attestation is queued), so the committer must have
+ * approved BAR on WireNodes first — without it the commit reverts with the
+ * token's `ERC1155MissingApprovalForAll`.
+ *
+ * @param contract - The committer-bound WireNodes surface.
+ * @param barAddress - The BAR contract address (the escrow operator).
+ * @returns The mined receipt.
+ */
+export async function approveNodeEscrow(
+  contract: MockWireNodesContract,
+  barAddress: string
+): Promise<ethers.ContractTransactionReceipt> {
+  const tx = await contract.setApprovalForAll(barAddress, true)
+  const receipt = await tx.wait()
+  Assert.ok(receipt, "approveNodeEscrow: receipt is null")
+  return receipt
+}
+
+/** Minimal `ethers` surface of `BAR.sol` for the node-owner commit path. */
+export interface BarContract extends ethers.BaseContract {
+  commitNode: (
+    tokenId: bigint | number,
+    wireAccountName: string,
+    wirePublicKey: WireKey,
+    depositorPublicKey: string,
+    overrides?: ethers.Overrides
+  ) => Promise<ethers.ContractTransactionResponse>
+  getAddress: () => Promise<string>
+}
+
+/**
+ * Load the deployed `BAR` contract from the run's wire-ethereum deploy
+ * artifacts (`outpost-addrs.json` + the hardhat artifact), bound to `signer`.
+ */
+export function loadBar(
+  ethereumPath: string,
+  outpostAddrs: Record<string, string>,
+  signer: ethers.Signer
+): BarContract {
+  return loadOutpostContract<BarContract>(
+    ethereumPath,
+    outpostAddrs,
+    "BAR",
+    ["outpost"],
+    signer
+  )
+}
+
+/**
+ * Commit a node NFT via `BAR.commitNode` — the production claim entry point.
+ * Claims are drawn from the canonical WireNodes contract configured in BAR
+ * (`setWireNodesContract`, wired by deployLocal on the local cluster), and
+ * the commit ESCROWS the claimed unit in BAR — the signer must hold ≥ 1
+ * unit of `tier` and have approved BAR first (see {@link approveNodeEscrow}).
+ * The contract validates every payload class the depot would silently drop
+ * (tier from the tokenId, name charset/length, Wire key usability, the
+ * depositor key deriving the caller) and queues the full
+ * `NodeOwnerRegistration` NODE_OWNER_REG attestation for the next outbound
+ * OPP envelope.
+ *
+ * @param contract - The signer-bound BAR surface; the signer must hold ≥ 1 of `tier` and match `depositorPublicKey`.
+ * @param tier - The claimed tier — WireNodes token ids ARE the tiers, so this is also the tokenId committed.
+ * @param wireAccountName - The Wire account to register (created in-flow when absent).
+ * @param wirePublicKey - The account's owner/active authority as the proto `WireKey`.
+ * @param depositorPublicKey - The caller's 65-byte SEC1 uncompressed public key (`0x04 || X || Y`).
+ * @returns The mined receipt.
+ */
+export async function commitNode(
+  contract: BarContract,
+  tier: NodeOwnerTier,
+  wireAccountName: string,
+  wirePublicKey: WireKey,
+  depositorPublicKey: string
+): Promise<ethers.ContractTransactionReceipt> {
+  const tx = await contract.commitNode(
+    tier,
+    wireAccountName,
+    wirePublicKey,
+    depositorPublicKey
+  )
+  const receipt = await tx.wait()
+  Assert.ok(receipt, "commitNode: receipt is null")
   return receipt
 }
 
