@@ -98,7 +98,9 @@ export namespace WireReserveTool {
   ): WireFee {
     const bps = BigInt(BpsTotal),
       clampedFeeBps = BigInt(Math.min(Math.max(feeBps, 0), BpsTotal)),
-      clampedRewardBps = BigInt(Math.min(Math.max(rewardShareBps, 0), BpsTotal)),
+      clampedRewardBps = BigInt(
+        Math.min(Math.max(rewardShareBps, 0), BpsTotal)
+      ),
       fee = (wireAmount * clampedFeeBps) / bps,
       rewardShare = (fee * clampedRewardBps) / bps
     return {
@@ -107,6 +109,55 @@ export namespace WireReserveTool {
       emissionsShare: fee - rewardShare,
       net: wireAmount - fee
     }
+  }
+
+  /** One reserve row's `(chain, wire)` book. */
+  export interface ReserveBook {
+    /** The reserve's chain-side (token) depth. */
+    chain: bigint
+    /** The reserve's WIRE-side depth. */
+    wire: bigint
+  }
+
+  /**
+   * Post-fee swap quote along the depot curve — the TypeScript mirror of
+   * `sysio::opp::amm::quote_swap`, evaluated over book values the caller
+   * already holds. Pass `null` for a WIRE endpoint: the depot IS the WIRE side,
+   * so that leg consults no reserve.
+   *
+   * The WIRE-leg fee is charged BETWEEN the hops — the source side gives up the
+   * full gross intermediate, and only the post-fee remainder converts into the
+   * destination token. Quoting the hops fee-free overstates the destination
+   * amount by roughly `feeBps`, which is what the depot settles short of: since
+   * `sysio.uwrit` derives `dst_amount` from this same expression, a fee-free
+   * quote is not a settlement amount, it is a settlement amount plus the fee.
+   *
+   * @param source - The source reserve's book, or `null` for a WIRE source.
+   * @param destination - The destination reserve's book, or `null` for a WIRE
+   *   destination.
+   * @param amountIn - The source amount in the source leg's depot-frame units.
+   * @param feeBps - The WIRE-leg fee in basis points — pass the live
+   *   `uwconfig.fee_bps` ({@link readFeeBps}).
+   * @returns The destination amount the recipient receives, or `0n` when the
+   *   input or either hop is degenerate — the on-chain "no quote available"
+   *   convention.
+   */
+  export function quoteSwap(
+    source: ReserveBook | null,
+    destination: ReserveBook | null,
+    amountIn: bigint,
+    feeBps: number
+  ): bigint {
+    if (amountIn <= 0n) return 0n
+    // WIRE → WIRE is a plain transfer: no curve, no fee.
+    if (source == null && destination == null) return amountIn
+    const wireLeg =
+      source == null ? amountIn : cpOutput(source.chain, source.wire, amountIn)
+    if (wireLeg === 0n) return 0n
+    const { net } = splitWireFee(wireLeg, feeBps)
+    // A WIRE destination receives the post-fee WIRE leg directly.
+    if (destination == null) return net
+    return cpOutput(destination.wire, destination.chain, net)
   }
 
   /**
@@ -159,7 +210,10 @@ export namespace WireReserveTool {
    * @param nativeDecimals - The token's chain-native decimal scale.
    * @returns The amount in the token's depot-frame units (floored when downscaling).
    */
-  export function toDepot(nativeAmount: bigint, nativeDecimals: number): bigint {
+  export function toDepot(
+    nativeAmount: bigint,
+    nativeDecimals: number
+  ): bigint {
     const precision = depotPrecision(nativeDecimals)
     return nativeDecimals > precision
       ? nativeAmount / 10n ** BigInt(nativeDecimals - precision)
@@ -177,7 +231,10 @@ export namespace WireReserveTool {
    * @param nativeDecimals - The destination token's chain-native decimal scale.
    * @returns The amount in chain-native base units.
    */
-  export function fromDepot(depotAmount: bigint, nativeDecimals: number): bigint {
+  export function fromDepot(
+    depotAmount: bigint,
+    nativeDecimals: number
+  ): bigint {
     const precision = depotPrecision(nativeDecimals)
     return nativeDecimals > precision
       ? depotAmount * 10n ** BigInt(nativeDecimals - precision)
@@ -221,14 +278,22 @@ export namespace WireReserveTool {
 
   /** Whether a triple denotes the WIRE leg (no reserve consulted). */
   function isWireLeg(triple: ReserveTriple): boolean {
-    return triple.chainCode === WireChainCode && triple.tokenCode === WireTokenCode
+    return (
+      triple.chainCode === WireChainCode && triple.tokenCode === WireTokenCode
+    )
   }
 
   /**
    * Cross-chain swap quote — the read-only `sysio.reserv::swapquote` surface,
-   * evaluated client-side from the live `reserves` table (a read). Mirrors the
-   * depot's `cp_output` math so callers can assert expected quotes before
-   * issuing a SWAP_REQUEST.
+   * evaluated client-side from the live `reserves` table and the live
+   * `uwconfig.fee_bps` (reads). A thin composition of {@link quoteSwap} over
+   * those rows, so callers can assert expected quotes before issuing a
+   * SWAP_REQUEST and get the amount the depot will actually settle.
+   *
+   * The fee is read here rather than accepted as a parameter: `sysio.uwrit`
+   * reads `uwconfig.fee_bps` fresh at both ingestion and settlement, and a
+   * caller who forgets to apply it gets a quote that is short by exactly the
+   * fee — silently, since a loose variance tolerance still admits the request.
    *
    * @param wire - The depot client.
    * @param request - The source triple + amount and destination triple.
@@ -248,42 +313,35 @@ export namespace WireReserveTool {
     const { rows } = await wire
       .getSysioContract(SysioContractName.reserv)
       .tables.reserves.query({ limit: MaxReservesScan })
-    const findReserve = (triple: ReserveTriple) =>
-      rows.find(
-        reserve =>
-          slugValue(reserve.chain_code) === triple.chainCode &&
-          slugValue(reserve.token_code) === triple.tokenCode &&
-          slugValue(reserve.reserve_code) === triple.reserveCode
+    const bookFor = (triple: ReserveTriple): ReserveBook | undefined => {
+      const reserve = rows.find(
+        row =>
+          slugValue(row.chain_code) === triple.chainCode &&
+          slugValue(row.token_code) === triple.tokenCode &&
+          slugValue(row.reserve_code) === triple.reserveCode
       )
-    const chainAmount = (reserve: SysioContracts.SysioReservReserveRowType) =>
-        BigInt(reserve.reserve_chain_amount),
-      wireAmount = (reserve: SysioContracts.SysioReservReserveRowType) =>
-        BigInt(reserve.reserve_wire_amount)
+      return reserve == null
+        ? undefined
+        : {
+            chain: BigInt(reserve.reserve_chain_amount),
+            wire: BigInt(reserve.reserve_wire_amount)
+          }
+    }
 
-    if (fromIsWire) {
-      const reserve = findReserve(to)
-      if (reserve == null) return 0n
-      return cpOutput(wireAmount(reserve), chainAmount(reserve), fromAmount)
+    // `null` denotes the WIRE leg (no reserve consulted); a missing row for a
+    // non-WIRE leg is "no quote available".
+    let source: ReserveBook | null = null
+    if (!fromIsWire) {
+      const book = bookFor(from)
+      if (book == null) return 0n
+      source = book
     }
-    if (toIsWire) {
-      const reserve = findReserve(from)
-      if (reserve == null) return 0n
-      return cpOutput(chainAmount(reserve), wireAmount(reserve), fromAmount)
+    let destination: ReserveBook | null = null
+    if (!toIsWire) {
+      const book = bookFor(to)
+      if (book == null) return 0n
+      destination = book
     }
-    // Full hop: source → WIRE → destination, two reserves consulted.
-    const sourceReserve = findReserve(from),
-      destinationReserve = findReserve(to)
-    if (sourceReserve == null || destinationReserve == null) return 0n
-    const wireIntermediate = cpOutput(
-      chainAmount(sourceReserve),
-      wireAmount(sourceReserve),
-      fromAmount
-    )
-    if (wireIntermediate === 0n) return 0n
-    return cpOutput(
-      wireAmount(destinationReserve),
-      chainAmount(destinationReserve),
-      wireIntermediate
-    )
+    return quoteSwap(source, destination, fromAmount, await readFeeBps(wire))
   }
 }

@@ -3,7 +3,14 @@ import type { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { WireReserveTool } from "@wireio/cluster-tool/tools/wire"
 
 const { SysioContractName } = SysioContracts
-const { BpsTotal, cpOutput, splitWireFee, swapquote, varianceDrift } = WireReserveTool
+const {
+  BpsTotal,
+  cpOutput,
+  quoteSwap,
+  splitWireFee,
+  swapquote,
+  varianceDrift
+} = WireReserveTool
 
 /** The old dev-cluster fee the recorded SwapFeeMath assertions were baselined on. */
 const LegacySwapFeeBps = 10
@@ -37,7 +44,8 @@ function stubWire(reserves: QuoteReserveFixture[], feeBps = 30): WireClient {
     }
   }
   return {
-    getSysioContract: (name: SysioContracts.SysioContractName) => clientByName[name]
+    getSysioContract: (name: SysioContracts.SysioContractName) =>
+      clientByName[name]
   } as WireClient
 }
 
@@ -45,7 +53,9 @@ describe("WireReserveTool", () => {
   describe("cpOutput", () => {
     it("matches the depot's constant-product floor math", () => {
       // 1e10 books, 1e8 in → floor(1e10 × 1e8 / (1e10 + 1e8)) = 99_009_900
-      expect(cpOutput(10_000_000_000n, 10_000_000_000n, 100_000_000n)).toBe(99_009_900n)
+      expect(cpOutput(10_000_000_000n, 10_000_000_000n, 100_000_000n)).toBe(
+        99_009_900n
+      )
     })
     it("is 0n when any side is empty", () => {
       expect(cpOutput(0n, 10n, 5n)).toBe(0n)
@@ -63,7 +73,14 @@ describe("WireReserveTool", () => {
       expect(fee.emissionsShare).toBe(49_505n)
     })
     it("holds the exact-integer invariants across amounts", () => {
-      const amounts = [1n, 7n, 1_000_000n, 99_009_900n, 100_969_310n, 80_000_000_000n]
+      const amounts = [
+        1n,
+        7n,
+        1_000_000n,
+        99_009_900n,
+        100_969_310n,
+        80_000_000_000n
+      ]
       amounts.forEach(amount => {
         const fee = splitWireFee(amount, LegacySwapFeeBps)
         expect(fee.rewardShare + fee.emissionsShare).toBe(fee.fee)
@@ -115,27 +132,76 @@ describe("WireReserveTool", () => {
 
     it("is identity at exactly 9 decimals (lamports)", () => {
       expect(WireReserveTool.toDepot(10_000_000_000n, 9)).toBe(10_000_000_000n)
-      expect(WireReserveTool.fromDepot(10_000_000_000n, 9)).toBe(10_000_000_000n)
+      expect(WireReserveTool.fromDepot(10_000_000_000n, 9)).toBe(
+        10_000_000_000n
+      )
     })
 
     it("downscales an above-cap token (18-dec wei → ÷1e9, floored)", () => {
-      expect(WireReserveTool.toDepot(1_500_000_000_999_999_999n, 18)).toBe(1_500_000_000n)
+      expect(WireReserveTool.toDepot(1_500_000_000_999_999_999n, 18)).toBe(
+        1_500_000_000n
+      )
     })
 
     it("fromDepot upscales an above-cap token (18-dec wei → ×1e9)", () => {
-      expect(WireReserveTool.fromDepot(4_754_411_063n, 18)).toBe(4_754_411_063_000_000_000n)
+      expect(WireReserveTool.fromDepot(4_754_411_063n, 18)).toBe(
+        4_754_411_063_000_000_000n
+      )
     })
 
     it("rejects a zero / non-integer decimals argument", () => {
-      expect(() => WireReserveTool.toDepot(1n, 0)).toThrow(/invalid native decimals/)
-      expect(() => WireReserveTool.fromDepot(1n, 1.5)).toThrow(/invalid native decimals/)
-      expect(() => WireReserveTool.depotPrecision(-1)).toThrow(/invalid native decimals/)
+      expect(() => WireReserveTool.toDepot(1n, 0)).toThrow(
+        /invalid native decimals/
+      )
+      expect(() => WireReserveTool.fromDepot(1n, 1.5)).toThrow(
+        /invalid native decimals/
+      )
+      expect(() => WireReserveTool.depotPrecision(-1)).toThrow(
+        /invalid native decimals/
+      )
     })
   })
 
   describe("readFeeBps", () => {
     it("reads the live uwconfig singleton", async () => {
-      await expect(WireReserveTool.readFeeBps(stubWire([], 30))).resolves.toBe(30)
+      await expect(WireReserveTool.readFeeBps(stubWire([], 30))).resolves.toBe(
+        30
+      )
+    })
+  })
+
+  describe("quoteSwap (the sysio::opp::amm::quote_swap mirror)", () => {
+    const book = { chain: 10_000_000_000n, wire: 10_000_000_000n }
+
+    it("charges the WIRE-leg fee BETWEEN the hops, not on the output", () => {
+      const gross = cpOutput(book.chain, book.wire, 100_000_000n),
+        net = splitWireFee(gross, 30).net
+      // Fee before the destination conversion — NOT cp(...gross) reduced after.
+      expect(quoteSwap(book, book, 100_000_000n, 30)).toBe(
+        cpOutput(book.wire, book.chain, net)
+      )
+      expect(quoteSwap(book, book, 100_000_000n, 30)).not.toBe(
+        splitWireFee(cpOutput(book.wire, book.chain, gross), 30).net
+      )
+    })
+    it("a WIRE destination receives the post-fee WIRE leg itself", () => {
+      const gross = cpOutput(book.chain, book.wire, 100_000_000n)
+      expect(quoteSwap(book, null, 100_000_000n, 30)).toBe(
+        splitWireFee(gross, 30).net
+      )
+    })
+    it("a WIRE source feeds the escrow straight into the WIRE leg", () => {
+      expect(quoteSwap(null, book, 100_000_000n, 30)).toBe(
+        cpOutput(book.wire, book.chain, splitWireFee(100_000_000n, 30).net)
+      )
+    })
+    it("WIRE → WIRE is a plain transfer — no curve, no fee", () => {
+      expect(quoteSwap(null, null, 42n, 30)).toBe(42n)
+    })
+    it("is 0n on degenerate input or a dry hop", () => {
+      expect(quoteSwap(book, book, 0n, 30)).toBe(0n)
+      expect(quoteSwap(book, book, -1n, 30)).toBe(0n)
+      expect(quoteSwap({ chain: 0n, wire: 0n }, book, 100n, 30)).toBe(0n)
     })
   })
 
@@ -172,34 +238,52 @@ describe("WireReserveTool", () => {
         reserveCode: PrimaryReserve
       }
 
-    it("full hop routes source → WIRE → destination through both books", async () => {
+    it("full hop routes source → WIRE → destination through both books, fee between the hops", async () => {
       const quote = await swapquote(stubWire(reserves), {
         from: ethereumTriple,
         fromAmount: 100_000_000n,
         to: solanaTriple
       })
-      // wireIntermediate = cp(1e10, 1e10, 1e8) = 99_009_900; then cp again.
-      expect(quote).toBe(cpOutput(10_000_000_000n, 10_000_000_000n, 99_009_900n))
+      // Gross intermediate cp(1e10, 1e10, 1e8) = 99_009_900; the 30 bps fee
+      // comes off it, and only the net converts on the destination curve.
+      const net = splitWireFee(99_009_900n, 30).net
+      expect(quote).toBe(cpOutput(10_000_000_000n, 10_000_000_000n, net))
+      expect(quote).toBe(97_747_972n)
     })
-    it("to-WIRE consults only the source book", async () => {
+    it("to-WIRE consults only the source book and pays the post-fee leg", async () => {
       const quote = await swapquote(stubWire(reserves), {
         from: ethereumTriple,
         fromAmount: 100_000_000n,
         to: wireTriple
       })
-      expect(quote).toBe(99_009_900n)
+      expect(quote).toBe(splitWireFee(99_009_900n, 30).net)
     })
-    it("from-WIRE consults only the destination book", async () => {
+    it("from-WIRE takes the fee off the escrow before the destination curve", async () => {
       const quote = await swapquote(stubWire(reserves), {
         from: wireTriple,
         fromAmount: 100_000_000n,
         to: solanaTriple
       })
+      const net = splitWireFee(100_000_000n, 30).net
+      expect(quote).toBe(cpOutput(10_000_000_000n, 10_000_000_000n, net))
+      expect(quote).toBe(98_715_803n)
+    })
+    it("honours the live uwconfig fee rather than a hardcoded rate", async () => {
+      const quote = await swapquote(stubWire(reserves, 0), {
+        from: wireTriple,
+        fromAmount: 100_000_000n,
+        to: solanaTriple
+      })
+      // A zero-fee cluster is the only case where the quote is the raw curve.
       expect(quote).toBe(99_009_900n)
     })
     it("WIRE → WIRE passes through 1:1", async () => {
       await expect(
-        swapquote(stubWire([]), { from: wireTriple, fromAmount: 42n, to: wireTriple })
+        swapquote(stubWire([]), {
+          from: wireTriple,
+          fromAmount: 42n,
+          to: wireTriple
+        })
       ).resolves.toBe(42n)
     })
     it("is 0n when a required reserve row is missing", async () => {

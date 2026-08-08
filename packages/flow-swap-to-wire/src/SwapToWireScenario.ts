@@ -261,12 +261,13 @@ async function runRequestSwap(
  * 3. **UnderwriterCollateral** / **UnderwriterActive** — default bonds on both
  *    outposts; the roster flips ACTIVE once the deposits credit over OPP.
  * 4. **QuoteAndRequest** — single-reserve `cp_output(src.chain, src.wire,
- *    amount)` target; the ONE `requestSwap` write with the WIRE target.
+ *    amount)` gross leg, less the WIRE-leg fee, is the target; the ONE
+ *    `requestSwap` write with the WIRE target.
  * 5. **CreateUwreq** — the PENDING to-WIRE UWREQ appears (dst token = WIRE).
  * 6. **RaceSourceLeg** — CONFIRMED with exactly ONE lock, on the SOURCE chain.
- * 7. **PayWireDirectly** — recipient paid the EXACT target; source book moves
- *    `chain += src, wire -= target + fee`; custody drains to
- *    `before − target − fee`.
+ * 7. **PayWireDirectly** — recipient paid the EXACT post-fee target; source
+ *    book moves `chain += src, wire -= target + fee` (i.e. the gross leg);
+ *    custody drains to `before − target − fee`.
  * 8. **ChallengeWindow** — the lock persists (still CONFIRMED) and NO outbound
  *    SWAP_REMIT references the uwreq (the depot itself was the payer).
  */
@@ -430,12 +431,13 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
         "compute-target",
         "compute the to-WIRE target from the source reserve curve (single-reserve cp_output)",
         async ctx => {
-          // The public reserv::swapquote is two-reserve; a WIRE target has no
-          // destination reserve, so the depot's variance check uses the
+          // A WIRE destination has no destination reserve, so the curve is the
           // single-reserve branch `cp_output(src.chain, src.wire, amount)` —
-          // mirrored here from the live row via WireReserveTool.cpOutput, with
-          // the WIRE-leg fee split at the LIVE uwconfig rate
-          // (WireReserveTool.readFeeBps). Baselines snapshot alongside.
+          // and that produces the GROSS WIRE leg. The fee comes out of it: the
+          // recipient receives `split_wire_fee(gross).net` (what `paywire`
+          // pays, and what `quoteSwap(book, null, ...)` returns), while the
+          // reserve gives up `net + fee == gross`. Both halves are snapshotted
+          // so the settlement assertions can spend them separately.
           const book = await ctx.reserveBook(
             Constants.EthereumChainCode,
             Constants.EthereumTokenCode,
@@ -445,22 +447,23 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
             Constants.ReserveCustodyAccount
           )
           const feeBps = await WireReserveTool.readFeeBps(ctx.wire)
-          const target = WireReserveTool.cpOutput(
+          const grossWireLeg = WireReserveTool.cpOutput(
             book.chain,
             book.wire,
             Constants.SourceDepotUnits
           )
-          Assert.ok(target > 0n, "curve target must be positive")
+          const { net: target, fee: wireLegFee } = WireReserveTool.splitWireFee(
+            grossWireLeg,
+            feeBps
+          )
+          Assert.ok(target > 0n, "post-fee curve target must be positive")
           ctx.outputs
             .set(SwapToWireScenario.Output.bookBefore, book)
             .set(SwapToWireScenario.Output.custodyBefore, custody)
             .set(SwapToWireScenario.Output.target, target)
-            .set(
-              SwapToWireScenario.Output.wireLegFee,
-              WireReserveTool.splitWireFee(target, feeBps).fee
-            )
+            .set(SwapToWireScenario.Output.wireLegFee, wireLegFee)
           log.info(
-            `[SwapToWire] curve target = ${target} WIRE base units (fee_bps=${feeBps})`
+            `[SwapToWire] gross curve leg = ${grossWireLeg}, post-fee target = ${target} WIRE base units (fee_bps=${feeBps})`
           )
         }
       ),
@@ -560,7 +563,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
       verifyStep<SwapScenarioContext>(
         Actor.Sysio,
         "recipient-paid-exact",
-        "recipient receives EXACTLY the target (the payout is not reduced by the fee)",
+        "recipient receives EXACTLY the post-fee target (the fee comes out of the WIRE leg)",
         async ctx => {
           const recipient = ctx.outputs.assert(
               SwapToWireScenario.Output.recipient
@@ -573,11 +576,14 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
             Constants.PayoutDeadlineMs,
             Constants.LongPollIntervalMs
           )
-          // paywire pays dst_amount exactly (the user's variance-gated target).
+          // paywire pays `dst_amount` exactly, and since #550 `dst_amount` is
+          // the depot's own quote — `split_wire_fee(gross).net` — not the
+          // caller's `target_amount`. The fee is borne by the swapper, not by
+          // the reserve: the recipient gets the post-fee WIRE.
           const received = await ctx.wire.getWireBalance(recipient.account)
           Assert.ok(
             received === target,
-            `paywire pays dst_amount exactly — expected ${target}, got ${received}`
+            `paywire pays the post-fee quote exactly — expected ${target}, got ${received}`
           )
         },
         payoutStepOptions
@@ -723,15 +729,22 @@ export namespace SwapToWireScenario {
       "swapToWire.recipient",
       "the provisioned WIRE recipient"
     )
-    /** The curve-derived WIRE target the request carries (paid EXACTLY). */
+    /**
+     * The POST-FEE WIRE target the request carries — `split_wire_fee(gross).net`
+     * over the single-reserve curve leg. `paywire` pays this exactly.
+     */
     export const target = outputKey<bigint>(
       "swapToWire.target",
-      "single-reserve cp_output WIRE target"
+      "post-fee single-reserve cp_output WIRE target"
     )
-    /** The predicted WIRE-leg fee on the target (from the live uwconfig fee_bps). */
+    /**
+     * The WIRE-leg fee charged on the GROSS curve leg (at the live uwconfig
+     * `fee_bps`). `target + wireLegFee` is the gross — what the source reserve
+     * gives up and what custody drains by.
+     */
     export const wireLegFee = outputKey<bigint>(
       "swapToWire.wireLegFee",
-      "WIRE-leg fee charged on the gross target"
+      "WIRE-leg fee charged on the gross curve leg"
     )
     /** The ETHEREUM/ETH/PRIMARY book snapshot taken at quote time. */
     export const bookBefore = outputKey<ReserveBook>(

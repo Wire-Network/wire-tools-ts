@@ -90,9 +90,10 @@ interface ComputeQuoteAndInflateInput extends StepInput {
 
 /**
  * Named runner — quote the swap live via {@link WireReserveTool.swapquote}
- * (the same two-hop `src → WIRE → dst` constant-product math the depot runs
- * when the SwapRequest is dispatched — a read), assert the quote is non-zero,
- * inflate it by `revertMultiplier`, and store the target in `ctx.outputs`.
+ * (the same two-hop `src → WIRE → dst` curve with the WIRE-leg fee charged
+ * between the hops that the depot runs when the SwapRequest is dispatched — a
+ * read), assert the quote is non-zero, inflate it by `revertMultiplier`, and
+ * store the target in `ctx.outputs`.
  */
 async function runComputeQuoteAndInflate(
   ctx: SwapScenarioContext,
