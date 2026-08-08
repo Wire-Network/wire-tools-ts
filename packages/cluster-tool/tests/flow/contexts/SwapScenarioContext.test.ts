@@ -62,6 +62,7 @@ function uwreqRow(
     dst_token_code: { value: 0 },
     dst_reserve_code: { value: 0 },
     dst_amount: 0,
+    target_amount: 0,
     variance_tolerance_bps: 0,
     source_tx_id: "",
     depositor: "",
