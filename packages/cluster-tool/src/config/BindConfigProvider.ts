@@ -1,4 +1,5 @@
 import Assert from "node:assert"
+import Crypto from "node:crypto"
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
@@ -75,15 +76,49 @@ async function clearPortLocks(): Promise<void> {
  * free, or `resolve` throws) or a newly-claimed free port.
  */
 export namespace BindConfigProvider {
+  /** Filename stem of the {@link portLockPath} advisory lock. */
+  const PortLockPrefix = "wire-cluster-ports"
+  /** Hex characters of the registry-path digest in a {@link portLockPath}. */
+  const PortLockKeyLength = 16
+
   /**
-   * Host-global lock path serializing port SELECTION across every wire process
-   * (parallel `flow-*` / `wire-cluster-tool` runs). `get-port` only de-dupes
-   * within one process; this cross-process advisory lock (via `withFileLock`)
-   * stops two processes racing the same free port while finding it. Shared by
-   * ALL processes on the host, so it lives under the OS temp dir, not a cluster
-   * path.
+   * Lock path serializing port SELECTION across every process that shares a
+   * registry (parallel `flow-*` / `wire-cluster-tool` runs). `get-port` only
+   * de-dupes within one process; this cross-process advisory lock (via
+   * `withFileLock`) stops two processes racing the same free port while
+   * finding it.
+   *
+   * KEYED BY {@link registryPath}, but kept in the OS temp dir. The lock's
+   * scope must match the scope of the registry it guards: real runs all
+   * resolve the same default registry dir, so they hash to the SAME lock and
+   * still serialize host-globally — behaviour unchanged. A caller that
+   * sandboxes the registry via {@link RegistryPathEnvVar} (every jest suite
+   * does, in `tests/jest.setup.ts`) hashes to its OWN lock, which is correct:
+   * disjoint registries cannot collide on a port, so serializing them protects
+   * nothing.
+   *
+   * When the path was a FIXED tmpdir name the two scopes disagreed, and every
+   * port-drawing test across all 8 jest projects queued on one global lock
+   * despite already holding private registries — blowing `FileLockOptions`'
+   * retry budget and failing ~37 tests per run with "Lock file is already
+   * being held". Raising that budget had already been tried once; it treats
+   * the symptom, because the contention was self-inflicted.
+   *
+   * The lock lives in the temp dir rather than INSIDE the registry dir because
+   * a sandboxing caller owns (and deletes) that dir: `proper-lockfile` keeps an
+   * mtime-refresh timer alive for a held lock and its `onCompromised` hook
+   * THROWS when the lock's directory vanishes underneath it, so a fixture
+   * tearing down its temp root raced the refresh and produced
+   * `ENOENT ... wire-cluster-ports.lock.lock`. Hashing the path keeps the
+   * scoping while putting the file somewhere no test owns.
    */
-  export const PortLockPath = Path.join(Os.tmpdir(), "wire-cluster-ports.lock")
+  export function portLockPath(): string {
+    const registryKey = Crypto.createHash("sha256")
+      .update(registryPath())
+      .digest("hex")
+      .slice(0, PortLockKeyLength)
+    return Path.join(Os.tmpdir(), `${PortLockPrefix}-${registryKey}.lock`)
+  }
   /**
    * agave's built-in validator port range — RESERVED host-wide; the harness
    * NEVER assigns a port inside it. A 4.x (solana-test-)validator binds
@@ -178,11 +213,11 @@ export namespace BindConfigProvider {
   ): Promise<BindConfig> {
     // Hold the host-global port lock for the WHOLE cluster port selection so a
     // parallel process cannot interleave and pick an overlapping set (get-port
-    // only de-dupes within one process — see PortLockPath).
-    return withFileLock(PortLockPath, () => resolveLocked(options, topology))
+    // only de-dupes within one process — see portLockPath).
+    return withFileLock(portLockPath(), () => resolveLocked(options, topology))
   }
 
-  /** {@link resolve} body — always runs under the {@link PortLockPath} lock. */
+  /** {@link resolve} body — always runs under the {@link portLockPath} lock. */
   async function resolveLocked(
     options: BindOptions,
     topology: ClusterTopologyOptions
@@ -440,7 +475,7 @@ export namespace BindConfigProvider {
    * (recycled), or whose content does not parse, is DELETED instead of
    * honored. A live pid whose `/proc` is unreadable (another user's process)
    * is kept conservatively. Call only under the
-   * {@link BindConfigProvider.PortLockPath} lock — read/reap/resolve/write
+   * {@link BindConfigProvider.portLockPath} lock — read/reap/resolve/write
    * must be one critical section.
    *
    * The set is SEEDED with {@link ReservedAgavePortBand} — the band is a
@@ -538,7 +573,7 @@ export namespace BindConfigProvider {
    */
   export async function isPortAvailable(port: number): Promise<boolean> {
     return withFileLock(
-      PortLockPath,
+      portLockPath(),
       async () => (await getPort({ port })) === port
     )
   }
@@ -562,7 +597,7 @@ export namespace BindConfigProvider {
     preferred: number,
     protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
   ): Promise<number> {
-    return withFileLock(PortLockPath, () =>
+    return withFileLock(portLockPath(), () =>
       pickPort(
         null,
         preferred,
@@ -681,7 +716,7 @@ export namespace BindConfigProvider {
    * caller-pinned range must be entirely free (else THROW, mirroring
    * {@link pickPort}); otherwise candidate windows are scanned from
    * {@link DefaultSolanaDynamicPortFirst}. Call only under the
-   * {@link BindConfigProvider.PortLockPath} lock (resolve does).
+   * {@link BindConfigProvider.portLockPath} lock (resolve does).
    *
    * @param callerPin - The caller's pinned window, or null.
    * @param exclusions - Ports already claimed/registered.
@@ -734,7 +769,7 @@ export namespace BindConfigProvider {
    * @returns A currently-free window.
    */
   export async function findAvailableRange(): Promise<BindConfigPortRange> {
-    return withFileLock(PortLockPath, () =>
+    return withFileLock(portLockPath(), () =>
       pickPortRange(null, readRegistryPortExclusions(), "solana.dynamicRange")
     )
   }
