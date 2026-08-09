@@ -35,8 +35,7 @@ interface AttestationMessageType {
 /**
  * Single source of truth mapping every `AttestationType` enum value → the
  * `MessageType` that knows how to decode its `data` bytes. Unmapped values
- * (for example `UNSPECIFIED`, or retired/reserved wire slots 3001 and 3002
- * arriving from historical data) fall through to a raw-record render in the
+ * (for example `UNSPECIFIED`) fall through to a raw-record render in the
  * panel — no decode is attempted.
  *
  * Keep the keys aligned with `AttestationType`'s identifiers; renames in the
