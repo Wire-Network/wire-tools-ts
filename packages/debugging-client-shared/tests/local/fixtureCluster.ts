@@ -147,7 +147,8 @@ export function makeFixtureCluster(): FixtureCluster {
     signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
     externalOutposts: null,
     debuggingServerEnabled: true,
-    enableMockReserves: false
+    enableMockReserves: false,
+    enableMockYieldEmitter: false
   }
 
   Fs.writeFileSync(

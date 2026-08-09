@@ -53,6 +53,11 @@ export interface ClusterBuildOptions {
    * to the bootstrap window (epoch 0), so this only ever seeds pre-EpochBootstrap.
    */
   enableMockReserves?: boolean
+  /**
+   * Deploy the transport-only Ethereum STAKING_REWARD emitter. Default false;
+   * only the yield-distribution flow opts in.
+   */
+  enableMockYieldEmitter?: boolean
   // termination tuning
   terminateMaxConsecutiveMisses?: number
   terminateMaxPercentMisses24h?: number

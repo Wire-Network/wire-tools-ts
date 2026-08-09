@@ -208,7 +208,13 @@ export const ClusterConfigSchema = z.object({
    * pre-existing configs — and every real/external depot — stay reserve-free
    * unless a caller (or a flow's scenario defaults) opts in.
    */
-  enableMockReserves: z.boolean().default(false)
+  enableMockReserves: z.boolean().default(false),
+  /**
+   * Whether the local Ethereum bootstrap deploys the transport-only synthetic
+   * yield emitter. Schema-defaulted `false` so it is absent from the standard
+   * local outpost surface.
+   */
+  enableMockYieldEmitter: z.boolean().default(false)
 })
 /** THE canonical cluster configuration — the schema-inferred shape of {@link ClusterConfigSchema}. */
 export type ClusterConfig = z.infer<typeof ClusterConfigSchema>

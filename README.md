@@ -14,7 +14,7 @@ The OPP message flow spans three chains:
 - **WIRE depot** (`nodeop` + `kiod`) — system contracts `sysio.epoch`, `sysio.msgch`,
   `sysio.opreg`, `sysio.uwrit`, `sysio.reserv`, `sysio.chalg`, …
 - **Ethereum outpost** (`anvil`) — `OPP.sol`, `OPPInbound.sol`, `OperatorRegistry.sol`,
-  `ReserveManager.sol`, `StakingManager.sol` (+ `liqEth`).
+  `ReserveManager.sol`, and `liqEth`.
 - **Solana outpost** (`solana-test-validator`) — the `opp-outpost` Anchor program (+ `liqsol-*`).
 
 ## Where this repo fits in the platform

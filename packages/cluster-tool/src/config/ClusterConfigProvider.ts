@@ -140,7 +140,8 @@ export namespace ClusterConfigProvider {
       cooldownEpochs: options.cooldownEpochs ?? 1,
       terminateMaxConsecutiveMisses:
         options.terminateMaxConsecutiveMisses ?? null,
-      terminateMaxPercentMisses24h: options.terminateMaxPercentMisses24h ?? null,
+      terminateMaxPercentMisses24h:
+        options.terminateMaxPercentMisses24h ?? null,
       terminateWindowMs: options.terminateWindowMs ?? null,
       ethereumPath: assertOption(options.ethereumPath, "ethereumPath"),
       solanaPath: assertOption(options.solanaPath, "solanaPath"),
@@ -160,7 +161,8 @@ export namespace ClusterConfigProvider {
       signatureProvider,
       externalOutposts,
       debuggingServerEnabled: true,
-      enableMockReserves: options.enableMockReserves ?? false
+      enableMockReserves: options.enableMockReserves ?? false,
+      enableMockYieldEmitter: options.enableMockYieldEmitter ?? false
     }
   }
 
@@ -201,7 +203,9 @@ export namespace ClusterConfigProvider {
    * @param options - The caller options (carries `bind`, `bindConfig`, counts).
    * @returns The resolved bind config.
    */
-  async function resolveBind(options: ClusterBuildOptions): Promise<BindConfig> {
+  async function resolveBind(
+    options: ClusterBuildOptions
+  ): Promise<BindConfig> {
     const { bind: cliBind = {} } = options,
       topology: ClusterTopologyOptions = {
         producerCount: options.nodeCount,

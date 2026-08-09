@@ -44,6 +44,8 @@ export interface EthereumOutpostBootstrapperOptions {
    * sharing `<wire-ethereum>/.local/deployments/` wiped each other mid-run).
    */
   deploymentsPath: string
+  /** Deploy the transport-only synthetic yield emitter into the local outpost. */
+  enableMockYieldEmitter?: boolean
   /**
    * Number of deterministic accounts to generate — MUST match the run anvil's
    * `--accounts` (default: {@link AnvilProcess.AccountCount}) so every generated
@@ -179,7 +181,8 @@ export class EthereumOutpostBootstrapper {
       key: deployerPrivateKey,
       addressFile: Path.join(localDir, "outpost-addrs.json"),
       gasLimitFile: Path.join(localDir, "outpost-gas-limits.json"),
-      useMockAggregator: true
+      useMockAggregator: true,
+      enableMockYieldEmitter: this.config.enableMockYieldEmitter
     }
     Fs.writeFileSync(
       Path.join(localDir, "liqeth.json"),
@@ -425,7 +428,8 @@ export namespace EthereumOutpostBootstrapper {
    *  anvil's `--accounts` so every generated account is pre-funded. */
   export function createDefaultOptions(): Partial<EthereumOutpostBootstrapperOptions> {
     return {
-      accountCount: AnvilProcess.AccountCount
+      accountCount: AnvilProcess.AccountCount,
+      enableMockYieldEmitter: false
     }
   }
 

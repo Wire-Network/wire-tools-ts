@@ -104,7 +104,8 @@ export const PersistedFixture: ClusterConfig = {
   signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
   externalOutposts: null,
   debuggingServerEnabled: true,
-  enableMockReserves: false
+  enableMockReserves: false,
+  enableMockYieldEmitter: false
 }
 
 /** Build a `ClusterConfig` from the fixture (via deserialize — no resolve / env).

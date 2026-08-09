@@ -261,7 +261,10 @@ describe("WIRE_* environment seeding (the run-flow.mjs / e2e-gate contract)", ()
   })
 
   it("the environment (per-invocation operator intent) beats scenario defaults", () => {
-    const options = register({ clusterPath: "/tmp/scenario-cluster" }, environment)
+    const options = register(
+      { clusterPath: "/tmp/scenario-cluster" },
+      environment
+    )
     expect(options.get("cluster-path")?.default).toBe("/tmp/env-cluster")
   })
 
@@ -305,7 +308,9 @@ describe("toClusterBuildOptions reverse parse", () => {
       { "epoch-duration-sec": 60 },
       { requiredBatchOperatorCollateral }
     )
-    expect(options.requiredBatchOperatorCollateral).toEqual(requiredBatchOperatorCollateral)
+    expect(options.requiredBatchOperatorCollateral).toEqual(
+      requiredBatchOperatorCollateral
+    )
     // absent defaults stay absent — flags never set these leaves
     expect(options.requiredUnderwriterCollateral).toBeUndefined()
   })
@@ -329,7 +334,16 @@ describe("toClusterBuildOptions reverse parse", () => {
       toClusterBuildOptions({ "enable-mock-reserves": true }).enableMockReserves
     ).toBe(true)
     expect(
-      toClusterBuildOptions({ "enable-mock-reserves": false }).enableMockReserves
+      toClusterBuildOptions({ "enable-mock-reserves": false })
+        .enableMockReserves
+    ).toBe(false)
+    expect(
+      toClusterBuildOptions({ "enable-mock-yield-emitter": true })
+        .enableMockYieldEmitter
+    ).toBe(true)
+    expect(
+      toClusterBuildOptions({ "enable-mock-yield-emitter": false })
+        .enableMockYieldEmitter
     ).toBe(false)
   })
 
@@ -358,6 +372,7 @@ describe("register → parse round-trip", () => {
     expect(options.bindAll).toBe(false)
     // no opt-in ⇒ the default-false mock-reserves flag survives as false
     expect(options.enableMockReserves).toBe(false)
+    expect(options.enableMockYieldEmitter).toBe(false)
     // unseeded (null-default) bind ports never materialize
     expect(options.bind?.kiod?.port).toBeUndefined()
   })
@@ -376,7 +391,8 @@ describe("register → parse round-trip", () => {
         terminateMaxConsecutiveMisses: 5,
         terminateMaxPercentMisses24h: 99,
         terminateWindowMs: 3_600_000,
-        enableMockReserves: true
+        enableMockReserves: true,
+        enableMockYieldEmitter: true
       }),
       argv: Record<string, unknown> = {}
     registered.forEach((config, flag) => {
@@ -392,6 +408,7 @@ describe("register → parse round-trip", () => {
     expect(options.terminateWindowMs).toBe(3_600_000)
     // the scenario-defaults opt-in path the 6 reserve-needing flows rely on
     expect(options.enableMockReserves).toBe(true)
+    expect(options.enableMockYieldEmitter).toBe(true)
   })
 })
 

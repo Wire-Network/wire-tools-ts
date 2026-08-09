@@ -36,9 +36,10 @@ liqsol-side staking contract that CPI-calls
 program here because `add_attestation` is already the exact CPI target
 — the test signs as the outpost's deployer authority (the
 `OutpostConfig.authority` set during Phase 10b bootstrap) and routes
-attestations through that path directly. The ETH side stands up
-`MockYieldEmitter.sol` as a separate fake because StakingManager.sol is
-currently a rename-only placeholder with no STAKING_REWARD path.
+attestations through that path directly. The ETH side explicitly opts into
+`MockYieldEmitter.sol` as a transport-only fixture because no production
+Ethereum staking reward emitter is implemented. This flow is not
+launch-readiness evidence for a staking product surface.
 
 ## Running
 

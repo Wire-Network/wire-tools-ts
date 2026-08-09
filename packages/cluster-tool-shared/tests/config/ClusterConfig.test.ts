@@ -81,7 +81,8 @@ describe("ClusterConfig shape", () => {
     signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
     externalOutposts: null,
     debuggingServerEnabled: true,
-    enableMockReserves: false
+    enableMockReserves: false,
+    enableMockYieldEmitter: false
   }
 
   it("persists the report/logging enum fields as their wire spellings", () => {
@@ -108,12 +109,13 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated).toEqual(config)
   })
 
-  it("loads a legacy config (no signatureProvider/externalOutposts/debuggingServerEnabled/enableMockReserves) via schema defaults", () => {
+  it("loads a config without optional platform features via schema defaults", () => {
     const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
     delete parsed.signatureProvider
     delete parsed.externalOutposts
     delete parsed.debuggingServerEnabled
     delete parsed.enableMockReserves
+    delete parsed.enableMockYieldEmitter
     const rehydrated = ClusterConfigSchemaCodec.deserialize(
       JSON.stringify(parsed)
     )
@@ -124,6 +126,7 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.externalOutposts).toBeNull()
     expect(rehydrated.debuggingServerEnabled).toBe(true)
     expect(rehydrated.enableMockReserves).toBe(false)
+    expect(rehydrated.enableMockYieldEmitter).toBe(false)
   })
 
   it("defaults the epoch-group + termination overrides to null for a legacy config", () => {
