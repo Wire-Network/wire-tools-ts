@@ -76,6 +76,230 @@ export namespace WireReserveTool {
   }
 
   /**
+   * Sum of the two pool-side weights, in basis points — the TypeScript mirror
+   * of `sysio::opp::amm::WEIGHT_TOTAL_BPS`. A reserve's `connector_weight_bps`
+   * is the WIRE-side weight; the token side gets the remainder.
+   */
+  export const WeightTotalBps = 10_000
+
+  /**
+   * The `connector_weight_bps` at which a reserve is symmetric (50/50). At this
+   * weight {@link outGivenIn} reduces to pure constant product and takes the
+   * EXACT integer path — no fixed-point error.
+   */
+  export const SymmetricConnectorWeightBps = 5_000
+
+  /** Fractional bits for the log2/exp2 fixed-point internals (Q60). */
+  const FpBits = 60n
+  /** `1.0` in Q60. */
+  const FpOne = 1n << FpBits
+
+  /**
+   * `2^(2^-i)` in Q60 for i = 1..60 — the table {@link exp2Frac} multiplies
+   * through to build `2^f` from the binary fraction of `f`. Copied verbatim
+   * from `sysio::opp::amm::EXP2_FRAC_TBL`; the two must stay bit-identical or
+   * quotes and settlement diverge.
+   */
+  const Exp2FracTable: readonly bigint[] = [
+    0x16a09e667f3bcc91n, 0x1306fe0a31b7152en,
+    0x1172b83c7d517addn, 0x10b5586cf9890f63n,
+    0x1059b0d31585743bn, 0x102c9a3e778060een,
+    0x10163da9fb33356en, 0x100b1afa5abcbed6n,
+    0x10058c86da1c09ean, 0x1002c605e2e8cec5n,
+    0x100162f3904051fan, 0x1000b175effdc76cn,
+    0x100058ba01fb9f97n, 0x10002c5cc37da949n,
+    0x1000162e525ee054n, 0x10000b17255775c0n,
+    0x1000058b91b5bc9bn, 0x100002c5c89d5ec7n,
+    0x10000162e43f4f83n, 0x100000b1721bcfcan,
+    0x10000058b90cf1e7n, 0x1000002c5c863b74n,
+    0x100000162e430e5an, 0x1000000b17218355n,
+    0x100000058b90c0b5n, 0x10000002c5c8601dn,
+    0x1000000162e42fffn, 0x10000000b17217fcn,
+    0x1000000058b90bfdn, 0x100000002c5c85fen,
+    0x10000000162e42ffn, 0x100000000b172180n,
+    0x10000000058b90c0n, 0x1000000002c5c860n,
+    0x100000000162e430n, 0x1000000000b17218n,
+    0x100000000058b90cn, 0x10000000002c5c86n,
+    0x1000000000162e43n, 0x10000000000b1721n,
+    0x1000000000058b91n, 0x100000000002c5c8n,
+    0x10000000000162e4n, 0x100000000000b172n,
+    0x10000000000058b9n, 0x1000000000002c5dn,
+    0x100000000000162en, 0x1000000000000b17n,
+    0x100000000000058cn, 0x10000000000002c6n,
+    0x1000000000000163n, 0x10000000000000b1n,
+    0x1000000000000059n, 0x100000000000002cn,
+    0x1000000000000016n, 0x100000000000000bn,
+    0x1000000000000006n, 0x1000000000000003n,
+    0x1000000000000001n, 0x1000000000000001n
+  ]
+
+  /**
+   * `log2(x)` for a Q60 value `>= FpOne` (real `x >= 1`), returned in Q60.
+   * Bit-by-bit mantissa squaring — the mirror of `amm::log2_fp`.
+   */
+  function log2Fp(xFp: bigint): bigint {
+    let x = xFp,
+      result = 0n
+    // Integer part: bring the mantissa into [FpOne, 2*FpOne).
+    while (x >= FpOne << 1n) {
+      x >>= 1n
+      result += FpOne
+    }
+    // Fractional part: square repeatedly; each carry past 2 contributes a bit.
+    let b = FpOne >> 1n
+    for (let i = 0n; i < FpBits; i++) {
+      x = (x * x) >> FpBits
+      if (x >= FpOne << 1n) {
+        result += b
+        x >>= 1n
+      }
+      b >>= 1n
+    }
+    return result
+  }
+
+  /**
+   * `2^f` for `f` in `[0, FpOne)`, returned in Q60 within `[FpOne, 2*FpOne)`.
+   * The mirror of `amm::exp2_frac`.
+   */
+  function exp2Frac(fraction: bigint): bigint {
+    let f = fraction,
+      y = FpOne
+    for (let i = 0; i < Number(FpBits); i++) {
+      f <<= 1n
+      if (f >= FpOne) {
+        f -= FpOne
+        y = (y * Exp2FracTable[i]) >> FpBits
+      }
+    }
+    return y
+  }
+
+  /**
+   * `(num/den)^(expNum/expDen)` for a base in `(0,1]` and a positive exponent,
+   * returned in Q60 within `(0, FpOne]`. The mirror of `amm::pow_frac_fp`,
+   * evaluated as `2^(-e * log2(den/num))`.
+   */
+  function powFracFp(
+    num: bigint,
+    den: bigint,
+    expNum: bigint,
+    expDen: bigint
+  ): bigint {
+    if (expDen === 0n) return FpOne
+    // base >= 1 -> 1 (only base == 1 reaches here).
+    if (num >= den) return FpOne
+
+    const xFp = (den << FpBits) / num,
+      lr = log2Fp(xFp),
+      g = (lr * expNum) / expDen,
+      gi = g >> FpBits
+    // 2^(-g) below 1 ULP -> 0.
+    if (gi >= FpBits + 2n) return 0n
+    const gf = g - (gi << FpBits),
+      e2 = exp2Frac(gf),
+      inv = (FpOne * FpOne) / e2
+    return inv >> gi
+  }
+
+  /**
+   * Weighted constant-product output — the TypeScript mirror of
+   * `sysio::opp::amm::out_given_in`, the curve the depot actually settles on:
+   *
+   * ```
+   * amountOut = balanceOut * (1 - (balanceIn/(balanceIn+amountIn))^(wIn/wOut))
+   * ```
+   *
+   * Equal weights take the EXACT integer constant-product path
+   * ({@link cpOutput}); unequal weights evaluate the fractional power in Q60
+   * fixed point, with the subtracted term rounded UP so the output is floored —
+   * the reserve never over-pays. Both branches are bit-identical to the
+   * contract.
+   *
+   * @param balanceIn - The input side's pool depth.
+   * @param weightIn - The input side's weight in bps.
+   * @param balanceOut - The output side's pool depth.
+   * @param weightOut - The output side's weight in bps.
+   * @param amountIn - The amount entering the input side.
+   * @returns `floor(amountOut)`, capped at `balanceOut`, or `0n` on degenerate
+   *   input.
+   */
+  export function outGivenIn(
+    balanceIn: bigint,
+    weightIn: bigint,
+    balanceOut: bigint,
+    weightOut: bigint,
+    amountIn: bigint
+  ): bigint {
+    if (balanceIn <= 0n || balanceOut <= 0n || amountIn <= 0n) return 0n
+    if (weightIn <= 0n || weightOut <= 0n) return 0n
+
+    // Symmetric pool: pure constant product, exact integer arithmetic.
+    if (weightIn === weightOut) {
+      const out = cpOutput(balanceIn, balanceOut, amountIn)
+      return out >= balanceOut ? balanceOut : out
+    }
+
+    const bpow = powFracFp(balanceIn, balanceIn + amountIn, weightIn, weightOut),
+      // Round the subtracted term UP so `out` is floored.
+      term = (balanceOut * bpow + (FpOne - 1n)) >> FpBits
+    return term >= balanceOut ? 0n : balanceOut - term
+  }
+
+  /**
+   * Quote a reserve's TOKEN side into WIRE — the mirror of
+   * `sysio::opp::amm::token_to_wire`. This is the source-side hop of a swap.
+   *
+   * @param reserveChainAmount - The reserve's token-side depth.
+   * @param reserveWireAmount - The reserve's WIRE-side depth.
+   * @param connectorWeightBps - The reserve's WIRE-side weight in bps.
+   * @param amountToken - The token amount entering the reserve.
+   * @returns The gross WIRE the curve yields (pre-fee).
+   */
+  export function tokenToWire(
+    reserveChainAmount: bigint,
+    reserveWireAmount: bigint,
+    connectorWeightBps: number,
+    amountToken: bigint
+  ): bigint {
+    const cw = BigInt(connectorWeightBps)
+    return outGivenIn(
+      reserveChainAmount,
+      BigInt(WeightTotalBps) - cw,
+      reserveWireAmount,
+      cw,
+      amountToken
+    )
+  }
+
+  /**
+   * Quote a reserve's WIRE side into its TOKEN — the mirror of
+   * `sysio::opp::amm::wire_to_token`. This is the destination-side hop of a
+   * swap, and consumes the POST-fee WIRE leg.
+   *
+   * @param reserveWireAmount - The reserve's WIRE-side depth.
+   * @param reserveChainAmount - The reserve's token-side depth.
+   * @param connectorWeightBps - The reserve's WIRE-side weight in bps.
+   * @param amountWire - The WIRE amount entering the reserve.
+   * @returns The token amount the curve yields.
+   */
+  export function wireToToken(
+    reserveWireAmount: bigint,
+    reserveChainAmount: bigint,
+    connectorWeightBps: number,
+    amountWire: bigint
+  ): bigint {
+    const cw = BigInt(connectorWeightBps)
+    return outGivenIn(
+      reserveWireAmount,
+      cw,
+      reserveChainAmount,
+      BigInt(WeightTotalBps) - cw,
+      amountWire
+    )
+  }
+
+  /**
    * Split a gross WIRE amount into its swap fee and remainder, mirroring
    * `sysio::opp::amm::split_wire_fee` bit-for-bit (floored integer math).
    *
@@ -98,7 +322,9 @@ export namespace WireReserveTool {
   ): WireFee {
     const bps = BigInt(BpsTotal),
       clampedFeeBps = BigInt(Math.min(Math.max(feeBps, 0), BpsTotal)),
-      clampedRewardBps = BigInt(Math.min(Math.max(rewardShareBps, 0), BpsTotal)),
+      clampedRewardBps = BigInt(
+        Math.min(Math.max(rewardShareBps, 0), BpsTotal)
+      ),
       fee = (wireAmount * clampedFeeBps) / bps,
       rewardShare = (fee * clampedRewardBps) / bps
     return {
@@ -107,6 +333,77 @@ export namespace WireReserveTool {
       emissionsShare: fee - rewardShare,
       net: wireAmount - fee
     }
+  }
+
+  /** One reserve row's `(chain, wire)` book and its curve weight. */
+  export interface ReserveBook {
+    /** The reserve's chain-side (token) depth. */
+    chain: bigint
+    /** The reserve's WIRE-side depth. */
+    wire: bigint
+    /**
+     * The reserve's `connector_weight_bps` — its WIRE-side weight, the token
+     * side taking the remainder of {@link WeightTotalBps}. Required rather
+     * than defaulted: a book quoted at the wrong weight rides a different
+     * curve than the depot settles on, and at
+     * {@link SymmetricConnectorWeightBps} (the common case) the error is
+     * invisible, so a default would hide the mistake exactly where it is
+     * hardest to notice.
+     */
+    connectorWeightBps: number
+  }
+
+  /**
+   * Post-fee swap quote along the depot curve — the TypeScript mirror of
+   * `sysio::opp::amm::quote_swap`, evaluated over book values the caller
+   * already holds. Pass `null` for a WIRE endpoint: the depot IS the WIRE side,
+   * so that leg consults no reserve.
+   *
+   * The WIRE-leg fee is charged BETWEEN the hops — the source side gives up the
+   * full gross intermediate, and only the post-fee remainder converts into the
+   * destination token. Quoting the hops fee-free overstates the destination
+   * amount by roughly `feeBps`, which is what the depot settles short of: since
+   * `sysio.uwrit` derives `dst_amount` from this same expression, a fee-free
+   * quote is not a settlement amount, it is a settlement amount plus the fee.
+   *
+   * @param source - The source reserve's book, or `null` for a WIRE source.
+   * @param destination - The destination reserve's book, or `null` for a WIRE
+   *   destination.
+   * @param amountIn - The source amount in the source leg's depot-frame units.
+   * @param feeBps - The WIRE-leg fee in basis points — pass the live
+   *   `uwconfig.fee_bps` ({@link readFeeBps}).
+   * @returns The destination amount the recipient receives, or `0n` when the
+   *   input or either hop is degenerate — the on-chain "no quote available"
+   *   convention.
+   */
+  export function quoteSwap(
+    source: ReserveBook | null,
+    destination: ReserveBook | null,
+    amountIn: bigint,
+    feeBps: number
+  ): bigint {
+    if (amountIn <= 0n) return 0n
+    // WIRE → WIRE is a plain transfer: no curve, no fee.
+    if (source == null && destination == null) return amountIn
+    const wireLeg =
+      source == null
+        ? amountIn
+        : tokenToWire(
+            source.chain,
+            source.wire,
+            source.connectorWeightBps,
+            amountIn
+          )
+    if (wireLeg === 0n) return 0n
+    const { net } = splitWireFee(wireLeg, feeBps)
+    // A WIRE destination receives the post-fee WIRE leg directly.
+    if (destination == null) return net
+    return wireToToken(
+      destination.wire,
+      destination.chain,
+      destination.connectorWeightBps,
+      net
+    )
   }
 
   /**
@@ -159,7 +456,10 @@ export namespace WireReserveTool {
    * @param nativeDecimals - The token's chain-native decimal scale.
    * @returns The amount in the token's depot-frame units (floored when downscaling).
    */
-  export function toDepot(nativeAmount: bigint, nativeDecimals: number): bigint {
+  export function toDepot(
+    nativeAmount: bigint,
+    nativeDecimals: number
+  ): bigint {
     const precision = depotPrecision(nativeDecimals)
     return nativeDecimals > precision
       ? nativeAmount / 10n ** BigInt(nativeDecimals - precision)
@@ -177,7 +477,10 @@ export namespace WireReserveTool {
    * @param nativeDecimals - The destination token's chain-native decimal scale.
    * @returns The amount in chain-native base units.
    */
-  export function fromDepot(depotAmount: bigint, nativeDecimals: number): bigint {
+  export function fromDepot(
+    depotAmount: bigint,
+    nativeDecimals: number
+  ): bigint {
     const precision = depotPrecision(nativeDecimals)
     return nativeDecimals > precision
       ? depotAmount * 10n ** BigInt(nativeDecimals - precision)
@@ -221,14 +524,22 @@ export namespace WireReserveTool {
 
   /** Whether a triple denotes the WIRE leg (no reserve consulted). */
   function isWireLeg(triple: ReserveTriple): boolean {
-    return triple.chainCode === WireChainCode && triple.tokenCode === WireTokenCode
+    return (
+      triple.chainCode === WireChainCode && triple.tokenCode === WireTokenCode
+    )
   }
 
   /**
    * Cross-chain swap quote — the read-only `sysio.reserv::swapquote` surface,
-   * evaluated client-side from the live `reserves` table (a read). Mirrors the
-   * depot's `cp_output` math so callers can assert expected quotes before
-   * issuing a SWAP_REQUEST.
+   * evaluated client-side from the live `reserves` table and the live
+   * `uwconfig.fee_bps` (reads). A thin composition of {@link quoteSwap} over
+   * those rows, so callers can assert expected quotes before issuing a
+   * SWAP_REQUEST and get the amount the depot will actually settle.
+   *
+   * The fee is read here rather than accepted as a parameter: `sysio.uwrit`
+   * reads `uwconfig.fee_bps` fresh at both ingestion and settlement, and a
+   * caller who forgets to apply it gets a quote that is short by exactly the
+   * fee — silently, since a loose variance tolerance still admits the request.
    *
    * @param wire - The depot client.
    * @param request - The source triple + amount and destination triple.
@@ -248,42 +559,36 @@ export namespace WireReserveTool {
     const { rows } = await wire
       .getSysioContract(SysioContractName.reserv)
       .tables.reserves.query({ limit: MaxReservesScan })
-    const findReserve = (triple: ReserveTriple) =>
-      rows.find(
-        reserve =>
-          slugValue(reserve.chain_code) === triple.chainCode &&
-          slugValue(reserve.token_code) === triple.tokenCode &&
-          slugValue(reserve.reserve_code) === triple.reserveCode
+    const bookFor = (triple: ReserveTriple): ReserveBook | undefined => {
+      const reserve = rows.find(
+        row =>
+          slugValue(row.chain_code) === triple.chainCode &&
+          slugValue(row.token_code) === triple.tokenCode &&
+          slugValue(row.reserve_code) === triple.reserveCode
       )
-    const chainAmount = (reserve: SysioContracts.SysioReservReserveRowType) =>
-        BigInt(reserve.reserve_chain_amount),
-      wireAmount = (reserve: SysioContracts.SysioReservReserveRowType) =>
-        BigInt(reserve.reserve_wire_amount)
+      return reserve == null
+        ? undefined
+        : {
+            chain: BigInt(reserve.reserve_chain_amount),
+            wire: BigInt(reserve.reserve_wire_amount),
+            connectorWeightBps: Number(reserve.connector_weight_bps)
+          }
+    }
 
-    if (fromIsWire) {
-      const reserve = findReserve(to)
-      if (reserve == null) return 0n
-      return cpOutput(wireAmount(reserve), chainAmount(reserve), fromAmount)
+    // `null` denotes the WIRE leg (no reserve consulted); a missing row for a
+    // non-WIRE leg is "no quote available".
+    let source: ReserveBook | null = null
+    if (!fromIsWire) {
+      const book = bookFor(from)
+      if (book == null) return 0n
+      source = book
     }
-    if (toIsWire) {
-      const reserve = findReserve(from)
-      if (reserve == null) return 0n
-      return cpOutput(chainAmount(reserve), wireAmount(reserve), fromAmount)
+    let destination: ReserveBook | null = null
+    if (!toIsWire) {
+      const book = bookFor(to)
+      if (book == null) return 0n
+      destination = book
     }
-    // Full hop: source → WIRE → destination, two reserves consulted.
-    const sourceReserve = findReserve(from),
-      destinationReserve = findReserve(to)
-    if (sourceReserve == null || destinationReserve == null) return 0n
-    const wireIntermediate = cpOutput(
-      chainAmount(sourceReserve),
-      wireAmount(sourceReserve),
-      fromAmount
-    )
-    if (wireIntermediate === 0n) return 0n
-    return cpOutput(
-      wireAmount(destinationReserve),
-      chainAmount(destinationReserve),
-      wireIntermediate
-    )
+    return quoteSwap(source, destination, fromAmount, await readFeeBps(wire))
   }
 }

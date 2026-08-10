@@ -702,9 +702,11 @@ async function runVerifySolanaLocalReserveActive(ctx: Context): Promise<void> {
 
 /**
  * Mirror the depot's `swap_quote` / `applyswap` math exactly from the live
- * pre-swap rows: `w = cp(src.chain, src.wire, amount)` then
- * `target = cp(dst.wire, dst.chain, w)`. Same integers in == same integers
- * out, so the variance check sees only the fee-sized drift and the books
+ * pre-swap rows: `w = cp(src.chain, src.wire, amount)` gross, then
+ * `target = cp(dst.wire, dst.chain, split_wire_fee(w).net)`. The fee is charged
+ * between the hops — the source gives up the gross `w`, the destination
+ * receives only the net and pays the curve output for THAT. Same integers in ==
+ * same integers out, so the variance check sees no drift at all and the books
  * assertions below can demand exact equality.
  */
 async function runPhaseAQuote(ctx: Context): Promise<void> {
@@ -718,15 +720,17 @@ async function runPhaseAQuote(ctx: Context): Promise<void> {
       Constants.Reserves.Solana.TokenCode,
       Constants.Reserves.PrivateReserveCode
     ),
-    wireIntermediate = WireReserveTool.cpOutput(
+    wireIntermediate = WireReserveTool.tokenToWire(
       ethereumBook.chain,
       ethereumBook.wire,
+      ethereumBook.connectorWeightBps,
       Constants.SwapAmounts.PhaseASourceDepotUnits
     ),
-    target = WireReserveTool.cpOutput(
-      solanaBook.wire,
-      solanaBook.chain,
-      wireIntermediate
+    target = WireReserveTool.quoteSwap(
+      ethereumBook,
+      solanaBook,
+      Constants.SwapAmounts.PhaseASourceDepotUnits,
+      await WireReserveTool.readFeeBps(ctx.wire)
     )
   Assert.ok(wireIntermediate > 0n, "PhaseA: WIRE intermediate must be positive")
   Assert.ok(target > 0n, "PhaseA: target must be positive")
@@ -923,15 +927,17 @@ async function runPhaseBQuote(ctx: Context): Promise<void> {
       Constants.Reserves.Solana.TokenCode,
       Constants.Reserves.PrivateReserveCode
     ),
-    wireIntermediate = WireReserveTool.cpOutput(
+    wireIntermediate = WireReserveTool.tokenToWire(
       solanaBook.chain,
       solanaBook.wire,
+      solanaBook.connectorWeightBps,
       Constants.SwapAmounts.PhaseBSourceDepotUnits
     ),
-    target = WireReserveTool.cpOutput(
-      ethereumBook.wire,
-      ethereumBook.chain,
-      wireIntermediate
+    target = WireReserveTool.quoteSwap(
+      solanaBook,
+      ethereumBook,
+      Constants.SwapAmounts.PhaseBSourceDepotUnits,
+      await WireReserveTool.readFeeBps(ctx.wire)
     )
   Assert.ok(wireIntermediate > 0n, "PhaseB: WIRE intermediate must be positive")
   Assert.ok(target > 0n, "PhaseB: target must be positive")

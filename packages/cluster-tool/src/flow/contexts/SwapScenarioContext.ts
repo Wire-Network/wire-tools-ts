@@ -1,15 +1,17 @@
 import Assert from "node:assert"
 import { SysioContracts } from "@wireio/sdk-core"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
+import { WireReserveTool } from "../../tools/wire/WireReserveTool.js"
 import { slugValue } from "../../utils/slugUtils.js"
 
 const { SysioContractName } = SysioContracts
 
-/** One reserve row's `(chain, wire)` book. */
-export interface ReserveBook {
-  chain: bigint
-  wire: bigint
-}
+/**
+ * One reserve row's `(chain, wire)` book. Re-exported from
+ * {@link WireReserveTool} — the AMM math and the scenario reads must agree on
+ * one book shape, and the math owns it.
+ */
+export type ReserveBook = WireReserveTool.ReserveBook
 
 /** The source + destination books snapshotted around a swap phase. */
 export interface Books {
@@ -52,7 +54,8 @@ export class SwapScenarioContext extends ClusterBuildContext {
     Assert.ok(row, `reserve ${chainCode}/${tokenCode}/${reserveCode} not found`)
     return {
       chain: BigInt(row.reserve_chain_amount),
-      wire: BigInt(row.reserve_wire_amount)
+      wire: BigInt(row.reserve_wire_amount),
+      connectorWeightBps: Number(row.connector_weight_bps)
     }
   }
 
