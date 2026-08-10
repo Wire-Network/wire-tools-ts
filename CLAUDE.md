@@ -13,7 +13,11 @@ across the WIRE depot and the Ethereum + Solana outposts).
 
 ## Package Manager
 
-**pnpm** (`packageManager` field pins the version). Node `>=22` required.
+**pnpm** (`packageManager` field pins the version). Node `>=24.9` required —
+NOT a preference. Below it, `require(ESM)` on `yargs` fails and **every jest
+suite that reaches the `@wireio/cluster-tool` barrel dies at import**, so those
+suites report as failing without ever running a test. A local "pre-existing
+failure" on an older Node is therefore not evidence about the code.
 Never use `npm` or `yarn`.
 
 ## Build & Test
