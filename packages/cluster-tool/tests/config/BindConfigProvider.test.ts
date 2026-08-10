@@ -361,6 +361,44 @@ describe("BindConfigProvider", () => {
     })
   })
 
+  describe("portLockPath", () => {
+    // A mutex must be scoped to the state it guards. The registry is that
+    // state and it is env-overridable, so the lock has to follow it — a lock
+    // pinned to the OS temp dir made every jest worker queue on ONE mutex
+    // while each held its own mkdtemp registry, i.e. contend over nothing,
+    // and the rotating loser failed with `Lock file is already being held`.
+    it("lives INSIDE the registry it guards, so isolated registries never contend", () => {
+      const previous = process.env[BindConfigProvider.RegistryPathEnvVar]
+      try {
+        process.env[BindConfigProvider.RegistryPathEnvVar] = "/tmp/registry-one"
+        const first = BindConfigProvider.portLockPath()
+        process.env[BindConfigProvider.RegistryPathEnvVar] = "/tmp/registry-two"
+        const second = BindConfigProvider.portLockPath()
+
+        expect(Path.dirname(first)).toBe("/tmp/registry-one")
+        expect(Path.dirname(second)).toBe("/tmp/registry-two")
+        expect(first).not.toBe(second)
+      } finally {
+        process.env[BindConfigProvider.RegistryPathEnvVar] = previous
+      }
+    })
+
+    it("is ONE shared path when the registry is shared — the cross-process guarantee", () => {
+      const previous = process.env[BindConfigProvider.RegistryPathEnvVar]
+      try {
+        process.env[BindConfigProvider.RegistryPathEnvVar] = "/tmp/registry-shared"
+        expect(BindConfigProvider.portLockPath()).toBe(
+          BindConfigProvider.portLockPath()
+        )
+        expect(Path.dirname(BindConfigProvider.portLockPath())).toBe(
+          BindConfigProvider.registryPath()
+        )
+      } finally {
+        process.env[BindConfigProvider.RegistryPathEnvVar] = previous
+      }
+    })
+  })
+
   describe("clearPortLocks", () => {
     it("releases the in-process lock so a registry-vetted port can be re-acquired as a PIN", async () => {
       const picked = await BindConfigProvider.findAvailable(
