@@ -6,10 +6,14 @@ const { SysioContractName } = SysioContracts
 const {
   BpsTotal,
   cpOutput,
+  outGivenIn,
   quoteSwap,
   splitWireFee,
   swapquote,
-  varianceDrift
+  SymmetricConnectorWeightBps,
+  tokenToWire,
+  varianceDrift,
+  wireToToken
 } = WireReserveTool
 
 /** The old dev-cluster fee the recorded SwapFeeMath assertions were baselined on. */
@@ -22,6 +26,7 @@ interface QuoteReserveFixture {
   reserve_code: { value: number }
   reserve_chain_amount: number
   reserve_wire_amount: number
+  connector_weight_bps: number
 }
 
 const EthereumChain = 100,
@@ -170,8 +175,102 @@ describe("WireReserveTool", () => {
     })
   })
 
+  // Every expected value below was produced by COMPILING
+  // `sysio.opp.common/amm_math.hpp` and printing `out_given_in` for the same
+  // inputs — not derived by hand. A mirror that merely approximates the depot
+  // is not a mirror; these pin bit-identity, including the Q60 log2/exp2 path.
+  describe("outGivenIn (the sysio::opp::amm::out_given_in mirror)", () => {
+    const Balance = 10_000_000_000n,
+      AmountIn = 100_000_000n
+
+    it("takes the EXACT constant-product path at equal weights", () => {
+      expect(
+        outGivenIn(Balance, 5_000n, Balance, 5_000n, AmountIn)
+      ).toBe(99_009_900n)
+      // The symmetric case must agree with the pure integer curve exactly.
+      expect(outGivenIn(Balance, 5_000n, Balance, 5_000n, AmountIn)).toBe(
+        cpOutput(Balance, Balance, AmountIn)
+      )
+    })
+
+    it.each([
+      [2_000n, 8_000n, 24_844_912n],
+      [8_000n, 2_000n, 390_196_555n],
+      [1_000n, 9_000n, 11_049_813n],
+      [9_000n, 1_000n, 856_601_757n],
+      [2_500n, 7_500n, 33_112_825n]
+    ])(
+      "matches the contract at wIn=%s wOut=%s",
+      (weightIn, weightOut, expected) => {
+        expect(
+          outGivenIn(Balance, weightIn, Balance, weightOut, AmountIn)
+        ).toBe(expected)
+      }
+    )
+
+    it("matches the contract at a larger input on the same pool", () => {
+      expect(
+        outGivenIn(Balance, 2_500n, Balance, 7_500n, 1_000_000_000n)
+      ).toBe(312_706_938n)
+    })
+
+    it("matches the contract on an asymmetric-depth pool", () => {
+      expect(
+        outGivenIn(5_000_000_000n, 3_000n, 20_000_000_000n, 7_000n, 250_000_000n)
+      ).toBe(413_859_413n)
+    })
+
+    it("diverges from equal-weight constant product off 50/50", () => {
+      // The whole point of the fix: cpOutput is only the curve at cw == 5000.
+      expect(
+        outGivenIn(Balance, 2_000n, Balance, 8_000n, AmountIn)
+      ).not.toBe(cpOutput(Balance, Balance, AmountIn))
+    })
+
+    it("is 0n on a degenerate balance, weight, or amount", () => {
+      expect(outGivenIn(0n, 5_000n, Balance, 5_000n, AmountIn)).toBe(0n)
+      expect(outGivenIn(Balance, 5_000n, 0n, 5_000n, AmountIn)).toBe(0n)
+      expect(outGivenIn(Balance, 0n, Balance, 5_000n, AmountIn)).toBe(0n)
+      expect(outGivenIn(Balance, 5_000n, Balance, 0n, AmountIn)).toBe(0n)
+      expect(outGivenIn(Balance, 5_000n, Balance, 5_000n, 0n)).toBe(0n)
+    })
+
+    it("never pays out more than the output side holds", () => {
+      expect(
+        outGivenIn(1n, 5_000n, Balance, 5_000n, 10n ** 18n)
+      ).toBeLessThanOrEqual(Balance)
+    })
+  })
+
+  describe("tokenToWire / wireToToken (the convenience mirrors)", () => {
+    const Balance = 10_000_000_000n,
+      Amount = 100_000_000n
+
+    it("route connectorWeightBps to the correct SIDE", () => {
+      // cw is the WIRE-side weight: token→wire has it as weightOut,
+      // wire→token as weightIn. Swapping them is the easy mistake, and these
+      // two values differ by more than an order of magnitude at cw=8000.
+      expect(tokenToWire(Balance, Balance, 8_000, Amount)).toBe(24_844_912n)
+      expect(wireToToken(Balance, Balance, 8_000, Amount)).toBe(390_196_555n)
+    })
+
+    it("collapse to constant product at the symmetric weight", () => {
+      const cp = cpOutput(Balance, Balance, Amount)
+      expect(
+        tokenToWire(Balance, Balance, SymmetricConnectorWeightBps, Amount)
+      ).toBe(cp)
+      expect(
+        wireToToken(Balance, Balance, SymmetricConnectorWeightBps, Amount)
+      ).toBe(cp)
+    })
+  })
+
   describe("quoteSwap (the sysio::opp::amm::quote_swap mirror)", () => {
-    const book = { chain: 10_000_000_000n, wire: 10_000_000_000n }
+    const book = {
+      chain: 10_000_000_000n,
+      wire: 10_000_000_000n,
+      connectorWeightBps: SymmetricConnectorWeightBps
+    }
 
     it("charges the WIRE-leg fee BETWEEN the hops, not on the output", () => {
       const gross = cpOutput(book.chain, book.wire, 100_000_000n),
@@ -195,13 +294,37 @@ describe("WireReserveTool", () => {
         cpOutput(book.wire, book.chain, splitWireFee(100_000_000n, 30).net)
       )
     })
+    it("rides the WEIGHTED curve when the reserve is not 50/50", () => {
+      // Contract value for cw=8000 on both legs at 30 bps.
+      const weighted = {
+        chain: 10_000_000_000n,
+        wire: 10_000_000_000n,
+        connectorWeightBps: 8_000
+      }
+      expect(quoteSwap(weighted, weighted, 100_000_000n, 30)).toBe(98_470_966n)
+      // …and that is NOT what the equal-weight curve would have quoted.
+      expect(quoteSwap(weighted, weighted, 100_000_000n, 30)).not.toBe(
+        quoteSwap(book, book, 100_000_000n, 30)
+      )
+    })
     it("WIRE → WIRE is a plain transfer — no curve, no fee", () => {
       expect(quoteSwap(null, null, 42n, 30)).toBe(42n)
     })
     it("is 0n on degenerate input or a dry hop", () => {
       expect(quoteSwap(book, book, 0n, 30)).toBe(0n)
       expect(quoteSwap(book, book, -1n, 30)).toBe(0n)
-      expect(quoteSwap({ chain: 0n, wire: 0n }, book, 100n, 30)).toBe(0n)
+      expect(
+        quoteSwap(
+          {
+            chain: 0n,
+            wire: 0n,
+            connectorWeightBps: SymmetricConnectorWeightBps
+          },
+          book,
+          100n,
+          30
+        )
+      ).toBe(0n)
     })
   })
 
@@ -212,14 +335,16 @@ describe("WireReserveTool", () => {
         token_code: { value: EthToken },
         reserve_code: { value: PrimaryReserve },
         reserve_chain_amount: 10_000_000_000,
-        reserve_wire_amount: 10_000_000_000
+        reserve_wire_amount: 10_000_000_000,
+        connector_weight_bps: SymmetricConnectorWeightBps
       },
       {
         chain_code: { value: SolanaChain },
         token_code: { value: SolToken },
         reserve_code: { value: PrimaryReserve },
         reserve_chain_amount: 10_000_000_000,
-        reserve_wire_amount: 10_000_000_000
+        reserve_wire_amount: 10_000_000_000,
+        connector_weight_bps: SymmetricConnectorWeightBps
       }
     ]
     const ethereumTriple = {

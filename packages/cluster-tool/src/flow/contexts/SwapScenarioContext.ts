@@ -54,7 +54,8 @@ export class SwapScenarioContext extends ClusterBuildContext {
     Assert.ok(row, `reserve ${chainCode}/${tokenCode}/${reserveCode} not found`)
     return {
       chain: BigInt(row.reserve_chain_amount),
-      wire: BigInt(row.reserve_wire_amount)
+      wire: BigInt(row.reserve_wire_amount),
+      connectorWeightBps: Number(row.connector_weight_bps)
     }
   }
 

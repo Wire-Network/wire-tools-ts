@@ -447,9 +447,10 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
             Constants.ReserveCustodyAccount
           )
           const feeBps = await WireReserveTool.readFeeBps(ctx.wire)
-          const grossWireLeg = WireReserveTool.cpOutput(
+          const grossWireLeg = WireReserveTool.tokenToWire(
             book.chain,
             book.wire,
+            book.connectorWeightBps,
             Constants.SourceDepotUnits
           )
           const { net: target, fee: wireLegFee } = WireReserveTool.splitWireFee(

@@ -361,9 +361,10 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
             targetAmount = ctx.outputs.assert(Constants.PhaseATargetAmountKey),
             sourceAmountDepot =
               Constants.SourceEthereumWei / Constants.WeiPerDepotUnit,
-            wireIntermediate = WireReserveTool.cpOutput(
+            wireIntermediate = WireReserveTool.tokenToWire(
               booksBefore.src.chain,
               booksBefore.src.wire,
+              booksBefore.src.connectorWeightBps,
               sourceAmountDepot
             ),
             phaseAFee = WireReserveTool.splitWireFee(

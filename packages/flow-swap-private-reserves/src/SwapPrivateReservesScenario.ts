@@ -720,9 +720,10 @@ async function runPhaseAQuote(ctx: Context): Promise<void> {
       Constants.Reserves.Solana.TokenCode,
       Constants.Reserves.PrivateReserveCode
     ),
-    wireIntermediate = WireReserveTool.cpOutput(
+    wireIntermediate = WireReserveTool.tokenToWire(
       ethereumBook.chain,
       ethereumBook.wire,
+      ethereumBook.connectorWeightBps,
       Constants.SwapAmounts.PhaseASourceDepotUnits
     ),
     target = WireReserveTool.quoteSwap(
@@ -926,9 +927,10 @@ async function runPhaseBQuote(ctx: Context): Promise<void> {
       Constants.Reserves.Solana.TokenCode,
       Constants.Reserves.PrivateReserveCode
     ),
-    wireIntermediate = WireReserveTool.cpOutput(
+    wireIntermediate = WireReserveTool.tokenToWire(
       solanaBook.chain,
       solanaBook.wire,
+      solanaBook.connectorWeightBps,
       Constants.SwapAmounts.PhaseBSourceDepotUnits
     ),
     target = WireReserveTool.quoteSwap(
