@@ -65,15 +65,37 @@ async function getPort(...args: GetPortParameters): Promise<number> {
  * free, or `resolve` throws) or a newly-claimed free port.
  */
 export namespace BindConfigProvider {
+  /** Basename of the mutex guarding port selection, inside the registry dir. */
+  const PortLockFilename = "wire-cluster-ports.lock"
+
   /**
-   * Host-global lock path serializing port SELECTION across every wire process
-   * (parallel `flow-*` / `wire-cluster-tool` runs). `get-port` only de-dupes
-   * within one process; this cross-process advisory lock (via `withFileLock`)
-   * stops two processes racing the same free port while finding it. Shared by
-   * ALL processes on the host, so it lives under the OS temp dir, not a cluster
-   * path.
+   * Lock path serializing port SELECTION across every process sharing a
+   * registry. `get-port` only de-dupes within one process; this cross-process
+   * advisory lock (via `withFileLock`) stops two processes racing the same free
+   * port while finding it.
+   *
+   * It is deliberately derived from {@link registryPath} rather than pinned to
+   * the OS temp dir: **a mutex must be scoped to the state it guards.** The
+   * registry IS that state, and it is env-overridable
+   * ({@link RegistryPathEnvVar}) — jest's setup gives every test file its own
+   * `mkdtemp` registry so suites never read each other's reservations. A
+   * host-global lock over per-worker registries produced pure FALSE contention:
+   * 8 jest projects' port-resolving tests queued on one mutex while having
+   * nothing to serialize against, and a rotating victim exhausted its retry
+   * budget with `Lock file is already being held`.
+   *
+   * Production is unchanged: with the env var unset every process resolves the
+   * same default registry, hence the same lock, and the cross-process guarantee
+   * holds exactly as before.
+   *
+   * Living inside the registry dir is safe because every reader filters on
+   * {@link RegistryFileSuffix}, so this file and the `.lock` directory
+   * `proper-lockfile` creates beside it are never mistaken for registrations —
+   * keep that filter if the reader is ever rewritten.
    */
-  export const PortLockPath = Path.join(Os.tmpdir(), "wire-cluster-ports.lock")
+  export function portLockPath(): string {
+    return Path.join(registryPath(), PortLockFilename)
+  }
   /**
    * agave's built-in validator port range — RESERVED host-wide; the harness
    * NEVER assigns a port inside it. A 4.x (solana-test-)validator binds
@@ -168,11 +190,11 @@ export namespace BindConfigProvider {
   ): Promise<BindConfig> {
     // Hold the host-global port lock for the WHOLE cluster port selection so a
     // parallel process cannot interleave and pick an overlapping set (get-port
-    // only de-dupes within one process — see PortLockPath).
-    return withFileLock(PortLockPath, () => resolveLocked(options, topology))
+    // only de-dupes within one process — see portLockPath()).
+    return withFileLock(portLockPath(), () => resolveLocked(options, topology))
   }
 
-  /** {@link resolve} body — always runs under the {@link PortLockPath} lock. */
+  /** {@link resolve} body — always runs under the {@link portLockPath} lock. */
   async function resolveLocked(
     options: BindOptions,
     topology: ClusterTopologyOptions
@@ -481,7 +503,7 @@ export namespace BindConfigProvider {
    * (recycled), or whose content does not parse, is DELETED instead of
    * honored. A live pid whose `/proc` is unreadable (another user's process)
    * is kept conservatively. Call only under the
-   * {@link BindConfigProvider.PortLockPath} lock — read/reap/resolve/write
+   * {@link BindConfigProvider.portLockPath} lock — read/reap/resolve/write
    * must be one critical section.
    *
    * The set is SEEDED with {@link ReservedAgavePortBand} — the band is a
@@ -600,7 +622,7 @@ export namespace BindConfigProvider {
    */
   export async function isPortAvailable(port: number): Promise<boolean> {
     return withFileLock(
-      PortLockPath,
+      portLockPath(),
       async () => (await getPort({ port })) === port
     )
   }
@@ -624,7 +646,7 @@ export namespace BindConfigProvider {
     preferred: number,
     protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
   ): Promise<number> {
-    return withFileLock(PortLockPath, () =>
+    return withFileLock(portLockPath(), () =>
       pickPort(
         null,
         preferred,
@@ -743,7 +765,7 @@ export namespace BindConfigProvider {
    * caller-pinned range must be entirely free (else THROW, mirroring
    * {@link pickPort}); otherwise candidate windows are scanned from
    * {@link DefaultSolanaDynamicPortFirst}. Call only under the
-   * {@link BindConfigProvider.PortLockPath} lock (resolve does).
+   * {@link BindConfigProvider.portLockPath} lock (resolve does).
    *
    * @param callerPin - The caller's pinned window, or null.
    * @param exclusions - Ports already claimed/registered.
@@ -796,7 +818,7 @@ export namespace BindConfigProvider {
    * @returns A currently-free window.
    */
   export async function findAvailableRange(): Promise<BindConfigPortRange> {
-    return withFileLock(PortLockPath, () =>
+    return withFileLock(portLockPath(), () =>
       pickPortRange(null, readRegistryPortExclusions(), "solana.dynamicRange")
     )
   }
