@@ -39,6 +39,10 @@ import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { serialize } from "../../utils/asyncUtils.js"
 import { abiEnumValue } from "../../utils/enumUtils.js"
+import {
+  clearNonceCache,
+  resolveLatestNonce
+} from "../../utils/ethereumUtils.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../../orchestration/ClusterBuildPhase.js"
@@ -731,16 +735,42 @@ export namespace WireOperatorProvisioningTool {
   ): Promise<void> {
     signal.throwIfAborted()
     const operator = ctx.keyStore.assertOperator(input.label)
-    // SERIALIZED: every operator funds from the SAME anvil signer, and the
-    // operator phases run in parallel — concurrent sends read one pending nonce
-    // and the losers are rejected `REPLACEMENT_UNDERPRICED`. The wait is inside
-    // the critical section so the nonce has advanced before the next send.
+    const { signer } = ctx.ethereum.wallet
+    // Every operator funds from the SAME anvil signer while the operator phases
+    // run in PARALLEL, so this write needs two things, not one.
+    //
+    // The nonce is PINNED from the shared per-address counter — the same
+    // counter every other ETH write in the harness draws from. Letting ethers
+    // derive it instead means a `getTransactionCount(…, "pending")` round-trip,
+    // which lags un-mined submissions: measured 2026-08-10, nonce 157 was handed
+    // to FOUR concurrent sends and three were rejected `nonce has already been
+    // used`. The counter increments synchronously, so distinct callers cannot
+    // collide even if they overlap.
+    //
+    // The serialize() queue stays because the counter's contract requires it:
+    // a pinned nonce is only valid if every earlier submission actually landed,
+    // so the receipt wait belongs INSIDE the critical section.
     await serialize(EthereumFundingQueueKey, async () => {
-      const response = await ctx.ethereum.wallet.signer.sendTransaction({
-        to: operator.ethereum.address,
-        value: input.wei
-      })
-      await response.wait()
+      const nonce = await resolveLatestNonce(signer)
+      try {
+        const response = await signer.sendTransaction({
+          to: operator.ethereum.address,
+          value: input.wei,
+          nonce
+        })
+        await response.wait()
+      } catch (error) {
+        // The counter already advanced for a nonce that never landed. Re-seed
+        // from the chain, or every later send sits above the chain's nonce and
+        // waits in the mempool forever.
+        clearNonceCache(await signer.getAddress())
+        log.warn(
+          `fund ${input.label} ETH wallet failed at nonce ${nonce}; nonce cache cleared: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+        throw error
+      }
     })
   }
 
