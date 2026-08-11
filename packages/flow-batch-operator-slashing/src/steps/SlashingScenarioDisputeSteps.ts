@@ -173,11 +173,11 @@ export namespace SlashingScenarioDisputeSteps {
   }
 
   /**
-   * The operator's row on `sysio.opreg::operators`, by provisioning label
-   * (resolved to its node-owner-generated chain account via `ctx.keyStore`).
+   * The operator's row on `sysio.opreg::operators`, by durable `label` handle
+   * (resolved to its node-owner-generated `account` via `ctx.keyStore`).
    *
    * @param ctx - The build context.
-   * @param label - The operator's provisioning label.
+   * @param label - The operator's durable harness `label` handle.
    * @returns The row (absent when the operator is unknown).
    */
   export async function readOperator(
@@ -248,7 +248,7 @@ export namespace SlashingScenarioDisputeSteps {
    *
    * @param candidates - The dispute's candidate buckets.
    * @param account - The delivering operator's CHAIN account (dispute rows
-   *   carry chain accounts — resolve a label via `ctx.keyStore` first).
+   *   carry chain accounts — resolve a durable handle via `ctx.keyStore` first).
    * @returns The checksum (absent when `account` delivered no candidate).
    */
   export function candidateChecksumForOperator(
@@ -529,7 +529,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   // ── Step: sysio.opreg::planProcessbatch (write) ───────────────────────────────
 
-  /** Input for {@link planProcessbatch} — the operator label + account-less action data. */
+  /** Input for {@link planProcessbatch} — the operator's `label` handle + account-less action data. */
   export interface ProcessbatchInput extends StepInput {
     readonly kind: "SlashingScenarioDisputeSteps.ProcessbatchInput"
     readonly label: string
@@ -540,7 +540,7 @@ export namespace SlashingScenarioDisputeSteps {
    * `sysio.opreg::processbatch` — force a dispute operator ACTIVE. Normally an
    * operator flips UNKNOWN→ACTIVE via `reevaluate_eligibility`, which only
    * fires on a deposit event; the dispute operators post no collateral, so
-   * nothing would ever evaluate them. `planProcessbatch(account, was_eligible=false,
+   * nothing would ever evaluate them. `planProcessbatch(label, was_eligible=false,
    * is_eligible=true)` IS the eligibility callback and flips status directly;
    * it only needs `sysio.opreg` auth (= `sysio@active` = the kiod dev key
    * in-cluster). They carry no bond, which is fine — the flow asserts the
@@ -550,6 +550,8 @@ export namespace SlashingScenarioDisputeSteps {
    * @param name - Step name.
    * @param description - Step description.
    * @param options - Step option overrides.
+   * @param label - The operator's durable harness `label` handle (its resolved
+   *   `account` is what the action carries).
    * @param data - The generated action data.
    * @returns The definition step.
    */
@@ -609,8 +611,8 @@ export namespace SlashingScenarioDisputeSteps {
    * @param name - Step name.
    * @param description - Step description.
    * @param options - Step option overrides.
-   * @param batchOperatorLabel - The delivering operator's provisioning label
-   *   (its resolved chain account signs `@active`).
+   * @param batchOperatorLabel - The delivering operator's durable `label`
+   *   handle (its resolved `account` signs `@active`).
    * @param chainCode - The outpost's `slug_name` chain code.
    * @param tag - The envelope payload tag (drives the checksum).
    * @returns The definition step.
@@ -927,11 +929,11 @@ export namespace SlashingScenarioDisputeSteps {
   /** Input for {@link planAwaitOperatorSlashed}. */
   export interface AwaitOperatorSlashedInput extends StepInput {
     readonly kind: "SlashingScenarioDisputeSteps.AwaitOperatorSlashedInput"
-    readonly account: string
+    readonly label: string
   }
 
   /**
-   * Poll until `account` flips OPERATOR_STATUS_SLASHED. The slash runs in
+   * Poll until the operator flips OPERATOR_STATUS_SLASHED. The slash runs in
    * `sysio.epoch::advance`; `chkcons` drives advance and the SBP-less group
    * means nothing else cranks it, so each iteration cranks
    * ({@link crankChkcons}) until the unpaused epoch advances.
@@ -940,7 +942,8 @@ export namespace SlashingScenarioDisputeSteps {
    * @param name - Step name.
    * @param description - Step description.
    * @param options - Step option overrides.
-   * @param account - The non-canonical deliverer expected to be slashed.
+   * @param label - The non-canonical deliverer (by durable harness `label`
+   *   handle) expected to be slashed.
    * @returns The definition step.
    */
   export function planAwaitOperatorSlashed<
@@ -950,7 +953,7 @@ export namespace SlashingScenarioDisputeSteps {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    account: string
+    label: string
   ): ClusterBuildStep<C, AwaitOperatorSlashedInput> {
     return ClusterBuildStep.create<C, AwaitOperatorSlashedInput>(
       actor,
@@ -959,7 +962,7 @@ export namespace SlashingScenarioDisputeSteps {
       options,
       {
         kind: "SlashingScenarioDisputeSteps.AwaitOperatorSlashedInput",
-        account
+        label
       },
       runAwaitOperatorSlashed
     )
@@ -973,10 +976,10 @@ export namespace SlashingScenarioDisputeSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     await pollUntil(
-      `${input.account} (non-canonical) becomes SLASHED`,
+      `${input.label} (non-canonical) becomes SLASHED`,
       async () => {
         await crankChkcons(ctx)
-        const row = await readOperator(ctx, input.account)
+        const row = await readOperator(ctx, input.label)
         return (
           row != null &&
           matchesProtoEnum(
@@ -1007,7 +1010,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param name - Step name.
    * @param description - Step description.
    * @param options - Step option overrides.
-   * @param label - The dispute operator (by provisioning label) expected to flip ACTIVE.
+   * @param label - The dispute operator (by durable harness `label` handle) expected to flip ACTIVE.
    * @returns The definition step.
    */
   export function planAwaitOperatorActive<

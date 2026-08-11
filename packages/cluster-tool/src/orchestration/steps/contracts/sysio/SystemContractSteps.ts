@@ -21,6 +21,20 @@ export namespace SystemContractSteps {
   /** Suffix appended to the chain's `head_block_time` so it parses as UTC. */
   const UtcSuffix = "Z"
 
+  /**
+   * The chain's `head_block_time` as a second-precision ISO-8601 timestamp.
+   *
+   * Every singleton anchored to a start instant reads it from here rather than from the
+   * local wall clock, because the contracts measure elapsed time against the chain's own
+   * clock — a local-clock anchor skews vesting and epoch accrual by the host's drift.
+   */
+  async function chainHeadTimestamp<C extends ClusterBuildContext>(ctx: C): Promise<string> {
+    const info = await ctx.wire.getInfo()
+    return new Date(info.head_block_time + UtcSuffix)
+      .toISOString()
+      .slice(0, IsoSecondsLength)
+  }
+
   /** Input for {@link planSetemitcfg} — the generated emission-config struct. */
   export interface SetemitcfgInput extends StepInput {
     readonly kind: "SystemContractSteps.SetemitcfgInput"
@@ -58,6 +72,49 @@ export namespace SystemContractSteps {
   }
 
   /**
+   * `sysio.system::setinittime` — seed the `emissionmngr` singleton with the node-owner
+   * distribution commencement time, anchored to the chain's `head_block_time`.
+   *
+   * Every tier's vesting schedule is measured from this one instant, so until it is set
+   * `claimnodedis` aborts with "emission state not initialized" and no node owner can ever
+   * claim — registration itself succeeds, which is what makes the omission silent. Must run
+   * AFTER `setemitcfg` (the action reads the emission config) and is one-shot: the contract
+   * rejects a second call.
+   *
+   * Input-less; the runner reads the head time. Production substitutes the approved
+   * Distribution Commencement Date for the chain head.
+   */
+  export function planSetinittime<C extends ClusterBuildContext = ClusterBuildContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, null> {
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runSetinittime
+    )
+  }
+
+  /** Named runner — `sysio.system::setinittime` anchored to chain head time. */
+  export async function runSetinittime<C extends ClusterBuildContext>(
+    ctx: C,
+    _input: null,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await ctx.wire
+      .getSysioContract(SysioContractName.system)
+      .actions.setinittime.invoke({
+        no_reward_init_time: await chainHeadTimestamp(ctx)
+      })
+  }
+
+  /**
    * `sysio.system::initt5` — seed the `t5_state` singleton, anchored to the
    * chain's `head_block_time` (the clock `accrueepoch` uses). Input-less; the
    * runner reads the head time.
@@ -85,13 +142,9 @@ export namespace SystemContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const info = await ctx.wire.getInfo()
-    const startTime = new Date(info.head_block_time + UtcSuffix)
-      .toISOString()
-      .slice(0, IsoSecondsLength)
     await ctx.wire
       .getSysioContract(SysioContractName.system)
-      .actions.initt5.invoke({ start_time: startTime })
+      .actions.initt5.invoke({ start_time: await chainHeadTimestamp(ctx) })
   }
 
   /** Input for {@link planInit} — the generated `system::init` data. */

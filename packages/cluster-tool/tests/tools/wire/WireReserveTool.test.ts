@@ -3,18 +3,30 @@ import type { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { WireReserveTool } from "@wireio/cluster-tool/tools/wire"
 
 const { SysioContractName } = SysioContracts
-const { BpsTotal, cpOutput, splitWireFee, swapquote, varianceDrift } = WireReserveTool
+const {
+  BpsTotal,
+  cpOutput,
+  outGivenIn,
+  quoteSwap,
+  splitWireFee,
+  swapquote,
+  SymmetricConnectorWeightBps,
+  tokenToWire,
+  varianceDrift,
+  wireToToken
+} = WireReserveTool
 
 /** The old dev-cluster fee the recorded SwapFeeMath assertions were baselined on. */
 const LegacySwapFeeBps = 10
 
 /** A minimal reserves row carrying only the fields swapquote consults. */
 interface QuoteReserveFixture {
-  chain_code: { value: number }
-  token_code: { value: number }
-  reserve_code: { value: number }
+  chain_code: SysioContracts.SysioReservSlugNameType
+  token_code: SysioContracts.SysioReservSlugNameType
+  reserve_code: SysioContracts.SysioReservSlugNameType
   reserve_chain_amount: number
   reserve_wire_amount: number
+  connector_weight_bps: number
 }
 
 const EthereumChain = 100,
@@ -37,7 +49,8 @@ function stubWire(reserves: QuoteReserveFixture[], feeBps = 30): WireClient {
     }
   }
   return {
-    getSysioContract: (name: SysioContracts.SysioContractName) => clientByName[name]
+    getSysioContract: (name: SysioContracts.SysioContractName) =>
+      clientByName[name]
   } as WireClient
 }
 
@@ -45,7 +58,9 @@ describe("WireReserveTool", () => {
   describe("cpOutput", () => {
     it("matches the depot's constant-product floor math", () => {
       // 1e10 books, 1e8 in → floor(1e10 × 1e8 / (1e10 + 1e8)) = 99_009_900
-      expect(cpOutput(10_000_000_000n, 10_000_000_000n, 100_000_000n)).toBe(99_009_900n)
+      expect(cpOutput(10_000_000_000n, 10_000_000_000n, 100_000_000n)).toBe(
+        99_009_900n
+      )
     })
     it("is 0n when any side is empty", () => {
       expect(cpOutput(0n, 10n, 5n)).toBe(0n)
@@ -63,7 +78,14 @@ describe("WireReserveTool", () => {
       expect(fee.rewardShare).toBe(49_505n)
     })
     it("holds the exact-integer invariants across amounts", () => {
-      const amounts = [1n, 7n, 1_000_000n, 99_009_900n, 100_969_310n, 80_000_000_000n]
+      const amounts = [
+        1n,
+        7n,
+        1_000_000n,
+        99_009_900n,
+        100_969_310n,
+        80_000_000_000n
+      ]
       amounts.forEach(amount => {
         const fee = splitWireFee(amount, LegacySwapFeeBps)
         expect(fee.underwriterShare + fee.rewardShare).toBe(fee.fee)
@@ -203,27 +225,194 @@ describe("WireReserveTool", () => {
 
     it("is identity at exactly 9 decimals (lamports)", () => {
       expect(WireReserveTool.toDepot(10_000_000_000n, 9)).toBe(10_000_000_000n)
-      expect(WireReserveTool.fromDepot(10_000_000_000n, 9)).toBe(10_000_000_000n)
+      expect(WireReserveTool.fromDepot(10_000_000_000n, 9)).toBe(
+        10_000_000_000n
+      )
     })
 
     it("downscales an above-cap token (18-dec wei → ÷1e9, floored)", () => {
-      expect(WireReserveTool.toDepot(1_500_000_000_999_999_999n, 18)).toBe(1_500_000_000n)
+      expect(WireReserveTool.toDepot(1_500_000_000_999_999_999n, 18)).toBe(
+        1_500_000_000n
+      )
     })
 
     it("fromDepot upscales an above-cap token (18-dec wei → ×1e9)", () => {
-      expect(WireReserveTool.fromDepot(4_754_411_063n, 18)).toBe(4_754_411_063_000_000_000n)
+      expect(WireReserveTool.fromDepot(4_754_411_063n, 18)).toBe(
+        4_754_411_063_000_000_000n
+      )
     })
 
     it("rejects a zero / non-integer decimals argument", () => {
-      expect(() => WireReserveTool.toDepot(1n, 0)).toThrow(/invalid native decimals/)
-      expect(() => WireReserveTool.fromDepot(1n, 1.5)).toThrow(/invalid native decimals/)
-      expect(() => WireReserveTool.depotPrecision(-1)).toThrow(/invalid native decimals/)
+      expect(() => WireReserveTool.toDepot(1n, 0)).toThrow(
+        /invalid native decimals/
+      )
+      expect(() => WireReserveTool.fromDepot(1n, 1.5)).toThrow(
+        /invalid native decimals/
+      )
+      expect(() => WireReserveTool.depotPrecision(-1)).toThrow(
+        /invalid native decimals/
+      )
     })
   })
 
   describe("readFeeBps", () => {
     it("reads the live uwconfig singleton", async () => {
-      await expect(WireReserveTool.readFeeBps(stubWire([], 30))).resolves.toBe(30)
+      await expect(WireReserveTool.readFeeBps(stubWire([], 30))).resolves.toBe(
+        30
+      )
+    })
+  })
+
+  // Every expected value below was produced by COMPILING
+  // `sysio.opp.common/amm_math.hpp` and printing `out_given_in` for the same
+  // inputs — not derived by hand. A mirror that merely approximates the depot
+  // is not a mirror; these pin bit-identity, including the Q60 log2/exp2 path.
+  describe("outGivenIn (the sysio::opp::amm::out_given_in mirror)", () => {
+    const Balance = 10_000_000_000n,
+      AmountIn = 100_000_000n
+
+    it("takes the EXACT constant-product path at equal weights", () => {
+      expect(
+        outGivenIn(Balance, 5_000n, Balance, 5_000n, AmountIn)
+      ).toBe(99_009_900n)
+      // The symmetric case must agree with the pure integer curve exactly.
+      expect(outGivenIn(Balance, 5_000n, Balance, 5_000n, AmountIn)).toBe(
+        cpOutput(Balance, Balance, AmountIn)
+      )
+    })
+
+    it.each([
+      [2_000n, 8_000n, 24_844_912n],
+      [8_000n, 2_000n, 390_196_555n],
+      [1_000n, 9_000n, 11_049_813n],
+      [9_000n, 1_000n, 856_601_757n],
+      [2_500n, 7_500n, 33_112_825n]
+    ])(
+      "matches the contract at wIn=%s wOut=%s",
+      (weightIn, weightOut, expected) => {
+        expect(
+          outGivenIn(Balance, weightIn, Balance, weightOut, AmountIn)
+        ).toBe(expected)
+      }
+    )
+
+    it("matches the contract at a larger input on the same pool", () => {
+      expect(
+        outGivenIn(Balance, 2_500n, Balance, 7_500n, 1_000_000_000n)
+      ).toBe(312_706_938n)
+    })
+
+    it("matches the contract on an asymmetric-depth pool", () => {
+      expect(
+        outGivenIn(5_000_000_000n, 3_000n, 20_000_000_000n, 7_000n, 250_000_000n)
+      ).toBe(413_859_413n)
+    })
+
+    it("diverges from equal-weight constant product off 50/50", () => {
+      // The whole point of the fix: cpOutput is only the curve at cw == 5000.
+      expect(
+        outGivenIn(Balance, 2_000n, Balance, 8_000n, AmountIn)
+      ).not.toBe(cpOutput(Balance, Balance, AmountIn))
+    })
+
+    it("is 0n on a degenerate balance, weight, or amount", () => {
+      expect(outGivenIn(0n, 5_000n, Balance, 5_000n, AmountIn)).toBe(0n)
+      expect(outGivenIn(Balance, 5_000n, 0n, 5_000n, AmountIn)).toBe(0n)
+      expect(outGivenIn(Balance, 0n, Balance, 5_000n, AmountIn)).toBe(0n)
+      expect(outGivenIn(Balance, 5_000n, Balance, 0n, AmountIn)).toBe(0n)
+      expect(outGivenIn(Balance, 5_000n, Balance, 5_000n, 0n)).toBe(0n)
+    })
+
+    it("never pays out more than the output side holds", () => {
+      expect(
+        outGivenIn(1n, 5_000n, Balance, 5_000n, 10n ** 18n)
+      ).toBeLessThanOrEqual(Balance)
+    })
+  })
+
+  describe("tokenToWire / wireToToken (the convenience mirrors)", () => {
+    const Balance = 10_000_000_000n,
+      Amount = 100_000_000n
+
+    it("route connectorWeightBps to the correct SIDE", () => {
+      // cw is the WIRE-side weight: token→wire has it as weightOut,
+      // wire→token as weightIn. Swapping them is the easy mistake, and these
+      // two values differ by more than an order of magnitude at cw=8000.
+      expect(tokenToWire(Balance, Balance, 8_000, Amount)).toBe(24_844_912n)
+      expect(wireToToken(Balance, Balance, 8_000, Amount)).toBe(390_196_555n)
+    })
+
+    it("collapse to constant product at the symmetric weight", () => {
+      const cp = cpOutput(Balance, Balance, Amount)
+      expect(
+        tokenToWire(Balance, Balance, SymmetricConnectorWeightBps, Amount)
+      ).toBe(cp)
+      expect(
+        wireToToken(Balance, Balance, SymmetricConnectorWeightBps, Amount)
+      ).toBe(cp)
+    })
+  })
+
+  describe("quoteSwap (the sysio::opp::amm::quote_swap mirror)", () => {
+    const book = {
+      chain: 10_000_000_000n,
+      wire: 10_000_000_000n,
+      connectorWeightBps: SymmetricConnectorWeightBps
+    }
+
+    it("charges the WIRE-leg fee BETWEEN the hops, not on the output", () => {
+      const gross = cpOutput(book.chain, book.wire, 100_000_000n),
+        net = splitWireFee(gross, 30).net
+      // Fee before the destination conversion — NOT cp(...gross) reduced after.
+      expect(quoteSwap(book, book, 100_000_000n, 30)).toBe(
+        cpOutput(book.wire, book.chain, net)
+      )
+      expect(quoteSwap(book, book, 100_000_000n, 30)).not.toBe(
+        splitWireFee(cpOutput(book.wire, book.chain, gross), 30).net
+      )
+    })
+    it("a WIRE destination receives the post-fee WIRE leg itself", () => {
+      const gross = cpOutput(book.chain, book.wire, 100_000_000n)
+      expect(quoteSwap(book, null, 100_000_000n, 30)).toBe(
+        splitWireFee(gross, 30).net
+      )
+    })
+    it("a WIRE source feeds the escrow straight into the WIRE leg", () => {
+      expect(quoteSwap(null, book, 100_000_000n, 30)).toBe(
+        cpOutput(book.wire, book.chain, splitWireFee(100_000_000n, 30).net)
+      )
+    })
+    it("rides the WEIGHTED curve when the reserve is not 50/50", () => {
+      // Contract value for cw=8000 on both legs at 30 bps.
+      const weighted = {
+        chain: 10_000_000_000n,
+        wire: 10_000_000_000n,
+        connectorWeightBps: 8_000
+      }
+      expect(quoteSwap(weighted, weighted, 100_000_000n, 30)).toBe(98_470_966n)
+      // …and that is NOT what the equal-weight curve would have quoted.
+      expect(quoteSwap(weighted, weighted, 100_000_000n, 30)).not.toBe(
+        quoteSwap(book, book, 100_000_000n, 30)
+      )
+    })
+    it("WIRE → WIRE is a plain transfer — no curve, no fee", () => {
+      expect(quoteSwap(null, null, 42n, 30)).toBe(42n)
+    })
+    it("is 0n on degenerate input or a dry hop", () => {
+      expect(quoteSwap(book, book, 0n, 30)).toBe(0n)
+      expect(quoteSwap(book, book, -1n, 30)).toBe(0n)
+      expect(
+        quoteSwap(
+          {
+            chain: 0n,
+            wire: 0n,
+            connectorWeightBps: SymmetricConnectorWeightBps
+          },
+          book,
+          100n,
+          30
+        )
+      ).toBe(0n)
     })
   })
 
@@ -234,14 +423,16 @@ describe("WireReserveTool", () => {
         token_code: { value: EthToken },
         reserve_code: { value: PrimaryReserve },
         reserve_chain_amount: 10_000_000_000,
-        reserve_wire_amount: 10_000_000_000
+        reserve_wire_amount: 10_000_000_000,
+        connector_weight_bps: SymmetricConnectorWeightBps
       },
       {
         chain_code: { value: SolanaChain },
         token_code: { value: SolToken },
         reserve_code: { value: PrimaryReserve },
         reserve_chain_amount: 10_000_000_000,
-        reserve_wire_amount: 10_000_000_000
+        reserve_wire_amount: 10_000_000_000,
+        connector_weight_bps: SymmetricConnectorWeightBps
       }
     ]
     const ethereumTriple = {
@@ -260,34 +451,52 @@ describe("WireReserveTool", () => {
         reserveCode: PrimaryReserve
       }
 
-    it("full hop routes source → WIRE → destination through both books", async () => {
+    it("full hop routes source → WIRE → destination through both books, fee between the hops", async () => {
       const quote = await swapquote(stubWire(reserves), {
         from: ethereumTriple,
         fromAmount: 100_000_000n,
         to: solanaTriple
       })
-      // wireIntermediate = cp(1e10, 1e10, 1e8) = 99_009_900; then cp again.
-      expect(quote).toBe(cpOutput(10_000_000_000n, 10_000_000_000n, 99_009_900n))
+      // Gross intermediate cp(1e10, 1e10, 1e8) = 99_009_900; the 30 bps fee
+      // comes off it, and only the net converts on the destination curve.
+      const net = splitWireFee(99_009_900n, 30).net
+      expect(quote).toBe(cpOutput(10_000_000_000n, 10_000_000_000n, net))
+      expect(quote).toBe(97_747_972n)
     })
-    it("to-WIRE consults only the source book", async () => {
+    it("to-WIRE consults only the source book and pays the post-fee leg", async () => {
       const quote = await swapquote(stubWire(reserves), {
         from: ethereumTriple,
         fromAmount: 100_000_000n,
         to: wireTriple
       })
-      expect(quote).toBe(99_009_900n)
+      expect(quote).toBe(splitWireFee(99_009_900n, 30).net)
     })
-    it("from-WIRE consults only the destination book", async () => {
+    it("from-WIRE takes the fee off the escrow before the destination curve", async () => {
       const quote = await swapquote(stubWire(reserves), {
         from: wireTriple,
         fromAmount: 100_000_000n,
         to: solanaTriple
       })
+      const net = splitWireFee(100_000_000n, 30).net
+      expect(quote).toBe(cpOutput(10_000_000_000n, 10_000_000_000n, net))
+      expect(quote).toBe(98_715_803n)
+    })
+    it("honours the live uwconfig fee rather than a hardcoded rate", async () => {
+      const quote = await swapquote(stubWire(reserves, 0), {
+        from: wireTriple,
+        fromAmount: 100_000_000n,
+        to: solanaTriple
+      })
+      // A zero-fee cluster is the only case where the quote is the raw curve.
       expect(quote).toBe(99_009_900n)
     })
     it("WIRE → WIRE passes through 1:1", async () => {
       await expect(
-        swapquote(stubWire([]), { from: wireTriple, fromAmount: 42n, to: wireTriple })
+        swapquote(stubWire([]), {
+          from: wireTriple,
+          fromAmount: 42n,
+          to: wireTriple
+        })
       ).resolves.toBe(42n)
     })
     it("is 0n when a required reserve row is missing", async () => {

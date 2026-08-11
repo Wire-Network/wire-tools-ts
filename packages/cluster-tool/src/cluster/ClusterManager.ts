@@ -6,9 +6,9 @@ import {
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { PidSources, pidIsAlive, readPid } from "@wireio/debugging-shared"
+import { getValue } from "@wireio/shared"
 import { ProtocolTiming } from "../Constants.js"
 import { BindConfigProvider } from "../config/BindConfigProvider.js"
-import { SSMClientProvider } from "../config/SSMClientProvider.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 import { ClusterConfigProvider } from "../config/ClusterConfigProvider.js"
 import { NodeConfig, NodeRole } from "../config/NodeConfig.js"
@@ -47,20 +47,6 @@ export namespace ClusterManager {
   const NodeLoggingFilename = "logging.json"
 
   /**
-   * Epoch-advance liveness budget as a count of effective-epoch windows. At the
-   * default 60s epoch this is 3 × (60 + 30)s = 270s — ≥ the ~4min a *resumed*
-   * cluster can need to restart OPP circulation before `current_epoch_index`
-   * advances. A healthy cluster still passes in ~1 epoch (the poll returns the
-   * moment the index moves), so the larger ceiling adds no wall clock to a
-   * healthy run — it only keeps a slow restart from failing a live cluster.
-   */
-  export const EpochVerifyEpochCount = 3
-  /** Poll gap for the epoch-advance liveness verify (ms). */
-  export const EpochVerifyPollIntervalMs = 1_000
-  /** Local ms-per-second conversion (each flow's own `ScenarioConstants` carries the same literal). */
-  export const MsPerSecond = 1_000
-
-  /**
    * Create + bootstrap a cluster: resolve `options`, write the cluster files,
    * run the default build (plus a final persist phase writing
    * `cluster-state.json` + `cluster-keys.json`), persist the resolved config,
@@ -68,6 +54,9 @@ export namespace ClusterManager {
    * here so every `Steps.processes.*` step can get-or-create against it.
    */
   export async function create(options: ClusterBuildOptions): Promise<Report> {
+    // The cluster path must be absent, or `--force` must authorize replacing
+    // it — enforced BEFORE anything is resolved, bound, or written.
+    prepareClusterPath(options)
     // SSM mode: the key-publication phases are composed INSIDE the default
     // build (`PublishNodeSignatureProviderKeys` after WalletAndKeys,
     // `PublishOperatorSignatureProviderKeys` after operator provisioning) —
@@ -87,6 +76,42 @@ export namespace ClusterManager {
       )
     )
     return launch(build)
+  }
+
+  /**
+   * Enforce {@link create}'s cluster-path precondition: the path is ABSENT, or
+   * `--force` authorizes replacing it. An existing path without `--force` is a
+   * hard error — never a silent overlay, which would inherit the previous
+   * cluster's block logs, chain state and stale pidfiles under a freshly
+   * written `genesis.json` and `cluster-config.json`.
+   *
+   * With `--force` the directory is removed outright — but never while its
+   * daemons are still LIVE: deleting a running cluster's directory orphans its
+   * nodeop / kiod / anvil / solana-test-validator processes, which keep holding
+   * their ports and then collide with the new cluster's port resolution — a
+   * failure whose symptom (an unrelated port claim failing much later) points
+   * nowhere near here.
+   *
+   * @param options - The create options — `clusterPath` names the directory,
+   *   `force` authorizes replacing it when it already exists.
+   * @throws If the path exists without `force`, or if any pidfile under the
+   *   existing cluster's `data/` names a live pid.
+   */
+  export function prepareClusterPath(options: ClusterBuildOptions): void {
+    const { force, clusterPath } = options
+    if (!Fs.existsSync(clusterPath)) return
+    Assert.ok(
+      force,
+      `cluster directory already exists at ${clusterPath} — pass --force to replace it`
+    )
+    assertNoLivePids(
+      clusterPath,
+      Path.join(clusterPath, ClusterConfigProvider.DataSubpath)
+    )
+    Fs.rmSync(clusterPath, { recursive: true, force: true })
+    log.info(
+      `[cluster] force: removed pre-existing cluster path ${clusterPath}`
+    )
   }
 
   /**
@@ -111,7 +136,7 @@ export namespace ClusterManager {
   >(build: ClusterBuild<C>): Promise<Report> {
     const config = build.config
     ProcessManager.setClusterPath(config.clusterPath)
-    writeClusterFiles(config)
+    await writeClusterFiles(config)
     await ClusterConfigProvider.save(config)
     log.info(
       `[cluster] filesystem ready at ${config.clusterPath}; running build`
@@ -171,41 +196,63 @@ export namespace ClusterManager {
     }
   }
 
-  /** Write dirs, the shared genesis, and per-node config/logging from the plan. */
-  function writeClusterFiles(config: ClusterConfig): void {
+  /**
+   * Write dirs, the shared genesis, and per-node config/logging from the plan.
+   *
+   * Async because {@link launch} is, and the seam is already there — the very
+   * next statement awaits {@link ClusterConfigProvider.save}. At the
+   * mainnet/testnet topology `NodeConfig.plan` yields ~48 nodes, so the
+   * per-node pair is ~96 writes with no ordering relationship to one another;
+   * issuing them concurrently keeps them off the event loop instead of
+   * serializing every one behind the next.
+   *
+   * Directory creation stays SYNCHRONOUS on purpose: `mkdirs` returns its path
+   * and is shared by 19 call sites, so forking an async variant would ripple
+   * for no gain — the mkdir is the cheap half, and every write below depends
+   * on its directory already existing.
+   */
+  async function writeClusterFiles(config: ClusterConfig): Promise<void> {
     mkdirs(config.dataPath)
     mkdirs(config.walletPath)
     mkdirs(config.report.path)
-    Fs.writeFileSync(
+    await Fs.promises.writeFile(
       ClusterConfigProvider.genesisFile(config),
       ClusterConfigProvider.genesisRenderer(config).render()
     )
-    NodeConfig.plan(config).forEach(node => {
-      mkdirs(node.nodePath)
-      Fs.writeFileSync(
-        Path.join(node.nodePath, NodeConfigFilename),
-        node.ini.render()
-      )
-      Fs.writeFileSync(
-        Path.join(node.nodePath, NodeLoggingFilename),
-        node.logging.render()
-      )
-    })
+    await Promise.all(
+      NodeConfig.plan(config).map(async node => {
+        mkdirs(node.nodePath)
+        await Promise.all([
+          Fs.promises.writeFile(
+            Path.join(node.nodePath, NodeConfigFilename),
+            node.ini.render()
+          ),
+          Fs.promises.writeFile(
+            Path.join(node.nodePath, NodeLoggingFilename),
+            node.logging.render()
+          )
+        ])
+      })
+    )
   }
 
   /**
-   * Refuse to relaunch a still-live cluster: scan every pidfile under every
-   * subdirectory of `config.dataPath` and throw, naming every pid that is
-   * still alive. Pid parsing + the kernel probe ride debugging-shared's
-   * {@link readPid} / {@link pidIsAlive} — the same primitives the debugging
-   * surface monitors with. Called at the top of {@link run}, before anything
-   * is started or swept.
+   * Scan every pidfile under every subdirectory of `dataPath` and throw, naming
+   * every pid that is still alive. Pid parsing + the kernel probe ride
+   * debugging-shared's {@link readPid} / {@link pidIsAlive} — the same
+   * primitives the debugging surface monitors with. The ONE implementation
+   * behind both live-cluster gates: {@link assertClusterStopped} (relaunch) and
+   * {@link prepareClusterPath} (`create --force`), which has only the
+   * caller's paths — never a resolved `ClusterConfig`.
    *
-   * @param config - The cluster config to check.
-   * @throws If any pidfile under `config.dataPath` names a live pid.
+   * @param clusterPath - The cluster root, named in the failure message.
+   * @param dataPath - The cluster's data dir holding the per-daemon pidfiles.
+   * @throws If any pidfile under `dataPath` names a live pid.
    */
-  export function assertClusterStopped(config: ClusterConfig): void {
-    const { dataPath } = config
+  function assertNoLivePids(
+    clusterPath: ClusterConfig["clusterPath"],
+    dataPath: ClusterConfig["dataPath"]
+  ): void {
     if (!Fs.existsSync(dataPath)) return
     const livePids = Fs.readdirSync(dataPath, { withFileTypes: true })
       .filter(entry => entry.isDirectory())
@@ -219,8 +266,20 @@ export namespace ClusterManager {
       .filter(pid => pidIsAlive(pid))
     Assert.ok(
       livePids.length === 0,
-      `cluster at ${config.clusterPath} appears to be running (live pid(s): ${livePids.join(", ")}) — stop it first`
+      `cluster at ${clusterPath} appears to be running (live pid(s): ${livePids.join(", ")}) — stop it first`
     )
+  }
+
+  /**
+   * Refuse to relaunch a still-live cluster — delegates the pidfile scan to
+   * {@link assertNoLivePids}. Called at the top of {@link run}, before anything
+   * is started or swept.
+   *
+   * @param config - The cluster config to check.
+   * @throws If any pidfile under `config.dataPath` names a live pid.
+   */
+  export function assertClusterStopped(config: ClusterConfig): void {
+    assertNoLivePids(config.clusterPath, config.dataPath)
   }
 
   /**
@@ -373,9 +432,9 @@ export namespace ClusterManager {
     const { rows: startRows } = await ctx.wire.getEpochState(),
       startEpochIndex = startRows[0]?.current_epoch_index ?? 0,
       budgetMs =
-        EpochVerifyEpochCount *
+        ProtocolTiming.EpochVerifyEpochCount *
         ProtocolTiming.effectiveEpochSec(config.epochDurationSec) *
-        MsPerSecond
+        ProtocolTiming.MsPerSecond
     try {
       await pollUntil(
         `sysio.epoch current_epoch_index advances past ${startEpochIndex}`,
@@ -391,7 +450,7 @@ export namespace ClusterManager {
           }
         },
         budgetMs,
-        EpochVerifyPollIntervalMs
+        ProtocolTiming.EpochVerifyPollIntervalMs
       )
     } catch (error) {
       log.error(
@@ -417,36 +476,51 @@ export namespace ClusterManager {
     ProcessManager.get().initialize()
     await stop(true)
     if (config.signatureProvider.type === SignatureProviderType.SSM) {
-      await cleanupSignatureProviderKeys(config)
+      cleanupSignatureProviderKeys(config)
     }
     Fs.rmSync(config.clusterPath, { recursive: true, force: true })
   }
 
+  /** Empty publication list — the guarded fallback when ids cannot be rendered. */
+  const NoSignatureProviderKeyPublications: Steps.keys.SignatureProviderKeyPublication[] =
+    []
+
   /**
-   * Best-effort delete of every published SSM parameter — ids re-rendered
-   * deterministically from the persisted pattern × accounts × key types (guard +
-   * log per the never-swallow rule; NEVER blocks destroy).
+   * Log — and NEVER delete — every SSM parameter an SSM cluster published.
+   *
+   * `destroy` NEVER deletes an SSM secret, full stop. A published parameter is
+   * the AWS ACCOUNT's DURABLE key identity: the next `create` in that account
+   * ADOPTS it (`KeySteps.adoptOrCreateSignatureProviderKey`), which is what
+   * keeps a re-created cluster's on-chain authorities, authex links and emitted
+   * external config pointing at the SAME keys. Deleting on destroy would defeat
+   * adoption entirely — the second create would mint fresh keys and orphan every
+   * consumer that still trusts the old ones.
+   *
+   * The ids are rendered and logged so an operator who genuinely wants them gone
+   * can sweep them by hand, with the regions named.
    *
    * @param config - The cluster config (SSM signature provider).
    */
-  async function cleanupSignatureProviderKeys(
-    config: ClusterConfig
-  ): Promise<void> {
-    const region = config.signatureProvider.ssm?.awsRegion
-    if (region == null) return
-    await eachSeries(
-      Steps.keys.signatureProviderKeyPublications(config),
-      async publication => {
-        try {
-          await SSMClientProvider.deleteParameter(region, publication.secretId)
-        } catch (error) {
-          log.warn(
-            `[cluster] destroy: SSM DeleteParameter ${publication.secretId} failed (best-effort): ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          )
-        }
-      }
+  function cleanupSignatureProviderKeys(config: ClusterConfig): void {
+    if (config.signatureProvider.ssm == null) return
+    // A half-built cluster — `create` aborted before the AWS placement resolved,
+    // so there is no `cluster-keys.json` and no renderable id set — must STILL
+    // have its directory removed. The rendering is guarded so its failure is a
+    // warning, never a throw that strands the directory.
+    const publications = getValue(
+      () => Steps.keys.signatureProviderKeyPublications(config),
+      NoSignatureProviderKeyPublications,
+      error =>
+        log.warn(
+          `[cluster] destroy: could not render the retained SSM ids (half-built cluster?): ${error.message}`
+        )
+    )
+    publications.forEach(publication =>
+      log.info(
+        `[cluster] destroy: RETAINING SSM parameter ${publication.secretId} in ${publication.awsRegions.join(
+          ", "
+        )} — destroy never deletes a secret; the next create in this AWS account adopts it`
+      )
     )
   }
 }

@@ -164,7 +164,10 @@ export namespace SolanaFundingTool {
   /** Input for {@link planAirdrop} — top an operator's SOL keypair up to a floor. */
   export interface AirdropInput extends StepInput {
     readonly kind: "SolanaFundingTool.AirdropInput"
-    /** Operator whose SOL keypair is read from `ctx.outputs` and airdropped to. */
+    /**
+     * Operator's durable `label` handle — its SOL keypair is resolved from
+     * `ctx.keyStore` (NOT its on-chain `account`) and airdropped to.
+     */
     readonly operatorLabel: string
     /** Ensure the operator's SOL keypair holds at least this many lamports. */
     readonly floorLamports: bigint
@@ -219,7 +222,10 @@ export namespace SolanaFundingTool {
   /** Input for {@link planSplMint} — one mock-SPL mint into the operator's ATA. */
   export interface MintSplInput extends StepInput {
     readonly kind: "SolanaFundingTool.MintSplInput"
-    /** Operator whose SOL keypair / ATA is read from `ctx.outputs`. */
+    /**
+     * Operator's durable `label` handle — its SOL keypair / ATA is resolved
+     * from `ctx.keyStore` (NOT its on-chain `account`).
+     */
     readonly operatorLabel: string
     /**
      * Token slug code — the config-level identity. The SPL mint ADDRESS is a
@@ -235,8 +241,8 @@ export namespace SolanaFundingTool {
   /**
    * A single mock-SPL mint into the operator's ATA (creating the ATA on demand),
    * signed by the persisted deployer keypair (the mint authority). The operator
-   * identity is read from `ctx.outputs`; the deployer keypair from the cluster
-   * data dir ({@link DeployerKeypairFilename}).
+   * identity is resolved from `ctx.keyStore` by its durable `label`; the deployer
+   * keypair from the cluster data dir ({@link DeployerKeypairFilename}).
    */
   export function planSplMint<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,

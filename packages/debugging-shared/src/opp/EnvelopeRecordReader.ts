@@ -14,6 +14,7 @@ import {
 import { plainify } from "./Plainify.js"
 import type {
   DebugOPPEnvelopeRecord,
+  DebugOPPEpochEnvelopeRecord,
   DebugOPPEpochRecord
 } from "./OPPDebugTypes.js"
 
@@ -76,7 +77,7 @@ async function tryReadOne(
   storageDir: string,
   baseKey: string,
   filter: EnvelopeRecordFilter
-): Promise<{ epoch: number; record: DebugOPPEnvelopeRecord } | null> {
+): Promise<DebugOPPEpochEnvelopeRecord> {
   const parsed = parseEnvelopeStorageKey(baseKey)
   if (!parsed) return null
   if (filter.epochStart !== undefined && parsed.epochIndex < filter.epochStart)

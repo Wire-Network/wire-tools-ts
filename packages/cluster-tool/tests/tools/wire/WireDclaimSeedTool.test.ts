@@ -68,6 +68,12 @@ function randomBytesHex(rng: () => number, byteLength: number): string {
     .join("")
 }
 
+/** A controlled address the dump appends as a fixed-amount purchaser row. */
+interface ControlledIdentity {
+  /** Lower-case hex ETH address WITHOUT `0x` prefix (importseed dump shape). */
+  addressHex: string
+}
+
 /**
  * Options for {@link buildSyntheticEthereumDump} — the subset of the
  * flow-side generator's `EthereumDumpOptions` these tests exercise.
@@ -91,7 +97,7 @@ interface EthereumDumpOptions {
    */
   yieldClaimedCount?: number
   /** Controlled addresses — appended as purchasers (no `yieldClaimed`). */
-  controlled?: { addressHex: string }[]
+  controlled?: ControlledIdentity[]
   /** Source-decimal (18) total for EVERY controlled purchaser row. */
   controlledSourceUnits?: bigint
 }

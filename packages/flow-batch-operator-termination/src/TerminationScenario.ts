@@ -49,7 +49,7 @@ const PostDepositSolanaLamportsKey = outputKey<number>(
   `${Constants.DoomedOperatorLabel}'s SOL wallet balance (lamports) after both bonds landed`
 )
 
-/** The doomed operator's node-owner-generated chain account, resolved from the key store. */
+/** The doomed operator's node-owner-generated WIRE account, resolved from the key store by its label. */
 function doomedOperatorAccount(ctx: ClusterBuildContext): string {
   return ctx.keyStore.assertOperator(Constants.DoomedOperatorLabel).account
 }

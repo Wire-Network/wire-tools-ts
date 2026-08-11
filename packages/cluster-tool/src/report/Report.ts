@@ -1,5 +1,6 @@
-import { promises as Fsp } from "node:fs"
+import Fs, { promises as Fsp } from "node:fs"
 import Path from "node:path"
+import { match } from "ts-pattern"
 import {
   ClusterConfigReportFormat,
   type ClusterConfigReport
@@ -31,6 +32,15 @@ export class Report {
    * {@link Report.DefaultName}.
    */
   name: string | null = null
+
+  /**
+   * The run never reached its end — killed by a signal, or abandoned by an
+   * unexpected rejection. Set ONLY by the exit-path writer, and load-bearing for
+   * honesty: {@link Report.succeeded} is `every()` over the nodes, so a partial
+   * report of all-OK phases is vacuously "succeeded" and would title a KILLED run
+   * `SUCCESS`. {@link Report.title} reads this FIRST.
+   */
+  interrupted = false
 
   /** The narrative tree's root nodes — internally mutable, externally read-only. */
   get nodes(): ReadonlyArray<Report.Node> {
@@ -74,6 +84,29 @@ export class Report {
     )
   }
 
+  /**
+   * The SYNCHRONOUS counterpart to {@link write} — same renderers, same files,
+   * no promises. For `process.on("exit")` ONLY, where the event loop has already
+   * stopped: {@link write}'s `Fsp` promises would never settle there, so the run
+   * narrative would be lost at exactly the moment it is most wanted — an
+   * interrupted or crashed run.
+   *
+   * Renderers are synchronous by construction (`render()` returns the string),
+   * so the file I/O is the only difference between the two paths.
+   *
+   * @param config - Where + which formats to write.
+   * @param registry - The renderer registry (e.g. `ReportRendererRegistry.createDefault()`).
+   */
+  writeSync(config: Report.Config, registry: ReportRendererRegistry): void {
+    Fs.mkdirSync(config.path, { recursive: true })
+    config.formats.forEach(format => {
+      const Ctor = registry.get(format),
+        file = Path.join(config.path, `${config.basename}.${format}`)
+      Fs.writeFileSync(file, new Ctor(this).render(), "utf8")
+      log.info("Report written (exit path): %s", file)
+    })
+  }
+
   private async writeOne(
     config: Report.Config,
     format: ClusterConfigReportFormat,
@@ -99,9 +132,28 @@ export namespace Report {
   /** The Eastern-time zone the report timestamps render alongside UTC. */
   export const EasternTimeZone = "America/New_York"
 
-  /** The run title: `<name>: SUCCESS|FAILED` (the renderers' heading text). */
+  /** The run-level outcome a report renders in its title. */
+  export enum Verdict {
+    SUCCESS = "SUCCESS",
+    FAILED = "FAILED",
+    INTERRUPTED = "INTERRUPTED"
+  }
+
+  /**
+   * The run title: `<name>: <verdict>` (the renderers' heading text).
+   * `interrupted` wins over `succeeded` — a killed run whose completed phases
+   * all passed is NOT a success, and titling it one is the exact lie the
+   * exit-path writer exists to avoid.
+   */
   export function title(report: Report): string {
-    return `${report.name ?? DefaultName}: ${report.succeeded ? "SUCCESS" : "FAILED"}`
+    const verdict = match({
+      interrupted: report.interrupted,
+      succeeded: report.succeeded
+    })
+      .with({ interrupted: true }, () => Verdict.INTERRUPTED)
+      .with({ succeeded: true }, () => Verdict.SUCCESS)
+      .otherwise(() => Verdict.FAILED)
+    return `${report.name ?? DefaultName}: ${verdict}`
   }
 
   /**

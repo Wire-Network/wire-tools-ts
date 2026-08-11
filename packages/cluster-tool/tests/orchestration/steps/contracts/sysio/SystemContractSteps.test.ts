@@ -49,6 +49,17 @@ describe("Steps.contracts.sysio.system", () => {
     expect(typeof step.runner).toBe("function")
   })
 
+  it("setinittime builds an input-less step with a runner", () => {
+    const step = Steps.contracts.sysio.system.planSetinittime(
+      Report.Actor.Sysio,
+      "set-node-rewards-start",
+      "anchor node-owner vesting at chain head time",
+      {}
+    )
+    expect(step.input).toBeNull()
+    expect(typeof step.runner).toBe("function")
+  })
+
   it("initt5 builds an input-less step with a runner", () => {
     const step = Steps.contracts.sysio.system.planInitt5(
       Report.Actor.Sysio,

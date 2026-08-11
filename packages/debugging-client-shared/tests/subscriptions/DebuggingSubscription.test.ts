@@ -5,6 +5,11 @@ import {
   DebuggingSubscriptionEventName
 } from "@wireio/debugging-client-shared"
 
+/** Minimal event payload used by the typed-payload assertions. */
+interface NumberPayload {
+  n: number
+}
+
 describe("DebuggingSubscription", () => {
   it("invokes onClose exactly once on close()", () => {
     const onClose = jest.fn()
@@ -31,12 +36,12 @@ describe("DebuggingSubscription", () => {
   })
 
   it("emits typed event payloads", () => {
-    const sub = new DebuggingSubscription<{ n: number }>(
+    const sub = new DebuggingSubscription<NumberPayload>(
       1,
       StreamTopic.LogTail,
       () => {}
     )
-    const received: { n: number }[] = []
+    const received: NumberPayload[] = []
     sub.on(DebuggingSubscriptionEventName.Event, e => received.push(e))
     sub.emitEvent({ n: 42 })
     sub.emitEvent({ n: 7 })

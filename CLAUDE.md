@@ -13,7 +13,11 @@ across the WIRE depot and the Ethereum + Solana outposts).
 
 ## Package Manager
 
-**pnpm** (`packageManager` field pins the version). Node `>=22` required.
+**pnpm** (`packageManager` field pins the version). Node `>=24.9` required —
+NOT a preference. Below it, `require(ESM)` on `yargs` fails and **every jest
+suite that reaches the `@wireio/cluster-tool` barrel dies at import**, so those
+suites report as failing without ever running a test. A local "pre-existing
+failure" on an older Node is therefore not evidence about the code.
 Never use `npm` or `yarn`.
 
 ## Build & Test
@@ -119,9 +123,63 @@ One declarative model is shared by the `wire-cluster-tool` CLI and every flow:
   tree under `tests/`. No exceptions for "trivial" code.
 - Tests must be environment-independent: never depend on incidental process
   ancestry (spawn a real child when a live pid with a known basename is
-  needed), never bind fixed ports (`await BindConfigProvider.findAvailable(...)` in
-  `beforeAll`), never leak children or timers (tie helper-child lifetime to
-  the worker, await the reap in `afterAll`).
+  needed), never source a port outside the bind registry (see below), never
+  leak children or timers (tie helper-child lifetime to the worker, await the
+  reap in `afterAll`).
+
+### EVERY port comes from the bind registry — production AND tests
+
+**Any port this repo binds, dials, pins into a config, or asserts on is issued by
+`BindConfigProvider`** — `findAvailable(preferred)`, `findAvailableRange()`, or
+`resolve()`. There is no exemption for tests, for "it's only a fixture value", or
+for "nothing actually binds it".
+
+Banned, without exception:
+
+```ts
+const port = 8545                                   // ✗ bare literal
+const port = await freeTcpPort()                    // ✗ hand-rolled Net.createServer().listen(0)
+server.listen(0)                                    // ✗ port 0 straight from the kernel
+const port = BindConfigProvider.DefaultKiod + 1     // ✗ derived literal — still never registered
+```
+
+```ts
+const port = await BindConfigProvider.findAvailable(BindConfigProvider.DefaultKiod)   // ✓
+const window = await BindConfigProvider.findAvailableRange()                          // ✓
+```
+
+**Why this is absolute.** `BindConfigProvider` claims each port under a host-global
+file lock against the cross-process registry
+(`/tmp/wire-platform-bind-config/<pid>.bind-config.json`, override
+`WIRE_BIND_REGISTRY_PATH`) and the reserved agave band. That registry is the ONLY
+mechanism making concurrent clusters safe on one host, and it works by *exclusion*:
+`resolve` seeds its claimed set from every live registrant. A port the registry never
+issued is invisible to that set, so a co-running cluster can resolve the same number.
+The resulting failures do not look like port collisions — a validator's UDP
+double-bind silently swallows forwarded transactions, and a daemon that resolves now
+but spawns minutes later collides with whoever took its port in between.
+
+**It is not a "does anything bind it?" question.** A port obtained off-registry is an
+OS *ephemeral* port (32768+ per `/proc/sys/net/ipv4/ip_local_port_range`), and the
+kernel can hand that same number to one of `resolve`'s own UNPINNED draws partway
+through the same resolve — the pin then lands in `claimed` and its pinned draw is
+correctly refused. That is an intermittent failure whose rate is just the odds of
+kernel reuse, so it survives a green test run and surfaces later as a flake.
+
+**The find-then-pin trap.** Every picker LOCKS what it hands back in `get-port`'s
+in-process cache (its collision avoidance). So obtaining a port via `findAvailable`
+and then feeding it back as a PIN fails *deterministically* — the resolver refuses
+the very port it just issued. Release the locks first; never work around it by
+sourcing the port from outside the registry:
+
+```ts
+const kiodPort = await BindConfigProvider.findAvailable(BindConfigProvider.DefaultKiod)
+await BindConfigProvider.clearPortLocks()   // in-process locks only; registry untouched
+const config = await ClusterConfigProvider.resolve(withBindConfig({ kiod: { port: kiodPort } }))
+```
+
+Authoritative rule:
+`wire-platform-manifest/.claude/rules/bind-available-ports-not-fixed.md`.
 
 ### Live flow runs — the two canonical scripts, monitoring mandatory
 

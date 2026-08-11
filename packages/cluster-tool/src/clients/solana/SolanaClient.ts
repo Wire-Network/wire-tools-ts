@@ -84,7 +84,7 @@ export class SolanaClient {
   }
 
   /** Read an account's (PDA's) data, or null when absent. */
-  async getAccountData(pubkey: PublicKey): Promise<Buffer | null> {
+  async getAccountData(pubkey: PublicKey): Promise<Buffer> {
     const info = await this.connection.getAccountInfo(pubkey)
     return info?.data != null ? Buffer.from(info.data) : null
   }

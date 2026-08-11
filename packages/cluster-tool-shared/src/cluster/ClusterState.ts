@@ -41,9 +41,9 @@ export const ClusterStateNodeSchema = z.object({
   ports: ClusterStateNodePortsSchema,
   /** Producer account names scheduled on this node (empty for pure operator nodes). */
   producers: z.array(z.string()),
-  /** Batch-operator provisioning label this node acts for, when `role === operator`. */
+  /** Durable batch-operator `label` handle this node acts for, when `role === operator`. */
   batchOperatorLabel: z.string().nullable(),
-  /** Underwriter provisioning label this node acts for, when `role === operator`. */
+  /** Durable underwriter `label` handle this node acts for, when `role === operator`. */
   underwriterLabel: z.string().nullable()
 })
 /** Post-bootstrap snapshot of a single cluster node — the shape of {@link ClusterStateNodeSchema}. */

@@ -1,7 +1,7 @@
 import Os from "node:os"
 import Path from "node:path"
 import Fs from "node:fs"
-import { configureStore } from "@reduxjs/toolkit"
+import { configureStore, type Action } from "@reduxjs/toolkit"
 import Bluebird from "bluebird"
 import { Level, getLoggingManager, type LevelKind } from "@wireio/shared"
 import { LoggingManager } from "@wireio/debugging-client-tool-tui/logging/LoggingManager.js"
@@ -32,7 +32,7 @@ function setLevel(level: LevelKind): void {
 function makeStore() {
   return configureStore({
     reducer: {
-      x: (state: number = 0, action: { type: string }) =>
+      x: (state: number = 0, action: Action) =>
         action.type === "x/inc" ? state + 1 : state
     },
     middleware: getDefault => getDefault().concat(createReduxFileLogger())

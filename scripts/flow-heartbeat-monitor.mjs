@@ -8,7 +8,7 @@
  * at `--cluster-path`) and, every `--interval-seconds`, executes ALL six probes
  * from the rule, printing ONE line-oriented, flushed heartbeat on stdout:
  *
- *   HB t=<s> head=<n> epoch=<n> env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
+ *   HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<n> env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
  *
  * plus `NOISE-TAIL:` / `FAIL-TAIL:` quote lines whenever those deltas are
  * positive. Everything derivable derives from `<cluster-path>/cluster-config.json`
@@ -70,6 +70,23 @@ const DefaultEpochDurationSeconds = 60
  * lowering it risks bailing on a healthy-but-slow bootstrap.
  */
 const BootstrapDeadlineFloorSeconds = 300
+
+/**
+ * Per-provisioned-identity allowance (seconds) folded into the bootstrap
+ * deadline. Bootstrap latency is a property of the TOPOLOGY, not a constant:
+ * the window between "the chain answers" and "epoch >= 1" is dominated by
+ * per-identity on-chain writes (account creation, key publication, operator
+ * registration, authex links), each of which waits for irreversibility — and
+ * LIB lag itself grows with the producer count (the same force behind
+ * `ProtocolTiming.irreversibleWaitBudgetMs`).
+ *
+ * At the 1-producer/3-batch-op/1-underwriter dev default this yields
+ * 5 x 60 = 300s — exactly the floor, so every existing flow's bail behavior is
+ * UNCHANGED; only large topologies get the longer leash they actually need.
+ * Raising it tolerates larger clusters; lowering it risks SIGINT-ing a
+ * healthy-but-large bootstrap.
+ */
+const BootstrapPerIdentitySeconds = 60
 
 /**
  * Delay before the epoch-stall re-probe. A same-epoch heartbeat at 60s epochs
@@ -246,30 +263,41 @@ const ClusterPathEnvVar = "WIRE_CLUSTER_PATH"
 const FlowExecutablePattern = "lib/index[.]js"
 
 /**
- * Broad candidate ERE for the cluster CLI's `run` command
- * (`wire-cluster-tool … run` — the resume-a-created-cluster entry point,
- * which parks while its daemons serve). Candidates are narrowed to THIS
+ * Broad candidate ERE for the cluster CLI's cluster-scoped commands
+ * (`wire-cluster-tool … create|run` — the bootstrap-a-new-cluster and
+ * resume-a-created-cluster entry points; the former runs the whole build, the
+ * latter parks while its daemons serve). Candidates are narrowed to THIS
  * cluster by exact argv TOKENS read from /proc/<pid>/cmdline — never by
  * substring — so sibling clusters (`…-001` vs `…-0012`) and the monitor's
  * own pgrep/shell wrappers (whose command lines carry the text only inside
  * one composite argument) never match.
  */
-const RunCliExecutablePattern = "wire-cluster-tool"
+const ClusterCliExecutablePattern = "wire-cluster-tool"
 
-/** Argv flag spellings that carry the cluster path for the run CLI. */
+/**
+ * The cluster CLI commands this monitor watches. `create` is included because a
+ * bootstrap IS the long-running work most worth watching — the create-cluster
+ * workflow runs it unattended for hours — and its epoch-0 window is exactly
+ * what the topology-scaled bootstrap deadline exists to bound.
+ * `destroy`/`package`/`create-external-config` are short and unwatched.
+ */
+const ClusterCliCommandNames = ["create", "run"]
+
+/** Argv flag spellings that carry the cluster path for the cluster CLI. */
 const ClusterPathFlagNames = ["-d", "--cluster-path"]
 
 /**
- * Whether a NUL-split /proc cmdline is `wire-cluster-tool run` for the given
- * cluster: it carries the discrete `run` command token AND the cluster path as
- * `-d <path>`, `--cluster-path <path>`, or `--cluster-path=<path>`.
+ * Whether a NUL-split /proc cmdline is a watched `wire-cluster-tool` command
+ * for the given cluster: it carries one of {@link ClusterCliCommandNames} as a
+ * discrete token AND the cluster path as `-d <path>`, `--cluster-path <path>`,
+ * or `--cluster-path=<path>`.
  *
  * @param {string[]} args NUL-split argv tokens.
  * @param {string} clusterPath the normalized cluster path.
- * @return {boolean} whether this argv addresses `run` for the cluster.
+ * @return {boolean} whether this argv addresses a watched command for the cluster.
  */
-function isRunCliArgv(args, clusterPath) {
-  if (!args.includes("run")) return false
+function isClusterCliArgv(args, clusterPath) {
+  if (!ClusterCliCommandNames.some(command => args.includes(command))) return false
   return args.some((arg, index) =>
     ClusterPathFlagNames.some(
       flag => arg === `${flag}=${clusterPath}` || (arg === flag && args[index + 1] === clusterPath)
@@ -278,14 +306,15 @@ function isRunCliArgv(args, clusterPath) {
 }
 
 /**
- * PIDs of `wire-cluster-tool run` parked for THIS cluster — the liveness
- * anchor for CLI-resumed clusters, exactly as the flow process is for flows.
+ * PIDs of the `wire-cluster-tool create`/`run` process for THIS cluster — the
+ * liveness anchor for CLI-driven clusters, exactly as the flow process is for
+ * flows.
  *
  * @param {string} clusterPath the normalized cluster path.
  * @return {Promise<string[]>} matching pids.
  */
-async function runCliPids(clusterPath) {
-  const candidates = await $`pgrep -f ${RunCliExecutablePattern}`.nothrow().quiet()
+async function clusterCliPids(clusterPath) {
+  const candidates = await $`pgrep -f ${ClusterCliExecutablePattern}`.nothrow().quiet()
   return candidates.stdout
     .split("\n")
     .map(pid => pid.trim())
@@ -293,7 +322,7 @@ async function runCliPids(clusterPath) {
     .filter(pid => {
       try {
         const args = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0")
-        return isRunCliArgv(args, clusterPath)
+        return isClusterCliArgv(args, clusterPath)
       } catch {
         return false // pid exited between the pgrep and the cmdline read
       }
@@ -306,12 +335,12 @@ async function runCliPids(clusterPath) {
  * <cluster-path>` — cluster path in argv), the flow orchestrator form
  * (`pnpm --filter <pkg> test` with `WIRE_CLUSTER_PATH=<cluster-path>`
  * exported — cluster path ONLY in the environment), and the cluster CLI's
- * parked `wire-cluster-tool … run` form. The env form matches `lib/index.js`
+ * `wire-cluster-tool … create|run` form. The env form matches `lib/index.js`
  * candidates by the exact cluster path in `/proc/<pid>/environ`, so
  * concurrent flows in a pooled run stay isolated per monitor.
  *
  * @param {string} clusterPath the watched cluster's data dir.
- * @return {Promise<string[]>} matching pids (argv-form ∪ env-form ∪ run-CLI).
+ * @return {Promise<string[]>} matching pids (argv-form ∪ env-form ∪ cluster-CLI).
  */
 async function flowPids(clusterPath) {
   const normalized = clusterPath.replace(/\/+$/, "")
@@ -330,8 +359,8 @@ async function flowPids(clusterPath) {
       }
     })
   const argvPids = argvHits.stdout.split("\n").map(pid => pid.trim()).filter(Boolean)
-  const runPids = await runCliPids(normalized)
-  return [...new Set([...argvPids, ...envHits, ...runPids])]
+  const cliPids = await clusterCliPids(normalized)
+  return [...new Set([...argvPids, ...envHits, ...cliPids])]
 }
 
 /**
@@ -399,9 +428,14 @@ async function bail(reason, clusterPath) {
  * (`bind.nodeop.ports.producers[0].http`) — never bios, whose port stops
  * answering after the Phase 8 producer handoff.
  *
+ * Also reports the cluster's PROVISIONED IDENTITY COUNT (producers + batch
+ * operators + underwriters), which scales the bootstrap deadline — see
+ * {@link bootstrapDeadlineSeconds}.
+ *
  * @param {string} clusterConfigPath absolute path to cluster-config.json.
- * @return {{ clioExecutable: string, producerUrl: string } | null} null while
- *   the config is absent or not yet fully written (the pre-config window).
+ * @return {{ clioExecutable: string, producerUrl: string, identityCount: number } | null}
+ *   null while the config is absent or not yet fully written (the pre-config
+ *   window).
  */
 function readClusterConfig(clusterConfigPath) {
   if (!fs.existsSync(clusterConfigPath)) return null
@@ -410,6 +444,10 @@ function readClusterConfig(clusterConfigPath) {
     const clioExecutable = config?.executables?.clio
     const producerHttpPort = config?.bind?.nodeop?.ports?.producers?.[0]?.http
     if (clioExecutable == null || producerHttpPort == null) return null
+    const identityCount =
+      (config?.producerCount ?? 0) +
+      (config?.batchOperatorCount ?? 0) +
+      (config?.underwriterCount ?? 0)
     // Dial the producer at its bind address, mapping the non-dialable listen
     // wildcard (0.0.0.0 / empty) to loopback — mirrors netUtils.toDialAddress
     // (this script is outside the eslint/TS surface, so the mapping is inline).
@@ -422,7 +460,8 @@ function readClusterConfig(clusterConfigPath) {
         : nodeopAddress
     return {
       clioExecutable,
-      producerUrl: `http://${producerHost}:${producerHttpPort}`
+      producerUrl: `http://${producerHost}:${producerHttpPort}`,
+      identityCount
     }
   } catch {
     return null // mid-write JSON — same as absent; the next beat re-reads
@@ -496,17 +535,31 @@ function kvRowValue(row) {
 }
 
 /**
- * Probe 1 — chain liveness: `clio get info` → head_block_num.
+ * Probe 1 — chain liveness: `clio get info` → head block AND last-irreversible
+ * block. BOTH are reported because a frozen LIB under an advancing head is a
+ * distinct, silent failure the head alone cannot show: when finalizers lock on
+ * a fork they cast only weak votes, no QC forms, and LIB stops dead while
+ * blocks keep being produced. Every `pushActionAndWait` at irreversible
+ * finality then hangs forever, so a bootstrap dies with a healthy-looking head.
+ * (2026-08-04, 21-producer create: head ~765 with LIB pinned at 584 across all
+ * 21 nodes — invisible on a head-only heartbeat.)
  *
  * @param {string} clioExecutable resolved clio binary.
  * @param {string} url the producer HTTP URL.
- * @return {Promise<number | null>} the head block, or null while unreachable.
+ * @return {Promise<{ headBlockNumber: number, libBlockNumber: number } | null>}
+ *   the head + LIB block numbers, or null while unreachable.
  */
 async function probeChainLiveness(clioExecutable, url) {
   const stdout = await runClio(clioExecutable, url, ["get", "info"])
   if (stdout == null) return null
-  const headBlockNumber = parseJson(stdout)?.head_block_num
-  return typeof headBlockNumber === "number" ? headBlockNumber : null
+  const info = parseJson(stdout),
+    headBlockNumber = info?.head_block_num,
+    libBlockNumber = info?.last_irreversible_block_num
+  if (typeof headBlockNumber !== "number") return null
+  return {
+    headBlockNumber,
+    libBlockNumber: typeof libBlockNumber === "number" ? libBlockNumber : 0
+  }
 }
 
 /**
@@ -696,7 +749,7 @@ ${chalk.bold("Options:")}
   -h, --help                     print this usage
 
 ${chalk.bold("Output")} (line-oriented on stdout; each line is a Monitor event):
-  HB t=<s> head=<n> epoch=<n> env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
+  HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<n> env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
   NOISE-TAIL: / FAIL-TAIL:  quote lines when the class deltas are positive
   BAIL: <reason>            a red flag fired → SIGINTs the flow, exits 1
                             (cluster dir preserved for forensics)
@@ -769,8 +822,23 @@ const expectEpochFreeze = argv["expect-epoch-freeze"] === true
 const clusterConfigPath = path.join(clusterPath, ClusterConfigFilename)
 const oppDebuggingDir = path.join(clusterPath, OppDebuggingSubdir)
 
-/** Bootstrap deadline: epoch must reach >= 1 within this many seconds of first chain liveness. */
-const bootstrapDeadlineSeconds = Math.max(BootstrapDeadlineFloorSeconds, epochDurationSeconds * 3)
+/**
+ * Bootstrap deadline: the epoch must reach >= 1 within this many seconds of
+ * first chain liveness. Scaled by the cluster's provisioned identity count
+ * (see {@link BootstrapPerIdentitySeconds}) because a 21-producer / 21-batch-op
+ * bootstrap legitimately takes many times longer than the dev default's — a
+ * flat floor would SIGINT it mid-bootstrap.
+ *
+ * @param {number} identityCount producers + batch operators + underwriters.
+ * @return {number} the deadline, in seconds of chain liveness.
+ */
+function bootstrapDeadlineSeconds(identityCount) {
+  return Math.max(
+    BootstrapDeadlineFloorSeconds,
+    epochDurationSeconds * 3,
+    identityCount * BootstrapPerIdentitySeconds
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Heartbeat loop
@@ -804,7 +872,9 @@ while (true) {
   const { clioExecutable, producerUrl } = clusterConfig
 
   // Probe 1 — chain liveness (also starts the bootstrap-deadline clock).
-  const headBlockNumber = await probeChainLiveness(clioExecutable, producerUrl)
+  const chain = await probeChainLiveness(clioExecutable, producerUrl),
+    headBlockNumber = chain?.headBlockNumber,
+    libBlockNumber = chain?.libBlockNumber
   if (headBlockNumber != null && firstLivenessTimestamp == null) {
     firstLivenessTimestamp = now
   }
@@ -853,7 +923,9 @@ while (true) {
     direction => `${direction.short}=${opp.byDirection[direction.name]}`
   ).join(" ")
   console.log(
-    `HB t=${elapsedSeconds}s head=${headBlockNumber ?? "?"} epoch=${epochIndex ?? "?"} ` +
+    `HB t=${elapsedSeconds}s head=${headBlockNumber ?? "?"} lib=${libBlockNumber ?? "?"}` +
+      `(-${headBlockNumber != null && libBlockNumber != null ? headBlockNumber - libBlockNumber : "?"}) ` +
+      `epoch=${epochIndex ?? "?"} ` +
       `env=${envelopeCount ?? "?"} opp=${opp.total} Δ=${oppDelta} dirs: ${directionsText} ` +
       `acts=[${logProbe.actionReceipts.join(" ")}] ` +
       `fatal=${logProbe.fatalCount}(+${fatalDelta}) noise=${logProbe.noiseCount}(+${noiseDelta})`
@@ -870,10 +942,12 @@ while (true) {
   // deadline. Every other bail is gated on epoch >= 1 — without this fallback
   // a monitor against a dead-during-bootstrap chain would print forever.
   if (firstLivenessTimestamp != null && (epochIndex == null || epochIndex === 0)) {
-    const livenessSeconds = Math.round((now - firstLivenessTimestamp) / 1000)
-    if (livenessSeconds > bootstrapDeadlineSeconds) {
+    const livenessSeconds = Math.round((now - firstLivenessTimestamp) / 1000),
+      deadlineSeconds = bootstrapDeadlineSeconds(clusterConfig.identityCount)
+    if (livenessSeconds > deadlineSeconds) {
       await bail(
-        `bootstrap never completed: current_epoch_index=${epochIndex ?? "null"} after ${livenessSeconds}s of chain liveness`,
+        `bootstrap never completed: current_epoch_index=${epochIndex ?? "null"} after ${livenessSeconds}s of chain liveness ` +
+          `(deadline ${deadlineSeconds}s for ${clusterConfig.identityCount} provisioned identities)`,
         clusterPath
       )
     }

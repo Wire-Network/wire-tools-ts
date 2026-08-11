@@ -33,7 +33,12 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { NodeOwnerTier, type WireKey } from "@wireio/opp-typescript-models"
 
 import type { WireClient } from "../../clients/wire/WireClient.js"
-import { loadOutpostContract } from "../../utils/ethereumUtils.js"
+import {
+  loadOutpostContract,
+  resolveLatestNonce,
+  type EthereumValueOverrides
+} from "../../utils/ethereumUtils.js"
+import type { ClioError } from "../../clients/wire/clio/ClioRunner.js"
 
 // Tier IDs accepted by sysio.roa::nodeownreg (matches MockWireNodes NodeInfo). The canonical enum
 // lives in the OPP protobuf models (sysio.opp.types.NodeOwnerTier: T1=1, T2=2, T3=3); re-exported
@@ -61,14 +66,15 @@ export interface MockWireNodesContract extends ethers.BaseContract {
   mint: (
     id: bigint | number,
     amount: bigint | number,
-    overrides?: ethers.Overrides & { value?: bigint }
+    overrides?: EthereumValueOverrides
   ) => Promise<ethers.ContractTransactionResponse>
   viewTotalSupply: (id: bigint | number) => Promise<bigint>
   viewMaxSupply: (id: bigint | number) => Promise<bigint>
   balanceOf: (account: string, id: bigint | number) => Promise<bigint>
   setApprovalForAll: (
     operator: string,
-    approved: boolean
+    approved: boolean,
+    overrides?: ethers.Overrides
   ) => Promise<ethers.ContractTransactionResponse>
   isApprovedForAll: (account: string, operator: string) => Promise<boolean>
   getAddress: () => Promise<string>
@@ -105,9 +111,10 @@ export async function mintNodeNFT(
   tier: NodeOwnerTier,
   amount: number = 1
 ): Promise<ethers.ContractTransactionReceipt> {
-  const value = ethers.parseEther(String(amount))
-  const tx = await contract.mint(tier, amount, { value })
-  const receipt = await tx.wait()
+  const value = ethers.parseEther(String(amount)),
+    nonce = await resolveLatestNonce(contract)
+  const tx = await contract.mint(tier, amount, { value, nonce })
+  const receipt = await tx.wait(1)
   Assert.ok(receipt, "mintNodeNFT: receipt is null")
   return receipt
 }
@@ -127,8 +134,9 @@ export async function approveNodeEscrow(
   contract: MockWireNodesContract,
   barAddress: string
 ): Promise<ethers.ContractTransactionReceipt> {
-  const tx = await contract.setApprovalForAll(barAddress, true)
-  const receipt = await tx.wait()
+  const nonce = await resolveLatestNonce(contract)
+  const tx = await contract.setApprovalForAll(barAddress, true, { nonce })
+  const receipt = await tx.wait(1)
   Assert.ok(receipt, "approveNodeEscrow: receipt is null")
   return receipt
 }
@@ -189,13 +197,15 @@ export async function commitNode(
   wirePublicKey: WireKey,
   depositorPublicKey: string
 ): Promise<ethers.ContractTransactionReceipt> {
+  const nonce = await resolveLatestNonce(contract)
   const tx = await contract.commitNode(
     tier,
     wireAccountName,
     wirePublicKey,
-    depositorPublicKey
+    depositorPublicKey,
+    { nonce }
   )
-  const receipt = await tx.wait()
+  const receipt = await tx.wait(1)
   Assert.ok(receipt, "commitNode: receipt is null")
   return receipt
 }
@@ -258,7 +268,7 @@ export async function pushNodeOwnerReg(
     // child_process.exec wraps clio failures with `Error("Command failed: <cmd>")` and stuffs clio's
     // `-j` JSON output on `err.stdout`. Surface the underlying sysio_assert_message so callers can
     // match the actual hard-abort reason (invalid tier / non-EM key) with `rejects.toThrow(/.../)`.
-    const stdout = (err as { stdout?: string })?.stdout ?? ""
+    const stdout = (err as ClioError)?.stdout ?? ""
     const m = /assertion failure with message: ([^"\n]+)/.exec(stdout)
     if (m) {
       throw new Error(`nodeownreg failed: ${m[1]}`, { cause: err })

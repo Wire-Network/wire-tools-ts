@@ -66,7 +66,7 @@ function readFromWireUwreq(ctx: SwapScenarioContext) {
   return ctx.uwreq(Constants.WireChainCode, Constants.SolanaChainCode)
 }
 
-/** Whether every `accounts` entry is `OPERATOR_STATUS_ACTIVE` on `sysio.opreg` (a read). */
+/** Whether every `labels` entry is `OPERATOR_STATUS_ACTIVE` on `sysio.opreg` (a read). */
 async function readAllOperatorsActive(
   ctx: SwapScenarioContext,
   labels: string[]
@@ -265,18 +265,22 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
         "quote-target",
         "compute the from-WIRE target from the destination reserve curve",
         async ctx => {
-          // src == WIRE quotes against the DESTINATION reserve only:
-          // cp_output(dst.wire, dst.chain, wire_in) — mirror the depot's math
-          // via WireReserveTool.cpOutput.
+          // src == WIRE quotes against the DESTINATION reserve only. The
+          // WIRE-leg fee comes off the escrowed input FIRST, so the curve
+          // converts only the post-fee net: cp_output(dst.wire, dst.chain,
+          // split_wire_fee(wire_in).net) — `WireReserveTool.quoteSwap` mirrors
+          // `opp::amm::quote_swap`, which is what `drainfwq` stores as
+          // `dst_amount` and what `applyfromwire` bounds the debit by.
           const book = await ctx.reserveBook(
             Constants.SolanaChainCode,
             Constants.SolanaTokenCode,
             Constants.PrimaryReserveCode
           )
-          const targetSolanaAmount = WireReserveTool.cpOutput(
-            book.wire,
-            book.chain,
-            Constants.SourceWireUnits
+          const targetSolanaAmount = WireReserveTool.quoteSwap(
+            null,
+            book,
+            Constants.SourceWireUnits,
+            await WireReserveTool.readFeeBps(ctx.wire)
           )
           Assert.ok(
             targetSolanaAmount > 0n,

@@ -87,4 +87,5 @@ describe("ClusterStateNode / ClusterState shape", () => {
     expect(rehydrated.anvilStateFile).toBeNull()
     expect(rehydrated.solanaLedgerPath).toBeNull()
   })
+
 })

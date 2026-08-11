@@ -7,6 +7,7 @@ import {
   mapSeries,
   retry,
   scaleTimeoutMs,
+  serialize,
   sleep,
   toURL,
   waitForEndpoint
@@ -171,5 +172,62 @@ describe("flowTimeoutScale / scaleTimeoutMs", () => {
     process.env[FlowTimeoutScaleEnvVar] = "3"
     expect(scaleTimeoutMs(60_000)).toBe(180_000)
     expect(scaleTimeoutMs(333)).toBe(999)
+  })
+})
+
+describe("serialize", () => {
+  /** Work that reports the peak number of concurrent bodies it ever saw. */
+  function trackingWork() {
+    const state = { inFlight: 0, peak: 0, order: [] as number[] }
+    const work = (id: number) => async () => {
+      state.inFlight += 1
+      state.peak = Math.max(state.peak, state.inFlight)
+      await sleep(5)
+      state.order.push(id)
+      state.inFlight -= 1
+      return id
+    }
+    return { state, work }
+  }
+
+  it("never runs two bodies of the same key concurrently", async () => {
+    const { state, work } = trackingWork()
+    const results = await Promise.all(
+      [1, 2, 3, 4, 5].map(id => serialize("same", work(id)))
+    )
+    expect(state.peak).toBe(1)
+    expect(results).toEqual([1, 2, 3, 4, 5])
+    expect(state.order).toEqual([1, 2, 3, 4, 5]) // FIFO, not just serialized
+  })
+
+  it("lets DIFFERENT keys proceed concurrently", async () => {
+    const { state, work } = trackingWork()
+    await Promise.all([
+      serialize("key-a", work(1)),
+      serialize("key-b", work(2)),
+      serialize("key-c", work(3))
+    ])
+    expect(state.peak).toBeGreaterThan(1)
+  })
+
+  it("a REJECTED predecessor does not stall the queue", async () => {
+    const failure = serialize("stall", async () => {
+      throw new Error("boom")
+    })
+    const follower = serialize("stall", async () => "ran anyway")
+    await expect(failure).rejects.toThrow("boom")
+    // The whole point: one operator's funding failure must not strand the rest.
+    await expect(follower).resolves.toBe("ran anyway")
+  })
+
+  it("propagates each caller's OWN outcome", async () => {
+    const ok = serialize("own", async () => "fine")
+    const bad = serialize("own", async () => {
+      throw new Error("mine")
+    })
+    const alsoOk = serialize("own", async () => "also fine")
+    await expect(ok).resolves.toBe("fine")
+    await expect(bad).rejects.toThrow("mine")
+    await expect(alsoOk).resolves.toBe("also fine")
   })
 })

@@ -1,6 +1,7 @@
 import { SysioContracts } from "@wireio/sdk-core"
 import { SwapScenarioContext } from "@wireio/cluster-tool/flow"
 import { getLogger } from "@wireio/cluster-tool/logging"
+import { WireReserveTool } from "@wireio/cluster-tool/tools/wire"
 import type { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 
@@ -17,6 +18,7 @@ const SolanaChain = 200
 const EthToken = 101
 const SolToken = 201
 const PrimaryReserve = 1
+const { SymmetricConnectorWeightBps } = WireReserveTool
 
 /** A complete `reserves` row with zero defaults; override the fields under test. */
 function reserveRow(
@@ -32,7 +34,7 @@ function reserveRow(
     reserve_chain_amount: 0,
     reserve_wire_amount: 0,
     source_token_precision: 0,
-    connector_weight_bps: 0,
+    connector_weight_bps: SymmetricConnectorWeightBps,
     creator_addr: { kind: SysioReservChainkind.CHAIN_KIND_UNKNOWN, address: "" },
     requested_wire_amount: 0,
     external_token_amount: 0,
@@ -65,6 +67,7 @@ function uwreqRow(
     dst_token_code: { value: 0 },
     dst_reserve_code: { value: 0 },
     dst_amount: 0,
+    target_amount: 0,
     variance_tolerance_bps: 0,
     source_tx_id: "",
     depositor: "",
@@ -168,7 +171,11 @@ describe("SwapScenarioContext", () => {
         EthToken,
         PrimaryReserve
       )
-      expect(book).toEqual({ chain: 1_000n, wire: 2_000n })
+      expect(book).toEqual({
+        chain: 1_000n,
+        wire: 2_000n,
+        connectorWeightBps: SymmetricConnectorWeightBps
+      })
     })
     it("throws when no reserve matches the triple", async () => {
       await expect(

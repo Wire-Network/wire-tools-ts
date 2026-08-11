@@ -145,6 +145,20 @@ export function EpochDetailRoute(
   )
 }
 
+/** Where the global attestation cursor lands: which envelope, and the row inside it. */
+interface CursorPosition {
+  /** Index into the ordered envelope list; -1 until a hosting envelope is found. */
+  envelopeIdx: number
+  /** Row index inside that envelope's flattened attestation list. */
+  cursorWithin: number
+}
+
+/** Fold state while walking envelope row-counts to locate the global cursor. */
+interface CursorFold extends CursorPosition {
+  /** Rows of the global cursor still unaccounted for. */
+  remaining: number
+}
+
 /**
  * Map a global cursor (across every flattened attestation in every envelope)
  * to its `(envelopeIdx, cursorWithin)` pair. Skips empty envelopes — they
@@ -153,12 +167,8 @@ export function EpochDetailRoute(
 function locateCursor(
   flatLengths: readonly number[],
   global: number
-): { envelopeIdx: number; cursorWithin: number } {
-  const folded = flatLengths.reduce<{
-    envelopeIdx: number
-    cursorWithin: number
-    remaining: number
-  }>(
+): CursorPosition {
+  const folded = flatLengths.reduce<CursorFold>(
     (acc, len, i) => {
       if (acc.envelopeIdx !== -1) return acc
       if (acc.remaining < len) {
