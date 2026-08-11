@@ -157,3 +157,15 @@ function cpOutput(
     return 0n
   return (reserveDestination * sourceAmount) / (reserveSource + sourceAmount)
 }
+
+/**
+ * Select the minimum target amount used to avoid over-quoting a mixed batch.
+ *
+ * @param targetAmounts Quoted target amounts for one stress phase.
+ * @returns Smallest target amount in the phase batch.
+ */
+export function minimumTargetAmount(targetAmounts: readonly bigint[]): bigint {
+  return targetAmounts.reduce((minimum, targetAmount) =>
+    targetAmount < minimum ? targetAmount : minimum
+  )
+}

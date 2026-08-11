@@ -163,6 +163,13 @@ export namespace SwapStressSaturationScenarioConstants {
     /** Derived from the curve so funding/provisioning can never drift from it. */
     export const MaxIterationCount = LoadProfile.iterationCount(Profile.ramp)
     /**
+     * Every rung's account count, in ramp order.
+     *
+     * The campaign registers one Phase per entry at PLAN time — the curve is
+     * static, so the rungs need not be discovered at run time.
+     */
+    export const RungAccountCounts = LoadProfile.accountCurve(Profile.ramp)
+    /**
      * Raw envelope bytes counted as saturated. At `saturating` this is the
      * engine's 95%-of-cap default (unchanged); lighter levels lower it so the
      * campaign measures ITS OWN target rather than the protocol maximum.

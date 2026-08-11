@@ -8,11 +8,11 @@ import type { OppEnvelopeSaturationStrategy } from "./envelopeMetrics.js"
 import type {
   OppPhaseCapturedArtifact,
   OppPhaseEnvelopeMetrics,
+  OppPhaseEvidenceObservation,
   OppPhaseMetricRequest,
   OppPhaseSelectedArtifact
 } from "./phaseMetricTypes.js"
 import { parseOppPhaseWindow } from "./phaseMetricWindow.js"
-import type { RunEvidencePersistence } from "./runEvidencePersistence.js"
 import {
   RunEvidenceEndpoint,
   RunEvidenceEndpoints,
@@ -114,7 +114,7 @@ export async function collectOppPhaseMetrics(
 
 async function captureSelectedArtifacts(
   pairs: readonly ValidEnvelopePair[],
-  observation: RunEvidencePersistence.Observation
+  observation: OppPhaseEvidenceObservation
 ): Promise<readonly OppPhaseCapturedArtifact[]> {
   return pairs.reduce<Promise<readonly OppPhaseCapturedArtifact[]>>(
     async (pending, pair) => {

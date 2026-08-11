@@ -2,18 +2,9 @@ import type {
   SwapStressPhase,
   SwapStressPhaseRunnerDeps
 } from "./phaseRunnerTypes.js"
+import { minimumTargetAmount } from "./phaseQuotes.js"
 
-/**
- * Select the minimum target amount used to avoid over-quoting a mixed batch.
- *
- * @param targetAmounts Quoted target amounts for one stress phase.
- * @returns Smallest target amount in the phase batch.
- */
-export function minimumTargetAmount(targetAmounts: readonly bigint[]): bigint {
-  return targetAmounts.reduce((minimum, targetAmount) =>
-    targetAmount < minimum ? targetAmount : minimum
-  )
-}
+export { minimumTargetAmount }
 
 /**
  * A detected batch-operator failure reason, or `null` when no probe is

@@ -281,13 +281,28 @@ export namespace LoadProfile {
    * @returns Iteration count, always at least one.
    */
   export function iterationCount(ramp: OppStressRampConfig): number {
-    let count = 1,
-      accounts = ramp.initialCount
+    return accountCurve(ramp).length
+  }
+
+  /**
+   * The ramp's account curve — every rung's account count, in order.
+   *
+   * The curve is fully determined by the profile, so an orchestrator can build
+   * one Phase per rung at PLAN time instead of discovering the rungs at run
+   * time. {@link iterationCount} is derived from this, so the two can never
+   * disagree.
+   *
+   * @param ramp Account curve to walk.
+   * @returns Account count per rung, always at least one entry.
+   */
+  export function accountCurve(ramp: OppStressRampConfig): readonly number[] {
+    const counts = [ramp.initialCount]
+    let accounts = ramp.initialCount
     while (accounts < ramp.maxCount) {
       accounts = Math.min(accounts * ramp.multiplier, ramp.maxCount)
-      count += 1
+      counts.push(accounts)
     }
-    return count
+    return counts
   }
 
   /**

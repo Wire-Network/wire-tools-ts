@@ -6,11 +6,9 @@ import type {
   OppEnvelopeSaturationStrategy,
   OppEnvelopeTelemetryObservation
 } from "./envelopeMetrics.js"
-import type { RunEvidencePersistence } from "./runEvidencePersistence.js"
 import type {
   RunEvidenceDecimal,
   RunEvidenceEndpoint,
-  RunEvidenceImmutableArtifactRefs,
   RunEvidencePhaseBaseline,
   RunEvidencePhaseWindow,
   RunEvidenceSaturationStrategy
@@ -21,11 +19,56 @@ export interface OppPhaseMetricBaseline extends EnvelopeBaseline {
   readonly artifactRefs: RunEvidencePhaseBaseline["artifactRefs"]
 }
 
-/** Narrow persistence capability accepted by the generic phase collector. */
-export type OppPhaseEvidenceSink = Pick<
-  RunEvidencePersistence,
-  "beginObservation"
->
+/** One immutable file committed by an artifact sink. */
+export interface OppPhaseArtifactFile {
+  /** Path of the committed immutable file. */
+  readonly path: string
+  /** Full lowercase SHA-256 digest of the committed bytes. */
+  readonly sha256: string
+}
+
+/** First committed immutable data + metadata references for one OPP key. */
+export interface RunEvidenceImmutableArtifactRefs {
+  /** Immutable raw envelope-data file reference. */
+  readonly data: OppPhaseArtifactFile
+  /** Immutable envelope-metadata file reference. */
+  readonly metadata: OppPhaseArtifactFile
+}
+
+/** One strict OPP sidecar pair offered to an artifact sink. */
+export interface OppPhaseArtifactCapture {
+  /** Canonical envelope storage key shared by the pair. */
+  readonly baseKey: string
+  /** Raw serialized envelope bytes. */
+  readonly dataBytes: Buffer
+  /** Raw sidecar metadata bytes. */
+  readonly metadataBytes: Buffer
+}
+
+/** Ordinal-scoped capture API allocated before source collection begins. */
+export interface OppPhaseEvidenceObservation {
+  /** Monotonic ordinal identifying this observation. */
+  readonly ordinal: RunEvidenceDecimal
+  /** Commit one sidecar pair, returning its immutable references. */
+  readonly captureArtifact: (
+    request: OppPhaseArtifactCapture
+  ) => Promise<RunEvidenceImmutableArtifactRefs>
+}
+
+/**
+ * Narrow artifact-capture capability accepted by the generic phase collector.
+ *
+ * Declared structurally rather than projected off a concrete persistence class
+ * so the measurement layer owns its own contract — any sink satisfying this
+ * shape (a run-evidence store, a Report-adjacent artifact directory, a test
+ * double) can be supplied without the collector depending on it.
+ */
+export interface OppPhaseEvidenceSink {
+  /** Allocate an ordinal-scoped observation for one collection pass. */
+  readonly beginObservation: (
+    updatedAtMs: RunEvidenceDecimal
+  ) => OppPhaseEvidenceObservation
+}
 
 /** Strict envelope collector request for a named OPP workload phase. */
 export interface OppPhaseMetricRequest {

@@ -20,7 +20,7 @@ import {
   type Logger
 } from "@wireio/cluster-tool"
 import { SwapStressSaturationScenarioConstants as Constants } from "./SwapStressSaturationScenarioConstants.js"
-import { SwapStressSaturationScenarioCampaignSteps as CampaignSteps } from "./steps/SwapStressSaturationScenarioCampaignSteps.js"
+import { SwapStressSaturationScenarioRungSteps as RungSteps } from "./steps/SwapStressSaturationScenarioRungSteps.js"
 import { SwapStressSaturationScenarioOwnerSteps as OwnerSteps } from "./steps/SwapStressSaturationScenarioOwnerSteps.js"
 import { SwapStressSaturationScenarioReserveSteps as ReserveSteps } from "./steps/SwapStressSaturationScenarioReserveSteps.js"
 import { SwapStressSaturationScenarioUserSteps as UserSteps } from "./steps/SwapStressSaturationScenarioUserSteps.js"
@@ -467,26 +467,18 @@ export class SwapStressSaturationScenario extends FlowScenario<Context> {
       Constants.StressAccounts.Funding
     )
 
-    // ── 8. The ramp campaign + both-directions saturation verification ──
-    ClusterBuildPhase.create<Context>(
-      cluster,
-      "RunCampaign",
-      `Ramp ${Constants.Ramp.InitialCount}→${Constants.Ramp.MaxCount} accounts (×${Constants.Ramp.Multiplier}) at load level '${Constants.Ramp.Level}' until both Ethereum OPP directions saturate against a ${Constants.Ramp.SaturatedEnvelopeMinBytes}-byte envelope target`
-    ).push(
-      CampaignSteps.planRunCampaign<Context>(
-        Actor.User,
-        "run-saturation-ramp",
-        "run the saturation ramp (per-swap ETH requestSwap + sysio.uwrit::swapfromwire, with OPP-envelope telemetry)",
-        { timeoutMs: Constants.Ramp.CampaignDeadlineMs }
-      ),
-      verifyStep<Context>(
-        Actor.Sysio,
-        "verify-saturation",
-        "both Ethereum OPP directions saturated with no missing endpoints",
-        CampaignSteps.runVerifySaturation,
-        writeOptions
-      )
+    // ── 8. The ramp campaign: one Phase per rung + saturation verification ──
+    //
+    // The curve is static (derived from the load profile at plan time), so the
+    // whole campaign is registered up-front and the Report narrates every
+    // rung's individual bursts, payout observations, and metric collections
+    // instead of hiding them inside one multi-minute row.
+    const rungPhases = RungSteps.planCampaign<Context>(cluster)
+    log.debug(
+      `${this.name}: setup + ${rungPhases.length} rung phases registered ` +
+        `(${Constants.Ramp.RungAccountCounts.join(" → ")} accounts, ` +
+        `load level '${Constants.Ramp.Level}', ` +
+        `${Constants.Ramp.SaturatedEnvelopeMinBytes}-byte envelope target)`
     )
-    log.debug(`${this.name}: setup + campaign phases registered`)
   }
 }

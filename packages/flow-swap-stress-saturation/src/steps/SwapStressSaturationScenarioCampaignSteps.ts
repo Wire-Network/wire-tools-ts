@@ -9,6 +9,7 @@ import { captureEnvelopeBaseline } from "../envelope-integrity/index.js"
 import {
   ClusterBuildStep,
   NodeConfig,
+  outputKey,
   Report,
   SwapScenarioContext,
   mapSeries,
@@ -47,6 +48,7 @@ import {
   RunEvidenceStage,
   collectOppPhaseMetrics,
   type OppEnvelopeSaturationStrategy,
+  type OppPhaseEvidenceSink,
   type RunEvidenceDecimal
 } from "../stress-engine/index.js"
 import { SwapStressSaturationScenarioArtifacts as Artifacts } from "../SwapStressSaturationScenarioArtifacts.js"
@@ -558,6 +560,63 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
     )
   }
 
+  // ── Campaign-scoped services (built once, shared by every rung Step) ─────
+
+  /**
+   * Live services every rung Step shares.
+   *
+   * These are NOT steps: nothing here writes to a chain — it resolves clients,
+   * contracts, and observers. The bundle MUST be a singleton for the whole
+   * campaign because the payout observers own the mutable
+   * `Map<address, balance>` that `preparePayouts` snapshots and
+   * `waitForPayouts` compares against; rebuilding them per Step would empty
+   * that map and every payout wait would fail its baseline assertion.
+   */
+  export interface CampaignServices extends SwapStressRealTelemetryDeps {
+    /** Slug route constants for both stress directions. */
+    readonly route: SwapStressRouteCodes
+    /** The swap user's bound `ReserveManager` (phase-1 submissions + nonces). */
+    readonly ethereumReserveManager: Artifacts.ReserveManagerPrivateReserveContract
+    /** WIRE-side delta observer credited by phase 1. */
+    readonly recipientPayoutObserver: SwapStressPayoutObserver
+    /** Ethereum-side delta observer credited by phase 2. */
+    readonly returnPayoutObserver: SwapStressPayoutObserver
+  }
+
+  /** Cached campaign services — one bundle per run. */
+  const campaignServicesKey = outputKey<CampaignServices>(
+    "stressSaturation.campaignServices",
+    "campaign-scoped clients, contracts, observers, and telemetry"
+  )
+
+  /**
+   * The campaign's shared services, built on first use and cached on
+   * `ctx.outputs` so every rung Step sees the same observer instances.
+   *
+   * @param ctx - The build context (clients + outputs + config).
+   * @returns The shared campaign services.
+   */
+  export async function campaignServices<C extends SwapScenarioContext>(
+    ctx: C
+  ): Promise<CampaignServices> {
+    const cached = ctx.outputs.get(campaignServicesKey)
+    if (cached !== null) return cached
+    const swapUser = ctx.outputs.assert(swapUserOutputKey()),
+      services: CampaignServices = {
+        route: routeCodes(),
+        ethereumReserveManager:
+          Artifacts.loadReserveManager<Artifacts.ReserveManagerPrivateReserveContract>(
+            ctx,
+            swapUser.ethereumWallet
+          ),
+        recipientPayoutObserver: wirePayoutObserver(ctx.wire),
+        returnPayoutObserver: ethereumPayoutObserver(ctx.ethereum),
+        ...createCampaignTelemetryDependencies(ctx.config.clusterPath, null)
+      }
+    ctx.outputs.set(campaignServicesKey, services)
+    return Promise.resolve(services)
+  }
+
   // ── OPP-envelope telemetry (real baseline-correlated collection) ─────────
 
   /**
@@ -567,12 +626,12 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
    * evidence sink.
    *
    * @param clusterPath - Canonical root of the running cluster.
-   * @param persistence - The allocated run-evidence sink.
+   * @param evidenceSink - Artifact sink, or null to measure without capturing.
    * @returns Strict real telemetry dependencies for the phase runner.
    */
   export function createCampaignTelemetryDependencies(
     clusterPath: string,
-    persistence: RunEvidencePersistence
+    evidenceSink: OppPhaseEvidenceSink | null
   ): SwapStressRealTelemetryDeps {
     return {
       telemetryKind: "real",
@@ -600,7 +659,7 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
                 saturatedEnvelopeMinBytes:
                   Constants.Ramp.SaturatedEnvelopeMinBytes,
                 baseline: phaseBaseline,
-                evidenceSink: persistence
+                evidenceSink
               })
             )
         })
