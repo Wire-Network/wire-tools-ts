@@ -6,6 +6,7 @@ import {
   ClusterReadinessReasonCode
 } from "@wireio/cluster-tool-shared"
 
+import { ProtocolTiming } from "../../Constants.js"
 import { ReadinessConfig } from "../../readiness/ReadinessConfig.js"
 import {
   ReadinessAssertionError,
@@ -714,16 +715,31 @@ export async function runEpochScheduler(
       state = stateResult.rows[0]
     if (!config || !state)
       throw new Error("sysio.epoch configuration or state is missing")
-    if (state.is_paused || Number(config.epoch_duration_sec) <= 0) {
+    const nextEpochStart = state.next_epoch_start.toString(),
+      overdueMs = epochOverdueMs(nextEpochStart),
+      maximumExtensionMs = ProtocolTiming.EpochExtensionMaxSec * 1_000
+    if (
+      state.is_paused ||
+      Number(config.epoch_duration_sec) <= 0 ||
+      !Number.isFinite(overdueMs) ||
+      overdueMs > maximumExtensionMs
+    ) {
       throw new ReadinessAssertionError(
         state.is_paused
           ? "sysio.epoch is paused"
-          : "sysio.epoch has an invalid duration",
+          : Number(config.epoch_duration_sec) <= 0
+            ? "sysio.epoch has an invalid duration"
+            : !Number.isFinite(overdueMs)
+              ? "sysio.epoch has an invalid next-epoch timestamp"
+              : `sysio.epoch is ${Math.round(overdueMs / 1_000)}s overdue`,
         ClusterReadinessReasonCode["protocol-unavailable"],
         {
           currentEpoch: state.current_epoch_index,
           epochDurationSec: config.epoch_duration_sec,
-          paused: state.is_paused
+          paused: state.is_paused,
+          nextEpochStart,
+          overdueMs,
+          maximumExtensionMs
         }
       )
     }
@@ -732,10 +748,31 @@ export async function runEpochScheduler(
       evidence: {
         currentEpoch: state.current_epoch_index,
         epochDurationSec: config.epoch_duration_sec,
-        paused: state.is_paused
+        paused: state.is_paused,
+        nextEpochStart,
+        overdueMs,
+        maximumExtensionMs
       }
     }
   })
+}
+
+/**
+ * Measure how far a Wire epoch has run past its scheduled next boundary.
+ * Wire ABI timestamps omit the UTC suffix, so this applies it before parsing.
+ *
+ * @param nextEpochStart Wire `time_point_sec` string for the next boundary.
+ * @param nowMs Observation time in Unix milliseconds.
+ * @return Non-negative overdue milliseconds, or `NaN` for an invalid timestamp.
+ */
+export function epochOverdueMs(
+  nextEpochStart: string,
+  nowMs: number = Date.now()
+): number {
+  const timestamp = Date.parse(
+    nextEpochStart.endsWith("Z") ? nextEpochStart : `${nextEpochStart}Z`
+  )
+  return Number.isFinite(timestamp) ? Math.max(0, nowMs - timestamp) : NaN
 }
 
 /** Run external-chain registry verification. */

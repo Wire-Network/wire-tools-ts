@@ -1,4 +1,4 @@
-import { Base58, SysioContracts } from "@wireio/sdk-core"
+import { Base58, contracts, SysioContracts } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
 import {
   ClusterReadinessArea,
@@ -28,7 +28,6 @@ import {
   readinessSlugValue
 } from "../../readiness/readinessUtils.js"
 import type { Report } from "../../report/Report.js"
-import { WireReserveTool } from "../../tools/wire/WireReserveTool.js"
 import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
@@ -39,6 +38,7 @@ import {
 } from "./ReadinessStepTools.js"
 
 const log = getLogger(__filename),
+  BpsTotal = 10_000,
   EthereumRpcMethod = { getCode: "eth_getCode" } as const,
   EthereumBlockTag = { latest: "latest" } as const,
   SolanaRpcMethod = { getAccountInfo: "getAccountInfo" } as const,
@@ -275,15 +275,13 @@ export async function runUnderwritingConfig(
   await runReadinessAssertion(context, input, async () => {
     const config = await context.wireSystem.uwrit.tables.uwconfig.first(),
       invalidFields = [
-        config.fee_bps < 0 || config.fee_bps > WireReserveTool.BpsTotal
-          ? "fee_bps"
-          : null,
+        config.fee_bps < 0 || config.fee_bps > BpsTotal ? "fee_bps" : null,
         Number(config.collateral_lock_duration_ms) <= 0
           ? "collateral_lock_duration_ms"
           : null,
         Number(config.min_fromwire_amount) <= 0 ? "min_fromwire_amount" : null,
         config.fromwire_revert_fee_bps < 0 ||
-        config.fromwire_revert_fee_bps > WireReserveTool.BpsTotal
+        config.fromwire_revert_fee_bps > BpsTotal
           ? "fromwire_revert_fee_bps"
           : null
       ].filter((field): field is string => field != null)
@@ -1019,8 +1017,26 @@ function availableCollateral(
 async function buildRoutes(
   context: ReadinessContext
 ): Promise<ClusterSwapRouteReadiness[]> {
-  const { chains, chainTokens, reserves } = await readReserveState(context),
+  const [reserveState, requestsResult] = await Promise.all([
+      readReserveState(context),
+      readinessBoundedQuery(
+        context.wireSystem.uwrit.tables.uwreqs.query({
+          limit: ReadinessMaxTableRows
+        }),
+        "sysio.uwrit::uwreqs"
+      )
+    ]),
+    { chains, chainTokens, reserves } = reserveState,
+    requests = requestsResult.rows,
     eligible = eligibleReserves(activePublicReserves(reserves), chainTokens),
+    reserveClient = new contracts.sysio.reserv.ReserveClient({
+      client: context.wireApi
+    }),
+    identity = (reserve: SysioContracts.SysioReservReserveRowType) => ({
+      chainCode: readinessSlug(reserve.chain_code),
+      tokenCode: readinessSlug(reserve.token_code),
+      reserveCode: readinessSlug(reserve.reserve_code)
+    }),
     label = (reserve: SysioContracts.SysioReservReserveRowType) => {
       const chain = chains.find(
         candidate =>
@@ -1029,65 +1045,80 @@ async function buildRoutes(
       )
       return `${readinessSlug(reserve.token_code)} on ${chain?.name ?? readinessSlug(reserve.chain_code)}`
     },
-    direct = eligible.flatMap(reserve => {
-      const external = label(reserve),
-        chainDepth = BigInt(reserve.reserve_chain_amount),
-        wireDepth = BigInt(reserve.reserve_wire_amount),
-        chainProbe = probeAmount(
-          chainDepth,
-          ReadinessConfig.QuoteProbeDepthDivisor
-        ),
-        wireProbe = probeAmount(
-          wireDepth,
-          ReadinessConfig.QuoteProbeDepthDivisor
-        ),
-        toWireQuote = WireReserveTool.cpOutput(
-          chainDepth,
-          wireDepth,
-          chainProbe
-        ),
-        fromWireQuote = WireReserveTool.cpOutput(
-          wireDepth,
-          chainDepth,
-          wireProbe
-        )
-      return [
-        route(context, external, "WIRE", chainProbe, toWireQuote, [reserve]),
-        route(context, "WIRE", external, wireProbe, fromWireQuote, [reserve])
-      ]
-    }),
-    crossChain = eligible.flatMap(source =>
-      eligible
-        .filter(
-          destination =>
-            readinessSlugValue(source.chain_code) !==
-            readinessSlugValue(destination.chain_code)
-        )
-        .map(destination => {
-          const sourceProbe = probeAmount(
-              BigInt(source.reserve_chain_amount),
+    direct = (
+      await Promise.all(
+        eligible.map(async reserve => {
+          const external = label(reserve),
+            chainProbe = probeAmount(
+              BigInt(reserve.reserve_chain_amount),
               ReadinessConfig.QuoteProbeDepthDivisor
             ),
-            wireIntermediate = WireReserveTool.cpOutput(
-              BigInt(source.reserve_chain_amount),
-              BigInt(source.reserve_wire_amount),
-              sourceProbe
+            wireProbe = probeAmount(
+              BigInt(reserve.reserve_wire_amount),
+              ReadinessConfig.QuoteProbeDepthDivisor
             ),
-            target = WireReserveTool.cpOutput(
-              BigInt(destination.reserve_wire_amount),
-              BigInt(destination.reserve_chain_amount),
-              wireIntermediate
-            )
-          return route(
-            context,
-            label(source),
-            label(destination),
-            sourceProbe,
-            target,
-            [source, destination]
-          )
+            [toWireQuote, fromWireQuote] = await Promise.all([
+              reserveClient.getSwapQuote({
+                from: identity(reserve),
+                fromAmount: chainProbe,
+                to: contracts.sysio.uwrit.WIRE_SWAP_ENDPOINT
+              }),
+              reserveClient.getSwapQuote({
+                from: contracts.sysio.uwrit.WIRE_SWAP_ENDPOINT,
+                fromAmount: wireProbe,
+                to: identity(reserve)
+              })
+            ])
+          return [
+            route(
+              context,
+              external,
+              "WIRE",
+              chainProbe,
+              toWireQuote,
+              [reserve],
+              directToWireVerified(reserve, requests)
+            ),
+            route(context, "WIRE", external, wireProbe, fromWireQuote, [
+              reserve
+            ])
+          ]
         })
-    )
+      )
+    ).flat(),
+    crossChain = (
+      await Promise.all(
+        eligible.map(async source =>
+          Promise.all(
+            eligible
+              .filter(
+                destination =>
+                  readinessSlugValue(source.chain_code) !==
+                  readinessSlugValue(destination.chain_code)
+              )
+              .map(async destination => {
+                const sourceProbe = probeAmount(
+                    BigInt(source.reserve_chain_amount),
+                    ReadinessConfig.QuoteProbeDepthDivisor
+                  ),
+                  target = await reserveClient.getSwapQuote({
+                    from: identity(source),
+                    fromAmount: sourceProbe,
+                    to: identity(destination)
+                  })
+                return route(
+                  context,
+                  label(source),
+                  label(destination),
+                  sourceProbe,
+                  target,
+                  [source, destination]
+                )
+              })
+          )
+        )
+      )
+    ).flat()
   return [...direct, ...crossChain]
 }
 
@@ -1097,7 +1128,8 @@ function route(
   destination: string,
   sourceAmount: bigint,
   destinationAmount: bigint,
-  reserves: SysioContracts.SysioReservReserveRowType[]
+  reserves: SysioContracts.SysioReservReserveRowType[],
+  transactionallyVerified = false
 ): ClusterSwapRouteReadiness {
   const custody = context.outputs.assert(
       ReadinessOutputs.externalCustodyReserves
@@ -1155,12 +1187,39 @@ function route(
     preflightReady: issues.length === 0,
     quotedSourceAmount: sourceAmount.toString(),
     quotedDestinationAmount: destinationAmount.toString(),
-    transactionallyVerified: false,
+    transactionallyVerified,
     detail:
       issues.length === 0
-        ? "Registry, depot quote, external custody, and available underwriter collateral pass; daemon circulation and settlement require a canary"
+        ? transactionallyVerified
+          ? "Registry, quote, custody, and collateral pass; a CONFIRMED direct-to-WIRE underwriting request proves transactional settlement"
+          : "Registry, depot quote, external custody, and available underwriter collateral pass; daemon circulation and settlement require a canary"
         : `Blocked: ${issues.join("; ")}`
   }
+}
+
+function directToWireVerified(
+  reserve: SysioContracts.SysioReservReserveRowType,
+  requests: SysioContracts.SysioUwritUwRequestTType[]
+): boolean {
+  const wire = contracts.sysio.uwrit.WIRE_SWAP_ENDPOINT
+  return requests.some(
+    request =>
+      readinessEnumMatches(
+        request.status,
+        SysioUwritUnderwriterequeststatus.UNDERWRITE_REQUEST_STATUS_CONFIRMED,
+        "UNDERWRITE_REQUEST_STATUS_CONFIRMED"
+      ) &&
+      readinessSlugValue(request.src_chain_code) ===
+        readinessSlugValue(reserve.chain_code) &&
+      readinessSlugValue(request.src_token_code) ===
+        readinessSlugValue(reserve.token_code) &&
+      readinessSlugValue(request.src_reserve_code) ===
+        readinessSlugValue(reserve.reserve_code) &&
+      readinessSlug(request.dst_chain_code) === wire.chainCode &&
+      readinessSlug(request.dst_token_code) === wire.tokenCode &&
+      readinessSlug(request.dst_reserve_code) === wire.reserveCode &&
+      request.source_tx_id.length > 0
+  )
 }
 
 function probeAmount(depth: bigint, divisor: bigint): bigint {
