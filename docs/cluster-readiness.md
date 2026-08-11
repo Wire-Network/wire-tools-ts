@@ -32,6 +32,12 @@ corepack pnpm --filter @wireio/cluster-tool exec ./bin/wire-cluster-tool readine
   --solana-rpc https://solana-sim2.sandbox.wire-dev.com
 ```
 
+Use an API-capable Wire endpoint for `--wire-rpc`. Live route quotes execute the
+read-only `sysio.reserv::swapquote` action; a raw nodeop endpoint configured
+with `read-only-threads = 0` can answer ordinary chain RPCs but cannot complete
+this readiness surface. The endpoint catalog's SIM2 Wire record already points
+to the API-capable endpoint.
+
 The command exits `0` only when the selected feature's read-only preflight
 passes. Any blocking check exits `1`. Optional endpoint-catalog or Hyperion
 failures are advisories when the three required RPCs are available.
@@ -73,7 +79,12 @@ The archive name includes the first 12 Wire chain-id characters and contains
 exactly two files with the same basename:
 
 - a schema-validated JSON readiness projection;
-- the existing self-contained, colored orchestration Report HTML.
+- a self-contained operator HTML report derived from that same projection.
+
+The CLI and HTML use the same presentation model. Both lead with verified
+configuration gaps, explicitly separate state the read-only command cannot
+prove, summarize healthy collateral/custody/routes, and retain every check,
+evidence payload, live quote, and per-route blocker for granular inspection.
 
 `readiness-reports/` is gitignored.
 
@@ -114,8 +125,9 @@ depot-state checks:
   reserve book, with coverage across both EVM and SVM;
 - every directional external-to-WIRE, WIRE-to-external, and cross-outpost route
   constructible from live registry state;
-- a positive deterministic quote for every route using the canonical
-  `WireReserveTool.cpOutput` implementation used by the swap FlowScenarios;
+- a positive live read-only `sysio.reserv::swapquote` result for every route,
+  using the same `sdk-core` client as Hub so fee ordering and integer rounding
+  match the user-visible quote;
 - no expired `PENDING` underwriting requests, while reporting the WIRE-origin
   queue size without inventing an expiry rule absent from `sdk-core`.
 

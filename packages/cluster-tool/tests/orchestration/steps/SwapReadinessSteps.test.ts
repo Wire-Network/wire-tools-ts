@@ -10,7 +10,7 @@ import {
   ReadinessOutputs
 } from "@wireio/cluster-tool/readiness"
 import { Report } from "@wireio/cluster-tool/report"
-import { SlugName, SysioContracts } from "@wireio/sdk-core"
+import { contracts, SlugName, SysioContracts } from "@wireio/sdk-core"
 
 const FullCollateral = 1_000_000_000,
   EthereumChainCode = { value: SlugName.from("ETHEREUM") },
@@ -128,6 +128,7 @@ interface ReadinessFixtures {
   operators: SysioContracts.SysioOpregOperatorEntryType[]
   locks: SysioContracts.SysioUwritLockEntryType[]
   withdrawals: SysioContracts.SysioOpregWithdrawRequestType[]
+  requests: SysioContracts.SysioUwritUwRequestTType[]
 }
 
 function reserve(
@@ -188,6 +189,37 @@ function underwriter(
   }
 }
 
+function underwritingRequest(
+  overrides: Partial<SysioContracts.SysioUwritUwRequestTType>
+): SysioContracts.SysioUwritUwRequestTType {
+  return {
+    id: 0,
+    type: SysioContracts.SysioUwritAttestationtype.ATTESTATION_TYPE_UNSPECIFIED,
+    status:
+      SysioContracts.SysioUwritUnderwriterequeststatus
+        .UNDERWRITE_REQUEST_STATUS_PENDING,
+    src_chain_code: { value: 0 },
+    src_token_code: { value: 0 },
+    src_reserve_code: { value: 0 },
+    src_amount: 0,
+    dst_chain_code: { value: 0 },
+    dst_token_code: { value: 0 },
+    dst_reserve_code: { value: 0 },
+    dst_amount: 0,
+    variance_tolerance_bps: 0,
+    source_tx_id: "",
+    depositor: "",
+    commits_by: [],
+    winner: "",
+    committed_at_ms: 0,
+    settled_at_ms: 0,
+    expires_at_epoch: 0,
+    attestation_inbound_data: "",
+    attestation_outbound_data: "",
+    ...overrides
+  }
+}
+
 function readinessContext(
   fixtures: Partial<ReadinessFixtures>
 ): ReadinessContext {
@@ -199,7 +231,8 @@ function readinessContext(
       operatorConfig = OperatorConfig,
       operators = [],
       locks = [],
-      withdrawals = []
+      withdrawals = [],
+      requests = []
     } = fixtures,
     context = new ReadinessContext(
       {
@@ -237,8 +270,14 @@ function readinessContext(
     .spyOn(context.wireSystem.uwrit.tables.locks, "query")
     .mockResolvedValue({ rows: locks, more: false })
   jest
+    .spyOn(context.wireSystem.uwrit.tables.uwreqs, "query")
+    .mockResolvedValue({ rows: requests, more: false })
+  jest
     .spyOn(context.wireSystem.opreg.tables.wtdwqueue, "query")
     .mockResolvedValue({ rows: withdrawals, more: false })
+  jest
+    .spyOn(contracts.sysio.reserv.ReserveClient.prototype, "getSwapQuote")
+    .mockResolvedValue(42n)
   return context
 }
 
@@ -630,6 +669,11 @@ describe("SwapReadinessSteps", () => {
       quotesStep = routeQuotesStep()
 
     primeRouteEvidence(context, reserves)
+    jest
+      .spyOn(contracts.sysio.reserv.ReserveClient.prototype, "getSwapQuote")
+      .mockImplementation(async options =>
+        String(options.from.chainCode) === "SOLANA" ? 0n : 42n
+      )
     await registryStep.runner(
       context,
       registryStep.input,
@@ -652,6 +696,71 @@ describe("SwapReadinessSteps", () => {
       quotesStep.runner(context, quotesStep.input, new AbortController().signal)
     ).rejects.toThrow(
       "directional route(s) fail infrastructure preflight or return a zero quote"
+    )
+  })
+
+  it("reports the live swapquote amount used by Hub instead of local curve math", async () => {
+    const context = readinessContext({ reserves: ActivePublicReserves }),
+      step = routeRegistryStep(),
+      liveQuote = 9_960_060n
+
+    primeRouteEvidence(context, ActivePublicReserves)
+    jest
+      .spyOn(contracts.sysio.reserv.ReserveClient.prototype, "getSwapQuote")
+      .mockResolvedValue(liveQuote)
+
+    await step.runner(context, step.input, new AbortController().signal)
+
+    expect(context.outputs.assert(ReadinessOutputs.routes)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "WIRE",
+          destination: "SOL on Solana",
+          quotedDestinationAmount: liveQuote.toString()
+        })
+      ])
+    )
+  })
+
+  it("marks only a confirmed direct-to-WIRE route transactionally verified", async () => {
+    const wire = contracts.sysio.uwrit.WIRE_SWAP_ENDPOINT,
+      context = readinessContext({
+        reserves: ActivePublicReserves,
+        requests: [
+          underwritingRequest({
+            id: 1,
+            status:
+              SysioContracts.SysioUwritUnderwriterequeststatus
+                .UNDERWRITE_REQUEST_STATUS_CONFIRMED,
+            src_chain_code: EthereumChainCode,
+            src_token_code: EthereumTokenCode,
+            src_reserve_code: PrimaryReserveCode,
+            dst_chain_code: { value: SlugName.from(wire.chainCode) },
+            dst_token_code: { value: SlugName.from(wire.tokenCode) },
+            dst_reserve_code: { value: SlugName.from(wire.reserveCode) },
+            source_tx_id: "0000000000000001",
+            winner: "wireno.wacca"
+          })
+        ]
+      }),
+      step = routeRegistryStep()
+
+    primeRouteEvidence(context, ActivePublicReserves)
+    await step.runner(context, step.input, new AbortController().signal)
+
+    expect(context.outputs.assert(ReadinessOutputs.routes)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "ETH on Ethereum",
+          destination: "WIRE",
+          transactionallyVerified: true
+        }),
+        expect.objectContaining({
+          source: "WIRE",
+          destination: "ETH on Ethereum",
+          transactionallyVerified: false
+        })
+      ])
     )
   })
 })

@@ -263,9 +263,29 @@ fail-fast. A Wire chain id resolves the network group's RPCs through the mutable
 endpoint catalog. An optional deployment profile enables exact outpost identity
 and custody verification through `@wireio/sdk-outpost`. Swap readiness keeps
 every advertised public reserve visible and computes collateral availability
-after locks and pending withdrawals. The manual command is the only entrypoint.
-It is not integrated with flows, bootstrap, the Hub, or CI. See
+after locks and pending withdrawals. Route amounts come from the live
+`sysio.reserv::swapquote` SDK path used by Hub, so the selected Wire endpoint
+must support read-only transaction execution (the Network API endpoint does;
+a raw nodeop endpoint may not). Terminal and exported HTML presentations must
+derive verified missing items, healthy sub-state, and route evidence from the
+same stable readiness projection; never maintain separate verdict logic in a
+renderer. The manual command is the only entrypoint. It is not integrated with
+flows, bootstrap, the Hub, or CI. See
 `docs/cluster-readiness.md`.
+
+The terminal `Settlement` line is an evidence count (`verified/advertised`),
+not a fixed canary label. A read-only run reports `0/N transactionally
+verified` until funded canary evidence is projected onto route records; quote
+success never implies settlement.
+
+Epoch readiness also verifies that `next_epoch_start` is not overdue beyond
+the protocol's 30-second extension allowance. Advancing blocks do not make a
+cluster swap-ready when the epoch scheduler itself is stalled.
+
+A retained `CONFIRMED` direct-to-WIRE underwriting request is terminal proof
+for that route because confirmation and the WIRE payout occur in the same depot
+transaction. Cross-outpost routes remain unverified until destination delivery
+is observed; a confirmed race alone is not enough.
 
 `create` also carries `--signature-provider-type <KEY|SSM|KIOD>` (default KEY)
 and `--signature-provider-ssm '<inline-json>'|<file>` (the SSM region +

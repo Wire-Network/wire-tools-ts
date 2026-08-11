@@ -4,8 +4,7 @@ import Path from "node:path"
 import type { ClusterReadinessReport } from "@wireio/cluster-tool-shared"
 import { Deferred } from "@wireio/shared"
 
-import type { Report } from "../report/Report.js"
-import { ReportHtmlRenderer } from "../report/renderers/ReportHtmlRenderer.js"
+import { ReadinessHtmlRenderer } from "./ReadinessHtmlRenderer.js"
 
 /** Default gitignored report root relative to the caller's working directory. */
 export const DefaultReadinessReportDirectory = "readiness-reports"
@@ -24,12 +23,11 @@ export interface ReadinessReportArchive {
   htmlFileName: string
 }
 
-/** Export the machine report and native orchestration HTML as one tar.gz. */
+/** Export the machine report and operator-focused readiness HTML as one tar.gz. */
 export class ReadinessReportExporter {
   /** Creates an exporter for one completed readiness run. */
   constructor(
     private readonly readinessReport: ClusterReadinessReport,
-    private readonly orchestrationReport: Report,
     private readonly options: ReadinessReportExportOptions = {}
   ) {}
 
@@ -70,7 +68,7 @@ export class ReadinessReportExporter {
       date: modifiedAt,
       mode: 0o644
     })
-    archive.append(new ReportHtmlRenderer(this.orchestrationReport).render(), {
+    archive.append(new ReadinessHtmlRenderer(report).render(), {
       name: htmlFileName,
       date: modifiedAt,
       mode: 0o644

@@ -190,7 +190,6 @@ export async function runReadiness(args: ReadinessArgv) {
   if (args.export) {
     const archive = await new ReadinessReportExporter(
       report,
-      orchestrationReport,
       args.exportDir ? { rootPath: Path.resolve(args.exportDir) } : {}
     ).exportArchive()
     archiveFile = archive.archiveFile

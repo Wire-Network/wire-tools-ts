@@ -1,40 +1,18 @@
 import {
   type ClusterReadinessCheck,
-  ClusterReadinessCheckId,
   ClusterReadinessCheckStatus,
   ClusterReadinessEndpointKind,
   ClusterReadinessFeature,
   type ClusterReadinessReport
 } from "@wireio/cluster-tool-shared"
 
-const CheckLabels: Record<ClusterReadinessCheckId, string> = {
-  "discovery.endpoint-catalog": "Endpoint catalog",
-  "discovery.required-endpoints": "Network group discovery",
-  "wire.identity": "Wire chain identity",
-  "wire.head-advancement": "Wire block production",
-  "wire.head-freshness": "Wire head freshness",
-  "wire.deployment-profile": "Wire deployment profile",
-  "ethereum.identity": "Ethereum chain identity",
-  "ethereum.head-advancement": "Ethereum block production",
-  "ethereum.deployment-profile": "Ethereum implementation identity",
-  "solana.identity": "Solana cluster identity",
-  "solana.slot-advancement": "Solana slot production",
-  "solana.deployment-profile": "Solana ProgramData identity",
-  "hyperion.health": "Hyperion indexing",
-  "wire.contracts": "Wire swap contract surface",
-  "wire.epoch-scheduler": "Epoch scheduler",
-  "wire.chain-registry": "External chain registry",
-  "swap.underwriting-config": "Underwriting policy",
-  "swap.active-underwriters": "Underwriter collateral",
-  "swap.external-assets": "External token deployments",
-  "swap.external-custody": "External reserve custody",
-  "swap.asset-registry": "Public asset registry",
-  "swap.public-reserves": "Public reserve funding",
-  "swap.route-registry": "Directional route coverage",
-  "swap.route-quotes": "Positive read-only quotes",
-  "swap.request-backlog": "Request backlog",
-  "stake.lifecycle": "LIQ stake/unstake lifecycle"
-}
+import {
+  presentReadiness,
+  ReadinessCheckLabels,
+  readinessProofBoundary,
+  type ReadinessMissingItem,
+  type ReadinessPresentation
+} from "./ReadinessPresentation.js"
 
 const EndpointLabels: Record<ClusterReadinessEndpointKind, string> = {
   [ClusterReadinessEndpointKind.wire]: "WIRE",
@@ -72,20 +50,8 @@ export class ReadinessTerminalRenderer {
   render(): string {
     const { color = false } = this.options,
       { report } = this,
+      view = presentReadiness(report),
       feature = report.feature.toUpperCase(),
-      blockers = report.checks.filter(
-        check =>
-          check.blocking && check.status === ClusterReadinessCheckStatus.fail
-      ),
-      advisories = report.checks.filter(
-        check => check.status === ClusterReadinessCheckStatus.advisory
-      ),
-      passed = report.checks.filter(
-        check => check.status === ClusterReadinessCheckStatus.pass
-      ).length,
-      positiveRoutes = report.routes.filter(
-        route => route.preflightReady
-      ).length,
       lines = [
         paint(
           color,
@@ -106,7 +72,7 @@ export class ReadinessTerminalRenderer {
         ),
         summaryRow(
           "Checks",
-          `${passed}/${report.checks.length} passed · ${blockers.length} blocker(s) · ${advisories.length} advisory`
+          `${view.passed.length}/${report.checks.length} passed · ${view.blockers.length} blocker(s) · ${view.advisories.length} advisory`
         )
       ]
 
@@ -114,9 +80,19 @@ export class ReadinessTerminalRenderer {
       lines.push(
         summaryRow(
           "Routes",
-          `${positiveRoutes}/${report.routes.length} quote-positive`
+          `${view.readyRoutes.length}/${report.routes.length} preflight-ready`
         ),
-        summaryRow("Settlement", paint(color, Ansi.yellow, "CANARY NOT RUN"))
+        summaryRow(
+          "Settlement",
+          paint(
+            color,
+            view.transactionallyVerifiedRoutes.length === report.routes.length &&
+              report.routes.length > 0
+              ? Ansi.green
+              : Ansi.yellow,
+            `${view.transactionallyVerifiedRoutes.length}/${report.routes.length} transactionally verified`
+          )
+        )
       )
     }
 
@@ -128,16 +104,25 @@ export class ReadinessTerminalRenderer {
         `╰─ ${report.generatedAt} · chain ${report.observedWireChainId ?? report.requestedWireChainId ?? "unknown"}`
       ),
       "",
+      paint(
+        color,
+        `${Ansi.bold}${view.missing.length > 0 ? Ansi.red : Ansi.green}`,
+        "STILL MISSING ON THIS CLUSTER"
+      ),
+      ...missingLines(view.missing, color),
+      "",
+      paint(color, `${Ansi.bold}${Ansi.yellow}`, "NOT YET PROVEN"),
+      "  - Funded test-wallet balances, ERC-20 allowances, and Solana token accounts are not inspected.",
+      "  - OPP circulation, settlement, delivery, and refunds require funded canaries.",
+      "",
+      paint(color, `${Ansi.bold}${Ansi.green}`, "HEALTHY NOW"),
+      ...healthyLines(report, view, color),
+      "",
       paint(color, Ansi.bold, "NETWORK GROUP"),
       ...endpointLines(report, color)
     )
 
-    if (blockers.length > 0) {
-      lines.push("", paint(color, `${Ansi.bold}${Ansi.red}`, "BLOCKERS"))
-      blockers.forEach(check => lines.push(checkLines(check, color)))
-    }
-
-    lines.push("", paint(color, Ansi.bold, "CHECKS"))
+    lines.push("", paint(color, Ansi.bold, "GRANULAR CHECKS"))
     report.checks.forEach(check => lines.push(checkLines(check, color)))
 
     if (
@@ -154,7 +139,7 @@ export class ReadinessTerminalRenderer {
     lines.push(
       "",
       paint(color, `${Ansi.bold}${Ansi.yellow}`, "PROOF BOUNDARY"),
-      `  ${proofBoundary(report)}`,
+      `  ${readinessProofBoundary(report)}`,
       "",
       report.summary.featurePreflightReady
         ? paint(
@@ -189,7 +174,45 @@ function checkLines(check: ClusterReadinessCheck, color: boolean): string {
           : paint(color, Ansi.yellow, "! NOTE"),
     reason = check.reason ? ` · ${check.reason}` : "",
     advisory = check.blocking ? "" : " · advisory"
-  return `  ${marker}  ${CheckLabels[check.id]}${reason}${advisory}\n          ${check.detail}`
+  return `  ${marker}  ${ReadinessCheckLabels[check.id]}${reason}${advisory}\n          ${check.detail}`
+}
+
+function missingLines(
+  missing: ReadinessMissingItem[],
+  color: boolean
+): string[] {
+  if (missing.length === 0) {
+    return [paint(color, Ansi.green, "  none")]
+  }
+  return missing.flatMap(item => [
+    `  ${paint(color, Ansi.red, "-")} [${item.category.toUpperCase()}] ${item.label}`,
+    `      ${item.issues.join("; ")}`,
+    ...(item.facts.length > 0 ? [`      ${item.facts.join(" · ")}`] : [])
+  ])
+}
+
+function healthyLines(
+  report: ClusterReadinessReport,
+  view: ReadinessPresentation,
+  color: boolean
+): string[] {
+  const readyCollateral = view.collateral.filter(state => state.ready),
+    readyCustody = view.custody.filter(state => state.ready),
+    lines = [
+      `  ${paint(color, report.summary.clusterLive ? Ansi.green : Ansi.red, report.summary.clusterLive ? "✓" : "✗")} Cluster ${report.summary.clusterLive ? "is healthy and advancing" : "is not healthy"}`,
+      `  ${paint(color, Ansi.green, "✓")} ${view.passed.length}/${report.checks.length} checks pass`,
+      `  ${paint(color, readyCollateral.length === view.collateral.length ? Ansi.green : Ansi.yellow, "•")} Collateral ${readyCollateral.length}/${view.collateral.length} ready${readyCollateral.length > 0 ? ` — ${readyCollateral.map(state => state.label).join(", ")}` : ""}`,
+      `  ${paint(color, readyCustody.length === view.custody.length ? Ansi.green : Ansi.yellow, "•")} Custody ${readyCustody.length}/${view.custody.length} ready${readyCustody.length > 0 ? ` — ${readyCustody.map(state => state.label).join(", ")}` : ""}`,
+      `  ${paint(color, view.readyRoutes.length === report.routes.length ? Ansi.green : Ansi.yellow, "•")} Routes ${view.readyRoutes.length}/${report.routes.length} preflight-ready`
+    ]
+  if (view.readyRoutes.length > 0) {
+    lines.push(
+      ...view.readyRoutes.map(
+        route => `      ${route.source} → ${route.destination}`
+      )
+    )
+  }
+  return lines
 }
 
 function endpointLines(
@@ -233,30 +256,28 @@ function routeCoverageLines(
       return `  ${label.padEnd(20)} ${paint(
         color,
         ready === routes.length && routes.length > 0 ? Ansi.green : Ansi.red,
-        `${ready}/${routes.length} quote-positive`
+        `${ready}/${routes.length} preflight-ready`
       )}`
     }),
+    ready = report.routes.filter(route => route.preflightReady),
     failed = report.routes.filter(route => !route.preflightReady)
 
+  if (ready.length > 0) {
+    lines.push("", paint(color, Ansi.green, "  Preflight-ready routes:"))
+    ready.forEach(route =>
+      lines.push(
+        `    ${route.source} → ${route.destination} · ${route.quotedSourceAmount} → ${route.quotedDestinationAmount}`
+      )
+    )
+  }
+
   if (failed.length > 0) {
-    lines.push("", paint(color, Ansi.red, "  Zero-quote routes:"))
+    lines.push("", paint(color, Ansi.red, "  Blocked routes:"))
     failed.forEach(route =>
-      lines.push(`    ${route.source} → ${route.destination}`)
+      lines.push(
+        `    ${route.source} → ${route.destination}\n      ${route.detail}`
+      )
     )
   }
   return lines
-}
-
-function proofBoundary(report: ClusterReadinessReport): string {
-  if (report.feature !== ClusterReadinessFeature.swap) {
-    return "Staking is intentionally nonfunctional until a canonical cross-chain LIQ lifecycle is deployed and proven."
-  }
-  const externalCustodyChecked = report.checks.some(
-    check =>
-      check.id === ClusterReadinessCheckId["swap.external-custody"] &&
-      check.status === ClusterReadinessCheckStatus.pass
-  )
-  return externalCustodyChecked
-    ? "Read-only evidence includes exact deployment identity and the current external custody snapshot. OPP daemon circulation, final settlement, and SWAP_REVERT refunds still require a funded canary."
-    : "Exact outpost deployment identity and external custody were not checked because no deployment profile was supplied. OPP daemon circulation, final settlement, and SWAP_REVERT refunds require a funded canary."
 }
