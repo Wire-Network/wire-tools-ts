@@ -2,23 +2,18 @@
   "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
   "compilerOptions": {
     "rootDir": "src",
+    "strictNullChecks": true,
     "outDir": "lib",
     "paths": {
       "@wireio/cluster-tool": ["../cluster-tool/src"],
       "@wireio/cluster-tool-shared": ["../cluster-tool-shared/src"],
-      "@wireio/debugging-shared": ["../debugging-shared/src"],
-      "@wireio/opp-swap-stress": ["../opp-swap-stress/src"],
-      "@wireio/test-opp-stress": ["../opp-stress/src"],
-      "@wireio/opp-stress-harness": ["../opp-stress-harness/src"]
+      "@wireio/debugging-shared": ["../debugging-shared/src"]
     }
   },
   "include": ["src"],
   "references": [
     { "path": "../cluster-tool-shared/tsconfig.json" },
     { "path": "../cluster-tool/tsconfig.json" },
-    { "path": "../debugging-shared/tsconfig.json" },
-    { "path": "../opp-swap-stress/tsconfig.json" },
-    { "path": "../opp-stress/tsconfig.json" },
-    { "path": "../opp-stress-harness/tsconfig.json" }
+    { "path": "../debugging-shared/tsconfig.json" }
   ]
 }

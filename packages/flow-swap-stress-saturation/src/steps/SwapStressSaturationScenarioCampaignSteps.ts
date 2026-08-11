@@ -43,7 +43,7 @@ import {
   type SwapStressRealTelemetryDeps,
   type SwapStressReservePairSnapshot,
   type SwapStressRouteCodes
-} from "@wireio/opp-swap-stress"
+} from "../swap-stress/index.js"
 import {
   RunEvidencePersistence,
   RunEvidenceSchemaVersion,
@@ -52,7 +52,7 @@ import {
   collectOppPhaseMetrics,
   type OppEnvelopeSaturationStrategy,
   type RunEvidenceDecimal
-} from "@wireio/test-opp-stress"
+} from "../stress-engine/index.js"
 import { SwapStressSaturationScenarioArtifacts as Artifacts } from "../SwapStressSaturationScenarioArtifacts.js"
 import { SwapStressSaturationScenarioConstants as Constants } from "../SwapStressSaturationScenarioConstants.js"
 import { SwapStressSaturationScenarioOutputs as Outputs } from "../SwapStressSaturationScenarioOutputs.js"
@@ -127,7 +127,7 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
 
   /**
    * The RunCampaign Step: allocate schema-v1 run evidence, build the
-   * dependency-injected `@wireio/opp-swap-stress` phase runner over the live
+   * dependency-injected `swap-stress` phase runner over the live
    * cluster (clients, deployed `ReserveManager`, OPP debugging artifacts), and
    * drive `runSaturationRamp` until both Ethereum OPP directions saturate,
    * breakage, or the account ceiling. The result lands in `ctx.outputs` under
@@ -260,7 +260,7 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
   // ── Phase-runner dependency wiring (values resolved from ctx) ────────────
 
   /**
-   * Assemble the `@wireio/opp-swap-stress` phase-runner dependencies from the
+   * Assemble the `swap-stress` phase-runner dependencies from the
    * live cluster: route codes, live reserve books, the swap user's bound
    * `ReserveManager`, the typed `swapfromwire` submitter, delta-based payout
    * observers, the batch-operator failure probe, and real OPP telemetry.
@@ -500,7 +500,8 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
     config: ClusterConfig,
     startedAtMs: number,
     endedAtMs: number
-  ): string {
+  // eslint-disable-next-line no-restricted-syntax -- this package sets strictNullChecks: true, so the `| null` union IS compiler-enforced
+  ): string | null {
     const failure = batchOperatorLogFiles(config)
       .map(filePath =>
         findBatchOperatorFailureInFile(filePath, startedAtMs, endedAtMs)
@@ -534,7 +535,8 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
     filePath: string,
     startedAtMs: number,
     endedAtMs: number
-  ): string {
+  // eslint-disable-next-line no-restricted-syntax -- this package sets strictNullChecks: true, so the `| null` union IS compiler-enforced
+  ): string | null {
     const record = Fs.readFileSync(filePath, "utf-8")
       .split("\n")
       .map(line => parseJsonLogLine(line))

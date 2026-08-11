@@ -44,21 +44,24 @@ async function readPrivateReserveRow(
   ctx: Context,
   chainCode: number,
   tokenCode: number
-): Promise<SysioContracts.SysioReservReserveRowType> {
+// eslint-disable-next-line no-restricted-syntax -- this package sets strictNullChecks: true, so the `| null` union IS compiler-enforced
+): Promise<SysioContracts.SysioReservReserveRowType | null> {
   const { rows } = await ctx.wire
     .getSysioContract(SysioContractName.reserv)
     .tables.reserves.query()
-  return rows.find(
-    row =>
-      slugValue(row.chain_code) === chainCode &&
-      slugValue(row.token_code) === tokenCode &&
-      slugValue(row.reserve_code) === Constants.Reserves.PrivateReserveCode
+  return (
+    rows.find(
+      row =>
+        slugValue(row.chain_code) === chainCode &&
+        slugValue(row.token_code) === tokenCode &&
+        slugValue(row.reserve_code) === Constants.Reserves.PrivateReserveCode
+    ) ?? null
   )
 }
 
 /** True when the reserve row exists and reports `want` (either wire shape). */
 function reserveStatusIs(
-  row: SysioContracts.SysioReservReserveRowType,
+  row: SysioContracts.SysioReservReserveRowType | null,
   want: number
 ): boolean {
   return row != null && matchesProtoEnum(row.status, SysioReservReservestatus, want)

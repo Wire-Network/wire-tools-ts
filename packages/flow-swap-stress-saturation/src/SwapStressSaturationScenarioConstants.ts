@@ -4,14 +4,14 @@ import {
   RealFlowMetricPolling,
   StressPrivateReserveCreateParams,
   SwapStressPhaseAmounts
-} from "@wireio/opp-swap-stress"
-import { LoadLevel, LoadProfile } from "@wireio/test-opp-stress"
+} from "./swap-stress/index.js"
+import { LoadLevel, LoadProfile } from "./stress-engine/index.js"
 
 /**
  * Constants for the swap-stress saturation soak: the same-owner PRIVATE reserve
  * pair sizing (ETH native × USDCSOL non-native), the ramp campaign shape, and
  * the deterministic stress-user funding. The reserve/phase sizings COMPOSE the
- * generic `@wireio/opp-swap-stress` constants (never re-declared); protocol
+ * generic `swap-stress` constants (never re-declared); protocol
  * waits derive from the {@link ProtocolTiming} envelope.
  */
 export namespace SwapStressSaturationScenarioConstants {

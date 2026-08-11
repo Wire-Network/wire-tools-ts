@@ -10,7 +10,7 @@ import {
   type WireUserResourcePolicy
 } from "@wireio/cluster-tool"
 import { SwapStressSaturationScenarioConstants as Constants } from "../SwapStressSaturationScenarioConstants.js"
-import { createStressIdentities } from "@wireio/opp-swap-stress"
+import { createStressIdentities } from "../swap-stress/index.js"
 
 /**
  * Stress-user provisioning: the deterministic WIRE accounts the ramp campaign

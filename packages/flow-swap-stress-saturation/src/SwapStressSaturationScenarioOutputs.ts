@@ -1,5 +1,5 @@
 import { outputKey } from "@wireio/cluster-tool"
-import type { StressRampResult } from "@wireio/opp-swap-stress"
+import type { StressRampResult } from "./swap-stress/index.js"
 
 /**
  * Typed cross-step outputs for the swap-stress saturation scenario — the ramp
