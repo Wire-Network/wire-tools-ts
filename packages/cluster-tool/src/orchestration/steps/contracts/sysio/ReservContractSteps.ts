@@ -1,3 +1,5 @@
+import Assert from "node:assert"
+
 import { type PermissionLevelType, SysioContracts } from "@wireio/sdk-core"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
@@ -7,7 +9,10 @@ import {
 } from "../../../ClusterBuildStep.js"
 import type { StepInput } from "../../../StepRunner.js"
 
-const { SysioContractName } = SysioContracts
+const { SysioContractName, SysioContractDefinitions } = SysioContracts
+
+/** Fee-routing action introduced after the SIM2 reserve contract revision. */
+const SetconfigActionName = "setconfig"
 
 /**
  * `<owner>@active` — the owner-fee actions are signed by the RESERVE'S OWNER,
@@ -27,7 +32,9 @@ export namespace ReservContractSteps {
   }
 
   /** `sysio.reserv::regreserve` — seed one `(chain, token, reserve)` reserve book. */
-  export function planRegreserve<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRegreserve<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -69,7 +76,9 @@ export namespace ReservContractSteps {
    * the batch-operator rewards bucket. Zero (the default) keeps every fee inside
    * `sysio.reserv` custody at settlement.
    */
-  export function planSetconfig<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetconfig<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -93,6 +102,29 @@ export namespace ReservContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
+    const contract = SysioContractDefinitions[SysioContractName.reserv]
+    const { abi } = await ctx.wire.api.v1.chain.get_abi(contract.account)
+    const actionAvailable =
+      abi?.actions.some(
+        action => String(action.name) === SetconfigActionName
+      ) ?? false
+    if (!actionAvailable) {
+      Assert.strictEqual(
+        input.data.fee_emissions_share_bps,
+        0,
+        "sysio.reserv::setconfig is unavailable; non-zero fee emissions routing cannot be configured"
+      )
+      Report.StepExtraRecorder.note(
+        "legacy sysio.reserv ABI has no setconfig action; zero emissions routing requires no write",
+        {
+          contract: contract.account,
+          action: SetconfigActionName,
+          actionAvailable,
+          feeEmissionsShareBps: input.data.fee_emissions_share_bps
+        }
+      )
+      return
+    }
     await ctx.wire
       .getSysioContract(SysioContractName.reserv)
       .actions.setconfig.invoke(input.data)
@@ -111,7 +143,9 @@ export namespace ReservContractSteps {
    * per-reserve fee its liquidity earns on every swap that draws from it. Signed
    * by the reserve's `owner`; the rate is `0` (charge nothing) or `[1, 9900]`.
    */
-  export function planSetrsvfee<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetrsvfee<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -155,7 +189,9 @@ export namespace ReservContractSteps {
    * `sysio.reserv::claimrsvfee` — pay one reserve's accrued owner fee out to its
    * owner as real WIRE and zero the accrual. Signed by the reserve's `owner`.
    */
-  export function planClaimrsvfee<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planClaimrsvfee<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,

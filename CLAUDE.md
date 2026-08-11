@@ -282,6 +282,11 @@ The bootstrap seeds them during epoch 0; a flow's `plan()` phases always run AFT
 `EpochBootstrap` advances epoch 0→1, and the depot gates `regreserve` to epoch 0,
 so `regreserve` can never be called from a flow phase.
 
+**Legacy reserve compatibility.** Bootstrap reads the deployed `sysio.reserv`
+ABI before configuring fee-emissions routing. If `setconfig` is absent, only the
+zero-routing default is accepted as a reported no-op; non-zero routing fails.
+This keeps current SIM2 reproducible without hiding a real configuration gap.
+
 ## Key Architecture (`packages/cluster-tool/src/`)
 
 - **`orchestration/`** — the engine (`ClusterBuild*`), `ClusterBuildContext`

@@ -43,6 +43,10 @@ beneath
 `/tmp/wire-flow-swap-epoch-stress/reports/`; cluster logs and OPP debugging
 artifacts remain in the same cluster directory.
 
+The bootstrap is compatible with the current SIM2 reserve contract: when its
+ABI lacks `sysio.reserv::setconfig`, the zero-valued fee-emissions routing step
+is reported as a legacy no-op. Non-zero routing still requires the newer action.
+
 The separate `wire-cluster-tool readiness` command remains the read-only tool
 for inspecting an already-running SIM2 cluster; this flow owns and stresses a
 fresh local cluster for reproducible debugging.

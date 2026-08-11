@@ -184,6 +184,11 @@ post-load soak. Run it locally with the canonical runner and heartbeat monitor
 shown in the package
 [README](packages/flow-swap-epoch-stress/README.md).
 
+Bootstrap supports the current SIM2 `sysio.reserv` ABI, which predates the
+zero-valued fee-emissions `setconfig` action: that write is skipped only when
+the action is absent and the requested routing remains zero. A non-zero value
+still fails rather than silently leaving the contract misconfigured.
+
 Each `--wire-build-path` / `--ethereum-path` / `--solana-path` flag falls back to
 its env var (`WIRE_BUILD_PATH` / `WIRE_ETH_PATH` / `WIRE_SOLANA_PATH`); one of the
 two is required. `--cluster-path` (env `WIRE_CLUSTER_PATH`) is optional — omit it
