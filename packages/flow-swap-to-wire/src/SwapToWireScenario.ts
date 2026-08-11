@@ -570,13 +570,19 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
               SwapToWireScenario.Output.recipient
             ),
             target = ctx.outputs.assert(SwapToWireScenario.Output.target)
+          // paywire CREDITS the recipient rather than transferring: it settles inside the
+          // never-throw consensus dispatch chain, where a pushed `sysio.token::transfer` would let
+          // the recipient's notify handler abort the delivery. So wait for the claimable balance,
+          // not the token balance — the latter stays at zero until the recipient pulls it.
           await pollUntil(
-            "recipient WIRE balance reaches the target",
+            "recipient claimable WIRE reaches the target",
             async () =>
-              (await ctx.wire.getWireBalance(recipient.account)) >= target,
+              (await ctx.wire.getWireClaimable(recipient.account)) >= target,
             Constants.PayoutDeadlineMs,
             Constants.LongPollIntervalMs
           )
+          // Bridging into WIRE is a two-step flow now: settle, then claim.
+          await ctx.wire.claimWire(recipient.account)
           // paywire pays `dst_amount` exactly, and since #550 `dst_amount` is
           // the depot's own quote — `split_wire_fee(gross).net` — not the
           // caller's `target_amount`. The fee is borne by the swapper, not by
@@ -633,6 +639,9 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
             ),
             target = ctx.outputs.assert(SwapToWireScenario.Output.target),
             fee = ctx.outputs.assert(SwapToWireScenario.Output.wireLegFee),
+            // The payout leg only leaves custody once the recipient claims it, which the
+            // recipient-paid-exact step above already did; the fee's emissions half left at
+            // settlement and its rewards half drains at the epoch boundary.
             expectedCustody = custodyBefore - target - fee
           await pollUntil(
             "rewards bucket drained from sysio.reserv custody",

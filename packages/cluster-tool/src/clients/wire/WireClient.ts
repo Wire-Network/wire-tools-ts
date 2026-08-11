@@ -416,6 +416,68 @@ export class WireClient {
     return BigInt(whole) * 1_000_000_000n + BigInt(frac.padEnd(9, "0"))
   }
 
+  /**
+   * Pull `account`'s claimable WIRE from `sysio.reserv` — swap-to-WIRE payouts and swap-from-WIRE
+   * refunds.
+   *
+   * Those settlement paths credit a balance instead of transferring: `sysio.token::transfer`
+   * notifies its recipient, and the chain runs notified receivers with no exception isolation, so
+   * a pushed payout let the recipient abort the enclosing transaction — which for `refundwire`
+   * meant halting the epoch drain chain-wide. The claim carries the claimant's own authority, so a
+   * hostile recipient can only block itself.
+   *
+   * Throws when nothing is owed; check {@link getWireClaimable} first if that is not a failure.
+   */
+  async claimWire(account: string, permission = "active") {
+    return this.invoke("sysio.reserv", "claimwire", { account }, [{ actor: account, permission }])
+  }
+
+  /**
+   * WIRE owed to `account` but not yet claimed, or 0n when there is no row.
+   *
+   * Raw `getTableRows` rather than the typed contract-table accessor
+   * (`prefer-typed-contract-table-accessors.md`) because `wireclaims` is new and does not reach
+   * the typed surface until `@wireio/sdk-core` publishes the regenerated `SysioContractTypes`.
+   * Switch to `getSysioContract(SysioContractName.reserv).tables.wireclaims.query()` once that
+   * version is released and this package's dependency is bumped.
+   */
+  async getWireClaimable(account: string): Promise<bigint> {
+    const { rows } = await this.getTableRows<{ balance: string | number }>({
+      account: "sysio.reserv",
+      scope: "sysio.reserv",
+      table: "wireclaims",
+      lowerBound: account,
+      upperBound: account,
+      limit: 1
+    })
+    return rows.length === 0 ? 0n : BigInt(rows[0].balance)
+  }
+
+  /**
+   * Pull `account`'s credited epoch pay from `sysio.system` — producer, standby, batch-operator and
+   * category-bucket shares. `payepoch` credits rather than transfers for the same reason as above:
+   * it runs inline from `sysio.epoch::advance`, which must never abort.
+   */
+  async claimPay(account: string, permission = "active") {
+    return this.invoke("sysio", "claimpay", { account_name: account }, [
+      { actor: account, permission }
+    ])
+  }
+
+  /** Epoch pay owed to `account` but not yet claimed, or 0n when there is no row. Raw table read
+   *  for the same reason as {@link getWireClaimable}. */
+  async getPayClaimable(account: string): Promise<bigint> {
+    const { rows } = await this.getTableRows<{ balance: string | number }>({
+      account: "sysio",
+      scope: "sysio",
+      table: "payclaims",
+      lowerBound: account,
+      upperBound: account,
+      limit: 1
+    })
+    return rows.length === 0 ? 0n : BigInt(rows[0].balance)
+  }
+
   // Convenience getters delegate to the typed contract-table accessor
   // (prefer-typed-contract-table-accessors.md) — never a raw getTableRows.
   getOperators() {
