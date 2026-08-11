@@ -79,9 +79,9 @@ export namespace LoadProfile {
    * Level used when a caller names none and supplies no other fallback.
    *
    * Deliberately mid-range: each consumer declares the fallback that preserves
-   * ITS behaviour instead of inheriting one. The `wire-opp-stress` CLI takes
-   * this default; `flow-swap-stress-saturation` passes `saturating` explicitly,
-   * so an unset environment reproduces its calibrated soak byte-for-byte.
+   * ITS behaviour instead of inheriting one. `flow-swap-stress-saturation`
+   * passes `saturating` explicitly, so an unset environment reproduces its
+   * calibrated soak byte-for-byte.
    */
   export const DefaultLevel = LoadLevel.moderate
   /**
