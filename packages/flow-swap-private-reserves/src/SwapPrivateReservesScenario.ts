@@ -9,6 +9,7 @@ import {
   ClusterBuildPhase,
   Constants as HarnessConstants,
   Report,
+  Steps,
   SwapScenarioContext,
   SwapUserIdentities,
   WireReserveTool,
@@ -388,6 +389,49 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
       )
     )
 
+    // ── 6b. The owner prices BOTH reserves before any swap runs ──
+    // Both rows are ACTIVE and owned by now, which is what `setrsvfee` requires
+    // (an owner-less reserve can never charge). One write per step.
+    ClusterBuildPhase.create<Context>(
+      cluster,
+      "ReserveOwnerFees",
+      "The reserve owner sets an owner fee on each private reserve"
+    ).push(
+      Steps.contracts.sysio.reserv.planSetrsvfee<Context>(
+        Actor.User,
+        "set-ethereum-reserve-fee",
+        `owner charges ${Constants.ReserveOwnerFees.EthereumBps} bps on the private ETH reserve`,
+        writeOptions,
+        {
+          chain_code: { value: Constants.Reserves.Ethereum.ChainCode },
+          token_code: { value: Constants.Reserves.Ethereum.TokenCode },
+          reserve_code: { value: Constants.Reserves.PrivateReserveCode },
+          owner_fee_bps: Constants.ReserveOwnerFees.EthereumBps
+        },
+        Constants.Accounts.Owner
+      ),
+      Steps.contracts.sysio.reserv.planSetrsvfee<Context>(
+        Actor.User,
+        "set-solana-reserve-fee",
+        `owner charges ${Constants.ReserveOwnerFees.SolanaBps} bps on the private SOL reserve`,
+        writeOptions,
+        {
+          chain_code: { value: Constants.Reserves.Solana.ChainCode },
+          token_code: { value: Constants.Reserves.Solana.TokenCode },
+          reserve_code: { value: Constants.Reserves.PrivateReserveCode },
+          owner_fee_bps: Constants.ReserveOwnerFees.SolanaBps
+        },
+        Constants.Accounts.Owner
+      ),
+      verifyStep<Context>(
+        Actor.User,
+        "reserve-fees-recorded",
+        "both private reserves carry the owner's fee rate and have earned nothing yet",
+        runVerifyReserveFeesSet,
+        writeOptions
+      )
+    )
+
     // ── 7. Phase A: ETH (native) → USDCSOL (SPL) through the private pair ──
     ClusterBuildPhase.create<Context>(
       cluster,
@@ -517,7 +561,61 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
         noUwreqOptions
       )
     )
+
+    // ── 10. The owner claims what both reserves earned across A and B ──
+    ClusterBuildPhase.create<Context>(
+      cluster,
+      "ClaimReserveOwnerFees",
+      "The reserve owner claims each private reserve's accrued owner fee as real WIRE"
+    ).push(
+      verifyStep<Context>(
+        Actor.User,
+        "snapshot-owner-balance",
+        "record the owner's WIRE balance before either claim",
+        runSnapshotOwnerBalance,
+        writeOptions
+      ),
+      Steps.contracts.sysio.reserv.planClaimrsvfee<Context>(
+        Actor.User,
+        "claim-ethereum-reserve-fee",
+        "owner claims the private ETH reserve's accrued owner fee",
+        writeOptions,
+        {
+          chain_code: { value: Constants.Reserves.Ethereum.ChainCode },
+          token_code: { value: Constants.Reserves.Ethereum.TokenCode },
+          reserve_code: { value: Constants.Reserves.PrivateReserveCode }
+        },
+        Constants.Accounts.Owner
+      ),
+      Steps.contracts.sysio.reserv.planClaimrsvfee<Context>(
+        Actor.User,
+        "claim-solana-reserve-fee",
+        "owner claims the private SOL reserve's accrued owner fee",
+        writeOptions,
+        {
+          chain_code: { value: Constants.Reserves.Solana.ChainCode },
+          token_code: { value: Constants.Reserves.Solana.TokenCode },
+          reserve_code: { value: Constants.Reserves.PrivateReserveCode }
+        },
+        Constants.Accounts.Owner
+      ),
+      verifyStep<Context>(
+        Actor.User,
+        "owner-fees-paid-out",
+        "both accruals are swept to zero and the owner holds exactly what the pair earned",
+        runVerifyOwnerFeesClaimed,
+        writeOptions
+      )
+    )
   }
+}
+
+/** Baseline the owner's WIRE balance before either `claimrsvfee` fires. */
+async function runSnapshotOwnerBalance(ctx: Context): Promise<void> {
+  ctx.outputs.set(
+    Outputs.ownerBalanceBeforeClaims,
+    await ctx.wire.getWireBalance(Constants.Accounts.Owner)
+  )
 }
 
 // ── Substrate-health verify runners ─────────────────────────────────────────
@@ -833,10 +931,18 @@ async function runPhaseAFourLegBooks(ctx: Context): Promise<void> {
   const booksBefore = ctx.outputs.assert(Outputs.phaseABooksBefore),
     wireIntermediate = ctx.outputs.assert(Outputs.phaseAWireIntermediate),
     target = ctx.outputs.assert(Outputs.phaseATarget),
-    fee = WireReserveTool.splitWireFee(
+    // THREE fees ride this leg: the network fee plus BOTH reserves' owner fees
+    // (WIRE-281 — "per reserve"). `.fee` is their total, which is what leaves
+    // the pair's Σwire. Phase A runs ETH → SOL, so ETH is the source side.
+    split = WireReserveTool.splitWireFee(
       wireIntermediate,
-      await WireReserveTool.readFeeBps(ctx.wire)
-    ).fee,
+      await WireReserveTool.readFeeBps(ctx.wire),
+      WireReserveTool.FeeUnderwriterShareBps,
+      WireReserveTool.FeeEmissionsShareBps,
+      Constants.ReserveOwnerFees.EthereumBps,
+      Constants.ReserveOwnerFees.SolanaBps
+    ),
+    fee = split.fee,
     ethereumBook = await ctx.reserveBook(
       Constants.Reserves.Ethereum.ChainCode,
       Constants.Reserves.Ethereum.TokenCode,
@@ -872,6 +978,108 @@ async function runPhaseAFourLegBooks(ctx: Context): Promise<void> {
     ethereumBook.wire + solanaBook.wire,
     booksBefore.src.wire + booksBefore.dst.wire - fee,
     "PhaseA books: Σwire must drop by exactly the WIRE-leg fee"
+  )
+
+  // Per-reserve attribution: BOTH reserves earned their own owner fee off the
+  // same leg, so the single owner is paid twice for one swap. The amounts leave
+  // the reserve BOOKS (asserted above) and land as claimable accruals.
+  const ethereumFee = await ctx.reserveOwnerFee(
+      Constants.Reserves.Ethereum.ChainCode,
+      Constants.Reserves.Ethereum.TokenCode,
+      Constants.Reserves.PrivateReserveCode
+    ),
+    solanaFee = await ctx.reserveOwnerFee(
+      Constants.Reserves.Solana.ChainCode,
+      Constants.Reserves.Solana.TokenCode,
+      Constants.Reserves.PrivateReserveCode
+    )
+  Assert.ok(
+    split.srcReserveShare > 0n && split.dstReserveShare > 0n,
+    "PhaseA fees: both reserve owner fees must be non-zero at these amounts"
+  )
+  Assert.strictEqual(
+    ethereumFee.accrued,
+    split.srcReserveShare,
+    "PhaseA fees: the source (ETH) reserve accrued its own owner fee"
+  )
+  Assert.strictEqual(
+    solanaFee.accrued,
+    split.dstReserveShare,
+    "PhaseA fees: the destination (SOL) reserve accrued its own owner fee"
+  )
+  Assert.strictEqual(
+    ethereumFee.lifetime,
+    ethereumFee.accrued,
+    "PhaseA fees: nothing claimed yet, so lifetime equals the accrual"
+  )
+  Assert.strictEqual(
+    solanaFee.lifetime,
+    solanaFee.accrued,
+    "PhaseA fees: nothing claimed yet, so lifetime equals the accrual"
+  )
+}
+
+/**
+ * Both private reserves carry the owner's rate before any swap runs, and
+ * neither has earned anything yet — the baseline the Phase A accrual assertions
+ * are measured against.
+ */
+async function runVerifyReserveFeesSet(ctx: Context): Promise<void> {
+  const ethereum = await ctx.reserveOwnerFee(
+      Constants.Reserves.Ethereum.ChainCode,
+      Constants.Reserves.Ethereum.TokenCode,
+      Constants.Reserves.PrivateReserveCode
+    ),
+    solana = await ctx.reserveOwnerFee(
+      Constants.Reserves.Solana.ChainCode,
+      Constants.Reserves.Solana.TokenCode,
+      Constants.Reserves.PrivateReserveCode
+    )
+  Assert.strictEqual(
+    ethereum.feeBps,
+    Constants.ReserveOwnerFees.EthereumBps,
+    "the ETH private reserve must carry the owner's configured fee"
+  )
+  Assert.strictEqual(
+    solana.feeBps,
+    Constants.ReserveOwnerFees.SolanaBps,
+    "the SOL private reserve must carry the owner's configured fee"
+  )
+  Assert.strictEqual(ethereum.owner, Constants.Accounts.Owner, "ETH reserve owner")
+  Assert.strictEqual(solana.owner, Constants.Accounts.Owner, "SOL reserve owner")
+  Assert.strictEqual(ethereum.accrued, 0n, "no ETH reserve fee earned before any swap")
+  Assert.strictEqual(solana.accrued, 0n, "no SOL reserve fee earned before any swap")
+}
+
+/**
+ * The owner sweeps both reserves' accrued fees into their own WIRE balance —
+ * the payout half of WIRE-281. Each claim zeroes that reserve's accrual while
+ * its lifetime audit total survives.
+ */
+async function runVerifyOwnerFeesClaimed(ctx: Context): Promise<void> {
+  const ethereum = await ctx.reserveOwnerFee(
+      Constants.Reserves.Ethereum.ChainCode,
+      Constants.Reserves.Ethereum.TokenCode,
+      Constants.Reserves.PrivateReserveCode
+    ),
+    solana = await ctx.reserveOwnerFee(
+      Constants.Reserves.Solana.ChainCode,
+      Constants.Reserves.Solana.TokenCode,
+      Constants.Reserves.PrivateReserveCode
+    ),
+    claimed = ctx.outputs.assert(Outputs.ownerBalanceBeforeClaims)
+  Assert.strictEqual(ethereum.accrued, 0n, "the ETH reserve's accrual is swept to zero")
+  Assert.strictEqual(solana.accrued, 0n, "the SOL reserve's accrual is swept to zero")
+  Assert.ok(
+    ethereum.lifetime > 0n && solana.lifetime > 0n,
+    "each reserve's lifetime audit total survives the claim"
+  )
+  // Both claims paid REAL WIRE to the owner.
+  const balance = await ctx.wire.getWireBalance(Constants.Accounts.Owner)
+  Assert.strictEqual(
+    balance,
+    claimed + ethereum.lifetime + solana.lifetime,
+    "the owner received exactly both reserves' earned fees"
   )
 }
 
@@ -1010,9 +1218,16 @@ async function runPhaseBFourLegBooks(ctx: Context): Promise<void> {
   const booksBefore = ctx.outputs.assert(Outputs.phaseBBooksBefore),
     wireIntermediate = ctx.outputs.assert(Outputs.phaseBWireIntermediate),
     target = ctx.outputs.assert(Outputs.phaseBTarget),
+    // Phase B is the INVERSE direction (SOL → ETH), so the SOL reserve is the
+    // source side and the ETH reserve the destination — the same two rates,
+    // swapped into their Phase B roles.
     fee = WireReserveTool.splitWireFee(
       wireIntermediate,
-      await WireReserveTool.readFeeBps(ctx.wire)
+      await WireReserveTool.readFeeBps(ctx.wire),
+      WireReserveTool.FeeUnderwriterShareBps,
+      WireReserveTool.FeeEmissionsShareBps,
+      Constants.ReserveOwnerFees.SolanaBps,
+      Constants.ReserveOwnerFees.EthereumBps
     ).fee,
     ethereumBook = await ctx.reserveBook(
       Constants.Reserves.Ethereum.ChainCode,
