@@ -1,5 +1,6 @@
 import { SysioContracts } from "@wireio/sdk-core"
 import {
+  ClusterEpochSchedulerState,
   ClusterReadinessArea,
   ClusterReadinessCheckId,
   ClusterReadinessEndpointKind,
@@ -17,6 +18,7 @@ import {
   ReadinessMaxTableRows,
   readinessBoundedQuery,
   readinessEnumMatches,
+  readinessErrorMessage,
   readinessSlug
 } from "../../readiness/readinessUtils.js"
 import { sleep } from "../../utils/asyncUtils.js"
@@ -42,6 +44,26 @@ const RequiredSwapContracts = [
   SysioContractName.reserv,
   SysioContractName.uwrit
 ]
+
+const ReadinessEpochProgressRows = 64,
+  ReadinessEpochProgressWindowCycles = 2
+
+interface EpochProgressSample {
+  readonly epochIndex: number
+  readonly emittedAt: string
+}
+
+interface EpochSchedulerAssessment {
+  readonly state: ClusterEpochSchedulerState
+  readonly overdueMs: number
+  readonly maximumExtensionMs: number
+  readonly progressWindowMs: number
+  readonly progressing: boolean
+  readonly latestProgressEpoch?: number
+  readonly previousProgressEpoch?: number
+  readonly latestProgressAt?: string
+  readonly latestProgressAgeMs?: number
+}
 
 interface ClusterReadinessInput extends ReadinessCheckStepInput {
   readonly kind: "ClusterReadinessSteps.Input"
@@ -289,7 +311,7 @@ export namespace ClusterReadinessSteps {
       ClusterReadinessCheckId["wire.epoch-scheduler"],
       ClusterReadinessArea.swap,
       true,
-      ClusterReadinessReasonCode["configuration-incomplete"],
+      ClusterReadinessReasonCode["protocol-unavailable"],
       runEpochScheduler
     )
   }
@@ -697,7 +719,20 @@ export async function runEpochScheduler(
 ): Promise<void> {
   signal.throwIfAborted()
   await runReadinessAssertion(context, input, async () => {
-    const [configResult, stateResult] = await Promise.all([
+    const progressResultPromise = context.wireSystem.msgch.tables.envlog
+        .query({
+          limit: ReadinessEpochProgressRows,
+          reverse: true
+        })
+        .then(result => ({
+          rows: result.rows,
+          error: undefined as string | undefined
+        }))
+        .catch((error: unknown) => ({
+          rows: [],
+          error: readinessErrorMessage(error)
+        })),
+      [configResult, stateResult, progressResult] = await Promise.all([
         readinessBoundedQuery(
           context.wireSystem.epoch.tables.epochcfg.query({
             limit: ReadinessMaxTableRows
@@ -709,52 +744,160 @@ export async function runEpochScheduler(
             limit: ReadinessMaxTableRows
           }),
           "sysio.epoch::epochstate"
-        )
+        ),
+        progressResultPromise
       ]),
       config = configResult.rows[0],
       state = stateResult.rows[0]
     if (!config || !state)
       throw new Error("sysio.epoch configuration or state is missing")
-    const nextEpochStart = state.next_epoch_start.toString(),
-      overdueMs = epochOverdueMs(nextEpochStart),
-      maximumExtensionMs = ProtocolTiming.EpochExtensionMaxSec * 1_000
+    const currentEpoch = Number(state.current_epoch_index),
+      epochDurationSec = Number(config.epoch_duration_sec),
+      nextEpochStart = state.next_epoch_start.toString(),
+      assessment = assessEpochScheduler(
+        currentEpoch,
+        nextEpochStart,
+        epochDurationSec,
+        progressResult.rows.map(row => ({
+          epochIndex: Number(row.epoch_index),
+          emittedAt: row.emitted_at.toString()
+        }))
+      ),
+      validEpochConfiguration =
+        Number.isInteger(currentEpoch) &&
+        currentEpoch >= 0 &&
+        Number.isFinite(epochDurationSec) &&
+        epochDurationSec > 0,
+      evidence = {
+        classification:
+          state.is_paused || !validEpochConfiguration
+            ? ClusterEpochSchedulerState["stalled-or-unproven"]
+            : assessment.state,
+        currentEpoch,
+        epochDurationSec,
+        paused: state.is_paused,
+        nextEpochStart,
+        overdueMs: assessment.overdueMs,
+        maximumExtensionMs: assessment.maximumExtensionMs,
+        progressing: assessment.progressing,
+        progressWindowMs: assessment.progressWindowMs,
+        latestProgressEpoch: assessment.latestProgressEpoch,
+        previousProgressEpoch: assessment.previousProgressEpoch,
+        latestProgressAt: assessment.latestProgressAt,
+        latestProgressAgeMs: assessment.latestProgressAgeMs,
+        progressSampleCount: progressResult.rows.length,
+        progressQueryError: progressResult.error
+      }
     if (
       state.is_paused ||
-      Number(config.epoch_duration_sec) <= 0 ||
-      !Number.isFinite(overdueMs) ||
-      overdueMs > maximumExtensionMs
+      !validEpochConfiguration ||
+      !Number.isFinite(assessment.overdueMs)
     ) {
       throw new ReadinessAssertionError(
         state.is_paused
           ? "sysio.epoch is paused"
-          : Number(config.epoch_duration_sec) <= 0
-            ? "sysio.epoch has an invalid duration"
-            : !Number.isFinite(overdueMs)
-              ? "sysio.epoch has an invalid next-epoch timestamp"
-              : `sysio.epoch is ${Math.round(overdueMs / 1_000)}s overdue`,
+          : !Number.isInteger(currentEpoch) || currentEpoch < 0
+            ? "sysio.epoch has an invalid current epoch index"
+            : !Number.isFinite(epochDurationSec) || epochDurationSec <= 0
+              ? "sysio.epoch has an invalid duration"
+              : "sysio.epoch has an invalid next-epoch timestamp",
         ClusterReadinessReasonCode["protocol-unavailable"],
-        {
-          currentEpoch: state.current_epoch_index,
-          epochDurationSec: config.epoch_duration_sec,
-          paused: state.is_paused,
-          nextEpochStart,
-          overdueMs,
-          maximumExtensionMs
-        }
+        evidence
       )
     }
+    if (assessment.state === ClusterEpochSchedulerState["advancing-late"])
+      throw new ReadinessAssertionError(
+        `Recent scheduler progression reached epoch ${currentEpoch}, but its next boundary is ${Math.round(assessment.overdueMs / 1_000)}s late`,
+        ClusterReadinessReasonCode["protocol-degraded"],
+        evidence
+      )
+    if (assessment.state === ClusterEpochSchedulerState["stalled-or-unproven"])
+      throw new ReadinessAssertionError(
+        `Epoch ${currentEpoch} is ${Math.round(assessment.overdueMs / 1_000)}s behind its next boundary; recent epoch progression was not proven`,
+        ClusterReadinessReasonCode["protocol-unavailable"],
+        evidence
+      )
     return {
-      detail: `Epoch ${state.current_epoch_index} is active with a ${config.epoch_duration_sec}s duration`,
-      evidence: {
-        currentEpoch: state.current_epoch_index,
-        epochDurationSec: config.epoch_duration_sec,
-        paused: state.is_paused,
-        nextEpochStart,
-        overdueMs,
-        maximumExtensionMs
-      }
+      detail: `Epoch ${currentEpoch} is on time with a ${epochDurationSec}s duration`,
+      evidence
     }
   })
+}
+
+/**
+ * Classify scheduler timeliness separately from recent epoch progression.
+ *
+ * @param currentEpoch Current `sysio.epoch::epochstate` epoch index.
+ * @param nextEpochStart Wire `time_point_sec` string for the next boundary.
+ * @param epochDurationSec Configured epoch duration in seconds.
+ * @param progressSamples Recent `sysio.msgch::envlog` epoch emissions.
+ * @param nowMs Observation time in Unix milliseconds.
+ * @return Timeliness and historical progression evidence for reporting.
+ */
+export function assessEpochScheduler(
+  currentEpoch: number,
+  nextEpochStart: string,
+  epochDurationSec: number,
+  progressSamples: readonly EpochProgressSample[],
+  nowMs: number = Date.now()
+): EpochSchedulerAssessment {
+  const validEpochConfiguration =
+      Number.isInteger(currentEpoch) &&
+      currentEpoch >= 0 &&
+      Number.isFinite(epochDurationSec) &&
+      epochDurationSec > 0,
+    overdueMs = epochOverdueMs(nextEpochStart, nowMs),
+    maximumExtensionMs = ProtocolTiming.EpochExtensionMaxSec * 1_000,
+    progressWindowMs =
+      (epochDurationSec + ProtocolTiming.EpochExtensionMaxSec) *
+      ReadinessEpochProgressWindowCycles *
+      1_000,
+    validSamples = progressSamples
+      .map(sample => ({
+        ...sample,
+        emittedAtMs: readinessTimestampMs(sample.emittedAt)
+      }))
+      .filter(
+        sample =>
+          Number.isFinite(sample.epochIndex) &&
+          Number.isFinite(sample.emittedAtMs)
+      ),
+    epochs = [...new Set(validSamples.map(sample => sample.epochIndex))].sort(
+      (left, right) => right - left
+    ),
+    latestProgressEpoch = epochs[0],
+    previousProgressEpoch = epochs[1],
+    latestSample = validSamples
+      .filter(sample => sample.epochIndex === latestProgressEpoch)
+      .sort((left, right) => right.emittedAtMs - left.emittedAtMs)[0],
+    latestProgressAgeMs = latestSample
+      ? Math.max(0, nowMs - latestSample.emittedAtMs)
+      : undefined,
+    progressing =
+      validEpochConfiguration &&
+      latestProgressEpoch !== undefined &&
+      previousProgressEpoch !== undefined &&
+      latestProgressEpoch >= currentEpoch - 1 &&
+      latestProgressAgeMs <= progressWindowMs,
+    state =
+      validEpochConfiguration &&
+      Number.isFinite(overdueMs) &&
+      overdueMs <= maximumExtensionMs
+        ? ClusterEpochSchedulerState["on-time"]
+        : progressing
+          ? ClusterEpochSchedulerState["advancing-late"]
+          : ClusterEpochSchedulerState["stalled-or-unproven"]
+  return {
+    state,
+    overdueMs,
+    maximumExtensionMs,
+    progressWindowMs,
+    progressing,
+    latestProgressEpoch,
+    previousProgressEpoch,
+    latestProgressAt: latestSample?.emittedAt,
+    latestProgressAgeMs
+  }
 }
 
 /**
@@ -769,10 +912,12 @@ export function epochOverdueMs(
   nextEpochStart: string,
   nowMs: number = Date.now()
 ): number {
-  const timestamp = Date.parse(
-    nextEpochStart.endsWith("Z") ? nextEpochStart : `${nextEpochStart}Z`
-  )
+  const timestamp = readinessTimestampMs(nextEpochStart)
   return Number.isFinite(timestamp) ? Math.max(0, nowMs - timestamp) : NaN
+}
+
+function readinessTimestampMs(timestamp: string): number {
+  return Date.parse(timestamp.endsWith("Z") ? timestamp : `${timestamp}Z`)
 }
 
 /** Run external-chain registry verification. */

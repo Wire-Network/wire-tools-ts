@@ -49,10 +49,11 @@ boundaries, healthy state, routes, and granular check evidence. See
 Swap readiness validates every advertised public reserve, including zero-depth
 rows, against depot token bindings and available underwriter collateral. Route
 amounts come from the same live read-only `sysio.reserv::swapquote` SDK surface
-used by Hub. An
-optional deployment profile adds exact external custody and deployment-identity
-verification. Funded wallet execution and terminal settlement are not part of
-this manual command.
+used by Hub. Epoch readiness retains the 30-second protocol allowance while
+reporting whether an overdue scheduler is still advancing or has no recent
+progression evidence. An optional deployment profile adds exact external
+custody and deployment-identity verification. Funded wallet execution and
+terminal settlement are not part of this manual command.
 
 ### What gets spawned
 

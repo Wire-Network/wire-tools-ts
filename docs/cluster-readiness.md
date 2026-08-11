@@ -105,8 +105,20 @@ Solana upgradeable-loader ProgramData/hash identity.
 The swap suite then checks:
 
 - required Wire swap contract ABIs, actions, and tables;
-- active epoch scheduling;
+- active epoch scheduling, including timeliness and recent epoch progression;
 - active EVM/SVM registry rows aligned with endpoint metadata.
+
+The epoch check treats the protocol's 30-second post-boundary extension as the
+readiness limit. If that limit is exceeded, the run remains blocked. Recent
+`sysio.msgch::envlog` emissions then make the diagnosis precise:
+
+- `advancing-late` / `protocol-degraded`: at least two recent epoch indices
+  prove the scheduler is moving, but it is outside the allowed timing window;
+- `stalled-or-unproven` / `protocol-unavailable`: the scheduler is outside the
+  timing window and recent progression cannot be proven.
+
+`on-time` passes. Wire head advancement is independent evidence and is never
+used as proof that epochs are progressing.
 
 It reads the typed `sdk-core` system-contract clients for the remaining
 depot-state checks:

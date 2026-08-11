@@ -23,9 +23,17 @@ export enum ClusterReadinessCheckStatus {
   advisory = "advisory"
 }
 
+/** Stable epoch-scheduler states emitted in readiness evidence. */
+export enum ClusterEpochSchedulerState {
+  "on-time" = "on-time",
+  "advancing-late" = "advancing-late",
+  "stalled-or-unproven" = "stalled-or-unproven"
+}
+
 /** Stable reason codes used by the operator-facing readiness report. */
 export enum ClusterReadinessReasonCode {
   "cluster-unverified" = "cluster-unverified",
+  "protocol-degraded" = "protocol-degraded",
   "protocol-unavailable" = "protocol-unavailable",
   "deployment-incomplete" = "deployment-incomplete",
   "configuration-incomplete" = "configuration-incomplete",
