@@ -9,8 +9,9 @@ Ethereum-to-Solana half of `flow-swap-with-underwriting`:
 - The cluster bootstraps 21 producer accounts and 21 batch operators.
 - One real underwriter is bonded on Ethereum and Solana.
 - The flow verifies all 10 destination payouts, all 10 confirmed UWREQ rows,
-  three post-load epoch advances, and recent Solana outpost logs for
-  memory/heap errors.
+  15 post-load WIRE epoch advances, and recent Solana outpost logs for
+  memory/heap errors. The soak crosses the ten-epoch envelope-retention and
+  underwriting-lock windows, then observes five additional epochs.
 
 Every transaction is its own Step. The generated Markdown, HTML, and CSV
 reports contain the parameters, transaction/RPC evidence, payout observations,
@@ -34,9 +35,11 @@ node scripts/flow-heartbeat-monitor.mjs \
   --cluster-path /tmp/wire-flow-swap-epoch-stress
 ```
 
-This flow can take at least 138 minutes and is excluded from the default E2E
-suite. Run it on demand when validating Solana terminal, validator, OPP, or
-epoch-liveness changes. Reports are written beneath
+This is a long-running flow and is excluded from the default E2E suite. A
+missing epoch advance fails after three extension-inclusive epoch windows
+instead of waiting for the full run ceiling. Run it on demand when validating
+Solana terminal, validator, OPP, or epoch-liveness changes. Reports are written
+beneath
 `/tmp/wire-flow-swap-epoch-stress/reports/`; cluster logs and OPP debugging
 artifacts remain in the same cluster directory.
 

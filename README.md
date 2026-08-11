@@ -179,8 +179,9 @@ and every live run is paired with the heartbeat monitor (see
 The long-running `flow-swap-epoch-stress` scenario is manual-only and excluded
 from the default E2E suite. It launches 10 simultaneous Ethereum → Solana swaps
 against 21 producer accounts and 21 batch operators, then records payout,
-UWREQ, Solana memory-log, and post-load epoch-liveness evidence. Run it locally
-with the canonical runner and heartbeat monitor shown in the package
+UWREQ, Solana memory-log, and per-epoch liveness evidence across a 15-epoch
+post-load soak. Run it locally with the canonical runner and heartbeat monitor
+shown in the package
 [README](packages/flow-swap-epoch-stress/README.md).
 
 Each `--wire-build-path` / `--ethereum-path` / `--solana-path` flag falls back to

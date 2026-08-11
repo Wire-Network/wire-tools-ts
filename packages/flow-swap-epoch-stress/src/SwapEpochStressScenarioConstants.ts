@@ -27,8 +27,13 @@ export namespace SwapEpochStressScenarioConstants {
   export const PollDeadlineBufferMs = 30_000
   export const RequestStepTimeoutMs = 60_000
   export const UnderwriterActiveEpochBudget = 9
-  export const RequiredPostLoadEpochAdvances = 3
-  export const PostLoadEpochBudget = 6
+  /**
+   * Post-load soak: crosses the ten-epoch envelope-retention and underwriting
+   * lock windows, then observes five additional steady-state epochs.
+   */
+  export const RequiredPostLoadEpochAdvances = 15
+  /** Missed effective-epoch windows tolerated before declaring a stall. */
+  export const EpochAdvanceFailureBudget = ProtocolTiming.EpochVerifyEpochCount
   export const SettlementDeadlineMs = ProtocolTiming.DoubleHopBudgetMs
   export const MsPerSecond = 1_000
 
@@ -40,10 +45,28 @@ export namespace SwapEpochStressScenarioConstants {
     )
   }
 
-  export function postLoadEpochDeadlineMs(): number {
+  /**
+   * Maximum time allowed for any single observed epoch advance.
+   *
+   * @returns Extension-inclusive epoch-stall deadline in milliseconds.
+   */
+  export function epochAdvanceDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      PostLoadEpochBudget *
+      EpochAdvanceFailureBudget *
+      MsPerSecond
+    )
+  }
+
+  /**
+   * Outer Step ceiling for the complete post-load epoch soak.
+   *
+   * @returns Extension-inclusive observation ceiling in milliseconds.
+   */
+  export function observationStepTimeoutMs(): number {
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      (RequiredPostLoadEpochAdvances + EpochAdvanceFailureBudget) *
       MsPerSecond
     )
   }

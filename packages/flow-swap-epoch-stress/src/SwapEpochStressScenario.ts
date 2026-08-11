@@ -70,9 +70,7 @@ export class SwapEpochStressScenario extends FlowScenario<SwapScenarioContext> {
     }
     const diagnosticsOptions = {
       timeoutMs:
-        Constants.postLoadEpochDeadlineMs() +
-        Constants.PollDeadlineBufferMs +
-        120_000
+        Constants.observationStepTimeoutMs() + Constants.PollDeadlineBufferMs
     }
 
     WireUnderwriterTool.planCollateralDeposit(
@@ -241,12 +239,12 @@ export class SwapEpochStressScenario extends FlowScenario<SwapScenarioContext> {
     ClusterBuildPhase.create(
       stress,
       "TerminalDiagnostics",
-      "Prove all UWREQs confirmed, the epoch remains live, and Solana logs are clean",
+      "Prove all UWREQs confirmed and keep Solana healthy for a 15-epoch post-load soak",
       [
         StressSteps.planTerminalDiagnostics(
           Actor.Sysio,
           "post-load-epoch-and-solana-health",
-          "require three post-load epoch advances and report UWREQ/Solana memory evidence",
+          "observe 15 post-load WIRE epoch advances and report UWREQ/Solana memory evidence",
           diagnosticsOptions,
           Constants.ActorCount
         )

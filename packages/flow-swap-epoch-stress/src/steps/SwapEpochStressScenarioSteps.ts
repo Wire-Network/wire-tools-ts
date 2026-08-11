@@ -264,20 +264,55 @@ export namespace SwapEpochStressScenarioSteps {
     const requiredEpoch =
       baselineEpoch + Constants.RequiredPostLoadEpochAdvances
     let observedEpoch = await currentEpoch(ctx)
+    const epochObservations = [
+      { epoch: observedEpoch, observedAt: new Date().toISOString() }
+    ]
+    const firstActor = ctx.outputs.assert(stressActorOutputKey(0))
+    const program = SolanaCollateralTool.loadOppOutpostProgram(
+      ctx,
+      firstActor.solanaKeypair
+    )
+    const memoryErrors = new Set<string>()
+    let programLogReadError: unknown
+    const scanSolanaProgramLogs = async (): Promise<void> => {
+      try {
+        const logs = (
+          await ctx.solana.getProgramLogs(program.programId, 100)
+        ).flat()
+        logs
+          .filter(line =>
+            /memory allocation failed|out of memory|heap(?:[ -]space)? violation/i.test(
+              line
+            )
+          )
+          .forEach(line => memoryErrors.add(line))
+      } catch (error) {
+        programLogReadError ??= error
+      }
+    }
+    await scanSolanaProgramLogs()
     let epochPollError: unknown
-    try {
-      await pollUntil(
-        `WIRE epoch advances from ${baselineEpoch} to at least ${requiredEpoch}`,
-        async () => {
-          signal.throwIfAborted()
-          observedEpoch = await currentEpoch(ctx)
-          return observedEpoch >= requiredEpoch
-        },
-        Constants.postLoadEpochDeadlineMs(),
-        Constants.LongPollIntervalMs
-      )
-    } catch (error) {
-      epochPollError = error
+    while (observedEpoch < requiredEpoch && epochPollError === undefined) {
+      const previousEpoch = observedEpoch
+      try {
+        await pollUntil(
+          `WIRE epoch advances beyond ${previousEpoch}`,
+          async () => {
+            signal.throwIfAborted()
+            observedEpoch = await currentEpoch(ctx)
+            return observedEpoch > previousEpoch
+          },
+          Constants.epochAdvanceDeadlineMs(),
+          Constants.LongPollIntervalMs
+        )
+        epochObservations.push({
+          epoch: observedEpoch,
+          observedAt: new Date().toISOString()
+        })
+        await scanSolanaProgramLogs()
+      } catch (error) {
+        epochPollError = error
+      }
     }
 
     const requests = await stressRequests(ctx)
@@ -288,30 +323,15 @@ export namespace SwapEpochStressScenarioSteps {
         SysioUwritUnderwriterequeststatus.UNDERWRITE_REQUEST_STATUS_CONFIRMED
       )
     )
-    const firstActor = ctx.outputs.assert(stressActorOutputKey(0))
-    const program = SolanaCollateralTool.loadOppOutpostProgram(
-      ctx,
-      firstActor.solanaKeypair
-    )
-    let programLogs: string[] = []
-    let programLogReadError: unknown
-    try {
-      programLogs = (
-        await ctx.solana.getProgramLogs(program.programId, 100)
-      ).flat()
-    } catch (error) {
-      programLogReadError = error
-    }
-    const memoryErrors = programLogs.filter(line =>
-      /memory allocation failed|out of memory|heap(?:[ -]space)? violation/i.test(
-        line
-      )
-    )
+    await scanSolanaProgramLogs()
+    const solanaMemoryErrors = [...memoryErrors]
 
     Report.StepExtraRecorder.note("post-load terminal diagnostics", {
       baselineEpoch,
       observedEpoch,
       requiredEpoch,
+      epochObservationCount: epochObservations.length,
+      epochObservations,
       expectedRequestCount: input.expectedRequestCount,
       observedRequestCount: requests.length,
       confirmedRequestCount: confirmed.length,
@@ -321,7 +341,7 @@ export namespace SwapEpochStressScenarioSteps {
         epochPollError instanceof Error
           ? epochPollError.message
           : String(epochPollError ?? ""),
-      solanaMemoryErrors: memoryErrors,
+      solanaMemoryErrors,
       solanaProgramLogReadError:
         programLogReadError instanceof Error
           ? programLogReadError.message
@@ -331,7 +351,7 @@ export namespace SwapEpochStressScenarioSteps {
     Assert.strictEqual(
       epochPollError,
       undefined,
-      `WIRE epoch failed to advance from ${baselineEpoch} to ${requiredEpoch}`
+      `WIRE epoch stalled at ${observedEpoch} before required epoch ${requiredEpoch}`
     )
     Assert.strictEqual(
       requests.length,
@@ -344,7 +364,7 @@ export namespace SwapEpochStressScenarioSteps {
       "not every stress underwrite request reached CONFIRMED"
     )
     Assert.deepStrictEqual(
-      memoryErrors,
+      solanaMemoryErrors,
       [],
       "Solana outpost logs contain memory/heap failure evidence"
     )
