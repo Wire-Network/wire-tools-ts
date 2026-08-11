@@ -127,6 +127,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `cluster-tool` | `@wireio/cluster-tool` | Core harness: process managers, chain clients, bootstrap, **`wire-cluster-tool` CLI** |
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Node-operator collateral deposit + withdraw remit |
 | `flow-swap-with-underwriting` | `@wireio/test-flow-swap-with-underwriting` | Bidirectional SWAP (ETH ↔ SOL) with underwriting |
+| `flow-swap-epoch-stress` | `@wireio/test-flow-swap-epoch-stress` | Manual 10-actor ETH → SOL swap/epoch stress diagnostic (21 producers + 21 batch operators) |
 | `flow-swap-non-native-tokens` | `@wireio/test-flow-swap-non-native-tokens` | SWAP of non-native tokens (USDC / USDT / LIQ) |
 | `flow-swap-variance-revert` | `@wireio/test-flow-swap-variance-revert` | Swap variance-tolerance revert |
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
@@ -174,6 +175,13 @@ and every live run is paired with the heartbeat monitor (see
 # Regex — 1 match runs it, multiple matches drop into a scoped picker:
 ./scripts/run-flow.mjs swap --wire-build-path … --ethereum-path … --solana-path …
 ```
+
+The long-running `flow-swap-epoch-stress` scenario is manual-only and excluded
+from the default E2E suite. It launches 10 simultaneous Ethereum → Solana swaps
+against 21 producer accounts and 21 batch operators, then records payout,
+UWREQ, Solana memory-log, and post-load epoch-liveness evidence. Run it locally
+with the canonical runner and heartbeat monitor shown in the package
+[README](packages/flow-swap-epoch-stress/README.md).
 
 Each `--wire-build-path` / `--ethereum-path` / `--solana-path` flag falls back to
 its env var (`WIRE_BUILD_PATH` / `WIRE_ETH_PATH` / `WIRE_SOLANA_PATH`); one of the
