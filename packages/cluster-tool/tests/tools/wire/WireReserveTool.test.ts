@@ -26,6 +26,8 @@ interface QuoteReserveFixture {
   reserve_chain_amount: number
   reserve_wire_amount: number
   connector_weight_bps: number
+  /** The reserve owner's fee on the WIRE leg — `0` for a public reserve. */
+  owner_fee_bps: number
 }
 
 const EthereumChain = 100,
@@ -356,7 +358,8 @@ describe("WireReserveTool", () => {
     const book = {
       chain: 10_000_000_000n,
       wire: 10_000_000_000n,
-      connectorWeightBps: SymmetricConnectorWeightBps
+      connectorWeightBps: SymmetricConnectorWeightBps,
+      ownerFeeBps: 0
     }
 
     it("charges the WIRE-leg fee BETWEEN the hops, not on the output", () => {
@@ -386,7 +389,8 @@ describe("WireReserveTool", () => {
       const weighted = {
         chain: 10_000_000_000n,
         wire: 10_000_000_000n,
-        connectorWeightBps: 8_000
+        connectorWeightBps: 8_000,
+        ownerFeeBps: 0
       }
       expect(quoteSwap(weighted, weighted, 100_000_000n, 30)).toBe(98_470_966n)
       // …and that is NOT what the equal-weight curve would have quoted.
@@ -397,6 +401,38 @@ describe("WireReserveTool", () => {
     it("WIRE → WIRE is a plain transfer — no curve, no fee", () => {
       expect(quoteSwap(null, null, 42n, 30)).toBe(42n)
     })
+    // The regression this whole field exists for: a PUBLIC reserve carries
+    // ownerFeeBps 0, so a quote that drops the owner fee is right everywhere
+    // except the one flow that configures one — where it silently over-quotes
+    // the destination and the books assertion fails by the owner fee.
+    it("charges BOTH reserve owners on the same gross leg as the network fee", () => {
+      const owned = { ...book, ownerFeeBps: 100 },
+        gross = cpOutput(book.chain, book.wire, 100_000_000n)
+      expect(quoteSwap(owned, owned, 100_000_000n, 30)).toBe(
+        cpOutput(book.wire, book.chain, splitWireFee(gross, 30, 0, 0, 100, 100).net)
+      )
+      // Strictly less than the same books with no owner fee — the exact gap
+      // that made the private-reserve flow's target over-predict.
+      expect(quoteSwap(owned, owned, 100_000_000n, 30)).toBeLessThan(
+        quoteSwap(book, book, 100_000_000n, 30)
+      )
+    })
+    it("a WIRE endpoint charges no owner fee on its side", () => {
+      // Only the SOURCE reserve's owner fee can apply when the destination is
+      // WIRE — mirroring the contract's `src_is_wire ? 0 : …` carve-out.
+      const owned = { ...book, ownerFeeBps: 250 },
+        gross = cpOutput(book.chain, book.wire, 100_000_000n)
+      expect(quoteSwap(owned, null, 100_000_000n, 30)).toBe(
+        splitWireFee(gross, 30, 0, 0, 250, 0).net
+      )
+      expect(quoteSwap(null, owned, 100_000_000n, 30)).toBe(
+        cpOutput(
+          book.wire,
+          book.chain,
+          splitWireFee(100_000_000n, 30, 0, 0, 0, 250).net
+        )
+      )
+    })
     it("is 0n on degenerate input or a dry hop", () => {
       expect(quoteSwap(book, book, 0n, 30)).toBe(0n)
       expect(quoteSwap(book, book, -1n, 30)).toBe(0n)
@@ -405,7 +441,8 @@ describe("WireReserveTool", () => {
           {
             chain: 0n,
             wire: 0n,
-            connectorWeightBps: SymmetricConnectorWeightBps
+            connectorWeightBps: SymmetricConnectorWeightBps,
+            ownerFeeBps: 0
           },
           book,
           100n,
@@ -423,7 +460,8 @@ describe("WireReserveTool", () => {
         reserve_code: { value: PrimaryReserve },
         reserve_chain_amount: 10_000_000_000,
         reserve_wire_amount: 10_000_000_000,
-        connector_weight_bps: SymmetricConnectorWeightBps
+        connector_weight_bps: SymmetricConnectorWeightBps,
+        owner_fee_bps: 0
       },
       {
         chain_code: { value: SolanaChain },
@@ -431,7 +469,8 @@ describe("WireReserveTool", () => {
         reserve_code: { value: PrimaryReserve },
         reserve_chain_amount: 10_000_000_000,
         reserve_wire_amount: 10_000_000_000,
-        connector_weight_bps: SymmetricConnectorWeightBps
+        connector_weight_bps: SymmetricConnectorWeightBps,
+        owner_fee_bps: 0
       }
     ]
     const ethereumTriple = {
