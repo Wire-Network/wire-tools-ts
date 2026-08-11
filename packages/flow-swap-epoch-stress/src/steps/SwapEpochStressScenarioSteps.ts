@@ -1,0 +1,375 @@
+import Assert from "node:assert"
+import { ethers } from "ethers"
+import { Keypair } from "@solana/web3.js"
+import { SysioContracts } from "@wireio/sdk-core"
+import {
+  ClusterBuildStep,
+  ClusterConfigProvider,
+  EthereumCollateralTool,
+  EthereumOutpostBootstrapper,
+  Report,
+  SolanaCollateralTool,
+  contractView,
+  matchesProtoEnum,
+  pollUntil,
+  requestEthereumSwap,
+  slugValue,
+  type ClusterBuildStepOptions,
+  type ReserveManagerRequestSwapContract,
+  type StepInput,
+  type SwapScenarioContext
+} from "@wireio/cluster-tool"
+import { SwapEpochStressScenarioConstants as Constants } from "../SwapEpochStressScenarioConstants.js"
+import {
+  StressBaselineEpochKey,
+  StressBaselineUwreqIdsKey,
+  StressTargetAmountKey,
+  stressActorOutputKey
+} from "../SwapEpochStressScenarioOutputs.js"
+
+const { SysioContractName, SysioUwritUnderwriterequeststatus } = SysioContracts
+type Uwreq = SysioContracts.SysioUwritUwRequestTType
+
+function isStressRoute(request: Uwreq): boolean {
+  return (
+    slugValue(request.src_chain_code) === Constants.EthereumChainCode &&
+    slugValue(request.dst_chain_code) === Constants.SolanaChainCode
+  )
+}
+
+async function currentEpoch(ctx: SwapScenarioContext): Promise<number> {
+  const { rows } = await ctx.wire.getEpochState()
+  Assert.ok(rows[0], "sysio.epoch::epochstate is empty")
+  return Number(rows[0].current_epoch_index)
+}
+
+async function stressRequests(ctx: SwapScenarioContext): Promise<Uwreq[]> {
+  const baseline = new Set(ctx.outputs.assert(StressBaselineUwreqIdsKey))
+  const { rows } = await ctx.wire
+    .getSysioContract(SysioContractName.uwrit)
+    .tables.uwreqs.query({ limit: 256 })
+  return rows.filter(row => !baseline.has(Number(row.id)) && isStressRoute(row))
+}
+
+export namespace SwapEpochStressScenarioSteps {
+  export interface ProvisionActorInput extends StepInput {
+    readonly kind: "SwapEpochStressScenarioSteps.ProvisionActorInput"
+    readonly actorIndex: number
+    readonly ethereumHdIndex: number
+  }
+
+  export function planProvisionActor(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    actorIndex: number,
+    ethereumHdIndex: number
+  ): ClusterBuildStep<SwapScenarioContext, ProvisionActorInput> {
+    return ClusterBuildStep.create(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "SwapEpochStressScenarioSteps.ProvisionActorInput",
+        actorIndex,
+        ethereumHdIndex
+      },
+      runProvisionActor
+    )
+  }
+
+  export async function runProvisionActor(
+    ctx: SwapScenarioContext,
+    input: ProvisionActorInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const derivation = `${EthereumOutpostBootstrapper.DerivationPath}${input.ethereumHdIndex}`
+    const ethereumWallet = ethers.HDNodeWallet.fromMnemonic(
+      ethers.Mnemonic.fromPhrase(EthereumOutpostBootstrapper.AnvilMnemonic),
+      derivation
+    ).connect(ctx.ethereum.provider)
+    const solanaKeypair = Keypair.generate()
+    const solanaBalanceBefore = await ctx.solana.getLamports(
+      solanaKeypair.publicKey
+    )
+    Report.StepExtraRecorder.note("created distinct stress actor", {
+      actorIndex: input.actorIndex,
+      ethereumHdIndex: input.ethereumHdIndex,
+      ethereumAddress: ethereumWallet.address,
+      solanaRecipient: solanaKeypair.publicKey.toBase58(),
+      solanaBalanceBefore
+    })
+    ctx.outputs.set(stressActorOutputKey(input.actorIndex), {
+      actorIndex: input.actorIndex,
+      ethereumWallet,
+      solanaKeypair,
+      solanaBalanceBefore
+    })
+  }
+
+  export interface RequestSwapInput extends StepInput {
+    readonly kind: "SwapEpochStressScenarioSteps.RequestSwapInput"
+    readonly actorIndex: number
+  }
+
+  export function planRequestSwap(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    actorIndex: number
+  ): ClusterBuildStep<SwapScenarioContext, RequestSwapInput> {
+    return ClusterBuildStep.create(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "SwapEpochStressScenarioSteps.RequestSwapInput", actorIndex },
+      runRequestSwap
+    )
+  }
+
+  export async function runRequestSwap(
+    ctx: SwapScenarioContext,
+    input: RequestSwapInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const stressActor = ctx.outputs.assert(
+      stressActorOutputKey(input.actorIndex)
+    )
+    const targetAmount = ctx.outputs.assert(StressTargetAmountKey)
+    const reserveManager = loadReserveManager(ctx, stressActor.ethereumWallet)
+    const result = await requestEthereumSwap(reserveManager, {
+      sourceTokenCode: BigInt(Constants.EthereumTokenCode),
+      sourceReserveCode: BigInt(Constants.PrimaryReserveCode),
+      sourceAmountWei: Constants.SourceEthereumWei,
+      targetChainCode: BigInt(Constants.SolanaChainCode),
+      targetTokenCode: BigInt(Constants.SolanaTokenCode),
+      targetReserveCode: BigInt(Constants.PrimaryReserveCode),
+      targetRecipient: stressActor.solanaKeypair.publicKey.toBytes(),
+      targetAmount,
+      targetToleranceBps: Constants.ToleranceBps
+    })
+    Assert.ok(
+      result.transactionHash,
+      `actor ${input.actorIndex} has no tx hash`
+    )
+    Report.StepExtraRecorder.note("concurrent swap request submitted", {
+      actorIndex: input.actorIndex,
+      source: stressActor.ethereumWallet.address,
+      recipient: stressActor.solanaKeypair.publicKey.toBase58(),
+      transactionHash: result.transactionHash,
+      blockNumber: result.blockNumber,
+      sourceAmountWei: Constants.SourceEthereumWei,
+      targetAmount
+    })
+  }
+
+  export interface VerifyPayoutInput extends StepInput {
+    readonly kind: "SwapEpochStressScenarioSteps.VerifyPayoutInput"
+    readonly actorIndex: number
+  }
+
+  export function planVerifyPayout(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    actorIndex: number
+  ): ClusterBuildStep<SwapScenarioContext, VerifyPayoutInput> {
+    return ClusterBuildStep.create(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "SwapEpochStressScenarioSteps.VerifyPayoutInput", actorIndex },
+      runVerifyPayout
+    )
+  }
+
+  export async function runVerifyPayout(
+    ctx: SwapScenarioContext,
+    input: VerifyPayoutInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const stressActor = ctx.outputs.assert(
+      stressActorOutputKey(input.actorIndex)
+    )
+    const targetAmount = ctx.outputs.assert(StressTargetAmountKey)
+    Assert.ok(
+      targetAmount <= BigInt(Number.MAX_SAFE_INTEGER),
+      "target amount exceeds JavaScript's exact integer range"
+    )
+    const expectedMinimum =
+      stressActor.solanaBalanceBefore + Number(targetAmount)
+    let observed = stressActor.solanaBalanceBefore
+    await pollUntil(
+      `actor ${input.actorIndex} SOL payout`,
+      async () => {
+        signal.throwIfAborted()
+        observed = await ctx.solana.getLamports(
+          stressActor.solanaKeypair.publicKey
+        )
+        return observed >= expectedMinimum
+      },
+      Constants.SettlementDeadlineMs,
+      Constants.LongPollIntervalMs
+    )
+    Report.StepExtraRecorder.note("destination payout observed", {
+      actorIndex: input.actorIndex,
+      recipient: stressActor.solanaKeypair.publicKey.toBase58(),
+      before: stressActor.solanaBalanceBefore,
+      observed,
+      expectedMinimum
+    })
+  }
+
+  export interface DiagnosticInput extends StepInput {
+    readonly kind: "SwapEpochStressScenarioSteps.DiagnosticInput"
+    readonly expectedRequestCount: number
+  }
+
+  export function planTerminalDiagnostics(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    expectedRequestCount: number
+  ): ClusterBuildStep<SwapScenarioContext, DiagnosticInput> {
+    return ClusterBuildStep.create(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "SwapEpochStressScenarioSteps.DiagnosticInput",
+        expectedRequestCount
+      },
+      runTerminalDiagnostics
+    )
+  }
+
+  export async function runTerminalDiagnostics(
+    ctx: SwapScenarioContext,
+    input: DiagnosticInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const baselineEpoch = ctx.outputs.assert(StressBaselineEpochKey)
+    const requiredEpoch =
+      baselineEpoch + Constants.RequiredPostLoadEpochAdvances
+    let observedEpoch = await currentEpoch(ctx)
+    let epochPollError: unknown
+    try {
+      await pollUntil(
+        `WIRE epoch advances from ${baselineEpoch} to at least ${requiredEpoch}`,
+        async () => {
+          signal.throwIfAborted()
+          observedEpoch = await currentEpoch(ctx)
+          return observedEpoch >= requiredEpoch
+        },
+        Constants.postLoadEpochDeadlineMs(),
+        Constants.LongPollIntervalMs
+      )
+    } catch (error) {
+      epochPollError = error
+    }
+
+    const requests = await stressRequests(ctx)
+    const confirmed = requests.filter(request =>
+      matchesProtoEnum(
+        request.status,
+        SysioUwritUnderwriterequeststatus,
+        SysioUwritUnderwriterequeststatus.UNDERWRITE_REQUEST_STATUS_CONFIRMED
+      )
+    )
+    const firstActor = ctx.outputs.assert(stressActorOutputKey(0))
+    const program = SolanaCollateralTool.loadOppOutpostProgram(
+      ctx,
+      firstActor.solanaKeypair
+    )
+    let programLogs: string[] = []
+    let programLogReadError: unknown
+    try {
+      programLogs = (
+        await ctx.solana.getProgramLogs(program.programId, 100)
+      ).flat()
+    } catch (error) {
+      programLogReadError = error
+    }
+    const memoryErrors = programLogs.filter(line =>
+      /memory allocation failed|out of memory|heap(?:[ -]space)? violation/i.test(
+        line
+      )
+    )
+
+    Report.StepExtraRecorder.note("post-load terminal diagnostics", {
+      baselineEpoch,
+      observedEpoch,
+      requiredEpoch,
+      expectedRequestCount: input.expectedRequestCount,
+      observedRequestCount: requests.length,
+      confirmedRequestCount: confirmed.length,
+      requestIds: requests.map(request => Number(request.id)),
+      requestStatuses: requests.map(request => String(request.status)),
+      epochPollError:
+        epochPollError instanceof Error
+          ? epochPollError.message
+          : String(epochPollError ?? ""),
+      solanaMemoryErrors: memoryErrors,
+      solanaProgramLogReadError:
+        programLogReadError instanceof Error
+          ? programLogReadError.message
+          : String(programLogReadError ?? "")
+    })
+
+    Assert.strictEqual(
+      epochPollError,
+      undefined,
+      `WIRE epoch failed to advance from ${baselineEpoch} to ${requiredEpoch}`
+    )
+    Assert.strictEqual(
+      requests.length,
+      input.expectedRequestCount,
+      "unexpected number of new ETH→SOL underwrite requests"
+    )
+    Assert.strictEqual(
+      confirmed.length,
+      input.expectedRequestCount,
+      "not every stress underwrite request reached CONFIRMED"
+    )
+    Assert.deepStrictEqual(
+      memoryErrors,
+      [],
+      "Solana outpost logs contain memory/heap failure evidence"
+    )
+    Assert.strictEqual(
+      programLogReadError,
+      undefined,
+      "failed to read recent Solana outpost program logs"
+    )
+  }
+
+  function loadReserveManager(
+    ctx: SwapScenarioContext,
+    wallet: ethers.Signer
+  ): ReserveManagerRequestSwapContract {
+    const address = EthereumCollateralTool.loadOutpostAddresses(
+      ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
+    )[Constants.ReserveManagerContractName]
+    Assert.ok(
+      address != null && /^0x[0-9a-fA-F]{40}$/.test(address),
+      `${Constants.ReserveManagerContractName} missing from outpost-addrs.json`
+    )
+    const abi = EthereumCollateralTool.loadOutpostAbi(
+      ctx.config.ethereumPath,
+      Constants.ReserveManagerContractName
+    )
+    return contractView<ReserveManagerRequestSwapContract>(address, abi, wallet)
+  }
+}

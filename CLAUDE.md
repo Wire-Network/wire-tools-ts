@@ -56,7 +56,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
 | `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize) |
-| `flow-*` (13 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and the six swap variants |
+| `flow-*` (14 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, the six functional swap variants, and the manual-only 10-actor swap/epoch stress diagnostic |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
 
