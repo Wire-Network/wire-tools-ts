@@ -132,6 +132,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
 | `flow-yield-distribution` | `@wireio/test-flow-yield-distribution` | `STAKING_REWARD` → `sysio.dclaim::onreward` → `fundclaim` |
 | `flow-emissions-soak` | `@wireio/test-flow-emissions-soak` | Multi-hour emissions + `sysio.dclaim` payout soak |
+| `flow-with-bootstrap-data` | `@wireio/test-flow-with-bootstrap-data` | Import committed ETH/SOL indexer fixtures into `sysio.dclaim` during bootstrap |
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
 Flow packages depend on the harness via `workspace:*`.

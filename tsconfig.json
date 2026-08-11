@@ -27,6 +27,7 @@
     { "path": "./packages/flow-swap-private-reserves/tsconfig.json" },
     { "path": "./packages/flow-node-owner-nft/tsconfig.json" },
     { "path": "./packages/flow-emissions-soak/tsconfig.json" },
+    { "path": "./packages/flow-with-bootstrap-data/tsconfig.json" },
     { "path": "./packages/flow-yield-distribution/tsconfig.json" },
     { "path": "./packages/flow-underwriter-slashing/tsconfig.json" },
     { "path": "./packages/debugging-shared/tsconfig.json" },

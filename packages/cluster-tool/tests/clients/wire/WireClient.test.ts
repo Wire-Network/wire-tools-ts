@@ -12,6 +12,13 @@ import {
 import { toURL } from "@wireio/cluster-tool/utils"
 import { SysioContracts } from "@wireio/sdk-core"
 
+/** Transaction JSON path following clio's `-j` flag. */
+function transactionFileArgument(args: readonly string[]): string {
+  const file = args[args.indexOf("-j") + 1]
+  if (file == null) throw new Error("clio transaction command omitted -j file")
+  return file
+}
+
 describe("WireClient", () => {
   let config: WireClientConfig
   beforeAll(async () => {
@@ -449,7 +456,7 @@ describe("WireClient", () => {
       const run = jest
         .spyOn(ClioRunner.prototype, "run")
         .mockImplementation(async args => {
-          const file = args.at(-1)!
+          const file = transactionFileArgument(args)
           paths.push(file)
           if (paths.length === 2) releaseBoth()
           await bothStarted
@@ -500,7 +507,7 @@ describe("WireClient", () => {
       const runOnce = jest
         .spyOn(ClioRunner.prototype, "runOnce")
         .mockImplementation(async args => {
-          payloadFile = args.at(-1)!
+          payloadFile = transactionFileArgument(args)
           expect(
             JSON.parse(Fs.readFileSync(payloadFile, "utf8"))
           ).toMatchObject({

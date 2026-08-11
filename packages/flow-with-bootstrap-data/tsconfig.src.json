@@ -1,0 +1,12 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib",
+    "paths": {
+      "@wireio/cluster-tool": ["../cluster-tool/src"]
+    }
+  },
+  "include": ["src"],
+  "references": [{ "path": "../cluster-tool/tsconfig.json" }]
+}
