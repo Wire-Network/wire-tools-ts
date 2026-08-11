@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.0",
+    "@protobuf-ts/runtime": "^2.11.1",
     "@solana/spl-token": "^0.4.9",
     "@solana/web3.js": "^1.98.0",
     "@wireio/cluster-tool": "workspace:*",

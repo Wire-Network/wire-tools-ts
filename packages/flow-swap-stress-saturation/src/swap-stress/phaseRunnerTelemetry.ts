@@ -1,8 +1,4 @@
-import type {
-  EnvelopeBaseline,
-  EnvelopeBaselineCaptureResult,
-  EnvelopeIntegrityIssueSequence
-} from "@wireio/debugging-shared"
+import type { EnvelopeBaseline, EnvelopeBaselineCaptureResult, EnvelopeIntegrityIssueSequence } from "../envelope-integrity/index.js"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import type {
   EmptyOppEnvelopeTelemetryHealth,

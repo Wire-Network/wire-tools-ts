@@ -1,4 +1,4 @@
-import { validateEnvelopeStorageKey } from "@wireio/debugging-shared"
+import { validateEnvelopeStorageKey } from "../../envelope-integrity/index.js"
 
 import { RunEvidencePath } from "./runEvidenceConstants.js"
 import type {

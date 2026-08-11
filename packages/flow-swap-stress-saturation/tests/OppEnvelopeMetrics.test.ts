@@ -1,8 +1,6 @@
 import * as Fs from "node:fs"
-import {
-  createEnvelopeBaseline,
-  oppDebuggingPath
-} from "@wireio/debugging-shared"
+import { oppDebuggingPath } from "@wireio/debugging-shared"
+import { createEnvelopeBaseline } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import {
   collectOppPhaseMetrics,

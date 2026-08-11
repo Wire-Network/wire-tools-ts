@@ -5,7 +5,7 @@ import {
   RunEvidenceEndpoints,
   type OppEnvelopeTelemetryHealth
 } from "../stress-engine/index.js"
-import type { EnvelopeIntegrityIssueSequence } from "@wireio/debugging-shared"
+import type { EnvelopeIntegrityIssueSequence } from "../envelope-integrity/index.js"
 
 import type {
   SwapStressPendingPhaseObservation,

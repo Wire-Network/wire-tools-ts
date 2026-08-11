@@ -1,4 +1,4 @@
-import type { AtomicFile } from "@wireio/debugging-shared"
+import type { AtomicFile } from "../../utils/index.js"
 
 import type { RunEvidencePersistence } from "../runEvidencePersistence.js"
 import {

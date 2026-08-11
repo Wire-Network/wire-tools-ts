@@ -1,9 +1,4 @@
-import type {
-  EnvelopeIntegrityFileError,
-  EnvelopeIntegrityFileIdentity,
-  EnvelopeIntegrityFileOperation,
-  EnvelopeIntegrityInvalidKeyReason
-} from "@wireio/debugging-shared"
+import type { EnvelopeIntegrityFileError, EnvelopeIntegrityFileIdentity, EnvelopeIntegrityFileOperation, EnvelopeIntegrityInvalidKeyReason } from "../envelope-integrity/index.js"
 
 /** Closed integrity-issue codes emitted by strict OPP envelope readers. */
 export enum OppEnvelopeTelemetryIssueCode {

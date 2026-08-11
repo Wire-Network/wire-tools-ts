@@ -1,7 +1,4 @@
-import type {
-  EnvelopeIntegrityIssue,
-  ValidEnvelopePair
-} from "@wireio/debugging-shared"
+import type { EnvelopeIntegrityIssue, ValidEnvelopePair } from "../envelope-integrity/index.js"
 import type { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 
 import type { RunEvidenceSaturationStrategy } from "./run-evidence/runEvidenceConstants.js"

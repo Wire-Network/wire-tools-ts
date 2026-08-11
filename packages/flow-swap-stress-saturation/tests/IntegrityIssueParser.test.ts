@@ -1,4 +1,4 @@
-import { EnvelopeIntegrityIssueCode } from "@wireio/debugging-shared"
+import { EnvelopeIntegrityIssueCode } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 
 import { isEnvelopeIntegrityIssue } from "@wireio/test-flow-swap-stress-saturation/observation-parsing/index.js"
 

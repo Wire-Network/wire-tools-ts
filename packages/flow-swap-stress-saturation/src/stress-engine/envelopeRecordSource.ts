@@ -1,9 +1,4 @@
-import {
-  createEnvelopeBaseline,
-  readEnvelopeIntegrity,
-  type EnvelopeBaseline,
-  type EnvelopeIntegrityResult
-} from "@wireio/debugging-shared"
+import { createEnvelopeBaseline, readEnvelopeIntegrity, type EnvelopeBaseline, type EnvelopeIntegrityResult } from "../envelope-integrity/index.js"
 
 import { projectSnapshotSaturationMetrics } from "./envelopeMetricProjection.js"
 import type {

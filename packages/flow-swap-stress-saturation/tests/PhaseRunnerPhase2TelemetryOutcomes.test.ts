@@ -1,4 +1,4 @@
-import { createEnvelopeBaseline } from "@wireio/debugging-shared"
+import { createEnvelopeBaseline } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import { RunEvidenceEndpoint } from "@wireio/test-flow-swap-stress-saturation/stress-engine/index.js"
 import {

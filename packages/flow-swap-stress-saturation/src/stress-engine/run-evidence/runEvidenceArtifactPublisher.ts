@@ -1,6 +1,6 @@
 import Path from "node:path"
 
-import type { AtomicFile } from "@wireio/debugging-shared"
+import type { AtomicFile } from "../../utils/index.js"
 
 import { RunEvidencePath } from "./runEvidenceConstants.js"
 import type {

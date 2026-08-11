@@ -1,7 +1,7 @@
 import Fs from "node:fs"
 import Path from "node:path"
 
-import { createEnvelopeBaseline } from "@wireio/debugging-shared"
+import { createEnvelopeBaseline } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 import {
   DebugEnvelopeMetadataRecord,
   DebugOutpostEndpointsType

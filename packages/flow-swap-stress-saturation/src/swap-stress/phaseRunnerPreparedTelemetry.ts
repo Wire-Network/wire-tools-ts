@@ -1,6 +1,6 @@
 import { match } from "ts-pattern"
 
-import type { EnvelopeBaseline } from "@wireio/debugging-shared"
+import type { EnvelopeBaseline } from "../envelope-integrity/index.js"
 import type { SwapStressPhaseEnvelopeMetrics } from "./phaseRunnerMetricTypes.js"
 import {
   emptyMetrics,

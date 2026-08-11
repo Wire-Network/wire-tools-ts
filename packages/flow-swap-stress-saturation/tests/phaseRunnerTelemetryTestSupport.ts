@@ -1,5 +1,5 @@
-import { createEnvelopeBaseline } from "@wireio/debugging-shared"
-import type { EnvelopeBaseline } from "@wireio/debugging-shared"
+import { createEnvelopeBaseline } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
+import type { EnvelopeBaseline } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import {
   OppEnvelopeTelemetryHealthKind,

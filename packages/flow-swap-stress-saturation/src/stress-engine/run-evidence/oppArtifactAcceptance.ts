@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto"
 
-import {
-  decodeCanonicalMessage,
-  validateEnvelopeStorageKey
-} from "@wireio/debugging-shared"
+import { decodeCanonicalMessage, validateEnvelopeStorageKey } from "../../envelope-integrity/index.js"
 import {
   DebugEnvelopeMetadataRecord,
   Envelope

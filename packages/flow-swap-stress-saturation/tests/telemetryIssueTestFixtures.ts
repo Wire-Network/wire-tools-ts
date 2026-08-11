@@ -1,9 +1,4 @@
-import {
-  EnvelopeIntegrityIssueCode,
-  type EnvelopeIntegrityFileError,
-  type EnvelopeIntegrityFileIdentity,
-  type EnvelopeIntegrityIssue
-} from "@wireio/debugging-shared"
+import { EnvelopeIntegrityIssueCode, type EnvelopeIntegrityFileError, type EnvelopeIntegrityFileIdentity, type EnvelopeIntegrityIssue } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 
 const CandidateBaseKey = "00000007-OUTPOST_ETHEREUM_DEPOT-0123456789abcdef",
   StorageBaseKey = "$storage",

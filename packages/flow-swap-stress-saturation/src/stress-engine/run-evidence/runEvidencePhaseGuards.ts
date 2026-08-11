@@ -1,4 +1,4 @@
-import { createEnvelopeBaseline } from "@wireio/debugging-shared"
+import { createEnvelopeBaseline } from "../../envelope-integrity/index.js"
 
 import { OppEnvelopeTelemetryHealthKind } from "../envelopeMetricTypes.js"
 import {

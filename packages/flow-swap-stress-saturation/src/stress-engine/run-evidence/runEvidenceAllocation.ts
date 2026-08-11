@@ -1,6 +1,6 @@
 import Path from "node:path"
 
-import { AtomicFile } from "@wireio/debugging-shared"
+import { AtomicFile } from "../../utils/index.js"
 
 import { OppEnvelopeTelemetryHealthKind } from "../envelopeMetricTypes.js"
 import type { RunEvidencePersistence } from "../runEvidencePersistence.js"

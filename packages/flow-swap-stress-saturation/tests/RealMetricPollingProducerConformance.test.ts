@@ -1,4 +1,4 @@
-import { validateEnvelopeStorageKey } from "@wireio/debugging-shared"
+import { validateEnvelopeStorageKey } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 import {
   OppEnvelopeTelemetryIssueCode,
   type OppEnvelopeTelemetryIssue

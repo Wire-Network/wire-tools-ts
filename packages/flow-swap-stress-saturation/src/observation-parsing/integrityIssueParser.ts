@@ -1,8 +1,5 @@
 import { match } from "ts-pattern"
-import {
-  EnvelopeIntegrityIssueCode,
-  type EnvelopeIntegrityIssue
-} from "@wireio/debugging-shared"
+import { EnvelopeIntegrityIssueCode, type EnvelopeIntegrityIssue } from "../envelope-integrity/index.js"
 
 import {
   hasExactObservationKeys,

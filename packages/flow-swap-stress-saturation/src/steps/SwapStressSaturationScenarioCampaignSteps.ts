@@ -4,12 +4,8 @@ import Path from "node:path"
 
 import { SysioContracts } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
-import {
-  captureEnvelopeBaseline,
-  oppDebuggingPath,
-  parseJsonLogLine,
-  PidSources
-} from "@wireio/debugging-shared"
+import { oppDebuggingPath, parseJsonLogLine, PidSources } from "@wireio/debugging-shared"
+import { captureEnvelopeBaseline } from "../envelope-integrity/index.js"
 import {
   ClusterBuildStep,
   NodeConfig,

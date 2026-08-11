@@ -3,7 +3,7 @@ import * as Path from "node:path"
 
 import type { OppEnvelopeTelemetryIssue } from "@wireio/test-flow-swap-stress-saturation/stress-engine/index.js"
 
-import type { EnvelopeSidecar } from "@wireio/debugging-shared"
+import type { EnvelopeSidecar } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 
 import {
   createPollingFileSystem,

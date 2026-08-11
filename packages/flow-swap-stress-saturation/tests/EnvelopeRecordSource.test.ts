@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 
-import type { EnvelopeIntegrityResult } from "@wireio/debugging-shared"
+import type { EnvelopeIntegrityResult } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 
 import {

@@ -1,4 +1,4 @@
-import type { EnvelopeIntegrityIssue } from "@wireio/debugging-shared"
+import type { EnvelopeIntegrityIssue } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 import type {
   EmptyOppEnvelopeTelemetryHealth,
   OppPhaseEnvelopeMetrics,

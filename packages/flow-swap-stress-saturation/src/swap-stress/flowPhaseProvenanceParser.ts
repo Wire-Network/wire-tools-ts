@@ -1,6 +1,6 @@
 import { match } from "ts-pattern"
 
-import { createEnvelopeBaseline } from "@wireio/debugging-shared"
+import { createEnvelopeBaseline } from "../envelope-integrity/index.js"
 import {
   RunEvidenceSaturationStrategies,
   type OppPhaseMetricEvidence,

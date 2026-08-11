@@ -1,7 +1,7 @@
 import Fs from "node:fs"
 import Path from "node:path"
 
-import { AtomicFile } from "@wireio/debugging-shared"
+import { AtomicFile } from "@wireio/test-flow-swap-stress-saturation/utils/index.js"
 import {
   RunEvidencePath,
   RunEvidencePersistence,

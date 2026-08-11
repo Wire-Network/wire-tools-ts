@@ -2,7 +2,7 @@ import Path from "node:path"
 import type { Stats } from "node:fs"
 import type { FileHandle } from "node:fs/promises"
 
-import type { AtomicFile } from "@wireio/debugging-shared"
+import type { AtomicFile } from "../utils/index.js"
 
 import { canonicalEvidenceJson } from "./run-evidence/canonicalEvidenceJson.js"
 import type {

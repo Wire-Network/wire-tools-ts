@@ -1,8 +1,5 @@
-import {
-  oppDebuggingPath,
-  readEnvelopeIntegrity,
-  type ValidEnvelopePair
-} from "@wireio/debugging-shared"
+import { oppDebuggingPath } from "@wireio/debugging-shared"
+import { readEnvelopeIntegrity, type ValidEnvelopePair } from "../envelope-integrity/index.js"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import { match } from "ts-pattern"
 

@@ -1,7 +1,4 @@
-import type {
-  EnvelopeBaseline,
-  EnvelopeBaselineIdentity
-} from "@wireio/debugging-shared"
+import type { EnvelopeBaseline, EnvelopeBaselineIdentity } from "../../envelope-integrity/index.js"
 
 import type {
   HealthyOppEnvelopeTelemetryHealth,

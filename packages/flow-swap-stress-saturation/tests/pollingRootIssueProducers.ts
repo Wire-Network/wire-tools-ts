@@ -1,7 +1,7 @@
 import * as Fs from "node:fs"
 import * as Path from "node:path"
 
-import type { EnvelopeIntegrityFileSystem } from "@wireio/debugging-shared"
+import type { EnvelopeIntegrityFileSystem } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 import type { OppEnvelopeTelemetryIssue } from "@wireio/test-flow-swap-stress-saturation/stress-engine/index.js"
 
 import {

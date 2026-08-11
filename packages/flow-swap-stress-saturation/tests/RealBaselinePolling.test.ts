@@ -1,5 +1,5 @@
-import { createEnvelopeBaseline } from "@wireio/debugging-shared"
-import type { EnvelopeBaselineCaptureResult } from "@wireio/debugging-shared"
+import { createEnvelopeBaseline } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
+import type { EnvelopeBaselineCaptureResult } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 import {
   pollRealFlowBaseline,
   RealFlowMetricPolling

@@ -1,6 +1,6 @@
 import { match } from "ts-pattern"
 
-import type { EnvelopeBaselineCaptureResult } from "@wireio/debugging-shared"
+import type { EnvelopeBaselineCaptureResult } from "../envelope-integrity/index.js"
 
 import type {
   SwapStressDegradedCollectionResult,

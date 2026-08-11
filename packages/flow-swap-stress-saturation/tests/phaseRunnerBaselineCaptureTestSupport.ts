@@ -1,8 +1,4 @@
-import {
-  EnvelopeIntegrityIssueCode,
-  type EnvelopeIntegrityIssue,
-  type EnvelopeIntegrityIssueSequence
-} from "@wireio/debugging-shared"
+import { EnvelopeIntegrityIssueCode, type EnvelopeIntegrityIssue, type EnvelopeIntegrityIssueSequence } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 
 /**
  * Build the canonical structured baseline capture issue used by failure tests.

@@ -7,15 +7,8 @@ import {
   DebugEnvelopeMetadataRecord,
   Envelope
 } from "@wireio/opp-typescript-models"
-import {
-  createEnvelopeBaseline,
-  readEnvelopeIntegrity
-} from "@wireio/debugging-shared"
-import type {
-  EnvelopeIntegrityDirectoryHandle,
-  EnvelopeIntegrityFileHandle,
-  EnvelopeIntegrityFileSystem
-} from "@wireio/debugging-shared"
+import { createEnvelopeBaseline, readEnvelopeIntegrity } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
+import type { EnvelopeIntegrityDirectoryHandle, EnvelopeIntegrityFileHandle, EnvelopeIntegrityFileSystem } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 import {
   mapEnvelopeIntegrityIssue,
   type OppEnvelopeTelemetryIssue
