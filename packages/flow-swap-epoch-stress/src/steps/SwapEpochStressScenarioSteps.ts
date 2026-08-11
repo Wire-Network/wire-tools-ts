@@ -309,6 +309,9 @@ export namespace SwapEpochStressScenarioSteps {
           epoch: observedEpoch,
           observedAt: new Date().toISOString()
         })
+        ctx.log.info(
+          `[SwapEpochStress] post-load epoch ${observedEpoch}/${requiredEpoch}`
+        )
         await scanSolanaProgramLogs()
       } catch (error) {
         epochPollError = error
