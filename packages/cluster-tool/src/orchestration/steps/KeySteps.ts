@@ -58,7 +58,7 @@ export namespace KeySteps {
    *
    * The anvil mnemonic is a PUBLISHED constant, so under it every operator's
    * ETH collateral key is reproducible by anyone with the repo — acceptable for
-   * a local flow cluster (and required, so all 13 flows keep deriving
+   * a local flow cluster (and required, so all 14 flows keep deriving
    * byte-identical wallets), never for a real deployment. Read through this
    * accessor, never off `EthereumOutpostBootstrapper` directly.
    *
