@@ -3,11 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "type": "commonjs",
-  "description": "Standalone un-privileged OPP stress-testing harness for a live WIRE testnet",
+  "description": "OPP stress observation parsers + bounded-workload chunking consumed by the swap-stress flow",
   "main": "lib/out/index.js",
-  "bin": {
-    "wire-opp-stress": "bin/wire-opp-stress"
-  },
   "scripts": {
     "compile": "tsc -b tsconfig.json",
     "compile:watch": "tsc -b tsconfig.json -w",
@@ -17,17 +14,11 @@
   },
   "dependencies": {
     "@wireio/debugging-shared": "workspace:*",
-    "@wireio/opp-typescript-models": "^1.0.26",
-    "@wireio/sdk-core": "^1.0.17",
-    "@wireio/shared": "^1.0.21",
     "@wireio/test-opp-stress": "workspace:*",
-    "ethers": "^6.14.0",
-    "ts-pattern": "^5.9.0",
-    "yargs": "^18.0.0"
+    "ts-pattern": "^5.9.0"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
-    "@types/node": "25.5.0",
-    "@types/yargs": "^17.0.35"
+    "@types/node": "25.5.0"
   }
 }
