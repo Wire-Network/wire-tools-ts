@@ -10,12 +10,16 @@ Ethereum-to-Solana half of `flow-swap-with-underwriting`:
 - One real underwriter is bonded on Ethereum and Solana.
 - The flow verifies all 10 destination payouts, all 10 confirmed UWREQ rows,
   15 post-load WIRE epoch advances, and recent Solana outpost logs for
-  memory/heap errors. The soak crosses the ten-epoch envelope-retention and
-  underwriting-lock windows, then observes five additional epochs.
+  memory/heap errors. It scans both committed Solana transactions and the raw
+  aggregate cluster log because an RPC simulation failure has no transaction
+  signature and therefore cannot appear in transaction-history queries. The
+  soak crosses the ten-epoch envelope-retention and underwriting-lock windows,
+  then observes five additional epochs.
 
 Every transaction is its own Step. The generated Markdown, HTML, and CSV
 reports contain the parameters, transaction/RPC evidence, payout observations,
-UWREQ statuses, epoch baseline/result, and relevant Solana log evidence.
+UWREQ statuses, epoch baseline/result, a plain-language diagnosis, and relevant
+Solana log evidence with occurrence counts plus bounded first/last samples.
 
 ## Run locally
 

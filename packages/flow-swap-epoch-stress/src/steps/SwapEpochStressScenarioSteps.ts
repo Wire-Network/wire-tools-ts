@@ -1,4 +1,7 @@
 import Assert from "node:assert"
+import Fs from "node:fs"
+import Path from "node:path"
+import { createInterface } from "node:readline"
 import { ethers } from "ethers"
 import { Keypair } from "@solana/web3.js"
 import { SysioContracts } from "@wireio/sdk-core"
@@ -291,6 +294,52 @@ export namespace SwapEpochStressScenarioSteps {
       }
     }
     await scanSolanaProgramLogs()
+
+    const clusterLogFiles: string[] = []
+    const clusterMemoryFailureSamples: string[] = []
+    let clusterMemoryFailureCount = 0
+    let firstClusterMemoryFailure = ""
+    let lastClusterMemoryFailure = ""
+    let clusterLogReadError: unknown
+    const scanClusterLogs = async (): Promise<void> => {
+      try {
+        const logPath = Path.join(ctx.config.clusterPath, "logs")
+        const names = (await Fs.promises.readdir(logPath))
+          .filter(name => /^cluster_.*\.log$/.test(name))
+          .sort()
+        clusterLogFiles.push(...names.map(name => Path.join(logPath, name)))
+        for (const file of clusterLogFiles) {
+          const lines = createInterface({
+            input: Fs.createReadStream(file),
+            crlfDelay: Infinity
+          })
+          for await (const line of lines) {
+            if (
+              !/memory allocation failed|out of memory|heap(?:[ -]space)? violation/i.test(
+                line
+              )
+            ) {
+              continue
+            }
+            const evidence = line.slice(
+              0,
+              Constants.ClusterLogEvidenceMaxLength
+            )
+            clusterMemoryFailureCount += 1
+            firstClusterMemoryFailure ||= evidence
+            lastClusterMemoryFailure = evidence
+            if (
+              clusterMemoryFailureSamples.length <
+              Constants.ClusterLogEvidenceSampleCount
+            ) {
+              clusterMemoryFailureSamples.push(evidence)
+            }
+          }
+        }
+      } catch (error) {
+        clusterLogReadError ??= error
+      }
+    }
     let epochPollError: unknown
     while (observedEpoch < requiredEpoch && epochPollError === undefined) {
       const previousEpoch = observedEpoch
@@ -327,9 +376,62 @@ export namespace SwapEpochStressScenarioSteps {
       )
     )
     await scanSolanaProgramLogs()
+    await scanClusterLogs()
     const solanaMemoryErrors = [...memoryErrors]
+    const targetAmount = ctx.outputs.assert(StressTargetAmountKey)
+    Assert.ok(
+      targetAmount <= BigInt(Number.MAX_SAFE_INTEGER),
+      "target amount exceeds JavaScript's exact integer range"
+    )
+    const payoutResults = await Promise.all(
+      Array.from(
+        { length: input.expectedRequestCount },
+        async (_, actorIndex) => {
+          const stressActor = ctx.outputs.assert(
+            stressActorOutputKey(actorIndex)
+          )
+          const balance = await ctx.solana.getLamports(
+            stressActor.solanaKeypair.publicKey
+          )
+          return {
+            actorIndex,
+            recipient: stressActor.solanaKeypair.publicKey.toBase58(),
+            before: stressActor.solanaBalanceBefore,
+            observed: balance,
+            paid:
+              balance >= stressActor.solanaBalanceBefore + Number(targetAmount)
+          }
+        }
+      )
+    )
+    const payoutObservedCount = payoutResults.filter(
+      result => result.paid
+    ).length
+    const memoryFailureDetected =
+      solanaMemoryErrors.length > 0 || clusterMemoryFailureCount > 0
+    const diagnosis = memoryFailureDetected
+      ? {
+          outcome: "REPRODUCED_SOLANA_MEMORY_FAILURE",
+          reason:
+            "Solana epoch_in failed during RPC simulation with a program heap/out-of-memory error, so the terminal transaction was never committed and cannot appear in signature-based program-log queries.",
+          result: `WIRE remained at epoch ${observedEpoch}; ${confirmed.length}/${input.expectedRequestCount} requests confirmed and ${payoutObservedCount}/${input.expectedRequestCount} destination payouts completed.`
+        }
+      : epochPollError !== undefined
+        ? {
+            outcome: "EPOCH_STALL_WITHOUT_MEMORY_EVIDENCE",
+            reason:
+              "WIRE stopped advancing, but neither committed Solana transactions nor aggregate cluster logs contained a memory/heap failure.",
+            result: `WIRE remained at epoch ${observedEpoch}; ${confirmed.length}/${input.expectedRequestCount} requests confirmed and ${payoutObservedCount}/${input.expectedRequestCount} destination payouts completed.`
+          }
+        : {
+            outcome: "HEALTHY_SWAP_STRESS_COMPLETION",
+            reason:
+              "No Solana memory/heap failure was observed and the required post-load epoch soak completed.",
+            result: `WIRE reached epoch ${observedEpoch}; ${confirmed.length}/${input.expectedRequestCount} requests confirmed and ${payoutObservedCount}/${input.expectedRequestCount} destination payouts completed.`
+          }
 
     Report.StepExtraRecorder.note("post-load terminal diagnostics", {
+      diagnosis,
       baselineEpoch,
       observedEpoch,
       requiredEpoch,
@@ -340,6 +442,8 @@ export namespace SwapEpochStressScenarioSteps {
       confirmedRequestCount: confirmed.length,
       requestIds: requests.map(request => Number(request.id)),
       requestStatuses: requests.map(request => String(request.status)),
+      payoutObservedCount,
+      payoutResults,
       epochPollError:
         epochPollError instanceof Error
           ? epochPollError.message
@@ -348,9 +452,23 @@ export namespace SwapEpochStressScenarioSteps {
       solanaProgramLogReadError:
         programLogReadError instanceof Error
           ? programLogReadError.message
-          : String(programLogReadError ?? "")
+          : String(programLogReadError ?? ""),
+      clusterLogFiles,
+      clusterMemoryFailureCount,
+      firstClusterMemoryFailure,
+      lastClusterMemoryFailure,
+      clusterMemoryFailureSamples,
+      clusterLogReadError:
+        clusterLogReadError instanceof Error
+          ? clusterLogReadError.message
+          : String(clusterLogReadError ?? "")
     })
 
+    Assert.strictEqual(
+      memoryFailureDetected,
+      false,
+      `${diagnosis.outcome}: ${diagnosis.reason} ${diagnosis.result}`
+    )
     Assert.strictEqual(
       epochPollError,
       undefined,
@@ -366,15 +484,20 @@ export namespace SwapEpochStressScenarioSteps {
       input.expectedRequestCount,
       "not every stress underwrite request reached CONFIRMED"
     )
-    Assert.deepStrictEqual(
-      solanaMemoryErrors,
-      [],
-      "Solana outpost logs contain memory/heap failure evidence"
+    Assert.strictEqual(
+      payoutObservedCount,
+      input.expectedRequestCount,
+      "not every stress swap completed its destination payout"
     )
     Assert.strictEqual(
       programLogReadError,
       undefined,
       "failed to read recent Solana outpost program logs"
+    )
+    Assert.strictEqual(
+      clusterLogReadError,
+      undefined,
+      "failed to read aggregate cluster logs"
     )
   }
 

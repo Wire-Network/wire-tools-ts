@@ -26,6 +26,10 @@ export namespace SwapEpochStressScenarioConstants {
   export const LongPollIntervalMs = 3_000
   export const PollDeadlineBufferMs = 30_000
   export const RequestStepTimeoutMs = 60_000
+  /** Maximum number of aggregate-log evidence lines embedded in the report. */
+  export const ClusterLogEvidenceSampleCount = 5
+  /** Maximum characters retained from each aggregate-log evidence line. */
+  export const ClusterLogEvidenceMaxLength = 1_000
   export const UnderwriterActiveEpochBudget = 9
   /**
    * Post-load soak: crosses the ten-epoch envelope-retention and underwriting

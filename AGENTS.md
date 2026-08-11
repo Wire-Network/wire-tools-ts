@@ -25,7 +25,7 @@ TypeScript monorepo for WIRE cluster orchestration, flow scenarios, readiness di
 
 ## Change-specific rules
 - If touching contract actions or tables, use generated SDK types and update tests.
-- If touching flow behavior, preserve Report evidence and the canonical runner contract.
+- If touching flow behavior, preserve Report evidence and the canonical runner contract; simulation-time failures must be sourced from aggregate cluster logs because they have no committed transaction signature.
 - If touching process/network configuration, obtain every port from `BindConfigProvider`.
 
 ## Verification
