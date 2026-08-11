@@ -408,6 +408,18 @@ export namespace WireReserveTool {
      * hardest to notice.
      */
     connectorWeightBps: number
+    /**
+     * The reserve owner's own fee on the WIRE leg, in basis points — the row's
+     * `owner_fee_bps`, charged independently of (and on the same gross leg as)
+     * the network fee.
+     *
+     * Required for the same reason as {@link connectorWeightBps}, and for a
+     * reason this field learned the hard way: a PUBLIC reserve carries `0`, so
+     * a quote that silently omits the owner fee is exactly right on twelve of
+     * the thirteen flows and wrong only where an owner fee is actually
+     * configured. Defaulting it would restore that blind spot.
+     */
+    ownerFeeBps: number
   }
 
   /**
@@ -452,7 +464,18 @@ export namespace WireReserveTool {
             amountIn
           )
     if (wireLeg === 0n) return 0n
-    const { net } = splitWireFee(wireLeg, feeBps)
+    // Both reserve owners charge on the SAME gross leg the network fee rides,
+    // so all three come out of one `splitWireFee` — mirroring the contract's
+    // `opp::amm::quote_swap`. A WIRE endpoint has no reserve on that side and
+    // therefore charges no owner fee, whatever the book would have said.
+    const { net } = splitWireFee(
+      wireLeg,
+      feeBps,
+      FeeUnderwriterShareBps,
+      FeeEmissionsShareBps,
+      source?.ownerFeeBps ?? 0,
+      destination?.ownerFeeBps ?? 0
+    )
     // A WIRE destination receives the post-fee WIRE leg directly.
     if (destination == null) return net
     return wireToToken(
@@ -628,7 +651,8 @@ export namespace WireReserveTool {
         : {
             chain: BigInt(reserve.reserve_chain_amount),
             wire: BigInt(reserve.reserve_wire_amount),
-            connectorWeightBps: Number(reserve.connector_weight_bps)
+            connectorWeightBps: Number(reserve.connector_weight_bps),
+            ownerFeeBps: Number(reserve.owner_fee_bps)
           }
     }
 
