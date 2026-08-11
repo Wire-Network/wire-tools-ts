@@ -67,7 +67,8 @@ export class SwapScenarioContext extends ClusterBuildContext {
     return {
       chain: BigInt(row.reserve_chain_amount),
       wire: BigInt(row.reserve_wire_amount),
-      connectorWeightBps: Number(row.connector_weight_bps)
+      connectorWeightBps: Number(row.connector_weight_bps),
+      ownerFeeBps: Number(row.owner_fee_bps)
     }
   }
 

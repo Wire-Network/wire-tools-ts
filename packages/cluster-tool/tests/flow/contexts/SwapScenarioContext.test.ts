@@ -174,8 +174,20 @@ describe("SwapScenarioContext", () => {
       expect(book).toEqual({
         chain: 1_000n,
         wire: 2_000n,
-        connectorWeightBps: SymmetricConnectorWeightBps
+        connectorWeightBps: SymmetricConnectorWeightBps,
+        ownerFeeBps: 0
       })
+    })
+    it("carries a private reserve's non-zero owner fee onto the book", async () => {
+      // The book is what `quoteSwap` prices against, so an owner fee that never
+      // reaches it silently over-quotes the destination — the private-reserve
+      // regression. A public reserve's 0 makes that omission invisible.
+      const book = await newContext(fixtures).reserveBook(
+        SolanaChain,
+        SolToken,
+        PrimaryReserve
+      )
+      expect(book.ownerFeeBps).toBe(200)
     })
     it("throws when no reserve matches the triple", async () => {
       await expect(
