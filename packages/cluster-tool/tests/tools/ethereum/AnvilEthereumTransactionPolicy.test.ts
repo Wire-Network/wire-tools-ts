@@ -5,8 +5,8 @@ describe("AnvilEthereumTransactionPolicy", () => {
     expect(AnvilEthereumTransactionPolicy.create()).toEqual({
       max_priority_fee_per_gas_wei: "2000000000",
       max_fee_per_gas_wei: "100000000000",
-      max_gas_limit: "2000000",
-      max_total_native_cost_wei: "250000000000000000"
+      max_gas_limit: "5000000",
+      max_total_native_cost_wei: "600000000000000000"
     })
   })
 
