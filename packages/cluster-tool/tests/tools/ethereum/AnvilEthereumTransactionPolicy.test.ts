@@ -1,12 +1,16 @@
 import { AnvilEthereumTransactionPolicy } from "@wireio/cluster-tool/tools/ethereum"
 
+const RemoteEpochInGasEstimate = 4_392_032n,
+  NodeopGasEstimateBufferNumerator = 6n,
+  NodeopGasEstimateBufferDenominator = 5n
+
 describe("AnvilEthereumTransactionPolicy", () => {
   it("defines the finite local SEC-131 limits in canonical decimal form", () => {
     expect(AnvilEthereumTransactionPolicy.create()).toEqual({
       max_priority_fee_per_gas_wei: "2000000000",
       max_fee_per_gas_wei: "100000000000",
-      max_gas_limit: "5000000",
-      max_total_native_cost_wei: "600000000000000000"
+      max_gas_limit: "6000000",
+      max_total_native_cost_wei: "700000000000000000"
     })
   })
 
@@ -17,6 +21,15 @@ describe("AnvilEthereumTransactionPolicy", () => {
     )
     expect(BigInt(policy.max_total_native_cost_wei)).toBeGreaterThanOrEqual(
       BigInt(policy.max_gas_limit) * BigInt(policy.max_fee_per_gas_wei)
+    )
+  })
+
+  it("covers the buffered remote epochIn gas high-water mark", () => {
+    const bufferedGasLimit =
+      (RemoteEpochInGasEstimate * NodeopGasEstimateBufferNumerator) /
+      NodeopGasEstimateBufferDenominator
+    expect(BigInt(AnvilEthereumTransactionPolicy.MaximumGasLimit)).toBeGreaterThanOrEqual(
+      bufferedGasLimit
     )
   })
 })

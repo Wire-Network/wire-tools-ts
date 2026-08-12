@@ -16,9 +16,9 @@ export namespace AnvilEthereumTransactionPolicy {
   /** Maximum EIP-1559 fee per gas in wei: 100 gwei. */
   export const MaximumFeePerGasWei = "100000000000"
   /** Maximum final gas limit after nodeop's 20% estimate buffer. */
-  export const MaximumGasLimit = "5000000"
-  /** Maximum native cost in wei: 0.6 ETH. */
-  export const MaximumTotalNativeCostWei = "600000000000000000"
+  export const MaximumGasLimit = "6000000"
+  /** Maximum native cost in wei: 0.7 ETH. */
+  export const MaximumTotalNativeCostWei = "700000000000000000"
 
   /**
    * Create the finite policy embedded in each local Anvil Ethereum client.

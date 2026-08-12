@@ -295,18 +295,18 @@ generated Ethereum client. The values live in
 |---|---:|
 | Maximum priority fee per gas | `2,000,000,000` wei (2 gwei) |
 | Maximum fee per gas | `100,000,000,000` wei (100 gwei) |
-| Maximum final gas limit | `5,000,000` |
-| Maximum total native cost | `600,000,000,000,000,000` wei (0.6 ETH) |
+| Maximum final gas limit | `6,000,000` |
+| Maximum total native cost | `700,000,000,000,000,000` wei (0.7 ETH) |
 
 Nodeop applies the final 20% estimate buffer before checking the gas cap. At
-the full `5,000,000 × 100 gwei = 0.5 ETH` gas bound, the total-cost cap leaves
+the full `6,000,000 × 100 gwei = 0.6 ETH` gas bound, the total-cost cap leaves
 `0.1 ETH` for transaction value. These limits cover the measured local
-`epochIn` and `commit` workloads—including the higher-cardinality emissions
-scenario—while retaining a finite configuration-error boundary. External-outpost
-configuration continues to omit the policy, because the reviewed limits for its
-operator-selected endpoint are outside this tool's scope. Bios and producer-only
-nodes receive neither an Ethereum signing client nor an orphaned client-config
-option.
+`epochIn` and `commit` workloads, including the 4,392,032-gas remote emissions
+high-water estimate after nodeop's 20% buffer, while retaining a finite
+configuration-error boundary. External-outpost configuration continues to omit
+the policy, because the reviewed limits for its operator-selected endpoint are
+outside this tool's scope. Bios and producer-only nodes receive neither an
+Ethereum signing client nor an orphaned client-config option.
 
 Production policy selection happens outside `wire-tools-ts`.
 
