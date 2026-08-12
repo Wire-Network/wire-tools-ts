@@ -57,7 +57,7 @@ export function classifyOppPhaseMetrics(
         }
       })
     )
-    .otherwise(value => assertNeverHealth(value))
+    .exhaustive()
 }
 
 /**
@@ -99,7 +99,7 @@ export function projectOppPhaseMetrics(
       provenance: { ...provenanceFields, evidence },
       artifactRefs: evidence.artifactRefs
     }))
-    .otherwise(value => assertNever(value))
+    .exhaustive()
 }
 
 /**
@@ -141,7 +141,7 @@ export function projectPendingOppPhaseMetrics(
       provenance: { ...provenanceFields, evidence },
       artifactRefs: evidence.artifactRefs
     }))
-    .otherwise(value => assertNever(value))
+    .exhaustive()
 }
 
 /**
@@ -218,10 +218,4 @@ export function emptyPhaseResult(phase: string): SwapStressPhaseResult {
   }
 }
 
-function assertNever(value: never): never {
-  throw new TypeError(`Unexpected OPP phase evidence: ${String(value)}`)
-}
 
-function assertNeverHealth(value: never): never {
-  throw new TypeError(`Unexpected OPP phase telemetry health: ${String(value)}`)
-}

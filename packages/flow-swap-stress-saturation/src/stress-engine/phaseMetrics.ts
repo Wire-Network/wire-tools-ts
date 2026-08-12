@@ -182,12 +182,9 @@ function canonicalStrategy(
       RunEvidenceSaturationStrategy.ByteThreshold,
       () => RunEvidenceSaturationStrategy.ByteThreshold
     )
-    .otherwise(value => assertNever(value))
+    .exhaustive()
 }
 
-function assertNever(value: never): never {
-  throw new TypeError(`Unexpected OPP phase strategy: ${String(value)}`)
-}
 
 class PhaseArtifactHashMismatchError extends Error {
   readonly name = "PhaseArtifactHashMismatchError"

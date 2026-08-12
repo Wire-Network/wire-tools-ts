@@ -181,7 +181,7 @@ function saturatedByStrategy(
     .with(RunEvidenceSaturationStrategy.ByteThreshold, () =>
       envelopes.some(envelope => envelope.byteSize >= minBytes)
     )
-    .otherwise(value => assertNever(value))
+    .exhaustive()
 }
 
 function compareEnvelopeMetrics(
@@ -195,6 +195,3 @@ function compareEnvelopeMetrics(
   )
 }
 
-function assertNever(value: never): never {
-  throw new Error(`Unexpected OPP envelope strategy: ${String(value)}`)
-}

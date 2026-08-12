@@ -71,7 +71,7 @@ export async function pollRealFlowBaseline(
         result = await runtime.capture()
         return null
       })
-      .otherwise(value => assertNeverBaselineCapture(value))
+      .exhaustive()
     if (outcome !== null) return outcome.settled
   }
 }
@@ -106,7 +106,7 @@ export async function pollRealFlowMetrics(
         result = await runtime.collect(request)
         return null
       })
-      .otherwise(value => assertNever(value))
+      .exhaustive()
     if (outcome !== null) return outcome.settled
   }
 }
@@ -125,10 +125,4 @@ function terminalResult(
   }
 }
 
-function assertNever(value: never): never {
-  throw new TypeError(`Unexpected real metric snapshot: ${String(value)}`)
-}
 
-function assertNeverBaselineCapture(value: never): never {
-  throw new TypeError(`Unexpected real baseline capture: ${String(value)}`)
-}
