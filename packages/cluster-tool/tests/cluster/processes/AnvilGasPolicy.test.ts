@@ -24,16 +24,12 @@ describe("AnvilProcess.gasPolicyArgs", () => {
     ])
   })
 
-  it("removes every practical ceiling for uncapped", () => {
+  it("raises the block ceiling for uncapped", () => {
     // Given/When: the uncapped policy.
     const args = AnvilProcess.gasPolicyArgs(EthereumGasPolicy.uncapped)
 
     // Then: both the block limit and the call<=block constraint are lifted.
-    expect(args).toEqual([
-      "--gas-limit",
-      AnvilProcess.UncappedBlockGasLimit,
-      "--disable-block-gas-limit"
-    ])
+    expect(args).toEqual(["--gas-limit", AnvilProcess.UncappedBlockGasLimit])
     // And: the limit clears the ~93.6M worst case ETH-241 describes.
     expect(Number(AnvilProcess.UncappedBlockGasLimit)).toBeGreaterThan(
       93_600_000

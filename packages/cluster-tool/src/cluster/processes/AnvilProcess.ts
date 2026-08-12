@@ -179,9 +179,11 @@ export namespace AnvilProcess {
         "--enable-tx-gas-limit"
       ])
       .with(EthereumGasPolicy.uncapped, () => [
+        // NOT combined with --disable-block-gas-limit: anvil rejects the pair
+        // ("cannot be used with") and exits 2 before serving. Raising the
+        // block limit is sufficient and observable — the block reports it.
         "--gas-limit",
-        UncappedBlockGasLimit,
-        "--disable-block-gas-limit"
+        UncappedBlockGasLimit
       ])
       .exhaustive()
   }
