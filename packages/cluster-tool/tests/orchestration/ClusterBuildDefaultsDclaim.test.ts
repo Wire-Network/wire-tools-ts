@@ -30,17 +30,15 @@ function findPhaseOrNull(
   children: ReadonlyArray<ClusterBuildPhaseBase>,
   name: string
 ): ClusterBuildPhase {
-  return (
-    children
-      .map(child => {
-        if (child.name === name && "steps" in child)
-          return child as ClusterBuildPhase
-        return "children" in child
-          ? findPhaseOrNull((child as PhaseGroupLike).children, name)
-          : null
-      })
-      .find(phase => phase != null) ?? null
-  )
+  return children
+    .map(child => {
+      if (child.name === name && "steps" in child)
+        return child as ClusterBuildPhase
+      return "children" in child
+        ? findPhaseOrNull((child as PhaseGroupLike).children, name)
+        : null
+    })
+    .find(phase => phase != null)
 }
 
 describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {

@@ -50,13 +50,21 @@ import { abiEnumValue } from "../../utils/enumUtils.js"
 // Chain kinds — the proto `ChainKind` subset importseed accepts (see
 // proto/sysio/opp/types/types.proto). importseed rejects unknown values.
 // ---------------------------------------------------------------------------
-/** Runtime schema for the proto `ChainKind` subset accepted by `importseed`. */
-export const ImportSeedChainKindSchema = z.union([
-  z.literal(ChainKind.EVM),
-  z.literal(ChainKind.SVM)
-])
 /** The chain kinds `importseed` accepts — a proto `ChainKind` subset. */
-export type ImportSeedChainKind = z.infer<typeof ImportSeedChainKindSchema>
+export type ImportSeedChainKind = ChainKind.EVM | ChainKind.SVM
+
+/** Whether an untyped value names a native chain `importseed` accepts. */
+export function isImportSeedChainKind(
+  value: unknown
+): value is ImportSeedChainKind {
+  return value === ChainKind.EVM || value === ChainKind.SVM
+}
+
+/** Runtime validation for the generated proto subset accepted by `importseed`. */
+export const ImportSeedChainKindSchema = z.custom<ImportSeedChainKind>(
+  isImportSeedChainKind,
+  "must be the EVM or SVM ChainKind"
+)
 
 enum IndexBalanceSection {
   purchasers = "purchasers",

@@ -1,7 +1,7 @@
 import Path from "node:path"
 
 import { ChainKind } from "@wireio/opp-typescript-models"
-import type { ImportSeedChainKind } from "@wireio/cluster-tool/tools/wire"
+import type { ImportSeedChainKind } from "@wireio/cluster-tool"
 
 /** One exact credit the fixture-driven flow expects after conversion and merge. */
 export interface ExpectedBootstrapCredit {
