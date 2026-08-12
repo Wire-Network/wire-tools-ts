@@ -90,7 +90,7 @@ One declarative model is shared by the `wire-cluster-tool` CLI and every flow:
 
 - `ClusterBuild` holds a tree of `ClusterBuildPhaseGroup` →
   `ClusterBuildPhase` → `ClusterBuildStep`; running it produces the
-  **`Report`** (CSV/MD/HTML under `<cluster>/reports/`) — the per-step
+  **`Report`** (CSV/MD/HTML/JSON under `<cluster>/reports/`) — the per-step
   narrative that IS the deliverable. `ClusterBuildDefaults.create()` registers
   the ~40-phase bootstrap; a flow's `FlowScenario.plan(cluster)` appends its
   scenario phases.
@@ -250,7 +250,7 @@ so `regreserve` can never be called from a flow phase.
   persisted `cluster-config.json`; `BindConfig` (file-locked, cross-process
   port registry, `findAvailable`/`findAvailableRange`); `NodeConfig.plan` +
   renderers.
-- **`report/`** — `Report` + CSV/MD/HTML renderers + `StepExtraRecorder`
+- **`report/`** — `Report` + CSV/MD/HTML/JSON renderers + `StepExtraRecorder`
   (ALS-scoped per-step extra capture — use native `mapSeries` on recorder
   paths, Bluebird detaches ALS).
 - **`flow/`** — `FlowScenario`/`FlowCLI` + shared scenario contexts +

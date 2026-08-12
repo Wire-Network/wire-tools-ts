@@ -372,7 +372,8 @@ export namespace ClusterConfigProvider {
       formats: options?.formats ?? [
         Report.Format.csv,
         Report.Format.md,
-        Report.Format.html
+        Report.Format.html,
+        Report.Format.json
       ]
     }
   }

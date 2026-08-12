@@ -5,6 +5,7 @@ import type { ReportRendererConstructor } from "./ReportRenderer.js"
 import { ReportCsvRenderer } from "./renderers/ReportCsvRenderer.js"
 import { ReportMarkdownRenderer } from "./renderers/ReportMarkdownRenderer.js"
 import { ReportHtmlRenderer } from "./renderers/ReportHtmlRenderer.js"
+import { ReportJsonRenderer } from "./renderers/ReportJsonRenderer.js"
 
 /**
  * Format → renderer constructor, assembled explicitly (a constructor argument),
@@ -26,13 +27,14 @@ export class ReportRendererRegistry {
     return constructor
   }
 
-  /** The built-in csv/md/html registry. */
+  /** The built-in csv/md/html/json registry. */
   static createDefault(): ReportRendererRegistry {
     return new ReportRendererRegistry(
       new Map<ClusterConfigReportFormat, ReportRendererConstructor>([
         [Report.Format.csv, ReportCsvRenderer],
         [Report.Format.md, ReportMarkdownRenderer],
-        [Report.Format.html, ReportHtmlRenderer]
+        [Report.Format.html, ReportHtmlRenderer],
+        [Report.Format.json, ReportJsonRenderer]
       ])
     )
   }

@@ -41,7 +41,8 @@ export enum EthereumGasPolicy {
 export enum ClusterConfigReportFormat {
   csv = "csv",
   md = "md",
-  html = "html"
+  html = "html",
+  json = "json"
 }
 
 /** The resolved report write target (`Report.Config`'s persisted shape). */
