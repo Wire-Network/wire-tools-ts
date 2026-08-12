@@ -733,8 +733,23 @@ export namespace SwapStressSaturationScenarioRungSteps {
     rungIndex: number,
     accountCount: number
   ): ClusterBuildPhase<C> {
-    const stepOptions: ClusterBuildStepOptions = {
+    // Per-Step ceilings, each sized ABOVE that Step's own inner budget
+    // (STYLE.md "Timing Budgets"). A blanket PhaseTimeoutMs is WRONG here: the
+    // payout wait polls to PayoutDeadlineMs (a double-hop, 14 min), so a 120s
+    // smoke-level ceiling killed it mid-poll on the first live run.
+    const captureOptions: ClusterBuildStepOptions = {
+        timeoutMs:
+          Constants.Timing.RelayDeadlineMs + Constants.Timing.PollDeadlineBufferMs
+      },
+      burstOptions: ClusterBuildStepOptions = {
         timeoutMs: Constants.Ramp.PhaseTimeoutMs
+      },
+      payoutOptions: ClusterBuildStepOptions = {
+        timeoutMs:
+          Constants.Timing.PayoutDeadlineMs + Constants.Timing.PollDeadlineBufferMs
+      },
+      verifyOptions: ClusterBuildStepOptions = {
+        timeoutMs: Constants.Timing.WriteDeadlineMs
       },
       phase = ClusterBuildPhase.create<C>(
         parent,
@@ -746,7 +761,7 @@ export namespace SwapStressSaturationScenarioRungSteps {
         Report.Actor.User,
         `rung-${accountCount}-phase1-baseline`,
         "capture the pre-burst OPP envelope baseline (outpost→depot)",
-        stepOptions,
+        captureOptions,
         rungIndex,
         accountCount,
         RungPhaseSlot.phase1
@@ -755,7 +770,7 @@ export namespace SwapStressSaturationScenarioRungSteps {
         Report.Actor.User,
         `rung-${accountCount}-phase1-burst`,
         `submit ${accountCount} ETH ReserveManager.requestSwap transactions`,
-        stepOptions,
+        burstOptions,
         rungIndex,
         accountCount
       ),
@@ -763,7 +778,7 @@ export namespace SwapStressSaturationScenarioRungSteps {
         Report.Actor.User,
         `rung-${accountCount}-phase1-metrics`,
         "project outpost→depot envelopes into saturation metrics",
-        stepOptions,
+        captureOptions,
         rungIndex,
         accountCount,
         RungPhaseSlot.phase1
@@ -772,7 +787,7 @@ export namespace SwapStressSaturationScenarioRungSteps {
         Report.Actor.User,
         `rung-${accountCount}-phase1-payouts`,
         "observe the WIRE-side payouts credited by phase 1",
-        stepOptions,
+        payoutOptions,
         rungIndex,
         accountCount,
         RungPhaseSlot.phase1
@@ -781,7 +796,7 @@ export namespace SwapStressSaturationScenarioRungSteps {
         Report.Actor.User,
         `rung-${accountCount}-phase2-baseline`,
         "capture the pre-burst OPP envelope baseline (depot→outpost)",
-        stepOptions,
+        captureOptions,
         rungIndex,
         accountCount,
         RungPhaseSlot.phase2
@@ -790,7 +805,7 @@ export namespace SwapStressSaturationScenarioRungSteps {
         Report.Actor.User,
         `rung-${accountCount}-phase2-burst`,
         `submit ${accountCount} sysio.uwrit::swapfromwire actions`,
-        stepOptions,
+        burstOptions,
         rungIndex,
         accountCount
       ),
@@ -798,7 +813,7 @@ export namespace SwapStressSaturationScenarioRungSteps {
         Report.Actor.User,
         `rung-${accountCount}-phase2-payouts`,
         "observe the Ethereum-side payouts credited by phase 2",
-        stepOptions,
+        payoutOptions,
         rungIndex,
         accountCount,
         RungPhaseSlot.phase2
@@ -807,7 +822,7 @@ export namespace SwapStressSaturationScenarioRungSteps {
         Report.Actor.User,
         `rung-${accountCount}-phase2-metrics`,
         "project depot→outpost envelopes into saturation metrics",
-        stepOptions,
+        captureOptions,
         rungIndex,
         accountCount,
         RungPhaseSlot.phase2
@@ -816,7 +831,7 @@ export namespace SwapStressSaturationScenarioRungSteps {
         Report.Actor.Sysio,
         `rung-${accountCount}-verify`,
         "the rung completed with no burst, payout, or telemetry breakage",
-        { timeoutMs: Constants.Timing.WriteDeadlineMs },
+        verifyOptions,
         rungIndex,
         accountCount
       )
