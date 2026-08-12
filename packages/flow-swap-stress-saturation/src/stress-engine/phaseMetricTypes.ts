@@ -12,7 +12,7 @@ import type {
   RunEvidencePhaseBaseline,
   RunEvidencePhaseWindow,
   RunEvidenceSaturationStrategy
-} from "./runEvidenceTypes.js"
+} from "./oppPhaseVocabulary.js"
 
 /** Baseline membership plus artifacts already persisted before phase work. */
 export interface OppPhaseMetricBaseline extends EnvelopeBaseline {

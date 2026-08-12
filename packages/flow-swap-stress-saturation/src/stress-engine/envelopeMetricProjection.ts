@@ -2,7 +2,7 @@ import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import { match } from "ts-pattern"
 
 import { mapEnvelopeIntegrityIssue } from "./envelopeTelemetryIssueMapper.js"
-import { RunEvidenceSaturationStrategy } from "./run-evidence/runEvidenceConstants.js"
+import { RunEvidenceSaturationStrategy } from "./oppPhaseVocabulary.js"
 import {
   MaxEnvelopeBytes,
   SaturatedEnvelopeMinBytes,

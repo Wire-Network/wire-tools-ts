@@ -1,7 +1,7 @@
 import type {
   RunEvidenceDecimal,
   RunEvidencePhaseWindow
-} from "./runEvidenceTypes.js"
+} from "./oppPhaseVocabulary.js"
 
 const NonNegativeDecimalPattern = /^(0|[1-9][0-9]*)$/
 

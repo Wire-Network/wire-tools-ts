@@ -1,8 +1,8 @@
 import { match } from "ts-pattern"
 
 import { MaxEnvelopeBytes } from "./envelopeMetricTypes.js"
-import { assertRampConfig } from "./rampControllerConfig.js"
-import type { OppStressRampConfig } from "./rampControllerTypes.js"
+import { assertRampConfig } from "./rampCurve.js"
+import type { OppStressRampConfig } from "./rampCurve.js"
 
 /**
  * Named stress intensity presets.

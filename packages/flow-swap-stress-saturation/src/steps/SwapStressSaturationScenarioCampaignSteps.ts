@@ -31,6 +31,7 @@ import {
   type SwapStressRouteCodes
 } from "../swap-stress/index.js"
 import {
+  ReportArtifactSink,
   collectOppPhaseMetrics,
   type OppEnvelopeSaturationStrategy,
   type OppPhaseEvidenceSink,
@@ -396,7 +397,10 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
           ),
         recipientPayoutObserver: wirePayoutObserver(ctx.wire),
         returnPayoutObserver: ethereumPayoutObserver(ctx.ethereum),
-        ...createCampaignTelemetryDependencies(ctx.config.clusterPath, null)
+        ...createCampaignTelemetryDependencies(
+          ctx.config.clusterPath,
+          ReportArtifactSink.create(ctx.config.report.path)
+        )
       }
     ctx.outputs.set(campaignServicesKey, services)
     return Promise.resolve(services)

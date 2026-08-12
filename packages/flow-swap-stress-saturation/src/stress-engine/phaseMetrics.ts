@@ -17,7 +17,7 @@ import {
   RunEvidenceEndpoint,
   RunEvidenceEndpoints,
   RunEvidenceSaturationStrategy
-} from "./runEvidenceTypes.js"
+} from "./oppPhaseVocabulary.js"
 
 export type {
   OppPhaseBaselineReference,

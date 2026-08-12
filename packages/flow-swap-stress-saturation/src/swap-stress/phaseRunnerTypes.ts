@@ -1,10 +1,5 @@
 import { RunEvidenceEndpoint } from "../stress-engine/index.js"
 import type {
-  OppStressRampDeferredEvidenceBreakageObservation,
-  OppStressRampDeferredEvidenceCompletedObservation,
-  RampBreakageCategory
-} from "../stress-engine/index.js"
-import type {
   EthereumBurstReserveManager,
   SolanaBurstRequest
 } from "./boundedBursts.js"
@@ -208,36 +203,6 @@ export interface SwapStressDegradedEvidence {
   readonly telemetryDegradation: SwapStressTelemetryDegradation
 }
 
-/** Completed phase-runner observation with no controller-owned metadata. */
-export type SwapStressCompletedObservation =
-  OppStressRampDeferredEvidenceCompletedObservation<SwapStressCleanEvidence>
-
-/** The workload-category narrowing of a breakage observation. */
-interface SwapStressWorkloadBreakageCategory {
-  readonly breakageCategory: RampBreakageCategory.Workload
-}
-
-/** The telemetry-integrity-category narrowing of a breakage observation. */
-interface SwapStressTelemetryBreakageCategory {
-  readonly breakageCategory: RampBreakageCategory.TelemetryIntegrity
-}
-
-/** Workload breakage observation with clean telemetry evidence. */
-export type SwapStressWorkloadBreakageObservation =
-  OppStressRampDeferredEvidenceBreakageObservation<SwapStressCleanEvidence> &
-    SwapStressWorkloadBreakageCategory
-
-/** Telemetry-integrity breakage observation with exact degradation evidence. */
-export type SwapStressTelemetryBreakageObservation =
-  OppStressRampDeferredEvidenceBreakageObservation<SwapStressDegradedEvidence> &
-    SwapStressTelemetryBreakageCategory
-
-/** Final observation-only callback contract for one flow iteration. */
-export type SwapStressIterationObservation =
-  | SwapStressCompletedObservation
-  | SwapStressWorkloadBreakageObservation
-  | SwapStressTelemetryBreakageObservation
-
 /** Evidence payload accepted by the flow's generic deferred parser. */
 export type SwapStressObservationEvidence =
   SwapStressCleanEvidence | SwapStressDegradedEvidence
@@ -275,19 +240,6 @@ interface SwapStressNonTelemetryPhaseRunnerDeps {
 /** Collaborators required to run one bidirectional stress iteration. */
 export type SwapStressPhaseRunnerDeps = SwapStressNonTelemetryPhaseRunnerDeps &
   SwapStressTelemetryDeps
-
-/** Minimal runner surface consumed by the future ramp/e2e todo. */
-export interface SwapStressPhaseRunner {
-  /**
-   * Run one bidirectional stress iteration.
-   *
-   * @param count Number of generated recipient/source identity pairs.
-   * @returns Completed or typed breakage observation with per-phase evidence.
-   */
-  readonly runIteration: (
-    count: number
-  ) => Promise<SwapStressIterationObservation>
-}
 
 /** Error raised when live reserve rows cannot produce a positive target. */
 export class SwapStressImpossibleQuoteError extends Error {
