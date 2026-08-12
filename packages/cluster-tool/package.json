@@ -32,7 +32,7 @@
   "dependencies": {
     "@3fv/guard": "^1.4.39",
     "@3fv/prelude-ts": "^0.8.41",
-    "@aws-sdk/client-ssm": "^3.1090.0",
+    "@aws-sdk/client-ssm": "3.1102.0",
     "@coral-xyz/anchor": "^0.31.0",
     "@solana/spl-token": "^0.4.9",
     "@solana/web3.js": "^1.98.0",

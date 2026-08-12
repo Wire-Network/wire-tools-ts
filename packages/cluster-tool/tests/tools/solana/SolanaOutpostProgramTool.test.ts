@@ -50,9 +50,7 @@ describe("SolanaOutpostProgramTool", () => {
       })
     )
     const idl = SolanaOutpostProgramTool.readIdl(solanaPath)
-    expect((idl as { metadata: { name: string } }).metadata.name).toBe(
-      SolanaOutpostProgramTool.ProgramName
-    )
+    expect(idl.metadata.name).toBe(SolanaOutpostProgramTool.ProgramName)
   })
 
   it("returns null / throws with the build remediation when artifacts are absent", () => {

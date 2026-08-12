@@ -45,6 +45,14 @@ function formatUpdatedAt(ms: number | null): string {
   ].join(":") + "." + String(d.getMilliseconds()).padStart(3, "0")
 }
 
+/** Props for one (epoch, endpoint) status cell. */
+interface EndpointCellProps {
+  /** Envelope received for this (epoch, endpoint), or undefined while pending. */
+  env: DebugOPPEnvelopeRecord | undefined
+  /** True when the cell belongs to the newest cached epoch. */
+  isLatest: boolean
+}
+
 /**
  * Two-row cell for one (epoch, endpoint) pair. The first row is the status
  * icon (✅ delivered, Nerd-Font progress-clock for pending), the second
@@ -52,10 +60,7 @@ function formatUpdatedAt(ms: number | null): string {
  * the icon row only — the second row stays blank so column heights still
  * line up across the table.
  */
-function EndpointCell(props: {
-  env: DebugOPPEnvelopeRecord | undefined
-  isLatest: boolean
-}): React.ReactElement {
+function EndpointCell(props: EndpointCellProps): React.ReactElement {
   const { env, isLatest } = props
   if (env) {
     const count = attestationCountFor(env.envelope)
@@ -120,12 +125,18 @@ function HeaderRow(): React.ReactElement {
   )
 }
 
-/** Body of a single epoch row — epoch + updated + endpoint cells. */
-function EpochRowBody(props: {
+/** Props for the inner content of one epoch row. */
+interface EpochRowBodyProps {
+  /** The epoch this row renders. */
   record: DebugOPPEpochRecord
+  /** True when this is the newest cached epoch. */
   isLatest: boolean
+  /** True when the keyboard cursor is parked on this row. */
   isSelected: boolean
-}): React.ReactElement {
+}
+
+/** Body of a single epoch row — epoch + updated + endpoint cells. */
+function EpochRowBody(props: EpochRowBodyProps): React.ReactElement {
   const { record, isLatest, isSelected } = props,
     byEndpoint = indexEnvelopesByEndpoint(record),
     selectionMarker = isSelected
@@ -154,6 +165,12 @@ function EpochRowBody(props: {
   )
 }
 
+/** Props for the bordered shell wrapping one epoch row. */
+interface EpochRowProps extends EpochRowBodyProps {
+  /** Blank rows inserted above this row (0 wherever a border already separates). */
+  marginTop: number
+}
+
 /**
  * One scrollable item — the bordered shell. Rules:
  *
@@ -166,12 +183,7 @@ function EpochRowBody(props: {
  * `marginTop` is 1 between non-adjacent-to-border rows and 0 wherever a
  * visible border already provides the visual separator.
  */
-function EpochRow(props: {
-  record: DebugOPPEpochRecord
-  isLatest: boolean
-  isSelected: boolean
-  marginTop: number
-}): React.ReactElement {
+function EpochRow(props: EpochRowProps): React.ReactElement {
   const { record, isLatest, isSelected, marginTop } = props,
     visibleBorder = isLatest || isSelected
   if (visibleBorder) {

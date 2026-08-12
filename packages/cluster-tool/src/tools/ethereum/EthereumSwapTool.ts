@@ -19,7 +19,10 @@
 import Assert from "node:assert"
 import { ethers } from "ethers"
 
-import { resolveLatestNonce } from "../../utils/ethereumUtils.js"
+import {
+  resolveLatestNonce,
+  type EthereumPayableOverrides
+} from "../../utils/ethereumUtils.js"
 
 /**
  * Minimal `ethers` contract surface this helper relies on. Typed structurally
@@ -36,7 +39,7 @@ export interface ReserveManagerRequestSwapContract extends ethers.BaseContract {
     targetRecipient: Uint8Array | string,
     targetAmount: bigint,
     targetToleranceBps: number,
-    overrides: ethers.Overrides & { value: bigint }
+    overrides: EthereumPayableOverrides
   ) => Promise<ethers.ContractTransactionResponse>
 }
 
@@ -276,6 +279,17 @@ export enum EthereumLocalReserveStatus {
   PENDING = 0,
   ACTIVE = 1,
   CANCELLED = 2
+}
+
+/**
+ * The `ReserveManager.getReserve(tokenCode, reserveCode)` local record as the
+ * reserve flows read it: only `status` is consumed, compared against
+ * {@link EthereumLocalReserveStatus}. Ethers decodes the contract's one-byte
+ * storage enum as a `bigint`, so callers narrow with `Number(record.status)`.
+ */
+export interface EthereumLocalReserveRecord {
+  /** Outpost-local `ReserveManager.sol::LocalReserveStatus` ordinal. */
+  status: bigint
 }
 
 /**

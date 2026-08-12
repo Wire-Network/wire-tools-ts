@@ -81,6 +81,31 @@ describe("SolanaValidatorProcess", () => {
     )
   })
 
+  it("deploys upgradeable via --upgradeable-program when an upgradeAuthority is set", async () => {
+    const validator = await SolanaValidatorProcess.create(manager, {
+      binary: "/bin/true",
+      programs: [
+        {
+          name: "opp",
+          programId: "PID",
+          soFile: "/tmp/opp.so",
+          upgradeAuthority: "UPGKEY"
+        }
+      ]
+    })
+    // The upgradeable form (so a ProgramData account exists) REPLACES the
+    // non-upgradeable --bpf-program form — the two are mutually exclusive.
+    expect(validator.args).toEqual(
+      expect.arrayContaining([
+        "--upgradeable-program",
+        "PID",
+        "/tmp/opp.so",
+        "UPGKEY"
+      ])
+    )
+    expect(validator.args).not.toContain("--bpf-program")
+  })
+
   it("drops --quiet when the verbose env var is set", async () => {
     process.env[SolanaValidatorProcess.VerboseEnvironmentVariable] = "1"
     const validator = await SolanaValidatorProcess.create(manager, {

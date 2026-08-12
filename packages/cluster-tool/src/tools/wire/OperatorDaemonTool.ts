@@ -343,7 +343,7 @@ export namespace OperatorDaemonTool {
   function assertOutpostKeys(operator: OperatorAccount): void {
     Assert.ok(
       operator.ethereum != null && operator.solana != null,
-      `OperatorDaemonTool: operator ${operator.account} is missing ethereum/solana keys`
+      `OperatorDaemonTool: operator ${operator.label} is missing ethereum/solana keys`
     )
   }
 
@@ -362,7 +362,7 @@ export namespace OperatorDaemonTool {
         KeyGenerator.toSignatureProvider(
           operator.ethereum,
           ethereumProvider,
-          keySourceFor(operator.account, KeyType.EM)
+          keySourceFor(operator.label, KeyType.EM)
         )
       ),
       ...pair(
@@ -377,7 +377,7 @@ export namespace OperatorDaemonTool {
         KeyGenerator.toSignatureProvider(
           operator.solana,
           solanaProvider,
-          keySourceFor(operator.account, KeyType.ED)
+          keySourceFor(operator.label, KeyType.ED)
         )
       ),
       ...pair(
@@ -390,7 +390,8 @@ export namespace OperatorDaemonTool {
   /**
    * The full extra-arg block for a BATCH OPERATOR daemon: read-mode + plugins +
    * the operator's own WIRE signature provider (its unique `wire` K1 — the
-   * account's active key) + batch plugin config + both outpost client specs.
+   * `account`'s active key) + batch plugin config + both outpost client
+   * specs.
    */
   export function batchOperatorArgs(
     operator: OperatorAccount,
@@ -400,7 +401,7 @@ export namespace OperatorDaemonTool {
   ): string[] {
     Assert.ok(
       operator.type === OperatorType.BATCH,
-      `batchOperatorArgs: ${operator.account} is a ${OperatorType[operator.type]}, not a batch operator`
+      `batchOperatorArgs: ${operator.label} is a ${OperatorType[operator.type]}, not a batch operator`
     )
     assertOutpostKeys(operator)
     return [
@@ -416,7 +417,7 @@ export namespace OperatorDaemonTool {
         KeyGenerator.toSignatureProvider(
           operator.wire,
           undefined,
-          keySourceFor(operator.account, KeyType.K1)
+          keySourceFor(operator.label, KeyType.K1)
         )
       ),
       ...pair("--batch-enabled", "true"),
@@ -472,7 +473,7 @@ export namespace OperatorDaemonTool {
   ): string[] {
     Assert.ok(
       operator.type === OperatorType.UNDERWRITER,
-      `underwriterArgs: ${operator.account} is a ${OperatorType[operator.type]}, not an underwriter`
+      `underwriterArgs: ${operator.label} is a ${OperatorType[operator.type]}, not an underwriter`
     )
     assertOutpostKeys(operator)
     return [
@@ -488,7 +489,7 @@ export namespace OperatorDaemonTool {
         KeyGenerator.toSignatureProvider(
           operator.wire,
           undefined,
-          keySourceFor(operator.account, KeyType.K1)
+          keySourceFor(operator.label, KeyType.K1)
         )
       ),
       ...pair("--underwriter-enabled", "true"),
@@ -560,8 +561,11 @@ export namespace OperatorDaemonTool {
 
   /**
    * The process label + node-dir name for an operator's daemon, keyed by the
-   * operator's provisioning LABEL (deterministic + human-navigable; the chain
-   * account is node-owner-generated).
+   * operator's durable `label` handle (deterministic + human-navigable; the
+   * `account` is node-owner-generated and not path-safe to rely on).
+   *
+   * @param label - The operator's durable handle (`batchop.a`, …).
+   * @returns The `node_<label>` process label / directory name.
    */
   export function daemonNodeName(label: string): string {
     return `node_${label}`
@@ -651,8 +655,8 @@ export namespace OperatorDaemonTool {
 
   /**
    * Compose the daemon's {@link NodeConfig}: a non-producing operator node named
-   * for the operator's label, peered to every producer node, on the resolved
-   * `ports`.
+   * for the operator's durable label handle, peered to every producer node, on
+   * the resolved `ports`.
    */
   function daemonNodeConfig(
     config: ClusterConfig,

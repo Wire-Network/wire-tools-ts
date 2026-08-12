@@ -3,7 +3,7 @@ import {
   useCallback,
   createContext,
   useContext,
-  ReactNode
+  type PropsWithChildren
 } from "react"
 
 /** Bootstrap alert variants a toast renders with (`toast-<color>` class). */
@@ -29,9 +29,12 @@ export function useToast() {
   return useContext(ToastContext)
 }
 
+/** Props for {@link ToastProvider} — children only; it owns the toast stack. */
+type ToastProviderProps = PropsWithChildren
+
 let nextId = 0
 
-export function ToastProvider({ children }: { children: ReactNode }) {
+export function ToastProvider({ children }: ToastProviderProps) {
   const [toasts, setToasts] = useState<ToastMessage[]>([])
 
   const show = useCallback(

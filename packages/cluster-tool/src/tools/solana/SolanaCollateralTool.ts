@@ -3,9 +3,9 @@
  * `opp-outpost::deposit` / `deposit_non_native` collateral writes. Every Anchor
  * WRITE is its OWN {@link ClusterBuildStep} so the `Report` records it:
  * {@link planDeposit} (native SOL) and {@link planNonNativeDeposit} (SPL). Each runner
- * reads the operator identity from `ctx.outputs`, builds the `opp_outpost`
- * program bound to the operator's keypair, resolves the program PDAs, and submits
- * exactly ONE deposit ix. PDA derivation + IDL/program loading are pure value
+ * resolves the operator identity from `ctx.keyStore` by its durable `label`,
+ * builds the `opp_outpost` program bound to the operator's keypair, resolves the
+ * program PDAs, and submits exactly ONE deposit ix. PDA derivation + IDL/program loading are pure value
  * helpers used INSIDE the runners.
  */
 
@@ -49,7 +49,7 @@ export namespace SolanaCollateralTool {
   /** Input for {@link planDeposit} — one native-SOL collateral deposit write. */
   export interface DepositInput extends StepInput {
     readonly kind: "SolanaCollateralTool.DepositInput"
-    /** Operator whose identity is read from `ctx.outputs`. */
+    /** Operator's durable `label` handle — resolved from `ctx.keyStore` (NOT its on-chain `account`). */
     readonly operatorLabel: string
     readonly operatorType: OperatorType
     /** 8-byte slug_name (`uint64`) of the deposited token (native `SOL`). */
@@ -126,6 +126,7 @@ export namespace SolanaCollateralTool {
   /** Input for {@link planNonNativeDeposit} — one SPL collateral deposit write. */
   export interface DepositNonNativeInput extends StepInput {
     readonly kind: "SolanaCollateralTool.DepositNonNativeInput"
+    /** Operator's durable `label` handle — resolved from `ctx.keyStore` (NOT its on-chain `account`). */
     readonly operatorLabel: string
     readonly chainCode: bigint
     /**

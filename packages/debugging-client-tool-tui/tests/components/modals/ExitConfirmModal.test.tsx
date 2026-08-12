@@ -1,6 +1,9 @@
 import { ExitConfirmModal } from "@wireio/debugging-client-tool-tui/components/modals/ExitConfirmModal.js"
 
-type Key = {
+// Minimal Key shape — ink ships types only through an `exports` map, which the
+// tests' `moduleResolution: node` cannot read, so ink's own `Key` is not
+// importable here.
+interface Key {
   upArrow: boolean
   downArrow: boolean
   leftArrow: boolean
@@ -17,7 +20,12 @@ type Key = {
   meta: boolean
 }
 
-const ink = require("ink") as { useInput: jest.Mock }
+/** The slice of the jest-mocked `ink` module these tests drive. */
+interface InkModuleMock {
+  useInput: jest.Mock
+}
+
+const ink = require("ink") as InkModuleMock
 
 function press(input: string, key: Partial<Key> = {}): void {
   const handler = ink.useInput.mock.calls.at(-1)?.[0] as

@@ -9,10 +9,14 @@ import {
   NodeopProcess,
   ProcessManager
 } from "@wireio/cluster-tool/cluster/processes"
+import { AnvilEthereumTransactionPolicy } from "@wireio/cluster-tool/tools/ethereum"
 import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
-import { SignatureProviderType } from "@wireio/cluster-tool-shared"
+import {
+  AWSAccountName,
+  SignatureProviderType
+} from "@wireio/cluster-tool-shared"
 import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
 import {
   OperatorDaemonArtifactsKey,
@@ -27,21 +31,18 @@ import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
 const AnvilMnemonic =
   "test test test test test test test test test test test junk"
 
-function operatorAccount(account: string, type: OperatorType): OperatorAccount {
+function operatorAccount(label: string, type: OperatorType): OperatorAccount {
   const wallet = ethers.HDNodeWallet.fromMnemonic(
       ethers.Mnemonic.fromPhrase(AnvilMnemonic),
       "m/44'/60'/0'/0/1"
     ),
     edPrivate = PrivateKey.generate(KeyType.ED)
   return {
-    label: account,
-    account,
+    label,
+    publicationLabel: label,
+    account: `wireno.${label}`,
     type,
-    wire: {
-      type: KeyType.K1,
-      publicKey: `PUB_K1_${account}`,
-      privateKey: `PVT_K1_${account}`
-    },
+    wire: { type: KeyType.K1, publicKey: `PUB_K1_${label}`, privateKey: `PVT_K1_${label}` },
     ethereum: ethereumKeyPairFromWallet(wallet),
     solana: {
       type: KeyType.ED,
@@ -98,7 +99,7 @@ describe("OperatorDaemonTool", () => {
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifacts)
       const recoverySpy = jest
         .spyOn(NodeopProcess, "startWithRecovery")
-        .mockResolvedValue(undefined as unknown as NodeopProcess)
+        .mockResolvedValue(undefined)
       try {
         await OperatorDaemonTool.runDaemonStart(
           ctx,
@@ -168,29 +169,25 @@ describe("OperatorDaemonTool", () => {
       expect(providers[1]).toMatch(
         /^eth-default,ethereum,ethereum,0x[0-9a-fA-F]{128},KEY:0x/
       )
-      expect(providers[2]).toMatch(/^sol-batchopaaaa,solana,solana,/)
+      expect(providers[2]).toMatch(/^sol-wireno\.batchopaaaa,solana,solana,/)
     })
 
     it("configures the batch plugin + both outpost clients + artifacts", () => {
       expect(valuesOf(args, "--batch-enabled")).toEqual(["true"])
-      expect(valuesOf(args, "--batch-operator-account")).toEqual([
-        "batchopaaaa"
-      ])
-      expect(valuesOf(args, "--batch-epoch-poll-ms")).toEqual([
-        String(OperatorDaemonTool.BatchEpochPollMs)
-      ])
-      expect(valuesOf(args, "--batch-delivery-timeout-ms")).toEqual([
-        String(OperatorDaemonTool.BatchDeliveryTimeoutMs)
-      ])
-      expect(valuesOf(args, "--ext-debugging-server")).toEqual([
-        network.debuggingServerUrl
-      ])
+      // The depot matches this argv against `sysio.opreg::operators`, which is
+      // keyed by the ON-CHAIN account — passing the handle would start a daemon
+      // that silently matches no operator row.
+      expect(valuesOf(args, "--batch-operator-account")).toEqual([operator.account])
+      expect(valuesOf(args, "--batch-operator-account")).not.toEqual([operator.label])
+      expect(valuesOf(args, "--batch-epoch-poll-ms")).toEqual([String(OperatorDaemonTool.BatchEpochPollMs)])
+      expect(valuesOf(args, "--batch-delivery-timeout-ms")).toEqual([String(OperatorDaemonTool.BatchDeliveryTimeoutMs)])
+      expect(valuesOf(args, "--ext-debugging-server")).toEqual([network.debuggingServerUrl])
       expect(valuesOf(args, "--outpost-ethereum-client")).toEqual([])
       expect(valuesOf(args, "--outpost-ethereum-client-config-file")).toEqual([
         artifacts.ethereumClientConfigurationFile
       ])
       expect(valuesOf(args, "--outpost-solana-client")).toEqual([
-        `sol-default,sol-batchopaaaa,${network.solanaRpcUrl}`
+        `sol-default,sol-${operator.account},${network.solanaRpcUrl}`
       ])
       expect(valuesOf(args, "--ethereum-abi-file")).toEqual(
         artifacts.ethereumAbiFiles
@@ -247,9 +244,14 @@ describe("OperatorDaemonTool", () => {
             signatureProvider: {
               type: SignatureProviderType.SSM,
               ssm: {
-                awsRegion: "us-east-1",
+                awsRegions: ["us-east-1"],
                 awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
               }
+            },
+            awsClusterNodeConfig: {
+              account: AWSAccountName.dev,
+              regions: ["us-east-1"],
+              ssm: null
             }
           })
         ),
@@ -262,7 +264,8 @@ describe("OperatorDaemonTool", () => {
         solProvider = valuesOf(ssmArgs, "--signature-provider").find(provider =>
           provider.startsWith(`sol-${operator.account}`)
         )
-      expect(solProvider).toMatch(/,SSM:us-east-1:/)
+      // REGION-LESS spec — `SSM:` then the id, ONE colon (`{cluster}` = `dev`).
+      expect(solProvider).toMatch(/,SSM:\/wire\/dev\//)
       expect(solProvider).not.toMatch(/,KEY:/)
     })
   })
@@ -298,16 +301,12 @@ describe("OperatorDaemonTool", () => {
         ...OperatorDaemonTool.UnderwriterPlugins
       ])
       expect(valuesOf(args, "--underwriter-enabled")).toEqual(["true"])
-      expect(valuesOf(args, "--underwriter-account")).toEqual(["uwritaaaaaa"])
-      expect(
-        valuesOf(args, "--underwriter-eth-source-deposit-function")
-      ).toEqual(["requestSwap"])
-      expect(
-        valuesOf(args, "--underwriter-sol-source-deposit-instruction")
-      ).toEqual(["request_swap"])
-      expect(valuesOf(args, "--solana-idl-file")).toEqual([
-        artifacts.solanaIdlFile
-      ])
+      // Same chain-boundary rule as `--batch-operator-account`.
+      expect(valuesOf(args, "--underwriter-account")).toEqual([operator.account])
+      expect(valuesOf(args, "--underwriter-account")).not.toEqual([operator.label])
+      expect(valuesOf(args, "--underwriter-eth-source-deposit-function")).toEqual(["requestSwap"])
+      expect(valuesOf(args, "--underwriter-sol-source-deposit-instruction")).toEqual(["request_swap"])
+      expect(valuesOf(args, "--solana-idl-file")).toEqual([artifacts.solanaIdlFile])
       expect(valuesOf(args, "--solana-outpost-program-name")).toEqual([
         SolanaOutpostProgramTool.ProgramName
       ])
@@ -472,7 +471,8 @@ describe("OperatorDaemonTool", () => {
               rpc_url: OperatorDaemonTool.networkFromConfig(ctx.config)
                 .ethereumRpcUrl
             },
-            chain_id: 31_337
+            chain_id: 31_337,
+            transaction_policy: AnvilEthereumTransactionPolicy.create()
           }
         ]
       })

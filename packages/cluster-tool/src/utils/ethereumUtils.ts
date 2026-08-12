@@ -10,8 +10,8 @@ import { ethers } from "ethers"
  * proxies); `View` just names the typed subset the harness calls. The
  * intersection with `ethers.BaseContract` keeps the instance assignable to
  * BaseContract consumers ({@link resolveLatestNonce}) with no re-cast — every
- * scattered `new ethers.Contract(...) as unknown as X` / `x as unknown as
- * ethers.BaseContract` pair collapses into this single cast site.
+ * scattered per-contract `new ethers.Contract(...)` assertion collapses into
+ * this single cast site.
  *
  * @param address - Deployed contract address.
  * @param abi - Contract ABI (hardhat artifact `abi` or a fragment list).
@@ -23,7 +23,7 @@ export function contractView<View extends object>(
   abi: ethers.InterfaceAbi,
   runner: ethers.ContractRunner
 ): View & ethers.BaseContract {
-  return new ethers.Contract(address, abi, runner) as unknown as View &
+  return new ethers.Contract(address, abi, runner) as View &
     ethers.BaseContract
 }
 
@@ -84,11 +84,51 @@ export function loadOutpostContract<View extends object>(
  * and hands back a stale value → `nonce too low`). Shared module state by
  * design — every {@link resolveLatestNonce} caller for a given address draws
  * from the same counter.
+ *
+ * The value is the PROMISE of the next nonce, not the number, and that is
+ * load-bearing. Seeding needs a `getTransactionCount` round-trip, so a
+ * number-valued counter leaves a read-modify-write straddling an `await`:
+ * every caller that arrives while the seed is in flight finds an empty cache,
+ * issues its own read, and receives the SAME value. Storing the promise lets
+ * each caller take its link synchronously — it reads the current tail and
+ * installs `tail + 1` before it yields — so concurrent callers cannot collide.
+ * (Measured 2026-08-10: nonce 157 went to four parallel funding sends; three
+ * were rejected `nonce has already been used`.)
  */
-const nonceCounters = new Map<string, number>()
+const nonceCounters = new Map<string, Promise<number>>()
 
 /**
- * Resolve the next nonce to submit from `contract`'s bound signer.
+ * What a nonce is drawn for: a contract bound to a signer, or the signer
+ * itself. Both forms exist because not every same-signer write goes through a
+ * contract — a plain value transfer is `signer.sendTransaction(...)` with no
+ * contract in sight, and it MUST draw from the SAME per-address counter.
+ */
+export type NonceSource = ethers.BaseContract | ethers.Signer
+
+/**
+ * The signer behind a {@link NonceSource}, asserted able to sign and reach a
+ * chain.
+ *
+ * Discriminates on `runner`, NOT on `getAddress`: in ethers v6 a
+ * `BaseContract` ALSO exposes `getAddress()` (it returns the contract's own
+ * address), so a `getAddress`-based check would classify every contract as a
+ * signer and draw the nonce for the wrong address.
+ */
+function assertNonceSigner(source: NonceSource): ethers.Signer {
+  const signer = "runner" in source ? (source.runner as ethers.Signer) : source
+  Assert.ok(
+    signer != null && typeof signer.getAddress === "function",
+    "resolveLatestNonce: contract must be bound to a Signer (got runner without getAddress)"
+  )
+  Assert.ok(
+    signer.provider !== null,
+    "resolveLatestNonce: signer must have a Provider attached"
+  )
+  return signer
+}
+
+/**
+ * Resolve the next nonce to submit for `source`'s signer.
  *
  * First call per address seeds from `getTransactionCount(addr, "latest")`;
  * subsequent calls increment the cached counter. Caller MUST pass the
@@ -101,37 +141,30 @@ const nonceCounters = new Map<string, number>()
  * revert), the caller should call {@link clearNonceCache} so the next
  * `resolveLatestNonce` re-seeds from the chain.
  *
- * @param contract Ethers contract instance bound to a Signer (its runner
- *                 must be a Signer with a Provider).
+ * @param source Contract bound to a Signer, or the Signer itself; either way
+ *               it must resolve to a Signer with a Provider.
  * @return The next nonce to submit.
- * @throws If the contract is not bound to a Signer with a Provider.
+ * @throws If the source resolves to no Signer, or that Signer has no Provider.
  */
-export async function resolveLatestNonce(
-  contract: ethers.BaseContract
-): Promise<number> {
-  const runner = contract.runner
-  Assert.ok(
-    runner !== null &&
-      typeof (runner as ethers.Signer).getAddress === "function",
-    "resolveLatestNonce: contract must be bound to a Signer (got runner without getAddress)"
-  )
-  const signer = runner as ethers.Signer
+export async function resolveLatestNonce(source: NonceSource): Promise<number> {
+  const signer = assertNonceSigner(source)
   const provider = signer.provider
-  Assert.ok(
-    provider !== null,
-    "resolveLatestNonce: signer must have a Provider attached"
-  )
   const fromAddr = (await signer.getAddress()).toLowerCase()
 
-  const cached = nonceCounters.get(fromAddr)
-  if (cached != null) {
-    const nonce = cached
-    nonceCounters.set(fromAddr, cached + 1)
-    return nonce
-  }
-  const chainNonce = await provider.getTransactionCount(fromAddr, "latest")
-  nonceCounters.set(fromAddr, chainNonce + 1)
-  return chainNonce
+  // Take this call's link and install the next one SYNCHRONOUSLY — no `await`
+  // between the read and the write, so two callers can never take the same one.
+  const nonce =
+    nonceCounters.get(fromAddr) ??
+    provider.getTransactionCount(fromAddr, "latest")
+  nonceCounters.set(
+    fromAddr,
+    nonce.then(value => value + 1)
+  )
+  // A failed SEED must not poison every later caller with the same rejection:
+  // drop the chain so the next call re-seeds from the chain itself. The
+  // rejection still reaches THIS caller through the returned promise.
+  nonce.catch(() => nonceCounters.delete(fromAddr))
+  return nonce
 }
 
 /**
@@ -147,6 +180,33 @@ export function clearNonceCache(address: string): void {
 }
 
 /**
+ * The reason-bearing fields an `ethers` (or arbitrary) error may carry, read
+ * duck-typed by {@link ethereumRevertReason}: ethers fills `reason` from a
+ * decoded `require(cond, "msg")` and `shortMessage` from its own error
+ * taxonomy. All optional — an arbitrary thrown value carries none of them.
+ */
+export interface EthereumRevertError {
+  reason?: string
+  shortMessage?: string
+  message?: string
+}
+
+/**
+ * `ethers` call overrides whose native value (`msg.value`) is a `bigint` — the
+ * harness's canonical amount shape, narrowed from ethers' own
+ * `BigNumberish`-widened `value`. Optional here;
+ * {@link EthereumPayableOverrides} requires it.
+ */
+export interface EthereumValueOverrides extends ethers.Overrides {
+  value?: bigint
+}
+
+/** {@link EthereumValueOverrides} for a call that MUST send native value. */
+export interface EthereumPayableOverrides extends EthereumValueOverrides {
+  value: bigint
+}
+
+/**
  * The most specific human-readable reason an ethers error carries: the decoded
  * `require(cond, "msg")` `reason` when present, else ethers' `shortMessage`,
  * else the plain `message`, else the stringified error. Use when surfacing a
@@ -157,6 +217,6 @@ export function clearNonceCache(address: string): void {
  * @returns The best available reason string.
  */
 export function ethereumRevertReason(error: unknown): string {
-  const decoded = error as { reason?: string; shortMessage?: string; message?: string }
+  const decoded = error as EthereumRevertError
   return decoded?.reason ?? decoded?.shortMessage ?? decoded?.message ?? String(error)
 }

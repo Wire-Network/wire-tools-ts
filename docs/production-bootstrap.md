@@ -249,21 +249,30 @@ authex) are no longer configured.
 | `req_uw_collat` | `[]` | empty by default |
 
 22. **WIRE token + emissions** — `sysio.token` is reused for a separate `9,WIRE` token the emissions contract
-    reads from `sysio`'s balance. Four actions, in order:
+    reads from `sysio`'s balance. Five actions, in order:
     - `sysio.token::create({issuer:"sysio", maximum_supply:"1000000000.000000000 WIRE"})` — `[sysio.token@active]`.
     - `sysio.token::issue({to:"sysio", quantity:"1000000000.000000000 WIRE", memo:"initial WIRE for emissions"})` — `[sysio@active]`.
     - `sysio::setemitcfg({cfg:{…}})` — `[sysio@active]` — full payload in the table below.
+    - `sysio::setinittime({no_reward_init_time:"<Distribution Commencement Date, ISO-8601 YYYY-MM-DDTHH:MM:SS>"})` —
+      `[sysio@active]` — seeds the `emissionmngr` singleton that anchors node-owner vesting. Every tier's schedule is
+      measured from this one instant, so until it is set `claimnodedis` aborts with "emission state not initialized"
+      and no node owner can claim — registration still succeeds, which is what makes the omission silent. Reads the
+      emission config, so it must run after `setemitcfg`, and it is one-shot (a second call is rejected).
+      **(cluster: the chain's `head_block_time`; production: the approved Distribution Commencement Date)**
     - `sysio::initt5({start_time:"<chain head time, ISO-8601 YYYY-MM-DDTHH:MM:SS>"})` — `[sysio@active]` — seeds
       the T5 state singleton (`start_time` = the chain's `head_block_time`, not wall clock). Must run after
       `setemitcfg` and before Stage 12's `bootstrap`.
 
-    `sysio::setemitcfg` payload (WIRE amounts are 9-decimal subunits):
+    `sysio::setemitcfg` payload (WIRE amounts are 9-decimal subunits). The `tN_allocation` fields are **per node
+    owner**, not per tier: `addnodeowner` copies the tier's value verbatim into that one owner's `nodedist` row, so
+    a tier's total exposure is the value times its cap (21 / 84 / 1000). Across all three tiers that is
+    341,500,000 WIRE against the 1,000,000,000 WIRE supply issued above.
 
 | Field | Value | Meaning |
 |---|---|---|
-| `t1_allocation` | `7500000000000000` | 7,500,000 WIRE (T1 tier total) |
-| `t2_allocation` | `15000000000000000` | 15,000,000 WIRE |
-| `t3_allocation` | `30000000000000000` | 30,000,000 WIRE |
+| `t1_allocation` | `7500000000000000` | 7,500,000 WIRE per T1 owner (× 21 cap = 157,500,000) |
+| `t2_allocation` | `1000000000000000` | 1,000,000 WIRE per T2 owner (× 84 cap = 84,000,000) |
+| `t3_allocation` | `100000000000000` | 100,000 WIRE per T3 owner (× 1000 cap = 100,000,000) |
 | `t1_duration` | `31104000` | 12 × 30 d, seconds |
 | `t2_duration` | `62208000` | 24 × 30 d |
 | `t3_duration` | `93312000` | 36 × 30 d |

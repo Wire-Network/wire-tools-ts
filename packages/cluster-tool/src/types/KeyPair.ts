@@ -1,19 +1,59 @@
 import { KeyType } from "@wireio/sdk-core"
 
 /**
+ * The curve-agnostic members every {@link KeyPair} carries — the curve tag, the
+ * Wire-canonical public key, and EXACTLY ONE custody form for the secret.
+ *
+ * Custody is a real runtime alternative, not an optionality convenience:
+ * - `privateKey` — the Wire-canonical key material itself. Present in memory
+ *   for every key the run generates OR adopts, and the persisted form under a
+ *   `KEY` / `KIOD` signature provider.
+ * - `awsSecretId` — the SSM parameter id the key material lives under. The
+ *   persisted form under an `SSM` signature provider, where `cluster-keys.json`
+ *   carries NO key material at all (§5.6) and a rehydrated pair is refs-only:
+ *   the daemon's `--signature-provider …,SSM:<id>` spec is what fetches the key
+ *   at startup, so nothing downstream of `ClusterState.loadKeys` may read
+ *   `privateKey`.
+ *
+ * `ClusterState`'s per-curve schemas enforce the exactly-one rule on the
+ * persisted records; in memory both slots are simply absent-able.
+ */
+export interface KeyPairCommon<T extends KeyType = KeyType> {
+  readonly type: T
+  readonly publicKey: string
+  readonly privateKey?: string
+  readonly awsSecretId?: string
+}
+
+/** The BLS-only {@link KeyPair} extension: the finalizer key's proof of possession. */
+export interface KeyPairProofOfPossession {
+  readonly proofOfPossession: string
+}
+
+/** The EM-only {@link KeyPair} extension: the address derived from the key. */
+export interface KeyPairAddress {
+  readonly address: string
+}
+
+/**
+ * The {@link KeyPair} extension for a curve that adds NO members beyond
+ * {@link KeyPairCommon} (K1, ED) — deliberately empty.
+ */
+export interface KeyPairNoExtension {}
+
+/**
  * A key pair tagged with its curve. String members are Wire-canonical
  * (`PUB_<KeyType>_…` / `PVT_<KeyType>_…` / `SIG_BLS_…`) so they round-trip
  * through JSON cluster state. BLS — and only BLS — additionally carries a proof
  * of possession; the conditional makes that compile-enforced. Replaces the
  * duplicated `K1KeyPair` / `BLSKeyPair` interfaces.
  */
-export type KeyPair<T extends KeyType = KeyType> = {
-  readonly type: T
-  readonly publicKey: string
-  readonly privateKey: string
-} & (T extends KeyType.BLS ? { readonly proofOfPossession: string } : T extends KeyType.EM ? {
-  readonly address: string
-} : {})
+export type KeyPair<T extends KeyType = KeyType> = KeyPairCommon<T> &
+  (T extends KeyType.BLS
+    ? KeyPairProofOfPossession
+    : T extends KeyType.EM
+      ? KeyPairAddress
+      : KeyPairNoExtension)
 
 /** WIRE operator key pair (`PUB_K1_…` / `PVT_K1_…`). */
 export type WireKeyPair = KeyPair<KeyType.K1>
@@ -23,3 +63,28 @@ export type WireFinalizerKeyPair = KeyPair<KeyType.BLS>
 export type EthereumKeyPair = KeyPair<KeyType.EM>
 /** Solana (Ed25519 / ED) key pair (`PUB_ED_…` / `PVT_ED_…`). */
 export type SolanaKeyPair = KeyPair<KeyType.ED>
+
+/**
+ * The per-curve key members a SIGNING IDENTITY carries.
+ *
+ * ONE shape for both identity kinds: `ClusterKeyStore.ProducerKeySet` (a node's
+ * `wire` + `wireFinalizer`) and `OperatorAccount` (an operator's `wire` plus
+ * whichever outpost curves it is bonded on) are both structurally assignable,
+ * so ONE resolver and ONE publication walker cover every identity that renders
+ * a `--signature-provider` spec.
+ *
+ * They were previously two shapes with two vocabularies (`{k1, bls}` vs
+ * `{wire, wireFinalizer}`), which is what let the bios identity fall between
+ * them — stored as an operator, published as a node, and therefore published by
+ * neither walker.
+ */
+export interface SigningKeySet {
+  /** WIRE block-signing key — every identity has one. */
+  readonly wire: WireKeyPair
+  /** WIRE finality key — nodes and the genesis identity; absent on batch/underwriter operators. */
+  readonly wireFinalizer?: WireFinalizerKeyPair
+  /** Ethereum key — operators bonded on the ETH outpost. */
+  readonly ethereum?: EthereumKeyPair
+  /** Solana key — operators bonded on the SOL outpost. */
+  readonly solana?: SolanaKeyPair
+}

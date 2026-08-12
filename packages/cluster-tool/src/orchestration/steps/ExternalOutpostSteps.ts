@@ -2,6 +2,9 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import type * as anchor from "@coral-xyz/anchor"
+import { NestedError } from "@wireio/shared"
+import type { SysioContracts } from "@wireio/sdk-core"
+import { ProtocolTiming } from "../../Constants.js"
 import { Report } from "../../report/Report.js"
 import { getLogger } from "../../logging/Logger.js"
 import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
@@ -49,6 +52,19 @@ export namespace ExternalOutpostSteps {
   export const HeadAdvanceTimeoutMs = 60_000
   /** Poll gap for the head-advance verify (ms). */
   export const HeadAdvancePollIntervalMs = 1_000
+
+  /**
+   * Poll budget for the outbound-envelope bootstrap gate (ms) — the single-hop
+   * class: the depot has to build and queue the bootstrap envelope for every
+   * registered outpost, which is bounded by one epoch's envelope cadence.
+   * Pinned to the TOP of its class; the poll returns the moment every outpost
+   * has a row, so the ceiling costs a healthy run nothing.
+   */
+  export const OutboundEnvelopesPollBudgetMs = ProtocolTiming.SingleHopBudgetMs
+  /** Step ceiling for the outbound-envelope gate (ms) — above its inner poll budget. */
+  export const OutboundEnvelopesTimeoutMs = ProtocolTiming.DoubleHopBudgetMs
+  /** Poll gap for the outbound-envelope gate (ms) — same probe cadence as the head-advance gate. */
+  export const OutboundEnvelopesPollIntervalMs = HeadAdvancePollIntervalMs
 
   /**
    * MATERIALIZE the config-referenced outpost files into the EXACT canonical
@@ -354,6 +370,91 @@ export namespace ExternalOutpostSteps {
     options: ClusterBuildStepOptions = {}
   ): ClusterBuildStep<C, null> {
     return verifyStep<C>(actor, name, description, runHeadBlockAdvance, options)
+  }
+
+  /**
+   * The external-create OPP gate: the depot has QUEUED an outbound envelope for
+   * every registered outpost. Head-advance ({@link planHeadBlockAdvance}) proves
+   * the depot is alive; this proves the OPP side of the bootstrap actually
+   * produced work for the remote outposts to consume — the closest external-mode
+   * analogue of the local epoch-distribution gate (an external cluster has no
+   * local chain whose epoch we can watch advance).
+   *
+   * @param actor - The Report actor.
+   * @param name - Step name.
+   * @param description - Step description.
+   * @param options - Step options (ceiling defaults to {@link OutboundEnvelopesTimeoutMs}).
+   * @returns The verify step.
+   */
+  export function planOutboundEnvelopesQueued<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions = { timeoutMs: OutboundEnvelopesTimeoutMs }
+  ): ClusterBuildStep<C, null> {
+    return verifyStep<C>(
+      actor,
+      name,
+      description,
+      runOutboundEnvelopesQueued,
+      options
+    )
+  }
+
+  /**
+   * Named runner — poll `sysio.msgch::outenvelopes` until EVERY registered
+   * (non-depot) chain in `sysio.chains::chains` has at least one queued outbound
+   * envelope row. Both reads go through the typed contract-table accessors
+   * (`ctx.wire.getChains()` / `getOutboundEnvelopes()`); the depot-side
+   * `envelopes` count is read only to enrich a failure.
+   *
+   * @param ctx - The build context.
+   * @param signal - Abort signal.
+   */
+  export async function runOutboundEnvelopesQueued<
+    C extends ClusterBuildContext
+  >(ctx: C, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted()
+    const { rows: chains } = await ctx.wire.getChains(),
+      outposts = chains.filter(chain => !chain.is_depot),
+      chainCode = (code: SysioContracts.SysioChainsSlugNameType): string =>
+        String(code.value)
+    Assert.ok(
+      outposts.length > 0,
+      "runOutboundEnvelopesQueued: sysio.chains::chains has no registered outpost (non-depot) chain"
+    )
+    const expected = outposts.map(outpost => chainCode(outpost.code))
+    try {
+      await pollUntil(
+        `an outbound envelope is queued for every registered outpost (${expected.join(", ")})`,
+        async () => {
+          const { rows: outbound } = await ctx.wire.getOutboundEnvelopes(),
+            queued = new Set(outbound.map(row => String(row.chain_code)))
+          return expected.every(code => queued.has(code))
+        },
+        OutboundEnvelopesPollBudgetMs,
+        OutboundEnvelopesPollIntervalMs
+      )
+    } catch (error) {
+      // Enrich, never mask: the depot-side envelope count says whether the
+      // bootstrap produced ANY envelope or none at all. A failed diagnostic read
+      // is logged and reported as absent — it can't replace the real failure.
+      const depotEnvelopeCount = await ctx.wire.getEnvelopes().then(
+        result => result.rows.length,
+        readError => {
+          log.debug(
+            `[external] envelope-count diagnostic read failed: ${readError instanceof Error ? readError.message : String(readError)}`
+          )
+          return null
+        }
+      )
+      throw new NestedError(
+        "external-outpost bootstrap gate: the depot queued no outbound envelope for every registered outpost",
+        { cause: error, context: { expected, depotEnvelopeCount } }
+      )
+    }
   }
 
   /**

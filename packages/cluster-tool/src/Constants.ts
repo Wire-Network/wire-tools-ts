@@ -3,7 +3,7 @@ import { Hash, KeyType, PrivateKey } from "@wireio/sdk-core"
 
 /**
  * Cross-cutting harness constants — development keys, system-account names,
- * token / ROA parameters, contract paths, plugin sets, operator-label
+ * token / ROA parameters, contract paths, plugin sets, operator-account-handle
  * generators, and the emissions config defaults. Ported from the former
  * the former `cluster/constants.ts`; network ports are NOT here — they live on
  * `config/BindConfigProvider.ts`, which owns binding.
@@ -163,7 +163,6 @@ export namespace Constants {
     voteThreads: 4,
     maxTransactionTime: -1,
     abiSerializerMaxTimeMs: 990_000,
-    maxClients: 25,
     connectionCleanupPeriod: 15,
     httpMaxResponseTimeMs: 990_000
   } as const
@@ -238,14 +237,15 @@ export namespace Constants {
     "sysio::outpost_solana_client_plugin"
   ] as const
 
-  /** Lowercase ASCII alphabet — single-character operator-label suffixes (wraps via modulo). */
+  /** Lowercase ASCII alphabet — single-character operator-account suffixes (wraps via modulo). */
   const LowercaseAlphabet = "abcdefghijklmnopqrstuvwxyz"
 
   /**
-   * Batch-operator provisioning label for an index — `batchop.<letter>`. The
-   * label is the operator's `ClusterKeyStore` key AND its `sysio.roa::newuser`
-   * sponsor nonce — the CHAIN account name is node-owner-generated
-   * (`wireno.<suffix>`), not this value.
+   * Batch-operator durable harness LABEL for an index — `batchop.<letter>`.
+   * The label is the operator's `ClusterKeyStore` key and its SSM secret-id
+   * `{account}` segment. It does NOT exist on chain — the on-chain account name
+   * is node-owner-generated (`wireno.<random>`, `OperatorAccount.account`), and
+   * its suffix is nonce-derived entropy, so it cannot be requested.
    *
    * @param index - Zero-based operator index.
    * @returns The label (e.g. `batchOperatorLabel(0)` → `"batchop.a"`).
@@ -255,8 +255,8 @@ export namespace Constants {
   }
 
   /**
-   * Underwriter provisioning label for an index — `uwrit.<letter>`. Same
-   * label-vs-generated-account split as {@link batchOperatorLabel}.
+   * Underwriter durable harness LABEL for an index — `uwrit.<letter>`. Same
+   * label-vs-generated-`account` split as {@link batchOperatorLabel}.
    *
    * @param index - Zero-based underwriter index.
    * @returns The label (e.g. `underwriterLabel(1)` → `"uwrit.b"`).
@@ -296,9 +296,14 @@ export namespace Constants {
 
   /** Default emissions config used by bootstrap (mirrors the realistic test fixture). */
   export const EMISSION_CONFIG_DEFAULTS: EmissionConfig = {
-    t1_allocation: 7_500_000_000_000_000,
-    t2_allocation: 15_000_000_000_000_000,
-    t3_allocation: 30_000_000_000_000_000,
+    // Node-owner allocations are PER OWNER, not per tier. `addnodeowner` copies the
+    // tier's value verbatim into that one owner's `nodedist` row, so a tier's total
+    // exposure is this value times the tier cap (21 / 84 / 1000 — the `TN_MAX_NODE_OWNERS`
+    // constants in wire-sysio `emissions.hpp`). At these values the three tiers commit
+    // 341,500,000 WIRE against the 1,000,000,000 WIRE supply issued at bootstrap.
+    t1_allocation: 7_500_000_000_000_000, // 7,500,000 WIRE x 1e9
+    t2_allocation: 1_000_000_000_000_000, // 1,000,000 WIRE x 1e9
+    t3_allocation: 100_000_000_000_000, // 100,000 WIRE x 1e9
     t1_duration: 12 * 30 * 24 * 60 * 60,
     t2_duration: 24 * 30 * 24 * 60 * 60,
     t3_duration: 36 * 30 * 24 * 60 * 60,
@@ -334,11 +339,60 @@ export namespace Constants {
  * undershot one fails healthy runs at the envelope's tail. There is NO
  * concurrency-derived scaling — concurrency reduces total wall clock, it does
  * not define protocol latency.
+ *
+ * TOPOLOGY is a different thing and IS a legitimate input: the finalizer-set
+ * size genuinely determines how long one Savanna quorum round takes, because
+ * every finalizer's vote has to propagate and aggregate. That is the protocol's
+ * own latency, not a measure of parallel work — see
+ * {@link ProtocolTiming.irreversibilityBudgetMs}, the only budget here that
+ * takes a parameter.
  */
 export namespace ProtocolTiming {
   /** Max extension an epoch can run past `epoch_duration_sec` while a
    *  scheduled batch operator has yet to deliver (s). */
   export const EpochExtensionMaxSec = 30
+
+  /**
+   * Irreversibility floor (ms) — the budget on a single-finalizer cluster.
+   *
+   * Sized so dev/flow topologies keep essentially the previous flat 60s
+   * behaviour: every `flow-*` bootstrap runs a handful of finalizers, so this
+   * floor plus a few increments lands within seconds of the old value.
+   */
+  export const IrreversibilityBaseMs = 60_000
+
+  /**
+   * Per-finalizer increment on the irreversibility budget (ms).
+   *
+   * TOPOLOGY-derived, not concurrency-derived — the distinction is why this is
+   * permitted where the namespace note bans scaling. Savanna finalizes on a
+   * quorum certificate: every finalizer's vote must propagate and aggregate, so
+   * one finalization round's wall clock genuinely grows with the SIZE OF THE
+   * FINALIZER SET. That is a property of the protocol, not of how much work the
+   * harness runs in parallel.
+   *
+   * Calibrated against a measured step: on 2026-08-04 a 21-finalizer cluster
+   * took **49.4 s** to reach irreversibility on `create-roa` — the step right
+   * before `create-acct` blew the flat 60 s budget and killed the run. 21
+   * finalizers here yields 186 s, ~3.7x the observed latency, the margin an
+   * envelope-top budget wants. Polls return the moment LIB passes the block, so
+   * the ceiling costs a healthy run nothing.
+   */
+  export const IrreversibilityPerFinalizerMs = 6_000
+
+  /**
+   * The irreversibility budget for a cluster with `finalizerCount` finalizers.
+   *
+   * @param finalizerCount - Finalizers in the genesis policy (the producer
+   *   nodes — `ConsensusSteps` builds the policy from exactly that set).
+   * @returns Wall-clock budget for one transaction to reach LIB (ms).
+   */
+  export function irreversibilityBudgetMs(finalizerCount: number): number {
+    return (
+      IrreversibilityBaseMs +
+      Math.max(finalizerCount, 1) * IrreversibilityPerFinalizerMs
+    )
+  }
 
   /** Collateral deposit + depot verification (ms) — 6-minute envelope top. */
   export const CollateralVerifyBudgetMs = 360_000
@@ -357,6 +411,25 @@ export namespace ProtocolTiming {
    * that pairs a `pollUntil` deadline with an enclosing step timeout.
    */
   export const PollDeadlineBufferMs = 30_000
+
+  /**
+   * Epoch-advance liveness budget as a count of effective-epoch windows. At the
+   * default 60s epoch this is 3 × (60 + 30)s = 270s — ≥ the ~4min a *resumed*
+   * cluster can need to restart OPP circulation before `current_epoch_index`
+   * advances. A healthy cluster still passes in ~1 epoch (the poll returns the
+   * moment the index moves), so the larger ceiling adds no wall clock to a
+   * healthy run — it only keeps a slow restart from failing a live cluster.
+   *
+   * ONE envelope, two owners: `ClusterManager.run`'s post-relaunch liveness
+   * check and `ClusterBuildDefaults`' bootstrap epoch-advance gate.
+   */
+  export const EpochVerifyEpochCount = 3
+
+  /** Poll gap for the epoch-advance liveness verify (ms). */
+  export const EpochVerifyPollIntervalMs = 1_000
+
+  /** Seconds → milliseconds, the conversion every epoch-derived budget applies. */
+  export const MsPerSecond = 1_000
 
   /**
    * Effective per-epoch duration for N-epoch deadlines (s): the nominal

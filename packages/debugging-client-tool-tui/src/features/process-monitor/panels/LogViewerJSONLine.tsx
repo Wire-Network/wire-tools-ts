@@ -111,7 +111,7 @@ function renderColumnsWithOffset(
   horizontalOffset: number,
   highlight: string
 ): React.ReactNode {
-  const initial: { cursor: number; nodes: React.ReactNode[] } = {
+  const initial: LineRender.SegmentFold = {
       cursor: 0,
       nodes: []
     },

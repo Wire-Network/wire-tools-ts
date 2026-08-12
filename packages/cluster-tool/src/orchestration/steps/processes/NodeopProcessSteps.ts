@@ -22,11 +22,18 @@ import { OperatorDaemonArtifactsKey } from "../../outputs/OperatorDaemonArtifact
 const log = getLogger(__filename)
 
 /**
- * The BIOS node's {@link OperatorAccount} — the genesis producer carrying the
- * dev K1 + BLS block-signing keys (matching genesis).
+ * FALLBACK bios {@link OperatorAccount} — the genesis producer carrying the
+ * well-known dev K1 + BLS keys.
+ *
+ * The live path resolves the bios account from `ctx.keyStore` (seeded by
+ * `ClusterBuild.create` from `ClusterConfigProvider.resolveWithBiosKeys`, so an
+ * SSM cluster's GENERATED bios keys are used). This constant only covers a
+ * cluster directory whose `cluster-keys.json` predates that seeding — such a
+ * cluster is a `KEY`-mode dev-key cluster by definition, so these ARE its keys.
  */
 const BiosOperator: OperatorAccount = {
-  label: NodeConfig.BiosProducer,
+  label: NodeConfig.BiosName,
+  publicationLabel: NodeConfig.BiosName,
   account: NodeConfig.BiosProducer,
   type: OperatorType.PRODUCER,
   wire: {
@@ -34,7 +41,7 @@ const BiosOperator: OperatorAccount = {
     publicKey: Constants.DEV_K1_PUBLIC_KEY,
     privateKey: Constants.DEV_K1_PRIVATE_KEY
   },
-  bls: {
+  wireFinalizer: {
     type: KeyType.BLS,
     publicKey: Constants.DEV_BLS_PUBLIC_KEY,
     privateKey: Constants.DEV_BLS_PRIVATE_KEY,
@@ -196,18 +203,25 @@ export namespace NodeopProcessSteps {
   }
 
   /**
-   * The {@link OperatorAccount} a node acts for, by role. A producer node's
-   * account carries its NODE-shared signing set from `ctx.keyStore` (identical
-   * to what its provisioning phase materializes); operator nodes resolve the
-   * provisioned account itself. Exported so `ClusterManager.run` (the relaunch
-   * path) reuses the SAME resolution logic — no duplication.
+   * The {@link OperatorAccount} a node acts for, by role. The bios node's
+   * account is the genesis producer seeded into `ctx.keyStore` at config
+   * resolution (its keys ARE `genesis.json`'s `initial_key` /
+   * `initial_finalizer_key`), falling back to {@link BiosOperator} for a cluster
+   * directory written before that seeding existed. A producer node's account
+   * carries its NODE-shared signing set from `ctx.keyStore` (identical to what
+   * its provisioning phase materializes); operator nodes resolve the provisioned
+   * account itself. Exported so `ClusterManager.run` (the relaunch path) reuses
+   * the SAME resolution logic — no duplication.
    */
   export function resolveOperator(
     ctx: ClusterBuildContext,
     node: NodeConfig
   ): OperatorAccount {
     return match(node.role)
-      .with(NodeRole.bios, () => BiosOperator)
+      .with(
+        NodeRole.bios,
+        () => ctx.keyStore.operator(NodeConfig.BiosName) ?? BiosOperator
+      )
       .with(NodeRole.producer, () => producerOperator(ctx, node))
       .otherwise(() => ctx.keyStore.assertOperator(assertOperatorLabel(node)))
   }
@@ -218,17 +232,21 @@ export namespace NodeopProcessSteps {
     node: NodeConfig
   ): OperatorAccount {
     const nodeKeys = ctx.keyStore.node(node.index),
+      // A producer never goes through `roa::newuser`, so its handle IS its
+      // on-chain name.
       account = node.producers[0] ?? node.name
     return {
-      label: account,
       account,
+      label: account,
+      // These are the NODE's keys; they are published under the node's name.
+      publicationLabel: node.name,
       type: OperatorType.PRODUCER,
-      wire: nodeKeys.keys.k1,
-      bls: nodeKeys.keys.bls
+      wire: nodeKeys.keys.wire,
+      wireFinalizer: nodeKeys.keys.wireFinalizer
     }
   }
 
-  /** Assert an operator node names its batch / underwriter provisioning label. */
+  /** Assert an operator node names the durable batch / underwriter `label` it acts for. */
   function assertOperatorLabel(node: NodeConfig): string {
     const { batchOperatorLabel, underwriterLabel } = node,
       label = batchOperatorLabel ?? underwriterLabel

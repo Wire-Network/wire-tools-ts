@@ -26,7 +26,7 @@ on it. `wire-cluster-tool` owns the full lifecycle:
 |---|---|
 | `create` | Resolve config, build the directory layout, generate keys + genesis + node configs, bootstrap every chain (WIRE system contracts, OPP contracts on anvil, `opp-outpost` on solana), persist `cluster-config.json` / `cluster-state.json` / `cluster-keys.json`, then exit. |
 | `run` | Rehydrate keys from `cluster-keys.json`, RE-DERIVE topology from the config (never a stored launch command), relaunch `kiod` + every node, gate on liveness, block until Ctrl+C. |
-| `destroy` | Stop every process, best-effort clean up published SSM keys, remove the cluster directory. |
+| `destroy` | Stop every process and remove the cluster directory. **Published SSM keys are NEVER deleted** — they are logged and retained (see below). |
 | `package` | Archive each node's full config tree (+ `genesis.json`) into `<cluster>/packages/<node>.<ext>` — the multihost hand-off artifact (post-`create`). |
 | `create-external-config` | Clone a created, stopped local cluster into a deployable external directory with a different `BindConfig` merged in + emit its self-described `external-cluster-config.json`. |
 
@@ -81,11 +81,11 @@ the path flags.
 | `--build-path` | | **required** | `wire-sysio` build dir (with `bin/nodeop`) |
 | `--ethereum-path` | | **required** | `wire-ethereum` repo (anvil + outpost deploy) |
 | `--solana-path` | | **required** | `wire-solana` repo (`solana-test-validator` + `opp-outpost`) |
-| `--force` | | `false` | overwrite an existing cluster directory |
+| `--force` | | `false` | replace an existing cluster directory. `create` REQUIRES this when `--cluster-path` already exists — it fails fast otherwise rather than overlaying a new cluster onto the old one's chain state. Refuses while the existing cluster's daemons are still live. |
 | `--node-count` | `-n` | `1` | producer node **processes** |
 | `--producer-count` | `-p` | `21` | producer **accounts** registered on-chain |
 | `--batch-operator-count` | `-b` | `3` | batch operators |
-| `--underwriter-count` | `-u` | `1` | underwriters |
+| `--underwriter-count` | `-u` | `1` | underwriters — must be an EXPLICIT `0` with `--external-outpost-config` (omitting it means ONE underwriter, not zero) |
 | `--epoch-duration-sec` | | `60` | minimum epoch duration (the depot floor) |
 | `--warmup-epochs` / `--cooldown-epochs` | | `1` / `1` | operator WARMUP → ACTIVE / COOLDOWN → deregister windows |
 | `--terminate-max-consecutive-misses` / `--terminate-max-percent-misses24h` / `--terminate-window-ms` | | — | termination tuning |
@@ -93,17 +93,29 @@ the path flags.
 | `--enable-mock-reserves` | | `false` | seed the 8 mock (chain, token) PRIMARY reserves at bootstrap |
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config <file>` | | — | a `BindConfig` JSON: complete → verbatim (no probing), partial → merged over resolved defaults (CLI > file > defaults) |
-| `--external-outpost-config <file>` | | — | bootstrap the depot against already-deployed REMOTE ETH+SOL outposts |
+| `--external-outpost-config <file>` | | — | bootstrap the depot against already-deployed REMOTE ETH+SOL outposts (requires `--underwriter-count 0`) |
+| `--cluster-build-options-file <file>` | | — | a whole `ClusterBuildOptions` JSON document (every option leaf + the collateral arrays + `signatureProvider.ssm`). Precedence: explicit flags > this file > `WIRE_*` env > defaults. Unknown keys / wrong types are hard errors naming the path; it may NOT carry `awsClusterNodeConfig` |
+| `--aws-cluster-node-config <file>` | | — | an `AWSClusterNodeConfig` JSON file (AWS account + every region secrets replicate to, plus its `ssm`) |
 | `--signature-provider-type` | | `KEY` | `KEY` (inline) / `SSM` / `KIOD` |
-| `--signature-provider-ssm '<json>'\|<file>` | | — | SSM region + secret-id pattern (required for `SSM`) |
-| `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink log levels |
+| `--signature-provider-ssm '<json>'\|<file>` | | — | SSM secret-id pattern (required for `SSM`); beats the options file's `signatureProvider.ssm`, which beats `--aws-cluster-node-config`'s own `ssm` |
+| `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output |
 
 ### `run` / `destroy`
 
 Both take only `--cluster-path` (`-d`). `run` blocks until Ctrl+C (clean
-shutdown); `destroy` stops every daemon, deletes published SSM keys under the
-`SSM` provider (best-effort), and removes the directory.
+shutdown); `destroy` stops every daemon and removes the directory.
+
+**`destroy` NEVER deletes a published SSM key — full stop.** Under the `SSM`
+provider it LOGS every parameter id it is deliberately retaining and leaves the
+SecureStrings in place. They are the account's durable key identity: the next
+`create` ADOPTS an existing parameter instead of reminting it, which is what
+makes re-creating a cluster in the same account idempotent. A parameter with no
+live cluster is therefore not an orphan. Removing one is an explicit,
+out-of-band act — delete it yourself, in EVERY region it was replicated to (a
+partial delete resurrects the old key via cross-region adoption). The CI role is
+not granted `ssm:DeleteParameter` at all, so the workflow has no code path that
+could remove a signing key even by accident.
 
 ### `package`
 
@@ -168,9 +180,10 @@ wire-cluster-tool create \
   --ethereum-path <wire-ethereum> \
   --solana-path   <wire-solana> \
   --signature-provider-type SSM \
-  --signature-provider-ssm '{"awsRegion":"us-east-1","awsSecretIdPattern":"/wire-sysio/{cluster}/keys/{account}/{keyType}"}'
-# ids render as e.g. /wire-sysio/testnet-local/keys/batchop.a/K1
-# ({cluster} = basename of --cluster-path); specs render SSM:us-east-1:<id>.
+  --signature-provider-ssm '{"awsSecretIdPattern":"/wire/{cluster}/{account}/{keyType}"}'
+# ids render as e.g. /wire/test/batchop.a/K1
+# ({cluster} = awsClusterNodeConfig.account); specs render a region-less SSM:<id>,
+# and each key is published to EVERY awsClusterNodeConfig.regions entry.
 
 # 2. Stop it, then clone into a deployable external directory (remote bind merged in):
 wire-cluster-tool create-external-config \
@@ -183,9 +196,27 @@ wire-cluster-tool create-external-config \
 
 External-outpost cluster (remote ETH+SOL): pass `--external-outpost-config` +
 a `--bind-config` whose `anvil` / `solana` addresses are the remote RPC
-endpoints; `create` verifies `eth_chainId` / Solana `getVersion` and gates on
-head-block advance (not epoch distribution). See the repo root README's
-"External outpost clusters" section.
+endpoints, and an EXPLICIT `--underwriter-count 0`:
+
+```bash
+wire-cluster-tool create \
+  --cluster-path            /opt/wire/testnet-depot \
+  --build-path              <wire-sysio>/build/release \
+  --ethereum-path           <wire-ethereum> \
+  --solana-path             <wire-solana> \
+  --external-outpost-config ~/external-outpost.json \
+  --bind-config             ~/external-bind-config.json \
+  --underwriter-count       0
+```
+
+`--underwriter-count 0` is REQUIRED, not optional: the flag defaults to `1`, so
+omitting it asks for one underwriter — and an external cluster has no local
+outpost for an underwriter to bond collateral on. `create` verifies
+`eth_chainId` / Solana `getVersion`, then gates success on head-block advance
+**and** on an outbound envelope being queued for every registered outpost (not
+on epoch distribution — there is no local chain to advance an epoch on). A LOCAL
+cluster instead gates on `sysio.epoch::current_epoch_index` passing the
+bootstrap epoch. See the repo root README's "External outpost clusters" section.
 
 ---
 
@@ -326,7 +357,7 @@ repo `CLAUDE.md` / `STYLE.md`).
 - **`--signature-provider-type SSM` fails at create** — publishing writes to AWS
   SSM Parameter Store and needs valid AWS credentials in the environment; the
   logged error carries the parameter id + region (never the secret value).
-  `destroy` deletes the published keys best-effort.
+  `destroy` does NOT delete the published keys — it logs and retains them.
 - **`--bind-config` rejected** — the file failed validation: a complete
   `BindConfig` must match the cluster topology (one entry per node/role); a
   remote `anvil`/`solana` address requires `--external-outpost-config`. The error

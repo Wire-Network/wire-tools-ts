@@ -83,7 +83,7 @@ describe("SignatureProviderConfigProvider.resolve", () => {
         providerType: SignatureProviderType.SSM,
         type: KeyType.ED,
         publicKey: ed.toPublic().toString(),
-        awsRegion: "us-east-1",
+        awsRegions: ["us-east-1", "eu-west-1"],
         awsSecretId: "/wire/keys/x"
       })
     }
@@ -102,7 +102,7 @@ describe("SignatureProviderConfigProvider.resolve", () => {
         providerType: SignatureProviderType.SSM,
         type: KeyType.ED,
         publicKey: ed.toPublic().toString(),
-        awsRegion: "us-east-1",
+        awsRegions: ["us-east-1", "eu-west-1"],
         awsSecretId: "/wire/keys/x"
       })
       expect(resolution.keyPair.privateKey).toBe(ed.toString())
@@ -123,7 +123,7 @@ describe("SignatureProviderConfigProvider.resolve", () => {
         providerType: SignatureProviderType.SSM,
         type: KeyType.EM,
         publicKey: em.publicKey,
-        awsRegion: "us-east-1",
+        awsRegions: ["us-east-1", "eu-west-1"],
         awsSecretId: "/wire/keys/em"
       })
       expect(resolution.keyPair.privateKey).toBe(em.privateKey)

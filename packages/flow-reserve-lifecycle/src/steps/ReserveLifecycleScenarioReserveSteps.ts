@@ -13,6 +13,8 @@ import {
   swapUserOutputKey,
   type ClusterBuildContext,
   type ClusterBuildStepOptions,
+  type EthereumLocalReserveRecord,
+  type EthereumPayableOverrides,
   type EthereumReserveCreateArgs,
   type EthereumSwapRequest,
   type OutputKey,
@@ -64,12 +66,12 @@ export namespace ReserveLifecycleScenarioReserveSteps {
       description: string,
       isPrivate: boolean,
       creatorPubKey: string,
-      overrides: ethers.Overrides & { value: bigint }
+      overrides: EthereumPayableOverrides
     ) => Promise<ethers.ContractTransactionResponse>
     getReserve: (
       tokenCode: bigint,
       reserveCode: bigint
-    ) => Promise<{ status: bigint }>
+    ) => Promise<EthereumLocalReserveRecord>
   }
 
   // ── cross-step output keys ─────────────────────────────────────────────────

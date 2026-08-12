@@ -86,13 +86,6 @@ describe("KeyGenerator", () => {
     )
   })
 
-  it("createProducerKeySet returns both K1 + BLS pairs", async () => {
-    const set = await KeyGenerator.createProducerKeySet(context())
-    expect(set.k1.type).toBe(KeyType.K1)
-    expect(set.bls.type).toBe(KeyType.BLS)
-    expect(set.bls.proofOfPossession).toBe("SIG_BLS_ghi789")
-  })
-
   it("throws a parse error on unrecognized clio output", async () => {
     await expect(
       KeyGenerator.create(KeyType.K1, context("no keys here"))
@@ -165,13 +158,17 @@ describe("KeyGenerator", () => {
     const ssmSource = KeyGenerator.keySource(
       {
         type: SignatureProviderType.SSM,
-        ssm: { awsRegion: "us-east-1", awsSecretIdPattern: "p" }
+        ssm: { awsSecretIdPattern: "p" }
       },
       "/wire/batchop1/K1",
       "http://kiod"
     )
+    // REGION-LESS — ONE colon. `parse_ssm_spec` rejects `SSM::<param>` ("has
+    // empty region; drop the leading ':'") and there is no primary region to
+    // name, so the region resolves from the depot's AWS environment chain.
+    expect(ssmSource).not.toHaveProperty("awsRegion")
     expect(KeyGenerator.toSignatureProvider(pair, undefined, ssmSource)).toBe(
-      "wire-PUB_K1_p,wire,wire,PUB_K1_p,SSM:us-east-1:/wire/batchop1/K1"
+      "wire-PUB_K1_p,wire,wire,PUB_K1_p,SSM:/wire/batchop1/K1"
     )
     const kiodSource = KeyGenerator.keySource(
       { type: SignatureProviderType.KIOD, ssm: null },
@@ -181,6 +178,64 @@ describe("KeyGenerator", () => {
     expect(KeyGenerator.toSignatureProvider(pair, undefined, kiodSource)).toBe(
       "wire-PUB_K1_p,wire,wire,PUB_K1_p,KIOD:http://127.0.0.1:8900"
     )
+  })
+
+  it("toSignatureProvider asserts an SSM source carries its awsSecretId", () => {
+    const pair = {
+      type: KeyType.K1,
+      publicKey: "PUB_K1_p",
+      privateKey: "PVT_K1_s"
+    }
+    expect(() =>
+      KeyGenerator.toSignatureProvider(pair, undefined, {
+        type: SignatureProviderType.SSM
+      })
+    ).toThrow(/an SSM source requires awsSecretId/)
+  })
+
+  it("renders an SSM spec for a REFS-ONLY pair — no privateKey is ever touched", async () => {
+    // What `ClusterState.loadKeys` rehydrates on an SSM cluster: publicKey +
+    // awsSecretId, no key material. `wire-cluster-tool run` must still build
+    // every daemon's --signature-provider from it.
+    const ethereum = await KeyGenerator.create(KeyType.EM, context(), {
+        ethereumHdIndex: 2
+      }),
+      solana = await KeyGenerator.create(KeyType.ED, context()),
+      ssmSource = KeyGenerator.keySource(
+        { type: SignatureProviderType.SSM, ssm: { awsSecretIdPattern: "p" } },
+        "/wire/test/batchop.a/EM",
+        "http://kiod"
+      )
+    const ethereumRefsOnly = {
+        type: KeyType.EM,
+        publicKey: ethereum.publicKey,
+        address: ethereum.address,
+        awsSecretId: "/wire/test/batchop.a/EM"
+      },
+      solanaRefsOnly = {
+        type: KeyType.ED,
+        publicKey: solana.publicKey,
+        awsSecretId: "/wire/test/batchop.a/ED"
+      }
+    const ethereumSpec = KeyGenerator.toSignatureProvider(
+      ethereumRefsOnly,
+      "eth-batchopaaaa",
+      ssmSource
+    )
+    expect(ethereumSpec).toBe(
+      KeyGenerator.toSignatureProvider(ethereum, "eth-batchopaaaa", ssmSource)
+    )
+    expect(ethereumSpec.endsWith(",SSM:/wire/test/batchop.a/EM")).toBe(true)
+    const solanaSpec = KeyGenerator.toSignatureProvider(
+      solanaRefsOnly,
+      "sol-batchopaaaa",
+      ssmSource
+    )
+    expect(solanaSpec).toBe(
+      KeyGenerator.toSignatureProvider(solana, "sol-batchopaaaa", ssmSource)
+    )
+    // The base58 public key still renders — it comes off the STORED pair.
+    expect(solanaSpec.split(",")[3]).toMatch(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)
   })
 
   it("keySource selects the KEY default source for a KEY provider config", () => {
@@ -195,7 +250,7 @@ describe("KeyGenerator", () => {
 })
 
 describe("keygen extra records", () => {
-  it("create(ED) records an sdk-core keygen entry with purpose + full pair", async () => {
+  it("create(ED) records the keygen IDENTITY — public half only, never the secret", async () => {
     const { StepExtraRecorder } = await import("@wireio/cluster-tool/report")
     const context = KeyGenerator.context("/usr/bin/clio", "/build", AnvilMnemonic)
     const recorder = new StepExtraRecorder()
@@ -208,9 +263,27 @@ describe("keygen extra records", () => {
         kind: "keygen",
         keyType: "ED",
         purpose: "operator x — solana key",
-        keyPair: { type: KeyType.ED, publicKey: pair.publicKey, privateKey: pair.privateKey }
+        type: KeyType.ED,
+        publicKey: pair.publicKey
       }
     ])
+  })
+
+  it("NEVER lands a private key in a keygen extra record, for any curve", async () => {
+    const { StepExtraRecorder } = await import("@wireio/cluster-tool/report")
+    const { findKeyMaterial } = await import("@wireio/cluster-tool-shared")
+    const context = KeyGenerator.context("/usr/bin/clio", "/build", AnvilMnemonic)
+    const recorder = new StepExtraRecorder()
+    const pair = await StepExtraRecorder.runWith(recorder, () =>
+      KeyGenerator.create(KeyType.ED, context, { purpose: "leak guard" })
+    )
+    // The recorder's payload is what the Report renderers serialize verbatim
+    // into cluster-build.{csv,md,html} — a real run's reports were VERIFIED to
+    // carry 15 PVT_ keys before this was fixed. Assert against the ONE shared
+    // pattern set so a new secret encoding is caught here too.
+    const serialized = JSON.stringify(recorder.calls)
+    expect(serialized).not.toContain(pair.privateKey)
+    expect(findKeyMaterial(serialized)).toEqual([])
   })
 
   it("create(EM) records the ethers derivation path", async () => {
