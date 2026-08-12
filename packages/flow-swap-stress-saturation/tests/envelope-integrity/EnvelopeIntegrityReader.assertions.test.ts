@@ -13,6 +13,7 @@ import {
   writeEnvelopePair,
   writeLeadingZeroPair
 } from "./envelopeIntegrityTestSupport.js"
+import { encodeVarint } from "../unknownProtobufFieldTestSupport.js"
 
 describe("EnvelopeIntegrityReader exact integrity failures", () => {
   let storageDir: string
@@ -273,13 +274,3 @@ function encodedUnknownField(wireType: number): Buffer {
     })
 }
 
-function encodeVarint(value: number): Buffer {
-  const bytes: number[] = []
-  let remaining = value
-  do {
-    const byte = remaining & 0x7f
-    remaining = Math.floor(remaining / 128)
-    bytes.push(remaining === 0 ? byte : byte | 0x80)
-  } while (remaining !== 0)
-  return Buffer.from(bytes)
-}

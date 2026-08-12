@@ -1,4 +1,5 @@
 import { Envelope } from "@wireio/opp-typescript-models"
+import { encodeVarint } from "../unknownProtobufFieldTestSupport.js"
 
 /** Protobuf wire type for length-delimited fields. */
 const LengthDelimitedWireType = 2,
@@ -12,16 +13,6 @@ const LengthDelimitedWireType = 2,
  * @param value Non-negative integer to encode.
  * @return The varint bytes.
  */
-export function encodeProtobufVarint(value: number): Buffer {
-  const bytes: number[] = []
-  let remaining = value
-  do {
-    const byte = remaining & 0x7f
-    remaining = Math.floor(remaining / 128)
-    bytes.push(remaining === 0 ? byte : byte | 0x80)
-  } while (remaining !== 0)
-  return Buffer.from(bytes)
-}
 
 /**
  * Build one length-delimited field carrying a synthetic payload.
@@ -34,8 +25,8 @@ export function lengthDelimitedField(
   payloadByteLength: number
 ): Buffer {
   return Buffer.concat([
-    encodeProtobufVarint((fieldNumber << 3) | LengthDelimitedWireType),
-    encodeProtobufVarint(payloadByteLength),
+    encodeVarint((fieldNumber << 3) | LengthDelimitedWireType),
+    encodeVarint(payloadByteLength),
     Buffer.alloc(payloadByteLength, PaddingByte)
   ])
 }
@@ -48,8 +39,8 @@ export function lengthDelimitedField(
  */
 export function varintField(fieldNumber: number, value: number): Buffer {
   return Buffer.concat([
-    encodeProtobufVarint((fieldNumber << 3) | VarintWireType),
-    encodeProtobufVarint(value)
+    encodeVarint((fieldNumber << 3) | VarintWireType),
+    encodeVarint(value)
   ])
 }
 

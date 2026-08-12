@@ -8,10 +8,10 @@ import { decodeCanonicalMessage } from "@wireio/test-flow-swap-stress-saturation
 import {
   canonicalEnvelopeBytes,
   concatFieldBytes,
-  encodeProtobufVarint,
   lengthDelimitedField,
   varintField
 } from "./canonicalDecodeTestSupport.js"
+import { encodeVarint } from "../unknownProtobufFieldTestSupport.js"
 
 const EnvelopeEpoch = 7,
   EnvelopeHashFieldNumber = 1,
@@ -111,7 +111,7 @@ describe("decodeCanonicalMessage", () => {
 
   it("rejects group wire encodings", () => {
     // Given: canonical bytes followed by a start-group tag.
-    const startGroupTag = encodeProtobufVarint((3 << 3) | 3),
+    const startGroupTag = encodeVarint((3 << 3) | 3),
       forged = concatFieldBytes([
         canonicalEnvelopeBytes(EnvelopeEpoch),
         startGroupTag
