@@ -10,7 +10,6 @@ import {
 import { createEnvelopeBaseline, readEnvelopeIntegrity } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 import type { EnvelopeIntegrityDirectoryHandle, EnvelopeIntegrityFileHandle, EnvelopeIntegrityFileSystem } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 import {
-  mapEnvelopeIntegrityIssue,
   type OppEnvelopeTelemetryIssue
 } from "@wireio/test-flow-swap-stress-saturation/stress-engine/index.js"
 
@@ -116,7 +115,7 @@ export async function readProducedIssue(
   )
   if (result.issues.length !== 1 || result.issues[0] === undefined)
     throw new TypeError(`producer returned ${result.issues.length} issues`)
-  return mapEnvelopeIntegrityIssue(result.issues[0])
+  return result.issues[0]
 }
 
 /**

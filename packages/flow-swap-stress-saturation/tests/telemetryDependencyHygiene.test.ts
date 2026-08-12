@@ -15,11 +15,14 @@ const SourceDir = Path.resolve(__dirname, "../src"),
  *
  * The floor is a DELIBERATE tripwire, not a running total: it fails when a
  * telemetry source disappears unnoticed. Lower it only in the same change that
- * removes a file on purpose. Dropped from 10 → 9 when the dead
+ * removes a file on purpose. 10 → 9 when the dead
  * `observation-parsing/oppTelemetryHealthParser.ts` was deleted (no production
- * consumer; the live parse path lives in `stress-engine/`).
+ * consumer; the live parse path lives in `stress-engine/`). 9 → 8 when
+ * `envelopeTelemetryIssueMapper.ts` was deleted (every one of its 25 match
+ * arms was the identity function; telemetry now aliases the strict
+ * envelope-integrity taxonomy instead of cloning it).
  */
-const MinimumTelemetryFileCount = 9
+const MinimumTelemetryFileCount = 8
 
 describe("telemetry dependency hygiene", () => {
   it("rejects private, transitive, and cross-package dependency access", () => {

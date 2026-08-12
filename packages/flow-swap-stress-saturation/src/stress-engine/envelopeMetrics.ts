@@ -29,7 +29,6 @@ export {
   projectOppEnvelopeSaturationMetrics
 } from "./envelopeRecordSource.js"
 export type { EnvelopeRecordSource } from "./envelopeRecordSource.js"
-export { mapEnvelopeIntegrityIssue } from "./envelopeTelemetryIssueMapper.js"
 export type {
   DegradedOppEnvelopeTelemetryHealth,
   EmptyOppEnvelopeTelemetryHealth,

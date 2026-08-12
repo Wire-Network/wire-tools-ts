@@ -1,6 +1,5 @@
 import { EnvelopeIntegrityIssueCode } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 import {
-  mapEnvelopeIntegrityIssue,
   OppEnvelopeTelemetryHealthKind,
   OppEnvelopeTelemetryHealthParseError,
   OppEnvelopeTelemetryIssueCode,
@@ -12,15 +11,15 @@ import {
   IntegrityIssueFixtures
 } from "./telemetryIssueTestFixtures.js"
 
-describe("telemetry integrity issue mapping and parsing", () => {
+describe("telemetry integrity issue parsing", () => {
   it.each(IntegrityIssueFixtures)(
-    "maps and parses the strict $code issue losslessly",
+    "parses the strict $code issue losslessly",
     strictIssue => {
-      // Given: one exact strict-reader issue variant.
+      // Given: one exact strict-reader issue variant, consumed by telemetry
+      // AS-IS (telemetry's issue type aliases the strict reader's).
       const isGlobal = GlobalIntegrityIssueCodes.some(
           code => code === strictIssue.code
         ),
-        mapped = mapEnvelopeIntegrityIssue(strictIssue),
         health = {
           kind: isGlobal
             ? OppEnvelopeTelemetryHealthKind.Empty
@@ -30,16 +29,16 @@ describe("telemetry integrity issue mapping and parsing", () => {
           validCount: 0,
           filteredCount: 0,
           issueCount: 1,
-          issues: [mapped]
+          issues: [strictIssue]
         }
 
-      // When: the mapped issue crosses the exact telemetry parser boundary.
+      // When: the issue crosses the exact telemetry parser boundary.
       const parsed = parseOppEnvelopeTelemetryHealth(health)
 
-      // Then: code, scope key, and structured context remain byte-for-byte data equivalents.
-      expect(mapped).toEqual(strictIssue)
-      expect(parsed.issues).toEqual([mapped])
-      expect(JSON.parse(JSON.stringify(mapped))).toEqual(mapped)
+      // Then: code, scope key, and structured context survive unchanged, and
+      // the issue stays JSON-round-trippable.
+      expect(parsed.issues).toEqual([strictIssue])
+      expect(JSON.parse(JSON.stringify(strictIssue))).toEqual(strictIssue)
     }
   )
 
@@ -59,7 +58,7 @@ describe("telemetry integrity issue mapping and parsing", () => {
 
   it("accepts an empty malformed-candidate base key", () => {
     // Given: the strict invalid-key fixture whose discovered base key is empty.
-    const issue = mapEnvelopeIntegrityIssue(IntegrityIssueFixtures[0])
+    const issue = IntegrityIssueFixtures[0]
 
     // When: pending candidate health is parsed.
     const parsed = parseOppEnvelopeTelemetryHealth({
@@ -78,9 +77,8 @@ describe("telemetry integrity issue mapping and parsing", () => {
 
   it("rejects a global issue outside the $storage scope", () => {
     // Given: an otherwise exact global issue with a candidate-like scope key.
-    const globalIssue = mapEnvelopeIntegrityIssue(
-        IntegrityIssueFixtures[IntegrityIssueFixtures.length - 1]
-      ),
+    const globalIssue =
+        IntegrityIssueFixtures[IntegrityIssueFixtures.length - 1],
       health = {
         kind: OppEnvelopeTelemetryHealthKind.Empty,
         retryable: true,
@@ -100,7 +98,7 @@ describe("telemetry integrity issue mapping and parsing", () => {
 
   it("rejects a legacy file-error shape", () => {
     // Given: a read issue that omits strict code and operation diagnostics.
-    const readIssue = mapEnvelopeIntegrityIssue(IntegrityIssueFixtures[8]),
+    const readIssue = IntegrityIssueFixtures[8],
       health = {
         kind: OppEnvelopeTelemetryHealthKind.PendingPublication,
         retryable: true,

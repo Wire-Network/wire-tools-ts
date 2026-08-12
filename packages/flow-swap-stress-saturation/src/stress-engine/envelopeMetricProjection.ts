@@ -1,7 +1,6 @@
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import { match } from "ts-pattern"
 
-import { mapEnvelopeIntegrityIssue } from "./envelopeTelemetryIssueMapper.js"
 import { RunEvidenceSaturationStrategy } from "./oppPhaseVocabulary.js"
 import {
   MaxEnvelopeBytes,
@@ -42,7 +41,7 @@ export function projectSnapshotSaturationMetrics(
   snapshot: EnvelopeMetricSnapshot,
   window: OppEnvelopeSaturationWindow = {}
 ): OppEnvelopeSaturationMetrics {
-  const issues = snapshot.issues.map(mapEnvelopeIntegrityIssue)
+  const issues = snapshot.issues
   if (snapshot.kind === "source_failed") {
     return metricsFor([], emptyHealth(issues), window)
   }
