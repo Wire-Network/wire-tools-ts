@@ -1,25 +1,30 @@
 # flow-swap-epoch-stress
 
-Manual-only FlowScenario that reproduces the swap load which exposed the
-Solana terminal/epoch-stall failure. It intentionally multiplies the existing
-Ethereum-to-Solana half of `flow-swap-with-underwriting`:
+Manual-only FlowScenario for concurrent swap settlement and post-load epoch
+liveness. It multiplies the existing Ethereum-to-Solana half of
+`flow-swap-with-underwriting` without encoding any one incident as the test's
+expected outcome:
 
 - 10 distinct prefunded Ethereum actors submit `requestSwap` concurrently.
 - Each actor targets a different Solana recipient.
 - The cluster bootstraps 21 producer accounts and 21 batch operators.
 - One real underwriter is bonded on Ethereum and Solana.
-- The flow verifies all 10 destination payouts, all 10 confirmed UWREQ rows,
-  15 post-load WIRE epoch advances, and recent Solana outpost logs for
-  memory/heap errors. It scans both committed Solana transactions and the raw
-  aggregate cluster log because an RPC simulation failure has no transaction
-  signature and therefore cannot appear in transaction-history queries. The
-  soak crosses the ten-epoch envelope-retention and underwriting-lock windows,
-  then observes five additional epochs.
+- The flow evaluates actor provisioning, all 10 request submissions, UWREQ
+  ingestion and confirmation, all 10 destination payouts, 15 post-load WIRE
+  epoch advances, and high-confidence chain-runtime failure evidence.
+- Runtime evidence includes fatal process failures, Solana program panics, and
+  memory/heap failures. These are supporting causes, not the test's design axis.
+  The scanner checks both committed Solana transactions and the raw aggregate
+  cluster log because an RPC simulation failure has no transaction signature.
+- The soak crosses the ten-epoch envelope-retention and underwriting-lock
+  windows, then observes five additional epochs.
 
-Every transaction is its own Step. The generated Markdown, HTML, and CSV
-reports contain the parameters, transaction/RPC evidence, payout observations,
-UWREQ statuses, epoch baseline/result, a plain-language diagnosis, and relevant
-Solana log evidence with occurrence counts plus bounded first/last samples.
+Every transaction is its own Step. The generated Markdown, HTML, and CSV reports
+contain the parameters, transaction/RPC evidence, payout observations, UWREQ
+statuses, epoch baseline/result, every failed invariant, and bounded runtime
+evidence. The terminal outcome is always either `SWAP_EPOCH_STRESS_COMPLETED` or
+`SWAP_EPOCH_STRESS_FAILED`; a failure lists all affected stages instead of
+stopping at the first symptom.
 
 ## Run locally
 
@@ -43,13 +48,12 @@ This is a long-running flow and is excluded from the default E2E suite. A
 missing epoch advance fails after three extension-inclusive epoch windows
 instead of waiting for the full run ceiling. Run it on demand when validating
 Solana terminal, validator, OPP, or epoch-liveness changes. Reports are written
-beneath
-`/tmp/wire-flow-swap-epoch-stress/reports/`; cluster logs and OPP debugging
-artifacts remain in the same cluster directory.
+beneath `/tmp/wire-flow-swap-epoch-stress/reports/`; cluster logs and OPP
+debugging artifacts remain in the same cluster directory.
 
-The bootstrap is compatible with the current SIM2 reserve contract: when its
-ABI lacks `sysio.reserv::setconfig`, the zero-valued fee-emissions routing step
-is reported as a legacy no-op. Non-zero routing still requires the newer action.
+The bootstrap tolerates legacy reserve ABIs that lack `sysio.reserv::setconfig`:
+zero-valued fee-emissions routing is reported as a legacy no-op. Non-zero
+routing still requires the newer action.
 
 The separate `wire-cluster-tool readiness` command remains the read-only tool
 for inspecting an already-running SIM2 cluster; this flow owns and stresses a

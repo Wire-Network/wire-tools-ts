@@ -9,12 +9,27 @@ export interface SwapEpochStressActorOutput {
   readonly solanaBalanceBefore: number
 }
 
+export interface SwapEpochStressRequestOutput {
+  readonly actorIndex: number
+  readonly transactionHash: string
+  readonly blockNumber: number
+}
+
 export function stressActorOutputKey(
   actorIndex: number
 ): OutputKey<SwapEpochStressActorOutput> {
   return outputKey(
     `swapEpochStress.actor.${actorIndex}`,
     `swap epoch stress actor ${actorIndex}`
+  )
+}
+
+export function stressRequestOutputKey(
+  actorIndex: number
+): OutputKey<SwapEpochStressRequestOutput> {
+  return outputKey(
+    `swapEpochStress.request.${actorIndex}`,
+    `submitted swap epoch stress request ${actorIndex}`
   )
 }
 

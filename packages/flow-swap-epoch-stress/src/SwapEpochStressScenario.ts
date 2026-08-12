@@ -29,7 +29,7 @@ import { SwapEpochStressScenarioSteps as StressSteps } from "./steps/index.js"
 const { SysioContractName, SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report
 
-/** Manual, report-first reproduction for the Solana terminal/epoch-stall load. */
+/** Manual, report-first concurrent swap settlement and epoch-liveness stress test. */
 export class SwapEpochStressScenario extends FlowScenario<SwapScenarioContext> {
   readonly name = "flow-swap-epoch-stress"
   readonly description =
@@ -239,12 +239,12 @@ export class SwapEpochStressScenario extends FlowScenario<SwapScenarioContext> {
     ClusterBuildPhase.create(
       stress,
       "TerminalDiagnostics",
-      "Prove all UWREQs confirmed and keep Solana healthy for a 15-epoch post-load soak",
+      "Evaluate every swap-stress invariant and complete a 15-epoch post-load soak",
       [
         StressSteps.planTerminalDiagnostics(
           Actor.Sysio,
-          "post-load-epoch-and-solana-health",
-          "observe 15 post-load WIRE epoch advances and report UWREQ/Solana memory evidence",
+          "post-load-swap-epoch-health",
+          "report request, UWREQ, payout, epoch-liveness, and chain-runtime results",
           diagnosticsOptions,
           Constants.ActorCount
         )

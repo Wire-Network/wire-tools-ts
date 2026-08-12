@@ -1,7 +1,7 @@
 import { SlugName } from "@wireio/sdk-core"
 import { ProtocolTiming } from "@wireio/cluster-tool"
 
-/** Fixed reproduction shape requested for the manual swap/epoch stress flow. */
+/** Fixed load shape for the manual swap settlement and epoch-liveness flow. */
 export namespace SwapEpochStressScenarioConstants {
   export const ActorCount = 10
   export const ProducerCount = 21
