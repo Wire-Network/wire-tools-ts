@@ -83,14 +83,71 @@ describe("StepExtraRecorder", () => {
         account: "some.acct"
       })
     })
-    expect(recorder.calls).toEqual([
+    const expected = [
       {
         client: "harness",
         kind: "note",
         text: "check deposited collateral for some.acct",
         account: "some.acct"
       }
+    ]
+    expect(recorder.notes).toEqual(expected)
+    // …and it reaches `extra`, which is what the Report renders.
+    expect(recorder.toExtra()?.calls).toEqual(expected)
+  })
+
+  it("keeps notes when client chatter saturates the call ceiling", () => {
+    // Given: a step whose runner notes what it did, then floods the recorder
+    // with far more client calls than the ceiling holds (a burst / poll loop).
+    const recorder = new StepExtraRecorder()
+    StepExtraRecorder.runWith(recorder, async () => {
+      StepExtraRecorder.note("phase-1 metrics", { bytes: 4323 })
+      Array.from({ length: StepExtraRecorder.MaxCalls * 4 }, (_, index) =>
+        recorder.record({ client: "wire", kind: "rpc", index })
+      )
+      StepExtraRecorder.note("phase-1 payout observed", { observed: 1 })
+    })
+
+    // Then: BOTH notes survive — including the one recorded after the flood.
+    // Sharing one budget evicted these, so the steps that most needed
+    // explaining were the ones that explained nothing.
+    expect(recorder.notes.map(note => note.text)).toEqual([
+      "phase-1 metrics",
+      "phase-1 payout observed"
     ])
+    const extra = recorder.toExtra()
+    expect(extra?.dropped).toBe(StepExtraRecorder.MaxCalls * 3)
+    expect(extra?.droppedNotes).toBeUndefined()
+  })
+
+  it("renders notes BEFORE client calls — what the step did, then how", () => {
+    const recorder = new StepExtraRecorder()
+    recorder.record({ client: "wire", kind: "rpc", path: "/v1/chain/get_info" })
+    StepExtraRecorder.runWith(recorder, async () => {
+      StepExtraRecorder.note("rung skipped — already saturated")
+    })
+    const calls = recorder.toExtra()?.calls as StepExtraRecorder.ClientCall[]
+    expect(calls[0].kind).toBe("note")
+    expect(calls[1].client).toBe("wire")
+  })
+
+  it("caps notes at MaxNotes and surfaces the overflow as droppedNotes", () => {
+    const recorder = new StepExtraRecorder()
+    StepExtraRecorder.runWith(recorder, async () => {
+      Array.from({ length: StepExtraRecorder.MaxNotes + 3 }, (_, index) =>
+        StepExtraRecorder.note(`note ${index}`)
+      )
+    })
+    expect(recorder.notes.length).toBe(StepExtraRecorder.MaxNotes)
+    expect(recorder.toExtra()?.droppedNotes).toBe(3)
+  })
+
+  it("toExtra is non-null for a step that recorded only notes", () => {
+    const recorder = new StepExtraRecorder()
+    StepExtraRecorder.runWith(recorder, async () => {
+      StepExtraRecorder.note("nothing to do this rung")
+    })
+    expect(recorder.toExtra()).not.toBeNull()
   })
 
   it("every executed step gets extra — a no-call runner falls back to its description", async () => {
