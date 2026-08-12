@@ -3,6 +3,8 @@
 End-to-end cluster harness and flow suites for the WIRE blockchain (OPP flows
 across the WIRE depot and the Ethereum + Solana outposts).
 
+`AGENTS.md` is a symlink to this file; maintain repository guidance here only.
+
 **Binding companions to this file:**
 
 - [`STYLE.md`](STYLE.md) — the repo's style guide. The "Orchestration Model",
