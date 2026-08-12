@@ -205,10 +205,27 @@ export namespace StartScriptSteps {
       new StartScriptRenderer(
         daemon,
         DaemonConfig.clusterRelocations(config)
-      ).render()
+      ).render(),
+      { mode: ExecutableMode }
     )
+    // Set explicitly as well as at write: `writeFileSync`'s mode applies only
+    // when it CREATES the file, so a re-render over an existing script (Rebind,
+    // or a repeated create into the same tree) would otherwise keep the old
+    // non-executable bits.
+    Fs.chmodSync(file, ExecutableMode)
     return file
   }
+
+  /**
+   * Mode for an emitted `start.sh` — `rwxr-xr-x`.
+   *
+   * The scripts are meant to be RUN (`./start.sh`), not sourced through an
+   * interpreter, so the executable bit is part of the deliverable. Group/other
+   * read+execute matches how the rest of the cluster tree ships; note that under
+   * a `KEY`-mode cluster the file also carries an inline signing key, which the
+   * script's own header states.
+   */
+  export const ExecutableMode = 0o755
 
   /**
    * Plan one emit Step per daemon — never a single step looping over N, so the

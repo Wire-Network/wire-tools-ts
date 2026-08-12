@@ -254,7 +254,7 @@ export namespace DaemonConfig {
           // precisely when it IS supported, which is the opposite of the
           // intent and hard-fails trace_api_plugin init on builds that require
           // it. A command substitution has no such short-circuit.
-          test: `[[ "$("${quoteForTest(nodeopBinary, StartScriptVariable.WIRE_BUILD_PATH, cluster.buildPath)}" --help 2>/dev/null || true)" == *'${NodeopProcess.TraceNoAbisFlag}'* ]]`,
+          test: `[[ "$("${quoteForTest(nodeopBinary, StartScriptVariable.WIRE_PREFIX_PATH, cluster.buildPath)}" --help 2>/dev/null || true)" == *'${NodeopProcess.TraceNoAbisFlag}'* ]]`,
           tokens: [NodeopProcess.TraceNoAbisFlag]
         }
       ],
@@ -470,7 +470,7 @@ export namespace DaemonConfig {
   ): StartScriptRelocation[] {
     return [
       { prefix: config.clusterPath, variable: StartScriptVariable.CLUSTER_DIR },
-      { prefix: config.buildPath, variable: StartScriptVariable.WIRE_BUILD_PATH },
+      { prefix: config.buildPath, variable: StartScriptVariable.WIRE_PREFIX_PATH },
       { prefix: config.ethereumPath, variable: StartScriptVariable.WIRE_ETH_PATH },
       { prefix: config.solanaPath, variable: StartScriptVariable.WIRE_SOLANA_PATH }
     ]

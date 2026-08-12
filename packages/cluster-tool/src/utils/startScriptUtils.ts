@@ -13,7 +13,15 @@ import Path from "node:path"
 export enum StartScriptVariable {
   NODE_DIR = "NODE_DIR",
   CLUSTER_DIR = "CLUSTER_DIR",
-  WIRE_BUILD_PATH = "WIRE_BUILD_PATH",
+  /**
+   * The wire-sysio install PREFIX — the directory holding `bin/nodeop`.
+   *
+   * Named for what a consumer supplies, not for how this cluster was built: on
+   * the deploy host there is usually no "build directory" at all, just an
+   * installed tree (or a `nodeop` already on `PATH`, from which the script
+   * derives the prefix itself). `WIRE_BUILD_PATH` remains an accepted fallback.
+   */
+  WIRE_PREFIX_PATH = "WIRE_PREFIX_PATH",
   WIRE_ETH_PATH = "WIRE_ETH_PATH",
   WIRE_SOLANA_PATH = "WIRE_SOLANA_PATH"
 }

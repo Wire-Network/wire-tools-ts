@@ -257,9 +257,14 @@ Every daemon directory gets one — `<cluster>/data/<daemon>/start.sh` — carry
 the same argv `run` would spawn, with three properties worth knowing:
 
 - **Relocatable.** No build-host path is frozen. `$NODE_DIR` and `$CLUSTER_DIR`
-  derive from the script's own location (override with `WIRE_CLUSTER_DIR`);
-  host-supplied roots are named env vars the script asserts —
-  `WIRE_BUILD_PATH`, and `WIRE_ETH_PATH` / `WIRE_SOLANA_PATH` where referenced.
+  derive from the script's own location (override with `WIRE_CLUSTER_DIR`).
+  The wire-sysio install prefix is `WIRE_PREFIX_PATH`, RESOLVED rather than
+  demanded: an explicit `WIRE_PREFIX_PATH` wins, else the parent of a `nodeop`
+  found on `PATH` (so a host with wire-sysio installed needs no configuration at
+  all), else `WIRE_BUILD_PATH` for a tree still pointed at a build dir — and it
+  fails loudly naming all three if none resolves. `WIRE_ETH_PATH` /
+  `WIRE_SOLANA_PATH` are asserted outright where referenced, since nothing on
+  `PATH` can imply them.
   PATH-resolved binaries indirect through `WIRE_ANVIL_BIN` /
   `WIRE_SOLANA_TEST_VALIDATOR_BIN` / `WIRE_NODE_BIN`, falling back to
   `command -v`. The `WIRE_` prefix is deliberate — unprefixed names collide with
@@ -274,7 +279,7 @@ the same argv `run` would spawn, with three properties worth knowing:
   invisible to a concurrently-resolving cluster on the same host. Intended for a
   dedicated deploy host; use `run` when other clusters share the machine.
 
-Invoke as `bash start.sh` (the file is not marked executable).
+Invoke as `./start.sh` — the emitted scripts are mode `0755`.
 
 > **Under the default `KEY` signature provider these scripts contain an inline
 > private key** for every producer/operator node, exactly as the daemon's argv

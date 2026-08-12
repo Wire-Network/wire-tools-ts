@@ -152,6 +152,39 @@ describe("StartScriptSteps", () => {
       const file = startScript.write(config, daemon)
       expect(Fs.existsSync(file)).toBe(true)
     })
+
+    /** A daemon descriptor writing into `dataPath/<label>`. */
+    function kiodDaemon(config: ReturnType<typeof cluster>): DaemonConfig {
+      return {
+        kind: DaemonKind.kiod,
+        label: "kiod",
+        daemonPath: Path.join(config.dataPath, "kiod"),
+        exe: "/bin/true",
+        argv: ["--flag"],
+        conditions: [],
+        relocations: []
+      }
+    }
+
+    it("emits an EXECUTABLE script", () => {
+      // The scripts are meant to be run as `./start.sh`, not handed to an
+      // interpreter, so the executable bit is part of the deliverable.
+      const config = cluster(),
+        file = startScript.write(config, kiodDaemon(config))
+      expect(Fs.statSync(file).mode & 0o111).not.toBe(0)
+    })
+
+    it("RE-applies the executable bit when overwriting an existing script", () => {
+      // writeFileSync's `mode` applies only on CREATE, so a re-render (Rebind,
+      // or a repeated create into the same tree) would silently keep whatever
+      // bits the previous file had.
+      const config = cluster(),
+        daemon = kiodDaemon(config),
+        file = startScript.write(config, daemon)
+      Fs.chmodSync(file, 0o644)
+      startScript.write(config, daemon)
+      expect(Fs.statSync(file).mode & 0o111).not.toBe(0)
+    })
   })
 
   describe("runEmit", () => {

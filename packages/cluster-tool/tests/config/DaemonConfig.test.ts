@@ -124,7 +124,7 @@ describe("DaemonConfig", () => {
         ])
       )
       expect(byVariable.get(StartScriptVariable.CLUSTER_DIR)).toBe("/c")
-      expect(byVariable.get(StartScriptVariable.WIRE_BUILD_PATH)).toBe("/build")
+      expect(byVariable.get(StartScriptVariable.WIRE_PREFIX_PATH)).toBe("/build")
     })
   })
 

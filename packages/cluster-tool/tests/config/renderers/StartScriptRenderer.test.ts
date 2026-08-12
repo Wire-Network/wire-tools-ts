@@ -185,7 +185,7 @@ describe("StartScriptRenderer", () => {
         conditions: [],
         relocations: []
       })
-      expect(script).toContain(StartScriptVariable.WIRE_BUILD_PATH)
+      expect(script).toContain(StartScriptVariable.WIRE_PREFIX_PATH)
       // No solana path is referenced — demanding it would break a depot-only run.
       expect(script).not.toContain(StartScriptVariable.WIRE_SOLANA_PATH)
     })
@@ -245,7 +245,11 @@ describe("StartScriptRenderer", () => {
           env: {
             ...global.process.env,
             WIRE_CLUSTER_DIR: dir,
-            WIRE_BUILD_PATH: Path.join(dir, "build")
+            // The EXPLICIT variable, not WIRE_BUILD_PATH: resolution prefers a
+            // `nodeop` on PATH over that fallback, so an ambient nodeop on the
+            // runner would silently resolve a different prefix and break this
+            // comparison. Precedence itself is covered below.
+            WIRE_PREFIX_PATH: Path.join(dir, "build")
           }
         }),
         actual = printed.split("\n").filter(line => line.length > 0)
@@ -253,5 +257,108 @@ describe("StartScriptRenderer", () => {
       expect(actual).toEqual(expected)
     })
 
+  })
+
+  describe("WIRE_PREFIX_PATH resolution", () => {
+    /**
+     * Run a node's rendered script under a controlled environment and return the
+     * prefix it resolved — read back from the argv the exec-shim echoes, whose
+     * first entry is `<prefix>/bin/nodeop`… but the shim IS that binary, so the
+     * resolved prefix is instead observed by echoing it.
+     */
+    function resolvePrefix(env: Record<string, string>, pathDir?: string) {
+      const node = producerNode(),
+        config = NodeopProcess.resolveConfig(
+          { node, relaunch: true },
+          { genesisTimestamp: "2026-01-01T00:00:00.000", supportsTraceNoAbis: false }
+        ),
+        daemon = DaemonConfig.plan(cluster, { nodeop: [config] }).find(
+          candidate => candidate.kind === DaemonKind.node
+        ),
+        // Only the preamble is under test; `exec` would run the real binary.
+        preamble = StartScriptRenderer.preamble(
+          daemon,
+          DaemonConfig.clusterRelocations(cluster)
+        ).join("\n"),
+        probe = Path.join(dir, `probe-${Math.random().toString(36).slice(2)}.sh`)
+
+      Fs.writeFileSync(
+        probe,
+        `#!/usr/bin/env bash\nset -euo pipefail\n${preamble}\nprintf '%s\\n' "$WIRE_PREFIX_PATH"\n`
+      )
+      // A SANITIZED PATH, never the ambient one: these cases turn on whether
+      // `nodeop` is findable, and a dev box or CI image with one installed would
+      // silently flip the branch under test. It still has to carry what the
+      // preamble itself needs (`dirname`) and bash, or the failure is ENOENT on
+      // the interpreter rather than the behaviour being asserted.
+      return execFileSync(sanitizedBash, [probe], {
+        encoding: "utf8",
+        env: {
+          ...global.process.env,
+          PATH: pathDir ? `${pathDir}:${sanitizedPathDir}` : sanitizedPathDir,
+          WIRE_CLUSTER_DIR: dir,
+          ...env
+        }
+      }).trim()
+    }
+
+    /** Absolute path of a binary, resolved through a shell that is not under test. */
+    function resolveBinary(name: string) {
+      return execFileSync("/bin/sh", ["-c", `command -v ${name}`], {
+        encoding: "utf8"
+      }).trim()
+    }
+
+    let sanitizedPathDir: string
+    let sanitizedBash: string
+
+    beforeAll(() => {
+      sanitizedBash = resolveBinary("bash")
+      sanitizedPathDir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "sanitized-bin-"))
+      // `dirname` is the only external the preamble invokes; everything else it
+      // uses (`cd`, `pwd`, `command`, `printf`) is a bash builtin.
+      ;["bash", "dirname"].forEach(name =>
+        Fs.symlinkSync(resolveBinary(name), Path.join(sanitizedPathDir, name))
+      )
+    })
+
+    /** A throwaway `<root>/bin/nodeop` so `command -v` resolves under `<root>`. */
+    function nodeopOnPath(root: string) {
+      const binDir = Path.join(root, "bin")
+      Fs.mkdirSync(binDir, { recursive: true })
+      const stub = Path.join(binDir, "nodeop")
+      Fs.writeFileSync(stub, "#!/usr/bin/env bash\nexit 0\n")
+      Fs.chmodSync(stub, 0o755)
+      return binDir
+    }
+
+    it("prefers an EXPLICIT WIRE_PREFIX_PATH over a nodeop on PATH", () => {
+      // An operator override must win: a host may have an unrelated nodeop
+      // installed while the cluster is meant to run against a specific tree.
+      const other = Fs.mkdtempSync(Path.join(Os.tmpdir(), "prefix-explicit-")),
+        binDir = nodeopOnPath(other)
+      expect(
+        resolvePrefix({ WIRE_PREFIX_PATH: "/explicit/prefix" }, binDir)
+      ).toBe("/explicit/prefix")
+    })
+
+    it("DERIVES the prefix from a nodeop on PATH when unset", () => {
+      // The point of the rename: an installed host needs no configuration.
+      const root = Fs.mkdtempSync(Path.join(Os.tmpdir(), "prefix-path-")),
+        binDir = nodeopOnPath(root)
+      expect(resolvePrefix({}, binDir)).toBe(Fs.realpathSync(root))
+    })
+
+    it("falls back to WIRE_BUILD_PATH when nodeop is not on PATH", () => {
+      expect(resolvePrefix({ WIRE_BUILD_PATH: "/legacy/build" })).toBe(
+        "/legacy/build"
+      )
+    })
+
+    it("FAILS loudly when none of the three resolve", () => {
+      // Silence here would exec `/bin/nodeop` off an empty prefix and surface as
+      // a confusing not-found rather than a missing-configuration error.
+      expect(() => resolvePrefix({})).toThrow()
+    })
   })
 })

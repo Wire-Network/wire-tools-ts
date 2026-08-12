@@ -83,7 +83,7 @@ export namespace StartScriptRenderer {
     "#",
     "# NOTE: under a KEY-mode cluster this file contains an inline signing key.",
     "#",
-    "# Invoke as:  bash start.sh"
+    "# Invoke as:  ./start.sh"
   ]
 
   /**
@@ -113,8 +113,41 @@ export namespace StartScriptRenderer {
       `  echo "start.sh: cluster root not found at $${StartScriptVariable.CLUSTER_DIR} — set WIRE_CLUSTER_DIR" >&2`,
       "  exit 1",
       "}",
+      ...(referencesRoot(
+        daemon,
+        relocations,
+        StartScriptVariable.WIRE_PREFIX_PATH
+      )
+        ? prefixResolution()
+        : []),
       ...requiredRootAssertions(daemon, relocations)
     ]
+  }
+
+  /**
+   * Does this daemon's argv (or a conditional's tokens) actually sit under the
+   * root `variable` stands for?
+   *
+   * @param daemon - The daemon being rendered.
+   * @param relocations - Ordered relocation table.
+   * @param variable - The root in question.
+   * @returns `true` when at least one token relocates onto that root.
+   */
+  export function referencesRoot(
+    daemon: DaemonConfig,
+    relocations: readonly StartScriptRelocation[],
+    variable: StartScriptVariable
+  ): boolean {
+    const tokens = [
+      daemon.exe,
+      ...daemon.argv,
+      ...daemon.conditions.flatMap(condition => [...condition.tokens])
+    ]
+    return relocations
+      .filter(relocation => relocation.variable === variable)
+      .some(relocation =>
+        tokens.some(token => matchesPrefix(token, relocation.prefix))
+      )
   }
 
   /**
@@ -130,26 +163,22 @@ export namespace StartScriptRenderer {
     daemon: DaemonConfig,
     relocations: readonly StartScriptRelocation[]
   ): string[] {
-    const tokens = [
-        daemon.exe,
-        ...daemon.argv,
-        ...daemon.conditions.flatMap(condition => [...condition.tokens])
-      ],
-      used = new Set(
-        relocations
-          .filter(relocation =>
-            tokens.some(token => matchesPrefix(token, relocation.prefix))
-          )
-          .map(relocation => relocation.variable)
-      )
-    return HostSuppliedRoots.filter(variable => used.has(variable)).map(
+    return HostSuppliedRoots.filter(variable =>
+      referencesRoot(daemon, relocations, variable)
+    ).map(
       variable => `: "\${${variable}:?set to the ${RootDescriptions[variable]}}"`
     )
   }
 
-  /** Roots the operator must export — they name trees the cluster dir never contains. */
+  /**
+   * Roots the operator must export outright — they name trees the cluster dir
+   * never contains and that nothing on `PATH` can imply.
+   *
+   * `WIRE_PREFIX_PATH` is deliberately ABSENT: it is RESOLVED rather than
+   * demanded (see {@link prefixResolution}), because a host with `nodeop`
+   * already installed should not have to name a directory the script can find.
+   */
   export const HostSuppliedRoots: readonly StartScriptVariable[] = [
-    StartScriptVariable.WIRE_BUILD_PATH,
     StartScriptVariable.WIRE_ETH_PATH,
     StartScriptVariable.WIRE_SOLANA_PATH
   ] as const
@@ -158,9 +187,41 @@ export namespace StartScriptRenderer {
   export const RootDescriptions: Record<StartScriptVariable, string> = {
     [StartScriptVariable.NODE_DIR]: "daemon directory",
     [StartScriptVariable.CLUSTER_DIR]: "cluster root",
-    [StartScriptVariable.WIRE_BUILD_PATH]: "wire-sysio build directory",
+    [StartScriptVariable.WIRE_PREFIX_PATH]: "wire-sysio install prefix",
     [StartScriptVariable.WIRE_ETH_PATH]: "wire-ethereum repository root",
     [StartScriptVariable.WIRE_SOLANA_PATH]: "wire-solana repository root"
+  }
+
+  /** The binary whose location on `PATH` implies the install prefix. */
+  export const PrefixProbeBinary = "nodeop"
+
+  /**
+   * Resolve `$WIRE_PREFIX_PATH`, in precedence order:
+   *
+   *   1. an explicit `WIRE_PREFIX_PATH` (an operator override always wins);
+   *   2. else the parent of a `nodeop` found on `PATH` — an installed host
+   *      needs no configuration at all;
+   *   3. else `WIRE_BUILD_PATH`, for a tree still pointed at a build dir.
+   *
+   * Only emitted for daemons whose argv actually references the prefix: anvil,
+   * the validator and the debugging server exec their own binaries and must not
+   * be made to demand a wire-sysio tree they never touch.
+   *
+   * @returns Resolution lines, ending in a `:?` guard that fails loudly.
+   */
+  export function prefixResolution(): string[] {
+    const prefix = StartScriptVariable.WIRE_PREFIX_PATH
+    return [
+      `if [ -z "\${${prefix}:-}" ]; then`,
+      `  _wire_nodeop="$(command -v ${PrefixProbeBinary} || true)"`,
+      `  if [ -n "$_wire_nodeop" ]; then`,
+      `    ${prefix}="$(cd "$(dirname "$_wire_nodeop")/.." && pwd)"`,
+      `  elif [ -n "\${WIRE_BUILD_PATH:-}" ]; then`,
+      `    ${prefix}="$WIRE_BUILD_PATH"`,
+      "  fi",
+      "fi",
+      `: "\${${prefix}:?set to the ${RootDescriptions[prefix]} (or put ${PrefixProbeBinary} on PATH, or set WIRE_BUILD_PATH)}"`
+    ]
   }
 
   /**
