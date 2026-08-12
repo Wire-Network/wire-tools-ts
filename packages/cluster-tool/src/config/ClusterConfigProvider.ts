@@ -2,7 +2,7 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import { promises as Fsp } from "node:fs"
 import Path from "node:path"
-import {
+import { EthereumGasPolicy,
   BindConfigSchemaCodec,
   BindOptionsSchema,
   ClusterConfigSchemaCodec,
@@ -129,7 +129,9 @@ export namespace ClusterConfigProvider {
       signatureProvider,
       externalOutposts,
       debuggingServerEnabled: true,
-      enableMockReserves: options.enableMockReserves ?? false
+      enableMockReserves: options.enableMockReserves ?? false,
+      ethereumGasPolicy:
+        options.ethereumGasPolicy ?? EthereumGasPolicy.chainDefault
     }
   }
 

@@ -1,4 +1,4 @@
-import type {
+import type { EthereumGasPolicy,
   BindOptions,
   ChainTokenAmount,
   ClusterConfigLoggingFileFormat,
@@ -53,6 +53,15 @@ export interface ClusterBuildOptions {
    * to the bootstrap window (epoch 0), so this only ever seeds pre-EpochBootstrap.
    */
   enableMockReserves?: boolean
+  /**
+   * Gas constraints imposed on the local Ethereum chain
+   * (`--ethereum-gas-policy`). Defaults to
+   * {@link EthereumGasPolicy.chainDefault} at every layer, so ordinary flows
+   * keep anvil's stock 30M block limit. `uncapped` exists to separate "the
+   * protocol failed" from "the chain's gas ceiling stopped it"; `osaka`
+   * enforces EIP-7825's per-transaction cap.
+   */
+  ethereumGasPolicy?: EthereumGasPolicy
   // termination tuning
   terminateMaxConsecutiveMisses?: number
   terminateMaxPercentMisses24h?: number

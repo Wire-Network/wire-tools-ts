@@ -1,4 +1,4 @@
-import {
+import { EthereumGasPolicy,
   ClusterConfigLoggingFileFormat,
   ClusterConfigReportFormat,
   ClusterConfigSchemaCodec,
@@ -81,7 +81,8 @@ describe("ClusterConfig shape", () => {
     signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
     externalOutposts: null,
     debuggingServerEnabled: true,
-    enableMockReserves: false
+    enableMockReserves: false,
+    ethereumGasPolicy: EthereumGasPolicy.chainDefault
   }
 
   it("persists the report/logging enum fields as their wire spellings", () => {

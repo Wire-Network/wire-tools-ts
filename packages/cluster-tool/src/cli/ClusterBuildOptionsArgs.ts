@@ -2,7 +2,7 @@ import Fs from "node:fs"
 import Path from "node:path"
 import { asOption } from "@3fv/prelude-ts"
 import { isString, Level } from "@wireio/shared"
-import {
+import { EthereumGasPolicy,
   ClusterSignatureProviderSSMOptionsSchema,
   SchemaCodec,
   SignatureProviderType,
@@ -381,6 +381,11 @@ export function buildOptionShape(
     enableMockReserves: leaf(
       false,
       "seed the 8 mock (chain, token) PRIMARY reserves at bootstrap"
+    ),
+    // ── ethereum gas policy (default: anvil's stock 30M block limit) ──
+    ethereumGasPolicy: leaf(
+      EthereumGasPolicy.chainDefault,
+      "local Ethereum gas constraints: chainDefault | osaka (EIP-7825 per-tx cap) | uncapped"
     ),
     bind: buildBindShape(nodeCount, batchCount, underwriterCount),
     bindConfig: optionalLeaf(

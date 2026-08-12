@@ -5,7 +5,33 @@ import { SchemaCodec } from "../schema/index.js"
 import { ChainTokenAmountSchema } from "../types/ChainTokenAmount.js"
 import { BindConfigSchema } from "./BindConfig.js"
 import { ClusterSignatureProviderConfigSchema } from "./SignatureProviderConfig.js"
+
 import { ExternalOutpostConfigSchema } from "./ExternalOutpostConfig.js"
+
+/**
+ * Gas constraints imposed on the local Ethereum chain.
+ *
+ * A stress campaign's outbound OPP delivery can need far more gas than a
+ * stock block allows — the ETH-241 characterization puts a ~3.4 KB inbound
+ * envelope plus a backlogged outbound queue at ~93.6M gas against anvil's
+ * 30M default. Naming the policy makes "did the protocol fail, or did the
+ * chain's gas ceiling stop it?" an answerable question rather than a guess.
+ */
+export enum EthereumGasPolicy {
+  /** Anvil's stock limits: 30M block gas, EIP-7825 per-tx cap NOT enforced. */
+  chainDefault = "chainDefault",
+  /**
+   * The Osaka constraint: EIP-7825's per-transaction gas cap (2^24) enforced
+   * on top of the stock block limit. The realistic future ceiling.
+   */
+  osaka = "osaka",
+  /**
+   * No practical ceiling — a block gas limit far above any envelope and no
+   * per-transaction cap. Not realistic; it exists to prove whether a failure
+   * is protocol behaviour or merely the gas ceiling.
+   */
+  uncapped = "uncapped"
+}
 
 /**
  * Report output format — value matches the file extension. THE one
@@ -208,7 +234,16 @@ export const ClusterConfigSchema = z.object({
    * pre-existing configs — and every real/external depot — stay reserve-free
    * unless a caller (or a flow's scenario defaults) opts in.
    */
-  enableMockReserves: z.boolean().default(false)
+  enableMockReserves: z.boolean().default(false),
+  /**
+   * Gas constraints imposed on the local Ethereum chain
+   * (the `--ethereum-gas-policy` create flag). Schema-defaulted
+   * {@link EthereumGasPolicy.chainDefault} so pre-existing configs and every
+   * ordinary flow keep anvil's stock 30M block limit.
+   */
+  ethereumGasPolicy: z
+    .enum(EthereumGasPolicy)
+    .default(EthereumGasPolicy.chainDefault)
 })
 /** THE canonical cluster configuration — the schema-inferred shape of {@link ClusterConfigSchema}. */
 export type ClusterConfig = z.infer<typeof ClusterConfigSchema>

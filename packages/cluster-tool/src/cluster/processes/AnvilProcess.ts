@@ -1,5 +1,7 @@
 import Fs from "node:fs"
 import Assert from "node:assert"
+import { match } from "ts-pattern"
+import { EthereumGasPolicy } from "@wireio/cluster-tool-shared"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { probeEndpoint } from "../../utils/asyncUtils.js"
 import { existsAsync, which } from "../../utils/fsUtils.js"
@@ -25,6 +27,8 @@ export interface AnvilOptions {
   slotsInAnEpoch?: number
   /** `--block-time` seconds (run-phase interval mining; omit during deploy). */
   blockTimeSec?: number
+  /** Gas constraints imposed on this chain. Defaults to anvil's stock limits. */
+  gasPolicy?: EthereumGasPolicy
 }
 
 /** Resolved anvil config. */
@@ -66,7 +70,8 @@ export class AnvilProcess extends ManagedProcess {
       binary,
       extraArgs: options.extraArgs ?? [],
       slotsInAnEpoch: options.slotsInAnEpoch ?? 0,
-      blockTimeSec: options.blockTimeSec ?? 0
+      blockTimeSec: options.blockTimeSec ?? 0,
+      gasPolicy: options.gasPolicy ?? EthereumGasPolicy.chainDefault
     }
     return new AnvilProcess(manager, config)
   }
@@ -113,6 +118,7 @@ export class AnvilProcess extends ManagedProcess {
       if (Fs.existsSync(this.config.stateFile))
         args.push("--load-state", this.config.stateFile)
     }
+    args.push(...AnvilProcess.gasPolicyArgs(this.config.gasPolicy))
     args.push(...this.config.extraArgs)
     return args
   }
@@ -144,6 +150,41 @@ export namespace AnvilProcess {
   export const StartupTimeoutMs = 60_000
   /** `--code-size-limit` — the OPP outpost contracts exceed EIP-170's 24KB. */
   export const CodeSizeLimit = "99999"
+  /**
+   * Block gas limit for {@link EthereumGasPolicy.uncapped}.
+   *
+   * Sized far above any real envelope so the ceiling can never bind: the
+   * ETH-241 characterization puts a backlogged outbound delivery at ~93.6M
+   * gas against anvil's 30M default, so this is ~10x the worst case observed.
+   */
+  export const UncappedBlockGasLimit = "1000000000"
+  /** Hardfork naming the EIP-7825 per-transaction gas cap. */
+  export const OsakaHardfork = "osaka"
+
+  /**
+   * Translate a gas policy into anvil flags.
+   *
+   * `chainDefault` adds nothing — anvil's stock 30M block limit applies and
+   * EIP-7825 is NOT enforced (anvil gates it behind `--enable-tx-gas-limit`).
+   *
+   * @param policy - The configured gas policy.
+   * @returns Flags to append, empty for the stock chain.
+   */
+  export function gasPolicyArgs(policy: EthereumGasPolicy): string[] {
+    return match(policy)
+      .with(EthereumGasPolicy.chainDefault, () => [])
+      .with(EthereumGasPolicy.osaka, () => [
+        "--hardfork",
+        OsakaHardfork,
+        "--enable-tx-gas-limit"
+      ])
+      .with(EthereumGasPolicy.uncapped, () => [
+        "--gas-limit",
+        UncappedBlockGasLimit,
+        "--disable-block-gas-limit"
+      ])
+      .exhaustive()
+  }
   /** `--accounts` — deployer (HD 0) + operator HD accounts must all be pre-funded. */
   export const AccountCount = 50
   /** `--balance` (ether) per pre-funded account. */
