@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "commonjs",
-  "description": "Manual FlowScenario: concurrent Ethereum to Solana swaps with epoch-stall diagnostics",
+  "description": "Manual FlowScenario for concurrent Ethereum-to-Solana swap and epoch stress",
   "scripts": {
     "build": "tsc -b tsconfig.json",
     "test": "node lib/index.js",

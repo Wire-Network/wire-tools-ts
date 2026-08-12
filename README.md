@@ -179,15 +179,10 @@ and every live run is paired with the heartbeat monitor (see
 The long-running `flow-swap-epoch-stress` scenario is manual-only and excluded
 from the default E2E suite. It launches 10 simultaneous Ethereum → Solana swaps
 against 21 producer accounts and 21 batch operators, then records payout,
-UWREQ, Solana memory-log, and per-epoch liveness evidence across a 15-epoch
+UWREQ, chain-runtime, and per-epoch liveness evidence across a 15-epoch
 post-load soak. Run it locally with the canonical runner and heartbeat monitor
 shown in the package
 [README](packages/flow-swap-epoch-stress/README.md).
-
-Bootstrap supports the current SIM2 `sysio.reserv` ABI, which predates the
-zero-valued fee-emissions `setconfig` action: that write is skipped only when
-the action is absent and the requested routing remains zero. A non-zero value
-still fails rather than silently leaving the contract misconfigured.
 
 Each `--wire-build-path` / `--ethereum-path` / `--solana-path` flag falls back to
 its env var (`WIRE_BUILD_PATH` / `WIRE_ETH_PATH` / `WIRE_SOLANA_PATH`); one of the

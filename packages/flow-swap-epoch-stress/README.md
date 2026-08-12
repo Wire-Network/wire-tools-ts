@@ -51,10 +51,6 @@ Solana terminal, validator, OPP, or epoch-liveness changes. Reports are written
 beneath `/tmp/wire-flow-swap-epoch-stress/reports/`; cluster logs and OPP
 debugging artifacts remain in the same cluster directory.
 
-The bootstrap tolerates legacy reserve ABIs that lack `sysio.reserv::setconfig`:
-zero-valued fee-emissions routing is reported as a legacy no-op. Non-zero
-routing still requires the newer action.
-
 The separate `wire-cluster-tool readiness` command remains the read-only tool
 for inspecting an already-running SIM2 cluster; this flow owns and stresses a
 fresh local cluster for reproducible debugging.

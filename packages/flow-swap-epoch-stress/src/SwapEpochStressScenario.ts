@@ -31,10 +31,13 @@ const { Actor } = Report
 
 /** Manual, report-first concurrent swap settlement and epoch-liveness stress test. */
 export class SwapEpochStressScenario extends FlowScenario<SwapScenarioContext> {
+  /** Flow package and cluster name. */
   readonly name = "flow-swap-epoch-stress"
+  /** Human-readable load shape shown in generated reports. */
   readonly description =
     "Ten concurrent Ethereum→Solana swaps across 21 producers and 21 batch operators, with settlement and epoch-liveness diagnostics"
 
+  /** Fresh-cluster topology and protocol settings required by this flow. */
   override readonly defaults: ClusterBuildOptions = {
     enableMockReserves: true,
     epochDurationSec: Constants.EpochDurationSec,
@@ -55,6 +58,13 @@ export class SwapEpochStressScenario extends FlowScenario<SwapScenarioContext> {
     ]
   }
 
+  /**
+   * Create the swap-aware context used by every scenario phase.
+   *
+   * @param config Resolved cluster configuration.
+   * @param log Scenario logger.
+   * @returns A swap scenario context for the new cluster.
+   */
   override createContext(
     config: ClusterConfig,
     log: Logger
@@ -62,6 +72,12 @@ export class SwapEpochStressScenario extends FlowScenario<SwapScenarioContext> {
     return new SwapScenarioContext(config, log)
   }
 
+  /**
+   * Register the underwriter, actor, request, payout, and diagnostic phases.
+   *
+   * @param cluster Cluster build receiving this scenario's phases.
+   * @returns Nothing.
+   */
   plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const firstUnderwriter = ClusterConstants.underwriterLabel(0)
     const requestOptions = { timeoutMs: Constants.RequestStepTimeoutMs }
@@ -219,6 +235,21 @@ export class SwapEpochStressScenario extends FlowScenario<SwapScenarioContext> {
 
     ClusterBuildPhase.create(
       stress,
+      "RequestLifecycle",
+      "Capture WIRE request ingestion and confirmation before retention can evict settled rows",
+      [
+        StressSteps.planObserveRequests(
+          Actor.Sysio,
+          "observe-stress-requests",
+          "preserve all stress UWREQ IDs and statuses before destination payout waits",
+          settlementOptions,
+          Constants.ActorCount
+        )
+      ]
+    )
+
+    ClusterBuildPhase.create(
+      stress,
       "DestinationPayouts",
       "Verify all ten distinct Solana recipients receive their remit payouts",
       Array.from({ length: Constants.ActorCount }, (_, actorIndex) =>
@@ -248,8 +279,7 @@ export class SwapEpochStressScenario extends FlowScenario<SwapScenarioContext> {
           diagnosticsOptions,
           Constants.ActorCount
         )
-      ],
-      { failureMode: ClusterBuildFailureMode.collect }
+      ]
     )
   }
 }

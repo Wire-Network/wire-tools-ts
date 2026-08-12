@@ -147,6 +147,7 @@ export class ClusterBuildPhase<
     phaseController.signal.addEventListener("abort", onPhaseAbort, {
       once: true
     })
+    if (phaseController.signal.aborted) onPhaseAbort()
     // One recorder per step: client wrappers record every action/tx/CLI call
     // into it via AsyncLocalStorage, landing in `StepResult.extra`. Parallel
     // steps each get their own async scope, so captures never cross steps.

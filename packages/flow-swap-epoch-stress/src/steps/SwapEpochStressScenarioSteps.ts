@@ -26,6 +26,7 @@ import { SwapEpochStressScenarioConstants as Constants } from "../SwapEpochStres
 import {
   StressBaselineEpochKey,
   StressBaselineUwreqIdsKey,
+  StressRequestSnapshotKey,
   StressTargetAmountKey,
   stressActorOutputKey,
   stressRequestOutputKey
@@ -38,6 +39,10 @@ import {
 
 const { SysioContractName, SysioUwritUnderwriterequeststatus } = SysioContracts
 type Uwreq = SysioContracts.SysioUwritUwRequestTType
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 
 function isStressRoute(request: Uwreq): boolean {
   return (
@@ -60,13 +65,26 @@ async function stressRequests(ctx: SwapScenarioContext): Promise<Uwreq[]> {
   return rows.filter(row => !baseline.has(Number(row.id)) && isStressRoute(row))
 }
 
+/** Typed Step planners and runners used by the swap epoch stress scenario. */
 export namespace SwapEpochStressScenarioSteps {
+  /** Input used to provision one independent source/destination actor pair. */
   export interface ProvisionActorInput extends StepInput {
     readonly kind: "SwapEpochStressScenarioSteps.ProvisionActorInput"
     readonly actorIndex: number
     readonly ethereumHdIndex: number
   }
 
+  /**
+   * Plan one stress-actor provisioning step.
+   *
+   * @param actor Report actor responsible for the step.
+   * @param name Stable step name.
+   * @param description Human-readable step description.
+   * @param options Step execution options.
+   * @param actorIndex Zero-based actor index.
+   * @param ethereumHdIndex Deterministic Anvil wallet index.
+   * @returns Registered actor-provisioning step.
+   */
   export function planProvisionActor(
     actor: Report.Actor,
     name: string,
@@ -89,6 +107,14 @@ export namespace SwapEpochStressScenarioSteps {
     )
   }
 
+  /**
+   * Provision one Ethereum sender and one distinct Solana recipient.
+   *
+   * @param ctx Flow build context.
+   * @param input Actor-provisioning input.
+   * @param signal Cooperative cancellation signal.
+   * @returns A promise resolved after recording the actor output.
+   */
   export async function runProvisionActor(
     ctx: SwapScenarioContext,
     input: ProvisionActorInput,
@@ -119,11 +145,22 @@ export namespace SwapEpochStressScenarioSteps {
     })
   }
 
+  /** Input used to submit one actor's Ethereum swap request. */
   export interface RequestSwapInput extends StepInput {
     readonly kind: "SwapEpochStressScenarioSteps.RequestSwapInput"
     readonly actorIndex: number
   }
 
+  /**
+   * Plan one Ethereum-to-Solana swap request.
+   *
+   * @param actor Report actor responsible for the step.
+   * @param name Stable step name.
+   * @param description Human-readable step description.
+   * @param options Step execution options.
+   * @param actorIndex Zero-based actor index.
+   * @returns Registered swap-request step.
+   */
   export function planRequestSwap(
     actor: Report.Actor,
     name: string,
@@ -141,6 +178,14 @@ export namespace SwapEpochStressScenarioSteps {
     )
   }
 
+  /**
+   * Submit one source-side swap request using the actor's distinct wallet.
+   *
+   * @param ctx Flow build context.
+   * @param input Swap-request input.
+   * @param signal Cooperative cancellation signal.
+   * @returns A promise resolved after recording the confirmed request transaction.
+   */
   export async function runRequestSwap(
     ctx: SwapScenarioContext,
     input: RequestSwapInput,
@@ -183,11 +228,100 @@ export namespace SwapEpochStressScenarioSteps {
     })
   }
 
+  /** Input used to capture the WIRE-side lifecycle of the submitted requests. */
+  export interface ObserveRequestsInput extends StepInput {
+    readonly kind: "SwapEpochStressScenarioSteps.ObserveRequestsInput"
+    readonly expectedRequestCount: number
+  }
+
+  /**
+   * Plan the retention-safe UWREQ lifecycle observation.
+   *
+   * @param actor Report actor responsible for the step.
+   * @param name Stable step name.
+   * @param description Human-readable step description.
+   * @param options Step execution options.
+   * @param expectedRequestCount Expected stress request count.
+   * @returns Registered request-observation step.
+   */
+  export function planObserveRequests(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    expectedRequestCount: number
+  ): ClusterBuildStep<SwapScenarioContext, ObserveRequestsInput> {
+    return ClusterBuildStep.create(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "SwapEpochStressScenarioSteps.ObserveRequestsInput",
+        expectedRequestCount
+      },
+      runObserveRequests
+    )
+  }
+
+  /**
+   * Preserve request IDs and statuses before settled rows reach their retention limit.
+   *
+   * @param ctx Flow build context.
+   * @param input Request-observation input.
+   * @param signal Cooperative cancellation signal.
+   * @returns A promise resolved when every expected UWREQ reaches CONFIRMED.
+   */
+  export async function runObserveRequests(
+    ctx: SwapScenarioContext,
+    input: ObserveRequestsInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await pollUntil(
+      `${input.expectedRequestCount} stress UWREQs reach CONFIRMED`,
+      async () => {
+        signal.throwIfAborted()
+        const requests = await stressRequests(ctx)
+        const confirmedCount = requests.filter(request =>
+          matchesProtoEnum(
+            request.status,
+            SysioUwritUnderwriterequeststatus,
+            SysioUwritUnderwriterequeststatus.UNDERWRITE_REQUEST_STATUS_CONFIRMED
+          )
+        ).length
+        ctx.outputs.set(StressRequestSnapshotKey, {
+          requestIds: requests.map(request => Number(request.id)),
+          requestStatuses: requests.map(request => String(request.status)),
+          ingestedCount: requests.length,
+          confirmedCount
+        })
+        return (
+          requests.length === input.expectedRequestCount &&
+          confirmedCount === input.expectedRequestCount
+        )
+      },
+      Constants.SettlementDeadlineMs,
+      Constants.LongPollIntervalMs
+    )
+  }
+
+  /** Input used to verify one actor's destination payout. */
   export interface VerifyPayoutInput extends StepInput {
     readonly kind: "SwapEpochStressScenarioSteps.VerifyPayoutInput"
     readonly actorIndex: number
   }
 
+  /**
+   * Plan one destination-payout observation step.
+   *
+   * @param actor Report actor responsible for the step.
+   * @param name Stable step name.
+   * @param description Human-readable step description.
+   * @param options Step execution options.
+   * @param actorIndex Zero-based actor index.
+   * @returns Registered payout-verification step.
+   */
   export function planVerifyPayout(
     actor: Report.Actor,
     name: string,
@@ -205,6 +339,14 @@ export namespace SwapEpochStressScenarioSteps {
     )
   }
 
+  /**
+   * Wait for one Solana recipient to receive the quoted remit amount.
+   *
+   * @param ctx Flow build context.
+   * @param input Payout-verification input.
+   * @param signal Cooperative cancellation signal.
+   * @returns A promise resolved when the complete payout is observed.
+   */
   export async function runVerifyPayout(
     ctx: SwapScenarioContext,
     input: VerifyPayoutInput,
@@ -243,11 +385,13 @@ export namespace SwapEpochStressScenarioSteps {
     })
   }
 
+  /** Input used by the single terminal diagnostic step. */
   export interface DiagnosticInput extends StepInput {
     readonly kind: "SwapEpochStressScenarioSteps.DiagnosticInput"
     readonly expectedRequestCount: number
   }
 
+  /** Machine-readable invariant failure included in the terminal diagnosis. */
   export interface FailedCheck {
     readonly check: SwapEpochStressCheck
     readonly expected: string | number
@@ -255,6 +399,16 @@ export namespace SwapEpochStressScenarioSteps {
     readonly detail: string
   }
 
+  /**
+   * Plan the report-first terminal diagnostic step.
+   *
+   * @param actor Report actor responsible for the step.
+   * @param name Stable step name.
+   * @param description Human-readable step description.
+   * @param options Step execution options.
+   * @param expectedRequestCount Expected actor/request count.
+   * @returns Registered terminal-diagnostic step.
+   */
   export function planTerminalDiagnostics(
     actor: Report.Actor,
     name: string,
@@ -275,6 +429,14 @@ export namespace SwapEpochStressScenarioSteps {
     )
   }
 
+  /**
+   * Evaluate every stress invariant, observe epoch liveness, and emit one result.
+   *
+   * @param ctx Flow build context.
+   * @param input Terminal-diagnostic input.
+   * @param signal Cooperative cancellation signal.
+   * @returns A promise resolved only when all invariants pass.
+   */
   export async function runTerminalDiagnostics(
     ctx: SwapScenarioContext,
     input: DiagnosticInput,
@@ -285,11 +447,14 @@ export namespace SwapEpochStressScenarioSteps {
     const requiredEpoch =
       baselineEpoch + Constants.RequiredPostLoadEpochAdvances
     let observedEpoch = baselineEpoch
-    let epochPollError: unknown
+    let epochPollError: unknown = null
     try {
       observedEpoch = await currentEpoch(ctx)
     } catch (error) {
       epochPollError = error
+      ctx.log.warn(
+        `[SwapEpochStress] initial epoch-state read failed: ${errorMessage(error)}`
+      )
     }
     const epochObservations = [
       { epoch: observedEpoch, observedAt: new Date().toISOString() }
@@ -302,7 +467,7 @@ export namespace SwapEpochStressScenarioSteps {
       ctx.outputs.has(stressRequestOutputKey(actorIndex))
     ).length
     const solanaProgramRuntimeErrors = new Set<string>()
-    let programLogReadError: unknown
+    let programLogReadError: unknown = null
     const scanSolanaProgramLogs = async (): Promise<void> => {
       const firstActorIndex = provisionedActorIndexes[0]
       if (firstActorIndex == null) {
@@ -331,11 +496,15 @@ export namespace SwapEpochStressScenarioSteps {
           .forEach(line => solanaProgramRuntimeErrors.add(line))
       } catch (error) {
         programLogReadError ??= error
+        ctx.log.warn(
+          `[SwapEpochStress] Solana program-log read failed: ${errorMessage(error)}`
+        )
       }
     }
     await scanSolanaProgramLogs()
 
-    const clusterLogFiles: string[] = []
+    const clusterLogFiles = new Set<string>()
+    const seenClusterRuntimeFailureLines = new Set<string>()
     const clusterRuntimeFailureSamples: string[] = []
     const clusterRuntimeFailureKinds: Partial<
       Record<SwapEpochStressRuntimeFailureKind, number>
@@ -343,14 +512,14 @@ export namespace SwapEpochStressScenarioSteps {
     let clusterRuntimeFailureCount = 0
     let firstClusterRuntimeFailure = ""
     let lastClusterRuntimeFailure = ""
-    let clusterLogReadError: unknown
+    let clusterLogReadError: unknown = null
     const scanClusterLogs = async (): Promise<void> => {
       try {
         const logPath = Path.join(ctx.config.clusterPath, "logs")
         const names = (await Fs.promises.readdir(logPath))
           .filter(name => /^cluster_.*\.log$/.test(name))
           .sort()
-        clusterLogFiles.push(...names.map(name => Path.join(logPath, name)))
+        names.forEach(name => clusterLogFiles.add(Path.join(logPath, name)))
         for (const file of clusterLogFiles) {
           const lines = createInterface({
             input: Fs.createReadStream(file),
@@ -359,20 +528,20 @@ export namespace SwapEpochStressScenarioSteps {
           for await (const line of lines) {
             const kinds = [
               {
-                kind: SwapEpochStressRuntimeFailureKind.solanaMemory,
+                kind: SwapEpochStressRuntimeFailureKind.SOLANA_MEMORY_FAILURE,
                 matches:
                   /memory allocation failed|out of memory|heap(?:[ -]space)? violation/i.test(
                     line
                   )
               },
               {
-                kind: SwapEpochStressRuntimeFailureKind.solanaProgram,
+                kind: SwapEpochStressRuntimeFailureKind.SOLANA_PROGRAM_FAILURE,
                 matches: /SBF program panicked|ProgramFailedToComplete/i.test(
                   line
                 )
               },
               {
-                kind: SwapEpochStressRuntimeFailureKind.processFatal,
+                kind: SwapEpochStressRuntimeFailureKind.PROCESS_FATAL_FAILURE,
                 matches:
                   /\bfatal\b|segmentation fault|core dumped|panicked at/i.test(
                     line
@@ -380,6 +549,8 @@ export namespace SwapEpochStressScenarioSteps {
               }
             ].filter(candidate => candidate.matches)
             if (kinds.length === 0) continue
+            if (seenClusterRuntimeFailureLines.has(line)) continue
+            seenClusterRuntimeFailureLines.add(line)
             const evidence = line.slice(
               0,
               Constants.ClusterLogEvidenceMaxLength
@@ -401,9 +572,15 @@ export namespace SwapEpochStressScenarioSteps {
         }
       } catch (error) {
         clusterLogReadError ??= error
+        ctx.log.warn(
+          `[SwapEpochStress] aggregate cluster-log read failed: ${errorMessage(error)}`
+        )
       }
     }
-    while (observedEpoch < requiredEpoch && epochPollError === undefined) {
+
+    const requestSnapshot = ctx.outputs.get(StressRequestSnapshotKey)
+
+    while (observedEpoch < requiredEpoch && epochPollError === null) {
       const previousEpoch = observedEpoch
       try {
         await pollUntil(
@@ -426,23 +603,11 @@ export namespace SwapEpochStressScenarioSteps {
         await scanSolanaProgramLogs()
       } catch (error) {
         epochPollError = error
+        ctx.log.warn(
+          `[SwapEpochStress] post-load epoch observation stopped: ${errorMessage(error)}`
+        )
       }
     }
-
-    let requests: Uwreq[] = []
-    let requestReadError: unknown
-    try {
-      requests = await stressRequests(ctx)
-    } catch (error) {
-      requestReadError = error
-    }
-    const confirmed = requests.filter(request =>
-      matchesProtoEnum(
-        request.status,
-        SysioUwritUnderwriterequeststatus,
-        SysioUwritUnderwriterequeststatus.UNDERWRITE_REQUEST_STATUS_CONFIRMED
-      )
-    )
     await scanSolanaProgramLogs()
     await scanClusterLogs()
     const solanaProgramFailureEvidence = [...solanaProgramRuntimeErrors]
@@ -485,6 +650,9 @@ export namespace SwapEpochStressScenarioSteps {
               diagnostic: ""
             }
           } catch (error) {
+            ctx.log.warn(
+              `[SwapEpochStress] actor ${actorIndex} payout balance read failed: ${errorMessage(error)}`
+            )
             return {
               actorIndex,
               recipient: stressActor.solanaKeypair.publicKey.toBase58(),
@@ -493,7 +661,7 @@ export namespace SwapEpochStressScenarioSteps {
               expectedMinimum:
                 stressActor.solanaBalanceBefore + Number(targetAmount),
               paid: false,
-              diagnostic: error instanceof Error ? error.message : String(error)
+              diagnostic: errorMessage(error)
             }
           }
         }
@@ -508,7 +676,7 @@ export namespace SwapEpochStressScenarioSteps {
     const failedChecks: FailedCheck[] = []
     if (provisionedActorIndexes.length !== input.expectedRequestCount) {
       failedChecks.push({
-        check: SwapEpochStressCheck.actorProvisioning,
+        check: SwapEpochStressCheck.ACTOR_PROVISIONING_FAILED,
         expected: input.expectedRequestCount,
         observed: provisionedActorIndexes.length,
         detail: "not every source/destination actor was provisioned"
@@ -516,41 +684,41 @@ export namespace SwapEpochStressScenarioSteps {
     }
     if (submittedRequestCount !== input.expectedRequestCount) {
       failedChecks.push({
-        check: SwapEpochStressCheck.requestSubmission,
+        check: SwapEpochStressCheck.REQUEST_SUBMISSION_FAILED,
         expected: input.expectedRequestCount,
         observed: submittedRequestCount,
         detail:
           "not every concurrent Ethereum requestSwap transaction succeeded"
       })
     }
-    if (requests.length !== input.expectedRequestCount) {
+    if (requestSnapshot?.ingestedCount !== input.expectedRequestCount) {
       failedChecks.push({
-        check: SwapEpochStressCheck.uwreqIngestion,
+        check: SwapEpochStressCheck.UWREQ_INGESTION_FAILED,
         expected: input.expectedRequestCount,
-        observed: requests.length,
+        observed: requestSnapshot?.ingestedCount ?? 0,
         detail:
           "WIRE did not create exactly one new ETH→SOL UWREQ per submitted load request"
       })
     }
-    if (confirmed.length !== input.expectedRequestCount) {
+    if (requestSnapshot?.confirmedCount !== input.expectedRequestCount) {
       failedChecks.push({
-        check: SwapEpochStressCheck.underwriting,
+        check: SwapEpochStressCheck.UNDERWRITING_FAILED,
         expected: input.expectedRequestCount,
-        observed: confirmed.length,
+        observed: requestSnapshot?.confirmedCount ?? 0,
         detail: "not every new UWREQ reached CONFIRMED"
       })
     }
     if (payoutObservedCount !== input.expectedRequestCount) {
       failedChecks.push({
-        check: SwapEpochStressCheck.destinationSettlement,
+        check: SwapEpochStressCheck.DESTINATION_SETTLEMENT_FAILED,
         expected: input.expectedRequestCount,
         observed: payoutObservedCount,
         detail: "not every Solana recipient received the complete quoted payout"
       })
     }
-    if (epochPollError !== undefined || observedEpoch < requiredEpoch) {
+    if (epochPollError !== null || observedEpoch < requiredEpoch) {
       failedChecks.push({
-        check: SwapEpochStressCheck.epochLiveness,
+        check: SwapEpochStressCheck.EPOCH_LIVENESS_FAILED,
         expected: `epoch >= ${requiredEpoch}`,
         observed: `epoch ${observedEpoch}`,
         detail: "WIRE did not complete the required post-load epoch soak"
@@ -561,7 +729,7 @@ export namespace SwapEpochStressScenarioSteps {
       clusterRuntimeFailureCount > 0
     ) {
       failedChecks.push({
-        check: SwapEpochStressCheck.chainRuntime,
+        check: SwapEpochStressCheck.CHAIN_RUNTIME_FAILED,
         expected: "no high-confidence runtime failure evidence",
         observed:
           `${solanaProgramFailureEvidence.length} committed-program lines; ` +
@@ -571,23 +739,23 @@ export namespace SwapEpochStressScenarioSteps {
       })
     }
     if (
-      requestReadError !== undefined ||
+      requestSnapshot === null ||
       payoutDiagnosticFailureCount > 0 ||
-      programLogReadError !== undefined ||
-      clusterLogReadError !== undefined
+      programLogReadError !== null ||
+      clusterLogReadError !== null
     ) {
       failedChecks.push({
-        check: SwapEpochStressCheck.diagnosticCollection,
+        check: SwapEpochStressCheck.DIAGNOSTIC_COLLECTION_FAILED,
         expected: "all terminal diagnostic sources readable",
         observed: [
-          requestReadError === undefined
-            ? "UWREQ table readable"
-            : "UWREQ table unreadable",
+          requestSnapshot !== null
+            ? "UWREQ lifecycle snapshot available"
+            : "UWREQ lifecycle snapshot unavailable",
           `${payoutDiagnosticFailureCount} payout balance read failures`,
-          programLogReadError === undefined
+          programLogReadError === null
             ? "program logs readable"
             : "program logs unreadable",
-          clusterLogReadError === undefined
+          clusterLogReadError === null
             ? "cluster logs readable"
             : "cluster logs unreadable"
         ].join("; "),
@@ -597,8 +765,8 @@ export namespace SwapEpochStressScenarioSteps {
 
     const outcome =
       failedChecks.length === 0
-        ? SwapEpochStressOutcome.completed
-        : SwapEpochStressOutcome.failed
+        ? SwapEpochStressOutcome.SWAP_EPOCH_STRESS_COMPLETED
+        : SwapEpochStressOutcome.SWAP_EPOCH_STRESS_FAILED
     const runtimeFailureKindSummary =
       Object.entries(clusterRuntimeFailureKinds)
         .map(([kind, count]) => `${kind}=${count}`)
@@ -606,8 +774,8 @@ export namespace SwapEpochStressScenarioSteps {
     const resultSummary =
       `actors ${provisionedActorIndexes.length}/${input.expectedRequestCount}; ` +
       `requests submitted ${submittedRequestCount}/${input.expectedRequestCount}; ` +
-      `UWREQs ingested ${requests.length}/${input.expectedRequestCount}; ` +
-      `UWREQs confirmed ${confirmed.length}/${input.expectedRequestCount}; ` +
+      `UWREQs ingested ${requestSnapshot?.ingestedCount ?? 0}/${input.expectedRequestCount}; ` +
+      `UWREQs confirmed ${requestSnapshot?.confirmedCount ?? 0}/${input.expectedRequestCount}; ` +
       `payouts completed ${payoutObservedCount}/${input.expectedRequestCount}; ` +
       `epoch ${observedEpoch}/${requiredEpoch}; ` +
       `runtime failure lines ${clusterRuntimeFailureCount}; ` +
@@ -630,14 +798,10 @@ export namespace SwapEpochStressScenarioSteps {
       expectedRequestCount: input.expectedRequestCount,
       provisionedActorCount: provisionedActorIndexes.length,
       submittedRequestCount,
-      observedRequestCount: requests.length,
-      confirmedRequestCount: confirmed.length,
-      requestIds: requests.map(request => Number(request.id)),
-      requestStatuses: requests.map(request => String(request.status)),
-      requestReadError:
-        requestReadError instanceof Error
-          ? requestReadError.message
-          : String(requestReadError ?? ""),
+      observedRequestCount: requestSnapshot?.ingestedCount ?? 0,
+      confirmedRequestCount: requestSnapshot?.confirmedCount ?? 0,
+      requestIds: requestSnapshot?.requestIds ?? [],
+      requestStatuses: requestSnapshot?.requestStatuses ?? [],
       payoutObservedCount,
       payoutDiagnosticFailureCount,
       payoutResults,
@@ -650,7 +814,7 @@ export namespace SwapEpochStressScenarioSteps {
         programLogReadError instanceof Error
           ? programLogReadError.message
           : String(programLogReadError ?? ""),
-      clusterLogFiles,
+      clusterLogFiles: [...clusterLogFiles],
       clusterRuntimeFailureCount,
       clusterRuntimeFailureKinds,
       firstClusterRuntimeFailure,

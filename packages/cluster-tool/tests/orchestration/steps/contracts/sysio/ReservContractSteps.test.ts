@@ -2,8 +2,6 @@ import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
 
-import { fixtureContext } from "../../../../config/clusterBuildContextFixture.js"
-
 describe("Steps.contracts.sysio.reserv", () => {
   it("regreserve carries the reserv::regreserve data", () => {
     const data: SysioContracts.SysioReservRegreserveAction = {
@@ -64,65 +62,6 @@ describe("Steps.contracts.sysio.reserv", () => {
     expect(step.input.data.fee_emissions_share_bps).toBe(5_000)
   })
 
-  describe("runSetconfig", () => {
-    const signal = new AbortController().signal
-
-    function setup(actions: string[]) {
-      const ctx = fixtureContext()
-      jest.spyOn(ctx.wire.api.v1.chain, "get_abi").mockResolvedValue({
-        account_name: "sysio.reserv",
-        abi: {
-          version: "sysio::abi/1.2",
-          types: [],
-          variants: [],
-          structs: [],
-          actions: actions.map(name => ({
-            name,
-            type: name,
-            ricardian_contract: ""
-          })),
-          tables: [],
-          ricardian_clauses: [],
-          action_results: [],
-          enums: []
-        }
-      })
-      const getSysioContract = jest.spyOn(ctx.wire, "getSysioContract")
-      return { ctx, getSysioContract }
-    }
-
-    it("treats missing setconfig as a legacy-compatible no-op for zero routing", async () => {
-      const { ctx, getSysioContract } = setup(["regreserve"])
-      const step = Steps.contracts.sysio.reserv.planSetconfig(
-        Report.Actor.Sysio,
-        "configure-reserv",
-        "set the swap-fee routing config",
-        {},
-        { fee_emissions_share_bps: 0 }
-      )
-
-      await step.runner(ctx, step.input, signal)
-
-      expect(getSysioContract).not.toHaveBeenCalled()
-    })
-
-    it("rejects non-zero routing when the deployed reserve ABI cannot configure it", async () => {
-      const { ctx, getSysioContract } = setup(["regreserve"])
-      const step = Steps.contracts.sysio.reserv.planSetconfig(
-        Report.Actor.Sysio,
-        "configure-reserv",
-        "set the swap-fee routing config",
-        {},
-        { fee_emissions_share_bps: 5_000 }
-      )
-
-      await expect(step.runner(ctx, step.input, signal)).rejects.toThrow(
-        "non-zero fee emissions routing cannot be configured"
-      )
-      expect(getSysioContract).not.toHaveBeenCalled()
-    })
-  })
-
   /** The reserve triple both owner-fee actions address. */
   const reserveTriple = {
     chain_code: { value: SlugName.from("ETHEREUM") },
@@ -167,9 +106,7 @@ describe("Steps.contracts.sysio.reserv", () => {
   })
 
   it("claimrsvfee carries the reserve triple AND the owner", () => {
-    const data: SysioContracts.SysioReservClaimrsvfeeAction = {
-      ...reserveTriple
-    }
+    const data: SysioContracts.SysioReservClaimrsvfeeAction = { ...reserveTriple }
     const step = Steps.contracts.sysio.reserv.planClaimrsvfee(
       Report.Actor.User,
       "claim-ethereum-reserve-fee",
