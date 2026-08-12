@@ -12,8 +12,14 @@ const SourceDir = Path.resolve(__dirname, "../src"),
  * Telemetry sources live across several `src/` subdirectories, so the scan is
  * recursive. A non-recursive readdir silently matches nothing and passes
  * vacuously.
+ *
+ * The floor is a DELIBERATE tripwire, not a running total: it fails when a
+ * telemetry source disappears unnoticed. Lower it only in the same change that
+ * removes a file on purpose. Dropped from 10 → 9 when the dead
+ * `observation-parsing/oppTelemetryHealthParser.ts` was deleted (no production
+ * consumer; the live parse path lives in `stress-engine/`).
  */
-const MinimumTelemetryFileCount = 10
+const MinimumTelemetryFileCount = 9
 
 describe("telemetry dependency hygiene", () => {
   it("rejects private, transitive, and cross-package dependency access", () => {
