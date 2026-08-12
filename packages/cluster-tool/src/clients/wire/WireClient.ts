@@ -991,7 +991,7 @@ export class WireClient {
    */
   async isTransactionIrreversible(
     transactionId: string,
-    observedBlockNum: number | null = null
+    observedBlockNum: number = null
   ): Promise<boolean> {
     const location = await this.locateTransactionBlock(transactionId),
       locatedBlockNum =
@@ -1199,7 +1199,7 @@ export namespace WireClient {
     constructor(
       readonly label: string,
       readonly transactionId: string,
-      readonly observedBlockNum: number | null,
+      readonly observedBlockNum: number,
       options: TransactionFinalityErrorOptions = {}
     ) {
       super(
