@@ -1,4 +1,3 @@
-import { createEnvelopeBaseline } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 import type { EnvelopeBaseline } from "@wireio/test-flow-swap-stress-saturation/envelope-integrity/index.js"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import {
@@ -7,7 +6,6 @@ import {
   RunEvidenceEndpoint,
   RunEvidenceSaturationStrategy
 } from "@wireio/test-flow-swap-stress-saturation/stress-engine/index.js"
-import { projectOppPhaseMetrics } from "@wireio/test-flow-swap-stress-saturation/swap-stress/index.js"
 import type {
   Phase2SwapRequest,
   SwapStressEnvelopeMetricCollectionResult,
@@ -19,7 +17,6 @@ import type {
 } from "@wireio/test-flow-swap-stress-saturation/swap-stress/index.js"
 
 import { strictSnapshotMetrics } from "./phaseRunnerMetricFixtures.js"
-import { createDeps } from "./phaseRunnerTestSupport.js"
 
 export {
   baselineCaptureIssue,
@@ -57,56 +54,6 @@ export interface PhaseTelemetryTestOptions {
 }
 
 /**
- * Build real dependencies that expose canonical phase telemetry ordering.
- * @param options Canonical capture, collection, payout, and event controls.
- * @returns Real runner dependencies with recorded Phase-2 submissions.
- */
-export function createRealPhaseTelemetryDeps(
-  options: PhaseTelemetryTestOptions
-): PhaseTelemetryTestDeps {
-  const base = createDeps({
-      ...(options.phase1PayoutFailureReason === undefined
-        ? {}
-        : { phase1PayoutFailureReason: options.phase1PayoutFailureReason })
-    }),
-    baseline = createEnvelopeBaseline(["default-existing"])
-  return {
-    ...base,
-    telemetryKind: "real",
-    getEthereumFirstNonce: async count => {
-      options.events?.push(`nonce:${count}`)
-      return base.getEthereumFirstNonce(count)
-    },
-    ethereumReserveManager: {
-      requestSwap: async (...args) => {
-        options.events?.push("submit:ethereum")
-        return base.ethereumReserveManager.requestSwap(...args)
-      }
-    },
-    recipientPayoutObserver: {
-      preparePayouts: async request => {
-        options.events?.push(`prepare:${request.phase}`)
-        await base.recipientPayoutObserver.preparePayouts?.(request)
-      },
-      waitForPayouts: request =>
-        base.recipientPayoutObserver.waitForPayouts(request)
-    },
-    captureEnvelopeBaseline: async () => {
-      options.events?.push("capture")
-      return options.captureEnvelopeBaseline === undefined
-        ? { kind: "captured", baseline }
-        : options.captureEnvelopeBaseline()
-    },
-    collectEnvelopeMetrics: async request => {
-      options.events?.push(
-        `collect:${request.phase}:${DebugOutpostEndpointsType[request.endpointsType]}`
-      )
-      return options.collectEnvelopeMetrics(request)
-    }
-  }
-}
-
-/**
  * Build a healthy canonical collection for one real request.
  * @param request Baseline-bearing canonical request.
  * @param saturated Whether the healthy observation satisfies saturation.
@@ -128,75 +75,6 @@ export function measuredCollection(
       epochEnd: "8"
     })
   }
-}
-
-/**
- * Build healthy recorded metrics with immutable baseline and artifact provenance.
- * @param baseline Canonical baseline whose identity is retained.
- * @param artifactRefs Ordered immutable observation refs.
- * @returns Healthy measured flow projection.
- */
-export function recordedMeasuredMetrics(
-  baseline: EnvelopeBaseline,
-  artifactRefs: readonly string[]
-): ReturnType<typeof projectOppPhaseMetrics> {
-  return projectOppPhaseMetrics({
-    phase: "phase-1",
-    endpoint: RunEvidenceEndpoint.OutpostEthereumDepot,
-    strategy: RunEvidenceSaturationStrategy.Rollover,
-    window: {
-      startedAtMs: "100",
-      endedAtMs: "200",
-      epochStart: "7",
-      epochEnd: "8"
-    },
-    saturated: false,
-    solanaOversized: false,
-    envelopeCount: 2,
-    envelopeByteSizes: [256, 512],
-    epochEnvelopeIndexes: [0, 1],
-    health: {
-      kind: OppEnvelopeTelemetryHealthKind.Healthy,
-      retryable: false,
-      candidateCount: 2,
-      validCount: 2,
-      filteredCount: 0,
-      issueCount: 0,
-      issues: []
-    },
-    malformedRecords: [],
-    selectedArtifacts: [
-      {
-        baseKey: "0000000007-outpost-ethereum-depot-a",
-        epoch: 7,
-        index: 0,
-        dataSha256: "sha256:data",
-        dataMtimeNs: "1",
-        metadataMtimeNs: "2"
-      }
-    ],
-    evidence: {
-      kind: "recorded",
-      baseline: {
-        ...baseline,
-        observationOrdinal: "3",
-        artifactRefs: ["artifacts/opp/baseline.data"]
-      },
-      artifacts:
-        artifactRefs.length === 0
-          ? []
-          : [
-              {
-                baseKey: "0000000007-outpost-ethereum-depot-a",
-                immutableRefs: {
-                  data: { path: artifactRefs[0], sha256: "a".repeat(64) },
-                  metadata: { path: artifactRefs[1], sha256: "b".repeat(64) }
-                }
-              }
-            ],
-      artifactRefs
-    }
-  })
 }
 
 /**
