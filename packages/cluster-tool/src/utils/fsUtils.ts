@@ -140,3 +140,26 @@ export const LongFileLockOptions: LockOptions = {
   retries: { retries: 120, factor: 1, minTimeout: 2_000, maxTimeout: 2_000 },
   stale: 10_000
 }
+
+/**
+ * proper-lockfile options for the bind-registry PORT lock: a SHORT critical
+ * section (port probing, well under a second) with MANY simultaneous
+ * contenders — every jest worker across all projects, plus every concurrent
+ * cluster on the host.
+ *
+ * The default's ~3.1s exponential budget is the wrong shape here. It is not
+ * exhausted by a slow holder but by DEPTH OF QUEUE: ~16 workers × a couple
+ * hundred milliseconds each already reaches it, so the suite failed with
+ * "Lock file is already being held" roughly 1 run in 12 — in whichever
+ * unlucky suite happened to ask last, which made it read as unrelated
+ * flakiness in random tests.
+ *
+ * Fixed short intervals with a deep retry count wait out the queue instead.
+ * The ~15s ceiling is never approached in practice (each holder releases in
+ * milliseconds); it exists so a contender QUEUES rather than fails.
+ */
+export const PortFileLockOptions: LockOptions = {
+  realpath: false,
+  retries: { retries: 60, factor: 1, minTimeout: 250, maxTimeout: 250 },
+  stale: 10_000
+}

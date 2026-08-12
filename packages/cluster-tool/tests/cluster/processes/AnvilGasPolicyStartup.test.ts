@@ -30,15 +30,37 @@ describe("anvil accepts every gas policy's flags", () => {
   const StartupGraceMs = 6_000
 
   /**
+   * One port per policy, claimed UP FRONT.
+   *
+   * `findAvailable` takes the host-global bind-registry lock, whose retry
+   * budget is bounded (~3s). Claiming inside each test spread three lock
+   * acquisitions across ~21s of real anvil startup, so under a loaded parallel
+   * run one of them exhausted the budget and the suite failed with "Lock file
+   * is already being held" — roughly 1 run in 25. Claiming all three here
+   * collapses that window to a few consecutive milliseconds.
+   */
+  const ports = new Map<EthereumGasPolicy, number>()
+
+  beforeAll(async () => {
+    for (const policy of [
+      EthereumGasPolicy.chainDefault,
+      EthereumGasPolicy.osaka,
+      EthereumGasPolicy.uncapped
+    ])
+      ports.set(
+        policy,
+        await BindConfigProvider.findAvailable(BindConfigProvider.DefaultAnvil)
+      )
+  })
+
+  /**
    * Spawn anvil with a policy's flags.
    *
    * @param policy - The policy whose flags are exercised.
    * @returns The block gas limit anvil reports, or a rejection on startup exit.
    */
   async function blockGasLimitFor(policy: EthereumGasPolicy): Promise<number> {
-    const port = await BindConfigProvider.findAvailable(
-        BindConfigProvider.DefaultAnvil
-      ),
+    const port = ports.get(policy),
       child = spawn(
         "anvil",
         ["--port", String(port), ...AnvilProcess.gasPolicyArgs(policy)],

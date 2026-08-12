@@ -18,7 +18,11 @@ import {
   ListenAllAddress,
   Localhost
 } from "../utils/netUtils.js"
-import { mkdirs, withFileLock } from "../utils/fsUtils.js"
+import {
+  mkdirs,
+  withFileLock,
+  PortFileLockOptions
+} from "../utils/fsUtils.js"
 import { isPidAlive, processCommandBasename } from "../utils/processUtils.js"
 import { Deferred, getLogger, getValue, guard } from "@wireio/shared"
 
@@ -179,7 +183,11 @@ export namespace BindConfigProvider {
     // Hold the host-global port lock for the WHOLE cluster port selection so a
     // parallel process cannot interleave and pick an overlapping set (get-port
     // only de-dupes within one process — see PortLockPath).
-    return withFileLock(PortLockPath, () => resolveLocked(options, topology))
+    return withFileLock(
+      PortLockPath,
+      () => resolveLocked(options, topology),
+      PortFileLockOptions
+    )
   }
 
   /** {@link resolve} body — always runs under the {@link PortLockPath} lock. */
@@ -552,14 +560,17 @@ export namespace BindConfigProvider {
     preferred: number,
     protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
   ): Promise<number> {
-    return withFileLock(PortLockPath, () =>
-      pickPort(
-        null,
-        preferred,
-        readRegistryPortExclusions(),
-        "findAvailable",
-        protocol
-      )
+    return withFileLock(
+      PortLockPath,
+      () =>
+        pickPort(
+          null,
+          preferred,
+          readRegistryPortExclusions(),
+          "findAvailable",
+          protocol
+        ),
+      PortFileLockOptions
     )
   }
 
@@ -724,8 +735,11 @@ export namespace BindConfigProvider {
    * @returns A currently-free window.
    */
   export async function findAvailableRange(): Promise<BindConfigPortRange> {
-    return withFileLock(PortLockPath, () =>
-      pickPortRange(null, readRegistryPortExclusions(), "solana.dynamicRange")
+    return withFileLock(
+      PortLockPath,
+      () =>
+        pickPortRange(null, readRegistryPortExclusions(), "solana.dynamicRange"),
+      PortFileLockOptions
     )
   }
 }

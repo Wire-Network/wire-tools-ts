@@ -2,6 +2,7 @@ import Fs from "node:fs"
 import Path from "node:path"
 import { ClusterConfigLoggingFileFormat } from "@wireio/cluster-tool-shared"
 import {
+  Deferred,
   LevelThresholds,
   type Appender,
   type LevelKind,
@@ -78,9 +79,24 @@ export class LogFileAppender implements Appender {
     this.ensureStream().write(this.format(record) + "\n")
   }
 
-  /** Flush and close the underlying file stream, if it was opened. */
-  close(): void {
-    this.stream?.end()
+  /**
+   * Flush and close the underlying file stream, if it was opened.
+   *
+   * `stream.end()` only STARTS the flush — the bytes are not on disk when it
+   * returns. Any caller that reads the file back (a test, an archiver, a
+   * report step) must await this, or it races the write and sees a truncated
+   * or empty file. Idempotent: closing twice resolves immediately.
+   *
+   * @returns Resolves once the stream has closed and the file is complete.
+   */
+  close(): Promise<void> {
+    const stream = this.stream
+    if (stream === null) return Promise.resolve()
+    this.stream = null
+    return Deferred.useCallback<void>(deferred => {
+      stream.once("close", () => deferred.resolve())
+      stream.end()
+    }).promise
   }
 }
 
