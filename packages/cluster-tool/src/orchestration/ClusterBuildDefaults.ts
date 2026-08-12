@@ -11,6 +11,7 @@ import { getLogger, type Logger } from "../logging/Logger.js"
 import { SysioContracts } from "@wireio/sdk-core"
 import { Constants, ProtocolTiming } from "../Constants.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
+import { DaemonConfig } from "../config/DaemonConfig.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
 import {
   readNodeOwner,
@@ -1032,6 +1033,53 @@ export namespace ClusterBuildDefaults {
         )
       )
     }
+
+    planStartScripts<C>(postContractDeployment, config)
+  }
+
+  /**
+   * Emit each daemon's `start.sh` — ONE step per daemon, never one step looping
+   * over N, so the Report validates every script individually.
+   *
+   * Placed LAST in the bootstrap: an operator node's argv includes its OPP
+   * daemon args, which resolve from `OperatorDaemonArtifactsKey` — asserting
+   * that output before the outpost deploys have published it would throw.
+   *
+   * @param parent - The phase group to register the phase on.
+   * @param config - The resolved cluster config (which daemons exist).
+   */
+  function planStartScripts<C extends ClusterBuildContext>(
+    parent: ClusterBuildPhaseGroup<C>,
+    config: ClusterConfig
+  ): void {
+    // The daemon SET comes from DaemonConfig — never re-derived here, or the
+    // emit labels and the enumeration can drift. That includes the bundle
+    // gate: it reads the LABELS, so "is a debugging-server start.sh emitted?"
+    // and "is its bundle copied?" are one predicate. Re-deriving the flag
+    // would let `plannedLabels` gain a condition the copy step never learns,
+    // emitting a script that execs a binary nobody copied.
+    const labels = DaemonConfig.plannedLabels(config),
+      debuggingServerEnabled = labels.includes(
+        DaemonConfig.DebuggingServerSubpath
+      ),
+      phase = ClusterBuildPhase.create<C>(
+        parent,
+        "StartScripts",
+        "Bundle the debugging server + emit a start.sh for every daemon"
+      )
+    // The bundle copy precedes the scripts: the server's start.sh lives in the
+    // directory this step creates. Skipped wholesale when the server is
+    // disabled — shipping 15 MB for a server that never runs is waste.
+    if (debuggingServerEnabled)
+      phase.push(
+        Steps.debuggingServerBundle.planCopy<C>(
+          Actor.Sysio,
+          "copy-debugging-server-bundle",
+          "copy the bundled debugging server into the cluster tree",
+          {}
+        )
+      )
+    Steps.startScript.planPhase<C>(phase, labels)
   }
 
   /**

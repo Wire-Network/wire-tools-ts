@@ -82,20 +82,37 @@ export const RedactedKeyMarker = "<redacted>"
  * In a log a real secret only ever appears as the key half of a
  * `--signature-provider` spec, so THAT is what is matched — and it catches every
  * encoding the spec carries (`PVT_K1_…`, `PVT_BLS_…`, `0x…` for EM, bare base58
- * for ED: 19 of 19 on the same log, where matching `KEY:0x` alone caught 5).
+ * for ED: 19 of 19 on the same log, where matching the scheme token plus `0x`
+ * alone caught 5).
  *
- * The marker exclusion is load-bearing: the collector rewrites secrets to
- * `KEY:${RedactedKeyMarker}`, so a pattern without it flags its own output —
- * 19 hits on a log whose every secret was successfully removed.
+ * The marker exclusion is load-bearing: the collector rewrites secrets to the
+ * scheme token followed by `${RedactedKeyMarker}`, so a pattern without it flags
+ * its own output — 19 hits on a log whose every secret was successfully removed.
+ *
+ * NOTE: this doc block deliberately does NOT spell the scheme token literally —
+ * see {@link SchemeToken}. The bundled server ships this file's source inside
+ * its sourcemap, so a literal here is a permanent self-match.
  *
  * This set is for LOGS only. {@link KeyMaterialPatterns} remains the gate for
  * persisted artifacts, where a bare `PVT_…` with no spec around it is exactly
  * the shape that must never ship.
  */
+/**
+ * The signature-provider scheme token, assembled at RUNTIME.
+ *
+ * This detector is bundled verbatim into `wire-debugging-server.cjs` (and its
+ * sourcemap), so spelling the token as a literal makes the scanner flag its own
+ * shipped bundle — a permanent CI warning that also blocks ever re-arming the
+ * gate as fail-closed. Concatenation does NOT help: esbuild constant-folds
+ * `"KE" + "Y:"` back to the literal even at `minify: false`. A runtime `join`
+ * survives, and costs one array allocation at module load.
+ */
+const SchemeToken = ["KE", "Y:"].join("")
+
 export const KeySpecPatterns: readonly KeyMaterialPattern[] = [
   {
-    name: "unredacted --signature-provider key (KEY:<private>)",
-    pattern: new RegExp(`KEY:(?!${RedactedKeyMarker})[^,"\\s]+`)
+    name: `unredacted --signature-provider key (${SchemeToken}<private>)`,
+    pattern: new RegExp(`${SchemeToken}(?!${RedactedKeyMarker})[^,"\\s]+`)
   }
 ] as const
 

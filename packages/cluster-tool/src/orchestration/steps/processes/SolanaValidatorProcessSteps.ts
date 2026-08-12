@@ -1,5 +1,9 @@
 import Path from "node:path"
-import { SolanaValidatorProcess } from "../../../cluster/processes/SolanaValidatorProcess.js"
+import type { ClusterConfig } from "@wireio/cluster-tool-shared"
+import {
+  SolanaValidatorProcess,
+  type SolanaValidatorProgram
+} from "../../../cluster/processes/SolanaValidatorProcess.js"
 import { SolanaFundingTool } from "../../../tools/solana/SolanaFundingTool.js"
 import { SolanaOutpostProgramTool } from "../../../tools/solana/SolanaOutpostProgramTool.js"
 import { Report } from "../../../report/Report.js"
@@ -34,17 +38,6 @@ export namespace SolanaValidatorProcessSteps {
     signal.throwIfAborted()
     if (ctx.processManager.get(SolanaValidatorProcess.ProcessLabel) != null) return
 
-    const programId = SolanaOutpostProgramTool.assertProgramId(ctx.config.solanaPath)
-      .toBase58()
-    const soFile = SolanaOutpostProgramTool.programSoFile(ctx.config.solanaPath)
-
-    // The program is deployed UPGRADEABLE with the per-cluster deployer as its
-    // upgrade authority — that same deployer becomes the `global_config.admin`
-    // the OPP admin ops require. Materialize the keypair here (before launch) so
-    // `SolanaOutpostBootstrapper` loads the identical identity.
-    const upgradeAuthority = SolanaFundingTool.createDeployerKeypair(ctx.config.dataPath)
-      .publicKey.toBase58()
-
     const validator = await SolanaValidatorProcess.create(ctx.processManager, {
       address: ctx.config.bind.solana.address,
       rpcPort: ctx.config.bind.solana.ports.http,
@@ -52,10 +45,42 @@ export namespace SolanaValidatorProcessSteps {
       gossipPort: ctx.config.bind.solana.ports.gossip,
       dynamicPortRange: ctx.config.bind.solana.ports.dynamicRange,
       ledgerPath: Path.join(ctx.config.dataPath, SolanaValidatorProcess.LedgerSubpath),
-      programs: [
-        { name: SolanaOutpostProgramTool.ProgramName, programId, soFile, upgradeAuthority }
-      ]
+      programs: resolvePrograms(ctx.config)
     })
     await validator.start()
+  }
+
+  /**
+   * The BPF programs this cluster's validator loads at genesis.
+   *
+   * Shared by {@link runStart} and the `start.sh` renderer
+   * (`StartScriptSteps.resolveSolanaValidatorConfig`) so the two cannot drift:
+   * omitting these from the rendered argv produces a validator with NO
+   * `opp-outpost` program, which fails as a one-direction OPP circulation
+   * stall rather than a startup error.
+   *
+   * The program is deployed UPGRADEABLE with the per-cluster deployer as its
+   * upgrade authority — that same deployer becomes the `global_config.admin`
+   * the OPP admin ops require. `createDeployerKeypair` is create-or-load, so
+   * calling it from either path yields the identical identity.
+   *
+   * @param config - The resolved cluster config.
+   * @returns The validator's program list.
+   */
+  export function resolvePrograms(
+    config: ClusterConfig
+  ): SolanaValidatorProgram[] {
+    return [
+      {
+        name: SolanaOutpostProgramTool.ProgramName,
+        programId: SolanaOutpostProgramTool.assertProgramId(
+          config.solanaPath
+        ).toBase58(),
+        soFile: SolanaOutpostProgramTool.programSoFile(config.solanaPath),
+        upgradeAuthority: SolanaFundingTool.createDeployerKeypair(
+          config.dataPath
+        ).publicKey.toBase58()
+      }
+    ]
   }
 }

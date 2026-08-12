@@ -18,6 +18,7 @@ import {
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { KeyType } from "@wireio/sdk-core"
+import { getValue } from "@wireio/shared"
 import { getLogger } from "../../logging/Logger.js"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import {
@@ -26,8 +27,11 @@ import {
 } from "../../cluster/ClusterState.js"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
+import { DaemonConfig } from "../../config/DaemonConfig.js"
 import { NodeConfig } from "../../config/NodeConfig.js"
+import { StartScriptSteps } from "./StartScriptSteps.js"
 import { OperatorDaemonTool } from "../../tools/wire/OperatorDaemonTool.js"
+import { ExternalOutpostSteps } from "./ExternalOutpostSteps.js"
 import type { KeyPair, WireFinalizerKeyPair } from "../../types/KeyPair.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
@@ -703,7 +707,119 @@ export namespace ExternalClusterConfigSteps {
       solanaIdlFile: Fs.existsSync(solanaIdlFile) ? solanaIdlFile : null
     })
 
+    // Re-render EVERY daemon's start.sh against the merged (external) model —
+    // not just the per-node files above. `writeAll` DELETES the cloned scripts
+    // first: Clone copies the local tree wholesale (excluding only
+    // logs/reports/*.pid), so a daemon the external model drops (anvil and the
+    // validator under external-outpost mode) would otherwise keep its
+    // LOCAL-port script, which the Verify scan cannot flag because it never
+    // enumerates it.
+    //
+    // A node's argv carries its signing providers, so the operators must be
+    // resolvable — and THIS context's keyStore is empty (a fresh context has an
+    // empty OutputStore). Rehydrate it from the cloned `cluster-keys.json`
+    // exactly as `ClusterManager.run` does before it resolves operators; a
+    // cluster whose keys are absent simply gets no scripts rather than failing
+    // the rebind.
+    await emitStartScripts(mergedContext, mergedConfig, signal)
+
     ctx.outputs.set(MergedConfigKey, mergedConfig)
+  }
+
+  /**
+   * The materialized ETH outpost address map — the artifact whose presence
+   * proves the outpost deploy published its results into this tree.
+   */
+  const ExternalOutpostAddressFilename = "outpost-addrs.json"
+
+  /**
+   * Re-render EVERY daemon's `start.sh` against the merged (external) model.
+   *
+   * Two prerequisites make a node's argv resolvable, and a FRESH context has
+   * neither — its `OutputStore` and `keyStore` are both empty:
+   *
+   * 1. **Key material.** A producing node's argv carries its signature
+   *    providers, resolved from `ctx.keyStore`. Rehydrated from the cloned
+   *    `cluster-keys.json` exactly as `ClusterManager.run` does.
+   * 2. **Operator daemon artifacts.** An operator node's argv carries its OPP
+   *    daemon args, which assert `OperatorDaemonArtifactsKey`. `run` publishes
+   *    those first, branching on outpost mode — the external arm reads only the
+   *    cluster tree, the local arm reads the wire-ethereum tree.
+   *
+   * Either prerequisite may be genuinely absent (a cluster cloned before its
+   * outposts deployed, unreadable keys). That is NOT fatal to the rebind: the
+   * scripts are SKIPPED with a warning, because emitting a node script without
+   * its signing providers or daemon args would ship a script that looks right
+   * and starts a misconfigured daemon.
+   *
+   * @param ctx - The merged-model context (mutated: keyStore + outputs filled).
+   * @param config - The merged cluster config.
+   * @param signal - Abort signal.
+   */
+  async function emitStartScripts(
+    ctx: ClusterBuildContext,
+    config: ClusterConfig,
+    signal: AbortSignal
+  ): Promise<void> {
+    const log = getLogger(__filename)
+
+    // DELETE FIRST, unconditionally. Clone copied every local `start.sh` into
+    // this tree; if the render below is skipped, leaving them behind is the
+    // WORST outcome — they carry local ports and, under a KEY-mode source
+    // cluster, the local inline signing keys the external model exists to
+    // replace with `SSM:` refs. No scripts is recoverable; wrong scripts are
+    // not.
+    //
+    // `writeAll` sweeps again on the success path. That is NOT redundant: this
+    // copy is the only one that runs when a prerequisite below is missing, and
+    // `writeAll`'s is the only one that runs on the `create` path. Removing
+    // either re-opens a hole.
+    DaemonConfig.existingStartScriptFiles(
+      config.dataPath,
+      Fs.existsSync,
+      Fs.readdirSync as (path: string) => string[]
+    ).forEach(file => Fs.rmSync(file, { force: true }))
+
+    // Keys may be genuinely absent (a tree cloned before provisioning) — that
+    // is a skip, not a failure. An artifact-publish throw is NOT expected and
+    // is left to propagate.
+    const keys = getValue(
+      () => ClusterState.loadKeys(config),
+      null,
+      error =>
+        log.warn(
+          `create-external-config: start scripts skipped — cluster keys unreadable: ${error instanceof Error ? error.message : String(error)}`
+        )
+    )
+    if (keys == null) return
+    ClusterState.rehydrate(ctx.keyStore, keys)
+
+    // An operator node's argv carries its OPP daemon args, which need the
+    // outpost deploy artifacts. A tree cloned BEFORE those were published
+    // (synthetic fixtures, a cluster whose outposts never deployed) simply has
+    // none — that is a legitimate skip, PRE-CHECKED rather than caught, so a
+    // genuine publication failure still propagates instead of being downgraded
+    // to a warning.
+    const addressFile = Path.join(
+      ClusterConfigProvider.ethereumDeploymentsPath(config),
+      ExternalOutpostAddressFilename
+    )
+    if (!Fs.existsSync(addressFile)) {
+      log.warn(
+        `create-external-config: start scripts skipped — outpost artifacts absent (${addressFile})`
+      )
+      return
+    }
+    // BOTH arms are reachable, and the LOCAL one is the common case: a plain
+    // local cluster cloned to external has `externalOutposts == null` (the
+    // field is set only when the SOURCE cluster was itself external-outpost),
+    // so it takes `runArtifactPreparation`. Verified on a real
+    // create-external-config run, which logged that arm's
+    // "[operator-daemon] artifacts ready" line.
+    await (config.externalOutposts != null
+      ? ExternalOutpostSteps.runPublishArtifacts(ctx, null, signal)
+      : OperatorDaemonTool.runArtifactPreparation(ctx, null, signal))
+    StartScriptSteps.writeAll(config, StartScriptSteps.resolveSources(ctx))
   }
 
   // ── Stage 4: Emit ──────────────────────────────────────────────────────────
@@ -1043,7 +1159,7 @@ export namespace ExternalClusterConfigSteps {
         : [],
       liqEthAddressFile = Path.join(deploymentsDir, "liqeth-addrs.json")
     return {
-      addressFile: Path.join(deploymentsDir, "outpost-addrs.json"),
+      addressFile: Path.join(deploymentsDir, ExternalOutpostAddressFilename),
       abiFiles,
       chainId: AnvilProcess.DefaultChainId,
       ...(Fs.existsSync(liqEthAddressFile) ? { liqEthAddressFile } : {})
@@ -1155,7 +1271,15 @@ export namespace ExternalClusterConfigSteps {
         ...NodeConfig.plan(merged).flatMap(node => [
           Path.join(node.nodePath, NodeConfigFilename),
           Path.join(node.nodePath, NodeLoggingFilename)
-        ])
+        ]),
+        // EVERY emitted start.sh — enumerated from the TREE, not from the
+        // model, so a script the external model no longer plans is still
+        // scanned rather than silently skipped.
+        ...DaemonConfig.existingStartScriptFiles(
+          merged.dataPath,
+          Fs.existsSync,
+          Fs.readdirSync as (path: string) => string[]
+        )
       ]
     configFiles
       .filter(file => Fs.existsSync(file))
