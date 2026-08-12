@@ -2,6 +2,7 @@ import Assert from "node:assert"
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import {
   ClusterBuildPhase,
+  ClusterBuildPhaseGroup,
   ClusterBuildStep,
   Report,
   StepExtraRecorder,
@@ -777,21 +778,30 @@ export namespace SwapStressSaturationScenarioRungSteps {
   // ── The campaign tree ─────────────────────────────────────────────────────
 
   /**
-   * Register the whole campaign: one Phase per ramp rung plus a closing
-   * saturation verification.
+   * Register the whole campaign as ONE group: a Phase per ramp rung plus a
+   * closing saturation verification.
    *
-   * @param parent - The build the campaign registers on.
-   * @returns The registered rung phases, in ramp order.
+   * The group is what makes the campaign read as a unit in the Report. Without
+   * it the rung phases sit flat among the bootstrap's ~40 phases and nothing
+   * marks where the stress run begins and ends.
+   *
+   * @param parent - The build the campaign group registers on.
+   * @returns The registered campaign group.
    */
   export function planCampaign<C extends SwapScenarioContext>(
     parent: ClusterBuildParent<C>
-  ): readonly ClusterBuildPhase<C>[] {
-    const phases = Constants.Ramp.RungAccountCounts.map(
-      (accountCount, rungIndex) =>
-        planRung<C>(parent, rungIndex, accountCount)
+  ): ClusterBuildPhaseGroup<C> {
+    const group = ClusterBuildPhaseGroup.create<C>(
+      parent,
+      "RunCampaign",
+      `saturation ramp over ${Constants.Ramp.RungAccountCounts.length} rungs ` +
+        `(${Constants.Ramp.RungAccountCounts.join(" → ")} accounts)`
+    )
+    Constants.Ramp.RungAccountCounts.forEach((accountCount, rungIndex) =>
+      planRung<C>(group, rungIndex, accountCount)
     )
     ClusterBuildPhase.create<C>(
-      parent,
+      group,
       "VerifySaturation",
       "both Ethereum OPP directions saturated across the ramp"
     ).push(
@@ -803,7 +813,7 @@ export namespace SwapStressSaturationScenarioRungSteps {
         { timeoutMs: Constants.Timing.WriteDeadlineMs }
       )
     )
-    return phases
+    return group
   }
 
   /**

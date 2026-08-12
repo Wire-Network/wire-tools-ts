@@ -472,10 +472,12 @@ export class SwapStressSaturationScenario extends FlowScenario<Context> {
     // The curve is static (derived from the load profile at plan time), so the
     // whole campaign is registered up-front and the Report narrates every
     // rung's individual bursts, payout observations, and metric collections
-    // instead of hiding them inside one multi-minute row.
-    const rungPhases = RungSteps.planCampaign<Context>(cluster)
+    // instead of hiding them inside one multi-minute row. The campaign is ONE
+    // PhaseGroup so the Report marks where the stress run begins and ends.
+    const campaign = RungSteps.planCampaign<Context>(cluster)
     log.debug(
-      `${this.name}: setup + ${rungPhases.length} rung phases registered ` +
+      `${this.name}: setup + ${campaign.name} group of ` +
+        `${campaign.children.length} phases registered ` +
         `(${Constants.Ramp.RungAccountCounts.join(" → ")} accounts, ` +
         `load level '${Constants.Ramp.Level}', ` +
         `${Constants.Ramp.SaturatedEnvelopeMinBytes}-byte envelope target)`
