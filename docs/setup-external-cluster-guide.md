@@ -163,9 +163,11 @@ wire-cluster-tool run --cluster-path /path/to/external
 ```
 
 `run` resumes from the persisted state, dialing the addresses in
-`ClusterConfig.bind`. The operator daemons' outpost-client endpoints
-(`--outpost-ethereum-client` / `--outpost-solana-client`) are built at run time
-from `config.bind.{anvil,solana}` — so they always match the merged bind.
+`ClusterConfig.bind`. Artifact preparation regenerates
+`data/ethereum-client.json` from `config.bind.anvil` and passes it through
+`--outpost-ethereum-client-config-file`; the Solana endpoint remains the inline
+`--outpost-solana-client` option built from `config.bind.solana`. Both therefore
+match the merged bind on every relaunch.
 
 ## Step 5 (optional) — package per-node archives
 
