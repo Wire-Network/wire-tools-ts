@@ -2,7 +2,7 @@ import Fs from "node:fs"
 import Path from "node:path"
 import { asOption } from "@3fv/prelude-ts"
 import { isString, Level } from "@wireio/shared"
-import { EthereumGasPolicy,
+import {
   ClusterSignatureProviderSSMOptionsSchema,
   SchemaCodec,
   SignatureProviderType,
@@ -13,6 +13,7 @@ import { match, P } from "ts-pattern"
 import type { Argv, Options as YargsOption } from "yargs"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 import { LogFileAppender } from "../logging/LogFileAppender.js"
+import { resolveEthereumGasPolicy } from "../config/ClusterConfigProvider.js"
 
 /**
  * CLI-layer defaults for the {@link ClusterBuildOptions} topology / epoch leaves
@@ -383,8 +384,11 @@ export function buildOptionShape(
       "seed the 8 mock (chain, token) PRIMARY reserves at bootstrap"
     ),
     // ── ethereum gas policy (default: anvil's stock 30M block limit) ──
+    // Seeded from WIRE_ETHEREUM_GAS_POLICY, exactly as the WIRE_* path flags
+    // are: a leaf with a STATIC default would always be defined and would
+    // therefore mask the environment override entirely.
     ethereumGasPolicy: leaf(
-      EthereumGasPolicy.chainDefault,
+      resolveEthereumGasPolicy(process.env),
       "local Ethereum gas constraints: chainDefault | osaka (EIP-7825 per-tx cap) | uncapped"
     ),
     bind: buildBindShape(nodeCount, batchCount, underwriterCount),
