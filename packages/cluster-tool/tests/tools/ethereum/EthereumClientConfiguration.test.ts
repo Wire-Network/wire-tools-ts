@@ -8,7 +8,9 @@ import {
 const BaseOptions: EthereumClientConfiguration.CreateOptions = {
   clientId: "eth-default",
   signatureProviderId: "eth-batchopaaaa",
-  rpcUrl: "http://127.0.0.1:8545",
+  // This configuration-only test never dials the endpoint, so keep the URL
+  // host-only rather than hard-coding an Anvil port outside BindConfigProvider.
+  rpcUrl: "http://anvil.test",
   chainId: 31_337
 }
 
@@ -30,7 +32,7 @@ describe("EthereumClientConfiguration", () => {
           connection: {
             client_id: "eth-default",
             signature_provider_id: "eth-batchopaaaa",
-            rpc_url: "http://127.0.0.1:8545"
+            rpc_url: "http://anvil.test"
           },
           chain_id: 31_337
         }
@@ -72,13 +74,13 @@ describe("EthereumClientConfiguration", () => {
     expect(() =>
       EthereumClientConfiguration.create({
         ...BaseOptions,
-        rpcUrl: "ws://127.0.0.1:8545"
+        rpcUrl: "ws://anvil.test"
       })
     ).toThrow(/rpc_url must use http or https with a host and no fragment/)
     expect(() =>
       EthereumClientConfiguration.create({
         ...BaseOptions,
-        rpcUrl: "http://127.0.0.1:8545/#secret"
+        rpcUrl: "http://anvil.test/#secret"
       })
     ).toThrow(/rpc_url must use http or https with a host and no fragment/)
     expect(() =>
