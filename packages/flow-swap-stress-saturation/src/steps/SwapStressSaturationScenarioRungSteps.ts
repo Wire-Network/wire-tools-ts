@@ -583,6 +583,83 @@ export namespace SwapStressSaturationScenarioRungSteps {
     })
   }
 
+  /**
+   * Re-measure a phase against a WIDENED window when it has not yet saturated.
+   *
+   * OPP envelopes are emitted on epoch boundaries, so the attestations a burst
+   * produces can land well after the burst returns — the phase-1 window in
+   * particular closes immediately after submission. The pre-rewrite runner
+   * compensated with a re-collection tree; this Step is that behaviour, made
+   * explicit and Report-visible instead of buried in a fallback branch.
+   *
+   * Measured live (2026-08-11, smoke): phase 1 measured a 62-byte header-only
+   * envelope at burst time while the envelope carrying its attestations —
+   * 2.5-4.9 KB, comfortably over the gate — was emitted up to two minutes
+   * later. Without this Step the leg can never satisfy its own criterion.
+   */
+  export function planRecheckMetrics<C extends SwapScenarioContext>(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    rungIndex: number,
+    accountCount: number,
+    slot: RungPhaseSlot
+  ): ClusterBuildStep<C, RungStepInput> {
+    return ClusterBuildStep.create<C, RungStepInput>(
+      actor,
+      name,
+      description,
+      options,
+      rungInput(rungIndex, accountCount),
+      slot === RungPhaseSlot.phase1
+        ? runRecheckMetricsPhase1
+        : runRecheckMetricsPhase2
+    )
+  }
+
+  /** Named runner — widened-window re-measure of the outpost→depot leg. */
+  export async function runRecheckMetricsPhase1<
+    C extends SwapScenarioContext
+  >(ctx: C, input: RungStepInput, signal: AbortSignal): Promise<void> {
+    await recheckMetricsInto(
+      ctx,
+      input,
+      signal,
+      RungPhaseSlot.phase1,
+      Phase1Endpoint
+    )
+  }
+
+  /** Named runner — widened-window re-measure of the depot→outpost leg. */
+  export async function runRecheckMetricsPhase2<
+    C extends SwapScenarioContext
+  >(ctx: C, input: RungStepInput, signal: AbortSignal): Promise<void> {
+    await recheckMetricsInto(
+      ctx,
+      input,
+      signal,
+      RungPhaseSlot.phase2,
+      Phase2Endpoint
+    )
+  }
+
+  async function recheckMetricsInto<C extends SwapScenarioContext>(
+    ctx: C,
+    input: RungStepInput,
+    signal: AbortSignal,
+    slot: RungPhaseSlot,
+    endpointsType: DebugOutpostEndpointsType
+  ): Promise<void> {
+    const state = rungState(ctx, input)
+    if (state.skipped || state[slot].saturated) return
+    StepExtraRecorder.note("re-measuring against a widened window", {
+      rungIndex: state.rungIndex,
+      slot
+    })
+    await collectMetricsInto(ctx, input, signal, slot, endpointsType)
+  }
+
   // ── Per-rung verification ─────────────────────────────────────────────────
 
   /**
@@ -801,6 +878,15 @@ export namespace SwapStressSaturationScenarioRungSteps {
         accountCount,
         RungPhaseSlot.phase1
       ),
+      planRecheckMetrics<C>(
+        Report.Actor.User,
+        `rung-${accountCount}-phase1-metrics-recheck`,
+        "re-measure outpost→depot over a widened window if not yet saturated",
+        captureOptions,
+        rungIndex,
+        accountCount,
+        RungPhaseSlot.phase1
+      ),
       planCaptureBaseline<C>(
         Report.Actor.User,
         `rung-${accountCount}-phase2-baseline`,
@@ -831,6 +917,15 @@ export namespace SwapStressSaturationScenarioRungSteps {
         Report.Actor.User,
         `rung-${accountCount}-phase2-metrics`,
         "project depot→outpost envelopes into saturation metrics",
+        captureOptions,
+        rungIndex,
+        accountCount,
+        RungPhaseSlot.phase2
+      ),
+      planRecheckMetrics<C>(
+        Report.Actor.User,
+        `rung-${accountCount}-phase2-metrics-recheck`,
+        "re-measure depot→outpost over a widened window if not yet saturated",
         captureOptions,
         rungIndex,
         accountCount,
