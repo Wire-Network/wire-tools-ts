@@ -122,9 +122,20 @@ export namespace EthereumClientConfiguration {
       "Ethereum chain_id must be a positive uint32"
     )
 
-    if (client.transaction_policy == null) return
-    const policy = client.transaction_policy,
-      maximumPriorityFeePerGas = positiveUint(
+    if (client.transaction_policy != null) {
+      assertTransactionPolicy(client.transaction_policy)
+    }
+  }
+
+  /**
+   * Assert that a finite policy uses SEC-131's canonical decimal format and
+   * satisfies its fee-cap relationship.
+   *
+   * @param policy - The client-local finite transaction policy to validate.
+   * @returns Nothing; invalid policies throw an assertion error.
+   */
+  export function assertTransactionPolicy(policy: EthereumTransactionPolicy): void {
+    const maximumPriorityFeePerGas = positiveUint(
         policy.max_priority_fee_per_gas_wei,
         "max_priority_fee_per_gas_wei",
         MaximumUint256

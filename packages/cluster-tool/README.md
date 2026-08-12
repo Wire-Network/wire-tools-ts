@@ -287,11 +287,25 @@ its own Ethereum private key as `eth-default` while safely sharing the same
 client configuration file. Daemon argument builders remain pure and reuse the
 artifact on create, run, restart, and flow-provisioned starts.
 
-Generated development-cluster files omit `transaction_policy`. Nodeop therefore
-assigns its maximum-`uint256` default caps, preserving the pre-policy behavior
-for local clusters. The schema supports an explicit nested policy when finite
-cluster limits are wanted later. Bios and producer-only nodes receive neither an
-Ethereum signing client nor an orphaned client-config option.
+Local Anvil clusters embed the following finite `transaction_policy` in every
+generated Ethereum client. The values live in
+`AnvilEthereumTransactionPolicy`; they are not production recommendations.
+
+| Limit | Anvil value |
+|---|---:|
+| Maximum priority fee per gas | `2,000,000,000` wei (2 gwei) |
+| Maximum fee per gas | `100,000,000,000` wei (100 gwei) |
+| Maximum final gas limit | `2,000,000` |
+| Maximum total native cost | `250,000,000,000,000,000` wei (0.25 ETH) |
+
+Nodeop applies the final 20% estimate buffer before checking the gas cap. At
+the full `2,000,000 × 100 gwei = 0.2 ETH` gas bound, the total-cost cap leaves
+`0.05 ETH` for transaction value. These limits cover the measured local
+`epochIn` and `commit` workloads while retaining a finite configuration-error
+boundary. External-outpost configuration continues to omit the policy, because
+the reviewed limits for its operator-selected endpoint are outside this tool's
+scope. Bios and producer-only nodes receive neither an Ethereum signing client
+nor an orphaned client-config option.
 
 Production policy selection happens outside `wire-tools-ts`.
 

@@ -42,6 +42,7 @@ import {
 } from "../../orchestration/outputs/OperatorDaemonArtifacts.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
+import { AnvilEthereumTransactionPolicy } from "../ethereum/AnvilEthereumTransactionPolicy.js"
 import { EthereumClientConfiguration } from "../ethereum/EthereumClientConfiguration.js"
 import { SolanaOutpostProgramTool } from "../solana/SolanaOutpostProgramTool.js"
 import { mkdirs } from "../../utils/fsUtils.js"
@@ -300,7 +301,8 @@ export namespace OperatorDaemonTool {
         clientId: EthereumClientId,
         signatureProviderId: EthereumSignatureProviderId,
         rpcUrl: network.ethereumRpcUrl,
-        chainId: network.ethereumChainId
+        chainId: network.ethereumChainId,
+        transactionPolicy: AnvilEthereumTransactionPolicy.create()
       })
     Fs.writeFileSync(
       ethereumClientConfigurationFile,

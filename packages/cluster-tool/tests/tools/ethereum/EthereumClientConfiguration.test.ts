@@ -1,4 +1,5 @@
 import {
+  AnvilEthereumTransactionPolicy,
   EthereumClientConfiguration,
   type EthereumClientConfigurationFile,
   type EthereumTransactionPolicy
@@ -11,12 +12,7 @@ const BaseOptions: EthereumClientConfiguration.CreateOptions = {
   chainId: 31_337
 }
 
-const FinitePolicy: EthereumTransactionPolicy = {
-  max_priority_fee_per_gas_wei: "2000000000",
-  max_fee_per_gas_wei: "100000000000",
-  max_gas_limit: "2000000",
-  max_total_native_cost_wei: "250000000000000000"
-}
+const FinitePolicy: EthereumTransactionPolicy = AnvilEthereumTransactionPolicy.create()
 
 function fileWith(
   changes: Partial<EthereumClientConfigurationFile["clients"][number]>
@@ -26,7 +22,7 @@ function fileWith(
 }
 
 describe("EthereumClientConfiguration", () => {
-  it("creates the unified schema without a policy so nodeop applies permissive defaults", () => {
+  it("allows external configuration to omit a policy for operator-selected production limits", () => {
     expect(EthereumClientConfiguration.create(BaseOptions)).toEqual({
       schema_version: 1,
       clients: [
