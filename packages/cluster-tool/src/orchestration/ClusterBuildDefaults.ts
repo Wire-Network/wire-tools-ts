@@ -212,7 +212,7 @@ export namespace ClusterBuildDefaults {
     const cluster = await ClusterBuild.create<C>(options, [], createContext)
     const core = await loadConfiguredDistributionClaimBootstrap(cluster.config)
     const contribution =
-      (await prepareDistributionClaimBootstrap?.(cluster, core)) ?? null
+      await prepareDistributionClaimBootstrap?.(cluster, core)
     const result = finalizeDistributionClaimBootstrap(core, contribution)
     cluster.context.outputs.set(DistributionClaimBootstrapResultKey, result)
     logDistributionClaimBootstrap(cluster.context.log, result)
