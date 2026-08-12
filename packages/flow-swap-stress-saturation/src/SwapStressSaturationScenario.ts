@@ -12,7 +12,7 @@ import {
   WireUnderwriterTool,
   FlowScenario,
   matchesProtoEnum,
-  pollUntil,
+  pollStep,
   slugValue,
   verifyStep,
   type ClusterBuild,
@@ -88,46 +88,42 @@ async function runVerifyWireChainProducing(
 }
 
 /** The first underwriter's deposits credit and it flips ACTIVE. */
-async function runVerifyUnderwriterActive(ctx: Context): Promise<void> {
-  const account = firstUnderwriterAccount()
-  await pollUntil(
-    `${account} ACTIVE`,
-    async () => {
-      const { rows } = await ctx.wire
+const runVerifyUnderwriterActive = pollStep.lift<Context>(
+  `${firstUnderwriterAccount()} ACTIVE`,
+  async ctx => {
+    const account = firstUnderwriterAccount(),
+      { rows } = await ctx.wire
         .getSysioContract(SysioContractName.opreg)
         .tables.operators.query()
-      return rows.some(
-        row =>
-          row.account === account &&
-          matchesProtoEnum(
-            row.status,
-            SysioOpregOperatorstatus,
-            SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
-          )
-      )
-    },
-    Constants.Timing.UwreqDeadlineMs,
-    Constants.Timing.LongPollIntervalMs
-  )
-}
+    return rows.some(
+      row =>
+        row.account === account &&
+        matchesProtoEnum(
+          row.status,
+          SysioOpregOperatorstatus,
+          SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
+        )
+    )
+  },
+  Constants.Timing.UwreqDeadlineMs,
+  Constants.Timing.LongPollIntervalMs
+)
 
 /** The ETH-side private depot row appears with status=PENDING. */
-async function runVerifyEthereumDepotRowPending(ctx: Context): Promise<void> {
-  await pollUntil(
-    "ETH private depot row PENDING",
-    async () =>
-      reserveStatusIs(
-        await readPrivateReserveRow(
-          ctx,
-          Constants.Reserves.Ethereum.ChainCode,
-          Constants.Reserves.Ethereum.TokenCode
-        ),
-        SysioReservReservestatus.RESERVE_STATUS_PENDING
+const runVerifyEthereumDepotRowPending = pollStep.lift<Context>(
+  "ETH private depot row PENDING",
+  async ctx =>
+    reserveStatusIs(
+      await readPrivateReserveRow(
+        ctx,
+        Constants.Reserves.Ethereum.ChainCode,
+        Constants.Reserves.Ethereum.TokenCode
       ),
-    Constants.Timing.RelayDeadlineMs,
-    Constants.Timing.LongPollIntervalMs
-  )
-}
+      SysioReservReservestatus.RESERVE_STATUS_PENDING
+    ),
+  Constants.Timing.RelayDeadlineMs,
+  Constants.Timing.LongPollIntervalMs
+)
 
 /** The ETH depot row is ACTIVE after the owner's match. */
 async function runVerifyEthereumDepotRowActive(
@@ -147,32 +143,28 @@ async function runVerifyEthereumDepotRowActive(
 }
 
 /** RESERVE_READY flips the ETH outpost-local private record ACTIVE. */
-async function runVerifyEthereumLocalReserveActive(ctx: Context): Promise<void> {
-  await pollUntil(
-    "ETH outpost-local private record ACTIVE",
-    () => ReserveSteps.readEthereumLocalReserveActive(ctx),
-    Constants.Timing.ReadyDeadlineMs,
-    Constants.Timing.LongPollIntervalMs
-  )
-}
+const runVerifyEthereumLocalReserveActive = pollStep.lift<Context>(
+  "ETH outpost-local private record ACTIVE",
+  ctx => ReserveSteps.readEthereumLocalReserveActive(ctx),
+  Constants.Timing.ReadyDeadlineMs,
+  Constants.Timing.LongPollIntervalMs
+)
 
 /** The SOL-side private depot row appears with status=PENDING. */
-async function runVerifySolanaDepotRowPending(ctx: Context): Promise<void> {
-  await pollUntil(
-    "SOL private depot row PENDING",
-    async () =>
-      reserveStatusIs(
-        await readPrivateReserveRow(
-          ctx,
-          Constants.Reserves.Solana.ChainCode,
-          Constants.Reserves.Solana.TokenCode
-        ),
-        SysioReservReservestatus.RESERVE_STATUS_PENDING
+const runVerifySolanaDepotRowPending = pollStep.lift<Context>(
+  "SOL private depot row PENDING",
+  async ctx =>
+    reserveStatusIs(
+      await readPrivateReserveRow(
+        ctx,
+        Constants.Reserves.Solana.ChainCode,
+        Constants.Reserves.Solana.TokenCode
       ),
-    Constants.Timing.RelayDeadlineMs,
-    Constants.Timing.LongPollIntervalMs
-  )
-}
+      SysioReservReservestatus.RESERVE_STATUS_PENDING
+    ),
+  Constants.Timing.RelayDeadlineMs,
+  Constants.Timing.LongPollIntervalMs
+)
 
 /** The SOL depot row is ACTIVE after the owner's match. */
 async function runVerifySolanaDepotRowActive(
@@ -192,14 +184,12 @@ async function runVerifySolanaDepotRowActive(
 }
 
 /** RESERVE_READY flips the SOL outpost-local Reserve PDA ACTIVE. */
-async function runVerifySolanaLocalReserveActive(ctx: Context): Promise<void> {
-  await pollUntil(
-    "SOL outpost-local Reserve PDA ACTIVE",
-    () => ReserveSteps.readSolanaLocalReserveActive(ctx),
-    Constants.Timing.ReadyDeadlineMs,
-    Constants.Timing.LongPollIntervalMs
-  )
-}
+const runVerifySolanaLocalReserveActive = pollStep.lift<Context>(
+  "SOL outpost-local Reserve PDA ACTIVE",
+  ctx => ReserveSteps.readSolanaLocalReserveActive(ctx),
+  Constants.Timing.ReadyDeadlineMs,
+  Constants.Timing.LongPollIntervalMs
+)
 
 /**
  * Flow (excluded soak): saturate both Ethereum OPP directions by ramping
