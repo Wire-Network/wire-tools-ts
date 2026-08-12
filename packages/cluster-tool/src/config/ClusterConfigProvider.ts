@@ -56,6 +56,43 @@ function assertOption<T>(value: T | null, name: string): T {
  * persistence ({@link ClusterConfigProvider.save}), and every derived-path
  * helper.
  */
+/**
+ * Environment variable overriding the local Ethereum gas policy.
+ *
+ * UNIFORM across every consumer, mirroring the `WIRE_FLOW_TIMEOUT_SCALE` /
+ * `WIRE_STRESS_LOAD_LEVEL` precedent: an explicit operator override that no
+ * code derives. It exists so a stress run can be repeated under a different
+ * gas ceiling without editing a scenario.
+ */
+export const EthereumGasPolicyEnvVar = "WIRE_ETHEREUM_GAS_POLICY"
+
+/**
+ * Resolve the gas policy from an explicit option, then the environment.
+ *
+ * @param env - Process environment to read the override from.
+ * @param option - Caller-supplied policy, which wins when present.
+ * @returns The resolved policy, defaulting to the stock chain.
+ * @throws RangeError when the environment names an unknown policy — a silent
+ *   fallback would run an uncapped experiment under a mislabelled policy.
+ */
+export function resolveEthereumGasPolicy(
+  env: NodeJS.ProcessEnv,
+  option?: EthereumGasPolicy
+): EthereumGasPolicy {
+  if (option !== undefined) return option
+  const named = env[EthereumGasPolicyEnvVar]
+  if (named === undefined || named === "") return EthereumGasPolicy.chainDefault
+  const resolved = Object.values(EthereumGasPolicy).find(
+    policy => policy === named
+  )
+  if (resolved === undefined)
+    throw new RangeError(
+      `${EthereumGasPolicyEnvVar} names an unknown policy: ${named} ` +
+        `(expected one of ${Object.values(EthereumGasPolicy).join(" | ")})`
+    )
+  return resolved
+}
+
 export namespace ClusterConfigProvider {
   export const DataSubpath = "data"
   export const WalletSubpath = "wallet"
@@ -130,8 +167,10 @@ export namespace ClusterConfigProvider {
       externalOutposts,
       debuggingServerEnabled: true,
       enableMockReserves: options.enableMockReserves ?? false,
-      ethereumGasPolicy:
-        options.ethereumGasPolicy ?? EthereumGasPolicy.chainDefault
+      ethereumGasPolicy: resolveEthereumGasPolicy(
+        process.env,
+        options.ethereumGasPolicy
+      )
     }
   }
 
