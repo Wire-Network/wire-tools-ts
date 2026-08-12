@@ -2,10 +2,8 @@ import {
   buildPhase1Requests,
   SwapStressPhaseAmounts
 } from "@wireio/test-flow-swap-stress-saturation/swap-stress/index.js"
-import type {
-  StressIdentities,
-  SwapStressRouteCodes
-} from "@wireio/test-flow-swap-stress-saturation/swap-stress/index.js"
+import type { SwapStressRouteCodes } from "@wireio/test-flow-swap-stress-saturation/swap-stress/index.js"
+import { stressIdentities } from "./constants.js"
 
 describe("buildPhase1Requests", () => {
   it("targets WIRE for ETH-to-WIRE stress requests", () => {
@@ -73,39 +71,3 @@ const Route: SwapStressRouteCodes = {
   privateReserveCode: 401n
 }
 
-function stressIdentities(): StressIdentities {
-  return {
-    ethereum: [
-      {
-        index: 0,
-        hdIndex: 128,
-        address: "0x0000000000000000000000000000000000000001",
-        addressBytes: new Uint8Array([1])
-      },
-      {
-        index: 1,
-        hdIndex: 129,
-        address: "0x0000000000000000000000000000000000000002",
-        addressBytes: new Uint8Array([2])
-      }
-    ],
-    solana: [
-      {
-        index: 0,
-        publicKey: "sol-0",
-        publicKeyBytes: new Uint8Array([10]),
-        secretKey: new Uint8Array([20])
-      },
-      {
-        index: 1,
-        publicKey: "sol-1",
-        publicKeyBytes: new Uint8Array([11]),
-        secretKey: new Uint8Array([21])
-      }
-    ],
-    wire: [
-      { index: 0, account: "stressw0", accountBytes: new Uint8Array([30]) },
-      { index: 1, account: "stressw1", accountBytes: new Uint8Array([31]) }
-    ]
-  }
-}

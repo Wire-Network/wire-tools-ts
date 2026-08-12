@@ -1,3 +1,5 @@
+import type { StressIdentities } from "@wireio/test-flow-swap-stress-saturation/swap-stress/index.js"
+
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 
 /** Stress identity fixture sizes used by package-local unit tests. */
@@ -58,35 +60,44 @@ export namespace BurstFixtures {
   )
 }
 
-/** Ramp-controller fixture values used by synthetic evidence tests. */
-export namespace RampFixtures {
-  /** Synthetic endpoint label persisted into JSON evidence. */
-  export const Endpoint = "OUTPOST_ETHEREUM_DEPOT"
-  /** First account count in the doubling ramp. */
-  export const InitialCount = 2
-  /** Doubling multiplier used by the stress ramp. */
-  export const Multiplier = 2
-  /** Max synthetic count for unit tests. */
-  export const MaxCount = 16
-  /** Synthetic phase timeout metadata. */
-  export const PhaseTimeoutMs = 30_000
-  /** Account count where synthetic metrics saturate. */
-  export const SaturatingCount = 16
-  /** Account count where synthetic tx breakage appears. */
-  export const BreakageCount = 4
-  /** Stable start timestamp for JSON assertions. */
-  export const StartedAtMs = 1_775_612_500_000
-  /** Stable end timestamp for JSON assertions. */
-  export const EndedAtMs = StartedAtMs + 1_000
-  /** Synthetic epoch lower bound. */
-  export const EpochStart = 20
-  /** Synthetic epoch upper bound. */
-  export const EpochEnd = 21
-  /** Ramp constants used by both controller tests. */
-  export const Config = {
-    initialCount: InitialCount,
-    multiplier: Multiplier,
-    maxCount: MaxCount,
-    phaseTimeoutMs: PhaseTimeoutMs
+/**
+ * The two-wallet stress identity roster both burst suites drive.
+ *
+ * @returns Deterministic ETH + SOL identities (hd indexes 128/129).
+ */
+export function stressIdentities(): StressIdentities {
+  return {
+    ethereum: [
+      {
+        index: 0,
+        hdIndex: 128,
+        address: "0x0000000000000000000000000000000000000001",
+        addressBytes: new Uint8Array([1])
+      },
+      {
+        index: 1,
+        hdIndex: 129,
+        address: "0x0000000000000000000000000000000000000002",
+        addressBytes: new Uint8Array([2])
+      }
+    ],
+    solana: [
+      {
+        index: 0,
+        publicKey: "sol-0",
+        publicKeyBytes: new Uint8Array([10]),
+        secretKey: new Uint8Array([20])
+      },
+      {
+        index: 1,
+        publicKey: "sol-1",
+        publicKeyBytes: new Uint8Array([11]),
+        secretKey: new Uint8Array([21])
+      }
+    ],
+    wire: [
+      { index: 0, account: "stressw0", accountBytes: new Uint8Array([30]) },
+      { index: 1, account: "stressw1", accountBytes: new Uint8Array([31]) }
+    ]
   }
 }
