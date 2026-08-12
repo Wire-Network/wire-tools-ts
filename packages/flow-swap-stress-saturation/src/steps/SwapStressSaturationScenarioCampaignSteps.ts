@@ -86,8 +86,6 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
   /** Chain label for phase-2 return (native ETH payout) observations. */
   export const EthereumPayoutLabel = "ETH"
 
-  /** Indent used when formatting a ramp result into an assertion message. */
-  export const JsonIndent = 2
 
   /**
    * Route codes for the bidirectional stress swaps: phase 1 sources native ETH

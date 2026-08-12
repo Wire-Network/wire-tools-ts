@@ -173,8 +173,8 @@ export namespace SwapStressSaturationScenarioReserveSteps {
       [Buffer.from(PdaSeed.OutboundMessageBuffer)],
       programId
     )
-    const tokenCodeLE = slugNameToLeBuffer(input.tokenCode)
-    const reserveCodeLE = slugNameToLeBuffer(input.reserveCode)
+    const tokenCodeLE = SolanaOutpostBootstrapper.slugNameToLittleEndianBuffer(input.tokenCode)
+    const reserveCodeLE = SolanaOutpostBootstrapper.slugNameToLittleEndianBuffer(input.reserveCode)
     const [reservePda] = PublicKey.findProgramAddressSync(
       [Buffer.from(PdaSeed.Reserve), tokenCodeLE, reserveCodeLE],
       programId
@@ -327,8 +327,8 @@ export namespace SwapStressSaturationScenarioReserveSteps {
     const [reservePda] = PublicKey.findProgramAddressSync(
       [
         Buffer.from(PdaSeed.Reserve),
-        slugNameToLeBuffer(Constants.Reserves.Solana.TokenCode),
-        slugNameToLeBuffer(Constants.Reserves.PrivateReserveCode)
+        SolanaOutpostBootstrapper.slugNameToLittleEndianBuffer(Constants.Reserves.Solana.TokenCode),
+        SolanaOutpostBootstrapper.slugNameToLittleEndianBuffer(Constants.Reserves.PrivateReserveCode)
       ],
       program.programId
     )
@@ -346,15 +346,5 @@ export namespace SwapStressSaturationScenarioReserveSteps {
    */
   interface SolanaReserveAccountStatusProbe {
     status?: unknown
-  }
-
-  /**
-   * Encode a slug_name `number` as an 8-byte little-endian Buffer matching
-   * the program's `to_le_bytes()` PDA seed derivation.
-   */
-  function slugNameToLeBuffer(value: number): Buffer {
-    const buffer = Buffer.alloc(8)
-    buffer.writeBigUInt64LE(BigInt(value))
-    return buffer
   }
 }

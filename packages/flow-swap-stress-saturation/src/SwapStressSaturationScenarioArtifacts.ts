@@ -1,12 +1,10 @@
 import Assert from "node:assert"
-import Fs from "node:fs"
-import Path from "node:path"
 import { ethers } from "ethers"
 import { PublicKey } from "@solana/web3.js"
 import {
   contractView,
   EthereumCollateralTool,
-  SolanaOutpostBootstrapper,
+  SolanaFundingTool,
   type ClusterBuildContext,
   type ReserveManagerRequestSwapContract,
   ClusterConfigProvider
@@ -98,9 +96,10 @@ export namespace SwapStressSaturationScenarioArtifacts {
   }
 
   /**
-   * The USDCSOL mock mint persisted by the Solana outpost bootstrap
-   * (`<dataPath>/sol-mock-mints.json`, rows of
-   * {@link SolanaOutpostBootstrapper.PersistedSplMint}).
+   * The USDCSOL mock mint persisted by the Solana outpost bootstrap.
+   *
+   * Delegates to the harness accessor, which owns the manifest filename and
+   * the not-found diagnostics (it lists the persisted codes on a miss).
    *
    * @param ctx - The build context (carries `config.dataPath`).
    * @returns The mint pubkey.
@@ -109,24 +108,11 @@ export namespace SwapStressSaturationScenarioArtifacts {
   export function loadUsdcSolMint<C extends ClusterBuildContext>(
     ctx: C
   ): PublicKey {
-    const mintsFile = Path.join(
-      ctx.config.dataPath,
-      Constants.SolanaMockMintsFilename
+    return new PublicKey(
+      SolanaFundingTool.solMintAddress(
+        ctx.config.dataPath,
+        BigInt(Constants.Reserves.Solana.TokenCode)
+      )
     )
-    Assert.ok(
-      Fs.existsSync(mintsFile),
-      `SwapStressSaturationScenario: mock SPL mints not found at ${mintsFile}`
-    )
-    const mints = JSON.parse(
-      Fs.readFileSync(mintsFile, "utf8")
-    ) as SolanaOutpostBootstrapper.PersistedSplMint[]
-    const usdcSolEntry = mints.find(
-      entry => entry.code === Constants.Reserves.Solana.TokenCode
-    )
-    Assert.ok(
-      usdcSolEntry != null,
-      "SwapStressSaturationScenario: bootstrap did not persist the USDCSOL SPL mint"
-    )
-    return new PublicKey(usdcSolEntry.mint)
   }
 }
