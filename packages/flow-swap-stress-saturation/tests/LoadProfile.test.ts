@@ -195,10 +195,19 @@ describe("LoadProfile.iterationCount", () => {
     expect(
       LoadProfile.iterationCount(LoadProfile.Presets[LoadLevel.saturating].ramp)
     ).toBe(5)
-    // 12 -> 24 -> 48 -> 96 is light's 4.
+    // 12 -> 24 -> 48 -> 96 -> 128(clamped) is light's 5.
     expect(
       LoadProfile.iterationCount(LoadProfile.Presets[LoadLevel.light].ramp)
-    ).toBe(4)
+    ).toBe(5)
+  })
+
+  it("clamps light's top rung to the ceiling instead of doubling past it", () => {
+    // The 128 ceiling is deliberate: 96 accounts miss the saturation gate by
+    // ~4%, and the natural next double (192) is where the phase-1 payout
+    // stalls. The clamp is what makes an intermediate top rung expressible.
+    expect(
+      LoadProfile.accountCurve(LoadProfile.Presets[LoadLevel.light].ramp)
+    ).toEqual([12, 24, 48, 96, 128])
   })
 
   it("returns one when the ramp starts at its ceiling", () => {

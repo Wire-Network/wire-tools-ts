@@ -138,12 +138,31 @@ export namespace LoadProfile {
       },
       workload: { swapsPerWallet: 1, concurrency: 4 }
     },
+    /**
+     * Ramps to 128 accounts (12 → 24 → 48 → 96 → 128), NOT the natural 192.
+     *
+     * At 96 the depot→Ethereum direction peaks around 15.7 KB against a
+     * 16,384-byte gate — a genuine campaign that misses saturation by ~4%. The
+     * top rung exists to clear that bar with real traffic rather than by
+     * lowering it.
+     *
+     * 128 rather than 192 for a measured reason: 192 accounts is where the
+     * phase-1 WIRE payout stalls outright (846s producing ZERO payouts, while
+     * 12–96 settle in 215–290s). Doubling would trade a saturation miss for a
+     * payout failure. 128 sits a third below that cliff.
+     *
+     * The sizing is interpolated from two live measurements of the SAME
+     * quantity (96 → 15,658 bytes, 192 → 25,180), which is legitimate because
+     * envelope size tracks ACCOUNT COUNT, not concurrency: light (concurrency
+     * 4) and moderate (concurrency 8) both peaked at exactly 15,658 at 96
+     * accounts. The fit puts 128 near 19 KB, ~16% clear of the gate.
+     */
     [LoadLevel.light]: {
       byteTargetRatio: 0.25,
       ramp: {
         initialCount: 12,
         multiplier: 2,
-        maxCount: 96,
+        maxCount: 128,
         phaseTimeoutMs: 240_000
       },
       workload: { swapsPerWallet: 1, concurrency: 4 }
