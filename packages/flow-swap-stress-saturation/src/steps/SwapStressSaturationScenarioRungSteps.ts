@@ -682,10 +682,19 @@ export namespace SwapStressSaturationScenarioRungSteps {
     Assert.ok(
       classification.missingEndpoints.length === 0,
       `expected BOTH Ethereum OPP directions to saturate; still missing: ` +
-        `[${classification.missingEndpoints.join(", ")}] ` +
-        `(saturated: [${classification.saturatedEndpoints.join(", ")}])`
+        `[${endpointNames(classification.missingEndpoints)}] ` +
+        `(saturated: [${endpointNames(classification.saturatedEndpoints)}])`
     )
     return Promise.resolve()
+  }
+
+  /** Endpoint members rendered by NAME — a raw join prints numeric values. */
+  function endpointNames(
+    endpoints: readonly DebugOutpostEndpointsType[]
+  ): string {
+    return endpoints
+      .map(endpoint => DebugOutpostEndpointsType[endpoint])
+      .join(", ")
   }
 
   // ── The campaign tree ─────────────────────────────────────────────────────
