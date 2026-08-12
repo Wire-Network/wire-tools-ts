@@ -3,49 +3,34 @@ import Fs from "node:fs"
 import Path from "node:path"
 
 import { SysioContracts } from "@wireio/sdk-core"
-import { getLogger } from "@wireio/shared"
 import { oppDebuggingPath, parseJsonLogLine, PidSources } from "@wireio/debugging-shared"
 import { captureEnvelopeBaseline } from "../envelope-integrity/index.js"
 import {
-  ClusterBuildStep,
   NodeConfig,
   outputKey,
-  Report,
   SwapScenarioContext,
   mapSeries,
   pollUntil,
-  resolveLatestNonce,
   sleep,
   swapUserOutputKey,
-  type ClusterBuildStepOptions,
   type EthereumClient,
-  type StepInput,
   type WireClient
 } from "@wireio/cluster-tool"
 import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import {
-  SwapStressRequiredEndpoints,
   classifyOppPhaseMetrics,
-  createSwapStressPhaseRunner,
   pollRealFlowBaseline,
   pollRealFlowMetrics,
-  runSaturationRamp,
   type Phase2SwapRequest,
   type SolanaBurstRequest,
-  type StressRampResult,
   type SwapStressPayoutObservation,
   type SwapStressPayoutObservationRequest,
   type SwapStressPayoutObserver,
-  type SwapStressPhaseRunnerDeps,
   type SwapStressRealTelemetryDeps,
   type SwapStressReservePairSnapshot,
   type SwapStressRouteCodes
 } from "../swap-stress/index.js"
 import {
-  RunEvidencePersistence,
-  RunEvidenceSchemaVersion,
-  RunEvidenceSetupStatus,
-  RunEvidenceStage,
   collectOppPhaseMetrics,
   type OppEnvelopeSaturationStrategy,
   type OppPhaseEvidenceSink,
@@ -53,11 +38,8 @@ import {
 } from "../stress-engine/index.js"
 import { SwapStressSaturationScenarioArtifacts as Artifacts } from "../SwapStressSaturationScenarioArtifacts.js"
 import { SwapStressSaturationScenarioConstants as Constants } from "../SwapStressSaturationScenarioConstants.js"
-import { SwapStressSaturationScenarioOutputs as Outputs } from "../SwapStressSaturationScenarioOutputs.js"
 
 const { SysioContractName, SysioUwritChainkind } = SysioContracts
-
-const log = getLogger(__filename)
 
 /**
  * The ramp campaign — the Phase 2b re-expression of the pre-port
@@ -105,203 +87,6 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
 
   /** Indent used when formatting a ramp result into an assertion message. */
   export const JsonIndent = 2
-
-  // ── Step: RunCampaign (the ramp write-Step) ──────────────────────────────
-
-  /** Input for {@link planRunCampaign} — the persisted ramp shape. */
-  export interface RunCampaignInput extends StepInput {
-    readonly kind: "SwapStressSaturationScenarioCampaignSteps.RunCampaignInput"
-    /** Account count submitted by the first ramp iteration. */
-    readonly initialCount: number
-    /** Multiplicative account-count increase between iterations. */
-    readonly multiplier: number
-    /** Inclusive maximum account count allowed by the controller. */
-    readonly maxCount: number
-    /** Per-phase deadline persisted into run evidence (ms). */
-    readonly phaseTimeoutMs: number
-    /** Max in-flight swap submissions per burst. */
-    readonly concurrency: number
-  }
-
-  /**
-   * The RunCampaign Step: allocate schema-v1 run evidence, build the
-   * dependency-injected `swap-stress` phase runner over the live
-   * cluster (clients, deployed `ReserveManager`, OPP debugging artifacts), and
-   * drive `runSaturationRamp` until both Ethereum OPP directions saturate,
-   * breakage, or the account ceiling. The result lands in `ctx.outputs` under
-   * {@link SwapStressSaturationScenarioOutputs.stressRampResult}.
-   *
-   * @param actor - The narrative subject.
-   * @param name - Step name (report row).
-   * @param description - One-line description.
-   * @param options - Step option overrides (carries the campaign ceiling).
-   * @returns The definition step.
-   */
-  export function planRunCampaign<
-    C extends SwapScenarioContext = SwapScenarioContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions
-  ): ClusterBuildStep<C, RunCampaignInput> {
-    return ClusterBuildStep.create<C, RunCampaignInput>(
-      actor,
-      name,
-      description,
-      options,
-      {
-        kind: "SwapStressSaturationScenarioCampaignSteps.RunCampaignInput",
-        initialCount: Constants.Ramp.InitialCount,
-        multiplier: Constants.Ramp.Multiplier,
-        maxCount: Constants.Ramp.MaxCount,
-        phaseTimeoutMs: Constants.Ramp.PhaseTimeoutMs,
-        concurrency: Constants.Ramp.Concurrency
-      },
-      runRunCampaign
-    )
-  }
-
-  /**
-   * Named runner — allocates run-evidence persistence (the flow's earlier
-   * phases ARE the evidence "setup" stage, published as succeeded here), then
-   * runs the saturation ramp and stores the result for the verify step.
-   */
-  export async function runRunCampaign<C extends SwapScenarioContext>(
-    ctx: C,
-    input: RunCampaignInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    const setupStartedAtMs = decimalTimestamp(Date.now()),
-      rampConfig = {
-        initialCount: input.initialCount,
-        multiplier: input.multiplier,
-        maxCount: input.maxCount,
-        phaseTimeoutMs: input.phaseTimeoutMs
-      },
-      persistence = await RunEvidencePersistence.allocate({
-        clusterPath: ctx.config.clusterPath,
-        rampConfig,
-        requiredEndpoints: SwapStressRequiredEndpoints,
-        provenance: {
-          wireBuildPath: ctx.config.buildPath,
-          ethereumPath: ctx.config.ethereumPath,
-          solanaPath: ctx.config.solanaPath
-        },
-        startedAtMs: setupStartedAtMs
-      })
-    await persistence.captureClusterConfig()
-    await persistence.publishSetup({
-      schemaVersion: RunEvidenceSchemaVersion,
-      stage: RunEvidenceStage.Setup,
-      status: RunEvidenceSetupStatus.Succeeded,
-      startedAtMs: setupStartedAtMs,
-      endedAtMs: decimalTimestamp(Date.now()),
-      clusterConfigCreated: true
-    })
-    log.info(
-      `[SwapStressSaturation] run evidence allocated at ${persistence.runDirectory} (runId=${persistence.runId})`
-    )
-    const runner = createSwapStressPhaseRunner(
-        createPhaseRunnerDependencies(ctx, input, persistence)
-      ),
-      result = await runSaturationRamp({
-        persistence,
-        config: rampConfig,
-        runIteration: iteration => runner.runIteration(iteration.accountCount)
-      })
-    ctx.outputs.set(Outputs.stressRampResult, result)
-    log.info(
-      `[SwapStressSaturation] ramp concluded: status=${result.status} ` +
-        `saturated=[${result.saturatedEndpoints.join(", ")}] ` +
-        `missing=[${result.missingEndpoints.join(", ")}] ` +
-        `iterations=${result.iterations.length}`
-    )
-  }
-
-  // ── Verify runner: both Ethereum directions saturated ────────────────────
-
-  /**
-   * Verify runner (the scenario wraps it in a `verifyStep`): the stored ramp
-   * result reports `saturated` with NO missing required endpoint — i.e. BOTH
-   * Ethereum OPP directions (`OutpostEthereumDepot` + `DepotOutpostEthereum`)
-   * saturated.
-   */
-  export async function runVerifySaturation<C extends SwapScenarioContext>(
-    ctx: C,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    const result = ctx.outputs.assert(Outputs.stressRampResult)
-    Assert.ok(
-      result.status === "saturated",
-      `expected both Ethereum OPP directions to saturate, received:\n${formatRampResult(result)}`
-    )
-    Assert.ok(
-      result.missingEndpoints.length === 0,
-      `saturated ramp still reports missing endpoints:\n${formatRampResult(result)}`
-    )
-  }
-
-  /**
-   * Format a ramp result for assertion messages, tolerating bigint evidence
-   * fields (`JSON.stringify` throws on raw bigints).
-   *
-   * @param result - The ramp result to render.
-   * @returns Indented JSON with bigints stringified.
-   */
-  export function formatRampResult(result: StressRampResult): string {
-    return JSON.stringify(result, bigintSafeReplacer, JsonIndent)
-  }
-
-  // ── Phase-runner dependency wiring (values resolved from ctx) ────────────
-
-  /**
-   * Assemble the `swap-stress` phase-runner dependencies from the
-   * live cluster: route codes, live reserve books, the swap user's bound
-   * `ReserveManager`, the typed `swapfromwire` submitter, delta-based payout
-   * observers, the batch-operator failure probe, and real OPP telemetry.
-   *
-   * @param ctx - The build context (clients + outputs + config).
-   * @param input - The campaign step input (concurrency).
-   * @param persistence - The allocated run-evidence sink.
-   * @returns The complete phase-runner dependency set.
-   */
-  export function createPhaseRunnerDependencies<C extends SwapScenarioContext>(
-    ctx: C,
-    input: RunCampaignInput,
-    persistence: RunEvidencePersistence
-  ): SwapStressPhaseRunnerDeps {
-    const swapUser = ctx.outputs.assert(swapUserOutputKey()),
-      reserveManager =
-        Artifacts.loadReserveManager<Artifacts.ReserveManagerPrivateReserveContract>(
-          ctx,
-          swapUser.ethereumWallet
-        )
-    return {
-      route: routeCodes(),
-      readReservePairSnapshot: () => readReservePairSnapshot(ctx),
-      ethereumReserveManager: reserveManager,
-      getEthereumFirstNonce: count => resolveLatestNonce(reserveManager, count),
-      submitPhase2Swap: request => submitPhase2Swap(ctx, request),
-      recipientPayoutObserver: wirePayoutObserver(ctx.wire),
-      returnPayoutObserver: ethereumPayoutObserver(ctx.ethereum),
-      batchOperatorFailureProbe: request =>
-        Promise.resolve(
-          findBatchOperatorFailure(
-            ctx.config,
-            request.startedAtMs,
-            request.endedAtMs
-          )
-        ),
-      concurrency: input.concurrency,
-      ...createCampaignTelemetryDependencies(
-        ctx.config.clusterPath,
-        persistence
-      )
-    }
-  }
 
   /**
    * Route codes for the bidirectional stress swaps: phase 1 sources native ETH
@@ -672,7 +457,4 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
     return `${BigInt(Math.trunc(timestampMs))}`
   }
 
-  function bigintSafeReplacer(_key: string, value: unknown): unknown {
-    return typeof value === "bigint" ? value.toString() : value
-  }
 }

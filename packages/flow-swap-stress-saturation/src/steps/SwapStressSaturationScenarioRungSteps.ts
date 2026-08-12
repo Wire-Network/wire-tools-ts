@@ -6,17 +6,14 @@ import {
   Report,
   StepExtraRecorder,
   getLogger,
-  outputKey,
   resolveLatestNonce,
   verifyStep,
   type ClusterBuildParent,
   type ClusterBuildStepOptions,
-  type OutputKey,
   type StepInput,
   type SwapScenarioContext
 } from "@wireio/cluster-tool"
 
-import type { EnvelopeBaselineIdentity } from "../envelope-integrity/index.js"
 import {
   buildPayoutRequest,
   buildPhase1Requests,
@@ -28,10 +25,8 @@ import {
   quoteSwapStressPhase2Targets,
   runEthereumSwapBurst,
   runSolanaSwapBurst,
-  type BurstResult,
   type StressIdentities,
-  type SwapStressPayoutObservationRequest,
-  type SwapStressPhaseResult
+  type PhaseSaturationEvidence
 } from "../swap-stress/index.js"
 import { SwapStressSaturationScenarioConstants as Constants } from "../SwapStressSaturationScenarioConstants.js"
 import { SwapStressSaturationScenarioOutputs as Outputs } from "../SwapStressSaturationScenarioOutputs.js"
@@ -52,6 +47,15 @@ const log = getLogger(__filename)
  * no-op with a Report note rather than submitting more load.
  */
 export namespace SwapStressSaturationScenarioRungSteps {
+  /** The rung's cross-step vocabulary lives with the other typed outputs. */
+  export import RungPhaseSlot = Outputs.RungPhaseSlot
+  /** @see SwapStressSaturationScenarioOutputs.RungState */
+  export type RungState = Outputs.RungState
+  /** @see SwapStressSaturationScenarioOutputs.RungPhaseState */
+  export type RungPhaseState = Outputs.RungPhaseState
+  /** @see SwapStressSaturationScenarioOutputs.rungStateKey */
+  export const rungStateKey = Outputs.rungStateKey
+
   /** Phase-1 measures the outpost→depot leg; phase-2 the depot→outpost leg. */
   const Phase1Endpoint = DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT
   const Phase2Endpoint = DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
@@ -61,54 +65,6 @@ export namespace SwapStressSaturationScenarioRungSteps {
 
   /** Both legs a rung must eventually cover for the campaign to succeed. */
   const RequiredEndpoints = [Phase1Endpoint, Phase2Endpoint] as const
-
-  /**
-   * Which leg of a rung a Step operates on. Phase 1 drives Ethereum→WIRE and
-   * measures the outpost→depot direction; phase 2 drives WIRE→Ethereum and
-   * measures depot→outpost.
-   */
-  export enum RungPhaseSlot {
-    phase1 = "phase1",
-    phase2 = "phase2"
-  }
-
-  /** Per-phase accumulation, mutated in order by that phase's Steps. */
-  export interface RungPhaseState {
-    startedAtMs: number
-    baselineIdentity: EnvelopeBaselineIdentity | null
-    baseKeys: readonly string[]
-    telemetryDegraded: boolean
-    burst: BurstResult | null
-    payoutRequest: SwapStressPayoutObservationRequest | null
-    payoutObservedCount: number | null
-    payoutFailureReason: string | null
-    batchOperatorFailureReason: string | null
-    saturated: boolean
-    endpointName: string
-    envelopeCount: number
-  }
-
-  /**
-   * One rung's cross-Step state. Deliberately mutable: the rung's Steps
-   * accumulate into a single record on `ctx.outputs`, which is the sanctioned
-   * cross-step channel (never a closure over scenario state).
-   */
-  export interface RungState {
-    readonly rungIndex: number
-    readonly accountCount: number
-    skipped: boolean
-    identities: StressIdentities | null
-    phase1: RungPhaseState
-    phase2: RungPhaseState
-  }
-
-  /** Stable per-rung output key — `OutputStore` keys by name, so this is pure. */
-  export function rungStateKey(rungIndex: number): OutputKey<RungState> {
-    return outputKey<RungState>(
-      `stressSaturation.rung.${rungIndex}`,
-      `ramp rung ${rungIndex} accumulated phase state`
-    )
-  }
 
   function newPhaseState(endpointName: string): RungPhaseState {
     return {
@@ -707,7 +663,7 @@ export namespace SwapStressSaturationScenarioRungSteps {
     C extends SwapScenarioContext
   >(ctx: C, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
-    const results: SwapStressPhaseResult[] = []
+    const results: PhaseSaturationEvidence[] = []
     Constants.Ramp.RungAccountCounts.forEach((accountCount, rungIndex) => {
       const state = ctx.outputs.get(rungStateKey(rungIndex))
       if (state === null) return
@@ -715,7 +671,7 @@ export namespace SwapStressSaturationScenarioRungSteps {
         results.push({
           endpoint: phase.endpointName,
           saturated: phase.saturated
-        } as unknown as SwapStressPhaseResult)
+        })
       )
       log.debug(
         `rung ${rungIndex} (${accountCount} accounts): ` +
@@ -867,5 +823,3 @@ export namespace SwapStressSaturationScenarioRungSteps {
     )
   }
 }
-
-void Outputs

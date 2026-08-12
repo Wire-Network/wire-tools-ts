@@ -1,6 +1,19 @@
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 
-import type { SwapStressPhaseResult } from "./phaseRunnerMetricTypes.js"
+/**
+ * The minimum real evidence one phase contributes to the all-legs decision.
+ *
+ * Deliberately narrower than a full phase result: the classifier reads only
+ * which endpoint a phase measured and whether it saturated, so any producer of
+ * those two facts can be classified without depending on the phase-runner's
+ * result shape.
+ */
+export interface PhaseSaturationEvidence {
+  /** `DebugOutpostEndpointsType` member NAME the phase measured. */
+  readonly endpoint: string
+  /** Whether the phase's envelopes met the saturation gate. */
+  readonly saturated: boolean
+}
 
 /** Required Ethereum OPP directions for a successful stress-saturation campaign. */
 export const RequiredEthereumSaturationEndpoints = [
@@ -47,7 +60,7 @@ export interface EthereumAllLegsSaturationClassification {
  * @returns Strict all-legs status plus required and diagnostic endpoint sets.
  */
 export function classifyEthereumAllLegsSaturation(
-  phaseResults: readonly SwapStressPhaseResult[]
+  phaseResults: readonly PhaseSaturationEvidence[]
 ): EthereumAllLegsSaturationClassification {
   const saturatedResults = phaseResults.filter(result => result.saturated),
     saturatedEndpoints = RequiredEthereumSaturationEndpoints.filter(endpoint =>
@@ -69,7 +82,7 @@ export function classifyEthereumAllLegsSaturation(
 }
 
 function hasEndpoint(
-  phaseResults: readonly SwapStressPhaseResult[],
+  phaseResults: readonly PhaseSaturationEvidence[],
   endpoint: DebugOutpostEndpointsType
 ): boolean {
   const endpointName = DebugOutpostEndpointsType[endpoint]
