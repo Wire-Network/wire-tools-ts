@@ -524,22 +524,26 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
       verifyStep<SwapScenarioContext>(
         Actor.Sysio,
         "custody-settled",
-        "custody holds the escrow minus the FULL WIRE-leg fee; the target-leg lock persists",
+        "custody holds the escrow minus the drained rewards half; the underwriter half and the target-leg lock persist",
         async ctx => {
           // FROM-WIRE never pays the escrow back out — it became reserve
-          // liquidity. Custody holds the deposit MINUS the FULL WIRE-leg fee:
-          // the emissions half goes to the treasury (#414), and as of #425 the
-          // rewards half no longer lingers — payepoch drains the rewards bucket
-          // each epoch (sysio.reserv::drainrewards). The drain can land just
-          // after the SOL-recipient poll succeeds, so poll until custody
-          // settles at the fully-drained value rather than snapshotting
-          // mid-race.
+          // liquidity. Of the WIRE-leg fee, ONLY the batch-operator rewards half
+          // ever leaves this custody, and only when payepoch drains the rewards
+          // bucket (sysio.reserv::drainrewards). The winning underwriter's half
+          // stays put in `sysio.reserv::uwfees` until that account claims it —
+          // this flow never calls `claimuwfee`, so it is still here.
+          //
+          // The drain can land just after the SOL-recipient poll succeeds, so
+          // poll until custody settles at the drained value rather than
+          // snapshotting mid-race.
           const reserveCustodyBefore = ctx.outputs.assert(
               Outputs.reserveCustodyBefore
             ),
             fromWireFee = await readWireLegFee(ctx, Constants.SourceWireUnits),
             expectedCustody =
-              reserveCustodyBefore + Constants.SourceWireUnits - fromWireFee.fee
+              reserveCustodyBefore +
+              Constants.SourceWireUnits -
+              fromWireFee.rewardShare
           await pollUntil(
             "rewards bucket drained from sysio.reserv custody",
             async () =>
@@ -551,7 +555,7 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
           Assert.strictEqual(
             await ctx.wire.getWireBalance(ReserveCustodyAccount),
             expectedCustody,
-            "custody must settle at baseline + escrow − full WIRE-leg fee"
+            "custody must settle at baseline + escrow − the drained rewards half of the WIRE-leg fee"
           )
           // Challenge window: the target-leg lock persists after delivery.
           const request = await readFromWireUwreq(ctx)

@@ -44,6 +44,9 @@ function reserveRow(
     is_private: false,
     owner: "",
     creator_pub_key: "",
+    owner_fee_bps: 0,
+    owner_fee_accrued: 0,
+    owner_fee_lifetime: 0,
     ...overrides
   }
 }
@@ -93,6 +96,7 @@ function lockRow(
     amount: 0,
     created_at_ms: 0,
     expires_at_ms: 0,
+    challenge_id: 0,
     ...overrides
   }
 }
@@ -139,7 +143,12 @@ describe("SwapScenarioContext", () => {
         token_code: { value: SolToken },
         reserve_code: { value: PrimaryReserve },
         reserve_chain_amount: 3_000,
-        reserve_wire_amount: 4_000
+        reserve_wire_amount: 4_000,
+        // An owned reserve that charges and has already earned.
+        owner: "privowner",
+        owner_fee_bps: 200,
+        owner_fee_accrued: 500,
+        owner_fee_lifetime: 900
       })
     ],
     uwreqs: [
@@ -166,12 +175,55 @@ describe("SwapScenarioContext", () => {
       expect(book).toEqual({
         chain: 1_000n,
         wire: 2_000n,
-        connectorWeightBps: SymmetricConnectorWeightBps
+        connectorWeightBps: SymmetricConnectorWeightBps,
+        ownerFeeBps: 0
       })
+    })
+    it("carries a private reserve's non-zero owner fee onto the book", async () => {
+      // The book is what `quoteSwap` prices against, so an owner fee that never
+      // reaches it silently over-quotes the destination — the private-reserve
+      // regression. A public reserve's 0 makes that omission invisible.
+      const book = await newContext(fixtures).reserveBook(
+        SolanaChain,
+        SolToken,
+        PrimaryReserve
+      )
+      expect(book.ownerFeeBps).toBe(200)
     })
     it("throws when no reserve matches the triple", async () => {
       await expect(
         newContext(fixtures).reserveBook(999, EthToken, PrimaryReserve)
+      ).rejects.toThrow(/not found/)
+    })
+  })
+
+  describe("reserveOwnerFee", () => {
+    it("returns the owner, rate, and earned amounts as bigints", async () => {
+      const fee = await newContext(fixtures).reserveOwnerFee(
+        SolanaChain,
+        SolToken,
+        PrimaryReserve
+      )
+      expect(fee).toEqual({
+        owner: "privowner",
+        feeBps: 200,
+        accrued: 500n,
+        lifetime: 900n
+      })
+      // `lifetime` outliving `accrued` is the signature of a prior claim.
+      expect(fee.lifetime).toBeGreaterThan(fee.accrued)
+    })
+    it("reports a fee-free, owner-less reserve as all zeroes", async () => {
+      const fee = await newContext(fixtures).reserveOwnerFee(
+        EthereumChain,
+        EthToken,
+        PrimaryReserve
+      )
+      expect(fee).toEqual({ owner: "", feeBps: 0, accrued: 0n, lifetime: 0n })
+    })
+    it("throws when no reserve matches the triple", async () => {
+      await expect(
+        newContext(fixtures).reserveOwnerFee(999, EthToken, PrimaryReserve)
       ).rejects.toThrow(/not found/)
     })
   })

@@ -18,13 +18,30 @@ export namespace WireReserveTool {
   export const BpsTotal = 10_000
 
   /**
-   * Reward share of the WIRE-leg fee, in basis points (the remainder routes to
-   * the emissions treasury). Mirrors `sysio.reserv::FEE_REWARD_SHARE_BPS`
-   * (5000 = a 50/50 reward/emissions split). The reward share is retained in
-   * `sysio.reserv` custody as a rewards bucket; only the emissions share leaves
-   * custody — so it is the half that shifts a flow's custody-balance assertion.
+   * The winning underwriter's share of the WIRE-leg fee, in basis points (the
+   * remainder is the batch-operator rewards share). Mirrors
+   * `sysio.reserv::FEE_UNDERWRITER_SHARE_BPS` (5000 = a 50/50 underwriter /
+   * batch-operator split).
+   *
+   * The underwriter half stays in `sysio.reserv` custody until that account
+   * calls `claimuwfee`. What happens to the rewards pool is stage 2 — see
+   * {@link FeeEmissionsShareBps}.
    */
-  export const FeeRewardShareBps = 5_000
+  export const FeeUnderwriterShareBps = 5_000
+
+  /**
+   * Stage 2 of the split: the share of each fee's REWARDS POOL (what stage 1
+   * leaves after the underwriter's cut) transferred to the `sysio` emissions
+   * treasury, in basis points. Mirrors
+   * `sysio.reserv::DEFAULT_FEE_EMISSIONS_SHARE_BPS` and the live
+   * `reserve_config.fee_emissions_share_bps` the bootstrap seeds.
+   *
+   * The default is ZERO — the whole pool accrues to the batch-operator rewards
+   * bucket and NO part of a swap fee leaves custody at settlement, so a flow's
+   * custody assertion sees only the swap's own transfers. A cluster configured
+   * with a non-zero share moves exactly that share out at settlement time.
+   */
+  export const FeeEmissionsShareBps = 0
 
   /** The WIRE chain's slug value (the depot leg of every quote). */
   export const WireChainCode = Number(SlugName.from("WIRE"))
@@ -41,16 +58,36 @@ export namespace WireReserveTool {
   /**
    * Decomposition of a WIRE-leg swap fee — the TypeScript mirror of
    * `sysio::opp::amm::wire_fee`. Every field is an exact integer quantity:
-   * `rewardShare + emissionsShare === fee` and `net + fee === wireAmount`,
-   * with no rounding leak.
+   * all five shares sum to `fee` and `net + fee === wireAmount`, with no
+   * rounding leak.
    */
   export interface WireFee {
     /** Total fee charged on the WIRE leg. */
     fee: bigint
-    /** Portion accrued to the rewards bucket — stays in `sysio.reserv` custody. */
+    /**
+     * Portion accrued to the swap's winning underwriter — held in
+     * `sysio.reserv` custody until that account calls `claimuwfee`.
+     */
+    underwriterShare: bigint
+    /**
+     * Portion accrued to the batch-operator rewards bucket — held in
+     * `sysio.reserv` custody until `payepoch` drains it.
+     */
     rewardShare: bigint
-    /** Portion returned to the emissions treasury — leaves `sysio.reserv` custody. */
+    /**
+     * Portion transferred to the `sysio` emissions treasury — the ONLY part of
+     * a fee that leaves `sysio.reserv` custody at settlement, and zero unless
+     * the cluster configures a non-zero share.
+     */
     emissionsShare: bigint
+    /**
+     * The SOURCE reserve owner's fee — an independent, per-reserve fee on the
+     * same WIRE leg, accrued to that reserve's `owner_fee_accrued` and claimed
+     * via `claimrsvfee`. Zero for a WIRE-source swap (no source reserve).
+     */
+    srcReserveShare: bigint
+    /** The DESTINATION reserve owner's fee. Zero for a swap paying out WIRE. */
+    dstReserveShare: bigint
     /** `wireAmount - fee`: the net WIRE that continues through the swap. */
     net: bigint
   }
@@ -311,27 +348,47 @@ export namespace WireReserveTool {
    * @param wireAmount - The gross WIRE leg — the constant-product intermediate
    *   for a token source, or the user's escrowed WIRE for a from-WIRE swap.
    * @param feeBps - Fee in basis points — pass the live `uwconfig.fee_bps`.
-   * @param rewardShareBps - Reward share of the fee in bps (defaults to
-   *   {@link FeeRewardShareBps}).
+   * @param underwriterShareBps - The winning underwriter's share of the fee in
+   *   bps (defaults to {@link FeeUnderwriterShareBps}). Pass `0` for a path with
+   *   no winning underwriter — a revert refund — which sends the whole fee into
+   *   the rewards pool, exactly as `sysio.reserv::refundwire` does.
+   * @param emissionsShareBps - The emissions treasury's share OF THE REWARDS
+   *   POOL (not of the whole fee) in bps, mirroring the live
+   *   `reserve_config.fee_emissions_share_bps`; defaults to
+   *   {@link FeeEmissionsShareBps} (zero).
+   * @param srcReserveFeeBps - The SOURCE reserve's `owner_fee_bps` — an
+   *   independent per-reserve fee on the same leg. Zero for a WIRE source.
+   * @param dstReserveFeeBps - The DESTINATION reserve's `owner_fee_bps`. Zero
+   *   when the swap pays out WIRE.
    * @returns The {@link WireFee} decomposition.
    */
   export function splitWireFee(
     wireAmount: bigint,
     feeBps: number,
-    rewardShareBps: number = FeeRewardShareBps
+    underwriterShareBps: number = FeeUnderwriterShareBps,
+    emissionsShareBps: number = FeeEmissionsShareBps,
+    srcReserveFeeBps = 0,
+    dstReserveFeeBps = 0
   ): WireFee {
     const bps = BigInt(BpsTotal),
-      clampedFeeBps = BigInt(Math.min(Math.max(feeBps, 0), BpsTotal)),
-      clampedRewardBps = BigInt(
-        Math.min(Math.max(rewardShareBps, 0), BpsTotal)
-      ),
-      fee = (wireAmount * clampedFeeBps) / bps,
-      rewardShare = (fee * clampedRewardBps) / bps
+      clamp = (value: number) => BigInt(Math.min(Math.max(value, 0), BpsTotal)),
+      // Every rate applies to the SAME gross leg, so the fees are additive and
+      // order-independent — matching `sysio::opp::amm::split_wire_fee`.
+      srcReserveShare = (wireAmount * clamp(srcReserveFeeBps)) / bps,
+      dstReserveShare = (wireAmount * clamp(dstReserveFeeBps)) / bps,
+      networkFee = (wireAmount * clamp(feeBps)) / bps,
+      underwriterShare = (networkFee * clamp(underwriterShareBps)) / bps,
+      rewardsPool = networkFee - underwriterShare,
+      emissionsShare = (rewardsPool * clamp(emissionsShareBps)) / bps,
+      fee = networkFee + srcReserveShare + dstReserveShare
     return {
       fee,
-      rewardShare,
-      emissionsShare: fee - rewardShare,
-      net: wireAmount - fee
+      underwriterShare,
+      rewardShare: rewardsPool - emissionsShare,
+      emissionsShare,
+      srcReserveShare,
+      dstReserveShare,
+      net: fee >= wireAmount ? 0n : wireAmount - fee
     }
   }
 
@@ -351,6 +408,18 @@ export namespace WireReserveTool {
      * hardest to notice.
      */
     connectorWeightBps: number
+    /**
+     * The reserve owner's own fee on the WIRE leg, in basis points — the row's
+     * `owner_fee_bps`, charged independently of (and on the same gross leg as)
+     * the network fee.
+     *
+     * Required for the same reason as {@link connectorWeightBps}, and for a
+     * reason this field learned the hard way: a PUBLIC reserve carries `0`, so
+     * a quote that silently omits the owner fee is exactly right on twelve of
+     * the thirteen flows and wrong only where an owner fee is actually
+     * configured. Defaulting it would restore that blind spot.
+     */
+    ownerFeeBps: number
   }
 
   /**
@@ -395,7 +464,18 @@ export namespace WireReserveTool {
             amountIn
           )
     if (wireLeg === 0n) return 0n
-    const { net } = splitWireFee(wireLeg, feeBps)
+    // Both reserve owners charge on the SAME gross leg the network fee rides,
+    // so all three come out of one `splitWireFee` — mirroring the contract's
+    // `opp::amm::quote_swap`. A WIRE endpoint has no reserve on that side and
+    // therefore charges no owner fee, whatever the book would have said.
+    const { net } = splitWireFee(
+      wireLeg,
+      feeBps,
+      FeeUnderwriterShareBps,
+      FeeEmissionsShareBps,
+      source?.ownerFeeBps ?? 0,
+      destination?.ownerFeeBps ?? 0
+    )
     // A WIRE destination receives the post-fee WIRE leg directly.
     if (destination == null) return net
     return wireToToken(
@@ -571,7 +651,8 @@ export namespace WireReserveTool {
         : {
             chain: BigInt(reserve.reserve_chain_amount),
             wire: BigInt(reserve.reserve_wire_amount),
-            connectorWeightBps: Number(reserve.connector_weight_bps)
+            connectorWeightBps: Number(reserve.connector_weight_bps),
+            ownerFeeBps: Number(reserve.owner_fee_bps)
           }
     }
 

@@ -182,21 +182,15 @@ export class NodeopProcess extends ManagedProcess {
       `nodeop ${node.name}: a producing node requires a producer OperatorAccount (wire + wireFinalizer keys)`
     )
     mkdirs(node.nodePath)
-    const config: NodeopConfig = {
-      ...options,
-      tuning: defaults(
-        { ...options.tuning },
-        createNodeopTuningDefaultOptions(cluster)
-      ),
-      extraArgs: options.extraArgs ?? [],
-      genesisTimestamp: JSON.parse(
-        Fs.readFileSync(ClusterConfigProvider.genesisFile(cluster), "utf8")
-      ).initial_timestamp,
-      supportsTraceNoAbis: (
-        await binaryHelp(cluster.executables.nodeop)
-      ).includes(NodeopProcess.TraceNoAbisFlag)
-    }
-    return new NodeopProcess(manager, config)
+    return new NodeopProcess(
+      manager,
+      NodeopProcess.resolveConfig(options, {
+        genesisTimestamp: NodeopProcess.readGenesisTimestamp(cluster),
+        supportsTraceNoAbis: (
+          await binaryHelp(cluster.executables.nodeop)
+        ).includes(NodeopProcess.TraceNoAbisFlag)
+      })
+    )
   }
 
   private constructor(
@@ -358,11 +352,65 @@ export namespace NodeopProcess {
   }
 
   /**
+   * `initial_timestamp` from the cluster's genesis file — the one-shot value a
+   * node is stamped with at first boot.
+   *
+   * @param cluster - The resolved cluster config.
+   * @returns The genesis `initial_timestamp`.
+   */
+  export function readGenesisTimestamp(cluster: ClusterConfig): string {
+    return JSON.parse(
+      Fs.readFileSync(ClusterConfigProvider.genesisFile(cluster), "utf8")
+    ).initial_timestamp
+  }
+
+  /**
+   * Resolve caller options into a complete {@link NodeopConfig}. PURE — the two
+   * values `create` obtains impurely (the genesis timestamp read off disk, the
+   * `--help` capability probe) are INJECTED.
+   *
+   * Extracting this is what makes the `start.sh` argv trustworthy: if the
+   * emitting step hand-built a config instead, the argv-equality test would
+   * compare two argvs derived from two INDEPENDENTLY resolved configs and pass
+   * while the configs themselves drifted.
+   *
+   * @param options - Caller options.
+   * @param resolved - The impure values `create` obtained.
+   * @returns The complete config.
+   */
+  /** The impure values `create` resolves (genesis read + `--help` capability probe). */
+  export interface ResolvedInputs {
+    genesisTimestamp: string
+    supportsTraceNoAbis: boolean
+  }
+
+  export function resolveConfig(
+    options: NodeopOptions,
+    resolved: ResolvedInputs
+  ): NodeopConfig {
+    return {
+      ...options,
+      tuning: defaults(
+        { ...options.tuning },
+        createNodeopTuningDefaultOptions(options.node.cluster)
+      ),
+      extraArgs: options.extraArgs ?? [],
+      genesisTimestamp: resolved.genesisTimestamp,
+      supportsTraceNoAbis: resolved.supportsTraceNoAbis
+    }
+  }
+
+  /**
    * Build the full nodeop command-line (binary + args), matching the Python
    * launcher's `construct_command_line()` output — every value derived from the
    * composed {@link NodeConfig} + {@link ClusterKeyStore.ProducerKeySet}. The
    * producing-node block uses {@link KeyGenerator.toSignatureProvider}
    * (dispatched on each key's curve).
+   *
+   * NOTE the shape: this returns argv **WITH the binary at index 0** (unlike the
+   * other daemons' `buildArgs`, which return args only). Callers wanting the
+   * argv alone `.slice(1)`, and relaunch semantics come from
+   * {@link buildRelaunchArgs} — `buildArgs` itself IGNORES `config.relaunch`.
    */
   export function buildArgs(config: NodeopConfig): string[] {
     const { node, operator, tuning } = config,

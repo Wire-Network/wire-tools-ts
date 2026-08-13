@@ -453,10 +453,11 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
             book.connectorWeightBps,
             Constants.SourceDepotUnits
           )
-          const { net: target, fee: wireLegFee } = WireReserveTool.splitWireFee(
-            grossWireLeg,
-            feeBps
-          )
+          // ONE split of the GROSS leg supplies both halves: `net` is what the
+          // recipient receives and every share is a slice of that same gross.
+          // Splitting `target` instead would charge the fee twice.
+          const wireLegFee = WireReserveTool.splitWireFee(grossWireLeg, feeBps),
+            target = wireLegFee.net
           Assert.ok(target > 0n, "post-fee curve target must be positive")
           ctx.outputs
             .set(SwapToWireScenario.Output.bookBefore, book)
@@ -608,7 +609,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
               SwapToWireScenario.Output.bookBefore
             ),
             target = ctx.outputs.assert(SwapToWireScenario.Output.target),
-            fee = ctx.outputs.assert(SwapToWireScenario.Output.wireLegFee)
+            { fee } = ctx.outputs.assert(SwapToWireScenario.Output.wireLegFee)
           const book = await ctx.reserveBook(
             Constants.EthereumChainCode,
             Constants.EthereumTokenCode,
@@ -627,22 +628,24 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
       verifyStep<SwapScenarioContext>(
         Actor.Sysio,
         "custody-settled",
-        "sysio.reserv custody drains to before − target − fee (rewards bucket drained)",
+        "sysio.reserv custody drains to before − target − the rewards half of the fee",
         async ctx => {
-          // The recipient's payout leaves `sysio.reserv`, and so does the FULL
-          // WIRE-leg fee — the emissions half at emit (#414) and, as of #425,
-          // the rewards half drained each epoch by payepoch
-          // (sysio.reserv::drainrewards). The drain can land just after emit,
-          // so poll until custody settles at the fully-drained value.
+          // The recipient's payout leaves `sysio.reserv`. Of the WIRE-leg fee,
+          // only the batch-operator rewards half follows it out — drained each
+          // epoch by payepoch (sysio.reserv::drainrewards). The winning
+          // underwriter's half stays in custody as a `uwfees` accrual until that
+          // account calls `claimuwfee`, which this flow never does. The drain
+          // can land just after emit, so poll until custody settles.
           const custodyBefore = ctx.outputs.assert(
               SwapToWireScenario.Output.custodyBefore
             ),
             target = ctx.outputs.assert(SwapToWireScenario.Output.target),
-            fee = ctx.outputs.assert(SwapToWireScenario.Output.wireLegFee),
-            // The payout leg only leaves custody once the recipient claims it, which the
-            // recipient-paid-exact step above already did; the fee's emissions half left at
-            // settlement and its rewards half drains at the epoch boundary.
-            expectedCustody = custodyBefore - target - fee
+            // The payout leg only leaves custody once the recipient claims it,
+            // which the recipient-paid-exact step above already did.
+            { rewardShare } = ctx.outputs.assert(
+              SwapToWireScenario.Output.wireLegFee
+            ),
+            expectedCustody = custodyBefore - target - rewardShare
           await pollUntil(
             "rewards bucket drained from sysio.reserv custody",
             async () =>
@@ -748,13 +751,16 @@ export namespace SwapToWireScenario {
       "post-fee single-reserve cp_output WIRE target"
     )
     /**
-     * The WIRE-leg fee charged on the GROSS curve leg (at the live uwconfig
-     * `fee_bps`). `target + wireLegFee` is the gross — what the source reserve
-     * gives up and what custody drains by.
+     * The WIRE-leg fee decomposition charged on the GROSS curve leg (at the
+     * live uwconfig `fee_bps`). `target + fee` is the gross — what the source
+     * reserve gives up and what custody drains by. The whole `fee` leaves the
+     * source reserve's WIRE side; only `rewardShare` ever leaves `sysio.reserv`
+     * CUSTODY (at the payepoch drain) — the underwriter half stays until that
+     * account claims it.
      */
-    export const wireLegFee = outputKey<bigint>(
+    export const wireLegFee = outputKey<WireReserveTool.WireFee>(
       "swapToWire.wireLegFee",
-      "WIRE-leg fee charged on the gross curve leg"
+      "WIRE-leg fee decomposition charged on the gross curve leg"
     )
     /** The ETHEREUM/ETH/PRIMARY book snapshot taken at quote time. */
     export const bookBefore = outputKey<ReserveBook>(

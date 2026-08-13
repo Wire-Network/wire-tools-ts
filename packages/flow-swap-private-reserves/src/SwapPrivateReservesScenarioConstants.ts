@@ -130,6 +130,23 @@ export namespace SwapPrivateReservesScenarioConstants {
     export const ToleranceBps = 500
   }
 
+  /**
+   * The owner fee each private reserve charges on its own WIRE leg — the
+   * per-reserve fee that is INDEPENDENT of the network `fee_bps` (WIRE-281).
+   *
+   * Because one account owns both reserves, a swap through the pair charges
+   * BOTH rates on the same leg, so the owner earns twice from a single swap —
+   * exactly the "per reserve" attribution under test. Two DIFFERENT rates are
+   * used so a bug that swaps or double-counts a side can't hide behind equal
+   * numbers. Both sit well inside the contract's `[1, 9900]` band.
+   */
+  export namespace ReserveOwnerFees {
+    /** ETH-side private reserve: 1%. */
+    export const EthereumBps = 100
+    /** SOL-side private reserve: 2%. */
+    export const SolanaBps = 200
+  }
+
   /** WIRE accounts provisioned by this flow. */
   export namespace Accounts {
     /** The single WIRE account that matches (and therefore owns) BOTH

@@ -11,6 +11,7 @@ import { getLogger, type Logger } from "../logging/Logger.js"
 import { SysioContracts } from "@wireio/sdk-core"
 import { Constants, ProtocolTiming } from "../Constants.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
+import { DaemonConfig } from "../config/DaemonConfig.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
 import {
   readNodeOwner,
@@ -63,10 +64,12 @@ const MinFromWireAmount = 100_000_000
 /**
  * Fee (bps of the escrow) forfeited on caller-fault drain-time reverts of
  * queued `swapfromwire` rows (zero quote / missed variance at `drainfwq`),
- * routed like the settlement fee. Mirrors the contract default; happy-path
- * flows never pay it and system-caused reverts refund in full.
+ * routed like the settlement fee. Mirrors the contract default — the 5% launch
+ * value — so a cluster prices revert churn the way the network will. Happy-path
+ * flows never pay it and system-caused reverts refund in full, so no flow's
+ * economics depend on this number.
  */
-const FromWireRevertFeeBps = 10
+const FromWireRevertFeeBps = 500
 /**
  * Nodeop processes started concurrently within a node-start group.
  *
@@ -92,6 +95,18 @@ const UwreqPendingTimeoutEpochs = 10
  * contract default (SEC-129 / WSA-223).
  */
 const UwreqRetentionEpochs = 10
+/**
+ * Stage 2 of the swap-fee split: the share of each fee's rewards pool routed to
+ * the `sysio` emissions treasury instead of the batch-operator rewards bucket.
+ * Mirrors `sysio.reserv::DEFAULT_FEE_EMISSIONS_SHARE_BPS`.
+ *
+ * Zero keeps every swap fee inside `sysio.reserv` custody at settlement (the
+ * underwriter half as a `uwfees` accrual, the rest in the rewards bucket), which
+ * is what the swap flows' custody assertions expect. Raising it makes exactly
+ * that share leave custody per settlement.
+ */
+const FeeEmissionsShareBps = 0
+
 /** Epoch envelope-log retention. */
 const EnvelopeLogRetentionEpochs = 10
 /** Dev-default `terminate_max_consecutive_misses` (per-flow overridable via ClusterConfig). */
@@ -823,6 +838,19 @@ export namespace ClusterBuildDefaults {
         }
       )
     )
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "ReserveConfig",
+      "Configure sysio.reserv fee routing"
+    ).push(
+      Steps.contracts.sysio.reserv.planSetconfig<C>(
+        Actor.Sysio,
+        "configure-reserv",
+        "set the swap-fee routing config",
+        {},
+        { fee_emissions_share_bps: FeeEmissionsShareBps }
+      )
+    )
 
     // ═══ Cluster Post Contract Deployment — batch/uw operators, nodes, first epoch ═══
     const postContractDeployment = ClusterBuildPhaseGroup.create<C>(
@@ -1005,6 +1033,53 @@ export namespace ClusterBuildDefaults {
         )
       )
     }
+
+    planStartScripts<C>(postContractDeployment, config)
+  }
+
+  /**
+   * Emit each daemon's `start.sh` — ONE step per daemon, never one step looping
+   * over N, so the Report validates every script individually.
+   *
+   * Placed LAST in the bootstrap: an operator node's argv includes its OPP
+   * daemon args, which resolve from `OperatorDaemonArtifactsKey` — asserting
+   * that output before the outpost deploys have published it would throw.
+   *
+   * @param parent - The phase group to register the phase on.
+   * @param config - The resolved cluster config (which daemons exist).
+   */
+  function planStartScripts<C extends ClusterBuildContext>(
+    parent: ClusterBuildPhaseGroup<C>,
+    config: ClusterConfig
+  ): void {
+    // The daemon SET comes from DaemonConfig — never re-derived here, or the
+    // emit labels and the enumeration can drift. That includes the bundle
+    // gate: it reads the LABELS, so "is a debugging-server start.sh emitted?"
+    // and "is its bundle copied?" are one predicate. Re-deriving the flag
+    // would let `plannedLabels` gain a condition the copy step never learns,
+    // emitting a script that execs a binary nobody copied.
+    const labels = DaemonConfig.plannedLabels(config),
+      debuggingServerEnabled = labels.includes(
+        DaemonConfig.DebuggingServerSubpath
+      ),
+      phase = ClusterBuildPhase.create<C>(
+        parent,
+        "StartScripts",
+        "Bundle the debugging server + emit a start.sh for every daemon"
+      )
+    // The bundle copy precedes the scripts: the server's start.sh lives in the
+    // directory this step creates. Skipped wholesale when the server is
+    // disabled — shipping 15 MB for a server that never runs is waste.
+    if (debuggingServerEnabled)
+      phase.push(
+        Steps.debuggingServerBundle.planCopy<C>(
+          Actor.Sysio,
+          "copy-debugging-server-bundle",
+          "copy the bundled debugging server into the cluster tree",
+          {}
+        )
+      )
+    Steps.startScript.planPhase<C>(phase, labels)
   }
 
   /**
