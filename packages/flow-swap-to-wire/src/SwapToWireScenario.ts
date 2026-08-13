@@ -77,8 +77,8 @@ async function underwritersActive(
 }
 
 /**
- * Whether `account`'s `sysio.reserv::wireclaims` credit has reached `target`
- * (a read).
+ * Predicate factory — whether `account`'s `sysio.reserv::wireclaims` credit has
+ * reached `target` (a read).
  *
  * `paywire` credits a claimable balance rather than transferring, so the
  * recipient's token balance stays flat until it pulls with `claimwire` — this
@@ -87,14 +87,15 @@ async function underwritersActive(
  * @param ctx - The scenario context.
  * @param account - The payout recipient's WIRE account.
  * @param target - The post-fee WIRE amount the credit must reach.
- * @returns Whether the claimable credit is at or above `target`.
+ * @returns A poll predicate for whether the credit is at or above `target`.
  */
-async function claimableReached(
+function claimableReachedPredicate(
   ctx: SwapScenarioContext,
   account: string,
   target: bigint
-): Promise<boolean> {
-  return (await ctx.wire.getWireClaimable(account)) >= target
+): () => Promise<boolean> {
+  return () =>
+    ctx.wire.getWireClaimable(account).then(amount => amount >= target)
 }
 
 /**
@@ -598,7 +599,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
           // not the token balance — the latter stays at zero until the recipient pulls it.
           await pollUntil(
             "recipient claimable WIRE reaches the target",
-            () => claimableReached(ctx, recipient.account, target),
+            claimableReachedPredicate(ctx, recipient.account, target),
             Constants.PayoutDeadlineMs,
             Constants.LongPollIntervalMs
           )
