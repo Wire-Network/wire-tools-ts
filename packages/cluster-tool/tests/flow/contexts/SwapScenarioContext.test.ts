@@ -78,6 +78,7 @@ function uwreqRow(
     expires_at_epoch: 0,
     attestation_inbound_data: "",
     attestation_outbound_data: "",
+    challenge_id: 0,
     ...overrides
   }
 }
