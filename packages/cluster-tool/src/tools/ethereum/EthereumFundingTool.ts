@@ -2,9 +2,11 @@
  * Erc20FundingTool — test-cluster helpers for funding user wallets with
  * mock ERC-20 balances and signing EIP-2612 permits.
  *
- * The harness's `ETHBootstrapper` deploys `MockUsdc`, `MockUsdt`, and
- * `MockUsdtFeeOnTransfer` as part of the local cluster spin-up; both
- * mocks expose an ungated `mint(address, uint256)` for test funding.
+ * The harness's Ethereum bootstrapper deploys `MockUsdc`, `MockUsdt`, and
+ * `MockUsdtFeeOnTransfer` as part of the local cluster spin-up; those
+ * stablecoin mocks expose an ungated `mint(address, uint256)` for test funding.
+ * LIQETH is the real liquid-staking token and must be acquired through its
+ * payable `DepositManager`.
  * This module is the thin wrapper around those mocks.
  *
  * Production deployments never run this code — they consume the
@@ -16,6 +18,8 @@
  */
 
 import Assert from "node:assert"
+import Fs from "node:fs"
+import Path from "node:path"
 import { ethers } from "ethers"
 
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
@@ -33,7 +37,7 @@ import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 /**
  * Minimal structural surface for an ERC-20 mock that exposes
  * `mint(to, amount)`. All test mocks under `contracts/test/outpost/`
- * conform to this shape; `MockLiqETH`, `MockUsdc`, `MockUsdt`, and
+ * conform to this shape; `MockUsdc`, `MockUsdt`, and
  * `MockUsdtFeeOnTransfer` all carry the same `mint` signature.
  */
 export interface MintableErc20 extends ethers.BaseContract {
@@ -298,4 +302,136 @@ export namespace EthereumFundingTool {
     if (current >= input.amount) return
     await mintMockErc20ToUser(token, signer.address, input.amount - current)
   }
+
+  /** Input for {@link planLiqEthFund} — one real DepositManager acquisition. */
+  export interface FundLiqEthInput extends StepInput {
+    readonly kind: "EthereumFundingTool.FundLiqEthInput"
+    /** Operator handle used to resolve the recipient Ethereum wallet. */
+    readonly operatorLabel: string
+    /** LIQETH balance floor required before collateral approval/deposit. */
+    readonly amount: bigint
+  }
+
+  /**
+   * Acquire LIQETH through the local deployment's real payable DepositManager.
+   * Unlike the test stablecoins, LiqEthToken.mint is permissioned; attempting
+   * an ungated mock mint prevents every LIQ collateral route from reaching its
+   * own report phase.
+   */
+  export function planLiqEthFund<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    operatorLabel: string,
+    amount: bigint
+  ): ClusterBuildStep<C, FundLiqEthInput> {
+    return ClusterBuildStep.create<C, FundLiqEthInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "EthereumFundingTool.FundLiqEthInput",
+        operatorLabel,
+        amount
+      },
+      runLiqEthFund
+    )
+  }
+
+  /** Named runner — one payable `DepositManager.deposit()` when below floor. */
+  export async function runLiqEthFund<C extends ClusterBuildContext>(
+    ctx: C,
+    input: FundLiqEthInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    Assert.ok(
+      input.amount > 0n,
+      "EthereumFundingTool.planLiqEthFund: amount must be positive"
+    )
+    const operator = ctx.keyStore.assertOperator(input.operatorLabel),
+      signer = ethereumSigner(operator.ethereum, ctx.ethereum.provider),
+      deploymentsPath = ClusterConfigProvider.ethereumDeploymentsPath(
+        ctx.config
+      ),
+      tokenAddress = EthereumCollateralTool.mockErc20Address(
+        deploymentsPath,
+        LiqEthTokenName
+      ),
+      token = contractView<LiqEthBalanceContract>(
+        tokenAddress,
+        LiqEthBalanceAbi,
+        signer
+      ),
+      current = await token.balanceOf(signer.address)
+    if (current >= input.amount) return
+
+    const addressesFile = Path.join(deploymentsPath, "liqeth-addrs.json")
+    Assert.ok(
+      Fs.existsSync(addressesFile),
+      `EthereumFundingTool: liqETH addresses not found at ${addressesFile}`
+    )
+    const depositManagerAddress = (
+      JSON.parse(Fs.readFileSync(addressesFile, "utf8")) as Record<
+        string,
+        string
+      >
+    ).DepositManager
+    Assert.ok(
+      depositManagerAddress != null && ethers.isAddress(depositManagerAddress),
+      "EthereumFundingTool: DepositManager missing from liqeth-addrs.json"
+    )
+    const depositManager = contractView<LiqEthDepositManagerContract>(
+        depositManagerAddress,
+        LiqEthDepositManagerAbi,
+        signer
+      ),
+      shortfall = input.amount - current,
+      response = await depositManager.deposit({
+        value: maximum(
+          shortfall * LiqEthFundingMultiplier,
+          await depositManager.minDeposit()
+        )
+      }),
+      receipt = await response.wait(1)
+    Assert.strictEqual(receipt?.status, 1, "LIQETH funding deposit reverted")
+  }
+}
+
+/** LIQETH balance read used by the dedicated funding step. */
+interface LiqEthBalanceContract extends ethers.BaseContract {
+  balanceOf: (owner: string) => Promise<bigint>
+}
+
+/** Payable liqETH acquisition surface. */
+interface LiqEthDepositManagerContract extends ethers.BaseContract {
+  minDeposit: () => Promise<bigint>
+  deposit: (
+    overrides: ethers.Overrides
+  ) => Promise<ethers.ContractTransactionResponse>
+}
+
+/** Minimal ABI for the LIQETH balance read. */
+const LiqEthBalanceAbi: ethers.InterfaceAbi = [
+  "function balanceOf(address owner) view returns (uint256)"
+]
+
+/** Minimal ABI for the payable LIQETH acquisition. */
+const LiqEthDepositManagerAbi: ethers.InterfaceAbi = [
+  "function minDeposit() view returns (uint256)",
+  "function deposit() payable"
+]
+
+/** Token name used by the configured real LIQETH deployment. */
+const LiqEthTokenName = "LIQETH"
+/** Covers the local DepositManager's fee while preserving the requested floor. */
+const LiqEthFundingMultiplier = 2n
+
+/** Return the larger bigint without coercing either amount through Number. */
+function maximum(left: bigint, right: bigint): bigint {
+  return left >= right ? left : right
 }

@@ -1,10 +1,14 @@
 import Assert from "node:assert"
-import type { ClusterConfig } from "@wireio/cluster-tool-shared"
+
+import type {
+  ChainTokenAmount,
+  ClusterConfig
+} from "@wireio/cluster-tool-shared"
+import { TokenAmount } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import {
-  ClusterBuildPhase,
   ClusterBuildFailureMode,
-  ClusterBuildPhaseGroup,
+  ClusterBuildPhase,
   Constants as HarnessConstants,
   FlowScenario,
   Report,
@@ -17,31 +21,26 @@ import {
   verifyStep,
   type ClusterBuild,
   type ClusterBuildOptions,
-  type ClusterBuildParent,
   type ClusterBuildStepOptions,
   type Logger
 } from "@wireio/cluster-tool"
-import {
-  type SwapRoute,
-  SwapRouteEndpoint,
-  SwapRouteMatrixScenarioConstants as Constants
-} from "./SwapRouteMatrixScenarioConstants.js"
+
+import { planSwapRouteMatrix } from "./SwapRouteMatrixPlan.js"
+import { SwapRouteMatrixScenarioConstants as Constants } from "./SwapRouteMatrixScenarioConstants.js"
 import { SwapRouteMatrixScenarioSteps as Steps } from "./steps/index.js"
 
 const { SysioContractName, SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report
 
 /**
- * Six-route conformance matrix for the native ETH, SOL, and WIRE
- * endpoints. Each direction is a Phase with explicit quote, request, UWREQ,
- * race, lock, and payout Steps. The three route families are PhaseGroups so
- * the generated report remains readable without introducing a second runner.
- * Route failures are collected by default so every leg reaches a verdict.
+ * Exhaustive conformance matrix for every configured public token route. The
+ * scenario owns shared cluster/user/collateral prerequisites and delegates the
+ * reusable Family → Direction → Route hierarchy to {@link planSwapRouteMatrix}.
  */
 export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
   readonly name = "flow-swap-route-matrix"
   readonly description =
-    "Serial native route matrix: ETH ↔ SOL, ETH/SOL → WIRE, and WIRE → ETH/SOL"
+    "Exhaustive configured route matrix across ETH, LIQETH, USDC, USDT, SOL, LIQSOL, USDCSOL, USDTSOL, and WIRE"
 
   override readonly defaults: ClusterBuildOptions = {
     enableMockReserves: true,
@@ -49,12 +48,12 @@ export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
     requiredUnderwriterCollateral: [
       {
         chainCode: Constants.EthereumChainCode,
-        tokenCode: Constants.EthereumTokenCode,
+        tokenCode: Constants.EthereumTokens[0].tokenCode,
         minimumBond: Constants.UnderwriterMinimumBond
       },
       {
         chainCode: Constants.SolanaChainCode,
-        tokenCode: Constants.SolanaTokenCode,
+        tokenCode: Constants.SolanaTokens[0].tokenCode,
         minimumBond: Constants.UnderwriterMinimumBond
       }
     ]
@@ -68,12 +67,19 @@ export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
     return new SwapScenarioContext(config, log)
   }
 
-  /** Append shared prerequisites followed by the three route families. */
+  /** Append shared prerequisites followed by the reusable exhaustive matrix. */
   plan(cluster: ClusterBuild<SwapScenarioContext>): void {
+    Assert.strictEqual(
+      Constants.AllRoutes.length,
+      Constants.ConfiguredRouteCount,
+      "configured swap route catalog must contain every meaningful ordered pair"
+    )
+
     const underwriterLabels = Array.from(
         { length: cluster.context.config.underwriterCount },
         (_, index) => HarnessConstants.underwriterLabel(index)
       ),
+      collateral = buildUnderwriterCollateral(underwriterLabels.length),
       writeOptions: ClusterBuildStepOptions = {
         timeoutMs: Constants.WriteTimeoutMs
       },
@@ -89,44 +95,35 @@ export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
     ClusterBuildPhase.create<SwapScenarioContext>(
       cluster,
       "PrerequisiteHealth",
-      "WIRE produces blocks and both native public reserves are seeded"
-    ).push(
-      verifyStep<SwapScenarioContext>(
-        Actor.Sysio,
-        "chain-producing",
-        "WIRE chain reports a positive head block",
-        async ctx => {
-          const info = await ctx.wire.getInfo()
-          Assert.ok(
-            Number(info.head_block_num) > 0,
-            "WIRE head_block_num must be positive"
+      "WIRE produces blocks and all eight configured public reserves exist",
+      [
+        verifyStep<SwapScenarioContext>(
+          Actor.Sysio,
+          "chain-producing",
+          "WIRE chain reports a positive head block",
+          async ctx => {
+            const info = await ctx.wire.getInfo()
+            Assert.ok(
+              Number(info.head_block_num) > 0,
+              "WIRE head_block_num must be positive"
+            )
+          }
+        ),
+        ...Constants.ExternalTokens.map(token =>
+          verifyStep<SwapScenarioContext>(
+            Actor.Sysio,
+            `reserve-${token.id}`,
+            `${token.endpoint}/${token.symbol}/PRIMARY reserve exists`,
+            async ctx => {
+              await ctx.reserveBook(
+                token.chainCode,
+                token.tokenCode,
+                Constants.PrimaryReserveCode
+              )
+            }
           )
-        }
-      ),
-      verifyStep<SwapScenarioContext>(
-        Actor.Sysio,
-        "ethereum-reserve-seeded",
-        "ETHEREUM/ETH/PRIMARY reserve exists",
-        async ctx => {
-          await ctx.reserveBook(
-            Constants.EthereumChainCode,
-            Constants.EthereumTokenCode,
-            Constants.PrimaryReserveCode
-          )
-        }
-      ),
-      verifyStep<SwapScenarioContext>(
-        Actor.Sysio,
-        "solana-reserve-seeded",
-        "SOLANA/SOL/PRIMARY reserve exists",
-        async ctx => {
-          await ctx.reserveBook(
-            Constants.SolanaChainCode,
-            Constants.SolanaTokenCode,
-            Constants.PrimaryReserveCode
-          )
-        }
-      )
+        )
+      ]
     )
 
     SwapUserIdentities.planIdentityProvisioning<SwapScenarioContext>(
@@ -151,20 +148,81 @@ export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
       )
     )
 
-    WireUnderwriterTool.planCollateralDeposit<SwapScenarioContext>(
+    ClusterBuildPhase.create<SwapScenarioContext>(
       cluster,
-      "UnderwriterCollateral",
-      "Bond the existing default native collateral on both outposts",
-      writeOptions,
-      underwriterLabels,
-      WireUnderwriterTool.load(null, cluster.context.config.underwriterCount)
+      "LiqEthReserveLiquidity",
+      "Bring physical LIQETH custody up to the configured logical reserve floor"
+    ).push(
+      Steps.planAcquireLiqEthReserveLiquidity(
+        Actor.EthereumOutpost,
+        "acquire-liqeth-liquidity",
+        "deployer acquires any LIQETH shortfall through DepositManager",
+        writeOptions,
+        Constants.LiqEthReserveFunding
+      ),
+      Steps.planTransferLiqEthReserveLiquidity(
+        Actor.EthereumOutpost,
+        "fund-liqeth-reserve",
+        "transfer the remaining LIQETH shortfall into ReserveManager custody",
+        writeOptions,
+        Constants.LiqEthReserveFunding
+      )
     )
 
     ClusterBuildPhase.create<SwapScenarioContext>(
       cluster,
-      "UnderwriterActivation",
-      "Wait for both native bonds to credit and activate every underwriter"
+      "SwapUserTokens",
+      "Fund every configured non-native source token for all route directions",
+      [
+        ...Constants.EthereumTokens.filter(
+          token => token.symbol !== Constants.EthereumNativeSymbol
+        ).map(token =>
+          Steps.planFundErc20SwapUser(
+            Actor.User,
+            `fund-${token.id}`,
+            `fund the swap user with ${token.symbol}`,
+            writeOptions,
+            token,
+            token.sourceAmount * Constants.UserFundingMultiple
+          )
+        ),
+        ...Constants.SolanaTokens.filter(
+          token => token.symbol !== Constants.SolanaNativeSymbol
+        ).map(token =>
+          Steps.planFundSplSwapUser(
+            Actor.User,
+            `fund-${token.id}`,
+            `fund the swap user with ${token.symbol}`,
+            writeOptions,
+            token,
+            token.sourceAmount * Constants.UserFundingMultiple
+          )
+        )
+      ]
+    )
+
+    WireUnderwriterTool.planCollateralDeposit<SwapScenarioContext>(
+      cluster,
+      "UnderwriterCollateral",
+      "Bond every configured external (chain, token) collateral bucket",
+      writeOptions,
+      underwriterLabels,
+      collateral
+    )
+
+    ClusterBuildPhase.create<SwapScenarioContext>(
+      cluster,
+      "UnderwriterReadiness",
+      "Wait for all configured bonds to credit and every underwriter to activate"
     ).push(
+      Steps.planVerifyUnderwriterBondsRelayed(
+        Actor.Sysio,
+        "all-bonds-relayed",
+        "every exact configured collateral bucket is credited on sysio.opreg",
+        activeOptions,
+        underwriterLabels,
+        collateral
+      ),
       verifyStep<SwapScenarioContext>(
         Actor.Underwriter,
         "underwriters-active",
@@ -181,132 +239,23 @@ export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
       )
     )
 
-    const matrix = ClusterBuildPhaseGroup.create<SwapScenarioContext>(
-      cluster,
-      "SwapRouteMatrix",
-      `Every native route; failure mode ${failureMode}`,
-      { failureMode }
-    )
-    planRouteGroup(
-      matrix,
-      "CrossOutpostRoutes",
-      "Two-leg native swaps between Ethereum and Solana",
-      Constants.CrossOutpostRoutes,
-      failureMode
-    )
-    planRouteGroup(
-      matrix,
-      "ExternalToWireRoutes",
-      "Single-leg native swaps paid directly in WIRE",
-      Constants.ExternalToWireRoutes,
-      failureMode
-    )
-    planRouteGroup(
-      matrix,
-      "WireToExternalRoutes",
-      "Queued WIRE escrows paid on an external outpost",
-      Constants.WireToExternalRoutes,
-      failureMode
-    )
+    planSwapRouteMatrix(cluster, failureMode)
   }
 }
 
-/** Add one route-family PhaseGroup with one Phase per direction. */
-function planRouteGroup(
-  parent: ClusterBuildParent<SwapScenarioContext>,
-  name: string,
-  description: string,
-  routes: readonly SwapRoute[],
-  failureMode: ClusterBuildFailureMode
-): ClusterBuildPhaseGroup<SwapScenarioContext> {
-  const group = ClusterBuildPhaseGroup.create<SwapScenarioContext>(
-    parent,
-    name,
-    description,
-    { failureMode }
+/** Build one uniform full-token collateral plan per configured underwriter. */
+function buildUnderwriterCollateral(
+  underwriterCount: number
+): ChainTokenAmount[][] {
+  return Array.from({ length: underwriterCount }, () =>
+    Constants.ExternalTokens.map(token => ({
+      chain_code: token.chainCode,
+      amount: TokenAmount.create({
+        tokenCode: BigInt(token.tokenCode),
+        amount: Constants.UnderwriterCollateralAmount
+      })
+    }))
   )
-  routes.forEach(route => planRoutePhase(group, route))
-  return group
-}
-
-/** Add the lifecycle Steps for one directional route. */
-function planRoutePhase(
-  parent: ClusterBuildParent<SwapScenarioContext>,
-  route: SwapRoute
-): ClusterBuildPhase<SwapScenarioContext> {
-  const uwreqOptions: ClusterBuildStepOptions = {
-      timeoutMs: Constants.UwreqDeadlineMs + Constants.PollDeadlineBufferMs
-    },
-    raceOptions: ClusterBuildStepOptions = {
-      timeoutMs: Constants.RaceDeadlineMs + Constants.PollDeadlineBufferMs
-    },
-    payoutOptions: ClusterBuildStepOptions = {
-      timeoutMs: Constants.PayoutDeadlineMs + Constants.PollDeadlineBufferMs
-    },
-    payoutActor =
-      route.destination === SwapRouteEndpoint.Ethereum
-        ? Actor.EthereumOutpost
-        : route.destination === SwapRouteEndpoint.Solana
-          ? Actor.SolanaOutpost
-          : Actor.Sysio
-
-  return ClusterBuildPhase.create<SwapScenarioContext>(
-    parent,
-    phaseName(route),
-    `${route.label}: quote, request, underwriting, lock shape, and payout`,
-    [
-      Steps.planPrepareRoute(
-        Actor.User,
-        "prepare-route",
-        `${route.label}: read live quote and route-specific baselines`,
-        {},
-        route
-      ),
-      Steps.planRequestRoute(
-        Actor.User,
-        "request-swap",
-        `${route.label}: submit the source endpoint swap request`,
-        { timeoutMs: Constants.WriteTimeoutMs },
-        route
-      ),
-      Steps.planVerifyUwreqCreated(
-        Actor.Sysio,
-        "uwreq-created",
-        `${route.label}: a new route-specific UWREQ reaches the depot`,
-        uwreqOptions,
-        route
-      ),
-      Steps.planVerifyUwreqConfirmed(
-        Actor.Underwriter,
-        "uwreq-confirmed",
-        `${route.label}: the underwriter race confirms the request`,
-        raceOptions,
-        route
-      ),
-      Steps.planVerifyLocks(
-        Actor.Sysio,
-        "locks-correct",
-        `${route.label}: ${route.expectedLockCount} expected collateral lock(s) exist`,
-        raceOptions,
-        route
-      ),
-      Steps.planVerifyPayout(
-        payoutActor,
-        "payout-received",
-        `${route.label}: destination balance receives the variance-adjusted target`,
-        payoutOptions,
-        route
-      )
-    ]
-  )
-}
-
-/** Stable PascalCase phase name derived from a route id. */
-function phaseName(route: SwapRoute): string {
-  return route.id
-    .split("-")
-    .map(part => `${part[0].toUpperCase()}${part.slice(1)}`)
-    .join("")
 }
 
 /** Read whether every configured underwriter is ACTIVE on the depot. */
@@ -319,7 +268,7 @@ async function readAllUnderwritersActive(
     .tables.operators.query({ limit: Constants.OperatorTableRowLimit })
   return underwriterLabels.every(label => {
     const account = ctx.keyStore.assertOperator(label).account,
-      row = rows.find(candidate => candidate.account === account)
+      row = rows.find(operator => operator.account === account)
     return (
       row != null &&
       matchesProtoEnum(

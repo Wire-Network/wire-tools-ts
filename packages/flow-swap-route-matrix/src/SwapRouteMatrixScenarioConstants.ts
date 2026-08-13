@@ -1,34 +1,77 @@
-import { SlugName } from "@wireio/sdk-core"
 import { ProtocolTiming } from "@wireio/cluster-tool"
+import { SlugName } from "@wireio/sdk-core"
 
-/** A native endpoint represented in the six-route matrix. */
+/** Outpost/depot location of a configured swap token. */
 export enum SwapRouteEndpoint {
   Ethereum = "ethereum",
   Solana = "solana",
   Wire = "wire"
 }
 
-/** Immutable build-time description of one native directional route. */
+/** Source transaction path required by a configured token. */
+export enum SwapRouteSourceKind {
+  Native = "native",
+  Erc20Permit = "erc20-permit",
+  Erc20Approval = "erc20-approval",
+  Spl = "spl",
+  Wire = "wire"
+}
+
+/** Build-time metadata required to exercise one configured swap token. */
+export interface SwapRouteToken {
+  /** Stable token id used in route ids and output keys. */
+  readonly id: string
+  /** Token symbol shown in reports. */
+  readonly symbol: string
+  /** Chain/outpost holding the token. */
+  readonly endpoint: SwapRouteEndpoint
+  /** Registered chain slug value. */
+  readonly chainCode: number
+  /** Registered token slug value. */
+  readonly tokenCode: number
+  /** Chain-native decimals used at the depot precision boundary. */
+  readonly decimals: number
+  /** Source amount in chain-native base units. */
+  readonly sourceAmount: bigint
+  /** Source request path for this token. */
+  readonly sourceKind: SwapRouteSourceKind
+}
+
+/** Immutable description of one exact directional route. */
 export interface SwapRoute {
   /** Stable route id used in report text and typed output keys. */
   readonly id: string
-  /** Human-readable direction shown in the report. */
+  /** Human-readable token direction shown in the report. */
   readonly label: string
-  /** Source endpoint. */
-  readonly source: SwapRouteEndpoint
-  /** Destination endpoint. */
-  readonly destination: SwapRouteEndpoint
-  /** Source amount in the source chain's native base units. */
-  readonly sourceAmount: bigint
-  /** Source token decimals used for the depot-frame conversion. */
-  readonly sourceDecimals: number
-  /** Destination token decimals used for the native payout floor. */
-  readonly destinationDecimals: number
+  /** Exact source token. */
+  readonly source: SwapRouteToken
+  /** Exact destination token. */
+  readonly destination: SwapRouteToken
   /** Expected persistent underwriter locks for the route. */
   readonly expectedLockCount: number
 }
 
-/** Constants and the six native route descriptors for the matrix flow. */
+/** One reusable direction group within the exhaustive matrix. */
+export interface SwapRouteDirection {
+  /** Stable PascalCase group name. */
+  readonly name: string
+  /** Human-readable direction description. */
+  readonly description: string
+  /** Exact token-pair phases in this direction. */
+  readonly routes: readonly SwapRoute[]
+}
+
+/** One reusable route-family group within the exhaustive matrix. */
+export interface SwapRouteFamily {
+  /** Stable PascalCase group name. */
+  readonly name: string
+  /** Human-readable family description. */
+  readonly description: string
+  /** Direction groups in this family. */
+  readonly directions: readonly SwapRouteDirection[]
+}
+
+/** Constants and generated descriptors for the exhaustive configured matrix. */
 export namespace SwapRouteMatrixScenarioConstants {
   /** Generic flow-orchestration override for collect-all versus fail-fast. */
   export const FailureModeEnvVar = "WIRE_FLOW_FAILURE_MODE"
@@ -53,113 +96,316 @@ export namespace SwapRouteMatrixScenarioConstants {
   export const EthereumChainCode = SlugName.from("ETHEREUM")
   export const SolanaChainCode = SlugName.from("SOLANA")
   export const WireChainCode = SlugName.from("WIRE")
-  /** Registered native token codes. */
-  export const EthereumTokenCode = SlugName.from("ETH")
-  export const SolanaTokenCode = SlugName.from("SOL")
-  export const WireTokenCode = SlugName.from("WIRE")
-  /** Public reserve code used on both outposts and as the WIRE sentinel. */
+  /** Registered reserve code used by every configured public route. */
   export const PrimaryReserveCode = SlugName.from("PRIMARY")
 
-  /** Native ETH uses 18 decimals. */
+  /** Native Ethereum token symbol. */
+  export const EthereumNativeSymbol = "ETH"
+  /** Ethereum liquid-staking token symbol. */
+  export const LiqEthSymbol = "LIQETH"
+  /** Ethereum USDC token symbol. */
+  export const EthereumUsdcSymbol = "USDC"
+  /** Ethereum USDT token symbol. */
+  export const EthereumUsdtSymbol = "USDT"
+  /** Native Solana token symbol. */
+  export const SolanaNativeSymbol = "SOL"
+  /** Solana liquid-staking token symbol. */
+  export const LiqSolSymbol = "LIQSOL"
+  /** Solana USDC token symbol. */
+  export const SolanaUsdcSymbol = "USDCSOL"
+  /** Solana USDT token symbol. */
+  export const SolanaUsdtSymbol = "USDTSOL"
+  /** Depot-native token symbol. */
+  export const WireSymbol = "WIRE"
+
+  /** Native ETH / LIQETH precision. */
   export const EthereumDecimals = 18
-  /** Native SOL and WIRE use the depot's 9-decimal frame. */
+  /** Native SOL / LIQSOL / WIRE precision. */
   export const DepotDecimals = 9
-  /** 0.1 ETH, expressed as wei. */
-  export const SourceEthereumWei = 100_000_000_000_000_000n
-  /** 0.1 SOL, expressed as lamports. */
-  export const SourceSolanaLamports = 100_000_000n
-  /** 0.1 WIRE, expressed in base units. */
-  export const SourceWireUnits = 100_000_000n
+  /** Mock stablecoin precision on both outposts. */
+  export const StableDecimals = 6
+  /** 0.1 token for 18-decimal Ethereum assets. */
+  export const SourceEthereumUnits = 100_000_000_000_000_000n
+  /** 0.1 token for 9-decimal Solana and WIRE assets. */
+  export const SourceDepotUnits = 100_000_000n
+  /** 0.1 token for 6-decimal stablecoins. */
+  export const SourceStableUnits = 100_000n
   /** User-supplied variance tolerance for every route. */
   export const ToleranceBps = 500
-  /** Collateral minimum matched by the existing default underwriter bond plan. */
+  /** Native-leg minimum mirrored into the operator eligibility config. */
   export const UnderwriterMinimumBond = 1_000_000_000
+  /** Per-token collateral covering all persistent locks in the 72-route run. */
+  export const UnderwriterCollateralAmount = 15_000_000_000n
 
   /** Shared WIRE endpoint account used as recipient and funded depositor. */
   export const WireUserAccount = "swapmatrix"
-  /** Enough WIRE for both from-WIRE source routes plus rerun headroom. */
-  export const WireUserFunding = 1_000_000_000n
+  /** Enough WIRE for every from-WIRE route plus rerun headroom. */
+  export const WireUserFunding = 2_000_000_000n
+  /** Source-token funding multiplier over one route amount. */
+  export const UserFundingMultiple = 12n
+  /** LIQETH liquidity floor matching the configured logical reserve. */
+  export const LiqEthReserveFunding = 10_000_000_000_000_000_000n
   /** Ethereum outpost address/ABI artifact key. */
   export const ReserveManagerContractName = "ReserveManager"
-  /** Maximum operator rows inspected by the ACTIVE prerequisite. */
+  /** Ethereum liqETH deposit contract artifact key. */
+  export const DepositManagerContractName = "DepositManager"
+  /** Maximum operator rows inspected by the collateral prerequisite. */
   export const OperatorTableRowLimit = 100
   /** No pre-existing UWREQ id for a route. */
   export const NoUwreqBaselineId = -1n
+  /** EIP-2612 permit validity window. */
+  export const PermitDeadlineWindowSec = 3_600
 
   /** External-to-external routes have a source and destination lock. */
-  export const CrossOutpostLockCount = 2
+  export const ExternalLockCount = 2
   /** Routes with WIRE as one endpoint have only the outpost-side lock. */
   export const WireEndpointLockCount = 1
 
-  /** ETH → SOL and SOL → ETH. */
-  export const CrossOutpostRoutes: readonly SwapRoute[] = [
+  /** Configured Ethereum reserve tokens. */
+  export const EthereumTokens: readonly SwapRouteToken[] = [
+    token(
+      "ethereum-eth",
+      EthereumNativeSymbol,
+      SwapRouteEndpoint.Ethereum,
+      EthereumChainCode,
+      EthereumDecimals,
+      SourceEthereumUnits,
+      SwapRouteSourceKind.Native
+    ),
+    token(
+      "ethereum-liqeth",
+      LiqEthSymbol,
+      SwapRouteEndpoint.Ethereum,
+      EthereumChainCode,
+      EthereumDecimals,
+      SourceEthereumUnits,
+      SwapRouteSourceKind.Erc20Approval
+    ),
+    token(
+      "ethereum-usdc",
+      EthereumUsdcSymbol,
+      SwapRouteEndpoint.Ethereum,
+      EthereumChainCode,
+      StableDecimals,
+      SourceStableUnits,
+      SwapRouteSourceKind.Erc20Permit
+    ),
+    token(
+      "ethereum-usdt",
+      EthereumUsdtSymbol,
+      SwapRouteEndpoint.Ethereum,
+      EthereumChainCode,
+      StableDecimals,
+      SourceStableUnits,
+      SwapRouteSourceKind.Erc20Approval
+    )
+  ]
+
+  /** Configured Solana reserve tokens. */
+  export const SolanaTokens: readonly SwapRouteToken[] = [
+    token(
+      "solana-sol",
+      SolanaNativeSymbol,
+      SwapRouteEndpoint.Solana,
+      SolanaChainCode,
+      DepotDecimals,
+      SourceDepotUnits,
+      SwapRouteSourceKind.Native
+    ),
+    token(
+      "solana-liqsol",
+      LiqSolSymbol,
+      SwapRouteEndpoint.Solana,
+      SolanaChainCode,
+      DepotDecimals,
+      SourceDepotUnits,
+      SwapRouteSourceKind.Spl
+    ),
+    token(
+      "solana-usdc",
+      SolanaUsdcSymbol,
+      SwapRouteEndpoint.Solana,
+      SolanaChainCode,
+      StableDecimals,
+      SourceStableUnits,
+      SwapRouteSourceKind.Spl
+    ),
+    token(
+      "solana-usdt",
+      SolanaUsdtSymbol,
+      SwapRouteEndpoint.Solana,
+      SolanaChainCode,
+      StableDecimals,
+      SourceStableUnits,
+      SwapRouteSourceKind.Spl
+    )
+  ]
+
+  /** Configured depot-native WIRE token. */
+  export const WireToken: SwapRouteToken = token(
+    "wire-wire",
+    WireSymbol,
+    SwapRouteEndpoint.Wire,
+    WireChainCode,
+    DepotDecimals,
+    SourceDepotUnits,
+    SwapRouteSourceKind.Wire
+  )
+
+  /** Every configured external reserve token. */
+  export const ExternalTokens: readonly SwapRouteToken[] = [
+    ...EthereumTokens,
+    ...SolanaTokens
+  ]
+
+  /** Every meaningful exact token route, grouped for report reuse. */
+  export const RouteFamilies: readonly SwapRouteFamily[] = [
     {
-      id: "ethereum-to-solana",
-      label: "ETH → SOL",
-      source: SwapRouteEndpoint.Ethereum,
-      destination: SwapRouteEndpoint.Solana,
-      sourceAmount: SourceEthereumWei,
-      sourceDecimals: EthereumDecimals,
-      destinationDecimals: DepotDecimals,
-      expectedLockCount: CrossOutpostLockCount
+      name: "CrossOutpostRoutes",
+      description: "Every Ethereum ↔ Solana token pair",
+      directions: [
+        direction(
+          "EthereumToSolana",
+          "Every configured Ethereum token → every configured Solana token",
+          EthereumTokens,
+          SolanaTokens
+        ),
+        direction(
+          "SolanaToEthereum",
+          "Every configured Solana token → every configured Ethereum token",
+          SolanaTokens,
+          EthereumTokens
+        )
+      ]
     },
     {
-      id: "solana-to-ethereum",
-      label: "SOL → ETH",
-      source: SwapRouteEndpoint.Solana,
-      destination: SwapRouteEndpoint.Ethereum,
-      sourceAmount: SourceSolanaLamports,
-      sourceDecimals: DepotDecimals,
-      destinationDecimals: EthereumDecimals,
-      expectedLockCount: CrossOutpostLockCount
+      name: "SameOutpostRoutes",
+      description: "Every distinct token pair on the same outpost",
+      directions: [
+        sameEndpointDirection(
+          "EthereumToEthereum",
+          "Every distinct configured Ethereum token pair",
+          EthereumTokens
+        ),
+        sameEndpointDirection(
+          "SolanaToSolana",
+          "Every distinct configured Solana token pair",
+          SolanaTokens
+        )
+      ]
+    },
+    {
+      name: "ExternalToWireRoutes",
+      description: "Every configured external token paid directly in WIRE",
+      directions: [
+        direction(
+          "EthereumToWire",
+          "Every configured Ethereum token → WIRE",
+          EthereumTokens,
+          [WireToken]
+        ),
+        direction(
+          "SolanaToWire",
+          "Every configured Solana token → WIRE",
+          SolanaTokens,
+          [WireToken]
+        )
+      ]
+    },
+    {
+      name: "WireToExternalRoutes",
+      description: "WIRE paid into every configured external token",
+      directions: [
+        direction(
+          "WireToEthereum",
+          "WIRE → every configured Ethereum token",
+          [WireToken],
+          EthereumTokens
+        ),
+        direction(
+          "WireToSolana",
+          "WIRE → every configured Solana token",
+          [WireToken],
+          SolanaTokens
+        )
+      ]
     }
   ]
 
-  /** ETH → WIRE and SOL → WIRE. */
-  export const ExternalToWireRoutes: readonly SwapRoute[] = [
-    {
-      id: "ethereum-to-wire",
-      label: "ETH → WIRE",
-      source: SwapRouteEndpoint.Ethereum,
-      destination: SwapRouteEndpoint.Wire,
-      sourceAmount: SourceEthereumWei,
-      sourceDecimals: EthereumDecimals,
-      destinationDecimals: DepotDecimals,
-      expectedLockCount: WireEndpointLockCount
-    },
-    {
-      id: "solana-to-wire",
-      label: "SOL → WIRE",
-      source: SwapRouteEndpoint.Solana,
-      destination: SwapRouteEndpoint.Wire,
-      sourceAmount: SourceSolanaLamports,
-      sourceDecimals: DepotDecimals,
-      destinationDecimals: DepotDecimals,
-      expectedLockCount: WireEndpointLockCount
-    }
-  ]
+  /** Flat exact-route catalog used by validation and report totals. */
+  export const AllRoutes: readonly SwapRoute[] = RouteFamilies.flatMap(family =>
+    family.directions.flatMap(routeDirection => routeDirection.routes)
+  )
+  /** Expected exhaustive route count: 32 cross + 24 same-outpost + 16 WIRE. */
+  export const ConfiguredRouteCount = 72
+}
 
-  /** WIRE → ETH and WIRE → SOL. */
-  export const WireToExternalRoutes: readonly SwapRoute[] = [
-    {
-      id: "wire-to-ethereum",
-      label: "WIRE → ETH",
-      source: SwapRouteEndpoint.Wire,
-      destination: SwapRouteEndpoint.Ethereum,
-      sourceAmount: SourceWireUnits,
-      sourceDecimals: DepotDecimals,
-      destinationDecimals: EthereumDecimals,
-      expectedLockCount: WireEndpointLockCount
-    },
-    {
-      id: "wire-to-solana",
-      label: "WIRE → SOL",
-      source: SwapRouteEndpoint.Wire,
-      destination: SwapRouteEndpoint.Solana,
-      sourceAmount: SourceWireUnits,
-      sourceDecimals: DepotDecimals,
-      destinationDecimals: DepotDecimals,
-      expectedLockCount: WireEndpointLockCount
-    }
-  ]
+/** Create one configured token descriptor. */
+function token(
+  id: string,
+  symbol: string,
+  endpoint: SwapRouteEndpoint,
+  chainCode: number,
+  decimals: number,
+  sourceAmount: bigint,
+  sourceKind: SwapRouteSourceKind
+): SwapRouteToken {
+  return {
+    id,
+    symbol,
+    endpoint,
+    chainCode,
+    tokenCode: SlugName.from(symbol),
+    decimals,
+    sourceAmount,
+    sourceKind
+  }
+}
+
+/** Generate every ordered source/destination token pair for one direction. */
+function direction(
+  name: string,
+  description: string,
+  sources: readonly SwapRouteToken[],
+  destinations: readonly SwapRouteToken[]
+): SwapRouteDirection {
+  return {
+    name,
+    description,
+    routes: sources.flatMap(source =>
+      destinations.map(destination => route(source, destination))
+    )
+  }
+}
+
+/** Generate every meaningful ordered pair on one outpost, excluding self. */
+function sameEndpointDirection(
+  name: string,
+  description: string,
+  tokens: readonly SwapRouteToken[]
+): SwapRouteDirection {
+  return {
+    name,
+    description,
+    routes: tokens.flatMap(source =>
+      tokens
+        .filter(destination => destination.id !== source.id)
+        .map(destination => route(source, destination))
+    )
+  }
+}
+
+/** Create one exact directional route. */
+function route(source: SwapRouteToken, destination: SwapRouteToken): SwapRoute {
+  return {
+    id: `${source.id}-to-${destination.id}`,
+    label: `${source.symbol} (${source.endpoint}) → ${destination.symbol} (${destination.endpoint})`,
+    source,
+    destination,
+    expectedLockCount:
+      source.endpoint === SwapRouteEndpoint.Wire ||
+      destination.endpoint === SwapRouteEndpoint.Wire
+        ? SwapRouteMatrixScenarioConstants.WireEndpointLockCount
+        : SwapRouteMatrixScenarioConstants.ExternalLockCount
+  }
 }

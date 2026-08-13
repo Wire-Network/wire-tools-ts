@@ -60,7 +60,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
 | `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize) |
-| `flow-*` (15 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and the native/non-native swap variants |
+| `flow-*` (15 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and swap variants including the reusable 72-route configured-token matrix |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
 
@@ -346,6 +346,11 @@ link automatically on `pnpm install` when the siblings exist.
 | `WIRE_ETH_DEPLOYMENTS_PATH` | Per-cluster hardhat deployments dir (parallel-run isolation) |
 | `WIRE_BIND_REGISTRY_PATH` | Bind-registry dir override (tests sandbox it) |
 | `LOG_LEVEL` | Logging verbosity (default `info`) |
+
+The swap-route matrix exports planners at matrix, family, direction, and exact
+route scope. Compose those planners into broader `FlowScenario` trees instead
+of duplicating route runners; keep exact routes serial while they share one set
+of user identities.
 
 ## How future sessions should design and produce code here
 

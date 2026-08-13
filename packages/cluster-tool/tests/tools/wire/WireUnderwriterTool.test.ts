@@ -23,6 +23,7 @@ const SolChain = SlugName.from("SOLANA")
 const EthToken = SlugName.from("ETH")
 const SolToken = SlugName.from("SOL")
 const UsdcToken = SlugName.from("USDC")
+const LiqEthToken = SlugName.from("LIQETH")
 
 /** A fresh build root (a `ClusterBuildParent`) for the deposit factory to register on. */
 function newBuild(): ClusterBuild {
@@ -262,6 +263,22 @@ describe("WireUnderwriterTool", () => {
         "EthereumFundingTool.MintErc20Input",
         "EthereumCollateralTool.ApproveErc20Input",
         "EthereumCollateralTool.DepositNonNativeInput"
+      ])
+    })
+
+    it("uses DepositManager funding and the dedicated LIQ deposit path", () => {
+      const group = WireUnderwriterTool.planCollateralDeposit(
+        newBuild(),
+        "uw-collateral",
+        "d",
+        {},
+        ["uwe"],
+        [[entry(EthChain, LiqEthToken, WireUnderwriterTool.DefaultAmount)]]
+      )
+      expect(stepKinds(group, 0)).toEqual([
+        "EthereumFundingTool.FundLiqEthInput",
+        "EthereumCollateralTool.ApproveErc20Input",
+        "EthereumCollateralTool.DepositInput"
       ])
     })
 

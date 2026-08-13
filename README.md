@@ -127,7 +127,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `cluster-tool` | `@wireio/cluster-tool` | Core harness: process managers, chain clients, bootstrap, **`wire-cluster-tool` CLI** |
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Node-operator collateral deposit + withdraw remit |
 | `flow-swap-with-underwriting` | `@wireio/test-flow-swap-with-underwriting` | Bidirectional SWAP (ETH ↔ SOL) with underwriting |
-| `flow-swap-route-matrix` | `@wireio/test-flow-swap-route-matrix` | Collect-all native route matrix (ETH ↔ SOL, ETH/SOL → WIRE, WIRE → ETH/SOL) |
+| `flow-swap-route-matrix` | `@wireio/test-flow-swap-route-matrix` | Collect-all 72-route matrix across all configured public ETH/SOL/LIQ/stable/WIRE tokens |
 | `flow-swap-non-native-tokens` | `@wireio/test-flow-swap-non-native-tokens` | SWAP of non-native tokens (USDC / USDT / LIQ) |
 | `flow-swap-variance-revert` | `@wireio/test-flow-swap-variance-revert` | Swap variance-tolerance revert |
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
@@ -176,7 +176,7 @@ and every live run is paired with the heartbeat monitor (see
 # Regex — 1 match runs it, multiple matches drop into a scoped picker:
 ./scripts/run-flow.mjs swap --wire-build-path … --ethereum-path … --solana-path …
 
-# Stop the swap matrix after its first failed route instead of collecting all six:
+# Stop the swap matrix after its first failed exact route instead of collecting all 72:
 WIRE_FLOW_FAILURE_MODE=fail-fast ./scripts/run-flow.mjs flow-swap-route-matrix \
   --wire-build-path … --ethereum-path … --solana-path …
 ```
