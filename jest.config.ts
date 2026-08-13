@@ -26,7 +26,6 @@ const config: Config = {
     "packages/cluster-tool-shared",
     "packages/cluster-tool",
     "packages/flow-batch-operator-slashing",
-    "packages/flow-with-bootstrap-data",
     "packages/debugging-shared",
     "packages/debugging-server",
     "packages/debugging-client-shared",

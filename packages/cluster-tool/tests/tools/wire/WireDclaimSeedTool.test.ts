@@ -277,6 +277,27 @@ describe("WireDclaimSeedTool", () => {
       )
     })
 
+    it("reports the absolute file, row, and field for an oversized converted balance", async () => {
+      const file = write("oversized.json", {
+        purchasers: [
+          {
+            address: `0x${"12".repeat(20)}`,
+            totalPretokens: (((1n << 62n) + 1n) * 1_000_000_000n).toString()
+          }
+        ]
+      })
+      await expect(
+        loadIndexBalanceDump(file, ChainKind.EVM)
+      ).rejects.toMatchObject({
+        context: expect.objectContaining({
+          file,
+          chain: ChainKind.EVM,
+          row: 0,
+          field: "purchasers[0].totalPretokens"
+        })
+      })
+    })
+
     it("rejects malformed JSON before conversion", async () => {
       const file = write("bad.json", "{")
       await expect(loadIndexBalanceDump(file, ChainKind.EVM)).rejects.toThrow(
