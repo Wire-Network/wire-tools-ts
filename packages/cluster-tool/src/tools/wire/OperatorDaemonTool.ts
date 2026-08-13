@@ -25,7 +25,9 @@ import { match } from "ts-pattern"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { WireClient } from "../../clients/wire/WireClient.js"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
+import { AnvilEthereumTransactionPolicyConfig } from "../../config/AnvilEthereumTransactionPolicyConfig.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
+import { EthereumClientConfigurationConfig } from "../../config/EthereumClientConfigurationConfig.js"
 import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { NodeopProcess } from "../../cluster/processes/NodeopProcess.js"
@@ -42,8 +44,6 @@ import {
 } from "../../orchestration/outputs/OperatorDaemonArtifacts.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
-import { AnvilEthereumTransactionPolicy } from "../ethereum/AnvilEthereumTransactionPolicy.js"
-import { EthereumClientConfiguration } from "../ethereum/EthereumClientConfiguration.js"
 import { SolanaOutpostProgramTool } from "../solana/SolanaOutpostProgramTool.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { scaleTimeoutMs } from "../../utils/asyncUtils.js"
@@ -297,16 +297,20 @@ export namespace OperatorDaemonTool {
         EthereumClientConfigurationFilename
       ),
       network = networkFromConfig(ctx.config),
-      ethereumClientConfiguration = EthereumClientConfiguration.create({
-        clientId: EthereumClientId,
-        signatureProviderId: EthereumSignatureProviderId,
-        rpcUrl: network.ethereumRpcUrl,
-        chainId: network.ethereumChainId,
-        transactionPolicy: AnvilEthereumTransactionPolicy.create()
-      })
+      ethereumClientConfiguration = EthereumClientConfigurationConfig.create(
+        EthereumClientId,
+        EthereumSignatureProviderId,
+        network.ethereumRpcUrl,
+        network.ethereumChainId,
+        AnvilEthereumTransactionPolicyConfig.create()
+      )
     Fs.writeFileSync(
       ethereumClientConfigurationFile,
-      JSON.stringify(ethereumClientConfiguration, null, 2)
+      JSON.stringify(
+        EthereumClientConfigurationConfig.toJson(ethereumClientConfiguration),
+        null,
+        2
+      )
     )
 
     ctx.outputs.set(OperatorDaemonArtifactsKey, {

@@ -1,16 +1,11 @@
 import Assert from "node:assert"
-
 import {
-  EthereumClientConfiguration,
+  EthereumClientConfigurationConfig,
   type EthereumTransactionPolicy
-} from "./EthereumClientConfiguration.js"
+} from "./EthereumClientConfigurationConfig.js"
 
-/**
- * Finite SEC-131 transaction limits for Anvil-backed operator daemons.
- * These limits are for local development and test clusters only; they are not
- * production policy recommendations.
- */
-export namespace AnvilEthereumTransactionPolicy {
+/** Finite SEC-131 transaction limits for Anvil-backed operator daemons. */
+export namespace AnvilEthereumTransactionPolicyConfig {
   /** Maximum EIP-1559 priority fee per gas in wei: 2 gwei. */
   export const MaximumPriorityFeePerGasWei = "2000000000"
   /** Maximum EIP-1559 fee per gas in wei: 100 gwei. */
@@ -21,9 +16,11 @@ export namespace AnvilEthereumTransactionPolicy {
   export const MaximumTotalNativeCostWei = "700000000000000000"
 
   /**
-   * Create the finite policy embedded in each local Anvil Ethereum client.
+   * Create the finite policy embedded in each local Anvil client.
+   * These limits are for local development and test clusters only; they are not
+   * production policy recommendations.
    *
-   * @returns A validated finite policy using canonical unsigned-decimal fields.
+   * @returns A validated policy using SEC-131's protobuf field spelling.
    */
   export function create(): EthereumTransactionPolicy {
     const policy: EthereumTransactionPolicy = {
@@ -32,7 +29,7 @@ export namespace AnvilEthereumTransactionPolicy {
       max_gas_limit: MaximumGasLimit,
       max_total_native_cost_wei: MaximumTotalNativeCostWei
     }
-    EthereumClientConfiguration.assertTransactionPolicy(policy)
+    EthereumClientConfigurationConfig.assertTransactionPolicy(policy)
     Assert.ok(
       BigInt(policy.max_total_native_cost_wei) >=
         BigInt(policy.max_gas_limit) * BigInt(policy.max_fee_per_gas_wei),

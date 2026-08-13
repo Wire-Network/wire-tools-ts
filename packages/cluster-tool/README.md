@@ -289,7 +289,7 @@ artifact on create, run, restart, and flow-provisioned starts.
 
 Local Anvil clusters embed the following finite `transaction_policy` in every
 generated Ethereum client. The values live in
-`AnvilEthereumTransactionPolicy`; they are not production recommendations.
+`AnvilEthereumTransactionPolicyConfig`; they are not production recommendations.
 
 | Limit | Anvil value |
 |---|---:|

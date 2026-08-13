@@ -9,8 +9,8 @@ import { Report } from "../../report/Report.js"
 import { getLogger } from "../../logging/Logger.js"
 import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
+import { EthereumClientConfigurationConfig } from "../../config/EthereumClientConfigurationConfig.js"
 import { NodeopProcess } from "../../cluster/processes/NodeopProcess.js"
-import { EthereumClientConfiguration } from "../../tools/ethereum/EthereumClientConfiguration.js"
 import { OperatorDaemonTool } from "../../tools/wire/OperatorDaemonTool.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import {
@@ -260,15 +260,19 @@ export namespace ExternalOutpostSteps {
         OperatorDaemonTool.EthereumClientConfigurationFilename
       ),
       network = OperatorDaemonTool.networkFromConfig(ctx.config),
-      ethereumClientConfiguration = EthereumClientConfiguration.create({
-        clientId: OperatorDaemonTool.EthereumClientId,
-        signatureProviderId: OperatorDaemonTool.EthereumSignatureProviderId,
-        rpcUrl: network.ethereumRpcUrl,
-        chainId: network.ethereumChainId
-      })
+      ethereumClientConfiguration = EthereumClientConfigurationConfig.create(
+        OperatorDaemonTool.EthereumClientId,
+        OperatorDaemonTool.EthereumSignatureProviderId,
+        network.ethereumRpcUrl,
+        network.ethereumChainId
+      )
     Fs.writeFileSync(
       ethereumClientConfigurationFile,
-      JSON.stringify(ethereumClientConfiguration, null, 2)
+      JSON.stringify(
+        EthereumClientConfigurationConfig.toJson(ethereumClientConfiguration),
+        null,
+        2
+      )
     )
 
     ctx.outputs.set(OperatorDaemonArtifactsKey, {

@@ -9,10 +9,12 @@ import {
   NodeopProcess,
   ProcessManager
 } from "@wireio/cluster-tool/cluster/processes"
-import { AnvilEthereumTransactionPolicy } from "@wireio/cluster-tool/tools/ethereum"
 import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
-import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
+import {
+  AnvilEthereumTransactionPolicyConfig,
+  ClusterConfigProvider
+} from "@wireio/cluster-tool/config"
 import {
   AWSAccountName,
   SignatureProviderType
@@ -472,7 +474,7 @@ describe("OperatorDaemonTool", () => {
                 .ethereumRpcUrl
             },
             chain_id: 31_337,
-            transaction_policy: AnvilEthereumTransactionPolicy.create()
+            transaction_policy: AnvilEthereumTransactionPolicyConfig.create()
           }
         ]
       })
