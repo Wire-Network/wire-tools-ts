@@ -137,16 +137,34 @@ function assertNonceSigner(source: NonceSource): ethers.Signer {
  * same signer — the cached counter is only valid if every submission
  * actually lands on-chain.
  *
+ * `count` reserves a CONTIGUOUS BLOCK: the return is the block's FIRST nonce
+ * and the counter advances by `count`, so a caller submitting a burst on
+ * `first … first + count - 1` leaves the counter correct for whoever comes
+ * next. Reserving the default `1` and then submitting more than one
+ * transaction hands the same nonces out twice, and every later submission
+ * from that signer fails `nonce has already been used` — a burst is the
+ * whole reason this parameter exists.
+ *
  * If a submission fails for a reason other than NONCE_EXPIRED (e.g. a
  * revert), the caller should call {@link clearNonceCache} so the next
  * `resolveLatestNonce` re-seeds from the chain.
  *
  * @param source Contract bound to a Signer, or the Signer itself; either way
  *               it must resolve to a Signer with a Provider.
- * @return The next nonce to submit.
- * @throws If the source resolves to no Signer, or that Signer has no Provider.
+ * @param count How many contiguous nonces to reserve. Defaults to 1 (a single
+ *              transaction); pass the burst size when submitting a batch.
+ * @return The first nonce of the reserved block.
+ * @throws If the source resolves to no Signer, that Signer has no Provider, or
+ *         `count` is not a positive integer.
  */
-export async function resolveLatestNonce(source: NonceSource): Promise<number> {
+export async function resolveLatestNonce(
+  source: NonceSource,
+  count = 1
+): Promise<number> {
+  Assert.ok(
+    Number.isInteger(count) && count > 0,
+    `nonce count must be a positive integer, got ${count}`
+  )
   const signer = assertNonceSigner(source)
   const provider = signer.provider
   const fromAddr = (await signer.getAddress()).toLowerCase()
@@ -158,7 +176,7 @@ export async function resolveLatestNonce(source: NonceSource): Promise<number> {
     provider.getTransactionCount(fromAddr, "latest")
   nonceCounters.set(
     fromAddr,
-    nonce.then(value => value + 1)
+    nonce.then(value => value + count)
   )
   // A failed SEED must not poison every later caller with the same rejection:
   // drop the chain so the next call re-seeds from the chain itself. The

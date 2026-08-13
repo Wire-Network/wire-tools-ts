@@ -303,7 +303,15 @@ export namespace SwapStressSaturationScenarioRungSteps {
     state.phase1.payoutRequest = payoutRequest
     await services.recipientPayoutObserver.preparePayouts?.(payoutRequest)
     const requests = buildPhase1Requests(services.route, identities, targets),
-      firstNonce = await resolveLatestNonce(services.ethereumReserveManager)
+      // Reserve the WHOLE block: the burst submits one transaction per request
+      // on `firstNonce … firstNonce + requests.length - 1`, so the shared
+      // counter must advance by that many. Reserving a single nonce leaves it
+      // pointing inside the block this burst is about to spend, and the next
+      // rung re-issues nonces already used here.
+      firstNonce = await resolveLatestNonce(
+        services.ethereumReserveManager,
+        requests.length
+      )
     state.phase1.burst = await runEthereumSwapBurst({
       reserveManager: services.ethereumReserveManager,
       requests,
