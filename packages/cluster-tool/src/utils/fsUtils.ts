@@ -14,11 +14,18 @@ const log = getLogger(__filename)
  * wedge the resource. `realpath: false` lets the lock target not pre-exist.
  *
  * Changing these tunes how long a contending process blocks before giving up
- * (retries) and how long a dead holder's lock survives (stale).
+ * (retries) and how long a dead holder's lock survives (stale). The ~25s
+ * cumulative retry budget (`retries: 8`) is sized for the WORST short-section
+ * holder under contention: a solana dynamic-range pick TCP+UDP-probes a
+ * 64-port window while holding the port lock (seconds on a loaded host), and
+ * the full jest run puts all 8 projects' port-resolving tests behind the SAME
+ * host-global lock — the previous ~6s budget failed a rotating victim test
+ * with `Lock file is already being held` (e2e gate run 30399635199 + local
+ * pre-commit runs).
  */
 const FileLockOptions: LockOptions = {
   realpath: false,
-  retries: { retries: 5, factor: 2, minTimeout: 100 },
+  retries: { retries: 8, factor: 2, minTimeout: 100 },
   stale: 10_000
 }
 
@@ -57,7 +64,7 @@ export function mkdirs(path: string): string {
  * @param command - Executable name to resolve (e.g. `"anvil"`).
  * @returns The resolved absolute path, or `null` if not on `PATH`.
  */
-export async function which(command: string): Promise<string | null> {
+export async function which(command: string): Promise<string> {
   return (await zxWhich(command, { nothrow: true })) ?? null
 }
 
@@ -141,25 +148,3 @@ export const LongFileLockOptions: LockOptions = {
   stale: 10_000
 }
 
-/**
- * proper-lockfile options for the bind-registry PORT lock: a SHORT critical
- * section (port probing, well under a second) with MANY simultaneous
- * contenders — every jest worker across all projects, plus every concurrent
- * cluster on the host.
- *
- * The default's ~3.1s exponential budget is the wrong shape here. It is not
- * exhausted by a slow holder but by DEPTH OF QUEUE: ~16 workers × a couple
- * hundred milliseconds each already reaches it, so the suite failed with
- * "Lock file is already being held" roughly 1 run in 12 — in whichever
- * unlucky suite happened to ask last, which made it read as unrelated
- * flakiness in random tests.
- *
- * Fixed short intervals with a deep retry count wait out the queue instead.
- * The ~15s ceiling is never approached in practice (each holder releases in
- * milliseconds); it exists so a contender QUEUES rather than fails.
- */
-export const PortFileLockOptions: LockOptions = {
-  realpath: false,
-  retries: { retries: 60, factor: 1, minTimeout: 250, maxTimeout: 250 },
-  stale: 10_000
-}

@@ -15,6 +15,7 @@ import {
   confirmSignature,
   resolveLatestNonce,
   swapUserOutputKey,
+  type AnchorEnumVariant,
   type ClusterBuildContext,
   type ClusterBuildStepOptions,
   type StepInput
@@ -312,6 +313,16 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
   }
 
   /**
+   * The `opp-outpost` Reserve PDA fields this flow reads. Anchor's IDL-generic
+   * `AccountClient` hands back an untyped record, so only the anchor-encoded
+   * `status` variant tag is modeled.
+   */
+  interface SolanaReserveAccountView {
+    /** Anchor variant tag for the PDA's `ReserveStatus` (e.g. `{ active: {} }`). */
+    status?: AnchorEnumVariant
+  }
+
+  /**
    * True once the SOL outpost's PRIVATE Reserve PDA reports `Active` (a read).
    * Required before Phase B — `request_swap_spl` constraint-gates on the local
    * status, so the RESERVE_READY round-trip must have landed.
@@ -335,7 +346,7 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
     const account = await (
       program.account as Record<string, anchor.AccountClient<anchor.Idl>>
     ).reserve.fetch(reservePda)
-    const status = (account as { status?: unknown }).status
+    const status = (account as SolanaReserveAccountView).status
     return typeof status === "object" && status !== null && "active" in status
   }
 

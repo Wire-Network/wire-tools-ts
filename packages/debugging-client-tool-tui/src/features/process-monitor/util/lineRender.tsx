@@ -18,6 +18,19 @@ export namespace LineRender {
    * visual row and be overdrawn by the next list item.
    */
   export const TruncateMode = "truncate-end" as const
+
+  /**
+   * Cumulative render state threaded through a segment reduction — the number
+   * of source characters consumed so far plus the nodes rendered from them.
+   * Shared by the highlight fold here and the column fold in
+   * `LogViewerJSONLine`.
+   */
+  export interface SegmentFold {
+    /** Source-string offset already rendered. */
+    cursor: number
+    /** Nodes emitted so far, in render order. */
+    nodes: React.ReactNode[]
+  }
 }
 
 /**
@@ -43,7 +56,7 @@ function escapeRegex(literal: string): string {
  *
  * Empty / single-`/` / `//` / unclosed-regex inputs all resolve to `null`.
  */
-export function compileSearchRegex(query: string): RegExp | null {
+export function compileSearchRegex(query: string): RegExp {
   if (query.length === 0) return null
   const isRegex =
       query.length >= 2 &&
@@ -56,12 +69,6 @@ export function compileSearchRegex(query: string): RegExp | null {
   } catch {
     return null
   }
-}
-
-/** Cumulative render state threaded through the matchAll reduction. */
-interface HighlightSegments {
-  cursor: number
-  nodes: React.ReactNode[]
 }
 
 /**
@@ -87,22 +94,25 @@ export function renderWithHighlight(
   if (!regex) return <Text>{text}</Text>
   const matches = [...text.matchAll(regex)]
   if (matches.length === 0) return <Text>{text}</Text>
-  const initial: HighlightSegments = { cursor: 0, nodes: [] },
-    segments = matches.reduce<HighlightSegments>(({ cursor, nodes }, m, i) => {
-      const { index: idx = cursor } = m,
-        matched = m[0],
-        next = idx + matched.length,
-        leading =
-          idx > cursor
-            ? [<Text key={`pre-${i}`}>{text.slice(cursor, idx)}</Text>]
-            : [],
-        hit = (
-          <Text key={`hit-${i}`} inverse>
-            {matched}
-          </Text>
-        )
-      return { cursor: next, nodes: [...nodes, ...leading, hit] }
-    }, initial),
+  const initial: LineRender.SegmentFold = { cursor: 0, nodes: [] },
+    segments = matches.reduce<LineRender.SegmentFold>(
+      ({ cursor, nodes }, m, i) => {
+        const { index: idx = cursor } = m,
+          matched = m[0],
+          next = idx + matched.length,
+          leading =
+            idx > cursor
+              ? [<Text key={`pre-${i}`}>{text.slice(cursor, idx)}</Text>]
+              : [],
+          hit = (
+            <Text key={`hit-${i}`} inverse>
+              {matched}
+            </Text>
+          )
+        return { cursor: next, nodes: [...nodes, ...leading, hit] }
+      },
+      initial
+    ),
     tail =
       segments.cursor < text.length
         ? [<Text key="tail">{text.slice(segments.cursor)}</Text>]

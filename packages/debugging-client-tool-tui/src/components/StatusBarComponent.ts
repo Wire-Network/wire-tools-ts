@@ -1,6 +1,7 @@
 import React from "react"
 
-export type StatusBarComponentProps = React.PropsWithChildren<{}>
+/** Props every status-bar widget accepts — children only. */
+export type StatusBarComponentProps = React.PropsWithChildren
 
 /**
  * A small fixed-size element rendered in the status bar.

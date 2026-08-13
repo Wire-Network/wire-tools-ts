@@ -1,8 +1,11 @@
 import { ethers } from "ethers"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import {
+  clearNonceCache,
   contractView,
   ethereumRevertReason,
-  resolveLatestNonce
+  resolveLatestNonce,
+  toURL
 } from "@wireio/cluster-tool/utils"
 
 /** A minimal typed view over one ERC-20 read — what a harness tool declares. */
@@ -39,43 +42,72 @@ describe("resolveLatestNonce", () => {
       /must be bound to a Signer/
     )
   })
-
-  it("throws when count is not a positive integer", async () => {
-    const view = contractView<BalanceReadView>(SomeAddress, BalanceAbi, null)
-    await expect(resolveLatestNonce(view, 0)).rejects.toThrow(
-      /count must be a positive integer/
-    )
-    await expect(resolveLatestNonce(view, 1.5)).rejects.toThrow(
-      /count must be a positive integer/
-    )
-  })
-
-  it("reserves a contiguous block: returns the first nonce and advances by count", async () => {
-    const signer = stubSigner("0x00000000000000000000000000000000000000bb", 7),
-      view = contractView<BalanceReadView>(SomeAddress, BalanceAbi, signer)
-    // First call seeds from the chain and reserves 3 nonces (7, 8, 9).
-    expect(await resolveLatestNonce(view, 3)).toBe(7)
-    // The next reservation starts where the block ended.
-    expect(await resolveLatestNonce(view)).toBe(10)
-    expect(await resolveLatestNonce(view, 2)).toBe(11)
-    expect(await resolveLatestNonce(view)).toBe(13)
-  })
 })
 
-/**
- * Minimal Signer + Provider stub for nonce accounting: the only calls
- * `resolveLatestNonce` makes are `getAddress()` and
- * `provider.getTransactionCount(addr, "latest")`.
- */
-function stubSigner(address: string, chainNonce: number): ethers.Signer {
-  const provider = {
-    getTransactionCount: async () => chainNonce
-  } as unknown as ethers.Provider
-  return {
-    provider,
-    getAddress: async () => address
-  } as unknown as ethers.Signer
-}
+describe("resolveLatestNonce — a Signer source", () => {
+  /** The signer whose counter these cases exercise. */
+  const SignerAddress = "0x00000000000000000000000000000000000000bb"
+  /** What the stubbed chain reports as the account's mined nonce. */
+  const SeedNonce = 42
+
+  let rpcUrl: string, provider: ethers.JsonRpcProvider, signer: ethers.VoidSigner
+
+  beforeAll(async () => {
+    // The URL is a BOUND url — its port comes from the registry, never a
+    // literal, even though nothing here dials it.
+    rpcUrl = toURL(
+      await BindConfigProvider.findAvailable(BindConfigProvider.DefaultAnvil)
+    )
+  })
+
+  beforeEach(() => {
+    provider = new ethers.JsonRpcProvider(rpcUrl)
+    jest.spyOn(provider, "getTransactionCount").mockResolvedValue(SeedNonce)
+    signer = new ethers.VoidSigner(SignerAddress, provider)
+    clearNonceCache(SignerAddress)
+  })
+
+  afterEach(() => {
+    clearNonceCache(SignerAddress)
+    provider.destroy()
+    jest.restoreAllMocks()
+  })
+
+  it("seeds from the chain, then increments in-process", async () => {
+    expect(await resolveLatestNonce(signer)).toBe(SeedNonce)
+    expect(await resolveLatestNonce(signer)).toBe(SeedNonce + 1)
+    expect(await resolveLatestNonce(signer)).toBe(SeedNonce + 2)
+    // Seeded once — every later draw is in-process, not another round-trip.
+    expect(provider.getTransactionCount).toHaveBeenCalledTimes(1)
+  })
+
+  it("never hands the same nonce to concurrent callers", async () => {
+    // The regression this guards: 2026-08-10, nonce 157 went to FOUR parallel
+    // funding sends and three were rejected `nonce has already been used`.
+    const nonces = await Promise.all(
+      Array.from({ length: 22 }, () => resolveLatestNonce(signer))
+    )
+    expect(new Set(nonces).size).toBe(nonces.length)
+    expect([...nonces].sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 22 }, (_, index) => SeedNonce + index)
+    )
+  })
+
+  it("shares ONE counter between a contract and its own signer", async () => {
+    // A contract write and a bare value transfer from the same account must
+    // draw from the same sequence — that is why the signer form exists.
+    const view = contractView<BalanceReadView>(SomeAddress, BalanceAbi, signer)
+    expect(await resolveLatestNonce(view)).toBe(SeedNonce)
+    expect(await resolveLatestNonce(signer)).toBe(SeedNonce + 1)
+    expect(await resolveLatestNonce(view)).toBe(SeedNonce + 2)
+  })
+
+  it("throws when the signer has no Provider", async () => {
+    await expect(
+      resolveLatestNonce(new ethers.VoidSigner(SignerAddress))
+    ).rejects.toThrow(/must have a Provider/)
+  })
+})
 
 describe("ethereumRevertReason", () => {
   it("prefers the decoded require reason over every other field", () => {

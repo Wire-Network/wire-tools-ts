@@ -32,19 +32,16 @@ describe("anvil accepts every gas policy's flags", () => {
   /**
    * One port per policy, claimed UP FRONT.
    *
-   * `findAvailable` takes the host-global bind-registry lock, whose retry
-   * budget is bounded (~3s). Claiming inside each test spread three lock
-   * acquisitions across ~21s of real anvil startup, so under a loaded parallel
-   * run one of them exhausted the budget and the suite failed with "Lock file
-   * is already being held" — roughly 1 run in 25. Claiming all three here
-   * collapses that window to a few consecutive milliseconds.
+   * `findAvailable` takes the host-global bind-registry lock. Claiming inside
+   * each test spread the acquisitions across many seconds of real anvil
+   * startup; claiming here collapses that window to consecutive milliseconds,
+   * so this suite contributes as little lock contention as possible.
    */
   const ports = new Map<EthereumGasPolicy, number>()
 
   beforeAll(async () => {
     for (const policy of [
-      EthereumGasPolicy.chainDefault,
-      EthereumGasPolicy.osaka,
+      EthereumGasPolicy.mainnetParity,
       EthereumGasPolicy.uncapped
     ])
       ports.set(
@@ -117,23 +114,21 @@ describe("anvil accepts every gas policy's flags", () => {
     }
   }
 
-  it("starts under chainDefault with the stock block limit", async () => {
-    expect(await blockGasLimitFor(EthereumGasPolicy.chainDefault)).toBe(
-      30_000_000
+  it("starts under mainnetParity at the sized block limit", async () => {
+    // The EIP-7825 per-tx cap does not appear in the block header, so what is
+    // observable here is the block limit; that anvil ACCEPTS the flag
+    // combination (pinned hardfork + --enable-tx-gas-limit + --gas-limit) is
+    // the other half of the assertion, and a rejected combination exits 2.
+    expect(await blockGasLimitFor(EthereumGasPolicy.mainnetParity)).toBe(
+      AnvilProcess.BlockGasLimit
     )
-  })
-
-  it("starts under osaka", async () => {
-    // The per-tx cap does not change the BLOCK limit, so the stock limit
-    // stands — what matters here is that anvil accepts the flag combination.
-    expect(
-      await blockGasLimitFor(EthereumGasPolicy.osaka)
-    ).toBeGreaterThan(0)
   })
 
   it("starts under uncapped with a block limit above the ETH-241 worst case", async () => {
     const limit = await blockGasLimitFor(EthereumGasPolicy.uncapped)
-    expect(limit).toBe(Number(AnvilProcess.UncappedBlockGasLimit))
+    expect(limit).toBe(AnvilProcess.UncappedBlockGasLimit)
+    // ETH-241 measured ~93.6M for a backlogged outbound envelope; the point of
+    // this regime is to clear that by an order of magnitude.
     expect(limit).toBeGreaterThan(93_600_000)
   })
 })

@@ -31,43 +31,39 @@ const {
 const { Actor } = Report
 const log = getLogger(__filename)
 
-/** An operator's row on `sysio.opreg::operators` by account name (a read). */
+/** An operator's row on `sysio.opreg::operators` by durable `label` handle (a read). */
 async function readUnderwriterRow(
   ctx: ClusterBuildContext,
-  account: string
+  label: string
 ): Promise<SysioContracts.SysioOpregOperatorEntryType> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.opreg)
-    .tables.operators.query({ limit: 100 })
+  const account = ctx.keyStore.assertOperator(label).account,
+    { rows } = await ctx.wire
+      .getSysioContract(SysioContractName.opreg)
+      .tables.operators.query({ limit: 100 })
   return rows.find(row => row.account === account)
 }
 
 /**
  * Full-hop (token → WIRE → token) swap quote over a pre-request book
- * snapshot — a thin composition of {@link WireReserveTool.cpOutput} over the
- * SAME `Books` the four-sided assertion later replays (the flow snapshots the
- * rows once so quote and book math share one baseline, rather than re-reading
- * the table via {@link WireReserveTool.swapquote}). Both hops are fee-less
- * constant products (the fee only appears in the settled books, inside the
- * user's variance tolerance).
+ * snapshot — {@link WireReserveTool.quoteSwap} against the SAME `Books` the
+ * four-sided assertion later replays, so quote and book math share one
+ * baseline rather than re-reading the table via
+ * {@link WireReserveTool.swapquote}.
+ *
+ * The WIRE-leg fee is charged BETWEEN the hops: the source side gives up the
+ * gross intermediate, the destination side receives only the net and pays out
+ * the curve output for that net. Quoting the hops fee-free would overstate the
+ * target by roughly `feeBps` — which a loose variance tolerance would still
+ * admit, so the flow would pass a request the depot settles short of.
  *
  * @param books - The source + destination reserve books (depot 9-decimal frame).
  * @param sourceAmount - Source amount in depot 9-decimal units.
+ * @param feeBps - The live WIRE-leg fee in bps ({@link WireReserveTool.readFeeBps}).
  * @returns The destination amount in depot units, or `0n` when either hop has
  *   no liquidity — the on-chain "no quote available" convention.
  */
-function swapquote(books: Books, sourceAmount: bigint): bigint {
-  const wireIntermediate = WireReserveTool.cpOutput(
-    books.src.chain,
-    books.src.wire,
-    sourceAmount
-  )
-  if (wireIntermediate === 0n) return 0n
-  return WireReserveTool.cpOutput(
-    books.dst.wire,
-    books.dst.chain,
-    wireIntermediate
-  )
+function swapquote(books: Books, sourceAmount: bigint, feeBps: number): bigint {
+  return WireReserveTool.quoteSwap(books.src, books.dst, sourceAmount, feeBps)
 }
 
 /**
@@ -131,10 +127,10 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
 
   plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const config = cluster.context.config,
-      firstUnderwriter = ClusterConstants.underwriterAccountName(0),
-      underwriterAccounts = Array.from(
+      firstUnderwriter = ClusterConstants.underwriterLabel(0),
+      underwriterLabels = Array.from(
         { length: config.underwriterCount },
-        (_, index) => ClusterConstants.underwriterAccountName(index)
+        (_, index) => ClusterConstants.underwriterLabel(index)
       ),
       requestStepOptions = { timeoutMs: Constants.RequestStepTimeoutMs },
       underwriterGateOptions = {
@@ -160,7 +156,7 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
       "UnderwriterCollateral",
       "Bond every underwriter's collateral on the Ethereum + Solana outposts",
       requestStepOptions,
-      underwriterAccounts,
+      underwriterLabels,
       config.underwriterCollateral ??
         WireUnderwriterTool.load(null, config.underwriterCount)
     )
@@ -269,7 +265,8 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
           // outbound scaling.
           const quote = swapquote(
             booksBefore,
-            Constants.SourceEthereumWei / Constants.WeiPerDepotUnit
+            Constants.SourceEthereumWei / Constants.WeiPerDepotUnit,
+            await WireReserveTool.readFeeBps(ctx.wire)
           )
           Assert.ok(quote > 0n, "ETH→SOL swapquote returned no quote")
           ctx.outputs
@@ -364,9 +361,10 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
             targetAmount = ctx.outputs.assert(Constants.PhaseATargetAmountKey),
             sourceAmountDepot =
               Constants.SourceEthereumWei / Constants.WeiPerDepotUnit,
-            wireIntermediate = WireReserveTool.cpOutput(
+            wireIntermediate = WireReserveTool.tokenToWire(
               booksBefore.src.chain,
               booksBefore.src.wire,
+              booksBefore.src.connectorWeightBps,
               sourceAmountDepot
             ),
             phaseAFee = WireReserveTool.splitWireFee(
@@ -402,12 +400,13 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
           Assert.strictEqual(
             dst.chain,
             booksBefore.dst.chain - targetAmount,
-            "destination reserve chain side pays out the target amount"
+            "destination reserve chain side pays out the curve output for the post-fee net"
           )
           // The w hop is internal, but the fee is skimmed inside it — so
-          // Σ reserve_wire_amount across the pair drops by exactly the fee
-          // (the emissions half leaves custody, the rewards half moves to
-          // the bucket).
+          // Σ reserve_wire_amount across the pair drops by exactly the fee.
+          // The fee itself stays in `sysio.reserv` custody, split between the
+          // winning underwriter's `uwfees` accrual and the rewards bucket; it
+          // leaves the reserve ROWS, not the contract's balance.
           Assert.strictEqual(
             src.wire + dst.wire,
             booksBefore.src.wire + booksBefore.dst.wire - phaseAFee.fee,
@@ -426,6 +425,28 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
             locks.length,
             2,
             "exactly two persistent locks back the UWREQ"
+          )
+
+          // The winner is PAID for the assurance: half the WIRE-leg fee accrues
+          // to their `sysio.reserv::uwfees` row at settlement, claimable on
+          // their own schedule via `claimuwfee`. PhaseA is this cluster's FIRST
+          // settled swap, so the whole balance is this swap's share.
+          const { winner } = request
+          Assert.ok(winner, "the confirmed UWREQ must name a winning underwriter")
+          const accrual = await ctx.underwriterFees(winner)
+          Assert.ok(
+            accrual,
+            `the winning underwriter ${winner} must have a uwfees accrual row`
+          )
+          Assert.strictEqual(
+            BigInt(accrual.balance),
+            phaseAFee.underwriterShare,
+            "the winner's unclaimed accrual must equal the underwriter half of the WIRE-leg fee"
+          )
+          Assert.strictEqual(
+            BigInt(accrual.lifetime_claimed),
+            0n,
+            "nothing is claimed until the underwriter calls claimuwfee"
           )
         }
       ),
@@ -497,7 +518,11 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
           // Lamports are already depot 9-decimal units — no inbound scaling.
           // The quote is the depot-frame target riding the OPP envelope; the
           // ETH outpost scales it × 1e9 → wei when settling the SWAP_REMIT.
-          const quote = swapquote(books, Constants.SourceSolanaLamports)
+          const quote = swapquote(
+            books,
+            Constants.SourceSolanaLamports,
+            await WireReserveTool.readFeeBps(ctx.wire)
+          )
           Assert.ok(quote > 0n, "SOL→ETH swapquote returned no quote")
           ctx.outputs
             .set(Constants.PhaseBTargetAmountDepotKey, quote)

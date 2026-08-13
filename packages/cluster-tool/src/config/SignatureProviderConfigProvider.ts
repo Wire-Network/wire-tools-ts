@@ -16,6 +16,7 @@ import type {
   KeyPair,
   WireFinalizerKeyPair
 } from "../types/KeyPair.js"
+import { privateKeyFromNativeString } from "../utils/keyPairUtils.js"
 import { SSMClientProvider } from "./SSMClientProvider.js"
 
 const log = getLogger(__filename)
@@ -72,7 +73,7 @@ export namespace SignatureProviderConfigProvider {
         resolveKIOD(cfg)
       )
       .exhaustive()
-    return resolution as unknown as SignatureProviderResolution<T, K>
+    return resolution as SignatureProviderResolution<T, K>
   }
 
   /** `KEY` — the private key is inline; assemble + verify against the pinned public key. */
@@ -95,23 +96,30 @@ export namespace SignatureProviderConfigProvider {
   /**
    * `SSM` — fetch the private key from AWS SSM once (`GetParameter` +
    * `WithDecryption`), then assemble + verify exactly like `KEY` (full `KEY:`
-   * parity). The secret VALUE is never logged or echoed.
+   * parity). The parameter VALUE is the key's CHAIN-NATIVE string (what the
+   * publish steps put and what nodeop's ssm plugin parses — K1 WIF, EM 0x-hex,
+   * ED base58 of the 64-byte secret, BLS `PVT_BLS_…`); it is normalized to the
+   * WIRE `PVT_…` form at this boundary so the hydrated {@link KeyPair} carries
+   * the house format. The secret VALUE is never logged or echoed.
+   *
+   * The read is REGION-LESS, mirroring the region-less `SSM:<secretId>` spec the
+   * depot plugin resolves: `config.awsRegions` records every region the
+   * parameter was replicated to and is INFORMATIONAL — there is no primary
+   * region to select from it, so the region comes from the AWS environment
+   * chain via {@link SSMClientProvider.AmbientRegion}.
    */
   async function resolveSSM(
     config: SignatureProviderSSMConfig
   ): Promise<
     SignatureProviderSSMConfig & SignatureProviderResolutionKeyPair<KeyType>
   > {
-    const privateKey = await fetchSSMPrivateKey(
-      config.awsRegion,
-      config.awsSecretId
-    )
+    const nativePrivateKey = await fetchSSMPrivateKey(config.awsSecretId)
     return {
       ...config,
       keyPair: assembleAndVerify(
         config.type,
         config.publicKey,
-        privateKey,
+        privateKeyFromNativeString(config.type, nativePrivateKey).toString(),
         config.proofOfPossession ?? null
       )
     }
@@ -130,19 +138,19 @@ export namespace SignatureProviderConfigProvider {
 
   /**
    * Fetch a private key from AWS SSM via {@link SSMClientProvider} — require a
-   * `SecureString`, trim, reject empty. NEVER echoes the value (logs only the
-   * parameter id + region + failure reason).
+   * `SecureString`, trim, reject empty. Region-less (see {@link resolveSSM}).
+   * NEVER echoes the value (logs only the parameter id + failure reason).
    */
-  async function fetchSSMPrivateKey(
-    region: string,
-    secretId: string
-  ): Promise<string> {
+  async function fetchSSMPrivateKey(secretId: string): Promise<string> {
     try {
-      return await SSMClientProvider.getParameter(region, secretId)
+      return await SSMClientProvider.getParameter(
+        SSMClientProvider.AmbientRegion,
+        secretId
+      )
     } catch (error) {
       // NEVER echo the secret value — surface only the parameter id + reason.
       log.error(
-        `SignatureProviderConfigProvider: failed to fetch SSM parameter ${secretId} in ${region}: ${
+        `SignatureProviderConfigProvider: failed to fetch SSM parameter ${secretId}: ${
           error instanceof Error ? error.message : String(error)
         }`
       )
@@ -197,8 +205,14 @@ export namespace SignatureProviderConfigProvider {
 
   /**
    * Verify the pinned `publicKey` matches the key derived from `privateKey`
-   * (K1 / ED / EM). BLS is exempt — there is no TS-side BLS public-key
-   * derivation; its authority is the config-carried proof of possession.
+   * (K1 / ED / EM). BLS is exempt: its authority is the config-carried proof of
+   * possession, which the schema requires on every BLS entry.
+   *
+   * The exemption is a POLICY choice, not a capability gap — TS-side BLS
+   * public-key derivation does exist (`PrivateKey.toPublic()` handles BLS, as
+   * `Constants.DefaultBLSKeyPair` and `keyPairUtils.keyPairFromPrivate` both
+   * rely on). An earlier revision of this comment claimed otherwise; it was
+   * wrong.
    */
   function assertPublicKey(keyPair: KeyPair): void {
     if (keyPair.type === KeyType.BLS) return

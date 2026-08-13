@@ -236,6 +236,57 @@ For interactive work — poking the chains with `clio` or the debugging TUI —
 drive the `wire-cluster-tool` CLI directly (alias: `wtc`). Its commands:
 `create`, `run`, `destroy`, `package`, and `create-external-config`.
 
+### Two ways to start a daemon — and how they relate
+
+After `create`, there are two launchers, and they are not alternatives to pick
+between at random:
+
+| | `wire-cluster-tool run` | a daemon's `start.sh` |
+|---|---|---|
+| Starts | the WHOLE cluster, in dependency order | ONE daemon |
+| Needs | this repo installed + built | only that daemon's binary |
+| Ports/paths | re-read from `cluster-config.json` at launch | frozen from the config at emit time |
+| Registers with the bind registry | yes (`validate` + `registerResolved`) | **no** |
+
+`run` is the local development path. `start.sh` exists for the **published
+artifact**: a consumer who unpacks
+`wire-platform-cluster-external-data-<version>.tgz` has the tree but not this
+repo, and the argv otherwise lives only inside `wire-cluster-tool`.
+
+Every daemon directory gets one — `<cluster>/data/<daemon>/start.sh` — carrying
+the same argv `run` would spawn, with three properties worth knowing:
+
+- **Relocatable.** No build-host path is frozen. `$NODE_DIR` and `$CLUSTER_DIR`
+  derive from the script's own location (override with `WIRE_CLUSTER_DIR`).
+  The wire-sysio install prefix is `WIRE_PREFIX_PATH`, RESOLVED rather than
+  demanded: an explicit `WIRE_PREFIX_PATH` wins, else the parent of a `nodeop`
+  found on `PATH` (so a host with wire-sysio installed needs no configuration at
+  all), else `WIRE_BUILD_PATH` for a tree still pointed at a build dir — and it
+  fails loudly naming all three if none resolves. `WIRE_ETH_PATH` /
+  `WIRE_SOLANA_PATH` are asserted outright where referenced, since nothing on
+  `PATH` can imply them.
+  PATH-resolved binaries indirect through `WIRE_ANVIL_BIN` /
+  `WIRE_SOLANA_TEST_VALIDATOR_BIN` / `WIRE_NODE_BIN`, falling back to
+  `command -v`. The `WIRE_` prefix is deliberate — unprefixed names collide with
+  ambient ones (`NODE_BIN` is set to a bin DIRECTORY by common node version
+  managers, so the fallback is never reached and the script execs a directory).
+- **Run semantics.** Nodes are relaunch-form (no one-shot genesis flags); anvil
+  carries interval mining. Conditions that depended on the build host — anvil's
+  `--load-state`, nodeop's `--trace-no-abis` — render as shell tests the script
+  evaluates itself.
+- **Not bind-registry aware.** The ports were issued by the registry at create
+  time, but a `start.sh`-launched daemon does not re-claim them, so it is
+  invisible to a concurrently-resolving cluster on the same host. Intended for a
+  dedicated deploy host; use `run` when other clusters share the machine.
+
+Invoke as `./start.sh` — the emitted scripts are mode `0755`.
+
+> **Under the default `KEY` signature provider these scripts contain an inline
+> private key** for every producer/operator node, exactly as the daemon's argv
+> does — the script header says so. Published GHA artifacts are unaffected:
+> that workflow is SSM-only and refuses any other provider, so its scripts carry
+> `SSM:<id>` references instead.
+
 ```bash
 wire-cluster-tool create \
   --cluster-path=/tmp/wire-cluster-tool-001 \
@@ -293,7 +344,7 @@ command comes first).
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, `--bind-nodeop-ports-bios-http`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults) |
 | `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file: bootstrap the depot against already-deployed REMOTE ETH+SOL outposts (skips the local anvil/validator + outpost deploys) |
-| `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink log levels |
+| `--logging-levels-console` / `--logging-levels-file` | | `info` / `debug` | per-sink levels for the HARNESS's own logger. `console` additionally sets the level of every **nodeop** logger (`net_plugin_impl`, `producer_plugin`, …): libfc filters at the logger, not the sink, so one level necessarily drives both of nodeop's sinks and the console is the binding one — it is the stream the harness captures. Raising it to `debug` on a large cluster produces GBs of nodeop output per minute; `--logging-levels-file` does NOT bound that, as it never touches nodeop's `logging.json`. |
 | `--logging-file-format` | | `jsonl` | log file format: `text` or `jsonl` |
 | `--report-path` / `--report-basename` | | `<cluster>/reports`, `cluster-build` | Report output location |
 
@@ -305,18 +356,22 @@ command comes first).
 - `KEY` — keys are generated locally and embedded inline in each node's
   `--signature-provider` spec (`KEY:<privateKey>`). The default; byte-identical
   to the historical bootstrap.
-- `SSM` — keys are published to AWS SSM Parameter Store and referenced as
-  `SSM:<region>:<secretId>`. Requires `--signature-provider-ssm` carrying the
-  region + secret-id pattern, either inline JSON (leading `{`) or a file path:
+- `SSM` — keys are published to AWS SSM Parameter Store and referenced by a
+  REGION-LESS `SSM:<secretId>` spec (the depot's ssm plugin resolves the region
+  from the AWS environment chain). Requires `--signature-provider-ssm` carrying
+  the secret-id pattern, either inline JSON (leading `{`) or a file path, plus
+  an `awsClusterNodeConfig` (the AWS account + the regions every secret is
+  replicated to — there is no primary region):
 
   ```bash
   wire-cluster-tool create … --signature-provider-type SSM \
-    --signature-provider-ssm '{"awsRegion":"us-east-1","awsSecretIdPattern":"/wire-sysio/{cluster}/keys/{account}/{keyType}"}'
+    --signature-provider-ssm '{"awsSecretIdPattern":"/wire/{cluster}/{account}/{keyType}"}'
   ```
 
-  Pattern placeholders: `{cluster}` (cluster dir basename), `{account}`,
-  `{keyType}`; an unknown placeholder fails fast. Publishing runs at create
-  time and needs AWS credentials.
+  Pattern placeholders: `{cluster}` (the AWS account — `dev` / `test` / `prod`),
+  `{account}` (the operator's durable handle or a node name), `{keyType}`, and
+  the optional `{version}`; an unknown or unfilled placeholder fails fast.
+  Publishing runs at create time, to EVERY region, and needs AWS credentials.
 - `KIOD` — material-less; the key lives in the local kiod wallet and specs
   render `KIOD:<kiod-url>`.
 
@@ -359,11 +414,19 @@ config; the Solana program id is parsed from the IDL):
 }
 ```
 
+External mode ALSO requires an EXPLICIT `--underwriter-count 0`. The flag
+defaults to `1`, so omitting it asks for one underwriter — and an external
+cluster has no local outpost for an underwriter to bond collateral on, so
+`create` fails fast naming whichever cause applies ("you asked for N" vs "you
+omitted it and got the default").
+
 At `create` the harness verifies the external endpoints are reachable
 (`eth_chainId` matches the configured `chainId`; Solana `getVersion` responds)
-and gates bootstrap success on the depot's head block advancing — NOT on epoch
-distribution (there is no local chain to advance). A remote `anvil`/`solana` bind
-address WITHOUT `--external-outpost-config` fails fast.
+and gates bootstrap success on the depot's head block advancing AND on an
+outbound envelope being queued for every registered outpost — NOT on epoch
+distribution (there is no local chain to advance). A LOCAL cluster instead gates
+on `sysio.epoch::current_epoch_index` passing the bootstrap epoch. A remote
+`anvil`/`solana` bind address WITHOUT `--external-outpost-config` fails fast.
 
 ### Exporting a deployable external config
 
@@ -409,11 +472,12 @@ wire-cluster-tool create \
   --ethereum-path /opt/wire-ethereum \
   --solana-path   /opt/wire-solana \
   --signature-provider-type SSM \
-  --signature-provider-ssm '{"awsRegion":"us-east-1","awsSecretIdPattern":"/wire-sysio/{cluster}/keys/{account}/{keyType}"}'
+  --signature-provider-ssm '{"awsSecretIdPattern":"/wire/{cluster}/{account}/{keyType}"}'
 
-# Each generated key is PutParameter'd to SSM under the rendered id — e.g.
-#   /wire-sysio/testnet-local/keys/batchop.a/K1   ({cluster} = basename of --cluster-path)
-# — and node/daemon --signature-provider specs render SSM:us-east-1:<id>.
+# Each generated key is PutParameter'd to SSM under the rendered id, in EVERY
+# region of awsClusterNodeConfig.regions — e.g.
+#   /wire/test/batchop.a/K1   ({cluster} = awsClusterNodeConfig.account)
+# — and node/daemon --signature-provider specs render a region-less SSM:<id>.
 
 # 2. Stop the cluster, then clone it into a deployable external directory with a
 #    remote BindConfig merged in, emitting its self-described external config.
@@ -423,8 +487,9 @@ wire-cluster-tool create-external-config \
   --external-bind-config  ~/testnet-bind-config.json
 
 # Because the source cluster used SSM, external-cluster-config.json carries SSM
-# providers ({awsRegion, awsSecretId} — the SAME ids create published,
-# reconstructed from the pattern) with NO plaintext keys. (A KEY cluster emits
+# providers ({awsRegions, awsSecretId} — the SAME ids create published,
+# reconstructed from the pattern; awsRegions is informational, for operators and
+# disaster recovery) with NO plaintext keys. (A KEY cluster emits
 # inline KEY providers; a KIOD cluster, material-less KIOD providers.)
 ```
 

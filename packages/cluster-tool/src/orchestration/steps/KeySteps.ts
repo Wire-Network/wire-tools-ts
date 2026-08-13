@@ -1,28 +1,84 @@
 import Assert from "node:assert"
-import Path from "node:path"
+import { ethers } from "ethers"
 import { range } from "lodash"
 import { match } from "ts-pattern"
-import { KeyType } from "@wireio/sdk-core"
-import type { ClusterConfig } from "@wireio/cluster-tool-shared"
-import { mapSeries } from "../../utils/asyncUtils.js"
+import { KeyType, PrivateKey } from "@wireio/sdk-core"
+import {
+  SignatureProviderType,
+  type ClusterConfig
+} from "@wireio/cluster-tool-shared"
+import type { Tag } from "@aws-sdk/client-ssm"
+import { eachSeries, mapSeries } from "../../utils/asyncUtils.js"
+import { keyPairFromPrivate } from "../../utils/keyPairUtils.js"
 import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
 import { SSMClientProvider } from "../../config/SSMClientProvider.js"
+import { getLogger } from "../../logging/Logger.js"
 import { Report } from "../../report/Report.js"
+import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
+import type { KeyPair, SigningKeySet } from "../../types/KeyPair.js"
+import { isNotEmpty } from "../../utils/predicateUtils.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
+import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
+import type { ClusterBuildParent } from "../ClusterBuildPhaseBase.js"
 import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
 } from "../ClusterBuildStep.js"
 import { ClusterKeyStore } from "../outputs/ClusterKeyStore.js"
-import type { OperatorAccount } from "../outputs/OperatorAccount.js"
+import { EthereumMnemonicKey } from "../outputs/EthereumMnemonicOutput.js"
 import type { StepInput } from "../StepRunner.js"
 import { EthereumOutpostBootstrapper } from "../ethereum/EthereumOutpostBootstrapper.js"
 
+const log = getLogger(__filename)
+
 /** Steps that generate the cluster {@link ClusterKeyStore} + set up the kiod wallet. */
 export namespace KeySteps {
+  /**
+   * Entropy behind a cluster-scoped Ethereum HD mnemonic — 32 bytes, i.e. the
+   * 24-word BIP-39 form. Only an SSM cluster generates one (see
+   * {@link EthereumMnemonicKey}).
+   */
+  export const EthereumMnemonicEntropyBytes = 32
+
+  /**
+   * SSM tag key recording which platform version a published key belongs to.
+   * Its value is the cluster's `signatureProvider.ssm.version`; absent when the
+   * cluster's SSM settings carry no version.
+   */
+  export const PlatformVersionTagKey = "wire:platform-version"
+
+  /**
+   * The Ethereum HD mnemonic PHRASE this run derives operator EM (secp256k1)
+   * keys from: the cluster-scoped one {@link runGenerateNodeKeys} put in
+   * `ctx.outputs` under SSM, else the published
+   * `EthereumOutpostBootstrapper.AnvilMnemonic`.
+   *
+   * The anvil mnemonic is a PUBLISHED constant, so under it every operator's
+   * ETH collateral key is reproducible by anyone with the repo — acceptable for
+   * a local flow cluster (and required, so all 13 flows keep deriving
+   * byte-identical wallets), never for a real deployment. Read through this
+   * accessor, never off `EthereumOutpostBootstrapper` directly.
+   *
+   * @param ctx - The build context.
+   * @returns The mnemonic phrase to derive EM keys from.
+   */
+  export function ethereumMnemonic(ctx: ClusterBuildContext): string {
+    return (
+      ctx.outputs.get(EthereumMnemonicKey) ??
+      EthereumOutpostBootstrapper.AnvilMnemonic
+    )
+  }
+
+  /** A freshly generated cluster-scoped Ethereum HD mnemonic phrase. */
+  function newEthereumMnemonic(): string {
+    return ethers.Mnemonic.fromEntropy(
+      ethers.randomBytes(EthereumMnemonicEntropyBytes)
+    ).phrase
+  }
+
   /**
    * Generate the cluster's key material — one K1+BLS set per producer node
    * (via `clio` / `sys-util`), one K1 + ED25519 per operator — and store it under
@@ -52,22 +108,36 @@ export namespace KeySteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
+    // The cluster-scoped Ethereum mnemonic is minted HERE, before the first key
+    // exists, because operator provisioning derives every EM key from it. It
+    // rides `ctx.outputs` and NEVER `ClusterConfig` — the config ships inside
+    // the release archives, which would make every operator EM private key
+    // re-derivable from the deployable artifact.
+    if (ctx.config.signatureProvider.type === SignatureProviderType.SSM) {
+      ctx.outputs.set(EthereumMnemonicKey, newEthereumMnemonic())
+    }
     const keyContext = KeyGenerator.context(
       ctx.config.executables.clio,
       ctx.config.buildPath,
-      EthereumOutpostBootstrapper.AnvilMnemonic
+      ethereumMnemonic(ctx)
     )
     // Producer NODE signing sets (K1+BLS per node), pushed into THE key store.
     // Operator identities (producer / batch / underwriter accounts) accumulate
-    // into the same store per-account as their provisioning phases materialize
+    // into the same store per-label as their provisioning phases materialize
     // them — producers referencing their node's set from here.
+    //
+    // The nodes come from `NodeConfig.plan`, the SAME source
+    // `signatureProviderKeyPublications` enumerates, so a node's secret-id
+    // `{account}` segment here and at publish time can never drift.
     const nodes: ClusterKeyStore.NodeKeys[] = await mapSeries(
-      range(ctx.config.nodeCount),
-      async index => ({
-        index,
-        keys: await KeyGenerator.createProducerKeySet(
+      producerNodes(ctx.config),
+      async node => ({
+        index: node.index,
+        keys: await adoptOrCreateProducerKeySet(
+          ctx.config,
           keyContext,
-          `producer node_${String(index).padStart(2, "0")} signing set`
+          node.name,
+          `producer ${node.name} signing set`
         )
       })
     )
@@ -104,15 +174,167 @@ export namespace KeySteps {
     signal.throwIfAborted()
     const wallet = await ctx.wire.wallet.getOrCreate(),
       nodeKeys = ctx.keyStore.nodes.flatMap(node => [
-        node.keys.k1.privateKey,
-        node.keys.bls.privateKey
-      ])
-    // BIOS dev keys + the generated producer node keys. Each batch/underwriter
-    // operator's UNIQUE wire key is imported by its own materialize step.
-    await wallet.addPrivateKey(
-      Constants.DEV_K1_PRIVATE_KEY,
-      Constants.DEV_BLS_PRIVATE_KEY,
-      ...nodeKeys
+        node.keys.wire.privateKey,
+        node.keys.wireFinalizer.privateKey
+      ]),
+      // The GENESIS identities, from the key store rather than the dev
+      // constants. Under SSM `resolveWithBiosKeys` GENERATES these, and
+      // `genesis.initial_key` carries the generated public half — so importing
+      // `DEV_K1_PRIVATE_KEY` here left the wallet unable to sign as `sysio` for
+      // every bootstrap action (setcode, feature activation, setprodkeys) or as
+      // the node owner for `roa::newuser`. Under KEY/KIOD the seeded values ARE
+      // the dev keys, so this is byte-identical there.
+      genesisKeys = [NodeConfig.BiosName, Constants.BOOTSTRAP_NODE_OWNER]
+        .map(label => ctx.keyStore.operator(label))
+        .filter(identity => identity != null)
+        .flatMap(identity =>
+          [identity.wire?.privateKey, identity.wireFinalizer?.privateKey].filter(
+            isNotEmpty
+          )
+        )
+    // DEDUPED: `kiod` rejects a re-import with `key_exist_exception`, and the
+    // genesis identities legitimately SHARE a key under KEY/KIOD —
+    // `resolveWithBiosKeys` hands back the same dev pair for both the bios node
+    // and the bootstrap node owner. Under SSM they are distinct generated keys,
+    // so the set is a no-op there.
+    //
+    // Each batch/underwriter operator's UNIQUE wire key is imported by its own
+    // materialize step.
+    await wallet.addPrivateKey(...new Set([...genesisKeys, ...nodeKeys]))
+  }
+
+  // ── D21 adopt-existing (the GENERATION seam) ───────────────────────────────
+
+  /**
+   * Obtain `account`'s `keyType` signing key: ADOPT the SSM parameter the AWS
+   * account already owns, else GENERATE a new pair.
+   *
+   * D21 — an existing parameter is the account's DURABLE key identity and is
+   * never regenerated. The read happens HERE, where key material is FIRST
+   * created, and deliberately NOT at publication time: a producer node's keys
+   * are imported into the kiod wallet and rendered into its `config.ini` right
+   * after generation, and an operator's identity sets its ON-CHAIN authority
+   * (`roa::newuser`) and both authex links, all long before its publish step
+   * runs. Adopting at publish time would leave SSM holding key B while the
+   * wallet, the chain authority, both links and the emitted external config all
+   * held key A — silently, and only on the SECOND create in an account.
+   *
+   * Under a non-SSM provider there is nothing to adopt and this is exactly
+   * `KeyGenerator.create`.
+   *
+   * @param config - The resolved cluster config.
+   * @param keyType - The curve to obtain.
+   * @param account - The key's DURABLE handle (the secret-id `{account}`).
+   * @param keyContext - Binaries + mnemonic the generation backends require.
+   * @param options - Per-curve generation extras (EM's HD index, the purpose).
+   * @returns The adopted or generated pair.
+   */
+  export async function adoptOrCreateSignatureProviderKey<T extends KeyType>(
+    config: ClusterConfig,
+    keyType: T,
+    account: string,
+    keyContext: KeyGenerator.Context,
+    options: KeyGenerator.CreateOptions = {}
+  ): Promise<KeyPair<T>> {
+    const secretId = signatureProviderSecretId(config, account, keyType)
+    if (secretId != null) {
+      const adopted = await SSMClientProvider.getParameterAcrossRegions(
+        replicationRegions(config),
+        secretId
+      )
+      if (adopted != null) {
+        log.info(
+          `[keys] adopting the existing ${KeyType[keyType]} key for ${account} from ${secretId} — NOT regenerating`
+        )
+        StepExtraRecorder.note(
+          `adopted ${account}'s existing ${KeyType[keyType]} key from SSM`,
+          { account, keyType: KeyType[keyType], secretId }
+        )
+        return keyPairFromPrivate(keyType, adopted)
+      }
+    }
+    return KeyGenerator.create(keyType, keyContext, options)
+  }
+
+  /**
+   * A producer node's composite K1 + BLS key set — each half adopted or
+   * generated independently via {@link adoptOrCreateSignatureProviderKey},
+   * since SSM custody is per-parameter (a rotation could legitimately leave one
+   * curve published and the other not).
+   *
+   * @param config - The resolved cluster config.
+   * @param keyContext - Binaries + mnemonic the generation backends require.
+   * @param nodeName - The node's name (the secret-id `{account}` segment).
+   * @param purpose - What the set is FOR (lands in the step's `extra` record).
+   * @returns The node's signing set.
+   */
+  export async function adoptOrCreateProducerKeySet(
+    config: ClusterConfig,
+    keyContext: KeyGenerator.Context,
+    nodeName: string,
+    purpose: string
+  ): Promise<ClusterKeyStore.ProducerKeySet> {
+    const [wire, wireFinalizer] = await Promise.all([
+      adoptOrCreateSignatureProviderKey(config, KeyType.K1, nodeName, keyContext, {
+        purpose: `${purpose} — block signing (K1)`
+      }),
+      adoptOrCreateSignatureProviderKey(config, KeyType.BLS, nodeName, keyContext, {
+        purpose: `${purpose} — finalizer (BLS)`
+      })
+    ])
+    return { wire, wireFinalizer }
+  }
+
+  /**
+   * The SSM secret id `account`'s `keyType` key is published under, or nothing
+   * when the cluster is not SSM-custodied (there is nothing to adopt — the key
+   * is always generated). Rendered through the SAME
+   * `ClusterConfigProvider.signatureProviderSource` the daemon
+   * `--signature-provider` args use, so the adopt read, the publish write and
+   * the rendered spec can never disagree on an id.
+   *
+   * @param config - The resolved cluster config.
+   * @param account - The key's DURABLE handle (the secret-id `{account}`).
+   * @param keyType - The key's curve.
+   * @returns The rendered secret id, or nothing under KEY / KIOD.
+   */
+  export function signatureProviderSecretId(
+    config: ClusterConfig,
+    account: string,
+    keyType: KeyType
+  ): string {
+    if (config.signatureProvider.type !== SignatureProviderType.SSM) return null
+    return ClusterConfigProvider.signatureProviderSource(config)(
+      account,
+      keyType
+    ).awsSecretId
+  }
+
+  /**
+   * Every AWS region an SSM cluster replicates its parameters to. `regions` on
+   * `awsClusterNodeConfig` is the ONE author; `ssm.awsRegions` is derived from
+   * it at resolve time and only fills in for a config that reached here without
+   * going through `ClusterConfigProvider.resolve`.
+   */
+  function replicationRegions(config: ClusterConfig): string[] {
+    const { ssm } = config.signatureProvider
+    Assert.ok(
+      ssm != null,
+      "KeySteps: SSM signature provider requires ssm settings"
+    )
+    Assert.ok(
+      config.awsClusterNodeConfig != null,
+      "KeySteps: SSM signature provider requires awsClusterNodeConfig (the secret-id {cluster} source + the replication regions)"
+    )
+    const { regions } = config.awsClusterNodeConfig,
+      { awsRegions = regions } = ssm
+    return awsRegions
+  }
+
+  /** The planned PRODUCER nodes, whose names are the node keys' `{account}` segments. */
+  function producerNodes(config: ClusterConfig): NodeConfig[] {
+    return NodeConfig.plan(config).filter(
+      node => node.role === NodeRole.producer
     )
   }
 
@@ -124,20 +346,69 @@ export namespace KeySteps {
     operator = "operator"
   }
 
+  /**
+   * WHEN a key is published, which is independent of WHERE it lives.
+   *
+   * Conflating the two is what made the bios failure possible: the genesis
+   * identity's keys live in the operator map, but they must be in SSM before
+   * the bios node starts — and the operator publish phase composes long after
+   * it. `SignatureKeySource` answers "which keystore"; this answers "which
+   * phase", and a row needs both.
+   */
+  export enum SignatureKeyPublishPhase {
+    /** Before `BiosNode` — every key a nodeop fetches at startup. */
+    beforeNodes = "beforeNodes",
+    /** After operator provisioning — keys that do not exist until then. */
+    afterOperators = "afterOperators"
+  }
+
+  /**
+   * One identity whose keys are published to SSM — the walker's unit.
+   *
+   * `source` says only WHERE the identity's key set lives (the node list vs the
+   * operator map); `label` is the secret-id `{account}` segment the daemon
+   * renders. The two differ for the genesis identity, which is precisely the
+   * case a single per-kind walker used to lose.
+   */
+  interface SignatureProviderKeyIdentity {
+    /** Secret-id `{account}` segment — a node name or an operator handle. */
+    label: string
+    /** Which keystore holds the identity's key set. */
+    source: SignatureKeySource
+    /** Producer-node topology index (only meaningful when `source === node`). */
+    nodeIndex: number
+    /** Which publish phase this identity's keys belong to. */
+    publishPhase: SignatureKeyPublishPhase
+    /** Every curve this identity publishes. */
+    keyTypes: readonly KeyType[]
+  }
+
   /** One signing key to publish to SSM — metadata ONLY (never key material). */
   export interface SignatureProviderKeyPublication {
     /** The store the runner reads the private key from. */
     source: SignatureKeySource
     /** Producer-node topology index (used when `source === node`). */
     nodeIndex: number
-    /** The key's account (node name or operator account) — the secret-id `{account}`. */
-    account: string
+    /** Which publish phase this key belongs to (independent of `source`). */
+    publishPhase: SignatureKeyPublishPhase
+    /** The key's label (node name or operator label) — the secret-id `{account}`. */
+    label: string
     /** The key's curve — selects which key of the source. */
     keyType: KeyType
-    /** AWS region the parameter is published under. */
-    awsRegion: string
+    /**
+     * EVERY AWS region the parameter is published to. There is no primary
+     * region: the key is replicated to all of them so a disaster-recovery
+     * migration into any one finds it already present.
+     */
+    awsRegions: string[]
     /** The rendered SSM secret id (via `toSecretId`) — NEVER the private key. */
     secretId: string
+    /**
+     * The cluster's `{version}` token value — carried as the
+     * {@link PlatformVersionTagKey} tag on the `PutParameter`. Absent when the
+     * cluster's SSM settings declare no version.
+     */
+    version?: string
   }
 
   /** Typed input for {@link planPublishSignatureProviderKey}. */
@@ -150,11 +421,15 @@ export namespace KeySteps {
 
   /**
    * Enumerate every generated signing key to publish for an SSM cluster —
-   * plan-time fan-out from the config's counts: one entry per producer-node
-   * K1/BLS and per batch/underwriter operator K1(wire)/EM(ethereum)/ED(solana).
-   * The bios genesis key is a bootstrap dev key (not SSM-managed) and is
-   * excluded. Each entry carries its pre-rendered `secretId` (never key
-   * material); the runner reads the private key from `ctx.keyStore`.
+   * plan-time fan-out over {@link SignatureProviderKeyIdentity} rows: the
+   * genesis identity (bios K1/BLS) and the bootstrap node owner (K1), every
+   * producer node (K1/BLS), and every batch/underwriter operator
+   * (K1 wire / EM ethereum / ED solana).
+   *
+   * Under SSM the bios node is NOT exempt — it renders `SSM:` specs like any
+   * other node, so its keys MUST be published or it cannot start. Each entry
+   * carries its pre-rendered `secretId` (never key material); the runner reads
+   * the private key from `ctx.keyStore`.
    *
    * @param config - The resolved cluster config (SSM signature provider).
    * @returns The per-key publications.
@@ -162,56 +437,127 @@ export namespace KeySteps {
   export function signatureProviderKeyPublications(
     config: ClusterConfig
   ): SignatureProviderKeyPublication[] {
-    const ssm = config.signatureProvider.ssm
-    Assert.ok(
-      ssm != null,
-      "KeySteps.signatureProviderKeyPublications: SSM signature provider requires ssm settings"
-    )
-    const cluster = Path.basename(config.clusterPath),
-      renderSecretId = (account: string, keyType: KeyType): string =>
+    const awsRegions = replicationRegions(config),
+      { account: cluster } = config.awsClusterNodeConfig,
+      { ssm } = config.signatureProvider,
+      // The `{account}` pattern token renders the DURABLE LABEL — a producer
+      // node's name, an operator's handle — never the on-chain account.
+      renderSecretId = (label: string, keyType: KeyType): string =>
         ClusterConfigProvider.toSecretId(ssm.awsSecretIdPattern, {
           cluster,
-          account,
-          keyType: KeyType[keyType]
+          account: label,
+          keyType: KeyType[keyType],
+          version: ssm.version
         }),
-      publications: SignatureProviderKeyPublication[] = []
-    // Producer-node signing keys (K1 + BLS per node).
-    NodeConfig.plan(config)
-      .filter(node => node.role === NodeRole.producer)
-      .forEach(node =>
-        ([KeyType.K1, KeyType.BLS] as const).forEach(keyType =>
-          publications.push({
-            source: SignatureKeySource.node,
-            nodeIndex: node.index,
-            account: node.name,
-            keyType,
-            awsRegion: ssm.awsRegion,
-            secretId: renderSecretId(node.name, keyType)
-          })
-        )
-      )
-    // Batch-operator + underwriter keys (K1 wire + EM ethereum + ED solana).
-    const operatorAccounts = [
-      ...range(config.batchOperatorCount).map(index =>
-        Constants.batchOperatorAccountName(index)
-      ),
-      ...range(config.underwriterCount).map(index =>
-        Constants.underwriterAccountName(index)
-      )
-    ]
-    operatorAccounts.forEach(account =>
-      ([KeyType.K1, KeyType.EM, KeyType.ED] as const).forEach(keyType =>
-        publications.push({
+      // ONE enumeration of every identity that renders a `--signature-provider`
+      // spec. Adding a row is the ONLY way to add a published key, so an
+      // identity cannot be silently omitted the way the bios node was: it
+      // renders `SSM:/…/node_bios/{K1,BLS}` from `node.name`, but the walker
+      // enumerated producers only, so nothing ever wrote those parameters and
+      // the bios daemon could not start on any SSM cluster.
+      identities: SignatureProviderKeyIdentity[] = [
+        // The genesis identity — bios block signing + finality. Its keys live in
+        // the OPERATOR map (not `keyStore.nodes`, which `ConsensusSteps` turns
+        // into the finalizer policy — a bios entry there would shift the
+        // threshold), while its secret-id segment is the NODE name the daemon
+        // renders. That split is exactly why it needs an explicit row.
+        {
+          label: NodeConfig.BiosName,
           source: SignatureKeySource.operator,
           nodeIndex: 0,
-          account,
-          keyType,
-          awsRegion: ssm.awsRegion,
-          secretId: renderSecretId(account, keyType)
-        })
-      )
+          publishPhase: SignatureKeyPublishPhase.beforeNodes,
+          keyTypes: [KeyType.K1, KeyType.BLS]
+        },
+        // The bootstrap node owner — signs `roa::newuser` for every operator.
+        {
+          label: Constants.BOOTSTRAP_NODE_OWNER,
+          source: SignatureKeySource.operator,
+          nodeIndex: 0,
+          publishPhase: SignatureKeyPublishPhase.beforeNodes,
+          keyTypes: [KeyType.K1]
+        },
+        // Producer nodes — block signing + finality, keys in `keyStore.nodes`.
+        ...producerNodes(config).map(node => ({
+          label: node.name,
+          source: SignatureKeySource.node,
+          nodeIndex: node.index,
+          publishPhase: SignatureKeyPublishPhase.beforeNodes,
+          keyTypes: [KeyType.K1, KeyType.BLS]
+        })),
+        // Batch operators + underwriters — wire + both outpost curves.
+        ...[
+          ...range(config.batchOperatorCount).map(index =>
+            Constants.batchOperatorLabel(index)
+          ),
+          ...range(config.underwriterCount).map(index =>
+            Constants.underwriterLabel(index)
+          )
+        ].map(label => ({
+          label,
+          source: SignatureKeySource.operator,
+          nodeIndex: 0,
+          publishPhase: SignatureKeyPublishPhase.afterOperators,
+          keyTypes: [KeyType.K1, KeyType.EM, KeyType.ED]
+        }))
+      ]
+    return identities.flatMap(identity =>
+      identity.keyTypes.map(keyType => ({
+        source: identity.source,
+        nodeIndex: identity.nodeIndex,
+        publishPhase: identity.publishPhase,
+        label: identity.label,
+        keyType,
+        awsRegions,
+        secretId: renderSecretId(identity.label, keyType),
+        version: ssm.version
+      }))
     )
-    return publications
+  }
+
+  /**
+   * Compose ONE publish phase for an SSM cluster — the `source`-class subset of
+   * {@link signatureProviderKeyPublications}, one step per key, self-registered
+   * on `parent`. `ClusterBuildDefaults` composes it at the point where the
+   * source's keys EXIST but their SSM-fetching consumers have NOT started:
+   * `node` keys right after `WalletAndKeys` (producer nodes fetch them from SSM
+   * at startup), `operator` keys right after operator provisioning (the
+   * operator daemons fetch theirs at startup). Publishing any later leaves the
+   * consumer's `SSM:<region>:<secretId>` spec pointing at a parameter that does
+   * not exist yet, aborting nodeop startup.
+   *
+   * @param parent - The build / group the phase self-registers on.
+   * @param name - The phase name.
+   * @param description - The phase description.
+   * @param options - Step options applied to every publish step.
+   * @param config - The resolved cluster config (SSM signature provider).
+   * @param source - Which key-store class this phase publishes.
+   * @returns The publish phase.
+   */
+  export function planSignatureProviderKeyPublications<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    config: ClusterConfig,
+    publishPhase: SignatureKeyPublishPhase
+  ): ClusterBuildPhase<C> {
+    const phase = ClusterBuildPhase.create<C>(parent, name, description)
+    signatureProviderKeyPublications(config)
+      .filter(publication => publication.publishPhase === publishPhase)
+      .forEach(publication =>
+        phase.push(
+          planPublishSignatureProviderKey<C>(
+            Report.Actor.Sysio,
+            `publish-${publication.label}-${KeyType[publication.keyType]}`,
+            `publish ${publication.label} ${KeyType[publication.keyType]} key → SSM`,
+            options,
+            publication
+          )
+        )
+      )
+    return phase
   }
 
   /**
@@ -243,7 +589,27 @@ export namespace KeySteps {
     )
   }
 
-  /** Named runner — read the private key from `ctx.keyStore` and `PutParameter` it (SecureString). */
+  /**
+   * Named runner — read the private key from `ctx.keyStore` and `PutParameter`
+   * its CHAIN-NATIVE string (SecureString). The stored key is the WIRE
+   * `PVT_<type>_…` form; the parameter value MUST be the native form
+   * (`toNativeString()`: K1 WIF, EM 0x-hex, ED base58 of the 64-byte secret,
+   * BLS `PVT_BLS_…`) — nodeop's ssm plugin parses the fetched value with the
+   * per-chain NATIVE parser (`from_native_string_to_private_key`), the same
+   * contract as the inline `KEY:` spec segment.
+   *
+   * The id is re-probed and written PER REGION, not once for the key: a key
+   * ADOPTED out of `us-east-1` still has to be written to `eu-west-1`, or
+   * replication silently breaks the moment a disaster-recovery migration
+   * targets a region that never received it. The probe is also what lets the
+   * write stay `Overwrite: false` — the alternative would rotate a live key out
+   * from under every consumer already holding it.
+   *
+   * The step's input is built at COMPOSE time from config alone, before any key
+   * exists, so it deliberately carries no "was this adopted?" flag — whether a
+   * given region already holds the parameter is a RUNTIME fact this runner
+   * discovers per region.
+   */
   export async function runPublishSignatureProviderKey<
     C extends ClusterBuildContext
   >(
@@ -252,60 +618,69 @@ export namespace KeySteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const privateKey = match(input.source)
-      .with(SignatureKeySource.node, () =>
-        nodePrivateKey(ctx.keyStore.node(input.nodeIndex).keys, input.keyType)
-      )
-      .with(SignatureKeySource.operator, () =>
-        operatorPrivateKey(
-          ctx.keyStore.assertOperator(input.account),
-          input.keyType
+    // ONE resolver over ONE shape: a node's key set and an operator account are
+    // both `SigningKeySet`s, so `source` selects only WHERE the identity lives,
+    // never how its curves are read.
+    const identity: SigningKeySet = match(input.source)
+        .with(SignatureKeySource.node, () => ctx.keyStore.node(input.nodeIndex).keys)
+        .with(SignatureKeySource.operator, () =>
+          ctx.keyStore.assertOperator(input.label)
         )
+        .exhaustive(),
+      privateKey = identityPrivateKey(identity, input.keyType, input.label)
+    const nativePrivateKey = PrivateKey.from(privateKey).toNativeString(),
+      tags: Tag[] =
+        input.version != null
+          ? [{ Key: PlatformVersionTagKey, Value: input.version }]
+          : []
+    await eachSeries(input.awsRegions, async region => {
+      const existing = await SSMClientProvider.tryGetParameter(
+        region,
+        input.secretId
       )
-      .exhaustive()
-    await SSMClientProvider.putParameter(
-      input.awsRegion,
-      input.secretId,
-      privateKey
-    )
+      if (existing != null) {
+        log.info(
+          `[keys] ${input.secretId} is already published in ${region} — retained (this run adopted it)`
+        )
+        return
+      }
+      await SSMClientProvider.putParameter(
+        region,
+        input.secretId,
+        nativePrivateKey,
+        tags
+      )
+    })
   }
 
   /** The private key of a producer-node key set for `keyType` (K1 / BLS). */
-  function nodePrivateKey(
-    keys: ClusterKeyStore.ProducerKeySet,
-    keyType: KeyType
+  function identityPrivateKey(
+    identity: SigningKeySet,
+    keyType: KeyType,
+    label: string
   ): string {
+    const assertPresent = <T>(key: T, curve: string): T => {
+      Assert.ok(key != null, `KeySteps: ${label} has no ${curve} key`)
+      return key
+    }
     return match(keyType)
-      .with(KeyType.K1, () => keys.k1.privateKey)
-      .with(KeyType.BLS, () => keys.bls.privateKey)
+      .with(KeyType.K1, () => identity.wire.privateKey)
+      .with(
+        KeyType.BLS,
+        () => assertPresent(identity.wireFinalizer, "wireFinalizer").privateKey
+      )
+      .with(
+        KeyType.EM,
+        () => assertPresent(identity.ethereum, "ethereum").privateKey
+      )
+      .with(
+        KeyType.ED,
+        () => assertPresent(identity.solana, "solana").privateKey
+      )
       .otherwise(() => {
-        throw new Error(`KeySteps: producer node has no ${KeyType[keyType]} key`)
+        throw new Error(`KeySteps: ${label} has no ${KeyType[keyType]} key`)
       })
   }
 
-  /** The private key of an operator account for `keyType` (K1 wire / EM ethereum / ED solana). */
-  function operatorPrivateKey(
-    operator: OperatorAccount,
-    keyType: KeyType
-  ): string {
-    return match(keyType)
-      .with(KeyType.K1, () => operator.wire.privateKey)
-      .with(KeyType.EM, () => {
-        Assert.ok(
-          operator.ethereum != null,
-          `KeySteps: operator ${operator.account} has no ethereum key`
-        )
-        return operator.ethereum.privateKey
-      })
-      .with(KeyType.ED, () => {
-        Assert.ok(
-          operator.solana != null,
-          `KeySteps: operator ${operator.account} has no solana key`
-        )
-        return operator.solana.privateKey
-      })
-      .otherwise(() => {
-        throw new Error(`KeySteps: operator has no ${KeyType[keyType]} key`)
-      })
-  }
+  /** The private key of an operator for `keyType` (K1 wire / EM ethereum / ED solana). */
 }

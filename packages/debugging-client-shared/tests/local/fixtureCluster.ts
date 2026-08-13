@@ -4,6 +4,7 @@ import * as Path from "node:path"
 
 import {
   ClusterConfigLoggingFileFormat,
+  EthereumGasPolicy,
   ClusterFiles,
   ClusterStateNodeRole,
   SignatureProviderType,
@@ -49,16 +50,16 @@ export function makeFixtureCluster(): FixtureCluster {
     name: string,
     nodePath: string,
     role: ClusterStateNodeRole,
-    batchOperatorAccount: string | null = null,
-    underwriterAccount: string | null = null
+    batchOperatorLabel: string | null = null,
+    underwriterLabel: string | null = null
   ): ClusterStateNode => ({
     name,
     role,
     nodePath,
     ports: { http: 0, p2p: 0 },
     producers: [],
-    batchOperatorAccount,
-    underwriterAccount
+    batchOperatorLabel,
+    underwriterLabel
   })
 
   const state: ClusterState = {
@@ -143,11 +144,14 @@ export function makeFixtureCluster(): FixtureCluster {
     requiredUnderwriterCollateral: [],
     requiredProducerCollateral: [],
     underwriterCollateral: null,
+    initialKey: null,
     initialFinalizerKey: null,
     signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
+    awsClusterNodeConfig: null,
     externalOutposts: null,
     debuggingServerEnabled: true,
-    enableMockReserves: false
+    enableMockReserves: false,
+    ethereumGasPolicy: EthereumGasPolicy.mainnetParity
   }
 
   Fs.writeFileSync(

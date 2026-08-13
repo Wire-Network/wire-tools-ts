@@ -1,36 +1,21 @@
 import Fs from "node:fs"
-import Os from "node:os"
 import Path from "node:path"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
-
-/** A phase or group node — a group carries `children`, a phase is a leaf. */
-interface NamedNode {
-  name: string
-  children?: ReadonlyArray<NamedNode>
-}
-
-/** Every phase/group name in a built cluster, recursively. */
-function collectNames(children: ReadonlyArray<NamedNode>): string[] {
-  return children.flatMap(child => [
-    child.name,
-    ...(child.children ? collectNames(child.children) : [])
-  ])
-}
+import {
+  fixtureResolveEnvironment,
+  type ResolveEnvironment
+} from "../config/resolveEnvironmentFixture.js"
+import { collectPhaseNames } from "./clusterBuildFixture.js"
 
 describe("ClusterBuildDefaults — external-outpost compose variant", () => {
-  const previousRegistry = process.env.WIRE_BIND_REGISTRY_PATH
-  let dir: string, buildPath: string, externalConfigFile: string
+  let environment: ResolveEnvironment, externalConfigFile: string
 
   beforeEach(() => {
-    dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "compose-variant-"))
-    process.env.WIRE_BIND_REGISTRY_PATH = Path.join(dir, "bind-registry")
-    // resolveExecutables asserts nodeop/kiod/clio exist under buildPath/bin.
-    buildPath = Path.join(dir, "build")
-    Fs.mkdirSync(Path.join(buildPath, "bin"), { recursive: true })
-    ;["nodeop", "kiod", "clio"].forEach(bin =>
-      Fs.writeFileSync(Path.join(buildPath, "bin", bin), "")
+    environment = fixtureResolveEnvironment("compose-variant-")
+    externalConfigFile = Path.join(
+      environment.rootPath,
+      "external-outpost.json"
     )
-    externalConfigFile = Path.join(dir, "external-outpost.json")
     Fs.writeFileSync(
       externalConfigFile,
       JSON.stringify({
@@ -45,15 +30,13 @@ describe("ClusterBuildDefaults — external-outpost compose variant", () => {
   })
 
   afterEach(() => {
-    if (previousRegistry == null) delete process.env.WIRE_BIND_REGISTRY_PATH
-    else process.env.WIRE_BIND_REGISTRY_PATH = previousRegistry
-    Fs.rmSync(dir, { recursive: true, force: true })
+    environment.cleanup()
   })
 
   function baseOptions() {
     return {
-      clusterPath: Path.join(dir, "cluster"),
-      buildPath,
+      clusterPath: Path.join(environment.rootPath, "cluster"),
+      buildPath: environment.buildPath,
       ethereumPath: "/fake/eth",
       solanaPath: "/fake/sol"
     }
@@ -62,9 +45,12 @@ describe("ClusterBuildDefaults — external-outpost compose variant", () => {
   it("omits the local outpost deploys + adds the liveness phase in external mode", async () => {
     const cluster = await ClusterBuildDefaults.create({
       ...baseOptions(),
-      externalOutpostConfig: externalConfigFile
+      externalOutpostConfig: externalConfigFile,
+      // External mode has no local outpost to bond underwriter collateral on,
+      // so `ClusterConfigProvider.resolve` demands an EXPLICIT zero.
+      underwriterCount: 0
     })
-    const names = collectNames(cluster.children as unknown as NamedNode[])
+    const names = collectPhaseNames(cluster.children)
     expect(names).toContain("MaterializeExternalOutposts")
     expect(names).toContain("HeadBlockAdvance")
     expect(names).not.toContain("EthereumOutpost")
@@ -73,7 +59,7 @@ describe("ClusterBuildDefaults — external-outpost compose variant", () => {
 
   it("keeps the local outpost deploys + no liveness phase in local mode", async () => {
     const cluster = await ClusterBuildDefaults.create(baseOptions())
-    const names = collectNames(cluster.children as unknown as NamedNode[])
+    const names = collectPhaseNames(cluster.children)
     expect(names).toContain("EthereumOutpost")
     expect(names).toContain("SolanaOutpost")
     expect(names).not.toContain("MaterializeExternalOutposts")

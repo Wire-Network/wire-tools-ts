@@ -27,7 +27,12 @@ export interface AnvilOptions {
   slotsInAnEpoch?: number
   /** `--block-time` seconds (run-phase interval mining; omit during deploy). */
   blockTimeSec?: number
-  /** Gas constraints imposed on this chain. Defaults to anvil's stock limits. */
+  /**
+   * Gas ceiling regime. Defaults to {@link EthereumGasPolicy.mainnetParity} —
+   * the pinned hardfork, EIP-7825's per-transaction cap, and the sized block
+   * limit. Set {@link EthereumGasPolicy.uncapped} ONLY to establish that a
+   * failure is not gas-related.
+   */
   gasPolicy?: EthereumGasPolicy
 }
 
@@ -62,18 +67,10 @@ export class AnvilProcess extends ManagedProcess {
         BindConfigProvider.DefaultAnvil
       )
     } = options
-    const config: AnvilConfig = {
-      host: options.host ?? Localhost,
-      port,
-      chainId: options.chainId ?? AnvilProcess.DefaultChainId,
-      stateFile: options.stateFile ?? null,
-      binary,
-      extraArgs: options.extraArgs ?? [],
-      slotsInAnEpoch: options.slotsInAnEpoch ?? 0,
-      blockTimeSec: options.blockTimeSec ?? 0,
-      gasPolicy: options.gasPolicy ?? EthereumGasPolicy.chainDefault
-    }
-    return new AnvilProcess(manager, config)
+    return new AnvilProcess(
+      manager,
+      AnvilProcess.resolveConfig(options, { binary, port })
+    )
   }
 
   private constructor(
@@ -91,43 +88,14 @@ export class AnvilProcess extends ManagedProcess {
   }
 
   get args(): string[] {
-    const args = [
-      "-vvv",
-      "--host",
-      this.config.host,
-      "--port",
-      String(this.config.port),
-      "--chain-id",
-      String(this.config.chainId),
-      // The WIRE anvil is ALWAYS the outpost deploy target: the OPP outpost
-      // contracts exceed EIP-170's 24KB code-size limit, and the deployer
-      // (HD index 0) + operator HD accounts must all be pre-funded.
-      "--code-size-limit",
-      AnvilProcess.CodeSizeLimit,
-      "--accounts",
-      String(AnvilProcess.AccountCount),
-      "--balance",
-      String(AnvilProcess.BalancePerAccountEther)
-    ]
-    if (this.config.slotsInAnEpoch)
-      args.push("--slots-in-an-epoch", String(this.config.slotsInAnEpoch))
-    if (this.config.blockTimeSec)
-      args.push("--block-time", String(this.config.blockTimeSec))
-    if (this.config.stateFile) {
-      args.push("--dump-state", this.config.stateFile)
-      if (Fs.existsSync(this.config.stateFile))
-        args.push("--load-state", this.config.stateFile)
-    }
-    args.push(...AnvilProcess.gasPolicyArgs(this.config.gasPolicy))
-    args.push(...this.config.extraArgs)
-    return args
+    return AnvilProcess.buildArgs(this.config)
   }
 
   protected get verifyTimeoutMs(): number {
     return AnvilProcess.StartupTimeoutMs
   }
 
-  protected verifyReady(): Promise<boolean> {
+  verifyReady(): Promise<boolean> {
     return probeEndpoint(this.rpcUrl)
   }
 
@@ -138,6 +106,131 @@ export class AnvilProcess extends ManagedProcess {
 }
 
 export namespace AnvilProcess {
+  /**
+   * Resolve caller options into a complete {@link AnvilConfig}. PURE — every
+   * impure input (the PATH-resolved binary, the registry-issued port) is
+   * INJECTED, so the same config the process spawns from can be rebuilt for a
+   * `start.sh` render without claiming a second port or re-probing PATH.
+   *
+   * @param options - Caller overrides.
+   * @param resolved - The impure values `create` obtained.
+   * @returns The complete config.
+   */
+  /** The impure values `create` resolves (PATH lookup + registry-issued port). */
+  export interface ResolvedInputs {
+    binary: string
+    port: number
+  }
+
+  export function resolveConfig(
+    options: AnvilOptions,
+    resolved: ResolvedInputs
+  ): AnvilConfig {
+    return {
+      host: options.host ?? Localhost,
+      port: resolved.port,
+      chainId: options.chainId ?? AnvilProcess.DefaultChainId,
+      stateFile: options.stateFile ?? null,
+      binary: resolved.binary,
+      extraArgs: options.extraArgs ?? [],
+      slotsInAnEpoch: options.slotsInAnEpoch ?? 0,
+      blockTimeSec: options.blockTimeSec ?? 0,
+      gasPolicy: options.gasPolicy ?? EthereumGasPolicy.mainnetParity
+    }
+  }
+
+  /**
+   * The anvil argv (WITHOUT the binary) — the ONE argv source, shared by the
+   * live process's {@link AnvilProcess.args} and the `start.sh` renderer.
+   *
+   * @param config - A resolved anvil config.
+   * @returns The argv.
+   */
+  export function buildArgs(config: AnvilConfig): string[] {
+    const args = [
+      "-vvv",
+      "--host",
+      config.host,
+      "--port",
+      String(config.port),
+      "--chain-id",
+      String(config.chainId),
+      // The WIRE anvil is ALWAYS the outpost deploy target: the OPP outpost
+      // contracts exceed EIP-170's 24KB code-size limit, and the deployer
+      // (HD index 0) + operator HD accounts must all be pre-funded.
+      "--code-size-limit",
+      AnvilProcess.CodeSizeLimit,
+      "--accounts",
+      String(AnvilProcess.AccountCount),
+      "--balance",
+      String(AnvilProcess.BalancePerAccountEther),
+      ...AnvilProcess.gasPolicyArgs(config.gasPolicy)
+    ]
+    if (config.slotsInAnEpoch)
+      args.push("--slots-in-an-epoch", String(config.slotsInAnEpoch))
+    if (config.blockTimeSec)
+      args.push("--block-time", String(config.blockTimeSec))
+    if (config.stateFile) {
+      args.push("--dump-state", config.stateFile)
+      // Build-time conditional: at CREATE time the state file does not exist
+      // yet. A start.sh must therefore render this as a shell test rather than
+      // inherit today's answer — see `DaemonArgvCondition`.
+      if (Fs.existsSync(config.stateFile))
+        args.push("--load-state", config.stateFile)
+    }
+    args.push(...config.extraArgs)
+    return args
+  }
+
+  /**
+   * The gas flags for a policy.
+   *
+   * {@link EthereumGasPolicy.mainnetParity} is the default and the only regime
+   * a normal run should use: pin the EVM revision, enforce EIP-7825's per-tx
+   * cap, size the block limit — so a transaction mainnet would reject is
+   * rejected here too, instead of passing only on the local node.
+   *
+   * {@link EthereumGasPolicy.uncapped} exists for ONE purpose: proving a
+   * failure is not gas-related. Lifting the block limit to
+   * {@link UncappedBlockGasLimit} and dropping the per-tx cap is what
+   * separated ETH-241 (the outbound envelope genuinely exceeds the ceiling)
+   * from WIRE-340 (a depot payout stall that merely hid behind it). It must
+   * never be a default — a run under it proves nothing about mainnet.
+   *
+   * NOTE: `--gas-limit` cannot be combined with `--disable-block-gas-limit`;
+   * anvil rejects that pair and exits 2. `AnvilGasPolicyStartup.test.ts` spawns
+   * the real binary per policy because asserting the flag STRINGS did not catch
+   * that.
+   *
+   * @param policy - The regime to render.
+   * @returns The gas-related argv fragment.
+   */
+  export function gasPolicyArgs(policy: EthereumGasPolicy): string[] {
+    return match(policy)
+      .with(EthereumGasPolicy.mainnetParity, () => [
+        "--hardfork",
+        AnvilProcess.Hardfork,
+        "--enable-tx-gas-limit",
+        "--gas-limit",
+        String(AnvilProcess.BlockGasLimit)
+      ])
+      .with(EthereumGasPolicy.uncapped, () => [
+        "--hardfork",
+        AnvilProcess.Hardfork,
+        "--gas-limit",
+        String(AnvilProcess.UncappedBlockGasLimit)
+      ])
+      .exhaustive()
+  }
+
+  /**
+   * `--gas-limit` under {@link EthereumGasPolicy.uncapped}: 1B, chosen to clear
+   * the ~93.6M that ETH-241 measured for a backlogged outbound envelope by an
+   * order of magnitude, so a run that still fails cannot be blamed on the
+   * ceiling.
+   */
+  export const UncappedBlockGasLimit = 1_000_000_000
+
   /** Default EVM chain id (Foundry's standard). */
   export const DefaultChainId = 31_337
   /** `--slots-in-an-epoch` value for the run-phase anvil (finalize after 2 blocks). */
@@ -151,42 +244,24 @@ export namespace AnvilProcess {
   /** `--code-size-limit` — the OPP outpost contracts exceed EIP-170's 24KB. */
   export const CodeSizeLimit = "99999"
   /**
-   * Block gas limit for {@link EthereumGasPolicy.uncapped}.
-   *
-   * Sized far above any real envelope so the ceiling can never bind: the
-   * ETH-241 characterization puts a backlogged outbound delivery at ~93.6M
-   * gas against anvil's 30M default, so this is ~10x the worst case observed.
+   * `--hardfork` — the EVM revision the local node emulates. Pinned so the
+   * cluster's gas semantics track mainnet's rather than drifting with whatever
+   * revision the installed anvil happens to default to.
    */
-  export const UncappedBlockGasLimit = "1000000000"
-  /** Hardfork naming the EIP-7825 per-transaction gas cap. */
-  export const OsakaHardfork = "osaka"
-
+  export const Hardfork = "osaka"
   /**
-   * Translate a gas policy into anvil flags.
+   * `--gas-limit` — the BLOCK gas limit (distinct from EIP-7825's per-transaction
+   * cap of 2^24 = 16,777,216, which `--enable-tx-gas-limit` enforces).
    *
-   * `chainDefault` adds nothing — anvil's stock 30M block limit applies and
-   * EIP-7825 is NOT enforced (anvil gates it behind `--enable-tx-gas-limit`).
-   *
-   * @param policy - The configured gas policy.
-   * @returns Flags to append, empty for the stock chain.
+   * 60M sits between mainnet's ~30M and the 100M that `wire-ethereum`'s hardhat
+   * network configures for its own fixtures: high enough that a block holding
+   * several outpost-deploy or envelope-delivery transactions is never the
+   * binding constraint, while staying close enough to mainnet that a genuinely
+   * oversized transaction still fails here. Raising it hides real gas
+   * regressions; lowering it below ~30M diverges from mainnet in the other
+   * direction.
    */
-  export function gasPolicyArgs(policy: EthereumGasPolicy): string[] {
-    return match(policy)
-      .with(EthereumGasPolicy.chainDefault, () => [])
-      .with(EthereumGasPolicy.osaka, () => [
-        "--hardfork",
-        OsakaHardfork,
-        "--enable-tx-gas-limit"
-      ])
-      .with(EthereumGasPolicy.uncapped, () => [
-        // NOT combined with --disable-block-gas-limit: anvil rejects the pair
-        // ("cannot be used with") and exits 2 before serving. Raising the
-        // block limit is sufficient and observable — the block reports it.
-        "--gas-limit",
-        UncappedBlockGasLimit
-      ])
-      .exhaustive()
-  }
+  export const BlockGasLimit = 60_000_000
   /** `--accounts` — deployer (HD 0) + operator HD accounts must all be pre-funded. */
   export const AccountCount = 50
   /** `--balance` (ether) per pre-funded account. */

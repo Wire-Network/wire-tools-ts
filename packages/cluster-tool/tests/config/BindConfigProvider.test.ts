@@ -213,6 +213,81 @@ describe("BindConfigProvider", () => {
       expect(ports.every(port => port > 0)).toBe(true)
     })
 
+    // Uniqueness is a per-HOST property. A multi-host external cluster puts
+    // every nodeop on its own machine, so all of them correctly bind the
+    // standard ports — a global-uniqueness check calls that a collision and
+    // makes a valid deployment unrepresentable. It rejected a correct
+    // 43-identity bind config on 2026-08-04, AFTER the bootstrap had passed.
+    describe("allPortBindings", () => {
+      it("accepts the same port on DIFFERENT advertised hosts", async () => {
+        const config = await BindConfigProvider.resolve(
+            {},
+            { producerCount: 2, batchOperatorCount: 1, underwriterCount: 0 }
+          ),
+          // The external shape: one shared LISTEN address, per-node ADVERTISE
+          // addresses, every node on the standard ports.
+          external = {
+            ...config,
+            nodeop: {
+              ...config.nodeop,
+              ports: {
+                ...config.nodeop.ports,
+                producers: config.nodeop.ports.producers.map((port, index) => ({
+                  ...port,
+                  http: 8888,
+                  p2p: 9876,
+                  advertiseAddress: `10.60.1.${index + 10}`
+                }))
+              }
+            }
+          }
+        const flat = BindConfigProvider.allPorts(external),
+          scoped = BindConfigProvider.allPortBindings(external)
+        // The old global check sees a collision …
+        expect(new Set(flat).size).toBeLessThan(flat.length)
+        // … the host-scoped one does not.
+        expect(new Set(scoped).size).toBe(scoped.length)
+      })
+
+      it("still REJECTS the same port twice on ONE advertised host", async () => {
+        const config = await BindConfigProvider.resolve(
+            {},
+            { producerCount: 2, batchOperatorCount: 0, underwriterCount: 0 }
+          ),
+          collided = {
+            ...config,
+            nodeop: {
+              ...config.nodeop,
+              ports: {
+                ...config.nodeop.ports,
+                // Both producers on the SAME host AND the same ports — a real
+                // collision the check must keep catching.
+                producers: config.nodeop.ports.producers.map(port => ({
+                  ...port,
+                  http: 8888,
+                  p2p: 9876,
+                  advertiseAddress: "10.60.1.10"
+                }))
+              }
+            }
+          }
+        const scoped = BindConfigProvider.allPortBindings(collided)
+        expect(new Set(scoped).size).toBeLessThan(scoped.length)
+      })
+
+      it("falls back to the shared listen address when none is advertised", async () => {
+        // Single-host local cluster: no advertiseAddress, so every node shares
+        // one key and global uniqueness is restored — which is correct there.
+        const config = await BindConfigProvider.resolve(
+            {},
+            { producerCount: 2, batchOperatorCount: 2, underwriterCount: 1 }
+          ),
+          scoped = BindConfigProvider.allPortBindings(config)
+        expect(new Set(scoped).size).toBe(scoped.length)
+        expect(scoped.every(key => key.includes(":"))).toBe(true)
+      })
+    })
+
     it("binds every address to the bind-all address when bindAll is set", async () => {
       const config = await BindConfigProvider.resolve({}, { bindAll: true })
       expect(config.kiod.address).toBe(ListenAllAddress)
@@ -248,6 +323,32 @@ describe("BindConfigProvider", () => {
       )
       expect(config.kiod.port).toBe(pinned)
     })
+
+    it("carries a per-node advertiseAddress through verbatim (multi-host mesh)", async () => {
+      const AdvertiseAddress = "10.0.0.11",
+        BiosAdvertiseAddress = "10.0.0.10"
+      const config = await BindConfigProvider.resolve(
+        {
+          nodeop: {
+            ports: {
+              bios: { advertiseAddress: BiosAdvertiseAddress },
+              producers: [{ advertiseAddress: AdvertiseAddress }]
+            }
+          }
+        },
+        { producerCount: 2 }
+      )
+      expect(config.nodeop.ports.bios.advertiseAddress).toBe(
+        BiosAdvertiseAddress
+      )
+      expect(config.nodeop.ports.producers[0].advertiseAddress).toBe(
+        AdvertiseAddress
+      )
+      // Unpinned entries persist WITHOUT the key (single-host default).
+      expect(
+        "advertiseAddress" in config.nodeop.ports.producers[1]
+      ).toBe(false)
+    })
   })
 
   describe("isPortAvailable", () => {
@@ -257,6 +358,67 @@ describe("BindConfigProvider", () => {
       expect(await BindConfigProvider.isPortAvailable(port)).toBe(false)
       allocator.reset()
       expect(await BindConfigProvider.isPortAvailable(port)).toBe(true)
+    })
+  })
+
+  describe("portLockPath", () => {
+    // A mutex must be scoped to the state it guards. The registry is that
+    // state and it is env-overridable, so the lock has to follow it — a lock
+    // pinned to the OS temp dir made every jest worker queue on ONE mutex
+    // while each held its own mkdtemp registry, i.e. contend over nothing,
+    // and the rotating loser failed with `Lock file is already being held`.
+    it("lives INSIDE the registry it guards, so isolated registries never contend", () => {
+      const previous = process.env[BindConfigProvider.RegistryPathEnvVar]
+      try {
+        process.env[BindConfigProvider.RegistryPathEnvVar] = "/tmp/registry-one"
+        const first = BindConfigProvider.portLockPath()
+        process.env[BindConfigProvider.RegistryPathEnvVar] = "/tmp/registry-two"
+        const second = BindConfigProvider.portLockPath()
+
+        expect(Path.dirname(first)).toBe("/tmp/registry-one")
+        expect(Path.dirname(second)).toBe("/tmp/registry-two")
+        expect(first).not.toBe(second)
+      } finally {
+        process.env[BindConfigProvider.RegistryPathEnvVar] = previous
+      }
+    })
+
+    it("is ONE shared path when the registry is shared — the cross-process guarantee", () => {
+      const previous = process.env[BindConfigProvider.RegistryPathEnvVar]
+      try {
+        process.env[BindConfigProvider.RegistryPathEnvVar] = "/tmp/registry-shared"
+        expect(BindConfigProvider.portLockPath()).toBe(
+          BindConfigProvider.portLockPath()
+        )
+        expect(Path.dirname(BindConfigProvider.portLockPath())).toBe(
+          BindConfigProvider.registryPath()
+        )
+      } finally {
+        process.env[BindConfigProvider.RegistryPathEnvVar] = previous
+      }
+    })
+  })
+
+  describe("clearPortLocks", () => {
+    it("releases the in-process lock so a registry-vetted port can be re-acquired as a PIN", async () => {
+      const picked = await BindConfigProvider.findAvailable(
+        BindConfigProvider.DefaultKiod
+      )
+      // findAvailable LOCKED it — asking for exactly that port is now refused,
+      // even though nothing on the OS holds it. This is the trap that makes a
+      // find-then-pin sequence fail deterministically.
+      expect(allocator.locked.has(picked)).toBe(true)
+      expect(await BindConfigProvider.isPortAvailable(picked)).toBe(false)
+
+      await BindConfigProvider.clearPortLocks()
+      expect(await BindConfigProvider.isPortAvailable(picked)).toBe(true)
+    })
+
+    it("drops ONLY the in-process locks — a genuinely taken port stays unavailable", async () => {
+      const port = 6544
+      allocator.markTaken(port)
+      await BindConfigProvider.clearPortLocks()
+      expect(await BindConfigProvider.isPortAvailable(port)).toBe(false)
     })
   })
 

@@ -42,8 +42,13 @@ export namespace EmissionsSoakScenarioConstants {
   export const EpochDurationSec = envInteger("EPOCH_DURATION_SEC", 60)
   /** Producers in the bootstrap roster. */
   export const ProducerCount = 3
-  /** Bootstrapped batch operators in the bootstrap roster. */
-  export const BatchOperatorCount = 3
+  /**
+   * Bootstrapped batch operators in the bootstrap roster — the mainnet roster
+   * size, so the soak exercises the full 3-group × 7-member sliding window (and
+   * its per-epoch rotation) over the whole soak window rather than the
+   * degenerate 3 × 1 shape. Must stay ODD and divisible by 3.
+   */
+  export const BatchOperatorCount = 21
   /** Bootstrapped underwriters in the bootstrap roster. */
   export const UnderwriterCount = 1
 

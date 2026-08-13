@@ -12,15 +12,15 @@ describe("Constants", () => {
     })
   })
 
-  describe("account-name generators", () => {
+  describe("operator-label generators", () => {
     it("names batch operators by letter and wraps at 26", () => {
-      expect(Constants.batchOperatorAccountName(0)).toBe("batchop.a")
-      expect(Constants.batchOperatorAccountName(1)).toBe("batchop.b")
-      expect(Constants.batchOperatorAccountName(26)).toBe("batchop.a")
+      expect(Constants.batchOperatorLabel(0)).toBe("batchop.a")
+      expect(Constants.batchOperatorLabel(1)).toBe("batchop.b")
+      expect(Constants.batchOperatorLabel(26)).toBe("batchop.a")
     })
     it("names underwriters by letter", () => {
-      expect(Constants.underwriterAccountName(0)).toBe("uwrit.a")
-      expect(Constants.underwriterAccountName(1)).toBe("uwrit.b")
+      expect(Constants.underwriterLabel(0)).toBe("uwrit.a")
+      expect(Constants.underwriterLabel(1)).toBe("uwrit.b")
     })
   })
 
@@ -58,6 +58,37 @@ describe("Constants", () => {
       expect(c.producer_bps + c.batch_op_bps).toBe(10_000)
     })
   })
+
+  describe("EMISSION_CONFIG_DEFAULTS", () => {
+    // Tier caps are TN_MAX_NODE_OWNERS in wire-sysio
+    // contracts/sysio.system/include/sysio.system/emissions.hpp.
+    const T1Cap = 21
+    const T2Cap = 84
+    const T3Cap = 1000
+    /** 1,000,000,000 WIRE x 1e9 subunits — the supply issued to `sysio` at bootstrap. */
+    const WireSupplySubunits = 1_000_000_000_000_000_000
+
+    it("sets tier allocations PER OWNER, not per tier", () => {
+      expect(Constants.EMISSION_CONFIG_DEFAULTS.t1_allocation).toBe(7_500_000_000_000_000)
+      expect(Constants.EMISSION_CONFIG_DEFAULTS.t2_allocation).toBe(1_000_000_000_000_000)
+      expect(Constants.EMISSION_CONFIG_DEFAULTS.t3_allocation).toBe(100_000_000_000_000)
+    })
+
+    it("commits 341,500,000 WIRE at tier caps, inside the WIRE supply", () => {
+      const { t1_allocation, t2_allocation, t3_allocation } =
+        Constants.EMISSION_CONFIG_DEFAULTS
+      const committed =
+        t1_allocation * T1Cap + t2_allocation * T2Cap + t3_allocation * T3Cap
+      expect(committed).toBe(341_500_000_000_000_000)
+      expect(committed).toBeLessThan(WireSupplySubunits)
+    })
+
+    it("vests over 12 / 24 / 36 months on a 30-day month", () => {
+      expect(Constants.EMISSION_CONFIG_DEFAULTS.t1_duration).toBe(31_104_000)
+      expect(Constants.EMISSION_CONFIG_DEFAULTS.t2_duration).toBe(62_208_000)
+      expect(Constants.EMISSION_CONFIG_DEFAULTS.t3_duration).toBe(93_312_000)
+    })
+  })
 })
 
 describe("ProtocolTiming", () => {
@@ -66,6 +97,7 @@ describe("ProtocolTiming", () => {
     expect(ProtocolTiming.CollateralVerifyBudgetMs).toBe(360_000)
     expect(ProtocolTiming.SingleHopBudgetMs).toBe(420_000)
     expect(ProtocolTiming.DoubleHopBudgetMs).toBe(840_000)
+    expect(ProtocolTiming.PollDeadlineBufferMs).toBe(30_000)
   })
 
   it("orders the classes: collateral < single hop < double hop = 2x single", () => {
@@ -80,5 +112,55 @@ describe("ProtocolTiming", () => {
   it("effectiveEpochSec adds the max delivery extension", () => {
     expect(ProtocolTiming.effectiveEpochSec(60)).toBe(90)
     expect(ProtocolTiming.effectiveEpochSec(300)).toBe(330)
+  })
+
+  describe("irreversibilityBudgetMs", () => {
+    it("pins the two constants the budget is built from", () => {
+      expect(ProtocolTiming.IrreversibilityBaseMs).toBe(60_000)
+      expect(ProtocolTiming.IrreversibilityPerFinalizerMs).toBe(6_000)
+    })
+
+    it("is the floor plus one increment per finalizer", () => {
+      expect(ProtocolTiming.irreversibilityBudgetMs(1)).toBe(66_000)
+      expect(ProtocolTiming.irreversibilityBudgetMs(3)).toBe(78_000)
+      expect(ProtocolTiming.irreversibilityBudgetMs(21)).toBe(186_000)
+    })
+
+    // The budget exists because a flat 60s failed `create-acct` on 2026-08-04
+    // against a MEASURED 49.4s irreversibility at 21 finalizers. If this margin
+    // ever drops back toward 1x, the timeout it was written to prevent is armed
+    // again — so the relationship is pinned, not just the arithmetic.
+    it("clears the measured 21-finalizer latency with real margin", () => {
+      const measuredMs = 49_400,
+        budget = ProtocolTiming.irreversibilityBudgetMs(21)
+      expect(budget).toBeGreaterThan(measuredMs * 3)
+    })
+
+    it("keeps small dev/flow topologies near the previous flat budget", () => {
+      // Every flow bootstraps a handful of finalizers; the floor must not make
+      // those runs materially slower to fail than the 60s they used to get.
+      ;[1, 2, 3].forEach(count =>
+        expect(ProtocolTiming.irreversibilityBudgetMs(count)).toBeLessThanOrEqual(
+          80_000
+        )
+      )
+    })
+
+    it("never returns less than the single-finalizer budget", () => {
+      // 0 is reachable: `WireClientConfig.finalizerCount` is optional and
+      // `withFinality` passes `?? 0`, so the floor is load-bearing, not defensive.
+      const floor = ProtocolTiming.irreversibilityBudgetMs(1)
+      expect(ProtocolTiming.irreversibilityBudgetMs(0)).toBe(floor)
+      expect(ProtocolTiming.irreversibilityBudgetMs(-5)).toBe(floor)
+    })
+
+    it("grows monotonically with the finalizer set", () => {
+      const budgets = [1, 5, 9, 21, 43].map(
+        ProtocolTiming.irreversibilityBudgetMs
+      )
+      budgets.slice(1).forEach((budget, index) => {
+        expect(budget).toBeGreaterThan(budgets[index])
+      })
+    })
   })
 })

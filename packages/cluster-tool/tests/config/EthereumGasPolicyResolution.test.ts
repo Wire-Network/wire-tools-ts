@@ -7,13 +7,13 @@ import {
 
 describe("resolveEthereumGasPolicy", () => {
   it("defaults to the stock chain when nothing selects a policy", () => {
-    expect(resolveEthereumGasPolicy({})).toBe(EthereumGasPolicy.chainDefault)
+    expect(resolveEthereumGasPolicy({})).toBe(EthereumGasPolicy.mainnetParity)
   })
 
   it("treats an empty override as unset", () => {
     expect(
       resolveEthereumGasPolicy({ [EthereumGasPolicyEnvVar]: "" })
-    ).toBe(EthereumGasPolicy.chainDefault)
+    ).toBe(EthereumGasPolicy.mainnetParity)
   })
 
   it("reads each policy from the environment", () => {
@@ -30,8 +30,8 @@ describe("resolveEthereumGasPolicy", () => {
 
     // When/Then: …an explicit caller option still wins, so a scenario that
     // pins its own policy is not silently overridden by ambient env.
-    expect(resolveEthereumGasPolicy(env, EthereumGasPolicy.osaka)).toBe(
-      EthereumGasPolicy.osaka
+    expect(resolveEthereumGasPolicy(env, EthereumGasPolicy.uncapped)).toBe(
+      EthereumGasPolicy.uncapped
     )
   })
 

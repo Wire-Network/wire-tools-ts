@@ -18,24 +18,22 @@ describe("SolanaValidatorProcess", () => {
   })
   afterEach(async () => {
     await manager.stopAll()
-    delete process.env[SolanaValidatorProcess.VerboseEnvironmentVariable]
   })
   afterAll(() => {
     Fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  it("builds the validator argv with --quiet by default + loopback URLs", async () => {
+  it("builds the validator argv + loopback URLs, and NEVER passes --quiet", async () => {
     const validator = await SolanaValidatorProcess.create(manager, {
       binary: "/bin/true"
     })
     expect(validator.args).toEqual(
-      expect.arrayContaining([
-        "--rpc-port",
-        "--faucet-port",
-        "--gossip-port",
-        "--quiet"
-      ])
+      expect.arrayContaining(["--rpc-port", "--faucet-port", "--gossip-port"])
     )
+    // A silencing flag on a dev/test daemon hides the exact startup panic and
+    // the program `msg!()` output you need when it fails — it is unconditional,
+    // with no env var to re-enable it.
+    expect(validator.args).not.toContain("--quiet")
     expect(validator.rpcUrl).toContain(Localhost)
     expect(validator.wsUrl).toMatch(/^ws:\/\//)
   })
@@ -81,12 +79,29 @@ describe("SolanaValidatorProcess", () => {
     )
   })
 
-  it("drops --quiet when the verbose env var is set", async () => {
-    process.env[SolanaValidatorProcess.VerboseEnvironmentVariable] = "1"
+  it("deploys upgradeable via --upgradeable-program when an upgradeAuthority is set", async () => {
     const validator = await SolanaValidatorProcess.create(manager, {
-      binary: "/bin/true"
+      binary: "/bin/true",
+      programs: [
+        {
+          name: "opp",
+          programId: "PID",
+          soFile: "/tmp/opp.so",
+          upgradeAuthority: "UPGKEY"
+        }
+      ]
     })
-    expect(validator.args).not.toContain("--quiet")
+    // The upgradeable form (so a ProgramData account exists) REPLACES the
+    // non-upgradeable --bpf-program form — the two are mutually exclusive.
+    expect(validator.args).toEqual(
+      expect.arrayContaining([
+        "--upgradeable-program",
+        "PID",
+        "/tmp/opp.so",
+        "UPGKEY"
+      ])
+    )
+    expect(validator.args).not.toContain("--bpf-program")
   })
 
   it("passes an explicit --dynamic-port-range window verbatim", async () => {

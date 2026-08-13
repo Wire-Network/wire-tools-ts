@@ -3,32 +3,38 @@ import { z } from "zod"
 
 import { SchemaCodec } from "../schema/index.js"
 import { ChainTokenAmountSchema } from "../types/ChainTokenAmount.js"
+import { AWSClusterNodeConfigSchema } from "./AWSClusterNodeConfig.js"
 import { BindConfigSchema } from "./BindConfig.js"
 import { ClusterSignatureProviderConfigSchema } from "./SignatureProviderConfig.js"
 
 import { ExternalOutpostConfigSchema } from "./ExternalOutpostConfig.js"
 
 /**
- * Gas constraints imposed on the local Ethereum chain.
+ * Gas ceiling regime for the local Ethereum chain.
  *
- * A stress campaign's outbound OPP delivery can need far more gas than a
- * stock block allows — the ETH-241 characterization puts a ~3.4 KB inbound
- * envelope plus a backlogged outbound queue at ~93.6M gas against anvil's
- * 30M default. Naming the policy makes "did the protocol fail, or did the
- * chain's gas ceiling stop it?" an answerable question rather than a guess.
+ * Two regimes, not a spectrum. The cluster's anvil runs mainnet-parity gas by
+ * default — a pinned EVM revision, EIP-7825's per-transaction cap, and a sized
+ * block limit — so a transaction mainnet would reject is rejected here too.
+ * The only reason to leave that regime is to answer one question: "did the
+ * protocol fail, or did the gas ceiling stop it?"
+ *
+ * That question is not hypothetical. ETH-241 put a ~3.4 KB inbound envelope
+ * plus a backlogged outbound queue at ~93.6M gas, and its `execution reverted`
+ * with empty data was indistinguishable from a contract fault. Re-running the
+ * identical commit and load with only this policy changed is what separated it
+ * from WIRE-340, a depot payout stall that had been hiding behind the gas
+ * failure.
  */
 export enum EthereumGasPolicy {
-  /** Anvil's stock limits: 30M block gas, EIP-7825 per-tx cap NOT enforced. */
-  chainDefault = "chainDefault",
   /**
-   * The Osaka constraint: EIP-7825's per-transaction gas cap (2^24) enforced
-   * on top of the stock block limit. The realistic future ceiling.
+   * Mainnet parity — the default. Pinned hardfork, EIP-7825 per-transaction
+   * cap enforced, block limit sized to `AnvilProcess.BlockGasLimit`.
    */
-  osaka = "osaka",
+  mainnetParity = "mainnetParity",
   /**
-   * No practical ceiling — a block gas limit far above any envelope and no
-   * per-transaction cap. Not realistic; it exists to prove whether a failure
-   * is protocol behaviour or merely the gas ceiling.
+   * No practical ceiling: a block gas limit far above any envelope and no
+   * per-transaction cap. Deliberately UNREALISTIC — a run under it proves
+   * nothing about mainnet, only whether gas was the binding constraint.
    */
   uncapped = "uncapped"
 }
@@ -207,6 +213,14 @@ export const ClusterConfigSchema = z.object({
    */
   underwriterCollateral: z.array(z.array(ChainTokenAmountSchema)).nullable(),
   /**
+   * Genesis block-signing K1 public key (`genesis.json`'s `initial_key`) — the
+   * bios node's authority. Under `KEY` / `KIOD` this is the well-known dev bios
+   * key (byte-identical to every historical cluster); under `SSM` it is the
+   * generated-or-adopted bios K1, which necessarily yields a DIFFERENT chain id.
+   * Schema-defaulted to `null` so pre-existing configs stay loadable.
+   */
+  initialKey: z.string().nullable().default(null),
+  /**
    * Genesis finalizer BLS public key, or `null` before key provisioning has
    * produced one. `null` (not absence) so the slot round-trips through JSON.
    */
@@ -217,6 +231,14 @@ export const ClusterConfigSchema = z.object({
    * configs stay loadable.
    */
   signatureProvider: ClusterSignatureProviderConfigSchema,
+  /**
+   * The cluster's AWS placement — the account its nodes run in, every region its
+   * secrets are replicated to, and the SSM publish settings — or `null` when the
+   * cluster has none. REQUIRED when `signatureProvider.type` is `SSM`: it
+   * sources the secret-id `{cluster}` segment and the region set. Schema-defaulted
+   * to `null` so pre-existing configs stay loadable.
+   */
+  awsClusterNodeConfig: AWSClusterNodeConfigSchema.nullable().default(null),
   /**
    * Already-deployed outposts to run against (external-outpost mode), or `null`
    * for the standard local-anvil/local-solana bootstrap. Schema-defaulted to
@@ -237,14 +259,14 @@ export const ClusterConfigSchema = z.object({
    */
   enableMockReserves: z.boolean().default(false),
   /**
-   * Gas constraints imposed on the local Ethereum chain
-   * (the `--ethereum-gas-policy` create flag). Schema-defaulted
-   * {@link EthereumGasPolicy.chainDefault} so pre-existing configs and every
-   * ordinary flow keep anvil's stock 30M block limit.
+   * Gas ceiling regime for the local Ethereum chain (the
+   * `--ethereum-gas-policy` create flag). Schema-defaulted
+   * {@link EthereumGasPolicy.mainnetParity} so pre-existing configs and every
+   * ordinary flow run under the mainnet-parity ceiling — the realistic one.
    */
   ethereumGasPolicy: z
     .enum(EthereumGasPolicy)
-    .default(EthereumGasPolicy.chainDefault)
+    .default(EthereumGasPolicy.mainnetParity)
 })
 /** THE canonical cluster configuration — the schema-inferred shape of {@link ClusterConfigSchema}. */
 export type ClusterConfig = z.infer<typeof ClusterConfigSchema>

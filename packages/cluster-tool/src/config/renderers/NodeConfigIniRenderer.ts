@@ -1,8 +1,12 @@
+import { KeyType } from "@wireio/sdk-core"
 import { Constants } from "../../Constants.js"
+import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { WireClient } from "../../clients/wire/WireClient.js"
+import type { WireKeyPair } from "../../types/KeyPair.js"
 import type { Renderer } from "../../utils/Renderer.js"
-import { Localhost, toDialAddress } from "../../utils/netUtils.js"
-import { NodeRole, type NodeConfig } from "../NodeConfig.js"
+import { Localhost } from "../../utils/netUtils.js"
+import { ClusterConfigProvider } from "../ClusterConfigProvider.js"
+import { NodeConfig, NodeRole } from "../NodeConfig.js"
 
 /**
  * Renders a nodeop `config.ini` (folds the former `cluster/Config.ts`
@@ -32,10 +36,7 @@ export class NodeConfigIniRenderer implements Renderer {
         ...plugins.map(plugin => kv("plugin", plugin)),
         "",
         kv("p2p-listen-endpoint", `${listen}:${node.ports.p2p}`),
-        kv(
-          "p2p-server-address",
-          `${toDialAddress(listen)}:${node.ports.p2p}`
-        ),
+        kv("p2p-server-address", `${node.advertiseAddress}:${node.ports.p2p}`),
         kv("http-server-address", `${listen}:${node.ports.http}`),
         ...node.peerEndpoints.map(ep => kv("p2p-peer-address", ep)),
         "",
@@ -43,7 +44,12 @@ export class NodeConfigIniRenderer implements Renderer {
         ...(isBios ? [kv("enable-stale-production", "true")] : []),
         ...node.producers.map(producer => kv("producer-name", producer)),
         ...(isBios
-          ? [kv("signature-provider", Constants.devSignatureProvider())]
+          ? [
+              kv(
+                "signature-provider",
+                NodeConfigIniRenderer.biosSignatureProvider(node)
+              )
+            ]
           : []),
         ...(isApi || isOperator
           ? [kv("transaction-retry-max-storage-size-gb", 100)]
@@ -52,17 +58,20 @@ export class NodeConfigIniRenderer implements Renderer {
         kv("vote-threads", extraArgs.voteThreads),
         kv("max-transaction-time", extraArgs.maxTransactionTime),
         kv("abi-serializer-max-time-ms", extraArgs.abiSerializerMaxTimeMs),
-        kv("max-clients", extraArgs.maxClients),
+        // Topology-derived, NOT a fixed cap: every node is meshed with every
+        // other, so a `max-clients` below the mesh size makes each node refuse
+        // the surplus inbound dials and LIB freezes at scale. See
+        // NodeConfig.peerCapacity.
+        kv("max-clients", NodeConfig.peerCapacity(node.cluster)),
+        kv("p2p-max-nodes-per-host", NodeConfig.peerCapacity(node.cluster)),
         kv("connection-cleanup-period", extraArgs.connectionCleanupPeriod),
         kv("http-max-response-time-ms", extraArgs.httpMaxResponseTimeMs),
+        // The operator's `batch-operator-account` / `underwriter-account` is
+        // NOT rendered here: the chain account is node-owner-generated at
+        // provisioning time, so it rides the daemon CLI args
+        // (`OperatorDaemonTool`) resolved from the key store at start.
         ...(isOperator
           ? [kv("read-mode", WireClient.FinalityType.irreversible)]
-          : []),
-        ...(isOperator && node.batchOperatorAccount
-          ? [kv("batch-operator-account", node.batchOperatorAccount)]
-          : []),
-        ...(isOperator && node.underwriterAccount
-          ? [kv("underwriter-account", node.underwriterAccount)]
           : []),
         ...NodeConfigIniRenderer.HttpInsecureLines,
         ""
@@ -72,6 +81,41 @@ export class NodeConfigIniRenderer implements Renderer {
 }
 
 export namespace NodeConfigIniRenderer {
+  /**
+   * The bios node's `signature-provider` value — its genesis K1 authority
+   * (`cluster.initialKey`, resolved by
+   * `ClusterConfigProvider.resolveWithBiosKeys`), sourced per the cluster's
+   * signature provider: inline `KEY:` (the default), `SSM:<secret id>`, or
+   * `KIOD:<url>`.
+   *
+   * Only a `KEY:` spec embeds a private key, and a KEY cluster's bios key is
+   * ALWAYS the well-known dev pair (bios key GENERATION happens only under SSM)
+   * — so the dev private key below is the correct one exactly when it is used
+   * and ignored in every other branch. That makes the KEY rendering
+   * byte-identical to the historical `Constants.devSignatureProvider()`.
+   *
+   * @param node - The bios node (its `cluster` carries the provider config, and
+   *   its `name` is the SSM secret-id `{account}` segment — the same one
+   *   `NodeopProcess.buildArgs` renders).
+   * @returns The `<name>,wire,wire,<pub>,<SCHEME>:<...>` provider spec.
+   */
+  export function biosSignatureProvider(node: NodeConfig): string {
+    const cluster = node.cluster,
+      biosKey: WireKeyPair = {
+        type: KeyType.K1,
+        publicKey: cluster.initialKey,
+        privateKey: Constants.DEV_K1_PRIVATE_KEY
+      }
+    return KeyGenerator.toSignatureProvider(
+      biosKey,
+      undefined,
+      ClusterConfigProvider.signatureProviderSource(cluster)(
+        node.name,
+        KeyType.K1
+      )
+    )
+  }
+
   /** Advertised peer / server address (a `0.0.0.0` listen cannot be advertised) —
    *  sourced from `netUtils.Localhost`. */
   export const Loopback = Localhost

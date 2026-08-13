@@ -3,7 +3,7 @@ import { z } from "zod"
 
 /**
  * Provider-type roster — member/value IS the C++ scheme token verbatim
- * (`KEY:` / `SSM:` / `KIOD:` signature-provider specs, modeled on
+ * (the KEY / SSM / KIOD signature-provider schemes, modeled on
  * `signature_provider_manager_plugin`). `KMS` is the documented next member;
  * `match().exhaustive()` forces handling when it is added.
  */
@@ -40,18 +40,26 @@ const signatureProviderBaseShape = {
   proofOfPossession: z.string().optional()
 }
 
-/** `KEY:` provider — carries the raw private key inline (full `KEY:`/`SSM:` parity). */
+/** KEY-scheme provider — carries the raw private key inline (full KEY/SSM parity). */
 export const SignatureProviderKEYConfigSchema = z.object({
   providerType: z.literal(SignatureProviderType.KEY),
   ...signatureProviderBaseShape,
   privateKey: z.string()
 })
 
-/** `SSM:` provider — the AWS region + secret id the private key is fetched from once. */
+/**
+ * `SSM:` provider — the secret id the private key is fetched from once. The
+ * rendered `--signature-provider` spec is REGION-LESS (`SSM:<secretId>`, ONE
+ * colon): the depot's `signature_provider_ssm_plugin` resolves the region from
+ * the ambient AWS environment chain (env vars → shared config → IMDS).
+ * `awsRegions` is INFORMATIONAL — it records every region the parameter was
+ * replicated to, for operators and disaster-recovery migrations; nothing
+ * resolves through it, and there is no primary region.
+ */
 export const SignatureProviderSSMConfigSchema = z.object({
   providerType: z.literal(SignatureProviderType.SSM),
   ...signatureProviderBaseShape,
-  awsRegion: z.string(),
+  awsRegions: z.array(z.string().min(1)).min(1),
   awsSecretId: z.string()
 })
 
@@ -82,7 +90,7 @@ export const SignatureProviderConfigSchema = z
     }
   })
 
-/** `KEY:` provider config — the schema-inferred shape of {@link SignatureProviderKEYConfigSchema}. */
+/** KEY-scheme provider config — the schema-inferred shape of {@link SignatureProviderKEYConfigSchema}. */
 export type SignatureProviderKEYConfig = z.infer<
   typeof SignatureProviderKEYConfigSchema
 >
@@ -114,21 +122,36 @@ export type SignatureProviderConfigOf<T extends SignatureProviderType> = Extract
 >
 
 /**
- * SSM publish settings: the AWS region + the secret-id PATTERN used when
- * publishing each generated key. Placeholders: `{cluster}` (basename of
- * clusterPath), `{account}`, `{keyType}` — e.g.
- * `/wire-sysio/{cluster}/keys/{account}/{keyType}`. Unknown placeholders fail
- * fast at resolution time.
+ * AWS SSM publish settings: the secret-id PATTERN every generated key is
+ * published under, the optional `{version}` token value, and the DERIVED
+ * replication region set.
+ *
+ * Pattern placeholders — `{cluster}` (the AWS account the cluster runs in:
+ * `dev` / `sandbox` / `test` / `prod`, sourced from `AWSClusterNodeConfig.account`),
+ * `{account}` (the key's DURABLE handle — an operator handle like `batchop.a`
+ * or a node name like `node_00`, NEVER the generated `wireno.…` chain account),
+ * `{keyType}`, and the OPTIONAL `{version}`. The default pattern is the
+ * 4-segment `/wire/{cluster}/{account}/{keyType}`; `{version}` is SUPPORTED but
+ * is not part of it. An unknown or unfilled placeholder fails fast at
+ * resolution time.
  */
-export const ClusterSignatureProviderSSMOptionsSchema = z.object({
-  /** AWS region the parameters are published under. */
-  awsRegion: z.string(),
-  /** Secret-id pattern with `{cluster}` / `{account}` / `{keyType}` placeholders. */
-  awsSecretIdPattern: z.string()
+export const AWSSSMSignatureProviderOptionsSchema = z.object({
+  /**
+   * Every AWS region the parameters are replicated to. DERIVED at resolve time
+   * from `AWSClusterNodeConfig.regions`, so authoring it here alongside an
+   * `awsClusterNodeConfig` is rejected. There is no primary region: every secret
+   * is published to EVERY region so a disaster-recovery migration into any one
+   * of them finds its parameters already present.
+   */
+  awsRegions: z.array(z.string().min(1)).min(1).optional(),
+  /** Secret-id pattern with `{cluster}` / `{account}` / `{keyType}` / `{version}` placeholders. */
+  awsSecretIdPattern: z.string(),
+  /** Value for the OPTIONAL `{version}` pattern token — omit when the pattern has none. */
+  version: z.string().min(1).optional()
 })
-/** SSM publish settings — the schema-inferred shape of {@link ClusterSignatureProviderSSMOptionsSchema}. */
-export type ClusterSignatureProviderSSMOptions = z.infer<
-  typeof ClusterSignatureProviderSSMOptionsSchema
+/** AWS SSM publish settings — the schema-inferred shape of {@link AWSSSMSignatureProviderOptionsSchema}. */
+export type AWSSSMSignatureProviderOptions = z.infer<
+  typeof AWSSSMSignatureProviderOptionsSchema
 >
 
 /**
@@ -140,8 +163,8 @@ export type ClusterSignatureProviderSSMOptions = z.infer<
 export interface ClusterSignatureProviderOptions {
   /** Provider type the cluster's own signing keys are handled with. Default: KEY. */
   type?: SignatureProviderType
-  /** SSM publish settings — required when `type === SSM`. */
-  ssm?: ClusterSignatureProviderSSMOptions
+  /** AWS SSM publish settings — required when `type === SSM`. */
+  ssm?: AWSSSMSignatureProviderOptions
 }
 
 /**
@@ -154,8 +177,8 @@ export const ClusterSignatureProviderConfigSchema = z
   .object({
     /** Provider type the cluster's own signing keys are handled with. */
     type: z.enum(SignatureProviderType),
-    /** SSM publish settings, or `null` under KEY/KIOD (round-trips through JSON). */
-    ssm: ClusterSignatureProviderSSMOptionsSchema.nullable()
+    /** AWS SSM publish settings, or `null` under KEY/KIOD (round-trips through JSON). */
+    ssm: AWSSSMSignatureProviderOptionsSchema.nullable()
   })
   .default({ type: SignatureProviderType.KEY, ssm: null })
 /** The resolved cluster signature-provider config — the shape of {@link ClusterSignatureProviderConfigSchema}. */

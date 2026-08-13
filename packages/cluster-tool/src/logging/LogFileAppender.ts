@@ -80,23 +80,17 @@ export class LogFileAppender implements Appender {
   }
 
   /**
-   * Flush and close the underlying file stream, if it was opened.
-   *
-   * `stream.end()` only STARTS the flush — the bytes are not on disk when it
-   * returns. Any caller that reads the file back (a test, an archiver, a
-   * report step) must await this, or it races the write and sees a truncated
-   * or empty file. Idempotent: closing twice resolves immediately.
-   *
-   * @returns Resolves once the stream has closed and the file is complete.
+   * Flush and close the underlying file stream, if it was opened — resolves
+   * once every buffered record is on disk (`end`'s finish callback), so a
+   * caller may read the file back deterministically. Resolves immediately
+   * when no record ever opened the stream.
    */
   close(): Promise<void> {
-    const stream = this.stream
-    if (stream === null) return Promise.resolve()
-    this.stream = null
-    return Deferred.useCallback<void>(deferred => {
-      stream.once("close", () => deferred.resolve())
-      stream.end()
-    }).promise
+    const { stream } = this
+    if (stream == null) return Promise.resolve()
+    return Deferred.useCallback<void>(deferred =>
+      stream.end(() => deferred.resolve())
+    ).promise
   }
 }
 

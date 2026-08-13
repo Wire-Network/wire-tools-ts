@@ -1,6 +1,7 @@
 import { SysioContracts } from "@wireio/sdk-core"
 import { SwapScenarioContext } from "@wireio/cluster-tool/flow"
 import { getLogger } from "@wireio/cluster-tool/logging"
+import { WireReserveTool } from "@wireio/cluster-tool/tools/wire"
 import type { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 
@@ -17,6 +18,7 @@ const SolanaChain = 200
 const EthToken = 101
 const SolToken = 201
 const PrimaryReserve = 1
+const { SymmetricConnectorWeightBps } = WireReserveTool
 
 /** A complete `reserves` row with zero defaults; override the fields under test. */
 function reserveRow(
@@ -32,7 +34,7 @@ function reserveRow(
     reserve_chain_amount: 0,
     reserve_wire_amount: 0,
     source_token_precision: 0,
-    connector_weight_bps: 0,
+    connector_weight_bps: SymmetricConnectorWeightBps,
     creator_addr: { kind: SysioReservChainkind.CHAIN_KIND_UNKNOWN, address: "" },
     requested_wire_amount: 0,
     external_token_amount: 0,
@@ -42,6 +44,9 @@ function reserveRow(
     is_private: false,
     owner: "",
     creator_pub_key: "",
+    owner_fee_bps: 0,
+    owner_fee_accrued: 0,
+    owner_fee_lifetime: 0,
     ...overrides
   }
 }
@@ -62,6 +67,7 @@ function uwreqRow(
     dst_token_code: { value: 0 },
     dst_reserve_code: { value: 0 },
     dst_amount: 0,
+    target_amount: 0,
     variance_tolerance_bps: 0,
     source_tx_id: "",
     depositor: "",
@@ -136,7 +142,12 @@ describe("SwapScenarioContext", () => {
         token_code: { value: SolToken },
         reserve_code: { value: PrimaryReserve },
         reserve_chain_amount: 3_000,
-        reserve_wire_amount: 4_000
+        reserve_wire_amount: 4_000,
+        // An owned reserve that charges and has already earned.
+        owner: "privowner",
+        owner_fee_bps: 200,
+        owner_fee_accrued: 500,
+        owner_fee_lifetime: 900
       })
     ],
     uwreqs: [
@@ -160,11 +171,58 @@ describe("SwapScenarioContext", () => {
         EthToken,
         PrimaryReserve
       )
-      expect(book).toEqual({ chain: 1_000n, wire: 2_000n })
+      expect(book).toEqual({
+        chain: 1_000n,
+        wire: 2_000n,
+        connectorWeightBps: SymmetricConnectorWeightBps,
+        ownerFeeBps: 0
+      })
+    })
+    it("carries a private reserve's non-zero owner fee onto the book", async () => {
+      // The book is what `quoteSwap` prices against, so an owner fee that never
+      // reaches it silently over-quotes the destination — the private-reserve
+      // regression. A public reserve's 0 makes that omission invisible.
+      const book = await newContext(fixtures).reserveBook(
+        SolanaChain,
+        SolToken,
+        PrimaryReserve
+      )
+      expect(book.ownerFeeBps).toBe(200)
     })
     it("throws when no reserve matches the triple", async () => {
       await expect(
         newContext(fixtures).reserveBook(999, EthToken, PrimaryReserve)
+      ).rejects.toThrow(/not found/)
+    })
+  })
+
+  describe("reserveOwnerFee", () => {
+    it("returns the owner, rate, and earned amounts as bigints", async () => {
+      const fee = await newContext(fixtures).reserveOwnerFee(
+        SolanaChain,
+        SolToken,
+        PrimaryReserve
+      )
+      expect(fee).toEqual({
+        owner: "privowner",
+        feeBps: 200,
+        accrued: 500n,
+        lifetime: 900n
+      })
+      // `lifetime` outliving `accrued` is the signature of a prior claim.
+      expect(fee.lifetime).toBeGreaterThan(fee.accrued)
+    })
+    it("reports a fee-free, owner-less reserve as all zeroes", async () => {
+      const fee = await newContext(fixtures).reserveOwnerFee(
+        EthereumChain,
+        EthToken,
+        PrimaryReserve
+      )
+      expect(fee).toEqual({ owner: "", feeBps: 0, accrued: 0n, lifetime: 0n })
+    })
+    it("throws when no reserve matches the triple", async () => {
+      await expect(
+        newContext(fixtures).reserveOwnerFee(999, EthToken, PrimaryReserve)
       ).rejects.toThrow(/not found/)
     })
   })

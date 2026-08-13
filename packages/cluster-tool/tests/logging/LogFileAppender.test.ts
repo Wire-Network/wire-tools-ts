@@ -12,6 +12,7 @@ const record = (over: Partial<LogRecord>): LogRecord => ({
   ...over
 })
 
+
 describe("LogFileAppender", () => {
   let dir: string
   let file: string
@@ -50,6 +51,12 @@ describe("LogFileAppender", () => {
     const content = Fs.readFileSync(file, "utf8")
     expect(content).not.toMatch(/skipme/)
     expect(content).toMatch(/keepme/)
+  })
+
+  it("close resolves immediately when no record ever opened the stream", async () => {
+    const appender = new LogFileAppender({ filename: file, level: "info" })
+    await expect(appender.close()).resolves.toBeUndefined()
+    expect(Fs.existsSync(file)).toBe(false)
   })
 
   it("uses a custom formatter when supplied", async () => {

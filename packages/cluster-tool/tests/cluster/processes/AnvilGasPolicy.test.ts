@@ -3,51 +3,53 @@ import { EthereumGasPolicy } from "@wireio/cluster-tool-shared"
 import { AnvilProcess } from "@wireio/cluster-tool"
 
 describe("AnvilProcess.gasPolicyArgs", () => {
-  it("adds nothing for the stock chain", () => {
-    // Given/When: the default policy.
-    const args = AnvilProcess.gasPolicyArgs(EthereumGasPolicy.chainDefault)
+  it("enforces mainnet parity by default: pinned fork, per-tx cap, sized block", () => {
+    // Given/When: the default regime.
+    const args = AnvilProcess.gasPolicyArgs(EthereumGasPolicy.mainnetParity)
 
-    // Then: anvil's own defaults apply — 30M block gas, EIP-7825 unenforced.
-    expect(args).toEqual([])
-  })
-
-  it("enforces the EIP-7825 per-transaction cap for osaka", () => {
-    // Given/When: the Osaka policy.
-    const args = AnvilProcess.gasPolicyArgs(EthereumGasPolicy.osaka)
-
-    // Then: anvil gates EIP-7825 behind an explicit opt-in, so the flag is
-    // required — selecting the hardfork alone does NOT enforce the cap.
+    // Then: all three constraints ride together. --enable-tx-gas-limit is what
+    // enforces EIP-7825's per-transaction cap; anvil does NOT apply it merely
+    // because the hardfork is selected.
     expect(args).toEqual([
       "--hardfork",
-      AnvilProcess.OsakaHardfork,
-      "--enable-tx-gas-limit"
+      AnvilProcess.Hardfork,
+      "--enable-tx-gas-limit",
+      "--gas-limit",
+      String(AnvilProcess.BlockGasLimit)
     ])
   })
 
-  it("raises the block ceiling for uncapped", () => {
-    // Given/When: the uncapped policy.
+  it("drops the per-tx cap and raises the block ceiling for uncapped", () => {
+    // Given/When: the investigation-only regime.
     const args = AnvilProcess.gasPolicyArgs(EthereumGasPolicy.uncapped)
 
-    // Then: both the block limit and the call<=block constraint are lifted.
-    expect(args).toEqual(["--gas-limit", AnvilProcess.UncappedBlockGasLimit])
-    // And: the limit clears the ~93.6M worst case ETH-241 describes.
-    expect(Number(AnvilProcess.UncappedBlockGasLimit)).toBeGreaterThan(
-      93_600_000
-    )
+    // Then: the per-tx cap is GONE (that is the point — it is the constraint
+    // being ruled out) and the block ceiling clears ETH-241's ~93.6M worst case.
+    expect(args).not.toContain("--enable-tx-gas-limit")
+    expect(args).toEqual([
+      "--hardfork",
+      AnvilProcess.Hardfork,
+      "--gas-limit",
+      String(AnvilProcess.UncappedBlockGasLimit)
+    ])
+    expect(AnvilProcess.UncappedBlockGasLimit).toBeGreaterThan(93_600_000)
   })
 
-  it("never enables the transaction cap unless osaka is selected", () => {
-    // Given: every policy that is not osaka.
-    const others = [
-      EthereumGasPolicy.chainDefault,
-      EthereumGasPolicy.uncapped
-    ]
+  it("never emits the flag pair anvil rejects", () => {
+    // --gas-limit cannot be combined with --disable-block-gas-limit; anvil
+    // exits 2. An earlier cut of `uncapped` shipped exactly that pair, passed
+    // its unit test, and killed a live run in the outpost-deploy phase.
+    Object.values(EthereumGasPolicy).forEach(policy => {
+      const args = AnvilProcess.gasPolicyArgs(policy)
+      expect(
+        args.includes("--gas-limit") && args.includes("--disable-block-gas-limit")
+      ).toBe(false)
+    })
+  })
 
-    // Then: the EIP-7825 opt-in appears for osaka alone.
-    others.forEach(policy =>
-      expect(AnvilProcess.gasPolicyArgs(policy)).not.toContain(
-        "--enable-tx-gas-limit"
-      )
+  it("pins the block ceiling ordering: parity below uncapped", () => {
+    expect(AnvilProcess.BlockGasLimit).toBeLessThan(
+      AnvilProcess.UncappedBlockGasLimit
     )
   })
 })

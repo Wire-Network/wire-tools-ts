@@ -1,16 +1,24 @@
+import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
-import { asOption } from "@3fv/prelude-ts"
-import { isString, Level } from "@wireio/shared"
+import { asOption, Either } from "@3fv/prelude-ts"
+import { isString, Level, NestedError } from "@wireio/shared"
 import {
-  ClusterSignatureProviderSSMOptionsSchema,
+  AWSClusterNodeConfigSchemaCodec,
+  AWSSSMSignatureProviderOptionsSchema,
+  ChainTokenAmountSchema,
+  CollateralRequirementSchema,
   SchemaCodec,
   SignatureProviderType,
-  type ClusterSignatureProviderSSMOptions
+  type AWSClusterNodeConfig,
+  type AWSSSMSignatureProviderOptions,
+  type ChainTokenAmount,
+  type CollateralRequirement
 } from "@wireio/cluster-tool-shared"
-import { camelCase, defaultsDeep, identity, range } from "lodash"
+import { camelCase, defaultsDeep, identity, isPlainObject, range } from "lodash"
 import { match, P } from "ts-pattern"
 import type { Argv, Options as YargsOption } from "yargs"
+import { z } from "zod"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 import { LogFileAppender } from "../logging/LogFileAppender.js"
 import { resolveEthereumGasPolicy } from "../config/ClusterConfigProvider.js"
@@ -38,11 +46,40 @@ const CliDefault = {
 } as const
 
 /** The dedicated `--signature-provider-ssm` flag: inline JSON, or a file path when the value doesn't start with `{`. */
-export const SignatureProviderSsmFlag = "signature-provider-ssm"
+export const SignatureProviderSSMFlag = "signature-provider-ssm"
+
+/**
+ * The dedicated `--cluster-build-options-file` flag: a JSON document carrying a
+ * whole {@link ClusterBuildOptions} — every scalar leaf `buildOptionShape`
+ * describes, the flag-less collateral arrays, and the out-of-shape
+ * `signatureProvider.ssm`. It does NOT carry `awsClusterNodeConfig` (that has
+ * its own {@link AWSClusterNodeConfigFlag}).
+ */
+export const ClusterBuildOptionsFileFlag = "cluster-build-options-file"
+
+/** The dedicated `--aws-cluster-node-config` flag: a path to an `AWSClusterNodeConfig` JSON file. */
+export const AWSClusterNodeConfigFlag = "aws-cluster-node-config"
 
 /** Validated codec for the `--signature-provider-ssm` payload. */
-const ssmOptionsCodec = SchemaCodec.create<ClusterSignatureProviderSSMOptions>(
-  ClusterSignatureProviderSSMOptionsSchema
+const ssmOptionsCodec = SchemaCodec.create<AWSSSMSignatureProviderOptions>(
+  AWSSSMSignatureProviderOptionsSchema
+)
+
+/**
+ * Validated codec for the three flag-less `CollateralRequirement[]` members of a
+ * build-options document. REUSES the shared `CollateralRequirementSchema` — the
+ * options document is never re-declared as a zod mirror of
+ * {@link ClusterBuildOptions} (`buildOptionShape` is the runtime source of truth
+ * for every scalar leaf); these two codecs cover ONLY the object-array members
+ * that shape deliberately declares empty.
+ */
+const collateralRequirementsCodec = SchemaCodec.create<CollateralRequirement[]>(
+  z.array(CollateralRequirementSchema)
+)
+
+/** Validated codec for the flag-less per-underwriter `ChainTokenAmount[][]` member. */
+const underwriterCollateralCodec = SchemaCodec.create<ChainTokenAmount[][]>(
+  z.array(z.array(ChainTokenAmountSchema))
 )
 
 /** A scalar option-leaf value — the yargs primitive kinds a flag can carry. */
@@ -329,13 +366,16 @@ export function buildOptionShape(
     buildPath: requiredLeaf(OptionLeafType.string, "wire-sysio build dir"),
     ethereumPath: requiredLeaf(OptionLeafType.string, "wire-ethereum repo"),
     solanaPath: requiredLeaf(OptionLeafType.string, "wire-solana repo"),
-    force: leaf(false, "overwrite an existing cluster directory"),
+    force: leaf(
+      false,
+      "replace an existing cluster directory (required when --cluster-path already exists; refuses while its daemons are live)"
+    ),
     // ── topology ──
     nodeCount: leaf(CliDefault.nodeCount, "producer node process count"),
     producerCount: leaf(CliDefault.producerCount, "producer account count"),
     batchOperatorCount: leaf(
       CliDefault.batchOperatorCount,
-      "batch operator count"
+      "batch operator count — ODD and divisible by 3 (3, 9, 15, 21) unless --operators-per-epoch OR --batch-op-groups is given; max 26"
     ),
     underwriterCount: leaf(CliDefault.underwriterCount, "underwriter count"),
     // ── epoch ──
@@ -389,7 +429,7 @@ export function buildOptionShape(
     // therefore mask the environment override entirely.
     ethereumGasPolicy: leaf(
       resolveEthereumGasPolicy(process.env),
-      "local Ethereum gas constraints: chainDefault | osaka (EIP-7825 per-tx cap) | uncapped"
+      "local Ethereum gas ceiling: mainnetParity (pinned hardfork + EIP-7825 per-tx cap + sized block limit) | uncapped (investigation only)"
     ),
     bind: buildBindShape(nodeCount, batchCount, underwriterCount),
     bindConfig: optionalLeaf(
@@ -420,9 +460,16 @@ export function buildOptionShape(
   }
 }
 
+/**
+ * The `--cluster-path` / `-d` flag — named because a `--cluster-build-options-file`
+ * document may also author `clusterPath`, and the two are mutually exclusive
+ * (`ClusterConfigProvider.assertClusterPathSource`).
+ */
+export const ClusterPathFlag = "cluster-path"
+
 /** yargs `-alias` for the highest-traffic flags (mirrors the historical CLI). */
 const AliasByFlag: Record<string, string> = {
-  "cluster-path": "d",
+  [ClusterPathFlag]: "d",
   "node-count": "n",
   "producer-count": "p",
   "batch-operator-count": "b",
@@ -540,14 +587,77 @@ export function applyClusterBuildOptionsArgs(
       ),
     yargs
   )
-  // `--signature-provider-ssm` lives OUTSIDE the option shape: its payload is a
-  // JSON object / file path, not a scalar leaf. A leading `{` selects inline
-  // JSON; otherwise it is read as a file path.
-  return withShape.option(SignatureProviderSsmFlag, {
-    type: "string",
-    describe:
-      "SSM publish settings as inline JSON ({awsRegion, awsSecretIdPattern}) or a file path (required when --signature-provider-type SSM)"
-  })
+  // These three live OUTSIDE the option shape: each payload is a JSON document
+  // (object / file path), not a scalar leaf. Registering them here keeps
+  // `.strict()` accepting them and `--help` listing them on every command that
+  // shares this surface.
+  return withShape
+    .option(SignatureProviderSSMFlag, {
+      type: "string",
+      describe:
+        "SSM publish settings as inline JSON ({awsSecretIdPattern, version?}) or a file path (required when --signature-provider-type SSM; the regions come from awsClusterNodeConfig)"
+    })
+    .option(ClusterBuildOptionsFileFlag, {
+      type: "string",
+      describe:
+        "path to a ClusterBuildOptions JSON document (every option leaf + the collateral arrays + signatureProvider.ssm); explicit flags beat the file, the file beats WIRE_* env"
+    })
+    .option(AWSClusterNodeConfigFlag, {
+      type: "string",
+      describe:
+        "path to an AWSClusterNodeConfig JSON file (the AWS account + every region secrets replicate to, plus its ssm settings)"
+    })
+}
+
+// ── raw command-line reads (pre-parse — the builder needs these BEFORE yargs) ──
+
+/**
+ * Read a `--<flag> <value>` / `--<flag>=<value>` string option straight from a
+ * RAW argv array, before yargs parses it. Needed because a flag whose value
+ * seeds the OTHER flags' defaults (`--cluster-build-options-file`) has to be
+ * known at builder time, which runs before any parse result exists.
+ *
+ * @param commandLine - The raw argument array (`process.argv.slice(2)`-shaped).
+ * @param flag - The long flag name, without the leading `--`.
+ * @returns The flag's value, or `null` when the flag is absent.
+ */
+export function readCommandLineFlag(
+  commandLine: string[],
+  flag: string
+): string {
+  const long = `--${flag}`,
+    assigned = `${long}=`,
+    index = commandLine.findIndex(
+      argument => argument === long || argument.startsWith(assigned)
+    )
+  if (index < 0) {
+    return null
+  }
+  const argument = commandLine[index]
+  return argument.startsWith(assigned)
+    ? argument.slice(assigned.length)
+    : commandLine[index + 1]
+}
+
+/**
+ * Whether a flag was passed EXPLICITLY on the raw command line — its long form
+ * (`--flag`, `--flag=value`) or its registered short alias (`-d`, `-d=value`).
+ * A yargs `default` (seeded from a file or the environment) is invisible here by
+ * construction, which is exactly what a "who authored this value" check needs.
+ *
+ * @param commandLine - The raw argument array.
+ * @param flag - The long flag name, without the leading `--`.
+ * @returns `true` when the flag itself appears on the command line.
+ */
+export function hasCommandLineFlag(
+  commandLine: string[],
+  flag: string
+): boolean {
+  const alias = AliasByFlag[flag],
+    forms = [`--${flag}`, ...(alias != null ? [`-${alias}`] : [])]
+  return commandLine.some(argument =>
+    forms.some(form => argument === form || argument.startsWith(`${form}=`))
+  )
 }
 
 /** Read a flag off argv by its kebab form, falling back to yargs' camelCase alias. */
@@ -702,16 +812,20 @@ export function toClusterBuildOptions(
   return absolutePaths(options)
 }
 
+/** The one non-flag member whose element type is `ChainTokenAmount[]`, not `CollateralRequirement`. */
+const UnderwriterCollateralKey = "underwriterCollateral" as const
+
 /**
  * `ClusterBuildOptions` members with NO flag representation (object-arrays —
  * `buildOptionShape` declares them empty). They flow from a caller's `defaults`
- * (e.g. a `FlowScenario.defaults`) straight into the resolved options.
+ * (e.g. a `FlowScenario.defaults`, or a `--cluster-build-options-file`
+ * document) straight into the resolved options.
  */
 const NonFlagOptionKeys = [
   "requiredProducerCollateral",
   "requiredBatchOperatorCollateral",
   "requiredUnderwriterCollateral",
-  "underwriterCollateral"
+  UnderwriterCollateralKey
 ] as const satisfies ReadonlyArray<keyof ClusterBuildOptions>
 
 /** A `ClusterBuildOptions` member with no flag representation. */
@@ -728,18 +842,302 @@ function carryNonFlagOption<K extends NonFlagOptionKey>(
   }
 }
 
+// ── `--cluster-build-options-file` (a whole ClusterBuildOptions document) ─────
+
+/** The out-of-shape member a build-options document MAY carry (validated by its own codec). */
+const SignatureProviderSSMDocumentPath = "signatureProvider.ssm"
+
+/** The member a build-options document may NOT carry — it has its own flag. */
+const AWSClusterNodeConfigDocumentKey =
+  "awsClusterNodeConfig" as const satisfies keyof ClusterBuildOptions
+
+/** The topology counts a document may set; they size the `bind` arrays of its own shape. */
+const TopologyCountKeys = [
+  "nodeCount",
+  "batchOperatorCount",
+  "underwriterCount"
+] as const satisfies ReadonlyArray<keyof ClusterBuildOptions>
+
+/** A topology-count member of a build-options document. */
+type TopologyCountKey = (typeof TopologyCountKeys)[number]
+
+/** Prefix every document diagnostic with the flag + the file it came from. */
+function documentLabel(file: string): string {
+  return `--${ClusterBuildOptionsFileFlag} ${file}`
+}
+
+/** Human label for a document path (the root has no segments). */
+function documentPathLabel(path: string[]): string {
+  return path.length === 0 ? "(root)" : path.join(".")
+}
+
+/** True when `key` is one of the flag-less object-array members. */
+function isNonFlagOptionKey(key: string): key is NonFlagOptionKey {
+  return (NonFlagOptionKeys as ReadonlyArray<string>).includes(key)
+}
+
+/** The {@link OptionLeafType} of a scalar document value. */
+function documentLeafType(value: OptionLeafValue): OptionLeafType {
+  return match(value)
+    .with(P.boolean, () => OptionLeafType.boolean)
+    .with(P.number, () => OptionLeafType.number)
+    .with(P.string, () => OptionLeafType.string)
+    .exhaustive()
+}
+
+/**
+ * Validate one scalar document value against its {@link OptionLeaf} spec — the
+ * yargs primitive type, and `choices` membership when the leaf constrains it.
+ */
+function assertDocumentLeafValue(
+  optionLeaf: OptionLeaf,
+  value: unknown,
+  file: string
+): OptionLeafValue {
+  const scalar = match(value)
+    .with(P.union(P.string, P.number, P.boolean), identity)
+    .otherwise(() =>
+      Assert.fail(
+        `${documentLabel(file)}: "${optionLeaf.path.join(".")}" must be a ${optionLeaf.type}, not an object/array/null`
+      )
+    )
+  Assert.ok(
+    documentLeafType(scalar) === optionLeaf.type,
+    `${documentLabel(file)}: "${optionLeaf.path.join(".")}" must be a ${optionLeaf.type} (got ${documentLeafType(scalar)} ${JSON.stringify(scalar)})`
+  )
+  Assert.ok(
+    optionLeaf.choices == null ||
+      optionLeaf.choices.includes(String(scalar)),
+    `${documentLabel(file)}: "${optionLeaf.path.join(".")}" must be one of ${optionLeaf.choices?.join(" | ")} (got ${JSON.stringify(scalar)})`
+  )
+  return scalar
+}
+
+/** Decode one flag-less object-array member through its shared-schema codec. */
+function decodeNonFlagOption(
+  key: NonFlagOptionKey,
+  value: unknown
+): CollateralRequirement[] | ChainTokenAmount[][] {
+  const text = JSON.stringify(value)
+  return match(key)
+    .with(UnderwriterCollateralKey, () =>
+      underwriterCollateralCodec.deserialize(text)
+    )
+    .otherwise(() => collateralRequirementsCodec.deserialize(text))
+}
+
+/**
+ * Decode + assign one flag-less object-array member. The two codecs mirror the
+ * two member shapes exactly, but TS cannot correlate the runtime dispatch inside
+ * {@link decodeNonFlagOption} with `K` — so the ONE cast lives here, at the
+ * dispatch boundary.
+ */
+function appendNonFlagOption<K extends NonFlagOptionKey>(
+  options: ClusterBuildOptions,
+  key: K,
+  value: unknown
+): void {
+  options[key] = decodeNonFlagOption(key, value) as ClusterBuildOptions[K]
+}
+
+/**
+ * Read + validate the three topology counts a document may set — they size the
+ * `bind` node-port arrays of the very shape the rest of the document is
+ * validated against, so they are checked BEFORE the shape is built.
+ */
+function assertTopologyCounts(
+  document: Record<string, unknown>,
+  file: string
+): ClusterBuildOptions {
+  const counts: ClusterBuildOptions = {}
+  TopologyCountKeys.forEach(key =>
+    appendTopologyCount(counts, key, document[key], file)
+  )
+  return counts
+}
+
+/** Validate + assign ONE topology count (typed same-key write, as `carryNonFlagOption`). */
+function appendTopologyCount<K extends TopologyCountKey>(
+  counts: ClusterBuildOptions,
+  key: K,
+  value: unknown,
+  file: string
+): void {
+  if (value == null) {
+    return
+  }
+  Assert.ok(
+    typeof value === "number" && Number.isInteger(value) && value >= 0,
+    `${documentLabel(file)}: "${key}" must be a non-negative integer (got ${JSON.stringify(value)})`
+  )
+  counts[key] = value
+}
+
+/** Every PROPER prefix of a leaf path — the branch paths a document may descend through. */
+function documentBranchPaths(leaves: OptionLeaf[]): ReadonlySet<string> {
+  return new Set(
+    leaves.flatMap(optionLeaf =>
+      optionLeaf.path
+        .slice(0, -1)
+        .map((_segment, depth) => optionLeaf.path.slice(0, depth + 1).join("."))
+    )
+  )
+}
+
+/** The walk state shared by every {@link appendDocumentNode} recursion. */
+interface DocumentWalk {
+  /** Every scalar leaf of the document's own shape, by dotted path. */
+  leafByPath: ReadonlyMap<string, OptionLeaf>
+  /** Every branch path those leaves descend through. */
+  branchPaths: ReadonlySet<string>
+  /** The resolved file path, for diagnostics. */
+  file: string
+}
+
+/**
+ * Walk one document node, appending it to `options`. A path that names a scalar
+ * leaf is type-checked and re-nested; the flag-less members and
+ * `signatureProvider.ssm` are decoded whole through their codecs; any other path
+ * must be a known branch — otherwise the walk fails naming the offending path.
+ */
+function appendDocumentNode(
+  node: unknown,
+  path: string[],
+  walk: DocumentWalk,
+  options: ClusterBuildOptions
+): void {
+  const dotted = documentPathLabel(path),
+    [firstSegment] = path,
+    { leafByPath, branchPaths, file } = walk
+  Assert.ok(
+    dotted !== AWSClusterNodeConfigDocumentKey,
+    `${documentLabel(file)}: "${AWSClusterNodeConfigDocumentKey}" is not part of a build-options document — pass it with --${AWSClusterNodeConfigFlag} <file>`
+  )
+  const optionLeaf = leafByPath.get(dotted)
+  if (optionLeaf != null) {
+    setDeep(
+      options,
+      optionLeaf.path,
+      assertDocumentLeafValue(optionLeaf, node, file)
+    )
+    return
+  }
+  if (path.length === 1 && isNonFlagOptionKey(firstSegment)) {
+    appendNonFlagOption(options, firstSegment, node)
+    return
+  }
+  if (dotted === SignatureProviderSSMDocumentPath) {
+    options.signatureProvider = {
+      ...(options.signatureProvider ?? {}),
+      ssm: ssmOptionsCodec.deserialize(JSON.stringify(node))
+    }
+    return
+  }
+  Assert.ok(
+    path.length === 0 || branchPaths.has(dotted),
+    `${documentLabel(file)}: unknown option "${dotted}"`
+  )
+  if (Array.isArray(node)) {
+    node.forEach((child, index) =>
+      appendDocumentNode(child, [...path, String(index)], walk, options)
+    )
+    return
+  }
+  Assert.ok(
+    isPlainObject(node),
+    `${documentLabel(file)}: "${dotted}" must be an object (it holds nested options)`
+  )
+  Object.entries(node as Record<string, unknown>).forEach(([key, child]) =>
+    appendDocumentNode(child, [...path, key], walk, options)
+  )
+}
+
+/**
+ * Validate a parsed build-options document against the SAME
+ * {@link buildOptionShape} descriptor the flags are generated from — the one
+ * runtime source of truth for what a `ClusterBuildOptions` leaf is (there is no
+ * second zod mirror of the interface). Unknown keys and type mismatches are hard
+ * errors naming the offending dotted path.
+ *
+ * @param document - The parsed JSON document.
+ * @param file - The resolved file path (diagnostics only).
+ * @returns The document as nested {@link ClusterBuildOptions}.
+ */
+export function toClusterBuildOptionsDocument(
+  document: unknown,
+  file: string
+): ClusterBuildOptions {
+  Assert.ok(
+    isPlainObject(document),
+    `${documentLabel(file)}: the document root must be a JSON object`
+  )
+  const root = document as Record<string, unknown>,
+    leaves = flattenOptionLeaves(
+      buildOptionShape(assertTopologyCounts(root, file))
+    ),
+    walk: DocumentWalk = {
+      leafByPath: new Map(
+        leaves.map(optionLeaf => [optionLeaf.path.join("."), optionLeaf])
+      ),
+      branchPaths: documentBranchPaths(leaves),
+      file
+    },
+    options: ClusterBuildOptions = {}
+  appendDocumentNode(root, [], walk, options)
+  return options
+}
+
+/**
+ * Load + validate a `--cluster-build-options-file` document.
+ *
+ * @param file - Path to the JSON document (resolved absolute).
+ * @returns The validated, nested build options.
+ * @throws When the file is not valid JSON, or carries an unknown / wrongly-typed option.
+ */
+export function loadClusterBuildOptionsFile(file: string): ClusterBuildOptions {
+  const resolved = Path.resolve(file),
+    document = Either.try(
+      () => JSON.parse(Fs.readFileSync(resolved, "utf-8")) as unknown
+    )
+      .ifLeft(error => {
+        throw new NestedError(
+          `${documentLabel(resolved)}: could not be read as JSON`,
+          { cause: error, context: { file: resolved } }
+        )
+      })
+      .getOrThrow()
+  return toClusterBuildOptionsDocument(document, resolved)
+}
+
+/**
+ * Load the `--cluster-build-options-file` document named on a RAW command line,
+ * before yargs parses it (the builder seeds every other flag's default from it).
+ *
+ * @param commandLine - The raw argument array (`process.argv.slice(2)`-shaped).
+ * @returns The validated build options, or `null` when the flag is absent.
+ */
+export function toClusterBuildOptionsFile(
+  commandLine: string[]
+): ClusterBuildOptions {
+  const file = readCommandLineFlag(commandLine, ClusterBuildOptionsFileFlag)
+  if (!isString(file) || file.trim().length === 0) {
+    return null
+  }
+  return loadClusterBuildOptionsFile(file.trim())
+}
+
 /**
  * Parse the dedicated `--signature-provider-ssm` flag — inline JSON (leading
- * `{`) or a file path — into {@link ClusterSignatureProviderSSMOptions}, or
- * `null` when the flag is absent.
+ * `{`) or a file path — into {@link AWSSSMSignatureProviderOptions}, or `null`
+ * when the flag is absent.
  *
  * @param argv - The parsed yargs result.
  * @returns The SSM options, or `null`.
  */
-export function toClusterSignatureProviderSsmOptions(
+export function toAWSSSMSignatureProviderOptions(
   argv: OptionArgv
-): ClusterSignatureProviderSSMOptions {
-  const raw = readArg(argv, SignatureProviderSsmFlag)
+): AWSSSMSignatureProviderOptions {
+  const raw = readArg(argv, SignatureProviderSSMFlag)
   if (!isString(raw) || raw.trim().length === 0) {
     return null
   }
@@ -750,22 +1148,90 @@ export function toClusterSignatureProviderSsmOptions(
   return ssmOptionsCodec.deserialize(json)
 }
 
+/** Re-validate SSM options arriving from a source other than the flag, through the ONE codec. */
+function assertSSMOptions(
+  ssm: AWSSSMSignatureProviderOptions,
+  source: string
+): AWSSSMSignatureProviderOptions {
+  if (ssm != null) {
+    Assert.ok(
+      ssmOptionsCodec.check(ssm),
+      `${source}: invalid SSM settings (awsSecretIdPattern is required)`
+    )
+  }
+  return ssm
+}
+
 /**
- * Merge the `--signature-provider-ssm` payload into `options.signatureProvider`
- * (called after {@link toClusterBuildOptions}) — the single create-side hook
- * shared by `CreateCommand` and `FlowCLI`. A no-op when the flag is absent.
+ * Merge SSM publish settings into `options.signatureProvider` (called after
+ * {@link toClusterBuildOptions}) — the single create-side hook shared by
+ * `CreateCommand` and `FlowCLI`. Precedence: the `--signature-provider-ssm`
+ * flag > the `--cluster-build-options-file` document's `signatureProvider.ssm` >
+ * the `--aws-cluster-node-config` file's own `ssm`. All three are validated by
+ * the ONE {@link AWSSSMSignatureProviderOptionsSchema} codec. A no-op when no
+ * source carries settings.
  *
  * @param options - The resolved build options (mutated + returned).
  * @param argv - The parsed yargs result.
+ * @param fileOptions - The `--cluster-build-options-file` document, when one was loaded.
  * @returns `options`, with `signatureProvider.ssm` filled when supplied.
  */
-export function mergeSignatureProviderSsm(
+export function mergeSignatureProviderSSM(
+  options: ClusterBuildOptions,
+  argv: OptionArgv,
+  fileOptions: ClusterBuildOptions = {}
+): ClusterBuildOptions {
+  const ssm =
+    toAWSSSMSignatureProviderOptions(argv) ??
+    assertSSMOptions(
+      fileOptions?.signatureProvider?.ssm,
+      `${SignatureProviderSSMDocumentPath} in --${ClusterBuildOptionsFileFlag}`
+    ) ??
+    assertSSMOptions(
+      options.awsClusterNodeConfig?.ssm,
+      `ssm in --${AWSClusterNodeConfigFlag}`
+    )
+  if (ssm != null) {
+    options.signatureProvider = { ...(options.signatureProvider ?? {}), ssm }
+  }
+  return options
+}
+
+/**
+ * Parse the dedicated `--aws-cluster-node-config` flag — a path to an
+ * `AWSClusterNodeConfig` JSON file — or `null` when the flag is absent.
+ *
+ * @param argv - The parsed yargs result.
+ * @returns The validated AWS placement, or `null`.
+ */
+export function toAWSClusterNodeConfig(
+  argv: OptionArgv
+): AWSClusterNodeConfig {
+  const raw = readArg(argv, AWSClusterNodeConfigFlag)
+  if (!isString(raw) || raw.trim().length === 0) {
+    return null
+  }
+  return AWSClusterNodeConfigSchemaCodec.deserialize(
+    Fs.readFileSync(Path.resolve(raw.trim()), "utf-8")
+  )
+}
+
+/**
+ * Merge the `--aws-cluster-node-config` file into `options.awsClusterNodeConfig`.
+ * Runs BEFORE {@link mergeSignatureProviderSSM} so that merge can see the file's
+ * own `ssm` as its lowest-precedence source. A no-op when the flag is absent.
+ *
+ * @param options - The resolved build options (mutated + returned).
+ * @param argv - The parsed yargs result.
+ * @returns `options`, with `awsClusterNodeConfig` filled when supplied.
+ */
+export function mergeAWSClusterNodeConfig(
   options: ClusterBuildOptions,
   argv: OptionArgv
 ): ClusterBuildOptions {
-  const ssm = toClusterSignatureProviderSsmOptions(argv)
-  if (ssm != null) {
-    options.signatureProvider = { ...(options.signatureProvider ?? {}), ssm }
+  const awsClusterNodeConfig = toAWSClusterNodeConfig(argv)
+  if (awsClusterNodeConfig != null) {
+    options.awsClusterNodeConfig = awsClusterNodeConfig
   }
   return options
 }

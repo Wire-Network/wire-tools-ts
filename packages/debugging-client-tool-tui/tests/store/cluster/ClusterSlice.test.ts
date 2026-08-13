@@ -1,5 +1,6 @@
 import {
   ClusterConfigLoggingFileFormat,
+  EthereumGasPolicy,
   ClusterConfigReportFormat,
   ClusterStateNodeRole,
   SignatureProviderType,
@@ -19,7 +20,7 @@ import {
 } from "@wireio/debugging-client-tool-tui/store/Store.js"
 import { SliceName } from "@wireio/debugging-client-tool-tui/store/StoreTypes.js"
 
-/** A complete `ClusterConfig` fixture — no field left to `as unknown as`. */
+/** A complete `ClusterConfig` fixture — every field real, none asserted. */
 const stubConfig: ClusterConfig = {
   buildPath: "/build",
   clusterPath: "/cluster",
@@ -87,11 +88,14 @@ const stubConfig: ClusterConfig = {
   requiredUnderwriterCollateral: [],
   requiredProducerCollateral: [],
   underwriterCollateral: null,
+  initialKey: null,
   initialFinalizerKey: null,
   signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
+  awsClusterNodeConfig: null,
   externalOutposts: null,
   debuggingServerEnabled: true,
-  enableMockReserves: false
+  enableMockReserves: false,
+    ethereumGasPolicy: EthereumGasPolicy.mainnetParity
 }
 
 /** A complete `ClusterState` fixture (post-bootstrap snapshot, no nodes). */
@@ -104,8 +108,8 @@ const stubState: ClusterState = {
       nodePath: "/cluster/data/node_bios",
       ports: { http: 8888, p2p: 9876 },
       producers: ["sysio"],
-      batchOperatorAccount: null,
-      underwriterAccount: null
+      batchOperatorLabel: null,
+      underwriterLabel: null
     }
   ],
   walletPath: "/cluster/wallet",

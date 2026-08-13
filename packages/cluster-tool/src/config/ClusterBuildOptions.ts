@@ -1,10 +1,12 @@
-import type { EthereumGasPolicy,
+import type {
+  AWSClusterNodeConfig,
   BindOptions,
   ChainTokenAmount,
   ClusterConfigLoggingFileFormat,
   ClusterConfigLoggingLevels,
   ClusterSignatureProviderOptions,
-  CollateralRequirement
+  CollateralRequirement,
+  EthereumGasPolicy
 } from "@wireio/cluster-tool-shared"
 import type { Report } from "../report/Report.js"
 
@@ -54,12 +56,12 @@ export interface ClusterBuildOptions {
    */
   enableMockReserves?: boolean
   /**
-   * Gas constraints imposed on the local Ethereum chain
+   * Gas ceiling regime for the local Ethereum chain
    * (`--ethereum-gas-policy`). Defaults to
-   * {@link EthereumGasPolicy.chainDefault} at every layer, so ordinary flows
-   * keep anvil's stock 30M block limit. `uncapped` exists to separate "the
-   * protocol failed" from "the chain's gas ceiling stopped it"; `osaka`
-   * enforces EIP-7825's per-transaction cap.
+   * {@link EthereumGasPolicy.mainnetParity} at every layer, so ordinary flows
+   * run under the realistic ceiling — pinned hardfork, EIP-7825 per-transaction
+   * cap, sized block limit. {@link EthereumGasPolicy.uncapped} exists solely to
+   * separate "the protocol failed" from "the gas ceiling stopped it".
    */
   ethereumGasPolicy?: EthereumGasPolicy
   // termination tuning
@@ -76,6 +78,13 @@ export interface ClusterBuildOptions {
   logging?: LoggingOptions
   // signature provider — how the cluster's own signing keys are handled (default KEY)
   signatureProvider?: ClusterSignatureProviderOptions
+  /**
+   * The cluster's AWS placement (account + replication regions + SSM publish
+   * settings). REQUIRED when `signatureProvider.type` is `SSM` — it sources the
+   * secret-id `{cluster}` segment and the region set every secret is replicated
+   * to. Accepted but unused under `KEY` / `KIOD`.
+   */
+  awsClusterNodeConfig?: AWSClusterNodeConfig
   // external inputs (file paths → `--bind-config` / `--external-outpost-config`)
   bindConfig?: string
   externalOutpostConfig?: string

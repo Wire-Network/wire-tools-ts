@@ -2,7 +2,11 @@ import Fs from "node:fs"
 import Http from "node:http"
 import Os from "node:os"
 import Path from "node:path"
-import type { ClusterConfig } from "@wireio/cluster-tool-shared"
+import {
+  AWSAccountName,
+  SignatureProviderType,
+  type ClusterConfig
+} from "@wireio/cluster-tool-shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
 import {
@@ -75,9 +79,11 @@ describe("NodeopProcess", () => {
   function producerOperator(account: string): OperatorAccount {
     return {
       account,
+      label: account,
+      publicationLabel: account,
       type: OperatorType.PRODUCER,
       wire: { type: KeyType.K1, publicKey: "PUB_K1_p", privateKey: "PVT_K1_s" },
-      bls: {
+      wireFinalizer: {
         type: KeyType.BLS,
         publicKey: "PUB_BLS_p",
         privateKey: "PVT_BLS_s",
@@ -113,7 +119,7 @@ describe("NodeopProcess", () => {
     ).rejects.toThrow(/genesis/)
   })
 
-  it("requires a producer OperatorAccount (wire + bls) for a producing node", async () => {
+  it("requires a producer OperatorAccount (wire + wireFinalizer) for a producing node", async () => {
     await expect(
       NodeopProcess.create(manager, {
         node: node("keyless", NodeRole.producer, ["sysio"])
@@ -172,6 +178,194 @@ describe("NodeopProcess", () => {
     )
   })
 
+  it("advertises the per-node advertiseAddress as the p2p-server-address", async () => {
+    const meshNode = new NodeConfig(
+      cluster,
+      NodeRole.operator,
+      0,
+      "meshed",
+      { http: 8888, p2p: 9876, advertiseAddress: "10.1.2.3" },
+      [],
+      []
+    )
+    const nodeop = await NodeopProcess.create(manager, { node: meshNode })
+    expect(nodeop.args).toEqual(
+      expect.arrayContaining(["--p2p-server-address", "10.1.2.3:9876"])
+    )
+    // the LISTEN endpoint stays on the fleet-wide bind address
+    expect(nodeop.args).toEqual(
+      expect.arrayContaining(["--p2p-listen-endpoint", "0.0.0.0:9876"])
+    )
+  })
+
+  describe("signature-provider scheme plugins", () => {
+    const SSMPlugin =
+      NodeopProcess.SignatureProviderSchemePlugins[SignatureProviderType.SSM]
+
+    /** The fixture cluster re-aimed at an SSM signature provider. */
+    function ssmCluster(): ClusterConfig {
+      return fixtureConfig({
+        clusterPath: dir,
+        dataPath: Path.join(dir, "data"),
+        executables: { ...PersistedFixture.executables, nodeop: "/bin/true" },
+        signatureProvider: {
+          type: SignatureProviderType.SSM,
+          ssm: {
+            awsRegions: ["us-east-1"],
+            awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}"
+          }
+        },
+        awsClusterNodeConfig: {
+          account: AWSAccountName.dev,
+          regions: ["us-east-1"],
+          ssm: null
+        }
+      })
+    }
+
+    it("requiredSignatureProviderPlugins maps a REGION-LESS SSM spec to the ssm plugin", () => {
+      expect(
+        NodeopProcess.requiredSignatureProviderPlugins([
+          NodeopProcess.SignatureProviderFlag,
+          "name,wire,wire,PUB_K1_p,SSM:/wire/c/a/K1"
+        ])
+      ).toEqual([SSMPlugin])
+    })
+
+    it("requiredSignatureProviderPlugins still maps the explicit-region SSM form", () => {
+      // The depot plugin accepts `<region>:<name>` too — scheme detection reads
+      // the leading token either way.
+      expect(
+        NodeopProcess.requiredSignatureProviderPlugins([
+          NodeopProcess.SignatureProviderFlag,
+          "name,wire,wire,PUB_K1_p,SSM:us-east-1:/wire/c/a/K1"
+        ])
+      ).toEqual([SSMPlugin])
+    })
+
+    it("requiredSignatureProviderPlugins is empty for KEY / KIOD specs and non-spec args", () => {
+      expect(
+        NodeopProcess.requiredSignatureProviderPlugins([
+          NodeopProcess.SignatureProviderFlag,
+          "name,wire,wire,PUB_K1_p,KEY:PVT_K1_s",
+          NodeopProcess.SignatureProviderFlag,
+          "name2,wire,wire_bls,PUB_BLS_p,KIOD:http://127.0.0.1:8900",
+          NodeopProcess.PluginFlag,
+          "sysio::net_plugin"
+        ])
+      ).toEqual([])
+    })
+
+    it("requiredSignatureProviderPlugins dedupes and skips already-enabled plugins", () => {
+      const twoSSMSpecs = [
+        NodeopProcess.SignatureProviderFlag,
+        "a,wire,wire,P1,SSM:/s1",
+        NodeopProcess.SignatureProviderFlag,
+        "b,wire,wire_bls,P2,SSM:/s2"
+      ]
+      expect(
+        NodeopProcess.requiredSignatureProviderPlugins(twoSSMSpecs)
+      ).toEqual([SSMPlugin])
+      expect(
+        NodeopProcess.requiredSignatureProviderPlugins([
+          ...twoSSMSpecs,
+          NodeopProcess.PluginFlag,
+          SSMPlugin
+        ])
+      ).toEqual([])
+    })
+
+    it("an SSM cluster's producing node enables the ssm plugin (the 3110006 fix)", async () => {
+      const producing = new NodeConfig(
+        ssmCluster(),
+        NodeRole.producer,
+        0,
+        "ssm-producer",
+        { http: 8888, p2p: 9876 },
+        ["sysio"],
+        []
+      )
+      const nodeop = await NodeopProcess.create(manager, {
+        node: producing,
+        operator: producerOperator("sysio")
+      })
+      expect(nodeop.args).toEqual(
+        expect.arrayContaining([NodeopProcess.PluginFlag, SSMPlugin])
+      )
+      // REGION-LESS, `{cluster}` = the AWS account (`dev`), not the cluster dir.
+      expect(nodeop.args.some(arg => arg.includes("SSM:/wire/dev/"))).toBe(true)
+      expect(nodeop.args.some(arg => arg.includes("SSM::"))).toBe(false)
+    })
+
+    /** The bios node planned over `cluster`. */
+    function biosNode(cluster: ClusterConfig): NodeConfig {
+      return new NodeConfig(
+        cluster,
+        NodeRole.bios,
+        NodeConfig.BiosIndex,
+        NodeConfig.BiosName,
+        { http: 8788, p2p: 8776 },
+        [NodeConfig.BiosProducer],
+        []
+      )
+    }
+
+    it("an SSM cluster's bios node fetches its GENERATED genesis keys from SSM", async () => {
+      // Under SSM the bios key is generated (or adopted) at config resolution
+      // like any other node key — it is NOT exempt from the provider source.
+      const nodeop = await NodeopProcess.create(manager, {
+        node: biosNode(ssmCluster()),
+        operator: producerOperator(NodeConfig.BiosProducer)
+      })
+      expect(nodeop.args).toEqual(
+        expect.arrayContaining([NodeopProcess.PluginFlag, SSMPlugin])
+      )
+      // `{account}` is the NODE NAME, and the spec stays REGION-LESS.
+      expect(
+        nodeop.args.some(arg =>
+          arg.includes(`SSM:/wire/dev/${NodeConfig.BiosName}/`)
+        )
+      ).toBe(true)
+      expect(nodeop.args.some(arg => arg.includes("SSM::"))).toBe(false)
+    })
+
+    it("a KIOD cluster's bios node keeps the INLINE dev KEY spec (never a kiod lookup)", async () => {
+      const kiodCluster = fixtureConfig({
+        clusterPath: dir,
+        dataPath: Path.join(dir, "data"),
+        executables: { ...PersistedFixture.executables, nodeop: "/bin/true" },
+        signatureProvider: { type: SignatureProviderType.KIOD, ssm: null }
+      })
+      const nodeop = await NodeopProcess.create(manager, {
+        node: biosNode(kiodCluster),
+        operator: producerOperator(NodeConfig.BiosProducer)
+      })
+      expect(nodeop.args.some(arg => arg.includes("KEY:PVT_K1_"))).toBe(true)
+      expect(nodeop.args.some(arg => arg.includes("KIOD:"))).toBe(false)
+    })
+
+    it("a KEY cluster never enables the ssm plugin", async () => {
+      const nodeop = await NodeopProcess.create(manager, {
+        node: node("key-producer", NodeRole.producer, ["sysio"]),
+        operator: producerOperator("sysio")
+      })
+      expect(nodeop.args).not.toContain(SSMPlugin)
+    })
+
+    it("detects an SSM spec arriving via extraArgs (operator daemons)", async () => {
+      const nodeop = await NodeopProcess.create(manager, {
+        node: node("ssm-daemon", NodeRole.operator),
+        extraArgs: [
+          NodeopProcess.SignatureProviderFlag,
+          "op,ethereum,ethereum,0xPUB,SSM:/wire/c/op/EM"
+        ]
+      })
+      expect(nodeop.args).toEqual(
+        expect.arrayContaining([NodeopProcess.PluginFlag, SSMPlugin])
+      )
+    })
+  })
+
   it("applies tuning overrides over the defaults", async () => {
     const nodeop = await NodeopProcess.create(manager, {
       node: node("tuned", NodeRole.operator),
@@ -192,13 +386,22 @@ describe("NodeopProcess", () => {
     })
     // 1 producer node + 3 batch ops + 1 underwriter + bios + ad-hoc headroom
     const allowance =
-      1 +
-      3 +
-      1 +
-      NodeopProcess.BiosNodeCount +
-      NodeopProcess.AdHocDaemonPeerHeadroom
+      1 + 3 + 1 + NodeConfig.BiosNodeCount + NodeConfig.AdHocDaemonPeerHeadroom
     expect(nodeop.args).toEqual(
       expect.arrayContaining(["--p2p-max-nodes-per-host", String(allowance)])
+    )
+  })
+
+  it("caps max-clients at the SAME topology-derived peer capacity", async () => {
+    // A fixed cap below the mesh size makes each node refuse the surplus
+    // inbound dials; the mesh never forms and LIB freezes at scale.
+    const nodeop = await NodeopProcess.create(manager, {
+      node: node("meshed", NodeRole.operator)
+    })
+    const allowance =
+      1 + 3 + 1 + NodeConfig.BiosNodeCount + NodeConfig.AdHocDaemonPeerHeadroom
+    expect(nodeop.args).toEqual(
+      expect.arrayContaining(["--max-clients", String(allowance)])
     )
   })
 
@@ -306,23 +509,14 @@ describe("NodeopProcess", () => {
       // relaunch (which stays up) counts as ready. The dirty first boot dies
       // instantly and fails via the dead-child fast path regardless of any
       // verify race.
-      interface VerifyReadyProbe {
-        verifyReady(): Promise<boolean>
-      }
-      // `verifyReady` is `protected` on `NodeopProcess` — TS's structural
-      // typing treats a protected member as only assignable within its
-      // declaring class hierarchy, so a direct `as VerifyReadyProbe` doesn't
-      // typecheck; bridging through `unknown` is the standard way to spy on
-      // a protected method from a test.
-      const proto = NodeopProcess.prototype as unknown as VerifyReadyProbe
-      readySpy = jest.spyOn(proto, "verifyReady").mockImplementation(function (
-        this: NodeopProcess
-      ) {
-        return Promise.resolve(
-          this.isRunning &&
-            this.args.includes(NodeopProcess.HardReplayBlockchainFlag)
-        )
-      })
+      readySpy = jest
+        .spyOn(NodeopProcess.prototype, "verifyReady")
+        .mockImplementation(function (this: NodeopProcess) {
+          return Promise.resolve(
+            this.isRunning &&
+              this.args.includes(NodeopProcess.HardReplayBlockchainFlag)
+          )
+        })
     })
     afterAll(() => {
       readySpy.mockRestore()

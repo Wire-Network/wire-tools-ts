@@ -1,12 +1,15 @@
 import Assert from "node:assert"
-import { type ClusterConfig } from "@wireio/cluster-tool-shared"
+import {
+  SignatureProviderType,
+  type ClusterConfig
+} from "@wireio/cluster-tool-shared"
 import { KeyType } from "@wireio/sdk-core"
 import { execFile } from "node:child_process"
 import Fs from "node:fs"
 import Path from "node:path"
 import { promisify } from "node:util"
 import { asOption } from "@3fv/prelude-ts"
-import { defaults } from "lodash"
+import { defaults, last } from "lodash"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import type { WireClient } from "../../clients/wire/WireClient.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
@@ -38,7 +41,7 @@ const TrailingPlugins = [
 const pair = (flag: string, value: string): [string, string] => [flag, value]
 /** `--plugin` expansion helper (readonly-array friendly). */
 const pluginArgs = (plugins: readonly string[]): string[] =>
-  plugins.flatMap(plugin => pair("--plugin", plugin))
+  plugins.flatMap(plugin => pair(NodeopProcess.PluginFlag, plugin))
 
 const execFileAsync = promisify(execFile)
 /** `--help` text per nodeop binary — probed once, shared by every node (capability detection). */
@@ -81,11 +84,14 @@ export interface NodeopTuningConfig extends Required<NodeopTuningOptions> {}
 
 /**
  * Resolve the tuning defaults for `cluster` (see the companion-namespace
- * constants). `p2pMaxNodesPerHost` is topology-derived: EVERY cluster node lives
- * on loopback, so each node must accept inbound connections from the whole
- * planned topology (bios + producers + operators) plus headroom for
- * flow-provisioned ad-hoc daemons — a limit of 1 leaves late-joining nodes
- * unable to sync (their dials get "Peer closed connection").
+ * constants). `p2pMaxNodesPerHost` AND `maxClients` are both topology-derived
+ * from {@link NodeConfig.peerCapacity}: EVERY cluster node lives on loopback in
+ * a full mesh, so each must accept inbound connections from the whole planned
+ * topology (bios + producers + operators) plus headroom for flow-provisioned
+ * ad-hoc daemons. A `p2pMaxNodesPerHost` of 1 leaves late-joining nodes unable
+ * to sync ("Peer closed connection"); a `maxClients` below the mesh size makes
+ * every node refuse the surplus dials, which freezes LIB at scale (see
+ * {@link NodeConfig.peerCapacity} for the full failure chain).
  */
 export function createNodeopTuningDefaultOptions(
   cluster: ClusterConfig
@@ -95,13 +101,8 @@ export function createNodeopTuningDefaultOptions(
     voteThreads: NodeopProcess.DefaultVoteThreads,
     maxTransactionTime: NodeopProcess.DefaultMaxTransactionTime,
     abiSerializerMaxTimeMs: NodeopProcess.DefaultAbiSerializerMaxTimeMs,
-    p2pMaxNodesPerHost:
-      cluster.nodeCount +
-      cluster.batchOperatorCount +
-      cluster.underwriterCount +
-      NodeopProcess.BiosNodeCount +
-      NodeopProcess.AdHocDaemonPeerHeadroom,
-    maxClients: NodeopProcess.DefaultMaxClients,
+    p2pMaxNodesPerHost: NodeConfig.peerCapacity(cluster),
+    maxClients: NodeConfig.peerCapacity(cluster),
     connectionCleanupPeriodSec: NodeopProcess.DefaultConnectionCleanupPeriodSec,
     httpMaxResponseTimeMs: NodeopProcess.DefaultHttpMaxResponseTimeMs,
     contractsConsole: true
@@ -113,7 +114,7 @@ export function createNodeopTuningDefaultOptions(
  * already describe it (never a flat primitive bag): the planned {@link NodeConfig}
  * (which carries its `cluster: ClusterConfig` — name, role, ports, peers,
  * producers, node dir, binaries, bind address, genesis), the {@link OperatorAccount}
- * the node acts for (a producer's carries the node-shared `wire`+`bls` signing
+ * the node acts for (a producer's carries the node-shared `wire`+`wireFinalizer` signing
  * keys; a batch/underwriter's carries `wire`+`ethereum`+`solana`; the bios node's
  * is the genesis producer with the dev keys), the typed
  * {@link NodeopTuningOptions}, and any OPP daemon extra args (operator nodes).
@@ -177,25 +178,19 @@ export class NodeopProcess extends ManagedProcess {
     )
     Assert.ok(
       node.producers.length === 0 ||
-        (options.operator != null && options.operator.bls != null),
-      `nodeop ${node.name}: a producing node requires a producer OperatorAccount (wire + bls keys)`
+        (options.operator != null && options.operator.wireFinalizer != null),
+      `nodeop ${node.name}: a producing node requires a producer OperatorAccount (wire + wireFinalizer keys)`
     )
     mkdirs(node.nodePath)
-    const config: NodeopConfig = {
-      ...options,
-      tuning: defaults(
-        { ...options.tuning },
-        createNodeopTuningDefaultOptions(cluster)
-      ),
-      extraArgs: options.extraArgs ?? [],
-      genesisTimestamp: JSON.parse(
-        Fs.readFileSync(ClusterConfigProvider.genesisFile(cluster), "utf8")
-      ).initial_timestamp,
-      supportsTraceNoAbis: (
-        await binaryHelp(cluster.executables.nodeop)
-      ).includes(NodeopProcess.TraceNoAbisFlag)
-    }
-    return new NodeopProcess(manager, config)
+    return new NodeopProcess(
+      manager,
+      NodeopProcess.resolveConfig(options, {
+        genesisTimestamp: NodeopProcess.readGenesisTimestamp(cluster),
+        supportsTraceNoAbis: (
+          await binaryHelp(cluster.executables.nodeop)
+        ).includes(NodeopProcess.TraceNoAbisFlag)
+      })
+    )
   }
 
   private constructor(
@@ -225,7 +220,7 @@ export class NodeopProcess extends ManagedProcess {
     return NodeopProcess.StartupTimeoutMs
   }
 
-  protected verifyReady(): Promise<boolean> {
+  verifyReady(): Promise<boolean> {
     return probeEndpoint(`${this.httpUrl}${NodeopProcess.HealthCheckPath}`)
   }
 
@@ -274,11 +269,6 @@ export namespace NodeopProcess {
   export const DefaultVoteThreads = 4
   export const DefaultMaxTransactionTime = -1
   export const DefaultAbiSerializerMaxTimeMs = 990_000
-  /** The bios node's contribution to the loopback peer allowance. */
-  export const BiosNodeCount = 1
-  /** Extra loopback inbound slots for flow-provisioned ad-hoc daemons. */
-  export const AdHocDaemonPeerHeadroom = 3
-  export const DefaultMaxClients = 25
   export const DefaultConnectionCleanupPeriodSec = 15
   export const DefaultHttpMaxResponseTimeMs = 990_000
   export const StartupTimeoutMs = 180_000
@@ -303,6 +293,112 @@ export namespace NodeopProcess {
   export const PausedPath = "/v1/producer/paused" as const
   /** Per-request timeout for {@link resumeProduction} (ms). */
   export const ResumeProductionTimeoutMs = 5_000
+  /** The nodeop `--plugin` flag (appended per plugin; scanned by {@link requiredSignatureProviderPlugins}). */
+  export const PluginFlag = "--plugin"
+  /** The nodeop `--signature-provider` flag (scanned by {@link requiredSignatureProviderPlugins}). */
+  export const SignatureProviderFlag = "--signature-provider"
+  /**
+   * Optional nodeop plugins by signature-provider SCHEME. `KEY` / `KIOD` are
+   * built into `sysio::signature_provider_manager_plugin`; an `SSM:` spec
+   * resolves through `sysio::signature_provider_ssm_plugin`, which must be
+   * ENABLED via `--plugin` — otherwise provider creation aborts startup with
+   * `plugin_config_exception (3110006): Signature-provider scheme "SSM" is
+   * provided by plugin "sysio::signature_provider_ssm_plugin"`.
+   */
+  export const SignatureProviderSchemePlugins: Partial<
+    Record<SignatureProviderType, string>
+  > = {
+    [SignatureProviderType.SSM]: "sysio::signature_provider_ssm_plugin"
+  }
+
+  /**
+   * The scheme of a rendered `--signature-provider` spec value — the leading
+   * token of its final `<SCHEME>:<data>` segment
+   * (`<name>,<chain>,<type>,<pub>,SSM:<id>` → `SSM`; the SSM form the harness
+   * renders is region-less). A spec whose final segment is not
+   * `<SCHEME>:<data>`-shaped yields a token no scheme map contains — callers
+   * treat that as "no optional plugin required".
+   */
+  function signatureProviderScheme(spec: string): string {
+    return last(spec.split(",")).split(":")[0]
+  }
+
+  /**
+   * The optional signature-provider plugins `args` requires but does not yet
+   * enable: every `--signature-provider` value's scheme is mapped through
+   * {@link SignatureProviderSchemePlugins}, minus plugins already present after
+   * a `--plugin` flag. {@link buildArgs} appends these so an SSM cluster's
+   * nodeop (producing nodes AND OPP operator daemons — their specs arrive via
+   * `extraArgs`) loads `sysio::signature_provider_ssm_plugin`.
+   *
+   * @param args - The composed argv to scan.
+   * @returns The missing `--plugin` values, deduplicated, in scan order.
+   */
+  export function requiredSignatureProviderPlugins(
+    args: readonly string[]
+  ): string[] {
+    const valuesAfter = (flag: string): string[] =>
+        args.flatMap((arg, index) => (arg === flag ? [args[index + 1]] : [])),
+      enabled = new Set(valuesAfter(PluginFlag)),
+      required = valuesAfter(SignatureProviderFlag)
+        .map(
+          spec =>
+            SignatureProviderSchemePlugins[
+              signatureProviderScheme(spec) as SignatureProviderType
+            ]
+        )
+        .filter(plugin => plugin != null && !enabled.has(plugin))
+    return [...new Set(required)]
+  }
+
+  /**
+   * `initial_timestamp` from the cluster's genesis file — the one-shot value a
+   * node is stamped with at first boot.
+   *
+   * @param cluster - The resolved cluster config.
+   * @returns The genesis `initial_timestamp`.
+   */
+  export function readGenesisTimestamp(cluster: ClusterConfig): string {
+    return JSON.parse(
+      Fs.readFileSync(ClusterConfigProvider.genesisFile(cluster), "utf8")
+    ).initial_timestamp
+  }
+
+  /**
+   * Resolve caller options into a complete {@link NodeopConfig}. PURE — the two
+   * values `create` obtains impurely (the genesis timestamp read off disk, the
+   * `--help` capability probe) are INJECTED.
+   *
+   * Extracting this is what makes the `start.sh` argv trustworthy: if the
+   * emitting step hand-built a config instead, the argv-equality test would
+   * compare two argvs derived from two INDEPENDENTLY resolved configs and pass
+   * while the configs themselves drifted.
+   *
+   * @param options - Caller options.
+   * @param resolved - The impure values `create` obtained.
+   * @returns The complete config.
+   */
+  /** The impure values `create` resolves (genesis read + `--help` capability probe). */
+  export interface ResolvedInputs {
+    genesisTimestamp: string
+    supportsTraceNoAbis: boolean
+  }
+
+  export function resolveConfig(
+    options: NodeopOptions,
+    resolved: ResolvedInputs
+  ): NodeopConfig {
+    return {
+      ...options,
+      tuning: defaults(
+        { ...options.tuning },
+        createNodeopTuningDefaultOptions(options.node.cluster)
+      ),
+      extraArgs: options.extraArgs ?? [],
+      genesisTimestamp: resolved.genesisTimestamp,
+      supportsTraceNoAbis: resolved.supportsTraceNoAbis
+    }
+  }
 
   /**
    * Build the full nodeop command-line (binary + args), matching the Python
@@ -310,31 +406,44 @@ export namespace NodeopProcess {
    * composed {@link NodeConfig} + {@link ClusterKeyStore.ProducerKeySet}. The
    * producing-node block uses {@link KeyGenerator.toSignatureProvider}
    * (dispatched on each key's curve).
+   *
+   * NOTE the shape: this returns argv **WITH the binary at index 0** (unlike the
+   * other daemons' `buildArgs`, which return args only). Callers wanting the
+   * argv alone `.slice(1)`, and relaunch semantics come from
+   * {@link buildRelaunchArgs} — `buildArgs` itself IGNORES `config.relaunch`.
    */
   export function buildArgs(config: NodeopConfig): string[] {
     const { node, operator, tuning } = config,
       cluster = node.cluster,
       listen = cluster.bind.nodeop.address,
-      // The bios genesis key is a bootstrap dev key (inline KEY always, never
-      // SSM-managed); every other producing node's signing keys use the
-      // cluster's provider source (SSM:/KIOD: render correctly; KEY byte-identical).
+      // Under KEY / KIOD the bios genesis key is the well-known dev pair and its
+      // spec is rendered INLINE (`KEY:<private>`) — byte-identical to every
+      // historical cluster, and never a kiod lookup for a key the wallet gets
+      // imported anyway. Under SSM the bios key is GENERATED (or adopted) like
+      // any other node key, so it uses the cluster's provider source and the
+      // node fetches it from SSM at startup, exactly as producer nodes do.
       baseKeySourceFor = ClusterConfigProvider.signatureProviderSource(cluster),
+      isInlineBios =
+        node.role === NodeRole.bios &&
+        cluster.signatureProvider.type !== SignatureProviderType.SSM,
       keySourceFor = (
         account: string,
         keyType: KeyType
       ): KeyGenerator.SignatureProviderSource =>
-        node.role === NodeRole.bios
+        isInlineBios
           ? KeyGenerator.DefaultKeySource
           : baseKeySourceFor(account, keyType),
       isProducing =
-        node.producers.length > 0 && operator != null && operator.bls != null
-    return [
+        node.producers.length > 0 &&
+        operator != null &&
+        operator.wireFinalizer != null
+    const args = [
       cluster.executables.nodeop,
       ...pair("--blocks-dir", tuning.blocksPath),
       ...pair("--p2p-listen-endpoint", `${listen}:${node.ports.p2p}`),
       ...pair(
         "--p2p-server-address",
-        `${toDialAddress(listen)}:${node.ports.p2p}`
+        `${node.advertiseAddress}:${node.ports.p2p}`
       ),
       ...node.peerEndpoints.flatMap(peer => pair("--p2p-peer-address", peer)),
       ...(node.role === NodeRole.bios ? ["--enable-stale-production"] : []),
@@ -343,7 +452,7 @@ export namespace NodeopProcess {
         ? [
             ...pluginArgs(ProducerPlugins),
             ...pair(
-              "--signature-provider",
+              SignatureProviderFlag,
               KeyGenerator.toSignatureProvider(
                 operator.wire,
                 undefined,
@@ -351,9 +460,9 @@ export namespace NodeopProcess {
               )
             ),
             ...pair(
-              "--signature-provider",
+              SignatureProviderFlag,
               KeyGenerator.toSignatureProvider(
-                operator.bls,
+                operator.wireFinalizer,
                 undefined,
                 keySourceFor(node.name, KeyType.BLS)
               )
@@ -390,6 +499,10 @@ export namespace NodeopProcess {
       ...pair("--http-server-address", `${listen}:${node.ports.http}`),
       ...config.extraArgs
     ]
+    // A --signature-provider spec's scheme may require an optional nodeop
+    // plugin (SSM today) — scan the COMPOSED argv (extraArgs included, so
+    // operator-daemon specs are covered) and enable what's missing.
+    return [...args, ...pluginArgs(requiredSignatureProviderPlugins(args))]
   }
 
   /**

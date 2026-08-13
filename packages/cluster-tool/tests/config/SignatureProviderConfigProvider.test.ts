@@ -83,15 +83,17 @@ describe("SignatureProviderConfigProvider.resolve", () => {
         providerType: SignatureProviderType.SSM,
         type: KeyType.ED,
         publicKey: ed.toPublic().toString(),
-        awsRegion: "us-east-1",
+        awsRegions: ["us-east-1", "eu-west-1"],
         awsSecretId: "/wire/keys/x"
       })
     }
 
-    it("fetches a SecureString, trims it, and hydrates the key", async () => {
+    it("fetches a NATIVE SecureString value, trims it, and hydrates the WIRE-format key", async () => {
       const ed = PrivateKey.generate(KeyType.ED)
+      // SSM stores the CHAIN-NATIVE string (what nodeop's ssm plugin parses) —
+      // resolve normalizes it back to the WIRE PVT_ form at the boundary.
       mockSend.mockResolvedValueOnce({
-        Parameter: { Type: "SecureString", Value: `  ${ed.toString()}  ` }
+        Parameter: { Type: "SecureString", Value: `  ${ed.toNativeString()}  ` }
       })
       const resolution = await SignatureProviderConfigProvider.resolve<
         SignatureProviderType.SSM,
@@ -100,11 +102,32 @@ describe("SignatureProviderConfigProvider.resolve", () => {
         providerType: SignatureProviderType.SSM,
         type: KeyType.ED,
         publicKey: ed.toPublic().toString(),
-        awsRegion: "us-east-1",
+        awsRegions: ["us-east-1", "eu-west-1"],
         awsSecretId: "/wire/keys/x"
       })
       expect(resolution.keyPair.privateKey).toBe(ed.toString())
       expect(mockSend).toHaveBeenCalledTimes(1)
+    })
+
+    it("hydrates + verifies an EM key from its native 0x-hex value (address derived)", async () => {
+      const em = ethereumKeyPairFromWallet(ethers.Wallet.createRandom()),
+        emNative = PrivateKey.from(em.privateKey).toNativeString()
+      expect(emNative).toMatch(/^0x/)
+      mockSend.mockResolvedValueOnce({
+        Parameter: { Type: "SecureString", Value: emNative }
+      })
+      const resolution = await SignatureProviderConfigProvider.resolve<
+        SignatureProviderType.SSM,
+        KeyType.EM
+      >({
+        providerType: SignatureProviderType.SSM,
+        type: KeyType.EM,
+        publicKey: em.publicKey,
+        awsRegions: ["us-east-1", "eu-west-1"],
+        awsSecretId: "/wire/keys/em"
+      })
+      expect(resolution.keyPair.privateKey).toBe(em.privateKey)
+      expect(resolution.keyPair.address).toBe(em.address)
     })
 
     it("rejects a non-SecureString parameter", async () => {

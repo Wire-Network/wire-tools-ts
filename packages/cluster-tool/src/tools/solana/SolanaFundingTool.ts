@@ -25,6 +25,7 @@ import {
   type ClusterBuildStepOptions
 } from "../../orchestration/ClusterBuildStep.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
+import { mkdirs } from "../../utils/fsUtils.js"
 import { solanaKeypair } from "../../utils/keyPairUtils.js"
 import { Report } from "../../report/Report.js"
 import { getLogger } from "../../logging/Logger.js"
@@ -122,13 +123,52 @@ export namespace SolanaFundingTool {
   /** Persisted mint-authority (deployer) keypair filename in the cluster data dir. */
   export const DeployerKeypairFilename = "sol-deployer-keypair.json"
 
+  /**
+   * Absolute path to the per-cluster SOL deployer keypair file
+   * (`<dataPath>/{@link DeployerKeypairFilename}`). This ONE identity is the
+   * `liqsol_core` program's upgrade authority (set at validator launch), the
+   * liqsol `global_config.admin`, and the mock-SPL mint authority — every
+   * consumer resolves the path through this function so they load the SAME
+   * keypair.
+   *
+   * @param dataPath - The cluster data directory.
+   * @return Absolute path to the deployer keypair JSON file.
+   */
+  export function deployerKeypairFile(dataPath: string): string {
+    return Path.join(dataPath, DeployerKeypairFilename)
+  }
+
+  /**
+   * Get-or-create the per-cluster SOL deployer keypair. Generates + persists
+   * the keypair on the first call; afterwards the persisted file is read back
+   * verbatim, so every caller (validator launch, outpost bootstrap, flow
+   * runners) resolves the identical identity. Idempotent.
+   *
+   * @param dataPath - The cluster data directory.
+   * @return The deployer keypair.
+   */
+  export function createDeployerKeypair(dataPath: string): Keypair {
+    const keypairFile = deployerKeypairFile(dataPath)
+    if (!Fs.existsSync(keypairFile)) {
+      mkdirs(Path.dirname(keypairFile))
+      Fs.writeFileSync(
+        keypairFile,
+        JSON.stringify(Array.from(Keypair.generate().secretKey))
+      )
+    }
+    return loadDeployerKeypair(dataPath)
+  }
+
   // ── Step: airdrop SOL to an operator keypair (write) ─────────────────────
 
   /** Input for {@link planAirdrop} — top an operator's SOL keypair up to a floor. */
   export interface AirdropInput extends StepInput {
     readonly kind: "SolanaFundingTool.AirdropInput"
-    /** Operator whose SOL keypair is read from `ctx.outputs` and airdropped to. */
-    readonly operatorAccount: string
+    /**
+     * Operator's durable `label` handle — its SOL keypair is resolved from
+     * `ctx.keyStore` (NOT its on-chain `account`) and airdropped to.
+     */
+    readonly operatorLabel: string
     /** Ensure the operator's SOL keypair holds at least this many lamports. */
     readonly floorLamports: bigint
   }
@@ -144,7 +184,7 @@ export namespace SolanaFundingTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    operatorAccount: string,
+    operatorLabel: string,
     floorLamports: bigint
   ): ClusterBuildStep<C, AirdropInput> {
     return ClusterBuildStep.create<C, AirdropInput>(
@@ -152,7 +192,7 @@ export namespace SolanaFundingTool {
       name,
       description,
       options,
-      { kind: "SolanaFundingTool.AirdropInput", operatorAccount, floorLamports },
+      { kind: "SolanaFundingTool.AirdropInput", operatorLabel, floorLamports },
       runAirdrop
     )
   }
@@ -164,7 +204,7 @@ export namespace SolanaFundingTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const operator = ctx.keyStore.assertOperator(input.operatorAccount)
+    const operator = ctx.keyStore.assertOperator(input.operatorLabel)
     const pubkey = solanaKeypair(operator.solana).publicKey
     const current = BigInt(await ctx.solana.getLamports(pubkey))
     if (current >= input.floorLamports) return
@@ -173,7 +213,7 @@ export namespace SolanaFundingTool {
     await confirmSignature(
       ctx.solana.connection,
       signature,
-      `SolanaFundingTool.planAirdrop ${input.operatorAccount}`
+      `SolanaFundingTool.planAirdrop ${input.operatorLabel}`
     )
   }
 
@@ -182,8 +222,11 @@ export namespace SolanaFundingTool {
   /** Input for {@link planSplMint} — one mock-SPL mint into the operator's ATA. */
   export interface MintSplInput extends StepInput {
     readonly kind: "SolanaFundingTool.MintSplInput"
-    /** Operator whose SOL keypair / ATA is read from `ctx.outputs`. */
-    readonly operatorAccount: string
+    /**
+     * Operator's durable `label` handle — its SOL keypair / ATA is resolved
+     * from `ctx.keyStore` (NOT its on-chain `account`).
+     */
+    readonly operatorLabel: string
     /**
      * Token slug code — the config-level identity. The SPL mint ADDRESS is a
      * deploy artifact (`sol-mock-mints.json`) that does not exist when the step
@@ -198,15 +241,15 @@ export namespace SolanaFundingTool {
   /**
    * A single mock-SPL mint into the operator's ATA (creating the ATA on demand),
    * signed by the persisted deployer keypair (the mint authority). The operator
-   * identity is read from `ctx.outputs`; the deployer keypair from the cluster
-   * data dir ({@link DeployerKeypairFilename}).
+   * identity is resolved from `ctx.keyStore` by its durable `label`; the deployer
+   * keypair from the cluster data dir ({@link DeployerKeypairFilename}).
    */
   export function planSplMint<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    operatorAccount: string,
+    operatorLabel: string,
     tokenCode: bigint,
     amount: bigint
   ): ClusterBuildStep<C, MintSplInput> {
@@ -215,7 +258,7 @@ export namespace SolanaFundingTool {
       name,
       description,
       options,
-      { kind: "SolanaFundingTool.MintSplInput", operatorAccount, tokenCode, amount },
+      { kind: "SolanaFundingTool.MintSplInput", operatorLabel, tokenCode, amount },
       runSplMint
     )
   }
@@ -228,7 +271,7 @@ export namespace SolanaFundingTool {
   ): Promise<void> {
     signal.throwIfAborted()
     Assert.ok(input.amount > 0n, "SolanaFundingTool.planSplMint: amount must be positive")
-    const operator = ctx.keyStore.assertOperator(input.operatorAccount)
+    const operator = ctx.keyStore.assertOperator(input.operatorLabel)
     const deployer = loadDeployerKeypair(ctx.config.dataPath)
     const mint = solMintAddress(ctx.config.dataPath, input.tokenCode)
     await mintMockSplToUser(
@@ -281,7 +324,7 @@ export namespace SolanaFundingTool {
    * mock SPL mints (a value helper used inside {@link runSplMint}).
    */
   export function loadDeployerKeypair(dataPath: string): Keypair {
-    const keypairFile = Path.join(dataPath, DeployerKeypairFilename)
+    const keypairFile = deployerKeypairFile(dataPath)
     Assert.ok(
       Fs.existsSync(keypairFile),
       `SolanaFundingTool.planSplMint: deployer keypair not found at ${keypairFile}`

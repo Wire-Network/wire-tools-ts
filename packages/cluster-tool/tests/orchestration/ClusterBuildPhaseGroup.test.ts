@@ -75,6 +75,41 @@ describe("ClusterBuildPhaseGroup", () => {
     expect(phases.map(phase => phase.name).sort()).toEqual(["fast", "slow"])
   })
 
+  it("defaults concurrency to unbounded so parallel keeps Promise.all semantics", () => {
+    const group = ClusterBuildPhaseGroup.create(newBuild(), "G", "group", {
+      parallel: true
+    })
+    expect(group.config.concurrency).toBe(
+      ClusterBuildPhaseGroup.UnboundedConcurrency
+    )
+  })
+
+  it("caps children in flight at `concurrency` when parallel", async () => {
+    // The bound is the point: node-start groups use it so a whole wave of
+    // nodeops cannot join the p2p mesh at once and starve vote propagation.
+    let inFlight = 0
+    let peakInFlight = 0
+    const group = ClusterBuildPhaseGroup.create(newBuild(), "G", "group", {
+      parallel: true,
+      concurrency: 2
+    })
+    const tracked = (name: string) =>
+      ClusterBuildStep.create(Report.Actor.Sysio, name, name, {}, null, async () => {
+        inFlight += 1
+        peakInFlight = Math.max(peakInFlight, inFlight)
+        await sleep(10)
+        inFlight -= 1
+      })
+    const names = ["a", "b", "c", "d", "e", "f"]
+    names.forEach(name =>
+      ClusterBuildPhase.create(group, name, "d").push(tracked(name))
+    )
+    const phases = await runGroup(group)
+    expect(peakInFlight).toBe(2)
+    expect(phases.map(phase => phase.name).sort()).toEqual(names)
+    expect(phases.every(phase => phase.succeeded)).toBe(true)
+  })
+
   it("nests a group inside a group, flattening children in run order", async () => {
     const order: string[] = []
     const outer = ClusterBuildPhaseGroup.create(newBuild(), "Outer", "d")

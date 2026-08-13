@@ -316,7 +316,7 @@ export namespace OperatorDaemonTool {
   function assertOutpostKeys(operator: OperatorAccount): void {
     Assert.ok(
       operator.ethereum != null && operator.solana != null,
-      `OperatorDaemonTool: operator ${operator.account} is missing ethereum/solana keys`
+      `OperatorDaemonTool: operator ${operator.label} is missing ethereum/solana keys`
     )
   }
 
@@ -335,7 +335,7 @@ export namespace OperatorDaemonTool {
         KeyGenerator.toSignatureProvider(
           operator.ethereum,
           ethereumProvider,
-          keySourceFor(operator.account, KeyType.EM)
+          keySourceFor(operator.label, KeyType.EM)
         )
       ),
       ...pair(
@@ -355,7 +355,7 @@ export namespace OperatorDaemonTool {
         KeyGenerator.toSignatureProvider(
           operator.solana,
           solanaProvider,
-          keySourceFor(operator.account, KeyType.ED)
+          keySourceFor(operator.label, KeyType.ED)
         )
       ),
       ...pair(
@@ -368,7 +368,8 @@ export namespace OperatorDaemonTool {
   /**
    * The full extra-arg block for a BATCH OPERATOR daemon: read-mode + plugins +
    * the operator's own WIRE signature provider (its unique `wire` K1 — the
-   * account's active key) + batch plugin config + both outpost client specs.
+   * `account`'s active key) + batch plugin config + both outpost client
+   * specs.
    */
   export function batchOperatorArgs(
     operator: OperatorAccount,
@@ -378,7 +379,7 @@ export namespace OperatorDaemonTool {
   ): string[] {
     Assert.ok(
       operator.type === OperatorType.BATCH,
-      `batchOperatorArgs: ${operator.account} is a ${OperatorType[operator.type]}, not a batch operator`
+      `batchOperatorArgs: ${operator.label} is a ${OperatorType[operator.type]}, not a batch operator`
     )
     assertOutpostKeys(operator)
     return [
@@ -389,7 +390,7 @@ export namespace OperatorDaemonTool {
         KeyGenerator.toSignatureProvider(
           operator.wire,
           undefined,
-          keySourceFor(operator.account, KeyType.K1)
+          keySourceFor(operator.label, KeyType.K1)
         )
       ),
       ...pair("--batch-enabled", "true"),
@@ -445,7 +446,7 @@ export namespace OperatorDaemonTool {
   ): string[] {
     Assert.ok(
       operator.type === OperatorType.UNDERWRITER,
-      `underwriterArgs: ${operator.account} is a ${OperatorType[operator.type]}, not an underwriter`
+      `underwriterArgs: ${operator.label} is a ${OperatorType[operator.type]}, not an underwriter`
     )
     assertOutpostKeys(operator)
     return [
@@ -456,7 +457,7 @@ export namespace OperatorDaemonTool {
         KeyGenerator.toSignatureProvider(
           operator.wire,
           undefined,
-          keySourceFor(operator.account, KeyType.K1)
+          keySourceFor(operator.label, KeyType.K1)
         )
       ),
       ...pair("--underwriter-enabled", "true"),
@@ -526,15 +527,22 @@ export namespace OperatorDaemonTool {
   /** Preferred p2p port for an ad-hoc (flow-provisioned) operator daemon. */
   export const PreferredDaemonP2pPort = 9976
 
-  /** The process label + node-dir name for an operator's daemon. */
-  export function daemonNodeName(account: string): string {
-    return `node_${account}`
+  /**
+   * The process label + node-dir name for an operator's daemon, keyed by the
+   * operator's durable `label` handle (deterministic + human-navigable; the
+   * `account` is node-owner-generated and not path-safe to rely on).
+   *
+   * @param label - The operator's durable handle (`batchop.a`, …).
+   * @returns The `node_<label>` process label / directory name.
+   */
+  export function daemonNodeName(label: string): string {
+    return `node_${label}`
   }
 
   /** Input for {@link planDaemonStart}. */
   export interface StartDaemonInput extends StepInput {
     readonly kind: "OperatorDaemonTool.StartDaemonInput"
-    readonly account: string
+    readonly label: string
   }
 
   /**
@@ -554,14 +562,14 @@ export namespace OperatorDaemonTool {
     name: string,
     description: string,
     options: ClusterBuildStepOptions,
-    account: string
+    label: string
   ): ClusterBuildStep<C, StartDaemonInput> {
     return ClusterBuildStep.create<C, StartDaemonInput>(
       actor,
       name,
       description,
       options,
-      { kind: "OperatorDaemonTool.StartDaemonInput", account },
+      { kind: "OperatorDaemonTool.StartDaemonInput", label },
       runDaemonStart
     )
   }
@@ -573,10 +581,10 @@ export namespace OperatorDaemonTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const nodeName = daemonNodeName(input.account)
+    const nodeName = daemonNodeName(input.label)
     if (ctx.processManager.get(nodeName) != null) return
 
-    const operator = ctx.keyStore.assertOperator(input.account),
+    const operator = ctx.keyStore.assertOperator(input.label),
       artifacts = ctx.outputs.assert(OperatorDaemonArtifactsKey),
       network = networkFromConfig(ctx.config),
       keySourceFor = ClusterConfigProvider.signatureProviderSource(ctx.config),
@@ -589,7 +597,7 @@ export namespace OperatorDaemonTool {
         )
         .otherwise(() => {
           throw new Error(
-            `startDaemon: ${input.account} is a ${OperatorType[operator.type]}, not an OPP operator`
+            `startDaemon: ${input.label} is a ${OperatorType[operator.type]}, not an OPP operator`
           )
         })
 
@@ -606,7 +614,7 @@ export namespace OperatorDaemonTool {
       extraArgs: daemonArgs
     })
     ctx.log.info(
-      `[operator-daemon] ${input.account} daemon up (${nodeName}, http=${ports.http})`
+      `[operator-daemon] ${input.label} (${operator.account}) daemon up (${nodeName}, http=${ports.http})`
     )
   }
 
@@ -615,7 +623,8 @@ export namespace OperatorDaemonTool {
 
   /**
    * Compose the daemon's {@link NodeConfig}: a non-producing operator node named
-   * for the account, peered to every producer node, on the resolved `ports`.
+   * for the operator's durable label handle, peered to every producer node, on
+   * the resolved `ports`.
    */
   function daemonNodeConfig(
     config: ClusterConfig,
@@ -625,18 +634,18 @@ export namespace OperatorDaemonTool {
     const isBatchOperator = operator.type === OperatorType.BATCH,
       producerPeers = config.bind.nodeop.ports.producers.map(
         producerPorts =>
-          `${toDialAddress(config.bind.nodeop.address)}:${producerPorts.p2p}`
+          `${NodeConfig.advertiseAddressFor(config, producerPorts)}:${producerPorts.p2p}`
       )
     return new NodeConfig(
       config,
       NodeRole.operator,
       AdHocDaemonNodeIndex,
-      daemonNodeName(operator.account),
+      daemonNodeName(operator.label),
       ports,
       [],
       producerPeers,
-      isBatchOperator ? operator.account : null,
-      isBatchOperator ? null : operator.account
+      isBatchOperator ? operator.label : null,
+      isBatchOperator ? null : operator.label
     )
   }
 }

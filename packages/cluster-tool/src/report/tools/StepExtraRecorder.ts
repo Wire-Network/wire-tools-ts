@@ -131,7 +131,7 @@ export class StepExtraRecorder {
    * plus `dropped` / `droppedNotes` when either ceiling cut entries, or null
    * when the step recorded nothing.
    */
-  toExtra(): Record<string, unknown> | null {
+  toExtra(): Record<string, unknown> {
     if (this.callList.length === 0 && this.noteList.length === 0) {
       return null
     }
@@ -207,7 +207,7 @@ export namespace StepExtraRecorder {
   const storage = new AsyncLocalStorage<StepExtraRecorder>()
 
   /** The recorder scoping the CURRENT async execution, or null outside a step. */
-  export function current(): StepExtraRecorder | null {
+  export function current(): StepExtraRecorder {
     return storage.getStore() ?? null
   }
 

@@ -5,7 +5,7 @@ export async function checkLinkStatus(
   api: APIClient,
   contractAccount: string,
   username: string
-): Promise<AuthLink | null> {
+): Promise<AuthLink> {
   if (!username || username.startsWith("0x")) return null
 
   const response = await api.v1.chain.get_table_rows({
@@ -21,7 +21,7 @@ export async function checkLinkStatus(
   })
 
   if (response.rows.length > 0) {
-    return response.rows[0] as unknown as AuthLink
+    return response.rows[0] as AuthLink
   }
   return null
 }

@@ -15,12 +15,9 @@ import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
  * instead of ballooning `extra` with hundreds of rows.
  */
 export class RecordingFetchProvider extends FetchProvider {
-  override async call(args: {
-    path: string
-    params?: Record<string, unknown>
-    method?: Parameters<FetchProvider["call"]>[0]["method"]
-    headers?: Record<string, string>
-  }): Promise<Awaited<ReturnType<FetchProvider["call"]>>> {
+  override async call(
+    args: RecordingFetchProvider.CallArgs
+  ): Promise<Awaited<ReturnType<FetchProvider["call"]>>> {
     StepExtraRecorder.record({
       client: "wire",
       kind: "rpc",
@@ -33,6 +30,13 @@ export class RecordingFetchProvider extends FetchProvider {
 
 export namespace RecordingFetchProvider {
   /**
+   * The `FetchProvider.call` argument shape — DERIVED from the SDK's own
+   * signature (path + params + method + headers), never re-declared, so an
+   * upstream change lands on the override through the compiler.
+   */
+  export type CallArgs = Parameters<FetchProvider["call"]>[0]
+
+  /**
    * The params exactly as they serialize onto the wire. Antelope value types
    * (`Name`, `UInt64`, …) carry BN internals as object graphs; a JSON
    * round-trip honors each type's `toJSON` (the same encoding `FetchProvider`
@@ -40,7 +44,7 @@ export namespace RecordingFetchProvider {
    */
   export function toWireForm(
     params: Record<string, unknown> | undefined
-  ): Record<string, unknown> | null {
+  ): Record<string, unknown> {
     return params != null
       ? (JSON.parse(JSON.stringify(params)) as Record<string, unknown>)
       : null

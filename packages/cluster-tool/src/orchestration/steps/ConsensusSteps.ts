@@ -56,8 +56,8 @@ export namespace ConsensusSteps {
     const finalizers = nodes.map((node, index) => ({
       description: `finalizer-${index}`,
       weight: 1,
-      public_key: node.keys.bls.publicKey,
-      pop: node.keys.bls.proofOfPossession
+      public_key: node.keys.wireFinalizer.publicKey,
+      pop: node.keys.wireFinalizer.proofOfPossession
     }))
     const threshold = Math.floor((finalizers.length * 2) / 3) + 1
     await ctx.wire
@@ -98,6 +98,8 @@ export namespace ConsensusSteps {
     const producers = ctx.keyStore.operatorsByType(OperatorType.PRODUCER)
     Assert.ok(producers.length > 0, "setProducerKeys: no producer operators provisioned")
     const schedule = producers.map(producer => ({
+      // An on-chain schedule entry — the ON-CHAIN name (for producers it equals
+      // the durable handle, but the chain boundary decides the field).
       producer_name: producer.account,
       block_signing_key: producer.wire.publicKey
     }))

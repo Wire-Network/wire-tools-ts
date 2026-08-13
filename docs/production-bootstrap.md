@@ -93,7 +93,7 @@ DEV_BLS = BLS.regenerate(SHA256("wire"))      # BLS12-381 finalizer key
 | `DEV_BLS_PUBLIC_KEY` | Genesis `initial_finalizer_key` (bios finalizer). | `DEV_BLS.publicKey` (`PUB_BLS_*` spelling) |
 | `DEV_BLS_PROOF_OF_POSSESSION` | PoP for `DEV_BLS_PUBLIC_KEY`. | `DEV_BLS.proofOfPossession` (`SIG_BLS_*` spelling) |
 | Per-node K1/BLS keys | Producer nodes' own block-signing (K1) + finalizer (BLS) keys, distinct from `DEV_*`; used by `setprodkeys` / `setfinalizer` AND as the producer accounts' owner/active keys. | generated at runtime (`clio create key --k1`, `sys-util bls create key`) |
-| Per-operator K1/EM/ED keys | Each batch operator / underwriter's UNIQUE identity: a WIRE account key (K1, imported into kiod so `<operator>@active` signs), an ETH key (EM, anvil-mnemonic HD-derived), and a SOL key (ED25519). | generated at runtime (`KeyGenerator`) |
+| Per-operator K1/EM/ED keys | Each batch operator / underwriter's UNIQUE identity: a WIRE account key (K1, imported into kiod so `<account>@active` signs), an ETH key (EM, anvil-mnemonic HD-derived), and a SOL key (ED25519). The chain ACCOUNT is node-owner-generated (`wireno.<suffix>` via `roa::newuser`); the deterministic labels (`batchop.a`, `uwrit.a`) are the newuser sponsor nonces + the tooling's keystore keys. | generated at runtime (`KeyGenerator`) |
 | `BOOTSTRAP_NODE_OWNER` | Bootstrap tier-1 node owner (2–6 chars to satisfy `valid_name_for_tier`); its tier-1 reserve is what post-bootstrap resource policies are issued from. | `wireno` |
 | `DEFAULT_WALLET_NAME` | kiod wallet the bootstrap creates and every helper re-opens. | `default` |
 
@@ -129,8 +129,8 @@ itself — flows/tools provision users and non-bootstrapped operators with them 
 |---|---|---|
 | `producerCount` | `21` (`MAX_PRODUCERS`) | accounts `defproducera … defproduceru` |
 | `nodeCount` | `1` **(cluster)** | producer nodes hosting the producers |
-| `batchOperatorCount` | `3` **(cluster)** | accounts `batchop.a/b/c` |
-| `underwriterCount` | `1` **(cluster)** | account `uwrit.a` |
+| `batchOperatorCount` | `3` **(cluster)** | labels `batchop.a/b/c` (chain accounts are `wireno.<suffix>`, node-owner-generated) |
+| `underwriterCount` | `1` **(cluster)** | label `uwrit.a` (chain account likewise generated) |
 | `epochDurationSec` | `90` **(cluster; production: real cadence)** | |
 | `EnvelopeLogRetentionEpochs` | `10` | `sysio.epoch::setconfig.epoch_retention_envelope_log_count` |
 
@@ -249,21 +249,30 @@ authex) are no longer configured.
 | `req_uw_collat` | `[]` | empty by default |
 
 22. **WIRE token + emissions** — `sysio.token` is reused for a separate `9,WIRE` token the emissions contract
-    reads from `sysio`'s balance. Four actions, in order:
+    reads from `sysio`'s balance. Five actions, in order:
     - `sysio.token::create({issuer:"sysio", maximum_supply:"1000000000.000000000 WIRE"})` — `[sysio.token@active]`.
     - `sysio.token::issue({to:"sysio", quantity:"1000000000.000000000 WIRE", memo:"initial WIRE for emissions"})` — `[sysio@active]`.
     - `sysio::setemitcfg({cfg:{…}})` — `[sysio@active]` — full payload in the table below.
+    - `sysio::setinittime({no_reward_init_time:"<Distribution Commencement Date, ISO-8601 YYYY-MM-DDTHH:MM:SS>"})` —
+      `[sysio@active]` — seeds the `emissionmngr` singleton that anchors node-owner vesting. Every tier's schedule is
+      measured from this one instant, so until it is set `claimnodedis` aborts with "emission state not initialized"
+      and no node owner can claim — registration still succeeds, which is what makes the omission silent. Reads the
+      emission config, so it must run after `setemitcfg`, and it is one-shot (a second call is rejected).
+      **(cluster: the chain's `head_block_time`; production: the approved Distribution Commencement Date)**
     - `sysio::initt5({start_time:"<chain head time, ISO-8601 YYYY-MM-DDTHH:MM:SS>"})` — `[sysio@active]` — seeds
       the T5 state singleton (`start_time` = the chain's `head_block_time`, not wall clock). Must run after
       `setemitcfg` and before Stage 12's `bootstrap`.
 
-    `sysio::setemitcfg` payload (WIRE amounts are 9-decimal subunits):
+    `sysio::setemitcfg` payload (WIRE amounts are 9-decimal subunits). The `tN_allocation` fields are **per node
+    owner**, not per tier: `addnodeowner` copies the tier's value verbatim into that one owner's `nodedist` row, so
+    a tier's total exposure is the value times its cap (21 / 84 / 1000). Across all three tiers that is
+    341,500,000 WIRE against the 1,000,000,000 WIRE supply issued above.
 
 | Field | Value | Meaning |
 |---|---|---|
-| `t1_allocation` | `7500000000000000` | 7,500,000 WIRE (T1 tier total) |
-| `t2_allocation` | `15000000000000000` | 15,000,000 WIRE |
-| `t3_allocation` | `30000000000000000` | 30,000,000 WIRE |
+| `t1_allocation` | `7500000000000000` | 7,500,000 WIRE per T1 owner (× 21 cap = 157,500,000) |
+| `t2_allocation` | `1000000000000000` | 1,000,000 WIRE per T2 owner (× 84 cap = 84,000,000) |
+| `t3_allocation` | `100000000000000` | 100,000 WIRE per T3 owner (× 1000 cap = 100,000,000) |
 | `t1_duration` | `31104000` | 12 × 30 d, seconds |
 | `t2_duration` | `62208000` | 24 × 30 d |
 | `t3_duration` | `93312000` | 36 × 30 d |
@@ -370,13 +379,16 @@ chain-side addresses from; production registers the canonical contract/mint addr
 ## Stage 12 — Operator provisioning + first epoch
 The genesis-replacing real producer schedule is already live. NOTHING here uses `forcereg`.
 
-31. **Operator accounts** — `sysio::newaccount({creator:"sysio", name, owner:<operator's generated K1>,
-    active:<same K1>})` — `[sysio@active]` — `batchop.a/b/c` (3) + `uwrit.a` (1) **(cluster counts)**. Each
-    operator carries its OWN runtime-generated identity: a unique WIRE K1 (the account key, imported into the
-    kiod wallet so `<operator>@active` can sign), an ETH key (EM), and a SOL key (ED25519). No resource
-    policy is issued during bootstrap (`sysio.roa::addpolicy` is a post-bootstrap flow/user-provisioning
-    tool). **(cluster: `sysio` creates the operator accounts directly; target design: operator accounts are
-    created/sponsored by a node owner — pending harness/flow update.)**
+31. **Operator accounts (node-owner-created)** — `sysio.roa::newuser({creator:"wireno", nonce:<label>,
+    pubkey:<operator's generated K1>})` — `[wireno@active]` — one call per operator, labels `batchop.a/b/c`
+    (3) + `uwrit.a` (1) **(cluster counts)**. The tier-1 node owner sponsors each account: the chain
+    generates a `wireno.<suffix>` account name (owner = active = the operator's K1), records the
+    `(creator, nonce) → username` mapping in the `sponsors` table (sponsorship rows billed to `wireno`),
+    and gifts `newaccount_ram` from the pool. The tooling adopts the generated name from the `sponsors`
+    row keyed by its deterministic label/nonce. Each operator carries its OWN runtime-generated identity:
+    a unique WIRE K1 (the account key, imported into the kiod wallet so `<account>@active` can sign), an
+    ETH key (EM), and a SOL key (ED25519). No resource policy is issued during bootstrap
+    (`sysio.roa::addpolicy` is a post-bootstrap flow/user-provisioning tool).
     - SOL-side (not a depot action): each batch operator's ED keypair is airdropped **100 SOL** — its daemon
       pays the fees on every per-epoch `epoch_in` delivery. Underwriters get no airdrop; anvil prefunds the
       operators' ETH HD accounts.

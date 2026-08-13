@@ -77,12 +77,14 @@ describe("ClusterConfig shape", () => {
     requiredUnderwriterCollateral: [],
     requiredProducerCollateral: [],
     underwriterCollateral: null,
+    initialKey: null,
     initialFinalizerKey: null,
     signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
+    awsClusterNodeConfig: null,
     externalOutposts: null,
     debuggingServerEnabled: true,
     enableMockReserves: false,
-    ethereumGasPolicy: EthereumGasPolicy.chainDefault
+    ethereumGasPolicy: EthereumGasPolicy.mainnetParity
   }
 
   it("persists the report/logging enum fields as their wire spellings", () => {
@@ -109,9 +111,10 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated).toEqual(config)
   })
 
-  it("loads a legacy config (no signatureProvider/externalOutposts/debuggingServerEnabled/enableMockReserves) via schema defaults", () => {
+  it("loads a legacy config (no signatureProvider/awsClusterNodeConfig/externalOutposts/debuggingServerEnabled/enableMockReserves) via schema defaults", () => {
     const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
     delete parsed.signatureProvider
+    delete parsed.awsClusterNodeConfig
     delete parsed.externalOutposts
     delete parsed.debuggingServerEnabled
     delete parsed.enableMockReserves
@@ -122,6 +125,7 @@ describe("ClusterConfig shape", () => {
       type: SignatureProviderType.KEY,
       ssm: null
     })
+    expect(rehydrated.awsClusterNodeConfig).toBeNull()
     expect(rehydrated.externalOutposts).toBeNull()
     expect(rehydrated.debuggingServerEnabled).toBe(true)
     expect(rehydrated.enableMockReserves).toBe(false)

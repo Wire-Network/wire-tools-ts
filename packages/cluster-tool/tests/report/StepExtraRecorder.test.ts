@@ -239,7 +239,7 @@ describe("StepExtraRecorder", () => {
     const nodes = await phase.run(new AbortController().signal)
     const step = (nodes[0] as Report.Phase).steps[0]
     expect(step.status).toBe(Report.StepStatus.failed)
-    expect((step.extra?.calls as Array<{ method?: string }>)[0].method).toBe(
+    expect((step.extra?.calls as StepExtraRecorder.ClientCall[])[0].method).toBe(
       "eth_sendRawTransaction"
     )
   })

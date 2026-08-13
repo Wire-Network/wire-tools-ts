@@ -4,7 +4,13 @@ import Os from "node:os"
 import Path from "node:path"
 import { flatten } from "lodash"
 import { match } from "ts-pattern"
-import { getLogger, isNumber, isObject, isString } from "@wireio/shared"
+import {
+  getLogger,
+  isNumber,
+  isObject,
+  isString,
+  NestedError
+} from "@wireio/shared"
 import {
   API,
   APIClient,
@@ -12,6 +18,7 @@ import {
   type PermissionLevelType,
   SysioContracts
 } from "@wireio/sdk-core"
+import { ProtocolTiming } from "../../Constants.js"
 import { scaleTimeoutMs, isNotEmpty, retry } from "../../utils/index.js"
 import { RecordingFetchProvider } from "./RecordingFetchProvider.js"
 import { ClioRunner } from "./clio/ClioRunner.js"
@@ -32,6 +39,17 @@ export interface WireClientConfig {
   readonly binary: string
   readonly nodeopUrl: string
   readonly kiodUrl: string | null
+  /**
+   * Finalizers in the cluster's genesis policy — the producer nodes, which is
+   * exactly the set `ConsensusSteps` builds the policy from.
+   *
+   * Sizes the irreversibility budget via
+   * {@link ProtocolTiming.irreversibilityBudgetMs}: a Savanna quorum round
+   * costs more wall clock as the finalizer set grows, so a budget that ignores
+   * topology is right for a 1-node dev cluster and wrong for a 21-producer one.
+   * Omitted (or 0) falls back to the single-finalizer floor.
+   */
+  readonly finalizerCount?: number
 }
 
 /**
@@ -100,7 +118,7 @@ export class WireClient {
       tables: guard("table", def.tables, queries, member =>
         this.tableQuery(def.account, member)
       )
-    } as unknown as WireClient.SysioContractClient<Name>
+    } as WireClient.SysioContractClient<Name>
   }
 
   private actionInvoker(
@@ -145,7 +163,7 @@ export class WireClient {
   // ── Actions / transactions ───────────────────────────────────────────────
 
   /** Single typed action; waits for finality by default (`skipWait` to fire-and-forget). */
-  async invoke<Action extends {}>(
+  async invoke<Action extends object>(
     account: string,
     action: string,
     data: Action,
@@ -157,11 +175,35 @@ export class WireClient {
       label = `${account}::${action}`,
       send = () =>
         this.runner.run<API.v1.SendTransactionResponse>(
-          ["push", "action", account, action, JSON.stringify(data), "-p", auth, "-j"],
+          [
+            "push",
+            "action",
+            account,
+            action,
+            JSON.stringify(data),
+            "-p",
+            auth,
+            "-j",
+            ...this.expirationArgs
+          ],
           { json: true }
         )
     if (options.skipWait) return send()
     return this.withFinality(label, send, options.finality)
+  }
+
+  /**
+   * clio's `--expiration` args for every pushed transaction.
+   *
+   * clio defaults to 30s, which is the window between SIGNING and INCLUSION —
+   * not execution. On a large cluster a push lands on whichever node the client
+   * dials, and that node must relay it to whichever of the N producers is
+   * currently producing. When block propagation degrades the tx can expire
+   * unincluded, surfacing as `expired_tx_exception` rather than anything that
+   * names the real cause. See {@link WireClient.TransactionExpirationSec}.
+   */
+  private get expirationArgs(): string[] {
+    return ["--expiration", String(WireClient.TransactionExpirationSec)]
   }
 
   /** Multi-action tx; variadic + flatten. Waits by default. */
@@ -174,7 +216,13 @@ export class WireClient {
       label = actions.map(a => `${a.account}::${a.name}`).join(","),
       send = () =>
         this.runner.run<API.v1.SendTransactionResponse>(
-          ["push", "transaction", "-j", JSON.stringify({ actions })],
+          [
+            "push",
+            "transaction",
+            "-j",
+            JSON.stringify({ actions }),
+            ...this.expirationArgs
+          ],
           { json: true }
         )
     return this.withFinality(label, send)
@@ -185,7 +233,7 @@ export class WireClient {
    * `sysio.roa::setsyscode`'s wasm hex) that would exceed the command-line arg
    * limit (E2BIG). Waits for finality by default.
    */
-  async invokeViaFile<Action extends {}>(
+  async invokeViaFile<Action extends object>(
     account: string,
     action: string,
     data: Action,
@@ -202,7 +250,7 @@ export class WireClient {
         await Fsp.writeFile(file, JSON.stringify(body))
         try {
           return await this.runner.run<API.v1.SendTransactionResponse>(
-            ["push", "transaction", "-j", file],
+            ["push", "transaction", "-j", file, ...this.expirationArgs],
             { json: true }
           )
         } finally {
@@ -309,9 +357,26 @@ export class WireClient {
 
   // ── RPC getters (v6 `.value` unwrap retained) ────────────────────────────
 
-  /** GET /v1/chain/get_info. */
-  getInfo(): Promise<WireClient.GetInfoResponse> {
-    return this.api.v1.chain.get_info() as unknown as Promise<WireClient.GetInfoResponse>
+  /**
+   * GET /v1/chain/get_info, projected onto plain JSON scalars.
+   *
+   * sdk-core answers with its rich `Struct` shape (`Checksum256`, `UInt32`,
+   * `TimePoint`, `Name`), so every field is CONVERTED here rather than
+   * asserted: the harness compares chain ids as strings and does arithmetic on
+   * block numbers, and an assertion would have handed those call sites wrapper
+   * objects that merely LOOK right through template interpolation.
+   */
+  async getInfo(): Promise<WireClient.GetInfoResponse> {
+    const info = await this.api.v1.chain.get_info()
+    return {
+      server_version: info.server_version,
+      chain_id: String(info.chain_id),
+      head_block_num: Number(info.head_block_num),
+      last_irreversible_block_num: Number(info.last_irreversible_block_num),
+      head_block_time: String(info.head_block_time),
+      head_block_id: String(info.head_block_id),
+      head_block_producer: String(info.head_block_producer)
+    }
   }
 
   /**
@@ -344,7 +409,7 @@ export class WireClient {
       "sysio.token",
       account,
       "WIRE"
-    )) as unknown as Asset[]
+    )) as Asset[]
     if (!rows || rows.length === 0) return 0n
     const [amount] = rows[0].toString().split(" ")
     const [whole, frac = ""] = amount.split(".")
@@ -414,7 +479,7 @@ export class WireClient {
   /** Fetch a transaction trace via /v1/trace_api/get_transaction_trace. */
   async getTransaction(
     id: string
-  ): Promise<WireClient.GetTransactionResponse | null> {
+  ): Promise<WireClient.GetTransactionResponse> {
     const resp = await fetch(
       `${this.config.nodeopUrl}/v1/trace_api/get_transaction_trace`,
       {
@@ -450,46 +515,206 @@ export class WireClient {
     )
   }
 
-  /** Push (via `send`), wait to `finality` (default irreversible), re-push on fork-out. */
-  private withFinality<T extends { transaction_id?: string }>(
+  /**
+   * Push (via `send`), then wait for `finality`.
+   *
+   * **A re-push happens ONLY when the transaction is PROVEN un-appliable.**
+   * That is the whole point of this method's shape, and it is structural — a
+   * `pending`/unresolved wait has no code path back to `send()`, rather than
+   * being talked out of one by a predicate.
+   *
+   * The previous form wrapped `send()` AND the wait in one `retry`, so ANY
+   * wait failure re-invoked `send()`. On 2026-08-04 that re-pushed an
+   * already-applied `sysio.acct` creation twice: the wait had merely timed out
+   * (LIB was lagging at 21 finalizers), the account existed the whole time, and
+   * both re-pushes bounced off `account_name_exists_exception`. `newaccount`
+   * fails LOUDLY — that was luck. A re-pushed `transfer` / `deposit` succeeds
+   * TWICE, silently. `clio push action` re-signs with fresh TAPOS, so a
+   * re-push is a NEW transaction, never a duplicate the chain dedupes.
+   *
+   * @param label - Human label for the operation (logs + errors).
+   * @param send - Performs the push; may be re-invoked ONLY on proven absence.
+   * @param finality - How far to wait (default irreversible; see
+   *   `irreversible-finality-only-never-head.md` — nothing weaker is allowed).
+   * @returns The push result once `finality` is reached.
+   */
+  private withFinality<T extends WireClient.TransactionIdResponse>(
     label: string,
     send: () => Promise<T>,
     finality: WireClient.FinalityType = WireClient.DefaultFinality
   ): Promise<T> {
-    return retry(
-      async () => {
-        const result = await send(),
+    const budgetMs = scaleTimeoutMs(
+        ProtocolTiming.irreversibilityBudgetMs(this.config.finalizerCount ?? 0)
+      ),
+      attempt = async (attemptNumber: number): Promise<T> => {
+        const pushedAtMs = Date.now(),
+          // Pre-inclusion retry ONLY — a throwing `send` produced no
+          // transaction id, so there is nothing to double-apply. Deliberately
+          // NOT fused with the finality wait; fusing them is the defect above.
+          result = await retry(send, {
+            maxAttempts: WireClient.PushMaxAttempts,
+            delayMs: WireClient.FinalityRetryDelayMs,
+            label
+          }),
           transactionId = WireClient.getTransactionId(result)
-        if (isString(transactionId) && isNotEmpty(transactionId))
-          await this.assertFinality(
-            transactionId,
-            label,
-            finality,
-            scaleTimeoutMs(WireClient.DefaultTimeoutMs)
+        // Nothing reached the chain: no id, or `setContract`'s settled-no-op
+        // sentinel. Waiting on the sentinel polled a fake id for the full
+        // budget and then re-ran `clio set contract` — see the constant.
+        if (
+          !isString(transactionId) ||
+          !isNotEmpty(transactionId) ||
+          transactionId === WireClient.NoTransactionSentTransactionId
+        )
+          return result
+        const outcome = await this.awaitFinality({
+          transactionId,
+          label,
+          finality,
+          budgetMs,
+          pushedAtMs
+        })
+        const resolved = await match(outcome.kind)
+          .with(WireClient.FinalityOutcome.irreversible, async () => result)
+          .with(WireClient.FinalityOutcome.unappliable, async () =>
+            attemptNumber < WireClient.FinalityMaxAttempts
+              ? attempt(attemptNumber + 1)
+              : WireClient.throwFinality(label, outcome)
           )
-        return result
-      },
-      {
-        maxAttempts: WireClient.FinalityMaxAttempts,
-        delayMs: WireClient.FinalityRetryDelayMs,
-        label
+          // No path to `attempt` — unresolved can NEVER re-push.
+          .with(WireClient.FinalityOutcome.unresolved, async () =>
+            WireClient.throwFinality(label, outcome)
+          )
+          .exhaustive()
+        return resolved
       }
-    )
+    return attempt(1)
   }
 
-  /** Wait for `transactionId` to reach `finality`, throwing if forked out (drives re-push). */
-  private async assertFinality(
-    transactionId: string,
-    label: string,
-    finality: WireClient.FinalityType,
-    timeoutMs: number
-  ): Promise<void> {
-    const blockNum = await this.waitForTransactionInBlock(transactionId, timeoutMs)
-    if (
-      finality === WireClient.FinalityType.irreversible &&
-      !(await this.waitForTransactionIrreversible(transactionId, blockNum, timeoutMs))
+  /**
+   * Wait for `transactionId` to reach `finality`; on any failure, RE-READ the
+   * transaction's status and classify what may be done about it.
+   *
+   * Every failure path funnels through the same re-read — a lapsed deadline, a
+   * transaction never located in a block, a suspected fork, an RPC error. That
+   * is why this closes the hole a per-error-type predicate leaves: it does not
+   * matter which of the four sites failed.
+   *
+   * @param input - Transaction id, label, target finality, budget, push time.
+   * @returns The classified outcome; only `unappliable` permits a re-push.
+   */
+  private async awaitFinality(
+    input: WireClient.FinalityWaitInput
+  ): Promise<WireClient.FinalityResult> {
+    const { transactionId, finality, budgetMs } = input,
+      deadlineMs = Date.now() + budgetMs,
+      remainingMs = () => Math.max(deadlineMs - Date.now(), 0)
+
+    let blockNum: number
+    try {
+      blockNum = await this.waitForTransactionInBlock(
+        transactionId,
+        remainingMs()
+      )
+    } catch (error) {
+      // NOT a failed transaction — "I could not locate it in time". The
+      // re-read below decides whether it is genuinely gone.
+      log.warn(
+        `${input.label}: tx ${transactionId} not located in a block — ${errorText(error)}`
+      )
+      return this.classifyUnresolved(input, null)
+    }
+
+    if (finality !== WireClient.FinalityType.irreversible)
+      return {
+        kind: WireClient.FinalityOutcome.irreversible,
+        transactionId,
+        blockNum,
+        lib: null
+      }
+
+    const reached = await this.pollIrreversible(
+      transactionId,
+      blockNum,
+      deadlineMs
     )
-      throw new Error(`${label}: tx ${transactionId} forked out before irreversibility`)
+    return reached
+      ? {
+          kind: WireClient.FinalityOutcome.irreversible,
+          transactionId,
+          blockNum,
+          lib: null
+        }
+      : this.classifyUnresolved(input, blockNum)
+  }
+
+  /**
+   * Decide whether a transaction whose wait did NOT succeed may be re-pushed.
+   *
+   * Absence is NOT proof — `getTransaction` answers 404 for "not indexed" and
+   * throws for "could not ask", and collapsing those is how an RPC hiccup gets
+   * laundered into a fork-out that re-pushes an applied transaction. Only a
+   * closed TAPOS window proves impossibility: this client pins the expiration
+   * itself ({@link WireClient.TransactionExpirationSec}), so once head time is
+   * past `pushedAt + expiration` AND the transaction is absent, it can never
+   * be included and a re-push is safe.
+   *
+   * @param input - The original wait input (carries `pushedAtMs`).
+   * @param blockNum - Where it was last seen, when it was located at all.
+   * @returns `unappliable` only on proof; `unresolved` in every other case.
+   */
+  private async classifyUnresolved(
+    input: WireClient.FinalityWaitInput,
+    blockNum: number
+  ): Promise<WireClient.FinalityResult> {
+    const { transactionId, pushedAtMs } = input,
+      located = await this.locateTransactionBlock(transactionId)
+
+    // Applied (anywhere), or we could not ask — either way, never re-push.
+    if (located.kind !== WireClient.TransactionLocation.absent)
+      return {
+        kind: WireClient.FinalityOutcome.unresolved,
+        transactionId,
+        blockNum: located.blockNum ?? blockNum,
+        lib: await this.readLib()
+      }
+
+    const lib = await this.readLib(),
+      headTimeMs = await this.readHeadTimeMs(),
+      expiresAtMs =
+        pushedAtMs +
+        WireClient.TransactionExpirationSec * ProtocolTiming.MsPerSecond,
+      expired = headTimeMs != null && headTimeMs > expiresAtMs
+    return {
+      kind: expired
+        ? WireClient.FinalityOutcome.unappliable
+        : WireClient.FinalityOutcome.unresolved,
+      transactionId,
+      blockNum,
+      lib
+    }
+  }
+
+  /** Current LIB, or null when the node cannot be reached. */
+  private async readLib(): Promise<number> {
+    try {
+      return (await this.getInfo()).last_irreversible_block_num
+    } catch (error) {
+      log.warn(`readLib failed: ${errorText(error)}`)
+      return null
+    }
+  }
+
+  /** Head block time in epoch ms, or null when unreadable. */
+  private async readHeadTimeMs(): Promise<number> {
+    try {
+      // Chain times are ISO-8601 WITHOUT a zone and are UTC; `Date.parse` would
+      // read a bare stamp as LOCAL time, so the `Z` is appended explicitly.
+      const { head_block_time } = await this.getInfo()
+      return Date.parse(`${head_block_time.replace(/Z$/, "")}Z`)
+    } catch (error) {
+      log.warn(`readHeadTimeMs failed: ${errorText(error)}`)
+      return null
+    }
   }
 
   /** Poll until a tx appears in a block; returns its block number. */
@@ -540,34 +765,79 @@ export class WireClient {
     return scanBlock(startBlock)
   }
 
-  /** Resolve the block a tx currently sits at, or null (forked out / not applied). */
-  private async locateTransactionBlock(transactionId: string): Promise<number | null> {
-    const trace = await this.getTransaction(transactionId).catch(() => null)
-    return isObject(trace) && isNumber(trace.block_num) && trace.block_num > 0
-      ? trace.block_num
-      : null
+  /**
+   * Re-read WHERE a transaction currently sits.
+   *
+   * The three-way answer is the point. This previously did
+   * `.catch(() => null)` and returned a bare number-or-null, so a trace-api
+   * 500, a socket reset, or a capability mismatch became indistinguishable
+   * from "the chain says it is not there" — and the caller read that as a
+   * fork-out and re-pushed an applied transaction. `getTransaction` answers
+   * 404 (authoritative: not indexed) or throws (we could not ask); those are
+   * different facts and stay different here.
+   *
+   * @param transactionId - The transaction to look up.
+   * @returns `found` with its block, `absent` on an authoritative 404, or
+   *   `unknown` when the lookup itself failed.
+   */
+  private async locateTransactionBlock(
+    transactionId: string
+  ): Promise<WireClient.TransactionLocationResult> {
+    try {
+      const trace = await this.getTransaction(transactionId)
+      return isObject(trace) && isNumber(trace.block_num) && trace.block_num > 0
+        ? {
+            kind: WireClient.TransactionLocation.found,
+            blockNum: trace.block_num
+          }
+        : { kind: WireClient.TransactionLocation.absent, blockNum: null }
+    } catch (error) {
+      log.warn(
+        `locateTransactionBlock(${transactionId}) could not read the trace — treating as UNKNOWN, not absent: ${errorText(error)}`
+      )
+      return { kind: WireClient.TransactionLocation.unknown, blockNum: null }
+    }
   }
 
-  /** Wait until a tx is in an IRREVERSIBLE block; false if forked out (caller re-pushes). */
-  async waitForTransactionIrreversible(
+  /**
+   * Poll until `transactionId` sits in an irreversible block.
+   *
+   * Renamed from the public `waitForTransactionIrreversible` deliberately: its
+   * boolean meant two opposite things (forked out vs. deadline lapsed) and the
+   * single caller inverted it into a "forked out" throw. Renaming makes any
+   * un-migrated caller a compile error rather than a silent mis-read.
+   *
+   * @param transactionId - The transaction to follow.
+   * @param blockNum - Block it was first seen in.
+   * @param deadlineMs - Absolute deadline (epoch ms) shared with the inclusion
+   *   wait, so one budget covers the whole finality wait rather than each
+   *   waiter getting its own full copy.
+   * @returns True once irreversible. False means ONLY "not confirmed here" —
+   *   the caller re-reads to decide what that means; it is never proof of a
+   *   fork.
+   */
+  private async pollIrreversible(
     transactionId: string,
     blockNum: number,
-    timeoutMs = scaleTimeoutMs(WireClient.DefaultTimeoutMs)
+    deadlineMs: number
   ): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs
     let height = blockNum
-    while (Date.now() < deadline) {
+    while (Date.now() < deadlineMs) {
       try {
         const lib = (await this.getInfo()).last_irreversible_block_num
         if (lib >= height) {
           const block = await this.getBlock(height)
-          if (WireClient.blockContainsTransaction(block, transactionId)) return true
+          if (WireClient.blockContainsTransaction(block, transactionId))
+            return true
           const relocated = await this.locateTransactionBlock(transactionId)
-          if (relocated === null) return false
-          height = relocated
+          if (relocated.kind !== WireClient.TransactionLocation.found)
+            return false
+          height = relocated.blockNum
         }
-      } catch (err) {
-        log.debug(`waitForTransactionIrreversible(${transactionId}) poll error: ${errorText(err)}`)
+      } catch (error) {
+        log.debug(
+          `pollIrreversible(${transactionId}) poll error: ${errorText(error)}`
+        )
       }
       await delay(WireClient.PollIntervalMs)
     }
@@ -648,7 +918,7 @@ export namespace WireClient {
   > {
     query(args?: TableQueryArgs): Promise<TableQueryResult<TableRow<Name, Table>>>
   }
-  export type SysioContractClient<Name extends SysioContractName> = {
+  export interface SysioContractClient<Name extends SysioContractName> {
     readonly actions: {
       readonly [Action in ActionName<Name>]: ActionInvoker<Name, Action>
     }
@@ -664,6 +934,107 @@ export namespace WireClient {
     irreversible = "irreversible"
   }
   export const DefaultFinality = FinalityType.irreversible
+
+  /**
+   * What a finality wait concluded — and therefore what may be done next.
+   *
+   * Three states, because a boolean cannot express them: "reached it",
+   * "provably can never apply", and "I do not know yet". Conflating the last
+   * two is what re-pushed an applied transaction.
+   */
+  export enum FinalityOutcome {
+    /** Reached the requested finality. Done. */
+    irreversible = "irreversible",
+    /** PROVEN un-appliable (TAPOS window closed, still absent) — re-push is safe. */
+    unappliable = "unappliable",
+    /** State unknown or still applied — NEVER re-push. */
+    unresolved = "unresolved"
+  }
+
+  /** Where a re-read found a transaction. */
+  export enum TransactionLocation {
+    /** In a block. */
+    found = "found",
+    /** The chain answered authoritatively that it is not indexed (404). */
+    absent = "absent",
+    /** The lookup itself failed — NOT evidence of absence. */
+    unknown = "unknown"
+  }
+
+  /** A re-read's answer: where the transaction is, if anywhere. */
+  export interface TransactionLocationResult {
+    readonly kind: TransactionLocation
+    /** Its block when `found`; null otherwise. */
+    readonly blockNum: number
+  }
+
+  /** Everything {@link WireClient.awaitFinality} needs for one attempt. */
+  export interface FinalityWaitInput {
+    readonly transactionId: string
+    readonly label: string
+    readonly finality: FinalityType
+    /** Whole-wait budget (ms) — ONE deadline covers inclusion + irreversibility. */
+    readonly budgetMs: number
+    /** When the push was issued — with the pinned expiration this proves impossibility. */
+    readonly pushedAtMs: number
+  }
+
+  /** A classified finality outcome, carrying what the error message needs. */
+  export interface FinalityResult {
+    readonly kind: FinalityOutcome
+    readonly transactionId: string
+    /** Last known block, when known. */
+    readonly blockNum: number
+    /** LIB at classification time, when readable. */
+    readonly lib: number
+  }
+
+  /**
+   * Fail a finality wait with an error that states what was actually observed.
+   *
+   * The old message claimed `forked out before irreversibility` for a plain
+   * timeout — actively false, and it misdirects whoever reads it. Context rides
+   * `NestedError` (no marker class: `instanceof` fails OPEN across jest realms,
+   * and this repo already documents that hazard in `ClioRunner`).
+   *
+   * @param label - The operation label.
+   * @param result - The classified outcome.
+   * @throws Always.
+   */
+  export function throwFinality(label: string, result: FinalityResult): never {
+    throw new NestedError(
+      match(result.kind)
+        .with(
+          FinalityOutcome.unappliable,
+          () => `${label}: transaction can never apply (expiration window closed while absent)`
+        )
+        .otherwise(
+          () => `${label}: finality unresolved — NOT re-pushed (the transaction may be applied)`
+        ),
+      { context: { ...result } }
+    )
+  }
+
+  /**
+   * Attempts for a push that THREW — i.e. produced no transaction id, so there
+   * is nothing to double-apply. Separate from {@link FinalityMaxAttempts},
+   * which bounds proven-safe re-pushes; fusing the two is the original defect.
+   */
+  export const PushMaxAttempts = 3
+
+  /**
+   * Seconds before a pushed transaction expires (clio `--expiration`).
+   *
+   * clio's own default is 30s. That is ample when the dialed node is producing,
+   * but a cluster push must relay to whichever of N producers currently holds
+   * the slot, so the inclusion window scales with topology and with any
+   * propagation hiccup. 30s left no margin: a 21-producer bootstrap lost
+   * `sysio.epoch::schbatchgps` to `expired_tx_exception` — a failure that names
+   * the timer, not the cause. Sized well above the observed worst case; a tx
+   * that cannot be included in this long has a real problem to diagnose, and
+   * the surrounding finality wait bounds the step regardless.
+   */
+  export const TransactionExpirationSec = 120
   export const FinalityMaxAttempts = 3
   export const FinalityRetryDelayMs = 1_000
   export const DefaultTimeoutMs = 60_000
@@ -731,8 +1102,17 @@ export namespace WireClient {
     block_time: string
   }
 
+  /**
+   * Any push/transaction response carrying the chain's transaction id — the ONE
+   * field the finality waiters read. {@link WireClient.withFinality} constrains
+   * its send result on it; {@link getTransactionId} extracts it.
+   */
+  export interface TransactionIdResponse {
+    transaction_id?: string
+  }
+
   /** Extract `transaction_id` from a clio JSON response. */
-  export function getTransactionId(result: unknown): string | null {
+  export function getTransactionId(result: unknown): string {
     if (typeof result === "string") {
       try {
         return JSON.parse(result)?.transaction_id ?? null
@@ -742,7 +1122,7 @@ export namespace WireClient {
       }
     }
     if (result && typeof result === "object" && "transaction_id" in result)
-      return (result as { transaction_id: string }).transaction_id
+      return (result as TransactionIdResponse).transaction_id
     return null
   }
 
