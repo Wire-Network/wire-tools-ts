@@ -1,0 +1,22 @@
+{
+  "name": "@wireio/test-flow-swap-route-matrix",
+  "version": "0.1.16",
+  "private": true,
+  "type": "commonjs",
+  "description": "Flow: serial native swap-route matrix across Ethereum, Solana, and WIRE",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "node lib/index.js",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@wireio/cluster-tool": "workspace:*",
+    "@wireio/cluster-tool-shared": "workspace:*",
+    "@wireio/sdk-core": "^1.0.22",
+    "ethers": "^6.14.0",
+    "ts-pattern": "^5.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0"
+  }
+}
