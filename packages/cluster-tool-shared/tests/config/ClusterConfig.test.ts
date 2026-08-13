@@ -1,4 +1,4 @@
-import { EthereumGasPolicy,
+import {
   ClusterConfigLoggingFileFormat,
   ClusterConfigReportFormat,
   ClusterConfigSchemaCodec,
@@ -84,7 +84,7 @@ describe("ClusterConfig shape", () => {
     externalOutposts: null,
     debuggingServerEnabled: true,
     enableMockReserves: false,
-    ethereumGasPolicy: EthereumGasPolicy.mainnetParity
+    ethereumGasUncapped: false
   }
 
   it("persists the report/logging enum fields as their wire spellings", () => {

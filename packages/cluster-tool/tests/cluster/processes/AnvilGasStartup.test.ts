@@ -1,7 +1,5 @@
 import { spawn } from "node:child_process"
 
-import { EthereumGasPolicy } from "@wireio/cluster-tool-shared"
-
 import { NestedError } from "@wireio/shared"
 
 import { AnvilProcess, BindConfigProvider } from "@wireio/cluster-tool"
@@ -17,35 +15,32 @@ interface LatestBlockResponse {
 }
 
 /**
- * Every gas policy must produce flags anvil ACCEPTS.
+ * Both gas regimes must produce flags anvil ACCEPTS.
  *
  * Asserting the flag STRINGS is not enough, and this suite exists because that
- * gap shipped: `uncapped` originally emitted
+ * gap shipped: the uncapped regime originally emitted
  * `--gas-limit … --disable-block-gas-limit`, which anvil rejects outright
  * ("the argument '--gas-limit' cannot be used with '--disable-block-gas-limit'")
  * and exits 2. The unit test passed, the build passed, and a live run died in
  * its outpost-deploy phase.
  */
-describe("anvil accepts every gas policy's flags", () => {
+describe("anvil accepts both gas regimes' flags", () => {
   const StartupGraceMs = 6_000
 
   /**
-   * One port per policy, claimed UP FRONT.
+   * One port per regime, claimed UP FRONT.
    *
    * `findAvailable` takes the host-global bind-registry lock. Claiming inside
    * each test spread the acquisitions across many seconds of real anvil
    * startup; claiming here collapses that window to consecutive milliseconds,
    * so this suite contributes as little lock contention as possible.
    */
-  const ports = new Map<EthereumGasPolicy, number>()
+  const ports = new Map<boolean, number>()
 
   beforeAll(async () => {
-    for (const policy of [
-      EthereumGasPolicy.mainnetParity,
-      EthereumGasPolicy.uncapped
-    ])
+    for (const uncapped of [false, true])
       ports.set(
-        policy,
+        uncapped,
         await BindConfigProvider.findAvailable(BindConfigProvider.DefaultAnvil)
       )
   })
@@ -56,11 +51,11 @@ describe("anvil accepts every gas policy's flags", () => {
    * @param policy - The policy whose flags are exercised.
    * @returns The block gas limit anvil reports, or a rejection on startup exit.
    */
-  async function blockGasLimitFor(policy: EthereumGasPolicy): Promise<number> {
-    const port = ports.get(policy),
+  async function blockGasLimitFor(uncapped: boolean): Promise<number> {
+    const port = ports.get(uncapped),
       child = spawn(
         "anvil",
-        ["--port", String(port), ...AnvilProcess.gasPolicyArgs(policy)],
+        ["--port", String(port), ...AnvilProcess.gasArgs(uncapped)],
         { stdio: ["ignore", "ignore", "pipe"] }
       )
     let stderr = ""
@@ -119,13 +114,13 @@ describe("anvil accepts every gas policy's flags", () => {
     // observable here is the block limit; that anvil ACCEPTS the flag
     // combination (pinned hardfork + --enable-tx-gas-limit + --gas-limit) is
     // the other half of the assertion, and a rejected combination exits 2.
-    expect(await blockGasLimitFor(EthereumGasPolicy.mainnetParity)).toBe(
+    expect(await blockGasLimitFor(false)).toBe(
       AnvilProcess.BlockGasLimit
     )
   })
 
   it("starts under uncapped with a block limit above the ETH-241 worst case", async () => {
-    const limit = await blockGasLimitFor(EthereumGasPolicy.uncapped)
+    const limit = await blockGasLimitFor(true)
     expect(limit).toBe(AnvilProcess.UncappedBlockGasLimit)
     // ETH-241 measured ~93.6M for a backlogged outbound envelope; the point of
     // this regime is to clear that by an order of magnitude.

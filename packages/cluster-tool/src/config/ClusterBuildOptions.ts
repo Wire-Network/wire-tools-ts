@@ -5,8 +5,7 @@ import type {
   ClusterConfigLoggingFileFormat,
   ClusterConfigLoggingLevels,
   ClusterSignatureProviderOptions,
-  CollateralRequirement,
-  EthereumGasPolicy
+  CollateralRequirement
 } from "@wireio/cluster-tool-shared"
 import type { Report } from "../report/Report.js"
 
@@ -56,14 +55,13 @@ export interface ClusterBuildOptions {
    */
   enableMockReserves?: boolean
   /**
-   * Gas ceiling regime for the local Ethereum chain
-   * (`--ethereum-gas-policy`). Defaults to
-   * {@link EthereumGasPolicy.mainnetParity} at every layer, so ordinary flows
-   * run under the realistic ceiling — pinned hardfork, EIP-7825 per-transaction
-   * cap, sized block limit. {@link EthereumGasPolicy.uncapped} exists solely to
-   * separate "the protocol failed" from "the gas ceiling stopped it".
+   * Lift the local Ethereum chain's gas ceilings
+   * (`--ethereum-gas-uncapped`). Default false at every layer, so ordinary
+   * flows run under the realistic ceiling — pinned hardfork, EIP-7825
+   * per-transaction cap, sized block limit. True exists solely to separate
+   * "the protocol failed" from "the gas ceiling stopped it".
    */
-  ethereumGasPolicy?: EthereumGasPolicy
+  ethereumGasUncapped?: boolean
   // termination tuning
   terminateMaxConsecutiveMisses?: number
   terminateMaxPercentMisses24h?: number

@@ -2,7 +2,7 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import { promises as Fsp } from "node:fs"
 import Path from "node:path"
-import { EthereumGasPolicy,
+import {
   BindConfigSchemaCodec,
   BindOptionsSchema,
   ClusterConfigSchemaCodec,
@@ -101,40 +101,38 @@ function assertBatchOperatorSchedule(options: ClusterBuildOptions): number {
  * helper.
  */
 /**
- * Environment variable overriding the local Ethereum gas policy.
+ * Environment variable lifting the local Ethereum gas ceilings.
  *
- * UNIFORM across every consumer, mirroring the `WIRE_FLOW_TIMEOUT_SCALE` /
- * `WIRE_STRESS_LOAD_LEVEL` precedent: an explicit operator override that no
- * code derives. It exists so a stress run can be repeated under a different
- * gas ceiling without editing a scenario.
+ * A LOCAL operator override only, mirroring the `WIRE_FLOW_TIMEOUT_SCALE` /
+ * `WIRE_STRESS_LOAD_LEVEL` precedent: explicit, never derived. The e2e gate
+ * does NOT set it — a flow is standalone there and runs on its own default
+ * config, which is mainnet parity (what `AnvilProcess` applies regardless).
+ *
+ * It exists so a run can be repeated under a lifted ceiling WITHOUT editing a
+ * scenario, which is how ETH-241 (gas genuinely exceeded) was separated from
+ * WIRE-340 (a depot payout stall hiding behind it).
+ *
+ * Truthy spellings: `1`, `true`, `yes` (case-insensitive). Anything else is
+ * false — an unrecognised value must not silently enable an unrealistic run.
  */
-export const EthereumGasPolicyEnvVar = "WIRE_ETHEREUM_GAS_POLICY"
+export const EthereumGasUncappedEnvVar = "WIRE_ETHEREUM_GAS_UNCAPPED"
 
 /**
- * Resolve the gas policy from an explicit option, then the environment.
+ * Resolve whether to lift the gas ceilings, from an explicit option then the
+ * environment.
  *
  * @param env - Process environment to read the override from.
- * @param option - Caller-supplied policy, which wins when present.
- * @returns The resolved policy, defaulting to the stock chain.
- * @throws RangeError when the environment names an unknown policy — a silent
- *   fallback would run an uncapped experiment under a mislabelled policy.
+ * @param option - Caller-supplied value, which wins when present.
+ * @returns Whether the ceilings are lifted; false unless explicitly enabled.
  */
-export function resolveEthereumGasPolicy(
+export function resolveEthereumGasUncapped(
   env: NodeJS.ProcessEnv,
-  option?: EthereumGasPolicy
-): EthereumGasPolicy {
+  option?: boolean
+): boolean {
   if (option !== undefined) return option
-  const named = env[EthereumGasPolicyEnvVar]
-  if (named === undefined || named === "") return EthereumGasPolicy.mainnetParity
-  const resolved = Object.values(EthereumGasPolicy).find(
-    policy => policy === named
-  )
-  if (resolved === undefined)
-    throw new RangeError(
-      `${EthereumGasPolicyEnvVar} names an unknown policy: ${named} ` +
-        `(expected one of ${Object.values(EthereumGasPolicy).join(" | ")})`
-    )
-  return resolved
+  const named = env[EthereumGasUncappedEnvVar]
+  if (named === undefined || named === "") return false
+  return ["1", "true", "yes"].includes(named.trim().toLowerCase())
 }
 
 export namespace ClusterConfigProvider {
@@ -226,9 +224,9 @@ export namespace ClusterConfigProvider {
       externalOutposts,
       debuggingServerEnabled: true,
       enableMockReserves: options.enableMockReserves ?? false,
-      ethereumGasPolicy: resolveEthereumGasPolicy(
+      ethereumGasUncapped: resolveEthereumGasUncapped(
         process.env,
-        options.ethereumGasPolicy
+        options.ethereumGasUncapped
       )
     }
   }

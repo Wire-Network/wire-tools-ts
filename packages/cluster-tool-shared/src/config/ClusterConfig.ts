@@ -9,35 +9,6 @@ import { ClusterSignatureProviderConfigSchema } from "./SignatureProviderConfig.
 
 import { ExternalOutpostConfigSchema } from "./ExternalOutpostConfig.js"
 
-/**
- * Gas ceiling regime for the local Ethereum chain.
- *
- * Two regimes, not a spectrum. The cluster's anvil runs mainnet-parity gas by
- * default — a pinned EVM revision, EIP-7825's per-transaction cap, and a sized
- * block limit — so a transaction mainnet would reject is rejected here too.
- * The only reason to leave that regime is to answer one question: "did the
- * protocol fail, or did the gas ceiling stop it?"
- *
- * That question is not hypothetical. ETH-241 put a ~3.4 KB inbound envelope
- * plus a backlogged outbound queue at ~93.6M gas, and its `execution reverted`
- * with empty data was indistinguishable from a contract fault. Re-running the
- * identical commit and load with only this policy changed is what separated it
- * from WIRE-340, a depot payout stall that had been hiding behind the gas
- * failure.
- */
-export enum EthereumGasPolicy {
-  /**
-   * Mainnet parity — the default. Pinned hardfork, EIP-7825 per-transaction
-   * cap enforced, block limit sized to `AnvilProcess.BlockGasLimit`.
-   */
-  mainnetParity = "mainnetParity",
-  /**
-   * No practical ceiling: a block gas limit far above any envelope and no
-   * per-transaction cap. Deliberately UNREALISTIC — a run under it proves
-   * nothing about mainnet, only whether gas was the binding constraint.
-   */
-  uncapped = "uncapped"
-}
 
 /**
  * Report output format — value matches the file extension. THE one
@@ -259,14 +230,21 @@ export const ClusterConfigSchema = z.object({
    */
   enableMockReserves: z.boolean().default(false),
   /**
-   * Gas ceiling regime for the local Ethereum chain (the
-   * `--ethereum-gas-policy` create flag). Schema-defaulted
-   * {@link EthereumGasPolicy.mainnetParity} so pre-existing configs and every
-   * ordinary flow run under the mainnet-parity ceiling — the realistic one.
+   * Lift the local Ethereum chain's gas ceilings (the
+   * `--ethereum-gas-uncapped` create flag).
+   *
+   * Default FALSE: the cluster runs mainnet-parity gas — pinned hardfork,
+   * EIP-7825's per-transaction cap, sized block limit — which `AnvilProcess`
+   * applies unconditionally, so outpost work a real chain would reject fails
+   * here too.
+   *
+   * TRUE lifts both ceilings and exists for ONE purpose: establishing that a
+   * failure is not gas-related. That is how ETH-241 (the outbound envelope
+   * genuinely exceeds the ceiling) was separated from WIRE-340 (a depot payout
+   * stall hiding behind it). A run under it proves nothing about mainnet, so it
+   * is never a gate or scenario default — an operator opts in per run.
    */
-  ethereumGasPolicy: z
-    .enum(EthereumGasPolicy)
-    .default(EthereumGasPolicy.mainnetParity)
+  ethereumGasUncapped: z.boolean().default(false)
 })
 /** THE canonical cluster configuration — the schema-inferred shape of {@link ClusterConfigSchema}. */
 export type ClusterConfig = z.infer<typeof ClusterConfigSchema>

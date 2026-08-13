@@ -21,7 +21,7 @@ import type { Argv, Options as YargsOption } from "yargs"
 import { z } from "zod"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 import { LogFileAppender } from "../logging/LogFileAppender.js"
-import { resolveEthereumGasPolicy } from "../config/ClusterConfigProvider.js"
+import { resolveEthereumGasUncapped } from "../config/ClusterConfigProvider.js"
 
 /**
  * CLI-layer defaults for the {@link ClusterBuildOptions} topology / epoch leaves
@@ -423,13 +423,13 @@ export function buildOptionShape(
       false,
       "seed the 8 mock (chain, token) PRIMARY reserves at bootstrap"
     ),
-    // ── ethereum gas policy (default: anvil's stock 30M block limit) ──
-    // Seeded from WIRE_ETHEREUM_GAS_POLICY, exactly as the WIRE_* path flags
+    // ── ethereum gas ceiling (default: mainnet parity) ──
+    // Seeded from WIRE_ETHEREUM_GAS_UNCAPPED, exactly as the WIRE_* path flags
     // are: a leaf with a STATIC default would always be defined and would
     // therefore mask the environment override entirely.
-    ethereumGasPolicy: leaf(
-      resolveEthereumGasPolicy(process.env),
-      "local Ethereum gas ceiling: mainnetParity (pinned hardfork + EIP-7825 per-tx cap + sized block limit) | uncapped (investigation only)"
+    ethereumGasUncapped: leaf(
+      resolveEthereumGasUncapped(process.env),
+      "lift the local Ethereum gas ceilings (drops EIP-7825's per-tx cap and raises the block limit) — investigation only; a run under it proves nothing about mainnet"
     ),
     bind: buildBindShape(nodeCount, batchCount, underwriterCount),
     bindConfig: optionalLeaf(

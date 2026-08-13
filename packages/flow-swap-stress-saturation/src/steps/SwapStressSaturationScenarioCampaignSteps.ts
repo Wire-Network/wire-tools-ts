@@ -294,7 +294,7 @@ export namespace SwapStressSaturationScenarioCampaignSteps {
 
   function batchOperatorLogFiles(config: ClusterConfig): readonly string[] {
     return NodeConfig.plan(config)
-      .filter(node => node.batchOperatorAccount !== null)
+      .filter(node => node.batchOperatorLabel !== null)
       .flatMap(node =>
         dailyLogFiles(Path.join(node.nodePath, PidSources.LogsSubdir))
       )

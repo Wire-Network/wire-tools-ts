@@ -87,11 +87,14 @@ export namespace LoadProfile {
   /**
    * Environment variable naming the active level.
    *
-   * UNIFORM across every consumer — the e2e gate sets it once in shared job
-   * env for all flows, never per-flow (see
-   * `e2e-tests-no-per-flow-env-customization.md`). Mirrors the
-   * `WIRE_FLOW_TIMEOUT_SCALE` precedent: an explicit operator override that no
-   * code derives.
+   * A LOCAL operator override only. The e2e gate deliberately does NOT set it:
+   * a flow must be standalone there and run on its own default config, so a
+   * cloud run always reproduces {@link DefaultLevel} (and this flow's own
+   * `saturating` fallback). Set it when running the flow by hand to bound a
+   * campaign; nothing in CI reads it.
+   *
+   * Mirrors the `WIRE_FLOW_TIMEOUT_SCALE` precedent: an explicit operator
+   * override that no code derives.
    */
   export const LevelEnvVar = "WIRE_STRESS_LOAD_LEVEL"
   /** Byte target must stay above zero — a zero gate is saturated by any envelope. */

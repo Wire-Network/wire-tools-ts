@@ -140,11 +140,11 @@ export namespace SwapStressSaturationScenarioConstants {
     /**
      * Resolved intensity for this run.
      *
-     * Selected by `WIRE_STRESS_LOAD_LEVEL` — a UNIFORM operator override the
-     * e2e gate sets once in shared job env for every flow, never per-flow (see
-     * `e2e-tests-no-per-flow-env-customization.md`). The fallback is
-     * `saturating`, whose preset is byte-for-byte the calibrated soak this flow
-     * has always run, so an unset environment changes nothing.
+     * Selected by `WIRE_STRESS_LOAD_LEVEL`, a LOCAL operator override for
+     * hand-run campaigns. The e2e gate does NOT set it — a flow is standalone
+     * there and runs on its own default config — so in CI the fallback always
+     * applies. That fallback is `saturating`, byte-for-byte the calibrated soak
+     * this flow has always run, so an unset environment changes nothing.
      *
      * Only the ramp curve and the byte gate are taken from the profile — the
      * two knobs the level exists to move. {@link Concurrency} stays this flow's

@@ -1,7 +1,5 @@
 import Fs from "node:fs"
 import Assert from "node:assert"
-import { match } from "ts-pattern"
-import { EthereumGasPolicy } from "@wireio/cluster-tool-shared"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { probeEndpoint } from "../../utils/asyncUtils.js"
 import { existsAsync, which } from "../../utils/fsUtils.js"
@@ -28,12 +26,11 @@ export interface AnvilOptions {
   /** `--block-time` seconds (run-phase interval mining; omit during deploy). */
   blockTimeSec?: number
   /**
-   * Gas ceiling regime. Defaults to {@link EthereumGasPolicy.mainnetParity} —
-   * the pinned hardfork, EIP-7825's per-transaction cap, and the sized block
-   * limit. Set {@link EthereumGasPolicy.uncapped} ONLY to establish that a
-   * failure is not gas-related.
+   * Lift the gas ceilings. Default false — the pinned hardfork, EIP-7825's
+   * per-transaction cap, and the sized block limit all apply. Set true ONLY to
+   * establish that a failure is not gas-related.
    */
-  gasPolicy?: EthereumGasPolicy
+  gasUncapped?: boolean
 }
 
 /** Resolved anvil config. */
@@ -135,7 +132,7 @@ export namespace AnvilProcess {
       extraArgs: options.extraArgs ?? [],
       slotsInAnEpoch: options.slotsInAnEpoch ?? 0,
       blockTimeSec: options.blockTimeSec ?? 0,
-      gasPolicy: options.gasPolicy ?? EthereumGasPolicy.mainnetParity
+      gasUncapped: options.gasUncapped ?? false
     }
   }
 
@@ -164,7 +161,7 @@ export namespace AnvilProcess {
       String(AnvilProcess.AccountCount),
       "--balance",
       String(AnvilProcess.BalancePerAccountEther),
-      ...AnvilProcess.gasPolicyArgs(config.gasPolicy)
+      ...AnvilProcess.gasArgs(config.gasUncapped)
     ]
     if (config.slotsInAnEpoch)
       args.push("--slots-in-an-epoch", String(config.slotsInAnEpoch))
@@ -183,48 +180,46 @@ export namespace AnvilProcess {
   }
 
   /**
-   * The gas flags for a policy.
+   * The gas flags.
    *
-   * {@link EthereumGasPolicy.mainnetParity} is the default and the only regime
-   * a normal run should use: pin the EVM revision, enforce EIP-7825's per-tx
+   * DEFAULT (`uncapped === false`) is mainnet parity and the only regime a
+   * normal run should use: pin the EVM revision, enforce EIP-7825's per-tx
    * cap, size the block limit — so a transaction mainnet would reject is
    * rejected here too, instead of passing only on the local node.
    *
-   * {@link EthereumGasPolicy.uncapped} exists for ONE purpose: proving a
-   * failure is not gas-related. Lifting the block limit to
-   * {@link UncappedBlockGasLimit} and dropping the per-tx cap is what
-   * separated ETH-241 (the outbound envelope genuinely exceeds the ceiling)
-   * from WIRE-340 (a depot payout stall that merely hid behind it). It must
-   * never be a default — a run under it proves nothing about mainnet.
+   * `uncapped` exists for ONE purpose: proving a failure is not gas-related.
+   * Lifting the block limit to {@link UncappedBlockGasLimit} and dropping the
+   * per-tx cap is what separated ETH-241 (the outbound envelope genuinely
+   * exceeds the ceiling) from WIRE-340 (a depot payout stall that merely hid
+   * behind it). It must never be a default — a run under it proves nothing
+   * about mainnet.
    *
    * NOTE: `--gas-limit` cannot be combined with `--disable-block-gas-limit`;
    * anvil rejects that pair and exits 2. `AnvilGasPolicyStartup.test.ts` spawns
-   * the real binary per policy because asserting the flag STRINGS did not catch
-   * that.
+   * the real binary because asserting the flag STRINGS did not catch that.
    *
-   * @param policy - The regime to render.
+   * @param uncapped - Whether to lift the ceilings.
    * @returns The gas-related argv fragment.
    */
-  export function gasPolicyArgs(policy: EthereumGasPolicy): string[] {
-    return match(policy)
-      .with(EthereumGasPolicy.mainnetParity, () => [
-        "--hardfork",
-        AnvilProcess.Hardfork,
-        "--enable-tx-gas-limit",
-        "--gas-limit",
-        String(AnvilProcess.BlockGasLimit)
-      ])
-      .with(EthereumGasPolicy.uncapped, () => [
-        "--hardfork",
-        AnvilProcess.Hardfork,
-        "--gas-limit",
-        String(AnvilProcess.UncappedBlockGasLimit)
-      ])
-      .exhaustive()
+  export function gasArgs(uncapped: boolean): string[] {
+    return uncapped
+      ? [
+          "--hardfork",
+          AnvilProcess.Hardfork,
+          "--gas-limit",
+          String(AnvilProcess.UncappedBlockGasLimit)
+        ]
+      : [
+          "--hardfork",
+          AnvilProcess.Hardfork,
+          "--enable-tx-gas-limit",
+          "--gas-limit",
+          String(AnvilProcess.BlockGasLimit)
+        ]
   }
 
   /**
-   * `--gas-limit` under {@link EthereumGasPolicy.uncapped}: 1B, chosen to clear
+   * `--gas-limit` when uncapped: 1B, chosen to clear
    * the ~93.6M that ETH-241 measured for a backlogged outbound envelope by an
    * order of magnitude, so a run that still fails cannot be blamed on the
    * ceiling.

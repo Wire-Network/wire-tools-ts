@@ -1,4 +1,4 @@
-import { EthereumGasPolicy,
+import {
   SignatureProviderType,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
@@ -108,7 +108,7 @@ export const PersistedFixture: ClusterConfig = {
   externalOutposts: null,
   debuggingServerEnabled: true,
   enableMockReserves: false,
-  ethereumGasPolicy: EthereumGasPolicy.mainnetParity
+  ethereumGasUncapped: false
 }
 
 /** Build a `ClusterConfig` from the fixture (via deserialize — no resolve / env).

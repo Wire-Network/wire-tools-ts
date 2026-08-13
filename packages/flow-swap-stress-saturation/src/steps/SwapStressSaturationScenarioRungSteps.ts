@@ -303,10 +303,7 @@ export namespace SwapStressSaturationScenarioRungSteps {
     state.phase1.payoutRequest = payoutRequest
     await services.recipientPayoutObserver.preparePayouts?.(payoutRequest)
     const requests = buildPhase1Requests(services.route, identities, targets),
-      firstNonce = await resolveLatestNonce(
-        services.ethereumReserveManager,
-        requests.length
-      )
+      firstNonce = await resolveLatestNonce(services.ethereumReserveManager)
     state.phase1.burst = await runEthereumSwapBurst({
       reserveManager: services.ethereumReserveManager,
       requests,

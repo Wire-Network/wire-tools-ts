@@ -267,10 +267,11 @@ override merged over the resolved defaults; a remote anvil/solana address
 requires `--external-outpost-config`), `--enable-mock-reserves` (default
 off — seed the 8 mock (chain, token) PRIMARY reserves at bootstrap; a real /
 external depot leaves these unseeded), and
-`--ethereum-gas-policy <chainDefault|osaka|uncapped>` (default `chainDefault`
-— anvil's stock 30M block limit; `osaka` enforces EIP-7825's per-transaction
-cap, `uncapped` lifts every ceiling so a stress failure can be attributed to
-the protocol rather than the gas limit); `package` writes one `<node>.<ext>` per
+`--ethereum-gas-uncapped` (default off — the cluster runs mainnet-parity gas:
+pinned hardfork + EIP-7825's per-transaction cap + sized block limit, which
+`AnvilProcess` applies regardless; the flag lifts every ceiling so a stress
+failure can be attributed to the protocol rather than the gas limit, and is
+LOCAL-only — the e2e gate never sets it); `package` writes one `<node>.<ext>` per
 node under `<cluster>/packages/` (a hand-off artifact for a multihost environment
 with distinct compute + storage — S3/EC2, GCS, or any other, loosely coupled).
 `create-external-config` clones a CREATED, STOPPED local cluster into a deployable
@@ -351,8 +352,8 @@ link automatically on `pnpm install` when the siblings exist.
 | `WIRE_BUILD_PATH` | wire-sysio build dir (binaries + contract artifacts) |
 | `WIRE_ETH_PATH` / `WIRE_SOLANA_PATH` | Outpost repo roots |
 | `WIRE_FLOW_TIMEOUT_SCALE` | EXPLICIT operator override of flow timing (default 1, clamped [1,5]); no code derives it |
-| `WIRE_STRESS_LOAD_LEVEL` | EXPLICIT operator override of stress intensity — `smoke\|light\|moderate\|heavy\|saturating` (`LoadProfile`). UNIFORM: the e2e gate sets it once in shared job env for every flow, NEVER per-flow. Unset preserves each consumer's own default (`flow-swap-stress-saturation` → `saturating`, its calibrated soak); an unrecognised value THROWS |
-| `WIRE_ETHEREUM_GAS_POLICY` | EXPLICIT operator override of the local Ethereum gas ceiling — `chainDefault\|osaka\|uncapped`. UNIFORM shared env like `WIRE_STRESS_LOAD_LEVEL`, never per-flow; unset → `chainDefault` (anvil's stock 30M block limit). `uncapped` exists to separate a protocol failure from a gas-ceiling failure when proving out stress-flow changes; an unrecognised value THROWS |
+| `WIRE_STRESS_LOAD_LEVEL` | **LOCAL-ONLY** operator override of stress intensity — `smoke\|light\|moderate\|heavy\|saturating` (`LoadProfile`). The e2e gate does NOT set it: a flow must be standalone there and run on its own default config. Unset preserves each consumer's own default (`flow-swap-stress-saturation` → `saturating`, its calibrated soak); an unrecognised value THROWS |
+| `WIRE_ETHEREUM_GAS_UNCAPPED` | **LOCAL-ONLY** boolean lifting the local Ethereum gas ceilings (`1`/`true`/`yes`). The e2e gate does NOT set it; unset → mainnet parity, which `AnvilProcess` applies unconditionally anyway (pinned hardfork + EIP-7825 per-tx cap + sized block limit). Exists ONLY to separate a protocol failure from a gas-ceiling one — a run under it proves nothing about mainnet. An unrecognised value is FALSE, never a silent opt-in |
 | `WIRE_ETH_DEPLOYMENTS_PATH` | Per-cluster hardhat deployments dir (parallel-run isolation) |
 | `WIRE_BIND_REGISTRY_PATH` | Bind-registry dir override (tests sandbox it) |
 | `LOG_LEVEL` | Logging verbosity (default `info`) |

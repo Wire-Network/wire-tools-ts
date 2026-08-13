@@ -4,7 +4,6 @@ import * as Path from "node:path"
 
 import {
   ClusterConfigLoggingFileFormat,
-  EthereumGasPolicy,
   ClusterFiles,
   ClusterStateNodeRole,
   SignatureProviderType,
@@ -151,7 +150,7 @@ export function makeFixtureCluster(): FixtureCluster {
     externalOutposts: null,
     debuggingServerEnabled: true,
     enableMockReserves: false,
-    ethereumGasPolicy: EthereumGasPolicy.mainnetParity
+    ethereumGasUncapped: false
   }
 
   Fs.writeFileSync(

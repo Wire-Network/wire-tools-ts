@@ -67,9 +67,25 @@ function reserveStatusIs(
   return row != null && matchesProtoEnum(row.status, SysioReservReservestatus, want)
 }
 
-/** The first underwriter account (the SubstrateHealth activation probe). */
-function firstUnderwriterAccount(): string {
-  return HarnessConstants.underwriterAccountName(0)
+/**
+ * The first underwriter's on-chain account (the SubstrateHealth activation
+ * probe).
+ *
+ * Master split the durable harness LABEL from the generated ACCOUNT, so the
+ * account is only knowable from the key store once that operator's
+ * materialize step has run — it cannot be derived from the index.
+ *
+ * @param ctx - The scenario context (carries the accumulated key store).
+ * @returns The first underwriter's account name.
+ */
+function firstUnderwriterAccount(ctx: Context): string {
+  const label = HarnessConstants.underwriterLabel(0),
+    { account } = ctx.keyStore.assertOperator(label)
+  // `account` is optional on OperatorAccount because it is generated at
+  // materialize time. Reaching this probe means provisioning already ran, so an
+  // absent account is a real ordering bug, not a missing-value case.
+  Assert.ok(account != null, `underwriter ${label} has no provisioned account`)
+  return account
 }
 
 // ── Verify runners (each is the body of a verifyStep) ───────────────────────
@@ -89,9 +105,12 @@ async function runVerifyWireChainProducing(
 
 /** The first underwriter's deposits credit and it flips ACTIVE. */
 const runVerifyUnderwriterActive = pollStep.lift<Context>(
-  `${firstUnderwriterAccount()} ACTIVE`,
+  // The LABEL is the durable harness handle, known at plan time; the ACCOUNT
+  // is only knowable from the key store once the operator materializes, so it
+  // is resolved inside the predicate rather than interpolated here.
+  `${HarnessConstants.underwriterLabel(0)} ACTIVE`,
   async ctx => {
-    const account = firstUnderwriterAccount(),
+    const account = firstUnderwriterAccount(ctx),
       { rows } = await ctx.wire
         .getSysioContract(SysioContractName.opreg)
         .tables.operators.query()
@@ -283,7 +302,7 @@ export class SwapStressSaturationScenario extends FlowScenario<Context> {
     // ── 1. Underwriter collateral (the old harness's bootstrap deposits) ──
     const underwriterAccounts = Array.from(
       { length: cluster.config.underwriterCount },
-      (_value, index) => HarnessConstants.underwriterAccountName(index)
+      (_value, index) => HarnessConstants.underwriterLabel(index)
     )
     WireUnderwriterTool.planCollateralDeposit(
       cluster,
@@ -311,7 +330,7 @@ export class SwapStressSaturationScenario extends FlowScenario<Context> {
       verifyStep<Context>(
         Actor.Underwriter,
         "underwriter-active",
-        `${firstUnderwriterAccount()} becomes ACTIVE (deposits credit)`,
+        `${HarnessConstants.underwriterLabel(0)} becomes ACTIVE (deposits credit)`,
         runVerifyUnderwriterActive,
         uwreqOptions
       )

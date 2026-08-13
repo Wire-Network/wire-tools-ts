@@ -1,6 +1,5 @@
 import {
   ClusterConfigLoggingFileFormat,
-  EthereumGasPolicy,
   ClusterConfigReportFormat,
   ClusterStateNodeRole,
   SignatureProviderType,
@@ -95,7 +94,7 @@ const stubConfig: ClusterConfig = {
   externalOutposts: null,
   debuggingServerEnabled: true,
   enableMockReserves: false,
-    ethereumGasPolicy: EthereumGasPolicy.mainnetParity
+    ethereumGasUncapped: false
 }
 
 /** A complete `ClusterState` fixture (post-bootstrap snapshot, no nodes). */
