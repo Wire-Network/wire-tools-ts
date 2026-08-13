@@ -56,3 +56,7 @@ yarn-error.log*
 # JUnit test-result output (CI artifact)
 /reports/
 /readiness-reports/
+**/readiness-reports/
+
+# Locally exported cluster/readiness bundles are evidence artifacts, not source.
+*.tar.gz

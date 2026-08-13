@@ -273,6 +273,11 @@ renderer. The manual command is the only entrypoint. It is not integrated with
 flows, bootstrap, the Hub, or CI. See
 `docs/cluster-readiness.md`.
 
+Readiness exports, manual canary scripts/results, key material, and packaged
+reports under any `readiness-reports/` directory are local evidence artifacts.
+They stay untracked; only source, tests, and durable documentation belong in
+version control.
+
 The terminal `Settlement` line is an evidence count (`verified/advertised`),
 not a fixed canary label. A read-only run reports `0/N transactionally
 verified` until funded canary evidence is projected onto route records; quote

@@ -260,6 +260,10 @@ deadline. It self-concludes when the flow exits. `--interval-seconds` /
 `--epoch-duration-seconds` are the only tuning knobs; everything else derives
 from the cluster's `cluster-config.json`.
 
+Generated readiness exports, manual canary evidence, key material, and report
+archives are local operational artifacts. Keep them under a
+`readiness-reports/` directory so Git excludes them from source commits.
+
 Rules of the road (binding for sessions/automation; see
 `wire-platform-manifest/.claude/rules/run-flows-via-canonical-scripts.md` and
 `…/cluster-state-active-probing.md`):
