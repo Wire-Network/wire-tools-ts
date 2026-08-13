@@ -170,6 +170,19 @@ export namespace SwapStressSaturationScenarioConstants {
      */
     export const RungAccountCounts = LoadProfile.accountCurve(Profile.ramp)
     /**
+     * Swaps ONE campaign phase submits across the whole ramp — the SUM of the
+     * curve, not its ceiling.
+     *
+     * `MaxCount × MaxIterationCount` overstates this for any non-flat ramp: a
+     * doubling curve's sum (12+24+48+96+128 = 308) sits well under its ceiling
+     * times its rung count (128 × 5 = 640). Anything sized against total
+     * campaign VOLUME uses this, so it tracks the curve it is derived from.
+     */
+    export const TotalPhaseSwaps = RungAccountCounts.reduce(
+      (total, accountCount) => total + accountCount,
+      0
+    )
+    /**
      * Raw envelope bytes counted as saturated. At `saturating` this is the
      * engine's 95%-of-cap default (unchanged); lighter levels lower it so the
      * campaign measures ITS OWN target rather than the protocol maximum.
@@ -236,11 +249,42 @@ export namespace SwapStressSaturationScenarioConstants {
   export namespace Underwriting {
     /** Per-(chain, token) `req_uw_collat` minimum bond (raw base units). */
     export const MinimumBond = 1_000_000_000
-    /** ETH-leg collateral — sized for the full ramp's phase-2 remit volume. */
+    /**
+     * Campaign phases that draw the SAME `(ETHEREUM, ETH)` collateral bucket.
+     *
+     * BOTH do: `sysio.uwrit`'s race resolver locks a leg iff that leg is not
+     * the depot (`src_needed`/`dst_needed`), so phase 1 (ETH→WIRE) locks its
+     * ETH SOURCE leg and phase 2 (WIRE→ETH) its ETH DESTINATION leg. Same
+     * chain, same token, one opreg balance.
+     */
+    export const EthereumLockingPhaseCount = 2n
+    /**
+     * ETH-leg collateral — the campaign's TOTAL lock demand plus bond headroom.
+     *
+     * A lock is a wall-clock challenge window, never released by delivery, so
+     * concurrently-held locks are what the bond has to cover. Sizing for the
+     * whole campaign is the safe bound: every swap of every rung, on BOTH
+     * phases ({@link EthereumLockingPhaseCount}), outstanding at once.
+     *
+     * This was previously `MaxCount × MaxIterationCount` of the phase-2 draw —
+     * counting ONE phase and against the curve's ceiling rather than its sum.
+     * The two errors partly cancelled, leaving a ~4-6% margin.
+     *
+     * NOTE: this is NOT the fix for WIRE-340. Both preserved stall runs peaked
+     * under 20% utilization of even the old sizing, because the harness sets
+     * `collateral_lock_duration_ms` to 10 minutes
+     * (`ClusterBuildDefaults.CollateralLockDurationMs`) — so locks recycle
+     * several times per campaign and peak exposure is a rate × window
+     * quantity, not a cumulative one. This is correctness hygiene: it makes
+     * the bond right by construction at any lock duration, including the
+     * contract's 12-hour default, under which the campaign genuinely would
+     * hold every lock at once.
+     */
     export const EthereumCollateral =
       SwapAmounts.Phase2SourceWireUnits *
-      BigInt(Ramp.MaxCount) *
-      BigInt(Ramp.MaxIterationCount)
+        BigInt(Ramp.TotalPhaseSwaps) *
+        EthereumLockingPhaseCount +
+      BigInt(MinimumBond)
     /** SOL-leg (native + USDCSOL) bootstrap collateral per token. */
     export const SolanaCollateral = 1_000_000_000n
   }
