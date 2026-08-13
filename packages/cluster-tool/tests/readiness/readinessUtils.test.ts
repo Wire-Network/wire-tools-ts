@@ -35,7 +35,10 @@ function reserve(): SysioContracts.SysioReservReserveRowType {
     cancelled_at_ms: 0,
     is_private: false,
     owner: "",
-    creator_pub_key: ""
+    creator_pub_key: "",
+    owner_fee_bps: 0,
+    owner_fee_accrued: 0,
+    owner_fee_lifetime: 0
   }
 }
 

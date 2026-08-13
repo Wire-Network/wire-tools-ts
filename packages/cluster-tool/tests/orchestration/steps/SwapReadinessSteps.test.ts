@@ -157,7 +157,10 @@ function reserve(
     cancelled_at_ms: 0,
     is_private: false,
     owner: "",
-    creator_pub_key: ""
+    creator_pub_key: "",
+    owner_fee_bps: 0,
+    owner_fee_accrued: 0,
+    owner_fee_lifetime: 0
   }
 }
 
@@ -206,6 +209,7 @@ function underwritingRequest(
     dst_token_code: { value: 0 },
     dst_reserve_code: { value: 0 },
     dst_amount: 0,
+    target_amount: 0,
     variance_tolerance_bps: 0,
     source_tx_id: "",
     depositor: "",
@@ -216,6 +220,7 @@ function underwritingRequest(
     expires_at_epoch: 0,
     attestation_inbound_data: "",
     attestation_outbound_data: "",
+    challenge_id: 0,
     ...overrides
   }
 }
@@ -482,7 +487,8 @@ describe("SwapReadinessSteps", () => {
             reserve_code: PrimaryReserveCode,
             amount: 1,
             created_at_ms: 0,
-            expires_at_ms: 1
+            expires_at_ms: 1,
+            challenge_id: 0
           }
         ],
         withdrawals: [

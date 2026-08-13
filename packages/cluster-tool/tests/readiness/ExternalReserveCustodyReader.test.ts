@@ -140,7 +140,10 @@ function reserve(
     cancelled_at_ms: 0,
     is_private: false,
     owner: "",
-    creator_pub_key: ""
+    creator_pub_key: "",
+    owner_fee_bps: 0,
+    owner_fee_accrued: 0,
+    owner_fee_lifetime: 0
   }
 }
 
@@ -254,6 +257,7 @@ function mockEthereumCalls(fixture: EthereumProbeFixture) {
 
 function solanaConfig(): SolanaOutpostConfig {
   return {
+    authority: PublicKey.default,
     chainCode: new BN(SolanaChainCode.value),
     nextEpochIndex: 0,
     previousEpochHash: Array(32).fill(0),

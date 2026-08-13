@@ -213,7 +213,7 @@ export class ClusterBuildPhase<
  * well-behaved step can bail cooperatively.
  */
 /** A step/phase ceiling multiplied by the flow-wide timing scale (null passes through). */
-function scaledTimeoutMs(timeoutMs: number | null): number | null {
+function scaledTimeoutMs(timeoutMs: number | null): number {
   return timeoutMs != null
     ? Math.round(timeoutMs * pollUntil.timeoutScale())
     : null
