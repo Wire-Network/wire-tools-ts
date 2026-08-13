@@ -36,6 +36,7 @@
 // 500KB transaction envelope.
 
 import Fs from "node:fs/promises"
+import Path from "node:path"
 
 import { PublicKey } from "@solana/web3.js"
 import { z } from "zod"
@@ -69,6 +70,11 @@ export const ImportSeedChainKindSchema = z.custom<ImportSeedChainKind>(
 enum IndexBalanceSection {
   purchasers = "purchasers",
   stakers = "stakers"
+}
+
+enum IndexBalanceField {
+  totalPretokens = "totalPretokens",
+  pretokenYield = "pretokenYield"
 }
 
 /** Credits per `importseed` call — fits the 150ms / 500KB transaction envelope. */
@@ -356,14 +362,15 @@ export async function loadIndexBalanceDump(
   file: string,
   chain: ImportSeedChainKind
 ): Promise<IndexBalanceDump> {
-  const label = chainLabel(chain)
+  const label = chainLabel(chain),
+    absoluteFile = Path.resolve(file)
   let contents: string
   try {
-    contents = await Fs.readFile(file, "utf8")
+    contents = await Fs.readFile(absoluteFile, "utf8")
   } catch (error) {
     throw new NestedError(`${label} bootstrap file could not be read`, {
       cause: error,
-      context: { file, chain }
+      context: { file: absoluteFile, chain }
     })
   }
 
@@ -373,7 +380,7 @@ export async function loadIndexBalanceDump(
   } catch (error) {
     throw new NestedError(`${label} bootstrap file contains invalid JSON`, {
       cause: error,
-      context: { file, chain }
+      context: { file: absoluteFile, chain }
     })
   }
 
@@ -383,7 +390,7 @@ export async function loadIndexBalanceDump(
     throw new NestedError(`${label} bootstrap file validation failed`, {
       cause: parsed.error,
       context: {
-        file,
+        file: absoluteFile,
         chain,
         field: formatIssuePath(issue.path),
         issue: issue.message
@@ -392,7 +399,8 @@ export async function loadIndexBalanceDump(
   }
 
   const dump = parsed.data
-  validateDumpAddresses(dump, chain, file)
+  validateDumpAddresses(dump, chain, absoluteFile)
+  validateDumpCreditMaximum(dump, chain, absoluteFile)
   return dump
 }
 
@@ -584,6 +592,70 @@ function validateDumpAddresses(
   }
   validateRows(data.purchasers ?? [], IndexBalanceSection.purchasers)
   validateRows(data.stakers ?? [], IndexBalanceSection.stakers)
+}
+
+/**
+ * Reject a configured file as soon as its per-address converted balance would
+ * exceed the dclaim asset limit. Keeping this validation beside file parsing
+ * retains the precise source row when duplicate source rows are accumulated.
+ */
+function validateDumpCreditMaximum(
+  data: IndexBalanceDump,
+  chain: ImportSeedChainKind,
+  file: string
+): void {
+  const config = CHAIN_CONFIG[chain],
+    totals = new Map<string, bigint>()
+  const record = (
+    row: IndexPurchaserRow | IndexStakerRow,
+    index: number,
+    section: IndexBalanceSection,
+    field: IndexBalanceField,
+    sourceAmount: bigint
+  ): void => {
+    if (sourceAmount <= 0n) return
+    const address = toHex(config.decoder(row.address)),
+      sourceTotal = (totals.get(address) ?? 0n) + sourceAmount,
+      wireAtomic = sourceTotal / config.divisor
+    if (wireAtomic > MaxImportSeedWireAtomic) {
+      throw new NestedError(
+        `${chainLabel(chain)} bootstrap file converted balance exceeds asset maximum`,
+        {
+          cause: new Error(
+            `converted wire_atomic ${wireAtomic} exceeds ${MaxImportSeedWireAtomic}`
+          ),
+          context: {
+            file,
+            chain,
+            row: index,
+            field: `${section}[${index}].${field}`,
+            address: row.address,
+            wireAtomic,
+            maximum: MaxImportSeedWireAtomic
+          }
+        }
+      )
+    }
+    totals.set(address, sourceTotal)
+  }
+  data.purchasers?.forEach((row, index) => {
+    record(
+      row,
+      index,
+      IndexBalanceSection.purchasers,
+      IndexBalanceField.totalPretokens,
+      toBigInt(row.totalPretokens)
+    )
+  })
+  data.stakers?.forEach((row, index) => {
+    record(
+      row,
+      index,
+      IndexBalanceSection.stakers,
+      IndexBalanceField.pretokenYield,
+      toBigInt(row.pretokenYield) - toBigInt(row.yieldClaimed, 0n)
+    )
+  })
 }
 
 function formatIssuePath(path: PropertyKey[]): string {
