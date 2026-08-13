@@ -422,7 +422,7 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
           )
           // The WIRE source leg carries no bond — only the SOL target leg locks.
           const request = await readFromWireUwreq(ctx)
-          const locks = await ctx.locksForUwreq(Number(request.id))
+          const locks = await ctx.locksForUwreq(BigInt(request.id))
           Assert.strictEqual(
             locks.length,
             1,
@@ -561,7 +561,7 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
           const request = await readFromWireUwreq(ctx)
           Assert.ok(request != null, "the from-WIRE uwreq must still exist")
           Assert.strictEqual(
-            (await ctx.locksForUwreq(Number(request.id))).length,
+            (await ctx.locksForUwreq(BigInt(request.id))).length,
             1,
             "the target-leg lock must persist through the challenge window"
           )

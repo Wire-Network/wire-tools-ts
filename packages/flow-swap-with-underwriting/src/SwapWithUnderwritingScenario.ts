@@ -420,7 +420,7 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
             Constants.SolanaChainCode
           )
           Assert.ok(request, "PhaseA UWREQ row must exist")
-          const locks = await ctx.locksForUwreq(Number(request.id))
+          const locks = await ctx.locksForUwreq(BigInt(request.id))
           Assert.strictEqual(
             locks.length,
             2,

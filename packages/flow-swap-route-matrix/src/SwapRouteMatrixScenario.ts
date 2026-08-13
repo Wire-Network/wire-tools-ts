@@ -3,6 +3,7 @@ import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildPhase,
+  ClusterBuildFailureMode,
   ClusterBuildPhaseGroup,
   Constants as HarnessConstants,
   FlowScenario,
@@ -12,6 +13,7 @@ import {
   WireUnderwriterTool,
   matchesProtoEnum,
   pollUntil,
+  resolveClusterBuildFailureMode,
   verifyStep,
   type ClusterBuild,
   type ClusterBuildOptions,
@@ -30,10 +32,11 @@ const { SysioContractName, SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report
 
 /**
- * Serial six-route conformance matrix for the native ETH, SOL, and WIRE
+ * Six-route conformance matrix for the native ETH, SOL, and WIRE
  * endpoints. Each direction is a Phase with explicit quote, request, UWREQ,
  * race, lock, and payout Steps. The three route families are PhaseGroups so
  * the generated report remains readable without introducing a second runner.
+ * Route failures are collected by default so every leg reaches a verdict.
  */
 export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
   readonly name = "flow-swap-route-matrix"
@@ -65,7 +68,7 @@ export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
     return new SwapScenarioContext(config, log)
   }
 
-  /** Append shared prerequisites followed by the three serial route families. */
+  /** Append shared prerequisites followed by the three route families. */
   plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const underwriterLabels = Array.from(
         { length: cluster.context.config.underwriterCount },
@@ -77,7 +80,11 @@ export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
       activeOptions: ClusterBuildStepOptions = {
         timeoutMs:
           Constants.UnderwriterActiveDeadlineMs + Constants.PollDeadlineBufferMs
-      }
+      },
+      failureMode = resolveClusterBuildFailureMode(
+        process.env[Constants.FailureModeEnvVar],
+        ClusterBuildFailureMode.CollectAll
+      )
 
     ClusterBuildPhase.create<SwapScenarioContext>(
       cluster,
@@ -174,38 +181,49 @@ export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
       )
     )
 
-    planRouteGroup(
+    const matrix = ClusterBuildPhaseGroup.create<SwapScenarioContext>(
       cluster,
+      "SwapRouteMatrix",
+      `Every native route; failure mode ${failureMode}`,
+      { failureMode }
+    )
+    planRouteGroup(
+      matrix,
       "CrossOutpostRoutes",
       "Two-leg native swaps between Ethereum and Solana",
-      Constants.CrossOutpostRoutes
+      Constants.CrossOutpostRoutes,
+      failureMode
     )
     planRouteGroup(
-      cluster,
+      matrix,
       "ExternalToWireRoutes",
       "Single-leg native swaps paid directly in WIRE",
-      Constants.ExternalToWireRoutes
+      Constants.ExternalToWireRoutes,
+      failureMode
     )
     planRouteGroup(
-      cluster,
+      matrix,
       "WireToExternalRoutes",
       "Queued WIRE escrows paid on an external outpost",
-      Constants.WireToExternalRoutes
+      Constants.WireToExternalRoutes,
+      failureMode
     )
   }
 }
 
-/** Add one serial route-family PhaseGroup with one Phase per direction. */
+/** Add one route-family PhaseGroup with one Phase per direction. */
 function planRouteGroup(
   parent: ClusterBuildParent<SwapScenarioContext>,
   name: string,
   description: string,
-  routes: readonly SwapRoute[]
+  routes: readonly SwapRoute[],
+  failureMode: ClusterBuildFailureMode
 ): ClusterBuildPhaseGroup<SwapScenarioContext> {
   const group = ClusterBuildPhaseGroup.create<SwapScenarioContext>(
     parent,
     name,
-    description
+    description,
+    { failureMode }
   )
   routes.forEach(route => planRoutePhase(group, route))
   return group

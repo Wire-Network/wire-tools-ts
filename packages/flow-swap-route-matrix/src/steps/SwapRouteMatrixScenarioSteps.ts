@@ -76,16 +76,16 @@ export namespace SwapRouteMatrixScenarioSteps {
   }
 
   /** Highest matching UWREQ id before one route request. */
-  export function uwreqBaselineOutputKey(routeId: string): OutputKey<number> {
-    return outputKey<number>(
+  export function uwreqBaselineOutputKey(routeId: string): OutputKey<bigint> {
+    return outputKey<bigint>(
       `swapRouteMatrix.${routeId}.uwreqBaseline`,
       `${routeId} pre-request maximum UWREQ id`
     )
   }
 
   /** UWREQ id created by one route. */
-  export function uwreqIdOutputKey(routeId: string): OutputKey<number> {
-    return outputKey<number>(
+  export function uwreqIdOutputKey(routeId: string): OutputKey<bigint> {
+    return outputKey<bigint>(
       `swapRouteMatrix.${routeId}.uwreqId`,
       `${routeId} UWREQ id`
     )
@@ -306,18 +306,18 @@ export namespace SwapRouteMatrixScenarioSteps {
           `${route.label}: new UWREQ after ${baseline}`,
           async () => {
             const candidates = (await readUwreqRowsForRoute(ctx, route)).filter(
-              row => Number(row.id) > baseline
+              row => BigInt(row.id) > baseline
             )
             if (candidates.length === 0) return false
             const newest = candidates.reduce((left, right) =>
-              Number(left.id) >= Number(right.id) ? left : right
+              BigInt(left.id) >= BigInt(right.id) ? left : right
             )
             Assert.strictEqual(
               BigInt(newest.src_amount),
               WireReserveTool.toDepot(route.sourceAmount, route.sourceDecimals),
               `${route.label}: UWREQ source amount differs from the request`
             )
-            ctx.outputs.set(uwreqIdOutputKey(route.id), Number(newest.id))
+            ctx.outputs.set(uwreqIdOutputKey(route.id), BigInt(newest.id))
             return true
           },
           Constants.UwreqDeadlineMs,
@@ -346,7 +346,7 @@ export namespace SwapRouteMatrixScenarioSteps {
           `${route.label}: UWREQ ${id} confirmed`,
           async () => {
             const row = (await readUwreqRowsForRoute(ctx, route)).find(
-              candidate => Number(candidate.id) === id
+              candidate => BigInt(candidate.id) === id
             )
             return (
               row != null &&
@@ -544,9 +544,9 @@ async function readUwreqRowsForRoute(
 async function maxUwreqIdForRoute(
   ctx: SwapScenarioContext,
   route: SwapRoute
-): Promise<number> {
+): Promise<bigint> {
   return (await readUwreqRowsForRoute(ctx, route)).reduce(
-    (maximum, row) => Math.max(maximum, Number(row.id)),
+    (maximum, row) => (BigInt(row.id) > maximum ? BigInt(row.id) : maximum),
     Constants.NoUwreqBaselineId
   )
 }

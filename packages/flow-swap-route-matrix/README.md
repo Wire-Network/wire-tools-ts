@@ -18,8 +18,10 @@ WireToExternalRoutes
 
 Every route Phase reports the same lifecycle: live quote and baselines, one
 source request write, route-specific UWREQ creation, confirmation, expected
-lock count, and destination payout. Route phases and groups run serially by
-default; this is conformance coverage, not a stress test.
+lock count, and destination payout. Routes run serially and collect every leg's
+result by default; failures remain failures in the final Report, but they do not
+omit the rest of the matrix. Set `WIRE_FLOW_FAILURE_MODE=fail-fast` to stop at
+the first failed route. This is conformance coverage, not a stress test.
 
 Non-native ERC-20 and SPL routes remain in
 `flow-swap-non-native-tokens`. Private-reserve behavior remains in

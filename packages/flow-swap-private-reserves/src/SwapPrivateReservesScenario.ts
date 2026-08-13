@@ -892,13 +892,13 @@ async function runPhaseAUwreqConfirmed(ctx: Context): Promise<void> {
     Constants.Reserves.Ethereum.ChainCode,
     Constants.Reserves.Solana.ChainCode
   )
-  await assertTwoLegLocks(ctx, Number(row.id), "PhaseA")
+  await assertTwoLegLocks(ctx, BigInt(row.id), "PhaseA")
 }
 
 /** Exactly two locks — one per swap leg chain. */
 async function assertTwoLegLocks(
   ctx: Context,
-  uwreqId: number,
+  uwreqId: bigint,
   label: string
 ): Promise<void> {
   const locks = await ctx.locksForUwreq(uwreqId)
@@ -1207,7 +1207,7 @@ async function runPhaseBUwreqConfirmed(ctx: Context): Promise<void> {
     Constants.Reserves.Solana.ChainCode,
     Constants.Reserves.Ethereum.ChainCode
   )
-  await assertTwoLegLocks(ctx, Number(row.id), "PhaseB")
+  await assertTwoLegLocks(ctx, BigInt(row.id), "PhaseB")
 }
 
 /**

@@ -15,7 +15,7 @@ export namespace UnderwriterSlashingScenarioOutputs {
    * field — already an account name, not a harness label).
    */
   export interface ChallengedCommitment {
-    readonly uwreqId: number
+    readonly uwreqId: bigint
     readonly underwriterAccount: string
   }
 

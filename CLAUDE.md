@@ -342,6 +342,7 @@ link automatically on `pnpm install` when the siblings exist.
 | `WIRE_BUILD_PATH` | wire-sysio build dir (binaries + contract artifacts) |
 | `WIRE_ETH_PATH` / `WIRE_SOLANA_PATH` | Outpost repo roots |
 | `WIRE_FLOW_TIMEOUT_SCALE` | EXPLICIT operator override of flow timing (default 1, clamped [1,5]); no code derives it |
+| `WIRE_FLOW_FAILURE_MODE` | Optional PhaseGroup execution policy (`collect-all` or `fail-fast`); supporting flows preserve the truthful final Report verdict in either mode |
 | `WIRE_ETH_DEPLOYMENTS_PATH` | Per-cluster hardhat deployments dir (parallel-run isolation) |
 | `WIRE_BIND_REGISTRY_PATH` | Bind-registry dir override (tests sandbox it) |
 | `LOG_LEVEL` | Logging verbosity (default `info`) |

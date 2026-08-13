@@ -30,6 +30,8 @@ export interface SwapRoute {
 
 /** Constants and the six native route descriptors for the matrix flow. */
 export namespace SwapRouteMatrixScenarioConstants {
+  /** Generic flow-orchestration override for collect-all versus fail-fast. */
+  export const FailureModeEnvVar = "WIRE_FLOW_FAILURE_MODE"
   /** Minimum supported epoch duration. */
   export const EpochDurationSec = 60
   /** Ceiling for one request transaction. */
@@ -82,7 +84,7 @@ export namespace SwapRouteMatrixScenarioConstants {
   /** Maximum operator rows inspected by the ACTIVE prerequisite. */
   export const OperatorTableRowLimit = 100
   /** No pre-existing UWREQ id for a route. */
-  export const NoUwreqBaselineId = -1
+  export const NoUwreqBaselineId = -1n
 
   /** External-to-external routes have a source and destination lock. */
   export const CrossOutpostLockCount = 2

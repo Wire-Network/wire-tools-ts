@@ -1,9 +1,11 @@
 import {
   ClusterBuild,
   ClusterBuildContext,
+  ClusterBuildFailureMode,
   ClusterBuildPhase,
   ClusterBuildPhaseGroup,
-  ClusterBuildStep
+  ClusterBuildStep,
+  resolveClusterBuildFailureMode
 } from "@wireio/cluster-tool/orchestration"
 import { getLogger } from "@wireio/cluster-tool/logging"
 import { Report } from "@wireio/cluster-tool/report"
@@ -33,12 +35,31 @@ const runGroup = (group: ClusterBuildPhaseGroup): Promise<Report.Phase[]> =>
     .then(nodes => nodes.flatMap(node => Report.Node.phases(node)))
 
 describe("ClusterBuildPhaseGroup", () => {
+  it("resolves a configured failure mode and rejects invalid values", () => {
+    expect(
+      resolveClusterBuildFailureMode("", ClusterBuildFailureMode.CollectAll)
+    ).toBe(ClusterBuildFailureMode.CollectAll)
+    expect(
+      resolveClusterBuildFailureMode(
+        ClusterBuildFailureMode.FailFast,
+        ClusterBuildFailureMode.CollectAll
+      )
+    ).toBe(ClusterBuildFailureMode.FailFast)
+    expect(() =>
+      resolveClusterBuildFailureMode(
+        "keep-going",
+        ClusterBuildFailureMode.CollectAll
+      )
+    ).toThrow(/invalid failure mode/)
+  })
+
   it("defaults to sequential; runs child phases in registration order", async () => {
     const order: string[] = []
     const group = ClusterBuildPhaseGroup.create(newBuild(), "G", "group")
     ClusterBuildPhase.create(group, "P1", "d").push(ok(order, "a"))
     ClusterBuildPhase.create(group, "P2", "d").push(ok(order, "b"))
     expect(group.config.parallel).toBe(false)
+    expect(group.config.failureMode).toBe(ClusterBuildFailureMode.FailFast)
     const phases = await runGroup(group)
     expect(order).toEqual(["a", "b"])
     expect(phases.map(phase => phase.name)).toEqual(["P1", "P2"])
@@ -55,6 +76,22 @@ describe("ClusterBuildPhaseGroup", () => {
     expect(order).toEqual(["a"]) // c never ran
     expect(phases.map(phase => phase.name)).toEqual(["P1", "P2"]) // P3 omitted
     expect(phases[1].succeeded).toBe(false)
+  })
+
+  it("collect-all runs every child while preserving the failed verdict", async () => {
+    const order: string[] = []
+    const group = ClusterBuildPhaseGroup.create(newBuild(), "G", "group", {
+      failureMode: ClusterBuildFailureMode.CollectAll
+    })
+    ClusterBuildPhase.create(group, "P1", "d").push(ok(order, "a"))
+    ClusterBuildPhase.create(group, "P2", "d").push(fail("b"))
+    ClusterBuildPhase.create(group, "P3", "d").push(ok(order, "c"))
+
+    const nodes = await group.run(new AbortController().signal),
+      phases = nodes.flatMap(node => Report.Node.phases(node))
+    expect(order).toEqual(["a", "c"])
+    expect(phases.map(phase => phase.name)).toEqual(["P1", "P2", "P3"])
+    expect(nodes[0].succeeded).toBe(false)
   })
 
   it("runs children concurrently when parallel", async () => {
