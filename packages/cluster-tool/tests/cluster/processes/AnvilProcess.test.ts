@@ -66,6 +66,15 @@ describe("AnvilProcess", () => {
     )
   })
 
+  it("never overrides the EVM code-size limit", async () => {
+    // Same parity requirement as the gas flags, on code size: NO --code-size-limit
+    // override, so the fork's default EIP-170 24KB rule applies and a cluster
+    // deploy is real EIP-170 evidence. Re-adding the override would let an
+    // unshippable contract deploy here and fail only on a real chain.
+    const process = await AnvilProcess.create(manager, { binary: "/bin/true" })
+    expect(process.args).not.toContain("--code-size-limit")
+  })
+
   it("sizes the block gas limit above EIP-7825's per-transaction cap", async () => {
     // `--gas-limit` bounds the BLOCK; `--enable-tx-gas-limit` bounds a single
     // transaction at 2^24. A block limit at or below the per-tx cap would make

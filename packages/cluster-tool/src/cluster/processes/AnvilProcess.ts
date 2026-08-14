@@ -145,11 +145,8 @@ export namespace AnvilProcess {
       String(config.port),
       "--chain-id",
       String(config.chainId),
-      // The WIRE anvil is ALWAYS the outpost deploy target: the OPP outpost
-      // contracts exceed EIP-170's 24KB code-size limit, and the deployer
+      // The WIRE anvil is ALWAYS the outpost deploy target: the deployer
       // (HD index 0) + operator HD accounts must all be pre-funded.
-      "--code-size-limit",
-      AnvilProcess.CodeSizeLimit,
       "--accounts",
       String(AnvilProcess.AccountCount),
       "--balance",
@@ -189,8 +186,6 @@ export namespace AnvilProcess {
   export const ProcessLabel = "anvil" as const
   /** Startup verify timeout (ms). */
   export const StartupTimeoutMs = 60_000
-  /** `--code-size-limit` — the OPP outpost contracts exceed EIP-170's 24KB. */
-  export const CodeSizeLimit = "99999"
   /**
    * `--hardfork` — the EVM revision the local node emulates. Pinned so the
    * cluster's gas semantics track mainnet's rather than drifting with whatever
