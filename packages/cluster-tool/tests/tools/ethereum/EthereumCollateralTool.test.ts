@@ -18,24 +18,36 @@ describe("EthereumCollateralTool.mockErc20Address", () => {
         OperatorRegistry: "0x00000000000000000000000000000000000000a3"
       })
     )
+    Fs.writeFileSync(
+      Path.join(deploymentsPath, "liqeth-addrs.json"),
+      JSON.stringify({
+        LiqEthToken: "0x00000000000000000000000000000000000000a4"
+      })
+    )
   })
   afterAll(() => {
     Fs.rmSync(deploymentsPath, { recursive: true, force: true })
   })
 
   it("resolves USDC / USDT to their deployed mock addresses", () => {
-    expect(EthereumCollateralTool.mockErc20Address(deploymentsPath, "USDC")).toBe(
-      "0x00000000000000000000000000000000000000a1"
-    )
-    expect(EthereumCollateralTool.mockErc20Address(deploymentsPath, "USDT")).toBe(
-      "0x00000000000000000000000000000000000000a2"
-    )
+    expect(
+      EthereumCollateralTool.mockErc20Address(deploymentsPath, "USDC")
+    ).toBe("0x00000000000000000000000000000000000000a1")
+    expect(
+      EthereumCollateralTool.mockErc20Address(deploymentsPath, "USDT")
+    ).toBe("0x00000000000000000000000000000000000000a2")
   })
 
-  it("throws LOUDLY for a token with no deployed mock (never a silent skip)", () => {
-    expect(() =>
+  it("resolves real LIQETH from its dedicated deployment artifact", () => {
+    expect(
       EthereumCollateralTool.mockErc20Address(deploymentsPath, "LIQETH")
-    ).toThrow(/no deployed mock ERC-20 for LIQETH/)
+    ).toBe("0x00000000000000000000000000000000000000a4")
+  })
+
+  it("throws LOUDLY for an unconfigured token (never a silent skip)", () => {
+    expect(() =>
+      EthereumCollateralTool.mockErc20Address(deploymentsPath, "DAI")
+    ).toThrow(/no deployed ERC-20 for DAI/)
   })
 
   it("throws when the deploy artifacts are absent entirely", () => {

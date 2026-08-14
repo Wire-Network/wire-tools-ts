@@ -136,6 +136,8 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
 Flow packages depend on the harness via `workspace:*`.
+The route matrix resolves the real LIQETH token from `liqeth-addrs.json` and
+acquires it through `DepositManager`; only the local stablecoins use mock minting.
 
 ## Running flows
 

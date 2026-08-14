@@ -506,29 +506,43 @@ export namespace EthereumCollateralTool {
   }
 
   /**
-   * Resolve a mock ERC-20's deployed address by token NAME from THIS cluster's
-   * deploy artifacts. Runners call this at RUN time — the address does not
-   * exist when steps are constructed (the outpost deploys later in the same
-   * build), and a configured collateral leg whose mock is missing is a hard
-   * failure, never a silent skip.
+   * Resolve a configured ERC-20's deployed address by token NAME from THIS
+   * cluster's deploy artifacts. USDC / USDT are outpost mocks; LIQETH is the
+   * real liquid-staking token emitted separately in `liqeth-addrs.json`.
+   * Runners call this at RUN time — the address does not exist when steps are
+   * constructed, and a configured collateral leg whose token is missing is a
+   * hard failure, never a silent skip.
    */
   export function mockErc20Address(
     deploymentsPath: string,
     tokenName: string
   ): string {
     const addresses = loadOutpostAddresses(deploymentsPath),
+      liqEthAddressesPath = Path.join(deploymentsPath, "liqeth-addrs.json"),
+      liqEthAddresses =
+        tokenName === "LIQETH" && Fs.existsSync(liqEthAddressesPath)
+          ? (JSON.parse(Fs.readFileSync(liqEthAddressesPath, "utf8")) as Record<
+              string,
+              string
+            >)
+          : {},
       address = match(tokenName)
         .with("USDC", () => addresses.MockUsdc)
         .with("USDT", () => addresses.MockUsdt)
         .with(
           "LIQETH",
-          () => addresses.LiqEth ?? addresses.LiqETH ?? addresses.LiqEthToken
+          () =>
+            addresses.LiqEth ??
+            addresses.LiqETH ??
+            addresses.LiqEthToken ??
+            liqEthAddresses.LiqEthToken
         )
         .otherwise(() => null)
     Assert.ok(
       address != null && /^0x[0-9a-fA-F]{40}$/.test(address),
-      `EthereumCollateralTool: no deployed mock ERC-20 for ${tokenName} ` +
-        `(outpost-addrs.json keys: ${Object.keys(addresses).join(", ")})`
+      `EthereumCollateralTool: no deployed ERC-20 for ${tokenName} ` +
+        `(outpost-addrs.json keys: ${Object.keys(addresses).join(", ")}; ` +
+        `liqeth-addrs.json keys: ${Object.keys(liqEthAddresses).join(", ")})`
     )
     return address
   }

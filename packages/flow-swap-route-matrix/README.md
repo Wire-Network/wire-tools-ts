@@ -36,6 +36,10 @@ stop at the first failed route. This is long-running conformance coverage, not
 a stress test. Private-reserve behavior remains in
 `flow-swap-private-reserves`.
 
+The local stablecoin routes use the outpost mock-token addresses. LIQETH uses
+the real token address from `liqeth-addrs.json` and acquires balances through
+the deployed `DepositManager`.
+
 Run it through the canonical flow runner and attach the heartbeat monitor for
 the generated cluster path:
 
