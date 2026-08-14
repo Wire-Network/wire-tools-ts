@@ -1,0 +1,67 @@
+name: "CI"
+
+# Build + root jest gate on every PR and master push. Extracted from the old
+# release workflow (now .github/workflows/noop/publish-npm.yaml) when releases
+# moved to the two-gate flow: merging to master no longer publishes anything,
+# so this workflow is what keeps master tested.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Install deps
+        run: |
+          # Double install kept from the old release workflow: the workspace
+          # `prepare` scripts build packages during install, and the second
+          # install re-links workspace bins against the built output.
+          pnpm install
+          pnpm build
+          pnpm install
+
+      - name: Build
+        run: pnpm run build
+
+      # Gate on the ROOT jest run (8 projects). NEVER `pnpm -r test` here —
+      # flow-* package test scripts launch live clusters.
+      - name: Test
+        env:
+          JEST_JUNIT_OUTPUT_DIR: reports/junit
+          JEST_JUNIT_OUTPUT_NAME: jest-junit.xml
+        run: pnpm run test:ci
+
+      - name: Upload test results (JUnit XML)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-test-results
+          path: reports/junit/
+          if-no-files-found: ignore
