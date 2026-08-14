@@ -442,7 +442,7 @@ export class WireClient {
    * version is released and this package's dependency is bumped.
    */
   async getWireClaimable(account: string): Promise<bigint> {
-    const { rows } = await this.getTableRows<{ balance: string | number }>({
+    const { rows } = await this.getTableRows<WireClient.ClaimableRow>({
       account: "sysio.reserv",
       scope: "sysio.reserv",
       table: "wireclaims",
@@ -454,9 +454,13 @@ export class WireClient {
   }
 
   /**
-   * Pull `account`'s credited epoch pay from `sysio.system` — producer, standby, batch-operator and
-   * category-bucket shares. `payepoch` credits rather than transfers for the same reason as above:
+   * Pull `account`'s credited epoch pay from `sysio.system` — a producer, standby or
+   * batch-operator share. `payepoch` credits rather than transfers for the same reason as above:
    * it runs inline from `sysio.epoch::advance`, which must never abort.
+   *
+   * The T5 category buckets (`sysio.ops`, `sysio.gov`) are NOT claimable: `payepoch` transfers to
+   * them directly, because ROA zeroes net/cpu for every `sysio`-prefixed account and neither
+   * carries a contract that could emit the claim inline, so neither could ever authorize one.
    */
   async claimPay(account: string, permission = "active") {
     return this.invoke("sysio", "claimpay", { account_name: account }, [
@@ -467,7 +471,7 @@ export class WireClient {
   /** Epoch pay owed to `account` but not yet claimed, or 0n when there is no row. Raw table read
    *  for the same reason as {@link getWireClaimable}. */
   async getPayClaimable(account: string): Promise<bigint> {
-    const { rows } = await this.getTableRows<{ balance: string | number }>({
+    const { rows } = await this.getTableRows<WireClient.ClaimableRow>({
       account: "sysio",
       scope: "sysio",
       table: "payclaims",
@@ -917,6 +921,20 @@ function errorText(err: unknown): string {
 }
 
 export namespace WireClient {
+  /**
+   * The single field a claimable-balance read consumes, shared by `sysio.reserv::wireclaims` and
+   * `sysio.system::payclaims` — both rows carry `balance` in atomic units, serialized as a string
+   * once it exceeds the JSON-safe integer range.
+   *
+   * Declared here rather than taken from `SysioContracts` because these two reads are deliberately
+   * raw (see {@link WireClient.getWireClaimable}): the generated row types do not reach an
+   * `@wireio/sdk-core` release until the contract ABIs land, so typing the generic against them
+   * would couple this package's build to that release. It retires with the raw reads.
+   */
+  export interface ClaimableRow {
+    balance: string | number
+  }
+
   // ── Contract-client typing (keyed by contract Name + member) ──
   export interface InvocationOptions {
     authorization?: PermissionLevelType[]
