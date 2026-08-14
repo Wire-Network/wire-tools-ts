@@ -48,6 +48,33 @@ export interface MintableErc20 extends ethers.BaseContract {
   ) => Promise<ethers.ContractTransactionResponse>
 }
 
+/** Payable liqETH acquisition surface used by {@link depositLiqEth}. */
+export interface LiqEthDepositTarget extends ethers.BaseContract {
+  deposit: (
+    overrides: ethers.Overrides
+  ) => Promise<ethers.ContractTransactionResponse>
+}
+
+/**
+ * Deposit native ETH through liqETH's `DepositManager`, sharing the harness's
+ * per-signer nonce sequence with adjacent collateral and swap writes.
+ *
+ * @param depositManager Signer-bound payable DepositManager contract.
+ * @param value Native ETH amount sent to the deposit.
+ * @return Mined transaction hash.
+ */
+export async function depositLiqEth(
+  depositManager: LiqEthDepositTarget,
+  value: bigint
+): Promise<string> {
+  Assert.ok(value > 0n, "EthereumFundingTool: liqETH deposit must be > 0")
+  const nonce = await resolveLatestNonce(depositManager),
+    response = await depositManager.deposit({ value, nonce }),
+    receipt = await response.wait(1)
+  Assert.strictEqual(receipt?.status, 1, "LIQETH funding deposit reverted")
+  return receipt.hash
+}
+
 /**
  * Mint `amount` of `mockErc20` to `recipient`. Confirms via `tx.wait()`.
  *
@@ -391,14 +418,11 @@ export namespace EthereumFundingTool {
         signer
       ),
       shortfall = input.amount - current,
-      response = await depositManager.deposit({
-        value: maximum(
-          shortfall * LiqEthFundingMultiplier,
-          await depositManager.minDeposit()
-        )
-      }),
-      receipt = await response.wait(1)
-    Assert.strictEqual(receipt?.status, 1, "LIQETH funding deposit reverted")
+      value = maximum(
+        shortfall * LiqEthFundingMultiplier,
+        await depositManager.minDeposit()
+      )
+    await depositLiqEth(depositManager, value)
   }
 }
 
@@ -408,11 +432,8 @@ interface LiqEthBalanceContract extends ethers.BaseContract {
 }
 
 /** Payable liqETH acquisition surface. */
-interface LiqEthDepositManagerContract extends ethers.BaseContract {
+interface LiqEthDepositManagerContract extends LiqEthDepositTarget {
   minDeposit: () => Promise<bigint>
-  deposit: (
-    overrides: ethers.Overrides
-  ) => Promise<ethers.ContractTransactionResponse>
 }
 
 /** Minimal ABI for the LIQETH balance read. */

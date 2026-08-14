@@ -38,7 +38,8 @@ a stress test. Private-reserve behavior remains in
 
 The local stablecoin routes use the outpost mock-token addresses. LIQETH uses
 the real token address from `liqeth-addrs.json` and acquires balances through
-the deployed `DepositManager`.
+the deployed `DepositManager`. Those writes participate in the harness's shared
+per-signer nonce sequence with the surrounding collateral and route writes.
 
 Run it through the canonical flow runner and attach the heartbeat monitor for
 the generated cluster path:

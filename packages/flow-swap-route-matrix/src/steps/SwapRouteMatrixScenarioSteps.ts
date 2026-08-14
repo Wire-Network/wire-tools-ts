@@ -19,6 +19,7 @@ import {
   SwapScenarioContext,
   WireReserveTool,
   contractView,
+  depositLiqEth,
   isNotEmpty,
   matchesProtoEnum,
   mintMockErc20ToUser,
@@ -263,12 +264,14 @@ export namespace SwapRouteMatrixScenarioSteps {
       owner = await ctx.ethereum.wallet.signer.getAddress(),
       ownerBalance = await token.balanceOf(owner)
     if (ownerBalance >= shortfall) return
-    const response = await liqEthDepositManager(
-      ctx,
-      ctx.ethereum.wallet.signer
-    ).deposit({ value: (shortfall - ownerBalance) * 2n })
-    const receipt = await response.wait(1)
-    Assert.strictEqual(receipt?.status, 1, "liqETH acquisition reverted")
+    const depositManager = liqEthDepositManager(ctx, ctx.ethereum.wallet.signer)
+    await depositLiqEth(
+      depositManager,
+      maximum(
+        (shortfall - ownerBalance) * 2n,
+        await depositManager.minDeposit()
+      )
+    )
   }
 
   /** Transfer the LIQETH reserve shortfall into ReserveManager custody. */
@@ -365,14 +368,9 @@ export namespace SwapRouteMatrixScenarioSteps {
     const shortfall = input.amount - current
     if (input.token.symbol === Constants.LiqEthSymbol) {
       const depositManager = liqEthDepositManager(ctx, swapUser.ethereumWallet)
-      const response = await depositManager.deposit({
-        value: maximum(shortfall * 2n, await depositManager.minDeposit())
-      })
-      const receipt = await response.wait(1)
-      Assert.strictEqual(
-        receipt?.status,
-        1,
-        "swap-user liqETH deposit reverted"
+      await depositLiqEth(
+        depositManager,
+        maximum(shortfall * 2n, await depositManager.minDeposit())
       )
       return
     }

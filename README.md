@@ -138,6 +138,8 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 Flow packages depend on the harness via `workspace:*`.
 The route matrix resolves the real LIQETH token from `liqeth-addrs.json` and
 acquires it through `DepositManager`; only the local stablecoins use mock minting.
+Every DepositManager write uses the same per-signer nonce sequence as adjacent
+collateral and swap transactions.
 
 ## Running flows
 
