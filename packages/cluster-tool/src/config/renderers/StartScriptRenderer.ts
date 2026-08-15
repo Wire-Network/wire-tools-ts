@@ -4,6 +4,7 @@ import {
   orderRelocations,
   toRelocatableArgv,
   toRelocatableToken,
+  shellQuote,
   StartScriptVariable,
   type StartScriptRelocation
 } from "../../utils/startScriptUtils.js"
@@ -18,7 +19,7 @@ import type { DaemonConfig } from "../DaemonConfig.js"
  * - **RUN semantics, not create semantics.** The argv comes from the daemon's
  *   run-phase form (nodeop relaunch-stripped, anvil with interval mining), so
  *   an operator restarting a daemon gets the same process the harness's own
- *   `run` would.
+ *   `run` would, including any extra environment its managed process supplies.
  * - **Build-time conditionals render as SHELL.** A flag whose presence depended
  *   on the build host (anvil's `--load-state`, nodeop's probed
  *   `--trace-no-abis`) is emitted as a test the script evaluates, never frozen.
@@ -53,6 +54,8 @@ export class StartScriptRenderer implements Renderer {
         "",
         ...StartScriptRenderer.preamble(daemon, relocations),
         "",
+        ...StartScriptRenderer.environmentLines(daemon),
+        ...(Object.keys(daemon.env ?? {}).length > 0 ? [""] : []),
         ...StartScriptRenderer.conditionLines(daemon, relocations),
         `exec ${StartScriptRenderer.execTarget(daemon, relocations)} \\`,
         ...toRelocatableArgv(argv, relocations).map(word => `  ${word} \\`),
@@ -68,6 +71,19 @@ export namespace StartScriptRenderer {
   export const StrictMode = "set -euo pipefail"
   /** Bash array collecting every condition's tokens, expanded into the `exec`. */
   export const ConditionalArrayName = "CONDITIONAL_ARGS"
+
+  /**
+   * Shell exports for the extra environment a live managed process would merge
+   * over its inherited environment.
+   *
+   * @param daemon - The daemon being rendered.
+   * @returns Safely quoted `export NAME=value` lines.
+   */
+  export function environmentLines(daemon: DaemonConfig): string[] {
+    return Object.entries(daemon.env ?? {}).map(
+      ([name, value]) => `export ${name}=${shellQuote(value)}`
+    )
+  }
 
   /**
    * Fixed header. The secret notice is NOT decoration: under the default `KEY`
@@ -166,7 +182,8 @@ export namespace StartScriptRenderer {
     return HostSuppliedRoots.filter(variable =>
       referencesRoot(daemon, relocations, variable)
     ).map(
-      variable => `: "\${${variable}:?set to the ${RootDescriptions[variable]}}"`
+      variable =>
+        `: "\${${variable}:?set to the ${RootDescriptions[variable]}}"`
     )
   }
 
@@ -241,7 +258,8 @@ export namespace StartScriptRenderer {
     daemon: DaemonConfig,
     relocations: readonly StartScriptRelocation[]
   ): string {
-    return daemon.exeCommandName != null && daemon.exeEnvironmentVariable != null
+    return daemon.exeCommandName != null &&
+      daemon.exeEnvironmentVariable != null
       ? `"\${${daemon.exeEnvironmentVariable}:-$(command -v ${daemon.exeCommandName})}"`
       : toRelocatableToken(daemon.exe, relocations)
   }
@@ -286,7 +304,9 @@ export namespace StartScriptRenderer {
     return [
       `${ConditionalArrayName}=()`,
       ...daemon.conditions.map(condition => {
-        const tokens = toRelocatableArgv(condition.tokens, relocations).join(" ")
+        const tokens = toRelocatableArgv(condition.tokens, relocations).join(
+          " "
+        )
         return `${condition.test} && ${ConditionalArrayName}+=(${tokens})`
       }),
       ""

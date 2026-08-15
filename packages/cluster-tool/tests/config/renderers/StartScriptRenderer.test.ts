@@ -15,10 +15,7 @@ import {
   StartScriptRenderer
 } from "@wireio/cluster-tool/config"
 import { StartScriptVariable } from "@wireio/cluster-tool/utils"
-import {
-  fixtureConfig,
-  PersistedFixture
-} from "../clusterConfigFixture.js"
+import { fixtureConfig, PersistedFixture } from "../clusterConfigFixture.js"
 
 describe("StartScriptRenderer", () => {
   let dir: string
@@ -189,6 +186,34 @@ describe("StartScriptRenderer", () => {
       // No solana path is referenced — demanding it would break a depot-only run.
       expect(script).not.toContain(StartScriptVariable.WIRE_SOLANA_PATH)
     })
+
+    it("exports the daemon's extra environment before exec", () => {
+      const daemonPath = Path.join(cluster.dataPath, "env-probe"),
+        scriptFile = DaemonConfig.startScriptFile(daemonPath),
+        value = "program logs' additive filter",
+        script = render({
+          kind: DaemonKind.kiod,
+          label: "env-probe",
+          daemonPath,
+          exe: "/bin/sh",
+          argv: ["-c", 'printf "%s" "$HARNESS_ENV_PROBE"'],
+          env: { HARNESS_ENV_PROBE: value },
+          conditions: [],
+          relocations: []
+        })
+      Fs.mkdirSync(daemonPath, { recursive: true })
+      Fs.writeFileSync(scriptFile, script)
+
+      expect(script).toContain(
+        "export HARNESS_ENV_PROBE='program logs'\\'' additive filter'"
+      )
+      expect(
+        execFileSync("bash", [scriptFile], {
+          encoding: "utf8",
+          env: { ...global.process.env, WIRE_CLUSTER_DIR: dir }
+        })
+      ).toBe(value)
+    })
   })
 
   describe("enumeration agreement", () => {
@@ -256,7 +281,6 @@ describe("StartScriptRenderer", () => {
 
       expect(actual).toEqual(expected)
     })
-
   })
 
   describe("WIRE_PREFIX_PATH resolution", () => {
@@ -270,7 +294,10 @@ describe("StartScriptRenderer", () => {
       const node = producerNode(),
         config = NodeopProcess.resolveConfig(
           { node, relaunch: true },
-          { genesisTimestamp: "2026-01-01T00:00:00.000", supportsTraceNoAbis: false }
+          {
+            genesisTimestamp: "2026-01-01T00:00:00.000",
+            supportsTraceNoAbis: false
+          }
         ),
         daemon = DaemonConfig.plan(cluster, { nodeop: [config] }).find(
           candidate => candidate.kind === DaemonKind.node
@@ -280,7 +307,10 @@ describe("StartScriptRenderer", () => {
           daemon,
           DaemonConfig.clusterRelocations(cluster)
         ).join("\n"),
-        probe = Path.join(dir, `probe-${Math.random().toString(36).slice(2)}.sh`)
+        probe = Path.join(
+          dir,
+          `probe-${Math.random().toString(36).slice(2)}.sh`
+        )
 
       Fs.writeFileSync(
         probe,
@@ -314,7 +344,9 @@ describe("StartScriptRenderer", () => {
 
     beforeAll(() => {
       sanitizedBash = resolveBinary("bash")
-      sanitizedPathDir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "sanitized-bin-"))
+      sanitizedPathDir = Fs.mkdtempSync(
+        Path.join(Os.tmpdir(), "sanitized-bin-")
+      )
       // `dirname` is the only external the preamble invokes; everything else it
       // uses (`cd`, `pwd`, `command`, `printf`) is a bash builtin.
       ;["bash", "dirname"].forEach(name =>

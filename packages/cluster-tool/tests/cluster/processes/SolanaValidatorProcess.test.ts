@@ -104,6 +104,46 @@ describe("SolanaValidatorProcess", () => {
     expect(validator.args).not.toContain("--bpf-program")
   })
 
+  // Program `msg!()` output is gated by RUST_LOG, NOT by --quiet: agave's
+  // default filter omits `stable_log` entirely, which is why dropping --quiet
+  // alone still produced a validator.log with zero `Program log:` lines.
+  it("enables agave's program-log target via RUST_LOG by default", async () => {
+    const previous = process.env[SolanaValidatorProcess.RustLogEnvVar]
+    delete process.env[SolanaValidatorProcess.RustLogEnvVar]
+    try {
+      const validator = await SolanaValidatorProcess.create(manager, {
+        binary: "/bin/true"
+      })
+      expect(validator.env[SolanaValidatorProcess.RustLogEnvVar]).toBe(
+        SolanaValidatorProcess.ProgramLogRustLog
+      )
+      expect(SolanaValidatorProcess.ProgramLogRustLog).toBe(
+        "solana=info,agave=info,solana_runtime::message_processor::stable_log=debug"
+      )
+    } finally {
+      if (previous === undefined)
+        delete process.env[SolanaValidatorProcess.RustLogEnvVar]
+      else process.env[SolanaValidatorProcess.RustLogEnvVar] = previous
+    }
+  })
+
+  it("defers to an explicit RUST_LOG from the environment", async () => {
+    const previous = process.env[SolanaValidatorProcess.RustLogEnvVar]
+    process.env[SolanaValidatorProcess.RustLogEnvVar] = "warn"
+    try {
+      const validator = await SolanaValidatorProcess.create(manager, {
+        binary: "/bin/true"
+      })
+      expect(
+        validator.env[SolanaValidatorProcess.RustLogEnvVar]
+      ).toBeUndefined()
+    } finally {
+      if (previous === undefined)
+        delete process.env[SolanaValidatorProcess.RustLogEnvVar]
+      else process.env[SolanaValidatorProcess.RustLogEnvVar] = previous
+    }
+  })
+
   it("passes an explicit --dynamic-port-range window verbatim", async () => {
     const validator = await SolanaValidatorProcess.create(manager, {
       binary: "/bin/true",

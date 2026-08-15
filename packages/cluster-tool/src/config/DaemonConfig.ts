@@ -104,6 +104,8 @@ export interface DaemonConfig {
   readonly exeEnvironmentVariable?: string
   /** Unconditional argv (WITHOUT the executable), in RUN — not create — form. */
   readonly argv: readonly string[]
+  /** Extra environment entries the live process merges over its inherited env. */
+  readonly env?: Readonly<Record<string, string>>
   /** Conditionals the script evaluates itself (see {@link DaemonArgvCondition}). */
   readonly conditions: readonly DaemonArgvCondition[]
   /**
@@ -324,6 +326,7 @@ export namespace DaemonConfig {
       exeCommandName: SolanaValidatorProcess.ProcessLabel,
       exeEnvironmentVariable: SolanaValidatorBinEnvironmentVariable,
       argv: SolanaValidatorProcess.buildArgs(validator),
+      env: SolanaValidatorProcess.resolveEnv(),
       conditions: [],
       relocations: [
         { prefix: daemonPath, variable: StartScriptVariable.NODE_DIR }
