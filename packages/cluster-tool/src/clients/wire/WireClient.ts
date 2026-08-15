@@ -15,6 +15,7 @@ import {
   API,
   APIClient,
   Asset,
+  Name,
   type PermissionLevelType,
   SysioContracts
 } from "@wireio/sdk-core"
@@ -442,12 +443,13 @@ export class WireClient {
    * version is released and this package's dependency is bumped.
    */
   async getWireClaimable(account: string): Promise<bigint> {
+    const bound = WireClient.nameKeyBound("account", account)
     const { rows } = await this.getTableRows<WireClient.ClaimableRow>({
       account: "sysio.reserv",
       scope: "sysio.reserv",
       table: "wireclaims",
-      lowerBound: account,
-      upperBound: account,
+      lowerBound: bound,
+      upperBound: bound,
       limit: 1
     })
     return rows.length === 0 ? 0n : BigInt(rows[0].balance)
@@ -471,12 +473,13 @@ export class WireClient {
   /** Epoch pay owed to `account` but not yet claimed, or 0n when there is no row. Raw table read
    *  for the same reason as {@link getWireClaimable}. */
   async getPayClaimable(account: string): Promise<bigint> {
+    const bound = WireClient.nameKeyBound("account_name", account)
     const { rows } = await this.getTableRows<WireClient.ClaimableRow>({
       account: "sysio",
       scope: "sysio",
       table: "payclaims",
-      lowerBound: account,
-      upperBound: account,
+      lowerBound: bound,
+      upperBound: bound,
       limit: 1
     })
     return rows.length === 0 ? 0n : BigInt(rows[0].balance)
@@ -921,6 +924,22 @@ function errorText(err: unknown): string {
 }
 
 export namespace WireClient {
+  /**
+   * A `get_table_rows` bound for a KV table whose key is ONE `uint64` field holding a `name`.
+   *
+   * With `json: true` the node parses each bound through `fc::json::from_string` and encodes it
+   * with `be_key_codec::encode_key`, which calls `.get_object()` and looks every key field up BY
+   * NAME (`chain_plugin.cpp` + `database_utils.hpp`). So the bound must be a JSON OBJECT keyed by
+   * the ABI's `key_names`, carrying the name's raw uint64 — never the account string, which the
+   * node cannot even parse as JSON ("Unexpected char '119' in \"wirercpt\"").
+   *
+   * The field name differs per table (`wireclaims.account` vs `payclaims.account_name`), so the
+   * caller supplies it; the uint64 goes as a decimal STRING because it exceeds `Number.MAX_SAFE_INTEGER`.
+   */
+  export function nameKeyBound(field: string, account: string): string {
+    return JSON.stringify({ [field]: Name.from(account).value.toString() })
+  }
+
   /**
    * The single field a claimable-balance read consumes, shared by `sysio.reserv::wireclaims` and
    * `sysio.system::payclaims` — both rows carry `balance` in atomic units, serialized as a string

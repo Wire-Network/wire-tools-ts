@@ -177,6 +177,42 @@ describe("WireClient", () => {
     })
   })
 
+  describe("nameKeyBound", () => {
+    // The node parses a json=true bound with fc::json::from_string and encodes it via
+    // be_key_codec::encode_key, which does .get_object() and looks each key field up BY NAME.
+    // Passing the bare account string made nodeop fail at parse time with
+    // `parse_error_exception: Unexpected char '119' in "wirercpt"` — 'w', the first character of
+    // the name — which is what took flow-swap-to-wire's recipient-paid-exact step down.
+    it("emits a JSON object keyed by the ABI key field, not the bare account", () => {
+      const bound = WireClient.nameKeyBound("account", "wirercpt")
+      expect(bound).not.toBe("wirercpt")
+      const parsed = JSON.parse(bound)
+      expect(Object.keys(parsed)).toEqual(["account"])
+    })
+
+    it("carries the name's raw uint64 as a decimal string", () => {
+      // key_types is ["uint64"], and a name's raw value exceeds Number.MAX_SAFE_INTEGER, so it
+      // must not ride as a JSON number.
+      const { account } = JSON.parse(WireClient.nameKeyBound("account", "wirercpt"))
+      expect(typeof account).toBe("string")
+      expect(account).toMatch(/^[0-9]+$/)
+      expect(BigInt(account)).toBeGreaterThan(BigInt(Number.MAX_SAFE_INTEGER))
+    })
+
+    it("honours the per-table key field name", () => {
+      // wireclaims keys on `account`; payclaims keys on `account_name`. One helper, two shapes.
+      expect(Object.keys(JSON.parse(WireClient.nameKeyBound("account_name", "wirercpt")))).toEqual([
+        "account_name"
+      ])
+    })
+
+    it("round-trips distinct accounts to distinct bounds", () => {
+      expect(WireClient.nameKeyBound("account", "wirercpt")).not.toBe(
+        WireClient.nameKeyBound("account", "wireno.aaa")
+      )
+    })
+  })
+
   describe("transaction expiration", () => {
     it("pins an expiration well above clio's 30s default", () => {
       // clio's default is the SIGN->INCLUSION window, not execution. On a large
