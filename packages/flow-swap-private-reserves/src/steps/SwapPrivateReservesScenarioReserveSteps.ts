@@ -15,6 +15,7 @@ import {
   confirmSignature,
   resolveLatestNonce,
   swapUserOutputKey,
+  tokenCodeToLittleEndianBuffer,
   type AnchorEnumVariant,
   type ClusterBuildContext,
   type ClusterBuildStepOptions,
@@ -174,8 +175,10 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
       [Buffer.from(PdaSeed.OutboundMessageBuffer)],
       programId
     )
-    const tokenCodeLE = slugNameToLeBuffer(input.tokenCode)
-    const reserveCodeLE = slugNameToLeBuffer(input.reserveCode)
+    const tokenCodeLE = tokenCodeToLittleEndianBuffer(BigInt(input.tokenCode))
+    const reserveCodeLE = tokenCodeToLittleEndianBuffer(
+      BigInt(input.reserveCode)
+    )
     const [reservePda] = PublicKey.findProgramAddressSync(
       [Buffer.from(PdaSeed.Reserve), tokenCodeLE, reserveCodeLE],
       programId
@@ -338,8 +341,12 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
     const [reservePda] = PublicKey.findProgramAddressSync(
       [
         Buffer.from(PdaSeed.Reserve),
-        slugNameToLeBuffer(Constants.Reserves.Solana.TokenCode),
-        slugNameToLeBuffer(Constants.Reserves.PrivateReserveCode)
+        tokenCodeToLittleEndianBuffer(
+          BigInt(Constants.Reserves.Solana.TokenCode)
+        ),
+        tokenCodeToLittleEndianBuffer(
+          BigInt(Constants.Reserves.PrivateReserveCode)
+        )
       ],
       program.programId
     )
@@ -348,15 +355,5 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
     ).reserve.fetch(reservePda)
     const status = (account as SolanaReserveAccountView).status
     return typeof status === "object" && status !== null && "active" in status
-  }
-
-  /**
-   * Encode a slug_name `number` as an 8-byte little-endian Buffer matching
-   * the program's `to_le_bytes()` PDA seed derivation.
-   */
-  function slugNameToLeBuffer(value: number): Buffer {
-    const buffer = Buffer.alloc(8)
-    buffer.writeBigUInt64LE(BigInt(value))
-    return buffer
   }
 }

@@ -27,6 +27,7 @@ import {
   getAssociatedTokenAddressSync
 } from "@solana/spl-token"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
+import { tokenCodeToLittleEndianBuffer } from "../../utils/slugUtils.js"
 
 /** PDA seeds — kept in sync with `wire-solana/programs/liqsol-core/src/states/opp_states.rs`. */
 const OUTPOST_CONFIG_SEED          = Buffer.from("outpost_config")
@@ -93,8 +94,8 @@ export async function requestSolanaSwap(
   const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync([OUTBOUND_MESSAGE_BUFFER_SEED], programId)
 
   // Reserve PDA — derived from `RESERVE_SEED` + LE-encoded source codes.
-  const sourceTokenCodeLE   = toU64LeBuffer(request.sourceTokenCode)
-  const sourceReserveCodeLE = toU64LeBuffer(request.sourceReserveCode)
+  const sourceTokenCodeLE   = tokenCodeToLittleEndianBuffer(request.sourceTokenCode)
+  const sourceReserveCodeLE = tokenCodeToLittleEndianBuffer(request.sourceReserveCode)
   const [reservePda] = PublicKey.findProgramAddressSync(
     [RESERVE_SEED, sourceTokenCodeLE, sourceReserveCodeLE],
     programId
@@ -125,16 +126,6 @@ export async function requestSolanaSwap(
   const sig = await connection.sendTransaction(tx, [user], { skipPreflight: false })
   await confirmSignature(connection, sig, "SolanaSwapTool request_swap")
   return sig
-}
-
-/**
- * Encode a `bigint` slug_name as an 8-byte little-endian Buffer matching
- * the program's `to_le_bytes()` seed derivation.
- */
-function toU64LeBuffer(value: bigint): Buffer {
-  const buf = Buffer.alloc(8)
-  buf.writeBigUInt64LE(value)
-  return buf
 }
 
 /**
@@ -194,8 +185,8 @@ export async function requestSolanaSwapSpl(
   const [configPda]                = PublicKey.findProgramAddressSync([OUTPOST_CONFIG_SEED], programId)
   const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync([OUTBOUND_MESSAGE_BUFFER_SEED], programId)
 
-  const sourceTokenCodeLE   = toU64LeBuffer(request.sourceTokenCode)
-  const sourceReserveCodeLE = toU64LeBuffer(request.sourceReserveCode)
+  const sourceTokenCodeLE   = tokenCodeToLittleEndianBuffer(request.sourceTokenCode)
+  const sourceReserveCodeLE = tokenCodeToLittleEndianBuffer(request.sourceReserveCode)
   const [reservePda]      = PublicKey.findProgramAddressSync(
     [RESERVE_SEED, sourceTokenCodeLE, sourceReserveCodeLE], programId
   )

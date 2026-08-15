@@ -2,7 +2,8 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { SolanaFundingTool } from "@wireio/cluster-tool/tools/solana"
-import { Connection, Keypair } from "@solana/web3.js"
+import { Connection, Keypair, PublicKey } from "@solana/web3.js"
+import { getAssociatedTokenAddressSync } from "@solana/spl-token"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { Report } from "@wireio/cluster-tool/report"
 import { toURL } from "@wireio/cluster-tool/utils"
@@ -49,6 +50,44 @@ describe("SolanaFundingTool input validation", () => {
   it("exposes the decimal bounds", () => {
     expect(SolanaFundingTool.MinDecimals).toBe(0)
     expect(SolanaFundingTool.MaxDecimals).toBe(18)
+  })
+})
+
+describe("SolanaFundingTool.ensureAssociatedTokenAccount", () => {
+  const funder = Keypair.generate()
+  const mint = Keypair.generate().publicKey
+  // An off-curve owner (a program PDA), exactly like reserve_aggregate.
+  const [ownerPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("reserve_aggregate")],
+    Keypair.generate().publicKey
+  )
+
+  it("resolves the off-curve (owner, mint) ATA and skips the write when it already exists", async () => {
+    let created = false
+    // getAccountInfo returns a live account -> the idempotent path must no-op.
+    const connection = {
+      getAccountInfo: async () => ({
+        data: Buffer.alloc(0),
+        executable: false,
+        lamports: 1,
+        owner: PublicKey.default,
+        rentEpoch: 0
+      }),
+      sendTransaction: async () => {
+        created = true
+        return "signature"
+      }
+    } as unknown as Connection
+
+    const ata = await SolanaFundingTool.ensureAssociatedTokenAccount(
+      connection,
+      funder,
+      mint,
+      ownerPda,
+      true
+    )
+    expect(ata.equals(getAssociatedTokenAddressSync(mint, ownerPda, true))).toBe(true)
+    expect(created).toBe(false)
   })
 })
 

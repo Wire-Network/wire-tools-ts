@@ -1,6 +1,32 @@
-import { slugValue } from "@wireio/cluster-tool/utils"
+import {
+  slugValue,
+  tokenCodeToLittleEndianBuffer
+} from "@wireio/cluster-tool/utils"
 
 describe("slugUtils", () => {
+  describe("tokenCodeToLittleEndianBuffer", () => {
+    it("encodes the full u64 range as 8 little-endian bytes", () => {
+      const maxU64 = 2n ** 64n - 1n
+      expect([...tokenCodeToLittleEndianBuffer(maxU64)]).toEqual([
+        255, 255, 255, 255, 255, 255, 255, 255
+      ])
+      expect(tokenCodeToLittleEndianBuffer(0n).readBigUInt64LE()).toBe(0n)
+      expect([...tokenCodeToLittleEndianBuffer(256n)]).toEqual([
+        0, 1, 0, 0, 0, 0, 0, 0
+      ])
+    })
+
+    it("rejects a value that does not fit in a u64", () => {
+      expect(() => tokenCodeToLittleEndianBuffer(2n ** 64n)).toThrow()
+    })
+
+    it("is deterministic", () => {
+      expect(tokenCodeToLittleEndianBuffer(123_456_789n)).toEqual(
+        tokenCodeToLittleEndianBuffer(123_456_789n)
+      )
+    })
+  })
+
   describe("slugValue", () => {
     it("passes a bare number through", () => {
       expect(slugValue(23373300651341)).toBe(23373300651341)

@@ -120,6 +120,40 @@ export namespace SolanaFundingTool {
     return ata
   }
 
+  /**
+   * Ensure the Associated Token Account for `(owner, mint)` exists, creating an
+   * empty one if absent. Idempotent — a present ATA no-ops. Unlike
+   * {@link mintMockSplToUser} this mints nothing; it only guarantees the account
+   * exists so a later SPL transfer INTO it cannot fail for want of a destination.
+   *
+   * `allowOwnerOffCurve` must be `true` when `owner` is a program PDA (e.g. the
+   * `reserve_aggregate` custody account), whose address is off the ed25519 curve.
+   *
+   * @param connection - RPC connection.
+   * @param funder - ATA rent payer keypair.
+   * @param mint - The SPL mint pubkey.
+   * @param owner - The ATA owner (a wallet, or a PDA when `allowOwnerOffCurve`).
+   * @param allowOwnerOffCurve - Permit a PDA owner (default `false`).
+   * @returns The owner's ATA pubkey for `mint`.
+   */
+  export async function ensureAssociatedTokenAccount(
+    connection: Connection,
+    funder: Keypair,
+    mint: PublicKey,
+    owner: PublicKey,
+    allowOwnerOffCurve = false
+  ): Promise<PublicKey> {
+    const ata = getAssociatedTokenAddressSync(mint, owner, allowOwnerOffCurve)
+    const ataInfo = await connection.getAccountInfo(ata)
+    if (ataInfo === null) {
+      const transaction = new Transaction().add(
+        createAssociatedTokenAccountInstruction(funder.publicKey, ata, owner, mint)
+      )
+      await sendAndPoll(connection, transaction, [funder], "ensureAssociatedTokenAccount")
+    }
+    return ata
+  }
+
   /** Persisted mint-authority (deployer) keypair filename in the cluster data dir. */
   export const DeployerKeypairFilename = "sol-deployer-keypair.json"
 

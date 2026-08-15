@@ -2,21 +2,6 @@ import { SolanaOutpostBootstrapper } from "@wireio/cluster-tool/orchestration"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { toURL } from "@wireio/cluster-tool/utils"
 
-describe("SolanaOutpostBootstrapper.slugNameToLittleEndianBuffer", () => {
-  it("encodes a value as an 8-byte little-endian u64", () => {
-    const buffer = SolanaOutpostBootstrapper.slugNameToLittleEndianBuffer(256)
-    expect(buffer).toHaveLength(8)
-    expect(buffer.readBigUInt64LE(0)).toBe(256n)
-    expect([...buffer]).toEqual([0, 1, 0, 0, 0, 0, 0, 0])
-  })
-
-  it("round-trips an arbitrary slug code", () => {
-    const buffer =
-      SolanaOutpostBootstrapper.slugNameToLittleEndianBuffer(123_456_789)
-    expect(buffer.readBigUInt64LE(0)).toBe(123_456_789n)
-  })
-})
-
 describe("SolanaOutpostBootstrapper.SplReserveSpecifications", () => {
   it("provisions USDCSOL / USDTSOL / LIQSOL with the expected decimals", () => {
     const byCode = new Map(

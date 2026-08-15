@@ -12,6 +12,7 @@ import { getLogger } from "../../logging/Logger.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../utils/asyncUtils.js"
 import { mkdirs } from "../../utils/fsUtils.js"
+import { tokenCodeToLittleEndianBuffer } from "../../utils/slugUtils.js"
 import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
 import { SolanaOutpostProgramTool } from "../../tools/solana/SolanaOutpostProgramTool.js"
 
@@ -211,8 +212,8 @@ export class SolanaOutpostBootstrapper {
     const [address] = PublicKey.findProgramAddressSync(
       [
         Buffer.from(seed),
-        SolanaOutpostBootstrapper.slugNameToLittleEndianBuffer(tokenCode),
-        SolanaOutpostBootstrapper.slugNameToLittleEndianBuffer(reserveCode)
+        tokenCodeToLittleEndianBuffer(BigInt(tokenCode)),
+        tokenCodeToLittleEndianBuffer(BigInt(reserveCode))
       ],
       programId
     )
@@ -395,6 +396,18 @@ export class SolanaOutpostBootstrapper {
     const primaryCode = new anchor.BN(SlugName.from(SolanaOutpostBootstrapper.PrimaryReserveCodename))
     const persisted: SolanaOutpostBootstrapper.PersistedSplMint[] = []
 
+    // Every registered SPL mint can back a CollateralPosition, and an
+    // OPERATOR_ACTION(SLASH) settles that custody into the reserve_aggregate's
+    // canonical ATA (opp/inbound.rs `process_slash_action` SPL branch). The
+    // program never creates ATAs, so a missing one makes the slash log-and-skip
+    // — silently dropping the seizure, which carries no return attestation to
+    // re-drive it. Pre-create the aggregate ATA per mint here so every SPL slash
+    // has a live destination (SOL-380).
+    const reserveAggregatePda = this.deriveProgramAddress(
+      programId,
+      SolanaOutpostBootstrapper.PdaSeed.ReserveAggregate
+    )
+
     // Sequential: each step depends on the previous landing on-chain.
     await mapSeries(
       SolanaOutpostBootstrapper.SplReserveSpecifications,
@@ -441,6 +454,16 @@ export class SolanaOutpostBootstrapper {
           setPrecisionTransaction,
           `set_token_precision(${specification.codeName})`
         )
+
+        // reserve_aggregate is a PDA (off-curve owner) — the SPL slash destination.
+        const aggregateAta = await SolanaFundingTool.ensureAssociatedTokenAccount(
+          this.connection,
+          deployer,
+          mint,
+          reserveAggregatePda,
+          true
+        )
+        log.info(`[solana]    reserve_aggregate ATA ensured (ata=${aggregateAta.toBase58()})`)
 
         const reservePda = this.deriveReserveScopedAddress(
           programId,
@@ -675,13 +698,4 @@ export namespace SolanaOutpostBootstrapper {
     return Path.join(process.env.HOME || "~", ".config", "solana", "id.json")
   }
 
-  /**
-   * Encode a `number` slug_name as an 8-byte little-endian Buffer matching the
-   * program's `to_le_bytes()` seed derivation.
-   */
-  export function slugNameToLittleEndianBuffer(value: number): Buffer {
-    const buffer = Buffer.alloc(8)
-    buffer.writeBigUInt64LE(BigInt(value))
-    return buffer
-  }
 }

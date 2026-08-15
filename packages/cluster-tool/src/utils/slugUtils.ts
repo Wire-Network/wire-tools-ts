@@ -1,6 +1,22 @@
 import { identity } from "lodash"
 import { match, P } from "ts-pattern"
 
+/** Byte width of a `u64` token-code PDA seed. */
+const TokenCodeByteWidth = 8
+
+/**
+ * Encode a `u64` token code as the 8-byte little-endian buffer used by Solana
+ * programs' `to_le_bytes()` PDA seeds.
+ *
+ * @param value - The token-code value to encode.
+ * @returns An 8-byte little-endian buffer.
+ */
+export function tokenCodeToLittleEndianBuffer(value: bigint): Buffer {
+  const buffer = Buffer.alloc(TokenCodeByteWidth)
+  buffer.writeBigUInt64LE(value)
+  return buffer
+}
+
 /**
  * The numeric value of a slug cell as returned by a v6 KV table read.
  *
