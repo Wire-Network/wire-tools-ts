@@ -177,6 +177,74 @@ describe("WireClient", () => {
     })
   })
 
+  describe("claimable reads", () => {
+    // Two defects lived in these two lines. First the bound was the bare account name, which the
+    // node cannot parse as JSON. Then, with that fixed, lower == upper described an EMPTY range:
+    // chain_plugin breaks on `kv >= ub_sv`, so the row can never come back and the flow's poll
+    // times out instead of erroring. Both were only reachable from flow-swap-to-wire.
+    const rowsFor = (client: WireClient, captured: any[]) =>
+      jest
+        .spyOn(client, "getTableRows")
+        .mockImplementation(async (query: any) => {
+          captured.push(query)
+          return { rows: [{ account: "wirercpt", balance: "1234" }], more: false } as never
+        })
+
+    it("sends a lower bound and NO upper bound", async () => {
+      const client = new WireClient(config),
+        captured: any[] = []
+      rowsFor(client, captured)
+      await client.getWireClaimable("wirercpt")
+      const [query] = captured
+      expect(query.lowerBound).toBe(WireClient.nameKeyBound("account", "wirercpt"))
+      expect(query.upperBound).toBeUndefined()
+    })
+
+    it("returns the balance when the row belongs to the account", async () => {
+      const client = new WireClient(config)
+      rowsFor(client, [])
+      expect(await client.getWireClaimable("wirercpt")).toBe(1234n)
+    })
+
+    it("returns 0n when the walk lands on the NEXT account's row", async () => {
+      // lower_bound returns the first row at-or-after the key, so an account with no row reads
+      // back a stranger's. Without the identity check this reported someone else's balance.
+      const client = new WireClient(config)
+      jest
+        .spyOn(client, "getTableRows")
+        .mockResolvedValue({
+          rows: [{ account: "wireother", balance: "999" }],
+          more: false
+        } as never)
+      expect(await client.getWireClaimable("wirercpt")).toBe(0n)
+    })
+
+    it("returns 0n when the table has no rows at all", async () => {
+      const client = new WireClient(config)
+      jest
+        .spyOn(client, "getTableRows")
+        .mockResolvedValue({ rows: [], more: false } as never)
+      expect(await client.getWireClaimable("wirercpt")).toBe(0n)
+    })
+
+    it("reads payclaims through its own key + row field names", async () => {
+      const client = new WireClient(config),
+        captured: any[] = []
+      jest.spyOn(client, "getTableRows").mockImplementation(async (query: any) => {
+        captured.push(query)
+        return {
+          rows: [{ account_name: "wirercpt", balance: "77" }],
+          more: false
+        } as never
+      })
+      expect(await client.getPayClaimable("wirercpt")).toBe(77n)
+      expect(captured[0].table).toBe("payclaims")
+      expect(captured[0].lowerBound).toBe(
+        WireClient.nameKeyBound("account_name", "wirercpt")
+      )
+    })
+  })
+
   describe("nameKeyBound", () => {
     // The node parses a json=true bound with fc::json::from_string and encodes it via
     // be_key_codec::encode_key, which does .get_object() and looks each key field up BY NAME.

@@ -443,16 +443,40 @@ export class WireClient {
    * version is released and this package's dependency is bumped.
    */
   async getWireClaimable(account: string): Promise<bigint> {
-    const bound = WireClient.nameKeyBound("account", account)
+    return this.claimableBalance("sysio.reserv", "wireclaims", "account", account)
+  }
+
+  /**
+   * One claimable row's balance, or 0n when the account has none.
+   *
+   * Reads with a LOWER bound only. The node's upper bound is EXCLUSIVE
+   * (`chain_plugin.cpp`: `if (has_upper && kv >= ub_sv) break;` — the exclusive increment at the
+   * `find` branch does not apply here), so passing lower == upper describes an empty range and
+   * returns nothing however long you poll.
+   *
+   * Keys encode big-endian (`be_key_codec`), so iteration is numeric order and the first row
+   * at-or-after the key belongs to this account IF it has one. When it does not, the walk yields
+   * the NEXT account's row — which is why the identity check is load-bearing here, not defensive:
+   * without it an unpaid account reads back a stranger's balance.
+   */
+  private async claimableBalance(
+    contract: string,
+    table: string,
+    keyField: string,
+    account: string
+  ): Promise<bigint> {
     const { rows } = await this.getTableRows<WireClient.ClaimableRow>({
-      account: "sysio.reserv",
-      scope: "sysio.reserv",
-      table: "wireclaims",
-      lowerBound: bound,
-      upperBound: bound,
+      account: contract,
+      scope: contract,
+      table,
+      lowerBound: WireClient.nameKeyBound(keyField, account),
       limit: 1
     })
-    return rows.length === 0 ? 0n : BigInt(rows[0].balance)
+    const [row] = rows
+    if (row == null) return 0n
+    // wireclaims names the row's account `account`; payclaims names it `account_name`.
+    const { account: rowAccount, account_name: rowAccountName, balance } = row
+    return (rowAccount ?? rowAccountName) === account ? BigInt(balance) : 0n
   }
 
   /**
@@ -473,16 +497,7 @@ export class WireClient {
   /** Epoch pay owed to `account` but not yet claimed, or 0n when there is no row. Raw table read
    *  for the same reason as {@link getWireClaimable}. */
   async getPayClaimable(account: string): Promise<bigint> {
-    const bound = WireClient.nameKeyBound("account_name", account)
-    const { rows } = await this.getTableRows<WireClient.ClaimableRow>({
-      account: "sysio",
-      scope: "sysio",
-      table: "payclaims",
-      lowerBound: bound,
-      upperBound: bound,
-      limit: 1
-    })
-    return rows.length === 0 ? 0n : BigInt(rows[0].balance)
+    return this.claimableBalance("sysio", "payclaims", "account_name", account)
   }
 
   // Convenience getters delegate to the typed contract-table accessor
@@ -952,6 +967,10 @@ export namespace WireClient {
    */
   export interface ClaimableRow {
     balance: string | number
+    /** `wireclaims` carries the row's owner here… */
+    account?: string
+    /** …and `payclaims` here. Exactly one is present, per that table's ABI. */
+    account_name?: string
   }
 
   // ── Contract-client typing (keyed by contract Name + member) ──
