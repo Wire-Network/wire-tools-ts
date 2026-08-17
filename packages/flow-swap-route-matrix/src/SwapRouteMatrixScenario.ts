@@ -40,7 +40,7 @@ const { Actor } = Report
 export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
   readonly name = "flow-swap-route-matrix"
   readonly description =
-    "Exhaustive configured route matrix across ETH, LIQETH, USDC, USDT, SOL, LIQSOL, USDCSOL, USDTSOL, and WIRE"
+    "Supported-token route matrix plus an explicit LIQETH protocol-rejection check"
 
   override readonly defaults: ClusterBuildOptions = {
     enableMockReserves: true,
@@ -95,7 +95,7 @@ export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
     ClusterBuildPhase.create<SwapScenarioContext>(
       cluster,
       "PrerequisiteHealth",
-      "WIRE produces blocks and all eight configured public reserves exist",
+      "WIRE produces blocks and all seven supported public reserves exist",
       [
         verifyStep<SwapScenarioContext>(
           Actor.Sysio,
@@ -150,42 +150,21 @@ export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
 
     ClusterBuildPhase.create<SwapScenarioContext>(
       cluster,
-      "LiqEthReserveLiquidity",
-      "Bring physical LIQETH custody up to the configured logical reserve floor"
-    ).push(
-      Steps.planAcquireLiqEthReserveLiquidity(
-        Actor.EthereumOutpost,
-        "acquire-liqeth-liquidity",
-        "deployer acquires any LIQETH shortfall through DepositManager",
-        writeOptions,
-        Constants.LiqEthReserveFunding
-      ),
-      Steps.planTransferLiqEthReserveLiquidity(
-        Actor.EthereumOutpost,
-        "fund-liqeth-reserve",
-        "transfer the remaining LIQETH shortfall into ReserveManager custody",
-        writeOptions,
-        Constants.LiqEthReserveFunding
-      )
-    )
-
-    ClusterBuildPhase.create<SwapScenarioContext>(
-      cluster,
       "SwapUserTokens",
-      "Fund every configured non-native source token for all route directions",
+      "Fund supported non-native sources and the isolated LIQETH policy probe",
       [
-        ...Constants.EthereumTokens.filter(
-          token => token.symbol !== Constants.EthereumNativeSymbol
-        ).map(token =>
-          Steps.planFundErc20SwapUser(
-            Actor.User,
-            `fund-${token.id}`,
-            `fund the swap user with ${token.symbol}`,
-            writeOptions,
-            token,
-            token.sourceAmount * Constants.UserFundingMultiple
-          )
-        ),
+        ...[...Constants.EthereumTokens, Constants.LiqEthToken]
+          .filter(token => token.symbol !== Constants.EthereumNativeSymbol)
+          .map(token =>
+            Steps.planFundErc20SwapUser(
+              Actor.User,
+              `fund-${token.id}`,
+              `fund the swap user with ${token.symbol}`,
+              writeOptions,
+              token,
+              token.sourceAmount * Constants.UserFundingMultiple
+            )
+          ),
         ...Constants.SolanaTokens.filter(
           token => token.symbol !== Constants.SolanaNativeSymbol
         ).map(token =>
@@ -201,10 +180,31 @@ export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
       ]
     )
 
+    ClusterBuildPhase.create<SwapScenarioContext>(
+      cluster,
+      "UnsupportedSwapTokens",
+      "Assert LIQETH remains explicitly rejected instead of entering the positive matrix"
+    ).push(
+      Steps.planApproveErc20Spend(
+        Actor.User,
+        "approve-liqeth-probe",
+        "approve the exact LIQETH probe amount",
+        writeOptions,
+        Constants.LiqEthUnsupportedRoute
+      ),
+      Steps.planVerifyLiqEthUnsupported(
+        Actor.EthereumOutpost,
+        "liqeth-source-rejected",
+        `LIQETH source rejects with ${Constants.LiqEthUnsupportedError}`,
+        writeOptions,
+        Constants.LiqEthUnsupportedRoute
+      )
+    )
+
     WireUnderwriterTool.planCollateralDeposit<SwapScenarioContext>(
       cluster,
       "UnderwriterCollateral",
-      "Bond every configured external (chain, token) collateral bucket",
+      "Bond every supported external (chain, token) collateral bucket",
       writeOptions,
       underwriterLabels,
       collateral

@@ -3,7 +3,7 @@
   "version": "0.1.16",
   "private": true,
   "type": "commonjs",
-  "description": "Flow: exhaustive 72-route matrix across every configured public Ethereum, Solana, and WIRE token",
+  "description": "Flow: exhaustive 56-route matrix across supported Ethereum, Solana, and WIRE tokens, plus LIQETH rejection policy",
   "scripts": {
     "build": "tsc -b tsconfig.json",
     "test": "node lib/index.js",

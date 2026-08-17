@@ -134,7 +134,7 @@ export namespace SwapRouteMatrixScenarioConstants {
   export const ToleranceBps = 500
   /** Native-leg minimum mirrored into the operator eligibility config. */
   export const UnderwriterMinimumBond = 1_000_000_000
-  /** Per-token collateral covering all persistent locks in the 72-route run. */
+  /** Per-token collateral covering all persistent locks in the supported run. */
   export const UnderwriterCollateralAmount = 15_000_000_000n
 
   /** Shared WIRE endpoint account used as recipient and funded depositor. */
@@ -143,8 +143,10 @@ export namespace SwapRouteMatrixScenarioConstants {
   export const WireUserFunding = 2_000_000_000n
   /** Source-token funding multiplier over one route amount. */
   export const UserFundingMultiple = 12n
-  /** LIQETH liquidity floor matching the configured logical reserve. */
-  export const LiqEthReserveFunding = 10_000_000_000_000_000_000n
+  /** Positive target used by the non-mutating LIQETH rejection probe. */
+  export const UnsupportedProbeTargetAmount = SourceDepotUnits
+  /** Exact protocol error proving LIQETH is currently unsupported as source. */
+  export const LiqEthUnsupportedError = "WIRE_FeeOnTransferUnsupported"
   /** Ethereum outpost address/ABI artifact key. */
   export const ReserveManagerContractName = "ReserveManager"
   /** Ethereum liqETH deposit contract artifact key. */
@@ -161,7 +163,18 @@ export namespace SwapRouteMatrixScenarioConstants {
   /** Routes with WIRE as one endpoint have only the outpost-side lock. */
   export const WireEndpointLockCount = 1
 
-  /** Configured Ethereum reserve tokens. */
+  /** LIQETH descriptor retained only for the expected-rejection probe. */
+  export const LiqEthToken: SwapRouteToken = token(
+    "ethereum-liqeth",
+    LiqEthSymbol,
+    SwapRouteEndpoint.Ethereum,
+    EthereumChainCode,
+    EthereumDecimals,
+    SourceEthereumUnits,
+    SwapRouteSourceKind.Erc20Approval
+  )
+
+  /** Supported Ethereum swap tokens. */
   export const EthereumTokens: readonly SwapRouteToken[] = [
     token(
       "ethereum-eth",
@@ -171,15 +184,6 @@ export namespace SwapRouteMatrixScenarioConstants {
       EthereumDecimals,
       SourceEthereumUnits,
       SwapRouteSourceKind.Native
-    ),
-    token(
-      "ethereum-liqeth",
-      LiqEthSymbol,
-      SwapRouteEndpoint.Ethereum,
-      EthereumChainCode,
-      EthereumDecimals,
-      SourceEthereumUnits,
-      SwapRouteSourceKind.Erc20Approval
     ),
     token(
       "ethereum-usdc",
@@ -201,7 +205,7 @@ export namespace SwapRouteMatrixScenarioConstants {
     )
   ]
 
-  /** Configured Solana reserve tokens. */
+  /** Supported Solana swap tokens. */
   export const SolanaTokens: readonly SwapRouteToken[] = [
     token(
       "solana-sol",
@@ -252,7 +256,13 @@ export namespace SwapRouteMatrixScenarioConstants {
     SwapRouteSourceKind.Wire
   )
 
-  /** Every configured external reserve token. */
+  /** LIQETH source policy probe; deliberately excluded from all positive routes. */
+  export const LiqEthUnsupportedRoute: SwapRoute = route(
+    LiqEthToken,
+    SolanaTokens[0]
+  )
+
+  /** Every currently supported external swap token. */
   export const ExternalTokens: readonly SwapRouteToken[] = [
     ...EthereumTokens,
     ...SolanaTokens
@@ -266,13 +276,13 @@ export namespace SwapRouteMatrixScenarioConstants {
       directions: [
         direction(
           "EthereumToSolana",
-          "Every configured Ethereum token → every configured Solana token",
+          "Every supported Ethereum token → every supported Solana token",
           EthereumTokens,
           SolanaTokens
         ),
         direction(
           "SolanaToEthereum",
-          "Every configured Solana token → every configured Ethereum token",
+          "Every supported Solana token → every supported Ethereum token",
           SolanaTokens,
           EthereumTokens
         )
@@ -284,29 +294,29 @@ export namespace SwapRouteMatrixScenarioConstants {
       directions: [
         sameEndpointDirection(
           "EthereumToEthereum",
-          "Every distinct configured Ethereum token pair",
+          "Every distinct supported Ethereum token pair",
           EthereumTokens
         ),
         sameEndpointDirection(
           "SolanaToSolana",
-          "Every distinct configured Solana token pair",
+          "Every distinct supported Solana token pair",
           SolanaTokens
         )
       ]
     },
     {
       name: "ExternalToWireRoutes",
-      description: "Every configured external token paid directly in WIRE",
+      description: "Every supported external token paid directly in WIRE",
       directions: [
         direction(
           "EthereumToWire",
-          "Every configured Ethereum token → WIRE",
+          "Every supported Ethereum token → WIRE",
           EthereumTokens,
           [WireToken]
         ),
         direction(
           "SolanaToWire",
-          "Every configured Solana token → WIRE",
+          "Every supported Solana token → WIRE",
           SolanaTokens,
           [WireToken]
         )
@@ -318,13 +328,13 @@ export namespace SwapRouteMatrixScenarioConstants {
       directions: [
         direction(
           "WireToEthereum",
-          "WIRE → every configured Ethereum token",
+          "WIRE → every supported Ethereum token",
           [WireToken],
           EthereumTokens
         ),
         direction(
           "WireToSolana",
-          "WIRE → every configured Solana token",
+          "WIRE → every supported Solana token",
           [WireToken],
           SolanaTokens
         )
@@ -336,8 +346,8 @@ export namespace SwapRouteMatrixScenarioConstants {
   export const AllRoutes: readonly SwapRoute[] = RouteFamilies.flatMap(family =>
     family.directions.flatMap(routeDirection => routeDirection.routes)
   )
-  /** Expected exhaustive route count: 32 cross + 24 same-outpost + 16 WIRE. */
-  export const ConfiguredRouteCount = 72
+  /** Expected supported route count: 24 cross + 18 same-outpost + 14 WIRE. */
+  export const ConfiguredRouteCount = 56
 }
 
 /** Create one configured token descriptor. */

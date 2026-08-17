@@ -127,7 +127,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `cluster-tool` | `@wireio/cluster-tool` | Core harness: process managers, chain clients, bootstrap, **`wire-cluster-tool` CLI** |
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Node-operator collateral deposit + withdraw remit |
 | `flow-swap-with-underwriting` | `@wireio/test-flow-swap-with-underwriting` | Bidirectional SWAP (ETH ↔ SOL) with underwriting |
-| `flow-swap-route-matrix` | `@wireio/test-flow-swap-route-matrix` | Collect-all 72-route matrix across all configured public ETH/SOL/LIQ/stable/WIRE tokens |
+| `flow-swap-route-matrix` | `@wireio/test-flow-swap-route-matrix` | Collect-all 56-route matrix across supported ETH/SOL/stable/WIRE tokens, plus explicit LIQETH rejection policy |
 | `flow-swap-non-native-tokens` | `@wireio/test-flow-swap-non-native-tokens` | SWAP of non-native tokens (USDC / USDT / LIQ) |
 | `flow-swap-variance-revert` | `@wireio/test-flow-swap-variance-revert` | Swap variance-tolerance revert |
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
@@ -136,10 +136,10 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
 Flow packages depend on the harness via `workspace:*`.
-The route matrix resolves the real LIQETH token from `liqeth-addrs.json` and
-acquires it through `DepositManager`; only the local stablecoins use mock minting.
-Every DepositManager write uses the same per-signer nonce sequence as adjacent
-collateral and swap transactions.
+The route matrix excludes LIQETH from positive routes while retaining an exact
+`WIRE_FeeOnTransferUnsupported` policy check against the real token from
+`liqeth-addrs.json`; only the local stablecoins use mock minting. Ethereum swap
+submission failures reset the shared nonce sequence before later routes run.
 
 ## Running flows
 
