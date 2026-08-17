@@ -5,6 +5,7 @@ import {
   contractView,
   ethereumRevertReason,
   resolveLatestNonce,
+  submitWithResolvedNonce,
   toURL
 } from "@wireio/cluster-tool/utils"
 
@@ -100,6 +101,27 @@ describe("resolveLatestNonce — a Signer source", () => {
     expect(await resolveLatestNonce(view)).toBe(SeedNonce)
     expect(await resolveLatestNonce(signer)).toBe(SeedNonce + 1)
     expect(await resolveLatestNonce(view)).toBe(SeedNonce + 2)
+  })
+
+  it("re-seeds after a pre-broadcast submission rejection", async () => {
+    await expect(
+      submitWithResolvedNonce(signer, nonce => {
+        expect(nonce).toBe(SeedNonce)
+        return Promise.reject(new Error("estimateGas reverted"))
+      })
+    ).rejects.toThrow("estimateGas reverted")
+
+    expect(await resolveLatestNonce(signer)).toBe(SeedNonce)
+    expect(provider.getTransactionCount).toHaveBeenCalledTimes(2)
+  })
+
+  it("keeps the incremented counter after submission succeeds", async () => {
+    await expect(
+      submitWithResolvedNonce(signer, nonce => Promise.resolve(nonce))
+    ).resolves.toBe(SeedNonce)
+
+    expect(await resolveLatestNonce(signer)).toBe(SeedNonce + 1)
+    expect(provider.getTransactionCount).toHaveBeenCalledTimes(1)
   })
 
   it("throws when the signer has no Provider", async () => {

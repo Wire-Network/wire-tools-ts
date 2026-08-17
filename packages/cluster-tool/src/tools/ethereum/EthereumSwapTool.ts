@@ -21,6 +21,7 @@ import { ethers } from "ethers"
 
 import {
   resolveLatestNonce,
+  submitWithResolvedNonce,
   type EthereumPayableOverrides
 } from "../../utils/ethereumUtils.js"
 
@@ -117,17 +118,18 @@ export async function requestEthereumSwap(
   Assert.ok(request.targetToleranceBps >= 0 && request.targetToleranceBps <= 10_000,
     `EthereumSwapTool: targetToleranceBps must be in [0, 10000], got ${request.targetToleranceBps}`)
 
-  const nonce = await resolveLatestNonce(reserveManager)
-  const tx = await reserveManager.requestSwap(
-    request.sourceTokenCode,
-    request.sourceReserveCode,
-    request.targetChainCode,
-    request.targetTokenCode,
-    request.targetReserveCode,
-    request.targetRecipient,
-    request.targetAmount,
-    request.targetToleranceBps,
-    { value: request.sourceAmountWei, nonce }
+  const tx = await submitWithResolvedNonce(reserveManager, nonce =>
+    reserveManager.requestSwap(
+      request.sourceTokenCode,
+      request.sourceReserveCode,
+      request.targetChainCode,
+      request.targetTokenCode,
+      request.targetReserveCode,
+      request.targetRecipient,
+      request.targetAmount,
+      request.targetToleranceBps,
+      { value: request.sourceAmountWei, nonce }
+    )
   )
   const receipt = await tx.wait(1)
   Assert.ok(
@@ -197,8 +199,10 @@ export interface ReserveManagerErc20SwapContract extends ethers.BaseContract {
  * EIP-2612 permit. The whole call is atomic: permit + transferFrom +
  * fee-on-transfer guard + outbound queue all happen in a single tx.
  *
- * Used by `flow-swap-non-native-tokens` for USDC / USDT / LIQETH source
- * legs. Native-ETH source still flows through `requestEthereumSwap`.
+ * Used by `flow-swap-non-native-tokens` for USDC / USDT source legs.
+ * LIQETH currently fails the fee-on-transfer guard and is isolated as an
+ * expected rejection in `flow-swap-route-matrix`. Native-ETH source still
+ * flows through `requestEthereumSwap`.
  */
 export async function requestEthereumSwapErc20WithPermit(
   reserveManager: ReserveManagerErc20SwapContract,
@@ -214,8 +218,9 @@ export async function requestEthereumSwapErc20WithPermit(
   Assert.ok(args.targetToleranceBps >= 0 && args.targetToleranceBps <= 10_000,
     `EthereumSwapTool: targetToleranceBps must be in [0, 10000], got ${args.targetToleranceBps}`)
 
-  const nonce = await resolveLatestNonce(reserveManager)
-  const tx = await reserveManager.requestSwapErc20WithPermit(args, permitSig, { nonce })
+  const tx = await submitWithResolvedNonce(reserveManager, nonce =>
+    reserveManager.requestSwapErc20WithPermit(args, permitSig, { nonce })
+  )
   const receipt = await tx.wait(1)
   Assert.ok(
     receipt !== null && receipt.status === 1,
@@ -248,8 +253,9 @@ export async function requestEthereumSwapErc20WithApproval(
   Assert.ok(args.targetToleranceBps >= 0 && args.targetToleranceBps <= 10_000,
     `EthereumSwapTool: targetToleranceBps must be in [0, 10000], got ${args.targetToleranceBps}`)
 
-  const nonce = await resolveLatestNonce(reserveManager)
-  const tx = await reserveManager.requestSwapErc20WithApproval(args, { nonce })
+  const tx = await submitWithResolvedNonce(reserveManager, nonce =>
+    reserveManager.requestSwapErc20WithApproval(args, { nonce })
+  )
   const receipt = await tx.wait(1)
   Assert.ok(
     receipt !== null && receipt.status === 1,
