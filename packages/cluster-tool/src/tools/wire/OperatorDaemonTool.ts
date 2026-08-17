@@ -127,7 +127,6 @@ export namespace OperatorDaemonTool {
   export const EthereumAbiContractNames = [
     "OPP",
     "OPPInbound",
-    "BAR",
     "ReserveManager",
     "OperatorRegistry"
   ] as const

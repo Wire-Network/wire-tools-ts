@@ -22,16 +22,35 @@ import { plainify } from "@wireio/debugging-shared"
  * ethers' receipt/blockNumber alternation). A per-step ceiling
  * ({@link StepExtraRecorder.MaxCalls}) bounds pathological steps; overflow is
  * surfaced as `dropped` on the `extra` object rather than lost silently.
+ *
+ * **Harness NOTES ride a reserved bucket of their own**
+ * ({@link StepExtraRecorder.MaxNotes}), never the client-call ceiling. A note
+ * is the runner's own semantic account of what it did — the metric it
+ * measured, the reason it skipped — and is worth strictly more than any single
+ * RPC entry. Sharing one budget let high-volume chatter EVICT them: in a live
+ * saturating run every one of the 12 capped steps lost its notes to poll
+ * traffic (one payout step dropped 51,186 calls and its note with them),
+ * leaving exactly the steps that most needed explaining as the ones that
+ * explained nothing.
  */
 export class StepExtraRecorder {
   private readonly callList: StepExtraRecorder.ClientCall[] = []
   /** Dedupe keys parallel to {@link callList} (never serialized). */
   private readonly keyList: string[] = []
   private droppedCount = 0
+  private readonly noteList: StepExtraRecorder.ClientCall[] = []
+  /** Dedupe keys parallel to {@link noteList} (never serialized). */
+  private readonly noteKeyList: string[] = []
+  private droppedNoteCount = 0
 
   /** The calls recorded so far — internally mutable, externally read-only. */
   get calls(): ReadonlyArray<StepExtraRecorder.ClientCall> {
     return this.callList
+  }
+
+  /** The harness notes recorded so far — internally mutable, externally read-only. */
+  get notes(): ReadonlyArray<StepExtraRecorder.ClientCall> {
+    return this.noteList
   }
 
   /**
@@ -45,41 +64,84 @@ export class StepExtraRecorder {
    * @param call - The call entry (client + kind + call-specific payload data).
    */
   record(call: StepExtraRecorder.ClientCall): void {
-    const entry = StepExtraRecorder.capStrings(
-      plainify(call)
-    ) as StepExtraRecorder.ClientCall
-    const key = JSON.stringify(entry)
-    const windowStart = Math.max(
-      0,
-      this.keyList.length - StepExtraRecorder.DedupeWindow
+    if (
+      this.append(call, this.callList, this.keyList, StepExtraRecorder.MaxCalls)
     )
-    for (let index = this.keyList.length - 1; index >= windowStart; index--) {
-      if (this.keyList[index] === key) {
-        const prior = this.callList[index]
-        prior.count = ((prior.count as number) ?? 1) + 1
-        return
-      }
-    }
-    if (this.callList.length >= StepExtraRecorder.MaxCalls) {
-      this.droppedCount++
       return
-    }
-    this.callList.push(entry)
-    this.keyList.push(key)
+    this.droppedCount++
   }
 
   /**
-   * The step's `Report.StepResult.extra` value: `{ calls: [...] }` (plus
-   * `dropped` when the {@link StepExtraRecorder.MaxCalls} ceiling cut
-   * entries), or null when the step recorded nothing.
+   * Record one harness note onto the RESERVED note bucket, so a runner's own
+   * account of what it did survives however much client chatter the step also
+   * produced.
+   *
+   * @param call - The note entry (`kind: "note"` plus its merged data).
+   */
+  recordNote(call: StepExtraRecorder.ClientCall): void {
+    if (
+      this.append(
+        call,
+        this.noteList,
+        this.noteKeyList,
+        StepExtraRecorder.MaxNotes
+      )
+    )
+      return
+    this.droppedNoteCount++
+  }
+
+  /**
+   * Plainify, cap, dedupe-or-append one entry into a bucket.
+   *
+   * @param call - The raw entry.
+   * @param entries - The bucket to append into.
+   * @param keys - Dedupe keys parallel to `entries`.
+   * @param ceiling - Bucket capacity.
+   * @returns `true` when the entry was collapsed or appended; `false` when the
+   *   bucket was full and the caller must count it as dropped.
+   */
+  private append(
+    call: StepExtraRecorder.ClientCall,
+    entries: StepExtraRecorder.ClientCall[],
+    keys: string[],
+    ceiling: number
+  ): boolean {
+    const entry = StepExtraRecorder.capStrings(
+        plainify(call)
+      ) as StepExtraRecorder.ClientCall,
+      key = JSON.stringify(entry),
+      windowStart = Math.max(0, keys.length - StepExtraRecorder.DedupeWindow)
+    for (let index = keys.length - 1; index >= windowStart; index--) {
+      if (keys[index] === key) {
+        const prior = entries[index]
+        prior.count = ((prior.count as number) ?? 1) + 1
+        return true
+      }
+    }
+    if (entries.length >= ceiling) return false
+    entries.push(entry)
+    keys.push(key)
+    return true
+  }
+
+  /**
+   * The step's `Report.StepResult.extra` value: `{ calls: [...] }` with the
+   * step's notes FIRST (they say what the step did; the client calls say how),
+   * plus `dropped` / `droppedNotes` when either ceiling cut entries, or null
+   * when the step recorded nothing.
    */
   toExtra(): Record<string, unknown> {
-    if (this.callList.length === 0) {
+    if (this.callList.length === 0 && this.noteList.length === 0) {
       return null
     }
-    return this.droppedCount > 0
-      ? { calls: [...this.callList], dropped: this.droppedCount }
-      : { calls: [...this.callList] }
+    return {
+      calls: [...this.noteList, ...this.callList],
+      ...(this.droppedCount > 0 ? { dropped: this.droppedCount } : {}),
+      ...(this.droppedNoteCount > 0
+        ? { droppedNotes: this.droppedNoteCount }
+        : {})
+    }
   }
 }
 
@@ -106,6 +168,13 @@ export namespace StepExtraRecorder {
 
   /** Per-step recorded-call ceiling; overflow increments `dropped`. */
   export const MaxCalls = 250
+
+  /**
+   * Per-step harness-NOTE ceiling, budgeted separately from {@link MaxCalls}
+   * so client chatter can never evict a runner's own account of the step.
+   * Overflow increments `droppedNotes`.
+   */
+  export const MaxNotes = 100
 
   /** Longest string preserved verbatim in a recorded entry. */
   export const MaxStringLength = 600
@@ -169,7 +238,7 @@ export namespace StepExtraRecorder {
    * extra structured fields into the entry.
    */
   export function note(text: string, data: Record<string, unknown> = {}): void {
-    current()?.record({ client: "harness", kind: "note", text, ...data })
+    current()?.recordNote({ client: "harness", kind: "note", text, ...data })
   }
 
   /**

@@ -388,6 +388,7 @@ export namespace ClusterManager {
         // create-path's post-deploy `evm_setIntervalMining` RPC toggle) — a
         // relaunch never runs the outpost deploy that needs instamine.
         const anvil = await AnvilProcess.create(ctx.processManager, {
+          gasUncapped: ctx.config.ethereumGasUncapped,
           host: config.bind.anvil.address,
           port: config.bind.anvil.port,
           chainId: AnvilProcess.DefaultChainId,

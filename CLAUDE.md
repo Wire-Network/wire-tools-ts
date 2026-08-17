@@ -25,7 +25,7 @@ Never use `npm` or `yarn`.
 ```bash
 pnpm install               # links workspace + sibling-repo packages
 pnpm build                 # tsc -b project references (incremental)
-pnpm test                  # build + jest across all 8 jest projects
+pnpm test                  # build + jest across all 9 jest projects
 pnpm --filter @wireio/cluster-tool test    # harness unit tests only
 pnpm clean                 # remove lib/ + tsbuildinfo everywhere
 
@@ -60,7 +60,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
 | `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize) |
-| `flow-*` (13 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and the six swap variants |
+| `flow-*` (14 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and the seven swap variants |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
 
@@ -94,7 +94,7 @@ One declarative model is shared by the `wire-cluster-tool` CLI and every flow:
 
 - `ClusterBuild` holds a tree of `ClusterBuildPhaseGroup` →
   `ClusterBuildPhase` → `ClusterBuildStep`; running it produces the
-  **`Report`** (CSV/MD/HTML under `<cluster>/reports/`) — the per-step
+  **`Report`** (CSV/MD/HTML/JSON under `<cluster>/reports/`) — the per-step
   narrative that IS the deliverable. `ClusterBuildDefaults.create()` registers
   the ~40-phase bootstrap; a flow's `FlowScenario.plan(cluster)` appends its
   scenario phases.
@@ -113,7 +113,12 @@ One declarative model is shared by the `wire-cluster-tool` CLI and every flow:
   ts-jest; `NODE_OPTIONS=--experimental-vm-modules` is wired into the test
   scripts for the ESM dynamic imports). Root `jest.config.ts` is
   multi-project.
-- **`flow-*` packages have NO jest.** A flow is verified by RUNNING its built
+- **`flow-*` packages have NO jest**, with two carve-outs:
+  `flow-batch-operator-slashing` and `flow-swap-stress-saturation` each ship a
+  `tests/` tree for the pure logic they own (envelope codecs; the stress
+  engine, swap-stress campaign, envelope-integrity reader). Their `test`
+  script still runs the flow — jest reaches them as root projects.
+  A flow is otherwise verified by RUNNING its built
   `lib/index.js` against a live cluster (its `test` script does exactly that) —
   launched via `scripts/run-flow.mjs` and watched via
   `scripts/flow-heartbeat-monitor.mjs`, never invoked directly (see "Live flow
@@ -259,9 +264,14 @@ secret-id pattern), plus `--external-outpost-config <file>` (bootstrap the depot
 against already-deployed REMOTE ETH+SOL outposts — no local anvil/validator),
 `--bind-config <file>` (a complete `BindConfig` used verbatim, or a partial
 override merged over the resolved defaults; a remote anvil/solana address
-requires `--external-outpost-config`), and `--enable-mock-reserves` (default
+requires `--external-outpost-config`), `--enable-mock-reserves` (default
 off — seed the 8 mock (chain, token) PRIMARY reserves at bootstrap; a real /
-external depot leaves these unseeded); `package` writes one `<node>.<ext>` per
+external depot leaves these unseeded), and
+`--ethereum-gas-uncapped` (default off — the cluster runs mainnet-parity gas:
+pinned hardfork + EIP-7825's per-transaction cap + sized block limit, which
+`AnvilProcess` applies regardless; the flag lifts every ceiling so a stress
+failure can be attributed to the protocol rather than the gas limit, and is
+LOCAL-only — the e2e gate never sets it); `package` writes one `<node>.<ext>` per
 node under `<cluster>/packages/` (a hand-off artifact for a multihost environment
 with distinct compute + storage — S3/EC2, GCS, or any other, loosely coupled).
 `create-external-config` clones a CREATED, STOPPED local cluster into a deployable
@@ -315,7 +325,7 @@ so `regreserve` can never be called from a flow phase.
   persisted `cluster-config.json`; `BindConfig` (file-locked, cross-process
   port registry, `findAvailable`/`findAvailableRange`); `NodeConfig.plan` +
   renderers.
-- **`report/`** — `Report` + CSV/MD/HTML renderers + `StepExtraRecorder`
+- **`report/`** — `Report` + CSV/MD/HTML/JSON renderers + `StepExtraRecorder`
   (ALS-scoped per-step extra capture — use native `mapSeries` on recorder
   paths, Bluebird detaches ALS).
 - **`flow/`** — `FlowScenario`/`FlowCLI` + shared scenario contexts +
@@ -342,6 +352,8 @@ link automatically on `pnpm install` when the siblings exist.
 | `WIRE_BUILD_PATH` | wire-sysio build dir (binaries + contract artifacts) |
 | `WIRE_ETH_PATH` / `WIRE_SOLANA_PATH` | Outpost repo roots |
 | `WIRE_FLOW_TIMEOUT_SCALE` | EXPLICIT operator override of flow timing (default 1, clamped [1,5]); no code derives it |
+| `WIRE_STRESS_LOAD_LEVEL` | **LOCAL-ONLY** operator override of stress intensity — `smoke\|light\|moderate\|heavy\|saturating` (`LoadProfile`). The e2e gate does NOT set it: a flow must be standalone there and run on its own default config. Unset preserves each consumer's own default (`flow-swap-stress-saturation` → `saturating`, its calibrated soak); an unrecognised value THROWS |
+| `WIRE_ETHEREUM_GAS_UNCAPPED` | **LOCAL-ONLY** boolean lifting the local Ethereum gas ceilings (`1`/`true`/`yes`). The e2e gate does NOT set it; unset → mainnet parity, which `AnvilProcess` applies unconditionally anyway (pinned hardfork + EIP-7825 per-tx cap + sized block limit). Exists ONLY to separate a protocol failure from a gas-ceiling one — a run under it proves nothing about mainnet. An unrecognised value is FALSE, never a silent opt-in |
 | `WIRE_ETH_DEPLOYMENTS_PATH` | Per-cluster hardhat deployments dir (parallel-run isolation) |
 | `WIRE_BIND_REGISTRY_PATH` | Bind-registry dir override (tests sandbox it) |
 | `LOG_LEVEL` | Logging verbosity (default `info`) |

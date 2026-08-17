@@ -54,6 +54,14 @@ export interface ClusterBuildOptions {
    * to the bootstrap window (epoch 0), so this only ever seeds pre-EpochBootstrap.
    */
   enableMockReserves?: boolean
+  /**
+   * Lift the local Ethereum chain's gas ceilings
+   * (`--ethereum-gas-uncapped`). Default false at every layer, so ordinary
+   * flows run under the realistic ceiling — pinned hardfork, EIP-7825
+   * per-transaction cap, sized block limit. True exists solely to separate
+   * "the protocol failed" from "the gas ceiling stopped it".
+   */
+  ethereumGasUncapped?: boolean
   // termination tuning
   terminateMaxConsecutiveMisses?: number
   terminateMaxPercentMisses24h?: number

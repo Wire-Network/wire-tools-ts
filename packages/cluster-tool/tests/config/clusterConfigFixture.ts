@@ -107,7 +107,8 @@ export const PersistedFixture: ClusterConfig = {
   awsClusterNodeConfig: null,
   externalOutposts: null,
   debuggingServerEnabled: true,
-  enableMockReserves: false
+  enableMockReserves: false,
+  ethereumGasUncapped: false
 }
 
 /** Build a `ClusterConfig` from the fixture (via deserialize — no resolve / env).

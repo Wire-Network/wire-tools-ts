@@ -1,0 +1,91 @@
+import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
+import {
+  resolveEndpointsType,
+  type ParsedEnvelopeStorageKey
+} from "@wireio/debugging-shared"
+
+const CanonicalEpochPattern = /^\d{8}$/
+const CanonicalChecksumPattern = /^[0-9a-f]{16}$/
+
+/**
+ * Serialized issue codes for canonical storage-key validation failures.
+ * Changing a value changes the persisted diagnostic contract consumed by strict
+ * validation clients and evidence readers.
+ */
+export enum EnvelopeStorageKeyValidationIssue {
+  /** Changing this value changes the diagnostic code for malformed key geometry. */
+  Format = "format",
+  /** Changing this value changes the diagnostic code for invalid epoch prefixes. */
+  Epoch = "epoch",
+  /** Changing this value changes the diagnostic code for invalid endpoint names. */
+  Endpoints = "endpoints",
+  /** Changing this value changes the diagnostic code for invalid checksum suffixes. */
+  Checksum = "checksum"
+}
+
+/** Canonical key whose every component parsed and validated. */
+export interface ValidEnvelopeStorageKey {
+  readonly kind: "valid"
+  readonly value: ParsedEnvelopeStorageKey
+}
+
+/** Non-canonical key reported with the component that failed. */
+export interface InvalidEnvelopeStorageKey {
+  readonly kind: "invalid"
+  readonly issue: EnvelopeStorageKeyValidationIssue
+}
+
+/** Typed outcome of validating a canonical envelope storage key. */
+export type EnvelopeStorageKeyValidationResult =
+  ValidEnvelopeStorageKey | InvalidEnvelopeStorageKey
+
+/**
+ * Validate the canonical envelope storage-key geometry written by the server.
+ * Unlike `parseEnvelopeStorageKey` from `@wireio/debugging-shared`, this rejects
+ * non-canonical values and reports the invalid component without throwing.
+ *
+ * @param key Filename-style storage key without its extension.
+ * @returns A parsed canonical key or the issue code for its invalid component.
+ *
+ * @example validateEnvelopeStorageKey("00000042-OUTPOST_ETHEREUM_DEPOT-abc123def4567890")
+ */
+export function validateEnvelopeStorageKey(
+  key: string
+): EnvelopeStorageKeyValidationResult {
+  const segments = key.split("-"),
+    epochKey = segments.at(0) ?? "",
+    endpointsKey = segments.at(1) ?? "",
+    checksum = segments.at(2) ?? "",
+    endpointsType = resolveEndpointsType(endpointsKey)
+  if (segments.length !== 3) {
+    return { kind: "invalid", issue: EnvelopeStorageKeyValidationIssue.Format }
+  }
+  if (!CanonicalEpochPattern.test(epochKey)) {
+    return { kind: "invalid", issue: EnvelopeStorageKeyValidationIssue.Epoch }
+  }
+  if (
+    endpointsType === DebugOutpostEndpointsType.UNKNOWN ||
+    DebugOutpostEndpointsType[endpointsType] !== endpointsKey
+  ) {
+    return {
+      kind: "invalid",
+      issue: EnvelopeStorageKeyValidationIssue.Endpoints
+    }
+  }
+  if (!CanonicalChecksumPattern.test(checksum)) {
+    return {
+      kind: "invalid",
+      issue: EnvelopeStorageKeyValidationIssue.Checksum
+    }
+  }
+
+  return {
+    kind: "valid",
+    value: {
+      key,
+      epochIndex: Number(epochKey),
+      endpointsKey,
+      checksum
+    }
+  }
+}

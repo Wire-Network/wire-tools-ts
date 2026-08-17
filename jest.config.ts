@@ -13,6 +13,7 @@ const config: Config = {
     "packages/cluster-tool-shared",
     "packages/cluster-tool",
     "packages/flow-batch-operator-slashing",
+    "packages/flow-swap-stress-saturation",
     "packages/debugging-shared",
     "packages/debugging-server",
     "packages/debugging-client-shared",

@@ -25,6 +25,7 @@
     { "path": "./packages/flow-swap-from-wire/tsconfig.json" },
     { "path": "./packages/flow-reserve-lifecycle/tsconfig.json" },
     { "path": "./packages/flow-swap-private-reserves/tsconfig.json" },
+    { "path": "./packages/flow-swap-stress-saturation/tsconfig.json" },
     { "path": "./packages/flow-node-owner-nft/tsconfig.json" },
     { "path": "./packages/flow-emissions-soak/tsconfig.json" },
     { "path": "./packages/flow-yield-distribution/tsconfig.json" },

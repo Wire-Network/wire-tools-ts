@@ -6,7 +6,9 @@ import { ChainTokenAmountSchema } from "../types/ChainTokenAmount.js"
 import { AWSClusterNodeConfigSchema } from "./AWSClusterNodeConfig.js"
 import { BindConfigSchema } from "./BindConfig.js"
 import { ClusterSignatureProviderConfigSchema } from "./SignatureProviderConfig.js"
+
 import { ExternalOutpostConfigSchema } from "./ExternalOutpostConfig.js"
+
 
 /**
  * Report output format — value matches the file extension. THE one
@@ -16,7 +18,8 @@ import { ExternalOutpostConfigSchema } from "./ExternalOutpostConfig.js"
 export enum ClusterConfigReportFormat {
   csv = "csv",
   md = "md",
-  html = "html"
+  html = "html",
+  json = "json"
 }
 
 /** The resolved report write target (`Report.Config`'s persisted shape). */
@@ -225,7 +228,23 @@ export const ClusterConfigSchema = z.object({
    * pre-existing configs — and every real/external depot — stay reserve-free
    * unless a caller (or a flow's scenario defaults) opts in.
    */
-  enableMockReserves: z.boolean().default(false)
+  enableMockReserves: z.boolean().default(false),
+  /**
+   * Lift the local Ethereum chain's gas ceilings (the
+   * `--ethereum-gas-uncapped` create flag).
+   *
+   * Default FALSE: the cluster runs mainnet-parity gas — pinned hardfork,
+   * EIP-7825's per-transaction cap, sized block limit — which `AnvilProcess`
+   * applies unconditionally, so outpost work a real chain would reject fails
+   * here too.
+   *
+   * TRUE lifts both ceilings and exists for ONE purpose: establishing that a
+   * failure is not gas-related. That is how ETH-241 (the outbound envelope
+   * genuinely exceeds the ceiling) was separated from WIRE-340 (a depot payout
+   * stall hiding behind it). A run under it proves nothing about mainnet, so it
+   * is never a gate or scenario default — an operator opts in per run.
+   */
+  ethereumGasUncapped: z.boolean().default(false)
 })
 /** THE canonical cluster configuration — the schema-inferred shape of {@link ClusterConfigSchema}. */
 export type ClusterConfig = z.infer<typeof ClusterConfigSchema>

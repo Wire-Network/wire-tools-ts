@@ -83,7 +83,8 @@ describe("ClusterConfig shape", () => {
     awsClusterNodeConfig: null,
     externalOutposts: null,
     debuggingServerEnabled: true,
-    enableMockReserves: false
+    enableMockReserves: false,
+    ethereumGasUncapped: false
   }
 
   it("persists the report/logging enum fields as their wire spellings", () => {

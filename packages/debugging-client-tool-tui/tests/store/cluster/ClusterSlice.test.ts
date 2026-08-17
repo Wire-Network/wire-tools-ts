@@ -93,7 +93,8 @@ const stubConfig: ClusterConfig = {
   awsClusterNodeConfig: null,
   externalOutposts: null,
   debuggingServerEnabled: true,
-  enableMockReserves: false
+  enableMockReserves: false,
+    ethereumGasUncapped: false
 }
 
 /** A complete `ClusterState` fixture (post-bootstrap snapshot, no nodes). */

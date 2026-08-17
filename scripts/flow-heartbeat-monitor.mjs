@@ -8,7 +8,7 @@
  * at `--cluster-path`) and, every `--interval-seconds`, executes ALL six probes
  * from the rule, printing ONE line-oriented, flushed heartbeat on stdout:
  *
- *   HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<n> env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
+ *   HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<n> env=<n> uwreqs=<total>(P<n>/C<n>/D<n>/R<n>/X<n>/V<n>) opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
  *
  * plus `NOISE-TAIL:` / `FAIL-TAIL:` quote lines whenever those deltas are
  * positive. Everything derivable derives from `<cluster-path>/cluster-config.json`
@@ -132,6 +132,17 @@ const TopActionReceipts = 3
 /** Row limit for the operators / envelopes probes — the envelope count caps here. */
 const TableQueryLimit = 50
 
+/**
+ * Row limit for the `sysio.uwrit::uwreqs` probe.
+ *
+ * Deliberately far above {@link TableQueryLimit}: this probe exists to observe
+ * the table GROWING, so a limit near the expected population would hide the
+ * very signal it is here to capture. A saturating campaign submits ~2,500
+ * swaps, and terminal rows are retained (`uwreq_retention_epochs`) until
+ * `pruneuwreqs` erases them, so the live table can hold thousands of rows.
+ */
+const UwreqQueryLimit = 5000
+
 /** The four OPP directions in heartbeat-line order, with their short labels. */
 const OppDirections = [
   { name: "DEPOT_OUTPOST_ETHEREUM", short: "D>E" },
@@ -223,6 +234,23 @@ const SysioOpregAccount = "sysio.opreg"
 const OperatorsTable = "operators"
 const SysioMsgchAccount = "sysio.msgch"
 const EnvelopesTable = "envelopes"
+const SysioUwritAccount = "sysio.uwrit"
+const UwreqsTable = "uwreqs"
+
+/**
+ * `UnderwriteRequestStatus` spellings carried on the heartbeat's `uwreqs=`
+ * field, in lifecycle order. The status arrives as the ABI spelling or its
+ * numeric form; only the distinguishing suffix is rendered so the line stays
+ * readable (`P` pending, `C` confirmed, …).
+ */
+const UwreqStatuses = [
+  { suffix: "PENDING", short: "P" },
+  { suffix: "CONFIRMED", short: "C" },
+  { suffix: "COMPLETED", short: "D" },
+  { suffix: "RELEASED", short: "R" },
+  { suffix: "EXPIRED", short: "X" },
+  { suffix: "REVERTED", short: "V" }
+]
 
 // Cluster-path-relative surfaces.
 const ClusterConfigFilename = "cluster-config.json"
@@ -612,6 +640,35 @@ async function probeEnvelopes(clioExecutable, url) {
   return rows.length
 }
 
+/**
+ * Probe 4b — `sysio.uwrit::uwreqs` total row count + per-status histogram.
+ *
+ * The underwriter plugin's `scan_pending_requests` walks this table in FULL on
+ * every poll and filters PENDING in C++, on the documented assumption that the
+ * table stays small because race-resolved rows leave PENDING within an epoch.
+ * Terminal rows are nonetheless RETAINED until `sysio.uwrit::pruneuwreqs`
+ * erases them, so the table's size is the thing to watch: a PENDING count that
+ * climbs while the plugin reports "found 0 pending" separates a scan that
+ * cannot reach the rows from rows that genuinely left PENDING without settling
+ * (WIRE-340).
+ *
+ * @param {string} clioExecutable resolved clio binary.
+ * @param {string} url the producer HTTP URL.
+ * @return {Promise<{ total: number, byStatus: Record<string, number> } | null>}
+ *   counts, or null while the table is unreachable (pre-bootstrap).
+ */
+async function probeUwreqs(clioExecutable, url) {
+  const rows = await clioGetTableRows(clioExecutable, url, SysioUwritAccount, UwreqsTable, SysioUwritAccount, UwreqQueryLimit)
+  if (rows == null) return null
+  const byStatus = Object.fromEntries(UwreqStatuses.map(status => [status.short, 0]))
+  rows.forEach(row => {
+    const status = String(kvRowValue(row)?.status ?? "")
+    const match = UwreqStatuses.find(candidate => status.endsWith(candidate.suffix))
+    if (match != null) byStatus[match.short] += 1
+  })
+  return { total: rows.length, byStatus }
+}
+
 // ---------------------------------------------------------------------------
 // Probe 5 — opp-debugging artifacts (total + per-direction .metadata counts)
 // ---------------------------------------------------------------------------
@@ -749,7 +806,7 @@ ${chalk.bold("Options:")}
   -h, --help                     print this usage
 
 ${chalk.bold("Output")} (line-oriented on stdout; each line is a Monitor event):
-  HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<n> env=<n> opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
+  HB t=<s> head=<n> lib=<n>(-<gap>) epoch=<n> env=<n> uwreqs=<total>(P<n>/C<n>/D<n>/R<n>/X<n>/V<n>) opp=<total> Δ=<delta> dirs: D>E=<n> E>D=<n> D>S=<n> S>D=<n> acts=[...] fatal=<n>(+<d>) noise=<n>(+<d>)
   NOISE-TAIL: / FAIL-TAIL:  quote lines when the class deltas are positive
   BAIL: <reason>            a red flag fired → SIGINTs the flow, exits 1
                             (cluster dir preserved for forensics)
@@ -888,6 +945,9 @@ while (true) {
   // Probe 4 — msgch outbound envelopes.
   const envelopeCount = await probeEnvelopes(clioExecutable, producerUrl)
 
+  // Probe 4b — uwreq lifecycle population (total + per-status).
+  const uwreqs = await probeUwreqs(clioExecutable, producerUrl)
+
   // Probe 5 — opp-debugging artifacts + per-direction freeze accounting.
   // A plateau = a direction FROZEN for DirectionFreezeBailStreak consecutive
   // beats while the total advances — evaluated only once EVERY direction has a
@@ -922,11 +982,16 @@ while (true) {
   const directionsText = OppDirections.map(
     direction => `${direction.short}=${opp.byDirection[direction.name]}`
   ).join(" ")
+  // `<total>(P<n>/C<n>/…)` — the total is what the plugin's full-table scan
+  // walks; the PENDING bucket is what it is looking for inside that walk.
+  const uwreqsText = uwreqs == null
+    ? "?"
+    : `${uwreqs.total}(${UwreqStatuses.map(status => `${status.short}${uwreqs.byStatus[status.short]}`).join("/")})`
   console.log(
     `HB t=${elapsedSeconds}s head=${headBlockNumber ?? "?"} lib=${libBlockNumber ?? "?"}` +
       `(-${headBlockNumber != null && libBlockNumber != null ? headBlockNumber - libBlockNumber : "?"}) ` +
       `epoch=${epochIndex ?? "?"} ` +
-      `env=${envelopeCount ?? "?"} opp=${opp.total} Δ=${oppDelta} dirs: ${directionsText} ` +
+      `env=${envelopeCount ?? "?"} uwreqs=${uwreqsText} opp=${opp.total} Δ=${oppDelta} dirs: ${directionsText} ` +
       `acts=[${logProbe.actionReceipts.join(" ")}] ` +
       `fatal=${logProbe.fatalCount}(+${fatalDelta}) noise=${logProbe.noiseCount}(+${noiseDelta})`
   )

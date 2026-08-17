@@ -107,6 +107,48 @@ describe("resolveLatestNonce — a Signer source", () => {
       resolveLatestNonce(new ethers.VoidSigner(SignerAddress))
     ).rejects.toThrow(/must have a Provider/)
   })
+
+  it("reserves a contiguous block and advances the counter past it", async () => {
+    // The regression this guards: a burst reserved ONE nonce, submitted 12
+    // transactions on 42..53, and left the counter at 43 — so the next burst
+    // re-issued 43.. and every one of those failed `nonce has already been
+    // used`. Reserving the block leaves the counter after it.
+    expect(await resolveLatestNonce(signer, 12)).toBe(SeedNonce)
+    expect(await resolveLatestNonce(signer)).toBe(SeedNonce + 12)
+  })
+
+  it("keeps blocks disjoint across concurrent reservations", async () => {
+    const [first, second, third] = await Promise.all([
+      resolveLatestNonce(signer, 4),
+      resolveLatestNonce(signer, 3),
+      resolveLatestNonce(signer, 5)
+    ])
+    // Whatever order they interleave in, the three blocks must not overlap.
+    const blocks = [
+      { first, size: 4 },
+      { first: second, size: 3 },
+      { first: third, size: 5 }
+    ]
+    const used = blocks.flatMap(({ first: start, size }) =>
+      Array.from({ length: size }, (_, index) => start + index)
+    )
+    expect(new Set(used).size).toBe(used.length)
+    expect([...used].sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 12 }, (_, index) => SeedNonce + index)
+    )
+  })
+
+  it("rejects a non-positive or fractional count", async () => {
+    await expect(resolveLatestNonce(signer, 0)).rejects.toThrow(
+      /positive integer/
+    )
+    await expect(resolveLatestNonce(signer, -1)).rejects.toThrow(
+      /positive integer/
+    )
+    await expect(resolveLatestNonce(signer, 1.5)).rejects.toThrow(
+      /positive integer/
+    )
+  })
 })
 
 describe("ethereumRevertReason", () => {

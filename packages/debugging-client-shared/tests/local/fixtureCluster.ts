@@ -149,7 +149,8 @@ export function makeFixtureCluster(): FixtureCluster {
     awsClusterNodeConfig: null,
     externalOutposts: null,
     debuggingServerEnabled: true,
-    enableMockReserves: false
+    enableMockReserves: false,
+    ethereumGasUncapped: false
   }
 
   Fs.writeFileSync(

@@ -100,6 +100,41 @@ function assertBatchOperatorSchedule(options: ClusterBuildOptions): number {
  * persistence ({@link ClusterConfigProvider.save}), and every derived-path
  * helper.
  */
+/**
+ * Environment variable lifting the local Ethereum gas ceilings.
+ *
+ * A LOCAL operator override only, mirroring the `WIRE_FLOW_TIMEOUT_SCALE` /
+ * `WIRE_STRESS_LOAD_LEVEL` precedent: explicit, never derived. The e2e gate
+ * does NOT set it — a flow is standalone there and runs on its own default
+ * config, which is mainnet parity (what `AnvilProcess` applies regardless).
+ *
+ * It exists so a run can be repeated under a lifted ceiling WITHOUT editing a
+ * scenario, which is how ETH-241 (gas genuinely exceeded) was separated from
+ * WIRE-340 (a depot payout stall hiding behind it).
+ *
+ * Truthy spellings: `1`, `true`, `yes` (case-insensitive). Anything else is
+ * false — an unrecognised value must not silently enable an unrealistic run.
+ */
+export const EthereumGasUncappedEnvVar = "WIRE_ETHEREUM_GAS_UNCAPPED"
+
+/**
+ * Resolve whether to lift the gas ceilings, from an explicit option then the
+ * environment.
+ *
+ * @param env - Process environment to read the override from.
+ * @param option - Caller-supplied value, which wins when present.
+ * @returns Whether the ceilings are lifted; false unless explicitly enabled.
+ */
+export function resolveEthereumGasUncapped(
+  env: NodeJS.ProcessEnv,
+  option?: boolean
+): boolean {
+  if (option !== undefined) return option
+  const named = env[EthereumGasUncappedEnvVar]
+  if (named === undefined || named === "") return false
+  return ["1", "true", "yes"].includes(named.trim().toLowerCase())
+}
+
 export namespace ClusterConfigProvider {
   export const DataSubpath = "data"
   export const WalletSubpath = "wallet"
@@ -188,7 +223,11 @@ export namespace ClusterConfigProvider {
       awsClusterNodeConfig,
       externalOutposts,
       debuggingServerEnabled: true,
-      enableMockReserves: options.enableMockReserves ?? false
+      enableMockReserves: options.enableMockReserves ?? false,
+      ethereumGasUncapped: resolveEthereumGasUncapped(
+        process.env,
+        options.ethereumGasUncapped
+      )
     }
   }
 
@@ -638,7 +677,8 @@ export namespace ClusterConfigProvider {
       formats: options?.formats ?? [
         Report.Format.csv,
         Report.Format.md,
-        Report.Format.html
+        Report.Format.html,
+        Report.Format.json
       ]
     }
   }
