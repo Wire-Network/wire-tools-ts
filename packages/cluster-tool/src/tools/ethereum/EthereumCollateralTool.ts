@@ -85,7 +85,7 @@ export namespace EthereumCollateralTool {
   /** Input for {@link planDeposit} — one native-ETH collateral deposit write. */
   export interface DepositInput extends StepInput {
     readonly kind: "EthereumCollateralTool.DepositInput"
-    /** Operator whose identity is read from `ctx.outputs`. */
+    /** Operator's durable `label` handle — resolved from `ctx.keyStore` (NOT its on-chain `account`). */
     readonly operatorLabel: string
     readonly operatorType: OperatorType
     /** 8-byte slug_name (`uint64`) of the deposited token (native `ETH`). */
@@ -168,7 +168,7 @@ export namespace EthereumCollateralTool {
   /** Input for {@link planWithdrawal} — one collateral withdraw-request write. */
   export interface WithdrawInput extends StepInput {
     readonly kind: "EthereumCollateralTool.WithdrawInput"
-    /** Operator whose identity is resolved from `ctx.keyStore`. */
+    /** Operator's durable `label` handle — resolved from `ctx.keyStore` (NOT its on-chain `account`). */
     readonly operatorLabel: string
     /** 8-byte slug_name (`uint64`) of the token to release. */
     readonly tokenCode: bigint
@@ -261,6 +261,7 @@ export namespace EthereumCollateralTool {
   /** Input for {@link planErc20Approval} — one ERC-20 allowance write. */
   export interface ApproveErc20Input extends StepInput {
     readonly kind: "EthereumCollateralTool.ApproveErc20Input"
+    /** Operator's durable `label` handle — resolved from `ctx.keyStore` (NOT its on-chain `account`). */
     readonly operatorLabel: string
     /**
      * Mock token NAME (`"USDC"` / `"USDT"` / `"LIQETH"`) — the config-level
@@ -336,6 +337,7 @@ export namespace EthereumCollateralTool {
   /** Input for {@link planNonNativeDeposit} — one ERC-20 collateral deposit write. */
   export interface DepositNonNativeInput extends StepInput {
     readonly kind: "EthereumCollateralTool.DepositNonNativeInput"
+    /** Operator's durable `label` handle — resolved from `ctx.keyStore` (NOT its on-chain `account`). */
     readonly operatorLabel: string
     readonly chainCode: bigint
     readonly tokenCode: bigint

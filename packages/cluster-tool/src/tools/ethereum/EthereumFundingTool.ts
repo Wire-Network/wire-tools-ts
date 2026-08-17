@@ -203,18 +203,30 @@ const MintWithBalanceAbi: ethers.InterfaceAbi = [
 ]
 
 /**
+ * The typed view over {@link MintWithBalanceAbi}: a {@link MintableErc20} that
+ * also exposes the `balanceOf` read the top-up path needs to mint only the
+ * shortfall.
+ */
+interface MintableErc20WithBalance extends MintableErc20 {
+  balanceOf: (address: string) => Promise<bigint>
+}
+
+/**
  * EthereumFundingTool — Step factories for the mock-token funding WRITES the
  * underwriter collateral flow needs before an ERC-20 `depositNonNative`. Every
  * WRITE is its OWN {@link ClusterBuildStep} so the `Report` records it; the
- * runner reads the operator identity from `ctx.outputs` and performs exactly ONE
- * mint. The plain `mintMockErc20ToUser` / `signErc20Permit` helpers above stay
+ * runner resolves the operator identity from `ctx.keyStore` by its durable
+ * `label` and performs exactly ONE mint. The plain `mintMockErc20ToUser` / `signErc20Permit` helpers above stay
  * flow-layer utilities (they take a pre-bound contract / signer).
  */
 export namespace EthereumFundingTool {
   /** Input for {@link planErc20Mint} — one mock-ERC-20 self-mint to the operator wallet. */
   export interface MintErc20Input extends StepInput {
     readonly kind: "EthereumFundingTool.MintErc20Input"
-    /** Operator whose ETH wallet is read from `ctx.outputs` and self-mints. */
+    /**
+     * Operator's durable `label` handle — its ETH wallet is resolved from
+     * `ctx.keyStore` (NOT its on-chain `account`) and self-mints.
+     */
     readonly operatorLabel: string
     /**
      * Mock token NAME (`"USDC"` / `"USDT"` / `"LIQETH"`) — the config-level
@@ -229,8 +241,9 @@ export namespace EthereumFundingTool {
 
   /**
    * A single mock-ERC-20 self-mint, topping the operator wallet up to `amount`.
-   * The operator's ETH wallet is read from `ctx.outputs` (self-mints via the mock's
-   * ungated `mint`); idempotent — a wallet already at/above `amount` no-ops.
+   * The operator's ETH wallet is resolved from `ctx.keyStore` by its durable
+   * `label` (self-mints via the mock's ungated `mint`); idempotent — a wallet
+   * already at/above `amount` no-ops.
    */
   export function planErc20Mint<
     C extends ClusterBuildContext = ClusterBuildContext
@@ -276,9 +289,11 @@ export namespace EthereumFundingTool {
       ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
       input.tokenName
     )
-    const token = contractView<
-      MintableErc20 & { balanceOf: (address: string) => Promise<bigint> }
-    >(tokenAddress, MintWithBalanceAbi, signer)
+    const token = contractView<MintableErc20WithBalance>(
+      tokenAddress,
+      MintWithBalanceAbi,
+      signer
+    )
     const current = await token.balanceOf(signer.address)
     if (current >= input.amount) return
     await mintMockErc20ToUser(token, signer.address, input.amount - current)

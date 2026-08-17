@@ -20,21 +20,25 @@ import { fixtureContext } from "../../../config/clusterBuildContextFixture.js"
 const AnvilMnemonic = "test test test test test test test test test test test junk"
 
 /**
- * A fully-keyed OperatorAccount fixture for the given account/type — REAL
+ * A fully-keyed OperatorAccount fixture for the given label/type — REAL
  * (decodable) ethereum + solana keys, since `resolveOperatorDaemonArgs`
- * threads them through `KeyGenerator.toSignatureProvider`.
+ * threads them through `KeyGenerator.toSignatureProvider`. `account` is the
+ * DISTINCT `roa::newuser`-generated chain name, never the durable handle: a
+ * fixture where the two are the same string cannot fail on a label/account
+ * swap at a chain boundary (mirrors the helper in `OperatorDaemonTool.test.ts`).
  */
-function operatorAccount(account: string, type: OperatorType): OperatorAccount {
+function operatorAccount(label: string, type: OperatorType): OperatorAccount {
   const wallet = ethers.HDNodeWallet.fromMnemonic(
       ethers.Mnemonic.fromPhrase(AnvilMnemonic),
       "m/44'/60'/0'/0/1"
     ),
     edPrivate = PrivateKey.generate(KeyType.ED)
   return {
-    label: account,
-    account,
+    label,
+    publicationLabel: label,
+    account: `wireno.${label}`,
     type,
-    wire: { type: KeyType.K1, publicKey: `PUB_K1_${account}`, privateKey: `PVT_K1_${account}` },
+    wire: { type: KeyType.K1, publicKey: `PUB_K1_${label}`, privateKey: `PVT_K1_${label}` },
     ethereum: ethereumKeyPairFromWallet(wallet),
     solana: {
       type: KeyType.ED,
@@ -78,6 +82,11 @@ function testNode(
     batchOperatorLabel,
     underwriterLabel
   )
+}
+
+/** The value following `flag` (each occurrence) — mirrors the local helper in `OperatorDaemonTool.test.ts`. */
+function valuesOf(args: string[], flag: string): string[] {
+  return args.flatMap((arg, index) => (arg === flag ? [args[index + 1]] : []))
 }
 
 describe("Steps.processes.nodeop", () => {
@@ -141,14 +150,44 @@ describe("Steps.processes.nodeop", () => {
   })
 
   describe("resolveOperator (exported for ClusterManager.run reuse)", () => {
-    it("bios node resolves the genesis producer's dev K1+BLS keys", () => {
+    it("bios node falls back to the dev K1+BLS keys when the key store has no bios entry", () => {
+      // A cluster directory written before `ClusterBuild.create` seeded the
+      // bios account — such a cluster is a KEY-mode dev-key cluster by
+      // definition, so the dev pair IS its genesis material.
       const ctx = fixtureContext()
       const node = testNode(ctx, NodeRole.bios, 0, "bios")
       const operator = Steps.processes.nodeop.resolveOperator(ctx, node)
-      expect(operator.account).toBe(NodeConfig.BiosProducer)
+      expect(operator.label).toBe(NodeConfig.BiosName)
       expect(operator.type).toBe(OperatorType.PRODUCER)
       expect(operator.wire.type).toBe(KeyType.K1)
-      expect(operator.bls?.type).toBe(KeyType.BLS)
+      expect(operator.wireFinalizer?.type).toBe(KeyType.BLS)
+    })
+
+    it("bios node prefers the SEEDED genesis account from ctx.keyStore", () => {
+      // `ClusterBuild.create` seeds this from
+      // `ClusterConfigProvider.resolveWithBiosKeys`, so an SSM cluster's
+      // GENERATED bios keys — not the dev pair — reach the nodeop args.
+      const ctx = fixtureContext(),
+        seeded: OperatorAccount = {
+          label: NodeConfig.BiosName,
+          publicationLabel: NodeConfig.BiosName,
+          account: NodeConfig.BiosProducer,
+          type: OperatorType.UNKNOWN,
+          wire: {
+            type: KeyType.K1,
+            publicKey: "PUB_K1_generatedBios",
+            privateKey: "PVT_K1_generatedBios"
+          },
+          wireFinalizer: {
+            type: KeyType.BLS,
+            publicKey: "PUB_BLS_generatedBios",
+            privateKey: "PVT_BLS_generatedBios",
+            proofOfPossession: "SIG_BLS_generatedBios"
+          }
+        }
+      ctx.keyStore.setOperator(seeded)
+      const node = testNode(ctx, NodeRole.bios, 0, "bios")
+      expect(Steps.processes.nodeop.resolveOperator(ctx, node)).toBe(seeded)
     })
 
     it("producer node resolves its NODE-shared K1+BLS keys from ctx.keyStore", () => {
@@ -156,8 +195,8 @@ describe("Steps.processes.nodeop", () => {
       ctx.keyStore.pushNodes({
         index: 1,
         keys: {
-          k1: { type: KeyType.K1, publicKey: "PUB_K1_node1", privateKey: "PVT_K1_node1" },
-          bls: {
+          wire: { type: KeyType.K1, publicKey: "PUB_K1_node1", privateKey: "PVT_K1_node1" },
+          wireFinalizer: {
             type: KeyType.BLS,
             publicKey: "PUB_BLS_node1",
             privateKey: "PVT_BLS_node1",
@@ -167,10 +206,10 @@ describe("Steps.processes.nodeop", () => {
       })
       const node = testNode(ctx, NodeRole.producer, 1, "node_01", ["defproducera"])
       const operator = Steps.processes.nodeop.resolveOperator(ctx, node)
-      expect(operator.account).toBe("defproducera")
+      expect(operator.label).toBe("defproducera")
       expect(operator.type).toBe(OperatorType.PRODUCER)
       expect(operator.wire.publicKey).toBe("PUB_K1_node1")
-      expect(operator.bls?.publicKey).toBe("PUB_BLS_node1")
+      expect(operator.wireFinalizer?.publicKey).toBe("PUB_BLS_node1")
     })
 
     it("operator node (batch operator) resolves the provisioned account from ctx.keyStore", () => {
@@ -197,7 +236,7 @@ describe("Steps.processes.nodeop", () => {
       )
     })
 
-    it("throws when the named operator account has not been provisioned in ctx.keyStore", () => {
+    it("throws when the named operator label has not been provisioned in ctx.keyStore", () => {
       const ctx = fixtureContext()
       const node = testNode(ctx, NodeRole.operator, 5, "node_05", [], "unprovisioned")
       expect(() => Steps.processes.nodeop.resolveOperator(ctx, node)).toThrow(
@@ -214,7 +253,7 @@ describe("Steps.processes.nodeop", () => {
         Steps.processes.nodeop.resolveOperatorDaemonArgs(
           ctx,
           node,
-          operatorAccount(NodeConfig.BiosProducer, OperatorType.PRODUCER)
+          operatorAccount(NodeConfig.BiosName, OperatorType.PRODUCER)
         )
       ).toEqual([])
     })
@@ -242,9 +281,14 @@ describe("Steps.processes.nodeop", () => {
           "--batch-enabled",
           "true",
           "--batch-operator-account",
-          "batchopaaaa"
+          "wireno.batchopaaaa"
         ])
       )
+      // The depot matches this argv against `sysio.opreg::operators`, which is
+      // keyed by the ON-CHAIN account — passing the handle would start a daemon
+      // that silently matches no operator row.
+      expect(valuesOf(args, "--batch-operator-account")).toEqual([account.account])
+      expect(valuesOf(args, "--batch-operator-account")).not.toEqual([account.label])
     })
 
     it("builds underwriter daemon args for an operator node with an underwriterLabel", () => {
@@ -258,9 +302,12 @@ describe("Steps.processes.nodeop", () => {
           "--underwriter-enabled",
           "true",
           "--underwriter-account",
-          "underwriteraaaa"
+          "wireno.underwriteraaaa"
         ])
       )
+      // Same chain-boundary rule as `--batch-operator-account`.
+      expect(valuesOf(args, "--underwriter-account")).toEqual([account.account])
+      expect(valuesOf(args, "--underwriter-account")).not.toEqual([account.label])
     })
 
     it("throws when the operator daemon artifacts have not been prepared yet", () => {

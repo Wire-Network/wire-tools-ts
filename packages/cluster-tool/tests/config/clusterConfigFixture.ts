@@ -3,6 +3,7 @@ import {
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
+import { Constants } from "@wireio/cluster-tool"
 import {
   BindConfigProvider,
   ClusterConfigProvider
@@ -100,8 +101,10 @@ export const PersistedFixture: ClusterConfig = {
   requiredUnderwriterCollateral: [],
   requiredProducerCollateral: [],
   underwriterCollateral: null,
-  initialFinalizerKey: null,
+  initialKey: Constants.DEV_K1_PUBLIC_KEY,
+  initialFinalizerKey: Constants.DEV_BLS_PUBLIC_KEY,
   signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
+  awsClusterNodeConfig: null,
   externalOutposts: null,
   debuggingServerEnabled: true,
   enableMockReserves: false,

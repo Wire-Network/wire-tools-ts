@@ -9,6 +9,7 @@ import { WireClient } from "../clients/wire/WireClient.js"
 import { ProcessManager } from "../cluster/processes/ProcessManager.js"
 
 import type { Logger } from "../logging/Logger.js"
+import type { Report } from "../report/Report.js"
 import { toDialAddress, toURL } from "../utils/netUtils.js"
 import { OutputStore } from "./OutputStore.js"
 import {
@@ -32,6 +33,18 @@ export class ClusterBuildContext<
   /** Typed cross-step value store. */
   readonly outputs = new OutputStore()
 
+  /**
+   * Every {@link Report.Phase} that has FINISHED, in completion order — appended
+   * by `ClusterBuildPhase.run` the moment a phase ends.
+   *
+   * The report TREE only materializes as each top-level child RETURNS, and the
+   * bootstrap's top-level children are large groups, so a run killed mid-group
+   * has an empty tree no matter how many phases actually completed (measured: 106
+   * steps done, 0 nodes in the tree). This flat list is the live narrative the
+   * exit-path writer renders instead — see `ClusterBuild.build`.
+   */
+  readonly completedPhases: Report.Phase[] = []
+
   private wireClient: WireClient | null = null
   private ethereumClient: EthereumClient | null = null
   private solanaClient: SolanaClient | null = null
@@ -52,7 +65,13 @@ export class ClusterBuildContext<
       kiodUrl: toURL(
         this.config.bind.kiod.port,
         toDialAddress(this.config.bind.kiod.address)
-      )
+      ),
+      // `producerCount` is the intended input for this tool's budget sizing.
+      // Note it is the producer ACCOUNT count, which is not always the producer
+      // NODE count the genesis finalizer policy is built from (`NodeConfig.plan`
+      // fans accounts round-robin across nodes) — the budget is an envelope, not
+      // an exact model, and this is the knob the tool sizes against.
+      finalizerCount: this.config.producerCount
     }))
   }
 

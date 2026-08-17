@@ -34,12 +34,18 @@ function mkKey(overrides: Partial<Key> = {}): any {
   }
 }
 
+/** One pending entry in the manual timer queue. */
+interface QueuedTimer {
+  cb: () => void
+  dueAt: number
+}
+
 /**
  * Manual timer seam — tests control time explicitly. Simpler and more robust
  * than jest.useFakeTimers across our transpile setup.
  */
 function manualTimer() {
-  const queue = new Map<number, { cb: () => void; dueAt: number }>()
+  const queue = new Map<number, QueuedTimer>()
   let now = 0
   let nextId = 1
   return {

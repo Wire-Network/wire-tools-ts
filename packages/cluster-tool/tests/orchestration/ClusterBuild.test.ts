@@ -72,6 +72,63 @@ describe("ClusterBuild", () => {
     expect(Fs.existsSync(Path.join(dir, "cluster-build.html"))).toBe(true)
   })
 
+  it("disarms the exit-path writer once the async write succeeds", async () => {
+    const build = buildWithReportDir(dir)
+    ClusterBuildPhase.create(build, "P1", "first").push(ok([], "a"))
+    const before = process.listenerCount("exit")
+    await build.build()
+    expect(process.listenerCount("exit")).toBe(before)
+  })
+
+  it("keeps the exit-path writer armed when a phase REJECTS, so the partial Report still lands", async () => {
+    // A phase whose run() rejects models an unexpected orchestration error —
+    // it propagates past the async write, which is exactly the hole the exit
+    // listener backstops (the other being an interrupt, where no async
+    // continuation resumes at all).
+    const target = Fs.mkdtempSync(Path.join(Os.tmpdir(), "build-reject-"))
+    try {
+      const build = buildWithReportDir(target)
+      ClusterBuildPhase.create(build, "P1", "first").push(ok([], "a"))
+      const phase = ClusterBuildPhase.create(build, "P2", "second").push(ok([], "b"))
+      jest.spyOn(phase, "run").mockRejectedValue(new Error("engine exploded"))
+
+      const listenersBefore = new Set(process.listeners("exit"))
+      await expect(build.build()).rejects.toThrow("engine exploded")
+      expect(Fs.existsSync(Path.join(target, "cluster-build.csv"))).toBe(false)
+
+      const armed = process
+        .listeners("exit")
+        .filter(listener => !listenersBefore.has(listener))
+      expect(armed).toHaveLength(1)
+
+      armed[0](0) // what `process.exit()` invokes, with its exit code
+      expect(Fs.existsSync(Path.join(target, "cluster-build.csv"))).toBe(true)
+      // P1 completed before the rejection — its steps survive, so the written
+      // report carries a real narrative rather than an empty shell.
+      const csv = Fs.readFileSync(Path.join(target, "cluster-build.csv"), "utf8")
+      expect(csv).toContain("P1")
+      expect(csv).toContain("a")
+      // …and the run is NOT titled a success: it never finished.
+      expect(Fs.readFileSync(Path.join(target, "cluster-build.md"), "utf8")).toContain(
+        `cluster-build: ${Report.Verdict.INTERRUPTED}`
+      )
+      process.removeListener("exit", armed[0])
+    } finally {
+      Fs.rmSync(target, { recursive: true, force: true })
+    }
+  })
+
+  it("records every finished phase on the shared context as it completes", async () => {
+    const build = buildWithReportDir(dir)
+    ClusterBuildPhase.create(build, "P1", "first").push(ok([], "a"))
+    ClusterBuildPhase.create(build, "P2", "second").push(ok([], "b"))
+    await build.build()
+    expect(build.context.completedPhases.map(phase => phase.name)).toEqual([
+      "P1",
+      "P2"
+    ])
+  })
+
   it("append merges another build's phases in order", () => {
     const build = buildWithReportDir(dir)
     ClusterBuildPhase.create(build, "Main", "m")

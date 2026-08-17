@@ -49,4 +49,13 @@ export namespace SwapPrivateReservesScenarioOutputs {
     "swapPrivateReserves.phaseB.ethereumBalanceBefore",
     "phase B user ETH balance baseline (wei)"
   )
+  /**
+   * The reserve owner's WIRE balance immediately before they claim either
+   * reserve's accrued owner fee — the baseline the claim payout is measured
+   * against (depot units).
+   */
+  export const ownerBalanceBeforeClaims = outputKey<bigint>(
+    "swapPrivateReserves.ownerFees.balanceBeforeClaims",
+    "reserve owner WIRE balance before claiming owner fees (depot units)"
+  )
 }

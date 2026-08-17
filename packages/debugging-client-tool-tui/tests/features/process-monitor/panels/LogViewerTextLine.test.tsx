@@ -1,5 +1,7 @@
 import { LogViewerTextLine } from "@wireio/debugging-client-tool-tui/features/process-monitor/panels/LogViewerTextLine.js"
 
+import type { RenderedTextProps } from "./RenderedTextProps.js"
+
 describe("LogViewerTextLine", () => {
   it("is a React function component", () => {
     expect(typeof LogViewerTextLine).toBe("function")
@@ -43,6 +45,6 @@ describe("LogViewerTextLine", () => {
       horizontalOffset: 0,
       highlight: ""
     })
-    expect((element.props as { wrap?: string }).wrap).toBe("truncate-end")
+    expect((element.props as RenderedTextProps).wrap).toBe("truncate-end")
   })
 })

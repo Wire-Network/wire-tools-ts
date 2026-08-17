@@ -191,21 +191,42 @@ export interface HandlerMap {
   [ApiPaths.Logs.Methods.Read]: Handler<LogReadRequest, LogReadResponse>
 }
 
-export type MessageTypeCtor<T extends object = any> = { new (): MessageType<T> }
+/** Constructor of a protobuf-ts `MessageType` handler for message shape `T`. */
+export interface MessageTypeCtor<T extends object = any> {
+  new (): MessageType<T>
+}
 
 /**
- * Runtime protobuf type table — used by the OPP JSON-RPC dispatcher to
+ * Runtime protobuf type table — one `[request, response]` `MessageType` pair
+ * per **protobuf-bodied** OPP method, used by the OPP JSON-RPC dispatcher to
  * `fromJson` request bodies and `toJson` responses. Keyed only by the
  * **protobuf** OPP methods; `LoadRecords` is plain JSON and intentionally
  * absent so the dispatcher's "no entry → plain JSON path" branch picks
  * it up. Adding an entry for a non-protobuf method here would break
  * runtime serialization.
+ *
+ * The dispatcher's key guard is `keyof HandlerTypeMappingTable`, so adding or
+ * removing a method here propagates through the compiler.
  */
-export const HandlerTypeMappings: {
+export interface HandlerTypeMappingTable {
   [ApiPaths.OPP.Methods.Envelope]: [MessageType<any>, MessageType<any>]
   [ApiPaths.OPP.Methods.EnvelopeList]: [MessageType<any>, MessageType<any>]
   [ApiPaths.OPP.Methods.EnvelopeGet]: [MessageType<any>, MessageType<any>]
-} = {
+}
+
+/**
+ * The protobuf type table itself.
+ *
+ * The EXPLICIT `HandlerTypeMappingTable` annotation is load-bearing and must
+ * not be replaced by inference (`as const satisfies …`). This package is a
+ * COMPOSITE project with `declaration: true`, so dropping the annotation forces
+ * tsc to infer and EMIT a `.d.ts` type for this exported const — which drags in
+ * unnameable `@protobuf-ts/runtime` internals (TS2883: `BinaryReadOptions`,
+ * `ReflectionTypeCheck`, …) and private members of an anonymous class (TS4094).
+ * `tsc --noEmit` does NOT run the declaration emitter, so that failure is
+ * invisible to a no-emit typecheck and only surfaces in `pnpm build`.
+ */
+export const HandlerTypeMappings: HandlerTypeMappingTable = {
   [ApiPaths.OPP.Methods.Envelope]: [PutEnvelopeRequest, PutEnvelopeResponse],
   [ApiPaths.OPP.Methods.EnvelopeList]: [
     ListEnvelopesRequest,
@@ -233,7 +254,7 @@ export type InferredResponseType<U extends HandlerURIType> =
   HandlerMap[U] extends Handler<unknown, infer T> ? T : never
 
 /** Lift result envelope shape used by some legacy callers. */
-export type JsonRPCResult<T extends {} = any> = {
+export interface JsonRPCResult<T extends object = any> {
   status: number
   body: T
   id: number

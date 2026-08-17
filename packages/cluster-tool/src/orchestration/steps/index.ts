@@ -3,12 +3,14 @@ import { ClusterPackageSteps } from "./ClusterPackageSteps.js"
 import { ClusterStateSteps } from "./ClusterStateSteps.js"
 import { ConsensusSteps } from "./ConsensusSteps.js"
 import { ContractSteps } from "./ContractSteps.js"
+import { DebuggingServerBundleSteps } from "./DebuggingServerBundleSteps.js"
 import { ExternalClusterConfigSteps } from "./ExternalClusterConfigSteps.js"
 import { ExternalOutpostSteps } from "./ExternalOutpostSteps.js"
 import { KeySteps } from "./KeySteps.js"
 import { OperatorSteps } from "./OperatorSteps.js"
 import { ProtocolSteps } from "./ProtocolSteps.js"
 import { RegistrySteps } from "./RegistrySteps.js"
+import { StartScriptSteps } from "./StartScriptSteps.js"
 import { EthereumOutpostSteps } from "../ethereum/EthereumOutpostSteps.js"
 import { SolanaOutpostSteps } from "../solana/SolanaOutpostSteps.js"
 import { SysioContractSteps } from "./contracts/sysio/index.js"
@@ -48,4 +50,8 @@ export namespace Steps {
   export import protocol = ProtocolSteps
   export import registry = RegistrySteps
   export import solanaOutpost = SolanaOutpostSteps
+  /** Copies the bundled debugging server into the cluster tree. */
+  export import debuggingServerBundle = DebuggingServerBundleSteps
+  /** Per-daemon `start.sh` emission (create + create-external-config rebind). */
+  export import startScript = StartScriptSteps
 }

@@ -9,6 +9,7 @@ import {
   ClusterFiles,
   ExternalOutpostConfigSchemaCodec,
   SignatureProviderType,
+  type AWSClusterNodeConfig,
   type BindConfig,
   type BindOptions,
   type ClusterConfig,
@@ -29,10 +30,17 @@ import {
   toDialAddress,
   toURL
 } from "../utils/netUtils.js"
+import { getLogger } from "../logging/Logger.js"
 import { LogFileAppender } from "../logging/LogFileAppender.js"
 import { Report } from "../report/Report.js"
 import type { Renderer } from "../utils/Renderer.js"
 import { which } from "../utils/fsUtils.js"
+import { keyPairFromPrivate } from "../utils/keyPairUtils.js"
+import type {
+  KeyPair,
+  WireFinalizerKeyPair,
+  WireKeyPair
+} from "../types/KeyPair.js"
 import { Constants } from "../Constants.js"
 import { BatchOperatorSchedule } from "./BatchOperatorSchedule.js"
 import { BindConfigProvider } from "./BindConfigProvider.js"
@@ -40,7 +48,15 @@ import type {
   ClusterBuildOptions,
   LoggingOptions
 } from "./ClusterBuildOptions.js"
+// Sibling-module cycle (NodeConfig → NodeConfigIniRenderer → here → NodeConfig):
+// every reference on both sides is read inside a function body, never at
+// module-init, so whichever module loads first the other is complete by the
+// time a value is dereferenced.
+import { NodeConfig } from "./NodeConfig.js"
+import { SSMClientProvider } from "./SSMClientProvider.js"
 import { ClusterConfigGenesisRenderer } from "./renderers/ClusterConfigGenesisRenderer.js"
+
+const log = getLogger(__filename)
 
 /** Throw if a required option is missing (fail-fast at the boundary). */
 function assertOption<T>(value: T | null, name: string): T {
@@ -117,10 +133,17 @@ export namespace ClusterConfigProvider {
       executables = await resolveExecutables(buildPath),
       report = resolveReport(options.report, clusterPath),
       logging = resolveLogging(options.logging),
-      signatureProvider = resolveSignatureProvider(options.signatureProvider),
+      awsClusterNodeConfig = resolveAWSClusterNodeConfig(
+        options.awsClusterNodeConfig
+      ),
+      signatureProvider = resolveSignatureProvider(
+        options.signatureProvider,
+        awsClusterNodeConfig
+      ),
       externalOutposts = await loadExternalOutposts(
         options.externalOutpostConfig
       )
+    assertExternalOutpostTopology(options, externalOutposts)
 
     return {
       buildPath,
@@ -155,10 +178,15 @@ export namespace ClusterConfigProvider {
         options.requiredUnderwriterCollateral ?? [],
       requiredProducerCollateral: options.requiredProducerCollateral ?? [],
       underwriterCollateral: options.underwriterCollateral ?? null,
-      // Genesis initial finalizer = the BIOS BLS key, matching the long-green
-      // bootstrap (the real finalizer policy is set later via bios::setfinalizer).
-      initialFinalizerKey: Constants.DEV_BLS_PUBLIC_KEY,
+      // Genesis authority = the well-known dev BIOS key pair, matching the
+      // long-green bootstrap (the real finalizer policy is set later via
+      // bios::setfinalizer). An SSM cluster REPLACES both of these in
+      // `resolveWithBiosKeys` — plain `resolve` is the config-only facade and
+      // never performs key generation or SSM I/O.
+      initialKey: KeyGenerator.BiosK1Key.publicKey,
+      initialFinalizerKey: KeyGenerator.BiosBLSKey.publicKey,
       signatureProvider,
+      awsClusterNodeConfig,
       externalOutposts,
       debuggingServerEnabled: true,
       enableMockReserves: options.enableMockReserves ?? false,
@@ -167,26 +195,274 @@ export namespace ClusterConfigProvider {
   }
 
   /**
+   * A resolved config PLUS the genesis-time private key material a build needs
+   * before ANY step runs. Deliberately NOT a zod/persisted shape: it carries
+   * PRIVATE keys and must never reach `cluster-config.json` (only the publics
+   * do, as `config.initialKey` / `config.initialFinalizerKey`).
+   */
+  export interface ClusterConfigWithBiosKeys {
+    /** The resolved config; its `initialKey` / `initialFinalizerKey` ARE these keys' publics. */
+    config: ClusterConfig
+    /** The bios node's block-signing (K1) key — genesis `initial_key`. */
+    biosWire: WireKeyPair
+    /** The bios node's finality (BLS) key — genesis `initial_finalizer_key`. */
+    biosFinalizer: WireFinalizerKeyPair
+    /** The bootstrap node owner's account-authority (K1) key. */
+    nodeOwnerWire: WireKeyPair
+  }
+
+  /**
+   * Resolve a config together with its genesis-time key material — the ONE
+   * entry point `ClusterBuild.create` uses. The bios keys are GENESIS material:
+   * `ClusterManager.launch` writes `genesis.json` (and every node's
+   * `config.ini`) BEFORE `build.build()` runs, and both renderers see only a
+   * `ClusterConfig` — so the keys have to exist at CONFIG-RESOLUTION time, not
+   * in a build phase. The bootstrap node owner's key rides along for the same
+   * reason: it is the `roa::newnameduser` account authority AND must be in the
+   * kiod wallet before the first `roa::newuser`, which happens in the very first
+   * phases.
+   *
+   * - `KEY` / `KIOD` → the well-known dev bios keys, byte-identical to every
+   *   historical cluster: same `genesis.json`, same chain id, same wallet
+   *   imports. No generation, no SSM I/O.
+   * - `SSM` → each key is ADOPTED from its SSM parameter when one already
+   *   exists (so re-creating a cluster keeps its identity), otherwise generated.
+   *   A generated `initial_key` changes `genesis.json`, and therefore the CHAIN
+   *   ID, versus a dev-key cluster — expected and unavoidable: the genesis
+   *   authority is part of the chain's identity.
+   *
+   * @param options - Caller options.
+   * @returns The resolved config plus the bios + node-owner key material.
+   */
+  export async function resolveWithBiosKeys(
+    options: ClusterBuildOptions
+  ): Promise<ClusterConfigWithBiosKeys> {
+    const config = await resolve(options)
+    if (config.signatureProvider.type !== SignatureProviderType.SSM) {
+      return {
+        config,
+        biosWire: KeyGenerator.BiosK1Key,
+        biosFinalizer: KeyGenerator.BiosBLSKey,
+        nodeOwnerWire: KeyGenerator.BiosK1Key
+      }
+    }
+    // Only K1 + BLS are resolved here, so the EM backend (the one member that
+    // consumes `ethereumMnemonic`) is never reached.
+    const keyContext: KeyGenerator.Context = {
+        clio: config.executables.clio,
+        sysUtil: Path.join(config.buildPath, KeyGenerator.SysUtilSubpath),
+        ethereumMnemonic: null
+      },
+      [biosWire, biosFinalizer, nodeOwnerWire] = await Promise.all([
+        adoptOrCreateKey(
+          config,
+          KeyType.K1,
+          NodeConfig.BiosName,
+          keyContext,
+          "bios node block signing (K1) — genesis initial_key"
+        ),
+        adoptOrCreateKey(
+          config,
+          KeyType.BLS,
+          NodeConfig.BiosName,
+          keyContext,
+          "bios node finality (BLS) — genesis initial_finalizer_key"
+        ),
+        adoptOrCreateKey(
+          config,
+          KeyType.K1,
+          Constants.BOOTSTRAP_NODE_OWNER,
+          keyContext,
+          "bootstrap node owner account authority (K1)"
+        )
+      ])
+    return {
+      config: {
+        ...config,
+        initialKey: biosWire.publicKey,
+        initialFinalizerKey: biosFinalizer.publicKey
+      },
+      biosWire,
+      biosFinalizer,
+      nodeOwnerWire
+    }
+  }
+
+  /**
+   * Adopt an EXISTING SSM key when the AWS account already owns its parameter,
+   * else generate a fresh one — the config-time twin of
+   * `KeySteps.adoptOrCreateSignatureProviderKey` (D21), which cannot be used
+   * here: it lives in the orchestration layer, and these keys are needed BEFORE
+   * any step exists. The secret id comes from the ONE renderer
+   * ({@link signatureProviderSource}) and the read spans every replication
+   * region, so a divergent parameter fails loudly instead of being adopted.
+   * The parameter VALUE is never logged.
+   *
+   * @param config - The resolved cluster config (SSM signature provider).
+   * @param keyType - The curve to resolve.
+   * @param account - The key's DURABLE handle — the secret-id `{account}` segment.
+   * @param keyContext - Binaries the generation backends need.
+   * @param purpose - What the key is for (lands in the keygen `extra` record).
+   * @returns The adopted or generated key pair.
+   */
+  async function adoptOrCreateKey<T extends KeyType>(
+    config: ClusterConfig,
+    keyType: T,
+    account: string,
+    keyContext: KeyGenerator.Context,
+    purpose: string
+  ): Promise<KeyPair<T>> {
+    const { awsSecretId } = signatureProviderSource(config)(account, keyType),
+      // `resolve` derives `ssm.awsRegions` from `awsClusterNodeConfig.regions`,
+      // so a resolved SSM config always names its replication set.
+      existing = await SSMClientProvider.getParameterAcrossRegions(
+        config.signatureProvider.ssm.awsRegions,
+        awsSecretId
+      )
+    if (existing != null) {
+      log.info(
+        `ClusterConfigProvider: adopting the existing SSM key ${awsSecretId} (${purpose}) — NOT regenerating`
+      )
+      return keyPairFromPrivate(keyType, existing)
+    }
+    log.info(
+      `ClusterConfigProvider: no SSM key at ${awsSecretId} — generating ${purpose}`
+    )
+    return KeyGenerator.create(keyType, keyContext, { purpose })
+  }
+
+  /**
+   * `clusterPath` has exactly ONE author. A `--cluster-build-options-file`
+   * document that carries `clusterPath` AND an EXPLICIT `--cluster-path` / `-d`
+   * on the command line is a conflict — the operator has said it twice, and
+   * silently letting the flag win hides a stale path in the document.
+   *
+   * A `WIRE_CLUSTER_PATH` environment value is deliberately NOT a conflict: the
+   * document outranks ambient env (that is the whole precedence chain —
+   * explicit flags > file > env > defaults), so a shell export can never be the
+   * "second author".
+   *
+   * Called by the CLI, which is the only layer that can see whether the flag was
+   * EXPLICIT (a yargs `default` seeded from the very document under test is
+   * indistinguishable from an operator-supplied value once parsed). It lives
+   * here, beside {@link resolve}'s other option-source invariants, so both
+   * exclusions have one home.
+   *
+   * @param fileOptions - The loaded build-options document (`null` when no file was given).
+   * @param explicitClusterPath - Whether `--cluster-path` / `-d` appeared on the raw command line.
+   * @throws When both sources author `clusterPath`.
+   */
+  export function assertClusterPathSource(
+    fileOptions: ClusterBuildOptions,
+    explicitClusterPath: boolean
+  ): void {
+    Assert.ok(
+      fileOptions?.clusterPath == null || !explicitClusterPath,
+      `clusterPath is authored twice: the --cluster-build-options-file document sets "clusterPath" (${fileOptions?.clusterPath}) AND an explicit --cluster-path/-d was passed. Drop one. ` +
+        "(A WIRE_CLUSTER_PATH environment value is NOT a conflict — the document outranks ambient env.)"
+    )
+  }
+
+  /**
+   * External-outpost mode and underwriters are mutually exclusive: an external
+   * cluster's ETH + SOL outposts already run on real chains, so there is no
+   * local outpost for an underwriter to bond collateral on or to underwrite
+   * against — a non-zero underwriter count would provision accounts and start
+   * daemons that can never reach ACTIVE.
+   *
+   * The check is on the EFFECTIVE count, not on whether the option was passed:
+   * an OMITTED `underwriterCount` resolves to {@link DefaultUnderwriterCount}
+   * (and the CLI seeds its own default of 1), so external mode requires an
+   * EXPLICIT `--underwriter-count 0`. The message distinguishes the two causes
+   * because their remedies read differently — "you asked for N" vs "you omitted
+   * it and got the default".
+   *
+   * @param options - The caller's options (its `underwriterCount`, if any).
+   * @param externalOutposts - The loaded external-outpost config, or `null` for local mode.
+   * @throws When external mode is combined with a non-zero effective underwriter count.
+   */
+  function assertExternalOutpostTopology(
+    options: ClusterBuildOptions,
+    externalOutposts: ExternalOutpostConfig
+  ): void {
+    if (externalOutposts == null) {
+      return
+    }
+    const { underwriterCount = DefaultUnderwriterCount } = options,
+      cause =
+        options.underwriterCount == null
+          ? `underwriterCount was omitted, which defaults to ${DefaultUnderwriterCount}`
+          : `underwriterCount was set to ${options.underwriterCount}`
+    Assert.ok(
+      underwriterCount === 0,
+      `externalOutposts (--external-outpost-config) requires 0 underwriters, but ${cause}. ` +
+        "An external cluster has no local outpost to bond underwriter collateral on — pass an EXPLICIT --underwriter-count 0."
+    )
+  }
+
+  /**
+   * Normalize + validate the caller's AWS placement: `null` when unset,
+   * otherwise a config whose `regions` names at least one region (every secret
+   * is replicated to EVERY region — there is no primary).
+   *
+   * @param options - The caller's AWS cluster-node config (may be omitted).
+   * @returns The validated config, or `null`.
+   */
+  function resolveAWSClusterNodeConfig(
+    options: AWSClusterNodeConfig
+  ): AWSClusterNodeConfig {
+    if (options == null) {
+      return null
+    }
+    Assert.ok(
+      options.regions?.length > 0,
+      "awsClusterNodeConfig.regions must name at least one AWS region (every secret is replicated to all of them)"
+    )
+    // Explicit `null` (not absence): the slot is persisted to cluster-config.json,
+    // where an `undefined` would DROP the key on serialize.
+    return { ...options, ssm: options.ssm ?? null }
+  }
+
+  /**
    * Resolve the cluster signature-provider config: default {@link
-   * SignatureProviderType.KEY}, and validate that SSM settings are present iff
-   * the type is `SSM`.
+   * SignatureProviderType.KEY}, validate that SSM settings are present iff the
+   * type is `SSM`, and DERIVE the SSM replication regions from
+   * `awsClusterNodeConfig.regions` (its one author).
    *
    * @param options - Caller signature-provider options (may be omitted).
+   * @param awsClusterNodeConfig - The resolved AWS placement (required under SSM).
    * @returns The resolved, validated config.
    */
   function resolveSignatureProvider(
-    options: ClusterSignatureProviderOptions
+    options: ClusterSignatureProviderOptions,
+    awsClusterNodeConfig: AWSClusterNodeConfig
   ): ClusterSignatureProviderConfig {
     const { type = SignatureProviderType.KEY, ssm = null } = options ?? {}
     Assert.ok(
       type !== SignatureProviderType.SSM || ssm != null,
-      "signatureProvider.ssm (awsRegion + awsSecretIdPattern) is required when type is SSM"
+      "signatureProvider.ssm (awsSecretIdPattern) is required when type is SSM"
     )
     Assert.ok(
       ssm == null || type === SignatureProviderType.SSM,
       "signatureProvider.ssm is only valid when type is SSM"
     )
-    return { type, ssm }
+    Assert.ok(
+      type !== SignatureProviderType.SSM || awsClusterNodeConfig != null,
+      "awsClusterNodeConfig is required when signatureProvider.type is SSM (it sources the secret-id {cluster} segment and the replication regions)"
+    )
+    // The region set has exactly ONE author — name BOTH sources so the operator
+    // knows which one to delete.
+    Assert.ok(
+      ssm?.awsRegions == null || awsClusterNodeConfig == null,
+      "signatureProvider.ssm.awsRegions and awsClusterNodeConfig.regions both author the SSM region set — author awsClusterNodeConfig.regions ONLY (signatureProvider.ssm.awsRegions is derived from it)"
+    )
+    return {
+      type,
+      ssm:
+        ssm == null
+          ? null
+          : { ...ssm, awsRegions: awsClusterNodeConfig.regions }
+    }
   }
 
   /**
@@ -507,17 +783,22 @@ export namespace ClusterConfigProvider {
 
   /** Substitutions for a signature-provider SSM secret-id pattern. */
   export interface SecretIdSubstitutions {
-    /** Basename of the cluster path. */
+    /** The AWS account the cluster runs in (`awsClusterNodeConfig.account`). */
     cluster: string
-    /** WIRE account name the key belongs to. */
+    /** The key's DURABLE handle — an operator handle (`batchop.a`) or a node name (`node_00`). */
     account: string
     /** Key type (curve) name. */
     keyType: string
+    /** The OPTIONAL `{version}` token's value — absent unless the pattern uses it. */
+    version?: string
   }
 
   /**
    * Render an SSM secret id from a pattern with `{cluster}` / `{account}` /
-   * `{keyType}` placeholders. An unknown `{placeholder}` fails fast.
+   * `{keyType}` / `{version}` placeholders. A placeholder that is unknown — or
+   * known but UNFILLED (the optional `{version}` with no value supplied) — fails
+   * fast, so a pattern authoring `{version}` throws at plan time rather than
+   * publishing to a half-rendered id.
    *
    * @param pattern - The secret-id pattern.
    * @param substitutions - The placeholder values.
@@ -531,7 +812,7 @@ export namespace ClusterConfigProvider {
       const value = substitutions[key as keyof SecretIdSubstitutions]
       Assert.ok(
         value != null,
-        `toSecretId: unknown placeholder {${key}} in pattern "${pattern}"`
+        `toSecretId: unknown or unfilled placeholder {${key}} in pattern "${pattern}"`
       )
       return value
     })
@@ -544,12 +825,31 @@ export namespace ClusterConfigProvider {
   ) => KeyGenerator.SignatureProviderSource
 
   /**
+   * The cluster's AWS account name — the secret-id `{cluster}` value. Fails fast
+   * when an SSM cluster carries no `awsClusterNodeConfig` ({@link resolve}
+   * enforces it, but a hand-edited `cluster-config.json` can still omit it).
+   *
+   * @param config - The cluster configuration.
+   * @returns The AWS account name.
+   */
+  function assertAWSAccountName(
+    config: ClusterConfig
+  ): AWSClusterNodeConfig["account"] {
+    Assert.ok(
+      config.awsClusterNodeConfig != null,
+      "ClusterConfigProvider: an SSM signature provider requires awsClusterNodeConfig (the secret-id {cluster} source)"
+    )
+    return config.awsClusterNodeConfig.account
+  }
+
+  /**
    * Build the per-key signature-provider source for a cluster's provider config —
-   * `KEY` → inline (byte-identical), `SSM` → the region + per-key rendered secret
-   * id (via {@link toSecretId}), `KIOD` → the kiod wallet URL. Threaded into the
-   * node / operator-daemon `--signature-provider` args so an SSM/KIOD cluster's
-   * daemons obtain their keys accordingly. The bios genesis dev key is NOT
-   * SSM/KIOD-managed — callers that render it force {@link KeyGenerator.DefaultKeySource}.
+   * `KEY` → inline (byte-identical), `SSM` → the per-key rendered secret id (via
+   * {@link toSecretId}; REGION-LESS — the depot plugin resolves the region from
+   * the AWS environment), `KIOD` → the kiod wallet URL. Threaded into the node /
+   * operator-daemon `--signature-provider` args so an SSM/KIOD cluster's daemons
+   * obtain their keys accordingly. The bios genesis dev key is NOT SSM/KIOD-managed
+   * — callers that render it force {@link KeyGenerator.DefaultKeySource}.
    *
    * @param config - The resolved cluster config.
    * @returns A `(account, keyType) => source` builder.
@@ -561,16 +861,16 @@ export namespace ClusterConfigProvider {
       kiodUrl = toURL(
         config.bind.kiod.port,
         toDialAddress(config.bind.kiod.address)
-      ),
-      cluster = Path.basename(config.clusterPath)
+      )
     return (account, keyType) =>
       KeyGenerator.keySource(
         provider,
         provider.type === SignatureProviderType.SSM
           ? toSecretId(provider.ssm.awsSecretIdPattern, {
-              cluster,
+              cluster: assertAWSAccountName(config),
               account,
-              keyType: KeyType[keyType]
+              keyType: KeyType[keyType],
+              version: provider.ssm.version
             })
           : "",
         kiodUrl

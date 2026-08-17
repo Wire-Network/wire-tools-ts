@@ -41,12 +41,12 @@ describe("Steps.clusterState", () => {
       ctx.keyStore.pushNodes({
         index: 0,
         keys: {
-          k1: {
+          wire: {
             type: KeyType.K1,
             publicKey: "PUB_K1_node0",
             privateKey: "PVT_K1_node0"
           },
-          bls: {
+          wireFinalizer: {
             type: KeyType.BLS,
             publicKey: "PUB_BLS_node0",
             privateKey: "PVT_BLS_node0",
@@ -66,7 +66,7 @@ describe("Steps.clusterState", () => {
       const loadedState = ClusterState.load(ctx.config)
       expect(loadedState.walletPath).toBe(ctx.config.walletPath)
       const loadedKeys = ClusterState.loadKeys(ctx.config)
-      expect(loadedKeys.nodes[0]?.k1.publicKey).toBe("PUB_K1_node0")
+      expect(loadedKeys.nodes[0]?.wire.publicKey).toBe("PUB_K1_node0")
     })
 
     it("short-circuits on an already-aborted signal — neither file is written", async () => {

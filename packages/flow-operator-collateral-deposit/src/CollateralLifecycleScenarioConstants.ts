@@ -10,7 +10,7 @@ import { ProtocolTiming } from "@wireio/cluster-tool"
  * epoch duration and survives extended epochs.
  */
 export namespace CollateralLifecycleScenarioConstants {
-  /** The flow's NON-bootstrapped batch operator's provisioning label (its chain account is node-owner-generated). */
+  /** The flow's NON-bootstrapped batch operator's durable harness `label` handle (its on-chain `account` is node-owner-generated). */
   export const DepositorLabel = "depositor"
   /** Anvil-mnemonic HD index for the depositor's ETH wallet (past every bootstrap slot). */
   export const DepositorEthereumHdIndex = 35

@@ -68,6 +68,50 @@ export const AttestationDecoders: Partial<
   [AttestationType.DEPOSIT_REVERT]: DepositRevert
 }
 
+/** Successful decode — the typed message the UI pretty-prints. */
+export interface DecodedAttestationMessage {
+  kind: "decoded"
+  /** Proto `typeName` of the `MessageType` that decoded the entry. */
+  typeName: string
+  /** The decoded message instance — its concrete class varies per attestation type. */
+  value: unknown
+}
+
+/**
+ * Every encoding an attestation's `data` can carry by the time it reaches the
+ * UI: the `Uint8Array` off the wire, the base64 string a JSON round-trip
+ * produces, or the `{ type: "Buffer", data: number[] }` a `Buffer.toJSON()`
+ * leaves behind. {@link bytesFor} normalizes all three.
+ */
+export type SerializedAttestationData =
+  | AttestationEntry["data"]
+  | string
+  | BufferJsonCandidate
+
+/**
+ * An {@link AttestationEntry} as it reaches the UI — the generated type with
+ * ONLY `data` widened to {@link SerializedAttestationData}. Derived from the
+ * generated entry rather than re-declared, so every other field stays sourced
+ * from the proto; a real `AttestationEntry` satisfies it unchanged.
+ *
+ * This widening is the actual runtime contract: a Redux round-trip serializes
+ * `data` to base64, which is why {@link decodeAttestation} has always handled
+ * the string form.
+ */
+export interface SerializedAttestationEntry
+  extends Omit<AttestationEntry, "data"> {
+  data: SerializedAttestationData
+}
+
+/** Fallback outcome — the entry is rendered as-is, with why the decode was skipped. */
+export interface RawAttestationFallback {
+  kind: "raw"
+  /** Human-readable reason the typed decode did not happen. */
+  reason: string
+  /** The undecoded entry, straight off the Redux-backed envelope. */
+  entry: SerializedAttestationEntry
+}
+
 /**
  * Result of decoding one attestation entry. `kind` discriminates the two
  * outcomes for the UI — a successful decode renders the typed message
@@ -75,8 +119,8 @@ export const AttestationDecoders: Partial<
  * still sees something.
  */
 export type DecodedAttestation =
-  | { kind: "decoded"; typeName: string; value: unknown }
-  | { kind: "raw"; reason: string; entry: AttestationEntry }
+  | DecodedAttestationMessage
+  | RawAttestationFallback
 
 /**
  * Decode an attestation entry's `data` bytes via the type-matched
@@ -88,7 +132,9 @@ export type DecodedAttestation =
  *
  * @param entry attestation entry from the Redux-backed `Envelope`
  */
-export function decodeAttestation(entry: AttestationEntry): DecodedAttestation {
+export function decodeAttestation(
+  entry: SerializedAttestationEntry
+): DecodedAttestation {
   const decoder = AttestationDecoders[entry.type as AttestationType]
   if (!decoder) {
     return {
@@ -118,6 +164,16 @@ export function decodeAttestation(entry: AttestationEntry): DecodedAttestation {
 }
 
 /**
+ * An object that MIGHT be the `Buffer.toJSON()` form
+ * (`{ type: "Buffer", data: number[] }`). Both members are `unknown` because
+ * the value arrives untrusted from Redux — {@link bytesFor} narrows them.
+ */
+interface BufferJsonCandidate {
+  type?: unknown
+  data?: unknown
+}
+
+/**
  * Coerce the entry's `data` to a `Uint8Array`. Three accepted shapes:
  *
  *   - `Uint8Array` / `Buffer` — direct passthrough.
@@ -129,7 +185,7 @@ export function decodeAttestation(entry: AttestationEntry): DecodedAttestation {
  *
  * Unknown shapes return `null` so the caller can degrade to a raw render.
  */
-function bytesFor(data: unknown): Uint8Array | null {
+function bytesFor(data: unknown): Uint8Array {
   if (data instanceof Uint8Array) return data
   if (typeof data === "string") {
     try {
@@ -139,7 +195,7 @@ function bytesFor(data: unknown): Uint8Array | null {
     }
   }
   if (typeof data === "object" && data !== null) {
-    const obj = data as { type?: unknown; data?: unknown }
+    const obj = data as BufferJsonCandidate
     if (obj.type === "Buffer" && Array.isArray(obj.data)) {
       return Uint8Array.from(obj.data as number[])
     }

@@ -7,17 +7,18 @@ import {
 import { range } from "lodash"
 import { LAMPORTS_PER_SOL } from "@solana/web3.js"
 import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
-import { type Logger } from "../logging/Logger.js"
+import { getLogger, type Logger } from "../logging/Logger.js"
 import { SysioContracts } from "@wireio/sdk-core"
-import { Constants } from "../Constants.js"
+import { Constants, ProtocolTiming } from "../Constants.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
+import { DaemonConfig } from "../config/DaemonConfig.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
 import {
   readNodeOwner,
   readNodeOwnerReg
 } from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
 import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
-import { verifyStep } from "./StepTools.js"
+import { pollUntil, verifyStep } from "./StepTools.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
 
 import { Report } from "../report/Report.js"
@@ -30,9 +31,19 @@ import { ClusterBuildPhaseGroup } from "./ClusterBuildPhaseGroup.js"
 import { Steps } from "./steps/index.js"
 import { ContractSteps } from "./steps/ContractSteps.js"
 
+const log = getLogger(__filename)
+
 const { SysioContractName } = SysioContracts
 const { DeployMode } = ContractSteps
 const { Actor } = Report
+
+/**
+ * Epoch index the LOCAL bootstrap gate waits for. `sysio.msgch::bootstrap`
+ * takes the chain 0 → 1 inline, so reaching 2 is the first index that can only
+ * come from `sysio.epoch::advance` firing on its own cadence — i.e. the depot
+ * is circulating epochs, not merely bootstrapped.
+ */
+const EpochAdvanceTargetIndex = 2
 
 /** The initial SYS supply + per-producer grant (core resource token). */
 const InitialSysSupply = "1000000000.0000 SYS"
@@ -53,10 +64,24 @@ const MinFromWireAmount = 100_000_000
 /**
  * Fee (bps of the escrow) forfeited on caller-fault drain-time reverts of
  * queued `swapfromwire` rows (zero quote / missed variance at `drainfwq`),
- * routed like the settlement fee. Mirrors the contract default; happy-path
- * flows never pay it and system-caused reverts refund in full.
+ * routed like the settlement fee. Mirrors the contract default — the 5% launch
+ * value — so a cluster prices revert churn the way the network will. Happy-path
+ * flows never pay it and system-caused reverts refund in full, so no flow's
+ * economics depend on this number.
  */
-const FromWireRevertFeeBps = 10
+const FromWireRevertFeeBps = 500
+/**
+ * Nodeop processes started concurrently within a node-start group.
+ *
+ * Node starts are bounded — NOT unbounded — because every node joins the same
+ * p2p mesh and begins syncing the moment it comes up. Starting a whole wave at
+ * once (43 nodes landed within 6ms at a 21-producer topology) starves the
+ * producers' vote propagation: QCs stop forming, LIB freezes while head keeps
+ * advancing, and the next `pushActionAndWait` at irreversible finality hangs
+ * until its transaction expires. Raising this trades bootstrap wall-clock for
+ * that risk.
+ */
+const NodeStartConcurrency = 4
 /**
  * Epochs a PENDING uwreq may wait for its underwriter race before
  * `sysio.uwrit::pruneuwreqs` expires it (refund/revert + EXPIRED). Mirrors
@@ -70,6 +95,18 @@ const UwreqPendingTimeoutEpochs = 10
  * contract default (SEC-129 / WSA-223).
  */
 const UwreqRetentionEpochs = 10
+/**
+ * Stage 2 of the swap-fee split: the share of each fee's rewards pool routed to
+ * the `sysio` emissions treasury instead of the batch-operator rewards bucket.
+ * Mirrors `sysio.reserv::DEFAULT_FEE_EMISSIONS_SHARE_BPS`.
+ *
+ * Zero keeps every swap fee inside `sysio.reserv` custody at settlement (the
+ * underwriter half as a `uwfees` accrual, the rest in the rewards bucket), which
+ * is what the swap flows' custody assertions expect. Raising it makes exactly
+ * that share leave custody per settlement.
+ */
+const FeeEmissionsShareBps = 0
+
 /** Epoch envelope-log retention. */
 const EnvelopeLogRetentionEpochs = 10
 /** Dev-default `terminate_max_consecutive_misses` (per-flow overridable via ClusterConfig). */
@@ -85,6 +122,31 @@ const DefaultTerminateWindowMs = 24 * 60 * 60 * 1000
  * SOL-outpost consensus). Matches the old launcher's 100-SOL seed.
  */
 const BatchOperatorAirdropLamports = 100n * BigInt(LAMPORTS_PER_SOL)
+
+/** Wei per ether — the ETH counterpart of `LAMPORTS_PER_SOL`. */
+const WeiPerEther = 10n ** 18n
+
+/**
+ * Wei seeded into each bootstrapped operator's ETH wallet under SSM — the exact
+ * ETH analogue of {@link BatchOperatorAirdropLamports}: their daemons PAY the gas
+ * on every outbound delivery to the Ethereum outpost, every epoch, for the whole
+ * run.
+ *
+ * Only needed under SSM. Under KEY the operator EM keys derive from
+ * `EthereumOutpostBootstrapper.AnvilMnemonic`, whose HD accounts anvil prefunds;
+ * under SSM they derive from a GENERATED cluster mnemonic (`KeySteps.ethereumMnemonic`)
+ * that anvil has never heard of, so every wallet starts at ZERO.
+ *
+ * An unfunded fee payer does not fail loudly — the daemon's outbound tx is rejected
+ * by the RPC with `-32003 'Out of gas: gas required exceeds allowance: 0'`, the ETH
+ * outpost's `latestOutboundEnvelope` is never written, the depot reads back
+ * `epoch_=0` forever, and the epoch stalls at 1 with SOL circulating normally
+ * (measured 2026-08-04: 98 such rejections, all EVM, zero SVM).
+ *
+ * Sized as a GAS budget, never collateral — the bootstrap performs no ETH
+ * collateral deposits for these operators.
+ */
+const BatchOperatorEthereumFundingWei = 10n * WeiPerEther
 
 /**
  * Builds a {@link ClusterBuild} pre-loaded with the full bootstrap, organized into
@@ -114,6 +176,12 @@ export namespace ClusterBuildDefaults {
     cluster: ClusterBuild<C>
   ): void {
     const config = cluster.context.config,
+      // Seeded by `ClusterBuild.create` from
+      // `ClusterConfigProvider.resolveWithBiosKeys` — its `wire` key IS the
+      // bootstrap node owner's account authority.
+      nodeOwner = cluster.context.keyStore.assertOperator(
+        Constants.BOOTSTRAP_NODE_OWNER
+      ),
       producers = range(config.producerCount).map(index => producerName(index)),
       batchOperators = range(config.batchOperatorCount).map(index =>
         Constants.batchOperatorLabel(index)
@@ -124,7 +192,6 @@ export namespace ClusterBuildDefaults {
       producerNodes = NodeConfig.plan(config).filter(
         node => node.role === NodeRole.producer
       ),
-      producerNodeCount = producerNodes.length,
       // External-outpost mode: the ETH + SOL outposts already run on real chains
       // (`config.externalOutposts`), so skip the local anvil/validator starts +
       // outpost deploys and publish the operator-daemon artifacts from the
@@ -169,18 +236,21 @@ export namespace ClusterBuildDefaults {
         {}
       )
     )
-    // SSM mode: publish the just-generated producer-node keys BEFORE any node
-    // consumes them — a producer's `--signature-provider ...SSM:` spec fetches
-    // its private key from SSM at nodeop startup, so publication must precede
-    // the ProducerNodes starts (the bios node stays on the inline dev KEY spec).
+    // SSM mode: publish the node signing keys BEFORE any node consumes them — a
+    // node's `--signature-provider ...SSM:` spec fetches its private key from
+    // SSM at nodeop startup, so publication must precede the BiosNode AND
+    // ProducerNodes starts. Under SSM the bios node is NOT exempt: its genesis
+    // keys are generated (or adopted) at config resolution like any other node
+    // key and its specs render `SSM:` too — only KEY / KIOD keep the inline
+    // dev-key spec.
     if (config.signatureProvider.type === SignatureProviderType.SSM) {
       Steps.keys.planSignatureProviderKeyPublications<C>(
         prerequisites,
         "PublishNodeSignatureProviderKeys",
-        "Publish each producer-node signing key to AWS SSM",
+        "Publish the genesis + producer-node signing keys to AWS SSM",
         {},
         config,
-        Steps.keys.SignatureKeySource.node
+        Steps.keys.SignatureKeyPublishPhase.beforeNodes
       )
     }
     ClusterBuildPhase.create<C>(
@@ -200,7 +270,7 @@ export namespace ClusterBuildDefaults {
       prerequisites,
       "ProducerNodes",
       "Start producer nodes",
-      { parallel: true }
+      { parallel: true, concurrency: NodeStartConcurrency }
     )
     producerNodes.forEach(node =>
       ClusterBuildPhase.create<C>(
@@ -336,11 +406,17 @@ export namespace ClusterBuildDefaults {
       "Producers",
       "Provision producer operators (account + node-shared identity)",
       {},
-      producers.map((label, index) => ({
-        label,
-        type: OperatorType.PRODUCER,
-        producerNodeIndex: producerNodeCount > 0 ? index % producerNodeCount : 0
-      }))
+      // The hosting node comes from `NodeConfig.plan` — the ONE author of the
+      // producer→node assignment. Re-deriving `index % producerNodeCount` here
+      // made a second copy that had to agree with it by hand.
+      producerNodes.flatMap(node =>
+        node.producers.map(label => ({
+          label,
+          type: OperatorType.PRODUCER,
+          producerNodeIndex: node.index,
+          producerNodeName: node.name
+        }))
+      )
     )
     ClusterBuildPhase.create<C>(
       prerequisites,
@@ -541,6 +617,15 @@ export namespace ClusterBuildDefaults {
         {},
         Constants.EMISSION_CONFIG_DEFAULTS
       ),
+      // Anchors node-owner vesting. Without it every `claimnodedis` aborts with
+      // "emission state not initialized", so node owners register successfully but can
+      // never claim. Reads the emission config, so it must follow `set-emit-config`.
+      Steps.contracts.sysio.system.planSetinittime<C>(
+        Actor.Sysio,
+        "set-node-rewards-start",
+        "anchor node-owner vesting at chain head time",
+        {}
+      ),
       Steps.contracts.sysio.system.planInitt5<C>(
         Actor.Sysio,
         "init-t5",
@@ -579,7 +664,12 @@ export namespace ClusterBuildDefaults {
         {},
         {
           account: Constants.BOOTSTRAP_NODE_OWNER,
-          pubkey: Constants.DEV_K1_PUBLIC_KEY,
+          // The account AUTHORITY — `newnameduser` sets this as the new
+          // account's owner/active key, and every subsequent action signed as
+          // BOOTSTRAP_NODE_OWNER (`roa::newuser` for every operator account,
+          // `roa::addpolicy`) is authorized by it. Its private half is imported
+          // into the kiod wallet by `KeySteps.runCreateWallet`.
+          pubkey: nodeOwner.wire.publicKey,
           tier: NodeOwnerTier.T1
         }
       ),
@@ -592,7 +682,12 @@ export namespace ClusterBuildDefaults {
           owner: Constants.BOOTSTRAP_NODE_OWNER,
           tier: NodeOwnerTier.T1,
           eth_pub_key: AuthExLinkTool.newEthereumPubEm(),
-          wire_pub_key: Constants.DEV_K1_PUBLIC_KEY
+          // NOT a free-form payload field: `sysio.roa::nodeownreg` runs
+          // `active_key_matches(owner, wire_pub_key)` and soft-fails the claim
+          // with ACCOUNT_KEY_MISMATCH (a REJECTED audit row, no revert) unless
+          // this key can satisfy the account's `active` authority BY ITSELF —
+          // i.e. it must be exactly the `newnameduser.pubkey` above.
+          wire_pub_key: nodeOwner.wire.publicKey
         }
       ),
       // nodeownreg SOFT-FAILS claim-payload problems into an audit row; a
@@ -743,6 +838,19 @@ export namespace ClusterBuildDefaults {
         }
       )
     )
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "ReserveConfig",
+      "Configure sysio.reserv fee routing"
+    ).push(
+      Steps.contracts.sysio.reserv.planSetconfig<C>(
+        Actor.Sysio,
+        "configure-reserv",
+        "set the swap-fee routing config",
+        {},
+        { fee_emissions_share_bps: FeeEmissionsShareBps }
+      )
+    )
 
     // ═══ Cluster Post Contract Deployment — batch/uw operators, nodes, first epoch ═══
     const postContractDeployment = ClusterBuildPhaseGroup.create<C>(
@@ -780,8 +888,10 @@ export namespace ClusterBuildDefaults {
           )
     )
 
-    // Bootstrapped batch operators + underwriters via the ONE mechanism (no funding —
-    // deposit flows provision their own non-bootstrapped ops with funding).
+    // Bootstrapped batch operators + underwriters via the ONE mechanism. Fee-payer
+    // funding only — deposit flows provision their own non-bootstrapped ops with
+    // collateral funding on top.
+    const isSSM = config.signatureProvider.type === SignatureProviderType.SSM
     WireOperatorProvisioningTool.planOperatorAccountProvisioning<C>(
       postContractDeployment,
       "Create batchops & uws",
@@ -793,15 +903,19 @@ export namespace ClusterBuildDefaults {
           type: OperatorType.BATCH,
           ethereumHdIndex: index + 1,
           isBootstrapped: true,
-          // Fee-payer funding for the daemon's per-epoch SOL deliveries (ETH
-          // needs none — anvil prefunds the operator HD accounts).
-          airdropSolanaLamports: BatchOperatorAirdropLamports
+          // Fee-payer funding for the daemon's per-epoch deliveries on BOTH
+          // chains. ETH is SSM-only: under KEY the EM keys come off the anvil
+          // mnemonic and are prefunded, under SSM they come off a generated
+          // mnemonic anvil never funded. See BatchOperatorEthereumFundingWei.
+          airdropSolanaLamports: BatchOperatorAirdropLamports,
+          ...(isSSM ? { fundEthereumWei: BatchOperatorEthereumFundingWei } : {})
         })),
         ...underwriters.map((label, index) => ({
           label,
           type: OperatorType.UNDERWRITER,
           ethereumHdIndex: config.batchOperatorCount + index + 1,
-          isBootstrapped: false
+          isBootstrapped: false,
+          ...(isSSM ? { fundEthereumWei: BatchOperatorEthereumFundingWei } : {})
         }))
       ]
     )
@@ -816,7 +930,7 @@ export namespace ClusterBuildDefaults {
         "Publish each operator signing key to AWS SSM",
         {},
         config,
-        Steps.keys.SignatureKeySource.operator
+        Steps.keys.SignatureKeyPublishPhase.afterOperators
       )
     }
 
@@ -824,7 +938,7 @@ export namespace ClusterBuildDefaults {
       postContractDeployment,
       "OperatorNodes",
       "Start operator nodes",
-      { parallel: true }
+      { parallel: true, concurrency: NodeStartConcurrency }
     )
     NodeConfig.plan(config)
       .filter(node => node.role === NodeRole.operator)
@@ -875,8 +989,11 @@ export namespace ClusterBuildDefaults {
       )
     )
 
-    // External-outpost success gate: no local chain to advance an epoch on, so
-    // prove the depot is producing blocks (head advance) — plan §5.3.
+    // Bootstrap success gate. LOCAL mode watches the depot's own epoch advance
+    // past the bootstrap epoch; EXTERNAL mode has no local chain to advance an
+    // epoch on, so it proves the depot is producing blocks (head advance) AND
+    // that the bootstrap actually queued an outbound envelope for every
+    // registered outpost.
     if (isExternalOutpost) {
       ClusterBuildPhase.create<C>(
         postContractDeployment,
@@ -890,7 +1007,131 @@ export namespace ClusterBuildDefaults {
           {}
         )
       )
+      ClusterBuildPhase.create<C>(
+        postContractDeployment,
+        "OutboundEnvelopesQueued",
+        "Verify an outbound envelope is queued per registered outpost (external-outpost OPP gate)"
+      ).push(
+        Steps.externalOutpost.planOutboundEnvelopesQueued<C>(
+          Actor.Sysio,
+          "verify-outbound-envelopes",
+          "every registered outpost has a queued outbound envelope",
+          { timeoutMs: Steps.externalOutpost.OutboundEnvelopesTimeoutMs }
+        )
+      )
+    } else {
+      ClusterBuildPhase.create<C>(
+        postContractDeployment,
+        "EpochAdvance",
+        "Verify the depot advances past the bootstrap epoch"
+      ).push(
+        verifyStep<C>(
+          Actor.Sysio,
+          "verify-epoch-advance",
+          `sysio.epoch current_epoch_index reaches ${EpochAdvanceTargetIndex}`,
+          runEpochAdvance
+        )
+      )
     }
+
+    planStartScripts<C>(postContractDeployment, config)
+  }
+
+  /**
+   * Emit each daemon's `start.sh` — ONE step per daemon, never one step looping
+   * over N, so the Report validates every script individually.
+   *
+   * Placed LAST in the bootstrap: an operator node's argv includes its OPP
+   * daemon args, which resolve from `OperatorDaemonArtifactsKey` — asserting
+   * that output before the outpost deploys have published it would throw.
+   *
+   * @param parent - The phase group to register the phase on.
+   * @param config - The resolved cluster config (which daemons exist).
+   */
+  function planStartScripts<C extends ClusterBuildContext>(
+    parent: ClusterBuildPhaseGroup<C>,
+    config: ClusterConfig
+  ): void {
+    // The daemon SET comes from DaemonConfig — never re-derived here, or the
+    // emit labels and the enumeration can drift. That includes the bundle
+    // gate: it reads the LABELS, so "is a debugging-server start.sh emitted?"
+    // and "is its bundle copied?" are one predicate. Re-deriving the flag
+    // would let `plannedLabels` gain a condition the copy step never learns,
+    // emitting a script that execs a binary nobody copied.
+    const labels = DaemonConfig.plannedLabels(config),
+      debuggingServerEnabled = labels.includes(
+        DaemonConfig.DebuggingServerSubpath
+      ),
+      phase = ClusterBuildPhase.create<C>(
+        parent,
+        "StartScripts",
+        "Bundle the debugging server + emit a start.sh for every daemon"
+      )
+    // The bundle copy precedes the scripts: the server's start.sh lives in the
+    // directory this step creates. Skipped wholesale when the server is
+    // disabled — shipping 15 MB for a server that never runs is waste.
+    if (debuggingServerEnabled)
+      phase.push(
+        Steps.debuggingServerBundle.planCopy<C>(
+          Actor.Sysio,
+          "copy-debugging-server-bundle",
+          "copy the bundled debugging server into the cluster tree",
+          {}
+        )
+      )
+    Steps.startScript.planPhase<C>(phase, labels)
+  }
+
+  /**
+   * The epoch-advance gate's budget — {@link ProtocolTiming.EpochVerifyEpochCount}
+   * effective-epoch windows, the SAME envelope `ClusterManager.run`'s post-relaunch
+   * liveness check uses (one constant, two call sites; no new literal).
+   *
+   * @param config - The resolved cluster config (its `epochDurationSec`).
+   * @returns The budget in ms.
+   */
+  export function epochAdvanceBudgetMs(config: ClusterConfig): number {
+    return (
+      ProtocolTiming.EpochVerifyEpochCount *
+      ProtocolTiming.effectiveEpochSec(config.epochDurationSec) *
+      ProtocolTiming.MsPerSecond
+    )
+  }
+
+  /**
+   * Named runner — poll `sysio.epoch::epochstate` until the depot has advanced
+   * PAST the bootstrap epoch. `msgch::bootstrap` takes the chain 0 → 1 inline;
+   * reaching {@link EpochAdvanceTargetIndex} proves `sysio.epoch::advance` then
+   * fired on its own cadence, i.e. OPP is circulating and not merely bootstrapped.
+   *
+   * The poll owns the whole budget (no step ceiling), mirroring
+   * `ExternalOutpostSteps.runHeadBlockAdvance` — one owner, so the Report carries
+   * `pollUntil`'s precise timeout message rather than a racing step abort.
+   *
+   * @param ctx - The build context.
+   * @param signal - Abort signal.
+   */
+  export async function runEpochAdvance<C extends ClusterBuildContext>(
+    ctx: C,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await pollUntil(
+      `sysio.epoch current_epoch_index reaches ${EpochAdvanceTargetIndex}`,
+      async () => {
+        try {
+          const { rows } = await ctx.wire.getEpochState()
+          return (rows[0]?.current_epoch_index ?? 0) >= EpochAdvanceTargetIndex
+        } catch (error) {
+          log.debug(
+            `[cluster] epoch-state read transient: ${error instanceof Error ? error.message : String(error)}`
+          )
+          return false
+        }
+      },
+      epochAdvanceBudgetMs(ctx.config),
+      ProtocolTiming.EpochVerifyPollIntervalMs
+    )
   }
 
   /**

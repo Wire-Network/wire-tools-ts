@@ -18,6 +18,7 @@ import {
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { KeyType } from "@wireio/sdk-core"
+import { getValue } from "@wireio/shared"
 import { getLogger } from "../../logging/Logger.js"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import {
@@ -26,8 +27,11 @@ import {
 } from "../../cluster/ClusterState.js"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
+import { DaemonConfig } from "../../config/DaemonConfig.js"
 import { NodeConfig } from "../../config/NodeConfig.js"
+import { StartScriptSteps } from "./StartScriptSteps.js"
 import { OperatorDaemonTool } from "../../tools/wire/OperatorDaemonTool.js"
+import { ExternalOutpostSteps } from "./ExternalOutpostSteps.js"
 import type { KeyPair, WireFinalizerKeyPair } from "../../types/KeyPair.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
@@ -38,6 +42,7 @@ import {
 } from "../ClusterBuildStep.js"
 import { outputKey, type OutputKey } from "../OutputStore.js"
 import { verifyStep } from "../StepTools.js"
+import { KeySteps } from "./KeySteps.js"
 import { Report } from "../../report/Report.js"
 
 /**
@@ -171,7 +176,7 @@ export namespace ExternalClusterConfigSteps {
         planVerifyOperatorAccounts(
           actor,
           "verify-operator-accounts",
-          "every state operator account is present in cluster-keys",
+          "every state operator label is present in cluster-keys",
           options
         ),
         planVerifySolanaDynamicRange(
@@ -410,7 +415,7 @@ export namespace ExternalClusterConfigSteps {
     )
   }
 
-  /** Named runner — every state operator account is present in cluster-keys.json. */
+  /** Named runner — every state operator label is present in cluster-keys.json. */
   export async function runVerifyOperatorAccounts<C extends ClusterBuildContext>(
     ctx: C,
     signal: AbortSignal
@@ -497,16 +502,29 @@ export namespace ExternalClusterConfigSteps {
     )
   }
 
-  /** Named runner — no port appears twice across the whole external bind config. */
+  /**
+   * Named runner — no HOST binds the same port twice.
+   *
+   * Scoped per host, not globally: an external cluster puts every nodeop on its
+   * own machine, so all 43 of them correctly bind the standard `8888`/`9876`.
+   * A global-uniqueness check calls that a collision and makes a valid
+   * multi-host deployment unrepresentable — it rejected a correct 43-identity
+   * bind config on 2026-08-04, after the bootstrap itself had fully succeeded.
+   */
   export async function runVerifyNoDuplicatePorts<C extends ClusterBuildContext>(
     ctx: C,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const allPorts = BindConfigProvider.allPorts(ctx.outputs.assert(ExternalBindKey))
+    const bindings = BindConfigProvider.allPortBindings(
+        ctx.outputs.assert(ExternalBindKey)
+      ),
+      duplicates = bindings.filter(
+        (binding, index) => bindings.indexOf(binding) !== index
+      )
     Assert.ok(
-      new Set(allPorts).size === allPorts.length,
-      "create-external-config: the external bind config has duplicate ports"
+      duplicates.length === 0,
+      `create-external-config: the external bind config binds the same port twice on one host: ${[...new Set(duplicates)].join(", ")}`
     )
   }
 
@@ -689,7 +707,119 @@ export namespace ExternalClusterConfigSteps {
       solanaIdlFile: Fs.existsSync(solanaIdlFile) ? solanaIdlFile : null
     })
 
+    // Re-render EVERY daemon's start.sh against the merged (external) model —
+    // not just the per-node files above. `writeAll` DELETES the cloned scripts
+    // first: Clone copies the local tree wholesale (excluding only
+    // logs/reports/*.pid), so a daemon the external model drops (anvil and the
+    // validator under external-outpost mode) would otherwise keep its
+    // LOCAL-port script, which the Verify scan cannot flag because it never
+    // enumerates it.
+    //
+    // A node's argv carries its signing providers, so the operators must be
+    // resolvable — and THIS context's keyStore is empty (a fresh context has an
+    // empty OutputStore). Rehydrate it from the cloned `cluster-keys.json`
+    // exactly as `ClusterManager.run` does before it resolves operators; a
+    // cluster whose keys are absent simply gets no scripts rather than failing
+    // the rebind.
+    await emitStartScripts(mergedContext, mergedConfig, signal)
+
     ctx.outputs.set(MergedConfigKey, mergedConfig)
+  }
+
+  /**
+   * The materialized ETH outpost address map — the artifact whose presence
+   * proves the outpost deploy published its results into this tree.
+   */
+  const ExternalOutpostAddressFilename = "outpost-addrs.json"
+
+  /**
+   * Re-render EVERY daemon's `start.sh` against the merged (external) model.
+   *
+   * Two prerequisites make a node's argv resolvable, and a FRESH context has
+   * neither — its `OutputStore` and `keyStore` are both empty:
+   *
+   * 1. **Key material.** A producing node's argv carries its signature
+   *    providers, resolved from `ctx.keyStore`. Rehydrated from the cloned
+   *    `cluster-keys.json` exactly as `ClusterManager.run` does.
+   * 2. **Operator daemon artifacts.** An operator node's argv carries its OPP
+   *    daemon args, which assert `OperatorDaemonArtifactsKey`. `run` publishes
+   *    those first, branching on outpost mode — the external arm reads only the
+   *    cluster tree, the local arm reads the wire-ethereum tree.
+   *
+   * Either prerequisite may be genuinely absent (a cluster cloned before its
+   * outposts deployed, unreadable keys). That is NOT fatal to the rebind: the
+   * scripts are SKIPPED with a warning, because emitting a node script without
+   * its signing providers or daemon args would ship a script that looks right
+   * and starts a misconfigured daemon.
+   *
+   * @param ctx - The merged-model context (mutated: keyStore + outputs filled).
+   * @param config - The merged cluster config.
+   * @param signal - Abort signal.
+   */
+  async function emitStartScripts(
+    ctx: ClusterBuildContext,
+    config: ClusterConfig,
+    signal: AbortSignal
+  ): Promise<void> {
+    const log = getLogger(__filename)
+
+    // DELETE FIRST, unconditionally. Clone copied every local `start.sh` into
+    // this tree; if the render below is skipped, leaving them behind is the
+    // WORST outcome — they carry local ports and, under a KEY-mode source
+    // cluster, the local inline signing keys the external model exists to
+    // replace with `SSM:` refs. No scripts is recoverable; wrong scripts are
+    // not.
+    //
+    // `writeAll` sweeps again on the success path. That is NOT redundant: this
+    // copy is the only one that runs when a prerequisite below is missing, and
+    // `writeAll`'s is the only one that runs on the `create` path. Removing
+    // either re-opens a hole.
+    DaemonConfig.existingStartScriptFiles(
+      config.dataPath,
+      Fs.existsSync,
+      Fs.readdirSync as (path: string) => string[]
+    ).forEach(file => Fs.rmSync(file, { force: true }))
+
+    // Keys may be genuinely absent (a tree cloned before provisioning) — that
+    // is a skip, not a failure. An artifact-publish throw is NOT expected and
+    // is left to propagate.
+    const keys = getValue(
+      () => ClusterState.loadKeys(config),
+      null,
+      error =>
+        log.warn(
+          `create-external-config: start scripts skipped — cluster keys unreadable: ${error instanceof Error ? error.message : String(error)}`
+        )
+    )
+    if (keys == null) return
+    ClusterState.rehydrate(ctx.keyStore, keys)
+
+    // An operator node's argv carries its OPP daemon args, which need the
+    // outpost deploy artifacts. A tree cloned BEFORE those were published
+    // (synthetic fixtures, a cluster whose outposts never deployed) simply has
+    // none — that is a legitimate skip, PRE-CHECKED rather than caught, so a
+    // genuine publication failure still propagates instead of being downgraded
+    // to a warning.
+    const addressFile = Path.join(
+      ClusterConfigProvider.ethereumDeploymentsPath(config),
+      ExternalOutpostAddressFilename
+    )
+    if (!Fs.existsSync(addressFile)) {
+      log.warn(
+        `create-external-config: start scripts skipped — outpost artifacts absent (${addressFile})`
+      )
+      return
+    }
+    // BOTH arms are reachable, and the LOCAL one is the common case: a plain
+    // local cluster cloned to external has `externalOutposts == null` (the
+    // field is set only when the SOURCE cluster was itself external-outpost),
+    // so it takes `runArtifactPreparation`. Verified on a real
+    // create-external-config run, which logged that arm's
+    // "[operator-daemon] artifacts ready" line.
+    await (config.externalOutposts != null
+      ? ExternalOutpostSteps.runPublishArtifacts(ctx, null, signal)
+      : OperatorDaemonTool.runArtifactPreparation(ctx, null, signal))
+    StartScriptSteps.writeAll(config, StartScriptSteps.resolveSources(ctx))
   }
 
   // ── Stage 4: Emit ──────────────────────────────────────────────────────────
@@ -744,16 +874,19 @@ export namespace ExternalClusterConfigSteps {
       externalBind = ctx.outputs.assert(ExternalBindKey),
       keys = ClusterState.loadKeys(merged),
       // The provider type + SSM settings are the SOURCE cluster's; SSM secret
-      // ids were PutParameter'd at CREATE time under the SOURCE cluster's
-      // basename — reconstruct against ctx.config (source), NOT merged (external root).
+      // ids were PutParameter'd at CREATE time under the SOURCE cluster's AWS
+      // account — reconstruct against ctx.config (source), NOT merged (external root).
       provider = ctx.config.signatureProvider,
-      cluster = Path.basename(ctx.config.clusterPath),
+      // What create ACTUALLY published, from the walker that published it — the
+      // emitted refs are those rows verbatim, so a ref can never name a
+      // parameter that does not exist. Empty under KEY / KIOD.
+      lookup = ssmPublicationLookup(ctx.config),
       solana = solanaSection(merged),
       external: ExternalClusterConfig = {
         bindings: externalBind,
         accounts: {
           operators: keys.operators.map(operator =>
-            toAccount(operator, provider, cluster)
+            toAccount(operator, provider, lookup)
           )
         },
         wire: {
@@ -785,16 +918,21 @@ export namespace ExternalClusterConfigSteps {
   function toAccount(
     operator: ClusterKeysOperatorEntry,
     provider: ClusterSignatureProviderConfig,
-    cluster: string
+    lookup: SSMPublicationLookup
   ): ExternalClusterConfigAccount {
+    // The SSM secret id is keyed by the DURABLE handle (what `KeySteps`
+    // PutParameter'd); `accountName` is the ON-CHAIN name the deployed daemon
+    // acts as. Two different values — do not collapse them.
     const providerFor = (keyPair: KeyPair): SignatureProviderConfig =>
-      keyProviderFor(keyPair, operator.account, provider, cluster)
+      keyProviderFor(keyPair, operator.publicationLabel, provider, lookup)
     return {
       accountName: operator.account,
       type: operator.type,
       keyProviders: [
         providerFor(operator.wire),
-        ...(operator.bls != null ? [providerFor(operator.bls)] : []),
+        ...(operator.wireFinalizer != null
+          ? [providerFor(operator.wireFinalizer)]
+          : []),
         ...(operator.ethereum != null ? [providerFor(operator.ethereum)] : []),
         ...(operator.solana != null ? [providerFor(operator.solana)] : [])
       ]
@@ -802,44 +940,88 @@ export namespace ExternalClusterConfigSteps {
   }
 
   /**
-   * The operator key curves published to SSM at create time
-   * (`KeySteps.signatureProviderKeyPublications`: K1 wire / EM ethereum / ED
-   * solana — NEVER operator BLS; BLS is a producer-NODE key and external-config
-   * emits OPERATORS). The SSM emit branch guards this set so an emitted
-   * `awsSecretId` never references a parameter create did not publish.
+   * Every key create PUBLISHED to SSM, indexed by `<label>/<KeyType>` — the ONE
+   * authority for "does this parameter exist", built from the SAME
+   * {@link KeySteps.signatureProviderKeyPublications} walker that wrote them.
    */
-  const OperatorSsmKeyTypes: readonly KeyType[] = [
-    KeyType.K1,
-    KeyType.EM,
-    KeyType.ED
-  ]
+  type SSMPublicationLookup = (
+    label: string,
+    keyType: KeyType
+  ) => KeySteps.SignatureProviderKeyPublication
+
+  /** Separator for the `<label>/<KeyType>` publication-index key. */
+  const PublicationKeySeparator = "/"
+
+  /** The publication-index key for one identity's curve. */
+  function publicationKey(label: string, keyType: KeyType): string {
+    return [label, KeyType[keyType]].join(PublicationKeySeparator)
+  }
+
+  /**
+   * Resolve an identity's curve to the publication create wrote for it; yields
+   * nothing under KEY / KIOD (nothing was published, and nothing consults it).
+   *
+   * Deriving the covered set — rather than re-stating a curve list at the emit
+   * site — is what makes the guard true by construction. The operator map is NOT
+   * homogeneous: batch operators and underwriters publish K1/EM/ED, the genesis
+   * identity (`node_bios`) publishes K1/BLS, and the bootstrap node owner
+   * publishes K1 alone. A hand-maintained "operators publish K1/EM/ED" set is
+   * right for the first class and wrong for the other two — it refused the
+   * genesis identity's BLS, a parameter create had genuinely published, and
+   * failed every SSM `create-external-config` at the Emit stage.
+   *
+   * @param config - The SOURCE cluster's resolved config.
+   * @returns A resolver from `(identity label, curve)` to its publication.
+   */
+  function ssmPublicationLookup(config: ClusterConfig): SSMPublicationLookup {
+    return match(config.signatureProvider.type)
+      .with(SignatureProviderType.SSM, (): SSMPublicationLookup => {
+        Assert.ok(
+          config.awsClusterNodeConfig != null,
+          "create-external-config: SSM signature provider requires awsClusterNodeConfig (the secret-id {cluster} source)"
+        )
+        // Callers pass the RECORDED `publicationLabel`, so this is a plain
+        // lookup — no mapping lives here. Emit deriving its own producer→node
+        // relationship is what made `cluster-keys.json` and the emitted config
+        // disagree about the same key.
+        const index = new Map(
+          KeySteps.signatureProviderKeyPublications(config).map(row => [
+            publicationKey(row.label, row.keyType),
+            row
+          ])
+        )
+        return (label, keyType) => index.get(publicationKey(label, keyType))
+      })
+      .otherwise((): SSMPublicationLookup => () => undefined)
+  }
 
   /**
    * Build a signature-provider config from a stored operator key pair, reflecting
    * the SOURCE cluster's provider type:
    * - `KEY`  → inline plaintext `privateKey` (byte-identical to a KEY cluster's keys).
-   * - `SSM`  → a region + rendered `awsSecretId` ref (NO private key); the id is
-   *   reconstructed DETERMINISTICALLY via the same
-   *   `ClusterConfigProvider.toSecretId(pattern, {cluster, account, keyType})`
-   *   `KeySteps` PutParameter'd at create time.
+   * - `SSM`  → the replication regions + `awsSecretId` taken VERBATIM from the
+   *   publication row create wrote (NO private key), so the emitted ref is the
+   *   published parameter by construction rather than by two render sites
+   *   agreeing.
    * - `KIOD` → material-less (`publicKey` + BLS proof only); hydration is deferred.
    *
    * A BLS pair carries its `proofOfPossession` in every mode (required by the
-   * union). Under `SSM` the key's curve MUST be in {@link OperatorSsmKeyTypes} —
-   * an out-of-set curve (e.g. operator BLS) is refused rather than emitted as a
-   * dangling ref.
+   * union). Under `SSM` the `(label, curve)` MUST appear in
+   * {@link ssmPublicationIndex} — an unpublished pair is refused rather than
+   * emitted as a dangling ref.
    *
    * @param keyPair - The stored key pair.
-   * @param account - The operator account (the secret-id `{account}`).
+   * @param label - The operator label (the secret-id `{account}`).
    * @param provider - The source cluster's signature-provider config.
-   * @param cluster - The source cluster label (the secret-id `{cluster}`).
+   * @param lookup - Resolves an identity's curve to the publication create
+   *   wrote for it; yields nothing under KEY / KIOD, where it is unused.
    * @returns The provider entry for this key.
    */
   function keyProviderFor(
     keyPair: KeyPair,
-    account: string,
+    label: string,
     provider: ClusterSignatureProviderConfig,
-    cluster: string
+    lookup: SSMPublicationLookup
   ): SignatureProviderConfig {
     const base = {
       type: keyPair.type,
@@ -860,24 +1042,20 @@ export namespace ExternalClusterConfigSteps {
         })
       )
       .with(SignatureProviderType.SSM, (): SignatureProviderConfig => {
-        const ssm = provider.ssm
         Assert.ok(
-          ssm != null,
+          provider.ssm != null,
           "create-external-config: SSM signature provider requires ssm settings"
         )
+        const published = lookup(label, keyPair.type)
         Assert.ok(
-          OperatorSsmKeyTypes.includes(keyPair.type),
-          `create-external-config: operator key ${KeyType[keyPair.type]} is not SSM-published (operators publish K1/EM/ED only) — refusing a dangling SSM ref for ${account}`
+          published != null,
+          `create-external-config: ${label} key ${KeyType[keyPair.type]} is not SSM-published — create wrote no such parameter; refusing a dangling SSM ref`
         )
         return {
           providerType: SignatureProviderType.SSM,
           ...base,
-          awsRegion: ssm.awsRegion,
-          awsSecretId: ClusterConfigProvider.toSecretId(ssm.awsSecretIdPattern, {
-            cluster,
-            account,
-            keyType: KeyType[keyPair.type]
-          })
+          awsRegions: published.awsRegions,
+          awsSecretId: published.secretId
         }
       })
       .with(
@@ -981,7 +1159,7 @@ export namespace ExternalClusterConfigSteps {
         : [],
       liqEthAddressFile = Path.join(deploymentsDir, "liqeth-addrs.json")
     return {
-      addressFile: Path.join(deploymentsDir, "outpost-addrs.json"),
+      addressFile: Path.join(deploymentsDir, ExternalOutpostAddressFilename),
       abiFiles,
       chainId: AnvilProcess.DefaultChainId,
       ...(Fs.existsSync(liqEthAddressFile) ? { liqEthAddressFile } : {})
@@ -1093,7 +1271,15 @@ export namespace ExternalClusterConfigSteps {
         ...NodeConfig.plan(merged).flatMap(node => [
           Path.join(node.nodePath, NodeConfigFilename),
           Path.join(node.nodePath, NodeLoggingFilename)
-        ])
+        ]),
+        // EVERY emitted start.sh — enumerated from the TREE, not from the
+        // model, so a script the external model no longer plans is still
+        // scanned rather than silently skipped.
+        ...DaemonConfig.existingStartScriptFiles(
+          merged.dataPath,
+          Fs.existsSync,
+          Fs.readdirSync as (path: string) => string[]
+        )
       ]
     configFiles
       .filter(file => Fs.existsSync(file))

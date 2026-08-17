@@ -28,10 +28,22 @@ export namespace CLI {
     export const LogLevelOption = "log-level" as const
   }
 
+  /** Local-disk transport — envelopes are read straight from a cluster directory. */
+  export interface LocalMode {
+    kind: "local"
+    /** Absolute path to the cluster directory. */
+    clusterPath: string
+  }
+
+  /** Remote transport — envelopes are streamed from a running debugging-server. */
+  export interface RemoteMode {
+    kind: "remote"
+    /** Base URL of the debugging-server. */
+    serverUrl: string
+  }
+
   /** Mutually-exclusive transport selection captured from the CLI. */
-  export type Mode =
-    | { kind: "local"; clusterPath: string }
-    | { kind: "remote"; serverUrl: string }
+  export type Mode = LocalMode | RemoteMode
 
   /** Parsed CLI arguments — resolved and validated. */
   export interface Args {
@@ -57,7 +69,7 @@ export namespace CLI {
 }
 
 /** Coerce raw `--features` input to a lowercased id set (or null when omitted). */
-export function coerceFeatures(raw?: string): Set<string> | null {
+export function coerceFeatures(raw?: string): Set<string> {
   return asOption(raw)
     .map(s =>
       s

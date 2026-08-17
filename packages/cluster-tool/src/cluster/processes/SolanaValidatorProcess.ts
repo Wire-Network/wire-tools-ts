@@ -96,36 +96,31 @@ export class SolanaValidatorProcess extends ManagedProcess {
       binary != null && (await existsAsync(binary)),
       "solana-test-validator binary not found on PATH"
     )
-    const config: SolanaValidatorConfig = {
-      address: options.address ?? Localhost,
-      rpcPort:
-        options.rpcPort ??
-        (await BindConfigProvider.findAvailable(
-          BindConfigProvider.DefaultSolanaRpc
-        )),
-      faucetPort:
-        options.faucetPort ??
-        (await BindConfigProvider.findAvailable(
-          BindConfigProvider.DefaultSolanaFaucet
-        )),
-      gossipPort:
-        options.gossipPort ??
-        (await BindConfigProvider.findAvailable(
-          BindConfigProvider.DefaultSolanaGossip,
-          BindConfigPortProtocol.udp
-        )),
-      dynamicPortRange:
-        options.dynamicPortRange ??
-        (await BindConfigProvider.findAvailableRange()),
-      ledgerPath: options.ledgerPath ?? null,
-      limitLedgerSizeShreds:
-        options.limitLedgerSizeShreds ??
-        SolanaValidatorProcess.DefaultLimitLedgerSizeShreds,
-      binary,
-      programs: options.programs ?? [],
-      extraArgs: options.extraArgs ?? []
-    }
-    return new SolanaValidatorProcess(manager, config)
+    return new SolanaValidatorProcess(
+      manager,
+      SolanaValidatorProcess.resolveConfig(options, {
+        binary,
+        rpcPort:
+          options.rpcPort ??
+          (await BindConfigProvider.findAvailable(
+            BindConfigProvider.DefaultSolanaRpc
+          )),
+        faucetPort:
+          options.faucetPort ??
+          (await BindConfigProvider.findAvailable(
+            BindConfigProvider.DefaultSolanaFaucet
+          )),
+        gossipPort:
+          options.gossipPort ??
+          (await BindConfigProvider.findAvailable(
+            BindConfigProvider.DefaultSolanaGossip,
+            BindConfigPortProtocol.udp
+          )),
+        dynamicPortRange:
+          options.dynamicPortRange ??
+          (await BindConfigProvider.findAvailableRange())
+      })
+    )
   }
 
   private constructor(
@@ -143,35 +138,7 @@ export class SolanaValidatorProcess extends ManagedProcess {
   }
 
   get args(): string[] {
-    // `--quiet` suppresses program `msg!()` output; disable it (verbose) so
-    // on-chain log lines land in the process log when debugging.
-    const verbose =
-      process.env[SolanaValidatorProcess.VerboseEnvironmentVariable] === "1"
-    return [
-      "--rpc-port",
-      String(this.config.rpcPort),
-      "--faucet-port",
-      String(this.config.faucetPort),
-      "--gossip-port",
-      String(this.config.gossipPort),
-      "--dynamic-port-range",
-      `${this.config.dynamicPortRange.first}-${this.config.dynamicPortRange.last}`,
-      "--limit-ledger-size",
-      String(this.config.limitLedgerSizeShreds),
-      ...(verbose ? [] : ["--quiet"]),
-      ...(this.config.ledgerPath ? ["--ledger", this.config.ledgerPath] : []),
-      ...this.config.programs.flatMap(program =>
-        program.upgradeAuthority
-          ? [
-              "--upgradeable-program",
-              program.programId,
-              program.soFile,
-              program.upgradeAuthority
-            ]
-          : ["--bpf-program", program.programId, program.soFile]
-      ),
-      ...this.config.extraArgs
-    ]
+    return SolanaValidatorProcess.buildArgs(this.config)
   }
 
   protected get verifyTimeoutMs(): number {
@@ -180,7 +147,7 @@ export class SolanaValidatorProcess extends ManagedProcess {
 
   /** Ready only once the endpoint answers AND ≥1 slot has been produced (an
    *  airdrop before the first slot times out). */
-  protected async verifyReady(): Promise<boolean> {
+  async verifyReady(): Promise<boolean> {
     if (!(await probeEndpoint(this.rpcUrl))) return false
     try {
       const slot = await new Connection(
@@ -262,6 +229,88 @@ export class SolanaValidatorProcess extends ManagedProcess {
 }
 
 export namespace SolanaValidatorProcess {
+  /**
+   * Resolve caller options into a complete {@link SolanaValidatorConfig}. PURE —
+   * the PATH-resolved binary and every registry-issued port/range are INJECTED,
+   * so a `start.sh` render rebuilds the same config without claiming a second
+   * set of ports.
+   *
+   * The `programs` entries (programId / soFile / upgradeAuthority) are already
+   * caller-supplied: the step that plans this validator resolves them from the
+   * wire-solana tree and the cluster's deployer keypair, so they arrive here as
+   * data rather than being probed.
+   *
+   * @param options - Caller overrides.
+   * @param resolved - The impure values `create` obtained.
+   * @returns The complete config.
+   */
+  /** The impure values `create` resolves (PATH lookup + registry-issued ports/range). */
+  export interface ResolvedInputs {
+    binary: string
+    rpcPort: number
+    faucetPort: number
+    gossipPort: number
+    dynamicPortRange: BindConfigPortRange
+  }
+
+  export function resolveConfig(
+    options: SolanaValidatorOptions,
+    resolved: ResolvedInputs
+  ): SolanaValidatorConfig {
+    return {
+      address: options.address ?? Localhost,
+      rpcPort: resolved.rpcPort,
+      faucetPort: resolved.faucetPort,
+      gossipPort: resolved.gossipPort,
+      dynamicPortRange: resolved.dynamicPortRange,
+      ledgerPath: options.ledgerPath ?? null,
+      limitLedgerSizeShreds:
+        options.limitLedgerSizeShreds ??
+        SolanaValidatorProcess.DefaultLimitLedgerSizeShreds,
+      binary: resolved.binary,
+      programs: options.programs ?? [],
+      extraArgs: options.extraArgs ?? []
+    }
+  }
+
+  /**
+   * The validator argv (WITHOUT the binary) — the ONE argv source, shared by the
+   * live process and the `start.sh` renderer.
+   *
+   * NEVER emits `--quiet` (or any diagnostics-suppressing flag): a silenced
+   * dev/test daemon hides the program `msg!()` output and the startup panic you
+   * need the moment it fails.
+   *
+   * @param config - A resolved validator config.
+   * @returns The argv.
+   */
+  export function buildArgs(config: SolanaValidatorConfig): string[] {
+    return [
+      "--rpc-port",
+      String(config.rpcPort),
+      "--faucet-port",
+      String(config.faucetPort),
+      "--gossip-port",
+      String(config.gossipPort),
+      "--dynamic-port-range",
+      `${config.dynamicPortRange.first}-${config.dynamicPortRange.last}`,
+      "--limit-ledger-size",
+      String(config.limitLedgerSizeShreds),
+      ...(config.ledgerPath ? ["--ledger", config.ledgerPath] : []),
+      ...config.programs.flatMap(program =>
+        program.upgradeAuthority
+          ? [
+              "--upgradeable-program",
+              program.programId,
+              program.soFile,
+              program.upgradeAuthority
+            ]
+          : ["--bpf-program", program.programId, program.soFile]
+      ),
+      ...config.extraArgs
+    ]
+  }
+
   export const ProcessLabel = "solana-test-validator" as const
   export const SlotPollIntervalMs = 500
   /**
@@ -274,8 +323,6 @@ export namespace SolanaValidatorProcess {
    * pays this ceiling.
    */
   export const StartupTimeoutMs = 480_000
-  /** Env var that, when `"1"`, drops `--quiet` so program logs are captured. */
-  export const VerboseEnvironmentVariable = "WIRE_SOLANA_VALIDATOR_VERBOSE"
   /**
    * Lines of `<ledger>/validator.log` surfaced in a startup-failure error —
    * agave's panic/bind-error detail lands there, not on the captured stdio.

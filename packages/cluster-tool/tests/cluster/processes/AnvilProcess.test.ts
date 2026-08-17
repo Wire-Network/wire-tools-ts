@@ -50,6 +50,38 @@ describe("AnvilProcess", () => {
     )
   })
 
+  it("always carries the mainnet-parity gas flags", async () => {
+    // Unconditional, NOT run-phase-gated: the deploy phase must reject an
+    // oversized transaction exactly as mainnet would, or a contract that can
+    // never ship passes locally and fails only on a real chain.
+    const process = await AnvilProcess.create(manager, { binary: "/bin/true" })
+    expect(process.args).toEqual(
+      expect.arrayContaining([
+        "--hardfork",
+        AnvilProcess.Hardfork,
+        "--enable-tx-gas-limit",
+        "--gas-limit",
+        String(AnvilProcess.BlockGasLimit)
+      ])
+    )
+  })
+
+  it("never overrides the EVM code-size limit", async () => {
+    // Same parity requirement as the gas flags, on code size: NO --code-size-limit
+    // override, so the fork's default EIP-170 24KB rule applies and a cluster
+    // deploy is real EIP-170 evidence. Re-adding the override would let an
+    // unshippable contract deploy here and fail only on a real chain.
+    const process = await AnvilProcess.create(manager, { binary: "/bin/true" })
+    expect(process.args).not.toContain("--code-size-limit")
+  })
+
+  it("sizes the block gas limit above EIP-7825's per-transaction cap", async () => {
+    // `--gas-limit` bounds the BLOCK; `--enable-tx-gas-limit` bounds a single
+    // transaction at 2^24. A block limit at or below the per-tx cap would make
+    // the block the binding constraint and mask which limit actually bit.
+    expect(AnvilProcess.BlockGasLimit).toBeGreaterThan(2 ** 24)
+  })
+
   it("dials loopback on the resolved (free) port", async () => {
     const process = await AnvilProcess.create(manager, { binary: "/bin/true" })
     expect(process.rpcUrl).toContain(Localhost)

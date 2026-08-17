@@ -5,11 +5,13 @@ import Path from "node:path"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
 import {
+  AWSAccountName,
+  type AWSClusterNodeConfig,
   type ClusterSignatureProviderConfig,
   ExternalClusterConfigSchemaCodec,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
-import { ClusterState } from "@wireio/cluster-tool"
+import { ClusterState, Constants } from "@wireio/cluster-tool"
 import {
   ClusterConfigProvider,
   NodeConfig,
@@ -36,14 +38,21 @@ const External = Steps.externalClusterConfig,
     type: SignatureProviderType.KIOD,
     ssm: null
   },
-  SsmRegion = "us-east-1",
-  SsmSecretIdPattern = "/wire/{cluster}/{account}/{keyType}",
-  SsmProvider: ClusterSignatureProviderConfig = {
+  SSMRegions = ["us-east-1", "eu-west-1"],
+  SSMSecretIdPattern = "/wire/{cluster}/{account}/{keyType}",
+  SSMProvider: ClusterSignatureProviderConfig = {
     type: SignatureProviderType.SSM,
-    ssm: { awsRegion: SsmRegion, awsSecretIdPattern: SsmSecretIdPattern }
+    ssm: { awsRegions: SSMRegions, awsSecretIdPattern: SSMSecretIdPattern }
   },
-  // basename(localDir) — the SSM `{cluster}` create published under (localDir = root/local).
-  SourceClusterLabel = "local"
+  // The SOURCE cluster's AWS placement — `{cluster}` renders its ACCOUNT.
+  SourceAWSClusterNodeConfig: AWSClusterNodeConfig = {
+    account: AWSAccountName.test,
+    regions: SSMRegions,
+    ssm: null
+  },
+  // The SSM `{cluster}` create published under — the AWS account, NOT
+  // basename(localDir).
+  SourceClusterLabel = AWSAccountName.test
 
 /** Deep-clone a bind shape, shifting every numeric port by `delta` (addresses unchanged). */
 function shiftPorts(value: unknown, delta: number): unknown {
@@ -110,8 +119,8 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     ctx.keyStore.pushNodes({
       index: 0,
       keys: {
-        k1: { type: KeyType.K1, publicKey: "PUB_K1_n0", privateKey: "PVT_K1_n0" },
-        bls: {
+        wire: { type: KeyType.K1, publicKey: "PUB_K1_n0", privateKey: "PVT_K1_n0" },
+        wireFinalizer: {
           type: KeyType.BLS,
           publicKey: "PUB_BLS_n0",
           privateKey: "PVT_BLS_n0",
@@ -128,7 +137,8 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
           label = batchOperatorLabel ?? underwriterLabel
         ctx.keyStore.setOperator({
           label,
-          account: label,
+          publicationLabel: label,
+          account: `wireno.${label.replace(/[^a-z1-5]/g, "")}`,
           type:
             batchOperatorLabel != null
               ? OperatorType.BATCH
@@ -169,7 +179,13 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       clusterPath: localDir,
       dataPath: Path.join(localDir, "data"),
       walletPath: Path.join(localDir, "wallet"),
-      signatureProvider
+      signatureProvider,
+      // `resolve` makes the AWS placement REQUIRED under SSM (it sources the
+      // secret-id `{cluster}`); KEY / KIOD clusters carry none.
+      awsClusterNodeConfig:
+        signatureProvider.type === SignatureProviderType.SSM
+          ? SourceAWSClusterNodeConfig
+          : null
     })
     ctx.outputs.set(External.ParamsKey, {
       externalClusterPath: externalDir,
@@ -198,21 +214,135 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     )
   }
 
-  /** Inject a BLS key onto the first cluster-keys operator (operators normally carry none). */
-  function injectOperatorBls() {
+  /**
+   * The persisted `cluster-keys.json` record an emitted `accountName` came from.
+   * `accountName` is the operator's ON-CHAIN name while the SSM secret id and
+   * the fixture's key material are keyed by the DURABLE handle — so every
+   * assertion that needs the handle resolves it through this map.
+   */
+  function keyEntryFor(accountName: string) {
+    const entry = ClusterState.loadKeys(runContext().config).operators.find(
+      operator => operator.account === accountName
+    )
+    expect(entry).toBeDefined()
+    return entry
+  }
+
+  /**
+   * The SSM id `create` publishes a label's curve under. Injected records use
+   * SSM CUSTODY FORM — `awsSecretId`, never `privateKey` — because that is what
+   * a real SSM create persists (`ClusterState.keyCustodyFor`), and the schema
+   * admits exactly one custody form. Injecting KEY-shaped records under an SSM
+   * provider is a shape no cluster ever produces, and it is what hid the
+   * producer-ref defect.
+   */
+  function secretId(label: string, keyType: KeyType): string {
+    return `/wire/${SourceClusterLabel}/${label}/${KeyType[keyType]}`
+  }
+
+  /**
+   * Append the two GENESIS identities `ClusterBuild.seedGenesisAccounts` puts in
+   * the operator map — the bios node (K1 + BLS) and the bootstrap node owner
+   * (K1 alone) — to the persisted cluster keys.
+   *
+   * They are the reason the emit guard cannot be a flat curve list: they live in
+   * the operator map like every batch operator but publish DIFFERENT curves, so
+   * a "operators publish K1/EM/ED" set refuses the bios BLS that create really
+   * did publish.
+   */
+  function injectGenesisAccounts() {
+    const config = runContext().config,
+      keys = ClusterState.loadKeys(config)
+    keys.operators.push(
+      {
+        label: NodeConfig.BiosName,
+        publicationLabel: NodeConfig.BiosName,
+        account: NodeConfig.BiosProducer,
+        type: OperatorType.UNKNOWN,
+        wire: {
+          type: KeyType.K1,
+          publicKey: "PUB_K1_bios",
+          awsSecretId: secretId(NodeConfig.BiosName, KeyType.K1)
+        },
+        wireFinalizer: {
+          type: KeyType.BLS,
+          publicKey: "PUB_BLS_bios",
+          proofOfPossession: "SIG_BLS_bios",
+          awsSecretId: secretId(NodeConfig.BiosName, KeyType.BLS)
+        }
+      },
+      {
+        label: Constants.BOOTSTRAP_NODE_OWNER,
+        publicationLabel: Constants.BOOTSTRAP_NODE_OWNER,
+        account: Constants.BOOTSTRAP_NODE_OWNER,
+        type: OperatorType.UNKNOWN,
+        wire: {
+          type: KeyType.K1,
+          publicKey: "PUB_K1_owner",
+          awsSecretId: secretId(Constants.BOOTSTRAP_NODE_OWNER, KeyType.K1)
+        }
+      }
+    )
+    ClusterState.saveKeys(config, keys)
+  }
+
+  /**
+   * Append the PRODUCER operator accounts `runProducerMaterialization` puts in
+   * the operator map — each carrying its hosting NODE's `wire` + `wireFinalizer`
+   * (sibling producers on one node share the same pair, by design).
+   *
+   * Their keys are published under the NODE name (`node_00`), never under the
+   * producer account, so the emit side must resolve producer → node or every
+   * producer K1 **and BLS** ref is refused.
+   *
+   * @returns The producer account names seeded, and their hosting node's name.
+   */
+  function injectProducerAccounts() {
     const config = runContext().config,
       keys = ClusterState.loadKeys(config),
+      node = NodeConfig.plan(config).find(
+        planned => planned.role === NodeRole.producer
+      ),
+      nodeKeys = keys.nodes.find(entry => entry.index === node.index)
+    node.producers.forEach(producer =>
+      keys.operators.push({
+        label: producer,
+        publicationLabel: node.name,
+        account: producer,
+        type: OperatorType.PRODUCER,
+        wire: {
+          type: KeyType.K1,
+          publicKey: nodeKeys.wire.publicKey,
+          awsSecretId: secretId(node.name, KeyType.K1)
+        },
+        wireFinalizer: {
+          type: KeyType.BLS,
+          publicKey: nodeKeys.wireFinalizer.publicKey,
+          proofOfPossession: nodeKeys.wireFinalizer.proofOfPossession,
+          awsSecretId: secretId(node.name, KeyType.BLS)
+        }
+      })
+    )
+    ClusterState.saveKeys(config, keys)
+    return { producers: node.producers, nodeName: node.name }
+  }
+
+  /** Inject a `wireFinalizer` key onto the first cluster-keys operator (operators normally carry none). */
+  function injectOperatorWireFinalizer() {
+    const config = runContext().config,
+      keys = ClusterState.loadKeys(config),
+      label = keys.operators[0].label,
       account = keys.operators[0].account,
       privateKey = "PVT_BLS_op",
       proofOfPossession = "SIG_BLS_op"
-    keys.operators[0].bls = {
+    keys.operators[0].wireFinalizer = {
       type: KeyType.BLS,
       publicKey: "PUB_BLS_op",
       privateKey,
       proofOfPossession
     }
     ClusterState.saveKeys(config, keys)
-    return { account, privateKey, proofOfPossession }
+    return { label, account, privateKey, proofOfPossession }
   }
 
   beforeEach(() => {
@@ -245,12 +375,20 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     )
     expect(emitted.wire.epochDurationSec).toBe(ctx.config.epochDurationSec)
     expect(emitted.bindings.kiod.port).toBe(externalBind.kiod.port)
-    const expectedAccounts = NodeConfig.plan(ctx.config)
-      .filter(node => node.role === NodeRole.operator)
-      .map(node => node.batchOperatorLabel ?? node.underwriterLabel)
+    // `accountName` is the operator's ON-CHAIN name (`account`), never the
+    // durable handle the node config and the SSM secret id are keyed by.
+    const persisted = ClusterState.loadKeys(ctx.config).operators,
+      expectedAccounts = persisted.map(operator => operator.account),
+      handles = NodeConfig.plan(ctx.config)
+        .filter(node => node.role === NodeRole.operator)
+        .map(node => node.batchOperatorLabel ?? node.underwriterLabel)
     expect(emitted.accounts.operators.map(op => op.accountName).sort()).toEqual(
       [...expectedAccounts].sort()
     )
+    expect(persisted.map(operator => operator.label).sort()).toEqual(
+      [...handles].sort()
+    )
+    expect(expectedAccounts.sort()).not.toEqual([...handles].sort())
 
     // The re-rendered config.ini files carry the EXTERNAL bios http port.
     const iniText = findFiles(externalDir, "config.ini")
@@ -365,7 +503,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     await External.runLoadExternalBind(ctx, null, signal)
     await expect(
       External.runVerifyNoDuplicatePorts(ctx, signal)
-    ).rejects.toThrow(/duplicate ports/)
+    ).rejects.toThrow(/binds the same port twice on one host/)
   })
 
   it("emits KEY providers with inline plaintext private keys (unchanged)", async () => {
@@ -375,24 +513,27 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       op.keyProviders.forEach(provider =>
         expect(provider).toMatchObject({
           providerType: SignatureProviderType.KEY,
-          privateKey: `PVT_${KeyType[provider.type]}_${op.accountName}`
+          privateKey: `PVT_${KeyType[provider.type]}_${keyEntryFor(op.accountName).label}`
         })
       )
     )
   })
 
-  it("emits SSM providers (region + reconstructed awsSecretId, ZERO plaintext)", async () => {
-    const emitted = await emitWithProvider(SsmProvider)
+  it("emits SSM providers (replication regions + reconstructed awsSecretId, ZERO plaintext)", async () => {
+    const emitted = await emitWithProvider(SSMProvider)
     expect(emitted.accounts.operators.length).toBeGreaterThan(0)
     emitted.accounts.operators.forEach(op =>
       op.keyProviders.forEach(provider => {
         // The emitted id EXACTLY equals what create's KeySteps PutParameter'd.
         expect(provider).toMatchObject({
           providerType: SignatureProviderType.SSM,
-          awsRegion: SsmRegion,
-          awsSecretId: ClusterConfigProvider.toSecretId(SsmSecretIdPattern, {
+          awsRegions: SSMRegions,
+          awsSecretId: ClusterConfigProvider.toSecretId(SSMSecretIdPattern, {
+            // `{cluster}` is the source cluster's AWS ACCOUNT, not its dir name.
             cluster: SourceClusterLabel,
-            account: op.accountName,
+            // The `{account}` pattern token RENDERS the DURABLE handle — what
+            // `KeySteps` PutParameter'd — NOT the emitted on-chain `accountName`.
+            account: keyEntryFor(op.accountName).label,
             keyType: KeyType[provider.type]
           })
         })
@@ -416,7 +557,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
         expect(provider.publicKey.length).toBeGreaterThan(0)
         expect(provider).not.toHaveProperty("privateKey")
         expect(provider).not.toHaveProperty("awsSecretId")
-        expect(provider).not.toHaveProperty("awsRegion")
+        expect(provider).not.toHaveProperty("awsRegions")
       })
     )
     const fileText = Fs.readFileSync(externalConfigFile(), "utf-8")
@@ -425,7 +566,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   })
 
   it("preserves a BLS proofOfPossession under KEY", async () => {
-    const injected = injectOperatorBls(),
+    const injected = injectOperatorWireFinalizer(),
       emitted = await emitWithProvider(KeyProvider),
       op = emitted.accounts.operators.find(
         entry => entry.accountName === injected.account
@@ -441,7 +582,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   })
 
   it("preserves a BLS proofOfPossession under KIOD (material-less)", async () => {
-    const injected = injectOperatorBls(),
+    const injected = injectOperatorWireFinalizer(),
       emitted = await emitWithProvider(KiodProvider),
       op = emitted.accounts.operators.find(
         entry => entry.accountName === injected.account
@@ -457,13 +598,102 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   })
 
   it("refuses a dangling SSM ref for an operator BLS key (covered-set guard)", async () => {
-    injectOperatorBls()
-    const ctx = runContext(externalBindFile, SsmProvider)
+    injectOperatorWireFinalizer()
+    const ctx = runContext(externalBindFile, SSMProvider)
     await External.runLoadExternalBind(ctx, null, signal)
     await External.runClone(ctx, null, signal)
     await External.runRebind(ctx, null, signal)
     await expect(External.runEmit(ctx, null, signal)).rejects.toThrow(
       /not SSM-published/
+    )
+  })
+
+  // The genesis identities are in the operator map but publish DIFFERENT curves
+  // than a batch operator (bios K1+BLS, node owner K1). Emit refused the bios
+  // BLS — a parameter create HAD published — so every SSM create-external-config
+  // died at Emit. The fixture never seeded them, which is why nothing caught it.
+  it("emits the genesis identities' SSM refs (bios K1+BLS, node owner K1)", async () => {
+    injectGenesisAccounts()
+    const emitted = await emitWithProvider(SSMProvider),
+      secretIdsFor = (accountName: string) =>
+        emitted.accounts.operators
+          .find(op => op.accountName === accountName)
+          .keyProviders.flatMap(provider =>
+            provider.providerType === SignatureProviderType.SSM
+              ? [provider.awsSecretId]
+              : []
+          )
+          .sort()
+
+    // Exactly the ids KeySteps PutParameter'd — `{account}` is the durable
+    // HANDLE (`node_bios`), never the on-chain account (`sysio`).
+    expect(secretIdsFor(NodeConfig.BiosProducer)).toEqual([
+      "/wire/test/node_bios/BLS",
+      "/wire/test/node_bios/K1"
+    ])
+    expect(secretIdsFor(Constants.BOOTSTRAP_NODE_OWNER)).toEqual([
+      "/wire/test/wireno/K1"
+    ])
+  })
+
+  // A producer ACCOUNT carries its hosting node's K1 + BLS (siblings share one
+  // pair), but the keys are published under the NODE name. Both refs — and the
+  // BLS one especially, it is the finality key — must resolve to the node's
+  // published parameter rather than be refused for lacking a producer-account
+  // parameter that by design never existed.
+  it("resolves producer-account refs (K1 AND BLS) to their node's published ids", async () => {
+    const { producers, nodeName } = injectProducerAccounts(),
+      emitted = await emitWithProvider(SSMProvider)
+    expect(producers.length).toBeGreaterThan(0)
+    producers.forEach(producer => {
+      const op = emitted.accounts.operators.find(
+          entry => entry.accountName === producer
+        ),
+        secretIds = op.keyProviders
+          .flatMap(provider =>
+            provider.providerType === SignatureProviderType.SSM
+              ? [provider.awsSecretId]
+              : []
+          )
+          .sort()
+      expect(secretIds).toEqual([
+        `/wire/test/${nodeName}/BLS`,
+        `/wire/test/${nodeName}/K1`
+      ])
+    })
+  })
+
+  // The guard is DERIVED from the publication walker, so it must track the
+  // walker rather than a curve list: every emitted ref exists in it, and every
+  // publication is reachable by the handle+curve the emit side looks up with.
+  it("emits only refs the publication walker actually wrote", async () => {
+    injectGenesisAccounts()
+    injectProducerAccounts()
+    const emitted = await emitWithProvider(SSMProvider),
+      published = new Set(
+        Steps.keys
+          .signatureProviderKeyPublications(
+            runContext(externalBindFile, SSMProvider).config
+          )
+          .map(publication => publication.secretId)
+      )
+    expect(published.size).toBeGreaterThan(0)
+    const emittedSecretIds = emitted.accounts.operators.flatMap(op =>
+        op.keyProviders.flatMap(provider =>
+          provider.providerType === SignatureProviderType.SSM
+            ? [provider.awsSecretId]
+            : []
+        )
+      ),
+      emittedProviderCount = emitted.accounts.operators.reduce(
+        (total, op) => total + op.keyProviders.length,
+        0
+      )
+    // Every emitted provider is an SSM ref…
+    expect(emittedSecretIds.length).toBe(emittedProviderCount)
+    // …and every one of them names a parameter create actually wrote.
+    emittedSecretIds.forEach(secretId =>
+      expect(published).toContain(secretId)
     )
   })
 })

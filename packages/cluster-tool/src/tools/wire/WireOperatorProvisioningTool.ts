@@ -1,6 +1,6 @@
 /**
  * WireOperatorProvisioningTool — THE operator-provisioning mechanism. Every
- * operator — producer, batch operator, underwriter, or a flow's extra account —
+ * operator — producer, batch operator, underwriter, or a flow's extra operator —
  * is provisioned through {@link planOperatorAccountProvisioning}, which RETURNS a
  * {@link ClusterBuildPhaseGroup} with one {@link ClusterBuildPhase} per operator
  * (per the orchestration model: every WRITE is its own {@link ClusterBuildStep}
@@ -9,17 +9,18 @@
  * Each Phase materializes the operator's type-appropriate keys and accumulates
  * its {@link OperatorAccount} into THE single {@link ClusterKeyStore}
  * (`ctx.keyStore`) — the one place keys are accessed from, keyed by the
- * operator's deterministic `label` — then runs the on-chain writes:
+ * operator's durable `label` handle — then runs the on-chain writes:
  *
  * - **producer**: materialize (node-shared K1+BLS from the store's node sets) →
- *   create the WIRE account with that K1 (`label` = the account name).
+ *   create the WIRE account with that K1 (`account` = `label`; producers
+ *   never go through `roa::newuser`).
  * - **batch operator / underwriter**: materialize (UNIQUE generated K1 + EM + ED;
  *   the K1 imported into the kiod wallet so `account@active` signs) →
  *   node-owner-sponsored account creation (`sysio.roa::newuser` as the bootstrap
- *   node owner, nonce = `label`; the chain assigns a generated
- *   `<nodeOwner>.<suffix>` account name, adopted from the `sponsors` table) →
- *   (optional) fund ETH / airdrop SOL → authex-link both chains →
- *   `opreg::regoperator`.
+ *   node owner with a FRESHLY MINTED single-use nonce; the chain assigns a
+ *   generated `<nodeOwner>.<suffix>` name, adopted from the `sponsors` table
+ *   into `account`) → (optional) fund ETH / airdrop SOL → authex-link both
+ *   chains → `opreg::regoperator`.
  *
  * Downstream write runners DERIVE the live ethers/web3 signing objects from the
  * stored typed keys via `utils/keyPairUtils` — no raw SDK handle is ever stored.
@@ -36,7 +37,12 @@ import { match } from "ts-pattern"
 import { getLogger } from "@wireio/shared"
 import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
+import { serialize } from "../../utils/asyncUtils.js"
 import { abiEnumValue } from "../../utils/enumUtils.js"
+import {
+  clearNonceCache,
+  resolveLatestNonce
+} from "../../utils/ethereumUtils.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../../orchestration/ClusterBuildPhase.js"
@@ -47,7 +53,8 @@ import {
 } from "../../orchestration/ClusterBuildStep.js"
 import type { ClusterBuildParent } from "../../orchestration/ClusterBuildPhaseBase.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
-import { EthereumOutpostBootstrapper } from "../../orchestration/ethereum/EthereumOutpostBootstrapper.js"
+import { KeySteps } from "../../orchestration/steps/KeySteps.js"
+import { isNotEmpty } from "../../utils/predicateUtils.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import {
@@ -55,6 +62,7 @@ import {
   solanaKeypair,
   solanaSdkPrivateKey
 } from "../../utils/keyPairUtils.js"
+import { newSponsorNonce } from "../../utils/nonceUtils.js"
 import { AuthExLinkTool } from "../all/AuthExLinkTool.js"
 
 const log = getLogger(__filename)
@@ -62,25 +70,40 @@ const log = getLogger(__filename)
 export namespace WireOperatorProvisioningTool {
   /** Default wei seeded into a flow operator's ETH wallet (covers a deposit + gas). */
   export const DefaultEthereumFundWei = 10n ** 18n // 1 ETH
+  /**
+   * Serialization key for ETH funding sends — they all share ONE anvil signer,
+   * so they share one nonce sequence. See {@link runEthereumFunding}.
+   */
+  const EthereumFundingQueueKey = "WireOperatorProvisioningTool.ethereumFunding"
   /** Default lamports airdropped to a flow operator's SOL keypair. */
   export const DefaultSolanaAirdropLamports = 5n * BigInt(LAMPORTS_PER_SOL)
   /** Creator account for provisioned operator accounts. */
   const AccountCreator = "sysio"
+  /**
+   * Row ceiling for the `sysio.roa::sponsors` read-back. The table holds one row
+   * per sponsored operator under the bootstrap node owner; the harness roster
+   * ceiling is `MaxBatchOperatorRoster` batch operators plus underwriters plus
+   * any flow-provisioned extras, so this sits well clear of it and never relies
+   * on the client's own default.
+   */
+  const SponsorsRowLimit = 500
 
   /** One operator to provision — `type` drives which keys + steps its Phase runs. */
   export interface OperatorProvisioningSpec {
     /**
-     * The operator's deterministic provisioning label — the `ClusterKeyStore`
-     * key. Producers: the WIRE account name itself (`defproducera`). Batch
-     * operators / underwriters: the `sysio.roa::newuser` sponsor nonce their
-     * generated chain account is created under (`batchop.a`, `uwrit.a`, a
-     * flow's `depositor`). Must be a valid WIRE name (1..12 chars).
+     * The operator's durable label handle — the `ClusterKeyStore` key.
+     * Producers: the WIRE account name itself (`defproducera`), which is also
+     * their `account`. Batch operators / underwriters: the deterministic
+     * handle (`batchop.a`, `uwrit.a`, a flow's `depositor`) their generated
+     * `account` is later adopted against. Must be 1..12 chars.
      */
     readonly label: string
     /** The operator's proto {@link OperatorType}. */
     readonly type: OperatorType
-    /** Producer: index of the producer NODE whose K1+BLS this account shares. */
+    /** Producer: index of the producer NODE whose K1+BLS this label shares. */
     readonly producerNodeIndex?: number
+    /** Producer: NAME of that node — the label its keys are published under. */
+    readonly producerNodeName?: string
     /** Batch / underwriter: anvil-mnemonic HD index for the operator's ETH wallet. */
     readonly ethereumHdIndex?: number
     /** Batch / underwriter: `regoperator` bootstrapped flag (default `true`). */
@@ -146,10 +169,14 @@ export namespace WireOperatorProvisioningTool {
     spec: OperatorProvisioningSpec,
     options: ClusterBuildStepOptions
   ): ClusterBuildPhase<C> {
-    const { label, producerNodeIndex } = spec
+    const { label, producerNodeIndex, producerNodeName } = spec
     Assert.ok(
       producerNodeIndex != null,
       `provision producer ${label}: producerNodeIndex is required`
+    )
+    Assert.ok(
+      isNotEmpty(producerNodeName),
+      `provision producer ${label}: producerNodeName is required — it is the label this account's keys are published under`
     )
     return ClusterBuildPhase.create<C>(group, `Provision ${label}`, `provision producer ${label}`, [
       planProducerMaterialization<C>(
@@ -158,7 +185,8 @@ export namespace WireOperatorProvisioningTool {
         `materialize producer ${label} identity from node ${producerNodeIndex}`,
         options,
         label,
-        producerNodeIndex
+        producerNodeIndex,
+        producerNodeName
       ),
       planAccountCreation<C>(
         Report.Actor.Producer,
@@ -175,8 +203,8 @@ export namespace WireOperatorProvisioningTool {
    * account creation → (optional) fund ETH / airdrop SOL → authex-link both
    * chains → register. Funding steps are included only when the spec supplies an
    * amount (bootstrap ops skip them; deposit flows opt in). Steps after the
-   * sponsored creation resolve the operator's GENERATED chain account from
-   * `ctx.keyStore` by `label`.
+   * sponsored creation resolve the operator by its durable `label` handle and
+   * read the GENERATED `account` off the stored {@link OperatorAccount}.
    */
   function planProvisionOppOperatorPhase<C extends ClusterBuildContext>(
     group: ClusterBuildParent<C>,
@@ -281,7 +309,7 @@ export namespace WireOperatorProvisioningTool {
   }
 
   /**
-   * Generate the operator's UNIQUE WIRE K1 (its account controller — imported
+   * Generate the operator's UNIQUE WIRE K1 (its label controller — imported
    * into the kiod wallet so `account@active` can sign), plus its ETH (EM) + SOL
    * (ED) keys, all via the {@link KeyGenerator} facade — then accumulate the
    * {@link OperatorAccount} into `ctx.keyStore`.
@@ -310,43 +338,68 @@ export namespace WireOperatorProvisioningTool {
     )
   }
 
-  /** Named runner — generate K1/ED/EM, import the K1 into kiod, store the account. */
+  /** Named runner — generate K1/ED/EM, import the K1 into kiod, store the label. */
   export async function runIdentityMaterialization<C extends ClusterBuildContext>(
     ctx: C,
     input: MaterializeIdentityInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
+    // The handle is a filesystem path segment (`daemonNodeName` → `node_<label>`
+    // → `NodeConfig.nodePath`) and an SSM parameter-name segment, so the 12-char
+    // bound stays — it is no longer a WIRE `name` constraint (the on-chain name
+    // is `account`, generated by the depot).
     Assert.ok(
       input.label.length > 0 && input.label.length <= 12,
-      `materializeIdentity: label "${input.label}" must be 1..12 chars`
+      `materializeIdentity: operator handle "${input.label}" must be 1..12 chars (it is a node-directory and SSM path segment)`
     )
+    // EM keys derive from the run's mnemonic: the CLUSTER-SCOPED one an SSM
+    // cluster generated in `KeySteps.runGenerateNodeKeys`, else the published
+    // anvil mnemonic (KEY / KIOD — every flow keeps its byte-identical wallets).
     const keyContext = KeyGenerator.context(
       ctx.config.executables.clio,
       ctx.config.buildPath,
-      EthereumOutpostBootstrapper.AnvilMnemonic
+      KeySteps.ethereumMnemonic(ctx)
     )
+    // D21 — a key the AWS account already owns is ADOPTED, never regenerated,
+    // and the read has to happen HERE: the very next steps set this account's
+    // ON-CHAIN authority (`roa::newuser`) and both authex links from these keys.
     const [wire, solana, ethereum] = await Promise.all([
-      KeyGenerator.create(KeyType.K1, keyContext, {
-        purpose: `operator ${input.label} — WIRE account key (K1)`
-      }),
-      KeyGenerator.create(KeyType.ED, keyContext, {
-        purpose: `operator ${input.label} — solana outpost key (ED)`
-      }),
-      KeyGenerator.create(KeyType.EM, keyContext, {
-        ethereumHdIndex: input.ethereumHdIndex,
-        purpose: `operator ${input.label} — ethereum outpost key (EM)`
-      })
+      KeySteps.adoptOrCreateSignatureProviderKey(
+        ctx.config,
+        KeyType.K1,
+        input.label,
+        keyContext,
+        { purpose: `operator ${input.label} — WIRE account key (K1)` }
+      ),
+      KeySteps.adoptOrCreateSignatureProviderKey(
+        ctx.config,
+        KeyType.ED,
+        input.label,
+        keyContext,
+        { purpose: `operator ${input.label} — solana outpost key (ED)` }
+      ),
+      KeySteps.adoptOrCreateSignatureProviderKey(
+        ctx.config,
+        KeyType.EM,
+        input.label,
+        keyContext,
+        {
+          ethereumHdIndex: input.ethereumHdIndex,
+          purpose: `operator ${input.label} — ethereum outpost key (EM)`
+        }
+      )
     ])
     // Import the operator's unique wire key so kiod can sign `account@active`
     // (authex links, registration, and any operator-signed flow actions).
     const wallet = await ctx.wire.wallet.getOrCreate()
     await wallet.addPrivateKey(wire.privateKey)
-    // `account` provisionally holds the label — the sponsored-creation step
-    // replaces it with the chain-generated name.
+    // `account` stays unset until the sponsored-creation step adopts the
+    // depot-generated name — `label` is the durable handle from here on.
     ctx.keyStore.setOperator({
       label: input.label,
-      account: input.label,
+      // An OPP operator owns its generated keys — published under its own handle.
+      publicationLabel: input.label,
       type: input.type,
       wire,
       ethereum,
@@ -364,6 +417,8 @@ export namespace WireOperatorProvisioningTool {
     readonly kind: "WireOperatorProvisioningTool.MaterializeProducerInput"
     readonly label: string
     readonly producerNodeIndex: number
+    /** The hosting node's NAME — recorded as the account's `publicationLabel`. */
+    readonly producerNodeName: string
   }
 
   /**
@@ -377,7 +432,8 @@ export namespace WireOperatorProvisioningTool {
     description: string,
     options: ClusterBuildStepOptions,
     label: string,
-    producerNodeIndex: number
+    producerNodeIndex: number,
+    producerNodeName: string
   ): ClusterBuildStep<C, MaterializeProducerInput> {
     return ClusterBuildStep.create<C, MaterializeProducerInput>(
       actor,
@@ -387,7 +443,8 @@ export namespace WireOperatorProvisioningTool {
       {
         kind: "WireOperatorProvisioningTool.MaterializeProducerInput",
         label,
-        producerNodeIndex
+        producerNodeIndex,
+        producerNodeName
       },
       runProducerMaterialization
     )
@@ -401,26 +458,30 @@ export namespace WireOperatorProvisioningTool {
   ): Promise<void> {
     signal.throwIfAborted()
     const nodeKeys = ctx.keyStore.node(input.producerNodeIndex)
-    // A producer's chain account name IS its label (no sponsored generation).
+    // A producer never calls `roa::newuser`, so its ON-CHAIN name IS its durable
+    // handle — `account` equals `label` from materialization onward.
     ctx.keyStore.setOperator({
       label: input.label,
+      // The keys just read belong to the NODE and are published under its name —
+      // recorded HERE, where the hand-over happens, so nothing re-derives it.
+      publicationLabel: input.producerNodeName,
       account: input.label,
       type: OperatorType.PRODUCER,
-      wire: nodeKeys.keys.k1,
-      bls: nodeKeys.keys.bls
+      wire: nodeKeys.keys.wire,
+      wireFinalizer: nodeKeys.keys.wireFinalizer
     })
     // Descriptive payload only — the full pairs live under the step that
     // GENERATED them (generate-keys); here we just say whose set this is.
     StepExtraRecorder.note(
       `producer ${input.label} assumes node_${String(input.producerNodeIndex).padStart(2, "0")}'s signing set`,
       {
-        account: input.label,
-        wirePublicKey: nodeKeys.keys.k1.publicKey,
-        blsPublicKey: nodeKeys.keys.bls.publicKey
+        label: input.label,
+        wirePublicKey: nodeKeys.keys.wire.publicKey,
+        blsPublicKey: nodeKeys.keys.wireFinalizer.publicKey
       }
     )
     log.info(
-      `[provision] producer ${input.label} — node ${input.producerNodeIndex} (K1 ${nodeKeys.keys.k1.publicKey})`
+      `[provision] producer ${input.label} — node ${input.producerNodeIndex} (K1 ${nodeKeys.keys.wire.publicKey})`
     )
   }
 
@@ -433,7 +494,8 @@ export namespace WireOperatorProvisioningTool {
   }
 
   /**
-   * Create a producer's WIRE account (name = `label`, owner = active = the
+   * Create a producer's WIRE account (name = `account`, which for a
+   * producer equals its durable `label` handle; owner = active = the
    * operator's `wire` public key from `ctx.keyStore`). Requires the operator's
    * materialize step to have run first. OPP operators (batch / underwriter) use
    * {@link planSponsoredAccountCreation} instead — their accounts are
@@ -482,13 +544,17 @@ export namespace WireOperatorProvisioningTool {
 
   /**
    * Create an OPP operator's WIRE account via the bootstrap node owner:
-   * `sysio.roa::newuser({creator: wireno, nonce: label, pubkey: <operator K1>})`
-   * signed `[wireno@active]`. The chain generates a `<nodeOwner>.<suffix>`
-   * account name and records the `(creator, nonce) → username` sponsor mapping;
-   * the runner adopts the generated name from the `sponsors` table and replaces
-   * the operator's provisional `account` in `ctx.keyStore`. Re-entrant: an
-   * existing sponsor row for the nonce is adopted without a second `newuser`.
-   * Requires the operator's materialize step to have run first.
+   * `sysio.roa::newuser({creator: wireno, nonce: <fresh>, pubkey: <operator K1>})`
+   * signed `[wireno@active]`. The nonce is a SINGLE-USE token minted per call
+   * ({@link newSponsorNonce}) — never the operator's durable handle: `sysio.roa`
+   * uses it as entropy for the generated name and hard-rejects reuse by the same
+   * creator. The chain generates a `<nodeOwner>.<suffix>` name and records the
+   * `(creator, nonce) → username` sponsor mapping; the runner reads it back BY
+   * THE MINTED NONCE and adopts it into the operator's `account` (the
+   * durable `label` handle is never overwritten). NOT re-entrant across
+   * processes — `create` always starts from a wiped directory against a fresh
+   * chain, and a `ClusterBuildStep` runs exactly once per build. Requires the
+   * operator's materialize step to have run first.
    */
   export function planSponsoredAccountCreation<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
@@ -519,26 +585,26 @@ export namespace WireOperatorProvisioningTool {
     signal.throwIfAborted()
     const operator = ctx.keyStore.assertOperator(input.label),
       roa = ctx.wire.getSysioContract(SysioContracts.SysioContractName.roa),
-      existing = await readSponsoredUsername(ctx, input.label)
-    if (existing == null) {
-      await roa.actions.newuser.invoke(
-        {
-          creator: Constants.BOOTSTRAP_NODE_OWNER,
-          nonce: input.label,
-          pubkey: operator.wire.publicKey
-        },
-        {
-          authorization: [
-            { actor: Constants.BOOTSTRAP_NODE_OWNER, permission: "active" }
-          ]
-        }
-      )
-    }
-    const account = existing ?? (await readSponsoredUsername(ctx, input.label))
+      nonce = newSponsorNonce()
+    await roa.actions.newuser.invoke(
+      {
+        creator: Constants.BOOTSTRAP_NODE_OWNER,
+        nonce,
+        pubkey: operator.wire.publicKey
+      },
+      {
+        authorization: [
+          { actor: Constants.BOOTSTRAP_NODE_OWNER, permission: "active" }
+        ]
+      }
+    )
+    const account = await readSponsoredUsername(ctx, nonce)
     Assert.ok(
       account != null,
-      `sponsoredAccountCreation: no sponsors row for nonce "${input.label}" under ${Constants.BOOTSTRAP_NODE_OWNER} after newuser`
+      `sponsoredAccountCreation: no sponsors row for nonce "${nonce}" under ${Constants.BOOTSTRAP_NODE_OWNER} after newuser`
     )
+    // The read-back lands on `account` — `label` keeps the durable handle
+    // the keystore is keyed by, so this never re-keys the store.
     ctx.keyStore.setOperator({ ...operator, account })
     log.info(
       `[provision] ${input.label} — node-owner-created WIRE account ${account} (sponsor ${Constants.BOOTSTRAP_NODE_OWNER})`
@@ -547,27 +613,28 @@ export namespace WireOperatorProvisioningTool {
 
   /**
    * The generated username the node owner's `sponsors` table records for
-   * `nonce`, or nothing when the nonce has no row yet (typed KV read, scoped to
-   * the sponsoring node owner). A KV table that has never been written can
-   * reject the read outright (`Contract Table Query Exception`) — treated as
-   * "no row yet", logged at debug (expected exactly once, on the first
-   * operator of a fresh chain).
+   * `nonce` (typed KV read, scoped to the sponsoring node owner), or nothing
+   * when no row carries that nonce. Called only AFTER `newuser` has landed with
+   * finality, so the table provably exists and a read failure is a REAL failure
+   * — it propagates rather than being tolerated as "no row yet".
+   *
+   * @param ctx - The build context.
+   * @param nonce - The single-use nonce the row was created under.
+   * @returns The generated `<nodeOwner>.<suffix>` account name.
    */
   async function readSponsoredUsername(
     ctx: ClusterBuildContext,
     nonce: string
   ): Promise<string> {
-    try {
-      const { rows } = await ctx.wire
-        .getSysioContract(SysioContracts.SysioContractName.roa)
-        .tables.sponsors.query({ scope: Constants.BOOTSTRAP_NODE_OWNER })
-      return rows.find(row => row.nonce === nonce)?.username
-    } catch (error) {
-      log.debug(
-        `[provision] sponsors read for nonce ${nonce} treated as absent: ${error instanceof Error ? error.message : String(error)}`
-      )
-      return undefined
-    }
+    // The sponsors roster is one row per provisioned OPP operator; the explicit
+    // limit keeps the read whole as the roster grows toward its ceiling.
+    const { rows } = await ctx.wire
+      .getSysioContract(SysioContracts.SysioContractName.roa)
+      .tables.sponsors.query({
+        scope: Constants.BOOTSTRAP_NODE_OWNER,
+        limit: SponsorsRowLimit
+      })
+    return rows.find(row => row.nonce === nonce)?.username
   }
 
   // ── Step: register the operator on sysio.opreg (write) ────────────────────
@@ -581,9 +648,10 @@ export namespace WireOperatorProvisioningTool {
   }
 
   /**
-   * Register the operator on `sysio.opreg` (`regoperator`). The account is
-   * resolved from `ctx.keyStore` at RUN time — it is the sponsored-creation
-   * step's generated name, unknown when the plan is built.
+   * Register the operator on `sysio.opreg` (`regoperator`). The registered
+   * label is the operator's `account`, resolved from `ctx.keyStore` at
+   * RUN time — it is the sponsored-creation step's generated name, unknown when
+   * the plan is built.
    */
   export function planRegistration<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
@@ -609,7 +677,7 @@ export namespace WireOperatorProvisioningTool {
     )
   }
 
-  /** Named runner — ONE `opreg::regoperator` for the operator's resolved account. */
+  /** Named runner — ONE `opreg::regoperator` for the operator's resolved label. */
   export async function runRegistration<C extends ClusterBuildContext>(
     ctx: C,
     input: RegistrationInput,
@@ -620,6 +688,9 @@ export namespace WireOperatorProvisioningTool {
     await ctx.wire
       .getSysioContract(SysioContracts.SysioContractName.opreg)
       .actions.regoperator.invoke({
+        // The depot keys `sysio.opreg::operators` by the ON-CHAIN account — the
+        // same value the operator's daemon passes as `--*-account`. `account:`
+        // is the generated ABI field name and never renames with the harness.
         account: operator.account,
         // proto OperatorType + the ABI mirror share numeric values —
         // resolved through the checked bridge.
@@ -664,11 +735,43 @@ export namespace WireOperatorProvisioningTool {
   ): Promise<void> {
     signal.throwIfAborted()
     const operator = ctx.keyStore.assertOperator(input.label)
-    const response = await ctx.ethereum.wallet.signer.sendTransaction({
-      to: operator.ethereum.address,
-      value: input.wei
+    const { signer } = ctx.ethereum.wallet
+    // Every operator funds from the SAME anvil signer while the operator phases
+    // run in PARALLEL, so this write needs two things, not one.
+    //
+    // The nonce is PINNED from the shared per-address counter — the same
+    // counter every other ETH write in the harness draws from. Letting ethers
+    // derive it instead means a `getTransactionCount(…, "pending")` round-trip,
+    // which lags un-mined submissions: measured 2026-08-10, nonce 157 was handed
+    // to FOUR concurrent sends and three were rejected `nonce has already been
+    // used`. The counter increments synchronously, so distinct callers cannot
+    // collide even if they overlap.
+    //
+    // The serialize() queue stays because the counter's contract requires it:
+    // a pinned nonce is only valid if every earlier submission actually landed,
+    // so the receipt wait belongs INSIDE the critical section.
+    await serialize(EthereumFundingQueueKey, async () => {
+      const nonce = await resolveLatestNonce(signer)
+      try {
+        const response = await signer.sendTransaction({
+          to: operator.ethereum.address,
+          value: input.wei,
+          nonce
+        })
+        await response.wait()
+      } catch (error) {
+        // The counter already advanced for a nonce that never landed. Re-seed
+        // from the chain, or every later send sits above the chain's nonce and
+        // waits in the mempool forever.
+        clearNonceCache(await signer.getAddress())
+        log.warn(
+          `fund ${input.label} ETH wallet failed at nonce ${nonce}; nonce cache cleared: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+        throw error
+      }
     })
-    await response.wait()
   }
 
   // ── Step: airdrop SOL to the operator keypair (write) ────────────────────
@@ -753,9 +856,9 @@ export namespace WireOperatorProvisioningTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    // `operator.account` is the RESOLVED chain account (the sponsored-creation
-    // step's generated name) — the link message + `account@active` auth must
-    // carry it, never the label.
+    // `operator.account` is the RESOLVED chain label (the
+    // sponsored-creation step's generated name) — the link message +
+    // `account@active` auth must carry it, never the durable handle.
     const operator = ctx.keyStore.assertOperator(input.label)
     if (input.chainKind === ChainKind.EVM) {
       const ethereumWallet = ethereumSigner(operator.ethereum, ctx.ethereum.provider)

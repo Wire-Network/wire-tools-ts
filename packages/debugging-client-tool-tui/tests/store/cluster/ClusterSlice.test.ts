@@ -19,7 +19,7 @@ import {
 } from "@wireio/debugging-client-tool-tui/store/Store.js"
 import { SliceName } from "@wireio/debugging-client-tool-tui/store/StoreTypes.js"
 
-/** A complete `ClusterConfig` fixture — no field left to `as unknown as`. */
+/** A complete `ClusterConfig` fixture — every field real, none asserted. */
 const stubConfig: ClusterConfig = {
   buildPath: "/build",
   clusterPath: "/cluster",
@@ -87,8 +87,10 @@ const stubConfig: ClusterConfig = {
   requiredUnderwriterCollateral: [],
   requiredProducerCollateral: [],
   underwriterCollateral: null,
+  initialKey: null,
   initialFinalizerKey: null,
   signatureProvider: { type: SignatureProviderType.KEY, ssm: null },
+  awsClusterNodeConfig: null,
   externalOutposts: null,
   debuggingServerEnabled: true,
   enableMockReserves: false,

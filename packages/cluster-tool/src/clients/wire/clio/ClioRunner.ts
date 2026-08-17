@@ -6,6 +6,7 @@ import { negate } from "lodash"
 import { StepExtraRecorder } from "../../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../../utils/asyncUtils.js"
 import { isNotEmpty } from "../../../utils/predicateUtils.js"
+import { maskSecretArgs } from "../../../utils/secretUtils.js"
 
 const log = getLogger("ClioRunner")
 const execFileAsync = promisify(execFile)
@@ -28,8 +29,21 @@ export interface ClioRunOptions<UseJson extends boolean = false> {
 }
 
 /** JSON-mode run options, with an optional row constructor. */
-export interface ClioRunOptionsJson<T extends {}> extends ClioRunOptions<true> {
+export interface ClioRunOptionsJson<T extends object> extends ClioRunOptions<true> {
   ctor?: new (data: any) => T
+}
+
+/**
+ * The duck-typed shape of a failed clio invocation: node's `execFile` rejection
+ * carries `message` plus the child's captured streams. Read structurally (NOT
+ * `instanceof Error`) — jest gives each module registry its own `Error` global,
+ * so a cross-realm `instanceof` is false. Every member stays optional and every
+ * read stays guarded: an arbitrary thrown value may carry none of them.
+ */
+export interface ClioError {
+  message?: string
+  stdout?: string
+  stderr?: string
 }
 
 /**
@@ -48,7 +62,7 @@ export function enrichClioError(
   stdout: string,
   stderr: string
 ): unknown {
-  const candidate = error as { message?: unknown }
+  const candidate = error as ClioError
   if (
     candidate != null &&
     typeof candidate === "object" &&
@@ -70,9 +84,9 @@ export class ClioRunner {
   constructor(readonly config: ClioRunnerConfig) {}
 
   /** Run a clio command, returning parsed JSON. */
-  run<T extends {}>(args: string[], options: ClioRunOptionsJson<T>): Promise<T>
+  run<T extends object>(args: string[], options: ClioRunOptionsJson<T>): Promise<T>
   /** Run a clio command, returning raw stdout. */
-  run(args: string[], options?: { json?: false }): Promise<string>
+  run(args: string[], options?: ClioRunOptions): Promise<string>
   async run(
     args: string[],
     options: ClioRunOptions | ClioRunOptionsJson<any> = { json: false }
@@ -85,13 +99,33 @@ export class ClioRunner {
     ]
     log.debug("clio %s", fullArgs.join(" "))
     // TRANSPORT retries only: a connection-level failure (refused / reset under
-    // host connection churn — the node itself keeps serving) never reached chain
-    // processing, so re-running is safe (a re-pushed duplicate surfaces as the
-    // benign `tx_duplicate`). A NON-transport error IS the result (rethrown).
+    // host connection churn — the node itself keeps serving). A NON-transport
+    // error IS the result (rethrown).
+    //
+    // ⚠️ The safety argument here is NOT uniform across the patterns, and the
+    // claim this comment used to make — "a re-pushed duplicate surfaces as the
+    // benign `tx_duplicate`" — is FALSE for `clio push action`. clio re-SIGNS
+    // with fresh TAPOS, so a re-run is a NEW transaction with a NEW id, which
+    // the chain has no way to dedupe. Run-5 (2026-08-04) demonstrates it: one
+    // logical `newaccount` produced a400888817 → 8d8cfc45 → c5bc6523.
+    //
+    // The patterns split by WHEN they can occur:
+    //   pre-submission  `Connection refused` / `couldn't connect to server` —
+    //                   nothing reached the node; re-running is genuinely safe.
+    //   ambiguous       `Connection reset` / `Failed http request to nodeop` —
+    //                   the node may have ACCEPTED the transaction before the
+    //                   socket died, so a re-run can double-apply it.
+    // The ambiguous class belongs in the same "unknown → do not re-send" bucket
+    // as an unresolved finality wait (see WireClient.withFinality). Narrowing it
+    // is a behavioural change with its own blast radius and is NOT made here;
+    // this note exists so the next reader does not inherit the false premise.
     // Every logical clio invocation — command line, outcome, duration — is
     // recorded into the running step's `Report.StepResult.extra`.
     const startedAtMs = Date.now(),
-      command = [this.config.binary, ...fullArgs]
+      // MASKED, not raw: this array is serialized verbatim into the Report, and
+      // `wallet import --private-key …` / `wallet unlock --password …` carry the
+      // secret in argv. The executable and every other argument survive intact.
+      command = maskSecretArgs([this.config.binary, ...fullArgs])
     try {
       const result = await retry(() => this.runOnce(fullArgs, options), {
         maxAttempts: ClioRunner.TransportRetryAttempts,
@@ -178,7 +212,7 @@ export namespace ClioRunner {
 
   /** True when `error` is a connection-level clio failure (safe to re-run). */
   export function isTransportFailure(error: unknown): boolean {
-    const candidate = error as { message?: unknown }
+    const candidate = error as ClioError
     return (
       candidate != null &&
       typeof candidate === "object" &&
@@ -215,6 +249,29 @@ export namespace ClioRunner {
       : value
   }
 
+  /** The `receipt` slice of a clio transaction response (`processed.receipt`). */
+  export interface TransactionReceipt {
+    /** Chain execution status of the receipt, e.g. `"executed"`. */
+    status?: string
+  }
+
+  /** The `processed` slice of a clio transaction response. */
+  export interface TransactionProcessed {
+    receipt?: TransactionReceipt
+  }
+
+  /**
+   * The clio `-j` transaction-response fields {@link summarizeResult} keeps —
+   * the same `transaction_id` field `WireClient.TransactionIdResponse`
+   * carries, plus the receipt status. Every member is optional and read behind
+   * a runtime `typeof` guard: this shape is duck-typed onto ARBITRARY clio
+   * JSON, so a non-transaction response simply fails the guard.
+   */
+  export interface TransactionResult {
+    transaction_id?: string
+    processed?: TransactionProcessed
+  }
+
   /**
    * The `extra`-record view of a clio result: a transaction response keeps its
    * id + receipt status; anything else is its (truncated) string form. The
@@ -222,10 +279,7 @@ export namespace ClioRunner {
    */
   export function summarizeResult(result: unknown): unknown {
     if (result != null && typeof result === "object") {
-      const candidate = result as {
-        transaction_id?: unknown
-        processed?: { receipt?: { status?: unknown } }
-      }
+      const candidate = result as TransactionResult
       if (typeof candidate.transaction_id === "string") {
         return {
           transaction_id: candidate.transaction_id,

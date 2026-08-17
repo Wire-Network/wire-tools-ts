@@ -1,4 +1,5 @@
 import type {
+  AWSClusterNodeConfig,
   BindOptions,
   ChainTokenAmount,
   ClusterConfigLoggingFileFormat,
@@ -72,6 +73,13 @@ export interface ClusterBuildOptions {
   logging?: LoggingOptions
   // signature provider — how the cluster's own signing keys are handled (default KEY)
   signatureProvider?: ClusterSignatureProviderOptions
+  /**
+   * The cluster's AWS placement (account + replication regions + SSM publish
+   * settings). REQUIRED when `signatureProvider.type` is `SSM` — it sources the
+   * secret-id `{cluster}` segment and the region set every secret is replicated
+   * to. Accepted but unused under `KEY` / `KIOD`.
+   */
+  awsClusterNodeConfig?: AWSClusterNodeConfig
   // external inputs (file paths → `--bind-config` / `--external-outpost-config`)
   bindConfig?: string
   externalOutpostConfig?: string
