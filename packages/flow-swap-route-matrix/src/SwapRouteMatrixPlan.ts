@@ -1,7 +1,6 @@
 import { match } from "ts-pattern"
 
 import {
-  ClusterBuildFailureMode,
   ClusterBuildPhase,
   ClusterBuildPhaseGroup,
   Report,
@@ -13,8 +12,6 @@ import {
 
 import {
   type SwapRoute,
-  type SwapRouteDirection,
-  type SwapRouteFamily,
   SwapRouteEndpoint,
   SwapRouteMatrixScenarioConstants as Constants,
   SwapRouteSourceKind
@@ -26,64 +23,39 @@ const { Actor } = Report
 /**
  * Compose the complete configured swap matrix under any FlowScenario parent.
  * The hierarchy is Family PhaseGroup → Direction PhaseGroup → exact Route
- * Phase → lifecycle Steps, so broader E2E scenarios can reuse any layer.
+ * Phase → lifecycle Steps.
  *
  * @param parent - Build root or enclosing phase group.
- * @param failureMode - Collect-all or fail-fast execution policy.
  * @returns The self-registered top-level matrix phase group.
  */
 export function planSwapRouteMatrix(
-  parent: ClusterBuildParent<SwapScenarioContext>,
-  failureMode: ClusterBuildFailureMode
+  parent: ClusterBuildParent<SwapScenarioContext>
 ): ClusterBuildPhaseGroup<SwapScenarioContext> {
   const matrix = ClusterBuildPhaseGroup.create<SwapScenarioContext>(
     parent,
     "SwapRouteMatrix",
-    `${Constants.AllRoutes.length} configured routes; failure mode ${failureMode}`,
-    { failureMode }
+    `${Constants.AllRoutes.length} configured routes`
   )
-  Constants.RouteFamilies.forEach(family =>
-    planSwapRouteFamily(matrix, family, failureMode)
-  )
+  Constants.RouteFamilies.forEach(family => {
+    const familyGroup = ClusterBuildPhaseGroup.create<SwapScenarioContext>(
+      matrix,
+      family.name,
+      family.description
+    )
+    family.directions.forEach(direction => {
+      const directionGroup = ClusterBuildPhaseGroup.create<SwapScenarioContext>(
+        familyGroup,
+        direction.name,
+        direction.description
+      )
+      direction.routes.forEach(route => planSwapRoute(directionGroup, route))
+    })
+  })
   return matrix
 }
 
-/** Compose one reusable route-family phase group. */
-export function planSwapRouteFamily(
-  parent: ClusterBuildParent<SwapScenarioContext>,
-  family: SwapRouteFamily,
-  failureMode: ClusterBuildFailureMode
-): ClusterBuildPhaseGroup<SwapScenarioContext> {
-  const group = ClusterBuildPhaseGroup.create<SwapScenarioContext>(
-    parent,
-    family.name,
-    family.description,
-    { failureMode }
-  )
-  family.directions.forEach(direction =>
-    planSwapRouteDirection(group, direction, failureMode)
-  )
-  return group
-}
-
-/** Compose one independently reusable source→destination direction group. */
-export function planSwapRouteDirection(
-  parent: ClusterBuildParent<SwapScenarioContext>,
-  direction: SwapRouteDirection,
-  failureMode: ClusterBuildFailureMode
-): ClusterBuildPhaseGroup<SwapScenarioContext> {
-  const group = ClusterBuildPhaseGroup.create<SwapScenarioContext>(
-    parent,
-    direction.name,
-    direction.description,
-    { failureMode }
-  )
-  direction.routes.forEach(route => planSwapRoute(group, route))
-  return group
-}
-
 /** Compose one exact token-pair route as a lifecycle phase. */
-export function planSwapRoute(
+function planSwapRoute(
   parent: ClusterBuildParent<SwapScenarioContext>,
   route: SwapRoute
 ): ClusterBuildPhase<SwapScenarioContext> {

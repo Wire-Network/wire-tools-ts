@@ -127,7 +127,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `cluster-tool` | `@wireio/cluster-tool` | Core harness: process managers, chain clients, bootstrap, **`wire-cluster-tool` CLI** |
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Node-operator collateral deposit + withdraw remit |
 | `flow-swap-with-underwriting` | `@wireio/test-flow-swap-with-underwriting` | Bidirectional SWAP (ETH ↔ SOL) with underwriting |
-| `flow-swap-route-matrix` | `@wireio/test-flow-swap-route-matrix` | Collect-all 56-route matrix across supported ETH/SOL/stable/WIRE tokens, plus explicit LIQETH rejection policy |
+| `flow-swap-route-matrix` | `@wireio/test-flow-swap-route-matrix` | Serial 56-route matrix across supported ETH/SOL/stable/WIRE tokens |
 | `flow-swap-non-native-tokens` | `@wireio/test-flow-swap-non-native-tokens` | SWAP of non-native tokens (USDC / USDT / LIQ) |
 | `flow-swap-variance-revert` | `@wireio/test-flow-swap-variance-revert` | Swap variance-tolerance revert |
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
@@ -136,10 +136,8 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
 Flow packages depend on the harness via `workspace:*`.
-The route matrix excludes LIQETH from positive routes while retaining an exact
-`WIRE_FeeOnTransferUnsupported` policy check against the real token from
-`liqeth-addrs.json`; only the local stablecoins use mock minting. Ethereum swap
-submission failures reset the shared nonce sequence before later routes run.
+The route matrix contains only advertised supported routes. Unsupported assets
+such as LIQETH remain outside this conformance flow.
 
 ## Running flows
 
@@ -152,7 +150,6 @@ flags to the helper script below):
 | `WIRE_ETH_PATH` | `wire-ethereum` repo root (must contain `hardhat.config.ts`) |
 | `WIRE_SOLANA_PATH` | `wire-solana` repo root (built `opp-outpost`) |
 | `WIRE_CLUSTER_PATH` | *(optional)* cluster data dir; the harness generates a fresh temp dir per run when unset |
-| `WIRE_FLOW_FAILURE_MODE` | *(optional)* supporting PhaseGroups use `collect-all` or `fail-fast`; the swap matrix defaults to `collect-all` |
 
 ### Option A — the `run-flow.mjs` helper (THE canonical way)
 
@@ -179,10 +176,6 @@ and every live run is paired with the heartbeat monitor (see
 
 # Regex — 1 match runs it, multiple matches drop into a scoped picker:
 ./scripts/run-flow.mjs swap --wire-build-path … --ethereum-path … --solana-path …
-
-# Stop the swap matrix after its first failed exact route instead of collecting all 72:
-WIRE_FLOW_FAILURE_MODE=fail-fast ./scripts/run-flow.mjs flow-swap-route-matrix \
-  --wire-build-path … --ethereum-path … --solana-path …
 ```
 
 Each `--wire-build-path` / `--ethereum-path` / `--solana-path` flag falls back to

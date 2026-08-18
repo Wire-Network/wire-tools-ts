@@ -542,7 +542,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
           )
           // The WIRE leg carries no bond — only the ETH source leg is locked.
           const request = await assertToWireUwreq(ctx)
-          const locks = await ctx.locksForUwreq(BigInt(request.id))
+          const locks = await ctx.locksForUwreq(Number(request.id))
           Assert.ok(
             locks.length === 1,
             `the WIRE leg carries no bond — expected exactly 1 lock, got ${locks.length}`
@@ -673,7 +673,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
           // Locks are a wall-clock challenge window — delivery does NOT release
           // them (chklocks sweeps them after collateral_lock_duration_ms).
           const request = await assertToWireUwreq(ctx)
-          const locks = await ctx.locksForUwreq(BigInt(request.id))
+          const locks = await ctx.locksForUwreq(Number(request.id))
           Assert.ok(
             locks.length === 1,
             `the source-leg lock must persist through the challenge window — expected 1, got ${locks.length}`

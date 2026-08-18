@@ -9,43 +9,6 @@ import {
   type ClusterBuildParent
 } from "./ClusterBuildPhaseBase.js"
 
-/** How a phase group reacts after one child reports a failure. */
-export enum ClusterBuildFailureMode {
-  /** Stop before the next child so the first failure is the terminal result. */
-  FailFast = "fail-fast",
-  /** Run every child so the report contains the complete result set. */
-  CollectAll = "collect-all"
-}
-
-/**
- * Resolve an operator-provided failure mode without silently accepting a typo.
- *
- * @param value - Serialized enum value, usually from an orchestration env var.
- * @param fallback - Mode used when the operator supplied no value.
- * @returns The resolved failure mode.
- * @throws When `value` is not a supported mode.
- */
-export function resolveClusterBuildFailureMode(
-  value: string | undefined,
-  fallback: ClusterBuildFailureMode
-): ClusterBuildFailureMode {
-  if (value == null || value.length === 0) return fallback
-  return match(value)
-    .with(
-      ClusterBuildFailureMode.FailFast,
-      () => ClusterBuildFailureMode.FailFast
-    )
-    .with(
-      ClusterBuildFailureMode.CollectAll,
-      () => ClusterBuildFailureMode.CollectAll
-    )
-    .otherwise(() => {
-      throw new Error(
-        `invalid failure mode '${value}'; expected ${Object.values(ClusterBuildFailureMode).join(" or ")}`
-      )
-    })
-}
-
 /** Caller tuning for a {@link ClusterBuildPhaseGroup}. */
 export interface ClusterBuildPhaseGroupOptions {
   /** Run children concurrently instead of in series. Defaults to `false`. */
@@ -62,12 +25,6 @@ export interface ClusterBuildPhaseGroupOptions {
    * freeze finality outright.
    */
   concurrency?: number
-  /**
-   * Whether a failed child stops the remaining children or is collected while
-   * execution continues. The group still reports failure in either mode; this
-   * option changes coverage, never the truth of the final verdict.
-   */
-  failureMode?: ClusterBuildFailureMode
 }
 
 /** Resolved {@link ClusterBuildPhaseGroup} config. */
@@ -78,10 +35,9 @@ export type ClusterBuildPhaseGroupConfig = Required<ClusterBuildPhaseGroupOption
  * {@link ClusterBuildPhaseGroup.create} factory (never `new`); it self-registers
  * on its {@link ClusterBuildParent} and is itself a parent (phases/groups register
  * onto it). Executes its children **sequentially by default** (`config.parallel
- * === false`) or concurrently when `parallel`.
- * {@link ClusterBuildFailureMode.FailFast} aborts after the first failed child;
- * {@link ClusterBuildFailureMode.CollectAll} preserves the failure while
- * continuing through every child. Children's `Report.Phase`s flatten into the
+ * === false`) — the first failing child short-circuits the rest — or concurrently
+ * when `parallel`, where the first failure aborts the shared signal so in-flight
+ * siblings cancel cooperatively. Children's `Report.Phase`s flatten into the
  * report in run order.
  */
 export class ClusterBuildPhaseGroup<
@@ -132,9 +88,9 @@ export class ClusterBuildPhaseGroup<
   /**
    * Run children per {@link config} and return ONE {@link Report.Group} node
    * whose `children` nest the produced {@link Report.Node}s in run order.
-   * Under `fail-fast`, sequential execution stops at the first failed child and
-   * parallel execution aborts in-flight siblings. Under `collect-all`, every
-   * child runs and every produced node is retained in the report.
+   * Sequential: stop at the first failed child (the rest are omitted —
+   * absent from the node tree). Parallel: a failing child aborts the shared
+   * controller so in-flight siblings cancel; all produced nodes are collected.
    */
   async run(signal: AbortSignal): Promise<Report.Node[]> {
     const startedAtMs = Date.now(),
@@ -149,12 +105,7 @@ export class ClusterBuildPhaseGroup<
             this.childList,
             async child => {
               const nodes = await child.run(controller.signal)
-              if (
-                this.config.failureMode === ClusterBuildFailureMode.FailFast &&
-                nodes.some(node => !node.succeeded)
-              ) {
-                controller.abort()
-              }
+              if (nodes.some(node => !node.succeeded)) controller.abort()
               return nodes
             },
             { concurrency: this.config.concurrency }
@@ -172,12 +123,7 @@ export class ClusterBuildPhaseGroup<
             }
             const childNodes = await child.run(controller.signal)
             nodes.push(...childNodes)
-            if (
-              this.config.failureMode === ClusterBuildFailureMode.FailFast &&
-              childNodes.some(node => !node.succeeded)
-            ) {
-              controller.abort()
-            }
+            if (childNodes.some(node => !node.succeeded)) controller.abort()
           })
           return nodes
         })
@@ -206,7 +152,6 @@ export namespace ClusterBuildPhaseGroup {
   /** Config defaults — groups run **sequentially** unless `parallel` is set. */
   export const ConfigDefaults: ClusterBuildPhaseGroupConfig = {
     parallel: false,
-    concurrency: UnboundedConcurrency,
-    failureMode: ClusterBuildFailureMode.FailFast
+    concurrency: UnboundedConcurrency
   }
 }

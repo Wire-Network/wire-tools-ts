@@ -1,6 +1,4 @@
 import Assert from "node:assert"
-import Fs from "node:fs"
-import Path from "node:path"
 
 import { getAssociatedTokenAddressSync } from "@solana/spl-token"
 import { PublicKey } from "@solana/web3.js"
@@ -19,7 +17,6 @@ import {
   SwapScenarioContext,
   WireReserveTool,
   contractView,
-  depositLiqEth,
   isNotEmpty,
   matchesProtoEnum,
   mintMockErc20ToUser,
@@ -33,7 +30,7 @@ import {
   requestSolanaSwapSpl,
   signErc20Permit,
   slugValue,
-  submitWithResolvedNonce,
+  resolveLatestNonce,
   swapUserOutputKey,
   verifyStep,
   type ClusterBuildStepOptions,
@@ -85,20 +82,7 @@ interface MatrixErc20Contract
   balanceOf: (owner: string) => Promise<bigint>
 }
 
-/** Structural liqETH deposit surface used to acquire test liquidity. */
-interface LiqEthDepositManagerContract extends ethers.BaseContract {
-  minDeposit: () => Promise<bigint>
-  deposit: (
-    overrides: ethers.Overrides
-  ) => Promise<ethers.ContractTransactionResponse>
-}
-
-/** Ethers call rejection surface used to decode ReserveManager custom errors. */
-interface EthereumCallRejection {
-  readonly data?: unknown
-}
-
-/** Minimal runtime ABI shared by mock stablecoins and liqETH. */
+/** Minimal runtime ABI shared by the supported mock stablecoins. */
 const MatrixErc20Abi: ethers.InterfaceAbi = [
   "function balanceOf(address owner) view returns (uint256)",
   "function mint(address to, uint256 amount)",
@@ -106,12 +90,6 @@ const MatrixErc20Abi: ethers.InterfaceAbi = [
   "function transfer(address recipient, uint256 amount) returns (bool)",
   "function name() view returns (string)",
   "function nonces(address owner) view returns (uint256)"
-]
-
-/** Minimal runtime ABI for the local liqETH deposit path. */
-const LiqEthDepositManagerAbi: ethers.InterfaceAbi = [
-  "function minDeposit() view returns (uint256)",
-  "function deposit() payable"
 ]
 
 /** Route-aware Steps shared by every exact configured matrix phase. */
@@ -245,7 +223,7 @@ export namespace SwapRouteMatrixScenarioSteps {
     )
   }
 
-  /** Named runner — one mint or one real liqETH deposit to the swap user. */
+  /** Named runner — top up one mock ERC-20 source balance. */
   export async function runFundErc20SwapUser(
     ctx: SwapScenarioContext,
     input: FundSwapUserTokenInput,
@@ -256,16 +234,11 @@ export namespace SwapRouteMatrixScenarioSteps {
       token = erc20Contract(ctx, input.token, ctx.ethereum.wallet.signer),
       current = await token.balanceOf(swapUser.ethereumWallet.address)
     if (current >= input.amount) return
-    const shortfall = input.amount - current
-    if (input.token.symbol === Constants.LiqEthSymbol) {
-      const depositManager = liqEthDepositManager(ctx, swapUser.ethereumWallet)
-      await depositLiqEth(
-        depositManager,
-        maximum(shortfall * 2n, await depositManager.minDeposit())
-      )
-      return
-    }
-    await mintMockErc20ToUser(token, swapUser.ethereumWallet.address, shortfall)
+    await mintMockErc20ToUser(
+      token,
+      swapUser.ethereumWallet.address,
+      input.amount - current
+    )
   }
 
   /** Fund one Solana SPL/LIQSOL source token. */
@@ -425,77 +398,17 @@ export namespace SwapRouteMatrixScenarioSteps {
     signal.throwIfAborted()
     const swapUser = ctx.outputs.assert(swapUserOutputKey()),
       token = erc20Contract(ctx, input.route.source, swapUser.ethereumWallet),
-      response = await submitWithResolvedNonce(token, nonce =>
-        token.approve(
-          reserveManagerAddress(ctx),
-          input.route.source.sourceAmount,
-          { nonce }
-        )
+      nonce = await resolveLatestNonce(token),
+      response = await token.approve(
+        reserveManagerAddress(ctx),
+        input.route.source.sourceAmount,
+        { nonce }
       ),
       receipt = await response.wait(1)
     Assert.strictEqual(
       receipt?.status,
       1,
       `${input.route.label}: approve reverted`
-    )
-  }
-
-  /** Assert the current protocol-level LIQETH source rejection without mutation. */
-  export function planVerifyLiqEthUnsupported(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    route: SwapRoute
-  ): ClusterBuildStep<SwapScenarioContext, null> {
-    return verifyStep<SwapScenarioContext>(
-      actor,
-      name,
-      description,
-      async ctx => {
-        const swapUser = ctx.outputs.assert(swapUserOutputKey()),
-          reserveManager = reserveManagerContract(ctx, swapUser.ethereumWallet),
-          targetRecipient = recipientBytes(ctx, swapUser, route.destination),
-          args = erc20SwapArgs(
-            route,
-            targetRecipient,
-            Constants.UnsupportedProbeTargetAmount
-          )
-        let rejection: unknown
-        try {
-          await reserveManager
-            .getFunction("requestSwapErc20WithApproval")
-            .staticCall(args)
-        } catch (error) {
-          rejection = error
-        }
-
-        Assert.ok(
-          rejection != null,
-          `${route.label}: LIQETH unexpectedly passed the source-custody policy`
-        )
-        const revertData = (rejection as EthereumCallRejection).data
-        Assert.ok(
-          typeof revertData === "string",
-          `${route.label}: expected ${Constants.LiqEthUnsupportedError}, got ${String(rejection)}`
-        )
-        const decoded = reserveManager.interface.parseError(revertData)
-        Assert.ok(
-          decoded != null,
-          `${route.label}: rejection data is not a ReserveManager error`
-        )
-        Assert.strictEqual(
-          decoded.name,
-          Constants.LiqEthUnsupportedError,
-          `${route.label}: rejection policy changed`
-        )
-        Assert.strictEqual(
-          BigInt(decoded.args[0]),
-          BigInt(route.source.tokenCode),
-          `${route.label}: rejection named the wrong token code`
-        )
-      },
-      options
     )
   }
 
@@ -801,7 +714,8 @@ export namespace SwapRouteMatrixScenarioSteps {
         await pollUntil(
           `${route.label}: ${route.expectedLockCount} lock(s) on UWREQ ${id}`,
           async () =>
-            (await ctx.locksForUwreq(id)).length === route.expectedLockCount,
+            (await ctx.locksForUwreq(Number(id))).length ===
+            route.expectedLockCount,
           Constants.RaceDeadlineMs,
           Constants.PollIntervalMs
         )
@@ -1050,33 +964,6 @@ function reserveManagerContract(
   )
 }
 
-/** Bind the local liqETH DepositManager to a signer. */
-function liqEthDepositManager(
-  ctx: SwapScenarioContext,
-  signer: ethers.Signer
-): LiqEthDepositManagerContract {
-  const addressesFile = Path.join(
-    ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
-    "liqeth-addrs.json"
-  )
-  Assert.ok(
-    Fs.existsSync(addressesFile),
-    `liqETH addresses missing: ${addressesFile}`
-  )
-  const address = (
-    JSON.parse(Fs.readFileSync(addressesFile, "utf8")) as Record<string, string>
-  )[Constants.DepositManagerContractName]
-  Assert.ok(
-    address != null && ethers.isAddress(address),
-    `${Constants.DepositManagerContractName} missing from liqeth-addrs.json`
-  )
-  return contractView<LiqEthDepositManagerContract>(
-    address,
-    LiqEthDepositManagerAbi,
-    signer
-  )
-}
-
 /** Calldata-facing ERC-20 swap arguments. */
 function erc20SwapArgs(
   route: SwapRoute,
@@ -1122,9 +1009,4 @@ async function maxUwreqIdForRoute(
     (maximum, row) => (BigInt(row.id) > maximum ? BigInt(row.id) : maximum),
     Constants.NoUwreqBaselineId
   )
-}
-
-/** Return the larger bigint without coercing either amount through Number. */
-function maximum(left: bigint, right: bigint): bigint {
-  return left >= right ? left : right
 }

@@ -243,29 +243,11 @@ describe("SwapScenarioContext", () => {
 
   describe("locksForUwreq", () => {
     it("returns every lock referencing the request id", async () => {
-      const locks = await newContext(fixtures).locksForUwreq(7n)
+      const locks = await newContext(fixtures).locksForUwreq(7)
       expect(locks.map(lock => lock.lock_id)).toEqual([1, 2])
     })
     it("is empty for an unknown request id", async () => {
-      expect(await newContext(fixtures).locksForUwreq(42n)).toEqual([])
-    })
-    it("keeps adjacent uint64 request ids distinct above Number.MAX_SAFE_INTEGER", async () => {
-      const first = 9_223_372_036_854_775_808n,
-        second = first + 1n,
-        context = newContext({
-          ...fixtures,
-          locks: [
-            lockRow({ lock_id: 10, uwreq_id: first.toString() }),
-            lockRow({ lock_id: 11, uwreq_id: second.toString() })
-          ]
-        })
-
-      expect(
-        (await context.locksForUwreq(first)).map(row => row.lock_id)
-      ).toEqual([10])
-      expect(
-        (await context.locksForUwreq(second)).map(row => row.lock_id)
-      ).toEqual([11])
+      expect(await newContext(fixtures).locksForUwreq(42)).toEqual([])
     })
   })
 })

@@ -7,7 +7,6 @@ import type {
 import { TokenAmount } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import {
-  ClusterBuildFailureMode,
   ClusterBuildPhase,
   Constants as HarnessConstants,
   FlowScenario,
@@ -17,7 +16,6 @@ import {
   WireUnderwriterTool,
   matchesProtoEnum,
   pollUntil,
-  resolveClusterBuildFailureMode,
   verifyStep,
   type ClusterBuild,
   type ClusterBuildOptions,
@@ -39,8 +37,7 @@ const { Actor } = Report
  */
 export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
   readonly name = "flow-swap-route-matrix"
-  readonly description =
-    "Supported-token route matrix plus an explicit LIQETH protocol-rejection check"
+  readonly description = "Supported-token route matrix"
 
   override readonly defaults: ClusterBuildOptions = {
     enableMockReserves: true,
@@ -86,11 +83,7 @@ export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
       activeOptions: ClusterBuildStepOptions = {
         timeoutMs:
           Constants.UnderwriterActiveDeadlineMs + Constants.PollDeadlineBufferMs
-      },
-      failureMode = resolveClusterBuildFailureMode(
-        process.env[Constants.FailureModeEnvVar],
-        ClusterBuildFailureMode.CollectAll
-      )
+      }
 
     ClusterBuildPhase.create<SwapScenarioContext>(
       cluster,
@@ -151,20 +144,20 @@ export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
     ClusterBuildPhase.create<SwapScenarioContext>(
       cluster,
       "SwapUserTokens",
-      "Fund supported non-native sources and the isolated LIQETH policy probe",
+      "Fund supported non-native sources",
       [
-        ...[...Constants.EthereumTokens, Constants.LiqEthToken]
-          .filter(token => token.symbol !== Constants.EthereumNativeSymbol)
-          .map(token =>
-            Steps.planFundErc20SwapUser(
-              Actor.User,
-              `fund-${token.id}`,
-              `fund the swap user with ${token.symbol}`,
-              writeOptions,
-              token,
-              token.sourceAmount * Constants.UserFundingMultiple
-            )
-          ),
+        ...Constants.EthereumTokens.filter(
+          token => token.symbol !== Constants.EthereumNativeSymbol
+        ).map(token =>
+          Steps.planFundErc20SwapUser(
+            Actor.User,
+            `fund-${token.id}`,
+            `fund the swap user with ${token.symbol}`,
+            writeOptions,
+            token,
+            token.sourceAmount * Constants.UserFundingMultiple
+          )
+        ),
         ...Constants.SolanaTokens.filter(
           token => token.symbol !== Constants.SolanaNativeSymbol
         ).map(token =>
@@ -178,27 +171,6 @@ export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
           )
         )
       ]
-    )
-
-    ClusterBuildPhase.create<SwapScenarioContext>(
-      cluster,
-      "UnsupportedSwapTokens",
-      "Assert LIQETH remains explicitly rejected instead of entering the positive matrix"
-    ).push(
-      Steps.planApproveErc20Spend(
-        Actor.User,
-        "approve-liqeth-probe",
-        "approve the exact LIQETH probe amount",
-        writeOptions,
-        Constants.LiqEthUnsupportedRoute
-      ),
-      Steps.planVerifyLiqEthUnsupported(
-        Actor.EthereumOutpost,
-        "liqeth-source-rejected",
-        `LIQETH source rejects with ${Constants.LiqEthUnsupportedError}`,
-        writeOptions,
-        Constants.LiqEthUnsupportedRoute
-      )
     )
 
     WireUnderwriterTool.planCollateralDeposit<SwapScenarioContext>(
@@ -239,7 +211,7 @@ export class SwapRouteMatrixScenario extends FlowScenario<SwapScenarioContext> {
       )
     )
 
-    planSwapRouteMatrix(cluster, failureMode)
+    planSwapRouteMatrix(cluster)
   }
 }
 

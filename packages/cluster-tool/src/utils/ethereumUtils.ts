@@ -180,35 +180,6 @@ export function clearNonceCache(address: string): void {
 }
 
 /**
- * Submit one Ethereum transaction with a nonce from the shared counter and
- * recover that counter when submission rejects before a transaction response
- * exists. Receipt waiting deliberately stays outside `submit`: once a response
- * exists, the transaction may already consume the nonce even if confirmation
- * later fails or times out.
- *
- * Same-signer callers must still serialize submissions through receipt
- * confirmation, as required by {@link resolveLatestNonce}.
- *
- * @param source Contract or signer owning the shared nonce sequence.
- * @param submit Callback that submits once and resolves to a transaction
- *               response; it must not wait for a receipt.
- * @returns The submitted transaction response.
- */
-export async function submitWithResolvedNonce<T>(
-  source: NonceSource,
-  submit: (nonce: number) => Promise<T>
-): Promise<T> {
-  const signer = assertNonceSigner(source),
-    nonce = await resolveLatestNonce(source)
-  try {
-    return await submit(nonce)
-  } catch (error) {
-    clearNonceCache(await signer.getAddress())
-    throw error
-  }
-}
-
-/**
  * The reason-bearing fields an `ethers` (or arbitrary) error may carry, read
  * duck-typed by {@link ethereumRevertReason}: ethers fills `reason` from a
  * decoded `require(cond, "msg")` and `shortMessage` from its own error

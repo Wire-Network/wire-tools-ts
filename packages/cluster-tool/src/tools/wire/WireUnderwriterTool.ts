@@ -470,16 +470,6 @@ function planDepositStepsForEntry<C extends ClusterBuildContext>(
         amount
       )
     )
-    .with({ chainKind: ChainKind.EVM, tokenKind: TokenKind.LIQ }, () =>
-      planEthereumLiqSteps<C>(
-        options,
-        underwriterLabel,
-        chainName,
-        tokenName,
-        tokenCode,
-        amount
-      )
-    )
     .with({ chainKind: ChainKind.EVM }, () =>
       planEthereumNonNativeSteps<C>(
         options,
@@ -527,49 +517,6 @@ function planDepositStepsForEntry<C extends ClusterBuildContext>(
       )
       return [] as ClusterBuildStep.Any<C>[]
     })
-}
-
-/**
- * EVM LIQ collateral — acquire through DepositManager, approve the registry,
- * then use OperatorRegistry's dedicated LIQ-aware `deposit` path.
- */
-function planEthereumLiqSteps<C extends ClusterBuildContext>(
-  options: ClusterBuildStepOptions,
-  underwriterLabel: string,
-  chainName: string,
-  tokenName: string,
-  tokenCode: bigint,
-  amount: bigint
-): ClusterBuildStep.Any<C>[] {
-  return [
-    EthereumFundingTool.planLiqEthFund<C>(
-      Report.Actor.Underwriter,
-      `${underwriterLabel}-${tokenName}-fund`,
-      `acquire ${amount} ${tokenName} through DepositManager`,
-      options,
-      underwriterLabel,
-      amount
-    ),
-    EthereumCollateralTool.planErc20Approval<C>(
-      Report.Actor.Underwriter,
-      `${underwriterLabel}-${tokenName}-approve`,
-      `approve ${amount} ${tokenName} to OperatorRegistry`,
-      options,
-      underwriterLabel,
-      tokenName,
-      amount
-    ),
-    EthereumCollateralTool.planDeposit<C>(
-      Report.Actor.Underwriter,
-      `${underwriterLabel}-${chainName}-${tokenName}-deposit`,
-      `deposit ${amount} ${tokenName} on ${chainName} (LIQ)`,
-      options,
-      underwriterLabel,
-      OperatorType.UNDERWRITER,
-      tokenCode,
-      amount
-    )
-  ]
 }
 
 /** EVM native deposit — one `OperatorRegistry.deposit` write. */

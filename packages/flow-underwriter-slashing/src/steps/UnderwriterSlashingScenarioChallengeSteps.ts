@@ -56,7 +56,7 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
    */
   export async function findConfirmedCommitment(
     ctx: SwapScenarioContext,
-    excludeUwreqIds: readonly bigint[]
+    excludeUwreqIds: readonly number[]
   ): Promise<Outputs.ChallengedCommitment> {
     const { rows } = await ctx.wire
       .getSysioContract(SysioContractName.uwrit)
@@ -70,22 +70,22 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
           SysioUwritUnderwriterequeststatus,
           SysioUwritUnderwriterequeststatus.UNDERWRITE_REQUEST_STATUS_CONFIRMED
         ) &&
-        !excludeUwreqIds.includes(BigInt(request.id))
+        !excludeUwreqIds.includes(Number(request.id))
     )
     return row == null
       ? null
-      : { uwreqId: BigInt(row.id), underwriterAccount: String(row.winner) }
+      : { uwreqId: Number(row.id), underwriterAccount: String(row.winner) }
   }
 
   /** The `sysio.uwrit::uwreqs` row by id. */
   export async function readUwreq(
     ctx: SwapScenarioContext,
-    uwreqId: bigint
+    uwreqId: number
   ): Promise<SysioContracts.SysioUwritUwRequestTType> {
     const { rows } = await ctx.wire
       .getSysioContract(SysioContractName.uwrit)
       .tables.uwreqs.query()
-    return rows.find(request => BigInt(request.id) === uwreqId)
+    return rows.find(request => Number(request.id) === uwreqId)
   }
 
   /**
@@ -101,7 +101,7 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
       .tables.uwchals.query()
     return rows.find(
       challenge =>
-        BigInt(challenge.uwreq_id) === commitment.uwreqId &&
+        Number(challenge.uwreq_id) === commitment.uwreqId &&
         challenge.underwriter === commitment.underwriterAccount
     )
   }
@@ -299,7 +299,7 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
       .actions.openuwchal.invoke(
         {
           challenger: Constants.ChallengerAccount,
-          uwreq_id: commitment.uwreqId.toString(),
+          uwreq_id: commitment.uwreqId,
           underwriter: commitment.underwriterAccount,
           reason: input.reason,
           detail: input.detail

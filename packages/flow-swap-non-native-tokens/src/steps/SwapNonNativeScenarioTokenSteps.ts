@@ -160,16 +160,16 @@ export namespace SwapNonNativeScenarioTokenSteps {
   /** Highest pre-existing uwreq id for the cell's chain pair (-1 when none). */
   export function uwreqBaselineIdOutputKey(
     cellName: string
-  ): OutputKey<bigint> {
-    return outputKey<bigint>(
+  ): OutputKey<number> {
+    return outputKey<number>(
       `${cellName}.uwreqBaselineId`,
       `pre-swap max uwreq id for ${cellName}`
     )
   }
 
   /** The cell's own uwreq row id (set once {@link planVerifyUwreqCreated} sees it). */
-  export function uwreqIdOutputKey(cellName: string): OutputKey<bigint> {
-    return outputKey<bigint>(
+  export function uwreqIdOutputKey(cellName: string): OutputKey<number> {
+    return outputKey<number>(
       `${cellName}.uwreqId`,
       `uwreq row id for ${cellName}`
     )
@@ -723,12 +723,12 @@ export namespace SwapNonNativeScenarioTokenSteps {
                 cell.sourceChainCode,
                 cell.targetChainCode
               )
-            ).filter(row => BigInt(row.id) > baselineId)
+            ).filter(row => Number(row.id) > baselineId)
             if (created.length === 0) return false
             const newest = created.reduce((left, right) =>
-              BigInt(left.id) >= BigInt(right.id) ? left : right
+              Number(left.id) >= Number(right.id) ? left : right
             )
-            ctx.outputs.set(uwreqIdOutputKey(cell.name), BigInt(newest.id))
+            ctx.outputs.set(uwreqIdOutputKey(cell.name), Number(newest.id))
             return true
           },
           Timing.UwreqDeadlineMs,
@@ -766,7 +766,7 @@ export namespace SwapNonNativeScenarioTokenSteps {
                 cell.sourceChainCode,
                 cell.targetChainCode
               )
-            ).find(candidate => BigInt(candidate.id) === uwreqId)
+            ).find(candidate => Number(candidate.id) === uwreqId)
             return (
               row != null &&
               (matchesProtoEnum(
@@ -936,7 +936,7 @@ interface Erc20BalanceReadContract extends ethers.BaseContract {
 type UwreqRow = SysioContracts.SysioUwritUwRequestTType
 
 /** Baseline uwreq id when the pair has no pre-existing rows. */
-const NoUwreqBaselineId = -1n
+const NoUwreqBaselineId = -1
 
 /**
  * Load a test-mock ERC-20 ABI from the hardhat artifacts. The mocks live under
@@ -1144,13 +1144,10 @@ async function maxUwreqIdForPair(
   ctx: SwapScenarioContext,
   sourceChainCode: number,
   targetChainCode: number
-): Promise<bigint> {
+): Promise<number> {
   return (
     await readUwreqRowsForPair(ctx, sourceChainCode, targetChainCode)
-  ).reduce(
-    (maximum, row) => (BigInt(row.id) > maximum ? BigInt(row.id) : maximum),
-    NoUwreqBaselineId
-  )
+  ).reduce((max, row) => Math.max(max, Number(row.id)), NoUwreqBaselineId)
 }
 
 /** Snapshot the ReserveManager's source-token custody before an ERC-20 swap write. */

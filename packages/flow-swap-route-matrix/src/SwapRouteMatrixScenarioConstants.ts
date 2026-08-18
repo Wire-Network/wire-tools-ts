@@ -73,8 +73,6 @@ export interface SwapRouteFamily {
 
 /** Constants and generated descriptors for the exhaustive configured matrix. */
 export namespace SwapRouteMatrixScenarioConstants {
-  /** Generic flow-orchestration override for collect-all versus fail-fast. */
-  export const FailureModeEnvVar = "WIRE_FLOW_FAILURE_MODE"
   /** Minimum supported epoch duration. */
   export const EpochDurationSec = 60
   /** Ceiling for one request transaction. */
@@ -143,14 +141,8 @@ export namespace SwapRouteMatrixScenarioConstants {
   export const WireUserFunding = 2_000_000_000n
   /** Source-token funding multiplier over one route amount. */
   export const UserFundingMultiple = 12n
-  /** Positive target used by the non-mutating LIQETH rejection probe. */
-  export const UnsupportedProbeTargetAmount = SourceDepotUnits
-  /** Exact protocol error proving LIQETH is currently unsupported as source. */
-  export const LiqEthUnsupportedError = "WIRE_FeeOnTransferUnsupported"
   /** Ethereum outpost address/ABI artifact key. */
   export const ReserveManagerContractName = "ReserveManager"
-  /** Ethereum liqETH deposit contract artifact key. */
-  export const DepositManagerContractName = "DepositManager"
   /** Maximum operator rows inspected by the collateral prerequisite. */
   export const OperatorTableRowLimit = 100
   /** No pre-existing UWREQ id for a route. */
@@ -162,17 +154,6 @@ export namespace SwapRouteMatrixScenarioConstants {
   export const ExternalLockCount = 2
   /** Routes with WIRE as one endpoint have only the outpost-side lock. */
   export const WireEndpointLockCount = 1
-
-  /** LIQETH descriptor retained only for the expected-rejection probe. */
-  export const LiqEthToken: SwapRouteToken = token(
-    "ethereum-liqeth",
-    LiqEthSymbol,
-    SwapRouteEndpoint.Ethereum,
-    EthereumChainCode,
-    EthereumDecimals,
-    SourceEthereumUnits,
-    SwapRouteSourceKind.Erc20Approval
-  )
 
   /** Supported Ethereum swap tokens. */
   export const EthereumTokens: readonly SwapRouteToken[] = [
@@ -254,12 +235,6 @@ export namespace SwapRouteMatrixScenarioConstants {
     DepotDecimals,
     SourceDepotUnits,
     SwapRouteSourceKind.Wire
-  )
-
-  /** LIQETH source policy probe; deliberately excluded from all positive routes. */
-  export const LiqEthUnsupportedRoute: SwapRoute = route(
-    LiqEthToken,
-    SolanaTokens[0]
   )
 
   /** Every currently supported external swap token. */

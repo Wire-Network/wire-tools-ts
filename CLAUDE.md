@@ -60,7 +60,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
 | `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize) |
-| `flow-*` (15 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and swap variants including the reusable 56-route supported-token matrix plus LIQETH rejection policy |
+| `flow-*` (15 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and swap variants including the reusable 56-route supported-token matrix |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
 
@@ -342,15 +342,12 @@ link automatically on `pnpm install` when the siblings exist.
 | `WIRE_BUILD_PATH` | wire-sysio build dir (binaries + contract artifacts) |
 | `WIRE_ETH_PATH` / `WIRE_SOLANA_PATH` | Outpost repo roots |
 | `WIRE_FLOW_TIMEOUT_SCALE` | EXPLICIT operator override of flow timing (default 1, clamped [1,5]); no code derives it |
-| `WIRE_FLOW_FAILURE_MODE` | Optional PhaseGroup execution policy (`collect-all` or `fail-fast`); supporting flows preserve the truthful final Report verdict in either mode |
 | `WIRE_ETH_DEPLOYMENTS_PATH` | Per-cluster hardhat deployments dir (parallel-run isolation) |
 | `WIRE_BIND_REGISTRY_PATH` | Bind-registry dir override (tests sandbox it) |
 | `LOG_LEVEL` | Logging verbosity (default `info`) |
 
-The swap-route matrix exports planners at matrix, family, direction, and exact
-route scope. Compose those planners into broader `FlowScenario` trees instead
-of duplicating route runners; keep exact routes serial while they share one set
-of user identities.
+The swap-route matrix exposes one package-level planner and keeps exact routes
+serial while they share one set of user identities.
 
 ## How future sessions should design and produce code here
 

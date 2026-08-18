@@ -98,16 +98,16 @@ export class SwapScenarioContext extends ClusterBuildContext {
   /**
    * The locks backing an underwrite request (a read).
    *
-   * @param uwreqId - The lossless `uint64` `uwreqs` row id.
+   * @param uwreqId - The `uwreqs` row id.
    * @returns Every `locks` row referencing the request.
    */
   async locksForUwreq(
-    uwreqId: bigint
+    uwreqId: number
   ): Promise<SysioContracts.SysioUwritLockEntryType[]> {
     const { rows } = await this.wire
       .getSysioContract(SysioContractName.uwrit)
       .tables.locks.query()
-    return rows.filter(lock => BigInt(lock.uwreq_id) === uwreqId)
+    return rows.filter(lock => Number(lock.uwreq_id) === uwreqId)
   }
 
   /**
