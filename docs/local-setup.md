@@ -43,7 +43,7 @@ $HOME/.foundry/bin/foundryup
 export PATH="$HOME/.foundry/bin:$PATH"
 
 # -- Solana CLI (Agave, solana-test-validator) --
-sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+sh -c "$(curl -sSfL https://release.anza.xyz/v4.2.0/install)"
 export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
 
 # -- Node.js 24+ --

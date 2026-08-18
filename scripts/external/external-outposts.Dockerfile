@@ -33,7 +33,7 @@ FROM ubuntu:24.04
 # current host; the verify script overrides via --build-arg from the detected
 # host versions).
 ARG FOUNDRY_VERSION=1.5.1
-ARG SOLANA_VERSION=4.0.3
+ARG SOLANA_VERSION=4.2.0
 
 ENV DEBIAN_FRONTEND=noninteractive
 # Foundry installs to /root/.foundry/bin; the anza installer to
