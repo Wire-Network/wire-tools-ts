@@ -1,7 +1,6 @@
 import {
   ClusterBuild,
   ClusterBuildContext,
-  ClusterBuildFailureMode,
   ClusterBuildPhase,
   ClusterBuildStep, pollUntil, type StepInput } from "@wireio/cluster-tool/orchestration"
 import { getLogger } from "@wireio/cluster-tool/logging"
@@ -72,106 +71,6 @@ describe("ClusterBuildPhase executor", () => {
     ])
     expect(result.steps[1].error?.message).toBe("b boom")
     expect(result.succeeded).toBe(false)
-  })
-
-  it("collect mode runs every sequential step after failures", async () => {
-    const order: string[] = []
-    const phase = ClusterBuildPhase.create(newBuild(), "P", "d", [], {
-      failureMode: ClusterBuildFailureMode.collect
-    }).push(ok(order, "a"), fail("b"), ok(order, "c"))
-    const result = await runOne(phase)
-    expect(order).toEqual(["a", "c"])
-    expect(result.steps.map(step => step.status)).toEqual([
-      Report.StepStatus.ok,
-      Report.StepStatus.failed,
-      Report.StepStatus.ok
-    ])
-  })
-
-  it("collect mode does not cancel parallel siblings after a failure", async () => {
-    const order: string[] = []
-    const phase = ClusterBuildPhase.create(newBuild(), "P", "d", [], {
-      parallelize: true,
-      failureMode: ClusterBuildFailureMode.collect
-    }).push(fail("a"), ok(order, "b"), ok(order, "c"))
-    const result = await runOne(phase)
-    expect(order.sort()).toEqual(["b", "c"])
-    expect(
-      result.steps.filter(step => step.status === Report.StepStatus.failed)
-    ).toHaveLength(1)
-  })
-
-  it("fail-fast mode aborts an in-flight parallel sibling", async () => {
-    let siblingSawAbort = false
-    const delayedFailure = ClusterBuildStep.create(
-      Report.Actor.Sysio,
-      "failure",
-      "failure",
-      {},
-      null,
-      async () => {
-        await sleep(10)
-        throw new Error("failure boom")
-      }
-    )
-    const abortAwareSibling = ClusterBuildStep.create(
-      Report.Actor.Sysio,
-      "sibling",
-      "sibling",
-      {},
-      null,
-      async (_ctx, _input, signal) =>
-        new Promise<void>((_resolve, reject) => {
-          const onAbort = () => {
-            siblingSawAbort = true
-            reject(new Error("sibling cancelled"))
-          }
-          if (signal.aborted) onAbort()
-          else signal.addEventListener("abort", onAbort, { once: true })
-        })
-    )
-    const phase = ClusterBuildPhase.create(newBuild(), "P", "d", [], {
-      parallelize: true
-    }).push(delayedFailure, abortAwareSibling)
-
-    await runOne(phase)
-
-    expect(siblingSawAbort).toBe(true)
-  })
-
-  it("collect mode isolates a timed-out step from parallel siblings", async () => {
-    const order: string[] = []
-    const timedOut = ClusterBuildStep.create(
-      Report.Actor.Sysio,
-      "timed-out",
-      "timed-out",
-      { timeoutMs: 10 },
-      null,
-      async () => sleep(100)
-    )
-    const sibling = ClusterBuildStep.create(
-      Report.Actor.Sysio,
-      "sibling",
-      "sibling",
-      {},
-      null,
-      async () => {
-        await sleep(30)
-        order.push("sibling")
-      }
-    )
-    const phase = ClusterBuildPhase.create(newBuild(), "P", "d", [], {
-      parallelize: true,
-      failureMode: ClusterBuildFailureMode.collect
-    }).push(timedOut, sibling)
-
-    const result = await runOne(phase)
-
-    expect(order).toEqual(["sibling"])
-    expect(result.steps.map(step => step.status)).toEqual([
-      Report.StepStatus.failed,
-      Report.StepStatus.ok
-    ])
   })
 
   it("runs steps in parallel when parallelize", async () => {

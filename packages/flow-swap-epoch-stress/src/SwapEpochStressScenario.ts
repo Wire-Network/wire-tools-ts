@@ -3,9 +3,7 @@ import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { SysioContracts } from "@wireio/sdk-core"
 import type { Logger } from "@wireio/shared"
 import {
-  ClusterBuildFailureMode,
   ClusterBuildPhase,
-  ClusterBuildPhaseGroup,
   Constants as ClusterConstants,
   FlowScenario,
   Report,
@@ -81,12 +79,11 @@ export class SwapEpochStressScenario extends FlowScenario<SwapScenarioContext> {
   plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const firstUnderwriter = ClusterConstants.underwriterLabel(0)
     const requestOptions = { timeoutMs: Constants.RequestStepTimeoutMs }
-    const settlementOptions = {
-      timeoutMs: Constants.SettlementDeadlineMs + Constants.PollDeadlineBufferMs
-    }
     const diagnosticsOptions = {
       timeoutMs:
-        Constants.observationStepTimeoutMs() + Constants.PollDeadlineBufferMs
+        Constants.SettlementDeadlineMs +
+        Constants.observationStepTimeoutMs() +
+        Constants.PollDeadlineBufferMs
     }
 
     WireUnderwriterTool.planCollateralDeposit(
@@ -113,10 +110,7 @@ export class SwapEpochStressScenario extends FlowScenario<SwapScenarioContext> {
           Constants.EthereumHdIndexBase + actorIndex
         )
       ),
-      {
-        parallelize: true,
-        failureMode: ClusterBuildFailureMode.collect
-      }
+      { parallelize: true }
     )
 
     ClusterBuildPhase.create(
@@ -207,15 +201,8 @@ export class SwapEpochStressScenario extends FlowScenario<SwapScenarioContext> {
       )
     )
 
-    const stress = ClusterBuildPhaseGroup.create(
-      cluster,
-      "ConcurrentSwapStress",
-      "Apply simultaneous swaps, collect every result, and always run terminal diagnostics",
-      { failureMode: ClusterBuildFailureMode.collect }
-    )
-
     ClusterBuildPhase.create(
-      stress,
+      cluster,
       "ConcurrentRequests",
       "Launch ten Ethereum→Solana requestSwap transactions at the same time",
       Array.from({ length: Constants.ActorCount }, (_, actorIndex) =>
@@ -227,50 +214,13 @@ export class SwapEpochStressScenario extends FlowScenario<SwapScenarioContext> {
           actorIndex
         )
       ),
-      {
-        parallelize: true,
-        failureMode: ClusterBuildFailureMode.collect
-      }
+      { parallelize: true }
     )
 
     ClusterBuildPhase.create(
-      stress,
-      "RequestLifecycle",
-      "Capture WIRE request ingestion and confirmation before retention can evict settled rows",
-      [
-        StressSteps.planObserveRequests(
-          Actor.Sysio,
-          "observe-stress-requests",
-          "preserve all stress UWREQ IDs and statuses before destination payout waits",
-          settlementOptions,
-          Constants.ActorCount
-        )
-      ]
-    )
-
-    ClusterBuildPhase.create(
-      stress,
-      "DestinationPayouts",
-      "Verify all ten distinct Solana recipients receive their remit payouts",
-      Array.from({ length: Constants.ActorCount }, (_, actorIndex) =>
-        StressSteps.planVerifyPayout(
-          Actor.SolanaOutpost,
-          `verify-payout-${actorIndex + 1}`,
-          `Solana recipient ${actorIndex + 1} receives the expected target amount`,
-          settlementOptions,
-          actorIndex
-        )
-      ),
-      {
-        parallelize: true,
-        failureMode: ClusterBuildFailureMode.collect
-      }
-    )
-
-    ClusterBuildPhase.create(
-      stress,
+      cluster,
       "TerminalDiagnostics",
-      "Evaluate every swap-stress invariant and complete a 15-epoch post-load soak",
+      "Observe request settlement once, then evaluate every invariant through the 15-epoch soak",
       [
         StressSteps.planTerminalDiagnostics(
           Actor.Sysio,

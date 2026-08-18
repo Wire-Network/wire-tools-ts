@@ -19,12 +19,13 @@ expected outcome:
 - The soak crosses the ten-epoch envelope-retention and underwriting-lock
   windows, then observes five additional epochs.
 
-Every transaction is its own Step. The generated Markdown, HTML, and CSV reports
-contain the parameters, transaction/RPC evidence, payout observations, UWREQ
-statuses, epoch baseline/result, every failed invariant, and bounded runtime
-evidence. The terminal outcome is always either `SWAP_EPOCH_STRESS_COMPLETED` or
-`SWAP_EPOCH_STRESS_FAILED`; a failure lists all affected stages instead of
-stopping at the first symptom.
+Every transaction is its own Step and uses the harness's normal fail-fast
+execution. After all 10 source requests are submitted, one terminal diagnostic
+step observes UWREQs, payouts, epochs, and bounded runtime evidence without
+duplicating those reads across separate phases. Its outcome is either
+`SWAP_EPOCH_STRESS_COMPLETED` or `SWAP_EPOCH_STRESS_FAILED`, with every observed
+protocol-side invariant reported together. Provisioning or transaction-submit
+failures stop at their exact failed Step.
 
 ## Run locally
 

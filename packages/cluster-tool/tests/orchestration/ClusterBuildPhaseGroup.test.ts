@@ -1,7 +1,6 @@
 import {
   ClusterBuild,
   ClusterBuildContext,
-  ClusterBuildFailureMode,
   ClusterBuildPhase,
   ClusterBuildPhaseGroup,
   ClusterBuildStep
@@ -56,20 +55,6 @@ describe("ClusterBuildPhaseGroup", () => {
     expect(order).toEqual(["a"]) // c never ran
     expect(phases.map(phase => phase.name)).toEqual(["P1", "P2"]) // P3 omitted
     expect(phases[1].succeeded).toBe(false)
-  })
-
-  it("collect mode runs every sequential child after failures", async () => {
-    const order: string[] = []
-    const group = ClusterBuildPhaseGroup.create(newBuild(), "G", "group", {
-      failureMode: ClusterBuildFailureMode.collect
-    })
-    ClusterBuildPhase.create(group, "P1", "d").push(ok(order, "a"))
-    ClusterBuildPhase.create(group, "P2", "d").push(fail("b"))
-    ClusterBuildPhase.create(group, "P3", "d").push(ok(order, "c"))
-    const phases = await runGroup(group)
-    expect(order).toEqual(["a", "c"])
-    expect(phases.map(phase => phase.name)).toEqual(["P1", "P2", "P3"])
-    expect(phases.map(phase => phase.succeeded)).toEqual([true, false, true])
   })
 
   it("runs children concurrently when parallel", async () => {

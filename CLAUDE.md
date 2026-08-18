@@ -104,9 +104,7 @@ One declarative model is shared by the `wire-cluster-tool` CLI and every flow:
   `run*`, typed `StepInput`, actor-first signature); reads run freely inside
   runners; assertions that ARE the scenario ride `verifyStep`. Cross-step data
   flows through `ctx.outputs` (`OutputKey<T>`) / `ctx.keyStore`
-  (`ClusterKeyStore`) — never closures. Diagnostic/stress phases use explicit
-  `ClusterBuildFailureMode.collect` when later evidence must still be recorded
-  after an independent step or child fails; fail-fast remains the default.
+  (`ClusterKeyStore`) — never closures.
 - Steps palette: `Steps.contracts.sysio.<contract>.<abi-action>` +
   `Steps.processes.<daemon>.planStart` + semantic composites
   (`Steps.keys`, `Steps.operator`, `Steps.registry`, …).

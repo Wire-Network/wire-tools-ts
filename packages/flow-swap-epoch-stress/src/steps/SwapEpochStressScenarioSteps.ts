@@ -65,6 +65,39 @@ async function stressRequests(ctx: SwapScenarioContext): Promise<Uwreq[]> {
   return rows.filter(row => !baseline.has(Number(row.id)) && isStressRoute(row))
 }
 
+async function observeStressRequests(
+  ctx: SwapScenarioContext,
+  expectedRequestCount: number,
+  signal: AbortSignal
+): Promise<void> {
+  await pollUntil(
+    `${expectedRequestCount} stress UWREQs reach CONFIRMED`,
+    async () => {
+      signal.throwIfAborted()
+      const requests = await stressRequests(ctx),
+        confirmedCount = requests.filter(request =>
+          matchesProtoEnum(
+            request.status,
+            SysioUwritUnderwriterequeststatus,
+            SysioUwritUnderwriterequeststatus.UNDERWRITE_REQUEST_STATUS_CONFIRMED
+          )
+        ).length
+      ctx.outputs.set(StressRequestSnapshotKey, {
+        requestIds: requests.map(request => Number(request.id)),
+        requestStatuses: requests.map(request => String(request.status)),
+        ingestedCount: requests.length,
+        confirmedCount
+      })
+      return (
+        requests.length === expectedRequestCount &&
+        confirmedCount === expectedRequestCount
+      )
+    },
+    Constants.SettlementDeadlineMs,
+    Constants.LongPollIntervalMs
+  )
+}
+
 /** Typed Step planners and runners used by the swap epoch stress scenario. */
 export namespace SwapEpochStressScenarioSteps {
   /** Input used to provision one independent source/destination actor pair. */
@@ -228,163 +261,6 @@ export namespace SwapEpochStressScenarioSteps {
     })
   }
 
-  /** Input used to capture the WIRE-side lifecycle of the submitted requests. */
-  export interface ObserveRequestsInput extends StepInput {
-    readonly kind: "SwapEpochStressScenarioSteps.ObserveRequestsInput"
-    readonly expectedRequestCount: number
-  }
-
-  /**
-   * Plan the retention-safe UWREQ lifecycle observation.
-   *
-   * @param actor Report actor responsible for the step.
-   * @param name Stable step name.
-   * @param description Human-readable step description.
-   * @param options Step execution options.
-   * @param expectedRequestCount Expected stress request count.
-   * @returns Registered request-observation step.
-   */
-  export function planObserveRequests(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    expectedRequestCount: number
-  ): ClusterBuildStep<SwapScenarioContext, ObserveRequestsInput> {
-    return ClusterBuildStep.create(
-      actor,
-      name,
-      description,
-      options,
-      {
-        kind: "SwapEpochStressScenarioSteps.ObserveRequestsInput",
-        expectedRequestCount
-      },
-      runObserveRequests
-    )
-  }
-
-  /**
-   * Preserve request IDs and statuses before settled rows reach their retention limit.
-   *
-   * @param ctx Flow build context.
-   * @param input Request-observation input.
-   * @param signal Cooperative cancellation signal.
-   * @returns A promise resolved when every expected UWREQ reaches CONFIRMED.
-   */
-  export async function runObserveRequests(
-    ctx: SwapScenarioContext,
-    input: ObserveRequestsInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    await pollUntil(
-      `${input.expectedRequestCount} stress UWREQs reach CONFIRMED`,
-      async () => {
-        signal.throwIfAborted()
-        const requests = await stressRequests(ctx)
-        const confirmedCount = requests.filter(request =>
-          matchesProtoEnum(
-            request.status,
-            SysioUwritUnderwriterequeststatus,
-            SysioUwritUnderwriterequeststatus.UNDERWRITE_REQUEST_STATUS_CONFIRMED
-          )
-        ).length
-        ctx.outputs.set(StressRequestSnapshotKey, {
-          requestIds: requests.map(request => Number(request.id)),
-          requestStatuses: requests.map(request => String(request.status)),
-          ingestedCount: requests.length,
-          confirmedCount
-        })
-        return (
-          requests.length === input.expectedRequestCount &&
-          confirmedCount === input.expectedRequestCount
-        )
-      },
-      Constants.SettlementDeadlineMs,
-      Constants.LongPollIntervalMs
-    )
-  }
-
-  /** Input used to verify one actor's destination payout. */
-  export interface VerifyPayoutInput extends StepInput {
-    readonly kind: "SwapEpochStressScenarioSteps.VerifyPayoutInput"
-    readonly actorIndex: number
-  }
-
-  /**
-   * Plan one destination-payout observation step.
-   *
-   * @param actor Report actor responsible for the step.
-   * @param name Stable step name.
-   * @param description Human-readable step description.
-   * @param options Step execution options.
-   * @param actorIndex Zero-based actor index.
-   * @returns Registered payout-verification step.
-   */
-  export function planVerifyPayout(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    actorIndex: number
-  ): ClusterBuildStep<SwapScenarioContext, VerifyPayoutInput> {
-    return ClusterBuildStep.create(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "SwapEpochStressScenarioSteps.VerifyPayoutInput", actorIndex },
-      runVerifyPayout
-    )
-  }
-
-  /**
-   * Wait for one Solana recipient to receive the quoted remit amount.
-   *
-   * @param ctx Flow build context.
-   * @param input Payout-verification input.
-   * @param signal Cooperative cancellation signal.
-   * @returns A promise resolved when the complete payout is observed.
-   */
-  export async function runVerifyPayout(
-    ctx: SwapScenarioContext,
-    input: VerifyPayoutInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    const stressActor = ctx.outputs.assert(
-      stressActorOutputKey(input.actorIndex)
-    )
-    const targetAmount = ctx.outputs.assert(StressTargetAmountKey)
-    Assert.ok(
-      targetAmount <= BigInt(Number.MAX_SAFE_INTEGER),
-      "target amount exceeds JavaScript's exact integer range"
-    )
-    const expectedMinimum =
-      stressActor.solanaBalanceBefore + Number(targetAmount)
-    let observed = stressActor.solanaBalanceBefore
-    await pollUntil(
-      `actor ${input.actorIndex} SOL payout`,
-      async () => {
-        signal.throwIfAborted()
-        observed = await ctx.solana.getLamports(
-          stressActor.solanaKeypair.publicKey
-        )
-        return observed >= expectedMinimum
-      },
-      Constants.SettlementDeadlineMs,
-      Constants.LongPollIntervalMs
-    )
-    Report.StepExtraRecorder.note("destination payout observed", {
-      actorIndex: input.actorIndex,
-      recipient: stressActor.solanaKeypair.publicKey.toBase58(),
-      before: stressActor.solanaBalanceBefore,
-      observed,
-      expectedMinimum
-    })
-  }
-
   /** Input used by the single terminal diagnostic step. */
   export interface DiagnosticInput extends StepInput {
     readonly kind: "SwapEpochStressScenarioSteps.DiagnosticInput"
@@ -466,6 +342,15 @@ export namespace SwapEpochStressScenarioSteps {
     const submittedRequestCount = provisionedActorIndexes.filter(actorIndex =>
       ctx.outputs.has(stressRequestOutputKey(actorIndex))
     ).length
+    let requestObservationError: unknown = null
+    try {
+      await observeStressRequests(ctx, input.expectedRequestCount, signal)
+    } catch (error) {
+      requestObservationError = error
+      ctx.log.warn(
+        `[SwapEpochStress] request lifecycle observation stopped: ${errorMessage(error)}`
+      )
+    }
     const solanaProgramRuntimeErrors = new Set<string>()
     let programLogReadError: unknown = null
     const scanSolanaProgramLogs = async (): Promise<void> => {
@@ -739,7 +624,8 @@ export namespace SwapEpochStressScenarioSteps {
       })
     }
     if (
-      requestSnapshot === null ||
+      requestSnapshot == null ||
+      requestObservationError !== null ||
       payoutDiagnosticFailureCount > 0 ||
       programLogReadError !== null ||
       clusterLogReadError !== null
@@ -748,9 +634,12 @@ export namespace SwapEpochStressScenarioSteps {
         check: SwapEpochStressCheck.DIAGNOSTIC_COLLECTION_FAILED,
         expected: "all terminal diagnostic sources readable",
         observed: [
-          requestSnapshot !== null
+          requestSnapshot != null
             ? "UWREQ lifecycle snapshot available"
             : "UWREQ lifecycle snapshot unavailable",
+          requestObservationError === null
+            ? "request observation completed"
+            : "request observation failed",
           `${payoutDiagnosticFailureCount} payout balance read failures`,
           programLogReadError === null
             ? "program logs readable"
@@ -802,6 +691,10 @@ export namespace SwapEpochStressScenarioSteps {
       confirmedRequestCount: requestSnapshot?.confirmedCount ?? 0,
       requestIds: requestSnapshot?.requestIds ?? [],
       requestStatuses: requestSnapshot?.requestStatuses ?? [],
+      requestObservationError:
+        requestObservationError instanceof Error
+          ? requestObservationError.message
+          : String(requestObservationError ?? ""),
       payoutObservedCount,
       payoutDiagnosticFailureCount,
       payoutResults,
