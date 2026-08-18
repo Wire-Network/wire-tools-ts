@@ -3,7 +3,7 @@ import { z } from "zod"
 
 /**
  * Provider-type roster — member/value IS the C++ scheme token verbatim
- * (`KEY:` / `SSM:` / `KIOD:` signature-provider specs, modeled on
+ * (the KEY / SSM / KIOD signature-provider schemes, modeled on
  * `signature_provider_manager_plugin`). `KMS` is the documented next member;
  * `match().exhaustive()` forces handling when it is added.
  */
@@ -40,7 +40,7 @@ const signatureProviderBaseShape = {
   proofOfPossession: z.string().optional()
 }
 
-/** `KEY:` provider — carries the raw private key inline (full `KEY:`/`SSM:` parity). */
+/** KEY-scheme provider — carries the raw private key inline (full KEY/SSM parity). */
 export const SignatureProviderKEYConfigSchema = z.object({
   providerType: z.literal(SignatureProviderType.KEY),
   ...signatureProviderBaseShape,
@@ -90,7 +90,7 @@ export const SignatureProviderConfigSchema = z
     }
   })
 
-/** `KEY:` provider config — the schema-inferred shape of {@link SignatureProviderKEYConfigSchema}. */
+/** KEY-scheme provider config — the schema-inferred shape of {@link SignatureProviderKEYConfigSchema}. */
 export type SignatureProviderKEYConfig = z.infer<
   typeof SignatureProviderKEYConfigSchema
 >

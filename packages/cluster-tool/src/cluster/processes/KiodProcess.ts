@@ -46,18 +46,7 @@ export class KiodProcess extends ManagedProcess {
         BindConfigProvider.DefaultKiod
       )
     } = options
-    const config: KiodConfig = {
-      binary: options.binary,
-      walletPath: options.walletPath,
-      address: options.address ?? Localhost,
-      port,
-      unlockTimeout: options.unlockTimeout ?? KiodProcess.DefaultUnlockTimeout,
-      httpMaxResponseTimeMs:
-        options.httpMaxResponseTimeMs ??
-        KiodProcess.DefaultHttpMaxResponseTimeMs,
-      extraArgs: options.extraArgs ?? []
-    }
-    return new KiodProcess(manager, config)
+    return new KiodProcess(manager, KiodProcess.resolveConfig(options, { port }))
   }
 
   private constructor(
@@ -80,20 +69,7 @@ export class KiodProcess extends ManagedProcess {
   }
 
   get args(): string[] {
-    return [
-      "--wallet-dir",
-      this.config.walletPath,
-      "--data-dir",
-      this.config.walletPath,
-      "--config-dir",
-      this.config.walletPath,
-      `--unlock-timeout=${this.config.unlockTimeout}`,
-      `--http-server-address=${this.config.address}:${this.config.port}`,
-      "--http-max-response-time-ms",
-      String(this.config.httpMaxResponseTimeMs),
-      "--verbose-http-errors",
-      ...this.config.extraArgs
-    ]
+    return KiodProcess.buildArgs(this.config)
   }
 
   protected get verifyTimeoutMs(): number {
@@ -110,6 +86,66 @@ export class KiodProcess extends ManagedProcess {
 }
 
 export namespace KiodProcess {
+  /**
+   * Resolve caller options into a complete {@link KiodConfig}. PURE — the
+   * registry-issued port is INJECTED, so a `start.sh` render rebuilds the same
+   * config without claiming a second port.
+   *
+   * @param options - Caller overrides (`binary` + `walletPath` asserted by `create`).
+   * @param resolved - The impure values `create` obtained.
+   * @returns The complete config.
+   */
+  /** The impure value `create` resolves (registry-issued port). */
+  export interface ResolvedInputs {
+    port: number
+  }
+
+  export function resolveConfig(
+    options: KiodOptions,
+    resolved: ResolvedInputs
+  ): KiodConfig {
+    return {
+      binary: options.binary,
+      walletPath: options.walletPath,
+      address: options.address ?? Localhost,
+      port: resolved.port,
+      unlockTimeout: options.unlockTimeout ?? KiodProcess.DefaultUnlockTimeout,
+      httpMaxResponseTimeMs:
+        options.httpMaxResponseTimeMs ??
+        KiodProcess.DefaultHttpMaxResponseTimeMs,
+      extraArgs: options.extraArgs ?? []
+    }
+  }
+
+  /**
+   * The kiod argv (WITHOUT the binary) — the ONE argv source, shared by the live
+   * process and the `start.sh` renderer.
+   *
+   * Every path here is the cluster's WALLET directory: kiod points
+   * `--wallet-dir` / `--data-dir` / `--config-dir` all at it and runs with it as
+   * `cwd`. Its own `data/kiod/` directory holds only the pidfile and log, so a
+   * rendered script has no `$NODE_DIR` substitution to make.
+   *
+   * @param config - A resolved kiod config.
+   * @returns The argv.
+   */
+  export function buildArgs(config: KiodConfig): string[] {
+    return [
+      "--wallet-dir",
+      config.walletPath,
+      "--data-dir",
+      config.walletPath,
+      "--config-dir",
+      config.walletPath,
+      `--unlock-timeout=${config.unlockTimeout}`,
+      `--http-server-address=${config.address}:${config.port}`,
+      "--http-max-response-time-ms",
+      String(config.httpMaxResponseTimeMs),
+      "--verbose-http-errors",
+      ...config.extraArgs
+    ]
+  }
+
   export const DefaultUnlockTimeout = 999_999
   export const DefaultHttpMaxResponseTimeMs = 99_999
   export const ProcessLabel = "kiod" as const

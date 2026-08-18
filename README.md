@@ -46,11 +46,11 @@ see [`docs/local-setup.md`](docs/local-setup.md).
 | **pnpm** | `10.32.1` | the only supported package manager | `corepack enable && corepack prepare pnpm@10.32.1 --activate` |
 | **Rust** | `1.86.0` | toolchain for Solana / Anchor builds | see below |
 | **Foundry (`anvil`)** | `>= 1.5` | local Ethereum node for the ETH outpost | see below |
-| **Solana CLI (`solana-test-validator`)** | `2.1.21` (Agave) | local Solana validator for the SOL outpost | see below |
+| **Solana CLI (`solana-test-validator`)** | `4.2.0` (Agave) | local Solana validator for the SOL outpost | see below |
 | **Anchor (`anchor`) via `avm`** | `0.31.0` | builds + loads the `opp-outpost` program | see below |
 
 > The Solana / Anchor / Rust versions are pinned by `wire-solana`
-> (`Anchor.toml` → `anchor_version = "0.31.0"`, `solana_version = "2.1.21"`;
+> (`Anchor.toml` → `anchor_version = "0.31.0"`, `solana_version = "4.2.0"`;
 > `rust-toolchain.toml` → `channel = "1.86.0"`). Match them — a mismatched
 > validator or Anchor CLI produces program-load failures that look like flow bugs.
 
@@ -72,9 +72,9 @@ curl -L https://foundry.paradigm.xyz | bash
 "$HOME/.foundry/bin/foundryup"
 export PATH="$HOME/.foundry/bin:$PATH"
 
-# ── Solana CLI (Agave) — pin 2.1.21 to match wire-solana ─────────────────────
+# ── Solana CLI (Agave) — pin 4.2.0 to match wire-solana ─────────────────────
 # https://docs.anza.xyz/cli/install
-sh -c "$(curl -sSfL https://release.anza.xyz/v2.1.21/install)"
+sh -c "$(curl -sSfL https://release.anza.xyz/v4.2.0/install)"
 export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
 
 # ── Anchor via avm (Anchor Version Manager) — pin 0.31.0 ─────────────────────
@@ -90,7 +90,7 @@ Verify:
 node --version        # v22+  (v24 OK)
 pnpm --version        # 10.32.1
 anvil --version       # 1.5.x
-solana --version      # 2.1.21 ... Agave
+solana --version      # 4.2.0 ... Agave
 anchor --version      # anchor-cli 0.31.0
 ```
 
@@ -244,6 +244,57 @@ Rules of the road (binding for sessions/automation; see
 For interactive work — poking the chains with `clio` or the debugging TUI —
 drive the `wire-cluster-tool` CLI directly (alias: `wtc`). Its commands:
 `create`, `run`, `destroy`, `package`, and `create-external-config`.
+
+### Two ways to start a daemon — and how they relate
+
+After `create`, there are two launchers, and they are not alternatives to pick
+between at random:
+
+| | `wire-cluster-tool run` | a daemon's `start.sh` |
+|---|---|---|
+| Starts | the WHOLE cluster, in dependency order | ONE daemon |
+| Needs | this repo installed + built | only that daemon's binary |
+| Ports/paths | re-read from `cluster-config.json` at launch | frozen from the config at emit time |
+| Registers with the bind registry | yes (`validate` + `registerResolved`) | **no** |
+
+`run` is the local development path. `start.sh` exists for the **published
+artifact**: a consumer who unpacks
+`wire-platform-cluster-external-data-<version>.tgz` has the tree but not this
+repo, and the argv otherwise lives only inside `wire-cluster-tool`.
+
+Every daemon directory gets one — `<cluster>/data/<daemon>/start.sh` — carrying
+the same argv `run` would spawn, with three properties worth knowing:
+
+- **Relocatable.** No build-host path is frozen. `$NODE_DIR` and `$CLUSTER_DIR`
+  derive from the script's own location (override with `WIRE_CLUSTER_DIR`).
+  The wire-sysio install prefix is `WIRE_PREFIX_PATH`, RESOLVED rather than
+  demanded: an explicit `WIRE_PREFIX_PATH` wins, else the parent of a `nodeop`
+  found on `PATH` (so a host with wire-sysio installed needs no configuration at
+  all), else `WIRE_BUILD_PATH` for a tree still pointed at a build dir — and it
+  fails loudly naming all three if none resolves. `WIRE_ETH_PATH` /
+  `WIRE_SOLANA_PATH` are asserted outright where referenced, since nothing on
+  `PATH` can imply them.
+  PATH-resolved binaries indirect through `WIRE_ANVIL_BIN` /
+  `WIRE_SOLANA_TEST_VALIDATOR_BIN` / `WIRE_NODE_BIN`, falling back to
+  `command -v`. The `WIRE_` prefix is deliberate — unprefixed names collide with
+  ambient ones (`NODE_BIN` is set to a bin DIRECTORY by common node version
+  managers, so the fallback is never reached and the script execs a directory).
+- **Run semantics.** Nodes are relaunch-form (no one-shot genesis flags); anvil
+  carries interval mining. Conditions that depended on the build host — anvil's
+  `--load-state`, nodeop's `--trace-no-abis` — render as shell tests the script
+  evaluates itself.
+- **Not bind-registry aware.** The ports were issued by the registry at create
+  time, but a `start.sh`-launched daemon does not re-claim them, so it is
+  invisible to a concurrently-resolving cluster on the same host. Intended for a
+  dedicated deploy host; use `run` when other clusters share the machine.
+
+Invoke as `./start.sh` — the emitted scripts are mode `0755`.
+
+> **Under the default `KEY` signature provider these scripts contain an inline
+> private key** for every producer/operator node, exactly as the daemon's argv
+> does — the script header says so. Published GHA artifacts are unaffected:
+> that workflow is SSM-only and refuses any other provider, so its scripts carry
+> `SSM:<id>` references instead.
 
 ```bash
 wire-cluster-tool create \

@@ -1,0 +1,21 @@
+{
+  "name": "@wireio/test-flow-underwriter-slashing",
+  "version": "0.1.1",
+  "private": true,
+  "type": "commonjs",
+  "description": "Flow: Underwriter slashing via the bonded Tier-1 challenge vote (WIRE-297)",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "node lib/index.js",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@wireio/cluster-tool": "workspace:*",
+    "@wireio/sdk-core": "^1.0.17",
+    "@wireio/shared": "^1.0.17",
+    "ethers": "^6.14.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0"
+  }
+}

@@ -271,6 +271,22 @@ external directory with the external `BindConfig` merged in and emits its
 self-described `external-cluster-config.json` (the Validate → Clone → Rebind →
 Emit → Verify pipeline; a mismatched bind config fails fast before any write).
 
+**Every daemon directory also gets a `start.sh`** (`<cluster>/data/<daemon>/`),
+emitted by `create` and re-rendered by `create-external-config`'s Rebind, so a
+published cluster tree is self-describing without this repo installed. It carries
+the argv `run` would spawn — relaunch form, `$NODE_DIR`/`$CLUSTER_DIR` derived
+from the script's own location, the wire-sysio prefix RESOLVED
+(`WIRE_PREFIX_PATH` → a `nodeop` on `PATH` → `WIRE_BUILD_PATH`) while
+`WIRE_ETH_PATH`/`WIRE_SOLANA_PATH` are asserted outright, PATH binaries
+indirected (`WIRE_ANVIL_BIN`/`WIRE_SOLANA_TEST_VALIDATOR_BIN`/`WIRE_NODE_BIN` —
+the `WIRE_` prefix avoids ambient collisions), and build-time
+conditionals rendered as shell tests. They are emitted mode `0755`, so a
+consumer runs `./start.sh`. The daemon SET comes from ONE enumeration,
+`DaemonConfig.plan`/`plannedLabels` — never re-derived at a consumer. Unlike
+`run`, a `start.sh`-launched daemon does NOT register with the bind registry.
+See README "Two ways to start a daemon". Under `KEY` these scripts contain an
+inline signing key (the GHA workflow is SSM-only, so published archives do not).
+
 `create` exposes every `ClusterBuildOptions` leaf as a `--kebab-path` flag via
 the SAME `applyClusterBuildOptionsArgs` surface every flow uses (env vars
 `WIRE_*` seed the path flags). Exit code mirrors the bootstrap Report.
@@ -330,7 +346,6 @@ link automatically on `pnpm install` when the siblings exist.
 | `WIRE_FLOW_TIMEOUT_SCALE` | EXPLICIT operator override of flow timing (default 1, clamped [1,5]); no code derives it |
 | `WIRE_ETH_DEPLOYMENTS_PATH` | Per-cluster hardhat deployments dir (parallel-run isolation) |
 | `WIRE_BIND_REGISTRY_PATH` | Bind-registry dir override (tests sandbox it) |
-| `WIRE_SOLANA_VALIDATOR_VERBOSE` | `"1"` drops `--quiet` so program logs land in the process log |
 | `LOG_LEVEL` | Logging verbosity (default `info`) |
 
 ## How future sessions should design and produce code here

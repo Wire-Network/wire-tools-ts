@@ -15,6 +15,7 @@ import {
   API,
   APIClient,
   Asset,
+  Name,
   type PermissionLevelType,
   SysioContracts
 } from "@wireio/sdk-core"
@@ -414,6 +415,89 @@ export class WireClient {
     const [amount] = rows[0].toString().split(" ")
     const [whole, frac = ""] = amount.split(".")
     return BigInt(whole) * 1_000_000_000n + BigInt(frac.padEnd(9, "0"))
+  }
+
+  /**
+   * Pull `account`'s claimable WIRE from `sysio.reserv` — swap-to-WIRE payouts and swap-from-WIRE
+   * refunds.
+   *
+   * Those settlement paths credit a balance instead of transferring: `sysio.token::transfer`
+   * notifies its recipient, and the chain runs notified receivers with no exception isolation, so
+   * a pushed payout let the recipient abort the enclosing transaction — which for `refundwire`
+   * meant halting the epoch drain chain-wide. The claim carries the claimant's own authority, so a
+   * hostile recipient can only block itself.
+   *
+   * Throws when nothing is owed; check {@link getWireClaimable} first if that is not a failure.
+   */
+  async claimWire(account: string, permission = "active") {
+    return this.invoke("sysio.reserv", "claimwire", { account }, [{ actor: account, permission }])
+  }
+
+  /**
+   * WIRE owed to `account` but not yet claimed, or 0n when there is no row.
+   *
+   * Raw `getTableRows` rather than the typed contract-table accessor
+   * (`prefer-typed-contract-table-accessors.md`) because `wireclaims` is new and does not reach
+   * the typed surface until `@wireio/sdk-core` publishes the regenerated `SysioContractTypes`.
+   * Switch to `getSysioContract(SysioContractName.reserv).tables.wireclaims.query()` once that
+   * version is released and this package's dependency is bumped.
+   */
+  async getWireClaimable(account: string): Promise<bigint> {
+    return this.claimableBalance("sysio.reserv", "wireclaims", "account", account)
+  }
+
+  /**
+   * One claimable row's balance, or 0n when the account has none.
+   *
+   * Reads with a LOWER bound only. The node's upper bound is EXCLUSIVE
+   * (`chain_plugin.cpp`: `if (has_upper && kv >= ub_sv) break;` — the exclusive increment at the
+   * `find` branch does not apply here), so passing lower == upper describes an empty range and
+   * returns nothing however long you poll.
+   *
+   * Keys encode big-endian (`be_key_codec`), so iteration is numeric order and the first row
+   * at-or-after the key belongs to this account IF it has one. When it does not, the walk yields
+   * the NEXT account's row — which is why the identity check is load-bearing here, not defensive:
+   * without it an unpaid account reads back a stranger's balance.
+   */
+  private async claimableBalance(
+    contract: string,
+    table: string,
+    keyField: string,
+    account: string
+  ): Promise<bigint> {
+    const { rows } = await this.getTableRows<WireClient.ClaimableRow>({
+      account: contract,
+      scope: contract,
+      table,
+      lowerBound: WireClient.nameKeyBound(keyField, account),
+      limit: 1
+    })
+    const [row] = rows
+    if (row == null) return 0n
+    // wireclaims names the row's account `account`; payclaims names it `account_name`.
+    const { account: rowAccount, account_name: rowAccountName, balance } = row
+    return (rowAccount ?? rowAccountName) === account ? BigInt(balance) : 0n
+  }
+
+  /**
+   * Pull `account`'s credited epoch pay from `sysio.system` — a producer, standby or
+   * batch-operator share. `payepoch` credits rather than transfers for the same reason as above:
+   * it runs inline from `sysio.epoch::advance`, which must never abort.
+   *
+   * The T5 category buckets (`sysio.ops`, `sysio.gov`) are NOT claimable: `payepoch` transfers to
+   * them directly, because ROA zeroes net/cpu for every `sysio`-prefixed account and neither
+   * carries a contract that could emit the claim inline, so neither could ever authorize one.
+   */
+  async claimPay(account: string, permission = "active") {
+    return this.invoke("sysio", "claimpay", { account_name: account }, [
+      { actor: account, permission }
+    ])
+  }
+
+  /** Epoch pay owed to `account` but not yet claimed, or 0n when there is no row. Raw table read
+   *  for the same reason as {@link getWireClaimable}. */
+  async getPayClaimable(account: string): Promise<bigint> {
+    return this.claimableBalance("sysio", "payclaims", "account_name", account)
   }
 
   // Convenience getters delegate to the typed contract-table accessor
@@ -855,6 +939,40 @@ function errorText(err: unknown): string {
 }
 
 export namespace WireClient {
+  /**
+   * A `get_table_rows` bound for a KV table whose key is ONE `uint64` field holding a `name`.
+   *
+   * With `json: true` the node parses each bound through `fc::json::from_string` and encodes it
+   * with `be_key_codec::encode_key`, which calls `.get_object()` and looks every key field up BY
+   * NAME (`chain_plugin.cpp` + `database_utils.hpp`). So the bound must be a JSON OBJECT keyed by
+   * the ABI's `key_names`, carrying the name's raw uint64 — never the account string, which the
+   * node cannot even parse as JSON ("Unexpected char '119' in \"wirercpt\"").
+   *
+   * The field name differs per table (`wireclaims.account` vs `payclaims.account_name`), so the
+   * caller supplies it; the uint64 goes as a decimal STRING because it exceeds `Number.MAX_SAFE_INTEGER`.
+   */
+  export function nameKeyBound(field: string, account: string): string {
+    return JSON.stringify({ [field]: Name.from(account).value.toString() })
+  }
+
+  /**
+   * The single field a claimable-balance read consumes, shared by `sysio.reserv::wireclaims` and
+   * `sysio.system::payclaims` — both rows carry `balance` in atomic units, serialized as a string
+   * once it exceeds the JSON-safe integer range.
+   *
+   * Declared here rather than taken from `SysioContracts` because these two reads are deliberately
+   * raw (see {@link WireClient.getWireClaimable}): the generated row types do not reach an
+   * `@wireio/sdk-core` release until the contract ABIs land, so typing the generic against them
+   * would couple this package's build to that release. It retires with the raw reads.
+   */
+  export interface ClaimableRow {
+    balance: string | number
+    /** `wireclaims` carries the row's owner here… */
+    account?: string
+    /** …and `payclaims` here. Exactly one is present, per that table's ABI. */
+    account_name?: string
+  }
+
   // ── Contract-client typing (keyed by contract Name + member) ──
   export interface InvocationOptions {
     authorization?: PermissionLevelType[]

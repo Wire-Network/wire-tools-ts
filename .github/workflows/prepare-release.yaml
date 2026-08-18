@@ -1,0 +1,162 @@
+name: "Prepare Release"
+
+# Gate 1 of the two-gate release flow, ported from wire-libraries-ts PR #63
+# (itself modeled on wire-sysio / wire-cdt "Strategy C") and adapted to this
+# pnpm workspace.
+#
+# A human dispatches this with a bump TYPE; the bot bumps every package relative
+# to its own current version — exactly what the previous publish-npm.yaml did
+# (`pnpm -r exec -- pnpm version <type>`), so the packages keep their independent
+# tracks (cluster-tool on 0.1.x, cluster-tool-shared on its own 0.1.x; the
+# private test-flow-* packages bump too but never publish) — and opens a
+# version-bump PR. Nothing is tagged or published here, and NOTHING is pushed
+# directly to master: the bump reaches master only when a human merges the PR,
+# so the wire-platform-ruleset-1 "pull request required" rule stays satisfied
+# without any bypass. The bot is the prep branch's last pusher, so the ruleset's
+# require_last_push_approval is satisfied by any human teammate's approval.
+#
+# The bump type decides the channel: `prerelease` produces a `-<preid>.N` suffix
+# (channel = that preid, e.g. dev/rc); patch/minor/major produce a stable
+# version. Tag Release derives the same channel from the resulting suffix.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump applied to every package, relative to its own current version"
+        type: choice
+        required: true
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+          - prerelease
+      preid:
+        description: "Prerelease identifier (only used when bump = prerelease); becomes the npm channel/dist-tag"
+        type: string
+        required: false
+        default: "dev"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+defaults:
+  run:
+    shell: bash
+
+# One prep run per bump type, and never cancel one mid-flight: a cancelled run
+# can leave a pushed prep branch with no PR opened for it.
+concurrency:
+  group: prepare-release-${{ inputs.bump }}-${{ inputs.preid }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Open the version-bump PR
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # Dispatch inputs are passed as env vars and NEVER interpolated into a
+      # script body, so their values stay inert data.
+      BUMP: ${{ inputs.bump }}
+      PREID: ${{ inputs.preid }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: master
+          # Unshallowed so origin/<prep-branch> exists for --force-with-lease.
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Bump every package on its own track
+        id: bump
+        run: |
+          set -euo pipefail
+
+          # cluster-tool is the representative "core" package: its version names
+          # the release (the tag, the branch, the PR title). Every other package
+          # bumps on its own track in the same command and is not the headline
+          # number. (pnpm-lock.yaml is gitignored in this repo, so there is no
+          # lockfile to refresh — installs always resolve fresh.)
+          core_manifest="packages/cluster-tool/package.json"
+          previous="$(node -p "require('./${core_manifest}').version")"
+
+          # Relative bump in EACH package — the exact mechanism publish-npm.yaml
+          # used. --no-git-tag-version: change the files only, no tag/commit here.
+          if [[ "$BUMP" == "prerelease" ]]; then
+            pnpm -r exec -- pnpm version prerelease --preid "$PREID" --no-git-tag-version
+          else
+            pnpm -r exec -- pnpm version "$BUMP" --no-git-tag-version
+          fi
+
+          version="$(node -p "require('./${core_manifest}').version")"
+          if [[ "$version" == "$previous" ]]; then
+            echo "::error::Bump produced no version change (${previous}). Nothing to prepare." >&2
+            exit 1
+          fi
+
+          # The channel is the resulting suffix — the "suffix IS the channel"
+          # principle from wire-sysio/wire-cdt. No suffix => stable; a
+          # `-<preid>.N` suffix => that preid is the channel.
+          if [[ "$version" == *-* ]]; then
+            suffix="${version#*-}"
+            channel="${suffix%%.*}"
+          else
+            channel="stable"
+          fi
+
+          {
+            echo "previous=$previous"
+            echo "version=$version"
+            echo "channel=$channel"
+            echo "branch=release/prep-v${version}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Prepared ${BUMP} bump: cluster-tool ${previous} -> ${version} (channel ${channel})"
+
+      - name: Open the bump PR
+        env:
+          BRANCH: ${{ steps.bump.outputs.branch }}
+          PREVIOUS: ${{ steps.bump.outputs.previous }}
+          VERSION: ${{ steps.bump.outputs.version }}
+          CHANNEL: ${{ steps.bump.outputs.channel }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add packages/*/package.json
+          git commit -m "chore(release): ${BUMP} bump -> v${VERSION} (${CHANNEL})"
+          # --force-with-lease, not a bare push: re-dispatching the same bump must
+          # replace the previous attempt's branch tip instead of failing
+          # non-fast-forward, while still refusing to clobber a tip someone else
+          # moved since this run's fetch.
+          git push --force-with-lease origin "$BRANCH"
+
+          # NOTE: a PR opened with GITHUB_TOKEN starts its checks in an
+          # approval-required state — gate 1 includes an "Approve and run" click.
+          # printf, not a heredoc: every body line must start at column 0.
+          body="$(printf '%s\n' \
+            "\`${BUMP}\` bump (channel: **${CHANNEL}**). cluster-tool: \`${PREVIOUS}\` -> \`${VERSION}\`." \
+            "" \
+            "- Every package bumped relative to its own version, so each package stays on its own track." \
+            "- Private \`test-flow-*\` packages bump for the in-git record but are never published." \
+            "- Internal \`workspace:*\` deps are rewritten to concrete versions at publish time." \
+            "" \
+            "After merging, dispatch **Tag Release** to tag master and publish the merged versions.")"
+          gh pr create \
+            --base master \
+            --head "$BRANCH" \
+            --title "chore(release): ${BUMP} bump v${VERSION} (${CHANNEL})" \
+            --body "$body"
