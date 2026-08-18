@@ -7,6 +7,7 @@ import {
 } from "@wireio/cluster-tool-shared"
 
 import {
+  isSdkOutpostCompatibilityCheck,
   presentReadiness,
   ReadinessCheckLabels,
   readinessProofBoundary,
@@ -86,8 +87,8 @@ export class ReadinessTerminalRenderer {
           "Settlement",
           paint(
             color,
-            view.transactionallyVerifiedRoutes.length === report.routes.length &&
-              report.routes.length > 0
+            view.transactionallyVerifiedRoutes.length ===
+              report.routes.length && report.routes.length > 0
               ? Ansi.green
               : Ansi.yellow,
             `${view.transactionallyVerifiedRoutes.length}/${report.routes.length} transactionally verified`
@@ -122,8 +123,19 @@ export class ReadinessTerminalRenderer {
       ...endpointLines(report, color)
     )
 
+    const sdkChecks = report.checks.filter(isSdkOutpostCompatibilityCheck)
+    if (sdkChecks.length > 0) {
+      lines.push(
+        "",
+        paint(color, Ansi.bold, "SDK-OUTPOST COMPATIBILITY"),
+        ...sdkChecks.map(check => checkLines(check, color))
+      )
+    }
+
     lines.push("", paint(color, Ansi.bold, "GRANULAR CHECKS"))
-    report.checks.forEach(check => lines.push(checkLines(check, color)))
+    report.checks
+      .filter(check => !isSdkOutpostCompatibilityCheck(check))
+      .forEach(check => lines.push(checkLines(check, color)))
 
     if (
       report.feature === ClusterReadinessFeature.swap &&

@@ -98,9 +98,11 @@ Every run includes the network-group baseline:
 - Solana health, genesis identity, and observed slot advancement;
 - optional Hyperion health.
 
-When `--outpost-deployment-profile-file` is supplied, the baseline additionally
-checks exact Wire binding, Ethereum EIP-1967 implementations/code hashes, and
-Solana upgradeable-loader ProgramData/hash identity.
+When `--outpost-deployment-profile-file` is supplied, a separate, non-gating
+SDK-outpost compatibility section checks exact Wire binding, Ethereum EIP-1967
+implementations/code hashes, and Solana upgradeable-loader ProgramData/hash
+identity. SDK package or profile failures remain advisories and do not change
+the independent cluster/feature verdict.
 
 The swap suite then checks:
 
@@ -108,12 +110,14 @@ The swap suite then checks:
 - active epoch scheduling, including timeliness and recent epoch progression;
 - active EVM/SVM registry rows aligned with endpoint metadata.
 
-The epoch check treats the protocol's 30-second post-boundary extension as the
-readiness limit. If that limit is exceeded, the run remains blocked. Recent
-`sysio.msgch::envlog` emissions then make the diagnosis precise:
+The epoch check treats the protocol's 30-second post-boundary extension as its
+normal timing allowance. `sysio.msgch::chkcons` advances only after active
+outposts reach consensus and the boundary passes; `sysio.epoch::advance`
+preserves the fixed schedule and advances one epoch per call. Recent sequential
+`sysio.msgch::envlog` emissions therefore prove valid backlog catch-up:
 
-- `advancing-late` / `protocol-degraded`: at least two recent epoch indices
-  prove the scheduler is moving, but it is outside the allowed timing window;
+- `advancing-late`: at least two recent, sequential epoch indices prove the
+  scheduler is catching up, so the check passes while reporting the backlog;
 - `stalled-or-unproven` / `protocol-unavailable`: the scheduler is outside the
   timing window and recent progression cannot be proven.
 

@@ -145,17 +145,28 @@ export function createReadinessCommand() {
  */
 export async function runReadiness(args: ReadinessArgv) {
   const startedAt = new Date(),
-    basename = `readiness-${startedAt.getTime()}`,
-    config = await resolveReadinessConfig({
+    basename = `readiness-${startedAt.getTime()}`
+  let outpostDeploymentProfile:
+      ReturnType<typeof resolveReadinessDeploymentProfile> | undefined,
+    outpostDeploymentProfileError: string | undefined
+  if (args.outpostDeploymentProfileFile) {
+    try {
+      outpostDeploymentProfile = resolveReadinessDeploymentProfile(
+        args.outpostDeploymentProfileFile
+      )
+    } catch (error: unknown) {
+      outpostDeploymentProfileError =
+        error instanceof Error ? error.message : String(error)
+    }
+  }
+
+  const config = await resolveReadinessConfig({
       feature: args.feature,
       wireChainId: args.wireChainId,
-      ...(args.outpostDeploymentProfileFile
-        ? {
-            outpostDeploymentProfile: resolveReadinessDeploymentProfile(
-              args.outpostDeploymentProfileFile
-            )
-          }
-        : {}),
+      outpostDeploymentProfile,
+      outpostDeploymentProfileRequested:
+        args.outpostDeploymentProfileFile != null,
+      outpostDeploymentProfileError,
       wireRpc: args.wireRpc,
       ethereumRpc: args.ethereumRpc,
       solanaRpc: args.solanaRpc,

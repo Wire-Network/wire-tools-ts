@@ -99,6 +99,10 @@ export async function resolveReadinessConfig(
     catalogUrl,
     requestedWireChainId,
     outpostDeploymentProfile: options.outpostDeploymentProfile,
+    outpostDeploymentProfileRequested:
+      options.outpostDeploymentProfileRequested ??
+      options.outpostDeploymentProfile != null,
+    outpostDeploymentProfileError: options.outpostDeploymentProfileError,
     endpoints: selectEndpoints(options, catalog.records),
     catalogRecordCount: catalog.records.length,
     catalogErrors: [

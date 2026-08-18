@@ -194,7 +194,7 @@ describe("readiness reports", () => {
     )
   })
 
-  it("requires exact deployment and custody checks when a profile is supplied", () => {
+  it("keeps optional SDK and custody checks outside the readiness verdict", () => {
     const context = readyContext(true)
     context.outputs.set(
       ReadinessOutputs.checks,
@@ -212,7 +212,10 @@ describe("readiness reports", () => {
       new Date("2026-08-04T12:00:01.000Z")
     )
 
-    expect(projected.summary.swapPreflightReady).toBe(false)
+    expect(projected.summary.swapPreflightReady).toBe(true)
+    expect(new ReadinessTerminalRenderer(projected).render()).toContain(
+      "SDK-OUTPOST COMPATIBILITY"
+    )
     expect(new ReadinessTerminalRenderer(projected).render()).toContain(
       "Strict deployment identity and external custody checks ran using the supplied profile"
     )

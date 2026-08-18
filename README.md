@@ -151,7 +151,8 @@ corepack pnpm --filter @wireio/cluster-tool exec ./bin/wire-cluster-tool readine
 The Network API catalog supplies the network group's RPCs. Use explicit RPC
 overrides immediately after a sandbox respin when catalog records are not yet
 published. Add `--outpost-deployment-profile-file <profile.json>` only for
-strict deployment-identity and external-custody checks. Add `--export` for a
+optional SDK-artifact compatibility and external-custody evidence. Those
+advisories do not gate core cluster or feature readiness. Add `--export` for a
 gitignored tar.gz containing the JSON result and an operator-focused HTML
 report. CLI and HTML both lead with the same granular “Still missing” list,
 separate unproven canary boundaries from verified gaps, and retain complete
@@ -168,10 +169,11 @@ not a fixed canary label. A read-only run reports `0/N transactionally
 verified` until funded canary evidence is projected onto route records; quote
 success never implies settlement.
 
-Epoch readiness keeps the protocol's 30-second extension allowance as a
-blocking limit, then uses recent `sysio.msgch::envlog` history to distinguish
-an `advancing-late` scheduler (`protocol-degraded`) from one whose progression
-is `stalled-or-unproven` (`protocol-unavailable`). Advancing blocks alone do
+Epoch readiness keeps the protocol's 30-second extension allowance, then uses
+recent sequential `sysio.msgch::envlog` epochs to recognize valid catch-up.
+Because consensus-gated `advance` preserves fixed boundaries and advances one
+epoch per call, an `advancing-late` scheduler passes while it is demonstrably
+catching up; `stalled-or-unproven` remains blocking. Advancing blocks alone do
 not prove scheduler health.
 
 A retained `CONFIRMED` direct-to-WIRE underwriting request is terminal proof

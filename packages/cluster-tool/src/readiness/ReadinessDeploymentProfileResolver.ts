@@ -1,11 +1,10 @@
 import Fs from "node:fs"
 import Path from "node:path"
 
-import {
-  type OutpostDeploymentProfile,
-  parseOutpostDeploymentProfile
-} from "@wireio/sdk-outpost"
+import type { OutpostDeploymentProfile } from "@wireio/sdk-outpost"
 import { NestedError } from "@wireio/shared"
+
+import { loadSdkOutpost } from "./SdkOutpostLoader.js"
 
 /**
  * Read and validate one immutable outpost deployment profile.
@@ -21,7 +20,7 @@ export function resolveReadinessDeploymentProfile(
     const value: unknown = JSON.parse(
       Fs.readFileSync(resolvedProfileFile, "utf8")
     )
-    return parseOutpostDeploymentProfile(value)
+    return loadSdkOutpost().parseOutpostDeploymentProfile(value)
   } catch (error: unknown) {
     throw new NestedError("Unable to load outpost deployment profile", {
       cause: error,

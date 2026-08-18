@@ -260,8 +260,9 @@ pnpm --filter @wireio/cluster-tool exec ./bin/wire-cluster-tool readiness \
 same `ClusterBuild`/Report engine. Its `collect` failure mode is explicit and
 local to diagnostic suites; existing bootstrap and FlowScenario plans remain
 fail-fast. A Wire chain id resolves the network group's RPCs through the mutable
-endpoint catalog. An optional deployment profile enables exact outpost identity
-and custody verification through `@wireio/sdk-outpost`. Swap readiness keeps
+endpoint catalog. An optional deployment profile enables a separate, non-gating
+SDK artifact, outpost identity, and custody section through the optional
+`@wireio/sdk-outpost` dependency. Swap readiness keeps
 every advertised public reserve visible and computes collateral availability
 after locks and pending withdrawals. Route amounts come from the live
 `sysio.reserv::swapquote` SDK path used by Hub, so the selected Wire endpoint
@@ -283,11 +284,11 @@ not a fixed canary label. A read-only run reports `0/N transactionally
 verified` until funded canary evidence is projected onto route records; quote
 success never implies settlement.
 
-Epoch readiness keeps the protocol's 30-second extension allowance as a
-blocking limit, then uses recent `sysio.msgch::envlog` history to distinguish
-an `advancing-late` scheduler (`protocol-degraded`) from one whose progression
-is `stalled-or-unproven` (`protocol-unavailable`). Advancing blocks alone do
-not prove scheduler health.
+Epoch readiness keeps the protocol's 30-second extension allowance, then uses
+recent sequential `sysio.msgch::envlog` history to accept consensus-gated,
+fixed-boundary catch-up. An overdue scheduler with no proven recent progression
+remains `stalled-or-unproven` (`protocol-unavailable`). Advancing blocks alone
+do not prove scheduler health.
 
 A retained `CONFIRMED` direct-to-WIRE underwriting request is terminal proof
 for that route because confirmation and the WIRE payout occur in the same depot

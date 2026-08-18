@@ -44,7 +44,7 @@ describe("ReadinessPhaseGroups", () => {
     expect(phases.map(phase => phase.name)).toEqual([
       "Endpoint discovery",
       "Cluster health",
-      "Outpost deployment",
+      "SDK-outpost compatibility",
       "Swap protocol configuration",
       "Swap infrastructure",
       "Swap routes"
@@ -73,7 +73,9 @@ describe("ReadinessPhaseGroups", () => {
         .flatMap(phase => phase.steps)
         .find(step => step.name === "external-custody")
 
-    expect(phases.map(phase => phase.name)).not.toContain("Outpost deployment")
+    expect(phases.map(phase => phase.name)).not.toContain(
+      "SDK-outpost compatibility"
+    )
     expect(stepNames).toContain("external-custody")
     expect(externalCustody?.input).toEqual(
       expect.objectContaining({ blocking: false })
@@ -96,7 +98,7 @@ describe("ReadinessPhaseGroups", () => {
     expect(phases.map(phase => phase.name)).toEqual([
       "Endpoint discovery",
       "Cluster health",
-      "Outpost deployment",
+      "SDK-outpost compatibility",
       "Stake protocol"
     ])
     expect(stepNames).toContain("stake-lifecycle")

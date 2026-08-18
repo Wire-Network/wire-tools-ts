@@ -805,12 +805,6 @@ export async function runEpochScheduler(
         evidence
       )
     }
-    if (assessment.state === ClusterEpochSchedulerState["advancing-late"])
-      throw new ReadinessAssertionError(
-        `Recent scheduler progression reached epoch ${currentEpoch}, but its next boundary is ${Math.round(assessment.overdueMs / 1_000)}s late`,
-        ClusterReadinessReasonCode["protocol-degraded"],
-        evidence
-      )
     if (assessment.state === ClusterEpochSchedulerState["stalled-or-unproven"])
       throw new ReadinessAssertionError(
         `Epoch ${currentEpoch} is ${Math.round(assessment.overdueMs / 1_000)}s behind its next boundary; recent epoch progression was not proven`,
@@ -818,7 +812,10 @@ export async function runEpochScheduler(
         evidence
       )
     return {
-      detail: `Epoch ${currentEpoch} is on time with a ${epochDurationSec}s duration`,
+      detail:
+        assessment.state === ClusterEpochSchedulerState["advancing-late"]
+          ? `Epoch ${currentEpoch} is actively catching up from a ${Math.round(assessment.overdueMs / 1_000)}s schedule backlog`
+          : `Epoch ${currentEpoch} is on time with a ${epochDurationSec}s duration`,
       evidence
     }
   })
@@ -878,6 +875,8 @@ export function assessEpochScheduler(
       latestProgressEpoch !== undefined &&
       previousProgressEpoch !== undefined &&
       latestProgressEpoch >= currentEpoch - 1 &&
+      latestProgressEpoch <= currentEpoch &&
+      previousProgressEpoch === latestProgressEpoch - 1 &&
       latestProgressAgeMs <= progressWindowMs,
     state =
       validEpochConfiguration &&

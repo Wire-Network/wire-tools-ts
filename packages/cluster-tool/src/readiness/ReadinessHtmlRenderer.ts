@@ -5,6 +5,7 @@ import {
 } from "@wireio/cluster-tool-shared"
 
 import {
+  isSdkOutpostCompatibilityCheck,
   presentReadiness,
   ReadinessCheckLabels,
   readinessProofBoundary,
@@ -33,7 +34,11 @@ export class ReadinessHtmlRenderer {
       collateralReady = view.collateral.filter(state => state.ready).length,
       custodyReady = view.custody.filter(state => state.ready).length,
       chainId =
-        report.observedWireChainId ?? report.requestedWireChainId ?? "unknown"
+        report.observedWireChainId ?? report.requestedWireChainId ?? "unknown",
+      sdkChecks = report.checks.filter(isSdkOutpostCompatibilityCheck),
+      coreChecks = report.checks.filter(
+        check => !isSdkOutpostCompatibilityCheck(check)
+      )
 
     return [
       "<!doctype html>",
@@ -49,6 +54,7 @@ export class ReadinessHtmlRenderer {
         `${view.transactionallyVerifiedRoutes.length} transactionally verified</p></div>`,
       `<p class="run-meta">${esc(report.generatedAt)} · ${(report.durationMs / 1_000).toFixed(1)}s · chain ${esc(chainId)}</p>`,
       `<nav><a href="#missing">Still missing</a><a href="#healthy">Healthy now</a>` +
+        `${sdkChecks.length > 0 ? `<a href="#sdk">SDK-outpost</a>` : ""}` +
         `<a href="#routes">Routes</a><a href="#checks">Granular checks</a></nav>`,
       `</header><main>`,
       `<section id="missing" class="missing"><div class="section-heading">`,
@@ -89,11 +95,19 @@ export class ReadinessHtmlRenderer {
       renderRoutes("Preflight-ready routes", view.readyRoutes, true),
       renderRoutes("Blocked routes", view.blockedRoutes, false),
       `</section>`,
+      ...(sdkChecks.length > 0
+        ? [
+            `<section id="sdk"><div class="section-heading"><p class="section-index">SDK</p>`,
+            `<div><h2>SDK-outpost compatibility</h2><p>Optional artifact-to-deployment evidence. These checks do not gate cluster or feature readiness.</p></div></div>`,
+            sdkChecks.map(renderCheck).join(""),
+            `</section>`
+          ]
+        : []),
       `<section id="checks"><div class="section-heading"><p class="section-index">05</p>`,
       `<div><h2>Granular checks</h2><p>Every assertion and its machine evidence. Failed checks open by default.</p></div></div>`,
       `<div class="check-controls"><button data-fold="expand">Expand all</button>` +
         `<button data-fold="collapse">Collapse all</button><button data-fold="failures">Failures only</button></div>`,
-      report.checks.map(renderCheck).join(""),
+      coreChecks.map(renderCheck).join(""),
       `</section>`,
       `<footer><strong>Proof boundary</strong><p>${esc(readinessProofBoundary(report))}</p>`,
       `<p class="final-verdict">${ready ? `${report.feature} read-only infrastructure preflight passed.` : `${report.feature} readiness is blocked; resolve the verified gaps above.`}</p></footer>`,

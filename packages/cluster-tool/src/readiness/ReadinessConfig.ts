@@ -15,6 +15,10 @@ export interface ReadinessOptions {
   wireChainId?: string
   /** Optional immutable identity for strict outpost deployment verification. */
   outpostDeploymentProfile?: OutpostDeploymentProfile
+  /** Whether optional SDK compatibility was requested, even if profile loading failed. */
+  outpostDeploymentProfileRequested?: boolean
+  /** Non-fatal SDK/profile loading error reported by compatibility checks. */
+  outpostDeploymentProfileError?: string
   /** Explicit Wire RPC override. */
   wireRpc?: string
   /** Explicit Ethereum JSON-RPC override. */
@@ -43,6 +47,10 @@ export interface ReadinessConfig extends OrchestrationConfig {
   requestedWireChainId: string | null
   /** Optional immutable identity for strict outpost deployment verification. */
   outpostDeploymentProfile?: OutpostDeploymentProfile
+  /** Whether optional SDK compatibility was requested. */
+  outpostDeploymentProfileRequested?: boolean
+  /** Non-fatal SDK/profile loading error reported by compatibility checks. */
+  outpostDeploymentProfileError?: string
   /** Selected live endpoints grouped by chain role. */
   endpoints: ClusterReadinessEndpoint[]
   /** Number of catalog records considered during resolution. */

@@ -74,6 +74,17 @@ export interface ReadinessPresentation {
   transactionallyVerifiedRoutes: ClusterSwapRouteReadiness[]
 }
 
+/** Identify optional SDK artifact-to-deployment compatibility checks. */
+export function isSdkOutpostCompatibilityCheck(
+  check: ClusterReadinessCheck
+): boolean {
+  return (
+    check.id === ClusterReadinessCheckId["wire.deployment-profile"] ||
+    check.id === ClusterReadinessCheckId["ethereum.deployment-profile"] ||
+    check.id === ClusterReadinessCheckId["solana.deployment-profile"]
+  )
+}
+
 /** Derive one cohesive operator view without changing the stable JSON schema. */
 export function presentReadiness(
   report: ClusterReadinessReport

@@ -25,12 +25,6 @@ const RequiredClusterChecks = [
   ClusterReadinessCheckId["solana.slot-advancement"]
 ]
 
-const StrictDeploymentChecks = [
-  ClusterReadinessCheckId["wire.deployment-profile"],
-  ClusterReadinessCheckId["ethereum.deployment-profile"],
-  ClusterReadinessCheckId["solana.deployment-profile"]
-]
-
 const RequiredSwapChecks = [
   ClusterReadinessCheckId["wire.contracts"],
   ClusterReadinessCheckId["wire.epoch-scheduler"],
@@ -63,24 +57,13 @@ export function projectReadinessReport(
         checkOrder.indexOf(left.id) - checkOrder.indexOf(right.id)
     ),
     feature = context.config.feature,
-    strictDeployment = context.config.outpostDeploymentProfile != null,
-    clusterChecks = strictDeployment
-      ? [...RequiredClusterChecks, ...StrictDeploymentChecks]
-      : RequiredClusterChecks,
-    clusterLive = requiredChecksPassed(checks, clusterChecks),
+    clusterLive = requiredChecksPassed(checks, RequiredClusterChecks),
     baseFeatureChecks =
       feature === ClusterReadinessFeature.swap
         ? RequiredSwapChecks
         : [ClusterReadinessCheckId["stake.lifecycle"]],
-    featureChecks =
-      feature === ClusterReadinessFeature.swap && strictDeployment
-        ? [
-            ...baseFeatureChecks,
-            ClusterReadinessCheckId["swap.external-custody"]
-          ]
-        : baseFeatureChecks,
     featurePreflightReady =
-      clusterLive && requiredChecksPassed(checks, featureChecks),
+      clusterLive && requiredChecksPassed(checks, baseFeatureChecks),
     featureState = featurePreflightReady
       ? ClusterFeatureReadinessState.unverified
       : ClusterFeatureReadinessState.blocked,

@@ -80,6 +80,10 @@ function readPackage(pkg, context) {
       pkg.devDependencies[name] = `link:${localPath}`
       context.log(`Linked ${name} -> ${localPath}`)
     }
+    if (pkg.optionalDependencies && pkg.optionalDependencies[name]) {
+      pkg.optionalDependencies[name] = `link:${localPath}`
+      context.log(`Linked optional ${name} -> ${localPath}`)
+    }
   }
   return pkg
 }

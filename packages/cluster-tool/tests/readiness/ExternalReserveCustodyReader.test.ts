@@ -257,7 +257,6 @@ function mockEthereumCalls(fixture: EthereumProbeFixture) {
 
 function solanaConfig(): SolanaOutpostConfig {
   return {
-    authority: PublicKey.default,
     chainCode: new BN(SolanaChainCode.value),
     nextEpochIndex: 0,
     previousEpochHash: Array(32).fill(0),

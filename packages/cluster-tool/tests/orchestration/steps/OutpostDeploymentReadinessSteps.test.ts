@@ -153,7 +153,7 @@ describe("OutpostDeploymentReadinessSteps", () => {
     }
   )
 
-  it("fails closed when no deployment profile is configured", async () => {
+  it("reports missing optional deployment context as an advisory", async () => {
     const context = readinessContext(),
       step = Steps.readiness.outpostDeployment.planEthereumDeploymentProfile(
         Report.Actor.EthereumOutpost,
@@ -162,18 +162,16 @@ describe("OutpostDeploymentReadinessSteps", () => {
         {}
       )
 
-    await expect(
-      step.runner(context, step.input, new AbortController().signal)
-    ).rejects.toThrow("Outpost deployment profile is not configured")
+    await step.runner(context, step.input, new AbortController().signal)
     expect(context.outputs.assert(ReadinessOutputs.checks)).toEqual([
       expect.objectContaining({
-        status: ClusterReadinessCheckStatus.fail,
+        status: ClusterReadinessCheckStatus.advisory,
         reason: ClusterReadinessReasonCode["configuration-incomplete"]
       })
     ])
   })
 
-  it("reports an exact runtime mismatch as version-incompatible", async () => {
+  it("reports an exact runtime mismatch as a compatibility advisory", async () => {
     const context = readinessContext(createReadinessDeploymentProfileFixture()),
       verify = jest
         .spyOn(OutpostDeploymentVerifier, "verify")
@@ -185,19 +183,17 @@ describe("OutpostDeploymentReadinessSteps", () => {
         {}
       )
 
-    await expect(
-      step.runner(context, step.input, new AbortController().signal)
-    ).rejects.toThrow("implementation code hash mismatch")
+    await step.runner(context, step.input, new AbortController().signal)
     expect(verify).toHaveBeenCalledTimes(1)
     expect(context.outputs.assert(ReadinessOutputs.checks)).toEqual([
       expect.objectContaining({
-        status: ClusterReadinessCheckStatus.fail,
+        status: ClusterReadinessCheckStatus.advisory,
         reason: ClusterReadinessReasonCode["version-incompatible"]
       })
     ])
   })
 
-  it("fails closed when a profiled chain endpoint is missing", async () => {
+  it("reports a missing profiled endpoint as an advisory", async () => {
     const profile = createReadinessDeploymentProfileFixture(),
       context = readinessContext(profile),
       verify = jest.spyOn(OutpostDeploymentVerifier, "verify"),
@@ -211,13 +207,11 @@ describe("OutpostDeploymentReadinessSteps", () => {
       endpoint => endpoint.kind !== ClusterReadinessEndpointKind.solana
     )
 
-    await expect(
-      step.runner(context, step.input, new AbortController().signal)
-    ).rejects.toThrow("solana endpoint is missing")
+    await step.runner(context, step.input, new AbortController().signal)
     expect(verify).not.toHaveBeenCalled()
     expect(context.outputs.assert(ReadinessOutputs.checks)).toEqual([
       expect.objectContaining({
-        status: ClusterReadinessCheckStatus.fail,
+        status: ClusterReadinessCheckStatus.advisory,
         reason: ClusterReadinessReasonCode["configuration-incomplete"]
       })
     ])

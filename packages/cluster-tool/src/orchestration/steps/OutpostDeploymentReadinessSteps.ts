@@ -6,16 +6,13 @@ import {
   ClusterReadinessEndpointKind,
   ClusterReadinessReasonCode
 } from "@wireio/cluster-tool-shared"
-import {
-  OutpostChainFamily,
-  OutpostDeploymentVerifier,
-  type OutpostDeploymentProfile
-} from "@wireio/sdk-outpost"
+import type { OutpostDeploymentProfile } from "@wireio/sdk-outpost"
 
 import {
   ReadinessAssertionError,
   ReadinessContext
 } from "../../readiness/ReadinessContext.js"
+import { loadSdkOutpost } from "../../readiness/SdkOutpostLoader.js"
 import type { Report } from "../../report/Report.js"
 import {
   ClusterBuildStep,
@@ -129,7 +126,7 @@ function plan(
       kind: "OutpostDeploymentReadinessSteps.Input",
       id,
       area: ClusterReadinessArea.cluster,
-      blocking: true,
+      blocking: false,
       failureReason: ClusterReadinessReasonCode["version-incompatible"]
     },
     runner
@@ -186,7 +183,8 @@ export async function runEthereumDeploymentProfile(
   signal.throwIfAborted()
   await runReadinessAssertion(context, input, async () => {
     const profile = assertOutpostDeploymentProfile(context),
-      endpoint = context.assertEndpoint(ClusterReadinessEndpointKind.ethereum)
+      endpoint = context.assertEndpoint(ClusterReadinessEndpointKind.ethereum),
+      { OutpostChainFamily, OutpostDeploymentVerifier } = loadSdkOutpost()
     await OutpostDeploymentVerifier.verify({
       family: OutpostChainFamily.ethereum,
       profile,
@@ -219,7 +217,8 @@ export async function runSolanaDeploymentProfile(
   signal.throwIfAborted()
   await runReadinessAssertion(context, input, async () => {
     const profile = assertOutpostDeploymentProfile(context),
-      endpoint = context.assertEndpoint(ClusterReadinessEndpointKind.solana)
+      endpoint = context.assertEndpoint(ClusterReadinessEndpointKind.solana),
+      { OutpostChainFamily, OutpostDeploymentVerifier } = loadSdkOutpost()
     await OutpostDeploymentVerifier.verify({
       family: OutpostChainFamily.solana,
       profile,
@@ -242,7 +241,8 @@ function assertOutpostDeploymentProfile(
   const { outpostDeploymentProfile } = context.config
   if (!outpostDeploymentProfile) {
     throw new ReadinessAssertionError(
-      "Outpost deployment profile is not configured",
+      context.config.outpostDeploymentProfileError ??
+        "Outpost deployment profile is not configured",
       ClusterReadinessReasonCode["configuration-incomplete"]
     )
   }

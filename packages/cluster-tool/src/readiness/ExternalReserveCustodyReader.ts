@@ -3,13 +3,7 @@ import { JsonRpcProvider } from "@ethersproject/providers"
 import { PublicKey } from "@solana/web3.js"
 import { ClusterReadinessEndpointKind } from "@wireio/cluster-tool-shared"
 import { SysioContracts } from "@wireio/sdk-core"
-import {
-  EthereumContractName,
-  type LiqsolCore,
-  liqsolCoreIdl,
-  ReserveManager__factory,
-  SolanaProgramName
-} from "@wireio/sdk-outpost"
+import type { LiqsolCore } from "@wireio/sdk-outpost"
 import { getLogger } from "@wireio/shared"
 import { getAddress, ZeroAddress } from "ethers"
 import { match, P } from "ts-pattern"
@@ -17,6 +11,7 @@ import { match, P } from "ts-pattern"
 import { WireReserveTool } from "../tools/wire/WireReserveTool.js"
 import type { ReadinessContext } from "./ReadinessContext.js"
 import type { ReadinessExternalCustodyReserve } from "./ReadinessOutputs.js"
+import { loadSdkOutpost } from "./SdkOutpostLoader.js"
 import {
   readinessErrorMessage,
   readinessEnumMatches,
@@ -171,7 +166,8 @@ async function readEthereumReserves(
   }
 
   try {
-    const provider = new JsonRpcProvider({
+    const { EthereumContractName, ReserveManager__factory } = loadSdkOutpost(),
+      provider = new JsonRpcProvider({
         url: endpoint.url,
         timeout: context.config.timeoutMs
       }),
@@ -303,7 +299,8 @@ async function readSolanaReserves(
     )
   }
 
-  const programId = new PublicKey(
+  const { liqsolCoreIdl, SolanaProgramName } = loadSdkOutpost(),
+    programId = new PublicKey(
       profile.solana.programs[SolanaProgramName.liqsolCore].address
     ),
     coder = new BorshAccountsCoder(liqsolCoreIdl),

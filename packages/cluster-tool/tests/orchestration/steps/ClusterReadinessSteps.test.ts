@@ -1,8 +1,7 @@
 import {
   ClusterEpochSchedulerState,
   ClusterReadinessCheckStatus,
-  ClusterReadinessFeature,
-  ClusterReadinessReasonCode
+  ClusterReadinessFeature
 } from "@wireio/cluster-tool-shared"
 import { getLogger } from "@wireio/cluster-tool/logging"
 import { Steps } from "@wireio/cluster-tool/orchestration"
@@ -236,7 +235,7 @@ describe("ClusterReadinessSteps", () => {
     ])
   })
 
-  it("blocks but reports recent progression when an epoch scheduler is late", async () => {
+  it("accepts recent sequential progression while an epoch scheduler catches up", async () => {
     jest
       .spyOn(Date, "now")
       .mockReturnValue(Date.parse("2026-08-11T20:50:30.000Z"))
@@ -249,13 +248,11 @@ describe("ClusterReadinessSteps", () => {
       ),
       step = epochSchedulerStep()
 
-    await expect(
-      step.runner(context, step.input, new AbortController().signal)
-    ).rejects.toThrow("Recent scheduler progression reached epoch 55")
+    await step.runner(context, step.input, new AbortController().signal)
     expect(context.outputs.assert(ReadinessOutputs.checks)).toEqual([
       expect.objectContaining({
-        status: ClusterReadinessCheckStatus.fail,
-        reason: ClusterReadinessReasonCode["protocol-degraded"],
+        status: ClusterReadinessCheckStatus.pass,
+        detail: "Epoch 55 is actively catching up from a 150s schedule backlog",
         evidence: expect.objectContaining({
           classification: ClusterEpochSchedulerState["advancing-late"],
           progressing: true,
@@ -264,5 +261,23 @@ describe("ClusterReadinessSteps", () => {
         })
       })
     ])
+  })
+
+  it("does not infer catch-up from non-sequential epoch history", () => {
+    const assessment = assessEpochScheduler(
+      55,
+      "2026-08-11T20:48:00.000",
+      60,
+      [
+        { epochIndex: 55, emittedAt: "2026-08-11T20:50:15.500" },
+        { epochIndex: 53, emittedAt: "2026-08-11T20:49:15.500" }
+      ],
+      Date.parse("2026-08-11T20:50:30.000Z")
+    )
+
+    expect(assessment.state).toBe(
+      ClusterEpochSchedulerState["stalled-or-unproven"]
+    )
+    expect(assessment.progressing).toBe(false)
   })
 })

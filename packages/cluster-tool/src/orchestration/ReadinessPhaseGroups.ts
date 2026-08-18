@@ -24,7 +24,10 @@ export namespace ReadinessPhaseGroups {
 
     planDiscovery(readiness)
     planClusterHealth(readiness)
-    if (readiness.context.config.outpostDeploymentProfile) {
+    if (
+      readiness.context.config.outpostDeploymentProfileRequested ||
+      readiness.context.config.outpostDeploymentProfile
+    ) {
       planOutpostDeployment(readiness)
     }
     if (feature === ClusterReadinessFeature.swap) {
@@ -41,8 +44,8 @@ function planOutpostDeployment(
 ): void {
   ClusterBuildPhase.create<ReadinessContext>(
     parent,
-    "Outpost deployment",
-    "Verify the immutable Wire, Ethereum, and Solana deployment profile",
+    "SDK-outpost compatibility",
+    "Compare optional SDK artifacts with the Wire, Ethereum, and Solana deployment",
     [
       Steps.readiness.outpostDeployment.planWireDeploymentProfile(
         Report.Actor.Sysio,
@@ -218,7 +221,7 @@ function planSwap(parent: ClusterBuildParent<ReadinessContext>): void {
         "external-custody",
         "Verify each advertised reserve is configured and funded in external custody",
         {},
-        parent.context.config.outpostDeploymentProfile != null
+        false
       ),
       Steps.readiness.swap.planAssetRegistry(
         Report.Actor.Sysio,
