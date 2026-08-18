@@ -5,7 +5,8 @@ liveness. It multiplies the existing Ethereum-to-Solana half of
 `flow-swap-with-underwriting` without encoding any one incident as the test's
 expected outcome:
 
-- 10 distinct prefunded Ethereum actors submit `requestSwap` concurrently.
+- 10 indexed identities from the shared `SwapUserIdentities` tool submit
+  `requestSwap` concurrently from distinct prefunded Ethereum actors.
 - Each actor targets a different Solana recipient.
 - The cluster bootstraps 21 producer accounts and 21 batch operators.
 - One real underwriter is bonded on Ethereum and Solana.
@@ -24,8 +25,9 @@ execution. After all 10 source requests are submitted, one terminal diagnostic
 step observes UWREQs, payouts, epochs, and bounded runtime evidence without
 duplicating those reads across separate phases. Its outcome is either
 `SWAP_EPOCH_STRESS_COMPLETED` or `SWAP_EPOCH_STRESS_FAILED`, with every observed
-protocol-side invariant reported together. Provisioning or transaction-submit
-failures stop at their exact failed Step.
+post-submission protocol invariant reported together. Provisioning or
+transaction-submit failures stop at their exact failed Step and therefore do not
+enter the terminal diagnostic.
 
 ## Run locally
 

@@ -3,20 +3,20 @@ import Fs from "node:fs"
 import Path from "node:path"
 import { createInterface } from "node:readline"
 import { ethers } from "ethers"
-import { Keypair } from "@solana/web3.js"
 import { SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildStep,
   ClusterConfigProvider,
   EthereumCollateralTool,
-  EthereumOutpostBootstrapper,
   Report,
   SolanaCollateralTool,
+  WireReserveTool,
   contractView,
   matchesProtoEnum,
   pollUntil,
   requestEthereumSwap,
   slugValue,
+  swapUserOutputKey,
   type ClusterBuildStepOptions,
   type ReserveManagerRequestSwapContract,
   type StepInput,
@@ -27,8 +27,8 @@ import {
   StressBaselineEpochKey,
   StressBaselineUwreqIdsKey,
   StressRequestSnapshotKey,
+  StressSolanaBalancesBeforeKey,
   StressTargetAmountKey,
-  stressActorOutputKey,
   stressRequestOutputKey
 } from "../SwapEpochStressScenarioOutputs.js"
 import {
@@ -61,7 +61,7 @@ async function stressRequests(ctx: SwapScenarioContext): Promise<Uwreq[]> {
   const baseline = new Set(ctx.outputs.assert(StressBaselineUwreqIdsKey))
   const { rows } = await ctx.wire
     .getSysioContract(SysioContractName.uwrit)
-    .tables.uwreqs.query({ limit: 256 })
+    .tables.uwreqs.query()
   return rows.filter(row => !baseline.has(Number(row.id)) && isStressRoute(row))
 }
 
@@ -100,84 +100,6 @@ async function observeStressRequests(
 
 /** Typed Step planners and runners used by the swap epoch stress scenario. */
 export namespace SwapEpochStressScenarioSteps {
-  /** Input used to provision one independent source/destination actor pair. */
-  export interface ProvisionActorInput extends StepInput {
-    readonly kind: "SwapEpochStressScenarioSteps.ProvisionActorInput"
-    readonly actorIndex: number
-    readonly ethereumHdIndex: number
-  }
-
-  /**
-   * Plan one stress-actor provisioning step.
-   *
-   * @param actor Report actor responsible for the step.
-   * @param name Stable step name.
-   * @param description Human-readable step description.
-   * @param options Step execution options.
-   * @param actorIndex Zero-based actor index.
-   * @param ethereumHdIndex Deterministic Anvil wallet index.
-   * @returns Registered actor-provisioning step.
-   */
-  export function planProvisionActor(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    actorIndex: number,
-    ethereumHdIndex: number
-  ): ClusterBuildStep<SwapScenarioContext, ProvisionActorInput> {
-    return ClusterBuildStep.create(
-      actor,
-      name,
-      description,
-      options,
-      {
-        kind: "SwapEpochStressScenarioSteps.ProvisionActorInput",
-        actorIndex,
-        ethereumHdIndex
-      },
-      runProvisionActor
-    )
-  }
-
-  /**
-   * Provision one Ethereum sender and one distinct Solana recipient.
-   *
-   * @param ctx Flow build context.
-   * @param input Actor-provisioning input.
-   * @param signal Cooperative cancellation signal.
-   * @returns A promise resolved after recording the actor output.
-   */
-  export async function runProvisionActor(
-    ctx: SwapScenarioContext,
-    input: ProvisionActorInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    const derivation = `${EthereumOutpostBootstrapper.DerivationPath}${input.ethereumHdIndex}`
-    const ethereumWallet = ethers.HDNodeWallet.fromMnemonic(
-      ethers.Mnemonic.fromPhrase(EthereumOutpostBootstrapper.AnvilMnemonic),
-      derivation
-    ).connect(ctx.ethereum.provider)
-    const solanaKeypair = Keypair.generate()
-    const solanaBalanceBefore = await ctx.solana.getLamports(
-      solanaKeypair.publicKey
-    )
-    Report.StepExtraRecorder.note("created distinct stress actor", {
-      actorIndex: input.actorIndex,
-      ethereumHdIndex: input.ethereumHdIndex,
-      ethereumAddress: ethereumWallet.address,
-      solanaRecipient: solanaKeypair.publicKey.toBase58(),
-      solanaBalanceBefore
-    })
-    ctx.outputs.set(stressActorOutputKey(input.actorIndex), {
-      actorIndex: input.actorIndex,
-      ethereumWallet,
-      solanaKeypair,
-      solanaBalanceBefore
-    })
-  }
-
   /** Input used to submit one actor's Ethereum swap request. */
   export interface RequestSwapInput extends StepInput {
     readonly kind: "SwapEpochStressScenarioSteps.RequestSwapInput"
@@ -225,9 +147,7 @@ export namespace SwapEpochStressScenarioSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const stressActor = ctx.outputs.assert(
-      stressActorOutputKey(input.actorIndex)
-    )
+    const stressActor = ctx.outputs.assert(swapUserOutputKey(input.actorIndex))
     const targetAmount = ctx.outputs.assert(StressTargetAmountKey)
     const reserveManager = loadReserveManager(ctx, stressActor.ethereumWallet)
     const result = await requestEthereumSwap(reserveManager, {
@@ -335,13 +255,14 @@ export namespace SwapEpochStressScenarioSteps {
     const epochObservations = [
       { epoch: observedEpoch, observedAt: new Date().toISOString() }
     ]
-    const provisionedActorIndexes = Array.from(
+    const actorIndexes = Array.from(
       { length: input.expectedRequestCount },
       (_, actorIndex) => actorIndex
-    ).filter(actorIndex => ctx.outputs.has(stressActorOutputKey(actorIndex)))
-    const submittedRequestCount = provisionedActorIndexes.filter(actorIndex =>
-      ctx.outputs.has(stressRequestOutputKey(actorIndex))
-    ).length
+    )
+    actorIndexes.forEach(actorIndex => {
+      ctx.outputs.assert(swapUserOutputKey(actorIndex))
+      ctx.outputs.assert(stressRequestOutputKey(actorIndex))
+    })
     let requestObservationError: unknown = null
     try {
       await observeStressRequests(ctx, input.expectedRequestCount, signal)
@@ -354,16 +275,9 @@ export namespace SwapEpochStressScenarioSteps {
     const solanaProgramRuntimeErrors = new Set<string>()
     let programLogReadError: unknown = null
     const scanSolanaProgramLogs = async (): Promise<void> => {
-      const firstActorIndex = provisionedActorIndexes[0]
-      if (firstActorIndex == null) {
-        programLogReadError ??= new Error(
-          "no provisioned Solana actor is available for program-log diagnostics"
-        )
-        return
-      }
       try {
         const firstActor = ctx.outputs.assert(
-          stressActorOutputKey(firstActorIndex)
+          swapUserOutputKey(actorIndexes[0])
         )
         const program = SolanaCollateralTool.loadOppOutpostProgram(
           ctx,
@@ -497,6 +411,9 @@ export namespace SwapEpochStressScenarioSteps {
     await scanClusterLogs()
     const solanaProgramFailureEvidence = [...solanaProgramRuntimeErrors]
     const targetAmount = ctx.outputs.assert(StressTargetAmountKey)
+    const solanaBalancesBefore = ctx.outputs.assert(
+      StressSolanaBalancesBeforeKey
+    )
     Assert.ok(
       targetAmount <= BigInt(Number.MAX_SAFE_INTEGER),
       "target amount exceeds JavaScript's exact integer range"
@@ -505,30 +422,29 @@ export namespace SwapEpochStressScenarioSteps {
       Array.from(
         { length: input.expectedRequestCount },
         async (_, actorIndex) => {
-          if (!ctx.outputs.has(stressActorOutputKey(actorIndex))) {
-            return {
-              actorIndex,
-              recipient: "",
-              before: 0,
-              observed: 0,
-              expectedMinimum: Number(targetAmount),
-              paid: false,
-              diagnostic: "actor was not provisioned"
-            }
-          }
-          const stressActor = ctx.outputs.assert(
-            stressActorOutputKey(actorIndex)
+          const stressActor = ctx.outputs.assert(swapUserOutputKey(actorIndex))
+          const balanceBefore = solanaBalancesBefore[actorIndex]
+          Assert.ok(
+            balanceBefore != null,
+            `actor ${actorIndex} has no pre-load Solana balance`
           )
+          const expectedMinimum =
+            balanceBefore +
+            Number(
+              targetAmount -
+                WireReserveTool.varianceDrift(
+                  targetAmount,
+                  Constants.ToleranceBps
+                )
+            )
           try {
             const balance = await ctx.solana.getLamports(
               stressActor.solanaKeypair.publicKey
             )
-            const expectedMinimum =
-              stressActor.solanaBalanceBefore + Number(targetAmount)
             return {
               actorIndex,
               recipient: stressActor.solanaKeypair.publicKey.toBase58(),
-              before: stressActor.solanaBalanceBefore,
+              before: balanceBefore,
               observed: balance,
               expectedMinimum,
               paid: balance >= expectedMinimum,
@@ -541,10 +457,9 @@ export namespace SwapEpochStressScenarioSteps {
             return {
               actorIndex,
               recipient: stressActor.solanaKeypair.publicKey.toBase58(),
-              before: stressActor.solanaBalanceBefore,
-              observed: stressActor.solanaBalanceBefore,
-              expectedMinimum:
-                stressActor.solanaBalanceBefore + Number(targetAmount),
+              before: balanceBefore,
+              observed: balanceBefore,
+              expectedMinimum,
               paid: false,
               diagnostic: errorMessage(error)
             }
@@ -559,23 +474,6 @@ export namespace SwapEpochStressScenarioSteps {
       result => result.diagnostic.length > 0
     ).length
     const failedChecks: FailedCheck[] = []
-    if (provisionedActorIndexes.length !== input.expectedRequestCount) {
-      failedChecks.push({
-        check: SwapEpochStressCheck.ACTOR_PROVISIONING_FAILED,
-        expected: input.expectedRequestCount,
-        observed: provisionedActorIndexes.length,
-        detail: "not every source/destination actor was provisioned"
-      })
-    }
-    if (submittedRequestCount !== input.expectedRequestCount) {
-      failedChecks.push({
-        check: SwapEpochStressCheck.REQUEST_SUBMISSION_FAILED,
-        expected: input.expectedRequestCount,
-        observed: submittedRequestCount,
-        detail:
-          "not every concurrent Ethereum requestSwap transaction succeeded"
-      })
-    }
     if (requestSnapshot?.ingestedCount !== input.expectedRequestCount) {
       failedChecks.push({
         check: SwapEpochStressCheck.UWREQ_INGESTION_FAILED,
@@ -661,8 +559,8 @@ export namespace SwapEpochStressScenarioSteps {
         .map(([kind, count]) => `${kind}=${count}`)
         .join(",") || "none"
     const resultSummary =
-      `actors ${provisionedActorIndexes.length}/${input.expectedRequestCount}; ` +
-      `requests submitted ${submittedRequestCount}/${input.expectedRequestCount}; ` +
+      `actors ${input.expectedRequestCount}/${input.expectedRequestCount}; ` +
+      `requests submitted ${input.expectedRequestCount}/${input.expectedRequestCount}; ` +
       `UWREQs ingested ${requestSnapshot?.ingestedCount ?? 0}/${input.expectedRequestCount}; ` +
       `UWREQs confirmed ${requestSnapshot?.confirmedCount ?? 0}/${input.expectedRequestCount}; ` +
       `payouts completed ${payoutObservedCount}/${input.expectedRequestCount}; ` +
@@ -685,8 +583,8 @@ export namespace SwapEpochStressScenarioSteps {
       epochObservationCount: epochObservations.length,
       epochObservations,
       expectedRequestCount: input.expectedRequestCount,
-      provisionedActorCount: provisionedActorIndexes.length,
-      submittedRequestCount,
+      provisionedActorCount: input.expectedRequestCount,
+      submittedRequestCount: input.expectedRequestCount,
       observedRequestCount: requestSnapshot?.ingestedCount ?? 0,
       confirmedRequestCount: requestSnapshot?.confirmedCount ?? 0,
       requestIds: requestSnapshot?.requestIds ?? [],

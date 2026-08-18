@@ -8,10 +8,12 @@ import {
   FlowScenario,
   Report,
   SwapScenarioContext,
+  SwapUserIdentities,
   WireReserveTool,
   WireUnderwriterTool,
   matchesProtoEnum,
   pollUntil,
+  swapUserOutputKey,
   verifyStep,
   type ClusterBuild,
   type ClusterBuildOptions
@@ -20,6 +22,7 @@ import { SwapEpochStressScenarioConstants as Constants } from "./SwapEpochStress
 import {
   StressBaselineEpochKey,
   StressBaselineUwreqIdsKey,
+  StressSolanaBalancesBeforeKey,
   StressTargetAmountKey
 } from "./SwapEpochStressScenarioOutputs.js"
 import { SwapEpochStressScenarioSteps as StressSteps } from "./steps/index.js"
@@ -101,13 +104,13 @@ export class SwapEpochStressScenario extends FlowScenario<SwapScenarioContext> {
       "StressActors",
       "Create ten distinct Ethereum senders and ten distinct Solana recipients",
       Array.from({ length: Constants.ActorCount }, (_, actorIndex) =>
-        StressSteps.planProvisionActor(
+        SwapUserIdentities.planIdentityCreation(
           Actor.User,
           `stress-actor-${actorIndex + 1}`,
           `create Ethereum sender ${actorIndex + 1} and Solana recipient ${actorIndex + 1}`,
-          {},
-          actorIndex,
-          Constants.EthereumHdIndexBase + actorIndex
+          requestOptions,
+          SwapUserIdentities.DefaultEthereumHdIndex + actorIndex,
+          actorIndex
         )
       ),
       { parallelize: true }
@@ -183,19 +186,27 @@ export class SwapEpochStressScenario extends FlowScenario<SwapScenarioContext> {
           Assert.ok(epochRows[0], "sysio.epoch::epochstate is empty")
           const { rows: requestRows } = await ctx.wire
             .getSysioContract(SysioContractName.uwrit)
-            .tables.uwreqs.query({ limit: 256 })
+            .tables.uwreqs.query()
           const baselineEpoch = Number(epochRows[0].current_epoch_index)
           const baselineUwreqIds = requestRows.map(request =>
             Number(request.id)
+          )
+          const solanaBalancesBefore = await Promise.all(
+            Array.from({ length: Constants.ActorCount }, (_, actorIndex) => {
+              const swapUser = ctx.outputs.assert(swapUserOutputKey(actorIndex))
+              return ctx.solana.getLamports(swapUser.solanaKeypair.publicKey)
+            })
           )
           ctx.outputs
             .set(StressTargetAmountKey, targetAmount)
             .set(StressBaselineEpochKey, baselineEpoch)
             .set(StressBaselineUwreqIdsKey, baselineUwreqIds)
+            .set(StressSolanaBalancesBeforeKey, solanaBalancesBefore)
           Report.StepExtraRecorder.note("pre-load baseline captured", {
             targetAmount,
             baselineEpoch,
-            baselineUwreqIds
+            baselineUwreqIds,
+            solanaBalancesBefore
           })
         }
       )

@@ -13,9 +13,6 @@ export namespace SwapEpochStressScenarioConstants {
   export const UnderwriterCount = 1
   /** WIRE epoch duration used by this isolated flow cluster. */
   export const EpochDurationSec = 60
-  /** First deterministic Anvil wallet index reserved for stress senders. */
-  export const EthereumHdIndexBase = 32
-
   /** 0.01 ETH per actor; ten requests consume about 1% of the seeded book. */
   export const SourceEthereumWei = 10_000_000_000_000_000n
   /** Wei represented by one WIRE-side ETH reserve unit. */

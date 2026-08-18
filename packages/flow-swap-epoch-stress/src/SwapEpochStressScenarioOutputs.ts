@@ -1,14 +1,4 @@
-import type { HDNodeWallet } from "ethers"
-import type { Keypair } from "@solana/web3.js"
 import { outputKey, type OutputKey } from "@wireio/cluster-tool"
-
-/** Provisioned source wallet and destination account for one stress actor. */
-export interface SwapEpochStressActorOutput {
-  readonly actorIndex: number
-  readonly ethereumWallet: HDNodeWallet
-  readonly solanaKeypair: Keypair
-  readonly solanaBalanceBefore: number
-}
 
 /** Confirmed Ethereum request transaction produced by one stress actor. */
 export interface SwapEpochStressRequestOutput {
@@ -23,21 +13,6 @@ export interface SwapEpochStressRequestSnapshotOutput {
   readonly requestStatuses: string[]
   readonly ingestedCount: number
   readonly confirmedCount: number
-}
-
-/**
- * Build the typed output key for one provisioned stress actor.
- *
- * @param actorIndex Zero-based actor index.
- * @returns Actor-specific output key.
- */
-export function stressActorOutputKey(
-  actorIndex: number
-): OutputKey<SwapEpochStressActorOutput> {
-  return outputKey(
-    `swapEpochStress.actor.${actorIndex}`,
-    `swap epoch stress actor ${actorIndex}`
-  )
 }
 
 /**
@@ -71,6 +46,12 @@ export const StressBaselineEpochKey: OutputKey<number> = outputKey(
 export const StressBaselineUwreqIdsKey: OutputKey<number[]> = outputKey(
   "swapEpochStress.baselineUwreqIds",
   "underwrite request IDs present before concurrent swap submission"
+)
+
+/** Solana recipient balances captured immediately before swap submission. */
+export const StressSolanaBalancesBeforeKey: OutputKey<number[]> = outputKey(
+  "swapEpochStress.solanaBalancesBefore",
+  "Solana recipient balances immediately before concurrent swap submission"
 )
 
 /** Stress UWREQ lifecycle snapshot captured before the ten-epoch retention window. */
