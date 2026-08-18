@@ -46,11 +46,11 @@ see [`docs/local-setup.md`](docs/local-setup.md).
 | **pnpm** | `10.32.1` | the only supported package manager | `corepack enable && corepack prepare pnpm@10.32.1 --activate` |
 | **Rust** | `1.86.0` | toolchain for Solana / Anchor builds | see below |
 | **Foundry (`anvil`)** | `>= 1.5` | local Ethereum node for the ETH outpost | see below |
-| **Solana CLI (`solana-test-validator`)** | `2.1.21` (Agave) | local Solana validator for the SOL outpost | see below |
+| **Solana CLI (`solana-test-validator`)** | `4.2.0` (Agave) | local Solana validator for the SOL outpost | see below |
 | **Anchor (`anchor`) via `avm`** | `0.31.0` | builds + loads the `opp-outpost` program | see below |
 
 > The Solana / Anchor / Rust versions are pinned by `wire-solana`
-> (`Anchor.toml` → `anchor_version = "0.31.0"`, `solana_version = "2.1.21"`;
+> (`Anchor.toml` → `anchor_version = "0.31.0"`, `solana_version = "4.2.0"`;
 > `rust-toolchain.toml` → `channel = "1.86.0"`). Match them — a mismatched
 > validator or Anchor CLI produces program-load failures that look like flow bugs.
 
@@ -72,9 +72,9 @@ curl -L https://foundry.paradigm.xyz | bash
 "$HOME/.foundry/bin/foundryup"
 export PATH="$HOME/.foundry/bin:$PATH"
 
-# ── Solana CLI (Agave) — pin 2.1.21 to match wire-solana ─────────────────────
+# ── Solana CLI (Agave) — pin 4.2.0 to match wire-solana ─────────────────────
 # https://docs.anza.xyz/cli/install
-sh -c "$(curl -sSfL https://release.anza.xyz/v2.1.21/install)"
+sh -c "$(curl -sSfL https://release.anza.xyz/v4.2.0/install)"
 export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
 
 # ── Anchor via avm (Anchor Version Manager) — pin 0.31.0 ─────────────────────
@@ -90,7 +90,7 @@ Verify:
 node --version        # v22+  (v24 OK)
 pnpm --version        # 10.32.1
 anvil --version       # 1.5.x
-solana --version      # 2.1.21 ... Agave
+solana --version      # 4.2.0 ... Agave
 anchor --version      # anchor-cli 0.31.0
 ```
 
