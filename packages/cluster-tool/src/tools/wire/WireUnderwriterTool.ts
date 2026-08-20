@@ -17,30 +17,18 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
 
-import type {
-  ChainTokenAmount,
-  ChainTokenAmountSchema,
-  ClusterConfig
-} from "@wireio/cluster-tool-shared"
+import type { ChainTokenAmount, ChainTokenAmountSchema, ClusterConfig } from "@wireio/cluster-tool-shared"
 import { match } from "ts-pattern"
 import type { z } from "zod"
 
-import {
-  ChainKind,
-  OperatorType,
-  TokenAmount,
-  TokenKind
-} from "@wireio/opp-typescript-models"
+import { ChainKind, OperatorType, TokenAmount, TokenKind } from "@wireio/opp-typescript-models"
 import { SlugName } from "@wireio/sdk-core"
 import { getLogger, NestedError } from "@wireio/shared"
 
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../../orchestration/ClusterBuildPhase.js"
 import { ClusterBuildPhaseGroup } from "../../orchestration/ClusterBuildPhaseGroup.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../orchestration/ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../orchestration/ClusterBuildStep.js"
 import type { ClusterBuildParent } from "../../orchestration/ClusterBuildPhaseBase.js"
 import { Report } from "../../report/Report.js"
 import { EthereumCollateralTool } from "../ethereum/EthereumCollateralTool.js"
@@ -189,18 +177,9 @@ export namespace WireUnderwriterTool {
    *   `underwriterCount`, OR if any inner `ChainTokenAmount` fails
    *   proto-level validation.
    */
-  export function parseJson(
-    json: unknown,
-    underwriterCount: number
-  ): ChainTokenAmount[][] {
-    Assert.ok(
-      Array.isArray(json),
-      "underwriter collateral JSON must be an array"
-    )
-    Assert.ok(
-      underwriterCount > 0,
-      `underwriterCount must be positive, got ${underwriterCount}`
-    )
+  export function parseJson(json: unknown, underwriterCount: number): ChainTokenAmount[][] {
+    Assert.ok(Array.isArray(json), "underwriter collateral JSON must be an array")
+    Assert.ok(underwriterCount > 0, `underwriterCount must be positive, got ${underwriterCount}`)
 
     const items = json as unknown[]
     if (items.length === 0) {
@@ -224,10 +203,7 @@ export namespace WireUnderwriterTool {
           `must equal --underwriters (${underwriterCount})`
       )
       return items.map((entry, idx) => {
-        Assert.ok(
-          Array.isArray(entry),
-          `underwriter collateral (varied shape): entry ${idx} must be an array`
-        )
+        Assert.ok(Array.isArray(entry), `underwriter collateral (varied shape): entry ${idx} must be an array`)
         return entry.map(raw => parseChainTokenAmountJson(raw))
       })
     }
@@ -255,30 +231,18 @@ export namespace WireUnderwriterTool {
    *   // With file → parsed per the file's shape (uniform or varied).
    *   WireUnderwriterTool.load("/path/to/file.json", 3)
    */
-  export function load(
-    filePath: string | null,
-    underwriterCount: number
-  ): ChainTokenAmount[][] {
-    Assert.ok(
-      underwriterCount > 0,
-      `underwriterCount must be positive, got ${underwriterCount}`
-    )
+  export function load(filePath: string | null, underwriterCount: number): ChainTokenAmount[][] {
+    Assert.ok(underwriterCount > 0, `underwriterCount must be positive, got ${underwriterCount}`)
     if (!filePath) {
       return Array.from({ length: underwriterCount }, () => buildDefault())
     }
-    Assert.ok(
-      Fs.existsSync(filePath),
-      `--underwriter-collateral-json-file: ${filePath} does not exist`
-    )
+    Assert.ok(Fs.existsSync(filePath), `--underwriter-collateral-json-file: ${filePath} does not exist`)
     const raw = Fs.readFileSync(filePath, "utf8")
     let parsed: unknown
     try {
       parsed = JSON.parse(raw)
     } catch (err) {
-      throw new NestedError(
-        `--underwriter-collateral-json-file: ${filePath} is not valid JSON`,
-        { cause: err }
-      )
+      throw new NestedError(`--underwriter-collateral-json-file: ${filePath} is not valid JSON`, { cause: err })
     }
     return parseJson(parsed, underwriterCount)
   }
@@ -316,9 +280,7 @@ export namespace WireUnderwriterTool {
    * @returns The self-registered deposit PhaseGroup.
    * @throws If `collateral.length !== underwriterLabels.length`.
    */
-  export function planCollateralDeposit<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planCollateralDeposit<C extends ClusterBuildContext = ClusterBuildContext>(
     parent: ClusterBuildParent<C>,
     name: string,
     description: string,
@@ -425,9 +387,7 @@ function parseChainTokenAmountJson(raw: unknown): ChainTokenAmount {
   const r = raw as ChainTokenAmountJson
   return {
     chain_code: r.chain_code,
-    amount: TokenAmount.fromJson(
-      r.amount as Parameters<typeof TokenAmount.fromJson>[0]
-    )
+    amount: TokenAmount.fromJson(r.amount as Parameters<typeof TokenAmount.fromJson>[0])
   }
 }
 
@@ -444,10 +404,7 @@ function planDepositStepsForEntry<C extends ClusterBuildContext>(
   underwriterLabel: string,
   entry: ChainTokenAmount
 ): ClusterBuildStep.Any<C>[] {
-  Assert.ok(
-    entry.amount,
-    "WireUnderwriterTool: ChainTokenAmount.amount is required"
-  )
+  Assert.ok(entry.amount, "WireUnderwriterTool: ChainTokenAmount.amount is required")
   const chainCode = BigInt(entry.chain_code),
     tokenCode = BigInt(entry.amount.tokenCode),
     tokenCodeNum = Number(entry.amount.tokenCode),
@@ -461,46 +418,16 @@ function planDepositStepsForEntry<C extends ClusterBuildContext>(
 
   return match({ chainKind, tokenKind })
     .with({ chainKind: ChainKind.EVM, tokenKind: TokenKind.NATIVE }, () =>
-      planEthereumNativeSteps<C>(
-        options,
-        underwriterLabel,
-        chainName,
-        tokenName,
-        tokenCode,
-        amount
-      )
+      planEthereumNativeSteps<C>(options, underwriterLabel, chainName, tokenName, tokenCode, amount)
     )
     .with({ chainKind: ChainKind.EVM }, () =>
-      planEthereumNonNativeSteps<C>(
-        options,
-        underwriterLabel,
-        chainName,
-        tokenName,
-        chainCode,
-        tokenCode,
-        amount
-      )
+      planEthereumNonNativeSteps<C>(options, underwriterLabel, chainName, tokenName, chainCode, tokenCode, amount)
     )
     .with({ chainKind: ChainKind.SVM, tokenKind: TokenKind.NATIVE }, () =>
-      planSolanaNativeSteps<C>(
-        options,
-        underwriterLabel,
-        chainName,
-        tokenName,
-        tokenCode,
-        amount
-      )
+      planSolanaNativeSteps<C>(options, underwriterLabel, chainName, tokenName, tokenCode, amount)
     )
     .with({ chainKind: ChainKind.SVM }, () =>
-      planSolanaNonNativeSteps<C>(
-        options,
-        underwriterLabel,
-        chainName,
-        tokenName,
-        chainCode,
-        tokenCode,
-        amount
-      )
+      planSolanaNonNativeSteps<C>(options, underwriterLabel, chainName, tokenName, chainCode, tokenCode, amount)
     )
     .with({ chainKind: ChainKind.WIRE }, () => {
       // WIRE collateral has no outpost-side deposit path today — the
@@ -512,9 +439,7 @@ function planDepositStepsForEntry<C extends ClusterBuildContext>(
       return [] as ClusterBuildStep.Any<C>[]
     })
     .otherwise(() => {
-      log.warn(
-        `[WireUnderwriterTool] ${underwriterLabel}: skipping unsupported chain ${chainName}/${tokenName}`
-      )
+      log.warn(`[WireUnderwriterTool] ${underwriterLabel}: skipping unsupported chain ${chainName}/${tokenName}`)
       return [] as ClusterBuildStep.Any<C>[]
     })
 }

@@ -13,9 +13,7 @@ const SampleLine =
   '{"ts":"2026-04-27T19:58:15.417594Z","lvl":"debug","thread":"nodeop","logger":"default","file":"/.../x.cpp","line":426,"func":"plugin_initialize","msg":"Registering signature provider"}'
 
 /** Shorthand: invoke the renderer with default test props. */
-function render(
-  overrides: Partial<LogViewerJSONLineProps> = {}
-): React.ReactElement {
+function render(overrides: Partial<LogViewerJSONLineProps> = {}): React.ReactElement {
   return LogViewerJSONLine({
     line: SampleLine,
     horizontalOffset: 0,
@@ -59,9 +57,7 @@ describe("LogViewerJSONLine", () => {
   })
 
   it("renders the malformed-line fallback with truncate-end wrap mode", () => {
-    expect((render({ line: "not json" }).props as RenderedTextProps).wrap).toBe(
-      "truncate-end"
-    )
+    expect((render({ line: "not json" }).props as RenderedTextProps).wrap).toBe("truncate-end")
   })
 
   it("hides the source-location column when locationVisible=false", () => {
@@ -88,9 +84,7 @@ describe("LogViewerJSONLine", () => {
     })
 
     it("panning past every leading column leaves only the msg", () => {
-      const serialized = JSON.stringify(
-        render({ horizontalOffset: MsgStartOffset })
-      )
+      const serialized = JSON.stringify(render({ horizontalOffset: MsgStartOffset }))
       expect(serialized).not.toContain("19:58:15.417")
       expect(serialized).not.toContain("[default]")
       expect(serialized).toContain("Registering signature provider")
@@ -98,9 +92,7 @@ describe("LogViewerJSONLine", () => {
 
     it("panning further into the msg slices the msg too", () => {
       // 13 chars into the msg drops "Registering s".
-      const serialized = JSON.stringify(
-        render({ horizontalOffset: MsgStartOffset + 13 })
-      )
+      const serialized = JSON.stringify(render({ horizontalOffset: MsgStartOffset + 13 }))
       expect(serialized).not.toContain("Registering signature provider")
       expect(serialized).toContain("ignature provider")
     })

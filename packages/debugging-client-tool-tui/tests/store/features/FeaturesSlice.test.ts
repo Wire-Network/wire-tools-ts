@@ -13,15 +13,9 @@ describe("featuresSlice", () => {
   })
 
   it("registerFeature appends once — idempotent on duplicate id", () => {
-    const first = featuresSlice.reducer(
-      undefined,
-      registerFeature({ id: "opp", name: "OPP", core: false })
-    )
+    const first = featuresSlice.reducer(undefined, registerFeature({ id: "opp", name: "OPP", core: false }))
     expect(first.registered).toHaveLength(1)
-    const second = featuresSlice.reducer(
-      first,
-      registerFeature({ id: "opp", name: "OPP", core: false })
-    )
+    const second = featuresSlice.reducer(first, registerFeature({ id: "opp", name: "OPP", core: false }))
     expect(second.registered).toHaveLength(1)
   })
 

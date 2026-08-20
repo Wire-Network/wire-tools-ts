@@ -32,8 +32,7 @@ export namespace SwapPrivateReservesScenarioArtifacts {
    * `OperatorRegistryContract` precedent — typechain types live in
    * `wire-ethereum` and are not consumable here.)
    */
-  export interface ReserveManagerPrivateReserveContract
-    extends ethers.BaseContract {
+  export interface ReserveManagerPrivateReserveContract extends ethers.BaseContract {
     create_reserve: (
       tokenCode: bigint,
       reserveCode: bigint,
@@ -46,10 +45,7 @@ export namespace SwapPrivateReservesScenarioArtifacts {
       creatorPubKey: string,
       overrides: EthereumPayableOverrides
     ) => Promise<ethers.ContractTransactionResponse>
-    getReserve: (
-      tokenCode: bigint,
-      reserveCode: bigint
-    ) => Promise<EthereumLocalReserveRecord>
+    getReserve: (tokenCode: bigint, reserveCode: bigint) => Promise<EthereumLocalReserveRecord>
   }
 
   /**
@@ -61,10 +57,10 @@ export namespace SwapPrivateReservesScenarioArtifacts {
    * @param signer - The wallet the writes are signed by.
    * @returns The signer-connected contract.
    */
-  export function loadReserveManager<
-    View extends object,
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(ctx: C, signer: ethers.Signer): View & ethers.BaseContract {
+  export function loadReserveManager<View extends object, C extends ClusterBuildContext = ClusterBuildContext>(
+    ctx: C,
+    signer: ethers.Signer
+  ): View & ethers.BaseContract {
     const address = EthereumCollateralTool.loadOutpostAddresses(
       ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
     )[ReserveManagerContractName]
@@ -72,10 +68,7 @@ export namespace SwapPrivateReservesScenarioArtifacts {
       address != null && /^0x[0-9a-fA-F]{40}$/.test(address),
       `SwapPrivateReservesScenario: ${ReserveManagerContractName} not in outpost-addrs.json (got ${address})`
     )
-    const abi = EthereumCollateralTool.loadOutpostAbi(
-      ctx.config.ethereumPath,
-      ReserveManagerContractName
-    )
+    const abi = EthereumCollateralTool.loadOutpostAbi(ctx.config.ethereumPath, ReserveManagerContractName)
     return contractView<View>(address, abi, signer)
   }
 
@@ -88,27 +81,12 @@ export namespace SwapPrivateReservesScenarioArtifacts {
    * @returns The mint pubkey.
    * @throws When the manifest or the USDCSOL entry is missing.
    */
-  export function loadUsdcSolMint<C extends ClusterBuildContext>(
-    ctx: C
-  ): PublicKey {
-    const mintsFile = Path.join(
-      ctx.config.dataPath,
-      Constants.SolanaMockMintsFilename
-    )
-    Assert.ok(
-      Fs.existsSync(mintsFile),
-      `SwapPrivateReservesScenario: mock SPL mints not found at ${mintsFile}`
-    )
-    const mints = JSON.parse(
-      Fs.readFileSync(mintsFile, "utf8")
-    ) as SolanaOutpostBootstrapper.PersistedSplMint[]
-    const usdcSolEntry = mints.find(
-      entry => entry.code === Constants.Reserves.Solana.TokenCode
-    )
-    Assert.ok(
-      usdcSolEntry != null,
-      "SwapPrivateReservesScenario: bootstrap did not persist the USDCSOL SPL mint"
-    )
+  export function loadUsdcSolMint<C extends ClusterBuildContext>(ctx: C): PublicKey {
+    const mintsFile = Path.join(ctx.config.dataPath, Constants.SolanaMockMintsFilename)
+    Assert.ok(Fs.existsSync(mintsFile), `SwapPrivateReservesScenario: mock SPL mints not found at ${mintsFile}`)
+    const mints = JSON.parse(Fs.readFileSync(mintsFile, "utf8")) as SolanaOutpostBootstrapper.PersistedSplMint[]
+    const usdcSolEntry = mints.find(entry => entry.code === Constants.Reserves.Solana.TokenCode)
+    Assert.ok(usdcSolEntry != null, "SwapPrivateReservesScenario: bootstrap did not persist the USDCSOL SPL mint")
     return new PublicKey(usdcSolEntry.mint)
   }
 }

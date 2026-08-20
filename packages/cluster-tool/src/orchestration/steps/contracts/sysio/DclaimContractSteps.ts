@@ -1,10 +1,7 @@
 import { SysioContracts } from "@wireio/sdk-core"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../../ClusterBuildStep.js"
 
 const { SysioContractName } = SysioContracts
 
@@ -17,14 +14,7 @@ export namespace DclaimContractSteps {
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runSetconfig
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runSetconfig)
   }
 
   /** Named runner — `sysio.dclaim::setconfig` (empty payload). */
@@ -34,8 +24,6 @@ export namespace DclaimContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.dclaim)
-      .actions.setconfig.invoke({})
+    await ctx.wire.getSysioContract(SysioContractName.dclaim).actions.setconfig.invoke({})
   }
 }

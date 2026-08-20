@@ -8,10 +8,7 @@ import {
   type ClusterBuildPhaseBase,
   type Steps
 } from "@wireio/cluster-tool/orchestration"
-import {
-  fixtureResolveEnvironment,
-  type ResolveEnvironment
-} from "../config/resolveEnvironmentFixture.js"
+import { fixtureResolveEnvironment, type ResolveEnvironment } from "../config/resolveEnvironmentFixture.js"
 
 /** The bootstrap phase holding the single `uwrit::setconfig` step. */
 const UnderwriterConfigPhaseName = "UnderwriterConfig"

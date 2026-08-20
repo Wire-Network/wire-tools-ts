@@ -3,11 +3,7 @@ import Path from "node:path"
 import { asOption } from "@3fv/prelude-ts"
 import { match } from "ts-pattern"
 
-import {
-  ClusterStateNodeRole,
-  type ClusterState,
-  type ClusterStateNode
-} from "@wireio/cluster-tool-shared"
+import { ClusterStateNodeRole, type ClusterState, type ClusterStateNode } from "@wireio/cluster-tool-shared"
 
 import { PidSourceKind, type PidSource } from "../processes/index.js"
 import { currentDateStamp } from "./dateStamp.js"
@@ -48,9 +44,7 @@ function kindForNode(node: ClusterStateNode): PidSourceKind {
     .with(ClusterStateNodeRole.bios, () => PidSourceKind.Bios)
     .with(ClusterStateNodeRole.producer, () => PidSourceKind.Producer)
     .with(ClusterStateNodeRole.operator, () =>
-      node.batchOperatorLabel != null
-        ? PidSourceKind.BatchOperator
-        : PidSourceKind.Underwriter
+      node.batchOperatorLabel != null ? PidSourceKind.BatchOperator : PidSourceKind.Underwriter
     )
     .exhaustive()
 }
@@ -85,11 +79,7 @@ function sourcesForNode(node: ClusterStateNode): PidSource[] {
 }
 
 /** Pid files in a known non-node subdir (anvil, solana-test-validator). */
-function sourcesForSubdir(
-  clusterPath: string,
-  subpath: string,
-  kind: PidSourceKind
-): PidSource[] {
+function sourcesForSubdir(clusterPath: string, subpath: string, kind: PidSourceKind): PidSource[] {
   const dir = Path.join(clusterPath, subpath)
   return readPidFiles(dir).map(raw => ({
     label: raw.label,
@@ -109,29 +99,16 @@ function sourcesForSubdir(
  * @param clusterPath cluster root (absolute)
  * @param state parsed `cluster-state.json`, or null when the cluster hasn't bootstrapped
  */
-export function collectPidSources(
-  clusterPath: string,
-  state: ClusterState | null
-): PidSource[] {
+export function collectPidSources(clusterPath: string, state: ClusterState | null): PidSource[] {
   if (!state) return []
   const nodeSources: PidSource[] = state.nodes.flatMap(sourcesForNode)
-  const anvilSources = sourcesForSubdir(
-      clusterPath,
-      PidSources.AnvilSubpath,
-      PidSourceKind.Anvil
-    ),
-    solanaSources = sourcesForSubdir(
-      clusterPath,
-      PidSources.SolanaSubpath,
-      PidSourceKind.SolanaValidator
-    )
+  const anvilSources = sourcesForSubdir(clusterPath, PidSources.AnvilSubpath, PidSourceKind.Anvil),
+    solanaSources = sourcesForSubdir(clusterPath, PidSources.SolanaSubpath, PidSourceKind.SolanaValidator)
   // Stable sort by label so re-renders don't reshuffle the list out from
   // under a cursor that's tracking by index. Filesystem order from
   // `Fs.readdirSync` is implementation-defined and can vary if pid files
   // are recreated on respawn.
-  return [...nodeSources, ...anvilSources, ...solanaSources].sort((a, b) =>
-    a.label.localeCompare(b.label)
-  )
+  return [...nodeSources, ...anvilSources, ...solanaSources].sort((a, b) => a.label.localeCompare(b.label))
 }
 
 /**
@@ -146,17 +123,11 @@ export function collectPidSources(
  * @param source process whose log to surface in the viewer
  * @param now    date used for the plain-log fallback filename; defaults to current time
  */
-export function logPathForSource(
-  source: PidSource,
-  now: Date = new Date()
-): string {
+export function logPathForSource(source: PidSource, now: Date = new Date()): string {
   const logsDir = Path.join(source.directory, PidSources.LogsSubdir),
     jsonl = latestJsonlIn(logsDir)
   if (jsonl) return Path.join(logsDir, jsonl)
-  return Path.join(
-    logsDir,
-    `${PidSources.PlainLogPrefix}${currentDateStamp(now)}${PidSources.PlainLogExt}`
-  )
+  return Path.join(logsDir, `${PidSources.PlainLogPrefix}${currentDateStamp(now)}${PidSources.PlainLogExt}`)
 }
 
 /** Lex-latest `*.jsonl` filename in `logsDir`, or null when there are none. */

@@ -24,13 +24,10 @@ describe("Steps.contracts.sysio.epoch", () => {
     expect(typeof step.runner).toBe("function")
   })
 
-  it.each(["planSchbatchgps", "planAdvance"] as const)(
-    "%s builds an input-less step with a runner",
-    action => {
-      const factory = Steps.contracts.sysio.epoch[action]
-      const step = factory(Report.Actor.Sysio, action, `crank ${action}`, {})
-      expect(step.input).toBeNull()
-      expect(typeof step.runner).toBe("function")
-    }
-  )
+  it.each(["planSchbatchgps", "planAdvance"] as const)("%s builds an input-less step with a runner", action => {
+    const factory = Steps.contracts.sysio.epoch[action]
+    const step = factory(Report.Actor.Sysio, action, `crank ${action}`, {})
+    expect(step.input).toBeNull()
+    expect(typeof step.runner).toBe("function")
+  })
 })

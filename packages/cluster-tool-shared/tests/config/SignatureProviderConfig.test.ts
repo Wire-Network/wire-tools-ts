@@ -45,10 +45,7 @@ describe("SignatureProviderConfigSchema", () => {
       awsSecretId: "/wire/keys/x"
     }
     expect(SignatureProviderConfigSchema.safeParse(base).success).toBe(false)
-    expect(
-      SignatureProviderConfigSchema.safeParse({ ...base, awsRegions: [] })
-        .success
-    ).toBe(false)
+    expect(SignatureProviderConfigSchema.safeParse({ ...base, awsRegions: [] }).success).toBe(false)
   })
 
   it("accepts a KIOD provider (material-less)", () => {

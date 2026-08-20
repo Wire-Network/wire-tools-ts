@@ -1,15 +1,8 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import {
-  Report,
-  ReportRendererRegistry
-} from "@wireio/cluster-tool/report"
-import {
-  createFailureReport,
-  createSkippedTailReport,
-  createSuccessReport
-} from "./reportFixture.js"
+import { Report, ReportRendererRegistry } from "@wireio/cluster-tool/report"
+import { createFailureReport, createSkippedTailReport, createSuccessReport } from "./reportFixture.js"
 
 describe("Report.StepResult factories", () => {
   const step: Report.StepLike = {
@@ -136,9 +129,7 @@ describe("Report.write", () => {
     const csv = Fs.readFileSync(Path.join(dir, "run.csv"), "utf8")
     const md = Fs.readFileSync(Path.join(dir, "run.md"), "utf8")
     const html = Fs.readFileSync(Path.join(dir, "run.html"), "utf8")
-    expect(csv.split("\n")[0]).toBe(
-      "path,phase,step,actor,status,startedAt,durationMs,error,extra"
-    )
+    expect(csv.split("\n")[0]).toBe("path,phase,step,actor,status,startedAt,durationMs,error,extra")
     expect(md).toContain("# cluster-build: FAILED")
     expect(html).toContain("<!doctype html>")
     expect(html).toContain("cluster-build: FAILED")
@@ -147,33 +138,25 @@ describe("Report.write", () => {
 
 describe("Report.title verdicts", () => {
   it("all-ok → SUCCESS", () => {
-    expect(Report.title(createSuccessReport())).toBe(
-      `cluster-build: ${Report.Verdict.SUCCESS}`
-    )
+    expect(Report.title(createSuccessReport())).toBe(`cluster-build: ${Report.Verdict.SUCCESS}`)
   })
 
   it("a failed step → FAILED", () => {
-    expect(Report.title(createFailureReport())).toBe(
-      `cluster-build: ${Report.Verdict.FAILED}`
-    )
+    expect(Report.title(createFailureReport())).toBe(`cluster-build: ${Report.Verdict.FAILED}`)
   })
 
   it("interrupted wins over succeeded — a killed run is never a SUCCESS", () => {
     const report = createSuccessReport()
     report.interrupted = true
     expect(report.succeeded).toBe(true) // the completed phases really did pass…
-    expect(Report.title(report)).toBe(
-      `cluster-build: ${Report.Verdict.INTERRUPTED}`
-    ) // …but the RUN did not finish
+    expect(Report.title(report)).toBe(`cluster-build: ${Report.Verdict.INTERRUPTED}`) // …but the RUN did not finish
   })
 
   it("an EMPTY interrupted report is not a SUCCESS either", () => {
     const report = new Report()
     report.interrupted = true
     expect(report.succeeded).toBe(true) // every() over zero nodes is vacuously true
-    expect(Report.title(report)).toBe(
-      `cluster-build: ${Report.Verdict.INTERRUPTED}`
-    )
+    expect(Report.title(report)).toBe(`cluster-build: ${Report.Verdict.INTERRUPTED}`)
   })
 })
 
@@ -199,12 +182,8 @@ describe("Report.writeSync", () => {
     expect(Fs.readFileSync(Path.join(nested, "run.csv"), "utf8").split("\n")[0]).toBe(
       "path,phase,step,actor,status,startedAt,durationMs,error,extra"
     )
-    expect(Fs.readFileSync(Path.join(nested, "run.md"), "utf8")).toContain(
-      "# cluster-build: FAILED"
-    )
-    expect(Fs.readFileSync(Path.join(nested, "run.html"), "utf8")).toContain(
-      "<!doctype html>"
-    )
+    expect(Fs.readFileSync(Path.join(nested, "run.md"), "utf8")).toContain("# cluster-build: FAILED")
+    expect(Fs.readFileSync(Path.join(nested, "run.html"), "utf8")).toContain("<!doctype html>")
   })
 
   it("produces byte-identical output to the async write", async () => {

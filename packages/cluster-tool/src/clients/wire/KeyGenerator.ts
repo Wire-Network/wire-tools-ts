@@ -5,10 +5,7 @@ import Assert from "node:assert"
 import { ethers } from "ethers"
 import { match } from "ts-pattern"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
-import {
-  SignatureProviderType,
-  type ClusterSignatureProviderConfig
-} from "@wireio/cluster-tool-shared"
+import { SignatureProviderType, type ClusterSignatureProviderConfig } from "@wireio/cluster-tool-shared"
 import { Constants } from "../../Constants.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import {
@@ -18,13 +15,7 @@ import {
   solanaNativePublicKey,
   solanaSdkPrivateKey
 } from "../../utils/keyPairUtils.js"
-import type {
-  EthereumKeyPair,
-  KeyPair,
-  SolanaKeyPair,
-  WireFinalizerKeyPair,
-  WireKeyPair
-} from "../../types/KeyPair.js"
+import type { EthereumKeyPair, KeyPair, SolanaKeyPair, WireFinalizerKeyPair, WireKeyPair } from "../../types/KeyPair.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -94,11 +85,7 @@ export namespace KeyGenerator {
    * @param ethereumMnemonicPhrase - The anvil HD mnemonic phrase.
    * @returns A ready {@link Context}.
    */
-  export function context(
-    clio: string,
-    buildPath: string,
-    ethereumMnemonicPhrase: string
-  ): Context {
+  export function context(clio: string, buildPath: string, ethereumMnemonicPhrase: string): Context {
     return {
       clio,
       sysUtil: Path.join(buildPath, SysUtilSubpath),
@@ -143,12 +130,7 @@ export namespace KeyGenerator {
    * half, the BLS proof of possession, the EM address — is recorded; the secret
    * lives only in SSM (or the keystore under KEY/KIOD).
    */
-  function recordKeygen(
-    type: KeyType,
-    context: Context,
-    options: CreateOptions,
-    keyPair: KeyPair
-  ): void {
+  function recordKeygen(type: KeyType, context: Context, options: CreateOptions, keyPair: KeyPair): void {
     const mechanism = match<KeyType, StepExtraRecorder.ClientCall>(type)
       .with(KeyType.K1, () => ({
         client: "clio",
@@ -185,18 +167,12 @@ export namespace KeyGenerator {
    * `T`, which control-flow would otherwise keep binding into the pattern). The one
    * `KeyPair<T>` cast lives at the {@link create} boundary above.
    */
-  async function createByType(
-    type: KeyType,
-    context: Context,
-    options: CreateOptions
-  ): Promise<KeyPair> {
+  async function createByType(type: KeyType, context: Context, options: CreateOptions): Promise<KeyPair> {
     return match(type)
       .with(KeyType.K1, () => createK1(context.clio))
       .with(KeyType.BLS, () => createBLS(context.sysUtil))
       .with(KeyType.ED, async () => createED())
-      .with(KeyType.EM, async () =>
-        createEM(context.ethereumMnemonic, options.ethereumHdIndex)
-      )
+      .with(KeyType.EM, async () => createEM(context.ethereumMnemonic, options.ethereumHdIndex))
       .otherwise(() => {
         throw new Error(`KeyGenerator: unsupported key type ${KeyType[type] ?? type}`)
       })
@@ -225,11 +201,7 @@ export namespace KeyGenerator {
       type: KeyType.BLS,
       privateKey: parseField(stdout, Pattern.BLSPrivate, "BLS private key"),
       publicKey: parseField(stdout, Pattern.BLSPublic, "BLS public key"),
-      proofOfPossession: parseField(
-        stdout,
-        Pattern.BLSProofOfPossession,
-        "BLS proof of possession"
-      )
+      proofOfPossession: parseField(stdout, Pattern.BLSProofOfPossession, "BLS proof of possession")
     }
   }
 
@@ -245,14 +217,8 @@ export namespace KeyGenerator {
 
   /** EM (secp256k1) via the anvil HD wallet at `ethereumHdIndex` (deterministic). */
   function createEM(mnemonic: ethers.Mnemonic, ethereumHdIndex?: number): EthereumKeyPair {
-    Assert.ok(
-      ethereumHdIndex != null,
-      "KeyGenerator.create(EM): options.ethereumHdIndex is required"
-    )
-    const wallet = ethers.HDNodeWallet.fromMnemonic(
-      mnemonic,
-      `${EthereumDerivationPath}${ethereumHdIndex}`
-    )
+    Assert.ok(ethereumHdIndex != null, "KeyGenerator.create(EM): options.ethereumHdIndex is required")
+    const wallet = ethers.HDNodeWallet.fromMnemonic(mnemonic, `${EthereumDerivationPath}${ethereumHdIndex}`)
     return ethereumKeyPairFromWallet(wallet)
   }
 
@@ -296,10 +262,7 @@ export namespace KeyGenerator {
     return match(providerConfig.type)
       .with(SignatureProviderType.KEY, () => DefaultKeySource)
       .with(SignatureProviderType.SSM, () => {
-        Assert.ok(
-          providerConfig.ssm != null,
-          "KeyGenerator.keySource: an SSM provider requires ssm settings"
-        )
+        Assert.ok(providerConfig.ssm != null, "KeyGenerator.keySource: an SSM provider requires ssm settings")
         return {
           type: SignatureProviderType.SSM,
           awsSecretId: secretId
@@ -330,24 +293,15 @@ export namespace KeyGenerator {
    * secret. Evaluating it eagerly would crash `wire-cluster-tool run` on an SSM
    * cluster while building a spec that never needed the key in the first place.
    */
-  function toProviderSegment(
-    source: SignatureProviderSource,
-    keyMaterial: () => string
-  ): string {
+  function toProviderSegment(source: SignatureProviderSource, keyMaterial: () => string): string {
     return match(source.type)
       .with(SignatureProviderType.KEY, () => `KEY:${keyMaterial()}`)
       .with(SignatureProviderType.SSM, () => {
-        Assert.ok(
-          source.awsSecretId != null,
-          "KeyGenerator.toProviderSegment: an SSM source requires awsSecretId"
-        )
+        Assert.ok(source.awsSecretId != null, "KeyGenerator.toProviderSegment: an SSM source requires awsSecretId")
         return `SSM:${source.awsSecretId}`
       })
       .with(SignatureProviderType.KIOD, () => {
-        Assert.ok(
-          source.kiodUrl != null,
-          "KeyGenerator.toProviderSegment: a KIOD source requires kiodUrl"
-        )
+        Assert.ok(source.kiodUrl != null, "KeyGenerator.toProviderSegment: a KIOD source requires kiodUrl")
         return `KIOD:${source.kiodUrl}`
       })
       .exhaustive()
@@ -378,23 +332,13 @@ export namespace KeyGenerator {
       .with(KeyType.K1, () => toSignatureProviderK1(pair, source))
       .with(KeyType.BLS, () => toSignatureProviderBLS(pair, source))
       .with(KeyType.EM, () =>
-        toSignatureProviderEM(
-          pair as EthereumKeyPair,
-          assertProviderName(pair, providerName),
-          source
-        )
+        toSignatureProviderEM(pair as EthereumKeyPair, assertProviderName(pair, providerName), source)
       )
       .with(KeyType.ED, () =>
-        toSignatureProviderED(
-          pair as SolanaKeyPair,
-          assertProviderName(pair, providerName),
-          source
-        )
+        toSignatureProviderED(pair as SolanaKeyPair, assertProviderName(pair, providerName), source)
       )
       .otherwise(() => {
-        throw new Error(
-          `KeyGenerator.toSignatureProvider: unsupported key type ${KeyType[pair.type] ?? pair.type}`
-        )
+        throw new Error(`KeyGenerator.toSignatureProvider: unsupported key type ${KeyType[pair.type] ?? pair.type}`)
       })
   }
 
@@ -408,18 +352,12 @@ export namespace KeyGenerator {
   }
 
   /** K1 block-signing provider spec (private — dispatched by {@link toSignatureProvider}). */
-  function toSignatureProviderK1(
-    pair: KeyPair,
-    source: SignatureProviderSource
-  ): string {
+  function toSignatureProviderK1(pair: KeyPair, source: SignatureProviderSource): string {
     return `wire-${pair.publicKey},wire,wire,${pair.publicKey},${toProviderSegment(source, () => pair.privateKey)}`
   }
 
   /** BLS finalizer provider spec (private — dispatched by {@link toSignatureProvider}). */
-  function toSignatureProviderBLS(
-    pair: KeyPair,
-    source: SignatureProviderSource
-  ): string {
+  function toSignatureProviderBLS(pair: KeyPair, source: SignatureProviderSource): string {
     return `wire-bls-${pair.publicKey},wire,wire_bls,${pair.publicKey},${toProviderSegment(source, () => pair.privateKey)}`
   }
 
@@ -429,28 +367,18 @@ export namespace KeyGenerator {
    * public key comes off the STORED pair, so the spec renders under SSM custody
    * where there is no `privateKey` to derive it from.
    */
-  function toSignatureProviderEM(
-    pair: EthereumKeyPair,
-    providerName: string,
-    source: SignatureProviderSource
-  ): string {
+  function toSignatureProviderEM(pair: EthereumKeyPair, providerName: string, source: SignatureProviderSource): string {
     return [
       providerName,
       "ethereum",
       "ethereum",
       ethereumUncompressedPublicKeyHex(pair),
-      toProviderSegment(source, () =>
-        ethereumSdkPrivateKey(pair).toNativeString()
-      )
+      toProviderSegment(source, () => ethereumSdkPrivateKey(pair).toNativeString())
     ].join(",")
   }
 
   /** ED (solana outpost) provider spec — base58 public key + the provider-sourced key segment. */
-  function toSignatureProviderED(
-    pair: SolanaKeyPair,
-    providerName: string,
-    source: SignatureProviderSource
-  ): string {
+  function toSignatureProviderED(pair: SolanaKeyPair, providerName: string, source: SignatureProviderSource): string {
     return [
       providerName,
       "solana",

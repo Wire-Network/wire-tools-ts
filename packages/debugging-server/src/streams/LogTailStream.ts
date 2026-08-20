@@ -33,9 +33,7 @@ export class LogTailStream implements ServerSideStream<LogTailEvent> {
 
   async start(emit: (payload: LogTailEvent) => void): Promise<void> {
     if (!isPathUnder(this.params.path, this.clusterPath)) {
-      throw new Error(
-        `LogTailStream: ${this.params.path} is not under ${this.clusterPath}`
-      )
+      throw new Error(`LogTailStream: ${this.params.path} is not under ${this.clusterPath}`)
     }
     try {
       this.index = await buildLineIndex(this.params.path)
@@ -64,22 +62,13 @@ export class LogTailStream implements ServerSideStream<LogTailEvent> {
   private async tick(emit: (payload: LogTailEvent) => void): Promise<void> {
     if (this.stopped) return
     try {
-      const next = this.index
-        ? await extendLineIndex(this.index)
-        : await buildLineIndex(this.params.path)
-      if (
-        this.index &&
-        next.totalBytes === this.index.totalBytes &&
-        next.ino === this.index.ino
-      ) {
+      const next = this.index ? await extendLineIndex(this.index) : await buildLineIndex(this.params.path)
+      if (this.index && next.totalBytes === this.index.totalBytes && next.ino === this.index.ino) {
         return
       }
       const fromLine = this.index?.completeLineCount ?? 0,
         appendedCount = next.completeLineCount - fromLine,
-        lines =
-          appendedCount > 0
-            ? await readLines(next, fromLine, appendedCount)
-            : []
+        lines = appendedCount > 0 ? await readLines(next, fromLine, appendedCount) : []
       this.index = next
       emit({
         path: this.params.path,

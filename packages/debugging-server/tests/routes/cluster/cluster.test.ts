@@ -3,11 +3,7 @@ import * as OS from "node:os"
 import * as Path from "node:path"
 
 import { ClusterFiles } from "@wireio/cluster-tool-shared"
-import {
-  ApiPaths,
-  type GetClusterConfigResponse,
-  type GetClusterStateResponse
-} from "@wireio/debugging-shared"
+import { ApiPaths, type GetClusterConfigResponse, type GetClusterStateResponse } from "@wireio/debugging-shared"
 
 import { DebuggingServer } from "@wireio/debugging-server"
 
@@ -127,14 +123,8 @@ describe(`POST ${ApiPaths.Cluster.Endpoint}`, () => {
 
   beforeAll(async () => {
     Fs.mkdirSync(tmpDir, { recursive: true })
-    Fs.writeFileSync(
-      Path.join(tmpDir, ClusterFiles.ConfigFilename),
-      JSON.stringify(fullConfig(tmpDir))
-    )
-    Fs.writeFileSync(
-      Path.join(tmpDir, ClusterFiles.StateFilename),
-      JSON.stringify(fullState(tmpDir))
-    )
+    Fs.writeFileSync(Path.join(tmpDir, ClusterFiles.ConfigFilename), JSON.stringify(fullConfig(tmpDir)))
+    Fs.writeFileSync(Path.join(tmpDir, ClusterFiles.StateFilename), JSON.stringify(fullState(tmpDir)))
     server = await DebuggingServer.create({ clusterPath: tmpDir, port: 0 })
     const addr = await server.start()
     baseUrl = `http://127.0.0.1:${addr.port}`
@@ -166,10 +156,7 @@ describe(`Cluster.GetState with no state file`, () => {
 
   beforeAll(async () => {
     Fs.mkdirSync(tmpDir, { recursive: true })
-    Fs.writeFileSync(
-      Path.join(tmpDir, ClusterFiles.ConfigFilename),
-      JSON.stringify(fullConfig(tmpDir))
-    )
+    Fs.writeFileSync(Path.join(tmpDir, ClusterFiles.ConfigFilename), JSON.stringify(fullConfig(tmpDir)))
     server = await DebuggingServer.create({ clusterPath: tmpDir, port: 0 })
     const addr = await server.start()
     baseUrl = `http://127.0.0.1:${addr.port}`

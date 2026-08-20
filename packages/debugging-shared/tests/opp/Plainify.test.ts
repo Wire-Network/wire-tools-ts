@@ -19,11 +19,7 @@ describe("plainify", () => {
   })
 
   it("walks arrays", () => {
-    expect(plainify([1n, new Uint8Array([0xff]), "x"])).toEqual([
-      "1",
-      "/w==",
-      "x"
-    ])
+    expect(plainify([1n, new Uint8Array([0xff]), "x"])).toEqual(["1", "/w==", "x"])
   })
 
   it("walks plain objects", () => {

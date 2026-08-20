@@ -14,13 +14,12 @@ export enum FeatureComponentToken {
 //       ? StatusBarComponentProps
 //       : never
 
-export type FeatureComponentType<
-  T extends FeatureComponentToken = FeatureComponentToken
-> = T extends FeatureComponentToken.Panel
-  ? PanelComponentType
-  : T extends FeatureComponentToken.StatusBar
-    ? StatusBarComponentType
-    : never
+export type FeatureComponentType<T extends FeatureComponentToken = FeatureComponentToken> =
+  T extends FeatureComponentToken.Panel
+    ? PanelComponentType
+    : T extends FeatureComponentToken.StatusBar
+      ? StatusBarComponentType
+      : never
 
 /**
  * Global registry of UI component contributions. Debuggers (core + feature)
@@ -33,25 +32,16 @@ export type FeatureComponentType<
  *   const widgets = ComponentProviders.get(StatusWidget)
  */
 class ComponentProvidersRegistry {
-  private readonly byToken = new Map<
-    FeatureComponentToken,
-    Array<FeatureComponentType>
-  >()
+  private readonly byToken = new Map<FeatureComponentToken, Array<FeatureComponentType>>()
 
-  protected getComponents<T extends FeatureComponentToken>(
-    token: T
-  ): FeatureComponentType<T>[] {
-    const components =
-      (this.byToken.get(token) as FeatureComponentType<T>[]) ?? []
+  protected getComponents<T extends FeatureComponentToken>(token: T): FeatureComponentType<T>[] {
+    const components = (this.byToken.get(token) as FeatureComponentType<T>[]) ?? []
     this.byToken.set(token, components)
     return components
   }
 
   /** Append an instance under its base-class token. */
-  register<T extends FeatureComponentToken>(
-    token: T,
-    component: FeatureComponentType<T>
-  ): this {
+  register<T extends FeatureComponentToken>(token: T, component: FeatureComponentType<T>): this {
     this.getComponents<T>(token).push(component)
 
     return this

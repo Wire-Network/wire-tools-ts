@@ -36,10 +36,7 @@ export class EnvelopeRenderer {
           ? [
               `    Version:       ${payload.version}`,
               `    Attestations:  ${payload.attestations.length}`,
-              ...payload.attestations.map(
-                (att, a) =>
-                  `      [${a}] type=${att.type} data_size=${att.dataSize}`
-              )
+              ...payload.attestations.map((att, a) => `      [${a}] type=${att.type} data_size=${att.dataSize}`)
             ]
           : []
         return ["", `  Message[${i}]`, ...header, ...payloadLines]

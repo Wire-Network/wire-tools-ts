@@ -32,12 +32,8 @@ import { SwapPrivateReservesScenarioOwnerSteps as OwnerSteps } from "./steps/Swa
 import { SwapPrivateReservesScenarioReserveSteps as ReserveSteps } from "./steps/SwapPrivateReservesScenarioReserveSteps.js"
 import { SwapPrivateReservesScenarioSwapSteps as SwapSteps } from "./steps/SwapPrivateReservesScenarioSwapSteps.js"
 
-const {
-  SysioContractName,
-  SysioOpregOperatorstatus,
-  SysioReservReservestatus,
-  SysioUwritUnderwriterequeststatus
-} = SysioContracts
+const { SysioContractName, SysioOpregOperatorstatus, SysioReservReservestatus, SysioUwritUnderwriterequeststatus } =
+  SysioContracts
 const { Actor } = Report
 
 const log = getLogger(__filename)
@@ -53,9 +49,7 @@ async function readPrivateReserveRow(
   chainCode: number,
   tokenCode: number
 ): Promise<SysioContracts.SysioReservReserveRowType> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.reserv)
-    .tables.reserves.query()
+  const { rows } = await ctx.wire.getSysioContract(SysioContractName.reserv).tables.reserves.query()
   return rows.find(
     row =>
       slugValue(row.chain_code) === chainCode &&
@@ -75,14 +69,11 @@ async function readPrivatePairUwreq(
   sourceChainCode: number,
   destinationChainCode: number
 ): Promise<SysioContracts.SysioUwritUwRequestTType> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.uwrit)
-    .tables.uwreqs.query()
+  const { rows } = await ctx.wire.getSysioContract(SysioContractName.uwrit).tables.uwreqs.query()
   return rows.find(
     request =>
       slugValue(request.src_chain_code) === sourceChainCode &&
-      slugValue(request.src_reserve_code) ===
-        Constants.Reserves.PrivateReserveCode &&
+      slugValue(request.src_reserve_code) === Constants.Reserves.PrivateReserveCode &&
       slugValue(request.dst_chain_code) === destinationChainCode
   )
 }
@@ -103,10 +94,7 @@ function uwreqConfirmed(row: SysioContracts.SysioUwritUwRequestTType): boolean {
 async function readUserUsdcSolBalance(ctx: Context): Promise<bigint> {
   const swapUser = ctx.outputs.assert(swapUserOutputKey())
   return ctx.solana.getSplBalance(
-    getAssociatedTokenAddressSync(
-      Artifacts.loadUsdcSolMint(ctx),
-      swapUser.solanaKeypair.publicKey
-    )
+    getAssociatedTokenAddressSync(Artifacts.loadUsdcSolMint(ctx), swapUser.solanaKeypair.publicKey)
   )
 }
 
@@ -186,34 +174,22 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
 
   plan(cluster: ClusterBuild<Context>): void {
     const relayOptions = {
-        timeoutMs:
-          Constants.Timing.RelayDeadlineMs +
-          Constants.Timing.PollDeadlineBufferMs
+        timeoutMs: Constants.Timing.RelayDeadlineMs + Constants.Timing.PollDeadlineBufferMs
       },
       readyOptions = {
-        timeoutMs:
-          Constants.Timing.ReadyDeadlineMs +
-          Constants.Timing.PollDeadlineBufferMs
+        timeoutMs: Constants.Timing.ReadyDeadlineMs + Constants.Timing.PollDeadlineBufferMs
       },
       uwreqOptions = {
-        timeoutMs:
-          Constants.Timing.UwreqDeadlineMs +
-          Constants.Timing.PollDeadlineBufferMs
+        timeoutMs: Constants.Timing.UwreqDeadlineMs + Constants.Timing.PollDeadlineBufferMs
       },
       raceOptions = {
-        timeoutMs:
-          Constants.Timing.RaceDeadlineMs +
-          Constants.Timing.PollDeadlineBufferMs
+        timeoutMs: Constants.Timing.RaceDeadlineMs + Constants.Timing.PollDeadlineBufferMs
       },
       remitOptions = {
-        timeoutMs:
-          Constants.Timing.RemitDeadlineMs +
-          Constants.Timing.PollDeadlineBufferMs
+        timeoutMs: Constants.Timing.RemitDeadlineMs + Constants.Timing.PollDeadlineBufferMs
       },
       noUwreqOptions = {
-        timeoutMs:
-          Constants.Timing.NoUwreqWindowMs +
-          Constants.Timing.PollDeadlineBufferMs
+        timeoutMs: Constants.Timing.NoUwreqWindowMs + Constants.Timing.PollDeadlineBufferMs
       },
       // Write / snapshot ceiling — covers the SOL confirm loop's own 60s
       // deadline plus tx build headroom (the old suite ran writes under a
@@ -223,9 +199,8 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
     // ── 1. Underwriter collateral (the old harness's bootstrap deposits) ──
     // One Phase per underwriter, one Step per (chain, token) bond, from the
     // resolved config plan (this scenario's defaults: ETH + SOL + USDCSOL).
-    const underwriterLabels = Array.from(
-      { length: cluster.config.underwriterCount },
-      (_, index) => HarnessConstants.underwriterLabel(index)
+    const underwriterLabels = Array.from({ length: cluster.config.underwriterCount }, (_, index) =>
+      HarnessConstants.underwriterLabel(index)
     )
     WireUnderwriterTool.planCollateralDeposit(
       cluster,
@@ -233,8 +208,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
       "Underwriters bond collateral on every leg the swap matrix touches",
       writeOptions,
       underwriterLabels,
-      cluster.config.underwriterCollateral ??
-        WireUnderwriterTool.load(null, cluster.config.underwriterCount)
+      cluster.config.underwriterCollateral ?? WireUnderwriterTool.load(null, cluster.config.underwriterCount)
     )
 
     // ── 2. Substrate health (old Phase 0 tests) ──
@@ -612,10 +586,7 @@ export class SwapPrivateReservesScenario extends FlowScenario<Context> {
 
 /** Baseline the owner's WIRE balance before either `claimrsvfee` fires. */
 async function runSnapshotOwnerBalance(ctx: Context): Promise<void> {
-  ctx.outputs.set(
-    Outputs.ownerBalanceBeforeClaims,
-    await ctx.wire.getWireBalance(Constants.Accounts.Owner)
-  )
+  ctx.outputs.set(Outputs.ownerBalanceBeforeClaims, await ctx.wire.getWireBalance(Constants.Accounts.Owner))
 }
 
 // ── Substrate-health verify runners ─────────────────────────────────────────
@@ -636,17 +607,11 @@ async function runVerifyUnderwriterActive(ctx: Context): Promise<void> {
   await pollUntil(
     `${label} (${account}) ACTIVE`,
     async () => {
-      const { rows } = await ctx.wire
-        .getSysioContract(SysioContractName.opreg)
-        .tables.operators.query()
+      const { rows } = await ctx.wire.getSysioContract(SysioContractName.opreg).tables.operators.query()
       const underwriter = rows.find(row => row.account === account)
       return (
         underwriter != null &&
-        matchesProtoEnum(
-          underwriter.status,
-          SysioOpregOperatorstatus,
-          SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
-        )
+        matchesProtoEnum(underwriter.status, SysioOpregOperatorstatus, SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE)
       )
     },
     Constants.Timing.UwreqDeadlineMs,
@@ -665,11 +630,7 @@ function assertPrivateRowActive(
 ): void {
   Assert.ok(row != null, `${label}: private depot row not found`)
   Assert.ok(
-    matchesProtoEnum(
-      row.status,
-      SysioReservReservestatus,
-      SysioReservReservestatus.RESERVE_STATUS_ACTIVE
-    ),
+    matchesProtoEnum(row.status, SysioReservReservestatus, SysioReservReservestatus.RESERVE_STATUS_ACTIVE),
     `${label}: expected status ACTIVE, got ${row.status}`
   )
   Assert.ok(
@@ -708,11 +669,7 @@ async function runVerifyEthereumDepotRowPending(ctx: Context): Promise<void> {
       )
       return (
         row != null &&
-        matchesProtoEnum(
-          row.status,
-          SysioReservReservestatus,
-          SysioReservReservestatus.RESERVE_STATUS_PENDING
-        )
+        matchesProtoEnum(row.status, SysioReservReservestatus, SysioReservReservestatus.RESERVE_STATUS_PENDING)
       )
     },
     Constants.Timing.RelayDeadlineMs,
@@ -732,11 +689,7 @@ async function runVerifySolanaDepotRowPending(ctx: Context): Promise<void> {
       )
       return (
         row != null &&
-        matchesProtoEnum(
-          row.status,
-          SysioReservReservestatus,
-          SysioReservReservestatus.RESERVE_STATUS_PENDING
-        )
+        matchesProtoEnum(row.status, SysioReservReservestatus, SysioReservReservestatus.RESERVE_STATUS_PENDING)
       )
     },
     Constants.Timing.RelayDeadlineMs,
@@ -747,11 +700,7 @@ async function runVerifySolanaDepotRowPending(ctx: Context): Promise<void> {
 /** ETH depot row ACTIVE + owner + is_private + exact custody (old test #4, ETH half). */
 async function runVerifyEthereumDepotRowActive(ctx: Context): Promise<void> {
   assertPrivateRowActive(
-    await readPrivateReserveRow(
-      ctx,
-      Constants.Reserves.Ethereum.ChainCode,
-      Constants.Reserves.Ethereum.TokenCode
-    ),
+    await readPrivateReserveRow(ctx, Constants.Reserves.Ethereum.ChainCode, Constants.Reserves.Ethereum.TokenCode),
     "ETH private reserve",
     Constants.CreateParams.EthereumRequestedWire,
     Constants.CreateParams.EthereumEscrowDepotUnits
@@ -761,11 +710,7 @@ async function runVerifyEthereumDepotRowActive(ctx: Context): Promise<void> {
 /** SOL depot row ACTIVE + owner + is_private + exact custody (old test #4, SOL half). */
 async function runVerifySolanaDepotRowActive(ctx: Context): Promise<void> {
   assertPrivateRowActive(
-    await readPrivateReserveRow(
-      ctx,
-      Constants.Reserves.Solana.ChainCode,
-      Constants.Reserves.Solana.TokenCode
-    ),
+    await readPrivateReserveRow(ctx, Constants.Reserves.Solana.ChainCode, Constants.Reserves.Solana.TokenCode),
     "SOL private reserve",
     Constants.CreateParams.SolanaRequestedWire,
     Constants.CreateParams.SolanaEscrowDepotUnits
@@ -773,9 +718,7 @@ async function runVerifySolanaDepotRowActive(ctx: Context): Promise<void> {
 }
 
 /** RESERVE_READY landed on the ETH outpost (local record ACTIVE). */
-async function runVerifyEthereumLocalReserveActive(
-  ctx: Context
-): Promise<void> {
+async function runVerifyEthereumLocalReserveActive(ctx: Context): Promise<void> {
   await pollUntil(
     "ETH outpost-local private record ACTIVE",
     () => ReserveSteps.readEthereumLocalReserveActive(ctx),
@@ -845,11 +788,8 @@ async function runPhaseAUwreqCreated(ctx: Context): Promise<void> {
   await pollUntil(
     "PhaseA private-pair UWREQ row appears",
     async () =>
-      (await readPrivatePairUwreq(
-        ctx,
-        Constants.Reserves.Ethereum.ChainCode,
-        Constants.Reserves.Solana.ChainCode
-      )) != null,
+      (await readPrivatePairUwreq(ctx, Constants.Reserves.Ethereum.ChainCode, Constants.Reserves.Solana.ChainCode)) !=
+      null,
     Constants.Timing.UwreqDeadlineMs,
     Constants.Timing.LongPollIntervalMs
   )
@@ -878,11 +818,7 @@ async function runPhaseAUwreqConfirmed(ctx: Context): Promise<void> {
     "PhaseA UWREQ status=CONFIRMED",
     async () =>
       uwreqConfirmed(
-        await readPrivatePairUwreq(
-          ctx,
-          Constants.Reserves.Ethereum.ChainCode,
-          Constants.Reserves.Solana.ChainCode
-        )
+        await readPrivatePairUwreq(ctx, Constants.Reserves.Ethereum.ChainCode, Constants.Reserves.Solana.ChainCode)
       ),
     Constants.Timing.RaceDeadlineMs,
     Constants.Timing.LongPollIntervalMs
@@ -896,29 +832,12 @@ async function runPhaseAUwreqConfirmed(ctx: Context): Promise<void> {
 }
 
 /** Exactly two locks — one per swap leg chain. */
-async function assertTwoLegLocks(
-  ctx: Context,
-  uwreqId: number,
-  label: string
-): Promise<void> {
+async function assertTwoLegLocks(ctx: Context, uwreqId: number, label: string): Promise<void> {
   const locks = await ctx.locksForUwreq(uwreqId)
-  Assert.strictEqual(
-    locks.length,
-    2,
-    `${label}: expected TWO locks (one per leg)`
-  )
-  const lockChains = locks
-      .map(lock => slugValue(lock.chain_code))
-      .sort((a, b) => a - b),
-    expectedChains = [
-      Constants.Reserves.Ethereum.ChainCode,
-      Constants.Reserves.Solana.ChainCode
-    ].sort((a, b) => a - b)
-  Assert.deepStrictEqual(
-    lockChains,
-    expectedChains,
-    `${label}: lock chains != [ETHEREUM, SOLANA]`
-  )
+  Assert.strictEqual(locks.length, 2, `${label}: expected TWO locks (one per leg)`)
+  const lockChains = locks.map(lock => slugValue(lock.chain_code)).sort((a, b) => a - b),
+    expectedChains = [Constants.Reserves.Ethereum.ChainCode, Constants.Reserves.Solana.ChainCode].sort((a, b) => a - b)
+  Assert.deepStrictEqual(lockChains, expectedChains, `${label}: lock chains != [ETHEREUM, SOLANA]`)
 }
 
 /**
@@ -1070,10 +989,7 @@ async function runVerifyOwnerFeesClaimed(ctx: Context): Promise<void> {
     claimed = ctx.outputs.assert(Outputs.ownerBalanceBeforeClaims)
   Assert.strictEqual(ethereum.accrued, 0n, "the ETH reserve's accrual is swept to zero")
   Assert.strictEqual(solana.accrued, 0n, "the SOL reserve's accrual is swept to zero")
-  Assert.ok(
-    ethereum.lifetime > 0n && solana.lifetime > 0n,
-    "each reserve's lifetime audit total survives the claim"
-  )
+  Assert.ok(ethereum.lifetime > 0n && solana.lifetime > 0n, "each reserve's lifetime audit total survives the claim")
   // Both claims paid REAL WIRE to the owner.
   const balance = await ctx.wire.getWireBalance(Constants.Accounts.Owner)
   Assert.strictEqual(
@@ -1091,16 +1007,8 @@ async function runVerifyOwnerFeesClaimed(ctx: Context): Promise<void> {
 async function runPhaseAUserPayout(ctx: Context): Promise<void> {
   const target = ctx.outputs.assert(Outputs.phaseATarget),
     balanceBefore = ctx.outputs.assert(Outputs.phaseAUserAtaBefore),
-    drift = WireReserveTool.varianceDrift(
-      target,
-      Constants.Variance.ToleranceBps
-    ),
-    floor =
-      balanceBefore +
-      WireReserveTool.fromDepot(
-        target - drift,
-        Constants.SwapAmounts.UsdcSolDecimals
-      )
+    drift = WireReserveTool.varianceDrift(target, Constants.Variance.ToleranceBps),
+    floor = balanceBefore + WireReserveTool.fromDepot(target - drift, Constants.SwapAmounts.UsdcSolDecimals)
   await pollUntil(
     "PhaseA user USDCSOL ATA bump",
     async () => (await readUserUsdcSolBalance(ctx)) >= floor,
@@ -1108,13 +1016,8 @@ async function runPhaseAUserPayout(ctx: Context): Promise<void> {
     Constants.Timing.LongPollIntervalMs
   )
   const balanceAfter = await readUserUsdcSolBalance(ctx)
-  log.info(
-    `[PhaseA] user received ${balanceAfter - balanceBefore} USDCSOL base units`
-  )
-  Assert.ok(
-    balanceAfter - balanceBefore > 0n,
-    "PhaseA: user's USDCSOL ATA must increase"
-  )
+  log.info(`[PhaseA] user received ${balanceAfter - balanceBefore} USDCSOL base units`)
+  Assert.ok(balanceAfter - balanceBefore > 0n, "PhaseA: user's USDCSOL ATA must increase")
 }
 
 // ── Phase B verify runners ──────────────────────────────────────────────────
@@ -1153,10 +1056,7 @@ async function runPhaseBQuote(ctx: Context): Promise<void> {
     .set(Outputs.phaseBBooksBefore, { src: solanaBook, dst: ethereumBook })
     .set(Outputs.phaseBWireIntermediate, wireIntermediate)
     .set(Outputs.phaseBTarget, target)
-    .set(
-      Outputs.phaseBEthereumBalanceBefore,
-      await ctx.ethereum.getBalance(swapUser.ethereumWallet.address)
-    )
+    .set(Outputs.phaseBEthereumBalanceBefore, await ctx.ethereum.getBalance(swapUser.ethereumWallet.address))
   log.info(`[PhaseB] w=${wireIntermediate} target=${target} (depot units)`)
 }
 
@@ -1165,11 +1065,8 @@ async function runPhaseBUwreqCreated(ctx: Context): Promise<void> {
   await pollUntil(
     "PhaseB private-pair UWREQ row appears",
     async () =>
-      (await readPrivatePairUwreq(
-        ctx,
-        Constants.Reserves.Solana.ChainCode,
-        Constants.Reserves.Ethereum.ChainCode
-      )) != null,
+      (await readPrivatePairUwreq(ctx, Constants.Reserves.Solana.ChainCode, Constants.Reserves.Ethereum.ChainCode)) !=
+      null,
     Constants.Timing.UwreqDeadlineMs,
     Constants.Timing.LongPollIntervalMs
   )
@@ -1193,11 +1090,7 @@ async function runPhaseBUwreqConfirmed(ctx: Context): Promise<void> {
     "PhaseB UWREQ status=CONFIRMED",
     async () =>
       uwreqConfirmed(
-        await readPrivatePairUwreq(
-          ctx,
-          Constants.Reserves.Solana.ChainCode,
-          Constants.Reserves.Ethereum.ChainCode
-        )
+        await readPrivatePairUwreq(ctx, Constants.Reserves.Solana.ChainCode, Constants.Reserves.Ethereum.ChainCode)
       ),
     Constants.Timing.RaceDeadlineMs,
     Constants.Timing.LongPollIntervalMs
@@ -1274,32 +1167,18 @@ async function runPhaseBUserPayout(ctx: Context): Promise<void> {
   const swapUser = ctx.outputs.assert(swapUserOutputKey()),
     target = ctx.outputs.assert(Outputs.phaseBTarget),
     balanceBefore = ctx.outputs.assert(Outputs.phaseBEthereumBalanceBefore),
-    targetWei = WireReserveTool.fromDepot(
-      target,
-      Constants.SwapAmounts.EthereumNativeDecimals
-    ),
-    driftWei = WireReserveTool.varianceDrift(
-      targetWei,
-      Constants.Variance.ToleranceBps
-    ),
+    targetWei = WireReserveTool.fromDepot(target, Constants.SwapAmounts.EthereumNativeDecimals),
+    driftWei = WireReserveTool.varianceDrift(targetWei, Constants.Variance.ToleranceBps),
     floor = balanceBefore + (targetWei - driftWei)
   await pollUntil(
     "PhaseB user receives ETH",
-    async () =>
-      (await ctx.ethereum.getBalance(swapUser.ethereumWallet.address)) >= floor,
+    async () => (await ctx.ethereum.getBalance(swapUser.ethereumWallet.address)) >= floor,
     Constants.Timing.RemitDeadlineMs,
     Constants.Timing.LongPollIntervalMs
   )
-  const balanceAfter = await ctx.ethereum.getBalance(
-    swapUser.ethereumWallet.address
-  )
-  log.info(
-    `[PhaseB] user received ${balanceAfter - balanceBefore} wei (targetWei=${targetWei})`
-  )
-  Assert.ok(
-    balanceAfter - balanceBefore > 0n,
-    "PhaseB: user's ETH balance must increase"
-  )
+  const balanceAfter = await ctx.ethereum.getBalance(swapUser.ethereumWallet.address)
+  log.info(`[PhaseB] user received ${balanceAfter - balanceBefore} wei (targetWei=${targetWei})`)
+  Assert.ok(balanceAfter - balanceBefore > 0n, "PhaseB: user's ETH balance must increase")
 }
 
 // ── Private→WIRE exclusion verify runners ───────────────────────────────────
@@ -1332,25 +1211,17 @@ async function runVerifyNoPrivateToWireUwreq(ctx: Context): Promise<void> {
   await pollUntil(
     "forbidden private→WIRE UWREQ",
     async () =>
-      (await readPrivatePairUwreq(
-        ctx,
-        Constants.Reserves.Ethereum.ChainCode,
-        Constants.Reserves.Wire.ChainCode
-      )) != null,
+      (await readPrivatePairUwreq(ctx, Constants.Reserves.Ethereum.ChainCode, Constants.Reserves.Wire.ChainCode)) !=
+      null,
     Constants.Timing.NoUwreqWindowMs,
     Constants.Timing.LongPollIntervalMs
   ).then(
     () => {
-      throw new Error(
-        "forbidden private→WIRE UWREQ was created — the privacy gate failed to exclude the WIRE endpoint"
-      )
+      throw new Error("forbidden private→WIRE UWREQ was created — the privacy gate failed to exclude the WIRE endpoint")
     },
     (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error)
-      Assert.ok(
-        message.includes("Timed out"),
-        `no-uwreq window failed for an unexpected reason: ${message}`
-      )
+      Assert.ok(message.includes("Timed out"), `no-uwreq window failed for an unexpected reason: ${message}`)
     }
   )
 }

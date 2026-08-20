@@ -44,10 +44,7 @@ export class ClusterKeyStore {
    */
   node(index: number): ClusterKeyStore.NodeKeys {
     const nodeKeys = this.nodeList.find(candidate => candidate.index === index)
-    Assert.ok(
-      nodeKeys != null,
-      `ClusterKeyStore: no generated keys for producer node ${index}`
-    )
+    Assert.ok(nodeKeys != null, `ClusterKeyStore: no generated keys for producer node ${index}`)
     return nodeKeys
   }
 
@@ -84,9 +81,7 @@ export class ClusterKeyStore {
    * in parallel, so completion order varies run to run.
    */
   operatorsByType(type: OperatorType): OperatorAccount[] {
-    return this.operators
-      .filter(operator => operator.type === type)
-      .sort((a, b) => a.label.localeCompare(b.label))
+    return this.operators.filter(operator => operator.type === type).sort((a, b) => a.label.localeCompare(b.label))
   }
 }
 

@@ -6,10 +6,7 @@ import { DaemonConfig } from "../../config/DaemonConfig.js"
 import { Report } from "../../report/Report.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../ClusterBuildStep.js"
 import type { StepInput } from "../StepRunner.js"
 
 /**
@@ -108,9 +105,7 @@ export namespace DebuggingServerBundleSteps {
   export function copyBundle(source: string, target: string): void {
     assertBundlePresent(source)
     mkdirs(target)
-    BundleFilenames.forEach(filename =>
-      Fs.copyFileSync(Path.join(source, filename), Path.join(target, filename))
-    )
+    BundleFilenames.forEach(filename => Fs.copyFileSync(Path.join(source, filename), Path.join(target, filename)))
   }
 
   /** Named runner — assert the bundle exists, then copy it into the cluster tree. */
@@ -120,9 +115,6 @@ export namespace DebuggingServerBundleSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    copyBundle(
-      bundleDirectory(),
-      Path.join(ctx.config.dataPath, DaemonConfig.DebuggingServerSubpath)
-    )
+    copyBundle(bundleDirectory(), Path.join(ctx.config.dataPath, DaemonConfig.DebuggingServerSubpath))
   }
 }

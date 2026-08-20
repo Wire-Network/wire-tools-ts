@@ -1,8 +1,4 @@
-import type {
-  DebugEnvelopeMetadataRecord,
-  DebugOutpostEndpointsType,
-  Envelope
-} from "@wireio/opp-typescript-models"
+import type { DebugEnvelopeMetadataRecord, DebugOutpostEndpointsType, Envelope } from "@wireio/opp-typescript-models"
 
 /**
  * Serializable view of a decoded envelope pair — plain objects, no BigInt

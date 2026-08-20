@@ -147,11 +147,7 @@ export abstract class ManagedProcess {
   }
   /** Pid file path: `<clusterPath>/data/<label>/<label>.pid`. */
   get pidFile(): string {
-    return ProcessManager.toClusterPath(
-      "data",
-      this.label.replaceAll("-", "_"),
-      `${this.label}.pid`
-    )
+    return ProcessManager.toClusterPath("data", this.label.replaceAll("-", "_"), `${this.label}.pid`)
   }
 
   /** Spawn, capture output, write the pid file, await {@link verifyReady}. Fluent. */
@@ -236,15 +232,12 @@ export abstract class ManagedProcess {
         }
       } catch (error) {
         // expected pre-ready transients (ECONNREFUSED, 404) — breadcrumb, keep polling
-        this.log.debug(
-          `${this.label} not ready yet: ${error instanceof Error ? error.message : String(error)}`
-        )
+        this.log.debug(`${this.label} not ready yet: ${error instanceof Error ? error.message : String(error)}`)
       }
       await sleep(this.verifyIntervalMs)
     }
     throw new Error(
-      `${this.label} did not pass verifyReady within ${verifyBudgetMs}ms` +
-        (await this.startupFailureDetailSuffix())
+      `${this.label} did not pass verifyReady within ${verifyBudgetMs}ms` + (await this.startupFailureDetailSuffix())
     )
   }
 
@@ -253,10 +246,7 @@ export abstract class ManagedProcess {
    * artifact, via {@link ProcessManager.writeRaw}) AND the structured logger.
    * stderr → warn, stdout → info.
    */
-  protected captureOutput(
-    stream: NodeJS.ReadableStream | null,
-    isErr = false
-  ): void {
+  protected captureOutput(stream: NodeJS.ReadableStream | null, isErr = false): void {
     if (!stream) return
     stream.setEncoding("utf8")
     stream.on("data", (chunk: string) =>
@@ -265,8 +255,7 @@ export abstract class ManagedProcess {
         .filter(Boolean)
         .forEach(line => {
           this.recentLines.push(line)
-          if (this.recentLines.length > ManagedProcess.RecentOutputCap)
-            this.recentLines.shift()
+          if (this.recentLines.length > ManagedProcess.RecentOutputCap) this.recentLines.shift()
           this.manager.writeRaw(this.label, line)
           if (isErr) this.log.warn(line)
           else this.log.info(line)
@@ -294,18 +283,13 @@ export abstract class ManagedProcess {
     // open past its exit grace (the "failed to exit gracefully" warning).
     let killEscalation: ReturnType<typeof setTimeout> | null = null
     const timer = new Promise<"timeout">(resolve => {
-      killEscalation = setTimeout(
-        () => resolve("timeout"),
-        ManagedProcess.GracefulKillMs
-      )
+      killEscalation = setTimeout(() => resolve("timeout"), ManagedProcess.GracefulKillMs)
     })
-    const outcome = await Promise.race([
-      this.exited.promise.then(() => "exited" as const),
-      timer,
-      aborted
-    ]).finally(() => {
-      if (killEscalation != null) clearTimeout(killEscalation)
-    })
+    const outcome = await Promise.race([this.exited.promise.then(() => "exited" as const), timer, aborted]).finally(
+      () => {
+        if (killEscalation != null) clearTimeout(killEscalation)
+      }
+    )
     if (outcome !== "exited") {
       this.log.warn(`${this.label} did not exit gracefully (${outcome}) — SIGKILL`)
       await this.kill()
@@ -326,13 +310,9 @@ export abstract class ManagedProcess {
 
   private signalTree(signal: ProcessSignalName): Promise<void> {
     return Deferred.useCallback<void>(deferred =>
-      treeKill(this.pidInternal, signal, error =>
-        error ? deferred.reject(error) : deferred.resolve()
-      )
+      treeKill(this.pidInternal, signal, error => (error ? deferred.reject(error) : deferred.resolve()))
     ).promise.catch(error =>
-      this.log.warn(
-        `${signal} failed for ${this.label}: ${error instanceof Error ? error.message : String(error)}`
-      )
+      this.log.warn(`${signal} failed for ${this.label}: ${error instanceof Error ? error.message : String(error)}`)
     )
   }
 }

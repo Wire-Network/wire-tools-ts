@@ -28,10 +28,7 @@ describe("ProcessLivenessStream over WS", () => {
 
   beforeAll(async () => {
     Fs.mkdirSync(nodeDir, { recursive: true })
-    Fs.writeFileSync(
-      Path.join(nodeDir, `nodeop${PidSources.PidExt}`),
-      String(process.pid)
-    )
+    Fs.writeFileSync(Path.join(nodeDir, `nodeop${PidSources.PidExt}`), String(process.pid))
     const node: ClusterStateNode = {
       name: PidSources.BiosNodeId,
       role: ClusterStateNodeRole.bios,
@@ -49,14 +46,8 @@ describe("ProcessLivenessStream over WS", () => {
       solanaLedgerPath: "",
       solanaIdlFile: null
     }
-    Fs.writeFileSync(
-      Path.join(tmpDir, ClusterFiles.ConfigFilename),
-      JSON.stringify({ clusterPath: tmpDir })
-    )
-    Fs.writeFileSync(
-      Path.join(tmpDir, ClusterFiles.StateFilename),
-      JSON.stringify(state)
-    )
+    Fs.writeFileSync(Path.join(tmpDir, ClusterFiles.ConfigFilename), JSON.stringify({ clusterPath: tmpDir }))
+    Fs.writeFileSync(Path.join(tmpDir, ClusterFiles.StateFilename), JSON.stringify(state))
     server = await DebuggingServer.create({ clusterPath: tmpDir, port: 0 })
     const addr = await server.start()
     baseUrl = `http://127.0.0.1:${addr.port}`
@@ -78,8 +69,7 @@ describe("ProcessLivenessStream over WS", () => {
     const frames = await collectFrames(ws, 2, 8_000)
     expect(frames[0].type).toBe(StreamFrameType.Subscribed)
     expect(frames[1].type).toBe(StreamFrameType.Event)
-    const event = (frames[1] as EventFrame<StreamTopic.ProcessLiveness>)
-      .payload as ProcessLivenessEvent
+    const event = (frames[1] as EventFrame<StreamTopic.ProcessLiveness>).payload as ProcessLivenessEvent
     expect(event.setSnapshots.length).toBe(1)
     expect(event.setSnapshots[0].label).toBe("nodeop")
     expect(event.setSnapshots[0].alive).toBe(true)

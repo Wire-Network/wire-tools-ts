@@ -1,9 +1,6 @@
 import Fs from "node:fs"
 import Path from "node:path"
-import {
-  AttestationType,
-  DebugOutpostEndpointsType
-} from "@wireio/opp-typescript-models"
+import { AttestationType, DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
 import { EnvelopeRecordFile } from "@wireio/debugging-shared"
 
 /**
@@ -72,16 +69,8 @@ export function envelopeDataContains(
   if (!Fs.existsSync(oppDebuggingDirectory)) return false
   const directionFragment = DebugOutpostEndpointsType[direction]
   return Fs.readdirSync(oppDebuggingDirectory)
-    .filter(
-      name =>
-        name.endsWith(EnvelopeRecordFile.DataExt) &&
-        name.includes(directionFragment)
-    )
-    .some(name =>
-      Fs.readFileSync(Path.join(oppDebuggingDirectory, name)).includes(
-        Buffer.from(needle)
-      )
-    )
+    .filter(name => name.endsWith(EnvelopeRecordFile.DataExt) && name.includes(directionFragment))
+    .some(name => Fs.readFileSync(Path.join(oppDebuggingDirectory, name)).includes(Buffer.from(needle)))
 }
 
 /**
@@ -97,9 +86,5 @@ export function containsSwapRevert(
   oppDebuggingDirectory: string,
   direction: DebugOutpostEndpointsType = DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
 ): boolean {
-  return envelopeDataContains(
-    oppDebuggingDirectory,
-    direction,
-    attestationEntryTag(AttestationType.SWAP_REVERT)
-  )
+  return envelopeDataContains(oppDebuggingDirectory, direction, attestationEntryTag(AttestationType.SWAP_REVERT))
 }

@@ -1,9 +1,6 @@
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
-import {
-  ClusterKeyStore,
-  type OperatorAccount
-} from "@wireio/cluster-tool/orchestration/outputs"
+import { ClusterKeyStore, type OperatorAccount } from "@wireio/cluster-tool/orchestration/outputs"
 
 function nodeKeys(index: number): ClusterKeyStore.NodeKeys {
   return {
@@ -61,10 +58,7 @@ describe("ClusterKeyStore", () => {
       .setOperator(operatorAccount("defproducera", OperatorType.PRODUCER))
       .setOperator(operatorAccount("defproducerb", OperatorType.PRODUCER))
       .setOperator(operatorAccount("batchopaaaa", OperatorType.BATCH))
-    expect(store.operatorsByType(OperatorType.PRODUCER).map(op => op.label)).toEqual([
-      "defproducera",
-      "defproducerb"
-    ])
+    expect(store.operatorsByType(OperatorType.PRODUCER).map(op => op.label)).toEqual(["defproducera", "defproducerb"])
     expect(store.operatorsByType(OperatorType.UNDERWRITER)).toEqual([])
   })
 })
@@ -94,12 +88,10 @@ describe("ClusterKeyStore account-handle keying", () => {
   })
 
   it("setOperator with the same handle REPLACES the entry (sponsored-creation account write-back)", () => {
-    const store = new ClusterKeyStore()
-      .setOperator(operatorAccount("batchop.a", OperatorType.BATCH))
-      .setOperator({
-        ...operatorAccount("batchop.a", OperatorType.BATCH),
-        account: "wireno.q8m2c"
-      })
+    const store = new ClusterKeyStore().setOperator(operatorAccount("batchop.a", OperatorType.BATCH)).setOperator({
+      ...operatorAccount("batchop.a", OperatorType.BATCH),
+      account: "wireno.q8m2c"
+    })
     expect(store.operators.length).toBe(1)
     // The write-back changes ONLY the chain account — the handle is the key.
     expect(store.assertOperator("batchop.a").account).toBe("wireno.q8m2c")

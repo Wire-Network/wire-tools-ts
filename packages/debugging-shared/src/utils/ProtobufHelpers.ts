@@ -14,8 +14,6 @@ import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
  * Derive the endpoints key string used in storage filenames.
  * Uses the enum's own reverse mapping — no manual string table to maintain.
  */
-export function endpointsTypeToKey(
-  type: DebugOutpostEndpointsType
-): string {
+export function endpointsTypeToKey(type: DebugOutpostEndpointsType): string {
   return asOption(DebugOutpostEndpointsType[type]).filter(isString).getOrNull()
 }

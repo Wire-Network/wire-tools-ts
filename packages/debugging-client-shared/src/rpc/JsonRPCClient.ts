@@ -56,10 +56,7 @@ export class JsonRPCClient {
    * @throws When the HTTP fetch fails, the envelope is malformed, or the
    *         server returns a JSON-RPC `error` field.
    */
-  async invoke<P extends HandlerURIType>(
-    method: P,
-    params: InferredRequestType<P>
-  ): Promise<InferredResponseType<P>> {
+  async invoke<P extends HandlerURIType>(method: P, params: InferredRequestType<P>): Promise<InferredResponseType<P>> {
     const id = this.nextId++
 
     const resp = await fetch(this.url, {
@@ -76,10 +73,7 @@ export class JsonRPCClient {
       )
     })
 
-    Assert.ok(
-      resp.ok,
-      `JSON-RPC POST failed: ${resp.status} ${resp.statusText}`
-    )
+    Assert.ok(resp.ok, `JSON-RPC POST failed: ${resp.status} ${resp.statusText}`)
 
     // Validate the response envelope structurally via the codec (replaces the
     // hand-rolled `as ResponseEnvelope` cast); `result` stays opaque per-method.
@@ -93,15 +87,10 @@ export class JsonRPCClient {
       body.jsonrpc === DebuggingDefaults.JsonrpcVersion,
       `Invalid JSON-RPC version in response: ${body.jsonrpc}`
     )
-    Assert.ok(
-      body.id === id,
-      `JSON-RPC id mismatch: expected ${id}, got ${body.id}`
-    )
+    Assert.ok(body.id === id, `JSON-RPC id mismatch: expected ${id}, got ${body.id}`)
 
     if (body.error) {
-      throw new Error(
-        `JSON-RPC error ${body.error.code}: ${body.error.message}`
-      )
+      throw new Error(`JSON-RPC error ${body.error.code}: ${body.error.message}`)
     }
 
     Assert.ok("result" in body, "JSON-RPC response missing 'result'")

@@ -136,9 +136,8 @@ export namespace SwapNonNativeScenarioConstants {
   }
 
   /** `outpost-addrs.json` key per mock ERC-20 token code (ETH-side stablecoins). */
-  export const MockErc20AddressKeyByTokenCode: ReadonlyMap<number, OutpostAddressKey> =
-    new Map([
-      [Reserves.Ethereum.USDC, OutpostAddressKey.MockUsdc],
-      [Reserves.Ethereum.USDT, OutpostAddressKey.MockUsdt]
-    ])
+  export const MockErc20AddressKeyByTokenCode: ReadonlyMap<number, OutpostAddressKey> = new Map([
+    [Reserves.Ethereum.USDC, OutpostAddressKey.MockUsdc],
+    [Reserves.Ethereum.USDT, OutpostAddressKey.MockUsdt]
+  ])
 }

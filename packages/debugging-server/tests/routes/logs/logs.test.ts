@@ -3,11 +3,7 @@ import * as OS from "node:os"
 import * as Path from "node:path"
 
 import { ClusterFiles } from "@wireio/cluster-tool-shared"
-import {
-  ApiPaths,
-  type LogReadResponse,
-  type LogStat
-} from "@wireio/debugging-shared"
+import { ApiPaths, type LogReadResponse, type LogStat } from "@wireio/debugging-shared"
 
 import { DebuggingServer } from "@wireio/debugging-server"
 
@@ -33,10 +29,7 @@ describe(`POST ${ApiPaths.Logs.Endpoint}`, () => {
   beforeAll(async () => {
     Fs.mkdirSync(Path.dirname(logFile), { recursive: true })
     Fs.writeFileSync(logFile, "alpha\nbeta\ngamma\n")
-    Fs.writeFileSync(
-      Path.join(tmpDir, ClusterFiles.ConfigFilename),
-      JSON.stringify({ clusterPath: tmpDir })
-    )
+    Fs.writeFileSync(Path.join(tmpDir, ClusterFiles.ConfigFilename), JSON.stringify({ clusterPath: tmpDir }))
     server = await DebuggingServer.create({ clusterPath: tmpDir, port: 0 })
     const addr = await server.start()
     baseUrl = `http://127.0.0.1:${addr.port}`

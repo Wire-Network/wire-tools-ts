@@ -35,9 +35,7 @@ export namespace SwapFromWireScenarioUserSteps {
    * @param fundWireAmount - Treasury funding in raw WIRE base units.
    * @returns The definition step.
    */
-  export function planProvisionWire<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planProvisionWire<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

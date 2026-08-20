@@ -13,10 +13,7 @@ import { getValue } from "@wireio/shared"
  * @returns The executable basename, or `""`.
  */
 export function processCommandBasename(pid: number): string {
-  const cmdline = getValue(
-    () => Fs.readFileSync(`/proc/${pid}/cmdline`, "utf8"),
-    ""
-  )
+  const cmdline = getValue(() => Fs.readFileSync(`/proc/${pid}/cmdline`, "utf8"), "")
   return Path.basename(cmdline.split("\0")[0] ?? "")
 }
 

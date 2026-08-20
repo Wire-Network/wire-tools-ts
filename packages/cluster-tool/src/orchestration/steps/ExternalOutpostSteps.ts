@@ -12,10 +12,7 @@ import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 import { NodeopProcess } from "../../cluster/processes/NodeopProcess.js"
 import { OperatorDaemonTool } from "../../tools/wire/OperatorDaemonTool.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../ClusterBuildStep.js"
 import { pollUntil, verifyStep } from "../StepTools.js"
 import { OperatorDaemonArtifactsKey } from "../outputs/index.js"
 
@@ -32,18 +29,9 @@ const log = getLogger(__filename)
  */
 export namespace ExternalOutpostSteps {
   /** ETH outpost address keys the daemons require (parity with local prep). */
-  const RequiredEthereumAddressKeys = [
-    "OPP",
-    "OPPInbound",
-    "OperatorRegistry",
-    "ReserveManager"
-  ] as const
+  const RequiredEthereumAddressKeys = ["OPP", "OPPInbound", "OperatorRegistry", "ReserveManager"] as const
   /** SOL outpost IDL instructions the daemons require (parity with local prep). */
-  const RequiredSolanaIdlInstructions = [
-    "epoch_in",
-    "commit_underwrite",
-    "request_swap"
-  ] as const
+  const RequiredSolanaIdlInstructions = ["epoch_in", "commit_underwrite", "request_swap"] as const
 
   /** Minimum head-block advance that proves the depot is producing blocks. */
   export const HeadAdvanceMinBlocks = 2
@@ -83,22 +71,13 @@ export namespace ExternalOutpostSteps {
    * @param options - Step options.
    * @returns The materialize step.
    */
-  export function planMaterialize<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planMaterialize<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runMaterialize
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runMaterialize)
   }
 
   /** Named runner — copy the config's outpost files to their canonical dataPath homes. */
@@ -118,35 +97,18 @@ export namespace ExternalOutpostSteps {
       abiDir = Path.join(dataPath, OperatorDaemonTool.EthereumAbiSubpath),
       idlDir = Path.join(dataPath, OperatorDaemonTool.SolanaIdlSubpath),
       materialize = (source: string, destination: string): void => {
-        Assert.ok(
-          Fs.existsSync(source),
-          `ExternalOutpostSteps.materialize: source file not found: ${source}`
-        )
+        Assert.ok(Fs.existsSync(source), `ExternalOutpostSteps.materialize: source file not found: ${source}`)
         Fs.mkdirSync(Path.dirname(destination), { recursive: true })
         Fs.copyFileSync(source, destination)
       }
-    materialize(
-      external.ethereum.addressFile,
-      Path.join(deploymentsDir, "outpost-addrs.json")
-    )
+    materialize(external.ethereum.addressFile, Path.join(deploymentsDir, "outpost-addrs.json"))
     if (external.ethereum.liqEthAddressFile != null) {
-      materialize(
-        external.ethereum.liqEthAddressFile,
-        Path.join(deploymentsDir, "liqeth-addrs.json")
-      )
+      materialize(external.ethereum.liqEthAddressFile, Path.join(deploymentsDir, "liqeth-addrs.json"))
     }
-    external.ethereum.abiFiles.forEach(abiFile =>
-      materialize(abiFile, Path.join(abiDir, Path.basename(abiFile)))
-    )
-    materialize(
-      external.solana.idlFile,
-      Path.join(idlDir, OperatorDaemonTool.SolanaIdlFilename)
-    )
+    external.ethereum.abiFiles.forEach(abiFile => materialize(abiFile, Path.join(abiDir, Path.basename(abiFile))))
+    materialize(external.solana.idlFile, Path.join(idlDir, OperatorDaemonTool.SolanaIdlFilename))
     if (external.solana.mintsFile != null) {
-      materialize(
-        external.solana.mintsFile,
-        Path.join(dataPath, "sol-mock-mints.json")
-      )
+      materialize(external.solana.mintsFile, Path.join(dataPath, "sol-mock-mints.json"))
     }
   }
 
@@ -164,22 +126,13 @@ export namespace ExternalOutpostSteps {
    * @param options - Step options.
    * @returns The publish-artifacts step.
    */
-  export function planPublishArtifacts<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planPublishArtifacts<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runPublishArtifacts
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runPublishArtifacts)
   }
 
   /** Named runner — store `OperatorDaemonArtifacts` from the materialized dataPath files. */
@@ -190,56 +143,32 @@ export namespace ExternalOutpostSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const dataPath = ctx.config.dataPath,
-      addressFile = Path.join(
-        ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
-        "outpost-addrs.json"
-      ),
+      addressFile = Path.join(ClusterConfigProvider.ethereumDeploymentsPath(ctx.config), "outpost-addrs.json"),
       abiDir = Path.join(dataPath, OperatorDaemonTool.EthereumAbiSubpath),
-      idlFile = Path.join(
-        dataPath,
-        OperatorDaemonTool.SolanaIdlSubpath,
-        OperatorDaemonTool.SolanaIdlFilename
-      )
+      idlFile = Path.join(dataPath, OperatorDaemonTool.SolanaIdlSubpath, OperatorDaemonTool.SolanaIdlFilename)
 
     // Ethereum: materialized addresses + ABI files; the daemon-required contract
     // keys must be present (fail here, not at first delivery).
-    Assert.ok(
-      Fs.existsSync(addressFile),
-      `ExternalOutpostSteps: ${addressFile} not found (materialize must run first)`
-    )
-    const ethereumAddresses: Record<string, string> = JSON.parse(
-      Fs.readFileSync(addressFile, "utf-8")
-    )
+    Assert.ok(Fs.existsSync(addressFile), `ExternalOutpostSteps: ${addressFile} not found (materialize must run first)`)
+    const ethereumAddresses: Record<string, string> = JSON.parse(Fs.readFileSync(addressFile, "utf-8"))
     RequiredEthereumAddressKeys.forEach(key =>
       Assert.ok(
-        typeof ethereumAddresses[key] === "string" &&
-          ethereumAddresses[key].length > 0,
+        typeof ethereumAddresses[key] === "string" && ethereumAddresses[key].length > 0,
         `ExternalOutpostSteps: outpost-addrs.json is missing the ${key} address`
       )
     )
-    Assert.ok(
-      Fs.existsSync(abiDir),
-      `ExternalOutpostSteps: ${abiDir} not found (materialize must run first)`
-    )
+    Assert.ok(Fs.existsSync(abiDir), `ExternalOutpostSteps: ${abiDir} not found (materialize must run first)`)
     const ethereumAbiFiles = Fs.readdirSync(abiDir)
       .filter(file => file.endsWith(".json"))
       .map(file => Path.join(abiDir, file))
-    Assert.ok(
-      ethereumAbiFiles.length > 0,
-      `ExternalOutpostSteps: no ETH ABI files in ${abiDir}`
-    )
+    Assert.ok(ethereumAbiFiles.length > 0, `ExternalOutpostSteps: no ETH ABI files in ${abiDir}`)
 
     // Solana: the program id is the materialized IDL's top-level `address`; it
     // must carry the daemon-required instructions.
-    Assert.ok(
-      Fs.existsSync(idlFile),
-      `ExternalOutpostSteps: ${idlFile} not found (materialize must run first)`
-    )
+    Assert.ok(Fs.existsSync(idlFile), `ExternalOutpostSteps: ${idlFile} not found (materialize must run first)`)
     const idl = JSON.parse(Fs.readFileSync(idlFile, "utf-8")) as anchor.Idl,
       solanaProgramId: string = idl.address,
-      idlInstructions = new Set<string>(
-        idl.instructions.map(instruction => instruction.name)
-      )
+      idlInstructions = new Set<string>(idl.instructions.map(instruction => instruction.name))
     Assert.ok(
       typeof solanaProgramId === "string" && solanaProgramId.length > 0,
       `ExternalOutpostSteps: solana IDL ${idlFile} is missing its top-level 'address' (program id)`
@@ -271,9 +200,7 @@ export namespace ExternalOutpostSteps {
    * @param options - Step options.
    * @returns The verify step.
    */
-  export function planVerifyEthereumEndpoint<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planVerifyEthereumEndpoint<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -304,9 +231,7 @@ export namespace ExternalOutpostSteps {
    * @param options - Step options.
    * @returns The verify step.
    */
-  export function planVerifySolanaEndpoint<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planVerifySolanaEndpoint<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -318,10 +243,7 @@ export namespace ExternalOutpostSteps {
       description,
       async ctx => {
         const version = await ctx.solana.getVersion()
-        Assert.ok(
-          version["solana-core"] != null,
-          "external Solana endpoint getVersion returned no solana-core version"
-        )
+        Assert.ok(version["solana-core"] != null, "external Solana endpoint getVersion returned no solana-core version")
       },
       options
     )
@@ -340,9 +262,7 @@ export namespace ExternalOutpostSteps {
    * @param options - Step options.
    * @returns The verify step.
    */
-  export function planHeadBlockAdvance<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planHeadBlockAdvance<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -365,21 +285,13 @@ export namespace ExternalOutpostSteps {
    * @param options - Step options (ceiling defaults to {@link OutboundEnvelopesTimeoutMs}).
    * @returns The verify step.
    */
-  export function planOutboundEnvelopesQueued<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planOutboundEnvelopesQueued<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions = { timeoutMs: OutboundEnvelopesTimeoutMs }
   ): ClusterBuildStep<C, null> {
-    return verifyStep<C>(
-      actor,
-      name,
-      description,
-      runOutboundEnvelopesQueued,
-      options
-    )
+    return verifyStep<C>(actor, name, description, runOutboundEnvelopesQueued, options)
   }
 
   /**
@@ -392,14 +304,14 @@ export namespace ExternalOutpostSteps {
    * @param ctx - The build context.
    * @param signal - Abort signal.
    */
-  export async function runOutboundEnvelopesQueued<
-    C extends ClusterBuildContext
-  >(ctx: C, signal: AbortSignal): Promise<void> {
+  export async function runOutboundEnvelopesQueued<C extends ClusterBuildContext>(
+    ctx: C,
+    signal: AbortSignal
+  ): Promise<void> {
     signal.throwIfAborted()
     const { rows: chains } = await ctx.wire.getChains(),
       outposts = chains.filter(chain => !chain.is_depot),
-      chainCode = (code: SysioContracts.SysioChainsSlugNameType): string =>
-        String(code.value)
+      chainCode = (code: SysioContracts.SysioChainsSlugNameType): string => String(code.value)
     Assert.ok(
       outposts.length > 0,
       "runOutboundEnvelopesQueued: sysio.chains::chains has no registered outpost (non-depot) chain"
@@ -444,24 +356,13 @@ export namespace ExternalOutpostSteps {
    * @param ctx - The build context (its process manager holds the running nodes).
    * @param signal - Abort signal.
    */
-  export async function runHeadBlockAdvance<C extends ClusterBuildContext>(
-    ctx: C,
-    signal: AbortSignal
-  ): Promise<void> {
+  export async function runHeadBlockAdvance<C extends ClusterBuildContext>(ctx: C, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
     const nodes = NodeConfig.plan(ctx.config),
-      headNode =
-        nodes.find(node => node.role === NodeRole.producer) ??
-        nodes.find(node => node.role === NodeRole.bios)
-    Assert.ok(
-      headNode != null,
-      "runHeadBlockAdvance: no producer/bios node in the topology"
-    )
+      headNode = nodes.find(node => node.role === NodeRole.producer) ?? nodes.find(node => node.role === NodeRole.bios)
+    Assert.ok(headNode != null, "runHeadBlockAdvance: no producer/bios node in the topology")
     const headProcess = ctx.processManager.get(headNode.name)
-    Assert.ok(
-      headProcess instanceof NodeopProcess,
-      `runHeadBlockAdvance: ${headNode.name} is not a running nodeop`
-    )
+    Assert.ok(headProcess instanceof NodeopProcess, `runHeadBlockAdvance: ${headNode.name} is not a running nodeop`)
     const startHead = await headProcess.head()
     await pollUntil(
       `${headNode.name} head advances >= ${HeadAdvanceMinBlocks} blocks`,
@@ -469,9 +370,7 @@ export namespace ExternalOutpostSteps {
         try {
           return (await headProcess.head()) - startHead >= HeadAdvanceMinBlocks
         } catch (error) {
-          log.debug(
-            `[external] head probe transient: ${error instanceof Error ? error.message : String(error)}`
-          )
+          log.debug(`[external] head probe transient: ${error instanceof Error ? error.message : String(error)}`)
           return false
         }
       },

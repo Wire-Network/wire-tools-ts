@@ -182,13 +182,10 @@ describe("ProcessManager + ManagedProcess", () => {
       await managed.stop()
       // The escalation timer stop() armed must be among the handles cleared.
       const escalation = timeoutSpy.mock.results.find(
-        (result, index) =>
-          timeoutSpy.mock.calls[index][1] === ManagedProcess.GracefulKillMs
+        (result, index) => timeoutSpy.mock.calls[index][1] === ManagedProcess.GracefulKillMs
       )
       expect(escalation).toBeDefined()
-      expect(clearTimeoutSpy.mock.calls.map(call => call[0])).toContain(
-        escalation.value
-      )
+      expect(clearTimeoutSpy.mock.calls.map(call => call[0])).toContain(escalation.value)
     } finally {
       clearTimeoutSpy.mockRestore()
       timeoutSpy.mockRestore()
@@ -258,18 +255,13 @@ describe("ProcessManager + ManagedProcess", () => {
     it("caps retention at RecentOutputCap, dropping the oldest lines", async () => {
       const process = new FakeProcess(manager, "recent-cap")
       const overflow = 5
-      const lines = Array.from(
-        { length: ManagedProcess.RecentOutputCap + overflow },
-        (_, index) => `line-${index}`
-      )
+      const lines = Array.from({ length: ManagedProcess.RecentOutputCap + overflow }, (_, index) => `line-${index}`)
       const stream = Readable.from([lines.join("\n") + "\n"])
       process.capture(stream)
       await new Promise<void>(resolve => stream.once("end", () => resolve()))
       expect(process.recentOutput).toHaveLength(ManagedProcess.RecentOutputCap)
       expect(process.recentOutput[0]).toBe(`line-${overflow}`)
-      expect(process.recentOutput[process.recentOutput.length - 1]).toBe(
-        `line-${lines.length - 1}`
-      )
+      expect(process.recentOutput[process.recentOutput.length - 1]).toBe(`line-${lines.length - 1}`)
     })
   })
 
@@ -351,9 +343,7 @@ describe("ProcessManager + ManagedProcess", () => {
       // failure message alone).
       const process = new FakeProcess(manager, "dies", "/bin/false", [], false)
       const startedAt = Date.now()
-      await expect(process.start()).rejects.toThrow(
-        /exited \(code 1\) before passing verifyReady/
-      )
+      await expect(process.start()).rejects.toThrow(/exited \(code 1\) before passing verifyReady/)
       expect(Date.now() - startedAt).toBeLessThan(5_000)
     })
 
@@ -377,17 +367,12 @@ describe("ProcessManager + ManagedProcess", () => {
         const process = new DetailProcess("detail-exit", "/bin/false", [], () =>
           Promise.resolve("DETAIL-MARKER: holder pid 4242")
         )
-        await expect(process.start()).rejects.toThrow(
-          /exited \(code 1\)[\s\S]*DETAIL-MARKER: holder pid 4242/
-        )
+        await expect(process.start()).rejects.toThrow(/exited \(code 1\)[\s\S]*DETAIL-MARKER: holder pid 4242/)
       })
 
       it("is appended to the verify-timeout rejection", async () => {
-        const process = new DetailProcess(
-          "detail-timeout",
-          "/bin/sleep",
-          ["5"],
-          () => Promise.resolve("DETAIL-MARKER: still booting")
+        const process = new DetailProcess("detail-timeout", "/bin/sleep", ["5"], () =>
+          Promise.resolve("DETAIL-MARKER: still booting")
         )
         await expect(process.start()).rejects.toThrow(
           /did not pass verifyReady within[\s\S]*DETAIL-MARKER: still booting/
@@ -399,9 +384,7 @@ describe("ProcessManager + ManagedProcess", () => {
         const process = new DetailProcess("detail-throws", "/bin/false", [], () =>
           Promise.reject(new Error("probe exploded"))
         )
-        await expect(process.start()).rejects.toThrow(
-          /exited \(code 1\) before passing verifyReady/
-        )
+        await expect(process.start()).rejects.toThrow(/exited \(code 1\) before passing verifyReady/)
       })
     })
   })

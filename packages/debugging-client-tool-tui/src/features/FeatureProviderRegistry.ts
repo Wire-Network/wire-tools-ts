@@ -16,12 +16,8 @@ export namespace FeatureProviderRegistry {
   export function add(provider: FeatureProvider): FeatureProvider {
     registry.set(provider.id, provider)
     provider.registerComponents(ComponentProviders)
-    asOption(provider.registerServices).ifSome(fn =>
-      fn.call(provider, ServiceManager.get())
-    )
-    asOption(provider.registerRoutes).ifSome(fn =>
-      fn.call(provider, RouteRegistry)
-    )
+    asOption(provider.registerServices).ifSome(fn => fn.call(provider, ServiceManager.get()))
+    asOption(provider.registerRoutes).ifSome(fn => fn.call(provider, RouteRegistry))
     return provider
   }
 

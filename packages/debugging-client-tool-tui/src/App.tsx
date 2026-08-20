@@ -3,20 +3,10 @@ import { Box, Text, useApp, useInput, useWindowSize } from "ink"
 import { ExitConfirmModal } from "./components/modals/ExitConfirmModal.js"
 import { ProcessMonitorFeatureProvider } from "./features/process-monitor/ProcessMonitorFeatureProvider.js"
 import { useMultiKeyTrigger } from "./hooks/useMultiKeyTrigger.js"
-import {
-  ComponentProviders,
-  FeatureComponentToken
-} from "./providers/ComponentProviders.js"
+import { ComponentProviders, FeatureComponentToken } from "./providers/ComponentProviders.js"
 import { RouterOutlet, useRouter } from "./router/index.js"
 import { RouteRegistry } from "./router/RouteRegistry.js"
-import {
-  selectCluster,
-  selectLogViewer,
-  selectUI,
-  setStatus,
-  useAppDispatch,
-  useAppSelector
-} from "./store/index.js"
+import { selectCluster, selectLogViewer, selectUI, setStatus, useAppDispatch, useAppSelector } from "./store/index.js"
 
 /**
  * Root Ink component. Renders a header + routed body + status bar. The router
@@ -80,28 +70,19 @@ export function App(): React.ReactElement {
   // CURRENT route is the Process Monitor route — otherwise a stale path
   // from a previous visit would silently disable Esc-to-pop on /opp routes
   // too.
-  const onProcessMonitorRoute =
-    router.current?.route.path === ProcessMonitorFeatureProvider.RoutePath
-  const escEatenByLogViewer =
-    onProcessMonitorRoute && !!logViewer.path
+  const onProcessMonitorRoute = router.current?.route.path === ProcessMonitorFeatureProvider.RoutePath
+  const escEatenByLogViewer = onProcessMonitorRoute && !!logViewer.path
   // Esc — single: pop; double: open exit modal.
-  useMultiKeyTrigger(
-    (_input, key) =>
-      key.escape && !exitModalOpen && !escEatenByLogViewer,
-    {
-      1: () => router.pop(),
-      2: () => setExitModalOpen(true)
-    }
-  )
+  useMultiKeyTrigger((_input, key) => key.escape && !exitModalOpen && !escEatenByLogViewer, {
+    1: () => router.pop(),
+    2: () => setExitModalOpen(true)
+  })
 
   // Ctrl+C — single: open exit modal; double: bypass and exit immediately.
-  useMultiKeyTrigger(
-    (_input, key) => key.ctrl && _input === "c" && !exitModalOpen,
-    {
-      1: () => setExitModalOpen(true),
-      2: () => exit()
-    }
-  )
+  useMultiKeyTrigger((_input, key) => key.ctrl && _input === "c" && !exitModalOpen, {
+    1: () => setExitModalOpen(true),
+    2: () => exit()
+  })
 
   // ---- Header helpers ----
 
@@ -110,22 +91,13 @@ export function App(): React.ReactElement {
   // still highlight the OPP badge instead of leaving every badge unbracketed.
   const cyclableRoutes = RouteRegistry.cyclable(),
     activeFeatureId = router.current?.route.featureId,
-    routeBadges = cyclableRoutes.map(r =>
-      r.featureId === activeFeatureId ? `[${r.name}]` : r.name
-    ),
+    routeBadges = cyclableRoutes.map(r => (r.featureId === activeFeatureId ? `[${r.name}]` : r.name)),
     routeList = routeBadges.length > 0 ? routeBadges.join("  ") : "none"
 
   // ---- Layout ----
 
   return (
-    <Box
-      flexDirection="column"
-      width={columns}
-      height={rows}
-      padding={1}
-      borderStyle="round"
-      borderColor="cyan"
-    >
+    <Box flexDirection="column" width={columns} height={rows} padding={1} borderStyle="round" borderColor="cyan">
       {/* Header */}
       <Box flexDirection="column">
         <Text bold color="cyan">
@@ -138,27 +110,18 @@ export function App(): React.ReactElement {
 
       {/* Body — modal takes over when active; otherwise route content renders. */}
       <Box flexDirection="column" flexGrow={1} marginTop={1}>
-        {exitModalOpen ? (
-          <ExitConfirmModal onConfirm={confirmExit} onCancel={cancelExit} />
-        ) : (
-          <RouterOutlet />
-        )}
+        {exitModalOpen ? <ExitConfirmModal onConfirm={confirmExit} onCancel={cancelExit} /> : <RouterOutlet />}
       </Box>
 
       {/* Status bar — contributed widgets + global hotkey legend */}
       <Box marginTop={1}>
         {widgets.map((Widget, i) => (
-          <Box
-            key={Widget.id}
-            marginRight={i < widgets.length - 1 ? 2 : 0}
-          >
+          <Box key={Widget.id} marginRight={i < widgets.length - 1 ? 2 : 0}>
             <Widget />
           </Box>
         ))}
         <Box marginLeft={widgets.length > 0 ? 2 : 0}>
-          <Text dimColor>
-            [Shift+Tab] next feature  [Esc] back  [Esc Esc / Ctrl+C] exit
-          </Text>
+          <Text dimColor>[Shift+Tab] next feature [Esc] back [Esc Esc / Ctrl+C] exit</Text>
         </Box>
       </Box>
     </Box>

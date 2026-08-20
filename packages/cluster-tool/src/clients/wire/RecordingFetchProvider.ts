@@ -15,9 +15,7 @@ import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
  * instead of ballooning `extra` with hundreds of rows.
  */
 export class RecordingFetchProvider extends FetchProvider {
-  override async call(
-    args: RecordingFetchProvider.CallArgs
-  ): Promise<Awaited<ReturnType<FetchProvider["call"]>>> {
+  override async call(args: RecordingFetchProvider.CallArgs): Promise<Awaited<ReturnType<FetchProvider["call"]>>> {
     StepExtraRecorder.record({
       client: "wire",
       kind: "rpc",
@@ -42,11 +40,7 @@ export namespace RecordingFetchProvider {
    * round-trip honors each type's `toJSON` (the same encoding `FetchProvider`
    * sends), so the record reads `"sysio.opreg"` — not `{"words": [...]}`.
    */
-  export function toWireForm(
-    params: Record<string, unknown> | undefined
-  ): Record<string, unknown> {
-    return params != null
-      ? (JSON.parse(JSON.stringify(params)) as Record<string, unknown>)
-      : null
+  export function toWireForm(params: Record<string, unknown> | undefined): Record<string, unknown> {
+    return params != null ? (JSON.parse(JSON.stringify(params)) as Record<string, unknown>) : null
   }
 }

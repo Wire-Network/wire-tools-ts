@@ -1,9 +1,5 @@
 import { TokenAmount } from "@wireio/opp-typescript-models"
-import {
-  ChainTokenAmountSchema,
-  SchemaCodec,
-  type ChainTokenAmount
-} from "@wireio/cluster-tool-shared"
+import { ChainTokenAmountSchema, SchemaCodec, type ChainTokenAmount } from "@wireio/cluster-tool-shared"
 import { z } from "zod"
 
 const PersonSchema = z.object({
@@ -23,9 +19,7 @@ describe("SchemaCodec", () => {
     })
 
     it("pretty-prints with the shared indent width", () => {
-      expect(PersonSchemaCodec.serialize(person)).toBe(
-        JSON.stringify(person, null, SchemaCodec.SerializeIndent)
-      )
+      expect(PersonSchemaCodec.serialize(person)).toBe(JSON.stringify(person, null, SchemaCodec.SerializeIndent))
     })
 
     it("deserializes from UTF-8 bytes", () => {
@@ -34,15 +28,11 @@ describe("SchemaCodec", () => {
     })
 
     it("throws on invalid JSON text", () => {
-      expect(() => PersonSchemaCodec.deserialize("{not json")).toThrow(
-        /invalid JSON/
-      )
+      expect(() => PersonSchemaCodec.deserialize("{not json")).toThrow(/invalid JSON/)
     })
 
     it("throws carrying the offending field path on a shape violation", () => {
-      expect(() =>
-        PersonSchemaCodec.deserialize(JSON.stringify({ name: "ada", age: -1 }))
-      ).toThrow(/age/)
+      expect(() => PersonSchemaCodec.deserialize(JSON.stringify({ name: "ada", age: -1 }))).toThrow(/age/)
     })
 
     it("check() narrows a valid value and rejects an invalid one", () => {
@@ -53,8 +43,7 @@ describe("SchemaCodec", () => {
   })
 
   describe("codec-bearing schema (ChainTokenAmount bigint bridge)", () => {
-    const ChainTokenAmountSchemaCodec =
-      SchemaCodec.create<ChainTokenAmount>(ChainTokenAmountSchema)
+    const ChainTokenAmountSchemaCodec = SchemaCodec.create<ChainTokenAmount>(ChainTokenAmountSchema)
     const entry: ChainTokenAmount = {
       chain_code: 2,
       amount: TokenAmount.create({ tokenCode: 7n, amount: 1_000_000n })

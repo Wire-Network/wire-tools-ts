@@ -29,23 +29,10 @@ export interface KiodConfig extends Required<KiodOptions> {}
 
 /** Manages a kiod (wallet daemon) process. */
 export class KiodProcess extends ManagedProcess {
-  static async create(
-    manager: ProcessManager,
-    options: KiodOptions = {}
-  ): Promise<KiodProcess> {
-    Assert.ok(
-      options.binary != null && (await existsAsync(options.binary)),
-      "kiod binary is required"
-    )
-    Assert.ok(
-      options.walletPath != null && (await existsAsync(options.walletPath)),
-      "kiod walletPath is required"
-    )
-    const {
-      port = await BindConfigProvider.findAvailable(
-        BindConfigProvider.DefaultKiod
-      )
-    } = options
+  static async create(manager: ProcessManager, options: KiodOptions = {}): Promise<KiodProcess> {
+    Assert.ok(options.binary != null && (await existsAsync(options.binary)), "kiod binary is required")
+    Assert.ok(options.walletPath != null && (await existsAsync(options.walletPath)), "kiod walletPath is required")
+    const { port = await BindConfigProvider.findAvailable(BindConfigProvider.DefaultKiod) } = options
     return new KiodProcess(manager, KiodProcess.resolveConfig(options, { port }))
   }
 
@@ -100,19 +87,14 @@ export namespace KiodProcess {
     port: number
   }
 
-  export function resolveConfig(
-    options: KiodOptions,
-    resolved: ResolvedInputs
-  ): KiodConfig {
+  export function resolveConfig(options: KiodOptions, resolved: ResolvedInputs): KiodConfig {
     return {
       binary: options.binary,
       walletPath: options.walletPath,
       address: options.address ?? Localhost,
       port: resolved.port,
       unlockTimeout: options.unlockTimeout ?? KiodProcess.DefaultUnlockTimeout,
-      httpMaxResponseTimeMs:
-        options.httpMaxResponseTimeMs ??
-        KiodProcess.DefaultHttpMaxResponseTimeMs,
+      httpMaxResponseTimeMs: options.httpMaxResponseTimeMs ?? KiodProcess.DefaultHttpMaxResponseTimeMs,
       extraArgs: options.extraArgs ?? []
     }
   }

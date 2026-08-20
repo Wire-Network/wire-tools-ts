@@ -14,10 +14,7 @@ import { ClusterBuildPhase } from "../orchestration/ClusterBuildPhase.js"
 import { ClusterBuildPhaseGroup } from "../orchestration/ClusterBuildPhaseGroup.js"
 import { ClusterPackageSteps } from "../orchestration/steps/ClusterPackageSteps.js"
 import { Report } from "../report/Report.js"
-import {
-  applyClusterPathArgs,
-  type ClusterPathArgv
-} from "./ClusterPathArgs.js"
+import { applyClusterPathArgs, type ClusterPathArgv } from "./ClusterPathArgs.js"
 import { ClusterCommand } from "./ClusterCommand.js"
 
 const log = getLogger(__filename)
@@ -31,10 +28,7 @@ interface PackageArgv extends ClusterPathArgv {
 export function toClusterPackageType(raw: string): ClusterPackageType {
   const upper = String(raw).toUpperCase(),
     matched = Object.values(ClusterPackageType).find(type => type === upper)
-  Assert.ok(
-    matched != null,
-    `unknown --package-type "${raw}" — valid: ${Object.values(ClusterPackageType).join(", ")}`
-  )
+  Assert.ok(matched != null, `unknown --package-type "${raw}" — valid: ${Object.values(ClusterPackageType).join(", ")}`)
   return matched
 }
 
@@ -60,14 +54,10 @@ function applyPackageTypeArg<T>(builder: Argv<T>) {
 export function createPackageCommand() {
   return {
     command: ClusterCommand.package,
-    describe:
-      "Package each node's config tree into a per-node archive (post-create)",
+    describe: "Package each node's config tree into a per-node archive (post-create)",
     builder: (builder: Argv) => applyPackageTypeArg(applyClusterPathArgs(builder)),
     handler: async (args: PackageArgv) => {
-      const report = await runPackage(
-        Path.resolve(args.clusterPath),
-        args.packageType
-      )
+      const report = await runPackage(Path.resolve(args.clusterPath), args.packageType)
       log.info(`[cluster] package ${report.succeeded ? "SUCCEEDED" : "FAILED"}`)
       process.exit(report.succeeded ? 0 : 1)
     }
@@ -75,28 +65,16 @@ export function createPackageCommand() {
 }
 
 /** Load + validate the cluster, compose the per-node archive build, and run it. */
-async function runPackage(
-  clusterPath: string,
-  packageType: ClusterPackageType
-): Promise<Report> {
-  const config = ClusterConfigProvider.loadSync(
-    Path.join(clusterPath, ClusterConfigProvider.ConfigFilename)
-  )
+async function runPackage(clusterPath: string, packageType: ClusterPackageType): Promise<Report> {
+  const config = ClusterConfigProvider.loadSync(Path.join(clusterPath, ClusterConfigProvider.ConfigFilename))
   Assert.ok(
     Fs.existsSync(ClusterState.stateFilePath(config)),
     `package: ${ClusterState.stateFilePath(config)} not found — run "wire-cluster-tool create" first`
   )
   ClusterManager.assertClusterStopped(config)
-  const context = new ClusterBuildContext(
-      config,
-      getLogger(config.report.basename)
-    ),
+  const context = new ClusterBuildContext(config, getLogger(config.report.basename)),
     cluster = ClusterBuild.forContext(context),
-    group = ClusterBuildPhaseGroup.create(
-      cluster,
-      "Package",
-      "Per-node archives"
-    )
+    group = ClusterBuildPhaseGroup.create(cluster, "Package", "Per-node archives")
   NodeConfig.plan(config).forEach(node =>
     ClusterBuildPhase.create(group, `package-${node.name}`, `archive ${node.name}`, [
       ClusterPackageSteps.planPackageNode(

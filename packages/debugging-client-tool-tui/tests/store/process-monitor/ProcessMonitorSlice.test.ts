@@ -20,11 +20,7 @@ import {
 } from "@wireio/debugging-client-tool-tui/store/process-monitor/ProcessMonitorSelectors.js"
 import { SliceName } from "@wireio/debugging-client-tool-tui/store/StoreTypes.js"
 
-function mkLiveness(
-  label: string,
-  alive: boolean,
-  pid: number | null = 1
-): ProcessLivenessSnapshot {
+function mkLiveness(label: string, alive: boolean, pid: number | null = 1): ProcessLivenessSnapshot {
   return { label, pid, alive, lastCheckedAt: 0, exitedAt: alive ? null : 0 }
 }
 
@@ -44,15 +40,9 @@ describe("processMonitorSlice", () => {
   })
 
   it("setProcess / removeProcess round-trip", () => {
-    const afterSet = processMonitorSlice.reducer(
-      undefined,
-      setProcess(mkLiveness("node-00", true))
-    )
+    const afterSet = processMonitorSlice.reducer(undefined, setProcess(mkLiveness("node-00", true)))
     expect(afterSet.processes["node-00"].alive).toBe(true)
-    const afterRemove = processMonitorSlice.reducer(
-      afterSet,
-      removeProcess("node-00")
-    )
+    const afterRemove = processMonitorSlice.reducer(afterSet, removeProcess("node-00"))
     expect(afterRemove.processes["node-00"]).toBeUndefined()
   })
 
@@ -68,10 +58,7 @@ describe("processMonitorSlice", () => {
     expect(state.logViewer.searchQuery).toBe("foo")
     expect(state.logViewer.locationVisible).toBe(true)
 
-    const switched = processMonitorSlice.reducer(
-      state,
-      setLogViewerPath("/tmp/log")
-    )
+    const switched = processMonitorSlice.reducer(state, setLogViewerPath("/tmp/log"))
     expect(switched.logViewer).toEqual({
       path: "/tmp/log",
       offset: 0,
@@ -85,37 +72,25 @@ describe("processMonitorSlice", () => {
   })
 
   it("setLogViewerOffset clamps negative to 0 and disables follow", () => {
-    const state = processMonitorSlice.reducer(
-      undefined,
-      setLogViewerOffset(-50)
-    )
+    const state = processMonitorSlice.reducer(undefined, setLogViewerOffset(-50))
     expect(state.logViewer.offset).toBe(0)
     expect(state.logViewer.follow).toBe(false)
   })
 
   it("setLogViewerFollow toggles the flag", () => {
-    const off = processMonitorSlice.reducer(
-      undefined,
-      setLogViewerFollow(false)
-    )
+    const off = processMonitorSlice.reducer(undefined, setLogViewerFollow(false))
     expect(off.logViewer.follow).toBe(false)
     const on = processMonitorSlice.reducer(off, setLogViewerFollow(true))
     expect(on.logViewer.follow).toBe(true)
   })
 
   it("setLogViewerHorizontalOffset clamps negative to 0", () => {
-    const state = processMonitorSlice.reducer(
-      undefined,
-      setLogViewerHorizontalOffset(-12)
-    )
+    const state = processMonitorSlice.reducer(undefined, setLogViewerHorizontalOffset(-12))
     expect(state.logViewer.horizontalOffset).toBe(0)
   })
 
   it("setLogViewerHorizontalOffset stores positive values", () => {
-    const state = processMonitorSlice.reducer(
-      undefined,
-      setLogViewerHorizontalOffset(40)
-    )
+    const state = processMonitorSlice.reducer(undefined, setLogViewerHorizontalOffset(40))
     expect(state.logViewer.horizontalOffset).toBe(40)
   })
 

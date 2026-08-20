@@ -64,19 +64,11 @@ export async function provisionWireUser(
 
   // Account creation — tolerate "already exists" so re-runs are idempotent.
   try {
-    await wire.createAccount(
-      "sysio",
-      account,
-      Constants.DEV_K1_PUBLIC_KEY,
-      Constants.DEV_K1_PUBLIC_KEY
-    )
+    await wire.createAccount("sysio", account, Constants.DEV_K1_PUBLIC_KEY, Constants.DEV_K1_PUBLIC_KEY)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
     if (!message.includes(ClioRunner.ErrorFragment.AccountAlreadyExists)) {
-      throw new NestedError(
-        `provisionWireUser: createAccount(${account}) failed`,
-        { cause: err }
-      )
+      throw new NestedError(`provisionWireUser: createAccount(${account}) failed`, { cause: err })
     }
     log.debug(`provisionWireUser: account ${account} already exists — reusing`)
   }

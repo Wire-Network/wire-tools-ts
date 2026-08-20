@@ -63,11 +63,7 @@ export class ReportMarkdownRenderer implements ReportRenderer {
     out.push("")
     node.steps.forEach(step => {
       if (step.error !== null) {
-        this.renderDetails(
-          `[FAIL] <code>${step.name}</code> — error detail`,
-          step.error,
-          out
-        )
+        this.renderDetails(`[FAIL] <code>${step.name}</code> — error detail`, step.error, out)
       }
       if (step.extra !== null) {
         this.renderDetails(

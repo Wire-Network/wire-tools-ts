@@ -49,11 +49,8 @@ function randomBigInt(rng: () => number, max: bigint): bigint {
   const bits = max.toString(2).length
   const chunkCount = Math.ceil(bits / RandomChunkBits)
   const total =
-    Array.from({ length: chunkCount }, () =>
-      BigInt(Math.floor(rng() * RandomChunkRange))
-    ).reduce(
-      (accumulator, chunk, index) =>
-        accumulator + (chunk << BigInt(index * RandomChunkBits)),
+    Array.from({ length: chunkCount }, () => BigInt(Math.floor(rng() * RandomChunkRange))).reduce(
+      (accumulator, chunk, index) => accumulator + (chunk << BigInt(index * RandomChunkBits)),
       0n
     ) % max
   return total === 0n ? 1n : total
@@ -61,9 +58,7 @@ function randomBigInt(rng: () => number, max: bigint): bigint {
 
 /** Lowercase hex of `byteLength` random bytes (no `0x` prefix). */
 function randomBytesHex(rng: () => number, byteLength: number): string {
-  return Array.from({ length: byteLength }, () =>
-    Math.floor(rng() * ByteValueRange)
-  )
+  return Array.from({ length: byteLength }, () => Math.floor(rng() * ByteValueRange))
     .map(byte => byte.toString(16).padStart(2, "0"))
     .join("")
 }
@@ -107,74 +102,50 @@ interface EthereumDumpOptions {
  * yield-claimed netting rows), with controlled addresses appended as
  * fixed-amount purchasers so dedup logic never suppresses them.
  */
-function buildSyntheticEthereumDump(
-  options: EthereumDumpOptions
-): IndexBalanceDump {
+function buildSyntheticEthereumDump(options: EthereumDumpOptions): IndexBalanceDump {
   const rng = mulberry32(options.seed)
-  const randomAddress = (): string =>
-    `0x${randomBytesHex(rng, EthereumAddressByteLength)}`
+  const randomAddress = (): string => `0x${randomBytesHex(rng, EthereumAddressByteLength)}`
   const randomAmount = (): bigint =>
-    EthereumMinimumSourceUnits +
-    randomBigInt(rng, EthereumMinimumSourceUnits * RandomAmountSpread)
+    EthereumMinimumSourceUnits + randomBigInt(rng, EthereumMinimumSourceUnits * RandomAmountSpread)
 
-  const standalonePurchasers = Array.from(
-    { length: options.purchaserCount },
-    () => ({
-      address: randomAddress(),
-      totalPretokens: randomAmount().toString()
-    })
-  )
+  const standalonePurchasers = Array.from({ length: options.purchaserCount }, () => ({
+    address: randomAddress(),
+    totalPretokens: randomAmount().toString()
+  }))
   const standaloneStakers = Array.from({ length: options.stakerCount }, () => ({
     address: randomAddress(),
     pretokenYield: randomAmount().toString()
   }))
-  const overlappingRows = Array.from(
-    { length: options.overlappingCount },
-    () => {
-      const address = randomAddress()
-      return {
-        purchaser: { address, totalPretokens: randomAmount().toString() },
-        staker: { address, pretokenYield: randomAmount().toString() }
-      }
+  const overlappingRows = Array.from({ length: options.overlappingCount }, () => {
+    const address = randomAddress()
+    return {
+      purchaser: { address, totalPretokens: randomAmount().toString() },
+      staker: { address, pretokenYield: randomAmount().toString() }
     }
-  )
-  const yieldClaimedStakers = Array.from(
-    { length: options.yieldClaimedCount ?? 0 },
-    () => {
-      const pretokenYield = randomAmount()
-      return {
-        address: randomAddress(),
-        pretokenYield: pretokenYield.toString(),
-        yieldClaimed: randomBigInt(rng, pretokenYield / 2n).toString()
-      }
+  })
+  const yieldClaimedStakers = Array.from({ length: options.yieldClaimedCount ?? 0 }, () => {
+    const pretokenYield = randomAmount()
+    return {
+      address: randomAddress(),
+      pretokenYield: pretokenYield.toString(),
+      yieldClaimed: randomBigInt(rng, pretokenYield / 2n).toString()
     }
-  )
+  })
   const controlledPurchasers = (options.controlled ?? []).map(identity => ({
     address: `0x${identity.addressHex}`,
     totalPretokens: (options.controlledSourceUnits ?? 0n).toString()
   }))
 
   return {
-    purchasers: [
-      ...standalonePurchasers,
-      ...overlappingRows.map(row => row.purchaser),
-      ...controlledPurchasers
-    ],
-    stakers: [
-      ...standaloneStakers,
-      ...overlappingRows.map(row => row.staker),
-      ...yieldClaimedStakers
-    ]
+    purchasers: [...standalonePurchasers, ...overlappingRows.map(row => row.purchaser), ...controlledPurchasers],
+    stakers: [...standaloneStakers, ...overlappingRows.map(row => row.staker), ...yieldClaimedStakers]
   }
 }
 
 describe("WireDclaimSeedTool", () => {
   describe("convertImportSeed", () => {
     it("batches an empty dump into zero batches", () => {
-      const result = convertImportSeed(
-        { purchasers: [], stakers: [] },
-        { chain: ChainKind.EVM }
-      )
+      const result = convertImportSeed({ purchasers: [], stakers: [] }, { chain: ChainKind.EVM })
       expect(result.batches).toHaveLength(0)
       expect(result.totalAtomic).toBe(0n)
       expect(result.uniqueAddresses).toBe(0)
@@ -184,9 +155,7 @@ describe("WireDclaimSeedTool", () => {
 
     it("dedupes addresses appearing in both purchasers and stakers", () => {
       const dump: IndexBalanceDump = {
-        purchasers: [
-          { address: `0x${"11".repeat(20)}`, totalPretokens: "5000000000" }
-        ],
+        purchasers: [{ address: `0x${"11".repeat(20)}`, totalPretokens: "5000000000" }],
         stakers: [
           {
             address: `0x${"11".repeat(20)}`,
@@ -206,9 +175,7 @@ describe("WireDclaimSeedTool", () => {
 
     it("drops sub-atomic dust on ETH and reports it", () => {
       const dump: IndexBalanceDump = {
-        purchasers: [
-          { address: `0x${"22".repeat(20)}`, totalPretokens: "1500000000" }
-        ]
+        purchasers: [{ address: `0x${"22".repeat(20)}`, totalPretokens: "1500000000" }]
       }
       const result = convertImportSeed(dump, { chain: ChainKind.EVM })
       expect(result.batches[0].credits[0].wire_atomic).toBe(1n)
@@ -240,12 +207,8 @@ describe("WireDclaimSeedTool", () => {
         chain: ChainKind.EVM,
         batchSize: 2
       })
-      expect(result.batches.map(batch => batch.credits.length)).toEqual([
-        2, 2, 1
-      ])
-      expect(result.batches.every(batch => batch.chain === ChainKind.EVM)).toBe(
-        true
-      )
+      expect(result.batches.map(batch => batch.credits.length)).toEqual([2, 2, 1])
+      expect(result.batches.every(batch => batch.chain === ChainKind.EVM)).toBe(true)
       const serialized = serializeBatchForClio(result.batches[0])
       expect(typeof serialized.credits[0].wire_atomic).toBe("string")
       expect(serialized.credits[0].wire_atomic).toBe("1")
@@ -284,9 +247,7 @@ describe("WireDclaimSeedTool", () => {
       expect(() =>
         convertImportSeed(
           {
-            purchasers: [
-              { address: `0x${"33".repeat(20)}`, totalPretokens: "1000000000" }
-            ]
+            purchasers: [{ address: `0x${"33".repeat(20)}`, totalPretokens: "1000000000" }]
           },
           { chain: ChainKind.EVM, batchSize: 0 }
         )
@@ -328,9 +289,10 @@ describe("WireDclaimSeedTool", () => {
     })
 
     it("serializes an empty batch to an empty credits array", () => {
-      expect(
-        serializeBatchForClio({ chain: ChainKind.EVM, credits: [] })
-      ).toEqual({ chain: ChainKind.EVM, credits: [] })
+      expect(serializeBatchForClio({ chain: ChainKind.EVM, credits: [] })).toEqual({
+        chain: ChainKind.EVM,
+        credits: []
+      })
     })
   })
 
@@ -352,10 +314,7 @@ describe("WireDclaimSeedTool", () => {
     })
 
     it("produces dumps that convertImportSeed accepts and counts correctly", () => {
-      const controlled = [
-        { addressHex: "aa".repeat(20) },
-        { addressHex: "bb".repeat(20) }
-      ]
+      const controlled = [{ addressHex: "aa".repeat(20) }, { addressHex: "bb".repeat(20) }]
       const dump = buildSyntheticEthereumDump({
         seed: 7,
         purchaserCount: 4,

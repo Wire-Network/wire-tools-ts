@@ -13,11 +13,7 @@ import {
   type BindOptions,
   type ClusterTopologyOptions
 } from "@wireio/cluster-tool-shared"
-import {
-  isUdpPortFree,
-  ListenAllAddress,
-  Localhost
-} from "../utils/netUtils.js"
+import { isUdpPortFree, ListenAllAddress, Localhost } from "../utils/netUtils.js"
 import { mkdirs, withFileLock } from "../utils/fsUtils.js"
 import { isPidAlive, processCommandBasename } from "../utils/processUtils.js"
 import { Deferred, getLogger, getValue, guard } from "@wireio/shared"
@@ -43,9 +39,7 @@ let importGetPortModuleDeferred: Deferred<GetPortModuleType> = null
 function importGetPortModule(): Promise<GetPortModuleType> {
   if (importGetPortModuleDeferred === null) {
     importGetPortModuleDeferred = new Deferred()
-    import("get-port").then(getPortModule =>
-      importGetPortModuleDeferred.resolve(getPortModule)
-    )
+    import("get-port").then(getPortModule => importGetPortModuleDeferred.resolve(getPortModule))
   }
   return importGetPortModuleDeferred.promise
 }
@@ -184,10 +178,7 @@ export namespace BindConfigProvider {
    * @param topology - Node counts + bind-all flag.
    * @returns The fully-resolved binding.
    */
-  export function resolve(
-    options: BindOptions,
-    topology: ClusterTopologyOptions
-  ): Promise<BindConfig> {
+  export function resolve(options: BindOptions, topology: ClusterTopologyOptions): Promise<BindConfig> {
     // Hold the host-global port lock for the WHOLE cluster port selection so a
     // parallel process cannot interleave and pick an overlapping set (get-port
     // only de-dupes within one process — see portLockPath()).
@@ -195,13 +186,9 @@ export namespace BindConfigProvider {
   }
 
   /** {@link resolve} body — always runs under the {@link portLockPath} lock. */
-  async function resolveLocked(
-    options: BindOptions,
-    topology: ClusterTopologyOptions
-  ): Promise<BindConfig> {
+  async function resolveLocked(options: BindOptions, topology: ClusterTopologyOptions): Promise<BindConfig> {
     const host = topology.bindAll ? ListenAllAddress : Localhost,
-      addr = (daemon: keyof BindOptions): string =>
-        options[daemon]?.address ?? host,
+      addr = (daemon: keyof BindOptions): string => options[daemon]?.address ?? host,
       // Seed the exclusion set with every LIVE process's registered ports —
       // a port get-port reports free is still reserved when another process
       // resolved it but hasn't bound its daemons yet (they spawn minutes
@@ -213,47 +200,30 @@ export namespace BindConfigProvider {
         daemon: string,
         protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
       ): Promise<number> => {
-        const port = await pickPort(
-          callerPin,
-          fallbackDefault,
-          claimed,
-          daemon,
-          protocol
-        )
+        const port = await pickPort(callerPin, fallbackDefault, claimed, daemon, protocol)
         claimed.add(port)
         return port
       },
-      pair = async (
-        base: BindNodeopPortsOptions | null,
-        daemon: string
-      ): Promise<BindConfigNodeopPorts> => ({
+      pair = async (base: BindNodeopPortsOptions | null, daemon: string): Promise<BindConfigNodeopPorts> => ({
         http: await claim(base?.http ?? null, null, `${daemon}.http`),
         p2p: await claim(base?.p2p ?? null, null, `${daemon}.p2p`),
         // Per-node advertise address (multi-host mesh): a REMOTE address —
         // carried through verbatim, never probed. Conditional spread so the
         // single-host default persists with no key at all.
-        ...(base?.advertiseAddress != null
-          ? { advertiseAddress: base.advertiseAddress }
-          : {})
+        ...(base?.advertiseAddress != null ? { advertiseAddress: base.advertiseAddress } : {})
       }),
       pairs = (
         bases: BindNodeopPortsOptions[] | null,
         count: number,
         daemon: string
       ): Promise<BindConfigNodeopPorts[]> =>
-        Bluebird.mapSeries(range(count), i =>
-          pair(bases?.[i] ?? null, `${daemon}[${i}]`)
-        ),
+        Bluebird.mapSeries(range(count), i => pair(bases?.[i] ?? null, `${daemon}[${i}]`)),
       // agave binds the RPC's companion websocket at rpc+1 AUTOMATICALLY (no
       // flag assigns it) — claiming the RPC port claims BOTH, so no daemon in
       // this resolve and no other cluster via the registry is ever handed the
       // companion.
       claimSolanaHttp = async (): Promise<number> => {
-        const http = await claim(
-          options.solana?.ports?.http ?? null,
-          DefaultSolanaRpc,
-          "solana.http"
-        )
+        const http = await claim(options.solana?.ports?.http ?? null, DefaultSolanaRpc, "solana.http")
         claimed.add(http + SolanaWsPortOffset)
         return http
       },
@@ -266,9 +236,7 @@ export namespace BindConfigProvider {
           claimed,
           "solana.dynamicRange"
         )
-        range(dynamicRange.first, dynamicRange.last + 1).forEach(port =>
-          claimed.add(port)
-        )
+        range(dynamicRange.first, dynamicRange.last + 1).forEach(port => claimed.add(port))
         return dynamicRange
       }
 
@@ -288,32 +256,16 @@ export namespace BindConfigProvider {
         address: addr("nodeop"),
         ports: {
           bios: {
-            http: await claim(
-              nodeopPorts?.bios?.http ?? null,
-              DefaultBiosHttp,
-              "nodeop.bios.http"
-            ),
-            p2p: await claim(
-              nodeopPorts?.bios?.p2p ?? null,
-              DefaultBiosP2p,
-              "nodeop.bios.p2p"
-            ),
+            http: await claim(nodeopPorts?.bios?.http ?? null, DefaultBiosHttp, "nodeop.bios.http"),
+            p2p: await claim(nodeopPorts?.bios?.p2p ?? null, DefaultBiosP2p, "nodeop.bios.p2p"),
             // Same verbatim carry-through as `pair` — see the note there.
             ...(nodeopPorts?.bios?.advertiseAddress != null
               ? { advertiseAddress: nodeopPorts.bios.advertiseAddress }
               : {})
           },
-          producers: await pairs(
-            nodeopPorts?.producers ?? null,
-            producerCount,
-            "producer"
-          ),
+          producers: await pairs(nodeopPorts?.producers ?? null, producerCount, "producer"),
           batch: await pairs(nodeopPorts?.batch ?? null, batchCount, "batch"),
-          underwriters: await pairs(
-            nodeopPorts?.underwriters ?? null,
-            uwCount,
-            "underwriter"
-          )
+          underwriters: await pairs(nodeopPorts?.underwriters ?? null, uwCount, "underwriter")
         }
       },
       anvil: {
@@ -324,11 +276,7 @@ export namespace BindConfigProvider {
         address: addr("solana"),
         ports: {
           http: await claimSolanaHttp(),
-          faucet: await claim(
-            options.solana?.ports?.faucet ?? null,
-            DefaultSolanaFaucet,
-            "solana.faucet"
-          ),
+          faucet: await claim(options.solana?.ports?.faucet ?? null, DefaultSolanaFaucet, "solana.faucet"),
           // agave 4.x binds the test validator's gossip socket at its FIXED
           // default (8000) instead of carving it from --dynamic-port-range,
           // so every parallel validator needs an explicit per-cluster
@@ -349,11 +297,7 @@ export namespace BindConfigProvider {
       },
       debuggingServer: {
         address: addr("debuggingServer"),
-        port: await claim(
-          options.debuggingServer?.port ?? null,
-          DefaultDebuggingServer,
-          "debuggingServer"
-        )
+        port: await claim(options.debuggingServer?.port ?? null, DefaultDebuggingServer, "debuggingServer")
       }
     }
     // Register BEFORE the lock releases: the next resolver (any process) must
@@ -422,9 +366,7 @@ export namespace BindConfigProvider {
       // omits it (single-host local clusters), the shared nodeop bind address
       // is the honest answer and global uniqueness is restored for free.
       nodeAt = (node: BindConfigNodeopPorts) =>
-        [node.http, node.p2p].map(port =>
-          at(node.advertiseAddress ?? config.nodeop.address, port)
-        ),
+        [node.http, node.p2p].map(port => at(node.advertiseAddress ?? config.nodeop.address, port)),
       flat = (nodes: BindConfigNodeopPorts[]) => nodes.flatMap(nodeAt)
     return [
       at(config.kiod.address, config.kiod.port),
@@ -454,11 +396,9 @@ export namespace BindConfigProvider {
     // The resolved ports were locked in get-port's in-process cache at resolve
     // time; clear it so each isPortAvailable re-probes true OS bindability.
     await clearPortLocks()
-    const taken = await Bluebird.filter(
-      allPorts(config),
-      async port => !(await isPortAvailable(port)),
-      { concurrency: 1 }
-    )
+    const taken = await Bluebird.filter(allPorts(config), async port => !(await isPortAvailable(port)), {
+      concurrency: 1
+    })
     return taken.length === 0
   }
 
@@ -486,10 +426,7 @@ export namespace BindConfigProvider {
 
   /** The host-global registry dir (env-overridable for tests). */
   export function registryPath(): string {
-    return (
-      process.env[RegistryPathEnvVar] ??
-      Path.join(Os.tmpdir(), "wire-platform-bind-config")
-    )
+    return process.env[RegistryPathEnvVar] ?? Path.join(Os.tmpdir(), "wire-platform-bind-config")
   }
 
   /** THIS process's registry file — an ARRAY of resolved BindConfigs. */
@@ -515,9 +452,7 @@ export namespace BindConfigProvider {
   export function readRegistryPortExclusions(): Set<number> {
     const dir = registryPath()
     mkdirs(dir)
-    const exclusions = new Set<number>(
-      range(ReservedAgavePortBand.first, ReservedAgavePortBand.last + 1)
-    )
+    const exclusions = new Set<number>(range(ReservedAgavePortBand.first, ReservedAgavePortBand.last + 1))
     Fs.readdirSync(dir)
       .filter(fileName => fileName.endsWith(RegistryFileSuffix))
       .forEach(fileName => {
@@ -528,16 +463,11 @@ export namespace BindConfigProvider {
           // "" basename + alive = unreadable /proc (foreign user) → keep.
           recycled = alive && basename !== "" && basename !== RegistrantBasename
         if (!alive || recycled) {
-          log.info(
-            `bind registry: reaping stale ${fileName} (${!alive ? "pid gone" : `pid recycled to ${basename}`})`
-          )
+          log.info(`bind registry: reaping stale ${fileName} (${!alive ? "pid gone" : `pid recycled to ${basename}`})`)
           guard(() => Fs.rmSync(filePath, { force: true }))
           return
         }
-        const entries = getValue(
-          () => JSON.parse(Fs.readFileSync(filePath, "utf8")) as unknown,
-          null
-        )
+        const entries = getValue(() => JSON.parse(Fs.readFileSync(filePath, "utf8")) as unknown, null)
         if (!Array.isArray(entries)) {
           log.warn(`bind registry: reaping malformed ${fileName}`)
           guard(() => Fs.rmSync(filePath, { force: true }))
@@ -546,10 +476,7 @@ export namespace BindConfigProvider {
         entries.forEach(entry => {
           // Walked via allPorts so it stays the ONE port walker over the
           // plain-data BindConfig shape.
-          const ports = getValue(
-            () => allPorts(entry as BindConfig),
-            [] as number[]
-          )
+          const ports = getValue(() => allPorts(entry as BindConfig), [] as number[])
           if (ports.length === 0) {
             log.warn(`bind registry: ignoring malformed entry in ${fileName}`)
           }
@@ -574,18 +501,13 @@ export namespace BindConfigProvider {
   export function registerResolved(config: BindConfig): void {
     mkdirs(registryPath())
     const file = registryFile(),
-      existing = getValue(
-        () => JSON.parse(Fs.readFileSync(file, "utf8")) as unknown,
-        null
-      ),
+      existing = getValue(() => JSON.parse(Fs.readFileSync(file, "utf8")) as unknown, null),
       entries: unknown[] = Array.isArray(existing) ? existing : []
     entries.push(config)
     Fs.writeFileSync(file, JSON.stringify(entries, null, 2))
     if (!registryExitCleanupArmed) {
       registryExitCleanupArmed = true
-      process.on("exit", () =>
-        guard(() => Fs.rmSync(registryFile(), { force: true }))
-      )
+      process.on("exit", () => guard(() => Fs.rmSync(registryFile(), { force: true })))
     }
   }
 
@@ -621,10 +543,7 @@ export namespace BindConfigProvider {
    * @returns Whether the port is free.
    */
   export async function isPortAvailable(port: number): Promise<boolean> {
-    return withFileLock(
-      portLockPath(),
-      async () => (await getPort({ port })) === port
-    )
+    return withFileLock(portLockPath(), async () => (await getPort({ port })) === port)
   }
 
   /**
@@ -647,13 +566,7 @@ export namespace BindConfigProvider {
     protocol: BindConfigPortProtocol = BindConfigPortProtocol.tcp
   ): Promise<number> {
     return withFileLock(portLockPath(), () =>
-      pickPort(
-        null,
-        preferred,
-        readRegistryPortExclusions(),
-        "findAvailable",
-        protocol
-      )
+      pickPort(null, preferred, readRegistryPortExclusions(), "findAvailable", protocol)
     )
   }
 
@@ -687,9 +600,7 @@ export namespace BindConfigProvider {
       )
       const resolved = await getPort({ port: callerPin, exclude: claimed })
       Assert.ok(
-        resolved === callerPin &&
-          (protocol === BindConfigPortProtocol.tcp ||
-            (await isUdpPortFree(callerPin))),
+        resolved === callerPin && (protocol === BindConfigPortProtocol.tcp || (await isUdpPortFree(callerPin))),
         `port ${callerPin} for ${daemon} is pinned but unavailable`
       )
       return callerPin
@@ -707,30 +618,21 @@ export namespace BindConfigProvider {
       async (found: number | null, attempt: number) => {
         if (found !== null) return found
         const candidate = await getPort(
-          attempt === 0 && fallbackDefault !== null
-            ? { port: fallbackDefault, exclude: claimed }
-            : { exclude: claimed }
+          attempt === 0 && fallbackDefault !== null ? { port: fallbackDefault, exclude: claimed } : { exclude: claimed }
         )
-        return !claimed.has(candidate) &&
-          (protocol === BindConfigPortProtocol.tcp ||
-            (await isUdpPortFree(candidate)))
+        return !claimed.has(candidate) && (protocol === BindConfigPortProtocol.tcp || (await isUdpPortFree(candidate)))
           ? candidate
           : null
       },
       null as number | null
     )
-    Assert.ok(
-      picked !== null,
-      `no free unclaimed port found for ${daemon} within ${UdpPickAttempts} attempts`
-    )
+    Assert.ok(picked !== null, `no free unclaimed port found for ${daemon} within ${UdpPickAttempts} attempts`)
     return picked
   }
 
   /** Whether `port` sits inside {@link ReservedAgavePortBand}. */
   function isReservedPort(port: number): boolean {
-    return (
-      port >= ReservedAgavePortBand.first && port <= ReservedAgavePortBand.last
-    )
+    return port >= ReservedAgavePortBand.first && port <= ReservedAgavePortBand.last
   }
 
   /**
@@ -745,16 +647,12 @@ export namespace BindConfigProvider {
    * @param exclusions - Ports already claimed/registered.
    * @returns Whether the whole window is free.
    */
-  async function isRangeFree(
-    first: number,
-    exclusions: Set<number>
-  ): Promise<boolean> {
+  async function isRangeFree(first: number, exclusions: Set<number>): Promise<boolean> {
     const ports = range(first, first + SolanaDynamicPortRangeSize)
     if (ports.some(port => exclusions.has(port))) return false
     const taken = await Bluebird.filter(
       ports,
-      async port =>
-        (await getPort({ port })) !== port || !(await isUdpPortFree(port)),
+      async port => (await getPort({ port })) !== port || !(await isUdpPortFree(port)),
       { concurrency: 1 }
     )
     return taken.length === 0
@@ -780,8 +678,7 @@ export namespace BindConfigProvider {
   ): Promise<BindConfigPortRange> {
     if (callerPin !== null) {
       Assert.ok(
-        callerPin.first > ReservedAgavePortBand.last ||
-          callerPin.last < ReservedAgavePortBand.first,
+        callerPin.first > ReservedAgavePortBand.last || callerPin.last < ReservedAgavePortBand.first,
         `port range ${callerPin.first}-${callerPin.last} for ${daemon} overlaps the reserved agave validator band ` +
           `${ReservedAgavePortBand.first}-${ReservedAgavePortBand.last} ` +
           `(agave binds implicit sockets there regardless of flags) — pin a window outside it`
@@ -797,8 +694,7 @@ export namespace BindConfigProvider {
     )
     const first = await Bluebird.reduce(
       starts,
-      async (found: number | null, start) =>
-        found ?? ((await isRangeFree(start, exclusions)) ? start : null),
+      async (found: number | null, start) => found ?? ((await isRangeFree(start, exclusions)) ? start : null),
       null as number | null
     )
     Assert.ok(
@@ -818,8 +714,6 @@ export namespace BindConfigProvider {
    * @returns A currently-free window.
    */
   export async function findAvailableRange(): Promise<BindConfigPortRange> {
-    return withFileLock(portLockPath(), () =>
-      pickPortRange(null, readRegistryPortExclusions(), "solana.dynamicRange")
-    )
+    return withFileLock(portLockPath(), () => pickPortRange(null, readRegistryPortExclusions(), "solana.dynamicRange"))
   }
 }

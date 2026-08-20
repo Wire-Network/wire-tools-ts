@@ -1,26 +1,16 @@
 import { isString } from "@wireio/shared"
-import {
-  DebugOutpostEndpointsType,
-  type Envelope
-} from "@wireio/opp-typescript-models"
-import type {
-  DebugOPPEnvelopeRecord,
-  DebugOPPEpochRecord
-} from "../../../store/opp/OPPTypes.js"
+import { DebugOutpostEndpointsType, type Envelope } from "@wireio/opp-typescript-models"
+import type { DebugOPPEnvelopeRecord, DebugOPPEpochRecord } from "../../../store/opp/OPPTypes.js"
 
 /**
  * Endpoint-type names sans `UNKNOWN` and sans the numeric reverse-map
  * entries that protobuf-ts emits on every numeric enum. Single source of
  * truth for both the EpochTracker column list and the EpochDetail overview.
  */
-export const EndpointTypeNames: readonly string[] = Object.keys(
-  DebugOutpostEndpointsType
-)
+export const EndpointTypeNames: readonly string[] = Object.keys(DebugOutpostEndpointsType)
   .filter(isString)
   .filter(v => !/^\d+$/.test(v))
-  .filter(
-    v => v !== DebugOutpostEndpointsType[DebugOutpostEndpointsType.UNKNOWN]
-  )
+  .filter(v => v !== DebugOutpostEndpointsType[DebugOutpostEndpointsType.UNKNOWN])
 
 /**
  * Sum of `payload.attestations.length` across every message in `envelope`.
@@ -30,29 +20,19 @@ export const EndpointTypeNames: readonly string[] = Object.keys(
  */
 export function attestationCountFor(envelope: Envelope): number {
   if (!envelope) return 0
-  return (envelope.messages ?? []).reduce(
-    (acc, msg) => acc + (msg.payload?.attestations?.length ?? 0),
-    0
-  )
+  return (envelope.messages ?? []).reduce((acc, msg) => acc + (msg.payload?.attestations?.length ?? 0), 0)
 }
 
 /**
  * Index a single epoch's envelopes by endpoint name (e.g. `"DEPOT_OUTPOST"`).
  * Returns a Map so the panel can read O(1) per cell.
  */
-export function indexEnvelopesByEndpoint(
-  epoch: DebugOPPEpochRecord
-): Map<string, DebugOPPEnvelopeRecord> {
-  return epoch.envelopes.reduce<Map<string, DebugOPPEnvelopeRecord>>(
-    (acc, env) => {
-      const key = DebugOutpostEndpointsType[env.endpointsType] as
-        | string
-        | undefined
-      if (key) acc.set(key, env)
-      return acc
-    },
-    new Map()
-  )
+export function indexEnvelopesByEndpoint(epoch: DebugOPPEpochRecord): Map<string, DebugOPPEnvelopeRecord> {
+  return epoch.envelopes.reduce<Map<string, DebugOPPEnvelopeRecord>>((acc, env) => {
+    const key = DebugOutpostEndpointsType[env.endpointsType] as string | undefined
+    if (key) acc.set(key, env)
+    return acc
+  }, new Map())
 }
 
 /**
@@ -78,8 +58,5 @@ export function isEpochComplete(
 
 /** Total attestation count across every envelope in an epoch. */
 export function totalAttestationsFor(epoch: DebugOPPEpochRecord): number {
-  return epoch.envelopes.reduce(
-    (acc, env) => acc + attestationCountFor(env.envelope),
-    0
-  )
+  return epoch.envelopes.reduce((acc, env) => acc + attestationCountFor(env.envelope), 0)
 }

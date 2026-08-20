@@ -39,29 +39,19 @@ import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { serialize } from "../../utils/asyncUtils.js"
 import { abiEnumValue } from "../../utils/enumUtils.js"
-import {
-  clearNonceCache,
-  resolveLatestNonce
-} from "../../utils/ethereumUtils.js"
+import { clearNonceCache, resolveLatestNonce } from "../../utils/ethereumUtils.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../../orchestration/ClusterBuildPhase.js"
 import { ClusterBuildPhaseGroup } from "../../orchestration/ClusterBuildPhaseGroup.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../orchestration/ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../orchestration/ClusterBuildStep.js"
 import type { ClusterBuildParent } from "../../orchestration/ClusterBuildPhaseBase.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { KeySteps } from "../../orchestration/steps/KeySteps.js"
 import { isNotEmpty } from "../../utils/predicateUtils.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
-import {
-  ethereumSigner,
-  solanaKeypair,
-  solanaSdkPrivateKey
-} from "../../utils/keyPairUtils.js"
+import { ethereumSigner, solanaKeypair, solanaSdkPrivateKey } from "../../utils/keyPairUtils.js"
 import { newSponsorNonce } from "../../utils/nonceUtils.js"
 import { AuthExLinkTool } from "../all/AuthExLinkTool.js"
 
@@ -153,13 +143,9 @@ export namespace WireOperatorProvisioningTool {
   ): ClusterBuildPhase<C> {
     return match(spec.type)
       .with(OperatorType.PRODUCER, () => planProvisionProducerPhase<C>(group, spec, options))
-      .with(OperatorType.BATCH, OperatorType.UNDERWRITER, () =>
-        planProvisionOppOperatorPhase<C>(group, spec, options)
-      )
+      .with(OperatorType.BATCH, OperatorType.UNDERWRITER, () => planProvisionOppOperatorPhase<C>(group, spec, options))
       .otherwise(() => {
-        throw new Error(
-          `provision ${spec.label}: unsupported operator type ${OperatorType[spec.type] ?? spec.type}`
-        )
+        throw new Error(`provision ${spec.label}: unsupported operator type ${OperatorType[spec.type] ?? spec.type}`)
       })
   }
 
@@ -170,10 +156,7 @@ export namespace WireOperatorProvisioningTool {
     options: ClusterBuildStepOptions
   ): ClusterBuildPhase<C> {
     const { label, producerNodeIndex, producerNodeName } = spec
-    Assert.ok(
-      producerNodeIndex != null,
-      `provision producer ${label}: producerNodeIndex is required`
-    )
+    Assert.ok(producerNodeIndex != null, `provision producer ${label}: producerNodeIndex is required`)
     Assert.ok(
       isNotEmpty(producerNodeName),
       `provision producer ${label}: producerNodeName is required — it is the label this account's keys are published under`
@@ -188,13 +171,7 @@ export namespace WireOperatorProvisioningTool {
         producerNodeIndex,
         producerNodeName
       ),
-      planAccountCreation<C>(
-        Report.Actor.Producer,
-        `${label}-account`,
-        `create WIRE account ${label}`,
-        options,
-        label
-      )
+      planAccountCreation<C>(Report.Actor.Producer, `${label}-account`, `create WIRE account ${label}`, options, label)
     ])
   }
 
@@ -211,24 +188,14 @@ export namespace WireOperatorProvisioningTool {
     spec: OperatorProvisioningSpec,
     options: ClusterBuildStepOptions
   ): ClusterBuildPhase<C> {
-    const {
-        label,
-        type,
-        ethereumHdIndex,
-        isBootstrapped,
-        fundEthereumWei,
-        airdropSolanaLamports
-      } = spec,
+    const { label, type, ethereumHdIndex, isBootstrapped, fundEthereumWei, airdropSolanaLamports } = spec,
       isUnderwriter = type === OperatorType.UNDERWRITER,
       actor = isUnderwriter ? Report.Actor.Underwriter : Report.Actor.BatchOperator,
       // External-outpost mode: operators are pre-funded out-of-band on the REAL
       // chains — there is no anvil prefund / SOL faucet — so the outpost-chain
       // funding steps are gated out; every depot-side step still runs.
       isExternalOutpost = group.context.config?.externalOutposts != null
-    Assert.ok(
-      ethereumHdIndex != null,
-      `provision operator ${label}: ethereumHdIndex is required`
-    )
+    Assert.ok(ethereumHdIndex != null, `provision operator ${label}: ethereumHdIndex is required`)
     return ClusterBuildPhase.create<C>(group, `Provision ${label}`, `provision operator ${label}`, [
       planIdentityMaterialization<C>(
         actor,
@@ -365,30 +332,16 @@ export namespace WireOperatorProvisioningTool {
     // and the read has to happen HERE: the very next steps set this account's
     // ON-CHAIN authority (`roa::newuser`) and both authex links from these keys.
     const [wire, solana, ethereum] = await Promise.all([
-      KeySteps.adoptOrCreateSignatureProviderKey(
-        ctx.config,
-        KeyType.K1,
-        input.label,
-        keyContext,
-        { purpose: `operator ${input.label} — WIRE account key (K1)` }
-      ),
-      KeySteps.adoptOrCreateSignatureProviderKey(
-        ctx.config,
-        KeyType.ED,
-        input.label,
-        keyContext,
-        { purpose: `operator ${input.label} — solana outpost key (ED)` }
-      ),
-      KeySteps.adoptOrCreateSignatureProviderKey(
-        ctx.config,
-        KeyType.EM,
-        input.label,
-        keyContext,
-        {
-          ethereumHdIndex: input.ethereumHdIndex,
-          purpose: `operator ${input.label} — ethereum outpost key (EM)`
-        }
-      )
+      KeySteps.adoptOrCreateSignatureProviderKey(ctx.config, KeyType.K1, input.label, keyContext, {
+        purpose: `operator ${input.label} — WIRE account key (K1)`
+      }),
+      KeySteps.adoptOrCreateSignatureProviderKey(ctx.config, KeyType.ED, input.label, keyContext, {
+        purpose: `operator ${input.label} — solana outpost key (ED)`
+      }),
+      KeySteps.adoptOrCreateSignatureProviderKey(ctx.config, KeyType.EM, input.label, keyContext, {
+        ethereumHdIndex: input.ethereumHdIndex,
+        purpose: `operator ${input.label} — ethereum outpost key (EM)`
+      })
     ])
     // Import the operator's unique wire key so kiod can sign `account@active`
     // (authex links, registration, and any operator-signed flow actions).
@@ -526,12 +479,7 @@ export namespace WireOperatorProvisioningTool {
   ): Promise<void> {
     signal.throwIfAborted()
     const operator = ctx.keyStore.assertOperator(input.label)
-    await ctx.wire.createAccount(
-      AccountCreator,
-      operator.account,
-      operator.wire.publicKey,
-      operator.wire.publicKey
-    )
+    await ctx.wire.createAccount(AccountCreator, operator.account, operator.wire.publicKey, operator.wire.publicKey)
   }
 
   // ── Step: node-owner-sponsored account creation (roa::newuser, write) ─────
@@ -593,9 +541,7 @@ export namespace WireOperatorProvisioningTool {
         pubkey: operator.wire.publicKey
       },
       {
-        authorization: [
-          { actor: Constants.BOOTSTRAP_NODE_OWNER, permission: "active" }
-        ]
+        authorization: [{ actor: Constants.BOOTSTRAP_NODE_OWNER, permission: "active" }]
       }
     )
     const account = await readSponsoredUsername(ctx, nonce)
@@ -622,18 +568,13 @@ export namespace WireOperatorProvisioningTool {
    * @param nonce - The single-use nonce the row was created under.
    * @returns The generated `<nodeOwner>.<suffix>` account name.
    */
-  async function readSponsoredUsername(
-    ctx: ClusterBuildContext,
-    nonce: string
-  ): Promise<string> {
+  async function readSponsoredUsername(ctx: ClusterBuildContext, nonce: string): Promise<string> {
     // The sponsors roster is one row per provisioned OPP operator; the explicit
     // limit keeps the read whole as the roster grows toward its ceiling.
-    const { rows } = await ctx.wire
-      .getSysioContract(SysioContracts.SysioContractName.roa)
-      .tables.sponsors.query({
-        scope: Constants.BOOTSTRAP_NODE_OWNER,
-        limit: SponsorsRowLimit
-      })
+    const { rows } = await ctx.wire.getSysioContract(SysioContracts.SysioContractName.roa).tables.sponsors.query({
+      scope: Constants.BOOTSTRAP_NODE_OWNER,
+      limit: SponsorsRowLimit
+    })
     return rows.find(row => row.nonce === nonce)?.username
   }
 
@@ -685,18 +626,16 @@ export namespace WireOperatorProvisioningTool {
   ): Promise<void> {
     signal.throwIfAborted()
     const operator = ctx.keyStore.assertOperator(input.label)
-    await ctx.wire
-      .getSysioContract(SysioContracts.SysioContractName.opreg)
-      .actions.regoperator.invoke({
-        // The depot keys `sysio.opreg::operators` by the ON-CHAIN account — the
-        // same value the operator's daemon passes as `--*-account`. `account:`
-        // is the generated ABI field name and never renames with the harness.
-        account: operator.account,
-        // proto OperatorType + the ABI mirror share numeric values —
-        // resolved through the checked bridge.
-        type: abiEnumValue(SysioContracts.SysioOpregOperatortype, input.type),
-        is_bootstrapped: input.isBootstrapped
-      })
+    await ctx.wire.getSysioContract(SysioContracts.SysioContractName.opreg).actions.regoperator.invoke({
+      // The depot keys `sysio.opreg::operators` by the ON-CHAIN account — the
+      // same value the operator's daemon passes as `--*-account`. `account:`
+      // is the generated ABI field name and never renames with the harness.
+      account: operator.account,
+      // proto OperatorType + the ABI mirror share numeric values —
+      // resolved through the checked bridge.
+      type: abiEnumValue(SysioContracts.SysioOpregOperatortype, input.type),
+      is_bootstrapped: input.isBootstrapped
+    })
   }
 
   // ── Step: fund the operator's ETH wallet (write) ─────────────────────────
@@ -814,11 +753,7 @@ export namespace WireOperatorProvisioningTool {
       solanaKeypair(operator.solana).publicKey,
       Number(input.lamports)
     )
-    await confirmSignature(
-      ctx.solana.connection,
-      signature,
-      `provision airdrop ${input.label}`
-    )
+    await confirmSignature(ctx.solana.connection, signature, `provision airdrop ${input.label}`)
   }
 
   // ── Step: authex-link the operator's chain key (write) ───────────────────

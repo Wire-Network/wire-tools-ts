@@ -57,20 +57,10 @@ export interface ClioError {
  * @param stderr - The child's captured stderr ("" when none).
  * @returns The same error, its `message` enriched with both streams.
  */
-export function enrichClioError(
-  error: unknown,
-  stdout: string,
-  stderr: string
-): unknown {
+export function enrichClioError(error: unknown, stdout: string, stderr: string): unknown {
   const candidate = error as ClioError
-  if (
-    candidate != null &&
-    typeof candidate === "object" &&
-    typeof candidate.message === "string"
-  ) {
-    candidate.message = [candidate.message, stdout, stderr]
-      .filter(isNotEmpty)
-      .join("\n")
+  if (candidate != null && typeof candidate === "object" && typeof candidate.message === "string") {
+    candidate.message = [candidate.message, stdout, stderr].filter(isNotEmpty).join("\n")
   }
   return error
 }
@@ -87,10 +77,7 @@ export class ClioRunner {
   run<T extends object>(args: string[], options: ClioRunOptionsJson<T>): Promise<T>
   /** Run a clio command, returning raw stdout. */
   run(args: string[], options?: ClioRunOptions): Promise<string>
-  async run(
-    args: string[],
-    options: ClioRunOptions | ClioRunOptionsJson<any> = { json: false }
-  ): Promise<any> {
+  async run(args: string[], options: ClioRunOptions | ClioRunOptionsJson<any> = { json: false }): Promise<any> {
     const fullArgs = [
       "-u",
       this.config.nodeopUrl,
@@ -149,19 +136,14 @@ export class ClioRunner {
         command,
         ok: false,
         durationMs: Date.now() - startedAtMs,
-        error: ClioRunner.truncateForRecord(
-          error instanceof Error ? error.message : String(error)
-        )
+        error: ClioRunner.truncateForRecord(error instanceof Error ? error.message : String(error))
       })
       throw error
     }
   }
 
   /** One clio subprocess execution (the retry loop above owns transport failures). */
-  private async runOnce(
-    fullArgs: string[],
-    options: ClioRunOptions | ClioRunOptionsJson<any>
-  ): Promise<any> {
+  private async runOnce(fullArgs: string[], options: ClioRunOptions | ClioRunOptionsJson<any>): Promise<any> {
     try {
       const { stdout, stderr } = await execFileAsync(this.config.binary, fullArgs, {
         maxBuffer: ClioRunner.MaxBuffer,

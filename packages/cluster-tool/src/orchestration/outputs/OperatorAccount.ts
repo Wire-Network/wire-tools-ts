@@ -1,10 +1,5 @@
 import { OperatorType } from "@wireio/opp-typescript-models"
-import type {
-  EthereumKeyPair,
-  SolanaKeyPair,
-  WireFinalizerKeyPair,
-  WireKeyPair
-} from "../../types/KeyPair.js"
+import type { EthereumKeyPair, SolanaKeyPair, WireFinalizerKeyPair, WireKeyPair } from "../../types/KeyPair.js"
 
 /**
  * One provisioned operator's identity — its durable `label`, the `account` it

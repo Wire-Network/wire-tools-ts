@@ -50,15 +50,7 @@ export default function App() {
         </div>
 
         <Routes>
-          <Route
-            path="/"
-            element={
-              <WalletConnect
-                chain={chain}
-                onProceedToLink={handleProceedToLink}
-              />
-            }
-          />
+          <Route path="/" element={<WalletConnect chain={chain} onProceedToLink={handleProceedToLink} />} />
           <Route
             path="/create-link"
             element={
@@ -73,11 +65,7 @@ export default function App() {
               ) : (
                 <div className="card">
                   <p>No account selected. Go back to connect.</p>
-                  <button
-                    className="btn-primary"
-                    style={{ marginTop: 12 }}
-                    onClick={() => navigate("/")}
-                  >
+                  <button className="btn-primary" style={{ marginTop: 12 }} onClick={() => navigate("/")}>
                     Go Home
                   </button>
                 </div>

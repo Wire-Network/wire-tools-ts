@@ -1,10 +1,7 @@
 import { WireSysioContractTool } from "../../tools/wire/WireSysioContractTool.js"
 import { Report } from "../../report/Report.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../ClusterBuildStep.js"
 import type { StepInput } from "../StepRunner.js"
 
 /** Steps that create accounts during bootstrap. */
@@ -78,11 +75,6 @@ export namespace AccountSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire.createAccount(
-      input.creator,
-      input.account,
-      input.publicKey,
-      input.publicKey
-    )
+    await ctx.wire.createAccount(input.creator, input.account, input.publicKey, input.publicKey)
   }
 }

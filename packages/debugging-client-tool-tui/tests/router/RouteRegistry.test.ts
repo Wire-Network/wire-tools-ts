@@ -24,15 +24,11 @@ describe("RouteRegistry.register", () => {
 
   it("throws on duplicate path", () => {
     RouteRegistry.register(mkRoute("/a", "feat-a"))
-    expect(() => RouteRegistry.register(mkRoute("/a", "feat-a"))).toThrow(
-      /already registered/
-    )
+    expect(() => RouteRegistry.register(mkRoute("/a", "feat-a"))).toThrow(/already registered/)
   })
 
   it("requires a non-empty path", () => {
-    expect(() => RouteRegistry.register(mkRoute("", "feat-a"))).toThrow(
-      /required/
-    )
+    expect(() => RouteRegistry.register(mkRoute("", "feat-a"))).toThrow(/required/)
   })
 })
 
@@ -44,11 +40,7 @@ describe("RouteRegistry.all / cyclable / findByFeatureId", () => {
   })
 
   it("all returns every route in insertion order", () => {
-    expect(RouteRegistry.all().map(r => r.path)).toEqual([
-      "/a",
-      "/b",
-      "/a/detail"
-    ])
+    expect(RouteRegistry.all().map(r => r.path)).toEqual(["/a", "/b", "/a/detail"])
   })
 
   it("cyclable excludes routes marked cyclable:false", () => {
@@ -56,10 +48,7 @@ describe("RouteRegistry.all / cyclable / findByFeatureId", () => {
   })
 
   it("findByFeatureId returns all routes owned by a provider", () => {
-    expect(RouteRegistry.findByFeatureId("feat-a").map(r => r.path)).toEqual([
-      "/a",
-      "/a/detail"
-    ])
+    expect(RouteRegistry.findByFeatureId("feat-a").map(r => r.path)).toEqual(["/a", "/a/detail"])
   })
 
   it("find returns undefined for unknown paths", () => {

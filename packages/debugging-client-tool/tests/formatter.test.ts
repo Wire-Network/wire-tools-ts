@@ -1,14 +1,6 @@
-import {
-  EnvelopeListEntry,
-  DebugOutpostEndpointsType,
-  GetEnvelopeResponse
-} from "@wireio/opp-typescript-models"
+import { EnvelopeListEntry, DebugOutpostEndpointsType, GetEnvelopeResponse } from "@wireio/opp-typescript-models"
 
-import {
-  formatList,
-  formatInspect,
-  OutputFormat
-} from "@wireio/debugging-client-tool"
+import { formatList, formatInspect, OutputFormat } from "@wireio/debugging-client-tool"
 
 describe("formatList", () => {
   const entries: EnvelopeListEntry[] = [

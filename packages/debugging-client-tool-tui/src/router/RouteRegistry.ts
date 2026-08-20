@@ -12,10 +12,7 @@ export namespace RouteRegistry {
   /** Register a route. Throws on duplicate path. */
   export function register(route: Route): void {
     Assert.ok(route.path, "Route.path is required")
-    Assert.ok(
-      !routes.has(route.path),
-      `Route "${route.path}" is already registered`
-    )
+    Assert.ok(!routes.has(route.path), `Route "${route.path}" is already registered`)
     routes.set(route.path, route)
   }
 

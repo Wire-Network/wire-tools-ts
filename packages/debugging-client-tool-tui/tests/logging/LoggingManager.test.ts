@@ -25,11 +25,7 @@ describe("LoggingManager.configure", () => {
   it("writes records to <clusterPath>/<LogSubpath>/<LogFilename>", () => {
     const log = LoggingManager.getGlobalLogger()
     log.fatal("probe-message")
-    const file = Path.join(
-      dir,
-      LoggingManager.LogSubpath,
-      LoggingManager.LogFilename
-    )
+    const file = Path.join(dir, LoggingManager.LogSubpath, LoggingManager.LogFilename)
     expect(Fs.existsSync(file)).toBe(true)
     // FileAppender flushes async via queueMicrotask; retry briefly.
     const deadline = Date.now() + 500
@@ -43,9 +39,7 @@ describe("LoggingManager.configure", () => {
 
   it("is idempotent — second configure() is a no-op", () => {
     // Call again with a different level; the existing appender stays put.
-    expect(() =>
-      LoggingManager.configure({ clusterPath: dir, level: Level.error })
-    ).not.toThrow()
+    expect(() => LoggingManager.configure({ clusterPath: dir, level: Level.error })).not.toThrow()
   })
 })
 

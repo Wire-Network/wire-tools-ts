@@ -14,16 +14,8 @@ import { getGlobalLogger } from "../logging/LoggingManager.js"
  * @param filter lowercase id set, or null when `--features` was omitted
  * @return providers that should be registered this run
  */
-export function selectActiveProviders(
-  all: readonly FeatureProvider[],
-  filter: Set<string> | null
-): FeatureProvider[] {
-  return all.filter(
-    p =>
-      p.isRequiredProvider ||
-      filter === null ||
-      filter.has(p.id.toLowerCase())
-  )
+export function selectActiveProviders(all: readonly FeatureProvider[], filter: Set<string> | null): FeatureProvider[] {
+  return all.filter(p => p.isRequiredProvider || filter === null || filter.has(p.id.toLowerCase()))
 }
 
 /**
@@ -33,13 +25,8 @@ export function selectActiveProviders(
  * @param filter raw lowercase id set from the CLI
  * @param activeIds ids of providers actually activated
  */
-export function warnUnknownFeatureIds(
-  filter: Set<string>,
-  activeIds: readonly string[]
-): void {
+export function warnUnknownFeatureIds(filter: Set<string>, activeIds: readonly string[]): void {
   const log = getGlobalLogger(),
     known = new Set(activeIds.map(id => id.toLowerCase()))
-  ;[...filter]
-    .filter(id => !known.has(id))
-    .forEach(id => log.warn(`--features: unknown feature id "${id}"`))
+  ;[...filter].filter(id => !known.has(id)).forEach(id => log.warn(`--features: unknown feature id "${id}"`))
 }

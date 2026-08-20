@@ -43,9 +43,7 @@ describe("netUtils", () => {
         holder.bind(0, () => deferred.resolve(holder.address().port))
       ).promise
       expect(await isUdpPortFree(port)).toBe(false)
-      await Deferred.useCallback<void>(deferred =>
-        holder.close(() => deferred.resolve())
-      ).promise
+      await Deferred.useCallback<void>(deferred => holder.close(() => deferred.resolve())).promise
       expect(await isUdpPortFree(port)).toBe(true)
     })
   })
@@ -59,19 +57,14 @@ describe("netUtils", () => {
     ].join("\n")
 
     it("keeps only lines whose LOCAL port matches, across v4/v6 forms", () => {
-      const lines = filterSocketLinesByLocalPort(
-        SsOutput,
-        new Set([8000, 8899])
-      )
+      const lines = filterSocketLinesByLocalPort(SsOutput, new Set([8000, 8899]))
       expect(lines).toHaveLength(2)
       expect(lines[0]).toContain("0.0.0.0:8000")
       expect(lines[1]).toContain("[::]:8899")
     })
 
     it("matches nothing for ports absent from the output (header never matches)", () => {
-      expect(
-        filterSocketLinesByLocalPort(SsOutput, new Set([12000]))
-      ).toHaveLength(0)
+      expect(filterSocketLinesByLocalPort(SsOutput, new Set([12000]))).toHaveLength(0)
       expect(filterSocketLinesByLocalPort(SsOutput, new Set())).toHaveLength(0)
     })
   })

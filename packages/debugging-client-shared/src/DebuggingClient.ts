@@ -10,11 +10,7 @@ import type {
   ProcessLivenessSnapshot,
   StreamTopic
 } from "@wireio/debugging-shared"
-import type {
-  GetEnvelopeResponse,
-  ListEnvelopesRequest,
-  ListEnvelopesResponse
-} from "@wireio/opp-typescript-models"
+import type { GetEnvelopeResponse, ListEnvelopesRequest, ListEnvelopesResponse } from "@wireio/opp-typescript-models"
 
 import type { DebuggingSubscription } from "./subscriptions/index.js"
 
@@ -61,9 +57,7 @@ export abstract class DebuggingClient {
    * Probe kernel liveness for each requested label. Empty `labels` probes
    * every known source; otherwise returns one snapshot per requested label.
    */
-  abstract getProcessLiveness(
-    labels: string[]
-  ): Promise<ProcessLivenessSnapshot[]>
+  abstract getProcessLiveness(labels: string[]): Promise<ProcessLivenessSnapshot[]>
 
   // -------------------------------------------------------------------------
   //  Logs
@@ -80,9 +74,7 @@ export abstract class DebuggingClient {
   // -------------------------------------------------------------------------
 
   /** List stored envelopes matching the filters in `req`. */
-  abstract listEnvelopes(
-    req: ListEnvelopesRequest
-  ): Promise<ListEnvelopesResponse>
+  abstract listEnvelopes(req: ListEnvelopesRequest): Promise<ListEnvelopesResponse>
 
   /** Read one stored envelope by storage key. */
   abstract getEnvelope(key: string): Promise<GetEnvelopeResponse>
@@ -93,9 +85,7 @@ export abstract class DebuggingClient {
    * the `EnvelopeWatch` stream emits, so the consumer's slice-update
    * code path is identical to the live-tail path.
    */
-  abstract loadEnvelopeRecords(
-    req: LoadEnvelopeRecordsRequest
-  ): Promise<LoadEnvelopeRecordsResponse>
+  abstract loadEnvelopeRecords(req: LoadEnvelopeRecordsRequest): Promise<LoadEnvelopeRecordsResponse>
 
   // -------------------------------------------------------------------------
   //  Streams

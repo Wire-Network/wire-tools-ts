@@ -42,9 +42,7 @@ describe("RecordingJsonRpcProvider.shouldRecord", () => {
 
 describe("RecordingJsonRpcProvider.toCall", () => {
   it("decodes a raw transaction submission into payload fields", async () => {
-    const wallet = new ethers.Wallet(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-    )
+    const wallet = new ethers.Wallet("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
     const raw = await wallet.signTransaction({
       to: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
       value: 12_345n,
@@ -90,9 +88,7 @@ describe("RecordingConnection.toTransactionCall", () => {
 
 describe("read-path recording", () => {
   it("RecordingFetchProvider records wire RPCs request-only and delegates", async () => {
-    const { RecordingFetchProvider } = await import(
-      "@wireio/cluster-tool/clients/wire"
-    )
+    const { RecordingFetchProvider } = await import("@wireio/cluster-tool/clients/wire")
     const { StepExtraRecorder } = await import("@wireio/cluster-tool/report")
     const seen: RecordedFetchRequest[] = []
     // A real Response: sdk-core's bounded body reader (SEC-74) consumes the
@@ -128,9 +124,7 @@ describe("read-path recording", () => {
   })
 
   it("RecordingFetchProvider records params in WIRE form (toJSON honored)", async () => {
-    const { RecordingFetchProvider } = await import(
-      "@wireio/cluster-tool/clients/wire"
-    )
+    const { RecordingFetchProvider } = await import("@wireio/cluster-tool/clients/wire")
     // Antelope value types carry BN internals; their toJSON is the wire form.
     const nameLike = {
       value: { words: [29_005_824, 3_834_021], negative: 0 },
@@ -143,9 +137,7 @@ describe("read-path recording", () => {
   })
 
   it("RecordingConnection records read RPCs request-only via the _rpcRequest wrap", async () => {
-    const { RecordingConnection } = await import(
-      "@wireio/cluster-tool/clients/solana"
-    )
+    const { RecordingConnection } = await import("@wireio/cluster-tool/clients/solana")
     const { StepExtraRecorder } = await import("@wireio/cluster-tool/report")
     // The fetch override fails fast — the record happens BEFORE the send, so
     // no live validator is needed and the transport never hangs.
@@ -158,9 +150,7 @@ describe("read-path recording", () => {
     const transport = connection
     const recorder = new StepExtraRecorder()
     await StepExtraRecorder.runWith(recorder, async () => {
-      await transport
-        ._rpcRequest("getBalance", ["someKey", { commitment: "confirmed" }])
-        .catch(() => undefined)
+      await transport._rpcRequest("getBalance", ["someKey", { commitment: "confirmed" }]).catch(() => undefined)
       await transport._rpcRequest("sendTransaction", ["base64wire"]).catch(() => undefined)
     })
     // getBalance recorded; sendTransaction skipped (the rich override owns it).
@@ -175,9 +165,7 @@ describe("read-path recording", () => {
   })
 
   it("RecordingJsonRpcProvider records read methods request-only", async () => {
-    const { RecordingJsonRpcProvider } = await import(
-      "@wireio/cluster-tool/clients/ethereum"
-    )
+    const { RecordingJsonRpcProvider } = await import("@wireio/cluster-tool/clients/ethereum")
     const { StepExtraRecorder } = await import("@wireio/cluster-tool/report")
     const { ethers } = await import("ethers")
     // staticNetwork suppresses the provider's own eth_chainId detection so the

@@ -13,11 +13,7 @@ import {
   type EnvelopeEvent,
   type EventFrame
 } from "@wireio/debugging-shared"
-import {
-  DebugEnvelopeMetadataRecord,
-  DebugOutpostEndpointsType,
-  Envelope
-} from "@wireio/opp-typescript-models"
+import { DebugEnvelopeMetadataRecord, DebugOutpostEndpointsType, Envelope } from "@wireio/opp-typescript-models"
 
 import { DebuggingServer } from "@wireio/debugging-server"
 
@@ -43,10 +39,7 @@ function writeEnvelopePair(
     messages: []
   })
   const bytes = Envelope.toBinary(envelope),
-    checksum = createHash("sha256")
-      .update(Buffer.from(bytes))
-      .digest("hex")
-      .substring(0, ChecksumHexChars),
+    checksum = createHash("sha256").update(Buffer.from(bytes)).digest("hex").substring(0, ChecksumHexChars),
     endpointsKey = endpointsTypeToKey(endpointsType),
     epochStr = String(epochIndex).padStart(EpochIndexPadWidth, "0"),
     baseKey = `${epochStr}-${endpointsKey}-${checksum}`
@@ -56,10 +49,7 @@ function writeEnvelopePair(
     checksum: BigInt(`0x${checksum.substring(0, 12)}`),
     batchOpNames: [batchOpName]
   })
-  Fs.writeFileSync(
-    Path.join(storageDir, `${baseKey}.metadata`),
-    DebugEnvelopeMetadataRecord.toBinary(meta)
-  )
+  Fs.writeFileSync(Path.join(storageDir, `${baseKey}.metadata`), DebugEnvelopeMetadataRecord.toBinary(meta))
   return baseKey
 }
 
@@ -70,10 +60,7 @@ describe("EnvelopeWatchStream over WS", () => {
 
   beforeAll(async () => {
     Fs.mkdirSync(tmpDir, { recursive: true })
-    Fs.writeFileSync(
-      Path.join(tmpDir, ClusterFiles.ConfigFilename),
-      JSON.stringify({ clusterPath: tmpDir })
-    )
+    Fs.writeFileSync(Path.join(tmpDir, ClusterFiles.ConfigFilename), JSON.stringify({ clusterPath: tmpDir }))
     server = await DebuggingServer.create({ clusterPath: tmpDir, port: 0 })
     const addr = await server.start()
     baseUrl = `http://127.0.0.1:${addr.port}`
@@ -87,12 +74,7 @@ describe("EnvelopeWatchStream over WS", () => {
   it("emits Hydrated for pre-existing pairs and Added for new ones", async () => {
     const storageDir = oppDebuggingPath(tmpDir)
     Fs.mkdirSync(storageDir, { recursive: true })
-    writeEnvelopePair(
-      storageDir,
-      11,
-      DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT,
-      "batchop.a"
-    )
+    writeEnvelopePair(storageDir, 11, DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT, "batchop.a")
 
     const ws = await connectStream(baseUrl)
     sendSubscribe(ws, {
@@ -105,21 +87,14 @@ describe("EnvelopeWatchStream over WS", () => {
     const initial = await collectFrames(ws, 2)
     // Subscribed then a Hydrated event
     expect(initial[0].type).toBe(StreamFrameType.Subscribed)
-    const hydrated = (initial[1] as EventFrame<StreamTopic.EnvelopeWatch>)
-      .payload as EnvelopeEvent
+    const hydrated = (initial[1] as EventFrame<StreamTopic.EnvelopeWatch>).payload as EnvelopeEvent
     expect(hydrated.kind).toBe(EnvelopeEventKind.Hydrated)
     expect(hydrated.epoch).toBe(11)
 
     // Drop a new pair; should fire an Added event
-    writeEnvelopePair(
-      storageDir,
-      12,
-      DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT,
-      "batchop.b"
-    )
+    writeEnvelopePair(storageDir, 12, DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT, "batchop.b")
     const [addedFrame] = await collectFrames(ws, 1)
-    const added = (addedFrame as EventFrame<StreamTopic.EnvelopeWatch>)
-      .payload as EnvelopeEvent
+    const added = (addedFrame as EventFrame<StreamTopic.EnvelopeWatch>).payload as EnvelopeEvent
     expect(added.kind).toBe(EnvelopeEventKind.Added)
     expect(added.epoch).toBe(12)
     ws.close()

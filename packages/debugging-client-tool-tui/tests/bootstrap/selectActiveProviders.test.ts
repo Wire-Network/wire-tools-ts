@@ -31,11 +31,7 @@ describe("selectActiveProviders", () => {
   const all = [required, opp, custom] as const
 
   it("returns every provider when filter is null", () => {
-    expect(selectActiveProviders(all, null).map(p => p.id)).toEqual([
-      "process-monitor",
-      "opp",
-      "custom"
-    ])
+    expect(selectActiveProviders(all, null).map(p => p.id)).toEqual(["process-monitor", "opp", "custom"])
   })
 
   it("keeps required providers even if the filter excludes them", () => {
@@ -45,29 +41,21 @@ describe("selectActiveProviders", () => {
 
   it("lowercases the id when matching against the filter (case-insensitive)", () => {
     const upperCase = mkProvider("OPP")
-    expect(
-      selectActiveProviders([upperCase] as any, new Set(["opp"])).map(p => p.id)
-    ).toEqual(["OPP"])
+    expect(selectActiveProviders([upperCase] as any, new Set(["opp"])).map(p => p.id)).toEqual(["OPP"])
   })
 
   it("filter with unknown ids excludes every non-required provider", () => {
-    expect(
-      selectActiveProviders(all, new Set(["nonexistent"])).map(p => p.id)
-    ).toEqual(["process-monitor"])
+    expect(selectActiveProviders(all, new Set(["nonexistent"])).map(p => p.id)).toEqual(["process-monitor"])
   })
 })
 
 describe("warnUnknownFeatureIds", () => {
   it("is a no-op when every filter id matches an active id", () => {
     // Assert: calling the function does not throw.
-    expect(() =>
-      warnUnknownFeatureIds(new Set(["opp"]), ["opp", "process-monitor"])
-    ).not.toThrow()
+    expect(() => warnUnknownFeatureIds(new Set(["opp"]), ["opp", "process-monitor"])).not.toThrow()
   })
 
   it("accepts unknown ids without throwing (logs a warning)", () => {
-    expect(() =>
-      warnUnknownFeatureIds(new Set(["opp", "bogus"]), ["opp"])
-    ).not.toThrow()
+    expect(() => warnUnknownFeatureIds(new Set(["opp", "bogus"]), ["opp"])).not.toThrow()
   })
 })

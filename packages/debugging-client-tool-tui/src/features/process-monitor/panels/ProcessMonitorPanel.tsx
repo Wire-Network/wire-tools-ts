@@ -9,17 +9,9 @@ import { useService } from "../../../services/ServiceContext.js"
 import { ServiceId } from "../../../services/ServiceId.js"
 import { useAppDispatch, useAppSelector } from "../../../store/Store.js"
 import { selectCluster } from "../../../store/cluster/ClusterSelectors.js"
-import {
-  selectLogViewer,
-  selectProcessMap
-} from "../../../store/process-monitor/ProcessMonitorSelectors.js"
+import { selectLogViewer, selectProcessMap } from "../../../store/process-monitor/ProcessMonitorSelectors.js"
 import { setLogViewerPath } from "../../../store/process-monitor/ProcessMonitorSlice.js"
-import {
-  PidSourceKind,
-  logPathForSource,
-  type PidSource,
-  type ProcessLivenessSnapshot
-} from "@wireio/debugging-shared"
+import { PidSourceKind, logPathForSource, type PidSource, type ProcessLivenessSnapshot } from "@wireio/debugging-shared"
 import type { ProcessMonitorService } from "../ProcessMonitorService.js"
 import { LogViewerPanel } from "./LogViewerPanel.js"
 
@@ -49,10 +41,7 @@ function classify(alive: ProcessLivenessSnapshot["alive"]): LivenessKind {
 function identifierForSource(source: PidSource): string {
   return match(source)
     .with({ kind: PidSourceKind.Anvil }, () => "anvil")
-    .with(
-      { kind: PidSourceKind.SolanaValidator },
-      () => "solana-test-validator"
-    )
+    .with({ kind: PidSourceKind.SolanaValidator }, () => "solana-test-validator")
     .otherwise(s => `${s.node?.producers[0] ?? s.node?.name ?? s.label}`)
 }
 
@@ -82,18 +71,14 @@ function ProcessMonitorBody(_: PanelComponentProps): React.ReactElement {
     cursor = cursorByLabel === -1 ? 0 : cursorByLabel,
     /** A log path is currently being viewed → render in compact mode. */
     isCompact = !!viewer.path,
-    windowSize = isCompact
-      ? ProcessMonitorPanel.CompactRowCount
-      : sources.length,
+    windowSize = isCompact ? ProcessMonitorPanel.CompactRowCount : sources.length,
     [sliceStart, setSliceStart] = useState(0)
 
   // Sticky window: re-center only when the cursor leaves the viewport. With
   // the previous "always-center" behavior, every keystroke shifted the row
   // set under the cursor, which read as the list "jumping" on each press.
   useEffect(() => {
-    setSliceStart(prev =>
-      adjustStickyWindow(prev, cursor, sources.length, windowSize)
-    )
+    setSliceStart(prev => adjustStickyWindow(prev, cursor, sources.length, windowSize))
   }, [cursor, sources.length, windowSize])
 
   const sliceEnd = Math.min(sources.length, sliceStart + windowSize),
@@ -136,8 +121,7 @@ function ProcessMonitorBody(_: PanelComponentProps): React.ReactElement {
   if (!cluster.state) {
     return (
       <Text dimColor>
-        No {ClusterFiles.StateFilename} found in {cluster.path ?? "(unknown)"} —
-        has the cluster been bootstrapped yet?
+        No {ClusterFiles.StateFilename} found in {cluster.path ?? "(unknown)"} — has the cluster been bootstrapped yet?
       </Text>
     )
   }
@@ -146,8 +130,8 @@ function ProcessMonitorBody(_: PanelComponentProps): React.ReactElement {
     <Box flexDirection="column">
       <Text bold color={isFocused ? "cyan" : undefined}>
         {sources.length} process(es)
-        {isCompact ? ` (showing ${sliceStart + 1}–${sliceEnd})` : ""} — ↑/↓ or
-        j/k select, Enter view log{isFocused ? "" : "  (Tab to focus)"}
+        {isCompact ? ` (showing ${sliceStart + 1}–${sliceEnd})` : ""} — ↑/↓ or j/k select, Enter view log
+        {isFocused ? "" : "  (Tab to focus)"}
       </Text>
       {visibleSources.map((s, i) => {
         const sourceIdx = sliceStart + i,
@@ -165,8 +149,7 @@ function ProcessMonitorBody(_: PanelComponentProps): React.ReactElement {
             .otherwise(() => "gray")
         return (
           <Text key={s.label} inverse={selected}>
-            {cursorMarker} <Text color={color}>{glyph}</Text> [{s.kind}]{" "}
-            {identifierForSource(s)}
+            {cursorMarker} <Text color={color}>{glyph}</Text> [{s.kind}] {identifierForSource(s)}
             {endpointForSource(s)} (pid {liveness?.pid ?? "-"})
           </Text>
         )

@@ -1,10 +1,7 @@
 import { ethers } from "ethers"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
-import {
-  NodeopProcess,
-  ProcessManager
-} from "@wireio/cluster-tool/cluster/processes"
+import { NodeopProcess, ProcessManager } from "@wireio/cluster-tool/cluster/processes"
 import { NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import {
@@ -28,10 +25,7 @@ const AnvilMnemonic = "test test test test test test test test test test test ju
  * swap at a chain boundary (mirrors the helper in `OperatorDaemonTool.test.ts`).
  */
 function operatorAccount(label: string, type: OperatorType): OperatorAccount {
-  const wallet = ethers.HDNodeWallet.fromMnemonic(
-      ethers.Mnemonic.fromPhrase(AnvilMnemonic),
-      "m/44'/60'/0'/0/1"
-    ),
+  const wallet = ethers.HDNodeWallet.fromMnemonic(ethers.Mnemonic.fromPhrase(AnvilMnemonic), "m/44'/60'/0'/0/1"),
     edPrivate = PrivateKey.generate(KeyType.ED)
   return {
     label,
@@ -123,9 +117,7 @@ describe("Steps.processes.nodeop", () => {
     // The context's processManager getter requires the singleton's cluster
     // path to be set (idempotent for the same value).
     ProcessManager.setClusterPath(ctx.config.clusterPath)
-    const bios = NodeConfig.plan(ctx.config).find(
-      planned => planned.role === NodeRole.bios
-    )
+    const bios = NodeConfig.plan(ctx.config).find(planned => planned.role === NodeRole.bios)
     const recoverySpy = jest
       .spyOn(NodeopProcess, "startWithRecovery")
       // strictNullChecks is off — `undefined` is assignable to `NodeopProcess`
@@ -231,17 +223,13 @@ describe("Steps.processes.nodeop", () => {
     it("throws when an operator node names no batch/underwriter label", () => {
       const ctx = fixtureContext()
       const node = testNode(ctx, NodeRole.operator, 4, "node_04")
-      expect(() => Steps.processes.nodeop.resolveOperator(ctx, node)).toThrow(
-        /has no operator label/
-      )
+      expect(() => Steps.processes.nodeop.resolveOperator(ctx, node)).toThrow(/has no operator label/)
     })
 
     it("throws when the named operator label has not been provisioned in ctx.keyStore", () => {
       const ctx = fixtureContext()
       const node = testNode(ctx, NodeRole.operator, 5, "node_05", [], "unprovisioned")
-      expect(() => Steps.processes.nodeop.resolveOperator(ctx, node)).toThrow(
-        /has not been provisioned/
-      )
+      expect(() => Steps.processes.nodeop.resolveOperator(ctx, node)).toThrow(/has not been provisioned/)
     })
   })
 
@@ -277,12 +265,7 @@ describe("Steps.processes.nodeop", () => {
       const node = testNode(ctx, NodeRole.operator, 2, "node_02", [], "batchopaaaa")
       const args = Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)
       expect(args).toEqual(
-        expect.arrayContaining([
-          "--batch-enabled",
-          "true",
-          "--batch-operator-account",
-          "wireno.batchopaaaa"
-        ])
+        expect.arrayContaining(["--batch-enabled", "true", "--batch-operator-account", "wireno.batchopaaaa"])
       )
       // The depot matches this argv against `sysio.opreg::operators`, which is
       // keyed by the ON-CHAIN account — passing the handle would start a daemon
@@ -298,12 +281,7 @@ describe("Steps.processes.nodeop", () => {
       const node = testNode(ctx, NodeRole.operator, 3, "node_03", [], null, "underwriteraaaa")
       const args = Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)
       expect(args).toEqual(
-        expect.arrayContaining([
-          "--underwriter-enabled",
-          "true",
-          "--underwriter-account",
-          "wireno.underwriteraaaa"
-        ])
+        expect.arrayContaining(["--underwriter-enabled", "true", "--underwriter-account", "wireno.underwriteraaaa"])
       )
       // Same chain-boundary rule as `--batch-operator-account`.
       expect(valuesOf(args, "--underwriter-account")).toEqual([account.account])
@@ -314,9 +292,9 @@ describe("Steps.processes.nodeop", () => {
       const ctx = fixtureContext()
       const account = operatorAccount("batchopbbbb", OperatorType.BATCH)
       const node = testNode(ctx, NodeRole.operator, 4, "node_04", [], "batchopbbbb")
-      expect(() =>
-        Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)
-      ).toThrow(/Missing asserted output/)
+      expect(() => Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)).toThrow(
+        /Missing asserted output/
+      )
     })
   })
 })

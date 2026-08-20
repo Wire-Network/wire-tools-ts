@@ -85,9 +85,7 @@ describe("useServiceManager", () => {
   })
 
   it("throws when context is null (no provider)", () => {
-    expect(() => withMockedContext(null, () => useServiceManager())).toThrow(
-      /outside a ServiceManagerContext.Provider/
-    )
+    expect(() => withMockedContext(null, () => useServiceManager())).toThrow(/outside a ServiceManagerContext.Provider/)
   })
 })
 
@@ -105,9 +103,7 @@ describe("useServices", () => {
   it("returns multiple services in tuple order", async () => {
     const sm = ServiceManager.get().register(StubA).register(StubB)
     await sm.boot()
-    const [a, b] = withMockedContext(sm, () =>
-      useServices<[StubA, StubB]>("a", "b")
-    )
+    const [a, b] = withMockedContext(sm, () => useServices<[StubA, StubB]>("a", "b"))
     expect(a.tag).toBe("a")
     expect(b.tag).toBe("b")
     await sm.destroy()
@@ -123,8 +119,6 @@ describe("ServiceManagerProvider", () => {
       </ServiceManagerProvider>
     )
     expect(element.props.manager).toBe(sm)
-    expect((element.type as typeof ServiceManagerProvider).name).toBe(
-      "ServiceManagerProvider"
-    )
+    expect((element.type as typeof ServiceManagerProvider).name).toBe("ServiceManagerProvider")
   })
 })

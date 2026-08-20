@@ -69,9 +69,7 @@ export namespace YieldDistributionScenarioEmitSteps {
    * @param rewardEpochIndex - Informational WIRE epoch index.
    * @returns The definition step.
    */
-  export function planEthereumEmit<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planEthereumEmit<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -158,9 +156,7 @@ export namespace YieldDistributionScenarioEmitSteps {
    * @param rewardEpochIndex - Informational WIRE epoch index.
    * @returns The definition step.
    */
-  export function planEthereumEmitReplay<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planEthereumEmitReplay<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -265,9 +261,7 @@ export namespace YieldDistributionScenarioEmitSteps {
    * @param rewardEpochIndex - Informational WIRE epoch index.
    * @returns The definition step.
    */
-  export function planSolanaEmit<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planSolanaEmit<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -337,14 +331,10 @@ export namespace YieldDistributionScenarioEmitSteps {
    * @param ctx - The build context (supplies `ethereumPath` + the deployer signer).
    * @returns The emitter bound to the deployer.
    */
-  export function loadEmitter<C extends ClusterBuildContext>(
-    ctx: C
-  ): MockYieldEmitterContract {
+  export function loadEmitter<C extends ClusterBuildContext>(ctx: C): MockYieldEmitterContract {
     return loadMockYieldEmitter(
       ctx.config.ethereumPath,
-      EthereumCollateralTool.loadOutpostAddresses(
-        ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
-      ),
+      EthereumCollateralTool.loadOutpostAddresses(ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)),
       ctx.ethereum.wallet.signer
     )
   }

@@ -42,10 +42,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * its signing wallet at run time (the contract verifies the compressed key
    * derives to `msg.sender`).
    */
-  export type NativeReserveCreateArgs = Omit<
-    EthereumReserveCreateArgs,
-    "creatorPubKey"
-  >
+  export type NativeReserveCreateArgs = Omit<EthereumReserveCreateArgs, "creatorPubKey">
 
   /** The swap-probe args — `EthereumSwapRequest` minus the runtime recipient. */
   export type SwapProbeRequest = Omit<EthereumSwapRequest, "targetRecipient">
@@ -68,10 +65,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
       creatorPubKey: string,
       overrides: EthereumPayableOverrides
     ) => Promise<ethers.ContractTransactionResponse>
-    getReserve: (
-      tokenCode: bigint,
-      reserveCode: bigint
-    ) => Promise<EthereumLocalReserveRecord>
+    getReserve: (tokenCode: bigint, reserveCode: bigint) => Promise<EthereumLocalReserveRecord>
   }
 
   // ── cross-step output keys ─────────────────────────────────────────────────
@@ -120,9 +114,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * @param ctx - The build context (supplies the Ethereum provider).
    * @returns The connected HD wallet.
    */
-  export function unlinkedCreatorWallet<C extends ClusterBuildContext>(
-    ctx: C
-  ): ethers.HDNodeWallet {
+  export function unlinkedCreatorWallet<C extends ClusterBuildContext>(ctx: C): ethers.HDNodeWallet {
     return ethers.HDNodeWallet.fromMnemonic(
       ethers.Mnemonic.fromPhrase(EthereumOutpostBootstrapper.AnvilMnemonic),
       `${EthereumOutpostBootstrapper.DerivationPath}${Constants.NoLinkCreatorHdIndex}`
@@ -149,13 +141,8 @@ export namespace ReserveLifecycleScenarioReserveSteps {
       address != null && /^0x[0-9a-fA-F]{40}$/.test(address),
       `ReserveLifecycleScenarioReserveSteps: ReserveManager not in outpost-addrs.json (got ${address})`
     )
-    const abi = EthereumCollateralTool.loadOutpostAbi(
-      ctx.config.ethereumPath,
-      Constants.ReserveManagerContractName
-    )
-    return contractView<
-      ReserveManagerNativeContract & ReserveManagerRequestSwapContract
-    >(address, abi, signer)
+    const abi = EthereumCollateralTool.loadOutpostAbi(ctx.config.ethereumPath, Constants.ReserveManagerContractName)
+    return contractView<ReserveManagerNativeContract & ReserveManagerRequestSwapContract>(address, abi, signer)
   }
 
   /**
@@ -184,10 +171,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
     wallet: ethers.HDNodeWallet,
     create: EthereumReserveCreateArgs
   ): Promise<void> {
-    Assert.ok(
-      create.externalTokenAmount > 0n,
-      "ReserveLifecycleScenarioReserveSteps: externalTokenAmount must be > 0"
-    )
+    Assert.ok(create.externalTokenAmount > 0n, "ReserveLifecycleScenarioReserveSteps: externalTokenAmount must be > 0")
     const reserveManager = loadReserveManager(ctx, wallet)
     const nonce = await resolveLatestNonce(reserveManager)
     const response = await reserveManager.create_reserve(
@@ -230,9 +214,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * @param create - The create args (pubkey injected at run time).
    * @returns The definition step.
    */
-  export function planCreateReserve<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planCreateReserve<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -290,9 +272,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * @param create - The create args (pubkey injected at run time).
    * @returns The definition step.
    */
-  export function planCreateReserveUnlinked<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planCreateReserveUnlinked<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -348,9 +328,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * @param amountWei - Wei to seed the wallet with.
    * @returns The definition step.
    */
-  export function planFundUnlinkedCreator<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planFundUnlinkedCreator<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -377,10 +355,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(
-      input.amountWei > 0n,
-      "ReserveLifecycleScenarioReserveSteps: funding amountWei must be > 0"
-    )
+    Assert.ok(input.amountWei > 0n, "ReserveLifecycleScenarioReserveSteps: funding amountWei must be > 0")
     const response = await ctx.ethereum.wallet.signer.sendTransaction({
       to: unlinkedCreatorWallet(ctx).address,
       value: input.amountWei
@@ -426,9 +401,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * @param wireAmount - Raw WIRE base units to escrow (exact match required).
    * @returns The definition step.
    */
-  export function planMatchReserve<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planMatchReserve<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -463,27 +436,23 @@ export namespace ReserveLifecycleScenarioReserveSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const custody = await ctx.wire.getWireBalance(
-      SysioContractAccount[SysioContractName.reserv]
-    )
+    const custody = await ctx.wire.getWireBalance(SysioContractAccount[SysioContractName.reserv])
     const matcher = await ctx.wire.getWireBalance(input.matcher)
     Assert.ok(
       matcher >= input.wireAmount,
       `ReserveLifecycleScenarioReserveSteps: matcher ${input.matcher} holds ${matcher}, needs ${input.wireAmount}`
     )
     ctx.outputs.set(wireCustodySnapshotKey(), { custody, matcher })
-    await ctx.wire
-      .getSysioContract(SysioContractName.reserv)
-      .actions.matchreserve.invoke(
-        {
-          chain_code: { value: input.chainCode },
-          token_code: { value: input.tokenCode },
-          reserve_code: { value: input.reserveCode },
-          matcher: input.matcher,
-          wire_amount: Number(input.wireAmount)
-        },
-        { authorization: [{ actor: input.matcher, permission: "active" }] }
-      )
+    await ctx.wire.getSysioContract(SysioContractName.reserv).actions.matchreserve.invoke(
+      {
+        chain_code: { value: input.chainCode },
+        token_code: { value: input.tokenCode },
+        reserve_code: { value: input.reserveCode },
+        matcher: input.matcher,
+        wire_amount: Number(input.wireAmount)
+      },
+      { authorization: [{ actor: input.matcher, permission: "active" }] }
+    )
   }
 
   // ── Step: the private↔public swap probe (rejected by the privacy gate) ────
@@ -508,9 +477,7 @@ export namespace ReserveLifecycleScenarioReserveSteps {
    * @param request - The swap args (recipient injected at run time).
    * @returns The definition step.
    */
-  export function planRequestSwapProbe<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planRequestSwapProbe<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

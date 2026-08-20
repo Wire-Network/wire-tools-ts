@@ -1,15 +1,9 @@
-import {
-  type Commitment,
-  Connection,
-  LAMPORTS_PER_SOL,
-  PublicKey
-} from "@solana/web3.js"
+import { type Commitment, Connection, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js"
 import { getAccount } from "@solana/spl-token"
 import { getLogger } from "@wireio/shared"
 import { RecordingConnection } from "./RecordingConnection.js"
 import { SolanaWallet } from "./SolanaWallet.js"
 import { mapSeries } from "../../utils/asyncUtils.js"
-
 
 const log = getLogger(__filename)
 
@@ -70,10 +64,7 @@ export class SolanaClient {
 
   /** Airdrop SOL to a pubkey (test-validator only). */
   async airdrop(pubkey: PublicKey, solAmount: number): Promise<string> {
-    const signature = await this.connection.requestAirdrop(
-      pubkey,
-      solAmount * LAMPORTS_PER_SOL
-    )
+    const signature = await this.connection.requestAirdrop(pubkey, solAmount * LAMPORTS_PER_SOL)
     await this.connection.confirmTransaction(signature)
     return signature
   }

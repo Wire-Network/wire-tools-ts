@@ -47,33 +47,21 @@ export function createCreateCommand(commandLine: string[] = []) {
     builder: (builder: Argv) =>
       applyClusterBuildOptionsArgs(
         builder,
-        defaultsDeep(
-          {},
-          fileOptions ?? {},
-          environmentPathDefaults(process.env)
-        ),
+        defaultsDeep({}, fileOptions ?? {}, environmentPathDefaults(process.env)),
         {}
       ),
     handler: async (args: Record<string, unknown>) => {
-      ClusterConfigProvider.assertClusterPathSource(
-        fileOptions,
-        explicitClusterPath
-      )
+      ClusterConfigProvider.assertClusterPathSource(fileOptions, explicitClusterPath)
       // Node config FIRST: `mergeSignatureProviderSSM` reads its `ssm` as the
       // lowest-precedence SSM source.
       const report = await ClusterManager.create(
         mergeSignatureProviderSSM(
-          mergeAWSClusterNodeConfig(
-            toClusterBuildOptions(args, fileOptions ?? {}),
-            args
-          ),
+          mergeAWSClusterNodeConfig(toClusterBuildOptions(args, fileOptions ?? {}), args),
           args,
           fileOptions
         )
       )
-      log.info(
-        `[cluster] bootstrap ${report.succeeded ? "SUCCEEDED" : "FAILED"}`
-      )
+      log.info(`[cluster] bootstrap ${report.succeeded ? "SUCCEEDED" : "FAILED"}`)
       process.exit(report.succeeded ? 0 : 1)
     }
   }

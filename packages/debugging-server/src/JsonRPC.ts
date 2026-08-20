@@ -33,19 +33,17 @@ export namespace JsonRPC {
   export type HandlerRegistry<
     Req extends IMessageType<any> = IMessageType<any>,
     Res extends IMessageType<any> = IMessageType<any>
-  > = Map<
-    string,
-    (reqMessage: Req, req: Request, res: Response) => Promise<Res>
-  >
+  > = Map<string, (reqMessage: Req, req: Request, res: Response) => Promise<Res>>
 
   /**
    * Register a strongly-typed handler in the registry.
    * Types are inferred from the HandlerMap at compile time.
    */
-  export function addRoute<
-    U extends HandlerURIType,
-    H extends InferredHandlerType<U> = InferredHandlerType<U>
-  >(registry: HandlerRegistry, method: U, handler: H): void {
+  export function addRoute<U extends HandlerURIType, H extends InferredHandlerType<U> = InferredHandlerType<U>>(
+    registry: HandlerRegistry,
+    method: U,
+    handler: H
+  ): void {
     registry.set(method, handler as any)
   }
 
@@ -53,11 +51,7 @@ export namespace JsonRPC {
    * Check if a parsed JSON body is a JSON-RPC 2.0 request.
    */
   function isJsonRPC(body: any): boolean {
-    return (
-      body &&
-      typeof body === "object" &&
-      body.jsonrpc === DebuggingDefaults.JsonrpcVersion
-    )
+    return body && typeof body === "object" && body.jsonrpc === DebuggingDefaults.JsonrpcVersion
   }
 
   /**
@@ -78,11 +72,7 @@ export namespace JsonRPC {
       .with(P.bigint, v => Number(v))
       .with(P.instanceOf(Buffer), v => Buffer.from(v).toString("base64"))
       .when(Array.isArray, v => v.map(prepareForJson))
-      .when(isObject, value =>
-        Object.fromEntries(
-          Object.entries(value).map(([k, v]) => [k, prepareForJson(v)])
-        )
-      )
+      .when(isObject, value => Object.fromEntries(Object.entries(value).map(([k, v]) => [k, prepareForJson(v)])))
       .otherwise(identity)
   }
 
@@ -99,65 +89,48 @@ export namespace JsonRPC {
    * All handlers in the registry are also mounted as individual POST routes
    * for plain JSON access (e.g. POST /api/opp/envelope with plain body).
    */
-  export function mount(
-    router: Router,
-    basePath: string,
-    registry: HandlerRegistry
-  ): void {
+  export function mount(router: Router, basePath: string, registry: HandlerRegistry): void {
     // JSON-RPC dispatch endpoint — POST to basePath
-    router.post(
-      basePath,
-      async (req: Request, res: Response, _next: NextFunction) => {
-        const body = req.body
+    router.post(basePath, async (req: Request, res: Response, _next: NextFunction) => {
+      const body = req.body
 
-        if (!isJsonRPC(body)) {
-          return res
-            .status(400)
-            .json({ error: "Expected JSON-RPC 2.0 request at this endpoint" })
-        }
-
-        await dispatchJsonRPC(body, registry, req, res)
+      if (!isJsonRPC(body)) {
+        return res.status(400).json({ error: "Expected JSON-RPC 2.0 request at this endpoint" })
       }
-    )
+
+      await dispatchJsonRPC(body, registry, req, res)
+    })
 
     // Individual plain-JSON routes for each registered handler
     registry.forEach((handler, method) => {
-      router.post(
-        method,
-        async (req: Request, res: Response, _next: NextFunction) => {
-          const body = req.body
+      router.post(method, async (req: Request, res: Response, _next: NextFunction) => {
+        const body = req.body
 
-          if (isJsonRPC(body)) {
-            // JSON-RPC sent to an individual route — still handle it
-            await dispatchJsonRPC(body, registry, req, res)
-            return
+        if (isJsonRPC(body)) {
+          // JSON-RPC sent to an individual route — still handle it
+          await dispatchJsonRPC(body, registry, req, res)
+          return
+        }
+
+        // Plain JSON — body IS the params
+        try {
+          const result = await handler(body, req, res)
+          if (!res.headersSent) {
+            sendJson(res, 200, result)
           }
-
-          // Plain JSON — body IS the params
-          try {
-            const result = await handler(body, req, res)
-            if (!res.headersSent) {
-              sendJson(res, 200, result)
-            }
-          } catch (err) {
-            if (!res.headersSent) {
-              sendJson(res, 500, {
-                error: err.message ?? "Unknown error",
-                stack: err?.stack ?? "Stack not available"
-              })
-            }
+        } catch (err) {
+          if (!res.headersSent) {
+            sendJson(res, 500, {
+              error: err.message ?? "Unknown error",
+              stack: err?.stack ?? "Stack not available"
+            })
           }
         }
-      )
+      })
     })
   }
 
-  async function dispatchJsonRPC(
-    body: any,
-    registry: HandlerRegistry,
-    req: Request,
-    res: Response
-  ): Promise<void> {
+  async function dispatchJsonRPC(body: any, registry: HandlerRegistry, req: Request, res: Response): Promise<void> {
     // `= null` (not absence): the JSON-RPC response echoes `id: null` for an
     // id-less request, and the destructuring default keeps that shape.
     const { id = null } = body
@@ -213,10 +186,7 @@ export namespace JsonRPC {
       if (protoEntry) {
         // Protobuf-encoded request/response (OPP routes)
         const [reqMessageType, resMessageType] = protoEntry,
-          reqMessage = reqMessageType.fromJson(
-            body.params,
-            FROM_JSON_OPTIONS
-          ) as IMessageType<any>
+          reqMessage = reqMessageType.fromJson(body.params, FROM_JSON_OPTIONS) as IMessageType<any>
         result = await Future.of(handler(reqMessage, req, res))
           .map(resMessage => resMessageType.toJson(resMessage, TO_JSON_OPTIONS))
           .toPromise()

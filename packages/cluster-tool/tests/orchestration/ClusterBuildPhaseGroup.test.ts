@@ -11,9 +11,7 @@ import { sleep } from "@wireio/cluster-tool/utils"
 import { fixtureConfig } from "../config/clusterConfigFixture.js"
 
 function newBuild(): ClusterBuild {
-  return ClusterBuild.forContext(
-    new ClusterBuildContext(fixtureConfig(), getLogger("group-test"))
-  )
+  return ClusterBuild.forContext(new ClusterBuildContext(fixtureConfig(), getLogger("group-test")))
 }
 
 const ok = (order: string[], name: string) =>
@@ -28,9 +26,7 @@ const fail = (name: string) =>
 
 /** Run a group and flatten its single Group node to the contained phases. */
 const runGroup = (group: ClusterBuildPhaseGroup): Promise<Report.Phase[]> =>
-  group
-    .run(new AbortController().signal)
-    .then(nodes => nodes.flatMap(node => Report.Node.phases(node)))
+  group.run(new AbortController().signal).then(nodes => nodes.flatMap(node => Report.Node.phases(node)))
 
 describe("ClusterBuildPhaseGroup", () => {
   it("defaults to sequential; runs child phases in registration order", async () => {
@@ -79,9 +75,7 @@ describe("ClusterBuildPhaseGroup", () => {
     const group = ClusterBuildPhaseGroup.create(newBuild(), "G", "group", {
       parallel: true
     })
-    expect(group.config.concurrency).toBe(
-      ClusterBuildPhaseGroup.UnboundedConcurrency
-    )
+    expect(group.config.concurrency).toBe(ClusterBuildPhaseGroup.UnboundedConcurrency)
   })
 
   it("caps children in flight at `concurrency` when parallel", async () => {
@@ -101,9 +95,7 @@ describe("ClusterBuildPhaseGroup", () => {
         inFlight -= 1
       })
     const names = ["a", "b", "c", "d", "e", "f"]
-    names.forEach(name =>
-      ClusterBuildPhase.create(group, name, "d").push(tracked(name))
-    )
+    names.forEach(name => ClusterBuildPhase.create(group, name, "d").push(tracked(name)))
     const phases = await runGroup(group)
     expect(peakInFlight).toBe(2)
     expect(phases.map(phase => phase.name).sort()).toEqual(names)

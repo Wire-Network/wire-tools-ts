@@ -45,20 +45,12 @@ export class DebuggingServerClient {
    *          open.
    * @throws When the health check does not return HTTP 200.
    */
-  static async create(
-    options: DebuggingToolClientOptions = {}
-  ): Promise<DebuggingServerClient> {
-    const config = defaults(
-      { ...options },
-      { baseUrl: DebuggingServerClient.DefaultURL }
-    ) as DebuggingToolClientConfig
+  static async create(options: DebuggingToolClientOptions = {}): Promise<DebuggingServerClient> {
+    const config = defaults({ ...options }, { baseUrl: DebuggingServerClient.DefaultURL }) as DebuggingToolClientConfig
 
     const pingUrl = `${config.baseUrl}${ApiPaths.Ping}`
     const resp = await fetch(pingUrl)
-    Assert.ok(
-      resp.status === 200,
-      `Debugging server not reachable at ${pingUrl}`
-    )
+    Assert.ok(resp.status === 200, `Debugging server not reachable at ${pingUrl}`)
 
     const rpc = new JsonRPCClient(`${config.baseUrl}${ApiPaths.OPP.Endpoint}`)
     return new DebuggingServerClient(config, rpc)
@@ -76,10 +68,7 @@ export class DebuggingServerClient {
    * @param params - Request body; type inferred from the handler entry.
    * @returns The decoded response body, typed from the handler entry.
    */
-  call<U extends HandlerURIType>(
-    method: U,
-    params: InferredRequestType<U>
-  ): Promise<InferredResponseType<U>> {
+  call<U extends HandlerURIType>(method: U, params: InferredRequestType<U>): Promise<InferredResponseType<U>> {
     return this.rpc.invoke(method, params)
   }
 }

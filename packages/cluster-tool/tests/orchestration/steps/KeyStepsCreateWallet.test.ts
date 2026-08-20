@@ -40,16 +40,12 @@ function walletContext() {
   const ctx = fixtureContext(),
     { wallet } = ctx.wire
   jest.spyOn(wallet, "getOrCreate").mockResolvedValue(wallet)
-  const addPrivateKey = jest
-    .spyOn(wallet, "addPrivateKey")
-    .mockResolvedValue(wallet)
+  const addPrivateKey = jest.spyOn(wallet, "addPrivateKey").mockResolvedValue(wallet)
   return { ctx, addPrivateKey }
 }
 
 /** Every private key handed to `addPrivateKey`, across all calls, flattened. */
-function importedKeys(
-  addPrivateKey: ReturnType<typeof walletContext>["addPrivateKey"]
-): string[] {
+function importedKeys(addPrivateKey: ReturnType<typeof walletContext>["addPrivateKey"]): string[] {
   return addPrivateKey.mock.calls.flat(2)
 }
 
@@ -79,9 +75,7 @@ describe("KeySteps.runCreateWallet", () => {
     // generated public half — importing `DEV_K1_PRIVATE_KEY` instead left the
     // wallet unable to sign as `sysio` or as the node owner.
     const imported = importedKeys(addPrivateKey)
-    expect(imported).toEqual(
-      expect.arrayContaining(["PVT_K1_bios", "PVT_BLS_bios", "PVT_K1_owner"])
-    )
+    expect(imported).toEqual(expect.arrayContaining(["PVT_K1_bios", "PVT_BLS_bios", "PVT_K1_owner"]))
     expect(imported).not.toContain(Constants.DEV_K1_PRIVATE_KEY)
   })
 

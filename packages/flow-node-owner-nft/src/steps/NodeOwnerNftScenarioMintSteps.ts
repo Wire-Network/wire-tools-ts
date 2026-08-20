@@ -38,14 +38,10 @@ export namespace NodeOwnerNftScenarioMintSteps {
    * @param ctx - The build context (ethereum path + anvil client).
    * @returns The signer-bound contract surface.
    */
-  export function resolveMockWireNodes<C extends ClusterBuildContext>(
-    ctx: C
-  ): MockWireNodesContract {
+  export function resolveMockWireNodes<C extends ClusterBuildContext>(ctx: C): MockWireNodesContract {
     return loadMockWireNodes(
       ctx.config.ethereumPath,
-      EthereumCollateralTool.loadOutpostAddresses(
-        ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
-      ),
+      EthereumCollateralTool.loadOutpostAddresses(ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)),
       ctx.ethereum.wallet.signer
     )
   }
@@ -96,15 +92,7 @@ export namespace NodeOwnerNftScenarioMintSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const receipt = await mintNodeNFT(
-      resolveMockWireNodes(ctx),
-      input.tier,
-      input.amount
-    )
-    Assert.strictEqual(
-      receipt.status,
-      1,
-      "MockWireNodes.mint: receipt status must be 1"
-    )
+    const receipt = await mintNodeNFT(resolveMockWireNodes(ctx), input.tier, input.amount)
+    Assert.strictEqual(receipt.status, 1, "MockWireNodes.mint: receipt status must be 1")
   }
 }

@@ -1,16 +1,16 @@
 import {
-    ABI,
-    Action,
-    AnyAction,
-    API,
-    APIClient,
-    APIError,
-    getCompressedPublicKey,
-    KeyType,
-    PublicKey,
-    Signature,
-    SignedTransaction,
-    Transaction
+  ABI,
+  Action,
+  AnyAction,
+  API,
+  APIClient,
+  APIError,
+  getCompressedPublicKey,
+  KeyType,
+  PublicKey,
+  Signature,
+  SignedTransaction,
+  Transaction
 } from "@wireio/sdk-core"
 import { getLogger, NestedError } from "@wireio/shared"
 import { WireWalletClient } from "@wireio/wallet-ext-sdk"
@@ -29,10 +29,7 @@ const log = getLogger(__filename)
  * @param actions - An array of AnyAction objects to convert
  * @returns A promise that resolves to an array of Action objects
  */
-async function anyToAction(
-  api: APIClient,
-  actions: AnyAction[]
-): Promise<Action[]> {
+async function anyToAction(api: APIClient, actions: AnyAction[]): Promise<Action[]> {
   const result: Action[] = []
   const abiCache = new Map<string, ABI>()
 
@@ -53,10 +50,7 @@ export async function pushTransaction(
   action: AnyAction | AnyAction[]
 ): Promise<API.v1.PushTransactionResponse> {
   try {
-    const actions = await anyToAction(
-      api,
-      Array.isArray(action) ? action : [action]
-    )
+    const actions = await anyToAction(api, Array.isArray(action) ? action : [action])
 
     const info = await api.v1.chain.get_info()
     const header = info.getTransactionHeader()
@@ -126,9 +120,7 @@ export async function createLinkTransaction(
   const compressed = getCompressedPublicKey(rawPubKey)
   const nonce = Date.now()
   const chainKind = ChainKind.Ethereum
-  const compressedHex = compressed.startsWith("0x")
-    ? compressed.slice(2)
-    : compressed
+  const compressedHex = compressed.startsWith("0x") ? compressed.slice(2) : compressed
   const pubKeyObj = PublicKey.from({
     type: "EM",
     compressed: ethers.getBytes("0x" + compressedHex)

@@ -45,9 +45,7 @@ export namespace NodeOwnerNftScenarioCommitSteps {
   export function resolveBar<C extends ClusterBuildContext>(ctx: C): BarContract {
     return loadBar(
       ctx.config.ethereumPath,
-      EthereumCollateralTool.loadOutpostAddresses(
-        ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
-      ),
+      EthereumCollateralTool.loadOutpostAddresses(ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)),
       ctx.ethereum.wallet.signer
     )
   }
@@ -68,9 +66,7 @@ export namespace NodeOwnerNftScenarioCommitSteps {
    * @param options - Per-step tuning.
    * @returns The definition step.
    */
-  export function planApproveEscrow<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planApproveEscrow<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -97,15 +93,8 @@ export namespace NodeOwnerNftScenarioCommitSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const receipt = await approveNodeEscrow(
-      MintSteps.resolveMockWireNodes(ctx),
-      await resolveBar(ctx).getAddress()
-    )
-    Assert.strictEqual(
-      receipt.status,
-      1,
-      "MockWireNodes.setApprovalForAll: receipt status must be 1"
-    )
+    const receipt = await approveNodeEscrow(MintSteps.resolveMockWireNodes(ctx), await resolveBar(ctx).getAddress())
+    Assert.strictEqual(receipt.status, 1, "MockWireNodes.setApprovalForAll: receipt status must be 1")
   }
 
   /** Input for {@link planCommitNode} — one `BAR.commitNode` write. */
@@ -136,9 +125,7 @@ export namespace NodeOwnerNftScenarioCommitSteps {
    * @param wirePublicKey - The account's claimed owner/active Wire key (`PUB_*`).
    * @returns The definition step.
    */
-  export function planCommitNode<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planCommitNode<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -184,10 +171,6 @@ export namespace NodeOwnerNftScenarioCommitSteps {
       wireKeyFromPublicKey(input.wirePublicKey),
       depositorPublicKey
     )
-    Assert.strictEqual(
-      receipt.status,
-      1,
-      "BAR.commitNode: receipt status must be 1"
-    )
+    Assert.strictEqual(receipt.status, 1, "BAR.commitNode: receipt status must be 1")
   }
 }

@@ -15,37 +15,21 @@ describe("SolanaFundingTool input validation", () => {
   const funder = Keypair.generate()
   let connection: Connection
   beforeAll(async () => {
-    connection = new Connection(
-      toURL(
-        await BindConfigProvider.findAvailable(
-          BindConfigProvider.DefaultSolanaRpc
-        )
-      )
-    )
+    connection = new Connection(toURL(await BindConfigProvider.findAvailable(BindConfigProvider.DefaultSolanaRpc)))
   })
 
   it("createMockSplMint rejects out-of-range decimals", async () => {
     await expect(
-      SolanaFundingTool.createMockSplMint(
-        connection,
-        funder,
-        SolanaFundingTool.MaxDecimals + 1
-      )
+      SolanaFundingTool.createMockSplMint(connection, funder, SolanaFundingTool.MaxDecimals + 1)
     ).rejects.toThrow(/decimals must be in/)
   })
 
   it("mintMockSplToUser rejects a non-positive amount", async () => {
     const mint = Keypair.generate().publicKey
     const recipient = Keypair.generate().publicKey
-    await expect(
-      SolanaFundingTool.mintMockSplToUser(
-        connection,
-        funder,
-        mint,
-        recipient,
-        0n
-      )
-    ).rejects.toThrow(/amount must be > 0/)
+    await expect(SolanaFundingTool.mintMockSplToUser(connection, funder, mint, recipient, 0n)).rejects.toThrow(
+      /amount must be > 0/
+    )
   })
 
   it("exposes the decimal bounds", () => {
@@ -64,10 +48,7 @@ describe("SolanaFundingTool.ensureAssociatedTokenAccount", () => {
   const funder = Keypair.generate()
   const mint = Keypair.generate().publicKey
   // An off-curve owner (a program PDA), exactly like reserve_aggregate.
-  const [ownerPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("reserve_aggregate")],
-    Keypair.generate().publicKey
-  )
+  const [ownerPda] = PublicKey.findProgramAddressSync([Buffer.from("reserve_aggregate")], Keypair.generate().publicKey)
 
   /**
    * Stub the methods the SEND path actually uses. `sendAndPoll` signs against a
@@ -108,16 +89,8 @@ describe("SolanaFundingTool.ensureAssociatedTokenAccount", () => {
   it("resolves the off-curve (owner, mint) ATA and skips the write when it already exists", async () => {
     const { connection, sent } = stubConnection(existingAccount)
 
-    const ata = await SolanaFundingTool.ensureAssociatedTokenAccount(
-      connection,
-      funder,
-      mint,
-      ownerPda,
-      true
-    )
-    expect(
-      ata.equals(getAssociatedTokenAddressSync(mint, ownerPda, true))
-    ).toBe(true)
+    const ata = await SolanaFundingTool.ensureAssociatedTokenAccount(connection, funder, mint, ownerPda, true)
+    expect(ata.equals(getAssociatedTokenAddressSync(mint, ownerPda, true))).toBe(true)
     expect(sent()).toBe(0)
   })
 
@@ -126,16 +99,8 @@ describe("SolanaFundingTool.ensureAssociatedTokenAccount", () => {
   it("creates the ATA when it is absent", async () => {
     const { connection, sent } = stubConnection(null)
 
-    const ata = await SolanaFundingTool.ensureAssociatedTokenAccount(
-      connection,
-      funder,
-      mint,
-      ownerPda,
-      true
-    )
-    expect(
-      ata.equals(getAssociatedTokenAddressSync(mint, ownerPda, true))
-    ).toBe(true)
+    const ata = await SolanaFundingTool.ensureAssociatedTokenAccount(connection, funder, mint, ownerPda, true)
+    expect(ata.equals(getAssociatedTokenAddressSync(mint, ownerPda, true))).toBe(true)
     expect(sent()).toBe(1)
   })
 
@@ -144,28 +109,16 @@ describe("SolanaFundingTool.ensureAssociatedTokenAccount", () => {
       { connection } = stubConnection(existingAccount)
 
     expect(
-      (
-        await SolanaFundingTool.ensureAssociatedTokenAccount(
-          connection,
-          funder,
-          mint,
-          wallet
-        )
-      ).equals(getAssociatedTokenAddressSync(mint, wallet))
+      (await SolanaFundingTool.ensureAssociatedTokenAccount(connection, funder, mint, wallet)).equals(
+        getAssociatedTokenAddressSync(mint, wallet)
+      )
     ).toBe(true)
   })
 })
 
 describe("SolanaFundingTool step factories", () => {
   it("airdrop builds a Step carrying the operator + floor input", () => {
-    const step = SolanaFundingTool.planAirdrop(
-      Report.Actor.Underwriter,
-      "uwa-airdrop",
-      "fund uwa",
-      {},
-      "uwa",
-      7n
-    )
+    const step = SolanaFundingTool.planAirdrop(Report.Actor.Underwriter, "uwa-airdrop", "fund uwa", {}, "uwa", 7n)
     expect(step.actor).toBe(Report.Actor.Underwriter)
     expect(step.name).toBe("uwa-airdrop")
     expect(step.input.kind).toBe("SolanaFundingTool.AirdropInput")
@@ -189,9 +142,7 @@ describe("SolanaFundingTool step factories", () => {
   })
 
   it("loadDeployerKeypair throws when the persisted keypair is absent", () => {
-    expect(() =>
-      SolanaFundingTool.loadDeployerKeypair("/no/such/data/dir")
-    ).toThrow(/deployer keypair not found/)
+    expect(() => SolanaFundingTool.loadDeployerKeypair("/no/such/data/dir")).toThrow(/deployer keypair not found/)
   })
 })
 
@@ -216,9 +167,7 @@ describe("SolanaFundingTool deployer keypair identity", () => {
     const deployer = SolanaFundingTool.createDeployerKeypair(dataPath)
     expect(Fs.existsSync(keypairFile)).toBe(true)
     // The persisted secret round-trips through the load path as the SAME identity.
-    expect(
-      SolanaFundingTool.loadDeployerKeypair(dataPath).publicKey.toBase58()
-    ).toBe(deployer.publicKey.toBase58())
+    expect(SolanaFundingTool.loadDeployerKeypair(dataPath).publicKey.toBase58()).toBe(deployer.publicKey.toBase58())
   })
 
   it("createDeployerKeypair is idempotent — a second call returns the SAME identity", () => {
@@ -230,9 +179,7 @@ describe("SolanaFundingTool deployer keypair identity", () => {
   it("createDeployerKeypair creates missing parent directories", () => {
     const nested = Path.join(dataPath, "nested", "data")
     const deployer = SolanaFundingTool.createDeployerKeypair(nested)
-    expect(Fs.existsSync(SolanaFundingTool.deployerKeypairFile(nested))).toBe(
-      true
-    )
+    expect(Fs.existsSync(SolanaFundingTool.deployerKeypairFile(nested))).toBe(true)
     expect(deployer.publicKey).toBeDefined()
   })
 })
@@ -251,9 +198,7 @@ describe("SolanaFundingTool.solMintAddress", () => {
   })
 
   it("resolves a persisted mock mint by token code", () => {
-    expect(SolanaFundingTool.solMintAddress(dataPath, 123n)).toBe(
-      "MintPubkeyBase58"
-    )
+    expect(SolanaFundingTool.solMintAddress(dataPath, 123n)).toBe("MintPubkeyBase58")
   })
 
   it("throws LOUDLY for a token code with no persisted mint (never a silent skip)", () => {
@@ -263,8 +208,6 @@ describe("SolanaFundingTool.solMintAddress", () => {
   })
 
   it("throws when the mint manifest is absent entirely", () => {
-    expect(() =>
-      SolanaFundingTool.solMintAddress("/no/such/data", 123n)
-    ).toThrow(/mock SPL mints not found/)
+    expect(() => SolanaFundingTool.solMintAddress("/no/such/data", 123n)).toThrow(/mock SPL mints not found/)
   })
 })

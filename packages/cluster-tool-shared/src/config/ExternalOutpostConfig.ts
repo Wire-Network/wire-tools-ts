@@ -30,9 +30,7 @@ export const ExternalOutpostConfigEthereumSchema = z.object({
   liqEthAddressFile: z.string().optional()
 })
 /** An already-deployed Ethereum outpost — the shape of {@link ExternalOutpostConfigEthereumSchema}. */
-export type ExternalOutpostConfigEthereum = z.infer<
-  typeof ExternalOutpostConfigEthereumSchema
->
+export type ExternalOutpostConfigEthereum = z.infer<typeof ExternalOutpostConfigEthereumSchema>
 
 /**
  * An already-deployed Solana outpost's structural references — the IDL is the
@@ -50,9 +48,7 @@ export const ExternalOutpostConfigSolanaSchema = z.object({
   mintsFile: z.string().optional()
 })
 /** An already-deployed Solana outpost — the shape of {@link ExternalOutpostConfigSolanaSchema}. */
-export type ExternalOutpostConfigSolana = z.infer<
-  typeof ExternalOutpostConfigSolanaSchema
->
+export type ExternalOutpostConfigSolana = z.infer<typeof ExternalOutpostConfigSolanaSchema>
 
 /**
  * The per-chain already-deployed-outpost description, defined ONCE and composed
@@ -71,5 +67,4 @@ export const ExternalOutpostConfigSchema = z.object({
 export type ExternalOutpostConfig = z.infer<typeof ExternalOutpostConfigSchema>
 
 /** Validated codec for the `--external-outpost-config` input file. */
-export const ExternalOutpostConfigSchemaCodec =
-  SchemaCodec.create<ExternalOutpostConfig>(ExternalOutpostConfigSchema)
+export const ExternalOutpostConfigSchemaCodec = SchemaCodec.create<ExternalOutpostConfig>(ExternalOutpostConfigSchema)

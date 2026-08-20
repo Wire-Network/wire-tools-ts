@@ -1,9 +1,5 @@
 import { TokenAmount } from "@wireio/opp-typescript-models"
-import {
-  ChainTokenAmountSchema,
-  SchemaCodec,
-  type ChainTokenAmount
-} from "@wireio/cluster-tool-shared"
+import { ChainTokenAmountSchema, SchemaCodec, type ChainTokenAmount } from "@wireio/cluster-tool-shared"
 import { z } from "zod"
 
 describe("ChainTokenAmount", () => {
@@ -36,18 +32,14 @@ describe("ChainTokenAmount", () => {
     const codec = SchemaCodec.create<ChainTokenAmount>(ChainTokenAmountSchema)
     // A malformed `amount` must fail as a zod ISSUE (the input refine), so
     // `check` returns false rather than letting `TokenAmount.fromJson` throw.
-    expect(codec.check({ chain_code: 2, amount: "not-a-token-amount" })).toBe(
-      false
-    )
+    expect(codec.check({ chain_code: 2, amount: "not-a-token-amount" })).toBe(false)
     expect(codec.check({ chain_code: 2, amount: null })).toBe(false)
   })
 
   it("deserialize surfaces the issue-path message on a corrupt amount", () => {
     const codec = SchemaCodec.create<ChainTokenAmount>(ChainTokenAmountSchema)
-    expect(() =>
-      codec.deserialize(
-        JSON.stringify({ chain_code: 2, amount: { bogus: true } })
-      )
-    ).toThrow(/invalid TokenAmount JSON/)
+    expect(() => codec.deserialize(JSON.stringify({ chain_code: 2, amount: { bogus: true } }))).toThrow(
+      /invalid TokenAmount JSON/
+    )
   })
 })

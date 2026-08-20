@@ -25,12 +25,8 @@ export class NodeConfigIniRenderer implements Renderer {
       isProducer = node.role === NodeRole.producer && node.producers.length > 0,
       isApi = node.role === NodeRole.producer && node.producers.length === 0,
       isOperator = node.role === NodeRole.operator,
-      plugins = [
-        ...Constants.BASE_PLUGINS,
-        ...(isProducer || isBios ? Constants.PRODUCER_PLUGINS : [])
-      ],
-      kv = (key: string, value: string | number | boolean) =>
-        `${key} = ${String(value)}`,
+      plugins = [...Constants.BASE_PLUGINS, ...(isProducer || isBios ? Constants.PRODUCER_PLUGINS : [])],
+      kv = (key: string, value: string | number | boolean) => `${key} = ${String(value)}`,
       extraArgs = Constants.NODEOP_EXTRA_ARGS,
       lines = [
         ...plugins.map(plugin => kv("plugin", plugin)),
@@ -43,17 +39,8 @@ export class NodeConfigIniRenderer implements Renderer {
         kv("blocks-dir", "blocks"),
         ...(isBios ? [kv("enable-stale-production", "true")] : []),
         ...node.producers.map(producer => kv("producer-name", producer)),
-        ...(isBios
-          ? [
-              kv(
-                "signature-provider",
-                NodeConfigIniRenderer.biosSignatureProvider(node)
-              )
-            ]
-          : []),
-        ...(isApi || isOperator
-          ? [kv("transaction-retry-max-storage-size-gb", 100)]
-          : []),
+        ...(isBios ? [kv("signature-provider", NodeConfigIniRenderer.biosSignatureProvider(node))] : []),
+        ...(isApi || isOperator ? [kv("transaction-retry-max-storage-size-gb", 100)] : []),
         kv("contracts-console", "true"),
         kv("vote-threads", extraArgs.voteThreads),
         kv("max-transaction-time", extraArgs.maxTransactionTime),
@@ -70,9 +57,7 @@ export class NodeConfigIniRenderer implements Renderer {
         // NOT rendered here: the chain account is node-owner-generated at
         // provisioning time, so it rides the daemon CLI args
         // (`OperatorDaemonTool`) resolved from the key store at start.
-        ...(isOperator
-          ? [kv("read-mode", WireClient.FinalityType.irreversible)]
-          : []),
+        ...(isOperator ? [kv("read-mode", WireClient.FinalityType.irreversible)] : []),
         ...NodeConfigIniRenderer.HttpInsecureLines,
         ""
       ]
@@ -109,10 +94,7 @@ export namespace NodeConfigIniRenderer {
     return KeyGenerator.toSignatureProvider(
       biosKey,
       undefined,
-      ClusterConfigProvider.signatureProviderSource(cluster)(
-        node.name,
-        KeyType.K1
-      )
+      ClusterConfigProvider.signatureProviderSource(cluster)(node.name, KeyType.K1)
     )
   }
 

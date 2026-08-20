@@ -5,11 +5,7 @@ import { asOption } from "@3fv/prelude-ts"
 import Yargs from "yargs"
 import { hideBin } from "yargs/helpers"
 
-import {
-  LocalFileDebuggingClient,
-  NetDebuggingClient,
-  type DebuggingClient
-} from "@wireio/debugging-client-shared"
+import { LocalFileDebuggingClient, NetDebuggingClient, type DebuggingClient } from "@wireio/debugging-client-shared"
 import { type Level } from "@wireio/shared"
 
 export namespace CLI {
@@ -56,14 +52,7 @@ export namespace CLI {
   }
 
   /** Log levels accepted by `--log-level`. */
-  export const LogLevels = [
-    "trace",
-    "debug",
-    "info",
-    "warn",
-    "error",
-    "fatal"
-  ] as const
+  export const LogLevels = ["trace", "debug", "info", "warn", "error", "fatal"] as const
   /** Default `--log-level` when omitted. */
   export const DefaultLogLevel: Level = "info" as Level
 }
@@ -87,19 +76,14 @@ export function coerceFeatures(raw?: string): Set<string> {
  * one of `--cluster-path` (local-disk transport) or `--server-url`
  * (remote debugging-server transport).
  */
-export function parseArgs(
-  argv: readonly string[] = hideBin(process.argv)
-): CLI.Args {
+export function parseArgs(argv: readonly string[] = hideBin(process.argv)): CLI.Args {
   const parsed = Yargs(argv.slice())
     .scriptName("wire-debugging-client-tool-tui")
-    .usage(
-      "$0 (--cluster-path|-c <path> | --server-url|-s <url>) [--features <ids>] [--log-level <level>]"
-    )
+    .usage("$0 (--cluster-path|-c <path> | --server-url|-s <url>) [--features <ids>] [--log-level <level>]")
     .option(CLI.Options.ClusterPathOption, {
       alias: CLI.Options.ClusterPathAlias,
       type: "string",
-      describe:
-        "Path to a cluster directory (local-disk transport). Mutually exclusive with --server-url."
+      describe: "Path to a cluster directory (local-disk transport). Mutually exclusive with --server-url."
     })
     .option(CLI.Options.ServerUrlOption, {
       alias: CLI.Options.ServerUrlAlias,
@@ -109,8 +93,7 @@ export function parseArgs(
     })
     .option(CLI.Options.FeaturesOption, {
       type: "string",
-      describe:
-        "Comma-separated feature ids to activate (case-insensitive). Required providers are always active.",
+      describe: "Comma-separated feature ids to activate (case-insensitive). Required providers are always active.",
       coerce: coerceFeatures
     })
     .option(CLI.Options.LogLevelOption, {
@@ -123,17 +106,13 @@ export function parseArgs(
       const hasCluster = typeof args.clusterPath === "string",
         hasServer = typeof args.serverUrl === "string"
       if (hasCluster === hasServer) {
-        throw new Error(
-          `Specify exactly one of --${CLI.Options.ClusterPathOption} or --${CLI.Options.ServerUrlOption}`
-        )
+        throw new Error(`Specify exactly one of --${CLI.Options.ClusterPathOption} or --${CLI.Options.ServerUrlOption}`)
       }
       if (hasCluster) {
         const resolved = Path.resolve(args.clusterPath as string),
           configFile = Path.join(resolved, ClusterFiles.ConfigFilename)
         if (!Fs.existsSync(configFile)) {
-          throw new Error(
-            `${ClusterFiles.ConfigFilename} not found in ${resolved} — is this a cluster directory?`
-          )
+          throw new Error(`${ClusterFiles.ConfigFilename} not found in ${resolved} — is this a cluster directory?`)
         }
       }
       return true

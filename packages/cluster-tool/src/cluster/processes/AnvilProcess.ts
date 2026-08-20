@@ -44,24 +44,11 @@ export class AnvilProcess extends ManagedProcess {
    * @param options - Caller overrides.
    * @returns The constructed anvil process.
    */
-  static async create(
-    manager: ProcessManager,
-    options: AnvilOptions = {}
-  ): Promise<AnvilProcess> {
+  static async create(manager: ProcessManager, options: AnvilOptions = {}): Promise<AnvilProcess> {
     const { binary = await which("anvil") } = options
-    Assert.ok(
-      binary != null && (await existsAsync(binary)),
-      "anvil binary not found on PATH"
-    )
-    const {
-      port = await BindConfigProvider.findAvailable(
-        BindConfigProvider.DefaultAnvil
-      )
-    } = options
-    return new AnvilProcess(
-      manager,
-      AnvilProcess.resolveConfig(options, { binary, port })
-    )
+    Assert.ok(binary != null && (await existsAsync(binary)), "anvil binary not found on PATH")
+    const { port = await BindConfigProvider.findAvailable(BindConfigProvider.DefaultAnvil) } = options
+    return new AnvilProcess(manager, AnvilProcess.resolveConfig(options, { binary, port }))
   }
 
   private constructor(
@@ -113,10 +100,7 @@ export namespace AnvilProcess {
     port: number
   }
 
-  export function resolveConfig(
-    options: AnvilOptions,
-    resolved: ResolvedInputs
-  ): AnvilConfig {
+  export function resolveConfig(options: AnvilOptions, resolved: ResolvedInputs): AnvilConfig {
     return {
       host: options.host ?? Localhost,
       port: resolved.port,
@@ -160,17 +144,14 @@ export namespace AnvilProcess {
       "--gas-limit",
       String(AnvilProcess.BlockGasLimit)
     ]
-    if (config.slotsInAnEpoch)
-      args.push("--slots-in-an-epoch", String(config.slotsInAnEpoch))
-    if (config.blockTimeSec)
-      args.push("--block-time", String(config.blockTimeSec))
+    if (config.slotsInAnEpoch) args.push("--slots-in-an-epoch", String(config.slotsInAnEpoch))
+    if (config.blockTimeSec) args.push("--block-time", String(config.blockTimeSec))
     if (config.stateFile) {
       args.push("--dump-state", config.stateFile)
       // Build-time conditional: at CREATE time the state file does not exist
       // yet. A start.sh must therefore render this as a shell test rather than
       // inherit today's answer — see `DaemonArgvCondition`.
-      if (Fs.existsSync(config.stateFile))
-        args.push("--load-state", config.stateFile)
+      if (Fs.existsSync(config.stateFile)) args.push("--load-state", config.stateFile)
     }
     args.push(...config.extraArgs)
     return args

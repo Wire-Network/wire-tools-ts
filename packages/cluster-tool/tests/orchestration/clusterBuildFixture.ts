@@ -26,9 +26,7 @@ export function collectPhaseNames<C extends ClusterBuildContext>(
 ): string[] {
   return children.flatMap(child => [
     child.name,
-    ...(child instanceof ClusterBuildPhaseGroup
-      ? collectPhaseNames(child.children)
-      : [])
+    ...(child instanceof ClusterBuildPhaseGroup ? collectPhaseNames(child.children) : [])
   ])
 }
 

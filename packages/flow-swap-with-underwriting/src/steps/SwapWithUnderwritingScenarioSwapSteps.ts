@@ -71,9 +71,7 @@ export namespace SwapWithUnderwritingScenarioSwapSteps {
    * @param request - The static swap parameters ({@link RequestSwapEthereumInput} minus `kind`).
    * @returns The definition step.
    */
-  export function planRequestSwapEthereum<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planRequestSwapEthereum<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -118,13 +116,8 @@ export namespace SwapWithUnderwritingScenarioSwapSteps {
       targetAmount,
       targetToleranceBps: input.targetToleranceBps
     })
-    Assert.ok(
-      result.transactionHash,
-      "SwapWithUnderwritingScenarioSwapSteps.requestSwapEthereum: no transaction hash"
-    )
-    log.info(
-      `[PhaseA] requestSwap tx=${result.transactionHash} block=${result.blockNumber} target=${targetAmount}`
-    )
+    Assert.ok(result.transactionHash, "SwapWithUnderwritingScenarioSwapSteps.requestSwapEthereum: no transaction hash")
+    log.info(`[PhaseA] requestSwap tx=${result.transactionHash} block=${result.blockNumber} target=${targetAmount}`)
   }
 
   // ── Step: Phase B SWAP_REQUEST (`opp_outpost::request_swap`) ──────────────
@@ -165,9 +158,7 @@ export namespace SwapWithUnderwritingScenarioSwapSteps {
    * @param request - The static swap parameters ({@link RequestSwapSolanaInput} minus `kind`).
    * @returns The definition step.
    */
-  export function planRequestSwapSolana<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planRequestSwapSolana<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -199,33 +190,20 @@ export namespace SwapWithUnderwritingScenarioSwapSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const swapUser = ctx.outputs.assert(swapUserOutputKey())
-    const targetAmount = ctx.outputs.assert(
-      Constants.PhaseBTargetAmountDepotKey
-    )
-    const program = SolanaCollateralTool.loadOppOutpostProgram(
-      ctx,
-      swapUser.solanaKeypair
-    )
-    const signature = await requestSolanaSwap(
-      ctx.solana.connection,
-      program,
-      swapUser.solanaKeypair,
-      {
-        sourceTokenCode: input.sourceTokenCode,
-        sourceReserveCode: input.sourceReserveCode,
-        sourceAmount: input.sourceAmount,
-        targetChainCode: input.targetChainCode,
-        targetTokenCode: input.targetTokenCode,
-        targetReserveCode: input.targetReserveCode,
-        targetRecipient: swapUser.ethereumAddressBytes,
-        targetAmount,
-        targetToleranceBps: input.targetToleranceBps
-      }
-    )
-    Assert.ok(
-      signature,
-      "SwapWithUnderwritingScenarioSwapSteps.requestSwapSolana: no transaction signature"
-    )
+    const targetAmount = ctx.outputs.assert(Constants.PhaseBTargetAmountDepotKey)
+    const program = SolanaCollateralTool.loadOppOutpostProgram(ctx, swapUser.solanaKeypair)
+    const signature = await requestSolanaSwap(ctx.solana.connection, program, swapUser.solanaKeypair, {
+      sourceTokenCode: input.sourceTokenCode,
+      sourceReserveCode: input.sourceReserveCode,
+      sourceAmount: input.sourceAmount,
+      targetChainCode: input.targetChainCode,
+      targetTokenCode: input.targetTokenCode,
+      targetReserveCode: input.targetReserveCode,
+      targetRecipient: swapUser.ethereumAddressBytes,
+      targetAmount,
+      targetToleranceBps: input.targetToleranceBps
+    })
+    Assert.ok(signature, "SwapWithUnderwritingScenarioSwapSteps.requestSwapSolana: no transaction signature")
     log.info(`[PhaseB] request_swap sig=${signature} target=${targetAmount}`)
   }
 
@@ -251,10 +229,7 @@ export namespace SwapWithUnderwritingScenarioSwapSteps {
       address != null && /^0x[0-9a-fA-F]{40}$/.test(address),
       `SwapWithUnderwritingScenarioSwapSteps: ${Constants.ReserveManagerContractName} not in outpost-addrs.json (got ${address})`
     )
-    const abi = EthereumCollateralTool.loadOutpostAbi(
-      ctx.config.ethereumPath,
-      Constants.ReserveManagerContractName
-    )
+    const abi = EthereumCollateralTool.loadOutpostAbi(ctx.config.ethereumPath, Constants.ReserveManagerContractName)
     return contractView<ReserveManagerRequestSwapContract>(address, abi, wallet)
   }
 }

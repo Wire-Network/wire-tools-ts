@@ -11,12 +11,7 @@ import {
   type PublicKeyType
 } from "@wireio/sdk-core"
 import { WireKey, WireKeyType } from "@wireio/opp-typescript-models"
-import type {
-  EthereumKeyPair,
-  KeyPair,
-  SolanaKeyPair,
-  WireFinalizerKeyPair
-} from "../types/KeyPair.js"
+import type { EthereumKeyPair, KeyPair, SolanaKeyPair, WireFinalizerKeyPair } from "../types/KeyPair.js"
 
 /**
  * Derivations between the strongly-typed KeyPair structures and the live chain-SDK
@@ -42,31 +37,20 @@ import type {
  * @param native - The chain-native private-key string.
  * @returns The parsed private key.
  */
-export function privateKeyFromNativeString(
-  type: KeyType,
-  native: string
-): PrivateKey {
-  return match(type)
-    .with(KeyType.K1, () => PrivateKey.from(native))
-    // BLS's native form IS its WIRE string.
-    .with(KeyType.BLS, () => PrivateKey.from(native))
-    .with(KeyType.EM, () =>
-      PrivateKey.regenerate(
-        KeyType.EM,
-        Bytes.fromString(
-          native.startsWith("0x") ? native.slice(2) : native,
-          "hex"
-        )
+export function privateKeyFromNativeString(type: KeyType, native: string): PrivateKey {
+  return (
+    match(type)
+      .with(KeyType.K1, () => PrivateKey.from(native))
+      // BLS's native form IS its WIRE string.
+      .with(KeyType.BLS, () => PrivateKey.from(native))
+      .with(KeyType.EM, () =>
+        PrivateKey.regenerate(KeyType.EM, Bytes.fromString(native.startsWith("0x") ? native.slice(2) : native, "hex"))
       )
-    )
-    .with(KeyType.ED, () =>
-      PrivateKey.regenerate(KeyType.ED, Base58.decode(native))
-    )
-    .otherwise(() => {
-      throw new Error(
-        `privateKeyFromNativeString: unsupported key type ${KeyType[type] ?? type}`
-      )
-    })
+      .with(KeyType.ED, () => PrivateKey.regenerate(KeyType.ED, Base58.decode(native)))
+      .otherwise(() => {
+        throw new Error(`privateKeyFromNativeString: unsupported key type ${KeyType[type] ?? type}`)
+      })
+  )
 }
 
 /**
@@ -94,10 +78,7 @@ export function privateKeyFromNativeString(
  * @param privateKey - The chain-native private-key string.
  * @returns The stored key pair for that curve.
  */
-export function keyPairFromPrivate<T extends KeyType>(
-  keyType: T,
-  privateKey: string
-): KeyPair<T> {
+export function keyPairFromPrivate<T extends KeyType>(keyType: T, privateKey: string): KeyPair<T> {
   const key = privateKeyFromNativeString(keyType, privateKey),
     keyPair = match(keyType as KeyType)
       .with(
@@ -110,11 +91,7 @@ export function keyPairFromPrivate<T extends KeyType>(
             proofOfPossession: key.proofOfPossessionString
           }) as WireFinalizerKeyPair
       )
-      .with(KeyType.EM, () =>
-        ethereumKeyPairFromWallet(
-          new ethers.Wallet(ethers.hexlify(key.data.array))
-        )
-      )
+      .with(KeyType.EM, () => ethereumKeyPairFromWallet(new ethers.Wallet(ethers.hexlify(key.data.array))))
       .otherwise(
         () =>
           ({
@@ -135,10 +112,7 @@ function ethereumPrivateKeyHex(ethereum: EthereumKeyPair): string {
 }
 
 /** An ethers signer (connected to `provider`) reconstructed from an EM key pair. */
-export function ethereumSigner(
-  ethereum: EthereumKeyPair,
-  provider: ethers.Provider
-): ethers.Wallet {
+export function ethereumSigner(ethereum: EthereumKeyPair, provider: ethers.Provider): ethers.Wallet {
   return new ethers.Wallet(ethereumPrivateKeyHex(ethereum), provider)
 }
 
@@ -186,18 +160,14 @@ export function solanaNativePublicKey(solana: SolanaKeyPair): string {
 
 /** The WIRE `PVT_EM_*` secp256k1 private key of a live ethers wallet. */
 export function ethereumPrivateKeyFromWallet(wallet: ethers.BaseWallet): PrivateKey {
-  const hex = wallet.privateKey.startsWith("0x")
-    ? wallet.privateKey.slice(2)
-    : wallet.privateKey
+  const hex = wallet.privateKey.startsWith("0x") ? wallet.privateKey.slice(2) : wallet.privateKey
   return PrivateKey.regenerate(KeyType.EM, Bytes.fromString(hex, "hex"))
 }
 
 /** The WIRE `PUB_EM_*` public key of a live ethers wallet (from its compressed key). */
 export function ethereumPublicKeyFromWallet(wallet: ethers.BaseWallet): PublicKey {
   const compressed = getCompressedPublicKey(wallet.signingKey.publicKey),
-    compressedBytes = ethers.getBytes(
-      compressed.startsWith("0x") ? compressed : `0x${compressed}`
-    )
+    compressedBytes = ethers.getBytes(compressed.startsWith("0x") ? compressed : `0x${compressed}`)
   return PublicKey.from({ type: "EM", compressed: compressedBytes })
 }
 
@@ -246,9 +216,7 @@ export function wireKeyFromPublicKey(publicKey: PublicKeyType): WireKey {
       .with(KeyType.EM, () => WireKeyType.EM)
       .with(KeyType.ED, () => WireKeyType.ED)
       .otherwise(() => {
-        throw new Error(
-          `wireKeyFromPublicKey: ${parsed.type} is not a Wire account-authority key type`
-        )
+        throw new Error(`wireKeyFromPublicKey: ${parsed.type} is not a Wire account-authority key type`)
       })
   return WireKey.create({ keyType, key: parsed.data.array })
 }

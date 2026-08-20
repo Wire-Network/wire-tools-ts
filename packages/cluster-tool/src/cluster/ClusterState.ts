@@ -21,13 +21,7 @@ import { isNotEmpty } from "../utils/predicateUtils.js"
 import type { ClusterBuildContext } from "../orchestration/ClusterBuildContext.js"
 import { ClusterKeyStore } from "../orchestration/outputs/ClusterKeyStore.js"
 import { OperatorDaemonArtifactsKey } from "../orchestration/outputs/OperatorDaemonArtifacts.js"
-import type {
-  EthereumKeyPair,
-  KeyPair,
-  SolanaKeyPair,
-  WireFinalizerKeyPair,
-  WireKeyPair
-} from "../types/KeyPair.js"
+import type { EthereumKeyPair, KeyPair, SolanaKeyPair, WireFinalizerKeyPair, WireKeyPair } from "../types/KeyPair.js"
 import { AnvilProcess } from "./processes/AnvilProcess.js"
 import { SolanaValidatorProcess } from "./processes/SolanaValidatorProcess.js"
 
@@ -176,9 +170,7 @@ const SolanaKeyPairSchema: z.ZodType<SolanaKeyPair> = z
   .refine(hasSingleCustodyForm, SingleCustodyFormMessage)
 
 /** The persisted `OperatorType` value (numeric, as stored in `cluster-keys.json`). */
-const OperatorTypeValueSchema = z.custom<OperatorType>(
-  value => typeof value === "number"
-)
+const OperatorTypeValueSchema = z.custom<OperatorType>(value => typeof value === "number")
 
 /** Schema for one producer node's key record. */
 const ClusterKeysNodeEntrySchema: z.ZodType<ClusterKeysNodeEntry> = z.object({
@@ -188,17 +180,16 @@ const ClusterKeysNodeEntrySchema: z.ZodType<ClusterKeysNodeEntry> = z.object({
 })
 
 /** Schema for one provisioned operator's key record. */
-const ClusterKeysOperatorEntrySchema: z.ZodType<ClusterKeysOperatorEntry> =
-  z.object({
-    label: z.string(),
-    publicationLabel: z.string(),
-    account: z.string(),
-    type: OperatorTypeValueSchema,
-    wire: WireKeyPairSchema,
-    wireFinalizer: WireFinalizerKeyPairSchema.optional(),
-    ethereum: EthereumKeyPairSchema.optional(),
-    solana: SolanaKeyPairSchema.optional()
-  })
+const ClusterKeysOperatorEntrySchema: z.ZodType<ClusterKeysOperatorEntry> = z.object({
+  label: z.string(),
+  publicationLabel: z.string(),
+  account: z.string(),
+  type: OperatorTypeValueSchema,
+  wire: WireKeyPairSchema,
+  wireFinalizer: WireFinalizerKeyPairSchema.optional(),
+  ethereum: EthereumKeyPairSchema.optional(),
+  solana: SolanaKeyPairSchema.optional()
+})
 
 /** Schema for the full `cluster-keys.json` payload. */
 const ClusterKeysSchema: z.ZodType<ClusterKeys> = z.object({
@@ -284,29 +275,18 @@ export namespace ClusterState {
       anvilStateFile:
         config.externalOutposts != null
           ? null
-          : Path.join(
-              config.dataPath,
-              AnvilProcess.StateSubpath,
-              AnvilProcess.StateFilename
-            ),
+          : Path.join(config.dataPath, AnvilProcess.StateSubpath, AnvilProcess.StateFilename),
       solanaLedgerPath:
-        config.externalOutposts != null
-          ? null
-          : Path.join(config.dataPath, SolanaValidatorProcess.LedgerSubpath),
-      solanaIdlFile:
-        ctx.outputs.get(OperatorDaemonArtifactsKey)?.solanaIdlFile ?? null
+        config.externalOutposts != null ? null : Path.join(config.dataPath, SolanaValidatorProcess.LedgerSubpath),
+      solanaIdlFile: ctx.outputs.get(OperatorDaemonArtifactsKey)?.solanaIdlFile ?? null
     }
   }
 
   /** Projects a stored key pair into the custody form `cluster-keys.json` persists. */
-  type PersistedKeyCustodyProjection = <T extends KeyType>(
-    account: string,
-    keyPair: KeyPair<T>
-  ) => KeyPair<T>
+  type PersistedKeyCustodyProjection = <T extends KeyType>(account: string, keyPair: KeyPair<T>) => KeyPair<T>
 
   /** KEY / KIOD: the pair persists verbatim, plaintext `privateKey` included. */
-  const retainKeyMaterial: PersistedKeyCustodyProjection = (_account, keyPair) =>
-    keyPair
+  const retainKeyMaterial: PersistedKeyCustodyProjection = (_account, keyPair) => keyPair
 
   /**
    * The custody projection `config` persists key records under (§5.6).
@@ -374,10 +354,7 @@ export namespace ClusterState {
     return {
       nodes: ctx.keyStore.nodes.map(nodeKeys => {
         const nodeName = nodeNames.get(nodeKeys.index)
-        Assert.ok(
-          isNotEmpty(nodeName),
-          `ClusterState.captureKeys: no producer node planned at index ${nodeKeys.index}`
-        )
+        Assert.ok(isNotEmpty(nodeName), `ClusterState.captureKeys: no producer node planned at index ${nodeKeys.index}`)
         return {
           index: nodeKeys.index,
           wire: toCustody(nodeName, nodeKeys.keys.wire),
@@ -405,26 +382,16 @@ export namespace ClusterState {
           ...(operator.wireFinalizer != null
             ? { wireFinalizer: toCustody(publicationLabel, operator.wireFinalizer) }
             : {}),
-          ...(operator.ethereum != null
-            ? { ethereum: toCustody(publicationLabel, operator.ethereum) }
-            : {}),
-          ...(operator.solana != null
-            ? { solana: toCustody(publicationLabel, operator.solana) }
-            : {})
+          ...(operator.ethereum != null ? { ethereum: toCustody(publicationLabel, operator.ethereum) } : {}),
+          ...(operator.solana != null ? { solana: toCustody(publicationLabel, operator.solana) } : {})
         }
       })
     }
   }
 
   /** Write `state` to {@link stateFilePath} (validated via `ClusterStateSchemaCodec`). */
-  export function save(
-    config: ClusterConfig,
-    state: ClusterStateSnapshot
-  ): void {
-    Fs.writeFileSync(
-      stateFilePath(config),
-      ClusterStateSchemaCodec.serialize(state)
-    )
+  export function save(config: ClusterConfig, state: ClusterStateSnapshot): void {
+    Fs.writeFileSync(stateFilePath(config), ClusterStateSchemaCodec.serialize(state))
   }
 
   /** Write `keys` to {@link keysFilePath}, then enforce {@link KeysFileMode} — `writeFileSync`'s
@@ -445,10 +412,7 @@ export namespace ClusterState {
    */
   export function load(config: ClusterConfig): ClusterStateSnapshot {
     const file = stateFilePath(config)
-    Assert.ok(
-      Fs.existsSync(file),
-      `ClusterState.load: ${file} not found — run "wire-cluster-tool create" first`
-    )
+    Assert.ok(Fs.existsSync(file), `ClusterState.load: ${file} not found — run "wire-cluster-tool create" first`)
     return ClusterStateSchemaCodec.deserialize(Fs.readFileSync(file, "utf8"))
   }
 
@@ -459,10 +423,7 @@ export namespace ClusterState {
    */
   export function loadKeys(config: ClusterConfig): ClusterKeys {
     const file = keysFilePath(config)
-    Assert.ok(
-      Fs.existsSync(file),
-      `ClusterState.loadKeys: ${file} not found — run "wire-cluster-tool create" first`
-    )
+    Assert.ok(Fs.existsSync(file), `ClusterState.loadKeys: ${file} not found — run "wire-cluster-tool create" first`)
     return ClusterKeysSchemaCodec.deserialize(Fs.readFileSync(file, "utf8"))
   }
 
@@ -475,10 +436,7 @@ export namespace ClusterState {
    * @param keyStore - The (empty) store to populate.
    * @param keys - The loaded key payload.
    */
-  export function rehydrate(
-    keyStore: ClusterKeyStore,
-    keys: ClusterKeys
-  ): void {
+  export function rehydrate(keyStore: ClusterKeyStore, keys: ClusterKeys): void {
     keyStore.pushNodes(
       ...keys.nodes.map(entry => ({
         index: entry.index,

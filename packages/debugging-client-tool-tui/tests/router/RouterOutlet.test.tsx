@@ -26,9 +26,7 @@ describe("RouterOutlet", () => {
       pop: jest.fn(),
       reset: jest.fn()
     }
-    const spy = jest
-      .spyOn(React, "useContext")
-      .mockImplementation(() => fakeRouter)
+    const spy = jest.spyOn(React, "useContext").mockImplementation(() => fakeRouter)
     try {
       const element = RouterOutlet()
       expect(React.isValidElement(element)).toBe(true)
@@ -49,9 +47,7 @@ describe("RouterOutlet", () => {
       pop: jest.fn(),
       reset: jest.fn()
     }
-    const spy = jest
-      .spyOn(React, "useContext")
-      .mockImplementation(() => fakeRouter)
+    const spy = jest.spyOn(React, "useContext").mockImplementation(() => fakeRouter)
     try {
       const element = RouterOutlet()
       expect(React.isValidElement(element)).toBe(true)

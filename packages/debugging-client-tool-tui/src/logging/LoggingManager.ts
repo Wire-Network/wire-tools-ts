@@ -51,21 +51,9 @@ export namespace LoggingManager {
    * @return fully-populated config with every field required downstream
    */
   function resolveConfig(options: ConfigureOptions): Config {
-    Assert.ok(
-      options.filename || options.clusterPath,
-      "LoggingManager.configure: clusterPath or filename is required"
-    )
-    const {
-      filename = Path.join(
-        options.clusterPath as string,
-        LogSubpath,
-        LogFilename
-      )
-    } = options
-    return defaults(
-      { ...options, filename },
-      { clusterPath: options.clusterPath ?? "", level: DefaultLevel }
-    ) as Config
+    Assert.ok(options.filename || options.clusterPath, "LoggingManager.configure: clusterPath or filename is required")
+    const { filename = Path.join(options.clusterPath as string, LogSubpath, LogFilename) } = options
+    return defaults({ ...options, filename }, { clusterPath: options.clusterPath ?? "", level: DefaultLevel }) as Config
   }
 
   /**

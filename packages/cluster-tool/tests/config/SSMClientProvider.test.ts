@@ -7,12 +7,8 @@ const mockSend = jest.fn()
 const mockSSMClient = jest.fn().mockImplementation(() => ({ send: mockSend }))
 jest.mock("@aws-sdk/client-ssm", () => ({
   SSMClient: mockSSMClient,
-  GetParameterCommand: jest
-    .fn()
-    .mockImplementation((input: unknown) => ({ kind: "GetParameter", input })),
-  PutParameterCommand: jest
-    .fn()
-    .mockImplementation((input: unknown) => ({ kind: "PutParameter", input }))
+  GetParameterCommand: jest.fn().mockImplementation((input: unknown) => ({ kind: "GetParameter", input })),
+  PutParameterCommand: jest.fn().mockImplementation((input: unknown) => ({ kind: "PutParameter", input }))
 }))
 
 /** The captured input of the single command sent for the last call. */
@@ -45,9 +41,7 @@ interface SSMClientConfig {
 /** The client config `SSMClient` was constructed with for `region`'s cache entry. */
 function clientConfigFor(region: string): SSMClientConfig {
   const call = mockSSMClient.mock.calls.find(([config]: [SSMClientConfig]) =>
-    region === SSMClientProvider.AmbientRegion
-      ? config?.region == null
-      : config?.region === region
+    region === SSMClientProvider.AmbientRegion ? config?.region == null : config?.region === region
   )
   return call?.[0]
 }
@@ -58,10 +52,7 @@ describe("SSMClientProvider (jest module mock — no live AWS)", () => {
   describe("getParameter", () => {
     it("requests WithDecryption and returns the trimmed SecureString value", async () => {
       mockSend.mockResolvedValueOnce(secureStringResponse("  the-secret  "))
-      const value = await SSMClientProvider.getParameter(
-        "us-east-1",
-        "/wire/keys/a"
-      )
+      const value = await SSMClientProvider.getParameter("us-east-1", "/wire/keys/a")
       expect(value).toBe("the-secret")
       expect(lastCommandInput()).toEqual({
         Name: "/wire/keys/a",
@@ -73,57 +64,45 @@ describe("SSMClientProvider (jest module mock — no live AWS)", () => {
       mockSend.mockResolvedValueOnce({
         Parameter: { Type: "String", Value: "x" }
       })
-      await expect(
-        SSMClientProvider.getParameter("us-east-1", "/wire/keys/a")
-      ).rejects.toThrow(/must be a SecureString/)
+      await expect(SSMClientProvider.getParameter("us-east-1", "/wire/keys/a")).rejects.toThrow(
+        /must be a SecureString/
+      )
     })
 
     it("rejects a missing parameter", async () => {
       mockSend.mockResolvedValueOnce({})
-      await expect(
-        SSMClientProvider.getParameter("us-east-1", "/wire/keys/a")
-      ).rejects.toThrow(/not found/)
+      await expect(SSMClientProvider.getParameter("us-east-1", "/wire/keys/a")).rejects.toThrow(/not found/)
     })
 
     it("rejects an empty (whitespace-only) value", async () => {
       mockSend.mockResolvedValueOnce(secureStringResponse("   "))
-      await expect(
-        SSMClientProvider.getParameter("us-east-1", "/wire/keys/a")
-      ).rejects.toThrow(/is empty/)
+      await expect(SSMClientProvider.getParameter("us-east-1", "/wire/keys/a")).rejects.toThrow(/is empty/)
     })
   })
 
   describe("tryGetParameter (the D21 adopt probe)", () => {
     it("returns the value when the id IS published", async () => {
       mockSend.mockResolvedValueOnce(secureStringResponse("adopt-me"))
-      await expect(
-        SSMClientProvider.tryGetParameter("us-east-1", "/wire/keys/a")
-      ).resolves.toBe("adopt-me")
+      await expect(SSMClientProvider.tryGetParameter("us-east-1", "/wire/keys/a")).resolves.toBe("adopt-me")
     })
 
     it("returns nothing on ParameterNotFound — the id is simply unpublished", async () => {
       mockSend.mockRejectedValueOnce(parameterNotFound("/wire/keys/a"))
-      await expect(
-        SSMClientProvider.tryGetParameter("us-east-1", "/wire/keys/a")
-      ).resolves.toBeNull()
+      await expect(SSMClientProvider.tryGetParameter("us-east-1", "/wire/keys/a")).resolves.toBeNull()
     })
 
     it("RETHROWS every other SSM failure — AccessDenied is not 'nothing to adopt'", async () => {
-      mockSend.mockRejectedValueOnce(
-        ssmError("AccessDeniedException", "not authorized to perform ssm:GetParameter")
-      )
-      await expect(
-        SSMClientProvider.tryGetParameter("us-east-1", "/wire/keys/a")
-      ).rejects.toThrow(/not authorized/)
+      mockSend.mockRejectedValueOnce(ssmError("AccessDeniedException", "not authorized to perform ssm:GetParameter"))
+      await expect(SSMClientProvider.tryGetParameter("us-east-1", "/wire/keys/a")).rejects.toThrow(/not authorized/)
     })
 
     it("RETHROWS a wrong-Type parameter rather than silently regenerating its key", async () => {
       mockSend.mockResolvedValueOnce({
         Parameter: { Type: "String", Value: "plaintext" }
       })
-      await expect(
-        SSMClientProvider.tryGetParameter("us-east-1", "/wire/keys/a")
-      ).rejects.toThrow(/must be a SecureString/)
+      await expect(SSMClientProvider.tryGetParameter("us-east-1", "/wire/keys/a")).rejects.toThrow(
+        /must be a SecureString/
+      )
     })
   })
 
@@ -135,18 +114,14 @@ describe("SSMClientProvider (jest module mock — no live AWS)", () => {
         .mockResolvedValueOnce(secureStringResponse("agreed"))
         .mockResolvedValueOnce(secureStringResponse("agreed"))
         .mockRejectedValueOnce(parameterNotFound("/wire/keys/b"))
-      await expect(
-        SSMClientProvider.getParameterAcrossRegions(Regions, "/wire/keys/b")
-      ).resolves.toBe("agreed")
+      await expect(SSMClientProvider.getParameterAcrossRegions(Regions, "/wire/keys/b")).resolves.toBe("agreed")
       // Probed IN ORDER, once per region.
       expect(mockSend).toHaveBeenCalledTimes(Regions.length)
     })
 
     it("returns nothing when NO region holds the id", async () => {
       mockSend.mockRejectedValue(parameterNotFound("/wire/keys/b"))
-      await expect(
-        SSMClientProvider.getParameterAcrossRegions(Regions, "/wire/keys/b")
-      ).resolves.toBeNull()
+      await expect(SSMClientProvider.getParameterAcrossRegions(Regions, "/wire/keys/b")).resolves.toBeNull()
     })
 
     it("HARD-FAILS on a divergence, naming the regions that disagree", async () => {
@@ -154,27 +129,23 @@ describe("SSMClientProvider (jest module mock — no live AWS)", () => {
         .mockResolvedValueOnce(secureStringResponse("old-key"))
         .mockResolvedValueOnce(secureStringResponse("rotated-key"))
         .mockRejectedValueOnce(parameterNotFound("/wire/keys/b"))
-      await expect(
-        SSMClientProvider.getParameterAcrossRegions(Regions, "/wire/keys/b")
-      ).rejects.toThrow(/DIVERGES across regions — us-east-1 disagrees with eu-west-1/)
+      await expect(SSMClientProvider.getParameterAcrossRegions(Regions, "/wire/keys/b")).rejects.toThrow(
+        /DIVERGES across regions — us-east-1 disagrees with eu-west-1/
+      )
     })
 
     it("propagates a non-not-found failure instead of treating it as absence", async () => {
       mockSend.mockRejectedValueOnce(ssmError("ThrottlingException", "Rate exceeded"))
-      await expect(
-        SSMClientProvider.getParameterAcrossRegions(Regions, "/wire/keys/b")
-      ).rejects.toThrow(/Rate exceeded/)
+      await expect(SSMClientProvider.getParameterAcrossRegions(Regions, "/wire/keys/b")).rejects.toThrow(
+        /Rate exceeded/
+      )
     })
   })
 
   describe("putParameter", () => {
     it("publishes a SecureString with Overwrite FALSE (never rotates a live key)", async () => {
       mockSend.mockResolvedValueOnce({})
-      await SSMClientProvider.putParameter(
-        "us-west-2",
-        "/wire/keys/b",
-        "the-private-key"
-      )
+      await SSMClientProvider.putParameter("us-west-2", "/wire/keys/b", "the-private-key")
       expect(lastCommandInput()).toEqual({
         Name: "/wire/keys/b",
         Value: "the-private-key",
@@ -187,15 +158,10 @@ describe("SSMClientProvider (jest module mock — no live AWS)", () => {
 
     it("rides the tags on the PutParameter itself (legal once Overwrite is false)", async () => {
       mockSend.mockResolvedValueOnce({})
-      await SSMClientProvider.putParameter(
-        "us-west-2",
-        "/wire/keys/b",
-        "the-private-key",
-        [{ Key: "wire:platform-version", Value: "v4" }]
-      )
-      expect(lastCommandInput().Tags).toEqual([
+      await SSMClientProvider.putParameter("us-west-2", "/wire/keys/b", "the-private-key", [
         { Key: "wire:platform-version", Value: "v4" }
       ])
+      expect(lastCommandInput().Tags).toEqual([{ Key: "wire:platform-version", Value: "v4" }])
     })
   })
 
@@ -214,15 +180,10 @@ describe("SSMClientProvider (jest module mock — no live AWS)", () => {
 
     it("constructs its client WITHOUT a region so the AWS env chain supplies one", async () => {
       mockSend.mockResolvedValueOnce(secureStringResponse("ambient-secret"))
-      const value = await SSMClientProvider.getParameter(
-        SSMClientProvider.AmbientRegion,
-        "/wire/keys/ambient"
-      )
+      const value = await SSMClientProvider.getParameter(SSMClientProvider.AmbientRegion, "/wire/keys/ambient")
       expect(value).toBe("ambient-secret")
       // `region: ""` would be a bad endpoint — the key must be absent entirely.
-      expect(clientConfigFor(SSMClientProvider.AmbientRegion)).not.toHaveProperty(
-        "region"
-      )
+      expect(clientConfigFor(SSMClientProvider.AmbientRegion)).not.toHaveProperty("region")
       // A pinned region still pins.
       expect(clientConfigFor("us-east-1")).toMatchObject({
         region: "us-east-1"
@@ -245,10 +206,7 @@ describe("SSMClientProvider (jest module mock — no live AWS)", () => {
     it("names the ambient region in a not-found diagnostic (never an empty string)", async () => {
       mockSend.mockResolvedValueOnce({})
       await expect(
-        SSMClientProvider.getParameter(
-          SSMClientProvider.AmbientRegion,
-          "/wire/keys/missing"
-        )
+        SSMClientProvider.getParameter(SSMClientProvider.AmbientRegion, "/wire/keys/missing")
       ).rejects.toThrow(/not found in the ambient AWS region/)
     })
   })

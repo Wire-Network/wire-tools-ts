@@ -1,10 +1,4 @@
-import {
-  useState,
-  useCallback,
-  createContext,
-  useContext,
-  type PropsWithChildren
-} from "react"
+import { useState, useCallback, createContext, useContext, type PropsWithChildren } from "react"
 
 /** Bootstrap alert variants a toast renders with (`toast-<color>` class). */
 export enum ToastColor {
@@ -37,17 +31,14 @@ let nextId = 0
 export function ToastProvider({ children }: ToastProviderProps) {
   const [toasts, setToasts] = useState<ToastMessage[]>([])
 
-  const show = useCallback(
-    (text: string, color: ToastMessage["color"] = ToastColor.success) => {
-      console.log("Toast:", text)
-      const id = nextId++
-      setToasts(prev => [...prev, { id, text, color }])
-      setTimeout(() => {
-        setToasts(prev => prev.filter(t => t.id !== id))
-      }, 4000)
-    },
-    []
-  )
+  const show = useCallback((text: string, color: ToastMessage["color"] = ToastColor.success) => {
+    console.log("Toast:", text)
+    const id = nextId++
+    setToasts(prev => [...prev, { id, text, color }])
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id))
+    }, 4000)
+  }, [])
 
   return (
     <ToastContext.Provider value={{ show }}>

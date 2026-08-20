@@ -59,9 +59,11 @@ export class RecordingConnection extends Connection {
     try {
       // web3.js overloads sendTransaction (legacy vs versioned); the runtime
       // dispatch is by argument shape, so forward verbatim.
-      const signature = await (
-        super.sendTransaction as (...args: unknown[]) => Promise<TransactionSignature>
-      )(transaction, signersOrOptions, options)
+      const signature = await (super.sendTransaction as (...args: unknown[]) => Promise<TransactionSignature>)(
+        transaction,
+        signersOrOptions,
+        options
+      )
       StepExtraRecorder.record({ ...call, ok: true, signature })
       return signature
     } catch (error) {
@@ -98,10 +100,7 @@ export class RecordingConnection extends Connection {
     }
   }
 
-  override async requestAirdrop(
-    to: PublicKey,
-    lamports: number
-  ): Promise<TransactionSignature> {
+  override async requestAirdrop(to: PublicKey, lamports: number): Promise<TransactionSignature> {
     const call: StepExtraRecorder.ClientCall = {
       client: "solana",
       kind: "airdrop",
@@ -129,19 +128,14 @@ export namespace RecordingConnection {
    * sendRawTransaction / requestAirdrop) already record with decoded
    * payloads — the `_rpcRequest` read wrap skips these to avoid duplicates.
    */
-  export const RichlyRecordedMethods: ReadonlySet<string> = new Set([
-    "sendTransaction",
-    "requestAirdrop"
-  ])
+  export const RichlyRecordedMethods: ReadonlySet<string> = new Set(["sendTransaction", "requestAirdrop"])
 
   /**
    * The `extra` record for a (legacy or versioned) transaction submission —
    * per-instruction program ids + data bytes, the actual payload the chain
    * executes.
    */
-  export function toTransactionCall(
-    transaction: Transaction | VersionedTransaction
-  ): StepExtraRecorder.ClientCall {
+  export function toTransactionCall(transaction: Transaction | VersionedTransaction): StepExtraRecorder.ClientCall {
     const call: StepExtraRecorder.ClientCall = {
       client: "solana",
       kind: "transaction",

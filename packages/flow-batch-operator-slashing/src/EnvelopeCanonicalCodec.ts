@@ -68,8 +68,7 @@ function canonicalVarint(value: bigint): number[] {
 }
 
 /** A protobuf field tag: `(field << 3) | wireType`, varint-encoded. */
-const canonicalTag = (field: number, wireType: number) =>
-  canonicalVarint(BigInt((field << 3) | wireType))
+const canonicalTag = (field: number, wireType: number) => canonicalVarint(BigInt((field << 3) | wireType))
 
 /** A varint field: tag + varint value. */
 const canonicalVarintField = (field: number, value: bigint | number) => [
@@ -124,14 +123,9 @@ const canonicalAttestation = (att: CanonicalAttestationBody) => [
 ]
 
 /** An `opp.MessagePayload` body (version + repeated attestation sub-messages). */
-const canonicalPayload = (
-  version: number,
-  atts: CanonicalAttestationBody[]
-) => [
+const canonicalPayload = (version: number, atts: CanonicalAttestationBody[]) => [
   ...canonicalVarintField(PayloadField.version, version),
-  ...atts.flatMap(att =>
-    canonicalSubMessage(PayloadField.attestation, canonicalAttestation(att))
-  )
+  ...atts.flatMap(att => canonicalSubMessage(PayloadField.attestation, canonicalAttestation(att)))
 ]
 
 /** The wire-level fields of an `opp.MessageHeader` body, as fed to the canonical encoder. */
@@ -154,10 +148,7 @@ interface CanonicalHeaderBody {
 const canonicalHeader = (header: CanonicalHeaderBody) => [
   ...canonicalSubMessage(HeaderField.endpoints, canonicalEndpointsDefault()),
   ...canonicalBytesField(HeaderField.messageId, header.messageId),
-  ...canonicalBytesField(
-    HeaderField.previousMessageId,
-    header.previousMessageId
-  ),
+  ...canonicalBytesField(HeaderField.previousMessageId, header.previousMessageId),
   ...canonicalVarintField(HeaderField.payloadSize, header.payloadSize),
   ...canonicalBytesField(HeaderField.payloadChecksum, header.payloadChecksum),
   ...canonicalVarintField(HeaderField.timestamp, header.timestamp),
@@ -165,8 +156,7 @@ const canonicalHeader = (header: CanonicalHeaderBody) => [
 ]
 
 /** keccak256 of the given bytes, as a 32-byte array. */
-const keccakBytes = (bytes: number[] | Uint8Array) =>
-  ethers.getBytes(ethers.keccak256(Uint8Array.from(bytes)))
+const keccakBytes = (bytes: number[] | Uint8Array) => ethers.getBytes(ethers.keccak256(Uint8Array.from(bytes)))
 
 /** Big-endian sequence number in the first 8 bytes of a message id; 0 when empty (genesis). */
 function messageSequence(messageId: Uint8Array): bigint {
@@ -174,10 +164,7 @@ function messageSequence(messageId: Uint8Array): bigint {
 }
 
 /** `headerChecksum` with its first 8 bytes replaced by the big-endian sequence number. */
-function deriveMessageId(
-  headerChecksum: Uint8Array,
-  sequence: bigint
-): Uint8Array {
+function deriveMessageId(headerChecksum: Uint8Array, sequence: bigint): Uint8Array {
   const out = new Uint8Array(headerChecksum)
   out.set(ethers.getBytes(ethers.toBeHex(sequence, 8)), 0)
   return out
@@ -229,9 +216,7 @@ export interface SemanticHeader {
  * @param input - The message's varying content + its predecessor's message id.
  * @returns The derived header checksum fields.
  */
-export function deriveSemanticHeader(
-  input: SemanticHeaderInput
-): SemanticHeader {
+export function deriveSemanticHeader(input: SemanticHeaderInput): SemanticHeader {
   const atts = input.attestations.map(att => ({
     type: att.type,
     dataSize: att.data.length,
@@ -249,10 +234,7 @@ export function deriveSemanticHeader(
       headerChecksum: CanonicalEmpty
     })
   )
-  const messageId = deriveMessageId(
-    headerChecksum,
-    messageSequence(input.previousMessageId) + 1n
-  )
+  const messageId = deriveMessageId(headerChecksum, messageSequence(input.previousMessageId) + 1n)
   return {
     payloadSize: payloadCanonical.length,
     payloadChecksum,
@@ -306,9 +288,7 @@ export interface TaggedEnvelopeInput {
  */
 export function encodeTaggedEnvelope(input: TaggedEnvelopeInput): Uint8Array {
   const data = new TextEncoder().encode(input.tag)
-  const attestations: CanonicalAttestation[] = [
-    { type: AttestationType.UNSPECIFIED, data }
-  ]
+  const attestations: CanonicalAttestation[] = [{ type: AttestationType.UNSPECIFIED, data }]
   const header = deriveSemanticHeader({
     version: input.payloadVersion,
     attestations,
@@ -333,9 +313,7 @@ export function encodeTaggedEnvelope(input: TaggedEnvelopeInput): Uint8Array {
           },
           payload: {
             version: input.payloadVersion,
-            attestations: [
-              { type: AttestationType.UNSPECIFIED, dataSize: data.length, data }
-            ]
+            attestations: [{ type: AttestationType.UNSPECIFIED, dataSize: data.length, data }]
           }
         }
       ]

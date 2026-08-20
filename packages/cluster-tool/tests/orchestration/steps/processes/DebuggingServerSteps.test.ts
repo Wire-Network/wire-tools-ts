@@ -37,15 +37,9 @@ describe("Steps.processes.debuggingServer", () => {
         family: "IPv4"
       })
     }
-    const createSpy = jest
-      .spyOn(DebuggingServer, "create")
-      .mockResolvedValue(fakeServer as DebuggingServer)
+    const createSpy = jest.spyOn(DebuggingServer, "create").mockResolvedValue(fakeServer as DebuggingServer)
     try {
-      await Steps.processes.debuggingServer.runStart(
-        ctx,
-        null,
-        new AbortController().signal
-      )
+      await Steps.processes.debuggingServer.runStart(ctx, null, new AbortController().signal)
       expect(createSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           host,

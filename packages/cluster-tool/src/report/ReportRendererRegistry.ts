@@ -12,12 +12,7 @@ import { ReportHtmlRenderer } from "./renderers/ReportHtmlRenderer.js"
  * effects — renderers never self-register. {@link Report.write} consults this.
  */
 export class ReportRendererRegistry {
-  constructor(
-    private readonly renderers: ReadonlyMap<
-      ClusterConfigReportFormat,
-      ReportRendererConstructor
-    >
-  ) {}
+  constructor(private readonly renderers: ReadonlyMap<ClusterConfigReportFormat, ReportRendererConstructor>) {}
 
   /** The constructor registered for `format` (throws when none is). */
   get(format: ClusterConfigReportFormat): ReportRendererConstructor {

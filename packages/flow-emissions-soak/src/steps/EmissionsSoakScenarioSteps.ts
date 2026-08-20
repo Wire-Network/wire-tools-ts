@@ -21,10 +21,7 @@ import {
   SolanaSeedConversionKey,
   type SeedConversionSummary
 } from "../EmissionsSoakScenarioOutputs.js"
-import {
-  controlledStakerWallet,
-  type ControlledStakerIdentity
-} from "../EmissionsSoakScenarioSyntheticDump.js"
+import { controlledStakerWallet, type ControlledStakerIdentity } from "../EmissionsSoakScenarioSyntheticDump.js"
 
 const log = getLogger(__filename)
 
@@ -52,22 +49,13 @@ export namespace EmissionsSoakScenarioSteps {
    * before the import and claim bursts — kiod auto-locks after its unlock
    * timeout, which the 30-minute soak window always exceeds.
    */
-  export function planUnlockWallet<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planUnlockWallet<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runUnlockWallet
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runUnlockWallet)
   }
 
   /** Named runner — open + unlock the default kiod wallet. */
@@ -95,9 +83,7 @@ export namespace EmissionsSoakScenarioSteps {
    * into `ctx.outputs` (the cross-step channel every import/claimer/verify
    * step reads), logging the conversion stats the old suite logged.
    */
-  export function planPublishSeedData<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planPublishSeedData<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -156,9 +142,7 @@ export namespace EmissionsSoakScenarioSteps {
   }
 
   /** `sysio.dclaim::importseed` — push ONE converted batch (dclaim self-auth). */
-  export function planImportSeedBatch<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planImportSeedBatch<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -191,39 +175,23 @@ export namespace EmissionsSoakScenarioSteps {
     signal.throwIfAborted()
     // Two-variant union → single-guard conditional (STYLE: don't match two branches).
     const summary = ctx.outputs.assert(
-        input.chain === Constants.EthereumChain
-          ? EthereumSeedConversionKey
-          : SolanaSeedConversionKey
+        input.chain === Constants.EthereumChain ? EthereumSeedConversionKey : SolanaSeedConversionKey
       ),
       batch = summary.batches[input.batchIndex]
-    Assert.ok(
-      batch != null,
-      `importseed batch ${input.batchIndex} missing for ${input.chain}`
-    )
-    await ctx.wire
-      .getSysioContract(SysioContractName.dclaim)
-      .actions.importseed.invoke(batch)
+    Assert.ok(batch != null, `importseed batch ${input.batchIndex} missing for ${input.chain}`)
+    await ctx.wire.getSysioContract(SysioContractName.dclaim).actions.importseed.invoke(batch)
   }
 
   // ── close the import window ────────────────────────────────────────────────
 
   /** `sysio.dclaim::importdone` — flip `cap_config.imported_complete` (dclaim self-auth). */
-  export function planImportDone<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planImportDone<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runImportDone
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runImportDone)
   }
 
   /** Named runner — `sysio.dclaim::importdone` (empty payload). */
@@ -233,9 +201,7 @@ export namespace EmissionsSoakScenarioSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.dclaim)
-      .actions.importdone.invoke({})
+    await ctx.wire.getSysioContract(SysioContractName.dclaim).actions.importdone.invoke({})
   }
 
   // ── provision a claimer's WIRE account ─────────────────────────────────────
@@ -251,9 +217,7 @@ export namespace EmissionsSoakScenarioSteps {
    * standard resource policy (the account must host its authex link + pclaim
    * row) — the harness's ONE user-provisioning mechanism, unfunded.
    */
-  export function planProvisionClaimer<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planProvisionClaimer<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -293,9 +257,7 @@ export namespace EmissionsSoakScenarioSteps {
    * account. The EM key identifies which ETH wallet "owns" the account; the
    * account still signs with the dev K1 key.
    */
-  export function planAuthexLink<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planAuthexLink<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -347,9 +309,7 @@ export namespace EmissionsSoakScenarioSteps {
    * `pending_claims`. `createlink` does NOT auto-sweep; in a real launch an
    * off-chain orchestrator batches one sweep per new link — mirrored here.
    */
-  export function planLinkswept<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planLinkswept<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -378,20 +338,15 @@ export namespace EmissionsSoakScenarioSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.dclaim)
-      .actions.linkswept.invoke(
-        {
-          wire_account: input.wireAccount,
-          // Proto ChainKind → the dclaim ABI's own enum, bridged by VALUE.
-          chain: abiEnumValue(
-            SysioContracts.SysioDclaimChainkind,
-            Constants.EthereumChain
-          ),
-          native_pubkey: input.nativePubkeyHex
-        },
-        { authorization: AuthexActiveAuthorization }
-      )
+    await ctx.wire.getSysioContract(SysioContractName.dclaim).actions.linkswept.invoke(
+      {
+        wire_account: input.wireAccount,
+        // Proto ChainKind → the dclaim ABI's own enum, bridged by VALUE.
+        chain: abiEnumValue(SysioContracts.SysioDclaimChainkind, Constants.EthereumChain),
+        native_pubkey: input.nativePubkeyHex
+      },
+      { authorization: AuthexActiveAuthorization }
+    )
   }
 
   // ── claim the staker's pending balance ─────────────────────────────────────
@@ -403,9 +358,7 @@ export namespace EmissionsSoakScenarioSteps {
   }
 
   /** `sysio.dclaim::claim` — drain the staker's pclaim row into WIRE (staker-authed). */
-  export function planClaim<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planClaim<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

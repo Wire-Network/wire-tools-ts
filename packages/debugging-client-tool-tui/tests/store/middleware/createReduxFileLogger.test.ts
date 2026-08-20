@@ -32,8 +32,7 @@ function setLevel(level: LevelKind): void {
 function makeStore() {
   return configureStore({
     reducer: {
-      x: (state: number = 0, action: Action) =>
-        action.type === "x/inc" ? state + 1 : state
+      x: (state: number = 0, action: Action) => (action.type === "x/inc" ? state + 1 : state)
     },
     middleware: getDefault => getDefault().concat(createReduxFileLogger())
   })
@@ -47,12 +46,9 @@ function makeStore() {
 async function awaitReduxLines(actionType: string): Promise<string[]> {
   const deadline = Date.now() + 500,
     matches = (line: string): boolean =>
-      line.includes(`"category":"${ReduxFileLogger.Category}"`) &&
-      line.includes(actionType),
+      line.includes(`"category":"${ReduxFileLogger.Category}"`) && line.includes(actionType),
     poll = async (): Promise<string[]> => {
-      const content = Fs.existsSync(logFile)
-        ? Fs.readFileSync(logFile, "utf-8")
-        : ""
+      const content = Fs.existsSync(logFile) ? Fs.readFileSync(logFile, "utf-8") : ""
       const found = content.split(/\r?\n/).filter(matches)
       if (found.length > 0) return found
       if (Date.now() > deadline) return []

@@ -80,9 +80,7 @@ describe("createRunCommand", () => {
       wait: () => keepAliveDeferred.promise,
       release: releaseMock
     })
-    clusterPath = Fs.mkdtempSync(
-      Path.join(Os.tmpdir(), "wire-cluster-run-cmd-test-")
-    )
+    clusterPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "wire-cluster-run-cmd-test-"))
     Fs.writeFileSync(
       Path.join(clusterPath, ClusterConfigProvider.ConfigFilename),
       JSON.stringify({ ...PersistedFixture, clusterPath })
@@ -96,9 +94,7 @@ describe("createRunCommand", () => {
   it("names itself with the run enum member and describes the create-only contract", () => {
     const module = createRunCommand()
     expect(module.command).toBe(ClusterCommand.run)
-    expect(module.describe).toEqual(
-      expect.stringContaining("wire-cluster-tool create")
-    )
+    expect(module.describe).toEqual(expect.stringContaining("wire-cluster-tool create"))
     expect(module.describe).toEqual(expect.stringContaining("not resumable"))
   })
 
@@ -131,9 +127,7 @@ describe("createRunCommand", () => {
     const failure = new Error("epoch stall")
     runMock.mockRejectedValue(failure)
 
-    await expect(createRunCommand().handler({ clusterPath })).rejects.toThrow(
-      "epoch stall"
-    )
+    await expect(createRunCommand().handler({ clusterPath })).rejects.toThrow("epoch stall")
     expect(createKeepAliveMock).not.toHaveBeenCalled()
   })
 })

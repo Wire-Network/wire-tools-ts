@@ -60,9 +60,7 @@ export const ClusterBuildOptionsFileFlag = "cluster-build-options-file"
 export const AWSClusterNodeConfigFlag = "aws-cluster-node-config"
 
 /** Validated codec for the `--signature-provider-ssm` payload. */
-const ssmOptionsCodec = SchemaCodec.create<AWSSSMSignatureProviderOptions>(
-  AWSSSMSignatureProviderOptionsSchema
-)
+const ssmOptionsCodec = SchemaCodec.create<AWSSSMSignatureProviderOptions>(AWSSSMSignatureProviderOptionsSchema)
 
 /**
  * Validated codec for the three flag-less `CollateralRequirement[]` members of a
@@ -72,14 +70,10 @@ const ssmOptionsCodec = SchemaCodec.create<AWSSSMSignatureProviderOptions>(
  * for every scalar leaf); these two codecs cover ONLY the object-array members
  * that shape deliberately declares empty.
  */
-const collateralRequirementsCodec = SchemaCodec.create<CollateralRequirement[]>(
-  z.array(CollateralRequirementSchema)
-)
+const collateralRequirementsCodec = SchemaCodec.create<CollateralRequirement[]>(z.array(CollateralRequirementSchema))
 
 /** Validated codec for the flag-less per-underwriter `ChainTokenAmount[][]` member. */
-const underwriterCollateralCodec = SchemaCodec.create<ChainTokenAmount[][]>(
-  z.array(z.array(ChainTokenAmountSchema))
-)
+const underwriterCollateralCodec = SchemaCodec.create<ChainTokenAmount[][]>(z.array(z.array(ChainTokenAmountSchema)))
 
 /** A scalar option-leaf value — the yargs primitive kinds a flag can carry. */
 export type OptionLeafValue = string | number | boolean
@@ -117,10 +111,7 @@ export class OptionLeafSpec {
  * nodes. The recursive union both the descriptor and {@link flattenOptionLeaves}
  * walk.
  */
-export type OptionShapeNode =
-  | OptionLeafSpec
-  | OptionShapeNode[]
-  | OptionShapeObject
+export type OptionShapeNode = OptionLeafSpec | OptionShapeNode[] | OptionShapeObject
 
 /** A nested object of shape nodes (named — no inline object types). */
 export interface OptionShapeObject {
@@ -159,11 +150,7 @@ function requiredLeaf(type: OptionLeafType, describe: string): OptionLeafSpec {
 }
 
 /** String leaf constrained to `choices` (yargs enforces the set), with a seeded default. */
-function choicesLeaf(
-  choices: readonly string[],
-  value: OptionLeafValue,
-  describe: string
-): OptionLeafSpec {
+function choicesLeaf(choices: readonly string[], value: OptionLeafValue, describe: string): OptionLeafSpec {
   return new OptionLeafSpec(value, describe, false, null, choices)
 }
 
@@ -206,9 +193,7 @@ function leafType(spec: OptionLeafSpec): OptionLeafType {
     .with(P.number, () => OptionLeafType.number)
     .with(P.string, () => OptionLeafType.string)
     .otherwise(() =>
-      asOption(spec.explicitType).getOrThrow(
-        `option leaf with a null default needs an explicit type: ${spec.describe}`
-      )
+      asOption(spec.explicitType).getOrThrow(`option leaf with a null default needs an explicit type: ${spec.describe}`)
     )
 }
 
@@ -237,10 +222,7 @@ function toLeaf(spec: OptionLeafSpec, path: string[]): OptionLeaf {
  * @param path - The accumulated path segments (internal; starts empty).
  * @returns Every leaf under `node`, each with its path + kebab flag + type.
  */
-export function flattenOptionLeaves(
-  node: OptionShapeNode,
-  path: string[] = []
-): OptionLeaf[] {
+export function flattenOptionLeaves(node: OptionShapeNode, path: string[] = []): OptionLeaf[] {
   // Structural recursion over the (self-referential) OptionShapeNode union.
   // Plain narrowing guards are used deliberately here: routing this three-way
   // dispatch through `match(node)` makes ts-pattern instantiate the recursive
@@ -249,13 +231,9 @@ export function flattenOptionLeaves(
     return [toLeaf(node, path)]
   }
   if (Array.isArray(node)) {
-    return node.flatMap((child, index) =>
-      flattenOptionLeaves(child, [...path, String(index)])
-    )
+    return node.flatMap((child, index) => flattenOptionLeaves(child, [...path, String(index)]))
   }
-  return Object.entries(node).flatMap(([key, child]) =>
-    flattenOptionLeaves(child, [...path, key])
-  )
+  return Object.entries(node).flatMap(([key, child]) => flattenOptionLeaves(child, [...path, key]))
 }
 
 /** `{ http, p2p }` nodeop port pair — both auto-picked unless overridden. */
@@ -275,26 +253,16 @@ function buildDaemonShape(label: string): OptionShapeObject {
 }
 
 /** The `bind` sub-tree; node-port arrays are sized from the topology counts. */
-function buildBindShape(
-  nodeCount: number,
-  batchCount: number,
-  underwriterCount: number
-): OptionShapeObject {
+function buildBindShape(nodeCount: number, batchCount: number, underwriterCount: number): OptionShapeObject {
   return {
     kiod: buildDaemonShape("kiod"),
     nodeop: {
       address: optionalLeaf(OptionLeafType.string, "nodeop bind address"),
       ports: {
         bios: buildPortPairShape("bios nodeop"),
-        producers: range(nodeCount).map(index =>
-          buildPortPairShape(`producer[${index}] nodeop`)
-        ),
-        batch: range(batchCount).map(index =>
-          buildPortPairShape(`batch operator[${index}] nodeop`)
-        ),
-        underwriters: range(underwriterCount).map(index =>
-          buildPortPairShape(`underwriter[${index}] nodeop`)
-        )
+        producers: range(nodeCount).map(index => buildPortPairShape(`producer[${index}] nodeop`)),
+        batch: range(batchCount).map(index => buildPortPairShape(`batch operator[${index}] nodeop`)),
+        underwriters: range(underwriterCount).map(index => buildPortPairShape(`underwriter[${index}] nodeop`))
       }
     },
     anvil: buildDaemonShape("anvil"),
@@ -302,14 +270,8 @@ function buildBindShape(
       address: optionalLeaf(OptionLeafType.string, "solana bind address"),
       ports: {
         http: optionalLeaf(OptionLeafType.number, "solana RPC listen port"),
-        faucet: optionalLeaf(
-          OptionLeafType.number,
-          "solana faucet listen port"
-        ),
-        gossip: optionalLeaf(
-          OptionLeafType.number,
-          "solana validator gossip listen port (--gossip-port)"
-        )
+        faucet: optionalLeaf(OptionLeafType.number, "solana faucet listen port"),
+        gossip: optionalLeaf(OptionLeafType.number, "solana validator gossip listen port (--gossip-port)")
       }
     },
     debuggingServer: buildDaemonShape("debugging server")
@@ -323,10 +285,7 @@ function buildLoggingShape(): OptionShapeObject {
       console: leaf(Level.info, "console log level"),
       file: leaf(Level.debug, "file log level")
     },
-    fileFormat: leaf(
-      LogFileAppender.Format.jsonl,
-      "log file format: text or jsonl"
-    )
+    fileFormat: leaf(LogFileAppender.Format.jsonl, "log file format: text or jsonl")
   }
 }
 
@@ -351,9 +310,7 @@ function buildReportShape(): OptionShapeObject {
  *   size the bind arrays) are read here.
  * @returns The nested descriptor to flatten.
  */
-export function buildOptionShape(
-  defaults: ClusterBuildOptions
-): OptionShapeObject {
+export function buildOptionShape(defaults: ClusterBuildOptions): OptionShapeObject {
   const {
     nodeCount = CliDefault.nodeCount,
     batchOperatorCount: batchCount = CliDefault.batchOperatorCount,
@@ -378,10 +335,7 @@ export function buildOptionShape(
     ),
     underwriterCount: leaf(CliDefault.underwriterCount, "underwriter count"),
     // ── epoch ──
-    epochDurationSec: leaf(
-      CliDefault.epochDurationSec,
-      "minimum epoch duration in seconds"
-    ),
+    epochDurationSec: leaf(CliDefault.epochDurationSec, "minimum epoch duration in seconds"),
     operatorsPerEpoch: optionalLeaf(
       OptionLeafType.number,
       "batch-op group SIZE (operators_per_epoch); omit to derive from batchOperatorCount"
@@ -394,14 +348,8 @@ export function buildOptionShape(
       OptionLeafType.number,
       "epoch_retention_envelope_log_count; omit for the bootstrap default"
     ),
-    warmupEpochs: optionalLeaf(
-      OptionLeafType.number,
-      "warmup epochs before the measured window"
-    ),
-    cooldownEpochs: optionalLeaf(
-      OptionLeafType.number,
-      "cooldown epochs after the measured window"
-    ),
+    warmupEpochs: optionalLeaf(OptionLeafType.number, "warmup epochs before the measured window"),
+    cooldownEpochs: optionalLeaf(OptionLeafType.number, "cooldown epochs after the measured window"),
     // ── termination tuning ──
     terminateMaxConsecutiveMisses: optionalLeaf(
       OptionLeafType.number,
@@ -411,17 +359,11 @@ export function buildOptionShape(
       OptionLeafType.number,
       "24h missed-delivery percentage termination threshold"
     ),
-    terminateWindowMs: optionalLeaf(
-      OptionLeafType.number,
-      "termination evaluation window in ms"
-    ),
+    terminateWindowMs: optionalLeaf(OptionLeafType.number, "termination evaluation window in ms"),
     // ── network binding ──
     bindAll: leaf(false, "bind every daemon to 0.0.0.0 instead of loopback"),
     // ── mock data seeding (default false → external / real depots get no fake reserves) ──
-    enableMockReserves: leaf(
-      false,
-      "seed the 8 mock (chain, token) PRIMARY reserves at bootstrap"
-    ),
+    enableMockReserves: leaf(false, "seed the 8 mock (chain, token) PRIMARY reserves at bootstrap"),
     bind: buildBindShape(nodeCount, batchCount, underwriterCount),
     bindConfig: optionalLeaf(
       OptionLeafType.string,
@@ -471,15 +413,10 @@ const AliasByFlag: Record<string, string> = {
 type OptionArgv = Record<string, unknown>
 
 /** Read one scalar leaf value out of a caller's `defaults` by dotted path, or `null`. */
-function readDeep(
-  source: ClusterBuildOptions,
-  path: string[]
-): OptionLeafValue {
+function readDeep(source: ClusterBuildOptions, path: string[]): OptionLeafValue {
   const found = path.reduce<unknown>(
     (node, segment) =>
-      node != null && typeof node === "object"
-        ? ((node as Record<string, unknown>)[segment] ?? null)
-        : null,
+      node != null && typeof node === "object" ? ((node as Record<string, unknown>)[segment] ?? null) : null,
     source
   )
   return match(found)
@@ -488,10 +425,7 @@ function readDeep(
 }
 
 /** The yargs `.option(...)` config for one leaf: type + describe + seeded default + demand. */
-function toYargsOption(
-  optionLeaf: OptionLeaf,
-  defaults: ClusterBuildOptions
-): YargsOption {
+function toYargsOption(optionLeaf: OptionLeaf, defaults: ClusterBuildOptions): YargsOption {
   const seeded = readDeep(defaults, optionLeaf.path) ?? optionLeaf.value,
     option: YargsOption = {
       // OptionLeafType's identity values ARE yargs' `type` spellings — the
@@ -532,9 +466,7 @@ export const PathEnvironmentVariableByOption = {
  * @param environment - The environment map (injectable for tests).
  * @returns The env-derived path options.
  */
-export function environmentPathDefaults(
-  environment: NodeJS.ProcessEnv = process.env
-): ClusterBuildOptions {
+export function environmentPathDefaults(environment: NodeJS.ProcessEnv = process.env): ClusterBuildOptions {
   return Object.fromEntries(
     Object.entries(PathEnvironmentVariableByOption)
       .map(([option, variable]) => [option, environment[variable]])
@@ -565,17 +497,9 @@ export function applyClusterBuildOptionsArgs(
   defaults: ClusterBuildOptions = {},
   environment: NodeJS.ProcessEnv = process.env
 ): Argv {
-  const seededDefaults: ClusterBuildOptions = defaultsDeep(
-    {},
-    environmentPathDefaults(environment),
-    defaults
-  )
+  const seededDefaults: ClusterBuildOptions = defaultsDeep({}, environmentPathDefaults(environment), defaults)
   const withShape = flattenOptionLeaves(buildOptionShape(seededDefaults)).reduce(
-    (instance, optionLeaf) =>
-      instance.option(
-        optionLeaf.flag,
-        toYargsOption(optionLeaf, seededDefaults)
-      ),
+    (instance, optionLeaf) => instance.option(optionLeaf.flag, toYargsOption(optionLeaf, seededDefaults)),
     yargs
   )
   // These three live OUTSIDE the option shape: each payload is a JSON document
@@ -612,22 +536,15 @@ export function applyClusterBuildOptionsArgs(
  * @param flag - The long flag name, without the leading `--`.
  * @returns The flag's value, or `null` when the flag is absent.
  */
-export function readCommandLineFlag(
-  commandLine: string[],
-  flag: string
-): string {
+export function readCommandLineFlag(commandLine: string[], flag: string): string {
   const long = `--${flag}`,
     assigned = `${long}=`,
-    index = commandLine.findIndex(
-      argument => argument === long || argument.startsWith(assigned)
-    )
+    index = commandLine.findIndex(argument => argument === long || argument.startsWith(assigned))
   if (index < 0) {
     return null
   }
   const argument = commandLine[index]
-  return argument.startsWith(assigned)
-    ? argument.slice(assigned.length)
-    : commandLine[index + 1]
+  return argument.startsWith(assigned) ? argument.slice(assigned.length) : commandLine[index + 1]
 }
 
 /**
@@ -640,15 +557,10 @@ export function readCommandLineFlag(
  * @param flag - The long flag name, without the leading `--`.
  * @returns `true` when the flag itself appears on the command line.
  */
-export function hasCommandLineFlag(
-  commandLine: string[],
-  flag: string
-): boolean {
+export function hasCommandLineFlag(commandLine: string[], flag: string): boolean {
   const alias = AliasByFlag[flag],
     forms = [`--${flag}`, ...(alias != null ? [`-${alias}`] : [])]
-  return commandLine.some(argument =>
-    forms.some(form => argument === form || argument.startsWith(`${form}=`))
-  )
+  return commandLine.some(argument => forms.some(form => argument === form || argument.startsWith(`${form}=`)))
 }
 
 /** Read a flag off argv by its kebab form, falling back to yargs' camelCase alias. */
@@ -679,19 +591,12 @@ function isIndexSegment(segment: string): boolean {
 }
 
 /** Read a child by segment (arrays accept numeric-string keys uniformly). */
-function childOf(
-  node: OptionTreeContainer,
-  segment: string
-): OptionTreeValue {
+function childOf(node: OptionTreeContainer, segment: string): OptionTreeValue {
   return (node as OptionTreeObject)[segment] ?? null
 }
 
 /** Write a child by segment (arrays accept numeric-string keys uniformly). */
-function putChild(
-  node: OptionTreeContainer,
-  segment: string,
-  value: OptionTreeValue
-): void {
+function putChild(node: OptionTreeContainer, segment: string, value: OptionTreeValue): void {
   ;(node as OptionTreeObject)[segment] = value
 }
 
@@ -703,31 +608,19 @@ function putChild(
  * mirror), so the assembled tree IS the options object — the dynamic-path
  * indexing view below is the ONE typed boundary of that assembly.
  */
-function setDeep(
-  root: ClusterBuildOptions,
-  path: string[],
-  value: OptionLeafValue
-): void {
+function setDeep(root: ClusterBuildOptions, path: string[], value: OptionLeafValue): void {
   const tree: OptionTreeObject = root as OptionTreeObject
   const lastIndex = path.length - 1,
-    container = path
-      .slice(0, lastIndex)
-      .reduce<OptionTreeContainer>((node, segment, depth) => {
-        const child =
-          childOf(node, segment) ?? (isIndexSegment(path[depth + 1]) ? [] : {})
-        putChild(node, segment, child)
-        return child as OptionTreeContainer
-      }, tree)
+    container = path.slice(0, lastIndex).reduce<OptionTreeContainer>((node, segment, depth) => {
+      const child = childOf(node, segment) ?? (isIndexSegment(path[depth + 1]) ? [] : {})
+      putChild(node, segment, child)
+      return child as OptionTreeContainer
+    }, tree)
   putChild(container, path[lastIndex], value)
 }
 
 /** The `ClusterBuildOptions` path leaves resolved absolute so any cwd resolves the same roots. */
-const PathOptionKeys = [
-  "buildPath",
-  "clusterPath",
-  "ethereumPath",
-  "solanaPath"
-] as const
+const PathOptionKeys = ["buildPath", "clusterPath", "ethereumPath", "solanaPath"] as const
 
 /** A `ClusterBuildOptions` member holding a filesystem path. */
 type PathOptionKey = (typeof PathOptionKeys)[number]
@@ -739,10 +632,7 @@ function absolutePaths(options: ClusterBuildOptions): ClusterBuildOptions {
 }
 
 /** Resolve one path member absolute (typed same-key read → write). */
-function absolutePathOption<K extends PathOptionKey>(
-  options: ClusterBuildOptions,
-  key: K
-): void {
+function absolutePathOption<K extends PathOptionKey>(options: ClusterBuildOptions, key: K): void {
   options[key] = asOption(options[key])
     .filter(isString)
     .map(value => Path.resolve(value))
@@ -782,23 +672,18 @@ function countsFromArgv(argv: OptionArgv): ClusterBuildOptions {
  * @param defaults - Caller defaults supplying the non-flag leaves.
  * @returns The resolved, nested cluster build options.
  */
-export function toClusterBuildOptions(
-  argv: OptionArgv,
-  defaults: ClusterBuildOptions = {}
-): ClusterBuildOptions {
+export function toClusterBuildOptions(argv: OptionArgv, defaults: ClusterBuildOptions = {}): ClusterBuildOptions {
   // `{}` IS a valid ClusterBuildOptions (every member is optional) — no cast.
   const options: ClusterBuildOptions = {}
-  flattenOptionLeaves(buildOptionShape(countsFromArgv(argv))).forEach(
-    optionLeaf => {
-      asOption(readArg(argv, optionLeaf.flag))
-        .filter(raw => raw != null)
-        .map(raw => coerce(optionLeaf.type, raw))
-        .match({
-          Some: value => setDeep(options, optionLeaf.path, value),
-          None: () => undefined
-        })
-    }
-  )
+  flattenOptionLeaves(buildOptionShape(countsFromArgv(argv))).forEach(optionLeaf => {
+    asOption(readArg(argv, optionLeaf.flag))
+      .filter(raw => raw != null)
+      .map(raw => coerce(optionLeaf.type, raw))
+      .match({
+        Some: value => setDeep(options, optionLeaf.path, value),
+        None: () => undefined
+      })
+  })
   NonFlagOptionKeys.forEach(key => carryNonFlagOption(options, defaults, key))
   return absolutePaths(options)
 }
@@ -839,15 +724,12 @@ function carryNonFlagOption<K extends NonFlagOptionKey>(
 const SignatureProviderSSMDocumentPath = "signatureProvider.ssm"
 
 /** The member a build-options document may NOT carry — it has its own flag. */
-const AWSClusterNodeConfigDocumentKey =
-  "awsClusterNodeConfig" as const satisfies keyof ClusterBuildOptions
+const AWSClusterNodeConfigDocumentKey = "awsClusterNodeConfig" as const satisfies keyof ClusterBuildOptions
 
 /** The topology counts a document may set; they size the `bind` arrays of its own shape. */
-const TopologyCountKeys = [
-  "nodeCount",
-  "batchOperatorCount",
-  "underwriterCount"
-] as const satisfies ReadonlyArray<keyof ClusterBuildOptions>
+const TopologyCountKeys = ["nodeCount", "batchOperatorCount", "underwriterCount"] as const satisfies ReadonlyArray<
+  keyof ClusterBuildOptions
+>
 
 /** A topology-count member of a build-options document. */
 type TopologyCountKey = (typeof TopologyCountKeys)[number]
@@ -880,11 +762,7 @@ function documentLeafType(value: OptionLeafValue): OptionLeafType {
  * Validate one scalar document value against its {@link OptionLeaf} spec — the
  * yargs primitive type, and `choices` membership when the leaf constrains it.
  */
-function assertDocumentLeafValue(
-  optionLeaf: OptionLeaf,
-  value: unknown,
-  file: string
-): OptionLeafValue {
+function assertDocumentLeafValue(optionLeaf: OptionLeaf, value: unknown, file: string): OptionLeafValue {
   const scalar = match(value)
     .with(P.union(P.string, P.number, P.boolean), identity)
     .otherwise(() =>
@@ -897,23 +775,17 @@ function assertDocumentLeafValue(
     `${documentLabel(file)}: "${optionLeaf.path.join(".")}" must be a ${optionLeaf.type} (got ${documentLeafType(scalar)} ${JSON.stringify(scalar)})`
   )
   Assert.ok(
-    optionLeaf.choices == null ||
-      optionLeaf.choices.includes(String(scalar)),
+    optionLeaf.choices == null || optionLeaf.choices.includes(String(scalar)),
     `${documentLabel(file)}: "${optionLeaf.path.join(".")}" must be one of ${optionLeaf.choices?.join(" | ")} (got ${JSON.stringify(scalar)})`
   )
   return scalar
 }
 
 /** Decode one flag-less object-array member through its shared-schema codec. */
-function decodeNonFlagOption(
-  key: NonFlagOptionKey,
-  value: unknown
-): CollateralRequirement[] | ChainTokenAmount[][] {
+function decodeNonFlagOption(key: NonFlagOptionKey, value: unknown): CollateralRequirement[] | ChainTokenAmount[][] {
   const text = JSON.stringify(value)
   return match(key)
-    .with(UnderwriterCollateralKey, () =>
-      underwriterCollateralCodec.deserialize(text)
-    )
+    .with(UnderwriterCollateralKey, () => underwriterCollateralCodec.deserialize(text))
     .otherwise(() => collateralRequirementsCodec.deserialize(text))
 }
 
@@ -923,11 +795,7 @@ function decodeNonFlagOption(
  * {@link decodeNonFlagOption} with `K` — so the ONE cast lives here, at the
  * dispatch boundary.
  */
-function appendNonFlagOption<K extends NonFlagOptionKey>(
-  options: ClusterBuildOptions,
-  key: K,
-  value: unknown
-): void {
+function appendNonFlagOption<K extends NonFlagOptionKey>(options: ClusterBuildOptions, key: K, value: unknown): void {
   options[key] = decodeNonFlagOption(key, value) as ClusterBuildOptions[K]
 }
 
@@ -936,14 +804,9 @@ function appendNonFlagOption<K extends NonFlagOptionKey>(
  * `bind` node-port arrays of the very shape the rest of the document is
  * validated against, so they are checked BEFORE the shape is built.
  */
-function assertTopologyCounts(
-  document: Record<string, unknown>,
-  file: string
-): ClusterBuildOptions {
+function assertTopologyCounts(document: Record<string, unknown>, file: string): ClusterBuildOptions {
   const counts: ClusterBuildOptions = {}
-  TopologyCountKeys.forEach(key =>
-    appendTopologyCount(counts, key, document[key], file)
-  )
+  TopologyCountKeys.forEach(key => appendTopologyCount(counts, key, document[key], file))
   return counts
 }
 
@@ -968,9 +831,7 @@ function appendTopologyCount<K extends TopologyCountKey>(
 function documentBranchPaths(leaves: OptionLeaf[]): ReadonlySet<string> {
   return new Set(
     leaves.flatMap(optionLeaf =>
-      optionLeaf.path
-        .slice(0, -1)
-        .map((_segment, depth) => optionLeaf.path.slice(0, depth + 1).join("."))
+      optionLeaf.path.slice(0, -1).map((_segment, depth) => optionLeaf.path.slice(0, depth + 1).join("."))
     )
   )
 }
@@ -991,12 +852,7 @@ interface DocumentWalk {
  * `signatureProvider.ssm` are decoded whole through their codecs; any other path
  * must be a known branch — otherwise the walk fails naming the offending path.
  */
-function appendDocumentNode(
-  node: unknown,
-  path: string[],
-  walk: DocumentWalk,
-  options: ClusterBuildOptions
-): void {
+function appendDocumentNode(node: unknown, path: string[], walk: DocumentWalk, options: ClusterBuildOptions): void {
   const dotted = documentPathLabel(path),
     [firstSegment] = path,
     { leafByPath, branchPaths, file } = walk
@@ -1006,11 +862,7 @@ function appendDocumentNode(
   )
   const optionLeaf = leafByPath.get(dotted)
   if (optionLeaf != null) {
-    setDeep(
-      options,
-      optionLeaf.path,
-      assertDocumentLeafValue(optionLeaf, node, file)
-    )
+    setDeep(options, optionLeaf.path, assertDocumentLeafValue(optionLeaf, node, file))
     return
   }
   if (path.length === 1 && isNonFlagOptionKey(firstSegment)) {
@@ -1024,20 +876,12 @@ function appendDocumentNode(
     }
     return
   }
-  Assert.ok(
-    path.length === 0 || branchPaths.has(dotted),
-    `${documentLabel(file)}: unknown option "${dotted}"`
-  )
+  Assert.ok(path.length === 0 || branchPaths.has(dotted), `${documentLabel(file)}: unknown option "${dotted}"`)
   if (Array.isArray(node)) {
-    node.forEach((child, index) =>
-      appendDocumentNode(child, [...path, String(index)], walk, options)
-    )
+    node.forEach((child, index) => appendDocumentNode(child, [...path, String(index)], walk, options))
     return
   }
-  Assert.ok(
-    isPlainObject(node),
-    `${documentLabel(file)}: "${dotted}" must be an object (it holds nested options)`
-  )
+  Assert.ok(isPlainObject(node), `${documentLabel(file)}: "${dotted}" must be an object (it holds nested options)`)
   Object.entries(node as Record<string, unknown>).forEach(([key, child]) =>
     appendDocumentNode(child, [...path, key], walk, options)
   )
@@ -1054,22 +898,12 @@ function appendDocumentNode(
  * @param file - The resolved file path (diagnostics only).
  * @returns The document as nested {@link ClusterBuildOptions}.
  */
-export function toClusterBuildOptionsDocument(
-  document: unknown,
-  file: string
-): ClusterBuildOptions {
-  Assert.ok(
-    isPlainObject(document),
-    `${documentLabel(file)}: the document root must be a JSON object`
-  )
+export function toClusterBuildOptionsDocument(document: unknown, file: string): ClusterBuildOptions {
+  Assert.ok(isPlainObject(document), `${documentLabel(file)}: the document root must be a JSON object`)
   const root = document as Record<string, unknown>,
-    leaves = flattenOptionLeaves(
-      buildOptionShape(assertTopologyCounts(root, file))
-    ),
+    leaves = flattenOptionLeaves(buildOptionShape(assertTopologyCounts(root, file))),
     walk: DocumentWalk = {
-      leafByPath: new Map(
-        leaves.map(optionLeaf => [optionLeaf.path.join("."), optionLeaf])
-      ),
+      leafByPath: new Map(leaves.map(optionLeaf => [optionLeaf.path.join("."), optionLeaf])),
       branchPaths: documentBranchPaths(leaves),
       file
     },
@@ -1087,14 +921,12 @@ export function toClusterBuildOptionsDocument(
  */
 export function loadClusterBuildOptionsFile(file: string): ClusterBuildOptions {
   const resolved = Path.resolve(file),
-    document = Either.try(
-      () => JSON.parse(Fs.readFileSync(resolved, "utf-8")) as unknown
-    )
+    document = Either.try(() => JSON.parse(Fs.readFileSync(resolved, "utf-8")) as unknown)
       .ifLeft(error => {
-        throw new NestedError(
-          `${documentLabel(resolved)}: could not be read as JSON`,
-          { cause: error, context: { file: resolved } }
-        )
+        throw new NestedError(`${documentLabel(resolved)}: could not be read as JSON`, {
+          cause: error,
+          context: { file: resolved }
+        })
       })
       .getOrThrow()
   return toClusterBuildOptionsDocument(document, resolved)
@@ -1107,9 +939,7 @@ export function loadClusterBuildOptionsFile(file: string): ClusterBuildOptions {
  * @param commandLine - The raw argument array (`process.argv.slice(2)`-shaped).
  * @returns The validated build options, or `null` when the flag is absent.
  */
-export function toClusterBuildOptionsFile(
-  commandLine: string[]
-): ClusterBuildOptions {
+export function toClusterBuildOptionsFile(commandLine: string[]): ClusterBuildOptions {
   const file = readCommandLineFlag(commandLine, ClusterBuildOptionsFileFlag)
   if (!isString(file) || file.trim().length === 0) {
     return null
@@ -1125,30 +955,20 @@ export function toClusterBuildOptionsFile(
  * @param argv - The parsed yargs result.
  * @returns The SSM options, or `null`.
  */
-export function toAWSSSMSignatureProviderOptions(
-  argv: OptionArgv
-): AWSSSMSignatureProviderOptions {
+export function toAWSSSMSignatureProviderOptions(argv: OptionArgv): AWSSSMSignatureProviderOptions {
   const raw = readArg(argv, SignatureProviderSSMFlag)
   if (!isString(raw) || raw.trim().length === 0) {
     return null
   }
   const text = raw.trim(),
-    json = text.startsWith("{")
-      ? text
-      : Fs.readFileSync(Path.resolve(text), "utf-8")
+    json = text.startsWith("{") ? text : Fs.readFileSync(Path.resolve(text), "utf-8")
   return ssmOptionsCodec.deserialize(json)
 }
 
 /** Re-validate SSM options arriving from a source other than the flag, through the ONE codec. */
-function assertSSMOptions(
-  ssm: AWSSSMSignatureProviderOptions,
-  source: string
-): AWSSSMSignatureProviderOptions {
+function assertSSMOptions(ssm: AWSSSMSignatureProviderOptions, source: string): AWSSSMSignatureProviderOptions {
   if (ssm != null) {
-    Assert.ok(
-      ssmOptionsCodec.check(ssm),
-      `${source}: invalid SSM settings (awsSecretIdPattern is required)`
-    )
+    Assert.ok(ssmOptionsCodec.check(ssm), `${source}: invalid SSM settings (awsSecretIdPattern is required)`)
   }
   return ssm
 }
@@ -1178,10 +998,7 @@ export function mergeSignatureProviderSSM(
       fileOptions?.signatureProvider?.ssm,
       `${SignatureProviderSSMDocumentPath} in --${ClusterBuildOptionsFileFlag}`
     ) ??
-    assertSSMOptions(
-      options.awsClusterNodeConfig?.ssm,
-      `ssm in --${AWSClusterNodeConfigFlag}`
-    )
+    assertSSMOptions(options.awsClusterNodeConfig?.ssm, `ssm in --${AWSClusterNodeConfigFlag}`)
   if (ssm != null) {
     options.signatureProvider = { ...(options.signatureProvider ?? {}), ssm }
   }
@@ -1195,16 +1012,12 @@ export function mergeSignatureProviderSSM(
  * @param argv - The parsed yargs result.
  * @returns The validated AWS placement, or `null`.
  */
-export function toAWSClusterNodeConfig(
-  argv: OptionArgv
-): AWSClusterNodeConfig {
+export function toAWSClusterNodeConfig(argv: OptionArgv): AWSClusterNodeConfig {
   const raw = readArg(argv, AWSClusterNodeConfigFlag)
   if (!isString(raw) || raw.trim().length === 0) {
     return null
   }
-  return AWSClusterNodeConfigSchemaCodec.deserialize(
-    Fs.readFileSync(Path.resolve(raw.trim()), "utf-8")
-  )
+  return AWSClusterNodeConfigSchemaCodec.deserialize(Fs.readFileSync(Path.resolve(raw.trim()), "utf-8"))
 }
 
 /**
@@ -1216,10 +1029,7 @@ export function toAWSClusterNodeConfig(
  * @param argv - The parsed yargs result.
  * @returns `options`, with `awsClusterNodeConfig` filled when supplied.
  */
-export function mergeAWSClusterNodeConfig(
-  options: ClusterBuildOptions,
-  argv: OptionArgv
-): ClusterBuildOptions {
+export function mergeAWSClusterNodeConfig(options: ClusterBuildOptions, argv: OptionArgv): ClusterBuildOptions {
   const awsClusterNodeConfig = toAWSClusterNodeConfig(argv)
   if (awsClusterNodeConfig != null) {
     options.awsClusterNodeConfig = awsClusterNodeConfig

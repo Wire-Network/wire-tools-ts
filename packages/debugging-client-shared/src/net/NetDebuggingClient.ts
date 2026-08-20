@@ -75,40 +75,19 @@ export interface NetDebuggingClientConfig extends Required<NetDebuggingClientOpt
  * connection so callers can fail fast on a misconfigured `baseUrl`.
  */
 export class NetDebuggingClient extends DebuggingClient {
-  static async create(
-    options: NetDebuggingClientOptions = {}
-  ): Promise<NetDebuggingClient> {
-    const config = defaults(
-      { ...options },
-      { baseUrl: NetDebuggingClient.DefaultURL }
-    ) as NetDebuggingClientConfig
+  static async create(options: NetDebuggingClientOptions = {}): Promise<NetDebuggingClient> {
+    const config = defaults({ ...options }, { baseUrl: NetDebuggingClient.DefaultURL }) as NetDebuggingClientConfig
 
     const pingUrl = `${config.baseUrl}${ApiPaths.Ping}`,
       pingResp = await fetch(pingUrl)
-    Assert.ok(
-      pingResp.status === 200,
-      `Debugging server not reachable at ${pingUrl}`
-    )
+    Assert.ok(pingResp.status === 200, `Debugging server not reachable at ${pingUrl}`)
 
-    const oppRpc = new JsonRPCClient(
-        `${config.baseUrl}${ApiPaths.OPP.Endpoint}`
-      ),
-      clusterRpc = new JsonRPCClient(
-        `${config.baseUrl}${ApiPaths.Cluster.Endpoint}`
-      ),
-      processesRpc = new JsonRPCClient(
-        `${config.baseUrl}${ApiPaths.Processes.Endpoint}`
-      ),
+    const oppRpc = new JsonRPCClient(`${config.baseUrl}${ApiPaths.OPP.Endpoint}`),
+      clusterRpc = new JsonRPCClient(`${config.baseUrl}${ApiPaths.Cluster.Endpoint}`),
+      processesRpc = new JsonRPCClient(`${config.baseUrl}${ApiPaths.Processes.Endpoint}`),
       logsRpc = new JsonRPCClient(`${config.baseUrl}${ApiPaths.Logs.Endpoint}`),
       ws = new WebSocketStreamClient(config.baseUrl)
-    return new NetDebuggingClient(
-      config,
-      oppRpc,
-      clusterRpc,
-      processesRpc,
-      logsRpc,
-      ws
-    )
+    return new NetDebuggingClient(config, oppRpc, clusterRpc, processesRpc, logsRpc, ws)
   }
 
   protected constructor(
@@ -139,18 +118,12 @@ export class NetDebuggingClient extends DebuggingClient {
   // -------------------------------------------------------------------------
 
   async getClusterConfig(): Promise<ClusterConfig> {
-    const resp = (await this.clusterRpc.invoke(
-      ApiPaths.Cluster.Methods.GetConfig,
-      {}
-    )) as GetClusterConfigResponse
+    const resp = (await this.clusterRpc.invoke(ApiPaths.Cluster.Methods.GetConfig, {})) as GetClusterConfigResponse
     return resp
   }
 
   async getClusterState(): Promise<ClusterState> {
-    const resp = (await this.clusterRpc.invoke(
-      ApiPaths.Cluster.Methods.GetState,
-      {}
-    )) as GetClusterStateResponse
+    const resp = (await this.clusterRpc.invoke(ApiPaths.Cluster.Methods.GetState, {})) as GetClusterStateResponse
     return resp.state
   }
 
@@ -159,16 +132,11 @@ export class NetDebuggingClient extends DebuggingClient {
   // -------------------------------------------------------------------------
 
   async listProcessSources(): Promise<PidSource[]> {
-    const resp = (await this.processesRpc.invoke(
-      ApiPaths.Processes.Methods.List,
-      {}
-    )) as ListProcessesResponse
+    const resp = (await this.processesRpc.invoke(ApiPaths.Processes.Methods.List, {})) as ListProcessesResponse
     return resp.sources
   }
 
-  async getProcessLiveness(
-    labels: string[]
-  ): Promise<ProcessLivenessSnapshot[]> {
+  async getProcessLiveness(labels: string[]): Promise<ProcessLivenessSnapshot[]> {
     const params: GetProcessLivenessRequest = { labels },
       resp = (await this.processesRpc.invoke(
         ApiPaths.Processes.Methods.GetLiveness,
@@ -183,17 +151,11 @@ export class NetDebuggingClient extends DebuggingClient {
 
   async getLogStat(path: string): Promise<LogStat> {
     const params: LogStatRequest = { path }
-    return (await this.logsRpc.invoke(
-      ApiPaths.Logs.Methods.GetStat,
-      params
-    )) as LogStat
+    return (await this.logsRpc.invoke(ApiPaths.Logs.Methods.GetStat, params)) as LogStat
   }
 
   async readLogWindow(req: LogReadRequest): Promise<string[]> {
-    const resp = (await this.logsRpc.invoke(
-      ApiPaths.Logs.Methods.Read,
-      req
-    )) as LogReadResponse
+    const resp = (await this.logsRpc.invoke(ApiPaths.Logs.Methods.Read, req)) as LogReadResponse
     return resp.lines
   }
 
@@ -207,42 +169,26 @@ export class NetDebuggingClient extends DebuggingClient {
   //  `Uint8Array` for bytes).
   // -------------------------------------------------------------------------
 
-  async listEnvelopes(
-    req: ListEnvelopesRequest
-  ): Promise<ListEnvelopesResponse> {
-    const json = await this.oppRpc.invoke(
-      ApiPaths.OPP.Methods.EnvelopeList,
-      req
-    )
+  async listEnvelopes(req: ListEnvelopesRequest): Promise<ListEnvelopesResponse> {
+    const json = await this.oppRpc.invoke(ApiPaths.OPP.Methods.EnvelopeList, req)
     // `invoke`'s inferred type is the protobuf-ts message interface
     // (`ListEnvelopesResponse`, with real `bigint`/`Uint8Array` field types),
     // but the value crossing the wire is plain parsed JSON matching
     // protobuf-ts's own `JsonValue` shape — the two are genuinely
     // structurally incompatible (bigint has no JsonValue member), so a
     // single-step assertion doesn't typecheck either direction.
-    return ListEnvelopesResponse.fromJson(
-      asJsonValue(json),
-      FROM_JSON_OPTIONS
-    )
+    return ListEnvelopesResponse.fromJson(asJsonValue(json), FROM_JSON_OPTIONS)
   }
 
   async getEnvelope(key: string): Promise<GetEnvelopeResponse> {
     const params: GetEnvelopeRequest = { key },
       json = await this.oppRpc.invoke(ApiPaths.OPP.Methods.EnvelopeGet, params)
     // Same protobuf-ts JSON-boundary mismatch as `listEnvelopes` above.
-    return GetEnvelopeResponse.fromJson(
-      asJsonValue(json),
-      FROM_JSON_OPTIONS
-    )
+    return GetEnvelopeResponse.fromJson(asJsonValue(json), FROM_JSON_OPTIONS)
   }
 
-  async loadEnvelopeRecords(
-    req: LoadEnvelopeRecordsRequest
-  ): Promise<LoadEnvelopeRecordsResponse> {
-    return (await this.oppRpc.invoke(
-      ApiPaths.OPP.Methods.LoadRecords,
-      req
-    )) as LoadEnvelopeRecordsResponse
+  async loadEnvelopeRecords(req: LoadEnvelopeRecordsRequest): Promise<LoadEnvelopeRecordsResponse> {
+    return (await this.oppRpc.invoke(ApiPaths.OPP.Methods.LoadRecords, req)) as LoadEnvelopeRecordsResponse
   }
 
   // -------------------------------------------------------------------------

@@ -75,5 +75,4 @@ export const ClusterStateSchema = z.object({
 export type ClusterState = z.infer<typeof ClusterStateSchema>
 
 /** Validated codec for `cluster-state.json`. */
-export const ClusterStateSchemaCodec =
-  SchemaCodec.create<ClusterState>(ClusterStateSchema)
+export const ClusterStateSchemaCodec = SchemaCodec.create<ClusterState>(ClusterStateSchema)

@@ -1,10 +1,7 @@
 import { SysioContracts } from "@wireio/sdk-core"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../../ClusterBuildStep.js"
 import type { StepInput } from "../../../StepRunner.js"
 
 const { SysioContractName } = SysioContracts
@@ -42,9 +39,7 @@ export namespace OpregContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.opreg)
-      .actions.setconfig.invoke(input.data)
+    await ctx.wire.getSysioContract(SysioContractName.opreg).actions.setconfig.invoke(input.data)
   }
 
   /** Input for {@link planRegoperator} — the generated `opreg::regoperator` data. */
@@ -78,8 +73,6 @@ export namespace OpregContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.opreg)
-      .actions.regoperator.invoke(input.data)
+    await ctx.wire.getSysioContract(SysioContractName.opreg).actions.regoperator.invoke(input.data)
   }
 }

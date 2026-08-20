@@ -2,10 +2,7 @@ import Path from "node:path"
 import { AnvilProcess } from "../../../cluster/processes/AnvilProcess.js"
 import { Report } from "../../../report/Report.js"
 import { ClusterBuildContext } from "../../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../ClusterBuildStep.js"
 
 /** Steps that manage the cluster's run-time anvil (Ethereum) process. */
 export namespace AnvilProcessSteps {
@@ -36,11 +33,7 @@ export namespace AnvilProcessSteps {
       host: ctx.config.bind.anvil.address,
       port: ctx.config.bind.anvil.port,
       chainId: AnvilProcess.DefaultChainId,
-      stateFile: Path.join(
-        ctx.config.dataPath,
-        AnvilProcess.StateSubpath,
-        AnvilProcess.StateFilename
-      )
+      stateFile: Path.join(ctx.config.dataPath, AnvilProcess.StateSubpath, AnvilProcess.StateFilename)
     })
     await anvil.start()
   }
@@ -55,14 +48,7 @@ export namespace AnvilProcessSteps {
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runEnableIntervalMining
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runEnableIntervalMining)
   }
 
   /** Named runner — `evm_setIntervalMining` to the configured block time. */

@@ -54,10 +54,7 @@ describe(`POST ${ApiPaths.Processes.Endpoint}`, () => {
 
   beforeAll(async () => {
     Fs.mkdirSync(nodeDir, { recursive: true })
-    Fs.writeFileSync(
-      Path.join(nodeDir, `nodeop${PidSources.PidExt}`),
-      String(process.pid)
-    )
+    Fs.writeFileSync(Path.join(nodeDir, `nodeop${PidSources.PidExt}`), String(process.pid))
     const node: ClusterStateNode = {
       name: PidSources.BiosNodeId,
       role: ClusterStateNodeRole.bios,
@@ -75,14 +72,8 @@ describe(`POST ${ApiPaths.Processes.Endpoint}`, () => {
       solanaLedgerPath: "",
       solanaIdlFile: null
     }
-    Fs.writeFileSync(
-      Path.join(tmpDir, ClusterFiles.ConfigFilename),
-      JSON.stringify({ clusterPath: tmpDir })
-    )
-    Fs.writeFileSync(
-      Path.join(tmpDir, ClusterFiles.StateFilename),
-      JSON.stringify(state)
-    )
+    Fs.writeFileSync(Path.join(tmpDir, ClusterFiles.ConfigFilename), JSON.stringify({ clusterPath: tmpDir }))
+    Fs.writeFileSync(Path.join(tmpDir, ClusterFiles.StateFilename), JSON.stringify(state))
     server = await DebuggingServer.create({ clusterPath: tmpDir, port: 0 })
     const addr = await server.start()
     baseUrl = `http://127.0.0.1:${addr.port}`

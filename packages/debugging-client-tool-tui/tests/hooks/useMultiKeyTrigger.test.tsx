@@ -73,12 +73,7 @@ describe("createMultiKeyMachine — single-count handler", () => {
   it("fires after the debounce window elapses", () => {
     const onSingle = jest.fn()
     const t = manualTimer()
-    const m = createMultiKeyMachine(
-      { 1: onSingle },
-      300,
-      t.setTimer,
-      t.clearTimer
-    )
+    const m = createMultiKeyMachine({ 1: onSingle }, 300, t.setTimer, t.clearTimer)
     m.press(mkKey({ escape: true }))
     t.advance(299)
     expect(onSingle).not.toHaveBeenCalled()
@@ -92,12 +87,7 @@ describe("createMultiKeyMachine — single + double handlers", () => {
     const onSingle = jest.fn()
     const onDouble = jest.fn()
     const t = manualTimer()
-    const m = createMultiKeyMachine(
-      { 1: onSingle, 2: onDouble },
-      300,
-      t.setTimer,
-      t.clearTimer
-    )
+    const m = createMultiKeyMachine({ 1: onSingle, 2: onDouble }, 300, t.setTimer, t.clearTimer)
     m.press(mkKey({ escape: true }))
     t.advance(100)
     m.press(mkKey({ escape: true }))
@@ -110,12 +100,7 @@ describe("createMultiKeyMachine — single + double handlers", () => {
     const onSingle = jest.fn()
     const onDouble = jest.fn()
     const t = manualTimer()
-    const m = createMultiKeyMachine(
-      { 1: onSingle, 2: onDouble },
-      300,
-      t.setTimer,
-      t.clearTimer
-    )
+    const m = createMultiKeyMachine({ 1: onSingle, 2: onDouble }, 300, t.setTimer, t.clearTimer)
     m.press(mkKey({ escape: true }))
     t.advance(350)
     expect(onSingle).toHaveBeenCalledTimes(1)
@@ -127,12 +112,7 @@ describe("createMultiKeyMachine — 2-handler only, with 3 presses", () => {
   it("falls through to the 2-handler (highest registered <= hit)", () => {
     const onDouble = jest.fn()
     const t = manualTimer()
-    const m = createMultiKeyMachine(
-      { 2: onDouble },
-      300,
-      t.setTimer,
-      t.clearTimer
-    )
+    const m = createMultiKeyMachine({ 2: onDouble }, 300, t.setTimer, t.clearTimer)
     m.press(mkKey({ escape: true }))
     t.advance(50)
     m.press(mkKey({ escape: true }))
@@ -145,12 +125,7 @@ describe("createMultiKeyMachine — 2-handler only, with 3 presses", () => {
   it("a single press with no 1-handler is ignored", () => {
     const onDouble = jest.fn()
     const t = manualTimer()
-    const m = createMultiKeyMachine(
-      { 2: onDouble },
-      300,
-      t.setTimer,
-      t.clearTimer
-    )
+    const m = createMultiKeyMachine({ 2: onDouble }, 300, t.setTimer, t.clearTimer)
     m.press(mkKey({ escape: true }))
     t.advance(300)
     expect(onDouble).not.toHaveBeenCalled()
@@ -161,12 +136,7 @@ describe("createMultiKeyMachine — cleanup", () => {
   it("prevents a pending handler from firing after cleanup", () => {
     const onSingle = jest.fn()
     const t = manualTimer()
-    const m = createMultiKeyMachine(
-      { 1: onSingle },
-      300,
-      t.setTimer,
-      t.clearTimer
-    )
+    const m = createMultiKeyMachine({ 1: onSingle }, 300, t.setTimer, t.clearTimer)
     m.press(mkKey({ escape: true }))
     m.cleanup()
     t.advance(500)

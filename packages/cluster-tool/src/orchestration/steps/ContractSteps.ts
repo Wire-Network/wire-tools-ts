@@ -5,10 +5,7 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { Report } from "../../report/Report.js"
 import { WireSysioContractTool } from "../../tools/wire/WireSysioContractTool.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../ClusterBuildStep.js"
 import { ContractArtifactResolver } from "../ContractArtifactResolver.js"
 import type { StepInput } from "../StepRunner.js"
 
@@ -67,19 +64,10 @@ export namespace ContractSteps {
     const artifact = resolver.resolve(input.contract)
     await match(input.mode)
       .with(DeployMode.raw, () =>
-        ctx.wire.setContract(
-          artifact.account,
-          Path.dirname(artifact.wasm),
-          artifact.wasm,
-          artifact.abi
-        )
+        ctx.wire.setContract(artifact.account, Path.dirname(artifact.wasm), artifact.wasm, artifact.abi)
       )
       .with(DeployMode.system, () =>
-        new WireSysioContractTool(ctx.wire).deploySystemContract(
-          artifact.account,
-          artifact.wasm,
-          artifact.abi
-        )
+        new WireSysioContractTool(ctx.wire).deploySystemContract(artifact.account, artifact.wasm, artifact.abi)
       )
       .exhaustive()
   }

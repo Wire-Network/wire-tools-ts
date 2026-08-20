@@ -24,9 +24,7 @@ export interface ParsedEnvelopeStorageKey {
  *
  * @example parseEnvelopeStorageKey("00000042-OUTPOST_ETHEREUM_DEPOT-abc123def4567890")
  */
-export function parseEnvelopeStorageKey(
-  key: string
-): ParsedEnvelopeStorageKey {
+export function parseEnvelopeStorageKey(key: string): ParsedEnvelopeStorageKey {
   const firstDash = key.indexOf("-")
   if (firstDash < 0) return null
   const lastDash = key.lastIndexOf("-")
@@ -46,12 +44,8 @@ export function parseEnvelopeStorageKey(
  * to `UNKNOWN` when no matching member exists — e.g. a peer on an older
  * protobuf schema wrote a name we no longer recognize.
  */
-export function resolveEndpointsType(
-  endpointsKey: string
-): DebugOutpostEndpointsType {
-  return asOption(
-    (DebugOutpostEndpointsType as Record<string, unknown>)[endpointsKey]
-  )
+export function resolveEndpointsType(endpointsKey: string): DebugOutpostEndpointsType {
+  return asOption((DebugOutpostEndpointsType as Record<string, unknown>)[endpointsKey])
     .filter((v): v is number => typeof v === "number")
     .map(v => v as DebugOutpostEndpointsType)
     .getOrElse(DebugOutpostEndpointsType.UNKNOWN)

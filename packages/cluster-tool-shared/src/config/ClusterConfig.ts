@@ -39,9 +39,7 @@ export const ClusterConfigLoggingLevelsSchema = z.object({
   file: z.enum(Level)
 })
 /** Per-sink log levels — the shape of {@link ClusterConfigLoggingLevelsSchema}. */
-export type ClusterConfigLoggingLevels = z.infer<
-  typeof ClusterConfigLoggingLevelsSchema
->
+export type ClusterConfigLoggingLevels = z.infer<typeof ClusterConfigLoggingLevelsSchema>
 
 /**
  * Log-file format. `jsonl` (one JSON object per line) is grep-/`jq`-friendly;
@@ -90,9 +88,7 @@ export const ClusterExecutablePathsSchema = z.object({
   solanaTestValidator: z.string()
 })
 /** Absolute paths of the resolved binaries — the shape of {@link ClusterExecutablePathsSchema}. */
-export type ClusterExecutablePaths = z.infer<
-  typeof ClusterExecutablePathsSchema
->
+export type ClusterExecutablePaths = z.infer<typeof ClusterExecutablePathsSchema>
 
 /**
  * THE canonical cluster configuration — the plain JSON shape persisted to
@@ -231,5 +227,4 @@ export const ClusterConfigSchema = z.object({
 export type ClusterConfig = z.infer<typeof ClusterConfigSchema>
 
 /** Validated codec for `cluster-config.json` (the single persistence surface). */
-export const ClusterConfigSchemaCodec =
-  SchemaCodec.create<ClusterConfig>(ClusterConfigSchema)
+export const ClusterConfigSchemaCodec = SchemaCodec.create<ClusterConfig>(ClusterConfigSchema)

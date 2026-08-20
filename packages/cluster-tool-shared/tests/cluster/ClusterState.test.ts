@@ -45,10 +45,7 @@ describe("ClusterStateNode / ClusterState shape", () => {
 
   it("holds every node in ONE flat array, regardless of role", () => {
     expect(state.nodes).toHaveLength(2)
-    expect(state.nodes.map(n => n.role)).toEqual([
-      ClusterStateNodeRole.bios,
-      ClusterStateNodeRole.operator
-    ])
+    expect(state.nodes.map(n => n.role)).toEqual([ClusterStateNodeRole.bios, ClusterStateNodeRole.operator])
   })
 
   it("distinguishes a batch operator from an underwriter via batchOperatorLabel", () => {
@@ -70,9 +67,7 @@ describe("ClusterStateNode / ClusterState shape", () => {
   })
 
   it("round-trips through ClusterStateSchemaCodec", () => {
-    expect(
-      ClusterStateSchemaCodec.deserialize(ClusterStateSchemaCodec.serialize(state))
-    ).toEqual(state)
+    expect(ClusterStateSchemaCodec.deserialize(ClusterStateSchemaCodec.serialize(state))).toEqual(state)
   })
 
   it("allows null anvilStateFile/solanaLedgerPath (external-outpost mode)", () => {
@@ -81,11 +76,8 @@ describe("ClusterStateNode / ClusterState shape", () => {
       anvilStateFile: null,
       solanaLedgerPath: null
     }
-    const rehydrated = ClusterStateSchemaCodec.deserialize(
-      ClusterStateSchemaCodec.serialize(external)
-    )
+    const rehydrated = ClusterStateSchemaCodec.deserialize(ClusterStateSchemaCodec.serialize(external))
     expect(rehydrated.anvilStateFile).toBeNull()
     expect(rehydrated.solanaLedgerPath).toBeNull()
   })
-
 })

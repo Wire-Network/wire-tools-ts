@@ -44,8 +44,7 @@ export interface LoggingSetupOptions {
 }
 
 /** The more verbose (lower-threshold) of two levels. */
-const moreVerbose = (a: LevelKind, b: LevelKind): LevelKind =>
-  LevelThresholds[a] <= LevelThresholds[b] ? a : b
+const moreVerbose = (a: LevelKind, b: LevelKind): LevelKind => (LevelThresholds[a] <= LevelThresholds[b] ? a : b)
 
 /**
  * A console appender that gates on its OWN level. The shared root level carries
@@ -58,8 +57,7 @@ class LevelConsoleAppender extends ConsoleAppender<LogRecord> {
   }
 
   override append(record: LogRecord): void {
-    if (LevelThresholds[record.level] >= LevelThresholds[this.level])
-      super.append(record)
+    if (LevelThresholds[record.level] >= LevelThresholds[this.level]) super.append(record)
   }
 }
 

@@ -3,17 +3,8 @@ import Os from "node:os"
 import Path from "node:path"
 import { execFileSync } from "node:child_process"
 import type { ClusterConfig } from "@wireio/cluster-tool-shared"
-import {
-  NodeopProcess,
-  ProcessManager
-} from "@wireio/cluster-tool/cluster/processes"
-import {
-  DaemonConfig,
-  DaemonKind,
-  NodeConfig,
-  NodeRole,
-  StartScriptRenderer
-} from "@wireio/cluster-tool/config"
+import { NodeopProcess, ProcessManager } from "@wireio/cluster-tool/cluster/processes"
+import { DaemonConfig, DaemonKind, NodeConfig, NodeRole, StartScriptRenderer } from "@wireio/cluster-tool/config"
 import { StartScriptVariable } from "@wireio/cluster-tool/utils"
 import { fixtureConfig, PersistedFixture } from "../clusterConfigFixture.js"
 
@@ -25,22 +16,13 @@ describe("StartScriptRenderer", () => {
 
   beforeAll(() => {
     dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "startscript-"))
-    Fs.writeFileSync(
-      Path.join(dir, "genesis.json"),
-      JSON.stringify({ initial_timestamp: "2026-01-01T00:00:00.000" })
-    )
-    Fs.writeFileSync(
-      Path.join(dir, "cluster-config.json"),
-      JSON.stringify({ marker: true })
-    )
+    Fs.writeFileSync(Path.join(dir, "genesis.json"), JSON.stringify({ initial_timestamp: "2026-01-01T00:00:00.000" }))
+    Fs.writeFileSync(Path.join(dir, "cluster-config.json"), JSON.stringify({ marker: true }))
     // An exec-capturing shim: the rendered script `exec`s this, so whatever it
     // prints IS the argv the script would have spawned.
     Fs.mkdirSync(Path.join(dir, "build", "bin"), { recursive: true })
     nodeopStub = Path.join(dir, "build", "bin", "nodeop")
-    Fs.writeFileSync(
-      nodeopStub,
-      '#!/usr/bin/env bash\nfor arg in "$@"; do printf "%s\\n" "$arg"; done\n'
-    )
+    Fs.writeFileSync(nodeopStub, '#!/usr/bin/env bash\nfor arg in "$@"; do printf "%s\\n" "$arg"; done\n')
     Fs.chmodSync(nodeopStub, 0o755)
 
     ProcessManager.setClusterPath(dir)
@@ -61,23 +43,12 @@ describe("StartScriptRenderer", () => {
 
   /** A planned producer node over the fixture cluster. */
   function producerNode(): NodeConfig {
-    return new NodeConfig(
-      cluster,
-      NodeRole.producer,
-      0,
-      "node_00",
-      { http: 8888, p2p: 9876 },
-      [],
-      []
-    )
+    return new NodeConfig(cluster, NodeRole.producer, 0, "node_00", { http: 8888, p2p: 9876 }, [], [])
   }
 
   /** The rendered script for a daemon descriptor. */
   function render(daemon: DaemonConfig): string {
-    return new StartScriptRenderer(
-      daemon,
-      DaemonConfig.clusterRelocations(cluster)
-    ).render()
+    return new StartScriptRenderer(daemon, DaemonConfig.clusterRelocations(cluster)).render()
   }
 
   describe("removeRun", () => {
@@ -91,18 +62,13 @@ describe("StartScriptRenderer", () => {
     })
 
     it("leaves the argv untouched when the run is absent", () => {
-      expect(
-        StartScriptRenderer.removeRun(["--a", "1"], ["--load-state", "/s.json"])
-      ).toEqual(["--a", "1"])
+      expect(StartScriptRenderer.removeRun(["--a", "1"], ["--load-state", "/s.json"])).toEqual(["--a", "1"])
     })
 
     it("does not strip a shared VALUE belonging to another flag", () => {
       // anvil passes the same path to --dump-state and --load-state; by-value
       // removal would silently break --dump-state.
-      const result = StartScriptRenderer.removeRun(
-        ["--dump-state", "/s.json"],
-        ["--load-state", "/s.json"]
-      )
+      const result = StartScriptRenderer.removeRun(["--dump-state", "/s.json"], ["--load-state", "/s.json"])
       expect(result).toContain("--dump-state")
       expect(result).toContain("/s.json")
     })
@@ -166,9 +132,7 @@ describe("StartScriptRenderer", () => {
         conditions: [],
         relocations: []
       })
-      expect(script).toContain(
-        `exec "${"$"}{${DaemonConfig.AnvilBinEnvironmentVariable}:-$(command -v anvil)}"`
-      )
+      expect(script).toContain(`exec "${"$"}{${DaemonConfig.AnvilBinEnvironmentVariable}:-$(command -v anvil)}"`)
       expect(script).not.toContain("/home/someone/.foundry")
     })
 
@@ -218,9 +182,7 @@ describe("StartScriptRenderer", () => {
       // Unset -> the daemon's value, quoting survived verbatim.
       expect(run({ HARNESS_ENV_PROBE: "" })).toBe(value)
       // Set -> the OPERATOR wins; the frozen default must not override it.
-      expect(run({ HARNESS_ENV_PROBE: "operator-choice" })).toBe(
-        "operator-choice"
-      )
+      expect(run({ HARNESS_ENV_PROBE: "operator-choice" })).toBe("operator-choice")
     })
   })
 
@@ -235,16 +197,12 @@ describe("StartScriptRenderer", () => {
             supportsTraceNoAbis: false
           }
         ),
-        planned = DaemonConfig.plan(cluster, { nodeop: [config] }).map(
-          daemon => daemon.label
-        )
+        planned = DaemonConfig.plan(cluster, { nodeop: [config] }).map(daemon => daemon.label)
       // plannedLabels covers the full cluster shape; plan() here was given one
       // node and no other sources, so compare the NODE portion plus assert the
       // shape function includes every non-node daemon this cluster runs.
       expect(planned).toContain(producerNode().name)
-      expect(DaemonConfig.plannedLabels(cluster)).toEqual(
-        expect.arrayContaining(planned)
-      )
+      expect(DaemonConfig.plannedLabels(cluster)).toEqual(expect.arrayContaining(planned))
     })
   })
 
@@ -307,18 +265,10 @@ describe("StartScriptRenderer", () => {
             supportsTraceNoAbis: false
           }
         ),
-        daemon = DaemonConfig.plan(cluster, { nodeop: [config] }).find(
-          candidate => candidate.kind === DaemonKind.node
-        ),
+        daemon = DaemonConfig.plan(cluster, { nodeop: [config] }).find(candidate => candidate.kind === DaemonKind.node),
         // Only the preamble is under test; `exec` would run the real binary.
-        preamble = StartScriptRenderer.preamble(
-          daemon,
-          DaemonConfig.clusterRelocations(cluster)
-        ).join("\n"),
-        probe = Path.join(
-          dir,
-          `probe-${Math.random().toString(36).slice(2)}.sh`
-        )
+        preamble = StartScriptRenderer.preamble(daemon, DaemonConfig.clusterRelocations(cluster)).join("\n"),
+        probe = Path.join(dir, `probe-${Math.random().toString(36).slice(2)}.sh`)
 
       Fs.writeFileSync(
         probe,
@@ -352,14 +302,10 @@ describe("StartScriptRenderer", () => {
 
     beforeAll(() => {
       sanitizedBash = resolveBinary("bash")
-      sanitizedPathDir = Fs.mkdtempSync(
-        Path.join(Os.tmpdir(), "sanitized-bin-")
-      )
+      sanitizedPathDir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "sanitized-bin-"))
       // `dirname` is the only external the preamble invokes; everything else it
       // uses (`cd`, `pwd`, `command`, `printf`) is a bash builtin.
-      ;["bash", "dirname"].forEach(name =>
-        Fs.symlinkSync(resolveBinary(name), Path.join(sanitizedPathDir, name))
-      )
+      ;["bash", "dirname"].forEach(name => Fs.symlinkSync(resolveBinary(name), Path.join(sanitizedPathDir, name)))
     })
 
     /** A throwaway `<root>/bin/nodeop` so `command -v` resolves under `<root>`. */
@@ -377,9 +323,7 @@ describe("StartScriptRenderer", () => {
       // installed while the cluster is meant to run against a specific tree.
       const other = Fs.mkdtempSync(Path.join(Os.tmpdir(), "prefix-explicit-")),
         binDir = nodeopOnPath(other)
-      expect(
-        resolvePrefix({ WIRE_PREFIX_PATH: "/explicit/prefix" }, binDir)
-      ).toBe("/explicit/prefix")
+      expect(resolvePrefix({ WIRE_PREFIX_PATH: "/explicit/prefix" }, binDir)).toBe("/explicit/prefix")
     })
 
     it("DERIVES the prefix from a nodeop on PATH when unset", () => {
@@ -390,9 +334,7 @@ describe("StartScriptRenderer", () => {
     })
 
     it("falls back to WIRE_BUILD_PATH when nodeop is not on PATH", () => {
-      expect(resolvePrefix({ WIRE_BUILD_PATH: "/legacy/build" })).toBe(
-        "/legacy/build"
-      )
+      expect(resolvePrefix({ WIRE_BUILD_PATH: "/legacy/build" })).toBe("/legacy/build")
     })
 
     it("FAILS loudly when none of the three resolve", () => {

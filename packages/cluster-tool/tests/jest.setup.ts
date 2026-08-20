@@ -8,6 +8,4 @@ import Path from "node:path"
 // var name is spelled literally because importing BindConfig here would
 // pre-load it into the per-file module registry ahead of the get-port module
 // mock BindConfigProvider.test.ts registers.
-process.env.WIRE_BIND_REGISTRY_PATH = Fs.mkdtempSync(
-  Path.join(Os.tmpdir(), "wire-bind-registry-test-")
-)
+process.env.WIRE_BIND_REGISTRY_PATH = Fs.mkdtempSync(Path.join(Os.tmpdir(), "wire-bind-registry-test-"))

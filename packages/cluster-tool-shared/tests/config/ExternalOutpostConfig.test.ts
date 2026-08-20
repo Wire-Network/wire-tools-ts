@@ -15,11 +15,9 @@ describe("ExternalOutpostConfig", () => {
   }
 
   it("round-trips through the codec", () => {
-    expect(
-      ExternalOutpostConfigSchemaCodec.deserialize(
-        ExternalOutpostConfigSchemaCodec.serialize(config)
-      )
-    ).toEqual(config)
+    expect(ExternalOutpostConfigSchemaCodec.deserialize(ExternalOutpostConfigSchemaCodec.serialize(config))).toEqual(
+      config
+    )
   })
 
   it("round-trips the optional liqEth + SPL-mints FILE references", () => {
@@ -32,11 +30,7 @@ describe("ExternalOutpostConfig", () => {
       },
       solana: { idlFile: "idl.json", mintsFile: "sol-mock-mints.json" }
     }
-    expect(
-      ExternalOutpostConfigSchemaCodec.deserialize(
-        ExternalOutpostConfigSchemaCodec.serialize(full)
-      )
-    ).toEqual(full)
+    expect(ExternalOutpostConfigSchemaCodec.deserialize(ExternalOutpostConfigSchemaCodec.serialize(full))).toEqual(full)
   })
 
   it("requires ethereum.addressFile", () => {

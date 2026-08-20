@@ -51,8 +51,7 @@ function stubWire(reserves: QuoteReserveFixture[], feeBps = 30): WireClient {
     }
   }
   return {
-    getSysioContract: (name: SysioContracts.SysioContractName) =>
-      clientByName[name]
+    getSysioContract: (name: SysioContracts.SysioContractName) => clientByName[name]
   } as WireClient
 }
 
@@ -60,9 +59,7 @@ describe("WireReserveTool", () => {
   describe("cpOutput", () => {
     it("matches the depot's constant-product floor math", () => {
       // 1e10 books, 1e8 in → floor(1e10 × 1e8 / (1e10 + 1e8)) = 99_009_900
-      expect(cpOutput(10_000_000_000n, 10_000_000_000n, 100_000_000n)).toBe(
-        99_009_900n
-      )
+      expect(cpOutput(10_000_000_000n, 10_000_000_000n, 100_000_000n)).toBe(99_009_900n)
     })
     it("is 0n when any side is empty", () => {
       expect(cpOutput(0n, 10n, 5n)).toBe(0n)
@@ -80,14 +77,7 @@ describe("WireReserveTool", () => {
       expect(fee.rewardShare).toBe(49_505n)
     })
     it("holds the exact-integer invariants across amounts", () => {
-      const amounts = [
-        1n,
-        7n,
-        1_000_000n,
-        99_009_900n,
-        100_969_310n,
-        80_000_000_000n
-      ]
+      const amounts = [1n, 7n, 1_000_000n, 99_009_900n, 100_969_310n, 80_000_000_000n]
       amounts.forEach(amount => {
         const fee = splitWireFee(amount, LegacySwapFeeBps)
         expect(fee.underwriterShare + fee.rewardShare).toBe(fee.fee)
@@ -168,11 +158,7 @@ describe("WireReserveTool", () => {
       amounts.forEach(amount => {
         const fee = splitWireFee(amount, 137, 5_000, 3_333, 97, 211)
         expect(
-          fee.underwriterShare +
-            fee.rewardShare +
-            fee.emissionsShare +
-            fee.srcReserveShare +
-            fee.dstReserveShare
+          fee.underwriterShare + fee.rewardShare + fee.emissionsShare + fee.srcReserveShare + fee.dstReserveShare
         ).toBe(fee.fee)
         expect(fee.net + fee.fee).toBe(amount)
       })
@@ -183,9 +169,7 @@ describe("WireReserveTool", () => {
       emissionsShares.forEach(emissions =>
         amounts.forEach(amount => {
           const fee = splitWireFee(amount, 137, 5_000, emissions)
-          expect(
-            fee.underwriterShare + fee.rewardShare + fee.emissionsShare
-          ).toBe(fee.fee)
+          expect(fee.underwriterShare + fee.rewardShare + fee.emissionsShare).toBe(fee.fee)
           expect(fee.net + fee.fee).toBe(amount)
         })
       )
@@ -227,41 +211,27 @@ describe("WireReserveTool", () => {
 
     it("is identity at exactly 9 decimals (lamports)", () => {
       expect(WireReserveTool.toDepot(10_000_000_000n, 9)).toBe(10_000_000_000n)
-      expect(WireReserveTool.fromDepot(10_000_000_000n, 9)).toBe(
-        10_000_000_000n
-      )
+      expect(WireReserveTool.fromDepot(10_000_000_000n, 9)).toBe(10_000_000_000n)
     })
 
     it("downscales an above-cap token (18-dec wei → ÷1e9, floored)", () => {
-      expect(WireReserveTool.toDepot(1_500_000_000_999_999_999n, 18)).toBe(
-        1_500_000_000n
-      )
+      expect(WireReserveTool.toDepot(1_500_000_000_999_999_999n, 18)).toBe(1_500_000_000n)
     })
 
     it("fromDepot upscales an above-cap token (18-dec wei → ×1e9)", () => {
-      expect(WireReserveTool.fromDepot(4_754_411_063n, 18)).toBe(
-        4_754_411_063_000_000_000n
-      )
+      expect(WireReserveTool.fromDepot(4_754_411_063n, 18)).toBe(4_754_411_063_000_000_000n)
     })
 
     it("rejects a zero / non-integer decimals argument", () => {
-      expect(() => WireReserveTool.toDepot(1n, 0)).toThrow(
-        /invalid native decimals/
-      )
-      expect(() => WireReserveTool.fromDepot(1n, 1.5)).toThrow(
-        /invalid native decimals/
-      )
-      expect(() => WireReserveTool.depotPrecision(-1)).toThrow(
-        /invalid native decimals/
-      )
+      expect(() => WireReserveTool.toDepot(1n, 0)).toThrow(/invalid native decimals/)
+      expect(() => WireReserveTool.fromDepot(1n, 1.5)).toThrow(/invalid native decimals/)
+      expect(() => WireReserveTool.depotPrecision(-1)).toThrow(/invalid native decimals/)
     })
   })
 
   describe("readFeeBps", () => {
     it("reads the live uwconfig singleton", async () => {
-      await expect(WireReserveTool.readFeeBps(stubWire([], 30))).resolves.toBe(
-        30
-      )
+      await expect(WireReserveTool.readFeeBps(stubWire([], 30))).resolves.toBe(30)
     })
   })
 
@@ -274,13 +244,9 @@ describe("WireReserveTool", () => {
       AmountIn = 100_000_000n
 
     it("takes the EXACT constant-product path at equal weights", () => {
-      expect(
-        outGivenIn(Balance, 5_000n, Balance, 5_000n, AmountIn)
-      ).toBe(99_009_900n)
+      expect(outGivenIn(Balance, 5_000n, Balance, 5_000n, AmountIn)).toBe(99_009_900n)
       // The symmetric case must agree with the pure integer curve exactly.
-      expect(outGivenIn(Balance, 5_000n, Balance, 5_000n, AmountIn)).toBe(
-        cpOutput(Balance, Balance, AmountIn)
-      )
+      expect(outGivenIn(Balance, 5_000n, Balance, 5_000n, AmountIn)).toBe(cpOutput(Balance, Balance, AmountIn))
     })
 
     it.each([
@@ -289,32 +255,21 @@ describe("WireReserveTool", () => {
       [1_000n, 9_000n, 11_049_813n],
       [9_000n, 1_000n, 856_601_757n],
       [2_500n, 7_500n, 33_112_825n]
-    ])(
-      "matches the contract at wIn=%s wOut=%s",
-      (weightIn, weightOut, expected) => {
-        expect(
-          outGivenIn(Balance, weightIn, Balance, weightOut, AmountIn)
-        ).toBe(expected)
-      }
-    )
+    ])("matches the contract at wIn=%s wOut=%s", (weightIn, weightOut, expected) => {
+      expect(outGivenIn(Balance, weightIn, Balance, weightOut, AmountIn)).toBe(expected)
+    })
 
     it("matches the contract at a larger input on the same pool", () => {
-      expect(
-        outGivenIn(Balance, 2_500n, Balance, 7_500n, 1_000_000_000n)
-      ).toBe(312_706_938n)
+      expect(outGivenIn(Balance, 2_500n, Balance, 7_500n, 1_000_000_000n)).toBe(312_706_938n)
     })
 
     it("matches the contract on an asymmetric-depth pool", () => {
-      expect(
-        outGivenIn(5_000_000_000n, 3_000n, 20_000_000_000n, 7_000n, 250_000_000n)
-      ).toBe(413_859_413n)
+      expect(outGivenIn(5_000_000_000n, 3_000n, 20_000_000_000n, 7_000n, 250_000_000n)).toBe(413_859_413n)
     })
 
     it("diverges from equal-weight constant product off 50/50", () => {
       // The whole point of the fix: cpOutput is only the curve at cw == 5000.
-      expect(
-        outGivenIn(Balance, 2_000n, Balance, 8_000n, AmountIn)
-      ).not.toBe(cpOutput(Balance, Balance, AmountIn))
+      expect(outGivenIn(Balance, 2_000n, Balance, 8_000n, AmountIn)).not.toBe(cpOutput(Balance, Balance, AmountIn))
     })
 
     it("is 0n on a degenerate balance, weight, or amount", () => {
@@ -326,9 +281,7 @@ describe("WireReserveTool", () => {
     })
 
     it("never pays out more than the output side holds", () => {
-      expect(
-        outGivenIn(1n, 5_000n, Balance, 5_000n, 10n ** 18n)
-      ).toBeLessThanOrEqual(Balance)
+      expect(outGivenIn(1n, 5_000n, Balance, 5_000n, 10n ** 18n)).toBeLessThanOrEqual(Balance)
     })
   })
 
@@ -346,12 +299,8 @@ describe("WireReserveTool", () => {
 
     it("collapse to constant product at the symmetric weight", () => {
       const cp = cpOutput(Balance, Balance, Amount)
-      expect(
-        tokenToWire(Balance, Balance, SymmetricConnectorWeightBps, Amount)
-      ).toBe(cp)
-      expect(
-        wireToToken(Balance, Balance, SymmetricConnectorWeightBps, Amount)
-      ).toBe(cp)
+      expect(tokenToWire(Balance, Balance, SymmetricConnectorWeightBps, Amount)).toBe(cp)
+      expect(wireToToken(Balance, Balance, SymmetricConnectorWeightBps, Amount)).toBe(cp)
     })
   })
 
@@ -367,18 +316,14 @@ describe("WireReserveTool", () => {
       const gross = cpOutput(book.chain, book.wire, 100_000_000n),
         net = splitWireFee(gross, 30).net
       // Fee before the destination conversion — NOT cp(...gross) reduced after.
-      expect(quoteSwap(book, book, 100_000_000n, 30)).toBe(
-        cpOutput(book.wire, book.chain, net)
-      )
+      expect(quoteSwap(book, book, 100_000_000n, 30)).toBe(cpOutput(book.wire, book.chain, net))
       expect(quoteSwap(book, book, 100_000_000n, 30)).not.toBe(
         splitWireFee(cpOutput(book.wire, book.chain, gross), 30).net
       )
     })
     it("a WIRE destination receives the post-fee WIRE leg itself", () => {
       const gross = cpOutput(book.chain, book.wire, 100_000_000n)
-      expect(quoteSwap(book, null, 100_000_000n, 30)).toBe(
-        splitWireFee(gross, 30).net
-      )
+      expect(quoteSwap(book, null, 100_000_000n, 30)).toBe(splitWireFee(gross, 30).net)
     })
     it("a WIRE source feeds the escrow straight into the WIRE leg", () => {
       expect(quoteSwap(null, book, 100_000_000n, 30)).toBe(
@@ -395,9 +340,7 @@ describe("WireReserveTool", () => {
       }
       expect(quoteSwap(weighted, weighted, 100_000_000n, 30)).toBe(98_470_966n)
       // …and that is NOT what the equal-weight curve would have quoted.
-      expect(quoteSwap(weighted, weighted, 100_000_000n, 30)).not.toBe(
-        quoteSwap(book, book, 100_000_000n, 30)
-      )
+      expect(quoteSwap(weighted, weighted, 100_000_000n, 30)).not.toBe(quoteSwap(book, book, 100_000_000n, 30))
     })
     it("WIRE → WIRE is a plain transfer — no curve, no fee", () => {
       expect(quoteSwap(null, null, 42n, 30)).toBe(42n)
@@ -414,24 +357,16 @@ describe("WireReserveTool", () => {
       )
       // Strictly less than the same books with no owner fee — the exact gap
       // that made the private-reserve flow's target over-predict.
-      expect(quoteSwap(owned, owned, 100_000_000n, 30)).toBeLessThan(
-        quoteSwap(book, book, 100_000_000n, 30)
-      )
+      expect(quoteSwap(owned, owned, 100_000_000n, 30)).toBeLessThan(quoteSwap(book, book, 100_000_000n, 30))
     })
     it("a WIRE endpoint charges no owner fee on its side", () => {
       // Only the SOURCE reserve's owner fee can apply when the destination is
       // WIRE — mirroring the contract's `src_is_wire ? 0 : …` carve-out.
       const owned = { ...book, ownerFeeBps: 250 },
         gross = cpOutput(book.chain, book.wire, 100_000_000n)
-      expect(quoteSwap(owned, null, 100_000_000n, 30)).toBe(
-        splitWireFee(gross, 30, 0, 0, 250, 0).net
-      )
+      expect(quoteSwap(owned, null, 100_000_000n, 30)).toBe(splitWireFee(gross, 30, 0, 0, 250, 0).net)
       expect(quoteSwap(null, owned, 100_000_000n, 30)).toBe(
-        cpOutput(
-          book.wire,
-          book.chain,
-          splitWireFee(100_000_000n, 30, 0, 0, 0, 250).net
-        )
+        cpOutput(book.wire, book.chain, splitWireFee(100_000_000n, 30, 0, 0, 0, 250).net)
       )
     })
     it("is 0n on degenerate input or a dry hop", () => {

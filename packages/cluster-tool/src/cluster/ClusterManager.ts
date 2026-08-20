@@ -1,10 +1,7 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
-import {
-  SignatureProviderType,
-  type ClusterConfig
-} from "@wireio/cluster-tool-shared"
+import { SignatureProviderType, type ClusterConfig } from "@wireio/cluster-tool-shared"
 import { PidSources, pidIsAlive, readPid } from "@wireio/debugging-shared"
 import { getValue } from "@wireio/shared"
 import { ProtocolTiming } from "../Constants.js"
@@ -63,11 +60,7 @@ export namespace ClusterManager {
     // each source's keys must be in SSM BEFORE their consumer nodeops start
     // and fetch them. Absent entirely under KEY.
     const build = await ClusterBuildDefaults.create(options)
-    ClusterBuildPhase.create(
-      build,
-      "PersistClusterState",
-      "Persist cluster-state.json + cluster-keys.json"
-    ).push(
+    ClusterBuildPhase.create(build, "PersistClusterState", "Persist cluster-state.json + cluster-keys.json").push(
       Steps.clusterState.planPersist(
         Report.Actor.Sysio,
         "persist-cluster-state",
@@ -100,18 +93,10 @@ export namespace ClusterManager {
   export function prepareClusterPath(options: ClusterBuildOptions): void {
     const { force, clusterPath } = options
     if (!Fs.existsSync(clusterPath)) return
-    Assert.ok(
-      force,
-      `cluster directory already exists at ${clusterPath} — pass --force to replace it`
-    )
-    assertNoLivePids(
-      clusterPath,
-      Path.join(clusterPath, ClusterConfigProvider.DataSubpath)
-    )
+    Assert.ok(force, `cluster directory already exists at ${clusterPath} — pass --force to replace it`)
+    assertNoLivePids(clusterPath, Path.join(clusterPath, ClusterConfigProvider.DataSubpath))
     Fs.rmSync(clusterPath, { recursive: true, force: true })
-    log.info(
-      `[cluster] force: removed pre-existing cluster path ${clusterPath}`
-    )
+    log.info(`[cluster] force: removed pre-existing cluster path ${clusterPath}`)
   }
 
   /**
@@ -131,16 +116,14 @@ export namespace ClusterManager {
    * @param build - The composed cluster build (bootstrap ± scenario phases).
    * @returns The run's report.
    */
-  export async function launch<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(build: ClusterBuild<C>): Promise<Report> {
+  export async function launch<C extends ClusterBuildContext = ClusterBuildContext>(
+    build: ClusterBuild<C>
+  ): Promise<Report> {
     const config = build.config
     ProcessManager.setClusterPath(config.clusterPath)
     await writeClusterFiles(config)
     await ClusterConfigProvider.save(config)
-    log.info(
-      `[cluster] filesystem ready at ${config.clusterPath}; running build`
-    )
+    log.info(`[cluster] filesystem ready at ${config.clusterPath}; running build`)
     // `finally`, not a trailing await: a build that REJECTS — an unexpected
     // orchestration error, a `Report.write()` filesystem failure — would
     // otherwise skip the stop and fall back to the synchronous exit sweep,
@@ -223,14 +206,8 @@ export namespace ClusterManager {
       NodeConfig.plan(config).map(async node => {
         mkdirs(node.nodePath)
         await Promise.all([
-          Fs.promises.writeFile(
-            Path.join(node.nodePath, NodeConfigFilename),
-            node.ini.render()
-          ),
-          Fs.promises.writeFile(
-            Path.join(node.nodePath, NodeLoggingFilename),
-            node.logging.render()
-          )
+          Fs.promises.writeFile(Path.join(node.nodePath, NodeConfigFilename), node.ini.render()),
+          Fs.promises.writeFile(Path.join(node.nodePath, NodeLoggingFilename), node.logging.render())
         ])
       })
     )
@@ -249,10 +226,7 @@ export namespace ClusterManager {
    * @param dataPath - The cluster's data dir holding the per-daemon pidfiles.
    * @throws If any pidfile under `dataPath` names a live pid.
    */
-  function assertNoLivePids(
-    clusterPath: ClusterConfig["clusterPath"],
-    dataPath: ClusterConfig["dataPath"]
-  ): void {
+  function assertNoLivePids(clusterPath: ClusterConfig["clusterPath"], dataPath: ClusterConfig["dataPath"]): void {
     if (!Fs.existsSync(dataPath)) return
     const livePids = Fs.readdirSync(dataPath, { withFileTypes: true })
       .filter(entry => entry.isDirectory())
@@ -289,20 +263,13 @@ export namespace ClusterManager {
    * `resolveOperator` / `resolveOperatorDaemonArgs` resolution), with
    * `relaunch: true` so the one-shot genesis flags are stripped.
    */
-  async function startNode(
-    ctx: ClusterBuildContext,
-    node: NodeConfig
-  ): Promise<void> {
+  async function startNode(ctx: ClusterBuildContext, node: NodeConfig): Promise<void> {
     if (ctx.processManager.get(node.name) != null) return
     const operator = Steps.processes.nodeop.resolveOperator(ctx, node)
     await NodeopProcess.startWithRecovery(ctx.processManager, {
       node,
       operator,
-      extraArgs: Steps.processes.nodeop.resolveOperatorDaemonArgs(
-        ctx,
-        node,
-        operator
-      ),
+      extraArgs: Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, operator),
       relaunch: true
     })
   }
@@ -330,10 +297,7 @@ export namespace ClusterManager {
     // NodeConfig.plan(config), the exact deterministic call `create`'s steps
     // make, so `run` and `create` can never drift apart.
     const keys = ClusterState.loadKeys(config)
-    const ctx = new ClusterBuildContext(
-      config,
-      getLogger(config.report.basename)
-    )
+    const ctx = new ClusterBuildContext(config, getLogger(config.report.basename))
     ClusterState.rehydrate(ctx.keyStore, keys)
 
     // External-outpost mode (`config.externalOutposts`): the ETH + SOL outposts
@@ -369,18 +333,14 @@ export namespace ClusterManager {
 
     log.info("[cluster] resuming production")
     await eachSeries([biosNode, ...producerNodes], node =>
-      NodeopProcess.resumeProduction(
-        toURL(node.ports.http, toDialAddress(ctx.config.bind.nodeop.address))
-      )
+      NodeopProcess.resumeProduction(toURL(node.ports.http, toDialAddress(ctx.config.bind.nodeop.address)))
     )
     // Shared head-advance liveness (create's external gate + run use one impl).
     await Steps.externalOutpost.runHeadBlockAdvance(ctx, controller.signal)
     log.info("[cluster] production resumed; head advancing")
 
     if (isExternalOutpost) {
-      log.info(
-        "[cluster] external-outpost mode — skipping local anvil + solana-test-validator"
-      )
+      log.info("[cluster] external-outpost mode — skipping local anvil + solana-test-validator")
     } else {
       log.info("[cluster] starting anvil")
       if (ctx.processManager.get(AnvilProcess.ProcessLabel) == null) {
@@ -391,11 +351,7 @@ export namespace ClusterManager {
           host: config.bind.anvil.address,
           port: config.bind.anvil.port,
           chainId: AnvilProcess.DefaultChainId,
-          stateFile: Path.join(
-            config.dataPath,
-            AnvilProcess.StateSubpath,
-            AnvilProcess.StateFilename
-          ),
+          stateFile: Path.join(config.dataPath, AnvilProcess.StateSubpath, AnvilProcess.StateFilename),
           slotsInAnEpoch: AnvilProcess.SlotsInAnEpoch,
           blockTimeSec: AnvilProcess.BlockTimeSec
         })
@@ -422,9 +378,7 @@ export namespace ClusterManager {
     await Promise.all(operatorNodes.map(node => startNode(ctx, node)))
 
     if (isExternalOutpost) {
-      log.info(
-        "[cluster] external-outpost mode — head advancing; skipping the epoch-advance gate"
-      )
+      log.info("[cluster] external-outpost mode — head advancing; skipping the epoch-advance gate")
       return
     }
 
@@ -443,9 +397,7 @@ export namespace ClusterManager {
             const { rows } = await ctx.wire.getEpochState()
             return (rows[0]?.current_epoch_index ?? 0) > startEpochIndex
           } catch (error) {
-            log.debug(
-              `[cluster] epoch-state read transient: ${error instanceof Error ? error.message : String(error)}`
-            )
+            log.debug(`[cluster] epoch-state read transient: ${error instanceof Error ? error.message : String(error)}`)
             return false
           }
         },
@@ -482,8 +434,7 @@ export namespace ClusterManager {
   }
 
   /** Empty publication list — the guarded fallback when ids cannot be rendered. */
-  const NoSignatureProviderKeyPublications: Steps.keys.SignatureProviderKeyPublication[] =
-    []
+  const NoSignatureProviderKeyPublications: Steps.keys.SignatureProviderKeyPublication[] = []
 
   /**
    * Log — and NEVER delete — every SSM parameter an SSM cluster published.
@@ -511,9 +462,7 @@ export namespace ClusterManager {
       () => Steps.keys.signatureProviderKeyPublications(config),
       NoSignatureProviderKeyPublications,
       error =>
-        log.warn(
-          `[cluster] destroy: could not render the retained SSM ids (half-built cluster?): ${error.message}`
-        )
+        log.warn(`[cluster] destroy: could not render the retained SSM ids (half-built cluster?): ${error.message}`)
     )
     publications.forEach(publication =>
       log.info(

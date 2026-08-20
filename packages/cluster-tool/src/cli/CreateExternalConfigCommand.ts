@@ -25,31 +25,33 @@ interface CreateExternalConfigArgv {
 
 /** Add the three required, command-local path options (two paths → not `applyClusterPathArgs`). */
 function applyCreateExternalConfigArgs<T>(builder: Argv<T>) {
-  return builder
-    // Keep `--no-debugging-server` a plain boolean flag rather than yargs'
-    // implicit negation of a `debugging-server` option.
-    .parserConfiguration({ "boolean-negation": false })
-    .option("local-cluster-path", {
-      type: "string",
-      demandOption: true,
-      describe: "the CREATED local cluster directory to clone"
-    })
-    .option("external-cluster-path", {
-      type: "string",
-      demandOption: true,
-      describe: "destination external cluster directory (MUST be empty or non-existent)"
-    })
-    .option("external-bind-config", {
-      type: "string",
-      demandOption: true,
-      describe: "path to the external BindConfig JSON to merge in"
-    })
-    .option("no-debugging-server", {
-      type: "boolean",
-      default: false,
-      describe:
-        "disable the OPP debugging server in the emitted external cluster (drops the sink plugin + --ext-debugging-server from the operator daemons and skips starting the server)"
-    })
+  return (
+    builder
+      // Keep `--no-debugging-server` a plain boolean flag rather than yargs'
+      // implicit negation of a `debugging-server` option.
+      .parserConfiguration({ "boolean-negation": false })
+      .option("local-cluster-path", {
+        type: "string",
+        demandOption: true,
+        describe: "the CREATED local cluster directory to clone"
+      })
+      .option("external-cluster-path", {
+        type: "string",
+        demandOption: true,
+        describe: "destination external cluster directory (MUST be empty or non-existent)"
+      })
+      .option("external-bind-config", {
+        type: "string",
+        demandOption: true,
+        describe: "path to the external BindConfig JSON to merge in"
+      })
+      .option("no-debugging-server", {
+        type: "boolean",
+        default: false,
+        describe:
+          "disable the OPP debugging server in the emitted external cluster (drops the sink plugin + --ext-debugging-server from the operator daemons and skips starting the server)"
+      })
+  )
 }
 
 /**
@@ -74,9 +76,7 @@ export function createCreateExternalConfigCommand() {
         Path.resolve(args.externalBindConfig),
         args.noDebuggingServer === true
       )
-      log.info(
-        `[cluster] create-external-config ${report.succeeded ? "SUCCEEDED" : "FAILED"}`
-      )
+      log.info(`[cluster] create-external-config ${report.succeeded ? "SUCCEEDED" : "FAILED"}`)
       process.exit(report.succeeded ? 0 : 1)
     }
   }
@@ -89,13 +89,10 @@ async function runCreateExternalConfig(
   externalBindConfigFile: string,
   noDebuggingServer: boolean
 ): Promise<Report> {
-  const config = ClusterConfigProvider.loadSync(
-    Path.join(localClusterPath, ClusterConfigProvider.ConfigFilename)
-  )
+  const config = ClusterConfigProvider.loadSync(Path.join(localClusterPath, ClusterConfigProvider.ConfigFilename))
   ClusterManager.assertClusterStopped(config)
   Assert.ok(
-    !Fs.existsSync(externalClusterPath) ||
-      Fs.readdirSync(externalClusterPath).length === 0,
+    !Fs.existsSync(externalClusterPath) || Fs.readdirSync(externalClusterPath).length === 0,
     `create-external-config: --external-cluster-path ${externalClusterPath} must be empty or non-existent`
   )
   Assert.ok(
@@ -103,10 +100,7 @@ async function runCreateExternalConfig(
     `create-external-config: --external-bind-config ${externalBindConfigFile} not found`
   )
 
-  const context = new ClusterBuildContext(
-      config,
-      getLogger(config.report.basename)
-    ),
+  const context = new ClusterBuildContext(config, getLogger(config.report.basename)),
     cluster = ClusterBuild.forContext(context)
   context.outputs.set(ExternalClusterConfigSteps.ParamsKey, {
     externalClusterPath,
@@ -138,20 +132,10 @@ async function runCreateExternalConfig(
     )
   ])
   ClusterBuildPhase.create(group, "Emit", "Emit external-cluster-config.json", [
-    ExternalClusterConfigSteps.planEmit(
-      Actor.Sysio,
-      "emit",
-      "write the self-described external cluster config",
-      {}
-    )
+    ExternalClusterConfigSteps.planEmit(Actor.Sysio, "emit", "write the self-described external cluster config", {})
   ])
   ClusterBuildPhase.create(group, "Verify", "Scan for stale local bind + round-trip", [
-    ExternalClusterConfigSteps.planVerify(
-      Actor.Sysio,
-      "verify",
-      "self-validation backstop",
-      {}
-    )
+    ExternalClusterConfigSteps.planVerify(Actor.Sysio, "verify", "self-validation backstop", {})
   ])
 
   cluster.report.name = "create-external-config"

@@ -45,9 +45,7 @@ export interface StartScriptRelocation {
  * @param relocations - Candidate prefix→variable mappings, any order.
  * @returns The usable entries, longest prefix first.
  */
-export function orderRelocations(
-  relocations: readonly StartScriptRelocation[]
-): StartScriptRelocation[] {
+export function orderRelocations(relocations: readonly StartScriptRelocation[]): StartScriptRelocation[] {
   return relocations
     .filter(relocation => relocation.prefix != null && relocation.prefix !== "")
     .slice()
@@ -87,9 +85,7 @@ export function shellQuote(value: string): string {
  * @returns `true` when `path` is `prefix` itself or lies beneath it.
  */
 export function matchesPrefix(path: string, prefix: string): boolean {
-  return (
-    prefix !== "" && (path === prefix || path.startsWith(prefix + Path.sep))
-  )
+  return prefix !== "" && (path === prefix || path.startsWith(prefix + Path.sep))
 }
 
 /**
@@ -104,18 +100,11 @@ export function matchesPrefix(path: string, prefix: string): boolean {
  * @param relocations - Table, already ordered by {@link orderRelocations}.
  * @returns The token as a shell word.
  */
-export function toRelocatableToken(
-  token: string,
-  relocations: readonly StartScriptRelocation[]
-): string {
-  const match = relocations.find(relocation =>
-    matchesPrefix(token, relocation.prefix)
-  )
+export function toRelocatableToken(token: string, relocations: readonly StartScriptRelocation[]): string {
+  const match = relocations.find(relocation => matchesPrefix(token, relocation.prefix))
   if (match == null) return shellQuote(token)
   const remainder = token.slice(match.prefix.length)
-  return remainder === ""
-    ? `"$${match.variable}"`
-    : `"$${match.variable}"${shellQuote(remainder)}`
+  return remainder === "" ? `"$${match.variable}"` : `"$${match.variable}"${shellQuote(remainder)}`
 }
 
 /**
@@ -126,10 +115,7 @@ export function toRelocatableToken(
  * @param relocations - Candidate prefix→variable mappings, any order.
  * @returns One shell word per argv entry, ready to join with spaces.
  */
-export function toRelocatableArgv(
-  argv: readonly string[],
-  relocations: readonly StartScriptRelocation[]
-): string[] {
+export function toRelocatableArgv(argv: readonly string[], relocations: readonly StartScriptRelocation[]): string[] {
   const ordered = orderRelocations(relocations)
   return argv.map(token => toRelocatableToken(token, ordered))
 }

@@ -22,12 +22,7 @@ import { ReserveLifecycleScenarioConstants as Constants } from "./ReserveLifecyc
 import { ReserveLifecycleScenarioOwnerSteps as OwnerSteps } from "./steps/ReserveLifecycleScenarioOwnerSteps.js"
 import { ReserveLifecycleScenarioReserveSteps as ReserveSteps } from "./steps/ReserveLifecycleScenarioReserveSteps.js"
 
-const {
-  SysioContractAccount,
-  SysioContractName,
-  SysioReservReservestatus,
-  SysioUwritChainkind
-} = SysioContracts
+const { SysioContractAccount, SysioContractName, SysioReservReservestatus, SysioUwritChainkind } = SysioContracts
 const { Actor } = Report
 
 /** The depot reserve row for a `(chain, token, reserve)` slug triple (a read). */
@@ -37,9 +32,7 @@ async function readReserveRow(
   tokenCode: number,
   reserveCode: number
 ): Promise<SysioContracts.SysioReservReserveRowType> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.reserv)
-    .tables.reserves.query({ limit: 100 })
+  const { rows } = await ctx.wire.getSysioContract(SysioContractName.reserv).tables.reserves.query({ limit: 100 })
   return rows.find(
     row =>
       slugValue(row.chain_code) === chainCode &&
@@ -49,12 +42,8 @@ async function readReserveRow(
 }
 
 /** The forbidden UWREQ — anything sourcing the private ETH reserve (a read). */
-async function readPrivateSourcedUwreq(
-  ctx: ClusterBuildContext
-): Promise<SysioContracts.SysioUwritUwRequestTType> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.uwrit)
-    .tables.uwreqs.query({ limit: 100 })
+async function readPrivateSourcedUwreq(ctx: ClusterBuildContext): Promise<SysioContracts.SysioUwritUwRequestTType> {
+  const { rows } = await ctx.wire.getSysioContract(SysioContractName.uwrit).tables.uwreqs.query({ limit: 100 })
   return rows.find(
     request =>
       slugValue(request.src_chain_code) === Constants.EthereumChainCode &&
@@ -82,9 +71,7 @@ async function assertNeverWithinWindow(
 ): Promise<void> {
   await pollUntil(label, predicate, windowMs, intervalMs).then(
     () => {
-      throw new Error(
-        `Forbidden condition observed within ${windowMs}ms: ${label}`
-      )
+      throw new Error(`Forbidden condition observed within ${windowMs}ms: ${label}`)
     },
     (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error)
@@ -118,8 +105,7 @@ async function assertNeverWithinWindow(
  */
 export class ReserveLifecycleScenario extends FlowScenario {
   readonly name = "flow-reserve-lifecycle"
-  readonly description =
-    "Gated reserve create→match lifecycle + private-reserve exclusions (ETH-side)"
+  readonly description = "Gated reserve create→match lifecycle + private-reserve exclusions (ETH-side)"
 
   override readonly defaults: ClusterBuildOptions = {
     // Seed the mock (chain, token) PRIMARY reserves this flow reads — `regreserve`
@@ -161,18 +147,10 @@ export class ReserveLifecycleScenario extends FlowScenario {
       "VerifySubstrate",
       "The chain produces blocks; the public counterpart is seeded"
     ).push(
-      verifyStep(
-        Actor.Sysio,
-        "wire-chain-producing",
-        "WIRE chain is producing blocks",
-        async ctx => {
-          const info = await ctx.wire.getInfo()
-          Assert.ok(
-            Number(info.head_block_num) > 0,
-            "head_block_num must be > 0"
-          )
-        }
-      ),
+      verifyStep(Actor.Sysio, "wire-chain-producing", "WIRE chain is producing blocks", async ctx => {
+        const info = await ctx.wire.getInfo()
+        Assert.ok(Number(info.head_block_num) > 0, "head_block_num must be > 0")
+      }),
       verifyStep(
         Actor.Sysio,
         "public-counterpart-seeded",
@@ -271,11 +249,7 @@ export class ReserveLifecycleScenario extends FlowScenario {
               )
               return (
                 row != null &&
-                matchesProtoEnum(
-                  row.status,
-                  SysioReservReservestatus,
-                  SysioReservReservestatus.RESERVE_STATUS_PENDING
-                )
+                matchesProtoEnum(row.status, SysioReservReservestatus, SysioReservReservestatus.RESERVE_STATUS_PENDING)
               )
             },
             Constants.RelayDeadlineMs,
@@ -289,13 +263,9 @@ export class ReserveLifecycleScenario extends FlowScenario {
             Constants.EthereumTokenCode,
             Constants.PrivateReserveCode
           )
+          Assert.ok(row.is_private === true || Number(row.is_private) === 1, "PRIVRES depot row must carry is_private")
           Assert.ok(
-            row.is_private === true || Number(row.is_private) === 1,
-            "PRIVRES depot row must carry is_private"
-          )
-          Assert.ok(
-            typeof row.creator_pub_key === "string" &&
-              row.creator_pub_key.length > 0,
+            typeof row.creator_pub_key === "string" && row.creator_pub_key.length > 0,
             "PRIVRES depot row must carry the creator pubkey"
           )
         },
@@ -366,16 +336,11 @@ export class ReserveLifecycleScenario extends FlowScenario {
         "escrow-refunded",
         "the RESERVE_CREATE_CANCELLED round-trip refunds the creator's escrow (gas-only spend)",
         async ctx => {
-          const preCreateBalance = ctx.outputs.assert(
-            ReserveSteps.unlinkedCreatorPreCreateBalanceKey()
-          )
+          const preCreateBalance = ctx.outputs.assert(ReserveSteps.unlinkedCreatorPreCreateBalanceKey())
           const refundFloor = preCreateBalance - Constants.RefundGasAllowanceWei
           await pollUntil(
             "NOLINKRS creator escrow refunded",
-            async () =>
-              (await ctx.ethereum.getBalance(
-                ReserveSteps.unlinkedCreatorWallet(ctx).address
-              )) > refundFloor,
+            async () => (await ctx.ethereum.getBalance(ReserveSteps.unlinkedCreatorWallet(ctx).address)) > refundFloor,
             Constants.ReadyDeadlineMs,
             Constants.PollIntervalMs
           )
@@ -418,26 +383,24 @@ export class ReserveLifecycleScenario extends FlowScenario {
           // wire_amount) so the failure is attributable to the missing
           // authex link alone.
           await Assert.rejects(
-            ctx.wire
-              .getSysioContract(SysioContractName.reserv)
-              .actions.matchreserve.invoke(
-                {
-                  chain_code: { value: Constants.EthereumChainCode },
-                  token_code: { value: Constants.EthereumTokenCode },
-                  reserve_code: { value: Constants.PrivateReserveCode },
-                  matcher: Constants.WrongMatcherAccount,
-                  wire_amount: Number(Constants.RequestedWireAmount)
-                },
-                {
-                  authorization: [
-                    {
-                      actor: Constants.WrongMatcherAccount,
-                      permission: "active"
-                    }
-                  ],
-                  skipWait: true
-                }
-              ),
+            ctx.wire.getSysioContract(SysioContractName.reserv).actions.matchreserve.invoke(
+              {
+                chain_code: { value: Constants.EthereumChainCode },
+                token_code: { value: Constants.EthereumTokenCode },
+                reserve_code: { value: Constants.PrivateReserveCode },
+                matcher: Constants.WrongMatcherAccount,
+                wire_amount: Number(Constants.RequestedWireAmount)
+              },
+              {
+                authorization: [
+                  {
+                    actor: Constants.WrongMatcherAccount,
+                    permission: "active"
+                  }
+                ],
+                skipWait: true
+              }
+            ),
             Constants.MatcherNotLinkedPattern
           )
         },
@@ -470,11 +433,7 @@ export class ReserveLifecycleScenario extends FlowScenario {
               )
               return (
                 row != null &&
-                matchesProtoEnum(
-                  row.status,
-                  SysioReservReservestatus,
-                  SysioReservReservestatus.RESERVE_STATUS_ACTIVE
-                )
+                matchesProtoEnum(row.status, SysioReservReservestatus, SysioReservReservestatus.RESERVE_STATUS_ACTIVE)
               )
             },
             Constants.ReadyDeadlineMs,
@@ -486,11 +445,7 @@ export class ReserveLifecycleScenario extends FlowScenario {
             Constants.EthereumTokenCode,
             Constants.PrivateReserveCode
           )
-          Assert.strictEqual(
-            row.owner,
-            Constants.MatcherAccount,
-            "owner must be the matcher"
-          )
+          Assert.strictEqual(row.owner, Constants.MatcherAccount, "owner must be the matcher")
           Assert.strictEqual(
             BigInt(row.reserve_wire_amount),
             Constants.RequestedWireAmount,
@@ -504,15 +459,9 @@ export class ReserveLifecycleScenario extends FlowScenario {
         "wire-custody-exact",
         "the match IS a WIRE deposit — custody up, matcher down, exactly",
         async ctx => {
-          const snapshot = ctx.outputs.assert(
-            ReserveSteps.wireCustodySnapshotKey()
-          )
-          const custodyAfter = await ctx.wire.getWireBalance(
-            SysioContractAccount[SysioContractName.reserv]
-          )
-          const matcherAfter = await ctx.wire.getWireBalance(
-            Constants.MatcherAccount
-          )
+          const snapshot = ctx.outputs.assert(ReserveSteps.wireCustodySnapshotKey())
+          const custodyAfter = await ctx.wire.getWireBalance(SysioContractAccount[SysioContractName.reserv])
+          const matcherAfter = await ctx.wire.getWireBalance(Constants.MatcherAccount)
           Assert.strictEqual(
             custodyAfter,
             snapshot.custody + Constants.RequestedWireAmount,
@@ -592,8 +541,7 @@ export class ReserveLifecycleScenario extends FlowScenario {
         async ctx => {
           await pollUntil(
             "SWAP_REVERT envelope on DEPOT→ETHEREUM",
-            async () =>
-              containsSwapRevert(oppDebuggingPath(ctx.config.clusterPath)),
+            async () => containsSwapRevert(oppDebuggingPath(ctx.config.clusterPath)),
             Constants.ReadyDeadlineMs,
             Constants.PollIntervalMs
           )
@@ -610,29 +558,23 @@ export class ReserveLifecycleScenario extends FlowScenario {
           // ACTIVE, so the privacy check is the one that fires).
           const swapUser = ctx.outputs.assert(swapUserOutputKey())
           await Assert.rejects(
-            ctx.wire
-              .getSysioContract(SysioContractName.uwrit)
-              .actions.swapfromwire.invoke(
-                {
-                  user: Constants.MatcherAccount,
-                  wire_amount: Number(Constants.FromWireProbeWireAmount),
-                  dst_chain_code: { value: Constants.EthereumChainCode },
-                  dst_token_code: { value: Constants.EthereumTokenCode },
-                  dst_reserve_code: { value: Constants.PrivateReserveCode },
-                  target_amount: Number(Constants.FromWireProbeTargetAmount),
-                  target_tolerance_bps: Constants.FromWireProbeToleranceBps,
-                  recipient_kind: SysioUwritChainkind.CHAIN_KIND_EVM,
-                  recipient_addr: Buffer.from(
-                    swapUser.ethereumAddressBytes
-                  ).toString("hex")
-                },
-                {
-                  authorization: [
-                    { actor: Constants.MatcherAccount, permission: "active" }
-                  ],
-                  skipWait: true
-                }
-              ),
+            ctx.wire.getSysioContract(SysioContractName.uwrit).actions.swapfromwire.invoke(
+              {
+                user: Constants.MatcherAccount,
+                wire_amount: Number(Constants.FromWireProbeWireAmount),
+                dst_chain_code: { value: Constants.EthereumChainCode },
+                dst_token_code: { value: Constants.EthereumTokenCode },
+                dst_reserve_code: { value: Constants.PrivateReserveCode },
+                target_amount: Number(Constants.FromWireProbeTargetAmount),
+                target_tolerance_bps: Constants.FromWireProbeToleranceBps,
+                recipient_kind: SysioUwritChainkind.CHAIN_KIND_EVM,
+                recipient_addr: Buffer.from(swapUser.ethereumAddressBytes).toString("hex")
+              },
+              {
+                authorization: [{ actor: Constants.MatcherAccount, permission: "active" }],
+                skipWait: true
+              }
+            ),
             Constants.PrivateFromWireExcludedPattern
           )
         },

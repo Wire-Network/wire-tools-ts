@@ -1,21 +1,11 @@
 import React, { useCallback, useEffect, useReducer, useRef } from "react"
-import {
-  Box,
-  Text,
-  useFocus,
-  useFocusManager,
-  useInput,
-  useWindowSize
-} from "ink"
+import { Box, Text, useFocus, useFocusManager, useInput, useWindowSize } from "ink"
 import { match } from "ts-pattern"
 import type { PanelComponentProps } from "../../../components/PanelComponent.js"
 import { VirtualList } from "../../../components/VirtualList.js"
 import { useService } from "../../../services/ServiceContext.js"
 import { ServiceId } from "../../../services/ServiceId.js"
-import {
-  useAppDispatch,
-  useAppSelector
-} from "../../../store/Store.js"
+import { useAppDispatch, useAppSelector } from "../../../store/Store.js"
 import { selectLogViewer } from "../../../store/process-monitor/ProcessMonitorSelectors.js"
 import {
   setLogViewerFollow,
@@ -26,19 +16,10 @@ import {
   setSearchQuery,
   toggleLocationColumn
 } from "../../../store/process-monitor/ProcessMonitorSlice.js"
-import {
-  LogTailingEventName,
-  LogTailingService,
-  type LogTailingRuntime
-} from "../LogTailingService.js"
+import { LogTailingEventName, LogTailingService, type LogTailingRuntime } from "../LogTailingService.js"
 import { LineRender, compileSearchRegex } from "../util/lineRender.js"
 import { PidSources } from "@wireio/debugging-shared"
-import {
-  LogViewerJSONLine,
-  jsonColumnBoundaries,
-  nextColumnOffset,
-  prevColumnOffset
-} from "./LogViewerJSONLine.js"
+import { LogViewerJSONLine, jsonColumnBoundaries, nextColumnOffset, prevColumnOffset } from "./LogViewerJSONLine.js"
 import { LogViewerSearchInput } from "./LogViewerSearchInput.js"
 import { LogViewerTextLine } from "./LogViewerTextLine.js"
 
@@ -46,13 +27,8 @@ function LogViewerBody(_: PanelComponentProps): React.ReactElement {
   const viewer = useAppSelector(selectLogViewer),
     dispatch = useAppDispatch(),
     { rows } = useWindowSize(),
-    chromeRows =
-      LogViewerPanel.ChromeLines +
-      (viewer.searchActive ? LogViewerPanel.SearchInputRows : 0),
-    viewportHeight = Math.max(
-      LogViewerPanel.MinViewportHeight,
-      rows - chromeRows
-    ),
+    chromeRows = LogViewerPanel.ChromeLines + (viewer.searchActive ? LogViewerPanel.SearchInputRows : 0),
+    viewportHeight = Math.max(LogViewerPanel.MinViewportHeight, rows - chromeRows),
     tailing = useService<LogTailingService>(ServiceId.LogTailing),
     { isFocused } = useFocus({ id: LogViewerPanel.id }),
     { focus } = useFocusManager(),
@@ -60,9 +36,7 @@ function LogViewerBody(_: PanelComponentProps): React.ReactElement {
     [, forceRender] = useReducer((n: number) => n + 1, 0),
     runtime = runtimeRef.current,
     isJsonlPath = !!viewer.path?.endsWith(PidSources.JsonlExt),
-    columnBoundaries = isJsonlPath
-      ? jsonColumnBoundaries(viewer.locationVisible)
-      : LogViewerPanel.NoColumnBoundaries
+    columnBoundaries = isJsonlPath ? jsonColumnBoundaries(viewer.locationVisible) : LogViewerPanel.NoColumnBoundaries
 
   /**
    * Close the active log: clear viewer state and hand focus back to the
@@ -104,9 +78,7 @@ function LogViewerBody(_: PanelComponentProps): React.ReactElement {
   }, [tailing, viewer.follow])
 
   /** Pin offset to tail when follow mode is on. */
-  const effectiveOffset = viewer.follow
-    ? Math.max(0, runtime.totalLines - viewportHeight)
-    : viewer.offset
+  const effectiveOffset = viewer.follow ? Math.max(0, runtime.totalLines - viewportHeight) : viewer.offset
 
   /**
    * Stable window-fetcher passed to `VirtualList`. Without `useCallback`,
@@ -115,10 +87,7 @@ function LogViewerBody(_: PanelComponentProps): React.ReactElement {
    * in-flight fetch via the cleanup — so a fast keystroke could leave
    * `items` empty mid-flight, making the log content visibly disappear.
    */
-  const fetchRange = useCallback(
-    (from: number, count: number) => tailing.readWindow(from, count),
-    [tailing]
-  )
+  const fetchRange = useCallback((from: number, count: number) => tailing.readWindow(from, count), [tailing])
 
   /**
    * Scan forward from the current viewport for the next match of `query`.
@@ -145,10 +114,7 @@ function LogViewerBody(_: PanelComponentProps): React.ReactElement {
       }
       const scanFrom = async (from: number): Promise<void> => {
         if (from >= runtimeRef.current.totalLines) return
-        const chunk = await tailing.readWindow(
-          from,
-          LogViewerPanel.SearchChunkLines
-        )
+        const chunk = await tailing.readWindow(from, LogViewerPanel.SearchChunkLines)
         if (chunk.length === 0) return
         const hitInChunk = chunk.findIndex(matches)
         if (hitInChunk !== -1) {
@@ -166,88 +132,49 @@ function LogViewerBody(_: PanelComponentProps): React.ReactElement {
     (input, key) => {
       if (!viewer.path) return
       match({ input, key })
-        .with({ key: { upArrow: true } }, () =>
-          dispatch(setLogViewerOffset(effectiveOffset - 1))
-        )
-        .with({ key: { downArrow: true } }, () =>
-          dispatch(setLogViewerOffset(effectiveOffset + 1))
-        )
-        .with({ key: { pageUp: true } }, () =>
-          dispatch(setLogViewerOffset(effectiveOffset - viewportHeight))
-        )
-        .with({ key: { pageDown: true } }, () =>
-          dispatch(setLogViewerOffset(effectiveOffset + viewportHeight))
-        )
+        .with({ key: { upArrow: true } }, () => dispatch(setLogViewerOffset(effectiveOffset - 1)))
+        .with({ key: { downArrow: true } }, () => dispatch(setLogViewerOffset(effectiveOffset + 1)))
+        .with({ key: { pageUp: true } }, () => dispatch(setLogViewerOffset(effectiveOffset - viewportHeight)))
+        .with({ key: { pageDown: true } }, () => dispatch(setLogViewerOffset(effectiveOffset + viewportHeight)))
         .with({ key: { leftArrow: true } }, () =>
           dispatch(
             setLogViewerHorizontalOffset(
-              prevColumnOffset(
-                columnBoundaries,
-                viewer.horizontalOffset,
-                LogViewerPanel.HorizontalStep
-              )
+              prevColumnOffset(columnBoundaries, viewer.horizontalOffset, LogViewerPanel.HorizontalStep)
             )
           )
         )
         .with({ key: { rightArrow: true } }, () =>
           dispatch(
             setLogViewerHorizontalOffset(
-              nextColumnOffset(
-                columnBoundaries,
-                viewer.horizontalOffset,
-                LogViewerPanel.HorizontalStep
-              )
+              nextColumnOffset(columnBoundaries, viewer.horizontalOffset, LogViewerPanel.HorizontalStep)
             )
           )
         )
-        .with({ input: LogViewerPanel.JumpTopKey }, () =>
-          dispatch(setLogViewerOffset(0))
-        )
+        .with({ input: LogViewerPanel.JumpTopKey }, () => dispatch(setLogViewerOffset(0)))
         .with({ input: LogViewerPanel.JumpBottomKey }, () =>
-          dispatch(
-            setLogViewerOffset(Math.max(0, runtime.totalLines - viewportHeight))
-          )
+          dispatch(setLogViewerOffset(Math.max(0, runtime.totalLines - viewportHeight)))
         )
-        .with({ input: LogViewerPanel.FollowKey }, () =>
-          dispatch(setLogViewerFollow(true))
-        )
-        .with(
-          { input: LogViewerPanel.SearchKey, key: { ctrl: true } },
-          () => dispatch(setSearchActive(true))
-        )
-        .with({ input: LogViewerPanel.ToggleLocationKey }, () =>
-          dispatch(toggleLocationColumn())
-        )
+        .with({ input: LogViewerPanel.FollowKey }, () => dispatch(setLogViewerFollow(true)))
+        .with({ input: LogViewerPanel.SearchKey, key: { ctrl: true } }, () => dispatch(setSearchActive(true)))
+        .with({ input: LogViewerPanel.ToggleLocationKey }, () => dispatch(toggleLocationColumn()))
         .with({ key: { escape: true } }, () => dismiss())
         .otherwise(() => {})
     },
     { isActive: isFocused && !viewer.searchActive }
   )
 
-  const borderColor = isFocused
-    ? LogViewerPanel.BorderColorFocused
-    : LogViewerPanel.BorderColorUnfocused
+  const borderColor = isFocused ? LogViewerPanel.BorderColorFocused : LogViewerPanel.BorderColorUnfocused
 
   if (!viewer.path) {
     return (
-      <Box
-        flexDirection="column"
-        borderStyle={LogViewerPanel.BorderStyle}
-        borderColor={borderColor}
-        paddingX={1}
-      >
+      <Box flexDirection="column" borderStyle={LogViewerPanel.BorderStyle} borderColor={borderColor} paddingX={1}>
         <Text dimColor>{LogViewerPanel.EmptySelectionText}</Text>
       </Box>
     )
   }
   if (runtime.indexing) {
     return (
-      <Box
-        flexDirection="column"
-        borderStyle={LogViewerPanel.BorderStyle}
-        borderColor={borderColor}
-        paddingX={1}
-      >
+      <Box flexDirection="column" borderStyle={LogViewerPanel.BorderStyle} borderColor={borderColor} paddingX={1}>
         <Text dimColor>
           {LogViewerPanel.IndexingPrefix}
           {viewer.path}...
@@ -270,9 +197,7 @@ function LogViewerBody(_: PanelComponentProps): React.ReactElement {
         {viewer.path} — line {effectiveOffset + 1} of {runtime.totalLines}
         {viewer.follow ? LogViewerPanel.FollowFlag : ""}
         {isJsonl ? LogViewerPanel.JsonlFlag : ""}
-        {viewer.searchQuery
-          ? `${LogViewerPanel.SearchPrefix}${viewer.searchQuery}${LogViewerPanel.SearchSuffix}`
-          : ""}
+        {viewer.searchQuery ? `${LogViewerPanel.SearchPrefix}${viewer.searchQuery}${LogViewerPanel.SearchSuffix}` : ""}
         {"  "}
         {LogViewerPanel.HelpText}
       </Text>
@@ -368,8 +293,7 @@ export namespace LogViewerPanel {
   /** Suffix for the active-search status fragment. */
   export const SearchSuffix = "]" as const
   /** Empty-state copy when no log path is selected. */
-  export const EmptySelectionText =
-    "Select a node in the Process Monitor panel (Enter) to view its log." as const
+  export const EmptySelectionText = "Select a node in the Process Monitor panel (Enter) to view its log." as const
   /** Prefix shown while the line index is being built. */
   export const IndexingPrefix = "Indexing " as const
   /** Hint string rendered at the right end of the status line. */

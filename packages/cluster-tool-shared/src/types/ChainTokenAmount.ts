@@ -22,9 +22,7 @@ function isTokenAmountJson(json: unknown): boolean {
  * `false` (never throws) and `deserialize` surfaces the issue-path message, not
  * a raw proto error.
  */
-const TokenAmountJsonSchema = z
-  .unknown()
-  .refine(isTokenAmountJson, { message: "invalid TokenAmount JSON" })
+const TokenAmountJsonSchema = z.unknown().refine(isTokenAmountJson, { message: "invalid TokenAmount JSON" })
 
 /**
  * zod v4 codec bridging the proto `TokenAmount` bigint round-trip: the WIRE
@@ -33,15 +31,10 @@ const TokenAmountJsonSchema = z
  * DECODE (`fromJson`, safe — the input schema already validated it); `serialize`
  * runs ENCODE (`toJson`) — the bigint-safe projection lives IN the schema.
  */
-export const TokenAmountCodec = z.codec(
-  TokenAmountJsonSchema,
-  z.custom<TokenAmount>(),
-  {
-    decode: (json: unknown): TokenAmount =>
-      TokenAmount.fromJson(json as TokenAmountJson),
-    encode: (amount: TokenAmount): unknown => TokenAmount.toJson(amount)
-  }
-)
+export const TokenAmountCodec = z.codec(TokenAmountJsonSchema, z.custom<TokenAmount>(), {
+  decode: (json: unknown): TokenAmount => TokenAmount.fromJson(json as TokenAmountJson),
+  encode: (amount: TokenAmount): unknown => TokenAmount.toJson(amount)
+})
 
 /**
  * Harness-local (chain, token) amount tuple. The previous proto-emitted

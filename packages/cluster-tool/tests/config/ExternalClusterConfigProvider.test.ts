@@ -87,23 +87,17 @@ describe("ExternalClusterConfigProvider", () => {
       ...config,
       ethereum: { ...config.ethereum, addressFile: "/abs/outpost-addrs.json" }
     })
-    expect(ExternalClusterConfigProvider.load(file).ethereum.addressFile).toBe(
-      "/abs/outpost-addrs.json"
-    )
+    expect(ExternalClusterConfigProvider.load(file).ethereum.addressFile).toBe("/abs/outpost-addrs.json")
   })
 
   it("deserialize decodes without resolving references", () => {
-    const decoded = ExternalClusterConfigProvider.deserialize(
-      ExternalClusterConfigSchemaCodec.serialize(config)
-    )
+    const decoded = ExternalClusterConfigProvider.deserialize(ExternalClusterConfigSchemaCodec.serialize(config))
     expect(decoded.ethereum.addressFile).toBe("outpost-addrs.json")
     expect(decoded.accounts.operators[0].type).toBe(OperatorType.BATCH)
   })
 
   it("throws for a missing file", () => {
-    expect(() =>
-      ExternalClusterConfigProvider.load(Path.join(dir, "nope.json"))
-    ).toThrow(/not found/)
+    expect(() => ExternalClusterConfigProvider.load(Path.join(dir, "nope.json"))).toThrow(/not found/)
   })
 
   it("throws for a schema-invalid payload", () => {

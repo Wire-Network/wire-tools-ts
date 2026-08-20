@@ -33,11 +33,7 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { NodeOwnerTier, type WireKey } from "@wireio/opp-typescript-models"
 
 import type { WireClient } from "../../clients/wire/WireClient.js"
-import {
-  loadOutpostContract,
-  resolveLatestNonce,
-  type EthereumValueOverrides
-} from "../../utils/ethereumUtils.js"
+import { loadOutpostContract, resolveLatestNonce, type EthereumValueOverrides } from "../../utils/ethereumUtils.js"
 import type { ClioError } from "../../clients/wire/clio/ClioRunner.js"
 
 // Tier IDs accepted by sysio.roa::nodeownreg (matches MockWireNodes NodeInfo). The canonical enum
@@ -162,13 +158,7 @@ export function loadBar(
   outpostAddrs: Record<string, string>,
   signer: ethers.Signer
 ): BarContract {
-  return loadOutpostContract<BarContract>(
-    ethereumPath,
-    outpostAddrs,
-    "BAR",
-    ["outpost"],
-    signer
-  )
+  return loadOutpostContract<BarContract>(ethereumPath, outpostAddrs, "BAR", ["outpost"], signer)
 }
 
 /**
@@ -198,13 +188,7 @@ export async function commitNode(
   depositorPublicKey: string
 ): Promise<ethers.ContractTransactionReceipt> {
   const nonce = await resolveLatestNonce(contract)
-  const tx = await contract.commitNode(
-    tier,
-    wireAccountName,
-    wirePublicKey,
-    depositorPublicKey,
-    { nonce }
-  )
+  const tx = await contract.commitNode(tier, wireAccountName, wirePublicKey, depositorPublicKey, { nonce })
   const receipt = await tx.wait(1)
   Assert.ok(receipt, "commitNode: receipt is null")
   return receipt
@@ -289,10 +273,7 @@ export async function readNodeOwnerReg(
 }
 
 /** Read the nodeowners registration row for `owner` (scope = network_gen = 0), or absent. */
-export async function readNodeOwner(
-  wire: WireClient,
-  owner: string
-): Promise<SysioContracts.SysioRoaNodeownersType> {
+export async function readNodeOwner(wire: WireClient, owner: string): Promise<SysioContracts.SysioRoaNodeownersType> {
   const { rows } = await wire
     .getSysioContract(SysioContracts.SysioContractName.roa)
     .tables.nodeowners.query({ scope: "0" })

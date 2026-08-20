@@ -1,10 +1,7 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import {
-  AnvilProcess,
-  ProcessManager
-} from "@wireio/cluster-tool/cluster/processes"
+import { AnvilProcess, ProcessManager } from "@wireio/cluster-tool/cluster/processes"
 import { Localhost } from "@wireio/cluster-tool/utils"
 
 describe("AnvilProcess", () => {
@@ -26,12 +23,7 @@ describe("AnvilProcess", () => {
     const process = await AnvilProcess.create(manager, { binary: "/bin/true" })
     expect(process.exe).toBe("/bin/true")
     expect(process.args).toEqual(
-      expect.arrayContaining([
-        "--host",
-        "--port",
-        "--chain-id",
-        String(AnvilProcess.DefaultChainId)
-      ])
+      expect.arrayContaining(["--host", "--port", "--chain-id", String(AnvilProcess.DefaultChainId)])
     )
   })
 
@@ -45,9 +37,7 @@ describe("AnvilProcess", () => {
       slotsInAnEpoch: AnvilProcess.SlotsInAnEpoch,
       blockTimeSec: AnvilProcess.BlockTimeSec
     })
-    expect(withFlags.args).toEqual(
-      expect.arrayContaining(["--slots-in-an-epoch", "--block-time"])
-    )
+    expect(withFlags.args).toEqual(expect.arrayContaining(["--slots-in-an-epoch", "--block-time"]))
   })
 
   it("always carries the mainnet-parity gas flags", async () => {

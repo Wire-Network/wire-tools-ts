@@ -1,9 +1,6 @@
 import { Report } from "../../report/Report.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../ClusterBuildStep.js"
 import { SolanaOutpostBootstrapper } from "./SolanaOutpostBootstrapper.js"
 
 /** Steps that deploy + seed the Solana (test-validator) outpost. */

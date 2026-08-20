@@ -1,9 +1,5 @@
 import Assert from "node:assert"
-import {
-  SignatureProviderType,
-  type ClusterConfig,
-  type CollateralRequirement
-} from "@wireio/cluster-tool-shared"
+import { SignatureProviderType, type ClusterConfig, type CollateralRequirement } from "@wireio/cluster-tool-shared"
 import { range } from "lodash"
 import { LAMPORTS_PER_SOL } from "@solana/web3.js"
 import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
@@ -13,10 +9,7 @@ import { Constants, ProtocolTiming } from "../Constants.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
 import { DaemonConfig } from "../config/DaemonConfig.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
-import {
-  readNodeOwner,
-  readNodeOwnerReg
-} from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
+import { readNodeOwner, readNodeOwnerReg } from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
 import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
 import { pollUntil, verifyStep } from "./StepTools.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
@@ -160,9 +153,7 @@ const BatchOperatorEthereumFundingWei = 10n * WeiPerEther
  */
 export namespace ClusterBuildDefaults {
   /** Resolve config + context, compose the bootstrap phases, return the build. */
-  export async function create<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export async function create<C extends ClusterBuildContext = ClusterBuildContext>(
     options: ClusterBuildOptions = {},
     createContext?: (config: ClusterConfig, log: Logger) => C
   ): Promise<ClusterBuild<C>> {
@@ -172,26 +163,16 @@ export namespace ClusterBuildDefaults {
   }
 
   /** Compose every bootstrap phase onto `cluster` (order = the top-level sequence). */
-  function compose<C extends ClusterBuildContext>(
-    cluster: ClusterBuild<C>
-  ): void {
+  function compose<C extends ClusterBuildContext>(cluster: ClusterBuild<C>): void {
     const config = cluster.context.config,
       // Seeded by `ClusterBuild.create` from
       // `ClusterConfigProvider.resolveWithBiosKeys` — its `wire` key IS the
       // bootstrap node owner's account authority.
-      nodeOwner = cluster.context.keyStore.assertOperator(
-        Constants.BOOTSTRAP_NODE_OWNER
-      ),
+      nodeOwner = cluster.context.keyStore.assertOperator(Constants.BOOTSTRAP_NODE_OWNER),
       producers = range(config.producerCount).map(index => producerName(index)),
-      batchOperators = range(config.batchOperatorCount).map(index =>
-        Constants.batchOperatorLabel(index)
-      ),
-      underwriters = range(config.underwriterCount).map(index =>
-        Constants.underwriterLabel(index)
-      ),
-      producerNodes = NodeConfig.plan(config).filter(
-        node => node.role === NodeRole.producer
-      ),
+      batchOperators = range(config.batchOperatorCount).map(index => Constants.batchOperatorLabel(index)),
+      underwriters = range(config.underwriterCount).map(index => Constants.underwriterLabel(index)),
+      producerNodes = NodeConfig.plan(config).filter(node => node.role === NodeRole.producer),
       // External-outpost mode: the ETH + SOL outposts already run on real chains
       // (`config.externalOutposts`), so skip the local anvil/validator starts +
       // outpost deploys and publish the operator-daemon artifacts from the
@@ -206,35 +187,12 @@ export namespace ClusterBuildDefaults {
     )
 
     // ── processes + keys + producing nodes ──
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "Kiod",
-      "Start the kiod wallet daemon"
-    ).push(
-      Steps.processes.kiod.planStart<C>(
-        Actor.Sysio,
-        "start-kiod",
-        "start kiod",
-        {}
-      )
+    ClusterBuildPhase.create<C>(prerequisites, "Kiod", "Start the kiod wallet daemon").push(
+      Steps.processes.kiod.planStart<C>(Actor.Sysio, "start-kiod", "start kiod", {})
     )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "WalletAndKeys",
-      "Generate producer node keys + open the wallet"
-    ).push(
-      Steps.keys.planGenerateNodeKeys<C>(
-        Actor.Sysio,
-        "generate-keys",
-        "generate producer node keys",
-        {}
-      ),
-      Steps.keys.planCreateWallet<C>(
-        Actor.Sysio,
-        "create-wallet",
-        "open wallet + import BIOS/node keys",
-        {}
-      )
+    ClusterBuildPhase.create<C>(prerequisites, "WalletAndKeys", "Generate producer node keys + open the wallet").push(
+      Steps.keys.planGenerateNodeKeys<C>(Actor.Sysio, "generate-keys", "generate producer node keys", {}),
+      Steps.keys.planCreateWallet<C>(Actor.Sysio, "create-wallet", "open wallet + import BIOS/node keys", {})
     )
     // SSM mode: publish the node signing keys BEFORE any node consumes them — a
     // node's `--signature-provider ...SSM:` spec fetches its private key from
@@ -253,47 +211,21 @@ export namespace ClusterBuildDefaults {
         Steps.keys.SignatureKeyPublishPhase.beforeNodes
       )
     }
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "BiosNode",
-      "Start the bios node"
-    ).push(
-      Steps.processes.nodeop.planStart<C>(
-        Actor.Sysio,
-        "start-bios",
-        "start bios node",
-        {},
-        NodeConfig.BiosName
-      )
+    ClusterBuildPhase.create<C>(prerequisites, "BiosNode", "Start the bios node").push(
+      Steps.processes.nodeop.planStart<C>(Actor.Sysio, "start-bios", "start bios node", {}, NodeConfig.BiosName)
     )
-    const producerNodeGroup = ClusterBuildPhaseGroup.create<C>(
-      prerequisites,
-      "ProducerNodes",
-      "Start producer nodes",
-      { parallel: true, concurrency: NodeStartConcurrency }
-    )
+    const producerNodeGroup = ClusterBuildPhaseGroup.create<C>(prerequisites, "ProducerNodes", "Start producer nodes", {
+      parallel: true,
+      concurrency: NodeStartConcurrency
+    })
     producerNodes.forEach(node =>
-      ClusterBuildPhase.create<C>(
-        producerNodeGroup,
-        node.name,
-        `Start ${node.name}`
-      ).push(
-        Steps.processes.nodeop.planStart<C>(
-          Actor.Producer,
-          `start-${node.name}`,
-          `start ${node.name}`,
-          {},
-          node.name
-        )
+      ClusterBuildPhase.create<C>(producerNodeGroup, node.name, `Start ${node.name}`).push(
+        Steps.processes.nodeop.planStart<C>(Actor.Producer, `start-${node.name}`, `start ${node.name}`, {}, node.name)
       )
     )
 
     // ── bios contract + features + finality ──
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "BiosContract",
-      "Deploy sysio.bios (raw)"
-    ).push(
+    ClusterBuildPhase.create<C>(prerequisites, "BiosContract", "Deploy sysio.bios (raw)").push(
       Steps.contract.planDeploy<C>(
         Actor.Sysio,
         "deploy-bios",
@@ -303,11 +235,7 @@ export namespace ClusterBuildDefaults {
         DeployMode.raw
       )
     )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "Features",
-      "Activate protocol features"
-    ).push(
+    ClusterBuildPhase.create<C>(prerequisites, "Features", "Activate protocol features").push(
       Steps.protocol.planActivateFeatures<C>(
         Actor.Sysio,
         "activate-features",
@@ -315,11 +243,7 @@ export namespace ClusterBuildDefaults {
         {}
       )
     )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "Finality",
-      "Activate BLS instant finality"
-    ).push(
+    ClusterBuildPhase.create<C>(prerequisites, "Finality", "Activate BLS instant finality").push(
       Steps.consensus.planSetFinalizer<C>(
         Actor.Sysio,
         "set-finalizer",
@@ -329,31 +253,11 @@ export namespace ClusterBuildDefaults {
     )
 
     // ── bring-up accounts + system + roa ──
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "BringUpAccounts",
-      "Create sysio.roa + sysio.acct"
-    ).push(
-      Steps.account.planCreateSystem<C>(
-        Actor.Sysio,
-        "create-roa",
-        "create sysio.roa",
-        {},
-        "sysio.roa"
-      ),
-      Steps.account.planCreateSystem<C>(
-        Actor.Sysio,
-        "create-acct",
-        "create sysio.acct",
-        {},
-        "sysio.acct"
-      )
+    ClusterBuildPhase.create<C>(prerequisites, "BringUpAccounts", "Create sysio.roa + sysio.acct").push(
+      Steps.account.planCreateSystem<C>(Actor.Sysio, "create-roa", "create sysio.roa", {}, "sysio.roa"),
+      Steps.account.planCreateSystem<C>(Actor.Sysio, "create-acct", "create sysio.acct", {}, "sysio.acct")
     )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "SystemContract",
-      "Deploy sysio.system (raw)"
-    ).push(
+    ClusterBuildPhase.create<C>(prerequisites, "SystemContract", "Deploy sysio.system (raw)").push(
       Steps.contract.planDeploy<C>(
         Actor.Sysio,
         "deploy-system",
@@ -363,11 +267,7 @@ export namespace ClusterBuildDefaults {
         DeployMode.raw
       )
     )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "Roa",
-      "Deploy sysio.roa + setpriv + activateroa"
-    ).push(
+    ClusterBuildPhase.create<C>(prerequisites, "Roa", "Deploy sysio.roa + setpriv + activateroa").push(
       Steps.contract.planDeploy<C>(
         Actor.Sysio,
         "deploy-roa",
@@ -418,28 +318,12 @@ export namespace ClusterBuildDefaults {
         }))
       )
     )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "RemainingSystemAccounts",
-      "Create remaining sysio.* accounts"
-    ).push(
-      ...Constants.SYSTEM_ACCOUNTS.filter(
-        account => account !== "sysio.roa" && account !== "sysio.acct"
-      ).map(account =>
-        Steps.account.planCreateSystem<C>(
-          Actor.Sysio,
-          `create-${account}`,
-          `create ${account}`,
-          {},
-          account
-        )
+    ClusterBuildPhase.create<C>(prerequisites, "RemainingSystemAccounts", "Create remaining sysio.* accounts").push(
+      ...Constants.SYSTEM_ACCOUNTS.filter(account => account !== "sysio.roa" && account !== "sysio.acct").map(account =>
+        Steps.account.planCreateSystem<C>(Actor.Sysio, `create-${account}`, `create ${account}`, {}, account)
       )
     )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "ProducerHandoff",
-      "Set producers + hand off from sysio"
-    ).push(
+    ClusterBuildPhase.create<C>(prerequisites, "ProducerHandoff", "Set producers + hand off from sysio").push(
       Steps.consensus.planSetProducerKeys<C>(
         Actor.Sysio,
         "set-producer-keys",
@@ -449,11 +333,7 @@ export namespace ClusterBuildDefaults {
     )
 
     // ── token (SYS) + authex/msig/wrap ──
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "TokenContract",
-      "Deploy sysio.token (system) + distribute SYS"
-    ).push(
+    ClusterBuildPhase.create<C>(prerequisites, "TokenContract", "Deploy sysio.token (system) + distribute SYS").push(
       Steps.contract.planDeploy<C>(
         Actor.Sysio,
         "deploy-token",
@@ -491,11 +371,7 @@ export namespace ClusterBuildDefaults {
         )
       )
     )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "AuthexMsigWrap",
-      "Deploy sysio.authex + sysio.msig + sysio.wrap"
-    ).push(
+    ClusterBuildPhase.create<C>(prerequisites, "AuthexMsigWrap", "Deploy sysio.authex + sysio.msig + sysio.wrap").push(
       Steps.contract.planDeploy<C>(
         Actor.Sysio,
         "deploy-authex",
@@ -534,11 +410,7 @@ export namespace ClusterBuildDefaults {
       SysioContractName.chalg,
       SysioContractName.dclaim
     ]
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "OPPContracts",
-      "Deploy the OPP system contracts"
-    ).push(
+    ClusterBuildPhase.create<C>(prerequisites, "OPPContracts", "Deploy the OPP system contracts").push(
       ...oppContracts.map(contract =>
         Steps.contract.planDeploy<C>(
           Actor.Sysio,
@@ -567,11 +439,7 @@ export namespace ClusterBuildDefaults {
     )
 
     // ── OPP config + emissions + dclaim ──
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "OPPConfig",
-      "Configure sysio.epoch + sysio.opreg"
-    ).push(
+    ClusterBuildPhase.create<C>(prerequisites, "OPPConfig", "Configure sysio.epoch + sysio.opreg").push(
       Steps.contracts.sysio.epoch.planSetconfig<C>(
         Actor.Sysio,
         "configure-epoch",
@@ -587,11 +455,7 @@ export namespace ClusterBuildDefaults {
         operatorRegistryConfig(config)
       )
     )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "Emissions",
-      "Seed WIRE + configure emissions"
-    ).push(
+    ClusterBuildPhase.create<C>(prerequisites, "Emissions", "Seed WIRE + configure emissions").push(
       Steps.contracts.sysio.token.planCreate<C>(
         Actor.Sysio,
         "create-wire",
@@ -626,24 +490,10 @@ export namespace ClusterBuildDefaults {
         "anchor node-owner vesting at chain head time",
         {}
       ),
-      Steps.contracts.sysio.system.planInitt5<C>(
-        Actor.Sysio,
-        "init-t5",
-        "seed t5_state at chain head time",
-        {}
-      )
+      Steps.contracts.sysio.system.planInitt5<C>(Actor.Sysio, "init-t5", "seed t5_state at chain head time", {})
     )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "DistributionClaims",
-      "Initialize sysio.dclaim"
-    ).push(
-      Steps.contracts.sysio.dclaim.planSetconfig<C>(
-        Actor.Sysio,
-        "init-dclaim",
-        "initialize the dclaim cap_config",
-        {}
-      )
+    ClusterBuildPhase.create<C>(prerequisites, "DistributionClaims", "Initialize sysio.dclaim").push(
+      Steps.contracts.sysio.dclaim.planSetconfig<C>(Actor.Sysio, "init-dclaim", "initialize the dclaim cap_config", {})
     )
 
     // ── the bootstrap node owner (issues every subsequent resource policy) ──
@@ -652,11 +502,7 @@ export namespace ClusterBuildDefaults {
     // `forcereg` shortcut. Registering at tier 1 allocates the ROA reserve
     // that `WireUserTool.provisionWireUser` (and every `addpolicy` issued as
     // `Constants.BOOTSTRAP_NODE_OWNER`) draws from.
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "BootstrapNodeOwner",
-      "Create + register the bootstrap node owner"
-    ).push(
+    ClusterBuildPhase.create<C>(prerequisites, "BootstrapNodeOwner", "Create + register the bootstrap node owner").push(
       Steps.contracts.sysio.roa.planNewnameduser<C>(
         Actor.Sysio,
         "create-node-owner",
@@ -698,15 +544,9 @@ export namespace ClusterBuildDefaults {
         "verify-node-owner",
         "the nodeowners row exists (else surface the audit rejection)",
         async ctx => {
-          const registered = await readNodeOwner(
-            ctx.wire,
-            Constants.BOOTSTRAP_NODE_OWNER
-          )
+          const registered = await readNodeOwner(ctx.wire, Constants.BOOTSTRAP_NODE_OWNER)
           if (registered == null) {
-            const audit = await readNodeOwnerReg(
-              ctx.wire,
-              Constants.BOOTSTRAP_NODE_OWNER
-            )
+            const audit = await readNodeOwnerReg(ctx.wire, Constants.BOOTSTRAP_NODE_OWNER)
             Assert.fail(
               `bootstrap node owner ${Constants.BOOTSTRAP_NODE_OWNER} was not registered by nodeownreg` +
                 (audit == null
@@ -748,11 +588,7 @@ export namespace ClusterBuildDefaults {
         )
       )
     } else {
-      ClusterBuildPhase.create<C>(
-        prerequisites,
-        "EthereumOutpost",
-        "Deploy the Ethereum outpost"
-      ).push(
+      ClusterBuildPhase.create<C>(prerequisites, "EthereumOutpost", "Deploy the Ethereum outpost").push(
         Steps.processes.anvil.planStart<C>(
           Actor.EthereumOutpost,
           "start-anvil",
@@ -772,38 +608,22 @@ export namespace ClusterBuildDefaults {
           {}
         )
       )
-      ClusterBuildPhase.create<C>(
-        prerequisites,
-        "SolanaOutpost",
-        "Deploy the Solana outpost"
-      ).push(
+      ClusterBuildPhase.create<C>(prerequisites, "SolanaOutpost", "Deploy the Solana outpost").push(
         Steps.processes.solanaValidator.planStart<C>(
           Actor.SolanaOutpost,
           "start-validator",
           "start solana-test-validator + liqsol_core (OPP outpost)",
           {}
         ),
-        Steps.solanaOutpost.planDeploy<C>(
-          Actor.SolanaOutpost,
-          "deploy-solana",
-          "init PDAs + provision SPL reserves",
-          { timeoutMs: 900_000 }
-        )
+        Steps.solanaOutpost.planDeploy<C>(Actor.SolanaOutpost, "deploy-solana", "init PDAs + provision SPL reserves", {
+          timeoutMs: 900_000
+        })
       )
     }
 
     // ── registry + optional mock reserves + underwriter config ──
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "Registry",
-      "Seed chains + tokens"
-    ).push(
-      Steps.registry.planSeedRegistry<C>(
-        Actor.Sysio,
-        "seed-registry",
-        "register chains, tokens, chain-tokens",
-        {}
-      )
+    ClusterBuildPhase.create<C>(prerequisites, "Registry", "Seed chains + tokens").push(
+      Steps.registry.planSeedRegistry<C>(Actor.Sysio, "seed-registry", "register chains, tokens, chain-tokens", {})
     )
     // Mock (chain, token) PRIMARY reserves — opt-in via `--enable-mock-reserves`
     // (default off, so a real / external depot never gets fake reserves). Seeded
@@ -818,11 +638,7 @@ export namespace ClusterBuildDefaults {
         {}
       )
     }
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "UnderwriterConfig",
-      "Configure sysio.uwrit"
-    ).push(
+    ClusterBuildPhase.create<C>(prerequisites, "UnderwriterConfig", "Configure sysio.uwrit").push(
       Steps.contracts.sysio.uwrit.planSetconfig<C>(
         Actor.Sysio,
         "configure-uwrit",
@@ -838,11 +654,7 @@ export namespace ClusterBuildDefaults {
         }
       )
     )
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "ReserveConfig",
-      "Configure sysio.reserv fee routing"
-    ).push(
+    ClusterBuildPhase.create<C>(prerequisites, "ReserveConfig", "Configure sysio.reserv fee routing").push(
       Steps.contracts.sysio.reserv.planSetconfig<C>(
         Actor.Sysio,
         "configure-reserv",
@@ -943,22 +755,9 @@ export namespace ClusterBuildDefaults {
     NodeConfig.plan(config)
       .filter(node => node.role === NodeRole.operator)
       .forEach(node => {
-        const actor =
-          node.batchOperatorLabel != null
-            ? Actor.BatchOperator
-            : Actor.Underwriter
-        ClusterBuildPhase.create<C>(
-          operatorNodeGroup,
-          node.name,
-          `Start ${node.name}`
-        ).push(
-          Steps.processes.nodeop.planStart<C>(
-            actor,
-            `start-${node.name}`,
-            `start ${node.name}`,
-            {},
-            node.name
-          )
+        const actor = node.batchOperatorLabel != null ? Actor.BatchOperator : Actor.Underwriter
+        ClusterBuildPhase.create<C>(operatorNodeGroup, node.name, `Start ${node.name}`).push(
+          Steps.processes.nodeop.planStart<C>(actor, `start-${node.name}`, `start ${node.name}`, {}, node.name)
         )
       })
 
@@ -981,12 +780,9 @@ export namespace ClusterBuildDefaults {
         "build the initial batch-operator schedule",
         {}
       ),
-      Steps.contracts.sysio.msgch.planBootstrap<C>(
-        Actor.Sysio,
-        "bootstrap-epoch",
-        "bootstrap the first epoch",
-        { timeoutMs: 300_000 }
-      )
+      Steps.contracts.sysio.msgch.planBootstrap<C>(Actor.Sysio, "bootstrap-epoch", "bootstrap the first epoch", {
+        timeoutMs: 300_000
+      })
     )
 
     // Bootstrap success gate. LOCAL mode watches the depot's own epoch advance
@@ -1059,9 +855,7 @@ export namespace ClusterBuildDefaults {
     // would let `plannedLabels` gain a condition the copy step never learns,
     // emitting a script that execs a binary nobody copied.
     const labels = DaemonConfig.plannedLabels(config),
-      debuggingServerEnabled = labels.includes(
-        DaemonConfig.DebuggingServerSubpath
-      ),
+      debuggingServerEnabled = labels.includes(DaemonConfig.DebuggingServerSubpath),
       phase = ClusterBuildPhase.create<C>(
         parent,
         "StartScripts",
@@ -1111,10 +905,7 @@ export namespace ClusterBuildDefaults {
    * @param ctx - The build context.
    * @param signal - Abort signal.
    */
-  export async function runEpochAdvance<C extends ClusterBuildContext>(
-    ctx: C,
-    signal: AbortSignal
-  ): Promise<void> {
+  export async function runEpochAdvance<C extends ClusterBuildContext>(ctx: C, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
     await pollUntil(
       `sysio.epoch current_epoch_index reaches ${EpochAdvanceTargetIndex}`,
@@ -1123,9 +914,7 @@ export namespace ClusterBuildDefaults {
           const { rows } = await ctx.wire.getEpochState()
           return (rows[0]?.current_epoch_index ?? 0) >= EpochAdvanceTargetIndex
         } catch (error) {
-          log.debug(
-            `[cluster] epoch-state read transient: ${error instanceof Error ? error.message : String(error)}`
-          )
+          log.debug(`[cluster] epoch-state read transient: ${error instanceof Error ? error.message : String(error)}`)
           return false
         }
       },
@@ -1149,22 +938,18 @@ export namespace ClusterBuildDefaults {
    * @returns The `epoch::setconfig` action data.
    * @throws If the resulting group shape violates the spec.
    */
-  export function epochConfig(
-    config: ClusterConfig
-  ): SysioContracts.SysioEpochSetconfigAction {
-    const { operatorsPerEpoch, batchOpGroups, batchOperatorMinimumActive } =
-      BatchOperatorSchedule.resolve({
-        batchOperatorCount: config.batchOperatorCount,
-        operatorsPerEpoch: config.operatorsPerEpoch,
-        batchOpGroups: config.batchOpGroups
-      })
+  export function epochConfig(config: ClusterConfig): SysioContracts.SysioEpochSetconfigAction {
+    const { operatorsPerEpoch, batchOpGroups, batchOperatorMinimumActive } = BatchOperatorSchedule.resolve({
+      batchOperatorCount: config.batchOperatorCount,
+      operatorsPerEpoch: config.operatorsPerEpoch,
+      batchOpGroups: config.batchOpGroups
+    })
     return {
       epoch_duration_sec: config.epochDurationSec,
       operators_per_epoch: operatorsPerEpoch,
       batch_operator_minimum_active: batchOperatorMinimumActive,
       batch_op_groups: batchOpGroups,
-      epoch_retention_envelope_log_count:
-        config.epochRetentionEnvelopeLogCount ?? EnvelopeLogRetentionEpochs
+      epoch_retention_envelope_log_count: config.epochRetentionEnvelopeLogCount ?? EnvelopeLogRetentionEpochs
     }
   }
 
@@ -1173,12 +958,8 @@ export namespace ClusterBuildDefaults {
    * collateral minimums (a flow's `defaults.requiredBatchOperatorCollateral` etc. flow through
    * here, gating `OPERATOR_STATUS_ACTIVE` on real deposits).
    */
-  function operatorRegistryConfig(
-    config: ClusterConfig
-  ): SysioContracts.SysioOpregSetconfigAction {
-    const toChainMinBond = (
-      requirement: CollateralRequirement
-    ): SysioContracts.SysioOpregChainMinBondType => ({
+  function operatorRegistryConfig(config: ClusterConfig): SysioContracts.SysioOpregSetconfigAction {
+    const toChainMinBond = (requirement: CollateralRequirement): SysioContracts.SysioOpregChainMinBondType => ({
       chain_code: { value: requirement.chainCode },
       token_code: { value: requirement.tokenCode },
       min_bond: requirement.minimumBond,
@@ -1189,15 +970,11 @@ export namespace ClusterBuildDefaults {
       max_available_batch_ops: 63,
       max_available_underwriters: 21,
       terminate_prune_delay_ms: 600_000,
-      terminate_max_consecutive_misses:
-        config.terminateMaxConsecutiveMisses ??
-        DefaultTerminateMaxConsecutiveMisses,
-      terminate_max_pct_misses_24h:
-        config.terminateMaxPercentMisses24h ?? DefaultTerminateMaxPercentMisses24h,
+      terminate_max_consecutive_misses: config.terminateMaxConsecutiveMisses ?? DefaultTerminateMaxConsecutiveMisses,
+      terminate_max_pct_misses_24h: config.terminateMaxPercentMisses24h ?? DefaultTerminateMaxPercentMisses24h,
       terminate_window_ms: config.terminateWindowMs ?? DefaultTerminateWindowMs,
       req_prod_collat: config.requiredProducerCollateral.map(toChainMinBond),
-      req_batchop_collat:
-        config.requiredBatchOperatorCollateral.map(toChainMinBond),
+      req_batchop_collat: config.requiredBatchOperatorCollateral.map(toChainMinBond),
       req_uw_collat: config.requiredUnderwriterCollateral.map(toChainMinBond)
     }
   }

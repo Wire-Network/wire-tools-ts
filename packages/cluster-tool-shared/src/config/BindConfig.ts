@@ -43,9 +43,7 @@ export const BindConfigNodeopClusterPortsSchema = z.object({
   underwriters: z.array(BindConfigNodeopPortsSchema)
 })
 /** The full nodeop port set across the cluster (one pair per node, per role). */
-export type BindConfigNodeopClusterPorts = z.infer<
-  typeof BindConfigNodeopClusterPortsSchema
->
+export type BindConfigNodeopClusterPorts = z.infer<typeof BindConfigNodeopClusterPortsSchema>
 
 /** A daemon that listens on one address + one port (kiod, anvil, debuggingServer). */
 export const BindConfigDaemonSchema = z.object({
@@ -207,8 +205,7 @@ export type BindDaemonOptions = BindOverrides<BindConfigDaemon>
 export type BindNodeopPortsOptions = BindOverrides<BindConfigNodeopPorts>
 
 /** Caller bind options for the cluster-wide nodeop port set. */
-export type BindNodeopClusterPortsOptions =
-  BindOverrides<BindConfigNodeopClusterPorts>
+export type BindNodeopClusterPortsOptions = BindOverrides<BindConfigNodeopClusterPorts>
 
 /** Caller bind options for the nodeop fleet. */
 export type BindNodeopOptions = BindOverrides<BindConfigNodeop>

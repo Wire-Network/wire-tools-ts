@@ -35,12 +35,8 @@ import {
 } from "@wireio/cluster-tool"
 import { SwapToWireScenarioConstants as Constants } from "./SwapToWireScenarioConstants.js"
 
-const {
-  SysioContractName,
-  SysioMsgchAttestationtype,
-  SysioOpregOperatorstatus,
-  SysioUwritUnderwriterequeststatus
-} = SysioContracts
+const { SysioContractName, SysioMsgchAttestationtype, SysioOpregOperatorstatus, SysioUwritUnderwriterequeststatus } =
+  SysioContracts
 const { Actor } = Report
 
 const log = getLogger(__filename)
@@ -55,10 +51,7 @@ const log = getLogger(__filename)
  * @param labels - The underwriters' durable harness `label` handles to check.
  * @returns Whether the whole roster is ACTIVE.
  */
-async function underwritersActive(
-  ctx: SwapScenarioContext,
-  labels: string[]
-): Promise<boolean> {
+async function underwritersActive(ctx: SwapScenarioContext, labels: string[]): Promise<boolean> {
   const { rows } = await ctx.wire
     .getSysioContract(SysioContractName.opreg)
     .tables.operators.query({ limit: Constants.OperatorTableRowLimit })
@@ -67,11 +60,7 @@ async function underwritersActive(
       operator = rows.find(row => row.account === account)
     return (
       operator != null &&
-      matchesProtoEnum(
-        operator.status,
-        SysioOpregOperatorstatus,
-        SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
-      )
+      matchesProtoEnum(operator.status, SysioOpregOperatorstatus, SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE)
     )
   })
 }
@@ -89,13 +78,8 @@ async function underwritersActive(
  * @param target - The post-fee WIRE amount the credit must reach.
  * @returns A poll predicate for whether the credit is at or above `target`.
  */
-function claimableReachedPredicate(
-  ctx: SwapScenarioContext,
-  account: string,
-  target: bigint
-): () => Promise<boolean> {
-  return () =>
-    ctx.wire.getWireClaimable(account).then(amount => amount >= target)
+function claimableReachedPredicate(ctx: SwapScenarioContext, account: string, target: bigint): () => Promise<boolean> {
+  return () => ctx.wire.getWireClaimable(account).then(amount => amount >= target)
 }
 
 /**
@@ -106,17 +90,9 @@ function claimableReachedPredicate(
  * @returns The matching `sysio.uwrit::uwreqs` row.
  * @throws When no to-WIRE uwreq row exists yet.
  */
-async function assertToWireUwreq(
-  ctx: SwapScenarioContext
-): Promise<SysioContracts.SysioUwritUwRequestTType> {
-  const request = await ctx.uwreq(
-    Constants.EthereumChainCode,
-    Constants.WireChainCode
-  )
-  Assert.ok(
-    request != null,
-    "to-WIRE uwreq row (src=ETHEREUM, dst=WIRE) not found"
-  )
+async function assertToWireUwreq(ctx: SwapScenarioContext): Promise<SysioContracts.SysioUwritUwRequestTType> {
+  const request = await ctx.uwreq(Constants.EthereumChainCode, Constants.WireChainCode)
+  Assert.ok(request != null, "to-WIRE uwreq row (src=ETHEREUM, dst=WIRE) not found")
   return request
 }
 
@@ -218,11 +194,7 @@ function planRequestSwap(
  * Named runner — bind `ReserveManager` to the swap user's wallet and submit
  * the ONE `requestSwap` write carrying the curve target from `ctx.outputs`.
  */
-async function runRequestSwap(
-  ctx: SwapScenarioContext,
-  input: RequestSwapInput,
-  signal: AbortSignal
-): Promise<void> {
+async function runRequestSwap(ctx: SwapScenarioContext, input: RequestSwapInput, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted()
   const swapUser = ctx.outputs.assert(swapUserOutputKey()),
     recipient = ctx.outputs.assert(SwapToWireScenario.Output.recipient),
@@ -237,10 +209,7 @@ async function runRequestSwap(
   )
   const reserveManager = contractView<ReserveManagerRequestSwapContract>(
     reserveManagerAddress,
-    EthereumCollateralTool.loadOutpostAbi(
-      ctx.config.ethereumPath,
-      Constants.ReserveManagerContractName
-    ),
+    EthereumCollateralTool.loadOutpostAbi(ctx.config.ethereumPath, Constants.ReserveManagerContractName),
     swapUser.ethereumWallet
   )
   const result = await requestEthereumSwap(reserveManager, {
@@ -254,13 +223,8 @@ async function runRequestSwap(
     targetAmount: target,
     targetToleranceBps: input.toleranceBps
   })
-  Assert.ok(
-    isNotEmpty(result.transactionHash),
-    "SwapToWireScenario: requestSwap must return a mined transaction hash"
-  )
-  log.info(
-    `[SwapToWire] requestSwap mined: ${result.transactionHash} (block ${result.blockNumber})`
-  )
+  Assert.ok(isNotEmpty(result.transactionHash), "SwapToWireScenario: requestSwap must return a mined transaction hash")
+  log.info(`[SwapToWire] requestSwap mined: ${result.transactionHash} (block ${result.blockNumber})`)
 }
 
 /**
@@ -320,18 +284,14 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
   }
 
   /** The swap flows share the {@link SwapScenarioContext} query surface. */
-  override createContext(
-    config: ClusterConfig,
-    log: Logger
-  ): SwapScenarioContext {
+  override createContext(config: ClusterConfig, log: Logger): SwapScenarioContext {
     return new SwapScenarioContext(config, log)
   }
 
   plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const config = cluster.context.config,
-      underwriterLabels = Array.from(
-        { length: config.underwriterCount },
-        (_, index) => HarnessConstants.underwriterLabel(index)
+      underwriterLabels = Array.from({ length: config.underwriterCount }, (_, index) =>
+        HarnessConstants.underwriterLabel(index)
       ),
       writeOptions = { timeoutMs: Constants.WriteTimeoutMs },
       activeStepOptions = {
@@ -353,18 +313,10 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
       "SubstrateHealth",
       "The chain produces blocks and the source reserve is seeded"
     ).push(
-      verifyStep<SwapScenarioContext>(
-        Actor.Sysio,
-        "chain-producing",
-        "WIRE chain is producing blocks",
-        async ctx => {
-          const info = await ctx.wire.getInfo()
-          Assert.ok(
-            Number(info.head_block_num) > 0,
-            `head_block_num must be positive (got ${info.head_block_num})`
-          )
-        }
-      ),
+      verifyStep<SwapScenarioContext>(Actor.Sysio, "chain-producing", "WIRE chain is producing blocks", async ctx => {
+        const info = await ctx.wire.getInfo()
+        Assert.ok(Number(info.head_block_num) > 0, `head_block_num must be positive (got ${info.head_block_num})`)
+      }),
       verifyStep<SwapScenarioContext>(
         Actor.Sysio,
         "reserve-custody-seeded",
@@ -377,9 +329,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
             Constants.EthereumTokenCode,
             Constants.EthereumReserveCode
           )
-          const custody = await ctx.wire.getWireBalance(
-            Constants.ReserveCustodyAccount
-          )
+          const custody = await ctx.wire.getWireBalance(Constants.ReserveCustodyAccount)
           Assert.ok(
             custody >= book.wire,
             `sysio.reserv custody (${custody}) must back the reserve's WIRE book (${book.wire})`
@@ -397,11 +347,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
     )
 
     // ── 3. The WIRE recipient — exists, holds no WIRE until the payout ──
-    ClusterBuildPhase.create(
-      cluster,
-      "Recipient",
-      "Provision the (unfunded) WIRE recipient"
-    ).push(
+    ClusterBuildPhase.create(cluster, "Recipient", "Provision the (unfunded) WIRE recipient").push(
       planProvisionRecipient(
         Actor.User,
         "provision-recipient",
@@ -465,9 +411,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
             Constants.EthereumTokenCode,
             Constants.EthereumReserveCode
           )
-          const custody = await ctx.wire.getWireBalance(
-            Constants.ReserveCustodyAccount
-          )
+          const custody = await ctx.wire.getWireBalance(Constants.ReserveCustodyAccount)
           const feeBps = await WireReserveTool.readFeeBps(ctx.wire)
           const grossWireLeg = WireReserveTool.tokenToWire(
             book.chain,
@@ -502,11 +446,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
     )
 
     // ── 6. CreateUwreq — the PENDING to-WIRE UWREQ appears ──
-    ClusterBuildPhase.create(
-      cluster,
-      "CreateUwreq",
-      "The depot creates the PENDING to-WIRE UWREQ"
-    ).push(
+    ClusterBuildPhase.create(cluster, "CreateUwreq", "The depot creates the PENDING to-WIRE UWREQ").push(
       verifyStep<SwapScenarioContext>(
         Actor.Sysio,
         "uwreq-appears",
@@ -514,11 +454,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
         async ctx => {
           await pollUntil(
             "to-WIRE UWREQ row appears",
-            async () =>
-              (await ctx.uwreq(
-                Constants.EthereumChainCode,
-                Constants.WireChainCode
-              )) != null,
+            async () => (await ctx.uwreq(Constants.EthereumChainCode, Constants.WireChainCode)) != null,
             Constants.UwreqDeadlineMs,
             Constants.LongPollIntervalMs
           )
@@ -533,11 +469,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
     )
 
     // ── 7. RaceSourceLeg — CONFIRMED with exactly ONE lock (source leg) ──
-    ClusterBuildPhase.create(
-      cluster,
-      "RaceSourceLeg",
-      "The single-leg race resolves with one source-chain lock"
-    ).push(
+    ClusterBuildPhase.create(cluster, "RaceSourceLeg", "The single-leg race resolves with one source-chain lock").push(
       verifyStep<SwapScenarioContext>(
         Actor.Underwriter,
         "race-confirms-single-lock",
@@ -546,10 +478,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
           await pollUntil(
             "to-WIRE UWREQ status=CONFIRMED",
             async () => {
-              const request = await ctx.uwreq(
-                Constants.EthereumChainCode,
-                Constants.WireChainCode
-              )
+              const request = await ctx.uwreq(Constants.EthereumChainCode, Constants.WireChainCode)
               return (
                 request != null &&
                 matchesProtoEnum(
@@ -565,10 +494,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
           // The WIRE leg carries no bond — only the ETH source leg is locked.
           const request = await assertToWireUwreq(ctx)
           const locks = await ctx.locksForUwreq(Number(request.id))
-          Assert.ok(
-            locks.length === 1,
-            `the WIRE leg carries no bond — expected exactly 1 lock, got ${locks.length}`
-          )
+          Assert.ok(locks.length === 1, `the WIRE leg carries no bond — expected exactly 1 lock, got ${locks.length}`)
           Assert.ok(
             slugValue(locks[0].chain_code) === Constants.EthereumChainCode,
             `the single lock must sit on the SOURCE chain (got chain_code=${slugValue(locks[0].chain_code)})`
@@ -589,9 +515,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
         "recipient-paid-exact",
         "recipient receives EXACTLY the post-fee target (the fee comes out of the WIRE leg)",
         async ctx => {
-          const recipient = ctx.outputs.assert(
-              SwapToWireScenario.Output.recipient
-            ),
+          const recipient = ctx.outputs.assert(SwapToWireScenario.Output.recipient),
             target = ctx.outputs.assert(SwapToWireScenario.Output.target)
           // paywire CREDITS the recipient rather than transferring: it settles inside the
           // never-throw consensus dispatch chain, where a pushed `sysio.token::transfer` would let
@@ -626,9 +550,7 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
           // settlement). #414 charges the WIRE-leg fee on the gross
           // intermediate ON TOP of the recipient's payout, so the source
           // reserve's WIRE side gives up target + fee.
-          const before = ctx.outputs.assert(
-              SwapToWireScenario.Output.bookBefore
-            ),
+          const before = ctx.outputs.assert(SwapToWireScenario.Output.bookBefore),
             target = ctx.outputs.assert(SwapToWireScenario.Output.target),
             { fee } = ctx.outputs.assert(SwapToWireScenario.Output.wireLegFee)
           const book = await ctx.reserveBook(
@@ -657,28 +579,19 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
           // underwriter's half stays in custody as a `uwfees` accrual until that
           // account calls `claimuwfee`, which this flow never does. The drain
           // can land just after emit, so poll until custody settles.
-          const custodyBefore = ctx.outputs.assert(
-              SwapToWireScenario.Output.custodyBefore
-            ),
+          const custodyBefore = ctx.outputs.assert(SwapToWireScenario.Output.custodyBefore),
             target = ctx.outputs.assert(SwapToWireScenario.Output.target),
             // The payout leg only leaves custody once the recipient claims it,
             // which the recipient-paid-exact step above already did.
-            { rewardShare } = ctx.outputs.assert(
-              SwapToWireScenario.Output.wireLegFee
-            ),
+            { rewardShare } = ctx.outputs.assert(SwapToWireScenario.Output.wireLegFee),
             expectedCustody = custodyBefore - target - rewardShare
           await pollUntil(
             "rewards bucket drained from sysio.reserv custody",
-            async () =>
-              (await ctx.wire.getWireBalance(
-                Constants.ReserveCustodyAccount
-              )) === expectedCustody,
+            async () => (await ctx.wire.getWireBalance(Constants.ReserveCustodyAccount)) === expectedCustody,
             Constants.PayoutDeadlineMs,
             Constants.LongPollIntervalMs
           )
-          const custody = await ctx.wire.getWireBalance(
-            Constants.ReserveCustodyAccount
-          )
+          const custody = await ctx.wire.getWireBalance(Constants.ReserveCustodyAccount)
           Assert.ok(
             custody === expectedCustody,
             `sysio.reserv custody must settle at ${expectedCustody}, got ${custody}`
@@ -724,16 +637,12 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
         "no outbound SWAP_REMIT was queued for the to-WIRE uwreq (the depot itself is the payer)",
         async ctx => {
           const request = await assertToWireUwreq(ctx)
-          const { rows } = await ctx.wire
-            .getSysioContract(SysioContractName.msgch)
-            .tables.attestations.query({
-              limit: Constants.AttestationScanRowLimit
-            })
+          const { rows } = await ctx.wire.getSysioContract(SysioContractName.msgch).tables.attestations.query({
+            limit: Constants.AttestationScanRowLimit
+          })
           // SwapRemit.original_message_id low 8 bytes = uwreq id (LE) — the
           // id's low byte leads the hex-encoded attestation data.
-          const requestIdHexLittleEndian = Number(request.id)
-            .toString(16)
-            .padStart(Constants.UwreqIdHexByteWidth, "0")
+          const requestIdHexLittleEndian = Number(request.id).toString(16).padStart(Constants.UwreqIdHexByteWidth, "0")
           const remitForRequest = rows.find(
             attestation =>
               matchesProtoEnum(
@@ -759,18 +668,12 @@ export namespace SwapToWireScenario {
   /** Typed cross-step outputs — no raw string keys, no shared mutable closures. */
   export namespace Output {
     /** The provisioned WIRE recipient (account + ChainAddress byte encoding). */
-    export const recipient = outputKey<WireUser>(
-      "swapToWire.recipient",
-      "the provisioned WIRE recipient"
-    )
+    export const recipient = outputKey<WireUser>("swapToWire.recipient", "the provisioned WIRE recipient")
     /**
      * The POST-FEE WIRE target the request carries — `split_wire_fee(gross).net`
      * over the single-reserve curve leg. `paywire` pays this exactly.
      */
-    export const target = outputKey<bigint>(
-      "swapToWire.target",
-      "post-fee single-reserve cp_output WIRE target"
-    )
+    export const target = outputKey<bigint>("swapToWire.target", "post-fee single-reserve cp_output WIRE target")
     /**
      * The WIRE-leg fee decomposition charged on the GROSS curve leg (at the
      * live uwconfig `fee_bps`). `target + fee` is the gross — what the source
@@ -784,14 +687,8 @@ export namespace SwapToWireScenario {
       "WIRE-leg fee decomposition charged on the gross curve leg"
     )
     /** The ETHEREUM/ETH/PRIMARY book snapshot taken at quote time. */
-    export const bookBefore = outputKey<ReserveBook>(
-      "swapToWire.bookBefore",
-      "source reserve (chain, wire) baseline"
-    )
+    export const bookBefore = outputKey<ReserveBook>("swapToWire.bookBefore", "source reserve (chain, wire) baseline")
     /** The `sysio.reserv` custody balance snapshot taken at quote time. */
-    export const custodyBefore = outputKey<bigint>(
-      "swapToWire.custodyBefore",
-      "sysio.reserv WIRE custody baseline"
-    )
+    export const custodyBefore = outputKey<bigint>("swapToWire.custodyBefore", "sysio.reserv WIRE custody baseline")
   }
 }

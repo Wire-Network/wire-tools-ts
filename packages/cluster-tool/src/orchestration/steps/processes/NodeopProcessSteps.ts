@@ -10,10 +10,7 @@ import { NodeopProcess } from "../../../cluster/processes/NodeopProcess.js"
 import { Report } from "../../../report/Report.js"
 import { OperatorDaemonTool } from "../../../tools/wire/OperatorDaemonTool.js"
 import { ClusterBuildContext } from "../../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../ClusterBuildStep.js"
 import { pollUntil } from "../../StepTools.js"
 import type { StepInput } from "../../StepRunner.js"
 import { OperatorAccount } from "../../outputs/OperatorAccount.js"
@@ -65,9 +62,7 @@ export namespace NodeopProcessSteps {
    * underwriter → the provisioned operator, whose OPP daemon args ride
    * `extraArgs`). One step per node.
    */
-  export function planStart<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planStart<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -91,9 +86,7 @@ export namespace NodeopProcessSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const node = NodeConfig.plan(ctx.config).find(
-      planned => planned.name === input.nodeName
-    )
+    const node = NodeConfig.plan(ctx.config).find(planned => planned.name === input.nodeName)
     Assert.ok(node != null, `nodeop start: node not planned: ${input.nodeName}`)
     if (ctx.processManager.get(node.name) != null) return
 
@@ -128,9 +121,7 @@ export namespace NodeopProcessSteps {
    * plugin permanently disables its cron. The relaunch REPLAYS the synced
    * chain, so the preflight sees every bootstrap-written registration.
    */
-  export function planRestart<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planRestart<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -154,18 +145,10 @@ export namespace NodeopProcessSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const node = NodeConfig.plan(ctx.config).find(
-      planned => planned.name === input.nodeName
-    )
-    Assert.ok(
-      node != null,
-      `nodeop restart: node not planned: ${input.nodeName}`
-    )
+    const node = NodeConfig.plan(ctx.config).find(planned => planned.name === input.nodeName)
+    Assert.ok(node != null, `nodeop restart: node not planned: ${input.nodeName}`)
     const running = ctx.processManager.get(node.name)
-    Assert.ok(
-      running instanceof NodeopProcess,
-      `nodeop restart: ${node.name} is not a running nodeop`
-    )
+    Assert.ok(running instanceof NodeopProcess, `nodeop restart: ${node.name} is not a running nodeop`)
 
     // Sync gate: the depot head at gate entry bounds the bootstrap-written
     // state (registrations, links) the second boot must be able to replay.
@@ -176,9 +159,7 @@ export namespace NodeopProcessSteps {
         running.head().then(
           localHead => localHead >= depotHead,
           error => {
-            log.debug(
-              `${node.name} head probe transient: ${error instanceof Error ? error.message : String(error)}`
-            )
+            log.debug(`${node.name} head probe transient: ${error instanceof Error ? error.message : String(error)}`)
             return false
           }
         ),
@@ -213,24 +194,15 @@ export namespace NodeopProcessSteps {
    * account itself. Exported so `ClusterManager.run` (the relaunch path) reuses
    * the SAME resolution logic — no duplication.
    */
-  export function resolveOperator(
-    ctx: ClusterBuildContext,
-    node: NodeConfig
-  ): OperatorAccount {
+  export function resolveOperator(ctx: ClusterBuildContext, node: NodeConfig): OperatorAccount {
     return match(node.role)
-      .with(
-        NodeRole.bios,
-        () => ctx.keyStore.operator(NodeConfig.BiosName) ?? BiosOperator
-      )
+      .with(NodeRole.bios, () => ctx.keyStore.operator(NodeConfig.BiosName) ?? BiosOperator)
       .with(NodeRole.producer, () => producerOperator(ctx, node))
       .otherwise(() => ctx.keyStore.assertOperator(assertOperatorLabel(node)))
   }
 
   /** A producer node's OperatorAccount — its first hosted account + the node-shared keys. */
-  function producerOperator(
-    ctx: ClusterBuildContext,
-    node: NodeConfig
-  ): OperatorAccount {
+  function producerOperator(ctx: ClusterBuildContext, node: NodeConfig): OperatorAccount {
     const nodeKeys = ctx.keyStore.node(node.index),
       // A producer never goes through `roa::newuser`, so its handle IS its
       // on-chain name.
@@ -250,10 +222,7 @@ export namespace NodeopProcessSteps {
   function assertOperatorLabel(node: NodeConfig): string {
     const { batchOperatorLabel, underwriterLabel } = node,
       label = batchOperatorLabel ?? underwriterLabel
-    Assert.ok(
-      label != null,
-      `nodeop start: operator node ${node.name} has no operator label`
-    )
+    Assert.ok(label != null, `nodeop start: operator node ${node.name} has no operator label`)
     return label
   }
 

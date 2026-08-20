@@ -61,10 +61,7 @@ describe("RouterStack.seed / push / pop / replace / reset", () => {
   })
 
   it("replace swaps top-of-stack without changing depth", () => {
-    const s = RouterStack.replace(
-      RouterStack.push(RouterStack.seed("/a"), "/b"),
-      "/c"
-    )
+    const s = RouterStack.replace(RouterStack.push(RouterStack.seed("/a"), "/b"), "/c")
     expect(s.map(m => m.route.path)).toEqual(["/a", "/c"])
   })
 

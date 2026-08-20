@@ -21,10 +21,7 @@ export interface ClusterBuildStepOptions extends ClusterBuildTaskOptions {}
  * {@link ClusterBuildStep.create}. No `build()`/`execute()` here (definition vs
  * executor); it structurally satisfies `Report.StepLike`.
  */
-export class ClusterBuildStep<
-  C extends ClusterBuildContext = ClusterBuildContext,
-  I extends StepInput | null = null
-> {
+export class ClusterBuildStep<C extends ClusterBuildContext = ClusterBuildContext, I extends StepInput | null = null> {
   private constructor(
     readonly actor: Report.Actor,
     readonly name: string,
@@ -47,10 +44,7 @@ export class ClusterBuildStep<
    * @param input - The step's typed input (or null).
    * @param runner - The behavior `(context, input, signal) => Promise<void>`.
    */
-  static create<
-    C extends ClusterBuildContext = ClusterBuildContext,
-    I extends StepInput | null = null
-  >(
+  static create<C extends ClusterBuildContext = ClusterBuildContext, I extends StepInput | null = null>(
     actor: Report.Actor,
     name: string,
     description: string,

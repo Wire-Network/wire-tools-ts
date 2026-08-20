@@ -8,11 +8,7 @@ import {
   type JsonLogRecord,
   type LogLevelColor
 } from "@wireio/debugging-shared"
-import {
-  LineRender,
-  renderWithHighlight,
-  sliceForHorizontalOffset
-} from "../util/lineRender.js"
+import { LineRender, renderWithHighlight, sliceForHorizontalOffset } from "../util/lineRender.js"
 
 export interface LogViewerJSONLineProps {
   /** Raw line read from the file. May or may not be valid JSON. */
@@ -48,9 +44,7 @@ interface ColumnSegment {
  * because the offset is panel-level (Redux). Falls back to a dimmed verbatim
  * render when the line isn't valid JSON or doesn't match the {@link JsonLogRecord} shape.
  */
-export function LogViewerJSONLine(
-  props: LogViewerJSONLineProps
-): React.ReactElement {
+export function LogViewerJSONLine(props: LogViewerJSONLineProps): React.ReactElement {
   const parsed = parseJsonLogLine(props.line)
   if (typeof parsed === "string") {
     return (
@@ -62,40 +56,25 @@ export function LogViewerJSONLine(
   const segments = composeSegments(parsed, props.locationVisible)
   return (
     <Text wrap={LineRender.TruncateMode}>
-      {renderColumnsWithOffset(
-        segments,
-        props.horizontalOffset,
-        props.highlight
-      )}
+      {renderColumnsWithOffset(segments, props.horizontalOffset, props.highlight)}
     </Text>
   )
 }
 
 /** Assemble the column-segment list for a parsed record. */
-function composeSegments(
-  record: JsonLogRecord,
-  locationVisible: boolean
-): ColumnSegment[] {
+function composeSegments(record: JsonLogRecord, locationVisible: boolean): ColumnSegment[] {
   const namespace = LogViewerJSONLine,
-    timestamp = padToWidth(
-      formatTimestamp(record.ts),
-      namespace.TimestampWidth
-    ),
+    timestamp = padToWidth(formatTimestamp(record.ts), namespace.TimestampWidth),
     level = padToWidth(record.lvl.toLowerCase(), namespace.LevelWidth),
     category = padToWidth(`[${record.logger}]`, namespace.CategoryWidth),
-    location = padToWidth(
-      `[${formatLocation(record)}]`,
-      namespace.LocationWidth
-    ),
+    location = padToWidth(`[${formatLocation(record)}]`, namespace.LocationWidth),
     sep = namespace.ColumnSeparator
   const head: ColumnSegment[] = [
     { text: timestamp + sep, dim: true },
     { text: level + sep, color: colorForLevel(record.lvl) },
     { text: category + sep, dim: true }
   ]
-  const middle: ColumnSegment[] = locationVisible
-    ? [{ text: location + sep, dim: true }]
-    : []
+  const middle: ColumnSegment[] = locationVisible ? [{ text: location + sep, dim: true }] : []
   const tail: ColumnSegment[] = [{ text: record.msg, highlight: true }]
   return [...head, ...middle, ...tail]
 }
@@ -121,14 +100,8 @@ function renderColumnsWithOffset(
       if (segEnd <= horizontalOffset) {
         return { cursor: segEnd, nodes: acc.nodes }
       }
-      const visible =
-          horizontalOffset > segStart
-            ? seg.text.slice(horizontalOffset - segStart)
-            : seg.text,
-        body =
-          seg.highlight && highlight.length > 0
-            ? renderWithHighlight(visible, highlight)
-            : visible,
+      const visible = horizontalOffset > segStart ? seg.text.slice(horizontalOffset - segStart) : seg.text,
+        body = seg.highlight && highlight.length > 0 ? renderWithHighlight(visible, highlight) : visible,
         rendered = (
           <Text key={i} color={seg.color} dimColor={seg.dim ?? false}>
             {body}
@@ -169,17 +142,13 @@ export namespace LogViewerJSONLine {
  *
  * Layout: time(12) sep level(5) sep [logger](31) sep [location](32, optional) sep msg
  */
-export function jsonColumnBoundaries(
-  locationVisible: boolean
-): readonly number[] {
+export function jsonColumnBoundaries(locationVisible: boolean): readonly number[] {
   const sep = LogViewerJSONLine.ColumnSeparator.length,
     timeStart = 0,
     levelStart = timeStart + LogViewerJSONLine.TimestampWidth + sep,
     categoryStart = levelStart + LogViewerJSONLine.LevelWidth + sep,
     afterCategory = categoryStart + LogViewerJSONLine.CategoryWidth + sep,
-    msgStart = locationVisible
-      ? afterCategory + LogViewerJSONLine.LocationWidth + sep
-      : afterCategory
+    msgStart = locationVisible ? afterCategory + LogViewerJSONLine.LocationWidth + sep : afterCategory
   return locationVisible
     ? [timeStart, levelStart, categoryStart, afterCategory, msgStart]
     : [timeStart, levelStart, categoryStart, msgStart]
@@ -190,11 +159,7 @@ export function jsonColumnBoundaries(
  * boundary (deep in `msg`) we fall back to a small fixed step so the user can
  * still scroll the message text with ←/→.
  */
-export function nextColumnOffset(
-  boundaries: readonly number[],
-  current: number,
-  fallbackStep: number
-): number {
+export function nextColumnOffset(boundaries: readonly number[], current: number, fallbackStep: number): number {
   const next = boundaries.find(b => b > current)
   return next ?? current + fallbackStep
 }
@@ -205,11 +170,7 @@ export function nextColumnOffset(
  * we step backwards by that fixed amount instead of jumping all the way back
  * to `msgStart` — keeps fine-grained scrolling intuitive.
  */
-export function prevColumnOffset(
-  boundaries: readonly number[],
-  current: number,
-  fallbackStep: number
-): number {
+export function prevColumnOffset(boundaries: readonly number[], current: number, fallbackStep: number): number {
   if (current <= 0) return 0
   const lastBoundary = boundaries[boundaries.length - 1] ?? 0
   if (current > lastBoundary + fallbackStep) {

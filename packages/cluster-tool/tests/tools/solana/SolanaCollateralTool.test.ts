@@ -19,74 +19,34 @@ describe("SolanaCollateralTool.collateralPositionPda", () => {
     const tokenCodeLeBytes = Buffer.alloc(8)
     tokenCodeLeBytes.writeBigUInt64LE(tokenCode)
     const [expected] = PublicKey.findProgramAddressSync(
-      [
-        Buffer.from("collateral_position"),
-        operator.toBuffer(),
-        tokenCodeLeBytes
-      ],
+      [Buffer.from("collateral_position"), operator.toBuffer(), tokenCodeLeBytes],
       programId
     )
-    expect(
-      SolanaCollateralTool.collateralPositionPda(
-        programId,
-        operator,
-        tokenCode
-      ).toBase58()
-    ).toBe(expected.toBase58())
+    expect(SolanaCollateralTool.collateralPositionPda(programId, operator, tokenCode).toBase58()).toBe(
+      expected.toBase58()
+    )
   })
 
   it("is deterministic for the same (operator, tokenCode)", () => {
-    expect(
-      SolanaCollateralTool.collateralPositionPda(
-        programId,
-        operator,
-        tokenCode
-      ).toBase58()
-    ).toBe(
-      SolanaCollateralTool.collateralPositionPda(
-        programId,
-        operator,
-        tokenCode
-      ).toBase58()
+    expect(SolanaCollateralTool.collateralPositionPda(programId, operator, tokenCode).toBase58()).toBe(
+      SolanaCollateralTool.collateralPositionPda(programId, operator, tokenCode).toBase58()
     )
   })
 
   it("gives a DISTINCT position per operator and per tokenCode", () => {
     const otherOperator = PublicKey.unique()
-    const base = SolanaCollateralTool.collateralPositionPda(
-      programId,
-      operator,
-      tokenCode
+    const base = SolanaCollateralTool.collateralPositionPda(programId, operator, tokenCode)
+    expect(SolanaCollateralTool.collateralPositionPda(programId, otherOperator, tokenCode).toBase58()).not.toBe(
+      base.toBase58()
     )
-    expect(
-      SolanaCollateralTool.collateralPositionPda(
-        programId,
-        otherOperator,
-        tokenCode
-      ).toBase58()
-    ).not.toBe(base.toBase58())
-    expect(
-      SolanaCollateralTool.collateralPositionPda(
-        programId,
-        operator,
-        tokenCode + 1n
-      ).toBase58()
-    ).not.toBe(base.toBase58())
+    expect(SolanaCollateralTool.collateralPositionPda(programId, operator, tokenCode + 1n).toBase58()).not.toBe(
+      base.toBase58()
+    )
   })
 
   it("is scoped to the program id", () => {
-    expect(
-      SolanaCollateralTool.collateralPositionPda(
-        PublicKey.unique(),
-        operator,
-        tokenCode
-      ).toBase58()
-    ).not.toBe(
-      SolanaCollateralTool.collateralPositionPda(
-        programId,
-        operator,
-        tokenCode
-      ).toBase58()
+    expect(SolanaCollateralTool.collateralPositionPda(PublicKey.unique(), operator, tokenCode).toBase58()).not.toBe(
+      SolanaCollateralTool.collateralPositionPda(programId, operator, tokenCode).toBase58()
     )
   })
 })

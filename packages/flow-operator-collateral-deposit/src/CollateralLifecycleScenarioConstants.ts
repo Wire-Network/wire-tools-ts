@@ -48,19 +48,11 @@ export namespace CollateralLifecycleScenarioConstants {
 
   /** Deadline for depot-side relay effects (balance row / status / queue row). */
   export function relayDeadlineMs(): number {
-    return (
-      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      RelayEpochBudget *
-      MsPerSecond
-    )
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * RelayEpochBudget * MsPerSecond
   }
 
   /** Deadline for the withdraw wait window + flush + outpost remit. */
   export function remitDeadlineMs(): number {
-    return (
-      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      RemitEpochBudget *
-      MsPerSecond
-    )
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * RemitEpochBudget * MsPerSecond
   }
 }

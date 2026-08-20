@@ -62,9 +62,7 @@ describe("renderWithHighlight", () => {
   })
 
   it("wraps literal substring matches in inverse-video Text", () => {
-    const serialized = JSON.stringify(
-      renderWithHighlight("alpha beta alpha", "alpha")
-    )
+    const serialized = JSON.stringify(renderWithHighlight("alpha beta alpha", "alpha"))
     // Two matches → two inverse hits.
     const inverseCount = serialized.match(/"inverse":true/g)?.length ?? 0
     expect(inverseCount).toBe(2)
@@ -74,9 +72,7 @@ describe("renderWithHighlight", () => {
     // `/\d+/` is 5 chars including delimiters; the match against "abc 123 xyz"
     // must be exactly "123" (3 chars). Digits dodge the case-insensitive flag's
     // letter-broadening, so this isolates the span-from-match-result behavior.
-    const serialized = JSON.stringify(
-      renderWithHighlight("abc 123 xyz", "/\\d+/")
-    )
+    const serialized = JSON.stringify(renderWithHighlight("abc 123 xyz", "/\\d+/"))
     expect(serialized).toContain('"inverse":true')
     expect(serialized).toContain("123")
     // Surrounding non-digit text remains in plain (non-inverse) Text nodes.

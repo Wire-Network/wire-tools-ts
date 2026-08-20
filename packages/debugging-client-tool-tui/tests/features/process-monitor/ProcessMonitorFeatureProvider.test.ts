@@ -37,27 +37,16 @@ describe("ProcessMonitorFeatureProvider.registerComponents", () => {
   it("installs both panels + the node-count widget", () => {
     const register = jest.fn()
     ProcessMonitorFeatureProvider.registerComponents({ register } as any)
-    expect(register).toHaveBeenCalledWith(
-      FeatureComponentToken.Panel,
-      ProcessMonitorPanel
-    )
-    expect(register).toHaveBeenCalledWith(
-      FeatureComponentToken.Panel,
-      LogViewerPanel
-    )
-    expect(register).toHaveBeenCalledWith(
-      FeatureComponentToken.StatusBar,
-      NodeCountWidget
-    )
+    expect(register).toHaveBeenCalledWith(FeatureComponentToken.Panel, ProcessMonitorPanel)
+    expect(register).toHaveBeenCalledWith(FeatureComponentToken.Panel, LogViewerPanel)
+    expect(register).toHaveBeenCalledWith(FeatureComponentToken.StatusBar, NodeCountWidget)
   })
 })
 
 describe("ProcessMonitorFeatureProvider.registerServices", () => {
   it("registers ProcessMonitor before LogTailing (dep order)", () => {
     const manager = ServiceManager.get().register(ReduxService)
-    manager.registerInstance(
-      new DebuggingClientService(new MockDebuggingClient() as any)
-    )
+    manager.registerInstance(new DebuggingClientService(new MockDebuggingClient() as any))
     ProcessMonitorFeatureProvider.registerServices(manager)
     expect(manager.find(ProcessMonitorService.id)).toBeDefined()
     expect(manager.find(LogTailingService.id)).toBeDefined()

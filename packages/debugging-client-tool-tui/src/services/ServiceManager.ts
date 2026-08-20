@@ -29,25 +29,14 @@ export class ServiceManager {
    * @return `this` for fluent chaining
    */
   register<T extends Service>(serviceType: ServiceType<T>): this {
-    Assert.ok(
-      this.configurable,
-      "ServiceManager already booted; cannot register more services"
-    )
+    Assert.ok(this.configurable, "ServiceManager already booted; cannot register more services")
     Assert.ok(serviceType?.id, "ServiceType.id is required")
-    Assert.ok(
-      !this.serviceRecordMap.has(serviceType.id),
-      `Service "${serviceType.id}" is already registered`
-    )
-    const depRecords: ServiceRecord[] = (serviceType.dependsOn ?? []).map(
-      depId => {
-        const dep = this.serviceRecordMap.get(depId)
-        Assert.ok(
-          dep,
-          `Service "${serviceType.id}" depends on "${depId}" which is not yet registered`
-        )
-        return dep
-      }
-    )
+    Assert.ok(!this.serviceRecordMap.has(serviceType.id), `Service "${serviceType.id}" is already registered`)
+    const depRecords: ServiceRecord[] = (serviceType.dependsOn ?? []).map(depId => {
+      const dep = this.serviceRecordMap.get(depId)
+      Assert.ok(dep, `Service "${serviceType.id}" depends on "${depId}" which is not yet registered`)
+      return dep
+    })
     const rec: ServiceRecord<T> = {
       id: serviceType.id,
       serviceType,
@@ -69,22 +58,13 @@ export class ServiceManager {
    * read off the constructor.
    */
   registerInstance<T extends Service>(service: T): this {
-    Assert.ok(
-      this.configurable,
-      "ServiceManager already booted; cannot register more services"
-    )
+    Assert.ok(this.configurable, "ServiceManager already booted; cannot register more services")
     const ctor = service.constructor as ServiceType<T>
     Assert.ok(ctor?.id, "Pre-constructed service missing static id")
-    Assert.ok(
-      !this.serviceRecordMap.has(ctor.id),
-      `Service "${ctor.id}" is already registered`
-    )
+    Assert.ok(!this.serviceRecordMap.has(ctor.id), `Service "${ctor.id}" is already registered`)
     const depRecords: ServiceRecord[] = (ctor.dependsOn ?? []).map(depId => {
       const dep = this.serviceRecordMap.get(depId)
-      Assert.ok(
-        dep,
-        `Service "${ctor.id}" depends on "${depId}" which is not yet registered`
-      )
+      Assert.ok(dep, `Service "${ctor.id}" depends on "${depId}" which is not yet registered`)
       return dep
     })
     const rec: ServiceRecord<T> = {
@@ -116,22 +96,11 @@ export class ServiceManager {
    */
   get serviceRecordsByBootOrder(): ServiceRecord[] {
     const records = [...this.serviceRecordMap.values()],
-      inDegree = new Map<string, number>(
-        records.map(r => [r.id, r.dependsOn.length])
-      ),
-      dependentsOf = new Map<string, ServiceRecord[]>(
-        records.map(r => [r.id, []])
-      )
-    records.forEach(r =>
-      r.dependsOn.forEach(dep => dependentsOf.get(dep.id)!.push(r))
-    )
+      inDegree = new Map<string, number>(records.map(r => [r.id, r.dependsOn.length])),
+      dependentsOf = new Map<string, ServiceRecord[]>(records.map(r => [r.id, []]))
+    records.forEach(r => r.dependsOn.forEach(dep => dependentsOf.get(dep.id)!.push(r)))
     const initialReady = records.filter(r => inDegree.get(r.id) === 0),
-      order = ServiceManager.drain(
-        initialReady,
-        [],
-        inDegree,
-        dependentsOf
-      )
+      order = ServiceManager.drain(initialReady, [], inDegree, dependentsOf)
     Assert.ok(
       order.length === records.length,
       `Cycle detected in service deps; unresolved: ${records
@@ -144,26 +113,17 @@ export class ServiceManager {
 
   /** Construct + init + start every service in topological order. */
   async boot(): Promise<void> {
-    Assert.ok(
-      this.configurable,
-      "ServiceManager is not configurable (already booted)"
-    )
+    Assert.ok(this.configurable, "ServiceManager is not configurable (already booted)")
     this.configurable = false
     const records = this.serviceRecordsByBootOrder
-    this.log.info(
-      `Initializing ${records.length} service(s): ${records
-        .map(r => r.id)
-        .join(", ")}`
-    )
+    this.log.info(`Initializing ${records.length} service(s): ${records.map(r => r.id).join(", ")}`)
     try {
       await Bluebird.each(records, async r => {
         if (!r.service) r.service = new r.serviceType()
         await r.service.init(this)
       })
       this.log.info("Starting services")
-      await Bluebird.each(records, r =>
-        r.service!.start(this).then(() => undefined)
-      )
+      await Bluebird.each(records, r => r.service!.start(this).then(() => undefined))
       this.booted = true
     } catch (err) {
       this.log.error("Boot failure — tearing down initialized services", err)
@@ -174,9 +134,7 @@ export class ServiceManager {
 
   /** Stop every instantiated service in reverse boot order; aggregates stop errors. */
   async destroy(): Promise<void> {
-    const startedReverse = this.serviceRecordsByBootOrder
-      .filter(r => !!r.service)
-      .reverse()
+    const startedReverse = this.serviceRecordsByBootOrder.filter(r => !!r.service).reverse()
     const errors = await Bluebird.reduce<ServiceRecord, unknown[]>(
       startedReverse,
       async (acc, r) => {
@@ -195,10 +153,7 @@ export class ServiceManager {
     this.booted = false
     this.configurable = true
     if (errors.length > 0) {
-      throw new AggregateError(
-        errors as Error[],
-        "One or more services failed to stop cleanly"
-      )
+      throw new AggregateError(errors as Error[], "One or more services failed to stop cleanly")
     }
   }
 
@@ -240,14 +195,11 @@ export class ServiceManager {
       .with([], () => order)
       .otherwise(([next, ...rest]) => {
         order.push(next!)
-        const freshReady = dependentsOf.get(next!.id)!.reduce<ServiceRecord[]>(
-          (acc, dep) => {
-            const newDeg = inDegree.get(dep.id)! - 1
-            inDegree.set(dep.id, newDeg)
-            return newDeg === 0 ? [...acc, dep] : acc
-          },
-          rest
-        )
+        const freshReady = dependentsOf.get(next!.id)!.reduce<ServiceRecord[]>((acc, dep) => {
+          const newDeg = inDegree.get(dep.id)! - 1
+          inDegree.set(dep.id, newDeg)
+          return newDeg === 0 ? [...acc, dep] : acc
+        }, rest)
         return ServiceManager.drain(freshReady, order, inDegree, dependentsOf)
       })
   }

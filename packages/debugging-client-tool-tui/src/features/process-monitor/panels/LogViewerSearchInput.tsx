@@ -22,17 +22,13 @@ export interface LogViewerSearchInputProps {
  *   - Backspace / Delete: trim the last character.
  *   - Any printable input: appended to the query.
  */
-export function LogViewerSearchInput(
-  props: LogViewerSearchInputProps
-): React.ReactElement {
+export function LogViewerSearchInput(props: LogViewerSearchInputProps): React.ReactElement {
   const [draft, setDraft] = useState(props.initialQuery)
   useInput((input, key) => {
     match({ input, key })
       .with({ key: { return: true } }, () => props.onSubmit(draft))
       .with({ key: { escape: true } }, () => props.onClose())
-      .with({ key: { backspace: true } }, () =>
-        setDraft(d => d.slice(0, -1))
-      )
+      .with({ key: { backspace: true } }, () => setDraft(d => d.slice(0, -1)))
       .with({ key: { delete: true } }, () => setDraft(d => d.slice(0, -1)))
       .otherwise(() => {
         // Printable chars only — Ink delivers them as `input`. Reject control
@@ -56,6 +52,5 @@ export namespace LogViewerSearchInput {
    * Hint text rendered to the right of the input. Mentions the `/pattern/`
    * regex affordance so users discover it without docs.
    */
-  export const HelpText =
-    "  [Enter find next, Esc close, /regex/ for regex]" as const
+  export const HelpText = "  [Enter find next, Esc close, /regex/ for regex]" as const
 }

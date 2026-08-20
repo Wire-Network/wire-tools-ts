@@ -80,9 +80,7 @@ export const JsonLogRecordSchema = z.object({
 })
 
 /** The {@link SchemaCodec} for {@link JsonLogRecord} — a validated JSONL round-trip. */
-export const JsonLogRecordSchemaCodec = SchemaCodec.create<JsonLogRecord>(
-  JsonLogRecordSchema
-)
+export const JsonLogRecordSchemaCodec = SchemaCodec.create<JsonLogRecord>(JsonLogRecordSchema)
 
 /**
  * Parse a single JSONL line into a validated {@link JsonLogRecord}. Returns the

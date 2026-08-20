@@ -7,9 +7,7 @@ import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
 const mockSend = jest.fn()
 jest.mock("@aws-sdk/client-ssm", () => ({
   SSMClient: jest.fn().mockImplementation(() => ({ send: mockSend })),
-  GetParameterCommand: jest
-    .fn()
-    .mockImplementation((input: unknown) => ({ input }))
+  GetParameterCommand: jest.fn().mockImplementation((input: unknown) => ({ input }))
 }))
 
 describe("SignatureProviderConfigProvider.resolve", () => {
@@ -18,10 +16,7 @@ describe("SignatureProviderConfigProvider.resolve", () => {
   describe("KEY", () => {
     it("hydrates + verifies an ED key pair", async () => {
       const ed = PrivateKey.generate(KeyType.ED)
-      const resolution = await SignatureProviderConfigProvider.resolve<
-        SignatureProviderType.KEY,
-        KeyType.ED
-      >({
+      const resolution = await SignatureProviderConfigProvider.resolve<SignatureProviderType.KEY, KeyType.ED>({
         providerType: SignatureProviderType.KEY,
         type: KeyType.ED,
         publicKey: ed.toPublic().toString(),
@@ -46,10 +41,7 @@ describe("SignatureProviderConfigProvider.resolve", () => {
 
     it("derives the ethereum address for an EM key pair", async () => {
       const em = ethereumKeyPairFromWallet(ethers.Wallet.createRandom())
-      const resolution = await SignatureProviderConfigProvider.resolve<
-        SignatureProviderType.KEY,
-        KeyType.EM
-      >({
+      const resolution = await SignatureProviderConfigProvider.resolve<SignatureProviderType.KEY, KeyType.EM>({
         providerType: SignatureProviderType.KEY,
         type: KeyType.EM,
         publicKey: em.publicKey,
@@ -59,10 +51,7 @@ describe("SignatureProviderConfigProvider.resolve", () => {
     })
 
     it("does NOT verify a BLS public key (exempt) but carries the proof of possession", async () => {
-      const resolution = await SignatureProviderConfigProvider.resolve<
-        SignatureProviderType.KEY,
-        KeyType.BLS
-      >({
+      const resolution = await SignatureProviderConfigProvider.resolve<SignatureProviderType.KEY, KeyType.BLS>({
         providerType: SignatureProviderType.KEY,
         type: KeyType.BLS,
         publicKey: "PUB_BLS_unverified",
@@ -76,10 +65,7 @@ describe("SignatureProviderConfigProvider.resolve", () => {
   describe("SSM (jest module mock — no live AWS)", () => {
     function ssmResolve() {
       const ed = PrivateKey.generate(KeyType.ED)
-      return SignatureProviderConfigProvider.resolve<
-        SignatureProviderType.SSM,
-        KeyType.ED
-      >({
+      return SignatureProviderConfigProvider.resolve<SignatureProviderType.SSM, KeyType.ED>({
         providerType: SignatureProviderType.SSM,
         type: KeyType.ED,
         publicKey: ed.toPublic().toString(),
@@ -95,10 +81,7 @@ describe("SignatureProviderConfigProvider.resolve", () => {
       mockSend.mockResolvedValueOnce({
         Parameter: { Type: "SecureString", Value: `  ${ed.toNativeString()}  ` }
       })
-      const resolution = await SignatureProviderConfigProvider.resolve<
-        SignatureProviderType.SSM,
-        KeyType.ED
-      >({
+      const resolution = await SignatureProviderConfigProvider.resolve<SignatureProviderType.SSM, KeyType.ED>({
         providerType: SignatureProviderType.SSM,
         type: KeyType.ED,
         publicKey: ed.toPublic().toString(),
@@ -116,10 +99,7 @@ describe("SignatureProviderConfigProvider.resolve", () => {
       mockSend.mockResolvedValueOnce({
         Parameter: { Type: "SecureString", Value: emNative }
       })
-      const resolution = await SignatureProviderConfigProvider.resolve<
-        SignatureProviderType.SSM,
-        KeyType.EM
-      >({
+      const resolution = await SignatureProviderConfigProvider.resolve<SignatureProviderType.SSM, KeyType.EM>({
         providerType: SignatureProviderType.SSM,
         type: KeyType.EM,
         publicKey: em.publicKey,
@@ -150,10 +130,7 @@ describe("SignatureProviderConfigProvider.resolve", () => {
 
   describe("KIOD", () => {
     it("resolves material-less (carries no keyPair)", async () => {
-      const resolution = await SignatureProviderConfigProvider.resolve<
-        SignatureProviderType.KIOD,
-        KeyType.K1
-      >({
+      const resolution = await SignatureProviderConfigProvider.resolve<SignatureProviderType.KIOD, KeyType.K1>({
         providerType: SignatureProviderType.KIOD,
         type: KeyType.K1,
         publicKey: "PUB_K1_x"

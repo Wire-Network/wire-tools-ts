@@ -28,16 +28,9 @@ describe("SolanaOutpostProgramTool", () => {
   it("derives the program id from the committed keypair", () => {
     const keypair = Keypair.generate()
     Fs.mkdirSync(Path.join(solanaPath, ".keys"), { recursive: true })
-    Fs.writeFileSync(
-      SolanaOutpostProgramTool.programKeypairFile(solanaPath),
-      JSON.stringify([...keypair.secretKey])
-    )
-    expect(SolanaOutpostProgramTool.programId(solanaPath)?.toBase58()).toBe(
-      keypair.publicKey.toBase58()
-    )
-    expect(SolanaOutpostProgramTool.assertProgramId(solanaPath).toBase58()).toBe(
-      keypair.publicKey.toBase58()
-    )
+    Fs.writeFileSync(SolanaOutpostProgramTool.programKeypairFile(solanaPath), JSON.stringify([...keypair.secretKey]))
+    expect(SolanaOutpostProgramTool.programId(solanaPath)?.toBase58()).toBe(keypair.publicKey.toBase58())
+    expect(SolanaOutpostProgramTool.assertProgramId(solanaPath).toBase58()).toBe(keypair.publicKey.toBase58())
   })
 
   it("parses the generated IDL", () => {
@@ -60,9 +53,7 @@ describe("SolanaOutpostProgramTool", () => {
       expect(() => SolanaOutpostProgramTool.assertProgramId(emptyPath)).toThrow(
         /program keypair missing.*patch-idl-errors/s
       )
-      expect(() => SolanaOutpostProgramTool.readIdl(emptyPath)).toThrow(
-        /IDL missing.*patch-idl-errors/s
-      )
+      expect(() => SolanaOutpostProgramTool.readIdl(emptyPath)).toThrow(/IDL missing.*patch-idl-errors/s)
     } finally {
       Fs.rmSync(emptyPath, { recursive: true, force: true })
     }

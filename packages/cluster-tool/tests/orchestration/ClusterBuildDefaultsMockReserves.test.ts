@@ -1,9 +1,6 @@
 import Path from "node:path"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
-import {
-  fixtureResolveEnvironment,
-  type ResolveEnvironment
-} from "../config/resolveEnvironmentFixture.js"
+import { fixtureResolveEnvironment, type ResolveEnvironment } from "../config/resolveEnvironmentFixture.js"
 
 import { collectPhaseNames } from "./clusterBuildFixture.js"
 

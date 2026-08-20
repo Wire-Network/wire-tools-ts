@@ -22,20 +22,14 @@ describe("plain-JSON RPC per-shape codecs", () => {
       labels: ["bios", "producer_00"]
     }
     expect(
-      GetProcessLivenessRequestSchemaCodec.deserialize(
-        GetProcessLivenessRequestSchemaCodec.serialize(request)
-      )
+      GetProcessLivenessRequestSchemaCodec.deserialize(GetProcessLivenessRequestSchemaCodec.serialize(request))
     ).toEqual(request)
 
     const response = {
-      snapshots: [
-        { label: "bios", pid: 42, alive: true, lastCheckedAt: 1, exitedAt: null }
-      ]
+      snapshots: [{ label: "bios", pid: 42, alive: true, lastCheckedAt: 1, exitedAt: null }]
     }
     expect(
-      GetProcessLivenessResponseSchemaCodec.deserialize(
-        GetProcessLivenessResponseSchemaCodec.serialize(response)
-      )
+      GetProcessLivenessResponseSchemaCodec.deserialize(GetProcessLivenessResponseSchemaCodec.serialize(response))
     ).toEqual(response)
   })
 
@@ -66,11 +60,9 @@ describe("plain-JSON RPC per-shape codecs", () => {
         }
       ]
     }
-    expect(
-      ListProcessesResponseSchemaCodec.deserialize(
-        ListProcessesResponseSchemaCodec.serialize(response)
-      )
-    ).toEqual(response)
+    expect(ListProcessesResponseSchemaCodec.deserialize(ListProcessesResponseSchemaCodec.serialize(response))).toEqual(
+      response
+    )
   })
 
   it("round-trips + validates the Logs codecs", () => {
@@ -80,25 +72,15 @@ describe("plain-JSON RPC per-shape codecs", () => {
       totalBytes: 10,
       totalLines: 2
     }
-    expect(
-      LogStatResponseSchemaCodec.deserialize(
-        LogStatResponseSchemaCodec.serialize(stat)
-      )
-    ).toEqual(stat)
+    expect(LogStatResponseSchemaCodec.deserialize(LogStatResponseSchemaCodec.serialize(stat))).toEqual(stat)
 
     const readRequest: LogReadRequest = { path: "/x.log", fromLine: 0, count: 5 }
-    expect(
-      LogReadRequestSchemaCodec.deserialize(
-        LogReadRequestSchemaCodec.serialize(readRequest)
-      )
-    ).toEqual(readRequest)
+    expect(LogReadRequestSchemaCodec.deserialize(LogReadRequestSchemaCodec.serialize(readRequest))).toEqual(readRequest)
 
     const readResponse: LogReadResponse = { lines: ["a", "b"] }
-    expect(
-      LogReadResponseSchemaCodec.deserialize(
-        LogReadResponseSchemaCodec.serialize(readResponse)
-      )
-    ).toEqual(readResponse)
+    expect(LogReadResponseSchemaCodec.deserialize(LogReadResponseSchemaCodec.serialize(readResponse))).toEqual(
+      readResponse
+    )
 
     // Missing totalBytes / totalLines.
     expect(LogStatResponseSchemaCodec.check({ path: "/x", ino: 1 })).toBe(false)
@@ -108,27 +90,15 @@ describe("plain-JSON RPC per-shape codecs", () => {
     expect(GetClusterConfigRequestSchemaCodec.check({})).toBe(true)
     expect(GetClusterStateResponseSchemaCodec.check({ state: null })).toBe(true)
     // A non-null but structurally-invalid state is rejected.
-    expect(
-      GetClusterStateResponseSchemaCodec.check({ state: { bogus: 1 } })
-    ).toBe(false)
+    expect(GetClusterStateResponseSchemaCodec.check({ state: { bogus: 1 } })).toBe(false)
   })
 
   it("registry maps plain-JSON methods and omits proto methods", () => {
-    expect(
-      PlainJsonRpcResponseCodecs[ApiPaths.Cluster.Methods.GetConfig]
-    ).toBeDefined()
-    expect(
-      PlainJsonRpcResponseCodecs[ApiPaths.Processes.Methods.List]
-    ).toBeDefined()
-    expect(
-      PlainJsonRpcResponseCodecs[ApiPaths.Logs.Methods.GetStat]
-    ).toBeDefined()
+    expect(PlainJsonRpcResponseCodecs[ApiPaths.Cluster.Methods.GetConfig]).toBeDefined()
+    expect(PlainJsonRpcResponseCodecs[ApiPaths.Processes.Methods.List]).toBeDefined()
+    expect(PlainJsonRpcResponseCodecs[ApiPaths.Logs.Methods.GetStat]).toBeDefined()
     // Proto (and proto-embedding) methods are absent — validated by protobuf-ts.
-    expect(
-      PlainJsonRpcResponseCodecs[ApiPaths.OPP.Methods.Envelope]
-    ).toBeUndefined()
-    expect(
-      PlainJsonRpcResponseCodecs[ApiPaths.OPP.Methods.LoadRecords]
-    ).toBeUndefined()
+    expect(PlainJsonRpcResponseCodecs[ApiPaths.OPP.Methods.Envelope]).toBeUndefined()
+    expect(PlainJsonRpcResponseCodecs[ApiPaths.OPP.Methods.LoadRecords]).toBeUndefined()
   })
 })

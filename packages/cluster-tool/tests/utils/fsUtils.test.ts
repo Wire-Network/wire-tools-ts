@@ -1,13 +1,7 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import {
-  currentDateStamp,
-  existsAsync,
-  mkdirs,
-  which,
-  withFileLock
-} from "@wireio/cluster-tool/utils"
+import { currentDateStamp, existsAsync, mkdirs, which, withFileLock } from "@wireio/cluster-tool/utils"
 
 describe("fsUtils", () => {
   let dir: string

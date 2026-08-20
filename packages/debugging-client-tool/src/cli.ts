@@ -112,8 +112,7 @@ Yargs(process.argv.slice(2))
           type: "string",
           describe: "Filter by endpoints type name"
         }),
-    async argv =>
-      run(() => handleTail(pick(argv, "server", "format", "pollMs", "endpoints")))
+    async argv => run(() => handleTail(pick(argv, "server", "format", "pollMs", "endpoints")))
   )
   .demandCommand(1)
   .strict()

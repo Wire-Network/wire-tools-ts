@@ -1,10 +1,7 @@
 import { SysioContracts } from "@wireio/sdk-core"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../../ClusterBuildStep.js"
 import type { StepInput } from "../../../StepRunner.js"
 
 const { SysioContractName } = SysioContracts
@@ -42,9 +39,7 @@ export namespace RoaContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.roa)
-      .actions.activateroa.invoke(input.data)
+    await ctx.wire.getSysioContract(SysioContractName.roa).actions.activateroa.invoke(input.data)
   }
 
   /** Input for {@link planNewnameduser} — the generated `roa::newnameduser` data. */
@@ -82,9 +77,7 @@ export namespace RoaContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.roa)
-      .actions.newnameduser.invoke(input.data)
+    await ctx.wire.getSysioContract(SysioContractName.roa).actions.newnameduser.invoke(input.data)
   }
 
   /** Input for {@link planNodeownreg} — the generated `roa::nodeownreg` data. */
@@ -124,8 +117,6 @@ export namespace RoaContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.roa)
-      .actions.nodeownreg.invoke(input.data)
+    await ctx.wire.getSysioContract(SysioContractName.roa).actions.nodeownreg.invoke(input.data)
   }
 }

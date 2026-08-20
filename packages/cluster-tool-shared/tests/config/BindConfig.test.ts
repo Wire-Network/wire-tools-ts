@@ -22,11 +22,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /** `true` only when `A` and `B` are mutually assignable. */
-type MutuallyAssignable<A, B> = [A] extends [B]
-  ? [B] extends [A]
-    ? true
-    : false
-  : false
+type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
 
 /** Compile-time truth pin — instantiating it with anything but `true` errors. */
 type Assert<T extends true> = T
@@ -80,30 +76,15 @@ interface ReferenceBindOptions {
   debuggingServer?: ReferenceBindDaemonOptions
 }
 
-type _daemonIdentity = Assert<
-  MutuallyAssignable<BindDaemonOptions, ReferenceBindDaemonOptions>
->
-type _nodeopPortsIdentity = Assert<
-  MutuallyAssignable<BindNodeopPortsOptions, ReferenceBindNodeopPortsOptions>
->
+type _daemonIdentity = Assert<MutuallyAssignable<BindDaemonOptions, ReferenceBindDaemonOptions>>
+type _nodeopPortsIdentity = Assert<MutuallyAssignable<BindNodeopPortsOptions, ReferenceBindNodeopPortsOptions>>
 type _nodeopClusterPortsIdentity = Assert<
-  MutuallyAssignable<
-    BindNodeopClusterPortsOptions,
-    ReferenceBindNodeopClusterPortsOptions
-  >
+  MutuallyAssignable<BindNodeopClusterPortsOptions, ReferenceBindNodeopClusterPortsOptions>
 >
-type _nodeopIdentity = Assert<
-  MutuallyAssignable<BindNodeopOptions, ReferenceBindNodeopOptions>
->
-type _solanaPortsIdentity = Assert<
-  MutuallyAssignable<BindSolanaPortsOptions, ReferenceBindSolanaPortsOptions>
->
-type _solanaIdentity = Assert<
-  MutuallyAssignable<BindSolanaOptions, ReferenceBindSolanaOptions>
->
-type _bindIdentity = Assert<
-  MutuallyAssignable<BindOptions, ReferenceBindOptions>
->
+type _nodeopIdentity = Assert<MutuallyAssignable<BindNodeopOptions, ReferenceBindNodeopOptions>>
+type _solanaPortsIdentity = Assert<MutuallyAssignable<BindSolanaPortsOptions, ReferenceBindSolanaPortsOptions>>
+type _solanaIdentity = Assert<MutuallyAssignable<BindSolanaOptions, ReferenceBindSolanaOptions>>
+type _bindIdentity = Assert<MutuallyAssignable<BindOptions, ReferenceBindOptions>>
 
 describe("BindConfigPortProtocol", () => {
   it("is an identity-mapped string enum (value === key) for every member", () => {
@@ -211,20 +192,14 @@ describe("BindConfigSchemaCodec + BindOptionsSchema", () => {
     }
 
     it("round-trips a per-node advertiseAddress through the codec", () => {
-      const roundTripped = BindConfigSchemaCodec.deserialize(
-        BindConfigSchemaCodec.serialize(meshed)
-      )
+      const roundTripped = BindConfigSchemaCodec.deserialize(BindConfigSchemaCodec.serialize(meshed))
       expect(roundTripped).toEqual(meshed)
-      expect(roundTripped.nodeop.ports.producers[0].advertiseAddress).toBe(
-        AdvertiseAddress
-      )
+      expect(roundTripped.nodeop.ports.producers[0].advertiseAddress).toBe(AdvertiseAddress)
       expect(BindConfigSchemaCodec.check(meshed)).toBe(true)
     })
 
     it("a legacy config without advertiseAddress parses with the field absent", () => {
-      const roundTripped = BindConfigSchemaCodec.deserialize(
-        BindConfigSchemaCodec.serialize(bind)
-      )
+      const roundTripped = BindConfigSchemaCodec.deserialize(BindConfigSchemaCodec.serialize(bind))
       expect(roundTripped.nodeop.ports.producers[0].advertiseAddress).toBeUndefined()
     })
 

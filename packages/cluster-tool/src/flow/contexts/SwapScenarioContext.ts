@@ -49,14 +49,8 @@ export class SwapScenarioContext extends ClusterBuildContext {
    * @returns The reserve's chain-side + WIRE-side book amounts.
    * @throws When no reserve row matches the triple.
    */
-  async reserveBook(
-    chainCode: number,
-    tokenCode: number,
-    reserveCode: number
-  ): Promise<ReserveBook> {
-    const { rows } = await this.wire
-      .getSysioContract(SysioContractName.reserv)
-      .tables.reserves.query()
+  async reserveBook(chainCode: number, tokenCode: number, reserveCode: number): Promise<ReserveBook> {
+    const { rows } = await this.wire.getSysioContract(SysioContractName.reserv).tables.reserves.query()
     const row = rows.find(
       reserve =>
         slugValue(reserve.chain_code) === chainCode &&
@@ -81,17 +75,11 @@ export class SwapScenarioContext extends ClusterBuildContext {
    * @returns The matching `uwreqs` row, or nothing when the depot has not
    *   created one yet.
    */
-  async uwreq(
-    srcChainCode: number,
-    dstChainCode: number
-  ): Promise<SysioContracts.SysioUwritUwRequestTType> {
-    const { rows } = await this.wire
-      .getSysioContract(SysioContractName.uwrit)
-      .tables.uwreqs.query()
+  async uwreq(srcChainCode: number, dstChainCode: number): Promise<SysioContracts.SysioUwritUwRequestTType> {
+    const { rows } = await this.wire.getSysioContract(SysioContractName.uwrit).tables.uwreqs.query()
     return rows.find(
       request =>
-        slugValue(request.src_chain_code) === srcChainCode &&
-        slugValue(request.dst_chain_code) === dstChainCode
+        slugValue(request.src_chain_code) === srcChainCode && slugValue(request.dst_chain_code) === dstChainCode
     )
   }
 
@@ -101,12 +89,8 @@ export class SwapScenarioContext extends ClusterBuildContext {
    * @param uwreqId - The `uwreqs` row id.
    * @returns Every `locks` row referencing the request.
    */
-  async locksForUwreq(
-    uwreqId: number
-  ): Promise<SysioContracts.SysioUwritLockEntryType[]> {
-    const { rows } = await this.wire
-      .getSysioContract(SysioContractName.uwrit)
-      .tables.locks.query()
+  async locksForUwreq(uwreqId: number): Promise<SysioContracts.SysioUwritLockEntryType[]> {
+    const { rows } = await this.wire.getSysioContract(SysioContractName.uwrit).tables.locks.query()
     return rows.filter(lock => Number(lock.uwreq_id) === uwreqId)
   }
 
@@ -122,14 +106,8 @@ export class SwapScenarioContext extends ClusterBuildContext {
    * @returns The reserve's owner, fee rate, and earned/unclaimed amounts.
    * @throws When no reserve row matches the triple.
    */
-  async reserveOwnerFee(
-    chainCode: number,
-    tokenCode: number,
-    reserveCode: number
-  ): Promise<ReserveOwnerFee> {
-    const { rows } = await this.wire
-      .getSysioContract(SysioContractName.reserv)
-      .tables.reserves.query()
+  async reserveOwnerFee(chainCode: number, tokenCode: number, reserveCode: number): Promise<ReserveOwnerFee> {
+    const { rows } = await this.wire.getSysioContract(SysioContractName.reserv).tables.reserves.query()
     const row = rows.find(
       reserve =>
         slugValue(reserve.chain_code) === chainCode &&
@@ -155,12 +133,8 @@ export class SwapScenarioContext extends ClusterBuildContext {
    * @returns The matching `uwfees` row, or nothing when the account has never
    *   won a swap (no row exists until the first accrual).
    */
-  async underwriterFees(
-    underwriter: string
-  ): Promise<SysioContracts.SysioReservUwFeeRowType> {
-    const { rows } = await this.wire
-      .getSysioContract(SysioContractName.reserv)
-      .tables.uwfees.query()
+  async underwriterFees(underwriter: string): Promise<SysioContracts.SysioReservUwFeeRowType> {
+    const { rows } = await this.wire.getSysioContract(SysioContractName.reserv).tables.uwfees.query()
     return rows.find(row => row.underwriter === underwriter)
   }
 }

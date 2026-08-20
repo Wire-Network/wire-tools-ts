@@ -2,10 +2,7 @@
 // and the network client all read from the same definitions. Re-exporting
 // here keeps existing TUI imports (`from "../OPPTypes.js"`) working
 // without ripple churn.
-export type {
-  DebugOPPEnvelopeRecord,
-  DebugOPPEpochRecord
-} from "@wireio/debugging-shared"
+export type { DebugOPPEnvelopeRecord, DebugOPPEpochRecord } from "@wireio/debugging-shared"
 
 /** OPP slice shape — bounded LRU over epoch index. */
 export interface OPPState {

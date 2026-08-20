@@ -18,11 +18,7 @@ export const isNotEmpty: (value: unknown) => boolean = negate(isEmpty)
  * @param max - Inclusive upper bound. Defaults to {@link Number.MAX_SAFE_INTEGER}.
  * @returns Whether `value` lies within `[min, max]`.
  */
-export function inRange(
-  value: number,
-  min: number,
-  max: number = Number.MAX_SAFE_INTEGER
-): boolean {
+export function inRange(value: number, min: number, max: number = Number.MAX_SAFE_INTEGER): boolean {
   return value >= min && value <= max
 }
 

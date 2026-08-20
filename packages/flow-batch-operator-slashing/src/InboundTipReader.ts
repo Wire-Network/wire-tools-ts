@@ -67,11 +67,7 @@ export class InboundTipReader {
    * @param query - Supplies the current `outpcons` rows on a cache miss.
    * @returns The outpost's inbound tips (each empty at genesis).
    */
-  read(
-    chainCode: number,
-    epochIndex: number,
-    query: OutpostConsensusQuery
-  ): Promise<OutpostInboundTips> {
+  read(chainCode: number, epochIndex: number, query: OutpostConsensusQuery): Promise<OutpostInboundTips> {
     return this.cache.get(`${chainCode}:${epochIndex}`, async () => {
       const rows = await query()
       const row = rows.find(row => String(row.chain_code) === String(chainCode))

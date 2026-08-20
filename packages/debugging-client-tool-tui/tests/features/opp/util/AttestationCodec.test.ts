@@ -1,8 +1,4 @@
-import {
-  AttestationType,
-  BatchOperatorGroups,
-  type AttestationEntry
-} from "@wireio/opp-typescript-models"
+import { AttestationType, BatchOperatorGroups, type AttestationEntry } from "@wireio/opp-typescript-models"
 import {
   AttestationDecoders,
   decodeAttestation,
@@ -25,9 +21,7 @@ function encodeBatchOperatorGroups(): Uint8Array {
 
 describe("AttestationDecoders registry", () => {
   it("registers the BatchOperatorGroups class for BATCH_OPERATOR_GROUPS", () => {
-    expect(AttestationDecoders[AttestationType.BATCH_OPERATOR_GROUPS]).toBe(
-      BatchOperatorGroups
-    )
+    expect(AttestationDecoders[AttestationType.BATCH_OPERATOR_GROUPS]).toBe(BatchOperatorGroups)
   })
 
   it("does not register a decoder for UNSPECIFIED", () => {

@@ -19,12 +19,7 @@ function walk(value: unknown): unknown {
   if (value instanceof Uint8Array) return Buffer.from(value).toString("base64")
   if (Array.isArray(value)) return value.map(walk)
   if (typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([k, v]) => [
-        k,
-        walk(v)
-      ])
-    )
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, walk(v)]))
   }
   return value
 }

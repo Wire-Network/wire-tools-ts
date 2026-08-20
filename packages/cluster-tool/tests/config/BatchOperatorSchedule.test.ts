@@ -21,11 +21,7 @@ import { Constants } from "@wireio/cluster-tool/Constants"
  */
 describe("BatchOperatorSchedule.resolve", () => {
   // The schema takes ONE options object; this keeps the cases readable.
-  const resolve = (
-    batchOperatorCount: number,
-    operatorsPerEpoch?: number,
-    batchOpGroups?: number
-  ) =>
+  const resolve = (batchOperatorCount: number, operatorsPerEpoch?: number, batchOpGroups?: number) =>
     BatchOperatorSchedule.resolve({
       batchOperatorCount,
       operatorsPerEpoch,
@@ -48,17 +44,12 @@ describe("BatchOperatorSchedule.resolve", () => {
       })
     })
 
-    it.each([1, 4, 5, 6, 7, 20])(
-      "rejects a roster of %i off the odd/3-divisible lattice",
-      roster => {
-        expect(() => resolve(roster)).toThrow(/must be ODD and divisible by 3/)
-      }
-    )
+    it.each([1, 4, 5, 6, 7, 20])("rejects a roster of %i off the odd/3-divisible lattice", roster => {
+      expect(() => resolve(roster)).toThrow(/must be ODD and divisible by 3/)
+    })
 
     it("names the escape hatch in the lattice error", () => {
-      expect(() => resolve(20)).toThrow(
-        /pass --operators-per-epoch OR --batch-op-groups to state a shape explicitly/
-      )
+      expect(() => resolve(20)).toThrow(/pass --operators-per-epoch OR --batch-op-groups to state a shape explicitly/)
     })
   })
 
@@ -83,9 +74,7 @@ describe("BatchOperatorSchedule.resolve", () => {
     })
 
     it("rejects a shape the roster cannot fill, naming both flags", () => {
-      expect(() => resolve(21, 7, 5)).toThrow(
-        /needs 35 ACTIVE batch operators.*batch-operator-count is 21/s
-      )
+      expect(() => resolve(21, 7, 5)).toThrow(/needs 35 ACTIVE batch operators.*batch-operator-count is 21/s)
     })
 
     it("keeps a derived size ODD when the group COUNT is off the lattice", () => {
@@ -115,15 +104,11 @@ describe("BatchOperatorSchedule.resolve", () => {
     })
 
     it.each([0, -3, 1.5])("rejects a group size of %p", size => {
-      expect(() => resolve(21, size)).toThrow(
-        /operatorsPerEpoch: operators-per-epoch must be a positive whole number/
-      )
+      expect(() => resolve(21, size)).toThrow(/operatorsPerEpoch: operators-per-epoch must be a positive whole number/)
     })
 
     it.each([0, -9, 2.5])("rejects a roster of %p", roster => {
-      expect(() => resolve(roster)).toThrow(
-        /batchOperatorCount: batch-operator-count must be a positive whole number/
-      )
+      expect(() => resolve(roster)).toThrow(/batchOperatorCount: batch-operator-count must be a positive whole number/)
     })
   })
 
@@ -140,16 +125,12 @@ describe("BatchOperatorSchedule.resolve", () => {
     })
 
     it("rejects a group count past MAX_BATCH_OP_GROUPS (255)", () => {
-      expect(() => resolve(21, 1, 256)).toThrow(
-        /batchOpGroups: batch-op-groups exceeds the depot ceiling of 255/
-      )
+      expect(() => resolve(21, 1, 256)).toThrow(/batchOpGroups: batch-op-groups exceeds the depot ceiling of 255/)
     })
 
     it("rejects a scheduled total past MAX_SCHEDULED_BATCH_OPERATORS (1000)", () => {
       // 5 x 255 = 1275 — under both per-field caps, over the total cap.
-      expect(() => resolve(21, 5, 255)).toThrow(
-        /batch_operator_minimum_active 1275 exceeds the depot ceiling of 1000/
-      )
+      expect(() => resolve(21, 5, 255)).toThrow(/batch_operator_minimum_active 1275 exceeds the depot ceiling of 1000/)
     })
 
     it("accepts the largest legal DERIVED roster (21 = 7 x 3)", () => {
@@ -162,22 +143,16 @@ describe("BatchOperatorSchedule.resolve", () => {
     it("rejects a roster past the harness label space", () => {
       // 27 IS a legal depot shape (9 x 3) but `Constants.batchOperatorLabel`
       // wraps modulo 26, so operator 27 would reuse the `batchop.a` handle.
-      expect(() => resolve(27)).toThrow(
-        /batchOperatorCount: batch-operator-count exceeds the harness ceiling of 26/
-      )
+      expect(() => resolve(27)).toThrow(/batchOperatorCount: batch-operator-count exceeds the harness ceiling of 26/)
     })
 
     it("gives every operator in the largest accepted roster a UNIQUE label", () => {
       const max = MaxBatchOperatorRoster
       expect(() => resolve(max, 1, 1)).not.toThrow()
-      const names = Array.from({ length: max }, (_, index) =>
-        Constants.batchOperatorLabel(index)
-      )
+      const names = Array.from({ length: max }, (_, index) => Constants.batchOperatorLabel(index))
       expect(new Set(names).size).toBe(max)
       // One past the cap is exactly where the collision starts.
-      expect(Constants.batchOperatorLabel(max)).toBe(
-        Constants.batchOperatorLabel(0)
-      )
+      expect(Constants.batchOperatorLabel(max)).toBe(Constants.batchOperatorLabel(0))
     })
 
     it("pins the ceilings against the contract", () => {
@@ -211,9 +186,7 @@ describe("BatchOperatorSchedule.resolve", () => {
         operatorsPerEpoch: 4
       })
       expect(result.success).toBe(false)
-      expect(result.error.issues.map(issue => issue.path.join("."))).toContain(
-        "operatorsPerEpoch"
-      )
+      expect(result.error.issues.map(issue => issue.path.join("."))).toContain("operatorsPerEpoch")
     })
 
     it("rejects a non-numeric input structurally", () => {

@@ -1,10 +1,6 @@
 import React from "react"
 import { Text } from "ink"
-import {
-  LineRender,
-  renderWithHighlight,
-  sliceForHorizontalOffset
-} from "../util/lineRender.js"
+import { LineRender, renderWithHighlight, sliceForHorizontalOffset } from "../util/lineRender.js"
 
 export interface LogViewerTextLineProps {
   /** Raw line read from the file — rendered verbatim. */
@@ -16,13 +12,7 @@ export interface LogViewerTextLineProps {
 }
 
 /** Render one plain-text log line verbatim with horizontal-offset slicing + search highlight. */
-export function LogViewerTextLine(
-  props: LogViewerTextLineProps
-): React.ReactElement {
+export function LogViewerTextLine(props: LogViewerTextLineProps): React.ReactElement {
   const sliced = sliceForHorizontalOffset(props.line, props.horizontalOffset)
-  return (
-    <Text wrap={LineRender.TruncateMode}>
-      {renderWithHighlight(sliced, props.highlight)}
-    </Text>
-  )
+  return <Text wrap={LineRender.TruncateMode}>{renderWithHighlight(sliced, props.highlight)}</Text>
 }

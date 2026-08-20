@@ -1,12 +1,5 @@
-import {
-  ClosedReason,
-  StreamTopic,
-  type EnvelopeEvent
-} from "@wireio/debugging-shared"
-import type {
-  DebuggingClient,
-  DebuggingSubscription
-} from "@wireio/debugging-client-shared"
+import { ClosedReason, StreamTopic, type EnvelopeEvent } from "@wireio/debugging-shared"
+import type { DebuggingClient, DebuggingSubscription } from "@wireio/debugging-client-shared"
 
 import { LoggingManager } from "../../logging/LoggingManager.js"
 import { DebuggingClientService } from "../../services/DebuggingClientService.js"
@@ -33,10 +26,7 @@ import { appendEnvelope } from "../../store/opp/OPPSlice.js"
  */
 export class OPPTrackingService implements Service {
   static readonly id = ServiceId.OPPTracking
-  static readonly dependsOn: readonly string[] = [
-    ServiceId.Redux,
-    ServiceId.DebuggingClient
-  ]
+  static readonly dependsOn: readonly string[] = [ServiceId.Redux, ServiceId.DebuggingClient]
 
   private readonly log = LoggingManager.getLogger(OPPTrackingService.Category)
   private redux: ReduxService | null = null
@@ -45,22 +35,15 @@ export class OPPTrackingService implements Service {
 
   async init(manager: ServiceManager): Promise<this> {
     this.redux = manager.get<ReduxService>(ServiceId.Redux)
-    this.client = manager.get<DebuggingClientService>(
-      ServiceId.DebuggingClient
-    ).client
+    this.client = manager.get<DebuggingClientService>(ServiceId.DebuggingClient).client
     return this
   }
 
   async start(_manager: ServiceManager): Promise<this> {
     if (!this.client || !this.redux) return this
-    this.subscription = await this.client.subscribe(
-      StreamTopic.EnvelopeWatch,
-      {}
-    )
+    this.subscription = await this.client.subscribe(StreamTopic.EnvelopeWatch, {})
     this.subscription.on("event", evt => this.onEvent(evt))
-    this.subscription.on("closed", reason =>
-      this.log.warn(`OPP envelope subscription closed: ${reason}`)
-    )
+    this.subscription.on("closed", reason => this.log.warn(`OPP envelope subscription closed: ${reason}`))
     return this
   }
 
@@ -71,9 +54,7 @@ export class OPPTrackingService implements Service {
   }
 
   private onEvent(evt: EnvelopeEvent): void {
-    this.redux?.dispatch(
-      appendEnvelope({ epoch: evt.epoch, record: evt.record })
-    )
+    this.redux?.dispatch(appendEnvelope({ epoch: evt.epoch, record: evt.record }))
   }
 
   /**
@@ -106,9 +87,7 @@ export class OPPTrackingService implements Service {
       if (records.length === 0) return null
       records.forEach(epochRec =>
         epochRec.envelopes.forEach(envRec =>
-          this.redux!.dispatch(
-            appendEnvelope({ epoch: epochRec.epoch, record: envRec })
-          )
+          this.redux!.dispatch(appendEnvelope({ epoch: epochRec.epoch, record: envRec }))
         )
       )
       return Math.min(...records.map(r => r.epoch))

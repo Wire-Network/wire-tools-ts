@@ -22,11 +22,7 @@ const fullRecord: JsonLogRecord = {
 
 describe("JsonLogRecordSchemaCodec", () => {
   it("round-trips a record through serialize → deserialize", () => {
-    expect(
-      JsonLogRecordSchemaCodec.deserialize(
-        JsonLogRecordSchemaCodec.serialize(fullRecord)
-      )
-    ).toEqual(fullRecord)
+    expect(JsonLogRecordSchemaCodec.deserialize(JsonLogRecordSchemaCodec.serialize(fullRecord))).toEqual(fullRecord)
   })
 
   it("check accepts a full record and rejects a partial one", () => {
@@ -35,9 +31,7 @@ describe("JsonLogRecordSchemaCodec", () => {
   })
 
   it("deserialize throws on a structurally-invalid record (wrong field type)", () => {
-    expect(() =>
-      JsonLogRecordSchemaCodec.deserialize(JSON.stringify({ ...fullRecord, line: "x" }))
-    ).toThrow()
+    expect(() => JsonLogRecordSchemaCodec.deserialize(JSON.stringify({ ...fullRecord, line: "x" }))).toThrow()
   })
 })
 
@@ -51,9 +45,7 @@ describe("parseJsonLogLine", () => {
   })
 
   it("returns raw line when parsed value lacks a `msg` string", () => {
-    expect(parseJsonLogLine(JSON.stringify({ ts: "x" }))).toEqual(
-      JSON.stringify({ ts: "x" })
-    )
+    expect(parseJsonLogLine(JSON.stringify({ ts: "x" }))).toEqual(JSON.stringify({ ts: "x" }))
   })
 
   it("returns the parsed record for a full structured record", () => {

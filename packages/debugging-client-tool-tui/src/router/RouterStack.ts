@@ -21,20 +21,12 @@ export namespace RouterStack {
   }
 
   /** Push a new route on top. */
-  export function push(
-    stack: readonly RouteMatch[],
-    path: string,
-    params?: RouteParams
-  ): RouteMatch[] {
+  export function push(stack: readonly RouteMatch[], path: string, params?: RouteParams): RouteMatch[] {
     return [...stack, resolve(path, params)]
   }
 
   /** Replace top-of-stack without changing depth. */
-  export function replace(
-    stack: readonly RouteMatch[],
-    path: string,
-    params?: RouteParams
-  ): RouteMatch[] {
+  export function replace(stack: readonly RouteMatch[], path: string, params?: RouteParams): RouteMatch[] {
     return [...stack.slice(0, -1), resolve(path, params)]
   }
 
@@ -44,17 +36,12 @@ export namespace RouterStack {
   }
 
   /** Reset to a single-entry stack. */
-  export function reset(
-    path: string,
-    params?: RouteParams
-  ): RouteMatch[] {
+  export function reset(path: string, params?: RouteParams): RouteMatch[] {
     return [resolve(path, params)]
   }
 
   /** Top-of-stack helper. Undefined only if someone emptied the array. */
-  export function current(
-    stack: readonly RouteMatch[]
-  ): RouteMatch | undefined {
+  export function current(stack: readonly RouteMatch[]): RouteMatch | undefined {
     return stack[stack.length - 1]
   }
 }

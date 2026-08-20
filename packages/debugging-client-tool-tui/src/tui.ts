@@ -4,41 +4,22 @@ import { render } from "ink"
 import { Provider } from "react-redux"
 import { App } from "./App.js"
 import { createClient, parseArgs } from "./cli.js"
-import {
-  LoggingManager,
-  getGlobalLogger
-} from "./logging/LoggingManager.js"
-import {
-  DebuggingClientService,
-  ReduxService,
-  ServiceManager,
-  ServiceManagerProvider
-} from "./services/index.js"
+import { LoggingManager, getGlobalLogger } from "./logging/LoggingManager.js"
+import { DebuggingClientService, ReduxService, ServiceManager, ServiceManagerProvider } from "./services/index.js"
 import { RouterProvider } from "./router/RouterContext.js"
 import { FeatureProviderRegistry } from "./features/FeatureProviderRegistry.js"
 import OPPFeatureProvider from "./features/opp/OPPFeatureProvider.js"
 import ProcessMonitorFeatureProvider from "./features/process-monitor/ProcessMonitorFeatureProvider.js"
 import type { FeatureProvider } from "./features/FeatureProvider.js"
-import {
-  registerFeature,
-  setActiveFeatures,
-  setCluster,
-  store
-} from "./store/index.js"
+import { registerFeature, setActiveFeatures, setCluster, store } from "./store/index.js"
 
 /**
  * Every provider known to the binary. The active subset is derived from
  * `--features` plus any provider with `isRequiredProvider: true`.
  */
-const KnownProviders: readonly FeatureProvider[] = [
-  ProcessMonitorFeatureProvider,
-  OPPFeatureProvider
-] as const
+const KnownProviders: readonly FeatureProvider[] = [ProcessMonitorFeatureProvider, OPPFeatureProvider] as const
 
-import {
-  selectActiveProviders,
-  warnUnknownFeatureIds
-} from "./bootstrap/selectActiveProviders.js"
+import { selectActiveProviders, warnUnknownFeatureIds } from "./bootstrap/selectActiveProviders.js"
 
 async function main(): Promise<void> {
   const args = parseArgs(),

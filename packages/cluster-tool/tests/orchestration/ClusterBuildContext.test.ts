@@ -1,13 +1,7 @@
-import {
-  ClusterBuildContext,
-  OutputStore
-} from "@wireio/cluster-tool/orchestration"
+import { ClusterBuildContext, OutputStore } from "@wireio/cluster-tool/orchestration"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { getLogger } from "@wireio/cluster-tool/logging"
-import {
-  fixtureConfig,
-  PersistedFixture
-} from "../config/clusterConfigFixture.js"
+import { fixtureConfig, PersistedFixture } from "../config/clusterConfigFixture.js"
 
 function newContext(): ClusterBuildContext {
   return new ClusterBuildContext(fixtureConfig(), getLogger("ctx-test"))
@@ -53,15 +47,11 @@ describe("ClusterBuildContext", () => {
     }
 
     it("dials a remote bind address verbatim", () => {
-      expect(ClusterBuildContext.nodeopUrl(withNodeopAddress("10.0.0.7"))).toBe(
-        `http://10.0.0.7:${producerHttp}`
-      )
+      expect(ClusterBuildContext.nodeopUrl(withNodeopAddress("10.0.0.7"))).toBe(`http://10.0.0.7:${producerHttp}`)
     })
 
     it("maps a 0.0.0.0 (bind-all) address to loopback", () => {
-      expect(ClusterBuildContext.nodeopUrl(withNodeopAddress("0.0.0.0"))).toBe(
-        `http://127.0.0.1:${producerHttp}`
-      )
+      expect(ClusterBuildContext.nodeopUrl(withNodeopAddress("0.0.0.0"))).toBe(`http://127.0.0.1:${producerHttp}`)
     })
   })
 })

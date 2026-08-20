@@ -4,8 +4,7 @@ import { toURL } from "@wireio/cluster-tool/utils"
 
 /** anvil/hardhat account 0 from the `test test … junk` mnemonic — well-known + stable. */
 const AnvilAccount0Address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-const AnvilAccount0PrivateKey =
-  "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+const AnvilAccount0PrivateKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
 describe("EthereumOutpostBootstrapper.generateAccounts", () => {
   it("generates the requested count deterministically from anvil's mnemonic", () => {
@@ -28,9 +27,7 @@ describe("EthereumOutpostBootstrapper constructor", () => {
   let rpcUrl: string
   const deploymentsPath = "/tmp/cluster/data/ethereum-deployments"
   beforeAll(async () => {
-    rpcUrl = toURL(
-      await BindConfigProvider.findAvailable(BindConfigProvider.DefaultAnvil)
-    )
+    rpcUrl = toURL(await BindConfigProvider.findAvailable(BindConfigProvider.DefaultAnvil))
   })
 
   it("throws when ethereumPath is missing", () => {

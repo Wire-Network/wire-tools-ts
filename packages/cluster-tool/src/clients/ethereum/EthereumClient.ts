@@ -21,10 +21,7 @@ export class EthereumClient {
     // this client (or any signer/contract bound to it) lands in the running
     // step's `Report.StepResult.extra`.
     this.provider = new RecordingJsonRpcProvider(rpcUrl)
-    this.wallet = new EthereumWallet(
-      this.provider,
-      privateKey ?? EthereumClient.DefaultPrivateKey
-    )
+    this.wallet = new EthereumWallet(this.provider, privateKey ?? EthereumClient.DefaultPrivateKey)
   }
 
   /**
@@ -35,11 +32,7 @@ export class EthereumClient {
    * @param abi - Contract ABI.
    * @returns The cached or newly-bound contract.
    */
-  getContract(
-    name: string,
-    address: string,
-    abi: ethers.InterfaceAbi
-  ): ethers.Contract {
+  getContract(name: string, address: string, abi: ethers.InterfaceAbi): ethers.Contract {
     const key = `${name}@${address}`
     const hit = this.contracts.get(key)
     if (hit != null) return hit
@@ -65,9 +58,7 @@ export class EthereumClient {
 
   /** Mine `blocks` blocks (anvil `evm_mine`). */
   async mine(blocks = 1): Promise<void> {
-    await Promise.all(
-      Array.from({ length: blocks }, () => this.provider.send("evm_mine", []))
-    )
+    await Promise.all(Array.from({ length: blocks }, () => this.provider.send("evm_mine", [])))
   }
 
   /** Advance anvil time by `seconds`, then mine. */
@@ -77,10 +68,7 @@ export class EthereumClient {
   }
 
   /** Query `OPPEnvelope` events from a contract. */
-  getOPPEnvelopes(
-    opp: ethers.Contract,
-    fromBlock = 0
-  ): Promise<ethers.EventLog[]> {
+  getOPPEnvelopes(opp: ethers.Contract, fromBlock = 0): Promise<ethers.EventLog[]> {
     return this.queryEvents(opp, EthereumClient.OppEnvelopeEvent, fromBlock)
   }
 
@@ -89,20 +77,14 @@ export class EthereumClient {
     eventName: string,
     fromBlock: number
   ): Promise<ethers.EventLog[]> {
-    const events = await contract.queryFilter(
-      contract.filters[eventName](),
-      fromBlock
-    )
-    return events.filter(
-      (event): event is ethers.EventLog => event instanceof ethers.EventLog
-    )
+    const events = await contract.queryFilter(contract.filters[eventName](), fromBlock)
+    return events.filter((event): event is ethers.EventLog => event instanceof ethers.EventLog)
   }
 }
 
 export namespace EthereumClient {
   /** anvil account #0 private key — deterministic; only used when none is supplied. */
-  export const DefaultPrivateKey =
-    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+  export const DefaultPrivateKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
   /** OPP envelope event name on the outpost contract. */
   export const OppEnvelopeEvent = "OPPEnvelope"
 }

@@ -5,11 +5,7 @@ import { Server } from "node:http"
 
 import express, { Express } from "express"
 
-import {
-  ApiPaths,
-  DebuggingDefaults,
-  oppDebuggingPath
-} from "@wireio/debugging-shared"
+import { ApiPaths, DebuggingDefaults, oppDebuggingPath } from "@wireio/debugging-shared"
 
 import { JsonRPC } from "./JsonRPC.js"
 
@@ -65,17 +61,9 @@ export class DebuggingServer {
    * Validate paths and return a ready-to-use server. The cluster path
    * must exist; the OPP debugging directory is created if missing.
    */
-  static async create(
-    options: DebuggingServerOptions
-  ): Promise<DebuggingServer> {
-    Assert.ok(
-      options.clusterPath,
-      "DebuggingServerOptions.clusterPath is required"
-    )
-    Assert.ok(
-      Fs.existsSync(options.clusterPath),
-      `clusterPath does not exist: ${options.clusterPath}`
-    )
+  static async create(options: DebuggingServerOptions): Promise<DebuggingServer> {
+    Assert.ok(options.clusterPath, "DebuggingServerOptions.clusterPath is required")
+    Assert.ok(Fs.existsSync(options.clusterPath), `clusterPath does not exist: ${options.clusterPath}`)
 
     const config: DebuggingServerConfig = {
       port: options.port ?? DebuggingServer.DefaultPort,
@@ -110,16 +98,10 @@ export class DebuggingServer {
     this.clusterAccess = new ClusterAccess(config.clusterPath)
     this.clusterAccess.start()
 
-    const clusterRegistry = ClusterRoutes.register(
-      new Map(),
-      this.clusterAccess
-    )
+    const clusterRegistry = ClusterRoutes.register(new Map(), this.clusterAccess)
     JsonRPC.mount(this.app, ApiPaths.Cluster.Endpoint, clusterRegistry)
 
-    const processRegistry = ProcessRoutes.register(
-      new Map(),
-      this.clusterAccess
-    )
+    const processRegistry = ProcessRoutes.register(new Map(), this.clusterAccess)
     JsonRPC.mount(this.app, ApiPaths.Processes.Endpoint, processRegistry)
 
     const logRegistry = LogRoutes.register(new Map(), config.clusterPath)
@@ -133,15 +115,11 @@ export class DebuggingServer {
 
   async start(): Promise<AddressInfo> {
     const addr = await Deferred.useCallback<AddressInfo>(d => {
-      const server = (this.server = this.app.listen(
-        this.config.port,
-        this.config.host,
-        err => {
-          if (err) return d.reject(err)
+      const server = (this.server = this.app.listen(this.config.port, this.config.host, err => {
+        if (err) return d.reject(err)
 
-          d.resolve(server.address() as AddressInfo)
-        }
-      ))
+        d.resolve(server.address() as AddressInfo)
+      }))
     }).promise
     this.streamServer.attach(this.server!)
     return addr
@@ -167,12 +145,7 @@ export class DebuggingServer {
     res.status(200).json({ status: "ok" })
   }
 
-  protected handleError(
-    err: any,
-    _req: express.Request,
-    res: express.Response,
-    _next: express.NextFunction
-  ) {
+  protected handleError(err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) {
     const status = err.status || 500
     res.status(status).json({
       error: err.message ?? "Unknown error",

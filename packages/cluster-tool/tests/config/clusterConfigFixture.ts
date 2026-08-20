@@ -1,13 +1,7 @@
-import {
-  SignatureProviderType,
-  type ClusterConfig
-} from "@wireio/cluster-tool-shared"
+import { SignatureProviderType, type ClusterConfig } from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
 import { Constants } from "@wireio/cluster-tool"
-import {
-  BindConfigProvider,
-  ClusterConfigProvider
-} from "@wireio/cluster-tool/config"
+import { BindConfigProvider, ClusterConfigProvider } from "@wireio/cluster-tool/config"
 import { LogFileAppender } from "@wireio/cluster-tool/logging"
 import { Report } from "@wireio/cluster-tool/report"
 import { Localhost } from "@wireio/cluster-tool/utils"
@@ -69,10 +63,7 @@ export const PersistedFixture: ClusterConfig = {
         gossip: BindConfigProvider.DefaultSolanaGossip,
         dynamicRange: {
           first: BindConfigProvider.DefaultSolanaDynamicPortFirst,
-          last:
-            BindConfigProvider.DefaultSolanaDynamicPortFirst +
-            BindConfigProvider.SolanaDynamicPortRangeSize -
-            1
+          last: BindConfigProvider.DefaultSolanaDynamicPortFirst + BindConfigProvider.SolanaDynamicPortRangeSize - 1
         }
       }
     },
@@ -117,10 +108,6 @@ export const PersistedFixture: ClusterConfig = {
  *   nested object at the call site to change one leaf
  *   (`executables: { ...PersistedFixture.executables, nodeop: "/bin/true" }`).
  */
-export function fixtureConfig(
-  overrides: Partial<ClusterConfig> = {}
-): ClusterConfig {
-  return ClusterConfigProvider.deserialize(
-    JSON.stringify({ ...PersistedFixture, ...overrides })
-  )
+export function fixtureConfig(overrides: Partial<ClusterConfig> = {}): ClusterConfig {
+  return ClusterConfigProvider.deserialize(JSON.stringify({ ...PersistedFixture, ...overrides }))
 }

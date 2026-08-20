@@ -19,10 +19,7 @@
 import Assert from "node:assert"
 import { ethers } from "ethers"
 
-import {
-  resolveLatestNonce,
-  type EthereumPayableOverrides
-} from "../../utils/ethereumUtils.js"
+import { resolveLatestNonce, type EthereumPayableOverrides } from "../../utils/ethereumUtils.js"
 
 /**
  * Minimal `ethers` contract surface this helper relies on. Typed structurally
@@ -108,14 +105,13 @@ export async function requestEthereumSwap(
   reserveManager: ReserveManagerRequestSwapContract,
   request: EthereumSwapRequest
 ): Promise<EthereumSwapResult> {
-  Assert.ok(request.sourceAmountWei > 0n,
-    "EthereumSwapTool: sourceAmountWei must be > 0")
-  Assert.ok(request.targetRecipient.byteLength > 0,
-    "EthereumSwapTool: targetRecipient must be non-empty")
-  Assert.ok(request.targetAmount > 0n,
-    "EthereumSwapTool: targetAmount must be > 0")
-  Assert.ok(request.targetToleranceBps >= 0 && request.targetToleranceBps <= 10_000,
-    `EthereumSwapTool: targetToleranceBps must be in [0, 10000], got ${request.targetToleranceBps}`)
+  Assert.ok(request.sourceAmountWei > 0n, "EthereumSwapTool: sourceAmountWei must be > 0")
+  Assert.ok(request.targetRecipient.byteLength > 0, "EthereumSwapTool: targetRecipient must be non-empty")
+  Assert.ok(request.targetAmount > 0n, "EthereumSwapTool: targetAmount must be > 0")
+  Assert.ok(
+    request.targetToleranceBps >= 0 && request.targetToleranceBps <= 10_000,
+    `EthereumSwapTool: targetToleranceBps must be in [0, 10000], got ${request.targetToleranceBps}`
+  )
 
   const nonce = await resolveLatestNonce(reserveManager)
   const tx = await reserveManager.requestSwap(
@@ -205,14 +201,13 @@ export async function requestEthereumSwapErc20WithPermit(
   args: EthereumSwapArgs,
   permitSig: EthereumPermitSig
 ): Promise<EthereumSwapResult> {
-  Assert.ok(args.sourceAmount > 0n,
-    "EthereumSwapTool: sourceAmount must be > 0")
-  Assert.ok(args.targetRecipient.byteLength > 0,
-    "EthereumSwapTool: targetRecipient must be non-empty")
-  Assert.ok(args.targetAmount > 0n,
-    "EthereumSwapTool: targetAmount must be > 0")
-  Assert.ok(args.targetToleranceBps >= 0 && args.targetToleranceBps <= 10_000,
-    `EthereumSwapTool: targetToleranceBps must be in [0, 10000], got ${args.targetToleranceBps}`)
+  Assert.ok(args.sourceAmount > 0n, "EthereumSwapTool: sourceAmount must be > 0")
+  Assert.ok(args.targetRecipient.byteLength > 0, "EthereumSwapTool: targetRecipient must be non-empty")
+  Assert.ok(args.targetAmount > 0n, "EthereumSwapTool: targetAmount must be > 0")
+  Assert.ok(
+    args.targetToleranceBps >= 0 && args.targetToleranceBps <= 10_000,
+    `EthereumSwapTool: targetToleranceBps must be in [0, 10000], got ${args.targetToleranceBps}`
+  )
 
   const nonce = await resolveLatestNonce(reserveManager)
   const tx = await reserveManager.requestSwapErc20WithPermit(args, permitSig, { nonce })
@@ -239,14 +234,13 @@ export async function requestEthereumSwapErc20WithApproval(
   reserveManager: ReserveManagerErc20SwapContract,
   args: EthereumSwapArgs
 ): Promise<EthereumSwapResult> {
-  Assert.ok(args.sourceAmount > 0n,
-    "EthereumSwapTool: sourceAmount must be > 0")
-  Assert.ok(args.targetRecipient.byteLength > 0,
-    "EthereumSwapTool: targetRecipient must be non-empty")
-  Assert.ok(args.targetAmount > 0n,
-    "EthereumSwapTool: targetAmount must be > 0")
-  Assert.ok(args.targetToleranceBps >= 0 && args.targetToleranceBps <= 10_000,
-    `EthereumSwapTool: targetToleranceBps must be in [0, 10000], got ${args.targetToleranceBps}`)
+  Assert.ok(args.sourceAmount > 0n, "EthereumSwapTool: sourceAmount must be > 0")
+  Assert.ok(args.targetRecipient.byteLength > 0, "EthereumSwapTool: targetRecipient must be non-empty")
+  Assert.ok(args.targetAmount > 0n, "EthereumSwapTool: targetAmount must be > 0")
+  Assert.ok(
+    args.targetToleranceBps >= 0 && args.targetToleranceBps <= 10_000,
+    `EthereumSwapTool: targetToleranceBps must be in [0, 10000], got ${args.targetToleranceBps}`
+  )
 
   const nonce = await resolveLatestNonce(reserveManager)
   const tx = await reserveManager.requestSwapErc20WithApproval(args, { nonce })
@@ -347,10 +341,8 @@ export async function requestEthereumReserveCreateErc20WithPermit(
   args: EthereumReserveCreateArgs,
   permitSig: EthereumPermitSig
 ): Promise<EthereumSwapResult> {
-  Assert.ok(args.externalTokenAmount > 0n,
-    "EthereumSwapTool: externalTokenAmount must be > 0")
-  Assert.ok(args.reserveCode !== 0n,
-    "EthereumSwapTool: reserveCode must be non-zero")
+  Assert.ok(args.externalTokenAmount > 0n, "EthereumSwapTool: externalTokenAmount must be > 0")
+  Assert.ok(args.reserveCode !== 0n, "EthereumSwapTool: reserveCode must be non-zero")
 
   const nonce = await resolveLatestNonce(reserveManager)
   const tx = await reserveManager.requestReserveCreateErc20WithPermit(args, permitSig, { nonce })
@@ -375,10 +367,8 @@ export async function requestEthereumReserveCreateErc20WithApproval(
   reserveManager: ReserveManagerErc20ReserveCreateContract,
   args: EthereumReserveCreateArgs
 ): Promise<EthereumSwapResult> {
-  Assert.ok(args.externalTokenAmount > 0n,
-    "EthereumSwapTool: externalTokenAmount must be > 0")
-  Assert.ok(args.reserveCode !== 0n,
-    "EthereumSwapTool: reserveCode must be non-zero")
+  Assert.ok(args.externalTokenAmount > 0n, "EthereumSwapTool: externalTokenAmount must be > 0")
+  Assert.ok(args.reserveCode !== 0n, "EthereumSwapTool: reserveCode must be non-zero")
 
   const nonce = await resolveLatestNonce(reserveManager)
   const tx = await reserveManager.requestReserveCreateErc20WithApproval(args, { nonce })

@@ -81,4 +81,3 @@ describe("report header + failure focus", () => {
     expect(html).toContain("scrollIntoView")
   })
 })
-

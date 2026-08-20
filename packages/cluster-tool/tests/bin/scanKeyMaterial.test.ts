@@ -9,15 +9,7 @@ import Path from "node:path"
  * a package `bin/`); this suite hosts its coverage because `cluster-tool` owns
  * the archives the gate guards and `scripts/` has no jest project of its own.
  */
-const ScannerScript = Path.resolve(
-  __dirname,
-  "..",
-  "..",
-  "..",
-  "..",
-  "scripts",
-  "scan-key-material.mjs"
-)
+const ScannerScript = Path.resolve(__dirname, "..", "..", "..", "..", "scripts", "scan-key-material.mjs")
 
 /** Exit code the scanner uses for "key material found". */
 const HitExitCode = 1
@@ -87,8 +79,7 @@ describe("scripts/scan-key-material.mjs", () => {
     Fs.writeFileSync(
       leaked,
       JSON.stringify({
-        privateKey:
-          "PVT_K1_2bfGi9rYsXQSXXTvJbDAPhHLQUojjaNLomdm3cEJ1XTdfThJ4i"
+        privateKey: "PVT_K1_2bfGi9rYsXQSXXTvJbDAPhHLQUojjaNLomdm3cEJ1XTdfThJ4i"
       })
     )
     const { status, output } = runScanner(dir)
@@ -110,10 +101,7 @@ describe("scripts/scan-key-material.mjs", () => {
   it("skips binary blobs instead of choking on them", () => {
     // Block logs / ledgers / .so files cannot carry a text-encoded key, and
     // reading them as utf8 yields mojibake — never a real match.
-    Fs.writeFileSync(
-      Path.join(dir, "blocks.log"),
-      Buffer.from([0, 1, 2, 3, 0, 255, 254, 0])
-    )
+    Fs.writeFileSync(Path.join(dir, "blocks.log"), Buffer.from([0, 1, 2, 3, 0, 255, 254, 0]))
     Fs.writeFileSync(Path.join(dir, "notes.txt"), "nothing secret here\n")
     expect(runScanner(dir).status).toBe(0)
   })

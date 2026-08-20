@@ -60,9 +60,7 @@ describe("ExternalClusterConfig", () => {
     const parsed = JSON.parse(ExternalClusterConfigSchemaCodec.serialize(config))
     expect(parsed.accounts.operators[0].type).toBe("BATCH")
 
-    const rehydrated = ExternalClusterConfigSchemaCodec.deserialize(
-      ExternalClusterConfigSchemaCodec.serialize(config)
-    )
+    const rehydrated = ExternalClusterConfigSchemaCodec.deserialize(ExternalClusterConfigSchemaCodec.serialize(config))
     expect(rehydrated.accounts.operators[0].type).toBe(OperatorType.BATCH)
     expect(rehydrated).toEqual(config)
   })

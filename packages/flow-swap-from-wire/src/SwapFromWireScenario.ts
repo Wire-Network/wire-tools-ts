@@ -22,17 +22,10 @@ import {
 } from "@wireio/cluster-tool"
 import { SwapFromWireScenarioConstants as Constants } from "./SwapFromWireScenarioConstants.js"
 import { SwapFromWireScenarioOutputs as Outputs } from "./SwapFromWireScenarioOutputs.js"
-import {
-  SwapFromWireScenarioUserSteps,
-  SwapFromWireScenarioUwritSteps
-} from "./steps/index.js"
+import { SwapFromWireScenarioUserSteps, SwapFromWireScenarioUwritSteps } from "./steps/index.js"
 
-const {
-  SysioContractName,
-  SysioContractAccount,
-  SysioOpregOperatorstatus,
-  SysioUwritUnderwriterequeststatus
-} = SysioContracts
+const { SysioContractName, SysioContractAccount, SysioOpregOperatorstatus, SysioUwritUnderwriterequeststatus } =
+  SysioContracts
 const { Actor } = Report
 
 const log = getLogger(__filename)
@@ -51,14 +44,8 @@ const ReserveCustodyAccount = SysioContractAccount[SysioContractName.reserv]
  * @param wireAmount - The gross WIRE leg to split.
  * @returns The {@link WireReserveTool.WireFee} decomposition at the live rate.
  */
-async function readWireLegFee(
-  ctx: SwapScenarioContext,
-  wireAmount: bigint
-): Promise<WireReserveTool.WireFee> {
-  return WireReserveTool.splitWireFee(
-    wireAmount,
-    await WireReserveTool.readFeeBps(ctx.wire)
-  )
+async function readWireLegFee(ctx: SwapScenarioContext, wireAmount: bigint): Promise<WireReserveTool.WireFee> {
+  return WireReserveTool.splitWireFee(wireAmount, await WireReserveTool.readFeeBps(ctx.wire))
 }
 
 /** The from-WIRE uwreq row (src=WIRE, dst=SOLANA), or nothing yet (a read). */
@@ -67,23 +54,14 @@ function readFromWireUwreq(ctx: SwapScenarioContext) {
 }
 
 /** Whether every `labels` entry is `OPERATOR_STATUS_ACTIVE` on `sysio.opreg` (a read). */
-async function readAllOperatorsActive(
-  ctx: SwapScenarioContext,
-  labels: string[]
-): Promise<boolean> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.opreg)
-    .tables.operators.query({ limit: 100 })
+async function readAllOperatorsActive(ctx: SwapScenarioContext, labels: string[]): Promise<boolean> {
+  const { rows } = await ctx.wire.getSysioContract(SysioContractName.opreg).tables.operators.query({ limit: 100 })
   return labels.every(label => {
     const account = ctx.keyStore.assertOperator(label).account,
       operator = rows.find(row => row.account === account)
     return (
       operator != null &&
-      matchesProtoEnum(
-        operator.status,
-        SysioOpregOperatorstatus,
-        SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
-      )
+      matchesProtoEnum(operator.status, SysioOpregOperatorstatus, SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE)
     )
   })
 }
@@ -142,18 +120,14 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
   }
 
   /** The swap flows share the {@link SwapScenarioContext} query surface. */
-  override createContext(
-    config: ClusterConfig,
-    log: Logger
-  ): SwapScenarioContext {
+  override createContext(config: ClusterConfig, log: Logger): SwapScenarioContext {
     return new SwapScenarioContext(config, log)
   }
 
   plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const config = cluster.context.config,
-      underwriterLabels = Array.from(
-        { length: config.underwriterCount },
-        (_, index) => HarnessConstants.underwriterLabel(index)
+      underwriterLabels = Array.from({ length: config.underwriterCount }, (_, index) =>
+        HarnessConstants.underwriterLabel(index)
       ),
       writeStepOptions = { timeoutMs: 60_000 },
       relayStepOptions = {
@@ -170,34 +144,18 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
       }
 
     // ── 1. Substrate health — blocks + the bootstrap-seeded reserve ──
-    ClusterBuildPhase.create(
-      cluster,
-      "SubstrateHealth",
-      "The chain produces blocks; the SOL reserve is seeded"
-    ).push(
-      verifyStep<SwapScenarioContext>(
-        Actor.Sysio,
-        "chain-producing",
-        "WIRE chain is producing blocks",
-        async ctx => {
-          const info = await ctx.wire.getInfo()
-          Assert.ok(
-            Number(info.head_block_num) > 0,
-            "head_block_num must be positive on a live chain"
-          )
-        }
-      ),
+    ClusterBuildPhase.create(cluster, "SubstrateHealth", "The chain produces blocks; the SOL reserve is seeded").push(
+      verifyStep<SwapScenarioContext>(Actor.Sysio, "chain-producing", "WIRE chain is producing blocks", async ctx => {
+        const info = await ctx.wire.getInfo()
+        Assert.ok(Number(info.head_block_num) > 0, "head_block_num must be positive on a live chain")
+      }),
       verifyStep<SwapScenarioContext>(
         Actor.Sysio,
         "solana-reserve-seeded",
         "bootstrap seeded the SOLANA/SOL/PRIMARY reserve",
         async ctx => {
           // reserveBook asserts the row exists (throws when absent).
-          await ctx.reserveBook(
-            Constants.SolanaChainCode,
-            Constants.SolanaTokenCode,
-            Constants.PrimaryReserveCode
-          )
+          await ctx.reserveBook(Constants.SolanaChainCode, Constants.SolanaTokenCode, Constants.PrimaryReserveCode)
         }
       )
     )
@@ -211,11 +169,7 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
       underwriterLabels,
       WireUnderwriterTool.load(null, config.underwriterCount)
     )
-    ClusterBuildPhase.create(
-      cluster,
-      "UnderwriterActivation",
-      "Underwriters flip ACTIVE once the bonds credit"
-    ).push(
+    ClusterBuildPhase.create(cluster, "UnderwriterActivation", "Underwriters flip ACTIVE once the bonds credit").push(
       verifyStep<SwapScenarioContext>(
         Actor.Sysio,
         "underwriters-active",
@@ -282,13 +236,8 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
             Constants.SourceWireUnits,
             await WireReserveTool.readFeeBps(ctx.wire)
           )
-          Assert.ok(
-            targetSolanaAmount > 0n,
-            "constant-product target must be positive"
-          )
-          ctx.outputs
-            .set(Outputs.solanaReserveBefore, book)
-            .set(Outputs.targetSolanaAmount, targetSolanaAmount)
+          Assert.ok(targetSolanaAmount > 0n, "constant-product target must be positive")
+          ctx.outputs.set(Outputs.solanaReserveBefore, book).set(Outputs.targetSolanaAmount, targetSolanaAmount)
           log.info(`[FromWire] curve target = ${targetSolanaAmount} lamports`)
         }
       ),
@@ -297,16 +246,10 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
         "snapshot-balances",
         "snapshot depositor WIRE / sysio.reserv custody / recipient lamports baselines",
         async ctx => {
-          const depositorWireBefore = await ctx.wire.getWireBalance(
-              Constants.DepositorAccount
-            ),
-            reserveCustodyBefore = await ctx.wire.getWireBalance(
-              ReserveCustodyAccount
-            ),
+          const depositorWireBefore = await ctx.wire.getWireBalance(Constants.DepositorAccount),
+            reserveCustodyBefore = await ctx.wire.getWireBalance(ReserveCustodyAccount),
             swapUser = ctx.outputs.assert(swapUserOutputKey()),
-            recipientLamportsBefore = await ctx.solana.getLamports(
-              swapUser.solanaKeypair.publicKey
-            )
+            recipientLamportsBefore = await ctx.solana.getLamports(swapUser.solanaKeypair.publicKey)
           Assert.ok(
             depositorWireBefore >= Constants.SourceWireUnits,
             `depositor must hold at least ${Constants.SourceWireUnits} WIRE base units to escrow`
@@ -334,12 +277,8 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
         "escrow-exact",
         "escrow is immediate and REAL: depositor WIRE down, sysio.reserv custody up (EXACT)",
         async ctx => {
-          const depositorWireBefore = ctx.outputs.assert(
-              Outputs.depositorWireBefore
-            ),
-            reserveCustodyBefore = ctx.outputs.assert(
-              Outputs.reserveCustodyBefore
-            )
+          const depositorWireBefore = ctx.outputs.assert(Outputs.depositorWireBefore),
+            reserveCustodyBefore = ctx.outputs.assert(Outputs.reserveCustodyBefore)
           Assert.strictEqual(
             await ctx.wire.getWireBalance(Constants.DepositorAccount),
             depositorWireBefore - Constants.SourceWireUnits,
@@ -423,11 +362,7 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
           // The WIRE source leg carries no bond — only the SOL target leg locks.
           const request = await readFromWireUwreq(ctx)
           const locks = await ctx.locksForUwreq(Number(request.id))
-          Assert.strictEqual(
-            locks.length,
-            1,
-            "the WIRE source leg carries no bond — exactly one lock expected"
-          )
+          Assert.strictEqual(locks.length, 1, "the WIRE source leg carries no bond — exactly one lock expected")
           Assert.strictEqual(
             slugValue(locks[0].chain_code),
             Constants.SolanaChainCode,
@@ -478,38 +413,21 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
         "recipient's SOL balance bumps by ~targetAmount (within variance tolerance)",
         async ctx => {
           const swapUser = ctx.outputs.assert(swapUserOutputKey()),
-            recipientLamportsBefore = ctx.outputs.assert(
-              Outputs.recipientLamportsBefore
-            ),
+            recipientLamportsBefore = ctx.outputs.assert(Outputs.recipientLamportsBefore),
             targetSolanaAmount = ctx.outputs.assert(Outputs.targetSolanaAmount),
-            drift = WireReserveTool.varianceDrift(
-              targetSolanaAmount,
-              Constants.VarianceToleranceBps
-            )
+            drift = WireReserveTool.varianceDrift(targetSolanaAmount, Constants.VarianceToleranceBps)
           await pollUntil(
             "from-WIRE recipient receives SOL",
             async () => {
-              const current = await ctx.solana.getLamports(
-                swapUser.solanaKeypair.publicKey
-              )
-              return (
-                current >=
-                recipientLamportsBefore + Number(targetSolanaAmount - drift)
-              )
+              const current = await ctx.solana.getLamports(swapUser.solanaKeypair.publicKey)
+              return current >= recipientLamportsBefore + Number(targetSolanaAmount - drift)
             },
             Constants.RemitDeadlineMs,
             Constants.PollIntervalMs
           )
-          const finalLamports = await ctx.solana.getLamports(
-            swapUser.solanaKeypair.publicKey
-          )
-          log.info(
-            `[FromWire] recipient received ${finalLamports - recipientLamportsBefore} lamports`
-          )
-          Assert.ok(
-            finalLamports - recipientLamportsBefore > 0,
-            "the recipient's lamport balance must have increased"
-          )
+          const finalLamports = await ctx.solana.getLamports(swapUser.solanaKeypair.publicKey)
+          log.info(`[FromWire] recipient received ${finalLamports - recipientLamportsBefore} lamports`)
+          Assert.ok(finalLamports - recipientLamportsBefore > 0, "the recipient's lamport balance must have increased")
         },
         remitStepOptions
       )
@@ -536,19 +454,12 @@ export class SwapFromWireScenario extends FlowScenario<SwapScenarioContext> {
           // The drain can land just after the SOL-recipient poll succeeds, so
           // poll until custody settles at the drained value rather than
           // snapshotting mid-race.
-          const reserveCustodyBefore = ctx.outputs.assert(
-              Outputs.reserveCustodyBefore
-            ),
+          const reserveCustodyBefore = ctx.outputs.assert(Outputs.reserveCustodyBefore),
             fromWireFee = await readWireLegFee(ctx, Constants.SourceWireUnits),
-            expectedCustody =
-              reserveCustodyBefore +
-              Constants.SourceWireUnits -
-              fromWireFee.rewardShare
+            expectedCustody = reserveCustodyBefore + Constants.SourceWireUnits - fromWireFee.rewardShare
           await pollUntil(
             "rewards bucket drained from sysio.reserv custody",
-            async () =>
-              (await ctx.wire.getWireBalance(ReserveCustodyAccount)) ===
-              expectedCustody,
+            async () => (await ctx.wire.getWireBalance(ReserveCustodyAccount)) === expectedCustody,
             Constants.DrainDeadlineMs,
             Constants.PollIntervalMs
           )

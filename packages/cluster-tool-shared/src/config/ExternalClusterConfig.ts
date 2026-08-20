@@ -3,10 +3,7 @@ import { z } from "zod"
 
 import { SchemaCodec } from "../schema/index.js"
 import { BindConfigSchema } from "./BindConfig.js"
-import {
-  ExternalOutpostConfigEthereumSchema,
-  ExternalOutpostConfigSolanaSchema
-} from "./ExternalOutpostConfig.js"
+import { ExternalOutpostConfigEthereumSchema, ExternalOutpostConfigSolanaSchema } from "./ExternalOutpostConfig.js"
 import { SignatureProviderConfigSchema } from "./SignatureProviderConfig.js"
 
 /** True when `name` is a valid `OperatorType` member name (not a reverse-map key). */
@@ -15,9 +12,7 @@ function isOperatorTypeName(name: string): boolean {
 }
 
 /** The wire (JSON) form of an operator type — the member NAME, validated against the enum. */
-const OperatorTypeNameSchema = z
-  .string()
-  .refine(isOperatorTypeName, { message: "unknown OperatorType name" })
+const OperatorTypeNameSchema = z.string().refine(isOperatorTypeName, { message: "unknown OperatorType name" })
 
 /**
  * zod v4 codec bridging `OperatorType`: the WIRE (input) side is the member
@@ -25,15 +20,10 @@ const OperatorTypeNameSchema = z
  * proto enum. The name is validated before decode runs, so the reverse mapping
  * is always defined.
  */
-const OperatorTypeCodec = z.codec(
-  OperatorTypeNameSchema,
-  z.custom<OperatorType>(),
-  {
-    decode: (name: string): OperatorType =>
-      OperatorType[name as keyof typeof OperatorType] as OperatorType,
-    encode: (value: OperatorType): string => OperatorType[value]
-  }
-)
+const OperatorTypeCodec = z.codec(OperatorTypeNameSchema, z.custom<OperatorType>(), {
+  decode: (name: string): OperatorType => OperatorType[name as keyof typeof OperatorType] as OperatorType,
+  encode: (value: OperatorType): string => OperatorType[value]
+})
 
 /**
  * One account in an {@link ExternalClusterConfig} — its WIRE account name, its
@@ -50,9 +40,7 @@ export const ExternalClusterConfigAccountSchema = z.object({
   keyProviders: z.array(SignatureProviderConfigSchema).min(1)
 })
 /** One account in an {@link ExternalClusterConfig} — the shape of {@link ExternalClusterConfigAccountSchema}. */
-export type ExternalClusterConfigAccount = z.infer<
-  typeof ExternalClusterConfigAccountSchema
->
+export type ExternalClusterConfigAccount = z.infer<typeof ExternalClusterConfigAccountSchema>
 
 /** The accounts an external cluster run hydrates (operators, as an array — no name double-carry). */
 export const ExternalClusterConfigAccountsSchema = z.object({
@@ -60,9 +48,7 @@ export const ExternalClusterConfigAccountsSchema = z.object({
   operators: z.array(ExternalClusterConfigAccountSchema)
 })
 /** The accounts section — the shape of {@link ExternalClusterConfigAccountsSchema}. */
-export type ExternalClusterConfigAccounts = z.infer<
-  typeof ExternalClusterConfigAccountsSchema
->
+export type ExternalClusterConfigAccounts = z.infer<typeof ExternalClusterConfigAccountsSchema>
 
 /**
  * The WIRE-depot section of an {@link ExternalClusterConfig}. `epochDurationSec`
@@ -77,9 +63,7 @@ export const ExternalClusterConfigWireSchema = z.object({
   genesisFile: z.string().optional()
 })
 /** The WIRE-depot section — the shape of {@link ExternalClusterConfigWireSchema}. */
-export type ExternalClusterConfigWire = z.infer<
-  typeof ExternalClusterConfigWireSchema
->
+export type ExternalClusterConfigWire = z.infer<typeof ExternalClusterConfigWireSchema>
 
 /**
  * The fully self-described external-cluster deployment payload — emitted by
@@ -105,5 +89,4 @@ export const ExternalClusterConfigSchema = z.object({
 export type ExternalClusterConfig = z.infer<typeof ExternalClusterConfigSchema>
 
 /** Validated codec for `external-cluster-config.json` (both ends of the deployment). */
-export const ExternalClusterConfigSchemaCodec =
-  SchemaCodec.create<ExternalClusterConfig>(ExternalClusterConfigSchema)
+export const ExternalClusterConfigSchemaCodec = SchemaCodec.create<ExternalClusterConfig>(ExternalClusterConfigSchema)

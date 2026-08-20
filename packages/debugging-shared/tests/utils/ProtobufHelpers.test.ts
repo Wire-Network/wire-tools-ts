@@ -51,9 +51,7 @@ describe("endpointsTypeToKey", () => {
   })
 
   it("returns the enum name string for UNKNOWN (value 0)", () => {
-    expect(endpointsTypeToKey(DebugOutpostEndpointsType.UNKNOWN)).toBe(
-      "UNKNOWN"
-    )
+    expect(endpointsTypeToKey(DebugOutpostEndpointsType.UNKNOWN)).toBe("UNKNOWN")
   })
 
   it("returns null for an out-of-range value", () => {

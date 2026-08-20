@@ -102,13 +102,8 @@ export namespace WireReserveTool {
    * @param sourceAmount - The amount entering the source side.
    * @returns The destination amount the curve yields.
    */
-  export function cpOutput(
-    reserveSource: bigint,
-    reserveDestination: bigint,
-    sourceAmount: bigint
-  ): bigint {
-    if (reserveSource <= 0n || reserveDestination <= 0n || sourceAmount <= 0n)
-      return 0n
+  export function cpOutput(reserveSource: bigint, reserveDestination: bigint, sourceAmount: bigint): bigint {
+    if (reserveSource <= 0n || reserveDestination <= 0n || sourceAmount <= 0n) return 0n
     return (reserveDestination * sourceAmount) / (reserveSource + sourceAmount)
   }
 
@@ -138,36 +133,66 @@ export namespace WireReserveTool {
    * quotes and settlement diverge.
    */
   const Exp2FracTable: readonly bigint[] = [
-    0x16a09e667f3bcc91n, 0x1306fe0a31b7152en,
-    0x1172b83c7d517addn, 0x10b5586cf9890f63n,
-    0x1059b0d31585743bn, 0x102c9a3e778060een,
-    0x10163da9fb33356en, 0x100b1afa5abcbed6n,
-    0x10058c86da1c09ean, 0x1002c605e2e8cec5n,
-    0x100162f3904051fan, 0x1000b175effdc76cn,
-    0x100058ba01fb9f97n, 0x10002c5cc37da949n,
-    0x1000162e525ee054n, 0x10000b17255775c0n,
-    0x1000058b91b5bc9bn, 0x100002c5c89d5ec7n,
-    0x10000162e43f4f83n, 0x100000b1721bcfcan,
-    0x10000058b90cf1e7n, 0x1000002c5c863b74n,
-    0x100000162e430e5an, 0x1000000b17218355n,
-    0x100000058b90c0b5n, 0x10000002c5c8601dn,
-    0x1000000162e42fffn, 0x10000000b17217fcn,
-    0x1000000058b90bfdn, 0x100000002c5c85fen,
-    0x10000000162e42ffn, 0x100000000b172180n,
-    0x10000000058b90c0n, 0x1000000002c5c860n,
-    0x100000000162e430n, 0x1000000000b17218n,
-    0x100000000058b90cn, 0x10000000002c5c86n,
-    0x1000000000162e43n, 0x10000000000b1721n,
-    0x1000000000058b91n, 0x100000000002c5c8n,
-    0x10000000000162e4n, 0x100000000000b172n,
-    0x10000000000058b9n, 0x1000000000002c5dn,
-    0x100000000000162en, 0x1000000000000b17n,
-    0x100000000000058cn, 0x10000000000002c6n,
-    0x1000000000000163n, 0x10000000000000b1n,
-    0x1000000000000059n, 0x100000000000002cn,
-    0x1000000000000016n, 0x100000000000000bn,
-    0x1000000000000006n, 0x1000000000000003n,
-    0x1000000000000001n, 0x1000000000000001n
+    0x16a09e667f3bcc91n,
+    0x1306fe0a31b7152en,
+    0x1172b83c7d517addn,
+    0x10b5586cf9890f63n,
+    0x1059b0d31585743bn,
+    0x102c9a3e778060een,
+    0x10163da9fb33356en,
+    0x100b1afa5abcbed6n,
+    0x10058c86da1c09ean,
+    0x1002c605e2e8cec5n,
+    0x100162f3904051fan,
+    0x1000b175effdc76cn,
+    0x100058ba01fb9f97n,
+    0x10002c5cc37da949n,
+    0x1000162e525ee054n,
+    0x10000b17255775c0n,
+    0x1000058b91b5bc9bn,
+    0x100002c5c89d5ec7n,
+    0x10000162e43f4f83n,
+    0x100000b1721bcfcan,
+    0x10000058b90cf1e7n,
+    0x1000002c5c863b74n,
+    0x100000162e430e5an,
+    0x1000000b17218355n,
+    0x100000058b90c0b5n,
+    0x10000002c5c8601dn,
+    0x1000000162e42fffn,
+    0x10000000b17217fcn,
+    0x1000000058b90bfdn,
+    0x100000002c5c85fen,
+    0x10000000162e42ffn,
+    0x100000000b172180n,
+    0x10000000058b90c0n,
+    0x1000000002c5c860n,
+    0x100000000162e430n,
+    0x1000000000b17218n,
+    0x100000000058b90cn,
+    0x10000000002c5c86n,
+    0x1000000000162e43n,
+    0x10000000000b1721n,
+    0x1000000000058b91n,
+    0x100000000002c5c8n,
+    0x10000000000162e4n,
+    0x100000000000b172n,
+    0x10000000000058b9n,
+    0x1000000000002c5dn,
+    0x100000000000162en,
+    0x1000000000000b17n,
+    0x100000000000058cn,
+    0x10000000000002c6n,
+    0x1000000000000163n,
+    0x10000000000000b1n,
+    0x1000000000000059n,
+    0x100000000000002cn,
+    0x1000000000000016n,
+    0x100000000000000bn,
+    0x1000000000000006n,
+    0x1000000000000003n,
+    0x1000000000000001n,
+    0x1000000000000001n
   ]
 
   /**
@@ -217,12 +242,7 @@ export namespace WireReserveTool {
    * returned in Q60 within `(0, FpOne]`. The mirror of `amm::pow_frac_fp`,
    * evaluated as `2^(-e * log2(den/num))`.
    */
-  function powFracFp(
-    num: bigint,
-    den: bigint,
-    expNum: bigint,
-    expDen: bigint
-  ): bigint {
+  function powFracFp(num: bigint, den: bigint, expNum: bigint, expDen: bigint): bigint {
     if (expDen === 0n) return FpOne
     // base >= 1 -> 1 (only base == 1 reaches here).
     if (num >= den) return FpOne
@@ -300,13 +320,7 @@ export namespace WireReserveTool {
     amountToken: bigint
   ): bigint {
     const cw = BigInt(connectorWeightBps)
-    return outGivenIn(
-      reserveChainAmount,
-      BigInt(WeightTotalBps) - cw,
-      reserveWireAmount,
-      cw,
-      amountToken
-    )
+    return outGivenIn(reserveChainAmount, BigInt(WeightTotalBps) - cw, reserveWireAmount, cw, amountToken)
   }
 
   /**
@@ -327,13 +341,7 @@ export namespace WireReserveTool {
     amountWire: bigint
   ): bigint {
     const cw = BigInt(connectorWeightBps)
-    return outGivenIn(
-      reserveWireAmount,
-      cw,
-      reserveChainAmount,
-      BigInt(WeightTotalBps) - cw,
-      amountWire
-    )
+    return outGivenIn(reserveWireAmount, cw, reserveChainAmount, BigInt(WeightTotalBps) - cw, amountWire)
   }
 
   /**
@@ -455,14 +463,7 @@ export namespace WireReserveTool {
     // WIRE → WIRE is a plain transfer: no curve, no fee.
     if (source == null && destination == null) return amountIn
     const wireLeg =
-      source == null
-        ? amountIn
-        : tokenToWire(
-            source.chain,
-            source.wire,
-            source.connectorWeightBps,
-            amountIn
-          )
+      source == null ? amountIn : tokenToWire(source.chain, source.wire, source.connectorWeightBps, amountIn)
     if (wireLeg === 0n) return 0n
     // Both reserve owners charge on the SAME gross leg the network fee rides,
     // so all three come out of one `splitWireFee` — mirroring the contract's
@@ -478,12 +479,7 @@ export namespace WireReserveTool {
     )
     // A WIRE destination receives the post-fee WIRE leg directly.
     if (destination == null) return net
-    return wireToToken(
-      destination.wire,
-      destination.chain,
-      destination.connectorWeightBps,
-      net
-    )
+    return wireToToken(destination.wire, destination.chain, destination.connectorWeightBps, net)
   }
 
   /**
@@ -536,14 +532,9 @@ export namespace WireReserveTool {
    * @param nativeDecimals - The token's chain-native decimal scale.
    * @returns The amount in the token's depot-frame units (floored when downscaling).
    */
-  export function toDepot(
-    nativeAmount: bigint,
-    nativeDecimals: number
-  ): bigint {
+  export function toDepot(nativeAmount: bigint, nativeDecimals: number): bigint {
     const precision = depotPrecision(nativeDecimals)
-    return nativeDecimals > precision
-      ? nativeAmount / 10n ** BigInt(nativeDecimals - precision)
-      : nativeAmount
+    return nativeDecimals > precision ? nativeAmount / 10n ** BigInt(nativeDecimals - precision) : nativeAmount
   }
 
   /**
@@ -557,14 +548,9 @@ export namespace WireReserveTool {
    * @param nativeDecimals - The destination token's chain-native decimal scale.
    * @returns The amount in chain-native base units.
    */
-  export function fromDepot(
-    depotAmount: bigint,
-    nativeDecimals: number
-  ): bigint {
+  export function fromDepot(depotAmount: bigint, nativeDecimals: number): bigint {
     const precision = depotPrecision(nativeDecimals)
-    return nativeDecimals > precision
-      ? depotAmount * 10n ** BigInt(nativeDecimals - precision)
-      : depotAmount
+    return nativeDecimals > precision ? depotAmount * 10n ** BigInt(nativeDecimals - precision) : depotAmount
   }
 
   /**
@@ -576,9 +562,7 @@ export namespace WireReserveTool {
    * @returns The configured `fee_bps`.
    */
   export async function readFeeBps(wire: WireClient): Promise<number> {
-    const { rows } = await wire
-      .getSysioContract(SysioContractName.uwrit)
-      .tables.uwconfig.query()
+    const { rows } = await wire.getSysioContract(SysioContractName.uwrit).tables.uwconfig.query()
     return Number(rows[0]?.fee_bps ?? 0)
   }
 
@@ -604,9 +588,7 @@ export namespace WireReserveTool {
 
   /** Whether a triple denotes the WIRE leg (no reserve consulted). */
   function isWireLeg(triple: ReserveTriple): boolean {
-    return (
-      triple.chainCode === WireChainCode && triple.tokenCode === WireTokenCode
-    )
+    return triple.chainCode === WireChainCode && triple.tokenCode === WireTokenCode
   }
 
   /**
@@ -626,10 +608,7 @@ export namespace WireReserveTool {
    * @returns The destination amount, or `0n` when any required reserve row is
    *   missing — matching the on-chain "no quote available" convention.
    */
-  export async function swapquote(
-    wire: WireClient,
-    request: SwapQuoteRequest
-  ): Promise<bigint> {
+  export async function swapquote(wire: WireClient, request: SwapQuoteRequest): Promise<bigint> {
     const { from, fromAmount, to } = request
     if (fromAmount <= 0n) return 0n
     const fromIsWire = isWireLeg(from),

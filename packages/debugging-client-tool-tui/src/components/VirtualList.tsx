@@ -42,17 +42,8 @@ interface VirtualListSnapshot<T> {
  * source.
  */
 export function VirtualList<T>(props: VirtualListProps<T>): React.ReactElement {
-  const {
-      totalItems,
-      offset,
-      viewportHeight,
-      fetchRange,
-      renderItem
-    } = props,
-    clampedOffset = Math.max(
-      0,
-      Math.min(offset, Math.max(0, totalItems - viewportHeight))
-    ),
+  const { totalItems, offset, viewportHeight, fetchRange, renderItem } = props,
+    clampedOffset = Math.max(0, Math.min(offset, Math.max(0, totalItems - viewportHeight))),
     [snapshot, setSnapshot] = useState<VirtualListSnapshot<T>>({
       items: [],
       offset: 0
@@ -70,9 +61,5 @@ export function VirtualList<T>(props: VirtualListProps<T>): React.ReactElement {
     }
   }, [clampedOffset, viewportHeight, fetchRange])
 
-  return (
-    <Box flexDirection="column">
-      {snapshot.items.map((it, i) => renderItem(it, snapshot.offset + i))}
-    </Box>
-  )
+  return <Box flexDirection="column">{snapshot.items.map((it, i) => renderItem(it, snapshot.offset + i))}</Box>
 }

@@ -59,9 +59,7 @@ describe("OPPTrackingService", () => {
     })
     await new Promise(r => setTimeout(r, 600))
     expect(store.getState().opp.epochs[1]?.envelopes.length).toBe(1)
-    expect(store.getState().opp.epochs[1]?.envelopes[0].checksum).toBe(
-      "deadbeef"
-    )
+    expect(store.getState().opp.epochs[1]?.envelopes[0].checksum).toBe("deadbeef")
   })
 
   it("dispatches appendEnvelope on Added events after hydration", async () => {

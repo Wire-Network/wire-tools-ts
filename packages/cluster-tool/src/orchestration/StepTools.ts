@@ -1,9 +1,6 @@
 import { getLogger } from "../logging/Logger.js"
 import { ClusterBuildContext } from "./ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "./ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "./ClusterBuildStep.js"
 import { Report } from "../report/Report.js"
 import {
   FlowTimeoutScaleEnvVar,
@@ -78,13 +75,8 @@ export function verifyStep<C extends ClusterBuildContext = ClusterBuildContext>(
   fn: (ctx: C, signal: AbortSignal) => Promise<void>,
   options: ClusterBuildStepOptions = {}
 ): ClusterBuildStep<C, null> {
-  return ClusterBuildStep.create<C, null>(
-    actor,
-    name,
-    description,
-    options,
-    null,
-    (ctx, _input, signal) => fn(ctx, signal)
+  return ClusterBuildStep.create<C, null>(actor, name, description, options, null, (ctx, _input, signal) =>
+    fn(ctx, signal)
   )
 }
 

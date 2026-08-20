@@ -36,9 +36,6 @@ export function newSponsorNonce(): string {
     secureRandom(SponsorNonceLength),
     byte => SponsorNonceAlphabet[byte % SponsorNonceAlphabet.length]
   ).join("")
-  Assert.ok(
-    Name.isValid(nonce),
-    `newSponsorNonce: generated nonce "${nonce}" is not a valid WIRE name`
-  )
+  Assert.ok(Name.isValid(nonce), `newSponsorNonce: generated nonce "${nonce}" is not a valid WIRE name`)
   return nonce
 }

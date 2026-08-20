@@ -29,10 +29,7 @@ export class ProcessLivenessStream implements ServerSideStream<ProcessLivenessEv
 
   async start(emit: (payload: ProcessLivenessEvent) => void): Promise<void> {
     await this.tick(emit)
-    this.timer = setInterval(
-      () => void this.tick(emit),
-      ProcessLivenessStream.PollMs
-    )
+    this.timer = setInterval(() => void this.tick(emit), ProcessLivenessStream.PollMs)
   }
 
   async stop(): Promise<void> {
@@ -41,9 +38,7 @@ export class ProcessLivenessStream implements ServerSideStream<ProcessLivenessEv
     this.timer = null
   }
 
-  private async tick(
-    emit: (payload: ProcessLivenessEvent) => void
-  ): Promise<void> {
+  private async tick(emit: (payload: ProcessLivenessEvent) => void): Promise<void> {
     if (this.stopped) return
     const state = await this.clusterAccess.getState(),
       sources = collectPidSources(this.clusterAccess.clusterPath, state),
@@ -65,18 +60,11 @@ export class ProcessLivenessStream implements ServerSideStream<ProcessLivenessEv
     const setSnapshots: ProcessLivenessSnapshot[] = []
     next.forEach((snap, label) => {
       const prior = this.prev.get(label)
-      if (
-        !prior ||
-        prior.pid !== snap.pid ||
-        prior.alive !== snap.alive ||
-        prior.exitedAt !== snap.exitedAt
-      ) {
+      if (!prior || prior.pid !== snap.pid || prior.alive !== snap.alive || prior.exitedAt !== snap.exitedAt) {
         setSnapshots.push(snap)
       }
     })
-    const removedLabels = [...this.prev.keys()].filter(
-      label => !next.has(label)
-    )
+    const removedLabels = [...this.prev.keys()].filter(label => !next.has(label))
     this.prev = next
     if (setSnapshots.length > 0 || removedLabels.length > 0) {
       emit({ setSnapshots, removedLabels })

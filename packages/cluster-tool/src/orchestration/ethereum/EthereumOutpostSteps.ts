@@ -2,10 +2,7 @@ import Path from "node:path"
 import { Report } from "../../report/Report.js"
 import { toDialAddress, toURL } from "../../utils/netUtils.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../ClusterBuildStep.js"
 import { EthereumOutpostBootstrapper } from "./EthereumOutpostBootstrapper.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 
@@ -21,22 +18,13 @@ export namespace EthereumOutpostSteps {
    * accounts file (later phases re-read `accounts.json` / `outpost-addrs.json`
    * from disk). Input-less — paths + the anvil port come from `ctx.config`.
    */
-  export function planDeploy<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planDeploy<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runDeploy
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runDeploy)
   }
 
   /** Named runner — `EthereumOutpostBootstrapper.bootstrap` against the run anvil. */
@@ -51,10 +39,7 @@ export namespace EthereumOutpostSteps {
     await new EthereumOutpostBootstrapper({
       ethereumPath: ctx.config.ethereumPath,
       anvilDataPath: Path.join(ctx.config.dataPath, AnvilDataSubpath),
-      rpcUrl: toURL(
-        ctx.config.bind.anvil.port,
-        toDialAddress(ctx.config.bind.anvil.address)
-      ),
+      rpcUrl: toURL(ctx.config.bind.anvil.port, toDialAddress(ctx.config.bind.anvil.address)),
       deploymentsPath: ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
     }).bootstrap()
   }

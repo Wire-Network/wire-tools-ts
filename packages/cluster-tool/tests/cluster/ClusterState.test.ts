@@ -3,12 +3,7 @@ import Os from "node:os"
 import Path from "node:path"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
-import {
-  AWSAccountName,
-  findKeyMaterial,
-  SignatureProviderType,
-  type ClusterConfig
-} from "@wireio/cluster-tool-shared"
+import { AWSAccountName, findKeyMaterial, SignatureProviderType, type ClusterConfig } from "@wireio/cluster-tool-shared"
 
 import { ClusterState } from "@wireio/cluster-tool"
 import { NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
@@ -131,10 +126,7 @@ describe("ClusterState", () => {
     it("the on-disk file carries no private key material", () => {
       const ctx = seededContext()
       ClusterState.save(ctx.config, ClusterState.capture(ctx))
-      const raw = Fs.readFileSync(
-        ClusterState.stateFilePath(ctx.config),
-        "utf8"
-      )
+      const raw = Fs.readFileSync(ClusterState.stateFilePath(ctx.config), "utf8")
       expect(raw).not.toContain("PVT_")
     })
 
@@ -151,14 +143,10 @@ describe("ClusterState", () => {
       ClusterState.saveKeys(ctx.config, keys)
       const loaded = ClusterState.loadKeys(ctx.config)
       expect(loaded).toEqual(keys)
-      const operator = loaded.operators.find(
-        entry => entry.label === BatchOperatorLabel
-      )
+      const operator = loaded.operators.find(entry => entry.label === BatchOperatorLabel)
       // The persisted record keeps BOTH identities distinct.
       expect(operator?.account).toBe(BatchOperatorAccount)
-      expect(operator?.ethereum?.address).toBe(
-        "0xabc0000000000000000000000000000000000a"
-      )
+      expect(operator?.ethereum?.address).toBe("0xabc0000000000000000000000000000000000a")
       expect(operator?.solana?.publicKey).toBe(`PUB_ED_${BatchOperatorLabel}`)
       expect(operator?.wire.privateKey).toBe(`PVT_K1_${BatchOperatorLabel}`)
     })
@@ -166,8 +154,7 @@ describe("ClusterState", () => {
     it("writes cluster-keys.json with file mode 0600", () => {
       const ctx = seededContext()
       ClusterState.saveKeys(ctx.config, ClusterState.captureKeys(ctx))
-      const mode =
-        Fs.statSync(ClusterState.keysFilePath(ctx.config)).mode & 0o777
+      const mode = Fs.statSync(ClusterState.keysFilePath(ctx.config)).mode & 0o777
       expect(mode).toBe(0o600)
     })
 
@@ -177,8 +164,7 @@ describe("ClusterState", () => {
       ClusterState.saveKeys(ctx.config, keys)
       Fs.chmodSync(ClusterState.keysFilePath(ctx.config), 0o644)
       ClusterState.saveKeys(ctx.config, keys)
-      const mode =
-        Fs.statSync(ClusterState.keysFilePath(ctx.config)).mode & 0o777
+      const mode = Fs.statSync(ClusterState.keysFilePath(ctx.config)).mode & 0o777
       expect(mode).toBe(0o600)
     })
 
@@ -190,12 +176,10 @@ describe("ClusterState", () => {
     it("refuses to capture an operator whose sponsored-creation step never ran", () => {
       const ctx = seededContext()
       // Re-set the operator WITHOUT an `account` — the materialize-only state.
-      const { account: _dropped, ...materialized } =
-        ctx.keyStore.assertOperator(BatchOperatorLabel)
+      const { account: _dropped, ...materialized } = ctx.keyStore.assertOperator(BatchOperatorLabel)
       ctx.keyStore.setOperator(materialized)
       expect(() => ClusterState.captureKeys(ctx)).toThrow(/has no account/)
     })
-
   })
 
   describe("§5.6 — an SSM cluster persists key REFERENCES, never key material", () => {
@@ -228,9 +212,7 @@ describe("ClusterState", () => {
     it("swaps every privateKey for the awsSecretId its publish step put it under", () => {
       const keys = ClusterState.captureKeys(ssmContext()),
         node = keys.nodes[0],
-        operator = keys.operators.find(
-          entry => entry.account === BatchOperatorAccount
-        )
+        operator = keys.operators.find(entry => entry.account === BatchOperatorAccount)
       // Node keys are keyed by the node NAME — the same `{account}` segment
       // `KeySteps.signatureProviderKeyPublications` publishes them under.
       expect(node.wire.privateKey).toBeUndefined()
@@ -238,15 +220,9 @@ describe("ClusterState", () => {
       expect(node.wireFinalizer.awsSecretId).toBe("/wire/test/node_00/BLS")
       // Operator keys are keyed by the DURABLE handle, never the chain account.
       expect(operator?.wire.privateKey).toBeUndefined()
-      expect(operator?.wire.awsSecretId).toBe(
-        `/wire/test/${BatchOperatorLabel}/K1`
-      )
-      expect(operator?.ethereum?.awsSecretId).toBe(
-        `/wire/test/${BatchOperatorLabel}/EM`
-      )
-      expect(operator?.solana?.awsSecretId).toBe(
-        `/wire/test/${BatchOperatorLabel}/ED`
-      )
+      expect(operator?.wire.awsSecretId).toBe(`/wire/test/${BatchOperatorLabel}/K1`)
+      expect(operator?.ethereum?.awsSecretId).toBe(`/wire/test/${BatchOperatorLabel}/EM`)
+      expect(operator?.solana?.awsSecretId).toBe(`/wire/test/${BatchOperatorLabel}/ED`)
     })
 
     // A producer ACCOUNT signs with its hosting NODE's key set, so that pair is
@@ -257,9 +233,7 @@ describe("ClusterState", () => {
     // (correct) node-keyed ref for the SAME key.
     it("keys a producer account's refs by its NODE, not the account", () => {
       const ctx = ssmContext(),
-        node = NodeConfig.plan(ctx.config).find(
-          planned => planned.role === NodeRole.producer
-        ),
+        node = NodeConfig.plan(ctx.config).find(planned => planned.role === NodeRole.producer),
         producer = node.producers[0],
         nodeKeys = ctx.keyStore.node(node.index)
       ctx.keyStore.setOperator({
@@ -270,9 +244,7 @@ describe("ClusterState", () => {
         wire: nodeKeys.keys.wire,
         wireFinalizer: nodeKeys.keys.wireFinalizer
       })
-      const entry = ClusterState.captureKeys(ctx).operators.find(
-        record => record.account === producer
-      )
+      const entry = ClusterState.captureKeys(ctx).operators.find(record => record.account === producer)
       expect(entry.wire.awsSecretId).toBe(`/wire/test/${node.name}/K1`)
       expect(entry.wireFinalizer.awsSecretId).toBe(`/wire/test/${node.name}/BLS`)
       expect(entry.wire.privateKey).toBeUndefined()
@@ -281,15 +253,11 @@ describe("ClusterState", () => {
 
     it("RETAINS the non-secret per-curve members (BLS proof, EM address)", () => {
       const keys = ClusterState.captureKeys(ssmContext()),
-        operator = keys.operators.find(
-          entry => entry.account === BatchOperatorAccount
-        )
+        operator = keys.operators.find(entry => entry.account === BatchOperatorAccount)
       // ExternalClusterConfigSteps.keyProviderFor + the genesis finalizer key
       // read these regardless of who holds the secret.
       expect(keys.nodes[0].wireFinalizer.proofOfPossession).toBe("SIG_BLS_node0")
-      expect(operator?.ethereum?.address).toBe(
-        "0xabc0000000000000000000000000000000000a"
-      )
+      expect(operator?.ethereum?.address).toBe("0xabc0000000000000000000000000000000000a")
       expect(keys.nodes[0].wire.publicKey).toBe("PUB_K1_node0")
     })
 
@@ -315,10 +283,9 @@ describe("ClusterState", () => {
         keys = ClusterState.captureKeys(ctx)
       expect(keys.nodes[0].wire.privateKey).toBe("PVT_K1_node0")
       expect(keys.nodes[0].wire.awsSecretId).toBeUndefined()
-      expect(
-        keys.operators.find(entry => entry.account === BatchOperatorAccount)
-          ?.wire.privateKey
-      ).toBe(`PVT_K1_${BatchOperatorLabel}`)
+      expect(keys.operators.find(entry => entry.account === BatchOperatorAccount)?.wire.privateKey).toBe(
+        `PVT_K1_${BatchOperatorLabel}`
+      )
     })
 
     it("REJECTS a record carrying BOTH custody forms — that is a leaked secret", () => {
@@ -328,9 +295,7 @@ describe("ClusterState", () => {
         leaked = JSON.parse(Fs.readFileSync(keysFile, "utf8"))
       leaked.nodes[0].wire.privateKey = "PVT_K1_node0"
       Fs.writeFileSync(keysFile, JSON.stringify(leaked))
-      expect(() => ClusterState.loadKeys(ctx.config)).toThrow(
-        /EXACTLY ONE custody form/
-      )
+      expect(() => ClusterState.loadKeys(ctx.config)).toThrow(/EXACTLY ONE custody form/)
     })
 
     it("REJECTS a record carrying NEITHER custody form — nothing could sign with it", () => {
@@ -340,9 +305,7 @@ describe("ClusterState", () => {
         orphaned = JSON.parse(Fs.readFileSync(keysFile, "utf8"))
       delete orphaned.nodes[0].wire.privateKey
       Fs.writeFileSync(keysFile, JSON.stringify(orphaned))
-      expect(() => ClusterState.loadKeys(ctx.config)).toThrow(
-        /EXACTLY ONE custody form/
-      )
+      expect(() => ClusterState.loadKeys(ctx.config)).toThrow(/EXACTLY ONE custody form/)
     })
   })
 
@@ -357,9 +320,7 @@ describe("ClusterState", () => {
       expect(store.operator(BatchOperatorAccount)).toBeUndefined()
       const operator = store.assertOperator(BatchOperatorLabel)
       expect(operator.account).toBe(BatchOperatorAccount)
-      expect(operator.ethereum?.address).toBe(
-        "0xabc0000000000000000000000000000000000a"
-      )
+      expect(operator.ethereum?.address).toBe("0xabc0000000000000000000000000000000000a")
       expect(operator.solana?.publicKey).toBe(`PUB_ED_${BatchOperatorLabel}`)
     })
   })

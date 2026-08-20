@@ -26,10 +26,7 @@ export namespace EmissionsSoakScenarioConstants {
    * `max(60s, soak/12)` so short local windows still collect ≥1 sample and the
    * default window samples roughly per epoch.
    */
-  export const SampleIntervalMs = Math.max(
-    60_000,
-    Math.floor(SoakDurationMs / 12)
-  )
+  export const SampleIntervalMs = Math.max(60_000, Math.floor(SoakDurationMs / 12))
   /**
    * Margin added to the soak window for the StabilityLoop step/phase timeout —
    * the old suite's per-test budget was `SOAK_DURATION_MS + 30 min`.
@@ -73,15 +70,13 @@ export namespace EmissionsSoakScenarioConstants {
    * Exact WIRE atomic each controlled staker is seeded with (and must receive
    * on claim): `ControlledStakerSourceUnits / 1e9`, zero dust by construction.
    */
-  export const PerStakerClaimAtomic =
-    ControlledStakerSourceUnits / WireAtomicDivisor
+  export const PerStakerClaimAtomic = ControlledStakerSourceUnits / WireAtomicDivisor
   /**
    * WIRE atomic pre-funded from `sysio` to `sysio.dclaim` to cover every
    * controlled-staker claim (the importseed path never calls `fundclaim`; only
    * the onreward path does — a real launch pre-funds dclaim the same way).
    */
-  export const ClaimPreFundAtomic =
-    PerStakerClaimAtomic * BigInt(ControlledStakerCount)
+  export const ClaimPreFundAtomic = PerStakerClaimAtomic * BigInt(ControlledStakerCount)
   /** Memo on the dclaim pre-fund transfer. */
   export const PreFundMemo = "pre-fund for importseed claim payouts"
 
@@ -94,10 +89,7 @@ export namespace EmissionsSoakScenarioConstants {
   /** ETH addresses appearing in BOTH purchasers and stakers (dedup path). */
   export const BulkEthereumOverlapping = envInteger("BULK_ETH_OVERLAPPING", 8)
   /** ETH stakers with non-zero `yieldClaimed` (netting path). */
-  export const BulkEthereumYieldClaimed = envInteger(
-    "BULK_ETH_YIELD_CLAIMED",
-    8
-  )
+  export const BulkEthereumYieldClaimed = envInteger("BULK_ETH_YIELD_CLAIMED", 8)
   /** Standalone SOL purchaser rows. */
   export const BulkSolanaPurchasers = envInteger("BULK_SOL_PURCHASERS", 20)
   /** Standalone SOL staker rows. */
@@ -130,9 +122,7 @@ export namespace EmissionsSoakScenarioConstants {
   /** Deadline for `pending_claims` rows to land after the linkswept sweeps —
    *  depot-internal, so extension-inclusive epochs rather than a hop class. */
   export const PendingClaimsTimeoutMs =
-    ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-    PendingClaimsEpochBudget *
-    MsPerSecond
+    ProtocolTiming.effectiveEpochSec(EpochDurationSec) * PendingClaimsEpochBudget * MsPerSecond
   /** Poll interval for the `pending_claims` wait (ms). */
   export const PendingClaimsPollIntervalMs = 2_000
   /**

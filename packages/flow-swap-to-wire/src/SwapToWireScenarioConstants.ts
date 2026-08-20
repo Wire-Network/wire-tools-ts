@@ -41,11 +41,7 @@ export namespace SwapToWireScenarioConstants {
   /** Deadline for the underwriter bonds to credit over OPP and flip ACTIVE —
    *  extension-inclusive epochs so consecutive extended epochs still fit. */
   export function relayDeadlineMs(): number {
-    return (
-      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      RelayEpochBudget *
-      MsPerSecond
-    )
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * RelayEpochBudget * MsPerSecond
   }
 
   // ── Bootstrap-seeded reserve identity (source leg) ───────────────────────

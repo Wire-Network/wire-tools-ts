@@ -76,9 +76,7 @@ export class NodeConfigLoggingRenderer implements Renderer {
         ],
         loggers: NodeConfigLoggingRenderer.Loggers.map(name => ({
           name,
-          level: NodeConfigLoggingRenderer.toNodeopLevel(
-            this.node.cluster.logging.levels.console
-          ),
+          level: NodeConfigLoggingRenderer.toNodeopLevel(this.node.cluster.logging.levels.console),
           enabled: true,
           sinks: ["stderr_color", "json_daily_file"]
         }))

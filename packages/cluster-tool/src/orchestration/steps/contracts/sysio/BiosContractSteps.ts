@@ -1,10 +1,7 @@
 import { SysioContracts } from "@wireio/sdk-core"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../../ClusterBuildStep.js"
 import type { StepInput } from "../../../StepRunner.js"
 
 const { SysioContractName } = SysioContracts
@@ -47,9 +44,7 @@ export namespace BiosContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.bios)
-      .actions.setfinalizer.invoke(input.data)
+    await ctx.wire.getSysioContract(SysioContractName.bios).actions.setfinalizer.invoke(input.data)
   }
 
   /** Input for {@link planNewaccount} — the generated `bios::newaccount` data. */
@@ -83,9 +78,7 @@ export namespace BiosContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.bios)
-      .actions.newaccount.invoke(input.data)
+    await ctx.wire.getSysioContract(SysioContractName.bios).actions.newaccount.invoke(input.data)
   }
 
   /** Input for {@link planSetpriv} — the generated `bios::setpriv` data. */
@@ -119,9 +112,7 @@ export namespace BiosContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.bios)
-      .actions.setpriv.invoke(input.data)
+    await ctx.wire.getSysioContract(SysioContractName.bios).actions.setpriv.invoke(input.data)
   }
 
   /** Input for {@link planSetprodkeys} — the generated `bios::setprodkeys` data. */
@@ -155,8 +146,6 @@ export namespace BiosContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.bios)
-      .actions.setprodkeys.invoke(input.data)
+    await ctx.wire.getSysioContract(SysioContractName.bios).actions.setprodkeys.invoke(input.data)
   }
 }

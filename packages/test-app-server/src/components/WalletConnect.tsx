@@ -14,9 +14,7 @@ interface Props {
 export default function WalletConnect({ chain, onProceedToLink }: Props) {
   const [accounts, setAccounts] = useState<string[]>([])
   const [selectedAddress, setSelectedAddress] = useState<string | null>(null)
-  const [wireAccount, setWireAccount] = useState<API.v1.AccountObject | null>(
-    null
-  )
+  const [wireAccount, setWireAccount] = useState<API.v1.AccountObject | null>(null)
   const [wireUsername, setWireUsername] = useState("jon.eth.link")
   const [noAccount, setNoAccount] = useState(false)
   const [link, setLink] = useState<AuthLink | null>(null)
@@ -32,11 +30,7 @@ export default function WalletConnect({ chain, onProceedToLink }: Props) {
         if (acct) {
           setWireAccount(acct)
           setNoAccount(false)
-          const linkResult = await checkLinkStatus(
-            api,
-            chain.contractAccount,
-            username
-          )
+          const linkResult = await checkLinkStatus(api, chain.contractAccount, username)
           setLink(linkResult)
         } else {
           setWireAccount(null)
@@ -94,9 +88,7 @@ export default function WalletConnect({ chain, onProceedToLink }: Props) {
   if (accounts.length === 0) {
     return (
       <div className="card" style={{ textAlign: "center" }}>
-        <p style={{ marginBottom: 16, color: "var(--text-muted)" }}>
-          Connect your MetaMask wallet to get started
-        </p>
+        <p style={{ marginBottom: 16, color: "var(--text-muted)" }}>Connect your MetaMask wallet to get started</p>
         <button className="btn-primary" onClick={connect}>
           Connect MetaMask
         </button>
@@ -110,11 +102,7 @@ export default function WalletConnect({ chain, onProceedToLink }: Props) {
       <div className="card">
         <h3 style={{ marginBottom: 12 }}>Select an Account</h3>
         {accounts.map(addr => (
-          <button
-            key={addr}
-            className="account-btn"
-            onClick={() => setSelectedAddress(addr)}
-          >
+          <button key={addr} className="account-btn" onClick={() => setSelectedAddress(addr)}>
             {walletService.shortenAddress(addr)}
           </button>
         ))}
@@ -184,29 +172,15 @@ export default function WalletConnect({ chain, onProceedToLink }: Props) {
               </div>
               <div className="detail-row">
                 <span className="label">Created</span>
-                <span>
-                  {new Date(
-                    wireAccount.created.toString()
-                  ).toLocaleDateString()}
-                </span>
+                <span>{new Date(wireAccount.created.toString()).toLocaleDateString()}</span>
               </div>
               <div className="detail-row">
                 <span className="label">CPU Available</span>
-                <span>
-                  {Number(
-                    wireAccount.cpu_limit.available.toString()
-                  ).toLocaleString()}{" "}
-                  us
-                </span>
+                <span>{Number(wireAccount.cpu_limit.available.toString()).toLocaleString()} us</span>
               </div>
               <div className="detail-row">
                 <span className="label">NET Available</span>
-                <span>
-                  {Number(
-                    wireAccount.net_limit.available.toString()
-                  ).toLocaleString()}{" "}
-                  bytes
-                </span>
+                <span>{Number(wireAccount.net_limit.available.toString()).toLocaleString()} bytes</span>
               </div>
             </div>
           </div>

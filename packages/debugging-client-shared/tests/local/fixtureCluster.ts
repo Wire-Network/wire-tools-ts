@@ -31,9 +31,7 @@ export interface FixtureCluster {
  * `getClusterState()` finds it.
  */
 export function makeFixtureCluster(): FixtureCluster {
-  const clusterPath = Fs.mkdtempSync(
-      Path.join(OS.tmpdir(), "fixture-cluster-")
-    ),
+  const clusterPath = Fs.mkdtempSync(Path.join(OS.tmpdir(), "fixture-cluster-")),
     dataPath = Path.join(clusterPath, "data"),
     biosDir = Path.join(dataPath, "node_bios"),
     batchDir = Path.join(dataPath, "node_b1"),
@@ -66,13 +64,7 @@ export function makeFixtureCluster(): FixtureCluster {
     nodes: [
       node(PidSources.BiosNodeId, biosDir, ClusterStateNodeRole.bios),
       node("node_00", batchDir, ClusterStateNodeRole.operator, "batchop1"),
-      node(
-        "node_01",
-        underwriterDir,
-        ClusterStateNodeRole.operator,
-        null,
-        "underwriter1"
-      )
+      node("node_01", underwriterDir, ClusterStateNodeRole.operator, null, "underwriter1")
     ],
     walletPath: "",
     anvilStateFile: "",
@@ -152,14 +144,8 @@ export function makeFixtureCluster(): FixtureCluster {
     enableMockReserves: false
   }
 
-  Fs.writeFileSync(
-    Path.join(clusterPath, ClusterFiles.ConfigFilename),
-    JSON.stringify(config, null, 2)
-  )
-  Fs.writeFileSync(
-    Path.join(clusterPath, ClusterFiles.StateFilename),
-    JSON.stringify(state, null, 2)
-  )
+  Fs.writeFileSync(Path.join(clusterPath, ClusterFiles.ConfigFilename), JSON.stringify(config, null, 2))
+  Fs.writeFileSync(Path.join(clusterPath, ClusterFiles.StateFilename), JSON.stringify(state, null, 2))
 
   return {
     clusterPath,

@@ -1,8 +1,4 @@
-import {
-  ClusterStateNodeSchema,
-  SchemaCodec,
-  type ClusterStateNode
-} from "@wireio/cluster-tool-shared"
+import { ClusterStateNodeSchema, SchemaCodec, type ClusterStateNode } from "@wireio/cluster-tool-shared"
 import { z } from "zod"
 
 /** Classifies a monitored process for display grouping and fallback handling. */
@@ -110,24 +106,23 @@ export const ProcessLivenessSnapshotSchema = z.object({
 /** Schema for {@link ListProcessesRequest} (empty body). */
 export const ListProcessesRequestSchema = z.object({})
 /** Codec for the `Processes.List` request body. */
-export const ListProcessesRequestSchemaCodec =
-  SchemaCodec.create<ListProcessesRequest>(ListProcessesRequestSchema)
+export const ListProcessesRequestSchemaCodec = SchemaCodec.create<ListProcessesRequest>(ListProcessesRequestSchema)
 
 /** Schema for {@link ListProcessesResponse}. */
 export const ListProcessesResponseSchema = z.object({
   sources: z.array(PidSourceSchema)
 })
 /** Codec for the `Processes.List` response body. */
-export const ListProcessesResponseSchemaCodec =
-  SchemaCodec.create<ListProcessesResponse>(ListProcessesResponseSchema)
+export const ListProcessesResponseSchemaCodec = SchemaCodec.create<ListProcessesResponse>(ListProcessesResponseSchema)
 
 /** Schema for {@link GetProcessLivenessRequest}. */
 export const GetProcessLivenessRequestSchema = z.object({
   labels: z.array(z.string())
 })
 /** Codec for the `Processes.GetLiveness` request body. */
-export const GetProcessLivenessRequestSchemaCodec =
-  SchemaCodec.create<GetProcessLivenessRequest>(GetProcessLivenessRequestSchema)
+export const GetProcessLivenessRequestSchemaCodec = SchemaCodec.create<GetProcessLivenessRequest>(
+  GetProcessLivenessRequestSchema
+)
 
 /** Schema for {@link GetProcessLivenessResponse}. */
 export const GetProcessLivenessResponseSchema = z.object({
@@ -136,6 +131,4 @@ export const GetProcessLivenessResponseSchema = z.object({
 /** Codec for the `Processes.GetLiveness` response body. (Generic inferred — the
  *  nullable `pid`/`exitedAt` infer optional under strictNullChecks-off, which the
  *  explicit interface generic would reject.) */
-export const GetProcessLivenessResponseSchemaCodec = SchemaCodec.create(
-  GetProcessLivenessResponseSchema
-)
+export const GetProcessLivenessResponseSchemaCodec = SchemaCodec.create(GetProcessLivenessResponseSchema)

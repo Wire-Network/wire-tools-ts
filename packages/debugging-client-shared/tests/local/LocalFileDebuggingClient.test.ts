@@ -10,10 +10,7 @@ import {
   type LogTailEvent,
   type ProcessLivenessEvent
 } from "@wireio/debugging-shared"
-import {
-  DebugOutpostEndpointsType,
-  Envelope
-} from "@wireio/opp-typescript-models"
+import { DebugOutpostEndpointsType, Envelope } from "@wireio/opp-typescript-models"
 
 import { LocalFileDebuggingClient } from "@wireio/debugging-client-shared"
 
@@ -39,9 +36,9 @@ describe("LocalFileDebuggingClient", () => {
   describe("create()", () => {
     it("throws when cluster-config.json is missing", async () => {
       const empty = Fs.mkdtempSync("/tmp/empty-")
-      await expect(
-        LocalFileDebuggingClient.create({ clusterPath: empty })
-      ).rejects.toThrow(/cluster-config\.json not found/)
+      await expect(LocalFileDebuggingClient.create({ clusterPath: empty })).rejects.toThrow(
+        /cluster-config\.json not found/
+      )
       Fs.rmSync(empty, { recursive: true, force: true })
     })
   })
@@ -143,9 +140,7 @@ describe("LocalFileDebuggingClient", () => {
 
       const got = await client.getEnvelope(put.key)
       expect(got.epochIndex).toBe(7)
-      expect(got.endpointsType).toBe(
-        DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT
-      )
+      expect(got.endpointsType).toBe(DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT)
       expect(got.batchOpNames).toEqual(["batchop.a"])
     })
 
@@ -171,9 +166,7 @@ describe("LocalFileDebuggingClient", () => {
     })
 
     it("getEnvelope rejects unknown keys", async () => {
-      await expect(client.getEnvelope("missing-key")).rejects.toThrow(
-        /Envelope not found/
-      )
+      await expect(client.getEnvelope("missing-key")).rejects.toThrow(/Envelope not found/)
     })
   })
 
@@ -185,13 +178,9 @@ describe("LocalFileDebuggingClient", () => {
       const sub = await client.subscribe(StreamTopic.LogTail, { path: logFile })
       sub.on("event", e => events.push(e))
       // Initial emit (might be 0 lines or 2 lines; either fine)
-      await new Promise(r =>
-        setTimeout(r, LocalFileDebuggingClient.LogTailPollMs + 50)
-      )
+      await new Promise(r => setTimeout(r, LocalFileDebuggingClient.LogTailPollMs + 50))
       fixture.appendLog(logRel, "tail.log", "gamma\n")
-      await new Promise(r =>
-        setTimeout(r, LocalFileDebuggingClient.LogTailPollMs * 2 + 50)
-      )
+      await new Promise(r => setTimeout(r, LocalFileDebuggingClient.LogTailPollMs * 2 + 50))
       sub.close(ClosedReason.ClientRequested)
       const flatLines = events.flatMap(e => e.lines)
       expect(flatLines).toContain("gamma")
@@ -204,9 +193,7 @@ describe("LocalFileDebuggingClient", () => {
       const sub = await client.subscribe(StreamTopic.ProcessLiveness, {})
       sub.on("event", e => events.push(e))
       fixture.writePid("data/node_bios", "nodeop", process.pid)
-      await new Promise(r =>
-        setTimeout(r, LocalFileDebuggingClient.ProcessLivenessPollMs + 200)
-      )
+      await new Promise(r => setTimeout(r, LocalFileDebuggingClient.ProcessLivenessPollMs + 200))
       sub.close(ClosedReason.ClientRequested)
       const allLabels = events.flatMap(e => e.setSnapshots.map(s => s.label))
       expect(allLabels).toContain("nodeop")
@@ -248,9 +235,7 @@ describe("LocalFileDebuggingClient", () => {
       await new Promise(r => setTimeout(r, 500))
       sub.close(ClosedReason.ClientRequested)
       expect(events.length).toBeGreaterThanOrEqual(1)
-      const hydratedEpochs = events
-        .filter(e => e.kind === EnvelopeEventKind.Hydrated)
-        .map(e => e.epoch)
+      const hydratedEpochs = events.filter(e => e.kind === EnvelopeEventKind.Hydrated).map(e => e.epoch)
       expect(hydratedEpochs).toContain(1)
     }, 10_000)
   })

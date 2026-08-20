@@ -9,9 +9,7 @@ import {
 import { fixtureConfig } from "../config/clusterConfigFixture.js"
 
 function fixtureBuild(): ClusterBuild {
-  return ClusterBuild.forContext(
-    new ClusterBuildContext(fixtureConfig(), getLogger("extra-test"))
-  )
+  return ClusterBuild.forContext(new ClusterBuildContext(fixtureConfig(), getLogger("extra-test")))
 }
 
 describe("StepExtraRecorder", () => {
@@ -52,9 +50,7 @@ describe("StepExtraRecorder", () => {
     const recorder = new StepExtraRecorder()
     const receipt = { client: "ethereum", kind: "call", method: "eth_getTransactionReceipt" }
     const blockNumber = { client: "ethereum", kind: "call", method: "eth_blockNumber" }
-    ;[receipt, blockNumber, receipt, blockNumber, receipt].forEach(call =>
-      recorder.record({ ...call })
-    )
+    ;[receipt, blockNumber, receipt, blockNumber, receipt].forEach(call => recorder.record({ ...call }))
     expect(recorder.calls.length).toBe(2)
     expect(recorder.calls[0].count).toBe(3)
     expect(recorder.calls[1].count).toBe(2)
@@ -145,9 +141,7 @@ describe("StepExtraRecorder", () => {
 
   it("record() outside any step scope is a silent no-op", () => {
     expect(StepExtraRecorder.current()).toBeNull()
-    expect(() =>
-      StepExtraRecorder.record({ client: "clio", kind: "cli" })
-    ).not.toThrow()
+    expect(() => StepExtraRecorder.record({ client: "clio", kind: "cli" })).not.toThrow()
   })
 
   it("scopes captures to the recording step, including PARALLEL steps", async () => {
@@ -182,8 +176,6 @@ describe("StepExtraRecorder", () => {
     const nodes = await phase.run(new AbortController().signal)
     const step = (nodes[0] as Report.Phase).steps[0]
     expect(step.status).toBe(Report.StepStatus.failed)
-    expect((step.extra?.calls as StepExtraRecorder.ClientCall[])[0].method).toBe(
-      "eth_sendRawTransaction"
-    )
+    expect((step.extra?.calls as StepExtraRecorder.ClientCall[])[0].method).toBe("eth_sendRawTransaction")
   })
 })

@@ -22,9 +22,7 @@ describe("ContractArtifactResolver", () => {
   it("resolves a contract to its account + wasm/abi paths under contracts/sysio.<name>", () => {
     const artifact = new ContractArtifactResolver(dir).resolve(SysioContractName.epoch)
     expect(artifact.account).toBe("sysio.epoch")
-    expect(artifact.wasm).toBe(
-      Path.join(dir, "contracts", "sysio.epoch", "sysio.epoch.wasm")
-    )
+    expect(artifact.wasm).toBe(Path.join(dir, "contracts", "sysio.epoch", "sysio.epoch.wasm"))
     expect(artifact.abi.endsWith("sysio.epoch.abi")).toBe(true)
   })
 

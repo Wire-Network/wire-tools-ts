@@ -16,11 +16,7 @@ describe("SingleFlightCache", () => {
       await gate
       return 42
     }
-    const inFlight = Promise.all([
-      cache.get("k", fetch),
-      cache.get("k", fetch),
-      cache.get("k", fetch)
-    ])
+    const inFlight = Promise.all([cache.get("k", fetch), cache.get("k", fetch), cache.get("k", fetch)])
     release()
     expect(await inFlight).toEqual([42, 42, 42])
     expect(calls).toBe(1)
@@ -60,10 +56,7 @@ describe("SingleFlightCache", () => {
       fetched.push(value)
       return value
     }
-    const [a, b] = await Promise.all([
-      cache.get("a", fetch("a")),
-      cache.get("b", fetch("b"))
-    ])
+    const [a, b] = await Promise.all([cache.get("a", fetch("a")), cache.get("b", fetch("b"))])
     expect([a, b]).toEqual(["a", "b"])
     expect([...fetched].sort()).toEqual(["a", "b"])
   })

@@ -23,22 +23,15 @@ const { Actor } = Report
 
 /** The WIRE chain is producing blocks (basic cluster health). */
 async function verifyChainProducing(ctx: ClusterBuildContext): Promise<void> {
-  Assert.ok(
-    Number((await ctx.wire.getInfo()).head_block_num) > 0,
-    "WIRE chain is not producing blocks"
-  )
+  Assert.ok(Number((await ctx.wire.getInfo()).head_block_num) > 0, "WIRE chain is not producing blocks")
 }
 
 /**
  * The Tier-1 electorate registered — `nodecount.t1_count` covers the voters
  * (each `nodeownreg` inline-bumps it; `chkdispute` reads it as the quorum N).
  */
-async function verifyElectorateRegistered(
-  ctx: ClusterBuildContext
-): Promise<void> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.system)
-    .tables.nodecount.query({ limit: 1 })
+async function verifyElectorateRegistered(ctx: ClusterBuildContext): Promise<void> {
+  const { rows } = await ctx.wire.getSysioContract(SysioContractName.system).tables.nodecount.query({ limit: 1 })
   Assert.ok(rows.length === 1, "nodecount singleton row missing")
   Assert.ok(
     Number(rows[0].t1_count) >= Constants.Tier1VoterNames.length,
@@ -48,10 +41,7 @@ async function verifyElectorateRegistered(
 
 /** `chalg::opendispute` inline-called `epoch::pause` — the epoch is paused. */
 async function verifyEpochPaused(ctx: ClusterBuildContext): Promise<void> {
-  Assert.ok(
-    await DisputeSteps.epochPaused(ctx),
-    "chalg::opendispute must inline-pause the epoch"
-  )
+  Assert.ok(await DisputeSteps.epochPaused(ctx), "chalg::opendispute must inline-pause the epoch")
 }
 
 /** `resolvedisp` dispatched the winner; `chkdispute` unpauses the epoch. */
@@ -75,27 +65,16 @@ async function verifySoleActiveGroup(ctx: ClusterBuildContext): Promise<void> {
 }
 
 /** The epoch settles (frozen) on the dispute-operators-owned post-swap epoch. */
-async function verifySettledDisputeEpoch(
-  ctx: ClusterBuildContext
-): Promise<void> {
+async function verifySettledDisputeEpoch(ctx: ClusterBuildContext): Promise<void> {
   await DisputeSteps.settleOnDisputeEpoch(ctx)
 }
 
 /** The canonical deliverer must NOT be slashed (may be ACTIVE/UNKNOWN, never SLASHED). */
-async function verifyCanonicalNotSlashed(
-  ctx: ClusterBuildContext
-): Promise<void> {
+async function verifyCanonicalNotSlashed(ctx: ClusterBuildContext): Promise<void> {
   const row = await DisputeSteps.readOperator(ctx, Constants.CanonicalOperator)
+  Assert.ok(row != null, `operator row missing for ${Constants.CanonicalOperator}`)
   Assert.ok(
-    row != null,
-    `operator row missing for ${Constants.CanonicalOperator}`
-  )
-  Assert.ok(
-    !matchesProtoEnum(
-      row.status,
-      SysioOpregOperatorstatus,
-      SysioOpregOperatorstatus.OPERATOR_STATUS_SLASHED
-    ),
+    !matchesProtoEnum(row.status, SysioOpregOperatorstatus, SysioOpregOperatorstatus.OPERATOR_STATUS_SLASHED),
     `${Constants.CanonicalOperator} (canonical deliverer) must not be SLASHED`
   )
 }
@@ -165,20 +144,16 @@ export class SlashingScenario extends FlowScenario {
         timeoutMs: Constants.settleDeadlineMs() + Constants.PollDeadlineBufferMs
       },
       stageStepOptions = {
-        timeoutMs:
-          Constants.boundaryDeadlineMs() + Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.boundaryDeadlineMs() + Constants.PollDeadlineBufferMs
       },
       disputeOpenStepOptions = {
-        timeoutMs:
-          Constants.disputeOpenDeadlineMs() + Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.disputeOpenDeadlineMs() + Constants.PollDeadlineBufferMs
       },
       resolveStepOptions = {
-        timeoutMs:
-          Constants.resolveDeadlineMs() + Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.resolveDeadlineMs() + Constants.PollDeadlineBufferMs
       },
       unpauseStepOptions = {
-        timeoutMs:
-          Constants.unpauseDeadlineMs() + Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.unpauseDeadlineMs() + Constants.PollDeadlineBufferMs
       },
       slashStepOptions = {
         timeoutMs: Constants.slashDeadlineMs() + Constants.PollDeadlineBufferMs
@@ -191,17 +166,8 @@ export class SlashingScenario extends FlowScenario {
       "Provision the Tier-1 electorate + the 3 SBP-less dispute operators; reshape to a single 3-operator group"
     )
 
-    ClusterBuildPhase.create(
-      setup,
-      "ChainHealth",
-      "The WIRE chain is producing blocks"
-    ).push(
-      verifyStep(
-        Actor.Sysio,
-        "chain-producing",
-        "WIRE chain is producing blocks",
-        verifyChainProducing
-      )
+    ClusterBuildPhase.create(setup, "ChainHealth", "The WIRE chain is producing blocks").push(
+      verifyStep(Actor.Sysio, "chain-producing", "WIRE chain is producing blocks", verifyChainProducing)
     )
 
     // The dispute electorate: each owner is created with the shared dev K1 key
@@ -273,11 +239,7 @@ export class SlashingScenario extends FlowScenario {
     // deliver — and being SBP-less, only when the flow injects an envelope.
     // `sysio.epoch@active` resolves to `sysio@active` (the governance key in
     // kiod), so the flow can sign `schbatchgps`.
-    ClusterBuildPhase.create(
-      setup,
-      "ReshapeSchedule",
-      "One group of exactly the 3 dispute operators"
-    ).push(
+    ClusterBuildPhase.create(setup, "ReshapeSchedule", "One group of exactly the 3 dispute operators").push(
       ...Constants.DisputeOperators.map(operator =>
         DisputeSteps.planProcessbatch(
           Actor.Sysio,
@@ -397,23 +359,14 @@ export class SlashingScenario extends FlowScenario {
       )
     })
 
-    ClusterBuildPhase.create(
-      inject,
-      "DisputeOpens",
-      "The 3-way split opens a dispute and pauses the epoch"
-    ).push(
+    ClusterBuildPhase.create(inject, "DisputeOpens", "The 3-way split opens a dispute and pauses the epoch").push(
       DisputeSteps.planAwaitDisputeOpened(
         Actor.Sysio,
         "dispute-opens",
         "an OPEN dispute row appears for the contested (outpost, epoch) with a candidate per operator",
         disputeOpenStepOptions
       ),
-      verifyStep(
-        Actor.Sysio,
-        "epoch-paused",
-        "chalg::opendispute inline-paused the epoch",
-        verifyEpochPaused
-      )
+      verifyStep(Actor.Sysio, "epoch-paused", "chalg::opendispute inline-paused the epoch", verifyEpochPaused)
     )
 
     // ── 3. VoteAndResolve — Tier-1 vote → chkdispute resolves → unpause ──

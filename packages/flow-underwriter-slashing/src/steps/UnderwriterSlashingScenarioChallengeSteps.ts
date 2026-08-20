@@ -58,9 +58,7 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
     ctx: SwapScenarioContext,
     excludeUwreqIds: readonly number[]
   ): Promise<Outputs.ChallengedCommitment> {
-    const { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.uwrit)
-      .tables.uwreqs.query()
+    const { rows } = await ctx.wire.getSysioContract(SysioContractName.uwrit).tables.uwreqs.query()
     const row = rows.find(
       request =>
         slugValue(request.src_chain_code) === Constants.EthereumChainCode &&
@@ -72,9 +70,7 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
         ) &&
         !excludeUwreqIds.includes(Number(request.id))
     )
-    return row == null
-      ? null
-      : { uwreqId: Number(row.id), underwriterAccount: String(row.winner) }
+    return row == null ? null : { uwreqId: Number(row.id), underwriterAccount: String(row.winner) }
   }
 
   /** The `sysio.uwrit::uwreqs` row by id. */
@@ -82,9 +78,7 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
     ctx: SwapScenarioContext,
     uwreqId: number
   ): Promise<SysioContracts.SysioUwritUwRequestTType> {
-    const { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.uwrit)
-      .tables.uwreqs.query()
+    const { rows } = await ctx.wire.getSysioContract(SysioContractName.uwrit).tables.uwreqs.query()
     return rows.find(request => Number(request.id) === uwreqId)
   }
 
@@ -96,13 +90,10 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
     ctx: SwapScenarioContext,
     commitment: Outputs.ChallengedCommitment
   ): Promise<SysioContracts.SysioChalgUwchalEntryType> {
-    const { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.chalg)
-      .tables.uwchals.query()
+    const { rows } = await ctx.wire.getSysioContract(SysioContractName.chalg).tables.uwchals.query()
     return rows.find(
       challenge =>
-        Number(challenge.uwreq_id) === commitment.uwreqId &&
-        challenge.underwriter === commitment.underwriterAccount
+        Number(challenge.uwreq_id) === commitment.uwreqId && challenge.underwriter === commitment.underwriterAccount
     )
   }
 
@@ -111,9 +102,7 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
     ctx: SwapScenarioContext,
     chalId: number
   ): Promise<SysioContracts.SysioChalgUwchalEntryType> {
-    const { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.chalg)
-      .tables.uwchals.query()
+    const { rows } = await ctx.wire.getSysioContract(SysioContractName.chalg).tables.uwchals.query()
     return rows.find(challenge => Number(challenge.id) === chalId)
   }
 
@@ -126,13 +115,8 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
    * `require_recipient(to)` would execute the recipient's own code and let it
    * abort epoch advancement. The WIRE moves only in `claimbond`.
    */
-  export async function readBondCredit(
-    ctx: SwapScenarioContext,
-    account: string
-  ): Promise<bigint> {
-    const { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.chalg)
-      .tables.bondcredits.query()
+  export async function readBondCredit(ctx: SwapScenarioContext, account: string): Promise<bigint> {
+    const { rows } = await ctx.wire.getSysioContract(SysioContractName.chalg).tables.bondcredits.query()
     const row = rows.find(credit => credit.account === account)
     return row == null ? 0n : BigInt(row.amount)
   }
@@ -142,9 +126,7 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
     ctx: SwapScenarioContext,
     account: string
   ): Promise<SysioContracts.SysioOpregOperatorEntryType> {
-    const { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.opreg)
-      .tables.operators.query()
+    const { rows } = await ctx.wire.getSysioContract(SysioContractName.opreg).tables.operators.query()
     return rows.find(operator => operator.account === account)
   }
 
@@ -166,10 +148,7 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
       `challenge ${chalId} reaches verdict ${SysioChalgUwchalVerdict[verdict]}`,
       async () => {
         const challenge = await readUwchal(ctx, chalId)
-        return (
-          challenge != null &&
-          matchesProtoEnum(challenge.verdict, SysioChalgUwchalVerdict, verdict)
-        )
+        return challenge != null && matchesProtoEnum(challenge.verdict, SysioChalgUwchalVerdict, verdict)
       },
       Constants.ResolveDeadlineMs,
       Constants.LongPollIntervalMs
@@ -214,16 +193,14 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.roa)
-      .actions.forcereg.invoke(input.data, {
-        authorization: [
-          {
-            actor: SysioContractAccount[SysioContractName.roa],
-            permission: ActivePermission
-          }
-        ]
-      })
+    await ctx.wire.getSysioContract(SysioContractName.roa).actions.forcereg.invoke(input.data, {
+      authorization: [
+        {
+          actor: SysioContractAccount[SysioContractName.roa],
+          permission: ActivePermission
+        }
+      ]
+    })
   }
 
   // ── Step: sysio.chalg::openuwchal (write) ─────────────────────────────────
@@ -289,33 +266,24 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const commitment = ctx.outputs.assert(keys.commitment)
-    const balanceBefore = await ctx.wire.getWireBalance(
-      Constants.ChallengerAccount
-    )
+    const balanceBefore = await ctx.wire.getWireBalance(Constants.ChallengerAccount)
     ctx.outputs.set(keys.challengerBalanceBefore, balanceBefore)
 
-    await ctx.wire
-      .getSysioContract(SysioContractName.chalg)
-      .actions.openuwchal.invoke(
-        {
-          challenger: Constants.ChallengerAccount,
-          uwreq_id: commitment.uwreqId,
-          underwriter: commitment.underwriterAccount,
-          reason: input.reason,
-          detail: input.detail
-        },
-        {
-          authorization: [
-            { actor: Constants.ChallengerAccount, permission: ActivePermission }
-          ]
-        }
-      )
+    await ctx.wire.getSysioContract(SysioContractName.chalg).actions.openuwchal.invoke(
+      {
+        challenger: Constants.ChallengerAccount,
+        uwreq_id: commitment.uwreqId,
+        underwriter: commitment.underwriterAccount,
+        reason: input.reason,
+        detail: input.detail
+      },
+      {
+        authorization: [{ actor: Constants.ChallengerAccount, permission: ActivePermission }]
+      }
+    )
 
     const challenge = await readUwchalByCommitment(ctx, commitment)
-    Assert.ok(
-      challenge != null,
-      `openuwchal landed but no uwchals row exists for uwreq ${commitment.uwreqId}`
-    )
+    Assert.ok(challenge != null, `openuwchal landed but no uwchals row exists for uwreq ${commitment.uwreqId}`)
     const bond = BigInt(challenge.bond_amount)
     Assert.ok(bond > 0n, "the escrowed challenge bond must be positive")
     Assert.strictEqual(
@@ -331,9 +299,7 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
       `snapshotted quorum ${challenge.quorum} exceeds the flow's ${Constants.Tier1VoterNames.length} voters`
     )
     ctx.outputs.set(keys.chalId, Number(challenge.id)).set(keys.bond, bond)
-    log.info(
-      `[uwchal] opened challenge ${challenge.id} on uwreq ${commitment.uwreqId} (bond ${bond})`
-    )
+    log.info(`[uwchal] opened challenge ${challenge.id} on uwreq ${commitment.uwreqId} (bond ${bond})`)
   }
 
   // ── Step: sysio.chalg::voteuwchal (write) ─────────────────────────────────
@@ -384,17 +350,13 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const chalId = ctx.outputs.assert(chalIdKey)
-    await ctx.wire
-      .getSysioContract(SysioContractName.chalg)
-      .actions.voteuwchal.invoke(
-        { owner: input.voter, chal_id: chalId, ballot: input.ballot },
-        {
-          authorization: [{ actor: input.voter, permission: ActivePermission }]
-        }
-      )
-    log.info(
-      `[uwchal] ${input.voter} voted ${SysioChalgUwchalBallot[input.ballot]} on challenge ${chalId}`
+    await ctx.wire.getSysioContract(SysioContractName.chalg).actions.voteuwchal.invoke(
+      { owner: input.voter, chal_id: chalId, ballot: input.ballot },
+      {
+        authorization: [{ actor: input.voter, permission: ActivePermission }]
+      }
     )
+    log.info(`[uwchal] ${input.voter} voted ${SysioChalgUwchalBallot[input.ballot]} on challenge ${chalId}`)
   }
 
   // ── Step: sysio.chalg::chkuwchal (write — the permissionless tally) ──────
@@ -436,16 +398,12 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const chalId = ctx.outputs.assert(chalIdKey)
-    await ctx.wire
-      .getSysioContract(SysioContractName.chalg)
-      .actions.chkuwchal.invoke(
-        { chal_id: chalId },
-        {
-          authorization: [
-            { actor: Constants.ChallengerAccount, permission: ActivePermission }
-          ]
-        }
-      )
+    await ctx.wire.getSysioContract(SysioContractName.chalg).actions.chkuwchal.invoke(
+      { chal_id: chalId },
+      {
+        authorization: [{ actor: Constants.ChallengerAccount, permission: ActivePermission }]
+      }
+    )
   }
 
   // ── Step: sysio.chalg::claimbond (write — the recipient's own pull) ───────
@@ -494,34 +452,21 @@ export namespace UnderwriterSlashingScenarioChallengeSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     // `OutputKey` is an object, so the literal-vs-key discrimination is total.
-    const account =
-      typeof recipient === "string"
-        ? recipient
-        : ctx.outputs.assert(recipient).underwriterAccount
+    const account = typeof recipient === "string" ? recipient : ctx.outputs.assert(recipient).underwriterAccount
     const credit = await readBondCredit(ctx, account),
       balanceBefore = await ctx.wire.getWireBalance(account)
-    Assert.ok(
-      credit > 0n,
-      `claimbond: ${account} has no claimable bond credit to pull`
-    )
+    Assert.ok(credit > 0n, `claimbond: ${account} has no claimable bond credit to pull`)
 
     await ctx.wire
       .getSysioContract(SysioContractName.chalg)
-      .actions.claimbond.invoke(
-        { account },
-        { authorization: [{ actor: account, permission: ActivePermission }] }
-      )
+      .actions.claimbond.invoke({ account }, { authorization: [{ actor: account, permission: ActivePermission }] })
 
     Assert.strictEqual(
       await ctx.wire.getWireBalance(account),
       balanceBefore + credit,
       "claimbond pays out the whole credited balance"
     )
-    Assert.strictEqual(
-      await readBondCredit(ctx, account),
-      0n,
-      "claimbond erases the credit row it paid out"
-    )
+    Assert.strictEqual(await readBondCredit(ctx, account), 0n, "claimbond erases the credit row it paid out")
     log.info(`[uwchal] ${account} claimed bond credit ${credit}`)
   }
 }

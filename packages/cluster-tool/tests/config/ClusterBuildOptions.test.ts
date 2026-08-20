@@ -1,12 +1,6 @@
-import type {
-  ClusterConfigLogging,
-  CollateralRequirement
-} from "@wireio/cluster-tool-shared"
+import type { ClusterConfigLogging, CollateralRequirement } from "@wireio/cluster-tool-shared"
 import { Level } from "@wireio/shared"
-import type {
-  ClusterBuildOptions,
-  LoggingOptions
-} from "@wireio/cluster-tool/config"
+import type { ClusterBuildOptions, LoggingOptions } from "@wireio/cluster-tool/config"
 import { LogFileAppender } from "@wireio/cluster-tool/logging"
 
 describe("ClusterBuildOptions types", () => {

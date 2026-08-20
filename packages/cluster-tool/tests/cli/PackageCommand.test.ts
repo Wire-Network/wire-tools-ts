@@ -1,9 +1,6 @@
 import { ClusterPackageType } from "@wireio/cluster-tool"
 import { ClusterCommand } from "@wireio/cluster-tool/cli/ClusterCommand"
-import {
-  createPackageCommand,
-  toClusterPackageType
-} from "@wireio/cluster-tool/cli/PackageCommand"
+import { createPackageCommand, toClusterPackageType } from "@wireio/cluster-tool/cli/PackageCommand"
 
 describe("toClusterPackageType", () => {
   it("coerces case-insensitively (lower/upper/mixed) to the enum member", () => {

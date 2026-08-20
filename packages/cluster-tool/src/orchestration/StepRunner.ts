@@ -14,7 +14,8 @@ export interface StepInput {
  * signal. Named functions only — never an inline arrow that closes over mutable
  * state (cross-step values flow through `ctx.outputs`).
  */
-export type StepRunner<
-  C extends ClusterBuildContext,
-  I extends StepInput | null
-> = (context: C, input: I, signal: AbortSignal) => Promise<void>
+export type StepRunner<C extends ClusterBuildContext, I extends StepInput | null> = (
+  context: C,
+  input: I,
+  signal: AbortSignal
+) => Promise<void>

@@ -2,10 +2,7 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { eachSeries } from "../../utils/asyncUtils.js"
 import { Report } from "../../report/Report.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../ClusterBuildStep.js"
 import type { StepInput } from "../StepRunner.js"
 
 /** Steps that configure chain protocol state (features, instant finality). */
@@ -24,14 +21,7 @@ export namespace ProtocolSteps {
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runActivateFeatures
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runActivateFeatures)
   }
 
   /** Named runner — fetch supported features, activate each (already-on is benign). */
@@ -43,9 +33,7 @@ export namespace ProtocolSteps {
     signal.throwIfAborted()
     const features = await ctx.wire.getSupportedProtocolFeatures()
     await eachSeries(features, async feature => {
-      const codename = feature.specification?.find(
-        spec => spec.name === FeatureCodenameSpecName
-      )?.value
+      const codename = feature.specification?.find(spec => spec.name === FeatureCodenameSpecName)?.value
       if (codename === PreactivateFeatureCodename) return
       try {
         await ctx.wire.activateFeature(feature.feature_digest)
@@ -53,10 +41,7 @@ export namespace ProtocolSteps {
         const message = error instanceof Error ? error.message : String(error)
         if (AlreadyActivatedFragments.some(fragment => message.includes(fragment)))
           ctx.log.debug(`feature ${codename ?? feature.feature_digest} already activated`)
-        else
-          ctx.log.warn(
-            `feature activation issue: ${codename ?? feature.feature_digest} — ${message}`
-          )
+        else ctx.log.warn(`feature activation issue: ${codename ?? feature.feature_digest} — ${message}`)
       }
     })
   }

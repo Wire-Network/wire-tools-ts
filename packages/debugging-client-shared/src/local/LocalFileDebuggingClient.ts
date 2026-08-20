@@ -83,20 +83,13 @@ export class LocalFileDebuggingClient extends DebuggingClient {
    * here is "does `cluster-config.json` exist?", which fails fast on a
    * misconfigured `--cluster-path` argument.
    */
-  static async create(
-    options: LocalFileDebuggingClientOptions
-  ): Promise<LocalFileDebuggingClient> {
+  static async create(options: LocalFileDebuggingClientOptions): Promise<LocalFileDebuggingClient> {
     const config: LocalFileDebuggingClientConfig = {
       clusterPath: Path.resolve(options.clusterPath)
     }
-    const configFile = Path.join(
-      config.clusterPath,
-      ClusterFiles.ConfigFilename
-    )
+    const configFile = Path.join(config.clusterPath, ClusterFiles.ConfigFilename)
     if (!Fs.existsSync(configFile)) {
-      throw new Error(
-        `LocalFileDebuggingClient: cluster-config.json not found at ${configFile}`
-      )
+      throw new Error(`LocalFileDebuggingClient: cluster-config.json not found at ${configFile}`)
     }
     return new LocalFileDebuggingClient(config)
   }
@@ -129,10 +122,7 @@ export class LocalFileDebuggingClient extends DebuggingClient {
   // -------------------------------------------------------------------------
 
   async getClusterConfig(): Promise<ClusterConfig> {
-    const file = Path.join(
-        this.config.clusterPath,
-        ClusterFiles.ConfigFilename
-      ),
+    const file = Path.join(this.config.clusterPath, ClusterFiles.ConfigFilename),
       raw = await Fs.promises.readFile(file, "utf8")
     return ClusterConfigSchemaCodec.deserialize(raw)
   }
@@ -153,14 +143,9 @@ export class LocalFileDebuggingClient extends DebuggingClient {
     return collectPidSources(this.config.clusterPath, state)
   }
 
-  async getProcessLiveness(
-    labels: string[]
-  ): Promise<ProcessLivenessSnapshot[]> {
+  async getProcessLiveness(labels: string[]): Promise<ProcessLivenessSnapshot[]> {
     const sources = await this.listProcessSources(),
-      filtered =
-        labels.length === 0
-          ? sources
-          : sources.filter(s => labels.includes(s.label)),
+      filtered = labels.length === 0 ? sources : sources.filter(s => labels.includes(s.label)),
       now = Date.now()
     return filtered.map(s => snapshotForSource(s, now))
   }
@@ -183,34 +168,22 @@ export class LocalFileDebuggingClient extends DebuggingClient {
   //  OPP envelope debug
   // -------------------------------------------------------------------------
 
-  async listEnvelopes(
-    req: ListEnvelopesRequest
-  ): Promise<ListEnvelopesResponse> {
+  async listEnvelopes(req: ListEnvelopesRequest): Promise<ListEnvelopesResponse> {
     const storageDir = oppDebuggingPath(this.config.clusterPath)
     if (!Fs.existsSync(storageDir)) {
       return ListEnvelopesResponse.create({ entries: [], total: 0 })
     }
     const allFiles = await Fs.promises.readdir(storageDir),
-      dataFiles = allFiles
-        .filter(f => f.endsWith(LocalFileDebuggingClient.DataExt))
-        .sort()
-    const resolved = await Promise.all(
-      dataFiles.map(dataFile => resolveListEntry(dataFile, storageDir, req))
-    )
+      dataFiles = allFiles.filter(f => f.endsWith(LocalFileDebuggingClient.DataExt)).sort()
+    const resolved = await Promise.all(dataFiles.map(dataFile => resolveListEntry(dataFile, storageDir, req)))
     const entries = resolved.filter((e): e is EnvelopeListEntry => e !== null)
     return ListEnvelopesResponse.create({ entries, total: entries.length })
   }
 
   async getEnvelope(key: string): Promise<GetEnvelopeResponse> {
     const storageDir = oppDebuggingPath(this.config.clusterPath),
-      dataPath = Path.join(
-        storageDir,
-        `${key}${LocalFileDebuggingClient.DataExt}`
-      ),
-      metadataPath = Path.join(
-        storageDir,
-        `${key}${LocalFileDebuggingClient.MetadataExt}`
-      )
+      dataPath = Path.join(storageDir, `${key}${LocalFileDebuggingClient.DataExt}`),
+      metadataPath = Path.join(storageDir, `${key}${LocalFileDebuggingClient.MetadataExt}`)
     let envelopeData: Uint8Array
     try {
       envelopeData = await Fs.promises.readFile(dataPath)
@@ -226,9 +199,7 @@ export class LocalFileDebuggingClient extends DebuggingClient {
     return {
       key,
       epochIndex: parsed?.epochIndex ?? 0,
-      endpointsType: parsed
-        ? resolveEndpointsType(parsed.endpointsKey)
-        : DebugOutpostEndpointsType.UNKNOWN,
+      endpointsType: parsed ? resolveEndpointsType(parsed.endpointsKey) : DebugOutpostEndpointsType.UNKNOWN,
       checksum,
       batchOpNames,
       timestamp: BigInt(Math.floor(stat.mtimeMs)),
@@ -237,17 +208,12 @@ export class LocalFileDebuggingClient extends DebuggingClient {
     }
   }
 
-  async loadEnvelopeRecords(
-    req: LoadEnvelopeRecordsRequest
-  ): Promise<LoadEnvelopeRecordsResponse> {
-    const records = await readEnvelopeRecordsFromDir(
-      oppDebuggingPath(this.config.clusterPath),
-      {
-        epochStart: req.epochStart,
-        epochEnd: req.epochEnd,
-        endpointsType: req.endpointsType
-      }
-    )
+  async loadEnvelopeRecords(req: LoadEnvelopeRecordsRequest): Promise<LoadEnvelopeRecordsResponse> {
+    const records = await readEnvelopeRecordsFromDir(oppDebuggingPath(this.config.clusterPath), {
+      epochStart: req.epochStart,
+      epochEnd: req.epochEnd,
+      endpointsType: req.endpointsType
+    })
     return { records }
   }
 
@@ -268,28 +234,17 @@ export class LocalFileDebuggingClient extends DebuggingClient {
     // this arm against TS 6's generic `Uint8Array<ArrayBufferLike>` builtin.
     const envelopeData: Uint8Array | string = req.envelopeData
     const envelopeBytes =
-        typeof envelopeData === "string"
-          ? Buffer.from(envelopeData, "base64")
-          : Buffer.from(envelopeData),
+        typeof envelopeData === "string" ? Buffer.from(envelopeData, "base64") : Buffer.from(envelopeData),
       checksum = createHash("sha256")
         .update(envelopeBytes)
         .digest("hex")
         .substring(0, LocalFileDebuggingClient.ChecksumHexChars),
       envelope = Envelope.fromBinary(envelopeBytes),
-      epochIndex = String(envelope.epochIndex).padStart(
-        LocalFileDebuggingClient.EpochIndexPadWidth,
-        "0"
-      ),
+      epochIndex = String(envelope.epochIndex).padStart(LocalFileDebuggingClient.EpochIndexPadWidth, "0"),
       endpointsKey = endpointsTypeToKey(req.endpointsType),
       baseKey = `${epochIndex}-${endpointsKey}-${checksum}`,
-      dataFile = Path.join(
-        storageDir,
-        `${baseKey}${LocalFileDebuggingClient.DataExt}`
-      ),
-      metadataFile = Path.join(
-        storageDir,
-        `${baseKey}${LocalFileDebuggingClient.MetadataExt}`
-      )
+      dataFile = Path.join(storageDir, `${baseKey}${LocalFileDebuggingClient.DataExt}`),
+      metadataFile = Path.join(storageDir, `${baseKey}${LocalFileDebuggingClient.MetadataExt}`)
     let dataExisted = false
     try {
       await Fs.promises.writeFile(dataFile, envelopeBytes, { flag: "wx" })
@@ -300,15 +255,8 @@ export class LocalFileDebuggingClient extends DebuggingClient {
         throw err
       }
     }
-    const metadata = await readOrInitMetadata(
-      metadataFile,
-      checksum,
-      req.batchOpName
-    )
-    await Fs.promises.writeFile(
-      metadataFile,
-      DebugEnvelopeMetadataRecord.toBinary(metadata)
-    )
+    const metadata = await readOrInitMetadata(metadataFile, checksum, req.batchOpName)
+    await Fs.promises.writeFile(metadataFile, DebugEnvelopeMetadataRecord.toBinary(metadata))
     return PutEnvelopeResponse.create({
       key: baseKey,
       dataExisted,
@@ -336,19 +284,12 @@ export class LocalFileDebuggingClient extends DebuggingClient {
     // to the arm's concrete event type.
     const teardown = await match(topic as StreamTopic)
       .with(StreamTopic.LogTail, () =>
-        this.startLogTail(
-          sub as DebuggingSubscription<LogTailEvent>,
-          params as LogTailParams
-        )
+        this.startLogTail(sub as DebuggingSubscription<LogTailEvent>, params as LogTailParams)
       )
       .with(StreamTopic.ProcessLiveness, () =>
-        this.startProcessLiveness(
-          sub as DebuggingSubscription<ProcessLivenessEvent>
-        )
+        this.startProcessLiveness(sub as DebuggingSubscription<ProcessLivenessEvent>)
       )
-      .with(StreamTopic.EnvelopeWatch, () =>
-        this.startEnvelopeWatch(sub as DebuggingSubscription<EnvelopeEvent>)
-      )
+      .with(StreamTopic.EnvelopeWatch, () => this.startEnvelopeWatch(sub as DebuggingSubscription<EnvelopeEvent>))
       .exhaustive()
     this.subscriptions.set(id, teardown)
     return sub
@@ -372,22 +313,13 @@ export class LocalFileDebuggingClient extends DebuggingClient {
     const tick = async () => {
       if (stopped) return
       try {
-        const next = index
-          ? await extendLineIndex(index)
-          : await buildLineIndex(params.path)
-        if (
-          index &&
-          next.totalBytes === index.totalBytes &&
-          next.ino === index.ino
-        ) {
+        const next = index ? await extendLineIndex(index) : await buildLineIndex(params.path)
+        if (index && next.totalBytes === index.totalBytes && next.ino === index.ino) {
           return
         }
         const fromLine = index?.completeLineCount ?? 0,
           appendedCount = next.completeLineCount - fromLine,
-          lines =
-            appendedCount > 0
-              ? await readLines(next, fromLine, appendedCount)
-              : []
+          lines = appendedCount > 0 ? await readLines(next, fromLine, appendedCount) : []
         index = next
         sub.emitEvent({
           path: params.path,
@@ -402,10 +334,7 @@ export class LocalFileDebuggingClient extends DebuggingClient {
       }
     }
     await tick()
-    const timer = setInterval(
-      () => void tick(),
-      LocalFileDebuggingClient.LogTailPollMs
-    )
+    const timer = setInterval(() => void tick(), LocalFileDebuggingClient.LogTailPollMs)
     return () => {
       stopped = true
       clearInterval(timer)
@@ -432,12 +361,7 @@ export class LocalFileDebuggingClient extends DebuggingClient {
         seen = new Set<string>(next.keys())
       next.forEach((snap, label) => {
         const prior = prev.get(label)
-        if (
-          !prior ||
-          prior.pid !== snap.pid ||
-          prior.alive !== snap.alive ||
-          prior.exitedAt !== snap.exitedAt
-        ) {
+        if (!prior || prior.pid !== snap.pid || prior.alive !== snap.alive || prior.exitedAt !== snap.exitedAt) {
           setSnapshots.push(snap)
         }
       })
@@ -448,36 +372,21 @@ export class LocalFileDebuggingClient extends DebuggingClient {
       }
     }
     await tick()
-    const timer = setInterval(
-      () => void tick(),
-      LocalFileDebuggingClient.ProcessLivenessPollMs
-    )
+    const timer = setInterval(() => void tick(), LocalFileDebuggingClient.ProcessLivenessPollMs)
     return () => {
       stopped = true
       clearInterval(timer)
     }
   }
 
-  private async startEnvelopeWatch(
-    sub: DebuggingSubscription<EnvelopeEvent>
-  ): Promise<LocalSubscriptionTeardown> {
+  private async startEnvelopeWatch(sub: DebuggingSubscription<EnvelopeEvent>): Promise<LocalSubscriptionTeardown> {
     const storageDir = oppDebuggingPath(this.config.clusterPath)
     await Fs.promises.mkdir(storageDir, { recursive: true })
     const seen = new Set<string>()
-    const watcher = Fs.watch(
-      storageDir,
-      { persistent: true },
-      (_evt, filename) => {
-        if (!filename) return
-        void this.tryEmitFromFilename(
-          sub,
-          storageDir,
-          filename.toString(),
-          seen,
-          /* hydrating */ false
-        )
-      }
-    )
+    const watcher = Fs.watch(storageDir, { persistent: true }, (_evt, filename) => {
+      if (!filename) return
+      void this.tryEmitFromFilename(sub, storageDir, filename.toString(), seen, /* hydrating */ false)
+    })
     // Defer the initial hydrate dump to the next tick so consumers who
     // register listeners immediately after `await subscribe(...)` returns
     // still catch every replayed event.
@@ -516,10 +425,7 @@ export class LocalFileDebuggingClient extends DebuggingClient {
     hydrating: boolean
   ): Promise<void> {
     if (!filename.endsWith(LocalFileDebuggingClient.MetadataExt)) return
-    const baseKey = filename.slice(
-      0,
-      -LocalFileDebuggingClient.MetadataExt.length
-    )
+    const baseKey = filename.slice(0, -LocalFileDebuggingClient.MetadataExt.length)
     if (seen.has(baseKey)) return
     const pair = await this.readEnvelopePair(storageDir, baseKey)
     if (!pair) return
@@ -538,19 +444,10 @@ export class LocalFileDebuggingClient extends DebuggingClient {
   ): Promise<LocalFileDebuggingClient.EnvelopeRecordPair> {
     const parsed = parseEnvelopeStorageKey(baseKey)
     if (!parsed) return null
-    const dataPath = Path.join(
-        storageDir,
-        baseKey + LocalFileDebuggingClient.DataExt
-      ),
-      metaPath = Path.join(
-        storageDir,
-        baseKey + LocalFileDebuggingClient.MetadataExt
-      )
+    const dataPath = Path.join(storageDir, baseKey + LocalFileDebuggingClient.DataExt),
+      metaPath = Path.join(storageDir, baseKey + LocalFileDebuggingClient.MetadataExt)
     try {
-      const [dataBytes, metaBytes] = await Promise.all([
-        Fs.promises.readFile(dataPath),
-        Fs.promises.readFile(metaPath)
-      ])
+      const [dataBytes, metaBytes] = await Promise.all([Fs.promises.readFile(dataPath), Fs.promises.readFile(metaPath)])
       return {
         epoch: parsed.epochIndex,
         record: {
@@ -612,10 +509,7 @@ export namespace LocalFileDebuggingClient {
 type LocalSubscriptionTeardown = () => void
 
 /** Snapshot a single source's pid + liveness; `exitedAt` resolved separately. */
-function snapshotForSource(
-  source: PidSource,
-  now: number
-): ProcessLivenessSnapshot {
+function snapshotForSource(source: PidSource, now: number): ProcessLivenessSnapshot {
   const pid = readPid(source.pidPath),
     alive = pidIsAlive(pid)
   return {
@@ -655,12 +549,9 @@ async function resolveListEntry(
   storageDir: string,
   filter: ListEnvelopesRequest
 ): Promise<EnvelopeListEntry> {
-  const parsed = parseEnvelopeStorageKey(
-    dataFile.replace(LocalFileDebuggingClient.DataExt, "")
-  )
+  const parsed = parseEnvelopeStorageKey(dataFile.replace(LocalFileDebuggingClient.DataExt, ""))
   if (!parsed) return null
-  if (filter.epochStart > 0 && parsed.epochIndex < filter.epochStart)
-    return null
+  if (filter.epochStart > 0 && parsed.epochIndex < filter.epochStart) return null
   if (filter.epochEnd > 0 && parsed.epochIndex > filter.epochEnd) return null
   if (filter.endpointsType !== DebugOutpostEndpointsType.UNKNOWN) {
     const filterKey = endpointsTypeToKey(filter.endpointsType)
@@ -669,23 +560,12 @@ async function resolveListEntry(
   const dataPath = Path.join(storageDir, dataFile),
     metadataPath = Path.join(
       storageDir,
-      dataFile.replace(
-        LocalFileDebuggingClient.DataExt,
-        LocalFileDebuggingClient.MetadataExt
-      )
+      dataFile.replace(LocalFileDebuggingClient.DataExt, LocalFileDebuggingClient.MetadataExt)
     ),
     stat = await Fs.promises.stat(dataPath),
     timestampMs = stat.mtimeMs
-  if (
-    Number(filter.timestampStart) > 0 &&
-    timestampMs < Number(filter.timestampStart)
-  )
-    return null
-  if (
-    Number(filter.timestampEnd) > 0 &&
-    timestampMs > Number(filter.timestampEnd)
-  )
-    return null
+  if (Number(filter.timestampStart) > 0 && timestampMs < Number(filter.timestampStart)) return null
+  if (Number(filter.timestampEnd) > 0 && timestampMs > Number(filter.timestampEnd)) return null
   const batchOpNames = await readMetadataBatchOpNames(metadataPath)
   return EnvelopeListEntry.create({
     key: parsed.key,
@@ -712,18 +592,14 @@ async function readOrInitMetadata(
     return { checksum: decoded.checksum, batchOpNames }
   } catch {
     return {
-      checksum: BigInt(
-        `0x${checksum.substring(0, LocalFileDebuggingClient.MetadataChecksumHexChars)}`
-      ),
+      checksum: BigInt(`0x${checksum.substring(0, LocalFileDebuggingClient.MetadataChecksumHexChars)}`),
       batchOpNames: [batchOpName]
     }
   }
 }
 
 /** Read just `batchOpNames` from a metadata file. */
-async function readMetadataBatchOpNames(
-  metadataPath: string
-): Promise<string[]> {
+async function readMetadataBatchOpNames(metadataPath: string): Promise<string[]> {
   try {
     const metaBytes = await Fs.promises.readFile(metadataPath)
     return [...DebugEnvelopeMetadataRecord.fromBinary(metaBytes).batchOpNames]
@@ -733,9 +609,7 @@ async function readMetadataBatchOpNames(
 }
 
 /** Read both `batchOpNames` and the hex checksum from a metadata file. */
-async function readMetadataSummary(
-  metadataPath: string
-): Promise<LocalFileDebuggingClient.MetadataSummary> {
+async function readMetadataSummary(metadataPath: string): Promise<LocalFileDebuggingClient.MetadataSummary> {
   try {
     const metaBytes = await Fs.promises.readFile(metadataPath),
       meta = DebugEnvelopeMetadataRecord.fromBinary(metaBytes)

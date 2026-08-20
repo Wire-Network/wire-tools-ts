@@ -36,20 +36,14 @@ describe("VirtualList offset clamping (logic through fetchRange args)", () => {
     const totalItems = 20
     const viewportHeight = 5
     const requested = 999
-    const clamped = Math.max(
-      0,
-      Math.min(requested, Math.max(0, totalItems - viewportHeight))
-    )
+    const clamped = Math.max(0, Math.min(requested, Math.max(0, totalItems - viewportHeight)))
     expect(clamped).toBe(15)
   })
 
   it("clamps to 0 when viewport is taller than totalItems", () => {
     const totalItems = 3
     const viewportHeight = 10
-    const clamped = Math.max(
-      0,
-      Math.min(0, Math.max(0, totalItems - viewportHeight))
-    )
+    const clamped = Math.max(0, Math.min(0, Math.max(0, totalItems - viewportHeight)))
     expect(clamped).toBe(0)
   })
 })
