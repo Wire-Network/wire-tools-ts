@@ -248,20 +248,26 @@ export namespace DaemonConfig {
       daemonPath: node.nodePath,
       exe: nodeopBinary,
       argv,
-      conditions: [
-        {
-          // CAPTURE then match — never `--help | grep -q` under `set -o
-          // pipefail`. `grep -q` exits 0 the instant it matches, closing the
-          // pipe; nodeop's help exceeds the 64 KiB pipe buffer, so it is still
-          // writing and dies of SIGPIPE (141). `pipefail` promotes that to the
-          // pipeline's status, so the `&&` would NOT fire — dropping the flag
-          // precisely when it IS supported, which is the opposite of the
-          // intent and hard-fails trace_api_plugin init on builds that require
-          // it. A command substitution has no such short-circuit.
-          test: `[[ "$("${quoteForTest(nodeopBinary, StartScriptVariable.WIRE_PREFIX_PATH, cluster.buildPath)}" --help 2>/dev/null || true)" == *'${NodeopProcess.TraceNoAbisFlag}'* ]]`,
-          tokens: [NodeopProcess.TraceNoAbisFlag]
-        }
-      ],
+      // The probe belongs to trace_api_plugin, so it rides the SAME gate the
+      // argv's plugin arg does (SHARED-25 AC#4) — a node that does not load the
+      // plugin must not be handed its flag, and the argv-equality guard would
+      // catch the two surfaces diverging. An external producer therefore renders
+      // with an EMPTY conditions array, which the renderer already handles (it
+      // always emits `CONDITIONAL_ARGS=()` first — kiod and the debugging server
+      // take that path today).
+      conditions: NodeConfig.runsTraceApiPlugin(node)
+        ? [
+            {
+              // The probe's shape (capture-then-match, never a `grep -q` pipe)
+              // lives in NodeopProcess with the flag it tests for, so the
+              // standalone API node's script renders the identical test.
+              test: NodeopProcess.traceNoAbisProbeTest(
+                `"${quoteForTest(nodeopBinary, StartScriptVariable.WIRE_PREFIX_PATH, cluster.buildPath)}"`
+              ),
+              tokens: [NodeopProcess.TraceNoAbisFlag]
+            }
+          ]
+        : [],
       relocations: [
         { prefix: node.nodePath, variable: StartScriptVariable.NODE_DIR }
       ]

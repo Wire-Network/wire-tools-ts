@@ -251,6 +251,9 @@ wire-cluster-tool -d <dir> package --package-type zip   # per-node archives (pos
 wire-cluster-tool create-external-config \              # clone → deployable external dir + emit its ExternalClusterConfig
   --local-cluster-path <created-dir> --external-cluster-path <new-dir> \
   --external-bind-config <bind.json>
+wire-cluster-tool create-api-node \                    # standalone (non-cluster) API node: config.ini + start.sh
+  --output-path <dir> --http-server-address <addr:port> \
+  [--p2p-peer-address <addr:port>]... [--genesis-json <file>]
 ```
 
 `create` also carries `--signature-provider-type <KEY|SSM|KIOD>` (default KEY)
@@ -268,6 +271,13 @@ with distinct compute + storage — S3/EC2, GCS, or any other, loosely coupled).
 external directory with the external `BindConfig` merged in and emits its
 self-described `external-cluster-config.json` (the Validate → Clone → Rebind →
 Emit → Verify pipeline; a mismatched bind config fails fast before any write).
+`create-api-node` is the one command with NO cluster behind it: it resolves an
+`ApiNodeConfig` (defaults in ONE place — `ApiNodeConfig.resolve`, never yargs
+`default:`) and writes `config.ini` + `start.sh` (mode 0755, plus a copied
+`genesis.json` when supplied) into `--output-path`. Having no `ClusterConfig`, it
+builds no `ClusterBuildContext` and produces no Report — see its JSDoc for the
+stated departure. Its endpoints are user-supplied deployment addresses used
+VERBATIM: nothing binds locally, so no bind-registry claim is made or invented.
 
 **Every daemon directory also gets a `start.sh`** (`<cluster>/data/<daemon>/`),
 emitted by `create` and re-rendered by `create-external-config`'s Rebind, so a

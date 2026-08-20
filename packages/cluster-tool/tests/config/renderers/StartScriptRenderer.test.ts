@@ -2,7 +2,11 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import { execFileSync } from "node:child_process"
-import type { ClusterConfig } from "@wireio/cluster-tool-shared"
+import {
+  ClusterDeploymentKind,
+  type ClusterConfig
+} from "@wireio/cluster-tool-shared"
+import { Constants } from "@wireio/cluster-tool"
 import {
   NodeopProcess,
   ProcessManager
@@ -288,6 +292,66 @@ describe("StartScriptRenderer", () => {
         actual = printed.split("\n").filter(line => line.length > 0)
 
       expect(actual).toEqual(expected)
+    })
+  })
+
+  describe("trace_api gating reaches the rendered script (SHARED-25 AC#4)", () => {
+    it("an EXTERNAL producer's script carries neither the plugin nor its probe", () => {
+      const externalCluster = fixtureConfig({
+          clusterPath: dir,
+          dataPath: Path.join(dir, "data"),
+          buildPath: Path.join(dir, "build"),
+          executables: { ...PersistedFixture.executables, nodeop: nodeopStub },
+          deploymentKind: ClusterDeploymentKind.external
+        }),
+        node = new NodeConfig(
+          externalCluster,
+          NodeRole.producer,
+          0,
+          "node_external",
+          // Replayed from the fixture's ALREADY-RESOLVED bind (the sanctioned
+          // carve-out) — nothing binds here, and no port is invented.
+          externalCluster.bind.nodeop.ports.producers[0],
+          [],
+          []
+        ),
+        config = NodeopProcess.resolveConfig(
+          { node, relaunch: true, postBootstrap: true },
+          {
+            genesisTimestamp: "2026-01-01T00:00:00.000",
+            supportsTraceNoAbis: false
+          }
+        ),
+        daemon = DaemonConfig.plan(externalCluster, { nodeop: [config] }).find(
+          candidate => candidate.kind === DaemonKind.node
+        ),
+        script = new StartScriptRenderer(
+          daemon,
+          DaemonConfig.clusterRelocations(externalCluster)
+        ).render()
+      expect(script).not.toContain(Constants.TRACE_API_PLUGIN)
+      expect(script).not.toContain(NodeopProcess.TraceNoAbisFlag)
+      // An EMPTY conditions array is a supported shape — the declaration is
+      // always emitted (kiod and the debugging server take that path today), so
+      // the `"${CONDITIONAL_ARGS[@]}"` expansion below it stays valid.
+      expect(script).toContain(`${StartScriptRenderer.ConditionalArrayName}=()`)
+    })
+
+    it("a LOCAL producer's script still carries both", () => {
+      const node = producerNode(),
+        config = NodeopProcess.resolveConfig(
+          { node, relaunch: true, postBootstrap: true },
+          {
+            genesisTimestamp: "2026-01-01T00:00:00.000",
+            supportsTraceNoAbis: false
+          }
+        ),
+        daemon = DaemonConfig.plan(cluster, { nodeop: [config] }).find(
+          candidate => candidate.kind === DaemonKind.node
+        ),
+        script = render(daemon)
+      expect(script).toContain(Constants.TRACE_API_PLUGIN)
+      expect(script).toContain(NodeopProcess.TraceNoAbisFlag)
     })
   })
 
