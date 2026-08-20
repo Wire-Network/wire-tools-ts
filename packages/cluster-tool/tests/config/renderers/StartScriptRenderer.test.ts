@@ -15,10 +15,7 @@ import {
   StartScriptRenderer
 } from "@wireio/cluster-tool/config"
 import { StartScriptVariable } from "@wireio/cluster-tool/utils"
-import {
-  fixtureConfig,
-  PersistedFixture
-} from "../clusterConfigFixture.js"
+import { fixtureConfig, PersistedFixture } from "../clusterConfigFixture.js"
 
 describe("StartScriptRenderer", () => {
   let dir: string
@@ -189,6 +186,42 @@ describe("StartScriptRenderer", () => {
       // No solana path is referenced — demanding it would break a depot-only run.
       expect(script).not.toContain(StartScriptVariable.WIRE_SOLANA_PATH)
     })
+
+    // The daemon's env is a DEFAULT, not an override: it is frozen into the
+    // script at create time, so pinning it would beat the operator's own value
+    // at run time — the "build-time conditionals render as SHELL" invariant.
+    it("exports the daemon's extra environment as a run-time default", () => {
+      const daemonPath = Path.join(cluster.dataPath, "env-probe"),
+        scriptFile = DaemonConfig.startScriptFile(daemonPath),
+        value = 'program logs\' "additive" $filter',
+        script = render({
+          kind: DaemonKind.kiod,
+          label: "env-probe",
+          daemonPath,
+          exe: "/bin/sh",
+          argv: ["-c", 'printf "%s" "$HARNESS_ENV_PROBE"'],
+          env: { HARNESS_ENV_PROBE: value },
+          conditions: [],
+          relocations: []
+        }),
+        run = (extraEnv: Record<string, string>): string =>
+          execFileSync("bash", [scriptFile], {
+            encoding: "utf8",
+            env: { ...global.process.env, WIRE_CLUSTER_DIR: dir, ...extraEnv }
+          })
+      Fs.mkdirSync(daemonPath, { recursive: true })
+      Fs.writeFileSync(scriptFile, script)
+
+      expect(script).toContain(
+        `[ -n "\${HARNESS_ENV_PROBE:-}" ] || export HARNESS_ENV_PROBE='program logs'\\'' "additive" $filter'`
+      )
+      // Unset -> the daemon's value, quoting survived verbatim.
+      expect(run({ HARNESS_ENV_PROBE: "" })).toBe(value)
+      // Set -> the OPERATOR wins; the frozen default must not override it.
+      expect(run({ HARNESS_ENV_PROBE: "operator-choice" })).toBe(
+        "operator-choice"
+      )
+    })
   })
 
   describe("enumeration agreement", () => {
@@ -256,7 +289,6 @@ describe("StartScriptRenderer", () => {
 
       expect(actual).toEqual(expected)
     })
-
   })
 
   describe("WIRE_PREFIX_PATH resolution", () => {
@@ -270,7 +302,10 @@ describe("StartScriptRenderer", () => {
       const node = producerNode(),
         config = NodeopProcess.resolveConfig(
           { node, relaunch: true },
-          { genesisTimestamp: "2026-01-01T00:00:00.000", supportsTraceNoAbis: false }
+          {
+            genesisTimestamp: "2026-01-01T00:00:00.000",
+            supportsTraceNoAbis: false
+          }
         ),
         daemon = DaemonConfig.plan(cluster, { nodeop: [config] }).find(
           candidate => candidate.kind === DaemonKind.node
@@ -280,7 +315,10 @@ describe("StartScriptRenderer", () => {
           daemon,
           DaemonConfig.clusterRelocations(cluster)
         ).join("\n"),
-        probe = Path.join(dir, `probe-${Math.random().toString(36).slice(2)}.sh`)
+        probe = Path.join(
+          dir,
+          `probe-${Math.random().toString(36).slice(2)}.sh`
+        )
 
       Fs.writeFileSync(
         probe,
@@ -314,7 +352,9 @@ describe("StartScriptRenderer", () => {
 
     beforeAll(() => {
       sanitizedBash = resolveBinary("bash")
-      sanitizedPathDir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "sanitized-bin-"))
+      sanitizedPathDir = Fs.mkdtempSync(
+        Path.join(Os.tmpdir(), "sanitized-bin-")
+      )
       // `dirname` is the only external the preamble invokes; everything else it
       // uses (`cd`, `pwd`, `command`, `printf`) is a bash builtin.
       ;["bash", "dirname"].forEach(name =>

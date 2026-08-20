@@ -104,6 +104,8 @@ export interface DaemonConfig {
   readonly exeEnvironmentVariable?: string
   /** Unconditional argv (WITHOUT the executable), in RUN — not create — form. */
   readonly argv: readonly string[]
+  /** Extra environment entries the live process merges over its inherited env. */
+  readonly env?: Readonly<Record<string, string>>
   /** Conditionals the script evaluates itself (see {@link DaemonArgvCondition}). */
   readonly conditions: readonly DaemonArgvCondition[]
   /**
@@ -191,7 +193,9 @@ export namespace DaemonConfig {
         ? []
         : [AnvilProcess.ProcessLabel, SolanaValidatorProcess.ProcessLabel]),
       KiodProcess.ProcessLabel,
-      ...(config.debuggingServerEnabled === false ? [] : [DebuggingServerSubpath])
+      ...(config.debuggingServerEnabled === false
+        ? []
+        : [DebuggingServerSubpath])
     ]
   }
 
@@ -324,6 +328,13 @@ export namespace DaemonConfig {
       exeCommandName: SolanaValidatorProcess.ProcessLabel,
       exeEnvironmentVariable: SolanaValidatorBinEnvironmentVariable,
       argv: SolanaValidatorProcess.buildArgs(validator),
+      // The UNCONDITIONAL default, never `resolveEnv()`: this value is frozen
+      // into the emitted `start.sh` at CREATE time, and `resolveEnv` reads the
+      // BUILD host's environment. Freezing its answer would either strip the
+      // program-log target entirely (build host had RUST_LOG set) or pin one
+      // the operator cannot override. The renderer emits it as a defaulting
+      // expansion, so the run-time environment still wins.
+      env: SolanaValidatorProcess.DefaultEnv,
       conditions: [],
       relocations: [
         { prefix: daemonPath, variable: StartScriptVariable.NODE_DIR }
@@ -470,9 +481,18 @@ export namespace DaemonConfig {
   ): StartScriptRelocation[] {
     return [
       { prefix: config.clusterPath, variable: StartScriptVariable.CLUSTER_DIR },
-      { prefix: config.buildPath, variable: StartScriptVariable.WIRE_PREFIX_PATH },
-      { prefix: config.ethereumPath, variable: StartScriptVariable.WIRE_ETH_PATH },
-      { prefix: config.solanaPath, variable: StartScriptVariable.WIRE_SOLANA_PATH }
+      {
+        prefix: config.buildPath,
+        variable: StartScriptVariable.WIRE_PREFIX_PATH
+      },
+      {
+        prefix: config.ethereumPath,
+        variable: StartScriptVariable.WIRE_ETH_PATH
+      },
+      {
+        prefix: config.solanaPath,
+        variable: StartScriptVariable.WIRE_SOLANA_PATH
+      }
     ]
   }
 }
