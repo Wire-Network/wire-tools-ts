@@ -4,10 +4,7 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { Report } from "../../report/Report.js"
 import { sleep } from "../../utils/asyncUtils.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../ClusterBuildStep.js"
 
 const { SysioContractName } = SysioContracts
 
@@ -34,14 +31,7 @@ export namespace ConsensusSteps {
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runSetFinalizer
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runSetFinalizer)
   }
 
   /** Named runner — build the finalizer policy from node BLS keys, invoke `bios::setfinalizer`. */
@@ -76,14 +66,7 @@ export namespace ConsensusSteps {
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runSetProducerKeys
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runSetProducerKeys)
   }
 
   /** Named runner — build + set the producer schedule, then poll for handoff. */
@@ -103,9 +86,7 @@ export namespace ConsensusSteps {
       producer_name: producer.account,
       block_signing_key: producer.wire.publicKey
     }))
-    await ctx.wire
-      .getSysioContract(SysioContractName.system)
-      .actions.setprodkeys.invoke({ schedule })
+    await ctx.wire.getSysioContract(SysioContractName.system).actions.setprodkeys.invoke({ schedule })
 
     const deadline = Date.now() + HandoffTimeoutMs
     while (Date.now() < deadline) {

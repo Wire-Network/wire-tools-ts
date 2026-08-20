@@ -1,10 +1,7 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import {
-  KiodProcess,
-  ProcessManager
-} from "@wireio/cluster-tool/cluster/processes"
+import { KiodProcess, ProcessManager } from "@wireio/cluster-tool/cluster/processes"
 import { Localhost } from "@wireio/cluster-tool/utils"
 
 describe("KiodProcess", () => {
@@ -24,9 +21,7 @@ describe("KiodProcess", () => {
 
   it("requires a binary and a walletPath", async () => {
     await expect(KiodProcess.create(manager, {})).rejects.toThrow(/binary/)
-    await expect(
-      KiodProcess.create(manager, { binary: "/bin/true" })
-    ).rejects.toThrow(/walletPath/)
+    await expect(KiodProcess.create(manager, { binary: "/bin/true" })).rejects.toThrow(/walletPath/)
   })
 
   it("builds the kiod argv, runs out of the wallet dir, dials loopback", async () => {
@@ -36,9 +31,7 @@ describe("KiodProcess", () => {
     })
     expect(process.exe).toBe("/bin/true")
     expect(process.cwd).toBe(dir)
-    expect(process.args).toEqual(
-      expect.arrayContaining(["--wallet-dir", dir, "--verbose-http-errors"])
-    )
+    expect(process.args).toEqual(expect.arrayContaining(["--wallet-dir", dir, "--verbose-http-errors"]))
     expect(process.httpUrl).toContain(Localhost)
   })
 })

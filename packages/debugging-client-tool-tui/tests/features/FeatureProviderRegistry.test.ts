@@ -22,9 +22,7 @@ beforeEach(async () => {
 
 /** Fake FeatureProvider with spies on the two hooks. */
 function makeProvider(id: string) {
-  const registerComponents = jest.fn(
-    (_providers: typeof ComponentProviders) => undefined
-  )
+  const registerComponents = jest.fn((_providers: typeof ComponentProviders) => undefined)
   const registerServices = jest.fn((_m: ServiceManager) => undefined)
   const provider: FeatureProvider = {
     id,

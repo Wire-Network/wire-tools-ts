@@ -30,9 +30,7 @@ describe("ClusterBuildDefaults.epochConfig — batch-op group shape", () => {
   })
 
   it("carries the global epoch duration through unchanged", () => {
-    const data = ClusterBuildDefaults.epochConfig(
-      config({ batchOperatorCount: 21, epochDurationSec: 90 })
-    )
+    const data = ClusterBuildDefaults.epochConfig(config({ batchOperatorCount: 21, epochDurationSec: 90 }))
     expect(data.epoch_duration_sec).toBe(90)
   })
 
@@ -51,19 +49,15 @@ describe("ClusterBuildDefaults.epochConfig — batch-op group shape", () => {
 
   it("keeps the group size ODD when a group-COUNT override is off the lattice", () => {
     // 21 / 5 = 4.2 → floor 4 → rounded DOWN to 3: still odd, and 3 × 5 = 15 ≤ 21.
-    const data = ClusterBuildDefaults.epochConfig(
-      config({ batchOperatorCount: 21, batchOpGroups: 5 })
-    )
+    const data = ClusterBuildDefaults.epochConfig(config({ batchOperatorCount: 21, batchOpGroups: 5 }))
     expect(data.operators_per_epoch).toBe(3)
     expect(data.batch_operator_minimum_active).toBe(15)
   })
 
   it("rejects an EVEN group-size override — the spec's assert(group_size % 2 == 1)", () => {
-    expect(() =>
-      ClusterBuildDefaults.epochConfig(
-        config({ batchOperatorCount: 21, operatorsPerEpoch: 4 })
-      )
-    ).toThrow(/group SIZE must be ODD/)
+    expect(() => ClusterBuildDefaults.epochConfig(config({ batchOperatorCount: 21, operatorsPerEpoch: 4 }))).toThrow(
+      /group SIZE must be ODD/
+    )
   })
 
   it("rejects an override pair the roster cannot fill, naming both flags", () => {

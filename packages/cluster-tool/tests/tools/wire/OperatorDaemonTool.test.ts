@@ -5,17 +5,11 @@ import { ethers } from "ethers"
 import { Keypair } from "@solana/web3.js"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
-import {
-  NodeopProcess,
-  ProcessManager
-} from "@wireio/cluster-tool/cluster/processes"
+import { NodeopProcess, ProcessManager } from "@wireio/cluster-tool/cluster/processes"
 import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
-import {
-  AWSAccountName,
-  SignatureProviderType
-} from "@wireio/cluster-tool-shared"
+import { AWSAccountName, SignatureProviderType } from "@wireio/cluster-tool-shared"
 import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
 import {
   OperatorDaemonArtifactsKey,
@@ -30,10 +24,7 @@ import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
 const AnvilMnemonic = "test test test test test test test test test test test junk"
 
 function operatorAccount(label: string, type: OperatorType): OperatorAccount {
-  const wallet = ethers.HDNodeWallet.fromMnemonic(
-      ethers.Mnemonic.fromPhrase(AnvilMnemonic),
-      "m/44'/60'/0'/0/1"
-    ),
+  const wallet = ethers.HDNodeWallet.fromMnemonic(ethers.Mnemonic.fromPhrase(AnvilMnemonic), "m/44'/60'/0'/0/1"),
     edPrivate = PrivateKey.generate(KeyType.ED)
   return {
     label,
@@ -91,9 +82,7 @@ describe("OperatorDaemonTool", () => {
       const operator = operatorAccount("batchopbbbb", OperatorType.BATCH)
       ctx.keyStore.setOperator(operator)
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifacts)
-      const recoverySpy = jest
-        .spyOn(NodeopProcess, "startWithRecovery")
-        .mockResolvedValue(undefined)
+      const recoverySpy = jest.spyOn(NodeopProcess, "startWithRecovery").mockResolvedValue(undefined)
       try {
         await OperatorDaemonTool.runDaemonStart(
           ctx,
@@ -132,21 +121,15 @@ describe("OperatorDaemonTool", () => {
         keySourceFor
       )
       expect(valuesOf(disabledArgs, "--plugin")).toEqual(
-        OperatorDaemonTool.BatchOperatorPlugins.filter(
-          plugin => plugin !== OperatorDaemonTool.ExternalDebuggingPlugin
-        )
+        OperatorDaemonTool.BatchOperatorPlugins.filter(plugin => plugin !== OperatorDaemonTool.ExternalDebuggingPlugin)
       )
-      expect(valuesOf(disabledArgs, "--plugin")).not.toContain(
-        OperatorDaemonTool.ExternalDebuggingPlugin
-      )
+      expect(valuesOf(disabledArgs, "--plugin")).not.toContain(OperatorDaemonTool.ExternalDebuggingPlugin)
       expect(valuesOf(disabledArgs, "--ext-debugging-server")).toEqual([])
     })
 
     it("signs WIRE with the operator's OWN unique wire key (account active)", () => {
       const providers = valuesOf(args, "--signature-provider")
-      expect(providers[0]).toBe(
-        "wire-PUB_K1_batchopaaaa,wire,wire,PUB_K1_batchopaaaa,KEY:PVT_K1_batchopaaaa"
-      )
+      expect(providers[0]).toBe("wire-PUB_K1_batchopaaaa,wire,wire,PUB_K1_batchopaaaa,KEY:PVT_K1_batchopaaaa")
       // + the ETH and SOL outpost providers, named per-operator
       expect(providers.length).toBe(3)
       // Provider NAMES are built from the CHAIN account, not the durable handle.
@@ -175,9 +158,7 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(args, "--solana-idl-file")).toEqual([artifacts.solanaIdlFile])
       // The cleanroom hosts the outpost interface in liqsol_core — nodeop's
       // IDL-name gate must be pointed at it.
-      expect(valuesOf(args, "--solana-outpost-program-name")).toEqual([
-        SolanaOutpostProgramTool.ProgramName
-      ])
+      expect(valuesOf(args, "--solana-outpost-program-name")).toEqual([SolanaOutpostProgramTool.ProgramName])
     })
 
     it("binds each outpost with one consolidated per-chain CSV spec", () => {
@@ -229,12 +210,7 @@ describe("OperatorDaemonTool", () => {
             }
           })
         ),
-        ssmArgs = OperatorDaemonTool.batchOperatorArgs(
-          operator,
-          artifacts,
-          network,
-          ssmKeySourceFor
-        ),
+        ssmArgs = OperatorDaemonTool.batchOperatorArgs(operator, artifacts, network, ssmKeySourceFor),
         solProvider = valuesOf(ssmArgs, "--signature-provider").find(provider =>
           provider.startsWith(`sol-${operator.account}`)
         )
@@ -269,9 +245,7 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(args, "--underwriter-eth-source-deposit-function")).toEqual(["requestSwap"])
       expect(valuesOf(args, "--underwriter-sol-source-deposit-instruction")).toEqual(["request_swap"])
       expect(valuesOf(args, "--solana-idl-file")).toEqual([artifacts.solanaIdlFile])
-      expect(valuesOf(args, "--solana-outpost-program-name")).toEqual([
-        SolanaOutpostProgramTool.ProgramName
-      ])
+      expect(valuesOf(args, "--solana-outpost-program-name")).toEqual([SolanaOutpostProgramTool.ProgramName])
     })
 
     it("drops the external-debugging plugin AND --ext-debugging-server when the debugging server is disabled", () => {
@@ -282,9 +256,7 @@ describe("OperatorDaemonTool", () => {
         keySourceFor
       )
       expect(valuesOf(disabledArgs, "--plugin")).toEqual(
-        OperatorDaemonTool.UnderwriterPlugins.filter(
-          plugin => plugin !== OperatorDaemonTool.ExternalDebuggingPlugin
-        )
+        OperatorDaemonTool.UnderwriterPlugins.filter(plugin => plugin !== OperatorDaemonTool.ExternalDebuggingPlugin)
       )
       expect(valuesOf(disabledArgs, "--ext-debugging-server")).toEqual([])
     })
@@ -299,11 +271,7 @@ describe("OperatorDaemonTool", () => {
         ].join(",")
       ])
       expect(valuesOf(args, "--underwriter-sol-outpost")).toEqual([
-        [
-          OperatorDaemonTool.SolanaChainCodename,
-          OperatorDaemonTool.SolanaClientId,
-          artifacts.solanaProgramId
-        ].join(",")
+        [OperatorDaemonTool.SolanaChainCodename, OperatorDaemonTool.SolanaClientId, artifacts.solanaProgramId].join(",")
       ])
     })
   })
@@ -419,9 +387,9 @@ describe("OperatorDaemonTool", () => {
         ethereumPath,
         solanaPath
       })
-      await expect(
-        OperatorDaemonTool.runArtifactPreparation(ctx, null, new AbortController().signal)
-      ).rejects.toThrow(/missing the 'epoch_in' instruction/)
+      await expect(OperatorDaemonTool.runArtifactPreparation(ctx, null, new AbortController().signal)).rejects.toThrow(
+        /missing the 'epoch_in' instruction/
+      )
     })
   })
 })

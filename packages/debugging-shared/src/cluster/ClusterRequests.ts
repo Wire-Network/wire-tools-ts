@@ -33,8 +33,7 @@ export const GetClusterConfigRequestSchemaCodec =
   SchemaCodec.create<GetClusterConfigRequest>(GetClusterConfigRequestSchema)
 
 /** Codec for the `Cluster.GetConfig` response body (= the shared `ClusterConfig`). */
-export const GetClusterConfigResponseSchemaCodec =
-  SchemaCodec.create<GetClusterConfigResponse>(ClusterConfigSchema)
+export const GetClusterConfigResponseSchemaCodec = SchemaCodec.create<GetClusterConfigResponse>(ClusterConfigSchema)
 
 /** Schema for {@link GetClusterStateRequest} (empty body). */
 export const GetClusterStateRequestSchema = z.object({})
@@ -49,6 +48,4 @@ export const GetClusterStateResponseSchema = z.object({
 /** Codec for the `Cluster.GetState` response body. (Generic inferred — the
  *  nullable `state` infers optional under strictNullChecks-off, which the
  *  explicit interface generic would reject.) */
-export const GetClusterStateResponseSchemaCodec = SchemaCodec.create(
-  GetClusterStateResponseSchema
-)
+export const GetClusterStateResponseSchemaCodec = SchemaCodec.create(GetClusterStateResponseSchema)

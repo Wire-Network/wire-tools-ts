@@ -12,16 +12,8 @@ import {
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { ClusterState, Constants } from "@wireio/cluster-tool"
-import {
-  ClusterConfigProvider,
-  NodeConfig,
-  NodeRole
-} from "@wireio/cluster-tool/config"
-import {
-  ClusterBuild,
-  ClusterBuildPhaseGroup,
-  Steps
-} from "@wireio/cluster-tool/orchestration"
+import { ClusterConfigProvider, NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
+import { ClusterBuild, ClusterBuildPhaseGroup, Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 import { PersistedFixture } from "../../config/clusterConfigFixture.js"
@@ -59,9 +51,7 @@ function shiftPorts(value: unknown, delta: number): unknown {
   if (typeof value === "number") return value + delta
   if (Array.isArray(value)) return value.map(entry => shiftPorts(entry, delta))
   if (value != null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [key, shiftPorts(entry, delta)])
-    )
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, shiftPorts(entry, delta)]))
   }
   return value
 }
@@ -82,11 +72,7 @@ function findFiles(dir: string, name: string): string[] {
   if (!Fs.existsSync(dir)) return []
   return Fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
     const full = Path.join(dir, entry.name)
-    return entry.isDirectory()
-      ? findFiles(full, name)
-      : entry.name === name
-        ? [full]
-        : []
+    return entry.isDirectory() ? findFiles(full, name) : entry.name === name ? [full] : []
   })
 }
 
@@ -139,10 +125,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
           label,
           publicationLabel: label,
           account: `wireno.${label.replace(/[^a-z1-5]/g, "")}`,
-          type:
-            batchOperatorLabel != null
-              ? OperatorType.BATCH
-              : OperatorType.UNDERWRITER,
+          type: batchOperatorLabel != null ? OperatorType.BATCH : OperatorType.UNDERWRITER,
           wire: {
             type: KeyType.K1,
             publicKey: `PUB_K1_${label}`,
@@ -182,10 +165,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       signatureProvider,
       // `resolve` makes the AWS placement REQUIRED under SSM (it sources the
       // secret-id `{cluster}`); KEY / KIOD clusters carry none.
-      awsClusterNodeConfig:
-        signatureProvider.type === SignatureProviderType.SSM
-          ? SourceAWSClusterNodeConfig
-          : null
+      awsClusterNodeConfig: signatureProvider.type === SignatureProviderType.SSM ? SourceAWSClusterNodeConfig : null
     })
     ctx.outputs.set(External.ParamsKey, {
       externalClusterPath: externalDir,
@@ -201,17 +181,13 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   }
 
   /** Run load → clone → rebind → emit under `signatureProvider`; return the emitted config. */
-  async function emitWithProvider(
-    signatureProvider: ClusterSignatureProviderConfig
-  ) {
+  async function emitWithProvider(signatureProvider: ClusterSignatureProviderConfig) {
     const ctx = runContext(externalBindFile, signatureProvider)
     await External.runLoadExternalBind(ctx, null, signal)
     await External.runClone(ctx, null, signal)
     await External.runRebind(ctx, null, signal)
     await External.runEmit(ctx, null, signal)
-    return ExternalClusterConfigSchemaCodec.deserialize(
-      Fs.readFileSync(externalConfigFile(), "utf-8")
-    )
+    return ExternalClusterConfigSchemaCodec.deserialize(Fs.readFileSync(externalConfigFile(), "utf-8"))
   }
 
   /**
@@ -300,9 +276,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   function injectProducerAccounts() {
     const config = runContext().config,
       keys = ClusterState.loadKeys(config),
-      node = NodeConfig.plan(config).find(
-        planned => planned.role === NodeRole.producer
-      ),
+      node = NodeConfig.plan(config).find(planned => planned.role === NodeRole.producer),
       nodeKeys = keys.nodes.find(entry => entry.index === node.index)
     node.producers.forEach(producer =>
       keys.operators.push({
@@ -353,9 +327,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     seedLocalCluster()
     // A dup-free bind, shifted so the external ports differ from the local ones
     // — the rebind is observable and the stale-port scan has something to catch.
-    externalBind = shiftPorts(dupFreeBind(), PortShift) as ReturnType<
-      typeof dupFreeBind
-    >
+    externalBind = shiftPorts(dupFreeBind(), PortShift) as ReturnType<typeof dupFreeBind>
     Fs.writeFileSync(externalBindFile, JSON.stringify(externalBind))
   })
 
@@ -370,9 +342,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     await External.runVerify(ctx, null, signal)
 
     expect(Fs.existsSync(externalConfigFile())).toBe(true)
-    const emitted = ExternalClusterConfigSchemaCodec.deserialize(
-      Fs.readFileSync(externalConfigFile(), "utf-8")
-    )
+    const emitted = ExternalClusterConfigSchemaCodec.deserialize(Fs.readFileSync(externalConfigFile(), "utf-8"))
     expect(emitted.wire.epochDurationSec).toBe(ctx.config.epochDurationSec)
     expect(emitted.bindings.kiod.port).toBe(externalBind.kiod.port)
     // `accountName` is the operator's ON-CHAIN name (`account`), never the
@@ -382,12 +352,8 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       handles = NodeConfig.plan(ctx.config)
         .filter(node => node.role === NodeRole.operator)
         .map(node => node.batchOperatorLabel ?? node.underwriterLabel)
-    expect(emitted.accounts.operators.map(op => op.accountName).sort()).toEqual(
-      [...expectedAccounts].sort()
-    )
-    expect(persisted.map(operator => operator.label).sort()).toEqual(
-      [...handles].sort()
-    )
+    expect(emitted.accounts.operators.map(op => op.accountName).sort()).toEqual([...expectedAccounts].sort())
+    expect(persisted.map(operator => operator.label).sort()).toEqual([...handles].sort())
     expect(expectedAccounts.sort()).not.toEqual([...handles].sort())
 
     // The re-rendered config.ini files carry the EXTERNAL bios http port.
@@ -419,9 +385,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     const kiodSocket = await listenUnixSocket(Path.join(localDir, "kiod.sock")),
       adminSocket = await listenUnixSocket(Path.join(ledgerDir, "admin.rpc"))
     try {
-      await expect(
-        External.runClone(runContext(), null, signal)
-      ).resolves.toBeUndefined()
+      await expect(External.runClone(runContext(), null, signal)).resolves.toBeUndefined()
     } finally {
       kiodSocket.close()
       adminSocket.close()
@@ -447,9 +411,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     const merged = ctx.outputs.assert(External.MergedConfigKey)
     expect(merged.debuggingServerEnabled).toBe(false)
     // …and it round-trips through the persisted external cluster-config.json.
-    const reloaded = ClusterConfigProvider.loadSync(
-      ClusterConfigProvider.configFilePath(merged)
-    )
+    const reloaded = ClusterConfigProvider.loadSync(ClusterConfigProvider.configFilePath(merged))
     expect(reloaded.debuggingServerEnabled).toBe(false)
   })
 
@@ -464,11 +426,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
 
   it("Validate composes one verify step per cross-check (fail-fast order)", () => {
     const cluster = ClusterBuild.forContext(runContext()),
-      group = ClusterBuildPhaseGroup.create(
-        cluster,
-        "CreateExternalConfig",
-        "cross-validate"
-      ),
+      group = ClusterBuildPhaseGroup.create(cluster, "CreateExternalConfig", "cross-validate"),
       phase = External.planValidatePhase(group, Report.Actor.Sysio, {})
     expect(phase.steps.map(step => step.name)).toEqual([
       "load-external-bind",
@@ -489,9 +447,9 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     Fs.writeFileSync(bindFile, JSON.stringify(bind))
     const ctx = runContext(bindFile)
     await External.runLoadExternalBind(ctx, null, signal)
-    await expect(
-      External.runVerifyProducerCardinality(ctx, signal)
-    ).rejects.toThrow(/producers has 2 entries but the local cluster has 1/)
+    await expect(External.runVerifyProducerCardinality(ctx, signal)).rejects.toThrow(
+      /producers has 2 entries but the local cluster has 1/
+    )
   })
 
   it("verify-no-duplicate-ports rejects an external bind with duplicate ports", async () => {
@@ -501,9 +459,9 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     Fs.writeFileSync(bindFile, JSON.stringify(bind))
     const ctx = runContext(bindFile)
     await External.runLoadExternalBind(ctx, null, signal)
-    await expect(
-      External.runVerifyNoDuplicatePorts(ctx, signal)
-    ).rejects.toThrow(/binds the same port twice on one host/)
+    await expect(External.runVerifyNoDuplicatePorts(ctx, signal)).rejects.toThrow(
+      /binds the same port twice on one host/
+    )
   })
 
   it("emits KEY providers with inline plaintext private keys (unchanged)", async () => {
@@ -568,12 +526,8 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   it("preserves a BLS proofOfPossession under KEY", async () => {
     const injected = injectOperatorWireFinalizer(),
       emitted = await emitWithProvider(KeyProvider),
-      op = emitted.accounts.operators.find(
-        entry => entry.accountName === injected.account
-      ),
-      blsProvider = op.keyProviders.find(
-        provider => provider.type === KeyType.BLS
-      )
+      op = emitted.accounts.operators.find(entry => entry.accountName === injected.account),
+      blsProvider = op.keyProviders.find(provider => provider.type === KeyType.BLS)
     expect(blsProvider).toMatchObject({
       providerType: SignatureProviderType.KEY,
       proofOfPossession: injected.proofOfPossession,
@@ -584,12 +538,8 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
   it("preserves a BLS proofOfPossession under KIOD (material-less)", async () => {
     const injected = injectOperatorWireFinalizer(),
       emitted = await emitWithProvider(KiodProvider),
-      op = emitted.accounts.operators.find(
-        entry => entry.accountName === injected.account
-      ),
-      blsProvider = op.keyProviders.find(
-        provider => provider.type === KeyType.BLS
-      )
+      op = emitted.accounts.operators.find(entry => entry.accountName === injected.account),
+      blsProvider = op.keyProviders.find(provider => provider.type === KeyType.BLS)
     expect(blsProvider).toMatchObject({
       providerType: SignatureProviderType.KIOD,
       proofOfPossession: injected.proofOfPossession
@@ -603,9 +553,7 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     await External.runLoadExternalBind(ctx, null, signal)
     await External.runClone(ctx, null, signal)
     await External.runRebind(ctx, null, signal)
-    await expect(External.runEmit(ctx, null, signal)).rejects.toThrow(
-      /not SSM-published/
-    )
+    await expect(External.runEmit(ctx, null, signal)).rejects.toThrow(/not SSM-published/)
   })
 
   // The genesis identities are in the operator map but publish DIFFERENT curves
@@ -619,21 +567,14 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
         emitted.accounts.operators
           .find(op => op.accountName === accountName)
           .keyProviders.flatMap(provider =>
-            provider.providerType === SignatureProviderType.SSM
-              ? [provider.awsSecretId]
-              : []
+            provider.providerType === SignatureProviderType.SSM ? [provider.awsSecretId] : []
           )
           .sort()
 
     // Exactly the ids KeySteps PutParameter'd — `{account}` is the durable
     // HANDLE (`node_bios`), never the on-chain account (`sysio`).
-    expect(secretIdsFor(NodeConfig.BiosProducer)).toEqual([
-      "/wire/test/node_bios/BLS",
-      "/wire/test/node_bios/K1"
-    ])
-    expect(secretIdsFor(Constants.BOOTSTRAP_NODE_OWNER)).toEqual([
-      "/wire/test/wireno/K1"
-    ])
+    expect(secretIdsFor(NodeConfig.BiosProducer)).toEqual(["/wire/test/node_bios/BLS", "/wire/test/node_bios/K1"])
+    expect(secretIdsFor(Constants.BOOTSTRAP_NODE_OWNER)).toEqual(["/wire/test/wireno/K1"])
   })
 
   // A producer ACCOUNT carries its hosting node's K1 + BLS (siblings share one
@@ -646,20 +587,11 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       emitted = await emitWithProvider(SSMProvider)
     expect(producers.length).toBeGreaterThan(0)
     producers.forEach(producer => {
-      const op = emitted.accounts.operators.find(
-          entry => entry.accountName === producer
-        ),
+      const op = emitted.accounts.operators.find(entry => entry.accountName === producer),
         secretIds = op.keyProviders
-          .flatMap(provider =>
-            provider.providerType === SignatureProviderType.SSM
-              ? [provider.awsSecretId]
-              : []
-          )
+          .flatMap(provider => (provider.providerType === SignatureProviderType.SSM ? [provider.awsSecretId] : []))
           .sort()
-      expect(secretIds).toEqual([
-        `/wire/test/${nodeName}/BLS`,
-        `/wire/test/${nodeName}/K1`
-      ])
+      expect(secretIds).toEqual([`/wire/test/${nodeName}/BLS`, `/wire/test/${nodeName}/K1`])
     })
   })
 
@@ -672,28 +604,19 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     const emitted = await emitWithProvider(SSMProvider),
       published = new Set(
         Steps.keys
-          .signatureProviderKeyPublications(
-            runContext(externalBindFile, SSMProvider).config
-          )
+          .signatureProviderKeyPublications(runContext(externalBindFile, SSMProvider).config)
           .map(publication => publication.secretId)
       )
     expect(published.size).toBeGreaterThan(0)
     const emittedSecretIds = emitted.accounts.operators.flatMap(op =>
         op.keyProviders.flatMap(provider =>
-          provider.providerType === SignatureProviderType.SSM
-            ? [provider.awsSecretId]
-            : []
+          provider.providerType === SignatureProviderType.SSM ? [provider.awsSecretId] : []
         )
       ),
-      emittedProviderCount = emitted.accounts.operators.reduce(
-        (total, op) => total + op.keyProviders.length,
-        0
-      )
+      emittedProviderCount = emitted.accounts.operators.reduce((total, op) => total + op.keyProviders.length, 0)
     // Every emitted provider is an SSM ref…
     expect(emittedSecretIds.length).toBe(emittedProviderCount)
     // …and every one of them names a parameter create actually wrote.
-    emittedSecretIds.forEach(secretId =>
-      expect(published).toContain(secretId)
-    )
+    emittedSecretIds.forEach(secretId => expect(published).toContain(secretId))
   })
 })

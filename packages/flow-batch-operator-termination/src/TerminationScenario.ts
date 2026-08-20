@@ -27,8 +27,7 @@ import { TerminationScenarioConstants as Constants } from "./TerminationScenario
 
 const log = getLogger(__filename)
 
-const { SysioContractName, SysioOpregActiontype, SysioOpregOperatorstatus } =
-  SysioContracts
+const { SysioContractName, SysioOpregActiontype, SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report
 
 /**
@@ -72,9 +71,7 @@ function doomedOperatorAccount(ctx: ClusterBuildContext): string {
 }
 
 /** The doomed operator's row on `sysio.opreg::operators` (a read). */
-async function readDoomedOperatorRow(
-  ctx: ClusterBuildContext
-): Promise<SysioContracts.SysioOpregOperatorEntryType> {
+async function readDoomedOperatorRow(ctx: ClusterBuildContext): Promise<SysioContracts.SysioOpregOperatorEntryType> {
   const account = doomedOperatorAccount(ctx),
     { rows } = await ctx.wire
       .getSysioContract(SysioContractName.opreg)
@@ -83,9 +80,7 @@ async function readDoomedOperatorRow(
 }
 
 /** The sliding-window schedule groups from the `sysio.epoch::epochstate` singleton (a read). */
-async function readScheduleGroups(
-  ctx: ClusterBuildContext
-): Promise<string[][]> {
+async function readScheduleGroups(ctx: ClusterBuildContext): Promise<string[][]> {
   const { rows } = await ctx.wire
     .getSysioContract(SysioContractName.epoch)
     .tables.epochstate.query({ limit: Constants.EpochStateQueryLimit })
@@ -99,9 +94,7 @@ async function readScheduleGroups(
  * envelope) AND appends a PERMANENT entry to the operator's `recent_actions`
  * ring buffer; the ring buffer is therefore the source of truth here.
  */
-async function readWithdrawRemitChainCodes(
-  ctx: ClusterBuildContext
-): Promise<Set<number>> {
+async function readWithdrawRemitChainCodes(ctx: ClusterBuildContext): Promise<Set<number>> {
   const operator = await readDoomedOperatorRow(ctx)
   const remits = (operator?.recent_actions ?? []).filter(
     entry =>
@@ -135,14 +128,9 @@ interface SolanaAccountClient {
 }
 
 /** The SOL outpost's on-chain collateral ledger from the `OperatorRegistry` PDA (a read). */
-async function readSolanaCollateralLedger(
-  ctx: ClusterBuildContext
-): Promise<SolanaCollateralLedgerEntry[]> {
+async function readSolanaCollateralLedger(ctx: ClusterBuildContext): Promise<SolanaCollateralLedgerEntry[]> {
   const operator = ctx.keyStore.assertOperator(Constants.DoomedOperatorLabel)
-  const program = SolanaCollateralTool.loadOppOutpostProgram(
-    ctx,
-    solanaKeypair(operator.solana)
-  )
+  const program = SolanaCollateralTool.loadOppOutpostProgram(ctx, solanaKeypair(operator.solana))
   const [registryAddress] = PublicKey.findProgramAddressSync(
     [Buffer.from(SolanaOutpostBootstrapper.PdaSeed.OperatorRegistry)],
     program.programId
@@ -150,9 +138,9 @@ async function readSolanaCollateralLedger(
   // Anchor types `Program<Idl>.account` per-IDL; for a runtime-loaded IDL the
   // account clients are reached by name — one assertion to the string-keyed view.
   const accounts: Record<string, SolanaAccountClient> = program.account
-  const registryAccount = (await accounts[
-    Constants.SolanaOperatorRegistryAccountName
-  ].fetch(registryAddress)) as SolanaOperatorRegistryAccount
+  const registryAccount = (await accounts[Constants.SolanaOperatorRegistryAccountName].fetch(
+    registryAddress
+  )) as SolanaOperatorRegistryAccount
   return registryAccount.collateralByCode ?? []
 }
 
@@ -217,42 +205,30 @@ export class TerminationScenario extends FlowScenario {
     const quickStepOptions = { timeoutMs: Constants.QuickVerifyTimeoutMs },
       depositStepOptions = { timeoutMs: Constants.DepositStepTimeoutMs },
       ethereumDepositStepOptions = {
-        timeoutMs:
-          Constants.ethereumDepositDeadlineMs() + Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.ethereumDepositDeadlineMs() + Constants.PollDeadlineBufferMs
       },
       solanaActivationStepOptions = {
-        timeoutMs:
-          Constants.solanaActivationDeadlineMs() +
-          Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.solanaActivationDeadlineMs() + Constants.PollDeadlineBufferMs
       },
       scheduleWindowStepOptions = {
-        timeoutMs:
-          Constants.scheduleWindowDeadlineMs() + Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.scheduleWindowDeadlineMs() + Constants.PollDeadlineBufferMs
       },
       terminationStepOptions = {
-        timeoutMs:
-          Constants.terminationDeadlineMs() + Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.terminationDeadlineMs() + Constants.PollDeadlineBufferMs
       },
       remitStepOptions = {
         timeoutMs: Constants.remitDeadlineMs() + Constants.PollDeadlineBufferMs
       }
 
     // ── 1. Substrate health (WIRE / ETH outpost / SOL validator) ──
-    ClusterBuildPhase.create(
-      cluster,
-      "ChainHealth",
-      "The three chains answer before the scenario begins"
-    ).push(
+    ClusterBuildPhase.create(cluster, "ChainHealth", "The three chains answer before the scenario begins").push(
       verifyStep(
         Actor.Sysio,
         "wire-produces-blocks",
         "WIRE chain is producing blocks",
         async ctx => {
           const info = await ctx.wire.getInfo()
-          Assert.ok(
-            Number(info.head_block_num) > 0,
-            `WIRE head_block_num not advancing (got ${info.head_block_num})`
-          )
+          Assert.ok(Number(info.head_block_num) > 0, `WIRE head_block_num not advancing (got ${info.head_block_num})`)
         },
         quickStepOptions
       ),
@@ -261,13 +237,8 @@ export class TerminationScenario extends FlowScenario {
         "ethereum-outpost-reachable",
         "anvil answers and OperatorRegistry has deployed code",
         async ctx => {
-          const registry = EthereumCollateralTool.loadOperatorRegistry(
-            ctx,
-            ctx.ethereum.wallet.signer
-          )
-          const code = await ctx.ethereum.provider.getCode(
-            await registry.getAddress()
-          )
+          const registry = EthereumCollateralTool.loadOperatorRegistry(ctx, ctx.ethereum.wallet.signer)
+          const code = await ctx.ethereum.provider.getCode(await registry.getAddress())
           Assert.ok(
             code.length > Constants.MinimumContractCodeLength,
             `OperatorRegistry has no code on anvil (getCode returned ${code.length} chars)`
@@ -281,10 +252,7 @@ export class TerminationScenario extends FlowScenario {
         "solana-test-validator answers getSlot",
         async ctx => {
           const slot = await ctx.solana.connection.getSlot()
-          Assert.ok(
-            slot > 0,
-            `solana-test-validator slot not advancing (got ${slot})`
-          )
+          Assert.ok(slot > 0, `solana-test-validator slot not advancing (got ${slot})`)
         },
         quickStepOptions
       )
@@ -321,10 +289,7 @@ export class TerminationScenario extends FlowScenario {
         "operator registered non-bootstrapped with status UNKNOWN (no deposits yet)",
         async ctx => {
           const operator = await readDoomedOperatorRow(ctx)
-          Assert.ok(
-            operator != null,
-            `${Constants.DoomedOperatorLabel} missing from sysio.opreg::operators`
-          )
+          Assert.ok(operator != null, `${Constants.DoomedOperatorLabel} missing from sysio.opreg::operators`)
           Assert.ok(
             !operator.is_bootstrapped,
             `${Constants.DoomedOperatorLabel} registered bootstrapped — it would bypass termination`
@@ -369,10 +334,8 @@ export class TerminationScenario extends FlowScenario {
               const operator = await readDoomedOperatorRow(ctx)
               return (operator?.balances ?? []).some(
                 balance =>
-                  slugValue(balance.chain_code) ===
-                    Constants.EthereumChainCode &&
-                  Number(balance.balance) >=
-                    Constants.RequiredEthereumMinimumBond
+                  slugValue(balance.chain_code) === Constants.EthereumChainCode &&
+                  Number(balance.balance) >= Constants.RequiredEthereumMinimumBond
               )
             },
             Constants.ethereumDepositDeadlineMs(),
@@ -446,9 +409,7 @@ export class TerminationScenario extends FlowScenario {
         "snapshot-post-deposit-balances",
         "capture the operator's post-deposit ETH + SOL wallet balances and SOL position rent (remit-exactness baselines)",
         async ctx => {
-          const operator = ctx.keyStore.assertOperator(
-            Constants.DoomedOperatorLabel
-          )
+          const operator = ctx.keyStore.assertOperator(Constants.DoomedOperatorLabel)
           const operatorKeypair = solanaKeypair(operator.solana)
           const operatorPublicKey = operatorKeypair.publicKey
           const wei = await ctx.ethereum.getBalance(operator.ethereum.address)
@@ -456,9 +417,7 @@ export class TerminationScenario extends FlowScenario {
           // Read the position's rent while the account still exists — the
           // remit empties it and the program closes it, refunding this to the
           // operator's wallet (see PostDepositSolanaPositionRentKey).
-          const programId = SolanaOutpostProgramTool.assertProgramId(
-              ctx.config.solanaPath
-            ),
+          const programId = SolanaOutpostProgramTool.assertProgramId(ctx.config.solanaPath),
             positionPda = SolanaCollateralTool.collateralPositionPda(
               programId,
               operatorPublicKey,
@@ -496,9 +455,7 @@ export class TerminationScenario extends FlowScenario {
               try {
                 const account = doomedOperatorAccount(ctx),
                   groups = await readScheduleGroups(ctx)
-                return groups.some(
-                  members => Array.isArray(members) && members.includes(account)
-                )
+                return groups.some(members => Array.isArray(members) && members.includes(account))
               } catch (error) {
                 // Transient RPC failure mid-advance — log it and keep polling.
                 log.warn(
@@ -516,11 +473,7 @@ export class TerminationScenario extends FlowScenario {
     )
 
     // ── 7. termcheck fires → TERMINATED with audit fields populated ──
-    ClusterBuildPhase.create(
-      cluster,
-      "Terminate",
-      "After the miss window, termcheck flips status to TERMINATED"
-    ).push(
+    ClusterBuildPhase.create(cluster, "Terminate", "After the miss window, termcheck flips status to TERMINATED").push(
       verifyStep(
         Actor.Sysio,
         "status-terminated",
@@ -551,10 +504,7 @@ export class TerminationScenario extends FlowScenario {
         "terminated_at > 0 and status_reason non-empty on the operator row",
         async ctx => {
           const operator = await readDoomedOperatorRow(ctx)
-          Assert.ok(
-            operator != null,
-            `${Constants.DoomedOperatorLabel} missing from sysio.opreg::operators`
-          )
+          Assert.ok(operator != null, `${Constants.DoomedOperatorLabel} missing from sysio.opreg::operators`)
           Assert.ok(
             matchesProtoEnum(
               operator.status,
@@ -563,13 +513,9 @@ export class TerminationScenario extends FlowScenario {
             ),
             `${Constants.DoomedOperatorLabel} status not TERMINATED (got ${operator.status})`
           )
+          Assert.ok(Number(operator.terminated_at) > 0, `terminated_at not populated (got ${operator.terminated_at})`)
           Assert.ok(
-            Number(operator.terminated_at) > 0,
-            `terminated_at not populated (got ${operator.terminated_at})`
-          )
-          Assert.ok(
-            typeof operator.status_reason === "string" &&
-              operator.status_reason.length > 0,
+            typeof operator.status_reason === "string" && operator.status_reason.length > 0,
             `status_reason not populated (got ${JSON.stringify(operator.status_reason)})`
           )
         },
@@ -592,10 +538,7 @@ export class TerminationScenario extends FlowScenario {
             "success-true WITHDRAW_REMIT for both ETH and SOL in recent_actions",
             async () => {
               const chainCodes = await readWithdrawRemitChainCodes(ctx)
-              return (
-                chainCodes.has(Constants.EthereumChainCode) &&
-                chainCodes.has(Constants.SolanaChainCode)
-              )
+              return chainCodes.has(Constants.EthereumChainCode) && chainCodes.has(Constants.SolanaChainCode)
             },
             Constants.remitDeadlineMs(),
             Constants.PollIntervalMs
@@ -632,15 +575,11 @@ export class TerminationScenario extends FlowScenario {
           // `_handleWithdrawRemit` — any drift means the outpost applied a
           // different amount than the depot encoded into the attestation.
           const baseline = ctx.outputs.assert(PostDepositEthereumWeiKey)
-          const operator = ctx.keyStore.assertOperator(
-            Constants.DoomedOperatorLabel
-          )
+          const operator = ctx.keyStore.assertOperator(Constants.DoomedOperatorLabel)
           await pollUntil(
             `operator ETH wallet credited exactly ${Constants.EthereumBondAmount} wei`,
             async () =>
-              (await ctx.ethereum.getBalance(operator.ethereum.address)) -
-                baseline ===
-              Constants.EthereumBondAmount,
+              (await ctx.ethereum.getBalance(operator.ethereum.address)) - baseline === Constants.EthereumBondAmount,
             Constants.remitDeadlineMs(),
             Constants.PollIntervalMs
           )
@@ -660,20 +599,13 @@ export class TerminationScenario extends FlowScenario {
           // exact: the rent is the account's live balance, snapshotted before
           // the remit destroys the account.
           const baseline = ctx.outputs.assert(PostDepositSolanaLamportsKey)
-          const positionRent = ctx.outputs.assert(
-            PostDepositSolanaPositionRentKey
-          )
+          const positionRent = ctx.outputs.assert(PostDepositSolanaPositionRentKey)
           const expected = Constants.SolanaBondAmount + BigInt(positionRent)
-          const operator = ctx.keyStore.assertOperator(
-            Constants.DoomedOperatorLabel
-          )
+          const operator = ctx.keyStore.assertOperator(Constants.DoomedOperatorLabel)
           const operatorPublicKey = solanaKeypair(operator.solana).publicKey
           await pollUntil(
             `operator SOL wallet credited exactly ${expected} lamports (${Constants.SolanaBondAmount} bond + ${positionRent} position rent)`,
-            async () =>
-              BigInt(
-                (await ctx.solana.getLamports(operatorPublicKey)) - baseline
-              ) === expected,
+            async () => BigInt((await ctx.solana.getLamports(operatorPublicKey)) - baseline) === expected,
             Constants.remitDeadlineMs(),
             Constants.PollIntervalMs
           )
@@ -685,16 +617,12 @@ export class TerminationScenario extends FlowScenario {
         "solana-ledger-zeroed",
         "the outpost's collateral_by_code ledger row for the operator is pruned or 0",
         async ctx => {
-          const operator = ctx.keyStore.assertOperator(
-            Constants.DoomedOperatorLabel
-          )
+          const operator = ctx.keyStore.assertOperator(Constants.DoomedOperatorLabel)
           const operatorPublicKey = solanaKeypair(operator.solana).publicKey
           const solanaTokenCode = BigInt(Constants.SolanaTokenCode)
           const ledger = await readSolanaCollateralLedger(ctx)
           const row = ledger.find(
-            entry =>
-              entry.depositor.equals(operatorPublicKey) &&
-              BigInt(entry.tokenCode.toString()) === solanaTokenCode
+            entry => entry.depositor.equals(operatorPublicKey) && BigInt(entry.tokenCode.toString()) === solanaTokenCode
           )
           // The row may be retained at 0 or pruned — either is a valid remit
           // outcome; only a non-zero residue is a failure.

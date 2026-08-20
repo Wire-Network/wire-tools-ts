@@ -100,11 +100,9 @@ export namespace SwapPrivateReservesScenarioConstants {
     export const ConnectorWeightBps = 5000
     /** Display metadata forwarded verbatim to the depot rows. */
     export const EthereumName = "ETHEREUM-ETH/WIRE private reserve"
-    export const EthereumDescription =
-      "flow-swap-private-reserves ETH-side private reserve"
+    export const EthereumDescription = "flow-swap-private-reserves ETH-side private reserve"
     export const SolanaName = "SOLANA-USDCSOL/WIRE private reserve"
-    export const SolanaDescription =
-      "flow-swap-private-reserves SOL-side private reserve"
+    export const SolanaDescription = "flow-swap-private-reserves SOL-side private reserve"
   }
 
   /**
@@ -153,9 +151,7 @@ export namespace SwapPrivateReservesScenarioConstants {
      *  private reserves — the pair's same-owner predicate. */
     export const Owner = "privowner"
     /** 2× the two requested WIRE amounts so both matches clear with slack. */
-    export const OwnerFunding =
-      2n *
-      (CreateParams.EthereumRequestedWire + CreateParams.SolanaRequestedWire)
+    export const OwnerFunding = 2n * (CreateParams.EthereumRequestedWire + CreateParams.SolanaRequestedWire)
   }
 
   /** SPL funding for the SOL-side create + Phase B source custody. */

@@ -1,12 +1,6 @@
-import {
-  setStatus,
-  uiSlice
-} from "@wireio/debugging-client-tool-tui/store/ui/UISlice.js"
+import { setStatus, uiSlice } from "@wireio/debugging-client-tool-tui/store/ui/UISlice.js"
 import { selectUI } from "@wireio/debugging-client-tool-tui/store/ui/UISelectors.js"
-import {
-  DefaultStatus,
-  SliceName
-} from "@wireio/debugging-client-tool-tui/store/StoreTypes.js"
+import { DefaultStatus, SliceName } from "@wireio/debugging-client-tool-tui/store/StoreTypes.js"
 
 describe("uiSlice", () => {
   it("starts with DefaultStatus", () => {

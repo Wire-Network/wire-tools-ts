@@ -1,18 +1,13 @@
 import { type PermissionLevelType, SysioContracts } from "@wireio/sdk-core"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../../ClusterBuildStep.js"
 import type { StepInput } from "../../../StepRunner.js"
 
 const { SysioContractName } = SysioContracts
 
 /** `sysio@active` — issue + transfer are signed by the issuer/sender `sysio`, not the token contract. */
-const SysioActiveAuthorization: PermissionLevelType[] = [
-  { actor: "sysio", permission: "active" }
-]
+const SysioActiveAuthorization: PermissionLevelType[] = [{ actor: "sysio", permission: "active" }]
 
 /** Steps for `sysio.token` (the core token ledger) actions. */
 export namespace TokenContractSteps {

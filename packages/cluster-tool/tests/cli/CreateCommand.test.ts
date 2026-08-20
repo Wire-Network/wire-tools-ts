@@ -20,10 +20,7 @@ jest.mock("@wireio/cluster-tool/cluster/ClusterManager", () => ({
   }
 }))
 
-import {
-  AWSClusterNodeConfigFlag,
-  ClusterBuildOptionsFileFlag
-} from "@wireio/cluster-tool/cli/ClusterBuildOptionsArgs"
+import { AWSClusterNodeConfigFlag, ClusterBuildOptionsFileFlag } from "@wireio/cluster-tool/cli/ClusterBuildOptionsArgs"
 import { ClusterCommand } from "@wireio/cluster-tool/cli/ClusterCommand"
 import { createCreateCommand } from "@wireio/cluster-tool/cli/CreateCommand"
 import type { ClusterBuildOptions } from "@wireio/cluster-tool/config"
@@ -60,9 +57,7 @@ describe("createCreateCommand", () => {
     createMock.mockReset()
     createMock.mockResolvedValue({ succeeded: true })
     dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "create-command-"))
-    exitSpy = jest
-      .spyOn(process, "exit")
-      .mockImplementation((() => undefined) as never)
+    exitSpy = jest.spyOn(process, "exit").mockImplementation((() => undefined) as never)
   })
 
   afterEach(() => {
@@ -99,9 +94,7 @@ describe("createCreateCommand", () => {
   it("names itself with the create enum member and carries a non-empty describe", () => {
     const module = createCreateCommand()
     expect(module.command).toBe(ClusterCommand.create)
-    expect(
-      typeof module.describe === "string" && module.describe.length > 0
-    ).toBe(true)
+    expect(typeof module.describe === "string" && module.describe.length > 0).toBe(true)
   })
 
   it("builder delegates to applyClusterBuildOptionsArgs (registers the shared flag surface)", () => {
@@ -136,13 +129,9 @@ describe("createCreateCommand", () => {
     try {
       const file = writeOptionsFile({ clusterPath: "/tmp/from-file" }),
         commandLine = ["create", `--${ClusterBuildOptionsFileFlag}=${file}`]
-      expect(registeredDefault(commandLine, "cluster-path")).toBe(
-        "/tmp/from-file"
-      )
+      expect(registeredDefault(commandLine, "cluster-path")).toBe("/tmp/from-file")
       // …and the env still seeds a leaf the document does not carry
-      expect(registeredDefault(commandLine, "build-path")).toBe(
-        "/tmp/build-from-env"
-      )
+      expect(registeredDefault(commandLine, "build-path")).toBe("/tmp/build-from-env")
     } finally {
       if (previousCluster == null) delete process.env.WIRE_CLUSTER_PATH
       else process.env.WIRE_CLUSTER_PATH = previousCluster
@@ -153,26 +142,18 @@ describe("createCreateCommand", () => {
 
   it("keeps the loaded document per-command — a second command sees none of it", () => {
     const file = writeOptionsFile({ epochDurationSec: 42 })
-    expect(
-      registeredDefault(["create", `--${ClusterBuildOptionsFileFlag}`, file], "epoch-duration-sec")
-    ).toBe(42)
+    expect(registeredDefault(["create", `--${ClusterBuildOptionsFileFlag}`, file], "epoch-duration-sec")).toBe(42)
     // a fresh command built from a bare command line falls back to the CLI default
     expect(registeredDefault(["create"], "epoch-duration-sec")).toBe(60)
   })
 
   it("passes the document as the reverse-parse defaults so the flag-less collateral carries", async () => {
-    const requiredBatchOperatorCollateral = [
-      { chainCode: 11, tokenCode: 22, minimumBond: 2_000_000 }
-    ]
+    const requiredBatchOperatorCollateral = [{ chainCode: 11, tokenCode: 22, minimumBond: 2_000_000 }]
     const file = writeOptionsFile({ requiredBatchOperatorCollateral })
-    await createCreateCommand([
-      "create",
-      `--${ClusterBuildOptionsFileFlag}`,
-      file
-    ]).handler({ "cluster-path": "/tmp/wire-cluster" })
-    expect(createdOptions().requiredBatchOperatorCollateral).toEqual(
-      requiredBatchOperatorCollateral
-    )
+    await createCreateCommand(["create", `--${ClusterBuildOptionsFileFlag}`, file]).handler({
+      "cluster-path": "/tmp/wire-cluster"
+    })
+    expect(createdOptions().requiredBatchOperatorCollateral).toEqual(requiredBatchOperatorCollateral)
   })
 
   it("merges --aws-cluster-node-config, and its ssm becomes the lowest-precedence SSM source", async () => {
@@ -187,9 +168,7 @@ describe("createCreateCommand", () => {
     })
     const options = createdOptions()
     expect(options.awsClusterNodeConfig?.account).toBe(AWSAccountName.dev)
-    expect(options.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
-      "/wire/{cluster}/{account}/{keyType}"
-    )
+    expect(options.signatureProvider?.ssm?.awsSecretIdPattern).toBe("/wire/{cluster}/{account}/{keyType}")
   })
 
   it("lets the document's signatureProvider.ssm outrank the node config's", async () => {
@@ -204,17 +183,11 @@ describe("createCreateCommand", () => {
           ssm: { awsSecretIdPattern: "/document/{account}" }
         }
       })
-    await createCreateCommand([
-      "create",
-      `--${ClusterBuildOptionsFileFlag}`,
-      file
-    ]).handler({
+    await createCreateCommand(["create", `--${ClusterBuildOptionsFileFlag}`, file]).handler({
       "cluster-path": "/tmp/wire-cluster",
       [AWSClusterNodeConfigFlag]: nodeConfigFile
     })
-    expect(createdOptions().signatureProvider?.ssm?.awsSecretIdPattern).toBe(
-      "/document/{account}"
-    )
+    expect(createdOptions().signatureProvider?.ssm?.awsSecretIdPattern).toBe("/document/{account}")
   })
 
   it("rejects a clusterPath authored by BOTH the document and an explicit --cluster-path", async () => {
@@ -236,11 +209,9 @@ describe("createCreateCommand", () => {
     process.env.WIRE_CLUSTER_PATH = "/tmp/from-env"
     try {
       const file = writeOptionsFile({ clusterPath: "/tmp/from-file" })
-      await createCreateCommand([
-        "create",
-        `--${ClusterBuildOptionsFileFlag}`,
-        file
-      ]).handler({ "cluster-path": "/tmp/from-file" })
+      await createCreateCommand(["create", `--${ClusterBuildOptionsFileFlag}`, file]).handler({
+        "cluster-path": "/tmp/from-file"
+      })
       expect(createMock).toHaveBeenCalledTimes(1)
     } finally {
       if (previous == null) delete process.env.WIRE_CLUSTER_PATH

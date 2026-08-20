@@ -39,9 +39,7 @@ describe("KeySpecPatterns self-match", () => {
   it("still detects a real inline signing key", () => {
     // The un-narrowed detector is the point — a fix that stopped matching real
     // material would be a fail-OPEN regression, far worse than the self-match.
-    expect(
-      hits(`--signature-provider PUB_K1_x=${["KE", "Y:"].join("")}PVT_K1_secret`)
-    ).toHaveLength(1)
+    expect(hits(`--signature-provider PUB_K1_x=${["KE", "Y:"].join("")}PVT_K1_secret`)).toHaveLength(1)
   })
 
   it("does not flag its own redaction marker", () => {
@@ -58,15 +56,7 @@ describe("KeySpecPatterns self-match", () => {
     // The artifacts are what actually ship; the source check above cannot see
     // an esbuild transformation (concatenation is constant-folded back to a
     // literal, which is why the detector assembles its token at runtime).
-    const bundleDir = Path.join(
-      __dirname,
-      "..",
-      "..",
-      "..",
-      "debugging-server",
-      "dist",
-      "bundle"
-    )
+    const bundleDir = Path.join(__dirname, "..", "..", "..", "debugging-server", "dist", "bundle")
     if (!Fs.existsSync(bundleDir)) {
       // Not built in this environment — the source assertions above still hold.
       return

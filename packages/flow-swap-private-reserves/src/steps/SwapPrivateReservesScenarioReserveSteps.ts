@@ -1,10 +1,7 @@
 import Assert from "node:assert"
 import * as anchor from "@coral-xyz/anchor"
 import { PublicKey, SystemProgram } from "@solana/web3.js"
-import {
-  TOKEN_PROGRAM_ID,
-  getAssociatedTokenAddressSync
-} from "@solana/spl-token"
+import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token"
 import { SysioContracts } from "@wireio/sdk-core"
 import {
   ClusterBuildStep,
@@ -52,9 +49,7 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
    * escrows `msg.value` wei and ships the creator's compressed secp256k1 key
    * (contract-verified to derive to the caller).
    */
-  export function planCreateEthereumReserve<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planCreateEthereumReserve<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -84,11 +79,10 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const swapUser = ctx.outputs.assert(swapUserOutputKey())
-    const reserveManager =
-      Artifacts.loadReserveManager<Artifacts.ReserveManagerPrivateReserveContract>(
-        ctx,
-        swapUser.ethereumWallet
-      )
+    const reserveManager = Artifacts.loadReserveManager<Artifacts.ReserveManagerPrivateReserveContract>(
+      ctx,
+      swapUser.ethereumWallet
+    )
     const nonce = await resolveLatestNonce(reserveManager)
     const response = await reserveManager.create_reserve(
       BigInt(input.tokenCode),
@@ -103,10 +97,7 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
       { value: input.escrowWei, nonce }
     )
     const receipt = await response.wait(1)
-    Assert.ok(
-      receipt?.status === 1,
-      `create_reserve(ETH/PRIVATE) reverted (status=${receipt?.status ?? "null"})`
-    )
+    Assert.ok(receipt?.status === 1, `create_reserve(ETH/PRIVATE) reverted (status=${receipt?.status ?? "null"})`)
   }
 
   // ── Step: SOL SPL-branch create_reserve (write) ──────────────────────────
@@ -130,9 +121,7 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
    * signer's ed25519 key rides the attestation as `creator_pub_key`
    * automatically.
    */
-  export function planCreateSolanaReserve<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planCreateSolanaReserve<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -162,15 +151,9 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const swapUser = ctx.outputs.assert(swapUserOutputKey())
-    const program = SolanaCollateralTool.loadOppOutpostProgram(
-      ctx,
-      swapUser.solanaKeypair
-    )
+    const program = SolanaCollateralTool.loadOppOutpostProgram(ctx, swapUser.solanaKeypair)
     const programId = program.programId
-    const [configPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from(PdaSeed.OutpostConfig)],
-      programId
-    )
+    const [configPda] = PublicKey.findProgramAddressSync([Buffer.from(PdaSeed.OutpostConfig)], programId)
     const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync(
       [Buffer.from(PdaSeed.OutboundMessageBuffer)],
       programId
@@ -204,10 +187,7 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
         reserve: reservePda,
         reserveVault: reserveVaultPda,
         mint: usdcSolMint,
-        creatorAta: getAssociatedTokenAddressSync(
-          usdcSolMint,
-          swapUser.solanaKeypair.publicKey
-        ),
+        creatorAta: getAssociatedTokenAddressSync(usdcSolMint, swapUser.solanaKeypair.publicKey),
         outboundMessageBuffer: outboundMessageBufferPda,
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
@@ -215,16 +195,10 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
       })
       .signers([swapUser.solanaKeypair])
       .transaction()
-    const signature = await ctx.solana.connection.sendTransaction(
-      transaction,
-      [swapUser.solanaKeypair],
-      { skipPreflight: false }
-    )
-    await confirmSignature(
-      ctx.solana.connection,
-      signature,
-      "create_reserve(USDCSOL/PRIVATE)"
-    )
+    const signature = await ctx.solana.connection.sendTransaction(transaction, [swapUser.solanaKeypair], {
+      skipPreflight: false
+    })
+    await confirmSignature(ctx.solana.connection, signature, "create_reserve(USDCSOL/PRIVATE)")
   }
 
   // ── Step: depot matchreserve (write) ─────────────────────────────────────
@@ -246,9 +220,7 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
    * reserve)` triple — escrows the requested WIRE, flips the depot row ACTIVE
    * synchronously, and queues RESERVE_READY back to the outpost.
    */
-  export function planMatchReserve<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planMatchReserve<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -281,31 +253,26 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.reserv)
-      .actions.matchreserve.invoke(
-        {
-          chain_code: { value: input.chainCode },
-          token_code: { value: input.tokenCode },
-          reserve_code: { value: input.reserveCode },
-          matcher: input.matcher,
-          wire_amount: Number(input.wireAmount)
-        },
-        { authorization: [{ actor: input.matcher, permission: "active" }] }
-      )
+    await ctx.wire.getSysioContract(SysioContractName.reserv).actions.matchreserve.invoke(
+      {
+        chain_code: { value: input.chainCode },
+        token_code: { value: input.tokenCode },
+        reserve_code: { value: input.reserveCode },
+        matcher: input.matcher,
+        wire_amount: Number(input.wireAmount)
+      },
+      { authorization: [{ actor: input.matcher, permission: "active" }] }
+    )
   }
 
   // ── Outpost-local record reads (polled by the RESERVE_READY verifies) ────
 
   /** True once the ETH outpost's local PRIVATE record reports ACTIVE (a read). */
-  export async function readEthereumLocalReserveActive<
-    C extends ClusterBuildContext
-  >(ctx: C): Promise<boolean> {
-    const reserveManager =
-      Artifacts.loadReserveManager<Artifacts.ReserveManagerPrivateReserveContract>(
-        ctx,
-        ctx.ethereum.wallet.signer
-      )
+  export async function readEthereumLocalReserveActive<C extends ClusterBuildContext>(ctx: C): Promise<boolean> {
+    const reserveManager = Artifacts.loadReserveManager<Artifacts.ReserveManagerPrivateReserveContract>(
+      ctx,
+      ctx.ethereum.wallet.signer
+    )
     const record = await reserveManager.getReserve(
       BigInt(Constants.Reserves.Ethereum.TokenCode),
       BigInt(Constants.Reserves.PrivateReserveCode)
@@ -328,14 +295,9 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
    * Required before Phase B — `request_swap_spl` constraint-gates on the local
    * status, so the RESERVE_READY round-trip must have landed.
    */
-  export async function readSolanaLocalReserveActive<
-    C extends ClusterBuildContext
-  >(ctx: C): Promise<boolean> {
+  export async function readSolanaLocalReserveActive<C extends ClusterBuildContext>(ctx: C): Promise<boolean> {
     const swapUser = ctx.outputs.assert(swapUserOutputKey())
-    const program = SolanaCollateralTool.loadOppOutpostProgram(
-      ctx,
-      swapUser.solanaKeypair
-    )
+    const program = SolanaCollateralTool.loadOppOutpostProgram(ctx, swapUser.solanaKeypair)
     const [reservePda] = PublicKey.findProgramAddressSync(
       [
         Buffer.from(PdaSeed.Reserve),
@@ -344,9 +306,9 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
       ],
       program.programId
     )
-    const account = await (
-      program.account as Record<string, anchor.AccountClient<anchor.Idl>>
-    ).reserve.fetch(reservePda)
+    const account = await (program.account as Record<string, anchor.AccountClient<anchor.Idl>>).reserve.fetch(
+      reservePda
+    )
     const status = (account as SolanaReserveAccountView).status
     return typeof status === "object" && status !== null && "active" in status
   }

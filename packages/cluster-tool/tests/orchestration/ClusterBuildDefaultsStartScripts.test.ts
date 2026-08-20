@@ -1,10 +1,7 @@
 import Path from "node:path"
 import { DaemonConfig } from "@wireio/cluster-tool/config"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
-import {
-  fixtureResolveEnvironment,
-  type ResolveEnvironment
-} from "../config/resolveEnvironmentFixture.js"
+import { fixtureResolveEnvironment, type ResolveEnvironment } from "../config/resolveEnvironmentFixture.js"
 
 import { collectPhaseNames, collectStepNames } from "./clusterBuildFixture.js"
 
@@ -47,9 +44,7 @@ describe("ClusterBuildDefaults — start-script composition", () => {
     const cluster = await ClusterBuildDefaults.create(baseOptions()),
       labels = DaemonConfig.plannedLabels(cluster.config),
       steps = collectStepNames(cluster.children)
-    expect(steps.includes(CopyStepName)).toBe(
-      labels.includes(DaemonConfig.DebuggingServerSubpath)
-    )
+    expect(steps.includes(CopyStepName)).toBe(labels.includes(DaemonConfig.DebuggingServerSubpath))
   })
 
   // The DISABLED half is not asserted here on purpose: `debuggingServerEnabled`

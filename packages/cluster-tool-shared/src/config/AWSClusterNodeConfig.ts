@@ -38,5 +38,4 @@ export const AWSClusterNodeConfigSchema = z.object({
 export type AWSClusterNodeConfig = z.infer<typeof AWSClusterNodeConfigSchema>
 
 /** Validated codec for a standalone `AWSClusterNodeConfig` document. */
-export const AWSClusterNodeConfigSchemaCodec =
-  SchemaCodec.create<AWSClusterNodeConfig>(AWSClusterNodeConfigSchema)
+export const AWSClusterNodeConfigSchemaCodec = SchemaCodec.create<AWSClusterNodeConfig>(AWSClusterNodeConfigSchema)

@@ -59,9 +59,7 @@ function escapeRegex(literal: string): string {
 export function compileSearchRegex(query: string): RegExp {
   if (query.length === 0) return null
   const isRegex =
-      query.length >= 2 &&
-      query.startsWith(LineRender.RegexDelimiter) &&
-      query.endsWith(LineRender.RegexDelimiter),
+      query.length >= 2 && query.startsWith(LineRender.RegexDelimiter) && query.endsWith(LineRender.RegexDelimiter),
     inner = isRegex ? query.slice(1, -1) : escapeRegex(query)
   if (inner.length === 0) return null
   try {
@@ -86,36 +84,24 @@ export function compileSearchRegex(query: string): RegExp {
  * @param text  text to render
  * @param term  search term — empty string disables highlighting
  */
-export function renderWithHighlight(
-  text: string,
-  term: string
-): React.ReactNode {
+export function renderWithHighlight(text: string, term: string): React.ReactNode {
   const regex = compileSearchRegex(term)
   if (!regex) return <Text>{text}</Text>
   const matches = [...text.matchAll(regex)]
   if (matches.length === 0) return <Text>{text}</Text>
   const initial: LineRender.SegmentFold = { cursor: 0, nodes: [] },
-    segments = matches.reduce<LineRender.SegmentFold>(
-      ({ cursor, nodes }, m, i) => {
-        const { index: idx = cursor } = m,
-          matched = m[0],
-          next = idx + matched.length,
-          leading =
-            idx > cursor
-              ? [<Text key={`pre-${i}`}>{text.slice(cursor, idx)}</Text>]
-              : [],
-          hit = (
-            <Text key={`hit-${i}`} inverse>
-              {matched}
-            </Text>
-          )
-        return { cursor: next, nodes: [...nodes, ...leading, hit] }
-      },
-      initial
-    ),
-    tail =
-      segments.cursor < text.length
-        ? [<Text key="tail">{text.slice(segments.cursor)}</Text>]
-        : []
+    segments = matches.reduce<LineRender.SegmentFold>(({ cursor, nodes }, m, i) => {
+      const { index: idx = cursor } = m,
+        matched = m[0],
+        next = idx + matched.length,
+        leading = idx > cursor ? [<Text key={`pre-${i}`}>{text.slice(cursor, idx)}</Text>] : [],
+        hit = (
+          <Text key={`hit-${i}`} inverse>
+            {matched}
+          </Text>
+        )
+      return { cursor: next, nodes: [...nodes, ...leading, hit] }
+    }, initial),
+    tail = segments.cursor < text.length ? [<Text key="tail">{text.slice(segments.cursor)}</Text>] : []
   return <>{[...segments.nodes, ...tail]}</>
 }

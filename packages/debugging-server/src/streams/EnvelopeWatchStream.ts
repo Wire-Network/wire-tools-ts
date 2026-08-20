@@ -11,10 +11,7 @@ import {
   type DebugOPPEpochEnvelopeRecord,
   type EnvelopeEvent
 } from "@wireio/debugging-shared"
-import {
-  DebugEnvelopeMetadataRecord,
-  Envelope
-} from "@wireio/opp-typescript-models"
+import { DebugEnvelopeMetadataRecord, Envelope } from "@wireio/opp-typescript-models"
 
 import { log } from "../logging/index.js"
 
@@ -41,14 +38,10 @@ export class EnvelopeWatchStream implements ServerSideStream<EnvelopeEvent> {
 
   async start(emit: (payload: EnvelopeEvent) => void): Promise<void> {
     await Fs.promises.mkdir(this.storageDir, { recursive: true })
-    this.watcher = Fs.watch(
-      this.storageDir,
-      { persistent: true },
-      (_evt, filename) => {
-        if (!filename || this.stopped) return
-        void this.tryEmit(filename.toString(), false, emit)
-      }
-    )
+    this.watcher = Fs.watch(this.storageDir, { persistent: true }, (_evt, filename) => {
+      if (!filename || this.stopped) return
+      void this.tryEmit(filename.toString(), false, emit)
+    })
     // Hydrate scheduled to next tick so consumer's WS pipe is ready.
     setImmediate(() => void this.hydrate(emit))
   }
@@ -76,11 +69,7 @@ export class EnvelopeWatchStream implements ServerSideStream<EnvelopeEvent> {
     })
   }
 
-  private async tryEmit(
-    filename: string,
-    hydrating: boolean,
-    emit: (payload: EnvelopeEvent) => void
-  ): Promise<void> {
+  private async tryEmit(filename: string, hydrating: boolean, emit: (payload: EnvelopeEvent) => void): Promise<void> {
     if (!filename.endsWith(EnvelopeWatchStream.MetadataExt)) return
     const baseKey = filename.slice(0, -EnvelopeWatchStream.MetadataExt.length)
     await this.tryEmitBaseKey(baseKey, hydrating, emit)
@@ -102,24 +91,13 @@ export class EnvelopeWatchStream implements ServerSideStream<EnvelopeEvent> {
     })
   }
 
-  private async readPair(
-    baseKey: string
-  ): Promise<DebugOPPEpochEnvelopeRecord> {
+  private async readPair(baseKey: string): Promise<DebugOPPEpochEnvelopeRecord> {
     const parsed = parseEnvelopeStorageKey(baseKey)
     if (!parsed) return null
-    const dataPath = Path.join(
-        this.storageDir,
-        baseKey + EnvelopeWatchStream.DataExt
-      ),
-      metaPath = Path.join(
-        this.storageDir,
-        baseKey + EnvelopeWatchStream.MetadataExt
-      )
+    const dataPath = Path.join(this.storageDir, baseKey + EnvelopeWatchStream.DataExt),
+      metaPath = Path.join(this.storageDir, baseKey + EnvelopeWatchStream.MetadataExt)
     try {
-      const [dataBytes, metaBytes] = await Promise.all([
-        Fs.promises.readFile(dataPath),
-        Fs.promises.readFile(metaPath)
-      ])
+      const [dataBytes, metaBytes] = await Promise.all([Fs.promises.readFile(dataPath), Fs.promises.readFile(metaPath)])
       return {
         epoch: parsed.epochIndex,
         record: {

@@ -1,14 +1,6 @@
 import { DebugOutpostEndpointsType } from "@wireio/opp-typescript-models"
-import {
-  appendEnvelope,
-  clear,
-  hydrate,
-  oppSlice
-} from "@wireio/debugging-client-tool-tui/store/opp/OPPSlice.js"
-import {
-  OPPState,
-  type DebugOPPEnvelopeRecord
-} from "@wireio/debugging-client-tool-tui/store/opp/OPPTypes.js"
+import { appendEnvelope, clear, hydrate, oppSlice } from "@wireio/debugging-client-tool-tui/store/opp/OPPSlice.js"
+import { OPPState, type DebugOPPEnvelopeRecord } from "@wireio/debugging-client-tool-tui/store/opp/OPPTypes.js"
 import {
   selectAllEpochsDescending,
   selectCurrentEpochIndex,
@@ -40,63 +32,36 @@ describe("oppSlice", () => {
   })
 
   it("appendEnvelope creates a new epoch record and tracks order", () => {
-    const state = oppSlice.reducer(
-      undefined,
-      appendEnvelope({ epoch: 5, record: makeRecord("aaaa") })
-    )
+    const state = oppSlice.reducer(undefined, appendEnvelope({ epoch: 5, record: makeRecord("aaaa") }))
     expect(state.epochIndex).toBe(5)
     expect(state.epochOrder).toEqual([5])
     expect(state.epochs[5].envelopes).toHaveLength(1)
   })
 
   it("appendEnvelope inserts older epochs in sorted order (via match -1 vs index)", () => {
-    let state = oppSlice.reducer(
-      undefined,
-      appendEnvelope({ epoch: 10, record: makeRecord("a") })
-    )
-    state = oppSlice.reducer(
-      state,
-      appendEnvelope({ epoch: 5, record: makeRecord("b") })
-    )
-    state = oppSlice.reducer(
-      state,
-      appendEnvelope({ epoch: 7, record: makeRecord("c") })
-    )
+    let state = oppSlice.reducer(undefined, appendEnvelope({ epoch: 10, record: makeRecord("a") }))
+    state = oppSlice.reducer(state, appendEnvelope({ epoch: 5, record: makeRecord("b") }))
+    state = oppSlice.reducer(state, appendEnvelope({ epoch: 7, record: makeRecord("c") }))
     expect(state.epochOrder).toEqual([5, 7, 10])
     expect(state.epochIndex).toBe(10)
   })
 
   it("appendEnvelope dedupes on (checksum, endpointsType)", () => {
-    let state = oppSlice.reducer(
-      undefined,
-      appendEnvelope({ epoch: 1, record: makeRecord("dup") })
-    )
-    state = oppSlice.reducer(
-      state,
-      appendEnvelope({ epoch: 1, record: makeRecord("dup") })
-    )
+    let state = oppSlice.reducer(undefined, appendEnvelope({ epoch: 1, record: makeRecord("dup") }))
+    state = oppSlice.reducer(state, appendEnvelope({ epoch: 1, record: makeRecord("dup") }))
     expect(state.epochs[1].envelopes).toHaveLength(1)
   })
 
   it("appendEnvelope keeps different checksums in same epoch", () => {
-    let state = oppSlice.reducer(
-      undefined,
-      appendEnvelope({ epoch: 1, record: makeRecord("aa") })
-    )
-    state = oppSlice.reducer(
-      state,
-      appendEnvelope({ epoch: 1, record: makeRecord("bb") })
-    )
+    let state = oppSlice.reducer(undefined, appendEnvelope({ epoch: 1, record: makeRecord("aa") }))
+    state = oppSlice.reducer(state, appendEnvelope({ epoch: 1, record: makeRecord("bb") }))
     expect(state.epochs[1].envelopes).toHaveLength(2)
   })
 
   it("appendEnvelope evicts oldest when over MaxEpochs", () => {
     let state = oppSlice.reducer(undefined, { type: "@@init" })
     for (let i = 0; i < OPPState.MaxEpochs + 3; i++) {
-      state = oppSlice.reducer(
-        state,
-        appendEnvelope({ epoch: i, record: makeRecord(`cs-${i}`) })
-      )
+      state = oppSlice.reducer(state, appendEnvelope({ epoch: i, record: makeRecord(`cs-${i}`) }))
     }
     expect(state.epochOrder).toHaveLength(OPPState.MaxEpochs)
     // first three epochs (0, 1, 2) were evicted
@@ -112,30 +77,20 @@ describe("oppSlice", () => {
     }))
     const state = oppSlice.reducer(undefined, hydrate(records))
     expect(state.epochOrder).toHaveLength(OPPState.MaxEpochs)
-    expect(state.epochOrder[0]).toBeLessThan(
-      state.epochOrder[state.epochOrder.length - 1]
-    )
+    expect(state.epochOrder[0]).toBeLessThan(state.epochOrder[state.epochOrder.length - 1])
     // The newest epoch (MaxEpochs + 4) must survive
-    expect(state.epochOrder[state.epochOrder.length - 1]).toBe(
-      OPPState.MaxEpochs + 4
-    )
+    expect(state.epochOrder[state.epochOrder.length - 1]).toBe(OPPState.MaxEpochs + 4)
   })
 
   it("clear resets everything", () => {
-    let state = oppSlice.reducer(
-      undefined,
-      appendEnvelope({ epoch: 1, record: makeRecord("x") })
-    )
+    let state = oppSlice.reducer(undefined, appendEnvelope({ epoch: 1, record: makeRecord("x") }))
     state = oppSlice.reducer(state, clear())
     expect(state).toEqual({ epochIndex: 0, epochs: {}, epochOrder: [] })
   })
 })
 
 describe("OPPSelectors", () => {
-  const populated = oppSlice.reducer(
-    undefined,
-    appendEnvelope({ epoch: 42, record: makeRecord("z") })
-  )
+  const populated = oppSlice.reducer(undefined, appendEnvelope({ epoch: 42, record: makeRecord("z") }))
 
   it("selectOPP returns the full slice", () => {
     const root = { [SliceName.OPP]: populated } as any
@@ -143,9 +98,7 @@ describe("OPPSelectors", () => {
   })
 
   it("selectCurrentEpochIndex returns the tracked max", () => {
-    expect(selectCurrentEpochIndex({ [SliceName.OPP]: populated } as any)).toBe(
-      42
-    )
+    expect(selectCurrentEpochIndex({ [SliceName.OPP]: populated } as any)).toBe(42)
   })
 
   it("selectLatestEpoch returns the tail of epochOrder", () => {
@@ -159,28 +112,15 @@ describe("OPPSelectors", () => {
   })
 
   it("selectAllEpochsDescending returns epochs newest-first", () => {
-    let state = oppSlice.reducer(
-      undefined,
-      appendEnvelope({ epoch: 5, record: makeRecord("a") })
-    )
-    state = oppSlice.reducer(
-      state,
-      appendEnvelope({ epoch: 7, record: makeRecord("b") })
-    )
-    state = oppSlice.reducer(
-      state,
-      appendEnvelope({ epoch: 3, record: makeRecord("c") })
-    )
+    let state = oppSlice.reducer(undefined, appendEnvelope({ epoch: 5, record: makeRecord("a") }))
+    state = oppSlice.reducer(state, appendEnvelope({ epoch: 7, record: makeRecord("b") }))
+    state = oppSlice.reducer(state, appendEnvelope({ epoch: 3, record: makeRecord("c") }))
     const all = selectAllEpochsDescending({ [SliceName.OPP]: state } as any)
     expect(all.map(r => r.epoch)).toEqual([7, 5, 3])
   })
 
   it("selectEpochByNumber returns the cached record or undefined", () => {
-    expect(
-      selectEpochByNumber(42)({ [SliceName.OPP]: populated } as any)?.epoch
-    ).toBe(42)
-    expect(
-      selectEpochByNumber(99)({ [SliceName.OPP]: populated } as any)
-    ).toBeUndefined()
+    expect(selectEpochByNumber(42)({ [SliceName.OPP]: populated } as any)?.epoch).toBe(42)
+    expect(selectEpochByNumber(99)({ [SliceName.OPP]: populated } as any)).toBeUndefined()
   })
 })

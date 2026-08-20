@@ -16,8 +16,6 @@ describe("ReportRendererRegistry", () => {
 
   it("throws for a format with no registered renderer", () => {
     const empty = new ReportRendererRegistry(new Map())
-    expect(() => empty.get(Report.Format.csv)).toThrow(
-      /No ReportRenderer registered/
-    )
+    expect(() => empty.get(Report.Format.csv)).toThrow(/No ReportRenderer registered/)
   })
 })

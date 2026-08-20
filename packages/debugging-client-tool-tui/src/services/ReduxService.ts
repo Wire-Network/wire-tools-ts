@@ -1,8 +1,4 @@
-import {
-  store,
-  type AppDispatch,
-  type RootState
-} from "../store/Store.js"
+import { store, type AppDispatch, type RootState } from "../store/Store.js"
 import type { Service } from "./Service.js"
 import { ServiceId } from "./ServiceId.js"
 import type { ServiceManager } from "./ServiceManager.js"

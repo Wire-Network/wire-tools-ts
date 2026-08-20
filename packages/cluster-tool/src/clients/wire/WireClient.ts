@@ -4,21 +4,8 @@ import Os from "node:os"
 import Path from "node:path"
 import { flatten } from "lodash"
 import { match } from "ts-pattern"
-import {
-  getLogger,
-  isNumber,
-  isObject,
-  isString,
-  NestedError
-} from "@wireio/shared"
-import {
-  API,
-  APIClient,
-  Asset,
-  Name,
-  type PermissionLevelType,
-  SysioContracts
-} from "@wireio/sdk-core"
+import { getLogger, isNumber, isObject, isString, NestedError } from "@wireio/shared"
+import { API, APIClient, Asset, Name, type PermissionLevelType, SysioContracts } from "@wireio/sdk-core"
 import { ProtocolTiming } from "../../Constants.js"
 import { scaleTimeoutMs, isNotEmpty, retry } from "../../utils/index.js"
 import { RecordingFetchProvider } from "./RecordingFetchProvider.js"
@@ -85,40 +72,24 @@ export class WireClient {
    * @param name - The contract to address.
    * @returns The typed action + table client.
    */
-  getSysioContract<Name extends SysioContractName>(
-    name: Name
-  ): WireClient.SysioContractClient<Name> {
+  getSysioContract<Name extends SysioContractName>(name: Name): WireClient.SysioContractClient<Name> {
     const def = SysioContractDefinitions[name],
       invokers = new Map<string, WireClient.ActionInvoker<Name, any>>(),
       queries = new Map<string, WireClient.TableQuery<Name, any>>(),
-      guard = <T>(
-        kind: string,
-        known: ReadonlyArray<string>,
-        cache: Map<string, T>,
-        make: (member: string) => T
-      ) =>
+      guard = <T>(kind: string, known: ReadonlyArray<string>, cache: Map<string, T>, make: (member: string) => T) =>
         new Proxy({} as Record<string, T>, {
           get: (_target, property) => {
             // symbols + `then` resolve to null (not a function → proxy stays
             // non-thenable); null over undefined per the prefer-null rule.
             if (typeof property === "symbol" || property === "then") return null
             const member = String(property)
-            Assert.ok(
-              known.includes(member),
-              `Unknown sysio.${name} ${kind}: ${member}`
-            )
-            return (
-              cache.get(member) ?? cache.set(member, make(member)).get(member)!
-            )
+            Assert.ok(known.includes(member), `Unknown sysio.${name} ${kind}: ${member}`)
+            return cache.get(member) ?? cache.set(member, make(member)).get(member)!
           }
         })
     return {
-      actions: guard("action", def.actions, invokers, member =>
-        this.actionInvoker(def.name, def.account, member)
-      ),
-      tables: guard("table", def.tables, queries, member =>
-        this.tableQuery(def.account, member)
-      )
+      actions: guard("action", def.actions, invokers, member => this.actionInvoker(def.name, def.account, member)),
+      tables: guard("table", def.tables, queries, member => this.tableQuery(def.account, member))
     } as WireClient.SysioContractClient<Name>
   }
 
@@ -127,9 +98,7 @@ export class WireClient {
     account: string,
     action: string
   ): WireClient.ActionInvoker<any, any> {
-    const authorize = (
-      options?: WireClient.InvocationOptions
-    ): PermissionLevelType[] =>
+    const authorize = (options?: WireClient.InvocationOptions): PermissionLevelType[] =>
       options?.authorization ?? [{ actor: account, permission: "active" }]
     return {
       prepare: (data, options) => ({
@@ -139,15 +108,11 @@ export class WireClient {
         authorization: authorize(options),
         data
       }),
-      invoke: (data, options) =>
-        this.invoke(account, action, data, authorize(options), options)
+      invoke: (data, options) => this.invoke(account, action, data, authorize(options), options)
     }
   }
 
-  private tableQuery(
-    account: string,
-    table: string
-  ): WireClient.TableQuery<any, any> {
+  private tableQuery(account: string, table: string): WireClient.TableQuery<any, any> {
     return {
       query: (args = {}) =>
         this.getTableRows({
@@ -176,17 +141,7 @@ export class WireClient {
       label = `${account}::${action}`,
       send = () =>
         this.runner.run<API.v1.SendTransactionResponse>(
-          [
-            "push",
-            "action",
-            account,
-            action,
-            JSON.stringify(data),
-            "-p",
-            auth,
-            "-j",
-            ...this.expirationArgs
-          ],
+          ["push", "action", account, action, JSON.stringify(data), "-p", auth, "-j", ...this.expirationArgs],
           { json: true }
         )
     if (options.skipWait) return send()
@@ -209,21 +164,13 @@ export class WireClient {
 
   /** Multi-action tx; variadic + flatten. Waits by default. */
   async invokeTransaction(
-    ...payloads: Array<
-      WireClient.ActionPayload<any, any> | WireClient.ActionPayload<any, any>[]
-    >
+    ...payloads: Array<WireClient.ActionPayload<any, any> | WireClient.ActionPayload<any, any>[]>
   ): Promise<API.v1.SendTransactionResponse> {
     const actions = flatten(payloads),
       label = actions.map(a => `${a.account}::${a.name}`).join(","),
       send = () =>
         this.runner.run<API.v1.SendTransactionResponse>(
-          [
-            "push",
-            "transaction",
-            "-j",
-            JSON.stringify({ actions }),
-            ...this.expirationArgs
-          ],
+          ["push", "transaction", "-j", JSON.stringify({ actions }), ...this.expirationArgs],
           { json: true }
         )
     return this.withFinality(label, send)
@@ -244,10 +191,7 @@ export class WireClient {
     const label = `${account}::${action} (file)`,
       body = { actions: [{ account, name: action, authorization, data }] },
       send = async () => {
-        const file = Path.join(
-          Os.tmpdir(),
-          `wire-trx-${account}-${action}-${process.pid}-${Date.now()}.json`
-        )
+        const file = Path.join(Os.tmpdir(), `wire-trx-${account}-${action}-${process.pid}-${Date.now()}.json`)
         await Fsp.writeFile(file, JSON.stringify(body))
         try {
           return await this.runner.run<API.v1.SendTransactionResponse>(
@@ -273,17 +217,7 @@ export class WireClient {
     const label = `setContract ${account}`,
       send = async () => {
         const result = await this.runner.run<Record<string, unknown>>(
-          [
-            "set",
-            "contract",
-            account,
-            contractPath,
-            wasmFile,
-            abiFile,
-            "-p",
-            `${account}@active`,
-            "-j"
-          ],
+          ["set", "contract", account, contractPath, wasmFile, abiFile, "-p", `${account}@active`, "-j"],
           { json: true }
         )
         // Identical code → settled no-op.
@@ -293,31 +227,19 @@ export class WireClient {
           } as Record<string, unknown>
         return result
       }
-    return this.withFinality(label, send as any, options.finality) as Promise<
-      Record<string, unknown>
-    >
+    return this.withFinality(label, send as any, options.finality) as Promise<Record<string, unknown>>
   }
 
   /** Activate a protocol feature (sysio.bios::activate). */
-  activateFeature(
-    featureDigest: string
-  ): Promise<API.v1.SendTransactionResponse> {
-    return this.invoke(
-      "sysio",
-      "activate",
-      { feature_digest: featureDigest },
-      [{ actor: "sysio", permission: "active" }]
-    )
+  activateFeature(featureDigest: string): Promise<API.v1.SendTransactionResponse> {
+    return this.invoke("sysio", "activate", { feature_digest: featureDigest }, [
+      { actor: "sysio", permission: "active" }
+    ])
   }
 
   /** Mark `account` privileged (sysio.bios::setpriv), waiting for irreversibility. */
   setPriv(account: string): Promise<API.v1.SendTransactionResponse> {
-    return this.invoke(
-      "sysio",
-      "setpriv",
-      { account, is_priv: 1 },
-      [{ actor: "sysio", permission: "active" }]
-    )
+    return this.invoke("sysio", "setpriv", { account, is_priv: 1 }, [{ actor: "sysio", permission: "active" }])
   }
 
   /**
@@ -331,27 +253,20 @@ export class WireClient {
     activeKey: string
   ): Promise<API.v1.SendTransactionResponse> {
     return this.withFinality(`create account ${name}`, () =>
-      this.runner.run<API.v1.SendTransactionResponse>(
-        ["create", "account", creator, name, ownerKey, activeKey, "-j"],
-        { json: true }
-      )
+      this.runner.run<API.v1.SendTransactionResponse>(["create", "account", creator, name, ownerKey, activeKey, "-j"], {
+        json: true
+      })
     )
   }
 
   /** The chain's supported protocol features (POST /v1/producer/get_supported_protocol_features). */
   async getSupportedProtocolFeatures(): Promise<WireClient.ProtocolFeature[]> {
-    const response = await fetch(
-      `${this.config.nodeopUrl}/v1/producer/get_supported_protocol_features`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({})
-      }
-    )
-    Assert.ok(
-      response.ok,
-      `get_supported_protocol_features failed: ${response.statusText}`
-    )
+    const response = await fetch(`${this.config.nodeopUrl}/v1/producer/get_supported_protocol_features`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    })
+    Assert.ok(response.ok, `get_supported_protocol_features failed: ${response.statusText}`)
     const features = await response.json()
     return Array.isArray(features) ? (features as WireClient.ProtocolFeature[]) : []
   }
@@ -385,9 +300,7 @@ export class WireClient {
    * rows. Prefer `getSysioContract(name).tables.<table>.query(...)` for any
    * `sysio.*` contract table; see `prefer-typed-contract-table-accessors.md`.
    */
-  async getTableRows<Row = unknown>(
-    query: WireClient.TableRowsQuery
-  ): Promise<WireClient.TableQueryResult<Row>> {
+  async getTableRows<Row = unknown>(query: WireClient.TableRowsQuery): Promise<WireClient.TableQueryResult<Row>> {
     const result: any = await this.api.v1.chain.get_table_rows({
       code: query.account,
       scope: query.scope,
@@ -406,11 +319,7 @@ export class WireClient {
 
   /** Real WIRE token balance (raw 9-decimal base units), or 0n when no row. */
   async getWireBalance(account: string): Promise<bigint> {
-    const rows = (await this.api.v1.chain.get_currency_balance(
-      "sysio.token",
-      account,
-      "WIRE"
-    )) as Asset[]
+    const rows = (await this.api.v1.chain.get_currency_balance("sysio.token", account, "WIRE")) as Asset[]
     if (!rows || rows.length === 0) return 0n
     const [amount] = rows[0].toString().split(" ")
     const [whole, frac = ""] = amount.split(".")
@@ -459,12 +368,7 @@ export class WireClient {
    * the NEXT account's row — which is why the identity check is load-bearing here, not defensive:
    * without it an unpaid account reads back a stranger's balance.
    */
-  private async claimableBalance(
-    contract: string,
-    table: string,
-    keyField: string,
-    account: string
-  ): Promise<bigint> {
+  private async claimableBalance(contract: string, table: string, keyField: string, account: string): Promise<bigint> {
     const { rows } = await this.getTableRows<WireClient.ClaimableRow>({
       account: contract,
       scope: contract,
@@ -489,9 +393,7 @@ export class WireClient {
    * carries a contract that could emit the claim inline, so neither could ever authorize one.
    */
   async claimPay(account: string, permission = "active") {
-    return this.invoke("sysio", "claimpay", { account_name: account }, [
-      { actor: account, permission }
-    ])
+    return this.invoke("sysio", "claimpay", { account_name: account }, [{ actor: account, permission }])
   }
 
   /** Epoch pay owed to `account` but not yet claimed, or 0n when there is no row. Raw table read
@@ -555,23 +457,17 @@ export class WireClient {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ block_num_or_id: blockNumOrId })
     })
-    if (!resp.ok)
-      throw new Error(`get_block(${blockNumOrId}) failed: HTTP ${resp.status}`)
+    if (!resp.ok) throw new Error(`get_block(${blockNumOrId}) failed: HTTP ${resp.status}`)
     return (await resp.json()) as WireClient.GetBlockResponse
   }
 
   /** Fetch a transaction trace via /v1/trace_api/get_transaction_trace. */
-  async getTransaction(
-    id: string
-  ): Promise<WireClient.GetTransactionResponse> {
-    const resp = await fetch(
-      `${this.config.nodeopUrl}/v1/trace_api/get_transaction_trace`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id })
-      }
-    )
+  async getTransaction(id: string): Promise<WireClient.GetTransactionResponse> {
+    const resp = await fetch(`${this.config.nodeopUrl}/v1/trace_api/get_transaction_trace`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id })
+    })
     return (await match(resp)
       .with({ ok: true }, r => r.json())
       .with({ status: 404 }, () => Promise.resolve(null))
@@ -581,9 +477,7 @@ export class WireClient {
   }
 
   /** Wait for head to advance past the current head. */
-  async waitForHeadToAdvance(
-    timeoutMs = scaleTimeoutMs(WireClient.DefaultTimeoutMs)
-  ): Promise<void> {
+  async waitForHeadToAdvance(timeoutMs = scaleTimeoutMs(WireClient.DefaultTimeoutMs)): Promise<void> {
     const startBlock = await this.getHead(),
       deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
@@ -594,9 +488,7 @@ export class WireClient {
         log.debug(`waitForHeadToAdvance poll error: ${errorText(err)}`)
       }
     }
-    throw new Error(
-      `Head block did not advance past ${startBlock} within ${timeoutMs}ms`
-    )
+    throw new Error(`Head block did not advance past ${startBlock} within ${timeoutMs}ms`)
   }
 
   /**
@@ -627,9 +519,7 @@ export class WireClient {
     send: () => Promise<T>,
     finality: WireClient.FinalityType = WireClient.DefaultFinality
   ): Promise<T> {
-    const budgetMs = scaleTimeoutMs(
-        ProtocolTiming.irreversibilityBudgetMs(this.config.finalizerCount ?? 0)
-      ),
+    const budgetMs = scaleTimeoutMs(ProtocolTiming.irreversibilityBudgetMs(this.config.finalizerCount ?? 0)),
       attempt = async (attemptNumber: number): Promise<T> => {
         const pushedAtMs = Date.now(),
           // Pre-inclusion retry ONLY — a throwing `send` produced no
@@ -665,9 +555,7 @@ export class WireClient {
               : WireClient.throwFinality(label, outcome)
           )
           // No path to `attempt` — unresolved can NEVER re-push.
-          .with(WireClient.FinalityOutcome.unresolved, async () =>
-            WireClient.throwFinality(label, outcome)
-          )
+          .with(WireClient.FinalityOutcome.unresolved, async () => WireClient.throwFinality(label, outcome))
           .exhaustive()
         return resolved
       }
@@ -686,25 +574,18 @@ export class WireClient {
    * @param input - Transaction id, label, target finality, budget, push time.
    * @returns The classified outcome; only `unappliable` permits a re-push.
    */
-  private async awaitFinality(
-    input: WireClient.FinalityWaitInput
-  ): Promise<WireClient.FinalityResult> {
+  private async awaitFinality(input: WireClient.FinalityWaitInput): Promise<WireClient.FinalityResult> {
     const { transactionId, finality, budgetMs } = input,
       deadlineMs = Date.now() + budgetMs,
       remainingMs = () => Math.max(deadlineMs - Date.now(), 0)
 
     let blockNum: number
     try {
-      blockNum = await this.waitForTransactionInBlock(
-        transactionId,
-        remainingMs()
-      )
+      blockNum = await this.waitForTransactionInBlock(transactionId, remainingMs())
     } catch (error) {
       // NOT a failed transaction — "I could not locate it in time". The
       // re-read below decides whether it is genuinely gone.
-      log.warn(
-        `${input.label}: tx ${transactionId} not located in a block — ${errorText(error)}`
-      )
+      log.warn(`${input.label}: tx ${transactionId} not located in a block — ${errorText(error)}`)
       return this.classifyUnresolved(input, null)
     }
 
@@ -716,11 +597,7 @@ export class WireClient {
         lib: null
       }
 
-    const reached = await this.pollIrreversible(
-      transactionId,
-      blockNum,
-      deadlineMs
-    )
+    const reached = await this.pollIrreversible(transactionId, blockNum, deadlineMs)
     return reached
       ? {
           kind: WireClient.FinalityOutcome.irreversible,
@@ -764,14 +641,10 @@ export class WireClient {
 
     const lib = await this.readLib(),
       headTimeMs = await this.readHeadTimeMs(),
-      expiresAtMs =
-        pushedAtMs +
-        WireClient.TransactionExpirationSec * ProtocolTiming.MsPerSecond,
+      expiresAtMs = pushedAtMs + WireClient.TransactionExpirationSec * ProtocolTiming.MsPerSecond,
       expired = headTimeMs != null && headTimeMs > expiresAtMs
     return {
-      kind: expired
-        ? WireClient.FinalityOutcome.unappliable
-        : WireClient.FinalityOutcome.unresolved,
+      kind: expired ? WireClient.FinalityOutcome.unappliable : WireClient.FinalityOutcome.unresolved,
       transactionId,
       blockNum,
       lib
@@ -820,12 +693,10 @@ export class WireClient {
       } catch (err) {
         log.debug(`get_transaction error: ${errorText(err)}`)
       }
-      if (!isDeadlinePast(WireClient.PollIntervalMs))
-        await delay(WireClient.PollIntervalMs)
+      if (!isDeadlinePast(WireClient.PollIntervalMs)) await delay(WireClient.PollIntervalMs)
     }
     const headBlock = await this.getHead(),
-      startBlock =
-        refBlockNum != null && refBlockNum > 0 ? refBlockNum : headBlock,
+      startBlock = refBlockNum != null && refBlockNum > 0 ? refBlockNum : headBlock,
       endBlock = headBlock + blocksAhead
     const scanBlock = async (blockNum: number): Promise<number> => {
       if (blockNum > endBlock || isDeadlinePast())
@@ -834,9 +705,7 @@ export class WireClient {
         )
       while ((await this.getHead()) < blockNum) {
         if (isDeadlinePast())
-          throw new Error(
-            `Timed out waiting for block ${blockNum} while searching for tx ${transactionId}`
-          )
+          throw new Error(`Timed out waiting for block ${blockNum} while searching for tx ${transactionId}`)
         await delay(WireClient.PollIntervalMs)
       }
       const block = await this.getBlock(blockNum)
@@ -864,9 +733,7 @@ export class WireClient {
    * @returns `found` with its block, `absent` on an authoritative 404, or
    *   `unknown` when the lookup itself failed.
    */
-  private async locateTransactionBlock(
-    transactionId: string
-  ): Promise<WireClient.TransactionLocationResult> {
+  private async locateTransactionBlock(transactionId: string): Promise<WireClient.TransactionLocationResult> {
     try {
       const trace = await this.getTransaction(transactionId)
       return isObject(trace) && isNumber(trace.block_num) && trace.block_num > 0
@@ -900,28 +767,20 @@ export class WireClient {
    *   the caller re-reads to decide what that means; it is never proof of a
    *   fork.
    */
-  private async pollIrreversible(
-    transactionId: string,
-    blockNum: number,
-    deadlineMs: number
-  ): Promise<boolean> {
+  private async pollIrreversible(transactionId: string, blockNum: number, deadlineMs: number): Promise<boolean> {
     let height = blockNum
     while (Date.now() < deadlineMs) {
       try {
         const lib = (await this.getInfo()).last_irreversible_block_num
         if (lib >= height) {
           const block = await this.getBlock(height)
-          if (WireClient.blockContainsTransaction(block, transactionId))
-            return true
+          if (WireClient.blockContainsTransaction(block, transactionId)) return true
           const relocated = await this.locateTransactionBlock(transactionId)
-          if (relocated.kind !== WireClient.TransactionLocation.found)
-            return false
+          if (relocated.kind !== WireClient.TransactionLocation.found) return false
           height = relocated.blockNum
         }
       } catch (error) {
-        log.debug(
-          `pollIrreversible(${transactionId}) poll error: ${errorText(error)}`
-        )
+        log.debug(`pollIrreversible(${transactionId}) poll error: ${errorText(error)}`)
       }
       await delay(WireClient.PollIntervalMs)
     }
@@ -980,14 +839,8 @@ export namespace WireClient {
     finality?: FinalityType
   }
   export type ContractOf<Name extends SysioContractName> = SysioContractMapping[Name]
-  export type ActionName<Name extends SysioContractName> = Extract<
-    keyof ContractOf<Name>["actions"],
-    string
-  >
-  export type TableName<Name extends SysioContractName> = Extract<
-    keyof ContractOf<Name>["tables"],
-    string
-  >
+  export type ActionName<Name extends SysioContractName> = Extract<keyof ContractOf<Name>["actions"], string>
+  export type TableName<Name extends SysioContractName> = Extract<keyof ContractOf<Name>["tables"], string>
   export type ActionData<
     Name extends SysioContractName,
     Action extends ActionName<Name>
@@ -997,28 +850,16 @@ export namespace WireClient {
     Table extends TableName<Name>
   > = ContractOf<Name>["tables"][Table]
 
-  export interface ActionPayload<
-    Name extends SysioContractName,
-    Action extends ActionName<Name>
-  > {
+  export interface ActionPayload<Name extends SysioContractName, Action extends ActionName<Name>> {
     readonly contract: Name
     readonly account: string
     readonly name: Action
     readonly authorization: ReadonlyArray<PermissionLevelType>
     readonly data: ActionData<Name, Action>
   }
-  export interface ActionInvoker<
-    Name extends SysioContractName,
-    Action extends ActionName<Name>
-  > {
-    prepare(
-      data: ActionData<Name, Action>,
-      options?: InvocationOptions
-    ): ActionPayload<Name, Action>
-    invoke(
-      data: ActionData<Name, Action>,
-      options?: InvocationOptions
-    ): Promise<API.v1.SendTransactionResponse>
+  export interface ActionInvoker<Name extends SysioContractName, Action extends ActionName<Name>> {
+    prepare(data: ActionData<Name, Action>, options?: InvocationOptions): ActionPayload<Name, Action>
+    invoke(data: ActionData<Name, Action>, options?: InvocationOptions): Promise<API.v1.SendTransactionResponse>
   }
   export interface TableQueryArgs {
     scope?: string
@@ -1030,10 +871,7 @@ export namespace WireClient {
     rows: Row[]
     more: boolean
   }
-  export interface TableQuery<
-    Name extends SysioContractName,
-    Table extends TableName<Name>
-  > {
+  export interface TableQuery<Name extends SysioContractName, Table extends TableName<Name>> {
     query(args?: TableQueryArgs): Promise<TableQueryResult<TableRow<Name, Table>>>
   }
   export interface SysioContractClient<Name extends SysioContractName> {
@@ -1126,9 +964,7 @@ export namespace WireClient {
           FinalityOutcome.unappliable,
           () => `${label}: transaction can never apply (expiration window closed while absent)`
         )
-        .otherwise(
-          () => `${label}: finality unresolved — NOT re-pushed (the transaction may be applied)`
-        ),
+        .otherwise(() => `${label}: finality unresolved — NOT re-pushed (the transaction may be applied)`),
       { context: { ...result } }
     )
   }
@@ -1245,15 +1081,9 @@ export namespace WireClient {
   }
 
   /** True if the block's transaction list contains `transactionId`. */
-  export function blockContainsTransaction(
-    block: GetBlockResponse,
-    transactionId: string
-  ): boolean {
+  export function blockContainsTransaction(block: GetBlockResponse, transactionId: string): boolean {
     return (block.transactions ?? []).some(
-      transaction =>
-        (typeof transaction.trx === "string"
-          ? transaction.trx
-          : transaction.trx?.id) === transactionId
+      transaction => (typeof transaction.trx === "string" ? transaction.trx : transaction.trx?.id) === transactionId
     )
   }
 }

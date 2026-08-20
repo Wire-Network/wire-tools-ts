@@ -1,10 +1,7 @@
 import { type PermissionLevelType, SysioContracts } from "@wireio/sdk-core"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../../ClusterBuildStep.js"
 import type { StepInput } from "../../../StepRunner.js"
 
 const { SysioContractName } = SysioContracts
@@ -30,9 +27,7 @@ export namespace SystemContractSteps {
    */
   async function chainHeadTimestamp<C extends ClusterBuildContext>(ctx: C): Promise<string> {
     const info = await ctx.wire.getInfo()
-    return new Date(info.head_block_time + UtcSuffix)
-      .toISOString()
-      .slice(0, IsoSecondsLength)
+    return new Date(info.head_block_time + UtcSuffix).toISOString().slice(0, IsoSecondsLength)
   }
 
   /** Input for {@link planSetemitcfg} — the generated emission-config struct. */
@@ -66,9 +61,7 @@ export namespace SystemContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.system)
-      .actions.setemitcfg.invoke({ cfg: input.data })
+    await ctx.wire.getSysioContract(SysioContractName.system).actions.setemitcfg.invoke({ cfg: input.data })
   }
 
   /**
@@ -90,14 +83,7 @@ export namespace SystemContractSteps {
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runSetinittime
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runSetinittime)
   }
 
   /** Named runner — `sysio.system::setinittime` anchored to chain head time. */
@@ -107,11 +93,9 @@ export namespace SystemContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.system)
-      .actions.setinittime.invoke({
-        no_reward_init_time: await chainHeadTimestamp(ctx)
-      })
+    await ctx.wire.getSysioContract(SysioContractName.system).actions.setinittime.invoke({
+      no_reward_init_time: await chainHeadTimestamp(ctx)
+    })
   }
 
   /**
@@ -125,14 +109,7 @@ export namespace SystemContractSteps {
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runInitt5
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runInitt5)
   }
 
   /** Named runner — `sysio.system::initt5` anchored to chain head time. */
@@ -212,9 +189,7 @@ export namespace SystemContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.system)
-      .actions.setprodkeys.invoke(input.data)
+    await ctx.wire.getSysioContract(SysioContractName.system).actions.setprodkeys.invoke(input.data)
   }
 
   /** Input for {@link planNewaccount} — the generated `system::newaccount` data. */
@@ -248,9 +223,7 @@ export namespace SystemContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.system)
-      .actions.newaccount.invoke(input.data)
+    await ctx.wire.getSysioContract(SysioContractName.system).actions.newaccount.invoke(input.data)
   }
 
   /** Input for {@link planSetpriv} — the generated `system::setpriv` data. */
@@ -284,9 +257,7 @@ export namespace SystemContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.system)
-      .actions.setpriv.invoke(input.data)
+    await ctx.wire.getSysioContract(SysioContractName.system).actions.setpriv.invoke(input.data)
   }
 
   /**

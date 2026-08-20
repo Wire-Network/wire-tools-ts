@@ -1,11 +1,7 @@
 import { APIClient } from "@wireio/sdk-core"
 import { AuthLink } from "../types"
 
-export async function checkLinkStatus(
-  api: APIClient,
-  contractAccount: string,
-  username: string
-): Promise<AuthLink> {
+export async function checkLinkStatus(api: APIClient, contractAccount: string, username: string): Promise<AuthLink> {
   if (!username || username.startsWith("0x")) return null
 
   const response = await api.v1.chain.get_table_rows({

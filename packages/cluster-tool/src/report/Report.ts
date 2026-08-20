@@ -1,10 +1,7 @@
 import Fs, { promises as Fsp } from "node:fs"
 import Path from "node:path"
 import { match } from "ts-pattern"
-import {
-  ClusterConfigReportFormat,
-  type ClusterConfigReport
-} from "@wireio/cluster-tool-shared"
+import { ClusterConfigReportFormat, type ClusterConfigReport } from "@wireio/cluster-tool-shared"
 import { getLogger } from "@wireio/shared"
 import type { ReportRendererRegistry } from "./ReportRendererRegistry.js"
 import { StepExtraRecorder as StepExtraRecorderTool } from "./tools/StepExtraRecorder.js"
@@ -74,14 +71,9 @@ export class Report {
    * @param config - Where + which formats to write.
    * @param registry - The renderer registry (e.g. `ReportRendererRegistry.createDefault()`).
    */
-  async write(
-    config: Report.Config,
-    registry: ReportRendererRegistry
-  ): Promise<void> {
+  async write(config: Report.Config, registry: ReportRendererRegistry): Promise<void> {
     await Fsp.mkdir(config.path, { recursive: true })
-    await Promise.all(
-      config.formats.map(format => this.writeOne(config, format, registry))
-    )
+    await Promise.all(config.formats.map(format => this.writeOne(config, format, registry)))
   }
 
   /**
@@ -268,8 +260,7 @@ export namespace Report {
      * not read as a clean `[OK]`.
      */
     export function skippedCount(phase: Phase): number {
-      return phase.steps.filter(step => step.status === StepStatus.skipped)
-        .length
+      return phase.steps.filter(step => step.status === StepStatus.skipped).length
     }
   }
 
@@ -280,12 +271,7 @@ export namespace Report {
      * child succeeded (a sequential group that omitted children after a
      * failure is already failed via that failing child).
      */
-    export function from(
-      name: string,
-      description: string,
-      children: Node[],
-      durationMs: number
-    ): Group {
+    export function from(name: string, description: string, children: Node[], durationMs: number): Group {
       return {
         kind: NodeKind.group,
         name,
@@ -311,25 +297,17 @@ export namespace Report {
 
     /** Every phase under `node` (itself included when a phase), depth-first. */
     export function phases(node: Node): Phase[] {
-      return isPhase(node)
-        ? [node]
-        : node.children.flatMap(child => phases(child))
+      return isPhase(node) ? [node] : node.children.flatMap(child => phases(child))
     }
 
     /** Total executed-step count under `node`. */
     export function stepCount(node: Node): number {
-      return phases(node).reduce(
-        (total, phase) => total + phase.steps.length,
-        0
-      )
+      return phases(node).reduce((total, phase) => total + phase.steps.length, 0)
     }
 
     /** Total skipped-step count under `node`. */
     export function skippedCount(node: Node): number {
-      return phases(node).reduce(
-        (total, phase) => total + Phase.skippedCount(phase),
-        0
-      )
+      return phases(node).reduce((total, phase) => total + Phase.skippedCount(phase), 0)
     }
 
     /** True when `node` (or any descendant) carries a failure or skip. */
@@ -387,9 +365,7 @@ export namespace Report {
         // Every step must be ok — a skipped step means work that never ran,
         // and a phase whose steps never ran did not succeed. (A "no step
         // failed" predicate let a skipped tail render as a passing phase.)
-        succeeded: this.results.every(
-          result => result.status === StepStatus.ok
-        ),
+        succeeded: this.results.every(result => result.status === StepStatus.ok),
         durationMs: Date.now() - this.startedAtMs
       }
     }
@@ -417,11 +393,7 @@ export namespace Report {
       }
     }
     /** A successful step result. */
-    export function ok(
-      step: StepLike,
-      durationMs: number,
-      extra: Record<string, unknown> | null = null
-    ): StepResult {
+    export function ok(step: StepLike, durationMs: number, extra: Record<string, unknown> | null = null): StepResult {
       return base(step, StepStatus.ok, durationMs, null, extra)
     }
     /** A failed step result (builds the ErrorDetail from `error` + the step input). */
@@ -431,13 +403,7 @@ export namespace Report {
       error: unknown,
       extra: Record<string, unknown> | null = null
     ): StepResult {
-      return base(
-        step,
-        StepStatus.failed,
-        durationMs,
-        ErrorDetail.from(error, step.input),
-        extra
-      )
+      return base(step, StepStatus.failed, durationMs, ErrorDetail.from(error, step.input), extra)
     }
     /** A skipped step result (an earlier sibling failed → this never ran). */
     export function skipped(step: StepLike): StepResult {
@@ -459,11 +425,7 @@ export namespace Report {
      * Build an {@link ErrorDetail} from a thrown value, the step input, and
      * optionally captured child-process output.
      */
-    export function from(
-      error: unknown,
-      input: unknown = null,
-      processOutput: string | null = null
-    ): ErrorDetail {
+    export function from(error: unknown, input: unknown = null, processOutput: string | null = null): ErrorDetail {
       return {
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? (error.stack ?? null) : null,

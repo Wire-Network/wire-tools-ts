@@ -55,9 +55,7 @@ export function fixtureResolveEnvironment(prefix: string): ResolveEnvironment {
 
   process.env.WIRE_BIND_REGISTRY_PATH = Path.join(rootPath, RegistrySubpath)
   Fs.mkdirSync(buildBinPath, { recursive: true })
-  BuildExecutables.forEach(bin =>
-    Fs.writeFileSync(Path.join(buildBinPath, bin), "")
-  )
+  BuildExecutables.forEach(bin => Fs.writeFileSync(Path.join(buildBinPath, bin), ""))
   Fs.mkdirSync(fakeExecutablesPath, { recursive: true })
   PathExecutables.forEach(bin =>
     Fs.writeFileSync(Path.join(fakeExecutablesPath, bin), "", {
@@ -72,8 +70,7 @@ export function fixtureResolveEnvironment(prefix: string): ResolveEnvironment {
     cleanup() {
       if (previousPath == null) delete process.env.PATH
       else process.env.PATH = previousPath
-      if (previousRegistryPath == null)
-        delete process.env.WIRE_BIND_REGISTRY_PATH
+      if (previousRegistryPath == null) delete process.env.WIRE_BIND_REGISTRY_PATH
       else process.env.WIRE_BIND_REGISTRY_PATH = previousRegistryPath
       Fs.rmSync(rootPath, { recursive: true, force: true })
     }

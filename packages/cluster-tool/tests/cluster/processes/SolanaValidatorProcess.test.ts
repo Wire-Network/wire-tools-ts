@@ -1,10 +1,7 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import {
-  ProcessManager,
-  SolanaValidatorProcess
-} from "@wireio/cluster-tool/cluster/processes"
+import { ProcessManager, SolanaValidatorProcess } from "@wireio/cluster-tool/cluster/processes"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { Localhost } from "@wireio/cluster-tool/utils"
 
@@ -27,9 +24,7 @@ describe("SolanaValidatorProcess", () => {
     const validator = await SolanaValidatorProcess.create(manager, {
       binary: "/bin/true"
     })
-    expect(validator.args).toEqual(
-      expect.arrayContaining(["--rpc-port", "--faucet-port", "--gossip-port"])
-    )
+    expect(validator.args).toEqual(expect.arrayContaining(["--rpc-port", "--faucet-port", "--gossip-port"]))
     // A silencing flag on a dev/test daemon hides the exact startup panic and
     // the program `msg!()` output you need when it fails — it is unconditional,
     // with no env var to re-enable it.
@@ -43,9 +38,7 @@ describe("SolanaValidatorProcess", () => {
       binary: "/bin/true",
       gossipPort: 14_700
     })
-    expect(validator.args).toEqual(
-      expect.arrayContaining(["--gossip-port", "14700"])
-    )
+    expect(validator.args).toEqual(expect.arrayContaining(["--gossip-port", "14700"]))
   })
 
   it("startup failure surfaces the validator.log tail and the assigned-port holders", async () => {
@@ -74,9 +67,7 @@ describe("SolanaValidatorProcess", () => {
       binary: "/bin/true",
       programs: [{ name: "opp", programId: "PID", soFile: "/tmp/opp.so" }]
     })
-    expect(validator.args).toEqual(
-      expect.arrayContaining(["--bpf-program", "PID", "/tmp/opp.so"])
-    )
+    expect(validator.args).toEqual(expect.arrayContaining(["--bpf-program", "PID", "/tmp/opp.so"]))
   })
 
   it("deploys upgradeable via --upgradeable-program when an upgradeAuthority is set", async () => {
@@ -93,14 +84,7 @@ describe("SolanaValidatorProcess", () => {
     })
     // The upgradeable form (so a ProgramData account exists) REPLACES the
     // non-upgradeable --bpf-program form — the two are mutually exclusive.
-    expect(validator.args).toEqual(
-      expect.arrayContaining([
-        "--upgradeable-program",
-        "PID",
-        "/tmp/opp.so",
-        "UPGKEY"
-      ])
-    )
+    expect(validator.args).toEqual(expect.arrayContaining(["--upgradeable-program", "PID", "/tmp/opp.so", "UPGKEY"]))
     expect(validator.args).not.toContain("--bpf-program")
   })
 
@@ -114,17 +98,14 @@ describe("SolanaValidatorProcess", () => {
       "solana=info,agave=info,solana_runtime::message_processor::stable_log=debug"
     )
     expect(SolanaValidatorProcess.DefaultEnv).toEqual({
-      [SolanaValidatorProcess.RustLogEnvVar]:
-        SolanaValidatorProcess.ProgramLogRustLog
+      [SolanaValidatorProcess.RustLogEnvVar]: SolanaValidatorProcess.ProgramLogRustLog
     })
   })
 
   // resolveEnv takes the inherited filter as a PARAMETER, so the decision is
   // testable without mutating this worker's environment.
   it("enables agave's program-log target when RUST_LOG is unset", () => {
-    expect(SolanaValidatorProcess.resolveEnv(undefined)).toEqual(
-      SolanaValidatorProcess.DefaultEnv
-    )
+    expect(SolanaValidatorProcess.resolveEnv(undefined)).toEqual(SolanaValidatorProcess.DefaultEnv)
   })
 
   it("defers to an explicit RUST_LOG from the environment", () => {
@@ -135,11 +116,7 @@ describe("SolanaValidatorProcess", () => {
     const validator = await SolanaValidatorProcess.create(manager, {
       binary: "/bin/true"
     })
-    expect(validator.env).toEqual(
-      SolanaValidatorProcess.resolveEnv(
-        process.env[SolanaValidatorProcess.RustLogEnvVar]
-      )
-    )
+    expect(validator.env).toEqual(SolanaValidatorProcess.resolveEnv(process.env[SolanaValidatorProcess.RustLogEnvVar]))
   })
 
   it("passes an explicit --dynamic-port-range window verbatim", async () => {
@@ -147,9 +124,7 @@ describe("SolanaValidatorProcess", () => {
       binary: "/bin/true",
       dynamicPortRange: { first: 13_100, last: 13_163 }
     })
-    expect(validator.args).toEqual(
-      expect.arrayContaining(["--dynamic-port-range", "13100-13163"])
-    )
+    expect(validator.args).toEqual(expect.arrayContaining(["--dynamic-port-range", "13100-13163"]))
   })
 
   it("defaults --dynamic-port-range to a resolved full-width window", async () => {
@@ -167,10 +142,7 @@ describe("SolanaValidatorProcess", () => {
       binary: "/bin/true"
     })
     expect(validator.args).toEqual(
-      expect.arrayContaining([
-        "--limit-ledger-size",
-        String(SolanaValidatorProcess.DefaultLimitLedgerSizeShreds)
-      ])
+      expect.arrayContaining(["--limit-ledger-size", String(SolanaValidatorProcess.DefaultLimitLedgerSizeShreds)])
     )
   })
 
@@ -179,8 +151,6 @@ describe("SolanaValidatorProcess", () => {
       binary: "/bin/true",
       limitLedgerSizeShreds: 250_000
     })
-    expect(validator.args).toEqual(
-      expect.arrayContaining(["--limit-ledger-size", "250000"])
-    )
+    expect(validator.args).toEqual(expect.arrayContaining(["--limit-ledger-size", "250000"]))
   })
 })

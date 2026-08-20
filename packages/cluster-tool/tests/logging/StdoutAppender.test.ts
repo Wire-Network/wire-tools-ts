@@ -19,9 +19,7 @@ describe("StdoutAppender", () => {
   })
 
   it("writes the raw message plus a newline for the stdout category", () => {
-    new StdoutAppender().append(
-      record({ category: StdoutAppender.Category, message: "hello" })
-    )
+    new StdoutAppender().append(record({ category: StdoutAppender.Category, message: "hello" }))
     expect(spy).toHaveBeenCalledWith("hello\n")
   })
 

@@ -45,11 +45,7 @@ describe("ClusterPackageSteps.runPackageNode", () => {
       new AbortController().signal
     )
 
-    const zipFile = Path.join(
-      dir,
-      ClusterPackageSteps.PackagesSubpath,
-      `${node.name}.zip`
-    )
+    const zipFile = Path.join(dir, ClusterPackageSteps.PackagesSubpath, `${node.name}.zip`)
     expect(Fs.existsSync(zipFile)).toBe(true)
     expect(Fs.statSync(zipFile).size).toBeGreaterThan(0)
 

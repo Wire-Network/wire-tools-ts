@@ -26,11 +26,11 @@ export type AnchorEnumVariant = Readonly<Record<string, Record<string, never>>>
  */
 export const operatorTypeVariant = (t: OperatorType): AnchorEnumVariant =>
   match(t)
-    .with(OperatorType.UNKNOWN,     () => ({ operatorTypeUnknown:     {} }))
-    .with(OperatorType.PRODUCER,    () => ({ operatorTypeProducer:    {} }))
-    .with(OperatorType.BATCH,       () => ({ operatorTypeBatch:       {} }))
+    .with(OperatorType.UNKNOWN, () => ({ operatorTypeUnknown: {} }))
+    .with(OperatorType.PRODUCER, () => ({ operatorTypeProducer: {} }))
+    .with(OperatorType.BATCH, () => ({ operatorTypeBatch: {} }))
     .with(OperatorType.UNDERWRITER, () => ({ operatorTypeUnderwriter: {} }))
-    .with(OperatorType.CHALLENGER,  () => ({ operatorTypeChallenger:  {} }))
+    .with(OperatorType.CHALLENGER, () => ({ operatorTypeChallenger: {} }))
     .otherwise(v => {
       throw new Error(`operatorTypeVariant: unknown OperatorType ${v}`)
     })
@@ -51,13 +51,13 @@ export const operatorTypeVariant = (t: OperatorType): AnchorEnumVariant =>
 export const tokenKindVariant = (k: TokenKind): AnchorEnumVariant =>
   match(k)
     .with(TokenKind.UNKNOWN, () => ({ tokenKindUnknown: {} }))
-    .with(TokenKind.NATIVE,  () => ({ tokenKindNative:  {} }))
-    .with(TokenKind.ERC20,   () => ({ tokenKindErc20:   {} }))
-    .with(TokenKind.ERC721,  () => ({ tokenKindErc721:  {} }))
+    .with(TokenKind.NATIVE, () => ({ tokenKindNative: {} }))
+    .with(TokenKind.ERC20, () => ({ tokenKindErc20: {} }))
+    .with(TokenKind.ERC721, () => ({ tokenKindErc721: {} }))
     .with(TokenKind.ERC1155, () => ({ tokenKindErc1155: {} }))
-    .with(TokenKind.SPL,     () => ({ tokenKindSpl:     {} }))
-    .with(TokenKind.SPL_NFT, () => ({ tokenKindSplNft:  {} }))
-    .with(TokenKind.LIQ,     () => ({ tokenKindLiq:     {} }))
+    .with(TokenKind.SPL, () => ({ tokenKindSpl: {} }))
+    .with(TokenKind.SPL_NFT, () => ({ tokenKindSplNft: {} }))
+    .with(TokenKind.LIQ, () => ({ tokenKindLiq: {} }))
     .otherwise(v => {
       throw new Error(`tokenKindVariant: unknown TokenKind ${v}`)
     })

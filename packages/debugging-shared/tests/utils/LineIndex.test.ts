@@ -2,11 +2,7 @@ import * as Fs from "node:fs"
 import * as OS from "node:os"
 import * as Path from "node:path"
 
-import {
-  buildLineIndex,
-  extendLineIndex,
-  readLines
-} from "@wireio/debugging-shared"
+import { buildLineIndex, extendLineIndex, readLines } from "@wireio/debugging-shared"
 
 describe("LineIndex", () => {
   let tmpDir: string

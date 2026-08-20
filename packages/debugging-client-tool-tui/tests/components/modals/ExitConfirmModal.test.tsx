@@ -28,9 +28,7 @@ interface InkModuleMock {
 const ink = require("ink") as InkModuleMock
 
 function press(input: string, key: Partial<Key> = {}): void {
-  const handler = ink.useInput.mock.calls.at(-1)?.[0] as
-    | ((i: string, k: Key) => void)
-    | undefined
+  const handler = ink.useInput.mock.calls.at(-1)?.[0] as ((i: string, k: Key) => void) | undefined
   if (!handler) return
   handler(input, {
     upArrow: false,

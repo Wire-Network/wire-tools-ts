@@ -11,11 +11,7 @@ import {
   type SignatureProviderKIODConfig,
   type SignatureProviderSSMConfig
 } from "@wireio/cluster-tool-shared"
-import type {
-  EthereumKeyPair,
-  KeyPair,
-  WireFinalizerKeyPair
-} from "../types/KeyPair.js"
+import type { EthereumKeyPair, KeyPair, WireFinalizerKeyPair } from "../types/KeyPair.js"
 import { privateKeyFromNativeString } from "../utils/keyPairUtils.js"
 import { SSMClientProvider } from "./SSMClientProvider.js"
 
@@ -49,9 +45,7 @@ export namespace SignatureProviderConfigProvider {
     T extends SignatureProviderType = SignatureProviderType,
     K extends KeyType = KeyType
   > = SignatureProviderConfigOf<T> &
-    (T extends SignatureProviderType.KEY | SignatureProviderType.SSM
-      ? SignatureProviderResolutionKeyPair<K>
-      : unknown)
+    (T extends SignatureProviderType.KEY | SignatureProviderType.SSM ? SignatureProviderResolutionKeyPair<K> : unknown)
 
   /**
    * Resolve `config` into a {@link SignatureProviderResolution} — the single
@@ -62,16 +56,13 @@ export namespace SignatureProviderConfigProvider {
    * @param config - The provider config to resolve.
    * @returns The resolved provider (with a hydrated `keyPair` for `KEY` / `SSM`).
    */
-  export async function resolve<
-    T extends SignatureProviderType,
-    K extends KeyType
-  >(config: SignatureProviderConfig): Promise<SignatureProviderResolution<T, K>> {
+  export async function resolve<T extends SignatureProviderType, K extends KeyType>(
+    config: SignatureProviderConfig
+  ): Promise<SignatureProviderResolution<T, K>> {
     const resolution = await match(config)
       .with({ providerType: SignatureProviderType.KEY }, cfg => resolveKEY(cfg))
       .with({ providerType: SignatureProviderType.SSM }, cfg => resolveSSM(cfg))
-      .with({ providerType: SignatureProviderType.KIOD }, cfg =>
-        resolveKIOD(cfg)
-      )
+      .with({ providerType: SignatureProviderType.KIOD }, cfg => resolveKIOD(cfg))
       .exhaustive()
     return resolution as SignatureProviderResolution<T, K>
   }
@@ -79,17 +70,10 @@ export namespace SignatureProviderConfigProvider {
   /** `KEY` — the private key is inline; assemble + verify against the pinned public key. */
   async function resolveKEY(
     config: SignatureProviderKEYConfig
-  ): Promise<
-    SignatureProviderKEYConfig & SignatureProviderResolutionKeyPair<KeyType>
-  > {
+  ): Promise<SignatureProviderKEYConfig & SignatureProviderResolutionKeyPair<KeyType>> {
     return {
       ...config,
-      keyPair: assembleAndVerify(
-        config.type,
-        config.publicKey,
-        config.privateKey,
-        config.proofOfPossession ?? null
-      )
+      keyPair: assembleAndVerify(config.type, config.publicKey, config.privateKey, config.proofOfPossession ?? null)
     }
   }
 
@@ -110,9 +94,7 @@ export namespace SignatureProviderConfigProvider {
    */
   async function resolveSSM(
     config: SignatureProviderSSMConfig
-  ): Promise<
-    SignatureProviderSSMConfig & SignatureProviderResolutionKeyPair<KeyType>
-  > {
+  ): Promise<SignatureProviderSSMConfig & SignatureProviderResolutionKeyPair<KeyType>> {
     const nativePrivateKey = await fetchSSMPrivateKey(config.awsSecretId)
     return {
       ...config,
@@ -130,9 +112,7 @@ export namespace SignatureProviderConfigProvider {
    * consumer binds to, so there is nothing to hydrate. Raw-material consumers
    * must NOT accept this resolution — the resolution type omits `keyPair`.
    */
-  async function resolveKIOD(
-    config: SignatureProviderKIODConfig
-  ): Promise<SignatureProviderKIODConfig> {
+  async function resolveKIOD(config: SignatureProviderKIODConfig): Promise<SignatureProviderKIODConfig> {
     return config
   }
 
@@ -143,10 +123,7 @@ export namespace SignatureProviderConfigProvider {
    */
   async function fetchSSMPrivateKey(secretId: string): Promise<string> {
     try {
-      return await SSMClientProvider.getParameter(
-        SSMClientProvider.AmbientRegion,
-        secretId
-      )
+      return await SSMClientProvider.getParameter(SSMClientProvider.AmbientRegion, secretId)
     } catch (error) {
       // NEVER echo the secret value — surface only the parameter id + reason.
       log.error(
@@ -225,8 +202,6 @@ export namespace SignatureProviderConfigProvider {
 
   /** The `0x` ethereum address derived from an EM (secp256k1) private key via ethers. */
   function deriveEthereumAddress(privateKey: string): string {
-    return new ethers.Wallet(
-      ethers.hexlify(PrivateKey.from(privateKey).data.array)
-    ).address
+    return new ethers.Wallet(ethers.hexlify(PrivateKey.from(privateKey).data.array)).address
   }
 }

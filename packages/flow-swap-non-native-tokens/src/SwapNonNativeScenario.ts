@@ -123,9 +123,7 @@ const UsdcPermitToUsdcSolanaCell: SwapCell = {
 // ── Flow-local composition helpers ──────────────────────────────────────────
 
 /** The (chain, token) legs every underwriter bonds — the full swap matrix set. */
-const UnderwriterCollateralLegPairs: ReadonlyArray<
-  [chainCode: number, tokenCode: number]
-> = [
+const UnderwriterCollateralLegPairs: ReadonlyArray<[chainCode: number, tokenCode: number]> = [
   [Reserves.Ethereum.ChainCode, Reserves.Ethereum.ETH],
   [Reserves.Ethereum.ChainCode, Reserves.Ethereum.USDC],
   [Reserves.Ethereum.ChainCode, Reserves.Ethereum.USDT],
@@ -175,16 +173,9 @@ const SolanaReserveTokenCodes = [
  * @param chainCode - The chain slug value to filter on.
  * @returns The token slug values of every seeded reserve on the chain.
  */
-async function readReserveTokenCodes(
-  ctx: SwapScenarioContext,
-  chainCode: number
-): Promise<number[]> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.reserv)
-    .tables.reserves.query({ limit: 50 })
-  return rows
-    .filter(row => slugValue(row.chain_code) === chainCode)
-    .map(row => slugValue(row.token_code))
+async function readReserveTokenCodes(ctx: SwapScenarioContext, chainCode: number): Promise<number[]> {
+  const { rows } = await ctx.wire.getSysioContract(SysioContractName.reserv).tables.reserves.query({ limit: 50 })
+  return rows.filter(row => slugValue(row.chain_code) === chainCode).map(row => slugValue(row.token_code))
 }
 
 /**
@@ -194,11 +185,7 @@ async function readReserveTokenCodes(
  * @param expected - Token codes the bootstrap must have seeded.
  * @param chainName - Chain label for the failure message.
  */
-function assertReserveTokenCodes(
-  seeded: number[],
-  expected: number[],
-  chainName: string
-): void {
+function assertReserveTokenCodes(seeded: number[], expected: number[], chainName: string): void {
   expected.forEach(code =>
     Assert.ok(
       seeded.includes(code),
@@ -215,13 +202,9 @@ function assertReserveTokenCodes(
  * @param cell - The swap cell under verification.
  * @returns The four verify steps, in lifecycle order.
  */
-function planSwapVerifySteps(
-  cell: SwapCell
-): ClusterBuildStep.Any<SwapScenarioContext>[] {
+function planSwapVerifySteps(cell: SwapCell): ClusterBuildStep.Any<SwapScenarioContext>[] {
   const destinationActor =
-    cell.destination === SwapDestinationKind.ethereumNative
-      ? Actor.EthereumOutpost
-      : Actor.SolanaOutpost
+    cell.destination === SwapDestinationKind.ethereumNative ? Actor.EthereumOutpost : Actor.SolanaOutpost
   return [
     TokenSteps.planVerifyUwreqCreated(
       Actor.Sysio,
@@ -283,8 +266,7 @@ function planSwapVerifySteps(
  */
 export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
   readonly name = "flow-swap-non-native-tokens"
-  readonly description =
-    "SWAP with non-native tokens (USDC / USDT / USDCSOL / USDTSOL) across both outposts"
+  readonly description = "SWAP with non-native tokens (USDC / USDT / USDCSOL / USDTSOL) across both outposts"
 
   override readonly defaults: ClusterBuildOptions = {
     // Seed the mock (chain, token) PRIMARY reserves this flow reads — `regreserve`
@@ -310,18 +292,14 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
     underwriterCollateral: [underwriterCollateralLegs()]
   }
 
-  override createContext(
-    config: ClusterConfig,
-    log: Logger
-  ): SwapScenarioContext {
+  override createContext(config: ClusterConfig, log: Logger): SwapScenarioContext {
     return new SwapScenarioContext(config, log)
   }
 
   plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const config = cluster.context.config
-    const underwriterLabels = Array.from(
-      { length: config.underwriterCount },
-      (_, index) => HarnessConstants.underwriterLabel(index)
+    const underwriterLabels = Array.from({ length: config.underwriterCount }, (_, index) =>
+      HarnessConstants.underwriterLabel(index)
     )
     const collateral = config.underwriterCollateral
     Assert.ok(
@@ -394,18 +372,10 @@ export class SwapNonNativeScenario extends FlowScenario<SwapScenarioContext> {
       "ClusterHealth",
       "Chain liveness + bootstrap-seeded non-native reserves"
     ).push(
-      verifyStep<SwapScenarioContext>(
-        Actor.Sysio,
-        "chain-producing",
-        "WIRE chain is producing blocks",
-        async ctx => {
-          const info = await ctx.wire.getInfo()
-          Assert.ok(
-            Number(info.head_block_num) > 0,
-            "WIRE chain reported head_block_num 0"
-          )
-        }
-      ),
+      verifyStep<SwapScenarioContext>(Actor.Sysio, "chain-producing", "WIRE chain is producing blocks", async ctx => {
+        const info = await ctx.wire.getInfo()
+        Assert.ok(Number(info.head_block_num) > 0, "WIRE chain reported head_block_num 0")
+      }),
       verifyStep<SwapScenarioContext>(
         Actor.Sysio,
         "ethereum-reserves-seeded",

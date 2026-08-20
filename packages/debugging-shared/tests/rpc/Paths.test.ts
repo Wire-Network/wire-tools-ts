@@ -1,7 +1,4 @@
-import type {
-  InferredRequestType,
-  InferredResponseType
-} from "@wireio/debugging-shared"
+import type { InferredRequestType, InferredResponseType } from "@wireio/debugging-shared"
 import { ApiPaths } from "@wireio/debugging-shared"
 
 describe("ApiPaths", () => {

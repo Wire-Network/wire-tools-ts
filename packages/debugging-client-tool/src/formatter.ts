@@ -1,9 +1,5 @@
 import { endpointsTypeToKey } from "@wireio/debugging-shared"
-import {
-  EnvelopeListEntry,
-  Envelope,
-  GetEnvelopeResponse
-} from "@wireio/opp-typescript-models"
+import { EnvelopeListEntry, Envelope, GetEnvelopeResponse } from "@wireio/opp-typescript-models"
 import { EnvelopeRenderer } from "./EnvelopeRenderer.js"
 
 /** Output format produced by {@link formatList} and {@link formatInspect}. */
@@ -53,10 +49,7 @@ namespace Formatter {
  * @example
  * stdout.info(formatList(resp.entries, OutputFormat.plain))
  */
-export function formatList(
-  entries: EnvelopeListEntry[],
-  format: OutputFormat
-): string {
+export function formatList(entries: EnvelopeListEntry[], format: OutputFormat): string {
   if (format === OutputFormat.json) {
     return JSON.stringify(entries.map(entryToPlainObject), null, 2)
   }
@@ -79,10 +72,7 @@ export function formatList(
   const rows = entries.map(e =>
     [
       padRight(String(e.epochIndex), ColumnWidth.Epoch),
-      padRight(
-        endpointsTypeToKey(e.endpointsType) ?? Formatter.UnknownEndpoints,
-        ColumnWidth.Endpoints
-      ),
+      padRight(endpointsTypeToKey(e.endpointsType) ?? Formatter.UnknownEndpoints, ColumnWidth.Endpoints),
       padRight(e.checksum, ColumnWidth.Checksum),
       padRight(e.batchOpNames.join(", "), ColumnWidth.Operators),
       padRight(String(e.dataSize), ColumnWidth.Size),
@@ -104,10 +94,7 @@ export function formatList(
  * @example
  * stdout.info(formatInspect(resp, OutputFormat.json))
  */
-export function formatInspect(
-  resp: GetEnvelopeResponse,
-  format: OutputFormat
-): string {
+export function formatInspect(resp: GetEnvelopeResponse, format: OutputFormat): string {
   if (format === OutputFormat.json) {
     return JSON.stringify(inspectToPlainObject(resp), null, 2)
   }
@@ -122,13 +109,9 @@ export function formatInspect(
     `Timestamp:     ${formatTimestamp(Number(resp.timestamp))}`
   ]
 
-  const envelopeSection = resp.envelopeData?.length
-    ? new EnvelopeRenderer(resp.envelopeData).render()
-    : null
+  const envelopeSection = resp.envelopeData?.length ? new EnvelopeRenderer(resp.envelopeData).render() : null
 
-  return [...headerLines, ...(envelopeSection ? [envelopeSection] : [])].join(
-    "\n"
-  )
+  return [...headerLines, ...(envelopeSection ? [envelopeSection] : [])].join("\n")
 }
 
 // ---------------------------------------------------------------------------
@@ -150,9 +133,7 @@ function entryToPlainObject(e: EnvelopeListEntry): Record<string, unknown> {
 }
 
 /** Shape an envelope inspect response for JSON output. */
-function inspectToPlainObject(
-  resp: GetEnvelopeResponse
-): Record<string, unknown> {
+function inspectToPlainObject(resp: GetEnvelopeResponse): Record<string, unknown> {
   const obj: Record<string, unknown> = {
     key: resp.key,
     epochIndex: resp.epochIndex,
@@ -176,9 +157,7 @@ function inspectToPlainObject(
         messages: envelope.messages.map((msg, i) => ({
           index: i,
           messageId: msg.header ? bufToHex(msg.header.messageId) : null,
-          previousMessageId: msg.header
-            ? bufToHex(msg.header.previousMessageId)
-            : null,
+          previousMessageId: msg.header ? bufToHex(msg.header.previousMessageId) : null,
           timestamp: msg.header ? Number(msg.header.timestamp) : null,
           version: msg.payload?.version ?? null,
           attestationCount: msg.payload?.attestations.length ?? 0,
@@ -214,7 +193,5 @@ export function bufToHex(buf: Uint8Array | undefined): string {
 
 /** Right-pad `s` to `width` columns, truncating if already longer. */
 function padRight(s: string, width: number): string {
-  return s.length >= width
-    ? s.substring(0, width)
-    : s + " ".repeat(width - s.length)
+  return s.length >= width ? s.substring(0, width) : s + " ".repeat(width - s.length)
 }

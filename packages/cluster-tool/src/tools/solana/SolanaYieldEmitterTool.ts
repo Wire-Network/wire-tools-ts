@@ -20,18 +20,8 @@
 import Assert from "node:assert"
 import * as crypto from "node:crypto"
 import * as anchor from "@coral-xyz/anchor"
-import {
-  Connection,
-  Keypair,
-  PublicKey,
-  Transaction,
-  TransactionInstruction
-} from "@solana/web3.js"
-import {
-  ChainKind,
-  type StakingReward,
-  StakingReward as StakingRewardMsg
-} from "@wireio/opp-typescript-models"
+import { Connection, Keypair, PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js"
+import { ChainKind, type StakingReward, StakingReward as StakingRewardMsg } from "@wireio/opp-typescript-models"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 
 /** Seed for the `OutpostConfig` singleton PDA (mirrors
@@ -80,9 +70,9 @@ export interface SolanaYieldEntry {
  * @param rewardEpochIndex WIRE epoch index — informational.
  */
 export function encodeStakingReward(
-  entry:            SolanaYieldEntry,
-  chainCode:        bigint,
-  tokenCode:        bigint,
+  entry: SolanaYieldEntry,
+  chainCode: bigint,
+  tokenCode: bigint,
   externalEpochRef: bigint,
   rewardEpochIndex: number
 ): Uint8Array {
@@ -128,36 +118,24 @@ export function encodeStakingReward(
  * @return Confirmed transaction signature.
  */
 export async function emitSolanaYield(
-  connection:       Connection,
-  program:          anchor.Program<anchor.Idl>,
-  authority:        Keypair,
-  entry:            SolanaYieldEntry,
-  chainCode:        bigint,
-  tokenCode:        bigint,
+  connection: Connection,
+  program: anchor.Program<anchor.Idl>,
+  authority: Keypair,
+  entry: SolanaYieldEntry,
+  chainCode: bigint,
+  tokenCode: bigint,
   externalEpochRef: bigint,
   rewardEpochIndex: number
 ): Promise<string> {
   Assert.ok(entry.rewardAmount > 0n, "SolanaYieldEmitterTool: rewardAmount must be positive")
   Assert.ok(externalEpochRef > 0n, "SolanaYieldEmitterTool: externalEpochRef must be positive")
 
-  const encoded = encodeStakingReward(
-    entry,
-    chainCode,
-    tokenCode,
-    externalEpochRef,
-    rewardEpochIndex
-  )
+  const encoded = encodeStakingReward(entry, chainCode, tokenCode, externalEpochRef, rewardEpochIndex)
 
   const programId = program.programId
   const [configPda] = PublicKey.findProgramAddressSync([OUTPOST_CONFIG_SEED], programId)
-  const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync(
-    [OUTBOUND_MESSAGE_BUFFER_SEED],
-    programId
-  )
-  const [globalConfigPda] = PublicKey.findProgramAddressSync(
-    [GLOBAL_CONFIG_SEED],
-    programId
-  )
+  const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync([OUTBOUND_MESSAGE_BUFFER_SEED], programId)
+  const [globalConfigPda] = PublicKey.findProgramAddressSync([GLOBAL_CONFIG_SEED], programId)
 
   // `add_attestation`'s `AttestationType` arg is declared in the IDL as a
   // unit enum, but the proto-generated Rust enum carries a custom Borsh
@@ -176,18 +154,17 @@ export async function emitSolanaYield(
   // — same convention every Anchor-generated client uses.
   const ATTESTATION_TYPE_STAKING_REWARD = 60950 // proto enum value
 
-  const discriminator = crypto
-    .createHash("sha256")
-    .update("global:add_attestation")
-    .digest()
-    .subarray(0, 8)
+  const discriminator = crypto.createHash("sha256").update("global:add_attestation").digest().subarray(0, 8)
 
   const dataBuf = Buffer.from(encoded)
   const ixData = Buffer.alloc(8 + 4 + 4 + dataBuf.length)
   let off = 0
-  discriminator.copy(ixData, off); off += 8
-  ixData.writeInt32LE(ATTESTATION_TYPE_STAKING_REWARD, off); off += 4
-  ixData.writeUInt32LE(dataBuf.length, off); off += 4
+  discriminator.copy(ixData, off)
+  off += 8
+  ixData.writeInt32LE(ATTESTATION_TYPE_STAKING_REWARD, off)
+  off += 4
+  ixData.writeUInt32LE(dataBuf.length, off)
+  off += 4
   dataBuf.copy(ixData, off)
 
   // `AddAttestation` declares exactly 4 accounts, IN THIS ORDER (admin,
@@ -198,10 +175,10 @@ export async function emitSolanaYield(
   const ix = new TransactionInstruction({
     programId,
     keys: [
-      { pubkey: authority.publicKey,         isSigner: true,  isWritable: true  },
-      { pubkey: globalConfigPda,             isSigner: false, isWritable: false },
-      { pubkey: configPda,                   isSigner: false, isWritable: false },
-      { pubkey: outboundMessageBufferPda,    isSigner: false, isWritable: true  }
+      { pubkey: authority.publicKey, isSigner: true, isWritable: true },
+      { pubkey: globalConfigPda, isSigner: false, isWritable: false },
+      { pubkey: configPda, isSigner: false, isWritable: false },
+      { pubkey: outboundMessageBufferPda, isSigner: false, isWritable: true }
     ],
     data: ixData
   })

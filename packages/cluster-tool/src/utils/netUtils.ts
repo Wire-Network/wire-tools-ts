@@ -50,8 +50,7 @@ export enum URLScheme {
  */
 export function toAddress(port: number, address: string = Localhost): string {
   // Bracket an IPv6 literal (`::1`, `fe80::1`) so the `:<port>` stays unambiguous.
-  const host =
-    address.includes(":") && !address.startsWith("[") ? `[${address}]` : address
+  const host = address.includes(":") && !address.startsWith("[") ? `[${address}]` : address
   return `${host}:${port}`
 }
 
@@ -68,11 +67,7 @@ export function toAddress(port: number, address: string = Localhost): string {
  *   toURL(8888)                            // "http://127.0.0.1:8888"
  *   toURL(8899, Localhost, URLScheme.ws)   // "ws://127.0.0.1:8899"
  */
-export function toURL(
-  port: number,
-  address: string = Localhost,
-  scheme: URLScheme = URLScheme.http
-): string {
+export function toURL(port: number, address: string = Localhost, scheme: URLScheme = URLScheme.http): string {
   return `${scheme}://${toAddress(port, address)}`
 }
 
@@ -93,11 +88,7 @@ export function toURL(
  *   toDialAddress("10.0.0.5")  // "10.0.0.5" (remote host, verbatim)
  */
 export function toDialAddress(address: string): string {
-  return address === ListenAllAddress ||
-    address === ListenAllAddressV6 ||
-    address.length === 0
-    ? Localhost
-    : address
+  return address === ListenAllAddress || address === ListenAllAddressV6 || address.length === 0 ? Localhost : address
 }
 
 /**
@@ -135,10 +126,7 @@ export function isUdpPortFree(port: number): Promise<boolean> {
  * @param ports - Local ports to keep.
  * @returns The matching lines, header excluded.
  */
-export function filterSocketLinesByLocalPort(
-  output: string,
-  ports: ReadonlySet<number>
-): string[] {
+export function filterSocketLinesByLocalPort(output: string, ports: ReadonlySet<number>): string[] {
   return output.split("\n").filter(line => {
     const local = line.trim().split(/\s+/)[4] ?? ""
     const port = Number.parseInt(local.slice(local.lastIndexOf(":") + 1), 10)

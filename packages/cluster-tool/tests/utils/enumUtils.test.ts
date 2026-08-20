@@ -9,17 +9,11 @@ describe("enumUtils", () => {
     it("resolves a proto ChainKind VALUE to its ABI-mirror member", () => {
       // The spellings differ (protobuf-ts strips the CHAIN_KIND_ prefix); the
       // numeric value is the invariant the bridge resolves through.
-      expect(abiEnumValue(SysioAuthexChainkind, ChainKind.EVM)).toBe(
-        SysioAuthexChainkind.CHAIN_KIND_EVM
-      )
-      expect(abiEnumValue(SysioAuthexChainkind, ChainKind.SVM)).toBe(
-        SysioAuthexChainkind.CHAIN_KIND_SVM
-      )
+      expect(abiEnumValue(SysioAuthexChainkind, ChainKind.EVM)).toBe(SysioAuthexChainkind.CHAIN_KIND_EVM)
+      expect(abiEnumValue(SysioAuthexChainkind, ChainKind.SVM)).toBe(SysioAuthexChainkind.CHAIN_KIND_SVM)
     })
     it("resolves a proto OperatorType VALUE to its ABI-mirror member", () => {
-      expect(abiEnumValue(SysioOpregOperatortype, OperatorType.BATCH)).toBe(
-        SysioOpregOperatortype.OPERATOR_TYPE_BATCH
-      )
+      expect(abiEnumValue(SysioOpregOperatortype, OperatorType.BATCH)).toBe(SysioOpregOperatortype.OPERATOR_TYPE_BATCH)
       expect(abiEnumValue(SysioOpregOperatortype, OperatorType.UNDERWRITER)).toBe(
         SysioOpregOperatortype.OPERATOR_TYPE_UNDERWRITER
       )

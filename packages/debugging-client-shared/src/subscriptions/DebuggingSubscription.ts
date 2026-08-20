@@ -35,9 +35,7 @@ export interface DebuggingSubscriptionEvents<T> {
  * when the consumer calls `close()`. This gives the transport a clean teardown
  * hook without exposing transport details on the subscription surface.
  */
-export class DebuggingSubscription<T> extends EventEmitter<
-  DebuggingSubscriptionEvents<T>
-> {
+export class DebuggingSubscription<T> extends EventEmitter<DebuggingSubscriptionEvents<T>> {
   /**
    * Whether `close()` has been invoked or the transport already pushed a
    * `closed` event. Idempotent — subsequent calls are no-ops.
@@ -130,34 +128,20 @@ export class DebuggingSubscription<T> extends EventEmitter<
    * the first replayed event fires — preserving the contract that
    * listeners receive events strictly after registration.
    */
-  override on(
-    event: keyof DebuggingSubscriptionEvents<T>,
-    fn: (...args: any[]) => void,
-    context?: any
-  ): this {
+  override on(event: keyof DebuggingSubscriptionEvents<T>, fn: (...args: any[]) => void, context?: any): this {
     // eventemitter3's typed `on` overloads collapse on a union key, so we
     // call through `super` with a relaxed cast — runtime behavior is
     // identical to the typed version.
     ;(super.on as any)(event, fn, context)
-    if (
-      event === DebuggingSubscriptionEventName.Event &&
-      this.pendingEvents.length > 0
-    ) {
+    if (event === DebuggingSubscriptionEventName.Event && this.pendingEvents.length > 0) {
       const drain = this.pendingEvents
       this.pendingEvents = []
-      setImmediate(() =>
-        drain.forEach(p => this.emit(DebuggingSubscriptionEventName.Event, p))
-      )
+      setImmediate(() => drain.forEach(p => this.emit(DebuggingSubscriptionEventName.Event, p)))
     }
-    if (
-      event === DebuggingSubscriptionEventName.Closed &&
-      this.pendingCloseReason !== null
-    ) {
+    if (event === DebuggingSubscriptionEventName.Closed && this.pendingCloseReason !== null) {
       const reason = this.pendingCloseReason
       this.pendingCloseReason = null
-      setImmediate(() =>
-        this.emit(DebuggingSubscriptionEventName.Closed, reason)
-      )
+      setImmediate(() => this.emit(DebuggingSubscriptionEventName.Closed, reason))
     }
     return this
   }

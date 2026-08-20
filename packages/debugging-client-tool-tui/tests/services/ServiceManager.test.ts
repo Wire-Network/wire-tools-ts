@@ -18,11 +18,7 @@ const logDir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "tui-sm-test-"))
 const sharedCalls: string[] = []
 
 /** Minimal stub Service — records lifecycle invocations for later assertions. */
-function makeServiceType(
-  id: string,
-  dependsOn: readonly string[] = [],
-  sink: string[] = sharedCalls
-) {
+function makeServiceType(id: string, dependsOn: readonly string[] = [], sink: string[] = sharedCalls) {
   const calls: string[] = []
   class StubService implements Service {
     static readonly id = id
@@ -120,14 +116,7 @@ describe("ServiceManager.boot + destroy", () => {
     const sm = ServiceManager.get()
     sm.register(a.type).register(b.type).register(c.type)
     await sm.boot()
-    expect(sharedCalls).toEqual([
-      "init:a",
-      "init:b",
-      "init:c",
-      "start:a",
-      "start:b",
-      "start:c"
-    ])
+    expect(sharedCalls).toEqual(["init:a", "init:b", "init:c", "start:a", "start:b", "start:c"])
     await sm.destroy()
     expect(sharedCalls.slice(6)).toEqual(["stop:c", "stop:b", "stop:a"])
   })

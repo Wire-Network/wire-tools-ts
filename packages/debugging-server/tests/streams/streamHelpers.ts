@@ -21,10 +21,7 @@ export async function connectStream(baseUrl: string): Promise<WebSocket> {
 }
 
 /** Send a subscribe frame. */
-export function sendSubscribe<T extends StreamTopic>(
-  ws: WebSocket,
-  frame: SubscribeFrame<T>
-): void {
+export function sendSubscribe<T extends StreamTopic>(ws: WebSocket, frame: SubscribeFrame<T>): void {
   ws.send(JSON.stringify(frame))
 }
 
@@ -38,11 +35,7 @@ export function sendUnsubscribe(ws: WebSocket, id: number): void {
 }
 
 /** Collect frames as they arrive; resolve when `predicate` is satisfied. */
-export function collectFrames(
-  ws: WebSocket,
-  count: number,
-  timeoutMs = 5_000
-): Promise<StreamFrame[]> {
+export function collectFrames(ws: WebSocket, count: number, timeoutMs = 5_000): Promise<StreamFrame[]> {
   return new Promise((resolve, reject) => {
     const frames: StreamFrame[] = []
     const onMessage = (data: Buffer) => {
@@ -56,11 +49,7 @@ export function collectFrames(
     }
     const timer = setTimeout(() => {
       ws.off("message", onMessage)
-      reject(
-        new Error(
-          `Timed out waiting for ${count} frames (got ${frames.length})`
-        )
-      )
+      reject(new Error(`Timed out waiting for ${count} frames (got ${frames.length})`))
     }, timeoutMs)
     ws.on("message", onMessage)
   })

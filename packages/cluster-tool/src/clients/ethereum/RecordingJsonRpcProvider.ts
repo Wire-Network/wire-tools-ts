@@ -42,8 +42,7 @@ export namespace RecordingJsonRpcProvider {
    * State-changing / admin JSON-RPC methods recorded RICHLY (payload +
    * outcome). Everything else records request-only via the `call` kind.
    */
-  export const RecordedMethodPattern =
-    /^(eth_sendTransaction|eth_sendRawTransaction|evm_|anvil_|hardhat_)/
+  export const RecordedMethodPattern = /^(eth_sendTransaction|eth_sendRawTransaction|evm_|anvil_|hardhat_)/
 
   /** True when `method` records richly (state-changing / admin RPC). */
   export function shouldRecord(method: string): boolean {
@@ -55,10 +54,7 @@ export namespace RecordingJsonRpcProvider {
    * additionally DECODED (to/value/data/nonce via `ethers.Transaction.from`)
    * so the record carries the actual payload, not just opaque hex.
    */
-  export function toCall(
-    method: string,
-    params: unknown[]
-  ): StepExtraRecorder.ClientCall {
+  export function toCall(method: string, params: unknown[]): StepExtraRecorder.ClientCall {
     const call: StepExtraRecorder.ClientCall = {
       client: "ethereum",
       kind: "rpc",

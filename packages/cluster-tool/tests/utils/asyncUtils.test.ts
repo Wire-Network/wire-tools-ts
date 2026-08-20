@@ -30,18 +30,13 @@ describe("asyncUtils", () => {
       expect(fn).toHaveBeenCalledTimes(1)
     })
     it("retries on failure then succeeds", async () => {
-      const fn = jest
-        .fn()
-        .mockRejectedValueOnce(new Error("boom"))
-        .mockResolvedValue("ok")
+      const fn = jest.fn().mockRejectedValueOnce(new Error("boom")).mockResolvedValue("ok")
       expect(await retry(fn, { maxAttempts: 3, delayMs: 1 })).toBe("ok")
       expect(fn).toHaveBeenCalledTimes(2)
     })
     it("throws the last error after exhausting attempts", async () => {
       const fn = jest.fn().mockRejectedValue(new Error("always"))
-      await expect(retry(fn, { maxAttempts: 2, delayMs: 1 })).rejects.toThrow(
-        "always"
-      )
+      await expect(retry(fn, { maxAttempts: 2, delayMs: 1 })).rejects.toThrow("always")
       expect(fn).toHaveBeenCalledTimes(2)
     })
     it("checkResult=true rethrows immediately (the error IS the result)", async () => {
@@ -50,8 +45,7 @@ describe("asyncUtils", () => {
         retry(fn, {
           maxAttempts: 5,
           delayMs: 1,
-          checkResult: error =>
-            error instanceof Error && error.message === "chain rejection"
+          checkResult: error => error instanceof Error && error.message === "chain rejection"
         })
       ).rejects.toThrow("chain rejection")
       expect(fn).toHaveBeenCalledTimes(1)
@@ -66,11 +60,7 @@ describe("asyncUtils", () => {
         await retry(fn, {
           maxAttempts: 4,
           delayMs: 1,
-          checkResult: error =>
-            !(
-              error instanceof Error &&
-              error.message.includes("Connection refused")
-            )
+          checkResult: error => !(error instanceof Error && error.message.includes("Connection refused"))
         })
       ).toBe("ok")
       expect(fn).toHaveBeenCalledTimes(3)
@@ -86,28 +76,16 @@ describe("asyncUtils", () => {
     afterEach(() => fetchSpy.mockRestore())
 
     it("resolves when the endpoint returns 2xx", async () => {
-      fetchSpy = jest
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(new Response(null, { status: 200 }))
-      await expect(
-        waitForEndpoint(url, { timeoutMs: 1_000, intervalMs: 1 })
-      ).resolves.toBeUndefined()
+      fetchSpy = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }))
+      await expect(waitForEndpoint(url, { timeoutMs: 1_000, intervalMs: 1 })).resolves.toBeUndefined()
     })
     it("resolves on a liveness status (404) even when not ok", async () => {
-      fetchSpy = jest
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(new Response(null, { status: 404 }))
-      await expect(
-        waitForEndpoint(url, { timeoutMs: 1_000, intervalMs: 1 })
-      ).resolves.toBeUndefined()
+      fetchSpy = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 404 }))
+      await expect(waitForEndpoint(url, { timeoutMs: 1_000, intervalMs: 1 })).resolves.toBeUndefined()
     })
     it("throws after the timeout when never reachable", async () => {
-      fetchSpy = jest
-        .spyOn(globalThis, "fetch")
-        .mockRejectedValue(new Error("ECONNREFUSED"))
-      await expect(
-        waitForEndpoint(url, { timeoutMs: 20, intervalMs: 5 })
-      ).rejects.toThrow(/did not become ready/)
+      fetchSpy = jest.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"))
+      await expect(waitForEndpoint(url, { timeoutMs: 20, intervalMs: 5 })).rejects.toThrow(/did not become ready/)
     })
   })
 })
@@ -192,9 +170,7 @@ describe("serialize", () => {
 
   it("never runs two bodies of the same key concurrently", async () => {
     const { state, work } = trackingWork()
-    const results = await Promise.all(
-      [1, 2, 3, 4, 5].map(id => serialize("same", work(id)))
-    )
+    const results = await Promise.all([1, 2, 3, 4, 5].map(id => serialize("same", work(id))))
     expect(state.peak).toBe(1)
     expect(results).toEqual([1, 2, 3, 4, 5])
     expect(state.order).toEqual([1, 2, 3, 4, 5]) // FIFO, not just serialized
@@ -202,11 +178,7 @@ describe("serialize", () => {
 
   it("lets DIFFERENT keys proceed concurrently", async () => {
     const { state, work } = trackingWork()
-    await Promise.all([
-      serialize("key-a", work(1)),
-      serialize("key-b", work(2)),
-      serialize("key-c", work(3))
-    ])
+    await Promise.all([serialize("key-a", work(1)), serialize("key-b", work(2)), serialize("key-c", work(3))])
     expect(state.peak).toBeGreaterThan(1)
   })
 

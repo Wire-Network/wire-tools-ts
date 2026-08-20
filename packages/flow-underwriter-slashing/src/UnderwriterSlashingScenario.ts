@@ -46,17 +46,9 @@ const log = getLogger(__filename)
  * only appears in the settled books, inside the user's variance tolerance).
  */
 function swapquote(books: Books, sourceAmount: bigint): bigint {
-  const wireIntermediate = WireReserveTool.cpOutput(
-    books.src.chain,
-    books.src.wire,
-    sourceAmount
-  )
+  const wireIntermediate = WireReserveTool.cpOutput(books.src.chain, books.src.wire, sourceAmount)
   if (wireIntermediate === 0n) return 0n
-  return WireReserveTool.cpOutput(
-    books.dst.wire,
-    books.dst.chain,
-    wireIntermediate
-  )
+  return WireReserveTool.cpOutput(books.dst.wire, books.dst.chain, wireIntermediate)
 }
 
 /**
@@ -121,31 +113,22 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
     ]
   }
 
-  override createContext(
-    config: ClusterConfig,
-    log: Logger
-  ): SwapScenarioContext {
+  override createContext(config: ClusterConfig, log: Logger): SwapScenarioContext {
     return new SwapScenarioContext(config, log)
   }
 
   plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const config = cluster.context.config,
       firstUnderwriter = ClusterConstants.underwriterLabel(0),
-      underwriterLabels = Array.from(
-        { length: config.underwriterCount },
-        (_, index) => ClusterConstants.underwriterLabel(index)
+      underwriterLabels = Array.from({ length: config.underwriterCount }, (_, index) =>
+        ClusterConstants.underwriterLabel(index)
       ),
       requestStepOptions = { timeoutMs: Constants.RequestStepTimeoutMs },
       underwriterGateOptions = {
-        timeoutMs:
-          Constants.underwriterActiveDeadlineMs() +
-          Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.underwriterActiveDeadlineMs() + Constants.PollDeadlineBufferMs
       },
       raceStepOptions = {
-        timeoutMs:
-          Constants.UwreqDeadlineMs +
-          Constants.RaceDeadlineMs +
-          Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.UwreqDeadlineMs + Constants.RaceDeadlineMs + Constants.PollDeadlineBufferMs
       },
       resolveStepOptions = {
         timeoutMs: Constants.ResolveDeadlineMs + Constants.PollDeadlineBufferMs
@@ -158,8 +141,7 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
       "Bond every underwriter's collateral on the Ethereum + Solana outposts",
       requestStepOptions,
       underwriterLabels,
-      config.underwriterCollateral ??
-        WireUnderwriterTool.load(null, config.underwriterCount)
+      config.underwriterCollateral ?? WireUnderwriterTool.load(null, config.underwriterCount)
     )
 
     // ── 2. The swap end-user's paired ETH + SOL identity ──
@@ -182,10 +164,7 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
         "WIRE chain is producing blocks",
         async (ctx: SwapScenarioContext) => {
           const info = await ctx.wire.getInfo()
-          Assert.ok(
-            Number(info.head_block_num) > 0,
-            `head_block_num must be positive, got ${info.head_block_num}`
-          )
+          Assert.ok(Number(info.head_block_num) > 0, `head_block_num must be positive, got ${info.head_block_num}`)
         }
       ),
       verifyStep(
@@ -194,16 +173,8 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
         "bootstrap seeded ETHEREUM/ETH/PRIMARY + SOLANA/SOL/PRIMARY reserves",
         async (ctx: SwapScenarioContext) => {
           // `reserveBook` throws when the row is absent — presence IS the check.
-          await ctx.reserveBook(
-            Constants.EthereumChainCode,
-            Constants.EthereumTokenCode,
-            Constants.PrimaryReserveCode
-          )
-          await ctx.reserveBook(
-            Constants.SolanaChainCode,
-            Constants.SolanaTokenCode,
-            Constants.PrimaryReserveCode
-          )
+          await ctx.reserveBook(Constants.EthereumChainCode, Constants.EthereumTokenCode, Constants.PrimaryReserveCode)
+          await ctx.reserveBook(Constants.SolanaChainCode, Constants.SolanaTokenCode, Constants.PrimaryReserveCode)
         }
       )
     )
@@ -337,27 +308,18 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
         "verdict REJECTED_FORFEIT: bond CREDITED to the underwriter (no transfer); holds clear; operator ACTIVE; uwreq still CONFIRMED",
         async (ctx: SwapScenarioContext) => {
           const chalId = ctx.outputs.assert(Outputs.challengeBId)
-          await ChallengeSteps.awaitVerdict(
-            ctx,
-            chalId,
-            SysioChalgUwchalVerdict.REJECTED_FORFEIT
-          )
+          await ChallengeSteps.awaitVerdict(ctx, chalId, SysioChalgUwchalVerdict.REJECTED_FORFEIT)
 
           const commitment = ctx.outputs.assert(Outputs.commitmentB),
             bond = ctx.outputs.assert(Outputs.challengeBBond),
-            underwriterBefore = ctx.outputs.assert(
-              Outputs.underwriterBalanceBeforeB
-            )
+            underwriterBefore = ctx.outputs.assert(Outputs.underwriterBalanceBeforeB)
           // Forfeiture is explicit council judgment — the bond is credited to
           // the wrongly-challenged underwriter, to the unit. Resolution moves
           // no WIRE: the crank can run under the epoch tick, where a transfer
           // would execute the recipient's notification handler and let it
           // abort epoch advancement. Custody stays with chalg until the pull.
           Assert.strictEqual(
-            await ChallengeSteps.readBondCredit(
-              ctx,
-              commitment.underwriterAccount
-            ),
+            await ChallengeSteps.readBondCredit(ctx, commitment.underwriterAccount),
             bond,
             "a rejected-with-forfeit challenge credits the underwriter the whole bond"
           )
@@ -368,10 +330,7 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
           )
           // No fault: the operator stands, the locks persist unheld to their
           // natural expiry, the commitment stays CONFIRMED.
-          const operator = await ChallengeSteps.readOperatorRow(
-            ctx,
-            commitment.underwriterAccount
-          )
+          const operator = await ChallengeSteps.readOperatorRow(ctx, commitment.underwriterAccount)
           Assert.ok(
             matchesProtoEnum(
               operator.status,
@@ -381,17 +340,9 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
             "a rejected challenge must leave the underwriter ACTIVE"
           )
           const locks = await ctx.locksForUwreq(commitment.uwreqId)
-          Assert.strictEqual(
-            locks.length,
-            2,
-            "both locks persist after a rejected challenge"
-          )
+          Assert.strictEqual(locks.length, 2, "both locks persist after a rejected challenge")
           locks.forEach(lock =>
-            Assert.strictEqual(
-              Number(lock.challenge_id),
-              0,
-              "a rejected challenge clears the lock hold"
-            )
+            Assert.strictEqual(Number(lock.challenge_id), 0, "a rejected challenge clears the lock hold")
           )
           log.info(
             `[uwchal] challenge ${chalId} REJECTED_FORFEIT — bond ${bond} credited to ${commitment.underwriterAccount}`
@@ -413,9 +364,7 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
         async (ctx: SwapScenarioContext) => {
           const commitment = ctx.outputs.assert(Outputs.commitmentB),
             bond = ctx.outputs.assert(Outputs.challengeBBond),
-            underwriterBefore = ctx.outputs.assert(
-              Outputs.underwriterBalanceBeforeB
-            )
+            underwriterBefore = ctx.outputs.assert(Outputs.underwriterBalanceBeforeB)
           Assert.strictEqual(
             await ctx.wire.getWireBalance(commitment.underwriterAccount),
             underwriterBefore + bond,
@@ -471,23 +420,14 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
         "verdict UPHELD: operator SLASHED; locks swept via deferred-slash; uwreq COMPLETED; bond refunded; chalg custody zero",
         async (ctx: SwapScenarioContext) => {
           const chalId = ctx.outputs.assert(Outputs.challengeAId)
-          await ChallengeSteps.awaitVerdict(
-            ctx,
-            chalId,
-            SysioChalgUwchalVerdict.UPHELD
-          )
+          await ChallengeSteps.awaitVerdict(ctx, chalId, SysioChalgUwchalVerdict.UPHELD)
 
           const commitment = ctx.outputs.assert(Outputs.commitmentA),
             bond = ctx.outputs.assert(Outputs.challengeABond),
-            challengerBefore = ctx.outputs.assert(
-              Outputs.challengerBalanceBeforeA
-            )
+            challengerBefore = ctx.outputs.assert(Outputs.challengerBalanceBeforeA)
           // Slash: the verdict flips the winner's operator row SLASHED in the
           // same transaction that records it.
-          const operator = await ChallengeSteps.readOperatorRow(
-            ctx,
-            commitment.underwriterAccount
-          )
+          const operator = await ChallengeSteps.readOperatorRow(ctx, commitment.underwriterAccount)
           Assert.ok(
             matchesProtoEnum(
               operator.status,
@@ -500,20 +440,10 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
           // locks (locked collateral debited, outbound SLASH attestations
           // queued) — no lock rows survive.
           const locks = await ctx.locksForUwreq(commitment.uwreqId)
-          Assert.strictEqual(
-            locks.length,
-            0,
-            "the upheld challenge sweeps both locks via the deferred slash"
-          )
+          Assert.strictEqual(locks.length, 0, "the upheld challenge sweeps both locks via the deferred slash")
           // The commitment finalizes COMPLETED — never re-underwritable.
-          const request = await ChallengeSteps.readUwreq(
-            ctx,
-            commitment.uwreqId
-          )
-          Assert.ok(
-            request != null,
-            "the challenged uwreq row must survive resolution"
-          )
+          const request = await ChallengeSteps.readUwreq(ctx, commitment.uwreqId)
+          Assert.ok(request != null, "the challenged uwreq row must survive resolution")
           Assert.ok(
             matchesProtoEnum(
               request.status,
@@ -526,10 +456,7 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
           // forfeit, resolution moves no WIRE — the challenger is still down
           // the escrow until it pulls.
           Assert.strictEqual(
-            await ChallengeSteps.readBondCredit(
-              ctx,
-              Constants.ChallengerAccount
-            ),
+            await ChallengeSteps.readBondCredit(ctx, Constants.ChallengerAccount),
             bond,
             "an upheld challenge credits the whole bond back to the challenger"
           )
@@ -556,9 +483,7 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
         "challenge-a-refund-paid",
         "the refund restores the challenger exactly; both bonds settled, chalg custody zero",
         async (ctx: SwapScenarioContext) => {
-          const challengerBefore = ctx.outputs.assert(
-            Outputs.challengerBalanceBeforeA
-          )
+          const challengerBefore = ctx.outputs.assert(Outputs.challengerBalanceBeforeA)
           Assert.strictEqual(
             await ctx.wire.getWireBalance(Constants.ChallengerAccount),
             challengerBefore,
@@ -567,9 +492,7 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
           // Custody: both bonds resolved AND claimed (one forfeited, one
           // refunded) — sysio.chalg escrows nothing at rest.
           Assert.strictEqual(
-            await ctx.wire.getWireBalance(
-              SysioContractAccount[SysioContractName.chalg]
-            ),
+            await ctx.wire.getWireBalance(SysioContractAccount[SysioContractName.chalg]),
             0n,
             "sysio.chalg ends the flow with zero WIRE custody"
           )
@@ -596,9 +519,7 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
     underwriterLabel: string,
     targetAmountKey: OutputKey<bigint>,
     commitmentKey: OutputKey<Outputs.ChallengedCommitment>,
-    excludeCommitmentKeys: ReadonlyArray<
-      OutputKey<Outputs.ChallengedCommitment>
-    >
+    excludeCommitmentKeys: ReadonlyArray<OutputKey<Outputs.ChallengedCommitment>>
   ): void {
     ClusterBuildPhase.create(
       cluster,
@@ -617,10 +538,7 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
           await pollUntil(
             `${underwriterLabel} ACTIVE`,
             async () => {
-              const operator = await ChallengeSteps.readOperatorRow(
-                ctx,
-                account
-              )
+              const operator = await ChallengeSteps.readOperatorRow(ctx, account)
               return (
                 operator != null &&
                 matchesProtoEnum(
@@ -655,14 +573,8 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
           }
           // Scale source wei (1e18) → depot 9-decimal units; for SOL the
           // depot unit IS the lamport, so the quote needs no outbound scaling.
-          const quote = swapquote(
-            books,
-            Constants.SourceEthereumWei / Constants.WeiPerDepotUnit
-          )
-          Assert.ok(
-            quote > 0n,
-            `${phaseName} ETH→SOL swapquote returned no quote`
-          )
+          const quote = swapquote(books, Constants.SourceEthereumWei / Constants.WeiPerDepotUnit)
+          Assert.ok(quote > 0n, `${phaseName} ETH→SOL swapquote returned no quote`)
           ctx.outputs.set(targetAmountKey, quote)
           log.info(`[${phaseName}] swapquote = ${quote} lamports`)
         }
@@ -683,33 +595,18 @@ export class UnderwriterSlashingScenario extends FlowScenario<SwapScenarioContex
         "capture-commitment",
         "the race resolves CONFIRMED — capture (uwreq id, winner) + assert both locks",
         async (ctx: SwapScenarioContext) => {
-          const excludeUwreqIds = excludeCommitmentKeys.map(
-            key => ctx.outputs.assert(key).uwreqId
-          )
+          const excludeUwreqIds = excludeCommitmentKeys.map(key => ctx.outputs.assert(key).uwreqId)
           await pollUntil(
             `${phaseName} commitment CONFIRMED`,
-            async () =>
-              (await ChallengeSteps.findConfirmedCommitment(
-                ctx,
-                excludeUwreqIds
-              )) != null,
+            async () => (await ChallengeSteps.findConfirmedCommitment(ctx, excludeUwreqIds)) != null,
             Constants.UwreqDeadlineMs + Constants.RaceDeadlineMs,
             Constants.LongPollIntervalMs
           )
-          const commitment = await ChallengeSteps.findConfirmedCommitment(
-            ctx,
-            excludeUwreqIds
-          )
+          const commitment = await ChallengeSteps.findConfirmedCommitment(ctx, excludeUwreqIds)
           ctx.outputs.set(commitmentKey, commitment)
           const locks = await ctx.locksForUwreq(commitment.uwreqId)
-          Assert.strictEqual(
-            locks.length,
-            2,
-            "exactly two persistent locks back the CONFIRMED commitment"
-          )
-          log.info(
-            `[${phaseName}] CONFIRMED uwreq ${commitment.uwreqId} won by ${commitment.underwriterAccount}`
-          )
+          Assert.strictEqual(locks.length, 2, "exactly two persistent locks back the CONFIRMED commitment")
+          log.info(`[${phaseName}] CONFIRMED uwreq ${commitment.uwreqId} won by ${commitment.underwriterAccount}`)
         },
         raceStepOptions
       )

@@ -27,10 +27,7 @@ export namespace SwapFromWireScenarioConstants {
    * extension-inclusive epochs rather than a hop class. Also bounds the #425
    * rewards-bucket custody settlement poll.
    */
-  export const DrainDeadlineMs =
-    ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-    DrainEpochBudget *
-    MsPerSecond
+  export const DrainDeadlineMs = ProtocolTiming.effectiveEpochSec(EpochDurationSec) * DrainEpochBudget * MsPerSecond
   /** Single-leg underwriter race (target commit only) — a single hop: the
    *  winning commit lands on the SOL outpost and relays back to the depot. */
   export const RaceDeadlineMs = ProtocolTiming.SingleHopBudgetMs
@@ -78,10 +75,6 @@ export namespace SwapFromWireScenarioConstants {
 
   /** Deadline for the underwriter deposit → depot credit → ACTIVE relay. */
   export function relayDeadlineMs(): number {
-    return (
-      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      RelayEpochBudget *
-      MsPerSecond
-    )
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * RelayEpochBudget * MsPerSecond
   }
 }

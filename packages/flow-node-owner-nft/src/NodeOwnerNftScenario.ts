@@ -31,11 +31,7 @@ async function assertRejectedAudit(
   reason: NodeOwnerRejectReason
 ): Promise<void> {
   const audit = await readNodeOwnerReg(ctx.wire, account)
-  Assert.strictEqual(
-    Number(audit?.status),
-    NodeOwnerRegStatus.Rejected,
-    `audit status must be REJECTED for ${account}`
-  )
+  Assert.strictEqual(Number(audit?.status), NodeOwnerRegStatus.Rejected, `audit status must be REJECTED for ${account}`)
   Assert.strictEqual(
     Number(audit?.reason),
     reason,
@@ -49,10 +45,7 @@ async function assertRejectedWithoutRow(
   account: string,
   reason: NodeOwnerRejectReason
 ): Promise<void> {
-  Assert.ok(
-    (await readNodeOwner(ctx.wire, account)) == null,
-    `nodeowners row must be absent for ${account}`
-  )
+  Assert.ok((await readNodeOwner(ctx.wire, account)) == null, `nodeowners row must be absent for ${account}`)
   await assertRejectedAudit(ctx, account, reason)
 }
 
@@ -82,25 +75,12 @@ async function assertNodeOwnerRegistrationAborts(
 }
 
 /** HappyPath verify — `nodeowners` row at tier 1 + CONFIRMED audit (reads). */
-async function verifyHappyPathConfirmed(
-  ctx: ClusterBuildContext
-): Promise<void> {
+async function verifyHappyPathConfirmed(ctx: ClusterBuildContext): Promise<void> {
   const registration = await readNodeOwner(ctx.wire, Constants.HappyPathAccount)
-  Assert.ok(
-    registration != null,
-    `missing nodeowners row for ${Constants.HappyPathAccount}`
-  )
-  Assert.strictEqual(
-    Number(registration.tier),
-    NodeOwnerTier.T1,
-    "registered tier must be T1"
-  )
+  Assert.ok(registration != null, `missing nodeowners row for ${Constants.HappyPathAccount}`)
+  Assert.strictEqual(Number(registration.tier), NodeOwnerTier.T1, "registered tier must be T1")
   const audit = await readNodeOwnerReg(ctx.wire, Constants.HappyPathAccount)
-  Assert.strictEqual(
-    Number(audit?.status),
-    NodeOwnerRegStatus.Confirmed,
-    "audit status must be CONFIRMED"
-  )
+  Assert.strictEqual(Number(audit?.status), NodeOwnerRegStatus.Confirmed, "audit status must be CONFIRMED")
 }
 
 /**
@@ -110,45 +90,27 @@ async function verifyHappyPathConfirmed(
  * budget is the single-hop envelope; the row appears as soon as the depot
  * processes the consensus envelope carrying the attestation.
  */
-async function verifyCommitPathConfirmed(
-  ctx: ClusterBuildContext
-): Promise<void> {
+async function verifyCommitPathConfirmed(ctx: ClusterBuildContext): Promise<void> {
   await pollUntil(
     `nodeowners row for ${Constants.CommitPathAccount} via OPP`,
-    async () =>
-      (await readNodeOwner(ctx.wire, Constants.CommitPathAccount)) != null,
+    async () => (await readNodeOwner(ctx.wire, Constants.CommitPathAccount)) != null,
     Constants.CommitPathDeadlineMs,
     Constants.CommitPathPollIntervalMs
   )
   const registration = await readNodeOwner(ctx.wire, Constants.CommitPathAccount)
-  Assert.strictEqual(
-    Number(registration.tier),
-    NodeOwnerTier.T1,
-    "commit-path registered tier must be T1"
-  )
+  Assert.strictEqual(Number(registration.tier), NodeOwnerTier.T1, "commit-path registered tier must be T1")
   const audit = await readNodeOwnerReg(ctx.wire, Constants.CommitPathAccount)
-  Assert.strictEqual(
-    Number(audit?.status),
-    NodeOwnerRegStatus.Confirmed,
-    "commit-path audit status must be CONFIRMED"
-  )
+  Assert.strictEqual(Number(audit?.status), NodeOwnerRegStatus.Confirmed, "commit-path audit status must be CONFIRMED")
 }
 
 /** Mint snapshot — record the pre-mint tier-1 `viewTotalSupply` into `ctx.outputs` (a read checkpoint). */
-async function snapshotTotalSupplyBefore(
-  ctx: ClusterBuildContext
-): Promise<void> {
+async function snapshotTotalSupplyBefore(ctx: ClusterBuildContext): Promise<void> {
   const contract = MintSteps.resolveMockWireNodes(ctx)
-  ctx.outputs.set(
-    MintSteps.TotalSupplyBeforeKey,
-    await contract.viewTotalSupply(NodeOwnerTier.T1)
-  )
+  ctx.outputs.set(MintSteps.TotalSupplyBeforeKey, await contract.viewTotalSupply(NodeOwnerTier.T1))
 }
 
 /** Mint verify — `viewTotalSupply` bumped by exactly the mint; the minter holds ≥ 1 (reads). */
-async function verifyMintSupplyAndBalance(
-  ctx: ClusterBuildContext
-): Promise<void> {
+async function verifyMintSupplyAndBalance(ctx: ClusterBuildContext): Promise<void> {
   const contract = MintSteps.resolveMockWireNodes(ctx),
     totalSupplyBefore = ctx.outputs.assert(MintSteps.TotalSupplyBeforeKey),
     totalSupplyAfter = await contract.viewTotalSupply(NodeOwnerTier.T1)
@@ -157,10 +119,7 @@ async function verifyMintSupplyAndBalance(
     Constants.ExpectedSupplyDelta,
     "totalSupply must bump by the minted amount"
   )
-  const minterBalance = await contract.balanceOf(
-    ctx.ethereum.wallet.address,
-    NodeOwnerTier.T1
-  )
+  const minterBalance = await contract.balanceOf(ctx.ethereum.wallet.address, NodeOwnerTier.T1)
   Assert.ok(
     minterBalance >= Constants.MinimumMinterBalance,
     `minter balance must be >= ${Constants.MinimumMinterBalance}`
@@ -268,12 +227,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
         Actor.Sysio,
         "rejected-wrong-key-owner",
         "no nodeowners row; audit REJECTED/ACCOUNT_KEY_MISMATCH",
-        ctx =>
-          assertRejectedWithoutRow(
-            ctx,
-            Constants.WrongKeyAccount,
-            NodeOwnerRejectReason.AccountKeyMismatch
-          ),
+        ctx => assertRejectedWithoutRow(ctx, Constants.WrongKeyAccount, NodeOwnerRejectReason.AccountKeyMismatch),
         stepOptions
       )
     )
@@ -298,12 +252,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
         Actor.Sysio,
         "rejected-name-invalid-owner",
         "no nodeowners row; audit REJECTED/NAME_INVALID",
-        ctx =>
-          assertRejectedWithoutRow(
-            ctx,
-            Constants.NameInvalidAccount,
-            NodeOwnerRejectReason.NameInvalid
-          ),
+        ctx => assertRejectedWithoutRow(ctx, Constants.NameInvalidAccount, NodeOwnerRejectReason.NameInvalid),
         stepOptions
       )
     )
@@ -328,12 +277,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
         Actor.Sysio,
         "rejected-ghost-owner",
         "no nodeowners row; audit REJECTED/OWNER_NOT_ACCOUNT",
-        ctx =>
-          assertRejectedWithoutRow(
-            ctx,
-            Constants.GhostAccount,
-            NodeOwnerRejectReason.OwnerNotAccount
-          ),
+        ctx => assertRejectedWithoutRow(ctx, Constants.GhostAccount, NodeOwnerRejectReason.OwnerNotAccount),
         stepOptions
       )
     )
@@ -377,12 +321,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
         Actor.Sysio,
         "rejected-duplicate-owner",
         "audit REJECTED/DUPLICATE after the replay",
-        ctx =>
-          assertRejectedAudit(
-            ctx,
-            Constants.DuplicateAccount,
-            NodeOwnerRejectReason.Duplicate
-          ),
+        ctx => assertRejectedAudit(ctx, Constants.DuplicateAccount, NodeOwnerRejectReason.Duplicate),
         stepOptions
       )
     )
@@ -411,10 +350,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
             ctx,
             Constants.InvalidTierAccount,
             Constants.TierBelowMinimum,
-            await RegistrationSteps.newEthereumPublicKey(
-              ctx,
-              Constants.TierBelowMinimumEthereumHdIndex
-            ),
+            await RegistrationSteps.newEthereumPublicKey(ctx, Constants.TierBelowMinimumEthereumHdIndex),
             Constants.InvalidTierAbortPattern
           ),
         stepOptions
@@ -428,10 +364,7 @@ export class NodeOwnerNftScenario extends FlowScenario {
             ctx,
             Constants.InvalidTierAccount,
             Constants.TierAboveMaximum,
-            await RegistrationSteps.newEthereumPublicKey(
-              ctx,
-              Constants.TierAboveMaximumEthereumHdIndex
-            ),
+            await RegistrationSteps.newEthereumPublicKey(ctx, Constants.TierAboveMaximumEthereumHdIndex),
             Constants.InvalidTierAbortPattern
           ),
         stepOptions

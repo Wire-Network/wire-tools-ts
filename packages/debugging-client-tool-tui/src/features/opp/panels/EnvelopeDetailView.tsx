@@ -1,16 +1,8 @@
 import React from "react"
 import { Box, Text } from "ink"
-import {
-  AttestationType,
-  type AttestationEntry,
-  type Envelope
-} from "@wireio/opp-typescript-models"
+import { AttestationType, type AttestationEntry, type Envelope } from "@wireio/opp-typescript-models"
 import type { DebugOPPEnvelopeRecord } from "../../../store/opp/OPPTypes.js"
-import {
-  decodeAttestation,
-  jsonSafe,
-  type DecodedAttestation
-} from "../util/AttestationCodec.js"
+import { decodeAttestation, jsonSafe, type DecodedAttestation } from "../util/AttestationCodec.js"
 import { attestationCountFor } from "../util/EpochSummary.js"
 
 export interface EnvelopeDetailViewProps {
@@ -34,9 +26,7 @@ export interface EnvelopeDetailViewProps {
  * cursor row expands the parent's `expanded` flag → we render the entry's
  * decoded data field as pretty-printed JSON below the heading.
  */
-export function EnvelopeDetailView(
-  props: EnvelopeDetailViewProps
-): React.ReactElement {
+export function EnvelopeDetailView(props: EnvelopeDetailViewProps): React.ReactElement {
   const { record, endpointName, cursor, expanded } = props,
     attestations = flattenAttestations(record.envelope),
     count = attestationCountFor(record.envelope)
@@ -51,9 +41,7 @@ export function EnvelopeDetailView(
       </Text>
       {attestations.map((att, i) => {
         const isCursor = cursor === i,
-          marker = isCursor
-            ? EnvelopeDetailView.CursorMarker
-            : EnvelopeDetailView.CursorPlaceholder,
+          marker = isCursor ? EnvelopeDetailView.CursorMarker : EnvelopeDetailView.CursorPlaceholder,
           typeName = attestationTypeName(att.type)
         return (
           <Box key={i} flexDirection="column">
@@ -61,10 +49,7 @@ export function EnvelopeDetailView(
               {marker} #{i} {typeName} · {att.dataSize} bytes
             </Text>
             {isCursor && expanded && (
-              <Box
-                marginLeft={EnvelopeDetailView.ExpansionIndent}
-                flexDirection="column"
-              >
+              <Box marginLeft={EnvelopeDetailView.ExpansionIndent} flexDirection="column">
                 {renderExpansion(att)}
               </Box>
             )}
@@ -76,13 +61,9 @@ export function EnvelopeDetailView(
 }
 
 /** Flatten every message's payload into a single array of attestation entries. */
-export function flattenAttestations(
-  envelope: Envelope | undefined
-): AttestationEntry[] {
+export function flattenAttestations(envelope: Envelope | undefined): AttestationEntry[] {
   if (!envelope) return []
-  return (envelope.messages ?? []).flatMap(
-    m => m.payload?.attestations ?? []
-  )
+  return (envelope.messages ?? []).flatMap(m => m.payload?.attestations ?? [])
 }
 
 /** Reverse-map `AttestationType` numeric values to their named label. */
@@ -107,11 +88,7 @@ function attestationTypeName(type: AttestationType | number): string {
 function renderExpansion(att: AttestationEntry): React.ReactNode {
   const decoded: DecodedAttestation = decodeAttestation(att)
   if (decoded.kind === "decoded") {
-    const body = JSON.stringify(
-      jsonSafe(decoded.value),
-      null,
-      EnvelopeDetailView.JsonIndent
-    )
+    const body = JSON.stringify(jsonSafe(decoded.value), null, EnvelopeDetailView.JsonIndent)
     return (
       <>
         <Text dimColor>{decoded.typeName}</Text>
@@ -119,11 +96,7 @@ function renderExpansion(att: AttestationEntry): React.ReactNode {
       </>
     )
   }
-  const body = JSON.stringify(
-    jsonSafe(decoded.entry),
-    null,
-    EnvelopeDetailView.JsonIndent
-  )
+  const body = JSON.stringify(jsonSafe(decoded.entry), null, EnvelopeDetailView.JsonIndent)
   return (
     <>
       <Text color="yellow" dimColor>

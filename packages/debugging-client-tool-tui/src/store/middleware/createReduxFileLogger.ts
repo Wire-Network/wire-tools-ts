@@ -35,11 +35,7 @@ function stringifyArgs(args: readonly unknown[]): string {
 function safeJson(value: unknown): string {
   try {
     return JSON.stringify(value, (_k, v) =>
-      typeof v === "bigint"
-        ? v.toString()
-        : v instanceof Uint8Array
-          ? `<bytes:${v.byteLength}>`
-          : v
+      typeof v === "bigint" ? v.toString() : v instanceof Uint8Array ? `<bytes:${v.byteLength}>` : v
     )
   } catch (err) {
     return `<unserializable: ${(err as Error).message ?? String(err)}>`
@@ -68,14 +64,9 @@ function isReduxLoggingEnabled(): boolean {
  * dropped so we don't crash the store.
  */
 function createFileConsoleShim(): FileConsoleShim {
-  const safeLog = (
-    level: Level.debug | Level.info | Level.warn | Level.error,
-    args: unknown[]
-  ): void => {
+  const safeLog = (level: Level.debug | Level.info | Level.warn | Level.error, args: unknown[]): void => {
     try {
-      LoggingManager.getLogger(ReduxFileLogger.Category)[level](
-        stringifyArgs(args)
-      )
+      LoggingManager.getLogger(ReduxFileLogger.Category)[level](stringifyArgs(args))
     } catch {
       /* swallow — pre-configure dispatches end up here */
     }

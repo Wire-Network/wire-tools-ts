@@ -1,25 +1,18 @@
 import type { ProcessLivenessSnapshot } from "@wireio/debugging-shared"
 import type { RootState } from "../RootState.js"
 import { SliceName } from "../StoreTypes.js"
-import type {
-  LogViewerState,
-  ProcessMonitorState
-} from "./ProcessMonitorTypes.js"
+import type { LogViewerState, ProcessMonitorState } from "./ProcessMonitorTypes.js"
 
 /** Full process-monitor slice. */
-export const selectProcessMonitor = (state: RootState): ProcessMonitorState =>
-  state[SliceName.ProcessMonitor]
+export const selectProcessMonitor = (state: RootState): ProcessMonitorState => state[SliceName.ProcessMonitor]
 
 /** Label → liveness map. */
-export const selectProcessMap = (
-  state: RootState
-): Record<string, ProcessLivenessSnapshot> =>
+export const selectProcessMap = (state: RootState): Record<string, ProcessLivenessSnapshot> =>
   state[SliceName.ProcessMonitor].processes
 
 /** Count of alive processes — drives the status-bar badge. */
 export const selectAliveCount = (state: RootState): number =>
-  Object.values(state[SliceName.ProcessMonitor].processes).filter(p => p.alive)
-    .length
+  Object.values(state[SliceName.ProcessMonitor].processes).filter(p => p.alive).length
 
 /**
  * Total pid-source count tracked by the process monitor — covers WIRE nodes,
@@ -31,5 +24,4 @@ export const selectTotalCount = (state: RootState): number =>
   Object.keys(state[SliceName.ProcessMonitor].processes).length
 
 /** Current log-viewer user intent. */
-export const selectLogViewer = (state: RootState): LogViewerState =>
-  state[SliceName.ProcessMonitor].logViewer
+export const selectLogViewer = (state: RootState): LogViewerState => state[SliceName.ProcessMonitor].logViewer

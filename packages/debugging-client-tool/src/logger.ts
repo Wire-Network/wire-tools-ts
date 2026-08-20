@@ -1,10 +1,4 @@
-import {
-  getLogger,
-  getLoggingManager,
-  type Appender,
-  type Logger,
-  type LogRecord
-} from "@wireio/shared"
+import { getLogger, getLoggingManager, type Appender, type Logger, type LogRecord } from "@wireio/shared"
 
 /** Category (prefix) marking a logger whose records are raw stdout — the clean data channel. */
 const StdoutCategory = "stdout"
@@ -39,13 +33,9 @@ class StdStreamAppender implements Appender {
       process.stderr.write(record.message + "\n")
       return
     }
-    const args = (record.args ?? [])
-      .map(arg => (typeof arg === "string" ? arg : JSON.stringify(arg)))
-      .join(" ")
+    const args = (record.args ?? []).map(arg => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" ")
     const suffix = args.length > 0 ? ` ${args}` : ""
-    process.stderr.write(
-      `[${record.category}] (${record.level}) ${record.message}${suffix}\n`
-    )
+    process.stderr.write(`[${record.category}] (${record.level}) ${record.message}${suffix}\n`)
   }
 }
 

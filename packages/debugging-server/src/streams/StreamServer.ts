@@ -50,10 +50,7 @@ interface ActiveSubscription {
  */
 export class StreamServer {
   private wss: WebSocketServer | null = null
-  private readonly subscriptions = new Map<
-    WebSocket,
-    Map<number, ActiveSubscription>
-  >()
+  private readonly subscriptions = new Map<WebSocket, Map<number, ActiveSubscription>>()
 
   /**
    * @param clusterAccess Drives the `ProcessLiveness` stream's snapshot loop.
@@ -86,9 +83,7 @@ export class StreamServer {
 
   /** Close the WS server and tear down every active subscription. */
   async detach(): Promise<void> {
-    const allSubs = [...this.subscriptions.values()].flatMap(perConn => [
-      ...perConn.values()
-    ])
+    const allSubs = [...this.subscriptions.values()].flatMap(perConn => [...perConn.values()])
     await Promise.all(allSubs.map(sub => sub.stream.stop()))
     this.subscriptions.clear()
     this.wss?.clients.forEach(ws => {
@@ -116,9 +111,7 @@ export class StreamServer {
   private async onMessage(ws: WebSocket, raw: string): Promise<void> {
     // Parse + validate the wire frame via the codec (replaces the hand-rolled
     // JSON.parse + isStreamFrame guard); a malformed frame is a ParseError.
-    const frame = Either.try(() =>
-      StreamFrameSchemaCodec.deserialize(raw)
-    ).getOrElse(null)
+    const frame = Either.try(() => StreamFrameSchemaCodec.deserialize(raw)).getOrElse(null)
     if (frame == null) {
       sendError(ws, StreamErrorCode.ParseError, "Frame is not a valid StreamFrame")
       return
@@ -131,11 +124,7 @@ export class StreamServer {
         await this.handleUnsubscribe(ws, f as UnsubscribeFrame)
       })
       .otherwise(() => {
-        sendError(
-          ws,
-          StreamErrorCode.InvalidFrameType,
-          `Server does not accept frames of type ${frame.type}`
-        )
+        sendError(ws, StreamErrorCode.InvalidFrameType, `Server does not accept frames of type ${frame.type}`)
       })
   }
 
@@ -150,19 +139,12 @@ export class StreamServer {
   //  Subscribe / Unsubscribe
   // -------------------------------------------------------------------------
 
-  private async handleSubscribe(
-    ws: WebSocket,
-    frame: SubscribeFrame<StreamTopic>
-  ): Promise<void> {
+  private async handleSubscribe(ws: WebSocket, frame: SubscribeFrame<StreamTopic>): Promise<void> {
     const perConn = this.subscriptions.get(ws)
     if (!perConn) return
     const stream = this.createStream(frame)
     if (!stream) {
-      sendError(
-        ws,
-        StreamErrorCode.UnknownTopic,
-        `No such topic: ${frame.topic}`
-      )
+      sendError(ws, StreamErrorCode.UnknownTopic, `No such topic: ${frame.topic}`)
       return
     }
     // Acknowledge BEFORE starting the stream so the consumer sees
@@ -174,18 +156,11 @@ export class StreamServer {
       await stream.start(payload => sendEvent(ws, frame.id, payload))
     } catch (err) {
       perConn.delete(frame.id)
-      sendError(
-        ws,
-        StreamErrorCode.Internal,
-        `Subscribe failed: ${err.message ?? err}`
-      )
+      sendError(ws, StreamErrorCode.Internal, `Subscribe failed: ${err.message ?? err}`)
     }
   }
 
-  private async handleUnsubscribe(
-    ws: WebSocket,
-    frame: UnsubscribeFrame
-  ): Promise<void> {
+  private async handleUnsubscribe(ws: WebSocket, frame: UnsubscribeFrame): Promise<void> {
     const perConn = this.subscriptions.get(ws)
     if (!perConn) return
     const sub = perConn.get(frame.id)
@@ -199,29 +174,17 @@ export class StreamServer {
   //  Stream factory
   // -------------------------------------------------------------------------
 
-  private createStream(
-    frame: SubscribeFrame<StreamTopic>
-  ): ServerSideStream<unknown> {
+  private createStream(frame: SubscribeFrame<StreamTopic>): ServerSideStream<unknown> {
     return match(frame.topic)
       .with(StreamTopic.LogTail, () => {
         const params = frame.params as LogTailParams
-        return new LogTailStream(
-          params,
-          this.clusterPath
-        ) as ServerSideStream<unknown>
+        return new LogTailStream(params, this.clusterPath) as ServerSideStream<unknown>
       })
       .with(
         StreamTopic.ProcessLiveness,
-        () =>
-          new ProcessLivenessStream(
-            this.clusterAccess
-          ) as ServerSideStream<unknown>
+        () => new ProcessLivenessStream(this.clusterAccess) as ServerSideStream<unknown>
       )
-      .with(
-        StreamTopic.EnvelopeWatch,
-        () =>
-          new EnvelopeWatchStream(this.clusterPath) as ServerSideStream<unknown>
-      )
+      .with(StreamTopic.EnvelopeWatch, () => new EnvelopeWatchStream(this.clusterPath) as ServerSideStream<unknown>)
       .otherwise(() => null)
   }
 }
@@ -253,11 +216,7 @@ function sendClosed(ws: WebSocket, id: number, reason: ClosedReason): void {
   safeSend(ws, frame)
 }
 
-function sendError(
-  ws: WebSocket,
-  code: StreamErrorCode,
-  message: string
-): void {
+function sendError(ws: WebSocket, code: StreamErrorCode, message: string): void {
   const frame: ErrorFrame = { type: StreamFrameType.Error, code, message }
   safeSend(ws, frame)
 }

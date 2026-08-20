@@ -7,22 +7,13 @@ import {
   type LogTailEvent,
   type ProcessLivenessEvent
 } from "@wireio/debugging-shared"
-import {
-  DebugOutpostEndpointsType,
-  Envelope
-} from "@wireio/opp-typescript-models"
+import { DebugOutpostEndpointsType, Envelope } from "@wireio/opp-typescript-models"
 
 import { DebuggingServer } from "@wireio/debugging-server"
 
-import {
-  LocalFileDebuggingClient,
-  NetDebuggingClient
-} from "@wireio/debugging-client-shared"
+import { LocalFileDebuggingClient, NetDebuggingClient } from "@wireio/debugging-client-shared"
 
-import {
-  makeFixtureCluster,
-  type FixtureCluster
-} from "../local/fixtureCluster.js"
+import { makeFixtureCluster, type FixtureCluster } from "../local/fixtureCluster.js"
 
 function makeEnvelopeBase64(epochIndex: number): string {
   const bytes = Envelope.toBinary(
@@ -71,9 +62,7 @@ describe("NetDebuggingClient", () => {
 
   describe("create()", () => {
     it("rejects when the server isn't reachable", async () => {
-      await expect(
-        NetDebuggingClient.create({ baseUrl: "http://127.0.0.1:1" })
-      ).rejects.toThrow()
+      await expect(NetDebuggingClient.create({ baseUrl: "http://127.0.0.1:1" })).rejects.toThrow()
     })
   })
 
@@ -123,9 +112,7 @@ describe("NetDebuggingClient", () => {
     })
 
     it("rejects path-traversal", async () => {
-      await expect(client.getLogStat("/etc/passwd")).rejects.toThrow(
-        /Path traversal rejected/
-      )
+      await expect(client.getLogStat("/etc/passwd")).rejects.toThrow(/Path traversal rejected/)
     })
   })
 
@@ -151,9 +138,7 @@ describe("NetDebuggingClient", () => {
 
       const got = await client.getEnvelope(put.key)
       expect(got.epochIndex).toBe(7)
-      expect(got.endpointsType).toBe(
-        DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT
-      )
+      expect(got.endpointsType).toBe(DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT)
       expect(got.batchOpNames).toEqual(["batchop.a"])
     })
   })
@@ -195,9 +180,7 @@ describe("NetDebuggingClient", () => {
       })
       await new Promise(r => setTimeout(r, 600))
       sub.close(ClosedReason.ClientRequested)
-      const hydrated = events
-        .filter(e => e.kind === EnvelopeEventKind.Hydrated)
-        .map(e => e.epoch)
+      const hydrated = events.filter(e => e.kind === EnvelopeEventKind.Hydrated).map(e => e.epoch)
       expect(hydrated).toContain(1)
     }, 10_000)
   })

@@ -6,19 +6,13 @@ import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { KiodProcess } from "../../cluster/processes/KiodProcess.js"
 import { NodeopProcess } from "../../cluster/processes/NodeopProcess.js"
 import { SolanaValidatorProcess } from "../../cluster/processes/SolanaValidatorProcess.js"
-import {
-  DaemonConfig,
-  type DaemonConfigSources
-} from "../../config/DaemonConfig.js"
+import { DaemonConfig, type DaemonConfigSources } from "../../config/DaemonConfig.js"
 import { NodeConfig } from "../../config/NodeConfig.js"
 import { StartScriptRenderer } from "../../config/renderers/StartScriptRenderer.js"
 import { Report } from "../../report/Report.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../ClusterBuildStep.js"
 import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
 import type { StepInput } from "../StepRunner.js"
 import { NodeopProcessSteps } from "./processes/NodeopProcessSteps.js"
@@ -55,9 +49,7 @@ export namespace StartScriptSteps {
    * @param ctx - The build context.
    * @returns The sources for {@link DaemonConfig.plan}.
    */
-  export function resolveSources<C extends ClusterBuildContext>(
-    ctx: C
-  ): DaemonConfigSources {
+  export function resolveSources<C extends ClusterBuildContext>(ctx: C): DaemonConfigSources {
     const config = ctx.config,
       // The daemon SET is decided in ONE place. Re-writing
       // `externalOutposts != null` / `debuggingServerEnabled === false` here
@@ -72,11 +64,7 @@ export namespace StartScriptSteps {
           {
             node,
             operator,
-            extraArgs: NodeopProcessSteps.resolveOperatorDaemonArgs(
-              ctx,
-              node,
-              operator
-            )
+            extraArgs: NodeopProcessSteps.resolveOperatorDaemonArgs(ctx, node, operator)
           },
           { genesisTimestamp, supportsTraceNoAbis: false }
         )
@@ -84,15 +72,11 @@ export namespace StartScriptSteps {
     return {
       nodeop,
       // Each daemon is resolved iff the ONE enumeration plans it.
-      anvil: labels.has(AnvilProcess.ProcessLabel)
-        ? resolveAnvilConfig(config)
-        : undefined,
+      anvil: labels.has(AnvilProcess.ProcessLabel) ? resolveAnvilConfig(config) : undefined,
       solanaValidator: labels.has(SolanaValidatorProcess.ProcessLabel)
         ? resolveSolanaValidatorConfig(config)
         : undefined,
-      kiod: labels.has(KiodProcess.ProcessLabel)
-        ? resolveKiodConfig(config)
-        : undefined,
+      kiod: labels.has(KiodProcess.ProcessLabel) ? resolveKiodConfig(config) : undefined,
       debuggingServer: labels.has(DaemonConfig.DebuggingServerSubpath)
         ? {
             address: config.bind.debuggingServer.address,
@@ -108,11 +92,7 @@ export namespace StartScriptSteps {
       {
         host: config.bind.anvil.address,
         chainId: AnvilProcess.DefaultChainId,
-        stateFile: Path.join(
-          config.dataPath,
-          AnvilProcess.StateSubpath,
-          AnvilProcess.StateFilename
-        ),
+        stateFile: Path.join(config.dataPath, AnvilProcess.StateSubpath, AnvilProcess.StateFilename),
         slotsInAnEpoch: AnvilProcess.SlotsInAnEpoch,
         blockTimeSec: AnvilProcess.BlockTimeSec
       },
@@ -125,10 +105,7 @@ export namespace StartScriptSteps {
     return SolanaValidatorProcess.resolveConfig(
       {
         address: config.bind.solana.address,
-        ledgerPath: Path.join(
-          config.dataPath,
-          SolanaValidatorProcess.LedgerSubpath
-        ),
+        ledgerPath: Path.join(config.dataPath, SolanaValidatorProcess.LedgerSubpath),
         // The SAME resolution `runStart` uses. Omitting it renders a validator
         // argv with no `--upgradeable-program`, so a script-started validator
         // comes up WITHOUT the opp-outpost program — surfacing as a
@@ -172,18 +149,13 @@ export namespace StartScriptSteps {
    * @param sources - The per-daemon configs (see {@link resolveSources}).
    * @returns The absolute paths written.
    */
-  export function writeAll(
-    config: ClusterConfig,
-    sources: DaemonConfigSources
-  ): string[] {
+  export function writeAll(config: ClusterConfig, sources: DaemonConfigSources): string[] {
     DaemonConfig.existingStartScriptFiles(
       config.dataPath,
       Fs.existsSync,
       Fs.readdirSync as (path: string) => string[]
     ).forEach(file => Fs.rmSync(file, { force: true }))
-    return DaemonConfig.plan(config, sources).map(daemon =>
-      write(config, daemon)
-    )
+    return DaemonConfig.plan(config, sources).map(daemon => write(config, daemon))
   }
 
   /**
@@ -200,14 +172,9 @@ export namespace StartScriptSteps {
   export function write(config: ClusterConfig, daemon: DaemonConfig): string {
     const file = DaemonConfig.startScriptFile(daemon.daemonPath)
     mkdirs(daemon.daemonPath)
-    Fs.writeFileSync(
-      file,
-      new StartScriptRenderer(
-        daemon,
-        DaemonConfig.clusterRelocations(config)
-      ).render(),
-      { mode: ExecutableMode }
-    )
+    Fs.writeFileSync(file, new StartScriptRenderer(daemon, DaemonConfig.clusterRelocations(config)).render(), {
+      mode: ExecutableMode
+    })
     // Set explicitly as well as at write: `writeFileSync`'s mode applies only
     // when it CREATES the file, so a re-render over an existing script (Rebind,
     // or a repeated create into the same tree) would otherwise keep the old
@@ -240,15 +207,7 @@ export namespace StartScriptSteps {
     labels: readonly string[]
   ): ClusterBuildPhase<C> {
     labels.forEach(label =>
-      parent.push(
-        planEmit<C>(
-          Report.Actor.Sysio,
-          `emit-start-script-${label}`,
-          `emit ${label} start.sh`,
-          {},
-          label
-        )
-      )
+      parent.push(planEmit<C>(Report.Actor.Sysio, `emit-start-script-${label}`, `emit ${label} start.sh`, {}, label))
     )
     return parent
   }
@@ -290,10 +249,9 @@ export namespace StartScriptSteps {
     // Namespace-qualified so the resolution is a seam a test can substitute —
     // building a context rich enough to resolve every operator is not the
     // subject of this step's own tests.
-    const daemon = DaemonConfig.plan(
-      ctx.config,
-      StartScriptSteps.resolveSources(ctx)
-    ).find(candidate => candidate.label === input.label)
+    const daemon = DaemonConfig.plan(ctx.config, StartScriptSteps.resolveSources(ctx)).find(
+      candidate => candidate.label === input.label
+    )
     // ASSERT, never a silent return: a label the enumeration no longer plans
     // means the two have drifted, and returning quietly would record a PASSING
     // Report step that wrote no file — defeating exactly the per-daemon

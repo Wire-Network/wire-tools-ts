@@ -10,9 +10,7 @@ const K1_OUTPUT =
   "Private key: PVT_K1_2bfGi9rYsXQSXXTvJbDAPhHLQUojjaNLomdm3cEJ1XTdfThJ4i\n" +
   "Public key: PUB_K1_6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV"
 const BLS_OUTPUT =
-  "Private key: PVT_BLS_abc123\n" +
-  "Public key: PUB_BLS_def456\n" +
-  "Proof of Possession: SIG_BLS_ghi789"
+  "Private key: PVT_BLS_abc123\n" + "Public key: PUB_BLS_def456\n" + "Proof of Possession: SIG_BLS_ghi789"
 /** anvil's deterministic mnemonic — HD-derived EM wallets are stable + well-known. */
 const AnvilMnemonic = "test test test test test test test test test test test junk"
 
@@ -81,15 +79,13 @@ describe("KeyGenerator", () => {
   })
 
   it("create(EM) requires an ethereumHdIndex", async () => {
-    await expect(KeyGenerator.create(KeyType.EM, context())).rejects.toThrow(
-      /ethereumHdIndex is required/
-    )
+    await expect(KeyGenerator.create(KeyType.EM, context())).rejects.toThrow(/ethereumHdIndex is required/)
   })
 
   it("throws a parse error on unrecognized clio output", async () => {
-    await expect(
-      KeyGenerator.create(KeyType.K1, context("no keys here"))
-    ).rejects.toThrow(/Failed to parse K1 private key/)
+    await expect(KeyGenerator.create(KeyType.K1, context("no keys here"))).rejects.toThrow(
+      /Failed to parse K1 private key/
+    )
   })
 
   it("toSignatureProvider formats WIRE (K1/BLS) nodeop specs via one generic entry", () => {
@@ -135,9 +131,7 @@ describe("KeyGenerator", () => {
 
   it("toSignatureProvider asserts a providerName for EM/ED specs", async () => {
     const solana = await KeyGenerator.create(KeyType.ED, context())
-    expect(() => KeyGenerator.toSignatureProvider(solana)).toThrow(
-      /providerName is required for ED providers/
-    )
+    expect(() => KeyGenerator.toSignatureProvider(solana)).toThrow(/providerName is required for ED providers/)
   })
 
   it("exposes typed dev bios keys", () => {
@@ -217,35 +211,19 @@ describe("KeyGenerator", () => {
         publicKey: solana.publicKey,
         awsSecretId: "/wire/test/batchop.a/ED"
       }
-    const ethereumSpec = KeyGenerator.toSignatureProvider(
-      ethereumRefsOnly,
-      "eth-batchopaaaa",
-      ssmSource
-    )
-    expect(ethereumSpec).toBe(
-      KeyGenerator.toSignatureProvider(ethereum, "eth-batchopaaaa", ssmSource)
-    )
+    const ethereumSpec = KeyGenerator.toSignatureProvider(ethereumRefsOnly, "eth-batchopaaaa", ssmSource)
+    expect(ethereumSpec).toBe(KeyGenerator.toSignatureProvider(ethereum, "eth-batchopaaaa", ssmSource))
     expect(ethereumSpec.endsWith(",SSM:/wire/test/batchop.a/EM")).toBe(true)
-    const solanaSpec = KeyGenerator.toSignatureProvider(
-      solanaRefsOnly,
-      "sol-batchopaaaa",
-      ssmSource
-    )
-    expect(solanaSpec).toBe(
-      KeyGenerator.toSignatureProvider(solana, "sol-batchopaaaa", ssmSource)
-    )
+    const solanaSpec = KeyGenerator.toSignatureProvider(solanaRefsOnly, "sol-batchopaaaa", ssmSource)
+    expect(solanaSpec).toBe(KeyGenerator.toSignatureProvider(solana, "sol-batchopaaaa", ssmSource))
     // The base58 public key still renders — it comes off the STORED pair.
     expect(solanaSpec.split(",")[3]).toMatch(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)
   })
 
   it("keySource selects the KEY default source for a KEY provider config", () => {
-    expect(
-      KeyGenerator.keySource(
-        { type: SignatureProviderType.KEY, ssm: null },
-        "s",
-        "u"
-      )
-    ).toEqual(KeyGenerator.DefaultKeySource)
+    expect(KeyGenerator.keySource({ type: SignatureProviderType.KEY, ssm: null }, "s", "u")).toEqual(
+      KeyGenerator.DefaultKeySource
+    )
   })
 })
 
@@ -290,9 +268,7 @@ describe("keygen extra records", () => {
     const { StepExtraRecorder } = await import("@wireio/cluster-tool/report")
     const context = KeyGenerator.context("/usr/bin/clio", "/build", AnvilMnemonic)
     const recorder = new StepExtraRecorder()
-    await StepExtraRecorder.runWith(recorder, () =>
-      KeyGenerator.create(KeyType.EM, context, { ethereumHdIndex: 3 })
-    )
+    await StepExtraRecorder.runWith(recorder, () => KeyGenerator.create(KeyType.EM, context, { ethereumHdIndex: 3 }))
     expect(recorder.calls[0].client).toBe("ethers")
     expect(recorder.calls[0].derivation).toBe(`${KeyGenerator.EthereumDerivationPath}3`)
     expect(recorder.calls[0].purpose).toBeNull()

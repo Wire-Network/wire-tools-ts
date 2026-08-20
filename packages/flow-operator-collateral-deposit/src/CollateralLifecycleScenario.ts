@@ -27,13 +27,9 @@ function depositorAccount(ctx: ClusterBuildContext): string {
 }
 
 /** The depositor's operator row on `sysio.opreg::operators` (a read). */
-async function readDepositorRow(
-  ctx: ClusterBuildContext
-): Promise<SysioContracts.SysioOpregOperatorEntryType> {
+async function readDepositorRow(ctx: ClusterBuildContext): Promise<SysioContracts.SysioOpregOperatorEntryType> {
   const account = depositorAccount(ctx),
-    { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.opreg)
-      .tables.operators.query({ limit: 100 })
+    { rows } = await ctx.wire.getSysioContract(SysioContractName.opreg).tables.operators.query({ limit: 100 })
   return rows.find(row => row.account === account)
 }
 
@@ -42,9 +38,7 @@ async function readWithdrawQueueRows(
   ctx: ClusterBuildContext
 ): Promise<SysioContracts.SysioOpregWithdrawRequestType[]> {
   const account = depositorAccount(ctx),
-    { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.opreg)
-      .tables.wtdwqueue.query({ limit: 100 })
+    { rows } = await ctx.wire.getSysioContract(SysioContractName.opreg).tables.wtdwqueue.query({ limit: 100 })
   return rows.filter(row => row.account === account)
 }
 
@@ -111,11 +105,7 @@ export class CollateralLifecycleScenario extends FlowScenario {
     )
 
     // ── 2. The depositor's daemon (schedule-relay requirement once ACTIVE) ──
-    ClusterBuildPhase.create(
-      cluster,
-      "DepositorDaemon",
-      "Start the depositor's batch-operator daemon"
-    ).push(
+    ClusterBuildPhase.create(cluster, "DepositorDaemon", "Start the depositor's batch-operator daemon").push(
       OperatorDaemonTool.planDaemonStart(
         Actor.BatchOperator,
         "start-depositor-daemon",
@@ -126,11 +116,7 @@ export class CollateralLifecycleScenario extends FlowScenario {
     )
 
     // ── 3. ETH bond → depot balance row ──
-    ClusterBuildPhase.create(
-      cluster,
-      "DepositEthereum",
-      "Bond ETH collateral; depot credits the balance row"
-    ).push(
+    ClusterBuildPhase.create(cluster, "DepositEthereum", "Bond ETH collateral; depot credits the balance row").push(
       EthereumCollateralTool.planDeposit(
         Actor.User,
         "deposit-ethereum",
@@ -152,8 +138,7 @@ export class CollateralLifecycleScenario extends FlowScenario {
               const operator = await readDepositorRow(ctx)
               return (operator?.balances ?? []).some(
                 balance =>
-                  slugValue(balance.chain_code) ===
-                    Constants.EthereumChainCode &&
+                  slugValue(balance.chain_code) === Constants.EthereumChainCode &&
                   Number(balance.balance) >= Number(Constants.BondAmount)
               )
             },
@@ -166,11 +151,7 @@ export class CollateralLifecycleScenario extends FlowScenario {
     )
 
     // ── 4. SOL bond → all-chain rule met → ACTIVE ──
-    ClusterBuildPhase.create(
-      cluster,
-      "DepositSolana",
-      "Bond SOL collateral; operator flips ACTIVE"
-    ).push(
+    ClusterBuildPhase.create(cluster, "DepositSolana", "Bond SOL collateral; operator flips ACTIVE").push(
       SolanaCollateralTool.planDeposit(
         Actor.User,
         "deposit-solana",
@@ -208,11 +189,7 @@ export class CollateralLifecycleScenario extends FlowScenario {
     )
 
     // ── 5. Withdraw half the ETH bond → depot queues it ──
-    ClusterBuildPhase.create(
-      cluster,
-      "WithdrawRequest",
-      "Release half the ETH bond; depot enqueues wtdwqueue"
-    ).push(
+    ClusterBuildPhase.create(cluster, "WithdrawRequest", "Release half the ETH bond; depot enqueues wtdwqueue").push(
       EthereumCollateralTool.planWithdrawal(
         Actor.User,
         "withdraw-ethereum",
@@ -233,8 +210,7 @@ export class CollateralLifecycleScenario extends FlowScenario {
               const requests = await readWithdrawQueueRows(ctx)
               return requests.some(
                 request =>
-                  slugValue(request.chain_code) ===
-                    Constants.EthereumChainCode &&
+                  slugValue(request.chain_code) === Constants.EthereumChainCode &&
                   Number(request.amount) === Number(Constants.WithdrawAmount)
               )
             },

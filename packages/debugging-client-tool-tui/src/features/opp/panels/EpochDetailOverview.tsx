@@ -20,9 +20,7 @@ export interface EpochDetailOverviewProps {
  * envelope, and the `checksum` metadata for each present envelope. Lives
  * above the scrollable {@link EnvelopeDetailView} stack.
  */
-export function EpochDetailOverview(
-  props: EpochDetailOverviewProps
-): React.ReactElement {
+export function EpochDetailOverview(props: EpochDetailOverviewProps): React.ReactElement {
   const { record } = props
   if (!record) {
     return (
@@ -48,9 +46,7 @@ export function EpochDetailOverview(
             return [
               <Text key={name}>
                 {paddedName}
-                <Text color={EpochTrackerPanel.PendingColor}>
-                  {EpochDetailOverview.UnreceivedLabel}
-                </Text>
+                <Text color={EpochTrackerPanel.PendingColor}>{EpochDetailOverview.UnreceivedLabel}</Text>
               </Text>
             ]
           }
@@ -80,6 +76,5 @@ export namespace EpochDetailOverview {
   /** Inline label for an endpoint we haven't received yet. */
   export const UnreceivedLabel = "unreceived" as const
   /** Empty-state copy when the route param doesn't match any cached epoch. */
-  export const MissingEpochText =
-    "Epoch not cached. Press Esc to return to the tracker." as const
+  export const MissingEpochText = "Epoch not cached. Press Esc to return to the tracker." as const
 }

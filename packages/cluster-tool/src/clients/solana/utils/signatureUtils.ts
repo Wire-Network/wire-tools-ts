@@ -9,17 +9,10 @@ const log = getLogger("signatureUtils")
  * Reject if `promise` does not settle within `ms`. Bounds an otherwise-unbounded
  * network call so a hung peer cannot stall a polling deadline.
  */
-function withTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-  label: string
-): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`${label} timed out after ${ms}ms`)),
-      ms
-    )
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
   })
   return Promise.race([promise, timeout]).finally(() => {
     if (timer != null) clearTimeout(timer)
@@ -67,9 +60,7 @@ export async function confirmSignature(
   // Confirmation deadlines are calibrated wall-clock constants — the flow
   // timing scale stretches them uniformly (a starved shared-host validator
   // legitimately confirms slower; see utils/asyncUtils.FlowTimeoutScaleEnvVar).
-  const deadlineMs = scaleTimeoutMs(
-      options.deadlineMs ?? confirmSignature.DefaultDeadlineMs
-    ),
+  const deadlineMs = scaleTimeoutMs(options.deadlineMs ?? confirmSignature.DefaultDeadlineMs),
     {
       intervalMs = confirmSignature.DefaultIntervalMs,
       rpcTimeoutMs = confirmSignature.DefaultRpcTimeoutMs,
@@ -108,15 +99,10 @@ export async function confirmSignature(
       confirmationStatus === SolanaClient.ConfirmationStatus.finalized
     )
       return
-    if (txError)
-      throw new Error(`${label} tx failed: ${JSON.stringify(txError)}`)
+    if (txError) throw new Error(`${label} tx failed: ${JSON.stringify(txError)}`)
 
     if (options.rebroadcast && Date.now() - lastRebroadcast >= rebroadcastMs) {
-      await withTimeout(
-        Promise.resolve(options.rebroadcast()),
-        rpcTimeoutMs,
-        `${label} rebroadcast`
-      ).catch(error =>
+      await withTimeout(Promise.resolve(options.rebroadcast()), rpcTimeoutMs, `${label} rebroadcast`).catch(error =>
         log.warn(
           `[confirmSignature/${label}] rebroadcast failed: ${error instanceof Error ? error.message : String(error)}`
         )
@@ -125,9 +111,7 @@ export async function confirmSignature(
     }
     await sleep(intervalMs)
   }
-  throw new Error(
-    `${label} tx ${signature} not confirmed within ${deadlineMs}ms`
-  )
+  throw new Error(`${label} tx ${signature} not confirmed within ${deadlineMs}ms`)
 }
 
 export namespace confirmSignature {

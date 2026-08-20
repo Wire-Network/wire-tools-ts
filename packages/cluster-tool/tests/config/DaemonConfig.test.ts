@@ -2,11 +2,7 @@ import Path from "node:path"
 import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { DaemonConfig, DaemonKind } from "@wireio/cluster-tool/config"
 import { StartScriptVariable } from "@wireio/cluster-tool/utils"
-import {
-  AnvilProcess,
-  KiodProcess,
-  SolanaValidatorProcess
-} from "@wireio/cluster-tool/cluster/processes"
+import { AnvilProcess, KiodProcess, SolanaValidatorProcess } from "@wireio/cluster-tool/cluster/processes"
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
 
 describe("DaemonConfig", () => {
@@ -26,9 +22,7 @@ describe("DaemonConfig", () => {
     })
 
     it("leaves an undashed label alone", () => {
-      expect(DaemonConfig.daemonPath("/c/data", "kiod")).toBe(
-        Path.join("/c/data", "kiod")
-      )
+      expect(DaemonConfig.daemonPath("/c/data", "kiod")).toBe(Path.join("/c/data", "kiod"))
     })
   })
 
@@ -76,41 +70,24 @@ describe("DaemonConfig", () => {
     /** A fake fs: `dirs` are entries of dataPath; `files` exist. */
     function probes(dirs: string[], files: string[]) {
       return {
-        existsSync: (path: string) =>
-          path === "/c/data" || files.includes(path),
+        existsSync: (path: string) => path === "/c/data" || files.includes(path),
         readdirSync: () => dirs
       }
     }
 
     it("finds a start.sh one directory deep", () => {
-      const { existsSync, readdirSync } = probes(
-        ["anvil", "node_00"],
-        ["/c/data/anvil/start.sh"]
-      )
-      expect(
-        DaemonConfig.existingStartScriptFiles(
-          "/c/data",
-          existsSync,
-          readdirSync
-        )
-      ).toEqual([Path.join("/c/data", "anvil", "start.sh")])
+      const { existsSync, readdirSync } = probes(["anvil", "node_00"], ["/c/data/anvil/start.sh"])
+      expect(DaemonConfig.existingStartScriptFiles("/c/data", existsSync, readdirSync)).toEqual([
+        Path.join("/c/data", "anvil", "start.sh")
+      ])
     })
 
     it("enumerates from the TREE, so a daemon the model dropped is still found", () => {
       // This is what lets Rebind delete a cloned local-port script for a daemon
       // the external model no longer plans — the Verify scan cannot flag a file
       // nobody enumerates.
-      const { existsSync, readdirSync } = probes(
-        ["anvil"],
-        ["/c/data/anvil/start.sh"]
-      )
-      expect(
-        DaemonConfig.existingStartScriptFiles(
-          "/c/data",
-          existsSync,
-          readdirSync
-        )
-      ).toHaveLength(1)
+      const { existsSync, readdirSync } = probes(["anvil"], ["/c/data/anvil/start.sh"])
+      expect(DaemonConfig.existingStartScriptFiles("/c/data", existsSync, readdirSync)).toHaveLength(1)
     })
 
     it("returns nothing when the data dir is absent", () => {
@@ -126,16 +103,9 @@ describe("DaemonConfig", () => {
 
   describe("clusterRelocations", () => {
     it("maps each host root to its variable", () => {
-      const byVariable = new Map(
-        DaemonConfig.clusterRelocations(cluster).map(entry => [
-          entry.variable,
-          entry.prefix
-        ])
-      )
+      const byVariable = new Map(DaemonConfig.clusterRelocations(cluster).map(entry => [entry.variable, entry.prefix]))
       expect(byVariable.get(StartScriptVariable.CLUSTER_DIR)).toBe("/c")
-      expect(byVariable.get(StartScriptVariable.WIRE_PREFIX_PATH)).toBe(
-        "/build"
-      )
+      expect(byVariable.get(StartScriptVariable.WIRE_PREFIX_PATH)).toBe("/build")
     })
   })
 
@@ -144,10 +114,7 @@ describe("DaemonConfig", () => {
     function daemonOfKind(kind: DaemonKind) {
       return DaemonConfig.plan(cluster, {
         nodeop: [],
-        anvil: AnvilProcess.resolveConfig(
-          {},
-          { binary: "/home/someone/.foundry/bin/anvil", port: 1 }
-        ),
+        anvil: AnvilProcess.resolveConfig({}, { binary: "/home/someone/.foundry/bin/anvil", port: 1 }),
         solanaValidator: SolanaValidatorProcess.resolveConfig(
           {},
           {
@@ -158,33 +125,24 @@ describe("DaemonConfig", () => {
             dynamicPortRange: { first: 10, last: 20 }
           }
         ),
-        kiod: KiodProcess.resolveConfig(
-          { binary: "/build/bin/kiod", walletPath: "/c/wallet" },
-          { port: 5 }
-        ),
+        kiod: KiodProcess.resolveConfig({ binary: "/build/bin/kiod", walletPath: "/c/wallet" }, { port: 5 }),
         debuggingServer: { address: "127.0.0.1", port: 6 }
       }).find(candidate => candidate.kind === kind)
     }
 
     it.each([
       [DaemonKind.anvil, DaemonConfig.AnvilBinEnvironmentVariable],
-      [
-        DaemonKind.solanaValidator,
-        DaemonConfig.SolanaValidatorBinEnvironmentVariable
-      ],
+      [DaemonKind.solanaValidator, DaemonConfig.SolanaValidatorBinEnvironmentVariable],
       [DaemonKind.debuggingServer, DaemonConfig.NodeBinEnvironmentVariable]
-    ])(
-      "%s declares an exe indirection so the build host's path is not frozen",
-      (kind, variable) => {
-        // `which()` yields e.g. /home/<user>/.foundry/bin/anvil — under NO
-        // relocatable root, so freezing it ships a script that runs only on the
-        // build host. Asserted at the PRODUCER (plan*), not just where the
-        // renderer consumes it.
-        const daemon = daemonOfKind(kind as DaemonKind)
-        expect(daemon.exeEnvironmentVariable).toBe(variable)
-        expect(daemon.exeCommandName).toBeTruthy()
-      }
-    )
+    ])("%s declares an exe indirection so the build host's path is not frozen", (kind, variable) => {
+      // `which()` yields e.g. /home/<user>/.foundry/bin/anvil — under NO
+      // relocatable root, so freezing it ships a script that runs only on the
+      // build host. Asserted at the PRODUCER (plan*), not just where the
+      // renderer consumes it.
+      const daemon = daemonOfKind(kind as DaemonKind)
+      expect(daemon.exeEnvironmentVariable).toBe(variable)
+      expect(daemon.exeCommandName).toBeTruthy()
+    })
 
     // The env a daemon carries is SERIALIZED into its start.sh at create time,
     // so it must be host-independent. `resolveEnv()` reads the BUILD host's
@@ -195,13 +153,10 @@ describe("DaemonConfig", () => {
       try {
         // A build host WITH RUST_LOG set is the case that used to strip it.
         process.env[SolanaValidatorProcess.RustLogEnvVar] = "warn"
-        expect(daemonOfKind(DaemonKind.solanaValidator).env).toEqual(
-          SolanaValidatorProcess.DefaultEnv
-        )
+        expect(daemonOfKind(DaemonKind.solanaValidator).env).toEqual(SolanaValidatorProcess.DefaultEnv)
         expect(SolanaValidatorProcess.resolveEnv()).toEqual({})
       } finally {
-        if (previous === undefined)
-          delete process.env[SolanaValidatorProcess.RustLogEnvVar]
+        if (previous === undefined) delete process.env[SolanaValidatorProcess.RustLogEnvVar]
         else process.env[SolanaValidatorProcess.RustLogEnvVar] = previous
       }
     })

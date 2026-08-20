@@ -12,7 +12,6 @@ const record = (over: Partial<LogRecord>): LogRecord => ({
   ...over
 })
 
-
 describe("LogFileAppender", () => {
   let dir: string
   let file: string

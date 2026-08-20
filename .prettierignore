@@ -1,0 +1,15 @@
+# Prettier owns TypeScript in this repo and nothing else.
+#
+# Everything is ignored, then .ts/.tsx are re-included. Markdown is authored by
+# hand (STYLE.md, CLAUDE.md, the .claude rules) and must not be prose-rewrapped;
+# JSON/YAML/mjs/bin were never prettier-formatted here either — until the global
+# `parser: "typescript"` was removed they could not even be parsed, so a check
+# over them reported a SyntaxError rather than a diff.
+#
+# Widening prettier's scope is a deliberate, separate decision: it would rewrite
+# CI workflows and every package.json, so it does not ride along with a
+# printWidth change.
+*
+!*/
+!*.ts
+!*.tsx

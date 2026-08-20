@@ -30,8 +30,7 @@ enum StateCacheSentinel {
 
 export class ClusterAccess {
   private configCache: ClusterConfig | null = null
-  private stateCache: ClusterState | null | StateCacheSentinel =
-    StateCacheSentinel.unread
+  private stateCache: ClusterState | null | StateCacheSentinel = StateCacheSentinel.unread
   private configWatcher: Fs.FSWatcher | null = null
   private stateWatcher: Fs.FSWatcher | null = null
 
@@ -60,10 +59,7 @@ export class ClusterAccess {
         }
       })
     } catch (err) {
-      log.warn(
-        `ClusterAccess: cannot watch state file in ${this.clusterPath}`,
-        err
-      )
+      log.warn(`ClusterAccess: cannot watch state file in ${this.clusterPath}`, err)
     }
   }
 

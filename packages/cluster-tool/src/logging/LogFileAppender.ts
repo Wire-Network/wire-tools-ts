@@ -1,13 +1,7 @@
 import Fs from "node:fs"
 import Path from "node:path"
 import { ClusterConfigLoggingFileFormat } from "@wireio/cluster-tool-shared"
-import {
-  Deferred,
-  LevelThresholds,
-  type Appender,
-  type LevelKind,
-  type LogRecord
-} from "@wireio/shared"
+import { Deferred, LevelThresholds, type Appender, type LevelKind, type LogRecord } from "@wireio/shared"
 import { mkdirs } from "../utils/fsUtils.js"
 
 /**
@@ -46,9 +40,7 @@ export class LogFileAppender implements Appender {
   constructor(private readonly options: LogFileAppenderOptions) {
     this.format =
       options.formatter ??
-      (options.format === LogFileAppender.Format.text
-        ? LogFileAppender.textFormatter
-        : LogFileAppender.jsonlFormatter)
+      (options.format === LogFileAppender.Format.text ? LogFileAppender.textFormatter : LogFileAppender.jsonlFormatter)
   }
 
   /** Open the append-mode stream on first use, creating parent directories. */
@@ -74,8 +66,7 @@ export class LogFileAppender implements Appender {
    * @param record - The log record to consider.
    */
   append(record: LogRecord): void {
-    if (LevelThresholds[record.level] < LevelThresholds[this.options.level])
-      return
+    if (LevelThresholds[record.level] < LevelThresholds[this.options.level]) return
     this.ensureStream().write(this.format(record) + "\n")
   }
 
@@ -88,9 +79,7 @@ export class LogFileAppender implements Appender {
   close(): Promise<void> {
     const { stream } = this
     if (stream == null) return Promise.resolve()
-    return Deferred.useCallback<void>(deferred =>
-      stream.end(() => deferred.resolve())
-    ).promise
+    return Deferred.useCallback<void>(deferred => stream.end(() => deferred.resolve())).promise
   }
 }
 
@@ -107,9 +96,7 @@ export namespace LogFileAppender {
   /** Console-style line prefixed with an ISO timestamp. */
   export const textFormatter: Formatter = record => {
     const ts = new Date(record.timestamp).toISOString(),
-      args = (record.args ?? [])
-        .map(arg => (typeof arg === "string" ? arg : JSON.stringify(arg)))
-        .join(" "),
+      args = (record.args ?? []).map(arg => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" "),
       err = record.errorStack ? `\n${record.errorStack}` : ""
     return `${ts} [${record.category}] (${record.level}) ${record.message}${args ? " " + args : ""}${err}`
   }

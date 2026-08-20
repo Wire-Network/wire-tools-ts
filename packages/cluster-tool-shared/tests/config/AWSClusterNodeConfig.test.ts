@@ -8,15 +8,8 @@ const SecretIdPattern = "/wire/{cluster}/{account}/{keyType}"
 
 describe("AWSAccountName", () => {
   it("is an identity-mapped string enum (value === key)", () => {
-    Object.entries(AWSAccountName).forEach(([key, value]) =>
-      expect(value).toBe(key)
-    )
-    expect(Object.values(AWSAccountName)).toEqual([
-      "dev",
-      "sandbox",
-      "test",
-      "prod"
-    ])
+    Object.entries(AWSAccountName).forEach(([key, value]) => expect(value).toBe(key))
+    expect(Object.values(AWSAccountName)).toEqual(["dev", "sandbox", "test", "prod"])
   })
 })
 
@@ -102,8 +95,6 @@ describe("AWSClusterNodeConfigSchemaCodec", () => {
   })
 
   it("throws with the failing path when deserializing an invalid document", () => {
-    expect(() =>
-      AWSClusterNodeConfigSchemaCodec.deserialize('{"account":"dev"}')
-    ).toThrow(/regions/)
+    expect(() => AWSClusterNodeConfigSchemaCodec.deserialize('{"account":"dev"}')).toThrow(/regions/)
   })
 })

@@ -33,18 +33,14 @@ export class StartScriptRenderer implements Renderer {
 
   /** The daemon's relocations ahead of the cluster-wide ones (nodePath out-ranks clusterPath). */
   private get relocations(): StartScriptRelocation[] {
-    return orderRelocations([
-      ...this.daemon.relocations,
-      ...this.clusterRelocations
-    ])
+    return orderRelocations([...this.daemon.relocations, ...this.clusterRelocations])
   }
 
   render(): string {
     const { daemon } = this,
       relocations = this.relocations,
       argv = daemon.conditions.reduce(
-        (remaining, condition) =>
-          StartScriptRenderer.removeRun(remaining, condition.tokens),
+        (remaining, condition) => StartScriptRenderer.removeRun(remaining, condition.tokens),
         [...daemon.argv]
       ),
       lines = [
@@ -95,8 +91,7 @@ export namespace StartScriptRenderer {
       // {@link shellQuote}'s fully-inert single-quoted form, which cannot appear
       // inside an expansion word (bash re-parses quotes there, so a value
       // containing `'` would break the script).
-      ([name, value]) =>
-        `[ -n "\${${name}:-}" ] || export ${name}=${shellQuote(value)}`
+      ([name, value]) => `[ -n "\${${name}:-}" ] || export ${name}=${shellQuote(value)}`
     )
     return isNotEmpty(lines) ? [...lines, ""] : lines
   }
@@ -134,10 +129,7 @@ export namespace StartScriptRenderer {
    * @param daemon - The daemon being rendered.
    * @returns Preamble lines.
    */
-  export function preamble(
-    daemon: DaemonConfig,
-    relocations: readonly StartScriptRelocation[]
-  ): string[] {
+  export function preamble(daemon: DaemonConfig, relocations: readonly StartScriptRelocation[]): string[] {
     return [
       `${StartScriptVariable.NODE_DIR}="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"`,
       `${StartScriptVariable.CLUSTER_DIR}="\${WIRE_CLUSTER_DIR:-$(cd "$${StartScriptVariable.NODE_DIR}/../.." && pwd)}"`,
@@ -145,13 +137,7 @@ export namespace StartScriptRenderer {
       `  echo "start.sh: cluster root not found at $${StartScriptVariable.CLUSTER_DIR} — set WIRE_CLUSTER_DIR" >&2`,
       "  exit 1",
       "}",
-      ...(referencesRoot(
-        daemon,
-        relocations,
-        StartScriptVariable.WIRE_PREFIX_PATH
-      )
-        ? prefixResolution()
-        : []),
+      ...(referencesRoot(daemon, relocations, StartScriptVariable.WIRE_PREFIX_PATH) ? prefixResolution() : []),
       ...requiredRootAssertions(daemon, relocations)
     ]
   }
@@ -170,16 +156,10 @@ export namespace StartScriptRenderer {
     relocations: readonly StartScriptRelocation[],
     variable: StartScriptVariable
   ): boolean {
-    const tokens = [
-      daemon.exe,
-      ...daemon.argv,
-      ...daemon.conditions.flatMap(condition => [...condition.tokens])
-    ]
+    const tokens = [daemon.exe, ...daemon.argv, ...daemon.conditions.flatMap(condition => [...condition.tokens])]
     return relocations
       .filter(relocation => relocation.variable === variable)
-      .some(relocation =>
-        tokens.some(token => matchesPrefix(token, relocation.prefix))
-      )
+      .some(relocation => tokens.some(token => matchesPrefix(token, relocation.prefix)))
   }
 
   /**
@@ -195,11 +175,8 @@ export namespace StartScriptRenderer {
     daemon: DaemonConfig,
     relocations: readonly StartScriptRelocation[]
   ): string[] {
-    return HostSuppliedRoots.filter(variable =>
-      referencesRoot(daemon, relocations, variable)
-    ).map(
-      variable =>
-        `: "\${${variable}:?set to the ${RootDescriptions[variable]}}"`
+    return HostSuppliedRoots.filter(variable => referencesRoot(daemon, relocations, variable)).map(
+      variable => `: "\${${variable}:?set to the ${RootDescriptions[variable]}}"`
     )
   }
 
@@ -270,12 +247,8 @@ export namespace StartScriptRenderer {
    * @param relocations - Ordered relocation table.
    * @returns The shell word to `exec`.
    */
-  export function execTarget(
-    daemon: DaemonConfig,
-    relocations: readonly StartScriptRelocation[]
-  ): string {
-    return daemon.exeCommandName != null &&
-      daemon.exeEnvironmentVariable != null
+  export function execTarget(daemon: DaemonConfig, relocations: readonly StartScriptRelocation[]): string {
+    return daemon.exeCommandName != null && daemon.exeEnvironmentVariable != null
       ? `"\${${daemon.exeEnvironmentVariable}:-$(command -v ${daemon.exeCommandName})}"`
       : toRelocatableToken(daemon.exe, relocations)
   }
@@ -292,17 +265,10 @@ export namespace StartScriptRenderer {
    * @param run - The contiguous token run to remove.
    * @returns The argv without that run.
    */
-  export function removeRun(
-    tokens: readonly string[],
-    run: readonly string[]
-  ): string[] {
+  export function removeRun(tokens: readonly string[], run: readonly string[]): string[] {
     if (run.length === 0) return [...tokens]
-    const at = tokens.findIndex((_token, index) =>
-      run.every((expected, offset) => tokens[index + offset] === expected)
-    )
-    return at < 0
-      ? [...tokens]
-      : [...tokens.slice(0, at), ...tokens.slice(at + run.length)]
+    const at = tokens.findIndex((_token, index) => run.every((expected, offset) => tokens[index + offset] === expected))
+    return at < 0 ? [...tokens] : [...tokens.slice(0, at), ...tokens.slice(at + run.length)]
   }
 
   /**
@@ -313,16 +279,11 @@ export namespace StartScriptRenderer {
    * @param relocations - Ordered relocation table.
    * @returns Lines declaring and populating {@link ConditionalArrayName}.
    */
-  export function conditionLines(
-    daemon: DaemonConfig,
-    relocations: readonly StartScriptRelocation[]
-  ): string[] {
+  export function conditionLines(daemon: DaemonConfig, relocations: readonly StartScriptRelocation[]): string[] {
     return [
       `${ConditionalArrayName}=()`,
       ...daemon.conditions.map(condition => {
-        const tokens = toRelocatableArgv(condition.tokens, relocations).join(
-          " "
-        )
+        const tokens = toRelocatableArgv(condition.tokens, relocations).join(" ")
         return `${condition.test} && ${ConditionalArrayName}+=(${tokens})`
       }),
       ""

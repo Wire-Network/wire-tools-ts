@@ -1,9 +1,6 @@
 import { ClosedReason, StreamTopic } from "@wireio/debugging-shared"
 
-import {
-  DebuggingSubscription,
-  DebuggingSubscriptionEventName
-} from "@wireio/debugging-client-shared"
+import { DebuggingSubscription, DebuggingSubscriptionEventName } from "@wireio/debugging-client-shared"
 
 /** Minimal event payload used by the typed-payload assertions. */
 interface NumberPayload {
@@ -13,22 +10,14 @@ interface NumberPayload {
 describe("DebuggingSubscription", () => {
   it("invokes onClose exactly once on close()", () => {
     const onClose = jest.fn()
-    const sub = new DebuggingSubscription<number>(
-      1,
-      StreamTopic.LogTail,
-      onClose
-    )
+    const sub = new DebuggingSubscription<number>(1, StreamTopic.LogTail, onClose)
     sub.close(ClosedReason.ClientRequested)
     sub.close(ClosedReason.ClientRequested)
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it("emits 'closed' to listeners with the reason", () => {
-    const sub = new DebuggingSubscription<number>(
-      1,
-      StreamTopic.LogTail,
-      () => {}
-    )
+    const sub = new DebuggingSubscription<number>(1, StreamTopic.LogTail, () => {})
     const reasons: ClosedReason[] = []
     sub.on(DebuggingSubscriptionEventName.Closed, r => reasons.push(r))
     sub.close(ClosedReason.ServerShutdown)
@@ -36,11 +25,7 @@ describe("DebuggingSubscription", () => {
   })
 
   it("emits typed event payloads", () => {
-    const sub = new DebuggingSubscription<NumberPayload>(
-      1,
-      StreamTopic.LogTail,
-      () => {}
-    )
+    const sub = new DebuggingSubscription<NumberPayload>(1, StreamTopic.LogTail, () => {})
     const received: NumberPayload[] = []
     sub.on(DebuggingSubscriptionEventName.Event, e => received.push(e))
     sub.emitEvent({ n: 42 })
@@ -50,11 +35,7 @@ describe("DebuggingSubscription", () => {
 
   it("notifyClosed by transport short-circuits subsequent close()", () => {
     const onClose = jest.fn()
-    const sub = new DebuggingSubscription<number>(
-      1,
-      StreamTopic.LogTail,
-      onClose
-    )
+    const sub = new DebuggingSubscription<number>(1, StreamTopic.LogTail, onClose)
     sub.notifyClosed(ClosedReason.ServerShutdown)
     sub.close(ClosedReason.ClientRequested)
     expect(onClose).not.toHaveBeenCalled()
@@ -62,11 +43,7 @@ describe("DebuggingSubscription", () => {
   })
 
   it("buffers events emitted before any listener is attached and drains them on attach", async () => {
-    const sub = new DebuggingSubscription<number>(
-      1,
-      StreamTopic.LogTail,
-      () => {}
-    )
+    const sub = new DebuggingSubscription<number>(1, StreamTopic.LogTail, () => {})
     // No listener — these would normally be lost.
     sub.emitEvent(1)
     sub.emitEvent(2)
@@ -79,11 +56,7 @@ describe("DebuggingSubscription", () => {
   })
 
   it("buffers a pre-listener close and surfaces it on attach", async () => {
-    const sub = new DebuggingSubscription<number>(
-      1,
-      StreamTopic.LogTail,
-      () => {}
-    )
+    const sub = new DebuggingSubscription<number>(1, StreamTopic.LogTail, () => {})
     sub.notifyClosed(ClosedReason.ServerShutdown)
     let captured: ClosedReason | null = null
     sub.on(DebuggingSubscriptionEventName.Closed, r => (captured = r))

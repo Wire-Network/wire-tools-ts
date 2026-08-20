@@ -5,10 +5,7 @@ describe("ClusterKeepAlive", () => {
     const setIntervalSpy = jest.spyOn(global, "setInterval")
     try {
       const keepAlive = ClusterKeepAlive.create()
-      expect(setIntervalSpy).toHaveBeenCalledWith(
-        expect.any(Function),
-        ClusterKeepAlive.KeepAliveIntervalMs
-      )
+      expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), ClusterKeepAlive.KeepAliveIntervalMs)
       keepAlive.release()
     } finally {
       setIntervalSpy.mockRestore()
@@ -27,8 +24,7 @@ describe("ClusterKeepAlive", () => {
     const clearIntervalSpy = jest.spyOn(global, "clearInterval")
     try {
       const keepAlive = ClusterKeepAlive.create()
-      const handle =
-        setIntervalSpy.mock.results[setIntervalSpy.mock.results.length - 1].value
+      const handle = setIntervalSpy.mock.results[setIntervalSpy.mock.results.length - 1].value
       keepAlive.release()
       expect(clearIntervalSpy).toHaveBeenCalledWith(handle)
     } finally {

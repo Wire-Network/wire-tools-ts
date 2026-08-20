@@ -51,11 +51,7 @@ export function createBigintFailureReport(): Report {
  * phase is failed; the header additionally annotates the skipped count.
  */
 export function createSkippedTailReport(): Report {
-  const phase = new Report.PhaseBuilder(
-    "PhaseA",
-    "swap via underwriter race",
-    Date.now()
-  )
+  const phase = new Report.PhaseBuilder("PhaseA", "swap via underwriter race", Date.now())
     .push(
       Report.StepResult.ok(
         {
@@ -157,12 +153,7 @@ export function createNestedReport(): Report {
     )
     .build()
   const processes = Report.Group.from("Processes", "daemon startup", [kiod], 50)
-  const bootstrap = Report.Group.from(
-    "Bootstrap",
-    "cluster prerequisites",
-    [processes, registry],
-    150
-  )
+  const bootstrap = Report.Group.from("Bootstrap", "cluster prerequisites", [processes, registry], 150)
   const swap = new Report.PhaseBuilder("Swap", "swap phase", Date.now())
     .push(
       Report.StepResult.failed(

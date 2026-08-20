@@ -6,10 +6,7 @@ import { pollUntil } from "./StepTools.js"
 import { Report } from "../report/Report.js"
 import { StepExtraRecorder } from "../report/tools/StepExtraRecorder.js"
 import type { ClusterBuildContext } from "./ClusterBuildContext.js"
-import {
-  ClusterBuildPhaseBase,
-  type ClusterBuildParent
-} from "./ClusterBuildPhaseBase.js"
+import { ClusterBuildPhaseBase, type ClusterBuildParent } from "./ClusterBuildPhaseBase.js"
 import { ClusterBuildStep, type ClusterBuildTaskOptions } from "./ClusterBuildStep.js"
 
 /** Per-phase tuning (extends the shared base). `timeoutMs` is applied to each
@@ -37,9 +34,7 @@ export interface ClusterBuildPhaseOptions extends ClusterBuildTaskOptions {
  * in-flight siblings (parallel) on the first failure. Steps never throw out of
  * here: each becomes a {@link Report.StepResult}.
  */
-export class ClusterBuildPhase<
-  C extends ClusterBuildContext = ClusterBuildContext
-> extends ClusterBuildPhaseBase<C> {
+export class ClusterBuildPhase<C extends ClusterBuildContext = ClusterBuildContext> extends ClusterBuildPhaseBase<C> {
   private readonly stepList: ClusterBuildStep.Any<C>[] = []
 
   private constructor(
@@ -95,21 +90,12 @@ export class ClusterBuildPhase<
     try {
       await match(this.options.parallelize ?? false)
         .with(true, async () => {
-          const results = await Bluebird.map(
-            this.stepList,
-            step => this.runStep(step, controller),
-            {
-              concurrency:
-                this.options.concurrency ?? ClusterBuildPhase.UnboundedConcurrency
-            }
-          )
+          const results = await Bluebird.map(this.stepList, step => this.runStep(step, controller), {
+            concurrency: this.options.concurrency ?? ClusterBuildPhase.UnboundedConcurrency
+          })
           builder.push(...results)
         })
-        .with(false, () =>
-          eachSeries(this.stepList, async step =>
-            builder.push(await this.runStep(step, controller))
-          )
-        )
+        .with(false, () => eachSeries(this.stepList, async step => builder.push(await this.runStep(step, controller))))
         .exhaustive()
     } finally {
       signal.removeEventListener("abort", onAbort)
@@ -128,10 +114,7 @@ export class ClusterBuildPhase<
    * failure → `skipped`), timed, and total: it resolves to a StepResult and never
    * rejects, aborting the controller on failure so the phase short-circuits.
    */
-  private async runStep(
-    step: ClusterBuildStep.Any<C>,
-    controller: AbortController
-  ): Promise<Report.StepResult> {
+  private async runStep(step: ClusterBuildStep.Any<C>, controller: AbortController): Promise<Report.StepResult> {
     if (controller.signal.aborted) {
       this.context.log.info(
         `↷ Abort signalled by an earlier failure — step "${step.name}" will not be executed (skipped)`
@@ -164,9 +147,7 @@ export class ClusterBuildPhase<
       )
     } catch (error) {
       controller.abort() // first-error: cancel siblings / skip the rest
-      this.context.log.error(
-        `✖ ${step.name}: ${error instanceof Error ? error.message : String(error)}`
-      )
+      this.context.log.error(`✖ ${step.name}: ${error instanceof Error ? error.message : String(error)}`)
       return Report.StepResult.failed(
         step,
         performance.now() - startedAt,
@@ -206,9 +187,7 @@ function runWithTimeout(
   // Settling the race MUST disarm the timer: a stale timeout left over from a
   // completed step would later fire and abort the SHARED phase controller,
   // silently skipping every remaining step in the phase.
-  return Promise.race([body(controller.signal), timer]).finally(() =>
-    clearTimeout(handle)
-  )
+  return Promise.race([body(controller.signal), timer]).finally(() => clearTimeout(handle))
 }
 
 export namespace ClusterBuildPhase {

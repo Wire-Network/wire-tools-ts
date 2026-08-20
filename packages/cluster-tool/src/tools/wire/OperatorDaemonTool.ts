@@ -15,10 +15,7 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
-import {
-  type BindConfigNodeopPorts,
-  type ClusterConfig
-} from "@wireio/cluster-tool-shared"
+import { type BindConfigNodeopPorts, type ClusterConfig } from "@wireio/cluster-tool-shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
 import { match } from "ts-pattern"
@@ -30,10 +27,7 @@ import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { NodeopProcess } from "../../cluster/processes/NodeopProcess.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../orchestration/ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../orchestration/ClusterBuildStep.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { OperatorAccount } from "../../orchestration/outputs/OperatorAccount.js"
 import {
@@ -74,13 +68,8 @@ export namespace OperatorDaemonTool {
   ] as const
 
   /** `plugins` with the external-debugging sink removed when the server is off. */
-  const debuggingGatedPlugins = (
-    plugins: readonly string[],
-    debuggingServerEnabled: boolean
-  ): readonly string[] =>
-    debuggingServerEnabled
-      ? plugins
-      : plugins.filter(plugin => plugin !== ExternalDebuggingPlugin)
+  const debuggingGatedPlugins = (plugins: readonly string[], debuggingServerEnabled: boolean): readonly string[] =>
+    debuggingServerEnabled ? plugins : plugins.filter(plugin => plugin !== ExternalDebuggingPlugin)
 
   // ── daemon tuning + protocol constants ────────────────────────────────────
 
@@ -124,13 +113,7 @@ export namespace OperatorDaemonTool {
     SolanaSourceDepositInstruction
   ] as const
   /** OPP outpost contracts whose ABIs (with embedded addresses) the plugins load. */
-  export const EthereumAbiContractNames = [
-    "OPP",
-    "OPPInbound",
-    "BAR",
-    "ReserveManager",
-    "OperatorRegistry"
-  ] as const
+  export const EthereumAbiContractNames = ["OPP", "OPPInbound", "BAR", "ReserveManager", "OperatorRegistry"] as const
   /** Cluster-data subpath holding the generated `{contractName, address, abi}` files. */
   export const EthereumAbiSubpath = "eth-abis"
   /** Cluster-data subpath holding the copied OPP outpost IDL. */
@@ -150,26 +133,13 @@ export namespace OperatorDaemonTool {
   }
 
   /** Resolve the daemon network endpoints from the resolved cluster config. */
-  export function networkFromConfig(
-    config: ClusterConfig
-  ): OperatorDaemonNetwork {
+  export function networkFromConfig(config: ClusterConfig): OperatorDaemonNetwork {
     return {
-      ethereumRpcUrl: toURL(
-        config.bind.anvil.port,
-        toDialAddress(config.bind.anvil.address)
-      ),
+      ethereumRpcUrl: toURL(config.bind.anvil.port, toDialAddress(config.bind.anvil.address)),
       // External-outpost mode carries the REAL chain id; else the anvil default.
-      ethereumChainId:
-        config.externalOutposts?.ethereum.chainId ??
-        AnvilProcess.DefaultChainId,
-      solanaRpcUrl: toURL(
-        config.bind.solana.ports.http,
-        toDialAddress(config.bind.solana.address)
-      ),
-      debuggingServerUrl: toURL(
-        config.bind.debuggingServer.port,
-        toDialAddress(config.bind.debuggingServer.address)
-      ),
+      ethereumChainId: config.externalOutposts?.ethereum.chainId ?? AnvilProcess.DefaultChainId,
+      solanaRpcUrl: toURL(config.bind.solana.ports.http, toDialAddress(config.bind.solana.address)),
+      debuggingServerUrl: toURL(config.bind.debuggingServer.port, toDialAddress(config.bind.debuggingServer.address)),
       debuggingServerEnabled: config.debuggingServerEnabled !== false
     }
   }
@@ -184,22 +154,13 @@ export namespace OperatorDaemonTool {
    * and store the typed {@link OperatorDaemonArtifacts}. Runs ONCE, after both
    * outpost deploys, before any operator node starts.
    */
-  export function planArtifactPreparation<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planArtifactPreparation<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runArtifactPreparation
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runArtifactPreparation)
   }
 
   /** Named runner — write ABI/IDL artifacts + store {@link OperatorDaemonArtifacts}. */
@@ -213,17 +174,9 @@ export namespace OperatorDaemonTool {
 
     // Deployed ETH outpost addresses (written by the ethereum outpost deploy
     // into THIS cluster's deployments dir — per-run, parallel-safe).
-    const addressesFile = Path.join(
-      ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
-      "outpost-addrs.json"
-    )
-    Assert.ok(
-      Fs.existsSync(addressesFile),
-      `ETH outpost addresses not found at ${addressesFile}`
-    )
-    const ethereumAddresses: Record<string, string> = JSON.parse(
-      Fs.readFileSync(addressesFile, "utf-8")
-    )
+    const addressesFile = Path.join(ClusterConfigProvider.ethereumDeploymentsPath(ctx.config), "outpost-addrs.json")
+    Assert.ok(Fs.existsSync(addressesFile), `ETH outpost addresses not found at ${addressesFile}`)
+    const ethereumAddresses: Record<string, string> = JSON.parse(Fs.readFileSync(addressesFile, "utf-8"))
 
     // ABI files with embedded deployed addresses, so the ethereum client plugin's
     // get_events can filter by contract address (hardhat artifact format).
@@ -254,22 +207,16 @@ export namespace OperatorDaemonTool {
       )
       return abiFile
     }).filter(file => file != null)
-    Assert.ok(
-      ethereumAbiFiles.length > 0,
-      "prepareArtifacts: no ETH outpost ABI artifacts found"
-    )
+    Assert.ok(ethereumAbiFiles.length > 0, "prepareArtifacts: no ETH outpost ABI artifacts found")
 
     // SOL program id (from the committed liqsol_core program keypair) + a
     // cluster-local VERBATIM IDL copy so operator nodes read a stable path
     // (nodeop accepts it via --solana-outpost-program-name liqsol_core).
-    const solanaProgramId =
-      SolanaOutpostProgramTool.assertProgramId(solanaPath).toBase58()
+    const solanaProgramId = SolanaOutpostProgramTool.assertProgramId(solanaPath).toBase58()
 
     const idlSource = SolanaOutpostProgramTool.programIdlFile(solanaPath),
       idl = SolanaOutpostProgramTool.readIdl(solanaPath),
-      idlInstructionNames = new Set(
-        idl.instructions.map(instruction => instruction.name)
-      )
+      idlInstructionNames = new Set(idl.instructions.map(instruction => instruction.name))
     for (const requiredInstruction of RequiredSolanaIdlInstructions) {
       Assert.ok(
         idlInstructionNames.has(requiredInstruction),
@@ -277,10 +224,7 @@ export namespace OperatorDaemonTool {
           `is missing the '${requiredInstruction}' instruction — wrong or stale IDL?`
       )
     }
-    const solanaIdlFile = Path.join(
-      mkdirs(Path.join(dataPath, SolanaIdlSubpath)),
-      SolanaIdlFilename
-    )
+    const solanaIdlFile = Path.join(mkdirs(Path.join(dataPath, SolanaIdlSubpath)), SolanaIdlFilename)
     Fs.copyFileSync(idlSource, solanaIdlFile)
 
     ctx.outputs.set(OperatorDaemonArtifactsKey, {
@@ -300,9 +244,7 @@ export namespace OperatorDaemonTool {
       solanaProgramId,
       solanaIdlFile
     })
-    ctx.log.info(
-      `[operator-daemon] artifacts ready (abis=${ethereumAbiFiles.length}, programId=${solanaProgramId})`
-    )
+    ctx.log.info(`[operator-daemon] artifacts ready (abis=${ethereumAbiFiles.length}, programId=${solanaProgramId})`)
   }
 
   // ── pure value builders: per-type daemon args ──────────────────────────────
@@ -310,8 +252,7 @@ export namespace OperatorDaemonTool {
   /** `[flag, value]` pair expansion helper. */
   const pair = (flag: string, value: string): [string, string] => [flag, value]
   /** `--plugin` expansion helper. */
-  const pluginArgs = (plugins: readonly string[]): string[] =>
-    plugins.flatMap(plugin => pair("--plugin", plugin))
+  const pluginArgs = (plugins: readonly string[]): string[] => plugins.flatMap(plugin => pair("--plugin", plugin))
 
   /** Assert `operator` carries the outpost keys its daemon signs with. */
   function assertOutpostKeys(operator: OperatorAccount): void {
@@ -333,36 +274,18 @@ export namespace OperatorDaemonTool {
     return [
       ...pair(
         "--signature-provider",
-        KeyGenerator.toSignatureProvider(
-          operator.ethereum,
-          ethereumProvider,
-          keySourceFor(operator.label, KeyType.EM)
-        )
+        KeyGenerator.toSignatureProvider(operator.ethereum, ethereumProvider, keySourceFor(operator.label, KeyType.EM))
       ),
       ...pair(
         "--outpost-ethereum-client",
-        [
-          EthereumClientId,
-          ethereumProvider,
-          network.ethereumRpcUrl,
-          String(network.ethereumChainId)
-        ].join(",")
+        [EthereumClientId, ethereumProvider, network.ethereumRpcUrl, String(network.ethereumChainId)].join(",")
       ),
-      ...artifacts.ethereumAbiFiles.flatMap(file =>
-        pair("--ethereum-abi-file", file)
-      ),
+      ...artifacts.ethereumAbiFiles.flatMap(file => pair("--ethereum-abi-file", file)),
       ...pair(
         "--signature-provider",
-        KeyGenerator.toSignatureProvider(
-          operator.solana,
-          solanaProvider,
-          keySourceFor(operator.label, KeyType.ED)
-        )
+        KeyGenerator.toSignatureProvider(operator.solana, solanaProvider, keySourceFor(operator.label, KeyType.ED))
       ),
-      ...pair(
-        "--outpost-solana-client",
-        [SolanaClientId, solanaProvider, network.solanaRpcUrl].join(",")
-      )
+      ...pair("--outpost-solana-client", [SolanaClientId, solanaProvider, network.solanaRpcUrl].join(","))
     ]
   }
 
@@ -388,22 +311,13 @@ export namespace OperatorDaemonTool {
       ...pluginArgs(debuggingGatedPlugins(BatchOperatorPlugins, network.debuggingServerEnabled)),
       ...pair(
         "--signature-provider",
-        KeyGenerator.toSignatureProvider(
-          operator.wire,
-          undefined,
-          keySourceFor(operator.label, KeyType.K1)
-        )
+        KeyGenerator.toSignatureProvider(operator.wire, undefined, keySourceFor(operator.label, KeyType.K1))
       ),
       ...pair("--batch-enabled", "true"),
       ...pair("--batch-operator-account", operator.account),
       ...pair("--batch-epoch-poll-ms", String(BatchEpochPollMs)),
-      ...pair(
-        "--batch-delivery-timeout-ms",
-        String(scaleTimeoutMs(BatchDeliveryTimeoutMs))
-      ),
-      ...(network.debuggingServerEnabled
-        ? pair("--ext-debugging-server", network.debuggingServerUrl)
-        : []),
+      ...pair("--batch-delivery-timeout-ms", String(scaleTimeoutMs(BatchDeliveryTimeoutMs))),
+      ...(network.debuggingServerEnabled ? pair("--ext-debugging-server", network.debuggingServerUrl) : []),
       ...outpostClientArgs(operator, artifacts, network, keySourceFor),
       // Per-chain outpost bindings (repeatable CSV specs; replaced the removed
       // --batch-eth-{client-id,opp-addr,opp-inbound-addr} / --batch-sol-program-id —
@@ -413,24 +327,14 @@ export namespace OperatorDaemonTool {
       //   SVM: <chain_code>,<opp_outpost_program_id>
       ...pair(
         "--batch-outpost",
-        [
-          EthereumChainCodename,
-          assertAddress(artifacts, "OPP"),
-          assertAddress(artifacts, "OPPInbound")
-        ].join(",")
+        [EthereumChainCodename, assertAddress(artifacts, "OPP"), assertAddress(artifacts, "OPPInbound")].join(",")
       ),
-      ...pair(
-        "--batch-outpost",
-        [SolanaChainCodename, artifacts.solanaProgramId].join(",")
-      ),
+      ...pair("--batch-outpost", [SolanaChainCodename, artifacts.solanaProgramId].join(",")),
       ...pair("--batch-sol-client-id", SolanaClientId),
       ...pair("--solana-idl-file", artifacts.solanaIdlFile),
       // The outpost interface is hosted in liqsol_core since the clean-room
       // rewrite; nodeop's compiled-in default IDL name is opp_outpost.
-      ...pair(
-        "--solana-outpost-program-name",
-        SolanaOutpostProgramTool.ProgramName
-      )
+      ...pair("--solana-outpost-program-name", SolanaOutpostProgramTool.ProgramName)
     ]
   }
 
@@ -455,21 +359,12 @@ export namespace OperatorDaemonTool {
       ...pluginArgs(debuggingGatedPlugins(UnderwriterPlugins, network.debuggingServerEnabled)),
       ...pair(
         "--signature-provider",
-        KeyGenerator.toSignatureProvider(
-          operator.wire,
-          undefined,
-          keySourceFor(operator.label, KeyType.K1)
-        )
+        KeyGenerator.toSignatureProvider(operator.wire, undefined, keySourceFor(operator.label, KeyType.K1))
       ),
       ...pair("--underwriter-enabled", "true"),
       ...pair("--underwriter-account", operator.account),
-      ...pair(
-        "--underwriter-action-timeout-ms",
-        String(scaleTimeoutMs(UnderwriterActionTimeoutMs))
-      ),
-      ...(network.debuggingServerEnabled
-        ? pair("--ext-debugging-server", network.debuggingServerUrl)
-        : []),
+      ...pair("--underwriter-action-timeout-ms", String(scaleTimeoutMs(UnderwriterActionTimeoutMs))),
+      ...(network.debuggingServerEnabled ? pair("--ext-debugging-server", network.debuggingServerUrl) : []),
       ...outpostClientArgs(operator, artifacts, network, keySourceFor),
       // Per-chain outpost wiring (repeatable CSV specs; replaced the removed
       // --underwriter-eth-opreg-addr / --underwriter-{eth,sol}-client-id):
@@ -484,35 +379,18 @@ export namespace OperatorDaemonTool {
           assertAddress(artifacts, "ReserveManager")
         ].join(",")
       ),
-      ...pair(
-        "--underwriter-sol-outpost",
-        [SolanaChainCodename, SolanaClientId, artifacts.solanaProgramId].join(
-          ","
-        )
-      ),
-      ...pair(
-        "--underwriter-eth-source-deposit-function",
-        EthereumSourceDepositFunction
-      ),
-      ...pair(
-        "--underwriter-sol-source-deposit-instruction",
-        SolanaSourceDepositInstruction
-      ),
+      ...pair("--underwriter-sol-outpost", [SolanaChainCodename, SolanaClientId, artifacts.solanaProgramId].join(",")),
+      ...pair("--underwriter-eth-source-deposit-function", EthereumSourceDepositFunction),
+      ...pair("--underwriter-sol-source-deposit-instruction", SolanaSourceDepositInstruction),
       ...pair("--solana-idl-file", artifacts.solanaIdlFile),
       // The outpost interface is hosted in liqsol_core since the clean-room
       // rewrite; nodeop's compiled-in default IDL name is opp_outpost.
-      ...pair(
-        "--solana-outpost-program-name",
-        SolanaOutpostProgramTool.ProgramName
-      )
+      ...pair("--solana-outpost-program-name", SolanaOutpostProgramTool.ProgramName)
     ]
   }
 
   /** Assert a deployed ETH outpost address is present in the artifacts. */
-  function assertAddress(
-    artifacts: OperatorDaemonArtifacts,
-    contractName: string
-  ): string {
+  function assertAddress(artifacts: OperatorDaemonArtifacts, contractName: string): string {
     const address = artifacts.ethereumAddresses[contractName]
     Assert.ok(
       address != null && address.length > 0,
@@ -556,9 +434,7 @@ export namespace OperatorDaemonTool {
    * operator nodes are planned by `NodeConfig.plan` instead; this Step is for
    * operators provisioned AFTER the plan (flow scenarios).
    */
-  export function planDaemonStart<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planDaemonStart<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -590,16 +466,10 @@ export namespace OperatorDaemonTool {
       network = networkFromConfig(ctx.config),
       keySourceFor = ClusterConfigProvider.signatureProviderSource(ctx.config),
       daemonArgs = match(operator.type)
-        .with(OperatorType.BATCH, () =>
-          batchOperatorArgs(operator, artifacts, network, keySourceFor)
-        )
-        .with(OperatorType.UNDERWRITER, () =>
-          underwriterArgs(operator, artifacts, network, keySourceFor)
-        )
+        .with(OperatorType.BATCH, () => batchOperatorArgs(operator, artifacts, network, keySourceFor))
+        .with(OperatorType.UNDERWRITER, () => underwriterArgs(operator, artifacts, network, keySourceFor))
         .otherwise(() => {
-          throw new Error(
-            `startDaemon: ${input.label} is a ${OperatorType[operator.type]}, not an OPP operator`
-          )
+          throw new Error(`startDaemon: ${input.label} is a ${OperatorType[operator.type]}, not an OPP operator`)
         })
 
     const ports: BindConfigNodeopPorts = {
@@ -614,9 +484,7 @@ export namespace OperatorDaemonTool {
       operator,
       extraArgs: daemonArgs
     })
-    ctx.log.info(
-      `[operator-daemon] ${input.label} (${operator.account}) daemon up (${nodeName}, http=${ports.http})`
-    )
+    ctx.log.info(`[operator-daemon] ${input.label} (${operator.account}) daemon up (${nodeName}, http=${ports.http})`)
   }
 
   /** Topology index for ad-hoc daemon nodes (not part of `NodeConfig.plan`). */
@@ -634,8 +502,7 @@ export namespace OperatorDaemonTool {
   ): NodeConfig {
     const isBatchOperator = operator.type === OperatorType.BATCH,
       producerPeers = config.bind.nodeop.ports.producers.map(
-        producerPorts =>
-          `${NodeConfig.advertiseAddressFor(config, producerPorts)}:${producerPorts.p2p}`
+        producerPorts => `${NodeConfig.advertiseAddressFor(config, producerPorts)}:${producerPorts.p2p}`
       )
     return new NodeConfig(
       config,

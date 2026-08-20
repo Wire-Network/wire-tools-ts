@@ -28,11 +28,7 @@ export interface MockYieldEmitterContract extends ethers.BaseContract {
     tokenCode: bigint,
     overrides?: ethers.Overrides
   ) => Promise<ethers.ContractTransactionResponse>
-  stake: (
-    staker: string,
-    amount: bigint,
-    overrides?: ethers.Overrides
-  ) => Promise<ethers.ContractTransactionResponse>
+  stake: (staker: string, amount: bigint, overrides?: ethers.Overrides) => Promise<ethers.ContractTransactionResponse>
   emitYield: (
     stakers: string[],
     wireAccounts: string[],
@@ -141,10 +137,10 @@ export async function emitYieldBatch(
   Assert.ok(entries.length > 0, "EthYieldEmitterTool: empty entries")
   Assert.ok(externalEpochRef > 0n, "EthYieldEmitterTool: externalEpochRef must be positive")
 
-  const stakers       = entries.map(e => e.staker)
-  const wireAccounts  = entries.map(e => e.wireAccount)
+  const stakers = entries.map(e => e.staker)
+  const wireAccounts = entries.map(e => e.wireAccount)
   const rewardAmounts = entries.map(e => e.rewardAmount)
-  const shareBpses    = entries.map(e => e.shareBps)
+  const shareBpses = entries.map(e => e.shareBps)
 
   const nonce = await resolveLatestNonce(contract)
   const tx = await contract.emitYield(

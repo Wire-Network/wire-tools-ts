@@ -33,9 +33,7 @@ describe("nonceUtils", () => {
     })
 
     it("draws distinct values across a large sample (no constant / low-entropy generator)", () => {
-      const samples = new Set(
-        Array.from({ length: SampleCount }, () => newSponsorNonce())
-      )
+      const samples = new Set(Array.from({ length: SampleCount }, () => newSponsorNonce()))
       expect(samples.size).toBe(SampleCount)
     })
   })

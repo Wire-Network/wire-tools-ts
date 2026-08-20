@@ -61,19 +61,13 @@ describe("ClusterConfig shape", () => {
     report: {
       path: "/cluster/reports",
       basename: "cluster-build",
-      formats: [
-        ClusterConfigReportFormat.csv,
-        ClusterConfigReportFormat.md,
-        ClusterConfigReportFormat.html
-      ]
+      formats: [ClusterConfigReportFormat.csv, ClusterConfigReportFormat.md, ClusterConfigReportFormat.html]
     },
     logging: {
       levels: { console: Level.info, file: Level.debug },
       fileFormat: ClusterConfigLoggingFileFormat.jsonl
     },
-    requiredBatchOperatorCollateral: [
-      { chainCode: 1, tokenCode: 2, minimumBond: 1000 }
-    ],
+    requiredBatchOperatorCollateral: [{ chainCode: 1, tokenCode: 2, minimumBond: 1000 }],
     requiredUnderwriterCollateral: [],
     requiredProducerCollateral: [],
     underwriterCollateral: null,
@@ -98,15 +92,11 @@ describe("ClusterConfig shape", () => {
   })
 
   it("carries per-role collateral requirements as plain (chain, token, bond) triples", () => {
-    expect(config.requiredBatchOperatorCollateral).toEqual([
-      { chainCode: 1, tokenCode: 2, minimumBond: 1000 }
-    ])
+    expect(config.requiredBatchOperatorCollateral).toEqual([{ chainCode: 1, tokenCode: 2, minimumBond: 1000 }])
   })
 
   it("round-trips through ClusterConfigSchemaCodec with no data loss", () => {
-    const rehydrated = ClusterConfigSchemaCodec.deserialize(
-      ClusterConfigSchemaCodec.serialize(config)
-    )
+    const rehydrated = ClusterConfigSchemaCodec.deserialize(ClusterConfigSchemaCodec.serialize(config))
     expect(rehydrated).toEqual(config)
   })
 
@@ -117,9 +107,7 @@ describe("ClusterConfig shape", () => {
     delete parsed.externalOutposts
     delete parsed.debuggingServerEnabled
     delete parsed.enableMockReserves
-    const rehydrated = ClusterConfigSchemaCodec.deserialize(
-      JSON.stringify(parsed)
-    )
+    const rehydrated = ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))
     expect(rehydrated.signatureProvider).toEqual({
       type: SignatureProviderType.KEY,
       ssm: null
@@ -138,9 +126,7 @@ describe("ClusterConfig shape", () => {
     delete parsed.terminateMaxConsecutiveMisses
     delete parsed.terminateMaxPercentMisses24h
     delete parsed.terminateWindowMs
-    const rehydrated = ClusterConfigSchemaCodec.deserialize(
-      JSON.stringify(parsed)
-    )
+    const rehydrated = ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))
     expect(rehydrated.operatorsPerEpoch).toBeNull()
     expect(rehydrated.batchOpGroups).toBeNull()
     expect(rehydrated.epochRetentionEnvelopeLogCount).toBeNull()

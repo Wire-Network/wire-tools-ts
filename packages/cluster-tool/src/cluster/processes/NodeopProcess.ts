@@ -1,8 +1,5 @@
 import Assert from "node:assert"
-import {
-  SignatureProviderType,
-  type ClusterConfig
-} from "@wireio/cluster-tool-shared"
+import { SignatureProviderType, type ClusterConfig } from "@wireio/cluster-tool-shared"
 import { KeyType } from "@wireio/sdk-core"
 import { execFile } from "node:child_process"
 import Fs from "node:fs"
@@ -25,17 +22,11 @@ import type { ProcessManager } from "./ProcessManager.js"
 const log = getLogger(__filename)
 
 /** Plugins loaded on every node regardless of role. */
-const AlwaysOnPlugins = [
-  "sysio::net_plugin",
-  "sysio::chain_api_plugin"
-] as const
+const AlwaysOnPlugins = ["sysio::net_plugin", "sysio::chain_api_plugin"] as const
 /** Plugins loaded only when the node has producers assigned. */
 const ProducerPlugins = ["sysio::producer_plugin"] as const
 /** Plugins loaded after the standard argument block. */
-const TrailingPlugins = [
-  "sysio::producer_api_plugin",
-  "sysio::trace_api_plugin"
-] as const
+const TrailingPlugins = ["sysio::producer_api_plugin", "sysio::trace_api_plugin"] as const
 
 /** `[flag, value]` pair expansion helper. */
 const pair = (flag: string, value: string): [string, string] => [flag, value]
@@ -93,9 +84,7 @@ export interface NodeopTuningConfig extends Required<NodeopTuningOptions> {}
  * every node refuse the surplus dials, which freezes LIB at scale (see
  * {@link NodeConfig.peerCapacity} for the full failure chain).
  */
-export function createNodeopTuningDefaultOptions(
-  cluster: ClusterConfig
-): NodeopTuningConfig {
+export function createNodeopTuningDefaultOptions(cluster: ClusterConfig): NodeopTuningConfig {
   return {
     blocksPath: NodeopProcess.DefaultBlocksPath,
     voteThreads: NodeopProcess.DefaultVoteThreads,
@@ -162,23 +151,13 @@ export interface NodeopConfig extends NodeopOptions {
  * instances coexist (one per node), each labeled by `node.name`.
  */
 export class NodeopProcess extends ManagedProcess {
-  static async create(
-    manager: ProcessManager,
-    options: NodeopOptions
-  ): Promise<NodeopProcess> {
+  static async create(manager: ProcessManager, options: NodeopOptions): Promise<NodeopProcess> {
     const { node } = options,
       cluster = node.cluster
+    Assert.ok(await existsAsync(cluster.executables.nodeop), "nodeop binary not found")
+    Assert.ok(await existsAsync(ClusterConfigProvider.genesisFile(cluster)), "genesis.json not found")
     Assert.ok(
-      await existsAsync(cluster.executables.nodeop),
-      "nodeop binary not found"
-    )
-    Assert.ok(
-      await existsAsync(ClusterConfigProvider.genesisFile(cluster)),
-      "genesis.json not found"
-    )
-    Assert.ok(
-      node.producers.length === 0 ||
-        (options.operator != null && options.operator.wireFinalizer != null),
+      node.producers.length === 0 || (options.operator != null && options.operator.wireFinalizer != null),
       `nodeop ${node.name}: a producing node requires a producer OperatorAccount (wire + wireFinalizer keys)`
     )
     mkdirs(node.nodePath)
@@ -186,9 +165,7 @@ export class NodeopProcess extends ManagedProcess {
       manager,
       NodeopProcess.resolveConfig(options, {
         genesisTimestamp: NodeopProcess.readGenesisTimestamp(cluster),
-        supportsTraceNoAbis: (
-          await binaryHelp(cluster.executables.nodeop)
-        ).includes(NodeopProcess.TraceNoAbisFlag)
+        supportsTraceNoAbis: (await binaryHelp(cluster.executables.nodeop)).includes(NodeopProcess.TraceNoAbisFlag)
       })
     )
   }
@@ -211,9 +188,7 @@ export class NodeopProcess extends ManagedProcess {
    *  relaunch mode strips the one-shot genesis flags. */
   get args(): string[] {
     const startArgs = NodeopProcess.buildArgs(this.config).slice(1)
-    return this.config.relaunch
-      ? NodeopProcess.buildRelaunchArgs(startArgs)
-      : startArgs
+    return this.config.relaunch ? NodeopProcess.buildRelaunchArgs(startArgs) : startArgs
   }
 
   protected get verifyTimeoutMs(): number {
@@ -232,20 +207,13 @@ export class NodeopProcess extends ManagedProcess {
    * file.
    */
   protected startupFailureDetail(): Promise<string> {
-    const tail = this.recentOutput.slice(
-      -NodeopProcess.StartupFailureDetailLines
-    )
-    return Promise.resolve(
-      tail.length === 0 ? null : `recent output:\n${tail.join("\n")}`
-    )
+    const tail = this.recentOutput.slice(-NodeopProcess.StartupFailureDetailLines)
+    return Promise.resolve(tail.length === 0 ? null : `recent output:\n${tail.join("\n")}`)
   }
 
   /** Dial URL for this node's HTTP API — the bind address mapped through {@link toDialAddress}. */
   get httpUrl(): string {
-    return toURL(
-      this.config.node.ports.http,
-      toDialAddress(this.config.node.cluster.bind.nodeop.address)
-    )
+    return toURL(this.config.node.ports.http, toDialAddress(this.config.node.cluster.bind.nodeop.address))
   }
 
   /**
@@ -254,10 +222,9 @@ export class NodeopProcess extends ManagedProcess {
    * step's sync gate polls this against the depot head.
    */
   async head(): Promise<number> {
-    const response = await fetch(
-      `${this.httpUrl}${NodeopProcess.HealthCheckPath}`,
-      { signal: AbortSignal.timeout(NodeopProcess.HeadProbeTimeoutMs) }
-    )
+    const response = await fetch(`${this.httpUrl}${NodeopProcess.HealthCheckPath}`, {
+      signal: AbortSignal.timeout(NodeopProcess.HeadProbeTimeoutMs)
+    })
     Assert.ok(response.ok, `${this.label} get_info answered ${response.status}`)
     const info = (await response.json()) as WireClient.GetInfoResponse
     return info.head_block_num
@@ -305,9 +272,7 @@ export namespace NodeopProcess {
    * `plugin_config_exception (3110006): Signature-provider scheme "SSM" is
    * provided by plugin "sysio::signature_provider_ssm_plugin"`.
    */
-  export const SignatureProviderSchemePlugins: Partial<
-    Record<SignatureProviderType, string>
-  > = {
+  export const SignatureProviderSchemePlugins: Partial<Record<SignatureProviderType, string>> = {
     [SignatureProviderType.SSM]: "sysio::signature_provider_ssm_plugin"
   }
 
@@ -334,19 +299,12 @@ export namespace NodeopProcess {
    * @param args - The composed argv to scan.
    * @returns The missing `--plugin` values, deduplicated, in scan order.
    */
-  export function requiredSignatureProviderPlugins(
-    args: readonly string[]
-  ): string[] {
+  export function requiredSignatureProviderPlugins(args: readonly string[]): string[] {
     const valuesAfter = (flag: string): string[] =>
         args.flatMap((arg, index) => (arg === flag ? [args[index + 1]] : [])),
       enabled = new Set(valuesAfter(PluginFlag)),
       required = valuesAfter(SignatureProviderFlag)
-        .map(
-          spec =>
-            SignatureProviderSchemePlugins[
-              signatureProviderScheme(spec) as SignatureProviderType
-            ]
-        )
+        .map(spec => SignatureProviderSchemePlugins[signatureProviderScheme(spec) as SignatureProviderType])
         .filter(plugin => plugin != null && !enabled.has(plugin))
     return [...new Set(required)]
   }
@@ -359,9 +317,7 @@ export namespace NodeopProcess {
    * @returns The genesis `initial_timestamp`.
    */
   export function readGenesisTimestamp(cluster: ClusterConfig): string {
-    return JSON.parse(
-      Fs.readFileSync(ClusterConfigProvider.genesisFile(cluster), "utf8")
-    ).initial_timestamp
+    return JSON.parse(Fs.readFileSync(ClusterConfigProvider.genesisFile(cluster), "utf8")).initial_timestamp
   }
 
   /**
@@ -384,16 +340,10 @@ export namespace NodeopProcess {
     supportsTraceNoAbis: boolean
   }
 
-  export function resolveConfig(
-    options: NodeopOptions,
-    resolved: ResolvedInputs
-  ): NodeopConfig {
+  export function resolveConfig(options: NodeopOptions, resolved: ResolvedInputs): NodeopConfig {
     return {
       ...options,
-      tuning: defaults(
-        { ...options.tuning },
-        createNodeopTuningDefaultOptions(options.node.cluster)
-      ),
+      tuning: defaults({ ...options.tuning }, createNodeopTuningDefaultOptions(options.node.cluster)),
       extraArgs: options.extraArgs ?? [],
       genesisTimestamp: resolved.genesisTimestamp,
       supportsTraceNoAbis: resolved.supportsTraceNoAbis
@@ -423,28 +373,15 @@ export namespace NodeopProcess {
       // any other node key, so it uses the cluster's provider source and the
       // node fetches it from SSM at startup, exactly as producer nodes do.
       baseKeySourceFor = ClusterConfigProvider.signatureProviderSource(cluster),
-      isInlineBios =
-        node.role === NodeRole.bios &&
-        cluster.signatureProvider.type !== SignatureProviderType.SSM,
-      keySourceFor = (
-        account: string,
-        keyType: KeyType
-      ): KeyGenerator.SignatureProviderSource =>
-        isInlineBios
-          ? KeyGenerator.DefaultKeySource
-          : baseKeySourceFor(account, keyType),
-      isProducing =
-        node.producers.length > 0 &&
-        operator != null &&
-        operator.wireFinalizer != null
+      isInlineBios = node.role === NodeRole.bios && cluster.signatureProvider.type !== SignatureProviderType.SSM,
+      keySourceFor = (account: string, keyType: KeyType): KeyGenerator.SignatureProviderSource =>
+        isInlineBios ? KeyGenerator.DefaultKeySource : baseKeySourceFor(account, keyType),
+      isProducing = node.producers.length > 0 && operator != null && operator.wireFinalizer != null
     const args = [
       cluster.executables.nodeop,
       ...pair("--blocks-dir", tuning.blocksPath),
       ...pair("--p2p-listen-endpoint", `${listen}:${node.ports.p2p}`),
-      ...pair(
-        "--p2p-server-address",
-        `${node.advertiseAddress}:${node.ports.p2p}`
-      ),
+      ...pair("--p2p-server-address", `${node.advertiseAddress}:${node.ports.p2p}`),
       ...node.peerEndpoints.flatMap(peer => pair("--p2p-peer-address", peer)),
       ...(node.role === NodeRole.bios ? ["--enable-stale-production"] : []),
       ...pluginArgs(AlwaysOnPlugins),
@@ -453,45 +390,28 @@ export namespace NodeopProcess {
             ...pluginArgs(ProducerPlugins),
             ...pair(
               SignatureProviderFlag,
-              KeyGenerator.toSignatureProvider(
-                operator.wire,
-                undefined,
-                keySourceFor(node.name, KeyType.K1)
-              )
+              KeyGenerator.toSignatureProvider(operator.wire, undefined, keySourceFor(node.name, KeyType.K1))
             ),
             ...pair(
               SignatureProviderFlag,
-              KeyGenerator.toSignatureProvider(
-                operator.wireFinalizer,
-                undefined,
-                keySourceFor(node.name, KeyType.BLS)
-              )
+              KeyGenerator.toSignatureProvider(operator.wireFinalizer, undefined, keySourceFor(node.name, KeyType.BLS))
             ),
             ...node.producers.flatMap(name => pair("--producer-name", name))
           ]
         : []),
       ...pair("--vote-threads", String(tuning.voteThreads)),
       ...pair("--max-transaction-time", String(tuning.maxTransactionTime)),
-      ...pair(
-        "--abi-serializer-max-time-ms",
-        String(tuning.abiSerializerMaxTimeMs)
-      ),
+      ...pair("--abi-serializer-max-time-ms", String(tuning.abiSerializerMaxTimeMs)),
       ...pair("--p2p-max-nodes-per-host", String(tuning.p2pMaxNodesPerHost)),
       ...pair("--max-clients", String(tuning.maxClients)),
-      ...pair(
-        "--connection-cleanup-period",
-        String(tuning.connectionCleanupPeriodSec)
-      ),
+      ...pair("--connection-cleanup-period", String(tuning.connectionCleanupPeriodSec)),
       ...(tuning.contractsConsole ? ["--contracts-console"] : []),
       ...pluginArgs(TrailingPlugins),
       // The harness supplies no trace-api ABI set — serve raw traces. Newer
       // nodeop generations hard-fail trace_api_plugin init without this flag;
       // older ones reject the unknown option, hence the capability probe.
       ...(config.supportsTraceNoAbis ? [TraceNoAbisFlag] : []),
-      ...pair(
-        "--http-max-response-time-ms",
-        String(tuning.httpMaxResponseTimeMs)
-      ),
+      ...pair("--http-max-response-time-ms", String(tuning.httpMaxResponseTimeMs)),
       ...pair("--config-dir", node.nodePath),
       ...pair("--data-dir", node.nodePath),
       ...pair("--genesis-json", ClusterConfigProvider.genesisFile(cluster)),
@@ -509,10 +429,7 @@ export namespace NodeopProcess {
    * Flags whose `[flag, value]` pair is stripped on relaunch — genesis settings
    * are one-shot (replaying them re-stamps the chain).
    */
-  const RelaunchStripFlags: ReadonlySet<string> = new Set([
-    "--genesis-json",
-    "--genesis-timestamp"
-  ])
+  const RelaunchStripFlags: ReadonlySet<string> = new Set(["--genesis-json", "--genesis-timestamp"])
   const EnableStaleProductionFlag = "--enable-stale-production"
 
   /**
@@ -526,15 +443,11 @@ export namespace NodeopProcess {
       if (RelaunchStripFlags.has(arg)) return []
       return [arg]
     })
-    return stripped.includes(EnableStaleProductionFlag)
-      ? stripped
-      : [...stripped, EnableStaleProductionFlag]
+    return stripped.includes(EnableStaleProductionFlag) ? stripped : [...stripped, EnableStaleProductionFlag]
   }
 
   /** The node's finalizer safety file: `<nodePath>/finalizers/safety.dat`. */
-  export function finalizerSafetyFile(
-    nodePath: NodeConfig["nodePath"]
-  ): string {
+  export function finalizerSafetyFile(nodePath: NodeConfig["nodePath"]): string {
     return Path.join(nodePath, FinalizersDirname, SafetyDatFilename)
   }
 
@@ -553,10 +466,7 @@ export namespace NodeopProcess {
    * {@link DirtyChainbasePattern}. A live-but-slow node never matches.
    */
   export function isDirtyChainbaseAbort(candidate: StartupOutcome): boolean {
-    return (
-      !candidate.isRunning &&
-      candidate.recentOutput.some(line => DirtyChainbasePattern.test(line))
-    )
+    return !candidate.isRunning && candidate.recentOutput.some(line => DirtyChainbasePattern.test(line))
   }
 
   /**
@@ -572,10 +482,7 @@ export namespace NodeopProcess {
       method: "POST",
       signal: AbortSignal.timeout(ResumeProductionTimeoutMs)
     })
-    Assert.ok(
-      response.ok,
-      `resumeProduction: ${httpUrl}${ResumeProductionPath} answered ${response.status}`
-    )
+    Assert.ok(response.ok, `resumeProduction: ${httpUrl}${ResumeProductionPath} answered ${response.status}`)
   }
 
   /**
@@ -598,10 +505,7 @@ export namespace NodeopProcess {
    * @param manager - The registry the processes register with.
    * @param options - Same options as {@link NodeopProcess.create}.
    */
-  export async function startWithRecovery(
-    manager: ProcessManager,
-    options: NodeopOptions
-  ): Promise<NodeopProcess> {
+  export async function startWithRecovery(manager: ProcessManager, options: NodeopOptions): Promise<NodeopProcess> {
     const first = await NodeopProcess.create(manager, options)
     try {
       return await first.start()

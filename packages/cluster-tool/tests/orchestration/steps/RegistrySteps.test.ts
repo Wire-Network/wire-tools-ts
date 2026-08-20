@@ -1,19 +1,12 @@
 import { SlugName } from "@wireio/sdk-core"
-import {
-  ClusterBuild,
-  ClusterBuildContext,
-  ClusterBuildPhase,
-  Steps
-} from "@wireio/cluster-tool/orchestration"
+import { ClusterBuild, ClusterBuildContext, ClusterBuildPhase, Steps } from "@wireio/cluster-tool/orchestration"
 import { getLogger } from "@wireio/cluster-tool/logging"
 import { Report } from "@wireio/cluster-tool/report"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 
 /** A fresh build root (a `ClusterBuildParent`) for the reserve phase to register on. */
 function newBuild(): ClusterBuild {
-  return ClusterBuild.forContext(
-    new ClusterBuildContext(fixtureConfig(), getLogger("registry-test"))
-  )
+  return ClusterBuild.forContext(new ClusterBuildContext(fixtureConfig(), getLogger("registry-test")))
 }
 
 describe("Steps.registry", () => {
@@ -39,26 +32,14 @@ describe("Steps.registry", () => {
     const ConnectorWeightBps = 5000
 
     it("returns a Phase of 8 static Sysio regreserve steps", () => {
-      const phase = Steps.registry.planMockReserves(
-        newBuild(),
-        "MockReserves",
-        "seed mock reserves",
-        {}
-      )
+      const phase = Steps.registry.planMockReserves(newBuild(), "MockReserves", "seed mock reserves", {})
       expect(phase).toBeInstanceOf(ClusterBuildPhase)
       expect(phase.steps).toHaveLength(8)
-      expect(
-        phase.steps.every(step => step.actor === Report.Actor.Sysio)
-      ).toBe(true)
+      expect(phase.steps.every(step => step.actor === Report.Actor.Sysio)).toBe(true)
     })
 
     it("names each step seed-reserve-<chain>-<token>, all unique", () => {
-      const phase = Steps.registry.planMockReserves(
-        newBuild(),
-        "MockReserves",
-        "d",
-        {}
-      )
+      const phase = Steps.registry.planMockReserves(newBuild(), "MockReserves", "d", {})
       const names = phase.steps.map(step => step.name)
       expect(new Set(names).size).toBe(8)
       expect(names).toContain("seed-reserve-ethereum-eth")
@@ -66,12 +47,7 @@ describe("Steps.registry", () => {
     })
 
     it("carries a RegreserveInput with PRIMARY code + 5000 connector on every row", () => {
-      const phase = Steps.registry.planMockReserves(
-        newBuild(),
-        "MockReserves",
-        "d",
-        {}
-      )
+      const phase = Steps.registry.planMockReserves(newBuild(), "MockReserves", "d", {})
       phase.steps.forEach(step => {
         expect(step.input.kind).toBe("ReservContractSteps.RegreserveInput")
         expect(step.input.data.reserve_code.value).toBe(PrimaryCode)

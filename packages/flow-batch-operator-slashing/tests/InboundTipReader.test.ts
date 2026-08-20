@@ -56,40 +56,22 @@ function queryOf(rows: OutpostConsensusRow[]): CountingQuery {
 describe("InboundTipReader", () => {
   test("parses both tips off the requested outpost's row", async () => {
     const { query, calls } = queryOf([otherRow(), matchingRow()])
-    const tips = await new InboundTipReader().read(
-      ETHEREUM_CHAIN_CODE,
-      EPOCH,
-      query
-    )
+    const tips = await new InboundTipReader().read(ETHEREUM_CHAIN_CODE, EPOCH, query)
 
-    expect(Buffer.from(tips.messageTip).toString("hex")).toBe(
-      MESSAGE_TIP_HEX.slice(2)
-    )
-    expect(Buffer.from(tips.envelopeDigest).toString("hex")).toBe(
-      ENVELOPE_DIGEST_HEX.slice(2)
-    )
+    expect(Buffer.from(tips.messageTip).toString("hex")).toBe(MESSAGE_TIP_HEX.slice(2))
+    expect(Buffer.from(tips.envelopeDigest).toString("hex")).toBe(ENVELOPE_DIGEST_HEX.slice(2))
     expect(calls()).toBe(1)
   })
 
   test("matches a row whose chain_code arrives as a string", async () => {
     const row = { ...matchingRow(), chain_code: String(ETHEREUM_CHAIN_CODE) }
-    const tips = await new InboundTipReader().read(
-      ETHEREUM_CHAIN_CODE,
-      EPOCH,
-      queryOf([row]).query
-    )
+    const tips = await new InboundTipReader().read(ETHEREUM_CHAIN_CODE, EPOCH, queryOf([row]).query)
 
-    expect(Buffer.from(tips.messageTip).toString("hex")).toBe(
-      MESSAGE_TIP_HEX.slice(2)
-    )
+    expect(Buffer.from(tips.messageTip).toString("hex")).toBe(MESSAGE_TIP_HEX.slice(2))
   })
 
   test("returns empty tips when the outpost has no row (stream genesis)", async () => {
-    const tips = await new InboundTipReader().read(
-      ETHEREUM_CHAIN_CODE,
-      EPOCH,
-      queryOf([otherRow()]).query
-    )
+    const tips = await new InboundTipReader().read(ETHEREUM_CHAIN_CODE, EPOCH, queryOf([otherRow()]).query)
 
     expect(tips.messageTip.length).toBe(0)
     expect(tips.envelopeDigest.length).toBe(0)
@@ -101,11 +83,7 @@ describe("InboundTipReader", () => {
       message_tip: "0x" + "00".repeat(32)
       // envelope_digest absent: the depot leaves it unset until the first accepted envelope.
     }
-    const tips = await new InboundTipReader().read(
-      ETHEREUM_CHAIN_CODE,
-      EPOCH,
-      queryOf([genesisRow]).query
-    )
+    const tips = await new InboundTipReader().read(ETHEREUM_CHAIN_CODE, EPOCH, queryOf([genesisRow]).query)
 
     expect(tips.messageTip.length).toBe(0)
     expect(tips.envelopeDigest.length).toBe(0)
@@ -115,9 +93,7 @@ describe("InboundTipReader", () => {
     const reader = new InboundTipReader()
     let calls = 0
     let release: (rows: OutpostConsensusRow[]) => void
-    const gate = new Promise<OutpostConsensusRow[]>(
-      resolve => (release = resolve)
-    )
+    const gate = new Promise<OutpostConsensusRow[]>(resolve => (release = resolve))
     const query = () => {
       calls++
       return gate
@@ -160,14 +136,10 @@ describe("InboundTipReader", () => {
       return [matchingRow()]
     }
 
-    await expect(
-      reader.read(ETHEREUM_CHAIN_CODE, EPOCH, query)
-    ).rejects.toThrow("transient RPC failure")
+    await expect(reader.read(ETHEREUM_CHAIN_CODE, EPOCH, query)).rejects.toThrow("transient RPC failure")
     const tips = await reader.read(ETHEREUM_CHAIN_CODE, EPOCH, query)
 
     expect(calls).toBe(2)
-    expect(Buffer.from(tips.messageTip).toString("hex")).toBe(
-      MESSAGE_TIP_HEX.slice(2)
-    )
+    expect(Buffer.from(tips.messageTip).toString("hex")).toBe(MESSAGE_TIP_HEX.slice(2))
   })
 })

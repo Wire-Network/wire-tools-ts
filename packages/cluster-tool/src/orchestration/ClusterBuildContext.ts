@@ -12,10 +12,7 @@ import type { Logger } from "../logging/Logger.js"
 import type { Report } from "../report/Report.js"
 import { toDialAddress, toURL } from "../utils/netUtils.js"
 import { OutputStore } from "./OutputStore.js"
-import {
-  ClusterKeyStore,
-  ClusterKeyStoreKey
-} from "./outputs/ClusterKeyStore.js"
+import { ClusterKeyStore, ClusterKeyStoreKey } from "./outputs/ClusterKeyStore.js"
 
 /**
  * The surface every step in a build shares: the resolved {@link ClusterConfig},
@@ -27,9 +24,7 @@ import {
  * The chain clients are LAZY (built on first access) — the orchestration engine
  * itself never touches them, so engine-only builds make no client at all.
  */
-export class ClusterBuildContext<
-  Events extends EventEmitter.ValidEventTypes = string
-> extends EventEmitter<Events> {
+export class ClusterBuildContext<Events extends EventEmitter.ValidEventTypes = string> extends EventEmitter<Events> {
   /** Typed cross-step value store. */
   readonly outputs = new OutputStore()
 
@@ -62,10 +57,7 @@ export class ClusterBuildContext<
       clusterPath: this.config.clusterPath,
       binary: this.config.executables.clio,
       nodeopUrl: ClusterBuildContext.nodeopUrl(this.config),
-      kiodUrl: toURL(
-        this.config.bind.kiod.port,
-        toDialAddress(this.config.bind.kiod.address)
-      ),
+      kiodUrl: toURL(this.config.bind.kiod.port, toDialAddress(this.config.bind.kiod.address)),
       // `producerCount` is the intended input for this tool's budget sizing.
       // Note it is the producer ACCOUNT count, which is not always the producer
       // NODE count the genesis finalizer policy is built from (`NodeConfig.plan`
@@ -78,20 +70,14 @@ export class ClusterBuildContext<
   /** The Ethereum client, bound to the cluster's anvil RPC. */
   get ethereum(): EthereumClient {
     return (this.ethereumClient ??= new EthereumClient(
-      toURL(
-        this.config.bind.anvil.port,
-        toDialAddress(this.config.bind.anvil.address)
-      )
+      toURL(this.config.bind.anvil.port, toDialAddress(this.config.bind.anvil.address))
     ))
   }
 
   /** The Solana client, bound to the cluster's validator RPC (ambient payer). */
   get solana(): SolanaClient {
     return (this.solanaClient ??= new SolanaClient(
-      toURL(
-        this.config.bind.solana.ports.http,
-        toDialAddress(this.config.bind.solana.address)
-      ),
+      toURL(this.config.bind.solana.ports.http, toDialAddress(this.config.bind.solana.address)),
       new SolanaWallet(Keypair.generate())
     ))
   }
@@ -126,9 +112,6 @@ export namespace ClusterBuildContext {
   /** The nodeop HTTP dial URL — the first producer (bios retires after handoff). */
   export function nodeopUrl(config: ClusterConfig): string {
     const ports = config.bind.nodeop.ports
-    return toURL(
-      ports.producers[0]?.http ?? ports.bios.http,
-      toDialAddress(config.bind.nodeop.address)
-    )
+    return toURL(ports.producers[0]?.http ?? ports.bios.http, toDialAddress(config.bind.nodeop.address))
   }
 }

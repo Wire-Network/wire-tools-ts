@@ -22,14 +22,8 @@ export class WireWallet {
 
   constructor(
     private readonly runner: ClioRunner,
-    readonly walletPath: string = Path.join(
-      runner.config.clusterPath,
-      WireWallet.Subpath
-    ),
-    readonly passwordFile: string = Path.join(
-      walletPath,
-      WireWallet.PasswordFilename
-    )
+    readonly walletPath: string = Path.join(runner.config.clusterPath, WireWallet.Subpath),
+    readonly passwordFile: string = Path.join(walletPath, WireWallet.PasswordFilename)
   ) {
     // Load the persisted password as a VALUE — never asOption().ifSome().
     this.passwordInternal = asOption(passwordFile)
@@ -57,18 +51,10 @@ export class WireWallet {
    * @param walletId - Wallet name. Defaults to {@link WireWallet.DefaultName}.
    * @returns This wallet.
    */
-  async getOrCreate(
-    walletId: string = WireWallet.DefaultName
-  ): Promise<WireWallet> {
+  async getOrCreate(walletId: string = WireWallet.DefaultName): Promise<WireWallet> {
     const result = await this.runner
       .run(["wallet", "create", "-n", walletId, "--to-console"])
-      .catch(error =>
-        WireWallet.tolerate(
-          error,
-          ClioRunner.ErrorFragment.AccountAlreadyExists,
-          ""
-        )
-      )
+      .catch(error => WireWallet.tolerate(error, ClioRunner.ErrorFragment.AccountAlreadyExists, ""))
     // VALUE flow off the capture group — persist when matched, else no-op.
     return asOption(result.match(WireWallet.PasswordPattern))
       .map(([, password]) => this.persistPassword(password))
@@ -81,18 +67,9 @@ export class WireWallet {
    * @param privateKeys - Keys to import (flattened; empties skipped).
    * @returns This wallet.
    */
-  async addPrivateKey(
-    ...privateKeys: Array<string | readonly string[]>
-  ): Promise<WireWallet> {
+  async addPrivateKey(...privateKeys: Array<string | readonly string[]>): Promise<WireWallet> {
     await eachSeries(flatten(privateKeys).filter(isNotEmpty), key =>
-      this.runner.run([
-        "wallet",
-        "import",
-        "-n",
-        WireWallet.DefaultName,
-        "--private-key",
-        key
-      ])
+      this.runner.run(["wallet", "import", "-n", WireWallet.DefaultName, "--private-key", key])
     )
     return this
   }
@@ -107,20 +84,9 @@ export class WireWallet {
   async unlock(password: string | null = this.password): Promise<WireWallet> {
     await this.open()
     await this.runner
-      .run([
-        "wallet",
-        "unlock",
-        "-n",
-        WireWallet.DefaultName,
-        "--password",
-        password ?? ""
-      ])
+      .run(["wallet", "unlock", "-n", WireWallet.DefaultName, "--password", password ?? ""])
       .catch(error =>
-        WireWallet.swallowBenign(
-          error,
-          ClioRunner.ErrorFragment.WalletAlreadyUnlocked,
-          "wallet already unlocked"
-        )
+        WireWallet.swallowBenign(error, ClioRunner.ErrorFragment.WalletAlreadyUnlocked, "wallet already unlocked")
       )
     return this
   }
@@ -129,13 +95,7 @@ export class WireWallet {
   private async open(walletId: string = WireWallet.DefaultName): Promise<void> {
     await this.runner
       .run(["wallet", "open", "-n", walletId])
-      .catch(error =>
-        WireWallet.swallowBenign(
-          error,
-          WireWallet.AlreadyOpenPattern,
-          "wallet already open"
-        )
-      )
+      .catch(error => WireWallet.swallowBenign(error, WireWallet.AlreadyOpenPattern, "wallet already open"))
   }
 }
 
@@ -185,15 +145,9 @@ export namespace WireWallet {
    * @param debugMessage - What to log on a benign match.
    * @throws The original error when not benign.
    */
-  export function swallowBenign(
-    error: unknown,
-    benign: string | RegExp,
-    debugMessage: string
-  ): void {
+  export function swallowBenign(error: unknown, benign: string | RegExp, debugMessage: string): void {
     asOption(errorMessage(error))
-      .filter(message =>
-        typeof benign === "string" ? message.includes(benign) : benign.test(message)
-      )
+      .filter(message => (typeof benign === "string" ? message.includes(benign) : benign.test(message)))
       .match({
         Some: () => log.debug(debugMessage),
         None: () => {

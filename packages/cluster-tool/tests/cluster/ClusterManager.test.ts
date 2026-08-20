@@ -2,20 +2,12 @@ import { spawn } from "node:child_process"
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import {
-  AWSAccountName,
-  ClusterFiles,
-  SignatureProviderType,
-  type ClusterConfig
-} from "@wireio/cluster-tool-shared"
+import { AWSAccountName, ClusterFiles, SignatureProviderType, type ClusterConfig } from "@wireio/cluster-tool-shared"
 import { PidSources } from "@wireio/debugging-shared"
 import { Deferred, guard } from "@wireio/shared"
 import { ClusterManager } from "@wireio/cluster-tool"
 import { ProcessSignalName } from "@wireio/cluster-tool/cluster/processes"
-import {
-  ClusterConfigProvider,
-  SSMClientProvider
-} from "@wireio/cluster-tool/config"
+import { ClusterConfigProvider, SSMClientProvider } from "@wireio/cluster-tool/config"
 import { fixtureConfig } from "../config/clusterConfigFixture.js"
 
 const mockSend = jest.fn()
@@ -26,12 +18,8 @@ const mockDeleteParameterCommand = jest.fn().mockImplementation(() => {
 })
 jest.mock("@aws-sdk/client-ssm", () => ({
   SSMClient: jest.fn().mockImplementation(() => ({ send: mockSend })),
-  GetParameterCommand: jest
-    .fn()
-    .mockImplementation((input: unknown) => ({ kind: "GetParameter", input })),
-  PutParameterCommand: jest
-    .fn()
-    .mockImplementation((input: unknown) => ({ kind: "PutParameter", input })),
+  GetParameterCommand: jest.fn().mockImplementation((input: unknown) => ({ kind: "GetParameter", input })),
+  PutParameterCommand: jest.fn().mockImplementation((input: unknown) => ({ kind: "PutParameter", input })),
   DeleteParameterCommand: mockDeleteParameterCommand
 }))
 
@@ -52,9 +40,7 @@ describe("ClusterManager.assertClusterStopped", () => {
   }
 
   it("passes when the data dir does not exist", () => {
-    expect(() =>
-      ClusterManager.assertClusterStopped(configWithDataPath(Path.join(dir, "data")))
-    ).not.toThrow()
+    expect(() => ClusterManager.assertClusterStopped(configWithDataPath(Path.join(dir, "data")))).not.toThrow()
   })
 
   it("passes when a pidfile is stale (its pid is no longer alive)", () => {
@@ -73,9 +59,9 @@ describe("ClusterManager.assertClusterStopped", () => {
         nodeDirectory = Path.join(dataPath, "node_bios")
       Fs.mkdirSync(nodeDirectory, { recursive: true })
       Fs.writeFileSync(Path.join(nodeDirectory, "node_bios.pid"), String(child.pid))
-      expect(() =>
-        ClusterManager.assertClusterStopped(configWithDataPath(dataPath))
-      ).toThrow(new RegExp(`live pid\\(s\\): ${child.pid}`))
+      expect(() => ClusterManager.assertClusterStopped(configWithDataPath(dataPath))).toThrow(
+        new RegExp(`live pid\\(s\\): ${child.pid}`)
+      )
     } finally {
       child.kill("SIGKILL")
       await new Promise<void>(resolve => child.once("exit", () => resolve()))
@@ -140,16 +126,9 @@ describe("ClusterManager.prepareClusterPath", () => {
 
   /** Seed a pidfile exactly where the live-pid scan looks: `data/<node>/<node>.pid`. */
   function writePidFile(pid: number): void {
-    const nodeDirectory = Path.join(
-      clusterPath,
-      ClusterConfigProvider.DataSubpath,
-      NodeName
-    )
+    const nodeDirectory = Path.join(clusterPath, ClusterConfigProvider.DataSubpath, NodeName)
     Fs.mkdirSync(nodeDirectory, { recursive: true })
-    Fs.writeFileSync(
-      Path.join(nodeDirectory, `${NodeName}${PidSources.PidExt}`),
-      String(pid)
-    )
+    Fs.writeFileSync(Path.join(nodeDirectory, `${NodeName}${PidSources.PidExt}`), String(pid))
   }
 
   it("removes the pre-existing cluster path when force is set", () => {
@@ -170,29 +149,25 @@ describe("ClusterManager.prepareClusterPath", () => {
     expect(() => ClusterManager.prepareClusterPath({ clusterPath })).toThrow(
       /already exists .* pass --force to replace it/
     )
-    expect(() =>
-      ClusterManager.prepareClusterPath({ force: false, clusterPath })
-    ).toThrow(/already exists .* pass --force to replace it/)
+    expect(() => ClusterManager.prepareClusterPath({ force: false, clusterPath })).toThrow(
+      /already exists .* pass --force to replace it/
+    )
     expect(Fs.existsSync(markerFile)).toBe(true)
     expect(Fs.readFileSync(markerFile, "utf8")).toBe(MarkerContent)
   })
 
   it("refuses to remove a cluster whose pidfile names a LIVE pid", () => {
     writePidFile(liveChild.pid)
-    expect(() =>
-      ClusterManager.prepareClusterPath({ force: true, clusterPath })
-    ).toThrow(new RegExp(`live pid\\(s\\): ${liveChild.pid}`))
+    expect(() => ClusterManager.prepareClusterPath({ force: true, clusterPath })).toThrow(
+      new RegExp(`live pid\\(s\\): ${liveChild.pid}`)
+    )
     expect(Fs.existsSync(markerFile)).toBe(true)
   })
 
   it("is a no-op when the cluster path does not exist — with or without force", () => {
     const missing = Path.join(root, "never-created")
-    expect(() =>
-      ClusterManager.prepareClusterPath({ force: true, clusterPath: missing })
-    ).not.toThrow()
-    expect(() =>
-      ClusterManager.prepareClusterPath({ clusterPath: missing })
-    ).not.toThrow()
+    expect(() => ClusterManager.prepareClusterPath({ force: true, clusterPath: missing })).not.toThrow()
+    expect(() => ClusterManager.prepareClusterPath({ clusterPath: missing })).not.toThrow()
     expect(Fs.existsSync(missing)).toBe(false)
   })
 })
@@ -225,10 +200,7 @@ describe("ClusterManager.destroy", () => {
 
   it("prunes a stale pidfile via the orphan sweep and still removes the directory", async () => {
     // A pid number far past any real pid — guaranteed not alive (ESRCH).
-    Fs.writeFileSync(
-      Path.join(destroyRoot, "data", "node_bios", "node_bios.pid"),
-      "987654321"
-    )
+    Fs.writeFileSync(Path.join(destroyRoot, "data", "node_bios", "node_bios.pid"), "987654321")
     await expect(ClusterManager.destroy(destroyConfig())).resolves.toBeUndefined()
     expect(Fs.existsSync(destroyRoot)).toBe(false)
   })
@@ -264,9 +236,7 @@ describe("ClusterManager.destroy", () => {
     })
 
     it("issues ZERO DeleteParameter calls — a published parameter is the account's key identity", async () => {
-      await expect(
-        ClusterManager.destroy(ssmDestroyConfig())
-      ).resolves.toBeUndefined()
+      await expect(ClusterManager.destroy(ssmDestroyConfig())).resolves.toBeUndefined()
       // Nothing was constructed, and nothing was sent to AWS at all.
       expect(mockDeleteParameterCommand).not.toHaveBeenCalled()
       expect(mockSend).not.toHaveBeenCalled()
@@ -278,12 +248,8 @@ describe("ClusterManager.destroy", () => {
     })
 
     it("removes the cluster directory even with NO cluster-keys.json", async () => {
-      expect(
-        Fs.existsSync(Path.join(destroyRoot, ClusterFiles.KeysFilename))
-      ).toBe(false)
-      await expect(
-        ClusterManager.destroy(ssmDestroyConfig())
-      ).resolves.toBeUndefined()
+      expect(Fs.existsSync(Path.join(destroyRoot, ClusterFiles.KeysFilename))).toBe(false)
+      await expect(ClusterManager.destroy(ssmDestroyConfig())).resolves.toBeUndefined()
       expect(Fs.existsSync(destroyRoot)).toBe(false)
     })
 
@@ -291,9 +257,7 @@ describe("ClusterManager.destroy", () => {
       // A half-built cluster: `create` aborted before the AWS placement
       // resolved, so `signatureProviderKeyPublications` throws. The guarded
       // rendering must degrade to a warning, never strand the directory.
-      await expect(
-        ClusterManager.destroy(ssmDestroyConfig({ awsClusterNodeConfig: null }))
-      ).resolves.toBeUndefined()
+      await expect(ClusterManager.destroy(ssmDestroyConfig({ awsClusterNodeConfig: null }))).resolves.toBeUndefined()
       expect(Fs.existsSync(destroyRoot)).toBe(false)
     })
   })

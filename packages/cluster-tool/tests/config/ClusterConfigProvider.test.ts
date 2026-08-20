@@ -1,24 +1,13 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import {
-  AWSAccountName,
-  SignatureProviderType
-} from "@wireio/cluster-tool-shared"
+import { AWSAccountName, SignatureProviderType } from "@wireio/cluster-tool-shared"
 import { KeyType } from "@wireio/sdk-core"
 
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
-import {
-  BindConfigProvider,
-  ClusterConfigProvider,
-  NodeConfig,
-  NodeRole
-} from "@wireio/cluster-tool/config"
+import { BindConfigProvider, ClusterConfigProvider, NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
-import {
-  fixtureResolveEnvironment,
-  type ResolveEnvironment
-} from "./resolveEnvironmentFixture.js"
+import { fixtureResolveEnvironment, type ResolveEnvironment } from "./resolveEnvironmentFixture.js"
 
 /**
  * PREFERRED kiod pin for the partial-bind-config merge test — one ABOVE the
@@ -61,9 +50,7 @@ describe("ClusterConfigProvider", () => {
     it("rehydrates the persisted topology as the plain ClusterConfig shape", () => {
       const cfg = fixtureConfig()
       expect(cfg.bind.nodeop.ports.batch).toHaveLength(3)
-      expect(cfg.bind.nodeop.ports.bios.http).toBe(
-        BindConfigProvider.DefaultBiosHttp
-      )
+      expect(cfg.bind.nodeop.ports.bios.http).toBe(BindConfigProvider.DefaultBiosHttp)
       expect(cfg.epochDurationSec).toBe(60)
       // Plain data end-to-end — BindConfigProvider owns behavior over the shape.
       expect(BindConfigProvider.allPorts(cfg.bind).length).toBeGreaterThan(0)
@@ -73,24 +60,18 @@ describe("ClusterConfigProvider", () => {
   describe("derived paths", () => {
     it("ethereumDeploymentsPath is per-cluster (under dataPath)", () => {
       const cfg = fixtureConfig()
-      expect(ClusterConfigProvider.ethereumDeploymentsPath(cfg)).toBe(
-        `${cfg.dataPath}/ethereum-deployments`
-      )
+      expect(ClusterConfigProvider.ethereumDeploymentsPath(cfg)).toBe(`${cfg.dataPath}/ethereum-deployments`)
     })
   })
 
   describe("serialize / deserialize round-trip", () => {
     it("preserves every scalar field", () => {
       const cfg = fixtureConfig()
-      const round = ClusterConfigProvider.deserialize(
-        ClusterConfigProvider.serialize(cfg)
-      )
+      const round = ClusterConfigProvider.deserialize(ClusterConfigProvider.serialize(cfg))
       expect(round.buildPath).toBe(PersistedFixture.buildPath)
       expect(round.producerCount).toBe(PersistedFixture.producerCount)
       expect(round.report.formats).toEqual(PersistedFixture.report.formats)
-      expect(round.bind.solana.ports.faucet).toBe(
-        BindConfigProvider.DefaultSolanaFaucet
-      )
+      expect(round.bind.solana.ports.faucet).toBe(BindConfigProvider.DefaultSolanaFaucet)
     })
   })
 
@@ -134,15 +115,12 @@ describe("ClusterConfigProvider", () => {
 
     it("renders the OPTIONAL {version} token when the pattern authors it", () => {
       expect(
-        ClusterConfigProvider.toSecretId(
-          "/wire/{cluster}/{account}/{keyType}/{version}",
-          {
-            cluster: AWSAccountName.prod,
-            account: "node_00",
-            keyType: "BLS",
-            version: "v2"
-          }
-        )
+        ClusterConfigProvider.toSecretId("/wire/{cluster}/{account}/{keyType}/{version}", {
+          cluster: AWSAccountName.prod,
+          account: "node_00",
+          keyType: "BLS",
+          version: "v2"
+        })
       ).toBe("/wire/prod/node_00/BLS/v2")
     })
 
@@ -169,9 +147,7 @@ describe("ClusterConfigProvider", () => {
 
   describe("signatureProvider / externalOutposts persistence", () => {
     it("defaults signatureProvider to KEY when a persisted config omits it", () => {
-      const parsed = JSON.parse(
-        ClusterConfigProvider.serialize(fixtureConfig())
-      )
+      const parsed = JSON.parse(ClusterConfigProvider.serialize(fixtureConfig()))
       delete parsed.signatureProvider
       delete parsed.externalOutposts
       delete parsed.awsClusterNodeConfig
@@ -207,19 +183,11 @@ describe("ClusterConfigProvider", () => {
           solana: { idlFile: "/x/idl.json" }
         }
       })
-      const round = ClusterConfigProvider.deserialize(
-        ClusterConfigProvider.serialize(cfg)
-      )
+      const round = ClusterConfigProvider.deserialize(ClusterConfigProvider.serialize(cfg))
       expect(round.signatureProvider.type).toBe(SignatureProviderType.SSM)
-      expect(round.signatureProvider.ssm?.awsRegions).toEqual([
-        "us-east-1",
-        "eu-west-1"
-      ])
+      expect(round.signatureProvider.ssm?.awsRegions).toEqual(["us-east-1", "eu-west-1"])
       expect(round.awsClusterNodeConfig?.account).toBe(AWSAccountName.test)
-      expect(round.awsClusterNodeConfig?.regions).toEqual([
-        "us-east-1",
-        "eu-west-1"
-      ])
+      expect(round.awsClusterNodeConfig?.regions).toEqual(["us-east-1", "eu-west-1"])
       expect(round.externalOutposts?.ethereum.chainId).toBe(1)
     })
   })
@@ -247,9 +215,7 @@ describe("ClusterConfigProvider", () => {
           }
         }),
         source = ClusterConfigProvider.signatureProviderSource(config),
-        producer = NodeConfig.plan(config).find(
-          node => node.role === NodeRole.producer
-        ).producers[0]
+        producer = NodeConfig.plan(config).find(node => node.role === NodeRole.producer).producers[0]
       expect(source(producer, KeyType.BLS)).toEqual({
         type: SignatureProviderType.SSM,
         awsSecretId: `/wire/test/${producer}/BLS`
@@ -259,9 +225,7 @@ describe("ClusterConfigProvider", () => {
 
   describe("signatureProviderSource", () => {
     it("KEY → the inline default source for every key (byte-identical)", () => {
-      const source = ClusterConfigProvider.signatureProviderSource(
-        fixtureConfig()
-      )
+      const source = ClusterConfigProvider.signatureProviderSource(fixtureConfig())
       expect(source("node_00", KeyType.K1)).toEqual({
         type: SignatureProviderType.KEY
       })
@@ -315,9 +279,7 @@ describe("ClusterConfigProvider", () => {
           }
         }),
         source = ClusterConfigProvider.signatureProviderSource(config)
-      expect(source("batchop.a", KeyType.K1).awsSecretId).toBe(
-        "/wire/prod/batchop.a/K1/v7"
-      )
+      expect(source("batchop.a", KeyType.K1).awsSecretId).toBe("/wire/prod/batchop.a/K1/v7")
     })
 
     it("SSM → fails fast when awsClusterNodeConfig is absent (the {cluster} source)", () => {
@@ -331,9 +293,7 @@ describe("ClusterConfigProvider", () => {
           }
         }),
         source = ClusterConfigProvider.signatureProviderSource(config)
-      expect(() => source("batchop.a", KeyType.K1)).toThrow(
-        /requires awsClusterNodeConfig/
-      )
+      expect(() => source("batchop.a", KeyType.K1)).toThrow(/requires awsClusterNodeConfig/)
     })
 
     it("KIOD → the kiod wallet URL for every key", () => {
@@ -378,14 +338,11 @@ describe("ClusterConfigProvider", () => {
     // (an even quotient = an even group size, which breaks the strict-majority
     // path-2 threshold). Every one used to bootstrap ~15 min and then revert in
     // `schbatchgps` with "not enough available batch operators".
-    it.each([1, 4, 5, 7, 20])(
-      "rejects a roster of %i off the odd/3-divisible lattice",
-      async batchOperatorCount => {
-        await expect(
-          ClusterConfigProvider.resolve(rosterOptions(batchOperatorCount))
-        ).rejects.toThrow(/must be ODD and divisible by 3/)
-      }
-    )
+    it.each([1, 4, 5, 7, 20])("rejects a roster of %i off the odd/3-divisible lattice", async batchOperatorCount => {
+      await expect(ClusterConfigProvider.resolve(rosterOptions(batchOperatorCount))).rejects.toThrow(
+        /must be ODD and divisible by 3/
+      )
+    })
 
     // The lattice constants themselves are pinned in BatchOperatorSchedule.test.ts.
 
@@ -432,10 +389,7 @@ describe("ClusterConfigProvider", () => {
           ssm: null
         }
       })
-      expect(config.signatureProvider.ssm?.awsRegions).toEqual([
-        "us-east-1",
-        "eu-west-1"
-      ])
+      expect(config.signatureProvider.ssm?.awsRegions).toEqual(["us-east-1", "eu-west-1"])
       // The resolved literal must CARRY the placement — an omitted key would
       // silently persist the schema default `null`.
       expect(config.awsClusterNodeConfig).toEqual({
@@ -451,9 +405,7 @@ describe("ClusterConfigProvider", () => {
           ...baseOptions(),
           signatureProvider: ssmOptions()
         })
-      ).rejects.toThrow(
-        /awsClusterNodeConfig is required when signatureProvider.type is SSM/
-      )
+      ).rejects.toThrow(/awsClusterNodeConfig is required when signatureProvider.type is SSM/)
     })
 
     it("rejects authoring BOTH region sources, naming each one", async () => {
@@ -473,9 +425,7 @@ describe("ClusterConfigProvider", () => {
             ssm: null
           }
         })
-      ).rejects.toThrow(
-        /signatureProvider\.ssm\.awsRegions and awsClusterNodeConfig\.regions both author/
-      )
+      ).rejects.toThrow(/signatureProvider\.ssm\.awsRegions and awsClusterNodeConfig\.regions both author/)
     })
 
     it("rejects an awsClusterNodeConfig with no regions", async () => {
@@ -538,21 +488,15 @@ describe("ClusterConfigProvider", () => {
 
     it("uses a COMPLETE bind config verbatim (ports not re-picked)", async () => {
       const bind = JSON.parse(JSON.stringify(PersistedFixture.bind)),
-        config = await ClusterConfigProvider.resolve(
-          baseOptions(writeBindConfig(bind))
-        )
+        config = await ClusterConfigProvider.resolve(baseOptions(writeBindConfig(bind)))
       expect(config.bind.kiod.port).toBe(bind.kiod.port)
-      expect(config.bind.nodeop.ports.bios.http).toBe(
-        bind.nodeop.ports.bios.http
-      )
+      expect(config.bind.nodeop.ports.bios.http).toBe(bind.nodeop.ports.bios.http)
     })
 
     it("rejects a COMPLETE bind config whose node cardinality mismatches the topology", async () => {
       const bind = JSON.parse(JSON.stringify(PersistedFixture.bind))
       bind.nodeop.ports.producers.push({ http: 19_999, p2p: 19_998 })
-      await expect(
-        ClusterConfigProvider.resolve(baseOptions(writeBindConfig(bind)))
-      ).rejects.toThrow(
+      await expect(ClusterConfigProvider.resolve(baseOptions(writeBindConfig(bind)))).rejects.toThrow(
         /nodeop\.ports\.producers has 2 entries but the cluster topology expects 1/
       )
     })
@@ -560,22 +504,18 @@ describe("ClusterConfigProvider", () => {
     it("rejects a remote anvil bind without --external-outpost-config", async () => {
       const bind = JSON.parse(JSON.stringify(PersistedFixture.bind))
       bind.anvil.address = "10.0.0.5"
-      await expect(
-        ClusterConfigProvider.resolve(baseOptions(writeBindConfig(bind)))
-      ).rejects.toThrow(/requires[\s\S]*external-outpost-config/)
+      await expect(ClusterConfigProvider.resolve(baseOptions(writeBindConfig(bind)))).rejects.toThrow(
+        /requires[\s\S]*external-outpost-config/
+      )
     })
 
     it("merges a PARTIAL bind config over resolver defaults (file pins the kiod port)", async () => {
-      const kiodPort = await BindConfigProvider.findAvailable(
-        PartialMergeKiodPin
-      )
+      const kiodPort = await BindConfigProvider.findAvailable(PartialMergeKiodPin)
       // findAvailable LOCKS the port in get-port's in-process cache. Release
       // the locks so resolve's PINNED draw can re-acquire the very port the
       // registry just vetted — without this the pin fails deterministically.
       await BindConfigProvider.clearPortLocks()
-      const config = await ClusterConfigProvider.resolve(
-        baseOptions(writeBindConfig({ kiod: { port: kiodPort } }))
-      )
+      const config = await ClusterConfigProvider.resolve(baseOptions(writeBindConfig({ kiod: { port: kiodPort } })))
       expect(config.bind.kiod.port).toBe(kiodPort)
       expect(typeof config.bind.nodeop.ports.bios.http).toBe("number")
     })
@@ -583,30 +523,20 @@ describe("ClusterConfigProvider", () => {
 
   describe("assertClusterPathSource", () => {
     it("throws when the options document AND an explicit --cluster-path both author it", () => {
-      expect(() =>
-        ClusterConfigProvider.assertClusterPathSource(
-          { clusterPath: "/tmp/from-file" },
-          true
-        )
-      ).toThrow(/clusterPath is authored twice/)
+      expect(() => ClusterConfigProvider.assertClusterPathSource({ clusterPath: "/tmp/from-file" }, true)).toThrow(
+        /clusterPath is authored twice/
+      )
     })
 
     it("accepts a document clusterPath with no explicit flag (env is NOT a conflict)", () => {
       expect(() =>
-        ClusterConfigProvider.assertClusterPathSource(
-          { clusterPath: "/tmp/from-file" },
-          false
-        )
+        ClusterConfigProvider.assertClusterPathSource({ clusterPath: "/tmp/from-file" }, false)
       ).not.toThrow()
     })
 
     it("accepts an explicit flag when the document does not author clusterPath", () => {
-      expect(() =>
-        ClusterConfigProvider.assertClusterPathSource({ epochDurationSec: 60 }, true)
-      ).not.toThrow()
-      expect(() =>
-        ClusterConfigProvider.assertClusterPathSource(null, true)
-      ).not.toThrow()
+      expect(() => ClusterConfigProvider.assertClusterPathSource({ epochDurationSec: 60 }, true)).not.toThrow()
+      expect(() => ClusterConfigProvider.assertClusterPathSource(null, true)).not.toThrow()
     })
   })
 
@@ -646,25 +576,19 @@ describe("ClusterConfigProvider", () => {
     }
 
     it("rejects an EXPLICIT non-zero underwriterCount, naming the requested value", async () => {
-      await expect(
-        ClusterConfigProvider.resolve(externalOptions({ underwriterCount: 3 }))
-      ).rejects.toThrow(/underwriterCount was set to 3/)
+      await expect(ClusterConfigProvider.resolve(externalOptions({ underwriterCount: 3 }))).rejects.toThrow(
+        /underwriterCount was set to 3/
+      )
     })
 
     it("rejects an OMITTED underwriterCount — the default is ONE underwriter, not zero", async () => {
-      await expect(
-        ClusterConfigProvider.resolve(externalOptions())
-      ).rejects.toThrow(
-        new RegExp(
-          `underwriterCount was omitted, which defaults to ${ClusterConfigProvider.DefaultUnderwriterCount}`
-        )
+      await expect(ClusterConfigProvider.resolve(externalOptions())).rejects.toThrow(
+        new RegExp(`underwriterCount was omitted, which defaults to ${ClusterConfigProvider.DefaultUnderwriterCount}`)
       )
     })
 
     it("accepts an EXPLICIT underwriterCount of 0", async () => {
-      const config = await ClusterConfigProvider.resolve(
-        externalOptions({ underwriterCount: 0 })
-      )
+      const config = await ClusterConfigProvider.resolve(externalOptions({ underwriterCount: 0 }))
       expect(config.underwriterCount).toBe(0)
       expect(config.externalOutposts).not.toBeNull()
     })
@@ -676,9 +600,7 @@ describe("ClusterConfigProvider", () => {
         ethereumPath: "/fake/eth",
         solanaPath: "/fake/sol"
       })
-      expect(config.underwriterCount).toBe(
-        ClusterConfigProvider.DefaultUnderwriterCount
-      )
+      expect(config.underwriterCount).toBe(ClusterConfigProvider.DefaultUnderwriterCount)
     })
   })
 
@@ -704,8 +626,7 @@ describe("ClusterConfigProvider", () => {
     }
 
     it("KEY mode returns the well-known dev bios keys — no generation, no SSM I/O", async () => {
-      const resolved =
-        await ClusterConfigProvider.resolveWithBiosKeys(keyModeOptions())
+      const resolved = await ClusterConfigProvider.resolveWithBiosKeys(keyModeOptions())
       expect(resolved.biosWire).toBe(KeyGenerator.BiosK1Key)
       expect(resolved.biosFinalizer).toBe(KeyGenerator.BiosBLSKey)
       // the bootstrap node owner's authority is the same dev K1 under KEY
@@ -713,8 +634,7 @@ describe("ClusterConfigProvider", () => {
     })
 
     it("KEY mode's genesis authority stays byte-identical to the historical bootstrap", async () => {
-      const { config } =
-        await ClusterConfigProvider.resolveWithBiosKeys(keyModeOptions())
+      const { config } = await ClusterConfigProvider.resolveWithBiosKeys(keyModeOptions())
       expect(config.initialKey).toBe(KeyGenerator.BiosK1Key.publicKey)
       expect(config.initialFinalizerKey).toBe(KeyGenerator.BiosBLSKey.publicKey)
     })

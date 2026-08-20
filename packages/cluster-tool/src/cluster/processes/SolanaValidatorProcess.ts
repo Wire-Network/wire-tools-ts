@@ -1,7 +1,4 @@
-import {
-  BindConfigPortProtocol,
-  type BindConfigPortRange
-} from "@wireio/cluster-tool-shared"
+import { BindConfigPortProtocol, type BindConfigPortRange } from "@wireio/cluster-tool-shared"
 import { Connection } from "@solana/web3.js"
 import Assert from "node:assert"
 import { execFileSync } from "node:child_process"
@@ -13,13 +10,7 @@ import { SolanaClient } from "../../clients/solana/SolanaClient.js"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { probeEndpoint } from "../../utils/asyncUtils.js"
 import { existsAsync, which } from "../../utils/fsUtils.js"
-import {
-  filterSocketLinesByLocalPort,
-  Localhost,
-  toDialAddress,
-  toURL,
-  URLScheme
-} from "../../utils/netUtils.js"
+import { filterSocketLinesByLocalPort, Localhost, toDialAddress, toURL, URLScheme } from "../../utils/netUtils.js"
 import { ManagedProcess } from "./ManagedProcess.js"
 import type { ProcessManager } from "./ProcessManager.js"
 
@@ -87,38 +78,20 @@ export interface SolanaValidatorConfig extends Required<SolanaValidatorOptions> 
 
 /** Manages a solana-test-validator (Agave) process. */
 export class SolanaValidatorProcess extends ManagedProcess {
-  static async create(
-    manager: ProcessManager,
-    options: SolanaValidatorOptions = {}
-  ): Promise<SolanaValidatorProcess> {
+  static async create(manager: ProcessManager, options: SolanaValidatorOptions = {}): Promise<SolanaValidatorProcess> {
     const { binary = await which("solana-test-validator") } = options
-    Assert.ok(
-      binary != null && (await existsAsync(binary)),
-      "solana-test-validator binary not found on PATH"
-    )
+    Assert.ok(binary != null && (await existsAsync(binary)), "solana-test-validator binary not found on PATH")
     return new SolanaValidatorProcess(
       manager,
       SolanaValidatorProcess.resolveConfig(options, {
         binary,
-        rpcPort:
-          options.rpcPort ??
-          (await BindConfigProvider.findAvailable(
-            BindConfigProvider.DefaultSolanaRpc
-          )),
+        rpcPort: options.rpcPort ?? (await BindConfigProvider.findAvailable(BindConfigProvider.DefaultSolanaRpc)),
         faucetPort:
-          options.faucetPort ??
-          (await BindConfigProvider.findAvailable(
-            BindConfigProvider.DefaultSolanaFaucet
-          )),
+          options.faucetPort ?? (await BindConfigProvider.findAvailable(BindConfigProvider.DefaultSolanaFaucet)),
         gossipPort:
           options.gossipPort ??
-          (await BindConfigProvider.findAvailable(
-            BindConfigProvider.DefaultSolanaGossip,
-            BindConfigPortProtocol.udp
-          )),
-        dynamicPortRange:
-          options.dynamicPortRange ??
-          (await BindConfigProvider.findAvailableRange())
+          (await BindConfigProvider.findAvailable(BindConfigProvider.DefaultSolanaGossip, BindConfigPortProtocol.udp)),
+        dynamicPortRange: options.dynamicPortRange ?? (await BindConfigProvider.findAvailableRange())
       })
     )
   }
@@ -170,10 +143,7 @@ export class SolanaValidatorProcess extends ManagedProcess {
   async verifyReady(): Promise<boolean> {
     if (!(await probeEndpoint(this.rpcUrl))) return false
     try {
-      const slot = await new Connection(
-        this.rpcUrl,
-        SolanaClient.DefaultCommitment
-      ).getSlot()
+      const slot = await new Connection(this.rpcUrl, SolanaClient.DefaultCommitment).getSlot()
       return slot > 0
     } catch {
       return false
@@ -187,10 +157,7 @@ export class SolanaValidatorProcess extends ManagedProcess {
       this.config.rpcPort + BindConfigProvider.SolanaWsPortOffset,
       this.config.faucetPort,
       this.config.gossipPort,
-      ...range(
-        this.config.dynamicPortRange.first,
-        this.config.dynamicPortRange.last + 1
-      )
+      ...range(this.config.dynamicPortRange.first, this.config.dynamicPortRange.last + 1)
     ])
   }
 
@@ -203,9 +170,7 @@ export class SolanaValidatorProcess extends ManagedProcess {
    * HOLDER, which is gone from every log by teardown time.
    */
   protected async startupFailureDetail(): Promise<string> {
-    const parts = [this.validatorLogTail(), this.assignedPortHolders()].filter(
-      part => !isEmpty(part)
-    )
+    const parts = [this.validatorLogTail(), this.assignedPortHolders()].filter(part => !isEmpty(part))
     return parts.length === 0 ? null : parts.join("\n")
   }
 
@@ -215,9 +180,7 @@ export class SolanaValidatorProcess extends ManagedProcess {
     const logFile = Path.join(this.config.ledgerPath, "validator.log")
     return getValue(() => {
       const lines = Fs.readFileSync(logFile, "utf8").trimEnd().split("\n")
-      const tail = lines
-        .slice(-SolanaValidatorProcess.ValidatorLogTailLines)
-        .join("\n")
+      const tail = lines.slice(-SolanaValidatorProcess.ValidatorLogTailLines).join("\n")
       return `validator.log tail (${logFile}):\n${tail}`
     }, null)
   }
@@ -273,10 +236,7 @@ export namespace SolanaValidatorProcess {
     dynamicPortRange: BindConfigPortRange
   }
 
-  export function resolveConfig(
-    options: SolanaValidatorOptions,
-    resolved: ResolvedInputs
-  ): SolanaValidatorConfig {
+  export function resolveConfig(options: SolanaValidatorOptions, resolved: ResolvedInputs): SolanaValidatorConfig {
     return {
       address: options.address ?? Localhost,
       rpcPort: resolved.rpcPort,
@@ -284,9 +244,7 @@ export namespace SolanaValidatorProcess {
       gossipPort: resolved.gossipPort,
       dynamicPortRange: resolved.dynamicPortRange,
       ledgerPath: options.ledgerPath ?? null,
-      limitLedgerSizeShreds:
-        options.limitLedgerSizeShreds ??
-        SolanaValidatorProcess.DefaultLimitLedgerSizeShreds,
+      limitLedgerSizeShreds: options.limitLedgerSizeShreds ?? SolanaValidatorProcess.DefaultLimitLedgerSizeShreds,
       binary: resolved.binary,
       programs: options.programs ?? [],
       extraArgs: options.extraArgs ?? []
@@ -319,12 +277,7 @@ export namespace SolanaValidatorProcess {
       ...(config.ledgerPath ? ["--ledger", config.ledgerPath] : []),
       ...config.programs.flatMap(program =>
         program.upgradeAuthority
-          ? [
-              "--upgradeable-program",
-              program.programId,
-              program.soFile,
-              program.upgradeAuthority
-            ]
+          ? ["--upgradeable-program", program.programId, program.soFile, program.upgradeAuthority]
           : ["--bpf-program", program.programId, program.soFile]
       ),
       ...config.extraArgs
@@ -359,8 +312,7 @@ export namespace SolanaValidatorProcess {
    * to it when the harness spawns the validator, and the emitted `start.sh`
    * renders it as a `${NAME:-default}` expansion evaluated at RUN time.
    */
-  export const ProgramLogRustLog =
-    "solana=info,agave=info,solana_runtime::message_processor::stable_log=debug"
+  export const ProgramLogRustLog = "solana=info,agave=info,solana_runtime::message_processor::stable_log=debug"
   /**
    * The validator's default extra environment — HOST-INDEPENDENT, so it is safe
    * to freeze into a rendered `start.sh` at create time. {@link resolveEnv} is
@@ -377,9 +329,7 @@ export namespace SolanaValidatorProcess {
    * @param rustLog - The inherited operator-provided filter, when present.
    * @returns Extra variables to merge over that environment.
    */
-  export function resolveEnv(
-    rustLog = process.env[RustLogEnvVar]
-  ): Record<string, string> {
+  export function resolveEnv(rustLog = process.env[RustLogEnvVar]): Record<string, string> {
     return rustLog ? {} : { ...DefaultEnv }
   }
   /**

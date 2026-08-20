@@ -84,9 +84,7 @@ function uwreqRow(
 }
 
 /** A complete `locks` row with zero defaults; override the fields under test. */
-function lockRow(
-  overrides: Partial<SysioContracts.SysioUwritLockEntryType>
-): SysioContracts.SysioUwritLockEntryType {
+function lockRow(overrides: Partial<SysioContracts.SysioUwritLockEntryType>): SysioContracts.SysioUwritLockEntryType {
   return {
     lock_id: 0,
     uwreq_id: 0,
@@ -121,11 +119,9 @@ function newContext(fixtures: TableFixtures): SwapScenarioContext {
       tables: { uwreqs: table(fixtures.uwreqs), locks: table(fixtures.locks) }
     }
   }
-  jest
-    .spyOn(context, "wire", "get")
-    .mockReturnValue({
-      getSysioContract: (name: SysioContracts.SysioContractName) => clientByName[name]
-    } as WireClient)
+  jest.spyOn(context, "wire", "get").mockReturnValue({
+    getSysioContract: (name: SysioContracts.SysioContractName) => clientByName[name]
+  } as WireClient)
   return context
 }
 
@@ -168,11 +164,7 @@ describe("SwapScenarioContext", () => {
 
   describe("reserveBook", () => {
     it("returns the matching reserve's (chain, wire) book as bigints", async () => {
-      const book = await newContext(fixtures).reserveBook(
-        EthereumChain,
-        EthToken,
-        PrimaryReserve
-      )
+      const book = await newContext(fixtures).reserveBook(EthereumChain, EthToken, PrimaryReserve)
       expect(book).toEqual({
         chain: 1_000n,
         wire: 2_000n,
@@ -184,27 +176,17 @@ describe("SwapScenarioContext", () => {
       // The book is what `quoteSwap` prices against, so an owner fee that never
       // reaches it silently over-quotes the destination — the private-reserve
       // regression. A public reserve's 0 makes that omission invisible.
-      const book = await newContext(fixtures).reserveBook(
-        SolanaChain,
-        SolToken,
-        PrimaryReserve
-      )
+      const book = await newContext(fixtures).reserveBook(SolanaChain, SolToken, PrimaryReserve)
       expect(book.ownerFeeBps).toBe(200)
     })
     it("throws when no reserve matches the triple", async () => {
-      await expect(
-        newContext(fixtures).reserveBook(999, EthToken, PrimaryReserve)
-      ).rejects.toThrow(/not found/)
+      await expect(newContext(fixtures).reserveBook(999, EthToken, PrimaryReserve)).rejects.toThrow(/not found/)
     })
   })
 
   describe("reserveOwnerFee", () => {
     it("returns the owner, rate, and earned amounts as bigints", async () => {
-      const fee = await newContext(fixtures).reserveOwnerFee(
-        SolanaChain,
-        SolToken,
-        PrimaryReserve
-      )
+      const fee = await newContext(fixtures).reserveOwnerFee(SolanaChain, SolToken, PrimaryReserve)
       expect(fee).toEqual({
         owner: "privowner",
         feeBps: 200,
@@ -215,17 +197,11 @@ describe("SwapScenarioContext", () => {
       expect(fee.lifetime).toBeGreaterThan(fee.accrued)
     })
     it("reports a fee-free, owner-less reserve as all zeroes", async () => {
-      const fee = await newContext(fixtures).reserveOwnerFee(
-        EthereumChain,
-        EthToken,
-        PrimaryReserve
-      )
+      const fee = await newContext(fixtures).reserveOwnerFee(EthereumChain, EthToken, PrimaryReserve)
       expect(fee).toEqual({ owner: "", feeBps: 0, accrued: 0n, lifetime: 0n })
     })
     it("throws when no reserve matches the triple", async () => {
-      await expect(
-        newContext(fixtures).reserveOwnerFee(999, EthToken, PrimaryReserve)
-      ).rejects.toThrow(/not found/)
+      await expect(newContext(fixtures).reserveOwnerFee(999, EthToken, PrimaryReserve)).rejects.toThrow(/not found/)
     })
   })
 
@@ -235,9 +211,7 @@ describe("SwapScenarioContext", () => {
       expect(request?.id).toBe(7)
     })
     it("is empty when the depot has not created the request", async () => {
-      expect(
-        await newContext(fixtures).uwreq(SolanaChain, EthereumChain)
-      ).toBeUndefined()
+      expect(await newContext(fixtures).uwreq(SolanaChain, EthereumChain)).toBeUndefined()
     })
   })
 

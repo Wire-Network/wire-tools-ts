@@ -23,11 +23,7 @@ import {
 import { SwapWithUnderwritingScenarioConstants as Constants } from "./SwapWithUnderwritingScenarioConstants.js"
 import { SwapWithUnderwritingScenarioSwapSteps as SwapSteps } from "./steps/index.js"
 
-const {
-  SysioContractName,
-  SysioOpregOperatorstatus,
-  SysioUwritUnderwriterequeststatus
-} = SysioContracts
+const { SysioContractName, SysioOpregOperatorstatus, SysioUwritUnderwriterequeststatus } = SysioContracts
 const { Actor } = Report
 const log = getLogger(__filename)
 
@@ -37,9 +33,7 @@ async function readUnderwriterRow(
   label: string
 ): Promise<SysioContracts.SysioOpregOperatorEntryType> {
   const account = ctx.keyStore.assertOperator(label).account,
-    { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.opreg)
-      .tables.operators.query({ limit: 100 })
+    { rows } = await ctx.wire.getSysioContract(SysioContractName.opreg).tables.operators.query({ limit: 100 })
   return rows.find(row => row.account === account)
 }
 
@@ -118,25 +112,19 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
     ]
   }
 
-  override createContext(
-    config: ClusterConfig,
-    log: Logger
-  ): SwapScenarioContext {
+  override createContext(config: ClusterConfig, log: Logger): SwapScenarioContext {
     return new SwapScenarioContext(config, log)
   }
 
   plan(cluster: ClusterBuild<SwapScenarioContext>): void {
     const config = cluster.context.config,
       firstUnderwriter = ClusterConstants.underwriterLabel(0),
-      underwriterLabels = Array.from(
-        { length: config.underwriterCount },
-        (_, index) => ClusterConstants.underwriterLabel(index)
+      underwriterLabels = Array.from({ length: config.underwriterCount }, (_, index) =>
+        ClusterConstants.underwriterLabel(index)
       ),
       requestStepOptions = { timeoutMs: Constants.RequestStepTimeoutMs },
       underwriterGateOptions = {
-        timeoutMs:
-          Constants.underwriterActiveDeadlineMs() +
-          Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.underwriterActiveDeadlineMs() + Constants.PollDeadlineBufferMs
       },
       uwreqStepOptions = {
         timeoutMs: Constants.UwreqDeadlineMs + Constants.PollDeadlineBufferMs
@@ -157,8 +145,7 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
       "Bond every underwriter's collateral on the Ethereum + Solana outposts",
       requestStepOptions,
       underwriterLabels,
-      config.underwriterCollateral ??
-        WireUnderwriterTool.load(null, config.underwriterCount)
+      config.underwriterCollateral ?? WireUnderwriterTool.load(null, config.underwriterCount)
     )
 
     // ── 2. The swap end-user's paired ETH + SOL identity (+ SOL airdrop) ──
@@ -181,10 +168,7 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
         "WIRE chain is producing blocks",
         async (ctx: SwapScenarioContext) => {
           const info = await ctx.wire.getInfo()
-          Assert.ok(
-            Number(info.head_block_num) > 0,
-            `head_block_num must be positive, got ${info.head_block_num}`
-          )
+          Assert.ok(Number(info.head_block_num) > 0, `head_block_num must be positive, got ${info.head_block_num}`)
         }
       ),
       verifyStep(
@@ -193,26 +177,14 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
         "bootstrap seeded ETHEREUM/ETH/PRIMARY + SOLANA/SOL/PRIMARY reserves",
         async (ctx: SwapScenarioContext) => {
           // `reserveBook` throws when the row is absent — presence IS the check.
-          await ctx.reserveBook(
-            Constants.EthereumChainCode,
-            Constants.EthereumTokenCode,
-            Constants.PrimaryReserveCode
-          )
-          await ctx.reserveBook(
-            Constants.SolanaChainCode,
-            Constants.SolanaTokenCode,
-            Constants.PrimaryReserveCode
-          )
+          await ctx.reserveBook(Constants.EthereumChainCode, Constants.EthereumTokenCode, Constants.PrimaryReserveCode)
+          await ctx.reserveBook(Constants.SolanaChainCode, Constants.SolanaTokenCode, Constants.PrimaryReserveCode)
         }
       )
     )
 
     // ── Phase A: Ethereum → Solana ──
-    ClusterBuildPhase.create(
-      cluster,
-      "PhaseA",
-      "Ethereum → Solana swap settled by the underwriter race"
-    ).push(
+    ClusterBuildPhase.create(cluster, "PhaseA", "Ethereum → Solana swap settled by the underwriter race").push(
       // The collateral DEPOSIT_REQUESTs must complete their OPP round-trip
       // (outpost → depot `depositinle`) before the depot marks the underwriter
       // ACTIVE. Without an ACTIVE underwriter no commits land for SWAP_REQUEST
@@ -272,13 +244,8 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
           ctx.outputs
             .set(Constants.PhaseATargetAmountKey, quote)
             .set(Constants.PhaseABooksBeforeKey, booksBefore)
-            .set(
-              Constants.PhaseASolanaBalanceBeforeKey,
-              await ctx.solana.getLamports(swapUser.solanaKeypair.publicKey)
-            )
-          log.info(
-            `[PhaseA] swapquote = ${quote} → targetAmount = ${quote} lamports`
-          )
+            .set(Constants.PhaseASolanaBalanceBeforeKey, await ctx.solana.getLamports(swapUser.solanaKeypair.publicKey))
+          log.info(`[PhaseA] swapquote = ${quote} → targetAmount = ${quote} lamports`)
         }
       ),
       SwapSteps.planRequestSwapEthereum(
@@ -303,11 +270,7 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
         async (ctx: SwapScenarioContext) => {
           await pollUntil(
             "PhaseA UWREQ row appears",
-            async () =>
-              (await ctx.uwreq(
-                Constants.EthereumChainCode,
-                Constants.SolanaChainCode
-              )) != null,
+            async () => (await ctx.uwreq(Constants.EthereumChainCode, Constants.SolanaChainCode)) != null,
             Constants.UwreqDeadlineMs,
             Constants.LongPollIntervalMs
           )
@@ -322,10 +285,7 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
           await pollUntil(
             "PhaseA UWREQ status=CONFIRMED",
             async () => {
-              const request = await ctx.uwreq(
-                Constants.EthereumChainCode,
-                Constants.SolanaChainCode
-              )
+              const request = await ctx.uwreq(Constants.EthereumChainCode, Constants.SolanaChainCode)
               return (
                 request != null &&
                 matchesProtoEnum(
@@ -355,22 +315,16 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
           // pre-swap source row, and the WIRE-leg fee skimmed in the hop
           // (routed to rewards custody + emissions out) at the LIVE
           // `sysio.uwrit::uwconfig.fee_bps` rate the bootstrap seeded.
-          const booksBefore = ctx.outputs.assert(
-              Constants.PhaseABooksBeforeKey
-            ),
+          const booksBefore = ctx.outputs.assert(Constants.PhaseABooksBeforeKey),
             targetAmount = ctx.outputs.assert(Constants.PhaseATargetAmountKey),
-            sourceAmountDepot =
-              Constants.SourceEthereumWei / Constants.WeiPerDepotUnit,
+            sourceAmountDepot = Constants.SourceEthereumWei / Constants.WeiPerDepotUnit,
             wireIntermediate = WireReserveTool.tokenToWire(
               booksBefore.src.chain,
               booksBefore.src.wire,
               booksBefore.src.connectorWeightBps,
               sourceAmountDepot
             ),
-            phaseAFee = WireReserveTool.splitWireFee(
-              wireIntermediate,
-              await WireReserveTool.readFeeBps(ctx.wire)
-            )
+            phaseAFee = WireReserveTool.splitWireFee(wireIntermediate, await WireReserveTool.readFeeBps(ctx.wire))
 
           const src = await ctx.reserveBook(
               Constants.EthereumChainCode,
@@ -415,17 +369,10 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
 
           // Both legs locked, and the locks PERSIST (wall-clock challenge
           // window — never released by delivery).
-          const request = await ctx.uwreq(
-            Constants.EthereumChainCode,
-            Constants.SolanaChainCode
-          )
+          const request = await ctx.uwreq(Constants.EthereumChainCode, Constants.SolanaChainCode)
           Assert.ok(request, "PhaseA UWREQ row must exist")
           const locks = await ctx.locksForUwreq(Number(request.id))
-          Assert.strictEqual(
-            locks.length,
-            2,
-            "exactly two persistent locks back the UWREQ"
-          )
+          Assert.strictEqual(locks.length, 2, "exactly two persistent locks back the UWREQ")
 
           // The winner is PAID for the assurance: half the WIRE-leg fee accrues
           // to their `sysio.reserv::uwfees` row at settlement, claimable on
@@ -434,10 +381,7 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
           const { winner } = request
           Assert.ok(winner, "the confirmed UWREQ must name a winning underwriter")
           const accrual = await ctx.underwriterFees(winner)
-          Assert.ok(
-            accrual,
-            `the winning underwriter ${winner} must have a uwfees accrual row`
-          )
+          Assert.ok(accrual, `the winning underwriter ${winner} must have a uwfees accrual row`)
           Assert.strictEqual(
             BigInt(accrual.balance),
             phaseAFee.underwriterShare,
@@ -456,47 +400,29 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
         "user's SOL balance bumps by ~targetAmount",
         async (ctx: SwapScenarioContext) => {
           const swapUser = ctx.outputs.assert(swapUserOutputKey()),
-            balanceBefore = ctx.outputs.assert(
-              Constants.PhaseASolanaBalanceBeforeKey
-            ),
+            balanceBefore = ctx.outputs.assert(Constants.PhaseASolanaBalanceBeforeKey),
             targetAmount = ctx.outputs.assert(Constants.PhaseATargetAmountKey)
           await pollUntil(
             "PhaseA user receives SOL",
             async () => {
-              const current = await ctx.solana.getLamports(
-                  swapUser.solanaKeypair.publicKey
-                ),
-                drift = WireReserveTool.varianceDrift(
-                  targetAmount,
-                  Constants.ToleranceBps
-                )
+              const current = await ctx.solana.getLamports(swapUser.solanaKeypair.publicKey),
+                drift = WireReserveTool.varianceDrift(targetAmount, Constants.ToleranceBps)
               return current >= balanceBefore + Number(targetAmount - drift)
             },
             Constants.RemitDeadlineMs,
             Constants.LongPollIntervalMs
           )
-          const finalBalance = await ctx.solana.getLamports(
-              swapUser.solanaKeypair.publicKey
-            ),
+          const finalBalance = await ctx.solana.getLamports(swapUser.solanaKeypair.publicKey),
             received = BigInt(finalBalance - balanceBefore)
-          Assert.ok(
-            received > 0n,
-            `expected a positive SOL payout, received ${received}`
-          )
-          log.info(
-            `[PhaseA] user received ${received} lamports (target=${targetAmount})`
-          )
+          Assert.ok(received > 0n, `expected a positive SOL payout, received ${received}`)
+          log.info(`[PhaseA] user received ${received} lamports (target=${targetAmount})`)
         },
         remitStepOptions
       )
     )
 
     // ── Phase B: Solana → Ethereum (inverse) ──
-    ClusterBuildPhase.create(
-      cluster,
-      "PhaseB",
-      "Solana → Ethereum swap (inverse direction)"
-    ).push(
+    ClusterBuildPhase.create(cluster, "PhaseB", "Solana → Ethereum swap (inverse direction)").push(
       verifyStep(
         Actor.Sysio,
         "swapquote-solana-to-ethereum",
@@ -518,23 +444,15 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
           // Lamports are already depot 9-decimal units — no inbound scaling.
           // The quote is the depot-frame target riding the OPP envelope; the
           // ETH outpost scales it × 1e9 → wei when settling the SWAP_REMIT.
-          const quote = swapquote(
-            books,
-            Constants.SourceSolanaLamports,
-            await WireReserveTool.readFeeBps(ctx.wire)
-          )
+          const quote = swapquote(books, Constants.SourceSolanaLamports, await WireReserveTool.readFeeBps(ctx.wire))
           Assert.ok(quote > 0n, "SOL→ETH swapquote returned no quote")
           ctx.outputs
             .set(Constants.PhaseBTargetAmountDepotKey, quote)
             .set(
               Constants.PhaseBEthereumBalanceBeforeKey,
-              await ctx.ethereum.provider.getBalance(
-                swapUser.ethereumWallet.address
-              )
+              await ctx.ethereum.provider.getBalance(swapUser.ethereumWallet.address)
             )
-          log.info(
-            `[PhaseB] swapquote = ${quote} → depotUnits=${quote} wei=${quote * Constants.WeiPerDepotUnit}`
-          )
+          log.info(`[PhaseB] swapquote = ${quote} → depotUnits=${quote} wei=${quote * Constants.WeiPerDepotUnit}`)
         }
       ),
       SwapSteps.planRequestSwapSolana(
@@ -558,38 +476,22 @@ export class SwapWithUnderwritingScenario extends FlowScenario<SwapScenarioConte
         "user's ETH balance bumps by ~targetAmount",
         async (ctx: SwapScenarioContext) => {
           const swapUser = ctx.outputs.assert(swapUserOutputKey()),
-            balanceBefore = ctx.outputs.assert(
-              Constants.PhaseBEthereumBalanceBeforeKey
-            ),
-            targetAmountWei =
-              ctx.outputs.assert(Constants.PhaseBTargetAmountDepotKey) *
-              Constants.WeiPerDepotUnit
+            balanceBefore = ctx.outputs.assert(Constants.PhaseBEthereumBalanceBeforeKey),
+            targetAmountWei = ctx.outputs.assert(Constants.PhaseBTargetAmountDepotKey) * Constants.WeiPerDepotUnit
           await pollUntil(
             "PhaseB user receives ETH",
             async () => {
-              const current = await ctx.ethereum.provider.getBalance(
-                  swapUser.ethereumWallet.address
-                ),
-                drift = WireReserveTool.varianceDrift(
-                  targetAmountWei,
-                  Constants.ToleranceBps
-                )
+              const current = await ctx.ethereum.provider.getBalance(swapUser.ethereumWallet.address),
+                drift = WireReserveTool.varianceDrift(targetAmountWei, Constants.ToleranceBps)
               return current >= balanceBefore + (targetAmountWei - drift)
             },
             Constants.RemitDeadlineMs,
             Constants.LongPollIntervalMs
           )
-          const finalBalance = await ctx.ethereum.provider.getBalance(
-              swapUser.ethereumWallet.address
-            ),
+          const finalBalance = await ctx.ethereum.provider.getBalance(swapUser.ethereumWallet.address),
             received = finalBalance - balanceBefore
-          Assert.ok(
-            received > 0n,
-            `expected a positive ETH payout, received ${received}`
-          )
-          log.info(
-            `[PhaseB] user received ${received} wei (targetWei=${targetAmountWei})`
-          )
+          Assert.ok(received > 0n, `expected a positive ETH payout, received ${received}`)
+          log.info(`[PhaseB] user received ${received} wei (targetWei=${targetAmountWei})`)
         },
         remitStepOptions
       )

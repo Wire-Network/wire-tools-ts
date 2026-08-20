@@ -32,10 +32,7 @@ export namespace ProcessRoutes {
    *                      `collectPidSources`).
    * @returns The same `registry` instance for fluent chaining.
    */
-  export function register(
-    registry: JsonRPC.HandlerRegistry,
-    clusterAccess: ClusterAccess
-  ): JsonRPC.HandlerRegistry {
+  export function register(registry: JsonRPC.HandlerRegistry, clusterAccess: ClusterAccess): JsonRPC.HandlerRegistry {
     JsonRPC.addRoute(
       registry,
       ApiPaths.Processes.Methods.List,
@@ -49,15 +46,10 @@ export namespace ProcessRoutes {
     JsonRPC.addRoute(
       registry,
       ApiPaths.Processes.Methods.GetLiveness,
-      async (
-        params: GetProcessLivenessRequest
-      ): Promise<GetProcessLivenessResponse> => {
+      async (params: GetProcessLivenessRequest): Promise<GetProcessLivenessResponse> => {
         const state = await clusterAccess.getState(),
           allSources = collectPidSources(clusterAccess.clusterPath, state),
-          filtered =
-            params.labels.length === 0
-              ? allSources
-              : allSources.filter(s => params.labels.includes(s.label)),
+          filtered = params.labels.length === 0 ? allSources : allSources.filter(s => params.labels.includes(s.label)),
           now = Date.now()
         const snapshots: ProcessLivenessSnapshot[] = filtered.map(src => {
           const pid = readPid(src.pidPath),

@@ -3,11 +3,7 @@ import Path from "node:path"
 import { SysioContracts } from "@wireio/sdk-core"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
-import {
-  ClioRunner,
-  WireClient,
-  type WireClientConfig
-} from "@wireio/cluster-tool/clients/wire"
+import { ClioRunner, WireClient, type WireClientConfig } from "@wireio/cluster-tool/clients/wire"
 import { toURL } from "@wireio/cluster-tool/utils"
 
 describe("WireClient", () => {
@@ -16,11 +12,7 @@ describe("WireClient", () => {
     config = {
       clusterPath: Os.tmpdir(),
       binary: Path.join(Os.tmpdir(), "clio"),
-      nodeopUrl: toURL(
-        await BindConfigProvider.findAvailable(
-          BindConfigProvider.DefaultBiosHttp
-        )
-      ),
+      nodeopUrl: toURL(await BindConfigProvider.findAvailable(BindConfigProvider.DefaultBiosHttp)),
       kiodUrl: null
     }
   })
@@ -34,9 +26,7 @@ describe("WireClient", () => {
     /** A client whose push succeeds and whose inclusion wait never resolves. */
     function clientWithUnresolvedWait() {
       const client = new WireClient(config),
-        send = jest
-          .spyOn(client["runner"], "run")
-          .mockResolvedValue({ transaction_id: TransactionId } as never)
+        send = jest.spyOn(client["runner"], "run").mockResolvedValue({ transaction_id: TransactionId } as never)
       jest
         .spyOn(client, "waitForTransactionInBlock")
         .mockRejectedValue(new Error("not found in blocks 1–6 within 60000ms"))
@@ -47,9 +37,7 @@ describe("WireClient", () => {
     function infoAt(offsetSec: number) {
       return {
         last_irreversible_block_num: 10,
-        head_block_time: new Date(Date.now() + offsetSec * 1000)
-          .toISOString()
-          .replace("Z", "")
+        head_block_time: new Date(Date.now() + offsetSec * 1000).toISOString().replace("Z", "")
       } as never
     }
 
@@ -58,14 +46,10 @@ describe("WireClient", () => {
     it("does NOT re-push when the transaction is still applied", async () => {
       const { client, send } = clientWithUnresolvedWait()
       // The re-read LOCATES it — exactly run-5's case (the account existed).
-      jest
-        .spyOn(client, "getTransaction")
-        .mockResolvedValue({ block_num: 268 } as never)
+      jest.spyOn(client, "getTransaction").mockResolvedValue({ block_num: 268 } as never)
       jest.spyOn(client, "getInfo").mockResolvedValue(infoAt(0))
 
-      await expect(
-        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
-      ).rejects.toThrow(/NOT re-pushed/)
+      await expect(client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")).rejects.toThrow(/NOT re-pushed/)
       expect(send).toHaveBeenCalledTimes(1)
     })
 
@@ -73,14 +57,10 @@ describe("WireClient", () => {
       const { client, send } = clientWithUnresolvedWait()
       // A trace-api 500 / socket reset is "could not ask", NOT "it is gone".
       // Laundering this into a fork-out is what re-pushed an applied tx.
-      jest
-        .spyOn(client, "getTransaction")
-        .mockRejectedValue(new Error("HTTP 500"))
+      jest.spyOn(client, "getTransaction").mockRejectedValue(new Error("HTTP 500"))
       jest.spyOn(client, "getInfo").mockResolvedValue(infoAt(0))
 
-      await expect(
-        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
-      ).rejects.toThrow(/NOT re-pushed/)
+      await expect(client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")).rejects.toThrow(/NOT re-pushed/)
       expect(send).toHaveBeenCalledTimes(1)
     })
 
@@ -90,9 +70,7 @@ describe("WireClient", () => {
       jest.spyOn(client, "getTransaction").mockResolvedValue(null as never)
       jest.spyOn(client, "getInfo").mockResolvedValue(infoAt(0))
 
-      await expect(
-        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
-      ).rejects.toThrow(/NOT re-pushed/)
+      await expect(client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")).rejects.toThrow(/NOT re-pushed/)
       expect(send).toHaveBeenCalledTimes(1)
     })
 
@@ -101,13 +79,11 @@ describe("WireClient", () => {
       // Absent AND head time is past pushedAt + TransactionExpirationSec, so
       // it can never be included — the one state where re-push is provably safe.
       jest.spyOn(client, "getTransaction").mockResolvedValue(null as never)
-      jest
-        .spyOn(client, "getInfo")
-        .mockResolvedValue(infoAt(WireClient.TransactionExpirationSec + 60))
+      jest.spyOn(client, "getInfo").mockResolvedValue(infoAt(WireClient.TransactionExpirationSec + 60))
 
-      await expect(
-        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
-      ).rejects.toThrow(/can never apply/)
+      await expect(client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")).rejects.toThrow(
+        /can never apply/
+      )
       expect(send.mock.calls.length).toBeGreaterThan(1)
       expect(send).toHaveBeenCalledTimes(WireClient.FinalityMaxAttempts)
     })
@@ -119,9 +95,7 @@ describe("WireClient", () => {
         } as never),
         wait = jest.spyOn(client, "waitForTransactionInBlock")
 
-      await expect(
-        client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")
-      ).resolves.toBeDefined()
+      await expect(client.createAccount("sysio", "sysio.acct", "PUB_K1_x", "PUB_K1_x")).resolves.toBeDefined()
       expect(send).toHaveBeenCalledTimes(1)
       // Previously this polled a FAKE id for the whole budget, then re-ran the
       // command up to FinalityMaxAttempts times on an idempotent redeploy.
@@ -130,10 +104,7 @@ describe("WireClient", () => {
   })
 
   describe("getSysioContract proxy", () => {
-    const epochClient = () =>
-      new WireClient(config).getSysioContract(
-        SysioContracts.SysioContractName.epoch
-      )
+    const epochClient = () => new WireClient(config).getSysioContract(SysioContracts.SysioContractName.epoch)
 
     it("resolves a known action to an invoker", () => {
       const epoch = epochClient()
@@ -142,9 +113,7 @@ describe("WireClient", () => {
     })
 
     it("throws on an unknown action", () => {
-      expect(() => Reflect.get(epochClient().actions, "bogus")).toThrow(
-        /Unknown sysio\.epoch action: bogus/
-      )
+      expect(() => Reflect.get(epochClient().actions, "bogus")).toThrow(/Unknown sysio\.epoch action: bogus/)
     })
 
     it("resolves a known table to a query", () => {
@@ -152,18 +121,14 @@ describe("WireClient", () => {
     })
 
     it("throws on an unknown table", () => {
-      expect(() => Reflect.get(epochClient().tables, "bogus")).toThrow(
-        /Unknown sysio\.epoch table: bogus/
-      )
+      expect(() => Reflect.get(epochClient().tables, "bogus")).toThrow(/Unknown sysio\.epoch table: bogus/)
     })
 
     it("prepare() builds an ActionPayload with the contract account + default auth", () => {
       const payload = epochClient().actions.advance.prepare({})
       expect(payload.account).toBe("sysio.epoch")
       expect(payload.name).toBe("advance")
-      expect(payload.authorization).toEqual([
-        { actor: "sysio.epoch", permission: "active" }
-      ])
+      expect(payload.authorization).toEqual([{ actor: "sysio.epoch", permission: "active" }])
     })
 
     it("resolves the system contract account override to 'sysio'", () => {
@@ -183,12 +148,10 @@ describe("WireClient", () => {
     // chain_plugin breaks on `kv >= ub_sv`, so the row can never come back and the flow's poll
     // times out instead of erroring. Both were only reachable from flow-swap-to-wire.
     const rowsFor = (client: WireClient, captured: any[]) =>
-      jest
-        .spyOn(client, "getTableRows")
-        .mockImplementation(async (query: any) => {
-          captured.push(query)
-          return { rows: [{ account: "wirercpt", balance: "1234" }], more: false } as never
-        })
+      jest.spyOn(client, "getTableRows").mockImplementation(async (query: any) => {
+        captured.push(query)
+        return { rows: [{ account: "wirercpt", balance: "1234" }], more: false } as never
+      })
 
     it("sends a lower bound and NO upper bound", async () => {
       const client = new WireClient(config),
@@ -210,20 +173,16 @@ describe("WireClient", () => {
       // lower_bound returns the first row at-or-after the key, so an account with no row reads
       // back a stranger's. Without the identity check this reported someone else's balance.
       const client = new WireClient(config)
-      jest
-        .spyOn(client, "getTableRows")
-        .mockResolvedValue({
-          rows: [{ account: "wireother", balance: "999" }],
-          more: false
-        } as never)
+      jest.spyOn(client, "getTableRows").mockResolvedValue({
+        rows: [{ account: "wireother", balance: "999" }],
+        more: false
+      } as never)
       expect(await client.getWireClaimable("wirercpt")).toBe(0n)
     })
 
     it("returns 0n when the table has no rows at all", async () => {
       const client = new WireClient(config)
-      jest
-        .spyOn(client, "getTableRows")
-        .mockResolvedValue({ rows: [], more: false } as never)
+      jest.spyOn(client, "getTableRows").mockResolvedValue({ rows: [], more: false } as never)
       expect(await client.getWireClaimable("wirercpt")).toBe(0n)
     })
 
@@ -239,9 +198,7 @@ describe("WireClient", () => {
       })
       expect(await client.getPayClaimable("wirercpt")).toBe(77n)
       expect(captured[0].table).toBe("payclaims")
-      expect(captured[0].lowerBound).toBe(
-        WireClient.nameKeyBound("account_name", "wirercpt")
-      )
+      expect(captured[0].lowerBound).toBe(WireClient.nameKeyBound("account_name", "wirercpt"))
     })
   })
 
@@ -269,15 +226,11 @@ describe("WireClient", () => {
 
     it("honours the per-table key field name", () => {
       // wireclaims keys on `account`; payclaims keys on `account_name`. One helper, two shapes.
-      expect(Object.keys(JSON.parse(WireClient.nameKeyBound("account_name", "wirercpt")))).toEqual([
-        "account_name"
-      ])
+      expect(Object.keys(JSON.parse(WireClient.nameKeyBound("account_name", "wirercpt")))).toEqual(["account_name"])
     })
 
     it("round-trips distinct accounts to distinct bounds", () => {
-      expect(WireClient.nameKeyBound("account", "wirercpt")).not.toBe(
-        WireClient.nameKeyBound("account", "wireno.aaa")
-      )
+      expect(WireClient.nameKeyBound("account", "wirercpt")).not.toBe(WireClient.nameKeyBound("account", "wireno.aaa"))
     })
   })
 
@@ -292,25 +245,14 @@ describe("WireClient", () => {
     it("passes --expiration on every pushed action", async () => {
       const client = new WireClient(config)
       const args: string[][] = []
-      jest
-        .spyOn(ClioRunner.prototype, "run")
-        .mockImplementation(async (runArgs: string[]) => {
-          args.push(runArgs)
-          return { transaction_id: "abc" } as never
-        })
-      await client.invoke(
-        "sysio.epoch",
-        "schbatchgps",
-        {},
-        [{ actor: "sysio.epoch", permission: "active" }],
-        { skipWait: true }
-      )
-      expect(args[0]).toEqual(
-        expect.arrayContaining([
-          "--expiration",
-          String(WireClient.TransactionExpirationSec)
-        ])
-      )
+      jest.spyOn(ClioRunner.prototype, "run").mockImplementation(async (runArgs: string[]) => {
+        args.push(runArgs)
+        return { transaction_id: "abc" } as never
+      })
+      await client.invoke("sysio.epoch", "schbatchgps", {}, [{ actor: "sysio.epoch", permission: "active" }], {
+        skipWait: true
+      })
+      expect(args[0]).toEqual(expect.arrayContaining(["--expiration", String(WireClient.TransactionExpirationSec)]))
     })
   })
 
@@ -319,14 +261,10 @@ describe("WireClient", () => {
       expect(WireClient.getTransactionId({ transaction_id: "abc" })).toBe("abc")
     })
     it("extracts from a JSON string", () => {
-      expect(WireClient.getTransactionId('{"transaction_id":"def"}')).toBe(
-        "def"
-      )
+      expect(WireClient.getTransactionId('{"transaction_id":"def"}')).toBe("def")
     })
     it("extracts from raw text via regex", () => {
-      expect(
-        WireClient.getTransactionId('noise "transaction_id": "0123abcd" noise')
-      ).toBe("0123abcd")
+      expect(WireClient.getTransactionId('noise "transaction_id": "0123abcd" noise')).toBe("0123abcd")
     })
     it("returns null when absent", () => {
       expect(WireClient.getTransactionId({})).toBeNull()

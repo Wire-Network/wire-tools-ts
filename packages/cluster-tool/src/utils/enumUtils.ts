@@ -17,14 +17,8 @@ import Assert from "node:assert"
  * @example
  *   chain_kind: abiEnumValue(SysioContracts.SysioAuthexChainkind, chainKind)
  */
-export function abiEnumValue<Abi extends Record<string, string | number>>(
-  abiEnum: Abi,
-  value: number
-): Abi[keyof Abi] {
+export function abiEnumValue<Abi extends Record<string, string | number>>(abiEnum: Abi, value: number): Abi[keyof Abi] {
   const spelling = abiEnum[value]
-  Assert.ok(
-    typeof spelling === "string",
-    `no ABI enum member is declared for proto value ${value}`
-  )
+  Assert.ok(typeof spelling === "string", `no ABI enum member is declared for proto value ${value}`)
   return abiEnum[spelling as keyof Abi]
 }

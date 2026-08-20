@@ -73,9 +73,7 @@ export class WebSocketStreamClient {
    * client is shutting itself down.
    */
   async disconnect(): Promise<void> {
-    this.subs.forEach(sub =>
-      sub.subscription.notifyClosed(ClosedReason.ServerShutdown)
-    )
+    this.subs.forEach(sub => sub.subscription.notifyClosed(ClosedReason.ServerShutdown))
     this.subs.clear()
     if (!this.ws) return
     const ws = this.ws
@@ -97,11 +95,7 @@ export class WebSocketStreamClient {
       throw new Error("WebSocketStreamClient: connect() before subscribe()")
     }
     const id = this.nextId++,
-      sub = new DebuggingSubscription<InferredStreamEvent<T>>(
-        id,
-        topic,
-        reason => this.sendUnsubscribe(id, reason)
-      )
+      sub = new DebuggingSubscription<InferredStreamEvent<T>>(id, topic, reason => this.sendUnsubscribe(id, reason))
     let ackResolve!: () => void, ackReject!: (err: Error) => void
     const ack = new Promise<void>((res, rej) => {
       ackResolve = res
@@ -133,9 +127,7 @@ export class WebSocketStreamClient {
   private onMessage(raw: string): void {
     // Parse + validate the wire frame via the codec; a malformed frame is a
     // benign no-op (drop the message), same as the pre-codec guard behavior.
-    const frame = Either.try(() =>
-      StreamFrameSchemaCodec.deserialize(raw)
-    ).getOrElse(null)
+    const frame = Either.try(() => StreamFrameSchemaCodec.deserialize(raw)).getOrElse(null)
     if (frame == null) return
     if (frame.type === StreamFrameType.Subscribed) {
       this.subs.get(frame.id)?.ackResolve()
@@ -160,9 +152,7 @@ export class WebSocketStreamClient {
   }
 
   private onClose(): void {
-    this.subs.forEach(rec =>
-      rec.subscription.notifyClosed(ClosedReason.ServerShutdown)
-    )
+    this.subs.forEach(rec => rec.subscription.notifyClosed(ClosedReason.ServerShutdown))
     this.subs.clear()
     this.ws = null
   }

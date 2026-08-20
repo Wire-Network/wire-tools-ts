@@ -15,10 +15,7 @@ describe("StartScriptSteps", () => {
     dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "startsteps-"))
     // Every real cluster has one, and `resolveSources` reads it for the node
     // configs' genesis timestamp.
-    Fs.writeFileSync(
-      Path.join(dir, "genesis.json"),
-      JSON.stringify({ initial_timestamp: "2026-01-01T00:00:00.000" })
-    )
+    Fs.writeFileSync(Path.join(dir, "genesis.json"), JSON.stringify({ initial_timestamp: "2026-01-01T00:00:00.000" }))
   })
   afterEach(() => {
     Fs.rmSync(dir, { recursive: true, force: true })
@@ -51,9 +48,7 @@ describe("StartScriptSteps", () => {
           upgradeAuthority: "UPGKEY"
         }
       ]
-      jest
-        .spyOn(validatorSteps, "resolvePrograms")
-        .mockReturnValue(programs)
+      jest.spyOn(validatorSteps, "resolvePrograms").mockReturnValue(programs)
 
       const resolved = startScript.resolveSolanaValidatorConfig(cluster())
       expect(validatorSteps.resolvePrograms).toHaveBeenCalled()
@@ -74,14 +69,7 @@ describe("StartScriptSteps", () => {
           nodeop: [],
           solanaValidator: startScript.resolveSolanaValidatorConfig(config)
         }).find(candidate => candidate.kind === DaemonKind.solanaValidator)
-      expect(daemon.argv).toEqual(
-        expect.arrayContaining([
-          "--upgradeable-program",
-          "PID",
-          "/tmp/opp.so",
-          "UPGKEY"
-        ])
-      )
+      expect(daemon.argv).toEqual(expect.arrayContaining(["--upgradeable-program", "PID", "/tmp/opp.so", "UPGKEY"]))
     })
   })
 
@@ -126,9 +114,7 @@ describe("StartScriptSteps", () => {
       const config = cluster(),
         written = startScript.writeAll(config, kiodOnlySources(config))
       expect(written).toContain(
-        DaemonConfig.startScriptFile(
-          DaemonConfig.daemonPath(config.dataPath, KiodProcess.ProcessLabel)
-        )
+        DaemonConfig.startScriptFile(DaemonConfig.daemonPath(config.dataPath, KiodProcess.ProcessLabel))
       )
     })
   })
@@ -193,9 +179,7 @@ describe("StartScriptSteps", () => {
       // defeating the per-daemon validation this step exists to provide.
       const config = cluster(),
         ctx = { config } as Parameters<typeof startScript.runEmit>[0]
-      jest
-        .spyOn(startScript, "resolveSources")
-        .mockReturnValue({ nodeop: [] })
+      jest.spyOn(startScript, "resolveSources").mockReturnValue({ nodeop: [] })
       await expect(
         startScript.runEmit(
           ctx,

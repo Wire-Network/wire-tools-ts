@@ -10,8 +10,7 @@
 
 jest.mock("ink", () => {
   const React = require("react")
-  const passthrough = (name: string) =>
-    (props: any) => React.createElement(name, props, props?.children)
+  const passthrough = (name: string) => (props: any) => React.createElement(name, props, props?.children)
   return {
     __esModule: true,
     Box: passthrough("Box"),

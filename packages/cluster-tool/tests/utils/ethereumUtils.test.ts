@@ -14,9 +14,7 @@ interface BalanceReadView extends ethers.BaseContract {
 }
 
 const SomeAddress = "0x00000000000000000000000000000000000000aa"
-const BalanceAbi: ethers.InterfaceAbi = [
-  "function balanceOf(address owner) view returns (uint256)"
-]
+const BalanceAbi: ethers.InterfaceAbi = ["function balanceOf(address owner) view returns (uint256)"]
 
 describe("contractView", () => {
   it("returns a real ethers Contract presented as the view", () => {
@@ -38,9 +36,7 @@ describe("contractView", () => {
 describe("resolveLatestNonce", () => {
   it("throws when the contract is not bound to a Signer", async () => {
     const view = contractView<BalanceReadView>(SomeAddress, BalanceAbi, null)
-    await expect(resolveLatestNonce(view)).rejects.toThrow(
-      /must be bound to a Signer/
-    )
+    await expect(resolveLatestNonce(view)).rejects.toThrow(/must be bound to a Signer/)
   })
 })
 
@@ -55,9 +51,7 @@ describe("resolveLatestNonce — a Signer source", () => {
   beforeAll(async () => {
     // The URL is a BOUND url — its port comes from the registry, never a
     // literal, even though nothing here dials it.
-    rpcUrl = toURL(
-      await BindConfigProvider.findAvailable(BindConfigProvider.DefaultAnvil)
-    )
+    rpcUrl = toURL(await BindConfigProvider.findAvailable(BindConfigProvider.DefaultAnvil))
   })
 
   beforeEach(() => {
@@ -84,13 +78,9 @@ describe("resolveLatestNonce — a Signer source", () => {
   it("never hands the same nonce to concurrent callers", async () => {
     // The regression this guards: 2026-08-10, nonce 157 went to FOUR parallel
     // funding sends and three were rejected `nonce has already been used`.
-    const nonces = await Promise.all(
-      Array.from({ length: 22 }, () => resolveLatestNonce(signer))
-    )
+    const nonces = await Promise.all(Array.from({ length: 22 }, () => resolveLatestNonce(signer)))
     expect(new Set(nonces).size).toBe(nonces.length)
-    expect([...nonces].sort((a, b) => a - b)).toEqual(
-      Array.from({ length: 22 }, (_, index) => SeedNonce + index)
-    )
+    expect([...nonces].sort((a, b) => a - b)).toEqual(Array.from({ length: 22 }, (_, index) => SeedNonce + index))
   })
 
   it("shares ONE counter between a contract and its own signer", async () => {
@@ -103,9 +93,7 @@ describe("resolveLatestNonce — a Signer source", () => {
   })
 
   it("throws when the signer has no Provider", async () => {
-    await expect(
-      resolveLatestNonce(new ethers.VoidSigner(SignerAddress))
-    ).rejects.toThrow(/must have a Provider/)
+    await expect(resolveLatestNonce(new ethers.VoidSigner(SignerAddress))).rejects.toThrow(/must have a Provider/)
   })
 })
 

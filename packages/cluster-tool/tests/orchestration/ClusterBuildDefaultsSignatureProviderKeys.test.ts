@@ -1,15 +1,9 @@
 import Path from "node:path"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
-import {
-  AWSAccountName,
-  SignatureProviderType
-} from "@wireio/cluster-tool-shared"
+import { AWSAccountName, SignatureProviderType } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
-import {
-  fixtureResolveEnvironment,
-  type ResolveEnvironment
-} from "../config/resolveEnvironmentFixture.js"
+import { fixtureResolveEnvironment, type ResolveEnvironment } from "../config/resolveEnvironmentFixture.js"
 import { collectPhaseNames } from "./clusterBuildFixture.js"
 
 const mockSend = jest.fn()
@@ -21,12 +15,8 @@ const mockSend = jest.fn()
 // build dir only stubs) out of the picture entirely.
 jest.mock("@aws-sdk/client-ssm", () => ({
   SSMClient: jest.fn().mockImplementation(() => ({ send: mockSend })),
-  GetParameterCommand: jest
-    .fn()
-    .mockImplementation((input: unknown) => ({ kind: "GetParameter", input })),
-  PutParameterCommand: jest
-    .fn()
-    .mockImplementation((input: unknown) => ({ kind: "PutParameter", input }))
+  GetParameterCommand: jest.fn().mockImplementation((input: unknown) => ({ kind: "GetParameter", input })),
+  PutParameterCommand: jest.fn().mockImplementation((input: unknown) => ({ kind: "PutParameter", input }))
 }))
 
 /** The captured command input — only the parameter id is read here. */
@@ -47,12 +37,9 @@ const SecureStringType = "SecureString"
 function publishedKey(secretId: string): string {
   const keyType = secretId.slice(secretId.lastIndexOf("/") + 1)
   return PrivateKey.from(
-    keyType === KeyType[KeyType.BLS]
-      ? Constants.DEV_BLS_PRIVATE_KEY
-      : Constants.DEV_K1_PRIVATE_KEY
+    keyType === KeyType[KeyType.BLS] ? Constants.DEV_BLS_PRIVATE_KEY : Constants.DEV_K1_PRIVATE_KEY
   ).toNativeString()
 }
-
 
 describe("ClusterBuildDefaults — SSM signature-provider key-publication gating", () => {
   let environment: ResolveEnvironment

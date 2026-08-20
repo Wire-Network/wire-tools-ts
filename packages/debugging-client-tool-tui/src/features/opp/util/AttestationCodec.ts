@@ -42,9 +42,7 @@ interface AttestationMessageType {
  * Keep the keys aligned with `AttestationType`'s identifiers; renames in the
  * generated package surface as compile errors here.
  */
-export const AttestationDecoders: Partial<
-  Record<AttestationType, AttestationMessageType>
-> = {
+export const AttestationDecoders: Partial<Record<AttestationType, AttestationMessageType>> = {
   [AttestationType.OPERATOR_ACTION]: OperatorAction,
   [AttestationType.PRETOKEN_PURCHASE]: PretokenPurchase,
   [AttestationType.PRETOKEN_YIELD]: PretokenYield,
@@ -84,10 +82,7 @@ export interface DecodedAttestationMessage {
  * produces, or the `{ type: "Buffer", data: number[] }` a `Buffer.toJSON()`
  * leaves behind. {@link bytesFor} normalizes all three.
  */
-export type SerializedAttestationData =
-  | AttestationEntry["data"]
-  | string
-  | BufferJsonCandidate
+export type SerializedAttestationData = AttestationEntry["data"] | string | BufferJsonCandidate
 
 /**
  * An {@link AttestationEntry} as it reaches the UI — the generated type with
@@ -99,8 +94,7 @@ export type SerializedAttestationData =
  * `data` to base64, which is why {@link decodeAttestation} has always handled
  * the string form.
  */
-export interface SerializedAttestationEntry
-  extends Omit<AttestationEntry, "data"> {
+export interface SerializedAttestationEntry extends Omit<AttestationEntry, "data"> {
   data: SerializedAttestationData
 }
 
@@ -119,9 +113,7 @@ export interface RawAttestationFallback {
  * pretty-printed; the raw fallback renders the entry as-is so the user
  * still sees something.
  */
-export type DecodedAttestation =
-  | DecodedAttestationMessage
-  | RawAttestationFallback
+export type DecodedAttestation = DecodedAttestationMessage | RawAttestationFallback
 
 /**
  * Decode an attestation entry's `data` bytes via the type-matched
@@ -133,9 +125,7 @@ export type DecodedAttestation =
  *
  * @param entry attestation entry from the Redux-backed `Envelope`
  */
-export function decodeAttestation(
-  entry: SerializedAttestationEntry
-): DecodedAttestation {
+export function decodeAttestation(entry: SerializedAttestationEntry): DecodedAttestation {
   const decoder = AttestationDecoders[entry.type as AttestationType]
   if (!decoder) {
     return {
@@ -219,12 +209,7 @@ export function jsonSafe(value: unknown): unknown {
   if (value instanceof Uint8Array) return Buffer.from(value).toString("base64")
   if (Array.isArray(value)) return value.map(jsonSafe)
   if (typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([k, v]) => [
-        k,
-        jsonSafe(v)
-      ])
-    )
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, jsonSafe(v)]))
   }
   return value
 }

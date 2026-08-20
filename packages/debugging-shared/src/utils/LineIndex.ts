@@ -74,19 +74,9 @@ export async function extendLineIndex(index: LineIndex): Promise<LineIndex> {
   const stat = await Fs.promises.stat(index.path)
   if (stat.ino !== index.ino) return buildLineIndex(index.path)
   if (stat.size <= index.totalBytes) return index
-  const oldTailIsNewline = await tailEndsInNewline(
-      index.path,
-      index.totalBytes
-    ),
-    seed = oldTailIsNewline
-      ? [...index.byteOffsets, index.totalBytes]
-      : [...index.byteOffsets],
-    byteOffsets = await streamNewlineOffsets(
-      index.path,
-      index.totalBytes,
-      stat.size,
-      seed
-    ),
+  const oldTailIsNewline = await tailEndsInNewline(index.path, index.totalBytes),
+    seed = oldTailIsNewline ? [...index.byteOffsets, index.totalBytes] : [...index.byteOffsets],
+    byteOffsets = await streamNewlineOffsets(index.path, index.totalBytes, stat.size, seed),
     newTailIsComplete = await tailEndsInNewline(index.path, stat.size),
     completeLineCount = computeCompleteLineCount(byteOffsets, newTailIsComplete)
   return {
@@ -103,18 +93,12 @@ export async function extendLineIndex(index: LineIndex): Promise<LineIndex> {
  * line and is excluded from the count (clamped at zero so an empty file
  * doesn't go negative).
  */
-function computeCompleteLineCount(
-  byteOffsets: number[],
-  tailIsComplete: boolean
-): number {
+function computeCompleteLineCount(byteOffsets: number[], tailIsComplete: boolean): number {
   return Math.max(0, byteOffsets.length - (tailIsComplete ? 0 : 1))
 }
 
 /** Read a single byte at `totalBytes - 1`; returns true when it's `\n` (0x0A). */
-async function tailEndsInNewline(
-  path: string,
-  totalBytes: number
-): Promise<boolean> {
+async function tailEndsInNewline(path: string, totalBytes: number): Promise<boolean> {
   if (totalBytes <= 0) return false
   const fd = await Fs.promises.open(path, "r"),
     buf = Buffer.alloc(1)
@@ -130,11 +114,7 @@ async function tailEndsInNewline(
  * Read `count` lines starting at `from`. Respects the byte offsets in the
  * index — callers should request [from, from+count) windows.
  */
-export async function readLines(
-  index: LineIndex,
-  from: number,
-  count: number
-): Promise<string[]> {
+export async function readLines(index: LineIndex, from: number, count: number): Promise<string[]> {
   const start = index.byteOffsets[from] ?? index.totalBytes,
     end = index.byteOffsets[from + count] ?? index.totalBytes
   if (start >= end) return []
@@ -181,15 +161,8 @@ function streamNewlineOffsets(
       highWaterMark: LineIndexInternals.ChunkSize
     })
     stream.on("data", (chunk: Buffer | string) => {
-      const buf =
-        typeof chunk === "string"
-          ? Buffer.from(chunk, LineIndexInternals.ScanEncoding)
-          : chunk
-      ;[
-        ...buf
-          .toString(LineIndexInternals.ScanEncoding)
-          .matchAll(LineIndexInternals.NewlineRegex)
-      ]
+      const buf = typeof chunk === "string" ? Buffer.from(chunk, LineIndexInternals.ScanEncoding) : chunk
+      ;[...buf.toString(LineIndexInternals.ScanEncoding).matchAll(LineIndexInternals.NewlineRegex)]
         .map(m => cursor + (m.index ?? 0) + LineIndexInternals.NewlineByteLength)
         .filter(pos => pos < endByte)
         .forEach(pos => offsets.push(pos))

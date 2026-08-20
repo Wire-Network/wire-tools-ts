@@ -63,29 +63,16 @@ describe("StreamFrameSchemaCodec", () => {
       code: StreamErrorCode.UnknownTopic,
       message: "no such topic"
     },
-    frames: StreamFrame[] = [
-      subscribe,
-      subscribed,
-      event,
-      unsubscribe,
-      closed,
-      error
-    ]
+    frames: StreamFrame[] = [subscribe, subscribed, event, unsubscribe, closed, error]
 
   it("round-trips every frame variant through serialize → deserialize", () => {
     frames.forEach(frame =>
-      expect(
-        StreamFrameSchemaCodec.deserialize(
-          StreamFrameSchemaCodec.serialize(frame)
-        )
-      ).toEqual(frame)
+      expect(StreamFrameSchemaCodec.deserialize(StreamFrameSchemaCodec.serialize(frame))).toEqual(frame)
     )
   })
 
   it("check accepts every well-formed frame variant", () => {
-    frames.forEach(frame =>
-      expect(StreamFrameSchemaCodec.check(frame)).toBe(true)
-    )
+    frames.forEach(frame => expect(StreamFrameSchemaCodec.check(frame)).toBe(true))
   })
 
   it("rejects non-frames, unknown types, and structurally-invalid frames", () => {
@@ -93,9 +80,7 @@ describe("StreamFrameSchemaCodec", () => {
     expect(StreamFrameSchemaCodec.check("hi")).toBe(false)
     expect(StreamFrameSchemaCodec.check({ type: "bogus" })).toBe(false)
     // A Subscribed frame missing its required numeric id.
-    expect(
-      StreamFrameSchemaCodec.check({ type: StreamFrameType.Subscribed })
-    ).toBe(false)
+    expect(StreamFrameSchemaCodec.check({ type: StreamFrameType.Subscribed })).toBe(false)
   })
 
   it("deserialize throws on a Closed frame with an out-of-set reason", () => {

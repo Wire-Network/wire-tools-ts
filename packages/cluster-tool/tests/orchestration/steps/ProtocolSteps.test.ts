@@ -3,12 +3,7 @@ import { Report } from "@wireio/cluster-tool/report"
 
 describe("Steps.protocol", () => {
   it("activateFeatures builds an input-less step", () => {
-    const step = Steps.protocol.planActivateFeatures(
-      Report.Actor.Sysio,
-      "features",
-      "activate protocol features",
-      {}
-    )
+    const step = Steps.protocol.planActivateFeatures(Report.Actor.Sysio, "features", "activate protocol features", {})
     expect(step.actor).toBe(Report.Actor.Sysio)
     expect(step.input).toBeNull()
     expect(typeof step.runner).toBe("function")
@@ -22,9 +17,7 @@ describe("Steps.protocol", () => {
       {},
       {
         threshold: 1,
-        finalizers: [
-          { description: "f0", weight: 1, public_key: "PUB_BLS_x", pop: "SIG_BLS_y" }
-        ]
+        finalizers: [{ description: "f0", weight: 1, public_key: "PUB_BLS_x", pop: "SIG_BLS_y" }]
       }
     )
     expect(step.input.kind).toBe("ProtocolSteps.SetFinalizerInput")

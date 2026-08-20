@@ -9,11 +9,7 @@ import { getLogger } from "../logging/Logger.js"
 import { ClusterBuildContext } from "../orchestration/ClusterBuildContext.js"
 import { ClusterBuildDefaults } from "../orchestration/ClusterBuildDefaults.js"
 import type { Report } from "../report/Report.js"
-import {
-  FlowScenario,
-  type FlowScenarioConstructor,
-  type FlowScenarioContextOf
-} from "./FlowScenario.js"
+import { FlowScenario, type FlowScenarioConstructor, type FlowScenarioContextOf } from "./FlowScenario.js"
 
 const log = getLogger(__filename)
 
@@ -33,10 +29,7 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
   readonly yargs: Argv
 
   private constructor(private readonly scenario: FlowScenario<C>) {
-    this.yargs = applyClusterBuildOptionsArgs(
-      Yargs(process.argv.slice(2)),
-      scenario.defaults
-    )
+    this.yargs = applyClusterBuildOptionsArgs(Yargs(process.argv.slice(2)), scenario.defaults)
       .scriptName(scenario.name)
       .usage(`$0 — ${scenario.description}`)
       .strict()
@@ -57,7 +50,7 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
     // `plan(cluster: ClusterBuild<C>)` param makes `FlowScenario<C>` contravariant
     // in `C`, so TS won't verify the narrowing — route through `unknown`.
     const scenario = new scenarioClass()
-    
+
     return new FlowCLI<C>(scenario)
   }
 
@@ -72,22 +65,14 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
     // Scenario defaults supply the non-flag leaves (collateral object-arrays)
     // that can't ride the argv surface.
     const argv = await this.yargs.parseAsync(),
-      options = mergeSignatureProviderSSM(
-        toClusterBuildOptions(argv, this.scenario.defaults),
-        argv
-      )
-    const cluster = await ClusterBuildDefaults.create<C>(
-      options,
-      this.scenario.createContext?.bind(this.scenario)
-    )
+      options = mergeSignatureProviderSSM(toClusterBuildOptions(argv, this.scenario.defaults), argv)
+    const cluster = await ClusterBuildDefaults.create<C>(options, this.scenario.createContext?.bind(this.scenario))
     this.scenario.plan(cluster)
     // Name the report before launch — the renderers title with it
     // ("flow-…: SUCCESS|FAILED") and launch writes the files.
     cluster.report.name = this.scenario.name
     const report = await ClusterManager.launch(cluster)
-    log.info(
-      `[${this.scenario.name}] ${report.succeeded ? "SUCCEEDED" : "FAILED"}`
-    )
+    log.info(`[${this.scenario.name}] ${report.succeeded ? "SUCCEEDED" : "FAILED"}`)
     return report
   }
 }

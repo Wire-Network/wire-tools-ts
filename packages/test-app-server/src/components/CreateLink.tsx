@@ -14,13 +14,7 @@ interface Props {
   onBack: () => void
 }
 
-export default function CreateLink({
-  chain,
-  username,
-  address,
-  onComplete,
-  onBack
-}: Props) {
+export default function CreateLink({ chain, username, address, onComplete, onBack }: Props) {
   const [done, setDone] = useState(false)
   const [loading, setLoading] = useState(false)
   const { show } = useToast()
@@ -50,9 +44,7 @@ export default function CreateLink({
   const linkVisual = (connected: boolean) => (
     <div className={`link-visual${connected ? " connected" : ""}`}>
       <span>@ {username}</span>
-      <span className="connector">
-        {connected ? "--- linked ---" : "--- link ---"}
-      </span>
+      <span className="connector">{connected ? "--- linked ---" : "--- link ---"}</span>
       <span className="mono">{shortenAddress(address)}</span>
     </div>
   )
@@ -61,33 +53,19 @@ export default function CreateLink({
     return (
       <div className="card">
         <div className="step-title">Create Link</div>
-        <div className="step-subtitle">
-          Officially link your Web3 wallet to your WNS account
-        </div>
+        <div className="step-subtitle">Officially link your Web3 wallet to your WNS account</div>
 
-        <p
-          style={{ fontSize: 14, color: "var(--text-muted)", marginBottom: 16 }}
-        >
-          By clicking confirm you agree to link the following wallet with your
-          account.
+        <p style={{ fontSize: 14, color: "var(--text-muted)", marginBottom: 16 }}>
+          By clicking confirm you agree to link the following wallet with your account.
         </p>
 
         {linkVisual(false)}
 
-        <button
-          className="btn-primary btn-full"
-          onClick={handleCreateLink}
-          disabled={loading}
-        >
+        <button className="btn-primary btn-full" onClick={handleCreateLink} disabled={loading}>
           {loading ? <span className="spinner" /> : "Create Link"}
         </button>
 
-        <button
-          className="btn-secondary btn-full"
-          style={{ marginTop: 8 }}
-          onClick={onBack}
-          disabled={loading}
-        >
+        <button className="btn-secondary btn-full" style={{ marginTop: 8 }} onClick={onBack} disabled={loading}>
           Back
         </button>
       </div>

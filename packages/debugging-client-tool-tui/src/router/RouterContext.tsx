@@ -32,9 +32,7 @@ const RouterContext = createContext<RouterAPI | null>(null)
  * components should never be rendered outside one.
  */
 export function useRouter(): RouterAPI {
-  return asOption(useContext(RouterContext)).getOrThrow(
-    "useRouter called outside a RouterProvider"
-  )
+  return asOption(useContext(RouterContext)).getOrThrow("useRouter called outside a RouterProvider")
 }
 
 export interface RouterProviderProps {
@@ -50,9 +48,7 @@ export interface RouterProviderProps {
  * can be unit-tested without a React renderer.
  */
 export function RouterProvider(props: RouterProviderProps): React.ReactElement {
-  const [stack, setStack] = useState<RouteMatch[]>(() =>
-    RouterStack.seed(props.initialPath)
-  )
+  const [stack, setStack] = useState<RouteMatch[]>(() => RouterStack.seed(props.initialPath))
 
   const push = useCallback((path: string, params?: RouteParams) => {
     setStack(prev => RouterStack.push(prev, path, params))
@@ -83,11 +79,7 @@ export function RouterProvider(props: RouterProviderProps): React.ReactElement {
     [stack, push, replace, pop, reset]
   )
 
-  return (
-    <RouterContext.Provider value={api}>
-      {props.children}
-    </RouterContext.Provider>
-  )
+  return <RouterContext.Provider value={api}>{props.children}</RouterContext.Provider>
 }
 
 /** Exported for tests that want to read the raw context. */

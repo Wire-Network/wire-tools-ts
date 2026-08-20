@@ -86,14 +86,12 @@ export const LogStatSchema = z.object({
   totalLines: z.number()
 })
 /** Codec for the `Logs.GetStat` response body ({@link LogStatResponse} = {@link LogStat}). */
-export const LogStatResponseSchemaCodec =
-  SchemaCodec.create<LogStatResponse>(LogStatSchema)
+export const LogStatResponseSchemaCodec = SchemaCodec.create<LogStatResponse>(LogStatSchema)
 
 /** Schema for {@link LogStatRequest}. */
 export const LogStatRequestSchema = z.object({ path: z.string() })
 /** Codec for the `Logs.GetStat` request body. */
-export const LogStatRequestSchemaCodec =
-  SchemaCodec.create<LogStatRequest>(LogStatRequestSchema)
+export const LogStatRequestSchemaCodec = SchemaCodec.create<LogStatRequest>(LogStatRequestSchema)
 
 /** Schema for {@link LogReadRequest}. */
 export const LogReadRequestSchema = z.object({
@@ -102,11 +100,9 @@ export const LogReadRequestSchema = z.object({
   count: z.number()
 })
 /** Codec for the `Logs.Read` request body. */
-export const LogReadRequestSchemaCodec =
-  SchemaCodec.create<LogReadRequest>(LogReadRequestSchema)
+export const LogReadRequestSchemaCodec = SchemaCodec.create<LogReadRequest>(LogReadRequestSchema)
 
 /** Schema for {@link LogReadResponse}. */
 export const LogReadResponseSchema = z.object({ lines: z.array(z.string()) })
 /** Codec for the `Logs.Read` response body. */
-export const LogReadResponseSchemaCodec =
-  SchemaCodec.create<LogReadResponse>(LogReadResponseSchema)
+export const LogReadResponseSchemaCodec = SchemaCodec.create<LogReadResponse>(LogReadResponseSchema)

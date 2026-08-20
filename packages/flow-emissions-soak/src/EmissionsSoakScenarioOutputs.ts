@@ -1,8 +1,4 @@
-import {
-  outputKey,
-  serializeBatchForClio,
-  type ImportSeedResult
-} from "@wireio/cluster-tool"
+import { outputKey, serializeBatchForClio, type ImportSeedResult } from "@wireio/cluster-tool"
 import type { ControlledStakerIdentity } from "./EmissionsSoakScenarioSyntheticDump.js"
 
 /**
@@ -37,9 +33,7 @@ export interface SeedConversionSummary {
  * @param result - The `convertImportSeed` result.
  * @return The JSON-safe summary.
  */
-export function toSeedConversionSummary(
-  result: ImportSeedResult
-): SeedConversionSummary {
+export function toSeedConversionSummary(result: ImportSeedResult): SeedConversionSummary {
   return {
     batches: result.batches.map(serializeBatchForClio),
     uniqueAddresses: result.uniqueAddresses,

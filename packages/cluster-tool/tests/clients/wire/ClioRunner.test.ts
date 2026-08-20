@@ -1,10 +1,7 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import {
-  ClioRunner,
-  enrichClioError
-} from "@wireio/cluster-tool/clients/wire/clio"
+import { ClioRunner, enrichClioError } from "@wireio/cluster-tool/clients/wire/clio"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { toURL } from "@wireio/cluster-tool/utils"
 
@@ -12,9 +9,7 @@ describe("ClioRunner", () => {
   let dir: string
   let nodeopUrl: string
   beforeAll(async () => {
-    nodeopUrl = toURL(
-      await BindConfigProvider.findAvailable(BindConfigProvider.DefaultBiosHttp)
-    )
+    nodeopUrl = toURL(await BindConfigProvider.findAvailable(BindConfigProvider.DefaultBiosHttp))
   })
   beforeEach(() => {
     dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "cliorunner-"))
@@ -60,13 +55,8 @@ describe("ClioRunner", () => {
     })
 
     it("enriches the thrown error with the child's stdout on failure", async () => {
-      const bin = makeScript(
-        "clio-fail.sh",
-        `echo 'assertion failure with message: boom'; exit 1`
-      )
-      await expect(new ClioRunner(config(bin)).run(["push"])).rejects.toThrow(
-        /assertion failure with message: boom/
-      )
+      const bin = makeScript("clio-fail.sh", `echo 'assertion failure with message: boom'; exit 1`)
+      await expect(new ClioRunner(config(bin)).run(["push"])).rejects.toThrow(/assertion failure with message: boom/)
     })
   })
 
@@ -87,12 +77,8 @@ describe("ClioRunner", () => {
 
   describe("ErrorFragment", () => {
     it("carries the recognised fragments", () => {
-      expect(ClioRunner.ErrorFragment.AccountAlreadyExists).toBe(
-        "already exists"
-      )
-      expect(ClioRunner.ErrorFragment.WalletAlreadyUnlocked).toBe(
-        "Already unlocked"
-      )
+      expect(ClioRunner.ErrorFragment.AccountAlreadyExists).toBe("already exists")
+      expect(ClioRunner.ErrorFragment.WalletAlreadyUnlocked).toBe("Already unlocked")
     })
   })
 })

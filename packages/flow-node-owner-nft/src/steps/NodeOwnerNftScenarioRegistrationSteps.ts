@@ -74,9 +74,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
    * @param tier - The claim tier the name is validated against.
    * @returns The definition step.
    */
-  export function planCreateNamedUser<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planCreateNamedUser<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -107,12 +105,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await pushNewNamedUser(
-      ctx.wire,
-      input.account,
-      input.wirePublicKey,
-      input.tier
-    )
+    await pushNewNamedUser(ctx.wire, input.account, input.wirePublicKey, input.tier)
   }
 
   /** Input for {@link planRegisterNodeOwner} — one `sysio.roa::nodeownreg` write. */
@@ -147,9 +140,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
    * @param wirePublicKey - The claimed owner/active Wire key.
    * @returns The definition step.
    */
-  export function planRegisterNodeOwner<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planRegisterNodeOwner<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -182,16 +173,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const ethereumPublicKey = await newEthereumPublicKey(
-      ctx,
-      input.ethereumHdIndex
-    )
-    await pushNodeOwnerReg(
-      ctx.wire,
-      input.ownerAccount,
-      input.tier,
-      ethereumPublicKey,
-      input.wirePublicKey
-    )
+    const ethereumPublicKey = await newEthereumPublicKey(ctx, input.ethereumHdIndex)
+    await pushNodeOwnerReg(ctx.wire, input.ownerAccount, input.tier, ethereumPublicKey, input.wirePublicKey)
   }
 }

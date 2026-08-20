@@ -7,15 +7,9 @@ import { useRouter } from "../../../router/index.js"
 import { useService } from "../../../services/ServiceContext.js"
 import { ServiceId } from "../../../services/ServiceId.js"
 import { useAppSelector } from "../../../store/Store.js"
-import {
-  selectAllEpochsDescending,
-  selectOldestEpochIndex
-} from "../../../store/opp/OPPSelectors.js"
+import { selectAllEpochsDescending, selectOldestEpochIndex } from "../../../store/opp/OPPSelectors.js"
 import { OPPTrackingService } from "../OPPTrackingService.js"
-import type {
-  DebugOPPEnvelopeRecord,
-  DebugOPPEpochRecord
-} from "../../../store/opp/OPPTypes.js"
+import type { DebugOPPEnvelopeRecord, DebugOPPEpochRecord } from "../../../store/opp/OPPTypes.js"
 import {
   EndpointTypeNames,
   attestationCountFor,
@@ -38,11 +32,15 @@ function shortEndpointName(name: string): string {
 function formatUpdatedAt(ms: number | null): string {
   if (ms === null) return "—"
   const d = new Date(ms)
-  return [
-    String(d.getHours()).padStart(2, "0"),
-    String(d.getMinutes()).padStart(2, "0"),
-    String(d.getSeconds()).padStart(2, "0")
-  ].join(":") + "." + String(d.getMilliseconds()).padStart(3, "0")
+  return (
+    [
+      String(d.getHours()).padStart(2, "0"),
+      String(d.getMinutes()).padStart(2, "0"),
+      String(d.getSeconds()).padStart(2, "0")
+    ].join(":") +
+    "." +
+    String(d.getMilliseconds()).padStart(3, "0")
+  )
 }
 
 /** Props for one (epoch, endpoint) status cell. */
@@ -65,14 +63,8 @@ function EndpointCell(props: EndpointCellProps): React.ReactElement {
   if (env) {
     const count = attestationCountFor(env.envelope)
     return (
-      <Box
-        flexDirection="column"
-        width={EpochTrackerPanel.EndpointCellWidth}
-        alignItems="center"
-      >
-        <Text color={EpochTrackerPanel.ReceivedColor}>
-          {EpochTrackerPanel.ReceivedIcon}
-        </Text>
+      <Box flexDirection="column" width={EpochTrackerPanel.EndpointCellWidth} alignItems="center">
+        <Text color={EpochTrackerPanel.ReceivedColor}>{EpochTrackerPanel.ReceivedIcon}</Text>
         <Text>
           #{count} {EpochTrackerPanel.AttestationsLabel}
         </Text>
@@ -80,18 +72,8 @@ function EndpointCell(props: EndpointCellProps): React.ReactElement {
     )
   }
   return (
-    <Box
-      flexDirection="column"
-      width={EpochTrackerPanel.EndpointCellWidth}
-      alignItems="center"
-    >
-      <Text
-        color={
-          isLatest
-            ? EpochTrackerPanel.PendingColor
-            : EpochTrackerPanel.MissingColor
-        }
-      >
+    <Box flexDirection="column" width={EpochTrackerPanel.EndpointCellWidth} alignItems="center">
+      <Text color={isLatest ? EpochTrackerPanel.PendingColor : EpochTrackerPanel.MissingColor}>
         {EpochTrackerPanel.PendingIcon}
       </Text>
       <Text> </Text>
@@ -113,11 +95,7 @@ function HeaderRow(): React.ReactElement {
         <Text bold>updated</Text>
       </Box>
       {EndpointTypeNames.map(name => (
-        <Box
-          key={name}
-          width={EpochTrackerPanel.EndpointCellWidth}
-          alignItems="center"
-        >
+        <Box key={name} width={EpochTrackerPanel.EndpointCellWidth} alignItems="center">
           <Text bold>{shortEndpointName(name)}</Text>
         </Box>
       ))}
@@ -139,9 +117,7 @@ interface EpochRowBodyProps {
 function EpochRowBody(props: EpochRowBodyProps): React.ReactElement {
   const { record, isLatest, isSelected } = props,
     byEndpoint = indexEnvelopesByEndpoint(record),
-    selectionMarker = isSelected
-      ? EpochTrackerPanel.SelectionMarker
-      : EpochTrackerPanel.SelectionPlaceholder
+    selectionMarker = isSelected ? EpochTrackerPanel.SelectionMarker : EpochTrackerPanel.SelectionPlaceholder
   return (
     <Box flexDirection="row">
       <Box width={EpochTrackerPanel.EpochColumnWidth}>
@@ -155,11 +131,7 @@ function EpochRowBody(props: EpochRowBodyProps): React.ReactElement {
         </Text>
       </Box>
       {EndpointTypeNames.map(name => (
-        <EndpointCell
-          key={name}
-          env={byEndpoint.get(name)}
-          isLatest={isLatest}
-        />
+        <EndpointCell key={name} env={byEndpoint.get(name)} isLatest={isLatest} />
       ))}
     </Box>
   )
@@ -200,25 +172,13 @@ function EpochRow(props: EpochRowProps): React.ReactElement {
         borderColor={borderColor}
         paddingX={1}
       >
-        <EpochRowBody
-          record={record}
-          isLatest={isLatest}
-          isSelected={isSelected}
-        />
+        <EpochRowBody record={record} isLatest={isLatest} isSelected={isSelected} />
       </Box>
     )
   }
   return (
-    <Box
-      flexDirection="column"
-      marginTop={marginTop}
-      paddingX={EpochTrackerPanel.UnborderedPaddingX}
-    >
-      <EpochRowBody
-        record={record}
-        isLatest={isLatest}
-        isSelected={isSelected}
-      />
+    <Box flexDirection="column" marginTop={marginTop} paddingX={EpochTrackerPanel.UnborderedPaddingX}>
+      <EpochRowBody record={record} isLatest={isLatest} isSelected={isSelected} />
     </Box>
   )
 }
@@ -239,12 +199,8 @@ function EpochTrackerBody(_: PanelComponentProps): React.ReactElement {
     [loadingOlder, setLoadingOlder] = useState(false),
     [olderExhausted, setOlderExhausted] = useState(false)
 
-  const cursorByLabel =
-      selectedEpoch === null
-        ? -1
-        : epochs.findIndex(e => e.epoch === selectedEpoch),
-    safeCursorIdx =
-      cursorByLabel === -1 || cursorByLabel >= epochs.length ? 0 : cursorByLabel
+  const cursorByLabel = selectedEpoch === null ? -1 : epochs.findIndex(e => e.epoch === selectedEpoch),
+    safeCursorIdx = cursorByLabel === -1 || cursorByLabel >= epochs.length ? 0 : cursorByLabel
 
   // Approximate visual rows-per-epoch — bordered rows take 2 content rows +
   // 2 border rows; non-bordered rows take 2 content rows + 1 margin row.
@@ -255,9 +211,7 @@ function EpochTrackerBody(_: PanelComponentProps): React.ReactElement {
   // Without this the window re-centered on every keystroke and the rows
   // visibly slid past a fixed cursor position.
   useEffect(() => {
-    setSliceStart(prev =>
-      adjustStickyWindow(prev, safeCursorIdx, epochs.length, visibleCount)
-    )
+    setSliceStart(prev => adjustStickyWindow(prev, safeCursorIdx, epochs.length, visibleCount))
   }, [safeCursorIdx, epochs.length, visibleCount])
 
   const visibleEpochs = epochs.slice(sliceStart, sliceStart + visibleCount)
@@ -265,10 +219,7 @@ function EpochTrackerBody(_: PanelComponentProps): React.ReactElement {
   const move = React.useCallback(
     (delta: number) => {
       if (epochs.length === 0) return
-      const nextIdx = Math.max(
-        0,
-        Math.min(epochs.length - 1, safeCursorIdx + delta)
-      )
+      const nextIdx = Math.max(0, Math.min(epochs.length - 1, safeCursorIdx + delta))
       setSelectedEpoch(epochs[nextIdx].epoch)
     },
     [epochs, safeCursorIdx]
@@ -326,11 +277,7 @@ function EpochTrackerBody(_: PanelComponentProps): React.ReactElement {
     <Box flexDirection="column">
       <Text bold color={isFocused ? "cyan" : undefined}>
         {epochs.length} epoch(s) cached — ↑/↓ select, Enter for detail
-        {olderExhausted
-          ? "  ·  no older epochs"
-          : loadingOlder
-            ? "  ·  loading older…"
-            : "  ·  < or [ to load older"}
+        {olderExhausted ? "  ·  no older epochs" : loadingOlder ? "  ·  loading older…" : "  ·  < or [ to load older"}
         {isFocused ? "" : "  (Tab to focus)"}
       </Text>
       <Box flexDirection="column" marginTop={1}>
@@ -341,13 +288,7 @@ function EpochTrackerBody(_: PanelComponentProps): React.ReactElement {
             isSelected = absoluteIdx === safeCursorIdx,
             marginTop = computeMarginTop(absoluteIdx, safeCursorIdx, i)
           return (
-            <EpochRow
-              key={rec.epoch}
-              record={rec}
-              isLatest={isLatest}
-              isSelected={isSelected}
-              marginTop={marginTop}
-            />
+            <EpochRow key={rec.epoch} record={rec} isLatest={isLatest} isSelected={isSelected} marginTop={marginTop} />
           )
         })}
       </Box>
@@ -365,11 +306,7 @@ function EpochTrackerBody(_: PanelComponentProps): React.ReactElement {
  * @param selectedIdx Index of the currently-selected row.
  * @param visibleIdx  Index inside the visible viewport (0 ⇒ top of viewport, no top margin).
  */
-export function computeMarginTop(
-  absoluteIdx: number,
-  selectedIdx: number,
-  visibleIdx: number
-): number {
+export function computeMarginTop(absoluteIdx: number, selectedIdx: number, visibleIdx: number): number {
   if (visibleIdx === 0) return 0
   const hasBorder = (idx: number): boolean => idx === 0 || idx === selectedIdx
   return hasBorder(absoluteIdx) || hasBorder(absoluteIdx - 1) ? 0 : 1
@@ -381,14 +318,8 @@ export function computeMarginTop(
  * fixed chrome the header + spacer + status bar consume.
  */
 function computeVisibleCount(terminalRows: number): number {
-  const usable = Math.max(
-    EpochTrackerPanel.RowsPerEpoch,
-    terminalRows - EpochTrackerPanel.ChromeLines
-  )
-  return Math.max(
-    1,
-    Math.floor(usable / EpochTrackerPanel.RowsPerEpoch)
-  )
+  const usable = Math.max(EpochTrackerPanel.RowsPerEpoch, terminalRows - EpochTrackerPanel.ChromeLines)
+  return Math.max(1, Math.floor(usable / EpochTrackerPanel.RowsPerEpoch))
 }
 
 /** Panel — virtual list of cached epochs (newest first) with per-endpoint status. */
@@ -444,6 +375,5 @@ export namespace EpochTrackerPanel {
   /** Path of the EpochDetailRoute pushed when Enter is pressed. */
   export const DetailRoutePath = "/opp/epoch" as const
   /** Empty-state copy when no envelopes have been cached yet. */
-  export const EmptyText =
-    "No epochs cached yet — waiting for the first envelope file..." as const
+  export const EmptyText = "No epochs cached yet — waiting for the first envelope file..." as const
 }

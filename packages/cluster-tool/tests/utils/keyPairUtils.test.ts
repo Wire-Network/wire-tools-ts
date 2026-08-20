@@ -20,14 +20,10 @@ import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import type { EthereumKeyPair, SolanaKeyPair } from "@wireio/cluster-tool/types"
 
 /** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
-const AnvilMnemonic =
-  "test test test test test test test test test test test junk"
+const AnvilMnemonic = "test test test test test test test test test test test junk"
 
 function anvilWallet(index: number): ethers.HDNodeWallet {
-  return ethers.HDNodeWallet.fromMnemonic(
-    ethers.Mnemonic.fromPhrase(AnvilMnemonic),
-    `m/44'/60'/0'/0/${index}`
-  )
+  return ethers.HDNodeWallet.fromMnemonic(ethers.Mnemonic.fromPhrase(AnvilMnemonic), `m/44'/60'/0'/0/${index}`)
 }
 
 function solanaFixture(): SolanaKeyPair {
@@ -66,9 +62,7 @@ describe("keyPairUtils", () => {
       expect(parsed.toString()).toBe(original.toString())
       expect(parsed.toNativeString()).toBe(original.toNativeString())
       expect(parsed.toPublic().toString()).toBe(original.toPublic().toString())
-      expect(parsed.proofOfPossessionString).toBe(
-        original.proofOfPossessionString
-      )
+      expect(parsed.proofOfPossessionString).toBe(original.proofOfPossessionString)
     })
 
     it("round-trips every key type through toNativeString (K1 WIF / EM 0x-hex / ED base58 / BLS PVT_BLS_)", () => {
@@ -85,24 +79,18 @@ describe("keyPairUtils", () => {
         [KeyType.BLS, bls]
       ] as const
       roundTrips.forEach(([type, privateKey]) =>
-        expect(
-          privateKeyFromNativeString(type, privateKey.toNativeString()).toString()
-        ).toBe(privateKey.toString())
+        expect(privateKeyFromNativeString(type, privateKey.toNativeString()).toString()).toBe(privateKey.toString())
       )
     })
 
     it("accepts an EM hex value without the 0x prefix", () => {
       const em = ethereumPrivateKeyFromWallet(anvilWallet(1)),
         bareHex = em.toNativeString().slice(2)
-      expect(privateKeyFromNativeString(KeyType.EM, bareHex).toString()).toBe(
-        em.toString()
-      )
+      expect(privateKeyFromNativeString(KeyType.EM, bareHex).toString()).toBe(em.toString())
     })
 
     it("throws on an unsupported key type", () => {
-      expect(() => privateKeyFromNativeString(KeyType.R1, "anything")).toThrow(
-        /unsupported key type/
-      )
+      expect(() => privateKeyFromNativeString(KeyType.R1, "anything")).toThrow(/unsupported key type/)
     })
   })
 
@@ -145,19 +133,14 @@ describe("keyPairUtils", () => {
     it("rebuilds an EM pair INCLUDING its 0x address, from the 0x-hex secret", () => {
       const wallet = anvilWallet(7),
         generated = ethereumKeyPairFromWallet(wallet),
-        pair = keyPairFromPrivate(
-          KeyType.EM,
-          ethereumPrivateKeyFromWallet(wallet).toNativeString()
-        )
+        pair = keyPairFromPrivate(KeyType.EM, ethereumPrivateKeyFromWallet(wallet).toNativeString())
       // An ADOPTED pair must be indistinguishable from a generated one.
       expect(pair).toEqual(generated)
       expect(pair.address).toBe(wallet.address)
     })
 
     it("throws on a curve with no native-string parser", () => {
-      expect(() => keyPairFromPrivate(KeyType.R1, "anything")).toThrow(
-        /unsupported key type/
-      )
+      expect(() => keyPairFromPrivate(KeyType.R1, "anything")).toThrow(/unsupported key type/)
     })
   })
 
@@ -166,12 +149,8 @@ describe("keyPairUtils", () => {
     it("derives a PVT_EM_ key deterministically per HD index", () => {
       const key = ethereumPrivateKeyFromWallet(anvilWallet(0))
       expect(key.toString()).toMatch(/^PVT_EM_/)
-      expect(ethereumPrivateKeyFromWallet(anvilWallet(0)).toString()).toBe(
-        key.toString()
-      )
-      expect(ethereumPrivateKeyFromWallet(anvilWallet(1)).toString()).not.toBe(
-        key.toString()
-      )
+      expect(ethereumPrivateKeyFromWallet(anvilWallet(0)).toString()).toBe(key.toString())
+      expect(ethereumPrivateKeyFromWallet(anvilWallet(1)).toString()).not.toBe(key.toString())
     })
   })
 
@@ -193,12 +172,8 @@ describe("keyPairUtils", () => {
       expect(keyPair.publicKey).toMatch(/^PUB_EM_/)
       expect(keyPair.privateKey).toMatch(/^PVT_EM_/)
       expect(keyPair.address).toBe(wallet.address)
-      expect(keyPair.publicKey).toBe(
-        ethereumPublicKeyFromWallet(wallet).toString()
-      )
-      expect(keyPair.privateKey).toBe(
-        ethereumPrivateKeyFromWallet(wallet).toString()
-      )
+      expect(keyPair.publicKey).toBe(ethereumPublicKeyFromWallet(wallet).toString())
+      expect(keyPair.privateKey).toBe(ethereumPrivateKeyFromWallet(wallet).toString())
     })
   })
 
@@ -208,9 +183,7 @@ describe("keyPairUtils", () => {
     beforeAll(async () => {
       // Never dialed — only used to attach the reconstructed Wallet; still resolve
       // a free port per bind-available-ports-not-fixed.
-      const port = await BindConfigProvider.findAvailable(
-        BindConfigProvider.DefaultAnvil
-      )
+      const port = await BindConfigProvider.findAvailable(BindConfigProvider.DefaultAnvil)
       provider = new ethers.JsonRpcProvider(`http://127.0.0.1:${port}`)
     })
 
@@ -233,9 +206,7 @@ describe("keyPairUtils", () => {
         keyPair = ethereumKeyPairFromWallet(wallet),
         fromPrivate = `0x${new ethers.SigningKey(wallet.privateKey).publicKey.slice(4)}`
       expect(ethereumUncompressedPublicKeyHex(keyPair)).toBe(fromPrivate)
-      expect(ethereumUncompressedPublicKeyHex(keyPair)).toMatch(
-        /^0x[0-9a-fA-F]{128}$/
-      )
+      expect(ethereumUncompressedPublicKeyHex(keyPair)).toMatch(/^0x[0-9a-fA-F]{128}$/)
     })
 
     it("renders from a REFS-ONLY pair (awsSecretId, no privateKey)", () => {
@@ -247,9 +218,7 @@ describe("keyPairUtils", () => {
           address: generated.address,
           awsSecretId: "/wire/test/batchop.a/EM"
         }
-      expect(ethereumUncompressedPublicKeyHex(refsOnly)).toBe(
-        ethereumUncompressedPublicKeyHex(generated)
-      )
+      expect(ethereumUncompressedPublicKeyHex(refsOnly)).toBe(ethereumUncompressedPublicKeyHex(generated))
     })
   })
 
@@ -261,12 +230,8 @@ describe("keyPairUtils", () => {
           publicKey: fixture.publicKey,
           awsSecretId: "/wire/test/batchop.a/ED"
         }
-      expect(solanaNativePublicKey(fixture)).toBe(
-        solanaKeypair(fixture).publicKey.toBase58()
-      )
-      expect(solanaNativePublicKey(refsOnly)).toBe(
-        solanaNativePublicKey(fixture)
-      )
+      expect(solanaNativePublicKey(fixture)).toBe(solanaKeypair(fixture).publicKey.toBase58())
+      expect(solanaNativePublicKey(refsOnly)).toBe(solanaNativePublicKey(fixture))
     })
   })
 
@@ -280,9 +245,7 @@ describe("keyPairUtils", () => {
     it("reconstructs a deterministic web3 Keypair (64-byte secret)", () => {
       const fixture = solanaFixture(),
         keypair = solanaKeypair(fixture)
-      expect(keypair.publicKey.toBase58()).toBe(
-        solanaKeypair(fixture).publicKey.toBase58()
-      )
+      expect(keypair.publicKey.toBase58()).toBe(solanaKeypair(fixture).publicKey.toBase58())
       expect(keypair.secretKey.length).toBe(64)
     })
   })
@@ -312,12 +275,12 @@ describe("keyPairUtils", () => {
     })
 
     it("throws for key types unusable as an account authority (WA, BLS)", () => {
-      expect(() =>
-        wireKeyFromPublicKey({ type: KeyType.WA, compressed: new Uint8Array(33) })
-      ).toThrow(/not a Wire account-authority key type/)
-      expect(() =>
-        wireKeyFromPublicKey({ type: KeyType.BLS, compressed: new Uint8Array(96) })
-      ).toThrow(/not a Wire account-authority key type/)
+      expect(() => wireKeyFromPublicKey({ type: KeyType.WA, compressed: new Uint8Array(33) })).toThrow(
+        /not a Wire account-authority key type/
+      )
+      expect(() => wireKeyFromPublicKey({ type: KeyType.BLS, compressed: new Uint8Array(96) })).toThrow(
+        /not a Wire account-authority key type/
+      )
     })
   })
 })

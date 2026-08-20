@@ -57,11 +57,9 @@ describe("ClusterManager.launch — daemon stop", () => {
   }
 
   it("stops the daemons after producing the Report", async () => {
-    const stopAll = jest
-      .spyOn(ProcessManager.get(), "stopAll")
-      .mockImplementation(async () => {
-        order.push("stopAll")
-      })
+    const stopAll = jest.spyOn(ProcessManager.get(), "stopAll").mockImplementation(async () => {
+      order.push("stopAll")
+    })
 
     const report = await ClusterManager.launch(buildStub())
 
@@ -73,11 +71,9 @@ describe("ClusterManager.launch — daemon stop", () => {
   })
 
   it("stops the daemons even when the build FAILED", async () => {
-    const stopAll = jest
-      .spyOn(ProcessManager.get(), "stopAll")
-      .mockImplementation(async () => {
-        order.push("stopAll")
-      })
+    const stopAll = jest.spyOn(ProcessManager.get(), "stopAll").mockImplementation(async () => {
+      order.push("stopAll")
+    })
 
     const report = await ClusterManager.launch(buildStub(false))
 
@@ -89,11 +85,9 @@ describe("ClusterManager.launch — daemon stop", () => {
     // The failure path is the one that can least afford a corrupted cluster —
     // it is the one an operator re-runs from. Before the `finally`, a rejected
     // build skipped the stop entirely and fell back to the exit sweep.
-    const stopAll = jest
-      .spyOn(ProcessManager.get(), "stopAll")
-      .mockImplementation(async () => {
-        order.push("stopAll")
-      })
+    const stopAll = jest.spyOn(ProcessManager.get(), "stopAll").mockImplementation(async () => {
+      order.push("stopAll")
+    })
     const failure = new Error("orchestration blew up"),
       build = buildStub()
     jest.spyOn(build, "build").mockImplementation(async () => {
@@ -107,9 +101,7 @@ describe("ClusterManager.launch — daemon stop", () => {
   })
 
   it("preserves the build's rejection even when the stop ALSO fails", async () => {
-    jest
-      .spyOn(ProcessManager.get(), "stopAll")
-      .mockRejectedValue(new Error("stopAll blew up"))
+    jest.spyOn(ProcessManager.get(), "stopAll").mockRejectedValue(new Error("stopAll blew up"))
     const failure = new Error("orchestration blew up"),
       build = buildStub()
     jest.spyOn(build, "build").mockRejectedValue(failure)
@@ -119,9 +111,7 @@ describe("ClusterManager.launch — daemon stop", () => {
   })
 
   it("still returns the Report when the graceful stop throws", async () => {
-    jest
-      .spyOn(ProcessManager.get(), "stopAll")
-      .mockRejectedValue(new Error("stopAll blew up"))
+    jest.spyOn(ProcessManager.get(), "stopAll").mockRejectedValue(new Error("stopAll blew up"))
 
     // The exit sweep remains the backstop; the run's verdict must survive.
     await expect(ClusterManager.launch(buildStub())).resolves.toMatchObject({

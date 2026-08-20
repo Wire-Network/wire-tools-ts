@@ -56,16 +56,12 @@ describe("createDestroyCommand", () => {
 
   beforeEach(() => {
     destroyMock.mockReset()
-    clusterPath = Fs.mkdtempSync(
-      Path.join(Os.tmpdir(), "wire-cluster-destroy-cmd-test-")
-    )
+    clusterPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "wire-cluster-destroy-cmd-test-"))
     Fs.writeFileSync(
       Path.join(clusterPath, ClusterConfigProvider.ConfigFilename),
       JSON.stringify({ ...PersistedFixture, clusterPath })
     )
-    exitSpy = jest
-      .spyOn(process, "exit")
-      .mockImplementation((() => undefined) as never)
+    exitSpy = jest.spyOn(process, "exit").mockImplementation((() => undefined) as never)
   })
 
   afterEach(() => {
@@ -76,9 +72,7 @@ describe("createDestroyCommand", () => {
   it("names itself with the destroy enum member and carries a non-empty describe", () => {
     const module = createDestroyCommand()
     expect(module.command).toBe(ClusterCommand.destroy)
-    expect(
-      typeof module.describe === "string" && module.describe.length > 0
-    ).toBe(true)
+    expect(typeof module.describe === "string" && module.describe.length > 0).toBe(true)
   })
 
   it("builder delegates to applyClusterPathArgs (registers --cluster-path)", () => {

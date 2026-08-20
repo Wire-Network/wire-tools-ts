@@ -1,10 +1,5 @@
 import { SlugName } from "@wireio/sdk-core"
-import {
-  outputKey,
-  ProtocolTiming,
-  type Books,
-  type OutputKey
-} from "@wireio/cluster-tool"
+import { outputKey, ProtocolTiming, type Books, type OutputKey } from "@wireio/cluster-tool"
 
 /**
  * Constants for the bidirectional swap-with-underwriting flow. Every
@@ -47,11 +42,7 @@ export namespace SwapWithUnderwritingScenarioConstants {
   /** Deadline for the underwriter deposit relay + ACTIVE eligibility flip —
    *  extension-inclusive epochs so consecutive extended epochs still fit. */
   export function underwriterActiveDeadlineMs(): number {
-    return (
-      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      UnderwriterActiveEpochBudget *
-      MsPerSecond
-    )
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * UnderwriterActiveEpochBudget * MsPerSecond
   }
 
   // ── Registry slugs (must match the bootstrap registry seed) ──────────────

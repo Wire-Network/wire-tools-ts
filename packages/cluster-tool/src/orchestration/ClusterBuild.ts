@@ -10,10 +10,7 @@ import { getLogger, type Logger } from "../logging/Logger.js"
 import { Report } from "../report/Report.js"
 import { ReportRendererRegistry } from "../report/ReportRendererRegistry.js"
 import { ClusterBuildContext } from "./ClusterBuildContext.js"
-import {
-  ClusterBuildPhaseBase,
-  type ClusterBuildParent
-} from "./ClusterBuildPhaseBase.js"
+import { ClusterBuildPhaseBase, type ClusterBuildParent } from "./ClusterBuildPhaseBase.js"
 
 /**
  * Seed the key store with the two accounts whose key material exists BEFORE any
@@ -69,9 +66,7 @@ function seedGenesisAccounts(
  * `flow-*` run this identical engine — they differ only in which phases/groups were
  * registered.
  */
-export class ClusterBuild<
-  C extends ClusterBuildContext = ClusterBuildContext
-> implements ClusterBuildParent<C> {
+export class ClusterBuild<C extends ClusterBuildContext = ClusterBuildContext> implements ClusterBuildParent<C> {
   private readonly childList: ClusterBuildPhaseBase<C>[] = []
   private readonly reportInternal = new Report()
 
@@ -120,9 +115,7 @@ export class ClusterBuild<
     const resolved = await ClusterConfigProvider.resolveWithBiosKeys(options),
       { config } = resolved,
       log = getLogger(config.report.basename),
-      context = createContext
-        ? createContext(config, log)
-        : (new ClusterBuildContext(config, log) as C)
+      context = createContext ? createContext(config, log) : (new ClusterBuildContext(config, log) as C)
     seedGenesisAccounts(context, resolved)
     return ClusterBuild.forContext(context, children)
   }
@@ -172,8 +165,7 @@ export class ClusterBuild<
   async build(): Promise<Report> {
     const controller = new AbortController(),
       registry = ReportRendererRegistry.createDefault(),
-      persistOnExit = () =>
-        guard(() => this.interruptedReport().writeSync(this.config.report, registry))
+      persistOnExit = () => guard(() => this.interruptedReport().writeSync(this.config.report, registry))
 
     process.once("exit", persistOnExit)
     await eachSeries(this.childList, async child => {

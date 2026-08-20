@@ -45,16 +45,14 @@ describe("ApiPaths.*.Methods", () => {
 
 describe("InferredRequestType / InferredResponseType", () => {
   it("infers the cluster config response from the method enum", () => {
-    const sample: InferredResponseType<
-      typeof ApiPaths.Cluster.Methods.GetConfig
-    > = {} as GetClusterConfigResponse
+    const sample: InferredResponseType<typeof ApiPaths.Cluster.Methods.GetConfig> = {} as GetClusterConfigResponse
     expect(typeof sample).toBe("object")
   })
 
   it("infers process-liveness request shape", () => {
-    const sample: InferredRequestType<
-      typeof ApiPaths.Processes.Methods.GetLiveness
-    > = { labels: ["nodeop"] } satisfies GetProcessLivenessRequest
+    const sample: InferredRequestType<typeof ApiPaths.Processes.Methods.GetLiveness> = {
+      labels: ["nodeop"]
+    } satisfies GetProcessLivenessRequest
     expect(sample.labels).toEqual(["nodeop"])
   })
 

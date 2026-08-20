@@ -21,10 +21,7 @@ import { KeyType } from "@wireio/sdk-core"
 import { getValue } from "@wireio/shared"
 import { getLogger } from "../../logging/Logger.js"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
-import {
-  ClusterState,
-  type ClusterKeysOperatorEntry
-} from "../../cluster/ClusterState.js"
+import { ClusterState, type ClusterKeysOperatorEntry } from "../../cluster/ClusterState.js"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 import { DaemonConfig } from "../../config/DaemonConfig.js"
@@ -36,10 +33,7 @@ import type { KeyPair, WireFinalizerKeyPair } from "../../types/KeyPair.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
 import { ClusterBuildPhaseGroup } from "../ClusterBuildPhaseGroup.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../ClusterBuildStep.js"
 import { outputKey, type OutputKey } from "../OutputStore.js"
 import { verifyStep } from "../StepTools.js"
 import { KeySteps } from "./KeySteps.js"
@@ -82,12 +76,7 @@ export namespace ExternalClusterConfigSteps {
     const base = Path.basename(source)
     if (CloneExcludedDirnames.has(base) || source.endsWith(PidFileSuffix)) return false
     const stats = Fs.lstatSync(source)
-    return (
-      !stats.isSocket() &&
-      !stats.isFIFO() &&
-      !stats.isBlockDevice() &&
-      !stats.isCharacterDevice()
-    )
+    return !stats.isSocket() && !stats.isFIFO() && !stats.isBlockDevice() && !stats.isCharacterDevice()
   }
 
   /** Command-scoped params (the local cluster is `ctx.config`). */
@@ -131,9 +120,7 @@ export namespace ExternalClusterConfigSteps {
    * @param options - Step options applied to every step.
    * @returns The Validate phase.
    */
-  export function planValidatePhase<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planValidatePhase<C extends ClusterBuildContext = ClusterBuildContext>(
     group: ClusterBuildPhaseGroup<C>,
     actor: Report.Actor,
     options: ClusterBuildStepOptions
@@ -143,12 +130,7 @@ export namespace ExternalClusterConfigSteps {
       "Validate",
       "Load + cross-validate the external bind config against the local topology",
       [
-        planLoadExternalBind(
-          actor,
-          "load-external-bind",
-          "deserialize + store the external bind config",
-          options
-        ),
+        planLoadExternalBind(actor, "load-external-bind", "deserialize + store the external bind config", options),
         planVerifyProducerCardinality(
           actor,
           "verify-producer-cardinality",
@@ -167,24 +149,14 @@ export namespace ExternalClusterConfigSteps {
           "underwriter bind entries match the local topology",
           options
         ),
-        planVerifyNodeMapping(
-          actor,
-          "verify-node-mapping",
-          "every cluster-state node maps to a bind entry",
-          options
-        ),
+        planVerifyNodeMapping(actor, "verify-node-mapping", "every cluster-state node maps to a bind entry", options),
         planVerifyOperatorAccounts(
           actor,
           "verify-operator-accounts",
           "every state operator label is present in cluster-keys",
           options
         ),
-        planVerifySolanaDynamicRange(
-          actor,
-          "verify-solana-dynamic-range",
-          "solana dynamicRange first < last",
-          options
-        ),
+        planVerifySolanaDynamicRange(actor, "verify-solana-dynamic-range", "solana dynamicRange first < last", options),
         planVerifyNoDuplicatePorts(
           actor,
           "verify-no-duplicate-ports",
@@ -205,22 +177,13 @@ export namespace ExternalClusterConfigSteps {
    * @param options - Step options.
    * @returns The load step.
    */
-  export function planLoadExternalBind<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planLoadExternalBind<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runLoadExternalBind
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runLoadExternalBind)
   }
 
   /** Named runner — deserialize the external bind config + store it for downstream steps. */
@@ -231,10 +194,7 @@ export namespace ExternalClusterConfigSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const externalBind = BindConfigSchemaCodec.deserialize(
-      Fs.readFileSync(
-        Path.resolve(ctx.outputs.assert(ParamsKey).externalBindConfigFile),
-        "utf-8"
-      )
+      Fs.readFileSync(Path.resolve(ctx.outputs.assert(ParamsKey).externalBindConfigFile), "utf-8")
     )
     ctx.outputs.set(ExternalBindKey, externalBind)
   }
@@ -248,33 +208,22 @@ export namespace ExternalClusterConfigSteps {
    * @param options - Step options.
    * @returns The verify step.
    */
-  export function planVerifyProducerCardinality<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planVerifyProducerCardinality<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return verifyStep<C>(
-      actor,
-      name,
-      description,
-      runVerifyProducerCardinality,
-      options
-    )
+    return verifyStep<C>(actor, name, description, runVerifyProducerCardinality, options)
   }
 
   /** Named runner — producer bind entries match the local node count. */
-  export async function runVerifyProducerCardinality<
-    C extends ClusterBuildContext
-  >(ctx: C, signal: AbortSignal): Promise<void> {
+  export async function runVerifyProducerCardinality<C extends ClusterBuildContext>(
+    ctx: C,
+    signal: AbortSignal
+  ): Promise<void> {
     signal.throwIfAborted()
-    assertCount(
-      "producers",
-      ctx.outputs.assert(ExternalBindKey).nodeop.ports.producers.length,
-      ctx.config.nodeCount
-    )
+    assertCount("producers", ctx.outputs.assert(ExternalBindKey).nodeop.ports.producers.length, ctx.config.nodeCount)
   }
 
   /**
@@ -286,33 +235,22 @@ export namespace ExternalClusterConfigSteps {
    * @param options - Step options.
    * @returns The verify step.
    */
-  export function planVerifyBatchCardinality<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planVerifyBatchCardinality<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return verifyStep<C>(
-      actor,
-      name,
-      description,
-      runVerifyBatchCardinality,
-      options
-    )
+    return verifyStep<C>(actor, name, description, runVerifyBatchCardinality, options)
   }
 
   /** Named runner — batch bind entries match the local batch-operator count. */
-  export async function runVerifyBatchCardinality<
-    C extends ClusterBuildContext
-  >(ctx: C, signal: AbortSignal): Promise<void> {
+  export async function runVerifyBatchCardinality<C extends ClusterBuildContext>(
+    ctx: C,
+    signal: AbortSignal
+  ): Promise<void> {
     signal.throwIfAborted()
-    assertCount(
-      "batch",
-      ctx.outputs.assert(ExternalBindKey).nodeop.ports.batch.length,
-      ctx.config.batchOperatorCount
-    )
+    assertCount("batch", ctx.outputs.assert(ExternalBindKey).nodeop.ports.batch.length, ctx.config.batchOperatorCount)
   }
 
   /**
@@ -324,27 +262,20 @@ export namespace ExternalClusterConfigSteps {
    * @param options - Step options.
    * @returns The verify step.
    */
-  export function planVerifyUnderwriterCardinality<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planVerifyUnderwriterCardinality<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return verifyStep<C>(
-      actor,
-      name,
-      description,
-      runVerifyUnderwriterCardinality,
-      options
-    )
+    return verifyStep<C>(actor, name, description, runVerifyUnderwriterCardinality, options)
   }
 
   /** Named runner — underwriter bind entries match the local underwriter count. */
-  export async function runVerifyUnderwriterCardinality<
-    C extends ClusterBuildContext
-  >(ctx: C, signal: AbortSignal): Promise<void> {
+  export async function runVerifyUnderwriterCardinality<C extends ClusterBuildContext>(
+    ctx: C,
+    signal: AbortSignal
+  ): Promise<void> {
     signal.throwIfAborted()
     assertCount(
       "underwriters",
@@ -362,9 +293,7 @@ export namespace ExternalClusterConfigSteps {
    * @param options - Step options.
    * @returns The verify step.
    */
-  export function planVerifyNodeMapping<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planVerifyNodeMapping<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -381,8 +310,7 @@ export namespace ExternalClusterConfigSteps {
     signal.throwIfAborted()
     const ports = ctx.outputs.assert(ExternalBindKey).nodeop.ports,
       state = ClusterState.load(ctx.config),
-      bindNodeCount =
-        1 + ports.producers.length + ports.batch.length + ports.underwriters.length
+      bindNodeCount = 1 + ports.producers.length + ports.batch.length + ports.underwriters.length
     Assert.ok(
       state.nodes.length === bindNodeCount,
       `create-external-config: cluster-state has ${state.nodes.length} nodes but the external bind describes ${bindNodeCount}`
@@ -398,21 +326,13 @@ export namespace ExternalClusterConfigSteps {
    * @param options - Step options.
    * @returns The verify step.
    */
-  export function planVerifyOperatorAccounts<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planVerifyOperatorAccounts<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return verifyStep<C>(
-      actor,
-      name,
-      description,
-      runVerifyOperatorAccounts,
-      options
-    )
+    return verifyStep<C>(actor, name, description, runVerifyOperatorAccounts, options)
   }
 
   /** Named runner — every state operator label is present in cluster-keys.json. */
@@ -426,9 +346,7 @@ export namespace ExternalClusterConfigSteps {
       keyLabels = new Set(keys.operators.map(operator => operator.label))
     state.nodes
       .flatMap(node =>
-        [node.batchOperatorLabel, node.underwriterLabel].filter(
-          (label): label is string => label != null
-        )
+        [node.batchOperatorLabel, node.underwriterLabel].filter((label): label is string => label != null)
       )
       .forEach(label =>
         Assert.ok(
@@ -447,27 +365,20 @@ export namespace ExternalClusterConfigSteps {
    * @param options - Step options.
    * @returns The verify step.
    */
-  export function planVerifySolanaDynamicRange<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planVerifySolanaDynamicRange<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return verifyStep<C>(
-      actor,
-      name,
-      description,
-      runVerifySolanaDynamicRange,
-      options
-    )
+    return verifyStep<C>(actor, name, description, runVerifySolanaDynamicRange, options)
   }
 
   /** Named runner — the external solana `dynamicRange` has `first` < `last`. */
-  export async function runVerifySolanaDynamicRange<
-    C extends ClusterBuildContext
-  >(ctx: C, signal: AbortSignal): Promise<void> {
+  export async function runVerifySolanaDynamicRange<C extends ClusterBuildContext>(
+    ctx: C,
+    signal: AbortSignal
+  ): Promise<void> {
     signal.throwIfAborted()
     const { dynamicRange } = ctx.outputs.assert(ExternalBindKey).solana.ports
     Assert.ok(
@@ -485,21 +396,13 @@ export namespace ExternalClusterConfigSteps {
    * @param options - Step options.
    * @returns The verify step.
    */
-  export function planVerifyNoDuplicatePorts<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planVerifyNoDuplicatePorts<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return verifyStep<C>(
-      actor,
-      name,
-      description,
-      runVerifyNoDuplicatePorts,
-      options
-    )
+    return verifyStep<C>(actor, name, description, runVerifyNoDuplicatePorts, options)
   }
 
   /**
@@ -516,12 +419,8 @@ export namespace ExternalClusterConfigSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const bindings = BindConfigProvider.allPortBindings(
-        ctx.outputs.assert(ExternalBindKey)
-      ),
-      duplicates = bindings.filter(
-        (binding, index) => bindings.indexOf(binding) !== index
-      )
+    const bindings = BindConfigProvider.allPortBindings(ctx.outputs.assert(ExternalBindKey)),
+      duplicates = bindings.filter((binding, index) => bindings.indexOf(binding) !== index)
     Assert.ok(
       duplicates.length === 0,
       `create-external-config: the external bind config binds the same port twice on one host: ${[...new Set(duplicates)].join(", ")}`
@@ -549,22 +448,13 @@ export namespace ExternalClusterConfigSteps {
    * @param options - Step options.
    * @returns The clone step.
    */
-  export function planClone<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planClone<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runClone
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runClone)
   }
 
   /** Named runner — copy the local tree to the external path (runtime artifacts excluded). */
@@ -613,22 +503,13 @@ export namespace ExternalClusterConfigSteps {
    * @param options - Step options.
    * @returns The rebind step.
    */
-  export function planRebind<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planRebind<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runRebind
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runRebind)
   }
 
   /** Named runner — merge the config to the external root + re-render every file. */
@@ -644,12 +525,8 @@ export namespace ExternalClusterConfigSteps {
       // Remap any path rooted at the local cluster dir onto the external root;
       // host-specific roots (build/ethereum/solana/executables) stay verbatim.
       rootSwap = (path: string): string =>
-        path === localConfig.clusterPath ||
-        path.startsWith(localConfig.clusterPath + Path.sep)
-          ? Path.join(
-              externalClusterPath,
-              Path.relative(localConfig.clusterPath, path)
-            )
+        path === localConfig.clusterPath || path.startsWith(localConfig.clusterPath + Path.sep)
+          ? Path.join(externalClusterPath, Path.relative(localConfig.clusterPath, path))
           : path,
       mergedConfig: ClusterConfig = {
         ...localConfig,
@@ -661,10 +538,7 @@ export namespace ExternalClusterConfigSteps {
         // external-outpost refs now point at their in-tree copies (Clone put them there).
         externalOutposts:
           localConfig.externalOutposts != null
-            ? inTreeExternalOutpost(
-                rootSwap(localConfig.dataPath),
-                localConfig.externalOutposts
-              )
+            ? inTreeExternalOutpost(rootSwap(localConfig.dataPath), localConfig.externalOutposts)
             : null,
         debuggingServerEnabled: noDebuggingServer ? false : localConfig.debuggingServerEnabled
       }
@@ -676,32 +550,19 @@ export namespace ExternalClusterConfigSteps {
     )
     NodeConfig.plan(mergedConfig).forEach(node => {
       Fs.mkdirSync(node.nodePath, { recursive: true })
-      Fs.writeFileSync(
-        Path.join(node.nodePath, NodeConfigFilename),
-        node.ini.render()
-      )
-      Fs.writeFileSync(
-        Path.join(node.nodePath, NodeLoggingFilename),
-        node.logging.render()
-      )
+      Fs.writeFileSync(Path.join(node.nodePath, NodeConfigFilename), node.ini.render())
+      Fs.writeFileSync(Path.join(node.nodePath, NodeLoggingFilename), node.logging.render())
     })
 
     // Re-capture cluster-state.json from the merged model (external ports/paths).
     // A fresh context has an empty OutputStore, so re-derive solanaIdlFile from
     // the external tree (capture would otherwise write null).
-    const mergedContext = new ClusterBuildContext(
-        mergedConfig,
-        getLogger(mergedConfig.report.basename)
-      ),
+    const mergedContext = new ClusterBuildContext(mergedConfig, getLogger(mergedConfig.report.basename)),
       state = ClusterState.capture(mergedContext),
       solanaIdlFile =
         mergedConfig.externalOutposts != null
           ? mergedConfig.externalOutposts.solana.idlFile
-          : Path.join(
-              mergedConfig.dataPath,
-              OperatorDaemonTool.SolanaIdlSubpath,
-              OperatorDaemonTool.SolanaIdlFilename
-            )
+          : Path.join(mergedConfig.dataPath, OperatorDaemonTool.SolanaIdlSubpath, OperatorDaemonTool.SolanaIdlFilename)
     ClusterState.save(mergedConfig, {
       ...state,
       solanaIdlFile: Fs.existsSync(solanaIdlFile) ? solanaIdlFile : null
@@ -756,11 +617,7 @@ export namespace ExternalClusterConfigSteps {
    * @param config - The merged cluster config.
    * @param signal - Abort signal.
    */
-  async function emitStartScripts(
-    ctx: ClusterBuildContext,
-    config: ClusterConfig,
-    signal: AbortSignal
-  ): Promise<void> {
+  async function emitStartScripts(ctx: ClusterBuildContext, config: ClusterConfig, signal: AbortSignal): Promise<void> {
     const log = getLogger(__filename)
 
     // DELETE FIRST, unconditionally. Clone copied every local `start.sh` into
@@ -800,14 +657,9 @@ export namespace ExternalClusterConfigSteps {
     // none — that is a legitimate skip, PRE-CHECKED rather than caught, so a
     // genuine publication failure still propagates instead of being downgraded
     // to a warning.
-    const addressFile = Path.join(
-      ClusterConfigProvider.ethereumDeploymentsPath(config),
-      ExternalOutpostAddressFilename
-    )
+    const addressFile = Path.join(ClusterConfigProvider.ethereumDeploymentsPath(config), ExternalOutpostAddressFilename)
     if (!Fs.existsSync(addressFile)) {
-      log.warn(
-        `create-external-config: start scripts skipped — outpost artifacts absent (${addressFile})`
-      )
+      log.warn(`create-external-config: start scripts skipped — outpost artifacts absent (${addressFile})`)
       return
     }
     // BOTH arms are reachable, and the LOCAL one is the common case: a plain
@@ -845,22 +697,13 @@ export namespace ExternalClusterConfigSteps {
    * @param options - Step options.
    * @returns The emit step.
    */
-  export function planEmit<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planEmit<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runEmit
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runEmit)
   }
 
   /** Named runner — assemble + write `external-cluster-config.json`. */
@@ -885,9 +728,7 @@ export namespace ExternalClusterConfigSteps {
       external: ExternalClusterConfig = {
         bindings: externalBind,
         accounts: {
-          operators: keys.operators.map(operator =>
-            toAccount(operator, provider, lookup)
-          )
+          operators: keys.operators.map(operator => toAccount(operator, provider, lookup))
         },
         wire: {
           epochDurationSec: merged.epochDurationSec,
@@ -898,15 +739,8 @@ export namespace ExternalClusterConfigSteps {
       }
     // Secret-bearing (embeds plaintext KEY-provider private keys) — write + pin
     // 0600, mirroring ClusterState.saveKeys / KeysFileMode.
-    const externalConfigFile = Path.join(
-      merged.clusterPath,
-      ClusterFiles.ExternalConfigFilename
-    )
-    Fs.writeFileSync(
-      externalConfigFile,
-      ExternalClusterConfigSchemaCodec.serialize(external),
-      { mode: 0o600 }
-    )
+    const externalConfigFile = Path.join(merged.clusterPath, ClusterFiles.ExternalConfigFilename)
+    Fs.writeFileSync(externalConfigFile, ExternalClusterConfigSchemaCodec.serialize(external), { mode: 0o600 })
     Fs.chmodSync(externalConfigFile, 0o600)
   }
 
@@ -930,9 +764,7 @@ export namespace ExternalClusterConfigSteps {
       type: operator.type,
       keyProviders: [
         providerFor(operator.wire),
-        ...(operator.wireFinalizer != null
-          ? [providerFor(operator.wireFinalizer)]
-          : []),
+        ...(operator.wireFinalizer != null ? [providerFor(operator.wireFinalizer)] : []),
         ...(operator.ethereum != null ? [providerFor(operator.ethereum)] : []),
         ...(operator.solana != null ? [providerFor(operator.solana)] : [])
       ]
@@ -944,10 +776,7 @@ export namespace ExternalClusterConfigSteps {
    * authority for "does this parameter exist", built from the SAME
    * {@link KeySteps.signatureProviderKeyPublications} walker that wrote them.
    */
-  type SSMPublicationLookup = (
-    label: string,
-    keyType: KeyType
-  ) => KeySteps.SignatureProviderKeyPublication
+  type SSMPublicationLookup = (label: string, keyType: KeyType) => KeySteps.SignatureProviderKeyPublication
 
   /** Separator for the `<label>/<KeyType>` publication-index key. */
   const PublicationKeySeparator = "/"
@@ -985,10 +814,7 @@ export namespace ExternalClusterConfigSteps {
         // relationship is what made `cluster-keys.json` and the emitted config
         // disagree about the same key.
         const index = new Map(
-          KeySteps.signatureProviderKeyPublications(config).map(row => [
-            publicationKey(row.label, row.keyType),
-            row
-          ])
+          KeySteps.signatureProviderKeyPublications(config).map(row => [publicationKey(row.label, row.keyType), row])
         )
         return (label, keyType) => index.get(publicationKey(label, keyType))
       })
@@ -1033,19 +859,13 @@ export namespace ExternalClusterConfigSteps {
         : {})
     }
     return match(provider.type)
-      .with(
-        SignatureProviderType.KEY,
-        (): SignatureProviderConfig => ({
-          providerType: SignatureProviderType.KEY,
-          ...base,
-          privateKey: keyPair.privateKey
-        })
-      )
+      .with(SignatureProviderType.KEY, (): SignatureProviderConfig => ({
+        providerType: SignatureProviderType.KEY,
+        ...base,
+        privateKey: keyPair.privateKey
+      }))
       .with(SignatureProviderType.SSM, (): SignatureProviderConfig => {
-        Assert.ok(
-          provider.ssm != null,
-          "create-external-config: SSM signature provider requires ssm settings"
-        )
+        Assert.ok(provider.ssm != null, "create-external-config: SSM signature provider requires ssm settings")
         const published = lookup(label, keyPair.type)
         Assert.ok(
           published != null,
@@ -1058,13 +878,10 @@ export namespace ExternalClusterConfigSteps {
           awsSecretId: published.secretId
         }
       })
-      .with(
-        SignatureProviderType.KIOD,
-        (): SignatureProviderConfig => ({
-          providerType: SignatureProviderType.KIOD,
-          ...base
-        })
-      )
+      .with(SignatureProviderType.KIOD, (): SignatureProviderConfig => ({
+        providerType: SignatureProviderType.KIOD,
+        ...base
+      }))
       .exhaustive()
   }
 
@@ -1072,26 +889,13 @@ export namespace ExternalClusterConfigSteps {
   const ExternalOutpostSubpath = "external-outpost"
 
   /** The in-tree path for a copied external-outpost artifact (self-contained tree). */
-  function inTreeExternalOutpostFile(
-    externalDataPath: string,
-    chain: string,
-    sourceFile: string
-  ): string {
-    return Path.join(
-      externalDataPath,
-      ExternalOutpostSubpath,
-      chain,
-      Path.basename(sourceFile)
-    )
+  function inTreeExternalOutpostFile(externalDataPath: string, chain: string, sourceFile: string): string {
+    return Path.join(externalDataPath, ExternalOutpostSubpath, chain, Path.basename(sourceFile))
   }
 
   /** The external-outpost config with every FILE ref rewritten to its in-tree copy. */
-  function inTreeExternalOutpost(
-    externalDataPath: string,
-    external: ExternalOutpostConfig
-  ): ExternalOutpostConfig {
-    const inTree = (chain: string, file: string): string =>
-      inTreeExternalOutpostFile(externalDataPath, chain, file)
+  function inTreeExternalOutpost(externalDataPath: string, external: ExternalOutpostConfig): ExternalOutpostConfig {
+    const inTree = (chain: string, file: string): string => inTreeExternalOutpostFile(externalDataPath, chain, file)
     return {
       ethereum: {
         addressFile: inTree("ethereum", external.ethereum.addressFile),
@@ -1099,18 +903,13 @@ export namespace ExternalClusterConfigSteps {
         chainId: external.ethereum.chainId,
         ...(external.ethereum.liqEthAddressFile != null
           ? {
-              liqEthAddressFile: inTree(
-                "ethereum",
-                external.ethereum.liqEthAddressFile
-              )
+              liqEthAddressFile: inTree("ethereum", external.ethereum.liqEthAddressFile)
             }
           : {})
       },
       solana: {
         idlFile: inTree("solana", external.solana.idlFile),
-        ...(external.solana.mintsFile != null
-          ? { mintsFile: inTree("solana", external.solana.mintsFile) }
-          : {})
+        ...(external.solana.mintsFile != null ? { mintsFile: inTree("solana", external.solana.mintsFile) } : {})
       }
     }
   }
@@ -1123,15 +922,9 @@ export namespace ExternalClusterConfigSteps {
    * @param externalDataPath - The external cluster's data dir.
    * @param external - The (absolute-ref) external-outpost config.
    */
-  function copyExternalOutpostFiles(
-    externalDataPath: string,
-    external: ExternalOutpostConfig
-  ): void {
+  function copyExternalOutpostFiles(externalDataPath: string, external: ExternalOutpostConfig): void {
     const copy = (chain: string, source: string): void => {
-      Assert.ok(
-        Fs.existsSync(source),
-        `create-external-config: external-outpost file not found: ${source}`
-      )
+      Assert.ok(Fs.existsSync(source), `create-external-config: external-outpost file not found: ${source}`)
       const destination = inTreeExternalOutpostFile(externalDataPath, chain, source)
       Fs.mkdirSync(Path.dirname(destination), { recursive: true })
       Fs.copyFileSync(source, destination)
@@ -1167,9 +960,7 @@ export namespace ExternalClusterConfigSteps {
   }
 
   /** The solana outpost section — from `externalOutposts`, else the cloned IDL (or none). */
-  function solanaSection(
-    merged: ClusterConfig
-  ): ExternalOutpostConfig["solana"] {
+  function solanaSection(merged: ClusterConfig): ExternalOutpostConfig["solana"] {
     if (merged.externalOutposts != null) {
       return { ...merged.externalOutposts.solana }
     }
@@ -1179,9 +970,7 @@ export namespace ExternalClusterConfigSteps {
         OperatorDaemonTool.SolanaIdlFilename
       ),
       mintsFile = Path.join(merged.dataPath, "sol-mock-mints.json")
-    return Fs.existsSync(idlFile)
-      ? { idlFile, ...(Fs.existsSync(mintsFile) ? { mintsFile } : {}) }
-      : null
+    return Fs.existsSync(idlFile) ? { idlFile, ...(Fs.existsSync(mintsFile) ? { mintsFile } : {}) } : null
   }
 
   // ── Stage 5: Verify ────────────────────────────────────────────────────────
@@ -1198,22 +987,13 @@ export namespace ExternalClusterConfigSteps {
    * @param options - Step options.
    * @returns The verify step.
    */
-  export function planVerify<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planVerify<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runVerify
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runVerify)
   }
 
   /**
@@ -1257,12 +1037,8 @@ export namespace ExternalClusterConfigSteps {
       externalPorts = new Set(BindConfigProvider.allPorts(merged.bind)),
       externalAddresses = new Set(bindAddresses(merged.bind)),
       // Ports/addresses that were local-only and MUST have been rewritten out.
-      stalePorts = BindConfigProvider.allPorts(localConfig.bind).filter(
-        port => !externalPorts.has(port)
-      ),
-      staleAddresses = bindAddresses(localConfig.bind).filter(
-        address => !externalAddresses.has(address)
-      ),
+      stalePorts = BindConfigProvider.allPorts(localConfig.bind).filter(port => !externalPorts.has(port)),
+      staleAddresses = bindAddresses(localConfig.bind).filter(address => !externalAddresses.has(address)),
       configFiles = [
         ClusterConfigProvider.configFilePath(merged),
         ClusterState.stateFilePath(merged),
@@ -1289,15 +1065,10 @@ export namespace ExternalClusterConfigSteps {
           // HEX-safe boundary — a local port must not be flagged as a substring
           // of a larger number (8888 ⊄ 18888) NOR inside a hex key (…a8888b…).
           const boundary = new RegExp(`(?<![0-9a-fA-F])${port}(?![0-9a-fA-F])`)
-          Assert.ok(
-            !boundary.test(text),
-            `create-external-config: ${file} still contains the local bind port ${port}`
-          )
+          Assert.ok(!boundary.test(text), `create-external-config: ${file} still contains the local bind port ${port}`)
         })
         staleAddresses.forEach(address => {
-          const boundary = new RegExp(
-            `(?<![0-9A-Za-z.:])${escapeRegExp(address)}(?![0-9A-Za-z.:])`
-          )
+          const boundary = new RegExp(`(?<![0-9A-Za-z.:])${escapeRegExp(address)}(?![0-9A-Za-z.:])`)
           Assert.ok(
             !boundary.test(text),
             `create-external-config: ${file} still contains the local bind address ${address}`
@@ -1307,10 +1078,7 @@ export namespace ExternalClusterConfigSteps {
 
     // Round-trip the emitted payload through its codec (structural backstop).
     ExternalClusterConfigSchemaCodec.deserialize(
-      Fs.readFileSync(
-        Path.join(merged.clusterPath, ClusterFiles.ExternalConfigFilename),
-        "utf-8"
-      )
+      Fs.readFileSync(Path.join(merged.clusterPath, ClusterFiles.ExternalConfigFilename), "utf-8")
     )
   }
 }

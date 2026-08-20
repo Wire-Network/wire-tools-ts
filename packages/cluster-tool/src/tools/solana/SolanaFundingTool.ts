@@ -21,10 +21,7 @@ import {
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../orchestration/ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../orchestration/ClusterBuildStep.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { solanaKeypair } from "../../utils/keyPairUtils.js"
@@ -70,16 +67,11 @@ export namespace SolanaFundingTool {
       decimals >= MinDecimals && decimals <= MaxDecimals,
       `SolanaFundingTool: decimals must be in [${MinDecimals}, ${MaxDecimals}], got ${decimals}`
     )
-    log.info(
-      `[SolanaFundingTool] createMockSplMint start (decimals=${decimals})`
-    )
+    log.info(`[SolanaFundingTool] createMockSplMint start (decimals=${decimals})`)
 
     const mintKeypair = Keypair.generate()
-    log.info(
-      `[SolanaFundingTool] generated mint pubkey=${mintKeypair.publicKey.toBase58()}`
-    )
-    const rentLamports =
-      await connection.getMinimumBalanceForRentExemption(MINT_SIZE)
+    log.info(`[SolanaFundingTool] generated mint pubkey=${mintKeypair.publicKey.toBase58()}`)
+    const rentLamports = await connection.getMinimumBalanceForRentExemption(MINT_SIZE)
     const transaction = new Transaction().add(
       SystemProgram.createAccount({
         fromPubkey: funder.publicKey,
@@ -88,22 +80,10 @@ export namespace SolanaFundingTool {
         lamports: rentLamports,
         programId: TOKEN_PROGRAM_ID
       }),
-      createInitializeMint2Instruction(
-        mintKeypair.publicKey,
-        decimals,
-        funder.publicKey,
-        null
-      )
+      createInitializeMint2Instruction(mintKeypair.publicKey, decimals, funder.publicKey, null)
     )
-    await sendAndPoll(
-      connection,
-      transaction,
-      [funder, mintKeypair],
-      "createMockSplMint"
-    )
-    log.info(
-      `[SolanaFundingTool] mint created (${mintKeypair.publicKey.toBase58()})`
-    )
+    await sendAndPoll(connection, transaction, [funder, mintKeypair], "createMockSplMint")
+    log.info(`[SolanaFundingTool] mint created (${mintKeypair.publicKey.toBase58()})`)
     return mintKeypair.publicKey
   }
 
@@ -126,19 +106,12 @@ export namespace SolanaFundingTool {
     amount: bigint
   ): Promise<PublicKey> {
     Assert.ok(amount > 0n, "SolanaFundingTool: mint amount must be > 0")
-    const { ata, createInstruction } = await resolveAssociatedTokenAccount(
-      connection,
-      funder,
-      mint,
-      recipient
-    )
+    const { ata, createInstruction } = await resolveAssociatedTokenAccount(connection, funder, mint, recipient)
     // ONE transaction: the ATA creation (when needed) rides with the mint, so
     // the credit is atomic and costs a single confirmation.
     const transaction = new Transaction()
     if (createInstruction != null) transaction.add(createInstruction)
-    transaction.add(
-      createMintToInstruction(mint, ata, funder.publicKey, amount)
-    )
+    transaction.add(createMintToInstruction(mint, ata, funder.publicKey, amount))
     await sendAndPoll(connection, transaction, [funder], "mintMockSplToUser")
     return ata
   }
@@ -174,12 +147,7 @@ export namespace SolanaFundingTool {
       allowOwnerOffCurve
     )
     if (createInstruction != null)
-      await sendAndPoll(
-        connection,
-        new Transaction().add(createInstruction),
-        [funder],
-        "ensureAssociatedTokenAccount"
-      )
+      await sendAndPoll(connection, new Transaction().add(createInstruction), [funder], "ensureAssociatedTokenAccount")
     return ata
   }
 
@@ -218,14 +186,7 @@ export namespace SolanaFundingTool {
     return {
       ata,
       createInstruction:
-        ataInfo === null
-          ? createAssociatedTokenAccountInstruction(
-              funder.publicKey,
-              ata,
-              owner,
-              mint
-            )
-          : null
+        ataInfo === null ? createAssociatedTokenAccountInstruction(funder.publicKey, ata, owner, mint) : null
     }
   }
 
@@ -260,10 +221,7 @@ export namespace SolanaFundingTool {
     const keypairFile = deployerKeypairFile(dataPath)
     if (!Fs.existsSync(keypairFile)) {
       mkdirs(Path.dirname(keypairFile))
-      Fs.writeFileSync(
-        keypairFile,
-        JSON.stringify(Array.from(Keypair.generate().secretKey))
-      )
+      Fs.writeFileSync(keypairFile, JSON.stringify(Array.from(Keypair.generate().secretKey)))
     }
     return loadDeployerKeypair(dataPath)
   }
@@ -288,9 +246,7 @@ export namespace SolanaFundingTool {
    * so the keypair must hold the deposit amount + fee headroom before depositing).
    * Idempotent — a keypair already at/above the floor no-ops.
    */
-  export function planAirdrop<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planAirdrop<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -319,17 +275,9 @@ export namespace SolanaFundingTool {
     const pubkey = solanaKeypair(operator.solana).publicKey
     const current = BigInt(await ctx.solana.getLamports(pubkey))
     if (current >= input.floorLamports) return
-    const requestLamports =
-      Number(input.floorLamports - current) + LAMPORTS_PER_SOL
-    const signature = await ctx.solana.connection.requestAirdrop(
-      pubkey,
-      requestLamports
-    )
-    await confirmSignature(
-      ctx.solana.connection,
-      signature,
-      `SolanaFundingTool.planAirdrop ${input.operatorLabel}`
-    )
+    const requestLamports = Number(input.floorLamports - current) + LAMPORTS_PER_SOL
+    const signature = await ctx.solana.connection.requestAirdrop(pubkey, requestLamports)
+    await confirmSignature(ctx.solana.connection, signature, `SolanaFundingTool.planAirdrop ${input.operatorLabel}`)
   }
 
   // ── Step: mint mock SPL to an operator's ATA (write) ─────────────────────
@@ -359,9 +307,7 @@ export namespace SolanaFundingTool {
    * identity is resolved from `ctx.keyStore` by its durable `label`; the deployer
    * keypair from the cluster data dir ({@link DeployerKeypairFilename}).
    */
-  export function planSplMint<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planSplMint<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -392,10 +338,7 @@ export namespace SolanaFundingTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(
-      input.amount > 0n,
-      "SolanaFundingTool.planSplMint: amount must be positive"
-    )
+    Assert.ok(input.amount > 0n, "SolanaFundingTool.planSplMint: amount must be positive")
     const operator = ctx.keyStore.assertOperator(input.operatorLabel)
     const deployer = loadDeployerKeypair(ctx.config.dataPath)
     const mint = solMintAddress(ctx.config.dataPath, input.tokenCode)
@@ -427,13 +370,8 @@ export namespace SolanaFundingTool {
    */
   export function solMintAddress(dataPath: string, tokenCode: bigint): string {
     const mintsFile = Path.join(dataPath, SolMockMintsFilename)
-    Assert.ok(
-      Fs.existsSync(mintsFile),
-      `SolanaFundingTool: mock SPL mints not found at ${mintsFile}`
-    )
-    const mints = JSON.parse(
-      Fs.readFileSync(mintsFile, "utf8")
-    ) as SolMockMint[]
+    Assert.ok(Fs.existsSync(mintsFile), `SolanaFundingTool: mock SPL mints not found at ${mintsFile}`)
+    const mints = JSON.parse(Fs.readFileSync(mintsFile, "utf8")) as SolMockMint[]
     const found = mints.find(entry => BigInt(entry.code) === tokenCode)
     Assert.ok(
       found != null,
@@ -450,13 +388,8 @@ export namespace SolanaFundingTool {
    */
   export function loadDeployerKeypair(dataPath: string): Keypair {
     const keypairFile = deployerKeypairFile(dataPath)
-    Assert.ok(
-      Fs.existsSync(keypairFile),
-      `SolanaFundingTool.planSplMint: deployer keypair not found at ${keypairFile}`
-    )
-    return Keypair.fromSecretKey(
-      Uint8Array.from(JSON.parse(Fs.readFileSync(keypairFile, "utf8")))
-    )
+    Assert.ok(Fs.existsSync(keypairFile), `SolanaFundingTool.planSplMint: deployer keypair not found at ${keypairFile}`)
+    return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(Fs.readFileSync(keypairFile, "utf8"))))
   }
 
   /**
@@ -471,9 +404,7 @@ export namespace SolanaFundingTool {
     signers: Keypair[],
     label: string
   ): Promise<string> {
-    const { blockhash } = await connection.getLatestBlockhash(
-      SolanaClient.DefaultCommitment
-    )
+    const { blockhash } = await connection.getLatestBlockhash(SolanaClient.DefaultCommitment)
     transaction.recentBlockhash = blockhash
     transaction.feePayer = signers[0].publicKey
     transaction.sign(...signers)
@@ -483,8 +414,7 @@ export namespace SolanaFundingTool {
     })
     log.info(`[SolanaFundingTool/${label}] sent signature=${signature}`)
     await confirmSignature(connection, signature, label, {
-      rebroadcast: () =>
-        connection.sendRawTransaction(raw, { skipPreflight: true })
+      rebroadcast: () => connection.sendRawTransaction(raw, { skipPreflight: true })
     })
     return signature
   }

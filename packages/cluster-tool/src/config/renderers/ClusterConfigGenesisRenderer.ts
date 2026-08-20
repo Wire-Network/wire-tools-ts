@@ -23,9 +23,7 @@ export class ClusterConfigGenesisRenderer implements Renderer {
       {
         initial_timestamp: new Date().toISOString().replace("Z", ""),
         initial_key: this.config.initialKey,
-        ...(this.config.initialFinalizerKey
-          ? { initial_finalizer_key: this.config.initialFinalizerKey }
-          : {}),
+        ...(this.config.initialFinalizerKey ? { initial_finalizer_key: this.config.initialFinalizerKey } : {}),
         initial_configuration: {
           max_block_net_usage: 1_048_576,
           target_block_net_usage_pct: 10_000,

@@ -9,9 +9,7 @@ describe("WireWallet", () => {
   let dir: string
   let nodeopUrl: string
   beforeAll(async () => {
-    nodeopUrl = toURL(
-      await BindConfigProvider.findAvailable(BindConfigProvider.DefaultBiosHttp)
-    )
+    nodeopUrl = toURL(await BindConfigProvider.findAvailable(BindConfigProvider.DefaultBiosHttp))
   })
   beforeEach(() => {
     dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "wirewallet-"))
@@ -26,9 +24,7 @@ describe("WireWallet", () => {
   /** A branching fake `clio` that records `import` calls to {@link importLogPath}. */
   const fakeClio = (unlockFails = false): string => {
     const p = Path.join(dir, "clio.sh")
-    const unlockBody = unlockFails
-      ? `echo 'Already unlocked: default' >&2; exit 1`
-      : `echo unlocked`
+    const unlockBody = unlockFails ? `echo 'Already unlocked: default' >&2; exit 1` : `echo unlocked`
     Fs.writeFileSync(
       p,
       [
@@ -67,10 +63,7 @@ describe("WireWallet", () => {
     it("loads an existing password file as a value", () => {
       const walletPath = Path.join(dir, WireWallet.Subpath)
       Fs.mkdirSync(walletPath, { recursive: true })
-      Fs.writeFileSync(
-        Path.join(walletPath, WireWallet.PasswordFilename),
-        "PWexisting\n"
-      )
+      Fs.writeFileSync(Path.join(walletPath, WireWallet.PasswordFilename), "PWexisting\n")
       expect(new WireWallet(runner(fakeClio())).password).toBe("PWexisting")
     })
     it("is null with no password file", () => {
@@ -83,9 +76,7 @@ describe("WireWallet", () => {
       const wallet = new WireWallet(runner(fakeClio()))
       const returned = await wallet.addPrivateKey("k1", ["k2", "k3"], "")
       expect(returned).toBe(wallet)
-      expect(
-        Fs.readFileSync(importLogPath(), "utf8").trim().split("\n")
-      ).toHaveLength(3)
+      expect(Fs.readFileSync(importLogPath(), "utf8").trim().split("\n")).toHaveLength(3)
     })
   })
 
@@ -103,45 +94,21 @@ describe("WireWallet", () => {
   describe("namespace helpers", () => {
     it("errorMessage reads message ?? stderr", () => {
       expect(WireWallet.errorMessage(new Error("boom"))).toBe("boom")
-      expect(WireWallet.errorMessage({ stderr: "from stderr" })).toBe(
-        "from stderr"
-      )
+      expect(WireWallet.errorMessage({ stderr: "from stderr" })).toBe("from stderr")
       expect(WireWallet.errorMessage(null)).toBe("")
     })
     it("tolerate returns the fallback on a benign match, else rethrows", () => {
-      expect(
-        WireWallet.tolerate(
-          new Error("x already exists"),
-          "already exists",
-          "fb"
-        )
-      ).toBe("fb")
-      expect(() =>
-        WireWallet.tolerate(new Error("fatal"), "already exists", "fb")
-      ).toThrow("fatal")
+      expect(WireWallet.tolerate(new Error("x already exists"), "already exists", "fb")).toBe("fb")
+      expect(() => WireWallet.tolerate(new Error("fatal"), "already exists", "fb")).toThrow("fatal")
     })
     it("swallowBenign swallows a match (string or regex), else rethrows", () => {
+      expect(() => WireWallet.swallowBenign(new Error("Already unlocked"), "Already unlocked", "ok")).not.toThrow()
       expect(() =>
-        WireWallet.swallowBenign(
-          new Error("Already unlocked"),
-          "Already unlocked",
-          "ok"
-        )
+        WireWallet.swallowBenign(new Error("cannot open it"), WireWallet.AlreadyOpenPattern, "ok")
       ).not.toThrow()
-      expect(() =>
-        WireWallet.swallowBenign(
-          new Error("cannot open it"),
-          WireWallet.AlreadyOpenPattern,
-          "ok"
-        )
-      ).not.toThrow()
-      expect(() =>
-        WireWallet.swallowBenign(
-          new Error("real failure"),
-          "Already unlocked",
-          "ok"
-        )
-      ).toThrow("real failure")
+      expect(() => WireWallet.swallowBenign(new Error("real failure"), "Already unlocked", "ok")).toThrow(
+        "real failure"
+      )
     })
   })
 })

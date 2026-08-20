@@ -19,14 +19,7 @@ export enum SignatureProviderType {
  * the enum's merged namespace helpers (`indexFor`/`from`) into the roster, so
  * the members are listed explicitly.
  */
-const KeyTypeSchema = z.enum([
-  KeyType.K1,
-  KeyType.R1,
-  KeyType.WA,
-  KeyType.EM,
-  KeyType.ED,
-  KeyType.BLS
-])
+const KeyTypeSchema = z.enum([KeyType.K1, KeyType.R1, KeyType.WA, KeyType.EM, KeyType.ED, KeyType.BLS])
 
 /**
  * Fields shared by every provider variant: the signing curve, the pinned public
@@ -91,21 +84,13 @@ export const SignatureProviderConfigSchema = z
   })
 
 /** KEY-scheme provider config — the schema-inferred shape of {@link SignatureProviderKEYConfigSchema}. */
-export type SignatureProviderKEYConfig = z.infer<
-  typeof SignatureProviderKEYConfigSchema
->
+export type SignatureProviderKEYConfig = z.infer<typeof SignatureProviderKEYConfigSchema>
 /** `SSM:` provider config — the schema-inferred shape of {@link SignatureProviderSSMConfigSchema}. */
-export type SignatureProviderSSMConfig = z.infer<
-  typeof SignatureProviderSSMConfigSchema
->
+export type SignatureProviderSSMConfig = z.infer<typeof SignatureProviderSSMConfigSchema>
 /** `KIOD:` provider config — the schema-inferred shape of {@link SignatureProviderKIODConfigSchema}. */
-export type SignatureProviderKIODConfig = z.infer<
-  typeof SignatureProviderKIODConfigSchema
->
+export type SignatureProviderKIODConfig = z.infer<typeof SignatureProviderKIODConfigSchema>
 /** A signing-key provider entry — the discriminated union of the three variants. */
-export type SignatureProviderConfig = z.infer<
-  typeof SignatureProviderConfigSchema
->
+export type SignatureProviderConfig = z.infer<typeof SignatureProviderConfigSchema>
 
 /** Named discriminator shape used to project a variant out of the union. */
 interface SignatureProviderDiscriminator<T extends SignatureProviderType> {
@@ -150,9 +135,7 @@ export const AWSSSMSignatureProviderOptionsSchema = z.object({
   version: z.string().min(1).optional()
 })
 /** AWS SSM publish settings — the schema-inferred shape of {@link AWSSSMSignatureProviderOptionsSchema}. */
-export type AWSSSMSignatureProviderOptions = z.infer<
-  typeof AWSSSMSignatureProviderOptionsSchema
->
+export type AWSSSMSignatureProviderOptions = z.infer<typeof AWSSSMSignatureProviderOptionsSchema>
 
 /**
  * Caller-facing cluster signature-provider options (all optional): the provider
@@ -182,6 +165,4 @@ export const ClusterSignatureProviderConfigSchema = z
   })
   .default({ type: SignatureProviderType.KEY, ssm: null })
 /** The resolved cluster signature-provider config — the shape of {@link ClusterSignatureProviderConfigSchema}. */
-export type ClusterSignatureProviderConfig = z.infer<
-  typeof ClusterSignatureProviderConfigSchema
->
+export type ClusterSignatureProviderConfig = z.infer<typeof ClusterSignatureProviderConfigSchema>

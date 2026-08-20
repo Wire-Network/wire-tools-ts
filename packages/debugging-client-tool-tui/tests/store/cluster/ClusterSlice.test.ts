@@ -13,10 +13,7 @@ import {
   type ClusterSliceState
 } from "@wireio/debugging-client-tool-tui/store/cluster/ClusterSlice.js"
 import { selectCluster } from "@wireio/debugging-client-tool-tui/store/cluster/ClusterSelectors.js"
-import {
-  store,
-  type RootState
-} from "@wireio/debugging-client-tool-tui/store/Store.js"
+import { store, type RootState } from "@wireio/debugging-client-tool-tui/store/Store.js"
 import { SliceName } from "@wireio/debugging-client-tool-tui/store/StoreTypes.js"
 
 /** A complete `ClusterConfig` fixture — every field real, none asserted. */
@@ -73,11 +70,7 @@ const stubConfig: ClusterConfig = {
   report: {
     path: "/cluster/reports",
     basename: "cluster-build",
-    formats: [
-      ClusterConfigReportFormat.csv,
-      ClusterConfigReportFormat.md,
-      ClusterConfigReportFormat.html
-    ]
+    formats: [ClusterConfigReportFormat.csv, ClusterConfigReportFormat.md, ClusterConfigReportFormat.html]
   },
   logging: {
     levels: { console: Level.info, file: Level.debug },
@@ -135,10 +128,7 @@ describe("clusterSlice", () => {
   })
 
   it("setCluster accepts null state for pre-bootstrap clusters", () => {
-    const updated = clusterSlice.reducer(
-      undefined,
-      setCluster({ path: "/tmp/c", config: stubConfig, state: null })
-    )
+    const updated = clusterSlice.reducer(undefined, setCluster({ path: "/tmp/c", config: stubConfig, state: null }))
     expect(updated.state).toBeNull()
   })
 })

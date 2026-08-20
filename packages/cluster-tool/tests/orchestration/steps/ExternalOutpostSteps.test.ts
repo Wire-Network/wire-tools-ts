@@ -11,18 +11,9 @@ import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 describe("Steps.externalOutpost (materialize + publish)", () => {
   const ProgramId = "GrqvbZLCLkfeSQqvE7rL8XKHVWjNhAG2faLsY8yr9tD5",
     OppAddress = "0x1111111111111111111111111111111111111111",
-    RequiredInstructions = [
-      { name: "epoch_in" },
-      { name: "commit_underwrite" },
-      { name: "request_swap" }
-    ],
+    RequiredInstructions = [{ name: "epoch_in" }, { name: "commit_underwrite" }, { name: "request_swap" }],
     signal = new AbortController().signal
-  let dir: string,
-    sourceDir: string,
-    dataPath: string,
-    addressFile: string,
-    abiFile: string,
-    idlFile: string
+  let dir: string, sourceDir: string, dataPath: string, addressFile: string, abiFile: string, idlFile: string
 
   beforeEach(() => {
     dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "external-outpost-"))
@@ -41,14 +32,8 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
         ReserveManager: "0x4444444444444444444444444444444444444444"
       })
     )
-    Fs.writeFileSync(
-      abiFile,
-      JSON.stringify({ contractName: "OPP", address: OppAddress, abi: [] })
-    )
-    Fs.writeFileSync(
-      idlFile,
-      JSON.stringify({ address: ProgramId, instructions: RequiredInstructions })
-    )
+    Fs.writeFileSync(abiFile, JSON.stringify({ contractName: "OPP", address: OppAddress, abi: [] }))
+    Fs.writeFileSync(idlFile, JSON.stringify({ address: ProgramId, instructions: RequiredInstructions }))
   })
 
   afterEach(() => Fs.rmSync(dir, { recursive: true, force: true }))
@@ -70,19 +55,9 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
     await Steps.externalOutpost.runMaterialize(ctx, null, signal)
     const deploymentsDir = ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
     expect(Fs.existsSync(Path.join(deploymentsDir, "outpost-addrs.json"))).toBe(true)
+    expect(Fs.existsSync(Path.join(dataPath, OperatorDaemonTool.EthereumAbiSubpath, "OPP.json"))).toBe(true)
     expect(
-      Fs.existsSync(
-        Path.join(dataPath, OperatorDaemonTool.EthereumAbiSubpath, "OPP.json")
-      )
-    ).toBe(true)
-    expect(
-      Fs.existsSync(
-        Path.join(
-          dataPath,
-          OperatorDaemonTool.SolanaIdlSubpath,
-          OperatorDaemonTool.SolanaIdlFilename
-        )
-      )
+      Fs.existsSync(Path.join(dataPath, OperatorDaemonTool.SolanaIdlSubpath, OperatorDaemonTool.SolanaIdlFilename))
     ).toBe(true)
   })
 
@@ -92,51 +67,46 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
     await Steps.externalOutpost.runPublishArtifacts(ctx, null, signal)
     const artifacts = ctx.outputs.get(OperatorDaemonArtifactsKey)
     expect(artifacts?.ethereumAddresses.OPP).toBe(OppAddress)
-    expect(artifacts?.ethereumAbiFiles.some(file => file.endsWith("OPP.json"))).toBe(
-      true
-    )
+    expect(artifacts?.ethereumAbiFiles.some(file => file.endsWith("OPP.json"))).toBe(true)
     expect(artifacts?.solanaProgramId).toBe(ProgramId)
     expect(artifacts?.solanaIdlFile).toContain(OperatorDaemonTool.SolanaIdlFilename)
   })
 
   it("materialize fails fast when a referenced source file is absent", async () => {
     Fs.rmSync(idlFile)
-    await expect(
-      Steps.externalOutpost.runMaterialize(externalContext(), null, signal)
-    ).rejects.toThrow(/source file not found/)
+    await expect(Steps.externalOutpost.runMaterialize(externalContext(), null, signal)).rejects.toThrow(
+      /source file not found/
+    )
   })
 
   it("materialize requires config.externalOutposts (local mode)", async () => {
-    await expect(
-      Steps.externalOutpost.runMaterialize(fixtureContext(), null, signal)
-    ).rejects.toThrow(/external-outpost mode only/)
+    await expect(Steps.externalOutpost.runMaterialize(fixtureContext(), null, signal)).rejects.toThrow(
+      /external-outpost mode only/
+    )
   })
 
   it("publish fails before materialize (data dir empty)", async () => {
-    await expect(
-      Steps.externalOutpost.runPublishArtifacts(externalContext(), null, signal)
-    ).rejects.toThrow(/materialize must run first/)
+    await expect(Steps.externalOutpost.runPublishArtifacts(externalContext(), null, signal)).rejects.toThrow(
+      /materialize must run first/
+    )
   })
 
   it("publish fails when a required ETH contract address is missing", async () => {
     Fs.writeFileSync(addressFile, JSON.stringify({ OPP: OppAddress }))
     const ctx = externalContext()
     await Steps.externalOutpost.runMaterialize(ctx, null, signal)
-    await expect(
-      Steps.externalOutpost.runPublishArtifacts(ctx, null, signal)
-    ).rejects.toThrow(/missing the OPPInbound address/)
+    await expect(Steps.externalOutpost.runPublishArtifacts(ctx, null, signal)).rejects.toThrow(
+      /missing the OPPInbound address/
+    )
   })
 
   it("publish fails when a required SOL IDL instruction is missing", async () => {
-    Fs.writeFileSync(
-      idlFile,
-      JSON.stringify({ address: ProgramId, instructions: [{ name: "epoch_in" }] })
-    )
+    Fs.writeFileSync(idlFile, JSON.stringify({ address: ProgramId, instructions: [{ name: "epoch_in" }] }))
     const ctx = externalContext()
     await Steps.externalOutpost.runMaterialize(ctx, null, signal)
-    await expect(
-      Steps.externalOutpost.runPublishArtifacts(ctx, null, signal)
-    ).rejects.toThrow(/missing the 'commit_underwrite' instruction/)
+    await expect(Steps.externalOutpost.runPublishArtifacts(ctx, null, signal)).rejects.toThrow(
+      /missing the 'commit_underwrite' instruction/
+    )
   })
 
   describe("outbound-envelope bootstrap gate", () => {
@@ -158,11 +128,7 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
       const ctx = externalContext(),
         wireStub = {
           getChains: async () => ({
-            rows: [
-              chainRow(DepotChainCode, true),
-              chainRow(EthereumChainCode, false),
-              chainRow(SolanaChainCode, false)
-            ]
+            rows: [chainRow(DepotChainCode, true), chainRow(EthereumChainCode, false), chainRow(SolanaChainCode, false)]
           }),
           getOutboundEnvelopes: async () => ({
             rows: outboundChainCodes.map(chain_code => ({ chain_code }))
@@ -178,10 +144,7 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
 
     it("passes once EVERY registered (non-depot) chain has a queued outbound envelope", async () => {
       await expect(
-        Steps.externalOutpost.runOutboundEnvelopesQueued(
-          gateContext([EthereumChainCode, SolanaChainCode]),
-          signal
-        )
+        Steps.externalOutpost.runOutboundEnvelopesQueued(gateContext([EthereumChainCode, SolanaChainCode]), signal)
       ).resolves.toBeUndefined()
     })
 
@@ -193,10 +156,7 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
       Object.defineProperty(ctx, "wire", {
         get: () => ({
           getChains: async () => ({
-            rows: [
-              chainRow(DepotChainCode, true),
-              chainRow(EthereumChainCode, false)
-            ]
+            rows: [chainRow(DepotChainCode, true), chainRow(EthereumChainCode, false)]
           }),
           getOutboundEnvelopes: async () => {
             throw cause
@@ -205,15 +165,11 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
         }),
         configurable: true
       })
-      await expect(
-        Steps.externalOutpost.runOutboundEnvelopesQueued(ctx, signal)
-      ).rejects.toThrow(
+      await expect(Steps.externalOutpost.runOutboundEnvelopesQueued(ctx, signal)).rejects.toThrow(
         /queued no outbound envelope for every registered outpost/
       )
       await expect(
-        Steps.externalOutpost
-          .runOutboundEnvelopesQueued(ctx, signal)
-          .catch((error: Error) => error.message)
+        Steps.externalOutpost.runOutboundEnvelopesQueued(ctx, signal).catch((error: Error) => error.message)
       ).resolves.toContain(String(EthereumChainCode))
     })
 
@@ -223,15 +179,15 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
         get: () => ({ getChains: async () => ({ rows: [] }) }),
         configurable: true
       })
-      await expect(
-        Steps.externalOutpost.runOutboundEnvelopesQueued(ctx, signal)
-      ).rejects.toThrow(/no registered outpost \(non-depot\) chain/)
+      await expect(Steps.externalOutpost.runOutboundEnvelopesQueued(ctx, signal)).rejects.toThrow(
+        /no registered outpost \(non-depot\) chain/
+      )
     })
 
     it("pins the step ceiling ABOVE its inner poll budget", () => {
-      expect(
-        Steps.externalOutpost.OutboundEnvelopesTimeoutMs
-      ).toBeGreaterThan(Steps.externalOutpost.OutboundEnvelopesPollBudgetMs)
+      expect(Steps.externalOutpost.OutboundEnvelopesTimeoutMs).toBeGreaterThan(
+        Steps.externalOutpost.OutboundEnvelopesPollBudgetMs
+      )
     })
 
     it("planOutboundEnvelopesQueued defaults its ceiling to the named constant", () => {
@@ -240,9 +196,7 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
         "verify-outbound-envelopes",
         "every registered outpost has a queued outbound envelope"
       )
-      expect(step.options.timeoutMs).toBe(
-        Steps.externalOutpost.OutboundEnvelopesTimeoutMs
-      )
+      expect(step.options.timeoutMs).toBe(Steps.externalOutpost.OutboundEnvelopesTimeoutMs)
       expect(step.input).toBeNull()
       expect(typeof step.runner).toBe("function")
     })

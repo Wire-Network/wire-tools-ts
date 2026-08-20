@@ -1,10 +1,7 @@
 import { DebuggingServer } from "@wireio/debugging-server"
 import { Report } from "../../../report/Report.js"
 import { ClusterBuildContext } from "../../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../ClusterBuildStep.js"
 import { DebuggingServerKey } from "../../outputs/DebuggingServerOutput.js"
 
 /**

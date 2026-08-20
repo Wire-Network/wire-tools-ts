@@ -1,14 +1,8 @@
 import { SchemaCodec } from "@wireio/cluster-tool-shared"
 import { z } from "zod"
-import type {
-  ProcessLivenessEvent,
-  ProcessLivenessStreamParams
-} from "../processes/index.js"
+import type { ProcessLivenessEvent, ProcessLivenessStreamParams } from "../processes/index.js"
 import type { LogTailEvent, LogTailParams } from "../logs/index.js"
-import type {
-  EnvelopeEvent,
-  EnvelopeWatchStreamParams
-} from "../opp/index.js"
+import type { EnvelopeEvent, EnvelopeWatchStreamParams } from "../opp/index.js"
 
 // ---------------------------------------------------------------------------
 //  Topics
@@ -37,15 +31,9 @@ export interface StreamTopicBinding<Params, Event> {
 }
 
 export interface StreamMap {
-  [StreamTopic.ProcessLiveness]: StreamTopicBinding<
-    ProcessLivenessStreamParams,
-    ProcessLivenessEvent
-  >
+  [StreamTopic.ProcessLiveness]: StreamTopicBinding<ProcessLivenessStreamParams, ProcessLivenessEvent>
   [StreamTopic.LogTail]: StreamTopicBinding<LogTailParams, LogTailEvent>
-  [StreamTopic.EnvelopeWatch]: StreamTopicBinding<
-    EnvelopeWatchStreamParams,
-    EnvelopeEvent
-  >
+  [StreamTopic.EnvelopeWatch]: StreamTopicBinding<EnvelopeWatchStreamParams, EnvelopeEvent>
 }
 
 /** Extract the params type for a given topic. */
@@ -165,12 +153,7 @@ export interface ErrorFrame {
 
 /** Discriminated union over every frame the protocol supports. */
 export type StreamFrame =
-  | SubscribeFrame<StreamTopic>
-  | SubscribedFrame
-  | EventFrame<StreamTopic>
-  | UnsubscribeFrame
-  | ClosedFrame
-  | ErrorFrame
+  SubscribeFrame<StreamTopic> | SubscribedFrame | EventFrame<StreamTopic> | UnsubscribeFrame | ClosedFrame | ErrorFrame
 
 // ---------------------------------------------------------------------------
 //  Wire validation — StreamFrameSchemaCodec (envelope; payload/params opaque)

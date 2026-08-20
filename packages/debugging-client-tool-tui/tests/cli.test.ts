@@ -6,17 +6,7 @@ import { Level } from "@wireio/shared"
 jest.mock("yargs", () => {
   const chain: any = {}
   const returnChain = () => chain
-  ;[
-    "scriptName",
-    "usage",
-    "option",
-    "strict",
-    "help",
-    "parseSync",
-    "command",
-    "middleware",
-    "check"
-  ].forEach(name => {
+  ;["scriptName", "usage", "option", "strict", "help", "parseSync", "command", "middleware", "check"].forEach(name => {
     chain[name] = returnChain
   })
   return { __esModule: true, default: () => chain }
@@ -27,10 +17,7 @@ jest.mock("yargs/helpers", () => ({
 }))
 
 // Imports that pull yargs must come AFTER the mocks are registered.
-import {
-  CLI,
-  coerceFeatures
-} from "@wireio/debugging-client-tool-tui/cli.js"
+import { CLI, coerceFeatures } from "@wireio/debugging-client-tool-tui/cli.js"
 
 describe("coerceFeatures", () => {
   it("returns null for undefined / empty / whitespace-only input", () => {
@@ -40,9 +27,7 @@ describe("coerceFeatures", () => {
   })
 
   it("lowercases and trims every id, drops empties", () => {
-    expect(coerceFeatures(" OPP, Process-Monitor ,,")).toEqual(
-      new Set(["opp", "process-monitor"])
-    )
+    expect(coerceFeatures(" OPP, Process-Monitor ,,")).toEqual(new Set(["opp", "process-monitor"]))
   })
 
   it("dedupes via Set semantics", () => {
@@ -61,14 +46,7 @@ describe("CLI namespace constants", () => {
   })
 
   it("LogLevels lists every shared Level value", () => {
-    expect(CLI.LogLevels).toEqual([
-      "trace",
-      "debug",
-      "info",
-      "warn",
-      "error",
-      "fatal"
-    ])
+    expect(CLI.LogLevels).toEqual(["trace", "debug", "info", "warn", "error", "fatal"])
   })
 
   it("DefaultLogLevel is info", () => {

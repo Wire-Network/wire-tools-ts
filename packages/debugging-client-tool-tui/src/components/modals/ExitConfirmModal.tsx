@@ -32,9 +32,7 @@ export function ExitConfirmModal(props: ExitConfirmModalProps): React.ReactEleme
   return (
     <Modal title="Exit TUI?" borderColor="red">
       <Text>Are you sure you want to quit?</Text>
-      <Text dimColor>
-        [y / Enter] confirm   [n / Esc] cancel   (double Ctrl+C skips this)
-      </Text>
+      <Text dimColor>[y / Enter] confirm [n / Esc] cancel (double Ctrl+C skips this)</Text>
     </Modal>
   )
 }

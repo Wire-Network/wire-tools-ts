@@ -2,28 +2,14 @@ import Fs from "node:fs"
 import Http from "node:http"
 import Os from "node:os"
 import Path from "node:path"
-import {
-  AWSAccountName,
-  SignatureProviderType,
-  type ClusterConfig
-} from "@wireio/cluster-tool-shared"
+import { AWSAccountName, SignatureProviderType, type ClusterConfig } from "@wireio/cluster-tool-shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
-import {
-  NodeopProcess,
-  ProcessManager
-} from "@wireio/cluster-tool/cluster/processes"
-import {
-  NodeConfig,
-  NodeRole,
-  BindConfigProvider
-} from "@wireio/cluster-tool/config"
+import { NodeopProcess, ProcessManager } from "@wireio/cluster-tool/cluster/processes"
+import { NodeConfig, NodeRole, BindConfigProvider } from "@wireio/cluster-tool/config"
 import { type OperatorAccount } from "@wireio/cluster-tool/orchestration/outputs"
 import { Localhost, toURL } from "@wireio/cluster-tool/utils"
-import {
-  fixtureConfig,
-  PersistedFixture
-} from "../../config/clusterConfigFixture.js"
+import { fixtureConfig, PersistedFixture } from "../../config/clusterConfigFixture.js"
 
 describe("NodeopProcess", () => {
   let dir: string
@@ -31,10 +17,7 @@ describe("NodeopProcess", () => {
   let cluster: ClusterConfig
   beforeAll(() => {
     dir = Fs.mkdtempSync(Path.join(Os.tmpdir(), "nodeop-"))
-    Fs.writeFileSync(
-      Path.join(dir, "genesis.json"),
-      JSON.stringify({ initial_timestamp: "2026-01-01T00:00:00.000" })
-    )
+    Fs.writeFileSync(Path.join(dir, "genesis.json"), JSON.stringify({ initial_timestamp: "2026-01-01T00:00:00.000" }))
     ProcessManager.setClusterPath(dir)
     manager = ProcessManager.get()
     // Fixture ClusterConfig aimed at this test's sandbox — NodeopProcess
@@ -58,21 +41,8 @@ describe("NodeopProcess", () => {
   })
 
   /** A planned node over the structural cluster config. */
-  function node(
-    name: string,
-    role: NodeRole,
-    producers: string[] = [],
-    peers: string[] = []
-  ): NodeConfig {
-    return new NodeConfig(
-      cluster,
-      role,
-      0,
-      name,
-      { http: 8888, p2p: 9876 },
-      producers,
-      peers
-    )
+  function node(name: string, role: NodeRole, producers: string[] = [], peers: string[] = []): NodeConfig {
+    return new NodeConfig(cluster, role, 0, name, { http: 8888, p2p: 9876 }, producers, peers)
   }
 
   /** A producer OperatorAccount carrying the node-shared signing keys. */
@@ -106,15 +76,7 @@ describe("NodeopProcess", () => {
     })
     await expect(
       NodeopProcess.create(manager, {
-        node: new NodeConfig(
-          missing,
-          NodeRole.producer,
-          0,
-          "missing-genesis",
-          { http: 1, p2p: 2 },
-          [],
-          []
-        )
+        node: new NodeConfig(missing, NodeRole.producer, 0, "missing-genesis", { http: 1, p2p: 2 }, [], [])
       })
     ).rejects.toThrow(/genesis/)
   })
@@ -147,16 +109,10 @@ describe("NodeopProcess", () => {
       ])
     )
     // endpoints derive from the cluster bind address + the node's ports
-    expect(nodeop.args).toEqual(
-      expect.arrayContaining(["--p2p-listen-endpoint", "0.0.0.0:9876"])
-    )
-    expect(
-      nodeop.args.filter(arg => arg === "--signature-provider")
-    ).toHaveLength(2)
+    expect(nodeop.args).toEqual(expect.arrayContaining(["--p2p-listen-endpoint", "0.0.0.0:9876"]))
+    expect(nodeop.args.filter(arg => arg === "--signature-provider")).toHaveLength(2)
     expect(nodeop.args.some(arg => arg.includes("wire-PUB_K1_p"))).toBe(true)
-    expect(nodeop.args.some(arg => arg.includes("wire-bls-PUB_BLS_p"))).toBe(
-      true
-    )
+    expect(nodeop.args.some(arg => arg.includes("wire-bls-PUB_BLS_p"))).toBe(true)
     expect(nodeop.httpUrl).toContain(Localhost)
   })
 
@@ -168,14 +124,7 @@ describe("NodeopProcess", () => {
     })
     expect(nodeop.args).not.toContain("sysio::producer_plugin")
     expect(nodeop.args).not.toContain("--producer-name")
-    expect(nodeop.args).toEqual(
-      expect.arrayContaining([
-        "--plugin",
-        "sysio::net_plugin",
-        "--batch-enabled",
-        "true"
-      ])
-    )
+    expect(nodeop.args).toEqual(expect.arrayContaining(["--plugin", "sysio::net_plugin", "--batch-enabled", "true"]))
   })
 
   it("advertises the per-node advertiseAddress as the p2p-server-address", async () => {
@@ -189,18 +138,13 @@ describe("NodeopProcess", () => {
       []
     )
     const nodeop = await NodeopProcess.create(manager, { node: meshNode })
-    expect(nodeop.args).toEqual(
-      expect.arrayContaining(["--p2p-server-address", "10.1.2.3:9876"])
-    )
+    expect(nodeop.args).toEqual(expect.arrayContaining(["--p2p-server-address", "10.1.2.3:9876"]))
     // the LISTEN endpoint stays on the fleet-wide bind address
-    expect(nodeop.args).toEqual(
-      expect.arrayContaining(["--p2p-listen-endpoint", "0.0.0.0:9876"])
-    )
+    expect(nodeop.args).toEqual(expect.arrayContaining(["--p2p-listen-endpoint", "0.0.0.0:9876"]))
   })
 
   describe("signature-provider scheme plugins", () => {
-    const SSMPlugin =
-      NodeopProcess.SignatureProviderSchemePlugins[SignatureProviderType.SSM]
+    const SSMPlugin = NodeopProcess.SignatureProviderSchemePlugins[SignatureProviderType.SSM]
 
     /** The fixture cluster re-aimed at an SSM signature provider. */
     function ssmCluster(): ClusterConfig {
@@ -263,15 +207,9 @@ describe("NodeopProcess", () => {
         NodeopProcess.SignatureProviderFlag,
         "b,wire,wire_bls,P2,SSM:/s2"
       ]
+      expect(NodeopProcess.requiredSignatureProviderPlugins(twoSSMSpecs)).toEqual([SSMPlugin])
       expect(
-        NodeopProcess.requiredSignatureProviderPlugins(twoSSMSpecs)
-      ).toEqual([SSMPlugin])
-      expect(
-        NodeopProcess.requiredSignatureProviderPlugins([
-          ...twoSSMSpecs,
-          NodeopProcess.PluginFlag,
-          SSMPlugin
-        ])
+        NodeopProcess.requiredSignatureProviderPlugins([...twoSSMSpecs, NodeopProcess.PluginFlag, SSMPlugin])
       ).toEqual([])
     })
 
@@ -289,9 +227,7 @@ describe("NodeopProcess", () => {
         node: producing,
         operator: producerOperator("sysio")
       })
-      expect(nodeop.args).toEqual(
-        expect.arrayContaining([NodeopProcess.PluginFlag, SSMPlugin])
-      )
+      expect(nodeop.args).toEqual(expect.arrayContaining([NodeopProcess.PluginFlag, SSMPlugin]))
       // REGION-LESS, `{cluster}` = the AWS account (`dev`), not the cluster dir.
       expect(nodeop.args.some(arg => arg.includes("SSM:/wire/dev/"))).toBe(true)
       expect(nodeop.args.some(arg => arg.includes("SSM::"))).toBe(false)
@@ -317,15 +253,9 @@ describe("NodeopProcess", () => {
         node: biosNode(ssmCluster()),
         operator: producerOperator(NodeConfig.BiosProducer)
       })
-      expect(nodeop.args).toEqual(
-        expect.arrayContaining([NodeopProcess.PluginFlag, SSMPlugin])
-      )
+      expect(nodeop.args).toEqual(expect.arrayContaining([NodeopProcess.PluginFlag, SSMPlugin]))
       // `{account}` is the NODE NAME, and the spec stays REGION-LESS.
-      expect(
-        nodeop.args.some(arg =>
-          arg.includes(`SSM:/wire/dev/${NodeConfig.BiosName}/`)
-        )
-      ).toBe(true)
+      expect(nodeop.args.some(arg => arg.includes(`SSM:/wire/dev/${NodeConfig.BiosName}/`))).toBe(true)
       expect(nodeop.args.some(arg => arg.includes("SSM::"))).toBe(false)
     })
 
@@ -355,14 +285,9 @@ describe("NodeopProcess", () => {
     it("detects an SSM spec arriving via extraArgs (operator daemons)", async () => {
       const nodeop = await NodeopProcess.create(manager, {
         node: node("ssm-daemon", NodeRole.operator),
-        extraArgs: [
-          NodeopProcess.SignatureProviderFlag,
-          "op,ethereum,ethereum,0xPUB,SSM:/wire/c/op/EM"
-        ]
+        extraArgs: [NodeopProcess.SignatureProviderFlag, "op,ethereum,ethereum,0xPUB,SSM:/wire/c/op/EM"]
       })
-      expect(nodeop.args).toEqual(
-        expect.arrayContaining([NodeopProcess.PluginFlag, SSMPlugin])
-      )
+      expect(nodeop.args).toEqual(expect.arrayContaining([NodeopProcess.PluginFlag, SSMPlugin]))
     })
   })
 
@@ -372,12 +297,7 @@ describe("NodeopProcess", () => {
       tuning: { maxClients: 99 }
     })
     expect(nodeop.args).toEqual(expect.arrayContaining(["--max-clients", "99"]))
-    expect(nodeop.args).toEqual(
-      expect.arrayContaining([
-        "--vote-threads",
-        String(NodeopProcess.DefaultVoteThreads)
-      ])
-    )
+    expect(nodeop.args).toEqual(expect.arrayContaining(["--vote-threads", String(NodeopProcess.DefaultVoteThreads)]))
   })
 
   it("derives the loopback peer allowance from the cluster topology", async () => {
@@ -385,11 +305,8 @@ describe("NodeopProcess", () => {
       node: node("peered", NodeRole.operator)
     })
     // 1 producer node + 3 batch ops + 1 underwriter + bios + ad-hoc headroom
-    const allowance =
-      1 + 3 + 1 + NodeConfig.BiosNodeCount + NodeConfig.AdHocDaemonPeerHeadroom
-    expect(nodeop.args).toEqual(
-      expect.arrayContaining(["--p2p-max-nodes-per-host", String(allowance)])
-    )
+    const allowance = 1 + 3 + 1 + NodeConfig.BiosNodeCount + NodeConfig.AdHocDaemonPeerHeadroom
+    expect(nodeop.args).toEqual(expect.arrayContaining(["--p2p-max-nodes-per-host", String(allowance)]))
   })
 
   it("caps max-clients at the SAME topology-derived peer capacity", async () => {
@@ -398,11 +315,8 @@ describe("NodeopProcess", () => {
     const nodeop = await NodeopProcess.create(manager, {
       node: node("meshed", NodeRole.operator)
     })
-    const allowance =
-      1 + 3 + 1 + NodeConfig.BiosNodeCount + NodeConfig.AdHocDaemonPeerHeadroom
-    expect(nodeop.args).toEqual(
-      expect.arrayContaining(["--max-clients", String(allowance)])
-    )
+    const allowance = 1 + 3 + 1 + NodeConfig.BiosNodeCount + NodeConfig.AdHocDaemonPeerHeadroom
+    expect(nodeop.args).toEqual(expect.arrayContaining(["--max-clients", String(allowance)]))
   })
 
   it("buildRelaunchArgs strips genesis flags + adds enable-stale-production", () => {
@@ -429,9 +343,7 @@ describe("NodeopProcess", () => {
     expect(nodeop.args).not.toContain("--genesis-json")
     expect(nodeop.args).not.toContain("--genesis-timestamp")
     // everything else survives the strip
-    expect(nodeop.args).toEqual(
-      expect.arrayContaining(["--plugin", "sysio::net_plugin"])
-    )
+    expect(nodeop.args).toEqual(expect.arrayContaining(["--plugin", "sysio::net_plugin"]))
   })
 
   describe("dirty-chainbase recovery", () => {
@@ -440,9 +352,7 @@ describe("NodeopProcess", () => {
 
     it("DirtyChainbasePattern matches chainbase's abort line only", () => {
       expect(NodeopProcess.DirtyChainbasePattern.test(DirtyLine)).toBe(true)
-      expect(
-        NodeopProcess.DirtyChainbasePattern.test("Produced block 00abc... #42")
-      ).toBe(false)
+      expect(NodeopProcess.DirtyChainbasePattern.test("Produced block 00abc... #42")).toBe(false)
     })
 
     it("isDirtyChainbaseAbort requires an EXITED child carrying the abort line", () => {
@@ -473,9 +383,7 @@ describe("NodeopProcess", () => {
     })
 
     it("finalizerSafetyFile is <data-dir>/finalizers/safety.dat", () => {
-      expect(NodeopProcess.finalizerSafetyFile("/data/node_00")).toBe(
-        "/data/node_00/finalizers/safety.dat"
-      )
+      expect(NodeopProcess.finalizerSafetyFile("/data/node_00")).toBe("/data/node_00/finalizers/safety.dat")
     })
 
     /** Fixture aimed at a nodeop stand-in: WITHOUT --hard-replay-blockchain it
@@ -509,14 +417,9 @@ describe("NodeopProcess", () => {
       // relaunch (which stays up) counts as ready. The dirty first boot dies
       // instantly and fails via the dead-child fast path regardless of any
       // verify race.
-      readySpy = jest
-        .spyOn(NodeopProcess.prototype, "verifyReady")
-        .mockImplementation(function (this: NodeopProcess) {
-          return Promise.resolve(
-            this.isRunning &&
-              this.args.includes(NodeopProcess.HardReplayBlockchainFlag)
-          )
-        })
+      readySpy = jest.spyOn(NodeopProcess.prototype, "verifyReady").mockImplementation(function (this: NodeopProcess) {
+        return Promise.resolve(this.isRunning && this.args.includes(NodeopProcess.HardReplayBlockchainFlag))
+      })
     })
     afterAll(() => {
       readySpy.mockRestore()
@@ -524,15 +427,7 @@ describe("NodeopProcess", () => {
 
     /** A planned operator node over the dirty-cluster fixture. */
     function dirtyNode(name: string): NodeConfig {
-      return new NodeConfig(
-        dirtyCluster,
-        NodeRole.operator,
-        0,
-        name,
-        { http: 18888, p2p: 19876 },
-        [],
-        []
-      )
+      return new NodeConfig(dirtyCluster, NodeRole.operator, 0, name, { http: 18888, p2p: 19876 }, [], [])
     }
 
     it("startWithRecovery relaunches once with --hard-replay-blockchain and wipes the stale fsi", async () => {
@@ -562,9 +457,7 @@ describe("NodeopProcess", () => {
       // still in place would relaunch straight back into the finality stall.
       Fs.mkdirSync(safetyFile, { recursive: true })
 
-      await expect(
-        NodeopProcess.startWithRecovery(manager, { node })
-      ).rejects.toThrow(/EISDIR|is a directory/i)
+      await expect(NodeopProcess.startWithRecovery(manager, { node })).rejects.toThrow(/EISDIR|is a directory/i)
       expect(Fs.existsSync(safetyFile)).toBe(true)
       // No retry happened: the first instance still owns the label and no
       // hard-replay relaunch was registered.
@@ -581,9 +474,9 @@ describe("NodeopProcess", () => {
       Fs.mkdirSync(Path.dirname(safetyFile), { recursive: true })
       Fs.writeFileSync(safetyFile, "keep-me")
 
-      await expect(
-        NodeopProcess.startWithRecovery(manager, { node: cleanNode })
-      ).rejects.toThrow(/before passing verifyReady/)
+      await expect(NodeopProcess.startWithRecovery(manager, { node: cleanNode })).rejects.toThrow(
+        /before passing verifyReady/
+      )
       expect(Fs.existsSync(safetyFile)).toBe(true)
       // No retry: the first (failed) instance still owns the label.
       expect(manager.get("clean-dies")).not.toBeNull()
@@ -613,16 +506,10 @@ describe("NodeopProcess", () => {
         res.writeHead(200)
         res.end()
       })
-      const port = await BindConfigProvider.findAvailable(
-        BindConfigProvider.DefaultBiosHttp
-      )
-      await new Promise<void>(resolve =>
-        server.listen(port, Localhost, resolve)
-      )
+      const port = await BindConfigProvider.findAvailable(BindConfigProvider.DefaultBiosHttp)
+      await new Promise<void>(resolve => server.listen(port, Localhost, resolve))
 
-      await expect(
-        NodeopProcess.resumeProduction(toURL(port, Localhost))
-      ).resolves.toBeUndefined()
+      await expect(NodeopProcess.resumeProduction(toURL(port, Localhost))).resolves.toBeUndefined()
       expect(requestedMethod).toBe("POST")
       expect(requestedPath).toBe(NodeopProcess.ResumeProductionPath)
     })
@@ -632,16 +519,10 @@ describe("NodeopProcess", () => {
         res.writeHead(503)
         res.end()
       })
-      const port = await BindConfigProvider.findAvailable(
-        BindConfigProvider.DefaultBiosHttp
-      )
-      await new Promise<void>(resolve =>
-        server.listen(port, Localhost, resolve)
-      )
+      const port = await BindConfigProvider.findAvailable(BindConfigProvider.DefaultBiosHttp)
+      await new Promise<void>(resolve => server.listen(port, Localhost, resolve))
 
-      await expect(
-        NodeopProcess.resumeProduction(toURL(port, Localhost))
-      ).rejects.toThrow(/answered 503/)
+      await expect(NodeopProcess.resumeProduction(toURL(port, Localhost))).rejects.toThrow(/answered 503/)
     })
   })
 })

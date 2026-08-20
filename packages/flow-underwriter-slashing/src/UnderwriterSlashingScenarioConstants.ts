@@ -38,11 +38,7 @@ export namespace UnderwriterSlashingScenarioConstants {
   /** Deadline for the underwriter deposit relay + ACTIVE eligibility flip —
    *  extension-inclusive epochs so consecutive extended epochs still fit. */
   export function underwriterActiveDeadlineMs(): number {
-    return (
-      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
-      UnderwriterActiveEpochBudget *
-      MsPerSecond
-    )
+    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * UnderwriterActiveEpochBudget * MsPerSecond
   }
 
   /**
@@ -113,6 +109,5 @@ export namespace UnderwriterSlashingScenarioConstants {
 
   /** The fault class each challenge alleges (what a real challenger would
    *  claim when the committed source deposit cannot be found). */
-  export const ChallengeReason =
-    SysioContracts.SysioChalgUnderwriteFaultReason.SOURCE_DEPOSIT_MISSING
+  export const ChallengeReason = SysioContracts.SysioChalgUnderwriteFaultReason.SOURCE_DEPOSIT_MISSING
 }

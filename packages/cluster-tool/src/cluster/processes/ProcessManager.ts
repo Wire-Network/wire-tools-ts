@@ -19,12 +19,7 @@ const GracefulSignal = ProcessSignalName.SIGINT
  * pidfile's pid against this list via `/proc/<pid>/cmdline` before signalling —
  * the recycled-pid guard (a stale pidfile must never kill an unrelated process).
  */
-const ManagedProcessNames = [
-  "nodeop",
-  "kiod",
-  "anvil",
-  "solana-test-validator"
-] as const
+const ManagedProcessNames = ["nodeop", "kiod", "anvil", "solana-test-validator"] as const
 
 /**
  * Every sweep / cleanup in this file is CLUSTER-SCOPED and PID-TARGETED —
@@ -37,9 +32,7 @@ const ManagedProcessNames = [
 
 /** Whether `pid` is live AND running one of the managed basenames. */
 function isManagedPid(pid: number): boolean {
-  return (ManagedProcessNames as readonly string[]).includes(
-    processCommandBasename(pid)
-  )
+  return (ManagedProcessNames as readonly string[]).includes(processCommandBasename(pid))
 }
 
 /** Signal one pid, tolerating ESRCH (already gone). */
@@ -64,10 +57,7 @@ function readOrphanPids(clusterPath: string): number[] {
         .map(name => Path.join(directory, name))
     })
     .flatMap(pidFile => {
-      const pid = getValue(
-        () => Number.parseInt(Fs.readFileSync(pidFile, "utf8").trim(), 10),
-        Number.NaN
-      )
+      const pid = getValue(() => Number.parseInt(Fs.readFileSync(pidFile, "utf8").trim(), 10), Number.NaN)
       if (Number.isInteger(pid) && pid > 0 && isManagedPid(pid)) return [pid]
       guard(() => Fs.rmSync(pidFile, { force: true })) // stale — prune
       return []
@@ -215,10 +205,7 @@ export class ProcessManager {
   push(...processes: ManagedProcess[]): this {
     this.ensureInitialized()
     processes.forEach(managed => {
-      Assert.ok(
-        !this.processes.has(managed.label),
-        `Process "${managed.label}" already registered`
-      )
+      Assert.ok(!this.processes.has(managed.label), `Process "${managed.label}" already registered`)
       this.processes.set(managed.label, managed)
     })
     return this
@@ -238,10 +225,7 @@ export class ProcessManager {
   remove(label: string): this {
     const managed = this.processes.get(label)
     Assert.ok(managed != null, `Process "${label}" is not registered`)
-    Assert.ok(
-      !managed.isRunning,
-      `Process "${label}" is still running — stop it before removing`
-    )
+    Assert.ok(!managed.isRunning, `Process "${label}" is still running — stop it before removing`)
     this.processes.delete(label)
     return this
   }
@@ -264,11 +248,7 @@ export class ProcessManager {
     log.info(`Stopping ${all.length} process(es) (forceKill=${forceKill})`)
     const controller = new AbortController()
     if (forceKill) controller.abort()
-    await Promise.all(
-      all.map(managed =>
-        forceKill ? managed.kill() : managed.stop(controller.signal)
-      )
-    )
+    await Promise.all(all.map(managed => (forceKill ? managed.kill() : managed.stop(controller.signal))))
     this.processes.clear()
     this.closeAllLogStreams()
   }
@@ -292,20 +272,12 @@ export class ProcessManager {
   private ensureLogStreams(label: string): void {
     const stamp = currentDateStamp()
     this.clusterLogStream ??= Fs.createWriteStream(
-      Path.join(
-        mkdirs(ProcessManager.toClusterPath("logs")),
-        `cluster_${stamp}.log`
-      ),
+      Path.join(mkdirs(ProcessManager.toClusterPath("logs")), `cluster_${stamp}.log`),
       { flags: "a" }
     )
     if (!this.processLogStreams.has(label)) {
-      const dir = mkdirs(
-        ProcessManager.toClusterPath("data", label.replaceAll("-", "_"), "logs")
-      )
-      this.processLogStreams.set(
-        label,
-        Fs.createWriteStream(Path.join(dir, `log_${stamp}.log`), { flags: "a" })
-      )
+      const dir = mkdirs(ProcessManager.toClusterPath("data", label.replaceAll("-", "_"), "logs"))
+      this.processLogStreams.set(label, Fs.createWriteStream(Path.join(dir, `log_${stamp}.log`), { flags: "a" }))
     }
   }
 

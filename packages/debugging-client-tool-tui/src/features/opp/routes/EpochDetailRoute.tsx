@@ -6,10 +6,7 @@ import type { RouteComponentProps } from "../../../router/RouteTypes.js"
 import { useAppSelector } from "../../../store/Store.js"
 import { selectEpochByNumber } from "../../../store/opp/OPPSelectors.js"
 import type { DebugOPPEnvelopeRecord } from "../../../store/opp/OPPTypes.js"
-import {
-  EnvelopeDetailView,
-  flattenAttestations
-} from "../panels/EnvelopeDetailView.js"
+import { EnvelopeDetailView, flattenAttestations } from "../panels/EnvelopeDetailView.js"
 import { EpochDetailOverview } from "../panels/EpochDetailOverview.js"
 
 /**
@@ -27,14 +24,10 @@ interface OrderedEnvelope {
  * lets ↑/↓ cross envelope boundaries without re-deriving the list every
  * keypress.
  */
-function orderEnvelopes(
-  envelopes: readonly DebugOPPEnvelopeRecord[]
-): OrderedEnvelope[] {
+function orderEnvelopes(envelopes: readonly DebugOPPEnvelopeRecord[]): OrderedEnvelope[] {
   return envelopes
     .map(record => {
-      const endpointName = DebugOutpostEndpointsType[record.endpointsType] as
-        | string
-        | undefined
+      const endpointName = DebugOutpostEndpointsType[record.endpointsType] as string | undefined
       return endpointName ? { endpointName, record } : null
     })
     .filter((v): v is OrderedEnvelope => v !== null)
@@ -54,19 +47,11 @@ function orderEnvelopes(
  *   - Enter: toggle the accordion JSON for the focused attestation row.
  *   - Esc:  pop back to the tracker (handled at App level).
  */
-export function EpochDetailRoute(
-  props: RouteComponentProps
-): React.ReactElement {
+export function EpochDetailRoute(props: RouteComponentProps): React.ReactElement {
   const epochNum = Number.parseInt(props.params.epoch ?? "", 10),
     record = useAppSelector(selectEpochByNumber(epochNum)),
-    ordered = useMemo(
-      () => (record ? orderEnvelopes(record.envelopes) : []),
-      [record]
-    ),
-    flatLengths = useMemo(
-      () => ordered.map(o => flattenAttestations(o.record.envelope).length),
-      [ordered]
-    ),
+    ordered = useMemo(() => (record ? orderEnvelopes(record.envelopes) : []), [record]),
+    flatLengths = useMemo(() => ordered.map(o => flattenAttestations(o.record.envelope).length), [ordered]),
     totalRows = flatLengths.reduce((acc, n) => acc + n, 0),
     [globalCursor, setGlobalCursor] = useState(0),
     [expanded, setExpanded] = useState(false),
@@ -115,20 +100,14 @@ export function EpochDetailRoute(
         flexGrow={1}
         marginTop={1}
         borderStyle={EpochDetailRoute.DetailBorderStyle}
-        borderColor={
-          isFocused
-            ? EpochDetailRoute.BorderColorFocused
-            : EpochDetailRoute.BorderColorUnfocused
-        }
+        borderColor={isFocused ? EpochDetailRoute.BorderColorFocused : EpochDetailRoute.BorderColorUnfocused}
         paddingX={1}
       >
         {ordered.length === 0 ? (
           <Text dimColor>{EpochDetailRoute.NoEnvelopesText}</Text>
         ) : (
           <Box flexDirection="column">
-            <Text dimColor>
-              {totalRows} attestation row(s) — ↑/↓ select, Enter expand/collapse
-            </Text>
+            <Text dimColor>{totalRows} attestation row(s) — ↑/↓ select, Enter expand/collapse</Text>
             {ordered.map((entry, i) => (
               <EnvelopeDetailView
                 key={entry.endpointName}
@@ -164,10 +143,7 @@ interface CursorFold extends CursorPosition {
  * to its `(envelopeIdx, cursorWithin)` pair. Skips empty envelopes — they
  * still appear in the UI but contribute zero rows to the cursor space.
  */
-function locateCursor(
-  flatLengths: readonly number[],
-  global: number
-): CursorPosition {
+function locateCursor(flatLengths: readonly number[], global: number): CursorPosition {
   const folded = flatLengths.reduce<CursorFold>(
     (acc, len, i) => {
       if (acc.envelopeIdx !== -1) return acc
@@ -199,6 +175,5 @@ export namespace EpochDetailRoute {
   /** Border color when focus has moved away. */
   export const BorderColorUnfocused = "gray" as const
   /** Empty-state message inside the bordered container. */
-  export const NoEnvelopesText =
-    "No envelopes have been received for this epoch yet." as const
+  export const NoEnvelopesText = "No envelopes have been received for this epoch yet." as const
 }

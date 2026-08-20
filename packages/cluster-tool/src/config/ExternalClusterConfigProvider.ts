@@ -1,10 +1,7 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
-import {
-  ExternalClusterConfigSchemaCodec,
-  type ExternalClusterConfig
-} from "@wireio/cluster-tool-shared"
+import { ExternalClusterConfigSchemaCodec, type ExternalClusterConfig } from "@wireio/cluster-tool-shared"
 
 /**
  * The behavior half of {@link ExternalClusterConfig} — loads + validates an
@@ -25,14 +22,8 @@ export namespace ExternalClusterConfigProvider {
    */
   export function load(file: string): ExternalClusterConfig {
     const configFile = Path.resolve(file)
-    Assert.ok(
-      Fs.existsSync(configFile),
-      `ExternalClusterConfigProvider.load: ${configFile} not found`
-    )
-    return resolveReferences(
-      deserialize(Fs.readFileSync(configFile, "utf-8")),
-      Path.dirname(configFile)
-    )
+    Assert.ok(Fs.existsSync(configFile), `ExternalClusterConfigProvider.load: ${configFile} not found`)
+    return resolveReferences(deserialize(Fs.readFileSync(configFile, "utf-8")), Path.dirname(configFile))
   }
 
   /**
@@ -43,9 +34,7 @@ export namespace ExternalClusterConfigProvider {
    * @returns The validated config.
    * @throws If `input` fails schema validation.
    */
-  export function deserialize(
-    input: string | Uint8Array
-  ): ExternalClusterConfig {
+  export function deserialize(input: string | Uint8Array): ExternalClusterConfig {
     return ExternalClusterConfigSchemaCodec.deserialize(input)
   }
 
@@ -57,30 +46,20 @@ export namespace ExternalClusterConfigProvider {
    * @param baseDir - The directory references resolve against.
    * @returns The config with absolute references.
    */
-  export function resolveReferences(
-    config: ExternalClusterConfig,
-    baseDir: string
-  ): ExternalClusterConfig {
-    const resolveRef = (ref: string): string =>
-      Path.isAbsolute(ref) ? ref : Path.resolve(baseDir, ref)
+  export function resolveReferences(config: ExternalClusterConfig, baseDir: string): ExternalClusterConfig {
+    const resolveRef = (ref: string): string => (Path.isAbsolute(ref) ? ref : Path.resolve(baseDir, ref))
     return {
       ...config,
       wire: {
         ...config.wire,
-        genesisFile:
-          config.wire.genesisFile != null
-            ? resolveRef(config.wire.genesisFile)
-            : config.wire.genesisFile
+        genesisFile: config.wire.genesisFile != null ? resolveRef(config.wire.genesisFile) : config.wire.genesisFile
       },
       ethereum: {
         ...config.ethereum,
         addressFile: resolveRef(config.ethereum.addressFile),
         abiFiles: config.ethereum.abiFiles.map(resolveRef)
       },
-      solana:
-        config.solana != null
-          ? { idlFile: resolveRef(config.solana.idlFile) }
-          : config.solana
+      solana: config.solana != null ? { idlFile: resolveRef(config.solana.idlFile) } : config.solana
     }
   }
 }

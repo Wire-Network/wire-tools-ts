@@ -59,10 +59,7 @@ const EthereumBalanceBeforeKey = outputKey<bigint>(
  * @param wallet - The signer the contract binds to (the swap user's wallet).
  * @returns The `requestSwap`-capable contract surface.
  */
-function loadReserveManager(
-  ctx: SwapScenarioContext,
-  wallet: ethers.Signer
-): ReserveManagerRequestSwapContract {
+function loadReserveManager(ctx: SwapScenarioContext, wallet: ethers.Signer): ReserveManagerRequestSwapContract {
   const address = EthereumCollateralTool.loadOutpostAddresses(
     ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
   )[Constants.ReserveManagerContractName]
@@ -70,10 +67,7 @@ function loadReserveManager(
     ethers.isAddress(address),
     `SwapVarianceRevertScenario: ${Constants.ReserveManagerContractName} not in outpost-addrs.json (got ${address})`
   )
-  const abi = EthereumCollateralTool.loadOutpostAbi(
-    ctx.config.ethereumPath,
-    Constants.ReserveManagerContractName
-  )
+  const abi = EthereumCollateralTool.loadOutpostAbi(ctx.config.ethereumPath, Constants.ReserveManagerContractName)
   return contractView<ReserveManagerRequestSwapContract>(address, abi, wallet)
 }
 
@@ -114,10 +108,7 @@ async function runComputeQuoteAndInflate(
       reserveCode: Constants.PrimaryReserveCode
     }
   })
-  Assert.ok(
-    liveQuote > 0n,
-    `SwapVarianceRevertScenario: live swap quote must be > 0 (got ${liveQuote})`
-  )
+  Assert.ok(liveQuote > 0n, `SwapVarianceRevertScenario: live swap quote must be > 0 (got ${liveQuote})`)
   // Inflate by RevertMultiplier — far past the 50 bps tolerance. Doubling the
   // target gives a 10_000 bps drift (100% off), guaranteeing the depot's
   // variance check rejects on first inspection.
@@ -132,16 +123,10 @@ async function runComputeQuoteAndInflate(
  * Named runner — snapshot the swap user's pre-swap ETH balance (a read) into
  * `ctx.outputs` so the refund step can assert against it.
  */
-async function runSnapshotEthereumBalance(
-  ctx: SwapScenarioContext,
-  _input: null,
-  signal: AbortSignal
-): Promise<void> {
+async function runSnapshotEthereumBalance(ctx: SwapScenarioContext, _input: null, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted()
   const swapUser = ctx.outputs.assert(swapUserOutputKey())
-  const balance = await ctx.ethereum.provider.getBalance(
-    swapUser.ethereumWallet.address
-  )
+  const balance = await ctx.ethereum.provider.getBalance(swapUser.ethereumWallet.address)
   ctx.outputs.set(EthereumBalanceBeforeKey, balance)
 }
 
@@ -180,10 +165,7 @@ async function runRequestSwapOutOfTolerance(
     targetAmount: inflatedTargetAmount,
     targetToleranceBps: input.targetToleranceBps
   })
-  Assert.ok(
-    result.transactionHash,
-    "SwapVarianceRevertScenario: requestSwap must return a mined transaction hash"
-  )
+  Assert.ok(result.transactionHash, "SwapVarianceRevertScenario: requestSwap must return a mined transaction hash")
 }
 
 /**
@@ -231,10 +213,7 @@ export class SwapVarianceRevertScenario extends FlowScenario<SwapScenarioContext
     ]
   }
 
-  override createContext(
-    config: ClusterConfig,
-    log: Logger
-  ): SwapScenarioContext {
+  override createContext(config: ClusterConfig, log: Logger): SwapScenarioContext {
     return new SwapScenarioContext(config, log)
   }
 
@@ -243,8 +222,7 @@ export class SwapVarianceRevertScenario extends FlowScenario<SwapScenarioContext
         timeoutMs: Constants.DefaultStepTimeoutMs
       },
       negativeAssertStepOptions: ClusterBuildStepOptions = {
-        timeoutMs:
-          Constants.UwreqNegativeAssertMs + Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.UwreqNegativeAssertMs + Constants.PollDeadlineBufferMs
       },
       revertStepOptions: ClusterBuildStepOptions = {
         timeoutMs: Constants.RevertDeadlineMs + Constants.PollDeadlineBufferMs
@@ -259,21 +237,14 @@ export class SwapVarianceRevertScenario extends FlowScenario<SwapScenarioContext
     )
 
     // ── 2. Chain health + bootstrap-seeded reserves ──
-    ClusterBuildPhase.create(
-      cluster,
-      "ChainHealth",
-      "Chain liveness + bootstrap-seeded primary reserves"
-    ).push(
+    ClusterBuildPhase.create(cluster, "ChainHealth", "Chain liveness + bootstrap-seeded primary reserves").push(
       verifyStep<SwapScenarioContext>(
         Actor.Sysio,
         "wire-producing-blocks",
         "WIRE chain is producing blocks",
         async ctx => {
           const info = await ctx.wire.getInfo()
-          Assert.ok(
-            Number(info.head_block_num) > 0,
-            `WIRE head_block_num must be > 0 (got ${info.head_block_num})`
-          )
+          Assert.ok(Number(info.head_block_num) > 0, `WIRE head_block_num must be > 0 (got ${info.head_block_num})`)
         },
         defaultStepOptions
       ),
@@ -284,16 +255,8 @@ export class SwapVarianceRevertScenario extends FlowScenario<SwapScenarioContext
         async ctx => {
           // `reserveBook` throws when the row is absent — both reads
           // succeeding IS the assertion.
-          await ctx.reserveBook(
-            Constants.EthereumChainCode,
-            Constants.EthereumTokenCode,
-            Constants.PrimaryReserveCode
-          )
-          await ctx.reserveBook(
-            Constants.SolanaChainCode,
-            Constants.SolanaTokenCode,
-            Constants.PrimaryReserveCode
-          )
+          await ctx.reserveBook(Constants.EthereumChainCode, Constants.EthereumTokenCode, Constants.PrimaryReserveCode)
+          await ctx.reserveBook(Constants.SolanaChainCode, Constants.SolanaTokenCode, Constants.PrimaryReserveCode)
         },
         defaultStepOptions
       )
@@ -362,16 +325,10 @@ export class SwapVarianceRevertScenario extends FlowScenario<SwapScenarioContext
           // depot's variance branch DIDN'T fire, a UWREQ row would appear
           // within ~1 epoch; we wait a generous window to be sure.
           await sleep(Constants.UwreqNegativeAssertMs)
-          const inflatedTargetAmount = ctx.outputs.assert(
-            InflatedTargetAmountKey
-          )
-          const request = await ctx.uwreq(
-            Constants.EthereumChainCode,
-            Constants.SolanaChainCode
-          )
+          const inflatedTargetAmount = ctx.outputs.assert(InflatedTargetAmountKey)
+          const request = await ctx.uwreq(Constants.EthereumChainCode, Constants.SolanaChainCode)
           Assert.ok(
-            request == null ||
-              BigInt(request.dst_amount ?? 0) !== inflatedTargetAmount,
+            request == null || BigInt(request.dst_amount ?? 0) !== inflatedTargetAmount,
             `UWREQ row ${request?.id} matches the rejected ETHEREUM→SOLANA swap (dst_amount=${request?.dst_amount}) — the variance guard did not fire`
           )
         },
@@ -416,20 +373,13 @@ export class SwapVarianceRevertScenario extends FlowScenario<SwapScenarioContext
           const refundFloor = balanceBefore - Constants.MaxGasReservedWei
           await pollUntil(
             "user ETH balance back to (initial − gas)",
-            async () =>
-              (await ctx.ethereum.provider.getBalance(
-                swapUser.ethereumWallet.address
-              )) >= refundFloor,
+            async () => (await ctx.ethereum.provider.getBalance(swapUser.ethereumWallet.address)) >= refundFloor,
             Constants.RevertDeadlineMs,
             Constants.LongPollIntervalMs
           )
-          const finalBalance = await ctx.ethereum.provider.getBalance(
-            swapUser.ethereumWallet.address
-          )
+          const finalBalance = await ctx.ethereum.provider.getBalance(swapUser.ethereumWallet.address)
           const spent = balanceBefore - finalBalance
-          log.info(
-            `[VarianceRevert] user spent ${spent} wei (= gas only; source deposit refunded)`
-          )
+          log.info(`[VarianceRevert] user spent ${spent} wei (= gas only; source deposit refunded)`)
           Assert.ok(
             spent < Constants.MaxGasReservedWei,
             `user spent ${spent} wei — exceeds the ${Constants.MaxGasReservedWei} wei gas ceiling, so the refund did not land`

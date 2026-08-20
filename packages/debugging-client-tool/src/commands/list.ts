@@ -20,8 +20,7 @@ export interface ListArgs {
 
 export async function handleList(argv: ListArgs): Promise<void> {
   const client = await DebuggingServerClient.create({ baseUrl: argv.server })
-  const format =
-    argv.format === OutputFormat.json ? OutputFormat.json : OutputFormat.plain
+  const format = argv.format === OutputFormat.json ? OutputFormat.json : OutputFormat.plain
 
   // Build filter params
   const epochStart = argv.epochStart ?? argv.epoch ?? 0
@@ -31,9 +30,7 @@ export async function handleList(argv: ListArgs): Promise<void> {
   let endpointsType = DebugOutpostEndpointsType.UNKNOWN
   if (argv.endpoints) {
     const upper = argv.endpoints.toUpperCase()
-    const match = Object.entries(DebugOutpostEndpointsType).find(
-      ([name]) => name.toUpperCase() === upper
-    )
+    const match = Object.entries(DebugOutpostEndpointsType).find(([name]) => name.toUpperCase() === upper)
     if (match) {
       endpointsType = match[1] as DebugOutpostEndpointsType
     }

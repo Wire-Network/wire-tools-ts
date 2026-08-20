@@ -62,8 +62,7 @@ export namespace UnderwriterSlashingScenarioSwapSteps {
         kind: "UnderwriterSlashingScenarioSwapSteps.RequestSwapEthereumInput",
         ...request
       },
-      async (ctx, input, signal) =>
-        runRequestSwapEthereum(ctx, input, signal, targetAmountKey)
+      async (ctx, input, signal) => runRequestSwapEthereum(ctx, input, signal, targetAmountKey)
     )
   }
 
@@ -90,10 +89,7 @@ export namespace UnderwriterSlashingScenarioSwapSteps {
       targetAmount,
       targetToleranceBps: input.targetToleranceBps
     })
-    Assert.ok(
-      result.transactionHash,
-      "UnderwriterSlashingScenarioSwapSteps.requestSwapEthereum: no transaction hash"
-    )
+    Assert.ok(result.transactionHash, "UnderwriterSlashingScenarioSwapSteps.requestSwapEthereum: no transaction hash")
     log.info(
       `[uwchal-swap] requestSwap tx=${result.transactionHash} block=${result.blockNumber} target=${targetAmount}`
     )
@@ -115,10 +111,7 @@ export namespace UnderwriterSlashingScenarioSwapSteps {
       address != null && /^0x[0-9a-fA-F]{40}$/.test(address),
       `UnderwriterSlashingScenarioSwapSteps: ${Constants.ReserveManagerContractName} not in outpost-addrs.json (got ${address})`
     )
-    const abi = EthereumCollateralTool.loadOutpostAbi(
-      ctx.config.ethereumPath,
-      Constants.ReserveManagerContractName
-    )
+    const abi = EthereumCollateralTool.loadOutpostAbi(ctx.config.ethereumPath, Constants.ReserveManagerContractName)
     return contractView<ReserveManagerRequestSwapContract>(address, abi, wallet)
   }
 }

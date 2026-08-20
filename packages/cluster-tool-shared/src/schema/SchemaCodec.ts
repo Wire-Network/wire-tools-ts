@@ -51,8 +51,7 @@ export namespace SchemaCodec {
         return JSON.stringify(z.encode(schema, value), null, SerializeIndent)
       },
       deserialize(data: string | Uint8Array): T {
-        const text =
-          typeof data === "string" ? data : new TextDecoder().decode(data)
+        const text = typeof data === "string" ? data : new TextDecoder().decode(data)
         return decode(schema, text)
       },
       check(value: unknown): value is T {
@@ -63,9 +62,7 @@ export namespace SchemaCodec {
 
   /** The ONE safeParse → `Either` bridge — every consumer chains off this. */
   function toEither<T>(result: SafeParseResult<T>): Either<z.ZodError, T> {
-    return result.success
-      ? Either.right<z.ZodError, T>(result.data)
-      : Either.left<z.ZodError, T>(result.error)
+    return result.success ? Either.right<z.ZodError, T>(result.data) : Either.left<z.ZodError, T>(result.error)
   }
 
   /** Parse `text` as JSON then validate + decode against `schema`, throwing on either failure. */
@@ -96,10 +93,7 @@ export namespace SchemaCodec {
    */
   function formatIssues(error: z.ZodError, text: string): NestedError {
     const detail = error.issues
-      .map(
-        issue =>
-          `${issue.path.length ? issue.path.join(".") : "(root)"}: ${issue.message}`
-      )
+      .map(issue => `${issue.path.length ? issue.path.join(".") : "(root)"}: ${issue.message}`)
       .join("; ")
     return new NestedError(`SchemaCodec: validation failed — ${detail}`, {
       cause: error,

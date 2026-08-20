@@ -19,9 +19,7 @@ describe("DebuggingServerBundleSteps", () => {
   function completeBundle(): string {
     const source = Path.join(dir, "bundle")
     Fs.mkdirSync(source, { recursive: true })
-    bundleSteps.BundleFilenames.forEach(filename =>
-      Fs.writeFileSync(Path.join(source, filename), `stub:${filename}`)
-    )
+    bundleSteps.BundleFilenames.forEach(filename => Fs.writeFileSync(Path.join(source, filename), `stub:${filename}`))
     return source
   }
 
@@ -34,36 +32,26 @@ describe("DebuggingServerBundleSteps", () => {
   it("ships the sourcemap alongside the bundle", () => {
     // `--enable-source-maps` needs it, and the scanner now proves the map is
     // clean of key material.
-    expect(bundleSteps.BundleFilenames).toContain(
-      `${DaemonConfig.DebuggingServerBundleFilename}.map`
-    )
+    expect(bundleSteps.BundleFilenames).toContain(`${DaemonConfig.DebuggingServerBundleFilename}.map`)
   })
 
   it("copies every bundle file into the target directory", () => {
     const target = Path.join(dir, "data", DaemonConfig.DebuggingServerSubpath)
     bundleSteps.copyBundle(completeBundle(), target)
-    bundleSteps.BundleFilenames.forEach(filename =>
-      expect(Fs.existsSync(Path.join(target, filename))).toBe(true)
-    )
+    bundleSteps.BundleFilenames.forEach(filename => expect(Fs.existsSync(Path.join(target, filename))).toBe(true))
   })
 
   it("FAILS LOUDLY when the bundle is absent", () => {
     // CI installs with a plain `pnpm install` so `prepare` builds it today —
     // but that is implicit, and one `--ignore-scripts` would otherwise ship a
     // cluster whose debugging server is silently missing.
-    expect(() =>
-      bundleSteps.assertBundlePresent(Path.join(dir, "nonexistent"))
-    ).toThrow(/bundle missing/)
+    expect(() => bundleSteps.assertBundlePresent(Path.join(dir, "nonexistent"))).toThrow(/bundle missing/)
   })
 
   it("FAILS LOUDLY when only the sourcemap is missing", () => {
     const source = completeBundle()
-    Fs.rmSync(
-      Path.join(source, `${DaemonConfig.DebuggingServerBundleFilename}.map`)
-    )
-    expect(() => bundleSteps.assertBundlePresent(source)).toThrow(
-      /bundle missing/
-    )
+    Fs.rmSync(Path.join(source, `${DaemonConfig.DebuggingServerBundleFilename}.map`))
+    expect(() => bundleSteps.assertBundlePresent(source)).toThrow(/bundle missing/)
   })
 
   it("honours an already-aborted signal", async () => {
@@ -71,9 +59,7 @@ describe("DebuggingServerBundleSteps", () => {
     controller.abort()
     await expect(
       bundleSteps.runCopy(
-        { config: { dataPath: dir } } as Parameters<
-          typeof bundleSteps.runCopy
-        >[0],
+        { config: { dataPath: dir } } as Parameters<typeof bundleSteps.runCopy>[0],
         { kind: "DebuggingServerBundleSteps.CopyInput" },
         controller.signal
       )

@@ -15,8 +15,6 @@ const log = getLogger(__filename)
  *   {@link fixtureConfig}); typically `clusterPath` / `dataPath` /
  *   `ethereumPath` / `solanaPath` aimed at a `mkdtemp` sandbox.
  */
-export function fixtureContext(
-  overrides: Partial<typeof PersistedFixture> = {}
-): ClusterBuildContext {
+export function fixtureContext(overrides: Partial<typeof PersistedFixture> = {}): ClusterBuildContext {
   return new ClusterBuildContext(fixtureConfig(overrides), log)
 }

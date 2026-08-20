@@ -14,22 +14,14 @@ import type {
   GetClusterStateRequest,
   GetClusterStateResponse
 } from "../cluster/index.js"
-import type {
-  LoadEnvelopeRecordsRequest,
-  LoadEnvelopeRecordsResponse
-} from "../opp/index.js"
+import type { LoadEnvelopeRecordsRequest, LoadEnvelopeRecordsResponse } from "../opp/index.js"
 import type {
   ListProcessesRequest,
   ListProcessesResponse,
   GetProcessLivenessRequest,
   GetProcessLivenessResponse
 } from "../processes/index.js"
-import type {
-  LogStatRequest,
-  LogStatResponse,
-  LogReadRequest,
-  LogReadResponse
-} from "../logs/index.js"
+import type { LogStatRequest, LogStatResponse, LogReadRequest, LogReadResponse } from "../logs/index.js"
 
 // ---------------------------------------------------------------------------
 //  API path constants — single source of truth for all URI strings
@@ -135,10 +127,7 @@ export namespace ApiPaths {
 //  this definition only needs to carry R and T for type inference.
 // ---------------------------------------------------------------------------
 
-export type Handler<R = unknown, T = unknown> = (
-  body: R,
-  ...args: any[]
-) => Promise<T> | T
+export type Handler<R = unknown, T = unknown> = (body: R, ...args: any[]) => Promise<T> | T
 
 // ---------------------------------------------------------------------------
 //  Handler map — pure type definition, no runtime object.
@@ -148,43 +137,19 @@ export type Handler<R = unknown, T = unknown> = (
 
 export interface HandlerMap {
   // OPP — protobuf bodies (preserved verbatim)
-  [ApiPaths.OPP.Methods.Envelope]: Handler<
-    PutEnvelopeRequest,
-    PutEnvelopeResponse
-  >
-  [ApiPaths.OPP.Methods.EnvelopeList]: Handler<
-    ListEnvelopesRequest,
-    ListEnvelopesResponse
-  >
-  [ApiPaths.OPP.Methods.EnvelopeGet]: Handler<
-    GetEnvelopeRequest,
-    GetEnvelopeResponse
-  >
+  [ApiPaths.OPP.Methods.Envelope]: Handler<PutEnvelopeRequest, PutEnvelopeResponse>
+  [ApiPaths.OPP.Methods.EnvelopeList]: Handler<ListEnvelopesRequest, ListEnvelopesResponse>
+  [ApiPaths.OPP.Methods.EnvelopeGet]: Handler<GetEnvelopeRequest, GetEnvelopeResponse>
   // OPP — plain JSON bulk-load of decoded records (no protobuf body)
-  [ApiPaths.OPP.Methods.LoadRecords]: Handler<
-    LoadEnvelopeRecordsRequest,
-    LoadEnvelopeRecordsResponse
-  >
+  [ApiPaths.OPP.Methods.LoadRecords]: Handler<LoadEnvelopeRecordsRequest, LoadEnvelopeRecordsResponse>
 
   // Cluster — plain JSON bodies
-  [ApiPaths.Cluster.Methods.GetConfig]: Handler<
-    GetClusterConfigRequest,
-    GetClusterConfigResponse
-  >
-  [ApiPaths.Cluster.Methods.GetState]: Handler<
-    GetClusterStateRequest,
-    GetClusterStateResponse
-  >
+  [ApiPaths.Cluster.Methods.GetConfig]: Handler<GetClusterConfigRequest, GetClusterConfigResponse>
+  [ApiPaths.Cluster.Methods.GetState]: Handler<GetClusterStateRequest, GetClusterStateResponse>
 
   // Processes — plain JSON bodies
-  [ApiPaths.Processes.Methods.List]: Handler<
-    ListProcessesRequest,
-    ListProcessesResponse
-  >
-  [ApiPaths.Processes.Methods.GetLiveness]: Handler<
-    GetProcessLivenessRequest,
-    GetProcessLivenessResponse
-  >
+  [ApiPaths.Processes.Methods.List]: Handler<ListProcessesRequest, ListProcessesResponse>
+  [ApiPaths.Processes.Methods.GetLiveness]: Handler<GetProcessLivenessRequest, GetProcessLivenessResponse>
 
   // Logs — plain JSON bodies
   [ApiPaths.Logs.Methods.GetStat]: Handler<LogStatRequest, LogStatResponse>
@@ -228,10 +193,7 @@ export interface HandlerTypeMappingTable {
  */
 export const HandlerTypeMappings: HandlerTypeMappingTable = {
   [ApiPaths.OPP.Methods.Envelope]: [PutEnvelopeRequest, PutEnvelopeResponse],
-  [ApiPaths.OPP.Methods.EnvelopeList]: [
-    ListEnvelopesRequest,
-    ListEnvelopesResponse
-  ],
+  [ApiPaths.OPP.Methods.EnvelopeList]: [ListEnvelopesRequest, ListEnvelopesResponse],
   [ApiPaths.OPP.Methods.EnvelopeGet]: [GetEnvelopeRequest, GetEnvelopeResponse]
 } as const
 
@@ -246,12 +208,10 @@ export type HandlerURIType = keyof HandlerMap
 export type InferredHandlerType<U extends HandlerURIType> = HandlerMap[U]
 
 /** Extract the request body type for a given URI. */
-export type InferredRequestType<U extends HandlerURIType> =
-  HandlerMap[U] extends Handler<infer R, unknown> ? R : never
+export type InferredRequestType<U extends HandlerURIType> = HandlerMap[U] extends Handler<infer R, unknown> ? R : never
 
 /** Extract the response type for a given URI. */
-export type InferredResponseType<U extends HandlerURIType> =
-  HandlerMap[U] extends Handler<unknown, infer T> ? T : never
+export type InferredResponseType<U extends HandlerURIType> = HandlerMap[U] extends Handler<unknown, infer T> ? T : never
 
 /** Lift result envelope shape used by some legacy callers. */
 export interface JsonRPCResult<T extends object = any> {

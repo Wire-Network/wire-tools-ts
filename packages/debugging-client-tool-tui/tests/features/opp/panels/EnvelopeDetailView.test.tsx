@@ -17,13 +17,7 @@ describe("flattenAttestations", () => {
         { payload: { attestations: [{ id: "c1" }, { id: "c2" }] } }
       ]
     } as never
-    expect(flattenAttestations(env).map((a: any) => a.id)).toEqual([
-      "a1",
-      "a2",
-      "b1",
-      "c1",
-      "c2"
-    ])
+    expect(flattenAttestations(env).map((a: any) => a.id)).toEqual(["a1", "a2", "b1", "c1", "c2"])
   })
 })
 

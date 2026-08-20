@@ -188,15 +188,8 @@ export interface WaitForEndpointOptions {
  * @example
  *   await waitForEndpoint(`${rpcUrl}/v1/chain/get_info`, { label: "nodeop" })
  */
-export async function waitForEndpoint(
-  url: string,
-  options: WaitForEndpointOptions = {}
-): Promise<void> {
-  const {
-    timeoutMs = DefaultEndpointTimeoutMs,
-    intervalMs = DefaultEndpointIntervalMs,
-    label = url
-  } = options
+export async function waitForEndpoint(url: string, options: WaitForEndpointOptions = {}): Promise<void> {
+  const { timeoutMs = DefaultEndpointTimeoutMs, intervalMs = DefaultEndpointIntervalMs, label = url } = options
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (await probeEndpoint(url)) {
@@ -236,10 +229,7 @@ export interface RetryOptions {
  * @example
  *   await retry(() => client.call(method, params), { maxAttempts: 5, label: method })
  */
-export async function retry<T>(
-  fn: () => Promise<T>,
-  options: RetryOptions = {}
-): Promise<T> {
+export async function retry<T>(fn: () => Promise<T>, options: RetryOptions = {}): Promise<T> {
   const {
     maxAttempts = DefaultRetryAttempts,
     delayMs = DefaultRetryDelayMs,
@@ -251,9 +241,7 @@ export async function retry<T>(
     try {
       return await fn()
     } catch (err) {
-      log.warn(
-        `${label} attempt ${n}/${maxAttempts} failed: ${err instanceof Error ? err.message : String(err)}`
-      )
+      log.warn(`${label} attempt ${n}/${maxAttempts} failed: ${err instanceof Error ? err.message : String(err)}`)
       if (n >= maxAttempts || checkResult(err)) throw err
       await sleep(delayMs)
       return attempt(n + 1)

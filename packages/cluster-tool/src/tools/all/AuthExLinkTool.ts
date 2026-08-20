@@ -23,20 +23,12 @@ export namespace AuthExLinkTool {
   }
 
   /** Build the authex `createlink` message: `<pubkey>|<account>|<chainKind>|<nonce>|createlink auth`. */
-  function buildLinkMessage(
-    publicKeyString: string,
-    account: string,
-    chainKind: ChainKind,
-    nonce: number
-  ): string {
+  function buildLinkMessage(publicKeyString: string, account: string, chainKind: ChainKind, nonce: number): string {
     return `${publicKeyString}|${account}|${chainKind}|${nonce}|createlink auth`
   }
 
   /** Sign for Ethereum (EM) — keccak256(message), no EIP-191 prefix. */
-  async function signEthereumMessage(
-    message: string,
-    ethereumWallet: ethers.BaseWallet
-  ): Promise<Signature> {
+  async function signEthereumMessage(message: string, ethereumWallet: ethers.BaseWallet): Promise<Signature> {
     const digest = ethers.getBytes(ethers.keccak256(ethers.toUtf8Bytes(message)))
     return Signature.fromHex(await ethereumWallet.signMessage(digest), KeyType.EM)
   }
@@ -47,10 +39,7 @@ export namespace AuthExLinkTool {
    * LOWERCASE-HEX encoding of that mapped digest. Returns a 96-byte Wire ED signature
    * (32-byte embedded pubkey + 64-byte signature) so `recover()` can extract the key.
    */
-  async function signSolanaMessage(
-    privateKey: PrivateKey,
-    message: string
-  ): Promise<Signature> {
+  async function signSolanaMessage(privateKey: PrivateKey, message: string): Promise<Signature> {
     const hashBytes = ethers.getBytes(ethers.sha256(ethers.toUtf8Bytes(message))),
       mapped = new Uint8Array(hashBytes.length)
     hashBytes.forEach((byte, index) => {

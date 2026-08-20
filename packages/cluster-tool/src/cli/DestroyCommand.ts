@@ -2,10 +2,7 @@ import Path from "node:path"
 import type { Argv } from "yargs"
 import { ClusterManager } from "../cluster/ClusterManager.js"
 import { ClusterConfigProvider } from "../config/ClusterConfigProvider.js"
-import {
-  applyClusterPathArgs,
-  type ClusterPathArgv
-} from "./ClusterPathArgs.js"
+import { applyClusterPathArgs, type ClusterPathArgv } from "./ClusterPathArgs.js"
 import { ClusterCommand } from "./ClusterCommand.js"
 
 /**
@@ -21,10 +18,7 @@ export function createDestroyCommand() {
     builder: (builder: Argv) => applyClusterPathArgs(builder),
     handler: async (args: ClusterPathArgv) => {
       const config = ClusterConfigProvider.loadSync(
-        Path.join(
-          Path.resolve(args.clusterPath),
-          ClusterConfigProvider.ConfigFilename
-        )
+        Path.join(Path.resolve(args.clusterPath), ClusterConfigProvider.ConfigFilename)
       )
       await ClusterManager.destroy(config)
       process.exit(0)

@@ -53,15 +53,12 @@ function positiveCountSchema(field: string) {
  * its own field path instead of surfacing as a downstream arithmetic failure.
  */
 export const BatchOperatorScheduleOptionsSchema = z.object({
-  batchOperatorCount: positiveCountSchema("batch-operator-count").refine(
-    value => value <= MaxBatchOperatorRoster,
-    {
-      message:
-        `batch-operator-count exceeds the harness ceiling of ${MaxBatchOperatorRoster} — ` +
-        `operator accounts are named batchop.<letter> off a ${MaxBatchOperatorRoster}-letter ` +
-        `alphabet, so a larger roster would reuse identities`
-    }
-  ),
+  batchOperatorCount: positiveCountSchema("batch-operator-count").refine(value => value <= MaxBatchOperatorRoster, {
+    message:
+      `batch-operator-count exceeds the harness ceiling of ${MaxBatchOperatorRoster} — ` +
+      `operator accounts are named batchop.<letter> off a ${MaxBatchOperatorRoster}-letter ` +
+      `alphabet, so a larger roster would reuse identities`
+  }),
   operatorsPerEpoch: positiveCountSchema("operators-per-epoch")
     .refine(value => value <= MaxOperatorsPerEpoch, {
       message: `operators-per-epoch exceeds the depot ceiling of ${MaxOperatorsPerEpoch}`
@@ -78,9 +75,7 @@ export const BatchOperatorScheduleOptionsSchema = z.object({
 })
 
 /** Caller-facing schedule inputs — the schema-inferred shape. */
-export type BatchOperatorScheduleOptions = z.infer<
-  typeof BatchOperatorScheduleOptionsSchema
->
+export type BatchOperatorScheduleOptions = z.infer<typeof BatchOperatorScheduleOptionsSchema>
 
 /**
  * The largest ODD group SIZE that fits `batchOperatorCount` into
@@ -95,10 +90,7 @@ export type BatchOperatorScheduleOptions = z.infer<
  * @param batchOpGroups - The sliding-window group COUNT (positive).
  * @returns The derived group size.
  */
-function deriveOperatorsPerEpoch(
-  batchOperatorCount: number,
-  batchOpGroups: number
-): number {
+function deriveOperatorsPerEpoch(batchOperatorCount: number, batchOpGroups: number): number {
   const fits = Math.floor(batchOperatorCount / batchOpGroups),
     odd = fits % 2 === 0 ? fits - 1 : fits
   return Math.max(MinimumOperatorsPerEpoch, odd)
@@ -125,69 +117,64 @@ function deriveOperatorsPerEpoch(
  * triple; single-field ceilings stay on
  * {@link BatchOperatorScheduleOptionsSchema}.
  */
-export const BatchOperatorScheduleSchema =
-  BatchOperatorScheduleOptionsSchema.transform((options, ctx) => {
-    const { batchOperatorCount, operatorsPerEpoch, batchOpGroups } = options,
-      groups = batchOpGroups ?? DefaultBatchOperatorGroupCount,
-      // DERIVED = NEITHER half stated. An explicit group COUNT takes the caller
-      // off the `groups = 3` lattice just as an explicit size does.
-      isDerived = operatorsPerEpoch == null && batchOpGroups == null,
-      size =
-        operatorsPerEpoch ??
-        deriveOperatorsPerEpoch(batchOperatorCount, groups),
-      total = size * groups
+export const BatchOperatorScheduleSchema = BatchOperatorScheduleOptionsSchema.transform((options, ctx) => {
+  const { batchOperatorCount, operatorsPerEpoch, batchOpGroups } = options,
+    groups = batchOpGroups ?? DefaultBatchOperatorGroupCount,
+    // DERIVED = NEITHER half stated. An explicit group COUNT takes the caller
+    // off the `groups = 3` lattice just as an explicit size does.
+    isDerived = operatorsPerEpoch == null && batchOpGroups == null,
+    size = operatorsPerEpoch ?? deriveOperatorsPerEpoch(batchOperatorCount, groups),
+    total = size * groups
 
-    if (size % 2 !== 1) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["operatorsPerEpoch"],
-        message:
-          `batch-op group SIZE must be ODD — got operators-per-epoch ${size} ` +
-          `(an even group has no strict majority, so the depot's path-2 consensus threshold is undefined)`
-      })
-    }
-    if (total > MaxScheduledBatchOperators) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["batchOperatorMinimumActive"],
-        message:
-          `batch_operator_minimum_active ${total} exceeds the depot ceiling of ` +
-          `${MaxScheduledBatchOperators}`
-      })
-    }
-    // DERIVED path: the default shape is exact, so the roster must sit on the
-    // lattice. Checked before the generic fits rule so the actionable message
-    // wins for an off-lattice roster.
-    if (isDerived && total !== batchOperatorCount) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["batchOperatorCount"],
-        message:
-          `batch-operator-count must be ODD and divisible by ${DefaultBatchOperatorGroupCount} ` +
-          `(3, 9, 15, 21) — got ${batchOperatorCount}; ` +
-          `pass --operators-per-epoch OR --batch-op-groups to state a shape explicitly`
-      })
-    } else if (total > batchOperatorCount) {
-      // What `schbatchgps` actually asserts: the ACTIVE pool must fill the
-      // initial window, and every bootstrapped operator is ACTIVE on
-      // registration — so the roster size IS the available pool.
-      ctx.addIssue({
-        code: "custom",
-        path: ["batchOperatorCount"],
-        message:
-          `batch-operator group shape needs ${total} ACTIVE batch operators ` +
-          `(operators-per-epoch ${size} × batch-op-groups ${groups}) ` +
-          `but batch-operator-count is ${batchOperatorCount} — raise --batch-operator-count ` +
-          `or lower --operators-per-epoch / --batch-op-groups`
-      })
-    }
+  if (size % 2 !== 1) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["operatorsPerEpoch"],
+      message:
+        `batch-op group SIZE must be ODD — got operators-per-epoch ${size} ` +
+        `(an even group has no strict majority, so the depot's path-2 consensus threshold is undefined)`
+    })
+  }
+  if (total > MaxScheduledBatchOperators) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["batchOperatorMinimumActive"],
+      message: `batch_operator_minimum_active ${total} exceeds the depot ceiling of ` + `${MaxScheduledBatchOperators}`
+    })
+  }
+  // DERIVED path: the default shape is exact, so the roster must sit on the
+  // lattice. Checked before the generic fits rule so the actionable message
+  // wins for an off-lattice roster.
+  if (isDerived && total !== batchOperatorCount) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["batchOperatorCount"],
+      message:
+        `batch-operator-count must be ODD and divisible by ${DefaultBatchOperatorGroupCount} ` +
+        `(3, 9, 15, 21) — got ${batchOperatorCount}; ` +
+        `pass --operators-per-epoch OR --batch-op-groups to state a shape explicitly`
+    })
+  } else if (total > batchOperatorCount) {
+    // What `schbatchgps` actually asserts: the ACTIVE pool must fill the
+    // initial window, and every bootstrapped operator is ACTIVE on
+    // registration — so the roster size IS the available pool.
+    ctx.addIssue({
+      code: "custom",
+      path: ["batchOperatorCount"],
+      message:
+        `batch-operator group shape needs ${total} ACTIVE batch operators ` +
+        `(operators-per-epoch ${size} × batch-op-groups ${groups}) ` +
+        `but batch-operator-count is ${batchOperatorCount} — raise --batch-operator-count ` +
+        `or lower --operators-per-epoch / --batch-op-groups`
+    })
+  }
 
-    return {
-      operatorsPerEpoch: size,
-      batchOpGroups: groups,
-      batchOperatorMinimumActive: total
-    }
-  })
+  return {
+    operatorsPerEpoch: size,
+    batchOpGroups: groups,
+    batchOperatorMinimumActive: total
+  }
+})
 
 /**
  * The resolved schedule: group SIZE (`operators_per_epoch`), group COUNT
@@ -211,9 +198,7 @@ export namespace BatchOperatorSchedule {
    * @returns The validated schedule.
    * @throws NestedError when a depot or harness invariant would be violated.
    */
-  export function resolve(
-    options: BatchOperatorScheduleOptions
-  ): BatchOperatorSchedule {
+  export function resolve(options: BatchOperatorScheduleOptions): BatchOperatorSchedule {
     const result = BatchOperatorScheduleSchema.safeParse(options)
     // safeParse rides `Either`, never a bare `if (result.success)`; the Left is
     // only ever thrown, so `.ifLeft(throw).getOrThrow()`.
@@ -224,15 +209,9 @@ export namespace BatchOperatorSchedule {
     )
       .ifLeft(error => {
         const detail = error.issues
-          .map(
-            issue =>
-              `${issue.path.length ? issue.path.join(".") : "(root)"}: ${issue.message}`
-          )
+          .map(issue => `${issue.path.length ? issue.path.join(".") : "(root)"}: ${issue.message}`)
           .join("; ")
-        throw new NestedError(
-          `batch-operator schedule is invalid — ${detail}`,
-          { cause: error, context: { options } }
-        )
+        throw new NestedError(`batch-operator schedule is invalid — ${detail}`, { cause: error, context: { options } })
       })
       .getOrThrow()
   }

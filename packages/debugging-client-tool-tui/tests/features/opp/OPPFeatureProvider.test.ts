@@ -36,14 +36,8 @@ describe("OPPFeatureProvider.registerComponents", () => {
   it("registers the epoch-tracker panel and epoch status-bar widget", () => {
     const register = jest.fn()
     OPPFeatureProvider.registerComponents({ register } as any)
-    expect(register).toHaveBeenCalledWith(
-      FeatureComponentToken.Panel,
-      EpochTrackerPanel
-    )
-    expect(register).toHaveBeenCalledWith(
-      FeatureComponentToken.StatusBar,
-      EpochStatusBarWidget
-    )
+    expect(register).toHaveBeenCalledWith(FeatureComponentToken.Panel, EpochTrackerPanel)
+    expect(register).toHaveBeenCalledWith(FeatureComponentToken.StatusBar, EpochStatusBarWidget)
   })
 })
 
@@ -51,13 +45,9 @@ describe("OPPFeatureProvider.registerServices", () => {
   it("registers the OPPTrackingService with the manager", () => {
     // OPPTrackingService dependsOn [Redux, DebuggingClient]; register both first.
     const manager = ServiceManager.get().register(ReduxService)
-    manager.registerInstance(
-      new DebuggingClientService(new MockDebuggingClient() as any)
-    )
+    manager.registerInstance(new DebuggingClientService(new MockDebuggingClient() as any))
     OPPFeatureProvider.registerServices(manager)
-    expect(manager.find(OPPTrackingService.id)?.serviceType).toBe(
-      OPPTrackingService
-    )
+    expect(manager.find(OPPTrackingService.id)?.serviceType).toBe(OPPTrackingService)
   })
 })
 

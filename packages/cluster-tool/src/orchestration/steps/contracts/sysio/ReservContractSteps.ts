@@ -1,10 +1,7 @@
 import { type PermissionLevelType, SysioContracts } from "@wireio/sdk-core"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../../ClusterBuildStep.js"
 import type { StepInput } from "../../../StepRunner.js"
 
 const { SysioContractName } = SysioContracts
@@ -14,9 +11,7 @@ const { SysioContractName } = SysioContracts
  * not by the contract. The owner is not part of either action's data (the
  * contract reads it off the row), so it rides the step input.
  */
-const ownerAuthorization = (owner: string): PermissionLevelType[] => [
-  { actor: owner, permission: "active" }
-]
+const ownerAuthorization = (owner: string): PermissionLevelType[] => [{ actor: owner, permission: "active" }]
 
 /** Steps for `sysio.reserv` actions. */
 export namespace ReservContractSteps {
@@ -51,9 +46,7 @@ export namespace ReservContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.reserv)
-      .actions.regreserve.invoke(input.data)
+    await ctx.wire.getSysioContract(SysioContractName.reserv).actions.regreserve.invoke(input.data)
   }
 
   /** Input for {@link planSetconfig} — the generated `reserv::setconfig` data. */
@@ -93,9 +86,7 @@ export namespace ReservContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.reserv)
-      .actions.setconfig.invoke(input.data)
+    await ctx.wire.getSysioContract(SysioContractName.reserv).actions.setconfig.invoke(input.data)
   }
 
   /** Input for {@link planSetrsvfee} — the generated `reserv::setrsvfee` data. */
@@ -136,11 +127,9 @@ export namespace ReservContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.reserv)
-      .actions.setrsvfee.invoke(input.data, {
-        authorization: ownerAuthorization(input.owner)
-      })
+    await ctx.wire.getSysioContract(SysioContractName.reserv).actions.setrsvfee.invoke(input.data, {
+      authorization: ownerAuthorization(input.owner)
+    })
   }
 
   /** Input for {@link planClaimrsvfee} — the generated `reserv::claimrsvfee` data. */
@@ -180,10 +169,8 @@ export namespace ReservContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.reserv)
-      .actions.claimrsvfee.invoke(input.data, {
-        authorization: ownerAuthorization(input.owner)
-      })
+    await ctx.wire.getSysioContract(SysioContractName.reserv).actions.claimrsvfee.invoke(input.data, {
+      authorization: ownerAuthorization(input.owner)
+    })
   }
 }

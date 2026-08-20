@@ -11,6 +11,4 @@ export interface ReportRenderer extends Renderer {
 }
 
 /** Constructor signature for a {@link ReportRenderer} — `new (report) => T`. */
-export type ReportRendererConstructor<T extends ReportRenderer = ReportRenderer> = new (
-  report: Report
-) => T
+export type ReportRendererConstructor<T extends ReportRenderer = ReportRenderer> = new (report: Report) => T

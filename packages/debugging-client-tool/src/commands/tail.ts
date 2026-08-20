@@ -1,9 +1,6 @@
 import { DebuggingServerClient } from "@wireio/debugging-client-shared"
 import { ApiPaths } from "@wireio/debugging-shared"
-import {
-  DebugOutpostEndpointsType,
-  EnvelopeListEntry
-} from "@wireio/opp-typescript-models"
+import { DebugOutpostEndpointsType, EnvelopeListEntry } from "@wireio/opp-typescript-models"
 
 import { getLogger } from "@wireio/shared"
 import { formatList, OutputFormat } from "../formatter.js"
@@ -22,16 +19,13 @@ export interface TailArgs {
 
 export async function handleTail(argv: TailArgs): Promise<void> {
   const client = await DebuggingServerClient.create({ baseUrl: argv.server })
-  const format =
-    argv.format === OutputFormat.json ? OutputFormat.json : OutputFormat.plain
+  const format = argv.format === OutputFormat.json ? OutputFormat.json : OutputFormat.plain
 
   // Resolve endpoints filter
   let endpointsType = DebugOutpostEndpointsType.UNKNOWN
   if (argv.endpoints) {
     const upper = argv.endpoints.toUpperCase()
-    const match = Object.entries(DebugOutpostEndpointsType).find(
-      ([name]) => name.toUpperCase() === upper
-    )
+    const match = Object.entries(DebugOutpostEndpointsType).find(([name]) => name.toUpperCase() === upper)
     if (match) {
       endpointsType = match[1] as DebugOutpostEndpointsType
     }
@@ -51,9 +45,7 @@ export async function handleTail(argv: TailArgs): Promise<void> {
   initial.entries.forEach(e => seenKeys.add(e.key))
 
   if (format === OutputFormat.plain) {
-    log.info(
-      `Watching for new envelopes (poll every ${argv.pollMs}ms, ${seenKeys.size} existing)...`
-    )
+    log.info(`Watching for new envelopes (poll every ${argv.pollMs}ms, ${seenKeys.size} existing)...`)
   }
 
   // Poll loop
@@ -74,9 +66,7 @@ export async function handleTail(argv: TailArgs): Promise<void> {
       timestampEnd: BigInt(0)
     })
 
-    const newEntries: EnvelopeListEntry[] = result.entries.filter(
-      e => !seenKeys.has(e.key)
-    )
+    const newEntries: EnvelopeListEntry[] = result.entries.filter(e => !seenKeys.has(e.key))
 
     if (newEntries.length > 0) {
       newEntries.forEach(e => seenKeys.add(e.key))

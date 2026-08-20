@@ -4,10 +4,7 @@ import * as Fs from "node:fs"
 
 import { JsonRPC, DebuggingServer } from "@wireio/debugging-server"
 import { ApiPaths, JsonRPCResult } from "@wireio/debugging-shared"
-import {
-  DebugOutpostEndpointsType,
-  Envelope
-} from "@wireio/opp-typescript-models"
+import { DebugOutpostEndpointsType, Envelope } from "@wireio/opp-typescript-models"
 import { Future } from "@3fv/prelude-ts"
 
 function makeEnvelopeBase64(epochIndex: number): string {
@@ -281,9 +278,7 @@ describe(`JSON-RPC ${ApiPaths.OPP.Methods.EnvelopeList}`, () => {
       endpointsType: DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
     })
     expect(body.result.total).toBe(1)
-    expect(body.result.entries[0].endpointsType).toBe(
-      DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM
-    )
+    expect(body.result.entries[0].endpointsType).toBe(DebugOutpostEndpointsType.DEPOT_OUTPOST_ETHEREUM)
   })
 
   it("returns entries sorted lexicographically by key", async () => {

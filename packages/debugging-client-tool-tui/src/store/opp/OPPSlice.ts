@@ -3,11 +3,7 @@ import { asOption } from "@3fv/prelude-ts"
 import { identity } from "lodash"
 import { match } from "ts-pattern"
 import { SliceName } from "../StoreTypes.js"
-import {
-  OPPState,
-  type DebugOPPEnvelopeRecord,
-  type DebugOPPEpochRecord
-} from "./OPPTypes.js"
+import { OPPState, type DebugOPPEnvelopeRecord, type DebugOPPEpochRecord } from "./OPPTypes.js"
 
 const initialState: OPPState = { epochIndex: 0, epochs: {}, epochOrder: [] }
 
@@ -73,9 +69,7 @@ export const oppSlice = createSlice({
         }
       })
       const duplicate = epochRecord.envelopes.some(
-        e =>
-          e.checksum === record.checksum &&
-          e.endpointsType === record.endpointsType
+        e => e.checksum === record.checksum && e.endpointsType === record.endpointsType
       )
       if (!duplicate) epochRecord.envelopes.push(record)
       if (epoch > state.epochIndex) state.epochIndex = epoch
@@ -84,8 +78,7 @@ export const oppSlice = createSlice({
     hydrate: (state, action: PayloadAction<DebugOPPEpochRecord[]>) => {
       action.payload.forEach(rec => {
         state.epochs[rec.epoch] = rec
-        if (!state.epochOrder.includes(rec.epoch))
-          state.epochOrder.push(rec.epoch)
+        if (!state.epochOrder.includes(rec.epoch)) state.epochOrder.push(rec.epoch)
         if (rec.epoch > state.epochIndex) state.epochIndex = rec.epoch
       })
       state.epochOrder.sort((a, b) => a - b)

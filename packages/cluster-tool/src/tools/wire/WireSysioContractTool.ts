@@ -1,17 +1,9 @@
 import Fs from "node:fs"
-import {
-  ABI,
-  Name,
-  type PermissionLevelType,
-  Serializer,
-  SysioContracts
-} from "@wireio/sdk-core"
+import { ABI, Name, type PermissionLevelType, Serializer, SysioContracts } from "@wireio/sdk-core"
 import type { WireClient } from "../../clients/wire/WireClient.js"
 
 /** Every system account is governed solely by `sysio@active`. */
-const SysioActiveAuthorization: PermissionLevelType[] = [
-  { actor: "sysio", permission: "active" }
-]
+const SysioActiveAuthorization: PermissionLevelType[] = [{ actor: "sysio", permission: "active" }]
 
 /**
  * Production-path system-contract deployment + system-account creation (folds
@@ -31,11 +23,7 @@ export class WireSysioContractTool {
    * @param wasmPath - Compiled `.wasm` path.
    * @param abiPath - `.abi` JSON path (packed for `setsysabi`).
    */
-  async deploySystemContract(
-    account: string,
-    wasmPath: string,
-    abiPath: string
-  ): Promise<void> {
+  async deploySystemContract(account: string, wasmPath: string, abiPath: string): Promise<void> {
     const codeHex = Fs.readFileSync(wasmPath).toString("hex"),
       abiHex = WireSysioContractTool.packAbi(Fs.readFileSync(abiPath, "utf-8"))
     await this.wire.invokeViaFile<SysioContracts.SysioRoaSetsyscodeAction>(
@@ -106,9 +94,7 @@ export namespace WireSysioContractTool {
     return {
       threshold: 1,
       keys: [] as AuthorityKeyWeight[],
-      accounts: [
-        { permission: { actor: "sysio", permission: "active" }, weight: 1 }
-      ],
+      accounts: [{ permission: { actor: "sysio", permission: "active" }, weight: 1 }],
       waits: [] as AuthorityWaitWeight[]
     }
   }

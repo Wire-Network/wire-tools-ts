@@ -22,9 +22,7 @@ export class ReportCsvRenderer implements ReportRenderer {
   /** Depth-first walk: groups extend `path`, phases emit their step rows. */
   private renderNode(node: Report.Node, path: string[], rows: string[]): void {
     if (Report.Node.isGroup(node)) {
-      node.children.forEach(child =>
-        this.renderNode(child, [...path, node.name], rows)
-      )
+      node.children.forEach(child => this.renderNode(child, [...path, node.name], rows))
       return
     }
     node.steps.forEach(step =>
@@ -52,8 +50,7 @@ export class ReportCsvRenderer implements ReportRenderer {
 }
 
 export namespace ReportCsvRenderer {
-  export const Header =
-    "path,phase,step,actor,status,startedAt,durationMs,error,extra"
+  export const Header = "path,phase,step,actor,status,startedAt,durationMs,error,extra"
   /** Joins the enclosing group names in the `path` column. */
   export const PathSeparator = " / "
 }

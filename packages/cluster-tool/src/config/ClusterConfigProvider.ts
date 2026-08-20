@@ -24,30 +24,18 @@ import { defaultsDeep } from "lodash"
 import { Level } from "@wireio/shared"
 import { KeyType } from "@wireio/sdk-core"
 import { KeyGenerator } from "../clients/wire/KeyGenerator.js"
-import {
-  ListenAllAddress,
-  Localhost,
-  toDialAddress,
-  toURL
-} from "../utils/netUtils.js"
+import { ListenAllAddress, Localhost, toDialAddress, toURL } from "../utils/netUtils.js"
 import { getLogger } from "../logging/Logger.js"
 import { LogFileAppender } from "../logging/LogFileAppender.js"
 import { Report } from "../report/Report.js"
 import type { Renderer } from "../utils/Renderer.js"
 import { which } from "../utils/fsUtils.js"
 import { keyPairFromPrivate } from "../utils/keyPairUtils.js"
-import type {
-  KeyPair,
-  WireFinalizerKeyPair,
-  WireKeyPair
-} from "../types/KeyPair.js"
+import type { KeyPair, WireFinalizerKeyPair, WireKeyPair } from "../types/KeyPair.js"
 import { Constants } from "../Constants.js"
 import { BatchOperatorSchedule } from "./BatchOperatorSchedule.js"
 import { BindConfigProvider } from "./BindConfigProvider.js"
-import type {
-  ClusterBuildOptions,
-  LoggingOptions
-} from "./ClusterBuildOptions.js"
+import type { ClusterBuildOptions, LoggingOptions } from "./ClusterBuildOptions.js"
 // Sibling-module cycle (NodeConfig → NodeConfigIniRenderer → here → NodeConfig):
 // every reference on both sides is read inside a function body, never at
 // module-init, so whichever module loads first the other is complete by the
@@ -120,9 +108,7 @@ export namespace ClusterConfigProvider {
    * @param options - Caller options.
    * @returns The fully-resolved, validated config.
    */
-  export async function resolve(
-    options: ClusterBuildOptions
-  ): Promise<ClusterConfig> {
+  export async function resolve(options: ClusterBuildOptions): Promise<ClusterConfig> {
     // Roster shape first: it is pure arithmetic, and rejecting here means an
     // illegal topology never claims a cluster's worth of ports (nor holds the
     // host-global bind lock) on its way to failing.
@@ -133,16 +119,9 @@ export namespace ClusterConfigProvider {
       executables = await resolveExecutables(buildPath),
       report = resolveReport(options.report, clusterPath),
       logging = resolveLogging(options.logging),
-      awsClusterNodeConfig = resolveAWSClusterNodeConfig(
-        options.awsClusterNodeConfig
-      ),
-      signatureProvider = resolveSignatureProvider(
-        options.signatureProvider,
-        awsClusterNodeConfig
-      ),
-      externalOutposts = await loadExternalOutposts(
-        options.externalOutpostConfig
-      )
+      awsClusterNodeConfig = resolveAWSClusterNodeConfig(options.awsClusterNodeConfig),
+      signatureProvider = resolveSignatureProvider(options.signatureProvider, awsClusterNodeConfig),
+      externalOutposts = await loadExternalOutposts(options.externalOutpostConfig)
     assertExternalOutpostTopology(options, externalOutposts)
 
     return {
@@ -157,12 +136,10 @@ export namespace ClusterConfigProvider {
       epochDurationSec: options.epochDurationSec ?? DefaultEpochDurationSec,
       operatorsPerEpoch: options.operatorsPerEpoch ?? null,
       batchOpGroups: options.batchOpGroups ?? null,
-      epochRetentionEnvelopeLogCount:
-        options.epochRetentionEnvelopeLogCount ?? null,
+      epochRetentionEnvelopeLogCount: options.epochRetentionEnvelopeLogCount ?? null,
       warmupEpochs: options.warmupEpochs ?? 1,
       cooldownEpochs: options.cooldownEpochs ?? 1,
-      terminateMaxConsecutiveMisses:
-        options.terminateMaxConsecutiveMisses ?? null,
+      terminateMaxConsecutiveMisses: options.terminateMaxConsecutiveMisses ?? null,
       terminateMaxPercentMisses24h: options.terminateMaxPercentMisses24h ?? null,
       terminateWindowMs: options.terminateWindowMs ?? null,
       ethereumPath: assertOption(options.ethereumPath, "ethereumPath"),
@@ -171,10 +148,8 @@ export namespace ClusterConfigProvider {
       executables,
       report,
       logging,
-      requiredBatchOperatorCollateral:
-        options.requiredBatchOperatorCollateral ?? [],
-      requiredUnderwriterCollateral:
-        options.requiredUnderwriterCollateral ?? [],
+      requiredBatchOperatorCollateral: options.requiredBatchOperatorCollateral ?? [],
+      requiredUnderwriterCollateral: options.requiredUnderwriterCollateral ?? [],
       requiredProducerCollateral: options.requiredProducerCollateral ?? [],
       underwriterCollateral: options.underwriterCollateral ?? null,
       // Genesis authority = the well-known dev BIOS key pair, matching the
@@ -232,9 +207,7 @@ export namespace ClusterConfigProvider {
    * @param options - Caller options.
    * @returns The resolved config plus the bios + node-owner key material.
    */
-  export async function resolveWithBiosKeys(
-    options: ClusterBuildOptions
-  ): Promise<ClusterConfigWithBiosKeys> {
+  export async function resolveWithBiosKeys(options: ClusterBuildOptions): Promise<ClusterConfigWithBiosKeys> {
     const config = await resolve(options)
     if (config.signatureProvider.type !== SignatureProviderType.SSM) {
       return {
@@ -313,19 +286,12 @@ export namespace ClusterConfigProvider {
     const { awsSecretId } = signatureProviderSource(config)(account, keyType),
       // `resolve` derives `ssm.awsRegions` from `awsClusterNodeConfig.regions`,
       // so a resolved SSM config always names its replication set.
-      existing = await SSMClientProvider.getParameterAcrossRegions(
-        config.signatureProvider.ssm.awsRegions,
-        awsSecretId
-      )
+      existing = await SSMClientProvider.getParameterAcrossRegions(config.signatureProvider.ssm.awsRegions, awsSecretId)
     if (existing != null) {
-      log.info(
-        `ClusterConfigProvider: adopting the existing SSM key ${awsSecretId} (${purpose}) — NOT regenerating`
-      )
+      log.info(`ClusterConfigProvider: adopting the existing SSM key ${awsSecretId} (${purpose}) — NOT regenerating`)
       return keyPairFromPrivate(keyType, existing)
     }
-    log.info(
-      `ClusterConfigProvider: no SSM key at ${awsSecretId} — generating ${purpose}`
-    )
+    log.info(`ClusterConfigProvider: no SSM key at ${awsSecretId} — generating ${purpose}`)
     return KeyGenerator.create(keyType, keyContext, { purpose })
   }
 
@@ -350,10 +316,7 @@ export namespace ClusterConfigProvider {
    * @param explicitClusterPath - Whether `--cluster-path` / `-d` appeared on the raw command line.
    * @throws When both sources author `clusterPath`.
    */
-  export function assertClusterPathSource(
-    fileOptions: ClusterBuildOptions,
-    explicitClusterPath: boolean
-  ): void {
+  export function assertClusterPathSource(fileOptions: ClusterBuildOptions, explicitClusterPath: boolean): void {
     Assert.ok(
       fileOptions?.clusterPath == null || !explicitClusterPath,
       `clusterPath is authored twice: the --cluster-build-options-file document sets "clusterPath" (${fileOptions?.clusterPath}) AND an explicit --cluster-path/-d was passed. Drop one. ` +
@@ -379,10 +342,7 @@ export namespace ClusterConfigProvider {
    * @param externalOutposts - The loaded external-outpost config, or `null` for local mode.
    * @throws When external mode is combined with a non-zero effective underwriter count.
    */
-  function assertExternalOutpostTopology(
-    options: ClusterBuildOptions,
-    externalOutposts: ExternalOutpostConfig
-  ): void {
+  function assertExternalOutpostTopology(options: ClusterBuildOptions, externalOutposts: ExternalOutpostConfig): void {
     if (externalOutposts == null) {
       return
     }
@@ -406,9 +366,7 @@ export namespace ClusterConfigProvider {
    * @param options - The caller's AWS cluster-node config (may be omitted).
    * @returns The validated config, or `null`.
    */
-  function resolveAWSClusterNodeConfig(
-    options: AWSClusterNodeConfig
-  ): AWSClusterNodeConfig {
+  function resolveAWSClusterNodeConfig(options: AWSClusterNodeConfig): AWSClusterNodeConfig {
     if (options == null) {
       return null
     }
@@ -440,10 +398,7 @@ export namespace ClusterConfigProvider {
       type !== SignatureProviderType.SSM || ssm != null,
       "signatureProvider.ssm (awsSecretIdPattern) is required when type is SSM"
     )
-    Assert.ok(
-      ssm == null || type === SignatureProviderType.SSM,
-      "signatureProvider.ssm is only valid when type is SSM"
-    )
+    Assert.ok(ssm == null || type === SignatureProviderType.SSM, "signatureProvider.ssm is only valid when type is SSM")
     Assert.ok(
       type !== SignatureProviderType.SSM || awsClusterNodeConfig != null,
       "awsClusterNodeConfig is required when signatureProvider.type is SSM (it sources the secret-id {cluster} segment and the replication regions)"
@@ -456,10 +411,7 @@ export namespace ClusterConfigProvider {
     )
     return {
       type,
-      ssm:
-        ssm == null
-          ? null
-          : { ...ssm, awsRegions: awsClusterNodeConfig.regions }
+      ssm: ssm == null ? null : { ...ssm, awsRegions: awsClusterNodeConfig.regions }
     }
   }
 
@@ -499,9 +451,7 @@ export namespace ClusterConfigProvider {
     cliBind: BindOptions,
     topology: ClusterTopologyOptions
   ): Promise<BindConfig> {
-    const parsed: unknown = JSON.parse(
-      await Fsp.readFile(Path.resolve(bindConfigFile), "utf-8")
-    )
+    const parsed: unknown = JSON.parse(await Fsp.readFile(Path.resolve(bindConfigFile), "utf-8"))
     if (BindConfigSchemaCodec.check(parsed)) {
       // COMPLETE: cross-validate cardinality, then use verbatim with the CLI
       // `--bind-*` overrides layered on top — remote ports are NOT probed.
@@ -510,37 +460,19 @@ export namespace ClusterConfigProvider {
     }
     // PARTIAL: validate the override shape, then merge over resolver defaults.
     const fileBind = BindOptionsSchema.parse(parsed) as BindOptions
-    return BindConfigProvider.resolve(
-      defaultsDeep({ ...cliBind }, fileBind),
-      topology
-    )
+    return BindConfigProvider.resolve(defaultsDeep({ ...cliBind }, fileBind), topology)
   }
 
   /** Fail fast when a COMPLETE `--bind-config`'s node counts mismatch the topology. */
-  function assertBindCardinality(
-    bind: BindConfig,
-    topology: ClusterTopologyOptions
-  ): void {
+  function assertBindCardinality(bind: BindConfig, topology: ClusterTopologyOptions): void {
     const expect = (label: string, actual: number, want: number): void =>
       Assert.ok(
         actual === want,
         `--bind-config: nodeop.ports.${label} has ${actual} entries but the cluster topology expects ${want}`
       )
-    expect(
-      "producers",
-      bind.nodeop.ports.producers.length,
-      topology.producerCount ?? DefaultNodeCount
-    )
-    expect(
-      "batch",
-      bind.nodeop.ports.batch.length,
-      topology.batchOperatorCount ?? DefaultBatchOperatorCount
-    )
-    expect(
-      "underwriters",
-      bind.nodeop.ports.underwriters.length,
-      topology.underwriterCount ?? DefaultUnderwriterCount
-    )
+    expect("producers", bind.nodeop.ports.producers.length, topology.producerCount ?? DefaultNodeCount)
+    expect("batch", bind.nodeop.ports.batch.length, topology.batchOperatorCount ?? DefaultBatchOperatorCount)
+    expect("underwriters", bind.nodeop.ports.underwriters.length, topology.underwriterCount ?? DefaultUnderwriterCount)
   }
 
   /**
@@ -550,12 +482,8 @@ export namespace ClusterConfigProvider {
    * @param bind - The resolved bind config.
    * @param options - The caller options (for `externalOutpostConfig`).
    */
-  function assertRemoteOutpostRequiresExternalConfig(
-    bind: BindConfig,
-    options: ClusterBuildOptions
-  ): void {
-    const isRemote = (address: string): boolean =>
-      address !== Localhost && address !== ListenAllAddress
+  function assertRemoteOutpostRequiresExternalConfig(bind: BindConfig, options: ClusterBuildOptions): void {
+    const isRemote = (address: string): boolean => address !== Localhost && address !== ListenAllAddress
     const remotes = [
       isRemote(bind.anvil.address) ? "anvil (Ethereum)" : null,
       isRemote(bind.solana.address) ? "solana" : null
@@ -575,19 +503,14 @@ export namespace ClusterConfigProvider {
    * @param file - Path to the `ExternalOutpostConfig` JSON (may be omitted).
    * @returns The resolved config, or `null`.
    */
-  async function loadExternalOutposts(
-    file: string
-  ): Promise<ExternalOutpostConfig> {
+  async function loadExternalOutposts(file: string): Promise<ExternalOutpostConfig> {
     if (file == null) {
       return null
     }
     const configFile = Path.resolve(file),
       baseDir = Path.dirname(configFile),
-      config = ExternalOutpostConfigSchemaCodec.deserialize(
-        await Fsp.readFile(configFile, "utf-8")
-      ),
-      resolveRef = (ref: string): string =>
-        Path.isAbsolute(ref) ? ref : Path.resolve(baseDir, ref)
+      config = ExternalOutpostConfigSchemaCodec.deserialize(await Fsp.readFile(configFile, "utf-8")),
+      resolveRef = (ref: string): string => (Path.isAbsolute(ref) ? ref : Path.resolve(baseDir, ref))
     return {
       ethereum: {
         addressFile: resolveRef(config.ethereum.addressFile),
@@ -599,54 +522,36 @@ export namespace ClusterConfigProvider {
       },
       solana: {
         idlFile: resolveRef(config.solana.idlFile),
-        ...(config.solana.mintsFile != null
-          ? { mintsFile: resolveRef(config.solana.mintsFile) }
-          : {})
+        ...(config.solana.mintsFile != null ? { mintsFile: resolveRef(config.solana.mintsFile) } : {})
       }
     }
   }
 
   /** Resolve + validate every binary path (the build-dir bins + PATH lookups). */
-  async function resolveExecutables(
-    buildPath: string
-  ): Promise<ClusterExecutablePaths> {
+  async function resolveExecutables(buildPath: string): Promise<ClusterExecutablePaths> {
     const toBin = (name: string) => Path.join(buildPath, "bin", name)
     const paths: ClusterExecutablePaths = {
       nodeop: toBin("nodeop"),
       kiod: toBin("kiod"),
       clio: toBin("clio"),
       anvil: assertOption(await which("anvil"), "anvil (on PATH)"),
-      solanaTestValidator: assertOption(
-        await which("solana-test-validator"),
-        "solana-test-validator (on PATH)"
-      )
+      solanaTestValidator: assertOption(await which("solana-test-validator"), "solana-test-validator (on PATH)")
     }
-    ;[paths.nodeop, paths.kiod, paths.clio].forEach(p =>
-      Assert.ok(Fs.existsSync(p), `binary not found at ${p}`)
-    )
+    ;[paths.nodeop, paths.kiod, paths.clio].forEach(p => Assert.ok(Fs.existsSync(p), `binary not found at ${p}`))
     return paths
   }
 
   /** Build the resolved `Report.Config` from the optional caller leaf. */
-  function resolveReport(
-    options: Report.Options | null,
-    clusterPath: string
-  ): Report.Config {
+  function resolveReport(options: Report.Options | null, clusterPath: string): Report.Config {
     return {
       path: options?.path ?? Path.join(clusterPath, ReportSubpath),
       basename: options?.basename ?? DefaultReportBasename,
-      formats: options?.formats ?? [
-        Report.Format.csv,
-        Report.Format.md,
-        Report.Format.html
-      ]
+      formats: options?.formats ?? [Report.Format.csv, Report.Format.md, Report.Format.html]
     }
   }
 
   /** Build the resolved `ClusterConfigLogging` from the optional caller leaf. */
-  function resolveLogging(
-    options: LoggingOptions | null
-  ): ClusterConfigLogging {
+  function resolveLogging(options: LoggingOptions | null): ClusterConfigLogging {
     return {
       levels: {
         console: options?.levels?.console ?? Level.info,
@@ -710,10 +615,7 @@ export namespace ClusterConfigProvider {
    * @param basename - The report basename for the clone.
    * @returns The cloned configuration.
    */
-  export function withReportBasename(
-    config: ClusterConfig,
-    basename: string
-  ): ClusterConfig {
+  export function withReportBasename(config: ClusterConfig, basename: string): ClusterConfig {
     return { ...config, report: { ...config.report, basename } }
   }
 
@@ -800,25 +702,16 @@ export namespace ClusterConfigProvider {
    * @param substitutions - The placeholder values.
    * @returns The rendered secret id.
    */
-  export function toSecretId(
-    pattern: string,
-    substitutions: SecretIdSubstitutions
-  ): string {
+  export function toSecretId(pattern: string, substitutions: SecretIdSubstitutions): string {
     return pattern.replace(/\{(\w+)\}/g, (_match, key: string) => {
       const value = substitutions[key as keyof SecretIdSubstitutions]
-      Assert.ok(
-        value != null,
-        `toSecretId: unknown or unfilled placeholder {${key}} in pattern "${pattern}"`
-      )
+      Assert.ok(value != null, `toSecretId: unknown or unfilled placeholder {${key}} in pattern "${pattern}"`)
       return value
     })
   }
 
   /** Builds the {@link KeyGenerator.SignatureProviderSource} for an account's key. */
-  export type SignatureProviderSourceFor = (
-    account: string,
-    keyType: KeyType
-  ) => KeyGenerator.SignatureProviderSource
+  export type SignatureProviderSourceFor = (account: string, keyType: KeyType) => KeyGenerator.SignatureProviderSource
 
   /**
    * The cluster's AWS account name — the secret-id `{cluster}` value. Fails fast
@@ -828,9 +721,7 @@ export namespace ClusterConfigProvider {
    * @param config - The cluster configuration.
    * @returns The AWS account name.
    */
-  function assertAWSAccountName(
-    config: ClusterConfig
-  ): AWSClusterNodeConfig["account"] {
+  function assertAWSAccountName(config: ClusterConfig): AWSClusterNodeConfig["account"] {
     Assert.ok(
       config.awsClusterNodeConfig != null,
       "ClusterConfigProvider: an SSM signature provider requires awsClusterNodeConfig (the secret-id {cluster} source)"
@@ -850,14 +741,9 @@ export namespace ClusterConfigProvider {
    * @param config - The resolved cluster config.
    * @returns A `(account, keyType) => source` builder.
    */
-  export function signatureProviderSource(
-    config: ClusterConfig
-  ): SignatureProviderSourceFor {
+  export function signatureProviderSource(config: ClusterConfig): SignatureProviderSourceFor {
     const provider = config.signatureProvider,
-      kiodUrl = toURL(
-        config.bind.kiod.port,
-        toDialAddress(config.bind.kiod.address)
-      )
+      kiodUrl = toURL(config.bind.kiod.port, toDialAddress(config.bind.kiod.address))
     return (account, keyType) =>
       KeyGenerator.keySource(
         provider,

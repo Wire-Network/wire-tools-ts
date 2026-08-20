@@ -1,29 +1,10 @@
 import Path from "node:path"
-import type {
-  BindConfigDaemon,
-  ClusterConfig
-} from "@wireio/cluster-tool-shared"
-import {
-  AnvilProcess,
-  type AnvilConfig
-} from "../cluster/processes/AnvilProcess.js"
-import {
-  KiodProcess,
-  type KiodConfig
-} from "../cluster/processes/KiodProcess.js"
-import {
-  NodeopProcess,
-  type NodeopConfig
-} from "../cluster/processes/NodeopProcess.js"
-import {
-  SolanaValidatorProcess,
-  type SolanaValidatorConfig
-} from "../cluster/processes/SolanaValidatorProcess.js"
-import {
-  matchesPrefix,
-  StartScriptVariable,
-  type StartScriptRelocation
-} from "../utils/startScriptUtils.js"
+import type { BindConfigDaemon, ClusterConfig } from "@wireio/cluster-tool-shared"
+import { AnvilProcess, type AnvilConfig } from "../cluster/processes/AnvilProcess.js"
+import { KiodProcess, type KiodConfig } from "../cluster/processes/KiodProcess.js"
+import { NodeopProcess, type NodeopConfig } from "../cluster/processes/NodeopProcess.js"
+import { SolanaValidatorProcess, type SolanaValidatorConfig } from "../cluster/processes/SolanaValidatorProcess.js"
+import { matchesPrefix, StartScriptVariable, type StartScriptRelocation } from "../utils/startScriptUtils.js"
 import { NodeConfig } from "./NodeConfig.js"
 
 /**
@@ -157,8 +138,7 @@ export namespace DaemonConfig {
   export const AnvilBinEnvironmentVariable = "WIRE_ANVIL_BIN"
 
   /** Env var overriding the solana-test-validator binary a rendered script execs. */
-  export const SolanaValidatorBinEnvironmentVariable =
-    "WIRE_SOLANA_TEST_VALIDATOR_BIN"
+  export const SolanaValidatorBinEnvironmentVariable = "WIRE_SOLANA_TEST_VALIDATOR_BIN"
 
   /** Env var overriding the `node` binary a rendered script execs. */
   export const NodeBinEnvironmentVariable = "WIRE_NODE_BIN"
@@ -189,13 +169,9 @@ export namespace DaemonConfig {
       ...NodeConfig.plan(config).map(node => node.name),
       // External-outpost clusters run against REMOTE chains — no local anvil
       // or validator exists, so neither gets a script.
-      ...(isExternalOutpost
-        ? []
-        : [AnvilProcess.ProcessLabel, SolanaValidatorProcess.ProcessLabel]),
+      ...(isExternalOutpost ? [] : [AnvilProcess.ProcessLabel, SolanaValidatorProcess.ProcessLabel]),
       KiodProcess.ProcessLabel,
-      ...(config.debuggingServerEnabled === false
-        ? []
-        : [DebuggingServerSubpath])
+      ...(config.debuggingServerEnabled === false ? [] : [DebuggingServerSubpath])
     ]
   }
 
@@ -207,20 +183,13 @@ export namespace DaemonConfig {
    * @param sources - The per-daemon resolved configs (see {@link DaemonConfigSources}).
    * @returns One descriptor per daemon this cluster actually runs.
    */
-  export function plan(
-    config: ClusterConfig,
-    sources: DaemonConfigSources
-  ): DaemonConfig[] {
+  export function plan(config: ClusterConfig, sources: DaemonConfigSources): DaemonConfig[] {
     return [
       ...sources.nodeop.map(nodeop => planNode(nodeop)),
       ...(sources.anvil == null ? [] : [planAnvil(config, sources.anvil)]),
-      ...(sources.solanaValidator == null
-        ? []
-        : [planSolanaValidator(config, sources.solanaValidator)]),
+      ...(sources.solanaValidator == null ? [] : [planSolanaValidator(config, sources.solanaValidator)]),
       ...(sources.kiod == null ? [] : [planKiod(config, sources.kiod)]),
-      ...(sources.debuggingServer == null
-        ? []
-        : [planDebuggingServer(config, sources.debuggingServer)])
+      ...(sources.debuggingServer == null ? [] : [planDebuggingServer(config, sources.debuggingServer)])
     ]
   }
 
@@ -262,9 +231,7 @@ export namespace DaemonConfig {
           tokens: [NodeopProcess.TraceNoAbisFlag]
         }
       ],
-      relocations: [
-        { prefix: node.nodePath, variable: StartScriptVariable.NODE_DIR }
-      ]
+      relocations: [{ prefix: node.nodePath, variable: StartScriptVariable.NODE_DIR }]
     }
   }
 
@@ -280,10 +247,7 @@ export namespace DaemonConfig {
         slotsInAnEpoch: AnvilProcess.SlotsInAnEpoch,
         blockTimeSec: AnvilProcess.BlockTimeSec
       },
-      daemonPath = DaemonConfig.daemonPath(
-        config.dataPath,
-        AnvilProcess.ProcessLabel
-      )
+      daemonPath = DaemonConfig.daemonPath(config.dataPath, AnvilProcess.ProcessLabel)
     return {
       kind: DaemonKind.anvil,
       label: AnvilProcess.ProcessLabel,
@@ -305,21 +269,13 @@ export namespace DaemonConfig {
                 tokens: ["--load-state", runConfig.stateFile]
               }
             ],
-      relocations: [
-        { prefix: daemonPath, variable: StartScriptVariable.NODE_DIR }
-      ]
+      relocations: [{ prefix: daemonPath, variable: StartScriptVariable.NODE_DIR }]
     }
   }
 
   /** The local solana-test-validator — identical by construction to `run`'s (same runner). */
-  function planSolanaValidator(
-    config: ClusterConfig,
-    validator: SolanaValidatorConfig
-  ): DaemonConfig {
-    const daemonPath = DaemonConfig.daemonPath(
-      config.dataPath,
-      SolanaValidatorProcess.ProcessLabel
-    )
+  function planSolanaValidator(config: ClusterConfig, validator: SolanaValidatorConfig): DaemonConfig {
+    const daemonPath = DaemonConfig.daemonPath(config.dataPath, SolanaValidatorProcess.ProcessLabel)
     return {
       kind: DaemonKind.solanaValidator,
       label: SolanaValidatorProcess.ProcessLabel,
@@ -336,9 +292,7 @@ export namespace DaemonConfig {
       // expansion, so the run-time environment still wins.
       env: SolanaValidatorProcess.DefaultEnv,
       conditions: [],
-      relocations: [
-        { prefix: daemonPath, variable: StartScriptVariable.NODE_DIR }
-      ]
+      relocations: [{ prefix: daemonPath, variable: StartScriptVariable.NODE_DIR }]
     }
   }
 
@@ -352,10 +306,7 @@ export namespace DaemonConfig {
     return {
       kind: DaemonKind.kiod,
       label: KiodProcess.ProcessLabel,
-      daemonPath: DaemonConfig.daemonPath(
-        config.dataPath,
-        KiodProcess.ProcessLabel
-      ),
+      daemonPath: DaemonConfig.daemonPath(config.dataPath, KiodProcess.ProcessLabel),
       exe: kiod.binary,
       argv: KiodProcess.buildArgs(kiod),
       conditions: [],
@@ -368,10 +319,7 @@ export namespace DaemonConfig {
    * inside the harness, with no label, pidfile or spawned argv — so its
    * directory and command are DECLARED here rather than derived.
    */
-  function planDebuggingServer(
-    config: ClusterConfig,
-    server: BindConfigDaemon
-  ): DaemonConfig {
+  function planDebuggingServer(config: ClusterConfig, server: BindConfigDaemon): DaemonConfig {
     const daemonPath = Path.join(config.dataPath, DebuggingServerSubpath)
     return {
       kind: DaemonKind.debuggingServer,
@@ -391,9 +339,7 @@ export namespace DaemonConfig {
         String(server.port)
       ],
       conditions: [],
-      relocations: [
-        { prefix: daemonPath, variable: StartScriptVariable.NODE_DIR }
-      ]
+      relocations: [{ prefix: daemonPath, variable: StartScriptVariable.NODE_DIR }]
     }
   }
 
@@ -407,14 +353,8 @@ export namespace DaemonConfig {
    * @param prefix - That root's prefix.
    * @returns The path with its root replaced by a `$VAR` expansion.
    */
-  function quoteForTest(
-    path: string,
-    variable: StartScriptVariable,
-    prefix: string
-  ): string {
-    return matchesPrefix(path, prefix)
-      ? `$${variable}${path.slice(prefix.length)}`
-      : path
+  function quoteForTest(path: string, variable: StartScriptVariable, prefix: string): string {
+    return matchesPrefix(path, prefix) ? `$${variable}${path.slice(prefix.length)}` : path
   }
 
   /** Directory (under the cluster data dir) the bundled debugging server lives in. */
@@ -476,9 +416,7 @@ export namespace DaemonConfig {
    * @param config - The resolved cluster config.
    * @returns Prefix→variable mappings (unordered; the renderer orders them).
    */
-  export function clusterRelocations(
-    config: ClusterConfig
-  ): StartScriptRelocation[] {
+  export function clusterRelocations(config: ClusterConfig): StartScriptRelocation[] {
     return [
       { prefix: config.clusterPath, variable: StartScriptVariable.CLUSTER_DIR },
       {

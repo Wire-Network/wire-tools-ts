@@ -42,9 +42,7 @@ export namespace ReserveLifecycleScenarioOwnerSteps {
    * @param fundWireAmount - Raw WIRE base units to fund the account with.
    * @returns The definition step.
    */
-  export function planProvisionUser<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planProvisionUser<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -101,9 +99,7 @@ export namespace ReserveLifecycleScenarioOwnerSteps {
    * @param account - WIRE account to link the creator key to.
    * @returns The definition step.
    */
-  export function planCreateLink<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planCreateLink<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,

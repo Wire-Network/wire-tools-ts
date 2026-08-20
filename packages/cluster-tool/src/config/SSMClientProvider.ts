@@ -130,10 +130,7 @@ export namespace SSMClientProvider {
    */
   function isParameterNotFound(error: unknown): boolean {
     return match(error)
-      .with(
-        P.instanceOf(Error),
-        ({ name }) => name === ParameterNotFoundErrorName
-      )
+      .with(P.instanceOf(Error), ({ name }) => name === ParameterNotFoundErrorName)
       .otherwise(() => false)
   }
 
@@ -146,29 +143,18 @@ export namespace SSMClientProvider {
    * @param secretId - The parameter name/id.
    * @returns The decrypted, trimmed value.
    */
-  export async function getParameter(
-    region: string,
-    secretId: string
-  ): Promise<string> {
+  export async function getParameter(region: string, secretId: string): Promise<string> {
     const { GetParameterCommand } = await importSSMModule()
     const client = await ssmClientForRegion(region)
-    const response = await client.send(
-      new GetParameterCommand({ Name: secretId, WithDecryption: true })
-    )
+    const response = await client.send(new GetParameterCommand({ Name: secretId, WithDecryption: true }))
     const parameter = response.Parameter
-    Assert.ok(
-      parameter != null,
-      `SSMClientProvider: parameter ${secretId} not found in ${regionLabel(region)}`
-    )
+    Assert.ok(parameter != null, `SSMClientProvider: parameter ${secretId} not found in ${regionLabel(region)}`)
     Assert.ok(
       parameter.Type == null || parameter.Type === SecureStringType,
       `SSMClientProvider: parameter ${secretId} must be a SecureString (got ${parameter.Type})`
     )
     const value = (parameter.Value ?? "").trim()
-    Assert.ok(
-      value.length > 0,
-      `SSMClientProvider: parameter ${secretId} is empty`
-    )
+    Assert.ok(value.length > 0, `SSMClientProvider: parameter ${secretId} is empty`)
     return value
   }
 
@@ -192,10 +178,7 @@ export namespace SSMClientProvider {
    * @param secretId - The parameter name/id.
    * @returns The decrypted, trimmed value, or nothing when the id is unpublished.
    */
-  export async function tryGetParameter(
-    region: string,
-    secretId: string
-  ): Promise<string> {
+  export async function tryGetParameter(region: string, secretId: string): Promise<string> {
     try {
       return await getParameter(region, secretId)
     } catch (error) {
@@ -223,10 +206,7 @@ export namespace SSMClientProvider {
    * @returns The agreed value, or nothing when the id is unpublished everywhere.
    * @throws If two regions hold DIFFERENT values for `secretId`.
    */
-  export async function getParameterAcrossRegions(
-    regions: readonly string[],
-    secretId: string
-  ): Promise<string> {
+  export async function getParameterAcrossRegions(regions: readonly string[], secretId: string): Promise<string> {
     const present: RegionParameter[] = []
     await eachSeries(regions, async region => {
       const value = await tryGetParameter(region, secretId)

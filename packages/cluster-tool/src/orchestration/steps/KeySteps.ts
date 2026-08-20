@@ -3,10 +3,7 @@ import { ethers } from "ethers"
 import { range } from "lodash"
 import { match } from "ts-pattern"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
-import {
-  SignatureProviderType,
-  type ClusterConfig
-} from "@wireio/cluster-tool-shared"
+import { SignatureProviderType, type ClusterConfig } from "@wireio/cluster-tool-shared"
 import type { Tag } from "@aws-sdk/client-ssm"
 import { eachSeries, mapSeries } from "../../utils/asyncUtils.js"
 import { keyPairFromPrivate } from "../../utils/keyPairUtils.js"
@@ -23,10 +20,7 @@ import { isNotEmpty } from "../../utils/predicateUtils.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
 import type { ClusterBuildParent } from "../ClusterBuildPhaseBase.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../ClusterBuildStep.js"
 import { ClusterKeyStore } from "../outputs/ClusterKeyStore.js"
 import { EthereumMnemonicKey } from "../outputs/EthereumMnemonicOutput.js"
 import type { StepInput } from "../StepRunner.js"
@@ -66,17 +60,12 @@ export namespace KeySteps {
    * @returns The mnemonic phrase to derive EM keys from.
    */
   export function ethereumMnemonic(ctx: ClusterBuildContext): string {
-    return (
-      ctx.outputs.get(EthereumMnemonicKey) ??
-      EthereumOutpostBootstrapper.AnvilMnemonic
-    )
+    return ctx.outputs.get(EthereumMnemonicKey) ?? EthereumOutpostBootstrapper.AnvilMnemonic
   }
 
   /** A freshly generated cluster-scoped Ethereum HD mnemonic phrase. */
   function newEthereumMnemonic(): string {
-    return ethers.Mnemonic.fromEntropy(
-      ethers.randomBytes(EthereumMnemonicEntropyBytes)
-    ).phrase
+    return ethers.Mnemonic.fromEntropy(ethers.randomBytes(EthereumMnemonicEntropyBytes)).phrase
   }
 
   /**
@@ -91,14 +80,7 @@ export namespace KeySteps {
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runGenerateNodeKeys
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runGenerateNodeKeys)
   }
 
   /** Named runner — generate node + operator keys into `ctx.outputs`. */
@@ -116,11 +98,7 @@ export namespace KeySteps {
     if (ctx.config.signatureProvider.type === SignatureProviderType.SSM) {
       ctx.outputs.set(EthereumMnemonicKey, newEthereumMnemonic())
     }
-    const keyContext = KeyGenerator.context(
-      ctx.config.executables.clio,
-      ctx.config.buildPath,
-      ethereumMnemonic(ctx)
-    )
+    const keyContext = KeyGenerator.context(ctx.config.executables.clio, ctx.config.buildPath, ethereumMnemonic(ctx))
     // Producer NODE signing sets (K1+BLS per node), pushed into THE key store.
     // Operator identities (producer / batch / underwriter accounts) accumulate
     // into the same store per-label as their provisioning phases materialize
@@ -129,18 +107,10 @@ export namespace KeySteps {
     // The nodes come from `NodeConfig.plan`, the SAME source
     // `signatureProviderKeyPublications` enumerates, so a node's secret-id
     // `{account}` segment here and at publish time can never drift.
-    const nodes: ClusterKeyStore.NodeKeys[] = await mapSeries(
-      producerNodes(ctx.config),
-      async node => ({
-        index: node.index,
-        keys: await adoptOrCreateProducerKeySet(
-          ctx.config,
-          keyContext,
-          node.name,
-          `producer ${node.name} signing set`
-        )
-      })
-    )
+    const nodes: ClusterKeyStore.NodeKeys[] = await mapSeries(producerNodes(ctx.config), async node => ({
+      index: node.index,
+      keys: await adoptOrCreateProducerKeySet(ctx.config, keyContext, node.name, `producer ${node.name} signing set`)
+    }))
     ctx.keyStore.pushNodes(...nodes)
   }
 
@@ -155,14 +125,7 @@ export namespace KeySteps {
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runCreateWallet
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runCreateWallet)
   }
 
   /** Named runner — `wallet.getOrCreate()` then import the BIOS + generated keys. */
@@ -173,10 +136,7 @@ export namespace KeySteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const wallet = await ctx.wire.wallet.getOrCreate(),
-      nodeKeys = ctx.keyStore.nodes.flatMap(node => [
-        node.keys.wire.privateKey,
-        node.keys.wireFinalizer.privateKey
-      ]),
+      nodeKeys = ctx.keyStore.nodes.flatMap(node => [node.keys.wire.privateKey, node.keys.wireFinalizer.privateKey]),
       // The GENESIS identities, from the key store rather than the dev
       // constants. Under SSM `resolveWithBiosKeys` GENERATES these, and
       // `genesis.initial_key` carries the generated public half — so importing
@@ -187,11 +147,7 @@ export namespace KeySteps {
       genesisKeys = [NodeConfig.BiosName, Constants.BOOTSTRAP_NODE_OWNER]
         .map(label => ctx.keyStore.operator(label))
         .filter(identity => identity != null)
-        .flatMap(identity =>
-          [identity.wire?.privateKey, identity.wireFinalizer?.privateKey].filter(
-            isNotEmpty
-          )
-        )
+        .flatMap(identity => [identity.wire?.privateKey, identity.wireFinalizer?.privateKey].filter(isNotEmpty))
     // DEDUPED: `kiod` rejects a re-import with `key_exist_exception`, and the
     // genesis identities legitimately SHARE a key under KEY/KIOD —
     // `resolveWithBiosKeys` hands back the same dev pair for both the bios node
@@ -238,18 +194,16 @@ export namespace KeySteps {
   ): Promise<KeyPair<T>> {
     const secretId = signatureProviderSecretId(config, account, keyType)
     if (secretId != null) {
-      const adopted = await SSMClientProvider.getParameterAcrossRegions(
-        replicationRegions(config),
-        secretId
-      )
+      const adopted = await SSMClientProvider.getParameterAcrossRegions(replicationRegions(config), secretId)
       if (adopted != null) {
         log.info(
           `[keys] adopting the existing ${KeyType[keyType]} key for ${account} from ${secretId} — NOT regenerating`
         )
-        StepExtraRecorder.note(
-          `adopted ${account}'s existing ${KeyType[keyType]} key from SSM`,
-          { account, keyType: KeyType[keyType], secretId }
-        )
+        StepExtraRecorder.note(`adopted ${account}'s existing ${KeyType[keyType]} key from SSM`, {
+          account,
+          keyType: KeyType[keyType],
+          secretId
+        })
         return keyPairFromPrivate(keyType, adopted)
       }
     }
@@ -298,16 +252,9 @@ export namespace KeySteps {
    * @param keyType - The key's curve.
    * @returns The rendered secret id, or nothing under KEY / KIOD.
    */
-  export function signatureProviderSecretId(
-    config: ClusterConfig,
-    account: string,
-    keyType: KeyType
-  ): string {
+  export function signatureProviderSecretId(config: ClusterConfig, account: string, keyType: KeyType): string {
     if (config.signatureProvider.type !== SignatureProviderType.SSM) return null
-    return ClusterConfigProvider.signatureProviderSource(config)(
-      account,
-      keyType
-    ).awsSecretId
+    return ClusterConfigProvider.signatureProviderSource(config)(account, keyType).awsSecretId
   }
 
   /**
@@ -318,10 +265,7 @@ export namespace KeySteps {
    */
   function replicationRegions(config: ClusterConfig): string[] {
     const { ssm } = config.signatureProvider
-    Assert.ok(
-      ssm != null,
-      "KeySteps: SSM signature provider requires ssm settings"
-    )
+    Assert.ok(ssm != null, "KeySteps: SSM signature provider requires ssm settings")
     Assert.ok(
       config.awsClusterNodeConfig != null,
       "KeySteps: SSM signature provider requires awsClusterNodeConfig (the secret-id {cluster} source + the replication regions)"
@@ -333,9 +277,7 @@ export namespace KeySteps {
 
   /** The planned PRODUCER nodes, whose names are the node keys' `{account}` segments. */
   function producerNodes(config: ClusterConfig): NodeConfig[] {
-    return NodeConfig.plan(config).filter(
-      node => node.role === NodeRole.producer
-    )
+    return NodeConfig.plan(config).filter(node => node.role === NodeRole.producer)
   }
 
   // ── SSM key publication (create --signature-provider-type SSM) ─────────────
@@ -412,9 +354,7 @@ export namespace KeySteps {
   }
 
   /** Typed input for {@link planPublishSignatureProviderKey}. */
-  export interface PublishSignatureProviderKeyInput
-    extends SignatureProviderKeyPublication,
-      StepInput {
+  export interface PublishSignatureProviderKeyInput extends SignatureProviderKeyPublication, StepInput {
     /** Step-input discriminator. */
     kind: "KeySteps.PublishSignatureProviderKeyInput"
   }
@@ -434,9 +374,7 @@ export namespace KeySteps {
    * @param config - The resolved cluster config (SSM signature provider).
    * @returns The per-key publications.
    */
-  export function signatureProviderKeyPublications(
-    config: ClusterConfig
-  ): SignatureProviderKeyPublication[] {
+  export function signatureProviderKeyPublications(config: ClusterConfig): SignatureProviderKeyPublication[] {
     const awsRegions = replicationRegions(config),
       { account: cluster } = config.awsClusterNodeConfig,
       { ssm } = config.signatureProvider,
@@ -486,12 +424,8 @@ export namespace KeySteps {
         })),
         // Batch operators + underwriters — wire + both outpost curves.
         ...[
-          ...range(config.batchOperatorCount).map(index =>
-            Constants.batchOperatorLabel(index)
-          ),
-          ...range(config.underwriterCount).map(index =>
-            Constants.underwriterLabel(index)
-          )
+          ...range(config.batchOperatorCount).map(index => Constants.batchOperatorLabel(index)),
+          ...range(config.underwriterCount).map(index => Constants.underwriterLabel(index))
         ].map(label => ({
           label,
           source: SignatureKeySource.operator,
@@ -533,9 +467,7 @@ export namespace KeySteps {
    * @param source - Which key-store class this phase publishes.
    * @returns The publish phase.
    */
-  export function planSignatureProviderKeyPublications<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planSignatureProviderKeyPublications<C extends ClusterBuildContext = ClusterBuildContext>(
     parent: ClusterBuildParent<C>,
     name: string,
     description: string,
@@ -570,9 +502,7 @@ export namespace KeySteps {
    * @param publication - The per-key publication descriptor (metadata only).
    * @returns The publish step.
    */
-  export function planPublishSignatureProviderKey<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planPublishSignatureProviderKey<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -610,9 +540,7 @@ export namespace KeySteps {
    * given region already holds the parameter is a RUNTIME fact this runner
    * discovers per region.
    */
-  export async function runPublishSignatureProviderKey<
-    C extends ClusterBuildContext
-  >(
+  export async function runPublishSignatureProviderKey<C extends ClusterBuildContext>(
     ctx: C,
     input: PublishSignatureProviderKeyInput,
     signal: AbortSignal
@@ -623,60 +551,32 @@ export namespace KeySteps {
     // never how its curves are read.
     const identity: SigningKeySet = match(input.source)
         .with(SignatureKeySource.node, () => ctx.keyStore.node(input.nodeIndex).keys)
-        .with(SignatureKeySource.operator, () =>
-          ctx.keyStore.assertOperator(input.label)
-        )
+        .with(SignatureKeySource.operator, () => ctx.keyStore.assertOperator(input.label))
         .exhaustive(),
       privateKey = identityPrivateKey(identity, input.keyType, input.label)
     const nativePrivateKey = PrivateKey.from(privateKey).toNativeString(),
-      tags: Tag[] =
-        input.version != null
-          ? [{ Key: PlatformVersionTagKey, Value: input.version }]
-          : []
+      tags: Tag[] = input.version != null ? [{ Key: PlatformVersionTagKey, Value: input.version }] : []
     await eachSeries(input.awsRegions, async region => {
-      const existing = await SSMClientProvider.tryGetParameter(
-        region,
-        input.secretId
-      )
+      const existing = await SSMClientProvider.tryGetParameter(region, input.secretId)
       if (existing != null) {
-        log.info(
-          `[keys] ${input.secretId} is already published in ${region} — retained (this run adopted it)`
-        )
+        log.info(`[keys] ${input.secretId} is already published in ${region} — retained (this run adopted it)`)
         return
       }
-      await SSMClientProvider.putParameter(
-        region,
-        input.secretId,
-        nativePrivateKey,
-        tags
-      )
+      await SSMClientProvider.putParameter(region, input.secretId, nativePrivateKey, tags)
     })
   }
 
   /** The private key of a producer-node key set for `keyType` (K1 / BLS). */
-  function identityPrivateKey(
-    identity: SigningKeySet,
-    keyType: KeyType,
-    label: string
-  ): string {
+  function identityPrivateKey(identity: SigningKeySet, keyType: KeyType, label: string): string {
     const assertPresent = <T>(key: T, curve: string): T => {
       Assert.ok(key != null, `KeySteps: ${label} has no ${curve} key`)
       return key
     }
     return match(keyType)
       .with(KeyType.K1, () => identity.wire.privateKey)
-      .with(
-        KeyType.BLS,
-        () => assertPresent(identity.wireFinalizer, "wireFinalizer").privateKey
-      )
-      .with(
-        KeyType.EM,
-        () => assertPresent(identity.ethereum, "ethereum").privateKey
-      )
-      .with(
-        KeyType.ED,
-        () => assertPresent(identity.solana, "solana").privateKey
-      )
+      .with(KeyType.BLS, () => assertPresent(identity.wireFinalizer, "wireFinalizer").privateKey)
+      .with(KeyType.EM, () => assertPresent(identity.ethereum, "ethereum").privateKey)
+      .with(KeyType.ED, () => assertPresent(identity.solana, "solana").privateKey)
       .otherwise(() => {
         throw new Error(`KeySteps: ${label} has no ${KeyType[keyType]} key`)
       })

@@ -4,19 +4,11 @@ import Path from "node:path"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { ethers } from "ethers"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
-import {
-  AWSAccountName,
-  SignatureProviderType,
-  type ClusterConfig
-} from "@wireio/cluster-tool-shared"
+import { AWSAccountName, SignatureProviderType, type ClusterConfig } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
 import { ClusterConfigProvider, NodeConfig } from "@wireio/cluster-tool/config"
-import {
-  EthereumMnemonicKey,
-  EthereumOutpostBootstrapper,
-  Steps
-} from "@wireio/cluster-tool/orchestration"
+import { EthereumMnemonicKey, EthereumOutpostBootstrapper, Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { fixtureConfig, PersistedFixture } from "../../config/clusterConfigFixture.js"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
@@ -31,17 +23,11 @@ const mockSend = jest.fn()
 // for: SSM parameters are per-region, so the store below can only mimic AWS if
 // it knows which region a get/put is addressed to.
 jest.mock("@aws-sdk/client-ssm", () => ({
-  SSMClient: jest
-    .fn()
-    .mockImplementation(({ region }: MockSSMClientConfig = {}) => ({
-      send: (command: unknown) => mockSend(command, region ?? "")
-    })),
-  GetParameterCommand: jest
-    .fn()
-    .mockImplementation((input: unknown) => ({ kind: "GetParameter", input })),
-  PutParameterCommand: jest
-    .fn()
-    .mockImplementation((input: unknown) => ({ kind: "PutParameter", input }))
+  SSMClient: jest.fn().mockImplementation(({ region }: MockSSMClientConfig = {}) => ({
+    send: (command: unknown) => mockSend(command, region ?? "")
+  })),
+  GetParameterCommand: jest.fn().mockImplementation((input: unknown) => ({ kind: "GetParameter", input })),
+  PutParameterCommand: jest.fn().mockImplementation((input: unknown) => ({ kind: "PutParameter", input }))
 }))
 
 /** A captured SSM tag. */
@@ -173,22 +159,13 @@ describe("Steps.keys", () => {
 
   /** The generation context over the fake binaries + the anvil mnemonic. */
   function keyContext(): KeyGenerator.Context {
-    return KeyGenerator.context(
-      Path.join(dir, "clio"),
-      dir,
-      EthereumOutpostBootstrapper.AnvilMnemonic
-    )
+    return KeyGenerator.context(Path.join(dir, "clio"), dir, EthereumOutpostBootstrapper.AnvilMnemonic)
   }
 
   it.each(["planGenerateNodeKeys", "planCreateWallet"] as const)(
     "%s builds an input-less step with a runner",
     factoryName => {
-      const step = Steps.keys[factoryName](
-        Report.Actor.Sysio,
-        factoryName,
-        `key step ${factoryName}`,
-        {}
-      )
+      const step = Steps.keys[factoryName](Report.Actor.Sysio, factoryName, `key step ${factoryName}`, {})
       expect(step.actor).toBe(Report.Actor.Sysio)
       expect(step.input).toBeNull()
       expect(typeof step.runner).toBe("function")
@@ -230,24 +207,15 @@ describe("Steps.keys", () => {
       // while the bios daemon renders `SSM:/…/node_bios/{K1,BLS}` from
       // `node.name`. Nothing wrote those parameters, so the bios node could
       // never start on ANY SSM cluster — first run or thousandth.
-      const biosKeys = publications.filter(
-        publication => publication.label === NodeConfig.BiosName
-      )
-      expect(biosKeys.map(publication => publication.keyType).sort()).toEqual(
-        [KeyType.K1, KeyType.BLS].sort()
-      )
+      const biosKeys = publications.filter(publication => publication.label === NodeConfig.BiosName)
+      expect(biosKeys.map(publication => publication.keyType).sort()).toEqual([KeyType.K1, KeyType.BLS].sort())
       expect(biosKeys.map(publication => publication.secretId)).toEqual(
-        expect.arrayContaining([
-          `/wire/test/${NodeConfig.BiosName}/K1`,
-          `/wire/test/${NodeConfig.BiosName}/BLS`
-        ])
+        expect.arrayContaining([`/wire/test/${NodeConfig.BiosName}/K1`, `/wire/test/${NodeConfig.BiosName}/BLS`])
       )
     })
 
     it("PUBLISHES the bootstrap node owner's K1 — it signs roa::newuser for every operator", () => {
-      const ownerKeys = publications.filter(
-        publication => publication.label === Constants.BOOTSTRAP_NODE_OWNER
-      )
+      const ownerKeys = publications.filter(publication => publication.label === Constants.BOOTSTRAP_NODE_OWNER)
       expect(ownerKeys).toHaveLength(1)
       expect(ownerKeys[0].keyType).toBe(KeyType.K1)
     })
@@ -256,30 +224,22 @@ describe("Steps.keys", () => {
       // Whatever a node's `--signature-provider` resolves to MUST have been
       // published. This is the invariant, independent of which identities the
       // walker happens to enumerate today.
-      const publishedIds = new Set(
-        publications.map(publication => publication.secretId)
-      )
+      const publishedIds = new Set(publications.map(publication => publication.secretId))
       const sourceFor = ClusterConfigProvider.signatureProviderSource(config),
         // Only a PRODUCING node renders `--signature-provider` specs; a
         // batch/underwriter node carries no producers and fetches no node key.
-        producingNodes = NodeConfig.plan(config).filter(
-          node => node.producers.length > 0
-        )
+        producingNodes = NodeConfig.plan(config).filter(node => node.producers.length > 0)
       expect(producingNodes.length).toBeGreaterThan(0)
       producingNodes.forEach(node =>
         [KeyType.K1, KeyType.BLS].forEach(keyType =>
-          expect(publishedIds).toContain(
-            sourceFor(node.name, keyType).awsSecretId
-          )
+          expect(publishedIds).toContain(sourceFor(node.name, keyType).awsSecretId)
         )
       )
     })
 
     it("keys each secret id by the AWS ACCOUNT, not the cluster-path basename", () => {
       const batchK1 = publications.find(
-        publication =>
-          publication.label === "batchop.a" &&
-          publication.keyType === KeyType.K1
+        publication => publication.label === "batchop.a" && publication.keyType === KeyType.K1
       )
       // `{cluster}` = awsClusterNodeConfig.account (`test`) — the cluster dir is
       // `/tmp/wire-cluster-pubs` and must NOT appear.
@@ -289,9 +249,7 @@ describe("Steps.keys", () => {
     })
 
     it("carries no version when the cluster's SSM settings declare none", () => {
-      expect(publications.every(publication => publication.version == null)).toBe(
-        true
-      )
+      expect(publications.every(publication => publication.version == null)).toBe(true)
     })
 
     it("renders the OPTIONAL {version} token when the pattern authors it, and carries it as the tag value", () => {
@@ -301,34 +259,29 @@ describe("Steps.keys", () => {
             type: SignatureProviderType.SSM,
             ssm: {
               awsRegions: SSMRegions,
-              awsSecretIdPattern:
-                "/wire/{cluster}/{account}/{keyType}/{version}",
+              awsSecretIdPattern: "/wire/{cluster}/{account}/{keyType}/{version}",
               version: "v4"
             }
           }
         })
       )
       const batchK1 = versioned.find(
-        publication =>
-          publication.label === "batchop.a" &&
-          publication.keyType === KeyType.K1
+        publication => publication.label === "batchop.a" && publication.keyType === KeyType.K1
       )
       expect(batchK1?.secretId).toBe("/wire/test/batchop.a/K1/v4")
       expect(batchK1?.version).toBe("v4")
     })
 
     it("throws on a KEY provider (SSM settings required)", () => {
-      expect(() =>
-        Steps.keys.signatureProviderKeyPublications(fixtureConfig())
-      ).toThrow(/SSM signature provider requires ssm settings/)
+      expect(() => Steps.keys.signatureProviderKeyPublications(fixtureConfig())).toThrow(
+        /SSM signature provider requires ssm settings/
+      )
     })
 
     it("throws when an SSM cluster carries no awsClusterNodeConfig", () => {
-      expect(() =>
-        Steps.keys.signatureProviderKeyPublications(
-          ssmConfig({ awsClusterNodeConfig: null })
-        )
-      ).toThrow(/requires awsClusterNodeConfig/)
+      expect(() => Steps.keys.signatureProviderKeyPublications(ssmConfig({ awsClusterNodeConfig: null }))).toThrow(
+        /requires awsClusterNodeConfig/
+      )
     })
   })
 
@@ -390,9 +343,7 @@ describe("Steps.keys", () => {
       )
       // (3 batch + 1 underwriter) × (K1 + EM + ED) = 12; no node publications.
       expect(phase.steps).toHaveLength(12)
-      expect(
-        phase.steps.every(step => !step.name.startsWith("publish-node_"))
-      ).toBe(true)
+      expect(phase.steps.every(step => !step.name.startsWith("publish-node_"))).toBe(true)
     })
 
     it("builds publish inputs from CONFIG ALONE — no 'adopted' flag at compose time", () => {
@@ -417,23 +368,11 @@ describe("Steps.keys", () => {
 
   describe("signatureProviderSecretId", () => {
     it("renders the id an SSM cluster publishes a key under", () => {
-      expect(
-        Steps.keys.signatureProviderSecretId(
-          ssmConfig(),
-          "batchop.a",
-          KeyType.EM
-        )
-      ).toBe("/wire/test/batchop.a/EM")
+      expect(Steps.keys.signatureProviderSecretId(ssmConfig(), "batchop.a", KeyType.EM)).toBe("/wire/test/batchop.a/EM")
     })
 
     it("is absent under KEY — there is nothing to adopt", () => {
-      expect(
-        Steps.keys.signatureProviderSecretId(
-          fixtureConfig(),
-          "batchop.a",
-          KeyType.EM
-        )
-      ).toBeNull()
+      expect(Steps.keys.signatureProviderSecretId(fixtureConfig(), "batchop.a", KeyType.EM)).toBeNull()
     })
   })
 
@@ -451,9 +390,7 @@ describe("Steps.keys", () => {
       expect(adopted.privateKey).toBe(existing.toString())
       expect(adopted.publicKey).toBe(existing.toPublic().toString())
       // The fake clio would have produced a DIFFERENT key — adoption must win.
-      expect(adopted.privateKey).not.toContain(
-        "2bfGi9rYsXQSXXTvJbDAPhHLQUojjaNLomdm3cEJ1XTdfThJ4i"
-      )
+      expect(adopted.privateKey).not.toContain("2bfGi9rYsXQSXXTvJbDAPhHLQUojjaNLomdm3cEJ1XTdfThJ4i")
       // Probed only; nothing was written.
       expect(commandInputs("PutParameter")).toEqual([])
     })
@@ -466,9 +403,7 @@ describe("Steps.keys", () => {
         "batchop.a",
         keyContext()
       )
-      expect(created.privateKey).toBe(
-        "PVT_K1_2bfGi9rYsXQSXXTvJbDAPhHLQUojjaNLomdm3cEJ1XTdfThJ4i"
-      )
+      expect(created.privateKey).toBe("PVT_K1_2bfGi9rYsXQSXXTvJbDAPhHLQUojjaNLomdm3cEJ1XTdfThJ4i")
       // Every region was probed before falling back to generation.
       expect(commandInputs("GetParameter").map(input => input.Name)).toEqual(
         SSMRegions.map(() => "/wire/test/batchop.a/K1")
@@ -477,31 +412,20 @@ describe("Steps.keys", () => {
 
     it("adopts a BLS key WITH its proof of possession", async () => {
       installSSMStoreMock()
-      publishEverywhere(
-        "/wire/test/node_00/BLS",
-        PrivateKey.from(Constants.DEV_BLS_PRIVATE_KEY).toNativeString()
-      )
+      publishEverywhere("/wire/test/node_00/BLS", PrivateKey.from(Constants.DEV_BLS_PRIVATE_KEY).toNativeString())
       const adopted = await Steps.keys.adoptOrCreateSignatureProviderKey(
         ssmConfig(fakeExecutables()),
         KeyType.BLS,
         "node_00",
         keyContext()
       )
-      expect(adopted.proofOfPossession).toBe(
-        Constants.DEV_BLS_PROOF_OF_POSSESSION
-      )
+      expect(adopted.proofOfPossession).toBe(Constants.DEV_BLS_PROOF_OF_POSSESSION)
     })
 
     it("HARD-FAILS when two regions hold different values for the same id", async () => {
       mockSend
-        .mockResolvedValueOnce(
-          secureStringResponse(
-            PrivateKey.from(Constants.DEV_K1_PRIVATE_KEY).toNativeString()
-          )
-        )
-        .mockResolvedValueOnce(
-          secureStringResponse(PrivateKey.generate(KeyType.K1).toNativeString())
-        )
+        .mockResolvedValueOnce(secureStringResponse(PrivateKey.from(Constants.DEV_K1_PRIVATE_KEY).toNativeString()))
+        .mockResolvedValueOnce(secureStringResponse(PrivateKey.generate(KeyType.K1).toNativeString()))
       await expect(
         Steps.keys.adoptOrCreateSignatureProviderKey(
           ssmConfig(fakeExecutables()),
@@ -527,9 +451,7 @@ describe("Steps.keys", () => {
 
   describe("ethereumMnemonic (D14 — never the published anvil phrase under SSM)", () => {
     it("falls back to the anvil mnemonic under KEY / KIOD so flows stay byte-identical", () => {
-      expect(Steps.keys.ethereumMnemonic(fixtureContext())).toBe(
-        EthereumOutpostBootstrapper.AnvilMnemonic
-      )
+      expect(Steps.keys.ethereumMnemonic(fixtureContext())).toBe(EthereumOutpostBootstrapper.AnvilMnemonic)
     })
 
     it("reads the cluster-scoped phrase once a run has generated one", () => {
@@ -543,29 +465,17 @@ describe("Steps.keys", () => {
   describe("runGenerateNodeKeys", () => {
     it("under KEY: generates node keys and leaves the anvil mnemonic in place", async () => {
       const ctx = fixtureContext(fakeExecutables())
-      await Steps.keys.runGenerateNodeKeys(
-        ctx,
-        null,
-        new AbortController().signal
-      )
+      await Steps.keys.runGenerateNodeKeys(ctx, null, new AbortController().signal)
       expect(ctx.outputs.get(EthereumMnemonicKey)).toBeNull()
-      expect(Steps.keys.ethereumMnemonic(ctx)).toBe(
-        EthereumOutpostBootstrapper.AnvilMnemonic
-      )
+      expect(Steps.keys.ethereumMnemonic(ctx)).toBe(EthereumOutpostBootstrapper.AnvilMnemonic)
       expect(ctx.keyStore.node(0).keys.wire.privateKey).toMatch(/^PVT_K1_/)
-      expect(ctx.keyStore.node(0).keys.wireFinalizer.proofOfPossession).toBe(
-        Constants.DEV_BLS_PROOF_OF_POSSESSION
-      )
+      expect(ctx.keyStore.node(0).keys.wireFinalizer.proofOfPossession).toBe(Constants.DEV_BLS_PROOF_OF_POSSESSION)
     })
 
     it("under SSM: mints a cluster-scoped mnemonic into ctx.outputs (never the config)", async () => {
       installSSMStoreMock()
       const ctx = fixtureContext(ssmConfig(fakeExecutables()))
-      await Steps.keys.runGenerateNodeKeys(
-        ctx,
-        null,
-        new AbortController().signal
-      )
+      await Steps.keys.runGenerateNodeKeys(ctx, null, new AbortController().signal)
       const phrase = ctx.outputs.get(EthereumMnemonicKey)
       expect(phrase).not.toBe(EthereumOutpostBootstrapper.AnvilMnemonic)
       // 32 bytes of entropy → the 24-word BIP-39 form, and a REAL phrase.
@@ -578,20 +488,11 @@ describe("Steps.keys", () => {
       installSSMStoreMock()
       const k1 = PrivateKey.from(Constants.DEV_K1_PRIVATE_KEY)
       publishEverywhere("/wire/test/node_00/K1", k1.toNativeString())
-      publishEverywhere(
-        "/wire/test/node_00/BLS",
-        PrivateKey.from(Constants.DEV_BLS_PRIVATE_KEY).toNativeString()
-      )
+      publishEverywhere("/wire/test/node_00/BLS", PrivateKey.from(Constants.DEV_BLS_PRIVATE_KEY).toNativeString())
       const ctx = fixtureContext(ssmConfig(fakeExecutables()))
-      await Steps.keys.runGenerateNodeKeys(
-        ctx,
-        null,
-        new AbortController().signal
-      )
+      await Steps.keys.runGenerateNodeKeys(ctx, null, new AbortController().signal)
       expect(ctx.keyStore.node(0).keys.wire.privateKey).toBe(k1.toString())
-      expect(ctx.keyStore.node(0).keys.wireFinalizer.privateKey).toBe(
-        Constants.DEV_BLS_PRIVATE_KEY
-      )
+      expect(ctx.keyStore.node(0).keys.wireFinalizer.privateKey).toBe(Constants.DEV_BLS_PRIVATE_KEY)
       // Adoption reads; it never writes.
       expect(commandInputs("PutParameter")).toEqual([])
     })
@@ -607,26 +508,17 @@ describe("Steps.keys", () => {
 
     it("an OPERATOR daemon resolves the very id publication wrote", () => {
       const label = Constants.batchOperatorLabel(0),
-        published = publications.find(
-          publication =>
-            publication.label === label && publication.keyType === KeyType.K1
-        )
+        published = publications.find(publication => publication.label === label && publication.keyType === KeyType.K1)
       expect(published.secretId).toBeDefined()
-      expect(keySourceFor(label, KeyType.K1).awsSecretId).toBe(
-        published.secretId
-      )
+      expect(keySourceFor(label, KeyType.K1).awsSecretId).toBe(published.secretId)
     })
 
     it("a PRODUCER node resolves the very id publication wrote", () => {
       const published = publications.find(
-        publication =>
-          publication.source === Steps.keys.SignatureKeySource.node &&
-          publication.keyType === KeyType.BLS
+        publication => publication.source === Steps.keys.SignatureKeySource.node && publication.keyType === KeyType.BLS
       )
       expect(published.secretId).toBeDefined()
-      expect(keySourceFor(published.label, KeyType.BLS).awsSecretId).toBe(
-        published.secretId
-      )
+      expect(keySourceFor(published.label, KeyType.BLS).awsSecretId).toBe(published.secretId)
     })
 
     it("NEVER resolves an operator's key from its generated chain account", () => {
@@ -636,13 +528,9 @@ describe("Steps.keys", () => {
       // at daemon start, invisible under KEY mode (the default), fatal on a
       // real SSM cluster.
       const published = publications.find(
-        publication =>
-          publication.label === Constants.batchOperatorLabel(0) &&
-          publication.keyType === KeyType.K1
+        publication => publication.label === Constants.batchOperatorLabel(0) && publication.keyType === KeyType.K1
       )
-      expect(keySourceFor(GeneratedAccount, KeyType.K1).awsSecretId).not.toBe(
-        published.secretId
-      )
+      expect(keySourceFor(GeneratedAccount, KeyType.K1).awsSecretId).not.toBe(published.secretId)
     })
   })
 
@@ -706,10 +594,7 @@ describe("Steps.keys", () => {
       installSSMStoreMock()
       // The adopted-everywhere case: the create adopted this key, so no region
       // needs it written — but each one is still probed.
-      publishEverywhere(
-        "/wire/c/batchop.a/K1",
-        PrivateKey.from(Constants.DEV_K1_PRIVATE_KEY).toNativeString()
-      )
+      publishEverywhere("/wire/c/batchop.a/K1", PrivateKey.from(Constants.DEV_K1_PRIVATE_KEY).toNativeString())
       const ctx = operatorContext(),
         step = Steps.keys.planPublishSignatureProviderKey(
           Report.Actor.Sysio,
@@ -726,11 +611,7 @@ describe("Steps.keys", () => {
     it("publishes to a region that is BEHIND even when another already has the id", async () => {
       // Region 0 answers with the value; region 1 reports not-found → one put.
       mockSend
-        .mockResolvedValueOnce(
-          secureStringResponse(
-            PrivateKey.from(Constants.DEV_K1_PRIVATE_KEY).toNativeString()
-          )
-        )
+        .mockResolvedValueOnce(secureStringResponse(PrivateKey.from(Constants.DEV_K1_PRIVATE_KEY).toNativeString()))
         .mockRejectedValueOnce(parameterNotFound("/wire/c/batchop.a/K1"))
         .mockResolvedValueOnce({})
       const ctx = operatorContext(),
@@ -757,9 +638,7 @@ describe("Steps.keys", () => {
           operatorK1Publication("v4")
         )
       await step.runner(ctx, step.input, new AbortController().signal)
-      expect(commandInputs("PutParameter")[0].Tags).toEqual([
-        { Key: Steps.keys.PlatformVersionTagKey, Value: "v4" }
-      ])
+      expect(commandInputs("PutParameter")[0].Tags).toEqual([{ Key: Steps.keys.PlatformVersionTagKey, Value: "v4" }])
     })
 
     it("omits Tags entirely when the cluster declares no version", async () => {
@@ -853,9 +732,7 @@ describe("Steps.keys", () => {
       )
       await step.runner(ctx, step.input, new AbortController().signal)
       const put = commandInputs("PutParameter")[0]
-      expect(put.Value).toBe(
-        PrivateKey.from(Constants.DEV_BLS_PRIVATE_KEY).toNativeString()
-      )
+      expect(put.Value).toBe(PrivateKey.from(Constants.DEV_BLS_PRIVATE_KEY).toNativeString())
       // BLS is the one type whose WIRE string IS its native form.
       expect(put.Value).toMatch(/^PVT_BLS_/)
     })

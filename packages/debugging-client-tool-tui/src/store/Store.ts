@@ -1,9 +1,5 @@
 import { configureStore } from "@reduxjs/toolkit"
-import {
-  useDispatch,
-  useSelector,
-  type TypedUseSelectorHook
-} from "react-redux"
+import { useDispatch, useSelector, type TypedUseSelectorHook } from "react-redux"
 import { SliceName } from "./StoreTypes.js"
 import { createReduxFileLogger } from "./middleware/createReduxFileLogger.js"
 import { uiSlice } from "./ui/UISlice.js"
@@ -18,10 +14,7 @@ import { processMonitorSlice } from "./process-monitor/ProcessMonitorSlice.js"
  * BigInts and Uint8Arrays before dispatch, but this second line of defense
  * avoids spurious warnings if any leak through.
  */
-const IgnoredSerializableActions = [
-  "opp/appendEnvelope",
-  "opp/hydrate"
-] as const
+const IgnoredSerializableActions = ["opp/appendEnvelope", "opp/hydrate"] as const
 
 /**
  * TUI Redux store. Single source of truth for every slice. The

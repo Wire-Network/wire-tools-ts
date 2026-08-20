@@ -1,10 +1,6 @@
 import * as Path from "node:path"
 
-import {
-  ClusterSubpath,
-  isPathUnder,
-  oppDebuggingPath
-} from "@wireio/debugging-shared"
+import { ClusterSubpath, isPathUnder, oppDebuggingPath } from "@wireio/debugging-shared"
 
 describe("ClusterSubpath", () => {
   it("OppDebugging is data/opp-debugging", () => {
@@ -14,9 +10,7 @@ describe("ClusterSubpath", () => {
 
 describe("oppDebuggingPath", () => {
   it("joins clusterPath with the OPP debugging subpath", () => {
-    expect(oppDebuggingPath("/tmp/cluster")).toBe(
-      Path.join("/tmp/cluster", "data", "opp-debugging")
-    )
+    expect(oppDebuggingPath("/tmp/cluster")).toBe(Path.join("/tmp/cluster", "data", "opp-debugging"))
   })
 })
 

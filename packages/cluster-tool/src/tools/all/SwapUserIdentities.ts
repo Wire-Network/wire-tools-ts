@@ -20,10 +20,7 @@ import { getLogger } from "@wireio/shared"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import { ClusterBuildPhase } from "../../orchestration/ClusterBuildPhase.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../orchestration/ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../orchestration/ClusterBuildStep.js"
 import type { ClusterBuildParent } from "../../orchestration/ClusterBuildPhaseBase.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { swapUserOutputKey } from "../../orchestration/outputs/SwapUserOutput.js"
@@ -182,10 +179,6 @@ export namespace SwapUserIdentities {
     if (current >= input.floorLamports) return
     const requestLamports = input.floorLamports - current + LAMPORTS_PER_SOL
     const signature = await ctx.solana.connection.requestAirdrop(publicKey, requestLamports)
-    await confirmSignature(
-      ctx.solana.connection,
-      signature,
-      `swap-user airdrop to ${publicKey.toBase58()}`
-    )
+    await confirmSignature(ctx.solana.connection, signature, `swap-user airdrop to ${publicKey.toBase58()}`)
   }
 }

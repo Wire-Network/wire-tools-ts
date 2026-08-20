@@ -8,9 +8,7 @@ import { ServiceManager } from "./ServiceManager.js"
  * `tui.ts` wrapping the Redux `Provider`. Null default so `useServiceManager`
  * can throw a clear error when consumed outside the provider.
  */
-export const ServiceManagerContext = React.createContext<ServiceManager | null>(
-  null
-)
+export const ServiceManagerContext = React.createContext<ServiceManager | null>(null)
 
 /**
  * Grab the ambient `ServiceManager`.
@@ -36,9 +34,7 @@ export function useService<T extends Service>(id: string): T {
  * Fetch multiple services in one call. Preserves tuple typing at call sites —
  * pass the `id` strings in the desired order, then assert the return type.
  */
-export function useServices<T extends readonly Service[]>(
-  ...ids: { [K in keyof T]: string }
-): T {
+export function useServices<T extends readonly Service[]>(...ids: { [K in keyof T]: string }): T {
   const manager = useServiceManager()
   // `.map` erases tuple LENGTH, so the result is re-typed as the caller's arity
   // before the per-slot narrowing. The slot types are the caller's declaration
@@ -57,12 +53,6 @@ export interface ServiceManagerProviderProps {
 }
 
 /** Thin JSX wrapper over `ServiceManagerContext.Provider`. */
-export function ServiceManagerProvider(
-  props: ServiceManagerProviderProps
-): React.ReactElement {
-  return (
-    <ServiceManagerContext.Provider value={props.manager}>
-      {props.children}
-    </ServiceManagerContext.Provider>
-  )
+export function ServiceManagerProvider(props: ServiceManagerProviderProps): React.ReactElement {
+  return <ServiceManagerContext.Provider value={props.manager}>{props.children}</ServiceManagerContext.Provider>
 }

@@ -26,14 +26,10 @@ describe("Constants", () => {
 
   describe("formatSignatureProvider", () => {
     it("produces the nodeop signature-provider spec", () => {
-      expect(
-        Constants.formatSignatureProvider("n", "wire", "wire", "PUB", "PVT")
-      ).toBe("n,wire,wire,PUB,KEY:PVT")
+      expect(Constants.formatSignatureProvider("n", "wire", "wire", "PUB", "PVT")).toBe("n,wire,wire,PUB,KEY:PVT")
     })
     it("devSignatureProvider embeds the dev K1 key", () => {
-      expect(Constants.devSignatureProvider()).toContain(
-        Constants.DEV_K1_PUBLIC_KEY
-      )
+      expect(Constants.devSignatureProvider()).toContain(Constants.DEV_K1_PUBLIC_KEY)
     })
   })
 
@@ -43,18 +39,14 @@ describe("Constants", () => {
       expect(Constants.OPP_SYSTEM_ACCOUNTS).toContain("sysio.dclaim")
     })
     it("maps OPP contract paths", () => {
-      expect(Constants.OPP_CONTRACT_PATHS["sysio.opreg"]).toBe(
-        "contracts/sysio.opreg"
-      )
+      expect(Constants.OPP_CONTRACT_PATHS["sysio.opreg"]).toBe("contracts/sysio.opreg")
     })
   })
 
   describe("EMISSION_CONFIG_DEFAULTS", () => {
     it("keeps the category split under 10000 bps", () => {
       const c = Constants.EMISSION_CONFIG_DEFAULTS
-      expect(c.compute_bps + c.capex_bps + c.governance_bps).toBeLessThanOrEqual(
-        10_000
-      )
+      expect(c.compute_bps + c.capex_bps + c.governance_bps).toBeLessThanOrEqual(10_000)
       expect(c.producer_bps + c.batch_op_bps).toBe(10_000)
     })
   })
@@ -75,10 +67,8 @@ describe("Constants", () => {
     })
 
     it("commits 341,500,000 WIRE at tier caps, inside the WIRE supply", () => {
-      const { t1_allocation, t2_allocation, t3_allocation } =
-        Constants.EMISSION_CONFIG_DEFAULTS
-      const committed =
-        t1_allocation * T1Cap + t2_allocation * T2Cap + t3_allocation * T3Cap
+      const { t1_allocation, t2_allocation, t3_allocation } = Constants.EMISSION_CONFIG_DEFAULTS
+      const committed = t1_allocation * T1Cap + t2_allocation * T2Cap + t3_allocation * T3Cap
       expect(committed).toBe(341_500_000_000_000_000)
       expect(committed).toBeLessThan(WireSupplySubunits)
     })
@@ -101,12 +91,8 @@ describe("ProtocolTiming", () => {
   })
 
   it("orders the classes: collateral < single hop < double hop = 2x single", () => {
-    expect(ProtocolTiming.CollateralVerifyBudgetMs).toBeLessThan(
-      ProtocolTiming.SingleHopBudgetMs
-    )
-    expect(ProtocolTiming.DoubleHopBudgetMs).toBe(
-      2 * ProtocolTiming.SingleHopBudgetMs
-    )
+    expect(ProtocolTiming.CollateralVerifyBudgetMs).toBeLessThan(ProtocolTiming.SingleHopBudgetMs)
+    expect(ProtocolTiming.DoubleHopBudgetMs).toBe(2 * ProtocolTiming.SingleHopBudgetMs)
   })
 
   it("effectiveEpochSec adds the max delivery extension", () => {
@@ -139,11 +125,7 @@ describe("ProtocolTiming", () => {
     it("keeps small dev/flow topologies near the previous flat budget", () => {
       // Every flow bootstraps a handful of finalizers; the floor must not make
       // those runs materially slower to fail than the 60s they used to get.
-      ;[1, 2, 3].forEach(count =>
-        expect(ProtocolTiming.irreversibilityBudgetMs(count)).toBeLessThanOrEqual(
-          80_000
-        )
-      )
+      ;[1, 2, 3].forEach(count => expect(ProtocolTiming.irreversibilityBudgetMs(count)).toBeLessThanOrEqual(80_000))
     })
 
     it("never returns less than the single-finalizer budget", () => {
@@ -155,9 +137,7 @@ describe("ProtocolTiming", () => {
     })
 
     it("grows monotonically with the finalizer set", () => {
-      const budgets = [1, 5, 9, 21, 43].map(
-        ProtocolTiming.irreversibilityBudgetMs
-      )
+      const budgets = [1, 5, 9, 21, 43].map(ProtocolTiming.irreversibilityBudgetMs)
       budgets.slice(1).forEach((budget, index) => {
         expect(budget).toBeGreaterThan(budgets[index])
       })

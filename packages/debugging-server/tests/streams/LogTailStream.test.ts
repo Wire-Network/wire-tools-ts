@@ -24,10 +24,7 @@ describe("LogTailStream over WS", () => {
   beforeAll(async () => {
     Fs.mkdirSync(Path.dirname(logFile), { recursive: true })
     Fs.writeFileSync(logFile, "alpha\nbeta\n")
-    Fs.writeFileSync(
-      Path.join(tmpDir, ClusterFiles.ConfigFilename),
-      JSON.stringify({ clusterPath: tmpDir })
-    )
+    Fs.writeFileSync(Path.join(tmpDir, ClusterFiles.ConfigFilename), JSON.stringify({ clusterPath: tmpDir }))
     server = await DebuggingServer.create({ clusterPath: tmpDir, port: 0 })
     const addr = await server.start()
     baseUrl = `http://127.0.0.1:${addr.port}`
@@ -68,8 +65,7 @@ describe("LogTailStream over WS", () => {
     Fs.appendFileSync(logFile, "gamma\n")
     const [growthFrame] = await collectFrames(ws, 1)
     expect(growthFrame.type).toBe(StreamFrameType.Event)
-    const ev = (growthFrame as EventFrame<StreamTopic.LogTail>)
-      .payload as LogTailEvent
+    const ev = (growthFrame as EventFrame<StreamTopic.LogTail>).payload as LogTailEvent
     expect(ev.lines).toContain("gamma")
     ws.close()
   }, 10_000)

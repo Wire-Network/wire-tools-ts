@@ -33,15 +33,15 @@ describe("EthereumCollateralTool.mockErc20Address", () => {
   })
 
   it("throws LOUDLY for a token with no deployed mock (never a silent skip)", () => {
-    expect(() =>
-      EthereumCollateralTool.mockErc20Address(deploymentsPath, "LIQETH")
-    ).toThrow(/no deployed mock ERC-20 for LIQETH/)
+    expect(() => EthereumCollateralTool.mockErc20Address(deploymentsPath, "LIQETH")).toThrow(
+      /no deployed mock ERC-20 for LIQETH/
+    )
   })
 
   it("throws when the deploy artifacts are absent entirely", () => {
-    expect(() =>
-      EthereumCollateralTool.mockErc20Address("/no/such/deployments", "USDC")
-    ).toThrow(/outpost addresses not found/)
+    expect(() => EthereumCollateralTool.mockErc20Address("/no/such/deployments", "USDC")).toThrow(
+      /outpost addresses not found/
+    )
   })
 })
 

@@ -20,34 +20,18 @@ function buildWithReportDir(dir: string): ClusterBuild {
       report: { ...PersistedFixture.report, path: dir }
     })
   )
-  return ClusterBuild.forContext(
-    new ClusterBuildContext(config, getLogger("build-test"))
-  )
+  return ClusterBuild.forContext(new ClusterBuildContext(config, getLogger("build-test")))
 }
 
 const ok = (order: string[], name: string) =>
-  ClusterBuildStep.create(
-    Report.Actor.Sysio,
-    name,
-    name,
-    {},
-    null,
-    async () => {
-      order.push(name)
-    }
-  )
+  ClusterBuildStep.create(Report.Actor.Sysio, name, name, {}, null, async () => {
+    order.push(name)
+  })
 
 const fail = (name: string) =>
-  ClusterBuildStep.create(
-    Report.Actor.Sysio,
-    name,
-    name,
-    {},
-    null,
-    async () => {
-      throw new Error(`${name} boom`)
-    }
-  )
+  ClusterBuildStep.create(Report.Actor.Sysio, name, name, {}, null, async () => {
+    throw new Error(`${name} boom`)
+  })
 
 describe("ClusterBuild", () => {
   let dir: string
@@ -96,9 +80,7 @@ describe("ClusterBuild", () => {
       await expect(build.build()).rejects.toThrow("engine exploded")
       expect(Fs.existsSync(Path.join(target, "cluster-build.csv"))).toBe(false)
 
-      const armed = process
-        .listeners("exit")
-        .filter(listener => !listenersBefore.has(listener))
+      const armed = process.listeners("exit").filter(listener => !listenersBefore.has(listener))
       expect(armed).toHaveLength(1)
 
       armed[0](0) // what `process.exit()` invokes, with its exit code
@@ -123,10 +105,7 @@ describe("ClusterBuild", () => {
     ClusterBuildPhase.create(build, "P1", "first").push(ok([], "a"))
     ClusterBuildPhase.create(build, "P2", "second").push(ok([], "b"))
     await build.build()
-    expect(build.context.completedPhases.map(phase => phase.name)).toEqual([
-      "P1",
-      "P2"
-    ])
+    expect(build.context.completedPhases.map(phase => phase.name)).toEqual(["P1", "P2"])
   })
 
   it("append merges another build's phases in order", () => {

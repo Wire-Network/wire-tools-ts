@@ -11,17 +11,8 @@
 
 import Assert from "node:assert"
 import * as anchor from "@coral-xyz/anchor"
-import {
-  PublicKey,
-  SystemProgram,
-  SYSVAR_RENT_PUBKEY,
-  type Keypair
-} from "@solana/web3.js"
-import {
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-  TOKEN_PROGRAM_ID,
-  getAssociatedTokenAddressSync
-} from "@solana/spl-token"
+import { PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY, type Keypair } from "@solana/web3.js"
+import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
 import { SolanaFundingTool } from "./SolanaFundingTool.js"
@@ -29,10 +20,7 @@ import { SolanaOutpostProgramTool } from "./SolanaOutpostProgramTool.js"
 import { SolanaOutpostBootstrapper } from "../../orchestration/solana/SolanaOutpostBootstrapper.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../orchestration/ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../orchestration/ClusterBuildStep.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { solanaKeypair } from "../../utils/keyPairUtils.js"
 import { slugNameToLittleEndianBuffer } from "../../utils/slugUtils.js"
@@ -56,15 +44,9 @@ const VaultSeed = Buffer.from("outpost_vault")
  * the first moment seizable collateral for a `(token_code, mint)` does, because
  * the dispatch path has no payer and cannot open it later.
  */
-const CollateralVaultSeed = Buffer.from(
-  SolanaOutpostBootstrapper.PdaSeed.CollateralVault
-)
-const CollateralPositionSeed = Buffer.from(
-  SolanaOutpostBootstrapper.PdaSeed.CollateralPosition
-)
-const ReserveAggregateSeed = Buffer.from(
-  SolanaOutpostBootstrapper.PdaSeed.ReserveAggregate
-)
+const CollateralVaultSeed = Buffer.from(SolanaOutpostBootstrapper.PdaSeed.CollateralVault)
+const CollateralPositionSeed = Buffer.from(SolanaOutpostBootstrapper.PdaSeed.CollateralPosition)
+const ReserveAggregateSeed = Buffer.from(SolanaOutpostBootstrapper.PdaSeed.ReserveAggregate)
 export namespace SolanaCollateralTool {
   // ── Step: native SOL planDeposit (`opp-outpost::deposit`) ────────────────────
 
@@ -81,9 +63,7 @@ export namespace SolanaCollateralTool {
   }
 
   /** A single native-SOL collateral deposit write to `opp-outpost::deposit`. */
-  export function planDeposit<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planDeposit<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -116,54 +96,26 @@ export namespace SolanaCollateralTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(
-      input.amount > 0n,
-      "SolanaCollateralTool.planDeposit: amount must be positive"
-    )
+    Assert.ok(input.amount > 0n, "SolanaCollateralTool.planDeposit: amount must be positive")
     const operator = ctx.keyStore.assertOperator(input.operatorLabel)
     const keypair = solanaKeypair(operator.solana)
     const program = loadOppOutpostProgram(ctx, keypair)
     const programId = program.programId
     const transaction = await program.methods
-      .deposit(
-        input.operatorType,
-        new anchor.BN(input.tokenCode.toString()),
-        new anchor.BN(input.amount.toString())
-      )
+      .deposit(input.operatorType, new anchor.BN(input.tokenCode.toString()), new anchor.BN(input.amount.toString()))
       .accounts({
         depositor: keypair.publicKey,
-        config: SolanaOutpostProgramTool.derivePda(
-          programId,
-          OutpostConfigSeed
-        ),
-        operatorRegistry: SolanaOutpostProgramTool.derivePda(
-          programId,
-          OperatorRegistrySeed
-        ),
-        outboundMessageBuffer: SolanaOutpostProgramTool.derivePda(
-          programId,
-          OutboundMessageBufferSeed
-        ),
+        config: SolanaOutpostProgramTool.derivePda(programId, OutpostConfigSeed),
+        operatorRegistry: SolanaOutpostProgramTool.derivePda(programId, OperatorRegistrySeed),
+        outboundMessageBuffer: SolanaOutpostProgramTool.derivePda(programId, OutboundMessageBufferSeed),
         vault: SolanaOutpostProgramTool.derivePda(programId, VaultSeed),
-        collateralPosition: collateralPositionPda(
-          programId,
-          keypair.publicKey,
-          input.tokenCode
-        ),
+        collateralPosition: collateralPositionPda(programId, keypair.publicKey, input.tokenCode),
         systemProgram: SystemProgram.programId
       })
       .signers([keypair])
       .transaction()
-    const signature = await ctx.solana.connection.sendTransaction(
-      transaction,
-      [keypair],
-      { skipPreflight: false }
-    )
-    await confirmSignature(
-      ctx.solana.connection,
-      signature,
-      "SolanaCollateralTool.planDeposit"
-    )
+    const signature = await ctx.solana.connection.sendTransaction(transaction, [keypair], { skipPreflight: false })
+    await confirmSignature(ctx.solana.connection, signature, "SolanaCollateralTool.planDeposit")
   }
 
   // ── Step: SPL planDeposit (`opp-outpost::deposit_non_native`) ────────────────
@@ -186,9 +138,7 @@ export namespace SolanaCollateralTool {
   }
 
   /** A single `opp-outpost::deposit_non_native` SPL write, signed by the operator keypair. */
-  export function planNonNativeDeposit<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planNonNativeDeposit<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -225,21 +175,13 @@ export namespace SolanaCollateralTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(
-      input.amount > 0n,
-      "SolanaCollateralTool.planNonNativeDeposit: amount must be positive"
-    )
+    Assert.ok(input.amount > 0n, "SolanaCollateralTool.planNonNativeDeposit: amount must be positive")
     const operator = ctx.keyStore.assertOperator(input.operatorLabel)
     const keypair = solanaKeypair(operator.solana)
     const program = loadOppOutpostProgram(ctx, keypair)
     const programId = program.programId
-    const mint = new PublicKey(
-      SolanaFundingTool.solMintAddress(ctx.config.dataPath, input.tokenCode)
-    )
-    const reserveAggregatePda = SolanaOutpostProgramTool.derivePda(
-      programId,
-      ReserveAggregateSeed
-    )
+    const mint = new PublicKey(SolanaFundingTool.solMintAddress(ctx.config.dataPath, input.tokenCode))
+    const reserveAggregatePda = SolanaOutpostProgramTool.derivePda(programId, ReserveAggregateSeed)
     const transaction = await program.methods
       .depositNonNative(
         new anchor.BN(input.chainCode.toString()),
@@ -250,18 +192,9 @@ export namespace SolanaCollateralTool {
       )
       .accounts({
         depositor: keypair.publicKey,
-        config: SolanaOutpostProgramTool.derivePda(
-          programId,
-          OutpostConfigSeed
-        ),
-        operatorRegistry: SolanaOutpostProgramTool.derivePda(
-          programId,
-          OperatorRegistrySeed
-        ),
-        outboundMessageBuffer: SolanaOutpostProgramTool.derivePda(
-          programId,
-          OutboundMessageBufferSeed
-        ),
+        config: SolanaOutpostProgramTool.derivePda(programId, OutpostConfigSeed),
+        operatorRegistry: SolanaOutpostProgramTool.derivePda(programId, OperatorRegistrySeed),
+        outboundMessageBuffer: SolanaOutpostProgramTool.derivePda(programId, OutboundMessageBufferSeed),
         mint,
         depositorAta: getAssociatedTokenAddressSync(mint, keypair.publicKey),
         collateralVault: SolanaOutpostProgramTool.derivePda(
@@ -269,18 +202,10 @@ export namespace SolanaCollateralTool {
           CollateralVaultSeed,
           slugNameToLittleEndianBuffer(input.tokenCode)
         ),
-        collateralPosition: collateralPositionPda(
-          programId,
-          keypair.publicKey,
-          input.tokenCode
-        ),
+        collateralPosition: collateralPositionPda(programId, keypair.publicKey, input.tokenCode),
         reserveAggregate: reserveAggregatePda,
         // The aggregate is a PDA, so its ATA is derived off-curve.
-        reserveAggregateAta: getAssociatedTokenAddressSync(
-          mint,
-          reserveAggregatePda,
-          true
-        ),
+        reserveAggregateAta: getAssociatedTokenAddressSync(mint, reserveAggregatePda, true),
         tokenProgram: TOKEN_PROGRAM_ID,
         associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
@@ -288,16 +213,8 @@ export namespace SolanaCollateralTool {
       })
       .signers([keypair])
       .transaction()
-    const signature = await ctx.solana.connection.sendTransaction(
-      transaction,
-      [keypair],
-      { skipPreflight: false }
-    )
-    await confirmSignature(
-      ctx.solana.connection,
-      signature,
-      "SolanaCollateralTool.planNonNativeDeposit"
-    )
+    const signature = await ctx.solana.connection.sendTransaction(transaction, [keypair], { skipPreflight: false })
+    await confirmSignature(ctx.solana.connection, signature, "SolanaCollateralTool.planNonNativeDeposit")
   }
 
   // ── value helpers (PDA / IDL loads — executed INSIDE runners) ────────────
@@ -313,11 +230,7 @@ export namespace SolanaCollateralTool {
    * @param tokenCode - The 8-byte slug_name of the collateral token.
    * @returns The `CollateralPosition` PDA address.
    */
-  export function collateralPositionPda(
-    programId: PublicKey,
-    operator: PublicKey,
-    tokenCode: bigint
-  ): PublicKey {
+  export function collateralPositionPda(programId: PublicKey, operator: PublicKey, tokenCode: bigint): PublicKey {
     return SolanaOutpostProgramTool.derivePda(
       programId,
       CollateralPositionSeed,
@@ -337,11 +250,9 @@ export namespace SolanaCollateralTool {
     keypair: Keypair
   ): anchor.Program<anchor.Idl> {
     const idl = SolanaOutpostProgramTool.readIdl(ctx.config.solanaPath)
-    const provider = new anchor.AnchorProvider(
-      ctx.solana.connection,
-      new anchor.Wallet(keypair),
-      { commitment: SolanaClient.DefaultCommitment }
-    )
+    const provider = new anchor.AnchorProvider(ctx.solana.connection, new anchor.Wallet(keypair), {
+      commitment: SolanaClient.DefaultCommitment
+    })
     return new anchor.Program(idl, provider)
   }
 }

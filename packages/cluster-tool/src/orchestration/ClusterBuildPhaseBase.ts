@@ -19,9 +19,7 @@ export interface ClusterBuildParent<C extends ClusterBuildContext = ClusterBuild
  * its one {@link Report.Phase} node, a group yields one {@link Report.Group}
  * node whose children nest to any depth.
  */
-export abstract class ClusterBuildPhaseBase<
-  C extends ClusterBuildContext = ClusterBuildContext
-> {
+export abstract class ClusterBuildPhaseBase<C extends ClusterBuildContext = ClusterBuildContext> {
   protected constructor(
     readonly context: C,
     readonly name: string,

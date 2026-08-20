@@ -8,10 +8,7 @@ import { SolanaFundingTool } from "../../../tools/solana/SolanaFundingTool.js"
 import { SolanaOutpostProgramTool } from "../../../tools/solana/SolanaOutpostProgramTool.js"
 import { Report } from "../../../report/Report.js"
 import { ClusterBuildContext } from "../../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../ClusterBuildStep.js"
 
 /** Steps that manage the cluster's solana-test-validator process. */
 export namespace SolanaValidatorProcessSteps {
@@ -67,19 +64,13 @@ export namespace SolanaValidatorProcessSteps {
    * @param config - The resolved cluster config.
    * @returns The validator's program list.
    */
-  export function resolvePrograms(
-    config: ClusterConfig
-  ): SolanaValidatorProgram[] {
+  export function resolvePrograms(config: ClusterConfig): SolanaValidatorProgram[] {
     return [
       {
         name: SolanaOutpostProgramTool.ProgramName,
-        programId: SolanaOutpostProgramTool.assertProgramId(
-          config.solanaPath
-        ).toBase58(),
+        programId: SolanaOutpostProgramTool.assertProgramId(config.solanaPath).toBase58(),
         soFile: SolanaOutpostProgramTool.programSoFile(config.solanaPath),
-        upgradeAuthority: SolanaFundingTool.createDeployerKeypair(
-          config.dataPath
-        ).publicKey.toBase58()
+        upgradeAuthority: SolanaFundingTool.createDeployerKeypair(config.dataPath).publicKey.toBase58()
       }
     ]
   }

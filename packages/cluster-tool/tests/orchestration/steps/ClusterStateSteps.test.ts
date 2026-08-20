@@ -55,11 +55,7 @@ describe("Steps.clusterState", () => {
         }
       })
 
-      await Steps.clusterState.runPersist(
-        ctx,
-        null,
-        new AbortController().signal
-      )
+      await Steps.clusterState.runPersist(ctx, null, new AbortController().signal)
 
       expect(Fs.existsSync(ClusterState.stateFilePath(ctx.config))).toBe(true)
       expect(Fs.existsSync(ClusterState.keysFilePath(ctx.config))).toBe(true)
@@ -78,9 +74,7 @@ describe("Steps.clusterState", () => {
       const controller = new AbortController()
       controller.abort()
 
-      await expect(
-        Steps.clusterState.runPersist(ctx, null, controller.signal)
-      ).rejects.toThrow()
+      await expect(Steps.clusterState.runPersist(ctx, null, controller.signal)).rejects.toThrow()
 
       expect(Fs.existsSync(ClusterState.stateFilePath(ctx.config))).toBe(false)
       expect(Fs.existsSync(ClusterState.keysFilePath(ctx.config))).toBe(false)

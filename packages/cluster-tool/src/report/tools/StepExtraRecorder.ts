@@ -45,14 +45,9 @@ export class StepExtraRecorder {
    * @param call - The call entry (client + kind + call-specific payload data).
    */
   record(call: StepExtraRecorder.ClientCall): void {
-    const entry = StepExtraRecorder.capStrings(
-      plainify(call)
-    ) as StepExtraRecorder.ClientCall
+    const entry = StepExtraRecorder.capStrings(plainify(call)) as StepExtraRecorder.ClientCall
     const key = JSON.stringify(entry)
-    const windowStart = Math.max(
-      0,
-      this.keyList.length - StepExtraRecorder.DedupeWindow
-    )
+    const windowStart = Math.max(0, this.keyList.length - StepExtraRecorder.DedupeWindow)
     for (let index = this.keyList.length - 1; index >= windowStart; index--) {
       if (this.keyList[index] === key) {
         const prior = this.callList[index]
@@ -126,10 +121,7 @@ export namespace StepExtraRecorder {
     }
     if (value !== null && typeof value === "object") {
       return Object.fromEntries(
-        Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
-          key,
-          capStrings(entry)
-        ])
+        Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, capStrings(entry)])
       )
     }
     return value
@@ -150,10 +142,7 @@ export namespace StepExtraRecorder {
    * @param body - The step execution.
    * @returns `body`'s result.
    */
-  export function runWith<T>(
-    recorder: StepExtraRecorder,
-    body: () => Promise<T>
-  ): Promise<T> {
+  export function runWith<T>(recorder: StepExtraRecorder, body: () => Promise<T>): Promise<T> {
     return storage.run(recorder, body)
   }
 

@@ -20,13 +20,8 @@ export class ReportHtmlRenderer implements ReportRenderer {
   render(): string {
     const report = this.report,
       totalMs = report.nodes.reduce((sum, node) => sum + node.durationMs, 0),
-      stepCount = report.phases.reduce(
-        (count, phase) => count + phase.steps.length,
-        0
-      ),
-      nodes = report.nodes
-        .map(node => this.renderNode(node, 0))
-        .join("\n")
+      stepCount = report.phases.reduce((count, phase) => count + phase.steps.length, 0),
+      nodes = report.nodes.map(node => this.renderNode(node, 0)).join("\n")
     const title = ReportHtmlRenderer.esc(Report.title(report))
     return [
       "<!doctype html>",
@@ -56,9 +51,7 @@ export class ReportHtmlRenderer implements ReportRenderer {
       skippedCount = Report.Node.skippedCount(node),
       skippedSuffix = skippedCount > 0 ? ` · ${skippedCount} skipped` : ""
     if (Report.Node.isGroup(node)) {
-      const children = node.children
-        .map(child => this.renderNode(child, depth + 1))
-        .join("\n")
+      const children = node.children.map(child => this.renderNode(child, depth + 1)).join("\n")
       return (
         `<details class="group ${cls}"${open ? " open" : ""}>` +
         `<summary><span class="verdict">${verdict}</span> ` +
@@ -95,14 +88,7 @@ export class ReportHtmlRenderer implements ReportRenderer {
     if (step.extra !== null) {
       // Recorded client calls: collapsed by default, EXPANDED when the
       // owning step failed (the calls are the failure's forensic trail).
-      body.push(
-        this.renderPayload(
-          `extra (${ReportHtmlRenderer.callCount(step)})`,
-          step.extra,
-          failed,
-          "extra"
-        )
-      )
+      body.push(this.renderPayload(`extra (${ReportHtmlRenderer.callCount(step)})`, step.extra, failed, "extra"))
     }
     if (step.error !== null) {
       body.push(this.renderPayload("error", step.error, true, "error"))
@@ -119,12 +105,7 @@ export class ReportHtmlRenderer implements ReportRenderer {
   }
 
   /** One collapsible JSON payload block under a step. */
-  private renderPayload(
-    label: string,
-    payload: unknown,
-    open: boolean,
-    kind: string = "input"
-  ): string {
+  private renderPayload(label: string, payload: unknown, open: boolean, kind: string = "input"): string {
     // plainify first: step inputs routinely nest bigints / Uint8Arrays,
     // which JSON.stringify rejects — on the FAILURE path this must render.
     const json = JSON.stringify(plainify(payload), null, 2)
@@ -136,10 +117,7 @@ export class ReportHtmlRenderer implements ReportRenderer {
   }
 
   private static esc(value: string): string {
-    return value
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
+    return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   }
 }
 

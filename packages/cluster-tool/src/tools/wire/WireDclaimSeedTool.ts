@@ -183,19 +183,13 @@ function toBigInt(v: string | number | undefined, fallback = 0n): bigint {
  * Addresses are normalized to raw bytes at decode time so case /
  * checksum differences collapse to a single key.
  */
-function accumulate(
-  data: IndexBalanceDump,
-  decoder: (s: string) => Uint8Array,
-  addrLen: number
-): Map<string, bigint> {
+function accumulate(data: IndexBalanceDump, decoder: (s: string) => Uint8Array, addrLen: number): Map<string, bigint> {
   const acc = new Map<string, bigint>()
 
   const decodeOrThrow = (addr: string): string => {
     const b = decoder(addr)
     if (b.length !== addrLen) {
-      throw new Error(
-        `address ${r(addr)} decoded to ${b.length} bytes, expected ${addrLen}`
-      )
+      throw new Error(`address ${r(addr)} decoded to ${b.length} bytes, expected ${addrLen}`)
     }
     return toHex(b)
   }
@@ -230,10 +224,7 @@ interface ImportSeedCreditResult {
  * Order is stable (sorted by address hex) so two runs against the same
  * input produce identical batches — important for fixture-based testing.
  */
-function toCredits(
-  accumulator: Map<string, bigint>,
-  divisor: bigint
-): ImportSeedCreditResult {
+function toCredits(accumulator: Map<string, bigint>, divisor: bigint): ImportSeedCreditResult {
   const credits: ImportSeedCredit[] = []
   let droppedDust = 0n
   const keys = [...accumulator.keys()].sort()
@@ -286,10 +277,7 @@ export interface ImportSeedOptions {
  *     )
  *   }
  */
-export function convertImportSeed(
-  data: IndexBalanceDump,
-  opts: ImportSeedOptions
-): ImportSeedResult {
+export function convertImportSeed(data: IndexBalanceDump, opts: ImportSeedOptions): ImportSeedResult {
   const cfg = CHAIN_CONFIG[opts.chain]
   if (!cfg) {
     throw new Error(`unknown chain: ${r(opts.chain)}`)
@@ -303,10 +291,7 @@ export function convertImportSeed(
     credits: c
   }))
 
-  const totalAtomic = credits.reduce(
-    (sum, c) => sum + c.wire_atomic,
-    0n as bigint
-  )
+  const totalAtomic = credits.reduce((sum, c) => sum + c.wire_atomic, 0n as bigint)
 
   return {
     batches,
@@ -323,9 +308,7 @@ export function convertImportSeed(
  * natively, and the dclaim ABI consumes `int64` which accepts string
  * input from JSON.
  */
-export function serializeBatchForClio(
-  batch: ImportSeedBatch
-): SysioContracts.SysioDclaimImportseedAction {
+export function serializeBatchForClio(batch: ImportSeedBatch): SysioContracts.SysioDclaimImportseedAction {
   return {
     // proto ChainKind → the dclaim ABI's own enum, bridged by VALUE.
     chain: abiEnumValue(SysioContracts.SysioDclaimChainkind, batch.chain),

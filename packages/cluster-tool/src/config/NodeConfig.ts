@@ -1,7 +1,4 @@
-import type {
-  BindConfigNodeopPorts,
-  ClusterConfig
-} from "@wireio/cluster-tool-shared"
+import type { BindConfigNodeopPorts, ClusterConfig } from "@wireio/cluster-tool-shared"
 import { asOption } from "@3fv/prelude-ts"
 import { range } from "lodash"
 import { match } from "ts-pattern"
@@ -35,9 +32,7 @@ function nodeName(index: number): string {
 function alphaStrBase(num: number, base: string): string {
   const quotient = Math.floor(num / base.length),
     remainder = num % base.length
-  return quotient > 0
-    ? alphaStrBase(quotient, base) + base[remainder]
-    : base[remainder]
+  return quotient > 0 ? alphaStrBase(quotient, base) + base[remainder] : base[remainder]
 }
 
 /**
@@ -51,10 +46,7 @@ function alphaStrBase(num: number, base: string): string {
 export function producerName(index: number, shared = false): string {
   const prefix = shared ? "shr" : "def"
   if (index > AsciiLower.length - 1) {
-    const suffix = alphaStrBase(
-      index - AsciiLower.length + 1,
-      AsciiLower
-    ).padStart(7, "a")
+    const suffix = alphaStrBase(index - AsciiLower.length + 1, AsciiLower).padStart(7, "a")
     return `${prefix}pr${suffix}`
   }
   return `${prefix}producer${AsciiLower[index]}`
@@ -145,9 +137,7 @@ export class NodeConfig {
         index: k,
         name: nodeName(k),
         ports,
-        producers: producerNames.filter(
-          (_, i) => producerNodeCount > 0 && i % producerNodeCount === k
-        ),
+        producers: producerNames.filter((_, i) => producerNodeCount > 0 && i % producerNodeCount === k),
         batchOperatorLabel: null,
         underwriterLabel: null
       })
@@ -180,14 +170,10 @@ export class NodeConfig {
     // The MESH is the block-producing set only (bios + producers). Operator
     // nodes attach to it at a single point instead of joining it — see
     // `peersFor`.
-    const meshDescriptors = descriptors.filter(
-        node => node.role !== NodeRole.operator
-      ),
+    const meshDescriptors = descriptors.filter(node => node.role !== NodeRole.operator),
       // Operators' single attachment point. Falls back to the bios node when a
       // cluster has no producer nodes at all, so an operator is never peerless.
-      operatorUplink = asOption(
-        descriptors.find(node => node.role === NodeRole.producer)
-      ).getOrElse(meshDescriptors[0])
+      operatorUplink = asOption(descriptors.find(node => node.role === NodeRole.producer)).getOrElse(meshDescriptors[0])
 
     return descriptors.map(
       d =>
@@ -199,8 +185,7 @@ export class NodeConfig {
           d.ports,
           d.producers,
           peersFor(d, meshDescriptors, operatorUplink).map(
-            other =>
-              `${NodeConfig.advertiseAddressFor(cluster, other.ports)}:${other.ports.p2p}`
+            other => `${NodeConfig.advertiseAddressFor(cluster, other.ports)}:${other.ports.p2p}`
           ),
           d.batchOperatorLabel,
           d.underwriterLabel
@@ -238,9 +223,7 @@ function peersFor(
   operatorUplink: NodeDescriptor
 ): NodeDescriptor[] {
   return match(node.role)
-    .with(NodeRole.operator, () =>
-      operatorUplink != null ? [operatorUplink] : []
-    )
+    .with(NodeRole.operator, () => (operatorUplink != null ? [operatorUplink] : []))
     .otherwise(() => meshDescriptors.filter(other => other.name !== node.name))
 }
 
@@ -300,10 +283,7 @@ export namespace NodeConfig {
    * @param ports - The node's binding (may pin a per-node advertise address).
    * @returns The address peers dial / the node advertises.
    */
-  export function advertiseAddressFor(
-    cluster: ClusterConfig,
-    ports: BindConfigNodeopPorts
-  ): string {
+  export function advertiseAddressFor(cluster: ClusterConfig, ports: BindConfigNodeopPorts): string {
     return ports.advertiseAddress ?? toDialAddress(cluster.bind.nodeop.address)
   }
 }

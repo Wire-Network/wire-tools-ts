@@ -1,15 +1,9 @@
 import Path from "node:path"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
-import {
-  AWSAccountName,
-  SignatureProviderType
-} from "@wireio/cluster-tool-shared"
+import { AWSAccountName, SignatureProviderType } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { ClusterBuildDefaults } from "@wireio/cluster-tool/orchestration"
-import {
-  fixtureResolveEnvironment,
-  type ResolveEnvironment
-} from "../config/resolveEnvironmentFixture.js"
+import { fixtureResolveEnvironment, type ResolveEnvironment } from "../config/resolveEnvironmentFixture.js"
 import { collectStepNames } from "./clusterBuildFixture.js"
 
 const mockSend = jest.fn()
@@ -18,12 +12,8 @@ const mockSend = jest.fn()
 // reaching for real AWS credentials (same rationale as the key-publication suite).
 jest.mock("@aws-sdk/client-ssm", () => ({
   SSMClient: jest.fn().mockImplementation(() => ({ send: mockSend })),
-  GetParameterCommand: jest
-    .fn()
-    .mockImplementation((input: unknown) => ({ kind: "GetParameter", input })),
-  PutParameterCommand: jest
-    .fn()
-    .mockImplementation((input: unknown) => ({ kind: "PutParameter", input }))
+  GetParameterCommand: jest.fn().mockImplementation((input: unknown) => ({ kind: "GetParameter", input })),
+  PutParameterCommand: jest.fn().mockImplementation((input: unknown) => ({ kind: "PutParameter", input }))
 }))
 
 /** The captured command input — only the parameter id is read here. */
@@ -47,9 +37,7 @@ const EthereumFundingStepSuffix = "-fund-ethereum"
 function publishedKey(secretId: string): string {
   const keyType = secretId.slice(secretId.lastIndexOf("/") + 1)
   return PrivateKey.from(
-    keyType === KeyType[KeyType.BLS]
-      ? Constants.DEV_BLS_PRIVATE_KEY
-      : Constants.DEV_K1_PRIVATE_KEY
+    keyType === KeyType[KeyType.BLS] ? Constants.DEV_BLS_PRIVATE_KEY : Constants.DEV_K1_PRIVATE_KEY
   ).toNativeString()
 }
 
@@ -99,8 +87,7 @@ describe("ClusterBuildDefaults — bootstrapped operator ETH fee funding", () =>
     }
   }
 
-  const fundingSteps = (names: string[]) =>
-    names.filter(name => name.endsWith(EthereumFundingStepSuffix))
+  const fundingSteps = (names: string[]) => names.filter(name => name.endsWith(EthereumFundingStepSuffix))
 
   it("funds every bootstrapped operator's ETH wallet under SSM", async () => {
     const cluster = await ClusterBuildDefaults.create(ssmOptions())
@@ -127,8 +114,7 @@ describe("ClusterBuildDefaults — bootstrapped operator ETH fee funding", () =>
   })
 
   it("still airdrops SOL fees in BOTH modes — the ETH gate is ETH-only", async () => {
-    const solanaAirdrops = (names: string[]) =>
-      names.filter(name => name.endsWith("-airdrop-solana"))
+    const solanaAirdrops = (names: string[]) => names.filter(name => name.endsWith("-airdrop-solana"))
     const keyCluster = await ClusterBuildDefaults.create(baseOptions())
     const ssmCluster = await ClusterBuildDefaults.create(ssmOptions())
     expect(solanaAirdrops(collectStepNames(keyCluster.children)).length).toBeGreaterThan(0)

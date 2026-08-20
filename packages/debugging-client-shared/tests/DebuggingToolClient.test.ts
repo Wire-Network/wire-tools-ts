@@ -9,8 +9,6 @@ describe("DebuggingServerClient", () => {
   })
 
   it("rejects create() when server is not reachable", async () => {
-    await expect(
-      DebuggingServerClient.create({ baseUrl: "http://127.0.0.1:1" })
-    ).rejects.toThrow()
+    await expect(DebuggingServerClient.create({ baseUrl: "http://127.0.0.1:1" })).rejects.toThrow()
   })
 })

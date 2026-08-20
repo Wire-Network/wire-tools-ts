@@ -3,10 +3,7 @@ import { Text } from "ink"
 import type { StatusBarComponentProps } from "../../../components/StatusBarComponent.js"
 import { useAppSelector } from "../../../store/Store.js"
 import { selectCluster } from "../../../store/cluster/ClusterSelectors.js"
-import {
-  selectAliveCount,
-  selectTotalCount
-} from "../../../store/process-monitor/ProcessMonitorSelectors.js"
+import { selectAliveCount, selectTotalCount } from "../../../store/process-monitor/ProcessMonitorSelectors.js"
 
 function NodeCountBody(_: StatusBarComponentProps): React.ReactElement {
   const cluster = useAppSelector(selectCluster),

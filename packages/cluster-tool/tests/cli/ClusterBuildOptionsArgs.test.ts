@@ -63,10 +63,7 @@ function createYargsRecorder(): YargsRecorder {
  * `environment` defaults EMPTY so a developer shell's `WIRE_*` exports can never
  * leak into the deterministic registration assertions.
  */
-function register(
-  defaults = {},
-  environment: NodeJS.ProcessEnv = {}
-): Map<string, RecordedOption> {
+function register(defaults = {}, environment: NodeJS.ProcessEnv = {}): Map<string, RecordedOption> {
   const { argv, options } = createYargsRecorder()
   applyClusterBuildOptionsArgs(argv, defaults, environment)
   return options
@@ -93,33 +90,23 @@ describe("toFlag", () => {
   it("kebab-cases each dotted segment and joins with '-'", () => {
     expect(toFlag(["bind", "kiod", "port"])).toBe("bind-kiod-port")
     expect(toFlag(["epochDurationSec"])).toBe("epoch-duration-sec")
-    expect(toFlag(["bind", "nodeop", "ports", "bios", "http"])).toBe(
-      "bind-nodeop-ports-bios-http"
-    )
-    expect(toFlag(["bind", "debuggingServer", "port"])).toBe(
-      "bind-debugging-server-port"
-    )
+    expect(toFlag(["bind", "nodeop", "ports", "bios", "http"])).toBe("bind-nodeop-ports-bios-http")
+    expect(toFlag(["bind", "debuggingServer", "port"])).toBe("bind-debugging-server-port")
   })
 
   it("passes numeric array-index segments through unchanged", () => {
-    expect(toFlag(["bind", "nodeop", "ports", "producers", "0", "http"])).toBe(
-      "bind-nodeop-ports-producers-0-http"
-    )
+    expect(toFlag(["bind", "nodeop", "ports", "producers", "0", "http"])).toBe("bind-nodeop-ports-producers-0-http")
   })
 
   it("keeps letter↔digit boundaries intact (p2p, not p-2-p)", () => {
-    expect(toFlag(["bind", "nodeop", "ports", "bios", "p2p"])).toBe(
-      "bind-nodeop-ports-bios-p2p"
-    )
+    expect(toFlag(["bind", "nodeop", "ports", "bios", "p2p"])).toBe("bind-nodeop-ports-bios-p2p")
     expect(toFlag(["terminateWindowMs"])).toBe("terminate-window-ms")
   })
 })
 
 describe("flattenOptionLeaves + buildOptionShape", () => {
   it("emits a kebab flag for every leaf at any depth", () => {
-    const flags = flattenOptionLeaves(buildOptionShape({})).map(
-      leaf => leaf.flag
-    )
+    const flags = flattenOptionLeaves(buildOptionShape({})).map(leaf => leaf.flag)
     expect(flags).toEqual(
       expect.arrayContaining([
         "cluster-path",
@@ -143,23 +130,15 @@ describe("flattenOptionLeaves + buildOptionShape", () => {
 
   it("infers the yargs type from each leaf's default value", () => {
     const leaves = flattenOptionLeaves(buildOptionShape({}))
-    expect(leafByFlag(leaves, "epoch-duration-sec").type).toBe(
-      OptionLeafType.number
-    )
+    expect(leafByFlag(leaves, "epoch-duration-sec").type).toBe(OptionLeafType.number)
     expect(leafByFlag(leaves, "force").type).toBe(OptionLeafType.boolean)
-    expect(leafByFlag(leaves, "logging-levels-console").type).toBe(
-      OptionLeafType.string
-    )
+    expect(leafByFlag(leaves, "logging-levels-console").type).toBe(OptionLeafType.string)
     // a null-defaulted bind port carries its explicit type
-    expect(leafByFlag(leaves, "bind-kiod-port").type).toBe(
-      OptionLeafType.number
-    )
+    expect(leafByFlag(leaves, "bind-kiod-port").type).toBe(OptionLeafType.number)
   })
 
   it("carries a non-empty describe for every generated flag", () => {
-    flattenOptionLeaves(buildOptionShape({})).forEach(leaf =>
-      expect(leaf.describe.length).toBeGreaterThan(0)
-    )
+    flattenOptionLeaves(buildOptionShape({})).forEach(leaf => expect(leaf.describe.length).toBeGreaterThan(0))
   })
 
   it("marks the four root paths required and everything else optional", () => {
@@ -171,9 +150,7 @@ describe("flattenOptionLeaves + buildOptionShape", () => {
   })
 
   it("sizes the node-port arrays from the topology counts", () => {
-    const flags = flattenOptionLeaves(
-      buildOptionShape({ nodeCount: 2, underwriterCount: 2 })
-    ).map(leaf => leaf.flag)
+    const flags = flattenOptionLeaves(buildOptionShape({ nodeCount: 2, underwriterCount: 2 })).map(leaf => leaf.flag)
     expect(flags).toContain("bind-nodeop-ports-producers-0-http")
     expect(flags).toContain("bind-nodeop-ports-producers-1-http")
     expect(flags).toContain("bind-nodeop-ports-underwriters-1-p2p")
@@ -181,13 +158,9 @@ describe("flattenOptionLeaves + buildOptionShape", () => {
   })
 
   it("yields no flags for empty-by-default arrays (collateral)", () => {
-    const flags = flattenOptionLeaves(buildOptionShape({})).map(
-      leaf => leaf.flag
-    )
+    const flags = flattenOptionLeaves(buildOptionShape({})).map(leaf => leaf.flag)
     expect(flags.some(flag => flag.startsWith("req-prod-collat"))).toBe(false)
-    expect(flags.some(flag => flag.startsWith("underwriter-collateral"))).toBe(
-      false
-    )
+    expect(flags.some(flag => flag.startsWith("underwriter-collateral"))).toBe(false)
   })
 })
 
@@ -213,11 +186,7 @@ describe("applyClusterBuildOptionsArgs registration", () => {
   })
 
   it("gives EVERY registered flag a non-empty describe (--help completeness)", () => {
-    register().forEach(config =>
-      expect(
-        typeof config.describe === "string" && config.describe.length > 0
-      ).toBe(true)
-    )
+    register().forEach(config => expect(typeof config.describe === "string" && config.describe.length > 0).toBe(true))
   })
 
   it("demands the four root paths only when a default is not seeded", () => {
@@ -314,10 +283,7 @@ describe("toClusterBuildOptions reverse parse", () => {
       { chainCode: 11, tokenCode: 22, minimumBond: 2_000_000 },
       { chainCode: 33, tokenCode: 44, minimumBond: 2_000_000 }
     ]
-    const options = toClusterBuildOptions(
-      { "epoch-duration-sec": 60 },
-      { requiredBatchOperatorCollateral }
-    )
+    const options = toClusterBuildOptions({ "epoch-duration-sec": 60 }, { requiredBatchOperatorCollateral })
     expect(options.requiredBatchOperatorCollateral).toEqual(requiredBatchOperatorCollateral)
     // absent defaults stay absent — flags never set these leaves
     expect(options.requiredUnderwriterCollateral).toBeUndefined()
@@ -338,19 +304,13 @@ describe("toClusterBuildOptions reverse parse", () => {
   it("coerces boolean flags", () => {
     expect(toClusterBuildOptions({ "bind-all": true }).bindAll).toBe(true)
     expect(toClusterBuildOptions({ "bind-all": false }).bindAll).toBe(false)
-    expect(
-      toClusterBuildOptions({ "enable-mock-reserves": true }).enableMockReserves
-    ).toBe(true)
-    expect(
-      toClusterBuildOptions({ "enable-mock-reserves": false }).enableMockReserves
-    ).toBe(false)
+    expect(toClusterBuildOptions({ "enable-mock-reserves": true }).enableMockReserves).toBe(true)
+    expect(toClusterBuildOptions({ "enable-mock-reserves": false }).enableMockReserves).toBe(false)
   })
 
   it("reads the camelCase alias yargs also emits", () => {
     // yargs stores both kebab + camelCase; the reverse falls back to camelCase
-    expect(
-      toClusterBuildOptions({ epochDurationSec: 15 }).epochDurationSec
-    ).toBe(15)
+    expect(toClusterBuildOptions({ epochDurationSec: 15 }).epochDurationSec).toBe(15)
   })
 })
 
@@ -431,10 +391,7 @@ describe("toAWSSSMSignatureProviderOptions", () => {
       file = Path.join(dir, "ssm.json")
     Fs.writeFileSync(file, SSMJson)
     try {
-      expect(
-        toAWSSSMSignatureProviderOptions({ [SSMFlag]: file })
-          ?.awsSecretIdPattern
-      ).toBe(SecretIdPattern)
+      expect(toAWSSSMSignatureProviderOptions({ [SSMFlag]: file })?.awsSecretIdPattern).toBe(SecretIdPattern)
     } finally {
       Fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -456,28 +413,26 @@ describe("toAWSSSMSignatureProviderOptions", () => {
 describe("mergeSignatureProviderSSM", () => {
   it("is a no-op when no source carries settings", () => {
     const options = { signatureProvider: { type: SignatureProviderType.SSM } }
-    expect(
-      mergeSignatureProviderSSM(options, {}).signatureProvider?.ssm
-    ).toBeUndefined()
+    expect(mergeSignatureProviderSSM(options, {}).signatureProvider?.ssm).toBeUndefined()
   })
 
   it("merges the SSM payload into signatureProvider.ssm", () => {
     const options = { signatureProvider: { type: SignatureProviderType.SSM } },
       merged = mergeSignatureProviderSSM(options, { [SSMFlag]: SSMJson })
-    expect(merged.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
-      SecretIdPattern
-    )
+    expect(merged.signatureProvider?.ssm?.awsSecretIdPattern).toBe(SecretIdPattern)
   })
 
   it("falls back to the options-file document's signatureProvider.ssm", () => {
-    const merged = mergeSignatureProviderSSM({}, {}, {
-      signatureProvider: {
-        ssm: { awsSecretIdPattern: "/from/{cluster}/{account}/{keyType}" }
+    const merged = mergeSignatureProviderSSM(
+      {},
+      {},
+      {
+        signatureProvider: {
+          ssm: { awsSecretIdPattern: "/from/{cluster}/{account}/{keyType}" }
+        }
       }
-    })
-    expect(merged.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
-      "/from/{cluster}/{account}/{keyType}"
     )
+    expect(merged.signatureProvider?.ssm?.awsSecretIdPattern).toBe("/from/{cluster}/{account}/{keyType}")
   })
 
   it("falls back LAST to the awsClusterNodeConfig's own ssm", () => {
@@ -491,9 +446,7 @@ describe("mergeSignatureProviderSSM", () => {
       },
       {}
     )
-    expect(merged.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
-      "/node-config/{account}/{keyType}"
-    )
+    expect(merged.signatureProvider?.ssm?.awsSecretIdPattern).toBe("/node-config/{account}/{keyType}")
   })
 
   it("prefers the flag over the file, and the file over the node config", () => {
@@ -508,27 +461,19 @@ describe("mergeSignatureProviderSSM", () => {
         }
       }
     expect(
-      mergeSignatureProviderSSM(
-        { ...nodeConfigOptions },
-        { [SSMFlag]: SSMJson },
-        fileOptions
-      ).signatureProvider?.ssm?.awsSecretIdPattern
+      mergeSignatureProviderSSM({ ...nodeConfigOptions }, { [SSMFlag]: SSMJson }, fileOptions).signatureProvider?.ssm
+        ?.awsSecretIdPattern
     ).toBe(SecretIdPattern)
     expect(
-      mergeSignatureProviderSSM({ ...nodeConfigOptions }, {}, fileOptions)
-        .signatureProvider?.ssm?.awsSecretIdPattern
+      mergeSignatureProviderSSM({ ...nodeConfigOptions }, {}, fileOptions).signatureProvider?.ssm?.awsSecretIdPattern
     ).toBe("/file/{account}")
   })
 })
 
 describe("raw command-line reads", () => {
   it("readCommandLineFlag reads both `--flag value` and `--flag=value`", () => {
-    expect(
-      readCommandLineFlag(["create", "--cluster-path", "/tmp/a"], ClusterPathFlag)
-    ).toBe("/tmp/a")
-    expect(
-      readCommandLineFlag(["create", "--cluster-path=/tmp/b"], ClusterPathFlag)
-    ).toBe("/tmp/b")
+    expect(readCommandLineFlag(["create", "--cluster-path", "/tmp/a"], ClusterPathFlag)).toBe("/tmp/a")
+    expect(readCommandLineFlag(["create", "--cluster-path=/tmp/b"], ClusterPathFlag)).toBe("/tmp/b")
   })
 
   it("readCommandLineFlag returns null when the flag is absent", () => {
@@ -606,14 +551,10 @@ describe("--cluster-build-options-file", () => {
   it("carries the flag-less collateral arrays through their shared schemas", () => {
     const loaded = loadClusterBuildOptionsFile(
       writeDocument({
-        requiredBatchOperatorCollateral: [
-          { chainCode: 11, tokenCode: 22, minimumBond: 2_000_000 }
-        ]
+        requiredBatchOperatorCollateral: [{ chainCode: 11, tokenCode: 22, minimumBond: 2_000_000 }]
       })
     )
-    expect(loaded.requiredBatchOperatorCollateral).toEqual([
-      { chainCode: 11, tokenCode: 22, minimumBond: 2_000_000 }
-    ])
+    expect(loaded.requiredBatchOperatorCollateral).toEqual([{ chainCode: 11, tokenCode: 22, minimumBond: 2_000_000 }])
   })
 
   it("codec-validates the out-of-shape signatureProvider.ssm", () => {
@@ -630,54 +571,42 @@ describe("--cluster-build-options-file", () => {
   })
 
   it("rejects an unknown option, naming its dotted path", () => {
-    expect(() =>
-      loadClusterBuildOptionsFile(writeDocument({ bind: { kiod: { prot: 1 } } }))
-    ).toThrow(/unknown option "bind\.kiod\.prot"/)
-    expect(() =>
-      loadClusterBuildOptionsFile(writeDocument({ nope: 1 }))
-    ).toThrow(/unknown option "nope"/)
+    expect(() => loadClusterBuildOptionsFile(writeDocument({ bind: { kiod: { prot: 1 } } }))).toThrow(
+      /unknown option "bind\.kiod\.prot"/
+    )
+    expect(() => loadClusterBuildOptionsFile(writeDocument({ nope: 1 }))).toThrow(/unknown option "nope"/)
   })
 
   it("rejects a wrongly-typed leaf, naming its dotted path and the expected type", () => {
-    expect(() =>
-      loadClusterBuildOptionsFile(writeDocument({ epochDurationSec: "60" }))
-    ).toThrow(/"epochDurationSec" must be a number/)
-    expect(() =>
-      loadClusterBuildOptionsFile(writeDocument({ force: {} }))
-    ).toThrow(/"force" must be a boolean/)
+    expect(() => loadClusterBuildOptionsFile(writeDocument({ epochDurationSec: "60" }))).toThrow(
+      /"epochDurationSec" must be a number/
+    )
+    expect(() => loadClusterBuildOptionsFile(writeDocument({ force: {} }))).toThrow(/"force" must be a boolean/)
   })
 
   it("rejects a value outside a choices-constrained leaf", () => {
-    expect(() =>
-      loadClusterBuildOptionsFile(
-        writeDocument({ signatureProvider: { type: "VAULT" } })
-      )
-    ).toThrow(/"signatureProvider\.type" must be one of/)
+    expect(() => loadClusterBuildOptionsFile(writeDocument({ signatureProvider: { type: "VAULT" } }))).toThrow(
+      /"signatureProvider\.type" must be one of/
+    )
   })
 
   it("rejects awsClusterNodeConfig, pointing at its own flag", () => {
     expect(() =>
-      loadClusterBuildOptionsFile(
-        writeDocument({ awsClusterNodeConfig: { account: "dev", regions: ["us-east-1"] } })
-      )
+      loadClusterBuildOptionsFile(writeDocument({ awsClusterNodeConfig: { account: "dev", regions: ["us-east-1"] } }))
     ).toThrow(new RegExp(`--${AWSClusterNodeConfigFlag}`))
   })
 
   it("rejects a non-object document root and invalid JSON", () => {
-    expect(() => loadClusterBuildOptionsFile(writeDocument([1, 2]))).toThrow(
-      /document root must be a JSON object/
-    )
+    expect(() => loadClusterBuildOptionsFile(writeDocument([1, 2]))).toThrow(/document root must be a JSON object/)
     const badFile = Path.join(dir, "bad.json")
     Fs.writeFileSync(badFile, "{not json")
-    expect(() => loadClusterBuildOptionsFile(badFile)).toThrow(
-      /could not be read as JSON/
-    )
+    expect(() => loadClusterBuildOptionsFile(badFile)).toThrow(/could not be read as JSON/)
   })
 
   it("rejects a non-integer topology count before the shape is built", () => {
-    expect(() =>
-      loadClusterBuildOptionsFile(writeDocument({ nodeCount: 1.5 }))
-    ).toThrow(/"nodeCount" must be a non-negative integer/)
+    expect(() => loadClusterBuildOptionsFile(writeDocument({ nodeCount: 1.5 }))).toThrow(
+      /"nodeCount" must be a non-negative integer/
+    )
   })
 })
 
@@ -717,9 +646,7 @@ describe("--aws-cluster-node-config", () => {
 
   it("throws on a malformed node config (no regions)", () => {
     const file = writeNodeConfig({ account: AWSAccountName.dev, regions: [] })
-    expect(() =>
-      toAWSClusterNodeConfig({ [AWSClusterNodeConfigFlag]: file })
-    ).toThrow()
+    expect(() => toAWSClusterNodeConfig({ [AWSClusterNodeConfigFlag]: file })).toThrow()
   })
 
   it("mergeAWSClusterNodeConfig fills options.awsClusterNodeConfig (no-op when absent)", () => {
@@ -727,10 +654,9 @@ describe("--aws-cluster-node-config", () => {
       account: AWSAccountName.test,
       regions: ["us-east-1"]
     })
-    expect(
-      mergeAWSClusterNodeConfig({}, { [AWSClusterNodeConfigFlag]: file })
-        .awsClusterNodeConfig?.account
-    ).toBe(AWSAccountName.test)
+    expect(mergeAWSClusterNodeConfig({}, { [AWSClusterNodeConfigFlag]: file }).awsClusterNodeConfig?.account).toBe(
+      AWSAccountName.test
+    )
     expect(mergeAWSClusterNodeConfig({}, {}).awsClusterNodeConfig).toBeUndefined()
   })
 })

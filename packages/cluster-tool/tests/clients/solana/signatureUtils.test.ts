@@ -7,44 +7,29 @@ describe("confirmSignature", () => {
   let connection: Connection
   let statusSpy: jest.SpyInstance
   beforeAll(async () => {
-    connection = new Connection(
-      toURL(
-        await BindConfigProvider.findAvailable(
-          BindConfigProvider.DefaultSolanaRpc
-        )
-      )
-    )
+    connection = new Connection(toURL(await BindConfigProvider.findAvailable(BindConfigProvider.DefaultSolanaRpc)))
   })
   afterEach(() => statusSpy?.mockRestore())
 
   // Builds a web3 getSignatureStatus response. `confirmationStatus` carries
   // web3's own `TransactionConfirmationStatus` literals (the external API
   // boundary) — `SolanaClient.ConfirmationStatus` mirrors them for our branching.
-  const response = (
-    confirmationStatus: TransactionConfirmationStatus | undefined,
-    err: string | null = null
-  ) => ({
+  const response = (confirmationStatus: TransactionConfirmationStatus | undefined, err: string | null = null) => ({
     context: { slot: 1 },
     value: { slot: 1, confirmations: 1, err, confirmationStatus }
   })
   const mockStatus = (...args: Parameters<typeof response>) => {
-    statusSpy = jest
-      .spyOn(connection, "getSignatureStatus")
-      .mockResolvedValue(response(...args))
+    statusSpy = jest.spyOn(connection, "getSignatureStatus").mockResolvedValue(response(...args))
   }
 
   it("resolves once the tx is confirmed", async () => {
     mockStatus("confirmed")
-    await expect(
-      confirmSignature(connection, "sig", "test", { intervalMs: 1 })
-    ).resolves.toBeUndefined()
+    await expect(confirmSignature(connection, "sig", "test", { intervalMs: 1 })).resolves.toBeUndefined()
   })
 
   it("throws when the tx reports an error", async () => {
     mockStatus("processed", "tx-error")
-    await expect(
-      confirmSignature(connection, "sig", "test", { intervalMs: 1 })
-    ).rejects.toThrow(/tx failed/)
+    await expect(confirmSignature(connection, "sig", "test", { intervalMs: 1 })).rejects.toThrow(/tx failed/)
   })
 
   it("throws on the deadline when never confirmed", async () => {

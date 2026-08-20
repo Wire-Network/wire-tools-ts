@@ -4,10 +4,7 @@ import { match } from "ts-pattern"
 import { eachSeries } from "../utils/asyncUtils.js"
 import { Report } from "../report/Report.js"
 import type { ClusterBuildContext } from "./ClusterBuildContext.js"
-import {
-  ClusterBuildPhaseBase,
-  type ClusterBuildParent
-} from "./ClusterBuildPhaseBase.js"
+import { ClusterBuildPhaseBase, type ClusterBuildParent } from "./ClusterBuildPhaseBase.js"
 
 /** Caller tuning for a {@link ClusterBuildPhaseGroup}. */
 export interface ClusterBuildPhaseGroupOptions {
@@ -40,26 +37,16 @@ export type ClusterBuildPhaseGroupConfig = Required<ClusterBuildPhaseGroupOption
  * siblings cancel cooperatively. Children's `Report.Phase`s flatten into the
  * report in run order.
  */
-export class ClusterBuildPhaseGroup<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >
+export class ClusterBuildPhaseGroup<C extends ClusterBuildContext = ClusterBuildContext>
   extends ClusterBuildPhaseBase<C>
   implements ClusterBuildParent<C>
 {
   private readonly childList: ClusterBuildPhaseBase<C>[] = []
   readonly config: ClusterBuildPhaseGroupConfig
 
-  private constructor(
-    context: C,
-    name: string,
-    description: string,
-    options: ClusterBuildPhaseGroupOptions
-  ) {
+  private constructor(context: C, name: string, description: string, options: ClusterBuildPhaseGroupOptions) {
     super(context, name, description)
-    this.config = defaults(
-      { ...options },
-      ClusterBuildPhaseGroup.ConfigDefaults
-    ) as ClusterBuildPhaseGroupConfig
+    this.config = defaults({ ...options }, ClusterBuildPhaseGroup.ConfigDefaults) as ClusterBuildPhaseGroupConfig
   }
 
   /** Factory — self-registers on `parent` (the build root or an enclosing group). */
@@ -128,14 +115,7 @@ export class ClusterBuildPhaseGroup<
           return nodes
         })
         .exhaustive()
-      return [
-        Report.Group.from(
-          this.name,
-          this.description,
-          children,
-          Date.now() - startedAtMs
-        )
-      ]
+      return [Report.Group.from(this.name, this.description, children, Date.now() - startedAtMs)]
     } finally {
       signal.removeEventListener("abort", onAbort)
     }

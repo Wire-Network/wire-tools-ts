@@ -11,15 +11,8 @@ import {
   type ProcessLivenessSnapshot,
   type StreamTopic
 } from "@wireio/debugging-shared"
-import {
-  DebuggingClient,
-  DebuggingSubscription
-} from "@wireio/debugging-client-shared"
-import type {
-  GetEnvelopeResponse,
-  ListEnvelopesRequest,
-  ListEnvelopesResponse
-} from "@wireio/opp-typescript-models"
+import { DebuggingClient, DebuggingSubscription } from "@wireio/debugging-client-shared"
+import type { GetEnvelopeResponse, ListEnvelopesRequest, ListEnvelopesResponse } from "@wireio/opp-typescript-models"
 
 /** One registered mock subscription — id, topic, and the (type-erased) subscription object. */
 export interface MockSubscriptionEntry {
@@ -91,11 +84,7 @@ export class MockDebuggingClient extends DebuggingClient {
   emit<T extends StreamTopic>(topic: T, payload: InferredStreamEvent<T>): void {
     this.subscriptions
       .filter(s => s.topic === topic)
-      .forEach(s =>
-        (s.sub as DebuggingSubscription<InferredStreamEvent<T>>).emitEvent(
-          payload
-        )
-      )
+      .forEach(s => (s.sub as DebuggingSubscription<InferredStreamEvent<T>>).emitEvent(payload))
   }
 
   /** Active subscription objects in registration order. */
@@ -112,15 +101,12 @@ export class MockDebuggingClient extends DebuggingClient {
   }
 
   async disconnect(): Promise<void> {
-    this.subscriptions.forEach(s =>
-      s.sub.notifyClosed(ClosedReason.ServerShutdown)
-    )
+    this.subscriptions.forEach(s => s.sub.notifyClosed(ClosedReason.ServerShutdown))
     this.subscriptions = []
   }
 
   async getClusterConfig(): Promise<ClusterConfig> {
-    if (!this.clusterConfig)
-      throw new Error("MockDebuggingClient: no cluster config set")
+    if (!this.clusterConfig) throw new Error("MockDebuggingClient: no cluster config set")
     return this.clusterConfig
   }
 
@@ -132,21 +118,16 @@ export class MockDebuggingClient extends DebuggingClient {
     return this.processSources
   }
 
-  async getProcessLiveness(
-    labels: string[]
-  ): Promise<ProcessLivenessSnapshot[]> {
+  async getProcessLiveness(labels: string[]): Promise<ProcessLivenessSnapshot[]> {
     if (labels.length === 0) {
       return [...this.livenessByLabel.values()]
     }
-    return labels
-      .map(l => this.livenessByLabel.get(l))
-      .filter((s): s is ProcessLivenessSnapshot => !!s)
+    return labels.map(l => this.livenessByLabel.get(l)).filter((s): s is ProcessLivenessSnapshot => !!s)
   }
 
   async getLogStat(path: string): Promise<LogStat> {
     const stat = this.logStats.get(path)
-    if (!stat)
-      throw new Error(`MockDebuggingClient: no LogStat set for ${path}`)
+    if (!stat) throw new Error(`MockDebuggingClient: no LogStat set for ${path}`)
     return stat
   }
 
@@ -155,24 +136,18 @@ export class MockDebuggingClient extends DebuggingClient {
     return all.slice(req.fromLine, req.fromLine + req.count)
   }
 
-  async listEnvelopes(
-    _req: ListEnvelopesRequest
-  ): Promise<ListEnvelopesResponse> {
-    if (!this.envelopeListResponse)
-      throw new Error("MockDebuggingClient: no envelope list set")
+  async listEnvelopes(_req: ListEnvelopesRequest): Promise<ListEnvelopesResponse> {
+    if (!this.envelopeListResponse) throw new Error("MockDebuggingClient: no envelope list set")
     return this.envelopeListResponse
   }
 
   async getEnvelope(key: string): Promise<GetEnvelopeResponse> {
     const resp = this.envelopeByKey.get(key)
-    if (!resp)
-      throw new Error(`MockDebuggingClient: no envelope for key ${key}`)
+    if (!resp) throw new Error(`MockDebuggingClient: no envelope for key ${key}`)
     return resp
   }
 
-  async loadEnvelopeRecords(
-    _req: LoadEnvelopeRecordsRequest
-  ): Promise<LoadEnvelopeRecordsResponse> {
+  async loadEnvelopeRecords(_req: LoadEnvelopeRecordsRequest): Promise<LoadEnvelopeRecordsResponse> {
     return { records: [] }
   }
 

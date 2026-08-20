@@ -23,8 +23,7 @@ export function contractView<View extends object>(
   abi: ethers.InterfaceAbi,
   runner: ethers.ContractRunner
 ): View & ethers.BaseContract {
-  return new ethers.Contract(address, abi, runner) as View &
-    ethers.BaseContract
+  return new ethers.Contract(address, abi, runner) as View & ethers.BaseContract
 }
 
 /** Shape of a deployed 20-byte EVM address (`0x` + 40 hex chars). */
@@ -120,10 +119,7 @@ function assertNonceSigner(source: NonceSource): ethers.Signer {
     signer != null && typeof signer.getAddress === "function",
     "resolveLatestNonce: contract must be bound to a Signer (got runner without getAddress)"
   )
-  Assert.ok(
-    signer.provider !== null,
-    "resolveLatestNonce: signer must have a Provider attached"
-  )
+  Assert.ok(signer.provider !== null, "resolveLatestNonce: signer must have a Provider attached")
   return signer
 }
 
@@ -153,9 +149,7 @@ export async function resolveLatestNonce(source: NonceSource): Promise<number> {
 
   // Take this call's link and install the next one SYNCHRONOUSLY — no `await`
   // between the read and the write, so two callers can never take the same one.
-  const nonce =
-    nonceCounters.get(fromAddr) ??
-    provider.getTransactionCount(fromAddr, "latest")
+  const nonce = nonceCounters.get(fromAddr) ?? provider.getTransactionCount(fromAddr, "latest")
   nonceCounters.set(
     fromAddr,
     nonce.then(value => value + 1)

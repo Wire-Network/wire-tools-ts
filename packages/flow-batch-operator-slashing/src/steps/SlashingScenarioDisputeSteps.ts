@@ -19,15 +19,10 @@ import {
   type StepInput
 } from "@wireio/cluster-tool"
 import { bytesToHex, encodeTaggedEnvelope } from "../EnvelopeCanonicalCodec.js"
-import {
-  InboundTipReader,
-  type OutpostConsensusRow,
-  type OutpostInboundTips
-} from "../InboundTipReader.js"
+import { InboundTipReader, type OutpostConsensusRow, type OutpostInboundTips } from "../InboundTipReader.js"
 import { SlashingScenarioConstants as Constants } from "../SlashingScenarioConstants.js"
 
-const { SysioContractName, SysioChalgDisputestatus, SysioOpregOperatorstatus } =
-  SysioContracts
+const { SysioContractName, SysioChalgDisputestatus, SysioOpregOperatorstatus } = SysioContracts
 
 const log = getLogger(__filename)
 
@@ -96,20 +91,14 @@ export namespace SlashingScenarioDisputeSteps {
     chainCode: number,
     epochIndex: number
   ): Promise<OutpostInboundTips> {
-    return inboundTipReader.read(chainCode, epochIndex, () =>
-      queryOutpostConsensusRows(ctx)
-    )
+    return inboundTipReader.read(chainCode, epochIndex, () => queryOutpostConsensusRows(ctx))
   }
 
   /** The current `sysio.msgch::outpcons` rows (the tip reader's injected query). */
-  async function queryOutpostConsensusRows(
-    ctx: ClusterBuildContext
-  ): Promise<OutpostConsensusRow[]> {
-    const { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.msgch)
-      .tables.outpcons.query({
-        limit: Constants.OutpostConsensusTableReadLimit
-      })
+  async function queryOutpostConsensusRows(ctx: ClusterBuildContext): Promise<OutpostConsensusRow[]> {
+    const { rows } = await ctx.wire.getSysioContract(SysioContractName.msgch).tables.outpcons.query({
+      limit: Constants.OutpostConsensusTableReadLimit
+    })
     return rows as OutpostConsensusRow[]
   }
 
@@ -121,9 +110,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param ctx - The build context.
    * @returns The epoch-state row.
    */
-  export async function readEpochState(
-    ctx: ClusterBuildContext
-  ): Promise<SysioContracts.SysioEpochEpochStateType> {
+  export async function readEpochState(ctx: ClusterBuildContext): Promise<SysioContracts.SysioEpochEpochStateType> {
     const { rows } = await ctx.wire.getEpochState()
     return rows[0]
   }
@@ -134,9 +121,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param ctx - The build context.
    * @returns The current epoch index.
    */
-  export async function currentEpoch(
-    ctx: ClusterBuildContext
-  ): Promise<number> {
+  export async function currentEpoch(ctx: ClusterBuildContext): Promise<number> {
     return Number((await readEpochState(ctx)).current_epoch_index)
   }
 
@@ -146,9 +131,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param ctx - The build context.
    * @returns The pause flag.
    */
-  export async function epochPaused(
-    ctx: ClusterBuildContext
-  ): Promise<boolean> {
+  export async function epochPaused(ctx: ClusterBuildContext): Promise<boolean> {
     return Boolean((await readEpochState(ctx)).is_paused)
   }
 
@@ -158,18 +141,11 @@ export namespace SlashingScenarioDisputeSteps {
    * @param ctx - The build context.
    * @returns `true` when `batch_op_groups[0]` matches {@link SlashingScenarioConstants.DisputeOperators}.
    */
-  export async function disputeOperatorsOwnGroup(
-    ctx: ClusterBuildContext
-  ): Promise<boolean> {
+  export async function disputeOperatorsOwnGroup(ctx: ClusterBuildContext): Promise<boolean> {
     const state = await readEpochState(ctx),
       active = state?.batch_op_groups?.[0] ?? [],
-      accounts = Constants.DisputeOperators.map(
-        label => ctx.keyStore.assertOperator(label).account
-      )
-    return (
-      active.length === accounts.length &&
-      accounts.every(account => active.includes(account))
-    )
+      accounts = Constants.DisputeOperators.map(label => ctx.keyStore.assertOperator(label).account)
+    return active.length === accounts.length && accounts.every(account => active.includes(account))
   }
 
   /**
@@ -197,9 +173,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param ctx - The build context.
    * @returns The dispute rows.
    */
-  export async function readDisputes(
-    ctx: ClusterBuildContext
-  ): Promise<SysioContracts.SysioChalgDisputeEntryType[]> {
+  export async function readDisputes(ctx: ClusterBuildContext): Promise<SysioContracts.SysioChalgDisputeEntryType[]> {
     const { rows } = await ctx.wire
       .getSysioContract(SysioContractName.chalg)
       .tables.disputes.query({ limit: Constants.DisputeTableReadLimit })
@@ -220,11 +194,7 @@ export namespace SlashingScenarioDisputeSteps {
     return (await readDisputes(ctx)).find(
       row =>
         Number(row.epoch_index) === epochIndex &&
-        matchesProtoEnum(
-          row.status,
-          SysioChalgDisputestatus,
-          SysioChalgDisputestatus.DISPUTE_STATUS_OPEN
-        )
+        matchesProtoEnum(row.status, SysioChalgDisputestatus, SysioChalgDisputestatus.DISPUTE_STATUS_OPEN)
     )
   }
 
@@ -255,8 +225,7 @@ export namespace SlashingScenarioDisputeSteps {
     candidates: SysioContracts.SysioChalgDisputeCandidateType[],
     account: string
   ): string {
-    return candidates.find(candidate => candidate.operators.includes(account))
-      ?.checksum
+    return candidates.find(candidate => candidate.operators.includes(account))?.checksum
   }
 
   // ── Cranks (permissionless writes driven inside polls) ───────────────────
@@ -276,20 +245,17 @@ export namespace SlashingScenarioDisputeSteps {
    */
   export async function crankChkcons(ctx: ClusterBuildContext): Promise<void> {
     try {
-      await ctx.wire
-        .getSysioContract(SysioContractName.msgch)
-        .actions.chkcons.invoke(
-          {},
-          {
-            authorization: [
-              {
-                actor: ctx.keyStore.assertOperator(Constants.CanonicalOperator)
-                  .account,
-                permission: ActivePermission
-              }
-            ]
-          }
-        )
+      await ctx.wire.getSysioContract(SysioContractName.msgch).actions.chkcons.invoke(
+        {},
+        {
+          authorization: [
+            {
+              actor: ctx.keyStore.assertOperator(Constants.CanonicalOperator).account,
+              permission: ActivePermission
+            }
+          ]
+        }
+      )
     } catch (error) {
       log.warn(`[slashing] chkcons crank transient: ${errorMessage(error)}`)
     }
@@ -304,25 +270,19 @@ export namespace SlashingScenarioDisputeSteps {
    * @param ctx - The build context.
    * @param disputeId - The dispute to tally.
    */
-  export async function crankChkdispute(
-    ctx: ClusterBuildContext,
-    disputeId: number
-  ): Promise<void> {
+  export async function crankChkdispute(ctx: ClusterBuildContext, disputeId: number): Promise<void> {
     try {
-      await ctx.wire
-        .getSysioContract(SysioContractName.chalg)
-        .actions.chkdispute.invoke(
-          { dispute_id: disputeId },
-          {
-            authorization: [
-              {
-                actor: ctx.keyStore.assertOperator(Constants.CanonicalOperator)
-                  .account,
-                permission: ActivePermission
-              }
-            ]
-          }
-        )
+      await ctx.wire.getSysioContract(SysioContractName.chalg).actions.chkdispute.invoke(
+        { dispute_id: disputeId },
+        {
+          authorization: [
+            {
+              actor: ctx.keyStore.assertOperator(Constants.CanonicalOperator).account,
+              permission: ActivePermission
+            }
+          ]
+        }
+      )
     } catch (error) {
       log.debug(`[slashing] chkdispute transient: ${errorMessage(error)}`)
     }
@@ -340,18 +300,12 @@ export namespace SlashingScenarioDisputeSteps {
    *
    * @param ctx - The build context.
    */
-  export async function waitPastEpochBoundary(
-    ctx: ClusterBuildContext
-  ): Promise<void> {
+  export async function waitPastEpochBoundary(ctx: ClusterBuildContext): Promise<void> {
     await pollUntil(
       "chain head-block time passes next_epoch_start",
       async () => {
-        const nextEpochStartMs = parseUtcMs(
-          String((await readEpochState(ctx)).next_epoch_start)
-        )
-        const headTimeMs = parseUtcMs(
-          String((await ctx.wire.getInfo()).head_block_time)
-        )
+        const nextEpochStartMs = parseUtcMs(String((await readEpochState(ctx)).next_epoch_start))
+        const headTimeMs = parseUtcMs(String((await ctx.wire.getInfo()).head_block_time))
         return (
           Number.isFinite(nextEpochStartMs) &&
           Number.isFinite(headTimeMs) &&
@@ -385,9 +339,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param ctx - The build context.
    * @returns The frozen, dispute-operators-owned `current_epoch_index`.
    */
-  export async function settleOnDisputeEpoch(
-    ctx: ClusterBuildContext
-  ): Promise<number> {
+  export async function settleOnDisputeEpoch(ctx: ClusterBuildContext): Promise<number> {
     let previousEpoch = -1
     let stableChecks = 0
     await pollUntil(
@@ -396,18 +348,13 @@ export namespace SlashingScenarioDisputeSteps {
         const epoch = await currentEpoch(ctx)
         stableChecks = epoch === previousEpoch ? stableChecks + 1 : 0
         previousEpoch = epoch
-        return (
-          (await disputeOperatorsOwnGroup(ctx)) &&
-          stableChecks >= Constants.SettleStableChecks
-        )
+        return (await disputeOperatorsOwnGroup(ctx)) && stableChecks >= Constants.SettleStableChecks
       },
       Constants.settleDeadlineMs(),
       Constants.settlePollIntervalMs()
     )
     const epoch = await currentEpoch(ctx)
-    log.info(
-      `[slashing] settled on frozen dispute-operators-owned epoch ${epoch}`
-    )
+    log.info(`[slashing] settled on frozen dispute-operators-owned epoch ${epoch}`)
     return epoch
   }
 
@@ -433,9 +380,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param tier - The node-owner tier.
    * @returns The definition step.
    */
-  export function planNewnameduser<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planNewnameduser<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -460,12 +405,7 @@ export namespace SlashingScenarioDisputeSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await pushNewNamedUser(
-      ctx.wire,
-      input.account,
-      TestClusterConstants.DEV_K1_PUBLIC_KEY,
-      input.tier
-    )
+    await pushNewNamedUser(ctx.wire, input.account, TestClusterConstants.DEV_K1_PUBLIC_KEY, input.tier)
   }
 
   // ── Step: sysio.roa::planNodeownreg (write) ───────────────────────────────────
@@ -491,9 +431,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param tier - The node-owner tier.
    * @returns The definition step.
    */
-  export function planNodeownreg<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planNodeownreg<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -555,9 +493,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param data - The generated action data.
    * @returns The definition step.
    */
-  export function planProcessbatch<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planProcessbatch<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -582,12 +518,10 @@ export namespace SlashingScenarioDisputeSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.opreg)
-      .actions.processbatch.invoke({
-        ...input.data,
-        account: ctx.keyStore.assertOperator(input.label).account
-      })
+    await ctx.wire.getSysioContract(SysioContractName.opreg).actions.processbatch.invoke({
+      ...input.data,
+      account: ctx.keyStore.assertOperator(input.label).account
+    })
   }
 
   // ── Step: sysio.msgch::planDeliver (write) ────────────────────────────────────
@@ -617,9 +551,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param tag - The envelope payload tag (drives the checksum).
    * @returns The definition step.
    */
-  export function planDeliver<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planDeliver<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -667,23 +599,17 @@ export namespace SlashingScenarioDisputeSteps {
       previousMessageId: tips.messageTip,
       previousEnvelopeHash: tips.envelopeDigest
     })
-    const batchOperatorAccount = ctx.keyStore.assertOperator(
-      input.batchOperatorLabel
-    ).account
-    await ctx.wire
-      .getSysioContract(SysioContractName.msgch)
-      .actions.deliver.invoke(
-        {
-          batch_op_name: batchOperatorAccount,
-          chain_code: input.chainCode,
-          data: bytesToHex(envelope)
-        },
-        {
-          authorization: [
-            { actor: batchOperatorAccount, permission: ActivePermission }
-          ]
-        }
-      )
+    const batchOperatorAccount = ctx.keyStore.assertOperator(input.batchOperatorLabel).account
+    await ctx.wire.getSysioContract(SysioContractName.msgch).actions.deliver.invoke(
+      {
+        batch_op_name: batchOperatorAccount,
+        chain_code: input.chainCode,
+        data: bytesToHex(envelope)
+      },
+      {
+        authorization: [{ actor: batchOperatorAccount, permission: ActivePermission }]
+      }
+    )
   }
 
   // ── Step: sysio.chalg::planVotedispute (write) ────────────────────────────────
@@ -706,9 +632,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param owner - The voting Tier-1 owner.
    * @returns The definition step.
    */
-  export function planVotedispute<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planVotedispute<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -733,18 +657,16 @@ export namespace SlashingScenarioDisputeSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const target = ctx.outputs.assert(DisputeResolutionKey)
-    await ctx.wire
-      .getSysioContract(SysioContractName.chalg)
-      .actions.votedispute.invoke(
-        {
-          owner: input.owner,
-          dispute_id: target.disputeId,
-          chosen_checksum: target.canonicalChecksum
-        },
-        {
-          authorization: [{ actor: input.owner, permission: ActivePermission }]
-        }
-      )
+    await ctx.wire.getSysioContract(SysioContractName.chalg).actions.votedispute.invoke(
+      {
+        owner: input.owner,
+        dispute_id: target.disputeId,
+        chosen_checksum: target.canonicalChecksum
+      },
+      {
+        authorization: [{ actor: input.owner, permission: ActivePermission }]
+      }
+    )
   }
 
   // ── Step: stage the contested epoch (boundary wait + capture) ─────────────
@@ -760,22 +682,13 @@ export namespace SlashingScenarioDisputeSteps {
    * @param options - Step option overrides.
    * @returns The definition step.
    */
-  export function planStageContestedEpoch<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planStageContestedEpoch<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runStageContestedEpoch
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runStageContestedEpoch)
   }
 
   /** Named runner — boundary wait, then store the contested epoch index. */
@@ -805,22 +718,13 @@ export namespace SlashingScenarioDisputeSteps {
    * @param options - Step option overrides.
    * @returns The definition step.
    */
-  export function planAwaitDisputeOpened<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planAwaitDisputeOpened<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runAwaitDisputeOpened
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runAwaitDisputeOpened)
   }
 
   /** Named runner — poll for the OPEN dispute, assert candidates, store the target. */
@@ -843,13 +747,8 @@ export namespace SlashingScenarioDisputeSteps {
       dispute.candidates.length >= Constants.DisputeOperators.length,
       `expected >= ${Constants.DisputeOperators.length} dispute candidates, got ${dispute.candidates.length}`
     )
-    const canonicalAccount = ctx.keyStore.assertOperator(
-      Constants.CanonicalOperator
-    ).account
-    const canonicalChecksum = candidateChecksumForOperator(
-      dispute.candidates,
-      canonicalAccount
-    )
+    const canonicalAccount = ctx.keyStore.assertOperator(Constants.CanonicalOperator).account
+    const canonicalChecksum = candidateChecksumForOperator(dispute.candidates, canonicalAccount)
     Assert.ok(
       isNotEmpty(canonicalChecksum),
       `no candidate checksum delivered by ${Constants.CanonicalOperator} (${canonicalAccount})`
@@ -858,9 +757,7 @@ export namespace SlashingScenarioDisputeSteps {
       disputeId: Number(dispute.id),
       canonicalChecksum
     })
-    log.info(
-      `[slashing] dispute ${dispute.id} open for epoch ${epoch} — canonical checksum ${canonicalChecksum}`
-    )
+    log.info(`[slashing] dispute ${dispute.id} open for epoch ${epoch} — canonical checksum ${canonicalChecksum}`)
   }
 
   // ── Step: await the dispute resolution (crank chkdispute inside the poll) ─
@@ -878,22 +775,13 @@ export namespace SlashingScenarioDisputeSteps {
    * @param options - Step option overrides.
    * @returns The definition step.
    */
-  export function planAwaitDisputeResolved<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planAwaitDisputeResolved<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runAwaitDisputeResolved
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runAwaitDisputeResolved)
   }
 
   /** Named runner — crank + poll until RESOLVED with the canonical winning checksum. */
@@ -911,11 +799,7 @@ export namespace SlashingScenarioDisputeSteps {
         const dispute = await readDispute(ctx, target.disputeId)
         return (
           dispute != null &&
-          matchesProtoEnum(
-            dispute.status,
-            SysioChalgDisputestatus,
-            SysioChalgDisputestatus.DISPUTE_STATUS_RESOLVED
-          ) &&
+          matchesProtoEnum(dispute.status, SysioChalgDisputestatus, SysioChalgDisputestatus.DISPUTE_STATUS_RESOLVED) &&
           dispute.winning_checksum === target.canonicalChecksum
         )
       },
@@ -946,9 +830,7 @@ export namespace SlashingScenarioDisputeSteps {
    *   handle) expected to be slashed.
    * @returns The definition step.
    */
-  export function planAwaitOperatorSlashed<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planAwaitOperatorSlashed<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -982,11 +864,7 @@ export namespace SlashingScenarioDisputeSteps {
         const row = await readOperator(ctx, input.label)
         return (
           row != null &&
-          matchesProtoEnum(
-            row.status,
-            SysioOpregOperatorstatus,
-            SysioOpregOperatorstatus.OPERATOR_STATUS_SLASHED
-          )
+          matchesProtoEnum(row.status, SysioOpregOperatorstatus, SysioOpregOperatorstatus.OPERATOR_STATUS_SLASHED)
         )
       },
       Constants.slashDeadlineMs(),
@@ -1013,9 +891,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param label - The dispute operator (by durable harness `label` handle) expected to flip ACTIVE.
    * @returns The definition step.
    */
-  export function planAwaitOperatorActive<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planAwaitOperatorActive<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -1048,11 +924,7 @@ export namespace SlashingScenarioDisputeSteps {
         const row = await readOperator(ctx, input.label)
         return (
           row != null &&
-          matchesProtoEnum(
-            row.status,
-            SysioOpregOperatorstatus,
-            SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
-          )
+          matchesProtoEnum(row.status, SysioOpregOperatorstatus, SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE)
         )
       },
       Constants.activeDeadlineMs(),
@@ -1067,8 +939,6 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** Parse a chain timestamp as UTC ms (chain timestamps omit the zone suffix). */
   function parseUtcMs(raw: string): number {
-    return Date.parse(
-      raw.endsWith(UtcZuluSuffix) ? raw : `${raw}${UtcZuluSuffix}`
-    )
+    return Date.parse(raw.endsWith(UtcZuluSuffix) ? raw : `${raw}${UtcZuluSuffix}`)
   }
 }

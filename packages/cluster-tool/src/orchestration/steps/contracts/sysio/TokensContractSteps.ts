@@ -1,10 +1,7 @@
 import { SysioContracts } from "@wireio/sdk-core"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../../../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../../../ClusterBuildStep.js"
 import type { StepInput } from "../../../StepRunner.js"
 
 const { SysioContractName } = SysioContracts
@@ -42,9 +39,7 @@ export namespace TokensContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.tokens)
-      .actions.regtoken.invoke(input.data)
+    await ctx.wire.getSysioContract(SysioContractName.tokens).actions.regtoken.invoke(input.data)
   }
 
   /** Input for {@link planRegctok} — the generated `tokens::regctok` data. */
@@ -78,8 +73,6 @@ export namespace TokensContractSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.tokens)
-      .actions.regctok.invoke(input.data)
+    await ctx.wire.getSysioContract(SysioContractName.tokens).actions.regctok.invoke(input.data)
   }
 }

@@ -2,11 +2,7 @@ import * as Fs from "node:fs"
 import * as OS from "node:os"
 import * as Path from "node:path"
 
-import {
-  ClusterStateNodeRole,
-  type ClusterState,
-  type ClusterStateNode
-} from "@wireio/cluster-tool-shared"
+import { ClusterStateNodeRole, type ClusterState, type ClusterStateNode } from "@wireio/cluster-tool-shared"
 import {
   PidSourceKind,
   PidSources,
@@ -39,25 +35,16 @@ describe("collectPidSources", () => {
       anvilDir = Path.join(tmpDir, PidSources.AnvilSubpath),
       solanaDir = Path.join(tmpDir, PidSources.SolanaSubpath)
 
-    ;[
-      biosDir,
-      producerDir,
-      batchDir,
-      underwriterDir,
-      anvilDir,
-      solanaDir
-    ].forEach(d => Fs.mkdirSync(d, { recursive: true }))
+    ;[biosDir, producerDir, batchDir, underwriterDir, anvilDir, solanaDir].forEach(d =>
+      Fs.mkdirSync(d, { recursive: true })
+    )
 
     Fs.writeFileSync(Path.join(biosDir, "nodeop.pid"), "11", "utf8")
     Fs.writeFileSync(Path.join(producerDir, "nodeop.pid"), "12", "utf8")
     Fs.writeFileSync(Path.join(batchDir, "nodeop.pid"), "13", "utf8")
     Fs.writeFileSync(Path.join(underwriterDir, "nodeop.pid"), "14", "utf8")
     Fs.writeFileSync(Path.join(anvilDir, "anvil.pid"), "15", "utf8")
-    Fs.writeFileSync(
-      Path.join(solanaDir, "solana-test-validator.pid"),
-      "16",
-      "utf8"
-    )
+    Fs.writeFileSync(Path.join(solanaDir, "solana-test-validator.pid"), "16", "utf8")
 
     const node = (
       name: string,
@@ -81,13 +68,7 @@ describe("collectPidSources", () => {
         node(PidSources.BiosNodeId, biosDir, ClusterStateNodeRole.bios),
         node("node_00", producerDir, ClusterStateNodeRole.producer),
         node("node_01", batchDir, ClusterStateNodeRole.operator, "batchop1"),
-        node(
-          "node_02",
-          underwriterDir,
-          ClusterStateNodeRole.operator,
-          null,
-          "underwriter1"
-        )
+        node("node_02", underwriterDir, ClusterStateNodeRole.operator, null, "underwriter1")
       ],
       walletPath: "",
       anvilStateFile: "",
@@ -149,9 +130,7 @@ describe("logPathForSource", () => {
       },
       new Date(2026, 4, 8)
     )
-    expect(path).toBe(
-      Path.join(tmpDir, PidSources.LogsSubdir, "log_20260508.log")
-    )
+    expect(path).toBe(Path.join(tmpDir, PidSources.LogsSubdir, "log_20260508.log"))
   })
 })
 

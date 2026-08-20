@@ -1,7 +1,4 @@
-import {
-  JsonRPCResponseEnvelopeSchemaCodec,
-  type JsonRPCResponseEnvelope
-} from "@wireio/debugging-shared"
+import { JsonRPCResponseEnvelopeSchemaCodec, type JsonRPCResponseEnvelope } from "@wireio/debugging-shared"
 
 describe("JsonRPCResponseEnvelopeSchemaCodec", () => {
   const success: JsonRPCResponseEnvelope = {
@@ -18,9 +15,7 @@ describe("JsonRPCResponseEnvelopeSchemaCodec", () => {
   it("round-trips success + error envelopes through serialize → deserialize", () => {
     ;[success, failure].forEach(envelope =>
       expect(
-        JsonRPCResponseEnvelopeSchemaCodec.deserialize(
-          JsonRPCResponseEnvelopeSchemaCodec.serialize(envelope)
-        )
+        JsonRPCResponseEnvelopeSchemaCodec.deserialize(JsonRPCResponseEnvelopeSchemaCodec.serialize(envelope))
       ).toEqual(envelope)
     )
   })
@@ -40,8 +35,6 @@ describe("JsonRPCResponseEnvelopeSchemaCodec", () => {
     // Missing the required jsonrpc field.
     expect(JsonRPCResponseEnvelopeSchemaCodec.check({ id: 1 })).toBe(false)
     // jsonrpc is not a string.
-    expect(
-      JsonRPCResponseEnvelopeSchemaCodec.check({ jsonrpc: 2, id: 1 })
-    ).toBe(false)
+    expect(JsonRPCResponseEnvelopeSchemaCodec.check({ jsonrpc: 2, id: 1 })).toBe(false)
   })
 })

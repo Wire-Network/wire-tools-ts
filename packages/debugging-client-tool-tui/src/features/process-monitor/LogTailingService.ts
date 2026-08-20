@@ -1,13 +1,6 @@
 import { EventEmitter } from "eventemitter3"
-import {
-  ClosedReason,
-  StreamTopic,
-  type LogTailEvent
-} from "@wireio/debugging-shared"
-import type {
-  DebuggingClient,
-  DebuggingSubscription
-} from "@wireio/debugging-client-shared"
+import { ClosedReason, StreamTopic, type LogTailEvent } from "@wireio/debugging-shared"
+import type { DebuggingClient, DebuggingSubscription } from "@wireio/debugging-client-shared"
 
 import { LoggingManager } from "../../logging/LoggingManager.js"
 import { DebuggingClientService } from "../../services/DebuggingClientService.js"
@@ -46,16 +39,9 @@ export interface LogTailingEvents {
  * surfaced via `EventEmitter3` events so the panel re-renders only when
  * it cares (e.g. while following / on indexing-flag transitions).
  */
-export class LogTailingService
-  extends EventEmitter<LogTailingEvents>
-  implements Service
-{
+export class LogTailingService extends EventEmitter<LogTailingEvents> implements Service {
   static readonly id = ServiceId.LogTailing
-  static readonly dependsOn: readonly string[] = [
-    ServiceId.Redux,
-    ServiceId.DebuggingClient,
-    ServiceId.ProcessMonitor
-  ]
+  static readonly dependsOn: readonly string[] = [ServiceId.Redux, ServiceId.DebuggingClient, ServiceId.ProcessMonitor]
 
   private readonly log = LoggingManager.getLogger(LogTailingService.Category)
   private redux: ReduxService | null = null
@@ -72,9 +58,7 @@ export class LogTailingService
 
   async init(manager: ServiceManager): Promise<this> {
     this.redux = manager.get<ReduxService>(ServiceId.Redux)
-    this.client = manager.get<DebuggingClientService>(
-      ServiceId.DebuggingClient
-    ).client
+    this.client = manager.get<DebuggingClientService>(ServiceId.DebuggingClient).client
     return this
   }
 
@@ -98,11 +82,7 @@ export class LogTailingService
     const max = this.runtime.totalLines
     if (from >= max || count <= 0) return []
     const safeCount = Math.min(count, max - from)
-    if (
-      this.lines.length < from + safeCount &&
-      this.client &&
-      this.currentPath
-    ) {
+    if (this.lines.length < from + safeCount && this.client && this.currentPath) {
       // Fill cache from the server / disk for the requested window.
       const fetched = await this.client.readLogWindow({
         path: this.currentPath,
@@ -152,9 +132,7 @@ export class LogTailingService
         path: viewer.path
       })
       this.subscription.on("event", evt => this.onTailEvent(evt))
-      this.subscription.on("closed", reason =>
-        this.log.warn(`log-tail subscription closed: ${reason}`)
-      )
+      this.subscription.on("closed", reason => this.log.warn(`log-tail subscription closed: ${reason}`))
     } catch (err) {
       this.log.error(`Failed to start log tail for ${viewer.path}`, err)
       this.runtime = { ...this.runtime, indexing: false }

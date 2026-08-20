@@ -30,9 +30,7 @@ describe("startScriptUtils", () => {
     it("REJECTS a sibling that merely shares the prefix STRING", () => {
       // A bare startsWith would relocate /build/cluster-2 onto $CLUSTER_DIR,
       // silently pointing a daemon at a different cluster's tree.
-      expect(matchesPrefix("/build/cluster-2/data/x", "/build/cluster")).toBe(
-        false
-      )
+      expect(matchesPrefix("/build/cluster-2/data/x", "/build/cluster")).toBe(false)
     })
 
     it("REJECTS an empty prefix, which would otherwise match everything", () => {
@@ -47,21 +45,17 @@ describe("startScriptUtils", () => {
     it("puts the longest prefix first so a nested root wins", () => {
       // A node dir lives UNDER the cluster dir; if clusterPath were tried
       // first every node path would relocate to $CLUSTER_DIR.
-      expect(
-        orderRelocations([clusterRelocation, nodeRelocation]).map(
-          entry => entry.variable
-        )
-      ).toEqual([StartScriptVariable.NODE_DIR, StartScriptVariable.CLUSTER_DIR])
+      expect(orderRelocations([clusterRelocation, nodeRelocation]).map(entry => entry.variable)).toEqual([
+        StartScriptVariable.NODE_DIR,
+        StartScriptVariable.CLUSTER_DIR
+      ])
     })
 
     it("drops empty prefixes so an unset root cannot match everything", () => {
       // A depot-only cluster has no ethereum path; a "" prefix would otherwise
       // match every token via startsWith.
       expect(
-        orderRelocations([
-          { prefix: "", variable: StartScriptVariable.WIRE_ETH_PATH },
-          clusterRelocation
-        ])
+        orderRelocations([{ prefix: "", variable: StartScriptVariable.WIRE_ETH_PATH }, clusterRelocation])
       ).toEqual([clusterRelocation])
     })
   })
@@ -77,28 +71,20 @@ describe("startScriptUtils", () => {
 
     it("keeps shell metacharacters literal when bash evaluates it", () => {
       const hostile = `a b$(echo pwned)\`echo x\`'q'`,
-        printed = execFileSync(
-          "bash",
-          ["-c", `printf '%s' ${shellQuote(hostile)}`],
-          { encoding: "utf8" }
-        )
+        printed = execFileSync("bash", ["-c", `printf '%s' ${shellQuote(hostile)}`], { encoding: "utf8" })
       expect(printed).toBe(hostile)
     })
   })
 
   describe("toRelocatableToken", () => {
     it("substitutes a matched root and quotes the remainder", () => {
-      expect(
-        toRelocatableToken("/build/cluster/data/anvil/anvil.json", [
-          clusterRelocation
-        ])
-      ).toBe(`"$CLUSTER_DIR"'/data/anvil/anvil.json'`)
+      expect(toRelocatableToken("/build/cluster/data/anvil/anvil.json", [clusterRelocation])).toBe(
+        `"$CLUSTER_DIR"'/data/anvil/anvil.json'`
+      )
     })
 
     it("emits the bare variable when the token IS the root", () => {
-      expect(toRelocatableToken("/build/cluster", [clusterRelocation])).toBe(
-        `"$CLUSTER_DIR"`
-      )
+      expect(toRelocatableToken("/build/cluster", [clusterRelocation])).toBe(`"$CLUSTER_DIR"`)
     })
 
     it("quotes an unmatched token whole", () => {
@@ -107,20 +93,14 @@ describe("startScriptUtils", () => {
 
     it("does NOT match a sibling directory sharing the prefix string", () => {
       // /build/cluster-other is not under /build/cluster.
-      expect(
-        toRelocatableToken("/build/cluster-other/x", [clusterRelocation])
-      ).toBe("'/build/cluster-other/x'")
+      expect(toRelocatableToken("/build/cluster-other/x", [clusterRelocation])).toBe("'/build/cluster-other/x'")
     })
 
     it("expands to the original path when bash evaluates it", () => {
-      const word = toRelocatableToken("/build/cluster/data/x y", [
-          clusterRelocation
-        ]),
-        printed = execFileSync(
-          "bash",
-          ["-c", `CLUSTER_DIR=/moved/elsewhere; printf '%s' ${word}`],
-          { encoding: "utf8" }
-        )
+      const word = toRelocatableToken("/build/cluster/data/x y", [clusterRelocation]),
+        printed = execFileSync("bash", ["-c", `CLUSTER_DIR=/moved/elsewhere; printf '%s' ${word}`], {
+          encoding: "utf8"
+        })
       expect(printed).toBe("/moved/elsewhere/data/x y")
     })
   })

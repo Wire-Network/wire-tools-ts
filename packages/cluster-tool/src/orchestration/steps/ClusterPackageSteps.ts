@@ -8,10 +8,7 @@ import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 import { NodeConfig } from "../../config/NodeConfig.js"
 import { Report } from "../../report/Report.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../ClusterBuildStep.js"
 import type { StepInput } from "../StepRunner.js"
 
 /** The `archiver` module surface, loaded lazily (type-only static import). */
@@ -75,9 +72,7 @@ export namespace ClusterPackageSteps {
    * @param packageType - The archive format.
    * @returns The archive step.
    */
-  export function planPackageNode<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planPackageNode<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -103,26 +98,14 @@ export namespace ClusterPackageSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const config = ctx.config,
-      node = NodeConfig.plan(config).find(
-        candidate => candidate.name === input.nodeName
-      )
-    Assert.ok(
-      node != null,
-      `ClusterPackageSteps: node ${input.nodeName} not found in the topology`
-    )
+      node = NodeConfig.plan(config).find(candidate => candidate.name === input.nodeName)
+    Assert.ok(node != null, `ClusterPackageSteps: node ${input.nodeName} not found in the topology`)
     const packagesDir = Path.join(config.clusterPath, PackagesSubpath)
     Fs.mkdirSync(packagesDir, { recursive: true })
-    const outputFile = Path.join(
-      packagesDir,
-      `${input.nodeName}${extensionFor(input.packageType)}`
-    )
+    const outputFile = Path.join(packagesDir, `${input.nodeName}${extensionFor(input.packageType)}`)
     await match(input.packageType)
       .with(ClusterPackageType.ZIP, () =>
-        packageNodeZIP(
-          node.nodePath,
-          ClusterConfigProvider.genesisFile(config),
-          outputFile
-        )
+        packageNodeZIP(node.nodePath, ClusterConfigProvider.genesisFile(config), outputFile)
       )
       .exhaustive()
   }
@@ -140,11 +123,7 @@ export namespace ClusterPackageSteps {
    * from this archive with no replay). NEVER includes `cluster-keys.json` (it
    * lives at the cluster root, outside `nodePath`, and is never added here).
    */
-  async function packageNodeZIP(
-    nodePath: string,
-    genesisFile: string,
-    outputFile: string
-  ): Promise<void> {
+  async function packageNodeZIP(nodePath: string, genesisFile: string, outputFile: string): Promise<void> {
     const { ZipArchive } = await importArchiverModule(),
       output = Fs.createWriteStream(outputFile),
       archive = new ZipArchive({ zlib: { level: ZipCompressionLevel } }),
@@ -157,9 +136,7 @@ export namespace ClusterPackageSteps {
     // Exclude runtime artifacts a handed-off archive must not carry — a stale
     // `*.pid` or any `logs/` entry (mirrors the clone step's exclusions).
     archive.directory(nodePath, Path.basename(nodePath), entry =>
-      entry.name.endsWith(".pid") || /(^|[\\/])logs([\\/]|$)/.test(entry.name)
-        ? false
-        : entry
+      entry.name.endsWith(".pid") || /(^|[\\/])logs([\\/]|$)/.test(entry.name) ? false : entry
     )
     archive.file(genesisFile, { name: Path.basename(genesisFile) })
     await archive.finalize()

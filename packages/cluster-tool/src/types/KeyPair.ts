@@ -49,11 +49,7 @@ export interface KeyPairNoExtension {}
  * duplicated `K1KeyPair` / `BLSKeyPair` interfaces.
  */
 export type KeyPair<T extends KeyType = KeyType> = KeyPairCommon<T> &
-  (T extends KeyType.BLS
-    ? KeyPairProofOfPossession
-    : T extends KeyType.EM
-      ? KeyPairAddress
-      : KeyPairNoExtension)
+  (T extends KeyType.BLS ? KeyPairProofOfPossession : T extends KeyType.EM ? KeyPairAddress : KeyPairNoExtension)
 
 /** WIRE operator key pair (`PUB_K1_…` / `PVT_K1_…`). */
 export type WireKeyPair = KeyPair<KeyType.K1>

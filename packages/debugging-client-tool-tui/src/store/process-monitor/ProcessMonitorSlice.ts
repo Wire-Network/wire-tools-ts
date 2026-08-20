@@ -1,10 +1,7 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit"
 import type { ProcessLivenessSnapshot } from "@wireio/debugging-shared"
 import { SliceName } from "../StoreTypes.js"
-import type {
-  LogViewerState,
-  ProcessMonitorState
-} from "./ProcessMonitorTypes.js"
+import type { LogViewerState, ProcessMonitorState } from "./ProcessMonitorTypes.js"
 
 const initialLogViewer: LogViewerState = {
   path: null,

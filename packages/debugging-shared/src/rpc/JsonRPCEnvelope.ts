@@ -25,9 +25,7 @@ export const JsonRPCResponseEnvelopeSchema = z.object({
 })
 
 /** A parsed JSON-RPC 2.0 response envelope — the shape of {@link JsonRPCResponseEnvelopeSchema}. */
-export type JsonRPCResponseEnvelope = z.infer<
-  typeof JsonRPCResponseEnvelopeSchema
->
+export type JsonRPCResponseEnvelope = z.infer<typeof JsonRPCResponseEnvelopeSchema>
 
 /**
  * The {@link SchemaCodec} for a JSON-RPC 2.0 response envelope — validates the

@@ -16,10 +16,7 @@ export const RedactedMarker = "<redacted>"
  * Flags whose FOLLOWING argv entry is the secret itself —
  * `clio wallet import --private-key PVT_K1_…`, `wallet unlock --password …`.
  */
-const SecretArgFlags: ReadonlySet<string> = new Set([
-  "--private-key",
-  "--password"
-])
+const SecretArgFlags: ReadonlySet<string> = new Set(["--private-key", "--password"])
 
 /**
  * A secret embedded INSIDE a larger token rather than passed as its own arg —

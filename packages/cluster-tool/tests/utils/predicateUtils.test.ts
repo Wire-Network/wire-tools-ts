@@ -1,9 +1,5 @@
 import { OperatorStatus } from "@wireio/opp-typescript-models"
-import {
-  inRange,
-  isNotEmpty,
-  matchesProtoEnum
-} from "@wireio/cluster-tool/utils"
+import { inRange, isNotEmpty, matchesProtoEnum } from "@wireio/cluster-tool/utils"
 
 describe("predicateUtils", () => {
   describe("isNotEmpty", () => {
@@ -47,9 +43,7 @@ describe("predicateUtils", () => {
       expect(matchesProtoEnum(spelling, OperatorStatus, want)).toBe(true)
     })
     it("rejects a different member and non-string/number shapes", () => {
-      expect(
-        matchesProtoEnum(OperatorStatus.TERMINATED, OperatorStatus, want)
-      ).toBe(false)
+      expect(matchesProtoEnum(OperatorStatus.TERMINATED, OperatorStatus, want)).toBe(false)
       expect(matchesProtoEnum("NOPE", OperatorStatus, want)).toBe(false)
       expect(matchesProtoEnum(null, OperatorStatus, want)).toBe(false)
       expect(matchesProtoEnum({}, OperatorStatus, want)).toBe(false)

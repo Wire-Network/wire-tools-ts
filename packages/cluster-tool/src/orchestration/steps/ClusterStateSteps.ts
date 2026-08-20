@@ -2,10 +2,7 @@ import { getLogger } from "../../logging/Logger.js"
 import { ClusterState } from "../../cluster/ClusterState.js"
 import { Report } from "../../report/Report.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
-import {
-  ClusterBuildStep,
-  type ClusterBuildStepOptions
-} from "../ClusterBuildStep.js"
+import { ClusterBuildStep, type ClusterBuildStepOptions } from "../ClusterBuildStep.js"
 
 const log = getLogger(__filename)
 
@@ -28,22 +25,13 @@ export namespace ClusterStateSteps {
    * @param options - Step execution options (timeouts, retries).
    * @returns The persist step (input-less; runner: {@link runPersist}).
    */
-  export function planPersist<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
+  export function planPersist<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
     name: string,
     description: string,
     options: ClusterBuildStepOptions
   ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
-      actor,
-      name,
-      description,
-      options,
-      null,
-      runPersist
-    )
+    return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runPersist)
   }
 
   /**

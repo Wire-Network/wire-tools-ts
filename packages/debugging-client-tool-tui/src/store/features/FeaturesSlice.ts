@@ -24,10 +24,7 @@ export const featuresSlice = createSlice({
   initialState,
   reducers: {
     /** Append a provider to the registry if not already present. */
-    registerFeature: (
-      state,
-      action: PayloadAction<RegisteredFeatureProvider>
-    ) => {
+    registerFeature: (state, action: PayloadAction<RegisteredFeatureProvider>) => {
       if (!state.registered.some(f => f.id === action.payload.id)) {
         state.registered.push(action.payload)
       }

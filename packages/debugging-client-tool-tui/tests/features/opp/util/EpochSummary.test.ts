@@ -54,10 +54,7 @@ describe("EndpointTypeNames", () => {
 describe("attestationCountFor", () => {
   it("sums payload.attestations.length across every message", () => {
     const env = {
-      messages: [
-        { payload: { attestations: [{}, {}] } },
-        { payload: { attestations: [{}] } }
-      ]
+      messages: [{ payload: { attestations: [{}, {}] } }, { payload: { attestations: [{}] } }]
     } as never
     expect(attestationCountFor(env)).toBe(3)
   })
@@ -84,9 +81,7 @@ describe("indexEnvelopesByEndpoint", () => {
     const idx = indexEnvelopesByEndpoint(epoch)
     expect(idx.has("OUTPOST_ETHEREUM_DEPOT")).toBe(true)
     expect(idx.has("DEPOT_OUTPOST_SOLANA")).toBe(true)
-    expect(idx.get("OUTPOST_ETHEREUM_DEPOT")?.endpointsType).toBe(
-      DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT
-    )
+    expect(idx.get("OUTPOST_ETHEREUM_DEPOT")?.endpointsType).toBe(DebugOutpostEndpointsType.OUTPOST_ETHEREUM_DEPOT)
   })
 })
 

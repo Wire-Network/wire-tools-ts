@@ -16,25 +16,14 @@ export namespace ClusterRoutes {
    *                      `cluster-state.json`.
    * @returns The same `registry` instance for fluent chaining.
    */
-  export function register(
-    registry: JsonRPC.HandlerRegistry,
-    clusterAccess: ClusterAccess
-  ): JsonRPC.HandlerRegistry {
-    JsonRPC.addRoute(
-      registry,
-      ApiPaths.Cluster.Methods.GetConfig,
-      async () => {
-        return clusterAccess.getConfig()
-      }
-    )
-    JsonRPC.addRoute(
-      registry,
-      ApiPaths.Cluster.Methods.GetState,
-      async () => {
-        const state = await clusterAccess.getState()
-        return { state }
-      }
-    )
+  export function register(registry: JsonRPC.HandlerRegistry, clusterAccess: ClusterAccess): JsonRPC.HandlerRegistry {
+    JsonRPC.addRoute(registry, ApiPaths.Cluster.Methods.GetConfig, async () => {
+      return clusterAccess.getConfig()
+    })
+    JsonRPC.addRoute(registry, ApiPaths.Cluster.Methods.GetState, async () => {
+      const state = await clusterAccess.getState()
+      return { state }
+    })
     return registry
   }
 }

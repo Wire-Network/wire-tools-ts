@@ -33,11 +33,6 @@ export function oppDebuggingPath(clusterPath: string): string {
 export function isPathUnder(candidate: string, root: string): boolean {
   const resolvedCandidate = Path.resolve(candidate),
     resolvedRoot = Path.resolve(root),
-    rootWithSep = resolvedRoot.endsWith(Path.sep)
-      ? resolvedRoot
-      : resolvedRoot + Path.sep
-  return (
-    resolvedCandidate === resolvedRoot ||
-    resolvedCandidate.startsWith(rootWithSep)
-  )
+    rootWithSep = resolvedRoot.endsWith(Path.sep) ? resolvedRoot : resolvedRoot + Path.sep
+  return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(rootWithSep)
 }

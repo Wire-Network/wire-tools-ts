@@ -1,7 +1,4 @@
-import {
-  ComponentProviders,
-  FeatureComponentToken
-} from "../../providers/ComponentProviders.js"
+import { ComponentProviders, FeatureComponentToken } from "../../providers/ComponentProviders.js"
 import type { RouteRegistry } from "../../router/RouteRegistry.js"
 import type { ServiceManager } from "../../services/ServiceManager.js"
 import { OPPTrackingService } from "./OPPTrackingService.js"

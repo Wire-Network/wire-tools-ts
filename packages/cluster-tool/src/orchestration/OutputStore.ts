@@ -37,10 +37,7 @@ export class OutputStore {
 
   /** The stored value; throws when absent. */
   assert<T>(key: OutputKey<T>): T {
-    Assert.ok(
-      this.values.has(key.name),
-      `Missing asserted output: ${key.name} (${key.description})`
-    )
+    Assert.ok(this.values.has(key.name), `Missing asserted output: ${key.name} (${key.description})`)
     return this.values.get(key.name) as T
   }
 

@@ -1,8 +1,4 @@
-import {
-  ClusterBuildContext,
-  ClusterBuildStep,
-  type StepInput
-} from "@wireio/cluster-tool/orchestration"
+import { ClusterBuildContext, ClusterBuildStep, type StepInput } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 
 interface DeployInput extends StepInput {
@@ -28,14 +24,7 @@ describe("ClusterBuildStep.create", () => {
   })
 
   it("structurally satisfies Report.StepLike", () => {
-    const step = ClusterBuildStep.create(
-      Report.Actor.User,
-      "s",
-      "describe s",
-      {},
-      null,
-      async () => {}
-    )
+    const step = ClusterBuildStep.create(Report.Actor.User, "s", "describe s", {}, null, async () => {})
     const like: Report.StepLike = step
     expect(like.actor).toBe(Report.Actor.User)
     expect(like.description).toBe("describe s")

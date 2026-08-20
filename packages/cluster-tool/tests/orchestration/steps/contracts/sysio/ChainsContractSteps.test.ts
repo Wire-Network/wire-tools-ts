@@ -21,9 +21,7 @@ describe("Steps.contracts.sysio.chains", () => {
     expect(step.actor).toBe(Report.Actor.Sysio)
     expect(step.input.kind).toBe("ChainsContractSteps.RegchainInput")
     expect(step.input.data).toBe(data)
-    expect(step.input.data.kind).toBe(
-      SysioContracts.SysioChainsChainkind.CHAIN_KIND_WIRE
-    )
+    expect(step.input.data.kind).toBe(SysioContracts.SysioChainsChainkind.CHAIN_KIND_WIRE)
     expect(typeof step.runner).toBe("function")
   })
 })

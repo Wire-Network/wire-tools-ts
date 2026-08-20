@@ -34,8 +34,7 @@ export const KeyMaterialPatterns: readonly KeyMaterialPattern[] = [
     // — always 51 chars, always `5H` / `5J` / `5K`. Fenced by TokenBoundary so
     // a coincidental run inside a longer key/id token cannot satisfy it.
     name: "wallet import format (WIF) private key",
-    pattern:
-      /(?<![0-9A-Za-z_+/=-])5[HJK][1-9A-HJ-NP-Za-km-z]{49}(?![0-9A-Za-z_+/=-])/
+    pattern: /(?<![0-9A-Za-z_+/=-])5[HJK][1-9A-HJ-NP-Za-km-z]{49}(?![0-9A-Za-z_+/=-])/
   },
   {
     // EM's chain-native form. A `0x` address is 40 hex chars, so the exact-64
@@ -50,8 +49,7 @@ export const KeyMaterialPatterns: readonly KeyMaterialPattern[] = [
     // token — a `PUB_BLS_…` key or a `SIG_BLS_…` proof of possession — cannot
     // satisfy the window. A real ED secret is delimited by JSON punctuation.
     name: "base58 64-byte ed25519 secret key",
-    pattern:
-      /(?<![0-9A-Za-z_+/=-])[1-9A-HJ-NP-Za-km-z]{87,88}(?![0-9A-Za-z_+/=-])/
+    pattern: /(?<![0-9A-Za-z_+/=-])[1-9A-HJ-NP-Za-km-z]{87,88}(?![0-9A-Za-z_+/=-])/
   },
   {
     // The `solana-keygen` keypair file shape — a JSON array of exactly 64 bytes.

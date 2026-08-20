@@ -41,8 +41,7 @@ export namespace SolanaOutpostProgramTool {
    */
   export const ProgramIdlSubpath = "target/idl/liqsol_core.json"
   /** Remediation hint appended to every missing-artifact assertion. */
-  export const BuildRemediationHint =
-    "(run 'anchor build && node scripts/opp/patch-idl-errors.js' in wire-solana)"
+  export const BuildRemediationHint = "(run 'anchor build && node scripts/opp/patch-idl-errors.js' in wire-solana)"
 
   /** Absolute path of the committed program keypair under `solanaPath`. */
   export function programKeypairFile(solanaPath: string): string {
@@ -68,9 +67,7 @@ export namespace SolanaOutpostProgramTool {
   export function programId(solanaPath: string): PublicKey {
     const keypairFile = programKeypairFile(solanaPath)
     if (!Fs.existsSync(keypairFile)) return null
-    const secretKey = Uint8Array.from(
-      JSON.parse(Fs.readFileSync(keypairFile, "utf8"))
-    )
+    const secretKey = Uint8Array.from(JSON.parse(Fs.readFileSync(keypairFile, "utf8")))
     return Keypair.fromSecretKey(secretKey).publicKey
   }
 
@@ -108,10 +105,7 @@ export namespace SolanaOutpostProgramTool {
    * @param seeds - The ordered seed buffers.
    * @returns The derived program address.
    */
-  export function derivePda(
-    programId: PublicKey,
-    ...seeds: Buffer[]
-  ): PublicKey {
+  export function derivePda(programId: PublicKey, ...seeds: Buffer[]): PublicKey {
     return PublicKey.findProgramAddressSync(seeds, programId)[0]
   }
 }
