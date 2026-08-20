@@ -362,8 +362,6 @@ describe("Steps.processes.nodeop", () => {
       const args = Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)
       expect(args).toEqual(
         expect.arrayContaining([
-          "--batch-enabled",
-          "true",
           "--batch-operator-account",
           "wireno.batchopaaaa"
         ])
@@ -383,8 +381,6 @@ describe("Steps.processes.nodeop", () => {
       const args = Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)
       expect(args).toEqual(
         expect.arrayContaining([
-          "--underwriter-enabled",
-          "true",
           "--underwriter-account",
           "wireno.underwriteraaaa"
         ])

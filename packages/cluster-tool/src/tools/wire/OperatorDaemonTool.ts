@@ -97,14 +97,22 @@ export namespace OperatorDaemonTool {
    * attempt for 12 minutes while the ETH leg sat confirmed).
    */
   export const UnderwriterActionTimeoutMs = 30_000
-  /** The single ethereum outpost client id every plugin arg references. */
-  export const EthereumClientId = "eth-default"
-  /** The single solana outpost client id every plugin arg references. */
-  export const SolanaClientId = "sol-default"
-  /** The `sysio.chains` codename keying the ETH outpost wiring specs. */
+  /** The `sysio.chains` codename identifying the ETH outpost. */
   export const EthereumChainCodename = "ETHEREUM"
-  /** The `sysio.chains` codename keying the SOL outpost wiring specs. */
+  /** The `sysio.chains` codename identifying the SOL outpost. */
   export const SolanaChainCodename = "SOLANA"
+  /**
+   * Outpost RPC client ids ARE the chain codes.
+   *
+   * Both operator daemons look a chain's RPC client up under that chain's
+   * `sysio.chains` code, so the id passed to `--outpost-{ethereum,solana}-client`
+   * must be the codename and nothing else. A client registered under any other
+   * id is invisible to them, and a batch operator that cannot reach an active
+   * chain shuts down rather than relaying a partial epoch.
+   */
+  export const EthereumClientId = EthereumChainCodename
+  /** See {@link EthereumClientId} — the SOL client id is likewise the chain code. */
+  export const SolanaClientId = SolanaChainCodename
   /** ETH source-deposit function the underwriter verifies before committing. */
   export const EthereumSourceDepositFunction = "requestSwap"
   /** SOL source-deposit instruction the underwriter verifies before committing. */
@@ -410,7 +418,6 @@ export namespace OperatorDaemonTool {
           keySourceFor(operator.label, KeyType.K1)
         )
       ),
-      ...pair("--batch-enabled", "true"),
       ...pair("--batch-operator-account", operator.account),
       ...pair("--batch-epoch-poll-ms", String(BatchEpochPollMs)),
       ...pair(
@@ -421,25 +428,9 @@ export namespace OperatorDaemonTool {
         ? pair("--ext-debugging-server", network.debuggingServerUrl)
         : []),
       ...outpostClientArgs(operator, artifacts, network, keySourceFor),
-      // Per-chain outpost bindings (repeatable CSV specs; replaced the removed
-      // --batch-eth-{client-id,opp-addr,opp-inbound-addr} / --batch-sol-program-id —
-      // the EVM RPC client is auto-selected by matching the chains row's
-      // external_chain_id against the --outpost-ethereum-client chain ids):
-      //   EVM: <chain_code>,<opp_addr>,<opp_inbound_addr>
-      //   SVM: <chain_code>,<opp_outpost_program_id>
-      ...pair(
-        "--batch-outpost",
-        [
-          EthereumChainCodename,
-          assertAddress(artifacts, "OPP"),
-          assertAddress(artifacts, "OPPInbound")
-        ].join(",")
-      ),
-      ...pair(
-        "--batch-outpost",
-        [SolanaChainCodename, artifacts.solanaProgramId].join(",")
-      ),
-      ...pair("--batch-sol-client-id", SolanaClientId),
+      // No per-chain outpost flags: the remote OPP contract addresses live on
+      // each chain's `sysio.chains` row (seeded by RegistrySteps), and the RPC
+      // client for a chain is the one registered under that chain's code.
       ...pair("--solana-idl-file", artifacts.solanaIdlFile),
       // The outpost interface is hosted in liqsol_core since the clean-room
       // rewrite; nodeop's compiled-in default IDL name is opp_outpost.
@@ -477,7 +468,6 @@ export namespace OperatorDaemonTool {
           keySourceFor(operator.label, KeyType.K1)
         )
       ),
-      ...pair("--underwriter-enabled", "true"),
       ...pair("--underwriter-account", operator.account),
       ...pair(
         "--underwriter-action-timeout-ms",
@@ -487,25 +477,10 @@ export namespace OperatorDaemonTool {
         ? pair("--ext-debugging-server", network.debuggingServerUrl)
         : []),
       ...outpostClientArgs(operator, artifacts, network, keySourceFor),
-      // Per-chain outpost wiring (repeatable CSV specs; replaced the removed
-      // --underwriter-eth-opreg-addr / --underwriter-{eth,sol}-client-id):
-      //   EVM: <chain_code>,<client_id>,<operator_registry_addr>,<source_deposit_contract_addr>
-      //   SVM: <chain_code>,<client_id>,<opp_outpost_program_id>
-      ...pair(
-        "--underwriter-eth-outpost",
-        [
-          EthereumChainCodename,
-          EthereumClientId,
-          assertAddress(artifacts, "OperatorRegistry"),
-          assertAddress(artifacts, "ReserveManager")
-        ].join(",")
-      ),
-      ...pair(
-        "--underwriter-sol-outpost",
-        [SolanaChainCodename, SolanaClientId, artifacts.solanaProgramId].join(
-          ","
-        )
-      ),
+      // No per-chain outpost flags: the underwriter serves every ACTIVE
+      // `sysio.chains` row, reads each one's OperatorRegistry / source-deposit
+      // address off that row, and reaches it through the RPC client registered
+      // under the chain's code.
       ...pair(
         "--underwriter-eth-source-deposit-function",
         EthereumSourceDepositFunction
@@ -522,19 +497,6 @@ export namespace OperatorDaemonTool {
         SolanaOutpostProgramTool.ProgramName
       )
     ]
-  }
-
-  /** Assert a deployed ETH outpost address is present in the artifacts. */
-  function assertAddress(
-    artifacts: OperatorDaemonArtifacts,
-    contractName: string
-  ): string {
-    const address = artifacts.ethereumAddresses[contractName]
-    Assert.ok(
-      address != null && address.length > 0,
-      `OperatorDaemonTool: ${contractName} address missing from outpost-addrs.json`
-    )
-    return address
   }
 
   // ── Step: start an operator's daemon (process spawn — its own Step) ───────
