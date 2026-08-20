@@ -2,6 +2,7 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import {
+  ClusterFiles,
   SignatureProviderType,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
@@ -41,8 +42,6 @@ const log = getLogger(__filename)
  * already-created cluster from its persisted state.
  */
 export namespace ClusterManager {
-  /** Per-node nodeop config filename. */
-  const NodeConfigFilename = "config.ini"
   /** Per-node nodeop logging config filename. */
   const NodeLoggingFilename = "logging.json"
 
@@ -224,7 +223,7 @@ export namespace ClusterManager {
         mkdirs(node.nodePath)
         await Promise.all([
           Fs.promises.writeFile(
-            Path.join(node.nodePath, NodeConfigFilename),
+            Path.join(node.nodePath, ClusterFiles.NodeConfigFilename),
             node.ini.render()
           ),
           Fs.promises.writeFile(
@@ -284,10 +283,12 @@ export namespace ClusterManager {
 
   /**
    * Start (or no-op if already running) `node`'s nodeop in RELAUNCH mode — the
-   * shared body for bios / producer / operator nodes in {@link run}. Mirrors
-   * `NodeopProcessSteps.runStart`'s option assembly exactly (same
-   * `resolveOperator` / `resolveOperatorDaemonArgs` resolution), with
-   * `relaunch: true` so the one-shot genesis flags are stripped.
+   * shared body for bios / producer / operator nodes in {@link run}. Uses the
+   * SAME operator resolution as `NodeopProcessSteps` and the SAME option
+   * assembly as its `runRestart` ({@link NodeopProcess.createRelaunchOptions}),
+   * so `run` and the restart step cannot drift on either flag: `run` only ever
+   * starts a cluster `create` already bootstrapped, so the SHARED-25 deadline
+   * rules apply here too.
    */
   async function startNode(
     ctx: ClusterBuildContext,
@@ -295,16 +296,14 @@ export namespace ClusterManager {
   ): Promise<void> {
     if (ctx.processManager.get(node.name) != null) return
     const operator = Steps.processes.nodeop.resolveOperator(ctx, node)
-    await NodeopProcess.startWithRecovery(ctx.processManager, {
-      node,
-      operator,
-      extraArgs: Steps.processes.nodeop.resolveOperatorDaemonArgs(
-        ctx,
+    await NodeopProcess.startWithRecovery(
+      ctx.processManager,
+      NodeopProcess.createRelaunchOptions(
         node,
-        operator
-      ),
-      relaunch: true
-    })
+        operator,
+        Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, operator)
+      )
+    )
   }
 
   /**
@@ -352,7 +351,7 @@ export namespace ClusterManager {
       nodes = NodeConfig.plan(config),
       biosNode = nodes.find(node => node.role === NodeRole.bios),
       producerNodes = nodes.filter(node => node.role === NodeRole.producer),
-      operatorNodes = nodes.filter(node => node.role === NodeRole.operator)
+      operatorNodes = nodes.filter(node => NodeConfig.isOperatorRole(node.role))
     Assert.ok(biosNode != null, "run: bios node missing from NodeConfig.plan")
 
     log.info("[cluster] starting kiod")

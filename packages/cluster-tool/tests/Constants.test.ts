@@ -49,6 +49,89 @@ describe("Constants", () => {
     })
   })
 
+  describe("plugin sets", () => {
+    // SHARED-25 AC#4 (D3): trace_api is the ONE role plugin whose presence is
+    // gated (NodeConfig.runsTraceApiPlugin), so it cannot ride the
+    // unconditional producer set — an entry here would re-arm it on the
+    // production-shaped external tree's producer / bios nodes.
+    it("keeps trace_api OUT of PRODUCER_PLUGINS", () => {
+      expect([...Constants.PRODUCER_PLUGINS]).toEqual([
+        "sysio::producer_plugin",
+        "sysio::producer_api_plugin"
+      ])
+      expect([...Constants.PRODUCER_PLUGINS]).not.toContain(
+        Constants.TRACE_API_PLUGIN
+      )
+    })
+
+    it("carries the ONE trace-api plugin spelling both surfaces read", () => {
+      expect(Constants.TRACE_API_PLUGIN).toBe("sysio::trace_api_plugin")
+    })
+
+    it("carries ONE spelling of each base plugin, and COMPOSES BASE_PLUGINS from them", () => {
+      // The individual constants exist so a standalone artifact (the API node's
+      // config.ini) can name the two it wants WITHOUT spreading BASE_PLUGINS —
+      // otherwise a future cluster-wide base plugin would silently land in a
+      // file the API-node baseline governs. The composition keeps the cluster
+      // set byte-identical, so nothing is re-spelled to buy that.
+      expect(Constants.NET_PLUGIN).toBe("sysio::net_plugin")
+      expect(Constants.CHAIN_API_PLUGIN).toBe("sysio::chain_api_plugin")
+      expect([...Constants.BASE_PLUGINS]).toEqual([
+        Constants.NET_PLUGIN,
+        Constants.CHAIN_API_PLUGIN
+      ])
+      expect([...Constants.BASE_PLUGINS]).toEqual([
+        "sysio::net_plugin",
+        "sysio::chain_api_plugin"
+      ])
+    })
+
+    it("carries the ONE chain-state DB size option spelling (SHARED-31)", () => {
+      // Consumed bare as an ini key + a yargs flag name, and as `--${…}` in the
+      // nodeop argv — three surfaces, one string.
+      expect(Constants.CHAIN_STATE_DB_SIZE_MB_OPTION).toBe(
+        "chain-state-db-size-mb"
+      )
+      expect(Constants.CHAIN_STATE_DB_SIZE_MB_OPTION.startsWith("--")).toBe(
+        false
+      )
+    })
+
+    it("keeps producer_api in the unconditional producer set", () => {
+      // Only trace_api moved out — producer_api stays role-gated but
+      // deployment-blind (the bios/producer argv emits it on every cluster).
+      expect([...Constants.PRODUCER_PLUGINS]).toContain(
+        "sysio::producer_api_plugin"
+      )
+    })
+  })
+
+  describe("NODEOP_EXTRA_ARGS", () => {
+    // SHARED-25: the ini these feed is read via `--config-dir` on BOTH launch
+    // forms, so only PHASE-INDEPENDENT values may live here. The three deadline
+    // knobs are phase- and role-dependent and belong solely to NodeopProcess's
+    // companion constants — an entry here would resurrect a value the
+    // post-bootstrap argv deliberately omits.
+    it("carries exactly the phase-independent extras", () => {
+      expect(Object.keys(Constants.NODEOP_EXTRA_ARGS).sort()).toEqual([
+        "connectionCleanupPeriod",
+        "voteThreads"
+      ])
+    })
+
+    it("carries NO deadline knobs", () => {
+      expect(Constants.NODEOP_EXTRA_ARGS).not.toHaveProperty(
+        "maxTransactionTime"
+      )
+      expect(Constants.NODEOP_EXTRA_ARGS).not.toHaveProperty(
+        "abiSerializerMaxTimeMs"
+      )
+      expect(Constants.NODEOP_EXTRA_ARGS).not.toHaveProperty(
+        "httpMaxResponseTimeMs"
+      )
+    })
+  })
+
   describe("EMISSION_CONFIG_DEFAULTS", () => {
     it("keeps the category split under 10000 bps", () => {
       const c = Constants.EMISSION_CONFIG_DEFAULTS

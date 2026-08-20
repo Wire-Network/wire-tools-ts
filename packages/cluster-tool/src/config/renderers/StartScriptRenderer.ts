@@ -56,10 +56,10 @@ export class StartScriptRenderer implements Renderer {
         ...StartScriptRenderer.preamble(daemon, relocations),
         "",
         ...StartScriptRenderer.environmentLines(daemon),
-        ...StartScriptRenderer.conditionLines(daemon, relocations),
+        ...StartScriptRenderer.conditionLines(daemon.conditions, relocations),
         `exec ${StartScriptRenderer.execTarget(daemon, relocations)} \\`,
         ...toRelocatableArgv(argv, relocations).map(word => `  ${word} \\`),
-        `  "\${${StartScriptRenderer.ConditionalArrayName}[@]}"`,
+        `  ${StartScriptRenderer.ConditionalArrayExpansion}`,
         ""
       ]
     return lines.join("\n")
@@ -309,17 +309,23 @@ export namespace StartScriptRenderer {
    * The conditional block: an array declaration plus one shell test per
    * condition, appending that condition's (relocated) tokens.
    *
-   * @param daemon - The daemon being rendered.
+   * Takes the CONDITIONS rather than a whole `DaemonConfig` so the standalone
+   * API node's script — which has no daemon and no relocations — renders its
+   * `--trace-no-abis` probe through this same function instead of a second copy
+   * of the block.
+   *
+   * @param conditions - The conditions to render (an empty list still emits the
+   *   array declaration, which the `exec` line always expands).
    * @param relocations - Ordered relocation table.
    * @returns Lines declaring and populating {@link ConditionalArrayName}.
    */
   export function conditionLines(
-    daemon: DaemonConfig,
+    conditions: DaemonConfig["conditions"],
     relocations: readonly StartScriptRelocation[]
   ): string[] {
     return [
       `${ConditionalArrayName}=()`,
-      ...daemon.conditions.map(condition => {
+      ...conditions.map(condition => {
         const tokens = toRelocatableArgv(condition.tokens, relocations).join(
           " "
         )
@@ -328,4 +334,7 @@ export namespace StartScriptRenderer {
       ""
     ]
   }
+
+  /** The `exec` line's trailing expansion of {@link ConditionalArrayName}. */
+  export const ConditionalArrayExpansion = `"\${${ConditionalArrayName}[@]}"`
 }

@@ -1,10 +1,19 @@
 import Path from "node:path"
-import type { ClusterConfig } from "@wireio/cluster-tool-shared"
-import { DaemonConfig, DaemonKind } from "@wireio/cluster-tool/config"
+import {
+  ClusterDeploymentKind,
+  type ClusterConfig
+} from "@wireio/cluster-tool-shared"
+import {
+  DaemonConfig,
+  DaemonKind,
+  NodeConfig,
+  NodeRole
+} from "@wireio/cluster-tool/config"
 import { StartScriptVariable } from "@wireio/cluster-tool/utils"
 import {
   AnvilProcess,
   KiodProcess,
+  NodeopProcess,
   SolanaValidatorProcess
 } from "@wireio/cluster-tool/cluster/processes"
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
@@ -137,6 +146,77 @@ describe("DaemonConfig", () => {
         "/build"
       )
     })
+  })
+
+  describe("planNode — trace-probe condition (SHARED-25 AC#4)", () => {
+    /** The planned node daemon for `role` over a cluster of `deploymentKind`. */
+    function nodeDaemon(
+      deploymentKind: ClusterDeploymentKind,
+      role: NodeRole
+    ): DaemonConfig {
+      const clusterOfKind = fixtureConfig({
+          clusterPath: "/c",
+          dataPath: "/c/data",
+          buildPath: "/build",
+          deploymentKind
+        }),
+        planned = new NodeConfig(
+          clusterOfKind,
+          role,
+          0,
+          `probe-${deploymentKind}-${role}`,
+          // Replayed from the fixture's ALREADY-RESOLVED bind (the sanctioned
+          // carve-out) — nothing binds here, and no port is invented.
+          clusterOfKind.bind.nodeop.ports.producers[0],
+          [],
+          []
+        ),
+        nodeop = NodeopProcess.resolveConfig(
+          { node: planned, relaunch: true, postBootstrap: true },
+          {
+            genesisTimestamp: "2026-01-01T00:00:00.000",
+            supportsTraceNoAbis: false
+          }
+        )
+      return DaemonConfig.plan(clusterOfKind, { nodeop: [nodeop] }).find(
+        candidate => candidate.kind === DaemonKind.node
+      )
+    }
+
+    /** Every token the daemon's conditions govern. */
+    function conditionTokens(daemon: DaemonConfig): string[] {
+      return daemon.conditions.flatMap(condition => [...condition.tokens])
+    }
+
+    it.each(Object.values(NodeRole))(
+      "emits the --trace-no-abis probe for a LOCAL %s node",
+      role => {
+        expect(
+          conditionTokens(nodeDaemon(ClusterDeploymentKind.local, role))
+        ).toContain(NodeopProcess.TraceNoAbisFlag)
+      }
+    )
+
+    it.each([NodeRole.bios, NodeRole.producer])(
+      "emits NO condition for an EXTERNAL %s node — the plugin is not loaded",
+      role => {
+        // The probe and the argv's plugin arg MUST move together: a probe left
+        // behind would append a flag nodeop rejects without trace_api_plugin,
+        // and the argv-equality guard would then go red.
+        expect(nodeDaemon(ClusterDeploymentKind.external, role).conditions).toEqual(
+          []
+        )
+      }
+    )
+
+    it.each([NodeRole.batch_operator, NodeRole.underwriter])(
+      "keeps the probe for an EXTERNAL %s node",
+      role => {
+        expect(
+          conditionTokens(nodeDaemon(ClusterDeploymentKind.external, role))
+        ).toContain(NodeopProcess.TraceNoAbisFlag)
+      }
+    )
   })
 
   describe("plan — PATH-resolved executables", () => {

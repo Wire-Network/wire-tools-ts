@@ -128,6 +128,7 @@ describe("flattenOptionLeaves + buildOptionShape", () => {
         "force",
         "bind-all",
         "enable-mock-reserves",
+        "chain-state-db-size-mb",
         "bind-kiod-port",
         "bind-kiod-address",
         "bind-nodeop-ports-bios-http",
@@ -233,6 +234,17 @@ describe("applyClusterBuildOptionsArgs registration", () => {
   it("seeds a flag default from the passed defaults", () => {
     const options = register({ ...RequiredPaths, epochDurationSec: 42 })
     expect(options.get("epoch-duration-sec")?.default).toBe(42)
+  })
+
+  it("registers --chain-state-db-size-mb with NO seeded default (SHARED-31)", () => {
+    // An `optionalLeaf`, deliberately: a seeded default would make yargs ALWAYS
+    // supply a value, so ClusterConfigProvider.resolve's
+    // `?? DefaultChainStateDbSizeMb` would become unreachable dead code and the
+    // 1024 fallback would gain a second author.
+    const registered = register(RequiredPaths).get("chain-state-db-size-mb")
+    expect(registered).toMatchObject({ type: "number", demandOption: false })
+    expect(registered?.default).toBeUndefined()
+    expect(registered?.describe).toContain("MiB")
   })
 
   it("wires the historical short aliases", () => {
@@ -346,6 +358,18 @@ describe("toClusterBuildOptions reverse parse", () => {
     ).toBe(false)
   })
 
+  it("reads --chain-state-db-size-mb, and leaves it ABSENT when omitted", () => {
+    // Registration is MANDATORY: this reverse parse reads argv ONLY through
+    // flattenOptionLeaves(buildOptionShape(...)), so an unregistered field is
+    // silently dropped here and never reaches the resolved config.
+    expect(
+      toClusterBuildOptions({ "chain-state-db-size-mb": 2048 })
+        .chainStateDbSizeMb
+    ).toBe(2048)
+    // Absent ⇒ ClusterConfigProvider.resolve's DefaultChainStateDbSizeMb applies.
+    expect(toClusterBuildOptions({}).chainStateDbSizeMb).toBeUndefined()
+  })
+
   it("reads the camelCase alias yargs also emits", () => {
     // yargs stores both kebab + camelCase; the reverse falls back to camelCase
     expect(
@@ -373,6 +397,9 @@ describe("register → parse round-trip", () => {
     expect(options.enableMockReserves).toBe(false)
     // unseeded (null-default) bind ports never materialize
     expect(options.bind?.kiod?.port).toBeUndefined()
+    // …and neither does the unseeded chain-state DB size (SHARED-31) — the
+    // resolve-time default is its ONE author.
+    expect(options.chainStateDbSizeMb).toBeUndefined()
   })
 
   it("carries the epoch-group + termination overrides through the full defaults→argv→options round-trip", () => {
@@ -389,7 +416,8 @@ describe("register → parse round-trip", () => {
         terminateMaxConsecutiveMisses: 5,
         terminateMaxPercentMisses24h: 99,
         terminateWindowMs: 3_600_000,
-        enableMockReserves: true
+        enableMockReserves: true,
+        chainStateDbSizeMb: 8_192
       }),
       argv: Record<string, unknown> = {}
     registered.forEach((config, flag) => {
@@ -405,6 +433,8 @@ describe("register → parse round-trip", () => {
     expect(options.terminateWindowMs).toBe(3_600_000)
     // the scenario-defaults opt-in path the 6 reserve-needing flows rely on
     expect(options.enableMockReserves).toBe(true)
+    // the same scenario-defaults path carries the SHARED-31 override
+    expect(options.chainStateDbSizeMb).toBe(8_192)
   })
 })
 

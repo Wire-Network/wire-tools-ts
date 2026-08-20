@@ -10,6 +10,8 @@ import Path from "node:path"
 import { promisify } from "node:util"
 import { asOption } from "@3fv/prelude-ts"
 import { defaults, last } from "lodash"
+import { match } from "ts-pattern"
+import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import type { WireClient } from "../../clients/wire/WireClient.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
@@ -31,11 +33,13 @@ const AlwaysOnPlugins = [
 ] as const
 /** Plugins loaded only when the node has producers assigned. */
 const ProducerPlugins = ["sysio::producer_plugin"] as const
-/** Plugins loaded after the standard argument block. */
-const TrailingPlugins = [
-  "sysio::producer_api_plugin",
-  "sysio::trace_api_plugin"
-] as const
+/**
+ * Plugins loaded after the standard argument block, on EVERY role
+ * unconditionally. `sysio::trace_api_plugin` is deliberately NOT here — it is
+ * gated by {@link NodeConfig.runsTraceApiPlugin} (SHARED-25 AC#4) and emitted
+ * immediately after this block.
+ */
+const TrailingPlugins = ["sysio::producer_api_plugin"] as const
 
 /** `[flag, value]` pair expansion helper. */
 const pair = (flag: string, value: string): [string, string] => [flag, value]
@@ -48,7 +52,7 @@ const execFileAsync = promisify(execFile)
 const binaryHelpCache = new Map<string, Promise<string>>()
 function binaryHelp(binary: string): Promise<string> {
   return asOption(binaryHelpCache.get(binary)).getOrCall(() => {
-    const helpText = execFileAsync(binary, ["--help"]).then(
+    const helpText = execFileAsync(binary, [NodeopProcess.HelpFlag]).then(
       result => result.stdout,
       () => ""
     )
@@ -57,55 +61,124 @@ function binaryHelp(binary: string): Promise<string> {
   })
 }
 
+/** nodeop chainbase map modes (closed set; spellings from chain_plugin's database-map-mode option). */
+export enum DatabaseMapMode {
+  mapped = "mapped",
+  mapped_private = "mapped_private",
+  heap = "heap",
+  locked = "locked"
+}
+
+/**
+ * The three SHARED-25 deadline knobs — optional in the RESOLVED shape
+ * ("absent ⇒ flag omitted ⇒ nodeop default"), which is what makes the
+ * phase/role matrix expressible at all: a `Required<>` config could only ever
+ * pick a VALUE, never the "don't emit the flag" state the post-bootstrap form
+ * needs. Split out of {@link NodeopTuningOptions} so
+ * {@link NodeopTuningConfig} can require every OTHER tuning knob while leaving
+ * exactly these three optional.
+ */
+export interface NodeopDeadlineOptions {
+  /** `--max-transaction-time` — emitted ONLY on the bootstrap form (`-1`); post-bootstrap omits ⇒ stock 499 ms. */
+  maxTransactionTime?: number
+  /** `--abi-serializer-max-time-ms` — bootstrap: all roles 990_000; post-bootstrap: operator roles only. */
+  abiSerializerMaxTimeMs?: number
+  /** `--http-max-response-time-ms` — same phase/role matrix as above. */
+  httpMaxResponseTimeMs?: number
+}
+
 /** Per-instance nodeop tuning knobs — every value configurable; defaults from the companion namespace. */
-export interface NodeopTuningOptions {
+export interface NodeopTuningOptions extends NodeopDeadlineOptions {
   /** `--blocks-dir` (relative to the node's data dir). */
   blocksPath?: string
   /** `--vote-threads`. */
   voteThreads?: number
-  /** `--max-transaction-time`. */
-  maxTransactionTime?: number
-  /** `--abi-serializer-max-time-ms`. */
-  abiSerializerMaxTimeMs?: number
   /** `--p2p-max-nodes-per-host`. */
   p2pMaxNodesPerHost?: number
   /** `--max-clients`. */
   maxClients?: number
   /** `--connection-cleanup-period` (seconds). */
   connectionCleanupPeriodSec?: number
-  /** `--http-max-response-time-ms`. */
-  httpMaxResponseTimeMs?: number
+  /** `--database-map-mode`. */
+  databaseMapMode?: DatabaseMapMode
   /** `--contracts-console` (default on). */
   contractsConsole?: boolean
 }
 
-/** Resolved tuning (defaults applied). */
-export interface NodeopTuningConfig extends Required<NodeopTuningOptions> {}
+/** Resolved tuning: every knob required EXCEPT the phase/role-gated deadlines. */
+export interface NodeopTuningConfig
+  extends
+    Required<Omit<NodeopTuningOptions, keyof NodeopDeadlineOptions>>,
+    NodeopDeadlineOptions {}
 
 /**
- * Resolve the tuning defaults for `cluster` (see the companion-namespace
- * constants). `p2pMaxNodesPerHost` AND `maxClients` are both topology-derived
- * from {@link NodeConfig.peerCapacity}: EVERY cluster node lives on loopback in
- * a full mesh, so each must accept inbound connections from the whole planned
- * topology (bios + producers + operators) plus headroom for flow-provisioned
- * ad-hoc daemons. A `p2pMaxNodesPerHost` of 1 leaves late-joining nodes unable
- * to sync ("Peer closed connection"); a `maxClients` below the mesh size makes
- * every node refuse the surplus dials, which freezes LIB at scale (see
- * {@link NodeConfig.peerCapacity} for the full failure chain).
+ * The SHARED-25 deadline defaults for `node` at `postBootstrap` — the ONE place
+ * the phase × role matrix lives.
+ *
+ * An ABSENT knob is not "no opinion": it is the instruction to OMIT the flag, so
+ * nodeop's own stock default applies. Bootstrap therefore keeps the permissive
+ * values on EVERY role, and post-bootstrap drops `--max-transaction-time`
+ * everywhere while keeping the long serializer / response deadlines for the
+ * non-public operator roles alone (SHARED-25 AC#3's exception — a batch
+ * operator's / underwriter's OPP daemon serves nobody but itself).
+ *
+ * @param node - The node whose role selects the post-bootstrap arm.
+ * @param postBootstrap - Whether this is a post-bootstrap launch form.
+ * @returns The deadline knobs to default; every omitted key stays absent.
+ */
+function createNodeopDeadlineDefaultOptions(
+  node: NodeConfig,
+  postBootstrap: boolean
+): NodeopDeadlineOptions {
+  return match({
+    postBootstrap,
+    isOperator: NodeConfig.isOperatorRole(node.role)
+  })
+    .with({ postBootstrap: false }, () => ({
+      maxTransactionTime: NodeopProcess.BootstrapMaxTransactionTime,
+      abiSerializerMaxTimeMs: NodeopProcess.BootstrapAbiSerializerMaxTimeMs,
+      httpMaxResponseTimeMs: NodeopProcess.BootstrapHttpMaxResponseTimeMs
+    }))
+    .with({ isOperator: true }, () => ({
+      abiSerializerMaxTimeMs: NodeopProcess.OperatorAbiSerializerMaxTimeMs,
+      httpMaxResponseTimeMs: NodeopProcess.OperatorHttpMaxResponseTimeMs
+    }))
+    .otherwise(() => ({}))
+}
+
+/**
+ * Resolve the tuning defaults for `node` at `postBootstrap` (see the
+ * companion-namespace constants). `p2pMaxNodesPerHost` AND `maxClients` are both
+ * topology-derived from {@link NodeConfig.peerCapacity}: EVERY cluster node lives
+ * on loopback in a full mesh, so each must accept inbound connections from the
+ * whole planned topology (bios + producers + operators) plus headroom for
+ * flow-provisioned ad-hoc daemons. A `p2pMaxNodesPerHost` of 1 leaves
+ * late-joining nodes unable to sync ("Peer closed connection"); a `maxClients`
+ * below the mesh size makes every node refuse the surplus dials, which freezes
+ * LIB at scale (see {@link NodeConfig.peerCapacity} for the full failure chain).
+ *
+ * Every knob except the three deadlines is phase- AND role-independent —
+ * `databaseMapMode` most pointedly (SHARED-28 applies to every node, both
+ * commands, both phases). The deadlines come from
+ * {@link createNodeopDeadlineDefaultOptions}.
+ *
+ * @param node - The node being launched (its `cluster` supplies the topology).
+ * @param postBootstrap - Whether this is a post-bootstrap launch form.
+ * @returns The resolved tuning defaults.
  */
 export function createNodeopTuningDefaultOptions(
-  cluster: ClusterConfig
+  node: NodeConfig,
+  postBootstrap: boolean
 ): NodeopTuningConfig {
   return {
     blocksPath: NodeopProcess.DefaultBlocksPath,
     voteThreads: NodeopProcess.DefaultVoteThreads,
-    maxTransactionTime: NodeopProcess.DefaultMaxTransactionTime,
-    abiSerializerMaxTimeMs: NodeopProcess.DefaultAbiSerializerMaxTimeMs,
-    p2pMaxNodesPerHost: NodeConfig.peerCapacity(cluster),
-    maxClients: NodeConfig.peerCapacity(cluster),
+    p2pMaxNodesPerHost: NodeConfig.peerCapacity(node.cluster),
+    maxClients: NodeConfig.peerCapacity(node.cluster),
     connectionCleanupPeriodSec: NodeopProcess.DefaultConnectionCleanupPeriodSec,
-    httpMaxResponseTimeMs: NodeopProcess.DefaultHttpMaxResponseTimeMs,
-    contractsConsole: true
+    databaseMapMode: NodeopProcess.DefaultDatabaseMapMode,
+    contractsConsole: true,
+    ...createNodeopDeadlineDefaultOptions(node, postBootstrap)
   }
 }
 
@@ -138,6 +211,13 @@ export interface NodeopOptions {
    * state on a boot that REPLAYS it.
    */
   relaunch?: boolean
+  /**
+   * Post-bootstrap launch form — the SHARED-25 deadline rules apply (author
+   * directive: the rules apply only after a complete bootstrap). Distinct from
+   * {@link relaunch}, which only strips the one-shot genesis flags and is ALSO
+   * set by in-bootstrap recovery.
+   */
+  postBootstrap?: boolean
 }
 
 /** Resolved nodeop config — options with tuning defaults applied + the launch-time genesis timestamp. */
@@ -267,16 +347,101 @@ export class NodeopProcess extends ManagedProcess {
 export namespace NodeopProcess {
   export const DefaultBlocksPath = "blocks"
   export const DefaultVoteThreads = 4
-  export const DefaultMaxTransactionTime = -1
-  export const DefaultAbiSerializerMaxTimeMs = 990_000
   export const DefaultConnectionCleanupPeriodSec = 15
-  export const DefaultHttpMaxResponseTimeMs = 990_000
+  /**
+   * `--max-transaction-time` on the BOOTSTRAP launch form (`-1` = unlimited).
+   *
+   * The `Bootstrap*` trio below is deliberately permissive on EVERY role, per
+   * the author's directive: "These rules only apply to `nodeop` instances
+   * following a complete bootstrap; until that point none should be applied."
+   * Bootstrap pushes `setcode` for a dozen system contracts and a long tail of
+   * heavy setup transactions through nodes that are also syncing — a stock
+   * 499 ms transaction deadline fails those outright, so the SHARED-25 limits
+   * cannot be armed until the chain is up.
+   *
+   * Post-bootstrap this knob is ABSENT for every role, so the flag is omitted
+   * and nodeop's own default applies.
+   */
+  export const BootstrapMaxTransactionTime = -1
+  /** `--abi-serializer-max-time-ms` on the BOOTSTRAP launch form (see {@link BootstrapMaxTransactionTime}). */
+  export const BootstrapAbiSerializerMaxTimeMs = 990_000
+  /** `--http-max-response-time-ms` on the BOOTSTRAP launch form (see {@link BootstrapMaxTransactionTime}). */
+  export const BootstrapHttpMaxResponseTimeMs = 990_000
+  /**
+   * `--abi-serializer-max-time-ms` on a POST-BOOTSTRAP operator node
+   * (batch operator / underwriter).
+   *
+   * SHARED-25 AC#3 tightens the serializer / response deadlines for nodes that
+   * serve a PUBLIC API; the `Operator*` pair is that AC's non-public exception.
+   * An operator node's HTTP surface exists for its own co-located OPP daemon
+   * (`batch_operator_plugin` / `underwriter_plugin`), whose envelope and table
+   * reads are large and legitimately slow, so it keeps the long deadlines.
+   * Bios / producer nodes get NEITHER value post-bootstrap — the flags are
+   * omitted and nodeop's own defaults apply.
+   */
+  export const OperatorAbiSerializerMaxTimeMs = 990_000
+  /** `--http-max-response-time-ms` on a POST-BOOTSTRAP operator node (see {@link OperatorAbiSerializerMaxTimeMs}). */
+  export const OperatorHttpMaxResponseTimeMs = 990_000
+  /**
+   * `--database-map-mode` for EVERY nodeop node, both commands, both phases
+   * (SHARED-28).
+   *
+   * Under {@link DatabaseMapMode.mapped_private} chainbase keeps its pages
+   * PRIVATE and writes them back only at a CLEAN exit, so an unclean stop
+   * (SIGKILL, OOM, host reset) discards every state change since that boot and
+   * the next start comes up on a dirty/stale chainbase — which routes through
+   * the {@link startWithRecovery} hard-replay path
+   * ({@link HardReplayBlockchainFlag}) rather than resuming. The trade is
+   * deliberate: private mapping keeps the node's dirty pages out of the shared
+   * page cache, which is what makes many co-located nodes survivable on one
+   * host, and a dev cluster can always replay from blocks.log.
+   */
+  export const DefaultDatabaseMapMode = DatabaseMapMode.mapped_private
   export const StartupTimeoutMs = 180_000
   /** Per-probe fetch timeout for the {@link NodeopProcess.head} reader (ms). */
   export const HeadProbeTimeoutMs = 2_000
   export const HealthCheckPath = "/v1/chain/get_info" as const
   /** trace_api_plugin raw-trace flag (capability-probed — see `supportsTraceNoAbis`). */
   export const TraceNoAbisFlag = "--trace-no-abis"
+  /** nodeop's `--config-dir` flag (the directory holding `config.ini`). */
+  export const ConfigDirFlag = "--config-dir"
+  /** nodeop's `--data-dir` flag; nodeop creates the directory itself. */
+  export const DataDirFlag = "--data-dir"
+  /** nodeop's `--genesis-json` flag — one-shot, stripped by {@link buildRelaunchArgs}. */
+  export const GenesisJsonFlag = "--genesis-json"
+  /** nodeop's `--genesis-timestamp` flag — one-shot, stripped alongside the genesis. */
+  export const GenesisTimestampFlag = "--genesis-timestamp"
+  /**
+   * nodeop's `--help` flag — THE one spelling of it, shared by both capability
+   * probes: the BUILD-TIME one `binaryHelp` shells out for (whose text
+   * `resolveConfig` matches {@link TraceNoAbisFlag} against) and the RUNTIME
+   * one {@link traceNoAbisProbeTest} renders into a published `start.sh`. The
+   * two must stay identical — a probe that asked nodeop a different question
+   * than the build did would answer for a different capability.
+   */
+  export const HelpFlag = "--help"
+
+  /**
+   * The shell test a rendered `start.sh` evaluates to answer "does the nodeop
+   * on THIS host know {@link TraceNoAbisFlag}?" — the run-time form of the
+   * build-time `--help` probe `create` performs, so a published script is never
+   * frozen to the build host's answer.
+   *
+   * CAPTURE then match — never `--help | grep -q` under `set -o pipefail`.
+   * `grep -q` exits 0 the instant it matches, closing the pipe; nodeop's help
+   * exceeds the 64 KiB pipe buffer, so it is still writing and dies of SIGPIPE
+   * (141). `pipefail` promotes that to the pipeline's status, so the `&&` would
+   * NOT fire — dropping the flag precisely when it IS supported, which
+   * hard-fails trace_api_plugin init on builds that require it. A command
+   * substitution has no such short-circuit.
+   *
+   * @param nodeopWord - The nodeop binary as ONE ready-to-execute shell word
+   *   (already quoted / variable-expanded by the caller).
+   * @returns The `[[ … ]]` test, true when the flag appears in `--help`.
+   */
+  export function traceNoAbisProbeTest(nodeopWord: string): string {
+    return `[[ "$(${nodeopWord} ${HelpFlag} 2>/dev/null || true)" == *'${TraceNoAbisFlag}'* ]]`
+  }
   /** nodeop recovery flag: wipe state, recover what blocks.log holds, replay with full validation. */
   export const HardReplayBlockchainFlag = "--hard-replay-blockchain"
   /** chainbase's startup-abort line after an unclean shutdown (`pinnable_mapped_file.cpp`). */
@@ -392,7 +557,10 @@ export namespace NodeopProcess {
       ...options,
       tuning: defaults(
         { ...options.tuning },
-        createNodeopTuningDefaultOptions(options.node.cluster)
+        createNodeopTuningDefaultOptions(
+          options.node,
+          options.postBootstrap ?? false
+        )
       ),
       extraArgs: options.extraArgs ?? [],
       genesisTimestamp: resolved.genesisTimestamp,
@@ -471,31 +639,58 @@ export namespace NodeopProcess {
           ]
         : []),
       ...pair("--vote-threads", String(tuning.voteThreads)),
-      ...pair("--max-transaction-time", String(tuning.maxTransactionTime)),
-      ...pair(
-        "--abi-serializer-max-time-ms",
-        String(tuning.abiSerializerMaxTimeMs)
-      ),
+      // SHARED-25: an ABSENT deadline is an instruction to OMIT the flag so
+      // nodeop's own default applies — the post-bootstrap state for every role
+      // these rules cover. Emitting a "default" value here instead would make
+      // that state unreachable.
+      ...(tuning.maxTransactionTime != null
+        ? pair("--max-transaction-time", String(tuning.maxTransactionTime))
+        : []),
+      ...(tuning.abiSerializerMaxTimeMs != null
+        ? pair(
+            "--abi-serializer-max-time-ms",
+            String(tuning.abiSerializerMaxTimeMs)
+          )
+        : []),
       ...pair("--p2p-max-nodes-per-host", String(tuning.p2pMaxNodesPerHost)),
       ...pair("--max-clients", String(tuning.maxClients)),
       ...pair(
         "--connection-cleanup-period",
         String(tuning.connectionCleanupPeriodSec)
       ),
+      ...pair("--database-map-mode", tuning.databaseMapMode),
+      // SHARED-31: UNIFORM across every node, both commands, both phases — so
+      // it is read off the CLUSTER config, never a per-instance tuning knob.
+      ...pair(
+        `--${Constants.CHAIN_STATE_DB_SIZE_MB_OPTION}`,
+        String(cluster.chainStateDbSizeMb)
+      ),
       ...(tuning.contractsConsole ? ["--contracts-console"] : []),
       ...pluginArgs(TrailingPlugins),
+      // SHARED-25 AC#4 (D3): local clusters keep trace_api on every role; the
+      // production-shaped external tree drops it from bios / producer nodes.
+      ...(NodeConfig.runsTraceApiPlugin(node)
+        ? pluginArgs([Constants.TRACE_API_PLUGIN])
+        : []),
       // The harness supplies no trace-api ABI set — serve raw traces. Newer
       // nodeop generations hard-fail trace_api_plugin init without this flag;
-      // older ones reject the unknown option, hence the capability probe.
-      ...(config.supportsTraceNoAbis ? [TraceNoAbisFlag] : []),
-      ...pair(
-        "--http-max-response-time-ms",
-        String(tuning.httpMaxResponseTimeMs)
-      ),
-      ...pair("--config-dir", node.nodePath),
-      ...pair("--data-dir", node.nodePath),
-      ...pair("--genesis-json", ClusterConfigProvider.genesisFile(cluster)),
-      ...pair("--genesis-timestamp", config.genesisTimestamp),
+      // older ones reject the unknown option, hence the capability probe. The
+      // flag belongs to the plugin, so it follows the SAME gate: nodeop rejects
+      // it outright when trace_api_plugin is not loaded.
+      ...(config.supportsTraceNoAbis && NodeConfig.runsTraceApiPlugin(node)
+        ? [TraceNoAbisFlag]
+        : []),
+      // Same SHARED-25 omission rule as the two deadlines above.
+      ...(tuning.httpMaxResponseTimeMs != null
+        ? pair(
+            "--http-max-response-time-ms",
+            String(tuning.httpMaxResponseTimeMs)
+          )
+        : []),
+      ...pair(ConfigDirFlag, node.nodePath),
+      ...pair(DataDirFlag, node.nodePath),
+      ...pair(GenesisJsonFlag, ClusterConfigProvider.genesisFile(cluster)),
+      ...pair(GenesisTimestampFlag, config.genesisTimestamp),
       ...pair("--http-server-address", `${listen}:${node.ports.http}`),
       ...config.extraArgs
     ]
@@ -510,8 +705,8 @@ export namespace NodeopProcess {
    * are one-shot (replaying them re-stamps the chain).
    */
   const RelaunchStripFlags: ReadonlySet<string> = new Set([
-    "--genesis-json",
-    "--genesis-timestamp"
+    GenesisJsonFlag,
+    GenesisTimestampFlag
   ])
   const EnableStaleProductionFlag = "--enable-stale-production"
 
@@ -576,6 +771,38 @@ export namespace NodeopProcess {
       response.ok,
       `resumeProduction: ${httpUrl}${ResumeProductionPath} answered ${response.status}`
     )
+  }
+
+  /**
+   * The {@link NodeopOptions} for relaunching an ALREADY-BOOTSTRAPPED node —
+   * the ONE assembly both post-bootstrap relaunch paths use:
+   * `ClusterManager.run`'s per-node start and `NodeopProcessSteps.runRestart`.
+   *
+   * Both flags are load-bearing and INDEPENDENT:
+   *
+   * - `relaunch: true` strips the one-shot genesis flags (replaying them
+   *   re-stamps the chain).
+   * - `postBootstrap: true` arms the SHARED-25 deadline rules. It is NOT
+   *   implied by `relaunch`, which in-bootstrap dirty-chainbase recovery also
+   *   sets — which is exactly why the pair lives here instead of being spelled
+   *   out at each call site, where one of them could silently go missing.
+   *
+   * The operator + daemon args are RESOLVED BY THE CALLER (both resolve them
+   * through the same `NodeopProcessSteps.resolveOperator` /
+   * `resolveOperatorDaemonArgs` pair) rather than here, so this module keeps no
+   * dependency on the orchestration layer that imports it.
+   *
+   * @param node - The planned node being relaunched.
+   * @param operator - The account that node acts for.
+   * @param extraArgs - Its OPP daemon args (empty for bios / producer nodes).
+   * @returns The post-bootstrap relaunch options.
+   */
+  export function createRelaunchOptions(
+    node: NodeConfig,
+    operator: OperatorAccount,
+    extraArgs: string[]
+  ): NodeopOptions {
+    return { node, operator, extraArgs, relaunch: true, postBootstrap: true }
   }
 
   /**

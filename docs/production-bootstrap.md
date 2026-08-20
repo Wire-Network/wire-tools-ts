@@ -433,17 +433,29 @@ Not on-chain actions, but the remaining config the tooling sets so the picture i
 | `max_transaction_cpu_usage` | `375000` | | |
 
 ### nodeop arguments & topology
-- Extra args (every node): `vote-threads = 4`, `max-transaction-time = -1`, `abi-serializer-max-time-ms =
-  990000`, `max-clients = 25`, `connection-cleanup-period = 15`, `http-max-response-time-ms = 990000`. HTTP is
+- Extra args (every node, every phase — the ini is read by both launch forms, so only phase-independent
+  values live there): `vote-threads = 4`, `connection-cleanup-period = 15`, plus the topology-derived
+  `max-clients` / `p2p-max-nodes-per-host` (the mesh size, not a fixed cap). HTTP is
   loosened for local tooling (`access-control-allow-origin/headers = *`, `verbose-http-errors = true`,
   `http-validate-host = false`), and dev clusters set
   `resource-monitor-not-shutdown-on-threshold-exceeded = true` (workstations routinely sit above the 90%
   disk threshold).
-- Plugins — base: `net_plugin`, `chain_api_plugin`; producers add `producer_plugin`, `producer_api_plugin`,
-  `trace_api_plugin`; batch operators add `batch_operator_plugin`, `external_debugging_plugin`,
+- Deadlines are PHASE-SPLIT, and ride the nodeop argv rather than the ini (a CLI flag only wins when it is
+  actually emitted, so an ini kv would resurrect a value the post-bootstrap form deliberately omits). The
+  bootstrap spawn is permissive on every role — `max-transaction-time = -1`, `abi-serializer-max-time-ms =
+  990000`, `http-max-response-time-ms = 990000` — because bootstrap pushes a dozen `setcode`s and a long tail
+  of heavy setup through nodes that are also syncing. Post-bootstrap launches (`run`, and every emitted
+  `start.sh`) drop `max-transaction-time` outright; only the non-public operator nodes (batch operators /
+  underwriters, whose HTTP surface serves their own co-located OPP daemon) retain the two `990000` timeouts —
+  bios and producer nodes get neither, and nodeop's own defaults apply.
+- Plugins — base: `net_plugin`, `chain_api_plugin`; producers add `producer_plugin`, `producer_api_plugin`;
+  batch operators add `batch_operator_plugin`, `external_debugging_plugin`,
   `outpost_ethereum_client_plugin`, `outpost_solana_client_plugin`, `cron_plugin`; underwriters add
   `underwriter_plugin`, `outpost_ethereum_client_plugin`, `outpost_solana_client_plugin`,
-  `external_debugging_plugin`, `cron_plugin`.
+  `external_debugging_plugin`, `cron_plugin`. `trace_api_plugin` is CONDITIONAL: a LOCAL cluster keeps it on
+  every role (the harness reads traces off `producer[0]`), while the production-shaped
+  `create-external-config` tree drops it from the bios / producer nodes — operator nodes are non-public and
+  retain it everywhere.
 - Ports: every daemon default is a PREFERENCE — the bind resolver claims it only when free, otherwise an
   ephemeral free port (parallel-run safe; the resolved set persists in `cluster-config.json::bind`). Defaults
   live in `10500–11999`, above agave's reserved `8000–10000` band (a solana-test-validator binds implicit

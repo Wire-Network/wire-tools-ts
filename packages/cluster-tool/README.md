@@ -29,6 +29,7 @@ on it. `wire-cluster-tool` owns the full lifecycle:
 | `destroy` | Stop every process and remove the cluster directory. **Published SSM keys are NEVER deleted** — they are logged and retained (see below). |
 | `package` | Archive each node's full config tree (+ `genesis.json`) into `<cluster>/packages/<node>.<ext>` — the multihost hand-off artifact (post-`create`). |
 | `create-external-config` | Clone a created, stopped local cluster into a deployable external directory with a different `BindConfig` merged in + emit its self-described `external-cluster-config.json`. |
+| `create-api-node` | Render a STANDALONE (non-cluster) WIRE API node's `config.ini` + `start.sh` into `--output-path`. The one command with no cluster behind it: no `ClusterConfig`, no process, no chain, no Report. |
 
 The cluster directory is the **single source of truth**: executable paths,
 ports, key material, node layout, deployed contract addresses. `run` never
@@ -148,6 +149,62 @@ before any write) → **Clone** (copy the tree, excluding `*.pid` / `logs/` /
 `reports/`, preserving `cluster-keys.json`'s 0600) → **Rebind** (re-render every
 config file from the merged, external-rooted model — never text-patched) →
 **Emit** → **Verify** (scan for stale local ports + round-trip the emitted JSON).
+
+### `create-api-node`
+
+```bash
+wire-cluster-tool create-api-node \
+  --output-path         /opt/wire/api-node \
+  --http-server-address 0.0.0.0:8888 \
+  --p2p-peer-address    peer-a.example:9876 \
+  --p2p-peer-address    peer-b.example:9876 \
+  --genesis-json        /opt/wire/genesis.json
+```
+
+Renders a **standalone** (non-cluster) WIRE API node into `--output-path`:
+`config.ini`, `start.sh` (mode `0755`), and — only when `--genesis-json` is
+passed — a copy of the genesis, so the directory stays self-contained. Safe to
+re-run: a second invocation re-renders both artifacts and keeps `start.sh`
+executable. `--data-dir` is deliberately NOT pre-created (nodeop makes it on
+first start), which is what leaves room to stage a snapshot there instead of
+passing a genesis.
+
+| Flag | Required | Default | Renders as |
+|---|---|---|---|
+| `--output-path` | **yes** | — | *(the destination directory, created if absent)* |
+| `--http-server-address` | **yes** | — | `http-server-address` |
+| `--p2p-peer-address` | | *(none)* | one `p2p-peer-address` line per value — repeat the flag |
+| `--chain-state-db-size-mb` | | `1024` | `chain-state-db-size-mb` |
+| `--transaction-finality-status-max-storage-size-gb` | | `10` | same key — supplying it ENABLES nodeop's finality-status tracker |
+| `--enable-account-queries` | | `true` | `enable-account-queries` (negation is off — disable with `=false`) |
+| `--http-max-in-flight-requests` | | `100` | `http-max-in-flight-requests` |
+| `--http-threads` | | `4` | `http-threads` |
+| `--agent-name` | | `wire-api-node` | `agent-name` |
+| `--genesis-json` | | *(none)* | copied to `<output>/genesis.json`, passed as `--genesis-json` in `start.sh` |
+
+Flag names follow **nodeop's own option names**, so the ini line and the flag
+that produced it read the same. No flag carries a yargs `default:` — every
+default is applied by `ApiNodeConfig.resolve` (one home), and each `--help` line
+interpolates the constant it will apply.
+
+Notes specific to this command:
+
+- **Endpoints are used VERBATIM.** `--http-server-address` and every
+  `--p2p-peer-address` name an arbitrary deployment host. Nothing is bound,
+  probed, or claimed against the bind registry — that registry keeps concurrent
+  clusters on *this* host from colliding, and this command starts no listener.
+- **`net_plugin` is in the emitted plugin set** alongside `chain_api_plugin` and
+  `trace_api_plugin`: it owns `p2p-peer-address` AND `agent-name`, which would
+  otherwise be accepted-and-ignored and the node would never sync.
+- **`start.sh` capability-probes `--trace-no-abis` at run time.** Newer nodeop
+  generations hard-fail `trace_api_plugin` init without it and older ones reject
+  the unknown option, so the answer is computed on the host that RUNS the
+  script — the same probe a cluster node's `start.sh` carries.
+- **No Report.** Having no `ClusterConfig`, the command builds no
+  `ClusterBuildContext`; a failed `ApiNodeConfig.resolve` assertion exits
+  non-zero through yargs.
+
+Full walkthrough: [`docs/create-api-node-guide.md`](../../docs/create-api-node-guide.md).
 
 ---
 
