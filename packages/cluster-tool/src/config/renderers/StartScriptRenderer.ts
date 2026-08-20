@@ -9,6 +9,7 @@ import {
   type StartScriptRelocation
 } from "../../utils/startScriptUtils.js"
 import type { DaemonConfig } from "../DaemonConfig.js"
+import { isNotEmpty } from "../../utils/predicateUtils.js"
 
 /**
  * Renders a daemon's `start.sh` — the command the harness would spawn for it,
@@ -55,7 +56,6 @@ export class StartScriptRenderer implements Renderer {
         ...StartScriptRenderer.preamble(daemon, relocations),
         "",
         ...StartScriptRenderer.environmentLines(daemon),
-        ...(Object.keys(daemon.env ?? {}).length > 0 ? [""] : []),
         ...StartScriptRenderer.conditionLines(daemon, relocations),
         `exec ${StartScriptRenderer.execTarget(daemon, relocations)} \\`,
         ...toRelocatableArgv(argv, relocations).map(word => `  ${word} \\`),
@@ -73,16 +73,32 @@ export namespace StartScriptRenderer {
   export const ConditionalArrayName = "CONDITIONAL_ARGS"
 
   /**
-   * Shell exports for the extra environment a live managed process would merge
-   * over its inherited environment.
+   * Shell exports for the extra environment a live managed process merges over
+   * its inherited environment — rendered as DEFAULTS, not overrides.
+   *
+   * Each line is `[ -n "${NAME:-}" ] || export NAME=<value>`, so an operator's own
+   * `NAME` survives a `start.sh` relaunch. That is what keeps the script
+   * faithful to the managed spawn: the harness resolves these values against
+   * the ambient environment at spawn time (e.g.
+   * `SolanaValidatorProcess.resolveEnv` defers to an operator-set `RUST_LOG`),
+   * and a frozen `export NAME=value` would silently win over the operator
+   * instead — the "build-time conditionals render as SHELL" invariant in this
+   * class's header, applied to environment rather than argv.
    *
    * @param daemon - The daemon being rendered.
-   * @returns Safely quoted `export NAME=value` lines.
+   * @returns Safely quoted defaulting `export` lines, blank-line terminated
+   *   when non-empty so the section reads as its own block.
    */
   export function environmentLines(daemon: DaemonConfig): string[] {
-    return Object.entries(daemon.env ?? {}).map(
-      ([name, value]) => `export ${name}=${shellQuote(value)}`
+    const lines = Object.entries(daemon.env ?? {}).map(
+      // A GUARDED assignment, not a `${NAME:-…}` expansion: the default keeps
+      // {@link shellQuote}'s fully-inert single-quoted form, which cannot appear
+      // inside an expansion word (bash re-parses quotes there, so a value
+      // containing `'` would break the script).
+      ([name, value]) =>
+        `[ -n "\${${name}:-}" ] || export ${name}=${shellQuote(value)}`
     )
+    return isNotEmpty(lines) ? [...lines, ""] : lines
   }
 
   /**

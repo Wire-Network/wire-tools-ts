@@ -456,22 +456,19 @@ export class TerminationScenario extends FlowScenario {
           // Read the position's rent while the account still exists — the
           // remit empties it and the program closes it, refunding this to the
           // operator's wallet (see PostDepositSolanaPositionRentKey).
-          const snapshotProgramId = SolanaOutpostProgramTool.assertProgramId(
+          const programId = SolanaOutpostProgramTool.assertProgramId(
               ctx.config.solanaPath
             ),
-            depositProgramId = SolanaCollateralTool.loadOppOutpostProgram(
-              ctx,
-              operatorKeypair
-            ).programId,
             positionPda = SolanaCollateralTool.collateralPositionPda(
-              snapshotProgramId,
+              programId,
               operatorPublicKey,
               BigInt(Constants.SolanaTokenCode)
             ),
             positionRent = await ctx.solana.getLamports(positionPda)
           Assert.ok(
             positionRent > 0,
-            `CollateralPosition PDA ${positionPda.toBase58()} is missing (rent=0): snapshot program id from SolanaOutpostProgramTool.assertProgramId(solanaPath)=${snapshotProgramId.toBase58()}, deposit program id from program.programId=${depositProgramId.toBase58()}`
+            `CollateralPosition PDA ${positionPda.toBase58()} is missing ` +
+              `(rent=0) for program ${programId.toBase58()}`
           )
           ctx.outputs
             .set(PostDepositEthereumWeiKey, wei)

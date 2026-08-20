@@ -352,11 +352,24 @@ export namespace SolanaValidatorProcess {
    * defaults is load-bearing for startup-failure diagnosability: replacing
    * them would silence the panic and bind-error lines surfaced by
    * `validatorLogTail()`. The longest-prefix-specific DEBUG directive still
-   * wins without enabling unrelated debug traffic. An explicit `RUST_LOG` in
-   * the environment wins over this default.
+   * wins without enabling unrelated debug traffic.
+   *
+   * This is the DEFAULT, never a hard override: an operator-set
+   * {@link RustLogEnvVar} wins on both start paths — {@link resolveEnv} defers
+   * to it when the harness spawns the validator, and the emitted `start.sh`
+   * renders it as a `${NAME:-default}` expansion evaluated at RUN time.
    */
   export const ProgramLogRustLog =
     "solana=info,agave=info,solana_runtime::message_processor::stable_log=debug"
+  /**
+   * The validator's default extra environment — HOST-INDEPENDENT, so it is safe
+   * to freeze into a rendered `start.sh` at create time. {@link resolveEnv} is
+   * the live-spawn counterpart; it reads the ambient environment and must NEVER
+   * be used to populate {@link DaemonConfig.env}, whose value is serialized.
+   */
+  export const DefaultEnv: Readonly<Record<string, string>> = {
+    [RustLogEnvVar]: ProgramLogRustLog
+  }
   /**
    * Resolve the validator's extra spawn environment while preserving an
    * operator-provided {@link RustLogEnvVar}.
@@ -367,7 +380,7 @@ export namespace SolanaValidatorProcess {
   export function resolveEnv(
     rustLog = process.env[RustLogEnvVar]
   ): Record<string, string> {
-    return rustLog ? {} : { [RustLogEnvVar]: ProgramLogRustLog }
+    return rustLog ? {} : { ...DefaultEnv }
   }
   /**
    * Lines of `<ledger>/validator.log` surfaced in a startup-failure error —

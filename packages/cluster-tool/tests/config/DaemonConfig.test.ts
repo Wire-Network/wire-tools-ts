@@ -76,7 +76,8 @@ describe("DaemonConfig", () => {
     /** A fake fs: `dirs` are entries of dataPath; `files` exist. */
     function probes(dirs: string[], files: string[]) {
       return {
-        existsSync: (path: string) => path === "/c/data" || files.includes(path),
+        existsSync: (path: string) =>
+          path === "/c/data" || files.includes(path),
         readdirSync: () => dirs
       }
     }
@@ -87,7 +88,11 @@ describe("DaemonConfig", () => {
         ["/c/data/anvil/start.sh"]
       )
       expect(
-        DaemonConfig.existingStartScriptFiles("/c/data", existsSync, readdirSync)
+        DaemonConfig.existingStartScriptFiles(
+          "/c/data",
+          existsSync,
+          readdirSync
+        )
       ).toEqual([Path.join("/c/data", "anvil", "start.sh")])
     })
 
@@ -100,7 +105,11 @@ describe("DaemonConfig", () => {
         ["/c/data/anvil/start.sh"]
       )
       expect(
-        DaemonConfig.existingStartScriptFiles("/c/data", existsSync, readdirSync)
+        DaemonConfig.existingStartScriptFiles(
+          "/c/data",
+          existsSync,
+          readdirSync
+        )
       ).toHaveLength(1)
     })
 
@@ -124,7 +133,9 @@ describe("DaemonConfig", () => {
         ])
       )
       expect(byVariable.get(StartScriptVariable.CLUSTER_DIR)).toBe("/c")
-      expect(byVariable.get(StartScriptVariable.WIRE_PREFIX_PATH)).toBe("/build")
+      expect(byVariable.get(StartScriptVariable.WIRE_PREFIX_PATH)).toBe(
+        "/build"
+      )
     })
   })
 
@@ -174,6 +185,26 @@ describe("DaemonConfig", () => {
         expect(daemon.exeCommandName).toBeTruthy()
       }
     )
+
+    // The env a daemon carries is SERIALIZED into its start.sh at create time,
+    // so it must be host-independent. `resolveEnv()` reads the BUILD host's
+    // RUST_LOG; freezing its answer would either strip the program-log target
+    // (build host had RUST_LOG set) or pin one the operator cannot override.
+    it("carries the validator's HOST-INDEPENDENT default env, never resolveEnv()", () => {
+      const previous = process.env[SolanaValidatorProcess.RustLogEnvVar]
+      try {
+        // A build host WITH RUST_LOG set is the case that used to strip it.
+        process.env[SolanaValidatorProcess.RustLogEnvVar] = "warn"
+        expect(daemonOfKind(DaemonKind.solanaValidator).env).toEqual(
+          SolanaValidatorProcess.DefaultEnv
+        )
+        expect(SolanaValidatorProcess.resolveEnv()).toEqual({})
+      } finally {
+        if (previous === undefined)
+          delete process.env[SolanaValidatorProcess.RustLogEnvVar]
+        else process.env[SolanaValidatorProcess.RustLogEnvVar] = previous
+      }
+    })
 
     it("NAMESPACES every override var, so none collides with an ambient one", () => {
       // `NODE_BIN` is already set by common node version managers — to the bin

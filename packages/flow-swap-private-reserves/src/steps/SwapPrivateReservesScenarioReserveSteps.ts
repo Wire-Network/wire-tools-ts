@@ -15,7 +15,7 @@ import {
   confirmSignature,
   resolveLatestNonce,
   swapUserOutputKey,
-  tokenCodeToLittleEndianBuffer,
+  slugNameToLittleEndianBuffer,
   type AnchorEnumVariant,
   type ClusterBuildContext,
   type ClusterBuildStepOptions,
@@ -175,10 +175,8 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
       [Buffer.from(PdaSeed.OutboundMessageBuffer)],
       programId
     )
-    const tokenCodeLE = tokenCodeToLittleEndianBuffer(BigInt(input.tokenCode))
-    const reserveCodeLE = tokenCodeToLittleEndianBuffer(
-      BigInt(input.reserveCode)
-    )
+    const tokenCodeLE = slugNameToLittleEndianBuffer(input.tokenCode)
+    const reserveCodeLE = slugNameToLittleEndianBuffer(input.reserveCode)
     const [reservePda] = PublicKey.findProgramAddressSync(
       [Buffer.from(PdaSeed.Reserve), tokenCodeLE, reserveCodeLE],
       programId
@@ -341,12 +339,8 @@ export namespace SwapPrivateReservesScenarioReserveSteps {
     const [reservePda] = PublicKey.findProgramAddressSync(
       [
         Buffer.from(PdaSeed.Reserve),
-        tokenCodeToLittleEndianBuffer(
-          BigInt(Constants.Reserves.Solana.TokenCode)
-        ),
-        tokenCodeToLittleEndianBuffer(
-          BigInt(Constants.Reserves.PrivateReserveCode)
-        )
+        slugNameToLittleEndianBuffer(Constants.Reserves.Solana.TokenCode),
+        slugNameToLittleEndianBuffer(Constants.Reserves.PrivateReserveCode)
       ],
       program.programId
     )

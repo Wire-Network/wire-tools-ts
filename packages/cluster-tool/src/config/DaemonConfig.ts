@@ -193,7 +193,9 @@ export namespace DaemonConfig {
         ? []
         : [AnvilProcess.ProcessLabel, SolanaValidatorProcess.ProcessLabel]),
       KiodProcess.ProcessLabel,
-      ...(config.debuggingServerEnabled === false ? [] : [DebuggingServerSubpath])
+      ...(config.debuggingServerEnabled === false
+        ? []
+        : [DebuggingServerSubpath])
     ]
   }
 
@@ -326,7 +328,13 @@ export namespace DaemonConfig {
       exeCommandName: SolanaValidatorProcess.ProcessLabel,
       exeEnvironmentVariable: SolanaValidatorBinEnvironmentVariable,
       argv: SolanaValidatorProcess.buildArgs(validator),
-      env: SolanaValidatorProcess.resolveEnv(),
+      // The UNCONDITIONAL default, never `resolveEnv()`: this value is frozen
+      // into the emitted `start.sh` at CREATE time, and `resolveEnv` reads the
+      // BUILD host's environment. Freezing its answer would either strip the
+      // program-log target entirely (build host had RUST_LOG set) or pin one
+      // the operator cannot override. The renderer emits it as a defaulting
+      // expansion, so the run-time environment still wins.
+      env: SolanaValidatorProcess.DefaultEnv,
       conditions: [],
       relocations: [
         { prefix: daemonPath, variable: StartScriptVariable.NODE_DIR }
@@ -473,9 +481,18 @@ export namespace DaemonConfig {
   ): StartScriptRelocation[] {
     return [
       { prefix: config.clusterPath, variable: StartScriptVariable.CLUSTER_DIR },
-      { prefix: config.buildPath, variable: StartScriptVariable.WIRE_PREFIX_PATH },
-      { prefix: config.ethereumPath, variable: StartScriptVariable.WIRE_ETH_PATH },
-      { prefix: config.solanaPath, variable: StartScriptVariable.WIRE_SOLANA_PATH }
+      {
+        prefix: config.buildPath,
+        variable: StartScriptVariable.WIRE_PREFIX_PATH
+      },
+      {
+        prefix: config.ethereumPath,
+        variable: StartScriptVariable.WIRE_ETH_PATH
+      },
+      {
+        prefix: config.solanaPath,
+        variable: StartScriptVariable.WIRE_SOLANA_PATH
+      }
     ]
   }
 }

@@ -187,10 +187,13 @@ describe("StartScriptRenderer", () => {
       expect(script).not.toContain(StartScriptVariable.WIRE_SOLANA_PATH)
     })
 
-    it("exports the daemon's extra environment before exec", () => {
+    // The daemon's env is a DEFAULT, not an override: it is frozen into the
+    // script at create time, so pinning it would beat the operator's own value
+    // at run time — the "build-time conditionals render as SHELL" invariant.
+    it("exports the daemon's extra environment as a run-time default", () => {
       const daemonPath = Path.join(cluster.dataPath, "env-probe"),
         scriptFile = DaemonConfig.startScriptFile(daemonPath),
-        value = "program logs' additive filter",
+        value = 'program logs\' "additive" $filter',
         script = render({
           kind: DaemonKind.kiod,
           label: "env-probe",
@@ -200,19 +203,24 @@ describe("StartScriptRenderer", () => {
           env: { HARNESS_ENV_PROBE: value },
           conditions: [],
           relocations: []
-        })
+        }),
+        run = (extraEnv: Record<string, string>): string =>
+          execFileSync("bash", [scriptFile], {
+            encoding: "utf8",
+            env: { ...global.process.env, WIRE_CLUSTER_DIR: dir, ...extraEnv }
+          })
       Fs.mkdirSync(daemonPath, { recursive: true })
       Fs.writeFileSync(scriptFile, script)
 
       expect(script).toContain(
-        "export HARNESS_ENV_PROBE='program logs'\\'' additive filter'"
+        `[ -n "\${HARNESS_ENV_PROBE:-}" ] || export HARNESS_ENV_PROBE='program logs'\\'' "additive" $filter'`
       )
-      expect(
-        execFileSync("bash", [scriptFile], {
-          encoding: "utf8",
-          env: { ...global.process.env, WIRE_CLUSTER_DIR: dir }
-        })
-      ).toBe(value)
+      // Unset -> the daemon's value, quoting survived verbatim.
+      expect(run({ HARNESS_ENV_PROBE: "" })).toBe(value)
+      // Set -> the OPERATOR wins; the frozen default must not override it.
+      expect(run({ HARNESS_ENV_PROBE: "operator-choice" })).toBe(
+        "operator-choice"
+      )
     })
   })
 

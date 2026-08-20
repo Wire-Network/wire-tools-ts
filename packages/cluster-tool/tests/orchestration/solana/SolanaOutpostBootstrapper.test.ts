@@ -27,9 +27,9 @@ describe("SolanaOutpostBootstrapper.PdaSeed", () => {
 
 describe("SolanaOutpostBootstrapper.BpfLoaderUpgradeableProgramId", () => {
   it("is the canonical upgradeable-loader id (parent of every ProgramData PDA)", () => {
-    expect(SolanaOutpostBootstrapper.BpfLoaderUpgradeableProgramId.toBase58()).toBe(
-      "BPFLoaderUpgradeab1e11111111111111111111111"
-    )
+    expect(
+      SolanaOutpostBootstrapper.BpfLoaderUpgradeableProgramId.toBase58()
+    ).toBe("BPFLoaderUpgradeab1e11111111111111111111111")
   })
 })
 
