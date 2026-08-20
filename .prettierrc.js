@@ -4,7 +4,6 @@ module.exports = {
   tabWidth: 2,
   semi: false,
   singleQuote: false,
-  parser: "typescript",
   arrowParens: "avoid",
   quoteProps: "as-needed",
   jsxSingleQuote: false,
