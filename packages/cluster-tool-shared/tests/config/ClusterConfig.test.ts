@@ -86,7 +86,7 @@ describe("ClusterConfig shape", () => {
     externalOutposts: null,
     debuggingServerEnabled: true,
     enableMockReserves: false,
-    deploymentKindenableMockYieldEmitter: false,
+    enableMockYieldEmitter: false,
     deploymentKind: ClusterDeploymentKind.local,
     chainStateDbSizeMb: DefaultChainStateDbSizeMb
   }
