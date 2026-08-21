@@ -17,6 +17,7 @@ import {
   readNodeOwner,
   readNodeOwnerReg
 } from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
+import { EthereumOutpostManagerTool } from "../tools/ethereum/EthereumOutpostManagerTool.js"
 import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
 import { pollUntil, verifyStep } from "./StepTools.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
@@ -919,6 +920,41 @@ export namespace ClusterBuildDefaults {
         }))
       ]
     )
+
+    // WNE-41: authorize each batch operator's Ethereum EOA to deliver the
+    // genesis envelope, BEFORE the operator daemons start.
+    //
+    // Until the ETH outpost installs its first batch-operator roster,
+    // `OPPInbound.epochIn` has no roster to authorize against and gates on the
+    // AccessManager instead — a role `OutpostManager.setupOPPRoles` grants to
+    // nobody. The sender is the operator's OWN EOA (the
+    // `outpost_ethereum_client` plugin signs `epochIn` with the daemon's key),
+    // so the deployer grant `deployLocal.ts` makes does not cover it. Without
+    // this phase epoch 1 reverts for every caller and the cluster epoch-stalls.
+    //
+    // It belongs HERE and not in the outpost deploy: these accounts are
+    // provisioned in the phase above, long after the outpost is on chain.
+    // External-outpost mode is excluded — that depot talks to outposts this run
+    // did not deploy and holds no admin authority over them; their operators are
+    // authorized out of band.
+    if (!isExternalOutpost) {
+      const bootstrapDeliveryPhase = ClusterBuildPhase.create<C>(
+        postContractDeployment,
+        "GrantBootstrapDelivery",
+        "Authorize each batch operator to deliver the ETH outpost's genesis envelope"
+      )
+      batchOperators.forEach(label =>
+        bootstrapDeliveryPhase.push(
+          EthereumOutpostManagerTool.planGrantBootstrapDelivery<C>(
+            Actor.EthereumOutpost,
+            `grant-bootstrap-delivery-${label}`,
+            `grant opp_inbound to ${label}`,
+            {},
+            label
+          )
+        )
+      )
+    }
 
     // SSM mode: publish the just-provisioned operator keys BEFORE the operator
     // daemons start — their wire/ethereum/solana `--signature-provider ...SSM:`
