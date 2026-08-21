@@ -16,12 +16,17 @@
  */
 
 import Assert from "node:assert"
+import { execFileSync } from "node:child_process"
 import Fs from "node:fs"
 import Path from "node:path"
+import { Either } from "@3fv/prelude-ts"
 import * as anchor from "@coral-xyz/anchor"
 import { Connection, Keypair, PublicKey } from "@solana/web3.js"
+import { getLogger, NestedError } from "@wireio/shared"
 
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
+
+const log = getLogger(__filename)
 
 export namespace SolanaOutpostProgramTool {
   /**
@@ -71,6 +76,12 @@ export namespace SolanaOutpostProgramTool {
   export const DeploySubdirectory = Path.join("target", "deploy")
   /** Subdirectory (under `wire-solana`) holding the generated Anchor IDLs. */
   export const IdlSubdirectory = Path.join("target", "idl")
+  /** Build stamp written by wire-solana for every deployable program. */
+  export const BuildManifestSubpath = Path.join(
+    DeploySubdirectory,
+    "wire-build-manifest.json"
+  )
+
   /**
    * Remediation hint appended to every missing-artifact assertion.
    *
@@ -82,6 +93,61 @@ export namespace SolanaOutpostProgramTool {
    */
   export const BuildRemediationHint =
     "(run the wire-solana build the harness deploys: 'npm install && npm run build:programs' in wire-solana)"
+
+  /** One program's entry in the wire-solana build manifest. */
+  export interface BuildManifestProgram {
+    /** Repo-relative path of the emitted binary. */
+    programBinaryPath: string
+    /** Byte length of the emitted binary. */
+    programBinaryLength: number
+    /** Hex sha256 of the emitted binary. */
+    programBinarySha256: string
+  }
+
+  /** The build manifest emitted alongside the compiled `.so`s. */
+  export interface BuildManifest {
+    /** Manifest format version. */
+    schemaVersion: number
+    /** SBPF arch the `.so`s were built for (`v0`…`v3`). */
+    arch: string
+    /**
+     * `git describe --tags --always --dirty` of the checkout the binaries were
+     * built from — see {@link assertProgramSoFile} for why the sha pair alone
+     * is not sufficient.
+     */
+    sourceDescribe: string
+    /** Per-program entries, keyed by the program's snake_case name. */
+    programs: Record<string, BuildManifestProgram>
+  }
+
+  /** Marker `git describe --dirty` appends when tracked files are modified. */
+  export const DirtyDescribeSuffix = "-dirty"
+
+  /**
+   * `git describe --tags --always --dirty` of a checkout — the same value the
+   * build records. Used for diagnostics and dirty status; display strings are
+   * never compared for commit identity.
+   *
+   * @param repositoryPath - Repo root to describe.
+   * @returns The describe string, e.g. `devnet-v1.5.2-237-g12f95d37-dirty`.
+   */
+  export function describeCheckout(repositoryPath: string): string {
+    return Either.try(() =>
+      execFileSync("git", ["describe", "--tags", "--always", "--dirty"], {
+        cwd: repositoryPath,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"]
+      })
+    )
+      .ifLeft(error => {
+        throw new NestedError(
+          "SolanaOutpostProgramTool: could not describe the wire-solana checkout",
+          { cause: error, context: { repositoryPath } }
+        )
+      })
+      .getOrThrow()
+      .trim()
+  }
 
   /**
    * Absolute path of a program's committed keypair under `solanaPath`. Its
@@ -128,6 +194,162 @@ export namespace SolanaOutpostProgramTool {
     program: AnchorProgram = ProgramName
   ): string {
     return Path.join(solanaPath, IdlSubdirectory, `${program}.json`)
+  }
+
+  /** Absolute path of the build manifest under `solanaPath`. */
+  export function buildManifestFile(solanaPath: string): string {
+    return Path.join(solanaPath, BuildManifestSubpath)
+  }
+
+  /** Parse the wire-solana build manifest; throws when the file is absent. */
+  export function readBuildManifest(solanaPath: string): BuildManifest {
+    const manifestFile = buildManifestFile(solanaPath)
+    Assert.ok(
+      Fs.existsSync(manifestFile),
+      `SolanaOutpostProgramTool: build manifest missing: ${manifestFile} ${BuildRemediationHint}`
+    )
+    return JSON.parse(Fs.readFileSync(manifestFile, "utf8")) as BuildManifest
+  }
+
+  /** Verified binary bytes and their build provenance, from one manifest read. */
+  export interface VerifiedBuild {
+    /** Bytes in the same order as the requested files. */
+    binaries: Buffer[]
+    /** Original diagnostic stamp, including dirty provenance. */
+    sourceDescribe: string
+  }
+
+  /** Prefix for a private, per-launch snapshot under the cluster data directory. */
+  export const ProgramSnapshotPrefix = "solana-programs-"
+
+  /**
+   * Verify one manifest snapshot against the bytes read and the checkout's full
+   * commit ID. This function is deliberately closure-free and uses only Node
+   * built-ins: the start-script renderer embeds its compiled source so a
+   * deployed cluster needs no installed tools-ts package.
+   *
+   * @param solanaPath - Checkout on the deployment host.
+   * @param manifestFile - Manifest to read exactly once.
+   * @param files - Binary files to read exactly once, in deployment order.
+   * @param remediationHint - Build command to include in failures.
+   * @param dirtySuffix - Canonical dirty marker, supplied explicitly by standalone scripts.
+   * @returns Verified bytes, never paths to mutable shared build outputs.
+   */
+  export function verifyProgramBuild(
+    solanaPath: string,
+    manifestFile: string,
+    files: readonly string[],
+    remediationHint: string,
+    dirtySuffix: string = DirtyDescribeSuffix
+  ): VerifiedBuild {
+    const filesystem = require("node:fs") as typeof import("node:fs"),
+      path = require("node:path") as typeof import("node:path"),
+      crypto = require("node:crypto") as typeof import("node:crypto"),
+      assert: typeof import("node:assert") = require("node:assert"),
+      childProcess =
+        require("node:child_process") as typeof import("node:child_process")
+    files.forEach(file =>
+      assert.ok(
+        filesystem.existsSync(file),
+        `SolanaOutpostProgramTool: ${path.basename(file, ".so")} .so missing: ${file} ${remediationHint}`
+      )
+    )
+    assert.ok(
+      filesystem.existsSync(manifestFile),
+      `SolanaOutpostProgramTool: build manifest missing: ${manifestFile} ${remediationHint}`
+    )
+    const { arch, sourceDescribe, programs } = JSON.parse(
+        filesystem.readFileSync(manifestFile, "utf8")
+      ) as BuildManifest,
+      binaries = files.map(file => {
+        const program = path.basename(file, ".so"),
+          recorded = programs?.[program]
+        assert.ok(
+          recorded != null,
+          `SolanaOutpostProgramTool: build manifest has no ${program} entry: ${manifestFile} ${remediationHint}`
+        )
+        const bytes = filesystem.readFileSync(file),
+          actual = crypto.createHash("sha256").update(bytes).digest("hex")
+        assert.ok(
+          actual === recorded.programBinarySha256 &&
+            bytes.length === recorded.programBinaryLength,
+          `SolanaOutpostProgramTool: ${program} .so does not match the recorded SBPF ${arch} build — ${file} is sha256 ${actual}, manifest records ${recorded.programBinarySha256} ${remediationHint}`
+        )
+        return bytes
+      }),
+      sourceRevision = sourceDescribe.endsWith(dirtySuffix)
+        ? sourceDescribe.slice(0, -dirtySuffix.length)
+        : sourceDescribe,
+      // A long describe embeds an object abbreviation; its tag prefix is
+      // presentation only. Exact-tag and untagged stamps resolve directly.
+      revision =
+        sourceRevision.match(/-\d+-g([0-9a-f]+)$/)?.[1] ?? sourceRevision,
+      git = (...args: string[]): string =>
+        childProcess
+          .execFileSync("git", args, {
+            cwd: solanaPath,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"]
+          })
+          .trim(),
+      currentCommit = git("rev-parse", "HEAD"),
+      currentDescribe = git("describe", "--tags", "--always", "--dirty")
+    let recordedCommit: string
+    try {
+      recordedCommit = git("rev-parse", "--verify", `${revision}^{commit}`)
+    } catch (cause) {
+      throw new Error(
+        `SolanaOutpostProgramTool: built from a different checkout — cannot resolve "${sourceDescribe}" ${remediationHint}`,
+        { cause }
+      )
+    }
+    assert.ok(
+      recordedCommit === currentCommit &&
+        sourceDescribe.endsWith(dirtySuffix) ===
+          currentDescribe.endsWith(dirtySuffix),
+      `SolanaOutpostProgramTool: built from a different checkout — manifest records "${sourceDescribe}" (${recordedCommit}), ${solanaPath} is now "${currentDescribe}" (${currentCommit}) ${remediationHint}`
+    )
+    return { binaries, sourceDescribe }
+  }
+
+  /**
+   * Verify requested programs together from one manifest and report dirty
+   * provenance through this file's logger. Called inside launch runners.
+   * @param solanaPath - Checkout to verify.
+   * @param programs - Programs in deployment order.
+   * @returns Verified bytes and their provenance.
+   */
+  export function readVerifiedPrograms(
+    solanaPath: string,
+    programs: readonly AnchorProgram[]
+  ): VerifiedBuild {
+    const verified = verifyProgramBuild(
+      solanaPath,
+      buildManifestFile(solanaPath),
+      programs.map(program => programSoFile(solanaPath, program)),
+      BuildRemediationHint
+    )
+    if (verified.sourceDescribe.endsWith(DirtyDescribeSuffix))
+      log.warn(
+        `Programs were built from a DIRTY checkout (${verified.sourceDescribe}) — their provenance cannot be verified beyond the commit`
+      )
+    return verified
+  }
+
+  /**
+   * Verify a single binary against its manifest and commit provenance.
+   * Deployment runners snapshot the returned bytes through readVerifiedPrograms
+   * instead of launching from this mutable path.
+   * @param solanaPath - Checkout to verify.
+   * @param program - Program to verify.
+   * @returns The verified file's original path.
+   */
+  export function assertProgramSoFile(
+    solanaPath: string,
+    program: AnchorProgram = ProgramName
+  ): string {
+    readVerifiedPrograms(solanaPath, [program])
+    return programSoFile(solanaPath, program)
   }
 
   /**

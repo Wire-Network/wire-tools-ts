@@ -183,9 +183,7 @@ describe("StartScriptSteps", () => {
           upgradeAuthority: "UPGKEY"
         }
       ]
-      jest
-        .spyOn(validatorSteps, "resolvePrograms")
-        .mockReturnValue(programs)
+      jest.spyOn(validatorSteps, "resolvePrograms").mockReturnValue(programs)
 
       const resolved = startScript.resolveSolanaValidatorConfig(cluster())
       expect(validatorSteps.resolvePrograms).toHaveBeenCalled()
@@ -206,6 +204,9 @@ describe("StartScriptSteps", () => {
           nodeop: [],
           solanaValidator: startScript.resolveSolanaValidatorConfig(config)
         }).find(candidate => candidate.kind === DaemonKind.solanaValidator)
+      expect(daemon.solanaPrograms).toEqual(
+        startScript.resolveSolanaValidatorConfig(config).programs
+      )
       expect(daemon.argv).toEqual(
         expect.arrayContaining([
           "--upgradeable-program",
@@ -240,7 +241,10 @@ describe("StartScriptSteps", () => {
         staleDir = Path.join(config.dataPath, "anvil"),
         stale = Path.join(staleDir, "start.sh")
       Fs.mkdirSync(staleDir, { recursive: true })
-      Fs.writeFileSync(stale, "#!/usr/bin/env bash\n# STALE local-port script\n")
+      Fs.writeFileSync(
+        stale,
+        "#!/usr/bin/env bash\n# STALE local-port script\n"
+      )
 
       startScript.writeAll(config, kiodOnlySources(config))
 
@@ -325,9 +329,7 @@ describe("StartScriptSteps", () => {
       // defeating the per-daemon validation this step exists to provide.
       const config = cluster(),
         ctx = { config } as Parameters<typeof startScript.runEmit>[0]
-      jest
-        .spyOn(startScript, "resolveSources")
-        .mockReturnValue({ nodeop: [] })
+      jest.spyOn(startScript, "resolveSources").mockReturnValue({ nodeop: [] })
       await expect(
         startScript.runEmit(
           ctx,
