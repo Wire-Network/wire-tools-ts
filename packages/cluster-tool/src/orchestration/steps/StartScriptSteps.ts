@@ -76,7 +76,11 @@ export namespace StartScriptSteps {
               ctx,
               node,
               operator
-            )
+            ),
+            // An emitted `start.sh` IS the post-bootstrap launch form: it
+            // restarts a node whose chain already exists, so the SHARED-25
+            // deadline rules apply to it exactly as they do to `run`.
+            postBootstrap: true
           },
           { genesisTimestamp, supportsTraceNoAbis: false }
         )

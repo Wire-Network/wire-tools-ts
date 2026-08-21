@@ -104,6 +104,44 @@ describe("SolanaValidatorProcess", () => {
     expect(validator.args).not.toContain("--bpf-program")
   })
 
+  // Program `msg!()` output is gated by RUST_LOG, NOT by --quiet: agave's
+  // default filter omits `stable_log` entirely, which is why dropping --quiet
+  // alone still produced a validator.log with zero `Program log:` lines.
+  it("pins the ADDITIVE program-log filter — agave's own targets are retained", () => {
+    // Replacing (rather than extending) agave's default would silence the
+    // panic/bind lines validatorLogTail() surfaces on a startup failure.
+    expect(SolanaValidatorProcess.ProgramLogRustLog).toBe(
+      "solana=info,agave=info,solana_runtime::message_processor::stable_log=debug"
+    )
+    expect(SolanaValidatorProcess.DefaultEnv).toEqual({
+      [SolanaValidatorProcess.RustLogEnvVar]:
+        SolanaValidatorProcess.ProgramLogRustLog
+    })
+  })
+
+  // resolveEnv takes the inherited filter as a PARAMETER, so the decision is
+  // testable without mutating this worker's environment.
+  it("enables agave's program-log target when RUST_LOG is unset", () => {
+    expect(SolanaValidatorProcess.resolveEnv(undefined)).toEqual(
+      SolanaValidatorProcess.DefaultEnv
+    )
+  })
+
+  it("defers to an explicit RUST_LOG from the environment", () => {
+    expect(SolanaValidatorProcess.resolveEnv("warn")).toEqual({})
+  })
+
+  it("wires resolveEnv into the live process env getter", async () => {
+    const validator = await SolanaValidatorProcess.create(manager, {
+      binary: "/bin/true"
+    })
+    expect(validator.env).toEqual(
+      SolanaValidatorProcess.resolveEnv(
+        process.env[SolanaValidatorProcess.RustLogEnvVar]
+      )
+    )
+  })
+
   it("passes an explicit --dynamic-port-range window verbatim", async () => {
     const validator = await SolanaValidatorProcess.create(manager, {
       binary: "/bin/true",

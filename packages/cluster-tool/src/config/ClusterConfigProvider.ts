@@ -6,7 +6,9 @@ import {
   BindConfigSchemaCodec,
   BindOptionsSchema,
   ClusterConfigSchemaCodec,
+  ClusterDeploymentKind,
   ClusterFiles,
+  DefaultChainStateDbSizeMb,
   ExternalOutpostConfigSchemaCodec,
   SignatureProviderType,
   type AWSClusterNodeConfig,
@@ -102,6 +104,13 @@ function assertBatchOperatorSchedule(options: ClusterBuildOptions): number {
  */
 export namespace ClusterConfigProvider {
   export const DataSubpath = "data"
+  /**
+   * The `bin/` directory holding the wire-sysio executables, relative to an
+   * install prefix (or a build dir). Shared by {@link resolveExecutables} and
+   * the standalone API node's `start.sh` exec target, so the two cannot spell
+   * the same directory differently.
+   */
+  export const BinSubpath = "bin"
   export const WalletSubpath = "wallet"
   export const ReportSubpath = "reports"
   export const ConfigFilename = ClusterFiles.ConfigFilename
@@ -188,7 +197,12 @@ export namespace ClusterConfigProvider {
       awsClusterNodeConfig,
       externalOutposts,
       debuggingServerEnabled: true,
-      enableMockReserves: options.enableMockReserves ?? false
+      enableMockReserves: options.enableMockReserves ?? false,
+      // `resolve` is the CREATE path, so the tree it describes is always local;
+      // `create-external-config`'s Rebind re-stamps its merged config `external`.
+      deploymentKind: ClusterDeploymentKind.local,
+      chainStateDbSizeMb:
+        options.chainStateDbSizeMb ?? DefaultChainStateDbSizeMb
     }
   }
 
@@ -590,14 +604,15 @@ export namespace ClusterConfigProvider {
         Path.isAbsolute(ref) ? ref : Path.resolve(baseDir, ref)
     return {
       ethereum: {
+        ...config.ethereum,
         addressFile: resolveRef(config.ethereum.addressFile),
         abiFiles: config.ethereum.abiFiles.map(resolveRef),
-        chainId: config.ethereum.chainId,
         ...(config.ethereum.liqEthAddressFile != null
           ? { liqEthAddressFile: resolveRef(config.ethereum.liqEthAddressFile) }
           : {})
       },
       solana: {
+        ...config.solana,
         idlFile: resolveRef(config.solana.idlFile),
         ...(config.solana.mintsFile != null
           ? { mintsFile: resolveRef(config.solana.mintsFile) }
@@ -610,7 +625,7 @@ export namespace ClusterConfigProvider {
   async function resolveExecutables(
     buildPath: string
   ): Promise<ClusterExecutablePaths> {
-    const toBin = (name: string) => Path.join(buildPath, "bin", name)
+    const toBin = (name: string) => Path.join(buildPath, BinSubpath, name)
     const paths: ClusterExecutablePaths = {
       nodeop: toBin("nodeop"),
       kiod: toBin("kiod"),

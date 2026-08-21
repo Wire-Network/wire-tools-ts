@@ -137,8 +137,15 @@ Runs a five-stage pipeline (each stage a validated Report step):
 2. **Clone** — copy the cluster tree, excluding runtime artifacts (`*.pid`,
    `logs/`, `reports/`, and non-copyable inodes like stale unix sockets).
 3. **Rebind** — re-render `cluster-config.json`, `genesis.json`, per-node
-   `config.ini` / `logging.json`, and `cluster-state.json` from the **merged
-   model** (external bind addresses + external root paths). Never text-patched.
+   `config.ini` / `logging.json`, `cluster-state.json`, and every daemon's
+   `start.sh` from the **merged model** (external bind addresses + external root
+   paths). Never text-patched. The merged config is stamped `external`, and the
+   re-rendered tree is production-shaped accordingly: **bios and producer nodes
+   are emitted WITHOUT `sysio::trace_api_plugin`** (and therefore without its
+   `--trace-no-abis` probe), while batch-operator / underwriter nodes retain it —
+   an operator's HTTP surface is non-public, serving only its own co-located OPP
+   daemon. Base plugins (`net_plugin`, `chain_api_plugin`), the producer plugins,
+   and the per-operator OPP plugins are unchanged from the local tree.
 4. **Emit** — write `external-cluster-config.json` (self-described: `bindings`,
    `accounts` + per-key-type key providers, `wire.epochDurationSec`, and the
    ethereum/solana outpost references).

@@ -3,6 +3,7 @@ import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { WireClient } from "../../clients/wire/WireClient.js"
 import type { WireKeyPair } from "../../types/KeyPair.js"
+import { toIniLine } from "../../utils/iniUtils.js"
 import type { Renderer } from "../../utils/Renderer.js"
 import { Localhost } from "../../utils/netUtils.js"
 import { ClusterConfigProvider } from "../ClusterConfigProvider.js"
@@ -24,54 +25,66 @@ export class NodeConfigIniRenderer implements Renderer {
       isBios = node.role === NodeRole.bios,
       isProducer = node.role === NodeRole.producer && node.producers.length > 0,
       isApi = node.role === NodeRole.producer && node.producers.length === 0,
-      isOperator = node.role === NodeRole.operator,
+      isOperator = NodeConfig.isOperatorRole(node.role),
       plugins = [
         ...Constants.BASE_PLUGINS,
-        ...(isProducer || isBios ? Constants.PRODUCER_PLUGINS : [])
+        ...(isProducer || isBios ? Constants.PRODUCER_PLUGINS : []),
+        // The conjunction is LOAD-BEARING. `runsTraceApiPlugin` is true for
+        // operators, but an operator ini has never carried a trace_api line
+        // (operators get BASE_PLUGINS only, and the daemon args add the rest),
+        // and an `isApi` node must not gain one either. Net effect: local is
+        // unchanged; an EXTERNAL producer / bios loses the line (SHARED-25 AC#4).
+        ...((isProducer || isBios) && NodeConfig.runsTraceApiPlugin(node)
+          ? [Constants.TRACE_API_PLUGIN]
+          : [])
       ],
-      kv = (key: string, value: string | number | boolean) =>
-        `${key} = ${String(value)}`,
       extraArgs = Constants.NODEOP_EXTRA_ARGS,
       lines = [
-        ...plugins.map(plugin => kv("plugin", plugin)),
+        ...plugins.map(plugin => toIniLine("plugin", plugin)),
         "",
-        kv("p2p-listen-endpoint", `${listen}:${node.ports.p2p}`),
-        kv("p2p-server-address", `${node.advertiseAddress}:${node.ports.p2p}`),
-        kv("http-server-address", `${listen}:${node.ports.http}`),
-        ...node.peerEndpoints.map(ep => kv("p2p-peer-address", ep)),
+        toIniLine("p2p-listen-endpoint", `${listen}:${node.ports.p2p}`),
+        toIniLine(
+          "p2p-server-address",
+          `${node.advertiseAddress}:${node.ports.p2p}`
+        ),
+        toIniLine("http-server-address", `${listen}:${node.ports.http}`),
+        ...node.peerEndpoints.map(ep => toIniLine("p2p-peer-address", ep)),
         "",
-        kv("blocks-dir", "blocks"),
-        ...(isBios ? [kv("enable-stale-production", "true")] : []),
-        ...node.producers.map(producer => kv("producer-name", producer)),
+        toIniLine("blocks-dir", "blocks"),
+        ...(isBios ? [toIniLine("enable-stale-production", "true")] : []),
+        ...node.producers.map(producer => toIniLine("producer-name", producer)),
         ...(isBios
           ? [
-              kv(
+              toIniLine(
                 "signature-provider",
                 NodeConfigIniRenderer.biosSignatureProvider(node)
               )
             ]
           : []),
         ...(isApi || isOperator
-          ? [kv("transaction-retry-max-storage-size-gb", 100)]
+          ? [toIniLine("transaction-retry-max-storage-size-gb", 100)]
           : []),
-        kv("contracts-console", "true"),
-        kv("vote-threads", extraArgs.voteThreads),
-        kv("max-transaction-time", extraArgs.maxTransactionTime),
-        kv("abi-serializer-max-time-ms", extraArgs.abiSerializerMaxTimeMs),
+        toIniLine("contracts-console", "true"),
+        toIniLine("vote-threads", extraArgs.voteThreads),
         // Topology-derived, NOT a fixed cap: every node is meshed with every
         // other, so a `max-clients` below the mesh size makes each node refuse
         // the surplus inbound dials and LIB freezes at scale. See
         // NodeConfig.peerCapacity.
-        kv("max-clients", NodeConfig.peerCapacity(node.cluster)),
-        kv("p2p-max-nodes-per-host", NodeConfig.peerCapacity(node.cluster)),
-        kv("connection-cleanup-period", extraArgs.connectionCleanupPeriod),
-        kv("http-max-response-time-ms", extraArgs.httpMaxResponseTimeMs),
+        toIniLine("max-clients", NodeConfig.peerCapacity(node.cluster)),
+        toIniLine(
+          "p2p-max-nodes-per-host",
+          NodeConfig.peerCapacity(node.cluster)
+        ),
+        toIniLine(
+          "connection-cleanup-period",
+          extraArgs.connectionCleanupPeriod
+        ),
         // The operator's `batch-operator-account` / `underwriter-account` is
         // NOT rendered here: the chain account is node-owner-generated at
         // provisioning time, so it rides the daemon CLI args
         // (`OperatorDaemonTool`) resolved from the key store at start.
         ...(isOperator
-          ? [kv("read-mode", WireClient.FinalityType.irreversible)]
+          ? [toIniLine("read-mode", WireClient.FinalityType.irreversible)]
           : []),
         ...NodeConfigIniRenderer.HttpInsecureLines,
         ""
