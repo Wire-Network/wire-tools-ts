@@ -158,27 +158,69 @@ export namespace Constants {
   /** Maximum number of active block producers. */
   export const MAX_PRODUCERS = 21
 
-  /** Extra nodeop arguments applied to every node. */
+  /**
+   * Extra nodeop arguments applied to every node, in EVERY phase — the ini is
+   * read via `--config-dir` by the bootstrap AND post-bootstrap launch forms
+   * alike, so only phase-independent values may live here.
+   *
+   * The SHARED-25 deadlines (`max-transaction-time`,
+   * `abi-serializer-max-time-ms`, `http-max-response-time-ms`) are phase- and
+   * role-dependent and live solely in `NodeopProcess`'s companion constants:
+   * an ini kv would resurrect a value the post-bootstrap argv deliberately
+   * omits, since a CLI flag only wins when it is actually emitted.
+   */
   export const NODEOP_EXTRA_ARGS = {
     voteThreads: 4,
-    maxTransactionTime: -1,
-    abiSerializerMaxTimeMs: 990_000,
-    connectionCleanupPeriod: 15,
-    httpMaxResponseTimeMs: 990_000
+    connectionCleanupPeriod: 15
   } as const
 
-  /** Plugins loaded for every node. */
-  export const BASE_PLUGINS = [
-    "sysio::net_plugin",
-    "sysio::chain_api_plugin"
-  ] as const
+  /**
+   * THE one spelling of the p2p plugin. It owns `p2p-peer-address` AND
+   * `agent-name`, so any node that configures either must LOAD it — appbase
+   * registers every compiled-in plugin's options regardless of which are
+   * loaded, so the lines are otherwise accepted-and-ignored.
+   */
+  export const NET_PLUGIN = "sysio::net_plugin"
+  /** THE one spelling of the chain HTTP-API plugin (`/v1/chain/*`). */
+  export const CHAIN_API_PLUGIN = "sysio::chain_api_plugin"
+
+  /**
+   * Plugins loaded for every CLUSTER node.
+   *
+   * COMPOSED from {@link NET_PLUGIN} + {@link CHAIN_API_PLUGIN} so a standalone
+   * artifact can name the two individually instead of spreading this array: a
+   * future cluster-wide addition here must NOT silently reach
+   * `ApiNodeIniRenderer.Plugins`, which is governed by the API-node baseline.
+   */
+  export const BASE_PLUGINS = [NET_PLUGIN, CHAIN_API_PLUGIN] as const
 
   /** Additional plugins for producer / bios nodes. */
   export const PRODUCER_PLUGINS = [
     "sysio::producer_plugin",
-    "sysio::producer_api_plugin",
-    "sysio::trace_api_plugin"
+    "sysio::producer_api_plugin"
   ] as const
+
+  /**
+   * THE one spelling of the trace-api plugin, shared by the ini renderer and
+   * the nodeop argv builder.
+   *
+   * It is NOT in {@link PRODUCER_PLUGINS} because it is the one role-plugin
+   * whose presence is GATED (SHARED-25 AC#4, the author's D3 carve-out):
+   * `NodeConfig.runsTraceApiPlugin` keeps it on every role of a LOCAL cluster
+   * and drops it from the production-shaped external tree's bios / producer
+   * nodes. Two spellings would let the gate move in one surface only.
+   */
+  export const TRACE_API_PLUGIN = "sysio::trace_api_plugin"
+
+  /**
+   * THE one spelling of nodeop's chain-state DB size option (SHARED-31), used
+   * bare as an ini key / yargs flag name and as `--${…}` in a nodeop argv.
+   *
+   * Changing it changes the emitted `config.ini` key, the `create-api-node`
+   * flag, and the cluster nodeop argv together — which is the point: three
+   * spellings would let one surface drift.
+   */
+  export const CHAIN_STATE_DB_SIZE_MB_OPTION = "chain-state-db-size-mb"
 
   /** Core system contract paths (relative to the build dir). */
   export const CONTRACT_PATHS = {

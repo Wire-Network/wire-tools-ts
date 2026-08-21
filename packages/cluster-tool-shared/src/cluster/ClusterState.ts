@@ -3,10 +3,9 @@ import { z } from "zod"
 import { SchemaCodec } from "../schema/index.js"
 
 /**
- * Role a cluster node plays. Identity-mapped string enum matching
- * `cluster-tool`'s `NodeRole` (`bios` / `producer` / `operator`) — the
- * identical string values mean a `cluster-tool` `NodeRole` member satisfies
- * this type with no cast.
+ * Role a cluster node plays in the persisted snapshot — its PROCESS kind.
+ * Identity-mapped string enum; `cluster-tool`'s finer-grained `NodeRole` is
+ * bridged onto it by value, with every operator kind landing on `operator`.
  */
 export enum ClusterStateNodeRole {
   bios = "bios",

@@ -95,6 +95,26 @@ export type ClusterExecutablePaths = z.infer<
 >
 
 /**
+ * Which command produced this cluster tree — controls production-shaped
+ * rendering (SHARED-25 AC#4). `local` is what `create` writes; `external` is
+ * stamped by `create-external-config`'s Rebind, and is the ONLY kind whose
+ * bios / producer nodes drop `sysio::trace_api_plugin`.
+ */
+export enum ClusterDeploymentKind {
+  local = "local",
+  external = "external"
+}
+
+/**
+ * SHARED-31's mandated `--chain-state-db-size-mb` default (MiB); equals
+ * nodeop's stock chain-state-db-size-mb (1 GiB), so the always-emitted flag is
+ * a no-op until an operator overrides it — uniformity by construction.
+ * Raising it raises every node's chainbase mapping, on both commands and in
+ * every emitted `start.sh`.
+ */
+export const DefaultChainStateDbSizeMb = 1_024
+
+/**
  * THE canonical cluster configuration — the plain JSON shape persisted to
  * `cluster-config.json` (`ClusterFiles.ConfigFilename`) and flowed through
  * the harness at runtime. `ClusterConfigProvider` (cluster-tool) resolves,
@@ -231,7 +251,23 @@ export const ClusterConfigSchema = z.object({
    * yield emitter. Schema-defaulted `false` so it is absent from the standard
    * local outpost surface.
    */
-  enableMockYieldEmitter: z.boolean().default(false)
+  enableMockYieldEmitter: z.boolean().default(false),
+  /**
+   * Which command produced this tree (SHARED-25 AC#4). Schema-defaulted
+   * {@link ClusterDeploymentKind.local} so pre-existing configs — and every
+   * `create`d cluster — keep `trace_api_plugin` on every role.
+   */
+  deploymentKind: z
+    .enum(ClusterDeploymentKind)
+    .default(ClusterDeploymentKind.local),
+  /**
+   * Uniform `--chain-state-db-size-mb` for EVERY nodeop node, both commands,
+   * both phases (SHARED-31). Schema-defaulted to
+   * {@link DefaultChainStateDbSizeMb} so pre-existing configs load as 1024 —
+   * nodeop's own stock value, i.e. no behavior change until an operator
+   * overrides it.
+   */
+  chainStateDbSizeMb: z.number().default(DefaultChainStateDbSizeMb)
 })
 /** THE canonical cluster configuration — the schema-inferred shape of {@link ClusterConfigSchema}. */
 export type ClusterConfig = z.infer<typeof ClusterConfigSchema>

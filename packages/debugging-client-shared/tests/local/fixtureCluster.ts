@@ -4,8 +4,10 @@ import * as Path from "node:path"
 
 import {
   ClusterConfigLoggingFileFormat,
+  ClusterDeploymentKind,
   ClusterFiles,
   ClusterStateNodeRole,
+  DefaultChainStateDbSizeMb,
   SignatureProviderType,
   type ClusterConfig,
   type ClusterState,
@@ -150,7 +152,8 @@ export function makeFixtureCluster(): FixtureCluster {
     externalOutposts: null,
     debuggingServerEnabled: true,
     enableMockReserves: false,
-    enableMockYieldEmitter: false
+    deploymentKind: ClusterDeploymentKind.local,
+    chainStateDbSizeMb: DefaultChainStateDbSizeMb
   }
 
   Fs.writeFileSync(

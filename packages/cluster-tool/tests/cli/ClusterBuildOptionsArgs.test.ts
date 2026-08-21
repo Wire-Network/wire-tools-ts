@@ -128,6 +128,7 @@ describe("flattenOptionLeaves + buildOptionShape", () => {
         "force",
         "bind-all",
         "enable-mock-reserves",
+        "chain-state-db-size-mb",
         "bind-kiod-port",
         "bind-kiod-address",
         "bind-nodeop-ports-bios-http",
@@ -235,6 +236,17 @@ describe("applyClusterBuildOptionsArgs registration", () => {
     expect(options.get("epoch-duration-sec")?.default).toBe(42)
   })
 
+  it("registers --chain-state-db-size-mb with NO seeded default (SHARED-31)", () => {
+    // An `optionalLeaf`, deliberately: a seeded default would make yargs ALWAYS
+    // supply a value, so ClusterConfigProvider.resolve's
+    // `?? DefaultChainStateDbSizeMb` would become unreachable dead code and the
+    // 1024 fallback would gain a second author.
+    const registered = register(RequiredPaths).get("chain-state-db-size-mb")
+    expect(registered).toMatchObject({ type: "number", demandOption: false })
+    expect(registered?.default).toBeUndefined()
+    expect(registered?.describe).toContain("MiB")
+  })
+
   it("wires the historical short aliases", () => {
     const options = register()
     expect(options.get("cluster-path")?.alias).toBe("d")
@@ -274,10 +286,7 @@ describe("WIRE_* environment seeding (the run-flow.mjs / e2e-gate contract)", ()
   })
 
   it("the environment (per-invocation operator intent) beats scenario defaults", () => {
-    const options = register(
-      { clusterPath: "/tmp/scenario-cluster" },
-      environment
-    )
+    const options = register({ clusterPath: "/tmp/scenario-cluster" }, environment)
     expect(options.get("cluster-path")?.default).toBe("/tmp/env-cluster")
   })
 
@@ -321,9 +330,7 @@ describe("toClusterBuildOptions reverse parse", () => {
       { "epoch-duration-sec": 60 },
       { requiredBatchOperatorCollateral }
     )
-    expect(options.requiredBatchOperatorCollateral).toEqual(
-      requiredBatchOperatorCollateral
-    )
+    expect(options.requiredBatchOperatorCollateral).toEqual(requiredBatchOperatorCollateral)
     // absent defaults stay absent — flags never set these leaves
     expect(options.requiredUnderwriterCollateral).toBeUndefined()
   })
@@ -347,17 +354,20 @@ describe("toClusterBuildOptions reverse parse", () => {
       toClusterBuildOptions({ "enable-mock-reserves": true }).enableMockReserves
     ).toBe(true)
     expect(
-      toClusterBuildOptions({ "enable-mock-reserves": false })
-        .enableMockReserves
+      toClusterBuildOptions({ "enable-mock-reserves": false }).enableMockReserves
     ).toBe(false)
+  })
+
+  it("reads --chain-state-db-size-mb, and leaves it ABSENT when omitted", () => {
+    // Registration is MANDATORY: this reverse parse reads argv ONLY through
+    // flattenOptionLeaves(buildOptionShape(...)), so an unregistered field is
+    // silently dropped here and never reaches the resolved config.
     expect(
-      toClusterBuildOptions({ "enable-mock-yield-emitter": true })
-        .enableMockYieldEmitter
-    ).toBe(true)
-    expect(
-      toClusterBuildOptions({ "enable-mock-yield-emitter": false })
-        .enableMockYieldEmitter
-    ).toBe(false)
+      toClusterBuildOptions({ "chain-state-db-size-mb": 2048 })
+        .chainStateDbSizeMb
+    ).toBe(2048)
+    // Absent ⇒ ClusterConfigProvider.resolve's DefaultChainStateDbSizeMb applies.
+    expect(toClusterBuildOptions({}).chainStateDbSizeMb).toBeUndefined()
   })
 
   it("reads the camelCase alias yargs also emits", () => {
@@ -385,9 +395,11 @@ describe("register → parse round-trip", () => {
     expect(options.bindAll).toBe(false)
     // no opt-in ⇒ the default-false mock-reserves flag survives as false
     expect(options.enableMockReserves).toBe(false)
-    expect(options.enableMockYieldEmitter).toBe(false)
     // unseeded (null-default) bind ports never materialize
     expect(options.bind?.kiod?.port).toBeUndefined()
+    // …and neither does the unseeded chain-state DB size (SHARED-31) — the
+    // resolve-time default is its ONE author.
+    expect(options.chainStateDbSizeMb).toBeUndefined()
   })
 
   it("carries the epoch-group + termination overrides through the full defaults→argv→options round-trip", () => {
@@ -405,7 +417,7 @@ describe("register → parse round-trip", () => {
         terminateMaxPercentMisses24h: 99,
         terminateWindowMs: 3_600_000,
         enableMockReserves: true,
-        enableMockYieldEmitter: true
+        chainStateDbSizeMb: 8_192
       }),
       argv: Record<string, unknown> = {}
     registered.forEach((config, flag) => {
@@ -421,7 +433,8 @@ describe("register → parse round-trip", () => {
     expect(options.terminateWindowMs).toBe(3_600_000)
     // the scenario-defaults opt-in path the 6 reserve-needing flows rely on
     expect(options.enableMockReserves).toBe(true)
-    expect(options.enableMockYieldEmitter).toBe(true)
+    // the same scenario-defaults path carries the SHARED-31 override
+    expect(options.chainStateDbSizeMb).toBe(8_192)
   })
 })
 

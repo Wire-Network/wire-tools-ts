@@ -1,7 +1,9 @@
 import {
   ClusterConfigLoggingFileFormat,
   ClusterConfigReportFormat,
+  ClusterDeploymentKind,
   ClusterStateNodeRole,
+  DefaultChainStateDbSizeMb,
   SignatureProviderType,
   type ClusterConfig,
   type ClusterState
@@ -94,7 +96,8 @@ const stubConfig: ClusterConfig = {
   externalOutposts: null,
   debuggingServerEnabled: true,
   enableMockReserves: false,
-  enableMockYieldEmitter: false
+  deploymentKind: ClusterDeploymentKind.local,
+  chainStateDbSizeMb: DefaultChainStateDbSizeMb
 }
 
 /** A complete `ClusterState` fixture (post-bootstrap snapshot, no nodes). */

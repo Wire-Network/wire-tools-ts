@@ -1,5 +1,6 @@
 import {
   AWSAccountName,
+  ClusterDeploymentKind,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool"
@@ -26,6 +27,89 @@ interface RenderedLogger {
 }
 
 describe("NodeConfig", () => {
+  describe("NodeRole", () => {
+    it("is identity-mapped — every value equals its key", () => {
+      expect(NodeRole.bios).toBe("bios")
+      expect(NodeRole.producer).toBe("producer")
+      expect(NodeRole.batch_operator).toBe("batch_operator")
+      expect(NodeRole.underwriter).toBe("underwriter")
+    })
+  })
+
+  describe("isOperatorRole", () => {
+    it("is true for BOTH operator kinds", () => {
+      expect(NodeConfig.isOperatorRole(NodeRole.batch_operator)).toBe(true)
+      expect(NodeConfig.isOperatorRole(NodeRole.underwriter)).toBe(true)
+    })
+
+    it("is false for the block-producing roles", () => {
+      expect(NodeConfig.isOperatorRole(NodeRole.bios)).toBe(false)
+      expect(NodeConfig.isOperatorRole(NodeRole.producer)).toBe(false)
+    })
+
+    it("covers exactly the OperatorRoles set", () => {
+      expect([...NodeConfig.OperatorRoles]).toEqual([
+        NodeRole.batch_operator,
+        NodeRole.underwriter
+      ])
+      expect(
+        Object.values(NodeRole).filter(role =>
+          NodeConfig.isOperatorRole(role)
+        )
+      ).toEqual([...NodeConfig.OperatorRoles])
+    })
+  })
+
+  describe("runsTraceApiPlugin (SHARED-25 AC#4 / the author's D3 carve-out)", () => {
+    const localNodes = NodeConfig.plan(fixtureConfig()),
+      externalNodes = NodeConfig.plan(
+        fixtureConfig({ deploymentKind: ClusterDeploymentKind.external })
+      )
+
+    /** The planned node of `role` (the fixture topology plans at least one). */
+    function nodeOfRole(nodes: NodeConfig[], role: NodeRole): NodeConfig {
+      const found = nodes.find(node => node.role === role)
+      expect(found).toBeDefined()
+      return found
+    }
+
+    // Driven off `NodeRole` so a new role is covered by construction. LOCAL is
+    // the regression pin: the harness's WireClient reads traces off producer[0],
+    // so a role-blind tightening here breaks every flow.
+    it.each(Object.values(NodeRole))(
+      "keeps it on a LOCAL cluster's %s node",
+      role => {
+        expect(NodeConfig.runsTraceApiPlugin(nodeOfRole(localNodes, role))).toBe(
+          true
+        )
+      }
+    )
+
+    it.each([NodeRole.bios, NodeRole.producer])(
+      "drops it from the production-shaped EXTERNAL tree's %s node",
+      role => {
+        expect(
+          NodeConfig.runsTraceApiPlugin(nodeOfRole(externalNodes, role))
+        ).toBe(false)
+      }
+    )
+
+    it.each([NodeRole.batch_operator, NodeRole.underwriter])(
+      "keeps it on an EXTERNAL cluster's %s node (non-public)",
+      role => {
+        expect(
+          NodeConfig.runsTraceApiPlugin(nodeOfRole(externalNodes, role))
+        ).toBe(true)
+      }
+    )
+
+    it("treats an unstamped (legacy) config as local", () => {
+      // The schema default is `local`, so a config that predates the field —
+      // and every `create`d cluster — keeps the plugin on every role.
+      expect(fixtureConfig().deploymentKind).toBe(ClusterDeploymentKind.local)
+    })
+  })
+
   describe("producerName", () => {
     it("names the first 26 producers defproducera..z", () => {
       expect(producerName(0)).toBe("defproducera")
@@ -95,7 +179,7 @@ describe("NodeConfig", () => {
       expect(nodes).toHaveLength(6) // 1 bios + 1 producer + 3 batch + 1 underwriter
       expect(nodes[0].role).toBe(NodeRole.bios)
       expect(nodes[0].name).toBe(NodeConfig.BiosName)
-      const operators = nodes.filter(n => n.role === NodeRole.operator)
+      const operators = nodes.filter(n => NodeConfig.isOperatorRole(n.role))
       expect(operators).toHaveLength(4)
       expect(
         operators.filter(n => n.batchOperatorLabel !== null)
@@ -105,8 +189,27 @@ describe("NodeConfig", () => {
       )
     })
 
+    it("gives each operator node its EXPLICIT kind, alongside its durable label", () => {
+      // The role discriminates batch vs underwriter; the label still carries
+      // WHICH operator the node acts for.
+      const batchOperators = nodes.filter(
+          n => n.role === NodeRole.batch_operator
+        ),
+        underwriters = nodes.filter(n => n.role === NodeRole.underwriter)
+      expect(batchOperators).toHaveLength(3)
+      expect(underwriters).toHaveLength(1)
+      batchOperators.forEach(n => {
+        expect(n.batchOperatorLabel).not.toBeNull()
+        expect(n.underwriterLabel).toBeNull()
+      })
+      underwriters.forEach(n => {
+        expect(n.underwriterLabel).not.toBeNull()
+        expect(n.batchOperatorLabel).toBeNull()
+      })
+    })
+
     it("meshes ONLY the producing set — bios + producers peer with each other", () => {
-      const mesh = nodes.filter(n => n.role !== NodeRole.operator)
+      const mesh = nodes.filter(n => !NodeConfig.isOperatorRole(n.role))
       mesh.forEach(n =>
         expect(n.peerEndpoints).toHaveLength(mesh.length - 1)
       )
@@ -119,7 +222,7 @@ describe("NodeConfig", () => {
       const producer = nodes.find(n => n.role === NodeRole.producer)!,
         producerEndpoint = `${producer.advertiseAddress}:${producer.ports.p2p}`
       nodes
-        .filter(n => n.role === NodeRole.operator)
+        .filter(n => NodeConfig.isOperatorRole(n.role))
         .forEach(operator => {
           expect(operator.peerEndpoints).toHaveLength(1)
           expect(operator.peerEndpoints[0]).toBe(producerEndpoint)
@@ -128,10 +231,10 @@ describe("NodeConfig", () => {
 
     it("keeps operators OUT of every mesh member's peer list", () => {
       const operatorEndpoints = nodes
-        .filter(n => n.role === NodeRole.operator)
+        .filter(n => NodeConfig.isOperatorRole(n.role))
         .map(n => `${n.advertiseAddress}:${n.ports.p2p}`)
       nodes
-        .filter(n => n.role !== NodeRole.operator)
+        .filter(n => !NodeConfig.isOperatorRole(n.role))
         .forEach(meshNode =>
           operatorEndpoints.forEach(endpoint =>
             expect(meshNode.peerEndpoints).not.toContain(endpoint)
@@ -282,6 +385,101 @@ describe("NodeConfig", () => {
       const ini = producer.ini.render()
       expect(ini).toContain(
         `p2p-peer-address = ${NodeConfigIniRenderer.Loopback}:${BindConfigProvider.DefaultBiosP2p}`
+      )
+    })
+
+    // SHARED-25: the ini is read via `--config-dir` by BOTH launch forms, so a
+    // deadline kv here would resurrect on the post-bootstrap form the very
+    // value its argv deliberately omits (a CLI flag only wins when emitted).
+    // Every role, because the ini is role-blind for these keys.
+    it.each(["max-transaction-time", "abi-serializer-max-time-ms", "http-max-response-time-ms"])(
+      "renders NO `%s` kv on any role's ini",
+      key => {
+        expect(nodes.length).toBeGreaterThan(0)
+        nodes.forEach(node => expect(node.ini.render()).not.toContain(key))
+      }
+    )
+
+    // SHARED-25 AC#4 (D3): the ini plugin LINE follows the same gate the argv
+    // does, so a published tree cannot load the plugin through `--config-dir`
+    // after the argv deliberately dropped it.
+    it.each([NodeRole.bios, NodeRole.producer])(
+      "renders the trace_api plugin line on a LOCAL %s node",
+      role => {
+        const node = nodes.find(candidate => candidate.role === role)!
+        expect(node.ini.render()).toContain(
+          `plugin = ${Constants.TRACE_API_PLUGIN}`
+        )
+      }
+    )
+
+    it.each([NodeRole.bios, NodeRole.producer])(
+      "renders NO trace_api plugin line on an EXTERNAL %s node",
+      role => {
+        const externalNodes = NodeConfig.plan(
+            fixtureConfig({ deploymentKind: ClusterDeploymentKind.external })
+          ),
+          node = externalNodes.find(candidate => candidate.role === role)!
+        expect(node.ini.render()).not.toContain(Constants.TRACE_API_PLUGIN)
+        // …and the neighbouring producer plugins survive the removal.
+        expect(node.ini.render()).toContain("plugin = sysio::producer_plugin")
+        expect(node.ini.render()).toContain(
+          "plugin = sysio::producer_api_plugin"
+        )
+      }
+    )
+
+    it.each(Object.values(ClusterDeploymentKind))(
+      "renders NO trace_api plugin line on an operator node of a %s cluster",
+      deploymentKind => {
+        // Operators take BASE_PLUGINS only — their daemon args carry the rest —
+        // so the `(isProducer || isBios) &&` conjunct is load-bearing even
+        // though `runsTraceApiPlugin` is true for them.
+        const operators = NodeConfig.plan(
+          fixtureConfig({ deploymentKind })
+        ).filter(node => NodeConfig.isOperatorRole(node.role))
+        expect(operators.length).toBeGreaterThan(0)
+        operators.forEach(node =>
+          expect(node.ini.render()).not.toContain(Constants.TRACE_API_PLUGIN)
+        )
+      }
+    )
+
+    it("renders NO trace_api plugin line on an isApi node, though runsTraceApiPlugin is TRUE", () => {
+      // The OTHER load-bearing reason for the `(isProducer || isBios) &&`
+      // conjunct: an `isApi` node is producer-ROLE with an EMPTY producer list,
+      // so `runsTraceApiPlugin` says yes (it is a LOCAL cluster and the gate is
+      // deployment/role-based) while the ini must still not load the plugin.
+      const apiNode = new NodeConfig(
+        fixtureConfig(),
+        NodeRole.producer,
+        0,
+        "node_api",
+        // Replayed from the fixture's ALREADY-RESOLVED bind (the sanctioned
+        // carve-out) — nothing binds here, and no port is invented.
+        PersistedFixture.bind.nodeop.ports.producers[0],
+        [],
+        []
+      )
+      expect(NodeConfig.runsTraceApiPlugin(apiNode)).toBe(true)
+      expect(apiNode.ini.render()).not.toContain(Constants.TRACE_API_PLUGIN)
+      // …and it is genuinely the isApi arm — that arm is what adds the retry
+      // storage line, and the producer plugins stay off a producerless node.
+      expect(apiNode.ini.render()).toContain(
+        "transaction-retry-max-storage-size-gb = 100"
+      )
+      expect(apiNode.ini.render()).not.toContain("plugin = sysio::producer_plugin")
+    })
+
+    it("still renders the phase-independent nodeop extras", () => {
+      // The deletion above must not have taken the neighbouring kvs with it.
+      const producer = nodes.find(n => n.role === NodeRole.producer)!
+      const ini = producer.ini.render()
+      expect(ini).toContain(
+        `vote-threads = ${Constants.NODEOP_EXTRA_ARGS.voteThreads}`
+      )
+      expect(ini).toContain(
+        `connection-cleanup-period = ${Constants.NODEOP_EXTRA_ARGS.connectionCleanupPeriod}`
       )
     })
   })

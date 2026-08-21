@@ -5,6 +5,7 @@ import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
 import {
   AWSAccountName,
+  ClusterStateNodeRole,
   findKeyMaterial,
   SignatureProviderType,
   type ClusterConfig
@@ -98,6 +99,31 @@ describe("ClusterState", () => {
       const ctx = seededContext()
       const raw = JSON.stringify(ClusterState.capture(ctx))
       expect(raw).not.toContain("PVT_")
+    })
+
+    it("bridges every planned NodeRole onto the persisted ClusterStateNodeRole", () => {
+      const ctx = seededContext(),
+        planned = NodeConfig.plan(ctx.config),
+        persistedRoleFor = new Map(
+          ClusterState.capture(ctx).nodes.map(
+            node => [node.name, node.role] as const
+          )
+        ),
+        persistedRoleOf = (role: NodeRole) =>
+          persistedRoleFor.get(planned.find(node => node.role === role).name)
+      expect(persistedRoleOf(NodeRole.bios)).toBe(ClusterStateNodeRole.bios)
+      expect(persistedRoleOf(NodeRole.producer)).toBe(
+        ClusterStateNodeRole.producer
+      )
+      // The snapshot records a node's PROCESS kind, so BOTH operator kinds
+      // land on its single `operator` member — the persisted shape is
+      // deliberately unchanged by the depot-side role split.
+      expect(persistedRoleOf(NodeRole.batch_operator)).toBe(
+        ClusterStateNodeRole.operator
+      )
+      expect(persistedRoleOf(NodeRole.underwriter)).toBe(
+        ClusterStateNodeRole.operator
+      )
     })
 
     it("nulls the anvil state + solana ledger paths in external-outpost mode", () => {
