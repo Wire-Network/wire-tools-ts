@@ -108,9 +108,10 @@ async function verifyCanonicalNotSlashed(
  * isolation; this flow covers the trigger + slash economics against a live
  * cluster):
  *
- * 1. Three batch operators deliver THREE DISTINCT envelope versions for one
- *    (outpost, epoch) with no majority, past the epoch boundary.
- *    `sysio.msgch::evalcons` detects the 3-way split and inline-calls
+ * 1. Three scheduled batch operators cover one (outpost, epoch), but only two
+ *    deliver conflicting envelope versions; the third stays eligible and
+ *    intentionally silent. Past the epoch boundary, `sysio.msgch::evalcons`
+ *    detects the two-candidate split and inline-calls
  *    `sysio.chalg::opendispute`, which pauses the epoch.
  * 2. Tier-1 node owners vote (`sysio.chalg::votedispute`) for the canonical
  *    checksum.
@@ -122,18 +123,18 @@ async function verifyCanonicalNotSlashed(
  *    checksum is slashed (`sysio.opreg::slash`, bond → LP, status SLASHED).
  *    The operator that delivered the canonical checksum is NOT slashed.
  *
- * To force a 3-way split, the three dispute operators are provisioned SBP-less
- * and made the sole active batch-op group, so their step-pushed deliveries are
- * the only ones the depot sees for the contested (outpost, epoch). Each
- * divergent delivery carries a distinct, epoch-matching OPP Envelope built with
- * the `@wireio/opp-typescript-models` Envelope encoder, so the depot's
- * trustless `sha256(data)` yields three distinct candidate checksums and
- * `opendispute` fires.
+ * The three dispute operators are provisioned SBP-less and made the sole active
+ * batch-op group, so their step-pushed deliveries are the only ones the depot
+ * sees for the contested (outpost, epoch). The flow delivers two distinct,
+ * epoch-matching OPP Envelopes from the canonical and losing operators; the
+ * third active operator has no contested delivery. The depot's trustless
+ * `sha256(data)` therefore yields exactly two candidate checksums and
+ * `opendispute` fires without requiring every eligible operator to deliver.
  */
 export class SlashingScenario extends FlowScenario {
   readonly name = "flow-batch-operator-slashing"
   readonly description =
-    "Three divergent batch-operator deliveries open a dispute; Tier-1 owners vote the canonical checksum; non-canonical deliverers are slashed"
+    "Two conflicting deliveries from a three-operator active group open a dispute; Tier-1 owners vote the canonical checksum; the non-canonical deliverer is slashed"
 
   override readonly defaults: ClusterBuildOptions = {
     epochDurationSec: Constants.EpochDurationSec,
@@ -239,7 +240,7 @@ export class SlashingScenario extends FlowScenario {
       )
     )
 
-    // The 3 divergent-delivery operators, provisioned SBP-less (no daemon) and
+    // The 3 active-group operators, provisioned SBP-less (no daemon) and
     // non-bootstrapped via the ONE provisioning mechanism, so they never
     // auto-deliver — the flow pushes their deliveries by hand. With
     // `req_batchop_collat` empty (this flow does not set it), processbatch can
@@ -270,7 +271,8 @@ export class SlashingScenario extends FlowScenario {
     // `schbatchgps` sorts non-bootstrapped ops first, then by name, so the three
     // `dispop.*` fill the single group and the bootstrapped harness ops fall
     // outside it. `deliver` is gated to the active group, so only these 3 can
-    // deliver — and being SBP-less, only when the flow injects an envelope.
+    // deliver — and being SBP-less, only when the flow injects an envelope. The
+    // flow intentionally omits an ETHEREUM injection for SilentOperator.
     // `sysio.epoch@active` resolves to `sysio@active` (the governance key in
     // kiod), so the flow can sign `schbatchgps`.
     ClusterBuildPhase.create(
@@ -331,11 +333,11 @@ export class SlashingScenario extends FlowScenario {
       )
     )
 
-    // ── 2. InjectDivergent — 3-way checksum split on the contested outpost ──
+    // ── 2. InjectDivergent — two candidates, one silent eligible operator ──
     const inject = ClusterBuildPhaseGroup.create(
       cluster,
       "InjectDivergent",
-      "3 batch operators each deliver the consensus SOLANA envelope + a distinct ETHEREUM envelope → 3-way checksum split"
+      "All 3 operators deliver consensus SOLANA; 2 deliver conflicting ETHEREUM candidates while the third stays silent"
     )
 
     // A dispute opens ONLY from deliver's inline evalcons, and only when that
@@ -355,27 +357,17 @@ export class SlashingScenario extends FlowScenario {
       )
     )
 
-    // One phase per dispute operator (parallel), each holding two atomic
-    // deliver steps run in order: the IDENTICAL consensus envelope for the
-    // non-contested outpost (SOLANA — so it reaches Option-A consensus for the
-    // contested epoch; the post-resolution advance where the slash runs
-    // requires EVERY active outpost at epoch consensus), then the operator's
-    // DISTINCT divergent envelope for the contested outpost (ETHEREUM). Each
-    // operator's SOLANA deliver strictly precedes its ETHEREUM deliver, so all
-    // three consensus deliveries land before the 3rd divergent one can open the
-    // dispute — the same ordering the depot saw from the original flow.
-    const deliveries = ClusterBuildPhaseGroup.create(
+    // First bring the non-contested outpost (SOLANA) to consensus. All three
+    // active operators deliver the identical envelope before either contested
+    // delivery can open the dispute. Then only DeliveringOperators submit their
+    // conflicting ETHEREUM candidates; SilentOperator remains eligible but does
+    // not deliver for ETHEREUM.
+    ClusterBuildPhase.create(
       inject,
-      "DivergentDeliveries",
-      "Each dispute operator delivers consensus SOLANA + its divergent ETHEREUM envelope",
-      { parallel: true }
-    )
-    Constants.DisputeOperators.forEach((operator, index) => {
-      ClusterBuildPhase.create(
-        deliveries,
-        `Deliver ${operator}`,
-        `${operator} delivers consensus SOLANA + divergent ETHEREUM`
-      ).push(
+      "ConsensusSolanaDeliveries",
+      "All 3 active operators deliver the consensus SOLANA envelope"
+    ).push(
+      ...Constants.DisputeOperators.map(operator =>
         DisputeSteps.planDeliver(
           Actor.BatchOperator,
           `${operator}-deliver-solana`,
@@ -384,28 +376,37 @@ export class SlashingScenario extends FlowScenario {
           operator,
           Constants.NonContestedChainCode,
           Constants.ConsensusEnvelopeTag
-        ),
+        )
+      )
+    )
+
+    ClusterBuildPhase.create(
+      inject,
+      "TwoCandidateEthereumDeliveries",
+      `The canonical and losing operators deliver conflicting ETHEREUM envelopes; ${Constants.SilentOperator} stays silent`
+    ).push(
+      ...Constants.DeliveringOperators.map((operator, index) =>
         DisputeSteps.planDeliver(
           Actor.BatchOperator,
           `${operator}-deliver-ethereum`,
-          `${operator} delivers its divergent ETHEREUM envelope (${Constants.EnvelopeTags[index]})`,
+          `${operator} delivers its conflicting ETHEREUM envelope (${Constants.EnvelopeTags[index]})`,
           {},
           operator,
           Constants.ContestedChainCode,
           Constants.EnvelopeTags[index]
         )
       )
-    })
+    )
 
     ClusterBuildPhase.create(
       inject,
       "DisputeOpens",
-      "The 3-way split opens a dispute and pauses the epoch"
+      "Exactly two contested candidates open a dispute and pause the epoch"
     ).push(
       DisputeSteps.planAwaitDisputeOpened(
         Actor.Sysio,
         "dispute-opens",
-        "an OPEN dispute row appears for the contested (outpost, epoch) with a candidate per operator",
+        "an OPEN dispute row appears for the contested (outpost, epoch) with exactly two candidates",
         disputeOpenStepOptions
       ),
       verifyStep(

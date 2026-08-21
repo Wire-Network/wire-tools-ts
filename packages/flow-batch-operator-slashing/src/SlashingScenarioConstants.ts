@@ -5,8 +5,9 @@ import { ProtocolTiming } from "@wireio/cluster-tool"
  * Constants for the batch-operator-slashing flow. Names, tags, epoch budgets,
  * and envelope fixture values carry over from the previously-validated jest
  * flow (tests/BatchOperatorSlashing.test.ts): three SBP-less dispute operators
- * inject a 3-way divergent split on the contested outpost, three Tier-1 owners
- * vote the canonical checksum, and the non-canonical deliverers are slashed.
+ * form the active group; two inject conflicting candidates while the third is
+ * intentionally silent on the contested outpost. Three Tier-1 owners vote the
+ * canonical checksum, and the non-canonical deliverer is slashed.
  * Every poll deadline derives from the epoch duration so the flow scales with it.
  */
 export namespace SlashingScenarioConstants {
@@ -28,13 +29,27 @@ export namespace SlashingScenarioConstants {
   export const EpochBoundaryMarginMs = 2_000
 
   /**
-   * The three batch operators whose divergent deliveries form the split. The
-   * operator delivering the canonical tag is the one the Tier-1 owners vote
-   * for; the other two are slashed. They are provisioned SBP-less (no daemon)
-   * and non-bootstrapped, so the flow fully controls their deliveries.
+   * The three batch operators in the active group. The canonical and losing
+   * operators deliver conflicting tags; the silent operator stays eligible but
+   * does not deliver for the contested outpost. All are provisioned SBP-less
+   * (no daemon) and non-bootstrapped, so the flow fully controls deliveries.
    */
-  export const DisputeOperators = ["dispop.a", "dispop.b", "dispop.c"] as const
-  /** Group SIZE the dispute needs — three divergent deliveries, no majority. */
+  export const CanonicalOperator = "dispop.a"
+  /** The eligible operator that delivers the non-canonical contested candidate. */
+  export const LosingOperator = "dispop.b"
+  /** The eligible operator that is deliberately silent on the contested outpost. */
+  export const SilentOperator = "dispop.c"
+  export const DisputeOperators = [
+    CanonicalOperator,
+    LosingOperator,
+    SilentOperator
+  ] as const
+  /** The two operators that actually deliver contested candidates. */
+  export const DeliveringOperators = [
+    CanonicalOperator,
+    LosingOperator
+  ] as const
+  /** Group SIZE: three scheduled operators, which preserves the odd-size invariant. */
   export const DisputeOperatorCount = DisputeOperators.length
   /**
    * Bootstrapped batch operators provisioned by the harness — exactly
@@ -88,20 +103,14 @@ export namespace SlashingScenarioConstants {
    * quorum is Q = floor(4/2)+1 = 3 — voting all 3 of these owners clears it.
    */
   export const Tier1VoterNames = ["voter1", "voter2", "voter3"] as const
-
-
   /** The operator delivering the canonical checksum (NOT slashed). */
-  export const CanonicalOperator = DisputeOperators[0]
-  /** The operators delivering the non-canonical checksums (slashed). */
-  export const LosingOperators = [
-    DisputeOperators[1],
-    DisputeOperators[2]
-  ] as const
+  /** The only non-canonical deliverer, which must be slashed after resolution. */
+  export const LosingOperators = [LosingOperator] as const
   /** HD slots for the dispute operators' ETH wallets — past every bootstrapped operator slot. */
   export const DisputeOperatorEthereumHdBase = 35
 
-  /** Distinct payload tags → distinct envelope checksums (no majority). */
-  export const EnvelopeTags = ["canonical", "fork-1", "fork-2"] as const
+  /** Two distinct payload tags produce the two conflicting candidate checksums. */
+  export const EnvelopeTags = ["canonical", "fork"] as const
   /**
    * Tag delivered IDENTICALLY by all three dispute operators on the
    * non-contested outpost, so that outpost reaches Option-A consensus for the
@@ -160,7 +169,7 @@ export namespace SlashingScenarioConstants {
   export const BoundaryEpochBudget = 2
   /**
    * Epochs budgeted for the dispute row to appear. CI-load timing margin: the
-   * dispute opens on the 3rd divergent deliver's inline `evalcons` once it
+   * dispute opens on the second conflicting deliver's inline `evalcons` once it
    * lands past `next_epoch_start`. Under CI load the deliver txns + epoch
    * boundary can lag, so the dispute row can appear a little late — 4 epochs
    * (2 raced the boundary and flaked, e.g. run 28108464932). The poll returns

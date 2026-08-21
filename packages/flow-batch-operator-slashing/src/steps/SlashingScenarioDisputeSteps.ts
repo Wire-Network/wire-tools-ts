@@ -370,7 +370,7 @@ export namespace SlashingScenarioDisputeSteps {
    * The schedule reshape runs while the genesis epoch is live, whose envelope
    * bucket already holds the bootstrap operators' consistent deliveries (pushed
    * by their cranks before the group swap de-elected them). Those form an
-   * Option-B majority, so a 3-way divergent split injected at the genesis epoch
+   * Option-B majority, so a two-candidate split injected at the genesis epoch
    * reaches `evalcons` consensus on the bootstrap checksum instead of opening a
    * dispute. After the swap, the bootstrap operators finish driving the genesis
    * epoch to consensus and `advance` rolls forward to the FIRST fully-post-swap
@@ -654,7 +654,7 @@ export namespace SlashingScenarioDisputeSteps {
     // Chain the synthetic envelope from the outpost's current inbound tips so the winner (or, for
     // the non-contested outpost, the consensus envelope) passes SEC-102 validation in
     // apply_consensus: `previous_envelope_hash` continues the envelope chain and
-    // `previous_message_id` continues the message chain. The three divergent envelopes for the
+    // `previous_message_id` continues the message chain. The two conflicting envelopes for the
     // contested outpost all read the SAME pre-dispute tips; only the voted winner dispatches and
     // advances them.
     const tips = await readInboundTips(ctx, input.chainCode, epochIndex)
@@ -840,8 +840,8 @@ export namespace SlashingScenarioDisputeSteps {
     const dispute = await findOpenDispute(ctx, epoch)
     Assert.ok(dispute != null, `no OPEN dispute row for epoch ${epoch}`)
     Assert.ok(
-      dispute.candidates.length >= Constants.DisputeOperators.length,
-      `expected >= ${Constants.DisputeOperators.length} dispute candidates, got ${dispute.candidates.length}`
+      dispute.candidates.length === Constants.DeliveringOperators.length,
+      `expected exactly ${Constants.DeliveringOperators.length} dispute candidates, got ${dispute.candidates.length}`
     )
     const canonicalAccount = ctx.keyStore.assertOperator(
       Constants.CanonicalOperator
