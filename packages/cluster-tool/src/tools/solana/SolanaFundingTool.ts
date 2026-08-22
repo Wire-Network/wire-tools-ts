@@ -7,7 +7,8 @@ import {
   LAMPORTS_PER_SOL,
   PublicKey,
   SystemProgram,
-  Transaction
+  Transaction,
+  type TransactionInstruction
 } from "@solana/web3.js"
 import {
   MINT_SIZE,
@@ -69,11 +70,16 @@ export namespace SolanaFundingTool {
       decimals >= MinDecimals && decimals <= MaxDecimals,
       `SolanaFundingTool: decimals must be in [${MinDecimals}, ${MaxDecimals}], got ${decimals}`
     )
-    log.info(`[SolanaFundingTool] createMockSplMint start (decimals=${decimals})`)
+    log.info(
+      `[SolanaFundingTool] createMockSplMint start (decimals=${decimals})`
+    )
 
     const mintKeypair = Keypair.generate()
-    log.info(`[SolanaFundingTool] generated mint pubkey=${mintKeypair.publicKey.toBase58()}`)
-    const rentLamports = await connection.getMinimumBalanceForRentExemption(MINT_SIZE)
+    log.info(
+      `[SolanaFundingTool] generated mint pubkey=${mintKeypair.publicKey.toBase58()}`
+    )
+    const rentLamports =
+      await connection.getMinimumBalanceForRentExemption(MINT_SIZE)
     const transaction = new Transaction().add(
       SystemProgram.createAccount({
         fromPubkey: funder.publicKey,
@@ -82,10 +88,22 @@ export namespace SolanaFundingTool {
         lamports: rentLamports,
         programId: TOKEN_PROGRAM_ID
       }),
-      createInitializeMint2Instruction(mintKeypair.publicKey, decimals, funder.publicKey, null)
+      createInitializeMint2Instruction(
+        mintKeypair.publicKey,
+        decimals,
+        funder.publicKey,
+        null
+      )
     )
-    await sendAndPoll(connection, transaction, [funder, mintKeypair], "createMockSplMint")
-    log.info(`[SolanaFundingTool] mint created (${mintKeypair.publicKey.toBase58()})`)
+    await sendAndPoll(
+      connection,
+      transaction,
+      [funder, mintKeypair],
+      "createMockSplMint"
+    )
+    log.info(
+      `[SolanaFundingTool] mint created (${mintKeypair.publicKey.toBase58()})`
+    )
     return mintKeypair.publicKey
   }
 
@@ -108,16 +126,107 @@ export namespace SolanaFundingTool {
     amount: bigint
   ): Promise<PublicKey> {
     Assert.ok(amount > 0n, "SolanaFundingTool: mint amount must be > 0")
-    const ata = getAssociatedTokenAddressSync(mint, recipient)
-    const ataInfo = await connection.getAccountInfo(ata)
+    const { ata, createInstruction } = await resolveAssociatedTokenAccount(
+      connection,
+      funder,
+      mint,
+      recipient
+    )
+    // ONE transaction: the ATA creation (when needed) rides with the mint, so
+    // the credit is atomic and costs a single confirmation.
     const transaction = new Transaction()
-    if (ataInfo === null)
-      transaction.add(
-        createAssociatedTokenAccountInstruction(funder.publicKey, ata, recipient, mint)
-      )
-    transaction.add(createMintToInstruction(mint, ata, funder.publicKey, amount))
+    if (createInstruction != null) transaction.add(createInstruction)
+    transaction.add(
+      createMintToInstruction(mint, ata, funder.publicKey, amount)
+    )
     await sendAndPoll(connection, transaction, [funder], "mintMockSplToUser")
     return ata
+  }
+
+  /**
+   * Ensure the Associated Token Account for `(owner, mint)` exists, creating an
+   * empty one if absent. Idempotent — a present ATA no-ops. Unlike
+   * {@link mintMockSplToUser} this mints nothing; it only guarantees the account
+   * exists so a later SPL transfer INTO it cannot fail for want of a destination.
+   *
+   * `allowOwnerOffCurve` must be `true` when `owner` is a program PDA (e.g. the
+   * `reserve_aggregate` custody account), whose address is off the ed25519 curve.
+   *
+   * @param connection - RPC connection.
+   * @param funder - ATA rent payer keypair.
+   * @param mint - The SPL mint pubkey.
+   * @param owner - The ATA owner (a wallet, or a PDA when `allowOwnerOffCurve`).
+   * @param allowOwnerOffCurve - Permit a PDA owner (default `false`).
+   * @returns The owner's ATA pubkey for `mint`.
+   */
+  export async function ensureAssociatedTokenAccount(
+    connection: Connection,
+    funder: Keypair,
+    mint: PublicKey,
+    owner: PublicKey,
+    allowOwnerOffCurve = false
+  ): Promise<PublicKey> {
+    const { ata, createInstruction } = await resolveAssociatedTokenAccount(
+      connection,
+      funder,
+      mint,
+      owner,
+      allowOwnerOffCurve
+    )
+    if (createInstruction != null)
+      await sendAndPoll(
+        connection,
+        new Transaction().add(createInstruction),
+        [funder],
+        "ensureAssociatedTokenAccount"
+      )
+    return ata
+  }
+
+  /** The ATA address plus, when it does not exist yet, the ix that creates it. */
+  interface AssociatedTokenAccountPlan {
+    readonly ata: PublicKey
+    /** `null` when the account already exists — nothing to add to a transaction. */
+    readonly createInstruction: TransactionInstruction
+  }
+
+  /**
+   * Derive the `(owner, mint)` ATA and probe whether it exists — the shared
+   * half of {@link ensureAssociatedTokenAccount} and {@link mintMockSplToUser}.
+   *
+   * Returns the creation INSTRUCTION rather than sending it, so each caller
+   * keeps its own transaction shape: `mintMockSplToUser` batches it with the
+   * `mintTo` in one transaction, while `ensureAssociatedTokenAccount` sends it
+   * alone. Namespace-private.
+   *
+   * @param connection - RPC connection.
+   * @param funder - ATA rent payer keypair.
+   * @param mint - The SPL mint pubkey.
+   * @param owner - The ATA owner (a wallet, or a PDA when `allowOwnerOffCurve`).
+   * @param allowOwnerOffCurve - Permit a PDA owner (default `false`).
+   * @returns The ATA, and its creation ix when the account is absent.
+   */
+  async function resolveAssociatedTokenAccount(
+    connection: Connection,
+    funder: Keypair,
+    mint: PublicKey,
+    owner: PublicKey,
+    allowOwnerOffCurve = false
+  ): Promise<AssociatedTokenAccountPlan> {
+    const ata = getAssociatedTokenAddressSync(mint, owner, allowOwnerOffCurve),
+      ataInfo = await connection.getAccountInfo(ata)
+    return {
+      ata,
+      createInstruction:
+        ataInfo === null
+          ? createAssociatedTokenAccountInstruction(
+              funder.publicKey,
+              ata,
+              owner,
+              mint
+            )
+          : null
+    }
   }
 
   /** Persisted mint-authority (deployer) keypair filename in the cluster data dir. */
@@ -179,7 +288,9 @@ export namespace SolanaFundingTool {
    * so the keypair must hold the deposit amount + fee headroom before depositing).
    * Idempotent — a keypair already at/above the floor no-ops.
    */
-  export function planAirdrop<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planAirdrop<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -208,8 +319,12 @@ export namespace SolanaFundingTool {
     const pubkey = solanaKeypair(operator.solana).publicKey
     const current = BigInt(await ctx.solana.getLamports(pubkey))
     if (current >= input.floorLamports) return
-    const requestLamports = Number(input.floorLamports - current) + LAMPORTS_PER_SOL
-    const signature = await ctx.solana.connection.requestAirdrop(pubkey, requestLamports)
+    const requestLamports =
+      Number(input.floorLamports - current) + LAMPORTS_PER_SOL
+    const signature = await ctx.solana.connection.requestAirdrop(
+      pubkey,
+      requestLamports
+    )
     await confirmSignature(
       ctx.solana.connection,
       signature,
@@ -244,7 +359,9 @@ export namespace SolanaFundingTool {
    * identity is resolved from `ctx.keyStore` by its durable `label`; the deployer
    * keypair from the cluster data dir ({@link DeployerKeypairFilename}).
    */
-  export function planSplMint<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSplMint<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -258,7 +375,12 @@ export namespace SolanaFundingTool {
       name,
       description,
       options,
-      { kind: "SolanaFundingTool.MintSplInput", operatorLabel, tokenCode, amount },
+      {
+        kind: "SolanaFundingTool.MintSplInput",
+        operatorLabel,
+        tokenCode,
+        amount
+      },
       runSplMint
     )
   }
@@ -270,7 +392,10 @@ export namespace SolanaFundingTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(input.amount > 0n, "SolanaFundingTool.planSplMint: amount must be positive")
+    Assert.ok(
+      input.amount > 0n,
+      "SolanaFundingTool.planSplMint: amount must be positive"
+    )
     const operator = ctx.keyStore.assertOperator(input.operatorLabel)
     const deployer = loadDeployerKeypair(ctx.config.dataPath)
     const mint = solMintAddress(ctx.config.dataPath, input.tokenCode)
@@ -346,15 +471,20 @@ export namespace SolanaFundingTool {
     signers: Keypair[],
     label: string
   ): Promise<string> {
-    const { blockhash } = await connection.getLatestBlockhash(SolanaClient.DefaultCommitment)
+    const { blockhash } = await connection.getLatestBlockhash(
+      SolanaClient.DefaultCommitment
+    )
     transaction.recentBlockhash = blockhash
     transaction.feePayer = signers[0].publicKey
     transaction.sign(...signers)
     const raw = transaction.serialize()
-    const signature = await connection.sendRawTransaction(raw, { skipPreflight: false })
+    const signature = await connection.sendRawTransaction(raw, {
+      skipPreflight: false
+    })
     log.info(`[SolanaFundingTool/${label}] sent signature=${signature}`)
     await confirmSignature(connection, signature, label, {
-      rebroadcast: () => connection.sendRawTransaction(raw, { skipPreflight: true })
+      rebroadcast: () =>
+        connection.sendRawTransaction(raw, { skipPreflight: true })
     })
     return signature
   }

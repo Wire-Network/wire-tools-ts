@@ -1028,7 +1028,7 @@ export namespace ClusterBuildDefaults {
       { parallel: true, concurrency: NodeStartConcurrency }
     )
     NodeConfig.plan(config)
-      .filter(node => node.role === NodeRole.operator)
+      .filter(node => NodeConfig.isOperatorRole(node.role))
       .forEach(node => {
         const actor =
           node.batchOperatorLabel != null

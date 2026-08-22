@@ -21,6 +21,9 @@ export const ExternalOutpostConfigEthereumSchema = z.object({
    * `AnvilProcess.DefaultChainId` — wrong for a live chain).
    */
   chainId: z.number().int().positive(),
+  /** Authoritative outpost RPC endpoint when set — WINS over the bind-derived URL
+   *  (mainnet / integrated testnet); omit for dev externals where the bind carries it. */
+  rpcUrl: z.string().optional(),
   /**
    * The liqEth deploy's `liqeth-addrs.json` (the `LiqEthToken` etc. addresses).
    * The MATERIALIZE step copies it to `<clusterPath>/data/ethereum-deployments/liqeth-addrs.json`
@@ -41,6 +44,9 @@ export type ExternalOutpostConfigEthereum = z.infer<
 export const ExternalOutpostConfigSolanaSchema = z.object({
   /** The `opp-outpost` IDL file — SOLE IDL source; program id parsed from it. */
   idlFile: z.string(),
+  /** Authoritative outpost RPC endpoint when set — WINS over the bind-derived URL
+   *  (mainnet / integrated testnet); omit for dev externals where the bind carries it. */
+  rpcUrl: z.string().optional(),
   /**
    * The SPL mints file (`sol-mock-mints.json` — array of `{code, mint, decimals}`).
    * The MATERIALIZE step copies it to `<clusterPath>/data/sol-mock-mints.json` so

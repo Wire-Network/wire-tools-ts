@@ -27,12 +27,13 @@ import {
   getAssociatedTokenAddressSync
 } from "@solana/spl-token"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
+import { slugNameToLittleEndianBuffer } from "../../utils/slugUtils.js"
 
 /** PDA seeds — kept in sync with `wire-solana/programs/liqsol-core/src/states/opp_states.rs`. */
-const OUTPOST_CONFIG_SEED          = Buffer.from("outpost_config")
+const OUTPOST_CONFIG_SEED = Buffer.from("outpost_config")
 const OUTBOUND_MESSAGE_BUFFER_SEED = Buffer.from("outbound_message_buffer")
-const RESERVE_SEED                 = Buffer.from("reserve")
-const RESERVE_VAULT_SEED           = Buffer.from("reserve_vault")
+const RESERVE_SEED = Buffer.from("reserve")
+const RESERVE_VAULT_SEED = Buffer.from("reserve_vault")
 
 /**
  * Structured arguments for a SOL-source SWAP_REQUEST emission. All
@@ -40,19 +41,19 @@ const RESERVE_VAULT_SEED           = Buffer.from("reserve_vault")
  * them in `anchor.BN` for Borsh encoding.
  */
 export interface SolanaSwapRequest {
-  sourceTokenCode:    bigint
-  sourceReserveCode:  bigint
+  sourceTokenCode: bigint
+  sourceReserveCode: bigint
   /** Lamports to escrow into the source reserve. */
-  sourceAmount:       bigint
-  targetChainCode:    bigint
-  targetTokenCode:    bigint
-  targetReserveCode:  bigint
+  sourceAmount: bigint
+  targetChainCode: bigint
+  targetTokenCode: bigint
+  targetReserveCode: bigint
   /**
    * Raw recipient address on the target chain. 20 bytes for EVM,
    * 32 bytes for SVM destinations.
    */
-  targetRecipient:    Uint8Array
-  targetAmount:       bigint
+  targetRecipient: Uint8Array
+  targetAmount: bigint
   targetToleranceBps: number
 }
 
@@ -73,28 +74,44 @@ export interface SolanaSwapRequest {
  */
 export async function requestSolanaSwap(
   connection: Connection,
-  program:    anchor.Program<anchor.Idl>,
-  user:       Keypair,
-  request:    SolanaSwapRequest
+  program: anchor.Program<anchor.Idl>,
+  user: Keypair,
+  request: SolanaSwapRequest
 ): Promise<string> {
-  Assert.ok(request.sourceAmount > 0n,
-    "SolanaSwapTool: sourceAmount must be > 0")
-  Assert.ok(request.targetRecipient.byteLength > 0,
-    "SolanaSwapTool: targetRecipient must be non-empty")
-  Assert.ok(request.targetAmount > 0n,
-    "SolanaSwapTool: targetAmount must be > 0")
+  Assert.ok(
+    request.sourceAmount > 0n,
+    "SolanaSwapTool: sourceAmount must be > 0"
+  )
+  Assert.ok(
+    request.targetRecipient.byteLength > 0,
+    "SolanaSwapTool: targetRecipient must be non-empty"
+  )
+  Assert.ok(
+    request.targetAmount > 0n,
+    "SolanaSwapTool: targetAmount must be > 0"
+  )
   Assert.ok(
     request.targetToleranceBps >= 0 && request.targetToleranceBps <= 10_000,
     `SolanaSwapTool: targetToleranceBps must be in [0, 10000], got ${request.targetToleranceBps}`
   )
 
-  const programId                  = program.programId
-  const [configPda]                = PublicKey.findProgramAddressSync([OUTPOST_CONFIG_SEED], programId)
-  const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync([OUTBOUND_MESSAGE_BUFFER_SEED], programId)
+  const programId = program.programId
+  const [configPda] = PublicKey.findProgramAddressSync(
+    [OUTPOST_CONFIG_SEED],
+    programId
+  )
+  const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync(
+    [OUTBOUND_MESSAGE_BUFFER_SEED],
+    programId
+  )
 
   // Reserve PDA — derived from `RESERVE_SEED` + LE-encoded source codes.
-  const sourceTokenCodeLE   = toU64LeBuffer(request.sourceTokenCode)
-  const sourceReserveCodeLE = toU64LeBuffer(request.sourceReserveCode)
+  const sourceTokenCodeLE = slugNameToLittleEndianBuffer(
+    request.sourceTokenCode
+  )
+  const sourceReserveCodeLE = slugNameToLittleEndianBuffer(
+    request.sourceReserveCode
+  )
   const [reservePda] = PublicKey.findProgramAddressSync(
     [RESERVE_SEED, sourceTokenCodeLE, sourceReserveCodeLE],
     programId
@@ -113,28 +130,20 @@ export async function requestSolanaSwap(
       request.targetToleranceBps
     )
     .accounts({
-      user:                  user.publicKey,
-      config:                configPda,
-      reserve:               reservePda,
+      user: user.publicKey,
+      config: configPda,
+      reserve: reservePda,
       outboundMessageBuffer: outboundMessageBufferPda,
-      systemProgram:         SystemProgram.programId
+      systemProgram: SystemProgram.programId
     })
     .signers([user])
     .transaction()
 
-  const sig = await connection.sendTransaction(tx, [user], { skipPreflight: false })
+  const sig = await connection.sendTransaction(tx, [user], {
+    skipPreflight: false
+  })
   await confirmSignature(connection, sig, "SolanaSwapTool request_swap")
   return sig
-}
-
-/**
- * Encode a `bigint` slug_name as an 8-byte little-endian Buffer matching
- * the program's `to_le_bytes()` seed derivation.
- */
-function toU64LeBuffer(value: bigint): Buffer {
-  const buf = Buffer.alloc(8)
-  buf.writeBigUInt64LE(value)
-  return buf
 }
 
 /**
@@ -144,17 +153,17 @@ function toU64LeBuffer(value: bigint): Buffer {
  * (Anchor IDL requires the mint Pubkey at the account-validation layer).
  */
 export interface SolanaSwapSplRequest {
-  sourceTokenCode:    bigint
-  sourceReserveCode:  bigint
+  sourceTokenCode: bigint
+  sourceReserveCode: bigint
   /** Source amount in chain-native units (6-dec for USDC/USDT, etc.). */
-  sourceAmount:       bigint
+  sourceAmount: bigint
   /** SPL mint Pubkey for `sourceTokenCode`. */
-  sourceMint:         PublicKey
-  targetChainCode:    bigint
-  targetTokenCode:    bigint
-  targetReserveCode:  bigint
-  targetRecipient:    Uint8Array
-  targetAmount:       bigint
+  sourceMint: PublicKey
+  targetChainCode: bigint
+  targetTokenCode: bigint
+  targetReserveCode: bigint
+  targetRecipient: Uint8Array
+  targetAmount: bigint
   targetToleranceBps: number
 }
 
@@ -175,37 +184,58 @@ export interface SolanaSwapSplRequest {
  */
 export async function requestSolanaSwapSpl(
   connection: Connection,
-  program:    anchor.Program<anchor.Idl>,
-  user:       Keypair,
-  request:    SolanaSwapSplRequest
+  program: anchor.Program<anchor.Idl>,
+  user: Keypair,
+  request: SolanaSwapSplRequest
 ): Promise<string> {
-  Assert.ok(request.sourceAmount > 0n,
-    "SolanaSwapTool: sourceAmount must be > 0")
-  Assert.ok(request.targetRecipient.byteLength > 0,
-    "SolanaSwapTool: targetRecipient must be non-empty")
-  Assert.ok(request.targetAmount > 0n,
-    "SolanaSwapTool: targetAmount must be > 0")
+  Assert.ok(
+    request.sourceAmount > 0n,
+    "SolanaSwapTool: sourceAmount must be > 0"
+  )
+  Assert.ok(
+    request.targetRecipient.byteLength > 0,
+    "SolanaSwapTool: targetRecipient must be non-empty"
+  )
+  Assert.ok(
+    request.targetAmount > 0n,
+    "SolanaSwapTool: targetAmount must be > 0"
+  )
   Assert.ok(
     request.targetToleranceBps >= 0 && request.targetToleranceBps <= 10_000,
     `SolanaSwapTool: targetToleranceBps must be in [0, 10000], got ${request.targetToleranceBps}`
   )
 
-  const programId                  = program.programId
-  const [configPda]                = PublicKey.findProgramAddressSync([OUTPOST_CONFIG_SEED], programId)
-  const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync([OUTBOUND_MESSAGE_BUFFER_SEED], programId)
+  const programId = program.programId
+  const [configPda] = PublicKey.findProgramAddressSync(
+    [OUTPOST_CONFIG_SEED],
+    programId
+  )
+  const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync(
+    [OUTBOUND_MESSAGE_BUFFER_SEED],
+    programId
+  )
 
-  const sourceTokenCodeLE   = toU64LeBuffer(request.sourceTokenCode)
-  const sourceReserveCodeLE = toU64LeBuffer(request.sourceReserveCode)
-  const [reservePda]      = PublicKey.findProgramAddressSync(
-    [RESERVE_SEED, sourceTokenCodeLE, sourceReserveCodeLE], programId
+  const sourceTokenCodeLE = slugNameToLittleEndianBuffer(
+    request.sourceTokenCode
+  )
+  const sourceReserveCodeLE = slugNameToLittleEndianBuffer(
+    request.sourceReserveCode
+  )
+  const [reservePda] = PublicKey.findProgramAddressSync(
+    [RESERVE_SEED, sourceTokenCodeLE, sourceReserveCodeLE],
+    programId
   )
   const [reserveVaultPda] = PublicKey.findProgramAddressSync(
-    [RESERVE_VAULT_SEED, sourceTokenCodeLE, sourceReserveCodeLE], programId
+    [RESERVE_VAULT_SEED, sourceTokenCodeLE, sourceReserveCodeLE],
+    programId
   )
 
   // The user's ATA for `sourceMint` MUST exist before this call — the
   // SwapDeposit funding flow is responsible (e.g. `SplFundingTool`).
-  const userAta = getAssociatedTokenAddressSync(request.sourceMint, user.publicKey)
+  const userAta = getAssociatedTokenAddressSync(
+    request.sourceMint,
+    user.publicKey
+  )
 
   const tx = await program.methods
     .requestSwapSpl(
@@ -220,19 +250,21 @@ export async function requestSolanaSwapSpl(
       request.targetToleranceBps
     )
     .accounts({
-      user:                  user.publicKey,
-      config:                configPda,
-      reserve:               reservePda,
-      reserveVault:          reserveVaultPda,
-      mint:                  request.sourceMint,
+      user: user.publicKey,
+      config: configPda,
+      reserve: reservePda,
+      reserveVault: reserveVaultPda,
+      mint: request.sourceMint,
       userAta,
       outboundMessageBuffer: outboundMessageBufferPda,
-      tokenProgram:          TOKEN_PROGRAM_ID
+      tokenProgram: TOKEN_PROGRAM_ID
     })
     .signers([user])
     .transaction()
 
-  const sig = await connection.sendTransaction(tx, [user], { skipPreflight: false })
+  const sig = await connection.sendTransaction(tx, [user], {
+    skipPreflight: false
+  })
   await confirmSignature(connection, sig, "SolanaSwapTool request_swap_spl")
   return sig
 }

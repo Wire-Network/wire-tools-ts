@@ -193,13 +193,18 @@ export namespace NodeopProcessSteps {
     const operator = resolveOperator(ctx, node)
     // startWithRecovery: if the graceful stop above was cut short (crashed
     // CLI, host pressure), the relaunch recovers the dirty chainbase with
-    // --hard-replay-blockchain instead of failing the build.
-    await NodeopProcess.startWithRecovery(ctx.processManager, {
-      node,
-      operator,
-      extraArgs: resolveOperatorDaemonArgs(ctx, node, operator),
-      relaunch: true
-    })
+    // --hard-replay-blockchain instead of failing the build. The sync gate
+    // above has already put a complete chain under this node, so this is the
+    // post-bootstrap relaunch form — the SAME assembly `ClusterManager.run`
+    // uses (`createRelaunchOptions` owns both flags).
+    await NodeopProcess.startWithRecovery(
+      ctx.processManager,
+      NodeopProcess.createRelaunchOptions(
+        node,
+        operator,
+        resolveOperatorDaemonArgs(ctx, node, operator)
+      )
+    )
   }
 
   /**
@@ -223,7 +228,10 @@ export namespace NodeopProcessSteps {
         () => ctx.keyStore.operator(NodeConfig.BiosName) ?? BiosOperator
       )
       .with(NodeRole.producer, () => producerOperator(ctx, node))
-      .otherwise(() => ctx.keyStore.assertOperator(assertOperatorLabel(node)))
+      .with(NodeRole.batch_operator, NodeRole.underwriter, () =>
+        ctx.keyStore.assertOperator(assertOperatorLabel(node))
+      )
+      .exhaustive()
   }
 
   /** A producer node's OperatorAccount — its first hosted account + the node-shared keys. */
@@ -269,11 +277,11 @@ export namespace NodeopProcessSteps {
     node: NodeConfig,
     operator: OperatorAccount
   ): string[] {
-    if (node.role !== NodeRole.operator) return []
+    if (!NodeConfig.isOperatorRole(node.role)) return []
     const artifacts = ctx.outputs.assert(OperatorDaemonArtifactsKey),
       network = OperatorDaemonTool.networkFromConfig(ctx.config),
       keySourceFor = ClusterConfigProvider.signatureProviderSource(ctx.config)
-    return node.batchOperatorLabel != null
+    return node.role === NodeRole.batch_operator
       ? OperatorDaemonTool.batchOperatorArgs(operator, artifacts, network, keySourceFor)
       : OperatorDaemonTool.underwriterArgs(operator, artifacts, network, keySourceFor)
   }

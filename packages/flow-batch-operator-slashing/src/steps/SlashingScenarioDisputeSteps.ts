@@ -295,38 +295,16 @@ export namespace SlashingScenarioDisputeSteps {
     }
   }
 
-  /**
-   * Crank the permissionless dispute tally (`sysio.chalg::chkdispute`) — called
-   * in a poll loop until the votes are tallied and the dispute resolves.
-   * Expected-transient failures (already resolving/resolved) are logged at
-   * debug, never swallowed silently.
-   *
-   * @param ctx - The build context.
-   * @param disputeId - The dispute to tally.
-   */
-  export async function crankChkdispute(
-    ctx: ClusterBuildContext,
-    disputeId: number
-  ): Promise<void> {
-    try {
-      await ctx.wire
-        .getSysioContract(SysioContractName.chalg)
-        .actions.chkdispute.invoke(
-          { dispute_id: disputeId },
-          {
-            authorization: [
-              {
-                actor: ctx.keyStore.assertOperator(Constants.CanonicalOperator)
-                  .account,
-                permission: ActivePermission
-              }
-            ]
-          }
-        )
-    } catch (error) {
-      log.debug(`[slashing] chkdispute transient: ${errorMessage(error)}`)
-    }
-  }
+  // There is deliberately NO `crankChkdispute` here. `sysio.chalg::chkdispute` is
+  // cranked in PRODUCTION by `batch_operator_plugin`'s epoch tick from every ACTIVE
+  // batch operator (wire-sysio `crank_open_disputes`). A flow that cranks the tally
+  // itself passes whether or not any operator would, so it cannot detect a missing
+  // production crank — and for a dispute that is the difference between "the epoch
+  // resumes" and "the epoch stays paused with quorum already reached". This flow's
+  // three `dispop.*` are SBP-less, but the bootstrapped batch operators keep their
+  // daemons and stay opreg-ACTIVE across the dispute (bootstrapped ops bypass
+  // `termcheck`, and a paused epoch runs no `recorddel`), so their plugin tick is
+  // what resolves the dispute here.
 
   /**
    * Wait until the CHAIN's head-block time is past the current epoch's
@@ -863,14 +841,15 @@ export namespace SlashingScenarioDisputeSteps {
     )
   }
 
-  // ── Step: await the dispute resolution (crank chkdispute inside the poll) ─
+  // ── Step: await the dispute resolution (production crank, not the harness) ─
 
   /**
-   * Poll until the dispute resolves to the canonical winner, re-cranking the
-   * permissionless tally ({@link crankChkdispute}) each iteration until the
-   * votes are tallied and it resolves. `chkdispute` records the winner,
-   * dispatches the winning envelope via `sysio.msgch::resolvedisp`, and
-   * unpauses the epoch.
+   * Poll until the dispute resolves to the canonical winner. The tally itself is
+   * NOT cranked here — `batch_operator_plugin` cranks `sysio.chalg::chkdispute`
+   * on its epoch tick, and this step asserts that it does: `chkdispute` records
+   * the winner, dispatches the winning envelope via `sysio.msgch::resolvedisp`,
+   * and unpauses the epoch. A timeout here means nothing in production tallied
+   * the votes.
    *
    * @param actor - The narrative subject.
    * @param name - Step name.
@@ -896,7 +875,7 @@ export namespace SlashingScenarioDisputeSteps {
     )
   }
 
-  /** Named runner — crank + poll until RESOLVED with the canonical winning checksum. */
+  /** Named runner — poll until RESOLVED with the canonical winning checksum. */
   export async function runAwaitDisputeResolved<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,
@@ -907,7 +886,6 @@ export namespace SlashingScenarioDisputeSteps {
     await pollUntil(
       "dispute resolves to the canonical winner",
       async () => {
-        await crankChkdispute(ctx, target.disputeId)
         const dispute = await readDispute(ctx, target.disputeId)
         return (
           dispute != null &&

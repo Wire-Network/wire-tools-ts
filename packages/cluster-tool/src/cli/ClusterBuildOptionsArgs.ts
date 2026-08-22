@@ -402,6 +402,15 @@ export function buildOptionShape(
       OptionLeafType.number,
       "cooldown epochs after the measured window"
     ),
+    // ── nodeop tuning ──
+    // optionalLeaf, NOT leaf: a seeded default would make yargs ALWAYS supply a
+    // value, so `ClusterConfigProvider.resolve`'s
+    // `?? DefaultChainStateDbSizeMb` could never fire — the resolve-time
+    // default is the ONE author of the 1024 fallback.
+    chainStateDbSizeMb: optionalLeaf(
+      OptionLeafType.number,
+      "maximum chain state DB size in MiB for every nodeop; omit for the default (1024)"
+    ),
     // ── termination tuning ──
     terminateMaxConsecutiveMisses: optionalLeaf(
       OptionLeafType.number,

@@ -77,6 +77,28 @@ async function underwritersActive(
 }
 
 /**
+ * Predicate factory — whether `account`'s `sysio.reserv::wireclaims` credit has
+ * reached `target` (a read).
+ *
+ * `paywire` credits a claimable balance rather than transferring, so the
+ * recipient's token balance stays flat until it pulls with `claimwire` — this
+ * reads the claim ledger, not the balance.
+ *
+ * @param ctx - The scenario context.
+ * @param account - The payout recipient's WIRE account.
+ * @param target - The post-fee WIRE amount the credit must reach.
+ * @returns A poll predicate for whether the credit is at or above `target`.
+ */
+function claimableReachedPredicate(
+  ctx: SwapScenarioContext,
+  account: string,
+  target: bigint
+): () => Promise<boolean> {
+  return () =>
+    ctx.wire.getWireClaimable(account).then(amount => amount >= target)
+}
+
+/**
  * The to-WIRE uwreq row (src=ETHEREUM, dst=WIRE) — throws when the depot has
  * not created it (a read).
  *
@@ -571,13 +593,18 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
               SwapToWireScenario.Output.recipient
             ),
             target = ctx.outputs.assert(SwapToWireScenario.Output.target)
+          // paywire CREDITS the recipient rather than transferring: it settles inside the
+          // never-throw consensus dispatch chain, where a pushed `sysio.token::transfer` would let
+          // the recipient's notify handler abort the delivery. So wait for the claimable balance,
+          // not the token balance — the latter stays at zero until the recipient pulls it.
           await pollUntil(
-            "recipient WIRE balance reaches the target",
-            async () =>
-              (await ctx.wire.getWireBalance(recipient.account)) >= target,
+            "recipient claimable WIRE reaches the target",
+            claimableReachedPredicate(ctx, recipient.account, target),
             Constants.PayoutDeadlineMs,
             Constants.LongPollIntervalMs
           )
+          // Bridging into WIRE is a two-step flow now: settle, then claim.
+          await ctx.wire.claimWire(recipient.account)
           // paywire pays `dst_amount` exactly, and since #550 `dst_amount` is
           // the depot's own quote — `split_wire_fee(gross).net` — not the
           // caller's `target_amount`. The fee is borne by the swapper, not by
@@ -634,6 +661,8 @@ export class SwapToWireScenario extends FlowScenario<SwapScenarioContext> {
               SwapToWireScenario.Output.custodyBefore
             ),
             target = ctx.outputs.assert(SwapToWireScenario.Output.target),
+            // The payout leg only leaves custody once the recipient claims it,
+            // which the recipient-paid-exact step above already did.
             { rewardShare } = ctx.outputs.assert(
               SwapToWireScenario.Output.wireLegFee
             ),

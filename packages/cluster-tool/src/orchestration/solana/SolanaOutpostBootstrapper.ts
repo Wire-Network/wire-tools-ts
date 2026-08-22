@@ -2,7 +2,12 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import * as anchor from "@coral-xyz/anchor"
-import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js"
+import {
+  Connection,
+  Keypair,
+  LAMPORTS_PER_SOL,
+  PublicKey
+} from "@solana/web3.js"
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token"
 import { SlugName } from "@wireio/sdk-core"
 import { mapSeries } from "../../utils/asyncUtils.js"
@@ -12,6 +17,7 @@ import { getLogger } from "../../logging/Logger.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import { retry } from "../../utils/asyncUtils.js"
 import { mkdirs } from "../../utils/fsUtils.js"
+import { slugNameToLittleEndianBuffer } from "../../utils/slugUtils.js"
 import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
 import { SolanaOutpostProgramTool } from "../../tools/solana/SolanaOutpostProgramTool.js"
 
@@ -70,7 +76,10 @@ export class SolanaOutpostBootstrapper {
   private globalConfigPda: PublicKey | null = null
 
   constructor(options: SolanaOutpostBootstrapperOptions) {
-    Assert.ok(options.solanaPath, "SolanaOutpostBootstrapper: solanaPath is required")
+    Assert.ok(
+      options.solanaPath,
+      "SolanaOutpostBootstrapper: solanaPath is required"
+    )
     Assert.ok(options.rpcUrl, "SolanaOutpostBootstrapper: rpcUrl is required")
     this.config = {
       solanaPath: options.solanaPath,
@@ -85,7 +94,10 @@ export class SolanaOutpostBootstrapper {
         SolanaOutpostProgramTool.programKeypairFile(options.solanaPath),
       clusterDataPath: options.clusterDataPath ?? null
     }
-    this.connection = new Connection(options.rpcUrl, SolanaClient.DefaultCommitment)
+    this.connection = new Connection(
+      options.rpcUrl,
+      SolanaClient.DefaultCommitment
+    )
   }
 
   /**
@@ -103,8 +115,15 @@ export class SolanaOutpostBootstrapper {
         const publicKey = new PublicKey(base58)
         await retry(
           async () => {
-            const signature = await this.connection.requestAirdrop(publicKey, lamports)
-            await confirmSignature(this.connection, signature, `airdrop to ${base58}`)
+            const signature = await this.connection.requestAirdrop(
+              publicKey,
+              lamports
+            )
+            await confirmSignature(
+              this.connection,
+              signature,
+              `airdrop to ${base58}`
+            )
           },
           {
             label: `airdrop to ${base58}`,
@@ -122,8 +141,12 @@ export class SolanaOutpostBootstrapper {
     log.info("=== Solana outpost bootstrap ===")
 
     if (Fs.existsSync(this.config.programKeypairFile)) {
-      const keypairData = JSON.parse(Fs.readFileSync(this.config.programKeypairFile, "utf8"))
-      this.programId = Keypair.fromSecretKey(Uint8Array.from(keypairData)).publicKey
+      const keypairData = JSON.parse(
+        Fs.readFileSync(this.config.programKeypairFile, "utf8")
+      )
+      this.programId = Keypair.fromSecretKey(
+        Uint8Array.from(keypairData)
+      ).publicKey
       log.info(
         `${SolanaOutpostProgramTool.ProgramName} (OPP outpost) program id: ${this.programId.toBase58()}`
       )
@@ -159,7 +182,11 @@ export class SolanaOutpostBootstrapper {
         )
         // Poll signature status via HTTP (no WebSocket dependency — the validator's
         // WS port may conflict with another service during cluster create).
-        await confirmSignature(this.connection, signature, "airdrop to deployer")
+        await confirmSignature(
+          this.connection,
+          signature,
+          "airdrop to deployer"
+        )
       },
       {
         label: "airdrop to deployer",
@@ -180,16 +207,25 @@ export class SolanaOutpostBootstrapper {
   private loadOrGenerateDeployer(): Keypair {
     let deployer: Keypair
     if (Fs.existsSync(this.config.deployerKeypairFile)) {
-      const data = JSON.parse(Fs.readFileSync(this.config.deployerKeypairFile, "utf8"))
+      const data = JSON.parse(
+        Fs.readFileSync(this.config.deployerKeypairFile, "utf8")
+      )
       deployer = Keypair.fromSecretKey(Uint8Array.from(data))
     } else {
       deployer = Keypair.generate()
-      log.warn(`no deployer keypair found, using generated: ${deployer.publicKey.toBase58()}`)
+      log.warn(
+        `no deployer keypair found, using generated: ${deployer.publicKey.toBase58()}`
+      )
     }
     if (this.config.clusterDataPath != null) {
       mkdirs(this.config.clusterDataPath)
-      const persistedFile = SolanaFundingTool.deployerKeypairFile(this.config.clusterDataPath)
-      Fs.writeFileSync(persistedFile, JSON.stringify(Array.from(deployer.secretKey)))
+      const persistedFile = SolanaFundingTool.deployerKeypairFile(
+        this.config.clusterDataPath
+      )
+      Fs.writeFileSync(
+        persistedFile,
+        JSON.stringify(Array.from(deployer.secretKey))
+      )
       log.info(`persisted SOL deployer keypair to ${persistedFile}`)
     }
     return deployer
@@ -197,8 +233,7 @@ export class SolanaOutpostBootstrapper {
 
   /** Derive a program-derived address from `seed` under the opp-outpost program. */
   private deriveProgramAddress(programId: PublicKey, seed: string): PublicKey {
-    const [address] = PublicKey.findProgramAddressSync([Buffer.from(seed)], programId)
-    return address
+    return SolanaOutpostProgramTool.derivePda(programId, Buffer.from(seed))
   }
 
   /** Derive a `(token_code, reserve_code)`-scoped PDA (reserve / reserve_vault). */
@@ -208,15 +243,12 @@ export class SolanaOutpostBootstrapper {
     tokenCode: number,
     reserveCode: number
   ): PublicKey {
-    const [address] = PublicKey.findProgramAddressSync(
-      [
-        Buffer.from(seed),
-        SolanaOutpostBootstrapper.slugNameToLittleEndianBuffer(tokenCode),
-        SolanaOutpostBootstrapper.slugNameToLittleEndianBuffer(reserveCode)
-      ],
-      programId
+    return SolanaOutpostProgramTool.derivePda(
+      programId,
+      Buffer.from(seed),
+      slugNameToLittleEndianBuffer(tokenCode),
+      slugNameToLittleEndianBuffer(reserveCode)
     )
-    return address
   }
 
   private async initializePDAs(deployer: Keypair): Promise<void> {
@@ -224,20 +256,39 @@ export class SolanaOutpostBootstrapper {
     Assert.ok(programId != null, "initializePDAs: programId required")
     log.info("initializing OPP outpost PDAs...")
 
-    const Seed = SolanaOutpostBootstrapper.PdaSeed
-    const configPda = this.deriveProgramAddress(programId, Seed.OutpostConfig)
-    const outboundMessageBufferPda = this.deriveProgramAddress(programId, Seed.OutboundMessageBuffer)
-    const operatorRegistryPda = this.deriveProgramAddress(programId, Seed.OperatorRegistry)
-    const inboundEnvelopesPda = this.deriveProgramAddress(programId, Seed.InboundEnvelopes)
-    const outboundEnvelopesPda = this.deriveProgramAddress(programId, Seed.OutboundEnvelopes)
-    const latestOutboundEnvelopePda = this.deriveProgramAddress(programId, Seed.LatestOutboundEnvelope)
+    const configPda = this.deriveProgramAddress(
+      programId,
+      SolanaOutpostBootstrapper.PdaSeed.OutpostConfig
+    )
+    const outboundMessageBufferPda = this.deriveProgramAddress(
+      programId,
+      SolanaOutpostBootstrapper.PdaSeed.OutboundMessageBuffer
+    )
+    const operatorRegistryPda = this.deriveProgramAddress(
+      programId,
+      SolanaOutpostBootstrapper.PdaSeed.OperatorRegistry
+    )
+    const inboundEnvelopesPda = this.deriveProgramAddress(
+      programId,
+      SolanaOutpostBootstrapper.PdaSeed.InboundEnvelopes
+    )
+    const outboundEnvelopesPda = this.deriveProgramAddress(
+      programId,
+      SolanaOutpostBootstrapper.PdaSeed.OutboundEnvelopes
+    )
+    const latestOutboundEnvelopePda = this.deriveProgramAddress(
+      programId,
+      SolanaOutpostBootstrapper.PdaSeed.LatestOutboundEnvelope
+    )
 
     log.info(`  config:                 ${configPda.toBase58()}`)
     log.info(`  outboundMessageBuffer:  ${outboundMessageBufferPda.toBase58()}`)
     log.info(`  operatorRegistry:       ${operatorRegistryPda.toBase58()}`)
     log.info(`  inboundEnvelopes:       ${inboundEnvelopesPda.toBase58()}`)
     log.info(`  outboundEnvelopes:      ${outboundEnvelopesPda.toBase58()}`)
-    log.info(`  latestOutboundEnvelope: ${latestOutboundEnvelopePda.toBase58()}`)
+    log.info(
+      `  latestOutboundEnvelope: ${latestOutboundEnvelopePda.toBase58()}`
+    )
 
     const configAccount = await this.connection.getAccountInfo(configPda)
     if (configAccount != null && configAccount.data.length > 0) {
@@ -245,10 +296,16 @@ export class SolanaOutpostBootstrapper {
       return
     }
 
-    const provider = new anchor.AnchorProvider(this.connection, new anchor.Wallet(deployer), {
-      commitment: SolanaClient.DefaultCommitment
-    })
-    const idlFile = SolanaOutpostProgramTool.programIdlFile(this.config.solanaPath)
+    const provider = new anchor.AnchorProvider(
+      this.connection,
+      new anchor.Wallet(deployer),
+      {
+        commitment: SolanaClient.DefaultCommitment
+      }
+    )
+    const idlFile = SolanaOutpostProgramTool.programIdlFile(
+      this.config.solanaPath
+    )
     if (!Fs.existsSync(idlFile)) {
       log.warn(`IDL not found at ${idlFile} — skipping PDA initialization`)
       return
@@ -265,7 +322,9 @@ export class SolanaOutpostBootstrapper {
     // `epoch_in` and the epoch duration is propagated via the
     // BATCH_OPERATOR_GROUPS attestation. (The clean-room rename: liqsol_core's
     // own staking `initialize` already claims the bare name.)
-    const solanaChainCode = new anchor.BN(SlugName.from(SolanaOutpostBootstrapper.SolanaChainCodename))
+    const solanaChainCode = new anchor.BN(
+      SlugName.from(SolanaOutpostBootstrapper.SolanaChainCodename)
+    )
     const initializeTransaction = await program.methods
       .initializeOutpost(solanaChainCode)
       .accounts({
@@ -280,18 +339,28 @@ export class SolanaOutpostBootstrapper {
       })
       .signers([deployer])
       .transaction()
-    await this.runSimpleAuthorityInstruction(deployer, initializeTransaction, "initialize_outpost")
+    await this.runSimpleAuthorityInstruction(
+      deployer,
+      initializeTransaction,
+      "initialize_outpost"
+    )
     log.info("PDAs initialized successfully")
 
     // Register the native-SOL binding (mint = all-zeroes `PublicKey.default`)
     // so `deposit(SOL_CODE, ...)` doesn't revert with `TokenCodeNotConfigured`.
-    const solTokenCode = new anchor.BN(SlugName.from(SolanaOutpostBootstrapper.SolTokenCodename))
+    const solTokenCode = new anchor.BN(
+      SlugName.from(SolanaOutpostBootstrapper.SolTokenCodename)
+    )
     const setTokenAddressTransaction = await program.methods
       .setTokenAddress(solTokenCode, anchor.web3.PublicKey.default)
       .accounts({ ...this.getAdminAccounts(deployer), config: configPda })
       .signers([deployer])
       .transaction()
-    await this.runSimpleAuthorityInstruction(deployer, setTokenAddressTransaction, "set_token_address")
+    await this.runSimpleAuthorityInstruction(
+      deployer,
+      setTokenAddressTransaction,
+      "set_token_address"
+    )
     log.info("SOL native-token binding registered")
 
     // Precision is REQUIRED for every registered token — the program's
@@ -300,7 +369,10 @@ export class SolanaOutpostBootstrapper {
     // Bind native SOL's 9 (lamports) right after its address binding so
     // `create_reserve_native` and every SOL swap path can frame-convert.
     const setSolPrecisionTransaction = await program.methods
-      .setTokenPrecision(solTokenCode, SolanaOutpostBootstrapper.SolTokenDecimals)
+      .setTokenPrecision(
+        solTokenCode,
+        SolanaOutpostBootstrapper.SolTokenDecimals
+      )
       .accounts({ ...this.getAdminAccounts(deployer), config: configPda })
       .signers([deployer])
       .transaction()
@@ -313,7 +385,10 @@ export class SolanaOutpostBootstrapper {
 
     // Initialize the ReserveAggregate PDA — `epoch_in` declares it as a writable
     // account, so without it every inbound delivery fails at simulation.
-    const reserveAggregatePda = this.deriveProgramAddress(programId, Seed.ReserveAggregate)
+    const reserveAggregatePda = this.deriveProgramAddress(
+      programId,
+      SolanaOutpostBootstrapper.PdaSeed.ReserveAggregate
+    )
     log.info(`  reserveAggregate:       ${reserveAggregatePda.toBase58()}`)
     const initReserveTransaction = await program.methods
       .initReserve()
@@ -326,18 +401,26 @@ export class SolanaOutpostBootstrapper {
       })
       .signers([deployer])
       .transaction()
-    await this.runSimpleAuthorityInstruction(deployer, initReserveTransaction, "init_reserve")
+    await this.runSimpleAuthorityInstruction(
+      deployer,
+      initReserveTransaction,
+      "init_reserve"
+    )
     log.info("SOL ReserveAggregate PDA initialized")
 
     // Bootstrap-seeded native SOL reserve — the outpost-side mirror of the
     // depot's SOLANA/SOL/PRIMARY row. `create_reserve_native` is the
     // authority-gated, NATIVE-only bootstrap-symmetry IX (no SPL Mint/ATA, no
     // RESERVE_CREATE attestation; status=Active set inline).
-    const solReserveCode = new anchor.BN(SlugName.from(SolanaOutpostBootstrapper.PrimaryReserveCodename))
-    const nativeReserveAmount = new anchor.BN(SolanaOutpostBootstrapper.BootstrapNativeReserveLamports)
+    const solReserveCode = new anchor.BN(
+      SlugName.from(SolanaOutpostBootstrapper.PrimaryReserveCodename)
+    )
+    const nativeReserveAmount = new anchor.BN(
+      SolanaOutpostBootstrapper.BootstrapNativeReserveLamports
+    )
     const solReservePda = this.deriveReserveScopedAddress(
       programId,
-      Seed.Reserve,
+      SolanaOutpostBootstrapper.PdaSeed.Reserve,
       SlugName.from(SolanaOutpostBootstrapper.SolTokenCodename),
       SlugName.from(SolanaOutpostBootstrapper.PrimaryReserveCodename)
     )
@@ -388,12 +471,31 @@ export class SolanaOutpostBootstrapper {
   ): Promise<void> {
     const clusterDataPath = this.config.clusterDataPath
     const programId = this.programId
-    Assert.ok(clusterDataPath != null, "provisionSplReserves: clusterDataPath required")
+    Assert.ok(
+      clusterDataPath != null,
+      "provisionSplReserves: clusterDataPath required"
+    )
     Assert.ok(programId != null, "provisionSplReserves: programId required")
-    log.info("[solana] provisioning mock SPL reserves (USDCSOL, USDTSOL, LIQSOL)...")
+    log.info(
+      "[solana] provisioning mock SPL reserves (USDCSOL, USDTSOL, LIQSOL)..."
+    )
 
-    const primaryCode = new anchor.BN(SlugName.from(SolanaOutpostBootstrapper.PrimaryReserveCodename))
+    const primaryCode = new anchor.BN(
+      SlugName.from(SolanaOutpostBootstrapper.PrimaryReserveCodename)
+    )
     const persisted: SolanaOutpostBootstrapper.PersistedSplMint[] = []
+
+    // Every registered SPL mint can back a CollateralPosition, and an
+    // OPERATOR_ACTION(SLASH) settles that custody into the reserve_aggregate's
+    // canonical ATA (opp/inbound.rs `process_slash_action` SPL branch). The
+    // program never creates ATAs, so a missing one makes the slash log-and-skip
+    // — silently dropping the seizure, which carries no return attestation to
+    // re-drive it. Pre-create the aggregate ATA per mint here so every SPL slash
+    // has a live destination (SOL-380).
+    const reserveAggregatePda = this.deriveProgramAddress(
+      programId,
+      SolanaOutpostBootstrapper.PdaSeed.ReserveAggregate
+    )
 
     // Sequential: each step depends on the previous landing on-chain.
     await mapSeries(
@@ -418,7 +520,9 @@ export class SolanaOutpostBootstrapper {
           deployer.publicKey,
           specification.chainAmount * 2n
         )
-        log.info(`[solana]    deployer ATA funded (ata=${deployerAta.toBase58()})`)
+        log.info(
+          `[solana]    deployer ATA funded (ata=${deployerAta.toBase58()})`
+        )
 
         const setAddressTransaction = await program.methods
           .setTokenAddress(codeBigNumber, mint)
@@ -440,6 +544,19 @@ export class SolanaOutpostBootstrapper {
           deployer,
           setPrecisionTransaction,
           `set_token_precision(${specification.codeName})`
+        )
+
+        // reserve_aggregate is a PDA (off-curve owner) — the SPL slash destination.
+        const aggregateAta =
+          await SolanaFundingTool.ensureAssociatedTokenAccount(
+            this.connection,
+            deployer,
+            mint,
+            reserveAggregatePda,
+            true
+          )
+        log.info(
+          `[solana]    reserve_aggregate ATA ensured (ata=${aggregateAta.toBase58()})`
         )
 
         const reservePda = this.deriveReserveScopedAddress(
@@ -485,15 +602,23 @@ export class SolanaOutpostBootstrapper {
           `create_reserve_spl_authority(${specification.codeName}/PRIMARY)`
         )
 
-        persisted.push({ code, mint: mint.toBase58(), decimals: specification.decimals })
-        log.info(`[solana]    reserve PDA seeded (${specification.codeName}/PRIMARY)`)
+        persisted.push({
+          code,
+          mint: mint.toBase58(),
+          decimals: specification.decimals
+        })
+        log.info(
+          `[solana]    reserve PDA seeded (${specification.codeName}/PRIMARY)`
+        )
       }
     )
 
     mkdirs(clusterDataPath)
     const persistedFile = Path.join(clusterDataPath, "sol-mock-mints.json")
     Fs.writeFileSync(persistedFile, JSON.stringify(persisted, null, 2))
-    log.info(`[solana] persisted ${persisted.length} mock SPL mint(s) to ${persistedFile}`)
+    log.info(
+      `[solana] persisted ${persisted.length} mock SPL mint(s) to ${persistedFile}`
+    )
   }
 
   /**
@@ -554,8 +679,14 @@ export class SolanaOutpostBootstrapper {
       })
       .signers([deployer])
       .transaction()
-    await this.runSimpleAuthorityInstruction(deployer, transaction, "initialize_global_config")
-    log.info(`liqsol global_config initialized (admin=${deployer.publicKey.toBase58()})`)
+    await this.runSimpleAuthorityInstruction(
+      deployer,
+      transaction,
+      "initialize_global_config"
+    )
+    log.info(
+      `liqsol global_config initialized (admin=${deployer.publicKey.toBase58()})`
+    )
   }
 
   /**
@@ -568,9 +699,13 @@ export class SolanaOutpostBootstrapper {
     transaction: anchor.web3.Transaction,
     label: string
   ): Promise<void> {
-    const signature = await this.connection.sendTransaction(transaction, [signer], {
-      skipPreflight: false
-    })
+    const signature = await this.connection.sendTransaction(
+      transaction,
+      [signer],
+      {
+        skipPreflight: false
+      }
+    )
     await confirmSignature(this.connection, signature, label)
   }
 }
@@ -610,6 +745,15 @@ export namespace SolanaOutpostBootstrapper {
     export const ReserveAggregate = "reserve_aggregate"
     export const Reserve = "reserve"
     export const ReserveVault = "reserve_vault"
+    /**
+     * Per-`(operator, token_code)` bonded-collateral position. BOTH deposit
+     * instructions declare it `init_if_needed, payer = depositor`, so it is
+     * supplied on every deposit — opened on the first, and auto-closed
+     * (refunding rent) when the balance reaches zero.
+     */
+    export const CollateralPosition = "collateral_position"
+    /** Per-`token_code` SPL collateral vault — from `deposit_non_native.rs`. */
+    export const CollateralVault = "collateral_vault"
     /**
      * liqsol `GlobalConfig` admin-gate PDA (`has_one = admin`) — from
      * `states/global_config.rs`'s `GlobalConfig::SEEDS`, shared with the
@@ -664,24 +808,23 @@ export namespace SolanaOutpostBootstrapper {
    * decimals (mainnet parity); LIQSOL uses 9 (depot parity). Distinct SOL-side
    * slug_names (`USDCSOL`/`USDTSOL`) per the v6 "two Token rows per pair" rule.
    */
-  export const SplReserveSpecifications: ReadonlyArray<SplReserveSpecification> = [
-    { codeName: "USDCSOL", decimals: 6, chainAmount: 1_000_000n * 1_000_000n },
-    { codeName: "USDTSOL", decimals: 6, chainAmount: 1_000_000n * 1_000_000n },
-    { codeName: "LIQSOL", decimals: 9, chainAmount: 20n * 1_000_000_000n }
-  ]
+  export const SplReserveSpecifications: ReadonlyArray<SplReserveSpecification> =
+    [
+      {
+        codeName: "USDCSOL",
+        decimals: 6,
+        chainAmount: 1_000_000n * 1_000_000n
+      },
+      {
+        codeName: "USDTSOL",
+        decimals: 6,
+        chainAmount: 1_000_000n * 1_000_000n
+      },
+      { codeName: "LIQSOL", decimals: 9, chainAmount: 20n * 1_000_000_000n }
+    ]
 
   /** Default deployer keypair file (`~/.config/solana/id.json`). */
   export function defaultDeployerKeypairFile(): string {
     return Path.join(process.env.HOME || "~", ".config", "solana", "id.json")
-  }
-
-  /**
-   * Encode a `number` slug_name as an 8-byte little-endian Buffer matching the
-   * program's `to_le_bytes()` seed derivation.
-   */
-  export function slugNameToLittleEndianBuffer(value: number): Buffer {
-    const buffer = Buffer.alloc(8)
-    buffer.writeBigUInt64LE(BigInt(value))
-    return buffer
   }
 }

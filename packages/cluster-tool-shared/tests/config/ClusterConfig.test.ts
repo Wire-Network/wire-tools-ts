@@ -4,6 +4,8 @@ import {
   ClusterConfigEthereumSchema,
   ClusterConfigSchemaCodec,
   ClusterConfigSolanaSchema,
+  ClusterDeploymentKind,
+  DefaultChainStateDbSizeMb,
   SignatureProviderType,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
@@ -87,7 +89,9 @@ describe("ClusterConfig shape", () => {
     awsClusterNodeConfig: null,
     externalOutposts: null,
     debuggingServerEnabled: true,
-    enableMockReserves: false
+    enableMockReserves: false,
+    deploymentKind: ClusterDeploymentKind.local,
+    chainStateDbSizeMb: DefaultChainStateDbSizeMb
   }
 
   it("persists the report/logging enum fields as their wire spellings", () => {
@@ -123,6 +127,8 @@ describe("ClusterConfig shape", () => {
     delete parsed.enableMockReserves
     delete parsed.ethereum
     delete parsed.solana
+    delete parsed.deploymentKind
+    delete parsed.chainStateDbSizeMb
     const rehydrated = ClusterConfigSchemaCodec.deserialize(
       JSON.stringify(parsed)
     )
@@ -136,6 +142,11 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.enableMockReserves).toBe(false)
     expect(rehydrated.ethereum.bootstrapJsonFile).toBeNull()
     expect(rehydrated.solana.bootstrapJsonFile).toBeNull()
+    // A config predating either field loads as the CREATE shape: trace_api on
+    // every role, and nodeop's own stock chain-state DB size.
+    expect(rehydrated.deploymentKind).toBe(ClusterDeploymentKind.local)
+    expect(rehydrated.chainStateDbSizeMb).toBe(DefaultChainStateDbSizeMb)
+    expect(rehydrated.chainStateDbSizeMb).toBe(1_024)
   })
 
   it("validates and defaults the enclosed chain-specific configs", () => {
@@ -148,6 +159,41 @@ describe("ClusterConfig shape", () => {
     expect(
       ClusterConfigEthereumSchema.safeParse({ bootstrapJsonFile: 1 }).success
     ).toBe(false)
+  })
+
+  it("round-trips an EXTERNAL deploymentKind + an overridden chain-state DB size", () => {
+    // The production-shaped tree create-external-config's Rebind stamps must
+    // survive the persisted cluster-config.json it writes.
+    const external: ClusterConfig = {
+        ...config,
+        deploymentKind: ClusterDeploymentKind.external,
+        chainStateDbSizeMb: 4_096
+      },
+      rehydrated = ClusterConfigSchemaCodec.deserialize(
+        ClusterConfigSchemaCodec.serialize(external)
+      )
+    expect(rehydrated.deploymentKind).toBe(ClusterDeploymentKind.external)
+    expect(rehydrated.chainStateDbSizeMb).toBe(4_096)
+    expect(rehydrated).toEqual(external)
+  })
+
+  it("persists deploymentKind as its identity-mapped wire spelling", () => {
+    // Every persisted cluster-config.json carries these two strings, and the
+    // schema rejects anything else — so a rename of either member is a
+    // breaking change to the file format, not an internal refactor.
+    expect(ClusterDeploymentKind.local).toBe("local")
+    expect(ClusterDeploymentKind.external).toBe("external")
+    expect(
+      JSON.parse(ClusterConfigSchemaCodec.serialize(config)).deploymentKind
+    ).toBe("local")
+  })
+
+  it("rejects a deploymentKind outside the enum", () => {
+    const parsed = JSON.parse(ClusterConfigSchemaCodec.serialize(config))
+    parsed.deploymentKind = "staging"
+    expect(() =>
+      ClusterConfigSchemaCodec.deserialize(JSON.stringify(parsed))
+    ).toThrow()
   })
 
   it("defaults the epoch-group + termination overrides to null for a legacy config", () => {

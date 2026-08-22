@@ -210,13 +210,15 @@ const ClusterKeysSchema: z.ZodType<ClusterKeys> = z.object({
 const ClusterKeysSchemaCodec = SchemaCodec.create<ClusterKeys>(ClusterKeysSchema)
 
 /** `NodeRole` (cluster-tool) → `ClusterStateNodeRole` (debugging-shared) —
- *  distinct nominal string enums with identical values; bridged by value via
- *  `match`, never a raw cast. */
+ *  distinct nominal string enums bridged by value via `match`, never a raw
+ *  cast. The persisted snapshot describes a node's PROCESS kind, so both
+ *  operator kinds land on its single `operator` member. */
 function toClusterStateNodeRole(role: NodeRole): ClusterStateNodeRole {
   return match(role)
     .with(NodeRole.bios, () => ClusterStateNodeRole.bios)
     .with(NodeRole.producer, () => ClusterStateNodeRole.producer)
-    .with(NodeRole.operator, () => ClusterStateNodeRole.operator)
+    .with(NodeRole.batch_operator, () => ClusterStateNodeRole.operator)
+    .with(NodeRole.underwriter, () => ClusterStateNodeRole.operator)
     .exhaustive()
 }
 

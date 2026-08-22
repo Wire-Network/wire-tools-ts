@@ -14,7 +14,7 @@ import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
 import type * as anchor from "@coral-xyz/anchor"
-import { Keypair, type PublicKey } from "@solana/web3.js"
+import { Keypair, PublicKey } from "@solana/web3.js"
 
 export namespace SolanaOutpostProgramTool {
   /**
@@ -68,7 +68,9 @@ export namespace SolanaOutpostProgramTool {
   export function programId(solanaPath: string): PublicKey {
     const keypairFile = programKeypairFile(solanaPath)
     if (!Fs.existsSync(keypairFile)) return null
-    const secretKey = Uint8Array.from(JSON.parse(Fs.readFileSync(keypairFile, "utf8")))
+    const secretKey = Uint8Array.from(
+      JSON.parse(Fs.readFileSync(keypairFile, "utf8"))
+    )
     return Keypair.fromSecretKey(secretKey).publicKey
   }
 
@@ -91,5 +93,25 @@ export namespace SolanaOutpostProgramTool {
       `SolanaOutpostProgramTool: ${ProgramName} IDL missing: ${idlFile} ${BuildRemediationHint}`
     )
     return JSON.parse(Fs.readFileSync(idlFile, "utf8")) as anchor.Idl
+  }
+
+  /**
+   * Derive a program-derived address from its ordered seeds — THE one PDA
+   * derivation for this program. A pure read, so it is called freely inside
+   * step runners and bootstrapper methods rather than being a Step.
+   *
+   * Seeds are passed in the program's own declared order; scoped legs
+   * (`token_code`, `reserve_code`) are encoded with `slugNameToLittleEndianBuffer`
+   * from `utils/slugUtils` to match the program's `to_le_bytes()`.
+   *
+   * @param programId - The deployed `liqsol_core` program id.
+   * @param seeds - The ordered seed buffers.
+   * @returns The derived program address.
+   */
+  export function derivePda(
+    programId: PublicKey,
+    ...seeds: Buffer[]
+  ): PublicKey {
+    return PublicKey.findProgramAddressSync(seeds, programId)[0]
   }
 }

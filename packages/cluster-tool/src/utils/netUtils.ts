@@ -4,6 +4,7 @@
  * literal the harness hands to a process, chain client, or readiness probe
  * (folds the former `tools/NetTools.ts`).
  */
+import Assert from "node:assert"
 import Dgram from "node:dgram"
 import { Deferred, guard } from "@wireio/shared"
 
@@ -74,6 +75,47 @@ export function toURL(
   scheme: URLScheme = URLScheme.http
 ): string {
   return `${scheme}://${toAddress(port, address)}`
+}
+
+/**
+ * The `<address>:<port>` shape {@link assertEndpoint} enforces: a HOST — a
+ * hostname / IPv4 literal (letters, digits, `.`, `_`, `-`) or a bracketed IPv6
+ * literal — followed by a 1–5 digit port.
+ *
+ * The host group deliberately excludes `:` and `/` OUTSIDE the bracketed form,
+ * so a URL cannot slip through: `http://host:8888` is a scheme-qualified
+ * endpoint nodeop would reject, and a permissive `\S+` accepted it as a "host"
+ * of `http://host`. This is the scheme-less form every nodeop bind / advertise /
+ * peer option takes — the same form {@link toAddress} builds.
+ */
+export const EndpointPattern = /^(?:\[[0-9a-fA-F:]+\]|[A-Za-z0-9._-]+):\d{1,5}$/
+
+/** Lowest port an endpoint may name (0 is "any", meaningless in a static config). */
+export const MinimumPort = 1
+/** Highest port an endpoint may name. */
+export const MaximumPort = 65_535
+
+/**
+ * Assert one `<address>:<port>` endpoint — shape first, then port range.
+ *
+ * SHAPE-only by design: the address may name an arbitrary deployment host this
+ * process never resolves, dials, or binds, so nothing here probes the network or
+ * claims a port from the bind registry.
+ *
+ * @param value - The endpoint as supplied.
+ * @param label - The flag/field name, used verbatim in the failure message.
+ * @throws If `value` is not `<address>:<port>`, or its port is out of range.
+ */
+export function assertEndpoint(value: string, label: string): void {
+  Assert.ok(
+    EndpointPattern.test(value),
+    `${label} must be <address>:<port> — got '${value}'`
+  )
+  const port = Number(value.slice(value.lastIndexOf(":") + 1))
+  Assert.ok(
+    port >= MinimumPort && port <= MaximumPort,
+    `${label} port must be ${MinimumPort}–${MaximumPort} — got ${port}`
+  )
 }
 
 /**

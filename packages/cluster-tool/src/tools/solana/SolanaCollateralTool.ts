@@ -18,6 +18,7 @@ import {
   type Keypair
 } from "@solana/web3.js"
 import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync
 } from "@solana/spl-token"
@@ -25,6 +26,7 @@ import { OperatorType } from "@wireio/opp-typescript-models"
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
 import { SolanaFundingTool } from "./SolanaFundingTool.js"
 import { SolanaOutpostProgramTool } from "./SolanaOutpostProgramTool.js"
+import { SolanaOutpostBootstrapper } from "../../orchestration/solana/SolanaOutpostBootstrapper.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import {
@@ -33,6 +35,7 @@ import {
 } from "../../orchestration/ClusterBuildStep.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { solanaKeypair } from "../../utils/keyPairUtils.js"
+import { slugNameToLittleEndianBuffer } from "../../utils/slugUtils.js"
 import { Report } from "../../report/Report.js"
 
 /** PDA seeds — kept in sync with `wire-solana/programs/liqsol-core/src/states/opp_states.rs`. */
@@ -40,9 +43,28 @@ const OutpostConfigSeed = Buffer.from("outpost_config")
 const OutboundMessageBufferSeed = Buffer.from("outbound_message_buffer")
 const OperatorRegistrySeed = Buffer.from("operator_registry")
 const VaultSeed = Buffer.from("outpost_vault")
-/** Per-`token_code` SPL collateral vault seed — matches `deposit_non_native.rs`. */
-const CollateralVaultSeed = Buffer.from("collateral_vault")
-
+/**
+ * The seeds this tool derives come from the ONE registry —
+ * {@link SolanaOutpostBootstrapper.PdaSeed}, whose entries mirror
+ * `opp_states.rs`. Never re-spell a seed literal here.
+ *
+ * `CollateralVault` is the per-`token_code` SPL collateral vault
+ * (`deposit_non_native.rs`); `CollateralPosition` is the per-`(operator,
+ * token_code)` bonded balance; `ReserveAggregate` is the seizure-destination
+ * authority for SPL collateral — `deposit_non_native` declares it alongside its
+ * ATA (`init_if_needed, payer = depositor`) so the SLASH destination exists from
+ * the first moment seizable collateral for a `(token_code, mint)` does, because
+ * the dispatch path has no payer and cannot open it later.
+ */
+const CollateralVaultSeed = Buffer.from(
+  SolanaOutpostBootstrapper.PdaSeed.CollateralVault
+)
+const CollateralPositionSeed = Buffer.from(
+  SolanaOutpostBootstrapper.PdaSeed.CollateralPosition
+)
+const ReserveAggregateSeed = Buffer.from(
+  SolanaOutpostBootstrapper.PdaSeed.ReserveAggregate
+)
 export namespace SolanaCollateralTool {
   // ── Step: native SOL planDeposit (`opp-outpost::deposit`) ────────────────────
 
@@ -59,7 +81,9 @@ export namespace SolanaCollateralTool {
   }
 
   /** A single native-SOL collateral deposit write to `opp-outpost::deposit`. */
-  export function planDeposit<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planDeposit<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -92,7 +116,10 @@ export namespace SolanaCollateralTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(input.amount > 0n, "SolanaCollateralTool.planDeposit: amount must be positive")
+    Assert.ok(
+      input.amount > 0n,
+      "SolanaCollateralTool.planDeposit: amount must be positive"
+    )
     const operator = ctx.keyStore.assertOperator(input.operatorLabel)
     const keypair = solanaKeypair(operator.solana)
     const program = loadOppOutpostProgram(ctx, keypair)
@@ -105,10 +132,24 @@ export namespace SolanaCollateralTool {
       )
       .accounts({
         depositor: keypair.publicKey,
-        config: pda(OutpostConfigSeed, programId),
-        operatorRegistry: pda(OperatorRegistrySeed, programId),
-        outboundMessageBuffer: pda(OutboundMessageBufferSeed, programId),
-        vault: pda(VaultSeed, programId),
+        config: SolanaOutpostProgramTool.derivePda(
+          programId,
+          OutpostConfigSeed
+        ),
+        operatorRegistry: SolanaOutpostProgramTool.derivePda(
+          programId,
+          OperatorRegistrySeed
+        ),
+        outboundMessageBuffer: SolanaOutpostProgramTool.derivePda(
+          programId,
+          OutboundMessageBufferSeed
+        ),
+        vault: SolanaOutpostProgramTool.derivePda(programId, VaultSeed),
+        collateralPosition: collateralPositionPda(
+          programId,
+          keypair.publicKey,
+          input.tokenCode
+        ),
         systemProgram: SystemProgram.programId
       })
       .signers([keypair])
@@ -118,7 +159,11 @@ export namespace SolanaCollateralTool {
       [keypair],
       { skipPreflight: false }
     )
-    await confirmSignature(ctx.solana.connection, signature, "SolanaCollateralTool.planDeposit")
+    await confirmSignature(
+      ctx.solana.connection,
+      signature,
+      "SolanaCollateralTool.planDeposit"
+    )
   }
 
   // ── Step: SPL planDeposit (`opp-outpost::deposit_non_native`) ────────────────
@@ -141,7 +186,9 @@ export namespace SolanaCollateralTool {
   }
 
   /** A single `opp-outpost::deposit_non_native` SPL write, signed by the operator keypair. */
-  export function planNonNativeDeposit<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planNonNativeDeposit<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -178,7 +225,10 @@ export namespace SolanaCollateralTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    Assert.ok(input.amount > 0n, "SolanaCollateralTool.planNonNativeDeposit: amount must be positive")
+    Assert.ok(
+      input.amount > 0n,
+      "SolanaCollateralTool.planNonNativeDeposit: amount must be positive"
+    )
     const operator = ctx.keyStore.assertOperator(input.operatorLabel)
     const keypair = solanaKeypair(operator.solana)
     const program = loadOppOutpostProgram(ctx, keypair)
@@ -186,8 +236,10 @@ export namespace SolanaCollateralTool {
     const mint = new PublicKey(
       SolanaFundingTool.solMintAddress(ctx.config.dataPath, input.tokenCode)
     )
-    const tokenCodeLeBytes = Buffer.alloc(8)
-    tokenCodeLeBytes.writeBigUInt64LE(input.tokenCode)
+    const reserveAggregatePda = SolanaOutpostProgramTool.derivePda(
+      programId,
+      ReserveAggregateSeed
+    )
     const transaction = await program.methods
       .depositNonNative(
         new anchor.BN(input.chainCode.toString()),
@@ -198,13 +250,39 @@ export namespace SolanaCollateralTool {
       )
       .accounts({
         depositor: keypair.publicKey,
-        config: pda(OutpostConfigSeed, programId),
-        operatorRegistry: pda(OperatorRegistrySeed, programId),
-        outboundMessageBuffer: pda(OutboundMessageBufferSeed, programId),
+        config: SolanaOutpostProgramTool.derivePda(
+          programId,
+          OutpostConfigSeed
+        ),
+        operatorRegistry: SolanaOutpostProgramTool.derivePda(
+          programId,
+          OperatorRegistrySeed
+        ),
+        outboundMessageBuffer: SolanaOutpostProgramTool.derivePda(
+          programId,
+          OutboundMessageBufferSeed
+        ),
         mint,
         depositorAta: getAssociatedTokenAddressSync(mint, keypair.publicKey),
-        collateralVault: pda(CollateralVaultSeed, programId, tokenCodeLeBytes),
+        collateralVault: SolanaOutpostProgramTool.derivePda(
+          programId,
+          CollateralVaultSeed,
+          slugNameToLittleEndianBuffer(input.tokenCode)
+        ),
+        collateralPosition: collateralPositionPda(
+          programId,
+          keypair.publicKey,
+          input.tokenCode
+        ),
+        reserveAggregate: reserveAggregatePda,
+        // The aggregate is a PDA, so its ATA is derived off-curve.
+        reserveAggregateAta: getAssociatedTokenAddressSync(
+          mint,
+          reserveAggregatePda,
+          true
+        ),
         tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         rent: SYSVAR_RENT_PUBKEY
       })
@@ -224,11 +302,28 @@ export namespace SolanaCollateralTool {
 
   // ── value helpers (PDA / IDL loads — executed INSIDE runners) ────────────
 
-  /** Derive a program PDA from its seeds (a pure read). */
-  function pda(...seedsAndProgramId: [Buffer, PublicKey, Buffer?]): PublicKey {
-    const [firstSeed, programId, secondSeed] = seedsAndProgramId
-    const seeds = secondSeed != null ? [firstSeed, secondSeed] : [firstSeed]
-    return PublicKey.findProgramAddressSync(seeds, programId)[0]
+  /**
+   * Derive the per-`(operator, tokenCode)` `CollateralPosition` PDA that both
+   * `deposit` and `depositNonNative` require, and that the terminal
+   * `WITHDRAW_REMIT` / `SLASH` / `DEPOSIT_REVERT` handlers resolve out of
+   * `remaining_accounts`.
+   *
+   * @param programId - The deployed `liqsol_core` program id.
+   * @param operator - The depositing operator's Solana pubkey.
+   * @param tokenCode - The 8-byte slug_name of the collateral token.
+   * @returns The `CollateralPosition` PDA address.
+   */
+  export function collateralPositionPda(
+    programId: PublicKey,
+    operator: PublicKey,
+    tokenCode: bigint
+  ): PublicKey {
+    return SolanaOutpostProgramTool.derivePda(
+      programId,
+      CollateralPositionSeed,
+      operator.toBuffer(),
+      slugNameToLittleEndianBuffer(tokenCode)
+    )
   }
 
   /**

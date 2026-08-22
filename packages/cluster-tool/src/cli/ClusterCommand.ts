@@ -21,5 +21,12 @@ export enum ClusterCommand {
    * member — access via `ClusterCommand["create-external-config"]` (the hyphen
    * is not a valid identifier), value === key like every other member.
    */
-  "create-external-config" = "create-external-config"
+  "create-external-config" = "create-external-config",
+  /**
+   * Generate a standalone (non-cluster) API node's `config.ini` + `start.sh`
+   * into an output directory. Quoted member — access via
+   * `ClusterCommand["create-api-node"]` (the hyphen is not a valid identifier),
+   * value === key like every other member.
+   */
+  "create-api-node" = "create-api-node"
 }

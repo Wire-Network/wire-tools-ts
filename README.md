@@ -46,11 +46,11 @@ see [`docs/local-setup.md`](docs/local-setup.md).
 | **pnpm** | `10.32.1` | the only supported package manager | `corepack enable && corepack prepare pnpm@10.32.1 --activate` |
 | **Rust** | `1.86.0` | toolchain for Solana / Anchor builds | see below |
 | **Foundry (`anvil`)** | `>= 1.5` | local Ethereum node for the ETH outpost | see below |
-| **Solana CLI (`solana-test-validator`)** | `2.1.21` (Agave) | local Solana validator for the SOL outpost | see below |
+| **Solana CLI (`solana-test-validator`)** | `4.2.0` (Agave) | local Solana validator for the SOL outpost | see below |
 | **Anchor (`anchor`) via `avm`** | `0.31.0` | builds + loads the `opp-outpost` program | see below |
 
 > The Solana / Anchor / Rust versions are pinned by `wire-solana`
-> (`Anchor.toml` → `anchor_version = "0.31.0"`, `solana_version = "2.1.21"`;
+> (`Anchor.toml` → `anchor_version = "0.31.0"`, `solana_version = "4.2.0"`;
 > `rust-toolchain.toml` → `channel = "1.86.0"`). Match them — a mismatched
 > validator or Anchor CLI produces program-load failures that look like flow bugs.
 
@@ -72,9 +72,9 @@ curl -L https://foundry.paradigm.xyz | bash
 "$HOME/.foundry/bin/foundryup"
 export PATH="$HOME/.foundry/bin:$PATH"
 
-# ── Solana CLI (Agave) — pin 2.1.21 to match wire-solana ─────────────────────
+# ── Solana CLI (Agave) — pin 4.2.0 to match wire-solana ─────────────────────
 # https://docs.anza.xyz/cli/install
-sh -c "$(curl -sSfL https://release.anza.xyz/v2.1.21/install)"
+sh -c "$(curl -sSfL https://release.anza.xyz/v4.2.0/install)"
 export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
 
 # ── Anchor via avm (Anchor Version Manager) — pin 0.31.0 ─────────────────────
@@ -90,7 +90,7 @@ Verify:
 node --version        # v22+  (v24 OK)
 pnpm --version        # 10.32.1
 anvil --version       # 1.5.x
-solana --version      # 2.1.21 ... Agave
+solana --version      # 4.2.0 ... Agave
 anchor --version      # anchor-cli 0.31.0
 ```
 
@@ -241,7 +241,8 @@ Rules of the road (binding for sessions/automation; see
 
 For interactive work — poking the chains with `clio` or the debugging TUI —
 drive the `wire-cluster-tool` CLI directly (alias: `wtc`). Its commands:
-`create`, `run`, `destroy`, `package`, and `create-external-config`.
+`create`, `run`, `destroy`, `package`, `create-external-config`, and
+`create-api-node`.
 
 ### Two ways to start a daemon — and how they relate
 
@@ -280,7 +281,11 @@ the same argv `run` would spawn, with three properties worth knowing:
 - **Run semantics.** Nodes are relaunch-form (no one-shot genesis flags); anvil
   carries interval mining. Conditions that depended on the build host — anvil's
   `--load-state`, nodeop's `--trace-no-abis` — render as shell tests the script
-  evaluates itself.
+  evaluates itself. The `--trace-no-abis` test is additionally
+  PREDICATE-GATED: the flag belongs to `trace_api_plugin`, so it is emitted only
+  for nodes that actually load it (every role on a local cluster; operators only
+  in an external tree). A node without the plugin renders no condition at all —
+  nodeop rejects the flag outright when the plugin is absent.
 - **Not bind-registry aware.** The ports were issued by the registry at create
   time, but a `start.sh`-launched daemon does not re-claim them, so it is
   invisible to a concurrently-resolving cluster on the same host. Intended for a
@@ -501,6 +506,48 @@ wire-cluster-tool create-external-config \
 # disaster recovery) with NO plaintext keys. (A KEY cluster emits
 # inline KEY providers; a KIOD cluster, material-less KIOD providers.)
 ```
+
+### Standalone API nodes
+
+`create-api-node` emits a self-contained API node — one that serves the chain's
+HTTP API and syncs from peers, with no cluster tree around it and no signing
+keys. It writes exactly two files into `--output-path` and touches nothing else:
+
+```bash
+wire-cluster-tool create-api-node \
+  --output-path         /opt/wire/api-node \
+  --http-server-address 0.0.0.0:8888 \
+  --p2p-peer-address    peer-a.example:9876 \
+  --p2p-peer-address    peer-b.example:9876 \
+  --genesis-json        /opt/wire/genesis.json
+```
+
+| Emitted | What it is |
+|---|---|
+| `config.ini` | the nodeop config — `chain-state-db-size-mb`, the finality-status / account-query / HTTP tuning, the endpoint, one `p2p-peer-address` line per peer, and the plugin set (`net_plugin`, `chain_api_plugin`, `trace_api_plugin`) |
+| `start.sh` | mode `0755`; `exec`s nodeop with `--config-dir "$NODE_DIR"`, `--data-dir "$NODE_DIR/data"`, and `--genesis-json` when a genesis was supplied |
+| `genesis.json` | only when `--genesis-json` was passed — the file is COPIED next to the script, so the emitted directory stays self-contained |
+
+The remaining flags all default through one resolution path, so the CLI and a
+programmatic caller agree: `--chain-state-db-size-mb` (1024),
+`--transaction-finality-status-max-storage-size-gb` (10 — supplying it is what
+ENABLES the finality-status feature), `--enable-account-queries` (true; disable
+with `--enable-account-queries=false`), `--http-max-in-flight-requests` (100),
+`--http-threads` (4), `--agent-name` (`wire-api-node`).
+
+`start.sh` resolves the wire-sysio install prefix exactly as a cluster daemon's
+does — an explicit `WIRE_PREFIX_PATH`, else the parent of a `nodeop` on `PATH`,
+else `WIRE_BUILD_PATH` — and fails loudly naming all three if none resolves. It
+carries no `$CLUSTER_DIR`, no `cluster-config.json` probe, and no inline key: a
+standalone API node signs nothing. `--data-dir` is not pre-created; nodeop makes
+it on first start, so pointing the node at an existing data dir or a snapshot is
+just a matter of populating it.
+
+`--http-server-address` and every `--p2p-peer-address` are used VERBATIM — they
+name an arbitrary deployment host, so nothing is bound, probed, or claimed
+against the local bind registry.
+
+Full walkthrough: [`docs/create-api-node-guide.md`](docs/create-api-node-guide.md).
 
 ## Environment variables
 
