@@ -13,12 +13,14 @@ import type {
 } from "@wireio/cluster-tool-shared"
 import {
   BindConfigSchemaCodec,
+  ClusterDeploymentKind,
   ClusterFiles,
   ExternalClusterConfigSchemaCodec,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { KeyType } from "@wireio/sdk-core"
 import { getValue } from "@wireio/shared"
+import { Constants } from "../../Constants.js"
 import { getLogger } from "../../logging/Logger.js"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import {
@@ -58,8 +60,8 @@ import { Report } from "../../report/Report.js"
  * rides `ctx.outputs`; the local cluster's config is `ctx.config`.
  */
 export namespace ExternalClusterConfigSteps {
-  /** The per-node config + logging filenames re-rendered into the external tree. */
-  const NodeConfigFilename = "config.ini"
+  /** The per-node logging filename re-rendered into the external tree
+   *  (its `config.ini` sibling is `ClusterFiles.NodeConfigFilename`). */
   const NodeLoggingFilename = "logging.json"
 
   /** Directory basenames excluded from the external clone (runtime artifacts). */
@@ -666,7 +668,12 @@ export namespace ExternalClusterConfigSteps {
                 localConfig.externalOutposts
               )
             : null,
-        debuggingServerEnabled: noDebuggingServer ? false : localConfig.debuggingServerEnabled
+        debuggingServerEnabled: noDebuggingServer ? false : localConfig.debuggingServerEnabled,
+        // This tree IS the production-shaped one (SHARED-25 AC#4): stamping it
+        // here — before the cluster-config.json write below, and therefore
+        // before the ini re-render and `emitStartScripts` read it back — is what
+        // drops `trace_api_plugin` from its bios / producer nodes.
+        deploymentKind: ClusterDeploymentKind.external
       }
 
     await ClusterConfigProvider.save(mergedConfig)
@@ -677,7 +684,7 @@ export namespace ExternalClusterConfigSteps {
     NodeConfig.plan(mergedConfig).forEach(node => {
       Fs.mkdirSync(node.nodePath, { recursive: true })
       Fs.writeFileSync(
-        Path.join(node.nodePath, NodeConfigFilename),
+        Path.join(node.nodePath, ClusterFiles.NodeConfigFilename),
         node.ini.render()
       )
       Fs.writeFileSync(
@@ -1085,7 +1092,18 @@ export namespace ExternalClusterConfigSteps {
     )
   }
 
-  /** The external-outpost config with every FILE ref rewritten to its in-tree copy. */
+  /**
+   * The external-outpost config with every FILE ref rewritten to its in-tree
+   * copy — and EVERY non-file field carried through untouched.
+   *
+   * The carry-through is a SPREAD, not a field list. Re-stating the non-file
+   * fields silently DROPPED any that the list had not been extended for: an
+   * authoritative `rpcUrl` (a real outpost endpoint no bind config can express)
+   * vanished from the merged config, so the rebound daemon scripts fell back to
+   * the bind-derived URL and a published tree dialed a local anvil that does not
+   * exist on the deploy host. Only the file refs are overridden here; the
+   * optional ones stay conditional so an ABSENT ref is not re-introduced.
+   */
   function inTreeExternalOutpost(
     externalDataPath: string,
     external: ExternalOutpostConfig
@@ -1094,9 +1112,9 @@ export namespace ExternalClusterConfigSteps {
       inTreeExternalOutpostFile(externalDataPath, chain, file)
     return {
       ethereum: {
+        ...external.ethereum,
         addressFile: inTree("ethereum", external.ethereum.addressFile),
         abiFiles: external.ethereum.abiFiles.map(file => inTree("ethereum", file)),
-        chainId: external.ethereum.chainId,
         ...(external.ethereum.liqEthAddressFile != null
           ? {
               liqEthAddressFile: inTree(
@@ -1107,6 +1125,7 @@ export namespace ExternalClusterConfigSteps {
           : {})
       },
       solana: {
+        ...external.solana,
         idlFile: inTree("solana", external.solana.idlFile),
         ...(external.solana.mintsFile != null
           ? { mintsFile: inTree("solana", external.solana.mintsFile) }
@@ -1245,6 +1264,51 @@ export namespace ExternalClusterConfigSteps {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
   }
 
+  /**
+   * The persisted `ClusterConfig` field holding
+   * {@link Constants.CHAIN_STATE_DB_SIZE_MB_OPTION}'s value — the second (and
+   * only other) spelling a scanned file carries it under, in
+   * `cluster-config.json`. Typed `keyof ClusterConfig` so a field rename fails
+   * the build instead of silently un-masking the value.
+   */
+  const ChainStateDbSizeMbField: keyof ClusterConfig = "chainStateDbSizeMb"
+
+  /**
+   * `text` with the chain-state DB SIZE's OWN value blanked out — nothing else.
+   *
+   * That size is an operator-chosen MEGABYTE count, not an endpoint, and it now
+   * rides every emitted `start.sh` (as `--chain-state-db-size-mb <N>`) plus the
+   * rebound `cluster-config.json`. A legitimate `N` that happens to equal a
+   * stale local bind port — 32768 sits inside the Linux ephemeral range — would
+   * otherwise hard-fail Verify claiming the file "still contains the local bind
+   * port", about a number that was never a port.
+   *
+   * The masking is POSITIONAL, not by value: only the digits this setting
+   * introduces are removed, so the very same number occurring anywhere else in
+   * the same file still fails the scan. The separator run covers both carriers —
+   * the renderer puts every argv word on its own quoted continuation line
+   * (`'--chain-state-db-size-mb' \` ⏎ `  '32768' \`), while JSON writes
+   * `"chainStateDbSizeMb": 32768`.
+   *
+   * @param text - A scanned file's text, exactly as read.
+   * @returns The same text with that one value removed.
+   */
+  function maskChainStateDbSize(text: string): string {
+    const introducers = [
+        `--${Constants.CHAIN_STATE_DB_SIZE_MB_OPTION}`,
+        ChainStateDbSizeMbField
+      ]
+        .map(escapeRegExp)
+        .join("|"),
+      // Quote/whitespace/backslash/colon run between the flag-or-key and its
+      // value — never a digit, so the match cannot slide onto another token.
+      separator = `['"]?[\\s\\\\'":]*`
+    return text.replace(
+      new RegExp(`((?:${introducers})${separator})[0-9]+`, "g"),
+      "$1"
+    )
+  }
+
   /** Named runner — scan for any stale local bind port/address + round-trip the config. */
   export async function runVerify<C extends ClusterBuildContext>(
     ctx: C,
@@ -1269,7 +1333,7 @@ export namespace ExternalClusterConfigSteps {
         ClusterConfigProvider.genesisFile(merged),
         Path.join(merged.clusterPath, ClusterFiles.ExternalConfigFilename),
         ...NodeConfig.plan(merged).flatMap(node => [
-          Path.join(node.nodePath, NodeConfigFilename),
+          Path.join(node.nodePath, ClusterFiles.NodeConfigFilename),
           Path.join(node.nodePath, NodeLoggingFilename)
         ]),
         // EVERY emitted start.sh — enumerated from the TREE, not from the
@@ -1284,7 +1348,10 @@ export namespace ExternalClusterConfigSteps {
     configFiles
       .filter(file => Fs.existsSync(file))
       .forEach(file => {
-        const text = Fs.readFileSync(file, "utf-8")
+        // Scanned with the chain-state DB SIZE's own value masked out: it is an
+        // operator-chosen megabyte count, and one that happens to equal a stale
+        // local port would otherwise be reported as an un-rebound endpoint.
+        const text = maskChainStateDbSize(Fs.readFileSync(file, "utf-8"))
         stalePorts.forEach(port => {
           // HEX-safe boundary — a local port must not be flagged as a substring
           // of a larger number (8888 ⊄ 18888) NOR inside a hex key (…a8888b…).

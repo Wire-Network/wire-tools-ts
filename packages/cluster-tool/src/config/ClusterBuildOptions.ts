@@ -54,6 +54,13 @@ export interface ClusterBuildOptions {
    * to the bootstrap window (epoch 0), so this only ever seeds pre-EpochBootstrap.
    */
   enableMockReserves?: boolean
+  // nodeop tuning
+  /**
+   * Uniform nodeop chain-state DB size in MiB for every node (SHARED-31). Omit
+   * for the 1024 default (`DefaultChainStateDbSizeMb` — nodeop's own stock
+   * value, so the always-emitted flag is a no-op until it is overridden).
+   */
+  chainStateDbSizeMb?: number
   // termination tuning
   terminateMaxConsecutiveMisses?: number
   terminateMaxPercentMisses24h?: number

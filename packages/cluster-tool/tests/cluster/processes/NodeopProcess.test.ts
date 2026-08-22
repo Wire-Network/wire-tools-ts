@@ -4,13 +4,19 @@ import Os from "node:os"
 import Path from "node:path"
 import {
   AWSAccountName,
+  ClusterDeploymentKind,
+  DefaultChainStateDbSizeMb,
   SignatureProviderType,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
+import { Constants } from "@wireio/cluster-tool"
 import {
+  createNodeopTuningDefaultOptions,
+  DatabaseMapMode,
   NodeopProcess,
+  type NodeopTuningOptions,
   ProcessManager
 } from "@wireio/cluster-tool/cluster/processes"
 import {
@@ -24,6 +30,27 @@ import {
   fixtureConfig,
   PersistedFixture
 } from "../../config/clusterConfigFixture.js"
+
+/** The chainbase map-mode flag, exactly as `buildArgs` emits it. */
+const DatabaseMapModeFlag = "--database-map-mode"
+
+/** The three SHARED-25 deadline flags, exactly as `buildArgs` emits them. */
+const MaxTransactionTimeFlag = "--max-transaction-time",
+  AbiSerializerMaxTimeFlag = "--abi-serializer-max-time-ms",
+  HttpMaxResponseTimeFlag = "--http-max-response-time-ms"
+
+/** The value following `flag` in an argv (each occurrence). */
+function valuesOf(args: string[], flag: string): string[] {
+  return args.flatMap((arg, index) => (arg === flag ? [args[index + 1]] : []))
+}
+
+/** Producers a role's node hosts — only the block-producing roles carry any. */
+const RoleProducers: Record<NodeRole, string[]> = {
+  [NodeRole.bios]: [NodeConfig.BiosProducer],
+  [NodeRole.producer]: ["sysio"],
+  [NodeRole.batch_operator]: [],
+  [NodeRole.underwriter]: []
+}
 
 describe("NodeopProcess", () => {
   let dir: string
@@ -162,7 +189,7 @@ describe("NodeopProcess", () => {
 
   it("omits the producer block for a non-producing node + appends extraArgs", async () => {
     const nodeop = await NodeopProcess.create(manager, {
-      node: node("operator-daemon", NodeRole.operator),
+      node: node("operator-daemon", NodeRole.batch_operator),
       operator: producerOperator("batchopaaaa"),
       extraArgs: ["--batch-enabled", "true"]
     })
@@ -181,7 +208,7 @@ describe("NodeopProcess", () => {
   it("advertises the per-node advertiseAddress as the p2p-server-address", async () => {
     const meshNode = new NodeConfig(
       cluster,
-      NodeRole.operator,
+      NodeRole.batch_operator,
       0,
       "meshed",
       { http: 8888, p2p: 9876, advertiseAddress: "10.1.2.3" },
@@ -354,7 +381,7 @@ describe("NodeopProcess", () => {
 
     it("detects an SSM spec arriving via extraArgs (operator daemons)", async () => {
       const nodeop = await NodeopProcess.create(manager, {
-        node: node("ssm-daemon", NodeRole.operator),
+        node: node("ssm-daemon", NodeRole.batch_operator),
         extraArgs: [
           NodeopProcess.SignatureProviderFlag,
           "op,ethereum,ethereum,0xPUB,SSM:/wire/c/op/EM"
@@ -368,9 +395,10 @@ describe("NodeopProcess", () => {
 
   it("applies tuning overrides over the defaults", async () => {
     const nodeop = await NodeopProcess.create(manager, {
-      node: node("tuned", NodeRole.operator),
-      tuning: { maxClients: 99 }
-    })
+        node: node("tuned", NodeRole.batch_operator),
+        tuning: { maxClients: 99, databaseMapMode: DatabaseMapMode.mapped }
+      }),
+      mapModeIndex = nodeop.args.indexOf(DatabaseMapModeFlag)
     expect(nodeop.args).toEqual(expect.arrayContaining(["--max-clients", "99"]))
     expect(nodeop.args).toEqual(
       expect.arrayContaining([
@@ -378,11 +406,583 @@ describe("NodeopProcess", () => {
         String(NodeopProcess.DefaultVoteThreads)
       ])
     )
+    // An explicit map mode wins over the SHARED-28 default — and the default
+    // spelling is then nowhere in the argv.
+    expect(nodeop.args[mapModeIndex + 1]).toBe(DatabaseMapMode.mapped)
+    expect(nodeop.args).not.toContain(NodeopProcess.DefaultDatabaseMapMode)
+  })
+
+  describe("deadline phase/role matrix (SHARED-25 AC#2 + AC#3)", () => {
+    /** The three deadline flags' values in one launch form's argv. */
+    function deadlines(args: string[]) {
+      return {
+        maxTransactionTime: valuesOf(args, MaxTransactionTimeFlag),
+        abiSerializerMaxTimeMs: valuesOf(args, AbiSerializerMaxTimeFlag),
+        httpMaxResponseTimeMs: valuesOf(args, HttpMaxResponseTimeFlag)
+      }
+    }
+
+    /** A launched node's argv for `role` at `postBootstrap`. */
+    async function argsFor(
+      role: NodeRole,
+      postBootstrap?: boolean,
+      tuning?: NodeopTuningOptions
+    ): Promise<string[]> {
+      const nodeop = await NodeopProcess.create(manager, {
+        node: node(
+          `deadline-${role}-${String(postBootstrap)}`,
+          role,
+          RoleProducers[role]
+        ),
+        operator: producerOperator("sysio"),
+        postBootstrap,
+        tuning
+      })
+      return nodeop.args
+    }
+
+    it("pins the five phase/role constants", () => {
+      expect(NodeopProcess.BootstrapMaxTransactionTime).toBe(-1)
+      expect(NodeopProcess.BootstrapAbiSerializerMaxTimeMs).toBe(990_000)
+      expect(NodeopProcess.BootstrapHttpMaxResponseTimeMs).toBe(990_000)
+      expect(NodeopProcess.OperatorAbiSerializerMaxTimeMs).toBe(990_000)
+      expect(NodeopProcess.OperatorHttpMaxResponseTimeMs).toBe(990_000)
+    })
+
+    it("carries NO phase-blind Default* deadline constants", () => {
+      // The old trio was a single permissive value for every launch form. A
+      // survivor would be a second, phase-blind source of these deadlines.
+      expect("DefaultMaxTransactionTime" in NodeopProcess).toBe(false)
+      expect("DefaultAbiSerializerMaxTimeMs" in NodeopProcess).toBe(false)
+      expect("DefaultHttpMaxResponseTimeMs" in NodeopProcess).toBe(false)
+      // The POSITIVE control the three negatives need: `in` on a namespace
+      // object answers false for ANY typo, so without these the assertions
+      // above would pass against a renamed namespace or an empty object.
+      expect("BootstrapMaxTransactionTime" in NodeopProcess).toBe(true)
+      expect("BootstrapAbiSerializerMaxTimeMs" in NodeopProcess).toBe(true)
+      expect("BootstrapHttpMaxResponseTimeMs" in NodeopProcess).toBe(true)
+      expect("OperatorAbiSerializerMaxTimeMs" in NodeopProcess).toBe(true)
+      expect("OperatorHttpMaxResponseTimeMs" in NodeopProcess).toBe(true)
+    })
+
+    // Driven off `NodeRole` so a new role is covered by construction rather
+    // than by remembering to add a case.
+    it.each(Object.values(NodeRole))(
+      "keeps the permissive bootstrap values on a %s node (postBootstrap UNSET)",
+      async role => {
+        // Author directive: the rules apply only AFTER a complete bootstrap —
+        // until then none of them, on any role.
+        expect(deadlines(await argsFor(role))).toEqual({
+          maxTransactionTime: [
+            String(NodeopProcess.BootstrapMaxTransactionTime)
+          ],
+          abiSerializerMaxTimeMs: [
+            String(NodeopProcess.BootstrapAbiSerializerMaxTimeMs)
+          ],
+          httpMaxResponseTimeMs: [
+            String(NodeopProcess.BootstrapHttpMaxResponseTimeMs)
+          ]
+        })
+      }
+    )
+
+    it.each(Object.values(NodeRole))(
+      "treats an EXPLICIT postBootstrap:false %s node as the bootstrap form",
+      async role => {
+        expect(deadlines(await argsFor(role, false))).toEqual({
+          maxTransactionTime: [
+            String(NodeopProcess.BootstrapMaxTransactionTime)
+          ],
+          abiSerializerMaxTimeMs: [
+            String(NodeopProcess.BootstrapAbiSerializerMaxTimeMs)
+          ],
+          httpMaxResponseTimeMs: [
+            String(NodeopProcess.BootstrapHttpMaxResponseTimeMs)
+          ]
+        })
+      }
+    )
+
+    it.each(Object.values(NodeRole))(
+      "OMITS --max-transaction-time on a post-bootstrap %s node",
+      async role => {
+        // AC#2 is role-blind: nodeop's stock 499ms deadline applies to every
+        // role once the chain is up.
+        expect(await argsFor(role, true)).not.toContain(MaxTransactionTimeFlag)
+      }
+    )
+
+    it.each([NodeRole.bios, NodeRole.producer])(
+      "OMITS BOTH timeout flags on a post-bootstrap %s node",
+      async role => {
+        // AC#3 tightens the serializer / response deadlines for the
+        // public-API-serving roles: no flag, so nodeop's own defaults apply.
+        expect(deadlines(await argsFor(role, true))).toEqual({
+          maxTransactionTime: [],
+          abiSerializerMaxTimeMs: [],
+          httpMaxResponseTimeMs: []
+        })
+      }
+    )
+
+    it.each([NodeRole.batch_operator, NodeRole.underwriter])(
+      "keeps both timeout flags on a post-bootstrap %s node (AC#3's non-public exception)",
+      async role => {
+        // An operator node's HTTP surface serves its own co-located OPP daemon
+        // only — its envelope + table reads are legitimately slow.
+        expect(deadlines(await argsFor(role, true))).toEqual({
+          maxTransactionTime: [],
+          abiSerializerMaxTimeMs: [
+            String(NodeopProcess.OperatorAbiSerializerMaxTimeMs)
+          ],
+          httpMaxResponseTimeMs: [
+            String(NodeopProcess.OperatorHttpMaxResponseTimeMs)
+          ]
+        })
+      }
+    )
+
+    it("lets an explicit caller override win on the BOOTSTRAP form", async () => {
+      const args = await argsFor(NodeRole.producer, false, {
+        maxTransactionTime: 250,
+        abiSerializerMaxTimeMs: 1_500,
+        httpMaxResponseTimeMs: 2_500
+      })
+      expect(deadlines(args)).toEqual({
+        maxTransactionTime: ["250"],
+        abiSerializerMaxTimeMs: ["1500"],
+        httpMaxResponseTimeMs: ["2500"]
+      })
+    })
+
+    it("lets an explicit caller override win on the POST-BOOTSTRAP form (even where the default is ABSENT)", async () => {
+      // The absent-default arm is the interesting one: `lodash.defaults` only
+      // fills keys the DEFAULTS object carries, so a caller value has nothing
+      // to lose a merge against — it must survive verbatim.
+      const args = await argsFor(NodeRole.producer, true, {
+        maxTransactionTime: 250,
+        abiSerializerMaxTimeMs: 1_500,
+        httpMaxResponseTimeMs: 2_500
+      })
+      expect(deadlines(args)).toEqual({
+        maxTransactionTime: ["250"],
+        abiSerializerMaxTimeMs: ["1500"],
+        httpMaxResponseTimeMs: ["2500"]
+      })
+    })
+
+    describe("lodash.defaults merge semantics for the optional deadlines", () => {
+      /** `resolveConfig`'s tuning for a `role` node at `postBootstrap`. */
+      function tuningFor(
+        role: NodeRole,
+        postBootstrap: boolean,
+        tuning?: NodeopTuningOptions
+      ) {
+        return NodeopProcess.resolveConfig(
+          {
+            node: node(
+              `merge-${role}-${String(postBootstrap)}`,
+              role,
+              RoleProducers[role]
+            ),
+            operator: producerOperator("sysio"),
+            postBootstrap,
+            tuning
+          },
+          {
+            genesisTimestamp: "2026-01-01T00:00:00.000",
+            supportsTraceNoAbis: false
+          }
+        ).tuning
+      }
+
+      it("leaves an explicitly-undefined caller slot ABSENT when the phase has no default", () => {
+        // `defaults` iterates the SOURCE's keys, so a destination key holding
+        // `undefined` with no matching default key stays `undefined` — which
+        // buildArgs reads as "omit the flag".
+        const tuning = tuningFor(NodeRole.producer, true, {
+          maxTransactionTime: undefined,
+          abiSerializerMaxTimeMs: undefined,
+          httpMaxResponseTimeMs: undefined
+        })
+        expect(tuning.maxTransactionTime).toBeUndefined()
+        expect(tuning.abiSerializerMaxTimeMs).toBeUndefined()
+        expect(tuning.httpMaxResponseTimeMs).toBeUndefined()
+      })
+
+      it("FILLS an explicitly-undefined caller slot from the phase default when one exists", () => {
+        // The other half of the same rule: `undefined` is exactly what
+        // `defaults` treats as "not supplied", so the bootstrap arm still wins.
+        const tuning = tuningFor(NodeRole.producer, false, {
+          maxTransactionTime: undefined,
+          abiSerializerMaxTimeMs: undefined,
+          httpMaxResponseTimeMs: undefined
+        })
+        expect(tuning.maxTransactionTime).toBe(
+          NodeopProcess.BootstrapMaxTransactionTime
+        )
+        expect(tuning.abiSerializerMaxTimeMs).toBe(
+          NodeopProcess.BootstrapAbiSerializerMaxTimeMs
+        )
+        expect(tuning.httpMaxResponseTimeMs).toBe(
+          NodeopProcess.BootstrapHttpMaxResponseTimeMs
+        )
+      })
+
+      it("keeps every NON-deadline knob required and phase-independent", () => {
+        // Only the three deadlines moved into the optional group; a phase must
+        // never be able to drop the map mode or the topology-derived caps.
+        ;[false, true].forEach(postBootstrap => {
+          const tuning = tuningFor(NodeRole.batch_operator, postBootstrap)
+          expect(tuning.databaseMapMode).toBe(
+            NodeopProcess.DefaultDatabaseMapMode
+          )
+          expect(tuning.voteThreads).toBe(NodeopProcess.DefaultVoteThreads)
+          expect(tuning.blocksPath).toBe(NodeopProcess.DefaultBlocksPath)
+          expect(tuning.connectionCleanupPeriodSec).toBe(
+            NodeopProcess.DefaultConnectionCleanupPeriodSec
+          )
+          expect(tuning.contractsConsole).toBe(true)
+          expect(tuning.maxClients).toBe(NodeConfig.peerCapacity(cluster))
+          expect(tuning.p2pMaxNodesPerHost).toBe(
+            NodeConfig.peerCapacity(cluster)
+          )
+        })
+      })
+    })
+  })
+
+  describe("trace_api plugin gating (SHARED-25 AC#4 / the author's D3 carve-out)", () => {
+    /** The `--plugin` values of an argv (never a stray matching token). */
+    function pluginsOf(args: string[]): string[] {
+      return valuesOf(args, NodeopProcess.PluginFlag)
+    }
+
+    /**
+     * The argv for `role` over a cluster of `deploymentKind`, built through the
+     * PURE builder with the `--trace-no-abis` capability forced ON: the real
+     * probe shells `<nodeop> --help` (here `/bin/true`, which prints nothing),
+     * so a live probe would hide the flag for an unrelated reason.
+     */
+    function argsFor(
+      deploymentKind: ClusterDeploymentKind,
+      role: NodeRole
+    ): string[] {
+      const clusterOfKind = fixtureConfig({
+          clusterPath: dir,
+          dataPath: Path.join(dir, "data"),
+          executables: { ...PersistedFixture.executables, nodeop: "/bin/true" },
+          deploymentKind
+        }),
+        planned = new NodeConfig(
+          clusterOfKind,
+          role,
+          0,
+          `trace-${deploymentKind}-${role}`,
+          // Replayed from the fixture's ALREADY-RESOLVED bind (the sanctioned
+          // carve-out) — nothing binds here, and no port is invented.
+          clusterOfKind.bind.nodeop.ports.producers[0],
+          RoleProducers[role],
+          []
+        )
+      return NodeopProcess.buildArgs(
+        NodeopProcess.resolveConfig(
+          {
+            node: planned,
+            operator: producerOperator("sysio"),
+            postBootstrap: true
+          },
+          {
+            genesisTimestamp: "2026-01-01T00:00:00.000",
+            supportsTraceNoAbis: true
+          }
+        )
+      )
+    }
+
+    // The D3 regression pin: a LOCAL cluster keeps the plugin on EVERY role,
+    // because the harness's WireClient reads traces off producer[0].
+    it.each(Object.values(NodeRole))(
+      "keeps trace_api + --trace-no-abis on a LOCAL %s node",
+      role => {
+        const args = argsFor(ClusterDeploymentKind.local, role)
+        expect(pluginsOf(args)).toContain(Constants.TRACE_API_PLUGIN)
+        expect(args).toContain(NodeopProcess.TraceNoAbisFlag)
+      }
+    )
+
+    it.each([NodeRole.bios, NodeRole.producer])(
+      "drops trace_api AND --trace-no-abis from an EXTERNAL %s node",
+      role => {
+        // The flag belongs to the plugin: nodeop rejects it outright when
+        // trace_api_plugin is not loaded, so the two must move together.
+        const args = argsFor(ClusterDeploymentKind.external, role)
+        expect(pluginsOf(args)).not.toContain(Constants.TRACE_API_PLUGIN)
+        expect(args).not.toContain(NodeopProcess.TraceNoAbisFlag)
+      }
+    )
+
+    it.each([NodeRole.batch_operator, NodeRole.underwriter])(
+      "keeps trace_api + --trace-no-abis on an EXTERNAL %s node (non-public)",
+      role => {
+        const args = argsFor(ClusterDeploymentKind.external, role)
+        expect(pluginsOf(args)).toContain(Constants.TRACE_API_PLUGIN)
+        expect(args).toContain(NodeopProcess.TraceNoAbisFlag)
+      }
+    )
+
+    it.each(Object.values(NodeRole))(
+      "keeps producer_api UNCONDITIONAL on a %s node of either kind",
+      role => {
+        // Only trace_api left the trailing set; producer_api is load-bearing on
+        // bios / producers (the resume endpoint) and role-blind by design.
+        Object.values(ClusterDeploymentKind).forEach(deploymentKind =>
+          expect(pluginsOf(argsFor(deploymentKind, role))).toContain(
+            "sysio::producer_api_plugin"
+          )
+        )
+      }
+    )
+  })
+
+  describe("createNodeopTuningDefaultOptions", () => {
+    /** The phase/role-independent half every arm must carry unchanged. */
+    function unconditionalDefaults() {
+      return {
+        blocksPath: NodeopProcess.DefaultBlocksPath,
+        voteThreads: NodeopProcess.DefaultVoteThreads,
+        p2pMaxNodesPerHost: NodeConfig.peerCapacity(cluster),
+        maxClients: NodeConfig.peerCapacity(cluster),
+        connectionCleanupPeriodSec:
+          NodeopProcess.DefaultConnectionCleanupPeriodSec,
+        databaseMapMode: NodeopProcess.DefaultDatabaseMapMode,
+        contractsConsole: true
+      }
+    }
+
+    it.each(Object.values(NodeRole))(
+      "returns the permissive bootstrap deadlines for a %s node",
+      role => {
+        // The bootstrap arm is role-blind: until a complete bootstrap none of
+        // the SHARED-25 rules apply, on any role.
+        expect(
+          createNodeopTuningDefaultOptions(
+            node(`tuning-bootstrap-${role}`, role, RoleProducers[role]),
+            false
+          )
+        ).toEqual({
+          ...unconditionalDefaults(),
+          maxTransactionTime: NodeopProcess.BootstrapMaxTransactionTime,
+          abiSerializerMaxTimeMs: NodeopProcess.BootstrapAbiSerializerMaxTimeMs,
+          httpMaxResponseTimeMs: NodeopProcess.BootstrapHttpMaxResponseTimeMs
+        })
+      }
+    )
+
+    it.each([NodeRole.batch_operator, NodeRole.underwriter])(
+      "keeps the long serializer/response deadlines for a post-bootstrap %s node",
+      role => {
+        const tuning = createNodeopTuningDefaultOptions(
+          node(`tuning-post-${role}`, role, RoleProducers[role]),
+          true
+        )
+        expect(tuning).toEqual({
+          ...unconditionalDefaults(),
+          abiSerializerMaxTimeMs: NodeopProcess.OperatorAbiSerializerMaxTimeMs,
+          httpMaxResponseTimeMs: NodeopProcess.OperatorHttpMaxResponseTimeMs
+        })
+        // ABSENT, not "some default": the key's absence is what makes
+        // buildArgs omit the flag so nodeop's own default applies.
+        expect("maxTransactionTime" in tuning).toBe(false)
+      }
+    )
+
+    it.each([NodeRole.bios, NodeRole.producer])(
+      "leaves ALL THREE deadlines absent for a post-bootstrap %s node",
+      role => {
+        const tuning = createNodeopTuningDefaultOptions(
+          node(`tuning-post-${role}`, role, RoleProducers[role]),
+          true
+        )
+        expect(tuning).toEqual(unconditionalDefaults())
+        expect("maxTransactionTime" in tuning).toBe(false)
+        expect("abiSerializerMaxTimeMs" in tuning).toBe(false)
+        expect("httpMaxResponseTimeMs" in tuning).toBe(false)
+      }
+    )
+  })
+
+  describe("createRelaunchOptions", () => {
+    it("pins BOTH post-bootstrap relaunch flags for every caller", () => {
+      // `ClusterManager.run` and `NodeopProcessSteps.runRestart` share this ONE
+      // assembly; the two flags are independent (in-bootstrap dirty-chainbase
+      // recovery sets `relaunch` WITHOUT `postBootstrap`), so a call site
+      // spelling them out could silently lose one.
+      const relaunchNode = node("relaunch", NodeRole.producer, ["sysio"]),
+        operator = producerOperator("sysio"),
+        extraArgs = ["--batch-enabled", "true"]
+      expect(
+        NodeopProcess.createRelaunchOptions(relaunchNode, operator, extraArgs)
+      ).toEqual({
+        node: relaunchNode,
+        operator,
+        extraArgs,
+        relaunch: true,
+        postBootstrap: true
+      })
+    })
+
+    it("carries the post-bootstrap deadline arm into the built argv", () => {
+      // The end-to-end consequence: resolving the returned options must drop
+      // --max-transaction-time on a producer, exactly like an explicit
+      // postBootstrap:true would.
+      const args = NodeopProcess.buildArgs(
+        NodeopProcess.resolveConfig(
+          NodeopProcess.createRelaunchOptions(
+            node("relaunch-args", NodeRole.producer, ["sysio"]),
+            producerOperator("sysio"),
+            []
+          ),
+          {
+            genesisTimestamp: "2026-01-01T00:00:00.000",
+            supportsTraceNoAbis: false
+          }
+        )
+      )
+      expect(args).not.toContain(MaxTransactionTimeFlag)
+      expect(valuesOf(args, AbiSerializerMaxTimeFlag)).toEqual([])
+    })
+  })
+
+  describe("database map mode (SHARED-28)", () => {
+    it("is an identity-mapped string enum (value === key)", () => {
+      expect(DatabaseMapMode.mapped).toBe("mapped")
+      expect(DatabaseMapMode.mapped_private).toBe("mapped_private")
+      expect(DatabaseMapMode.heap).toBe("heap")
+      expect(DatabaseMapMode.locked).toBe("locked")
+    })
+
+    it("defaults to mapped_private", () => {
+      expect(NodeopProcess.DefaultDatabaseMapMode).toBe(
+        DatabaseMapMode.mapped_private
+      )
+    })
+
+    // EVERY nodeop node carries the flag, whatever its role — a role-conditional
+    // map mode is precisely the defect this pins. Driven off `NodeRole` so a new
+    // role is covered by construction rather than by remembering to add a case.
+    it.each(Object.values(NodeRole))(
+      "pins mapped_private on a %s node",
+      async role => {
+        const nodeop = await NodeopProcess.create(manager, {
+            node: node(`map-mode-${role}`, role, RoleProducers[role]),
+            operator: producerOperator("sysio")
+          }),
+          flagIndex = nodeop.args.indexOf(DatabaseMapModeFlag)
+        // Index-adjacency, not `arrayContaining`: the flag must be followed by
+        // its value, not merely accompanied by it somewhere in the argv.
+        expect(flagIndex).toBeGreaterThanOrEqual(0)
+        expect(nodeop.args[flagIndex + 1]).toBe(DatabaseMapMode.mapped_private)
+      }
+    )
+
+    // …and on BOTH launch forms. SHARED-28 is phase-blind, so the adjacency
+    // above must hold post-bootstrap too — the phase arm only governs the three
+    // deadlines, and a map mode that fell into it would be silently dropped.
+    it.each([false, true])(
+      "pins mapped_private on BOTH launch forms (postBootstrap=%s)",
+      async postBootstrap => {
+        const nodeop = await NodeopProcess.create(manager, {
+            node: node(
+              `map-mode-phase-${String(postBootstrap)}`,
+              NodeRole.producer,
+              ["sysio"]
+            ),
+            operator: producerOperator("sysio"),
+            postBootstrap
+          }),
+          flagIndex = nodeop.args.indexOf(DatabaseMapModeFlag)
+        expect(flagIndex).toBeGreaterThanOrEqual(0)
+        expect(nodeop.args[flagIndex + 1]).toBe(DatabaseMapMode.mapped_private)
+        expect(valuesOf(nodeop.args, DatabaseMapModeFlag)).toEqual([
+          DatabaseMapMode.mapped_private
+        ])
+      }
+    )
+  })
+
+  describe("chain-state DB size (SHARED-31)", () => {
+    /** The chain-state DB size flag, exactly as `buildArgs` emits it. */
+    const ChainStateDbSizeFlag = "--chain-state-db-size-mb"
+
+    // UNIFORM: every role, both commands, both phases — a role- or
+    // phase-conditional size is precisely the defect this pins. Driven off
+    // `NodeRole` so a new role is covered by construction.
+    it.each(Object.values(NodeRole))(
+      "emits the default 1024 MiB on a %s node",
+      async role => {
+        const nodeop = await NodeopProcess.create(manager, {
+            node: node(`db-size-${role}`, role, RoleProducers[role]),
+            operator: producerOperator("sysio")
+          }),
+          flagIndex = nodeop.args.indexOf(ChainStateDbSizeFlag)
+        // Index-adjacency, not `arrayContaining`: the flag must be followed by
+        // its value, not merely accompanied by it somewhere in the argv.
+        expect(flagIndex).toBeGreaterThanOrEqual(0)
+        expect(nodeop.args[flagIndex + 1]).toBe(
+          String(DefaultChainStateDbSizeMb)
+        )
+        expect(DefaultChainStateDbSizeMb).toBe(1_024)
+      }
+    )
+
+    it.each([false, true])(
+      "emits it on BOTH launch forms (postBootstrap=%s)",
+      async postBootstrap => {
+        const nodeop = await NodeopProcess.create(manager, {
+          node: node(
+            `db-size-phase-${String(postBootstrap)}`,
+            NodeRole.producer,
+            ["sysio"]
+          ),
+          operator: producerOperator("sysio"),
+          postBootstrap
+        })
+        expect(valuesOf(nodeop.args, ChainStateDbSizeFlag)).toEqual([
+          String(DefaultChainStateDbSizeMb)
+        ])
+      }
+    )
+
+    it("takes an overridden CLUSTER value, not a per-instance tuning knob", async () => {
+      // Uniformity is the ticket's point: the value is read off the cluster
+      // config so every node of a cluster carries the same one.
+      const oversized = fixtureConfig({
+          clusterPath: dir,
+          dataPath: Path.join(dir, "data"),
+          executables: { ...PersistedFixture.executables, nodeop: "/bin/true" },
+          chainStateDbSizeMb: 2_048
+        }),
+        nodeop = await NodeopProcess.create(manager, {
+          node: new NodeConfig(
+            oversized,
+            NodeRole.batch_operator,
+            0,
+            "db-size-override",
+            // The fixture's ALREADY-RESOLVED batch pair — a replayed binding,
+            // not a fresh port (the sanctioned carve-out).
+            oversized.bind.nodeop.ports.batch[0],
+            [],
+            []
+          )
+        })
+      expect(valuesOf(nodeop.args, ChainStateDbSizeFlag)).toEqual(["2048"])
+    })
   })
 
   it("derives the loopback peer allowance from the cluster topology", async () => {
     const nodeop = await NodeopProcess.create(manager, {
-      node: node("peered", NodeRole.operator)
+      node: node("peered", NodeRole.batch_operator)
     })
     // 1 producer node + 3 batch ops + 1 underwriter + bios + ad-hoc headroom
     const allowance =
@@ -396,7 +996,7 @@ describe("NodeopProcess", () => {
     // A fixed cap below the mesh size makes each node refuse the surplus
     // inbound dials; the mesh never forms and LIB freezes at scale.
     const nodeop = await NodeopProcess.create(manager, {
-      node: node("meshed", NodeRole.operator)
+      node: node("meshed", NodeRole.batch_operator)
     })
     const allowance =
       1 + 3 + 1 + NodeConfig.BiosNodeCount + NodeConfig.AdHocDaemonPeerHeadroom
@@ -423,7 +1023,7 @@ describe("NodeopProcess", () => {
 
   it("relaunch mode strips the one-shot genesis flags from the instance argv", async () => {
     const nodeop = await NodeopProcess.create(manager, {
-      node: node("relaunched", NodeRole.operator),
+      node: node("relaunched", NodeRole.batch_operator),
       relaunch: true
     })
     expect(nodeop.args).not.toContain("--genesis-json")
@@ -526,7 +1126,7 @@ describe("NodeopProcess", () => {
     function dirtyNode(name: string): NodeConfig {
       return new NodeConfig(
         dirtyCluster,
-        NodeRole.operator,
+        NodeRole.batch_operator,
         0,
         name,
         { http: 18888, p2p: 19876 },
@@ -576,7 +1176,7 @@ describe("NodeopProcess", () => {
     it("startWithRecovery rethrows a non-dirty failure without retrying or touching the fsi", async () => {
       // The outer fixture's nodeop is /bin/true: it exits cleanly with no
       // output — a startup failure that is NOT the dirty-chainbase abort.
-      const cleanNode = node("clean-dies", NodeRole.operator)
+      const cleanNode = node("clean-dies", NodeRole.batch_operator)
       const safetyFile = NodeopProcess.finalizerSafetyFile(cleanNode.nodePath)
       Fs.mkdirSync(Path.dirname(safetyFile), { recursive: true })
       Fs.writeFileSync(safetyFile, "keep-me")

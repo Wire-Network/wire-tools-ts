@@ -6,6 +6,15 @@
 export namespace ClusterFiles {
   /** Resolved cluster config written by `wire-cluster-tool create`. */
   export const ConfigFilename = "cluster-config.json" as const
+  /**
+   * A nodeop instance's own `config.ini` — the file nodeop reads via
+   * `--config-dir`. Written per node into `<cluster>/data/<node>/` by `create`,
+   * re-rendered by `create-external-config`'s Rebind, and emitted standalone by
+   * `create-api-node` into its `--output-path`.
+   *
+   * Distinct from {@link ConfigFilename}, which is the CLUSTER's JSON config.
+   */
+  export const NodeConfigFilename = "config.ini" as const
   /** Serialized cluster state written after bootstrap. */
   export const StateFilename = "cluster-state.json" as const
   /**

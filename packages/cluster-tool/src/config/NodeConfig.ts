@@ -1,10 +1,11 @@
-import type {
-  BindConfigNodeopPorts,
-  ClusterConfig
+import {
+  ClusterDeploymentKind,
+  type BindConfigNodeopPorts,
+  type ClusterConfig
 } from "@wireio/cluster-tool-shared"
 import { asOption } from "@3fv/prelude-ts"
 import { range } from "lodash"
-import { match } from "ts-pattern"
+import { match, P } from "ts-pattern"
 import { Constants } from "../Constants.js"
 import type { Renderer } from "../utils/Renderer.js"
 import { toDialAddress } from "../utils/netUtils.js"
@@ -13,13 +14,15 @@ import { NodeConfigIniRenderer } from "./renderers/NodeConfigIniRenderer.js"
 import { NodeConfigLoggingRenderer } from "./renderers/NodeConfigLoggingRenderer.js"
 
 /**
- * The role a `nodeop` instance plays. Identity-mapped string enum so `match`
- * patterns and JSON round-trips are clean.
+ * A planned node's role — explicit operator kinds per the author's directive.
+ * Identity-mapped string enum so `match` patterns and JSON round-trips are
+ * clean.
  */
 export enum NodeRole {
   bios = "bios",
   producer = "producer",
-  operator = "operator"
+  batch_operator = "batch_operator",
+  underwriter = "underwriter"
 }
 
 /** Index width used when padding a node index into its `node_NN` name. */
@@ -156,7 +159,7 @@ export class NodeConfig {
     let opIndex = producerNodeCount
     nodeopPorts.batch.forEach((ports, k) =>
       descriptors.push({
-        role: NodeRole.operator,
+        role: NodeRole.batch_operator,
         index: opIndex++,
         name: nodeName(opIndex - 1),
         ports,
@@ -167,7 +170,7 @@ export class NodeConfig {
     )
     nodeopPorts.underwriters.forEach((ports, k) =>
       descriptors.push({
-        role: NodeRole.operator,
+        role: NodeRole.underwriter,
         index: opIndex++,
         name: nodeName(opIndex - 1),
         ports,
@@ -181,7 +184,7 @@ export class NodeConfig {
     // nodes attach to it at a single point instead of joining it — see
     // `peersFor`.
     const meshDescriptors = descriptors.filter(
-        node => node.role !== NodeRole.operator
+        node => !NodeConfig.isOperatorRole(node.role)
       ),
       // Operators' single attachment point. Falls back to the bios node when a
       // cluster has no producer nodes at all, so an operator is never peerless.
@@ -214,7 +217,7 @@ export class NodeConfig {
  * off it, never one flat mesh of everything.
  *
  * - **bios / producer** → every other mesh member (the block-producing set).
- * - **operator** → exactly ONE producer (`operatorUplink`).
+ * - **batch operator / underwriter** → exactly ONE producer (`operatorUplink`).
  *
  * Operators are excluded from the mesh because p2p flooding is O(N²) in mesh
  * size, and operator nodes produce nothing — they only need a view of the chain
@@ -238,13 +241,53 @@ function peersFor(
   operatorUplink: NodeDescriptor
 ): NodeDescriptor[] {
   return match(node.role)
-    .with(NodeRole.operator, () =>
+    .with(P.when(NodeConfig.isOperatorRole), () =>
       operatorUplink != null ? [operatorUplink] : []
     )
     .otherwise(() => meshDescriptors.filter(other => other.name !== node.name))
 }
 
 export namespace NodeConfig {
+  /** The operator-kind roles (batch + underwriter) — the ONE derived "any
+   *  operator" set. */
+  export const OperatorRoles: ReadonlyArray<NodeRole> = [
+    NodeRole.batch_operator,
+    NodeRole.underwriter
+  ]
+
+  /**
+   * Whether `role` is an operator kind — the single predicate every "is this an
+   * operator node?" site reads, so the set lives in exactly one place.
+   *
+   * @param role - The planned node's role.
+   * @returns `true` for a batch-operator or underwriter node.
+   */
+  export function isOperatorRole(role: NodeConfig["role"]): boolean {
+    return NodeConfig.OperatorRoles.includes(role)
+  }
+
+  /**
+   * Whether this node's rendered nodeop config loads
+   * `sysio::trace_api_plugin` — the ONE predicate the ini renderer, the argv
+   * builder, and the `--trace-no-abis` probe all read, so the three surfaces
+   * cannot disagree about whether the plugin is loaded.
+   *
+   * SHARED-25 AC#4 with the author's explicit D3 carve-out: LOCAL clusters keep
+   * it on EVERY role (the harness's `WireClient` reads traces off `producer[0]`,
+   * so dropping it there breaks every flow); the production-shaped
+   * `create-external-config` tree drops it from bios / producer-role nodes;
+   * operator nodes are non-public and retain it everywhere.
+   *
+   * @param node - The planned node (its `cluster` carries the deployment kind).
+   * @returns `true` when the node loads the trace-api plugin.
+   */
+  export function runsTraceApiPlugin(node: NodeConfig): boolean {
+    return (
+      NodeConfig.isOperatorRole(node.role) ||
+      node.cluster.deploymentKind !== ClusterDeploymentKind.external
+    )
+  }
+
   /** Bios node index (matches the Python launcher). */
   export const BiosIndex = -100
   /** Bios node name. */

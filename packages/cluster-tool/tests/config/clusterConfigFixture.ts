@@ -1,4 +1,6 @@
 import {
+  ClusterDeploymentKind,
+  DefaultChainStateDbSizeMb,
   SignatureProviderType,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
@@ -107,7 +109,9 @@ export const PersistedFixture: ClusterConfig = {
   awsClusterNodeConfig: null,
   externalOutposts: null,
   debuggingServerEnabled: true,
-  enableMockReserves: false
+  enableMockReserves: false,
+  deploymentKind: ClusterDeploymentKind.local,
+  chainStateDbSizeMb: DefaultChainStateDbSizeMb
 }
 
 /** Build a `ClusterConfig` from the fixture (via deserialize — no resolve / env).
