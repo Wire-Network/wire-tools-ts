@@ -11,6 +11,7 @@ import {
   SolanaCollateralTool,
   SolanaOutpostBootstrapper,
   SolanaOutpostProgramTool,
+  Steps,
   WireOperatorProvisioningTool,
   getLogger,
   matchesProtoEnum,
@@ -82,14 +83,15 @@ async function readDoomedOperatorRow(
   return rows.find(row => row.account === account)
 }
 
-/** The sliding-window schedule groups from the `sysio.epoch::epochstate` singleton (a read). */
+/**
+ * The sliding-window schedule groups from the `sysio.epoch::epochstate`
+ * singleton (a read) — the WHOLE window, not just the active group: this
+ * scenario asserts the doomed operator rides into ANY upcoming group.
+ */
 async function readScheduleGroups(
   ctx: ClusterBuildContext
 ): Promise<string[][]> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.epoch)
-    .tables.epochstate.query({ limit: Constants.EpochStateQueryLimit })
-  return rows[0]?.batch_op_groups ?? []
+  return Steps.contracts.sysio.epoch.batchOperatorGroups(ctx)
 }
 
 /**
