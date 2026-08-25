@@ -970,7 +970,10 @@ export namespace ClusterBuildDefaults {
     // scenarios that need a real restart.
 
     // ── first epoch ──
-    ClusterBuildPhase.create<C>(
+    // Step ORDER is load-bearing: the roster seed reads the schedule
+    // `schbatchgps` just materialized, and must land before `msgch::bootstrap`
+    // delivers the first envelope.
+    const epochBootstrap = ClusterBuildPhase.create<C>(
       postContractDeployment,
       "EpochBootstrap",
       "Schedule groups + bootstrap epoch 0 → 1"
@@ -980,7 +983,23 @@ export namespace ClusterBuildDefaults {
         "schedule-batch-groups",
         "build the initial batch-operator schedule",
         {}
-      ),
+      )
+    )
+    // SOL-376: seed the LOCAL Solana outpost's operator registry with the
+    // depot's epoch-1 batch-operator group (just materialized by schbatchgps)
+    // BEFORE the first envelope is delivered — `epoch_in` refuses to finalize
+    // until `opp_bootstrap` runs. External outposts are seeded by their own
+    // operators, out of band.
+    if (!isExternalOutpost)
+      epochBootstrap.push(
+        Steps.solanaOutpost.planOppBootstrap<C>(
+          Actor.SolanaOutpost,
+          "seed-solana-roster",
+          "seed the Solana outpost operator registry (opp_bootstrap)",
+          {}
+        )
+      )
+    epochBootstrap.push(
       Steps.contracts.sysio.msgch.planBootstrap<C>(
         Actor.Sysio,
         "bootstrap-epoch",
