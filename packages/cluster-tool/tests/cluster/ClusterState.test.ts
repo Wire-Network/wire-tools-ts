@@ -15,11 +15,22 @@ import { ClusterState } from "@wireio/cluster-tool"
 import { NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
 import { ClusterKeyStore } from "@wireio/cluster-tool/orchestration/outputs"
 import { fixtureContext } from "../config/clusterBuildContextFixture.js"
+import { fixtureOperatorAccount } from "../orchestration/outputs/operatorAccountFixture.js"
 
 /** A fully-keyed batch-operator handle — carries wire + ethereum + solana keys. */
 const BatchOperatorLabel = "batchopaaaa"
 /** The node-owner-generated chain account the sponsored-creation step adopts. */
 const BatchOperatorAccount = "wireno.x3f9k"
+/**
+ * The ONE batch-operator identity every case here seeds and asserts against —
+ * a single instance, so its derived EM/ED keys stay stable across the capture /
+ * save / load / rehydrate round-trips this suite compares.
+ */
+const BatchOperator = fixtureOperatorAccount(
+  BatchOperatorLabel,
+  OperatorType.BATCH,
+  BatchOperatorAccount
+)
 
 describe("ClusterState", () => {
   let dir: string
@@ -57,28 +68,7 @@ describe("ClusterState", () => {
         }
       }
     })
-    ctx.keyStore.setOperator({
-      label: BatchOperatorLabel,
-      publicationLabel: BatchOperatorLabel,
-      account: BatchOperatorAccount,
-      type: OperatorType.BATCH,
-      wire: {
-        type: KeyType.K1,
-        publicKey: `PUB_K1_${BatchOperatorLabel}`,
-        privateKey: `PVT_K1_${BatchOperatorLabel}`
-      },
-      ethereum: {
-        type: KeyType.EM,
-        publicKey: `PUB_EM_${BatchOperatorLabel}`,
-        privateKey: `PVT_EM_${BatchOperatorLabel}`,
-        address: "0xabc0000000000000000000000000000000000a"
-      },
-      solana: {
-        type: KeyType.ED,
-        publicKey: `PUB_ED_${BatchOperatorLabel}`,
-        privateKey: `PVT_ED_${BatchOperatorLabel}`
-      }
-    })
+    ctx.keyStore.setOperator(BatchOperator)
     return ctx
   }
 
@@ -182,10 +172,8 @@ describe("ClusterState", () => {
       )
       // The persisted record keeps BOTH identities distinct.
       expect(operator?.account).toBe(BatchOperatorAccount)
-      expect(operator?.ethereum?.address).toBe(
-        "0xabc0000000000000000000000000000000000a"
-      )
-      expect(operator?.solana?.publicKey).toBe(`PUB_ED_${BatchOperatorLabel}`)
+      expect(operator?.ethereum?.address).toBe(BatchOperator.ethereum.address)
+      expect(operator?.solana?.publicKey).toBe(BatchOperator.solana.publicKey)
       expect(operator?.wire.privateKey).toBe(`PVT_K1_${BatchOperatorLabel}`)
     })
 
@@ -313,9 +301,7 @@ describe("ClusterState", () => {
       // ExternalClusterConfigSteps.keyProviderFor + the genesis finalizer key
       // read these regardless of who holds the secret.
       expect(keys.nodes[0].wireFinalizer.proofOfPossession).toBe("SIG_BLS_node0")
-      expect(operator?.ethereum?.address).toBe(
-        "0xabc0000000000000000000000000000000000a"
-      )
+      expect(operator?.ethereum?.address).toBe(BatchOperator.ethereum.address)
       expect(keys.nodes[0].wire.publicKey).toBe("PUB_K1_node0")
     })
 
@@ -383,10 +369,8 @@ describe("ClusterState", () => {
       expect(store.operator(BatchOperatorAccount)).toBeUndefined()
       const operator = store.assertOperator(BatchOperatorLabel)
       expect(operator.account).toBe(BatchOperatorAccount)
-      expect(operator.ethereum?.address).toBe(
-        "0xabc0000000000000000000000000000000000a"
-      )
-      expect(operator.solana?.publicKey).toBe(`PUB_ED_${BatchOperatorLabel}`)
+      expect(operator.ethereum?.address).toBe(BatchOperator.ethereum.address)
+      expect(operator.solana?.publicKey).toBe(BatchOperator.solana.publicKey)
     })
   })
 })

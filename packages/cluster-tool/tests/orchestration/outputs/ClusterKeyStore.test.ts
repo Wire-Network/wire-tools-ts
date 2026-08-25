@@ -1,9 +1,7 @@
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
-import {
-  ClusterKeyStore,
-  type OperatorAccount
-} from "@wireio/cluster-tool/orchestration/outputs"
+import { ClusterKeyStore } from "@wireio/cluster-tool/orchestration/outputs"
+import { fixtureOperatorAccount } from "./operatorAccountFixture.js"
 
 function nodeKeys(index: number): ClusterKeyStore.NodeKeys {
   return {
@@ -20,16 +18,6 @@ function nodeKeys(index: number): ClusterKeyStore.NodeKeys {
   }
 }
 
-function operatorAccount(label: string, type: OperatorType): OperatorAccount {
-  return {
-    label,
-    publicationLabel: label,
-    account: `wireno.${label}`,
-    type,
-    wire: { type: KeyType.K1, publicKey: `PUB_K1_${label}`, privateKey: `PVT_K1_${label}` }
-  }
-}
-
 describe("ClusterKeyStore", () => {
   it("accumulates node key sets and resolves them by index", () => {
     const store = new ClusterKeyStore().pushNodes(nodeKeys(0), nodeKeys(1))
@@ -41,8 +29,8 @@ describe("ClusterKeyStore", () => {
   it("accumulates operator accounts as they are provisioned (set/get/require)", () => {
     const store = new ClusterKeyStore()
     expect(() => store.assertOperator("batchopaaaa")).toThrow(/has not been provisioned/)
-    store.setOperator(operatorAccount("batchopaaaa", OperatorType.BATCH))
-    store.setOperator(operatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER))
+    store.setOperator(fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH))
+    store.setOperator(fixtureOperatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER))
     expect(store.assertOperator("batchopaaaa").type).toBe(OperatorType.BATCH)
     expect(store.operator("uwritaaaaaa").label).toBe("uwritaaaaaa")
     expect(store.operators.length).toBe(2)
@@ -50,17 +38,17 @@ describe("ClusterKeyStore", () => {
 
   it("replaces an operator re-set under the same label (single source of truth)", () => {
     const store = new ClusterKeyStore()
-      .setOperator(operatorAccount("depositoraaa", OperatorType.BATCH))
-      .setOperator(operatorAccount("depositoraaa", OperatorType.UNDERWRITER))
+      .setOperator(fixtureOperatorAccount("depositoraaa", OperatorType.BATCH))
+      .setOperator(fixtureOperatorAccount("depositoraaa", OperatorType.UNDERWRITER))
     expect(store.operators.length).toBe(1)
     expect(store.assertOperator("depositoraaa").type).toBe(OperatorType.UNDERWRITER)
   })
 
   it("filters operators by type (producers vs OPP operators)", () => {
     const store = new ClusterKeyStore()
-      .setOperator(operatorAccount("defproducera", OperatorType.PRODUCER))
-      .setOperator(operatorAccount("defproducerb", OperatorType.PRODUCER))
-      .setOperator(operatorAccount("batchopaaaa", OperatorType.BATCH))
+      .setOperator(fixtureOperatorAccount("defproducera", OperatorType.PRODUCER))
+      .setOperator(fixtureOperatorAccount("defproducerb", OperatorType.PRODUCER))
+      .setOperator(fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH))
     expect(store.operatorsByType(OperatorType.PRODUCER).map(op => op.label)).toEqual([
       "defproducera",
       "defproducerb"
@@ -95,9 +83,9 @@ describe("ClusterKeyStore account-handle keying", () => {
 
   it("setOperator with the same handle REPLACES the entry (sponsored-creation account write-back)", () => {
     const store = new ClusterKeyStore()
-      .setOperator(operatorAccount("batchop.a", OperatorType.BATCH))
+      .setOperator(fixtureOperatorAccount("batchop.a", OperatorType.BATCH))
       .setOperator({
-        ...operatorAccount("batchop.a", OperatorType.BATCH),
+        ...fixtureOperatorAccount("batchop.a", OperatorType.BATCH),
         account: "wireno.q8m2c"
       })
     expect(store.operators.length).toBe(1)
@@ -108,9 +96,9 @@ describe("ClusterKeyStore account-handle keying", () => {
 
   it("operatorsByType sorts by the durable handle regardless of insertion order", () => {
     const store = new ClusterKeyStore()
-      .setOperator(operatorAccount("batchop.c", OperatorType.BATCH))
-      .setOperator(operatorAccount("batchop.a", OperatorType.BATCH))
-      .setOperator(operatorAccount("batchop.b", OperatorType.BATCH))
+      .setOperator(fixtureOperatorAccount("batchop.c", OperatorType.BATCH))
+      .setOperator(fixtureOperatorAccount("batchop.a", OperatorType.BATCH))
+      .setOperator(fixtureOperatorAccount("batchop.b", OperatorType.BATCH))
     expect(store.operatorsByType(OperatorType.BATCH).map(op => op.label)).toEqual([
       "batchop.a",
       "batchop.b",

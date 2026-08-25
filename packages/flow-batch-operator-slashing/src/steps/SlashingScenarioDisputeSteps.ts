@@ -15,6 +15,7 @@ import {
   pushNewNamedUser,
   pushNodeOwnerReg,
   Report,
+  Steps,
   type ClusterBuildStepOptions,
   type StepInput
 } from "@wireio/cluster-tool"
@@ -124,8 +125,7 @@ export namespace SlashingScenarioDisputeSteps {
   export async function readEpochState(
     ctx: ClusterBuildContext
   ): Promise<SysioContracts.SysioEpochEpochStateType> {
-    const { rows } = await ctx.wire.getEpochState()
-    return rows[0]
+    return Steps.contracts.sysio.epoch.readEpochState(ctx)
   }
 
   /**
@@ -156,13 +156,13 @@ export namespace SlashingScenarioDisputeSteps {
    * Whether the ACTIVE batch-operator group is exactly the dispute operators.
    *
    * @param ctx - The build context.
-   * @returns `true` when `batch_op_groups[0]` matches {@link SlashingScenarioConstants.DisputeOperators}.
+   * @returns `true` when the ACTIVE group matches {@link SlashingScenarioConstants.DisputeOperators}.
    */
   export async function disputeOperatorsOwnGroup(
     ctx: ClusterBuildContext
   ): Promise<boolean> {
-    const state = await readEpochState(ctx),
-      active = state?.batch_op_groups?.[0] ?? [],
+    const active =
+        (await Steps.contracts.sysio.epoch.activeBatchOperatorGroup(ctx)) ?? [],
       accounts = Constants.DisputeOperators.map(
         label => ctx.keyStore.assertOperator(label).account
       )

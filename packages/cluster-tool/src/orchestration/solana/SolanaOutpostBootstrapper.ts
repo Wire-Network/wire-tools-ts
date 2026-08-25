@@ -10,6 +10,7 @@ import {
 } from "@solana/web3.js"
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token"
 import { SlugName } from "@wireio/sdk-core"
+import { OperatorStatus, OperatorType } from "@wireio/opp-typescript-models"
 import { mapSeries } from "../../utils/asyncUtils.js"
 import { SolanaClient } from "../../clients/solana/SolanaClient.js"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
@@ -32,12 +33,6 @@ export interface SolanaOutpostBootstrapperOptions {
   /** Deployer keypair file (default: `~/.config/solana/id.json`). */
   deployerKeypairFile?: string
   /**
-   * OPP outpost program keypair file (default:
-   * `<solanaPath>/.keys/liqsol_core-keypair.json` — the outpost interface is
-   * hosted in the `liqsol_core` program since the clean-room rewrite).
-   */
-  programKeypairFile?: string
-  /**
    * Directory under which mock-SPL-mint metadata (`sol-mock-mints.json`) +
    * the deployer keypair are persisted for downstream token registration.
    * When `null`, SPL provisioning is skipped (native SOL still works).
@@ -50,7 +45,6 @@ export interface SolanaOutpostBootstrapperConfig {
   solanaPath: string
   rpcUrl: string
   deployerKeypairFile: string
-  programKeypairFile: string
   clusterDataPath: string | null
 }
 
@@ -89,9 +83,6 @@ export class SolanaOutpostBootstrapper {
         (options.clusterDataPath != null
           ? SolanaFundingTool.deployerKeypairFile(options.clusterDataPath)
           : SolanaOutpostBootstrapper.defaultDeployerKeypairFile()),
-      programKeypairFile:
-        options.programKeypairFile ??
-        SolanaOutpostProgramTool.programKeypairFile(options.solanaPath),
       clusterDataPath: options.clusterDataPath ?? null
     }
     this.connection = new Connection(
@@ -140,13 +131,10 @@ export class SolanaOutpostBootstrapper {
   async bootstrap(): Promise<void> {
     log.info("=== Solana outpost bootstrap ===")
 
-    if (Fs.existsSync(this.config.programKeypairFile)) {
-      const keypairData = JSON.parse(
-        Fs.readFileSync(this.config.programKeypairFile, "utf8")
-      )
-      this.programId = Keypair.fromSecretKey(
-        Uint8Array.from(keypairData)
-      ).publicKey
+    const { solanaPath } = this.config,
+      programKeypairFile = SolanaOutpostProgramTool.programKeypairFile(solanaPath)
+    this.programId = SolanaOutpostProgramTool.programId(solanaPath)
+    if (this.programId != null) {
       log.info(
         `${SolanaOutpostProgramTool.ProgramName} (OPP outpost) program id: ${this.programId.toBase58()}`
       )
@@ -155,11 +143,11 @@ export class SolanaOutpostBootstrapper {
       StepExtraRecorder.record({
         client: "harness",
         kind: "artifact",
-        file: this.config.programKeypairFile,
+        file: programKeypairFile,
         programId: this.programId.toBase58()
       })
     } else {
-      log.warn(`program keypair not found at ${this.config.programKeypairFile}`)
+      log.warn(`program keypair not found at ${programKeypairFile}`)
     }
 
     if (this.programId != null) {
@@ -296,13 +284,10 @@ export class SolanaOutpostBootstrapper {
       return
     }
 
-    const provider = new anchor.AnchorProvider(
-      this.connection,
-      new anchor.Wallet(deployer),
-      {
-        commitment: SolanaClient.DefaultCommitment
-      }
-    )
+    // The ONE existence check on this path: a missing IDL is not fatal HERE —
+    // the PDAs are simply left uninitialized (a program that was never built
+    // has nothing to initialize against). Every other caller takes the
+    // throwing contract of `SolanaOutpostProgramTool.loadProgram`.
     const idlFile = SolanaOutpostProgramTool.programIdlFile(
       this.config.solanaPath
     )
@@ -310,8 +295,7 @@ export class SolanaOutpostBootstrapper {
       log.warn(`IDL not found at ${idlFile} — skipping PDA initialization`)
       return
     }
-    const idl = JSON.parse(Fs.readFileSync(idlFile, "utf8"))
-    const program = new anchor.Program(idl, provider)
+    const program = this.loadProgram(deployer)
 
     // The OPP admin ops are gated by the liqsol `global_config`
     // (`has_one = admin`), which must be initialized once before the outpost.
@@ -708,6 +692,92 @@ export class SolanaOutpostBootstrapper {
     )
     await confirmSignature(this.connection, signature, label)
   }
+
+  /** The OPP outpost Anchor `Program` bound to `deployer` on this bootstrapper's connection. */
+  private loadProgram(deployer: Keypair): anchor.Program<anchor.Idl> {
+    return SolanaOutpostProgramTool.loadProgram(
+      this.connection,
+      deployer,
+      this.config.solanaPath
+    )
+  }
+
+  /**
+   * Seed the SOL outpost's first operator roster + signable group via
+   * `opp_bootstrap` (SOL-376). The outpost starts with `registry_initialized =
+   * false` and `epoch_in` refuses to finalize until this runs, so it must
+   * happen AFTER the depot materializes its epoch-1 batch-operator group and
+   * BEFORE the depot delivers its first envelope. The seed is transient — the
+   * depot's first `BatchOperatorGroups` attestation overwrites it under
+   * consensus.
+   *
+   * @param seed - the epoch-1 group's roster + its SOL pubkeys. Both halves are
+   *   GROUP-bounded and must stay paired: the roster is exactly the group's
+   *   operators (the program needs one signable group, and Anchor borsh-encodes
+   *   the instruction into a fixed
+   *   {@link SolanaOutpostBootstrapper.AnchorInstructionBufferBytes}-byte buffer
+   *   a larger seed overruns), and the group's SIZE drives the outpost's
+   *   consensus threshold (`consensus_reached_now`), so seeding more than the
+   *   delivering set would stall epoch 1.
+   * @param epochDurationSec - the depot's epoch duration (must be positive).
+   */
+  async oppBootstrap(
+    seed: SolanaOutpostBootstrapper.OppBootstrapSeed,
+    epochDurationSec: number
+  ): Promise<void> {
+    const { operators, groupMembers } = seed
+    Assert.ok(operators.length > 0, "oppBootstrap: at least one operator is required")
+    Assert.ok(groupMembers.length > 0, "oppBootstrap: at least one group member is required")
+    Assert.ok(epochDurationSec > 0, "oppBootstrap: epochDurationSec must be positive")
+    Assert.ok(
+      SolanaOutpostBootstrapper.oppBootstrapEncodedBytes(
+        operators.length,
+        groupMembers.length
+      ) <= SolanaOutpostBootstrapper.AnchorInstructionBufferBytes,
+      `oppBootstrap: a group of ${groupMembers.length} exceeds the ` +
+        `${SolanaOutpostBootstrapper.MaxOppBootstrapGroupMembers}-member limit — Anchor encodes ` +
+        `the instruction into a fixed ${SolanaOutpostBootstrapper.AnchorInstructionBufferBytes}-byte ` +
+        `buffer and the roster and group BOTH scale with the group size`
+    )
+
+    const { solanaPath } = this.config,
+      programId = SolanaOutpostProgramTool.assertProgramId(solanaPath),
+      idlFile = SolanaOutpostProgramTool.programIdlFile(solanaPath)
+    this.programId = programId
+
+    const deployer = this.loadOrGenerateDeployer()
+    const program = this.loadProgram(deployer)
+    // The IDL predates SOL-376 when `opp_bootstrap` is absent; without this the
+    // call dies as a bare `program.methods.oppBootstrap is not a function`.
+    Assert.ok(
+      typeof program.methods.oppBootstrap === "function",
+      `oppBootstrap: the ${SolanaOutpostProgramTool.ProgramName} IDL at ${idlFile} has no ` +
+        `opp_bootstrap instruction — rebuild wire-solana at SOL-376 or newer ` +
+        `${SolanaOutpostProgramTool.BuildRemediationHint}`
+    )
+    // `opp_bootstrap` is `has_one = admin`-gated on the same liqsol
+    // `global_config` every OPP admin op uses — idempotent when already set.
+    await this.ensureGlobalConfig(deployer, program)
+
+    const Seed = SolanaOutpostBootstrapper.PdaSeed,
+      configPda = this.deriveProgramAddress(programId, Seed.OutpostConfig),
+      operatorRegistryPda = this.deriveProgramAddress(programId, Seed.OperatorRegistry)
+
+    log.info(
+      `opp_bootstrap: seeding ${operators.length} operator(s), group of ${groupMembers.length}, epoch_duration=${epochDurationSec}s`
+    )
+    const transaction = await program.methods
+      .oppBootstrap(operators, groupMembers, epochDurationSec)
+      .accounts({
+        ...this.getAdminAccounts(deployer),
+        config: configPda,
+        operatorRegistry: operatorRegistryPda
+      })
+      .signers([deployer])
+      .transaction()
+    await this.runSimpleAuthorityInstruction(deployer, transaction, "opp_bootstrap")
+    log.info("opp_bootstrap: SOL outpost roster seeded — registry_initialized")
+  }
 }
 
 export namespace SolanaOutpostBootstrapper {
@@ -781,6 +851,95 @@ export namespace SolanaOutpostBootstrapper {
     admin: PublicKey
     /** The gating `global_config` PDA (`has_one = admin`). */
     globalConfig: PublicKey
+  }
+
+  /**
+   * One genesis operator seeded into the SOL outpost registry via
+   * {@link SolanaOutpostBootstrapper.oppBootstrap} (SOL-376). Mirrors the
+   * program's `BootstrapOperator` struct (`wire_name`/`sol_address`/`role`/
+   * `status`).
+   */
+  export interface BootstrapOperator {
+    /** Antelope-encoded WIRE account name (`u64`, via `Name.value`). */
+    wireName: anchor.BN
+    /** The operator's Solana native pubkey. */
+    solAddress: PublicKey
+    /** Operator role — the proto `OperatorType` numeric value. */
+    role: OperatorType
+    /** Operator status — must be `OperatorStatus.ACTIVE` for a group member. */
+    status: OperatorStatus
+  }
+
+  /**
+   * The `opp_bootstrap` seed passed to
+   * {@link SolanaOutpostBootstrapper.oppBootstrap}: the epoch-1 group's
+   * operators and their SOL pubkeys. The two halves are the SAME set — see
+   * {@link operators} for why the roster stays group-bounded.
+   */
+  export interface OppBootstrapSeed {
+    /**
+     * The epoch-1 group's operators — the minimal signable seed roster,
+     * deliberately NOT every provisioned batch operator: the program only needs
+     * one signable group (the depot's first envelope installs the authoritative
+     * roster under consensus), and the whole payload must fit
+     * {@link AnchorInstructionBufferBytes}.
+     */
+    operators: BootstrapOperator[]
+    /** The SOL pubkeys of exactly the depot's epoch-1 batch-operator group. */
+    groupMembers: PublicKey[]
+  }
+
+  /**
+   * Anchor 0.31's fixed borsh instruction-encode buffer (`Buffer.alloc(1000)` in
+   * its `BorshInstructionCoder`). Raising it is not ours to do — it is the
+   * dependency's constant; the seed is sized to fit it.
+   */
+  export const AnchorInstructionBufferBytes = 1_000
+  /** Borsh size of one {@link BootstrapOperator} roster entry (u64 + 32-byte pubkey + two u32). */
+  export const OppBootstrapRosterEntryBytes = 48
+  /** Borsh size of one group-member `Pubkey`. */
+  export const OppBootstrapGroupMemberBytes = 32
+  /**
+   * Fixed `opp_bootstrap` payload overhead INSIDE the encode buffer: the two
+   * 4-byte vec lengths and the 4-byte epoch duration. The 8-byte instruction
+   * discriminator is deliberately NOT counted — Anchor concatenates it AFTER
+   * slicing the buffer (`Buffer.concat([discriminator, data])`), so it never
+   * occupies the 1000 bytes this budget is measured against.
+   */
+  export const OppBootstrapFixedPayloadBytes = 12
+  /**
+   * Largest group `opp_bootstrap` can encode. Because the roster IS the group
+   * ({@link OppBootstrapSeed}), every member costs a roster entry AND a pubkey,
+   * so the buffer caps the GROUP size — never the cluster topology.
+   *
+   * NOTE: this is the ENCODE-buffer ceiling, not the tightest one. A legacy
+   * transaction packet is capped at 1232 bytes, and this instruction ships with
+   * ~270 bytes of envelope, which bounds the group at 11. That never bites
+   * today because {@link BatchOperatorSchedule} rejects an even group size, so
+   * the reachable sizes straddling both limits are 11 (fits) and 13 (rejected
+   * here). Re-derive both if odd-only group sizing is ever relaxed.
+   */
+  export const MaxOppBootstrapGroupMembers = Math.floor(
+    (AnchorInstructionBufferBytes - OppBootstrapFixedPayloadBytes) /
+      (OppBootstrapRosterEntryBytes + OppBootstrapGroupMemberBytes)
+  )
+
+  /**
+   * Borsh-encoded size of an `opp_bootstrap` instruction payload.
+   *
+   * @param operatorCount - roster length.
+   * @param groupMemberCount - group length.
+   * @returns The encoded byte count, to compare against {@link AnchorInstructionBufferBytes}.
+   */
+  export function oppBootstrapEncodedBytes(
+    operatorCount: number,
+    groupMemberCount: number
+  ): number {
+    return (
+      OppBootstrapFixedPayloadBytes +
+      OppBootstrapRosterEntryBytes * operatorCount +
+      OppBootstrapGroupMemberBytes * groupMemberCount
+    )
   }
 
   /**

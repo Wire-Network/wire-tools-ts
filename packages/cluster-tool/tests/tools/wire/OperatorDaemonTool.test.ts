@@ -34,6 +34,7 @@ import {
 } from "@wireio/cluster-tool/utils"
 import { AnvilProcess } from "@wireio/cluster-tool/cluster/processes"
 import type { ExternalOutpostConfig } from "@wireio/cluster-tool-shared"
+import { fixtureOperatorAccount } from "../../orchestration/outputs/operatorAccountFixture.js"
 
 /** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
 const AnvilMnemonic = "test test test test test test test test test test test junk"
@@ -250,7 +251,7 @@ describe("OperatorDaemonTool", () => {
       // The context's processManager getter requires the singleton's cluster
       // path to be set (idempotent for the same value).
       ProcessManager.setClusterPath(ctx.config.clusterPath)
-      const operator = operatorAccount("batchopbbbb", OperatorType.BATCH)
+      const operator = fixtureOperatorAccount("batchopbbbb", OperatorType.BATCH)
       ctx.keyStore.setOperator(operator)
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifacts)
       const recoverySpy = jest
@@ -316,7 +317,7 @@ describe("OperatorDaemonTool", () => {
   })
 
   describe("batchOperatorArgs", () => {
-    const operator = operatorAccount("batchopaaaa", OperatorType.BATCH)
+    const operator = fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH)
     const args = OperatorDaemonTool.batchOperatorArgs(operator, artifacts, network, keySourceFor)
 
     it("loads the batch plugin set at irreversible read-mode", () => {
@@ -401,7 +402,7 @@ describe("OperatorDaemonTool", () => {
     it("rejects a non-batch operator", () => {
       expect(() =>
         OperatorDaemonTool.batchOperatorArgs(
-          operatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER),
+          fixtureOperatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER),
           artifacts,
           network,
           keySourceFor
@@ -445,7 +446,7 @@ describe("OperatorDaemonTool", () => {
   })
 
   describe("underwriterArgs", () => {
-    const operator = operatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER)
+    const operator = fixtureOperatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER)
     const args = OperatorDaemonTool.underwriterArgs(operator, artifacts, network, keySourceFor)
 
     it("passes the SCALED action timeout (flow timing scale reaches the daemon)", () => {
