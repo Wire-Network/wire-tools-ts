@@ -32,12 +32,6 @@ export interface SolanaOutpostBootstrapperOptions {
   /** Deployer keypair file (default: `~/.config/solana/id.json`). */
   deployerKeypairFile?: string
   /**
-   * OPP outpost program keypair file (default:
-   * `<solanaPath>/.keys/liqsol_core-keypair.json` — the outpost interface is
-   * hosted in the `liqsol_core` program since the clean-room rewrite).
-   */
-  programKeypairFile?: string
-  /**
    * Directory under which mock-SPL-mint metadata (`sol-mock-mints.json`) +
    * the deployer keypair are persisted for downstream token registration.
    * When `null`, SPL provisioning is skipped (native SOL still works).
@@ -50,7 +44,6 @@ export interface SolanaOutpostBootstrapperConfig {
   solanaPath: string
   rpcUrl: string
   deployerKeypairFile: string
-  programKeypairFile: string
   clusterDataPath: string | null
 }
 
@@ -89,9 +82,6 @@ export class SolanaOutpostBootstrapper {
         (options.clusterDataPath != null
           ? SolanaFundingTool.deployerKeypairFile(options.clusterDataPath)
           : SolanaOutpostBootstrapper.defaultDeployerKeypairFile()),
-      programKeypairFile:
-        options.programKeypairFile ??
-        SolanaOutpostProgramTool.programKeypairFile(options.solanaPath),
       clusterDataPath: options.clusterDataPath ?? null
     }
     this.connection = new Connection(
@@ -140,13 +130,10 @@ export class SolanaOutpostBootstrapper {
   async bootstrap(): Promise<void> {
     log.info("=== Solana outpost bootstrap ===")
 
-    if (Fs.existsSync(this.config.programKeypairFile)) {
-      const keypairData = JSON.parse(
-        Fs.readFileSync(this.config.programKeypairFile, "utf8")
-      )
-      this.programId = Keypair.fromSecretKey(
-        Uint8Array.from(keypairData)
-      ).publicKey
+    const { solanaPath } = this.config,
+      programKeypairFile = SolanaOutpostProgramTool.programKeypairFile(solanaPath)
+    this.programId = SolanaOutpostProgramTool.programId(solanaPath)
+    if (this.programId != null) {
       log.info(
         `${SolanaOutpostProgramTool.ProgramName} (OPP outpost) program id: ${this.programId.toBase58()}`
       )
@@ -155,11 +142,11 @@ export class SolanaOutpostBootstrapper {
       StepExtraRecorder.record({
         client: "harness",
         kind: "artifact",
-        file: this.config.programKeypairFile,
+        file: programKeypairFile,
         programId: this.programId.toBase58()
       })
     } else {
-      log.warn(`program keypair not found at ${this.config.programKeypairFile}`)
+      log.warn(`program keypair not found at ${programKeypairFile}`)
     }
 
     if (this.programId != null) {
@@ -296,13 +283,10 @@ export class SolanaOutpostBootstrapper {
       return
     }
 
-    const provider = new anchor.AnchorProvider(
-      this.connection,
-      new anchor.Wallet(deployer),
-      {
-        commitment: SolanaClient.DefaultCommitment
-      }
-    )
+    // The ONE existence check on this path: a missing IDL is not fatal HERE —
+    // the PDAs are simply left uninitialized (a program that was never built
+    // has nothing to initialize against). Every other caller takes the
+    // throwing contract of `SolanaOutpostProgramTool.loadProgram`.
     const idlFile = SolanaOutpostProgramTool.programIdlFile(
       this.config.solanaPath
     )
@@ -310,8 +294,7 @@ export class SolanaOutpostBootstrapper {
       log.warn(`IDL not found at ${idlFile} — skipping PDA initialization`)
       return
     }
-    const idl = JSON.parse(Fs.readFileSync(idlFile, "utf8"))
-    const program = new anchor.Program(idl, provider)
+    const program = this.loadProgram(deployer)
 
     // The OPP admin ops are gated by the liqsol `global_config`
     // (`has_one = admin`), which must be initialized once before the outpost.
@@ -707,6 +690,15 @@ export class SolanaOutpostBootstrapper {
       }
     )
     await confirmSignature(this.connection, signature, label)
+  }
+
+  /** The OPP outpost Anchor `Program` bound to `deployer` on this bootstrapper's connection. */
+  private loadProgram(deployer: Keypair): anchor.Program<anchor.Idl> {
+    return SolanaOutpostProgramTool.loadProgram(
+      this.connection,
+      deployer,
+      this.config.solanaPath
+    )
   }
 }
 
