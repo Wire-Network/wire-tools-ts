@@ -47,7 +47,7 @@ const VaultSeed = Buffer.from("outpost_vault")
  * {@link SolanaOutpostBootstrapper.PdaSeed}, whose entries mirror
  * `opp_states.rs`. Never re-spell a seed literal here.
  *
- * `CollateralVault` is the per-`token_code` SPL collateral vault
+ * `CollateralVault` is the per-`(token_code, mint)` SPL collateral vault
  * (`deposit_non_native.rs`); `CollateralPosition` is the per-`(operator,
  * token_code)` bonded balance; `ReserveAggregate` is the seizure-destination
  * authority for SPL collateral — `deposit_non_native` declares it alongside its
@@ -263,11 +263,7 @@ export namespace SolanaCollateralTool {
         ),
         mint,
         depositorAta: getAssociatedTokenAddressSync(mint, keypair.publicKey),
-        collateralVault: SolanaOutpostProgramTool.derivePda(
-          programId,
-          CollateralVaultSeed,
-          slugNameToLittleEndianBuffer(input.tokenCode)
-        ),
+        collateralVault: collateralVaultPda(programId, input.tokenCode, mint),
         collateralPosition: collateralPositionPda(
           programId,
           keypair.publicKey,
@@ -300,6 +296,30 @@ export namespace SolanaCollateralTool {
   }
 
   // ── value helpers (PDA / IDL loads — executed INSIDE runners) ────────────
+
+  /**
+   * Derive the per-`(tokenCode, mint)` SPL collateral-vault PDA required by
+   * `depositNonNative` and the matching settlement handlers. Scoping by mint
+   * prevents two SPL mints registered under the same token code from sharing
+   * custody.
+   *
+   * @param programId - The deployed `liqsol_core` program id.
+   * @param tokenCode - The 8-byte slug_name of the collateral token.
+   * @param mint - The SPL mint whose tokens the vault holds.
+   * @returns The mint-scoped collateral-vault PDA address.
+   */
+  export function collateralVaultPda(
+    programId: PublicKey,
+    tokenCode: bigint,
+    mint: PublicKey
+  ): PublicKey {
+    return SolanaOutpostProgramTool.derivePda(
+      programId,
+      CollateralVaultSeed,
+      slugNameToLittleEndianBuffer(tokenCode),
+      mint.toBuffer()
+    )
+  }
 
   /**
    * Derive the per-`(operator, tokenCode)` `CollateralPosition` PDA that both

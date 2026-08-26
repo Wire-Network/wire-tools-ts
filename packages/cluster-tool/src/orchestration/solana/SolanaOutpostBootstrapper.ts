@@ -822,7 +822,7 @@ export namespace SolanaOutpostBootstrapper {
      * (refunding rent) when the balance reaches zero.
      */
     export const CollateralPosition = "collateral_position"
-    /** Per-`token_code` SPL collateral vault — from `deposit_non_native.rs`. */
+    /** Per-`(token_code, mint)` SPL collateral vault — from `deposit_non_native.rs`. */
     export const CollateralVault = "collateral_vault"
     /**
      * liqsol `GlobalConfig` admin-gate PDA (`has_one = admin`) — from

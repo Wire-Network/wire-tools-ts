@@ -90,3 +90,66 @@ describe("SolanaCollateralTool.collateralPositionPda", () => {
     )
   })
 })
+
+describe("SolanaCollateralTool.collateralVaultPda", () => {
+  const programId = PublicKey.unique()
+  const mint = PublicKey.unique()
+  /** An arbitrary fixed token code — the derivation is value-agnostic. ASCII "USDC", NOT SlugName.from("USDC"). */
+  const tokenCode = 0x55534443n
+
+  it("matches an independent derivation of the mint-scoped on-chain seed list", () => {
+    const tokenCodeLeBytes = Buffer.alloc(8)
+    tokenCodeLeBytes.writeBigUInt64LE(tokenCode)
+    const [expected] = PublicKey.findProgramAddressSync(
+      [Buffer.from("collateral_vault"), tokenCodeLeBytes, mint.toBuffer()],
+      programId
+    )
+
+    expect(
+      SolanaCollateralTool.collateralVaultPda(
+        programId,
+        tokenCode,
+        mint
+      ).toBase58()
+    ).toBe(expected.toBase58())
+  })
+
+  it("gives a distinct vault per token code and per mint", () => {
+    const base = SolanaCollateralTool.collateralVaultPda(
+      programId,
+      tokenCode,
+      mint
+    )
+
+    expect(
+      SolanaCollateralTool.collateralVaultPda(
+        programId,
+        tokenCode + 1n,
+        mint
+      ).toBase58()
+    ).not.toBe(base.toBase58())
+    expect(
+      SolanaCollateralTool.collateralVaultPda(
+        programId,
+        tokenCode,
+        PublicKey.unique()
+      ).toBase58()
+    ).not.toBe(base.toBase58())
+  })
+
+  it("is scoped to the deployed program id", () => {
+    expect(
+      SolanaCollateralTool.collateralVaultPda(
+        PublicKey.unique(),
+        tokenCode,
+        mint
+      ).toBase58()
+    ).not.toBe(
+      SolanaCollateralTool.collateralVaultPda(
+        programId,
+        tokenCode,
+        mint
+      ).toBase58()
+    )
+  })
+})
