@@ -79,12 +79,11 @@ describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
     ).toEqual({ chains: [] })
   })
 
-  it("leaves the import window open for an empty flow contribution", async () => {
-    const cluster = await ClusterBuildDefaults.create(
-      baseOptions(),
-      undefined,
-      async () => ({
-        creditSets: [
+  it("leaves the import window open for an empty programmatic input", async () => {
+    const cluster = await ClusterBuildDefaults.create({
+      ...baseOptions(),
+      distributionClaimBootstrap: {
+        fallbackCreditSets: [
           {
             chain: ChainKind.EVM,
             source: DistributionClaimBootstrapSource.synthetic,
@@ -92,8 +91,8 @@ describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
             droppedDust: 0n
           }
         ]
-      })
-    )
+      }
+    })
     expect(
       findPhase(cluster.children, "DistributionClaims").steps.map(
         step => step.name
@@ -101,7 +100,34 @@ describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
     ).toEqual(["init-dclaim"])
   })
 
-  it("calls the flow hook after file conversion and merges before composing batches", async () => {
+  it("imports a programmatic fallback when its chain has no configured file", async () => {
+    const cluster = await ClusterBuildDefaults.create({
+      ...baseOptions(),
+      distributionClaimBootstrap: {
+        fallbackCreditSets: [
+          {
+            chain: ChainKind.SVM,
+            source: DistributionClaimBootstrapSource.synthetic,
+            credits: [{ native_address: "cc".repeat(32), wire_atomic: 7n }],
+            droppedDust: 2n
+          }
+        ]
+      }
+    })
+    const result = cluster.context.outputs.assert(
+      DistributionClaimBootstrapResultKey
+    )
+    expect(result.chains[0]).toMatchObject({
+      chain: ChainKind.SVM,
+      droppedDust: 2n,
+      sources: [DistributionClaimBootstrapSource.synthetic]
+    })
+    expect(result.chains[0].batches[0].credits).toEqual([
+      { native_address: "cc".repeat(32), wire_atomic: 7n }
+    ])
+  })
+
+  it("prefers a configured chain over its fallback and merges additive credits before batching", async () => {
     const file = writeDump("ethereum.json", {
       purchasers: [
         {
@@ -110,31 +136,37 @@ describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
         }
       ]
     })
-    const cluster = await ClusterBuildDefaults.create(
-      {
-        ...baseOptions(),
-        ethereum: { bootstrapJsonFile: file }
-      },
-      undefined,
-      async (_cluster, core) => {
-        expect(core.creditSets[0].credits[0].wire_atomic).toBe(2n)
-        return {
-          creditSets: [
-            {
-              chain: ChainKind.EVM,
-              source: DistributionClaimBootstrapSource.controlled,
-              credits: [{ native_address: "aa".repeat(20), wire_atomic: 3n }],
-              droppedDust: 0n
-            }
-          ]
-        }
+    const cluster = await ClusterBuildDefaults.create({
+      ...baseOptions(),
+      ethereum: { bootstrapJsonFile: file },
+      distributionClaimBootstrap: {
+        fallbackCreditSets: [
+          {
+            chain: ChainKind.EVM,
+            source: DistributionClaimBootstrapSource.synthetic,
+            credits: [{ native_address: "bb".repeat(20), wire_atomic: 9n }],
+            droppedDust: 0n
+          }
+        ],
+        additiveCreditSets: [
+          {
+            chain: ChainKind.EVM,
+            source: DistributionClaimBootstrapSource.controlled,
+            credits: [{ native_address: "aa".repeat(20), wire_atomic: 3n }],
+            droppedDust: 0n
+          }
+        ]
       }
-    )
+    })
     const result = cluster.context.outputs.assert(
       DistributionClaimBootstrapResultKey
     )
     expect(result.chains[0].batches[0].credits).toEqual([
       { native_address: "aa".repeat(20), wire_atomic: 5n }
+    ])
+    expect(result.chains[0].sources).toEqual([
+      DistributionClaimBootstrapSource.configuredFile,
+      DistributionClaimBootstrapSource.controlled
     ])
     expect(cluster.config.ethereum.bootstrapJsonFile).toBe(Path.resolve(file))
     expect(

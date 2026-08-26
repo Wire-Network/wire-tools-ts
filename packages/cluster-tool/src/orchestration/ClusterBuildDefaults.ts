@@ -43,7 +43,7 @@ import {
   DistributionClaimBootstrapResultKey,
   DistributionClaimBootstrapSource,
   finalizeDistributionClaimBootstrap,
-  type DistributionClaimBootstrapContribution,
+  hasDistributionClaimBootstrapChain,
   type DistributionClaimBootstrapCore
 } from "./outputs/DistributionClaimBootstrapOutput.js"
 import { ContractSteps } from "./steps/ContractSteps.js"
@@ -190,30 +190,32 @@ const BatchOperatorEthereumFundingWei = 10n * WeiPerEther
 export namespace ClusterBuildDefaults {
   /**
    * Resolve config and context, prepare the complete distribution-claim input,
-   * then compose the bootstrap phases. The optional flow hook runs after
-   * configured files are validated and before composition; its credit sets are
-   * additive to configured-file sets and cannot replace them.
+   * then compose the bootstrap phases. Programmatic fallback/additive inputs
+   * ride `ClusterBuildOptions`, the same capability-default pattern used by
+   * every flow-specific cluster opt-in.
    *
    * @param options - Cluster creation and persisted configuration options.
    * @param createContext - Optional factory for a flow-specific build context.
-   * @param prepareDistributionClaimBootstrap - Optional flow hook contributing
-   *   additional validated credit sets before the import Steps are composed.
    * @returns The fully composed cluster build.
    */
   export async function create<
     C extends ClusterBuildContext = ClusterBuildContext
   >(
     options: ClusterBuildOptions = {},
-    createContext?: (config: ClusterConfig, log: Logger) => C,
-    prepareDistributionClaimBootstrap?: (
-      cluster: ClusterBuild<C>,
-      core: DistributionClaimBootstrapCore
-    ) => Promise<DistributionClaimBootstrapContribution>
+    createContext?: (config: ClusterConfig, log: Logger) => C
   ): Promise<ClusterBuild<C>> {
     const cluster = await ClusterBuild.create<C>(options, [], createContext)
     const core = await loadConfiguredDistributionClaimBootstrap(cluster.config)
-    const contribution =
-      await prepareDistributionClaimBootstrap?.(cluster, core)
+    const programmatic = options.distributionClaimBootstrap,
+      contribution = {
+        creditSets: [
+          ...(programmatic?.fallbackCreditSets ?? []).filter(
+            creditSet =>
+              !hasDistributionClaimBootstrapChain(core, creditSet.chain)
+          ),
+          ...(programmatic?.additiveCreditSets ?? [])
+        ]
+      }
     const result = finalizeDistributionClaimBootstrap(core, contribution)
     cluster.context.outputs.set(DistributionClaimBootstrapResultKey, result)
     logDistributionClaimBootstrap(cluster.context.log, result)

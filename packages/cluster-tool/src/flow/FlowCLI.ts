@@ -26,9 +26,7 @@ const log = getLogger(__filename)
  * @param args - Process arguments following the flow entrypoint.
  * @returns A fresh array with at most one leading delimiter removed.
  */
-export function normalizeFlowCLIArguments(
-  args: readonly string[]
-): string[] {
+export function normalizeFlowCLIArguments(args: readonly string[]): string[] {
   return args[0] === "--" ? args.slice(1) : [...args]
 }
 
@@ -65,14 +63,17 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
    * @param scenarioClass - The `FlowScenario` subclass (zero-arg constructor).
    * @returns The flow CLI, typed to the scenario's context.
    */
-  static create<S extends FlowScenario, C extends FlowScenarioContextOf<S> = FlowScenarioContextOf<S>>(
+  static create<
+    S extends FlowScenario,
+    C extends FlowScenarioContextOf<S> = FlowScenarioContextOf<S>
+  >(
     scenarioClass: FlowScenarioConstructor<FlowScenario<C>>
   ): FlowCLI<FlowScenarioContextOf<S>> {
     // `S extends FlowScenario<FlowScenarioContextOf<S>>` holds semantically, but the
     // `plan(cluster: ClusterBuild<C>)` param makes `FlowScenario<C>` contravariant
     // in `C`, so TS won't verify the narrowing — route through `unknown`.
     const scenario = new scenarioClass()
-    
+
     return new FlowCLI<C>(scenario)
   }
 
@@ -84,8 +85,8 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
    * @returns The run's report.
    */
   async run(): Promise<Report> {
-    // Scenario defaults supply the non-flag leaves (collateral object-arrays)
-    // that can't ride the argv surface.
+    // Scenario defaults supply non-flag object arrays and programmatic-only
+    // capability inputs that can't ride the argv surface.
     const argv = await this.yargs.parseAsync(),
       options = mergeSignatureProviderSSM(
         toClusterBuildOptions(argv, this.scenario.defaults),
@@ -93,8 +94,7 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
       )
     const cluster = await ClusterBuildDefaults.create<C>(
       options,
-      this.scenario.createContext?.bind(this.scenario),
-      this.scenario.prepareDistributionClaimBootstrap?.bind(this.scenario)
+      this.scenario.createContext?.bind(this.scenario)
     )
     this.scenario.plan(cluster)
     // Name the report before launch — the renderers title with it

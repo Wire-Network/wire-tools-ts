@@ -118,9 +118,7 @@ export class OptionLeafSpec {
  * walk.
  */
 export type OptionShapeNode =
-  | OptionLeafSpec
-  | OptionShapeNode[]
-  | OptionShapeObject
+  OptionLeafSpec | OptionShapeNode[] | OptionShapeObject
 
 /** A nested object of shape nodes (named — no inline object types). */
 export interface OptionShapeObject {
@@ -592,7 +590,9 @@ export function applyClusterBuildOptionsArgs(
     environmentPathDefaults(environment),
     defaults
   )
-  const withShape = flattenOptionLeaves(buildOptionShape(seededDefaults)).reduce(
+  const withShape = flattenOptionLeaves(
+    buildOptionShape(seededDefaults)
+  ).reduce(
     (instance, optionLeaf) =>
       instance.option(
         optionLeaf.flag,
@@ -701,10 +701,7 @@ function isIndexSegment(segment: string): boolean {
 }
 
 /** Read a child by segment (arrays accept numeric-string keys uniformly). */
-function childOf(
-  node: OptionTreeContainer,
-  segment: string
-): OptionTreeValue {
+function childOf(node: OptionTreeContainer, segment: string): OptionTreeValue {
   return (node as OptionTreeObject)[segment] ?? null
 }
 
@@ -796,9 +793,8 @@ function countsFromArgv(argv: OptionArgv): ClusterBuildOptions {
  * auto-pick. Path leaves are absolutized so a flow run from any cwd resolves the
  * same cluster / build / outpost roots.
  *
- * The NON-FLAG leaves ({@link NonFlagOptionKeys} — the collateral object-arrays
- * `buildOptionShape` declares flag-less) can't ride argv; they carry over from
- * `defaults` verbatim (e.g. a `FlowScenario.defaults.requiredBatchOperatorCollateral`).
+ * The non-flag leaves ({@link NonFlagOptionKeys} plus the programmatic-only
+ * bootstrap input) can't ride argv; they carry over from `defaults` verbatim.
  *
  * @param argv - The parsed yargs result (fields arrive as `unknown`).
  * @param defaults - Caller defaults supplying the non-flag leaves.
@@ -822,6 +818,9 @@ export function toClusterBuildOptions(
     }
   )
   NonFlagOptionKeys.forEach(key => carryNonFlagOption(options, defaults, key))
+  ProgrammaticOptionKeys.forEach(key =>
+    carryNonFlagOption(options, defaults, key)
+  )
   return absolutePaths(options)
 }
 
@@ -841,11 +840,20 @@ const NonFlagOptionKeys = [
   UnderwriterCollateralKey
 ] as const satisfies ReadonlyArray<keyof ClusterBuildOptions>
 
-/** A `ClusterBuildOptions` member with no flag representation. */
+/** In-memory API options deliberately excluded from flags and JSON documents. */
+const ProgrammaticOptionKeys = [
+  "distributionClaimBootstrap"
+] as const satisfies ReadonlyArray<keyof ClusterBuildOptions>
+
+/** A `ClusterBuildOptions` member carried directly from caller defaults. */
+type CarriedOptionKey =
+  (typeof NonFlagOptionKeys)[number] | (typeof ProgrammaticOptionKeys)[number]
+
+/** A JSON-document-compatible `ClusterBuildOptions` member with no flag. */
 type NonFlagOptionKey = (typeof NonFlagOptionKeys)[number]
 
 /** Carry one non-flag member over from `defaults` (typed same-key read → write). */
-function carryNonFlagOption<K extends NonFlagOptionKey>(
+function carryNonFlagOption<K extends CarriedOptionKey>(
   options: ClusterBuildOptions,
   defaults: ClusterBuildOptions,
   key: K
@@ -919,8 +927,7 @@ function assertDocumentLeafValue(
     `${documentLabel(file)}: "${optionLeaf.path.join(".")}" must be a ${optionLeaf.type} (got ${documentLeafType(scalar)} ${JSON.stringify(scalar)})`
   )
   Assert.ok(
-    optionLeaf.choices == null ||
-      optionLeaf.choices.includes(String(scalar)),
+    optionLeaf.choices == null || optionLeaf.choices.includes(String(scalar)),
     `${documentLabel(file)}: "${optionLeaf.path.join(".")}" must be one of ${optionLeaf.choices?.join(" | ")} (got ${JSON.stringify(scalar)})`
   )
   return scalar
@@ -1217,9 +1224,7 @@ export function mergeSignatureProviderSSM(
  * @param argv - The parsed yargs result.
  * @returns The validated AWS placement, or `null`.
  */
-export function toAWSClusterNodeConfig(
-  argv: OptionArgv
-): AWSClusterNodeConfig {
+export function toAWSClusterNodeConfig(argv: OptionArgv): AWSClusterNodeConfig {
   const raw = readArg(argv, AWSClusterNodeConfigFlag)
   if (!isString(raw) || raw.trim().length === 0) {
     return null

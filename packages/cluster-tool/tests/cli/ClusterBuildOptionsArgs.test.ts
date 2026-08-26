@@ -2,7 +2,15 @@ import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
 import type { Argv } from "yargs"
-import { AWSAccountName, SignatureProviderType } from "@wireio/cluster-tool-shared"
+import {
+  AWSAccountName,
+  SignatureProviderType
+} from "@wireio/cluster-tool-shared"
+import { ChainKind } from "@wireio/opp-typescript-models"
+import {
+  DistributionClaimBootstrapSource,
+  type DistributionClaimBootstrapOptions
+} from "@wireio/cluster-tool"
 import {
   applyClusterBuildOptionsArgs,
   AWSClusterNodeConfigFlag,
@@ -342,6 +350,25 @@ describe("toClusterBuildOptions reverse parse", () => {
     expect(options.requiredUnderwriterCollateral).toBeUndefined()
   })
 
+  it("carries programmatic bootstrap inputs only through caller defaults", () => {
+    const distributionClaimBootstrap: DistributionClaimBootstrapOptions = {
+        fallbackCreditSets: [
+          {
+            chain: ChainKind.EVM,
+            source: DistributionClaimBootstrapSource.synthetic,
+            credits: [{ native_address: "aa".repeat(20), wire_atomic: 3n }],
+            droppedDust: 0n
+          }
+        ]
+      },
+      options = toClusterBuildOptions(
+        { "epoch-duration-sec": 60 },
+        { distributionClaimBootstrap }
+      )
+    expect(options.distributionClaimBootstrap).toBe(distributionClaimBootstrap)
+    expect(toClusterBuildOptions({}).distributionClaimBootstrap).toBeUndefined()
+  })
+
   it("absolutizes path leaves and leaves unset bind ports absent", () => {
     const options = toClusterBuildOptions({
       "cluster-path": "relative/cluster",
@@ -517,11 +544,15 @@ describe("mergeSignatureProviderSSM", () => {
   })
 
   it("falls back to the options-file document's signatureProvider.ssm", () => {
-    const merged = mergeSignatureProviderSSM({}, {}, {
-      signatureProvider: {
-        ssm: { awsSecretIdPattern: "/from/{cluster}/{account}/{keyType}" }
+    const merged = mergeSignatureProviderSSM(
+      {},
+      {},
+      {
+        signatureProvider: {
+          ssm: { awsSecretIdPattern: "/from/{cluster}/{account}/{keyType}" }
+        }
       }
-    })
+    )
     expect(merged.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
       "/from/{cluster}/{account}/{keyType}"
     )
@@ -571,7 +602,10 @@ describe("mergeSignatureProviderSSM", () => {
 describe("raw command-line reads", () => {
   it("readCommandLineFlag reads both `--flag value` and `--flag=value`", () => {
     expect(
-      readCommandLineFlag(["create", "--cluster-path", "/tmp/a"], ClusterPathFlag)
+      readCommandLineFlag(
+        ["create", "--cluster-path", "/tmp/a"],
+        ClusterPathFlag
+      )
     ).toBe("/tmp/a")
     expect(
       readCommandLineFlag(["create", "--cluster-path=/tmp/b"], ClusterPathFlag)
@@ -579,18 +613,26 @@ describe("raw command-line reads", () => {
   })
 
   it("readCommandLineFlag returns null when the flag is absent", () => {
-    expect(readCommandLineFlag(["create", "-d", "/tmp/a"], ClusterPathFlag)).toBeNull()
+    expect(
+      readCommandLineFlag(["create", "-d", "/tmp/a"], ClusterPathFlag)
+    ).toBeNull()
   })
 
   it("hasCommandLineFlag sees the long form, the `=` form, and the short alias", () => {
-    expect(hasCommandLineFlag(["--cluster-path", "/x"], ClusterPathFlag)).toBe(true)
-    expect(hasCommandLineFlag(["--cluster-path=/x"], ClusterPathFlag)).toBe(true)
+    expect(hasCommandLineFlag(["--cluster-path", "/x"], ClusterPathFlag)).toBe(
+      true
+    )
+    expect(hasCommandLineFlag(["--cluster-path=/x"], ClusterPathFlag)).toBe(
+      true
+    )
     expect(hasCommandLineFlag(["-d", "/x"], ClusterPathFlag)).toBe(true)
     expect(hasCommandLineFlag(["-d=/x"], ClusterPathFlag)).toBe(true)
   })
 
   it("hasCommandLineFlag is false for a flag that only arrives as a yargs default", () => {
-    expect(hasCommandLineFlag(["create", "--force"], ClusterPathFlag)).toBe(false)
+    expect(hasCommandLineFlag(["create", "--force"], ClusterPathFlag)).toBe(
+      false
+    )
   })
 })
 
@@ -628,7 +670,10 @@ describe("--cluster-build-options-file", () => {
         clusterPath: "/tmp/doc-cluster",
         epochDurationSec: 30,
         bindAll: true,
-        bind: { kiod: { port: 1234 }, nodeop: { ports: { bios: { http: 5555 } } } },
+        bind: {
+          kiod: { port: 1234 },
+          nodeop: { ports: { bios: { http: 5555 } } }
+        },
         logging: { levels: { console: "debug" } }
       })
     )
@@ -644,7 +689,9 @@ describe("--cluster-build-options-file", () => {
     const loaded = loadClusterBuildOptionsFile(
       writeDocument({
         nodeCount: 2,
-        bind: { nodeop: { ports: { producers: [{ http: 7000 }, { http: 7001 }] } } }
+        bind: {
+          nodeop: { ports: { producers: [{ http: 7000 }, { http: 7001 }] } }
+        }
       })
     )
     expect(loaded.bind?.nodeop?.ports?.producers?.[1]?.http).toBe(7001)
@@ -673,12 +720,16 @@ describe("--cluster-build-options-file", () => {
       })
     )
     expect(loaded.signatureProvider?.type).toBe(SignatureProviderType.SSM)
-    expect(loaded.signatureProvider?.ssm?.awsSecretIdPattern).toBe(SecretIdPattern)
+    expect(loaded.signatureProvider?.ssm?.awsSecretIdPattern).toBe(
+      SecretIdPattern
+    )
   })
 
   it("rejects an unknown option, naming its dotted path", () => {
     expect(() =>
-      loadClusterBuildOptionsFile(writeDocument({ bind: { kiod: { prot: 1 } } }))
+      loadClusterBuildOptionsFile(
+        writeDocument({ bind: { kiod: { prot: 1 } } })
+      )
     ).toThrow(/unknown option "bind\.kiod\.prot"/)
     expect(() =>
       loadClusterBuildOptionsFile(writeDocument({ nope: 1 }))
@@ -705,7 +756,9 @@ describe("--cluster-build-options-file", () => {
   it("rejects awsClusterNodeConfig, pointing at its own flag", () => {
     expect(() =>
       loadClusterBuildOptionsFile(
-        writeDocument({ awsClusterNodeConfig: { account: "dev", regions: ["us-east-1"] } })
+        writeDocument({
+          awsClusterNodeConfig: { account: "dev", regions: ["us-east-1"] }
+        })
       )
     ).toThrow(new RegExp(`--${AWSClusterNodeConfigFlag}`))
   })
@@ -778,6 +831,8 @@ describe("--aws-cluster-node-config", () => {
       mergeAWSClusterNodeConfig({}, { [AWSClusterNodeConfigFlag]: file })
         .awsClusterNodeConfig?.account
     ).toBe(AWSAccountName.test)
-    expect(mergeAWSClusterNodeConfig({}, {}).awsClusterNodeConfig).toBeUndefined()
+    expect(
+      mergeAWSClusterNodeConfig({}, {}).awsClusterNodeConfig
+    ).toBeUndefined()
   })
 })

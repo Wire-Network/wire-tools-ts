@@ -8,6 +8,7 @@ import type {
   CollateralRequirement
 } from "@wireio/cluster-tool-shared"
 import type { Report } from "../report/Report.js"
+import type { DistributionClaimBootstrapOptions } from "../types/DistributionClaimBootstrap.js"
 
 /** Caller-facing logging options (the `Options` half of `ClusterConfigLogging`). */
 export interface LoggingOptions {
@@ -57,6 +58,11 @@ export interface ClusterBuildOptions {
   // per-chain inputs
   ethereum?: EthereumOptions
   solana?: SolanaOptions
+  /**
+   * Programmatic dclaim bootstrap inputs used by API callers and flow defaults.
+   * This in-memory payload has no CLI or persisted-config representation.
+   */
+  distributionClaimBootstrap?: DistributionClaimBootstrapOptions
   // network binding
   bindAll?: boolean
   bind?: BindOptions

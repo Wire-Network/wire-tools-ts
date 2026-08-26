@@ -3,6 +3,10 @@ import { z } from "zod"
 import type { ChainKind } from "@wireio/opp-typescript-models"
 
 import {
+  DistributionClaimBootstrapSource,
+  type DistributionClaimBootstrapCreditSet
+} from "../../types/DistributionClaimBootstrap.js"
+import {
   batchImportSeedCredits,
   ImportSeedBatchSchema,
   ImportSeedChainKindSchema,
@@ -12,12 +16,10 @@ import {
 } from "../../tools/wire/WireDclaimSeedTool.js"
 import { outputKey, type OutputKey } from "../OutputStore.js"
 
-/** Provenance categories for distribution-claim credit sets. */
-export enum DistributionClaimBootstrapSource {
-  configuredFile = "configuredFile",
-  synthetic = "synthetic",
-  controlled = "controlled"
-}
+export {
+  DistributionClaimBootstrapSource,
+  type DistributionClaimBootstrapCreditSet
+} from "../../types/DistributionClaimBootstrap.js"
 
 /** Runtime schema for a distribution-claim credit-set provenance category. */
 export const DistributionClaimBootstrapSourceSchema = z.enum(
@@ -25,25 +27,20 @@ export const DistributionClaimBootstrapSourceSchema = z.enum(
 )
 
 /** Runtime schema for one pre-batching credit set contributed for one native chain. */
-export const DistributionClaimBootstrapCreditSetSchema = z.object({
-  /** Native chain whose address and decimal conventions produced the credits. */
-  chain: ImportSeedChainKindSchema,
-  /** Origin reported in preflight summaries. */
-  source: DistributionClaimBootstrapSourceSchema,
-  /** Converted WIRE-atomic credits. */
-  credits: z.array(ImportSeedCreditSchema),
-  /** Source-native dust discarded during decimal conversion. */
-  droppedDust: z.bigint().nonnegative()
-})
-/** One pre-batching credit set — the shape of {@link DistributionClaimBootstrapCreditSetSchema}. */
-export type DistributionClaimBootstrapCreditSet = z.infer<
-  typeof DistributionClaimBootstrapCreditSetSchema
->
-
+export const DistributionClaimBootstrapCreditSetSchema: z.ZodType<DistributionClaimBootstrapCreditSet> =
+  z.object({
+    /** Native chain whose address and decimal conventions produced the credits. */
+    chain: ImportSeedChainKindSchema,
+    /** Origin reported in preflight summaries. */
+    source: DistributionClaimBootstrapSourceSchema,
+    /** Converted WIRE-atomic credits. */
+    credits: z.array(ImportSeedCreditSchema),
+    /** Source-native dust discarded during decimal conversion. */
+    droppedDust: z.bigint().nonnegative()
+  })
 /**
- * Runtime schema for configured-file bootstrap state passed to an optional
- * flow preparation hook. Flow contributions are additive and never replace
- * these credit sets.
+ * Runtime schema for configured-file bootstrap state. Programmatic additive
+ * inputs never replace these credit sets.
  */
 export const DistributionClaimBootstrapCoreSchema = z.object({
   creditSets: z.array(DistributionClaimBootstrapCreditSetSchema)
@@ -53,11 +50,11 @@ export type DistributionClaimBootstrapCore = z.infer<
   typeof DistributionClaimBootstrapCoreSchema
 >
 
-/** Runtime schema for additive credit sets returned by a flow preparation hook. */
+/** Runtime schema for programmatic credit sets merged with configured inputs. */
 export const DistributionClaimBootstrapContributionSchema = z.object({
   creditSets: z.array(DistributionClaimBootstrapCreditSetSchema)
 })
-/** Additive flow credit sets — the shape of {@link DistributionClaimBootstrapContributionSchema}. */
+/** Programmatic credit sets — the shape of {@link DistributionClaimBootstrapContributionSchema}. */
 export type DistributionClaimBootstrapContribution = z.infer<
   typeof DistributionClaimBootstrapContributionSchema
 >
@@ -111,11 +108,11 @@ export function hasDistributionClaimBootstrapChain(
 }
 
 /**
- * Merge core and flow contributions by chain/address, then batch only after the
+ * Merge core and programmatic contributions by chain/address, then batch after the
  * merge so duplicate addresses cannot straddle independent action plans.
  *
  * @param core - Validated configured-file credit sets.
- * @param contribution - Optional additive flow credit sets.
+ * @param contribution - Optional programmatic credit sets.
  * @returns Deterministically chain/address-sorted action plan.
  */
 export function finalizeDistributionClaimBootstrap(

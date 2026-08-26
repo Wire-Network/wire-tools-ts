@@ -8,7 +8,6 @@ import {
   distributionClaimBootstrapCredit,
   FlowScenario,
   formatWireAsset,
-  hasDistributionClaimBootstrapChain,
   pollUntil,
   Report,
   sleep,
@@ -17,8 +16,7 @@ import {
   type ClusterBuild,
   type ClusterBuildContext,
   type ClusterBuildOptions,
-  type DistributionClaimBootstrapContribution,
-  type DistributionClaimBootstrapCore
+  type DistributionClaimBootstrapOptions
 } from "@wireio/cluster-tool"
 import { getLogger } from "@wireio/shared"
 import { SysioContracts } from "@wireio/sdk-core"
@@ -41,6 +39,63 @@ const log = getLogger(__filename)
 
 const { SysioContractAccount, SysioContractName } = SysioContracts
 const { Actor } = Report
+
+/** Build the generic cluster bootstrap inputs the soak opts into by default. */
+function createDistributionClaimBootstrapOptions(): DistributionClaimBootstrapOptions {
+  const ethereumConversion = convertImportSeedCredits(
+      buildSyntheticEthereumDump({
+        seed: Constants.SyntheticSeed,
+        purchaserCount: Constants.BulkEthereumPurchasers,
+        stakerCount: Constants.BulkEthereumStakers,
+        overlappingCount: Constants.BulkEthereumOverlapping,
+        yieldClaimedCount: Constants.BulkEthereumYieldClaimed
+      }),
+      Constants.EthereumChain
+    ),
+    solanaConversion = convertImportSeedCredits(
+      buildSyntheticSolanaDump({
+        seed: Constants.SyntheticSeed + 1,
+        purchaserCount: Constants.BulkSolanaPurchasers,
+        stakerCount: Constants.BulkSolanaStakers
+      }),
+      Constants.SolanaChain
+    ),
+    identities = buildControlledStakerIdentities(
+      Constants.ControlledStakerCount,
+      Constants.ControlledStakerAccountPrefix,
+      Constants.ControlledStakerEthereumHdIndexBase
+    )
+  return {
+    fallbackCreditSets: [
+      {
+        chain: Constants.EthereumChain,
+        source: DistributionClaimBootstrapSource.synthetic,
+        credits: ethereumConversion.credits,
+        droppedDust: ethereumConversion.droppedDust
+      },
+      {
+        chain: Constants.SolanaChain,
+        source: DistributionClaimBootstrapSource.synthetic,
+        credits: solanaConversion.credits,
+        droppedDust: solanaConversion.droppedDust
+      }
+    ],
+    additiveCreditSets:
+      identities.length === 0
+        ? []
+        : [
+            {
+              chain: Constants.EthereumChain,
+              source: DistributionClaimBootstrapSource.controlled,
+              credits: identities.map(identity => ({
+                native_address: identity.addressHex,
+                wire_atomic: Constants.ControlledStakerCreditAtomic
+              })),
+              droppedDust: 0n
+            }
+          ]
+  }
+}
 
 /** The `sysio::t5state` singleton row (a read; asserts the row exists). */
 async function readT5State(
@@ -111,72 +166,16 @@ export class EmissionsSoakScenario extends FlowScenario {
     epochDurationSec: Constants.EpochDurationSec,
     producerCount: Constants.ProducerCount,
     batchOperatorCount: Constants.BatchOperatorCount,
-    underwriterCount: Constants.UnderwriterCount
-  }
-
-  override async prepareDistributionClaimBootstrap(
-    cluster: ClusterBuild,
-    core: DistributionClaimBootstrapCore
-  ): Promise<DistributionClaimBootstrapContribution> {
-    const identities = buildControlledStakerIdentities(
-      Constants.ControlledStakerCount,
-      Constants.ControlledStakerAccountPrefix,
-      Constants.ControlledStakerEthereumHdIndexBase
-    )
-    cluster.context.outputs.set(ClaimantIdentitiesKey, identities)
-
-    const creditSets: DistributionClaimBootstrapContribution["creditSets"][number][] =
-      []
-    if (!hasDistributionClaimBootstrapChain(core, Constants.EthereumChain)) {
-      const conversion = convertImportSeedCredits(
-        buildSyntheticEthereumDump({
-          seed: Constants.SyntheticSeed,
-          purchaserCount: Constants.BulkEthereumPurchasers,
-          stakerCount: Constants.BulkEthereumStakers,
-          overlappingCount: Constants.BulkEthereumOverlapping,
-          yieldClaimedCount: Constants.BulkEthereumYieldClaimed
-        }),
-        Constants.EthereumChain
-      )
-      creditSets.push({
-        chain: Constants.EthereumChain,
-        source: DistributionClaimBootstrapSource.synthetic,
-        credits: conversion.credits,
-        droppedDust: conversion.droppedDust
-      })
-    }
-    if (!hasDistributionClaimBootstrapChain(core, Constants.SolanaChain)) {
-      const conversion = convertImportSeedCredits(
-        buildSyntheticSolanaDump({
-          seed: Constants.SyntheticSeed + 1,
-          purchaserCount: Constants.BulkSolanaPurchasers,
-          stakerCount: Constants.BulkSolanaStakers
-        }),
-        Constants.SolanaChain
-      )
-      creditSets.push({
-        chain: Constants.SolanaChain,
-        source: DistributionClaimBootstrapSource.synthetic,
-        credits: conversion.credits,
-        droppedDust: conversion.droppedDust
-      })
-    }
-    if (identities.length > 0) {
-      creditSets.push({
-        chain: Constants.EthereumChain,
-        source: DistributionClaimBootstrapSource.controlled,
-        credits: identities.map(identity => ({
-          native_address: identity.addressHex,
-          wire_atomic: Constants.ControlledStakerCreditAtomic
-        })),
-        droppedDust: 0n
-      })
-    }
-    return { creditSets }
+    underwriterCount: Constants.UnderwriterCount,
+    distributionClaimBootstrap: createDistributionClaimBootstrapOptions()
   }
 
   plan(cluster: ClusterBuild): void {
-    const identities = cluster.context.outputs.assert(ClaimantIdentitiesKey),
+    const identities = buildControlledStakerIdentities(
+        Constants.ControlledStakerCount,
+        Constants.ControlledStakerAccountPrefix,
+        Constants.ControlledStakerEthereumHdIndexBase
+      ),
       bootstrap = cluster.context.outputs.assert(
         DistributionClaimBootstrapResultKey
       ),
@@ -201,6 +200,7 @@ export class EmissionsSoakScenario extends FlowScenario {
       soakOptions = {
         timeoutMs: Constants.SoakDurationMs + Constants.SoakTimeoutMarginMs
       }
+    cluster.context.outputs.set(ClaimantIdentitiesKey, identities)
     cluster.context.outputs.set(ControlledClaimExpectationsKey, expectations)
 
     // ── 1. ConfigureEmissions — the bootstrap seeds every emissions/dclaim
