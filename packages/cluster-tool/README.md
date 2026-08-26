@@ -323,6 +323,7 @@ After `create`:
     ├── anvil/                    # anvil state          (local ETH outpost only)
     ├── solana-ledger/            # validator ledger      (local SOL outpost only)
     ├── eth-abis/                 # address-embedded outpost ABIs
+    ├── ethereum-client.json      # shared Ethereum client config for operator daemons
     ├── solana-idls/              # liqsol_core (opp-outpost) IDL
     ├── ethereum-deployments/     # outpost-addrs.json
     └── opp-debugging/            # OPP envelope .data / .metadata pairs
@@ -331,6 +332,40 @@ After `create`:
 In external-outpost mode no local `anvil` / `solana-ledger` state is written
 (`cluster-state.json` records them as `null`); the operator-daemon artifacts come
 from the `--external-outpost-config` instead.
+
+### Generated Ethereum client configuration
+
+Artifact preparation writes one `data/ethereum-client.json`, and every operator
+daemon passes it through `--outpost-ethereum-client-config-file`. The
+protobuf-JSON document uses `schema_version: 1`, nests the stable `eth-default`
+client and signature-provider ids under `connection`, and records `chain_id` as
+a number. Signature-provider ids are process-local, so each daemon can register
+its own Ethereum private key as `eth-default` while safely sharing the same
+client configuration file. Daemon argument builders remain pure and reuse the
+artifact on create, run, restart, and flow-provisioned starts.
+
+Local Anvil clusters embed the following finite `transaction_policy` in every
+generated Ethereum client. The values live in
+`AnvilEthereumTransactionPolicyConfig`; they are not production recommendations.
+
+| Limit | Anvil value |
+|---|---:|
+| Maximum priority fee per gas | `2,000,000,000` wei (2 gwei) |
+| Maximum fee per gas | `100,000,000,000` wei (100 gwei) |
+| Maximum final gas limit | `6,000,000` |
+| Maximum total native cost | `700,000,000,000,000,000` wei (0.7 ETH) |
+
+Nodeop applies the final 20% estimate buffer before checking the gas cap. At
+the full `6,000,000 × 100 gwei = 0.6 ETH` gas bound, the total-cost cap leaves
+`0.1 ETH` for transaction value. These limits cover the measured local
+`epochIn` and `commit` workloads, including the 4,392,032-gas remote emissions
+high-water estimate after nodeop's 20% buffer, while retaining a finite
+configuration-error boundary. External-outpost configuration continues to omit
+the policy, because the reviewed limits for its operator-selected endpoint are
+outside this tool's scope. Bios and producer-only nodes receive neither an
+Ethereum signing client nor an orphaned client-config option.
+
+Production policy selection happens outside `wire-tools-ts`.
 
 ---
 

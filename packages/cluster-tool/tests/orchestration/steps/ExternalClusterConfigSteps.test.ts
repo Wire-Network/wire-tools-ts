@@ -24,6 +24,7 @@ import {
   NodeopProcess
 } from "@wireio/cluster-tool/cluster/processes"
 import {
+  AnvilEthereumTransactionPolicyConfig,
   ClusterConfigProvider,
   DaemonConfig,
   NodeConfig,
@@ -40,7 +41,9 @@ import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
 import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import {
   keyPairFromPrivate,
+  StartScriptVariable,
   toDialAddress,
+  toRelocatableToken,
   toURL
 } from "@wireio/cluster-tool/utils"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
@@ -715,6 +718,13 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       scriptFile = DaemonConfig.startScriptFile(node.nodePath),
       argv = startScriptArgv(scriptFile),
       account = assertOperatorAccount(merged, node.batchOperatorLabel),
+      ethereumClientConfigurationFile = Path.join(
+        merged.dataPath,
+        OperatorDaemonTool.EthereumClientConfigurationFilename
+      ),
+      ethereumClientConfiguration = JSON.parse(
+        Fs.readFileSync(ethereumClientConfigurationFile, "utf-8")
+      ),
       // FULL `address:port` URLs on both sides. `shiftPorts` moves PORTS only,
       // so the local and external ADDRESSES are byte-identical — an
       // address-only assertion passes against a completely un-rebound script.
@@ -744,14 +754,24 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       )
 
     expect(argv.length).toBeGreaterThan(0)
-    expect(argvValuesOf(argv, "--outpost-ethereum-client")).toEqual([
-      [
-        OperatorDaemonTool.EthereumClientId,
-        `eth-${account}`,
-        externalEthereumRpcUrl,
-        String(AnvilProcess.DefaultChainId)
-      ].join(",")
+    expect(argvValuesOf(argv, "--outpost-ethereum-client")).toEqual([])
+    expect(argvValuesOf(argv, "--outpost-ethereum-client-config-file")).toEqual([
+      toRelocatableToken(ethereumClientConfigurationFile, [
+        {
+          prefix: merged.clusterPath,
+          variable: StartScriptVariable.CLUSTER_DIR
+        }
+      ])
     ])
+    expect(ethereumClientConfiguration.clients[0].connection.rpc_url).toBe(
+      externalEthereumRpcUrl
+    )
+    expect(ethereumClientConfiguration.clients[0].chain_id).toBe(
+      AnvilProcess.DefaultChainId
+    )
+    expect(ethereumClientConfiguration.clients[0].transaction_policy).toEqual(
+      AnvilEthereumTransactionPolicyConfig.create()
+    )
     expect(argvValuesOf(argv, "--outpost-solana-client")).toEqual([
       [
         OperatorDaemonTool.SolanaClientId,
@@ -764,9 +784,10 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     ])
     // Target the SPECIFIC option specs, never a blanket scan of the file: a
     // `--signature-provider` value legitimately contains `ethereum` / `solana`.
-    const [ethereumSpec] = argvValuesOf(argv, "--outpost-ethereum-client"),
-      [solanaSpec] = argvValuesOf(argv, "--outpost-solana-client")
-    expect(ethereumSpec).not.toContain(localEthereumRpcUrl)
+    const [solanaSpec] = argvValuesOf(argv, "--outpost-solana-client")
+    expect(ethereumClientConfiguration.clients[0].connection.rpc_url).not.toContain(
+      localEthereumRpcUrl
+    )
     expect(solanaSpec).not.toContain(localSolanaRpcUrl)
     expect(argvValuesOf(argv, "--ext-debugging-server")).not.toContain(
       localDebuggingServerUrl
@@ -957,7 +978,14 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       node = assertBatchOperatorNode(merged),
       scriptFile = DaemonConfig.startScriptFile(node.nodePath),
       argv = startScriptArgv(scriptFile),
-      account = assertOperatorAccount(merged, node.batchOperatorLabel)
+      account = assertOperatorAccount(merged, node.batchOperatorLabel),
+      ethereumClientConfigurationFile = Path.join(
+        merged.dataPath,
+        OperatorDaemonTool.EthereumClientConfigurationFilename
+      ),
+      ethereumClientConfiguration = JSON.parse(
+        Fs.readFileSync(ethereumClientConfigurationFile, "utf-8")
+      )
 
     // The Rebind carries the non-file fields through UNTOUCHED while moving
     // every FILE ref in-tree — a re-stated field list dropped `rpcUrl` here and
@@ -968,16 +996,24 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     expect(merged.externalOutposts.ethereum.addressFile.startsWith(externalDir)).toBe(true)
     expect(merged.externalOutposts.solana.idlFile.startsWith(externalDir)).toBe(true)
 
-    // The 4-field ETH client spec: id, provider, the AUTHORITATIVE endpoint,
-    // and the config's REAL chain id (never the anvil default).
-    expect(argvValuesOf(argv, "--outpost-ethereum-client")).toEqual([
-      [
-        OperatorDaemonTool.EthereumClientId,
-        `eth-${account}`,
-        ExternalEthereumRpcUrl,
-        String(ExternalChainId)
-      ].join(",")
+    // The generated ETH client file keeps the AUTHORITATIVE endpoint and real
+    // chain id; the argv references that stable artifact.
+    expect(argvValuesOf(argv, "--outpost-ethereum-client")).toEqual([])
+    expect(argvValuesOf(argv, "--outpost-ethereum-client-config-file")).toEqual([
+      toRelocatableToken(ethereumClientConfigurationFile, [
+        {
+          prefix: merged.clusterPath,
+          variable: StartScriptVariable.CLUSTER_DIR
+        }
+      ])
     ])
+    expect(ethereumClientConfiguration.clients[0].connection.rpc_url).toBe(
+      ExternalEthereumRpcUrl
+    )
+    expect(ethereumClientConfiguration.clients[0].chain_id).toBe(
+      ExternalChainId
+    )
+    expect(ethereumClientConfiguration.clients[0].transaction_policy).toBeUndefined()
     expect(argvValuesOf(argv, "--outpost-solana-client")).toEqual([
       [
         OperatorDaemonTool.SolanaClientId,

@@ -68,8 +68,12 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
   it("materializes the config-referenced files into the canonical data dir", async () => {
     const ctx = externalContext()
     await Steps.externalOutpost.runMaterialize(ctx, null, signal)
-    const deploymentsDir = ClusterConfigProvider.ethereumDeploymentsPath(ctx.config)
-    expect(Fs.existsSync(Path.join(deploymentsDir, "outpost-addrs.json"))).toBe(true)
+    const deploymentsDir = ClusterConfigProvider.ethereumDeploymentsPath(
+      ctx.config
+    )
+    expect(Fs.existsSync(Path.join(deploymentsDir, "outpost-addrs.json"))).toBe(
+      true
+    )
     expect(
       Fs.existsSync(
         Path.join(dataPath, OperatorDaemonTool.EthereumAbiSubpath, "OPP.json")
@@ -90,13 +94,34 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
     const ctx = externalContext()
     await Steps.externalOutpost.runMaterialize(ctx, null, signal)
     await Steps.externalOutpost.runPublishArtifacts(ctx, null, signal)
-    const artifacts = ctx.outputs.get(OperatorDaemonArtifactsKey)
-    expect(artifacts?.ethereumAddresses.OPP).toBe(OppAddress)
-    expect(artifacts?.ethereumAbiFiles.some(file => file.endsWith("OPP.json"))).toBe(
-      true
+    const artifacts = ctx.outputs.assert(OperatorDaemonArtifactsKey)
+    expect(artifacts.ethereumAddresses.OPP).toBe(OppAddress)
+    expect(
+      artifacts.ethereumAbiFiles.some(file => file.endsWith("OPP.json"))
+    ).toBe(true)
+    expect(
+      JSON.parse(
+        Fs.readFileSync(artifacts.ethereumClientConfigurationFile, "utf-8")
+      )
+    ).toEqual({
+      schema_version: 1,
+      clients: [
+        {
+          connection: {
+            client_id: OperatorDaemonTool.EthereumClientId,
+            signature_provider_id:
+              OperatorDaemonTool.EthereumSignatureProviderId,
+            rpc_url: OperatorDaemonTool.networkFromConfig(ctx.config)
+              .ethereumRpcUrl
+          },
+          chain_id: 11_155_111
+        }
+      ]
+    })
+    expect(artifacts.solanaProgramId).toBe(ProgramId)
+    expect(artifacts.solanaIdlFile).toContain(
+      OperatorDaemonTool.SolanaIdlFilename
     )
-    expect(artifacts?.solanaProgramId).toBe(ProgramId)
-    expect(artifacts?.solanaIdlFile).toContain(OperatorDaemonTool.SolanaIdlFilename)
   })
 
   it("materialize fails fast when a referenced source file is absent", async () => {
@@ -130,7 +155,10 @@ describe("Steps.externalOutpost (materialize + publish)", () => {
   it("publish fails when a required SOL IDL instruction is missing", async () => {
     Fs.writeFileSync(
       idlFile,
-      JSON.stringify({ address: ProgramId, instructions: [{ name: "epoch_in" }] })
+      JSON.stringify({
+        address: ProgramId,
+        instructions: [{ name: "epoch_in" }]
+      })
     )
     const ctx = externalContext()
     await Steps.externalOutpost.runMaterialize(ctx, null, signal)
