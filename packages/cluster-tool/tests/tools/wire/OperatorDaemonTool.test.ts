@@ -231,16 +231,16 @@ describe("OperatorDaemonTool", () => {
           keySourceFor
         )
       expect(valuesOf(batchArgs, "--outpost-ethereum-client")).toEqual([
-        `eth-default,eth-wireno.batchopcccc,${ExternalEthereumRpcUrl},${ExternalChainId}`
+        `${OperatorDaemonTool.EthereumClientId},eth-wireno.batchopcccc,${ExternalEthereumRpcUrl},${ExternalChainId}`
       ])
       expect(valuesOf(batchArgs, "--outpost-solana-client")).toEqual([
-        `sol-default,sol-wireno.batchopcccc,${ExternalSolanaRpcUrl}`
+        `${OperatorDaemonTool.SolanaClientId},sol-wireno.batchopcccc,${ExternalSolanaRpcUrl}`
       ])
       expect(valuesOf(underwriterArgs, "--outpost-ethereum-client")).toEqual([
-        `eth-default,eth-${underwriter.account},${ExternalEthereumRpcUrl},${ExternalChainId}`
+        `${OperatorDaemonTool.EthereumClientId},eth-${underwriter.account},${ExternalEthereumRpcUrl},${ExternalChainId}`
       ])
       expect(valuesOf(underwriterArgs, "--outpost-solana-client")).toEqual([
-        `sol-default,sol-${underwriter.account},${ExternalSolanaRpcUrl}`
+        `${OperatorDaemonTool.SolanaClientId},sol-${underwriter.account},${ExternalSolanaRpcUrl}`
       ])
     })
   })
