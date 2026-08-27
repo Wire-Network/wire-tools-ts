@@ -6,6 +6,7 @@ import { createCreateExternalConfigCommand } from "./CreateExternalConfigCommand
 import { createDestroyCommand } from "./DestroyCommand.js"
 import { createPackageCommand } from "./PackageCommand.js"
 import { createRunCommand } from "./RunCommand.js"
+import { createReadinessCommand } from "./ReadinessCommand.js"
 
 /**
  * The `wire-cluster-tool` CLI: parser assembly only — each command's options
@@ -24,6 +25,7 @@ export function main(argv: string[] = process.argv.slice(2)): Promise<unknown> {
     .command(createRunCommand())
     .command(createDestroyCommand())
     .command(createPackageCommand())
+    .command(createReadinessCommand())
     .command(createCreateExternalConfigCommand())
     .command(createCreateApiNodeCommand())
     .demandCommand(1)
