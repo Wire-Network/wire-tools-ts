@@ -1,6 +1,29 @@
 import { identity } from "lodash"
 import { match, P } from "ts-pattern"
 
+/** Byte width of a `u64` slug_name PDA seed. */
+const SlugNameByteWidth = 8
+
+/**
+ * Encode a `slug_name` as the 8-byte little-endian buffer used by Solana
+ * programs' `to_le_bytes()` PDA seeds. Every scoped seed leg goes through
+ * this — token codes AND reserve codes alike.
+ *
+ * Both carriers are accepted because both occur: `SlugName.from()` and
+ * {@link slugValue} yield `number` (a slug_name packs into 48 bits, well under
+ * `Number.MAX_SAFE_INTEGER`), while the generated deposit / swap inputs carry
+ * the `u64` as `bigint`. Widening once here keeps every call site free of a
+ * `BigInt(...)` wrapper.
+ *
+ * @param value - The slug_name to encode (a token code, a reserve code, …).
+ * @returns An 8-byte little-endian buffer.
+ */
+export function slugNameToLittleEndianBuffer(value: number | bigint): Buffer {
+  const buffer = Buffer.alloc(SlugNameByteWidth)
+  buffer.writeBigUInt64LE(BigInt(value))
+  return buffer
+}
+
 /**
  * The numeric value of a slug cell as returned by a v6 KV table read.
  *

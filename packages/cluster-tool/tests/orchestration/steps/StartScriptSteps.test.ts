@@ -1,13 +1,35 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+import { OperatorType } from "@wireio/opp-typescript-models"
+import { KeyType } from "@wireio/sdk-core"
 import { Steps } from "@wireio/cluster-tool/orchestration/steps"
-import { DaemonConfig, DaemonKind } from "@wireio/cluster-tool/config"
-import { KiodProcess } from "@wireio/cluster-tool/cluster/processes"
+import {
+  DaemonConfig,
+  DaemonKind,
+  NodeConfig,
+  NodeRole
+} from "@wireio/cluster-tool/config"
+import {
+  KiodProcess,
+  NodeopProcess
+} from "@wireio/cluster-tool/cluster/processes"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
+import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 
 const startScript = Steps.startScript,
-  validatorSteps = Steps.processes.solanaValidator
+  validatorSteps = Steps.processes.solanaValidator,
+  nodeopSteps = Steps.processes.nodeop
+
+/** The three SHARED-25 deadline flags, exactly as `buildArgs` emits them. */
+const MaxTransactionTimeFlag = "--max-transaction-time",
+  AbiSerializerMaxTimeFlag = "--abi-serializer-max-time-ms",
+  HttpMaxResponseTimeFlag = "--http-max-response-time-ms"
+
+/** The value following `flag` in an argv (each occurrence). */
+function valuesOf(args: string[], flag: string): string[] {
+  return args.flatMap((arg, index) => (arg === flag ? [args[index + 1]] : []))
+}
 
 describe("StartScriptSteps", () => {
   let dir: string
@@ -33,6 +55,112 @@ describe("StartScriptSteps", () => {
       buildPath: Path.join(dir, "build")
     })
   }
+
+  // SHARED-25 AC#2 + AC#3. This pin has to be DIRECT: the argv-equality guard in
+  // `StartScriptRenderer.test.ts` feeds ONE options object to both the rendered
+  // script and the live process, so a `resolveSources` that resolved the WRONG
+  // phase would still compare equal against itself and pass.
+  describe("resolveSources — the POST-BOOTSTRAP launch form", () => {
+    /**
+     * A context whose key store carries every identity `resolveOperator` needs
+     * for the planned topology. Operator accounts get K1 material only: their
+     * EM / ED pairs are consumed exclusively by the OPP daemon args, which this
+     * suite stubs (below), and `buildArgs` renders signature providers only for
+     * PRODUCING nodes.
+     */
+    function seededContext() {
+      const ctx = fixtureContext({
+        clusterPath: dir,
+        dataPath: Path.join(dir, "data"),
+        buildPath: Path.join(dir, "build")
+      })
+      ctx.keyStore.pushNodes({
+        index: 0,
+        keys: {
+          wire: {
+            type: KeyType.K1,
+            publicKey: "PUB_K1_n0",
+            privateKey: "PVT_K1_n0"
+          },
+          wireFinalizer: {
+            type: KeyType.BLS,
+            publicKey: "PUB_BLS_n0",
+            privateKey: "PVT_BLS_n0",
+            proofOfPossession: "SIG_BLS_n0"
+          }
+        }
+      })
+      NodeConfig.plan(ctx.config)
+        .filter(node => NodeConfig.isOperatorRole(node.role))
+        .forEach(node => {
+          const { batchOperatorLabel, underwriterLabel } = node,
+            label = batchOperatorLabel ?? underwriterLabel
+          ctx.keyStore.setOperator({
+            label,
+            publicationLabel: label,
+            account: `wireno.${label.replace(/[^a-z1-5]/g, "")}`,
+            type:
+              batchOperatorLabel != null
+                ? OperatorType.BATCH
+                : OperatorType.UNDERWRITER,
+            wire: {
+              type: KeyType.K1,
+              publicKey: `PUB_K1_${label}`,
+              privateKey: `PVT_K1_${label}`
+            }
+          })
+        })
+      // The OPP daemon argv is a separate concern with its own coverage
+      // (`NodeopProcessSteps.test.ts`) and needs real EM / ED key material plus
+      // prepared outpost artifacts — neither of which says anything about the
+      // launch PHASE this block pins.
+      jest.spyOn(nodeopSteps, "resolveOperatorDaemonArgs").mockReturnValue([])
+      // Same reasoning for the validator's BPF set: it reads a built
+      // `liqsol_core` keypair off the wire-solana checkout, and its own
+      // threading is pinned by `resolveSolanaValidatorConfig` below.
+      jest.spyOn(validatorSteps, "resolvePrograms").mockReturnValue([])
+      return ctx
+    }
+
+    /** The resolved argv for the first planned node of `role`. */
+    function argsForRole(role: NodeRole): string[] {
+      const resolved = startScript
+        .resolveSources(seededContext())
+        .nodeop.find(candidate => candidate.node.role === role)
+      expect(resolved).toBeDefined()
+      return NodeopProcess.buildArgs(resolved)
+    }
+
+    it("resolves a PRODUCER node with no --max-transaction-time and NEITHER timeout flag", () => {
+      const args = argsForRole(NodeRole.producer)
+      expect(args).not.toContain(MaxTransactionTimeFlag)
+      expect(args).not.toContain(AbiSerializerMaxTimeFlag)
+      expect(args).not.toContain(HttpMaxResponseTimeFlag)
+    })
+
+    it("resolves a BATCH-OPERATOR node with both timeout flags and no --max-transaction-time", () => {
+      const args = argsForRole(NodeRole.batch_operator)
+      expect(args).not.toContain(MaxTransactionTimeFlag)
+      expect(valuesOf(args, AbiSerializerMaxTimeFlag)).toEqual([
+        String(NodeopProcess.OperatorAbiSerializerMaxTimeMs)
+      ])
+      expect(valuesOf(args, HttpMaxResponseTimeFlag)).toEqual([
+        String(NodeopProcess.OperatorHttpMaxResponseTimeMs)
+      ])
+    })
+
+    it("drops --max-transaction-time from EVERY planned node's script argv", () => {
+      // Role-blind by design (AC#2), so assert over the whole planned set
+      // rather than the two roles sampled above.
+      const sources = startScript.resolveSources(seededContext())
+      expect(sources.nodeop.length).toBeGreaterThan(0)
+      sources.nodeop.forEach(resolved =>
+        expect(NodeopProcess.buildArgs(resolved)).not.toContain(
+          MaxTransactionTimeFlag
+        )
+      )
+    })
+  })
 
   describe("resolveSolanaValidatorConfig", () => {
     it("threads the validator's BPF programs through — via the PRODUCTION resolver", () => {

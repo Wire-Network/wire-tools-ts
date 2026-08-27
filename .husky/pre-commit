@@ -1,1 +1,12 @@
+# Run the gate under the mise-pinned toolchain when mise is available.
+
+# Falls through to a bare run when mise is absent OR cannot execute (notably
+# when a fresh clone's mise config has not been trusted yet), so the hook never
+# becomes a hard dependency on mise's local configuration state.
+if command -v mise >/dev/null 2>&1; then
+  if mise exec -- true; then
+    exec mise exec -- sh -c 'pnpm lint && pnpm test'
+  fi
+fi
+
 pnpm lint && pnpm test

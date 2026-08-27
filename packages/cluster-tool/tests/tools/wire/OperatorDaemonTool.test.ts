@@ -11,7 +11,7 @@ import {
 } from "@wireio/cluster-tool/cluster/processes"
 import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
-import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
+import { ClusterConfigProvider, NodeRole } from "@wireio/cluster-tool/config"
 import {
   AWSAccountName,
   SignatureProviderType
@@ -23,8 +23,18 @@ import {
   type OperatorDaemonArtifacts
 } from "@wireio/cluster-tool/orchestration/outputs"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
-import { fixtureConfig } from "../../config/clusterConfigFixture.js"
-import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
+import {
+  fixtureConfig,
+  PersistedFixture
+} from "../../config/clusterConfigFixture.js"
+import {
+  ethereumKeyPairFromWallet,
+  toDialAddress,
+  toURL
+} from "@wireio/cluster-tool/utils"
+import { AnvilProcess } from "@wireio/cluster-tool/cluster/processes"
+import type { ExternalOutpostConfig } from "@wireio/cluster-tool-shared"
+import { fixtureOperatorAccount } from "../../orchestration/outputs/operatorAccountFixture.js"
 
 /** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
 const AnvilMnemonic = "test test test test test test test test test test test junk"
@@ -75,6 +85,40 @@ function valuesOf(args: string[], flag: string): string[] {
   return args.flatMap((arg, index) => (arg === flag ? [args[index + 1]] : []))
 }
 
+/** A live (non-anvil) EVM chain id — proves the anvil default is not assumed. */
+const ExternalChainId = 11_155_111
+/** An authoritative ETH outpost endpoint no local binding could describe. */
+const ExternalEthereumRpcUrl = "https://ethereum-rpc.external.example/"
+/** An authoritative SOL outpost endpoint no local binding could describe. */
+const ExternalSolanaRpcUrl = "https://solana-rpc.external.example/"
+
+/**
+ * An already-deployed-outpost config, optionally carrying the authoritative
+ * per-chain RPC endpoints. Omitting either models a DEV external, whose outpost
+ * endpoint travels on the cluster's own bind config instead.
+ *
+ * @param ethereumRpcUrl - Authoritative ETH endpoint (omit for bind-governed).
+ * @param solanaRpcUrl - Authoritative SOL endpoint (omit for bind-governed).
+ * @returns The external-outpost config.
+ */
+function externalOutposts(
+  ethereumRpcUrl?: string,
+  solanaRpcUrl?: string
+): ExternalOutpostConfig {
+  return {
+    ethereum: {
+      addressFile: "/external/outpost-addrs.json",
+      abiFiles: ["/external/eth-abis/OPP.json"],
+      chainId: ExternalChainId,
+      ...(ethereumRpcUrl != null ? { rpcUrl: ethereumRpcUrl } : {})
+    },
+    solana: {
+      idlFile: "/external/liqsol_core.json",
+      ...(solanaRpcUrl != null ? { rpcUrl: solanaRpcUrl } : {})
+    }
+  }
+}
+
 /**
  * These daemon-arg assertions pin the byte-identical KEY (default) source; the
  * SSM/KIOD source rendering is covered by the signature-provider tests.
@@ -82,13 +126,132 @@ function valuesOf(args: string[], flag: string): string[] {
 const keySourceFor = () => KeyGenerator.DefaultKeySource
 
 describe("OperatorDaemonTool", () => {
+  describe("networkFromConfig", () => {
+    // The fixture's ports are ALREADY-RESOLVED persisted values being replayed
+    // (no binding happens here) — the sanctioned fixture case of the bind rule.
+    const boundEthereumRpcUrl = toURL(
+        PersistedFixture.bind.anvil.port,
+        toDialAddress(PersistedFixture.bind.anvil.address)
+      ),
+      boundSolanaRpcUrl = toURL(
+        PersistedFixture.bind.solana.ports.http,
+        toDialAddress(PersistedFixture.bind.solana.address)
+      )
+
+    it("derives BOTH outpost endpoints from the bind when there is no external-outpost config", () => {
+      const network = OperatorDaemonTool.networkFromConfig(
+        fixtureConfig({ externalOutposts: null })
+      )
+      expect(network.ethereumRpcUrl).toBe(boundEthereumRpcUrl)
+      expect(network.solanaRpcUrl).toBe(boundSolanaRpcUrl)
+      expect(network.ethereumChainId).toBe(AnvilProcess.DefaultChainId)
+    })
+
+    it("keeps the BIND governing when an external-outpost config omits rpcUrl (dev external)", () => {
+      // rpcUrl is OPTIONAL, never defaulted — an external whose outpost sits on
+      // the cluster's own binding must not be re-pointed at anything else.
+      const network = OperatorDaemonTool.networkFromConfig(
+        fixtureConfig({ externalOutposts: externalOutposts() })
+      )
+      expect(network.ethereumRpcUrl).toBe(boundEthereumRpcUrl)
+      expect(network.solanaRpcUrl).toBe(boundSolanaRpcUrl)
+    })
+
+    it("lets an external-outpost rpcUrl WIN over the bind-derived URL on BOTH chains", () => {
+      const network = OperatorDaemonTool.networkFromConfig(
+        fixtureConfig({
+          externalOutposts: externalOutposts(
+            ExternalEthereumRpcUrl,
+            ExternalSolanaRpcUrl
+          )
+        })
+      )
+      expect(network.ethereumRpcUrl).toBe(ExternalEthereumRpcUrl)
+      expect(network.solanaRpcUrl).toBe(ExternalSolanaRpcUrl)
+      expect(network.ethereumRpcUrl).not.toBe(boundEthereumRpcUrl)
+      expect(network.solanaRpcUrl).not.toBe(boundSolanaRpcUrl)
+    })
+
+    it("resolves each chain's endpoint INDEPENDENTLY (one override never moves the other)", () => {
+      const ethereumOnly = OperatorDaemonTool.networkFromConfig(
+          fixtureConfig({
+            externalOutposts: externalOutposts(ExternalEthereumRpcUrl)
+          })
+        ),
+        solanaOnly = OperatorDaemonTool.networkFromConfig(
+          fixtureConfig({
+            externalOutposts: externalOutposts(undefined, ExternalSolanaRpcUrl)
+          })
+        )
+      expect(ethereumOnly.ethereumRpcUrl).toBe(ExternalEthereumRpcUrl)
+      expect(ethereumOnly.solanaRpcUrl).toBe(boundSolanaRpcUrl)
+      expect(solanaOnly.solanaRpcUrl).toBe(ExternalSolanaRpcUrl)
+      expect(solanaOnly.ethereumRpcUrl).toBe(boundEthereumRpcUrl)
+    })
+
+    it("keeps the chainId precedence intact (external chain id over the anvil default)", () => {
+      expect(
+        OperatorDaemonTool.networkFromConfig(
+          fixtureConfig({
+            externalOutposts: externalOutposts(
+              ExternalEthereumRpcUrl,
+              ExternalSolanaRpcUrl
+            )
+          })
+        ).ethereumChainId
+      ).toBe(ExternalChainId)
+      // …and it is independent of rpcUrl — an omitted endpoint never reverts it.
+      expect(
+        OperatorDaemonTool.networkFromConfig(
+          fixtureConfig({ externalOutposts: externalOutposts() })
+        ).ethereumChainId
+      ).toBe(ExternalChainId)
+    })
+
+    it("carries the resolved endpoints into the daemon argv (batch + underwriter)", () => {
+      const network = OperatorDaemonTool.networkFromConfig(
+          fixtureConfig({
+            externalOutposts: externalOutposts(
+              ExternalEthereumRpcUrl,
+              ExternalSolanaRpcUrl
+            )
+          })
+        ),
+        batchArgs = OperatorDaemonTool.batchOperatorArgs(
+          operatorAccount("batchopcccc", OperatorType.BATCH),
+          artifacts,
+          network,
+          keySourceFor
+        ),
+        underwriter = operatorAccount("uwritbbbbbb", OperatorType.UNDERWRITER),
+        underwriterArgs = OperatorDaemonTool.underwriterArgs(
+          underwriter,
+          artifacts,
+          network,
+          keySourceFor
+        )
+      expect(valuesOf(batchArgs, "--outpost-ethereum-client")).toEqual([
+        `eth-default,eth-wireno.batchopcccc,${ExternalEthereumRpcUrl},${ExternalChainId}`
+      ])
+      expect(valuesOf(batchArgs, "--outpost-solana-client")).toEqual([
+        `sol-default,sol-wireno.batchopcccc,${ExternalSolanaRpcUrl}`
+      ])
+      expect(valuesOf(underwriterArgs, "--outpost-ethereum-client")).toEqual([
+        `eth-default,eth-${underwriter.account},${ExternalEthereumRpcUrl},${ExternalChainId}`
+      ])
+      expect(valuesOf(underwriterArgs, "--outpost-solana-client")).toEqual([
+        `sol-default,sol-${underwriter.account},${ExternalSolanaRpcUrl}`
+      ])
+    })
+  })
+
   describe("runDaemonStart", () => {
     it("launches the daemon through NodeopProcess.startWithRecovery (dirty-chainbase resilient)", async () => {
       const ctx = fixtureContext()
       // The context's processManager getter requires the singleton's cluster
       // path to be set (idempotent for the same value).
       ProcessManager.setClusterPath(ctx.config.clusterPath)
-      const operator = operatorAccount("batchopbbbb", OperatorType.BATCH)
+      const operator = fixtureOperatorAccount("batchopbbbb", OperatorType.BATCH)
       ctx.keyStore.setOperator(operator)
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifacts)
       const recoverySpy = jest
@@ -102,13 +265,51 @@ describe("OperatorDaemonTool", () => {
         )
         // A flow rerun reuses the daemon's data dir, so this launch must go
         // through the dirty-chainbase recovery path, not bare create+start.
+        // The composed node's ROLE is pinned too: it selects the daemon's
+        // plugin set, its ini read-mode, and the SHARED-25 deadline arm.
         expect(recoverySpy).toHaveBeenCalledWith(
           ctx.processManager,
           expect.objectContaining({
             operator,
+            node: expect.objectContaining({ role: NodeRole.batch_operator }),
             extraArgs: expect.arrayContaining(["--batch-enabled"])
           })
         )
+        // A flow-provisioned daemon launches in the BOOTSTRAP form — the
+        // SHARED-25 rules arm only after a complete bootstrap.
+        expect(recoverySpy.mock.calls[0][1].postBootstrap).toBeUndefined()
+      } finally {
+        recoverySpy.mockRestore()
+      }
+    })
+
+    it("composes an UNDERWRITER-role node for an underwriter operator", async () => {
+      // The mirrored arm: `daemonNodeConfig` picks the role off the operator's
+      // type, so a wrong pick would silently give an underwriter the batch
+      // plugin set (and vice versa).
+      const ctx = fixtureContext()
+      ProcessManager.setClusterPath(ctx.config.clusterPath)
+      const operator = operatorAccount("uwritdddddd", OperatorType.UNDERWRITER)
+      ctx.keyStore.setOperator(operator)
+      ctx.outputs.set(OperatorDaemonArtifactsKey, artifacts)
+      const recoverySpy = jest
+        .spyOn(NodeopProcess, "startWithRecovery")
+        .mockResolvedValue(undefined)
+      try {
+        await OperatorDaemonTool.runDaemonStart(
+          ctx,
+          { kind: "OperatorDaemonTool.StartDaemonInput", label: "uwritdddddd" },
+          new AbortController().signal
+        )
+        expect(recoverySpy).toHaveBeenCalledWith(
+          ctx.processManager,
+          expect.objectContaining({
+            operator,
+            node: expect.objectContaining({ role: NodeRole.underwriter }),
+            extraArgs: expect.arrayContaining(["--underwriter-enabled"])
+          })
+        )
+        expect(recoverySpy.mock.calls[0][1].postBootstrap).toBeUndefined()
       } finally {
         recoverySpy.mockRestore()
       }
@@ -116,7 +317,7 @@ describe("OperatorDaemonTool", () => {
   })
 
   describe("batchOperatorArgs", () => {
-    const operator = operatorAccount("batchopaaaa", OperatorType.BATCH)
+    const operator = fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH)
     const args = OperatorDaemonTool.batchOperatorArgs(operator, artifacts, network, keySourceFor)
 
     it("loads the batch plugin set at irreversible read-mode", () => {
@@ -201,7 +402,7 @@ describe("OperatorDaemonTool", () => {
     it("rejects a non-batch operator", () => {
       expect(() =>
         OperatorDaemonTool.batchOperatorArgs(
-          operatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER),
+          fixtureOperatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER),
           artifacts,
           network,
           keySourceFor
@@ -245,7 +446,7 @@ describe("OperatorDaemonTool", () => {
   })
 
   describe("underwriterArgs", () => {
-    const operator = operatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER)
+    const operator = fixtureOperatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER)
     const args = OperatorDaemonTool.underwriterArgs(operator, artifacts, network, keySourceFor)
 
     it("passes the SCALED action timeout (flow timing scale reaches the daemon)", () => {

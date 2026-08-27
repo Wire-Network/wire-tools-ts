@@ -1,6 +1,7 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+import { ClusterConfigProvider } from "@wireio/cluster-tool/config"
 
 /**
  * A disposable on-disk environment for tests that drive the REAL
@@ -31,8 +32,6 @@ const BuildExecutables = ["nodeop", "kiod", "clio"] as const
 const PathExecutables = ["anvil", "solana-test-validator"] as const
 /** Fake build dir under the temp root. */
 const BuildSubpath = "build"
-/** Binary dir under the build dir (`resolveExecutables` reads `<build>/bin`). */
-const BinSubpath = "bin"
 /** Dir holding the fake PATH executables, prepended to `PATH`. */
 const FakeExecutablesSubpath = "fake-executables"
 /** Per-test bind-port registry dir (see `BindConfigProvider.registryPath`). */
@@ -50,7 +49,8 @@ export function fixtureResolveEnvironment(prefix: string): ResolveEnvironment {
     previousRegistryPath = process.env.WIRE_BIND_REGISTRY_PATH,
     rootPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), prefix)),
     buildPath = Path.join(rootPath, BuildSubpath),
-    buildBinPath = Path.join(buildPath, BinSubpath),
+    // THE `bin` spelling — the same constant `resolveExecutables` joins.
+    buildBinPath = Path.join(buildPath, ClusterConfigProvider.BinSubpath),
     fakeExecutablesPath = Path.join(rootPath, FakeExecutablesSubpath)
 
   process.env.WIRE_BIND_REGISTRY_PATH = Path.join(rootPath, RegistrySubpath)

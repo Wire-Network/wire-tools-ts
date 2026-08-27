@@ -4,10 +4,12 @@ import {
   orderRelocations,
   toRelocatableArgv,
   toRelocatableToken,
+  shellQuote,
   StartScriptVariable,
   type StartScriptRelocation
 } from "../../utils/startScriptUtils.js"
 import type { DaemonConfig } from "../DaemonConfig.js"
+import { isNotEmpty } from "../../utils/predicateUtils.js"
 
 /**
  * Renders a daemon's `start.sh` — the command the harness would spawn for it,
@@ -18,7 +20,7 @@ import type { DaemonConfig } from "../DaemonConfig.js"
  * - **RUN semantics, not create semantics.** The argv comes from the daemon's
  *   run-phase form (nodeop relaunch-stripped, anvil with interval mining), so
  *   an operator restarting a daemon gets the same process the harness's own
- *   `run` would.
+ *   `run` would, including any extra environment its managed process supplies.
  * - **Build-time conditionals render as SHELL.** A flag whose presence depended
  *   on the build host (anvil's `--load-state`, nodeop's probed
  *   `--trace-no-abis`) is emitted as a test the script evaluates, never frozen.
@@ -53,10 +55,11 @@ export class StartScriptRenderer implements Renderer {
         "",
         ...StartScriptRenderer.preamble(daemon, relocations),
         "",
-        ...StartScriptRenderer.conditionLines(daemon, relocations),
+        ...StartScriptRenderer.environmentLines(daemon),
+        ...StartScriptRenderer.conditionLines(daemon.conditions, relocations),
         `exec ${StartScriptRenderer.execTarget(daemon, relocations)} \\`,
         ...toRelocatableArgv(argv, relocations).map(word => `  ${word} \\`),
-        `  "\${${StartScriptRenderer.ConditionalArrayName}[@]}"`,
+        `  ${StartScriptRenderer.ConditionalArrayExpansion}`,
         ""
       ]
     return lines.join("\n")
@@ -68,6 +71,35 @@ export namespace StartScriptRenderer {
   export const StrictMode = "set -euo pipefail"
   /** Bash array collecting every condition's tokens, expanded into the `exec`. */
   export const ConditionalArrayName = "CONDITIONAL_ARGS"
+
+  /**
+   * Shell exports for the extra environment a live managed process merges over
+   * its inherited environment — rendered as DEFAULTS, not overrides.
+   *
+   * Each line is `[ -n "${NAME:-}" ] || export NAME=<value>`, so an operator's own
+   * `NAME` survives a `start.sh` relaunch. That is what keeps the script
+   * faithful to the managed spawn: the harness resolves these values against
+   * the ambient environment at spawn time (e.g.
+   * `SolanaValidatorProcess.resolveEnv` defers to an operator-set `RUST_LOG`),
+   * and a frozen `export NAME=value` would silently win over the operator
+   * instead — the "build-time conditionals render as SHELL" invariant in this
+   * class's header, applied to environment rather than argv.
+   *
+   * @param daemon - The daemon being rendered.
+   * @returns Safely quoted defaulting `export` lines, blank-line terminated
+   *   when non-empty so the section reads as its own block.
+   */
+  export function environmentLines(daemon: DaemonConfig): string[] {
+    const lines = Object.entries(daemon.env ?? {}).map(
+      // A GUARDED assignment, not a `${NAME:-…}` expansion: the default keeps
+      // {@link shellQuote}'s fully-inert single-quoted form, which cannot appear
+      // inside an expansion word (bash re-parses quotes there, so a value
+      // containing `'` would break the script).
+      ([name, value]) =>
+        `[ -n "\${${name}:-}" ] || export ${name}=${shellQuote(value)}`
+    )
+    return isNotEmpty(lines) ? [...lines, ""] : lines
+  }
 
   /**
    * Fixed header. The secret notice is NOT decoration: under the default `KEY`
@@ -166,7 +198,8 @@ export namespace StartScriptRenderer {
     return HostSuppliedRoots.filter(variable =>
       referencesRoot(daemon, relocations, variable)
     ).map(
-      variable => `: "\${${variable}:?set to the ${RootDescriptions[variable]}}"`
+      variable =>
+        `: "\${${variable}:?set to the ${RootDescriptions[variable]}}"`
     )
   }
 
@@ -241,7 +274,8 @@ export namespace StartScriptRenderer {
     daemon: DaemonConfig,
     relocations: readonly StartScriptRelocation[]
   ): string {
-    return daemon.exeCommandName != null && daemon.exeEnvironmentVariable != null
+    return daemon.exeCommandName != null &&
+      daemon.exeEnvironmentVariable != null
       ? `"\${${daemon.exeEnvironmentVariable}:-$(command -v ${daemon.exeCommandName})}"`
       : toRelocatableToken(daemon.exe, relocations)
   }
@@ -275,21 +309,32 @@ export namespace StartScriptRenderer {
    * The conditional block: an array declaration plus one shell test per
    * condition, appending that condition's (relocated) tokens.
    *
-   * @param daemon - The daemon being rendered.
+   * Takes the CONDITIONS rather than a whole `DaemonConfig` so the standalone
+   * API node's script — which has no daemon and no relocations — renders its
+   * `--trace-no-abis` probe through this same function instead of a second copy
+   * of the block.
+   *
+   * @param conditions - The conditions to render (an empty list still emits the
+   *   array declaration, which the `exec` line always expands).
    * @param relocations - Ordered relocation table.
    * @returns Lines declaring and populating {@link ConditionalArrayName}.
    */
   export function conditionLines(
-    daemon: DaemonConfig,
+    conditions: DaemonConfig["conditions"],
     relocations: readonly StartScriptRelocation[]
   ): string[] {
     return [
       `${ConditionalArrayName}=()`,
-      ...daemon.conditions.map(condition => {
-        const tokens = toRelocatableArgv(condition.tokens, relocations).join(" ")
+      ...conditions.map(condition => {
+        const tokens = toRelocatableArgv(condition.tokens, relocations).join(
+          " "
+        )
         return `${condition.test} && ${ConditionalArrayName}+=(${tokens})`
       }),
       ""
     ]
   }
+
+  /** The `exec` line's trailing expansion of {@link ConditionalArrayName}. */
+  export const ConditionalArrayExpansion = `"\${${ConditionalArrayName}[@]}"`
 }
