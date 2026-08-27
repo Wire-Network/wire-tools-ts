@@ -5,10 +5,8 @@ import {
   ClusterBuildPhaseGroup,
   ReadinessPhaseGroups
 } from "@wireio/cluster-tool/orchestration"
-import {
-  ConnectedReadinessContext,
-  createReadinessConfig
-} from "@wireio/cluster-tool/readiness"
+import { createReadinessConfig } from "@wireio/cluster-tool/config"
+import { ConnectedReadinessContext } from "@wireio/cluster-tool/orchestration/contexts"
 
 function newBuild(hyperionUrl?: string) {
   const context = new ConnectedReadinessContext(

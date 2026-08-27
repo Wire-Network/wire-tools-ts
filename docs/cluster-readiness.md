@@ -30,8 +30,9 @@ The suite checks:
 - required Wire swap-contract ABI surfaces, epoch scheduling, and active EVM and
   SVM chain-registry rows;
 - underwriting configuration, active underwriter collateral after locks and
-  pending withdrawals, public reserve depth, token bindings, external token or
-  mint existence, and expired pending request backlog;
+  pending withdrawals, public reserve depth, token bindings, deployed EVM
+  contract or configured Solana account existence, and expired pending request
+  backlog;
 - every public Wire/external and cross-chain direction using the canonical
   client-side depot quote math and a small probe derived from live depth.
 
@@ -92,12 +93,18 @@ Markdown/HTML/CSV Report.
 Use the canonical flow runner and its normal heartbeat monitor:
 
 ```bash
-./scripts/run-flow.mjs flow-cluster-readiness \
+node scripts/run-flow.mjs flow-cluster-readiness \
+  --cluster-path /tmp/wire-flow-cluster-readiness \
   --wire-build-path ../wire-sysio/build/release \
   --ethereum-path ../wire-ethereum \
   --solana-path ../wire-solana
+
+node scripts/flow-heartbeat-monitor.mjs \
+  --cluster-path /tmp/wire-flow-cluster-readiness
 ```
 
 The scenario opts into mock reserves because it creates a disposable
 representative swap cluster. It still uses the same `ReadinessPhaseGroups` and
 native Report as the connected CLI; there is no second readiness implementation.
+The heartbeat monitor is mandatory for the entire live run and uses the same
+cluster path as the runner.

@@ -1,17 +1,22 @@
-import { Report } from "../report/Report.js"
-import type { ReadinessCapable } from "../readiness/ReadinessContext.js"
-import type { OrchestrationContext } from "./OrchestrationContext.js"
-import { ClusterBuildFailureMode } from "./ClusterBuildFailureMode.js"
-import { ClusterBuildPhase } from "./ClusterBuildPhase.js"
-import type { ClusterBuildParent } from "./ClusterBuildPhaseBase.js"
-import { ClusterBuildPhaseGroup } from "./ClusterBuildPhaseGroup.js"
-import { Steps } from "./steps/index.js"
+import { Report } from "../../report/Report.js"
+import type { ReadinessCapable } from "../contexts/ConnectedReadinessContext.js"
+import type { OrchestrationContext } from "../OrchestrationContext.js"
+import { ClusterBuildFailureMode } from "../ClusterBuildFailureMode.js"
+import { ClusterBuildPhase } from "../ClusterBuildPhase.js"
+import type { ClusterBuildParent } from "../ClusterBuildPhaseBase.js"
+import { ClusterBuildPhaseGroup } from "../ClusterBuildPhaseGroup.js"
+import { Steps } from "../steps/index.js"
 
 type ReadinessContext = OrchestrationContext & ReadinessCapable
 
 /** Reusable read-only readiness compositions for connected and bootstrap flows. */
 export namespace ReadinessPhaseGroups {
-  /** Plan the complete cluster and swap preflight suite. */
+  /**
+   * Plan the complete cluster and swap preflight suite.
+   *
+   * @param parent - Build or group that receives the readiness PhaseGroup.
+   * @returns The registered readiness PhaseGroup.
+   */
   export function plan<C extends ReadinessContext>(
     parent: ClusterBuildParent<C>
   ): ClusterBuildPhaseGroup<C> {
@@ -239,6 +244,6 @@ function planRoutes<C extends ReadinessContext>(
 
 /** Constants used by readiness PhaseGroup planning. */
 export namespace ReadinessPhaseGroups {
-  /** Prevent a Step timeout racing the final advancement poll or HTTP call. */
+  /** Buffer preventing a Step timeout from racing the final advancement poll. */
   export const AdvancementTimeoutBufferMs = 2_000
 }

@@ -1,27 +1,27 @@
 import { SysioContracts } from "@wireio/sdk-core"
 
 import { ProtocolTiming } from "../../Constants.js"
-import {
-  ReadinessAssertionError,
-  type ReadinessCapable,
-  runReadinessAssertion
-} from "../../readiness/ReadinessContext.js"
-import { ReadinessConfig } from "../../readiness/ReadinessConfig.js"
-import { ReadinessOutputs } from "../../readiness/ReadinessOutputs.js"
+import { ReadinessConfig } from "../../config/ReadinessConfig.js"
+import type { Report } from "../../report/Report.js"
+import { sleep } from "../../utils/asyncUtils.js"
+import { matchesProtoEnum } from "../../utils/predicateUtils.js"
 import {
   ReadinessMaxTableRows,
   readinessBoundedQuery,
   readinessEndpointLabel,
-  readinessEnumMatches,
   readinessSlug
-} from "../../readiness/readinessUtils.js"
-import type { Report } from "../../report/Report.js"
-import { sleep } from "../../utils/asyncUtils.js"
+} from "../../utils/readinessUtils.js"
+import {
+  ReadinessAssertionError,
+  type ReadinessCapable,
+  runReadinessAssertion
+} from "../contexts/ConnectedReadinessContext.js"
 import type { OrchestrationContext } from "../OrchestrationContext.js"
 import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
 } from "../ClusterBuildStep.js"
+import { ReadinessOutputs } from "../outputs/ReadinessOutput.js"
 import type { StepInput } from "../StepRunner.js"
 
 const { SysioChainsChainkind, SysioContractDefinitions, SysioContractName } =
@@ -55,21 +55,33 @@ interface EpochProgressSample {
 
 /** Scheduler states reported by the read-only epoch assessment. */
 export enum EpochSchedulerState {
+  /** Scheduler is within the protocol extension envelope. */
   onTime = "onTime",
+  /** Scheduler is late but recent consecutive epochs prove catch-up progress. */
   advancingLate = "advancingLate",
+  /** Scheduler is late and recent progress cannot be proven. */
   stalledOrUnproven = "stalledOrUnproven"
 }
 
 /** Structured assessment of the WIRE epoch scheduler. */
 export interface EpochSchedulerAssessment {
+  /** Scheduler readiness classification. */
   readonly state: EpochSchedulerState
+  /** Milliseconds past the next scheduled epoch boundary. */
   readonly overdueMs: number
+  /** Protocol-permitted extension beyond the scheduled boundary. */
   readonly maximumExtensionMs: number
+  /** Recent-progress window used to prove catch-up. */
   readonly progressWindowMs: number
+  /** Whether consecutive recent epoch samples prove progress. */
   readonly progressing: boolean
+  /** Most recent valid progress epoch. */
   readonly latestProgressEpoch?: number
+  /** Progress epoch immediately preceding the latest. */
   readonly previousProgressEpoch?: number
+  /** Emission time of the latest valid progress sample. */
   readonly latestProgressAt?: string
+  /** Age of the latest valid progress sample. */
   readonly latestProgressAgeMs?: number
 }
 
@@ -82,7 +94,15 @@ type ReadinessRunner<C extends ReadinessContext> = (
 
 /** Cluster-level read-only Step factories shared by CLI and FlowScenario runs. */
 export namespace ClusterReadinessSteps {
-  /** Record the explicit RPC inputs used by this run. */
+  /**
+   * Plan the Step that records explicit RPC inputs.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planRequiredEndpoints<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -92,7 +112,15 @@ export namespace ClusterReadinessSteps {
     return plan(actor, name, description, options, runRequiredEndpoints)
   }
 
-  /** Verify the WIRE chain identity. */
+  /**
+   * Plan the WIRE chain-identity Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planWireIdentity<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -102,7 +130,15 @@ export namespace ClusterReadinessSteps {
     return plan(actor, name, description, options, runWireIdentity)
   }
 
-  /** Verify WIRE head advancement. */
+  /**
+   * Plan the WIRE head-advancement Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planWireHeadAdvancement<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -112,7 +148,15 @@ export namespace ClusterReadinessSteps {
     return plan(actor, name, description, options, runWireHeadAdvancement)
   }
 
-  /** Verify WIRE head freshness. */
+  /**
+   * Plan the WIRE head-freshness Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planWireHeadFreshness<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -122,7 +166,15 @@ export namespace ClusterReadinessSteps {
     return plan(actor, name, description, options, runWireHeadFreshness)
   }
 
-  /** Verify Ethereum chain identity. */
+  /**
+   * Plan the Ethereum chain-identity Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planEthereumIdentity<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -132,7 +184,15 @@ export namespace ClusterReadinessSteps {
     return plan(actor, name, description, options, runEthereumIdentity)
   }
 
-  /** Verify Ethereum head advancement. */
+  /**
+   * Plan the Ethereum head-advancement Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planEthereumHeadAdvancement<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -142,7 +202,15 @@ export namespace ClusterReadinessSteps {
     return plan(actor, name, description, options, runEthereumHeadAdvancement)
   }
 
-  /** Verify Solana health and genesis identity. */
+  /**
+   * Plan the Solana health and genesis-identity Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planSolanaIdentity<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -152,7 +220,15 @@ export namespace ClusterReadinessSteps {
     return plan(actor, name, description, options, runSolanaIdentity)
   }
 
-  /** Verify Solana slot advancement. */
+  /**
+   * Plan the Solana slot-advancement Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planSolanaSlotAdvancement<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -162,7 +238,15 @@ export namespace ClusterReadinessSteps {
     return plan(actor, name, description, options, runSolanaSlotAdvancement)
   }
 
-  /** Probe an explicitly supplied Hyperion endpoint. */
+  /**
+   * Plan the optional Hyperion health Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planHyperionHealth<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -172,7 +256,15 @@ export namespace ClusterReadinessSteps {
     return plan(actor, name, description, options, runHyperionHealth)
   }
 
-  /** Verify required WIRE system-contract ABI surfaces. */
+  /**
+   * Plan the WIRE system-contract ABI-surface Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planWireContracts<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -182,7 +274,15 @@ export namespace ClusterReadinessSteps {
     return plan(actor, name, description, options, runWireContracts)
   }
 
-  /** Verify active epoch scheduling. */
+  /**
+   * Plan the active epoch-scheduler Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planEpochScheduler<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -192,7 +292,15 @@ export namespace ClusterReadinessSteps {
     return plan(actor, name, description, options, runEpochScheduler)
   }
 
-  /** Verify the active Ethereum and Solana chain registry. */
+  /**
+   * Plan the active Ethereum and Solana registry Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planChainRegistry<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -220,7 +328,14 @@ function plan<C extends ReadinessContext>(
   )
 }
 
-/** Record the three explicit endpoint inputs. */
+/**
+ * Record the three explicit endpoint inputs.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after endpoint evidence is recorded.
+ */
 export async function runRequiredEndpoints<C extends ReadinessContext>(
   context: C,
   _input: ClusterReadinessInput,
@@ -241,7 +356,14 @@ export async function runRequiredEndpoints<C extends ReadinessContext>(
   }))
 }
 
-/** Verify the exact WIRE chain id when the caller supplied one. */
+/**
+ * Verify the exact WIRE chain id when the caller supplied one.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after identity evidence is recorded.
+ */
 export async function runWireIdentity<C extends ReadinessContext>(
   context: C,
   _input: ClusterReadinessInput,
@@ -271,7 +393,14 @@ export async function runWireIdentity<C extends ReadinessContext>(
   })
 }
 
-/** Observe WIRE head-block advancement. */
+/**
+ * Observe WIRE head-block advancement.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after advancement is proven.
+ */
 export async function runWireHeadAdvancement<C extends ReadinessContext>(
   context: C,
   _input: ClusterReadinessInput,
@@ -294,7 +423,14 @@ export async function runWireHeadAdvancement<C extends ReadinessContext>(
   })
 }
 
-/** Verify that the WIRE head timestamp is current. */
+/**
+ * Verify that the WIRE head timestamp is current.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after freshness is proven.
+ */
 export async function runWireHeadFreshness<C extends ReadinessContext>(
   context: C,
   _input: ClusterReadinessInput,
@@ -323,7 +459,14 @@ export async function runWireHeadFreshness<C extends ReadinessContext>(
   })
 }
 
-/** Verify Ethereum identity and retain it for registry comparison. */
+/**
+ * Verify Ethereum identity and retain it for registry comparison.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after identity evidence is recorded.
+ */
 export async function runEthereumIdentity<C extends ReadinessContext>(
   context: C,
   _input: ClusterReadinessInput,
@@ -358,7 +501,14 @@ export async function runEthereumIdentity<C extends ReadinessContext>(
   })
 }
 
-/** Observe Ethereum block advancement. */
+/**
+ * Observe Ethereum block advancement.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after advancement is proven.
+ */
 export async function runEthereumHeadAdvancement<C extends ReadinessContext>(
   context: C,
   _input: ClusterReadinessInput,
@@ -386,7 +536,14 @@ export async function runEthereumHeadAdvancement<C extends ReadinessContext>(
   })
 }
 
-/** Verify Solana health and genesis identity. */
+/**
+ * Verify Solana health and genesis identity.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after identity and health are proven.
+ */
 export async function runSolanaIdentity<C extends ReadinessContext>(
   context: C,
   _input: ClusterReadinessInput,
@@ -421,7 +578,14 @@ export async function runSolanaIdentity<C extends ReadinessContext>(
   })
 }
 
-/** Observe Solana slot advancement. */
+/**
+ * Observe Solana slot advancement.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after advancement is proven.
+ */
 export async function runSolanaSlotAdvancement<C extends ReadinessContext>(
   context: C,
   _input: ClusterReadinessInput,
@@ -446,7 +610,14 @@ export async function runSolanaSlotAdvancement<C extends ReadinessContext>(
   })
 }
 
-/** Probe an explicitly configured Hyperion health endpoint. */
+/**
+ * Probe an explicitly configured Hyperion health endpoint.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after the health endpoint returns JSON.
+ */
 export async function runHyperionHealth<C extends ReadinessContext>(
   context: C,
   _input: ClusterReadinessInput,
@@ -466,7 +637,14 @@ export async function runHyperionHealth<C extends ReadinessContext>(
   })
 }
 
-/** Compare live WIRE ABIs to the generated sdk-core contract definitions. */
+/**
+ * Compare live WIRE ABIs to the generated sdk-core contract definitions.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after every required surface is found.
+ */
 export async function runWireContracts<C extends ReadinessContext>(
   context: C,
   _input: ClusterReadinessInput,
@@ -510,7 +688,14 @@ export async function runWireContracts<C extends ReadinessContext>(
   })
 }
 
-/** Verify epoch configuration, timeliness, and recent progression evidence. */
+/**
+ * Verify epoch configuration, timeliness, and recent progression evidence.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after scheduler readiness is classified.
+ */
 export async function runEpochScheduler<C extends ReadinessContext>(
   context: C,
   _input: ClusterReadinessInput,
@@ -605,7 +790,14 @@ export async function runEpochScheduler<C extends ReadinessContext>(
   })
 }
 
-/** Verify active EVM/SVM rows and compare the EVM row to the live RPC. */
+/**
+ * Verify active EVM/SVM rows and compare the EVM row to the live RPC.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after registry consistency is proven.
+ */
 export async function runChainRegistry<C extends ReadinessContext>(
   context: C,
   _input: ClusterReadinessInput,
@@ -621,17 +813,17 @@ export async function runChainRegistry<C extends ReadinessContext>(
       ),
       active = rows.filter(row => row.active),
       ethereum = active.find(row =>
-        readinessEnumMatches(
+        matchesProtoEnum(
           row.kind,
-          SysioChainsChainkind.CHAIN_KIND_EVM,
-          "CHAIN_KIND_EVM"
+          SysioChainsChainkind,
+          SysioChainsChainkind.CHAIN_KIND_EVM
         )
       ),
       solana = active.find(row =>
-        readinessEnumMatches(
+        matchesProtoEnum(
           row.kind,
-          SysioChainsChainkind.CHAIN_KIND_SVM,
-          "CHAIN_KIND_SVM"
+          SysioChainsChainkind,
+          SysioChainsChainkind.CHAIN_KIND_SVM
         )
       ),
       observedEthereumChainId = context.outputs.get(
@@ -660,7 +852,16 @@ export async function runChainRegistry<C extends ReadinessContext>(
   })
 }
 
-/** Classify scheduler timeliness separately from recent epoch progression. */
+/**
+ * Classify scheduler timeliness separately from recent epoch progression.
+ *
+ * @param currentEpoch - Current epoch index from live state.
+ * @param nextEpochStart - Scheduled next-epoch timestamp.
+ * @param epochDurationSec - Configured epoch duration in seconds.
+ * @param progressSamples - Recent emitted epoch evidence.
+ * @param nowMs - Observation time in Unix milliseconds.
+ * @returns The scheduler readiness classification and supporting timing values.
+ */
 export function assessEpochScheduler(
   currentEpoch: number,
   nextEpochStart: string,
@@ -729,7 +930,13 @@ export function assessEpochScheduler(
   }
 }
 
-/** Measure how far a WIRE epoch has run past its scheduled boundary. */
+/**
+ * Measure how far a WIRE epoch has run past its scheduled boundary.
+ *
+ * @param nextEpochStart - Scheduled next-epoch timestamp.
+ * @param nowMs - Observation time in Unix milliseconds.
+ * @returns Non-negative overdue milliseconds, or `NaN` for an invalid timestamp.
+ */
 export function epochOverdueMs(
   nextEpochStart: string,
   nowMs: number = Date.now()
@@ -738,7 +945,15 @@ export function epochOverdueMs(
   return Number.isFinite(timestamp) ? Math.max(0, nowMs - timestamp) : NaN
 }
 
-/** Observe a monotonically increasing chain value within a bounded window. */
+/**
+ * Observe a monotonically increasing chain value within a bounded window.
+ *
+ * @param label - Chain label used in failure diagnostics.
+ * @param read - Read operation returning the current monotonic value.
+ * @param observationMs - Maximum observation window.
+ * @param signal - Cooperative Step abort signal.
+ * @returns The initial and first greater observed values.
+ */
 export async function observeAdvancement(
   label: string,
   read: () => Promise<number>,

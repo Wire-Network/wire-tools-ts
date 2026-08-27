@@ -1,26 +1,26 @@
 import { Base58, SysioContracts } from "@wireio/sdk-core"
 
+import { ReadinessConfig } from "../../config/ReadinessConfig.js"
+import type { Report } from "../../report/Report.js"
+import { WireReserveTool } from "../../tools/wire/WireReserveTool.js"
+import { matchesProtoEnum } from "../../utils/predicateUtils.js"
+import {
+  ReadinessMaxTableRows,
+  readinessBoundedQuery,
+  readinessReserveLabel,
+  readinessSlug
+} from "../../utils/readinessUtils.js"
+import { slugValue } from "../../utils/slugUtils.js"
 import {
   ReadinessAssertionError,
   type ReadinessCapable,
   runReadinessAssertion
-} from "../../readiness/ReadinessContext.js"
-import { ReadinessConfig } from "../../readiness/ReadinessConfig.js"
+} from "../contexts/ConnectedReadinessContext.js"
 import {
   type ReadinessCollateralBucket,
   ReadinessOutputs,
   type ReadinessRoute
-} from "../../readiness/ReadinessOutputs.js"
-import {
-  ReadinessMaxTableRows,
-  readinessBoundedQuery,
-  readinessEnumMatches,
-  readinessReserveLabel,
-  readinessSlug,
-  readinessSlugValue
-} from "../../readiness/readinessUtils.js"
-import type { Report } from "../../report/Report.js"
-import { WireReserveTool } from "../../tools/wire/WireReserveTool.js"
+} from "../outputs/ReadinessOutput.js"
 import type { OrchestrationContext } from "../OrchestrationContext.js"
 import {
   ClusterBuildStep,
@@ -71,7 +71,15 @@ type ReadinessRunner<C extends ReadinessContext> = (
 
 /** Swap-specific read-only Step factories shared by CLI and FlowScenario runs. */
 export namespace SwapReadinessSteps {
-  /** Validate underwriting configuration. */
+  /**
+   * Plan the underwriting-configuration Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planUnderwritingConfig<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -81,7 +89,15 @@ export namespace SwapReadinessSteps {
     return plan(actor, name, description, options, runUnderwritingConfig)
   }
 
-  /** Validate active underwriter collateral coverage. */
+  /**
+   * Plan the active-underwriter collateral Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planActiveUnderwriters<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -91,7 +107,15 @@ export namespace SwapReadinessSteps {
     return plan(actor, name, description, options, runActiveUnderwriters)
   }
 
-  /** Validate external assets referenced by public reserves. */
+  /**
+   * Plan the external-asset existence Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planExternalAssets<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -101,7 +125,15 @@ export namespace SwapReadinessSteps {
     return plan(actor, name, description, options, runExternalAssets)
   }
 
-  /** Validate active token bindings for public reserves. */
+  /**
+   * Plan the active token-binding Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planAssetRegistry<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -111,7 +143,15 @@ export namespace SwapReadinessSteps {
     return plan(actor, name, description, options, runAssetRegistry)
   }
 
-  /** Validate positive liquidity on every advertised public reserve. */
+  /**
+   * Plan the public-reserve liquidity Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planPublicReserves<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -121,7 +161,15 @@ export namespace SwapReadinessSteps {
     return plan(actor, name, description, options, runPublicReserves)
   }
 
-  /** Validate that expired pending underwriting requests are absent. */
+  /**
+   * Plan the expired-request backlog Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planRequestBacklog<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -131,7 +179,15 @@ export namespace SwapReadinessSteps {
     return plan(actor, name, description, options, runRequestBacklog)
   }
 
-  /** Build every public directional route from live registry state. */
+  /**
+   * Plan the public directional-route construction Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planRouteRegistry<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -141,7 +197,15 @@ export namespace SwapReadinessSteps {
     return plan(actor, name, description, options, runRouteRegistry)
   }
 
-  /** Require a positive canonical quote for every constructed route. */
+  /**
+   * Plan the canonical route-quote Step.
+   *
+   * @param actor - Report actor performing the check.
+   * @param name - Stable Step name.
+   * @param description - Human-readable Step description.
+   * @param options - Step timeout overrides.
+   * @returns The planned readiness Step.
+   */
   export function planRouteQuotes<C extends ReadinessContext>(
     actor: Report.Actor,
     name: string,
@@ -169,7 +233,14 @@ function plan<C extends ReadinessContext>(
   )
 }
 
-/** Validate the live underwriting limits and fee bounds. */
+/**
+ * Validate the live underwriting limits and fee bounds.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after underwriting configuration is proven valid.
+ */
 export async function runUnderwritingConfig<C extends ReadinessContext>(
   context: C,
   _input: SwapReadinessInput,
@@ -209,7 +280,14 @@ export async function runUnderwritingConfig<C extends ReadinessContext>(
   })
 }
 
-/** Validate one active underwriter can cover the advertised collateral matrix. */
+/**
+ * Validate that every advertised collateral bucket has an active underwriter.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after per-bucket collateral coverage is proven.
+ */
 export async function runActiveUnderwriters<C extends ReadinessContext>(
   context: C,
   _input: SwapReadinessInput,
@@ -278,9 +356,7 @@ export async function runActiveUnderwriters<C extends ReadinessContext>(
       advertised = eligibleReserves(
         activePublicReserves(reservesResult.rows).filter(reserve =>
           externalChains.some(
-            chain =>
-              readinessSlugValue(chain.code) ===
-              readinessSlugValue(reserve.chain_code)
+            chain => slugValue(chain.code) === slugValue(reserve.chain_code)
           )
         ),
         chainTokensResult.rows
@@ -294,24 +370,23 @@ export async function runActiveUnderwriters<C extends ReadinessContext>(
       ),
       underwriters = operatorsResult.rows.filter(
         operator =>
-          readinessEnumMatches(
+          matchesProtoEnum(
             operator.type,
-            SysioOpregOperatortype.OPERATOR_TYPE_UNDERWRITER,
-            "OPERATOR_TYPE_UNDERWRITER"
+            SysioOpregOperatortype,
+            SysioOpregOperatortype.OPERATOR_TYPE_UNDERWRITER
           ) &&
-          readinessEnumMatches(
+          matchesProtoEnum(
             operator.status,
-            SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE,
-            "OPERATOR_STATUS_ACTIVE"
+            SysioOpregOperatorstatus,
+            SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
           )
       ),
       buckets: ReadinessCollateralBucket[] = bucketReserves.map(reserve => {
         const requirement = config.req_uw_collat.find(
             candidate =>
-              readinessSlugValue(candidate.chain_code) ===
-                readinessSlugValue(reserve.chain_code) &&
-              readinessSlugValue(candidate.token_code) ===
-                readinessSlugValue(reserve.token_code)
+              slugValue(candidate.chain_code) ===
+                slugValue(reserve.chain_code) &&
+              slugValue(candidate.token_code) === slugValue(reserve.token_code)
           ),
           minimum = requirement ? BigInt(requirement.min_bond) : 0n,
           accounts =
@@ -338,8 +413,8 @@ export async function runActiveUnderwriters<C extends ReadinessContext>(
               : null
           ].filter((issue): issue is string => issue != null)
         return {
-          chainCode: readinessSlugValue(reserve.chain_code),
-          tokenCode: readinessSlugValue(reserve.token_code),
+          chainCode: slugValue(reserve.chain_code),
+          tokenCode: slugValue(reserve.token_code),
           label: `${readinessSlug(reserve.chain_code)}/${readinessSlug(reserve.token_code)}`,
           minimum: minimum.toString(),
           accounts,
@@ -347,26 +422,25 @@ export async function runActiveUnderwriters<C extends ReadinessContext>(
           issues
         }
       }),
-      fullCoverageAccounts = underwriters
-        .map(operator => operator.account)
-        .filter(account =>
-          buckets.every(bucket => bucket.accounts.includes(account))
-        ),
-      invalidBuckets = buckets.filter(bucket => !bucket.ready)
+      invalidBuckets = buckets.filter(bucket => !bucket.ready),
+      servingUnderwriters = [
+        ...new Set(buckets.flatMap(bucket => bucket.accounts))
+      ]
 
     context.outputs.set(ReadinessOutputs.collateralBuckets, buckets)
     if (
       buckets.length === 0 ||
       config.max_available_underwriters <= 0 ||
-      invalidBuckets.length > 0 ||
-      fullCoverageAccounts.length === 0
+      invalidBuckets.length > 0
     ) {
       throw new ReadinessAssertionError(
         buckets.length === 0
           ? "The advertised collateral matrix is empty"
-          : invalidBuckets.length > 0
-            ? `Collateral coverage is incomplete for ${invalidBuckets.map(bucket => bucket.label).join(", ")}`
-            : "No ACTIVE underwriter can cover every advertised collateral bucket",
+          : config.max_available_underwriters <= 0
+            ? "max_available_underwriters must be positive"
+            : invalidBuckets.length > 0
+              ? `Collateral coverage is incomplete for ${invalidBuckets.map(bucket => bucket.label).join(", ")}`
+              : "Collateral readiness is invalid",
         {
           buckets,
           maxAvailableUnderwriters: config.max_available_underwriters,
@@ -375,9 +449,9 @@ export async function runActiveUnderwriters<C extends ReadinessContext>(
       )
     }
     return {
-      detail: `${fullCoverageAccounts.length} ACTIVE underwriter(s) can cover every advertised collateral bucket`,
+      detail: `${servingUnderwriters.length} ACTIVE underwriter(s) cover ${buckets.length} advertised collateral bucket(s)`,
       evidence: {
-        accounts: fullCoverageAccounts,
+        accounts: servingUnderwriters,
         buckets,
         activeLocks: locksResult.rows.length,
         pendingWithdrawals: withdrawalsResult.rows.length
@@ -386,7 +460,14 @@ export async function runActiveUnderwriters<C extends ReadinessContext>(
   })
 }
 
-/** Validate native assets and deployed EVM contracts or Solana mint accounts. */
+/**
+ * Validate native assets and deployed EVM contracts or configured Solana accounts.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after every advertised external asset exists.
+ */
 export async function runExternalAssets<C extends ReadinessContext>(
   context: C,
   _input: SwapReadinessInput,
@@ -400,16 +481,15 @@ export async function runExternalAssets<C extends ReadinessContext>(
           const chain = chains.find(
               candidate =>
                 candidate.active &&
-                readinessSlugValue(candidate.code) ===
-                  readinessSlugValue(reserve.chain_code)
+                slugValue(candidate.code) === slugValue(reserve.chain_code)
             ),
             token = chainTokens.find(
               candidate =>
                 candidate.active &&
-                readinessSlugValue(candidate.chain_code) ===
-                  readinessSlugValue(reserve.chain_code) &&
-                readinessSlugValue(candidate.token_code) ===
-                  readinessSlugValue(reserve.token_code)
+                slugValue(candidate.chain_code) ===
+                  slugValue(reserve.chain_code) &&
+                slugValue(candidate.token_code) ===
+                  slugValue(reserve.token_code)
             ),
             label = `${readinessSlug(reserve.chain_code)}/${readinessSlug(reserve.token_code)}`,
             address = token?.contract_addr.trim() ?? ""
@@ -424,10 +504,10 @@ export async function runExternalAssets<C extends ReadinessContext>(
           if (address.length === 0)
             return failedAsset(label, address, "contract_addr is empty")
           if (
-            readinessEnumMatches(
+            matchesProtoEnum(
               chain.kind,
-              SysioChainsChainkind.CHAIN_KIND_EVM,
-              "CHAIN_KIND_EVM"
+              SysioChainsChainkind,
+              SysioChainsChainkind.CHAIN_KIND_EVM
             )
           ) {
             if (!/^(?:0x)?[0-9a-f]{40}$/i.test(address))
@@ -445,15 +525,19 @@ export async function runExternalAssets<C extends ReadinessContext>(
               : { label, native: false, address: normalized, deployed: true }
           }
           if (
-            readinessEnumMatches(
+            matchesProtoEnum(
               chain.kind,
-              SysioChainsChainkind.CHAIN_KIND_SVM,
-              "CHAIN_KIND_SVM"
+              SysioChainsChainkind,
+              SysioChainsChainkind.CHAIN_KIND_SVM
             )
           ) {
             const publicKey = solanaPublicKey(address)
             if (publicKey.length === 0)
-              return failedAsset(label, address, "invalid Solana mint address")
+              return failedAsset(
+                label,
+                address,
+                "invalid Solana account address"
+              )
             const account =
               await context.readiness.jsonRpc<SolanaAccountInfoResponse>(
                 context.readiness.config.endpoints.solanaRpc,
@@ -461,7 +545,7 @@ export async function runExternalAssets<C extends ReadinessContext>(
                 [publicKey, { encoding: "base64" }]
               )
             return account.value == null
-              ? failedAsset(label, publicKey, "Solana mint account is missing")
+              ? failedAsset(label, publicKey, "Solana account is missing")
               : { label, native: false, address: publicKey, deployed: true }
           }
           return failedAsset(label, address, "unsupported external chain kind")
@@ -477,13 +561,20 @@ export async function runExternalAssets<C extends ReadinessContext>(
       )
     }
     return {
-      detail: `${probes.length} public reserve asset(s) resolve to native currency or a deployed token/mint`,
+      detail: `${probes.length} public reserve asset(s) resolve to native currency or a deployed contract/account`,
       evidence: { assets: probes }
     }
   })
 }
 
-/** Validate active token mappings for every advertised reserve. */
+/**
+ * Validate active token mappings for every advertised reserve.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after token bindings are proven complete.
+ */
 export async function runAssetRegistry<C extends ReadinessContext>(
   context: C,
   _input: SwapReadinessInput,
@@ -510,7 +601,14 @@ export async function runAssetRegistry<C extends ReadinessContext>(
   })
 }
 
-/** Validate positive public reserve depth across active EVM and SVM chains. */
+/**
+ * Validate positive public reserve depth across active EVM and SVM chains.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after public reserve capacity is proven.
+ */
 export async function runPublicReserves<C extends ReadinessContext>(
   context: C,
   _input: SwapReadinessInput,
@@ -521,17 +619,17 @@ export async function runPublicReserves<C extends ReadinessContext>(
     const { chains, chainTokens, reserves } = await readReserveState(context),
       externalChains = chains.filter(row => row.active && isExternalChain(row)),
       hasEthereum = externalChains.some(row =>
-        readinessEnumMatches(
+        matchesProtoEnum(
           row.kind,
-          SysioChainsChainkind.CHAIN_KIND_EVM,
-          "CHAIN_KIND_EVM"
+          SysioChainsChainkind,
+          SysioChainsChainkind.CHAIN_KIND_EVM
         )
       ),
       hasSolana = externalChains.some(row =>
-        readinessEnumMatches(
+        matchesProtoEnum(
           row.kind,
-          SysioChainsChainkind.CHAIN_KIND_SVM,
-          "CHAIN_KIND_SVM"
+          SysioChainsChainkind,
+          SysioChainsChainkind.CHAIN_KIND_SVM
         )
       ),
       publicActive = activePublicReserves(reserves),
@@ -545,9 +643,7 @@ export async function runPublicReserves<C extends ReadinessContext>(
         .filter(
           chain =>
             !eligible.some(
-              reserve =>
-                readinessSlugValue(reserve.chain_code) ===
-                readinessSlugValue(chain.code)
+              reserve => slugValue(reserve.chain_code) === slugValue(chain.code)
             )
         )
         .map(chain => readinessSlug(chain.code))
@@ -579,7 +675,14 @@ export async function runPublicReserves<C extends ReadinessContext>(
   })
 }
 
-/** Validate expired pending underwriting requests are not accumulating. */
+/**
+ * Validate expired pending underwriting requests are not accumulating.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after backlog state is proven current.
+ */
 export async function runRequestBacklog<C extends ReadinessContext>(
   context: C,
   _input: SwapReadinessInput,
@@ -611,10 +714,10 @@ export async function runRequestBacklog<C extends ReadinessContext>(
     if (epoch == null) throw new Error("sysio.epoch::epochstate is missing")
     const stale = requestsResult.rows.filter(
       request =>
-        readinessEnumMatches(
+        matchesProtoEnum(
           request.status,
-          SysioUwritUnderwriterequeststatus.UNDERWRITE_REQUEST_STATUS_PENDING,
-          "UNDERWRITE_REQUEST_STATUS_PENDING"
+          SysioUwritUnderwriterequeststatus,
+          SysioUwritUnderwriterequeststatus.UNDERWRITE_REQUEST_STATUS_PENDING
         ) && request.expires_at_epoch < epoch.current_epoch_index
     )
     if (stale.length > 0) {
@@ -638,7 +741,14 @@ export async function runRequestBacklog<C extends ReadinessContext>(
   })
 }
 
-/** Construct routes and quote them from the same bounded live table snapshot. */
+/**
+ * Construct routes and quote them from the same bounded live table snapshot.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after route evidence is stored.
+ */
 export async function runRouteRegistry<C extends ReadinessContext>(
   context: C,
   _input: SwapReadinessInput,
@@ -660,7 +770,14 @@ export async function runRouteRegistry<C extends ReadinessContext>(
   })
 }
 
-/** Require every constructed route to pass read-only preflight. */
+/**
+ * Require every constructed route to pass read-only preflight.
+ *
+ * @param context - Readiness-capable orchestration context.
+ * @param _input - Typed input marker recorded in the Report.
+ * @param signal - Cooperative Step abort signal.
+ * @returns A promise resolved after every route passes preflight.
+ */
 export async function runRouteQuotes<C extends ReadinessContext>(
   context: C,
   _input: SwapReadinessInput,
@@ -725,15 +842,15 @@ function bounded<T extends BoundedQueryResult>(
 
 function isExternalChain(row: SysioContracts.SysioChainsChainRowType): boolean {
   return (
-    readinessEnumMatches(
+    matchesProtoEnum(
       row.kind,
-      SysioChainsChainkind.CHAIN_KIND_EVM,
-      "CHAIN_KIND_EVM"
+      SysioChainsChainkind,
+      SysioChainsChainkind.CHAIN_KIND_EVM
     ) ||
-    readinessEnumMatches(
+    matchesProtoEnum(
       row.kind,
-      SysioChainsChainkind.CHAIN_KIND_SVM,
-      "CHAIN_KIND_SVM"
+      SysioChainsChainkind,
+      SysioChainsChainkind.CHAIN_KIND_SVM
     )
   )
 }
@@ -744,10 +861,10 @@ function activePublicReserves(
   return reserves.filter(
     reserve =>
       !reserve.is_private &&
-      readinessEnumMatches(
+      matchesProtoEnum(
         reserve.status,
-        SysioReservReservestatus.RESERVE_STATUS_ACTIVE,
-        "RESERVE_STATUS_ACTIVE"
+        SysioReservReservestatus,
+        SysioReservReservestatus.RESERVE_STATUS_ACTIVE
       )
   )
 }
@@ -760,10 +877,8 @@ function eligibleReserves(
     tokens.some(
       token =>
         token.active &&
-        readinessSlugValue(token.chain_code) ===
-          readinessSlugValue(reserve.chain_code) &&
-        readinessSlugValue(token.token_code) ===
-          readinessSlugValue(reserve.token_code)
+        slugValue(token.chain_code) === slugValue(reserve.chain_code) &&
+        slugValue(token.token_code) === slugValue(reserve.token_code)
     )
   )
 }
@@ -771,10 +886,18 @@ function eligibleReserves(
 function collateralBucketKey(
   reserve: SysioContracts.SysioReservReserveRowType
 ): string {
-  return `${readinessSlugValue(reserve.chain_code)}/${readinessSlugValue(reserve.token_code)}`
+  return `${slugValue(reserve.chain_code)}/${slugValue(reserve.token_code)}`
 }
 
-/** Available collateral after active locks and pending withdrawals. */
+/**
+ * Calculate available collateral after active locks and pending withdrawals.
+ *
+ * @param operator - Active underwriter operator row.
+ * @param reserve - Reserve whose chain/token bucket is being evaluated.
+ * @param locks - Live underwriting locks.
+ * @param withdrawals - Pending collateral withdrawals.
+ * @returns Non-negative available collateral in token base units.
+ */
 export function availableCollateral(
   operator: SysioContracts.SysioOpregOperatorEntryType,
   reserve: SysioContracts.SysioReservReserveRowType,
@@ -782,10 +905,8 @@ export function availableCollateral(
   withdrawals: SysioContracts.SysioOpregWithdrawRequestType[]
 ): bigint {
   const matchesBucket = (candidate: CollateralBucketRow) =>
-      readinessSlugValue(candidate.chain_code) ===
-        readinessSlugValue(reserve.chain_code) &&
-      readinessSlugValue(candidate.token_code) ===
-        readinessSlugValue(reserve.token_code),
+      slugValue(candidate.chain_code) === slugValue(reserve.chain_code) &&
+      slugValue(candidate.token_code) === slugValue(reserve.token_code),
     balance = operator.balances.find(matchesBucket),
     locked = locks
       .filter(
@@ -812,9 +933,7 @@ async function buildReadinessRoutes<C extends ReadinessContext>(
     buckets = context.outputs.get(ReadinessOutputs.collateralBuckets) ?? [],
     label = (reserve: SysioContracts.SysioReservReserveRowType) => {
       const chain = chains.find(
-        candidate =>
-          readinessSlugValue(candidate.code) ===
-          readinessSlugValue(reserve.chain_code)
+        candidate => slugValue(candidate.code) === slugValue(reserve.chain_code)
       )
       return `${readinessSlug(reserve.token_code)} on ${chain?.name ?? readinessSlug(reserve.chain_code)}`
     },
@@ -846,8 +965,7 @@ async function buildReadinessRoutes<C extends ReadinessContext>(
       eligible
         .filter(
           destination =>
-            readinessSlugValue(source.chain_code) !==
-            readinessSlugValue(destination.chain_code)
+            slugValue(source.chain_code) !== slugValue(destination.chain_code)
         )
         .map(destination => {
           const sourceBook = reserveBook(source),
@@ -893,8 +1011,8 @@ function createRoute(
   const routeBuckets = reserves.map(reserve =>
       buckets.find(
         bucket =>
-          bucket.chainCode === readinessSlugValue(reserve.chain_code) &&
-          bucket.tokenCode === readinessSlugValue(reserve.token_code)
+          bucket.chainCode === slugValue(reserve.chain_code) &&
+          bucket.tokenCode === slugValue(reserve.token_code)
       )
     ),
     commonUnderwriters = routeBuckets.reduce<string[]>(

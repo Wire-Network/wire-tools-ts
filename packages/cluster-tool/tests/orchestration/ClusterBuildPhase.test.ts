@@ -131,6 +131,31 @@ describe("ClusterBuildPhase executor", () => {
     ])
   })
 
+  it("aborts cooperative parallel siblings in the default fail-fast mode", async () => {
+    let siblingObservedAbort = false
+    const sibling = ClusterBuildStep.create(
+        Report.Actor.Sysio,
+        "sibling",
+        "sibling",
+        {},
+        null,
+        async (_context, _input, signal) => {
+          await sleep(10)
+          siblingObservedAbort = signal.aborted
+          signal.throwIfAborted()
+        }
+      ),
+      phase = ClusterBuildPhase.create(newBuild(), "P", "d", [], {
+        parallelize: true
+      }).push(fail("immediate"), sibling),
+      result = await runOne(phase)
+    expect(siblingObservedAbort).toBe(true)
+    expect(result.succeeded).toBe(false)
+    expect(
+      result.steps.every(step => step.status === Report.StepStatus.failed)
+    ).toBe(true)
+  })
+
   it("runs steps in parallel when parallelize", async () => {
     const order: string[] = []
     const timed = (name: string, ms: number) =>
@@ -207,21 +232,66 @@ describe("ClusterBuildPhase executor", () => {
     expect(peakInFlight).toBe(4) // all at once — unchanged from Promise.all
   })
 
-  it("fails a step that exceeds its timeout", async () => {
-    const slow = ClusterBuildStep.create(
-      Report.Actor.Sysio,
-      "slow",
-      "slow",
-      { timeoutMs: 20 },
-      null,
-      async () => {
-        await sleep(150)
-      }
-    )
-    const phase = ClusterBuildPhase.create(newBuild(), "P", "d").push(slow)
+  it("fails a timed-out step and skips the tail in default fail-fast mode", async () => {
+    const order: string[] = [],
+      slow = ClusterBuildStep.create(
+        Report.Actor.Sysio,
+        "slow",
+        "slow",
+        { timeoutMs: 20 },
+        null,
+        async () => {
+          await sleep(150)
+        }
+      ),
+      phase = ClusterBuildPhase.create(newBuild(), "P", "d").push(
+        slow,
+        ok(order, "tail")
+      )
     const result = await runOne(phase)
     expect(result.steps[0].status).toBe(Report.StepStatus.failed)
     expect(result.steps[0].error?.message).toMatch(/exceeded 20ms/)
+    expect(result.steps[1].status).toBe(Report.StepStatus.skipped)
+    expect(order).toEqual([])
+  })
+
+  it("limits a collect-mode timeout to its step and continues the tail", async () => {
+    const order: string[] = [],
+      slow = ClusterBuildStep.create(
+        Report.Actor.Sysio,
+        "slow",
+        "slow",
+        { timeoutMs: 10 },
+        null,
+        async () => {
+          await sleep(40)
+        }
+      ),
+      phase = ClusterBuildPhase.create(newBuild(), "P", "d", [], {
+        failureMode: ClusterBuildFailureMode.collect
+      }).push(slow, ok(order, "tail")),
+      result = await runOne(phase)
+    expect(result.steps.map(step => step.status)).toEqual([
+      Report.StepStatus.failed,
+      Report.StepStatus.ok
+    ])
+    expect(order).toEqual(["tail"])
+  })
+
+  it("skips every step when its parent signal is already aborted", async () => {
+    const order: string[] = [],
+      controller = new AbortController(),
+      phase = ClusterBuildPhase.create(newBuild(), "P", "d").push(
+        ok(order, "a"),
+        ok(order, "b")
+      )
+    controller.abort()
+    const result = (await phase.run(controller.signal))[0] as Report.Phase
+    expect(order).toEqual([])
+    expect(result.steps.map(step => step.status)).toEqual([
+      Report.StepStatus.skipped,
+      Report.StepStatus.skipped
+    ])
   })
 
   it("a satisfied timeout is disarmed — the stale timer never aborts later steps", async () => {

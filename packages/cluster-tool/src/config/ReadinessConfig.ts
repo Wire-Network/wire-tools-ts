@@ -32,16 +32,28 @@ export interface ReadinessOptions extends ReadinessEndpoints {
 
 /** Resolved configuration for one read-only readiness build. */
 export interface ReadinessConfig extends OrchestrationConfig {
+  /** Explicit endpoints probed by the readiness run. */
   endpoints: ReadinessEndpoints
+  /** Expected WIRE chain id, when exact identity is caller-known. */
   expectedWireChainId?: string
+  /** Expected Ethereum chain id, when exact identity is caller-known. */
   expectedEthereumChainId?: number
+  /** Expected Solana genesis hash, when exact identity is caller-known. */
   expectedSolanaGenesisHash?: string
+  /** Maximum chain-advancement observation window. */
   observationMs: number
+  /** Per-request timeout. */
   timeoutMs: number
+  /** Native report output configuration. */
   report: OrchestrationConfig["report"]
 }
 
-/** Validate and resolve a readiness configuration without network discovery. */
+/**
+ * Validate and resolve a readiness configuration without network discovery.
+ *
+ * @param options - Caller-supplied endpoints, expected identities, and report options.
+ * @returns A normalized runtime readiness configuration.
+ */
 export function createReadinessConfig(
   options: ReadinessOptions
 ): ReadinessConfig {
@@ -95,16 +107,16 @@ function assertHttpUrl(value: string, name: string): string {
 
 /** Runtime constants for connected readiness. */
 export namespace ReadinessConfig {
-  /** Default head-observation window. */
+  /** Default head-observation window used when a caller omits `observationMs`. */
   export const DefaultObservationMs = 15_000
-  /** Poll cadence inside the bounded head-advancement window. */
+  /** Poll cadence controlling request frequency inside the advancement window. */
   export const AdvancementPollIntervalMs = 1_000
-  /** Default individual request timeout. */
+  /** Default individual request timeout used when a caller omits `timeoutMs`. */
   export const DefaultTimeoutMs = 8_000
-  /** Maximum acceptable WIRE head age. */
+  /** Maximum acceptable WIRE head age before freshness fails. */
   export const FreshWireHeadLimitMs = 60_000
-  /** Probe one-thousandth of a reserve's source depth. */
+  /** Divisor selecting the quote probe amount from a reserve's source depth. */
   export const QuoteProbeDepthDivisor = 1_000n
-  /** Exact WIRE chain-id shape. */
+  /** Exact WIRE chain-id shape enforced during config validation. */
   export const WireChainIdPattern = /^[0-9a-f]{64}$/i
 }

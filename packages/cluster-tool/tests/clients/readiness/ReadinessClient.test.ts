@@ -1,7 +1,6 @@
-import {
-  createReadinessConfig,
-  ReadinessClient
-} from "@wireio/cluster-tool/readiness"
+import { ReadinessClient } from "@wireio/cluster-tool/clients/readiness"
+import { createReadinessConfig } from "@wireio/cluster-tool/config"
+import { StepExtraRecorder } from "@wireio/cluster-tool/report"
 
 const config = createReadinessConfig({
   wireRpc: "https://wire.example",
@@ -52,18 +51,45 @@ describe("ReadinessClient", () => {
     ).rejects.toThrow("getHealth failed: denied")
   })
 
+  it("records WIRE API reads through the native Step recorder", async () => {
+    const request = jest.fn(
+        async () =>
+          new Response(JSON.stringify({ head_block_num: 7 }), { status: 200 })
+      ),
+      client = new ReadinessClient(config, request),
+      recorder = new StepExtraRecorder()
+    await StepExtraRecorder.runWith(recorder, () =>
+      client.wireApi.v1Provider.call({
+        path: "/v1/chain/get_table_rows",
+        params: { code: "sysio.opreg", table: "operators" }
+      })
+    )
+    expect(recorder.calls).toEqual([
+      {
+        client: "wire",
+        kind: "rpc",
+        path: "/v1/chain/get_table_rows",
+        params: { code: "sysio.opreg", table: "operators" }
+      }
+    ])
+  })
+
   it("redacts credentials and query parameters from request failures", async () => {
-    const request = jest.fn(async () => {
-        throw new Error("offline")
+    const endpoint =
+        "https://operator:secret@wire.example/health?token=hidden#fragment",
+      request = jest.fn(async () => {
+        throw new Error(`offline while requesting ${endpoint}`)
       }),
       client = new ReadinessClient(config, request),
-      operation = client.fetchJson(
-        "https://operator:secret@wire.example/health?token=hidden#fragment"
+      error = await client.fetchJson(endpoint).then(
+        () => new Error("request unexpectedly succeeded"),
+        reason =>
+          reason instanceof Error ? reason : new Error(String(reason))
       )
-    await expect(operation).rejects.toThrow(
+    expect(error.message).toContain(
       "Request failed: https://wire.example/health"
     )
-    await expect(operation).rejects.not.toThrow("secret")
-    await expect(operation).rejects.not.toThrow("hidden")
+    expect(error.stack).not.toContain("secret")
+    expect(error.stack).not.toContain("hidden")
   })
 })

@@ -110,6 +110,78 @@ describe("ClusterBuildPhaseGroup", () => {
     expect(phases.map(phase => phase.name).sort()).toEqual(["fast", "slow"])
   })
 
+  it("aborts cooperative parallel children in the default fail-fast mode", async () => {
+    let siblingObservedAbort = false
+    const group = ClusterBuildPhaseGroup.create(newBuild(), "G", "group", {
+      parallel: true
+    })
+    ClusterBuildPhase.create(group, "failed", "d").push(fail("immediate"))
+    ClusterBuildPhase.create(group, "sibling", "d").push(
+      ClusterBuildStep.create(
+        Report.Actor.Sysio,
+        "cooperative",
+        "cooperative",
+        {},
+        null,
+        async (_context, _input, signal) => {
+          await sleep(10)
+          siblingObservedAbort = signal.aborted
+          signal.throwIfAborted()
+        }
+      )
+    )
+    const phases = await runGroup(group)
+    expect(siblingObservedAbort).toBe(true)
+    expect(phases).toHaveLength(2)
+    expect(phases.every(phase => !phase.succeeded)).toBe(true)
+  })
+
+  it("does not abort parallel children in collect mode", async () => {
+    const order: string[] = [],
+      group = ClusterBuildPhaseGroup.create(newBuild(), "G", "group", {
+        parallel: true,
+        failureMode: ClusterBuildFailureMode.collect
+      })
+    ClusterBuildPhase.create(group, "failed", "d").push(fail("immediate"))
+    ClusterBuildPhase.create(group, "sibling", "d").push(
+      ClusterBuildStep.create(
+        Report.Actor.Sysio,
+        "delayed",
+        "delayed",
+        {},
+        null,
+        async (_context, _input, signal) => {
+          await sleep(10)
+          signal.throwIfAborted()
+          order.push("delayed")
+        }
+      )
+    )
+    const phases = await runGroup(group)
+    expect(order).toEqual(["delayed"])
+    expect(phases.map(phase => phase.succeeded).sort()).toEqual([false, true])
+  })
+
+  it("propagates a pre-aborted parent signal to every child", async () => {
+    const order: string[] = [],
+      controller = new AbortController(),
+      group = ClusterBuildPhaseGroup.create(newBuild(), "G", "group", {
+        failureMode: ClusterBuildFailureMode.collect
+      })
+    ClusterBuildPhase.create(group, "P1", "d").push(ok(order, "a"))
+    ClusterBuildPhase.create(group, "P2", "d").push(ok(order, "b"))
+    controller.abort()
+    const phases = (await group.run(controller.signal)).flatMap(node =>
+      Report.Node.phases(node)
+    )
+    expect(order).toEqual([])
+    expect(
+      phases
+        .flatMap(phase => phase.steps)
+        .every(step => step.status === Report.StepStatus.skipped)
+    ).toBe(true)
+  })
+
   it("defaults concurrency to unbounded so parallel keeps Promise.all semantics", () => {
     const group = ClusterBuildPhaseGroup.create(newBuild(), "G", "group", {
       parallel: true

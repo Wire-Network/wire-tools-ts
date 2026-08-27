@@ -1,5 +1,18 @@
-import { availableCollateral } from "@wireio/cluster-tool/orchestration/steps/SwapReadinessSteps"
 import { SlugName, SysioContracts } from "@wireio/sdk-core"
+
+import {
+  availableCollateral,
+  runActiveUnderwriters,
+  runAssetRegistry,
+  runExternalAssets,
+  runPublicReserves,
+  runRequestBacklog,
+  runRouteQuotes,
+  runRouteRegistry,
+  runUnderwritingConfig,
+  SwapReadinessSteps
+} from "@wireio/cluster-tool/orchestration/steps/SwapReadinessSteps"
+import { Report } from "@wireio/cluster-tool/report"
 
 const chainCode = { value: SlugName.from("ETHEREUM") },
   tokenCode = { value: SlugName.from("ETH") },
@@ -53,6 +66,27 @@ const chainCode = { value: SlugName.from("ETHEREUM") },
   }
 
 describe("SwapReadinessSteps", () => {
+  it("wires every planned Step to its named runner and typed input", () => {
+    const pairs = [
+      [SwapReadinessSteps.planUnderwritingConfig, runUnderwritingConfig],
+      [SwapReadinessSteps.planActiveUnderwriters, runActiveUnderwriters],
+      [SwapReadinessSteps.planExternalAssets, runExternalAssets],
+      [SwapReadinessSteps.planAssetRegistry, runAssetRegistry],
+      [SwapReadinessSteps.planPublicReserves, runPublicReserves],
+      [SwapReadinessSteps.planRequestBacklog, runRequestBacklog],
+      [SwapReadinessSteps.planRouteRegistry, runRouteRegistry],
+      [SwapReadinessSteps.planRouteQuotes, runRouteQuotes]
+    ] as const
+    pairs.forEach(([planner, runner], index) => {
+      const step = planner(Report.Actor.Sysio, `step-${index}`, "fixture", {
+        timeoutMs: 123
+      })
+      expect(step.runner).toBe(runner)
+      expect(step.input).toEqual({ kind: "SwapReadinessSteps.Input" })
+      expect(step.options.timeoutMs).toBe(123)
+    })
+  })
+
   it("subtracts active locks and pending withdrawals from collateral", () => {
     const locks: SysioContracts.SysioUwritLockEntryType[] = [
         {

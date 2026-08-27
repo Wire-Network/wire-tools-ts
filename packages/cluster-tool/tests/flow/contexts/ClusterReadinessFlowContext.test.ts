@@ -1,6 +1,6 @@
 import { getLogger } from "@wireio/cluster-tool/logging"
-import { ClusterReadinessFlowContext } from "@wireio/cluster-tool/readiness"
-import { fixtureConfig } from "../config/clusterConfigFixture.js"
+import { ClusterReadinessFlowContext } from "@wireio/cluster-tool/flow"
+import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 
 describe("ClusterReadinessFlowContext", () => {
   it("derives explicit probe endpoints from the resolved BindConfig", () => {

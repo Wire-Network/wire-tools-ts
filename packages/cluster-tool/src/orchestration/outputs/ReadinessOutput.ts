@@ -1,23 +1,36 @@
-import { outputKey } from "../orchestration/OutputStore.js"
+import { outputKey } from "../OutputStore.js"
 
 /** One collateral bucket and the active underwriters able to serve it. */
 export interface ReadinessCollateralBucket {
+  /** Numeric WIRE chain slug. */
   chainCode: number
+  /** Numeric WIRE token slug. */
   tokenCode: number
+  /** Human-readable chain/token label. */
   label: string
+  /** Minimum required collateral in the token's base units. */
   minimum: string
+  /** Active underwriter accounts able to serve this bucket. */
   accounts: string[]
+  /** Whether at least one active underwriter can serve the bucket. */
   ready: boolean
+  /** Reasons the bucket is not ready. */
   issues: string[]
 }
 
 /** Read-only preflight evidence for one directional public route. */
 export interface ReadinessRoute {
+  /** Human-readable source reserve label. */
   source: string
+  /** Human-readable destination reserve label. */
   destination: string
+  /** Source probe amount in base units. */
   quotedSourceAmount: string
+  /** Canonical quoted destination amount in base units. */
   quotedDestinationAmount: string
+  /** Whether quote and per-route collateral checks passed. */
   preflightReady: boolean
+  /** Reasons the route is not preflight-ready. */
   issues: string[]
 }
 

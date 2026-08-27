@@ -1,4 +1,4 @@
-import { createReadinessConfig } from "@wireio/cluster-tool/readiness"
+import { createReadinessConfig } from "@wireio/cluster-tool/config"
 
 const base = {
   wireRpc: "https://wire.example/",
