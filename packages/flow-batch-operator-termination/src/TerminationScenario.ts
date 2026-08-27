@@ -10,6 +10,8 @@ import {
   Report,
   SolanaCollateralTool,
   SolanaOutpostBootstrapper,
+  SolanaOutpostProgramTool,
+  Steps,
   WireOperatorProvisioningTool,
   getLogger,
   matchesProtoEnum,
@@ -49,6 +51,22 @@ const PostDepositSolanaLamportsKey = outputKey<number>(
   `${Constants.DoomedOperatorLabel}'s SOL wallet balance (lamports) after both bonds landed`
 )
 
+/**
+ * Rent held by the operator's `CollateralPosition` PDA while the bond is open.
+ *
+ * SOL-379 made collateral a per-`(operator, token_code)` PDA that the DEPOSITOR
+ * rent-funds and that auto-closes once its balance reaches zero — refunding
+ * that rent to the operator. So a WITHDRAW_REMIT credits the wallet with the
+ * bond AND this rent, and the remit-exactness check has to know both halves.
+ * Captured from the live account rather than hardcoded, so it tracks
+ * `CollateralPosition::SIZE` instead of silently drifting when the struct
+ * changes. Must be read BEFORE the remit — the account is gone afterwards.
+ */
+const PostDepositSolanaPositionRentKey = outputKey<number>(
+  "TerminationScenario.postDepositSolanaPositionRent",
+  `${Constants.DoomedOperatorLabel}'s SOL CollateralPosition rent (lamports), refunded when the remit empties it`
+)
+
 /** The doomed operator's node-owner-generated WIRE account, resolved from the key store by its label. */
 function doomedOperatorAccount(ctx: ClusterBuildContext): string {
   return ctx.keyStore.assertOperator(Constants.DoomedOperatorLabel).account
@@ -65,14 +83,15 @@ async function readDoomedOperatorRow(
   return rows.find(row => row.account === account)
 }
 
-/** The sliding-window schedule groups from the `sysio.epoch::epochstate` singleton (a read). */
+/**
+ * The sliding-window schedule groups from the `sysio.epoch::epochstate`
+ * singleton (a read) — the WHOLE window, not just the active group: this
+ * scenario asserts the doomed operator rides into ANY upcoming group.
+ */
 async function readScheduleGroups(
   ctx: ClusterBuildContext
 ): Promise<string[][]> {
-  const { rows } = await ctx.wire
-    .getSysioContract(SysioContractName.epoch)
-    .tables.epochstate.query({ limit: Constants.EpochStateQueryLimit })
-  return rows[0]?.batch_op_groups ?? []
+  return Steps.contracts.sysio.epoch.batchOperatorGroups(ctx)
 }
 
 /**
@@ -427,18 +446,36 @@ export class TerminationScenario extends FlowScenario {
       verifyStep(
         Actor.User,
         "snapshot-post-deposit-balances",
-        "capture the operator's post-deposit ETH + SOL wallet balances (remit-exactness baselines)",
+        "capture the operator's post-deposit ETH + SOL wallet balances and SOL position rent (remit-exactness baselines)",
         async ctx => {
           const operator = ctx.keyStore.assertOperator(
             Constants.DoomedOperatorLabel
           )
+          const operatorKeypair = solanaKeypair(operator.solana)
+          const operatorPublicKey = operatorKeypair.publicKey
           const wei = await ctx.ethereum.getBalance(operator.ethereum.address)
-          const lamports = await ctx.solana.getLamports(
-            solanaKeypair(operator.solana).publicKey
+          const lamports = await ctx.solana.getLamports(operatorPublicKey)
+          // Read the position's rent while the account still exists — the
+          // remit empties it and the program closes it, refunding this to the
+          // operator's wallet (see PostDepositSolanaPositionRentKey).
+          const programId = SolanaOutpostProgramTool.assertProgramId(
+              ctx.config.solanaPath
+            ),
+            positionPda = SolanaCollateralTool.collateralPositionPda(
+              programId,
+              operatorPublicKey,
+              BigInt(Constants.SolanaTokenCode)
+            ),
+            positionRent = await ctx.solana.getLamports(positionPda)
+          Assert.ok(
+            positionRent > 0,
+            `CollateralPosition PDA ${positionPda.toBase58()} is missing ` +
+              `(rent=0) for program ${programId.toBase58()}`
           )
           ctx.outputs
             .set(PostDepositEthereumWeiKey, wei)
             .set(PostDepositSolanaLamportsKey, lamports)
+            .set(PostDepositSolanaPositionRentKey, positionRent)
         },
         quickStepOptions
       )
@@ -462,8 +499,7 @@ export class TerminationScenario extends FlowScenario {
                 const account = doomedOperatorAccount(ctx),
                   groups = await readScheduleGroups(ctx)
                 return groups.some(
-                  members =>
-                    Array.isArray(members) && members.includes(account)
+                  members => Array.isArray(members) && members.includes(account)
                 )
               } catch (error) {
                 // Transient RPC failure mid-advance — log it and keep polling.
@@ -616,22 +652,30 @@ export class TerminationScenario extends FlowScenario {
       verifyStep(
         Actor.SolanaOutpost,
         "solana-wallet-credited-exact",
-        `operator SOL wallet balance rises by exactly ${Constants.SolanaBondAmount} lamports`,
+        `operator SOL wallet balance rises by exactly the ${Constants.SolanaBondAmount}-lamport bond plus the refunded position rent`,
         async ctx => {
           // The cranker pays the `epoch_in` fees on its own keypair and the
           // on-chain handler signed-CPI transfers vault → operator, so the
-          // lamport delta is purely the bond amount.
+          // operator's lamport delta is the bond PLUS the rent refunded when
+          // the emptied `CollateralPosition` PDA auto-closes (SOL-379 — the
+          // depositor funded that rent at deposit time). Both halves are
+          // exact: the rent is the account's live balance, snapshotted before
+          // the remit destroys the account.
           const baseline = ctx.outputs.assert(PostDepositSolanaLamportsKey)
+          const positionRent = ctx.outputs.assert(
+            PostDepositSolanaPositionRentKey
+          )
+          const expected = Constants.SolanaBondAmount + BigInt(positionRent)
           const operator = ctx.keyStore.assertOperator(
             Constants.DoomedOperatorLabel
           )
           const operatorPublicKey = solanaKeypair(operator.solana).publicKey
           await pollUntil(
-            `operator SOL wallet credited exactly ${Constants.SolanaBondAmount} lamports`,
+            `operator SOL wallet credited exactly ${expected} lamports (${Constants.SolanaBondAmount} bond + ${positionRent} position rent)`,
             async () =>
               BigInt(
                 (await ctx.solana.getLamports(operatorPublicKey)) - baseline
-              ) === Constants.SolanaBondAmount,
+              ) === expected,
             Constants.remitDeadlineMs(),
             Constants.PollIntervalMs
           )

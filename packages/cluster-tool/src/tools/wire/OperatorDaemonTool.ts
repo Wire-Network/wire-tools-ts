@@ -149,23 +149,39 @@ export namespace OperatorDaemonTool {
     readonly debuggingServerEnabled: boolean
   }
 
-  /** Resolve the daemon network endpoints from the resolved cluster config. */
+  /**
+   * Resolve the daemon network endpoints from the resolved cluster config.
+   *
+   * AUTHORITY RULE for the two outpost RPC endpoints: an
+   * `externalOutposts.<chain>.rpcUrl` WINS whenever it is specified (a mainnet /
+   * integrated-testnet outpost whose endpoint no local binding can describe);
+   * otherwise the cluster's own BIND governs, exactly as the chain id does — a
+   * dev external carries its outpost endpoint in the bind config and omits
+   * `rpcUrl`.
+   *
+   * @param config - The resolved cluster config.
+   * @returns The endpoints + debugging sink an operator daemon dials.
+   */
   export function networkFromConfig(
     config: ClusterConfig
   ): OperatorDaemonNetwork {
     return {
-      ethereumRpcUrl: toURL(
-        config.bind.anvil.port,
-        toDialAddress(config.bind.anvil.address)
-      ),
+      ethereumRpcUrl:
+        config.externalOutposts?.ethereum.rpcUrl ??
+        toURL(
+          config.bind.anvil.port,
+          toDialAddress(config.bind.anvil.address)
+        ),
       // External-outpost mode carries the REAL chain id; else the anvil default.
       ethereumChainId:
         config.externalOutposts?.ethereum.chainId ??
         AnvilProcess.DefaultChainId,
-      solanaRpcUrl: toURL(
-        config.bind.solana.ports.http,
-        toDialAddress(config.bind.solana.address)
-      ),
+      solanaRpcUrl:
+        config.externalOutposts?.solana.rpcUrl ??
+        toURL(
+          config.bind.solana.ports.http,
+          toDialAddress(config.bind.solana.address)
+        ),
       debuggingServerUrl: toURL(
         config.bind.debuggingServer.port,
         toDialAddress(config.bind.debuggingServer.address)
@@ -639,7 +655,7 @@ export namespace OperatorDaemonTool {
       )
     return new NodeConfig(
       config,
-      NodeRole.operator,
+      isBatchOperator ? NodeRole.batch_operator : NodeRole.underwriter,
       AdHocDaemonNodeIndex,
       daemonNodeName(operator.label),
       ports,

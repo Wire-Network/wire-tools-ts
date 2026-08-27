@@ -137,6 +137,26 @@ export class SolanaValidatorProcess extends ManagedProcess {
     return this.config.binary
   }
 
+  /**
+   * Enable agave's program-log target so on-chain `msg!()` output reaches
+   * `<ledger>/validator.log`.
+   *
+   * `--quiet` does NOT control this — it only trims console progress output.
+   * Program logs are emitted by `solana_runtime::message_processor::stable_log`
+   * at DEBUG, and agave's default filter omits that target entirely, so the
+   * flag alone yields a 108MB validator.log containing zero `Program log:`
+   * lines (verified on e2e run 31103866070).
+   *
+   * This matters because an OPP handler's log-and-skip is a SUCCESSFUL
+   * transaction: nothing surfaces it as an error, and its `msg!()` reason is
+   * the only record of which precondition failed. Scoped to the one target so
+   * the log does not balloon with unrelated debug traffic, and only when the
+   * caller has not already pinned `RUST_LOG`.
+   */
+  get env(): Record<string, string> {
+    return SolanaValidatorProcess.resolveEnv()
+  }
+
   get args(): string[] {
     return SolanaValidatorProcess.buildArgs(this.config)
   }
@@ -323,6 +343,45 @@ export namespace SolanaValidatorProcess {
    * pays this ceiling.
    */
   export const StartupTimeoutMs = 480_000
+  /** Harness-recognized env var controlling Rust validator log filters. */
+  export const RustLogEnvVar = "RUST_LOG"
+  /**
+   * Additive `RUST_LOG` filter retaining agave's normal `solana=info` and
+   * `agave=info` targets while enabling the specific program-log target, so
+   * on-chain `msg!()` lines land in `<ledger>/validator.log`. Keeping the
+   * defaults is load-bearing for startup-failure diagnosability: replacing
+   * them would silence the panic and bind-error lines surfaced by
+   * `validatorLogTail()`. The longest-prefix-specific DEBUG directive still
+   * wins without enabling unrelated debug traffic.
+   *
+   * This is the DEFAULT, never a hard override: an operator-set
+   * {@link RustLogEnvVar} wins on both start paths — {@link resolveEnv} defers
+   * to it when the harness spawns the validator, and the emitted `start.sh`
+   * renders it as a `${NAME:-default}` expansion evaluated at RUN time.
+   */
+  export const ProgramLogRustLog =
+    "solana=info,agave=info,solana_runtime::message_processor::stable_log=debug"
+  /**
+   * The validator's default extra environment — HOST-INDEPENDENT, so it is safe
+   * to freeze into a rendered `start.sh` at create time. {@link resolveEnv} is
+   * the live-spawn counterpart; it reads the ambient environment and must NEVER
+   * be used to populate {@link DaemonConfig.env}, whose value is serialized.
+   */
+  export const DefaultEnv: Readonly<Record<string, string>> = {
+    [RustLogEnvVar]: ProgramLogRustLog
+  }
+  /**
+   * Resolve the validator's extra spawn environment while preserving an
+   * operator-provided {@link RustLogEnvVar}.
+   *
+   * @param rustLog - The inherited operator-provided filter, when present.
+   * @returns Extra variables to merge over that environment.
+   */
+  export function resolveEnv(
+    rustLog = process.env[RustLogEnvVar]
+  ): Record<string, string> {
+    return rustLog ? {} : { ...DefaultEnv }
+  }
   /**
    * Lines of `<ledger>/validator.log` surfaced in a startup-failure error —
    * agave's panic/bind-error detail lands there, not on the captured stdio.

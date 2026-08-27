@@ -3,6 +3,8 @@ import Os from "node:os"
 import Path from "node:path"
 import {
   AWSAccountName,
+  ClusterDeploymentKind,
+  DefaultChainStateDbSizeMb,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
 import { KeyType } from "@wireio/sdk-core"
@@ -505,6 +507,46 @@ describe("ClusterConfigProvider", () => {
         ssm: null
       })
       expect(config.awsClusterNodeConfig?.account).toBe(AWSAccountName.prod)
+    })
+  })
+
+  describe("resolve deploymentKind + chainStateDbSizeMb", () => {
+    let environment: ResolveEnvironment
+
+    beforeEach(() => {
+      environment = fixtureResolveEnvironment("deployment-kind-")
+    })
+    afterEach(() => {
+      environment.cleanup()
+    })
+
+    /** Base create options (fake host paths; binaries fixture-resolved). */
+    function baseOptions() {
+      return {
+        clusterPath: Path.join(environment.rootPath, "cluster"),
+        buildPath: environment.buildPath,
+        ethereumPath: "/fake/eth",
+        solanaPath: "/fake/sol"
+      }
+    }
+
+    it("stamps LOCAL and defaults the chain-state DB size to nodeop's own 1024 MiB", async () => {
+      // `resolve` IS the create path — only create-external-config's Rebind
+      // stamps `external`, and the default must equal nodeop's stock value so
+      // the always-emitted flag changes nothing until it is overridden.
+      const config = await ClusterConfigProvider.resolve(baseOptions())
+      expect(config.deploymentKind).toBe(ClusterDeploymentKind.local)
+      expect(config.chainStateDbSizeMb).toBe(DefaultChainStateDbSizeMb)
+      expect(DefaultChainStateDbSizeMb).toBe(1_024)
+    })
+
+    it("lets an explicit chainStateDbSizeMb override win", async () => {
+      const config = await ClusterConfigProvider.resolve({
+        ...baseOptions(),
+        chainStateDbSizeMb: 2_048
+      })
+      expect(config.chainStateDbSizeMb).toBe(2_048)
+      expect(config.deploymentKind).toBe(ClusterDeploymentKind.local)
     })
   })
 

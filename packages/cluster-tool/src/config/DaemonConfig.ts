@@ -104,6 +104,8 @@ export interface DaemonConfig {
   readonly exeEnvironmentVariable?: string
   /** Unconditional argv (WITHOUT the executable), in RUN — not create — form. */
   readonly argv: readonly string[]
+  /** Extra environment entries the live process merges over its inherited env. */
+  readonly env?: Readonly<Record<string, string>>
   /** Conditionals the script evaluates itself (see {@link DaemonArgvCondition}). */
   readonly conditions: readonly DaemonArgvCondition[]
   /**
@@ -191,7 +193,9 @@ export namespace DaemonConfig {
         ? []
         : [AnvilProcess.ProcessLabel, SolanaValidatorProcess.ProcessLabel]),
       KiodProcess.ProcessLabel,
-      ...(config.debuggingServerEnabled === false ? [] : [DebuggingServerSubpath])
+      ...(config.debuggingServerEnabled === false
+        ? []
+        : [DebuggingServerSubpath])
     ]
   }
 
@@ -244,20 +248,26 @@ export namespace DaemonConfig {
       daemonPath: node.nodePath,
       exe: nodeopBinary,
       argv,
-      conditions: [
-        {
-          // CAPTURE then match — never `--help | grep -q` under `set -o
-          // pipefail`. `grep -q` exits 0 the instant it matches, closing the
-          // pipe; nodeop's help exceeds the 64 KiB pipe buffer, so it is still
-          // writing and dies of SIGPIPE (141). `pipefail` promotes that to the
-          // pipeline's status, so the `&&` would NOT fire — dropping the flag
-          // precisely when it IS supported, which is the opposite of the
-          // intent and hard-fails trace_api_plugin init on builds that require
-          // it. A command substitution has no such short-circuit.
-          test: `[[ "$("${quoteForTest(nodeopBinary, StartScriptVariable.WIRE_PREFIX_PATH, cluster.buildPath)}" --help 2>/dev/null || true)" == *'${NodeopProcess.TraceNoAbisFlag}'* ]]`,
-          tokens: [NodeopProcess.TraceNoAbisFlag]
-        }
-      ],
+      // The probe belongs to trace_api_plugin, so it rides the SAME gate the
+      // argv's plugin arg does (SHARED-25 AC#4) — a node that does not load the
+      // plugin must not be handed its flag, and the argv-equality guard would
+      // catch the two surfaces diverging. An external producer therefore renders
+      // with an EMPTY conditions array, which the renderer already handles (it
+      // always emits `CONDITIONAL_ARGS=()` first — kiod and the debugging server
+      // take that path today).
+      conditions: NodeConfig.runsTraceApiPlugin(node)
+        ? [
+            {
+              // The probe's shape (capture-then-match, never a `grep -q` pipe)
+              // lives in NodeopProcess with the flag it tests for, so the
+              // standalone API node's script renders the identical test.
+              test: NodeopProcess.traceNoAbisProbeTest(
+                `"${quoteForTest(nodeopBinary, StartScriptVariable.WIRE_PREFIX_PATH, cluster.buildPath)}"`
+              ),
+              tokens: [NodeopProcess.TraceNoAbisFlag]
+            }
+          ]
+        : [],
       relocations: [
         { prefix: node.nodePath, variable: StartScriptVariable.NODE_DIR }
       ]
@@ -324,6 +334,13 @@ export namespace DaemonConfig {
       exeCommandName: SolanaValidatorProcess.ProcessLabel,
       exeEnvironmentVariable: SolanaValidatorBinEnvironmentVariable,
       argv: SolanaValidatorProcess.buildArgs(validator),
+      // The UNCONDITIONAL default, never `resolveEnv()`: this value is frozen
+      // into the emitted `start.sh` at CREATE time, and `resolveEnv` reads the
+      // BUILD host's environment. Freezing its answer would either strip the
+      // program-log target entirely (build host had RUST_LOG set) or pin one
+      // the operator cannot override. The renderer emits it as a defaulting
+      // expansion, so the run-time environment still wins.
+      env: SolanaValidatorProcess.DefaultEnv,
       conditions: [],
       relocations: [
         { prefix: daemonPath, variable: StartScriptVariable.NODE_DIR }
@@ -470,9 +487,18 @@ export namespace DaemonConfig {
   ): StartScriptRelocation[] {
     return [
       { prefix: config.clusterPath, variable: StartScriptVariable.CLUSTER_DIR },
-      { prefix: config.buildPath, variable: StartScriptVariable.WIRE_PREFIX_PATH },
-      { prefix: config.ethereumPath, variable: StartScriptVariable.WIRE_ETH_PATH },
-      { prefix: config.solanaPath, variable: StartScriptVariable.WIRE_SOLANA_PATH }
+      {
+        prefix: config.buildPath,
+        variable: StartScriptVariable.WIRE_PREFIX_PATH
+      },
+      {
+        prefix: config.ethereumPath,
+        variable: StartScriptVariable.WIRE_ETH_PATH
+      },
+      {
+        prefix: config.solanaPath,
+        variable: StartScriptVariable.WIRE_SOLANA_PATH
+      }
     ]
   }
 }

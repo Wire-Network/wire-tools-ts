@@ -1,5 +1,6 @@
 import "source-map-support/register.js"
 import Yargs from "yargs"
+import { createCreateApiNodeCommand } from "./CreateApiNodeCommand.js"
 import { createCreateCommand } from "./CreateCommand.js"
 import { createCreateExternalConfigCommand } from "./CreateExternalConfigCommand.js"
 import { createDestroyCommand } from "./DestroyCommand.js"
@@ -24,6 +25,7 @@ export function main(argv: string[] = process.argv.slice(2)): Promise<unknown> {
     .command(createDestroyCommand())
     .command(createPackageCommand())
     .command(createCreateExternalConfigCommand())
+    .command(createCreateApiNodeCommand())
     .demandCommand(1)
     .strict()
     .help()

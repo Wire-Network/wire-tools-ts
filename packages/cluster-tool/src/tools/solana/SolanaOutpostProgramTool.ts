@@ -13,8 +13,10 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
-import type * as anchor from "@coral-xyz/anchor"
-import { Keypair, type PublicKey } from "@solana/web3.js"
+import * as anchor from "@coral-xyz/anchor"
+import { Connection, Keypair, PublicKey } from "@solana/web3.js"
+
+import { SolanaClient } from "../../clients/solana/SolanaClient.js"
 
 export namespace SolanaOutpostProgramTool {
   /**
@@ -68,7 +70,9 @@ export namespace SolanaOutpostProgramTool {
   export function programId(solanaPath: string): PublicKey {
     const keypairFile = programKeypairFile(solanaPath)
     if (!Fs.existsSync(keypairFile)) return null
-    const secretKey = Uint8Array.from(JSON.parse(Fs.readFileSync(keypairFile, "utf8")))
+    const secretKey = Uint8Array.from(
+      JSON.parse(Fs.readFileSync(keypairFile, "utf8"))
+    )
     return Keypair.fromSecretKey(secretKey).publicKey
   }
 
@@ -91,5 +95,50 @@ export namespace SolanaOutpostProgramTool {
       `SolanaOutpostProgramTool: ${ProgramName} IDL missing: ${idlFile} ${BuildRemediationHint}`
     )
     return JSON.parse(Fs.readFileSync(idlFile, "utf8")) as anchor.Idl
+  }
+
+  /**
+   * Build the OPP outpost Anchor `Program` (hosted in `liqsol_core`) bound to
+   * `keypair` as its provider wallet — THE one `Program` construction for this
+   * program. A pure value helper (IDL read + provider wiring, no chain call),
+   * so it is called freely inside step runners and bootstrapper methods.
+   *
+   * @param connection - The Solana RPC connection the provider transacts over.
+   * @param keypair - The signer the provider's wallet wraps.
+   * @param solanaPath - The `wire-solana` repo root holding the generated IDL.
+   * @returns The Anchor program bound to `connection` + `keypair`.
+   * @throws If the generated IDL is missing (see {@link readIdl}).
+   */
+  export function loadProgram(
+    connection: Connection,
+    keypair: Keypair,
+    solanaPath: string
+  ): anchor.Program<anchor.Idl> {
+    const provider = new anchor.AnchorProvider(
+      connection,
+      new anchor.Wallet(keypair),
+      { commitment: SolanaClient.DefaultCommitment }
+    )
+    return new anchor.Program(readIdl(solanaPath), provider)
+  }
+
+  /**
+   * Derive a program-derived address from its ordered seeds — THE one PDA
+   * derivation for this program. A pure read, so it is called freely inside
+   * step runners and bootstrapper methods rather than being a Step.
+   *
+   * Seeds are passed in the program's own declared order; scoped legs
+   * (`token_code`, `reserve_code`) are encoded with `slugNameToLittleEndianBuffer`
+   * from `utils/slugUtils` to match the program's `to_le_bytes()`.
+   *
+   * @param programId - The deployed `liqsol_core` program id.
+   * @param seeds - The ordered seed buffers.
+   * @returns The derived program address.
+   */
+  export function derivePda(
+    programId: PublicKey,
+    ...seeds: Buffer[]
+  ): PublicKey {
+    return PublicKey.findProgramAddressSync(seeds, programId)[0]
   }
 }

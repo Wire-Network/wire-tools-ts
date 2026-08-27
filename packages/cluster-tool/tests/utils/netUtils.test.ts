@@ -1,10 +1,14 @@
 import Dgram from "node:dgram"
 import { Deferred } from "@wireio/shared"
 import {
+  assertEndpoint,
+  EndpointPattern,
   filterSocketLinesByLocalPort,
   isUdpPortFree,
   ListenAllAddress,
   Localhost,
+  MaximumPort,
+  MinimumPort,
   toAddress,
   toDialAddress,
   toURL,
@@ -89,6 +93,87 @@ describe("netUtils", () => {
     it("passes a remote / LAN / hostname address through verbatim", () => {
       expect(toDialAddress("10.0.0.5")).toBe("10.0.0.5")
       expect(toDialAddress("rpc.testnet.example")).toBe("rpc.testnet.example")
+    })
+  })
+
+  describe("assertEndpoint", () => {
+    it("pins the port bounds it enforces", () => {
+      expect(MinimumPort).toBe(1)
+      expect(MaximumPort).toBe(65_535)
+    })
+
+    it.each([
+      "127.0.0.1:8888",
+      "0.0.0.0:9876",
+      "10.0.0.1:80",
+      "host:8888",
+      "rpc.testnet.example:443",
+      "peer-a.example:9876",
+      "under_score.host:1",
+      "[::1]:8888",
+      "[fe80::1]:65535"
+    ])("accepts the scheme-less endpoint %s", endpoint => {
+      expect(() => assertEndpoint(endpoint, "field")).not.toThrow()
+      expect(EndpointPattern.test(endpoint)).toBe(true)
+    })
+
+    it("accepts what toAddress builds, for both address families", () => {
+      // The producer and the validator must agree by construction.
+      expect(() => assertEndpoint(toAddress(8888), "field")).not.toThrow()
+      expect(() =>
+        assertEndpoint(toAddress(8888, "::1"), "field")
+      ).not.toThrow()
+    })
+
+    it("REJECTS a URL — the host group excludes the scheme separators", () => {
+      // A permissive `\S+` host accepted `http://host` as a "host"; nodeop
+      // takes only the scheme-less form, so a URL has to fail HERE rather than
+      // at daemon startup on the deploy host.
+      expect(() => assertEndpoint("http://host:8888", "field")).toThrow(
+        /field must be <address>:<port>/
+      )
+      expect(EndpointPattern.test("http://host:8888")).toBe(false)
+      expect(() => assertEndpoint("ws://10.0.0.1:8899", "field")).toThrow(
+        /field must be <address>:<port>/
+      )
+      expect(() => assertEndpoint(toURL(8888, Localhost), "field")).toThrow(
+        /field must be <address>:<port>/
+      )
+    })
+
+    it.each([
+      "host",
+      "host:",
+      ":8888",
+      "host:not-a-port",
+      "host:123456",
+      "ho st:8888",
+      "host/path:8888",
+      "::1:8888"
+    ])("REJECTS the malformed endpoint %s", endpoint => {
+      expect(() => assertEndpoint(endpoint, "field")).toThrow(
+        /field must be <address>:<port>/
+      )
+    })
+
+    it("REJECTS a port outside the bounds, naming them", () => {
+      expect(() => assertEndpoint("host:0", "field")).toThrow(
+        /field port must be 1–65535 — got 0/
+      )
+      expect(() => assertEndpoint("host:99999", "field")).toThrow(
+        /field port must be/
+      )
+      // The shape allows 5 digits, so the RANGE check is what stops 65536.
+      expect(EndpointPattern.test("host:65536")).toBe(true)
+      expect(() => assertEndpoint("host:65536", "field")).toThrow(
+        /field port must be/
+      )
+    })
+
+    it("names the caller's label verbatim in every message", () => {
+      expect(() =>
+        assertEndpoint("nope", "ApiNodeConfig: p2pPeerAddresses[1]")
+      ).toThrow(/ApiNodeConfig: p2pPeerAddresses\[1\] must be/)
     })
   })
 })
