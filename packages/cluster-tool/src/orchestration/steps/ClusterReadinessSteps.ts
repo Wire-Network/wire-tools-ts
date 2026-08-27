@@ -11,6 +11,7 @@ import { ReadinessOutputs } from "../../readiness/ReadinessOutputs.js"
 import {
   ReadinessMaxTableRows,
   readinessBoundedQuery,
+  readinessEndpointLabel,
   readinessEnumMatches,
   readinessSlug
 } from "../../readiness/readinessUtils.js"
@@ -229,9 +230,13 @@ export async function runRequiredEndpoints<C extends ReadinessContext>(
   await runReadinessAssertion(context, async () => ({
     detail: "WIRE, Ethereum, and Solana endpoints were supplied explicitly",
     evidence: {
-      wire: endpointLabel(context.readiness.config.endpoints.wireRpc),
-      ethereum: endpointLabel(context.readiness.config.endpoints.ethereumRpc),
-      solana: endpointLabel(context.readiness.config.endpoints.solanaRpc)
+      wire: readinessEndpointLabel(context.readiness.config.endpoints.wireRpc),
+      ethereum: readinessEndpointLabel(
+        context.readiness.config.endpoints.ethereumRpc
+      ),
+      solana: readinessEndpointLabel(
+        context.readiness.config.endpoints.solanaRpc
+      )
     }
   }))
 }
@@ -456,7 +461,7 @@ export async function runHyperionHealth<C extends ReadinessContext>(
     )
     return {
       detail: "Hyperion health endpoint returned JSON",
-      evidence: { endpoint: endpointLabel(endpoint) }
+      evidence: { endpoint: readinessEndpointLabel(endpoint) }
     }
   })
 }
@@ -765,9 +770,4 @@ export async function observeAdvancement(
 
 function parseWireTimestamp(timestamp: string): number {
   return Date.parse(timestamp.endsWith("Z") ? timestamp : `${timestamp}Z`)
-}
-
-function endpointLabel(value: string): string {
-  const url = new URL(value)
-  return `${url.origin}${url.pathname}`.replace(/\/$/, "")
 }

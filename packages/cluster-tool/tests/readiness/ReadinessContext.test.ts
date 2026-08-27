@@ -51,4 +51,19 @@ describe("ReadinessClient", () => {
       client.jsonRpc(config.endpoints.solanaRpc, "getHealth", [])
     ).rejects.toThrow("getHealth failed: denied")
   })
+
+  it("redacts credentials and query parameters from request failures", async () => {
+    const request = jest.fn(async () => {
+        throw new Error("offline")
+      }),
+      client = new ReadinessClient(config, request),
+      operation = client.fetchJson(
+        "https://operator:secret@wire.example/health?token=hidden#fragment"
+      )
+    await expect(operation).rejects.toThrow(
+      "Request failed: https://wire.example/health"
+    )
+    await expect(operation).rejects.not.toThrow("secret")
+    await expect(operation).rejects.not.toThrow("hidden")
+  })
 })

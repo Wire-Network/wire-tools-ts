@@ -5,6 +5,7 @@ import type { Logger } from "../logging/Logger.js"
 import { OrchestrationContext } from "../orchestration/OrchestrationContext.js"
 import { Report } from "../report/Report.js"
 import type { ReadinessConfig } from "./ReadinessConfig.js"
+import { readinessEndpointLabel } from "./readinessUtils.js"
 
 interface JsonRpcError {
   code?: number
@@ -63,7 +64,7 @@ export class ReadinessClient {
         throw new Error(`${response.status} ${response.statusText}`)
       return (await response.json()) as T
     } catch (error: unknown) {
-      throw new NestedError(`Request failed: ${url}`, {
+      throw new NestedError(`Request failed: ${readinessEndpointLabel(url)}`, {
         cause: error,
         context: { method: init.method ?? "GET" }
       })

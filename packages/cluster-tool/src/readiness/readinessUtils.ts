@@ -11,6 +11,12 @@ interface BoundedQueryResult {
   more: boolean
 }
 
+/** Display an endpoint without credentials, query parameters, or fragments. */
+export function readinessEndpointLabel(value: string): string {
+  const url = new URL(value)
+  return `${url.protocol}//${url.host}${url.pathname}`.replace(/\/$/, "")
+}
+
 /** ABI/protobuf enum compatibility check for numeric or named values. */
 export function readinessEnumMatches(
   value: unknown,
