@@ -1,6 +1,7 @@
 import {
   ClusterBuild,
   ClusterBuildContext,
+  ClusterBuildFailureMode,
   ClusterBuildPhase,
   ClusterBuildPhaseGroup,
   ClusterBuildStep
@@ -17,14 +18,28 @@ function newBuild(): ClusterBuild {
 }
 
 const ok = (order: string[], name: string) =>
-  ClusterBuildStep.create(Report.Actor.Sysio, name, name, {}, null, async () => {
-    order.push(name)
-  })
+  ClusterBuildStep.create(
+    Report.Actor.Sysio,
+    name,
+    name,
+    {},
+    null,
+    async () => {
+      order.push(name)
+    }
+  )
 
 const fail = (name: string) =>
-  ClusterBuildStep.create(Report.Actor.Sysio, name, name, {}, null, async () => {
-    throw new Error(`${name} boom`)
-  })
+  ClusterBuildStep.create(
+    Report.Actor.Sysio,
+    name,
+    name,
+    {},
+    null,
+    async () => {
+      throw new Error(`${name} boom`)
+    }
+  )
 
 /** Run a group and flatten its single Group node to the contained phases. */
 const runGroup = (group: ClusterBuildPhaseGroup): Promise<Report.Phase[]> =>
@@ -57,16 +72,36 @@ describe("ClusterBuildPhaseGroup", () => {
     expect(phases[1].succeeded).toBe(false)
   })
 
+  it("collects every child phase when configured for diagnostics", async () => {
+    const order: string[] = []
+    const group = ClusterBuildPhaseGroup.create(newBuild(), "G", "group", {
+      failureMode: ClusterBuildFailureMode.collect
+    })
+    ClusterBuildPhase.create(group, "P1", "d").push(fail("a"))
+    ClusterBuildPhase.create(group, "P2", "d").push(ok(order, "b"))
+    const phases = await runGroup(group)
+    expect(order).toEqual(["b"])
+    expect(phases.map(phase => phase.name)).toEqual(["P1", "P2"])
+    expect(phases.map(phase => phase.succeeded)).toEqual([false, true])
+  })
+
   it("runs children concurrently when parallel", async () => {
     const order: string[] = []
     const group = ClusterBuildPhaseGroup.create(newBuild(), "G", "group", {
       parallel: true
     })
     const timed = (name: string, ms: number) =>
-      ClusterBuildStep.create(Report.Actor.Sysio, name, name, {}, null, async () => {
-        await sleep(ms)
-        order.push(name)
-      })
+      ClusterBuildStep.create(
+        Report.Actor.Sysio,
+        name,
+        name,
+        {},
+        null,
+        async () => {
+          await sleep(ms)
+          order.push(name)
+        }
+      )
     ClusterBuildPhase.create(group, "slow", "d").push(timed("slow", 40))
     ClusterBuildPhase.create(group, "fast", "d").push(timed("fast", 5))
     expect(group.config.parallel).toBe(true)
@@ -94,12 +129,19 @@ describe("ClusterBuildPhaseGroup", () => {
       concurrency: 2
     })
     const tracked = (name: string) =>
-      ClusterBuildStep.create(Report.Actor.Sysio, name, name, {}, null, async () => {
-        inFlight += 1
-        peakInFlight = Math.max(peakInFlight, inFlight)
-        await sleep(10)
-        inFlight -= 1
-      })
+      ClusterBuildStep.create(
+        Report.Actor.Sysio,
+        name,
+        name,
+        {},
+        null,
+        async () => {
+          inFlight += 1
+          peakInFlight = Math.max(peakInFlight, inFlight)
+          await sleep(10)
+          inFlight -= 1
+        }
+      )
     const names = ["a", "b", "c", "d", "e", "f"]
     names.forEach(name =>
       ClusterBuildPhase.create(group, name, "d").push(tracked(name))

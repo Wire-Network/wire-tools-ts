@@ -4,6 +4,8 @@ import { match } from "ts-pattern"
 import { eachSeries } from "../utils/asyncUtils.js"
 import { Report } from "../report/Report.js"
 import type { ClusterBuildContext } from "./ClusterBuildContext.js"
+import { ClusterBuildFailureMode } from "./ClusterBuildFailureMode.js"
+import type { OrchestrationContext } from "./OrchestrationContext.js"
 import {
   ClusterBuildPhaseBase,
   type ClusterBuildParent
@@ -25,10 +27,13 @@ export interface ClusterBuildPhaseGroupOptions {
    * freeze finality outright.
    */
   concurrency?: number
+  /** Continue executing independent children after a failed child. */
+  failureMode?: ClusterBuildFailureMode
 }
 
 /** Resolved {@link ClusterBuildPhaseGroup} config. */
-export type ClusterBuildPhaseGroupConfig = Required<ClusterBuildPhaseGroupOptions>
+export type ClusterBuildPhaseGroupConfig =
+  Required<ClusterBuildPhaseGroupOptions>
 
 /**
  * A nestable grouping of phases and/or sub-groups. Built by the
@@ -37,12 +42,13 @@ export type ClusterBuildPhaseGroupConfig = Required<ClusterBuildPhaseGroupOption
  * onto it). Executes its children **sequentially by default** (`config.parallel
  * === false`) — the first failing child short-circuits the rest — or concurrently
  * when `parallel`, where the first failure aborts the shared signal so in-flight
- * siblings cancel cooperatively. Children's `Report.Phase`s flatten into the
- * report in run order.
+ * siblings cancel cooperatively. Explicit collect mode preserves independent
+ * child execution after failures; fail-fast remains the default for existing
+ * plans. Children's `Report.Phase`s flatten into the report in run order.
  */
 export class ClusterBuildPhaseGroup<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >
+  C extends OrchestrationContext = ClusterBuildContext
+>
   extends ClusterBuildPhaseBase<C>
   implements ClusterBuildParent<C>
 {
@@ -63,13 +69,18 @@ export class ClusterBuildPhaseGroup<
   }
 
   /** Factory — self-registers on `parent` (the build root or an enclosing group). */
-  static create<C extends ClusterBuildContext = ClusterBuildContext>(
+  static create<C extends OrchestrationContext = ClusterBuildContext>(
     parent: ClusterBuildParent<C>,
     name: string,
     description: string,
     options: ClusterBuildPhaseGroupOptions = {}
   ): ClusterBuildPhaseGroup<C> {
-    const group = new ClusterBuildPhaseGroup<C>(parent.context, name, description, options)
+    const group = new ClusterBuildPhaseGroup<C>(
+      parent.context,
+      name,
+      description,
+      options
+    )
     parent.push(group)
     return group
   }
@@ -105,7 +116,12 @@ export class ClusterBuildPhaseGroup<
             this.childList,
             async child => {
               const nodes = await child.run(controller.signal)
-              if (nodes.some(node => !node.succeeded)) controller.abort()
+              if (
+                this.config.failureMode === ClusterBuildFailureMode.failFast &&
+                nodes.some(node => !node.succeeded)
+              ) {
+                controller.abort()
+              }
               return nodes
             },
             { concurrency: this.config.concurrency }
@@ -123,7 +139,12 @@ export class ClusterBuildPhaseGroup<
             }
             const childNodes = await child.run(controller.signal)
             nodes.push(...childNodes)
-            if (childNodes.some(node => !node.succeeded)) controller.abort()
+            if (
+              this.config.failureMode === ClusterBuildFailureMode.failFast &&
+              childNodes.some(node => !node.succeeded)
+            ) {
+              controller.abort()
+            }
           })
           return nodes
         })
@@ -152,6 +173,7 @@ export namespace ClusterBuildPhaseGroup {
   /** Config defaults — groups run **sequentially** unless `parallel` is set. */
   export const ConfigDefaults: ClusterBuildPhaseGroupConfig = {
     parallel: false,
-    concurrency: UnboundedConcurrency
+    concurrency: UnboundedConcurrency,
+    failureMode: ClusterBuildFailureMode.failFast
   }
 }
