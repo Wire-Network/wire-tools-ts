@@ -271,7 +271,12 @@ describe("NodeopProcess", () => {
     const nodeop = await NodeopProcess.create(manager, {
       node: node("operator-daemon", NodeRole.batch_operator),
       operators: [producerOperator("batchopaaaa")],
-      extraArgs: ["--batch-operator-account", "wireno.batchopaaaa"]
+      extraArgs: [
+        "--batch-operator-account",
+        "wireno.batchopaaaa",
+        "--batch-epoch-poll-ms",
+        "500"
+      ]
     })
     expect(nodeop.args).not.toContain("sysio::producer_plugin")
     expect(nodeop.args).not.toContain("--producer-name")
@@ -280,7 +285,9 @@ describe("NodeopProcess", () => {
         "--plugin",
         "sysio::net_plugin",
         "--batch-operator-account",
-        "wireno.batchopaaaa"
+        "wireno.batchopaaaa",
+        "--batch-epoch-poll-ms",
+        "500"
       ])
     )
   })
@@ -904,7 +911,7 @@ describe("NodeopProcess", () => {
       // spelling them out could silently lose one.
       const relaunchNode = node("relaunch", NodeRole.producer, ["sysio"]),
         operators = [producerOperator("sysio")],
-        extraArgs = ["--batch-enabled", "true"]
+        extraArgs = ["--batch-epoch-poll-ms", "500"]
       expect(
         NodeopProcess.createRelaunchOptions(relaunchNode, operators, extraArgs)
       ).toEqual({
