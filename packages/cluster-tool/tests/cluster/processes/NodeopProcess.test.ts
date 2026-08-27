@@ -191,7 +191,7 @@ describe("NodeopProcess", () => {
     const nodeop = await NodeopProcess.create(manager, {
       node: node("operator-daemon", NodeRole.batch_operator),
       operator: producerOperator("batchopaaaa"),
-      extraArgs: ["--batch-enabled", "true"]
+      extraArgs: ["--batch-operator-account", "wireno.batchopaaaa"]
     })
     expect(nodeop.args).not.toContain("sysio::producer_plugin")
     expect(nodeop.args).not.toContain("--producer-name")
@@ -199,8 +199,8 @@ describe("NodeopProcess", () => {
       expect.arrayContaining([
         "--plugin",
         "sysio::net_plugin",
-        "--batch-enabled",
-        "true"
+        "--batch-operator-account",
+        "wireno.batchopaaaa"
       ])
     )
   })

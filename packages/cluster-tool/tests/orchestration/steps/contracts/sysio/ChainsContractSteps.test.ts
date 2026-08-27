@@ -9,7 +9,16 @@ describe("Steps.contracts.sysio.chains", () => {
       code: { value: SlugName.from("WIRE") },
       external_chain_id: 0,
       name: "Wire (depot)",
-      description: "The WIRE depot chain itself"
+      description: "The WIRE depot chain itself",
+      // The depot self-row has no remote deployment, and outpost rows are
+      // registered empty here too — RegistrySteps seeds their addresses with
+      // setoutpost once the daemon artifacts resolve.
+      outpost: {
+        opp_addr: "",
+        opp_inbound_addr: "",
+        operator_registry_addr: "",
+        source_deposit_addr: ""
+      }
     }
     const step = Steps.contracts.sysio.chains.planRegchain(
       Report.Actor.Sysio,
