@@ -308,6 +308,37 @@ export namespace Constants {
   }
 
   /**
+   * HD account index the operators' EM (Ethereum) keys derive from. Index 0 is
+   * reserved for the deploy owner (`EthereumOutpostBootstrapper.DeployerAccountIndex`),
+   * so operators start at 1: batch operators occupy `1..batchOperatorCount`,
+   * underwriters continue immediately after.
+   *
+   * These are the ONE authority for the mapping. The Ethereum outpost's genesis
+   * batch-operator roster is derived from the SAME (mnemonic, index) pair the
+   * operator's own key is later generated from, at a point in the bootstrap
+   * where the operator accounts do not exist yet — so a second spelling of the
+   * rule would silently authorize the wrong addresses.
+   */
+  export function batchOperatorEthereumHdIndex(index: number): number {
+    return index + 1
+  }
+
+  /**
+   * HD account index for an underwriter's EM key — continues past the batch
+   * operators. See {@link batchOperatorEthereumHdIndex}.
+   *
+   * @param batchOperatorCount - Size of the batch-operator roster.
+   * @param index - Zero-based underwriter index.
+   * @returns The HD account index.
+   */
+  export function underwriterEthereumHdIndex(
+    batchOperatorCount: number,
+    index: number
+  ): number {
+    return batchOperatorCount + index + 1
+  }
+
+  /**
    * Shape of the `sysio.system::setemitcfg` action payload. Mirrors the
    * on-chain `emission_config` struct (post wire-sysio PR #354 — no
    * `capital_bps`; the implicit capital reserve is the remainder).

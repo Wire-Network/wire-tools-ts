@@ -910,7 +910,7 @@ export namespace ClusterBuildDefaults {
         ...batchOperators.map((label, index) => ({
           label,
           type: OperatorType.BATCH,
-          ethereumHdIndex: index + 1,
+          ethereumHdIndex: Constants.batchOperatorEthereumHdIndex(index),
           isBootstrapped: true,
           // Fee-payer funding for the daemon's per-epoch deliveries on BOTH
           // chains. ETH is SSM-only: under KEY the EM keys come off the anvil
@@ -922,7 +922,10 @@ export namespace ClusterBuildDefaults {
         ...underwriters.map((label, index) => ({
           label,
           type: OperatorType.UNDERWRITER,
-          ethereumHdIndex: config.batchOperatorCount + index + 1,
+          ethereumHdIndex: Constants.underwriterEthereumHdIndex(
+            config.batchOperatorCount,
+            index
+          ),
           isBootstrapped: false,
           ...(isSSM ? { fundEthereumWei: BatchOperatorEthereumFundingWei } : {})
         }))
