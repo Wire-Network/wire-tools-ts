@@ -12,6 +12,7 @@ import {
   SolanaCollateralTool,
   WireReserveTool,
   contractView,
+  isSolanaProgramRuntimeFailure,
   matchesProtoEnum,
   pollUntil,
   requestEthereumSwap,
@@ -287,10 +288,11 @@ export namespace SwapEpochStressScenarioSteps {
           await ctx.solana.getProgramLogs(program.programId, 100)
         ).flat()
         logs
-          .filter(line =>
-            /memory allocation failed|out of memory|heap(?:[ -]space)? violation|SBF program panicked|ProgramFailedToComplete/i.test(
-              line
-            )
+          .filter(
+            line =>
+              /memory allocation failed|out of memory|heap(?:[ -]space)? violation/i.test(
+                line
+              ) || isSolanaProgramRuntimeFailure(line)
           )
           .forEach(line => solanaProgramRuntimeErrors.add(line))
       } catch (error) {
@@ -335,9 +337,7 @@ export namespace SwapEpochStressScenarioSteps {
               },
               {
                 kind: SwapEpochStressRuntimeFailureKind.SOLANA_PROGRAM_FAILURE,
-                matches: /SBF program panicked|ProgramFailedToComplete/i.test(
-                  line
-                )
+                matches: isSolanaProgramRuntimeFailure(line)
               },
               {
                 kind: SwapEpochStressRuntimeFailureKind.PROCESS_FATAL_FAILURE,

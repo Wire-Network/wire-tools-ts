@@ -16,7 +16,8 @@ expected outcome:
 - Runtime evidence includes fatal process failures, Solana program panics, and
   memory/heap failures. These are supporting causes, not the test's design axis.
   The scanner checks both committed Solana transactions and the raw aggregate
-  cluster log because an RPC simulation failure has no transaction signature.
+  cluster log because an RPC simulation failure has no transaction signature;
+  compact and human-readable `ProgramFailedToComplete` forms are normalized.
 - The soak crosses the ten-epoch envelope-retention and underwriting-lock
   windows, then observes five additional epochs.
 
