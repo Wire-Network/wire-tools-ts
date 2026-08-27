@@ -60,7 +60,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
 | `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize) |
-| `flow-*` (13 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and the six swap variants |
+| `flow-*` (14 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; readiness, batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and the six swap variants |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
 
@@ -106,6 +106,11 @@ One declarative model is shared by the `wire-cluster-tool` CLI and every flow:
 - Steps palette: `Steps.contracts.sysio.<contract>.<abi-action>` +
   `Steps.processes.<daemon>.planStart` + semantic composites
   (`Steps.keys`, `Steps.operator`, `Steps.registry`, …).
+- Connected read-only orchestration uses `OrchestrationContext`; readiness is
+  composed once as `ReadinessPhaseGroups` and reused by both
+  `flow-cluster-readiness` and `wire-cluster-tool readiness`. It consumes only
+  explicit endpoints and native Reports—no network catalog, Noco, SDK-outpost,
+  or artifact-registry dependency.
 
 ## Testing
 
