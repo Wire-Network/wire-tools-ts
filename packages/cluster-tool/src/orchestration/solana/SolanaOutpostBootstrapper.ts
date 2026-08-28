@@ -915,10 +915,9 @@ export namespace SolanaOutpostBootstrapper {
    * NOTE: this is the ENCODE-buffer ceiling, not the tightest one. A legacy
    * transaction packet is capped at 1232 bytes, and this instruction ships with
    * ~270 bytes of envelope, which bounds the group at 11. That never bites
-   * today because {@link BatchOperatorSchedule} permits only odd group sizes
-   * plus the packet-safe terminal size 2, so the reachable sizes straddling both
-   * limits are 11 (fits) and 13 (rejected here). Re-derive both if that bounded
-   * policy is relaxed.
+   * today because {@link BatchOperatorSchedule} rejects an even group size, so
+   * the reachable sizes straddling both limits are 11 (fits) and 13 (rejected
+   * here). Re-derive both if odd-only group sizing is ever relaxed.
    */
   export const MaxOppBootstrapGroupMembers = Math.floor(
     (AnchorInstructionBufferBytes - OppBootstrapFixedPayloadBytes) /

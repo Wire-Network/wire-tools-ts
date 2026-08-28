@@ -1,4 +1,7 @@
 export * from "./FlowScenario.js"
 export * from "./FlowCLI.js"
+export * from "./EnvelopeCanonicalCodec.js"
+export * from "./InboundTipReader.js"
 export * from "./oppEnvelopeScan.js"
+export * from "./SingleFlightCache.js"
 export * from "./contexts/index.js"

@@ -1,0 +1,18 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib",
+    "paths": {
+      "@wireio/cluster-tool": ["../cluster-tool/src"],
+      "@wireio/test-flow-batch-operator-slashing/BatchOperatorDisputeScenario": [
+        "../flow-batch-operator-slashing/src/BatchOperatorDisputeScenario"
+      ]
+    }
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../cluster-tool/tsconfig.json" },
+    { "path": "../flow-batch-operator-slashing/tsconfig.json" }
+  ]
+}

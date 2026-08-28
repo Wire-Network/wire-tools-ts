@@ -1,7 +1,7 @@
 import {
   InboundTipReader,
   type OutpostConsensusRow
-} from "@wireio/test-flow-batch-operator-slashing/InboundTipReader.js"
+} from "@wireio/cluster-tool/flow"
 
 /** The ETHEREUM outpost chain code used across the fixtures. */
 const ETHEREUM_CHAIN_CODE = 41

@@ -374,7 +374,7 @@ export function buildOptionShape(
     producerCount: leaf(CliDefault.producerCount, "producer account count"),
     batchOperatorCount: leaf(
       CliDefault.batchOperatorCount,
-      "batch operator count — derived defaults are ODD and divisible by 3 (3, 9, 15, 21); explicit shapes include the terminal 2 × 1 topology; max 26"
+      "batch operator count — ODD and divisible by 3 (3, 9, 15, 21) unless --operators-per-epoch OR --batch-op-groups is given; max 26"
     ),
     underwriterCount: leaf(CliDefault.underwriterCount, "underwriter count"),
     // ── epoch ──

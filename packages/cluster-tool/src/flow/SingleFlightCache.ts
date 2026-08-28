@@ -5,7 +5,7 @@
  * The dedupe is race-free because the pending promise is registered SYNCHRONOUSLY — between the
  * `Map.get` miss and the `Map.set`, only `fetch()` (up to its first `await`) runs, with no `await`
  * in {@link get} itself — so two callers that both miss cannot each start a fetch. This is exactly
- * the property the slashing flow needs: every parallel `deliver` for one `(chain_code, epoch)` must
+ * the property parallel delivery flows need: every `deliver` for one `(chain_code, epoch)` must
  * chain from the SAME pre-delivery tip, even though a peer delivery may advance that tip inline the
  * moment consensus is reached.
  *

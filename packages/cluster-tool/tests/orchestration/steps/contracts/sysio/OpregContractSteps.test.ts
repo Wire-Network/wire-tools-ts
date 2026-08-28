@@ -49,4 +49,20 @@ describe("Steps.contracts.sysio.opreg", () => {
     expect(step.input.data.is_bootstrapped).toBe(true)
     expect(typeof step.runner).toBe("function")
   })
+
+  it("terminate carries the operator label and audit reason", () => {
+    const step = Steps.contracts.sysio.opreg.planTerminate(
+      Report.Actor.Sysio,
+      "terminate-batchop-a",
+      "administratively remove batchop.a",
+      {},
+      "batchop.a",
+      "test live-group degradation"
+    )
+    expect(step.actor).toBe(Report.Actor.Sysio)
+    expect(step.input.kind).toBe("OpregContractSteps.TerminateInput")
+    expect(step.input.label).toBe("batchop.a")
+    expect(step.input.reason).toBe("test live-group degradation")
+    expect(typeof step.runner).toBe("function")
+  })
 })

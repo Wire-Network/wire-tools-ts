@@ -7,7 +7,10 @@ import {
   ClusterBuildContext,
   ClusterBuildStep,
   Constants as TestClusterConstants,
+  bytesToHex,
+  encodeTaggedEnvelope,
   ethereumKeyPairFromWallet,
+  InboundTipReader,
   isNotEmpty,
   matchesProtoEnum,
   outputKey,
@@ -17,14 +20,10 @@ import {
   Report,
   Steps,
   type ClusterBuildStepOptions,
+  type OutpostConsensusRow,
+  type OutpostInboundTips,
   type StepInput
 } from "@wireio/cluster-tool"
-import { bytesToHex, encodeTaggedEnvelope } from "../EnvelopeCanonicalCodec.js"
-import {
-  InboundTipReader,
-  type OutpostConsensusRow,
-  type OutpostInboundTips
-} from "../InboundTipReader.js"
 import { SlashingScenarioConstants as Constants } from "../SlashingScenarioConstants.js"
 
 const { SysioContractName, SysioChalgDisputestatus, SysioOpregOperatorstatus } =
@@ -72,9 +71,8 @@ export namespace SlashingScenarioDisputeSteps {
 
   // ── Envelope encoding + inbound chain tips ────────────────────────────────
   //
-  // The canonical OPP codec (semantic-header derivation + tagged-envelope encoding) lives in
-  // ../EnvelopeCanonicalCodec.ts and the single-flight tip reader in ../InboundTipReader.ts so
-  // both can be unit-tested without this step module's cluster-tool dependency; see those files
+  // The canonical OPP codec (semantic-header derivation + tagged-envelope encoding) and the
+  // single-flight tip reader live in cluster-tool's shared flow helpers; see those files
   // for why the checksums are computed over a field-complete canonical encoding rather than
   // protobuf-ts `toBinary`, and for why the tip read must be single-flight.
 
@@ -301,7 +299,7 @@ export namespace SlashingScenarioDisputeSteps {
   // itself passes whether or not any operator would, so it cannot detect a missing
   // production crank — and for a dispute that is the difference between "the epoch
   // resumes" and "the epoch stays paused with quorum already reached". This flow's
-  // two `dispop.*` are SBP-less, but the bootstrapped batch operators keep their
+  // three `dispop.*` are SBP-less, but the bootstrapped batch operators keep their
   // daemons and stay opreg-ACTIVE across the dispute (bootstrapped ops bypass
   // `termcheck`, and a paused epoch runs no `recorddel`), so their plugin tick is
   // what resolves the dispute here.
@@ -347,10 +345,10 @@ export namespace SlashingScenarioDisputeSteps {
    *
    * The schedule reshape runs while the genesis epoch is live, whose envelope
    * bucket already holds the bootstrap operators' consistent deliveries (pushed
-   * by their cranks before the group swap de-elected them). Those form Option-A
-   * consensus, so a two-candidate split injected at the genesis epoch reaches
-   * `evalcons` consensus on the bootstrap checksum instead of opening a dispute.
-   * After the swap, the bootstrap operators finish driving the genesis
+   * by their cranks before the group swap de-elected them). Those form an
+   * Option-B majority, so a 3-way divergent split injected at the genesis epoch
+   * reaches `evalcons` consensus on the bootstrap checksum instead of opening a
+   * dispute. After the swap, the bootstrap operators finish driving the genesis
    * epoch to consensus and `advance` rolls forward to the FIRST fully-post-swap
    * epoch — where only the SBP-less dispute operators are elected, so nothing
    * auto-delivers and the epoch FREEZES. That frozen epoch's contested-outpost
@@ -582,8 +580,8 @@ export namespace SlashingScenarioDisputeSteps {
    * `sysio.msgch::deliver` — one operator delivers one tagged envelope for the
    * contested epoch (read from {@link ContestedEpochKey} at run time). The
    * typed `invoke` waits for finality, so the deliver is CONFIRMED to land — a
-   * forked-out/dropped deliver would leave fewer than the two terminal candidates
-   * or fewer than every eligible delivery, so the dispute would never open.
+   * forked-out/dropped deliver would leave fewer than 3 distinct checksums and
+   * the dispute would never open.
    *
    * @param actor - The narrative subject.
    * @param name - Step name.
@@ -632,7 +630,7 @@ export namespace SlashingScenarioDisputeSteps {
     // Chain the synthetic envelope from the outpost's current inbound tips so the winner (or, for
     // the non-contested outpost, the consensus envelope) passes SEC-102 validation in
     // apply_consensus: `previous_envelope_hash` continues the envelope chain and
-    // `previous_message_id` continues the message chain. The two conflicting envelopes for the
+    // `previous_message_id` continues the message chain. The three divergent envelopes for the
     // contested outpost all read the SAME pre-dispute tips; only the voted winner dispatches and
     // advances them.
     const tips = await readInboundTips(ctx, input.chainCode, epochIndex)
@@ -781,6 +779,7 @@ export namespace SlashingScenarioDisputeSteps {
    * @param name - Step name.
    * @param description - Step description.
    * @param options - Step option overrides.
+   * @param expectedCandidateCount - Number of live operators that delivered a candidate.
    * @returns The definition step.
    */
   export function planAwaitDisputeOpened<
@@ -789,22 +788,33 @@ export namespace SlashingScenarioDisputeSteps {
     actor: Report.Actor,
     name: string,
     description: string,
-    options: ClusterBuildStepOptions
-  ): ClusterBuildStep<C, null> {
-    return ClusterBuildStep.create<C, null>(
+    options: ClusterBuildStepOptions,
+    expectedCandidateCount: number
+  ): ClusterBuildStep<C, AwaitDisputeOpenedInput> {
+    return ClusterBuildStep.create<C, AwaitDisputeOpenedInput>(
       actor,
       name,
       description,
       options,
-      null,
+      {
+        kind: "SlashingScenarioDisputeSteps.AwaitDisputeOpenedInput",
+        expectedCandidateCount
+      },
       runAwaitDisputeOpened
     )
+  }
+
+  /** Input for {@link planAwaitDisputeOpened}. */
+  export interface AwaitDisputeOpenedInput extends StepInput {
+    readonly kind: "SlashingScenarioDisputeSteps.AwaitDisputeOpenedInput"
+    /** Number of distinct live delivery candidates expected on the open dispute. */
+    readonly expectedCandidateCount: number
   }
 
   /** Named runner — poll for the OPEN dispute, assert candidates, store the target. */
   export async function runAwaitDisputeOpened<C extends ClusterBuildContext>(
     ctx: C,
-    _input: null,
+    input: AwaitDisputeOpenedInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
@@ -818,8 +828,8 @@ export namespace SlashingScenarioDisputeSteps {
     const dispute = await findOpenDispute(ctx, epoch)
     Assert.ok(dispute != null, `no OPEN dispute row for epoch ${epoch}`)
     Assert.ok(
-      dispute.candidates.length === Constants.DisputeOperators.length,
-      `expected exactly ${Constants.DisputeOperators.length} dispute candidates, got ${dispute.candidates.length}`
+      dispute.candidates.length === input.expectedCandidateCount,
+      `expected exactly ${input.expectedCandidateCount} dispute candidates, got ${dispute.candidates.length}`
     )
     const canonicalAccount = ctx.keyStore.assertOperator(
       Constants.CanonicalOperator

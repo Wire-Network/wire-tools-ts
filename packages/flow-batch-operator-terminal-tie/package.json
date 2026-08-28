@@ -1,0 +1,19 @@
+{
+  "name": "@wireio/test-flow-batch-operator-terminal-tie",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Flow: terminal two-candidate batch-operator dispute via a reduced live group",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "node lib/index.js",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@wireio/cluster-tool": "workspace:*",
+    "@wireio/test-flow-batch-operator-slashing": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0"
+  }
+}

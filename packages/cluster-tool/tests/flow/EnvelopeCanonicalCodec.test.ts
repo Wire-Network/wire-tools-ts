@@ -6,7 +6,7 @@ import {
   encodeTaggedEnvelope,
   parseChainTip,
   type TaggedEnvelopeInput
-} from "@wireio/test-flow-batch-operator-slashing/EnvelopeCanonicalCodec.js"
+} from "@wireio/cluster-tool/flow"
 
 /** keccak-timestamp shared by every pinned vector (matches `GOLDEN_TS_MS` in the C++ suite). */
 const GOLDEN_TS_MS = 1_775_612_516_983n
@@ -172,16 +172,16 @@ describe("EnvelopeCanonicalCodec", () => {
       expect(sequenceOf(env.messages[0].header.messageId)).toBe(1n)
     })
 
-    it("distinct tags produce distinct message ids (the two-candidate dispute split)", () => {
+    it("distinct tags produce distinct message ids (the 3-way dispute split)", () => {
       const previousMessageId = tipWithSequence(4n)
       const previousEnvelopeHash = fromHex("22".repeat(32))
-      const ids = ["canonical", "fork"].map(tag =>
+      const ids = ["canonical", "fork-1", "fork-2"].map(tag =>
         hex(
           encode({ tag, previousMessageId, previousEnvelopeHash }).messages[0]
             .header.messageId
         )
       )
-      expect(new Set(ids).size).toBe(2)
+      expect(new Set(ids).size).toBe(3)
     })
   })
 

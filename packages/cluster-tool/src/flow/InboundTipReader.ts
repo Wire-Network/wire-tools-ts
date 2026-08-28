@@ -4,9 +4,8 @@ import { SingleFlightCache } from "./SingleFlightCache.js"
 /**
  * Single-flight reader of an outpost's inbound chain tips off `sysio.msgch::outpcons`.
  *
- * Lives outside the step module (which imports the cluster-tool harness) with the table query
- * injected, so the full composition — query the rows, select the requested chain, parse both
- * tips, cache the result — is unit-testable; see `../tests/InboundTipReader.test.ts`.
+ * The table query is injected so the full composition — query the rows, select the requested
+ * chain, parse both tips, cache the result — is unit-testable.
  */
 
 /** The outpost's inbound chain tips from `sysio.msgch::outpcons` (each empty at genesis). */
@@ -47,8 +46,8 @@ export type OutpostConsensusQuery = () => Promise<OutpostConsensusRow[]>
  * Caches each outpost's inbound tips per `(chainCode, epochIndex)`, so all deliveries an outpost
  * receives for one contested epoch chain from the SAME pre-delivery tips. The cache is
  * SINGLE-FLIGHT ({@link SingleFlightCache}): the per-operator deliveries run in parallel, so
- * without it each would issue its own read, and once the non-contested outpost's two-operator
- * unanimous consensus triggers `apply_consensus` inline and advances the tips, a late read would produce a
+ * without it each would issue its own read, and once the non-contested outpost reaches consensus
+ * and advances the tips, a late read would produce a
  * differently-chained (and so differently-checksummed) envelope — mis-classified as a divergent
  * delivery and wrongly slashed. Registering the in-flight read synchronously collapses the
  * parallel misses onto one read that observes the pre-delivery tips; a rejected read is evicted,

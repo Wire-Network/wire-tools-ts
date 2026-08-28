@@ -3,10 +3,10 @@ import { ProtocolTiming } from "@wireio/cluster-tool"
 
 /**
  * Constants for the batch-operator-slashing flow. Names, tags, epoch budgets,
- * and deterministic envelope fixture values support two SBP-less dispute
- * operators that form the active group and deliver conflicting candidates,
- * producing a terminal 1-1 split. Three Tier-1 owners vote the canonical
- * checksum, and the non-canonical deliverer is slashed.
+ * and envelope fixture values carry over from the previously-validated jest
+ * flow (tests/BatchOperatorSlashing.test.ts): three SBP-less dispute operators
+ * inject a 3-way divergent split on the contested outpost, three Tier-1 owners
+ * vote the canonical checksum, and the non-canonical deliverers are slashed.
  * Every poll deadline derives from the epoch duration so the flow scales with it.
  */
 export namespace SlashingScenarioConstants {
@@ -28,17 +28,13 @@ export namespace SlashingScenarioConstants {
   export const EpochBoundaryMarginMs = 2_000
 
   /**
-   * The two batch operators in the active group. Both deliver conflicting tags,
-   * making the two-candidate split terminal. Both are provisioned SBP-less (no
-   * daemon) and non-bootstrapped, so the flow fully controls deliveries.
+   * The three batch operators whose divergent deliveries form the split. The
+   * operator delivering the canonical tag is the one the Tier-1 owners vote
+   * for; the other two are slashed. They are provisioned SBP-less (no daemon)
+   * and non-bootstrapped, so the flow fully controls their deliveries.
    */
-  /** The operator that delivers the canonical checksum and is not slashed. */
-  export const CanonicalOperator = "dispop.a"
-  /** The eligible operator that delivers the non-canonical contested candidate. */
-  export const LosingOperator = "dispop.b"
-  /** The complete active group; every eligible operator delivers one contested candidate. */
-  export const DisputeOperators = [CanonicalOperator, LosingOperator] as const
-  /** Group size: two scheduled operators, producing the terminal 1-1 tie. */
+  export const DisputeOperators = ["dispop.a", "dispop.b", "dispop.c"] as const
+  /** Group SIZE the dispute needs — three divergent deliveries, no majority. */
   export const DisputeOperatorCount = DisputeOperators.length
   /**
    * Bootstrapped batch operators provisioned by the harness — exactly
@@ -51,7 +47,7 @@ export namespace SlashingScenarioConstants {
    *
    * These bootstrapped operators do NOT stay in the group: once the flow flips
    * the SBP-less dispute operators ACTIVE it re-materializes the rotation with a
-   * fresh `schbatchgps`, which sorts non-bootstrapped first — so the two
+   * fresh `schbatchgps`, which sorts non-bootstrapped first — so the three
    * `dispop.*` fill the sole group and these fall outside it, exactly as the
    * hand-off in `SlashingScenario.plan` describes. They keep the network
    * relaying until that hand-off.
@@ -92,15 +88,20 @@ export namespace SlashingScenarioConstants {
    * quorum is Q = floor(4/2)+1 = 3 — voting all 3 of these owners clears it.
    */
   export const Tier1VoterNames = ["voter1", "voter2", "voter3"] as const
-  /** The only non-canonical deliverer, which must be slashed after resolution. */
-  export const LosingOperators = [LosingOperator] as const
+  /** The operator delivering the canonical checksum (NOT slashed). */
+  export const CanonicalOperator = DisputeOperators[0]
+  /** The operators delivering the non-canonical checksums (slashed). */
+  export const LosingOperators = [
+    DisputeOperators[1],
+    DisputeOperators[2]
+  ] as const
   /** HD slots for the dispute operators' ETH wallets — past every bootstrapped operator slot. */
   export const DisputeOperatorEthereumHdBase = 35
 
-  /** Two distinct payload tags produce the two conflicting candidate checksums. */
-  export const EnvelopeTags = ["canonical", "fork"] as const
+  /** Distinct payload tags → distinct envelope checksums (no majority). */
+  export const EnvelopeTags = ["canonical", "fork-1", "fork-2"] as const
   /**
-   * Tag delivered IDENTICALLY by both dispute operators on the
+   * Tag delivered IDENTICALLY by all three dispute operators on the
    * non-contested outpost, so that outpost reaches Option-A consensus for the
    * contested epoch (the post-resolution advance where the slash runs requires
    * every active outpost at epoch consensus).
@@ -157,7 +158,7 @@ export namespace SlashingScenarioConstants {
   export const BoundaryEpochBudget = 2
   /**
    * Epochs budgeted for the dispute row to appear. CI-load timing margin: the
-   * dispute opens on the second conflicting deliver's inline `evalcons` once it
+   * dispute opens on the 3rd divergent deliver's inline `evalcons` once it
    * lands past `next_epoch_start`. Under CI load the deliver txns + epoch
    * boundary can lag, so the dispute row can appear a little late — 4 epochs
    * (2 raced the boundary and flaked, e.g. run 28108464932). The poll returns

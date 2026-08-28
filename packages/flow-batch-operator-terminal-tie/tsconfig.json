@@ -1,0 +1,10 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {},
+  "include": [],
+  "references": [
+    { "path": "../cluster-tool/tsconfig.json" },
+    { "path": "../flow-batch-operator-slashing/tsconfig.json" },
+    { "path": "./tsconfig.src.json" }
+  ]
+}
