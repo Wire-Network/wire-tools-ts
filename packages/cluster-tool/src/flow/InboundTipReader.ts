@@ -1,3 +1,4 @@
+import type { SysioContracts } from "@wireio/sdk-core"
 import { parseChainTip } from "./EnvelopeCanonicalCodec.js"
 import { SingleFlightCache } from "./SingleFlightCache.js"
 
@@ -28,19 +29,11 @@ export interface OutpostInboundTips {
   envelopeDigest: Uint8Array
 }
 
-/**
- * The `outpcons` row fields the reader consumes. `message_tip` / `envelope_digest` are new in the
- * deployed ABI (SEC-102) but absent from the pinned SystemContractTypes, so rows arrive as this
- * shape-cast rather than a generated type.
- */
-export interface OutpostConsensusRow {
-  chain_code: number | string
-  message_tip?: string
-  envelope_digest?: string
-}
+/** The generated `sysio.msgch::outpcons` row consumed by the reader. */
+type OutpostConsensusRow = SysioContracts.SysioMsgchOutpostConsensusEntryType
 
 /** Supplies the current `outpcons` rows; injected so the reader stays harness-free. */
-export type OutpostConsensusQuery = () => Promise<OutpostConsensusRow[]>
+type OutpostConsensusQuery = () => Promise<OutpostConsensusRow[]>
 
 /**
  * Caches each outpost's inbound tips per `(chainCode, epochIndex)`, so all deliveries an outpost

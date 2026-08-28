@@ -1,8 +1,8 @@
 import {
   BatchOperatorDisputeScenario,
+  SlashingScenarioConstants as Constants,
   type BatchOperatorDisputeScenarioOptions
-} from "./BatchOperatorDisputeScenario.js"
-import { SlashingScenarioConstants as Constants } from "./SlashingScenarioConstants.js"
+} from "@wireio/cluster-tool"
 
 const ThreeWaySlashingOptions = {
   name: "flow-batch-operator-slashing",

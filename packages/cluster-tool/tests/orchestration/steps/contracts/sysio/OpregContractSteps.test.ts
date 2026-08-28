@@ -1,6 +1,28 @@
+import { OperatorType } from "@wireio/opp-typescript-models"
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { SysioContracts } from "@wireio/sdk-core"
+import { fixtureContext } from "../../../../config/clusterBuildContextFixture.js"
+import { fixtureOperatorAccount } from "../../../outputs/operatorAccountFixture.js"
+
+const OperatorLabel = "batchop.a",
+  GeneratedAccount = "wireno.x3f9k",
+  AuditReason = "test live-group degradation"
+
+function terminateFixture() {
+  const ctx = fixtureContext()
+  ctx.keyStore.setOperator(
+    fixtureOperatorAccount(OperatorLabel, OperatorType.BATCH, GeneratedAccount)
+  )
+  const contract = ctx.wire.getSysioContract(
+      SysioContracts.SysioContractName.opreg
+    ),
+    invoke = jest
+      .spyOn(contract.actions.terminate, "invoke")
+      .mockResolvedValue(undefined)
+  jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+  return { ctx, invoke }
+}
 
 describe("Steps.contracts.sysio.opreg", () => {
   it("setconfig carries the opreg::setconfig data", () => {
@@ -56,13 +78,55 @@ describe("Steps.contracts.sysio.opreg", () => {
       "terminate-batchop-a",
       "administratively remove batchop.a",
       {},
-      "batchop.a",
-      "test live-group degradation"
+      OperatorLabel,
+      AuditReason
     )
     expect(step.actor).toBe(Report.Actor.Sysio)
     expect(step.input.kind).toBe("OpregContractSteps.TerminateInput")
-    expect(step.input.label).toBe("batchop.a")
-    expect(step.input.reason).toBe("test live-group degradation")
+    expect(step.input.label).toBe(OperatorLabel)
+    expect(step.input.reason).toBe(AuditReason)
     expect(typeof step.runner).toBe("function")
+  })
+
+  it("terminate resolves the operator label and invokes the generated account", async () => {
+    const { ctx, invoke } = terminateFixture()
+
+    await Steps.contracts.sysio.opreg.runTerminate(
+      ctx,
+      {
+        kind: "OpregContractSteps.TerminateInput",
+        label: OperatorLabel,
+        reason: AuditReason
+      },
+      new AbortController().signal
+    )
+
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith({
+      account: GeneratedAccount,
+      reason: AuditReason
+    })
+  })
+
+  it("terminate rejects a pre-aborted signal without resolving or invoking", async () => {
+    const { ctx, invoke } = terminateFixture(),
+      assertOperator = jest.spyOn(ctx.keyStore, "assertOperator"),
+      controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      Steps.contracts.sysio.opreg.runTerminate(
+        ctx,
+        {
+          kind: "OpregContractSteps.TerminateInput",
+          label: OperatorLabel,
+          reason: AuditReason
+        },
+        controller.signal
+      )
+    ).rejects.toMatchObject({ name: "AbortError" })
+
+    expect(assertOperator).not.toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalled()
   })
 })

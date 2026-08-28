@@ -4,15 +4,11 @@
     "rootDir": "src",
     "outDir": "lib",
     "paths": {
-      "@wireio/cluster-tool": ["../cluster-tool/src"],
-      "@wireio/test-flow-batch-operator-slashing/BatchOperatorDisputeScenario": [
-        "../flow-batch-operator-slashing/src/BatchOperatorDisputeScenario"
-      ]
+      "@wireio/cluster-tool": ["../cluster-tool/src"]
     }
   },
   "include": ["src"],
   "references": [
-    { "path": "../cluster-tool/tsconfig.json" },
-    { "path": "../flow-batch-operator-slashing/tsconfig.json" }
+    { "path": "../cluster-tool/tsconfig.json" }
   ]
 }

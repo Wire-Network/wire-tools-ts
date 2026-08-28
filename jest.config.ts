@@ -10,7 +10,7 @@ const config: Config = {
   // `ClusterConfigProvider.resolve` claims every daemon port (each TCP-probed,
   // UDP-role ones probed twice) and `findAvailableRange` sweeps a 64-port
   // window — ~15s per test even with the suite running ALONE. Under the full
-  // 8-project run that comfortably exceeds a 30s ceiling.
+  // 7-project run that comfortably exceeds a 30s ceiling.
   //
   // An undershot ceiling does NOT fail cleanly here, which is why this is
   // sized generously rather than trimmed: a test killed mid-`withFileLock`
@@ -25,7 +25,6 @@ const config: Config = {
   projects: [
     "packages/cluster-tool-shared",
     "packages/cluster-tool",
-    "packages/flow-batch-operator-slashing",
     "packages/debugging-shared",
     "packages/debugging-server",
     "packages/debugging-client-shared",

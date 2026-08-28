@@ -1,7 +1,7 @@
 import {
   BatchOperatorDisputeScenario,
   type BatchOperatorDisputeScenarioOptions
-} from "@wireio/test-flow-batch-operator-slashing/BatchOperatorDisputeScenario"
+} from "@wireio/cluster-tool"
 
 const TerminalTieOptions = {
   name: "flow-batch-operator-terminal-tie",

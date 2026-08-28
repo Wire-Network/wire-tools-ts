@@ -1,22 +1,19 @@
 import Assert from "node:assert"
 import { NodeOwnerTier, OperatorType } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
-import {
-  ClusterBuildContext,
-  ClusterBuildPhase,
-  ClusterBuildPhaseGroup,
-  FlowScenario,
-  Report,
-  Steps,
-  WireOperatorProvisioningTool,
-  matchesProtoEnum,
-  pollUntil,
-  verifyStep,
-  type ClusterBuild,
-  type ClusterBuildOptions
-} from "@wireio/cluster-tool"
+import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
+import type { ClusterBuild } from "../orchestration/ClusterBuild.js"
+import { ClusterBuildPhase } from "../orchestration/ClusterBuildPhase.js"
+import { ClusterBuildPhaseGroup } from "../orchestration/ClusterBuildPhaseGroup.js"
+import { ClusterBuildContext } from "../orchestration/ClusterBuildContext.js"
+import { verifyStep, pollUntil } from "../orchestration/StepTools.js"
+import { Steps } from "../orchestration/steps/index.js"
+import { Report } from "../report/Report.js"
+import { WireOperatorProvisioningTool } from "../tools/wire/WireOperatorProvisioningTool.js"
+import { matchesProtoEnum } from "../utils/predicateUtils.js"
+import { FlowScenario } from "./FlowScenario.js"
 import { SlashingScenarioConstants as Constants } from "./SlashingScenarioConstants.js"
-import { SlashingScenarioDisputeSteps as DisputeSteps } from "./steps/SlashingScenarioDisputeSteps.js"
+import { SlashingScenarioDisputeSteps as DisputeSteps } from "./steps/index.js"
 
 const { SysioContractName, SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report
@@ -114,6 +111,19 @@ async function verifyOperatorTerminated(
       SysioOpregOperatorstatus.OPERATOR_STATUS_TERMINATED
     ),
     `${operator} must be OPERATOR_STATUS_TERMINATED before the contested deliveries`
+  )
+}
+
+/** The configured group size remains three even when only two operators deliver. */
+async function verifyConfiguredGroupSize(
+  ctx: ClusterBuildContext
+): Promise<void> {
+  const { rows } = await ctx.wire.getEpochConfig()
+  Assert.ok(rows.length === 1, "epochcfg singleton row missing")
+  Assert.strictEqual(
+    Number(rows[0].operators_per_epoch),
+    Constants.DisputeOperatorCount,
+    `epochcfg.operators_per_epoch must remain ${Constants.DisputeOperatorCount}`
   )
 }
 
@@ -390,6 +400,12 @@ export class BatchOperatorDisputeScenario extends FlowScenario {
           `${terminatedOperator}-terminated`,
           `${terminatedOperator} is OPERATOR_STATUS_TERMINATED`,
           ctx => verifyOperatorTerminated(ctx, terminatedOperator)
+        ),
+        verifyStep(
+          Actor.Sysio,
+          "configured-group-size",
+          `epochcfg retains operators_per_epoch=${Constants.DisputeOperatorCount} while ${candidateCount} live operators contest the dispute`,
+          verifyConfiguredGroupSize
         )
       )
     }

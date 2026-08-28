@@ -10,8 +10,7 @@
     "clean": "rm -rf lib"
   },
   "dependencies": {
-    "@wireio/cluster-tool": "workspace:*",
-    "@wireio/test-flow-batch-operator-slashing": "workspace:*"
+    "@wireio/cluster-tool": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "25.5.0"

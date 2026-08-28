@@ -3,27 +3,28 @@ import { ethers } from "ethers"
 import { NodeOwnerTier } from "@wireio/opp-typescript-models"
 import { SysioContracts } from "@wireio/sdk-core"
 import { getLogger } from "@wireio/shared"
+import { Constants as TestClusterConstants } from "../../Constants.js"
+import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import {
-  ClusterBuildContext,
   ClusterBuildStep,
-  Constants as TestClusterConstants,
-  bytesToHex,
-  encodeTaggedEnvelope,
-  ethereumKeyPairFromWallet,
-  InboundTipReader,
-  isNotEmpty,
-  matchesProtoEnum,
-  outputKey,
-  pollUntil,
+  type ClusterBuildStepOptions
+} from "../../orchestration/ClusterBuildStep.js"
+import { outputKey } from "../../orchestration/OutputStore.js"
+import { pollUntil } from "../../orchestration/StepTools.js"
+import type { StepInput } from "../../orchestration/StepRunner.js"
+import { Steps } from "../../orchestration/steps/index.js"
+import { Report } from "../../report/Report.js"
+import {
   pushNewNamedUser,
-  pushNodeOwnerReg,
-  Report,
-  Steps,
-  type ClusterBuildStepOptions,
-  type OutpostConsensusRow,
-  type OutpostInboundTips,
-  type StepInput
-} from "@wireio/cluster-tool"
+  pushNodeOwnerReg
+} from "../../tools/ethereum/EthereumNodeOwnerNftTool.js"
+import { ethereumKeyPairFromWallet } from "../../utils/keyPairUtils.js"
+import { isNotEmpty, matchesProtoEnum } from "../../utils/predicateUtils.js"
+import { bytesToHex, encodeTaggedEnvelope } from "../EnvelopeCanonicalCodec.js"
+import {
+  InboundTipReader,
+  type OutpostInboundTips
+} from "../InboundTipReader.js"
 import { SlashingScenarioConstants as Constants } from "../SlashingScenarioConstants.js"
 
 const { SysioContractName, SysioChalgDisputestatus, SysioOpregOperatorstatus } =
@@ -37,7 +38,7 @@ const ActivePermission = "active"
 const UtcZuluSuffix = "Z"
 
 /**
- * Flow-local step factories + dispute-domain reads for the slashing scenario.
+ * Shared step factories + dispute-domain reads for batch-operator disputes.
  * The `sysio.chalg` actions (`votedispute`, `chkdispute`), `sysio.msgch::deliver`,
  * `sysio.opreg::processbatch`, and the roa node-owner registration pair have no
  * shared `Steps.*` palette factories yet, so this namespace supplies them in the
@@ -103,13 +104,13 @@ export namespace SlashingScenarioDisputeSteps {
   /** The current `sysio.msgch::outpcons` rows (the tip reader's injected query). */
   async function queryOutpostConsensusRows(
     ctx: ClusterBuildContext
-  ): Promise<OutpostConsensusRow[]> {
+  ): Promise<SysioContracts.SysioMsgchOutpostConsensusEntryType[]> {
     const { rows } = await ctx.wire
       .getSysioContract(SysioContractName.msgch)
       .tables.outpcons.query({
         limit: Constants.OutpostConsensusTableReadLimit
       })
-    return rows as OutpostConsensusRow[]
+    return rows
   }
 
   // ── Reads (execute freely inside runners / verify steps) ─────────────────
@@ -205,7 +206,7 @@ export namespace SlashingScenarioDisputeSteps {
   }
 
   /**
-   * The OPEN dispute row for `epochIndex`, if any.
+   * The OPEN dispute row for the contested outpost and `epochIndex`, if any.
    *
    * @param ctx - The build context.
    * @param epochIndex - The contested epoch.
@@ -217,6 +218,7 @@ export namespace SlashingScenarioDisputeSteps {
   ): Promise<SysioContracts.SysioChalgDisputeEntryType> {
     return (await readDisputes(ctx)).find(
       row =>
+        String(row.chain_code) === String(Constants.ContestedChainCode) &&
         Number(row.epoch_index) === epochIndex &&
         matchesProtoEnum(
           row.status,

@@ -1,8 +1,8 @@
 import { SlugName } from "@wireio/sdk-core"
-import { ProtocolTiming } from "@wireio/cluster-tool"
+import { ProtocolTiming } from "../Constants.js"
 
 /**
- * Constants for the batch-operator-slashing flow. Names, tags, epoch budgets,
+ * Constants for the shared batch-operator-dispute harness. Names, tags, epoch budgets,
  * and envelope fixture values carry over from the previously-validated jest
  * flow (tests/BatchOperatorSlashing.test.ts): three SBP-less dispute operators
  * inject a 3-way divergent split on the contested outpost, three Tier-1 owners

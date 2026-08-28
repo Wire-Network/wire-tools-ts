@@ -4,8 +4,7 @@
   "private": true,
   "type": "commonjs",
   "exports": {
-    ".": "./lib/index.js",
-    "./BatchOperatorDisputeScenario": "./lib/BatchOperatorDisputeScenario.js"
+    ".": "./lib/index.js"
   },
   "description": "Flow: Batch Operator Slashing via OPP envelope dispute vote",
   "scripts": {
@@ -14,11 +13,7 @@
     "clean": "rm -rf lib"
   },
   "dependencies": {
-    "@wireio/cluster-tool": "workspace:*",
-    "@wireio/sdk-core": "^1.0.17",
-    "@wireio/opp-typescript-models": "^1.0.26",
-    "@wireio/shared": "^1.0.17",
-    "ethers": "^6.14.0"
+    "@wireio/cluster-tool": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "25.5.0"
