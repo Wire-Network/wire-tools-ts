@@ -15,6 +15,13 @@ export const DefaultBatchOperatorGroupCount = 3
  */
 export const MinimumOperatorsPerEpoch = 1
 /**
+ * The sole even batch-operator group size supported by the harness. WIRE-362
+ * needs this explicit E=2 topology to exercise a terminal 1-1 consensus tie;
+ * larger even groups remain rejected because the Solana bootstrap packet budget
+ * is only proven safe for the normal odd sizes and this bounded exception.
+ */
+export const TerminalTieOperatorsPerEpoch = 2
+/**
  * Depot ceilings, mirrored from `sysio.epoch.hpp` so an over-large topology
  * fails HERE instead of inside `sysio.epoch::setconfig` after the whole cluster
  * has been stood up. Keep in lock-step with the contract.
@@ -85,11 +92,12 @@ export type BatchOperatorScheduleOptions = z.infer<
 /**
  * The largest ODD group SIZE that fits `batchOperatorCount` into
  * `batchOpGroups` groups: `floor(count / groups)` rounded DOWN to odd, floored
- * at {@link MinimumOperatorsPerEpoch}.
+ * at {@link MinimumOperatorsPerEpoch}. This remains the derived default;
+ * {@link TerminalTieOperatorsPerEpoch} is accepted only when stated explicitly.
  *
  * FLOOR because `schbatchgps` asserts the ACTIVE pool is at least
- * `size × groups`; ODD because the depot's path-2 consensus threshold is a
- * strict group majority (`opp-consensus.md`).
+ * `size × groups`; ODD preserves the normal automatic-consensus topology. The
+ * explicit two-member exception is reserved for terminal-tie validation.
  *
  * @param batchOperatorCount - Bootstrapped batch operators in the roster.
  * @param batchOpGroups - The sliding-window group COUNT (positive).
@@ -110,16 +118,15 @@ function deriveOperatorsPerEpoch(
  *
  * ```
  * groups = 3
- * assert(group_size % 2 == 1)
- * total  = groups * group_size
+ * group_size = largest fitting odd size
+ * total = groups * group_size
  * ```
  *
  * On the DERIVED path (the caller states NEITHER half) that admits exactly the
  * ODD multiples of 3 — `3, 9, 15, 21` — because `count / 3` must be a whole ODD
  * number for `total` to equal the roster. An explicit size or group count takes
- * the caller off that lattice and onto what the depot actually enforces
- * (`total <= roster`), so `{ count: 6, operatorsPerEpoch: 1, batchOpGroups: 3 }`
- * is legal.
+ * the caller off that lattice and onto the supported harness shapes, including
+ * the terminal `{ count: 2, operatorsPerEpoch: 2, batchOpGroups: 1 }` topology.
  *
  * Cross-field rules live in the transform because each needs the whole resolved
  * triple; single-field ceilings stay on
@@ -137,13 +144,13 @@ export const BatchOperatorScheduleSchema =
         deriveOperatorsPerEpoch(batchOperatorCount, groups),
       total = size * groups
 
-    if (size % 2 !== 1) {
+    if (size % 2 !== 1 && size !== TerminalTieOperatorsPerEpoch) {
       ctx.addIssue({
         code: "custom",
         path: ["operatorsPerEpoch"],
         message:
-          `batch-op group SIZE must be ODD — got operators-per-epoch ${size} ` +
-          `(an even group has no strict majority, so the depot's path-2 consensus threshold is undefined)`
+          `batch-op group SIZE must be ODD or terminal size ${TerminalTieOperatorsPerEpoch} — ` +
+          `got operators-per-epoch ${size}`
       })
     }
     if (total > MaxScheduledBatchOperators) {

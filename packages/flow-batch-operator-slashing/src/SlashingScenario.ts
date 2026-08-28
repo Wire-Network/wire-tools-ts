@@ -64,10 +64,10 @@ async function verifyEpochUnpauses(ctx: ClusterBuildContext): Promise<void> {
   )
 }
 
-/** The 3 dispute operators are exactly the active batch-operator group. */
+/** The 2 dispute operators are exactly the active batch-operator group. */
 async function verifySoleActiveGroup(ctx: ClusterBuildContext): Promise<void> {
   await pollUntil(
-    "the 3 dispute operators are exactly the active batch-op group",
+    "the 2 dispute operators are exactly the active batch-op group",
     () => DisputeSteps.disputeOperatorsOwnGroup(ctx),
     Constants.groupDeadlineMs(),
     Constants.LongPollIntervalMs
@@ -108,10 +108,9 @@ async function verifyCanonicalNotSlashed(
  * isolation; this flow covers the trigger + slash economics against a live
  * cluster):
  *
- * 1. Three scheduled batch operators cover one (outpost, epoch), but only two
- *    deliver conflicting envelope versions; the third stays eligible and
- *    intentionally silent. Past the epoch boundary, `sysio.msgch::evalcons`
- *    detects the two-candidate split and inline-calls
+ * 1. Two scheduled batch operators cover one (outpost, epoch) and both deliver
+ *    conflicting envelope versions. Past the epoch boundary, the 1-1 split is
+ *    terminal, so `sysio.msgch::evalcons` inline-calls
  *    `sysio.chalg::opendispute`, which pauses the epoch.
  * 2. Tier-1 node owners vote (`sysio.chalg::votedispute`) for the canonical
  *    checksum.
@@ -123,18 +122,18 @@ async function verifyCanonicalNotSlashed(
  *    checksum is slashed (`sysio.opreg::slash`, bond → LP, status SLASHED).
  *    The operator that delivered the canonical checksum is NOT slashed.
  *
- * The three dispute operators are provisioned SBP-less and made the sole active
+ * The two dispute operators are provisioned SBP-less and made the sole active
  * batch-op group, so their step-pushed deliveries are the only ones the depot
  * sees for the contested (outpost, epoch). The flow delivers two distinct,
  * epoch-matching OPP Envelopes from the canonical and losing operators; the
- * third active operator has no contested delivery. The depot's trustless
+ * entire active group delivers one contested candidate. The depot's trustless
  * `sha256(data)` therefore yields exactly two candidate checksums and
- * `opendispute` fires without requiring every eligible operator to deliver.
+ * `opendispute` fires only after every eligible operator has delivered.
  */
 export class SlashingScenario extends FlowScenario {
   readonly name = "flow-batch-operator-slashing"
   readonly description =
-    "Two conflicting deliveries from a three-operator active group open a dispute; Tier-1 owners vote the canonical checksum; the non-canonical deliverer is slashed"
+    "A terminal 1-1 split from a two-operator active group opens a dispute; Tier-1 owners vote the canonical checksum; the non-canonical deliverer is slashed"
 
   override readonly defaults: ClusterBuildOptions = {
     epochDurationSec: Constants.EpochDurationSec,
@@ -185,11 +184,11 @@ export class SlashingScenario extends FlowScenario {
         timeoutMs: Constants.slashDeadlineMs() + Constants.PollDeadlineBufferMs
       }
 
-    // ── 1. SetupDispute — 3 T1 voters, 3 SBP-less dispute ops, 1-group/3-op epoch ──
+    // ── 1. SetupDispute — 3 T1 voters, 2 SBP-less dispute ops, 1-group/2-op epoch ──
     const setup = ClusterBuildPhaseGroup.create(
       cluster,
       "SetupDispute",
-      "Provision the Tier-1 electorate + the 3 SBP-less dispute operators; reshape to a single 3-operator group"
+      "Provision the Tier-1 electorate + the 2 SBP-less dispute operators; reshape to a single 2-operator group"
     )
 
     ClusterBuildPhase.create(
@@ -240,7 +239,7 @@ export class SlashingScenario extends FlowScenario {
       )
     )
 
-    // The 3 active-group operators, provisioned SBP-less (no daemon) and
+    // The 2 active-group operators, provisioned SBP-less (no daemon) and
     // non-bootstrapped via the ONE provisioning mechanism, so they never
     // auto-deliver — the flow pushes their deliveries by hand. With
     // `req_batchop_collat` empty (this flow does not set it), processbatch can
@@ -248,7 +247,7 @@ export class SlashingScenario extends FlowScenario {
     WireOperatorProvisioningTool.planOperatorAccountProvisioning(
       setup,
       "ProvisionDisputeOperators",
-      "Provision the 3 SBP-less non-bootstrapped dispute batch operators",
+      "Provision the 2 SBP-less non-bootstrapped dispute batch operators",
       {},
       Constants.DisputeOperators.map((label, index) => ({
         label,
@@ -263,22 +262,21 @@ export class SlashingScenario extends FlowScenario {
     // `operatorsPerEpoch` / `batchOpGroups`), so there is NO mid-run
     // `setconfig`: the batch-op group SIZE + COUNT never change after bootstrap
     // (the depot's #529 invariant forbids resizing a materialized rotation
-    // anyway). Here we only flip the 3 SBP-less dispute ops ACTIVE
+    // anyway). Here we only flip the 2 SBP-less dispute ops ACTIVE
     // (`processbatch`, since `req_batchop_collat` is empty), then re-materialize
     // the rotation with a fresh `schbatchgps` — the ONLY way to fold the
     // now-active, non-bootstrapped dispute ops into the schedule (`advance()`
     // rotates the already-materialized schedule; it does NOT re-select members).
-    // `schbatchgps` sorts non-bootstrapped ops first, then by name, so the three
+    // `schbatchgps` sorts non-bootstrapped ops first, then by name, so the two
     // `dispop.*` fill the single group and the bootstrapped harness ops fall
-    // outside it. `deliver` is gated to the active group, so only these 3 can
-    // deliver — and being SBP-less, only when the flow injects an envelope. The
-    // flow intentionally omits an ETHEREUM injection for SilentOperator.
+    // outside it. `deliver` is gated to the active group, so only these 2 can
+    // deliver — and being SBP-less, only when the flow injects an envelope.
     // `sysio.epoch@active` resolves to `sysio@active` (the governance key in
     // kiod), so the flow can sign `schbatchgps`.
     ClusterBuildPhase.create(
       setup,
       "ReshapeSchedule",
-      "One group of exactly the 3 dispute operators"
+      "One group of exactly the 2 dispute operators"
     ).push(
       ...Constants.DisputeOperators.map(operator =>
         DisputeSteps.planProcessbatch(
@@ -308,7 +306,7 @@ export class SlashingScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "sole-active-group",
-        "the 3 dispute operators are exactly the active batch-operator group",
+        "the 2 dispute operators are exactly the active batch-operator group",
         verifySoleActiveGroup,
         groupStepOptions
       )
@@ -333,11 +331,11 @@ export class SlashingScenario extends FlowScenario {
       )
     )
 
-    // ── 2. InjectDivergent — two candidates, one silent eligible operator ──
+    // ── 2. InjectDivergent — terminal two-candidate 1-1 split ──
     const inject = ClusterBuildPhaseGroup.create(
       cluster,
       "InjectDivergent",
-      "All 3 operators deliver consensus SOLANA; 2 deliver conflicting ETHEREUM candidates while the third stays silent"
+      "Both operators deliver consensus SOLANA and conflicting ETHEREUM candidates"
     )
 
     // A dispute opens ONLY from deliver's inline evalcons, and only when that
@@ -357,15 +355,14 @@ export class SlashingScenario extends FlowScenario {
       )
     )
 
-    // First bring the non-contested outpost (SOLANA) to consensus. All three
-    // active operators deliver the identical envelope before either contested
-    // delivery can open the dispute. Then only DeliveringOperators submit their
-    // conflicting ETHEREUM candidates; SilentOperator remains eligible but does
-    // not deliver for ETHEREUM.
+    // First bring the non-contested outpost (SOLANA) to consensus. Both active
+    // operators deliver the identical envelope before either contested delivery
+    // can open the dispute. They then deliver conflicting ETHEREUM candidates,
+    // completing the terminal two-version tie.
     ClusterBuildPhase.create(
       inject,
       "ConsensusSolanaDeliveries",
-      "All 3 active operators deliver the consensus SOLANA envelope"
+      "Both active operators deliver the consensus SOLANA envelope"
     ).push(
       ...Constants.DisputeOperators.map(operator =>
         DisputeSteps.planDeliver(
@@ -383,9 +380,9 @@ export class SlashingScenario extends FlowScenario {
     ClusterBuildPhase.create(
       inject,
       "TwoCandidateEthereumDeliveries",
-      `The canonical and losing operators deliver conflicting ETHEREUM envelopes; ${Constants.SilentOperator} stays silent`
+      "The canonical and losing operators deliver conflicting ETHEREUM envelopes"
     ).push(
-      ...Constants.DeliveringOperators.map((operator, index) =>
+      ...Constants.DisputeOperators.map((operator, index) =>
         DisputeSteps.planDeliver(
           Actor.BatchOperator,
           `${operator}-deliver-ethereum`,

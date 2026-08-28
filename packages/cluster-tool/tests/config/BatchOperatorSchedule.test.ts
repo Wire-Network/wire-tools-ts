@@ -7,7 +7,8 @@ import {
   MaxBatchOperatorGroups,
   MaxBatchOperatorRoster,
   MaxOperatorsPerEpoch,
-  MaxScheduledBatchOperators
+  MaxScheduledBatchOperators,
+  TerminalTieOperatorsPerEpoch
 } from "@wireio/cluster-tool/config"
 // Direct module, not the root barrel (it re-exports FlowCLI → yargs@18, which
 // jest cannot require as ESM on Node < 24.9).
@@ -78,8 +79,16 @@ describe("BatchOperatorSchedule.resolve", () => {
       expect(resolve(21, 3, 3).batchOperatorMinimumActive).toBe(9)
     })
 
-    it("rejects an EVEN explicit size", () => {
-      expect(() => resolve(21, 4)).toThrow(/group SIZE must be ODD/)
+    it("accepts the explicit terminal two-member topology", () => {
+      expect(resolve(2, TerminalTieOperatorsPerEpoch, 1)).toEqual({
+        operatorsPerEpoch: TerminalTieOperatorsPerEpoch,
+        batchOpGroups: 1,
+        batchOperatorMinimumActive: TerminalTieOperatorsPerEpoch
+      })
+    })
+
+    it("rejects an unsupported EVEN explicit size", () => {
+      expect(() => resolve(21, 4)).toThrow(/group SIZE must be ODD or terminal size 2/)
     })
 
     it("rejects a shape the roster cannot fill, naming both flags", () => {
@@ -207,12 +216,13 @@ describe("BatchOperatorSchedule.resolve", () => {
 
     it("reports cross-field failures on the field they belong to", () => {
       const result = BatchOperatorScheduleSchema.safeParse({
-        batchOperatorCount: 21,
-        operatorsPerEpoch: 4
+        batchOperatorCount: 2,
+        operatorsPerEpoch: TerminalTieOperatorsPerEpoch,
+        batchOpGroups: 2
       })
       expect(result.success).toBe(false)
       expect(result.error.issues.map(issue => issue.path.join("."))).toContain(
-        "operatorsPerEpoch"
+        "batchOperatorCount"
       )
     })
 

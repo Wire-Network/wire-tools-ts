@@ -301,7 +301,7 @@ export namespace SlashingScenarioDisputeSteps {
   // itself passes whether or not any operator would, so it cannot detect a missing
   // production crank — and for a dispute that is the difference between "the epoch
   // resumes" and "the epoch stays paused with quorum already reached". This flow's
-  // three `dispop.*` are SBP-less, but the bootstrapped batch operators keep their
+  // two `dispop.*` are SBP-less, but the bootstrapped batch operators keep their
   // daemons and stay opreg-ACTIVE across the dispute (bootstrapped ops bypass
   // `termcheck`, and a paused epoch runs no `recorddel`), so their plugin tick is
   // what resolves the dispute here.
@@ -347,10 +347,10 @@ export namespace SlashingScenarioDisputeSteps {
    *
    * The schedule reshape runs while the genesis epoch is live, whose envelope
    * bucket already holds the bootstrap operators' consistent deliveries (pushed
-   * by their cranks before the group swap de-elected them). Those form an
-   * Option-B majority, so a two-candidate split injected at the genesis epoch
-   * reaches `evalcons` consensus on the bootstrap checksum instead of opening a
-   * dispute. After the swap, the bootstrap operators finish driving the genesis
+   * by their cranks before the group swap de-elected them). Those form Option-A
+   * consensus, so a two-candidate split injected at the genesis epoch reaches
+   * `evalcons` consensus on the bootstrap checksum instead of opening a dispute.
+   * After the swap, the bootstrap operators finish driving the genesis
    * epoch to consensus and `advance` rolls forward to the FIRST fully-post-swap
    * epoch — where only the SBP-less dispute operators are elected, so nothing
    * auto-delivers and the epoch FREEZES. That frozen epoch's contested-outpost
@@ -582,8 +582,8 @@ export namespace SlashingScenarioDisputeSteps {
    * `sysio.msgch::deliver` — one operator delivers one tagged envelope for the
    * contested epoch (read from {@link ContestedEpochKey} at run time). The
    * typed `invoke` waits for finality, so the deliver is CONFIRMED to land — a
-   * forked-out/dropped deliver would leave fewer than 3 distinct checksums and
-   * the dispute would never open.
+   * forked-out/dropped deliver would leave fewer than the two terminal candidates
+   * or fewer than every eligible delivery, so the dispute would never open.
    *
    * @param actor - The narrative subject.
    * @param name - Step name.
@@ -818,8 +818,8 @@ export namespace SlashingScenarioDisputeSteps {
     const dispute = await findOpenDispute(ctx, epoch)
     Assert.ok(dispute != null, `no OPEN dispute row for epoch ${epoch}`)
     Assert.ok(
-      dispute.candidates.length === Constants.DeliveringOperators.length,
-      `expected exactly ${Constants.DeliveringOperators.length} dispute candidates, got ${dispute.candidates.length}`
+      dispute.candidates.length === Constants.DisputeOperators.length,
+      `expected exactly ${Constants.DisputeOperators.length} dispute candidates, got ${dispute.candidates.length}`
     )
     const canonicalAccount = ctx.keyStore.assertOperator(
       Constants.CanonicalOperator

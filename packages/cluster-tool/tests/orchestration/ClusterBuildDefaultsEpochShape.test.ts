@@ -11,10 +11,11 @@ function config(overrides: Partial<ClusterConfig>): ClusterConfig {
 }
 
 describe("ClusterBuildDefaults.epochConfig — batch-op group shape", () => {
-  // The spec: groups = 3; assert(group_size % 2 == 1); total = groups × size.
-  // Every admissible roster is 3 × odd, so the derived size is a whole ODD
-  // number and `minimum_active` lands exactly ON the roster — never above it,
-  // which is what `sysio.epoch::schbatchgps` asserts against.
+  // The derived default: groups = 3; group_size is the largest fitting odd
+  // value; total = groups × size. The resulting roster is 3 × odd, so
+  // `minimum_active` lands exactly ON the roster — never above it, which is
+  // what `sysio.epoch::schbatchgps` asserts against. An explicit E=2 topology
+  // is separately supported for terminal-tie validation.
   // The lattice/ceiling/override matrix lives in BatchOperatorSchedule.test.ts
   // (pure, no cluster). What matters HERE is that epochConfig emits the shape
   // that resolver produced, into the real `epoch::setconfig` payload.
@@ -58,12 +59,21 @@ describe("ClusterBuildDefaults.epochConfig — batch-op group shape", () => {
     expect(data.batch_operator_minimum_active).toBe(15)
   })
 
-  it("rejects an EVEN group-size override — the spec's assert(group_size % 2 == 1)", () => {
+  it("emits the explicit terminal two-member group shape", () => {
+    const data = ClusterBuildDefaults.epochConfig(
+      config({ batchOperatorCount: 2, operatorsPerEpoch: 2, batchOpGroups: 1 })
+    )
+    expect(data.operators_per_epoch).toBe(2)
+    expect(data.batch_op_groups).toBe(1)
+    expect(data.batch_operator_minimum_active).toBe(2)
+  })
+
+  it("rejects an unsupported EVEN group-size override", () => {
     expect(() =>
       ClusterBuildDefaults.epochConfig(
         config({ batchOperatorCount: 21, operatorsPerEpoch: 4 })
       )
-    ).toThrow(/group SIZE must be ODD/)
+    ).toThrow(/group SIZE must be ODD or terminal size 2/)
   })
 
   it("rejects an override pair the roster cannot fill, naming both flags", () => {
