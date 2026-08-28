@@ -983,7 +983,16 @@ export namespace ClusterBuildDefaults {
             "prepare-daemon-artifacts",
             "write ETH ABI + SOL IDL artifacts for operator daemons",
             {}
-          )
+          ),
+      // Must follow the artifact step (it reads the published SOL program id)
+      // and precede any daemon start: an operator skips a chain whose remote
+      // addresses are still unset.
+      Steps.registry.planSeedOutpostAddresses<C>(
+        Actor.Sysio,
+        "seed-outpost-addresses",
+        "write each outpost chain's remote contract addresses onto its sysio.chains row",
+        {}
+      )
     )
 
     // Bootstrapped batch operators + underwriters via the ONE mechanism. Fee-payer
