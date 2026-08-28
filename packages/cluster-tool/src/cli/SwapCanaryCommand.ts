@@ -1,9 +1,11 @@
 import Path from "node:path"
 
 import type { ClusterConfig } from "@wireio/cluster-tool-shared"
+import { SysioContracts } from "@wireio/sdk-core"
 import type { ArgumentsCamelCase, Argv } from "yargs"
 
 import { ClusterState } from "../cluster/ClusterState.js"
+import { SwapCanaryConfig } from "../config/SwapCanaryConfig.js"
 import { ClusterConfigProvider } from "../config/ClusterConfigProvider.js"
 import { getLogger } from "../logging/Logger.js"
 import { ClusterBuild } from "../orchestration/ClusterBuild.js"
@@ -22,6 +24,7 @@ import {
 import { ClusterCommand } from "./ClusterCommand.js"
 
 const log = getLogger(__filename)
+const { SysioContractName } = SysioContracts
 
 /** Parsed arguments for a transactional canary against an existing cluster. */
 export interface SwapCanaryArgv extends ClusterPathArgv {
@@ -75,8 +78,12 @@ export async function runSwapCanary(args: SwapCanaryArgv): Promise<Report> {
   ClusterState.load(config)
   ClusterState.rehydrate(context.keyStore, ClusterState.loadKeys(config))
 
-  const cluster = ClusterBuild.forContext(context)
+  const { rows: liveReserves } = await context.wire
+      .getSysioContract(SysioContractName.reserv)
+      .tables.reserves.query({ limit: SwapCanaryConfig.TableRowLimit }),
+    cluster = ClusterBuild.forContext(context)
   SwapCanaryPhaseGroups.plan(cluster, {
+    availableRoutes: SwapRouteCatalog.fromLiveReserveRows(liveReserves),
     routes: SwapRouteCatalog.parseSelectors(args.routes.map(String)),
     waitForChallenge: args.waitForChallenge,
     provisionUnderwriterCollateral: false
@@ -128,7 +135,7 @@ function applySwapCanaryArgs<T>(builder: Argv<T>) {
       choices: Object.values(SwapRouteSelector),
       default: [SwapRouteSelector.canary],
       describe:
-        "Route selector; repeat to union groups (default: six native endpoint routes)"
+        "Route selector; repeat to union groups (default: one public reserve per endpoint)"
     })
     .option("wait-for-challenge", {
       type: "boolean",

@@ -2,7 +2,11 @@ import { ClusterBuild } from "@wireio/cluster-tool/orchestration/ClusterBuild"
 import { ClusterBuildPhase } from "@wireio/cluster-tool/orchestration/ClusterBuildPhase"
 import { ClusterBuildPhaseGroup } from "@wireio/cluster-tool/orchestration/ClusterBuildPhaseGroup"
 import { SwapCanaryPhaseGroups } from "@wireio/cluster-tool/orchestration/phases/SwapCanaryPhaseGroups"
-import { SwapRouteSelector } from "@wireio/cluster-tool/tools/all/SwapRouteCatalog"
+import {
+  SwapRouteCatalog,
+  SwapRouteSelector
+} from "@wireio/cluster-tool/tools/all/SwapRouteCatalog"
+import { Steps } from "@wireio/cluster-tool/orchestration/steps"
 import type { SwapScenarioContext } from "@wireio/cluster-tool/flow/contexts/SwapScenarioContext"
 
 function createPlan(
@@ -14,6 +18,9 @@ function createPlan(
     } as SwapScenarioContext,
     cluster = ClusterBuild.forContext(context)
   SwapCanaryPhaseGroups.plan(cluster, {
+    availableRoutes: SwapRouteCatalog.fromReserveRegistrations(
+      Steps.registry.MockReserveRegistrations
+    ),
     routes: [SwapRouteSelector.canary],
     waitForChallenge,
     provisionUnderwriterCollateral
@@ -32,7 +39,7 @@ function routePhases(cluster: ReturnType<typeof createPlan>) {
 }
 
 describe("SwapCanaryPhaseGroups", () => {
-  it("plans the six native canary routes in both lifecycle modes", () => {
+  it("plans six representative canary routes in both lifecycle modes", () => {
     expect(routePhases(createPlan(true))).toHaveLength(6)
     expect(routePhases(createPlan(false))).toHaveLength(6)
   })

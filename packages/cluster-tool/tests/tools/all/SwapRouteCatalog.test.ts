@@ -1,4 +1,4 @@
-import { SlugName } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 
 import {
   SwapRouteCatalog,
@@ -52,6 +52,43 @@ describe("SwapRouteCatalog", () => {
     ])
   })
 
+  it("uses active public live identities and falls back to LIQSOL for canary", () => {
+    const eth = liveRow(Steps.registry.MockReserveRegistrations[0]),
+      sol = liveRow(Steps.registry.MockReserveRegistrations[4], {
+        status:
+          SysioContracts.SysioReservReservestatus.RESERVE_STATUS_PENDING
+      }),
+      liqsol = liveRow(Steps.registry.MockReserveRegistrations[5], {
+        reserve_code: { value: SlugName.from("PUB") }
+      }),
+      privateLiqsol = liveRow(Steps.registry.MockReserveRegistrations[5], {
+        reserve_code: { value: SlugName.from("PRIVATE") },
+        is_private: true
+      }),
+      liveRoutes = SwapRouteCatalog.fromLiveReserveRows([
+        eth,
+        sol,
+        liqsol,
+        privateLiqsol
+      ]),
+      selected = SwapRouteCatalog.select(liveRoutes, [
+        SwapRouteSelector.canary
+      ])
+    expect(selected.map(route => route.id)).toEqual([
+      "eth-to-liqsol",
+      "liqsol-to-eth",
+      "eth-to-wire",
+      "wire-to-eth",
+      "liqsol-to-wire",
+      "wire-to-liqsol"
+    ])
+    expect(selected[1].source).toMatchObject({
+      reserveCode: SlugName.from("PUB"),
+      sourceKind: SwapRouteSourceKind.SPL,
+      sourcePrecision: 9
+    })
+  })
+
   it("unions and de-duplicates endpoint and direction selectors", () => {
     const selected = SwapRouteCatalog.select(routes, [
       SwapRouteSelector["eth-to-sol"],
@@ -87,3 +124,37 @@ describe("SwapRouteCatalog", () => {
     )
   })
 })
+
+function liveRow(
+  registration: SysioContracts.SysioReservRegreserveAction,
+  overrides: Partial<SysioContracts.SysioReservReserveRowType> = {}
+): SysioContracts.SysioReservReserveRowType {
+  return {
+    chain_code: registration.chain_code,
+    token_code: registration.token_code,
+    reserve_code: registration.reserve_code,
+    name: registration.name,
+    description: registration.description,
+    status: SysioContracts.SysioReservReservestatus.RESERVE_STATUS_ACTIVE,
+    reserve_chain_amount: registration.initial_chain_amount,
+    reserve_wire_amount: registration.initial_wire_amount,
+    source_token_precision: registration.source_token_precision,
+    connector_weight_bps: registration.connector_weight_bps,
+    creator_addr: {
+      kind: SysioContracts.SysioReservChainkind.CHAIN_KIND_UNKNOWN,
+      address: ""
+    },
+    requested_wire_amount: registration.initial_wire_amount,
+    external_token_amount: registration.initial_chain_amount,
+    registered_at_ms: 1,
+    activated_at_ms: 1,
+    cancelled_at_ms: 0,
+    is_private: false,
+    owner: registration.owner,
+    creator_pub_key: "",
+    owner_fee_bps: 0,
+    owner_fee_accrued: 0,
+    owner_fee_lifetime: 0,
+    ...overrides
+  }
+}

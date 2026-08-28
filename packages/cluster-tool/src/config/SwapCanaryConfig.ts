@@ -1,8 +1,13 @@
 import { ProtocolTiming } from "../Constants.js"
-import type { SwapRouteSelector } from "../tools/all/SwapRouteCatalog.js"
+import type {
+  SwapRoute,
+  SwapRouteSelector
+} from "../tools/all/SwapRouteCatalog.js"
 
 /** Resolved planning policy shared by fresh and connected swap-canary runs. */
 export interface SwapCanaryConfig {
+  /** Public route catalog resolved from bootstrap declarations or live rows. */
+  readonly availableRoutes: readonly SwapRoute[]
   /** Unioned route selectors to execute in canonical serial order. */
   readonly routes: readonly SwapRouteSelector[]
   /** Whether each route waits through its exact challenge window. */

@@ -148,8 +148,11 @@ packages/cluster-tool/bin/wire-cluster-tool swap-canary \
   --cluster-path /path/to/running/cluster
 ```
 
-It defaults to the six native directions. Repeat `--routes` to select another
-union and add `--wait-for-challenge` when terminal UWREQ completion is required.
+It defaults to six representative public directions. The fresh flow prefers
+native ETH/SOL; a connected run discovers ACTIVE public reserves and falls back
+to the deterministic public asset for an endpoint (for example LIQSOL/PUB on a
+post-boot-provisioned sandbox). Repeat `--routes` to select another union and
+add `--wait-for-challenge` when terminal UWREQ completion is required.
 The connected command does not bootstrap processes, redeploy outposts, create
 reserves, or deposit more underwriter collateral; it validates the persisted
 cluster and existing collateral before making the selected swap transactions.

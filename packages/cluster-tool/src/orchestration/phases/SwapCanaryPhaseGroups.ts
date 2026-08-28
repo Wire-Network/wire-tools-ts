@@ -2,7 +2,7 @@ import Assert from "node:assert"
 
 import type { ChainTokenAmount } from "@wireio/cluster-tool-shared"
 import { TokenAmount } from "@wireio/opp-typescript-models"
-import { SysioContracts } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 
 import { SwapCanaryConfig as Constants } from "../../config/SwapCanaryConfig.js"
 import type { SwapCanaryConfig } from "../../config/SwapCanaryConfig.js"
@@ -38,7 +38,6 @@ import {
   sourceAmountFor,
   SwapCanarySteps as CanarySteps
 } from "../steps/SwapCanarySteps.js"
-import { Steps as HarnessSteps } from "../steps/index.js"
 
 const { SysioContractName, SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report
@@ -55,19 +54,15 @@ export namespace SwapCanaryPhaseGroups {
     cluster: ClusterBuild<SwapScenarioContext>,
     config: SwapCanaryConfig
   ): void {
-    const catalog = SwapRouteCatalog.fromReserveRegistrations(
-        HarnessSteps.registry.MockReserveRegistrations
+    const routes = SwapRouteCatalog.select(
+        config.availableRoutes,
+        config.routes
       ),
-      routes = SwapRouteCatalog.select(catalog, config.routes),
       underwriterLabels = Array.from(
         { length: cluster.context.config.underwriterCount },
         (_, index) => HarnessConstants.underwriterLabel(index)
       ),
-      collateral = buildUnderwriterCollateral(
-        catalog,
-        routes,
-        underwriterLabels.length
-      ),
+      collateral = buildUnderwriterCollateral(routes, underwriterLabels.length),
       writeOptions = { timeoutMs: Constants.WriteTimeoutMs },
       activeOptions = {
         timeoutMs:
@@ -376,21 +371,28 @@ function planRoute(
 }
 
 function buildUnderwriterCollateral(
-  catalog: readonly SwapRoute[],
   selected: readonly SwapRoute[],
   underwriterCount: number
 ): ChainTokenAmount[][] {
-  const nativeActivationAssets = uniqueExternalAssets(catalog).filter(asset =>
-      ["ETH", "SOL"].includes(asset.symbol)
+  const nativeActivationLegs = [
+      [SlugName.from("ETHEREUM"), SlugName.from("ETH")],
+      [SlugName.from("SOLANA"), SlugName.from("SOL")]
+    ] as const,
+    selectedLegs = uniqueExternalAssets(selected).map(
+      asset => [asset.chainCode, asset.tokenCode] as const
     ),
-    assets = uniqueAssets([
-      ...nativeActivationAssets,
-      ...uniqueExternalAssets(selected)
-    ]),
-    uniform = assets.map(asset => ({
-      chain_code: asset.chainCode,
+    legs = Array.from(
+      new Map(
+        [...nativeActivationLegs, ...selectedLegs].map(leg => [
+          `${leg[0]}:${leg[1]}`,
+          leg
+        ])
+      ).values()
+    ),
+    uniform = legs.map(([chainCode, tokenCode]) => ({
+      chain_code: chainCode,
       amount: TokenAmount.create({
-        tokenCode: BigInt(asset.tokenCode),
+        tokenCode: BigInt(tokenCode),
         amount: Constants.UnderwriterCollateralAmount
       })
     }))

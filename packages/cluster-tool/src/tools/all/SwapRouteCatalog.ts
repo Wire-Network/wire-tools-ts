@@ -1,9 +1,9 @@
 import Assert from "node:assert"
 
-import type { SysioContracts } from "@wireio/sdk-core"
-import { SlugName } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { match } from "ts-pattern"
 
+import { matchesProtoEnum } from "../../utils/predicateUtils.js"
 import { slugValue } from "../../utils/slugUtils.js"
 
 /** Public swap endpoint represented by one route asset. */
@@ -79,8 +79,39 @@ export namespace SwapRouteCatalog {
   export function fromReserveRegistrations(
     registrations: readonly SysioContracts.SysioReservRegreserveAction[]
   ): readonly SwapRoute[] {
-    const externalAssets = registrations.map(toExternalAsset),
-      assets = [...externalAssets, WireAsset]
+    return fromExternalAssets(registrations.map(toExternalAsset))
+  }
+
+  /**
+   * Build routes from ACTIVE, public ETHEREUM/SOLANA reserve table rows.
+   * Connected runs use the live reserve code and source precision verbatim;
+   * they never substitute bootstrap-only PRIMARY identities.
+   *
+   * @param rows - Live `sysio.reserv::reserves` rows.
+   * @returns Ordered public routes over every supported active reserve.
+   */
+  export function fromLiveReserveRows(
+    rows: readonly SysioContracts.SysioReservReserveRowType[]
+  ): readonly SwapRoute[] {
+    return fromExternalAssets(
+      rows
+        .filter(row => !row.is_private)
+        .filter(row =>
+          matchesProtoEnum(
+            row.status,
+            SysioContracts.SysioReservReservestatus,
+            SysioContracts.SysioReservReservestatus.RESERVE_STATUS_ACTIVE
+          )
+        )
+        .filter(row => SupportedExternalChains.has(slugValue(row.chain_code)))
+        .map(toLiveExternalAsset)
+    )
+  }
+
+  function fromExternalAssets(
+    externalAssets: readonly SwapRouteAsset[]
+  ): readonly SwapRoute[] {
+    const assets = [...externalAssets, WireAsset]
 
     assertUniqueAssets(assets)
 
@@ -141,11 +172,7 @@ export namespace SwapRouteCatalog {
   ): readonly SwapRoute[] {
     return match(selector)
       .with(SwapRouteSelector.all, () => routes)
-      .with(SwapRouteSelector.canary, () =>
-        routes
-          .filter(route => isNativeEndpointAsset(route.source))
-          .filter(route => isNativeEndpointAsset(route.destination))
-      )
+      .with(SwapRouteSelector.canary, () => canaryRoutes(routes))
       .with(SwapRouteSelector.eth, () =>
         touching(routes, SwapRouteEndpoint.ETHEREUM)
       )
@@ -170,6 +197,11 @@ export namespace SwapRouteCatalog {
       )
   }
 }
+
+const SupportedExternalChains = new Set([
+  SlugName.from(SwapRouteEndpoint.ETHEREUM),
+  SlugName.from(SwapRouteEndpoint.SOLANA)
+])
 
 const WireAsset: SwapRouteAsset = {
   symbol: "WIRE",
@@ -233,6 +265,47 @@ function toExternalAsset(
     reserveCode = slugValue(registration.reserve_code),
     endpoint = endpointFor(chainCode),
     symbol = SlugName.toString(tokenCode)
+  return externalAsset(
+    endpoint,
+    symbol,
+    chainCode,
+    tokenCode,
+    reserveCode,
+    sourcePrecision(endpoint, symbol)
+  )
+}
+
+function toLiveExternalAsset(
+  row: SysioContracts.SysioReservReserveRowType
+): SwapRouteAsset {
+  const chainCode = slugValue(row.chain_code),
+    tokenCode = slugValue(row.token_code),
+    reserveCode = slugValue(row.reserve_code),
+    endpoint = endpointFor(chainCode),
+    symbol = SlugName.toString(tokenCode),
+    precision = Number(row.source_token_precision)
+  Assert.ok(
+    Number.isSafeInteger(precision) && precision >= 0,
+    `invalid source precision for ${symbol}: ${row.source_token_precision}`
+  )
+  return externalAsset(
+    endpoint,
+    symbol,
+    chainCode,
+    tokenCode,
+    reserveCode,
+    precision
+  )
+}
+
+function externalAsset(
+  endpoint: SwapRouteEndpoint,
+  symbol: string,
+  chainCode: number,
+  tokenCode: number,
+  reserveCode: number,
+  precision: number
+): SwapRouteAsset {
   Assert.notStrictEqual(
     endpoint,
     SwapRouteEndpoint.WIRE,
@@ -244,7 +317,7 @@ function toExternalAsset(
     chainCode,
     tokenCode,
     reserveCode,
-    sourcePrecision: sourcePrecision(endpoint, symbol),
+    sourcePrecision: precision,
     sourceKind: sourceKind(endpoint, symbol)
   }
 }
@@ -306,11 +379,57 @@ function route(
   }
 }
 
-function isNativeEndpointAsset(asset: SwapRouteAsset): boolean {
-  return (
-    asset.sourceKind === SwapRouteSourceKind.NATIVE ||
-    asset.sourceKind === SwapRouteSourceKind.WIRE
+function canaryRoutes(routes: readonly SwapRoute[]): readonly SwapRoute[] {
+  const representatives = new Map<SwapRouteEndpoint, SwapRouteAsset>()
+  for (const endpoint of [
+    SwapRouteEndpoint.ETHEREUM,
+    SwapRouteEndpoint.SOLANA
+  ]) {
+    const candidates = uniqueAssets(
+      routes.flatMap(route => [route.source, route.destination])
+    )
+      .filter(asset => asset.endpoint === endpoint)
+      .sort(compareCanaryAssets)
+    Assert.ok(
+      candidates[0],
+      `canary requires an active public ${endpoint} reserve`
+    )
+    representatives.set(endpoint, candidates[0])
+  }
+  return routes.filter(
+    route =>
+      isCanaryAsset(route.source, representatives) &&
+      isCanaryAsset(route.destination, representatives)
   )
+}
+
+function isCanaryAsset(
+  asset: SwapRouteAsset,
+  representatives: ReadonlyMap<SwapRouteEndpoint, SwapRouteAsset>
+): boolean {
+  return (
+    asset.endpoint === SwapRouteEndpoint.WIRE ||
+    assetId(asset) === assetId(representatives.get(asset.endpoint)!)
+  )
+}
+
+function compareCanaryAssets(a: SwapRouteAsset, b: SwapRouteAsset): number {
+  const nativeDifference =
+    Number(a.sourceKind !== SwapRouteSourceKind.NATIVE) -
+    Number(b.sourceKind !== SwapRouteSourceKind.NATIVE)
+  if (nativeDifference !== 0) return nativeDifference
+  if (a.symbol !== b.symbol) return a.symbol < b.symbol ? -1 : 1
+  return a.reserveCode - b.reserveCode
+}
+
+function uniqueAssets(assets: readonly SwapRouteAsset[]): SwapRouteAsset[] {
+  return Array.from(
+    new Map(assets.map(asset => [assetId(asset), asset])).values()
+  )
+}
+
+function assetId(asset: SwapRouteAsset): string {
+  return `${asset.chainCode}:${asset.tokenCode}:${asset.reserveCode}`
 }
 
 function touching(
@@ -326,7 +445,7 @@ function touching(
 
 function assertUniqueAssets(assets: readonly SwapRouteAsset[]): void {
   const ids = assets.map(
-    asset => `${asset.chainCode}:${asset.tokenCode}:${asset.reserveCode}`
+    asset => assetId(asset)
   )
   Assert.strictEqual(
     new Set(ids).size,

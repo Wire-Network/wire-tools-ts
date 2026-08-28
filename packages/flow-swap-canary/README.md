@@ -5,8 +5,11 @@ It uses the canonical cluster bootstrap and PhaseGroup → Phase → Step → Re
 engine. It does not depend on the Hub, SDK outpost, Noco, deployment profiles,
 or S3 artifacts.
 
-The default `canary` selector runs the six native endpoint directions:
-ETH↔SOL, ETH↔WIRE, and SOL↔WIRE. A route succeeds when destination funds land;
+The default `canary` selector runs six representative endpoint directions. In
+the fresh flow that is ETH↔SOL, ETH↔WIRE, and SOL↔WIRE. The connected form
+discovers ACTIVE public reserve identities from the live depot and prefers a
+native asset, falling back deterministically when an endpoint is provisioned
+only with a public token such as LIQSOL/PUB. A route succeeds when destination funds land;
 to-WIRE routes also claim the credited WIRE and verify its liquid balance.
 `--wait-for-challenge` is opt-in and additionally waits for each exact UWREQ to
 reach `COMPLETED` after the collateral challenge window.
@@ -48,8 +51,8 @@ a persistent live-cluster directory; that runner owns a fresh cluster lifecycle.
 
 ## Route selectors
 
-- `canary` — six native endpoint routes; the default
-- `all` — all 48 legal public token routes
+- `canary` — one representative public reserve per external endpoint; six routes
+- `all` — every legal route in the selected fresh or live catalog
 - `eth`, `sol`, `wire` — every route touching that endpoint
 - `cross-outpost`, `wire-endpoint` — route families
 - `eth-to-sol`, `sol-to-eth`, `eth-to-wire`, `wire-to-eth`, `sol-to-wire`,

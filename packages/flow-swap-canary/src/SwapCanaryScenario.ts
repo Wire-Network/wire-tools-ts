@@ -9,6 +9,7 @@ import {
   SwapRouteCatalog,
   SwapRouteSelector,
   SwapScenarioContext,
+  Steps,
   type ClusterBuild,
   type ClusterBuildOptions,
   type FlowScenarioArguments,
@@ -56,7 +57,7 @@ export class SwapCanaryScenario extends FlowScenario<
         choices: Object.values(SwapRouteSelector),
         default: [SwapRouteSelector.canary],
         description:
-          "Route selector; repeat to union groups (default: six native endpoint routes)"
+          "Route selector; repeat to union groups (default: one public reserve per endpoint)"
       })
       .option("wait-for-challenge", {
         type: "boolean",
@@ -91,6 +92,9 @@ export class SwapCanaryScenario extends FlowScenario<
   ): void {
     SwapCanaryPhaseGroups.plan(cluster, {
       ...args,
+      availableRoutes: SwapRouteCatalog.fromReserveRegistrations(
+        Steps.registry.MockReserveRegistrations
+      ),
       provisionUnderwriterCollateral: true
     })
   }
