@@ -6,33 +6,34 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { ethers } from "ethers"
 import { match } from "ts-pattern"
 
+import { SwapCanaryConfig as Constants } from "../../config/SwapCanaryConfig.js"
+import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 import {
-  ClusterBuildStep,
-  ClusterConfigProvider,
-  EthereumCollateralTool,
-  Report,
-  SolanaFundingTool,
-  SwapRouteSteps,
-  WireReserveTool,
-  contractView,
-  matchesProtoEnum,
-  outputKey,
-  pollUntil,
-  slugValue,
-  swapUserOutputKey,
-  verifyStep,
-  type ClusterBuildStepOptions,
-  type OutputKey,
   type ReserveBook,
-  type StepInput,
+  type SwapScenarioContext
+} from "../../flow/contexts/SwapScenarioContext.js"
+import { Report } from "../../report/Report.js"
+import {
   type SwapRoute,
   type SwapRouteAsset,
   SwapRouteEndpoint,
-  SwapRouteSourceKind,
-  type SwapScenarioContext
-} from "@wireio/cluster-tool"
-
-import { SwapCanaryScenarioConstants as Constants } from "../SwapCanaryScenarioConstants.js"
+  SwapRouteSourceKind
+} from "../../tools/all/SwapRouteCatalog.js"
+import { SwapRouteSteps } from "../../tools/all/SwapRouteSteps.js"
+import { EthereumCollateralTool } from "../../tools/ethereum/EthereumCollateralTool.js"
+import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
+import { WireReserveTool } from "../../tools/wire/WireReserveTool.js"
+import { contractView } from "../../utils/ethereumUtils.js"
+import { matchesProtoEnum } from "../../utils/predicateUtils.js"
+import { slugValue } from "../../utils/slugUtils.js"
+import {
+  ClusterBuildStep,
+  type ClusterBuildStepOptions
+} from "../ClusterBuildStep.js"
+import { outputKey, type OutputKey } from "../OutputStore.js"
+import { swapUserOutputKey } from "../outputs/SwapUserOutput.js"
+import { pollUntil, verifyStep } from "../StepTools.js"
+import type { StepInput } from "../StepRunner.js"
 
 const { SysioContractName, SysioUwritUnderwriterequeststatus } = SysioContracts
 const ReserveManagerContractName = "ReserveManager"
@@ -54,7 +55,7 @@ const BalanceErc20Abi: ethers.InterfaceAbi = [
 ]
 
 /** Route lifecycle verification Steps owned by the swap canary. */
-export namespace SwapCanaryScenarioSteps {
+export namespace SwapCanarySteps {
   /** Depot UWREQ id correlated to one exact source request. */
   export function uwreqIdOutputKey(routeId: string): OutputKey<bigint> {
     return outputKey<bigint>(
@@ -348,7 +349,7 @@ export namespace SwapCanaryScenarioSteps {
 
   /** Input for the one explicit `claimwire` destination write. */
   export interface ClaimWireInput extends StepInput {
-    readonly kind: "SwapCanaryScenarioSteps.ClaimWireInput"
+    readonly kind: "SwapCanarySteps.ClaimWireInput"
     readonly route: SwapRoute
   }
 
@@ -363,7 +364,7 @@ export namespace SwapCanaryScenarioSteps {
       "claim-wire",
       `${routeLabel(route)}: recipient claims its settled WIRE`,
       options,
-      { kind: "SwapCanaryScenarioSteps.ClaimWireInput", route },
+      { kind: "SwapCanarySteps.ClaimWireInput", route },
       runClaimWire
     )
   }

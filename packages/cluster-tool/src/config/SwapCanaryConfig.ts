@@ -1,7 +1,18 @@
-import { ProtocolTiming } from "@wireio/cluster-tool"
+import { ProtocolTiming } from "../Constants.js"
+import type { SwapRouteSelector } from "../tools/all/SwapRouteCatalog.js"
+
+/** Resolved planning policy shared by fresh and connected swap-canary runs. */
+export interface SwapCanaryConfig {
+  /** Unioned route selectors to execute in canonical serial order. */
+  readonly routes: readonly SwapRouteSelector[]
+  /** Whether each route waits through its exact challenge window. */
+  readonly waitForChallenge: boolean
+  /** Whether this run provisions collateral instead of only verifying it. */
+  readonly provisionUnderwriterCollateral: boolean
+}
 
 /** Deliberately small policy surface for the configurable swap canary. */
-export namespace SwapCanaryScenarioConstants {
+export namespace SwapCanaryConfig {
   /** Minimum supported protocol epoch. */
   export const EpochDurationSec = 60
   /** Source draw: 0.1 token at 18 decimals. */

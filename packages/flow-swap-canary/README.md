@@ -30,6 +30,22 @@ identical to every other live flow:
   -- --routes eth-to-sol --routes wire-to-sol --wait-for-challenge
 ```
 
+## Existing running cluster
+
+The connected command reuses this scenario's PhaseGroups and route Steps while
+skipping fresh-cluster bootstrap and collateral deposits:
+
+```bash
+packages/cluster-tool/bin/wire-cluster-tool swap-canary \
+  --cluster-path /path/to/running/cluster
+```
+
+Run it on the cluster host. It loads that cluster's validated persisted config,
+state, and keys locally, writes to a timestamped report directory under the
+cluster, and accepts the same repeatable `--routes` and
+`--wait-for-challenge` options. Never point the normal `run-flow.mjs` command at
+a persistent live-cluster directory; that runner owns a fresh cluster lifecycle.
+
 ## Route selectors
 
 - `canary` — six native endpoint routes; the default
@@ -56,6 +72,7 @@ Each selected route uses one shared swap identity and verifies:
 8. destination delivery, including WIRE claim when applicable;
 9. optional challenge completion.
 
-Selected non-native user funds and underwriter collateral are provisioned by
-existing cluster-tool Step factories. Route phases remain serial because they
-share one user and persistent collateral locks.
+Selected non-native user funds are provisioned by existing cluster-tool Step
+factories. Fresh runs also deposit underwriter collateral; connected runs verify
+the live cluster's existing collateral without depositing again. Route phases
+remain serial because they share one user and persistent collateral locks.
