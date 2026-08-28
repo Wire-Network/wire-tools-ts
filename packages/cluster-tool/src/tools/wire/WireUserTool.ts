@@ -269,20 +269,32 @@ async function addWireUserResourcePolicy(
   wire: WireClient,
   account: string
 ): Promise<void> {
-  await wire.invoke<SysioContracts.SysioRoaAddpolicyAction>(
-    "sysio.roa",
-    "addpolicy",
-    {
-      owner: account,
-      issuer: Constants.BOOTSTRAP_NODE_OWNER,
-      net_weight: "25.0000 SYS",
-      ram_weight: "25.0000 SYS",
-      cpu_weight: "25.0000 SYS",
-      time_block: 0,
-      network_gen: 0
-    },
-    [{ actor: Constants.BOOTSTRAP_NODE_OWNER, permission: "active" }]
-  )
+  try {
+    await wire.invoke<SysioContracts.SysioRoaAddpolicyAction>(
+      "sysio.roa",
+      "addpolicy",
+      {
+        owner: account,
+        issuer: Constants.BOOTSTRAP_NODE_OWNER,
+        net_weight: "25.0000 SYS",
+        ram_weight: "25.0000 SYS",
+        cpu_weight: "25.0000 SYS",
+        time_block: 0,
+        network_gen: 0
+      },
+      [{ actor: Constants.BOOTSTRAP_NODE_OWNER, permission: "active" }]
+    )
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (
+      !message.includes(ClioRunner.ErrorFragment.ResourcePolicyAlreadyExists)
+    ) {
+      throw err
+    }
+    log.debug(
+      `provisionWireUser: resource policy for ${account} already exists — reusing (${message})`
+    )
+  }
 }
 
 async function fundWireUser(
