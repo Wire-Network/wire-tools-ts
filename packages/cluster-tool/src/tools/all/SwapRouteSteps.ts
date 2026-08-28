@@ -30,7 +30,8 @@ import { SolanaCollateralTool } from "../solana/SolanaCollateralTool.js"
 import { SolanaFundingTool } from "../solana/SolanaFundingTool.js"
 import {
   requestSolanaSwap,
-  requestSolanaSwapSpl
+  requestSolanaSwapSpl,
+  readSolanaSwapSourceRequestId
 } from "../solana/SolanaSwapTool.js"
 import { WireUserTool } from "../wire/WireUserTool.js"
 import {
@@ -77,6 +78,19 @@ export namespace SwapRouteSteps {
     return outputKey<bigint>(
       `swapRoute.${routeId}.target`,
       `${routeId} live target amount`
+    )
+  }
+
+  /**
+   * Typed protocol source request id emitted by one route request.
+   *
+   * @param routeId - Stable token-level route id.
+   * @returns Typed source-request-id output key.
+   */
+  export function sourceRequestIdOutputKey(routeId: string): OutputKey<bigint> {
+    return outputKey<bigint>(
+      `swapRoute.${routeId}.sourceRequestId`,
+      `${routeId} protocol source request id`
     )
   }
 
@@ -219,7 +233,7 @@ export namespace SwapRouteSteps {
       .with(SwapRouteSourceKind.NATIVE, () =>
         match(route.source.endpoint)
           .with(SwapRouteEndpoint.ETHEREUM, async () => {
-            await requestEthereumSwap(
+            const result = await requestEthereumSwap(
               reserveManagerContract(ctx, swapUser.ethereumWallet),
               {
                 sourceTokenCode: BigInt(route.source.tokenCode),
@@ -233,9 +247,13 @@ export namespace SwapRouteSteps {
                 targetToleranceBps: input.targetToleranceBps
               }
             )
+            ctx.outputs.set(
+              sourceRequestIdOutputKey(route.id),
+              result.sourceRequestId
+            )
           })
           .with(SwapRouteEndpoint.SOLANA, async () => {
-            await requestSolanaSwap(
+            const signature = await requestSolanaSwap(
               ctx.solana.connection,
               SolanaCollateralTool.loadOppOutpostProgram(
                 ctx,
@@ -254,13 +272,20 @@ export namespace SwapRouteSteps {
                 targetToleranceBps: input.targetToleranceBps
               }
             )
+            ctx.outputs.set(
+              sourceRequestIdOutputKey(route.id),
+              await readSolanaSwapSourceRequestId(
+                ctx.solana.connection,
+                signature
+              )
+            )
           })
           .otherwise(() => {
             throw new Error("native public swap source must be an outpost")
           })
       )
       .with(SwapRouteSourceKind.ERC20, async () => {
-        await requestEthereumSwapErc20WithApproval(
+        const result = await requestEthereumSwapErc20WithApproval(
           reserveManagerContract(ctx, swapUser.ethereumWallet),
           {
             sourceTokenCode: BigInt(route.source.tokenCode),
@@ -274,9 +299,13 @@ export namespace SwapRouteSteps {
             targetToleranceBps: input.targetToleranceBps
           }
         )
+        ctx.outputs.set(
+          sourceRequestIdOutputKey(route.id),
+          result.sourceRequestId
+        )
       })
       .with(SwapRouteSourceKind.SPL, async () => {
-        await requestSolanaSwapSpl(
+        const signature = await requestSolanaSwapSpl(
           ctx.solana.connection,
           SolanaCollateralTool.loadOppOutpostProgram(
             ctx,
@@ -301,9 +330,18 @@ export namespace SwapRouteSteps {
             targetToleranceBps: input.targetToleranceBps
           }
         )
+        ctx.outputs.set(
+          sourceRequestIdOutputKey(route.id),
+          await readSolanaSwapSourceRequestId(ctx.solana.connection, signature)
+        )
       })
       .with(SwapRouteSourceKind.WIRE, async () => {
-        const user = ctx.outputs.assert(
+        const { rows: counterRows } = await ctx.wire
+            .getSysioContract(SysioContractName.uwrit)
+            .tables.uwcounters.query(),
+          nextSequence = BigInt(counterRows[0]?.next_fromwire_seq ?? 0),
+          sourceRequestId = (1n << 63n) | nextSequence,
+          user = ctx.outputs.assert(
             WireUserTool.userOutputKey(input.wireAccount)
           ),
           recipientKind = match(route.destination.endpoint)
@@ -334,6 +372,7 @@ export namespace SwapRouteSteps {
             },
             { authorization: [{ actor: user.account, permission: "active" }] }
           )
+        ctx.outputs.set(sourceRequestIdOutputKey(route.id), sourceRequestId)
       })
       .exhaustive()
   }

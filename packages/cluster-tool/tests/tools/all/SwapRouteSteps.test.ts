@@ -19,6 +19,9 @@ describe("SwapRouteSteps", () => {
     expect(SwapRouteSteps.targetOutputKey(nativeRoute.id).name).toBe(
       "swapRoute.eth-to-sol.target"
     )
+    expect(SwapRouteSteps.sourceRequestIdOutputKey(nativeRoute.id).name).toBe(
+      "swapRoute.eth-to-sol.sourceRequestId"
+    )
   })
 
   it("builds an ERC-20 approval Step with exact route and amount", () => {
