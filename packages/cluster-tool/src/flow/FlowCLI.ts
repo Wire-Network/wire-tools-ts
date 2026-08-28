@@ -1,4 +1,5 @@
-import Yargs, { type Argv } from "yargs"
+import type { Argv } from "yargs"
+import YargsModule = require("yargs/yargs")
 import {
   applyClusterBuildOptionsArgs,
   mergeSignatureProviderSSM,
@@ -18,6 +19,23 @@ import {
 } from "./FlowScenario.js"
 
 const log = getLogger(__filename)
+type YargsFactory = typeof import("yargs/yargs")
+interface YargsModuleInterop {
+  readonly default?: unknown
+}
+
+function resolveYargsFactory(module: unknown): YargsFactory {
+  let candidate = module
+  for (let depth = 0; depth < 4; depth++) {
+    if (typeof candidate === "function") return candidate as YargsFactory
+    if (candidate == null || typeof candidate !== "object") break
+    const { default: next } = candidate as YargsModuleInterop
+    candidate = next
+  }
+  throw new TypeError("yargs/yargs did not export a callable parser factory")
+}
+
+const createYargs = resolveYargsFactory(YargsModule)
 
 /**
  * The runner for a `flow-*` executable — the SAME `cluster → phase → step →
@@ -39,7 +57,7 @@ export class FlowCLI<
 
   private constructor(private readonly scenario: FlowScenario<C, A>) {
     const commonYargs = applyClusterBuildOptionsArgs(
-      Yargs(process.argv.slice(2)),
+      createYargs(process.argv.slice(2)),
       scenario.defaults
     )
       .scriptName(scenario.name)
