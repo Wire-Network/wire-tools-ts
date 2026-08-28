@@ -3,8 +3,8 @@ import type { ChainKind } from "@wireio/opp-typescript-models"
 /** Provenance categories for distribution-claim credit sets. */
 export enum DistributionClaimBootstrapSource {
   configuredFile = "configuredFile",
-  synthetic = "synthetic",
-  controlled = "controlled"
+  fallback = "fallback",
+  additive = "additive"
 }
 
 /** One normalized WIRE-atomic distribution-claim credit. */
@@ -15,16 +15,21 @@ export interface DistributionClaimBootstrapCredit {
   wire_atomic: bigint
 }
 
-/** One pre-batching credit set for a native chain and provenance source. */
-export interface DistributionClaimBootstrapCreditSet {
+/** One caller-supplied pre-batching credit set for a native chain. */
+export interface DistributionClaimBootstrapInputCreditSet {
   /** Native chain whose address and decimal conventions produced the credits. */
   chain: ChainKind.EVM | ChainKind.SVM
-  /** Origin reported in preflight summaries. */
-  source: DistributionClaimBootstrapSource
   /** Converted WIRE-atomic credits. */
   credits: DistributionClaimBootstrapCredit[]
   /** Source-native dust discarded during decimal conversion. */
   droppedDust: bigint
+}
+
+/** One normalized credit set with cluster-derived provenance. */
+export interface DistributionClaimBootstrapCreditSet
+  extends DistributionClaimBootstrapInputCreditSet {
+  /** Generic origin derived from the input channel, never caller-supplied. */
+  source: DistributionClaimBootstrapSource
 }
 
 /**
@@ -34,7 +39,7 @@ export interface DistributionClaimBootstrapCreditSet {
  */
 export interface DistributionClaimBootstrapOptions {
   /** Per-chain fallback sets suppressed by a configured file for that chain. */
-  fallbackCreditSets?: DistributionClaimBootstrapCreditSet[]
+  fallbackCreditSets?: DistributionClaimBootstrapInputCreditSet[]
   /** Credit sets always merged into the selected configured/fallback inputs. */
-  additiveCreditSets?: DistributionClaimBootstrapCreditSet[]
+  additiveCreditSets?: DistributionClaimBootstrapInputCreditSet[]
 }

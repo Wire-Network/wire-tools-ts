@@ -2,8 +2,9 @@ import Assert from "node:assert"
 
 import * as anchor from "@coral-xyz/anchor"
 import { PublicKey } from "@solana/web3.js"
-import { Name } from "@wireio/sdk-core"
+
 import { OperatorStatus, OperatorType } from "@wireio/opp-typescript-models"
+import { Name } from "@wireio/sdk-core"
 
 import { getLogger } from "../../logging/Logger.js"
 import { Report } from "../../report/Report.js"
@@ -73,6 +74,12 @@ export namespace SolanaOutpostSteps {
    * materialized the epoch-1 batch-operator group and BEFORE the depot delivers
    * its first envelope. Input-less — the roster + group are resolved from
    * `ctx.keyStore` and the depot's `sysio.epoch::epochstate`.
+   *
+   * @param actor - Report actor responsible for the bootstrap.
+   * @param name - Step report name.
+   * @param description - Step report description.
+   * @param options - Retry, timeout, and scheduling options.
+   * @returns The planned input-less Solana roster bootstrap Step.
    */
   export function planOppBootstrap<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
@@ -83,7 +90,14 @@ export namespace SolanaOutpostSteps {
     return ClusterBuildStep.create<C, null>(actor, name, description, options, null, runOppBootstrap)
   }
 
-  /** Named runner — `SolanaOutpostBootstrapper.oppBootstrap`. */
+  /**
+   * Resolve the epoch-1 roster and invoke the Solana outpost bootstrap.
+   *
+   * @param ctx - Cluster build context containing keys and epoch state.
+   * @param _input - Empty Step input.
+   * @param signal - Cancellation signal checked before external work.
+   * @returns A promise that resolves after the bootstrap transaction confirms.
+   */
   export async function runOppBootstrap<C extends ClusterBuildContext>(
     ctx: C,
     _input: null,

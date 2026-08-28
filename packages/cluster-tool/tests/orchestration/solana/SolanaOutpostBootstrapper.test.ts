@@ -1,8 +1,10 @@
 import * as anchor from "@coral-xyz/anchor"
-import { PublicKey } from "@solana/web3.js"
+import { Keypair, PublicKey } from "@solana/web3.js"
+
 import { OperatorStatus, OperatorType } from "@wireio/opp-typescript-models"
-import { SolanaOutpostBootstrapper } from "@wireio/cluster-tool/orchestration"
 import { BindConfigProvider } from "@wireio/cluster-tool/config"
+import { SolanaOutpostBootstrapper } from "@wireio/cluster-tool/orchestration"
+import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
 import { toURL } from "@wireio/cluster-tool/utils"
 
 /** A minimal roster entry — the asserts under test never read its contents. */
@@ -148,5 +150,79 @@ describe("SolanaOutpostBootstrapper.oppBootstrap argument validation", () => {
         epochDurationSec
       )
     ).rejects.toThrow(/program keypair missing/)
+  })
+
+  it("encodes, signs, and submits the opp_bootstrap instruction", async () => {
+    const seed = seedOfSize(2),
+      programId = Keypair.generate().publicKey,
+      configPda = Keypair.generate().publicKey,
+      operatorRegistryPda = Keypair.generate().publicKey,
+      deployer = Keypair.generate(),
+      transaction = new anchor.web3.Transaction(),
+      transactionMethod = jest.fn().mockResolvedValue(transaction),
+      signers = jest
+        .fn()
+        .mockReturnValue({ transaction: transactionMethod }),
+      accounts = jest.fn().mockReturnValue({ signers }),
+      oppBootstrap = jest.fn().mockReturnValue({ accounts }),
+      program = {
+        methods: { oppBootstrap }
+      } as unknown as anchor.Program<anchor.Idl>,
+      ensureGlobalConfig = jest.fn().mockResolvedValue(undefined),
+      deriveProgramAddress = jest
+        .fn()
+        .mockReturnValueOnce(configPda)
+        .mockReturnValueOnce(operatorRegistryPda),
+      adminAccounts = {
+        admin: deployer.publicKey,
+        globalConfig: Keypair.generate().publicKey
+      },
+      runSimpleAuthorityInstruction = jest.fn().mockResolvedValue(undefined),
+      assertProgramId = jest
+        .spyOn(SolanaOutpostProgramTool, "assertProgramId")
+        .mockReturnValue(programId)
+    Object.assign(bootstrapper, {
+      loadOrGenerateDeployer: () => deployer,
+      loadProgram: () => program,
+      ensureGlobalConfig,
+      deriveProgramAddress,
+      getAdminAccounts: () => adminAccounts,
+      runSimpleAuthorityInstruction
+    })
+
+    try {
+      await bootstrapper.oppBootstrap(seed, epochDurationSec)
+    } finally {
+      assertProgramId.mockRestore()
+    }
+
+    expect(oppBootstrap).toHaveBeenCalledWith(
+      seed.operators,
+      seed.groupMembers,
+      epochDurationSec
+    )
+    expect(ensureGlobalConfig).toHaveBeenCalledWith(deployer, program)
+    expect(deriveProgramAddress).toHaveBeenNthCalledWith(
+      1,
+      programId,
+      SolanaOutpostBootstrapper.PdaSeed.OutpostConfig
+    )
+    expect(deriveProgramAddress).toHaveBeenNthCalledWith(
+      2,
+      programId,
+      SolanaOutpostBootstrapper.PdaSeed.OperatorRegistry
+    )
+    expect(accounts).toHaveBeenCalledWith({
+      ...adminAccounts,
+      config: configPda,
+      operatorRegistry: operatorRegistryPda
+    })
+    expect(signers).toHaveBeenCalledWith([deployer])
+    expect(transactionMethod).toHaveBeenCalledTimes(1)
+    expect(runSimpleAuthorityInstruction).toHaveBeenCalledWith(
+      deployer,
+      transaction,
+      "opp_bootstrap"
+    )
   })
 })

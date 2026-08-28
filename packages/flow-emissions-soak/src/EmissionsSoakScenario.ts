@@ -3,7 +3,6 @@ import Assert from "node:assert"
 import {
   ClusterBuildPhase,
   DistributionClaimBootstrapResultKey,
-  DistributionClaimBootstrapSource,
   convertImportSeedCredits,
   distributionClaimBootstrapCredit,
   FlowScenario,
@@ -69,13 +68,11 @@ function createDistributionClaimBootstrapOptions(): DistributionClaimBootstrapOp
     fallbackCreditSets: [
       {
         chain: Constants.EthereumChain,
-        source: DistributionClaimBootstrapSource.synthetic,
         credits: ethereumConversion.credits,
         droppedDust: ethereumConversion.droppedDust
       },
       {
         chain: Constants.SolanaChain,
-        source: DistributionClaimBootstrapSource.synthetic,
         credits: solanaConversion.credits,
         droppedDust: solanaConversion.droppedDust
       }
@@ -86,7 +83,6 @@ function createDistributionClaimBootstrapOptions(): DistributionClaimBootstrapOp
         : [
             {
               chain: Constants.EthereumChain,
-              source: DistributionClaimBootstrapSource.controlled,
               credits: identities.map(identity => ({
                 native_address: identity.addressHex,
                 wire_atomic: Constants.ControlledStakerCreditAtomic

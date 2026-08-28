@@ -1,6 +1,5 @@
 import { ethers } from "ethers"
-import { KeyType, PrivateKey } from "@wireio/sdk-core"
-import { OperatorType } from "@wireio/opp-typescript-models"
+
 import { Constants } from "@wireio/cluster-tool/Constants"
 import {
   EthereumOutpostBootstrapper,
@@ -8,6 +7,8 @@ import {
 } from "@wireio/cluster-tool/orchestration"
 import type { EthereumKeyPair, SolanaKeyPair } from "@wireio/cluster-tool/types"
 import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
+import { OperatorType } from "@wireio/opp-typescript-models"
+import { KeyType, PrivateKey } from "@wireio/sdk-core"
 
 /** Account index 1 of the anvil mnemonic (index 0 is the deploying signer). */
 const AnvilHdIndex = 1

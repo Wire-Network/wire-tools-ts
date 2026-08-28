@@ -212,8 +212,14 @@ export namespace ClusterBuildDefaults {
           ...(programmatic?.fallbackCreditSets ?? []).filter(
             creditSet =>
               !hasDistributionClaimBootstrapChain(core, creditSet.chain)
-          ),
-          ...(programmatic?.additiveCreditSets ?? [])
+          ).map(creditSet => ({
+            ...creditSet,
+            source: DistributionClaimBootstrapSource.fallback
+          })),
+          ...(programmatic?.additiveCreditSets ?? []).map(creditSet => ({
+            ...creditSet,
+            source: DistributionClaimBootstrapSource.additive
+          }))
         ]
       }
     const result = finalizeDistributionClaimBootstrap(core, contribution)
@@ -701,6 +707,7 @@ export namespace ClusterBuildDefaults {
     const bootstrap = cluster.context.outputs.assert(
       DistributionClaimBootstrapResultKey
     )
+    let nextUnmappedId = 1n
     bootstrap.chains.forEach(chainResult => {
       const chain = distributionClaimChainLabel(chainResult.chain).toLowerCase()
       chainResult.batches.forEach((batch, batchIndex) => {
@@ -712,6 +719,7 @@ export namespace ClusterBuildDefaults {
             {},
             chainResult.chain,
             batchIndex,
+            nextUnmappedId.toString(),
             batch.credits.length,
             {
               sources: chainResult.sources,
@@ -722,6 +730,7 @@ export namespace ClusterBuildDefaults {
             }
           )
         )
+        nextUnmappedId += BigInt(batch.credits.length)
       })
     })
     if (bootstrap.chains.length > 0) {

@@ -1,4 +1,7 @@
 import Assert from "node:assert"
+import Crypto from "node:crypto"
+import Fs from "node:fs/promises"
+import Path from "node:path"
 
 import { z } from "zod"
 
@@ -30,6 +33,8 @@ const { SysioContractName } = SysioContracts
 export namespace DclaimContractSteps {
   /** Decimal non-negative-integer text carried in compact report inputs. */
   const DecimalIntegerPattern = /^\d+$/
+  /** Canonical positive decimal text used for deterministic row identities. */
+  const PositiveDecimalIntegerPattern = /^[1-9]\d*$/
 
   /** Runtime schema for compact per-chain totals copied into every batch's report input. */
   export const ImportSeedChainSummarySchema = z.object({
@@ -53,11 +58,30 @@ export namespace DclaimContractSteps {
     kind: z.literal("DclaimContractSteps.ImportSeedBatchInput"),
     chain: ImportSeedChainKindSchema,
     batchIndex: z.number().safe().int().nonnegative(),
+    firstUnmappedId: z.string().regex(PositiveDecimalIntegerPattern),
     creditCount: z.number().safe().int().positive(),
     summary: ImportSeedChainSummarySchema
   })
   /** Compact `importseed` Step input — the shape of {@link ImportSeedBatchInputSchema}. */
   export type ImportSeedBatchInput = z.infer<typeof ImportSeedBatchInputSchema>
+
+  /**
+   * Runtime schema for one durable, compact pending-submission marker.
+   * A null expiry is intentionally permanent: it means the process could have
+   * died before learning when clio signed, so an automatic retry is unsafe.
+   */
+  const PendingImportSeedJournalSchema = z.object({
+    kind: z.literal("DclaimContractSteps.PendingImportSeed"),
+    chain: ImportSeedChainKindSchema,
+    batchIndex: z.number().safe().int().nonnegative(),
+    firstUnmappedId: z.string().regex(PositiveDecimalIntegerPattern),
+    creditCount: z.number().safe().int().positive(),
+    payloadSha256: z.string().regex(/^[0-9a-f]{64}$/),
+    expiresAfterChainTimeMs: z.number().safe().int().nonnegative().nullable()
+  })
+  type PendingImportSeedJournal = z.infer<
+    typeof PendingImportSeedJournalSchema
+  >
 
   /** `sysio.dclaim::setconfig` — initialize the `cap_config` singleton (idempotent). */
   export function planSetconfig<
@@ -99,6 +123,7 @@ export namespace DclaimContractSteps {
    * @param options - Retry, timeout, and scheduling options.
    * @param chain - Native chain selecting the prepared output.
    * @param batchIndex - Zero-based batch index within that chain.
+   * @param firstUnmappedId - Deterministic first row id assigned to the batch.
    * @param creditCount - Expected batch size, checked at execution time.
    * @param summary - Compact chain-level aggregate report fields.
    * @returns The planned import Step.
@@ -112,6 +137,7 @@ export namespace DclaimContractSteps {
     options: ClusterBuildStepOptions,
     chain: ImportSeedChainKind,
     batchIndex: number,
+    firstUnmappedId: string,
     creditCount: number,
     summary: ImportSeedChainSummary
   ): ClusterBuildStep<C, ImportSeedBatchInput> {
@@ -119,6 +145,7 @@ export namespace DclaimContractSteps {
       kind: "DclaimContractSteps.ImportSeedBatchInput",
       chain,
       batchIndex,
+      firstUnmappedId,
       creditCount,
       summary
     })
@@ -164,19 +191,276 @@ export namespace DclaimContractSteps {
       `distribution-claim bootstrap batch size changed: chain=${input.chain}, index=${input.batchIndex}`
     )
     const dclaim = ctx.wire.getSysioContract(SysioContractName.dclaim),
-      nextUnmappedId = await readNextUnmappedId(ctx)
+      journalPath = pendingImportSeedJournalPath(ctx, input),
+      nextUnmappedId = await readNextUnmappedId(ctx),
+      expectedFirstUnmappedId = BigInt(input.firstUnmappedId),
+      liveNextUnmappedId = BigInt(nextUnmappedId)
+    if (liveNextUnmappedId < expectedFirstUnmappedId) {
+      throw new Error(
+        `dclaim importseed batch cannot run before its deterministic range: ` +
+          `chain=${input.chain}, batch=${input.batchIndex}, ` +
+          `expected_first_id=${input.firstUnmappedId}, live_next_id=${nextUnmappedId}`
+      )
+    }
+    if (liveNextUnmappedId > expectedFirstUnmappedId) {
+      if (
+        await isObservedStateIrreversible(
+          ctx,
+          () => isImportSeedBatchApplied(ctx, batch, input.firstUnmappedId),
+          "importseed preflight"
+        )
+      ) {
+        await removePendingImportSeedJournal(journalPath)
+        return
+      }
+      throw new Error(
+        `dclaim importseed counter advanced past an unreconciled batch: ` +
+          `chain=${input.chain}, batch=${input.batchIndex}, ` +
+          `expected_first_id=${input.firstUnmappedId}, live_next_id=${nextUnmappedId}`
+      )
+    }
+
+    const existingJournal = await readPendingImportSeedJournal(journalPath)
+    if (existingJournal != null) {
+      assertPendingImportSeedJournalMatches(input, batch, existingJournal)
+      if (
+        await waitForPendingImportSeedResolution(
+          ctx,
+          batch,
+          input,
+          existingJournal,
+          signal
+        )
+      ) {
+        await removePendingImportSeedJournal(journalPath)
+        return
+      }
+      await removePendingImportSeedJournal(journalPath)
+      return runImportSeedBatch(ctx, input, signal)
+    }
+
+    const pendingJournal: PendingImportSeedJournal = {
+      kind: "DclaimContractSteps.PendingImportSeed",
+      chain: input.chain,
+      batchIndex: input.batchIndex,
+      firstUnmappedId: input.firstUnmappedId,
+      creditCount: input.creditCount,
+      payloadSha256: importSeedPayloadSha256(batch),
+      expiresAfterChainTimeMs: null
+    }
+    await writePendingImportSeedJournal(journalPath, pendingJournal)
     try {
       await dclaim.actions.importseed.invokeViaFileOnce(
         serializeBatchForClio(batch)
       )
+      await removePendingImportSeedJournal(journalPath)
     } catch (error) {
       if (
-        (await isIrreversibleFinalityError(ctx, error)) &&
-        (await isImportSeedBatchApplied(ctx, batch, nextUnmappedId))
-      )
+        await isActionAppliedIrreversibly(
+          ctx,
+          error,
+          () => isImportSeedBatchApplied(ctx, batch, input.firstUnmappedId),
+          "importseed"
+        )
+      ) {
+        await removePendingImportSeedJournal(journalPath)
         return
+      }
+      const boundedJournal = await boundPendingImportSeedExpiration(
+        ctx,
+        journalPath,
+        pendingJournal
+      )
+      if (
+        await waitForPendingImportSeedResolution(
+          ctx,
+          batch,
+          input,
+          boundedJournal,
+          signal
+        )
+      ) {
+        await removePendingImportSeedJournal(journalPath)
+        return
+      }
+      await removePendingImportSeedJournal(journalPath)
       throw error
     }
+  }
+
+  async function waitForPendingImportSeedResolution<
+    C extends ClusterBuildContext
+  >(
+    ctx: C,
+    batch: ImportSeedBatch,
+    input: ImportSeedBatchInput,
+    journal: PendingImportSeedJournal,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    while (true) {
+      signal.throwIfAborted()
+      if (
+        await isObservedStateIrreversible(
+          ctx,
+          () => isImportSeedBatchApplied(ctx, batch, input.firstUnmappedId),
+          "pending importseed"
+        )
+      )
+        return true
+
+      if (journal.expiresAfterChainTimeMs == null)
+        throw new Error(
+          `Pending importseed submission has no safe expiration bound: ` +
+            `chain=${input.chain}, batch=${input.batchIndex}`
+        )
+      const info = await ctx.wire.getInfo()
+      if (
+        parseChainTime(info.head_block_time) >
+        journal.expiresAfterChainTimeMs
+      )
+        return false
+      await ctx.wire.waitForHeadToAdvance()
+    }
+  }
+
+  function pendingImportSeedJournalPath<C extends ClusterBuildContext>(
+    ctx: C,
+    input: ImportSeedBatchInput
+  ): string {
+    return Path.join(
+      ctx.config.dataPath,
+      `.dclaim-importseed-${input.chain}-${input.batchIndex}-${input.firstUnmappedId}.pending.json`
+    )
+  }
+
+  async function readPendingImportSeedJournal(
+    journalPath: string
+  ): Promise<PendingImportSeedJournal | null> {
+    try {
+      return PendingImportSeedJournalSchema.parse(
+        JSON.parse(await Fs.readFile(journalPath, "utf8"))
+      )
+    } catch (error) {
+      if (nodeErrorCode(error) === "ENOENT") return null
+      throw error
+    }
+  }
+
+  async function writePendingImportSeedJournal(
+    journalPath: string,
+    journal: PendingImportSeedJournal
+  ): Promise<void> {
+    await writeAndSyncFile(journalPath, JSON.stringify(journal))
+    await syncParentDirectory(journalPath)
+  }
+
+  async function boundPendingImportSeedExpiration<
+    C extends ClusterBuildContext
+  >(
+    ctx: C,
+    journalPath: string,
+    journal: PendingImportSeedJournal
+  ): Promise<PendingImportSeedJournal> {
+    // clio has returned and can no longer sign a transaction. Sampling chain
+    // time now therefore gives a conservative upper bound for any transaction
+    // it may have submitted; a crash before this replacement leaves null and
+    // remains fail-closed.
+    const info = await ctx.wire.getInfo(),
+      boundedJournal: PendingImportSeedJournal = {
+        ...journal,
+        expiresAfterChainTimeMs:
+          parseChainTime(info.head_block_time) +
+          WireClient.TransactionExpirationSec * 1_000
+      },
+      temporaryPath = `${journalPath}.${Crypto.randomUUID()}.tmp`
+    try {
+      await writeAndSyncFile(temporaryPath, JSON.stringify(boundedJournal))
+      await Fs.rename(temporaryPath, journalPath)
+      await syncParentDirectory(journalPath)
+      return boundedJournal
+    } finally {
+      try {
+        await Fs.unlink(temporaryPath)
+      } catch (error) {
+        if (nodeErrorCode(error) !== "ENOENT") throw error
+      }
+    }
+  }
+
+  async function writeAndSyncFile(path: string, value: string): Promise<void> {
+    const file = await Fs.open(path, "wx", 0o600)
+    try {
+      await file.writeFile(value, "utf8")
+      await file.sync()
+    } finally {
+      await file.close()
+    }
+  }
+
+  async function syncParentDirectory(path: string): Promise<void> {
+    const directory = await Fs.open(Path.dirname(path), "r")
+    try {
+      await directory.sync()
+    } finally {
+      await directory.close()
+    }
+  }
+
+  async function removePendingImportSeedJournal(
+    journalPath: string
+  ): Promise<void> {
+    try {
+      await Fs.unlink(journalPath)
+      await syncParentDirectory(journalPath)
+    } catch (error) {
+      if (nodeErrorCode(error) !== "ENOENT") throw error
+    }
+  }
+
+  function assertPendingImportSeedJournalMatches(
+    input: ImportSeedBatchInput,
+    batch: ImportSeedBatch,
+    journal: PendingImportSeedJournal
+  ): void {
+    Assert.equal(journal.chain, input.chain, "pending importseed chain changed")
+    Assert.equal(
+      journal.batchIndex,
+      input.batchIndex,
+      "pending importseed batch index changed"
+    )
+    Assert.equal(
+      journal.firstUnmappedId,
+      input.firstUnmappedId,
+      "pending importseed first row id changed"
+    )
+    Assert.equal(
+      journal.creditCount,
+      input.creditCount,
+      "pending importseed credit count changed"
+    )
+    Assert.equal(
+      journal.payloadSha256,
+      importSeedPayloadSha256(batch),
+      "pending importseed payload changed"
+    )
+  }
+
+  function importSeedPayloadSha256(batch: ImportSeedBatch): string {
+    return Crypto.createHash("sha256")
+      .update(JSON.stringify(serializeBatchForClio(batch)))
+      .digest("hex")
+  }
+
+  function parseChainTime(value: string): number {
+    const milliseconds = Date.parse(`${value.replace(/Z$/, "")}Z`)
+    Assert.ok(Number.isFinite(milliseconds), `invalid chain time: ${value}`)
+    return milliseconds
+  }
+
+  function nodeErrorCode(error: unknown): string | null {
+    return typeof error === "object" && error != null && "code" in error
+      ? String(error.code)
+      : null
   }
 
   /**
@@ -225,8 +509,12 @@ export namespace DclaimContractSteps {
       await dclaim.actions.importdone.invokeOnce({})
     } catch (error) {
       if (
-        (await isIrreversibleFinalityError(ctx, error)) &&
-        (await isImportComplete(ctx))
+        await isActionAppliedIrreversibly(
+          ctx,
+          error,
+          () => isImportComplete(ctx),
+          "importdone"
+        )
       )
         return
       throw error
@@ -259,7 +547,7 @@ export namespace DclaimContractSteps {
         ): Promise<SysioContracts.SysioDclaimUnmappedTokenType[]> => {
           const page = await dclaim.tables.unmapped.query({
               lowerBound,
-              upperBound: endUnmappedId,
+              upperBound: unmappedIdBound(endUnmappedId),
               limit: Math.max(batch.credits.length - accumulated.length, 1)
             }),
             rows = [...accumulated, ...page.rows]
@@ -268,7 +556,6 @@ export namespace DclaimContractSteps {
             page.nextKey != null,
             "dclaim importseed reconciliation page omitted next_key"
           )
-          if (BigInt(page.nextKey) >= BigInt(endUnmappedId)) return rows
           Assert.notEqual(
             page.nextKey,
             lowerBound,
@@ -276,7 +563,7 @@ export namespace DclaimContractSteps {
           )
           return readPage(page.nextKey, rows)
         },
-        rows = await readPage(firstUnmappedId, []),
+        rows = await readPage(unmappedIdBound(firstUnmappedId), []),
         rowsByAddress = new Map(
           rows
             .filter(row => isExpectedChainKind(row.chain_kind, expectedChain))
@@ -326,6 +613,52 @@ export namespace DclaimContractSteps {
       )
       return false
     }
+  }
+
+  async function isActionAppliedIrreversibly<
+    C extends ClusterBuildContext
+  >(
+    ctx: C,
+    error: unknown,
+    isApplied: () => Promise<boolean>,
+    action: string
+  ): Promise<boolean> {
+    if (error instanceof WireClient.TransactionFinalityError)
+      return (
+        (await isIrreversibleFinalityError(ctx, error)) && (await isApplied())
+      )
+    return isObservedStateIrreversible(ctx, isApplied, action)
+  }
+
+  async function isObservedStateIrreversible<
+    C extends ClusterBuildContext
+  >(
+    ctx: C,
+    isApplied: () => Promise<boolean>,
+    action: string
+  ): Promise<boolean> {
+    if (!(await isApplied())) return false
+    try {
+      const observedHead = await ctx.wire.getInfo()
+      if (
+        !(await ctx.wire.waitForBlockIrreversible({
+          blockNum: observedHead.head_block_num,
+          blockId: observedHead.head_block_id
+        }))
+      )
+        return false
+      return await isApplied()
+    } catch (proofError) {
+      ctx.log.warn(
+        `dclaim ${action} state-finality reconciliation failed: ${errorMessage(proofError)}`
+      )
+      return false
+    }
+  }
+
+  function unmappedIdBound(id: string): string {
+    Assert.match(id, DecimalIntegerPattern, `invalid dclaim unmapped id: ${id}`)
+    return JSON.stringify({ id })
   }
 
   function abiChainKind(

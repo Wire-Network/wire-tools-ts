@@ -1,5 +1,6 @@
 import Fs from "node:fs"
 import Path from "node:path"
+
 import { ChainKind } from "@wireio/opp-typescript-models"
 import {
   ClusterBuildDefaults,
@@ -86,7 +87,6 @@ describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
         fallbackCreditSets: [
           {
             chain: ChainKind.EVM,
-            source: DistributionClaimBootstrapSource.synthetic,
             credits: [],
             droppedDust: 0n
           }
@@ -107,7 +107,6 @@ describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
         fallbackCreditSets: [
           {
             chain: ChainKind.SVM,
-            source: DistributionClaimBootstrapSource.synthetic,
             credits: [{ native_address: "cc".repeat(32), wire_atomic: 7n }],
             droppedDust: 2n
           }
@@ -120,7 +119,7 @@ describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
     expect(result.chains[0]).toMatchObject({
       chain: ChainKind.SVM,
       droppedDust: 2n,
-      sources: [DistributionClaimBootstrapSource.synthetic]
+      sources: [DistributionClaimBootstrapSource.fallback]
     })
     expect(result.chains[0].batches[0].credits).toEqual([
       { native_address: "cc".repeat(32), wire_atomic: 7n }
@@ -143,7 +142,6 @@ describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
         fallbackCreditSets: [
           {
             chain: ChainKind.EVM,
-            source: DistributionClaimBootstrapSource.synthetic,
             credits: [{ native_address: "bb".repeat(20), wire_atomic: 9n }],
             droppedDust: 0n
           }
@@ -151,7 +149,6 @@ describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
         additiveCreditSets: [
           {
             chain: ChainKind.EVM,
-            source: DistributionClaimBootstrapSource.controlled,
             credits: [{ native_address: "aa".repeat(20), wire_atomic: 3n }],
             droppedDust: 0n
           }
@@ -166,7 +163,7 @@ describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
     ])
     expect(result.chains[0].sources).toEqual([
       DistributionClaimBootstrapSource.configuredFile,
-      DistributionClaimBootstrapSource.controlled
+      DistributionClaimBootstrapSource.additive
     ])
     expect(cluster.config.ethereum.bootstrapJsonFile).toBe(Path.resolve(file))
     expect(
@@ -177,6 +174,78 @@ describe("ClusterBuildDefaults — distribution-claim bootstrap", () => {
       "init-dclaim",
       "import-dclaim-ethereum-1",
       "finalize-dclaim-import"
+    ])
+  })
+
+  it("selects configured and fallback inputs independently in either chain direction", async () => {
+    const ethereumFile = writeDump("mixed-ethereum.json", {
+        purchasers: [
+          {
+            address: `0x${"11".repeat(20)}`,
+            totalPretokens: "1000000000"
+          }
+        ]
+      }),
+      solanaFile = writeDump("mixed-solana.json", {
+        purchasers: [
+          {
+            address: "4vJ9JU1bJJE96FbKdjWme2JC2nKjpGoxiNzU1S6mYP78",
+            totalPretokens: "2"
+          }
+        ]
+      }),
+      ethereumConfigured = await ClusterBuildDefaults.create({
+        ...baseOptions(),
+        ethereum: { bootstrapJsonFile: ethereumFile },
+        distributionClaimBootstrap: {
+          fallbackCreditSets: [
+            {
+              chain: ChainKind.EVM,
+              credits: [{ native_address: "22".repeat(20), wire_atomic: 3n }],
+              droppedDust: 0n
+            },
+            {
+              chain: ChainKind.SVM,
+              credits: [{ native_address: "33".repeat(32), wire_atomic: 4n }],
+              droppedDust: 0n
+            }
+          ]
+        }
+      }),
+      solanaConfigured = await ClusterBuildDefaults.create({
+        ...baseOptions(),
+        solana: { bootstrapJsonFile: solanaFile },
+        distributionClaimBootstrap: {
+          fallbackCreditSets: [
+            {
+              chain: ChainKind.EVM,
+              credits: [{ native_address: "44".repeat(20), wire_atomic: 5n }],
+              droppedDust: 0n
+            },
+            {
+              chain: ChainKind.SVM,
+              credits: [{ native_address: "55".repeat(32), wire_atomic: 6n }],
+              droppedDust: 0n
+            }
+          ]
+        }
+      })
+
+    expect(
+      ethereumConfigured.context.outputs
+        .assert(DistributionClaimBootstrapResultKey)
+        .chains.map(chain => [chain.chain, chain.sources])
+    ).toEqual([
+      [ChainKind.EVM, [DistributionClaimBootstrapSource.configuredFile]],
+      [ChainKind.SVM, [DistributionClaimBootstrapSource.fallback]]
+    ])
+    expect(
+      solanaConfigured.context.outputs
+        .assert(DistributionClaimBootstrapResultKey)
+        .chains.map(chain => [chain.chain, chain.sources])
+    ).toEqual([
+      [ChainKind.EVM, [DistributionClaimBootstrapSource.fallback]],
+      [ChainKind.SVM, [DistributionClaimBootstrapSource.configuredFile]]
     ])
   })
 

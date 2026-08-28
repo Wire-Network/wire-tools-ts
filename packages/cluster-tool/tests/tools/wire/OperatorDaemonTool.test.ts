@@ -1,39 +1,42 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+
 import { ethers } from "ethers"
 import { Keypair } from "@solana/web3.js"
-import { OperatorType } from "@wireio/opp-typescript-models"
-import { KeyType, PrivateKey } from "@wireio/sdk-core"
-import {
-  NodeopProcess,
-  ProcessManager
-} from "@wireio/cluster-tool/cluster/processes"
-import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
-import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
-import { ClusterConfigProvider, NodeRole } from "@wireio/cluster-tool/config"
+
+import type { ExternalOutpostConfig } from "@wireio/cluster-tool-shared"
 import {
   AWSAccountName,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
-import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
+import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
+import { AnvilProcess } from "@wireio/cluster-tool/cluster/processes"
+import {
+  NodeopProcess,
+  ProcessManager
+} from "@wireio/cluster-tool/cluster/processes"
+import { ClusterConfigProvider, NodeRole } from "@wireio/cluster-tool/config"
 import {
   OperatorDaemonArtifactsKey,
   type OperatorAccount,
   type OperatorDaemonArtifacts
 } from "@wireio/cluster-tool/orchestration/outputs"
-import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
-import {
-  fixtureConfig,
-  PersistedFixture
-} from "../../config/clusterConfigFixture.js"
+import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
+import { OperatorDaemonTool } from "@wireio/cluster-tool/tools/wire"
 import {
   ethereumKeyPairFromWallet,
   toDialAddress,
   toURL
 } from "@wireio/cluster-tool/utils"
-import { AnvilProcess } from "@wireio/cluster-tool/cluster/processes"
-import type { ExternalOutpostConfig } from "@wireio/cluster-tool-shared"
+import { OperatorType } from "@wireio/opp-typescript-models"
+import { KeyType, PrivateKey } from "@wireio/sdk-core"
+
+import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
+import {
+  fixtureConfig,
+  PersistedFixture
+} from "../../config/clusterConfigFixture.js"
 import { fixtureOperatorAccount } from "../../orchestration/outputs/operatorAccountFixture.js"
 
 /** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */

@@ -445,6 +445,71 @@ describe("WireClient", () => {
     })
   })
 
+  describe("waitForBlockIrreversible", () => {
+    it("accepts an observed block once LIB has reached it", async () => {
+      const client = new WireClient(config),
+        getInfo = jest.spyOn(client, "getInfo").mockResolvedValue({
+          head_block_num: 24,
+          last_irreversible_block_num: 21
+        } as WireClient.GetInfoResponse),
+        getBlock = jest.spyOn(client, "getBlock").mockResolvedValue({
+          block_num: 21,
+          id: "block-21",
+          transactions: []
+        })
+
+      await expect(
+        client.waitForBlockIrreversible(
+          { blockNum: 21, blockId: "block-21" },
+          0
+        )
+      ).resolves.toBe(true)
+      expect(getInfo).toHaveBeenCalledTimes(1)
+      expect(getBlock).toHaveBeenCalledWith(21)
+    })
+
+    it("fails closed when LIB has not reached the observed block", async () => {
+      const client = new WireClient(config)
+      jest.spyOn(client, "getInfo").mockResolvedValue({
+        head_block_num: 24,
+        last_irreversible_block_num: 20
+      } as WireClient.GetInfoResponse)
+
+      await expect(
+        client.waitForBlockIrreversible(
+          { blockNum: 21, blockId: "block-21" },
+          0
+        )
+      ).resolves.toBe(false)
+      await expect(
+        client.waitForBlockIrreversible(
+          { blockNum: -1, blockId: "invalid" },
+          0
+        )
+      ).rejects.toThrow(/non-negative safe integer/)
+    })
+
+    it("rejects a same-height block replaced before irreversibility", async () => {
+      const client = new WireClient(config)
+      jest.spyOn(client, "getInfo").mockResolvedValue({
+        head_block_num: 24,
+        last_irreversible_block_num: 21
+      } as WireClient.GetInfoResponse)
+      jest.spyOn(client, "getBlock").mockResolvedValue({
+        block_num: 21,
+        id: "replacement-block-21",
+        transactions: []
+      })
+
+      await expect(
+        client.waitForBlockIrreversible(
+          { blockNum: 21, blockId: "observed-block-21" },
+          0
+        )
+      ).resolves.toBe(false)
+    })
+  })
+
   describe("invokeViaFile", () => {
     it("isolates concurrent payload files and removes them after use", async () => {
       const paths: string[] = []

@@ -1016,6 +1016,46 @@ export class WireClient {
     )
   }
 
+  /**
+   * Wait until the canonical chain's LIB reaches an observed block.
+   *
+   * This proves that state observed at or before `blockNum` survived
+   * irreversibility without requiring the transaction id that produced it.
+   *
+   * @param observation - Head block number and id sampled after the state read.
+   * @param timeoutMs - Maximum time to wait for LIB to reach the block.
+   * @returns Whether LIB reached `blockNum` within the budget.
+   */
+  async waitForBlockIrreversible(
+    observation: WireClient.BlockObservation,
+    timeoutMs = scaleTimeoutMs(
+      ProtocolTiming.irreversibilityBudgetMs(this.config.finalizerCount ?? 0)
+    )
+  ): Promise<boolean> {
+    Assert.ok(
+      Number.isSafeInteger(observation.blockNum) && observation.blockNum >= 0,
+      `irreversible block target must be a non-negative safe integer; got ${observation.blockNum}`
+    )
+    const deadlineMs = Date.now() + timeoutMs
+    while (true) {
+      try {
+        if (
+          (await this.getInfo()).last_irreversible_block_num >=
+          observation.blockNum
+        ) {
+          const canonicalBlock = await this.getBlock(observation.blockNum)
+          return canonicalBlock.id === observation.blockId
+        }
+      } catch (error) {
+        log.debug(
+          `waitForBlockIrreversible(${observation.blockNum}) poll error: ${errorText(error)}`
+        )
+      }
+      if (Date.now() + WireClient.PollIntervalMs > deadlineMs) return false
+      await delay(WireClient.PollIntervalMs)
+    }
+  }
+
   /** Poll until a tx appears in a block; returns its block number. */
   async waitForTransactionInBlock(
     transactionId: string,
@@ -1154,6 +1194,14 @@ function errorText(err: unknown): string {
 }
 
 export namespace WireClient {
+  /** A specific observed head whose identity must survive to irreversibility. */
+  export interface BlockObservation {
+    /** Observed head block number. */
+    blockNum: number
+    /** Observed head block id used to reject a same-height replacement fork. */
+    blockId: string
+  }
+
   /**
    * A `get_table_rows` bound for a KV table whose key is ONE `uint64` field holding a `name`.
    *
@@ -1288,7 +1336,7 @@ export namespace WireClient {
     rows: Row[]
     more: boolean
     /** Lower bound for the next page, or `null` when the result is complete. */
-    nextKey: string
+    nextKey: string | null
   }
   export interface TableQuery<
     Name extends SysioContractName,

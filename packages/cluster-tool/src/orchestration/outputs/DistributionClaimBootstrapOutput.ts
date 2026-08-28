@@ -26,6 +26,13 @@ export const DistributionClaimBootstrapSourceSchema = z.enum(
   DistributionClaimBootstrapSource
 )
 
+/** Stable generic provenance order used in logs and compact Step inputs. */
+const DistributionClaimBootstrapSourceOrder = [
+  DistributionClaimBootstrapSource.configuredFile,
+  DistributionClaimBootstrapSource.fallback,
+  DistributionClaimBootstrapSource.additive
+]
+
 /** Runtime schema for one pre-batching credit set contributed for one native chain. */
 export const DistributionClaimBootstrapCreditSetSchema: z.ZodType<DistributionClaimBootstrapCreditSet> =
   z.object({
@@ -144,7 +151,11 @@ export function finalizeDistributionClaimBootstrap(
         chain,
         sources: [
           ...new Set(chainSets.map(creditSet => creditSet.source))
-        ].sort(),
+        ].sort(
+          (left, right) =>
+            DistributionClaimBootstrapSourceOrder.indexOf(left) -
+            DistributionClaimBootstrapSourceOrder.indexOf(right)
+        ),
         batches: batchImportSeedCredits(credits, { chain }),
         droppedDust: chainSets.reduce(
           (total, creditSet) => total + creditSet.droppedDust,

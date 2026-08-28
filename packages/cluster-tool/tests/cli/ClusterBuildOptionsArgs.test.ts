@@ -8,7 +8,6 @@ import {
 } from "@wireio/cluster-tool-shared"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import {
-  DistributionClaimBootstrapSource,
   type DistributionClaimBootstrapOptions
 } from "@wireio/cluster-tool"
 import {
@@ -355,7 +354,6 @@ describe("toClusterBuildOptions reverse parse", () => {
         fallbackCreditSets: [
           {
             chain: ChainKind.EVM,
-            source: DistributionClaimBootstrapSource.synthetic,
             credits: [{ native_address: "aa".repeat(20), wire_atomic: 3n }],
             droppedDust: 0n
           }

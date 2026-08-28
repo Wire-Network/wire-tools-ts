@@ -45,6 +45,7 @@ import { ChainKind } from "@wireio/opp-typescript-models"
 import { NestedError } from "@wireio/shared"
 import { SysioContracts } from "@wireio/sdk-core"
 
+import type { DistributionClaimBootstrapCredit } from "../../types/DistributionClaimBootstrap.js"
 import { abiEnumValue } from "../../utils/enumUtils.js"
 
 // ---------------------------------------------------------------------------
@@ -54,7 +55,12 @@ import { abiEnumValue } from "../../utils/enumUtils.js"
 /** The chain kinds `importseed` accepts — a proto `ChainKind` subset. */
 export type ImportSeedChainKind = ChainKind.EVM | ChainKind.SVM
 
-/** Whether an untyped value names a native chain `importseed` accepts. */
+/**
+ * Whether an untyped value names a native chain `importseed` accepts.
+ *
+ * @param value - Candidate proto chain-kind value.
+ * @returns Whether `value` is the EVM or SVM chain kind.
+ */
 export function isImportSeedChainKind(
   value: unknown
 ): value is ImportSeedChainKind {
@@ -140,7 +146,8 @@ export type IndexBalanceDump = z.infer<typeof IndexBalanceDumpSchema>
 // importseed action payload shape
 // ---------------------------------------------------------------------------
 /** Runtime schema for one converted `sysio.dclaim::importseed` credit. */
-export const ImportSeedCreditSchema = z.object({
+export const ImportSeedCreditSchema: z.ZodType<DistributionClaimBootstrapCredit> =
+  z.object({
   /**
    * Raw native address as a hex string (no `0x` prefix). The dclaim ABI
    * consumes this as `bytes`. ETH = 20 bytes, SOL = 32 bytes.
@@ -148,9 +155,9 @@ export const ImportSeedCreditSchema = z.object({
   native_address: z.string().regex(/^[0-9a-f]+$/),
   /** WIRE amount in atomic units (9 decimals). */
   wire_atomic: z.bigint().positive()
-})
-/** One converted `sysio.dclaim::importseed` credit — the shape of {@link ImportSeedCreditSchema}. */
-export type ImportSeedCredit = z.infer<typeof ImportSeedCreditSchema>
+  })
+/** One converted `sysio.dclaim::importseed` credit. */
+export type ImportSeedCredit = DistributionClaimBootstrapCredit
 
 /** Runtime schema for one transaction-sized `sysio.dclaim::importseed` batch. */
 export const ImportSeedBatchSchema = z.object({
@@ -313,7 +320,7 @@ function toCredits(
 ): ImportSeedCreditResult {
   const credits: ImportSeedCredit[] = [],
     entries = [...accumulator.entries()].sort(([left], [right]) =>
-      left.localeCompare(right)
+      compareAddressHex(left, right)
     )
   let droppedDust = 0n
   entries.forEach(([native_address, total]) => {
@@ -491,7 +498,7 @@ export function mergeImportSeedCredits(
     )
   })
   const credits = [...merged.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => compareAddressHex(left, right))
     .map(([native_address, wire_atomic]) => ({
       native_address,
       wire_atomic
@@ -504,6 +511,11 @@ export function mergeImportSeedCredits(
     }
   })
   return credits
+}
+
+/** Compare normalized address hex by locale-independent UTF-16 code units. */
+function compareAddressHex(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
 }
 
 /**

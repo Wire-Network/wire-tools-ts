@@ -1,6 +1,7 @@
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
 import { ClusterKeyStore } from "@wireio/cluster-tool/orchestration/outputs"
+
 import { fixtureOperatorAccount } from "./operatorAccountFixture.js"
 
 function nodeKeys(index: number): ClusterKeyStore.NodeKeys {

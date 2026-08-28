@@ -88,7 +88,7 @@ describe("DistributionClaimBootstrap", () => {
       creditSets: [
         {
           chain: ChainKind.EVM,
-          source: DistributionClaimBootstrapSource.controlled,
+          source: DistributionClaimBootstrapSource.additive,
           credits: [
             { native_address: "aa".repeat(20), wire_atomic: 3n },
             { native_address: "cc".repeat(20), wire_atomic: 5n }
@@ -97,7 +97,7 @@ describe("DistributionClaimBootstrap", () => {
         },
         {
           chain: ChainKind.SVM,
-          source: DistributionClaimBootstrapSource.synthetic,
+          source: DistributionClaimBootstrapSource.fallback,
           credits: [{ native_address: "dd".repeat(32), wire_atomic: 11n }],
           droppedDust: 0n
         }
@@ -118,7 +118,7 @@ describe("DistributionClaimBootstrap", () => {
       droppedDust: 7n,
       sources: [
         DistributionClaimBootstrapSource.configuredFile,
-        DistributionClaimBootstrapSource.controlled
+        DistributionClaimBootstrapSource.additive
       ]
     })
     expect(
@@ -143,7 +143,7 @@ describe("DistributionClaimBootstrap", () => {
           creditSets: [
             {
               chain: ChainKind.EVM,
-              source: DistributionClaimBootstrapSource.synthetic,
+              source: DistributionClaimBootstrapSource.fallback,
               credits: [],
               droppedDust: 9n
             }

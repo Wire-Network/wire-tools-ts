@@ -720,6 +720,7 @@ export class SolanaOutpostBootstrapper {
    *   consensus threshold (`consensus_reached_now`), so seeding more than the
    *   delivering set would stall epoch 1.
    * @param epochDurationSec - the depot's epoch duration (must be positive).
+   * @returns A promise that resolves after the bootstrap transaction confirms.
    */
   async oppBootstrap(
     seed: SolanaOutpostBootstrapper.OppBootstrapSeed,

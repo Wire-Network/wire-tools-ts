@@ -307,6 +307,38 @@ describe("WireDclaimSeedTool", () => {
   })
 
   describe("conversion, merge, and batching boundaries", () => {
+    it("sorts normalized address hex by code units instead of host locale", () => {
+      const addresses = [
+          `${"b000"}${"00".repeat(18)}`,
+          `${"aaff"}${"00".repeat(18)}`,
+          `${"ab00"}${"00".repeat(18)}`
+        ],
+        expected = [addresses[1], addresses[2], addresses[0]],
+        converted = convertImportSeedCredits(
+          {
+            purchasers: addresses.map(address => ({
+              address: `0x${address}`,
+              totalPretokens: "1000000000"
+            }))
+          },
+          ChainKind.EVM
+        ),
+        merged = mergeImportSeedCredits(
+          [
+            addresses.map(native_address => ({
+              native_address,
+              wire_atomic: 1n
+            }))
+          ],
+          ChainKind.EVM
+        )
+
+      expect(converted.credits.map(credit => credit.native_address)).toEqual(
+        expected
+      )
+      expect(merged.map(credit => credit.native_address)).toEqual(expected)
+    })
+
     it("converts without batching, merges duplicate credits, then batches", () => {
       const converted = convertImportSeedCredits(
         {
