@@ -128,6 +128,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Node-operator collateral deposit + withdraw remit |
 | `flow-swap-with-underwriting` | `@wireio/test-flow-swap-with-underwriting` | Bidirectional SWAP (ETH ↔ SOL) with underwriting |
 | `flow-swap-non-native-tokens` | `@wireio/test-flow-swap-non-native-tokens` | SWAP of non-native tokens (USDC / USDT / LIQ) |
+| `flow-swap-canary` | `@wireio/test-flow-swap-canary` | Configurable serial canary over public ETH, SOL, and WIRE routes |
 | `flow-swap-variance-revert` | `@wireio/test-flow-swap-variance-revert` | Swap variance-tolerance revert |
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
 | `flow-yield-distribution` | `@wireio/test-flow-yield-distribution` | `STAKING_REWARD` → `sysio.dclaim::onreward` → `fundclaim` |

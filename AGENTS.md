@@ -16,6 +16,7 @@ engine.
   authoritative.
 - Use pnpm only and run live flows through `scripts/run-flow.mjs` with the
   heartbeat monitor.
+- Pass FlowScenario-specific CLI arguments after the runner's literal `--`.
 
 ## Commands
 
