@@ -35,6 +35,9 @@ engine.
   `packages/cluster-tool/src/orchestration`, runtime config under
   `packages/cluster-tool/src/config`, and reports under
   `packages/cluster-tool/src/report`.
+- Connected `swap-canary` runs load an existing cluster's persisted state on
+  that host and reuse the fresh FlowScenario's PhaseGroups; they must never
+  invoke fresh-cluster bootstrap or export signing material.
 - Sensitive areas: cluster keys, signing providers, process lifecycle, port
   allocation, chain identities, and external deployment configuration.
 - Generated code / files to avoid editing directly: `lib/`, `dist/`,

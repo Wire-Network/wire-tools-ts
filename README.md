@@ -137,6 +137,23 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 
 Flow packages depend on the harness via `workspace:*`.
 
+### Connected swap canary
+
+The fresh `flow-swap-canary` and the existing-cluster command share the same
+PhaseGroups and route Steps. Run the connected form on the cluster host so its
+persisted signing state never leaves that host:
+
+```bash
+packages/cluster-tool/bin/wire-cluster-tool swap-canary \
+  --cluster-path /path/to/running/cluster
+```
+
+It defaults to the six native directions. Repeat `--routes` to select another
+union and add `--wait-for-challenge` when terminal UWREQ completion is required.
+The connected command does not bootstrap processes, redeploy outposts, create
+reserves, or deposit more underwriter collateral; it validates the persisted
+cluster and existing collateral before making the selected swap transactions.
+
 ## Running flows
 
 Every flow needs three paths into the sibling repos, supplied as env vars (or as

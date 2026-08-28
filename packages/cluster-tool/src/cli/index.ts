@@ -6,6 +6,7 @@ import { createCreateExternalConfigCommand } from "./CreateExternalConfigCommand
 import { createDestroyCommand } from "./DestroyCommand.js"
 import { createPackageCommand } from "./PackageCommand.js"
 import { createRunCommand } from "./RunCommand.js"
+import { createSwapCanaryCommand } from "./SwapCanaryCommand.js"
 
 /**
  * The `wire-cluster-tool` CLI: parser assembly only — each command's options
@@ -22,6 +23,7 @@ export function main(argv: string[] = process.argv.slice(2)): Promise<unknown> {
     .scriptName("wire-cluster-tool")
     .command(createCreateCommand(commandLine))
     .command(createRunCommand())
+    .command(createSwapCanaryCommand())
     .command(createDestroyCommand())
     .command(createPackageCommand())
     .command(createCreateExternalConfigCommand())
