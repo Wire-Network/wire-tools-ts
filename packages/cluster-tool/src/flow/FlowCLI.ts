@@ -12,6 +12,8 @@ import type { Report } from "../report/Report.js"
 import {
   FlowScenario,
   type FlowScenarioConstructor,
+  type FlowScenarioArguments,
+  type FlowScenarioArgumentsOf,
   type FlowScenarioContextOf
 } from "./FlowScenario.js"
 
@@ -28,12 +30,15 @@ const log = getLogger(__filename)
  *
  * @typeParam C - The scenario's context type (inferred via {@link FlowScenarioContextOf}).
  */
-export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
+export class FlowCLI<
+  C extends ClusterBuildContext = ClusterBuildContext,
+  A extends FlowScenarioArguments = Record<string, never>
+> {
   /** The yargs surface (shared `ClusterBuildOptions` flags) — exposed for per-flow customization. */
   readonly yargs: Argv
 
-  private constructor(private readonly scenario: FlowScenario<C>) {
-    this.yargs = applyClusterBuildOptionsArgs(
+  private constructor(private readonly scenario: FlowScenario<C, A>) {
+    const commonYargs = applyClusterBuildOptionsArgs(
       Yargs(process.argv.slice(2)),
       scenario.defaults
     )
@@ -41,6 +46,7 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
       .usage(`$0 — ${scenario.description}`)
       .strict()
       .help()
+    this.yargs = scenario.configureArguments?.(commonYargs) ?? commonYargs
   }
 
   /**
@@ -50,15 +56,17 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
    * @param scenarioClass - The `FlowScenario` subclass (zero-arg constructor).
    * @returns The flow CLI, typed to the scenario's context.
    */
-  static create<S extends FlowScenario, C extends FlowScenarioContextOf<S> = FlowScenarioContextOf<S>>(
-    scenarioClass: FlowScenarioConstructor<FlowScenario<C>>
-  ): FlowCLI<FlowScenarioContextOf<S>> {
+  static create<
+    S extends FlowScenario<ClusterBuildContext, FlowScenarioArguments>,
+    C extends FlowScenarioContextOf<S> = FlowScenarioContextOf<S>,
+    A extends FlowScenarioArgumentsOf<S> = FlowScenarioArgumentsOf<S>
+  >(scenarioClass: FlowScenarioConstructor<S>): FlowCLI<C, A> {
     // `S extends FlowScenario<FlowScenarioContextOf<S>>` holds semantically, but the
     // `plan(cluster: ClusterBuild<C>)` param makes `FlowScenario<C>` contravariant
     // in `C`, so TS won't verify the narrowing — route through `unknown`.
-    const scenario = new scenarioClass()
-    
-    return new FlowCLI<C>(scenario)
+    const scenario = new scenarioClass() as unknown as FlowScenario<C, A>
+
+    return new FlowCLI<C, A>(scenario)
   }
 
   /**
@@ -75,12 +83,13 @@ export class FlowCLI<C extends ClusterBuildContext = ClusterBuildContext> {
       options = mergeSignatureProviderSSM(
         toClusterBuildOptions(argv, this.scenario.defaults),
         argv
-      )
+      ),
+      scenarioArguments = this.scenario.parseArguments?.(argv) ?? ({} as A)
     const cluster = await ClusterBuildDefaults.create<C>(
       options,
       this.scenario.createContext?.bind(this.scenario)
     )
-    this.scenario.plan(cluster)
+    this.scenario.plan(cluster, scenarioArguments)
     // Name the report before launch — the renderers title with it
     // ("flow-…: SUCCESS|FAILED") and launch writes the files.
     cluster.report.name = this.scenario.name

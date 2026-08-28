@@ -173,12 +173,17 @@ and every live run is paired with the heartbeat monitor (see
 
 # Regex — 1 match runs it, multiple matches drop into a scoped picker:
 ./scripts/run-flow.mjs swap --wire-build-path … --ethereum-path … --solana-path …
+
+# Flow-specific flags follow `--` and are parsed by that flow's strict CLI:
+./scripts/run-flow.mjs flow-swap-canary --wire-build-path … --ethereum-path … \
+  --solana-path … -- --routes eth-to-sol --wait-for-challenge
 ```
 
 Each `--wire-build-path` / `--ethereum-path` / `--solana-path` flag falls back to
 its env var (`WIRE_BUILD_PATH` / `WIRE_ETH_PATH` / `WIRE_SOLANA_PATH`); one of the
 two is required. `--cluster-path` (env `WIRE_CLUSTER_PATH`) is optional — omit it
-and the harness picks a fresh temp dir.
+and the harness picks a fresh temp dir. Put scenario-specific options after a
+literal `--`; the runner forwards them without owning or interpreting them.
 
 ### Option B — `pnpm --filter` directly (what Option A runs under the hood)
 
