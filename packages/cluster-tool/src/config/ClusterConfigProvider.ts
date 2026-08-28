@@ -452,7 +452,7 @@ export namespace ClusterConfigProvider {
    * @param file - Caller-supplied path, or absence.
    * @returns The absolute path, or `null`.
    */
-  function resolveBootstrapJsonFile(file?: string): string {
+  function resolveBootstrapJsonFile(file?: string) {
     return file == null ? null : Path.resolve(file)
   }
 

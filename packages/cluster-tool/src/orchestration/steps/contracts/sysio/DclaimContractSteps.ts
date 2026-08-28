@@ -333,9 +333,7 @@ export namespace DclaimContractSteps {
     )
   }
 
-  async function readPendingImportSeedJournal(
-    journalPath: string
-  ): Promise<PendingImportSeedJournal> {
+  async function readPendingImportSeedJournal(journalPath: string) {
     try {
       return PendingImportSeedJournalSchema.parse(
         JSON.parse(await Fs.readFile(journalPath, "utf8"))
@@ -462,7 +460,7 @@ export namespace DclaimContractSteps {
     return milliseconds
   }
 
-  function nodeErrorCode(error: unknown): string {
+  function nodeErrorCode(error: unknown) {
     return typeof error === "object" && error != null && "code" in error
       ? String(error.code)
       : null
