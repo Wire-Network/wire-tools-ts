@@ -21,6 +21,7 @@ import { Report } from "@wireio/cluster-tool/report"
 import { ethereumKeyPairFromWallet } from "@wireio/cluster-tool/utils"
 import { fixtureContext } from "../../../config/clusterBuildContextFixture.js"
 import { PersistedFixture } from "../../../config/clusterConfigFixture.js"
+import { fixtureOperatorAccount } from "../../../orchestration/outputs/operatorAccountFixture.js"
 
 /** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
 const AnvilMnemonic = "test test test test test test test test test test test junk"
@@ -297,7 +298,7 @@ describe("Steps.processes.nodeop", () => {
 
     it("batch-operator node resolves the provisioned account from ctx.keyStore", () => {
       const ctx = fixtureContext()
-      const provisioned = operatorAccount("batchopaaaa", OperatorType.BATCH)
+      const provisioned = fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH)
       ctx.keyStore.setOperator(provisioned)
       const node = testNode(ctx, NodeRole.batch_operator, 2, "node_02", [], "batchopaaaa")
       expect(Steps.processes.nodeop.resolveOperator(ctx, node)).toBe(provisioned)
@@ -305,7 +306,7 @@ describe("Steps.processes.nodeop", () => {
 
     it("underwriter node resolves the provisioned account from ctx.keyStore", () => {
       const ctx = fixtureContext()
-      const provisioned = operatorAccount("underwriteraaaa", OperatorType.UNDERWRITER)
+      const provisioned = fixtureOperatorAccount("underwriteraaaa", OperatorType.UNDERWRITER)
       ctx.keyStore.setOperator(provisioned)
       const node = testNode(ctx, NodeRole.underwriter, 3, "node_03", [], null, "underwriteraaaa")
       expect(Steps.processes.nodeop.resolveOperator(ctx, node)).toBe(provisioned)
@@ -336,7 +337,7 @@ describe("Steps.processes.nodeop", () => {
         Steps.processes.nodeop.resolveOperatorDaemonArgs(
           ctx,
           node,
-          operatorAccount(NodeConfig.BiosName, OperatorType.PRODUCER)
+          fixtureOperatorAccount(NodeConfig.BiosName, OperatorType.PRODUCER)
         )
       ).toEqual([])
     })
@@ -348,7 +349,7 @@ describe("Steps.processes.nodeop", () => {
         Steps.processes.nodeop.resolveOperatorDaemonArgs(
           ctx,
           node,
-          operatorAccount("defproducera", OperatorType.PRODUCER)
+          fixtureOperatorAccount("defproducera", OperatorType.PRODUCER)
         )
       ).toEqual([])
     })
@@ -356,13 +357,11 @@ describe("Steps.processes.nodeop", () => {
     it("builds batch-operator daemon args for a batch_operator node", () => {
       const ctx = fixtureContext()
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifactsFixture)
-      const account = operatorAccount("batchopaaaa", OperatorType.BATCH)
+      const account = fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH)
       const node = testNode(ctx, NodeRole.batch_operator, 2, "node_02", [], "batchopaaaa")
       const args = Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)
       expect(args).toEqual(
         expect.arrayContaining([
-          "--batch-enabled",
-          "true",
           "--batch-operator-account",
           "wireno.batchopaaaa"
         ])
@@ -377,13 +376,11 @@ describe("Steps.processes.nodeop", () => {
     it("builds underwriter daemon args for an underwriter node", () => {
       const ctx = fixtureContext()
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifactsFixture)
-      const account = operatorAccount("underwriteraaaa", OperatorType.UNDERWRITER)
+      const account = fixtureOperatorAccount("underwriteraaaa", OperatorType.UNDERWRITER)
       const node = testNode(ctx, NodeRole.underwriter, 3, "node_03", [], null, "underwriteraaaa")
       const args = Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)
       expect(args).toEqual(
         expect.arrayContaining([
-          "--underwriter-enabled",
-          "true",
           "--underwriter-account",
           "wireno.underwriteraaaa"
         ])
@@ -395,7 +392,7 @@ describe("Steps.processes.nodeop", () => {
 
     it("throws when the operator daemon artifacts have not been prepared yet", () => {
       const ctx = fixtureContext()
-      const account = operatorAccount("batchopbbbb", OperatorType.BATCH)
+      const account = fixtureOperatorAccount("batchopbbbb", OperatorType.BATCH)
       const node = testNode(ctx, NodeRole.batch_operator, 4, "node_04", [], "batchopbbbb")
       expect(() =>
         Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, account)

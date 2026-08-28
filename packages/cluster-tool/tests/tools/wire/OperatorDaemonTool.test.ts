@@ -34,6 +34,7 @@ import {
 } from "@wireio/cluster-tool/utils"
 import { AnvilProcess } from "@wireio/cluster-tool/cluster/processes"
 import type { ExternalOutpostConfig } from "@wireio/cluster-tool-shared"
+import { fixtureOperatorAccount } from "../../orchestration/outputs/operatorAccountFixture.js"
 
 /** anvil's deterministic mnemonic — HD-derived wallets are stable + well-known. */
 const AnvilMnemonic = "test test test test test test test test test test test junk"
@@ -230,16 +231,16 @@ describe("OperatorDaemonTool", () => {
           keySourceFor
         )
       expect(valuesOf(batchArgs, "--outpost-ethereum-client")).toEqual([
-        `eth-default,eth-wireno.batchopcccc,${ExternalEthereumRpcUrl},${ExternalChainId}`
+        `${OperatorDaemonTool.EthereumClientId},eth-wireno.batchopcccc,${ExternalEthereumRpcUrl},${ExternalChainId}`
       ])
       expect(valuesOf(batchArgs, "--outpost-solana-client")).toEqual([
-        `sol-default,sol-wireno.batchopcccc,${ExternalSolanaRpcUrl}`
+        `${OperatorDaemonTool.SolanaClientId},sol-wireno.batchopcccc,${ExternalSolanaRpcUrl}`
       ])
       expect(valuesOf(underwriterArgs, "--outpost-ethereum-client")).toEqual([
-        `eth-default,eth-${underwriter.account},${ExternalEthereumRpcUrl},${ExternalChainId}`
+        `${OperatorDaemonTool.EthereumClientId},eth-${underwriter.account},${ExternalEthereumRpcUrl},${ExternalChainId}`
       ])
       expect(valuesOf(underwriterArgs, "--outpost-solana-client")).toEqual([
-        `sol-default,sol-${underwriter.account},${ExternalSolanaRpcUrl}`
+        `${OperatorDaemonTool.SolanaClientId},sol-${underwriter.account},${ExternalSolanaRpcUrl}`
       ])
     })
   })
@@ -250,7 +251,7 @@ describe("OperatorDaemonTool", () => {
       // The context's processManager getter requires the singleton's cluster
       // path to be set (idempotent for the same value).
       ProcessManager.setClusterPath(ctx.config.clusterPath)
-      const operator = operatorAccount("batchopbbbb", OperatorType.BATCH)
+      const operator = fixtureOperatorAccount("batchopbbbb", OperatorType.BATCH)
       ctx.keyStore.setOperator(operator)
       ctx.outputs.set(OperatorDaemonArtifactsKey, artifacts)
       const recoverySpy = jest
@@ -271,7 +272,7 @@ describe("OperatorDaemonTool", () => {
           expect.objectContaining({
             operator,
             node: expect.objectContaining({ role: NodeRole.batch_operator }),
-            extraArgs: expect.arrayContaining(["--batch-enabled"])
+            extraArgs: expect.arrayContaining(["--batch-operator-account"])
           })
         )
         // A flow-provisioned daemon launches in the BOOTSTRAP form — the
@@ -305,7 +306,7 @@ describe("OperatorDaemonTool", () => {
           expect.objectContaining({
             operator,
             node: expect.objectContaining({ role: NodeRole.underwriter }),
-            extraArgs: expect.arrayContaining(["--underwriter-enabled"])
+            extraArgs: expect.arrayContaining(["--underwriter-account"])
           })
         )
         expect(recoverySpy.mock.calls[0][1].postBootstrap).toBeUndefined()
@@ -316,7 +317,7 @@ describe("OperatorDaemonTool", () => {
   })
 
   describe("batchOperatorArgs", () => {
-    const operator = operatorAccount("batchopaaaa", OperatorType.BATCH)
+    const operator = fixtureOperatorAccount("batchopaaaa", OperatorType.BATCH)
     const args = OperatorDaemonTool.batchOperatorArgs(operator, artifacts, network, keySourceFor)
 
     it("loads the batch plugin set at irreversible read-mode", () => {
@@ -355,7 +356,6 @@ describe("OperatorDaemonTool", () => {
     })
 
     it("configures the batch plugin + both outpost clients + artifacts", () => {
-      expect(valuesOf(args, "--batch-enabled")).toEqual(["true"])
       // The depot matches this argv against `sysio.opreg::operators`, which is
       // keyed by the ON-CHAIN account — passing the handle would start a daemon
       // that silently matches no operator row.
@@ -364,14 +364,15 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(args, "--batch-epoch-poll-ms")).toEqual([String(OperatorDaemonTool.BatchEpochPollMs)])
       expect(valuesOf(args, "--batch-delivery-timeout-ms")).toEqual([String(OperatorDaemonTool.BatchDeliveryTimeoutMs)])
       expect(valuesOf(args, "--ext-debugging-server")).toEqual([network.debuggingServerUrl])
+      // The client id IS the chain code: both daemons look a chain's RPC client
+      // up under its `sysio.chains` code, so any other id is invisible to them.
       expect(valuesOf(args, "--outpost-ethereum-client")).toEqual([
-        `eth-default,eth-${operator.account},${network.ethereumRpcUrl},31337`
+        `ETHEREUM,eth-${operator.account},${network.ethereumRpcUrl},31337`
       ])
       expect(valuesOf(args, "--outpost-solana-client")).toEqual([
-        `sol-default,sol-${operator.account},${network.solanaRpcUrl}`
+        `SOLANA,sol-${operator.account},${network.solanaRpcUrl}`
       ])
       expect(valuesOf(args, "--ethereum-abi-file")).toEqual(artifacts.ethereumAbiFiles)
-      expect(valuesOf(args, "--batch-sol-client-id")).toEqual(["sol-default"])
       expect(valuesOf(args, "--solana-idl-file")).toEqual([artifacts.solanaIdlFile])
       // The cleanroom hosts the outpost interface in liqsol_core — nodeop's
       // IDL-name gate must be pointed at it.
@@ -380,28 +381,32 @@ describe("OperatorDaemonTool", () => {
       ])
     })
 
-    it("binds each outpost with one consolidated per-chain CSV spec", () => {
-      expect(valuesOf(args, "--batch-outpost")).toEqual([
-        [
-          OperatorDaemonTool.EthereumChainCodename,
-          artifacts.ethereumAddresses.OPP,
-          artifacts.ethereumAddresses.OPPInbound
-        ].join(","),
-        [OperatorDaemonTool.SolanaChainCodename, artifacts.solanaProgramId].join(",")
-      ])
+    it("declares the client ids as the chain codes", () => {
+      expect(OperatorDaemonTool.EthereumClientId).toBe(
+        OperatorDaemonTool.EthereumChainCodename
+      )
+      expect(OperatorDaemonTool.SolanaClientId).toBe(
+        OperatorDaemonTool.SolanaChainCodename
+      )
     })
 
-    it("emits none of the flags removed by wire-sysio #474 (nodeop rejects them)", () => {
+    it("emits no per-chain outpost flags (nodeop rejects them)", () => {
+      // Removed by wire-sysio #474 …
       expect(valuesOf(args, "--batch-eth-opp-addr")).toEqual([])
       expect(valuesOf(args, "--batch-eth-opp-inbound-addr")).toEqual([])
       expect(valuesOf(args, "--batch-eth-client-id")).toEqual([])
       expect(valuesOf(args, "--batch-sol-program-id")).toEqual([])
+      // … and by the sysio.chains outpost-registry change: the addresses live
+      // on the chain row and the RPC client is keyed by chain code.
+      expect(valuesOf(args, "--batch-enabled")).toEqual([])
+      expect(valuesOf(args, "--batch-outpost")).toEqual([])
+      expect(valuesOf(args, "--batch-sol-client-id")).toEqual([])
     })
 
     it("rejects a non-batch operator", () => {
       expect(() =>
         OperatorDaemonTool.batchOperatorArgs(
-          operatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER),
+          fixtureOperatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER),
           artifacts,
           network,
           keySourceFor
@@ -445,7 +450,7 @@ describe("OperatorDaemonTool", () => {
   })
 
   describe("underwriterArgs", () => {
-    const operator = operatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER)
+    const operator = fixtureOperatorAccount("uwritaaaaaa", OperatorType.UNDERWRITER)
     const args = OperatorDaemonTool.underwriterArgs(operator, artifacts, network, keySourceFor)
 
     it("passes the SCALED action timeout (flow timing scale reaches the daemon)", () => {
@@ -462,7 +467,6 @@ describe("OperatorDaemonTool", () => {
 
     it("loads the underwriter plugin set + source-deposit verification targets", () => {
       expect(valuesOf(args, "--plugin")).toEqual([...OperatorDaemonTool.UnderwriterPlugins])
-      expect(valuesOf(args, "--underwriter-enabled")).toEqual(["true"])
       // Same chain-boundary rule as `--batch-operator-account`.
       expect(valuesOf(args, "--underwriter-account")).toEqual([operator.account])
       expect(valuesOf(args, "--underwriter-account")).not.toEqual([operator.label])
@@ -489,22 +493,13 @@ describe("OperatorDaemonTool", () => {
       expect(valuesOf(disabledArgs, "--ext-debugging-server")).toEqual([])
     })
 
-    it("wires each outpost with one consolidated per-chain CSV spec", () => {
-      expect(valuesOf(args, "--underwriter-eth-outpost")).toEqual([
-        [
-          OperatorDaemonTool.EthereumChainCodename,
-          OperatorDaemonTool.EthereumClientId,
-          artifacts.ethereumAddresses.OperatorRegistry,
-          artifacts.ethereumAddresses.ReserveManager
-        ].join(",")
-      ])
-      expect(valuesOf(args, "--underwriter-sol-outpost")).toEqual([
-        [
-          OperatorDaemonTool.SolanaChainCodename,
-          OperatorDaemonTool.SolanaClientId,
-          artifacts.solanaProgramId
-        ].join(",")
-      ])
+    it("emits no per-chain outpost flags (nodeop rejects them)", () => {
+      // The underwriter serves every ACTIVE sysio.chains row, reads each one's
+      // contract addresses off that row, and reaches it through the RPC client
+      // registered under the chain code — nothing left to declare per node.
+      expect(valuesOf(args, "--underwriter-enabled")).toEqual([])
+      expect(valuesOf(args, "--underwriter-eth-outpost")).toEqual([])
+      expect(valuesOf(args, "--underwriter-sol-outpost")).toEqual([])
     })
   })
 

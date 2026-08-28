@@ -94,8 +94,6 @@ export namespace TerminationScenarioConstants {
   export const MinimumContractCodeLength = 4
   /** Row budget when scanning `sysio.opreg::operators` for the doomed operator. */
   export const OperatorsQueryLimit = 100
-  /** Row budget for the `sysio.epoch::epochstate` singleton read. */
-  export const EpochStateQueryLimit = 1
   /** Anchor account-namespace name of the SOL outpost's `OperatorRegistry` PDA account. */
   export const SolanaOperatorRegistryAccountName = "operatorRegistry"
 
