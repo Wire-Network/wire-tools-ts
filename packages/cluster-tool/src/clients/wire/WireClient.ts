@@ -388,16 +388,27 @@ export class WireClient {
   async getTableRows<Row = unknown>(
     query: WireClient.TableRowsQuery
   ): Promise<WireClient.TableQueryResult<Row>> {
-    const result: any = await this.api.v1.chain.get_table_rows({
-      code: query.account,
-      scope: query.scope,
-      table: query.table,
-      json: true,
-      limit: query.limit ?? WireClient.DefaultRowLimit,
-      // omit bounds when null (conditional spread — no undefined)
-      ...(query.lowerBound != null ? { lower_bound: query.lowerBound } : {}),
-      ...(query.upperBound != null ? { upper_bound: query.upperBound } : {})
-    } as any)
+    // Deliberately call the APIClient without a response type. The SDK's
+    // get_table_rows response decoder coerces `next_key` through UInt64 and
+    // rejects name-keyed KV rows above Number.MAX_SAFE_INTEGER. This escape
+    // hatch needs the node's plain JSON strings, especially for wireclaims.
+    const result: any = await this.api.call({
+      path: "/v1/chain/get_table_rows",
+      params: {
+        code: query.account,
+        scope: query.scope,
+        table: query.table,
+        json: true,
+        limit: query.limit ?? WireClient.DefaultRowLimit,
+        // omit bounds when null (conditional spread — no undefined)
+        ...(query.lowerBound != null
+          ? { lower_bound: query.lowerBound }
+          : {}),
+        ...(query.upperBound != null
+          ? { upper_bound: query.upperBound }
+          : {})
+      }
+    })
     const rows = (result.rows ?? []).map((row: any) =>
       row != null && typeof row === "object" && "value" in row ? row.value : row
     )

@@ -190,6 +190,29 @@ describe("WireClient", () => {
           return { rows: [{ account: "wirercpt", balance: "1234" }], more: false } as never
         })
 
+    it("keeps name-keyed uint64 response metadata as raw JSON strings", async () => {
+      const client = new WireClient(config),
+        call = jest.spyOn(client.api, "call").mockResolvedValue({
+          rows: [
+            {
+              key: "14343212860614606848",
+              value: { account: "wirercpt", balance: "1234" }
+            }
+          ],
+          more: false,
+          next_key: "14343212860614606848"
+        })
+
+      expect(await client.getWireClaimable("wirercpt")).toBe(1234n)
+      expect(call).toHaveBeenCalledWith(
+        expect.objectContaining({
+          path: "/v1/chain/get_table_rows",
+          params: expect.objectContaining({ table: "wireclaims" })
+        })
+      )
+      expect(call.mock.calls[0][0]).not.toHaveProperty("responseType")
+    })
+
     it("sends a lower bound and NO upper bound", async () => {
       const client = new WireClient(config),
         captured: any[] = []
