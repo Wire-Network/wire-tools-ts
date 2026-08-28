@@ -84,8 +84,10 @@ export namespace SwapRouteCatalog {
 
   /**
    * Build routes from ACTIVE, public ETHEREUM/SOLANA reserve table rows.
-   * Connected runs use the live reserve code and source precision verbatim;
-   * they never substitute bootstrap-only PRIMARY identities.
+   * Connected runs use the live reserve identity verbatim. The table stores
+   * depot precision (`min(native, 9)`), so transaction construction resolves
+   * the configured token's chain-native precision and verifies the table's
+   * normalized value instead of treating it as native precision.
    *
    * @param rows - Live `sysio.reserv::reserves` rows.
    * @returns Ordered public routes over every supported active reserve.
@@ -283,10 +285,16 @@ function toLiveExternalAsset(
     reserveCode = slugValue(row.reserve_code),
     endpoint = endpointFor(chainCode),
     symbol = SlugName.toString(tokenCode),
-    precision = Number(row.source_token_precision)
+    nativePrecision = sourcePrecision(endpoint, symbol),
+    depotPrecision = Number(row.source_token_precision)
   Assert.ok(
-    Number.isSafeInteger(precision) && precision >= 0,
+    Number.isSafeInteger(depotPrecision) && depotPrecision >= 0,
     `invalid source precision for ${symbol}: ${row.source_token_precision}`
+  )
+  Assert.strictEqual(
+    depotPrecision,
+    Math.min(nativePrecision, 9),
+    `${symbol}: live depot precision ${depotPrecision} does not match native precision ${nativePrecision}`
   )
   return externalAsset(
     endpoint,
@@ -294,7 +302,7 @@ function toLiveExternalAsset(
     chainCode,
     tokenCode,
     reserveCode,
-    precision
+    nativePrecision
   )
 }
 

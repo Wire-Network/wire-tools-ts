@@ -9,7 +9,9 @@ The default `canary` selector runs six representative endpoint directions. In
 the fresh flow that is ETH↔SOL, ETH↔WIRE, and SOL↔WIRE. The connected form
 discovers ACTIVE public reserve identities from the live depot and prefers a
 native asset, falling back deterministically when an endpoint is provisioned
-only with a public token such as LIQSOL/PUB. A route succeeds when destination funds land;
+only with a public token such as LIQSOL/PUB. Live rows carry depot-normalized
+precision, so the runner validates that value and constructs requests using
+the configured token's chain-native precision. A route succeeds when destination funds land;
 to-WIRE routes also claim the credited WIRE and verify its liquid balance.
 `--wait-for-challenge` is opt-in and additionally waits for each exact UWREQ to
 reach `COMPLETED` after the collateral challenge window.

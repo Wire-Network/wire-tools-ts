@@ -82,11 +82,24 @@ describe("SwapRouteCatalog", () => {
       "liqsol-to-wire",
       "wire-to-liqsol"
     ])
+    expect(selected[0].source).toMatchObject({
+      sourceKind: SwapRouteSourceKind.NATIVE,
+      sourcePrecision: 18
+    })
     expect(selected[1].source).toMatchObject({
       reserveCode: SlugName.from("PUB"),
       sourceKind: SwapRouteSourceKind.SPL,
       sourcePrecision: 9
     })
+  })
+
+  it("rejects live depot precision that disagrees with native precision", () => {
+    const eth = liveRow(Steps.registry.MockReserveRegistrations[0], {
+      source_token_precision: 6
+    })
+    expect(() => SwapRouteCatalog.fromLiveReserveRows([eth])).toThrow(
+      /live depot precision 6 does not match native precision 18/
+    )
   })
 
   it("unions and de-duplicates endpoint and direction selectors", () => {
