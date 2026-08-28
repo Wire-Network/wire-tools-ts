@@ -1,7 +1,6 @@
 const config = {
   displayName: "flow-batch-operator-slashing",
   testEnvironment: "node",
-  roots: ["<rootDir>/tests"],
   testMatch: ["**/*.test.ts"],
   transform: {
     "^.+\\.ts$": [
