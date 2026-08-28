@@ -5,6 +5,7 @@ import {
   SwapRouteSelector,
   SwapRouteSteps
 } from "@wireio/cluster-tool/tools/all"
+import { SlugName, type SysioContracts } from "@wireio/sdk-core"
 
 describe("SwapRouteSteps", () => {
   const routes = SwapRouteCatalog.fromReserveRegistrations(
@@ -22,6 +23,24 @@ describe("SwapRouteSteps", () => {
     expect(SwapRouteSteps.sourceRequestIdOutputKey(nativeRoute.id).name).toBe(
       "swapRoute.eth-to-sol.sourceRequestId"
     )
+  })
+
+  it("decodes external source ids as big-endian", () => {
+    expect(
+      SwapRouteSteps.decodeUwreqSourceRequestId({
+        src_chain_code: { value: SlugName.from("ETHEREUM") },
+        source_tx_id: "000000000000002a"
+      } as SysioContracts.SysioUwritUwRequestTType)
+    ).toBe(42n)
+  })
+
+  it("decodes depot-origin WIRE source ids as little-endian", () => {
+    expect(
+      SwapRouteSteps.decodeUwreqSourceRequestId({
+        src_chain_code: { value: SlugName.from("WIRE") },
+        source_tx_id: "0700000000000080"
+      } as SysioContracts.SysioUwritUwRequestTType)
+    ).toBe((1n << 63n) | 7n)
   })
 
   it("builds an ERC-20 approval Step with exact route and amount", () => {

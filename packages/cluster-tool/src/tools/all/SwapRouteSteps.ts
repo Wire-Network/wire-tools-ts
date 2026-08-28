@@ -1,7 +1,7 @@
 import Assert from "node:assert"
 
 import { PublicKey } from "@solana/web3.js"
-import { SysioContracts } from "@wireio/sdk-core"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
 import { ethers } from "ethers"
 import { match } from "ts-pattern"
 
@@ -16,6 +16,7 @@ import { swapUserOutputKey } from "../../orchestration/outputs/SwapUserOutput.js
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { Report } from "../../report/Report.js"
 import { contractView, resolveLatestNonce } from "../../utils/ethereumUtils.js"
+import { slugValue } from "../../utils/slugUtils.js"
 import {
   EthereumCollateralTool,
   type Erc20ApprovableContract
@@ -92,6 +93,26 @@ export namespace SwapRouteSteps {
       `swapRoute.${routeId}.sourceRequestId`,
       `${routeId} protocol source request id`
     )
+  }
+
+  /**
+   * Decode a depot UWREQ's source transaction id into the protocol uint64 id.
+   * External outposts encode it big-endian; depot-origin WIRE requests retain
+   * the chain's little-endian uint64 byte representation.
+   *
+   * @param row - Typed UWREQ row.
+   * @returns Canonical protocol source request id.
+   */
+  export function decodeUwreqSourceRequestId(
+    row: SysioContracts.SysioUwritUwRequestTType
+  ): bigint {
+    const hex = row.source_tx_id.replace(/^0x/, "")
+    Assert.match(hex, /^(?:[0-9a-fA-F]{2})+$/, "UWREQ source_tx_id must be hex")
+    const bytes = [...Buffer.from(hex, "hex")]
+    if (slugValue(row.src_chain_code) === SlugName.from("WIRE")) {
+      bytes.reverse()
+    }
+    return bytes.reduce((value, byte) => (value << 8n) | BigInt(byte), 0n)
   }
 
   /**
