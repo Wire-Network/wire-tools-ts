@@ -335,7 +335,7 @@ export namespace DclaimContractSteps {
 
   async function readPendingImportSeedJournal(
     journalPath: string
-  ): Promise<PendingImportSeedJournal | null> {
+  ): Promise<PendingImportSeedJournal> {
     try {
       return PendingImportSeedJournalSchema.parse(
         JSON.parse(await Fs.readFile(journalPath, "utf8"))
@@ -378,12 +378,17 @@ export namespace DclaimContractSteps {
       await Fs.rename(temporaryPath, journalPath)
       await syncParentDirectory(journalPath)
       return boundedJournal
-    } finally {
+    } catch (error) {
       try {
         await Fs.unlink(temporaryPath)
-      } catch (error) {
-        if (nodeErrorCode(error) !== "ENOENT") throw error
+      } catch (cleanupError) {
+        if (nodeErrorCode(cleanupError) !== "ENOENT") {
+          ctx.log.warn(
+            `Failed to remove temporary importseed journal ${temporaryPath}: ${String(cleanupError)}`
+          )
+        }
       }
+      throw error
     }
   }
 
@@ -457,7 +462,7 @@ export namespace DclaimContractSteps {
     return milliseconds
   }
 
-  function nodeErrorCode(error: unknown): string | null {
+  function nodeErrorCode(error: unknown): string {
     return typeof error === "object" && error != null && "code" in error
       ? String(error.code)
       : null

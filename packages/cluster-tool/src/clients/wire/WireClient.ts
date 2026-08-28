@@ -37,14 +37,14 @@ const { SysioContractName, SysioContractDefinitions } = SysioContracts
 type SysioContractName = SysioContracts.SysioContractName
 type SysioContractMapping = SysioContracts.SysioContractMapping
 
-interface ClioTransactionAction<Action extends {}> {
+interface ClioTransactionAction<Action extends object> {
   readonly account: string
   readonly name: string
   readonly authorization: PermissionLevelType[]
   readonly data: Action
 }
 
-interface ClioTransactionBody<Action extends {}> {
+interface ClioTransactionBody<Action extends object> {
   readonly actions: ClioTransactionAction<Action>[]
 }
 
@@ -236,7 +236,7 @@ export class WireClient {
    * @param options - Invocation finality and authorization options.
    * @returns The single transaction submission response.
    */
-  async invokeOnce<Action extends {}>(
+  async invokeOnce<Action extends object>(
     account: string,
     action: string,
     data: Action,
@@ -337,7 +337,7 @@ export class WireClient {
    * @param options - Invocation finality and authorization options.
    * @returns The single transaction submission response.
    */
-  async invokeViaFileOnce<Action extends {}>(
+  async invokeViaFileOnce<Action extends object>(
     account: string,
     action: string,
     data: Action,
@@ -357,7 +357,7 @@ export class WireClient {
     return this.withFinalityOnce(label, send, options.finality)
   }
 
-  private async sendViaFile<Action extends {}>(
+  private async sendViaFile<Action extends object>(
     body: ClioTransactionBody<Action>,
     send: (file: string) => Promise<API.v1.SendTransactionResponse>
   ): Promise<API.v1.SendTransactionResponse> {

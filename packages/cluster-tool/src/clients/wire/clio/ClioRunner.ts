@@ -111,7 +111,7 @@ export class ClioRunner {
    * @param options - JSON parsing and recording options.
    * @returns The parsed response without transport retries.
    */
-  runOnce<T extends {}>(
+  runOnce<T extends object>(
     args: string[],
     options: ClioRunOptionsJson<T>
   ): Promise<T>

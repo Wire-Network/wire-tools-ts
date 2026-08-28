@@ -13,6 +13,11 @@ import {
 import { Report } from "@wireio/cluster-tool/report"
 import { ChainKind } from "@wireio/opp-typescript-models"
 
+interface DclaimCredit {
+  readonly native_address: string
+  readonly wire_atomic: string
+}
+
 describe("Steps.contracts.sysio.dclaim", () => {
   let dataPath: string
 
@@ -40,7 +45,7 @@ describe("Steps.contracts.sysio.dclaim", () => {
   }
   const payloadSha256 = (
     chain: ChainKind,
-    credits: { native_address: string; wire_atomic: string }[]
+    credits: DclaimCredit[]
   ) =>
     Crypto.createHash("sha256")
       .update(JSON.stringify({ chain, credits }))
