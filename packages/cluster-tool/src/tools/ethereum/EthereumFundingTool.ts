@@ -24,6 +24,7 @@ import {
   type ClusterBuildStepOptions
 } from "../../orchestration/ClusterBuildStep.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
+import { swapUserOutputKey } from "../../orchestration/outputs/SwapUserOutput.js"
 import { Report } from "../../report/Report.js"
 import { contractView, resolveLatestNonce } from "../../utils/ethereumUtils.js"
 import { ethereumSigner } from "../../utils/keyPairUtils.js"
@@ -297,5 +298,77 @@ export namespace EthereumFundingTool {
     const current = await token.balanceOf(signer.address)
     if (current >= input.amount) return
     await mintMockErc20ToUser(token, signer.address, input.amount - current)
+  }
+
+  /** Input for one mock-ERC-20 top-up to the shared swap user. */
+  export interface MintErc20ToSwapUserInput extends StepInput {
+    readonly kind: "EthereumFundingTool.MintErc20ToSwapUserInput"
+    readonly tokenName: string
+    readonly amount: bigint
+  }
+
+  /**
+   * Plan one mock-ERC-20 top-up to the shared swap user.
+   *
+   * @param actor - Narrative subject.
+   * @param name - Report step name.
+   * @param description - Report step description.
+   * @param options - Step tuning.
+   * @param tokenName - Mock token artifact name.
+   * @param amount - Desired swap-user balance floor in token base units.
+   * @returns Swap-user mint Step.
+   */
+  export function planErc20MintToSwapUser<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    tokenName: string,
+    amount: bigint
+  ): ClusterBuildStep<C, MintErc20ToSwapUserInput> {
+    return ClusterBuildStep.create<C, MintErc20ToSwapUserInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "EthereumFundingTool.MintErc20ToSwapUserInput",
+        tokenName,
+        amount
+      },
+      runErc20MintToSwapUser
+    )
+  }
+
+  /** Named runner for one mock-ERC-20 mint to the shared swap user. */
+  export async function runErc20MintToSwapUser<C extends ClusterBuildContext>(
+    ctx: C,
+    input: MintErc20ToSwapUserInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    Assert.ok(
+      input.amount > 0n,
+      "EthereumFundingTool.planErc20MintToSwapUser: amount must be positive"
+    )
+    const swapUser = ctx.outputs.assert(swapUserOutputKey()),
+      tokenAddress = EthereumCollateralTool.mockErc20Address(
+        ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
+        input.tokenName
+      ),
+      token = contractView<MintableErc20WithBalance>(
+        tokenAddress,
+        MintWithBalanceAbi,
+        ctx.ethereum.wallet.signer
+      ),
+      current = await token.balanceOf(swapUser.ethereumWallet.address)
+    if (current >= input.amount) return
+    await mintMockErc20ToUser(
+      token,
+      swapUser.ethereumWallet.address,
+      input.amount - current
+    )
   }
 }

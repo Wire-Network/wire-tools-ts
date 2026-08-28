@@ -176,7 +176,9 @@ const WireAsset: SwapRouteAsset = {
   endpoint: SwapRouteEndpoint.WIRE,
   chainCode: SlugName.from("WIRE"),
   tokenCode: SlugName.from("WIRE"),
-  reserveCode: 0,
+  // Outpost request contracts require a non-zero target reserve code even
+  // though the depot-native WIRE endpoint has no reserve row of its own.
+  reserveCode: SlugName.from("PRIMARY"),
   sourcePrecision: 9,
   sourceKind: SwapRouteSourceKind.WIRE
 }
