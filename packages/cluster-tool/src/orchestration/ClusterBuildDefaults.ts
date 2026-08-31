@@ -182,6 +182,7 @@ export namespace ClusterBuildDefaults {
       nodeOwner = cluster.context.keyStore.assertOperator(
         Constants.BOOTSTRAP_NODE_OWNER
       ),
+      bootstrapNodeOwnerEth = AuthExLinkTool.newEthereumIdentity(),
       producers = range(config.producerCount).map(index => producerName(index)),
       batchOperators = range(config.batchOperatorCount).map(index =>
         Constants.batchOperatorLabel(index)
@@ -197,6 +198,20 @@ export namespace ClusterBuildDefaults {
       // outpost deploys and publish the operator-daemon artifacts from the
       // external config instead (verifying the endpoints are reachable).
       isExternalOutpost = config.externalOutposts != null
+    // Keep this inferred/widened payload compatible with both the published
+    // pre-extension SDK type and the upgraded optional-extension SDK type.
+    const bootstrapNodeOwnerRegistration = {
+      owner: Constants.BOOTSTRAP_NODE_OWNER,
+      tier: NodeOwnerTier.T1,
+      eth_pub_key: bootstrapNodeOwnerEth.publicKey,
+      // NOT a free-form payload field: `sysio.roa::nodeownreg` runs
+      // `active_key_matches(owner, wire_pub_key)` and soft-fails the claim
+      // with ACCOUNT_KEY_MISMATCH (a REJECTED audit row, no revert) unless
+      // this key can satisfy the account's `active` authority BY ITSELF —
+      // i.e. it must be exactly the `newnameduser.pubkey` below.
+      wire_pub_key: nodeOwner.wire.publicKey,
+      eth_address: bootstrapNodeOwnerEth.nativeAddress
+    }
 
     // ═══ Cluster Prerequisites — processes, keys, contracts, registry, producers ═══
     const prerequisites = ClusterBuildPhaseGroup.create<C>(
@@ -678,17 +693,7 @@ export namespace ClusterBuildDefaults {
         "register-node-owner",
         `register ${Constants.BOOTSTRAP_NODE_OWNER} at tier 1`,
         {},
-        {
-          owner: Constants.BOOTSTRAP_NODE_OWNER,
-          tier: NodeOwnerTier.T1,
-          eth_pub_key: AuthExLinkTool.newEthereumPubEm(),
-          // NOT a free-form payload field: `sysio.roa::nodeownreg` runs
-          // `active_key_matches(owner, wire_pub_key)` and soft-fails the claim
-          // with ACCOUNT_KEY_MISMATCH (a REJECTED audit row, no revert) unless
-          // this key can satisfy the account's `active` authority BY ITSELF —
-          // i.e. it must be exactly the `newnameduser.pubkey` above.
-          wire_pub_key: nodeOwner.wire.publicKey
-        }
+        bootstrapNodeOwnerRegistration
       ),
       // nodeownreg SOFT-FAILS claim-payload problems into an audit row; a
       // silently-unregistered owner would otherwise surface much later as a

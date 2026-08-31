@@ -496,11 +496,13 @@ export namespace SlashingScenarioDisputeSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
+    const ethereumIdentity = ethereumKeyPairFromWallet(ethers.Wallet.createRandom())
     await pushNodeOwnerReg(
       ctx.wire,
       input.account,
       input.tier,
-      ethereumKeyPairFromWallet(ethers.Wallet.createRandom()).publicKey,
+      ethereumIdentity.address.slice(2).toLowerCase(),
+      ethereumIdentity.publicKey,
       TestClusterConstants.DEV_K1_PUBLIC_KEY
     )
   }

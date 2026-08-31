@@ -303,13 +303,20 @@ Drives the two `sysio.roa` actions the OPP NFT-claim depot (`sysio.msgch`) would
 24. `sysio.roa::newnameduser({account:"wireno", pubkey:DEV_K1_PUBLIC_KEY, tier:1})` — `[sysio.roa@active]` —
     creates `wireno` (owner = active = `DEV_K1`) with a finite pool-gifted RAM allocation. `tier:1` = T1
     (Validator); `NodeOwnerTier` = `{T1:1, T2:2, T3:3}`.
-25. `sysio.roa::nodeownreg({owner:"wireno", tier:1, eth_pub_key:<PUB_EM_…>, wire_pub_key:DEV_K1_PUBLIC_KEY})` —
+25. `sysio.roa::nodeownreg({owner:"wireno", tier:1, eth_pub_key:<PUB_EM_…>, wire_pub_key:DEV_K1_PUBLIC_KEY, eth_address:<20-byte ETH address>})` —
     `[sysio.roa@active]` — records the depositor ETH key as a `sysio.authex` link (inline `recordlink`) and
     allocates the tier-1 reserve post-bootstrap resource policies are issued from. `eth_pub_key` is a **fresh
-    random `PUB_EM_*` secp256k1 key (cluster throwaway; production: the NFT depositor's key)** — recorded
-    only, never signed with. Claim-payload problems SOFT-FAIL into a `nodeownerreg` audit row rather than
+    random `PUB_EM_*` secp256k1 key (cluster throwaway; production: the NFT depositor's key)**; its
+    corresponding `eth_address` is passed to the inline DClaim sweep. The key is recorded only, never
+    signed with. Claim-payload problems SOFT-FAIL into a `nodeownerreg` audit row rather than
     aborting the transaction, so the tooling follows with a verify that the `nodeowners` row exists
     (surfacing the audit rejection if not).
+
+`eth_address` is a trailing ABI binary extension. Deploying the upgraded contracts therefore does not
+invalidate old four-field `nodeownreg` payloads or old three-field `sysio.authex::recordlink` payloads;
+legacy callers still register/link without performing a pre-link DClaim sweep. Upgraded tooling appends
+the address and enables the sweep. This permits the contract release to precede the libraries and tools
+releases without breaking existing cluster bootstrap and E2E callers.
 
 ## Stage 11 — Outpost deploys, then registry seeding + underwriter config
 The ETH and SOL outposts deploy here (chain-side, not depot actions): anvil starts (instamine), the Ethereum

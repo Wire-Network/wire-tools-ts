@@ -125,9 +125,9 @@ export namespace EmissionsSoakScenarioConstants {
 
   /** 1 s in ms — multiplies epoch counts into ms deadlines. */
   export const MsPerSecond = 1_000
-  /** Epochs budgeted for the `pending_claims` rows after the linkswept sweeps. */
+  /** Epochs budgeted for `pending_claims` after AuthX performs its inline sweeps. */
   export const PendingClaimsEpochBudget = 3
-  /** Deadline for `pending_claims` rows to land after the linkswept sweeps —
+  /** Deadline for `pending_claims` rows to land after the inline AuthX sweeps —
    *  depot-internal, so extension-inclusive epochs rather than a hop class. */
   export const PendingClaimsTimeoutMs =
     ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
