@@ -6,11 +6,16 @@ import { pollUntil } from "./StepTools.js"
 import { Report } from "../report/Report.js"
 import { StepExtraRecorder } from "../report/tools/StepExtraRecorder.js"
 import type { ClusterBuildContext } from "./ClusterBuildContext.js"
+import { ClusterBuildFailureMode } from "./ClusterBuildFailureMode.js"
+import type { OrchestrationContext } from "./OrchestrationContext.js"
 import {
   ClusterBuildPhaseBase,
   type ClusterBuildParent
 } from "./ClusterBuildPhaseBase.js"
-import { ClusterBuildStep, type ClusterBuildTaskOptions } from "./ClusterBuildStep.js"
+import {
+  ClusterBuildStep,
+  type ClusterBuildTaskOptions
+} from "./ClusterBuildStep.js"
 
 /** Per-phase tuning (extends the shared base). `timeoutMs` is applied to each
  *  step lacking its own. */
@@ -25,6 +30,8 @@ export interface ClusterBuildPhaseOptions extends ClusterBuildTaskOptions {
    * {@link ClusterBuildPhaseGroupOptions.concurrency} for the motivating case.
    */
   concurrency?: number
+  /** Continue executing independent steps after a failed step. */
+  failureMode?: ClusterBuildFailureMode
 }
 
 /**
@@ -32,13 +39,13 @@ export interface ClusterBuildPhaseOptions extends ClusterBuildTaskOptions {
  * {@link ClusterBuildPhase.create} factory (never `new`), generic over the
  * context `C`; the factory self-registers on the owning {@link ClusterBuildParent}
  * (`parent.push(this)`) and adopts its context. Steps run sequentially, or in
- * parallel when `options.parallelize` — a shared {@link AbortController} (linked
- * to the parent `signal`) short-circuits the remainder (sequential) / cancels
- * in-flight siblings (parallel) on the first failure. Steps never throw out of
- * here: each becomes a {@link Report.StepResult}.
+ * parallel when `options.parallelize`. Fail-fast mode short-circuits the
+ * remainder and cancels in-flight siblings on the first failure; collect mode
+ * leaves independent steps running. Steps never throw out of here: each becomes
+ * a {@link Report.StepResult}.
  */
 export class ClusterBuildPhase<
-  C extends ClusterBuildContext = ClusterBuildContext
+  C extends OrchestrationContext = ClusterBuildContext
 > extends ClusterBuildPhaseBase<C> {
   private readonly stepList: ClusterBuildStep.Any<C>[] = []
 
@@ -56,14 +63,19 @@ export class ClusterBuildPhase<
    * (`ClusterBuildPhase.create<MyFlowContext>(parent, …)`); steps infer `C` when
    * added inline. Self-registers on `parent` (the build root or an enclosing group).
    */
-  static create<C extends ClusterBuildContext = ClusterBuildContext>(
+  static create<C extends OrchestrationContext = ClusterBuildContext>(
     parent: ClusterBuildParent<C>,
     name: string,
     description: string,
     steps: ClusterBuildStep.Any<C>[] = [],
     options: ClusterBuildPhaseOptions = {}
   ): ClusterBuildPhase<C> {
-    const phase = new ClusterBuildPhase<C>(parent.context, name, description, options)
+    const phase = new ClusterBuildPhase<C>(
+      parent.context,
+      name,
+      description,
+      options
+    )
     phase.push(...steps)
     parent.push(phase)
     return phase
@@ -87,7 +99,11 @@ export class ClusterBuildPhase<
    * pre-aborted `signal` skips every step.
    */
   async run(signal: AbortSignal): Promise<Report.Node[]> {
-    const builder = new Report.PhaseBuilder(this.name, this.description, Date.now()),
+    const builder = new Report.PhaseBuilder(
+        this.name,
+        this.description,
+        Date.now()
+      ),
       controller = new AbortController(),
       onAbort = () => controller.abort()
     if (signal.aborted) controller.abort()
@@ -100,7 +116,8 @@ export class ClusterBuildPhase<
             step => this.runStep(step, controller),
             {
               concurrency:
-                this.options.concurrency ?? ClusterBuildPhase.UnboundedConcurrency
+                this.options.concurrency ??
+                ClusterBuildPhase.UnboundedConcurrency
             }
           )
           builder.push(...results)
@@ -130,16 +147,21 @@ export class ClusterBuildPhase<
    */
   private async runStep(
     step: ClusterBuildStep.Any<C>,
-    controller: AbortController
+    phaseController: AbortController
   ): Promise<Report.StepResult> {
-    if (controller.signal.aborted) {
+    if (phaseController.signal.aborted) {
       this.context.log.info(
         `↷ Abort signalled by an earlier failure — step "${step.name}" will not be executed (skipped)`
       )
       return Report.StepResult.skipped(step)
     }
 
-    const startedAt = performance.now()
+    const startedAt = performance.now(),
+      stepController = new AbortController(),
+      onPhaseAbort = () => stepController.abort()
+    phaseController.signal.addEventListener("abort", onPhaseAbort, {
+      once: true
+    })
     // One recorder per step: client wrappers record every action/tx/CLI call
     // into it via AsyncLocalStorage, landing in `StepResult.extra`. Parallel
     // steps each get their own async scope, so captures never cross steps.
@@ -153,8 +175,10 @@ export class ClusterBuildPhase<
           // budgets — the flow-wide timing scale applies to BOTH (run
           // 28691422161: deploy-solana crossed its 180s ceiling under a
           // co-running heavy flow while every poll was scaled).
-          scaledTimeoutMs(step.options.timeoutMs ?? this.options.timeoutMs ?? null),
-          controller
+          scaledTimeoutMs(
+            step.options.timeoutMs ?? this.options.timeoutMs ?? null
+          ),
+          stepController
         )
       )
       return Report.StepResult.ok(
@@ -163,7 +187,12 @@ export class ClusterBuildPhase<
         recorder.toExtra() ?? StepExtraRecorder.fallbackExtra(step.description)
       )
     } catch (error) {
-      controller.abort() // first-error: cancel siblings / skip the rest
+      if (
+        (this.options.failureMode ?? ClusterBuildFailureMode.failFast) ===
+        ClusterBuildFailureMode.failFast
+      ) {
+        phaseController.abort()
+      }
       this.context.log.error(
         `✖ ${step.name}: ${error instanceof Error ? error.message : String(error)}`
       )
@@ -173,6 +202,8 @@ export class ClusterBuildPhase<
         error,
         recorder.toExtra() ?? StepExtraRecorder.fallbackExtra(step.description)
       )
+    } finally {
+      phaseController.signal.removeEventListener("abort", onPhaseAbort)
     }
   }
 }
@@ -184,7 +215,9 @@ export class ClusterBuildPhase<
  */
 /** A step/phase ceiling multiplied by the flow-wide timing scale (null passes through). */
 function scaledTimeoutMs(timeoutMs: number | null): number {
-  return timeoutMs != null ? Math.round(timeoutMs * pollUntil.timeoutScale()) : null
+  return timeoutMs != null
+    ? Math.round(timeoutMs * pollUntil.timeoutScale())
+    : null
 }
 
 function runWithTimeout(
