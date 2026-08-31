@@ -34,6 +34,8 @@ export namespace BatchOperatorDisputeConstants {
    * and non-bootstrapped, so the flow fully controls their deliveries.
    */
   export const DisputeOperators = ["dispop.a", "dispop.b", "dispop.c"] as const
+  /** Label of an operator provisioned by the shared dispute scenario. */
+  export type DisputeOperator = (typeof DisputeOperators)[number]
   /** Group SIZE the dispute needs — three divergent deliveries, no majority. */
   export const DisputeOperatorCount = DisputeOperators.length
   /**

@@ -100,7 +100,7 @@ async function verifyCanonicalNotSlashed(
 /** A scheduled operator was administratively removed before contested delivery. */
 async function verifyOperatorTerminated(
   ctx: ClusterBuildContext,
-  operator: string
+  operator: Constants.DisputeOperator
 ): Promise<void> {
   const row = await DisputeSteps.readOperator(ctx, operator)
   Assert.ok(row != null, `operator row missing for ${operator}`)
@@ -134,13 +134,13 @@ export interface BatchOperatorDisputeScenarioOptions {
   /** One-line report description. */
   readonly description: string
   /** ACTIVE scheduled operators that inject the candidate envelopes. */
-  readonly deliveryOperators: readonly string[]
+  readonly deliveryOperators: readonly Constants.DisputeOperator[]
   /** One distinct contested-envelope tag for every delivering operator. */
   readonly candidateTags: readonly string[]
   /** Non-canonical deliverers expected to be slashed after resolution. */
-  readonly losingOperators: readonly string[]
+  readonly losingOperators: readonly Constants.DisputeOperator[]
   /** Scheduled operator to terminate after the three-member schedule is materialized. */
-  readonly terminatedOperator?: string
+  readonly terminatedOperator?: Constants.DisputeOperator
 }
 
 /**
@@ -221,6 +221,19 @@ export class BatchOperatorDisputeScenario extends FlowScenario {
       "a dispute flow needs at least two deliveries"
     )
     Assert.strictEqual(
+      new Set(deliveryOperators).size,
+      candidateCount,
+      "delivery operators must be distinct"
+    )
+    Assert.ok(
+      deliveryOperators.every(operator =>
+        Constants.DisputeOperators.some(
+          provisionedOperator => provisionedOperator === operator
+        )
+      ),
+      "every delivering operator must belong to the provisioned dispute roster"
+    )
+    Assert.strictEqual(
       candidateTags.length,
       candidateCount,
       "every delivering operator needs exactly one candidate tag"
@@ -233,6 +246,11 @@ export class BatchOperatorDisputeScenario extends FlowScenario {
     Assert.ok(
       deliveryOperators.includes(Constants.CanonicalOperator),
       `the canonical deliverer ${Constants.CanonicalOperator} must participate`
+    )
+    Assert.strictEqual(
+      new Set(losingOperators).size,
+      losingOperators.length,
+      "slashing targets must be distinct"
     )
     Assert.ok(
       losingOperators.every(operator => deliveryOperators.includes(operator)),

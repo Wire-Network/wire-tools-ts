@@ -217,6 +217,44 @@ describe("BatchOperatorDisputeScenario", () => {
     expect(disputeWait?.input).toMatchObject({ expectedCandidateCount: 3 })
   })
 
+  it("rejects a delivery operator outside the provisioned dispute roster", () => {
+    const options = {
+      ...TerminalTieOptions,
+      deliveryOperators: ["dispop.a", "ghost"],
+      losingOperators: []
+    } as const
+
+    expect(() => {
+      // @ts-expect-error Exercise runtime validation for untyped JavaScript callers.
+      new TestBatchOperatorDisputeScenario(options).plan(newBuild())
+    }).toThrow(
+      "every delivering operator must belong to the provisioned dispute roster"
+    )
+  })
+
+  it("rejects duplicate delivery operators", () => {
+    const options = {
+      ...TerminalTieOptions,
+      deliveryOperators: ["dispop.a", "dispop.a"],
+      losingOperators: []
+    } satisfies BatchOperatorDisputeScenarioOptions
+
+    expect(() =>
+      new TestBatchOperatorDisputeScenario(options).plan(newBuild())
+    ).toThrow("delivery operators must be distinct")
+  })
+
+  it("rejects duplicate slashing targets", () => {
+    const options = {
+      ...ThreeWayOptions,
+      losingOperators: ["dispop.b", "dispop.b"]
+    } satisfies BatchOperatorDisputeScenarioOptions
+
+    expect(() =>
+      new TestBatchOperatorDisputeScenario(options).plan(newBuild())
+    ).toThrow("slashing targets must be distinct")
+  })
+
   it("rejects a terminal-tie run if epochcfg no longer retains three operators", async () => {
     const step = configuredGroupSizeStep()
     const signal = new AbortController().signal
