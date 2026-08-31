@@ -12,8 +12,8 @@ import { Report } from "../report/Report.js"
 import { WireOperatorProvisioningTool } from "../tools/wire/WireOperatorProvisioningTool.js"
 import { matchesProtoEnum } from "../utils/predicateUtils.js"
 import { FlowScenario } from "./FlowScenario.js"
-import { SlashingScenarioConstants as Constants } from "./SlashingScenarioConstants.js"
-import { SlashingScenarioDisputeSteps as DisputeSteps } from "./steps/index.js"
+import { BatchOperatorDisputeConstants as Constants } from "./BatchOperatorDisputeConstants.js"
+import { BatchOperatorDisputeSteps as DisputeSteps } from "./steps/index.js"
 
 const { SysioContractName, SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report

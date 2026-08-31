@@ -1,6 +1,6 @@
 import {
   BatchOperatorDisputeScenario,
-  SlashingScenarioConstants as Constants,
+  BatchOperatorDisputeConstants as Constants,
   type BatchOperatorDisputeScenarioOptions
 } from "@wireio/cluster-tool"
 

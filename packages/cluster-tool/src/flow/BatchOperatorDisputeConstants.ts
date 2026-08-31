@@ -9,7 +9,7 @@ import { ProtocolTiming } from "../Constants.js"
  * vote the canonical checksum, and the non-canonical deliverers are slashed.
  * Every poll deadline derives from the epoch duration so the flow scales with it.
  */
-export namespace SlashingScenarioConstants {
+export namespace BatchOperatorDisputeConstants {
   /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
   export const EpochDurationSec = 60
   /** 1 s in ms — multiplies epoch counts into ms deadlines. */
@@ -49,7 +49,7 @@ export namespace SlashingScenarioConstants {
    * the SBP-less dispute operators ACTIVE it re-materializes the rotation with a
    * fresh `schbatchgps`, which sorts non-bootstrapped first — so the three
    * `dispop.*` fill the sole group and these fall outside it, exactly as the
-   * hand-off in `SlashingScenario.plan` describes. They keep the network
+   * hand-off in `BatchOperatorDisputeScenario.plan` describes. They keep the network
    * relaying until that hand-off.
    *
    * (This was 1 while the shape was DERIVED from the roster — one operator then

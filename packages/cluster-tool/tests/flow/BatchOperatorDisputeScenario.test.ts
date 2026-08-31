@@ -1,9 +1,9 @@
 import {
+  BatchOperatorDisputeConstants as Constants,
   BatchOperatorDisputeScenario,
-  SlashingScenarioConstants as Constants,
+  BatchOperatorDisputeSteps as DisputeSteps,
   type BatchOperatorDisputeScenarioOptions
 } from "@wireio/cluster-tool/flow"
-import { SlashingScenarioDisputeSteps as DisputeSteps } from "@wireio/cluster-tool/flow/steps"
 import {
   ClusterBuild,
   type ClusterBuildContext,
@@ -161,7 +161,7 @@ function awaitDisputeInput(
   expectedCandidateCount: number
 ): DisputeSteps.AwaitDisputeOpenedInput {
   return {
-    kind: "SlashingScenarioDisputeSteps.AwaitDisputeOpenedInput",
+    kind: "BatchOperatorDisputeSteps.AwaitDisputeOpenedInput",
     expectedCandidateCount
   }
 }

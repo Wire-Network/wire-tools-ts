@@ -25,7 +25,7 @@ import {
   InboundTipReader,
   type OutpostInboundTips
 } from "../InboundTipReader.js"
-import { SlashingScenarioConstants as Constants } from "../SlashingScenarioConstants.js"
+import { BatchOperatorDisputeConstants as Constants } from "../BatchOperatorDisputeConstants.js"
 
 const { SysioContractName, SysioChalgDisputestatus, SysioOpregOperatorstatus } =
   SysioContracts
@@ -47,12 +47,12 @@ const UtcZuluSuffix = "Z"
  * (the contested epoch, the open dispute's id + canonical checksum) ride
  * `ctx.outputs` via the typed keys below.
  */
-export namespace SlashingScenarioDisputeSteps {
+export namespace BatchOperatorDisputeSteps {
   // ── Cross-step output keys ────────────────────────────────────────────────
 
   /** The frozen, dispute-operators-owned epoch (boundary passed) hosting the divergent split. */
   export const ContestedEpochKey = outputKey<number>(
-    "SlashingScenario.contestedEpoch",
+    "BatchOperatorDisputeScenario.contestedEpoch",
     "the frozen dispute-operators-owned epoch whose boundary has passed"
   )
 
@@ -66,7 +66,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** The open dispute's id + the canonical candidate checksum. */
   export const DisputeResolutionKey = outputKey<DisputeResolutionTarget>(
-    "SlashingScenario.disputeResolution",
+    "BatchOperatorDisputeScenario.disputeResolution",
     "the open dispute's id + the canonical candidate checksum the Tier-1 electorate votes for"
   )
 
@@ -155,7 +155,7 @@ export namespace SlashingScenarioDisputeSteps {
    * Whether the ACTIVE batch-operator group is exactly the dispute operators.
    *
    * @param ctx - The build context.
-   * @returns `true` when the ACTIVE group matches {@link SlashingScenarioConstants.DisputeOperators}.
+   * @returns `true` when the ACTIVE group matches {@link BatchOperatorDisputeConstants.DisputeOperators}.
    */
   export async function disputeOperatorsOwnGroup(
     ctx: ClusterBuildContext
@@ -291,7 +291,9 @@ export namespace SlashingScenarioDisputeSteps {
           }
         )
     } catch (error) {
-      log.warn(`[slashing] chkcons crank transient: ${errorMessage(error)}`)
+      log.warn(
+        `[batch-operator-dispute] chkcons crank transient: ${errorMessage(error)}`
+      )
     }
   }
 
@@ -384,7 +386,7 @@ export namespace SlashingScenarioDisputeSteps {
     )
     const epoch = await currentEpoch(ctx)
     log.info(
-      `[slashing] settled on frozen dispute-operators-owned epoch ${epoch}`
+      `[batch-operator-dispute] settled on frozen dispute-operators-owned epoch ${epoch}`
     )
     return epoch
   }
@@ -393,7 +395,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** Input for {@link planNewnameduser}. */
   export interface NewnameduserInput extends StepInput {
-    readonly kind: "SlashingScenarioDisputeSteps.NewnameduserInput"
+    readonly kind: "BatchOperatorDisputeSteps.NewnameduserInput"
     readonly account: string
     readonly tier: NodeOwnerTier
   }
@@ -426,7 +428,7 @@ export namespace SlashingScenarioDisputeSteps {
       name,
       description,
       options,
-      { kind: "SlashingScenarioDisputeSteps.NewnameduserInput", account, tier },
+      { kind: "BatchOperatorDisputeSteps.NewnameduserInput", account, tier },
       runNewnameduser
     )
   }
@@ -450,7 +452,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** Input for {@link planNodeownreg}. */
   export interface NodeownregInput extends StepInput {
-    readonly kind: "SlashingScenarioDisputeSteps.NodeownregInput"
+    readonly kind: "BatchOperatorDisputeSteps.NodeownregInput"
     readonly account: string
     readonly tier: NodeOwnerTier
   }
@@ -484,7 +486,7 @@ export namespace SlashingScenarioDisputeSteps {
       name,
       description,
       options,
-      { kind: "SlashingScenarioDisputeSteps.NodeownregInput", account, tier },
+      { kind: "BatchOperatorDisputeSteps.NodeownregInput", account, tier },
       runNodeownreg
     )
   }
@@ -509,7 +511,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** Input for {@link planProcessbatch} — the operator's `label` handle + account-less action data. */
   export interface ProcessbatchInput extends StepInput {
-    readonly kind: "SlashingScenarioDisputeSteps.ProcessbatchInput"
+    readonly kind: "BatchOperatorDisputeSteps.ProcessbatchInput"
     readonly label: string
     readonly data: Omit<SysioContracts.SysioOpregProcessbatchAction, "account">
   }
@@ -548,7 +550,7 @@ export namespace SlashingScenarioDisputeSteps {
       name,
       description,
       options,
-      { kind: "SlashingScenarioDisputeSteps.ProcessbatchInput", label, data },
+      { kind: "BatchOperatorDisputeSteps.ProcessbatchInput", label, data },
       runProcessbatch
     )
   }
@@ -572,7 +574,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** Input for {@link planDeliver}. */
   export interface DeliverInput extends StepInput {
-    readonly kind: "SlashingScenarioDisputeSteps.DeliverInput"
+    readonly kind: "BatchOperatorDisputeSteps.DeliverInput"
     readonly batchOperatorLabel: string
     readonly chainCode: number
     readonly tag: string
@@ -612,7 +614,7 @@ export namespace SlashingScenarioDisputeSteps {
       description,
       options,
       {
-        kind: "SlashingScenarioDisputeSteps.DeliverInput",
+        kind: "BatchOperatorDisputeSteps.DeliverInput",
         batchOperatorLabel,
         chainCode,
         tag
@@ -668,7 +670,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** Input for {@link planVotedispute}. */
   export interface VotedisputeInput extends StepInput {
-    readonly kind: "SlashingScenarioDisputeSteps.VotedisputeInput"
+    readonly kind: "BatchOperatorDisputeSteps.VotedisputeInput"
     readonly owner: string
   }
 
@@ -698,7 +700,7 @@ export namespace SlashingScenarioDisputeSteps {
       name,
       description,
       options,
-      { kind: "SlashingScenarioDisputeSteps.VotedisputeInput", owner },
+      { kind: "BatchOperatorDisputeSteps.VotedisputeInput", owner },
       runVotedispute
     )
   }
@@ -766,7 +768,7 @@ export namespace SlashingScenarioDisputeSteps {
     await waitPastEpochBoundary(ctx)
     const epoch = await currentEpoch(ctx)
     ctx.outputs.set(ContestedEpochKey, epoch)
-    log.info(`[slashing] contested epoch staged: ${epoch}`)
+    log.info(`[batch-operator-dispute] contested epoch staged: ${epoch}`)
   }
 
   // ── Step: await the dispute opening (poll + capture the resolution target) ─
@@ -799,7 +801,7 @@ export namespace SlashingScenarioDisputeSteps {
       description,
       options,
       {
-        kind: "SlashingScenarioDisputeSteps.AwaitDisputeOpenedInput",
+        kind: "BatchOperatorDisputeSteps.AwaitDisputeOpenedInput",
         expectedCandidateCount
       },
       runAwaitDisputeOpened
@@ -808,7 +810,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** Input for {@link planAwaitDisputeOpened}. */
   export interface AwaitDisputeOpenedInput extends StepInput {
-    readonly kind: "SlashingScenarioDisputeSteps.AwaitDisputeOpenedInput"
+    readonly kind: "BatchOperatorDisputeSteps.AwaitDisputeOpenedInput"
     /** Number of distinct live delivery candidates expected on the open dispute. */
     readonly expectedCandidateCount: number
   }
@@ -849,7 +851,7 @@ export namespace SlashingScenarioDisputeSteps {
       canonicalChecksum
     })
     log.info(
-      `[slashing] dispute ${dispute.id} open for epoch ${epoch} — canonical checksum ${canonicalChecksum}`
+      `[batch-operator-dispute] dispute ${dispute.id} open for epoch ${epoch} — canonical checksum ${canonicalChecksum}`
     )
   }
 
@@ -918,7 +920,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** Input for {@link planAwaitOperatorSlashed}. */
   export interface AwaitOperatorSlashedInput extends StepInput {
-    readonly kind: "SlashingScenarioDisputeSteps.AwaitOperatorSlashedInput"
+    readonly kind: "BatchOperatorDisputeSteps.AwaitOperatorSlashedInput"
     readonly label: string
   }
 
@@ -951,7 +953,7 @@ export namespace SlashingScenarioDisputeSteps {
       description,
       options,
       {
-        kind: "SlashingScenarioDisputeSteps.AwaitOperatorSlashedInput",
+        kind: "BatchOperatorDisputeSteps.AwaitOperatorSlashedInput",
         label
       },
       runAwaitOperatorSlashed
@@ -988,7 +990,7 @@ export namespace SlashingScenarioDisputeSteps {
 
   /** Input for {@link planAwaitOperatorActive}. */
   export interface AwaitOperatorActiveInput extends StepInput {
-    readonly kind: "SlashingScenarioDisputeSteps.AwaitOperatorActiveInput"
+    readonly kind: "BatchOperatorDisputeSteps.AwaitOperatorActiveInput"
     readonly label: string
   }
 
@@ -1018,7 +1020,7 @@ export namespace SlashingScenarioDisputeSteps {
       description,
       options,
       {
-        kind: "SlashingScenarioDisputeSteps.AwaitOperatorActiveInput",
+        kind: "BatchOperatorDisputeSteps.AwaitOperatorActiveInput",
         label
       },
       runAwaitOperatorActive

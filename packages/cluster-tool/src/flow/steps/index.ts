@@ -1,1 +1,1 @@
-export * from "./SlashingScenarioDisputeSteps.js"
+export * from "./BatchOperatorDisputeSteps.js"
