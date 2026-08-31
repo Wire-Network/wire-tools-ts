@@ -11,9 +11,22 @@ name: "Tag Release"
 # No inputs: the release version is whatever master currently carries. Its suffix
 # IS the channel: no suffix => stable => npm dist-tag `latest`; a `-<preid>.N`
 # suffix => that preid is the dist-tag (e.g. dev, rc). The two human gates
-# (dispatch + Environment approval) are the safety, not a typed version.
+# (the release-PR merge + the release Environment's required reviewers) are the
+# safety, not a typed version.
 
 on:
+  # Auto-triggered when a release/prep-v* PR merges to master — the human
+  # merge is gate 1; the `release` Environment's required reviewers are gate 2
+  # (an org-configuration action of this change — the environment ships with
+  # no protection rules). The merge must be performed by a HUMAN: an
+  # auto-merge or any GITHUB_TOKEN-driven merge is suppressed by GitHub and
+  # fires no run — use workflow_dispatch (the standing manual/recovery path)
+  # if that ever changes. `pull_request closed` fires for every PR; the
+  # job-level `if` below skips everything but merged, same-repo release-prep
+  # PRs (skipped runs on ordinary merges are cosmetic noise).
+  pull_request:
+    types: [closed]
+    branches: [master]
   workflow_dispatch: {}
 
 permissions:
@@ -30,6 +43,14 @@ concurrency:
 jobs:
   tag:
     name: Tag master and publish
+    # Manual dispatch, or a MERGED, SAME-REPO release-prep PR — everything
+    # else (unmerged closes, non-release branches, fork PRs whose head happens
+    # to be named release/prep-v*) skips.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release/prep-v'))
     runs-on: ubuntu-latest
     # Required reviewers on this Environment are gate 2 — nothing below runs until
     # a human approves the deployment.

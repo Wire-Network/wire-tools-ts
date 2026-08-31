@@ -11,8 +11,8 @@
   },
   "dependencies": {
     "@wireio/cluster-tool": "workspace:*",
-    "@wireio/opp-typescript-models": "^1.0.26",
-    "@wireio/sdk-core": "^1.0.22"
+    "@wireio/opp-typescript-models": "^1.0.48",
+    "@wireio/sdk-core": "^1.0.88"
   },
   "devDependencies": {
     "@types/node": "25.5.0"
