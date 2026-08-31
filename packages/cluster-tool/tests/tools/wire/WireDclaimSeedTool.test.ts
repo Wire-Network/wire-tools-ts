@@ -18,6 +18,7 @@ import {
   batchImportSeedCredits,
   convertImportSeed,
   convertImportSeedCredits,
+  convertValidatedImportSeedCredits,
   mergeImportSeedCredits,
   serializeBatchForClio,
   validateIndexBalanceDump,
@@ -191,7 +192,8 @@ describe("WireDclaimSeedTool", () => {
           ],
           futureTopLevel: { retained: true }
         },
-        parsed = validateIndexBalanceDump(value, {
+        parsed = IndexBalanceDumpSchema.parse(value),
+        validated = validateIndexBalanceDump(value, {
           chain: ChainKind.EVM,
           source: "/inputs/ethereum.json"
         })
@@ -199,7 +201,23 @@ describe("WireDclaimSeedTool", () => {
       expect((parsed as Record<string, unknown>).futureTopLevel).toEqual({
         retained: true
       })
-      expect(IndexBalanceDumpSchema.safeParse(parsed).success).toBe(true)
+      expect(validated.context).toEqual({
+        chain: ChainKind.EVM,
+        source: "/inputs/ethereum.json"
+      })
+      expect(Object.isFrozen(validated)).toBe(true)
+      expect(Object.isFrozen(validated.context)).toBe(true)
+      expect(convertValidatedImportSeedCredits(validated).credits).toEqual([
+        { native_address: "11".repeat(20), wire_atomic: 1n }
+      ])
+      expect(() =>
+        convertValidatedImportSeedCredits({
+          context: {
+            chain: ChainKind.SVM,
+            source: "/inputs/ethereum.json"
+          }
+        } as never)
+      ).toThrow(/requires validateIndexBalanceDump output/)
       expect(ImportSeedChainKindSchema.safeParse(ChainKind.EVM).success).toBe(
         true
       )
@@ -564,10 +582,10 @@ describe("WireDclaimSeedTool", () => {
       expect(() => JSON.stringify(serialized)).not.toThrow()
     })
 
-    it("serializes an empty batch to an empty credits array", () => {
-      expect(
+    it("rejects an empty batch before serialization", () => {
+      expect(() =>
         serializeBatchForClio({ chain: ChainKind.EVM, credits: [] })
-      ).toEqual({ chain: ChainKind.EVM, credits: [] })
+      ).toThrow()
     })
   })
 

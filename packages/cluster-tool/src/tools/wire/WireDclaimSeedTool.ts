@@ -36,6 +36,7 @@
 // 500KB transaction envelope.
 
 import { PublicKey } from "@solana/web3.js"
+import { match } from "ts-pattern"
 import { z } from "zod"
 
 import { ChainKind } from "@wireio/opp-typescript-models"
@@ -166,7 +167,7 @@ export const ImportSeedCreditSetSchema = z
     credits: z.array(ImportSeedCreditSchema)
   })
   .superRefine((creditSet, context) => {
-    const expectedHexLength = nativeAddressByteLength(creditSet.chain) * 2
+    const expectedHexLength = CHAIN_CONFIG[creditSet.chain].addrLen * 2
     creditSet.credits.forEach((credit, index) => {
       if (credit.native_address.length !== expectedHexLength) {
         context.addIssue({
@@ -383,6 +384,26 @@ export interface IndexBalanceDumpValidationContext {
   source: string
 }
 
+const ValidatedIndexBalanceDumpBrand = Symbol("ValidatedIndexBalanceDump")
+
+/** Opaque proof that an indexer dump was validated for one chain and source. */
+export interface ValidatedIndexBalanceDump {
+  /** Chain and provenance used for address and balance-limit validation. */
+  readonly context: Readonly<IndexBalanceDumpValidationContext>
+  /** Private proof that this value came from {@link validateIndexBalanceDump}. */
+  readonly [ValidatedIndexBalanceDumpBrand]: true
+}
+
+interface ValidatedIndexBalanceDumpState {
+  data: IndexBalanceDump
+  context: IndexBalanceDumpValidationContext
+}
+
+const ValidatedIndexBalanceDumpStates = new WeakMap<
+  ValidatedIndexBalanceDump,
+  ValidatedIndexBalanceDumpState
+>()
+
 /**
  * Validate an untrusted indexer balance dump without performing file I/O.
  *
@@ -391,12 +412,12 @@ export interface IndexBalanceDumpValidationContext {
  *
  * @param value - Untrusted parsed JSON value.
  * @param context - Native chain and provenance label.
- * @returns The schema-validated indexer dump.
+ * @returns The schema-validated dump coupled to its chain and provenance.
  */
 export function validateIndexBalanceDump(
   value: unknown,
   context: IndexBalanceDumpValidationContext
-): IndexBalanceDump {
+): ValidatedIndexBalanceDump {
   const validatedContext = {
       ...context,
       chain: ImportSeedChainKindSchema.parse(context.chain)
@@ -419,9 +440,16 @@ export function validateIndexBalanceDump(
       }
     )
   }
-  validateDumpAddresses(parsed.data, validatedContext)
-  validateDumpCreditMaximum(parsed.data, validatedContext)
-  return parsed.data
+  validateDumpRows(parsed.data, validatedContext)
+  const validated: ValidatedIndexBalanceDump = Object.freeze({
+    context: Object.freeze(validatedContext),
+    [ValidatedIndexBalanceDumpBrand]: true as const
+  })
+  ValidatedIndexBalanceDumpStates.set(validated, {
+    data: parsed.data,
+    context: validatedContext
+  })
+  return validated
 }
 
 /**
@@ -436,16 +464,41 @@ export function convertImportSeedCredits(
   data: IndexBalanceDump,
   chain: ImportSeedChainKind
 ): ImportSeedConversion {
-  const cfg = CHAIN_CONFIG[chain]
+  const validated = validateIndexBalanceDump(data, {
+    chain,
+    source: "in-memory indexer balance dump"
+  })
+  return convertValidatedImportSeedCredits(validated)
+}
+
+/**
+ * Convert an already-validated indexer dump without repeating schema,
+ * provenance-aware address, or balance-limit validation.
+ *
+ * Callers that need errors to retain a real file or endpoint source should
+ * first call {@link validateIndexBalanceDump}, then pass its return value here.
+ *
+ * @param validated - Dump, chain, and source returned by
+ *   {@link validateIndexBalanceDump}.
+ * @returns Credits plus conversion statistics.
+ */
+export function convertValidatedImportSeedCredits(
+  validated: ValidatedIndexBalanceDump
+): ImportSeedConversion {
+  const state = ValidatedIndexBalanceDumpStates.get(validated)
+  if (state == null) {
+    throw new Error(
+      "convertValidatedImportSeedCredits requires validateIndexBalanceDump output"
+    )
+  }
+  const { data, context } = state,
+    { chain } = context,
+    cfg = CHAIN_CONFIG[chain]
   if (!cfg) {
     throw new Error(`unknown chain: ${r(chain)}`)
   }
 
-  const validated = validateIndexBalanceDump(data, {
-      chain,
-      source: "in-memory indexer balance dump"
-    }),
-    accumulator = accumulate(validated, cfg.decoder, cfg.addrLen),
+  const accumulator = accumulate(data, cfg.decoder, cfg.addrLen),
     { credits, droppedDust } = toCredits(accumulator, cfg.divisor),
     totalAtomic = credits.reduce((sum, credit) => sum + credit.wire_atomic, 0n)
   return {
@@ -564,80 +617,66 @@ export function convertImportSeed(
 export function serializeBatchForClio(
   batch: ImportSeedBatch
 ): SysioContracts.SysioDclaimImportseedAction {
+  const validatedBatch = ImportSeedBatchSchema.parse(batch)
   return {
     // proto ChainKind → the dclaim ABI's own enum, bridged by VALUE.
-    chain: abiEnumValue(SysioContracts.SysioDclaimChainkind, batch.chain),
-    credits: batch.credits.map(c => ({
+    chain: abiEnumValue(
+      SysioContracts.SysioDclaimChainkind,
+      validatedBatch.chain
+    ),
+    credits: validatedBatch.credits.map(c => ({
       native_address: c.native_address,
       wire_atomic: c.wire_atomic.toString()
     }))
   }
 }
 
-function nativeAddressByteLength(chain: ImportSeedChainKind): number {
-  return chain === ChainKind.EVM
-    ? EthereumNativeAddressByteLength
-    : SolanaNativeAddressByteLength
-}
-
 function chainLabel(chain: ImportSeedChainKind): string {
-  if (chain === ChainKind.EVM) return "Ethereum"
-  if (chain === ChainKind.SVM) return "Solana"
-  return `chain ${chain}`
-}
-
-function validateDumpAddresses(
-  data: IndexBalanceDump,
-  context: IndexBalanceDumpValidationContext
-): void {
-  const config = CHAIN_CONFIG[context.chain]
-  const validateRows = (
-    rows: readonly (IndexPurchaserRow | IndexStakerRow)[],
-    section: IndexBalanceSection
-  ): void => {
-    rows.forEach((row, index) => {
-      try {
-        const bytes = config.decoder(row.address)
-        if (bytes.length !== config.addrLen) {
-          throw new Error(
-            `decoded to ${bytes.length} bytes, expected ${config.addrLen}`
-          )
-        }
-      } catch (error) {
-        throw new NestedError(
-          `${chainLabel(context.chain)} bootstrap data address validation failed`,
-          {
-            cause: error,
-            context: {
-              chain: context.chain,
-              source: context.source,
-              row: index,
-              field: `${section}[${index}].address`
-            }
-          }
-        )
-      }
+  return match(chain)
+    .with(ChainKind.EVM, () => "Ethereum")
+    .with(ChainKind.SVM, () => "Solana")
+    .otherwise(unsupportedChain => {
+      throw new Error(`unknown chain: ${r(unsupportedChain)}`)
     })
-  }
-  validateRows(data.purchasers ?? [], IndexBalanceSection.purchasers)
-  validateRows(data.stakers ?? [], IndexBalanceSection.stakers)
 }
 
-function validateDumpCreditMaximum(
+function validateDumpRows(
   data: IndexBalanceDump,
   context: IndexBalanceDumpValidationContext
 ): void {
   const config = CHAIN_CONFIG[context.chain],
     totals = new Map<string, bigint>()
-  const record = (
+  const validateRow = (
     row: IndexPurchaserRow | IndexStakerRow,
     index: number,
     section: IndexBalanceSection,
     field: IndexBalanceField,
     sourceAmount: bigint
   ): void => {
+    let bytes: Uint8Array
+    try {
+      bytes = config.decoder(row.address)
+      if (bytes.length !== config.addrLen) {
+        throw new Error(
+          `decoded to ${bytes.length} bytes, expected ${config.addrLen}`
+        )
+      }
+    } catch (error) {
+      throw new NestedError(
+        `${chainLabel(context.chain)} bootstrap data address validation failed`,
+        {
+          cause: error,
+          context: {
+            chain: context.chain,
+            source: context.source,
+            row: index,
+            field: `${section}[${index}].address`
+          }
+        }
+      )
+    }
     if (sourceAmount <= 0n) return
-    const address = toHex(config.decoder(row.address)),
+    const address = toHex(bytes),
       sourceTotal = (totals.get(address) ?? 0n) + sourceAmount,
       wireAtomic = sourceTotal / config.divisor
     if (wireAtomic > MaxImportSeedWireAtomic) {
@@ -662,7 +701,7 @@ function validateDumpCreditMaximum(
     totals.set(address, sourceTotal)
   }
   data.purchasers?.forEach((row, index) => {
-    record(
+    validateRow(
       row,
       index,
       IndexBalanceSection.purchasers,
@@ -671,7 +710,7 @@ function validateDumpCreditMaximum(
     )
   })
   data.stakers?.forEach((row, index) => {
-    record(
+    validateRow(
       row,
       index,
       IndexBalanceSection.stakers,

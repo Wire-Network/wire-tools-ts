@@ -41,4 +41,6 @@ export interface DistributionClaimBootstrapOptions {
   additiveCreditSets?: DistributionClaimBootstrapInputCreditSet[]
   /** Optional transaction batch size from 1 through the importer maximum. */
   batchSize?: number
+  /** First global dclaim row id available for the planned batches. Defaults to 1. */
+  firstUnmappedId?: bigint
 }

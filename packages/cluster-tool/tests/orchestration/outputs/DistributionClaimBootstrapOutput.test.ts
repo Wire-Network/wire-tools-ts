@@ -1,12 +1,13 @@
 import {
   DistributionClaimBootstrapBatchSchema,
   DistributionClaimBootstrapCreditSetSchema,
+  DistributionClaimBootstrapResultKey,
   DistributionClaimBootstrapResultSchema,
   DistributionClaimBootstrapSource,
   createDistributionClaimBootstrapPlan,
   distributionClaimBootstrapCredit,
-  hasConfiguredDistributionClaimBootstrapChain,
-  type DistributionClaimBootstrapCreditSet
+  type DistributionClaimBootstrapCreditSet,
+  type DistributionClaimBootstrapInputCreditSet
 } from "@wireio/cluster-tool"
 import { ChainKind } from "@wireio/opp-typescript-models"
 
@@ -48,6 +49,11 @@ describe("DistributionClaimBootstrapOutput", () => {
           chain: ChainKind.EVM,
           credits: [],
           droppedDust: 13n
+        },
+        {
+          chain: ChainKind.SVM,
+          credits: [],
+          droppedDust: 17n
         }
       ],
       batchSize: 2
@@ -71,9 +77,10 @@ describe("DistributionClaimBootstrapOutput", () => {
         DistributionClaimBootstrapSource.additive
       ]
     })
-    expect(result.chains[1].sources).toEqual([
-      DistributionClaimBootstrapSource.fallback
-    ])
+    expect(result.chains[1]).toMatchObject({
+      sources: [DistributionClaimBootstrapSource.fallback],
+      droppedDust: 17n
+    })
   })
 
   it("assigns stable batch indexes and globally consecutive first row ids", () => {
@@ -94,7 +101,8 @@ describe("DistributionClaimBootstrapOutput", () => {
           droppedDust: 0n
         }
       ],
-      batchSize: 2
+      batchSize: 2,
+      firstUnmappedId: 41n
     })
     expect(
       result.chains.flatMap(chain =>
@@ -109,19 +117,19 @@ describe("DistributionClaimBootstrapOutput", () => {
       {
         chain: ChainKind.EVM,
         batchIndex: 0,
-        firstUnmappedId: 1n,
+        firstUnmappedId: 41n,
         creditCount: 2
       },
       {
         chain: ChainKind.EVM,
         batchIndex: 1,
-        firstUnmappedId: 3n,
+        firstUnmappedId: 43n,
         creditCount: 1
       },
       {
         chain: ChainKind.SVM,
         batchIndex: 0,
-        firstUnmappedId: 4n,
+        firstUnmappedId: 44n,
         creditCount: 1
       }
     ])
@@ -132,6 +140,49 @@ describe("DistributionClaimBootstrapOutput", () => {
           DistributionClaimBootstrapBatchSchema.safeParse(batch).success
         ).toBe(true)
       )
+    expect(
+      createDistributionClaimBootstrapPlan({
+        fallbackCreditSets: [
+          {
+            chain: ChainKind.EVM,
+            credits: [{ native_address: "55".repeat(20), wire_atomic: 1n }],
+            droppedDust: 0n
+          }
+        ]
+      }).chains[0].batches[0].firstUnmappedId
+    ).toBe(1n)
+
+    const maxUnmappedId = (1n << 64n) - 1n,
+      boundaryCreditSet: DistributionClaimBootstrapInputCreditSet = {
+        chain: ChainKind.EVM,
+        credits: [{ native_address: "66".repeat(20), wire_atomic: 1n }],
+        droppedDust: 0n
+      }
+    expect(
+      createDistributionClaimBootstrapPlan({
+        fallbackCreditSets: [boundaryCreditSet],
+        firstUnmappedId: maxUnmappedId
+      }).chains[0].batches[0].firstUnmappedId
+    ).toBe(maxUnmappedId)
+    expect(() =>
+      createDistributionClaimBootstrapPlan({
+        fallbackCreditSets: [
+          {
+            ...boundaryCreditSet,
+            credits: [
+              ...boundaryCreditSet.credits,
+              { native_address: "77".repeat(20), wire_atomic: 1n }
+            ]
+          }
+        ],
+        firstUnmappedId: maxUnmappedId
+      })
+    ).toThrow(/uint64/)
+    expect(() =>
+      createDistributionClaimBootstrapPlan({
+        firstUnmappedId: maxUnmappedId + 1n
+      })
+    ).toThrow(/uint64/)
   })
 
   it("provides runtime schemas and final credit lookup", () => {
@@ -157,12 +208,10 @@ describe("DistributionClaimBootstrapOutput", () => {
     expect(
       DistributionClaimBootstrapResultSchema.safeParse(result).success
     ).toBe(true)
-    expect(
-      hasConfiguredDistributionClaimBootstrapChain(
-        { configuredCreditSets: [configuredCreditSet] },
-        ChainKind.EVM
-      )
-    ).toBe(true)
+    expect(DistributionClaimBootstrapResultKey).toEqual({
+      name: "cluster.distributionClaimBootstrapResult",
+      description: "the finalized distribution-claim bootstrap plan"
+    })
     expect(
       distributionClaimBootstrapCredit(result, ChainKind.EVM, "aa".repeat(20))
     ).toBe(2n)
@@ -171,7 +220,7 @@ describe("DistributionClaimBootstrapOutput", () => {
     ).toBe(0n)
   })
 
-  it("keeps no-input and empty-credit bootstraps dormant", () => {
+  it("keeps absent and empty fallback inputs dormant but rejects empty configured data", () => {
     expect(createDistributionClaimBootstrapPlan()).toEqual({ chains: [] })
     expect(
       createDistributionClaimBootstrapPlan({
@@ -184,5 +233,26 @@ describe("DistributionClaimBootstrapOutput", () => {
         ]
       })
     ).toEqual({ chains: [] })
+    expect(() =>
+      createDistributionClaimBootstrapPlan({
+        configuredCreditSets: [
+          {
+            chain: ChainKind.EVM,
+            credits: [],
+            droppedDust: 9n
+          }
+        ],
+        fallbackCreditSets: [
+          {
+            chain: ChainKind.EVM,
+            credits: [{ native_address: "88".repeat(20), wire_atomic: 1n }],
+            droppedDust: 0n
+          }
+        ]
+      })
+    ).toThrow(/configured.*no eligible credits.*chain/)
+    expect(() =>
+      createDistributionClaimBootstrapPlan({ firstUnmappedId: 0n })
+    ).toThrow()
   })
 })

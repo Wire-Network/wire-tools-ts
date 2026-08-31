@@ -13,9 +13,9 @@ import {
   ImportSeedBatchSchema,
   ImportSeedChainKindSchema,
   ImportSeedCreditSetSchema,
-  mergeImportSeedCredits,
-  type ImportSeedChainKind
+  mergeImportSeedCredits
 } from "../../tools/wire/WireDclaimSeedTool.js"
+import { outputKey, type OutputKey } from "../OutputStore.js"
 
 export {
   DistributionClaimBootstrapSource,
@@ -35,11 +35,29 @@ export const DistributionClaimBootstrapCreditSetSchema: z.ZodType<DistributionCl
     droppedDust: z.bigint().nonnegative()
   })
 
+/** Maximum row id representable by the dclaim `uint64` counter. */
+const MaxDclaimUnmappedId = (1n << 64n) - 1n
+/** Runtime validation for an unused global dclaim row id. */
+const DclaimUnmappedIdSchema = z
+  .bigint()
+  .positive()
+  .max(MaxDclaimUnmappedId, "dclaim row id must fit uint64")
+
 /** Runtime schema for one batch with its deterministic global row identity. */
 export const DistributionClaimBootstrapBatchSchema =
   ImportSeedBatchSchema.safeExtend({
     batchIndex: z.number().safe().int().nonnegative(),
-    firstUnmappedId: z.bigint().positive()
+    firstUnmappedId: DclaimUnmappedIdSchema
+  }).superRefine((batch, context) => {
+    const lastUnmappedId =
+      batch.firstUnmappedId + BigInt(batch.credits.length) - 1n
+    if (lastUnmappedId > MaxDclaimUnmappedId) {
+      context.addIssue({
+        code: "custom",
+        path: ["firstUnmappedId"],
+        message: "dclaim batch row ids must fit uint64"
+      })
+    }
   })
 /** One batch with its deterministic index and first global dclaim row id. */
 export type DistributionClaimBootstrapBatch = z.infer<
@@ -69,6 +87,13 @@ export type DistributionClaimBootstrapResult = z.infer<
   typeof DistributionClaimBootstrapResultSchema
 >
 
+/** Typed cross-step handle to the finalized distribution-claim bootstrap plan. */
+export const DistributionClaimBootstrapResultKey: OutputKey<DistributionClaimBootstrapResult> =
+  outputKey(
+    "cluster.distributionClaimBootstrapResult",
+    "the finalized distribution-claim bootstrap plan"
+  )
+
 /** Stable source order used in compact summaries. */
 const DistributionClaimBootstrapSourceOrder = [
   DistributionClaimBootstrapSource.configuredFile,
@@ -90,7 +115,8 @@ export function createDistributionClaimBootstrapPlan(
       configuredCreditSets = [],
       fallbackCreditSets = [],
       additiveCreditSets = [],
-      batchSize
+      batchSize,
+      firstUnmappedId = 1n
     } = options,
     configured = toCreditSets(
       configuredCreditSets,
@@ -105,13 +131,22 @@ export function createDistributionClaimBootstrapPlan(
       DistributionClaimBootstrapSource.additive
     ),
     chains = [ChainKind.EVM, ChainKind.SVM] as const
-  let nextUnmappedId = 1n
+  let nextUnmappedId = DclaimUnmappedIdSchema.parse(firstUnmappedId)
 
   const results = chains.flatMap(chain => {
     const configuredForChain = configured.filter(set => set.chain === chain),
       fallbackForChain = fallback.filter(set => set.chain === chain),
-      additiveForChain = additive.filter(set => set.chain === chain),
-      selectedBase =
+      additiveForChain = additive.filter(set => set.chain === chain)
+    if (
+      configuredForChain.length > 0 &&
+      configuredForChain.every(set => set.credits.length === 0)
+    ) {
+      throw new Error(
+        `configured distribution-claim bootstrap contains no eligible credits for chain ${chain}`
+      )
+    }
+
+    const selectedBase =
         configuredForChain.length > 0 ? configuredForChain : fallbackForChain,
       selectedSets = [...selectedBase, ...additiveForChain],
       creditSets = selectedSets.filter(set => set.credits.length > 0)
@@ -132,7 +167,7 @@ export function createDistributionClaimBootstrapPlan(
           return plannedBatch
         }
       ),
-      sources = [...new Set(selectedSets.map(set => set.source))].sort(
+      sources = [...new Set(creditSets.map(set => set.source))].sort(
         (left, right) =>
           DistributionClaimBootstrapSourceOrder.indexOf(left) -
           DistributionClaimBootstrapSourceOrder.indexOf(right)
@@ -156,20 +191,6 @@ export function createDistributionClaimBootstrapPlan(
     ]
   })
   return DistributionClaimBootstrapResultSchema.parse({ chains: results })
-}
-
-/**
- * Return whether configured bootstrap credits exist for a native chain.
- *
- * @param options - Bootstrap planning inputs.
- * @param chain - Native chain to inspect.
- * @returns Whether a configured credit set exists for the chain.
- */
-export function hasConfiguredDistributionClaimBootstrapChain(
-  options: DistributionClaimBootstrapOptions,
-  chain: ImportSeedChainKind
-): boolean {
-  return (options.configuredCreditSets ?? []).some(set => set.chain === chain)
 }
 
 /**
