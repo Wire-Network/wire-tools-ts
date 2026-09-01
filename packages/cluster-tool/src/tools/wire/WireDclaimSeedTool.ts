@@ -35,6 +35,8 @@
 // each batched up to `batchSize` credits per call to fit the 150ms /
 // 500KB transaction envelope.
 
+import Assert from "node:assert"
+
 import { PublicKey } from "@solana/web3.js"
 import { match } from "ts-pattern"
 import { z } from "zod"
@@ -143,6 +145,12 @@ export type IndexStakerRow = z.infer<typeof IndexStakerRowSchema>
 /** Schema-derived indexer balance-dump input. */
 export type IndexBalanceDump = z.infer<typeof IndexBalanceDumpSchema>
 
+type DeepReadonly<T> = T extends readonly (infer Item)[]
+  ? readonly DeepReadonly<Item>[]
+  : T extends object
+    ? { readonly [Key in keyof T]: DeepReadonly<T[Key]> }
+    : T
+
 // ---------------------------------------------------------------------------
 // importseed action payload shape
 // ---------------------------------------------------------------------------
@@ -173,7 +181,7 @@ export const ImportSeedCreditSetSchema = z
         context.addIssue({
           code: "custom",
           path: ["credits", index, "native_address"],
-          message: `${chainLabel(creditSet.chain)} native address must be ${expectedHexLength / 2} bytes`
+          message: `${importSeedChainLabel(creditSet.chain)} native address must be ${expectedHexLength / 2} bytes`
         })
       }
     })
@@ -285,7 +293,7 @@ function toBigInt(v: string | number | undefined, fallback = 0n): bigint {
  * checksum differences collapse to a single key.
  */
 function accumulate(
-  data: IndexBalanceDump,
+  data: DeepReadonly<IndexBalanceDump>,
   decoder: (s: string) => Uint8Array,
   addrLen: number
 ): Map<string, bigint> {
@@ -366,6 +374,7 @@ function chunked<T>(arr: T[], size: number): T[][] {
 // Public API
 // ---------------------------------------------------------------------------
 
+/** Native-chain and transaction-batching options for indexer-dump conversion. */
 export interface ImportSeedOptions {
   /** ChainKind enum name. */
   chain: ImportSeedChainKind
@@ -386,23 +395,20 @@ export interface IndexBalanceDumpValidationContext {
 
 const ValidatedIndexBalanceDumpBrand = Symbol("ValidatedIndexBalanceDump")
 
-/** Opaque proof that an indexer dump was validated for one chain and source. */
+interface ValidatedIndexBalanceDumpProof {
+  readonly data: DeepReadonly<IndexBalanceDump>
+  readonly context: DeepReadonly<IndexBalanceDumpValidationContext>
+}
+
+/** Validated indexer data coupled to one immutable chain and source context. */
 export interface ValidatedIndexBalanceDump {
+  /** Schema-validated dump contents, isolated from the caller's input. */
+  readonly data: DeepReadonly<IndexBalanceDump>
   /** Chain and provenance used for address and balance-limit validation. */
-  readonly context: Readonly<IndexBalanceDumpValidationContext>
+  readonly context: DeepReadonly<IndexBalanceDumpValidationContext>
   /** Private proof that this value came from {@link validateIndexBalanceDump}. */
-  readonly [ValidatedIndexBalanceDumpBrand]: true
+  readonly [ValidatedIndexBalanceDumpBrand]: ValidatedIndexBalanceDumpProof
 }
-
-interface ValidatedIndexBalanceDumpState {
-  data: IndexBalanceDump
-  context: IndexBalanceDumpValidationContext
-}
-
-const ValidatedIndexBalanceDumpStates = new WeakMap<
-  ValidatedIndexBalanceDump,
-  ValidatedIndexBalanceDumpState
->()
 
 /**
  * Validate an untrusted indexer balance dump without performing file I/O.
@@ -427,7 +433,7 @@ export function validateIndexBalanceDump(
     const issue = parsed.error.issues[0],
       row = issue.path.find(segment => typeof segment === "number")
     throw new NestedError(
-      `${chainLabel(validatedContext.chain)} bootstrap data validation failed`,
+      `${importSeedChainLabel(validatedContext.chain)} bootstrap data validation failed`,
       {
         cause: parsed.error,
         context: {
@@ -441,15 +447,14 @@ export function validateIndexBalanceDump(
     )
   }
   validateDumpRows(parsed.data, validatedContext)
-  const validated: ValidatedIndexBalanceDump = Object.freeze({
-    context: Object.freeze(validatedContext),
-    [ValidatedIndexBalanceDumpBrand]: true as const
+  const data = parsed.data,
+    frozenContext = Object.freeze(validatedContext),
+    proof = Object.freeze({ data, context: frozenContext })
+  return Object.freeze({
+    data,
+    context: frozenContext,
+    [ValidatedIndexBalanceDumpBrand]: proof
   })
-  ValidatedIndexBalanceDumpStates.set(validated, {
-    data: parsed.data,
-    context: validatedContext
-  })
-  return validated
 }
 
 /**
@@ -485,13 +490,17 @@ export function convertImportSeedCredits(
 export function convertValidatedImportSeedCredits(
   validated: ValidatedIndexBalanceDump
 ): ImportSeedConversion {
-  const state = ValidatedIndexBalanceDumpStates.get(validated)
-  if (state == null) {
+  const proof = validated[ValidatedIndexBalanceDumpBrand]
+  if (
+    proof == null ||
+    proof.data !== validated.data ||
+    proof.context !== validated.context
+  ) {
     throw new Error(
       "convertValidatedImportSeedCredits requires validateIndexBalanceDump output"
     )
   }
-  const { data, context } = state,
+  const { data, context } = validated,
     { chain } = context,
     cfg = CHAIN_CONFIG[chain]
   if (!cfg) {
@@ -551,7 +560,7 @@ export function mergeImportSeedCredits(
       !/^[0-9a-f]+$/.test(credit.native_address)
     ) {
       throw new Error(
-        `${chainLabel(chain)} importseed native_address must be ${config.addrLen} bytes of lowercase hex without 0x; got ${r(credit.native_address)}`
+        `${importSeedChainLabel(chain)} importseed native_address must be ${config.addrLen} bytes of lowercase hex without 0x; got ${r(credit.native_address)}`
       )
     }
     if (credit.wire_atomic <= 0n) {
@@ -570,7 +579,7 @@ export function mergeImportSeedCredits(
   credits.forEach(credit => {
     if (credit.wire_atomic > MaxImportSeedWireAtomic) {
       throw new Error(
-        `${chainLabel(chain)} importseed wire_atomic exceeds asset maximum for ${r(credit.native_address)}; got ${credit.wire_atomic}, maximum ${MaxImportSeedWireAtomic}`
+        `${importSeedChainLabel(chain)} importseed wire_atomic exceeds asset maximum for ${r(credit.native_address)}; got ${credit.wire_atomic}, maximum ${MaxImportSeedWireAtomic}`
       )
     }
   })
@@ -596,6 +605,10 @@ function compareAddressHex(left: string, right: string): number {
  *       "sysio.dclaim@active"
  *     )
  *   }
+ *
+ * @param data - Indexer balance dump to validate and convert.
+ * @param opts - Native chain and optional transaction batch size.
+ * @returns Deterministic credits, conversion statistics, and importseed batches.
  */
 export function convertImportSeed(
   data: IndexBalanceDump,
@@ -613,25 +626,34 @@ export function convertImportSeed(
  * be emitted as decimal strings — JSON.stringify can't handle BigInt
  * natively, and the dclaim ABI consumes `int64` which accepts string
  * input from JSON.
+ *
+ * @param batch - Validated transaction-sized importseed batch.
+ * @returns The clio-ready action payload with decimal-string amounts.
  */
 export function serializeBatchForClio(
   batch: ImportSeedBatch
 ): SysioContracts.SysioDclaimImportseedAction {
-  const validatedBatch = ImportSeedBatchSchema.parse(batch)
+  Assert.ok(
+    batch.credits.length > 0 && batch.credits.length <= MaxImportSeedBatchSize,
+    `importseed batch must contain between 1 and ${MaxImportSeedBatchSize} credits`
+  )
   return {
     // proto ChainKind → the dclaim ABI's own enum, bridged by VALUE.
-    chain: abiEnumValue(
-      SysioContracts.SysioDclaimChainkind,
-      validatedBatch.chain
-    ),
-    credits: validatedBatch.credits.map(c => ({
+    chain: abiEnumValue(SysioContracts.SysioDclaimChainkind, batch.chain),
+    credits: batch.credits.map(c => ({
       native_address: c.native_address,
       wire_atomic: c.wire_atomic.toString()
     }))
   }
 }
 
-function chainLabel(chain: ImportSeedChainKind): string {
+/**
+ * Return the human-readable native-chain label used in importseed errors.
+ *
+ * @param chain - Supported native chain kind.
+ * @returns The Ethereum or Solana label.
+ */
+export function importSeedChainLabel(chain: ImportSeedChainKind): string {
   return match(chain)
     .with(ChainKind.EVM, () => "Ethereum")
     .with(ChainKind.SVM, () => "Solana")
@@ -645,7 +667,8 @@ function validateDumpRows(
   context: IndexBalanceDumpValidationContext
 ): void {
   const config = CHAIN_CONFIG[context.chain],
-    totals = new Map<string, bigint>()
+    totals = new Map<string, bigint>(),
+    { purchasers = [], stakers = [] } = data
   const validateRow = (
     row: IndexPurchaserRow | IndexStakerRow,
     index: number,
@@ -663,7 +686,7 @@ function validateDumpRows(
       }
     } catch (error) {
       throw new NestedError(
-        `${chainLabel(context.chain)} bootstrap data address validation failed`,
+        `${importSeedChainLabel(context.chain)} bootstrap data address validation failed`,
         {
           cause: error,
           context: {
@@ -681,7 +704,7 @@ function validateDumpRows(
       wireAtomic = sourceTotal / config.divisor
     if (wireAtomic > MaxImportSeedWireAtomic) {
       throw new NestedError(
-        `${chainLabel(context.chain)} bootstrap data converted balance exceeds asset maximum`,
+        `${importSeedChainLabel(context.chain)} bootstrap data converted balance exceeds asset maximum`,
         {
           cause: new Error(
             `converted wire_atomic ${wireAtomic} exceeds ${MaxImportSeedWireAtomic}`
@@ -700,7 +723,7 @@ function validateDumpRows(
     }
     totals.set(address, sourceTotal)
   }
-  data.purchasers?.forEach((row, index) => {
+  purchasers.forEach((row, index) => {
     validateRow(
       row,
       index,
@@ -708,8 +731,9 @@ function validateDumpRows(
       IndexBalanceField.totalPretokens,
       toBigInt(row.totalPretokens)
     )
+    Object.freeze(row)
   })
-  data.stakers?.forEach((row, index) => {
+  stakers.forEach((row, index) => {
     validateRow(
       row,
       index,
@@ -717,7 +741,11 @@ function validateDumpRows(
       IndexBalanceField.pretokenYield,
       toBigInt(row.pretokenYield) - toBigInt(row.yieldClaimed, 0n)
     )
+    Object.freeze(row)
   })
+  Object.freeze(purchasers)
+  Object.freeze(stakers)
+  Object.freeze(data)
 }
 
 function formatIssuePath(path: PropertyKey[]): string {

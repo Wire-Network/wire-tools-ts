@@ -238,6 +238,11 @@ describe("DistributionClaimBootstrapOutput", () => {
         configuredCreditSets: [
           {
             chain: ChainKind.EVM,
+            credits: [{ native_address: "99".repeat(20), wire_atomic: 1n }],
+            droppedDust: 0n
+          },
+          {
+            chain: ChainKind.EVM,
             credits: [],
             droppedDust: 9n
           }
@@ -250,7 +255,7 @@ describe("DistributionClaimBootstrapOutput", () => {
           }
         ]
       })
-    ).toThrow(/configured.*no eligible credits.*chain/)
+    ).toThrow(/configured.*no eligible credits.*Ethereum/)
     expect(() =>
       createDistributionClaimBootstrapPlan({ firstUnmappedId: 0n })
     ).toThrow()

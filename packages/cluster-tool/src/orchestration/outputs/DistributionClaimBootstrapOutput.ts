@@ -13,6 +13,7 @@ import {
   ImportSeedBatchSchema,
   ImportSeedChainKindSchema,
   ImportSeedCreditSetSchema,
+  importSeedChainLabel,
   mergeImportSeedCredits
 } from "../../tools/wire/WireDclaimSeedTool.js"
 import { outputKey, type OutputKey } from "../OutputStore.js"
@@ -139,10 +140,10 @@ export function createDistributionClaimBootstrapPlan(
       additiveForChain = additive.filter(set => set.chain === chain)
     if (
       configuredForChain.length > 0 &&
-      configuredForChain.every(set => set.credits.length === 0)
+      configuredForChain.some(set => set.credits.length === 0)
     ) {
       throw new Error(
-        `configured distribution-claim bootstrap contains no eligible credits for chain ${chain}`
+        `configured distribution-claim bootstrap contains no eligible credits for ${importSeedChainLabel(chain)}`
       )
     }
 
