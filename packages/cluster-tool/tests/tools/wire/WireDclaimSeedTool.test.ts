@@ -10,10 +10,22 @@
 
 import { ChainKind } from "@wireio/opp-typescript-models"
 import {
+  ImportSeedBatchSchema,
+  ImportSeedChainKindSchema,
+  ImportSeedCreditSchema,
+  ImportSeedCreditSetSchema,
+  batchImportSeedCredits,
   convertImportSeed,
+  convertImportSeedCredits,
+  convertValidatedImportSeedCredits,
+  importSeedChainLabel,
+  mergeImportSeedCredits,
   serializeBatchForClio,
+  validateIndexBalanceDump,
   type ImportSeedBatch,
-  type IndexBalanceDump
+  type IndexBalanceDump,
+  type IndexBalanceDumpValidationContext,
+  type IndexPurchaserRow
 } from "@wireio/cluster-tool/tools/wire"
 
 // ── Synthetic-dump fixture ─────────────────────────────────────────────────
@@ -169,6 +181,289 @@ function buildSyntheticEthereumDump(
 }
 
 describe("WireDclaimSeedTool", () => {
+  describe("validation", () => {
+    it("retains unrelated indexer fields and validates generated chain kinds", () => {
+      const value = {
+          metadata: { generatedAt: "now", futureMetadata: true },
+          purchasers: [
+            {
+              address: `0x${"11".repeat(20)}`,
+              totalPretokens: "1000000000",
+              futureRowField: "retained"
+            }
+          ],
+          futureTopLevel: { retained: true }
+        },
+        validated = validateIndexBalanceDump(value, {
+          chain: ChainKind.EVM,
+          source: "/inputs/ethereum.json"
+        })
+      expect(validated.data.purchasers?.[0].futureRowField).toBe("retained")
+      expect(
+        (validated.data as Record<string, unknown>).futureTopLevel
+      ).toEqual({
+        retained: true
+      })
+      expect(validated.context).toEqual({
+        chain: ChainKind.EVM,
+        source: "/inputs/ethereum.json"
+      })
+      const credits = convertValidatedImportSeedCredits(validated).credits
+      expect(credits).toEqual([
+        { native_address: "11".repeat(20), wire_atomic: 1n }
+      ])
+      expect(
+        convertValidatedImportSeedCredits({ ...validated }).credits
+      ).toEqual(credits)
+      expect(() => {
+        const purchaser = validated.data.purchasers?.[0] as IndexPurchaserRow
+        purchaser.totalPretokens = "999999999999999999999999999999999999"
+      }).toThrow()
+      expect(() => {
+        const data = validated.data as IndexBalanceDump
+        data.purchasers = []
+      }).toThrow()
+      expect(() => {
+        const purchasers = validated.data.purchasers as IndexPurchaserRow[]
+        purchasers.push({
+          address: `0x${"22".repeat(20)}`,
+          totalPretokens: "1000000000"
+        })
+      }).toThrow()
+      expect(() => {
+        const context = validated.context as IndexBalanceDumpValidationContext
+        context.chain = ChainKind.SVM
+      }).toThrow()
+      expect(() =>
+        convertValidatedImportSeedCredits({
+          ...validated,
+          data: { purchasers: [] }
+        })
+      ).toThrow(/requires validateIndexBalanceDump output/)
+      expect(() =>
+        convertValidatedImportSeedCredits({
+          ...validated,
+          context: {
+            chain: ChainKind.SVM,
+            source: "/inputs/ethereum.json"
+          }
+        })
+      ).toThrow(/requires validateIndexBalanceDump output/)
+      expect(() =>
+        convertValidatedImportSeedCredits({
+          data: validated.data,
+          context: {
+            chain: ChainKind.SVM,
+            source: "/inputs/ethereum.json"
+          }
+        } as never)
+      ).toThrow(/requires validateIndexBalanceDump output/)
+      expect(ImportSeedChainKindSchema.safeParse(ChainKind.EVM).success).toBe(
+        true
+      )
+      expect(
+        ImportSeedChainKindSchema.safeParse(ChainKind.UNKNOWN).success
+      ).toBe(false)
+      expect(importSeedChainLabel(ChainKind.EVM)).toBe("Ethereum")
+      expect(importSeedChainLabel(ChainKind.SVM)).toBe("Solana")
+      expect(() => importSeedChainLabel(ChainKind.UNKNOWN as never)).toThrow(
+        /unknown chain/
+      )
+    })
+
+    it("reports chain, source, row, and field for malformed input", () => {
+      let malformedAmountError: unknown
+      let solanaAddressError: unknown
+      try {
+        validateIndexBalanceDump(
+          {
+            purchasers: [
+              {
+                address: `0x${"11".repeat(20)}`,
+                totalPretokens: "1.5"
+              }
+            ]
+          },
+          { chain: ChainKind.EVM, source: "/inputs/ethereum.json" }
+        )
+      } catch (error) {
+        malformedAmountError = error
+      }
+      expect(malformedAmountError).toMatchObject({
+        context: expect.objectContaining({
+          chain: ChainKind.EVM,
+          source: "/inputs/ethereum.json",
+          row: 0,
+          field: "purchasers[0].totalPretokens"
+        })
+      })
+      try {
+        validateIndexBalanceDump(
+          {
+            stakers: [{ address: "not-base58", pretokenYield: 1 }]
+          },
+          { chain: ChainKind.SVM, source: "/inputs/solana.json" }
+        )
+      } catch (error) {
+        solanaAddressError = error
+      }
+      expect(solanaAddressError).toMatchObject({
+        context: expect.objectContaining({
+          chain: ChainKind.SVM,
+          source: "/inputs/solana.json",
+          row: 0,
+          field: "stakers[0].address"
+        })
+      })
+    })
+
+    it("rejects a converted balance above the on-chain asset maximum", () => {
+      expect(() =>
+        validateIndexBalanceDump(
+          {
+            purchasers: [
+              {
+                address: `0x${"12".repeat(20)}`,
+                totalPretokens: (((1n << 62n) + 1n) * 1_000_000_000n).toString()
+              }
+            ]
+          },
+          { chain: ChainKind.EVM, source: "/inputs/oversized.json" }
+        )
+      ).toThrow(/converted balance exceeds asset maximum/)
+    })
+  })
+
+  describe("conversion, merge, and batching boundaries", () => {
+    it("converts without batching, merges duplicates, and sorts by code units", () => {
+      const converted = convertImportSeedCredits(
+          {
+            purchasers: [
+              {
+                address: `0x${"22".repeat(20)}`,
+                totalPretokens: "1500000000"
+              }
+            ]
+          },
+          ChainKind.EVM
+        ),
+        merged = mergeImportSeedCredits(
+          [
+            converted.credits,
+            [
+              { native_address: "11".repeat(20), wire_atomic: 3n },
+              { native_address: "22".repeat(20), wire_atomic: 4n }
+            ]
+          ],
+          ChainKind.EVM
+        )
+      expect(converted.credits).toEqual([
+        { native_address: "22".repeat(20), wire_atomic: 1n }
+      ])
+      expect(merged).toEqual([
+        { native_address: "11".repeat(20), wire_atomic: 3n },
+        { native_address: "22".repeat(20), wire_atomic: 5n }
+      ])
+      expect(
+        batchImportSeedCredits(merged, {
+          chain: ChainKind.EVM,
+          batchSize: 1
+        }).map(batch => batch.credits.length)
+      ).toEqual([1, 1])
+    })
+
+    it("validates normalized credits, address widths, amounts, and batch sizes", () => {
+      const credit = {
+          native_address: "33".repeat(20),
+          wire_atomic: 1n
+        },
+        invalidBatchSizes = [
+          Number.NaN,
+          Number.POSITIVE_INFINITY,
+          1.5,
+          0,
+          10_001
+        ]
+      expect(ImportSeedCreditSchema.safeParse(credit).success).toBe(true)
+      expect(
+        ImportSeedCreditSchema.safeParse({
+          ...credit,
+          wire_atomic: 1n << 62n
+        }).success
+      ).toBe(false)
+      expect(
+        ImportSeedBatchSchema.safeParse({
+          chain: ChainKind.EVM,
+          credits: [credit]
+        }).success
+      ).toBe(true)
+      expect(
+        ImportSeedBatchSchema.safeParse({
+          chain: ChainKind.EVM,
+          credits: [{ ...credit, native_address: "44".repeat(32) }]
+        }).success
+      ).toBe(false)
+      expect(
+        ImportSeedCreditSetSchema.safeParse({
+          chain: ChainKind.EVM,
+          credits: Array.from({ length: 10_001 }, () => credit)
+        }).success
+      ).toBe(true)
+      expect(
+        ImportSeedBatchSchema.safeParse({
+          chain: ChainKind.EVM,
+          credits: []
+        }).success
+      ).toBe(false)
+      expect(
+        ImportSeedBatchSchema.safeParse({
+          chain: ChainKind.EVM,
+          credits: Array.from({ length: 10_001 }, () => credit)
+        }).success
+      ).toBe(false)
+      expect(
+        ImportSeedCreditSchema.safeParse({
+          ...credit,
+          native_address: `${"44".repeat(19)}f`
+        }).success
+      ).toBe(false)
+      expect(() =>
+        mergeImportSeedCredits(
+          [[{ native_address: "44".repeat(32), wire_atomic: 1n }]],
+          ChainKind.EVM
+        )
+      ).toThrow(/must be 20 bytes/)
+      expect(() =>
+        mergeImportSeedCredits(
+          [[{ native_address: "33".repeat(20), wire_atomic: 0n }]],
+          ChainKind.EVM
+        )
+      ).toThrow(/wire_atomic must be positive/)
+      invalidBatchSizes.forEach(batchSize => {
+        expect(() =>
+          batchImportSeedCredits([credit], {
+            chain: ChainKind.EVM,
+            batchSize
+          })
+        ).toThrow(/batch size must be a safe integer between 1 and 10000/)
+      })
+    })
+
+    it("rejects duplicate sums above the on-chain asset maximum", () => {
+      const address = "66".repeat(20),
+        maximum = (1n << 62n) - 1n
+      expect(() =>
+        mergeImportSeedCredits(
+          [
+            [{ native_address: address, wire_atomic: maximum }],
+            [{ native_address: address, wire_atomic: 1n }]
+          ],
+          ChainKind.EVM
+        )
+      ).toThrow(/exceeds asset maximum/)
+    })
+  })
+
   describe("convertImportSeed", () => {
     it("batches an empty dump into zero batches", () => {
       const result = convertImportSeed(
@@ -251,13 +546,18 @@ describe("WireDclaimSeedTool", () => {
       expect(serialized.credits[0].wire_atomic).toBe("1")
     })
 
-    it("skips a staker whose yieldClaimed consumes the entire pretokenYield", () => {
+    it("skips stakers whose yieldClaimed equals or exceeds pretokenYield", () => {
       const result = convertImportSeed(
         {
           stakers: [
             {
               address: `0x${"44".repeat(20)}`,
               pretokenYield: "5000000000",
+              yieldClaimed: "5000000000"
+            },
+            {
+              address: `0x${"45".repeat(20)}`,
+              pretokenYield: "4000000000",
               yieldClaimed: "5000000000"
             }
           ]
@@ -277,7 +577,7 @@ describe("WireDclaimSeedTool", () => {
           { purchasers: [{ address: "0x1234", totalPretokens: "1000000000" }] },
           { chain: ChainKind.EVM }
         )
-      ).toThrow(/invalid ethereum address/)
+      ).toThrow(/Ethereum bootstrap data address validation failed/)
     })
 
     it("throws when batchSize is not positive", () => {
@@ -290,7 +590,7 @@ describe("WireDclaimSeedTool", () => {
           },
           { chain: ChainKind.EVM, batchSize: 0 }
         )
-      ).toThrow(/batch size must be > 0/)
+      ).toThrow(/batch size must be a safe integer between 1 and 10000/)
     })
   })
 
@@ -327,10 +627,34 @@ describe("WireDclaimSeedTool", () => {
       expect(() => JSON.stringify(serialized)).not.toThrow()
     })
 
-    it("serializes an empty batch to an empty credits array", () => {
-      expect(
+    it("rejects an empty batch before serialization", () => {
+      expect(() =>
         serializeBatchForClio({ chain: ChainKind.EVM, credits: [] })
-      ).toEqual({ chain: ChainKind.EVM, credits: [] })
+      ).toThrow(/must contain between 1 and 10000 credits/)
+    })
+
+    it("rejects a batch above the transaction credit limit", () => {
+      expect(() =>
+        serializeBatchForClio({
+          chain: ChainKind.EVM,
+          credits: Array.from({ length: 10_001 }, () => ({
+            native_address: "dd".repeat(20),
+            wire_atomic: 1n
+          }))
+        })
+      ).toThrow(/must contain between 1 and 10000 credits/)
+    })
+
+    it("accepts a batch at the transaction credit limit", () => {
+      expect(
+        serializeBatchForClio({
+          chain: ChainKind.EVM,
+          credits: Array.from({ length: 10_000 }, () => ({
+            native_address: "ee".repeat(20),
+            wire_atomic: 1n
+          }))
+        }).credits
+      ).toHaveLength(10_000)
     })
   })
 
