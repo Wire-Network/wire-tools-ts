@@ -184,7 +184,8 @@ export class YieldDistributionScenario extends FlowScenario {
     epochDurationSec: Constants.EpochDurationSec,
     producerCount: Constants.ProducerCount,
     batchOperatorCount: Constants.BatchOperatorCount,
-    underwriterCount: Constants.UnderwriterCount
+    underwriterCount: Constants.UnderwriterCount,
+    enableMockYieldEmitter: true
   }
 
   plan(cluster: ClusterBuild): void {

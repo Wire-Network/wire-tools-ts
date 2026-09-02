@@ -247,6 +247,12 @@ export const ClusterConfigSchema = z.object({
    */
   enableMockReserves: z.boolean().default(false),
   /**
+   * Whether the local Ethereum bootstrap deploys the transport-only synthetic
+   * yield emitter. Schema-defaulted `false` so it is absent from the standard
+   * local outpost surface.
+   */
+  enableMockYieldEmitter: z.boolean().default(false),
+  /**
    * Which command produced this tree (SHARED-25 AC#4). Schema-defaulted
    * {@link ClusterDeploymentKind.local} so pre-existing configs — and every
    * `create`d cluster — keep `trace_api_plugin` on every role.

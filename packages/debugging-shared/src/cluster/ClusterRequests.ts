@@ -33,7 +33,7 @@ export const GetClusterConfigRequestSchemaCodec =
   SchemaCodec.create<GetClusterConfigRequest>(GetClusterConfigRequestSchema)
 
 /** Codec for the `Cluster.GetConfig` response body (= the shared `ClusterConfig`). */
-export const GetClusterConfigResponseSchemaCodec =
+export const GetClusterConfigResponseSchemaCodec: SchemaCodec<GetClusterConfigResponse> =
   SchemaCodec.create<GetClusterConfigResponse>(ClusterConfigSchema)
 
 /** Schema for {@link GetClusterStateRequest} (empty body). */

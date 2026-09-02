@@ -6,16 +6,19 @@
  * The on-chain contract is a permissioned poke-emit fake: an admin
  * records synthetic per-staker positions, then triggers a single tx
  * that fans STAKING_REWARD attestations onto OPP's outbound queue —
- * the same queue the post-launch StakingManager will use. Once an
- * attestation lands there, the batch-operator nodeop plugin picks it
- * up, ferries it through OPP envelope consensus, and the depot
+ * exercising transport and depot accounting without representing a
+ * production staking surface. Once an attestation lands there, the
+ * batch-operator nodeop plugin picks it up, ferries it through OPP envelope consensus, and the depot
  * dispatches it as `sysio.dclaim::onreward`.
  */
 
 import Assert from "node:assert"
 import { ethers } from "ethers"
 
-import { loadOutpostContract, resolveLatestNonce } from "../../utils/ethereumUtils.js"
+import {
+  loadOutpostContract,
+  resolveLatestNonce
+} from "../../utils/ethereumUtils.js"
 
 /**
  * Minimal `ethers` surface of `MockYieldEmitter.sol`. Typed structurally
@@ -139,12 +142,15 @@ export async function emitYieldBatch(
   rewardEpochIndex: number
 ): Promise<ethers.TransactionReceipt> {
   Assert.ok(entries.length > 0, "EthYieldEmitterTool: empty entries")
-  Assert.ok(externalEpochRef > 0n, "EthYieldEmitterTool: externalEpochRef must be positive")
+  Assert.ok(
+    externalEpochRef > 0n,
+    "EthYieldEmitterTool: externalEpochRef must be positive"
+  )
 
-  const stakers       = entries.map(e => e.staker)
-  const wireAccounts  = entries.map(e => e.wireAccount)
+  const stakers = entries.map(e => e.staker)
+  const wireAccounts = entries.map(e => e.wireAccount)
   const rewardAmounts = entries.map(e => e.rewardAmount)
-  const shareBpses    = entries.map(e => e.shareBps)
+  const shareBpses = entries.map(e => e.shareBps)
 
   const nonce = await resolveLatestNonce(contract)
   const tx = await contract.emitYield(
