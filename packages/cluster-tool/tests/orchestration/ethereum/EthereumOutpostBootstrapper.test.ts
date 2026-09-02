@@ -1,5 +1,11 @@
-import { EthereumOutpostBootstrapper } from "@wireio/cluster-tool/orchestration"
-import { BindConfigProvider } from "@wireio/cluster-tool/config"
+import {
+  EthereumOutpostBootstrapper,
+  type EthereumOutpostInitialRoster
+} from "@wireio/cluster-tool/orchestration"
+import {
+  BindConfigProvider,
+  ClusterConfigProvider
+} from "@wireio/cluster-tool/config"
 import { toURL } from "@wireio/cluster-tool/utils"
 
 /** anvil/hardhat account 0 from the `test test … junk` mnemonic — well-known + stable. */
@@ -26,7 +32,12 @@ describe("EthereumOutpostBootstrapper.generateAccounts", () => {
 
 describe("EthereumOutpostBootstrapper constructor", () => {
   let rpcUrl: string
-  const deploymentsPath = "/tmp/cluster/data/ethereum-deployments"
+  const deploymentsPath = "/tmp/cluster/data/ethereum-deployments",
+    /** A valid WNE-41 initial roster — one operator, one positive duration. */
+    initialRoster: EthereumOutpostInitialRoster = {
+      groups: [[AnvilAccount0Address]],
+      epochDurationSec: ClusterConfigProvider.DefaultEpochDurationSec
+    }
   beforeAll(async () => {
     rpcUrl = toURL(
       await BindConfigProvider.findAvailable(BindConfigProvider.DefaultAnvil)
@@ -40,7 +51,8 @@ describe("EthereumOutpostBootstrapper constructor", () => {
           ethereumPath: "",
           anvilDataPath: "/tmp/anvil",
           rpcUrl,
-          deploymentsPath
+          deploymentsPath,
+          initialRoster
         })
     ).toThrow(/ethereumPath is required/)
   })
@@ -52,7 +64,8 @@ describe("EthereumOutpostBootstrapper constructor", () => {
           ethereumPath: "/repo/eth",
           anvilDataPath: "",
           rpcUrl,
-          deploymentsPath
+          deploymentsPath,
+          initialRoster
         })
     ).toThrow(/anvilDataPath is required/)
   })
@@ -64,7 +77,8 @@ describe("EthereumOutpostBootstrapper constructor", () => {
           ethereumPath: "/repo/eth",
           anvilDataPath: "/tmp/anvil",
           rpcUrl: "",
-          deploymentsPath
+          deploymentsPath,
+          initialRoster
         })
     ).toThrow(/rpcUrl is required/)
   })
@@ -76,8 +90,41 @@ describe("EthereumOutpostBootstrapper constructor", () => {
           ethereumPath: "/repo/eth",
           anvilDataPath: "/tmp/anvil",
           rpcUrl,
-          deploymentsPath: ""
+          deploymentsPath: "",
+          initialRoster
         })
     ).toThrow(/deploymentsPath is required/)
+  })
+
+  // WNE-41 — `OPPInbound.initialize` is one-shot and `isActiveOperator` is
+  // fail-closed, so both of these would otherwise produce an outpost whose
+  // `epochIn` no address can ever call.
+  it("throws when the initial roster carries no operator", () => {
+    expect(
+      () =>
+        new EthereumOutpostBootstrapper({
+          ethereumPath: "/repo/eth",
+          anvilDataPath: "/tmp/anvil",
+          rpcUrl,
+          deploymentsPath,
+          initialRoster: {
+            groups: [[]],
+            epochDurationSec: ClusterConfigProvider.DefaultEpochDurationSec
+          }
+        })
+    ).toThrow(/at least one batch-operator address/)
+  })
+
+  it("throws when the initial epochDurationSec is not positive", () => {
+    expect(
+      () =>
+        new EthereumOutpostBootstrapper({
+          ethereumPath: "/repo/eth",
+          anvilDataPath: "/tmp/anvil",
+          rpcUrl,
+          deploymentsPath,
+          initialRoster: { groups: [[AnvilAccount0Address]], epochDurationSec: 0 }
+        })
+    ).toThrow(/epochDurationSec must be positive/)
   })
 })

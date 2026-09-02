@@ -910,7 +910,7 @@ export namespace ClusterBuildDefaults {
         ...batchOperators.map((label, index) => ({
           label,
           type: OperatorType.BATCH,
-          ethereumHdIndex: index + 1,
+          ethereumHdIndex: Constants.batchOperatorEthereumHdIndex(index),
           isBootstrapped: true,
           // Fee-payer funding for the daemon's per-epoch deliveries on BOTH
           // chains. ETH is SSM-only: under KEY the EM keys come off the anvil
@@ -922,7 +922,15 @@ export namespace ClusterBuildDefaults {
         ...underwriters.map((label, index) => ({
           label,
           type: OperatorType.UNDERWRITER,
-          ethereumHdIndex: config.batchOperatorCount + index + 1,
+          // The offset is the length of the PREFIX-FILTERED batch-operator
+          // array, not `config.batchOperatorCount`: only a list already
+          // narrowed to `batchop.` entries guarantees the ordinal the HD-index
+          // rule is defined against. `index` is that same filtered array's
+          // iterator index for underwriters.
+          ethereumHdIndex: Constants.underwriterEthereumHdIndex(
+            batchOperators.length,
+            index
+          ),
           isBootstrapped: false,
           ...(isSSM ? { fundEthereumWei: BatchOperatorEthereumFundingWei } : {})
         }))

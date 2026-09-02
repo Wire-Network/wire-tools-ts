@@ -28,6 +28,26 @@ export interface EthereumAccount {
   usedFor: string
 }
 
+/**
+ * The initial batch-operator roster `OPPInbound.initialize` installs (WNE-41).
+ *
+ * `OPPInbound.isActiveOperator` is FAIL-CLOSED: an uninitialized roster
+ * authorizes nobody, and on a WIRE cluster the addresses that send `epochIn`
+ * are the batch-operator DAEMONS' own EOAs — not the deployer. Without this the
+ * first envelope is refused and the epoch never advances.
+ */
+export interface EthereumOutpostInitialRoster {
+  /**
+   * Batch-operator ETH addresses, grouped as the depot schedules them.
+   * `groups[0].length` sizes the outpost's consensus threshold, so it must be
+   * the depot's `operators_per_epoch`; membership beyond it only grants
+   * delivery rights.
+   */
+  groups: string[][]
+  /** The depot's global `epoch_duration_sec`; must be positive. */
+  epochDurationSec: number
+}
+
 /** Caller options for {@link EthereumOutpostBootstrapper}. */
 export interface EthereumOutpostBootstrapperOptions {
   /** Path to the `wire-ethereum` repo root. */
@@ -44,6 +64,12 @@ export interface EthereumOutpostBootstrapperOptions {
    * sharing `<wire-ethereum>/.local/deployments/` wiped each other mid-run).
    */
   deploymentsPath: string
+  /**
+   * WNE-41 initial batch-operator roster for `OPPInbound.initialize`. Required:
+   * a cluster deployed without one has an outpost whose `epochIn` is callable
+   * by nobody, and `initialize` is one-shot.
+   */
+  initialRoster: EthereumOutpostInitialRoster
   /**
    * Number of deterministic accounts to generate — MUST match the run anvil's
    * `--accounts` (default: {@link AnvilProcess.AccountCount}) so every generated
@@ -87,6 +113,17 @@ export class EthereumOutpostBootstrapper {
     Assert.ok(
       options.deploymentsPath,
       "EthereumOutpostBootstrapper: deploymentsPath is required"
+    )
+    // WNE-41 — fail HERE, before anvil is touched. `OPPInbound.initialize` is
+    // one-shot with no roster setter, so an empty or zero-duration initial
+    // roster produces an outpost nothing can ever deliver to.
+    Assert.ok(
+      options.initialRoster?.groups?.some(group => group.length > 0),
+      "EthereumOutpostBootstrapper: initialRoster needs at least one batch-operator address"
+    )
+    Assert.ok(
+      options.initialRoster.epochDurationSec > 0,
+      "EthereumOutpostBootstrapper: initialRoster.epochDurationSec must be positive"
     )
     this.config = defaults(
       { ...options },
@@ -174,13 +211,25 @@ export class EthereumOutpostBootstrapper {
       rewardCooldown: 100,
       withdrawalDelay: 50
     }
-    const outpostConfig = {
-      url: rpcUrl,
-      key: deployerPrivateKey,
-      addressFile: Path.join(localDir, "outpost-addrs.json"),
-      gasLimitFile: Path.join(localDir, "outpost-gas-limits.json"),
-      useMockAggregator: true
-    }
+    const { initialRoster } = this.config,
+      outpostConfig = {
+        url: rpcUrl,
+        key: deployerPrivateKey,
+        addressFile: Path.join(localDir, "outpost-addrs.json"),
+        gasLimitFile: Path.join(localDir, "outpost-gas-limits.json"),
+        useMockAggregator: true,
+        // WNE-41: consumed by `deployLocal.ts`'s OutpostLocalDeploy, which
+        // hands them to `OPPInbound.initialize`. The deployer is deliberately
+        // NOT among them — on a cluster the batch-operator daemons sign
+        // `epochIn` with their own keys.
+        initialOperatorGroups: initialRoster.groups,
+        epochDurationSec: initialRoster.epochDurationSec
+      }
+    log.info(
+      `[ethereum] initial batch-operator roster: ${initialRoster.groups
+        .map(group => `[${group.join(", ")}]`)
+        .join(" ")} (epochDurationSec=${initialRoster.epochDurationSec})`
+    )
     Fs.writeFileSync(
       Path.join(localDir, "liqeth.json"),
       JSON.stringify(liqEthConfig, null, 2)
