@@ -1,4 +1,4 @@
-import { SingleFlightCache } from "@wireio/test-flow-batch-operator-slashing/SingleFlightCache.js"
+import { SingleFlightCache } from "@wireio/cluster-tool/flow"
 
 describe("SingleFlightCache", () => {
   it("collapses concurrent misses for one key onto a single fetch", async () => {
