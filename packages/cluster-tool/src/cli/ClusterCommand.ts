@@ -11,6 +11,8 @@ export enum ClusterCommand {
   create = "create",
   /** Start an existing cluster (produced by {@link ClusterCommand.create}) from saved state. */
   run = "run",
+  /** Run transactional swap-canary phases against an already-running cluster. */
+  "swap-canary" = "swap-canary",
   /** Stop every daemon and delete a cluster's data directory. */
   destroy = "destroy",
   /** Package each node's config tree into a per-node archive (post-`create`). */

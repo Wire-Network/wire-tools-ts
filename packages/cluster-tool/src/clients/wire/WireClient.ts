@@ -388,16 +388,27 @@ export class WireClient {
   async getTableRows<Row = unknown>(
     query: WireClient.TableRowsQuery
   ): Promise<WireClient.TableQueryResult<Row>> {
-    const result: any = await this.api.v1.chain.get_table_rows({
-      code: query.account,
-      scope: query.scope,
-      table: query.table,
-      json: true,
-      limit: query.limit ?? WireClient.DefaultRowLimit,
-      // omit bounds when null (conditional spread — no undefined)
-      ...(query.lowerBound != null ? { lower_bound: query.lowerBound } : {}),
-      ...(query.upperBound != null ? { upper_bound: query.upperBound } : {})
-    } as any)
+    // Deliberately call the APIClient without a response type. The generated
+    // table proxy delegates here, and the SDK response decoder coerces
+    // `next_key` through UInt64 even when the caller only needs typed rows.
+    // Keeping the raw JSON response preserves name keys above MAX_SAFE_INTEGER.
+    const result: any = await this.api.call({
+      path: "/v1/chain/get_table_rows",
+      params: {
+        code: query.account,
+        scope: query.scope,
+        table: query.table,
+        json: true,
+        limit: query.limit ?? WireClient.DefaultRowLimit,
+        // omit bounds when null (conditional spread — no undefined)
+        ...(query.lowerBound != null
+          ? { lower_bound: query.lowerBound }
+          : {}),
+        ...(query.upperBound != null
+          ? { upper_bound: query.upperBound }
+          : {})
+      }
+    })
     const rows = (result.rows ?? []).map((row: any) =>
       row != null && typeof row === "object" && "value" in row ? row.value : row
     )
@@ -435,48 +446,17 @@ export class WireClient {
 
   /**
    * WIRE owed to `account` but not yet claimed, or 0n when there is no row.
-   *
-   * Raw `getTableRows` rather than the typed contract-table accessor
-   * (`prefer-typed-contract-table-accessors.md`) because `wireclaims` is new and does not reach
-   * the typed surface until `@wireio/sdk-core` publishes the regenerated `SysioContractTypes`.
-   * Switch to `getSysioContract(SysioContractName.reserv).tables.wireclaims.query()` once that
-   * version is released and this package's dependency is bumped.
    */
   async getWireClaimable(account: string): Promise<bigint> {
-    return this.claimableBalance("sysio.reserv", "wireclaims", "account", account)
-  }
-
-  /**
-   * One claimable row's balance, or 0n when the account has none.
-   *
-   * Reads with a LOWER bound only. The node's upper bound is EXCLUSIVE
-   * (`chain_plugin.cpp`: `if (has_upper && kv >= ub_sv) break;` — the exclusive increment at the
-   * `find` branch does not apply here), so passing lower == upper describes an empty range and
-   * returns nothing however long you poll.
-   *
-   * Keys encode big-endian (`be_key_codec`), so iteration is numeric order and the first row
-   * at-or-after the key belongs to this account IF it has one. When it does not, the walk yields
-   * the NEXT account's row — which is why the identity check is load-bearing here, not defensive:
-   * without it an unpaid account reads back a stranger's balance.
-   */
-  private async claimableBalance(
-    contract: string,
-    table: string,
-    keyField: string,
-    account: string
-  ): Promise<bigint> {
-    const { rows } = await this.getTableRows<WireClient.ClaimableRow>({
-      account: contract,
-      scope: contract,
-      table,
-      lowerBound: WireClient.nameKeyBound(keyField, account),
+    const { rows } = await this.getSysioContract(
+      SysioContractName.reserv
+    ).tables.wireclaims.query({
+      lowerBound: WireClient.nameKeyBound("account", account),
       limit: 1
     })
     const [row] = rows
     if (row == null) return 0n
-    // wireclaims names the row's account `account`; payclaims names it `account_name`.
-    const { account: rowAccount, account_name: rowAccountName, balance } = row
-    return (rowAccount ?? rowAccountName) === account ? BigInt(balance) : 0n
+    return row.account === account ? BigInt(row.balance) : 0n
   }
 
   /**
@@ -494,10 +474,17 @@ export class WireClient {
     ])
   }
 
-  /** Epoch pay owed to `account` but not yet claimed, or 0n when there is no row. Raw table read
-   *  for the same reason as {@link getWireClaimable}. */
+  /** Epoch pay owed to `account` but not yet claimed, or 0n when there is no row. */
   async getPayClaimable(account: string): Promise<bigint> {
-    return this.claimableBalance("sysio", "payclaims", "account_name", account)
+    const { rows } = await this.getSysioContract(
+      SysioContractName.system
+    ).tables.payclaims.query({
+      lowerBound: WireClient.nameKeyBound("account_name", account),
+      limit: 1
+    })
+    const [row] = rows
+    if (row == null) return 0n
+    return row.account_name === account ? BigInt(row.balance) : 0n
   }
 
   // Convenience getters delegate to the typed contract-table accessor
@@ -953,24 +940,6 @@ export namespace WireClient {
    */
   export function nameKeyBound(field: string, account: string): string {
     return JSON.stringify({ [field]: Name.from(account).value.toString() })
-  }
-
-  /**
-   * The single field a claimable-balance read consumes, shared by `sysio.reserv::wireclaims` and
-   * `sysio.system::payclaims` — both rows carry `balance` in atomic units, serialized as a string
-   * once it exceeds the JSON-safe integer range.
-   *
-   * Declared here rather than taken from `SysioContracts` because these two reads are deliberately
-   * raw (see {@link WireClient.getWireClaimable}): the generated row types do not reach an
-   * `@wireio/sdk-core` release until the contract ABIs land, so typing the generic against them
-   * would couple this package's build to that release. It retires with the raw reads.
-   */
-  export interface ClaimableRow {
-    balance: string | number
-    /** `wireclaims` carries the row's owner here… */
-    account?: string
-    /** …and `payclaims` here. Exactly one is present, per that table's ABI. */
-    account_name?: string
   }
 
   // ── Contract-client typing (keyed by contract Name + member) ──

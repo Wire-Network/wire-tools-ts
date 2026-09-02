@@ -128,6 +128,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Node-operator collateral deposit + withdraw remit |
 | `flow-swap-with-underwriting` | `@wireio/test-flow-swap-with-underwriting` | Bidirectional SWAP (ETH ↔ SOL) with underwriting |
 | `flow-swap-non-native-tokens` | `@wireio/test-flow-swap-non-native-tokens` | SWAP of non-native tokens (USDC / USDT / LIQ) |
+| `flow-swap-canary` | `@wireio/test-flow-swap-canary` | Configurable serial canary over public ETH, SOL, and WIRE routes |
 | `flow-swap-variance-revert` | `@wireio/test-flow-swap-variance-revert` | Swap variance-tolerance revert |
 | `flow-batch-operator-termination` | `@wireio/test-flow-batch-operator-termination` | Batch-operator termination via delivery underperformance |
 | `flow-yield-distribution` | `@wireio/test-flow-yield-distribution` | `STAKING_REWARD` → `sysio.dclaim::onreward` → `fundclaim` |
@@ -135,6 +136,21 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | `debugging-*` / `test-app-server` | `@wireio/debugging-*` | OPP debugging server, client tooling, TUI, shared types |
 
 Flow packages depend on the harness via `workspace:*`.
+
+### Swap canary
+
+`flow-swap-canary` bootstraps a fresh cluster. The connected command runs the
+same PhaseGroups and route Steps against an existing cluster; run it on that
+host so persisted signing state stays local:
+
+```bash
+packages/cluster-tool/bin/wire-cluster-tool swap-canary \
+  --cluster-path /path/to/running/cluster
+```
+
+The default covers all six endpoint directions. Repeat `--routes` to select
+other route groups; add `--wait-for-challenge` to require terminal UWREQ
+completion. See [`packages/flow-swap-canary`](packages/flow-swap-canary).
 
 ## Running flows
 
@@ -173,12 +189,17 @@ and every live run is paired with the heartbeat monitor (see
 
 # Regex — 1 match runs it, multiple matches drop into a scoped picker:
 ./scripts/run-flow.mjs swap --wire-build-path … --ethereum-path … --solana-path …
+
+# Flow-specific flags follow `--` and are parsed by that flow's strict CLI:
+./scripts/run-flow.mjs flow-swap-canary --wire-build-path … --ethereum-path … \
+  --solana-path … -- --routes eth-to-sol --wait-for-challenge
 ```
 
 Each `--wire-build-path` / `--ethereum-path` / `--solana-path` flag falls back to
 its env var (`WIRE_BUILD_PATH` / `WIRE_ETH_PATH` / `WIRE_SOLANA_PATH`); one of the
 two is required. `--cluster-path` (env `WIRE_CLUSTER_PATH`) is optional — omit it
-and the harness picks a fresh temp dir.
+and the harness picks a fresh temp dir. Put scenario-specific options after a
+literal `--`; the runner forwards them without owning or interpreting them.
 
 ### Option B — `pnpm --filter` directly (what Option A runs under the hood)
 

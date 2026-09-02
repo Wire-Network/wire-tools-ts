@@ -28,12 +28,61 @@ import {
 } from "@solana/spl-token"
 import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
 import { slugNameToLittleEndianBuffer } from "../../utils/slugUtils.js"
+import { sleep } from "../../utils/asyncUtils.js"
 
 /** PDA seeds — kept in sync with `wire-solana/programs/liqsol-core/src/states/opp_states.rs`. */
 const OUTPOST_CONFIG_SEED = Buffer.from("outpost_config")
 const OUTBOUND_MESSAGE_BUFFER_SEED = Buffer.from("outbound_message_buffer")
 const RESERVE_SEED = Buffer.from("reserve")
 const RESERVE_VAULT_SEED = Buffer.from("reserve_vault")
+const SwapDepositLog = /opp_outpost: SwapDeposit id=(\d+)\b/
+const ConfirmedTransactionReadAttempts = 20
+const ConfirmedTransactionReadIntervalMs = 250
+
+/**
+ * Parse the canonical `SwapDeposit` id from confirmed Solana program logs.
+ *
+ * @param logMessages - Confirmed transaction log messages.
+ * @returns Protocol source request id.
+ */
+export function parseSolanaSwapSourceRequestId(
+  logMessages: readonly string[]
+): bigint {
+  const match = logMessages
+    .map(message => message.match(SwapDepositLog))
+    .find(candidate => candidate != null)
+  Assert.ok(match != null, "confirmed Solana swap did not log SwapDeposit")
+  return BigInt(match[1])
+}
+
+/**
+ * Read and parse a confirmed Solana swap's protocol source request id.
+ *
+ * @param connection - Solana RPC connection.
+ * @param signature - Confirmed request transaction signature.
+ * @returns Protocol source request id.
+ */
+export async function readSolanaSwapSourceRequestId(
+  connection: Connection,
+  signature: string
+): Promise<bigint> {
+  let transaction = null
+  for (
+    let attempt = 0;
+    attempt < ConfirmedTransactionReadAttempts && transaction == null;
+    attempt++
+  ) {
+    transaction = await connection.getTransaction(signature, {
+      // getTransaction accepts Finality, while the shared Connection default
+      // is deliberately typed as the broader Commitment union.
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0
+    })
+    if (transaction == null) await sleep(ConfirmedTransactionReadIntervalMs)
+  }
+  Assert.ok(transaction != null, `confirmed Solana swap ${signature} not found`)
+  return parseSolanaSwapSourceRequestId(transaction.meta?.logMessages ?? [])
+}
 
 /**
  * Structured arguments for a SOL-source SWAP_REQUEST emission. All
