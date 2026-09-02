@@ -922,8 +922,13 @@ export namespace ClusterBuildDefaults {
         ...underwriters.map((label, index) => ({
           label,
           type: OperatorType.UNDERWRITER,
+          // The offset is the length of the PREFIX-FILTERED batch-operator
+          // array, not `config.batchOperatorCount`: only a list already
+          // narrowed to `batchop.` entries guarantees the ordinal the HD-index
+          // rule is defined against. `index` is that same filtered array's
+          // iterator index for underwriters.
           ethereumHdIndex: Constants.underwriterEthereumHdIndex(
-            config.batchOperatorCount,
+            batchOperators.length,
             index
           ),
           isBootstrapped: false,

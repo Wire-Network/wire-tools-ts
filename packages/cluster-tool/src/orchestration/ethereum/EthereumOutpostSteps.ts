@@ -15,7 +15,7 @@ import {
 import { KeySteps } from "../steps/KeySteps.js"
 import {
   EthereumOutpostBootstrapper,
-  type EthereumOutpostGenesisRoster
+  type EthereumOutpostInitialRoster
 } from "./EthereumOutpostBootstrapper.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 
@@ -25,7 +25,7 @@ export namespace EthereumOutpostSteps {
   const AnvilDataSubpath = "anvil"
 
   /**
-   * Derive the WNE-41 genesis batch-operator roster the outpost is constructed
+   * Derive the WNE-41 initial batch-operator roster the outpost is constructed
    * with — the ETH addresses of every bootstrapped batch operator, grouped the
    * way the depot's `schbatchgps` will group them.
    *
@@ -45,32 +45,109 @@ export namespace EthereumOutpostSteps {
    * attestation.
    *
    * @param ctx - The build context.
-   * @returns The genesis roster for `OPPInbound.initialize`.
+   * @returns The initial roster for `OPPInbound.initialize`.
    */
-  export async function resolveGenesisRoster<C extends ClusterBuildContext>(
+  export async function resolveInitialRoster<C extends ClusterBuildContext>(
     ctx: C
-  ): Promise<EthereumOutpostGenesisRoster> {
+  ): Promise<EthereumOutpostInitialRoster> {
     const { config } = ctx,
-      { operatorsPerEpoch } = BatchOperatorSchedule.resolve(config),
+      { operatorsPerEpoch, batchOpGroups, batchOperatorMinimumActive } =
+        BatchOperatorSchedule.resolve(config),
       keyContext = KeyGenerator.context(
         config.executables.clio,
         config.buildPath,
         KeySteps.ethereumMnemonic(ctx)
       ),
+      // Walk the BATCH-OPERATOR LABEL list — an array already narrowed to
+      // `batchop.` entries — and take that filtered array's iterator index.
+      // The provisioning side (`ClusterBuildDefaults`) assigns each operator's
+      // HD index the same way, so the roster authorizes exactly the addresses
+      // the daemons later sign `epochIn` with. Indexing a bare
+      // `range(batchOperatorCount)` would agree only by coincidence of
+      // ordering; neither the position nor the sort order of an operator in a
+      // persisted `cluster-keys.json` is guaranteed, so the ordinal is only
+      // meaningful once the list has been filtered by label prefix.
+      batchOperatorLabels = range(config.batchOperatorCount).map(index =>
+        Constants.batchOperatorLabel(index)
+      ),
       addresses = await mapSeries(
-        range(config.batchOperatorCount),
-        async index =>
+        batchOperatorLabels,
+        async (label, index) =>
           (
             await KeyGenerator.create(KeyType.EM, keyContext, {
               ethereumHdIndex: Constants.batchOperatorEthereumHdIndex(index),
-              purpose: "ethereum-outpost genesis batch-operator roster"
+              purpose: `ethereum-outpost initial batch-operator roster (${label})`
             })
           ).address
       )
     return {
-      groups: chunk(addresses, operatorsPerEpoch),
+      groups: partitionLikeDepot(
+        addresses,
+        operatorsPerEpoch,
+        batchOpGroups,
+        batchOperatorMinimumActive
+      ),
       epochDurationSec: config.epochDurationSec
     }
+  }
+
+  /**
+   * Partition roster addresses into groups the way `sysio.epoch::schbatchgps`
+   * does, so the outpost starts life with the shape the depot will replace it
+   * with on its first `BATCH_OPERATOR_GROUPS` attestation.
+   *
+   * Mirrors the depot's steps in order: TRIM the pool to
+   * `batch_operator_minimum_active`, EVEN/ODD INTERLEAVE it, then partition
+   * into exactly `batch_op_groups` groups of `operators_per_epoch`.
+   *
+   * The interleave is what spreads bootstrapped and non-bootstrapped operators
+   * across groups on the depot; reproducing it here keeps group 0 — whose
+   * length IS the outpost's consensus threshold — the same SIZE the depot will
+   * install. Group MEMBERSHIP cannot be reproduced: the depot orders by
+   * on-chain account name, which is generated later in the bootstrap and does
+   * not exist when the outpost is deployed. Membership is not load-bearing for
+   * epoch 1 — `isActiveOperator` scans every group — but the threshold is.
+   *
+   * @param addresses - Roster addresses in batch-operator label order.
+   * @param operatorsPerEpoch - Depot `operators_per_epoch` (group SIZE).
+   * @param batchOpGroups - Depot `batch_op_groups` (group COUNT).
+   * @param batchOperatorMinimumActive - Depot `batch_operator_minimum_active`.
+   * @returns Exactly `batchOpGroups` non-empty groups.
+   */
+  export function partitionLikeDepot(
+    addresses: string[],
+    operatorsPerEpoch: number,
+    batchOpGroups: number,
+    batchOperatorMinimumActive: number
+  ): string[][] {
+    // TRIM — the depot schedules only `batch_operator_minimum_active` of the
+    // ACTIVE pool; anything past it stays ACTIVE but ungrouped there.
+    const scheduled = addresses.slice(0, batchOperatorMinimumActive),
+      // INTERLEAVE — evens then odds, exactly as `schbatchgps` shuffles.
+      interleaved = [
+        ...scheduled.filter((_address, index) => index % 2 === 0),
+        ...scheduled.filter((_address, index) => index % 2 === 1)
+      ],
+      scheduledGroups = range(batchOpGroups)
+        .map(group =>
+          interleaved.slice(
+            group * operatorsPerEpoch,
+            group * operatorsPerEpoch + operatorsPerEpoch
+          )
+        )
+        // The contract rejects an EMPTY group, so a short pool yields fewer
+        // groups rather than padded ones.
+        .filter(group => group.length > 0),
+      // Operators past the depot's scheduled window still need delivery rights
+      // on epoch 1 — `isActiveOperator` scans every group. They ride groups of
+      // their OWN and are never merged into an existing one: with a single
+      // scheduled group the "last" group IS group 0, and widening that raises
+      // the consensus threshold to a number no epoch can meet.
+      overflowGroups = chunk(
+        addresses.slice(batchOperatorMinimumActive),
+        operatorsPerEpoch
+      )
+    return [...scheduledGroups, ...overflowGroups]
   }
 
   /**
@@ -115,7 +192,7 @@ export namespace EthereumOutpostSteps {
         toDialAddress(ctx.config.bind.anvil.address)
       ),
       deploymentsPath: ClusterConfigProvider.ethereumDeploymentsPath(ctx.config),
-      genesisRoster: await resolveGenesisRoster(ctx)
+      initialRoster: await resolveInitialRoster(ctx)
     }).bootstrap()
   }
 }
