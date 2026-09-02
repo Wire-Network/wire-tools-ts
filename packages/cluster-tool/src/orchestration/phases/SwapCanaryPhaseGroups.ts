@@ -128,8 +128,8 @@ function planPrerequisiteHealth(
       ...assets.map(asset =>
         verifyStep<SwapScenarioContext>(
           Actor.Sysio,
-          `reserve-${asset.symbol.toLowerCase()}`,
-          `${asset.endpoint}/${asset.symbol}/PRIMARY reserve exists`,
+          `reserve-${asset.symbol.toLowerCase()}-${SlugName.toString(asset.reserveCode).toLowerCase()}`,
+          `${asset.endpoint}/${asset.symbol}/${SlugName.toString(asset.reserveCode)} reserve exists`,
           async ctx => {
             await ctx.reserveBook(
               asset.chainCode,
@@ -183,7 +183,9 @@ function planSourceFunding(
   routes: readonly SwapRoute[],
   options: ClusterBuildStepOptions
 ): void {
-  const sources = uniqueAssets(routes.map(route => route.source)).filter(
+  const sources = SwapRouteCatalog.uniqueAssets(
+    routes.map(route => route.source)
+  ).filter(
     source =>
       source.sourceKind === SwapRouteSourceKind.ERC20 ||
       source.sourceKind === SwapRouteSourceKind.SPL
@@ -235,9 +237,15 @@ function planUnderwriterReadiness(
         await pollUntil(
           "selected collateral credited and underwriters ACTIVE",
           async () => {
-            const { rows } = await ctx.wire
+            const result = await ctx.wire
               .getSysioContract(SysioContractName.opreg)
               .tables.operators.query({ limit: Constants.TableRowLimit })
+            Assert.strictEqual(
+              result.more,
+              false,
+              `swap canary operator scan exceeds ${Constants.TableRowLimit} rows`
+            )
+            const { rows } = result
             return labels.every((label, index) => {
               const account = ctx.keyStore.assertOperator(label).account,
                 operator = rows.find(row => row.account === account)
@@ -315,7 +323,7 @@ function planRoute(
       SwapRouteSteps.planErc20Approval(
         Actor.User,
         "approve-source",
-        `${routeLabel(route)}: approve ReserveManager for the source amount`,
+        `${SwapRouteCatalog.routeLabel(route)}: approve ReserveManager for the source amount`,
         writeOptions,
         route,
         sourceAmountFor(route.source)
@@ -326,7 +334,7 @@ function planRoute(
     SwapRouteSteps.planRequest(
       Actor.User,
       "request-swap",
-      `${routeLabel(route)}: submit exactly one source request`,
+      `${SwapRouteCatalog.routeLabel(route)}: submit exactly one source request`,
       writeOptions,
       route,
       sourceAmountFor(route.source),
@@ -365,7 +373,7 @@ function planRoute(
   ClusterBuildPhase.create<SwapScenarioContext>(
     parent,
     pascalCase(route.id),
-    `${routeLabel(route)} request, exact underwriting, accounting, and payout`,
+    `${SwapRouteCatalog.routeLabel(route)} request, exact underwriting, accounting, and payout`,
     steps
   )
 }
@@ -400,21 +408,11 @@ function buildUnderwriterCollateral(
 }
 
 function uniqueExternalAssets(routes: readonly SwapRoute[]): SwapRouteAsset[] {
-  return uniqueAssets(
+  return SwapRouteCatalog.uniqueAssets(
     routes
       .flatMap(route => [route.source, route.destination])
       .filter(asset => asset.endpoint !== SwapRouteEndpoint.WIRE)
   )
-}
-
-function uniqueAssets(assets: readonly SwapRouteAsset[]): SwapRouteAsset[] {
-  const seen = new Set<string>()
-  return assets.filter(asset => {
-    const key = `${asset.chainCode}:${asset.tokenCode}:${asset.reserveCode}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
 }
 
 function uniqueDirections(routes: readonly SwapRoute[]): SwapRouteDirection[] {
@@ -435,10 +433,6 @@ function destinationActor(route: SwapRoute): Report.Actor {
     : route.destination.endpoint === SwapRouteEndpoint.SOLANA
       ? Actor.SolanaOutpost
       : Actor.Sysio
-}
-
-function routeLabel(route: SwapRoute): string {
-  return `${route.source.symbol}→${route.destination.symbol}`
 }
 
 function routeTouchesWire(route: SwapRoute): boolean {

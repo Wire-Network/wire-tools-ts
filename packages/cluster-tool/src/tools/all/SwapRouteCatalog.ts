@@ -168,6 +168,31 @@ export namespace SwapRouteCatalog {
     })
   }
 
+  /**
+   * De-duplicate assets by their exact chain, token, and reserve identity.
+   *
+   * @param assets - Route assets that may repeat across source and destination legs.
+   * @returns Assets in first-seen order.
+   */
+  export function uniqueAssets(
+    assets: readonly SwapRouteAsset[]
+  ): SwapRouteAsset[] {
+    return Array.from(
+      new Map(assets.map(asset => [assetId(asset), asset])).values()
+    )
+  }
+
+  /**
+   * Human-readable label for one exact token/reserve route.
+   *
+   * @param route - Exact public route.
+   * @returns Source and destination labels joined by an arrow.
+   */
+  export function routeLabel(route: SwapRoute): string {
+    const qualifyEndpoint = route.source.symbol === route.destination.symbol
+    return `${assetLabel(route.source, qualifyEndpoint)}→${assetLabel(route.destination, qualifyEndpoint)}`
+  }
+
   function matching(
     routes: readonly SwapRoute[],
     selector: SwapRouteSelector
@@ -204,6 +229,7 @@ const SupportedExternalChains = new Set([
   SlugName.from(SwapRouteEndpoint.ETHEREUM),
   SlugName.from(SwapRouteEndpoint.SOLANA)
 ])
+const PrimaryReserveCode = SlugName.from("PRIMARY")
 
 const WireAsset: SwapRouteAsset = {
   symbol: "WIRE",
@@ -212,7 +238,7 @@ const WireAsset: SwapRouteAsset = {
   tokenCode: SlugName.from("WIRE"),
   // Outpost request contracts require a non-zero target reserve code even
   // though the depot-native WIRE endpoint has no reserve row of its own.
-  reserveCode: SlugName.from("PRIMARY"),
+  reserveCode: PrimaryReserveCode,
   sourcePrecision: 9,
   sourceKind: SwapRouteSourceKind.WIRE
 }
@@ -380,7 +406,7 @@ function route(
   destination: SwapRouteAsset
 ): SwapRoute {
   return {
-    id: `${source.symbol.toLowerCase()}-to-${destination.symbol.toLowerCase()}`,
+    id: `${routeAssetId(source)}-to-${routeAssetId(destination)}`,
     direction,
     source,
     destination
@@ -393,7 +419,7 @@ function canaryRoutes(routes: readonly SwapRoute[]): readonly SwapRoute[] {
     SwapRouteEndpoint.ETHEREUM,
     SwapRouteEndpoint.SOLANA
   ]) {
-    const candidates = uniqueAssets(
+    const candidates = SwapRouteCatalog.uniqueAssets(
       routes.flatMap(route => [route.source, route.destination])
     )
       .filter(asset => asset.endpoint === endpoint)
@@ -430,14 +456,37 @@ function compareCanaryAssets(a: SwapRouteAsset, b: SwapRouteAsset): number {
   return a.reserveCode - b.reserveCode
 }
 
-function uniqueAssets(assets: readonly SwapRouteAsset[]): SwapRouteAsset[] {
-  return Array.from(
-    new Map(assets.map(asset => [assetId(asset), asset])).values()
-  )
-}
-
 function assetId(asset: SwapRouteAsset): string {
   return `${asset.chainCode}:${asset.tokenCode}:${asset.reserveCode}`
+}
+
+function routeAssetId(asset: SwapRouteAsset): string {
+  const symbol = asset.symbol.toLowerCase(),
+    base =
+      asset.endpoint === SwapRouteEndpoint.WIRE ||
+      asset.sourceKind === SwapRouteSourceKind.NATIVE
+        ? symbol
+        : `${endpointId(asset.endpoint)}-${symbol}`
+  return asset.reserveCode === PrimaryReserveCode
+    ? base
+    : `${base}-${SlugName.toString(asset.reserveCode).toLowerCase()}`
+}
+
+function assetLabel(asset: SwapRouteAsset, qualifyEndpoint: boolean): string {
+  const reserve =
+      asset.reserveCode === PrimaryReserveCode
+        ? ""
+        : `/${SlugName.toString(asset.reserveCode)}`,
+    endpoint = qualifyEndpoint ? `${endpointId(asset.endpoint).toUpperCase()}:` : ""
+  return `${endpoint}${asset.symbol}${reserve}`
+}
+
+function endpointId(endpoint: SwapRouteEndpoint): string {
+  return match(endpoint)
+    .with(SwapRouteEndpoint.ETHEREUM, () => "eth")
+    .with(SwapRouteEndpoint.SOLANA, () => "sol")
+    .with(SwapRouteEndpoint.WIRE, () => "wire")
+    .exhaustive()
 }
 
 function touching(
@@ -452,9 +501,7 @@ function touching(
 }
 
 function assertUniqueAssets(assets: readonly SwapRouteAsset[]): void {
-  const ids = assets.map(
-    asset => assetId(asset)
-  )
+  const ids = assets.map(asset => assetId(asset))
   Assert.strictEqual(
     new Set(ids).size,
     ids.length,

@@ -1,3 +1,4 @@
+import Assert from "node:assert"
 import Path from "node:path"
 
 import type { ClusterConfig } from "@wireio/cluster-tool-shared"
@@ -50,9 +51,7 @@ export function createSwapCanaryCommand() {
     builder: (builder: Argv) => applySwapCanaryArgs(builder),
     handler: async (args: ArgumentsCamelCase<SwapCanaryArgv>) => {
       const report = await runSwapCanary(args)
-      log.info(
-        `[swap-canary] ${report.succeeded ? "SUCCEEDED" : "FAILED"}`
-      )
+      log.info(`[swap-canary] ${report.succeeded ? "SUCCEEDED" : "FAILED"}`)
       process.exitCode = report.succeeded ? 0 : 1
     }
   }
@@ -78,9 +77,15 @@ export async function runSwapCanary(args: SwapCanaryArgv): Promise<Report> {
   ClusterState.load(config)
   ClusterState.rehydrate(context.keyStore, ClusterState.loadKeys(config))
 
-  const { rows: liveReserves } = await context.wire
-      .getSysioContract(SysioContractName.reserv)
-      .tables.reserves.query({ limit: SwapCanaryConfig.TableRowLimit }),
+  const liveReserveResult = await context.wire
+    .getSysioContract(SysioContractName.reserv)
+    .tables.reserves.query({ limit: SwapCanaryConfig.TableRowLimit })
+  Assert.strictEqual(
+    liveReserveResult.more,
+    false,
+    `connected swap canary reserve scan exceeds ${SwapCanaryConfig.TableRowLimit} rows`
+  )
+  const { rows: liveReserves } = liveReserveResult,
     cluster = ClusterBuild.forContext(context)
   SwapCanaryPhaseGroups.plan(cluster, {
     availableRoutes: SwapRouteCatalog.fromLiveReserveRows(liveReserves),

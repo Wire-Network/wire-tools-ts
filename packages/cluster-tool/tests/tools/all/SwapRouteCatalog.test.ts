@@ -55,8 +55,7 @@ describe("SwapRouteCatalog", () => {
   it("uses active public live identities and falls back to LIQSOL for canary", () => {
     const eth = liveRow(Steps.registry.MockReserveRegistrations[0]),
       sol = liveRow(Steps.registry.MockReserveRegistrations[4], {
-        status:
-          SysioContracts.SysioReservReservestatus.RESERVE_STATUS_PENDING
+        status: SysioContracts.SysioReservReservestatus.RESERVE_STATUS_PENDING
       }),
       liqsol = liveRow(Steps.registry.MockReserveRegistrations[5], {
         reserve_code: { value: SlugName.from("PUB") }
@@ -71,16 +70,14 @@ describe("SwapRouteCatalog", () => {
         liqsol,
         privateLiqsol
       ]),
-      selected = SwapRouteCatalog.select(liveRoutes, [
-        SwapRouteSelector.canary
-      ])
+      selected = SwapRouteCatalog.select(liveRoutes, [SwapRouteSelector.canary])
     expect(selected.map(route => route.id)).toEqual([
-      "eth-to-liqsol",
-      "liqsol-to-eth",
+      "eth-to-sol-liqsol-pub",
+      "sol-liqsol-pub-to-eth",
       "eth-to-wire",
       "wire-to-eth",
-      "liqsol-to-wire",
-      "wire-to-liqsol"
+      "sol-liqsol-pub-to-wire",
+      "wire-to-sol-liqsol-pub"
     ])
     expect(selected[0].source).toMatchObject({
       sourceKind: SwapRouteSourceKind.NATIVE,
@@ -91,6 +88,41 @@ describe("SwapRouteCatalog", () => {
       sourceKind: SwapRouteSourceKind.SPL,
       sourcePrecision: 9
     })
+  })
+
+  it("keeps routes and labels distinct when one token has multiple public reserves", () => {
+    const eth = liveRow(Steps.registry.MockReserveRegistrations[0]),
+      alternateEth = liveRow(Steps.registry.MockReserveRegistrations[0], {
+        reserve_code: { value: SlugName.from("ALT") }
+      }),
+      sol = liveRow(Steps.registry.MockReserveRegistrations[4]),
+      liveRoutes = SwapRouteCatalog.fromLiveReserveRows([
+        eth,
+        alternateEth,
+        sol
+      ]),
+      alternateRoute = liveRoutes.find(route => route.id === "eth-alt-to-sol")
+    expect(new Set(liveRoutes.map(route => route.id)).size).toBe(
+      liveRoutes.length
+    )
+    expect(alternateRoute).toBeDefined()
+    expect(SwapRouteCatalog.routeLabel(alternateRoute!)).toBe("ETH/ALT→SOL")
+  })
+
+  it("qualifies route ids and labels when external chains share a token symbol", () => {
+    const ethUsdc = liveRow(Steps.registry.MockReserveRegistrations[2]),
+      solUsdc = liveRow(Steps.registry.MockReserveRegistrations[6], {
+        token_code: { value: SlugName.from("USDC") }
+      }),
+      liveRoutes = SwapRouteCatalog.fromLiveReserveRows([ethUsdc, solUsdc]),
+      forward = liveRoutes.find(route => route.direction === "eth-to-sol"),
+      reverse = liveRoutes.find(route => route.direction === "sol-to-eth")
+    expect(new Set(liveRoutes.map(route => route.id)).size).toBe(
+      liveRoutes.length
+    )
+    expect(forward?.id).toBe("eth-usdc-to-sol-usdc")
+    expect(reverse?.id).toBe("sol-usdc-to-eth-usdc")
+    expect(SwapRouteCatalog.routeLabel(forward!)).toBe("ETH:USDC→SOL:USDC")
   })
 
   it("rejects live depot precision that disagrees with native precision", () => {

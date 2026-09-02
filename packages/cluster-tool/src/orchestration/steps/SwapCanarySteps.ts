@@ -16,6 +16,7 @@ import { Report } from "../../report/Report.js"
 import {
   type SwapRoute,
   type SwapRouteAsset,
+  SwapRouteCatalog,
   SwapRouteEndpoint,
   SwapRouteSourceKind
 } from "../../tools/all/SwapRouteCatalog.js"
@@ -79,7 +80,7 @@ export namespace SwapCanarySteps {
     return verifyStep<SwapScenarioContext>(
       actor,
       "quote-and-snapshot",
-      `${routeLabel(route)}: compute the live quote and snapshot balances/books`,
+      `${SwapRouteCatalog.routeLabel(route)}: compute the live quote and snapshot balances/books`,
       async ctx => {
         const sourceAmount = sourceAmountFor(route.source),
           target = await WireReserveTool.swapquote(ctx.wire, {
@@ -90,7 +91,10 @@ export namespace SwapCanarySteps {
             ),
             to: reserveTriple(route.destination)
           })
-        Assert.ok(target > 0n, `${routeLabel(route)}: live quote returned zero`)
+        Assert.ok(
+          target > 0n,
+          `${SwapRouteCatalog.routeLabel(route)}: live quote returned zero`
+        )
         ctx.outputs
           .set(SwapRouteSteps.targetOutputKey(route.id), target)
           .set(snapshotOutputKey(route.id), {
@@ -118,15 +122,21 @@ export namespace SwapCanarySteps {
     return verifyStep<SwapScenarioContext>(
       actor,
       "source-custody",
-      `${routeLabel(route)}: verify the exact source custody movement`,
+      `${SwapRouteCatalog.routeLabel(route)}: verify the exact source custody movement`,
       async ctx => {
         const before = ctx.outputs.assert(
             snapshotOutputKey(route.id)
           ).sourceCustody,
           amount = sourceAmountFor(route.source)
-        Assert.ok(before != null, `${routeLabel(route)}: no custody baseline`)
+        Assert.ok(
+          before != null,
+          `${SwapRouteCatalog.routeLabel(route)}: no custody baseline`
+        )
         const after = await readSourceCustody(ctx, route.source)
-        Assert.ok(after != null, `${routeLabel(route)}: no custody balance`)
+        Assert.ok(
+          after != null,
+          `${SwapRouteCatalog.routeLabel(route)}: no custody balance`
+        )
         const expected = match(route.source.sourceKind)
           .with(SwapRouteSourceKind.ERC20, () => before + amount)
           .with(
@@ -136,13 +146,13 @@ export namespace SwapCanarySteps {
           )
           .otherwise(() => {
             throw new Error(
-              `${routeLabel(route)}: custody check not applicable`
+              `${SwapRouteCatalog.routeLabel(route)}: custody check not applicable`
             )
           })
         Assert.strictEqual(
           after,
           expected,
-          `${routeLabel(route)}: source custody mismatch`
+          `${SwapRouteCatalog.routeLabel(route)}: source custody mismatch`
         )
       }
     )
@@ -157,7 +167,7 @@ export namespace SwapCanarySteps {
     return verifyStep<SwapScenarioContext>(
       actor,
       "uwreq-correlated",
-      `${routeLabel(route)}: correlate the exact source request to its UWREQ`,
+      `${SwapRouteCatalog.routeLabel(route)}: correlate the exact source request to its UWREQ`,
       async ctx => {
         const sourceRequestId = ctx.outputs.assert(
             SwapRouteSteps.sourceRequestIdOutputKey(route.id)
@@ -167,7 +177,7 @@ export namespace SwapCanarySteps {
             route.source.sourcePrecision
           )
         await pollUntil(
-          `${routeLabel(route)}: exact source request ${sourceRequestId}`,
+          `${SwapRouteCatalog.routeLabel(route)}: exact source request ${sourceRequestId}`,
           async () => {
             const request = (await readUwreqs(ctx, route)).find(
               row =>
@@ -178,7 +188,7 @@ export namespace SwapCanarySteps {
             Assert.strictEqual(
               BigInt(request.src_amount),
               sourceDepotAmount,
-              `${routeLabel(route)}: UWREQ source amount mismatch`
+              `${SwapRouteCatalog.routeLabel(route)}: UWREQ source amount mismatch`
             )
             ctx.outputs.set(uwreqIdOutputKey(route.id), BigInt(request.id))
             return true
@@ -200,11 +210,11 @@ export namespace SwapCanarySteps {
     return verifyStep<SwapScenarioContext>(
       actor,
       "uwreq-confirmed",
-      `${routeLabel(route)}: exact UWREQ reaches CONFIRMED`,
+      `${SwapRouteCatalog.routeLabel(route)}: exact UWREQ reaches CONFIRMED`,
       async ctx => {
         const id = ctx.outputs.assert(uwreqIdOutputKey(route.id))
         await pollUntil(
-          `${routeLabel(route)}: UWREQ ${id} confirmed`,
+          `${SwapRouteCatalog.routeLabel(route)}: UWREQ ${id} confirmed`,
           async () => {
             const row = await readUwreq(ctx, route, id)
             return row != null && isConfirmedOrCompleted(row)
@@ -227,11 +237,11 @@ export namespace SwapCanarySteps {
     return verifyStep<SwapScenarioContext>(
       actor,
       "collateral-locks",
-      `${routeLabel(route)}: ${expected} expected collateral lock(s) exist`,
+      `${SwapRouteCatalog.routeLabel(route)}: ${expected} expected collateral lock(s) exist`,
       async ctx => {
         const id = ctx.outputs.assert(uwreqIdOutputKey(route.id))
         await pollUntil(
-          `${routeLabel(route)}: ${expected} lock(s) for UWREQ ${id}`,
+          `${SwapRouteCatalog.routeLabel(route)}: ${expected} lock(s) for UWREQ ${id}`,
           async () => (await ctx.locksForUwreq(Number(id))).length === expected,
           Constants.RaceDeadlineMs,
           Constants.PollIntervalMs
@@ -250,7 +260,7 @@ export namespace SwapCanarySteps {
     return verifyStep<SwapScenarioContext>(
       actor,
       "reserve-accounting",
-      `${routeLabel(route)}: reserve books match the live curve settlement`,
+      `${SwapRouteCatalog.routeLabel(route)}: reserve books match the live curve settlement`,
       async ctx => {
         const snapshot = ctx.outputs.assert(snapshotOutputKey(route.id)),
           sourceAmount = WireReserveTool.toDepot(
@@ -276,7 +286,7 @@ export namespace SwapCanarySteps {
             snapshot.destinationBook?.ownerFeeBps ?? 0
           )
         await pollUntil(
-          `${routeLabel(route)}: reserve books settled`,
+          `${SwapRouteCatalog.routeLabel(route)}: reserve books settled`,
           async () => {
             const source = await readReserveBook(ctx, route.source),
               destination = await readReserveBook(ctx, route.destination)
@@ -320,7 +330,7 @@ export namespace SwapCanarySteps {
     return verifyStep<SwapScenarioContext>(
       actor,
       "destination-funded",
-      `${routeLabel(route)}: destination receives the variance-adjusted payout`,
+      `${SwapRouteCatalog.routeLabel(route)}: destination receives the variance-adjusted payout`,
       async ctx => {
         const snapshot = ctx.outputs.assert(snapshotOutputKey(route.id)),
           target = ctx.outputs.assert(SwapRouteSteps.targetOutputKey(route.id)),
@@ -328,7 +338,7 @@ export namespace SwapCanarySteps {
             target -
             WireReserveTool.varianceDrift(target, Constants.ToleranceBps)
         await pollUntil(
-          `${routeLabel(route)}: destination funds land`,
+          `${SwapRouteCatalog.routeLabel(route)}: destination funds land`,
           async () =>
             route.destination.endpoint === SwapRouteEndpoint.WIRE
               ? (await ctx.wire.getWireClaimable(Constants.WireUserAccount)) >=
@@ -362,7 +372,7 @@ export namespace SwapCanarySteps {
     return ClusterBuildStep.create<SwapScenarioContext, ClaimWireInput>(
       actor,
       "claim-wire",
-      `${routeLabel(route)}: recipient claims its settled WIRE`,
+      `${SwapRouteCatalog.routeLabel(route)}: recipient claims its settled WIRE`,
       options,
       { kind: "SwapCanarySteps.ClaimWireInput", route },
       runClaimWire
@@ -392,7 +402,7 @@ export namespace SwapCanarySteps {
     return verifyStep<SwapScenarioContext>(
       actor,
       "wire-claim-received",
-      `${routeLabel(route)}: claimed WIRE reaches the liquid balance`,
+      `${SwapRouteCatalog.routeLabel(route)}: claimed WIRE reaches the liquid balance`,
       async ctx => {
         const snapshot = ctx.outputs.assert(snapshotOutputKey(route.id)),
           target = ctx.outputs.assert(SwapRouteSteps.targetOutputKey(route.id)),
@@ -402,7 +412,7 @@ export namespace SwapCanarySteps {
         Assert.ok(
           (await ctx.wire.getWireBalance(Constants.WireUserAccount)) >=
             snapshot.destinationBalance + minimum,
-          `${routeLabel(route)}: claimed WIRE balance is below the payout floor`
+          `${SwapRouteCatalog.routeLabel(route)}: claimed WIRE balance is below the payout floor`
         )
       }
     )
@@ -417,11 +427,11 @@ export namespace SwapCanarySteps {
     return verifyStep<SwapScenarioContext>(
       actor,
       "challenge-completed",
-      `${routeLabel(route)}: exact UWREQ reaches COMPLETED`,
+      `${SwapRouteCatalog.routeLabel(route)}: exact UWREQ reaches COMPLETED`,
       async ctx => {
         const id = ctx.outputs.assert(uwreqIdOutputKey(route.id))
         await pollUntil(
-          `${routeLabel(route)}: UWREQ ${id} completed`,
+          `${SwapRouteCatalog.routeLabel(route)}: UWREQ ${id} completed`,
           async () => {
             const row = await readUwreq(ctx, route, id)
             return (
@@ -459,10 +469,6 @@ function reserveTriple(asset: SwapRouteAsset): WireReserveTool.ReserveTriple {
     tokenCode: asset.tokenCode,
     reserveCode: asset.reserveCode
   }
-}
-
-function routeLabel(route: SwapRoute): string {
-  return `${route.source.symbol}→${route.destination.symbol}`
 }
 
 async function readReserveBook(
@@ -557,9 +563,15 @@ async function readUwreqs(
   ctx: SwapScenarioContext,
   route: SwapRoute
 ): Promise<SysioContracts.SysioUwritUwRequestTType[]> {
-  const { rows } = await ctx.wire
+  const result = await ctx.wire
     .getSysioContract(SysioContractName.uwrit)
     .tables.uwreqs.query({ limit: Constants.TableRowLimit })
+  Assert.strictEqual(
+    result.more,
+    false,
+    `swap canary UWREQ scan exceeds ${Constants.TableRowLimit} rows`
+  )
+  const { rows } = result
   return rows.filter(
     row =>
       slugValue(row.src_chain_code) === route.source.chainCode &&

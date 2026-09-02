@@ -2,8 +2,7 @@
 
 Configurable FlowScenario for a small, serial proof of the public swap surface.
 It uses the canonical cluster bootstrap and PhaseGroup → Phase → Step → Report
-engine. It does not depend on the Hub, SDK outpost, Noco, deployment profiles,
-or S3 artifacts.
+engine.
 
 The default `canary` selector runs six representative endpoint directions. In
 the fresh flow that is ETH↔SOL, ETH↔WIRE, and SOL↔WIRE. The connected form
@@ -11,24 +10,29 @@ discovers ACTIVE public reserve identities from the live depot and prefers a
 native asset, falling back deterministically when an endpoint is provisioned
 only with a public token such as LIQSOL/PUB. Live rows carry depot-normalized
 precision, so the runner validates that value and constructs requests using
-the configured token's chain-native precision. A route succeeds when destination funds land;
-to-WIRE routes also claim the credited WIRE and verify its liquid balance.
+the configured token's chain-native precision. A route succeeds when destination
+funds land; to-WIRE routes also claim and verify the credited WIRE.
 `--wait-for-challenge` is opt-in and additionally waits for each exact UWREQ to
 reach `COMPLETED` after the collateral challenge window.
 
 ## Run
 
-Use the repository runner so path validation and heartbeat monitoring remain
-identical to every other live flow:
+Use the canonical runner and arm the heartbeat monitor with the same cluster
+path:
 
 ```bash
-./scripts/run-flow.mjs flow-swap-canary \
+node scripts/run-flow.mjs flow-swap-canary \
+  --cluster-path /tmp/wire-flow-swap-canary \
   --wire-build-path ../wire-sysio/build/release \
   --ethereum-path ../wire-ethereum \
   --solana-path ../wire-solana
 
+node scripts/flow-heartbeat-monitor.mjs \
+  --cluster-path /tmp/wire-flow-swap-canary
+
 # Union repeatable selectors; wait for challenge completion when requested.
-./scripts/run-flow.mjs flow-swap-canary \
+node scripts/run-flow.mjs flow-swap-canary \
+  --cluster-path /tmp/wire-flow-swap-canary \
   --wire-build-path ../wire-sysio/build/release \
   --ethereum-path ../wire-ethereum \
   --solana-path ../wire-solana \
@@ -77,7 +81,5 @@ Each selected route uses one shared swap identity and verifies:
 8. destination delivery, including WIRE claim when applicable;
 9. optional challenge completion.
 
-Selected non-native user funds are provisioned by existing cluster-tool Step
-factories. Fresh runs also deposit underwriter collateral; connected runs verify
-the live cluster's existing collateral without depositing again. Route phases
-remain serial because they share one user and persistent collateral locks.
+Fresh runs provision selected source assets and underwriter collateral through
+existing cluster-tool Steps. Connected runs use the live cluster's collateral.
