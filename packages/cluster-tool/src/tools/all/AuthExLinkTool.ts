@@ -2,7 +2,10 @@ import { ethers } from "ethers"
 import { Bytes, KeyType, PrivateKey, Signature, SysioContracts } from "@wireio/sdk-core"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import type { WireClient } from "../../clients/wire/WireClient.js"
-import { ethereumPublicKeyFromWallet } from "../../utils/keyPairUtils.js"
+import {
+  ethereumKeyPairFromWallet,
+  ethereumPublicKeyFromWallet
+} from "../../utils/keyPairUtils.js"
 import { abiEnumValue } from "../../utils/enumUtils.js"
 
 const { SysioContractName } = SysioContracts
@@ -20,6 +23,12 @@ export namespace AuthExLinkTool {
     privateKey: PrivateKey
     /** For ETH: the ethers wallet (compressed-pubkey derivation must match). */
     ethereumWallet?: ethers.BaseWallet
+  }
+
+  /** An Ethereum public key and its canonical 20-byte, lowercase-hex EVM address. */
+  export interface EthereumIdentity {
+    readonly publicKey: string
+    readonly nativeAddress: string
   }
 
   /** Build the authex `createlink` message: `<pubkey>|<account>|<chainKind>|<nonce>|createlink auth`. */
@@ -104,5 +113,14 @@ export namespace AuthExLinkTool {
    */
   export function newEthereumPubEm(): string {
     return ethereumPublicKeyFromWallet(ethers.Wallet.createRandom()).toString()
+  }
+
+  /** A throwaway EM public key plus its canonical 20-byte, lowercase-hex EVM address. */
+  export function newEthereumIdentity(): EthereumIdentity {
+    const pair = ethereumKeyPairFromWallet(ethers.Wallet.createRandom())
+    return {
+      publicKey: pair.publicKey,
+      nativeAddress: pair.address.slice(2).toLowerCase()
+    }
   }
 }

@@ -242,6 +242,7 @@ export async function pushNewNamedUser(
  *
  * @param ownerAccount  The Wire account to register.
  * @param tier          1 (T1), 2 (T2), or 3 (T3).
+ * @param ethAddress    Depositor's canonical 20-byte ETH address (lowercase hex, no `0x`).
  * @param ethPubKey     Depositor's `PUB_EM_*` secp256k1 key (recorded as the sysio.authex link).
  * @param wirePubKey    The account's owner/active key; an existing account must be controlled by it.
  */
@@ -249,19 +250,24 @@ export async function pushNodeOwnerReg(
   wire: WireClient,
   ownerAccount: string,
   tier: NodeOwnerTier,
+  ethAddress: string,
   ethPubKey: string,
   wirePubKey: string
 ): Promise<void> {
   try {
+    // An inferred variable is structurally assignable to both the published
+    // pre-extension SDK action type and the upgraded optional-extension type.
+    const registration = {
+      owner: ownerAccount,
+      tier,
+      eth_pub_key: ethPubKey,
+      wire_pub_key: wirePubKey,
+      eth_address: ethAddress
+    }
     await wire.invoke<SysioContracts.SysioRoaNodeownregAction>(
       "sysio.roa",
       "nodeownreg",
-      {
-        owner: ownerAccount,
-        tier,
-        eth_pub_key: ethPubKey,
-        wire_pub_key: wirePubKey
-      },
+      registration,
       [{ actor: "sysio.roa", permission: "active" }]
     )
   } catch (err) {

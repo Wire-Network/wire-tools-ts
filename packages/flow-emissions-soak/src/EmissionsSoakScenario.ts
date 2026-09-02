@@ -81,7 +81,7 @@ async function readCapConfig(
  *       `payepoch`; `t5_state.total_distributed` advances monotonically and
  *       respects `t5_distributable - t5_floor`.
  *   (c) **importseed → link → claim** — controlled staker accounts (this flow
- *       holds their ETH wallets) complete AuthEx linking → an explicit
+ *       holds their ETH wallets) complete AuthEx linking, whose inline
  *       `linkswept` sweeps `unmapped_tokens` into `pending_claims` → `claim`
  *       pays each staker its exact seeded WIRE. dclaim is pre-funded from
  *       `sysio` for the synthetic load (the importseed path never calls
@@ -312,7 +312,7 @@ export class EmissionsSoakScenario extends FlowScenario {
     ClusterBuildPhase.create(
       cluster,
       "SetupClaimers",
-      "Pre-fund dclaim + provision, link, and sweep every controlled staker"
+      "Pre-fund dclaim + provision and link every controlled staker"
     ).push(
       Steps.contracts.sysio.token.planTransfer(
         Actor.Sysio,
@@ -342,16 +342,6 @@ export class EmissionsSoakScenario extends FlowScenario {
           `authex-link ${identity.wireAccount}'s ETH wallet (hd=${identity.ethereumHdIndex})`,
           actionOptions,
           identity
-        )
-      ),
-      ...identities.map(identity =>
-        EmissionsSoakScenarioSteps.planLinkswept(
-          Actor.User,
-          `linkswept-${identity.wireAccount}`,
-          `sweep ${identity.wireAccount}'s unmapped credit into pending_claims`,
-          actionOptions,
-          identity.wireAccount,
-          identity.addressHex
         )
       ),
       verifyStep(
