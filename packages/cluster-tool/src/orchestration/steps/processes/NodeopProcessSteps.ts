@@ -97,14 +97,14 @@ export namespace NodeopProcessSteps {
     Assert.ok(node != null, `nodeop start: node not planned: ${input.nodeName}`)
     if (ctx.processManager.get(node.name) != null) return
 
-    const operator = resolveOperator(ctx, node)
+    const operators = resolveOperators(ctx, node)
     // startWithRecovery (not bare create+start): a node dir left dirty by an
     // unclean shutdown relaunches once with --hard-replay-blockchain instead
     // of failing the build.
     await NodeopProcess.startWithRecovery(ctx.processManager, {
       node,
-      operator,
-      extraArgs: resolveOperatorDaemonArgs(ctx, node, operator)
+      operators,
+      extraArgs: resolveOperatorDaemonArgs(ctx, node, operators[0])
     })
   }
 
@@ -190,7 +190,7 @@ export namespace NodeopProcessSteps {
     await running.stop()
     ctx.processManager.remove(node.name)
 
-    const operator = resolveOperator(ctx, node)
+    const operators = resolveOperators(ctx, node)
     // startWithRecovery: if the graceful stop above was cut short (crashed
     // CLI, host pressure), the relaunch recovers the dirty chainbase with
     // --hard-replay-blockchain instead of failing the build. The sync gate
@@ -201,57 +201,52 @@ export namespace NodeopProcessSteps {
       ctx.processManager,
       NodeopProcess.createRelaunchOptions(
         node,
-        operator,
-        resolveOperatorDaemonArgs(ctx, node, operator)
+        operators,
+        resolveOperatorDaemonArgs(ctx, node, operators[0])
       )
     )
   }
 
   /**
-   * The {@link OperatorAccount} a node acts for, by role. The bios node's
+   * The {@link OperatorAccount}s a node acts for, by role. The bios node's
    * account is the genesis producer seeded into `ctx.keyStore` at config
    * resolution (its keys ARE `genesis.json`'s `initial_key` /
    * `initial_finalizer_key`), falling back to {@link BiosOperator} for a cluster
-   * directory written before that seeding existed. A producer node's account
-   * carries its NODE-shared signing set from `ctx.keyStore` (identical to what
-   * its provisioning phase materializes); operator nodes resolve the provisioned
-   * account itself. Exported so `ClusterManager.run` (the relaunch path) reuses
-   * the SAME resolution logic — no duplication.
+   * directory written before that seeding existed. A producer node yields ONE ENTRY PER HOSTED
+   * PRODUCER — they share the node's block-signing K1 but each owns its own finalizer key, which
+   * `regfinkey`'s global uniqueness check requires; operator nodes resolve the single provisioned
+   * account itself. Exported so `ClusterManager.run` (the relaunch path) reuses the SAME
+   * resolution logic — no duplication.
    */
-  export function resolveOperator(
+  export function resolveOperators(
     ctx: ClusterBuildContext,
     node: NodeConfig
-  ): OperatorAccount {
+  ): OperatorAccount[] {
     return match(node.role)
-      .with(
-        NodeRole.bios,
-        () => ctx.keyStore.operator(NodeConfig.BiosName) ?? BiosOperator
-      )
-      .with(NodeRole.producer, () => producerOperator(ctx, node))
-      .with(NodeRole.batch_operator, NodeRole.underwriter, () =>
+      .with(NodeRole.bios, () => [
+        ctx.keyStore.operator(NodeConfig.BiosName) ?? BiosOperator
+      ])
+      .with(NodeRole.producer, () => producerOperators(ctx, node))
+      .with(NodeRole.batch_operator, NodeRole.underwriter, () => [
         ctx.keyStore.assertOperator(assertOperatorLabel(node))
-      )
+      ])
       .exhaustive()
   }
 
-  /** A producer node's OperatorAccount — its first hosted account + the node-shared keys. */
-  function producerOperator(
+  /**
+   * A producer node's hosted accounts, in `node.producers` order.
+   *
+   * A producer never goes through `roa::newuser`, so its handle IS its on-chain name and the
+   * store is keyed by it directly. Each account was materialized with the node's K1 and its own
+   * BLS by `WireOperatorProvisioningTool.runProducerMaterialization`, so nothing is synthesized
+   * here — an absent entry means that provisioning step never ran and must fail loudly rather
+   * than silently launch a node that cannot vote.
+   */
+  function producerOperators(
     ctx: ClusterBuildContext,
     node: NodeConfig
-  ): OperatorAccount {
-    const nodeKeys = ctx.keyStore.node(node.index),
-      // A producer never goes through `roa::newuser`, so its handle IS its
-      // on-chain name.
-      account = node.producers[0] ?? node.name
-    return {
-      account,
-      label: account,
-      // These are the NODE's keys; they are published under the node's name.
-      publicationLabel: node.name,
-      type: OperatorType.PRODUCER,
-      wire: nodeKeys.keys.wire,
-      wireFinalizer: nodeKeys.keys.wireFinalizer
-    }
+  ): OperatorAccount[] {
+    return node.producers.map(label => ctx.keyStore.assertOperator(label))
   }
 
   /** Assert an operator node names the durable batch / underwriter `label` it acts for. */

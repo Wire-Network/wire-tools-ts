@@ -484,6 +484,24 @@ export namespace KeySteps {
           publishPhase: SignatureKeyPublishPhase.beforeNodes,
           keyTypes: [KeyType.K1, KeyType.BLS]
         })),
+        // Producer ACCOUNTS — each owns a BLS finalizer key of its own, because `regfinkey`
+        // enforces a global uniqueness check and siblings on one node would otherwise share
+        // (and collide on) their node's key. The K1 they sign blocks with is still the node's,
+        // republished here so every parameter this account's `--signature-provider` specs point
+        // at holds exactly the key it names — the alternative, publishing the account's BLS under
+        // the NODE's label, lands on the node's own `(label, BLS)` id.
+        ...producerNodes(config).flatMap(node =>
+          node.producers.map(label => ({
+            label,
+            source: SignatureKeySource.operator,
+            nodeIndex: node.index,
+            // beforeNodes, not afterOperators: a producing node renders these accounts'
+            // `--signature-provider ...SSM:` specs at LAUNCH, so the parameters have to exist
+            // by then. `ProducerIdentities` materializes the keys just before this runs.
+            publishPhase: SignatureKeyPublishPhase.beforeNodes,
+            keyTypes: [KeyType.K1, KeyType.BLS]
+          }))
+        ),
         // Batch operators + underwriters — wire + both outpost curves.
         ...[
           ...range(config.batchOperatorCount).map(index =>

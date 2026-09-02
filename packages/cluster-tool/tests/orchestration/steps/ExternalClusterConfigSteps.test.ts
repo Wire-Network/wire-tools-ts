@@ -44,6 +44,7 @@ import {
   toURL
 } from "@wireio/cluster-tool/utils"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
+import { seedProducerOperators } from "../outputs/operatorAccountFixture.js"
 import { PersistedFixture } from "../../config/clusterConfigFixture.js"
 
 const External = Steps.externalClusterConfig,
@@ -409,6 +410,9 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
         }
       }
     })
+    // Every producing node resolves one ACCOUNT per hosted producer (each owning its own
+    // finalizer key), so the rebind's start-script rendering needs them present.
+    seedProducerOperators(ctx)
     // Seed every operator account the planned topology references (so the
     // captured cluster-keys.json covers cluster-state's operator nodes).
     NodeConfig.plan(ctx.config)
@@ -601,22 +605,25 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
         planned => planned.role === NodeRole.producer
       ),
       nodeKeys = keys.nodes.find(entry => entry.index === node.index)
+    // A producer ACCOUNT shares its node's K1 but owns its BLS, and BOTH halves are published
+    // under its OWN label — custody is per identity, so splitting them across two labels would
+    // leave one ref dangling.
     node.producers.forEach(producer =>
       keys.operators.push({
         label: producer,
-        publicationLabel: node.name,
+        publicationLabel: producer,
         account: producer,
         type: OperatorType.PRODUCER,
         wire: {
           type: KeyType.K1,
           publicKey: nodeKeys.wire.publicKey,
-          awsSecretId: secretId(node.name, KeyType.K1)
+          awsSecretId: secretId(producer, KeyType.K1)
         },
         wireFinalizer: {
           type: KeyType.BLS,
-          publicKey: nodeKeys.wireFinalizer.publicKey,
-          proofOfPossession: nodeKeys.wireFinalizer.proofOfPossession,
-          awsSecretId: secretId(node.name, KeyType.BLS)
+          publicKey: `PUB_BLS_${producer}`,
+          proofOfPossession: `SIG_BLS_${producer}`,
+          awsSecretId: secretId(producer, KeyType.BLS)
         }
       })
     )
@@ -624,15 +631,24 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     return { producers: node.producers, nodeName: node.name }
   }
 
-  /** Inject a `wireFinalizer` key onto the first cluster-keys operator (operators normally carry none). */
+  /**
+   * Inject a `wireFinalizer` key onto the first BATCH / UNDERWRITER cluster-keys operator —
+   * roles the publication walker deliberately publishes no BLS parameter for, which is what
+   * makes such a ref dangling. A PRODUCER account is explicitly excluded: it OWNS a finalizer
+   * key and the walker publishes one for it, so injecting there would be covered rather than
+   * dangling and would quietly defeat every assertion built on this helper.
+   */
   function injectOperatorWireFinalizer() {
     const config = runContext().config,
       keys = ClusterState.loadKeys(config),
-      label = keys.operators[0].label,
-      account = keys.operators[0].account,
+      operator = keys.operators.find(
+        entry => entry.type !== OperatorType.PRODUCER
+      ),
       privateKey = "PVT_BLS_op",
       proofOfPossession = "SIG_BLS_op"
-    keys.operators[0].wireFinalizer = {
+    expect(operator).toBeDefined()
+    const { label, account } = operator
+    operator.wireFinalizer = {
       type: KeyType.BLS,
       publicKey: "PUB_BLS_op",
       privateKey,
@@ -679,9 +695,19 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     // durable handle the node config and the SSM secret id are keyed by.
     const persisted = ClusterState.loadKeys(ctx.config).operators,
       expectedAccounts = persisted.map(operator => operator.account),
-      handles = NodeConfig.plan(ctx.config)
-        .filter(node => NodeConfig.isOperatorRole(node.role))
-        .map(node => node.batchOperatorLabel ?? node.underwriterLabel)
+      planned = NodeConfig.plan(ctx.config),
+      handles = [
+        ...planned
+          .filter(node => NodeConfig.isOperatorRole(node.role))
+          .map(node => node.batchOperatorLabel ?? node.underwriterLabel),
+        // Producer ACCOUNTS are persisted operators too (each owns a finalizer key), and their
+        // handle IS their on-chain name — a producer never goes through `roa::newuser`. They are
+        // what makes the `handles !== accounts` assertion below meaningful rather than trivially
+        // true: the batch/underwriter halves differ, the producer halves do not.
+        ...planned
+          .filter(node => node.role === NodeRole.producer)
+          .flatMap(node => node.producers)
+      ]
     expect(emitted.accounts.operators.map(op => op.accountName).sort()).toEqual(
       [...expectedAccounts].sort()
     )
@@ -1321,13 +1347,12 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
     ])
   })
 
-  // A producer ACCOUNT carries its hosting node's K1 + BLS (siblings share one
-  // pair), but the keys are published under the NODE name. Both refs — and the
-  // BLS one especially, it is the finality key — must resolve to the node's
-  // published parameter rather than be refused for lacking a producer-account
-  // parameter that by design never existed.
-  it("resolves producer-account refs (K1 AND BLS) to their node's published ids", async () => {
-    const { producers, nodeName } = injectProducerAccounts(),
+  // A producer ACCOUNT shares its hosting node's block-signing K1 but owns its BLS finalizer
+  // key — `regfinkey` enforces global uniqueness, so a shared one would let only the first
+  // sibling register. Both refs — and the BLS one especially, it is the finality key — resolve
+  // to that ACCOUNT's own published ids, which is what the publication walker writes.
+  it("resolves producer-account refs (K1 AND BLS) to their OWN published ids", async () => {
+    const { producers } = injectProducerAccounts(),
       emitted = await emitWithProvider(SSMProvider)
     expect(producers.length).toBeGreaterThan(0)
     producers.forEach(producer => {
@@ -1342,8 +1367,8 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
           )
           .sort()
       expect(secretIds).toEqual([
-        `/wire/test/${nodeName}/BLS`,
-        `/wire/test/${nodeName}/K1`
+        `/wire/test/${producer}/BLS`,
+        `/wire/test/${producer}/K1`
       ])
     })
   })

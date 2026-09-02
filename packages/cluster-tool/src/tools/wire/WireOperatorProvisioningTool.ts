@@ -54,7 +54,6 @@ import {
 import type { ClusterBuildParent } from "../../orchestration/ClusterBuildPhaseBase.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { KeySteps } from "../../orchestration/steps/KeySteps.js"
-import { isNotEmpty } from "../../utils/predicateUtils.js"
 import { Report } from "../../report/Report.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
 import {
@@ -100,10 +99,8 @@ export namespace WireOperatorProvisioningTool {
     readonly label: string
     /** The operator's proto {@link OperatorType}. */
     readonly type: OperatorType
-    /** Producer: index of the producer NODE whose K1+BLS this label shares. */
+    /** Producer: index of the producer NODE whose block-signing K1 this label shares. */
     readonly producerNodeIndex?: number
-    /** Producer: NAME of that node — the label its keys are published under. */
-    readonly producerNodeName?: string
     /** Batch / underwriter: anvil-mnemonic HD index for the operator's ETH wallet. */
     readonly ethereumHdIndex?: number
     /** Batch / underwriter: `regoperator` bootstrapped flag (default `true`). */
@@ -152,7 +149,16 @@ export namespace WireOperatorProvisioningTool {
     options: ClusterBuildStepOptions
   ): ClusterBuildPhase<C> {
     return match(spec.type)
-      .with(OperatorType.PRODUCER, () => planProvisionProducerPhase<C>(group, spec, options))
+      .with(OperatorType.PRODUCER, () =>
+        // A GENESIS producer names its hosting node and shares that node's block-signing K1; a
+        // COLLATERAL-BACKED one does not, and takes the same route every other bonded operator
+        // does — unique keys, a node-owner-sponsored account, authex links on both chains, and
+        // `opreg::regoperator`. The two shapes are mutually exclusive, and `planProvisionOpp-
+        // OperatorPhase` asserts the `ethereumHdIndex` the second one requires.
+        spec.producerNodeIndex != null
+          ? planProvisionProducerPhase<C>(group, spec, options)
+          : planProvisionOppOperatorPhase<C>(group, spec, options)
+      )
       .with(OperatorType.BATCH, OperatorType.UNDERWRITER, () =>
         planProvisionOppOperatorPhase<C>(group, spec, options)
       )
@@ -163,31 +169,70 @@ export namespace WireOperatorProvisioningTool {
       })
   }
 
-  /** A producer's Phase: materialize its (node-shared) identity, then create its account. */
+  /**
+   * Materialize every genesis producer's identity, ONE step each, as a Phase the caller
+   * registers early in the bootstrap.
+   *
+   * Split from the account creation because the two have different earliest-possible points.
+   * Materialization is pure key work (read the node's K1, mint this account's BLS, accumulate
+   * the {@link OperatorAccount}) and must happen BEFORE the producer nodes start, since a
+   * producing node renders one `--signature-provider` per hosted account at launch. Creating the
+   * account is a chain WRITE and cannot happen until `sysio.system` is deployed, which is much
+   * later. Keeping them in one phase forced the earlier of the two to wait for the later.
+   *
+   * @param parent - The build root or enclosing PhaseGroup.
+   * @param name - The phase name.
+   * @param description - Human-readable phase description.
+   * @param options - Step option overrides applied to every step.
+   * @param specs - The genesis producers to materialize (each must name its hosting node).
+   * @returns The self-registered phase.
+   */
+  export function planProducerIdentityPhase<C extends ClusterBuildContext = ClusterBuildContext>(
+    parent: ClusterBuildParent<C>,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    specs: readonly OperatorProvisioningSpec[]
+  ): ClusterBuildPhase<C> {
+    return ClusterBuildPhase.create<C>(
+      parent,
+      name,
+      description,
+      specs.map(spec => {
+        const { label, producerNodeIndex } = spec
+        Assert.ok(
+          producerNodeIndex != null,
+          `materialize producer ${label}: producerNodeIndex is required`
+        )
+        return planProducerMaterialization<C>(
+          Report.Actor.Producer,
+          `${label}-identity`,
+          `materialize producer ${label} identity from node ${producerNodeIndex}`,
+          options,
+          label,
+          producerNodeIndex
+        )
+      })
+    )
+  }
+
+  /**
+   * A genesis producer's Phase: create its account.
+   *
+   * Its identity is materialized earlier, by {@link planProducerIdentityPhase} — see there for
+   * why the two cannot share a phase.
+   */
   function planProvisionProducerPhase<C extends ClusterBuildContext>(
     group: ClusterBuildParent<C>,
     spec: OperatorProvisioningSpec,
     options: ClusterBuildStepOptions
   ): ClusterBuildPhase<C> {
-    const { label, producerNodeIndex, producerNodeName } = spec
+    const { label, producerNodeIndex } = spec
     Assert.ok(
       producerNodeIndex != null,
       `provision producer ${label}: producerNodeIndex is required`
     )
-    Assert.ok(
-      isNotEmpty(producerNodeName),
-      `provision producer ${label}: producerNodeName is required — it is the label this account's keys are published under`
-    )
     return ClusterBuildPhase.create<C>(group, `Provision ${label}`, `provision producer ${label}`, [
-      planProducerMaterialization<C>(
-        Report.Actor.Producer,
-        `${label}-identity`,
-        `materialize producer ${label} identity from node ${producerNodeIndex}`,
-        options,
-        label,
-        producerNodeIndex,
-        producerNodeName
-      ),
       planAccountCreation<C>(
         Report.Actor.Producer,
         `${label}-account`,
@@ -390,10 +435,26 @@ export namespace WireOperatorProvisioningTool {
         }
       )
     ])
+    // A collateral-backed PRODUCER reaches this path too, and it needs a finalizer key of its
+    // own before it can hold a rank position at all — one of the three conditions
+    // `is_schedulable` tests. Batch operators and underwriters have no finality role and get
+    // none, which is also why the publication walker publishes no BLS parameter for them.
+    const wireFinalizer =
+      input.type === OperatorType.PRODUCER
+        ? await KeySteps.adoptOrCreateSignatureProviderKey(
+            ctx.config,
+            KeyType.BLS,
+            input.label,
+            keyContext,
+            { purpose: `producer ${input.label} — finalizer key (BLS)` }
+          )
+        : null
     // Import the operator's unique wire key so kiod can sign `account@active`
-    // (authex links, registration, and any operator-signed flow actions).
+    // (authex links, registration, and any operator-signed flow actions), and its finalizer key
+    // so a KIOD-provider node can vote with it.
     const wallet = await ctx.wire.wallet.getOrCreate()
     await wallet.addPrivateKey(wire.privateKey)
+    if (wireFinalizer != null) await wallet.addPrivateKey(wireFinalizer.privateKey)
     // `account` stays unset until the sponsored-creation step adopts the
     // depot-generated name — `label` is the durable handle from here on.
     ctx.keyStore.setOperator({
@@ -403,7 +464,8 @@ export namespace WireOperatorProvisioningTool {
       type: input.type,
       wire,
       ethereum,
-      solana
+      solana,
+      ...(wireFinalizer != null ? { wireFinalizer } : {})
     })
     log.info(
       `[provision] ${input.label} — WIRE ${wire.publicKey}, ETH ${ethereum.address} (hd=${input.ethereumHdIndex}), SOL ${solana.publicKey}`
@@ -417,14 +479,24 @@ export namespace WireOperatorProvisioningTool {
     readonly kind: "WireOperatorProvisioningTool.MaterializeProducerInput"
     readonly label: string
     readonly producerNodeIndex: number
-    /** The hosting node's NAME — recorded as the account's `publicationLabel`. */
-    readonly producerNodeName: string
   }
 
   /**
-   * Materialize a producer's {@link OperatorAccount} from its NODE's generated
-   * K1+BLS in `ctx.keyStore` — sibling producer accounts on the same node share
-   * that key set (the node signs blocks for all of them). Pure read + accumulate.
+   * Materialize a producer's {@link OperatorAccount}: the hosting NODE's generated K1 for block
+   * signing, plus a BLS finalizer key MINTED FOR THIS ACCOUNT.
+   *
+   * The split is forced by the chain. `regfinkey` enforces a GLOBAL uniqueness check on the
+   * finalizer key, so sibling producer accounts sharing their node's one BLS key means only the
+   * first of them can ever register — and without a registered key a producer holds no rank
+   * position, so it is never scheduled, never paid, and never snapshot-eligible. Block-signing
+   * keys carry no such constraint (`setprodkeys` maps each producer to its host node's K1), so
+   * the K1 stays node-shared and only the finalizer half becomes per-account.
+   *
+   * Because the account now owns a key of its own, its `publicationLabel` is its OWN handle
+   * rather than the node's: publishing its BLS under the node's name would land on the same
+   * `(label, BLS)` secret id the node's own finalizer key occupies. The node K1 is consequently
+   * published once per hosting producer as well — redundant material, but every parameter holds
+   * exactly the key its owner signs with.
    */
   export function planProducerMaterialization<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
@@ -432,8 +504,7 @@ export namespace WireOperatorProvisioningTool {
     description: string,
     options: ClusterBuildStepOptions,
     label: string,
-    producerNodeIndex: number,
-    producerNodeName: string
+    producerNodeIndex: number
   ): ClusterBuildStep<C, MaterializeProducerInput> {
     return ClusterBuildStep.create<C, MaterializeProducerInput>(
       actor,
@@ -443,45 +514,62 @@ export namespace WireOperatorProvisioningTool {
       {
         kind: "WireOperatorProvisioningTool.MaterializeProducerInput",
         label,
-        producerNodeIndex,
-        producerNodeName
+        producerNodeIndex
       },
       runProducerMaterialization
     )
   }
 
-  /** Named runner — read the producer node's keys, accumulate the producer OperatorAccount. */
+  /** Named runner — take the node's K1, mint this account's own BLS, accumulate the OperatorAccount. */
   export async function runProducerMaterialization<C extends ClusterBuildContext>(
     ctx: C,
     input: MaterializeProducerInput,
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const nodeKeys = ctx.keyStore.node(input.producerNodeIndex)
+    const nodeKeys = ctx.keyStore.node(input.producerNodeIndex),
+      keyContext = KeyGenerator.context(
+        ctx.config.executables.clio,
+        ctx.config.buildPath,
+        KeySteps.ethereumMnemonic(ctx)
+      ),
+      // Adopt-or-create, like every other identity: an SSM parameter the AWS account already
+      // owns is this producer's durable finalizer identity and is never regenerated.
+      wireFinalizer = await KeySteps.adoptOrCreateSignatureProviderKey(
+        ctx.config,
+        KeyType.BLS,
+        input.label,
+        keyContext,
+        { purpose: `producer ${input.label} — finalizer key (BLS)` }
+      )
+    // The finalizer key has to reach the kiod wallet the same way the node's does, or the node
+    // cannot sign votes with it.
+    const wallet = await ctx.wire.wallet.getOrCreate()
+    await wallet.addPrivateKey(wireFinalizer.privateKey)
     // A producer never calls `roa::newuser`, so its ON-CHAIN name IS its durable
     // handle — `account` equals `label` from materialization onward.
     ctx.keyStore.setOperator({
       label: input.label,
-      // The keys just read belong to the NODE and are published under its name —
-      // recorded HERE, where the hand-over happens, so nothing re-derives it.
-      publicationLabel: input.producerNodeName,
+      // Its own handle: the account owns its finalizer key, so publishing under the NODE's name
+      // would collide with the node's own BLS parameter.
+      publicationLabel: input.label,
       account: input.label,
       type: OperatorType.PRODUCER,
       wire: nodeKeys.keys.wire,
-      wireFinalizer: nodeKeys.keys.wireFinalizer
+      wireFinalizer
     })
-    // Descriptive payload only — the full pairs live under the step that
-    // GENERATED them (generate-keys); here we just say whose set this is.
+    // Descriptive payload only — the node's full pairs live under the step that GENERATED them
+    // (generate-keys); here we say whose K1 this is and which finalizer key was minted.
     StepExtraRecorder.note(
-      `producer ${input.label} assumes node_${String(input.producerNodeIndex).padStart(2, "0")}'s signing set`,
+      `producer ${input.label} signs blocks with node_${String(input.producerNodeIndex).padStart(2, "0")}'s K1 and its own finalizer key`,
       {
         label: input.label,
         wirePublicKey: nodeKeys.keys.wire.publicKey,
-        blsPublicKey: nodeKeys.keys.wireFinalizer.publicKey
+        blsPublicKey: wireFinalizer.publicKey
       }
     )
     log.info(
-      `[provision] producer ${input.label} — node ${input.producerNodeIndex} (K1 ${nodeKeys.keys.wire.publicKey})`
+      `[provision] producer ${input.label} — node ${input.producerNodeIndex} (K1 ${nodeKeys.keys.wire.publicKey}, BLS ${wireFinalizer.publicKey})`
     )
   }
 

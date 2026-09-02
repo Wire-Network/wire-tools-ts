@@ -11,7 +11,7 @@ import {
 } from "@wireio/cluster-tool-shared"
 import { Constants } from "@wireio/cluster-tool/Constants"
 import { KeyGenerator } from "@wireio/cluster-tool/clients/wire"
-import { ClusterConfigProvider, NodeConfig } from "@wireio/cluster-tool/config"
+import { ClusterConfigProvider, NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
 import {
   EthereumMnemonicKey,
   EthereumOutpostBootstrapper,
@@ -219,10 +219,27 @@ describe("Steps.keys", () => {
     const config = ssmConfig(),
       publications = Steps.keys.signatureProviderKeyPublications(config)
 
-    it("enumerates the GENESIS identity, every producer node, and every operator", () => {
-      // Fixture topology: bios K1+BLS (2) + node owner K1 (1) + 1 producer node
-      // K1+BLS (2) + (3 batch + 1 underwriter) operators × 3 K1/EM/ED (12) = 17.
-      expect(publications).toHaveLength(17)
+    it("enumerates the GENESIS identity, every producer node, every producer ACCOUNT, and every operator", () => {
+      // Fixture topology: bios K1+BLS (2) + node owner K1 (1) + 1 producer node K1+BLS (2)
+      // + 21 producer ACCOUNTS × K1+BLS (42) + (3 batch + 1 underwriter) operators × 3
+      // K1/EM/ED (12) = 59.
+      //
+      // The producer-account rows are the point: each account owns its finalizer key (a shared
+      // one would fail `regfinkey`'s global uniqueness check), and BOTH halves of an account's
+      // set are published under ITS label, because custody is per-identity — the K1 it shares
+      // with its node is republished here rather than referenced across labels.
+      const producerAccounts = NodeConfig.plan(config)
+        .filter(node => node.role === NodeRole.producer)
+        .flatMap(node => node.producers)
+      expect(publications).toHaveLength(17 + producerAccounts.length * 2)
+      producerAccounts.forEach(label => {
+        expect(
+          publications
+            .filter(publication => publication.label === label)
+            .map(publication => publication.keyType)
+            .sort()
+        ).toEqual([KeyType.K1, KeyType.BLS].sort())
+      })
     })
 
     it("PUBLISHES the bios keys — under SSM the bios node renders SSM: specs and cannot start without them", () => {
@@ -365,16 +382,26 @@ describe("Steps.keys", () => {
       )
       expect(children).toContain(phase)
       expect(phase.name).toBe("PublishNodeSignatureProviderKeys")
-      // Genesis (bios K1+BLS, node owner K1) + 1 producer node (K1+BLS).
+      // Genesis (bios K1+BLS, node owner K1) + 1 producer node (K1+BLS) + every producer
+      // ACCOUNT (K1+BLS each).
       // The bios entries MUST be here and not in the operator phase: that phase
       // composes after BiosNode has already started, so publishing them there
       // would leave the bios daemon fetching parameters that do not yet exist.
+      // The producer ACCOUNTS are here for the same reason: a producing node renders one
+      // `--signature-provider ...SSM:` per hosted account at LAUNCH.
+      const producerAccounts = NodeConfig.plan(config)
+        .filter(node => node.role === NodeRole.producer)
+        .flatMap(node => node.producers)
       expect(phase.steps.map(step => step.name)).toEqual([
         "publish-node_bios-K1",
         "publish-node_bios-BLS",
         "publish-wireno-K1",
         "publish-node_00-K1",
-        "publish-node_00-BLS"
+        "publish-node_00-BLS",
+        ...producerAccounts.flatMap(label => [
+          `publish-${label}-K1`,
+          `publish-${label}-BLS`
+        ])
       ])
     })
 
@@ -388,8 +415,13 @@ describe("Steps.keys", () => {
         config,
         Steps.keys.SignatureKeyPublishPhase.afterOperators
       )
-      // (3 batch + 1 underwriter) × (K1 + EM + ED) = 12; no node publications.
+      // (3 batch + 1 underwriter) × (K1 + EM + ED) = 12. Producer ACCOUNTS are operator-source
+      // too, but publish in the beforeNodes phase (their nodes fetch those keys at launch), so
+      // they are deliberately NOT here.
       expect(phase.steps).toHaveLength(12)
+      expect(
+        phase.steps.every(step => !step.name.startsWith("publish-defproducer"))
+      ).toBe(true)
       expect(
         phase.steps.every(step => !step.name.startsWith("publish-node_"))
       ).toBe(true)

@@ -589,7 +589,7 @@ export namespace OperatorDaemonTool {
     // this launch must recover from, same as the planned-node paths.
     await NodeopProcess.startWithRecovery(ctx.processManager, {
       node: daemonNodeConfig(ctx.config, operator, ports),
-      operator,
+      operators: [operator],
       extraArgs: daemonArgs
     })
     ctx.log.info(

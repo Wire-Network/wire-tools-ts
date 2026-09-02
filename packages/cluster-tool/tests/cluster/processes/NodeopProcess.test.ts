@@ -103,11 +103,22 @@ describe("NodeopProcess", () => {
   }
 
   /** A producer OperatorAccount carrying the node-shared signing keys. */
-  function producerOperator(account: string): OperatorAccount {
+  /**
+   * @param account - the ON-CHAIN name the node produces under.
+   * @param publicationLabel - the label its keys are published under; defaults to the account,
+   *   which is what a provisioned producer carries. The bios identity is the exception the live
+   *   path also carries (`ClusterBuild.create` seeds it with `NodeConfig.BiosName`): its account
+   *   is the genesis producer while its secret-id segment is the NODE name.
+   * @returns a producer identity with a K1 + BLS pair.
+   */
+  function producerOperator(
+    account: string,
+    publicationLabel = account
+  ): OperatorAccount {
     return {
       account,
       label: account,
-      publicationLabel: account,
+      publicationLabel,
       type: OperatorType.PRODUCER,
       wire: { type: KeyType.K1, publicKey: "PUB_K1_p", privateKey: "PVT_K1_s" },
       wireFinalizer: {
@@ -151,13 +162,13 @@ describe("NodeopProcess", () => {
       NodeopProcess.create(manager, {
         node: node("keyless", NodeRole.producer, ["sysio"])
       })
-    ).rejects.toThrow(/requires a producer OperatorAccount/)
+    ).rejects.toThrow(/requires one producer OperatorAccount per hosted producer/)
   })
 
   it("builds a producer node's argv from the composed node + operator", async () => {
     const nodeop = await NodeopProcess.create(manager, {
       node: node("producer", NodeRole.producer, ["sysio"], ["127.0.0.1:9877"]),
-      operator: producerOperator("sysio")
+      operators: [producerOperator("sysio")]
     })
     expect(nodeop.exe).toBe("/bin/true")
     expect(nodeop.args).toEqual(
@@ -190,7 +201,7 @@ describe("NodeopProcess", () => {
   it("omits the producer block for a non-producing node + appends extraArgs", async () => {
     const nodeop = await NodeopProcess.create(manager, {
       node: node("operator-daemon", NodeRole.batch_operator),
-      operator: producerOperator("batchopaaaa"),
+      operators: [producerOperator("batchopaaaa")],
       extraArgs: ["--batch-operator-account", "wireno.batchopaaaa"]
     })
     expect(nodeop.args).not.toContain("sysio::producer_plugin")
@@ -314,7 +325,7 @@ describe("NodeopProcess", () => {
       )
       const nodeop = await NodeopProcess.create(manager, {
         node: producing,
-        operator: producerOperator("sysio")
+        operators: [producerOperator("sysio")]
       })
       expect(nodeop.args).toEqual(
         expect.arrayContaining([NodeopProcess.PluginFlag, SSMPlugin])
@@ -342,7 +353,9 @@ describe("NodeopProcess", () => {
       // like any other node key — it is NOT exempt from the provider source.
       const nodeop = await NodeopProcess.create(manager, {
         node: biosNode(ssmCluster()),
-        operator: producerOperator(NodeConfig.BiosProducer)
+        operators: [
+          producerOperator(NodeConfig.BiosProducer, NodeConfig.BiosName)
+        ]
       })
       expect(nodeop.args).toEqual(
         expect.arrayContaining([NodeopProcess.PluginFlag, SSMPlugin])
@@ -365,7 +378,9 @@ describe("NodeopProcess", () => {
       })
       const nodeop = await NodeopProcess.create(manager, {
         node: biosNode(kiodCluster),
-        operator: producerOperator(NodeConfig.BiosProducer)
+        operators: [
+          producerOperator(NodeConfig.BiosProducer, NodeConfig.BiosName)
+        ]
       })
       expect(nodeop.args.some(arg => arg.includes("KEY:PVT_K1_"))).toBe(true)
       expect(nodeop.args.some(arg => arg.includes("KIOD:"))).toBe(false)
@@ -374,7 +389,7 @@ describe("NodeopProcess", () => {
     it("a KEY cluster never enables the ssm plugin", async () => {
       const nodeop = await NodeopProcess.create(manager, {
         node: node("key-producer", NodeRole.producer, ["sysio"]),
-        operator: producerOperator("sysio")
+        operators: [producerOperator("sysio")]
       })
       expect(nodeop.args).not.toContain(SSMPlugin)
     })
@@ -434,7 +449,7 @@ describe("NodeopProcess", () => {
           role,
           RoleProducers[role]
         ),
-        operator: producerOperator("sysio"),
+        operators: [producerOperator("sysio")],
         postBootstrap,
         tuning
       })
@@ -585,7 +600,7 @@ describe("NodeopProcess", () => {
               role,
               RoleProducers[role]
             ),
-            operator: producerOperator("sysio"),
+            operators: [producerOperator("sysio")],
             postBootstrap,
             tuning
           },
@@ -689,7 +704,7 @@ describe("NodeopProcess", () => {
         NodeopProcess.resolveConfig(
           {
             node: planned,
-            operator: producerOperator("sysio"),
+            operators: [producerOperator("sysio")],
             postBootstrap: true
           },
           {
@@ -819,13 +834,13 @@ describe("NodeopProcess", () => {
       // recovery sets `relaunch` WITHOUT `postBootstrap`), so a call site
       // spelling them out could silently lose one.
       const relaunchNode = node("relaunch", NodeRole.producer, ["sysio"]),
-        operator = producerOperator("sysio"),
+        operators = [producerOperator("sysio")],
         extraArgs = ["--batch-enabled", "true"]
       expect(
-        NodeopProcess.createRelaunchOptions(relaunchNode, operator, extraArgs)
+        NodeopProcess.createRelaunchOptions(relaunchNode, operators, extraArgs)
       ).toEqual({
         node: relaunchNode,
-        operator,
+        operators,
         extraArgs,
         relaunch: true,
         postBootstrap: true
@@ -840,7 +855,7 @@ describe("NodeopProcess", () => {
         NodeopProcess.resolveConfig(
           NodeopProcess.createRelaunchOptions(
             node("relaunch-args", NodeRole.producer, ["sysio"]),
-            producerOperator("sysio"),
+            [producerOperator("sysio")],
             []
           ),
           {
@@ -876,7 +891,7 @@ describe("NodeopProcess", () => {
       async role => {
         const nodeop = await NodeopProcess.create(manager, {
             node: node(`map-mode-${role}`, role, RoleProducers[role]),
-            operator: producerOperator("sysio")
+            operators: [producerOperator("sysio")]
           }),
           flagIndex = nodeop.args.indexOf(DatabaseMapModeFlag)
         // Index-adjacency, not `arrayContaining`: the flag must be followed by
@@ -898,7 +913,7 @@ describe("NodeopProcess", () => {
               NodeRole.producer,
               ["sysio"]
             ),
-            operator: producerOperator("sysio"),
+            operators: [producerOperator("sysio")],
             postBootstrap
           }),
           flagIndex = nodeop.args.indexOf(DatabaseMapModeFlag)
@@ -923,7 +938,7 @@ describe("NodeopProcess", () => {
       async role => {
         const nodeop = await NodeopProcess.create(manager, {
             node: node(`db-size-${role}`, role, RoleProducers[role]),
-            operator: producerOperator("sysio")
+            operators: [producerOperator("sysio")]
           }),
           flagIndex = nodeop.args.indexOf(ChainStateDbSizeFlag)
         // Index-adjacency, not `arrayContaining`: the flag must be followed by
@@ -945,7 +960,7 @@ describe("NodeopProcess", () => {
             NodeRole.producer,
             ["sysio"]
           ),
-          operator: producerOperator("sysio"),
+          operators: [producerOperator("sysio")],
           postBootstrap
         })
         expect(valuesOf(nodeop.args, ChainStateDbSizeFlag)).toEqual([

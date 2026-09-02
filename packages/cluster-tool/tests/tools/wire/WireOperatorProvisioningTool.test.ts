@@ -46,25 +46,22 @@ describe("WireOperatorProvisioningTool.planOperatorAccountProvisioning", () => {
     ])
   })
 
-  it("a producer Phase materializes from its node + creates the account with ITS key (no authex/register)", () => {
+  it("a producer Phase creates the account only — its identity is materialized earlier", () => {
     const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(fakeParent(), "Producers", "producers", {}, [
       {
         label: "defproducera",
         type: OperatorType.PRODUCER,
-        producerNodeIndex: 0,
-        producerNodeName: "node_00"
+        producerNodeIndex: 0
       }
     ])
     const kinds = firstPhaseStepKinds(group)
-    expect(kinds).toEqual([
-      "WireOperatorProvisioningTool.MaterializeProducerInput",
-      "WireOperatorProvisioningTool.CreateAccountInput"
-    ])
+    // Materialization moved to `planProducerIdentityPhase`, which the bootstrap registers before
+    // any node starts: a producing node renders one `--signature-provider` per hosted account at
+    // launch, and the account's finalizer key has to exist by then. The account CREATION is a
+    // chain write that cannot run until `sysio.system` is deployed, which is much later.
+    expect(kinds).toEqual(["WireOperatorProvisioningTool.CreateAccountInput"])
     const phase = group.children[0] as ClusterBuildPhase
-    expect(phase.steps.map(step => step.actor)).toEqual([
-      Report.Actor.Producer,
-      Report.Actor.Producer
-    ])
+    expect(phase.steps.map(step => step.actor)).toEqual([Report.Actor.Producer])
   })
 
   it("a bootstrap batch/uw Phase (no funding) sponsors the account, authex-links both chains, registers", () => {

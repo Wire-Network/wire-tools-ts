@@ -82,6 +82,17 @@ const FromWireRevertFeeBps = 500
  * that risk.
  */
 const NodeStartConcurrency = 4
+
+/**
+ * Native RAM granted to each genesis producer account.
+ *
+ * A genesis producer is created with `newaccount`, not sponsored through `roa::newuser`, so it
+ * carries no RAM allocation — and `regfinkey` bills its `finalizers` + `finkeys` rows to the
+ * producer. Sized well clear of those two small rows rather than at their measured width: the
+ * failure mode is an opaque "Account using more than allotted RAM usage" mid-bootstrap, and RAM
+ * is free to grant on a test chain.
+ */
+const GenesisProducerRamBytes = 1_000_000
 /**
  * Epochs a PENDING uwreq may wait for its underwriter race before
  * `sysio.uwrit::pruneuwreqs` expires it (refund/revert + EXPIRED). Mirrors
@@ -236,6 +247,28 @@ export namespace ClusterBuildDefaults {
         {}
       )
     )
+    // Producer ACCOUNT identities are materialized HERE, before any node starts and before the
+    // SSM publication below, because a producing node renders one `--signature-provider` per
+    // hosted account at launch — each account owns its finalizer key, so those keys must exist
+    // (and, under SSM, be published) first. This is pure key work; the matching chain WRITE
+    // (`newaccount`) waits for `sysio.system` and lands in the `Producers` group far below.
+    const producerSpecs = producerNodes.flatMap(node =>
+      node.producers.map(label => ({
+        label,
+        type: OperatorType.PRODUCER,
+        // The hosting node comes from `NodeConfig.plan` — the ONE author of the producer→node
+        // assignment. Re-deriving `index % producerNodeCount` here made a second copy that had
+        // to agree with it by hand.
+        producerNodeIndex: node.index
+      }))
+    )
+    WireOperatorProvisioningTool.planProducerIdentityPhase<C>(
+      prerequisites,
+      "ProducerIdentities",
+      "Materialize genesis producer identities (node K1 + each account's own finalizer key)",
+      {},
+      producerSpecs
+    )
     // SSM mode: publish the node signing keys BEFORE any node consumes them — a
     // node's `--signature-provider ...SSM:` spec fetches its private key from
     // SSM at nodeop startup, so publication must precede the BiosNode AND
@@ -315,6 +348,15 @@ export namespace ClusterBuildDefaults {
         {}
       )
     )
+    // ── bring-up accounts + system + roa ──
+    // `bios::setfinalizer` is a BIOS-ABI action, so it can only run while `sysio.bios` is the
+    // code on `sysio` — `SystemContract` below replaces it, and afterwards the action does not
+    // exist. The policy is nonetheless built from the producer ACCOUNTS' finalizer keys, which is
+    // possible this early only because `ProducerIdentities` materialized them before any node
+    // started. Account-keyed is required: `update_ranked_producers` rebuilds the policy from
+    // exactly those keys the first time ranking publishes, so a node-keyed genesis policy would
+    // be replaced by one the running node holds no key for — LIB freezes, and a pending producer
+    // schedule can then never become final.
     ClusterBuildPhase.create<C>(
       prerequisites,
       "Finality",
@@ -323,12 +365,11 @@ export namespace ClusterBuildDefaults {
       Steps.consensus.planSetFinalizer<C>(
         Actor.Sysio,
         "set-finalizer",
-        "set the BLS finalizer policy from node keys",
+        "set the BLS finalizer policy from the provisioned producer accounts",
         {}
       )
     )
 
-    // ── bring-up accounts + system + roa ──
     ClusterBuildPhase.create<C>(
       prerequisites,
       "BringUpAccounts",
@@ -398,24 +439,56 @@ export namespace ClusterBuildDefaults {
       )
     )
 
-    // ── producer operators + remaining system accounts + handoff ──
-    // Producers are operators: provisioned through the ONE mechanism, each account
-    // materializing its (round-robin, node-shared) K1+BLS into an OperatorAccount.
+    // ── producer accounts + remaining system accounts + handoff ──
+    // Producers are operators: provisioned through the ONE mechanism. Their identities were
+    // materialized in `ProducerIdentities` above; this is the chain write that could not run
+    // until `sysio.system` existed.
     WireOperatorProvisioningTool.planOperatorAccountProvisioning<C>(
       prerequisites,
       "Producers",
-      "Provision producer operators (account + node-shared identity)",
+      "Create the genesis producer accounts",
       {},
-      // The hosting node comes from `NodeConfig.plan` — the ONE author of the
-      // producer→node assignment. Re-deriving `index % producerNodeCount` here
-      // made a second copy that had to agree with it by hand.
-      producerNodes.flatMap(node =>
-        node.producers.map(label => ({
-          label,
-          type: OperatorType.PRODUCER,
-          producerNodeIndex: node.index,
-          producerNodeName: node.name
-        }))
+      producerSpecs
+    )
+    // Genesis producers have to REGISTER, not merely exist. `update_ranked_producers` schedules
+    // only producers that pass one predicate — an active `producers` row, an ACTIVE
+    // `OPERATOR_TYPE_PRODUCER` row in sysio.opreg, and an active finalizer key — so without
+    // these writes a cluster has zero schedulable producers, ranking never publishes, and the
+    // schedule stays frozen at whatever `setprodkeys` stamped. The opreg half lands later
+    // (`GenesisProducerOperators`), because sysio.opreg is not deployed until `OPPContracts`.
+    //
+    // `regfinkey` requires an existing `producers` row, so regproducer strictly precedes it —
+    // and it activates a producer's FIRST key by itself, which is why no `actfinkey` follows.
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "GenesisProducerRegistration",
+      "Register genesis producers + their finalizer keys"
+    ).push(
+      ...producerNodes.flatMap(node =>
+        node.producers.flatMap(label => [
+          Steps.consensus.planGrantProducerRam<C>(
+            Actor.Sysio,
+            `setacctram-${label}`,
+            `grant ${label} RAM for its producer + finalizer-key rows`,
+            {},
+            label,
+            GenesisProducerRamBytes
+          ),
+          Steps.consensus.planRegisterProducer<C>(
+            Actor.Producer,
+            `regproducer-${label}`,
+            `register producer ${label}`,
+            {},
+            label
+          ),
+          Steps.consensus.planRegisterFinalizerKey<C>(
+            Actor.Producer,
+            `regfinkey-${label}`,
+            `register ${label}'s finalizer key`,
+            {},
+            label
+          )
+        ])
       )
     )
     ClusterBuildPhase.create<C>(
@@ -585,6 +658,33 @@ export namespace ClusterBuildDefaults {
         "set the operator-registry config",
         {},
         operatorRegistryConfig(config)
+      )
+    )
+    // The opreg half of genesis-producer registration — deferred to here because sysio.opreg is
+    // only deployed by `OPPContracts` and configured by `OPPConfig` above. Bootstrapped by fiat:
+    // genesis producers post no collateral, `req_prod_collat` ships empty, and `meets_role_min`
+    // refuses an empty requirement vector by design (SEC-22) — so a non-bootstrapped
+    // registration would sit UNKNOWN forever and never become schedulable. They are also exempt
+    // from `termcheck`, which is what a genesis backstop is for.
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "GenesisProducerOperators",
+      "Register genesis producers as bootstrapped PRODUCER operators"
+    ).push(
+      ...producerNodes.flatMap(node =>
+        node.producers.map(label =>
+          Steps.contracts.sysio.opreg.planRegoperator<C>(
+            Actor.Producer,
+            `regoperator-${label}`,
+            `register ${label} as a bootstrapped producer operator`,
+            {},
+            {
+              account: label,
+              type: SysioContracts.SysioOpregOperatortype.OPERATOR_TYPE_PRODUCER,
+              is_bootstrapped: true
+            }
+          )
+        )
       )
     )
     ClusterBuildPhase.create<C>(
