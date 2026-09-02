@@ -1,0 +1,22 @@
+/** Terminal result emitted by the swap epoch stress flow. */
+export enum SwapEpochStressOutcome {
+  SWAP_EPOCH_STRESS_COMPLETED = "SWAP_EPOCH_STRESS_COMPLETED",
+  SWAP_EPOCH_STRESS_FAILED = "SWAP_EPOCH_STRESS_FAILED"
+}
+
+/** Independently evaluated invariant failures reported by the stress flow. */
+export enum SwapEpochStressCheck {
+  UWREQ_INGESTION_FAILED = "UWREQ_INGESTION_FAILED",
+  UNDERWRITING_FAILED = "UNDERWRITING_FAILED",
+  DESTINATION_SETTLEMENT_FAILED = "DESTINATION_SETTLEMENT_FAILED",
+  EPOCH_LIVENESS_FAILED = "EPOCH_LIVENESS_FAILED",
+  CHAIN_RUNTIME_FAILED = "CHAIN_RUNTIME_FAILED",
+  DIAGNOSTIC_COLLECTION_FAILED = "DIAGNOSTIC_COLLECTION_FAILED"
+}
+
+/** High-confidence runtime failure categories collected as supporting evidence. */
+export enum SwapEpochStressRuntimeFailureKind {
+  SOLANA_MEMORY_FAILURE = "SOLANA_MEMORY_FAILURE",
+  SOLANA_PROGRAM_FAILURE = "SOLANA_PROGRAM_FAILURE",
+  PROCESS_FATAL_FAILURE = "PROCESS_FATAL_FAILURE"
+}

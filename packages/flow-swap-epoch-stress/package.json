@@ -1,0 +1,22 @@
+{
+  "name": "@wireio/test-flow-swap-epoch-stress",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Manual FlowScenario for concurrent Ethereum-to-Solana swap and epoch stress",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "node lib/index.js",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.98.0",
+    "@wireio/cluster-tool": "workspace:*",
+    "@wireio/sdk-core": "^1.0.17",
+    "@wireio/shared": "^1.0.17",
+    "ethers": "^6.14.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0"
+  }
+}

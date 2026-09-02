@@ -17,6 +17,7 @@
     { "path": "./packages/cluster-tool/tsconfig.json" },
     { "path": "./packages/flow-operator-collateral-deposit/tsconfig.json" },
     { "path": "./packages/flow-swap-with-underwriting/tsconfig.json" },
+    { "path": "./packages/flow-swap-epoch-stress/tsconfig.json" },
     { "path": "./packages/flow-batch-operator-termination/tsconfig.json" },
     { "path": "./packages/flow-batch-operator-slashing/tsconfig.json" },
     { "path": "./packages/flow-swap-variance-revert/tsconfig.json" },
