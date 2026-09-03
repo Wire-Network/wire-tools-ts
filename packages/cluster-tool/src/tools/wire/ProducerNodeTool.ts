@@ -1,54 +1,30 @@
 /**
- * ProducerNodeTool — start a `nodeop` that produces blocks for ONE flow-provisioned producer
- * account, outside `NodeConfig.plan`.
+ * ProducerNodeTool — start (and stop) a `nodeop` that produces blocks for ONE flow-provisioned
+ * producer account, outside `NodeConfig.plan`.
  *
  * The planned topology is fixed at config-resolution time, so a producer a FLOW provisions after
  * bootstrap has no node to run on. This is the producer-side counterpart of
- * `OperatorDaemonTool.planDaemonStart` — the established precedent for spawning an ad-hoc nodeop
- * — and differs from it in exactly the ways a producing node does: it carries the producer role,
- * its own `--producer-name`, and both signature providers, and it needs no OPP daemon args.
- *
- * Ports come from `BindConfigProvider.findAvailable`; the node is peered to every planned
- * producer node so it joins the mesh and syncs before its first slot comes round.
+ * `OperatorDaemonTool.planDaemonStart`: both compose their node through `NodeConfig.createAdHoc`
+ * (named for the operator's durable label, peered to every planned producer node, on
+ * `BindConfigProvider.findAvailableAdHocPorts`-issued ports), and a producing node differs only
+ * in what that composition derives from its type — the producer role, its own `--producer-name`,
+ * and both signature providers — and in needing no OPP daemon args.
  */
 
 import Assert from "node:assert"
-import {
-  type BindConfigNodeopPorts,
-  type ClusterConfig
-} from "@wireio/cluster-tool-shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
-import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
+import { NodeConfig } from "../../config/NodeConfig.js"
 import { NodeopProcess } from "../../cluster/processes/NodeopProcess.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
 import {
   ClusterBuildStep,
   type ClusterBuildStepOptions
 } from "../../orchestration/ClusterBuildStep.js"
-import type { OperatorAccount } from "../../orchestration/outputs/OperatorAccount.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
 import { Report } from "../../report/Report.js"
 
 export namespace ProducerNodeTool {
-  /** Preferred HTTP port for an ad-hoc (flow-provisioned) producer node. */
-  export const PreferredProducerHttpPort = 8987
-  /** Preferred p2p port for an ad-hoc (flow-provisioned) producer node. */
-  export const PreferredProducerP2pPort = 9975
-  /** Topology index for ad-hoc producer nodes (not part of `NodeConfig.plan`). */
-  const AdHocProducerNodeIndex = -2
-
-  /**
-   * The process label + node-dir name for a flow-provisioned producer's node, keyed by the
-   * producer's durable `label` handle.
-   *
-   * @param label - The producer's durable handle.
-   * @returns The `node_<label>` process label / directory name.
-   */
-  export function producerNodeName(label: string): string {
-    return `node_${label}`
-  }
-
   /** Input for {@link planProducerNodeStart}. */
   export interface StartProducerNodeInput extends StepInput {
     readonly kind: "ProducerNodeTool.StartProducerNodeInput"
@@ -94,7 +70,7 @@ export namespace ProducerNodeTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const nodeName = producerNodeName(input.label)
+    const nodeName = NodeConfig.adHocNodeName(input.label)
     if (ctx.processManager.get(nodeName) != null) return
 
     const producer = ctx.keyStore.assertOperator(input.label)
@@ -107,48 +83,16 @@ export namespace ProducerNodeTool {
       `startProducerNode: ${input.label} has no finalizer key — it could produce blocks but never vote`
     )
 
-    const ports: BindConfigNodeopPorts = {
-      http: await BindConfigProvider.findAvailable(PreferredProducerHttpPort),
-      p2p: await BindConfigProvider.findAvailable(PreferredProducerP2pPort)
-    }
+    const ports = await BindConfigProvider.findAvailableAdHocPorts()
     // startWithRecovery (not bare create+start): a flow rerun reuses this node's data dir, so an
     // unclean prior stop leaves a dirty chainbase this launch must recover from — the same
     // reasoning as every other ad-hoc and planned node path.
     await NodeopProcess.startWithRecovery(ctx.processManager, {
-      node: producerNodeConfig(ctx.config, producer, ports),
+      node: NodeConfig.createAdHoc(ctx.config, producer, ports),
       operators: [producer]
     })
     ctx.log.info(
       `[producer-node] ${input.label} (${producer.account}) up (${nodeName}, http=${ports.http})`
-    )
-  }
-
-  /**
-   * Compose the node's {@link NodeConfig}: a PRODUCING node named for the producer's durable
-   * handle, producing for its one account, peered to every planned producer node.
-   *
-   * @param config - The resolved cluster config (supplies binaries, bind, genesis).
-   * @param producer - The account this node produces for.
-   * @param ports - The registry-issued ports it binds.
-   * @returns The node config.
-   */
-  function producerNodeConfig(
-    config: ClusterConfig,
-    producer: OperatorAccount,
-    ports: BindConfigNodeopPorts
-  ): NodeConfig {
-    const producerPeers = config.bind.nodeop.ports.producers.map(
-      producerPorts =>
-        `${NodeConfig.advertiseAddressFor(config, producerPorts)}:${producerPorts.p2p}`
-    )
-    return new NodeConfig(
-      config,
-      NodeRole.producer,
-      AdHocProducerNodeIndex,
-      producerNodeName(producer.label),
-      ports,
-      [producer.account],
-      producerPeers
     )
   }
 
@@ -198,7 +142,7 @@ export namespace ProducerNodeTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const nodeName = producerNodeName(input.label),
+    const nodeName = NodeConfig.adHocNodeName(input.label),
       running = ctx.processManager.get(nodeName)
     if (running == null) return
     await running.stop()

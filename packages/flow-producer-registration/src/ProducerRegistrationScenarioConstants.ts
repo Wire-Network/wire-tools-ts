@@ -1,13 +1,14 @@
-import { SlugName } from "@wireio/sdk-core"
-import { ProtocolTiming } from "@wireio/cluster-tool"
+import { SlugName, SysioContracts } from "@wireio/sdk-core"
+import { Constants, ProtocolTiming } from "@wireio/cluster-tool"
 
 /**
  * Constants for the producer-registration flow.
  *
- * Every deadline derives from {@link ProtocolTiming.effectiveEpochSec} (epochs) or from the
- * ROUND envelope (rounds) — never a stopwatch constant. The distinction matters here more than
- * in most flows: a producer's miss is only observable once its slot comes round again, so the
- * demotion phases are budgeted in ROUNDS while the collateral phases are budgeted in EPOCHS.
+ * Every deadline derives from {@link ProtocolTiming.effectiveEpochSec} (epochs) or from
+ * {@link ProtocolTiming.producerRotationMs} (rounds) — never a stopwatch constant. The
+ * distinction matters here more than in most flows: a producer's miss is only observable once
+ * its slot comes round again, so the demotion phases are budgeted in ROUNDS while the collateral
+ * phases are budgeted in EPOCHS.
  */
 export namespace ProducerRegistrationScenarioConstants {
   /** The flow's NON-bootstrapped producer's durable harness handle. */
@@ -21,18 +22,21 @@ export namespace ProducerRegistrationScenarioConstants {
   export const EpochDurationSec = 60
 
   /**
-   * Producer NODE processes, and producer ACCOUNTS, in the bootstrap topology.
+   * Producer ACCOUNTS in the bootstrap topology: one above the schedule floor.
    *
-   * The two are different knobs — `nodeCount` sizes the node processes, `producerCount` the
-   * accounts fanned across them — and they are set EQUAL here deliberately. Five genesis
-   * producers plus the flow's own gives six schedulable, so the demotion phase can remove one
-   * and still leave five: `min_schedule_size` is 4, and at four genesis producers the demotion
-   * would land exactly on the floor, where `update_ranked_producers` retains the last good
-   * schedule instead of publishing — making the assertion ambiguous rather than failing cleanly.
+   * The flow's own producer joins these, so the demotion phase removes one of `floor + 2`
+   * schedulable producers and leaves `floor + 1` — strictly ABOVE `min_schedule_size`. At the
+   * floor itself `update_ranked_producers` retains the last good schedule rather than publishing
+   * a shorter one, and the demoted producer would keep its slot: the assertion would then be
+   * ambiguous rather than failing cleanly.
    */
-  export const NodeCount = 5
-  /** Producer ACCOUNTS — one per node, so each carries a distinct signing set. */
-  export const ProducerCount = 5
+  export const ProducerCount = Constants.MIN_SCHEDULE_SIZE + 1
+  /**
+   * Producer NODE processes — a different knob from {@link ProducerCount} (`nodeCount` sizes the
+   * processes, `producerCount` the accounts fanned across them), set EQUAL so each account
+   * carries a distinct signing set.
+   */
+  export const NodeCount = ProducerCount
 
   /** Collateral bonded per chain (raw outpost units — wei / lamports). */
   export const BondAmount = 2_000_000n
@@ -47,23 +51,36 @@ export namespace ProducerRegistrationScenarioConstants {
   export const SolanaTokenCode = SlugName.from("SOL")
 
   /**
-   * Native RAM granted to the flow's producer before it registers.
-   *
-   * `roa::newuser` sponsors the account with enough for its own rows, but `regfinkey` bills the
-   * `finalizers` + `finkeys` rows to the producer on top of that, and the shortfall surfaces as
-   * an opaque "Account using more than allotted RAM usage". On a real chain a producer obtains
-   * RAM itself; in the harness this is the equivalent affordance, and the bootstrap grants the
-   * genesis producers the same way.
+   * Consecutive missed rounds that demote a producer — INSTALLED by the flow's `setscorecfg`
+   * step, so the demotion assertion is against a threshold the flow set, not one it assumed of
+   * the contract's default.
    */
-  export const ProducerRamBytes = 1_000_000
-
-  /** Consecutive missed rounds that demote a producer — the `prodscorecfg` default. */
   export const MaxConsecutiveMissedRounds = 3
-
-  /** Blocks one producer holds before the round-robin rotates (`producer_repetitions`). */
-  export const BlocksPerProducerRound = 12
-  /** Block interval in ms — half-second slots. */
-  export const BlockIntervalMs = 500
+  /**
+   * Fixed-point scale of every score weight — the contract's `producer_rank::score_scale`
+   * (basis points; a weight at this value is 100%).
+   */
+  export const ScoreScale = 10_000
+  /**
+   * Snapshot attestations within one pay period that earn full marks on the snapshot factor —
+   * the contract default.
+   */
+  export const SnapshotTargetAttestations = 1
+  /**
+   * The `prodscorecfg` the flow installs: the contract's shipped weights (the three live factors
+   * at full weight, the reserved `relay` / `api` / `benchmark` at 0) around the flow's own
+   * demotion threshold.
+   */
+  export const ScoreConfig: SysioContracts.SysioSystemProducerScoreConfigType = {
+    collateral_weight: ScoreScale,
+    participation_weight: ScoreScale,
+    snapshot_weight: ScoreScale,
+    relay_weight: 0,
+    api_weight: 0,
+    benchmark_weight: 0,
+    max_consecutive_missed_rounds: MaxConsecutiveMissedRounds,
+    snapshot_target_attestations: SnapshotTargetAttestations
+  }
 
   /**
    * Withdrawn from the ETH bond in the removal phase — the WHOLE of it.
@@ -80,41 +97,25 @@ export namespace ProducerRegistrationScenarioConstants {
 
   /** Interval for long-running chain-state polls (ms). */
   export const PollIntervalMs = 3_000
-  /** Buffer added on top of each poll deadline for the enclosing step timeout (ms). */
-  export const PollDeadlineBufferMs = 30_000
-  /** 1 s in ms — multiplies epoch counts into ms deadlines. */
-  export const MsPerSecond = 1_000
 
   /** Deadline for depot-side relay effects (balance row, status flip). */
   export function relayDeadlineMs(): number {
     return (
       ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
       RelayEpochBudget *
-      MsPerSecond
+      ProtocolTiming.MsPerSecond
     )
   }
 
   /**
-   * Wall-clock one full rotation of `scheduleSize` producers takes.
-   *
-   * Derived, never pinned: a producer's slot comes round once per rotation, so every
-   * demotion / recovery budget below is a multiple of this rather than a guessed constant.
-   *
-   * @param scheduleSize - Producers in the active schedule.
-   * @returns One rotation in ms.
-   */
-  export function rotationMs(scheduleSize: number): number {
-    return scheduleSize * BlocksPerProducerRound * BlockIntervalMs
-  }
-
-  /**
-   * Deadline for a producer to be seen producing a block, or for the schedule to pick it up.
+   * Deadline for a producer to be seen producing a block, or for a schedule rebuild to publish
+   * its entry or its exit.
    *
    * @param scheduleSize - Producers in the active schedule.
    * @returns The deadline in ms.
    */
   export function scheduleDeadlineMs(scheduleSize: number): number {
-    return rotationMs(scheduleSize) * ScheduleRebuildRoundBudget
+    return ProtocolTiming.producerRotationMs(scheduleSize) * ScheduleRebuildRoundBudget
   }
 
   /**
@@ -125,7 +126,7 @@ export namespace ProducerRegistrationScenarioConstants {
    */
   export function demotionDeadlineMs(scheduleSize: number): number {
     return (
-      rotationMs(scheduleSize) *
+      ProtocolTiming.producerRotationMs(scheduleSize) *
       (MaxConsecutiveMissedRounds + ScheduleRebuildRoundBudget)
     )
   }

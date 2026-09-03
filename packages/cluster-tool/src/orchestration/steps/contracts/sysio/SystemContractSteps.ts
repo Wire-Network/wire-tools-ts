@@ -1,4 +1,5 @@
 import { type PermissionLevelType, SysioContracts } from "@wireio/sdk-core"
+import { WireClient } from "../../../../clients/wire/WireClient.js"
 import { Report } from "../../../../report/Report.js"
 import { ClusterBuildContext } from "../../../ClusterBuildContext.js"
 import {
@@ -8,17 +9,6 @@ import {
 import type { StepInput } from "../../../StepRunner.js"
 
 const { SysioContractName } = SysioContracts
-
-/**
- * `<account>@active` — the producer-lifecycle actions (`regproducer`, `regfinkey`,
- * `actfinkey`, `unregprod`) are signed by the PRODUCER, not by `sysio`, so the default
- * `<contract>@active` the invoker would supply is the wrong signer. Every one of those
- * actions already names its account in the action data, so the authorization is DERIVED
- * from it rather than riding the input as a second copy that could drift.
- */
-const accountAuthorization = (account: string): PermissionLevelType[] => [
-  { actor: account, permission: "active" }
-]
 
 /**
  * Steps for `sysio.system` actions (the system contract on the `sysio` account,
@@ -385,7 +375,7 @@ export namespace SystemContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.system)
       .actions.regproducer.invoke(input.data, {
-        authorization: accountAuthorization(input.data.producer)
+        authorization: WireClient.activeAuthorization(input.data.producer)
       })
   }
 
@@ -433,7 +423,7 @@ export namespace SystemContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.system)
       .actions.regfinkey.invoke(input.data, {
-        authorization: accountAuthorization(input.data.finalizer_name)
+        authorization: WireClient.activeAuthorization(input.data.finalizer_name)
       })
   }
 
@@ -476,7 +466,7 @@ export namespace SystemContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.system)
       .actions.actfinkey.invoke(input.data, {
-        authorization: accountAuthorization(input.data.finalizer_name)
+        authorization: WireClient.activeAuthorization(input.data.finalizer_name)
       })
   }
 
@@ -521,7 +511,7 @@ export namespace SystemContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.system)
       .actions.unregprod.invoke(input.data, {
-        authorization: accountAuthorization(input.data.producer)
+        authorization: WireClient.activeAuthorization(input.data.producer)
       })
   }
 

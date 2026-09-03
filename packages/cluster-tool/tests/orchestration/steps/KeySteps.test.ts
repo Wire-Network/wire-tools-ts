@@ -937,4 +937,29 @@ describe("Steps.keys", () => {
       expect(commandInputs("PutParameter")[0].Value).toBe(bls.toNativeString())
     })
   })
+
+  describe("keyGeneratorContext", () => {
+    it("pairs the cluster's clio + its build's sys-util with the run's mnemonic — the anvil one by default", () => {
+      const ctx = fixtureContext(),
+        context = Steps.keys.keyGeneratorContext(ctx)
+      expect(context.clio).toBe(ctx.config.executables.clio)
+      expect(context.sysUtil).toBe(
+        Path.join(ctx.config.buildPath, KeyGenerator.SysUtilSubpath)
+      )
+      expect(context.ethereumMnemonic.phrase).toBe(
+        EthereumOutpostBootstrapper.AnvilMnemonic
+      )
+    })
+
+    it("derives EM keys from the CLUSTER-SCOPED mnemonic once an SSM run has minted one", () => {
+      const ctx = fixtureContext(),
+        phrase = ethers.Mnemonic.fromEntropy(
+          ethers.randomBytes(Steps.keys.EthereumMnemonicEntropyBytes)
+        ).phrase
+      ctx.outputs.set(EthereumMnemonicKey, phrase)
+      expect(Steps.keys.keyGeneratorContext(ctx).ethereumMnemonic.phrase).toBe(
+        phrase
+      )
+    })
+  })
 })

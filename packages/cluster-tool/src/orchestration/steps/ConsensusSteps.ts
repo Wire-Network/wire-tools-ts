@@ -9,6 +9,7 @@ import {
   type ClusterBuildStepOptions
 } from "../ClusterBuildStep.js"
 import type { StepInput } from "../StepRunner.js"
+import { SystemContractSteps } from "./contracts/sysio/SystemContractSteps.js"
 
 const { SysioContractName } = SysioContracts
 
@@ -24,8 +25,19 @@ export namespace ConsensusSteps {
   const HandoffTimeoutMs = 90_000
   /** The genesis producer that carries the chain until handoff. */
   const GenesisProducer = "sysio"
-  /** The permission a producer signs its own lifecycle actions with. */
-  const ActivePermission = "active"
+
+  /**
+   * Native RAM granted to a producer account before it registers — the ONE value the bootstrap
+   * grants every genesis producer and a flow grants its own producer.
+   *
+   * Neither route to a producer account leaves room for its rows: a genesis producer is created
+   * with `newaccount` and holds no allocation at all, and a `roa::newuser`-sponsored one is sized
+   * for its own rows — while `regfinkey` bills the `finalizers` + `finkeys` rows to the producer.
+   * Sized well clear of those two small rows rather than at their measured width: the failure
+   * mode is an opaque "Account using more than allotted RAM usage" at registration, and RAM is
+   * free to grant on a test chain. On a real chain a producer obtains RAM itself.
+   */
+  export const ProducerRamBytes = 1_000_000
 
   /**
    * Activate BLS instant finality (`sysio.bios::setfinalizer`) with a policy built from every
@@ -182,7 +194,10 @@ export namespace ConsensusSteps {
     )
   }
 
-  /** Named runner — `sysio.system::setacctram` for the resolved producer account. */
+  /**
+   * Named runner — resolve the producer's on-chain account from the key store, then delegate the
+   * write to `SystemContractSteps.runSetacctram`.
+   */
   export async function runGrantProducerRam<C extends ClusterBuildContext>(
     ctx: C,
     input: GrantProducerRamInput,
@@ -190,12 +205,14 @@ export namespace ConsensusSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const producer = ctx.keyStore.assertOperator(input.label)
-    await ctx.wire
-      .getSysioContract(SysioContractName.system)
-      .actions.setacctram.invoke({
-        account: producer.account,
-        ram_bytes: input.ramBytes
-      })
+    await SystemContractSteps.runSetacctram(
+      ctx,
+      {
+        kind: "SystemContractSteps.SetacctramInput",
+        data: { account: producer.account, ram_bytes: input.ramBytes }
+      },
+      signal
+    )
   }
 
   /**
@@ -226,7 +243,10 @@ export namespace ConsensusSteps {
     )
   }
 
-  /** Named runner — `regproducer` with the account's stored block-signing key. */
+  /**
+   * Named runner — resolve the account + its stored block-signing key from the key store, then
+   * delegate the write to `SystemContractSteps.runRegproducer` (signed by the producer).
+   */
   export async function runRegisterProducer<C extends ClusterBuildContext>(
     ctx: C,
     input: ProducerRegistrationInput,
@@ -234,17 +254,19 @@ export namespace ConsensusSteps {
   ): Promise<void> {
     signal.throwIfAborted()
     const producer = ctx.keyStore.assertOperator(input.label)
-    await ctx.wire
-      .getSysioContract(SysioContractName.system)
-      .actions.regproducer.invoke(
-        {
+    await SystemContractSteps.runRegproducer(
+      ctx,
+      {
+        kind: "SystemContractSteps.RegproducerInput",
+        data: {
           producer: producer.account,
           producer_key: producer.wire.publicKey,
           url: "",
           location: 0
-        },
-        { authorization: [{ actor: producer.account, permission: ActivePermission }] }
-      )
+        }
+      },
+      signal
+    )
   }
 
   /**
@@ -271,7 +293,10 @@ export namespace ConsensusSteps {
     )
   }
 
-  /** Named runner — `regfinkey` with the account's OWN BLS key + proof of possession. */
+  /**
+   * Named runner — resolve the account's OWN BLS key + proof of possession from the key store,
+   * then delegate the write to `SystemContractSteps.runRegfinkey` (signed by the finalizer).
+   */
   export async function runRegisterFinalizerKey<C extends ClusterBuildContext>(
     ctx: C,
     input: ProducerRegistrationInput,
@@ -283,15 +308,17 @@ export namespace ConsensusSteps {
       producer.wireFinalizer != null,
       `regfinkey: producer ${input.label} has no finalizer key`
     )
-    await ctx.wire
-      .getSysioContract(SysioContractName.system)
-      .actions.regfinkey.invoke(
-        {
+    await SystemContractSteps.runRegfinkey(
+      ctx,
+      {
+        kind: "SystemContractSteps.RegfinkeyInput",
+        data: {
           finalizer_name: producer.account,
           finalizer_key: producer.wireFinalizer.publicKey,
           proof_of_possession: producer.wireFinalizer.proofOfPossession
-        },
-        { authorization: [{ actor: producer.account, permission: ActivePermission }] }
-      )
+        }
+      },
+      signal
+    )
   }
 }

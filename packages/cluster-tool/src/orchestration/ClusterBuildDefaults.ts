@@ -84,16 +84,6 @@ const FromWireRevertFeeBps = 500
 const NodeStartConcurrency = 4
 
 /**
- * Native RAM granted to each genesis producer account.
- *
- * A genesis producer is created with `newaccount`, not sponsored through `roa::newuser`, so it
- * carries no RAM allocation — and `regfinkey` bills its `finalizers` + `finkeys` rows to the
- * producer. Sized well clear of those two small rows rather than at their measured width: the
- * failure mode is an opaque "Account using more than allotted RAM usage" mid-bootstrap, and RAM
- * is free to grant on a test chain.
- */
-const GenesisProducerRamBytes = 1_000_000
-/**
  * Epochs a PENDING uwreq may wait for its underwriter race before
  * `sysio.uwrit::pruneuwreqs` expires it (refund/revert + EXPIRED). Mirrors
  * the contract default; flow races resolve within an epoch, so the timeout
@@ -472,7 +462,7 @@ export namespace ClusterBuildDefaults {
             `grant ${label} RAM for its producer + finalizer-key rows`,
             {},
             label,
-            GenesisProducerRamBytes
+            Steps.consensus.ProducerRamBytes
           ),
           Steps.consensus.planRegisterProducer<C>(
             Actor.Producer,

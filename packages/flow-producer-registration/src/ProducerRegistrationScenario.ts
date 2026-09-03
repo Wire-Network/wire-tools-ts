@@ -5,12 +5,16 @@ import {
   EthereumCollateralTool,
   FlowScenario,
   ProducerNodeTool,
+  ProducerTier,
+  ProtocolTiming,
   Report,
   SolanaCollateralTool,
   Steps,
   WireOperatorProvisioningTool,
   matchesProtoEnum,
   pollUntil,
+  producerTier,
+  sleep,
   slugValue,
   verifyStep,
   type ClusterBuild,
@@ -19,7 +23,7 @@ import {
 } from "@wireio/cluster-tool"
 import { ProducerRegistrationScenarioConstants as Constants } from "./ProducerRegistrationScenarioConstants.js"
 
-const { SysioContractName, SysioOpregOperatorstatus } = SysioContracts
+const { SysioOpregOperatorstatus } = SysioContracts
 const { Actor } = Report
 
 /** The flow producer's on-chain WIRE account, resolved from the key store by its label. */
@@ -32,10 +36,21 @@ async function readOperatorRow(
   ctx: ClusterBuildContext
 ): Promise<SysioContracts.SysioOpregOperatorEntryType> {
   const account = producerAccount(ctx),
-    { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.opreg)
-      .tables.operators.query({ limit: 100 })
+    { rows } = await ctx.wire.getOperators()
   return rows.find(row => row.account === account)
+}
+
+/** True while the flow producer's operator row is `OPERATOR_STATUS_ACTIVE`. */
+async function isOperatorActive(ctx: ClusterBuildContext): Promise<boolean> {
+  const operator = await readOperatorRow(ctx)
+  return (
+    operator != null &&
+    matchesProtoEnum(
+      operator.status,
+      SysioOpregOperatorstatus,
+      SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
+    )
+  )
 }
 
 /** The flow producer's row on `sysio::producers` (a read). */
@@ -43,10 +58,27 @@ async function readProducerRow(
   ctx: ClusterBuildContext
 ): Promise<SysioContracts.SysioSystemProducerInfoType> {
   const account = producerAccount(ctx),
-    { rows } = await ctx.wire
-      .getSysioContract(SysioContractName.system)
-      .tables.producers.query({ limit: 200 })
+    { rows } = await ctx.wire.getProducers()
   return rows.find(row => row.owner === account)
+}
+
+/**
+ * The producers the ACTIVE schedule names — the set actually taking turns. A pending or proposed
+ * schedule becomes it only once its proposing block is FINAL.
+ */
+async function activeScheduleProducers(ctx: ClusterBuildContext): Promise<string[]> {
+  return (await ctx.wire.getProducerSchedule()).active.producers
+}
+
+/**
+ * Every producer ANY schedule names — active, pending, or proposed — so a "never scheduled"
+ * assertion also covers a change still in flight.
+ */
+async function scheduledProducers(ctx: ClusterBuildContext): Promise<string[]> {
+  const { active, pending, proposed } = await ctx.wire.getProducerSchedule()
+  return [active, pending, proposed]
+    .filter(schedule => schedule != null)
+    .flatMap(schedule => schedule.producers)
 }
 
 /** True once the flow producer has actually produced a block. */
@@ -62,29 +94,57 @@ async function hasProducedBlock(ctx: ClusterBuildContext): Promise<boolean> {
 const ScheduleSize = Constants.ProducerCount + 1
 
 /**
+ * The body of both schedule-exit verifies: the ACTIVE schedule drops the flow producer and every
+ * genesis producer keeps its slot.
+ *
+ * Asserted on the active schedule, never on who holds the head block — any other producer holds
+ * it 11 slots in 12, so a head-block check passes while the producer is still scheduled. The
+ * genesis count is the floor's proof: a rebuild that dropped the schedule below
+ * `min_schedule_size` would have been retained instead, and the exiting producer would keep
+ * producing.
+ */
+async function verifyProducerLeavesSchedule(ctx: ClusterBuildContext): Promise<void> {
+  const account = producerAccount(ctx)
+  await pollUntil(
+    "the active schedule no longer names the flow producer",
+    async () => !(await activeScheduleProducers(ctx)).includes(account),
+    Constants.scheduleDeadlineMs(ScheduleSize),
+    Constants.PollIntervalMs
+  )
+  const schedule = await activeScheduleProducers(ctx)
+  if (schedule.length !== Constants.ProducerCount) {
+    throw new Error(
+      `the active schedule holds ${schedule.length} producers after the exit; every one of the ${Constants.ProducerCount} genesis producers should still be in it`
+    )
+  }
+}
+
+/**
  * Block Producer Registration — a fresh account driven from provisioning all the way to
  * producing blocks, then out of the schedule and back:
  *
+ * 0. **ScoreConfig** — the flow INSTALLS the score weights and the demotion threshold it later
+ *    asserts against (`setscorecfg`), rather than assuming the contract's defaults.
  * 1. **ProvisionProducer** — the ONE provisioning mechanism creates the account (unique WIRE
  *    key + its own finalizer key, ETH + SOL identities, authex links, `regoperator`). No
  *    `producerNodeIndex`, so it takes the collateral-backed route, not the genesis one.
  * 2. **NegativeCase** — `regproducer` + `regfinkey` BEFORE any collateral. Asserted here rather
  *    than after the deposits so the ordering is unambiguous: registration alone must NOT make a
- *    producer schedulable.
+ *    producer schedulable, so no schedule (active, pending, or proposed) ever names it.
  * 3. **DepositEthereum** / 4. **DepositSolana** — bond on both outposts; the all-chain rule is
- *    met and the operator flips ACTIVE.
+ *    met, the operator flips ACTIVE, and its `rank_score` moves into the healthy tier.
  * 5. **StartProducerNode** — its own nodeop, peered into the mesh.
  * 6. **EntersSchedule** — it enters the ranked schedule and PRODUCES A BLOCK. This is also the
  *    first end-to-end coverage anywhere of the `regfinkey` → `set_proposed_finalizers` path; a
  *    cluster otherwise installs finality directly at genesis.
  * 7. **MissedRounds** — its node is stopped (a controlled stop; the flow owns the process). The
- *    miss counter climbs, demotion fires at exactly the configured threshold, and it leaves the
- *    schedule while the schedule stays at or above `min_schedule_size`.
+ *    miss counter climbs, demotion fires at exactly the installed threshold, and the ACTIVE
+ *    schedule drops it while every genesis producer keeps its slot.
  * 8. **Recover** — the node restarts and `regproducer` clears the demotion. It re-enters the
  *    schedule and produces again.
  * 9. **Removal** — the whole ETH bond is withdrawn. The operator drops below the per-chain
- *    minimum, leaves ACTIVE, and its rank position goes with it — the collateral-driven exit
- *    that mirrors the collateral-driven entry in phases 3-4. This depends on `opreg::withdraw`
+ *    minimum, leaves ACTIVE, and the active schedule drops it — the collateral-driven exit that
+ *    mirrors the collateral-driven entry in phases 3-4. This depends on `opreg::withdraw`
  *    re-evaluating eligibility (WIRE-351, wire-sysio PR #589).
  */
 export class ProducerRegistrationScenario extends FlowScenario {
@@ -95,7 +155,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
   override readonly defaults: ClusterBuildOptions = {
     epochDurationSec: Constants.EpochDurationSec,
     // One producer ACCOUNT per producer NODE — see the constants' note on why the two counts
-    // are set equal, and why five rather than the `min_schedule_size` floor of four.
+    // are set equal, and why one above the `min_schedule_size` floor.
     nodeCount: Constants.NodeCount,
     producerCount: Constants.ProducerCount,
     // Without this the requirement vector is empty, `meets_role_min` refuses every
@@ -116,18 +176,32 @@ export class ProducerRegistrationScenario extends FlowScenario {
 
   plan(cluster: ClusterBuild): void {
     const relayStepOptions = {
-        timeoutMs: Constants.relayDeadlineMs() + Constants.PollDeadlineBufferMs
+        timeoutMs: Constants.relayDeadlineMs() + ProtocolTiming.PollDeadlineBufferMs
       },
       scheduleStepOptions = {
         timeoutMs:
-          Constants.scheduleDeadlineMs(ScheduleSize) +
-          Constants.PollDeadlineBufferMs
+          Constants.scheduleDeadlineMs(ScheduleSize) + ProtocolTiming.PollDeadlineBufferMs
       },
       demotionStepOptions = {
         timeoutMs:
-          Constants.demotionDeadlineMs(ScheduleSize) +
-          Constants.PollDeadlineBufferMs
-      }
+          Constants.demotionDeadlineMs(ScheduleSize) + ProtocolTiming.PollDeadlineBufferMs
+      },
+      outpostWriteStepOptions = { timeoutMs: ProtocolTiming.OutpostWriteBudgetMs }
+
+    // ── 0. Install the weights + the demotion threshold the flow asserts against ──
+    ClusterBuildPhase.create(
+      cluster,
+      "ScoreConfig",
+      "Install the producer score weights and the missed-round demotion threshold"
+    ).push(
+      Steps.contracts.sysio.system.planSetscorecfg(
+        Actor.Sysio,
+        "setscorecfg",
+        `install prodscorecfg with max_consecutive_missed_rounds = ${Constants.MaxConsecutiveMissedRounds}`,
+        {},
+        { weights: Constants.ScoreConfig }
+      )
+    )
 
     // ── 1. Provision the collateral-backed producer (the ONE mechanism) ──
     WireOperatorProvisioningTool.planOperatorAccountProvisioning(
@@ -160,7 +234,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
         "grant the flow producer RAM for its producer + finalizer-key rows",
         {},
         Constants.ProducerLabel,
-        Constants.ProducerRamBytes
+        Steps.consensus.ProducerRamBytes
       ),
       Steps.consensus.planRegisterProducer(
         Actor.Producer,
@@ -178,35 +252,25 @@ export class ProducerRegistrationScenario extends FlowScenario {
       ),
       verifyStep(
         Actor.Sysio,
-        "unbonded-producer-stays-unknown",
-        "a registered but unbonded producer stays UNKNOWN and produces nothing",
+        "unbonded-producer-is-never-scheduled",
+        "a registered but unbonded producer stays UNKNOWN and no schedule ever names it",
         async ctx => {
           // Held across a full schedule-rebuild window: `update_ranked_producers` fires roughly
           // once a minute, so a shorter check would pass merely because no rebuild had run.
-          const deadline =
-            Date.now() + Constants.scheduleDeadlineMs(ScheduleSize)
+          const account = producerAccount(ctx),
+            deadline = Date.now() + Constants.scheduleDeadlineMs(ScheduleSize)
           while (Date.now() < deadline) {
-            const operator = await readOperatorRow(ctx)
-            if (
-              operator != null &&
-              matchesProtoEnum(
-                operator.status,
-                SysioOpregOperatorstatus,
-                SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
-              )
-            ) {
+            if (await isOperatorActive(ctx)) {
               throw new Error(
                 "an unbonded producer reached OPERATOR_STATUS_ACTIVE — meets_role_min let an empty bond through"
               )
             }
-            if (await hasProducedBlock(ctx)) {
+            if ((await scheduledProducers(ctx)).includes(account)) {
               throw new Error(
-                "an unbonded producer produced a block — it was scheduled without collateral"
+                "an unbonded producer was scheduled — it holds a rank position without collateral"
               )
             }
-            await new Promise(resolve =>
-              setTimeout(resolve, Constants.PollIntervalMs)
-            )
+            await sleep(Constants.PollIntervalMs)
           }
         },
         scheduleStepOptions
@@ -223,7 +287,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
         Actor.User,
         "deposit-ethereum",
         `deposit ${Constants.BondAmount} wei ETH producer collateral`,
-        { timeoutMs: 60_000 },
+        outpostWriteStepOptions,
         Constants.ProducerLabel,
         OperatorType.PRODUCER,
         BigInt(Constants.EthereumTokenCode),
@@ -240,8 +304,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
               const operator = await readOperatorRow(ctx)
               return (operator?.balances ?? []).some(
                 balance =>
-                  slugValue(balance.chain_code) ===
-                    Constants.EthereumChainCode &&
+                  slugValue(balance.chain_code) === Constants.EthereumChainCode &&
                   Number(balance.balance) >= Number(Constants.MinimumBond)
               )
             },
@@ -253,17 +316,17 @@ export class ProducerRegistrationScenario extends FlowScenario {
       )
     )
 
-    // ── 4. SOL bond → all-chain rule met → ACTIVE ──
+    // ── 4. SOL bond → all-chain rule met → ACTIVE → scored ──
     ClusterBuildPhase.create(
       cluster,
       "DepositSolana",
-      "Bond SOL collateral; the producer operator flips ACTIVE"
+      "Bond SOL collateral; the producer operator flips ACTIVE and is scored"
     ).push(
       SolanaCollateralTool.planDeposit(
         Actor.User,
         "deposit-solana",
         `deposit ${Constants.BondAmount} lamports SOL producer collateral`,
-        { timeoutMs: 60_000 },
+        outpostWriteStepOptions,
         Constants.ProducerLabel,
         OperatorType.PRODUCER,
         BigInt(Constants.SolanaTokenCode),
@@ -276,17 +339,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
         async ctx => {
           await pollUntil(
             "depot producer status = ACTIVE",
-            async () => {
-              const operator = await readOperatorRow(ctx)
-              return (
-                operator != null &&
-                matchesProtoEnum(
-                  operator.status,
-                  SysioOpregOperatorstatus,
-                  SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
-                )
-              )
-            },
+            () => isOperatorActive(ctx),
             Constants.relayDeadlineMs(),
             Constants.PollIntervalMs
           )
@@ -296,17 +349,20 @@ export class ProducerRegistrationScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "collateral-scores-the-producer",
-        "the bond moves the producer out of the unscored demoted tier",
+        "the bond moves the producer's rank_score into the healthy tier",
         async ctx => {
           // The score is what ranking ORDERS on, and an unscored row sits in the demoted tier
           // where no consumer's walk ever reaches it. `processprod` fires on every balance
-          // change precisely so this happens without a governance action.
+          // change precisely so this happens without a governance action — and the TIER is
+          // read off the key itself, because `is_demoted` and `is_active` were already false
+          // and true the moment the producer registered.
           await pollUntil(
-            "producer rank_score left the demoted tier",
+            "producer rank_score in the healthy tier",
             async () => {
               const producer = await readProducerRow(ctx)
               return (
-                producer != null && !producer.is_demoted && producer.is_active
+                producer != null &&
+                producerTier(producer.rank_score) === ProducerTier.healthy
               )
             },
             Constants.relayDeadlineMs(),
@@ -358,11 +414,11 @@ export class ProducerRegistrationScenario extends FlowScenario {
       )
     )
 
-    // ── 7. Stop its node; misses accrue; demotion fires ──
+    // ── 7. Stop its node; misses accrue; demotion fires; the schedule drops it ──
     ClusterBuildPhase.create(
       cluster,
       "MissedRounds",
-      "Stop the producer's node; misses accrue and demotion fires"
+      "Stop the producer's node; misses accrue, demotion fires, the schedule drops it"
     ).push(
       ProducerNodeTool.planProducerNodeStop(
         Actor.Producer,
@@ -386,14 +442,16 @@ export class ProducerRegistrationScenario extends FlowScenario {
             Constants.PollIntervalMs
           )
           const demoted = await readProducerRow(ctx)
-          // Exactly the threshold, not merely "at least": demoting early would evict a producer
-          // that had not yet earned it.
-          if (
-            demoted.consecutive_missed_rounds <
-            Constants.MaxConsecutiveMissedRounds
-          ) {
+          // Exactly the threshold the flow installed, not merely "at least": demoting early
+          // would evict a producer that had not yet earned it.
+          if (demoted.consecutive_missed_rounds < Constants.MaxConsecutiveMissedRounds) {
             throw new Error(
-              `demoted at ${demoted.consecutive_missed_rounds} misses, below the configured ${Constants.MaxConsecutiveMissedRounds}`
+              `demoted at ${demoted.consecutive_missed_rounds} misses, below the installed ${Constants.MaxConsecutiveMissedRounds}`
+            )
+          }
+          if (producerTier(demoted.rank_score) !== ProducerTier.demoted) {
+            throw new Error(
+              `is_demoted is set but rank_score ${demoted.rank_score} is not in the demoted tier`
             )
           }
         },
@@ -401,23 +459,9 @@ export class ProducerRegistrationScenario extends FlowScenario {
       ),
       verifyStep(
         Actor.Sysio,
-        "schedule-holds-above-the-floor",
-        "the genesis producers keep producing while the demoted one is out",
-        async ctx => {
-          // The floor is the point: a demotion must never take the schedule below
-          // `min_schedule_size`, because below it `update_ranked_producers` retains the last
-          // good schedule and the demoted producer would keep producing.
-          const account = producerAccount(ctx)
-          await pollUntil(
-            "a genesis producer holds the head block",
-            async () => {
-              const { head_block_producer } = await ctx.wire.getInfo()
-              return head_block_producer !== account
-            },
-            Constants.scheduleDeadlineMs(ScheduleSize),
-            Constants.PollIntervalMs
-          )
-        },
+        "demoted-producer-leaves-the-schedule",
+        "the active schedule drops the demoted producer and every genesis producer keeps its slot",
+        verifyProducerLeavesSchedule,
         scheduleStepOptions
       )
     )
@@ -485,7 +529,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
         Actor.User,
         "withdraw-ethereum",
         `withdraw the whole ${Constants.WithdrawAmount} wei ETH bond`,
-        { timeoutMs: 60_000 },
+        outpostWriteStepOptions,
         Constants.ProducerLabel,
         BigInt(Constants.EthereumTokenCode),
         Constants.WithdrawAmount
@@ -500,17 +544,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
           // merge the status simply never changed.
           await pollUntil(
             "depot producer status left ACTIVE",
-            async () => {
-              const operator = await readOperatorRow(ctx)
-              return (
-                operator != null &&
-                !matchesProtoEnum(
-                  operator.status,
-                  SysioOpregOperatorstatus,
-                  SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
-                )
-              )
-            },
+            async () => !(await isOperatorActive(ctx)),
             Constants.relayDeadlineMs(),
             Constants.PollIntervalMs
           )
@@ -520,22 +554,10 @@ export class ProducerRegistrationScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "unbonded-producer-leaves-the-schedule",
-        "a genesis producer reclaims the slot and the schedule never drops below the floor",
-        async ctx => {
-          // No `is_op_active` row means no rank position, so the next rebuild drops it. The
-          // schedule stays live throughout: five genesis producers is one above
-          // `min_schedule_size`, so this removal is absorbed rather than freezing the schedule.
-          const account = producerAccount(ctx)
-          await pollUntil(
-            "a genesis producer holds the head block after the removal",
-            async () => {
-              const { head_block_producer } = await ctx.wire.getInfo()
-              return head_block_producer !== account
-            },
-            Constants.scheduleDeadlineMs(ScheduleSize),
-            Constants.PollIntervalMs
-          )
-        },
+        "the active schedule drops the unbonded producer and every genesis producer keeps its slot",
+        // No ACTIVE opreg row means no rank position, so the next rebuild drops it — absorbed
+        // rather than retained, because the genesis producers alone still exceed the floor.
+        verifyProducerLeavesSchedule,
         scheduleStepOptions
       )
     )

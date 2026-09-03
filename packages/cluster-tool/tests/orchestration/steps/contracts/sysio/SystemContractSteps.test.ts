@@ -33,6 +33,7 @@ describe("Steps.contracts.sysio.system", () => {
       producer_bps: 0,
       batch_op_bps: 0,
       standby_end_rank: 0,
+      standby_bps: 0,
       epoch_log_retention_count: 10,
       pay_cadence_epochs: 1
     }

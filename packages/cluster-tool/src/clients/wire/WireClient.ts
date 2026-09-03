@@ -2,6 +2,7 @@ import Assert from "node:assert"
 import { promises as Fsp } from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
+import { asOption } from "@3fv/prelude-ts"
 import { flatten } from "lodash"
 import { match } from "ts-pattern"
 import {
@@ -33,6 +34,10 @@ const log = getLogger("WireClient")
 const { SysioContractName, SysioContractDefinitions } = SysioContracts
 type SysioContractName = SysioContracts.SysioContractName
 type SysioContractMapping = SysioContracts.SysioContractMapping
+/** sdk-core's `producer_schedule` struct, exactly as `get_producer_schedule` answers it. */
+type ProducerScheduleStruct = Awaited<
+  ReturnType<APIClient["v1"]["chain"]["get_producer_schedule"]>
+>["active"]
 
 /** Caller config for the WIRE client (clio binary + node/wallet URLs). */
 export interface WireClientConfig {
@@ -130,7 +135,7 @@ export class WireClient {
     const authorize = (
       options?: WireClient.InvocationOptions
     ): PermissionLevelType[] =>
-      options?.authorization ?? [{ actor: account, permission: "active" }]
+      options?.authorization ?? WireClient.activeAuthorization(account)
     return {
       prepare: (data, options) => ({
         contract,
@@ -306,7 +311,7 @@ export class WireClient {
       "sysio",
       "activate",
       { feature_digest: featureDigest },
-      [{ actor: "sysio", permission: "active" }]
+      WireClient.activeAuthorization("sysio")
     )
   }
 
@@ -316,7 +321,7 @@ export class WireClient {
       "sysio",
       "setpriv",
       { account, is_priv: 1 },
-      [{ actor: "sysio", permission: "active" }]
+      WireClient.activeAuthorization("sysio")
     )
   }
 
@@ -381,6 +386,29 @@ export class WireClient {
   }
 
   /**
+   * GET /v1/chain/get_producer_schedule — the ACTIVE schedule, plus the pending / proposed ones
+   * while a change is in flight — projected onto plain producer names the way {@link getInfo}
+   * projects its scalars (sdk-core answers with `Name`-typed entries). A proposed schedule
+   * becomes pending once its block is produced and active once that block is FINAL, so the
+   * active list is the set actually taking turns.
+   */
+  async getProducerSchedule(): Promise<WireClient.GetProducerScheduleResponse> {
+    const schedule = await this.api.v1.chain.get_producer_schedule(),
+      project = (entry: ProducerScheduleStruct): WireClient.ProducerSchedule =>
+        asOption(entry)
+          .map(present => ({
+            version: Number(present.version),
+            producers: present.producers.map(producer => String(producer.producer_name))
+          }))
+          .getOrUndefined()
+    return {
+      active: project(schedule.active),
+      pending: project(schedule.pending),
+      proposed: project(schedule.proposed)
+    }
+  }
+
+  /**
    * Raw table read (ESCAPE HATCH) — unwraps v6 KV `{ key, value }` rows to flat
    * rows. Prefer `getSysioContract(name).tables.<table>.query(...)` for any
    * `sysio.*` contract table; see `prefer-typed-contract-table-accessors.md`.
@@ -429,7 +457,7 @@ export class WireClient {
    *
    * Throws when nothing is owed; check {@link getWireClaimable} first if that is not a failure.
    */
-  async claimWire(account: string, permission = "active") {
+  async claimWire(account: string, permission = WireClient.ActivePermission) {
     return this.invoke("sysio.reserv", "claimwire", { account }, [{ actor: account, permission }])
   }
 
@@ -488,7 +516,7 @@ export class WireClient {
    * them directly, because ROA zeroes net/cpu for every `sysio`-prefixed account and neither
    * carries a contract that could emit the claim inline, so neither could ever authorize one.
    */
-  async claimPay(account: string, permission = "active") {
+  async claimPay(account: string, permission = WireClient.ActivePermission) {
     return this.invoke("sysio", "claimpay", { account_name: account }, [
       { actor: account, permission }
     ])
@@ -504,6 +532,9 @@ export class WireClient {
   // (prefer-typed-contract-table-accessors.md) — never a raw getTableRows.
   getOperators() {
     return this.getSysioContract(SysioContractName.opreg).tables.operators.query()
+  }
+  getProducers() {
+    return this.getSysioContract(SysioContractName.system).tables.producers.query()
   }
   getWithdrawQueue() {
     return this.getSysioContract(SysioContractName.opreg).tables.wtdwqueue.query()
@@ -1161,6 +1192,24 @@ export namespace WireClient {
   export const NoTransactionSent = "no transaction is sent"
   export const NoTransactionSentTransactionId = "no_transaction_sent"
 
+  /** The permission an account signs its own actions with. */
+  export const ActivePermission = "active"
+
+  /**
+   * `<account>@active` — the authorization for an action the ACCOUNT itself signs: a
+   * producer's lifecycle (`regproducer`, `regfinkey`, `actfinkey`, `unregprod`), a reserve
+   * owner's fee actions, a claim. The default `<contract>@active` the invoker would supply is
+   * the wrong signer for every one of those, and each already names its account in the action
+   * data (or the step input), so the authorization is DERIVED from it here — the ONE spelling —
+   * rather than riding along as a second copy that could drift.
+   *
+   * @param account - The signing account.
+   * @returns The single-entry authorization.
+   */
+  export function activeAuthorization(account: string): PermissionLevelType[] {
+    return [{ actor: account, permission: ActivePermission }]
+  }
+
   // ── Table getters config ──
   // (contract accounts + table names come from SysioContractName /
   // getSysioContract(name).tables — no dupe enums here.)
@@ -1189,6 +1238,20 @@ export namespace WireClient {
     head_block_time: string
     head_block_id: string
     head_block_producer: string
+  }
+  /** One producer schedule — its version + its producers' on-chain names, in slot order. */
+  export interface ProducerSchedule {
+    version: number
+    producers: string[]
+  }
+  /**
+   * `get_producer_schedule` projected onto plain names. `pending` / `proposed` are present only
+   * while a schedule change is in flight.
+   */
+  export interface GetProducerScheduleResponse {
+    active: ProducerSchedule
+    pending?: ProducerSchedule
+    proposed?: ProducerSchedule
   }
   /** A single protocol-feature specification entry. */
   export interface ProtocolFeatureSpecification {

@@ -1,6 +1,6 @@
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
-import { NodeRole } from "@wireio/cluster-tool/config"
+import { NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
 import {
   NodeopProcess,
   ProcessManager
@@ -18,7 +18,16 @@ import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
  * can prove the collateral-backed onboarding actually reaches block production.
  */
 describe("ProducerNodeTool", () => {
-  const signal = new AbortController().signal
+  const signal = new AbortController().signal,
+    ProducerLabel = "flowprod",
+    StartInput = {
+      kind: "ProducerNodeTool.StartProducerNodeInput" as const,
+      label: ProducerLabel
+    },
+    StopInput = {
+      kind: "ProducerNodeTool.StopProducerNodeInput" as const,
+      label: ProducerLabel
+    }
 
   /** A provisioned producer identity: its own K1 and its own finalizer key. */
   function producerAccount(
@@ -45,6 +54,8 @@ describe("ProducerNodeTool", () => {
     }
   }
 
+  afterEach(() => jest.restoreAllMocks())
+
   describe("planProducerNodeStart", () => {
     it("carries the label as its typed input so the Report records which producer started", () => {
       const step = ProducerNodeTool.planProducerNodeStart(
@@ -52,71 +63,53 @@ describe("ProducerNodeTool", () => {
         "start-producer-node",
         "start the flow producer's node",
         {},
-        "flowprod"
+        ProducerLabel
       )
-      expect(step.input).toEqual({
-        kind: "ProducerNodeTool.StartProducerNodeInput",
-        label: "flowprod"
-      })
+      expect(step.input).toEqual(StartInput)
       expect(step.runner).toBe(ProducerNodeTool.runProducerNodeStart)
     })
   })
 
   describe("runProducerNodeStart", () => {
-    it("launches a PRODUCING node for the account, through the dirty-chainbase recovery path", async () => {
+    it("launches a PRODUCING node for the account, composed by NodeConfig.createAdHoc, through the dirty-chainbase recovery path", async () => {
       const ctx = fixtureContext()
       ProcessManager.setClusterPath(ctx.config.clusterPath)
-      const producer = producerAccount("flowprod")
+      const producer = producerAccount(ProducerLabel)
       ctx.keyStore.setOperator(producer)
       const recoverySpy = jest
         .spyOn(NodeopProcess, "startWithRecovery")
         .mockResolvedValue(undefined)
-      try {
-        await ProducerNodeTool.runProducerNodeStart(
-          ctx,
-          { kind: "ProducerNodeTool.StartProducerNodeInput", label: "flowprod" },
-          signal
-        )
-        expect(recoverySpy).toHaveBeenCalledWith(
-          ctx.processManager,
-          expect.objectContaining({
-            operators: [producer],
-            node: expect.objectContaining({
-              role: NodeRole.producer,
-              // It produces for its OWN account and nothing else.
-              producers: [producer.account],
-              name: `node_${producer.label}`
-            })
+      await ProducerNodeTool.runProducerNodeStart(ctx, StartInput, signal)
+      expect(recoverySpy).toHaveBeenCalledWith(
+        ctx.processManager,
+        expect.objectContaining({
+          operators: [producer],
+          node: expect.objectContaining({
+            role: NodeRole.producer,
+            // It produces for its OWN account and nothing else.
+            producers: [producer.account],
+            name: NodeConfig.adHocNodeName(producer.label),
+            index: NodeConfig.AdHocIndex
           })
-        )
-        // A flow-provisioned node launches in the BOOTSTRAP form, like every other ad-hoc node.
-        expect(recoverySpy.mock.calls[0][1].postBootstrap).toBeUndefined()
-      } finally {
-        recoverySpy.mockRestore()
-      }
+        })
+      )
+      // A flow-provisioned node launches in the BOOTSTRAP form, like every other ad-hoc node.
+      expect(recoverySpy.mock.calls[0][1].postBootstrap).toBeUndefined()
     })
 
     it("peers the node to every planned producer node so it syncs before its first slot", async () => {
       const ctx = fixtureContext()
       ProcessManager.setClusterPath(ctx.config.clusterPath)
-      ctx.keyStore.setOperator(producerAccount("flowprod"))
+      ctx.keyStore.setOperator(producerAccount(ProducerLabel))
       const recoverySpy = jest
         .spyOn(NodeopProcess, "startWithRecovery")
         .mockResolvedValue(undefined)
-      try {
-        await ProducerNodeTool.runProducerNodeStart(
-          ctx,
-          { kind: "ProducerNodeTool.StartProducerNodeInput", label: "flowprod" },
-          signal
-        )
-        const { node } = recoverySpy.mock.calls[0][1]
-        expect(node.peerEndpoints).toHaveLength(
-          ctx.config.bind.nodeop.ports.producers.length
-        )
-        expect(node.peerEndpoints.length).toBeGreaterThan(0)
-      } finally {
-        recoverySpy.mockRestore()
-      }
+      await ProducerNodeTool.runProducerNodeStart(ctx, StartInput, signal)
+      const { node } = recoverySpy.mock.calls[0][1]
+      expect(node.peerEndpoints).toEqual(
+        NodeConfig.producerPeerEndpoints(ctx.config)
+      )
+      expect(node.peerEndpoints.length).toBeGreaterThan(0)
     })
 
     it("refuses an operator that is not a producer", async () => {
@@ -128,7 +121,7 @@ describe("ProducerNodeTool", () => {
       await expect(
         ProducerNodeTool.runProducerNodeStart(
           ctx,
-          { kind: "ProducerNodeTool.StartProducerNodeInput", label: "batchopzzzz" },
+          { ...StartInput, label: "batchopzzzz" },
           signal
         )
       ).rejects.toThrow(/not a producer/)
@@ -147,7 +140,7 @@ describe("ProducerNodeTool", () => {
       await expect(
         ProducerNodeTool.runProducerNodeStart(
           ctx,
-          { kind: "ProducerNodeTool.StartProducerNodeInput", label: "keyless" },
+          { ...StartInput, label: "keyless" },
           signal
         )
       ).rejects.toThrow(/has no finalizer key/)
@@ -156,24 +149,56 @@ describe("ProducerNodeTool", () => {
     it("is idempotent — a node already under the process manager is not relaunched", async () => {
       const ctx = fixtureContext()
       ProcessManager.setClusterPath(ctx.config.clusterPath)
-      ctx.keyStore.setOperator(producerAccount("flowprod"))
+      ctx.keyStore.setOperator(producerAccount(ProducerLabel))
       const recoverySpy = jest
         .spyOn(NodeopProcess, "startWithRecovery")
         .mockResolvedValue(undefined)
-      const managerSpy = jest
-        .spyOn(ctx.processManager, "get")
-        .mockReturnValue({} as never)
-      try {
-        await ProducerNodeTool.runProducerNodeStart(
-          ctx,
-          { kind: "ProducerNodeTool.StartProducerNodeInput", label: "flowprod" },
-          signal
-        )
-        expect(recoverySpy).not.toHaveBeenCalled()
-      } finally {
-        managerSpy.mockRestore()
-        recoverySpy.mockRestore()
-      }
+      jest.spyOn(ctx.processManager, "get").mockReturnValue({} as never)
+      await ProducerNodeTool.runProducerNodeStart(ctx, StartInput, signal)
+      expect(recoverySpy).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("planProducerNodeStop", () => {
+    it("carries the label as its typed input so the Report records which producer stopped", () => {
+      const step = ProducerNodeTool.planProducerNodeStop(
+        Report.Actor.Producer,
+        "stop-producer-node",
+        "stop the flow producer's node",
+        {},
+        ProducerLabel
+      )
+      expect(step.input).toEqual(StopInput)
+      expect(step.runner).toBe(ProducerNodeTool.runProducerNodeStop)
+    })
+  })
+
+  describe("runProducerNodeStop", () => {
+    it("stops the running node and drops it from the manager, so a later start relaunches it", async () => {
+      const ctx = fixtureContext()
+      ProcessManager.setClusterPath(ctx.config.clusterPath)
+      const stop = jest.fn().mockResolvedValue(undefined),
+        getSpy = jest
+          .spyOn(ctx.processManager, "get")
+          .mockReturnValue({ stop } as never),
+        removeSpy = jest
+          .spyOn(ctx.processManager, "remove")
+          .mockReturnValue(ctx.processManager)
+      await ProducerNodeTool.runProducerNodeStop(ctx, StopInput, signal)
+      expect(getSpy).toHaveBeenCalledWith(NodeConfig.adHocNodeName(ProducerLabel))
+      expect(stop).toHaveBeenCalledTimes(1)
+      expect(removeSpy).toHaveBeenCalledWith(NodeConfig.adHocNodeName(ProducerLabel))
+    })
+
+    it("is a no-op when the node is not running — nothing to stop, nothing to remove", async () => {
+      const ctx = fixtureContext()
+      ProcessManager.setClusterPath(ctx.config.clusterPath)
+      jest.spyOn(ctx.processManager, "get").mockReturnValue(undefined)
+      const removeSpy = jest.spyOn(ctx.processManager, "remove")
+      await expect(
+        ProducerNodeTool.runProducerNodeStop(ctx, StopInput, signal)
+      ).resolves.toBeUndefined()
+      expect(removeSpy).not.toHaveBeenCalled()
     })
   })
 })

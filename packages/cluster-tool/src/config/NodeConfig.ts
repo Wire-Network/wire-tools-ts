@@ -1,12 +1,15 @@
+import Assert from "node:assert"
 import {
   ClusterDeploymentKind,
   type BindConfigNodeopPorts,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
+import { OperatorType } from "@wireio/opp-typescript-models"
 import { asOption } from "@3fv/prelude-ts"
 import { range } from "lodash"
 import { match, P } from "ts-pattern"
 import { Constants } from "../Constants.js"
+import type { OperatorAccount } from "../orchestration/outputs/OperatorAccount.js"
 import type { Renderer } from "../utils/Renderer.js"
 import { toDialAddress } from "../utils/netUtils.js"
 
@@ -29,9 +32,9 @@ export enum NodeRole {
 const NodeNamePadWidth = 2
 const AsciiLower = "abcdefghijklmnopqrstuvwxyz"
 
-/** Format a node index as its canonical `node_NN` name. */
+/** Format a PLANNED node's index as its canonical `node_NN` name. */
 function nodeName(index: number): string {
-  return `node_${String(index).padStart(NodeNamePadWidth, "0")}`
+  return `${NodeConfig.NodeNamePrefix}${String(index).padStart(NodeNamePadWidth, "0")}`
 }
 
 /** Base-26 alpha string for a producer-name suffix. */
@@ -201,9 +204,8 @@ export class NodeConfig {
           d.name,
           d.ports,
           d.producers,
-          peersFor(d, meshDescriptors, operatorUplink).map(
-            other =>
-              `${NodeConfig.advertiseAddressFor(cluster, other.ports)}:${other.ports.p2p}`
+          peersFor(d, meshDescriptors, operatorUplink).map(other =>
+            NodeConfig.peerEndpointFor(cluster, other.ports)
           ),
           d.batchOperatorLabel,
           d.underwriterLabel
@@ -288,10 +290,15 @@ export namespace NodeConfig {
     )
   }
 
+  /**
+   * The prefix every node name carries — planned (`node_NN`), bios
+   * (`node_bios`), and ad-hoc (`node_<label>`) alike.
+   */
+  export const NodeNamePrefix = "node_"
   /** Bios node index (matches the Python launcher). */
   export const BiosIndex = -100
   /** Bios node name. */
-  export const BiosName = "node_bios"
+  export const BiosName = `${NodeNamePrefix}bios`
   /** The producer the bios node runs. */
   export const BiosProducer = "sysio"
 
@@ -348,5 +355,124 @@ export namespace NodeConfig {
     ports: BindConfigNodeopPorts
   ): string {
     return ports.advertiseAddress ?? toDialAddress(cluster.bind.nodeop.address)
+  }
+
+  /**
+   * The p2p endpoint peers dial ONE node at: its advertised address + its p2p
+   * port — the single spelling {@link NodeConfig.plan}'s mesh and every ad-hoc
+   * node's peer list share.
+   *
+   * @param cluster - The resolved cluster config (fleet-wide bind address).
+   * @param ports - The node's binding.
+   * @returns The `<address>:<p2p>` endpoint.
+   */
+  export function peerEndpointFor(
+    cluster: ClusterConfig,
+    ports: BindConfigNodeopPorts
+  ): string {
+    return `${advertiseAddressFor(cluster, ports)}:${ports.p2p}`
+  }
+
+  /**
+   * The p2p endpoints of every PLANNED producer node — the mesh an ad-hoc node
+   * attaches to, so it syncs before its first slot (a producer) or has a path
+   * to submit (an operator daemon).
+   *
+   * @param cluster - The resolved cluster config.
+   * @returns One endpoint per planned producer node.
+   */
+  export function producerPeerEndpoints(cluster: ClusterConfig): string[] {
+    return cluster.bind.nodeop.ports.producers.map(ports =>
+      peerEndpointFor(cluster, ports)
+    )
+  }
+
+  /**
+   * Topology index of every AD-HOC node — one a flow provisions after
+   * {@link NodeConfig.plan}.
+   *
+   * ONE sentinel regardless of role: `index` identifies a PLANNED node (the key
+   * store's node sets, `ClusterState`'s producer-node map), and an ad-hoc node
+   * has no entry in either — its identity is its `name`, derived from the
+   * operator's durable label.
+   */
+  export const AdHocIndex = -1
+
+  /**
+   * The process label + node-dir name of an ad-hoc node, keyed by its
+   * operator's durable `label` handle (deterministic + human-navigable; the
+   * `account` is node-owner-generated and not path-safe to rely on).
+   *
+   * @param label - The operator's durable handle (`batchop.a`, `flowprod`, …).
+   * @returns The `node_<label>` process label / directory name.
+   */
+  export function adHocNodeName(label: string): string {
+    return `${NodeNamePrefix}${label}`
+  }
+
+  /**
+   * Compose the {@link NodeConfig} of an AD-HOC node for one flow-provisioned
+   * operator. The role and its role-specific fields derive from the operator's
+   * TYPE — a producer's node produces for its one account; a batch operator's /
+   * underwriter's carries the matching label — and the rest is uniform: named
+   * {@link adHocNodeName}, indexed {@link AdHocIndex}, bound to `ports`, peered
+   * to every planned producer node ({@link producerPeerEndpoints}).
+   *
+   * @param cluster - The resolved cluster config (supplies binaries, bind, genesis).
+   * @param operator - The operator the node acts for.
+   * @param ports - The registry-issued ports it binds
+   *   (`BindConfigProvider.findAvailableAdHocPorts`).
+   * @returns The node config.
+   */
+  export function createAdHoc(
+    cluster: ClusterConfig,
+    operator: OperatorAccount,
+    ports: BindConfigNodeopPorts
+  ): NodeConfig {
+    const shared = { index: AdHocIndex, name: adHocNodeName(operator.label), ports },
+      descriptor: NodeDescriptor = match(operator.type)
+        .with(OperatorType.PRODUCER, () => {
+          Assert.ok(
+            operator.account != null,
+            `NodeConfig.createAdHoc: producer ${operator.label} has no on-chain account to produce for`
+          )
+          return {
+            ...shared,
+            role: NodeRole.producer,
+            producers: [operator.account],
+            batchOperatorLabel: null,
+            underwriterLabel: null
+          }
+        })
+        .with(OperatorType.BATCH, () => ({
+          ...shared,
+          role: NodeRole.batch_operator,
+          producers: [],
+          batchOperatorLabel: operator.label,
+          underwriterLabel: null
+        }))
+        .with(OperatorType.UNDERWRITER, () => ({
+          ...shared,
+          role: NodeRole.underwriter,
+          producers: [],
+          batchOperatorLabel: null,
+          underwriterLabel: operator.label
+        }))
+        .otherwise(() => {
+          throw new Error(
+            `NodeConfig.createAdHoc: ${operator.label} is a ${OperatorType[operator.type] ?? operator.type}, which no node role realizes`
+          )
+        })
+    return new NodeConfig(
+      cluster,
+      descriptor.role,
+      descriptor.index,
+      descriptor.name,
+      descriptor.ports,
+      descriptor.producers,
+      producerPeerEndpoints(cluster),
+      descriptor.batchOperatorLabel,
+      descriptor.underwriterLabel
+    )
   }
 }

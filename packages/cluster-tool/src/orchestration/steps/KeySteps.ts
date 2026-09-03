@@ -72,6 +72,23 @@ export namespace KeySteps {
     )
   }
 
+  /**
+   * The {@link KeyGenerator.Context} every key-generation site in a run shares:
+   * the cluster's `clio`, its build's `sys-util`, and the run's Ethereum
+   * mnemonic ({@link ethereumMnemonic}). Resolved in ONE place so no site can
+   * pair the wrong mnemonic with the right binaries.
+   *
+   * @param ctx - The build context.
+   * @returns The generation context.
+   */
+  export function keyGeneratorContext(ctx: ClusterBuildContext): KeyGenerator.Context {
+    return KeyGenerator.context(
+      ctx.config.executables.clio,
+      ctx.config.buildPath,
+      ethereumMnemonic(ctx)
+    )
+  }
+
   /** A freshly generated cluster-scoped Ethereum HD mnemonic phrase. */
   function newEthereumMnemonic(): string {
     return ethers.Mnemonic.fromEntropy(
@@ -116,11 +133,7 @@ export namespace KeySteps {
     if (ctx.config.signatureProvider.type === SignatureProviderType.SSM) {
       ctx.outputs.set(EthereumMnemonicKey, newEthereumMnemonic())
     }
-    const keyContext = KeyGenerator.context(
-      ctx.config.executables.clio,
-      ctx.config.buildPath,
-      ethereumMnemonic(ctx)
-    )
+    const keyContext = keyGeneratorContext(ctx)
     // Producer NODE signing sets (K1+BLS per node), pushed into THE key store.
     // Operator identities (producer / batch / underwriter accounts) accumulate
     // into the same store per-label as their provisioning phases materialize

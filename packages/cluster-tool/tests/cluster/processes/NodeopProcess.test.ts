@@ -198,6 +198,33 @@ describe("NodeopProcess", () => {
     expect(nodeop.httpUrl).toContain(Localhost)
   })
 
+  it("renders a node hosting TWO producers with ONE block-signing provider, one finalizer provider per account, and both --producer-name", async () => {
+    // The `operators` array exists for exactly this: sibling accounts share the node's K1 but each
+    // owns its BLS key, because `regfinkey` enforces a global uniqueness check on finalizer keys.
+    const second: OperatorAccount = {
+      ...producerOperator("defproducerb"),
+      wireFinalizer: {
+        type: KeyType.BLS,
+        publicKey: "PUB_BLS_q",
+        privateKey: "PVT_BLS_t",
+        proofOfPossession: "SIG_BLS_y"
+      }
+    }
+    const nodeop = await NodeopProcess.create(manager, {
+      node: node("two-producers", NodeRole.producer, ["defproducera", "defproducerb"]),
+      operators: [producerOperator("defproducera"), second]
+    })
+    expect(valuesOf(nodeop.args, "--producer-name")).toEqual([
+      "defproducera",
+      "defproducerb"
+    ])
+    const providers = valuesOf(nodeop.args, NodeopProcess.SignatureProviderFlag)
+    expect(providers).toHaveLength(3)
+    expect(providers.filter(spec => spec.includes("PUB_K1_p"))).toHaveLength(1)
+    expect(providers.some(spec => spec.includes("PUB_BLS_p"))).toBe(true)
+    expect(providers.some(spec => spec.includes("PUB_BLS_q"))).toBe(true)
+  })
+
   it("omits the producer block for a non-producing node + appends extraArgs", async () => {
     const nodeop = await NodeopProcess.create(manager, {
       node: node("operator-daemon", NodeRole.batch_operator),

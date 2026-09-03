@@ -6,12 +6,14 @@ import { Constants } from "@wireio/cluster-tool/Constants"
 import {
   ClusterBuild,
   ClusterBuildPhase,
+  Steps,
   type ClusterBuildContext,
   type ClusterBuildParent,
   type ClusterBuildPhaseBase,
   type ClusterBuildPhaseGroup,
   type StepInput
 } from "@wireio/cluster-tool/orchestration"
+import type { KeyPair } from "@wireio/cluster-tool/types"
 import { type ExternalOutpostConfig } from "@wireio/cluster-tool-shared"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 
@@ -336,5 +338,201 @@ describe("planOperatorAccountProvisioning — outpost-chain funding gate (H3)", 
     // every depot-side step still runs.
     expect(kinds).toContain("WireOperatorProvisioningTool.SponsoredAccountCreationInput")
     expect(kinds).toContain("WireOperatorProvisioningTool.RegistrationInput")
+  })
+})
+
+describe("WireOperatorProvisioningTool.planProducerIdentityPhase", () => {
+  it("materializes ONE genesis producer identity per spec — producer-actor steps named for the label", () => {
+    const phase = WireOperatorProvisioningTool.planProducerIdentityPhase(
+      fakeParent(),
+      "ProducerIdentities",
+      "materialize genesis producer identities",
+      {},
+      [
+        { label: "defproducera", type: OperatorType.PRODUCER, producerNodeIndex: 0 },
+        { label: "defproducerb", type: OperatorType.PRODUCER, producerNodeIndex: 1 }
+      ]
+    )
+    expect(phase.steps.map(step => step.name)).toEqual([
+      "defproducera-identity",
+      "defproducerb-identity"
+    ])
+    expect(phase.steps.map(step => step.actor)).toEqual([
+      Report.Actor.Producer,
+      Report.Actor.Producer
+    ])
+    expect(
+      phase.steps.map(
+        step => step.input as WireOperatorProvisioningTool.MaterializeProducerInput
+      )
+    ).toEqual([
+      {
+        kind: "WireOperatorProvisioningTool.MaterializeProducerInput",
+        label: "defproducera",
+        producerNodeIndex: 0
+      },
+      {
+        kind: "WireOperatorProvisioningTool.MaterializeProducerInput",
+        label: "defproducerb",
+        producerNodeIndex: 1
+      }
+    ])
+  })
+
+  it("refuses a spec that names no hosting node — a genesis identity shares that node's K1", () => {
+    expect(() =>
+      WireOperatorProvisioningTool.planProducerIdentityPhase(
+        fakeParent(),
+        "ProducerIdentities",
+        "materialize",
+        {},
+        [{ label: "flowprod", type: OperatorType.PRODUCER }]
+      )
+    ).toThrow(/producerNodeIndex is required/)
+  })
+})
+
+/**
+ * A COLLATERAL-BACKED producer: a PRODUCER spec with no `producerNodeIndex`. It takes the same
+ * route every other bonded operator does — unique keys, a node-owner-sponsored account, authex
+ * links on both chains, `opreg::regoperator` — and its identity step additionally mints the
+ * finalizer key a producer needs to hold a rank position at all.
+ */
+describe("WireOperatorProvisioningTool — a collateral-backed PRODUCER (no producerNodeIndex)", () => {
+  const signal = new AbortController().signal
+
+  it("takes the OPP-operator route: unique identity, sponsored account, authex links, regoperator", () => {
+    const group = WireOperatorProvisioningTool.planOperatorAccountProvisioning(
+      fakeParent(),
+      "flow",
+      "flow",
+      {},
+      [
+        {
+          label: "flowprod",
+          type: OperatorType.PRODUCER,
+          ethereumHdIndex: 36,
+          isBootstrapped: false
+        }
+      ]
+    )
+    expect(firstPhaseStepKinds(group)).toEqual([
+      "WireOperatorProvisioningTool.MaterializeIdentityInput",
+      "WireOperatorProvisioningTool.SponsoredAccountCreationInput",
+      "WireOperatorProvisioningTool.AuthexLinkInput",
+      "WireOperatorProvisioningTool.AuthexLinkInput",
+      "WireOperatorProvisioningTool.RegistrationInput"
+    ])
+    const phase = group.children[0] as ClusterBuildPhase
+    expect(
+      (phase.steps[0].input as WireOperatorProvisioningTool.MaterializeIdentityInput).type
+    ).toBe(OperatorType.PRODUCER)
+  })
+
+  it("refuses a collateral-backed producer with no ethereumHdIndex — it bonds on Ethereum like any operator", () => {
+    expect(() =>
+      WireOperatorProvisioningTool.planOperatorAccountProvisioning(
+        fakeParent(),
+        "flow",
+        "flow",
+        {},
+        [{ label: "flowprod", type: OperatorType.PRODUCER, isBootstrapped: false }]
+      )
+    ).toThrow(/ethereumHdIndex is required/)
+  })
+
+  describe("runIdentityMaterialization", () => {
+    /** A readable pair per curve — the adopt-or-create seam is doubled, so no generator runs. */
+    function fakePair(keyType: KeyType, label: string): KeyPair<KeyType> {
+      return {
+        type: keyType,
+        publicKey: `PUB_${KeyType[keyType]}_${label}`,
+        privateKey: `PVT_${KeyType[keyType]}_${label}`,
+        ...(keyType === KeyType.BLS ? { proofOfPossession: `SIG_${label}` } : {}),
+        ...(keyType === KeyType.EM ? { address: `0x${label}` } : {})
+      } as KeyPair<KeyType>
+    }
+
+    /** A context whose key generation and wallet import are doubled at their seams. */
+    function materializationContext() {
+      const ctx = fixtureContext(),
+        addPrivateKey = jest.fn().mockResolvedValue(undefined),
+        adopt = jest
+          .spyOn(Steps.keys, "adoptOrCreateSignatureProviderKey")
+          .mockImplementation(
+            (async (_config: unknown, keyType: KeyType, account: string) =>
+              fakePair(keyType, account)) as never
+          )
+      jest
+        .spyOn(ctx.wire.wallet, "getOrCreate")
+        .mockResolvedValue({ addPrivateKey } as never)
+      return { ctx, adopt, addPrivateKey }
+    }
+
+    afterEach(() => jest.restoreAllMocks())
+
+    it("mints a PRODUCER its own finalizer key alongside the WIRE / ETH / SOL identity, and imports both wire keys", async () => {
+      const { ctx, adopt, addPrivateKey } = materializationContext()
+      await WireOperatorProvisioningTool.runIdentityMaterialization(
+        ctx,
+        {
+          kind: "WireOperatorProvisioningTool.MaterializeIdentityInput",
+          label: "flowprod",
+          type: OperatorType.PRODUCER,
+          ethereumHdIndex: 36
+        },
+        signal
+      )
+      const requested = adopt.mock.calls.map(([, keyType]) => keyType)
+      expect(requested).toHaveLength(4)
+      expect(requested).toEqual(
+        expect.arrayContaining([KeyType.K1, KeyType.ED, KeyType.EM, KeyType.BLS])
+      )
+      const stored = ctx.keyStore.assertOperator("flowprod")
+      expect(stored.type).toBe(OperatorType.PRODUCER)
+      expect(stored.wire.publicKey).toBe("PUB_K1_flowprod")
+      expect(stored.wireFinalizer.publicKey).toBe("PUB_BLS_flowprod")
+      // `account` stays unset until the sponsored-creation step adopts the generated name.
+      expect(stored.account).toBeUndefined()
+      // Both the controller key and the finalizer key reach the wallet, so a KIOD node can vote.
+      expect(addPrivateKey).toHaveBeenCalledWith("PVT_K1_flowprod")
+      expect(addPrivateKey).toHaveBeenCalledWith("PVT_BLS_flowprod")
+    })
+
+    it("mints NO finalizer key for a batch operator — it has no finality role", async () => {
+      const { ctx, adopt, addPrivateKey } = materializationContext()
+      await WireOperatorProvisioningTool.runIdentityMaterialization(
+        ctx,
+        {
+          kind: "WireOperatorProvisioningTool.MaterializeIdentityInput",
+          label: "batchopaaaa",
+          type: OperatorType.BATCH,
+          ethereumHdIndex: 1
+        },
+        signal
+      )
+      const requested = adopt.mock.calls.map(([, keyType]) => keyType)
+      expect(requested).toHaveLength(3)
+      expect(requested).not.toContain(KeyType.BLS)
+      expect(ctx.keyStore.assertOperator("batchopaaaa").wireFinalizer).toBeUndefined()
+      expect(addPrivateKey).toHaveBeenCalledTimes(1)
+      expect(addPrivateKey).toHaveBeenCalledWith("PVT_K1_batchopaaaa")
+    })
+
+    it("rejects a handle longer than 12 chars — it is a node-directory and SSM path segment", async () => {
+      const { ctx } = materializationContext()
+      await expect(
+        WireOperatorProvisioningTool.runIdentityMaterialization(
+          ctx,
+          {
+            kind: "WireOperatorProvisioningTool.MaterializeIdentityInput",
+            label: "thirteenchars",
+            type: OperatorType.PRODUCER,
+            ethereumHdIndex: 36
+          },
+          signal
+        )
+      ).rejects.toThrow(/must be 1\.\.12 chars/)
+    })
   })
 })

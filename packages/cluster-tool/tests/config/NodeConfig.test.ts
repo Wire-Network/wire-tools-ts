@@ -3,6 +3,7 @@ import {
   ClusterDeploymentKind,
   SignatureProviderType
 } from "@wireio/cluster-tool-shared"
+import { OperatorType } from "@wireio/opp-typescript-models"
 import { Constants } from "@wireio/cluster-tool"
 import { Level } from "@wireio/shared"
 import {
@@ -17,6 +18,7 @@ import {
 import { WireClient } from "@wireio/cluster-tool/clients/wire"
 import { Localhost } from "@wireio/cluster-tool/utils"
 import { fixtureConfig, PersistedFixture } from "./clusterConfigFixture.js"
+import { fixtureOperatorAccount } from "../orchestration/outputs/operatorAccountFixture.js"
 
 /** One `loggers[]` entry of a rendered nodeop `logging.json`. */
 interface RenderedLogger {
@@ -622,6 +624,129 @@ describe("NodeConfig", () => {
       expect(genesis.initial_configuration).not.toHaveProperty(
         "base_per_transaction_net_usage"
       )
+    })
+  })
+})
+
+/**
+ * Ad-hoc nodes — the ones a flow provisions AFTER `NodeConfig.plan`: an operator daemon or a
+ * collateral-backed producer's own node. Both tools compose them through the ONE factory here, so
+ * the name template, the index sentinel, the peer list and the role derivation have one spelling.
+ */
+describe("NodeConfig — ad-hoc nodes", () => {
+  const cluster = fixtureConfig()
+  let ports: Awaited<ReturnType<typeof BindConfigProvider.findAvailableAdHocPorts>>
+
+  // Registry-issued, like every port a test pins into a config (bind-available-ports rule).
+  beforeAll(async () => {
+    ports = await BindConfigProvider.findAvailableAdHocPorts()
+  })
+
+  it("NodeNamePrefix is the ONE spelling every node name carries — planned, bios, and ad-hoc", () => {
+    expect(NodeConfig.NodeNamePrefix).toBe("node_")
+    NodeConfig.plan(cluster).forEach(node =>
+      expect(node.name.startsWith(NodeConfig.NodeNamePrefix)).toBe(true)
+    )
+    expect(NodeConfig.BiosName).toBe(`${NodeConfig.NodeNamePrefix}bios`)
+    expect(NodeConfig.adHocNodeName("flowprod")).toBe(
+      `${NodeConfig.NodeNamePrefix}flowprod`
+    )
+  })
+
+  it("peerEndpointFor is the spelling the planned mesh dials each other by", () => {
+    const nodes = NodeConfig.plan(cluster),
+      bios = nodes.find(node => node.role === NodeRole.bios),
+      producer = nodes.find(node => node.role === NodeRole.producer)
+    expect(bios.peerEndpoints).toContain(
+      NodeConfig.peerEndpointFor(cluster, producer.ports)
+    )
+    expect(NodeConfig.peerEndpointFor(cluster, producer.ports)).toBe(
+      `${producer.advertiseAddress}:${producer.ports.p2p}`
+    )
+  })
+
+  it("producerPeerEndpoints names every planned producer node, and only those", () => {
+    const producers = NodeConfig.plan(cluster).filter(
+      node => node.role === NodeRole.producer
+    )
+    expect(producers.length).toBeGreaterThan(0)
+    expect(NodeConfig.producerPeerEndpoints(cluster)).toEqual(
+      producers.map(node => NodeConfig.peerEndpointFor(cluster, node.ports))
+    )
+  })
+
+  it("AdHocIndex is one sentinel no planned node ever carries", () => {
+    expect(NodeConfig.AdHocIndex).toBe(-1)
+    NodeConfig.plan(cluster).forEach(node =>
+      expect(node.index).not.toBe(NodeConfig.AdHocIndex)
+    )
+  })
+
+  describe("createAdHoc", () => {
+    it("composes a PRODUCING node for a producer: its one account, the producer role, the producer mesh", () => {
+      const producer = fixtureOperatorAccount("flowprod", OperatorType.PRODUCER, "flowprod"),
+        node = NodeConfig.createAdHoc(cluster, producer, ports)
+      expect(node.role).toBe(NodeRole.producer)
+      expect(node.producers).toEqual(["flowprod"])
+      expect(node.name).toBe(NodeConfig.adHocNodeName("flowprod"))
+      expect(node.index).toBe(NodeConfig.AdHocIndex)
+      expect(node.ports).toBe(ports)
+      expect(node.peerEndpoints).toEqual(NodeConfig.producerPeerEndpoints(cluster))
+      expect(node.batchOperatorLabel).toBeNull()
+      expect(node.underwriterLabel).toBeNull()
+      expect(node.cluster).toBe(cluster)
+    })
+
+    it("produces for the ON-CHAIN account, never the handle", () => {
+      // A sponsored producer's on-chain name is depot-generated; the fixture's default account
+      // is deliberately distinct from the label so a confusion of the two is observable.
+      const producer = fixtureOperatorAccount("flowprod", OperatorType.PRODUCER),
+        node = NodeConfig.createAdHoc(cluster, producer, ports)
+      expect(node.producers).toEqual([producer.account])
+      expect(node.producers).not.toEqual([producer.label])
+      expect(node.name).toBe(NodeConfig.adHocNodeName(producer.label))
+    })
+
+    it("composes a non-producing BATCH-OPERATOR node carrying the operator's label", () => {
+      const operator = fixtureOperatorAccount("batchop.x", OperatorType.BATCH),
+        node = NodeConfig.createAdHoc(cluster, operator, ports)
+      expect(node.role).toBe(NodeRole.batch_operator)
+      expect(node.producers).toEqual([])
+      expect(node.batchOperatorLabel).toBe("batchop.x")
+      expect(node.underwriterLabel).toBeNull()
+      expect(node.name).toBe(NodeConfig.adHocNodeName("batchop.x"))
+      expect(node.peerEndpoints).toEqual(NodeConfig.producerPeerEndpoints(cluster))
+    })
+
+    it("composes a non-producing UNDERWRITER node carrying the operator's label", () => {
+      const operator = fixtureOperatorAccount("uwrit.x", OperatorType.UNDERWRITER),
+        node = NodeConfig.createAdHoc(cluster, operator, ports)
+      expect(node.role).toBe(NodeRole.underwriter)
+      expect(node.producers).toEqual([])
+      expect(node.batchOperatorLabel).toBeNull()
+      expect(node.underwriterLabel).toBe("uwrit.x")
+    })
+
+    it("refuses a producer that has no on-chain account yet", () => {
+      // Between materialization and sponsored creation `account` is absent by design; a node
+      // composed then would carry `--producer-name undefined`.
+      const unsponsored = {
+        ...fixtureOperatorAccount("flowprod", OperatorType.PRODUCER),
+        account: undefined
+      }
+      expect(() => NodeConfig.createAdHoc(cluster, unsponsored, ports)).toThrow(
+        /has no on-chain account/
+      )
+    })
+
+    it("refuses an operator type no node role realizes", () => {
+      expect(() =>
+        NodeConfig.createAdHoc(
+          cluster,
+          fixtureOperatorAccount("mystery", OperatorType.UNKNOWN),
+          ports
+        )
+      ).toThrow(/no node role realizes/)
     })
   })
 })
