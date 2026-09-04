@@ -40,4 +40,18 @@ describe("ContractArtifactResolver", () => {
     expect(resolver.exists(SysioContractName.epoch)).toBe(true)
     expect(resolver.exists(SysioContractName.token)).toBe(false)
   })
+
+  it("requires both compiled council artifacts under the SYSIO build directory", () => {
+    const resolver = new ContractArtifactResolver(dir),
+      artifact = resolver.resolve(SysioContractName.councl)
+    expect(artifact.account).toBe("sysio.councl")
+    expect(artifact.wasm).toBe(
+      Path.join(dir, "contracts", "sysio.councl", "sysio.councl.wasm")
+    )
+    Fs.mkdirSync(Path.dirname(artifact.wasm), { recursive: true })
+    Fs.writeFileSync(artifact.wasm, "")
+    expect(resolver.exists(SysioContractName.councl)).toBe(false)
+    Fs.writeFileSync(artifact.abi, "{}")
+    expect(resolver.exists(SysioContractName.councl)).toBe(true)
+  })
 })

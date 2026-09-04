@@ -618,7 +618,8 @@ export namespace ClusterBuildDefaults {
       SysioContractName.swap,
       SysioContractName.liq,
       SysioContractName.bond,
-      SysioContractName.synd
+      SysioContractName.synd,
+      SysioContractName.councl
     ]
     ClusterBuildPhase.create<C>(
       prerequisites,

@@ -10,7 +10,7 @@ import {
   fixtureResolveEnvironment,
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
-import { collectPhaseNames } from "./clusterBuildFixture.js"
+import { collectPhaseNames, collectStepNames } from "./clusterBuildFixture.js"
 import { seedProducerOperators } from "./outputs/operatorAccountFixture.js"
 
 /** One `finalizer_policy` entry as `bios::setfinalizer` receives it. */
@@ -98,6 +98,22 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
   })
 
   describe("genesis account seeding", () => {
+    it.each(["local", "external"])(
+      "creates and deploys sysio.councl without an unnecessary code grant in %s mode",
+      async mode => {
+        const cluster = await ClusterBuildDefaults.create(
+            mode === "local" ? baseOptions() : externalOptions()
+          ),
+          names = collectStepNames(cluster.children),
+          createIndex = names.indexOf("create-sysio.councl"),
+          deployIndex = names.indexOf("deploy-councl")
+        expect(createIndex).toBeGreaterThanOrEqual(0)
+        expect(deployIndex).toBeGreaterThan(createIndex)
+        expect(names).not.toContain("grant-sysio.councl")
+        expect(names.filter(name => name === "deploy-councl")).toHaveLength(1)
+      }
+    )
+
     it("seeds the bios producer + the bootstrap node owner as key-store OPERATORS", async () => {
       const { keyStore } = (await ClusterBuildDefaults.create(baseOptions()))
         .context

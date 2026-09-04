@@ -200,7 +200,7 @@ unlimited.
 | Group | Accounts |
 |---|---|
 | System / authority | `sysio.noop`, `sysio.bpay`, `sysio.msig`, `sysio.names`, `sysio.token`, `sysio.vpay`, `sysio.wrap`, `sysio.authex` |
-| OPP set | `sysio.chains`, `sysio.tokens`, `sysio.epoch`, `sysio.opreg`, `sysio.msgch`, `sysio.chalg`, `sysio.dclaim`, `sysio.swap`, `sysio.liq`, `sysio.andon`, `sysio.bond`, `sysio.synd` |
+| OPP set | `sysio.chains`, `sysio.tokens`, `sysio.epoch`, `sysio.opreg`, `sysio.msgch`, `sysio.chalg`, `sysio.dclaim`, `sysio.swap`, `sysio.liq`, `sysio.andon`, `sysio.bond`, `sysio.synd`, `sysio.councl` |
 | T5 buckets | `sysio.gov` (governance), `sysio.ops` (capex/ops) |
 | Dev-only (cluster) | `dev.owner1` |
 11. `sysio::setprodkeys({schedule:[{producer_name, block_signing_key}…]})` — `[sysio@active]` — one row per
@@ -228,12 +228,13 @@ standalone key, and `sysio.authex` keeps the plain `sysio@active` owner/active i
 ## Stage 8 — OPP contracts + owner `sysio.code` grants
 18. deploy the OPP set — **sys** — `[sysio@active]`, in order: `sysio.chains`, `sysio.tokens`, `sysio.epoch`,
     `sysio.opreg`, `sysio.msgch`, `sysio.chalg`, `sysio.dclaim`, `sysio.andon`, `sysio.swap`, `sysio.liq`,
-    `sysio.bond`, `sysio.synd`. `sysio.andon` precedes the four contracts that read its cord (swap, liq, bond,
-    synd), `sysio.bond` precedes `sysio.synd`, and `sysio.synd` precedes the first liq-token registration
-    (Stage 11).
+    `sysio.bond`, `sysio.synd`, `sysio.councl`. `sysio.andon` precedes the four contracts that read its cord
+    (swap, liq, bond, synd), `sysio.bond` precedes `sysio.synd`, and `sysio.synd` precedes the first liq-token registration
+    (Stage 11). `sysio.councl` uses the same SYSIO-built artifacts and privileged deployment path;
+    candidate registration and election initialization are separate governance operations.
 19. `sysio::updateauth` on **each OPP account's owner** (`grantSysioCode`) — `[<account>@owner]` — owner ←
     `{threshold:1, keys:[], accounts:[{sysio@active,1},{<account>@sysio.code,1}], waits:[]}` (sorted by name
-    value; `sysio` sorts first). (11 calls: every OPP account except `sysio.andon`, which sends no inline
+    value; `sysio` sorts first). (11 calls: every OPP account except `sysio.andon` and `sysio.councl`, which send no inline
     actions.) Lets each contract inline-send its own actions (epoch `advance`, `evalcons`, `dispatch`, …)
     while staying governed by `sysio@active`.
 

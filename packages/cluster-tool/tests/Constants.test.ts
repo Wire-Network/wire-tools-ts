@@ -63,11 +63,16 @@ describe("Constants", () => {
     it("lists the OPP system accounts", () => {
       expect(Constants.OPP_SYSTEM_ACCOUNTS).toContain("sysio.epoch")
       expect(Constants.OPP_SYSTEM_ACCOUNTS).toContain("sysio.dclaim")
+      expect(Constants.OPP_SYSTEM_ACCOUNTS).not.toContain("sysio.councl")
       expect(Constants.OPP_SYSTEM_ACCOUNTS).not.toContain("sysio.authex")
     })
     it("maps OPP contract paths", () => {
       expect(Constants.OPP_CONTRACT_PATHS["sysio.opreg"]).toBe(
         "contracts/sysio.opreg"
+      )
+      expect(Constants.SYSTEM_ACCOUNTS).toContain("sysio.councl")
+      expect(Constants.OPP_CONTRACT_PATHS["sysio.councl"]).toBe(
+        "contracts/sysio.councl"
       )
     })
     it("creates the underwriting, syndication and emergency-stop accounts", () => {
