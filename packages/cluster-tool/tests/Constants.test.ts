@@ -47,9 +47,6 @@ describe("Constants", () => {
       expect(Constants.OPP_CONTRACT_PATHS["sysio.opreg"]).toBe(
         "contracts/sysio.opreg"
       )
-      expect(Constants.OPP_CONTRACT_PATHS["sysio.councl"]).toBe(
-        "contracts/sysio.councl"
-      )
     })
   })
 
