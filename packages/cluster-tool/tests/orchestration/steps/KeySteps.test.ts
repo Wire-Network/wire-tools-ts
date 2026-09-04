@@ -936,6 +936,184 @@ describe("Steps.keys", () => {
       await step.runner(ctx, step.input, new AbortController().signal)
       expect(commandInputs("PutParameter")[0].Value).toBe(bls.toNativeString())
     })
+    it("REFUSES a region whose existing parameter holds a DIFFERENT key — a stale copy is never retained silently", async () => {
+      installSSMStoreMock()
+      // The canonical stale copy: a producer account's republished K1 after its
+      // node's key rotated. Retaining it would abort the daemon's next start.
+      const stale = PrivateKey.generate(KeyType.K1).toNativeString(),
+        current = PrivateKey.from(Constants.DEV_K1_PRIVATE_KEY).toNativeString()
+      expect(stale).not.toBe(current)
+      publishEverywhere("/wire/c/batchop.a/K1", stale)
+      const ctx = operatorContext(),
+        step = Steps.keys.planPublishSignatureProviderKey(
+          Report.Actor.Sysio,
+          "publish-batchop.a-K1",
+          "publish batchop.a K1",
+          {},
+          operatorK1Publication()
+        )
+      await expect(
+        step.runner(ctx, step.input, new AbortController().signal)
+      ).rejects.toThrow(
+        /\/wire\/c\/batchop\.a\/K1 in us-east-1 already holds a DIFFERENT K1 key/
+      )
+      // Neither overwritten nor "retained": the step fails before any write.
+      expect(commandInputs("PutParameter")).toEqual([])
+    })
+
+    it("REFUSES a parameter whose value is not a key of the curve at all — the parse failure rides as the cause", async () => {
+      installSSMStoreMock()
+      publishEverywhere("/wire/c/batchop.a/K1", "not-a-private-key")
+      const ctx = operatorContext(),
+        step = Steps.keys.planPublishSignatureProviderKey(
+          Report.Actor.Sysio,
+          "publish-batchop.a-K1",
+          "publish batchop.a K1",
+          {},
+          operatorK1Publication()
+        )
+      await expect(
+        step.runner(ctx, step.input, new AbortController().signal)
+      ).rejects.toThrow(
+        /\/wire\/c\/batchop\.a\/K1 in us-east-1 holds a value that is not a K1 private key/
+      )
+      expect(commandInputs("PutParameter")).toEqual([])
+    })
+
+    /** A context whose batch operator also holds outpost keys (EM off the anvil mnemonic, ED generated). */
+    async function outpostKeyContext() {
+      const ethereum = await KeyGenerator.create(KeyType.EM, keyContext(), {
+          ethereumHdIndex: 7
+        }),
+        solana = await KeyGenerator.create(KeyType.ED, keyContext()),
+        ctx = fixtureContext()
+      ctx.keyStore.setOperator({
+        label: "batchop.a",
+        publicationLabel: "batchop.a",
+        account: "wireno.x3f9k",
+        type: OperatorType.BATCH,
+        wire: {
+          type: KeyType.K1,
+          publicKey: Constants.DEV_K1_PUBLIC_KEY,
+          privateKey: Constants.DEV_K1_PRIVATE_KEY
+        },
+        ethereum,
+        solana
+      })
+      return { ctx, ethereum, solana }
+    }
+
+    /** The publication descriptor for the fixture batch operator's `keyType` key. */
+    function operatorPublication(keyType: KeyType) {
+      return {
+        ...operatorK1Publication(),
+        keyType,
+        secretId: `/wire/c/batchop.a/${KeyType[keyType]}`
+      }
+    }
+
+    it("retains an existing EM parameter that holds this run's key — compared in canonical NATIVE form", async () => {
+      installSSMStoreMock()
+      const { ctx, ethereum } = await outpostKeyContext()
+      publishEverywhere(
+        "/wire/c/batchop.a/EM",
+        PrivateKey.from(ethereum.privateKey).toNativeString()
+      )
+      const step = Steps.keys.planPublishSignatureProviderKey(
+        Report.Actor.Sysio,
+        "publish-batchop.a-EM",
+        "publish batchop.a EM",
+        {},
+        operatorPublication(KeyType.EM)
+      )
+      await step.runner(ctx, step.input, new AbortController().signal)
+      expect(commandInputs("PutParameter")).toEqual([])
+    })
+
+    it("retains an existing ED parameter that holds this run's key — compared in canonical NATIVE form", async () => {
+      installSSMStoreMock()
+      const { ctx, solana } = await outpostKeyContext()
+      publishEverywhere(
+        "/wire/c/batchop.a/ED",
+        PrivateKey.from(solana.privateKey).toNativeString()
+      )
+      const step = Steps.keys.planPublishSignatureProviderKey(
+        Report.Actor.Sysio,
+        "publish-batchop.a-ED",
+        "publish batchop.a ED",
+        {},
+        operatorPublication(KeyType.ED)
+      )
+      await step.runner(ctx, step.input, new AbortController().signal)
+      expect(commandInputs("PutParameter")).toEqual([])
+    })
+  })
+
+  describe("operatorKeyTypes / operatorKeyPublications / isPublishedAtBootstrap (a FLOW operator's SSM rows)", () => {
+    const config = ssmConfig()
+
+    it("publishes wire K1 + both outpost curves for a batch operator / underwriter, plus a BLS finalizer key for a collateral-backed producer", () => {
+      expect(Steps.keys.operatorKeyTypes(OperatorType.BATCH)).toEqual([
+        KeyType.K1,
+        KeyType.EM,
+        KeyType.ED
+      ])
+      expect(Steps.keys.operatorKeyTypes(OperatorType.UNDERWRITER)).toEqual([
+        KeyType.K1,
+        KeyType.EM,
+        KeyType.ED
+      ])
+      expect(Steps.keys.operatorKeyTypes(OperatorType.PRODUCER)).toEqual([
+        KeyType.K1,
+        KeyType.EM,
+        KeyType.ED,
+        KeyType.BLS
+      ])
+    })
+
+    it("renders a flow operator's rows under ITS OWN handle, through the renderer the walker uses", () => {
+      const publications = Steps.keys.operatorKeyPublications(
+        config,
+        "depositoraaa",
+        OperatorType.PRODUCER
+      )
+      expect(publications.map(publication => publication.secretId)).toEqual([
+        "/wire/test/depositoraaa/K1",
+        "/wire/test/depositoraaa/EM",
+        "/wire/test/depositoraaa/ED",
+        "/wire/test/depositoraaa/BLS"
+      ])
+      publications.forEach(publication => {
+        expect(publication.source).toBe(Steps.keys.SignatureKeySource.operator)
+        expect(publication.publishPhase).toBe(
+          Steps.keys.SignatureKeyPublishPhase.afterOperators
+        )
+        expect(publication.awsRegions).toEqual(SSMRegions)
+        expect(publication).not.toHaveProperty("privateKey")
+      })
+      // The walker's own batch-operator rows are the SAME shape — one renderer,
+      // so a flow's id and a bootstrap id can never drift apart.
+      expect(
+        Steps.keys.operatorKeyPublications(config, "batchop.a", OperatorType.BATCH)
+      ).toEqual(
+        Steps.keys
+          .signatureProviderKeyPublications(config)
+          .filter(publication => publication.label === "batchop.a")
+      )
+    })
+
+    it("knows which labels the bootstrap publishes itself — a flow's label is never among them", () => {
+      expect(
+        Steps.keys.isPublishedAtBootstrap(config, Constants.batchOperatorLabel(0))
+      ).toBe(true)
+      expect(
+        Steps.keys.isPublishedAtBootstrap(config, Constants.underwriterLabel(0))
+      ).toBe(true)
+      expect(Steps.keys.isPublishedAtBootstrap(config, NodeConfig.BiosName)).toBe(
+        true
+      )
+      expect(Steps.keys.isPublishedAtBootstrap(config, "depositoraaa")).toBe(false)
+    })
   })
 
   describe("keyGeneratorContext", () => {

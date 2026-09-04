@@ -272,6 +272,13 @@ export class NodeopProcess extends ManagedProcess {
           options.operators.every(operator => operator.wireFinalizer != null)),
       `nodeop ${node.name}: a producing node requires one producer OperatorAccount per hosted producer, each carrying wire + wireFinalizer keys (${node.producers.length} producers, ${options.operators?.length ?? 0} accounts)`
     )
+    // `buildArgs` renders ONE block-signing provider for the whole node, so every hosted account
+    // must sign blocks with the same K1 — the one `regproducer` / `setprodkeys` registered for
+    // each of them. A second key would leave its accounts' slots silently unproduced.
+    Assert.ok(
+      new Set((options.operators ?? []).map(operator => operator.wire.publicKey)).size <= 1,
+      `nodeop ${node.name}: every hosted producer account must share the node's block-signing K1`
+    )
     mkdirs(node.nodePath)
     return new NodeopProcess(
       manager,

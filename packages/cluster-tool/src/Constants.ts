@@ -503,6 +503,16 @@ export namespace ProtocolTiming {
   export const ProducerRepetitions = 12
 
   /**
+   * Least time between two ranked-schedule rebuilds (ms): `onblock` proposes a
+   * new schedule at most once per 120 block slots, so a change that makes a
+   * producer schedulable (or not) waits up to this long before a rebuild can
+   * publish it, and the pending schedule then needs its proposing block final.
+   * Every deadline on "the schedule picks it up / drops it" carries this term
+   * on top of the rotations it budgets.
+   */
+  export const ScheduleRebuildIntervalMs = 60_000
+
+  /**
    * Wall clock one full rotation of `scheduleSize` producers takes (ms): every
    * scheduled producer holds {@link ProducerRepetitions} slots of
    * {@link BlockIntervalMs} each. TOPOLOGY-derived like

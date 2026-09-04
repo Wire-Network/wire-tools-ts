@@ -270,6 +270,12 @@ describe("ProtocolTiming — producer rounds + outpost writes", () => {
     expect(ProtocolTiming.OutpostWriteBudgetMs).toBe(60_000)
   })
 
+  it("pins the ranked-schedule rebuild throttle: 120 slots of the block interval", () => {
+    expect(ProtocolTiming.ScheduleRebuildIntervalMs).toBe(
+      120 * ProtocolTiming.BlockIntervalMs
+    )
+  })
+
   it("producerRotationMs is one full round-robin: every scheduled producer's 12 half-second slots", () => {
     expect(ProtocolTiming.producerRotationMs(1)).toBe(6_000)
     expect(ProtocolTiming.producerRotationMs(6)).toBe(36_000)

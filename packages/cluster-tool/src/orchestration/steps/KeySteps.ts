@@ -1,15 +1,21 @@
 import Assert from "node:assert"
+import { Either } from "@3fv/prelude-ts"
 import { ethers } from "ethers"
 import { range } from "lodash"
 import { match } from "ts-pattern"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
+import { OperatorType } from "@wireio/opp-typescript-models"
+import { NestedError } from "@wireio/shared"
 import {
   SignatureProviderType,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
 import type { Tag } from "@aws-sdk/client-ssm"
 import { eachSeries, mapSeries } from "../../utils/asyncUtils.js"
-import { keyPairFromPrivate } from "../../utils/keyPairUtils.js"
+import {
+  keyPairFromPrivate,
+  privateKeyFromNativeString
+} from "../../utils/keyPairUtils.js"
 import { Constants } from "../../Constants.js"
 import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
@@ -432,6 +438,128 @@ export namespace KeySteps {
     kind: "KeySteps.PublishSignatureProviderKeyInput"
   }
 
+  /** Renders ONE publication row — an identity's curve with its `secretId`, never key material. */
+  type SignatureProviderKeyPublicationRenderer = (
+    identity: SignatureProviderKeyIdentity,
+    keyType: KeyType
+  ) => SignatureProviderKeyPublication
+
+  /**
+   * The ONE renderer every publication row goes through, so a row composed by
+   * the config walker and a row composed by a flow's provisioning phase can
+   * never disagree on an id. The `{account}` pattern token renders the DURABLE
+   * LABEL — a producer node's name, an operator's handle — never the on-chain
+   * account.
+   */
+  function publicationRenderer(
+    config: ClusterConfig
+  ): SignatureProviderKeyPublicationRenderer {
+    const awsRegions = replicationRegions(config),
+      { account: cluster } = config.awsClusterNodeConfig,
+      { ssm } = config.signatureProvider
+    return (identity, keyType) => ({
+      source: identity.source,
+      nodeIndex: identity.nodeIndex,
+      publishPhase: identity.publishPhase,
+      label: identity.label,
+      keyType,
+      awsRegions,
+      secretId: ClusterConfigProvider.toSecretId(ssm.awsSecretIdPattern, {
+        cluster,
+        account: identity.label,
+        keyType: KeyType[keyType],
+        version: ssm.version
+      }),
+      version: ssm.version
+    })
+  }
+
+  /** The curves every OPP operator materializes: wire K1 + both outpost curves. */
+  const OperatorKeyTypes = [KeyType.K1, KeyType.EM, KeyType.ED] as const
+  /** A collateral-backed PRODUCER adds a finalizer key of its own. */
+  const ProducerOperatorKeyTypes = [...OperatorKeyTypes, KeyType.BLS] as const
+
+  /**
+   * The curves an OPP operator's identity materializes and publishes, in
+   * publication order: wire K1 + EM ethereum + ED solana for every operator,
+   * plus BLS for a collateral-backed PRODUCER — it needs a finalizer key of its
+   * own to hold a rank position at all, while batch operators and underwriters
+   * have no finality role and get none. This is the set
+   * `WireOperatorProvisioningTool.runIdentityMaterialization` materializes.
+   *
+   * @param type - The operator's proto type.
+   * @returns The curves to publish.
+   */
+  export function operatorKeyTypes(type: OperatorType): readonly KeyType[] {
+    return match(type)
+      .with(OperatorType.PRODUCER, () => ProducerOperatorKeyTypes)
+      .otherwise(() => OperatorKeyTypes)
+  }
+
+  /**
+   * The walker's row for an OPP operator identity: published under its OWN
+   * handle (it owns its generated keys), read from the operator map, and part
+   * of the `afterOperators` phase (the keys do not exist until its
+   * provisioning phase materializes them).
+   */
+  function operatorKeyIdentity(
+    label: string,
+    type: OperatorType
+  ): SignatureProviderKeyIdentity {
+    return {
+      label,
+      source: SignatureKeySource.operator,
+      nodeIndex: 0,
+      publishPhase: SignatureKeyPublishPhase.afterOperators,
+      keyTypes: operatorKeyTypes(type)
+    }
+  }
+
+  /**
+   * The publications of ONE materialized OPP operator — one per curve of
+   * {@link operatorKeyTypes}, under the operator's own handle. The bootstrap's
+   * batch operators and underwriters ride exactly this shape inside
+   * {@link signatureProviderKeyPublications}; a FLOW-provisioned operator,
+   * whose label no config enumeration can know, is published through this
+   * directly by its provisioning phase — the daemon it later starts renders
+   * `SSM:` specs for these very ids.
+   *
+   * @param config - The resolved cluster config (SSM signature provider).
+   * @param label - The operator's durable handle (the secret-id `{account}`).
+   * @param type - The operator's proto type (selects the curves).
+   * @returns The per-key publications.
+   */
+  export function operatorKeyPublications(
+    config: ClusterConfig,
+    label: string,
+    type: OperatorType
+  ): SignatureProviderKeyPublication[] {
+    const render = publicationRenderer(config),
+      identity = operatorKeyIdentity(label, type)
+    return identity.keyTypes.map(keyType => render(identity, keyType))
+  }
+
+  /**
+   * Whether the bootstrap's own publish phases cover `label` — true for every
+   * identity {@link signatureProviderKeyPublications} enumerates from the
+   * config (the genesis identity, producer nodes and accounts, the bootstrapped
+   * batch operators and underwriters). A FLOW-provisioned operator is never in
+   * that set, so its provisioning phase publishes its keys itself; the two
+   * mechanisms therefore never plan the same parameter twice.
+   *
+   * @param config - The resolved cluster config (SSM signature provider).
+   * @param label - The operator's durable handle.
+   * @returns Whether the bootstrap publishes `label`'s keys.
+   */
+  export function isPublishedAtBootstrap(
+    config: ClusterConfig,
+    label: string
+  ): boolean {
+    return signatureProviderKeyPublications(config).some(
+      publication => publication.label === label
+    )
+  }
+
   /**
    * Enumerate every generated signing key to publish for an SSM cluster —
    * plan-time fan-out over {@link SignatureProviderKeyIdentity} rows: the
@@ -450,18 +578,7 @@ export namespace KeySteps {
   export function signatureProviderKeyPublications(
     config: ClusterConfig
   ): SignatureProviderKeyPublication[] {
-    const awsRegions = replicationRegions(config),
-      { account: cluster } = config.awsClusterNodeConfig,
-      { ssm } = config.signatureProvider,
-      // The `{account}` pattern token renders the DURABLE LABEL — a producer
-      // node's name, an operator's handle — never the on-chain account.
-      renderSecretId = (label: string, keyType: KeyType): string =>
-        ClusterConfigProvider.toSecretId(ssm.awsSecretIdPattern, {
-          cluster,
-          account: label,
-          keyType: KeyType[keyType],
-          version: ssm.version
-        }),
+    const render = publicationRenderer(config),
       // ONE enumeration of every identity that renders a `--signature-provider`
       // spec. Adding a row is the ONLY way to add a published key, so an
       // identity cannot be silently omitted the way the bios node was: it
@@ -515,33 +632,17 @@ export namespace KeySteps {
             keyTypes: [KeyType.K1, KeyType.BLS]
           }))
         ),
-        // Batch operators + underwriters — wire + both outpost curves.
-        ...[
-          ...range(config.batchOperatorCount).map(index =>
-            Constants.batchOperatorLabel(index)
-          ),
-          ...range(config.underwriterCount).map(index =>
-            Constants.underwriterLabel(index)
-          )
-        ].map(label => ({
-          label,
-          source: SignatureKeySource.operator,
-          nodeIndex: 0,
-          publishPhase: SignatureKeyPublishPhase.afterOperators,
-          keyTypes: [KeyType.K1, KeyType.EM, KeyType.ED]
-        }))
+        // Batch operators + underwriters — wire + both outpost curves, the same
+        // row a flow's operator publishes through `operatorKeyPublications`.
+        ...range(config.batchOperatorCount).map(index =>
+          operatorKeyIdentity(Constants.batchOperatorLabel(index), OperatorType.BATCH)
+        ),
+        ...range(config.underwriterCount).map(index =>
+          operatorKeyIdentity(Constants.underwriterLabel(index), OperatorType.UNDERWRITER)
+        )
       ]
     return identities.flatMap(identity =>
-      identity.keyTypes.map(keyType => ({
-        source: identity.source,
-        nodeIndex: identity.nodeIndex,
-        publishPhase: identity.publishPhase,
-        label: identity.label,
-        keyType,
-        awsRegions,
-        secretId: renderSecretId(identity.label, keyType),
-        version: ssm.version
-      }))
+      identity.keyTypes.map(keyType => render(identity, keyType))
     )
   }
 
@@ -634,7 +735,9 @@ export namespace KeySteps {
    * replication silently breaks the moment a disaster-recovery migration
    * targets a region that never received it. The probe is also what lets the
    * write stay `Overwrite: false` — the alternative would rotate a live key out
-   * from under every consumer already holding it.
+   * from under every consumer already holding it. A parameter that IS there is
+   * retained only if it holds this run's key ({@link assertPublishedKeyMatches});
+   * a stale copy fails the step rather than a daemon start.
    *
    * The step's input is built at COMPOSE time from config alone, before any key
    * exists, so it deliberately carries no "was this adopted?" flag — whether a
@@ -670,8 +773,9 @@ export namespace KeySteps {
         input.secretId
       )
       if (existing != null) {
+        assertPublishedKeyMatches(input, region, existing, nativePrivateKey)
         log.info(
-          `[keys] ${input.secretId} is already published in ${region} — retained (this run adopted it)`
+          `[keys] ${input.secretId} is already published in ${region} and holds this run's key — retained`
         )
         return
       }
@@ -682,6 +786,41 @@ export namespace KeySteps {
         tags
       )
     })
+  }
+
+  /**
+   * An existing parameter is retained ONLY when it holds the key this run
+   * materialized. A different value is a stale copy: the daemon whose `SSM:`
+   * spec fetches this id would sign with a key the chain never saw — the
+   * republished K1 of a producer account after its node's key was rotated is
+   * the canonical case — and retaining it silently would abort that daemon's
+   * next start far from here. So it fails HERE, naming the parameter and
+   * region an operator has to rotate or delete; a parameter is never
+   * overwritten. Values are compared in their canonical NATIVE form, so an
+   * equivalently-encoded copy is not mistaken for a different key.
+   */
+  function assertPublishedKeyMatches(
+    publication: SignatureProviderKeyPublication,
+    region: string,
+    existing: string,
+    nativePrivateKey: string
+  ): void {
+    const { secretId, label } = publication,
+      curve = KeyType[publication.keyType],
+      existingNative = Either.try(() =>
+        privateKeyFromNativeString(publication.keyType, existing).toNativeString()
+      )
+        .ifLeft(error => {
+          throw new NestedError(
+            `KeySteps: ${secretId} in ${region} holds a value that is not a ${curve} private key`,
+            { cause: error, context: { secretId, region, label, curve } }
+          )
+        })
+        .getOrThrow()
+    Assert.ok(
+      existingNative === nativePrivateKey,
+      `KeySteps: ${secretId} in ${region} already holds a DIFFERENT ${curve} key than the one materialized for ${label} — rotate or delete the stale parameter (it is never overwritten)`
+    )
   }
 
   /** The private key of a producer-node key set for `keyType` (K1 / BLS). */

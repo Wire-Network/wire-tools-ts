@@ -396,9 +396,10 @@ export namespace ClusterState {
           `ClusterState.captureKeys: operator ${operator.label} has no account — its sponsored-creation step did not run`
         )
         // Custody is keyed by the RECORDED `publicationLabel` — the label whose
-        // parameter actually holds these keys. For most identities that is
-        // their own handle; for a producer account it is its NODE, because the
-        // pair it signs with belongs to the node and is published once there.
+        // parameter actually holds these keys. For every provisioned identity,
+        // producer accounts included, that is its own handle: a producer's
+        // finalizer key is minted for the account, and its node's block-signing
+        // K1 is published under the account's handle alongside it.
         const { publicationLabel, account } = operator
         return {
           ...operator,

@@ -589,8 +589,8 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
 
   /**
    * Append the PRODUCER operator accounts `runProducerMaterialization` puts in
-   * the operator map — each carrying its hosting NODE's `wire` + `wireFinalizer`
-   * (sibling producers on one node share the same pair, by design).
+   * the operator map — each carrying its hosting NODE's `wire` and its OWN
+   * `wireFinalizer` (sibling producers on one node share the K1, never the BLS).
    *
    * Their keys are published under the NODE name (`node_00`), never under the
    * producer account, so the emit side must resolve producer → node or every

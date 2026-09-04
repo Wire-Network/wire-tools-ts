@@ -2,6 +2,7 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import {
   ClusterBuildPhase,
+  Constants as ClusterToolConstants,
   EthereumCollateralTool,
   FlowScenario,
   ProducerNodeTool,
@@ -13,6 +14,7 @@ import {
   WireOperatorProvisioningTool,
   matchesProtoEnum,
   pollUntil,
+  producerName,
   producerTier,
   sleep,
   slugValue,
@@ -93,15 +95,22 @@ async function hasProducedBlock(ctx: ClusterBuildContext): Promise<boolean> {
  */
 const ScheduleSize = Constants.ProducerCount + 1
 
+/** The genesis producers' on-chain names — the only names the schedule may hold after an exit. */
+const GenesisProducers = Array.from({ length: Constants.ProducerCount }, (_, index) =>
+  producerName(index)
+)
+
 /**
- * The body of both schedule-exit verifies: the ACTIVE schedule drops the flow producer and every
- * genesis producer keeps its slot.
+ * The body of both schedule-exit verifies: the ACTIVE schedule drops the flow producer, keeps
+ * only genesis producers, and stays above the floor.
  *
  * Asserted on the active schedule, never on who holds the head block — any other producer holds
  * it 11 slots in 12, so a head-block check passes while the producer is still scheduled. The
- * genesis count is the floor's proof: a rebuild that dropped the schedule below
- * `min_schedule_size` would have been retained instead, and the exiting producer would keep
- * producing.
+ * floor is the proof that the exit was published rather than retained: below `min_schedule_size`
+ * the rebuild keeps the last good schedule and the exiting producer would keep producing. It is
+ * NOT asserted that every genesis producer kept its slot: the flow's own demotion threshold
+ * applies to them too, and a genesis node that misses three rounds on a loaded host is dropped
+ * exactly as the flow producer was.
  */
 async function verifyProducerLeavesSchedule(ctx: ClusterBuildContext): Promise<void> {
   const account = producerAccount(ctx)
@@ -111,10 +120,16 @@ async function verifyProducerLeavesSchedule(ctx: ClusterBuildContext): Promise<v
     Constants.scheduleDeadlineMs(ScheduleSize),
     Constants.PollIntervalMs
   )
-  const schedule = await activeScheduleProducers(ctx)
-  if (schedule.length !== Constants.ProducerCount) {
+  const schedule = await activeScheduleProducers(ctx),
+    strangers = schedule.filter(name => !GenesisProducers.includes(name))
+  if (strangers.length > 0) {
     throw new Error(
-      `the active schedule holds ${schedule.length} producers after the exit; every one of the ${Constants.ProducerCount} genesis producers should still be in it`
+      `the active schedule names ${strangers.join(", ")} after the exit; only genesis producers should remain`
+    )
+  }
+  if (schedule.length < ClusterToolConstants.MIN_SCHEDULE_SIZE) {
+    throw new Error(
+      `the active schedule holds ${schedule.length} producers after the exit, below the ${ClusterToolConstants.MIN_SCHEDULE_SIZE} floor — the rebuild would have been retained, not published`
     )
   }
 }
@@ -442,6 +457,9 @@ export class ProducerRegistrationScenario extends FlowScenario {
             Constants.PollIntervalMs
           )
           const demoted = await readProducerRow(ctx)
+          if (demoted == null) {
+            throw new Error("the producer's row disappeared after its demotion")
+          }
           // Exactly the threshold the flow installed, not merely "at least": demoting early
           // would evict a producer that had not yet earned it.
           if (demoted.consecutive_missed_rounds < Constants.MaxConsecutiveMissedRounds) {

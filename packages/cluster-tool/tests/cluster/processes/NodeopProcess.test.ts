@@ -225,6 +225,21 @@ describe("NodeopProcess", () => {
     expect(providers.some(spec => spec.includes("PUB_BLS_q"))).toBe(true)
   })
 
+  it("refuses a node whose hosted producers do not share ONE block-signing K1", async () => {
+    // buildArgs renders a single block-signing provider, so a second key would leave its
+    // accounts' slots silently unproduced — the assert makes the positional assumption explicit.
+    const other: OperatorAccount = {
+      ...producerOperator("defproducerb"),
+      wire: { type: KeyType.K1, publicKey: "PUB_K1_other", privateKey: "PVT_K1_other" }
+    }
+    await expect(
+      NodeopProcess.create(manager, {
+        node: node("split-keys", NodeRole.producer, ["defproducera", "defproducerb"]),
+        operators: [producerOperator("defproducera"), other]
+      })
+    ).rejects.toThrow(/share the node's block-signing K1/)
+  })
+
   it("omits the producer block for a non-producing node + appends extraArgs", async () => {
     const nodeop = await NodeopProcess.create(manager, {
       node: node("operator-daemon", NodeRole.batch_operator),

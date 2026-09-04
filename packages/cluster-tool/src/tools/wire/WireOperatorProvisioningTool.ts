@@ -15,7 +15,10 @@
  *   create the WIRE account with that K1 (`account` = `label`; producers
  *   never go through `roa::newuser`).
  * - **batch operator / underwriter**: materialize (UNIQUE generated K1 + EM + ED;
- *   the K1 imported into the kiod wallet so `account@active` signs) →
+ *   the K1 imported into the kiod wallet so `account@active` signs) → (SSM, a
+ *   FLOW's operator only: publish each key, so the daemon's `SSM:` specs
+ *   resolve — the bootstrap's own operators are published by its operator
+ *   publish phase) →
  *   node-owner-sponsored account creation (`sysio.roa::newuser` as the bootstrap
  *   node owner with a FRESHLY MINTED single-use nonce; the chain assigns a
  *   generated `<nodeOwner>.<suffix>` name, adopted from the `sponsors` table
@@ -35,6 +38,7 @@ import { KeyType, PrivateKey, SysioContracts } from "@wireio/sdk-core"
 import { ChainKind, OperatorType } from "@wireio/opp-typescript-models"
 import { match } from "ts-pattern"
 import { getLogger } from "@wireio/shared"
+import { SignatureProviderType } from "@wireio/cluster-tool-shared"
 import { Constants } from "../../Constants.js"
 import { serialize } from "../../utils/asyncUtils.js"
 import { abiEnumValue } from "../../utils/enumUtils.js"
@@ -148,16 +152,21 @@ export namespace WireOperatorProvisioningTool {
     options: ClusterBuildStepOptions
   ): ClusterBuildPhase<C> {
     return match(spec.type)
-      .with(OperatorType.PRODUCER, () =>
+      .with(OperatorType.PRODUCER, () => {
         // A GENESIS producer names its hosting node and shares that node's block-signing K1; a
         // COLLATERAL-BACKED one does not, and takes the same route every other bonded operator
         // does — unique keys, a node-owner-sponsored account, authex links on both chains, and
-        // `opreg::regoperator`. The two shapes are mutually exclusive, and `planProvisionOpp-
-        // OperatorPhase` asserts the `ethereumHdIndex` the second one requires.
-        spec.producerNodeIndex != null
+        // `opreg::regoperator`. The two shapes are mutually exclusive: a spec carrying both a
+        // node index and an ETH wallet index would take the genesis route and silently drop the
+        // outpost identity, the links and the registration.
+        Assert.ok(
+          !(spec.producerNodeIndex != null && spec.ethereumHdIndex != null),
+          `provision producer ${spec.label}: producerNodeIndex (genesis) and ethereumHdIndex (collateral-backed) are mutually exclusive`
+        )
+        return spec.producerNodeIndex != null
           ? planProvisionProducerPhase<C>(group, spec, options)
           : planProvisionOppOperatorPhase<C>(group, spec, options)
-      )
+      })
       .with(OperatorType.BATCH, OperatorType.UNDERWRITER, () =>
         planProvisionOppOperatorPhase<C>(group, spec, options)
       )
@@ -263,8 +272,10 @@ export namespace WireOperatorProvisioningTool {
         fundEthereumWei,
         airdropSolanaLamports
       } = spec,
-      isUnderwriter = type === OperatorType.UNDERWRITER,
-      actor = isUnderwriter ? Report.Actor.Underwriter : Report.Actor.BatchOperator,
+      actor = match(type)
+        .with(OperatorType.UNDERWRITER, () => Report.Actor.Underwriter)
+        .with(OperatorType.PRODUCER, () => Report.Actor.Producer)
+        .otherwise(() => Report.Actor.BatchOperator),
       // External-outpost mode: operators are pre-funded out-of-band on the REAL
       // chains — there is no anvil prefund / SOL faucet — so the outpost-chain
       // funding steps are gated out; every depot-side step still runs.
@@ -283,6 +294,7 @@ export namespace WireOperatorProvisioningTool {
         type,
         ethereumHdIndex
       ),
+      ...planOperatorKeyPublications<C>(group, actor, options, label, type),
       planSponsoredAccountCreation<C>(
         actor,
         `${label}-account`,
@@ -337,9 +349,46 @@ export namespace WireOperatorProvisioningTool {
         options,
         label,
         type,
-        isBootstrapped ?? true
+        // A collateral-backed producer is on this route BECAUSE it is not a genesis one: a
+        // bootstrapped registration would be ACTIVE at once and refused every deposit after.
+        isBootstrapped ?? type !== OperatorType.PRODUCER
       )
     ])
+  }
+
+  /**
+   * The SSM publish steps for a FLOW-provisioned OPP operator's freshly
+   * materialized keys — one per curve of `KeySteps.operatorKeyTypes` — planned
+   * right after materialization so the parameters exist long before
+   * `OperatorDaemonTool.planDaemonStart` renders the daemon's `SSM:` specs for
+   * them. Nothing is planned under KEY / KIOD, and nothing for a label the
+   * bootstrap's own operator publish phase already covers
+   * (`KeySteps.isPublishedAtBootstrap`), so a bootstrapped batch operator's
+   * keys are still published exactly once.
+   */
+  function planOperatorKeyPublications<C extends ClusterBuildContext>(
+    group: ClusterBuildParent<C>,
+    actor: Report.Actor,
+    options: ClusterBuildStepOptions,
+    label: string,
+    type: OperatorType
+  ): ClusterBuildStep<C, KeySteps.PublishSignatureProviderKeyInput>[] {
+    const config = group.context.config
+    if (
+      config?.signatureProvider?.type !== SignatureProviderType.SSM ||
+      KeySteps.isPublishedAtBootstrap(config, label)
+    ) {
+      return []
+    }
+    return KeySteps.operatorKeyPublications(config, label, type).map(publication =>
+      KeySteps.planPublishSignatureProviderKey<C>(
+        actor,
+        `${label}-publish-${KeyType[publication.keyType]}`,
+        `publish ${label} ${KeyType[publication.keyType]} key → SSM`,
+        options,
+        publication
+      )
+    )
   }
 
   // ── Step: materialize an OPP operator's identity (keys → store + wallet) ──

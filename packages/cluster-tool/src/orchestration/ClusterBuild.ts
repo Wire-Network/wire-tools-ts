@@ -23,9 +23,10 @@ import {
  * every `config.ini` are written before `build()` runs, and the first
  * `roa::newuser` signs as the node owner out of the kiod wallet.
  *
- * `setOperator`, NEVER `pushNodes`: `ConsensusSteps.runSetFinalizer` builds the
- * genesis finalizer policy from `keyStore.nodes` with `threshold = ⌊2n/3⌋ + 1`,
- * so a bios entry there would silently add a finalizer and shift consensus.
+ * `setOperator` with `OperatorType.UNKNOWN`, never a PRODUCER entry:
+ * `ConsensusSteps.runSetFinalizer` builds the genesis finalizer policy from the
+ * PRODUCER operator accounts with `threshold = ⌊2n/3⌋ + 1`, so a bios entry
+ * typed as one would silently add a finalizer and shift consensus.
  *
  * Both entries carry {@link OperatorType.UNKNOWN}, NOT `PRODUCER`: neither
  * account is a registered OPP operator, and `ConsensusSteps.runSetProducerKeys`

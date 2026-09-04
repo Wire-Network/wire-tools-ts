@@ -109,25 +109,31 @@ export namespace ProducerRegistrationScenarioConstants {
 
   /**
    * Deadline for a producer to be seen producing a block, or for a schedule rebuild to publish
-   * its entry or its exit.
+   * its entry or its exit: the rebuild throttle (a rebuild runs at most once a minute, and the
+   * change may have landed just after one) plus the rotations budgeted for the pending schedule
+   * to go final and the producer's slot to come round.
    *
    * @param scheduleSize - Producers in the active schedule.
    * @returns The deadline in ms.
    */
   export function scheduleDeadlineMs(scheduleSize: number): number {
-    return ProtocolTiming.producerRotationMs(scheduleSize) * ScheduleRebuildRoundBudget
+    return (
+      ProtocolTiming.ScheduleRebuildIntervalMs +
+      ProtocolTiming.producerRotationMs(scheduleSize) * ScheduleRebuildRoundBudget
+    )
   }
 
   /**
-   * Deadline for `max_consecutive_missed_rounds` misses to accrue and the demotion to publish.
+   * Deadline for `max_consecutive_missed_rounds` misses to accrue and the demotion to publish:
+   * the misses themselves, then a full schedule deadline for the rebuild that drops the producer.
    *
    * @param scheduleSize - Producers in the active schedule.
    * @returns The deadline in ms.
    */
   export function demotionDeadlineMs(scheduleSize: number): number {
     return (
-      ProtocolTiming.producerRotationMs(scheduleSize) *
-      (MaxConsecutiveMissedRounds + ScheduleRebuildRoundBudget)
+      ProtocolTiming.producerRotationMs(scheduleSize) * MaxConsecutiveMissedRounds +
+      scheduleDeadlineMs(scheduleSize)
     )
   }
 }
