@@ -41,6 +41,7 @@ describe("Constants", () => {
     it("lists the OPP system accounts", () => {
       expect(Constants.OPP_SYSTEM_ACCOUNTS).toContain("sysio.epoch")
       expect(Constants.OPP_SYSTEM_ACCOUNTS).toContain("sysio.dclaim")
+      expect(Constants.OPP_SYSTEM_ACCOUNTS).toContain("sysio.councl")
     })
     it("maps OPP contract paths", () => {
       expect(Constants.OPP_CONTRACT_PATHS["sysio.opreg"]).toBe(

@@ -532,7 +532,8 @@ export namespace ClusterBuildDefaults {
       SysioContractName.uwrit,
       SysioContractName.reserv,
       SysioContractName.chalg,
-      SysioContractName.dclaim
+      SysioContractName.dclaim,
+      SysioContractName.councl
     ]
     ClusterBuildPhase.create<C>(
       prerequisites,

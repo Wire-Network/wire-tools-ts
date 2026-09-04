@@ -188,7 +188,7 @@ unlimited.
 | Group | Accounts |
 |---|---|
 | System / authority | `sysio.noop`, `sysio.bpay`, `sysio.msig`, `sysio.names`, `sysio.token`, `sysio.vpay`, `sysio.wrap`, `sysio.authex` |
-| OPP set | `sysio.chains`, `sysio.tokens`, `sysio.epoch`, `sysio.opreg`, `sysio.msgch`, `sysio.uwrit`, `sysio.reserv`, `sysio.chalg`, `sysio.dclaim` |
+| OPP set | `sysio.chains`, `sysio.tokens`, `sysio.epoch`, `sysio.opreg`, `sysio.msgch`, `sysio.uwrit`, `sysio.reserv`, `sysio.chalg`, `sysio.dclaim`, `sysio.councl` |
 | T5 buckets | `sysio.gov` (governance), `sysio.ops` (capex/ops) |
 | Dev-only (cluster) | `dev.owner1` |
 11. `sysio::setprodkeys({schedule:[{producer_name, block_signing_key}…]})` — `[sysio@active]` — one row per
@@ -215,13 +215,13 @@ standalone key, and `sysio.authex` keeps the plain `sysio@active` owner/active i
 
 ## Stage 8 — OPP contracts + owner `sysio.code` grants
 18. deploy the OPP set — **sys** — `[sysio@active]`, in order: `sysio.chains`, `sysio.tokens`, `sysio.epoch`,
-    `sysio.opreg`, `sysio.msgch`, `sysio.uwrit`, `sysio.reserv`, `sysio.chalg`, `sysio.dclaim`.
+    `sysio.opreg`, `sysio.msgch`, `sysio.uwrit`, `sysio.reserv`, `sysio.chalg`, `sysio.dclaim`, `sysio.councl`.
 19. `sysio::updateauth` on **each OPP account's owner** (`grantSysioCode`) — `[<account>@owner]` — owner ←
     `{threshold:1, keys:[], accounts:[{sysio@active,1},{<account>@sysio.code,1}], waits:[]}` (sorted by name
-    value; `sysio` sorts first). (9 calls.) Lets each contract inline-send its own actions (epoch `advance`,
+    value; `sysio` sorts first). (10 calls.) Lets each contract inline-send its own actions (epoch `advance`,
     `evalcons`, `dispatch`, …) while staying governed by `sysio@active`.
 
-These nine owner grants are the ONLY authority rewrites in the bootstrap. The former cross-contract
+These ten owner grants are the ONLY authority rewrites in the bootstrap. The former cross-contract
 active-permission delegations (`@sysio.code` weights for `sysio.msgch` on opreg/roa and for `sysio.roa` on
 authex) are no longer configured.
 
