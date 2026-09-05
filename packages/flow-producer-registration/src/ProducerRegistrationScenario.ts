@@ -155,8 +155,10 @@ async function verifyProducerLeavesSchedule(ctx: ClusterBuildContext): Promise<v
  * 7. **MissedRounds** — its node is stopped (a controlled stop; the flow owns the process). The
  *    miss counter climbs, demotion fires at exactly the installed threshold, and the ACTIVE
  *    schedule drops it while every genesis producer keeps its slot.
- * 8. **Recover** — the node restarts and `regproducer` clears the demotion. It re-enters the
- *    schedule and produces again.
+ * 8. **Recover** — the node restarts and `regproducer` clears the DEMOTION, returning eligibility
+ *    without wiping the record: the miss streak survives, because re-registering costs only a
+ *    signature and could otherwise be called on a timer by an operator that never produces. The
+ *    producer re-enters the schedule, produces, and THAT is what clears the streak.
  * 9. **Removal** — the whole ETH bond is withdrawn. The operator drops below the per-chain
  *    minimum, leaves ACTIVE, and the active schedule drops it — the collateral-driven exit that
  *    mirrors the collateral-driven entry in phases 3-4. This depends on `opreg::withdraw`
@@ -507,15 +509,22 @@ export class ProducerRegistrationScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "demotion-cleared",
-        "regproducer clears is_demoted and the miss counter, with no waiting period",
+        "regproducer returns eligibility but NOT a clean record: the demotion clears, the miss streak stands",
         async ctx => {
           const producer = await readProducerRow(ctx)
           if (producer == null) {
             throw new Error("the producer's row disappeared after re-registration")
           }
-          if (producer.is_demoted || producer.consecutive_missed_rounds !== 0) {
+          if (producer.is_demoted) {
+            throw new Error("regproducer left the producer demoted")
+          }
+          // The streak deliberately SURVIVES re-registration. `regproducer` costs nothing but a
+          // signature and can be repeated, so clearing the streak here would let an absent
+          // operator call it on a timer and never produce a block at all. Only producing clears
+          // it, which the next step asserts.
+          if (producer.consecutive_missed_rounds === 0) {
             throw new Error(
-              `regproducer left the producer demoted=${producer.is_demoted} misses=${producer.consecutive_missed_rounds}`
+              "regproducer cleared the miss streak; only producing a block may do that"
             )
           }
         },
@@ -534,6 +543,23 @@ export class ProducerRegistrationScenario extends FlowScenario {
           )
         },
         scheduleStepOptions
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "producing-clears-the-streak",
+        "the block it just produced is what clears the miss streak",
+        async ctx => {
+          const producer = await readProducerRow(ctx)
+          if (producer == null) {
+            throw new Error("the producer's row disappeared after it produced again")
+          }
+          if (producer.consecutive_missed_rounds !== 0) {
+            throw new Error(
+              `producing left the miss streak at ${producer.consecutive_missed_rounds}`
+            )
+          }
+        },
+        {}
       )
     )
 
