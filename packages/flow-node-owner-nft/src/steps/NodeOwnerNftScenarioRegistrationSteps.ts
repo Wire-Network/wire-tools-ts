@@ -2,12 +2,12 @@ import { KeyType } from "@wireio/sdk-core"
 import {
   ClusterBuildContext,
   ClusterBuildStep,
-  EthereumOutpostBootstrapper,
   KeyGenerator,
   NodeOwnerTier,
   pushNewNamedUser,
   pushNodeOwnerReg,
   Report,
+  Steps,
   type ClusterBuildStepOptions,
   type StepInput
 } from "@wireio/cluster-tool"
@@ -25,12 +25,13 @@ import {
  */
 export namespace NodeOwnerNftScenarioRegistrationSteps {
   /**
-   * A new depositor `PUB_EM_*` public key, derived from the run's anvil
-   * mnemonic at `ethereumHdIndex` — deterministic, and distinct per claim when
-   * each claim carries its own index. A pure value helper: used inside the
-   * {@link planRegisterNodeOwner} runner and the scenario's hard-abort probes.
+   * A new depositor `PUB_EM_*` public key, derived from the run's Ethereum
+   * mnemonic (`Steps.keys.keyGeneratorContext`) at `ethereumHdIndex` —
+   * deterministic, and distinct per claim when each claim carries its own
+   * index. A pure value helper: used inside the {@link planRegisterNodeOwner}
+   * runner and the scenario's hard-abort probes.
    *
-   * @param ctx - The build context (clio / build-path key-generation material).
+   * @param ctx - The build context (the run's key-generation material).
    * @param ethereumHdIndex - HD account index for the EM derivation.
    * @returns The derived `PUB_EM_*` public key.
    */
@@ -38,14 +39,11 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
     ctx: C,
     ethereumHdIndex: number
   ): Promise<string> {
-    const keyContext = KeyGenerator.context(
-      ctx.config.executables.clio,
-      ctx.config.buildPath,
-      EthereumOutpostBootstrapper.AnvilMnemonic
+    const pair = await KeyGenerator.create(
+      KeyType.EM,
+      Steps.keys.keyGeneratorContext(ctx),
+      { ethereumHdIndex }
     )
-    const pair = await KeyGenerator.create(KeyType.EM, keyContext, {
-      ethereumHdIndex
-    })
     return pair.publicKey
   }
 

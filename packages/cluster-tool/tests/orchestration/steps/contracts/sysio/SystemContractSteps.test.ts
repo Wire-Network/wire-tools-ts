@@ -1,6 +1,7 @@
 import { Steps } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { SysioContracts } from "@wireio/sdk-core"
+import { fixtureContext } from "../../../../config/clusterBuildContextFixture.js"
 
 const DevK1 = "PUB_K1_6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYq2fJUVgWY7"
 
@@ -32,6 +33,7 @@ describe("Steps.contracts.sysio.system", () => {
       producer_bps: 0,
       batch_op_bps: 0,
       standby_end_rank: 0,
+      standby_bps: 0,
       epoch_log_retention_count: 10,
       pay_cadence_epochs: 1
     }
@@ -161,5 +163,110 @@ describe("Steps.contracts.sysio.system", () => {
     expect(step.input.data).toBe(data)
     expect(step.input.authorization).toBe(authorization)
     expect(typeof step.runner).toBe("function")
+  })
+
+  it("setacctram carries the system::setacctram data", () => {
+    const data: SysioContracts.SysioSystemSetacctramAction = {
+      account: "defproducera",
+      ram_bytes: 1_000_000
+    }
+    const step = Steps.contracts.sysio.system.planSetacctram(
+      Report.Actor.Sysio,
+      "setacctram-defproducera",
+      "grant defproducera RAM",
+      {},
+      data
+    )
+    expect(step.input.kind).toBe("SystemContractSteps.SetacctramInput")
+    expect(step.input.data).toBe(data)
+    expect(typeof step.runner).toBe("function")
+  })
+
+  it.each([
+    ["regproducer", "RegproducerInput", { producer: "flowprod", producer_key: DevK1, url: "", location: 0 }],
+    ["unregprod", "UnregprodInput", { producer: "flowprod" }]
+  ])(
+    "%s signs as the PRODUCER named in its own data, not as sysio",
+    async (action, kind, data) => {
+      // Every producer-lifecycle action is `require_auth(producer)`, so the invoker's default
+      // `<contract>@active` (i.e. sysio) is the WRONG signer — and the authorization is derived
+      // from the data rather than carried beside it, so the two cannot drift.
+      const step = Steps.contracts.sysio.system[
+        action === "regproducer" ? "planRegproducer" : "planUnregprod"
+      ](Report.Actor.Producer, `${action}-flowprod`, action, {}, data as never)
+      expect(step.input.kind).toBe(`SystemContractSteps.${kind}`)
+
+      const ctx = fixtureContext(),
+        contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.system),
+        invoke = jest
+          .spyOn(contract.actions[action as "regproducer"], "invoke")
+          .mockResolvedValue(undefined)
+      jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+      await step.runner(ctx, step.input as never, new AbortController().signal)
+      expect(invoke).toHaveBeenCalledWith(data, {
+        authorization: [{ actor: "flowprod", permission: "active" }]
+      })
+    }
+  )
+
+  it.each([
+    ["regfinkey", "RegfinkeyInput", { finalizer_name: "flowprod", finalizer_key: "PUB_BLS_x", proof_of_possession: "SIG_BLS_x" }],
+    ["actfinkey", "ActfinkeyInput", { finalizer_name: "flowprod", finalizer_key: "PUB_BLS_x" }]
+  ])(
+    "%s signs as the FINALIZER named in its own data",
+    async (action, kind, data) => {
+      const step = Steps.contracts.sysio.system[
+        action === "regfinkey" ? "planRegfinkey" : "planActfinkey"
+      ](Report.Actor.Producer, `${action}-flowprod`, action, {}, data as never)
+      expect(step.input.kind).toBe(`SystemContractSteps.${kind}`)
+
+      const ctx = fixtureContext(),
+        contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.system),
+        invoke = jest
+          .spyOn(contract.actions[action as "regfinkey"], "invoke")
+          .mockResolvedValue(undefined)
+      jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+      await step.runner(ctx, step.input as never, new AbortController().signal)
+      expect(invoke).toHaveBeenCalledWith(data, {
+        authorization: [{ actor: "flowprod", permission: "active" }]
+      })
+    }
+  )
+
+  it("setscorecfg is governance-signed — it carries NO explicit authorization", async () => {
+    // `require_auth(get_self())`, so the invoker's default `sysio@active` is exactly right;
+    // passing a producer authorization here would break it.
+    const data: SysioContracts.SysioSystemSetscorecfgAction = {
+      weights: {
+        collateral_weight: 10_000,
+        participation_weight: 10_000,
+        snapshot_weight: 10_000,
+        relay_weight: 0,
+        api_weight: 0,
+        benchmark_weight: 0,
+        max_consecutive_missed_rounds: 3,
+        snapshot_target_attestations: 1,
+        missed_round_window_ms: 24 * 60 * 60 * 1_000,
+        max_pct_missed_rounds_in_window: 5,
+        min_blocks_per_round: 6
+      }
+    }
+    const step = Steps.contracts.sysio.system.planSetscorecfg(
+      Report.Actor.Sysio,
+      "setscorecfg",
+      "set producer score weights",
+      {},
+      data
+    )
+    expect(step.input.kind).toBe("SystemContractSteps.SetscorecfgInput")
+
+    const ctx = fixtureContext(),
+      contract = ctx.wire.getSysioContract(SysioContracts.SysioContractName.system),
+      invoke = jest
+        .spyOn(contract.actions.setscorecfg, "invoke")
+        .mockResolvedValue(undefined)
+    jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
+    await step.runner(ctx, step.input, new AbortController().signal)
+    expect(invoke).toHaveBeenCalledWith(data)
   })
 })

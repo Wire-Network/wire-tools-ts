@@ -170,6 +170,16 @@ export namespace BindConfigProvider {
    */
   export const SolanaDynamicPortRangeSearchLimit = 32
   export const DefaultDebuggingServer = 10_991
+  /**
+   * Preferred HTTP port of an AD-HOC node — one a flow provisions after
+   * `NodeConfig.plan` (an operator daemon, or a collateral-backed producer's
+   * own node). A PREFERENCE only, placed in the daemon-default layout above:
+   * {@link findAvailableAdHocPorts} takes it when free and an ephemeral port
+   * otherwise, so two ad-hoc nodes never collide on it.
+   */
+  export const DefaultAdHocHttp = 10_988
+  /** Preferred p2p port of an ad-hoc node (see {@link DefaultAdHocHttp}). */
+  export const DefaultAdHocP2p = 10_976
   export const DefaultProducerCount = 1
   export const DefaultBatchCount = 3
   export const DefaultUnderwriterCount = 1
@@ -655,6 +665,21 @@ export namespace BindConfigProvider {
         protocol
       )
     )
+  }
+
+  /**
+   * The registry-issued `http` + `p2p` pair an AD-HOC node binds — each port
+   * resolved through {@link findAvailable} from the ad-hoc preferences
+   * ({@link DefaultAdHocHttp} / {@link DefaultAdHocP2p}), so the pair is claimed
+   * under the same host-global lock as every planned node's.
+   *
+   * @returns The node's binding.
+   */
+  export async function findAvailableAdHocPorts(): Promise<BindConfigNodeopPorts> {
+    return {
+      http: await findAvailable(DefaultAdHocHttp),
+      p2p: await findAvailable(DefaultAdHocP2p)
+    }
   }
 
   /**

@@ -15,10 +15,7 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
-import {
-  type BindConfigNodeopPorts,
-  type ClusterConfig
-} from "@wireio/cluster-tool-shared"
+import { type ClusterConfig } from "@wireio/cluster-tool-shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
 import { match } from "ts-pattern"
@@ -26,7 +23,7 @@ import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { WireClient } from "../../clients/wire/WireClient.js"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
-import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
+import { NodeConfig } from "../../config/NodeConfig.js"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { NodeopProcess } from "../../cluster/processes/NodeopProcess.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
@@ -501,23 +498,6 @@ export namespace OperatorDaemonTool {
 
   // ── Step: start an operator's daemon (process spawn — its own Step) ───────
 
-  /** Preferred HTTP port for an ad-hoc (flow-provisioned) operator daemon. */
-  export const PreferredDaemonHttpPort = 8988
-  /** Preferred p2p port for an ad-hoc (flow-provisioned) operator daemon. */
-  export const PreferredDaemonP2pPort = 9976
-
-  /**
-   * The process label + node-dir name for an operator's daemon, keyed by the
-   * operator's durable `label` handle (deterministic + human-navigable; the
-   * `account` is node-owner-generated and not path-safe to rely on).
-   *
-   * @param label - The operator's durable handle (`batchop.a`, …).
-   * @returns The `node_<label>` process label / directory name.
-   */
-  export function daemonNodeName(label: string): string {
-    return `node_${label}`
-  }
-
   /** Input for {@link planDaemonStart}. */
   export interface StartDaemonInput extends StepInput {
     readonly kind: "OperatorDaemonTool.StartDaemonInput"
@@ -527,8 +507,9 @@ export namespace OperatorDaemonTool {
   /**
    * Start a flow-provisioned operator's daemon: a non-producing nodeop carrying
    * the type-matched OPP daemon args ({@link batchOperatorArgs} /
-   * {@link underwriterArgs}), peered to the producer nodes, on
-   * {@link BindConfigProvider.findAvailable}-resolved ports. Required whenever a
+   * {@link underwriterArgs}), composed by `NodeConfig.createAdHoc` (peered to
+   * the producer nodes, on {@link BindConfigProvider.findAvailableAdHocPorts}-
+   * resolved ports). Required whenever a
    * NON-bootstrapped operator flips ACTIVE — the schedule prefers it over the
    * bootstrapped set, and its group's consensus needs it to relay. Bootstrap
    * operator nodes are planned by `NodeConfig.plan` instead; this Step is for
@@ -560,7 +541,7 @@ export namespace OperatorDaemonTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const nodeName = daemonNodeName(input.label)
+    const nodeName = NodeConfig.adHocNodeName(input.label)
     if (ctx.processManager.get(nodeName) != null) return
 
     const operator = ctx.keyStore.assertOperator(input.label),
@@ -580,51 +561,17 @@ export namespace OperatorDaemonTool {
           )
         })
 
-    const ports: BindConfigNodeopPorts = {
-      http: await BindConfigProvider.findAvailable(PreferredDaemonHttpPort),
-      p2p: await BindConfigProvider.findAvailable(PreferredDaemonP2pPort)
-    }
+    const ports = await BindConfigProvider.findAvailableAdHocPorts()
     // startWithRecovery (not bare create+start): a flow rerun reuses the
     // daemon's data dir, so an unclean prior stop leaves a dirty chainbase
     // this launch must recover from, same as the planned-node paths.
     await NodeopProcess.startWithRecovery(ctx.processManager, {
-      node: daemonNodeConfig(ctx.config, operator, ports),
-      operator,
+      node: NodeConfig.createAdHoc(ctx.config, operator, ports),
+      operators: [operator],
       extraArgs: daemonArgs
     })
     ctx.log.info(
       `[operator-daemon] ${input.label} (${operator.account}) daemon up (${nodeName}, http=${ports.http})`
-    )
-  }
-
-  /** Topology index for ad-hoc daemon nodes (not part of `NodeConfig.plan`). */
-  const AdHocDaemonNodeIndex = -1
-
-  /**
-   * Compose the daemon's {@link NodeConfig}: a non-producing operator node named
-   * for the operator's durable label handle, peered to every producer node, on
-   * the resolved `ports`.
-   */
-  function daemonNodeConfig(
-    config: ClusterConfig,
-    operator: OperatorAccount,
-    ports: BindConfigNodeopPorts
-  ): NodeConfig {
-    const isBatchOperator = operator.type === OperatorType.BATCH,
-      producerPeers = config.bind.nodeop.ports.producers.map(
-        producerPorts =>
-          `${NodeConfig.advertiseAddressFor(config, producerPorts)}:${producerPorts.p2p}`
-      )
-    return new NodeConfig(
-      config,
-      isBatchOperator ? NodeRole.batch_operator : NodeRole.underwriter,
-      AdHocDaemonNodeIndex,
-      daemonNodeName(operator.label),
-      ports,
-      [],
-      producerPeers,
-      isBatchOperator ? operator.label : null,
-      isBatchOperator ? null : operator.label
     )
   }
 }

@@ -671,6 +671,28 @@ describe("BindConfigProvider", () => {
       expect(port).not.toBe(BindConfigProvider.DefaultAnvil)
       expect(port).toBeGreaterThan(0)
     })
+
+    it("findAvailableAdHocPorts issues the ad-hoc http + p2p preferences when free — in the daemon layout, clear of the agave band", async () => {
+      const ports = await BindConfigProvider.findAvailableAdHocPorts()
+      expect(ports).toEqual({
+        http: BindConfigProvider.DefaultAdHocHttp,
+        p2p: BindConfigProvider.DefaultAdHocP2p
+      })
+      ;[ports.http, ports.p2p].forEach(port => {
+        expect(port).toBeGreaterThan(BindConfigProvider.ReservedAgavePortBand.last)
+        expect(port).toBeLessThan(BindConfigProvider.DefaultSolanaDynamicPortFirst)
+      })
+    })
+
+    it("findAvailableAdHocPorts never hands a second ad-hoc node the first one's pair", async () => {
+      // Every returned port is locked in-process, exactly as get-port does, so the second node
+      // falls through to free ports instead of colliding on the preferences.
+      const first = await BindConfigProvider.findAvailableAdHocPorts(),
+        second = await BindConfigProvider.findAvailableAdHocPorts()
+      expect(
+        new Set([first.http, first.p2p, second.http, second.p2p]).size
+      ).toBe(4)
+    })
   })
 
   describe("pickPort", () => {

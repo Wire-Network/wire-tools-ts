@@ -140,6 +140,14 @@ describe("Constants", () => {
       )
       expect(c.producer_bps + c.batch_op_bps).toBe(10_000)
     })
+
+    it("reserves a standby retainer slice of the producer pool, inside the pool", () => {
+      // 8% keeps the economics where the weight-based model left them (28 of 343 weight units
+      // at full attendance); the contract rejects anything over the whole pool.
+      const c = Constants.EMISSION_CONFIG_DEFAULTS
+      expect(c.standby_bps).toBe(800)
+      expect(c.standby_bps).toBeLessThanOrEqual(10_000)
+    })
   })
 
   describe("EMISSION_CONFIG_DEFAULTS", () => {
@@ -245,5 +253,44 @@ describe("ProtocolTiming", () => {
         expect(budget).toBeGreaterThan(budgets[index])
       })
     })
+  })
+})
+
+describe("Constants — schedule bounds", () => {
+  it("pins the contract's min_schedule_size floor, below the producer cap", () => {
+    expect(Constants.MIN_SCHEDULE_SIZE).toBe(4)
+    expect(Constants.MIN_SCHEDULE_SIZE).toBeLessThan(Constants.MAX_PRODUCERS)
+  })
+})
+
+describe("ProtocolTiming — producer rounds + outpost writes", () => {
+  it("pins the chain's slot + round constants and the outpost write ceiling", () => {
+    expect(ProtocolTiming.BlockIntervalMs).toBe(500)
+    expect(ProtocolTiming.ProducerRepetitions).toBe(12)
+    expect(ProtocolTiming.OutpostWriteBudgetMs).toBe(60_000)
+  })
+
+  it("pins the ranked-schedule rebuild throttle: 120 slots of the block interval", () => {
+    expect(ProtocolTiming.ScheduleRebuildIntervalMs).toBe(
+      120 * ProtocolTiming.BlockIntervalMs
+    )
+  })
+
+  it("producerRotationMs is one full round-robin: every scheduled producer's 12 half-second slots", () => {
+    expect(ProtocolTiming.producerRotationMs(1)).toBe(6_000)
+    expect(ProtocolTiming.producerRotationMs(6)).toBe(36_000)
+    expect(ProtocolTiming.producerRotationMs(21)).toBe(126_000)
+  })
+
+  it("grows linearly with the schedule — topology-derived, never concurrency-derived", () => {
+    const [one, two, three] = [1, 2, 3].map(ProtocolTiming.producerRotationMs)
+    expect(two - one).toBe(one)
+    expect(three - two).toBe(one)
+  })
+
+  it("keeps the outpost write ceiling a local-operation budget, under every protocol hop", () => {
+    expect(ProtocolTiming.OutpostWriteBudgetMs).toBeLessThan(
+      ProtocolTiming.CollateralVerifyBudgetMs
+    )
   })
 })
