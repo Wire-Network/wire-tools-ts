@@ -165,6 +165,33 @@ describe("NodeopProcess", () => {
     ).rejects.toThrow(/requires one producer OperatorAccount per hosted producer/)
   })
 
+  // The BIOS shape, which an all-labels assertion rejected outright and took every e2e flow with
+  // it: the node carries the ON-CHAIN genesis producer name while its operator is labelled
+  // `node_bios`. The two identifiers legitimately differ, so identity is matched on either.
+  it("accepts the bios shape, where the producer name is the account and the label differs", async () => {
+    const biosOperator = {
+      ...producerOperator("sysio"),
+      label: "node_bios"
+    }
+    const nodeop = await NodeopProcess.create(manager, {
+      node: node("node_bios", NodeRole.bios, ["sysio"]),
+      operators: [biosOperator]
+    })
+    // Produces for the ON-CHAIN account, whatever the operator is labelled.
+    expect(nodeop.args).toEqual(
+      expect.arrayContaining(["--producer-name", "sysio"])
+    )
+  })
+
+  it("REJECTS an operator that matches the node's producer by neither label nor account", async () => {
+    await expect(
+      NodeopProcess.create(manager, {
+        node: node("producer", NodeRole.producer, ["defproducera"]),
+        operators: [producerOperator("someoneelse")]
+      })
+    ).rejects.toThrow(/no hosted operator for producer\(s\) defproducera/)
+  })
+
   it("builds a producer node's argv from the composed node + operator", async () => {
     const nodeop = await NodeopProcess.create(manager, {
       node: node("producer", NodeRole.producer, ["sysio"], ["127.0.0.1:9877"]),

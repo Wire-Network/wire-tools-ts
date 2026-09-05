@@ -278,10 +278,23 @@ export class NodeopProcess extends ManagedProcess {
     // or the right accounts in a different order -- and the node would sign for producers it holds
     // no slot for, silently, with every assertion satisfied.
     if (node.producers.length > 0) {
-      Assert.deepStrictEqual(
-        [...(options.operators ?? [])].map(operator => operator.label).sort(),
-        [...node.producers].sort(),
-        `nodeop ${node.name}: hosted operator labels must be exactly the node's producers`
+      // Matched on EITHER identifier, because `producers` is not uniformly one of them: a planned
+      // producer node carries labels (and a producer never calls `roa::newuser`, so its label IS
+      // its account), while the bios node carries the on-chain genesis producer name `sysio` under
+      // the operator labelled `node_bios`. Requiring labels alone rejects the bios node outright.
+      const { operators = [] } = options,
+        unmatched = node.producers.filter(
+          producer =>
+            !operators.some(
+              operator =>
+                operator.label === producer || operator.account === producer
+            )
+        )
+      Assert.ok(
+        unmatched.length === 0,
+        `nodeop ${node.name}: no hosted operator for producer(s) ${unmatched.join(", ")} — hosted ${operators
+          .map(operator => `${operator.label}/${operator.account}`)
+          .join(", ")}`
       )
     }
     // `buildArgs` renders ONE block-signing provider for the whole node, so every hosted account
