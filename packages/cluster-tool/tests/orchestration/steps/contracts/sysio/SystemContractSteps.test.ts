@@ -245,7 +245,9 @@ describe("Steps.contracts.sysio.system", () => {
         api_weight: 0,
         benchmark_weight: 0,
         max_consecutive_missed_rounds: 3,
-        snapshot_target_attestations: 1
+        snapshot_target_attestations: 1,
+        missed_round_window_ms: 24 * 60 * 60 * 1_000,
+        max_pct_missed_rounds_in_window: 5
       }
     }
     const step = Steps.contracts.sysio.system.planSetscorecfg(

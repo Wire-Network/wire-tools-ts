@@ -67,19 +67,33 @@ export namespace ProducerRegistrationScenarioConstants {
    */
   export const SnapshotTargetAttestations = 1
   /**
-   * The `prodscorecfg` the flow installs: the contract's shipped weights (the three live factors
-   * at full weight, the reserved `relay` / `api` / `benchmark` at 0) around the flow's own
-   * demotion threshold.
+   * Rolling window the miss RATE is measured over — the contract default of a day. The flow never
+   * runs long enough to roll it, so every round it observes belongs to one window.
+   */
+  export const MissedRoundWindowMs = 24 * 60 * 60 * 1_000
+  /**
+   * Percent of its scheduled rounds a producer may miss inside that window. The flow demotes
+   * through the CONSECUTIVE gate, so this is set to the contract default and left alone; it is
+   * here because `setscorecfg` installs the whole config, not a subset.
+   */
+  export const MaxPctMissedRoundsInWindow = 5
+  /**
+   * The `prodscorecfg` the flow installs: the contract's shipped weights around the flow's own
+   * demotion threshold. Snapshot service is weighted at a TENTH of collateral, as the contract
+   * ships it — it breaks ties rather than outranking a bond. The reserved `relay` / `api` /
+   * `benchmark` factors stay at 0.
    */
   export const ScoreConfig: SysioContracts.SysioSystemProducerScoreConfigType = {
     collateral_weight: ScoreScale,
     participation_weight: ScoreScale,
-    snapshot_weight: ScoreScale,
+    snapshot_weight: ScoreScale / 10,
     relay_weight: 0,
     api_weight: 0,
     benchmark_weight: 0,
     max_consecutive_missed_rounds: MaxConsecutiveMissedRounds,
-    snapshot_target_attestations: SnapshotTargetAttestations
+    snapshot_target_attestations: SnapshotTargetAttestations,
+    missed_round_window_ms: MissedRoundWindowMs,
+    max_pct_missed_rounds_in_window: MaxPctMissedRoundsInWindow
   }
 
   /**
