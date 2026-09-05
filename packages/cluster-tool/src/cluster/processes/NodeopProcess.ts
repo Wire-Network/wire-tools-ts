@@ -272,6 +272,18 @@ export class NodeopProcess extends ManagedProcess {
           options.operators.every(operator => operator.wireFinalizer != null)),
       `nodeop ${node.name}: a producing node requires one producer OperatorAccount per hosted producer, each carrying wire + wireFinalizer keys (${node.producers.length} producers, ${options.operators?.length ?? 0} accounts)`
     )
+    // IDENTITY, not just arity. `buildArgs` renders `--producer-name` from the OPERATORS while
+    // every other consumer (key-store lookup, SSM secret ids, start.sh) reads `node.producers`, so
+    // matching counts alone would let a caller hand over the right NUMBER of the wrong accounts --
+    // or the right accounts in a different order -- and the node would sign for producers it holds
+    // no slot for, silently, with every assertion satisfied.
+    if (node.producers.length > 0) {
+      Assert.deepStrictEqual(
+        [...(options.operators ?? [])].map(operator => operator.label).sort(),
+        [...node.producers].sort(),
+        `nodeop ${node.name}: hosted operator labels must be exactly the node's producers`
+      )
+    }
     // `buildArgs` renders ONE block-signing provider for the whole node, so every hosted account
     // must sign blocks with the same K1 — the one `regproducer` / `setprodkeys` registered for
     // each of them. A second key would leave its accounts' slots silently unproduced.

@@ -607,6 +607,13 @@ export namespace KeySteps {
           keyTypes: [KeyType.K1]
         },
         // Producer nodes — block signing + finality, keys in `keyStore.nodes`.
+        //
+        // NOTE: since finality moved to per-ACCOUNT finalizer keys, no nodeop fetches the
+        // node-labelled BLS parameter and no finalizer policy names it. Dropping it would narrow
+        // the custody surface, but the node/account publication split also decides which label
+        // `buildArgs` resolves the BLOCK-SIGNING K1 from, and SSM startup is exercised only by the
+        // cloud cluster workflow — so it is left in place pending a verification pass that can
+        // actually observe an SSM boot. Tracked rather than changed blind.
         ...producerNodes(config).map(node => ({
           label: node.name,
           source: SignatureKeySource.node,

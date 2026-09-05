@@ -72,6 +72,11 @@ interface NodeDescriptor {
   index: number
   name: string
   ports: BindConfigNodeopPorts
+  /**
+   * Key-store LABELS of the producer accounts this node hosts — never on-chain account names.
+   * `ClusterKeyStore` is keyed by label, and a sponsored producer's account is generated at run
+   * time, so the two are not interchangeable.
+   */
   producers: readonly string[]
   batchOperatorLabel: string | null
   underwriterLabel: string | null
@@ -439,7 +444,11 @@ export namespace NodeConfig {
           return {
             ...shared,
             role: NodeRole.producer,
-            producers: [operator.account],
+            // The key-store LABEL, exactly as `plan` stores it. `producers` is resolved against
+            // `ClusterKeyStore`, which is keyed by label only, and a sponsored producer's on-chain
+            // account is generated at run time -- so an account here reads as a label that resolves
+            // to nothing. The account is carried by the OperatorAccount itself.
+            producers: [operator.label],
             batchOperatorLabel: null,
             underwriterLabel: null
           }

@@ -697,13 +697,19 @@ describe("NodeConfig — ad-hoc nodes", () => {
       expect(node.cluster).toBe(cluster)
     })
 
-    it("produces for the ON-CHAIN account, never the handle", () => {
+    it("carries the key-store LABEL in producers, exactly as a planned node does", () => {
       // A sponsored producer's on-chain name is depot-generated; the fixture's default account
       // is deliberately distinct from the label so a confusion of the two is observable.
+      //
+      // `producers` is resolved against ClusterKeyStore, which is keyed by LABEL only, and is read
+      // that way by the key-store lookup, the SSM secret-id renderer and start.sh. An account here
+      // would read as a label that resolves to nothing. Producing for the ON-CHAIN account is
+      // still guaranteed -- `NodeopProcess.buildArgs` renders `--producer-name` from the
+      // OperatorAccount, which is asserted in NodeopProcess.test.ts.
       const producer = fixtureOperatorAccount("flowprod", OperatorType.PRODUCER),
         node = NodeConfig.createAdHoc(cluster, producer, ports)
-      expect(node.producers).toEqual([producer.account])
-      expect(node.producers).not.toEqual([producer.label])
+      expect(node.producers).toEqual([producer.label])
+      expect(node.producers).not.toEqual([producer.account])
       expect(node.name).toBe(NodeConfig.adHocNodeName(producer.label))
     })
 

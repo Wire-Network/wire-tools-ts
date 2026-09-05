@@ -78,6 +78,13 @@ export namespace ProducerRegistrationScenarioConstants {
    */
   export const MaxPctMissedRoundsInWindow = 5
   /**
+   * Blocks a producer must deliver within its own round for that round to count as served. Set to
+   * 0 — the DISABLED spelling — because this flow demotes by stopping a node outright, so every
+   * round it charges is a whole round with no blocks at all. Leaving the check armed would make
+   * the assertions depend on how many blocks the node happened to land before it died.
+   */
+  export const MinBlocksPerRound = 0
+  /**
    * The `prodscorecfg` the flow installs: the contract's shipped weights around the flow's own
    * demotion threshold. Snapshot service is weighted at a TENTH of collateral, as the contract
    * ships it — it breaks ties rather than outranking a bond. The reserved `relay` / `api` /
@@ -93,7 +100,8 @@ export namespace ProducerRegistrationScenarioConstants {
     max_consecutive_missed_rounds: MaxConsecutiveMissedRounds,
     snapshot_target_attestations: SnapshotTargetAttestations,
     missed_round_window_ms: MissedRoundWindowMs,
-    max_pct_missed_rounds_in_window: MaxPctMissedRoundsInWindow
+    max_pct_missed_rounds_in_window: MaxPctMissedRoundsInWindow,
+    min_blocks_per_round: MinBlocksPerRound
   }
 
   /**

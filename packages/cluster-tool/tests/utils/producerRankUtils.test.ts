@@ -42,4 +42,19 @@ describe("producerRankUtils", () => {
       /unknown tier 3/
     )
   })
+
+  it("refuses a tiered key rendered as a number, rather than decoding a rounded one", () => {
+    // unscored() -- the demoted tier's worst key, and the value every unrankable row carries.
+    const unscored = (BigInt(ProducerTier.demoted) << ProducerTierShift) | ((1n << ProducerTierShift) - 1n)
+    expect(producerTier(unscored.toString())).toBe(ProducerTier.demoted)
+
+    // The same value as a double is not representable: it rounds UP past the tier boundary, so
+    // decoding it would silently report a tier the contract never packs.
+    expect(Number(unscored)).toBeGreaterThan(Number.MAX_SAFE_INTEGER)
+    expect(() => producerTier(Number(unscored))).toThrow(/must arrive as a string/)
+  })
+
+  it("still accepts a healthy-tier key as a number, where a double is exact", () => {
+    expect(producerTier(Number.MAX_SAFE_INTEGER)).toBe(ProducerTier.healthy)
+  })
 })
