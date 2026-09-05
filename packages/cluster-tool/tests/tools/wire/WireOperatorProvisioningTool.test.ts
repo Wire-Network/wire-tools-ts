@@ -766,7 +766,6 @@ describe("planOperatorAccountProvisioning — SSM key publication for a FLOW ope
     ])
     publications.forEach(publication => {
       expect(publication.label).toBe("depositoraaa")
-      expect(publication.source).toBe(Steps.keys.SignatureKeySource.operator)
       expect(publication.awsRegions).toEqual(SSMRegions)
     })
     // Named for the label like the phase's other steps, under the phase's actor.

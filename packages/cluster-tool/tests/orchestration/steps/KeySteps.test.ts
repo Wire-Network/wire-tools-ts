@@ -18,6 +18,7 @@ import {
   Steps
 } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
+import type { WireFinalizerKeyPair } from "@wireio/cluster-tool/types/KeyPair"
 import { fixtureConfig, PersistedFixture } from "../../config/clusterConfigFixture.js"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
 
@@ -219,19 +220,29 @@ describe("Steps.keys", () => {
     const config = ssmConfig(),
       publications = Steps.keys.signatureProviderKeyPublications(config)
 
-    it("enumerates the GENESIS identity, every producer node, every producer ACCOUNT, and every operator", () => {
-      // Fixture topology: bios K1+BLS (2) + node owner K1 (1) + 1 producer node K1+BLS (2)
-      // + 21 producer ACCOUNTS × K1+BLS (42) + (3 batch + 1 underwriter) operators × 3
-      // K1/EM/ED (12) = 59.
+    it("enumerates the GENESIS identity, every producer ACCOUNT, and every operator — but NO producer node", () => {
+      // Fixture topology: bios K1+BLS (2) + node owner K1 (1) + 21 producer ACCOUNTS × K1+BLS
+      // (42) + (3 batch + 1 underwriter) operators × 3 K1/EM/ED (12) = 57.
       //
       // The producer-account rows are the point: each account owns its finalizer key (a shared
       // one would fail `regfinkey`'s global uniqueness check), and BOTH halves of an account's
       // set are published under ITS label, because custody is per-identity — the K1 it shares
       // with its node is republished here rather than referenced across labels.
+      //
+      // A producer NODE contributes nothing. Every `--signature-provider` spec a node renders
+      // resolves from an ACCOUNT's label, so publishing under `node_NN` would write a live
+      // signing key to every replication region that no daemon ever reads.
       const producerAccounts = NodeConfig.plan(config)
         .filter(node => node.role === NodeRole.producer)
         .flatMap(node => node.producers)
-      expect(publications).toHaveLength(17 + producerAccounts.length * 2)
+      expect(publications).toHaveLength(15 + producerAccounts.length * 2)
+      NodeConfig.plan(config)
+        .filter(node => node.role === NodeRole.producer)
+        .forEach(node =>
+          expect(
+            publications.filter(publication => publication.label === node.name)
+          ).toEqual([])
+        )
       producerAccounts.forEach(label => {
         expect(
           publications
@@ -269,7 +280,7 @@ describe("Steps.keys", () => {
       expect(ownerKeys[0].keyType).toBe(KeyType.K1)
     })
 
-    it("every rendered daemon secret id has a matching publication (the cross-check that catches an omitted identity)", () => {
+    it("every secret id a daemon RENDERS has a matching publication (the cross-check that catches an omitted identity)", () => {
       // Whatever a node's `--signature-provider` resolves to MUST have been
       // published. This is the invariant, independent of which identities the
       // walker happens to enumerate today.
@@ -283,13 +294,27 @@ describe("Steps.keys", () => {
           node => node.producers.length > 0
         )
       expect(producingNodes.length).toBeGreaterThan(0)
-      producingNodes.forEach(node =>
-        [KeyType.K1, KeyType.BLS].forEach(keyType =>
+      producingNodes.forEach(node => {
+        // Derived from what `NodeopProcess.buildArgs` RENDERS, never from a per-node
+        // [K1, BLS] assumption: one block-signing K1 spec resolved from the first hosted
+        // account's publication label, plus one finalizer BLS spec per hosted account. The
+        // node's own name appears nowhere — it publishes nothing.
+        //
+        // The bios node is the exception worth naming: its single hosted account publishes
+        // under the NODE name, which is what its daemon resolves against. That divergence
+        // between a hosted account's label and the producer name is real, and asserting the
+        // wrong one of the two is how this contract gets broken.
+        const publicationLabels =
+          node.role === NodeRole.bios ? [NodeConfig.BiosName] : node.producers
+        expect(publishedIds).toContain(
+          sourceFor(publicationLabels[0], KeyType.K1).awsSecretId
+        )
+        publicationLabels.forEach(label =>
           expect(publishedIds).toContain(
-            sourceFor(node.name, keyType).awsSecretId
+            sourceFor(label, KeyType.BLS).awsSecretId
           )
         )
-      )
+      })
     })
 
     it("keys each secret id by the AWS ACCOUNT, not the cluster-path basename", () => {
@@ -396,8 +421,7 @@ describe("Steps.keys", () => {
         "publish-node_bios-K1",
         "publish-node_bios-BLS",
         "publish-wireno-K1",
-        "publish-node_00-K1",
-        "publish-node_00-BLS",
+        // No `publish-node_00-*`: a producer node publishes nothing under its own name.
         ...producerAccounts.flatMap(label => [
           `publish-${label}-K1`,
           `publish-${label}-BLS`
@@ -649,14 +673,19 @@ describe("Steps.keys", () => {
       )
     })
 
-    it("a PRODUCER node resolves the very id publication wrote", () => {
+    it("a producing node's FINALIZER key resolves the very id publication wrote", () => {
+      // The node renders one finalizer provider per hosted ACCOUNT, resolved from that account's
+      // own label — never from the node's name, which publishes nothing of its own.
+      const label = NodeConfig.plan(config)
+        .filter(node => node.role === NodeRole.producer)
+        .flatMap(node => node.producers)[0]
+      expect(label).toBeDefined()
       const published = publications.find(
         publication =>
-          publication.source === Steps.keys.SignatureKeySource.node &&
-          publication.keyType === KeyType.BLS
+          publication.label === label && publication.keyType === KeyType.BLS
       )
       expect(published.secretId).toBeDefined()
-      expect(keySourceFor(published.label, KeyType.BLS).awsSecretId).toBe(
+      expect(keySourceFor(label, KeyType.BLS).awsSecretId).toBe(
         published.secretId
       )
     })
@@ -682,8 +711,6 @@ describe("Steps.keys", () => {
     /** The publication descriptor for the fixture's batch-operator K1 key. */
     function operatorK1Publication(version?: string) {
       return {
-        source: Steps.keys.SignatureKeySource.operator,
-        nodeIndex: 0,
         publishPhase: Steps.keys.SignatureKeyPublishPhase.afterOperators,
         label: "batchop.a",
         keyType: KeyType.K1,
@@ -694,6 +721,30 @@ describe("Steps.keys", () => {
     }
 
     /** A context whose key store holds the fixture batch operator's wire key. */
+    /**
+     * A producer ACCOUNT carrying a finalizer key, under its own label.
+     *
+     * Producer nodes publish nothing of their own — every `--signature-provider` spec a node
+     * renders resolves from an ACCOUNT's `publicationLabel` — so a BLS publication is always an
+     * operator identity.
+     */
+    function producerAccountContext(wireFinalizer: WireFinalizerKeyPair) {
+      const ctx = fixtureContext()
+      ctx.keyStore.setOperator({
+        label: "defproducera",
+        publicationLabel: "defproducera",
+        account: "defproducera",
+        type: OperatorType.PRODUCER,
+        wire: {
+          type: KeyType.K1,
+          publicKey: Constants.DEV_K1_PUBLIC_KEY,
+          privateKey: Constants.DEV_K1_PRIVATE_KEY
+        },
+        wireFinalizer
+      })
+      return ctx
+    }
+
     function operatorContext() {
       const ctx = fixtureContext()
       ctx.keyStore.setOperator({
@@ -834,8 +885,6 @@ describe("Steps.keys", () => {
         "publish batchop.a ED",
         {},
         {
-          source: Steps.keys.SignatureKeySource.operator,
-          nodeIndex: 0,
           publishPhase: Steps.keys.SignatureKeyPublishPhase.afterOperators,
           label: "batchop.a",
           keyType: KeyType.ED,
@@ -849,38 +898,25 @@ describe("Steps.keys", () => {
       expect(put.Value).not.toMatch(/^PVT_/)
     })
 
-    it("PutParameters a producer-node BLS key's NATIVE string (PVT_BLS_ IS native)", async () => {
+    it("PutParameters a producer ACCOUNT's BLS key NATIVE string (PVT_BLS_ IS native)", async () => {
       installSSMStoreMock()
-      const ctx = fixtureContext()
-      ctx.keyStore.pushNodes({
-        index: 0,
-        keys: {
-          wire: {
-            type: KeyType.K1,
-            publicKey: Constants.DEV_K1_PUBLIC_KEY,
-            privateKey: Constants.DEV_K1_PRIVATE_KEY
-          },
-          wireFinalizer: {
-            type: KeyType.BLS,
-            publicKey: Constants.DEV_BLS_PUBLIC_KEY,
-            privateKey: Constants.DEV_BLS_PRIVATE_KEY,
-            proofOfPossession: Constants.DEV_BLS_PROOF_OF_POSSESSION
-          }
-        }
+      const ctx = producerAccountContext({
+        type: KeyType.BLS,
+        publicKey: Constants.DEV_BLS_PUBLIC_KEY,
+        privateKey: Constants.DEV_BLS_PRIVATE_KEY,
+        proofOfPossession: Constants.DEV_BLS_PROOF_OF_POSSESSION
       })
       const step = Steps.keys.planPublishSignatureProviderKey(
         Report.Actor.Sysio,
-        "publish-node_00-BLS",
-        "publish node_00 BLS",
+        "publish-defproducera-BLS",
+        "publish defproducera BLS",
         {},
         {
-          source: Steps.keys.SignatureKeySource.node,
-          nodeIndex: 0,
           publishPhase: Steps.keys.SignatureKeyPublishPhase.beforeNodes,
-          label: "node_00",
+          label: "defproducera",
           keyType: KeyType.BLS,
           awsRegions: SSMRegions,
-          secretId: "/wire/c/node_00/BLS"
+          secretId: "/wire/c/defproducera/BLS"
         }
       )
       await step.runner(ctx, step.input, new AbortController().signal)
@@ -901,36 +937,23 @@ describe("Steps.keys", () => {
         ),
         bls = candidates.find(key => key.toString().slice(8).includes("_"))
       expect(bls).toBeDefined()
-      const ctx = fixtureContext()
-      ctx.keyStore.pushNodes({
-        index: 0,
-        keys: {
-          wire: {
-            type: KeyType.K1,
-            publicKey: Constants.DEV_K1_PUBLIC_KEY,
-            privateKey: Constants.DEV_K1_PRIVATE_KEY
-          },
-          wireFinalizer: {
-            type: KeyType.BLS,
-            publicKey: bls.toPublic().toString(),
-            privateKey: bls.toString(),
-            proofOfPossession: bls.proofOfPossessionString
-          }
-        }
+      const ctx = producerAccountContext({
+        type: KeyType.BLS,
+        publicKey: bls.toPublic().toString(),
+        privateKey: bls.toString(),
+        proofOfPossession: bls.proofOfPossessionString
       })
       const step = Steps.keys.planPublishSignatureProviderKey(
         Report.Actor.Sysio,
-        "publish-node_00-BLS",
-        "publish node_00 BLS",
+        "publish-defproducera-BLS",
+        "publish defproducera BLS",
         {},
         {
-          source: Steps.keys.SignatureKeySource.node,
-          nodeIndex: 0,
           publishPhase: Steps.keys.SignatureKeyPublishPhase.beforeNodes,
-          label: "node_00",
+          label: "defproducera",
           keyType: KeyType.BLS,
           awsRegions: SSMRegions,
-          secretId: "/wire/c/node_00/BLS"
+          secretId: "/wire/c/defproducera/BLS"
         }
       )
       await step.runner(ctx, step.input, new AbortController().signal)
@@ -1084,7 +1107,6 @@ describe("Steps.keys", () => {
         "/wire/test/depositoraaa/BLS"
       ])
       publications.forEach(publication => {
-        expect(publication.source).toBe(Steps.keys.SignatureKeySource.operator)
         expect(publication.publishPhase).toBe(
           Steps.keys.SignatureKeyPublishPhase.afterOperators
         )

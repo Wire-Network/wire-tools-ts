@@ -359,20 +359,12 @@ export namespace KeySteps {
 
   // ── SSM key publication (create --signature-provider-type SSM) ─────────────
 
-  /** Which store a published key is read back from. */
-  export enum SignatureKeySource {
-    node = "node",
-    operator = "operator"
-  }
-
   /**
    * WHEN a key is published, which is independent of WHERE it lives.
    *
-   * Conflating the two is what made the bios failure possible: the genesis
-   * identity's keys live in the operator map, but they must be in SSM before
-   * the bios node starts — and the operator publish phase composes long after
-   * it. `SignatureKeySource` answers "which keystore"; this answers "which
-   * phase", and a row needs both.
+   * The genesis identity is why this is its own axis: its keys are provisioned
+   * with the operators, but they must be in SSM BEFORE the bios node starts —
+   * and the operator publish phase composes long after it.
    */
   export enum SignatureKeyPublishPhase {
     /** Before `BiosNode` — every key a nodeop fetches at startup. */
@@ -384,18 +376,14 @@ export namespace KeySteps {
   /**
    * One identity whose keys are published to SSM — the walker's unit.
    *
-   * `source` says only WHERE the identity's key set lives (the node list vs the
-   * operator map); `label` is the secret-id `{account}` segment the daemon
-   * renders. The two differ for the genesis identity, which is precisely the
-   * case a single per-kind walker used to lose.
+   * `label` is both the key-store handle the private key is read from and the
+   * secret-id `{account}` segment the daemon renders, so the two can never
+   * drift. For the genesis identity that label is the NODE name (`node_bios`),
+   * which is exactly what the bios daemon resolves its specs against.
    */
   interface SignatureProviderKeyIdentity {
-    /** Secret-id `{account}` segment — a node name or an operator handle. */
+    /** The operator handle, which is also the secret-id `{account}` segment. */
     label: string
-    /** Which keystore holds the identity's key set. */
-    source: SignatureKeySource
-    /** Producer-node topology index (only meaningful when `source === node`). */
-    nodeIndex: number
     /** Which publish phase this identity's keys belong to. */
     publishPhase: SignatureKeyPublishPhase
     /** Every curve this identity publishes. */
@@ -404,13 +392,9 @@ export namespace KeySteps {
 
   /** One signing key to publish to SSM — metadata ONLY (never key material). */
   export interface SignatureProviderKeyPublication {
-    /** The store the runner reads the private key from. */
-    source: SignatureKeySource
-    /** Producer-node topology index (used when `source === node`). */
-    nodeIndex: number
-    /** Which publish phase this key belongs to (independent of `source`). */
+    /** Which publish phase this key belongs to. */
     publishPhase: SignatureKeyPublishPhase
-    /** The key's label (node name or operator label) — the secret-id `{account}`. */
+    /** The key's operator label — also the secret-id `{account}` segment. */
     label: string
     /** The key's curve — selects which key of the source. */
     keyType: KeyType
@@ -458,8 +442,6 @@ export namespace KeySteps {
       { account: cluster } = config.awsClusterNodeConfig,
       { ssm } = config.signatureProvider
     return (identity, keyType) => ({
-      source: identity.source,
-      nodeIndex: identity.nodeIndex,
       publishPhase: identity.publishPhase,
       label: identity.label,
       keyType,
@@ -508,8 +490,6 @@ export namespace KeySteps {
   ): SignatureProviderKeyIdentity {
     return {
       label,
-      source: SignatureKeySource.operator,
-      nodeIndex: 0,
       publishPhase: SignatureKeyPublishPhase.afterOperators,
       keyTypes: operatorKeyTypes(type)
     }
@@ -593,34 +573,22 @@ export namespace KeySteps {
         // renders. That split is exactly why it needs an explicit row.
         {
           label: NodeConfig.BiosName,
-          source: SignatureKeySource.operator,
-          nodeIndex: 0,
           publishPhase: SignatureKeyPublishPhase.beforeNodes,
           keyTypes: [KeyType.K1, KeyType.BLS]
         },
         // The bootstrap node owner — signs `roa::newuser` for every operator.
         {
           label: Constants.BOOTSTRAP_NODE_OWNER,
-          source: SignatureKeySource.operator,
-          nodeIndex: 0,
           publishPhase: SignatureKeyPublishPhase.beforeNodes,
           keyTypes: [KeyType.K1]
         },
-        // Producer nodes — block signing + finality, keys in `keyStore.nodes`.
+        // NOTE: producer NODES publish nothing under their own name. A producing node renders
+        // every `--signature-provider` spec from an ACCOUNT's `publicationLabel` -- the
+        // block-signing K1 from its first hosted account, one finalizer BLS per hosted account --
+        // so a `node_NN` parameter is fetched by nobody. Publishing one wrote a live signing key
+        // into every replication region for no reader. The bios node is not an exception: its
+        // identity is the operator row above, whose label IS the node name the daemon renders.
         //
-        // NOTE: since finality moved to per-ACCOUNT finalizer keys, no nodeop fetches the
-        // node-labelled BLS parameter and no finalizer policy names it. Dropping it would narrow
-        // the custody surface, but the node/account publication split also decides which label
-        // `buildArgs` resolves the BLOCK-SIGNING K1 from, and SSM startup is exercised only by the
-        // cloud cluster workflow — so it is left in place pending a verification pass that can
-        // actually observe an SSM boot. Tracked rather than changed blind.
-        ...producerNodes(config).map(node => ({
-          label: node.name,
-          source: SignatureKeySource.node,
-          nodeIndex: node.index,
-          publishPhase: SignatureKeyPublishPhase.beforeNodes,
-          keyTypes: [KeyType.K1, KeyType.BLS]
-        })),
         // Producer ACCOUNTS — each owns a BLS finalizer key of its own, because `regfinkey`
         // enforces a global uniqueness check and siblings on one node would otherwise share
         // (and collide on) their node's key. The K1 they sign blocks with is still the node's,
@@ -630,8 +598,6 @@ export namespace KeySteps {
         ...producerNodes(config).flatMap(node =>
           node.producers.map(label => ({
             label,
-            source: SignatureKeySource.operator,
-            nodeIndex: node.index,
             // beforeNodes, not afterOperators: a producing node renders these accounts'
             // `--signature-provider ...SSM:` specs at LAUNCH, so the parameters have to exist
             // by then. `ProducerIdentities` materializes the keys just before this runs.
@@ -759,15 +725,10 @@ export namespace KeySteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    // ONE resolver over ONE shape: a node's key set and an operator account are
-    // both `SigningKeySet`s, so `source` selects only WHERE the identity lives,
-    // never how its curves are read.
-    const identity: SigningKeySet = match(input.source)
-        .with(SignatureKeySource.node, () => ctx.keyStore.node(input.nodeIndex).keys)
-        .with(SignatureKeySource.operator, () =>
-          ctx.keyStore.assertOperator(input.label)
-        )
-        .exhaustive(),
+    // EVERY published identity is an operator account, keyed by its own label -- including the
+    // genesis one, whose label is the node name the bios daemon renders. Producer nodes publish
+    // nothing of their own, so there is no second keystore to select between.
+    const identity: SigningKeySet = ctx.keyStore.assertOperator(input.label),
       privateKey = identityPrivateKey(identity, input.keyType, input.label)
     const nativePrivateKey = PrivateKey.from(privateKey).toNativeString(),
       tags: Tag[] =
