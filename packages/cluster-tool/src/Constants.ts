@@ -252,7 +252,6 @@ export namespace Constants {
 
   /** OPP system accounts (need `sysio.code` on their active permission). */
   export const OPP_SYSTEM_ACCOUNTS = [
-    "sysio.authex",
     "sysio.chains",
     "sysio.tokens",
     "sysio.epoch",
