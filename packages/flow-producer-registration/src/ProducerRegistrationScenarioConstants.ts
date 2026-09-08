@@ -67,21 +67,10 @@ export namespace ProducerRegistrationScenarioConstants {
    */
   export const SnapshotTargetAttestations = 1
   /**
-   * Rolling window the miss RATE is measured over — the contract default of a day. The flow never
-   * runs long enough to roll it, so every round it observes belongs to one window.
-   */
-  export const MissedRoundWindowMs = 24 * 60 * 60 * 1_000
-  /**
-   * Percent of its scheduled rounds a producer may miss inside that window. The flow demotes
-   * through the CONSECUTIVE gate, so this is set to the contract default and left alone; it is
-   * here because `setscorecfg` installs the whole config, not a subset.
-   */
-  export const MaxPctMissedRoundsInWindow = 5
-  /**
-   * Blocks a producer must deliver within its own round for that round to count as served. Set to
-   * 0 — the DISABLED spelling — because this flow demotes by stopping a node outright, so every
-   * round it charges is a whole round with no blocks at all. Leaving the check armed would make
-   * the assertions depend on how many blocks the node happened to land before it died.
+   * Blocks a producer must deliver for a round to count as served. Set to 0 — the disabled
+   * spelling — because this flow demotes by stopping a node outright, so every round it charges
+   * has no blocks at all. Armed, the assertions would depend on how many blocks the node landed
+   * before it died.
    */
   export const MinBlocksPerRound = 0
   /**
@@ -99,8 +88,6 @@ export namespace ProducerRegistrationScenarioConstants {
     benchmark_weight: 0,
     max_consecutive_missed_rounds: MaxConsecutiveMissedRounds,
     snapshot_target_attestations: SnapshotTargetAttestations,
-    missed_round_window_ms: MissedRoundWindowMs,
-    max_pct_missed_rounds_in_window: MaxPctMissedRoundsInWindow,
     min_blocks_per_round: MinBlocksPerRound
   }
 
