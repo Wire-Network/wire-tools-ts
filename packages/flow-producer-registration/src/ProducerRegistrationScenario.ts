@@ -546,18 +546,24 @@ export class ProducerRegistrationScenario extends FlowScenario {
       ),
       verifyStep(
         Actor.Sysio,
-        "producing-clears-the-streak",
-        "the block it just produced is what clears the miss streak",
+        "serving-a-round-clears-the-streak",
+        "serving its round is what clears the miss streak",
         async ctx => {
-          const producer = await readProducerRow(ctx)
-          if (producer == null) {
-            throw new Error("the producer's row disappeared after it produced again")
-          }
-          if (producer.consecutive_missed_rounds !== 0) {
-            throw new Error(
-              `producing left the miss streak at ${producer.consecutive_missed_rounds}`
-            )
-          }
+          // A round is scored once, when it ENDS — the block count is only known at the
+          // transition to the next producer. So the streak clears up to a round after the first
+          // block appears, not on it.
+          await pollUntil(
+            "miss streak cleared by a served round",
+            async () => {
+              const producer = await readProducerRow(ctx)
+              if (producer == null) {
+                throw new Error("the producer's row disappeared after it produced again")
+              }
+              return producer.consecutive_missed_rounds === 0
+            },
+            Constants.scheduleDeadlineMs(ScheduleSize),
+            Constants.PollIntervalMs
+          )
         },
         {}
       )
