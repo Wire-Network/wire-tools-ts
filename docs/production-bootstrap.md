@@ -312,12 +312,6 @@ Drives the two `sysio.roa` actions the OPP NFT-claim depot (`sysio.msgch`) would
     aborting the transaction, so the tooling follows with a verify that the `nodeowners` row exists
     (surfacing the audit rejection if not).
 
-`eth_address` is a trailing ABI binary extension. Deploying the upgraded contracts therefore does not
-invalidate old four-field `nodeownreg` payloads or old three-field `sysio.authex::recordlink` payloads;
-legacy callers still register/link without performing a pre-link DClaim sweep. Upgraded tooling appends
-the address and enables the sweep. This permits the contract release to precede the libraries and tools
-releases without breaking existing cluster bootstrap and E2E callers.
-
 ## Stage 11 — Outpost deploys, then registry seeding + underwriter config
 The ETH and SOL outposts deploy here (chain-side, not depot actions): anvil starts (instamine), the Ethereum
 outpost contracts deploy + seed, anvil switches to interval mining; solana-test-validator starts with

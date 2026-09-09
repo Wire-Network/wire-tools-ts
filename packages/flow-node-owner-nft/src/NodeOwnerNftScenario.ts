@@ -70,9 +70,7 @@ async function assertNodeOwnerRegistrationAborts(
   ethereumPublicKey: string,
   abortPattern: RegExp
 ): Promise<void> {
-  // Inferred so the flow compiles against both the published pre-extension
-  // SDK type and the upgraded optional-extension type during staged rollout.
-  const registration = {
+  const registration: SysioContracts.SysioRoaNodeownregAction = {
     owner: ownerAccount,
     tier,
     eth_pub_key: ethereumPublicKey,

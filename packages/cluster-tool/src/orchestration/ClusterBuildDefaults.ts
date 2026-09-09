@@ -198,9 +198,7 @@ export namespace ClusterBuildDefaults {
       // outpost deploys and publish the operator-daemon artifacts from the
       // external config instead (verifying the endpoints are reachable).
       isExternalOutpost = config.externalOutposts != null
-    // Keep this inferred/widened payload compatible with both the published
-    // pre-extension SDK type and the upgraded optional-extension SDK type.
-    const bootstrapNodeOwnerRegistration = {
+    const bootstrapNodeOwnerRegistration: SysioContracts.SysioRoaNodeownregAction = {
       owner: Constants.BOOTSTRAP_NODE_OWNER,
       tier: NodeOwnerTier.T1,
       eth_pub_key: bootstrapNodeOwnerEth.publicKey,
