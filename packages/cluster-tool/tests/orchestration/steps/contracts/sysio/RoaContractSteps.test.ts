@@ -24,9 +24,7 @@ describe("Steps.contracts.sysio.roa", () => {
   })
 
   it("nodeownreg carries the roa::nodeownreg data", () => {
-    // Inferred so this rollout test compiles against both the published
-    // pre-extension SDK type and the upgraded optional-extension type.
-    const data = {
+    const data: SysioContracts.SysioRoaNodeownregAction = {
       owner: "wireno",
       tier: NodeOwnerTier.T1,
       eth_pub_key: "PUB_EM_examplekey",

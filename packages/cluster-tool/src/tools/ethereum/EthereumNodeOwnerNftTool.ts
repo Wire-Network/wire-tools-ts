@@ -255,9 +255,7 @@ export async function pushNodeOwnerReg(
   wirePubKey: string
 ): Promise<void> {
   try {
-    // An inferred variable is structurally assignable to both the published
-    // pre-extension SDK action type and the upgraded optional-extension type.
-    const registration = {
+    const registration: SysioContracts.SysioRoaNodeownregAction = {
       owner: ownerAccount,
       tier,
       eth_pub_key: ethPubKey,
