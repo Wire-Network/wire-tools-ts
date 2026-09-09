@@ -52,6 +52,35 @@ package dynamically and runs them through a work-stealing pool
 (`FLOW_MAX_CONCURRENCY`); never special-case one flow's environment there —
 and never hand-invoke that pool locally.
 
+## @wireio dependency updates (release-triggered)
+
+- `scripts/update-wireio-deps.mjs` updates every `@wireio/*` range this repo
+  declares — origin-agnostic (the dep list is assembled dynamically by
+  scanning every `package.json`; no pre-existing package list), each package
+  to ITS OWN npm `latest`, range operators preserved, `workspace:*`
+  untouched, `resolutions` covered. It writes the working tree by default on
+  any branch, locally or in GHA; `--dry-run` previews without writing (exit 2
+  when updates exist) in human-readable form, or as one JSON document with
+  `--json`.
+- `.github/workflows/update-wireio-deps.yaml` runs it on the
+  `wire-libraries-ts-release` repository_dispatch (fired by that repo's
+  tag-release on stable releases) and on manual `workflow_dispatch` (optional
+  `reason` input): `gh workflow run update-wireio-deps.yaml -f reason=…`.
+  Because bot-authored PRs trigger no workflow runs in this repo, the
+  workflow gates the updated ranges ITSELF (the ci.yaml install+build+test
+  sequence, in a read-only job) before its write-scoped job opens a NEW
+  `chore/update-wireio-deps-<timestamp>-<pkgs>` branch + PR with reviewers
+  assigned (jglanz + bearcubsvet).
+- A red `update-and-gate` run here is the ONLY failure signal (the
+  wire-libraries-ts release itself is unaffected); its jest output is uploaded
+  as the `update-gate-junit` artifact. A legitimately failing gate means the
+  updated packages break this repo — fix that first; the next dispatch or
+  manual run opens a fresh PR.
+- This repo's own release flow: `prepare-release.yaml` REFUSES to run while a
+  `release/prep-v*` PR is still open (one release in flight at a time), and
+  `tag-release.yaml` auto-triggers when a release PR merges —
+  `workflow_dispatch` remains the manual/recovery path for both.
+
 ## Monorepo Structure
 
 pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:

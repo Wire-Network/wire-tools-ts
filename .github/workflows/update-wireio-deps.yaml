@@ -1,0 +1,270 @@
+name: "Update @wireio Dependencies"
+
+# Opens a PR that updates every `@wireio/*` dependency this monorepo declares
+# to its own latest npm version (scripts/update-wireio-deps.mjs — origin-
+# agnostic, per-package versions, range operators preserved).
+#
+# Two triggers:
+#   - repository_dispatch `wire-libraries-ts-release` — fired by
+#     wire-libraries-ts's tag-release.yaml after every STABLE publish; the
+#     payload carries a human-readable `reason`;
+#   - workflow_dispatch — manual, with the same optional `reason` input.
+#
+# The reason is UNTRUSTED input: it rides env vars (never interpolated into a
+# script body — the same discipline as prepare-release.yaml's inputs) and is
+# rendered into the PR body via a quoted printf only. Versions come from npm
+# itself (`dist-tags.latest`, --prefer-online) — the payload cannot steer what
+# is written.
+#
+# THIS WORKFLOW IS THE CI GATE for the PR it opens: bot-authored PRs get no
+# checks in wire-tools-ts and only approval-gated ones in wire-libraries-ts,
+# so the update-and-gate job runs the same install+build+test sequence
+# ci.yaml and tag-release.yaml use, against the UPDATED versions, BEFORE any
+# PR opens. A red update-and-gate run (with its JUnit artifact) is the
+# failure signal.
+#
+# Least-privilege split: update-and-gate executes freshly-resolved third-party
+# code, so it runs under `contents: read` with no persisted git credentials;
+# open-pr holds the write scopes and runs NO third-party code — the two hand
+# off through a same-run artifact. Every run gets a NEW timestamped branch and
+# PR (reviewers: jglanz + bearcubsvet); nothing is ever force-pushed.
+
+on:
+  repository_dispatch:
+    types: [wire-libraries-ts-release]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why this update is being dispatched (lands in the PR body)"
+        type: string
+        required: false
+
+# Explicit zero floor — each job grants exactly what it needs (job-level
+# permissions replace this entirely).
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+# One update at a time; never cancel one mid-flight (a cancelled run can leave
+# a pushed branch with no PR opened for it).
+concurrency:
+  group: update-wireio-deps
+  cancel-in-progress: false
+
+jobs:
+  update-and-gate:
+    name: Update the ranges and run the gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # This job executes freshly-resolved third-party code (the gate's installs
+    # and builds), so it carries NO write token.
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.detect.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # Both jobs pin the SAME commit — the event-time master head — so the
+          # open-pr overlay can never silently revert a change that lands on
+          # master mid-run.
+          ref: ${{ github.sha }}
+          # No git writes happen in this job — don't leave a token in
+          # .git/config next to third-party code.
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Install script dependencies
+        # The update script itself needs only the root devDeps (zx); the full
+        # gate install below re-resolves the UPDATED ranges.
+        # --no-frozen-lockfile: wire-libraries-ts commits a lockfile that
+        # legitimately drifts (.pnpmfile OPP-model resolution — the flag is
+        # its own ci.yaml/tag-release precedent); a no-op in lockfile-less
+        # wire-tools-ts.
+        run: pnpm install --ignore-scripts --no-frozen-lockfile
+
+      - name: Update the @wireio/* dependencies
+        run: |
+          set -euo pipefail
+          node scripts/update-wireio-deps.mjs \
+            --report-file update-output/report.md \
+            --summary-file update-output/summary.json
+
+      - name: Detect manifest changes
+        id: detect
+        run: |
+          set -euo pipefail
+          # Scoped to the manifests the script writes: in a lockfile repo the
+          # script-deps install may legitimately rewrite pnpm-lock.yaml, which
+          # must never turn a no-op run into changed=true. (git's default
+          # pathspec is fnmatch without FNM_PATHNAME, so '*package.json'
+          # matches at every depth, root included.)
+          if git diff --quiet -- '*package.json'; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already current — nothing to open."
+            # A release-triggered run that changes NOTHING is suspicious by
+            # definition (possible npm propagation lag) — make it visible.
+            if [[ "$GITHUB_EVENT_NAME" == "repository_dispatch" ]]; then
+              echo "::warning::release-triggered run produced no updates — possible npm propagation lag; re-run shortly if a release just published"
+            fi
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Refresh the lockfile (lockfile repos only)
+        if: steps.detect.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          # wire-libraries-ts COMMITS pnpm-lock.yaml; wire-tools-ts gitignores
+          # it — but an earlier install still CREATES one on disk there, so the
+          # test is trackedness, not existence. The guard keeps this workflow
+          # byte-identical in both repos.
+          if git ls-files --error-unmatch pnpm-lock.yaml >/dev/null 2>&1; then
+            pnpm install --lockfile-only --ignore-scripts --no-frozen-lockfile
+          fi
+
+      - name: Gate — the updated ranges must install, build and test
+        if: steps.detect.outputs.changed == 'true'
+        env:
+          JEST_JUNIT_OUTPUT_DIR: reports/junit
+          JEST_JUNIT_OUTPUT_NAME: jest-junit.xml
+        run: |
+          set -euo pipefail
+          # The PR opened by open-pr will carry NO checks (bot-authored events
+          # do not trigger workflows in this repo), so THIS step is the gate —
+          # the same double-install + build + root-jest sequence ci.yaml and
+          # tag-release.yaml run, now resolving the UPDATED ranges. A red run
+          # here means the updated packages break this repo; no PR opens until
+          # that is fixed. (--no-frozen-lockfile: see the script-deps install
+          # note.)
+          pnpm install --no-frozen-lockfile
+          pnpm build
+          pnpm install --no-frozen-lockfile
+          pnpm run build
+          pnpm run test:ci
+
+      - name: Upload the gate's test results
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: update-gate-junit
+          path: reports/junit/
+          if-no-files-found: ignore
+
+      - name: Upload the updated manifests and report
+        if: steps.detect.outputs.changed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: update-manifests
+          # Explicit paths, not **/package.json: the upload globber follows
+          # symlinks and would walk the pnpm node_modules forest before any
+          # exclude could filter it. Root package.json is load-bearing: it
+          # keeps the artifact's least-common-ancestor at the workspace root,
+          # so open-pr's download overlays every file back at its real path.
+          # examples/* and pnpm-lock.yaml match nothing in wire-tools-ts —
+          # harmless (if-no-files-found evaluates the TOTAL result set).
+          path: |
+            package.json
+            packages/*/package.json
+            examples/*/package.json
+            pnpm-lock.yaml
+            update-output/
+          if-no-files-found: error
+
+  open-pr:
+    name: Open the update PR
+    needs: update-and-gate
+    if: needs.update-and-gate.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The write scopes live ONLY here — this job runs no pnpm install and no
+    # third-party code beyond the pinned actions. (No `actions: read`: a
+    # same-run artifact download authenticates with the runner's scoped
+    # credential.)
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # Untrusted trigger metadata → env var; rendered via quoted printf only.
+      REASON: ${{ github.event.client_payload.reason || inputs.reason }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # Same commit as update-and-gate (see its checkout comment). Every
+          # run pushes a NEW uniquely-named branch, so no history depth or
+          # remote-branch refs are needed.
+          ref: ${{ github.sha }}
+
+      - name: Restore the updated manifests and report
+        # Pinned on the SAME v4 major as the upload (newer majors changed
+        # digest handling and client internals; this hand-off is unexercisable
+        # before merge, so it rides the guaranteed-compatible matched pair).
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: update-manifests
+
+      - name: Open the update PR
+        run: |
+          set -euo pipefail
+
+          updated_count="$(jq -r '.updated | length' update-output/summary.json)"
+          if [[ "$updated_count" -eq 0 ]]; then
+            echo "::error::summary reports zero updated packages but the tree changed" >&2
+            exit 1
+          fi
+
+          # Branch: chore/update-wireio-deps-<UTC ts>-<abbrev pkg names>.
+          # Each updated package's unscoped name, truncated to 6 chars,
+          # deduped, joined; the whole suffix capped so branch names stay sane.
+          timestamp="$(date -u +%Y%m%d-%H%M%S)"
+          suffix="$(jq -r '.updated | keys | map(sub("^@wireio/"; "") | .[0:6]) | unique | join("-") | .[0:48] | sub("-+$"; "")' update-output/summary.json)"
+          branch="chore/update-wireio-deps-${timestamp}-${suffix}"
+          title="chore(deps): update @wireio/* (${updated_count} package(s))"
+
+          # The reason is untrusted trigger metadata: flatten newlines, strip
+          # fence-breakers, cap the length, and render it inside a text fence —
+          # so issue-closing keywords, @-mentions, and markdown forgery are all
+          # inert. (printf's format string is a literal; %s carries the value.)
+          reason_safe="$(printf '%s' "${REASON:-manual dispatch (no reason given)}" \
+            | tr -d "\`" | tr '\n\r' '  ' | cut -c1-500)"
+          {
+            cat update-output/report.md
+            printf "\n**Reason:**\n\n\`\`\`text\n%s\n\`\`\`\n" "$reason_safe"
+            printf '\n**Validation:** this run installed, built, and ran the root jest gate against these versions before opening the PR (%s/%s/actions/runs/%s). The PR itself shows no checks — bot-authored events do not trigger workflows in this repo.\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+          } > "$RUNNER_TEMP/pr-body.md"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          # -u: stage every tracked modification — exactly the script's
+          # manifest writes plus (in a lockfile repo) the refreshed lockfile;
+          # update-output/ is untracked and stays out.
+          git add -u
+          if git diff --cached --quiet; then
+            echo "::notice::tree already matches — nothing to open"
+            exit 0
+          fi
+          git commit -m "$title"
+          git push origin "$branch"
+
+          # Decoupled: the PR landing and the reviewer request fail
+          # independently — a failed reviewer request (someone leaves the org)
+          # must not red a run whose PR already exists.
+          pr_url="$(gh pr create --base master --head "$branch" \
+            --title "$title" --body-file "$RUNNER_TEMP/pr-body.md")"
+          gh pr edit "$pr_url" --add-reviewer jglanz --add-reviewer bearcubsvet \
+            || echo "::warning::could not request reviewers on ${pr_url} — assign manually"
+          echo "Opened ${pr_url}"

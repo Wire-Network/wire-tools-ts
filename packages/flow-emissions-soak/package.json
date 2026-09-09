@@ -12,9 +12,9 @@
   "dependencies": {
     "@solana/web3.js": "^1.98.0",
     "@wireio/cluster-tool": "workspace:*",
-    "@wireio/sdk-core": "^1.0.17",
-    "@wireio/opp-typescript-models": "^1.0.26",
-    "@wireio/shared": "^1.0.17",
+    "@wireio/sdk-core": "^1.0.88",
+    "@wireio/opp-typescript-models": "^1.0.48",
+    "@wireio/shared": "^1.0.88",
     "ethers": "^6.14.0"
   },
   "devDependencies": {

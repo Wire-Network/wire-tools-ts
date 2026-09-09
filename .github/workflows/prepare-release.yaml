@@ -14,6 +14,8 @@ name: "Prepare Release"
 # so the wire-platform-ruleset-1 "pull request required" rule stays satisfied
 # without any bypass. The bot is the prep branch's last pusher, so the ruleset's
 # require_last_push_approval is satisfied by any human teammate's approval.
+# A prepare run REFUSES to start while a previous release PR is still open, so
+# at most one release is in flight at a time.
 #
 # The bump type decides the channel: `prerelease` produces a `-<preid>.N` suffix
 # (channel = that preid, e.g. dev/rc); patch/minor/major produce a stable
@@ -46,10 +48,13 @@ defaults:
   run:
     shell: bash
 
-# One prep run per bump type, and never cancel one mid-flight: a cancelled run
-# can leave a pushed prep branch with no PR opened for it.
+# One prep run at a time — a constant group, not per-bump-type: the open-PR
+# guard below declares one release in flight, and a per-input group would let
+# two DIFFERENT-bump dispatches run concurrently, both passing the guard before
+# either PR exists. Never cancel one mid-flight: a cancelled run can leave a
+# pushed prep branch with no PR opened for it.
 concurrency:
-  group: prepare-release-${{ inputs.bump }}-${{ inputs.preid }}
+  group: prepare-release
   cancel-in-progress: false
 
 jobs:
@@ -69,6 +74,25 @@ jobs:
           ref: master
           # Unshallowed so origin/<prep-branch> exists for --force-with-lease.
           fetch-depth: 0
+
+      - name: Refuse when a release PR is already open
+        run: |
+          set -euo pipefail
+          # One release in flight at a time: an un-merged release/prep-v* PR
+          # means a previous prepare was never resolved — a second bump would
+          # race it (two competing version numbers for the next tag). Merge or
+          # close the open PR first; this run fails by design. Same-repo,
+          # bot-authored PRs only: prep PRs are always bot-created here, and an
+          # unfiltered match would let ANY fork PR named release/prep-v* block
+          # releases indefinitely (the repo is public) — a hand-created prep PR
+          # is deliberately invisible to this guard; do not "fix" that away.
+          open_release_prs="$(gh pr list --base master --state open --limit 100 \
+            --json number,headRefName,isCrossRepository,author \
+            --jq '[.[] | select(.isCrossRepository == false and .author.login == "app/github-actions" and (.headRefName | startswith("release/prep-v")))] | map("#\(.number) (\(.headRefName))") | join(", ")')"
+          if [[ -n "$open_release_prs" ]]; then
+            echo "::error::release PR(s) already open: ${open_release_prs} — merge or close before preparing a new release" >&2
+            exit 1
+          fi
 
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
