@@ -45,6 +45,16 @@ import type { ClioError } from "../../clients/wire/clio/ClioRunner.js"
 // here so flows keep importing it from @wireio/cluster-tool.
 export { NodeOwnerTier }
 
+/**
+ * `nodeownreg` payload accepted by both the released SDK and the WIRE-352 SDK.
+ * The released generated action predates `eth_address`, while the updated
+ * contract requires it.
+ */
+export interface NodeOwnerRegAction
+  extends SysioContracts.SysioRoaNodeownregAction {
+  eth_address: string
+}
+
 /** nodeownerreg.reg_status values (mirror sysio.roa.hpp). */
 export enum NodeOwnerRegStatus {
   Confirmed = 0,
@@ -255,7 +265,7 @@ export async function pushNodeOwnerReg(
   wirePubKey: string
 ): Promise<void> {
   try {
-    const registration: SysioContracts.SysioRoaNodeownregAction = {
+    const registration: NodeOwnerRegAction = {
       owner: ownerAccount,
       tier,
       eth_pub_key: ethPubKey,
