@@ -55,7 +55,7 @@ that matches the shape returned by:
 
 The synthetic dump includes:
 - Controlled ETH stakers (test holds the wallets) — drives the
-  `importseed → linkswept → claim` path end-to-end.
+  `importseed → createlink (inline linkswept) → claim` path end-to-end.
 - Bulk purchasers + stakers with overlapping addresses and partial
   `yieldClaimed` rows — exercises the dedup + netting paths in
   `convertImportSeed`.

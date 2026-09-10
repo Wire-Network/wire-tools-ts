@@ -3,7 +3,6 @@ import { getLogger } from "@wireio/shared"
 import { SysioContracts } from "@wireio/sdk-core"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import {
-  abiEnumValue,
   AuthExLinkTool,
   ClusterBuildContext,
   ClusterBuildStep,
@@ -28,20 +27,12 @@ import {
 
 const log = getLogger(__filename)
 
-const { SysioContractAccount, SysioContractName } = SysioContracts
-
-/** `sysio.authex@active` — `linkswept` is an AUTHEX-authed sweep, mirroring the launch orchestrator. */
-const AuthexActiveAuthorization = [
-  {
-    actor: SysioContractAccount[SysioContractName.authex],
-    permission: "active"
-  }
-]
+const { SysioContractName } = SysioContracts
 
 /**
  * Flow-local step factories for the emissions soak: dclaim seeding
- * (importseed / importdone), claimer provisioning (account + authex link +
- * linkswept sweep), the per-staker claim, and the kiod wallet unlock the old
+ * (importseed / importdone), claimer provisioning (account + authex link with
+ * its inline sweep), the per-staker claim, and the kiod wallet unlock the old
  * suite performed before each write burst.
  */
 export namespace EmissionsSoakScenarioSteps {
@@ -326,72 +317,6 @@ export namespace EmissionsSoakScenarioSteps {
       privateKey: ethereumPrivateKeyFromWallet(wallet),
       ethereumWallet: wallet
     })
-  }
-
-  // ── sweep the staker's unmapped credit into pending_claims ────────────────
-
-  /** Input for {@link planLinkswept}. */
-  export interface LinksweptInput extends StepInput {
-    readonly kind: "EmissionsSoakScenarioSteps.LinksweptInput"
-    readonly wireAccount: string
-    /**
-     * The exact bytes `importseed` stored for this staker — the 20-byte ETH
-     * address as lower-case hex (NOT the 33-byte compressed pubkey); linkswept
-     * matches on raw byte equality.
-     */
-    readonly nativePubkeyHex: string
-  }
-
-  /**
-   * `sysio.dclaim::linkswept` — sweep the staker's `unmapped_tokens` row into
-   * `pending_claims`. `createlink` does NOT auto-sweep; in a real launch an
-   * off-chain orchestrator batches one sweep per new link — mirrored here.
-   */
-  export function planLinkswept<
-    C extends ClusterBuildContext = ClusterBuildContext
-  >(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    wireAccount: string,
-    nativePubkeyHex: string
-  ): ClusterBuildStep<C, LinksweptInput> {
-    return ClusterBuildStep.create<C, LinksweptInput>(
-      actor,
-      name,
-      description,
-      options,
-      {
-        kind: "EmissionsSoakScenarioSteps.LinksweptInput",
-        wireAccount,
-        nativePubkeyHex
-      },
-      runLinkswept
-    )
-  }
-
-  /** Named runner — `sysio.dclaim::linkswept`, AUTHEX-authed. */
-  export async function runLinkswept<C extends ClusterBuildContext>(
-    ctx: C,
-    input: LinksweptInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    await ctx.wire
-      .getSysioContract(SysioContractName.dclaim)
-      .actions.linkswept.invoke(
-        {
-          wire_account: input.wireAccount,
-          // Proto ChainKind → the dclaim ABI's own enum, bridged by VALUE.
-          chain: abiEnumValue(
-            SysioContracts.SysioDclaimChainkind,
-            Constants.EthereumChain
-          ),
-          native_pubkey: input.nativePubkeyHex
-        },
-        { authorization: AuthexActiveAuthorization }
-      )
   }
 
   // ── claim the staker's pending balance ─────────────────────────────────────

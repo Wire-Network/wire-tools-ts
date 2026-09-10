@@ -24,6 +24,12 @@ import {
  * `nodeownerreg` audit row that the scenario's verify steps assert.
  */
 export namespace NodeOwnerNftScenarioRegistrationSteps {
+  /** A depositor EM public key and its canonical 20-byte, lowercase-hex EVM address. */
+  export interface EthereumIdentity {
+    readonly publicKey: string
+    readonly nativeAddress: string
+  }
+
   /**
    * A new depositor `PUB_EM_*` public key, derived from the run's anvil
    * mnemonic at `ethereumHdIndex` — deterministic, and distinct per claim when
@@ -38,6 +44,14 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
     ctx: C,
     ethereumHdIndex: number
   ): Promise<string> {
+    return (await newEthereumIdentity(ctx, ethereumHdIndex)).publicKey
+  }
+
+  /** Deterministic depositor EM identity, including the raw address required by nodeownreg. */
+  export async function newEthereumIdentity<C extends ClusterBuildContext>(
+    ctx: C,
+    ethereumHdIndex: number
+  ): Promise<EthereumIdentity> {
     const keyContext = KeyGenerator.context(
       ctx.config.executables.clio,
       ctx.config.buildPath,
@@ -46,7 +60,10 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
     const pair = await KeyGenerator.create(KeyType.EM, keyContext, {
       ethereumHdIndex
     })
-    return pair.publicKey
+    return {
+      publicKey: pair.publicKey,
+      nativeAddress: pair.address.slice(2).toLowerCase()
+    }
   }
 
   /** Input for {@link planCreateNamedUser} — one `sysio.roa::newnameduser` write. */
@@ -182,7 +199,7 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const ethereumPublicKey = await newEthereumPublicKey(
+    const ethereumIdentity = await newEthereumIdentity(
       ctx,
       input.ethereumHdIndex
     )
@@ -190,7 +207,8 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
       ctx.wire,
       input.ownerAccount,
       input.tier,
-      ethereumPublicKey,
+      ethereumIdentity.nativeAddress,
+      ethereumIdentity.publicKey,
       input.wirePublicKey
     )
   }
