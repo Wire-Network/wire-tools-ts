@@ -509,7 +509,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "demotion-cleared",
-        "regproducer returns eligibility but NOT a clean record: the demotion clears, the miss streak stands",
+        "regproducer pardons a producer the schedule dropped, clearing the demotion and the streak",
         async ctx => {
           const producer = await readProducerRow(ctx)
           if (producer == null) {
@@ -518,13 +518,15 @@ export class ProducerRegistrationScenario extends FlowScenario {
           if (producer.is_demoted) {
             throw new Error("regproducer left the producer demoted")
           }
-          // The streak deliberately SURVIVES re-registration. `regproducer` costs nothing but a
-          // signature and can be repeated, so clearing the streak here would let an absent
-          // operator call it on a timer and never produce a block at all. Only producing clears
-          // it, which the next step asserts.
-          if (producer.consecutive_missed_rounds === 0) {
+          // The pardon is gated on the producer having actually LEFT the schedule, which the
+          // previous step asserted. That gate is what makes clearing the streak safe: a producer
+          // still holding a slot is refused the pardon outright and recovers by serving a round,
+          // so the repeatable-regproducer loop has nothing to clear. Off the schedule there are no
+          // rounds left to serve, so the streak clears with the flag or it would be permanent.
+          if (producer.consecutive_missed_rounds !== 0) {
             throw new Error(
-              "regproducer cleared the miss streak; only producing a block may do that"
+              `regproducer left a miss streak of ${producer.consecutive_missed_rounds}; ` +
+                "a pardon for an unscheduled producer must clear it, since it has no round to serve"
             )
           }
         },
@@ -546,24 +548,33 @@ export class ProducerRegistrationScenario extends FlowScenario {
       ),
       verifyStep(
         Actor.Sysio,
-        "serving-a-round-clears-the-streak",
-        "serving its round is what clears the miss streak",
+        "served-rounds-keep-the-record-clean",
+        "the recovered producer stays healthy while it serves its rounds",
         async ctx => {
-          // A round is scored once, when it ENDS — the block count is only known at the
-          // transition to the next producer. So the streak clears up to a round after the first
-          // block appears, not on it.
+          // The pardon already zeroed the streak, so this is not re-asserting the clear — it is
+          // asserting the producer does not fall straight back. A round is scored once, at the
+          // transition where it ENDS, so waiting for the head to move OFF this producer is what
+          // makes the verdict readable: only then has its round been judged, and a SERVED verdict
+          // is the one that leaves the streak at zero and the demotion off.
           await pollUntil(
-            "miss streak cleared by a served round",
-            async () => {
-              const producer = await readProducerRow(ctx)
-              if (producer == null) {
-                throw new Error("the producer's row disappeared after it produced again")
-              }
-              return producer.consecutive_missed_rounds === 0
-            },
+            "the recovered producer's round ended and was scored",
+            async () => !(await hasProducedBlock(ctx)),
             Constants.scheduleDeadlineMs(ScheduleSize),
             Constants.PollIntervalMs
           )
+          const producer = await readProducerRow(ctx)
+          if (producer == null) {
+            throw new Error("the producer's row disappeared after it produced again")
+          }
+          if (producer.is_demoted) {
+            throw new Error("the recovered producer was demoted again while serving its rounds")
+          }
+          if (producer.consecutive_missed_rounds !== 0) {
+            throw new Error(
+              `the recovered producer accrued a miss streak of ${producer.consecutive_missed_rounds} ` +
+                "while serving its rounds"
+            )
+          }
         },
         {}
       )
