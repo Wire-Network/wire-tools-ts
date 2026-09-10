@@ -56,7 +56,8 @@ function fullConfig(clusterPath: string) {
           bios: { http: 2, p2p: 3 },
           producers: [],
           batch: [],
-          underwriters: []
+          underwriters: [],
+          adHoc: []
         }
       },
       anvil: { address: "127.0.0.1", port: 4 },
