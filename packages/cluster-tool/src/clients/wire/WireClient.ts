@@ -34,10 +34,24 @@ const log = getLogger("WireClient")
 const { SysioContractName, SysioContractDefinitions } = SysioContracts
 type SysioContractName = SysioContracts.SysioContractName
 type SysioContractMapping = SysioContracts.SysioContractMapping
-/** sdk-core's `producer_schedule` struct, exactly as `get_producer_schedule` answers it. */
-type ProducerScheduleStruct = Awaited<
-  ReturnType<APIClient["v1"]["chain"]["get_producer_schedule"]>
->["active"]
+// Each step of a derived index type is named, so every member is reusable and no definition
+// spells more than one string literal — a renamed sdk-core member then fails at the one line
+// that names it rather than inside a chain.
+/** sdk-core's versioned API surface. */
+type APIClientV1 = APIClient["v1"]
+/** sdk-core's chain API — the root every chain call below derives from. */
+type ChainAPI = APIClientV1["chain"]
+/** sdk-core's `get_producer_schedule` call. */
+type GetProducerScheduleCall = ChainAPI["get_producer_schedule"]
+/** What `get_producer_schedule` answers, before projection onto plain names. */
+type GetProducerScheduleResult = Awaited<ReturnType<GetProducerScheduleCall>>
+/**
+ * sdk-core's `producer_schedule` struct, exactly as `get_producer_schedule` answers it.
+ *
+ * The RAW struct, distinct from {@link WireClient.GetProducerScheduleResponse}, which is this
+ * projected onto plain producer names.
+ */
+type ProducerScheduleStruct = GetProducerScheduleResult["active"]
 
 /** Caller config for the WIRE client (clio binary + node/wallet URLs). */
 export interface WireClientConfig {
