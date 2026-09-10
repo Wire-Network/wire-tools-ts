@@ -6,7 +6,7 @@
  * bootstrap has no node to run on. This is the producer-side counterpart of
  * `OperatorDaemonTool.planDaemonStart`: both compose their node through `NodeConfig.createAdHoc`
  * (named for the operator's durable label, peered to every planned producer node, on
- * `BindConfigProvider.findAvailableAdHocPorts`-issued ports), and a producing node differs only
+ * `BindConfigProvider.claimAdHocPorts`-issued ports), and a producing node differs only
  * in what that composition derives from its type — the producer role, its own `--producer-name`,
  * and both signature providers — and in needing no OPP daemon args.
  */
@@ -83,7 +83,7 @@ export namespace ProducerNodeTool {
       `startProducerNode: ${input.label} has no finalizer key — it could produce blocks but never vote`
     )
 
-    const ports = await BindConfigProvider.findAvailableAdHocPorts()
+    const ports = BindConfigProvider.claimAdHocPorts(ctx.config.bind, input.label)
     // startWithRecovery (not bare create+start): a flow rerun reuses this node's data dir, so an
     // unclean prior stop leaves a dirty chainbase this launch must recover from — the same
     // reasoning as every other ad-hoc and planned node path.

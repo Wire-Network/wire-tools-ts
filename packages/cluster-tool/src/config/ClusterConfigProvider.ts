@@ -497,6 +497,7 @@ export namespace ClusterConfigProvider {
         producerCount: options.nodeCount,
         batchOperatorCount: options.batchOperatorCount,
         underwriterCount: options.underwriterCount,
+        adHocCount: options.adHocCount,
         bindAll: options.bindAll
       },
       bind =
@@ -554,6 +555,11 @@ export namespace ClusterConfigProvider {
       "underwriters",
       bind.nodeop.ports.underwriters.length,
       topology.underwriterCount ?? DefaultUnderwriterCount
+    )
+    expect(
+      "adHoc",
+      bind.nodeop.ports.adHoc.length,
+      topology.adHocCount ?? BindConfigProvider.DefaultAdHocCount
     )
   }
 

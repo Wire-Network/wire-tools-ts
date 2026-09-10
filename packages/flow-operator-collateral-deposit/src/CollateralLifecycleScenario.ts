@@ -69,6 +69,9 @@ export class CollateralLifecycleScenario extends FlowScenario {
 
   override readonly defaults: ClusterBuildOptions = {
     epochDurationSec: Constants.EpochDurationSec,
+    // One daemon started outside `NodeConfig.plan` — its ports are reserved with every planned
+    // node so they reach the port registry, rather than being picked when it spawns.
+    adHocCount: 1,
     // All-chain collateral invariant: ACTIVE requires the minimum on EVERY
     // registered outpost chain, so the flow's ACTIVE assertion is meaningful.
     requiredBatchOperatorCollateral: [

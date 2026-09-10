@@ -635,11 +635,15 @@ describe("NodeConfig", () => {
  */
 describe("NodeConfig — ad-hoc nodes", () => {
   const cluster = fixtureConfig()
-  let ports: Awaited<ReturnType<typeof BindConfigProvider.findAvailableAdHocPorts>>
+  let ports: Awaited<
+    ReturnType<typeof BindConfigProvider.resolve>
+  >["nodeop"]["ports"]["adHoc"][number]
 
-  // Registry-issued, like every port a test pins into a config (bind-available-ports rule).
+  // Registry-issued, like every port a test pins into a config (bind-available-ports rule) —
+  // now reserved by `resolve` with every planned node rather than picked when the node spawns.
   beforeAll(async () => {
-    ports = await BindConfigProvider.findAvailableAdHocPorts()
+    const bind = await BindConfigProvider.resolve({}, { adHocCount: 1 })
+    ports = BindConfigProvider.claimAdHocPorts(bind, "adhoc-fixture")
   })
 
   it("NodeNamePrefix is the ONE spelling every node name carries — planned, bios, and ad-hoc", () => {

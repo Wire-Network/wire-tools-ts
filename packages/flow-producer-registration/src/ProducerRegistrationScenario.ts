@@ -175,6 +175,8 @@ export class ProducerRegistrationScenario extends FlowScenario {
     // are set equal, and why one above the `min_schedule_size` floor.
     nodeCount: Constants.NodeCount,
     producerCount: Constants.ProducerCount,
+    // The flow starts one node of its own, outside `NodeConfig.plan`.
+    adHocCount: Constants.AdHocNodeCount,
     // Without this the requirement vector is empty, `meets_role_min` refuses every
     // non-bootstrapped producer by design, and the flow's account could never leave UNKNOWN.
     requiredProducerCollateral: [

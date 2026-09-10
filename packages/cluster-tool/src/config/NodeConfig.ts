@@ -426,7 +426,7 @@ export namespace NodeConfig {
    * @param cluster - The resolved cluster config (supplies binaries, bind, genesis).
    * @param operator - The operator the node acts for.
    * @param ports - The registry-issued ports it binds
-   *   (`BindConfigProvider.findAvailableAdHocPorts`).
+   *   (`BindConfigProvider.claimAdHocPorts`).
    * @returns The node config.
    */
   export function createAdHoc(

@@ -573,6 +573,9 @@ describe("ClusterConfigProvider", () => {
         buildPath: environment.buildPath,
         ethereumPath: "/fake/eth",
         solanaPath: "/fake/sol",
+        // The fixture bind fed in as a COMPLETE config carries ad-hoc pairs, and cardinality is
+        // cross-checked per role — so the topology has to declare them.
+        adHocCount: PersistedFixture.bind.nodeop.ports.adHoc.length,
         bindConfig,
         ...extra
       }

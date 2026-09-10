@@ -38,6 +38,16 @@ export namespace ProducerRegistrationScenarioConstants {
    */
   export const NodeCount = ProducerCount
 
+  /**
+   * Ad-hoc port pairs this flow reserves: one, for the flow producer's own node.
+   *
+   * Reserved up front through `adHocCount` rather than picked when the node starts — a pair
+   * picked at spawn time never reaches the port registry, so a parallel resolver can hand the
+   * same port to a planned daemon before this one binds. The node is stopped and restarted
+   * mid-flow and reclaims the SAME pair, so one is enough.
+   */
+  export const AdHocNodeCount = 1
+
   /** Collateral bonded per chain (raw outpost units — wei / lamports). */
   export const BondAmount = 2_000_000n
   /** Per-chain minimum the depot requires of a producer (equal to the bond: exactly sufficient). */

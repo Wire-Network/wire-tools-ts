@@ -40,7 +40,16 @@ export const BindConfigNodeopClusterPortsSchema = z.object({
   /** One port pair per batch-operator node. */
   batch: z.array(BindConfigNodeopPortsSchema),
   /** One port pair per underwriter node. */
-  underwriters: z.array(BindConfigNodeopPortsSchema)
+  underwriters: z.array(BindConfigNodeopPortsSchema),
+  /**
+   * Port pairs held for nodes a FLOW starts on its own, outside `NodeConfig.plan`.
+   *
+   * Reserved here rather than picked when the node spawns so an ad-hoc pair is claimed under the
+   * same host-global lock as every planned node's AND published to the port registry with them —
+   * a pair picked later is invisible to a parallel resolver during the window between the pick
+   * and the daemon actually binding. Empty unless the flow asks for a count.
+   */
+  adHoc: z.array(BindConfigNodeopPortsSchema)
 })
 /** The full nodeop port set across the cluster (one pair per node, per role). */
 export type BindConfigNodeopClusterPorts = z.infer<
@@ -144,7 +153,8 @@ const BindConfigNodeopClusterPortsOptionsSchema = z.object({
   bios: BindConfigNodeopPortsOptionsSchema.optional(),
   producers: z.array(BindConfigNodeopPortsOptionsSchema).optional(),
   batch: z.array(BindConfigNodeopPortsOptionsSchema).optional(),
-  underwriters: z.array(BindConfigNodeopPortsOptionsSchema).optional()
+  underwriters: z.array(BindConfigNodeopPortsOptionsSchema).optional(),
+  adHoc: z.array(BindConfigNodeopPortsOptionsSchema).optional()
 })
 const BindConfigNodeopOptionsSchema = z.object({
   address: z.string().optional(),
@@ -240,6 +250,13 @@ export interface ClusterTopologyOptions {
   batchOperatorCount?: number
   /** Number of underwriter nodes. */
   underwriterCount?: number
+  /**
+   * Port pairs to hold for nodes a flow starts itself, outside `NodeConfig.plan`.
+   *
+   * Defaults to 0: a flow asks for exactly what it starts. Reserving pairs no flow spawns is
+   * real port pressure at the concurrency these run under.
+   */
+  adHocCount?: number
   /** Bind every daemon on `0.0.0.0` instead of loopback. */
   bindAll?: boolean
 }

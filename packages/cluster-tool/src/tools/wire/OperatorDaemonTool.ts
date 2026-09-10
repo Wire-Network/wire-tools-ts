@@ -508,7 +508,7 @@ export namespace OperatorDaemonTool {
    * Start a flow-provisioned operator's daemon: a non-producing nodeop carrying
    * the type-matched OPP daemon args ({@link batchOperatorArgs} /
    * {@link underwriterArgs}), composed by `NodeConfig.createAdHoc` (peered to
-   * the producer nodes, on {@link BindConfigProvider.findAvailableAdHocPorts}-
+   * the producer nodes, on {@link BindConfigProvider.claimAdHocPorts}-
    * resolved ports). Required whenever a
    * NON-bootstrapped operator flips ACTIVE — the schedule prefers it over the
    * bootstrapped set, and its group's consensus needs it to relay. Bootstrap
@@ -561,7 +561,7 @@ export namespace OperatorDaemonTool {
           )
         })
 
-    const ports = await BindConfigProvider.findAvailableAdHocPorts()
+    const ports = BindConfigProvider.claimAdHocPorts(ctx.config.bind, input.label)
     // startWithRecovery (not bare create+start): a flow rerun reuses the
     // daemon's data dir, so an unclean prior stop leaves a dirty chainbase
     // this launch must recover from, same as the planned-node paths.
