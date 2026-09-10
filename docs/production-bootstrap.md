@@ -225,6 +225,13 @@ These nine owner grants are the ONLY authority rewrites in the bootstrap. The fo
 active-permission delegations (`@sysio.code` weights for `sysio.msgch` on opreg/roa and for `sysio.roa` on
 authex) are no longer configured.
 
+`sysio.dclaim` must be deployed before the first `sysio.authex::createlink` or `recordlink`. Both link
+actions inline `sysio.dclaim::linkswept`; if DClaim is not yet deployed and privileged, they deliberately
+commit the link but leave pre-link rewards in `unmapped_tokens` for operator remediation. The **sys** deploy
+above uses `sysio.roa::setsyscode`, which grants privilege as part of deployment, so this ordering—not a
+separate `setpriv` action—is the production precondition. This bootstrap satisfies it: DClaim is deployed in
+Stage 8 before the first node-owner link in Stage 10 and operator `createlink` calls in Stage 12.
+
 ## Stage 9 — OPP / application configuration (epoch, opreg, emissions, dclaim)
 20. `sysio.epoch::setconfig({epoch_duration_sec:90, operators_per_epoch:1,
     batch_operator_minimum_active:3, batch_op_groups:3, epoch_retention_envelope_log_count:10})` —
