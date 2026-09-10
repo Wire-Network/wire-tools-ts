@@ -2,6 +2,7 @@ import { Constants } from "../../../Constants.js"
 import Assert from "node:assert"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
+import { asOption } from "@3fv/prelude-ts"
 import { getLogger } from "@wireio/shared"
 import { match } from "ts-pattern"
 import { ClusterConfigProvider } from "../../../config/ClusterConfigProvider.js"
@@ -246,7 +247,13 @@ export namespace NodeopProcessSteps {
     ctx: ClusterBuildContext,
     node: NodeConfig
   ): OperatorAccount[] {
-    return node.producers.map(label => ctx.keyStore.assertOperator(label))
+    // Validate, then convert. `assertOperator` names the missing label; a boolean `every` /
+    // `filter` would collapse the offender to "one of them", and naming it is the whole value of
+    // this failure -- it says which provisioning step never ran.
+    return asOption(node.producers)
+      .tap(labels => labels.forEach(label => ctx.keyStore.assertOperator(label)))
+      .map(labels => labels.map(label => ctx.keyStore.operator(label)))
+      .get()
   }
 
   /** Assert an operator node names the durable batch / underwriter `label` it acts for. */
