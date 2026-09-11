@@ -179,7 +179,6 @@ export namespace SolanaCollateralTool {
      * the step is constructed).
      */
     readonly tokenCode: bigint
-    readonly reserveCode: bigint
     readonly operatorType: OperatorType
     readonly amount: bigint
   }
@@ -195,7 +194,6 @@ export namespace SolanaCollateralTool {
     operatorLabel: string,
     chainCode: bigint,
     tokenCode: bigint,
-    reserveCode: bigint,
     operatorType: OperatorType,
     amount: bigint
   ): ClusterBuildStep<C, DepositNonNativeInput> {
@@ -209,7 +207,6 @@ export namespace SolanaCollateralTool {
         operatorLabel,
         chainCode,
         tokenCode,
-        reserveCode,
         operatorType,
         amount
       },
@@ -243,7 +240,6 @@ export namespace SolanaCollateralTool {
       .depositNonNative(
         new anchor.BN(input.chainCode.toString()),
         new anchor.BN(input.tokenCode.toString()),
-        new anchor.BN(input.reserveCode.toString()),
         input.operatorType,
         new anchor.BN(input.amount.toString())
       )

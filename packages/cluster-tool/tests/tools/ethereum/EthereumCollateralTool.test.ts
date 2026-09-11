@@ -55,16 +55,17 @@ describe("EthereumCollateralTool.planNonNativeDeposit", () => {
       "uwrit.a",
       2n,
       7n,
-      3n,
       OperatorType.UNDERWRITER,
       1_000_000n
     )
+    // SOL-432: `toEqual` is exact, so this also pins the ABSENCE of any reserve
+    // dimension on the collateral deposit — re-introducing `reserveCode` on the
+    // StepInput fails here.
     expect(step.input).toEqual({
       kind: "EthereumCollateralTool.DepositNonNativeInput",
       operatorLabel: "uwrit.a",
       chainCode: 2n,
       tokenCode: 7n,
-      reserveCode: 3n,
       operatorType: OperatorType.UNDERWRITER,
       amount: 1_000_000n
     })
@@ -82,7 +83,6 @@ describe("EthereumCollateralTool.planNonNativeDeposit", () => {
           operatorLabel: "uwrit.a",
           chainCode: 2n,
           tokenCode: 7n,
-          reserveCode: 3n,
           operatorType: OperatorType.UNDERWRITER,
           amount: 0n
         },
