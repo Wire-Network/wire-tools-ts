@@ -53,7 +53,7 @@ interface SolanaOutpostConfigAccount {
   nextEpochIndex: BN
 }
 
-/** State captured after the first incomplete schedule window is withheld. */
+/** State captured after the first schedule candidate is withheld. */
 interface WithheldScheduleCheckpoint {
   epochIndex: number
   activeGroup: string[]
@@ -416,6 +416,7 @@ async function runSlashRecoveryTarget(
   signal.throwIfAborted()
   const before = await Steps.contracts.sysio.epoch.readEpochState(ctx)
   assertCompleteSchedule(before.batch_op_groups)
+  assertCompleteSchedule(before.next_batch_op_groups)
   const current = before.batch_op_groups[before.current_batch_op_group] ?? []
   const activeAccounts = await readActiveBatchOperatorAccounts(ctx)
   Assert.equal(
@@ -1114,6 +1115,16 @@ export class TerminationScenario extends FlowScenario {
                   group => group.length === Constants.OperatorsPerEpoch
                 )
               if (!complete) return false
+              const published = state.next_batch_op_groups
+              if (
+                published.length !== Constants.BatchOperatorGroups ||
+                published.some(
+                  group => group.length !== Constants.OperatorsPerEpoch
+                )
+              ) {
+                return false
+              }
+              assertCompleteSchedule(published)
               assertCompleteSchedule(groups)
               const current = groups[state.current_batch_op_group] ?? []
               const activeAccounts = await readActiveBatchOperatorAccounts(ctx)
@@ -1157,27 +1168,30 @@ export class TerminationScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "capture-withheld-window",
-        "the first slide enters the announced group and persists an incomplete window",
+        "the first advance enters announced duty and discards an incomplete candidate",
         async ctx => {
           let checkpoint: WithheldScheduleCheckpoint | null = null
           await pollUntil(
-            "an incomplete schedule window is persisted after the target is slashed",
+            "no next window is published after the target is slashed",
             async () => {
               const state =
                 await Steps.contracts.sysio.epoch.readEpochState(ctx)
               const current =
                 state.batch_op_groups[state.current_batch_op_group] ?? []
-              const incomplete = state.batch_op_groups.some(
-                group => group.length !== Constants.OperatorsPerEpoch
-              )
+              assertCompleteSchedule(state.batch_op_groups)
+              const withheld = state.next_batch_op_groups.length === 0
               const slashTarget = ctx.outputs.assert(RecoverySlashAccountKey)
               if (
                 !(await operatorIsSlashed(ctx, slashTarget)) ||
-                !incomplete ||
+                !withheld ||
                 current.length === 0
               ) {
                 return false
               }
+              Assert.ok(
+                !current.includes(slashTarget),
+                "withheld duty did not enter the announced successor"
+              )
               const [ethereumNextEpoch, solanaNextEpoch] = await Promise.all([
                 readEthereumNextEpoch(ctx),
                 readSolanaNextEpoch(ctx)
@@ -1211,7 +1225,7 @@ export class TerminationScenario extends FlowScenario {
     ClusterBuildPhase.create(
       cluster,
       "HoldAnnouncedDuty",
-      "The current group remains fixed while the short future window is withheld"
+      "The serving window remains intact while candidate publication is withheld"
     ).push(
       verifyStep(
         Actor.Sysio,
@@ -1234,11 +1248,11 @@ export class TerminationScenario extends FlowScenario {
                   `duty rotated before repair: ${checkpoint.activeGroup.join(",")} -> ${current.join(",")}`
                 )
               }
-              Assert.ok(
-                state.batch_op_groups.some(
-                  group => group.length !== Constants.OperatorsPerEpoch
-                ),
-                "schedule became complete before a replacement was provisioned"
+              assertCompleteSchedule(state.batch_op_groups)
+              Assert.equal(
+                state.next_batch_op_groups.length,
+                0,
+                "a candidate was published before a replacement was provisioned"
               )
               return (
                 Number(state.current_epoch_index) >=
@@ -1269,7 +1283,7 @@ export class TerminationScenario extends FlowScenario {
     ClusterBuildPhase.create(
       cluster,
       "DegradeHeldDuty",
-      "An announced seat becomes ineligible while the incomplete future window is held"
+      "An announced seat becomes ineligible while no next window is published"
     ).push(
       ClusterBuildStep.create(
         Actor.Sysio,
@@ -1300,9 +1314,7 @@ export class TerminationScenario extends FlowScenario {
                 )
               }
               Assert.ok(
-                state.batch_op_groups.some(
-                  group => group.length !== Constants.OperatorsPerEpoch
-                ),
+                state.next_batch_op_groups.length === 0,
                 "schedule became complete before replacements were provisioned"
               )
               if (
@@ -1368,7 +1380,7 @@ export class TerminationScenario extends FlowScenario {
       verifyStep(
         Actor.Sysio,
         "complete-window-published",
-        "the held window becomes full and names the next group while current duty is unchanged",
+        "a complete candidate is published while the serving window is unchanged",
         async ctx => {
           const withheld = ctx.outputs.assert(WithheldScheduleCheckpointKey)
           const replacements = Constants.RecoveryOperatorLabels.map(
@@ -1376,12 +1388,13 @@ export class TerminationScenario extends FlowScenario {
           )
           let checkpoint: RepairedScheduleCheckpoint | null = null
           await pollUntil(
-            "the replacement fills the held schedule window",
+            "the replacement enables a complete next-window announcement",
             async () => {
               const state =
                 await Steps.contracts.sysio.epoch.readEpochState(ctx)
-              const groups = state.batch_op_groups
-              const current = groups[state.current_batch_op_group] ?? []
+              const groups = state.next_batch_op_groups
+              const current =
+                state.batch_op_groups[state.current_batch_op_group] ?? []
               const complete =
                 groups.length === Constants.BatchOperatorGroups &&
                 groups.every(
@@ -1400,8 +1413,7 @@ export class TerminationScenario extends FlowScenario {
                 "current duty moved before the repaired lookahead was published"
               )
               assertCompleteSchedule(groups)
-              const nextGroup =
-                groups[state.current_batch_op_group + 1] ?? current
+              const nextGroup = groups[1] ?? groups[0]
               const [ethereumNextEpoch, solanaNextEpoch] = await Promise.all([
                 readEthereumNextEpoch(ctx),
                 readSolanaNextEpoch(ctx)
