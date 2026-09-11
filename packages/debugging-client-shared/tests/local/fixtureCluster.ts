@@ -110,7 +110,8 @@ export function makeFixtureCluster(): FixtureCluster {
           bios: { http: 0, p2p: 0 },
           producers: [],
           batch: [],
-          underwriters: []
+          underwriters: [],
+          adHoc: []
         }
       },
       anvil: { address: "127.0.0.1", port: 0 },

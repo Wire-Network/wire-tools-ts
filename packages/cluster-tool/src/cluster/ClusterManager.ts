@@ -295,13 +295,13 @@ export namespace ClusterManager {
     node: NodeConfig
   ): Promise<void> {
     if (ctx.processManager.get(node.name) != null) return
-    const operator = Steps.processes.nodeop.resolveOperator(ctx, node)
+    const operators = Steps.processes.nodeop.resolveOperators(ctx, node)
     await NodeopProcess.startWithRecovery(
       ctx.processManager,
       NodeopProcess.createRelaunchOptions(
         node,
-        operator,
-        Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, operator)
+        operators,
+        Steps.processes.nodeop.resolveOperatorDaemonArgs(ctx, node, operators[0])
       )
     )
   }

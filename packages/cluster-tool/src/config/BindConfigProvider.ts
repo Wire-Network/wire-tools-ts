@@ -170,7 +170,24 @@ export namespace BindConfigProvider {
    */
   export const SolanaDynamicPortRangeSearchLimit = 32
   export const DefaultDebuggingServer = 10_991
+  /**
+   * Preferred HTTP port of the first AD-HOC pair — one a flow starts after
+   * `NodeConfig.plan` (an operator daemon, or a collateral-backed producer's
+   * own node). A PREFERENCE only, placed in the daemon-default layout above:
+   * {@link resolve} seeds the ad-hoc pairs from it and falls back to ephemeral
+   * ports, so pairs never collide within a resolve or across concurrent ones.
+   */
+  export const DefaultAdHocHttp = 10_988
+  /** Preferred p2p port of an ad-hoc node (see {@link DefaultAdHocHttp}). */
+  export const DefaultAdHocP2p = 10_976
   export const DefaultProducerCount = 1
+  /**
+   * Ad-hoc pairs held when a caller names no count.
+   *
+   * Zero on purpose: a flow asks for exactly the nodes it starts. Reserving pairs nothing spawns
+   * is real port pressure at the concurrency these clusters run under.
+   */
+  export const DefaultAdHocCount = 0
   export const DefaultBatchCount = 3
   export const DefaultUnderwriterCount = 1
 
@@ -276,7 +293,8 @@ export namespace BindConfigProvider {
       {
         producerCount = DefaultProducerCount,
         batchOperatorCount: batchCount = DefaultBatchCount,
-        underwriterCount: uwCount = DefaultUnderwriterCount
+        underwriterCount: uwCount = DefaultUnderwriterCount,
+        adHocCount = DefaultAdHocCount
       } = topology
 
     const resolved: BindConfig = {
@@ -313,7 +331,11 @@ export namespace BindConfigProvider {
             nodeopPorts?.underwriters ?? null,
             uwCount,
             "underwriter"
-          )
+          ),
+          // Claimed with every planned node, under the one lock this resolve holds, so the pairs
+          // land in the registration below rather than being picked when a flow spawns the node
+          // — by which point a parallel resolver has already read the registry without them.
+          adHoc: await pairs(nodeopPorts?.adHoc ?? null, adHocCount, "adHoc")
         }
       },
       anvil: {
@@ -380,6 +402,7 @@ export namespace BindConfigProvider {
       ...flat(np.producers),
       ...flat(np.batch),
       ...flat(np.underwriters),
+      ...flat(np.adHoc),
       config.anvil.port,
       config.solana.ports.http,
       // The RPC's companion websocket — agave binds rpc+1 automatically (no
@@ -655,6 +678,57 @@ export namespace BindConfigProvider {
         protocol
       )
     )
+  }
+
+  /**
+   * The registry-issued `http` + `p2p` pair an AD-HOC node binds — each port
+   * resolved through {@link findAvailable} from the ad-hoc preferences
+   * ({@link DefaultAdHocHttp} / {@link DefaultAdHocP2p}), so the pair is claimed
+   * under the same host-global lock as every planned node's.
+   *
+   * @returns The node's binding.
+   */
+
+  /**
+   * Per-binding `label` -> ad-hoc slot. A label that asks twice gets the SAME pair, so a flow that
+   * stops and restarts a node rebinds where it was rather than consuming a second reservation.
+   */
+  const adHocClaims = new WeakMap<BindConfig, Map<string, number>>()
+
+  /**
+   * Take this label's pair from the ad-hoc reservations {@link resolve} already claimed.
+   *
+   * Ad-hoc nodes are started by a FLOW, after `NodeConfig.plan`, but their ports are not picked
+   * then: a pair picked at spawn time is claimed under the host-global lock yet never reaches the
+   * port registry, so a parallel resolver reading the registry cannot see it and can hand the same
+   * port to a planned daemon during the window before this one binds. The pairs are therefore
+   * reserved up front with every other node and handed out here.
+   *
+   * @param bind - The resolved cluster binding holding the reservations.
+   * @param label - The operator label the node is started for.
+   * @returns The pair reserved for `label`.
+   */
+  export function claimAdHocPorts(
+    bind: BindConfig,
+    label: string
+  ): BindConfigNodeopPorts {
+    const pool = bind.nodeop.ports.adHoc
+    let claims = adHocClaims.get(bind)
+    if (claims == null) {
+      claims = new Map<string, number>()
+      adHocClaims.set(bind, claims)
+    }
+    const existing = claims.get(label)
+    if (existing != null) return pool[existing]
+    Assert.ok(
+      claims.size < pool.length,
+      `ad-hoc port pool exhausted: ${pool.length} pair(s) reserved but "${label}" is the ` +
+        `${claims.size + 1}${claims.size === 0 ? "st" : "th"} node to ask — raise adHocCount ` +
+        `for this cluster so the pairs are claimed and registered with every planned node`
+    )
+    const index = claims.size
+    claims.set(label, index)
+    return pool[index]
   }
 
   /**

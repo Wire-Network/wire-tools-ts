@@ -11,6 +11,7 @@ import {
   type ResolveEnvironment
 } from "../config/resolveEnvironmentFixture.js"
 import { collectPhaseNames } from "./clusterBuildFixture.js"
+import { seedProducerOperators } from "./outputs/operatorAccountFixture.js"
 
 /** One `finalizer_policy` entry as `bios::setfinalizer` receives it. */
 interface FinalizerEntry {
@@ -141,9 +142,13 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
       ).toBe(OperatorType.UNKNOWN)
     })
 
-    it("keeps the finalizer policy at the PRODUCER-NODE cardinality", async () => {
+    it("keeps the finalizer policy at the PRODUCER-ACCOUNT cardinality", async () => {
       const cluster = await ClusterBuildDefaults.create(baseOptions()),
         ctx = cluster.context
+      // The policy is keyed on ACCOUNTS, not nodes: `update_ranked_producers` rebuilds it from
+      // the keys accounts registered via `regfinkey`, so a node-keyed genesis policy would be
+      // replaced by an account-keyed one this node holds no key for. Seeding a node key set is
+      // therefore NOT enough — and must not be, or the two would silently diverge.
       ctx.keyStore.pushNodes({
         index: 0,
         keys: {
@@ -160,6 +165,7 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
           }
         }
       })
+      const producers = seedProducerOperators(ctx)
       // The REAL typed contract client, with only the network call doubled.
       // `getSysioContract` mints a fresh Proxy (and a fresh invoker cache) per
       // call, so the client the runner would build is not the one spied here —
@@ -178,14 +184,15 @@ describe("ClusterBuildDefaults — genesis seeding + bootstrap gates", () => {
         new AbortController().signal
       )
       const action = invoke.mock.calls[0][0] as SetFinalizerAction
-      // ONE finalizer for the ONE producer node — the seeded bios account
-      // contributes none, which is the whole point of `setOperator` over
-      // `pushNodes`.
-      expect(action.finalizer_policy.finalizers).toHaveLength(
-        ctx.keyStore.nodes.length
+      // ONE finalizer per PROVISIONED PRODUCER ACCOUNT — the seeded bios account contributes
+      // none (it is typed UNKNOWN), which is the whole point of `setOperator` over `pushNodes`.
+      expect(action.finalizer_policy.finalizers).toHaveLength(producers.length)
+      expect(action.finalizer_policy.finalizers.map(entry => entry.public_key)).toEqual(
+        producers.map(producer => producer.wireFinalizer.publicKey)
       )
-      expect(action.finalizer_policy.finalizers).toHaveLength(1)
-      expect(action.finalizer_policy.threshold).toBe(1)
+      expect(action.finalizer_policy.threshold).toBe(
+        Math.floor((producers.length * 2) / 3) + 1
+      )
     })
   })
 })

@@ -671,6 +671,63 @@ describe("BindConfigProvider", () => {
       expect(port).not.toBe(BindConfigProvider.DefaultAnvil)
       expect(port).toBeGreaterThan(0)
     })
+
+    it("resolve reserves the ad-hoc pairs a caller asks for, in the daemon layout clear of the agave band", async () => {
+      const bind = await BindConfigProvider.resolve({}, { adHocCount: 2 })
+      expect(bind.nodeop.ports.adHoc).toHaveLength(2)
+      // Only the FIRST pair can take the daemon-layout preference; every pair after it falls
+      // through to an ephemeral port, so the invariant that holds for all of them is the reserved
+      // agave band — a port inside it is one agave binds implicitly whatever the flags say.
+      bind.nodeop.ports.adHoc
+        .flatMap(pair => [pair.http, pair.p2p])
+        .forEach(port => {
+          const inBand =
+            port >= BindConfigProvider.ReservedAgavePortBand.first &&
+            port <= BindConfigProvider.ReservedAgavePortBand.last
+          expect(inBand).toBe(false)
+        })
+    })
+
+    it("reserves none by default — a flow asks for exactly the nodes it starts", async () => {
+      const bind = await BindConfigProvider.resolve({}, {})
+      expect(BindConfigProvider.DefaultAdHocCount).toBe(0)
+      expect(bind.nodeop.ports.adHoc).toEqual([])
+    })
+
+    it("carries the ad-hoc pairs into allPorts, so the registry publishes them with every planned node", async () => {
+      // This is the whole point of reserving up front: a pair picked when the node spawns is
+      // claimed under the lock but never registered, so a parallel resolver cannot see it.
+      const bind = await BindConfigProvider.resolve({}, { adHocCount: 2 }),
+        all = new Set(BindConfigProvider.allPorts(bind))
+      bind.nodeop.ports.adHoc
+        .flatMap(pair => [pair.http, pair.p2p])
+        .forEach(port => expect(all.has(port)).toBe(true))
+    })
+
+    it("never overlaps an ad-hoc pair with a planned node's ports", async () => {
+      const bind = await BindConfigProvider.resolve({}, { adHocCount: 3 }),
+        all = BindConfigProvider.allPorts(bind)
+      expect(new Set(all).size).toBe(all.length)
+    })
+  })
+
+  describe("claimAdHocPorts", () => {
+    it("hands each label its own pair, and the SAME pair when it asks again", async () => {
+      const bind = await BindConfigProvider.resolve({}, { adHocCount: 2 }),
+        first = BindConfigProvider.claimAdHocPorts(bind, "flowprod"),
+        second = BindConfigProvider.claimAdHocPorts(bind, "otherprod")
+      expect(first).not.toEqual(second)
+      // A stop/restart of the same node must rebind where it was, not consume a second slot.
+      expect(BindConfigProvider.claimAdHocPorts(bind, "flowprod")).toEqual(first)
+    })
+
+    it("fails naming the count to raise when the pool is exhausted", async () => {
+      const bind = await BindConfigProvider.resolve({}, { adHocCount: 1 })
+      BindConfigProvider.claimAdHocPorts(bind, "flowprod")
+      expect(() => BindConfigProvider.claimAdHocPorts(bind, "otherprod")).toThrow(
+        /ad-hoc port pool exhausted.*adHocCount/s
+      )
+    })
   })
 
   describe("pickPort", () => {
@@ -704,7 +761,8 @@ describe("BindConfigProvider", () => {
             bios: { http: port + 1, p2p: port + 2 },
             producers: [],
             batch: [],
-            underwriters: []
+            underwriters: [],
+            adHoc: []
           }
         },
         anvil: { address: Localhost, port: port + 3 },

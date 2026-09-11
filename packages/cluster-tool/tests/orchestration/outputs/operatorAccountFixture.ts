@@ -2,8 +2,10 @@ import { ethers } from "ethers"
 import { KeyType, PrivateKey } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { Constants } from "@wireio/cluster-tool/Constants"
+import { NodeConfig, NodeRole } from "@wireio/cluster-tool/config"
 import {
   EthereumOutpostBootstrapper,
+  type ClusterBuildContext,
   type OperatorAccount
 } from "@wireio/cluster-tool/orchestration"
 import type { EthereumKeyPair, SolanaKeyPair } from "@wireio/cluster-tool/types"
@@ -72,4 +74,48 @@ export function fixtureOperatorAccount(
       return (solana ??= newSolanaKeyPair())
     }
   }
+}
+
+/**
+ * Seed one producer {@link OperatorAccount} per hosted producer of every planned producer node,
+ * mirroring what `WireOperatorProvisioningTool.runProducerMaterialization` accumulates.
+ *
+ * Every consumer that launches or renders a producing node
+ * (`NodeopProcessSteps.resolveOperators` and, through it, `StartScriptSteps` and the
+ * external-config rebind) reads these accounts rather than the node key set, because each
+ * account owns its own BLS finalizer key — `regfinkey` enforces a global uniqueness check, so
+ * siblings sharing their node's one key means only the first can ever register. The K1 is the
+ * NODE's, identical across the accounts it hosts, exactly as the live path materializes it.
+ *
+ * @param ctx - the fixture context whose `keyStore` receives the accounts.
+ * @returns the seeded accounts, in plan order.
+ */
+export function seedProducerOperators(
+  ctx: ClusterBuildContext
+): OperatorAccount[] {
+  const seeded = NodeConfig.plan(ctx.config)
+    .filter(node => node.role === NodeRole.producer)
+    .flatMap(node =>
+      node.producers.map(
+        (label): OperatorAccount => ({
+          label,
+          publicationLabel: label,
+          account: label,
+          type: OperatorType.PRODUCER,
+          wire: {
+            type: KeyType.K1 as const,
+            publicKey: `PUB_K1_n${node.index}`,
+            privateKey: `PVT_K1_n${node.index}`
+          },
+          wireFinalizer: {
+            type: KeyType.BLS as const,
+            publicKey: `PUB_BLS_${label}`,
+            privateKey: `PVT_BLS_${label}`,
+            proofOfPossession: `SIG_BLS_${label}`
+          }
+        })
+      )
+    )
+  seeded.forEach(operator => ctx.keyStore.setOperator(operator))
+  return seeded
 }

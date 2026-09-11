@@ -270,7 +270,7 @@ describe("OperatorDaemonTool", () => {
         expect(recoverySpy).toHaveBeenCalledWith(
           ctx.processManager,
           expect.objectContaining({
-            operator,
+            operators: [operator],
             node: expect.objectContaining({ role: NodeRole.batch_operator }),
             extraArgs: expect.arrayContaining(["--batch-operator-account"])
           })
@@ -304,7 +304,7 @@ describe("OperatorDaemonTool", () => {
         expect(recoverySpy).toHaveBeenCalledWith(
           ctx.processManager,
           expect.objectContaining({
-            operator,
+            operators: [operator],
             node: expect.objectContaining({ role: NodeRole.underwriter }),
             extraArgs: expect.arrayContaining(["--underwriter-account"])
           })

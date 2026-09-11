@@ -67,15 +67,15 @@ export namespace StartScriptSteps {
       labels = new Set(DaemonConfig.plannedLabels(config)),
       genesisTimestamp = NodeopProcess.readGenesisTimestamp(config),
       nodeop = NodeConfig.plan(config).map(node => {
-        const operator = NodeopProcessSteps.resolveOperator(ctx, node)
+        const operators = NodeopProcessSteps.resolveOperators(ctx, node)
         return NodeopProcess.resolveConfig(
           {
             node,
-            operator,
+            operators,
             extraArgs: NodeopProcessSteps.resolveOperatorDaemonArgs(
               ctx,
               node,
-              operator
+              operators[0]
             ),
             // An emitted `start.sh` IS the post-bootstrap launch form: it
             // restarts a node whose chain already exists, so the SHARED-25

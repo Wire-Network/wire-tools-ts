@@ -50,7 +50,8 @@ const stubConfig: ClusterConfig = {
         bios: { http: 8888, p2p: 9876 },
         producers: [],
         batch: [],
-        underwriters: []
+        underwriters: [],
+        adHoc: []
       }
     },
     anvil: { address: "127.0.0.1", port: 8545 },

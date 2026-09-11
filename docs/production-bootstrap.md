@@ -290,6 +290,7 @@ authex) are no longer configured.
 | `producer_bps` | `7000` | compute split: 70% producers |
 | `batch_op_bps` | `3000` | compute split: 30% batch ops |
 | `standby_end_rank` | `28` | producers ranked ≤28 are standby-eligible |
+| `standby_bps` | `800` | share of the producer pool reserved for the standby retainer (position-decaying); the rest is paid per block |
 | `epoch_log_retention_count` | `8640` | emissions pay-log retention, in epochs |
 | `pay_cadence_epochs` | `1` | fire `payepoch` every epoch **(cluster; production: higher)** |
 

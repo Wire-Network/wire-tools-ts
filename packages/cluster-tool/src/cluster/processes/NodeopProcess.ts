@@ -197,8 +197,17 @@ export function createNodeopTuningDefaultOptions(
 export interface NodeopOptions {
   /** The node this process realizes (its `cluster` supplies binaries + binding + genesis). */
   node: NodeConfig
-  /** The operator this node acts for — required when `node.producers` is non-empty. */
-  operator?: OperatorAccount
+  /**
+   * The accounts this node acts for.
+   *
+   * A PRODUCING node carries one entry per hosted producer account: they share the node's
+   * block-signing K1 (`setprodkeys` maps every producer on a node to it), but each owns its own
+   * BLS finalizer key, because `regfinkey` enforces a global uniqueness check — siblings sharing
+   * one finalizer key means only the first can ever register, and an unregistered producer holds
+   * no rank position at all. A batch-operator / underwriter node carries exactly one entry; a
+   * non-producing plain node carries none.
+   */
+  operators?: OperatorAccount[]
   /** Per-instance tuning overrides (defaults from the companion namespace). */
   tuning?: NodeopTuningOptions
   /** OPP daemon extra args (operator nodes — see `OperatorDaemonTool`). */
@@ -258,8 +267,42 @@ export class NodeopProcess extends ManagedProcess {
     )
     Assert.ok(
       node.producers.length === 0 ||
-        (options.operator != null && options.operator.wireFinalizer != null),
-      `nodeop ${node.name}: a producing node requires a producer OperatorAccount (wire + wireFinalizer keys)`
+        (options.operators != null &&
+          options.operators.length === node.producers.length &&
+          options.operators.every(operator => operator.wireFinalizer != null)),
+      `nodeop ${node.name}: a producing node requires one producer OperatorAccount per hosted producer, each carrying wire + wireFinalizer keys (${node.producers.length} producers, ${options.operators?.length ?? 0} accounts)`
+    )
+    // IDENTITY, not just arity. `buildArgs` renders `--producer-name` from the OPERATORS while
+    // every other consumer (key-store lookup, SSM secret ids, start.sh) reads `node.producers`, so
+    // matching counts alone would let a caller hand over the right NUMBER of the wrong accounts --
+    // or the right accounts in a different order -- and the node would sign for producers it holds
+    // no slot for, silently, with every assertion satisfied.
+    if (node.producers.length > 0) {
+      // Matched on EITHER identifier, because `producers` is not uniformly one of them: a planned
+      // producer node carries labels (and a producer never calls `roa::newuser`, so its label IS
+      // its account), while the bios node carries the on-chain genesis producer name `sysio` under
+      // the operator labelled `node_bios`. Requiring labels alone rejects the bios node outright.
+      const { operators = [] } = options,
+        unmatched = node.producers.filter(
+          producer =>
+            !operators.some(
+              operator =>
+                operator.label === producer || operator.account === producer
+            )
+        )
+      Assert.ok(
+        unmatched.length === 0,
+        `nodeop ${node.name}: no hosted operator for producer(s) ${unmatched.join(", ")} — hosted ${operators
+          .map(operator => `${operator.label}/${operator.account}`)
+          .join(", ")}`
+      )
+    }
+    // `buildArgs` renders ONE block-signing provider for the whole node, so every hosted account
+    // must sign blocks with the same K1 — the one `regproducer` / `setprodkeys` registered for
+    // each of them. A second key would leave its accounts' slots silently unproduced.
+    Assert.ok(
+      new Set((options.operators ?? []).map(operator => operator.wire.publicKey)).size <= 1,
+      `nodeop ${node.name}: every hosted producer account must share the node's block-signing K1`
     )
     mkdirs(node.nodePath)
     return new NodeopProcess(
@@ -581,7 +624,7 @@ export namespace NodeopProcess {
    * {@link buildRelaunchArgs} — `buildArgs` itself IGNORES `config.relaunch`.
    */
   export function buildArgs(config: NodeopConfig): string[] {
-    const { node, operator, tuning } = config,
+    const { node, operators = [], tuning } = config,
       cluster = node.cluster,
       listen = cluster.bind.nodeop.address,
       // Under KEY / KIOD the bios genesis key is the well-known dev pair and its
@@ -603,8 +646,8 @@ export namespace NodeopProcess {
           : baseKeySourceFor(account, keyType),
       isProducing =
         node.producers.length > 0 &&
-        operator != null &&
-        operator.wireFinalizer != null
+        operators.length > 0 &&
+        operators.every(entry => entry.wireFinalizer != null)
     const args = [
       cluster.executables.nodeop,
       ...pair("--blocks-dir", tuning.blocksPath),
@@ -619,23 +662,32 @@ export namespace NodeopProcess {
       ...(isProducing
         ? [
             ...pluginArgs(ProducerPlugins),
+            // ONE block-signing provider: the hosted accounts share the node's K1. It resolves
+            // from the FIRST account's own label, not the node's — every one of an account's
+            // keys is published under, and persisted against, its `publicationLabel`, so
+            // splitting the two halves across two labels would leave one of them a dangling
+            // custody reference.
             ...pair(
               SignatureProviderFlag,
               KeyGenerator.toSignatureProvider(
-                operator.wire,
+                operators[0].wire,
                 undefined,
-                keySourceFor(node.name, KeyType.K1)
+                keySourceFor(operators[0].publicationLabel, KeyType.K1)
               )
             ),
-            ...pair(
-              SignatureProviderFlag,
-              KeyGenerator.toSignatureProvider(
-                operator.wireFinalizer,
-                undefined,
-                keySourceFor(node.name, KeyType.BLS)
+            // …and one finalizer provider per hosted account, each published under that
+            // ACCOUNT's own name — the node's own BLS parameter is a different key.
+            ...operators.flatMap(entry =>
+              pair(
+                SignatureProviderFlag,
+                KeyGenerator.toSignatureProvider(
+                  entry.wireFinalizer,
+                  undefined,
+                  keySourceFor(entry.publicationLabel, KeyType.BLS)
+                )
               )
             ),
-            ...node.producers.flatMap(name => pair("--producer-name", name))
+            ...operators.flatMap(entry => pair("--producer-name", entry.account))
           ]
         : []),
       ...pair("--vote-threads", String(tuning.voteThreads)),
@@ -793,16 +845,16 @@ export namespace NodeopProcess {
    * dependency on the orchestration layer that imports it.
    *
    * @param node - The planned node being relaunched.
-   * @param operator - The account that node acts for.
+   * @param operators - The accounts that node acts for (one per hosted producer).
    * @param extraArgs - Its OPP daemon args (empty for bios / producer nodes).
    * @returns The post-bootstrap relaunch options.
    */
   export function createRelaunchOptions(
     node: NodeConfig,
-    operator: OperatorAccount,
+    operators: OperatorAccount[],
     extraArgs: string[]
   ): NodeopOptions {
-    return { node, operator, extraArgs, relaunch: true, postBootstrap: true }
+    return { node, operators, extraArgs, relaunch: true, postBootstrap: true }
   }
 
   /**
