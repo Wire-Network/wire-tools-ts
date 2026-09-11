@@ -35,6 +35,10 @@ export namespace TerminationScenarioConstants {
    * still cover consensus majority on every group.
    */
   export const BatchOperatorCount = 9
+  /** Number of disjoint groups retained in the rolling schedule window. */
+  export const BatchOperatorGroups = 3
+  /** Operators per group; three keeps majority consensus unambiguous. */
+  export const OperatorsPerEpoch = 3
   /**
    * Override for `terminate_max_consecutive_misses` so `termcheck` fires inside
    * the flow's budget: 2 consecutive missed scheduled epochs flip TERMINATED.
@@ -96,29 +100,74 @@ export namespace TerminationScenarioConstants {
   export const OperatorsQueryLimit = 100
   /** Anchor account-namespace name of the SOL outpost's `OperatorRegistry` PDA account. */
   export const SolanaOperatorRegistryAccountName = "operatorRegistry"
+  /** Anchor account namespace for the Solana outpost configuration PDA. */
+  export const SolanaOutpostConfigAccountName = "outpostConfig"
+
+  /** Bootstrapped operator removed at the exact nine-operator roster floor. */
+  export const RecoverySlashTargetAccount = "batchop.a"
+  /** Healthy operator key used for read-only Solana account access. */
+  export const RecoverySolanaReaderLabel = "batchop.b"
+  /** Harness labels for operators that repair two independent roster losses. */
+  export const RecoveryOperatorLabels = ["recoverya", "recoveryb"] as const
+  /** Anvil HD slots beyond the bootstrapped roster and underwriters. */
+  export const RecoveryOperatorEthereumHdIndices = [36, 37] as const
+  /** Ad-hoc daemons started for the two flow-provisioned replacements. */
+  export const RecoveryAdHocDaemonCount = 2
+  /** Epoch advances required while the announced duty remains frozen. */
+  export const RecoveryHeldEpochAdvances = 2
 
   /** Deadline for the ETH deposit to credit the depot balance row. */
   export function ethereumDepositDeadlineMs(): number {
-    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * EthereumDepositRelayEpochs * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      EthereumDepositRelayEpochs *
+      MsPerSecond
+    )
   }
 
   /** Deadline for the SOL deposit to land and the ACTIVE flip to follow. */
   export function solanaActivationDeadlineMs(): number {
-    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * SolanaActivationEpochs * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      SolanaActivationEpochs *
+      MsPerSecond
+    )
   }
 
   /** Deadline for the operator to appear in `epochstate.batch_op_groups`. */
   export function scheduleWindowDeadlineMs(): number {
-    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * ScheduleWindowEpochs * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      ScheduleWindowEpochs *
+      MsPerSecond
+    )
   }
 
   /** Deadline for the miss window to accumulate and `termcheck` to flip TERMINATED. */
   export function terminationDeadlineMs(): number {
-    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * MissAccumulationEpochs * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      MissAccumulationEpochs *
+      MsPerSecond
+    )
   }
 
   /** Deadline for the post-termination WITHDRAW_REMIT effects on either outpost. */
   export function remitDeadlineMs(): number {
-    return ProtocolTiming.effectiveEpochSec(EpochDurationSec) * RemitPropagationEpochs * MsPerSecond
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+      RemitPropagationEpochs *
+      MsPerSecond
+    )
+  }
+
+  /** Deadline for a recovery condition spanning the supplied epoch count. */
+  export function recoveryDeadlineMs(epochCount: number): number {
+    return (
+      ProtocolTiming.effectiveEpochSec(EpochDurationSec) *
+        epochCount *
+        MsPerSecond +
+      PollDeadlineBufferMs
+    )
   }
 }

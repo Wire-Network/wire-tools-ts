@@ -49,4 +49,22 @@ describe("Steps.contracts.sysio.opreg", () => {
     expect(step.input.data.is_bootstrapped).toBe(true)
     expect(typeof step.runner).toBe("function")
   })
+
+  it("slash carries the opreg::slash data", () => {
+    const data: SysioContracts.SysioOpregSlashAction = {
+      account: "batchop.a",
+      reason: "schedule recovery regression"
+    }
+    const step = Steps.contracts.sysio.opreg.planSlash(
+      Report.Actor.Sysio,
+      "slash-current-operator",
+      "slash one operator from the current group",
+      {},
+      data
+    )
+    expect(step.actor).toBe(Report.Actor.Sysio)
+    expect(step.input.kind).toBe("OpregContractSteps.SlashInput")
+    expect(step.input.data).toBe(data)
+    expect(typeof step.runner).toBe("function")
+  })
 })

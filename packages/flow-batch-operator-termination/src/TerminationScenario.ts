@@ -5,14 +5,18 @@ import { SysioContracts } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import {
   ClusterBuildPhase,
+  ClusterBuildStep,
+  ClusterConfigProvider,
   EthereumCollateralTool,
   FlowScenario,
+  OperatorDaemonTool,
   Report,
   SolanaCollateralTool,
   SolanaOutpostBootstrapper,
   SolanaOutpostProgramTool,
   Steps,
   WireOperatorProvisioningTool,
+  contractView,
   getLogger,
   matchesProtoEnum,
   outputKey,
@@ -28,9 +32,56 @@ import { TerminationScenarioConstants as Constants } from "./TerminationScenario
 
 const log = getLogger(__filename)
 
-const { SysioContractName, SysioOpregActiontype, SysioOpregOperatorstatus } =
-  SysioContracts
+const {
+  SysioContractName,
+  SysioOpregActiontype,
+  SysioOpregOperatortype,
+  SysioOpregOperatorstatus
+} = SysioContracts
 const { Actor } = Report
+
+/** Minimal Ethereum inbound surface needed to prove sequential acceptance. */
+interface EthereumInboundView {
+  activeGroupIndex(): Promise<bigint>
+  batchOpGroups(groupIndex: number, memberIndex: number): Promise<string>
+  epochDeliveries(epochIndex: number, operator: string): Promise<string>
+  nextEpochIndex(): Promise<bigint>
+}
+
+/** Anchor-decoded subset of the Solana outpost configuration account. */
+interface SolanaOutpostConfigAccount {
+  nextEpochIndex: BN
+}
+
+/** State captured after the first incomplete schedule window is withheld. */
+interface WithheldScheduleCheckpoint {
+  epochIndex: number
+  activeGroup: string[]
+  ethereumNextEpoch: number
+  solanaNextEpoch: number
+}
+
+/** State captured after a replacement makes the held window publishable. */
+interface RepairedScheduleCheckpoint extends WithheldScheduleCheckpoint {
+  nextGroup: string[]
+}
+
+const WithheldScheduleCheckpointKey = outputKey<WithheldScheduleCheckpoint>(
+  "TerminationScenario.withheldScheduleCheckpoint",
+  "depot duty and outpost epoch cursors after the first withheld schedule window"
+)
+const RepairedScheduleCheckpointKey = outputKey<RepairedScheduleCheckpoint>(
+  "TerminationScenario.repairedScheduleCheckpoint",
+  "held duty, next group, and outpost cursors after the repaired window is published"
+)
+const HeldSlashAccountKey = outputKey<string>(
+  "TerminationScenario.heldSlashAccount",
+  "operator removed from the announced group while schedule duty is held"
+)
+const HeldSlashEpochKey = outputKey<number>(
+  "TerminationScenario.heldSlashEpoch",
+  "depot epoch in which a member of the held group was slashed"
+)
 
 /**
  * Post-deposit snapshot of the doomed operator's ETH wallet balance (wei),
@@ -128,12 +179,252 @@ interface SolanaCollateralLedgerEntry {
 
 /** The slice of the SOL outpost's `OperatorRegistry` PDA account this flow reads. */
 interface SolanaOperatorRegistryAccount {
+  activeGroupIndex: number
   collateralByCode: SolanaCollateralLedgerEntry[]
+  groupCount: number
+  groups: SolanaOperatorGroup[]
+}
+
+/** One fixed-capacity group in the zero-copy Solana operator registry. */
+interface SolanaOperatorGroup {
+  memberCount: number
+  members: PublicKey[]
+}
+
+/** Signer records retained for one accepted Solana inbound epoch. */
+interface SolanaOperatorDelivery {
+  operator: PublicKey
+}
+
+/** Signer records retained for one accepted Solana inbound epoch. */
+interface SolanaEpochDeliveriesAccount {
+  deliveries: SolanaOperatorDelivery[]
 }
 
 /** Anchor account-client surface for a runtime-loaded IDL (untyped `Program<Idl>` namespace). */
 interface SolanaAccountClient {
   fetch(address: PublicKey): Promise<unknown>
+  fetchNullable(address: PublicKey): Promise<unknown | null>
+}
+
+/** Bound Solana OPP account readers and their program addresses. */
+interface SolanaOppAccounts {
+  accounts: Record<string, SolanaAccountClient>
+  configAddress: PublicKey
+  programId: PublicKey
+}
+
+/** Cross-chain signing identities for one replacement operator. */
+interface ReplacementAddresses {
+  ethereum: string
+  solana: PublicKey
+}
+
+/** Compare ordered operator groups without depending on array identity. */
+function sameGroup(left: readonly string[], right: readonly string[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  )
+}
+
+/** Require the full disjoint schedule used by the recovery regression. */
+function assertCompleteSchedule(groups: readonly string[][]): void {
+  Assert.equal(
+    groups.length,
+    Constants.BatchOperatorGroups,
+    "schedule group count changed"
+  )
+  const members = new Set<string>()
+  for (const group of groups) {
+    Assert.equal(
+      group.length,
+      Constants.OperatorsPerEpoch,
+      "schedule contains a short group"
+    )
+    for (const member of group) {
+      Assert.ok(
+        !members.has(member),
+        `${member} is seated in more than one group`
+      )
+      members.add(member)
+    }
+  }
+  Assert.equal(
+    members.size,
+    Constants.BatchOperatorCount,
+    "schedule window is not full"
+  )
+}
+
+/** Read the Ethereum outpost's next sequential inbound epoch. */
+async function readEthereumNextEpoch(
+  ctx: ClusterBuildContext
+): Promise<number> {
+  return Number(await loadEthereumInbound(ctx).nextEpochIndex())
+}
+
+/** Bind the deployed Ethereum inbound contract to its read-only flow surface. */
+function loadEthereumInbound(ctx: ClusterBuildContext): EthereumInboundView {
+  const deploymentsPath = ClusterConfigProvider.ethereumDeploymentsPath(
+    ctx.config
+  )
+  const addresses = EthereumCollateralTool.loadOutpostAddresses(deploymentsPath)
+  return contractView<EthereumInboundView>(
+    addresses.OPPInbound,
+    EthereumCollateralTool.loadOutpostAbi(
+      ctx.config.ethereumPath,
+      "OPPInbound"
+    ),
+    ctx.ethereum.wallet.signer
+  )
+}
+
+/** Read the Solana outpost's next sequential inbound epoch. */
+async function readSolanaNextEpoch(ctx: ClusterBuildContext): Promise<number> {
+  const { accounts, configAddress } = loadSolanaOppAccounts(ctx)
+  const config = (await accounts[
+    Constants.SolanaOutpostConfigAccountName
+  ].fetch(configAddress)) as SolanaOutpostConfigAccount
+  return Number(config.nextEpochIndex.toString())
+}
+
+/** Load the Solana OPP program and the account namespace used by flow reads. */
+function loadSolanaOppAccounts(ctx: ClusterBuildContext): SolanaOppAccounts {
+  const reader = ctx.keyStore.assertOperator(
+    Constants.RecoverySolanaReaderLabel
+  )
+  const program = SolanaCollateralTool.loadOppOutpostProgram(
+    ctx,
+    solanaKeypair(reader.solana)
+  )
+  const configAddress = SolanaOutpostProgramTool.derivePda(
+    program.programId,
+    Buffer.from(SolanaOutpostBootstrapper.PdaSeed.OutpostConfig)
+  )
+  const accounts: Record<string, SolanaAccountClient> = program.account
+  return { accounts, configAddress, programId: program.programId }
+}
+
+/** Cross-chain signing addresses for one WIRE operator account. */
+function replacementAddresses(
+  ctx: ClusterBuildContext,
+  account: string
+): ReplacementAddresses {
+  const operator = ctx.keyStore.operators.find(
+    entry => entry.account === account
+  )
+  Assert.ok(operator != null, `${account} is absent from the cluster key store`)
+  Assert.ok(operator.ethereum != null, `${account} has no Ethereum identity`)
+  Assert.ok(operator.solana != null, `${account} has no Solana identity`)
+  return {
+    ethereum: operator.ethereum.address,
+    solana: solanaKeypair(operator.solana).publicKey
+  }
+}
+
+/**
+ * Prove one replacement signed accepted deliveries for the same duty epoch on
+ * both outposts. Each contract records a signer only after its active-group
+ * admission check, so this is also direct evidence that the replacement's
+ * propagated address was seated rather than merely present in the depot group.
+ */
+async function replacementDeliveredOnBothOutposts(
+  ctx: ClusterBuildContext,
+  account: string,
+  epochIndex: number
+): Promise<boolean> {
+  const addresses = replacementAddresses(ctx, account)
+  const ethereumDigest = await loadEthereumInbound(ctx).epochDeliveries(
+    epochIndex,
+    addresses.ethereum
+  )
+  if (/^0x0{64}$/i.test(ethereumDigest)) return false
+
+  const { accounts, programId } = loadSolanaOppAccounts(ctx)
+  const epochBytes = Buffer.alloc(4)
+  epochBytes.writeUInt32LE(epochIndex)
+  const deliveriesAddress = SolanaOutpostProgramTool.derivePda(
+    programId,
+    Buffer.from("epoch_deliveries"),
+    epochBytes
+  )
+  const deliveries = (await accounts.epochDeliveries.fetchNullable(
+    deliveriesAddress
+  )) as SolanaEpochDeliveriesAccount | null
+  return (
+    deliveries != null &&
+    deliveries.deliveries.some(entry => entry.operator.equals(addresses.solana))
+  )
+}
+
+/** Read whether an operator is SLASHED in the depot registry. */
+async function operatorIsSlashed(
+  ctx: ClusterBuildContext,
+  account: string
+): Promise<boolean> {
+  const { rows } = await ctx.wire
+    .getSysioContract(SysioContractName.opreg)
+    .tables.operators.query({ limit: Constants.OperatorsQueryLimit })
+  const target = rows.find(row => row.account === account)
+  return (
+    target != null &&
+    matchesProtoEnum(
+      target.status,
+      SysioOpregOperatorstatus,
+      SysioOpregOperatorstatus.OPERATOR_STATUS_SLASHED
+    )
+  )
+}
+
+/** Remove one eligible member from the group whose duty is currently held. */
+async function runSlashHeldGroupMember(
+  ctx: ClusterBuildContext,
+  _input: null,
+  signal: AbortSignal
+): Promise<void> {
+  signal.throwIfAborted()
+  const checkpoint = ctx.outputs.assert(WithheldScheduleCheckpointKey)
+  const { rows } = await ctx.wire
+    .getSysioContract(SysioContractName.opreg)
+    .tables.operators.query({ limit: Constants.OperatorsQueryLimit })
+  const candidate = checkpoint.activeGroup.find(account => {
+    if (
+      account === Constants.RecoverySlashTargetAccount ||
+      account === Constants.RecoverySolanaReaderLabel
+    ) {
+      return false
+    }
+    const row = rows.find(operator => operator.account === account)
+    return (
+      row != null &&
+      matchesProtoEnum(
+        row.type,
+        SysioOpregOperatortype,
+        SysioOpregOperatortype.OPERATOR_TYPE_BATCH
+      ) &&
+      matchesProtoEnum(
+        row.status,
+        SysioOpregOperatorstatus,
+        SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
+      )
+    )
+  })
+  Assert.ok(candidate != null, "held group has no eligible slash candidate")
+  const state = await Steps.contracts.sysio.epoch.readEpochState(ctx)
+  await Steps.contracts.sysio.opreg.runSlash(
+    ctx,
+    {
+      kind: "OpregContractSteps.SlashInput",
+      data: {
+        account: candidate,
+        reason: "WIRE-385 held-duty recovery regression"
+      }
+    },
+    signal
+  )
+  ctx.outputs.set(HeldSlashAccountKey, candidate)
+  ctx.outputs.set(HeldSlashEpochKey, Number(state.current_epoch_index))
 }
 
 /** The SOL outpost's on-chain collateral ledger from the `OperatorRegistry` PDA (a read). */
@@ -187,15 +478,22 @@ async function readSolanaCollateralLedger(
  *    outpost's escrow ledger returns to 0, and each wallet is credited the
  *    exact bond amount (wei/lamport-exact — any drift means the outpost decoded
  *    a different amount than the depot encoded).
+ * 9. **Schedule recovery** — remove an announced operator at the exact roster
+ *    floor, prove the depot freezes that duty while both outposts keep accepting
+ *    sequential epochs, remove another member while frozen, add two replacements,
+ *    and prove publication and rotation resume through replacement-backed duty.
  */
 export class TerminationScenario extends FlowScenario {
   readonly name = "flow-batch-operator-termination"
   readonly description =
-    "Non-bootstrapped batch operator bonds ETH + SOL, misses its scheduled deliveries, is terminated, and both bonds are remitted back"
+    "Terminate and remit a non-bootstrapped operator, then freeze, repair, and resume a depleted batch schedule across Ethereum and Solana"
 
   override readonly defaults: ClusterBuildOptions = {
     epochDurationSec: Constants.EpochDurationSec,
     batchOperatorCount: Constants.BatchOperatorCount,
+    operatorsPerEpoch: Constants.OperatorsPerEpoch,
+    batchOpGroups: Constants.BatchOperatorGroups,
+    adHocCount: Constants.RecoveryAdHocDaemonCount,
     terminateMaxConsecutiveMisses: Constants.TerminateMaxConsecutiveMisses,
     // Depot must enforce "ACTIVE requires the minimum on EVERY registered
     // outpost chain" — otherwise the operator flips ACTIVE on an empty
@@ -706,6 +1004,447 @@ export class TerminationScenario extends FlowScenario {
           )
         },
         quickStepOptions
+      )
+    )
+
+    // ── 9. Reach the exact roster floor with the fixed slash target on duty ──
+    ClusterBuildPhase.create(
+      cluster,
+      "PrepareScheduleRecovery",
+      "The terminated test operator is gone and batchop.a reaches current duty in a complete window"
+    ).push(
+      verifyStep(
+        Actor.Sysio,
+        "exact-minimum-window-ready",
+        "three disjoint groups of three remain, with batchop.a in the current group",
+        async ctx => {
+          await pollUntil(
+            `${Constants.RecoverySlashTargetAccount} reaches current duty in a complete window`,
+            async () => {
+              const state =
+                await Steps.contracts.sysio.epoch.readEpochState(ctx)
+              const groups = state.batch_op_groups
+              const complete =
+                groups.length === Constants.BatchOperatorGroups &&
+                groups.every(
+                  group => group.length === Constants.OperatorsPerEpoch
+                )
+              if (!complete) return false
+              assertCompleteSchedule(groups)
+              const current = groups[state.current_batch_op_group] ?? []
+              return current.includes(Constants.RecoverySlashTargetAccount)
+            },
+            Constants.recoveryDeadlineMs(Constants.BatchOperatorGroups + 2),
+            Constants.PollIntervalMs
+          )
+        },
+        {
+          timeoutMs: Constants.recoveryDeadlineMs(
+            Constants.BatchOperatorGroups + 2
+          )
+        }
+      )
+    )
+
+    // ── 10. Remove one current member at the exact floor → withhold ──
+    ClusterBuildPhase.create(
+      cluster,
+      "StarveScheduleWindow",
+      "Slashing one seated operator makes the next tail one seat short"
+    ).push(
+      Steps.contracts.sysio.opreg.planSlash(
+        Actor.Sysio,
+        "slash-current-member",
+        `slash ${Constants.RecoverySlashTargetAccount} to exercise withheld-window recovery`,
+        {},
+        {
+          account: Constants.RecoverySlashTargetAccount,
+          reason: "WIRE-385 schedule recovery regression"
+        }
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "capture-withheld-window",
+        "the first slide enters the announced group and persists an incomplete window",
+        async ctx => {
+          let checkpoint: WithheldScheduleCheckpoint | null = null
+          await pollUntil(
+            "an incomplete schedule window is persisted after the target is slashed",
+            async () => {
+              const state =
+                await Steps.contracts.sysio.epoch.readEpochState(ctx)
+              const current =
+                state.batch_op_groups[state.current_batch_op_group] ?? []
+              const incomplete = state.batch_op_groups.some(
+                group => group.length !== Constants.OperatorsPerEpoch
+              )
+              if (
+                !(await operatorIsSlashed(
+                  ctx,
+                  Constants.RecoverySlashTargetAccount
+                )) ||
+                !incomplete ||
+                current.length === 0
+              ) {
+                return false
+              }
+              const [ethereumNextEpoch, solanaNextEpoch] = await Promise.all([
+                readEthereumNextEpoch(ctx),
+                readSolanaNextEpoch(ctx)
+              ])
+              const expectedNextEpoch = Number(state.current_epoch_index) + 1
+              if (
+                ethereumNextEpoch < expectedNextEpoch ||
+                solanaNextEpoch < expectedNextEpoch
+              ) {
+                return false
+              }
+              checkpoint = {
+                epochIndex: Number(state.current_epoch_index),
+                activeGroup: [...current],
+                ethereumNextEpoch,
+                solanaNextEpoch
+              }
+              return true
+            },
+            Constants.recoveryDeadlineMs(4),
+            Constants.PollIntervalMs
+          )
+          Assert.ok(checkpoint != null, "withheld checkpoint was not captured")
+          ctx.outputs.set(WithheldScheduleCheckpointKey, checkpoint)
+        },
+        { timeoutMs: Constants.recoveryDeadlineMs(4) }
+      )
+    )
+
+    // ── 11. Keep announced duty while both outposts accept later epochs ──
+    ClusterBuildPhase.create(
+      cluster,
+      "HoldAnnouncedDuty",
+      "The current group remains fixed while the short future window is withheld"
+    ).push(
+      verifyStep(
+        Actor.Sysio,
+        "held-duty-remains-live",
+        "two epochs land on Ethereum and Solana without changing the announced current group",
+        async ctx => {
+          const checkpoint = ctx.outputs.assert(WithheldScheduleCheckpointKey)
+          await pollUntil(
+            "both outposts advance twice while the depot duty remains held",
+            async () => {
+              const state =
+                await Steps.contracts.sysio.epoch.readEpochState(ctx)
+              const current =
+                state.batch_op_groups[state.current_batch_op_group] ?? []
+              if (
+                Number(state.current_epoch_index) > checkpoint.epochIndex &&
+                !sameGroup(current, checkpoint.activeGroup)
+              ) {
+                throw new Error(
+                  `duty rotated before repair: ${checkpoint.activeGroup.join(",")} -> ${current.join(",")}`
+                )
+              }
+              Assert.ok(
+                state.batch_op_groups.some(
+                  group => group.length !== Constants.OperatorsPerEpoch
+                ),
+                "schedule became complete before a replacement was provisioned"
+              )
+              return (
+                Number(state.current_epoch_index) >=
+                  checkpoint.epochIndex + Constants.RecoveryHeldEpochAdvances &&
+                (await readEthereumNextEpoch(ctx)) >=
+                  checkpoint.ethereumNextEpoch +
+                    Constants.RecoveryHeldEpochAdvances &&
+                (await readSolanaNextEpoch(ctx)) >=
+                  checkpoint.solanaNextEpoch +
+                    Constants.RecoveryHeldEpochAdvances
+              )
+            },
+            Constants.recoveryDeadlineMs(
+              Constants.RecoveryHeldEpochAdvances + 4
+            ),
+            Constants.PollIntervalMs
+          )
+        },
+        {
+          timeoutMs: Constants.recoveryDeadlineMs(
+            Constants.RecoveryHeldEpochAdvances + 4
+          )
+        }
+      )
+    )
+
+    // ── 12. Lose a member of held duty without changing its announced seats ──
+    ClusterBuildPhase.create(
+      cluster,
+      "DegradeHeldDuty",
+      "An announced seat becomes ineligible while the incomplete future window is held"
+    ).push(
+      ClusterBuildStep.create(
+        Actor.Sysio,
+        "slash-held-member",
+        "slash one eligible held-group member selected from live chain state",
+        {},
+        null,
+        runSlashHeldGroupMember
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "held-seat-preserved",
+        "the next epoch retains the announced seat as a denominator placeholder",
+        async ctx => {
+          const withheld = ctx.outputs.assert(WithheldScheduleCheckpointKey)
+          const slashedAccount = ctx.outputs.assert(HeldSlashAccountKey)
+          const slashEpoch = ctx.outputs.assert(HeldSlashEpochKey)
+          await pollUntil(
+            "held duty survives a member becoming ineligible",
+            async () => {
+              const state =
+                await Steps.contracts.sysio.epoch.readEpochState(ctx)
+              const current =
+                state.batch_op_groups[state.current_batch_op_group] ?? []
+              if (!sameGroup(current, withheld.activeGroup)) {
+                throw new Error(
+                  `held duty changed after ${slashedAccount} was slashed: ${withheld.activeGroup.join(",")} -> ${current.join(",")}`
+                )
+              }
+              Assert.ok(
+                state.batch_op_groups.some(
+                  group => group.length !== Constants.OperatorsPerEpoch
+                ),
+                "schedule became complete before replacements were provisioned"
+              )
+              if (
+                Number(state.current_epoch_index) <= slashEpoch ||
+                !(await operatorIsSlashed(ctx, slashedAccount))
+              ) {
+                return false
+              }
+              const [ethereumNextEpoch, solanaNextEpoch] = await Promise.all([
+                readEthereumNextEpoch(ctx),
+                readSolanaNextEpoch(ctx)
+              ])
+              const expectedNextEpoch = Number(state.current_epoch_index) + 1
+              return (
+                ethereumNextEpoch >= expectedNextEpoch &&
+                solanaNextEpoch >= expectedNextEpoch
+              )
+            },
+            Constants.recoveryDeadlineMs(4),
+            Constants.PollIntervalMs
+          )
+        },
+        { timeoutMs: Constants.recoveryDeadlineMs(4) }
+      )
+    )
+
+    // ── 13. Add ACTIVE standbys and their daemons for the two roster losses ──
+    WireOperatorProvisioningTool.planOperatorAccountProvisioning(
+      cluster,
+      "ProvisionScheduleReplacement",
+      "Provision two bootstrapped batch operators to repair both roster losses",
+      {},
+      Constants.RecoveryOperatorLabels.map((label, index) => ({
+        label,
+        type: OperatorType.BATCH,
+        ethereumHdIndex: Constants.RecoveryOperatorEthereumHdIndices[index],
+        isBootstrapped: true
+      }))
+    )
+
+    ClusterBuildPhase.create(
+      cluster,
+      "StartScheduleReplacementDaemons",
+      "Start both replacement batch-operator daemons before they enter rotation"
+    ).push(
+      ...Constants.RecoveryOperatorLabels.map(label =>
+        OperatorDaemonTool.planDaemonStart(
+          Actor.BatchOperator,
+          `start-${label}-daemon`,
+          `start ${label}'s batch-operator daemon`,
+          {},
+          label
+        )
+      )
+    )
+
+    // ── 14. Repair and publish the future window without moving held duty ──
+    ClusterBuildPhase.create(
+      cluster,
+      "RepairScheduleWindow",
+      "The replacement completes and publishes lookahead without moving current duty"
+    ).push(
+      verifyStep(
+        Actor.Sysio,
+        "complete-window-published",
+        "the held window becomes full and names the next group while current duty is unchanged",
+        async ctx => {
+          const withheld = ctx.outputs.assert(WithheldScheduleCheckpointKey)
+          const replacements = Constants.RecoveryOperatorLabels.map(
+            label => ctx.keyStore.assertOperator(label).account
+          )
+          let checkpoint: RepairedScheduleCheckpoint | null = null
+          await pollUntil(
+            "the replacement fills the held schedule window",
+            async () => {
+              const state =
+                await Steps.contracts.sysio.epoch.readEpochState(ctx)
+              const groups = state.batch_op_groups
+              const current = groups[state.current_batch_op_group] ?? []
+              const complete =
+                groups.length === Constants.BatchOperatorGroups &&
+                groups.every(
+                  group => group.length === Constants.OperatorsPerEpoch
+                )
+              if (
+                !complete ||
+                !groups.some(group =>
+                  group.some(member => replacements.includes(member))
+                )
+              ) {
+                return false
+              }
+              Assert.ok(
+                sameGroup(current, withheld.activeGroup),
+                "current duty moved before the repaired lookahead was published"
+              )
+              assertCompleteSchedule(groups)
+              const nextGroup =
+                groups[state.current_batch_op_group + 1] ?? current
+              const [ethereumNextEpoch, solanaNextEpoch] = await Promise.all([
+                readEthereumNextEpoch(ctx),
+                readSolanaNextEpoch(ctx)
+              ])
+              const expectedNextEpoch = Number(state.current_epoch_index) + 1
+              if (
+                ethereumNextEpoch < expectedNextEpoch ||
+                solanaNextEpoch < expectedNextEpoch
+              ) {
+                return false
+              }
+              checkpoint = {
+                epochIndex: Number(state.current_epoch_index),
+                activeGroup: [...current],
+                nextGroup: [...nextGroup],
+                ethereumNextEpoch,
+                solanaNextEpoch
+              }
+              return true
+            },
+            Constants.recoveryDeadlineMs(4),
+            Constants.PollIntervalMs
+          )
+          Assert.ok(checkpoint != null, "repaired checkpoint was not captured")
+          ctx.outputs.set(RepairedScheduleCheckpointKey, checkpoint)
+        },
+        { timeoutMs: Constants.recoveryDeadlineMs(4) }
+      )
+    )
+
+    // ── 15. Rotate only after the repaired lookahead has been published ──
+    ClusterBuildPhase.create(
+      cluster,
+      "ResumeScheduleRotation",
+      "The next published group takes duty and both outposts remain sequential"
+    ).push(
+      verifyStep(
+        Actor.Sysio,
+        "rotation-resumes-after-publication",
+        "the announced next group serves an epoch accepted by Ethereum and Solana",
+        async ctx => {
+          const repaired = ctx.outputs.assert(RepairedScheduleCheckpointKey)
+          await pollUntil(
+            "the repaired next group serves an epoch accepted by both outposts",
+            async () => {
+              const state =
+                await Steps.contracts.sysio.epoch.readEpochState(ctx)
+              const current =
+                state.batch_op_groups[state.current_batch_op_group] ?? []
+              const [ethereumNextEpoch, solanaNextEpoch] = await Promise.all([
+                readEthereumNextEpoch(ctx),
+                readSolanaNextEpoch(ctx)
+              ])
+              const expectedNextEpoch = Number(state.current_epoch_index) + 1
+              return (
+                Number(state.current_epoch_index) > repaired.epochIndex &&
+                sameGroup(current, repaired.nextGroup) &&
+                ethereumNextEpoch >= expectedNextEpoch &&
+                solanaNextEpoch >= expectedNextEpoch
+              )
+            },
+            Constants.recoveryDeadlineMs(4),
+            Constants.PollIntervalMs
+          )
+        },
+        { timeoutMs: Constants.recoveryDeadlineMs(4) }
+      )
+    )
+
+    // ── 16. Prove each replacement is seated and delivers on both outposts ──
+    ClusterBuildPhase.create(
+      cluster,
+      "ExerciseScheduleReplacement",
+      "Each replacement signs an accepted duty epoch on Ethereum and Solana"
+    ).push(
+      verifyStep(
+        Actor.BatchOperator,
+        "replacement-duty-serves",
+        "each replacement is admitted as an active-group signer on Ethereum and Solana",
+        async ctx => {
+          const replacements = Constants.RecoveryOperatorLabels.map(
+            label => ctx.keyStore.assertOperator(label).account
+          )
+          const dutyEpochs = new Map<string, number>()
+          await pollUntil(
+            "each replacement signs an accepted duty epoch on both outposts",
+            async () => {
+              const state =
+                await Steps.contracts.sysio.epoch.readEpochState(ctx)
+              const current =
+                state.batch_op_groups[state.current_batch_op_group] ?? []
+              const currentEpoch = Number(state.current_epoch_index)
+              for (const replacement of replacements) {
+                if (
+                  current.includes(replacement) &&
+                  !dutyEpochs.has(replacement)
+                ) {
+                  dutyEpochs.set(replacement, currentEpoch)
+                }
+              }
+              assertCompleteSchedule(state.batch_op_groups)
+              if (dutyEpochs.size !== replacements.length) return false
+
+              const [ethereumNextEpoch, solanaNextEpoch] = await Promise.all([
+                readEthereumNextEpoch(ctx),
+                readSolanaNextEpoch(ctx)
+              ])
+              for (const replacement of replacements) {
+                const dutyEpoch = dutyEpochs.get(replacement)
+                Assert.ok(dutyEpoch != null)
+                if (
+                  ethereumNextEpoch < dutyEpoch + 1 ||
+                  solanaNextEpoch < dutyEpoch + 1 ||
+                  !(await replacementDeliveredOnBothOutposts(
+                    ctx,
+                    replacement,
+                    dutyEpoch
+                  ))
+                ) {
+                  return false
+                }
+              }
+              return true
+            },
+            Constants.recoveryDeadlineMs(Constants.BatchOperatorGroups + 4),
+            Constants.PollIntervalMs
+          )
+        },
+        {
+          timeoutMs: Constants.recoveryDeadlineMs(
+            Constants.BatchOperatorGroups + 4
+          )
+        }
       )
     )
   }
