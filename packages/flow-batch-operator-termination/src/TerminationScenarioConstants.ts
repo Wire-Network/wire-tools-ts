@@ -103,8 +103,6 @@ export namespace TerminationScenarioConstants {
   /** Anchor account namespace for the Solana outpost configuration PDA. */
   export const SolanaOutpostConfigAccountName = "outpostConfig"
 
-  /** Bootstrapped operator removed at the exact nine-operator roster floor. */
-  export const RecoverySlashTargetAccount = "batchop.a"
   /** Healthy operator key used for read-only Solana account access. */
   export const RecoverySolanaReaderLabel = "batchop.b"
   /** Harness labels for operators that repair two independent roster losses. */

@@ -82,6 +82,10 @@ const HeldSlashEpochKey = outputKey<number>(
   "TerminationScenario.heldSlashEpoch",
   "depot epoch in which a member of the held group was slashed"
 )
+const RecoverySlashAccountKey = outputKey<string>(
+  "TerminationScenario.recoverySlashAccount",
+  "active current-group operator selected for the first recovery slash"
+)
 
 /**
  * Post-deposit snapshot of the doomed operator's ETH wallet balance (wei),
@@ -377,6 +381,85 @@ async function operatorIsSlashed(
   )
 }
 
+/** Read the ACTIVE batch-operator account names from the live registry. */
+async function readActiveBatchOperatorAccounts(
+  ctx: ClusterBuildContext
+): Promise<Set<string>> {
+  const { rows } = await ctx.wire
+    .getSysioContract(SysioContractName.opreg)
+    .tables.operators.query({ limit: Constants.OperatorsQueryLimit })
+  return new Set(
+    rows
+      .filter(
+        row =>
+          matchesProtoEnum(
+            row.type,
+            SysioOpregOperatortype,
+            SysioOpregOperatortype.OPERATOR_TYPE_BATCH
+          ) &&
+          matchesProtoEnum(
+            row.status,
+            SysioOpregOperatorstatus,
+            SysioOpregOperatorstatus.OPERATOR_STATUS_ACTIVE
+          )
+      )
+      .map(row => row.account)
+  )
+}
+
+/** Select and slash an active member of the live current group without crossing an epoch boundary. */
+async function runSlashRecoveryTarget(
+  ctx: ClusterBuildContext,
+  _input: null,
+  signal: AbortSignal
+): Promise<void> {
+  signal.throwIfAborted()
+  const before = await Steps.contracts.sysio.epoch.readEpochState(ctx)
+  assertCompleteSchedule(before.batch_op_groups)
+  const current = before.batch_op_groups[before.current_batch_op_group] ?? []
+  const activeAccounts = await readActiveBatchOperatorAccounts(ctx)
+  Assert.equal(
+    activeAccounts.size,
+    Constants.BatchOperatorCount,
+    "recovery slash did not start at the exact active roster floor"
+  )
+  Assert.ok(
+    current.every(account => activeAccounts.has(account)),
+    "current duty contains an inactive historical placeholder"
+  )
+  const readerAccount = ctx.keyStore.assertOperator(
+    Constants.RecoverySolanaReaderLabel
+  ).account
+  const account = current.find(member => member !== readerAccount)
+  Assert.ok(
+    account != null,
+    "current duty has no eligible recovery slash target"
+  )
+  await Steps.contracts.sysio.opreg.runSlash(
+    ctx,
+    {
+      kind: "OpregContractSteps.SlashInput",
+      data: {
+        account,
+        reason: "WIRE-385 schedule recovery regression"
+      }
+    },
+    signal
+  )
+  const after = await Steps.contracts.sysio.epoch.readEpochState(ctx)
+  const afterCurrent = after.batch_op_groups[after.current_batch_op_group] ?? []
+  Assert.equal(
+    Number(after.current_epoch_index),
+    Number(before.current_epoch_index),
+    "epoch advanced across the recovery slash"
+  )
+  Assert.ok(
+    sameGroup(afterCurrent, current),
+    "current duty changed across the recovery slash"
+  )
+  ctx.outputs.set(RecoverySlashAccountKey, account)
+}
+
 /** Remove one eligible member from the group whose duty is currently held. */
 async function runSlashHeldGroupMember(
   ctx: ClusterBuildContext,
@@ -388,11 +471,12 @@ async function runSlashHeldGroupMember(
   const { rows } = await ctx.wire
     .getSysioContract(SysioContractName.opreg)
     .tables.operators.query({ limit: Constants.OperatorsQueryLimit })
+  const firstSlashAccount = ctx.outputs.assert(RecoverySlashAccountKey)
+  const readerAccount = ctx.keyStore.assertOperator(
+    Constants.RecoverySolanaReaderLabel
+  ).account
   const candidate = checkpoint.activeGroup.find(account => {
-    if (
-      account === Constants.RecoverySlashTargetAccount ||
-      account === Constants.RecoverySolanaReaderLabel
-    ) {
+    if (account === firstSlashAccount || account === readerAccount) {
       return false
     }
     const row = rows.find(operator => operator.account === account)
@@ -1007,19 +1091,19 @@ export class TerminationScenario extends FlowScenario {
       )
     )
 
-    // ── 9. Reach the exact roster floor with the fixed slash target on duty ──
+    // ── 9. Reach the exact roster floor with a fully active group on duty ──
     ClusterBuildPhase.create(
       cluster,
       "PrepareScheduleRecovery",
-      "The terminated test operator is gone and batchop.a reaches current duty in a complete window"
+      "The terminated test operator is gone and a complete window reaches active current duty"
     ).push(
       verifyStep(
         Actor.Sysio,
         "exact-minimum-window-ready",
-        "three disjoint groups of three remain, with batchop.a in the current group",
+        "three disjoint groups of three remain with a fully active current group",
         async ctx => {
           await pollUntil(
-            `${Constants.RecoverySlashTargetAccount} reaches current duty in a complete window`,
+            "a complete three-by-three window has a fully active current group",
             async () => {
               const state =
                 await Steps.contracts.sysio.epoch.readEpochState(ctx)
@@ -1032,7 +1116,17 @@ export class TerminationScenario extends FlowScenario {
               if (!complete) return false
               assertCompleteSchedule(groups)
               const current = groups[state.current_batch_op_group] ?? []
-              return current.includes(Constants.RecoverySlashTargetAccount)
+              const activeAccounts = await readActiveBatchOperatorAccounts(ctx)
+              if (activeAccounts.size !== Constants.BatchOperatorCount) {
+                return false
+              }
+              const readerAccount = ctx.keyStore.assertOperator(
+                Constants.RecoverySolanaReaderLabel
+              ).account
+              return (
+                current.every(account => activeAccounts.has(account)) &&
+                current.some(account => account !== readerAccount)
+              )
             },
             Constants.recoveryDeadlineMs(Constants.BatchOperatorGroups + 2),
             Constants.PollIntervalMs
@@ -1052,15 +1146,13 @@ export class TerminationScenario extends FlowScenario {
       "StarveScheduleWindow",
       "Slashing one seated operator makes the next tail one seat short"
     ).push(
-      Steps.contracts.sysio.opreg.planSlash(
+      ClusterBuildStep.create(
         Actor.Sysio,
         "slash-current-member",
-        `slash ${Constants.RecoverySlashTargetAccount} to exercise withheld-window recovery`,
+        "slash the selected active current-group member to exercise withheld-window recovery",
         {},
-        {
-          account: Constants.RecoverySlashTargetAccount,
-          reason: "WIRE-385 schedule recovery regression"
-        }
+        null,
+        runSlashRecoveryTarget
       ),
       verifyStep(
         Actor.Sysio,
@@ -1078,11 +1170,9 @@ export class TerminationScenario extends FlowScenario {
               const incomplete = state.batch_op_groups.some(
                 group => group.length !== Constants.OperatorsPerEpoch
               )
+              const slashTarget = ctx.outputs.assert(RecoverySlashAccountKey)
               if (
-                !(await operatorIsSlashed(
-                  ctx,
-                  Constants.RecoverySlashTargetAccount
-                )) ||
+                !(await operatorIsSlashed(ctx, slashTarget)) ||
                 !incomplete ||
                 current.length === 0
               ) {
