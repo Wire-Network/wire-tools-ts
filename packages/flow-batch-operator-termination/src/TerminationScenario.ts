@@ -1499,7 +1499,8 @@ export class TerminationScenario extends FlowScenario {
           const replacements = Constants.RecoveryOperatorLabels.map(
             label => ctx.keyStore.assertOperator(label).account
           )
-          const dutyEpochs = new Map<string, number>()
+          const dutyEpochs = new Map<string, Set<number>>()
+          const delivered = new Set<string>()
           await pollUntil(
             "each replacement signs an accepted duty epoch on both outposts",
             async () => {
@@ -1509,36 +1510,40 @@ export class TerminationScenario extends FlowScenario {
                 state.batch_op_groups[state.current_batch_op_group] ?? []
               const currentEpoch = Number(state.current_epoch_index)
               for (const replacement of replacements) {
-                if (
-                  current.includes(replacement) &&
-                  !dutyEpochs.has(replacement)
-                ) {
-                  dutyEpochs.set(replacement, currentEpoch)
+                if (current.includes(replacement) && !delivered.has(replacement)) {
+                  const epochs = dutyEpochs.get(replacement) ?? new Set<number>()
+                  epochs.add(currentEpoch)
+                  dutyEpochs.set(replacement, epochs)
                 }
               }
               assertCompleteSchedule(state.batch_op_groups)
-              if (dutyEpochs.size !== replacements.length) return false
-
               const [ethereumNextEpoch, solanaNextEpoch] = await Promise.all([
                 readEthereumNextEpoch(ctx),
                 readSolanaNextEpoch(ctx)
               ])
               for (const replacement of replacements) {
-                const dutyEpoch = dutyEpochs.get(replacement)
-                Assert.ok(dutyEpoch != null)
-                if (
-                  ethereumNextEpoch < dutyEpoch + 1 ||
-                  solanaNextEpoch < dutyEpoch + 1 ||
-                  !(await replacementDeliveredOnBothOutposts(
-                    ctx,
-                    replacement,
-                    dutyEpoch
-                  ))
-                ) {
-                  return false
+                if (delivered.has(replacement)) continue
+                // A delivery arriving after quorum is a benign no-op. Keep
+                // later observed duties eligible instead of pinning the first.
+                for (const dutyEpoch of dutyEpochs.get(replacement) ?? []) {
+                  if (
+                    ethereumNextEpoch >= dutyEpoch + 1 &&
+                    solanaNextEpoch >= dutyEpoch + 1 &&
+                    (await replacementDeliveredOnBothOutposts(
+                      ctx,
+                      replacement,
+                      dutyEpoch
+                    ))
+                  ) {
+                    delivered.add(replacement)
+                    log.info(
+                      `${replacement} signed accepted deliveries on both outposts for duty epoch ${dutyEpoch}`
+                    )
+                    break
+                  }
                 }
               }
-              return true
+              return delivered.size === replacements.length
             },
             Constants.recoveryDeadlineMs(Constants.BatchOperatorGroups + 4),
             Constants.PollIntervalMs
