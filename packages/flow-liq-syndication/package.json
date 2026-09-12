@@ -1,0 +1,23 @@
+{
+  "name": "@wireio/test-flow-liq-syndication",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Flow: SYNDICATE_LIQ + LIQ_YIELD circulate from the Solana outpost and the depot keeps advancing",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "node lib/index.js",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.31.0",
+    "@solana/web3.js": "^1.98.0",
+    "@wireio/cluster-tool": "workspace:*",
+    "@wireio/debugging-shared": "workspace:*",
+    "@wireio/sdk-core": "^1.0.88",
+    "@wireio/opp-typescript-models": "^1.0.48"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0"
+  }
+}

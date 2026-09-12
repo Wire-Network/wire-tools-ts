@@ -15,35 +15,27 @@
  * picks it up, packs the next `BATCH_OPERATOR_GROUPS` envelope, and
  * the depot dispatches it as `sysio.dclaim::onreward` — same code
  * path a production STAKING_REWARD would exercise.
+ *
+ * The instruction itself is assembled by
+ * {@link SolanaAddAttestationTool} — the ONE home of the hand-built
+ * `add_attestation` ix (the i32-LE attestation-type encoding the
+ * proto-derived Rust enum's custom Borsh impl requires) and of the
+ * instruction's four-account list.
  */
 
 import Assert from "node:assert"
-import * as crypto from "node:crypto"
-import * as anchor from "@coral-xyz/anchor"
+import type { Connection, Keypair, PublicKey } from "@solana/web3.js"
+import type * as anchor from "@coral-xyz/anchor"
 import {
-  Connection,
-  Keypair,
-  PublicKey,
-  Transaction,
-  TransactionInstruction
-} from "@solana/web3.js"
-import {
+  AttestationType,
   ChainKind,
   type StakingReward,
   StakingReward as StakingRewardMsg
 } from "@wireio/opp-typescript-models"
-import { confirmSignature } from "../../clients/solana/utils/signatureUtils.js"
+import { SolanaAddAttestationTool } from "./SolanaAddAttestationTool.js"
 
-/** Seed for the `OutpostConfig` singleton PDA (mirrors
- *  `wire-solana/programs/liqsol-core/src/states/opp_states.rs`). */
-const OUTPOST_CONFIG_SEED = Buffer.from("outpost_config")
-/** Seed for the `OutboundMessageBuffer` singleton PDA. */
-const OUTBOUND_MESSAGE_BUFFER_SEED = Buffer.from("outbound_message_buffer")
-/** Seed for the liqsol `GlobalConfig` admin-gate PDA (mirrors
- *  `wire-solana/programs/liqsol-core/src/states/global_config.rs`'s
- *  `GlobalConfig::SEEDS`). `add_attestation` checks `has_one = admin`
- *  against it, so every caller must pass it. */
-const GLOBAL_CONFIG_SEED = Buffer.from("global_config")
+/** Confirmation label for the STAKING_REWARD `add_attestation` submission. */
+const StakingRewardConfirmLabel = "SolanaYieldEmitterTool add_attestation"
 
 /** Per-staker entry in an `emitYieldBatch` invocation. Mirrors the ETH
  *  side's `YieldEntry` shape for ergonomic symmetry across the two
@@ -112,11 +104,6 @@ export function encodeStakingReward(
  * a single-tx batch should iterate this helper inside their own
  * `Promise.all` or pass distinct refs per entry.
  *
- * The Anchor IDL declares `attestation_type` as the protobuf-derived
- * `AttestationType` enum. Anchor-TS encodes enum variants as
- * `{ <variantName>: {} }`; the matching variant for STAKING_REWARD is
- * `attestationTypeStakingReward`.
- *
  * @param connection         Solana RPC connection (typically `solClient.connection`).
  * @param program            Anchor `Program` bound to `opp_outpost`.
  * @param authority          Deployer keypair = `OutpostConfig.authority`.
@@ -140,79 +127,18 @@ export async function emitSolanaYield(
   Assert.ok(entry.rewardAmount > 0n, "SolanaYieldEmitterTool: rewardAmount must be positive")
   Assert.ok(externalEpochRef > 0n, "SolanaYieldEmitterTool: externalEpochRef must be positive")
 
-  const encoded = encodeStakingReward(
-    entry,
-    chainCode,
-    tokenCode,
-    externalEpochRef,
-    rewardEpochIndex
+  return SolanaAddAttestationTool.addAttestation(
+    connection,
+    program.programId,
+    authority,
+    AttestationType.STAKING_REWARD,
+    encodeStakingReward(
+      entry,
+      chainCode,
+      tokenCode,
+      externalEpochRef,
+      rewardEpochIndex
+    ),
+    StakingRewardConfirmLabel
   )
-
-  const programId = program.programId
-  const [configPda] = PublicKey.findProgramAddressSync([OUTPOST_CONFIG_SEED], programId)
-  const [outboundMessageBufferPda] = PublicKey.findProgramAddressSync(
-    [OUTBOUND_MESSAGE_BUFFER_SEED],
-    programId
-  )
-  const [globalConfigPda] = PublicKey.findProgramAddressSync(
-    [GLOBAL_CONFIG_SEED],
-    programId
-  )
-
-  // `add_attestation`'s `AttestationType` arg is declared in the IDL as a
-  // unit enum, but the proto-generated Rust enum carries a custom Borsh
-  // impl that serializes as `i32` (4-byte LE) — see the wire-opp-solana-models
-  // crate (types.rs):
-  //   impl borsh::BorshSerialize for AttestationType { ... as i32 ... }
-  // anchor.Program would encode it as the IDL's 1-byte variant tag,
-  // producing bytes the program's deserializer reads as a corrupted
-  // payload (and the OOM the proto-derived enum's `from(i32)` tries to
-  // allocate a `Vec` over). So we build the instruction by hand with
-  // the correct Borsh shape: 8-byte Anchor discriminator + i32 LE
-  // attestation_type + Vec<u8> data (4-byte LE length + bytes).
-  //
-  // Anchor's instruction discriminator is the first 8 bytes of
-  //   sha256("global:add_attestation")
-  // — same convention every Anchor-generated client uses.
-  const ATTESTATION_TYPE_STAKING_REWARD = 60950 // proto enum value
-
-  const discriminator = crypto
-    .createHash("sha256")
-    .update("global:add_attestation")
-    .digest()
-    .subarray(0, 8)
-
-  const dataBuf = Buffer.from(encoded)
-  const ixData = Buffer.alloc(8 + 4 + 4 + dataBuf.length)
-  let off = 0
-  discriminator.copy(ixData, off); off += 8
-  ixData.writeInt32LE(ATTESTATION_TYPE_STAKING_REWARD, off); off += 4
-  ixData.writeUInt32LE(dataBuf.length, off); off += 4
-  dataBuf.copy(ixData, off)
-
-  // `AddAttestation` declares exactly 4 accounts, IN THIS ORDER (admin,
-  // global_config, config, outbound_message_buffer) — the keys below must match
-  // that list. `global_config` is the liqsol admin gate (`has_one = admin`):
-  // the signer here is the deployer the validator installed as the program's
-  // upgrade authority, which `initialize_global_config` recorded as `admin`.
-  const ix = new TransactionInstruction({
-    programId,
-    keys: [
-      { pubkey: authority.publicKey,         isSigner: true,  isWritable: true  },
-      { pubkey: globalConfigPda,             isSigner: false, isWritable: false },
-      { pubkey: configPda,                   isSigner: false, isWritable: false },
-      { pubkey: outboundMessageBufferPda,    isSigner: false, isWritable: true  }
-    ],
-    data: ixData
-  })
-  const tx = new Transaction().add(ix)
-
-  const sig = await connection.sendTransaction(tx, [authority], {
-    skipPreflight: false
-  })
-
-  // Poll for confirmation via the shared bounded poller — anchor's
-  // .rpc() confirmTransaction is broken in our test-validator env.
-  await confirmSignature(connection, sig, "SolanaYieldEmitterTool add_attestation")
-  return sig
 }
