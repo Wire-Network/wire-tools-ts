@@ -103,3 +103,65 @@ export function containsSwapRevert(
     attestationEntryTag(AttestationType.SWAP_REVERT)
   )
 }
+
+/**
+ * Whether a `SYNDICATE_LIQ` attestation has circulated on `direction` — the
+ * outpost → depot proof that a syndication enqueued on the outpost reached an
+ * envelope (`flow-liq-syndication`).
+ *
+ * @param oppDebuggingDirectory - The cluster's `data/opp-debugging/` path.
+ * @param direction - The cross-chain edge to scan (default: Solana → depot,
+ *   the only direction that emits one).
+ * @returns Whether any matching envelope carries a SYNDICATE_LIQ attestation.
+ */
+export function containsSyndicateLiq(
+  oppDebuggingDirectory: string,
+  direction: DebugOutpostEndpointsType = DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT
+): boolean {
+  return envelopeDataContains(
+    oppDebuggingDirectory,
+    direction,
+    attestationEntryTag(AttestationType.SYNDICATE_LIQ)
+  )
+}
+
+/**
+ * Whether a `LIQ_YIELD` attestation has circulated on `direction` — the
+ * outpost → depot proof that the outpost's global syndicated-pool yield report
+ * reached an envelope (`flow-liq-syndication`).
+ *
+ * @param oppDebuggingDirectory - The cluster's `data/opp-debugging/` path.
+ * @param direction - The cross-chain edge to scan (default: Solana → depot,
+ *   the only direction that emits one).
+ * @returns Whether any matching envelope carries a LIQ_YIELD attestation.
+ */
+export function containsLiqYield(
+  oppDebuggingDirectory: string,
+  direction: DebugOutpostEndpointsType = DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT
+): boolean {
+  return envelopeDataContains(
+    oppDebuggingDirectory,
+    direction,
+    attestationEntryTag(AttestationType.LIQ_YIELD)
+  )
+}
+
+/**
+ * Whether a `DESYNDICATE_LIQ` attestation has circulated on `direction` — the
+ * depot → outpost release instruction (depot-originated, so the Solana-bound
+ * edge is the only one that ever carries it).
+ *
+ * @param oppDebuggingDirectory - The cluster's `data/opp-debugging/` path.
+ * @param direction - The cross-chain edge to scan (default: depot → Solana).
+ * @returns Whether any matching envelope carries a DESYNDICATE_LIQ attestation.
+ */
+export function containsDesyndicateLiq(
+  oppDebuggingDirectory: string,
+  direction: DebugOutpostEndpointsType = DebugOutpostEndpointsType.DEPOT_OUTPOST_SOLANA
+): boolean {
+  return envelopeDataContains(
+    oppDebuggingDirectory,
+    direction,
+    attestationEntryTag(AttestationType.DESYNDICATE_LIQ)
+  )
+}
