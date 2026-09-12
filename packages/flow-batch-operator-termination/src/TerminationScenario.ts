@@ -9,6 +9,8 @@ import {
   ClusterConfigProvider,
   EthereumCollateralTool,
   FlowScenario,
+  NodeConfig,
+  NodeRole,
   OperatorDaemonTool,
   Report,
   SolanaCollateralTool,
@@ -26,9 +28,11 @@ import {
   verifyStep,
   type ClusterBuild,
   type ClusterBuildContext,
-  type ClusterBuildOptions
+  type ClusterBuildOptions,
+  type StepInput
 } from "@wireio/cluster-tool"
 import { TerminationScenarioConstants as Constants } from "./TerminationScenarioConstants.js"
+import { assertReplacementQuorumPeer } from "./ReplacementQuorum.js"
 
 const log = getLogger(__filename)
 
@@ -359,6 +363,45 @@ async function replacementDeliveredOnBothOutposts(
   return (
     deliveries != null &&
     deliveries.deliveries.some(entry => entry.operator.equals(addresses.solana))
+  )
+}
+
+interface StopReplacementPeerInput extends StepInput {
+  readonly kind: "TerminationScenario.StopReplacementPeerInput"
+  readonly label: string
+}
+
+/** Stop one original signer so this replacement is necessary for quorum. */
+async function runStopReplacementPeer(
+  ctx: ClusterBuildContext,
+  input: StopReplacementPeerInput,
+  signal: AbortSignal
+): Promise<void> {
+  signal.throwIfAborted()
+  const state = await Steps.contracts.sysio.epoch.readEpochState(ctx)
+  const replacements = Constants.RecoveryOperatorLabels.map(
+    label => ctx.keyStore.assertOperator(label).account
+  )
+  const replacement = ctx.keyStore.assertOperator(input.label).account
+  const account = assertReplacementQuorumPeer(
+    state.batch_op_groups,
+    replacements,
+    replacement
+  )
+  const operator = ctx.keyStore.operators.find(entry => entry.account === account)
+  Assert.ok(operator != null, `${account} has no operator identity`)
+  const node = NodeConfig.plan(ctx.config).find(
+    entry =>
+      entry.role === NodeRole.batch_operator &&
+      entry.batchOperatorLabel === operator.label
+  )
+  Assert.ok(node != null, `${account} has no planned batch-operator daemon`)
+  const daemon = ctx.processManager.get(node.name)
+  Assert.ok(daemon != null, `${node.name} is not registered`)
+  // Replacements in the same group select the same peer. stop() is idempotent.
+  await daemon.stop(signal)
+  log.info(
+    `stopped ${account}'s daemon; ${replacement} is required for quorum`
   )
 }
 
@@ -1491,6 +1534,48 @@ export class TerminationScenario extends FlowScenario {
       "ExerciseScheduleReplacement",
       "Each replacement signs an accepted duty epoch on Ethereum and Solana"
     ).push(
+      verifyStep(
+        Actor.Sysio,
+        "replacement-groups-ready",
+        "both replacements are seated in a complete, fully active window",
+        async ctx => {
+          const replacements = Constants.RecoveryOperatorLabels.map(
+            label => ctx.keyStore.assertOperator(label).account
+          )
+          await pollUntil(
+            "historical vacancies leave the activated window",
+            async () => {
+              const state =
+                await Steps.contracts.sysio.epoch.readEpochState(ctx)
+              const active = await readActiveBatchOperatorAccounts(ctx)
+              assertCompleteSchedule(state.batch_op_groups)
+              const members = state.batch_op_groups.flat()
+              return (
+                members.every(account => active.has(account)) &&
+                replacements.every(account => members.includes(account))
+              )
+            },
+            Constants.recoveryDeadlineMs(Constants.BatchOperatorGroups + 1),
+            Constants.PollIntervalMs
+          )
+        },
+        {
+          timeoutMs: Constants.recoveryDeadlineMs(Constants.BatchOperatorGroups + 1)
+        }
+      ),
+      // A late third signature is a valid no-op after quorum. Stop one original
+      // peer per replacement group so each replacement must be admitted.
+      // The groups may be shared or distinct; every group retains two signers.
+      ...Constants.RecoveryOperatorLabels.map(label =>
+        ClusterBuildStep.create(
+          Actor.BatchOperator,
+          `stop-${label}-peer`,
+          `stop an original group peer so ${label} is required for quorum`,
+          {},
+          { kind: "TerminationScenario.StopReplacementPeerInput", label },
+          runStopReplacementPeer
+        )
+      ),
       verifyStep(
         Actor.BatchOperator,
         "replacement-duty-serves",
