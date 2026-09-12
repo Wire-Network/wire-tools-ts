@@ -125,8 +125,8 @@ export namespace EpochContractSteps {
   }
 
   /**
-   * The depot's whole sliding-window batch-operator schedule — every group,
-   * `[current, next, next+1]` at the default `batch_op_groups` of 3.
+   * The depot's last activated batch-operator window, including historical groups.
+   * Current duty is selected by its cursor; `next_batch_op_groups` is separate.
    *
    * @param ctx - The build context.
    * @returns The schedule groups (empty when the epoch state has no row yet).
