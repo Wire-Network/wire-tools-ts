@@ -1,6 +1,7 @@
 import { jest } from "@jest/globals"
 import { spawn, spawnSync } from "node:child_process"
 import Fs from "node:fs"
+import Os from "node:os"
 import Path from "node:path"
 import {
   BindConfigPortProtocol,
@@ -345,9 +346,7 @@ describe("BindConfigProvider", () => {
         AdvertiseAddress
       )
       // Unpinned entries persist WITHOUT the key (single-host default).
-      expect(
-        "advertiseAddress" in config.nodeop.ports.producers[1]
-      ).toBe(false)
+      expect("advertiseAddress" in config.nodeop.ports.producers[1]).toBe(false)
     })
   })
 
@@ -363,11 +362,16 @@ describe("BindConfigProvider", () => {
 
   describe("portLockPath", () => {
     // A mutex must be scoped to the state it guards. The registry is that
-    // state and it is env-overridable, so the lock has to follow it — a lock
-    // pinned to the OS temp dir made every jest worker queue on ONE mutex
-    // while each held its own mkdtemp registry, i.e. contend over nothing,
-    // and the rotating loser failed with `Lock file is already being held`.
-    it("lives INSIDE the registry it guards, so isolated registries never contend", () => {
+    // state and it is env-overridable, so the lock has to FOLLOW it — a lock
+    // pinned to one fixed tmpdir name made every jest worker queue on ONE
+    // mutex while each held its own mkdtemp registry, i.e. contend over
+    // nothing, and the rotating loser failed with `Lock file is already
+    // being held`. The lock is keyed by the registry path but does NOT live
+    // inside the registry dir: a sandboxing suite deletes that dir at
+    // teardown while `proper-lockfile`'s refresh timer still holds the lock,
+    // and its onCompromised hook then throws
+    // `ENOENT ... wire-cluster-ports.lock.lock`.
+    it("is distinct per registry, so isolated registries never contend", () => {
       const previous = process.env[BindConfigProvider.RegistryPathEnvVar]
       try {
         process.env[BindConfigProvider.RegistryPathEnvVar] = "/tmp/registry-one"
@@ -375,9 +379,10 @@ describe("BindConfigProvider", () => {
         process.env[BindConfigProvider.RegistryPathEnvVar] = "/tmp/registry-two"
         const second = BindConfigProvider.portLockPath()
 
-        expect(Path.dirname(first)).toBe("/tmp/registry-one")
-        expect(Path.dirname(second)).toBe("/tmp/registry-two")
         expect(first).not.toBe(second)
+        // OUTSIDE the registries it keys on — nothing a fixture owns/deletes.
+        expect(Path.dirname(first)).toBe(Os.tmpdir())
+        expect(Path.dirname(second)).toBe(Os.tmpdir())
       } finally {
         process.env[BindConfigProvider.RegistryPathEnvVar] = previous
       }
@@ -386,15 +391,29 @@ describe("BindConfigProvider", () => {
     it("is ONE shared path when the registry is shared — the cross-process guarantee", () => {
       const previous = process.env[BindConfigProvider.RegistryPathEnvVar]
       try {
-        process.env[BindConfigProvider.RegistryPathEnvVar] = "/tmp/registry-shared"
+        process.env[BindConfigProvider.RegistryPathEnvVar] =
+          "/tmp/registry-shared"
         expect(BindConfigProvider.portLockPath()).toBe(
           BindConfigProvider.portLockPath()
         )
-        expect(Path.dirname(BindConfigProvider.portLockPath())).toBe(
-          BindConfigProvider.registryPath()
-        )
       } finally {
         process.env[BindConfigProvider.RegistryPathEnvVar] = previous
+      }
+    })
+
+    it("normalizes equivalent registry spellings to one lock", () => {
+      const previous = process.env[BindConfigProvider.RegistryPathEnvVar]
+      try {
+        process.env[BindConfigProvider.RegistryPathEnvVar] =
+          "/tmp/registry-normalized"
+        const absolute = BindConfigProvider.portLockPath()
+        process.env[BindConfigProvider.RegistryPathEnvVar] =
+          "/tmp/registry-normalized/"
+        expect(BindConfigProvider.portLockPath()).toBe(absolute)
+      } finally {
+        if (previous === undefined)
+          delete process.env[BindConfigProvider.RegistryPathEnvVar]
+        else process.env[BindConfigProvider.RegistryPathEnvVar] = previous
       }
     })
   })
