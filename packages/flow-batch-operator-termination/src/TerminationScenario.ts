@@ -1351,7 +1351,9 @@ export class TerminationScenario extends FlowScenario {
         label,
         type: OperatorType.BATCH,
         ethereumHdIndex: Constants.RecoveryOperatorEthereumHdIndices[index],
-        isBootstrapped: true
+        isBootstrapped: true,
+        airdropSolanaLamports:
+          WireOperatorProvisioningTool.DefaultSolanaAirdropLamports
       }))
     )
 
