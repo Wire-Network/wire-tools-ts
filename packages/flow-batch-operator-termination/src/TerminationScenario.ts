@@ -33,6 +33,7 @@ import {
 } from "@wireio/cluster-tool"
 import { TerminationScenarioConstants as Constants } from "./TerminationScenarioConstants.js"
 import { assertReplacementQuorumPeer } from "./ReplacementQuorum.js"
+import { assertCompleteSchedule, assertStandingSpare } from "./StandingSpare.js"
 
 const log = getLogger(__filename)
 
@@ -69,6 +70,20 @@ interface WithheldScheduleCheckpoint {
 interface RepairedScheduleCheckpoint extends WithheldScheduleCheckpoint {
   nextGroup: string[]
 }
+
+/** Complete lookahead published after the doomed operator is terminated. */
+interface AbsorbedRemovalCheckpoint {
+  epochIndex: number
+  servingGroup: string[]
+  nextGroups: string[][]
+  ethereumNextEpoch: number
+  solanaNextEpoch: number
+}
+
+const AbsorbedRemovalCheckpointKey = outputKey<AbsorbedRemovalCheckpoint>(
+  "TerminationScenario.absorbedRemovalCheckpoint",
+  "complete lookahead and outpost cursors after the termination is absorbed"
+)
 
 const WithheldScheduleCheckpointKey = outputKey<WithheldScheduleCheckpoint>(
   "TerminationScenario.withheldScheduleCheckpoint",
@@ -233,35 +248,6 @@ function sameGroup(left: readonly string[], right: readonly string[]): boolean {
   return (
     left.length === right.length &&
     left.every((value, index) => value === right[index])
-  )
-}
-
-/** Require the full disjoint schedule used by the recovery regression. */
-function assertCompleteSchedule(groups: readonly string[][]): void {
-  Assert.equal(
-    groups.length,
-    Constants.BatchOperatorGroups,
-    "schedule group count changed"
-  )
-  const members = new Set<string>()
-  for (const group of groups) {
-    Assert.equal(
-      group.length,
-      Constants.OperatorsPerEpoch,
-      "schedule contains a short group"
-    )
-    for (const member of group) {
-      Assert.ok(
-        !members.has(member),
-        `${member} is seated in more than one group`
-      )
-      members.add(member)
-    }
-  }
-  Assert.equal(
-    members.size,
-    Constants.BatchOperatorCount,
-    "schedule window is not full"
   )
 }
 
@@ -464,7 +450,7 @@ async function runSlashRecoveryTarget(
   const activeAccounts = await readActiveBatchOperatorAccounts(ctx)
   Assert.equal(
     activeAccounts.size,
-    Constants.BatchOperatorCount,
+    Constants.ScheduleSeatCount,
     "recovery slash did not start at the exact active roster floor"
   )
   Assert.ok(
@@ -502,6 +488,61 @@ async function runSlashRecoveryTarget(
     "current duty changed across the recovery slash"
   )
   ctx.outputs.set(RecoverySlashAccountKey, account)
+}
+
+interface SlashStandingSpareInput extends StepInput {
+  readonly kind: "TerminationScenario.SlashStandingSpareInput"
+  readonly ordinal: number
+}
+
+/** Slash one verified standing spare, leaving every activated seat available. */
+async function runSlashStandingSpare(
+  ctx: ClusterBuildContext,
+  input: SlashStandingSpareInput,
+  signal: AbortSignal
+): Promise<void> {
+  signal.throwIfAborted()
+  let spare: string | null = null
+  await pollUntil(
+    `standing spare ${input.ordinal + 1} is outside a full active window`,
+    async () => {
+      const state = await Steps.contracts.sysio.epoch.readEpochState(ctx)
+      const active = await readActiveBatchOperatorAccounts(ctx)
+      if (
+        active.size !== Constants.BatchOperatorCount - input.ordinal ||
+        state.batch_op_groups.length !== Constants.BatchOperatorGroups ||
+        state.batch_op_groups.some(
+          group => group.length !== Constants.OperatorsPerEpoch
+        )
+      ) {
+        return false
+      }
+      try {
+        spare = assertStandingSpare(
+          active,
+          state.batch_op_groups,
+          Constants.StandingSpareCount - input.ordinal
+        )
+        return true
+      } catch {
+        return false
+      }
+    },
+    Constants.recoveryDeadlineMs(Constants.BatchOperatorGroups + 2),
+    Constants.PollIntervalMs
+  )
+  Assert.ok(spare != null, "no safe standing spare was selected")
+  await Steps.contracts.sysio.opreg.runSlash(
+    ctx,
+    {
+      kind: "OpregContractSteps.SlashInput",
+      data: {
+        account: spare,
+        reason: `WIRE-385 exhaust standing spare ${input.ordinal + 1}`
+      }
+    },
+    signal
+  )
 }
 
 /** Remove one eligible member from the group whose duty is currently held. */
@@ -555,26 +596,25 @@ async function runSlashHeldGroupMember(
   ctx.outputs.set(HeldSlashEpochKey, Number(state.current_epoch_index))
 }
 
-/** The SOL outpost's on-chain collateral ledger from the `OperatorRegistry` PDA (a read). */
+/** Read the SOL outpost's zero-copy operator registry and schedule. */
+async function readSolanaOperatorRegistry(
+  ctx: ClusterBuildContext
+): Promise<SolanaOperatorRegistryAccount> {
+  const { accounts, programId } = loadSolanaOppAccounts(ctx)
+  const [registryAddress] = PublicKey.findProgramAddressSync(
+    [Buffer.from(SolanaOutpostBootstrapper.PdaSeed.OperatorRegistry)],
+    programId
+  )
+  return (await accounts[
+    Constants.SolanaOperatorRegistryAccountName
+  ].fetch(registryAddress)) as SolanaOperatorRegistryAccount
+}
+
+/** The SOL outpost's on-chain collateral ledger from the operator registry. */
 async function readSolanaCollateralLedger(
   ctx: ClusterBuildContext
 ): Promise<SolanaCollateralLedgerEntry[]> {
-  const operator = ctx.keyStore.assertOperator(Constants.DoomedOperatorLabel)
-  const program = SolanaCollateralTool.loadOppOutpostProgram(
-    ctx,
-    solanaKeypair(operator.solana)
-  )
-  const [registryAddress] = PublicKey.findProgramAddressSync(
-    [Buffer.from(SolanaOutpostBootstrapper.PdaSeed.OperatorRegistry)],
-    program.programId
-  )
-  // Anchor types `Program<Idl>.account` per-IDL; for a runtime-loaded IDL the
-  // account clients are reached by name — one assertion to the string-keyed view.
-  const accounts: Record<string, SolanaAccountClient> = program.account
-  const registryAccount = (await accounts[
-    Constants.SolanaOperatorRegistryAccountName
-  ].fetch(registryAddress)) as SolanaOperatorRegistryAccount
-  return registryAccount.collateralByCode ?? []
+  return (await readSolanaOperatorRegistry(ctx)).collateralByCode ?? []
 }
 
 /**
@@ -606,10 +646,10 @@ async function readSolanaCollateralLedger(
  *    outpost's escrow ledger returns to 0, and each wallet is credited the
  *    exact bond amount (wei/lamport-exact — any drift means the outpost decoded
  *    a different amount than the depot encoded).
- * 9. **Schedule recovery** — remove an announced operator at the exact roster
- *    floor, prove the depot freezes that duty while both outposts keep accepting
- *    sequential epochs, remove another member while frozen, add two replacements,
- *    and prove publication and rotation resume through replacement-backed duty.
+ * 9. **Schedule recovery** — prove two standing spares absorb the terminated
+ *    operator without a hold, remove those spares and one announced operator
+ *    to reach the freeze, then repair two independent roster losses and prove
+ *    publication and rotation resume across both outposts.
  */
 export class TerminationScenario extends FlowScenario {
   readonly name = "flow-batch-operator-termination"
@@ -1005,7 +1045,160 @@ export class TerminationScenario extends FlowScenario {
       )
     )
 
-    // ── 8. Depot auto-remits the full bond on termination — both outposts ──
+    // ── 8. Two standing spares absorb the loss without a schedule hold ──
+    ClusterBuildPhase.create(
+      cluster,
+      "AbsorbTerminatedOperator",
+      "A complete successor reaches both outposts and the next duty rotates"
+    ).push(
+      verifyStep(
+        Actor.Sysio,
+        "standing-spare-successor-accepted",
+        "termination leaves eleven ACTIVE operators; both outposts seat a complete live successor",
+        async ctx => {
+          const doomed = doomedOperatorAccount(ctx)
+          let checkpoint: AbsorbedRemovalCheckpoint | null = null
+          await pollUntil(
+            "both outposts accept the complete post-termination lookahead",
+            async () => {
+              const state = await Steps.contracts.sysio.epoch.readEpochState(ctx)
+              const groups = state.next_batch_op_groups
+              const active = await readActiveBatchOperatorAccounts(ctx)
+              if (
+                active.size !== Constants.BatchOperatorCount ||
+                groups.length !== Constants.BatchOperatorGroups ||
+                groups.some(
+                  group => group.length !== Constants.OperatorsPerEpoch
+                )
+              ) {
+                return false
+              }
+              assertCompleteSchedule(groups)
+              const liveGroups = groups.slice(Constants.SuccessorGroupIndex)
+              Assert.ok(
+                liveGroups.flat().every(account => active.has(account)),
+                "successor contains an inactive active/future seat"
+              )
+              Assert.ok(
+                !liveGroups.flat().includes(doomed),
+                "terminated operator remains in an active/future seat"
+              )
+              const oldMembers = new Set(state.batch_op_groups.flat())
+              Assert.ok(
+                liveGroups.flat().some(account => !oldMembers.has(account)),
+                "no standing operator joined the successor"
+              )
+
+              const ethereum = loadEthereumInbound(ctx)
+              const solana = await readSolanaOperatorRegistry(ctx)
+              if (
+                Number(await ethereum.activeGroupIndex()) !== Constants.SuccessorGroupIndex ||
+                solana.activeGroupIndex !== Constants.SuccessorGroupIndex ||
+                solana.groupCount !== Constants.BatchOperatorGroups
+              ) {
+                return false
+              }
+              for (let groupIndex = Constants.SuccessorGroupIndex; groupIndex < groups.length; ++groupIndex) {
+                const solanaGroup = solana.groups[groupIndex]
+                if (solanaGroup?.memberCount !== Constants.OperatorsPerEpoch) {
+                  return false
+                }
+                for (let memberIndex = 0; memberIndex < Constants.OperatorsPerEpoch; ++memberIndex) {
+                  const addresses = replacementAddresses(
+                    ctx,
+                    groups[groupIndex][memberIndex]
+                  )
+                  if (
+                    (await ethereum.batchOpGroups(groupIndex, memberIndex)).toLowerCase() !==
+                      addresses.ethereum.toLowerCase() ||
+                    !solanaGroup.members[memberIndex]?.equals(addresses.solana)
+                  ) {
+                    return false
+                  }
+                }
+              }
+              const [ethereumNextEpoch, solanaNextEpoch] = await Promise.all([
+                readEthereumNextEpoch(ctx),
+                readSolanaNextEpoch(ctx)
+              ])
+              if (
+                ethereumNextEpoch < Number(state.current_epoch_index) + 1 ||
+                solanaNextEpoch < Number(state.current_epoch_index) + 1
+              ) {
+                return false
+              }
+              checkpoint = {
+                epochIndex: Number(state.current_epoch_index),
+                servingGroup: [
+                  ...(state.batch_op_groups[state.current_batch_op_group] ?? [])
+                ],
+                nextGroups: groups.map(group => [...group]),
+                ethereumNextEpoch,
+                solanaNextEpoch
+              }
+              return true
+            },
+            Constants.recoveryDeadlineMs(Constants.BatchOperatorGroups + 3),
+            Constants.PollIntervalMs
+          )
+          Assert.ok(checkpoint != null, "absorbed-removal checkpoint was not captured")
+          ctx.outputs.set(AbsorbedRemovalCheckpointKey, checkpoint)
+        },
+        {
+          timeoutMs: Constants.recoveryDeadlineMs(Constants.BatchOperatorGroups + 3)
+        }
+      ),
+      verifyStep(
+        Actor.Sysio,
+        "standing-spare-duty-rotates",
+        "the announced live group takes duty and both outpost cursors keep advancing",
+        async ctx => {
+          const checkpoint = ctx.outputs.assert(AbsorbedRemovalCheckpointKey)
+          const doomed = doomedOperatorAccount(ctx)
+          let sawActivation = false
+          await pollUntil(
+            "the complete successor becomes the activated schedule",
+            async () => {
+              const state = await Steps.contracts.sysio.epoch.readEpochState(ctx)
+              const current = state.batch_op_groups[state.current_batch_op_group] ?? []
+              if (
+                Number(state.current_epoch_index) <= checkpoint.epochIndex ||
+                state.current_batch_op_group !== Constants.SuccessorGroupIndex ||
+                !state.batch_op_groups.every((group, index) =>
+                  sameGroup(group, checkpoint.nextGroups[index] ?? [])
+                ) ||
+                !sameGroup(current, checkpoint.nextGroups[Constants.SuccessorGroupIndex])
+              ) {
+                if (!sawActivation) return false
+              } else {
+                Assert.ok(
+                  !sameGroup(current, checkpoint.servingGroup),
+                  "serving duty did not rotate to the announced successor"
+                )
+                Assert.ok(!current.includes(doomed), "terminated operator returned to duty")
+                sawActivation = true
+              }
+              const [ethereumNextEpoch, solanaNextEpoch] = await Promise.all([
+                readEthereumNextEpoch(ctx),
+                readSolanaNextEpoch(ctx)
+              ])
+              return (
+                sawActivation &&
+                ethereumNextEpoch > checkpoint.ethereumNextEpoch &&
+                solanaNextEpoch > checkpoint.solanaNextEpoch
+              )
+            },
+            Constants.recoveryDeadlineMs(Constants.BatchOperatorGroups + 3),
+            Constants.PollIntervalMs
+          )
+        },
+        {
+          timeoutMs: Constants.recoveryDeadlineMs(Constants.BatchOperatorGroups + 3)
+        }
+      )
+    )
+
+    // ── 9. Depot auto-remits the full bond on termination — both outposts ──
     ClusterBuildPhase.create(
       cluster,
       "RemitBonds",
@@ -1135,7 +1328,29 @@ export class TerminationScenario extends FlowScenario {
       )
     )
 
-    // ── 9. Reach the exact roster floor with a fully active group on duty ──
+    // ── 10. Exhaust both standing spares before requesting a freeze ──
+    ClusterBuildPhase.create(
+      cluster,
+      "ExhaustStandingSpares",
+      "Each standing spare is slashed in its own reported contract step"
+    ).push(
+      ...Array.from({ length: Constants.StandingSpareCount }, (_, ordinal) =>
+        ClusterBuildStep.create(
+          Actor.Sysio,
+          `slash-standing-spare-${ordinal + 1}`,
+          "slash one ACTIVE operator outside the complete activated window",
+          {
+            timeoutMs: Constants.recoveryDeadlineMs(
+              Constants.BatchOperatorGroups + 2
+            )
+          },
+          { kind: "TerminationScenario.SlashStandingSpareInput", ordinal },
+          runSlashStandingSpare
+        )
+      )
+    )
+
+    // ── 11. Reach the exact nine-seat roster floor ──
     ClusterBuildPhase.create(
       cluster,
       "PrepareScheduleRecovery",
@@ -1171,7 +1386,7 @@ export class TerminationScenario extends FlowScenario {
               assertCompleteSchedule(groups)
               const current = groups[state.current_batch_op_group] ?? []
               const activeAccounts = await readActiveBatchOperatorAccounts(ctx)
-              if (activeAccounts.size !== Constants.BatchOperatorCount) {
+              if (activeAccounts.size !== Constants.ScheduleSeatCount) {
                 return false
               }
               const readerAccount = ctx.keyStore.assertOperator(
@@ -1194,7 +1409,7 @@ export class TerminationScenario extends FlowScenario {
       )
     )
 
-    // ── 10. Remove one current member at the exact floor → withhold ──
+    // ── 12. Remove one current member at the exact floor → withhold ──
     ClusterBuildPhase.create(
       cluster,
       "StarveScheduleWindow",

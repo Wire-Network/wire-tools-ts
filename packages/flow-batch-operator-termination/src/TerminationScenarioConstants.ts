@@ -30,15 +30,22 @@ export namespace TerminationScenarioConstants {
   /** Epoch duration (s) — the bare-cluster working baseline (`sysio.epoch::setconfig` floor is 60). */
   export const EpochDurationSec = 60
   /**
-   * Bootstrapped batch operators stood up by the harness. 9 → 3 odd-sized
-   * groups of 3; with the doomed operator never delivering, the remaining 8
-   * still cover consensus majority on every group.
+   * Bootstrapped batch operators stood up by the harness. Eleven operators
+   * cover nine schedule seats plus two standing spares. The separately
+   * provisioned doomed operator never delivers, but its two group peers can
+   * still reach consensus majority.
    */
-  export const BatchOperatorCount = 9
+  export const BatchOperatorCount = 11
   /** Number of disjoint groups retained in the rolling schedule window. */
   export const BatchOperatorGroups = 3
   /** Operators per group; three keeps majority consensus unambiguous. */
   export const OperatorsPerEpoch = 3
+  /** Number of seats in one full schedule window. */
+  export const ScheduleSeatCount = BatchOperatorGroups * OperatorsPerEpoch
+  /** Spares remaining after the doomed operator terminates. */
+  export const StandingSpareCount = BatchOperatorCount - ScheduleSeatCount
+  /** Published lookahead serves group one after a three-group window activates. */
+  export const SuccessorGroupIndex = 1
   /**
    * Override for `terminate_max_consecutive_misses` so `termcheck` fires inside
    * the flow's budget: 2 consecutive missed scheduled epochs flip TERMINATED.
