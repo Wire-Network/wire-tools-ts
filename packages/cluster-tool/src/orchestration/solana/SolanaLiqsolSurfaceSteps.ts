@@ -52,6 +52,7 @@ import * as anchor from "@coral-xyz/anchor"
 
 import { LiqsolPdaSeed } from "../../tools/solana/LiqsolPdaSeed.js"
 import { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
+import { SolanaLiqSyndicationTool } from "../../tools/solana/SolanaLiqSyndicationTool.js"
 import { SolanaOutpostProgramTool } from "../../tools/solana/SolanaOutpostProgramTool.js"
 import { Report } from "../../report/Report.js"
 import { ClusterBuildContext } from "../ClusterBuildContext.js"
@@ -302,6 +303,12 @@ export namespace SolanaLiqsolSurfaceSteps {
         "verify-program-ids",
         "every wire-solana IDL declares the program id the validator loaded",
         assertProgramIdsMatch
+      ),
+      verifyStep<C>(
+        Report.Actor.SolanaOutpost,
+        "verify-instruction-accounts",
+        "every driven liqsol_core instruction's account map matches the deployed IDL",
+        async ctx => SolanaLiqSyndicationTool.assertAccountMapsMatchIdl(ctx)
       ),
       SolanaFundingTool.planKeypairAirdrop<C>(
         Report.Actor.SolanaOutpost,
