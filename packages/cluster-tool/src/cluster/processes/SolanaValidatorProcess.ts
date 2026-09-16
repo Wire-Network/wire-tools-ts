@@ -1,5 +1,6 @@
 import {
   BindConfigPortProtocol,
+  DefaultSolanaSlotsPerEpoch,
   type BindConfigPortRange
 } from "@wireio/cluster-tool-shared"
 import { Connection } from "@solana/web3.js"
@@ -64,6 +65,15 @@ export interface SolanaValidatorOptions {
   dynamicPortRange?: BindConfigPortRange
   /** Ledger directory (`--ledger`). */
   ledgerPath?: string | null
+  /**
+   * `--slots-per-epoch`. Supplied from the persisted
+   * `ClusterConfig.solanaSlotsPerEpoch` on every start path so `run` and a
+   * rendered `start.sh` cannot drift from what `create` bootstrapped on;
+   * defaults to {@link SolanaValidatorProcess.DefaultSlotsPerEpoch} when a
+   * caller omits it. See {@link DefaultSolanaSlotsPerEpoch} for why agave's own
+   * default is unusable here and what this value shapes.
+   */
+  slotsPerEpoch?: number
   /**
    * `--limit-ledger-size` (shreds retained in root slots). agave's default is
    * a mere 10 000 shreds — the blockstore prunes to a ~90-second window, after
@@ -284,6 +294,8 @@ export namespace SolanaValidatorProcess {
       gossipPort: resolved.gossipPort,
       dynamicPortRange: resolved.dynamicPortRange,
       ledgerPath: options.ledgerPath ?? null,
+      slotsPerEpoch:
+        options.slotsPerEpoch ?? SolanaValidatorProcess.DefaultSlotsPerEpoch,
       limitLedgerSizeShreds:
         options.limitLedgerSizeShreds ??
         SolanaValidatorProcess.DefaultLimitLedgerSizeShreds,
@@ -314,6 +326,8 @@ export namespace SolanaValidatorProcess {
       String(config.gossipPort),
       "--dynamic-port-range",
       `${config.dynamicPortRange.first}-${config.dynamicPortRange.last}`,
+      "--slots-per-epoch",
+      String(config.slotsPerEpoch),
       "--limit-ledger-size",
       String(config.limitLedgerSizeShreds),
       ...(config.ledgerPath ? ["--ledger", config.ledgerPath] : []),
@@ -398,6 +412,14 @@ export namespace SolanaValidatorProcess {
    * traffic reaches it; lowering it re-introduces mid-run history loss.
    */
   export const DefaultLimitLedgerSizeShreds = 200_000_000
+  /**
+   * Default `--slots-per-epoch` — an ALIAS of the persisted-config default
+   * ({@link DefaultSolanaSlotsPerEpoch}), which carries the full rationale and
+   * the list of what observes the value. One declaration, two names: this one
+   * so the process's own option has a local default, that one because the
+   * value is `cluster-config.json` truth.
+   */
+  export const DefaultSlotsPerEpoch = DefaultSolanaSlotsPerEpoch
   /** Subpath (under the cluster data dir) for the validator ledger. */
   export const LedgerSubpath = "solana-ledger"
 }
