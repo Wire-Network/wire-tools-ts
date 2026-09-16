@@ -38,6 +38,11 @@ export namespace SolanaValidatorProcessSteps {
     signal.throwIfAborted()
     if (ctx.processManager.get(SolanaValidatorProcess.ProcessLabel) != null) return
 
+    // THIS is the deploy: the validator loads the binary at genesis via
+    // `--upgradeable-program`, so whatever sits at that path is what executes
+    // on chain. Verify it against the recorded build BEFORE launching. The
+    // shared `resolvePrograms` deliberately does NOT — see its JSDoc.
+    SolanaOutpostProgramTool.assertProgramSoFile(ctx.config.solanaPath)
     const validator = await SolanaValidatorProcess.create(ctx.processManager, {
       address: ctx.config.bind.solana.address,
       rpcPort: ctx.config.bind.solana.ports.http,
@@ -63,6 +68,15 @@ export namespace SolanaValidatorProcessSteps {
    * upgrade authority — that same deployer becomes the `global_config.admin`
    * the OPP admin ops require. `createDeployerKeypair` is create-or-load, so
    * calling it from either path yields the identical identity.
+   *
+   * `soFile` is the PATH ONLY — this resolves what the argv must say, never
+   * whether the binary on disk is the one the recorded build emitted. That
+   * check belongs to whoever actually loads it, which is {@link runStart}
+   * alone: the renderer emits a script that runs LATER, and often on ANOTHER
+   * host — `create-external-config` clones a tree whose `wire-solana` was
+   * never built here, so verifying against THIS checkout would reject a
+   * perfectly good deployment payload while proving nothing about the host
+   * that will run it.
    *
    * @param config - The resolved cluster config.
    * @returns The validator's program list.
