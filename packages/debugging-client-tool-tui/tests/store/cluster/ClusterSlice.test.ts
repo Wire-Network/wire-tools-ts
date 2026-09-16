@@ -4,6 +4,7 @@ import {
   ClusterDeploymentKind,
   ClusterStateNodeRole,
   DefaultChainStateDbSizeMb,
+  DefaultSolanaSlotsPerEpoch,
   SignatureProviderType,
   type ClusterConfig,
   type ClusterState
@@ -32,6 +33,7 @@ const stubConfig: ClusterConfig = {
   batchOperatorCount: 0,
   underwriterCount: 0,
   epochDurationSec: 60,
+  solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch,
   operatorsPerEpoch: null,
   batchOpGroups: null,
   epochRetentionEnvelopeLogCount: null,

@@ -2,7 +2,10 @@ import * as Fs from "node:fs"
 import * as OS from "node:os"
 import * as Path from "node:path"
 
-import { ClusterFiles } from "@wireio/cluster-tool-shared"
+import {
+  ClusterFiles,
+  DefaultSolanaSlotsPerEpoch
+} from "@wireio/cluster-tool-shared"
 import {
   ApiPaths,
   type GetClusterConfigResponse,
@@ -44,6 +47,7 @@ function fullConfig(clusterPath: string) {
     batchOperatorCount: 0,
     underwriterCount: 0,
     epochDurationSec: 60,
+    solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch,
     warmupEpochs: 1,
     cooldownEpochs: 1,
     ethereumPath: "/eth",

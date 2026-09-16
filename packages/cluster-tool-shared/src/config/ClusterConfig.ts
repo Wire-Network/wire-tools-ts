@@ -115,6 +115,38 @@ export enum ClusterDeploymentKind {
 export const DefaultChainStateDbSizeMb = 1_024
 
 /**
+ * Default `solana-test-validator --slots-per-epoch`.
+ *
+ * agave's own default (432 000) keeps a fresh validator at Solana epoch 0 for
+ * ~2 days of slot time, and wire-solana's
+ * `initialize_pretoken_purchase_history_handler` seeds its history from
+ * `current_epoch.checked_sub(1)` — which underflows (`Underflow`, 7418) for as
+ * long as the epoch is 0. The liqsol surface therefore cannot be initialized at
+ * all on a default-scheduled validator. 100 slots (~40 s) leaves epoch 0 within
+ * the validator's first minute, and matches what wire-solana's own
+ * `run-wire-postlaunch-local.sh` uses for the same reason.
+ *
+ * What DOES observe this value, and is therefore shaped by it on a test
+ * cluster:
+ *
+ * - `liqsol_core::report_liq_yield` stamps `Clock::get()?.epoch` into every
+ *   `LIQYield` attestation, so the epoch the depot receives ticks every ~40 s
+ *   rather than every ~2 days. Nothing asserts on it today; a future depot-side
+ *   LIQ_YIELD handler (or any harness expectation written against "the outpost
+ *   epoch") would be reading a schedule no real deployment has.
+ * - `GlobalConfig.min_late_epoch_slot_gate` defaults to 410 000 slots, so
+ *   against a 100-slot epoch the stake-controller's late-epoch gate
+ *   (`process_stake_orders` / `process_unstake_orders`) can NEVER open. No
+ *   current flow touches those cranks; one that does will see `NotLateEpoch`
+ *   and the reason is this default.
+ * - `PretokenPurchaseHistory`'s per-epoch ring advances on the same clock.
+ *
+ * It is persisted (not re-derived per spawn) so `run` and every emitted
+ * `start.sh` launch the validator on the SAME schedule `create` bootstrapped on.
+ */
+export const DefaultSolanaSlotsPerEpoch = 100
+
+/**
  * THE canonical cluster configuration — the plain JSON shape persisted to
  * `cluster-config.json` (`ClusterFiles.ConfigFilename`) and flowed through
  * the harness at runtime. `ClusterConfigProvider` (cluster-tool) resolves,
@@ -261,7 +293,18 @@ export const ClusterConfigSchema = z.object({
    * nodeop's own stock value, i.e. no behavior change until an operator
    * overrides it.
    */
-  chainStateDbSizeMb: z.number().default(DefaultChainStateDbSizeMb)
+  chainStateDbSizeMb: z.number().default(DefaultChainStateDbSizeMb),
+  /**
+   * `solana-test-validator --slots-per-epoch` for this cluster, on every start
+   * path — see {@link DefaultSolanaSlotsPerEpoch} for why the agave default is
+   * unusable here and what observes this value.
+   *
+   * REQUIRED, with no schema default: `ClusterConfigProvider.resolve` always
+   * writes it, so a config without it is not an older config, it is a
+   * malformed one — and the value has to be the same on `create`, `run` and
+   * `start.sh` or the epoch length silently changes between them.
+   */
+  solanaSlotsPerEpoch: z.number()
 })
 /** THE canonical cluster configuration — the schema-inferred shape of {@link ClusterConfigSchema}. */
 export type ClusterConfig = z.infer<typeof ClusterConfigSchema>

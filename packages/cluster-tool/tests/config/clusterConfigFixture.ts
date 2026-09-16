@@ -1,6 +1,7 @@
 import {
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
+  DefaultSolanaSlotsPerEpoch,
   SignatureProviderType,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
@@ -114,7 +115,8 @@ export const PersistedFixture: ClusterConfig = {
   debuggingServerEnabled: true,
   enableMockReserves: false,
   deploymentKind: ClusterDeploymentKind.local,
-  chainStateDbSizeMb: DefaultChainStateDbSizeMb
+  chainStateDbSizeMb: DefaultChainStateDbSizeMb,
+  solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch
 }
 
 /** Build a `ClusterConfig` from the fixture (via deserialize — no resolve / env).
