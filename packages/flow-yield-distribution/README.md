@@ -5,7 +5,6 @@ fresh cluster:
 
 ```
 MockYieldEmitter.sol::emitYield     (ETH outpost — Solidity fake)
-opp_outpost::add_attestation        (SOL outpost — existing CPI target)
   → STAKING_REWARD attestation
   → batch operator ferries via OPP envelope
   → sysio.msgch dispatches as
@@ -28,17 +27,16 @@ Asserts:
 3. **Dedupe.** Re-emitting the same `external_epoch_ref` is a no-op on
    the depot (the dclaim reward-cursor row guards against replay).
 
-## Solana side note
+## Ethereum only, for now
 
-Production-shaped Solana yield will eventually live in a separate
-liqsol-side staking contract that CPI-calls
-`opp_outpost::add_attestation`. We skip standing up a separate Anchor
-program here because `add_attestation` is already the exact CPI target
-— the test signs as the outpost's deployer authority (the
-`OutpostConfig.authority` set during Phase 10b bootstrap) and routes
-attestations through that path directly. The ETH side stands up
-`MockYieldEmitter.sol` as a separate fake because StakingManager.sol is
-currently a rename-only placeholder with no STAKING_REWARD path.
+The flow drives the ETH outpost alone. `MockYieldEmitter.sol` stands in
+for a real emitter because `StakingManager.sol` is a rename-only
+placeholder with no STAKING_REWARD path.
+
+There is no Solana leg: the SOL staking surface is a separate developer
+track and `liqsol_core` emits no STAKING_REWARD, so a SOL leg could only
+be a harness-side attestation injection — which the harness no longer
+does. It returns when the outpost produces the attestation itself.
 
 ## Running
 

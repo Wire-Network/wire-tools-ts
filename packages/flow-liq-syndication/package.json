@@ -1,9 +1,9 @@
 {
-  "name": "@wireio/test-flow-yield-distribution",
-  "version": "0.1.8",
+  "name": "@wireio/test-flow-liq-syndication",
+  "version": "0.1.0",
   "private": true,
   "type": "commonjs",
-  "description": "Flow: fake-yield STAKING_REWARD → sysio.dclaim::onreward → sysio.system::fundclaim",
+  "description": "Flow: SYNDICATE_LIQ + LIQ_YIELD produced by the real liqsol_core paths circulate and the depot keeps advancing",
   "scripts": {
     "build": "tsc -b tsconfig.json",
     "test": "node lib/index.js",
@@ -11,9 +11,9 @@
   },
   "dependencies": {
     "@wireio/cluster-tool": "workspace:*",
+    "@wireio/debugging-shared": "workspace:*",
     "@wireio/sdk-core": "^1.0.88",
-    "@wireio/opp-typescript-models": "^1.0.48",
-    "ethers": "^6.14.0"
+    "@wireio/opp-typescript-models": "^1.0.48"
   },
   "devDependencies": {
     "@types/node": "25.5.0"
