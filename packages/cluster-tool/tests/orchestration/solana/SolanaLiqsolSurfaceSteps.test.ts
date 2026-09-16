@@ -447,6 +447,7 @@ describe("SolanaLiqsolSurfaceSteps", () => {
       expect(collectStepNames(cluster.children)).toEqual([
         "verify-toolchain",
         "verify-program-ids",
+        "verify-instruction-accounts",
         "airdrop-deployer",
         ...expected,
         // the treasury top-up is a harness Step too

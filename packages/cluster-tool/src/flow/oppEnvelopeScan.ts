@@ -4,7 +4,10 @@ import {
   AttestationType,
   DebugOutpostEndpointsType
 } from "@wireio/opp-typescript-models"
-import { EnvelopeRecordFile } from "@wireio/debugging-shared"
+import {
+  EnvelopeRecordFile,
+  readEnvelopeRecordsFromDir
+} from "@wireio/debugging-shared"
 
 /**
  * Scanners over the cluster's `data/opp-debugging/` artifacts — the raw
@@ -102,4 +105,89 @@ export function containsSwapRevert(
     direction,
     attestationEntryTag(AttestationType.SWAP_REVERT)
   )
+}
+
+/**
+ * Whether a `SYNDICATE_LIQ` attestation has circulated on `direction` — the
+ * outpost → depot proof that a syndication enqueued on the outpost reached an
+ * envelope (`flow-liq-syndication`).
+ *
+ * @param oppDebuggingDirectory - The cluster's `data/opp-debugging/` path.
+ * @param direction - The cross-chain edge to scan (default: Solana → depot,
+ *   the only direction that emits one).
+ * @returns Whether any matching envelope carries a SYNDICATE_LIQ attestation.
+ */
+export function containsSyndicateLIQ(
+  oppDebuggingDirectory: string,
+  direction: DebugOutpostEndpointsType = DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT
+): boolean {
+  return envelopeDataContains(
+    oppDebuggingDirectory,
+    direction,
+    attestationEntryTag(AttestationType.SYNDICATE_LIQ)
+  )
+}
+
+/**
+ * Whether a `LIQ_YIELD` attestation has circulated on `direction` — the
+ * outpost → depot proof that the outpost's global syndicated-pool yield report
+ * reached an envelope (`flow-liq-syndication`).
+ *
+ * @param oppDebuggingDirectory - The cluster's `data/opp-debugging/` path.
+ * @param direction - The cross-chain edge to scan (default: Solana → depot,
+ *   the only direction that emits one).
+ * @returns Whether any matching envelope carries a LIQ_YIELD attestation.
+ */
+export function containsLIQYield(
+  oppDebuggingDirectory: string,
+  direction: DebugOutpostEndpointsType = DebugOutpostEndpointsType.OUTPOST_SOLANA_DEPOT
+): boolean {
+  return envelopeDataContains(
+    oppDebuggingDirectory,
+    direction,
+    attestationEntryTag(AttestationType.LIQ_YIELD)
+  )
+}
+
+/**
+ * The raw attestation payloads of every `type` attestation carried by any
+ * `.data` envelope artifact for `direction`.
+ *
+ * The type-tag scanners above answer "did one circulate?"; this answers "with
+ * what CONTENT?" — each element is the attestation's serialized proto bytes,
+ * which the caller decodes with the matching generated message class
+ * (`LIQYield.fromBinary(...)`, …). Decoding stays at the call site so this
+ * module never re-declares or re-wraps a generated proto shape.
+ *
+ * The directory walk, the `Envelope` decode and the per-file swallow are NOT
+ * re-implemented here: they belong to `@wireio/debugging-shared`'s
+ * `readEnvelopeRecordsFromDir`, which this delegates to (it already filters by
+ * endpoints type and already skips a torn read of an artifact still being
+ * written, so a poll sees the complete file on its next pass).
+ *
+ * @param oppDebuggingDirectory - The cluster's `data/opp-debugging/` path.
+ * @param direction - The cross-chain edge to scan (filename fragment is the
+ *   enum member's name).
+ * @param type - The attestation type whose payloads are wanted.
+ * @returns Every matching attestation's serialized payload bytes.
+ */
+export async function readEnvelopeAttestations(
+  oppDebuggingDirectory: string,
+  direction: DebugOutpostEndpointsType,
+  type: AttestationType
+): Promise<Uint8Array[]> {
+  const records = await readEnvelopeRecordsFromDir(oppDebuggingDirectory, {
+    endpointsType: direction
+  })
+  return records
+    .flatMap(({ envelopes }) => envelopes)
+    .flatMap(({ envelope }) => envelope.messages)
+    .flatMap(message => message.payload?.attestations ?? [])
+    .filter(entry => entry.type === type)
+    // `readEnvelopeRecordsFromDir` returns `plainify`d records — every
+    // `Uint8Array` comes back BASE64-ENCODED while still typed `Uint8Array`
+    // (see `@wireio/debugging-shared`'s `Plainify`). Undo that one conversion
+    // here rather than re-walking the directory, so the `.data` decode lives in
+    // exactly one place.
+    .map(entry => Buffer.from(entry.data as unknown as string, "base64"))
 }

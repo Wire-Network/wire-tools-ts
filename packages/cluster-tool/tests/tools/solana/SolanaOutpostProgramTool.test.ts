@@ -110,6 +110,41 @@ describe("SolanaOutpostProgramTool", () => {
     }
   })
 
+  it("loadReadOnlyProgram binds the connection with no wallet and camelCases the IDL", () => {
+    const programPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-outpost-ro-"))
+    try {
+      const keypair = Keypair.generate()
+      Fs.mkdirSync(Path.join(programPath, "target", "idl"), { recursive: true })
+      Fs.writeFileSync(
+        SolanaOutpostProgramTool.programIdlFile(programPath),
+        JSON.stringify({
+          address: keypair.publicKey.toBase58(),
+          metadata: { name: "liqsol_core", version: "0.1.0", spec: "0.1.0" },
+          instructions: [],
+          accounts: [{ name: "GlobalState", discriminator: [0, 1, 2, 3, 4, 5, 6, 7] }],
+          types: [
+            {
+              name: "GlobalState",
+              type: { kind: "struct", fields: [{ name: "liq_sequence", type: "u64" }] }
+            }
+          ]
+        })
+      )
+
+      const connection = new Connection(rpcUrl),
+        program = SolanaOutpostProgramTool.loadReadOnlyProgram(connection, programPath)
+      expect(program.programId.toBase58()).toBe(keypair.publicKey.toBase58())
+      expect(program.provider.connection).toBe(connection)
+      // No wallet: a read never signs, so none is constructed.
+      expect(program.provider.publicKey).toBeUndefined()
+      // The IDL says `GlobalState` / `liq_sequence`; `anchor.Program` converts
+      // both, which is why every coder key in the harness is camelCase.
+      expect(Object.keys(program.account)).toEqual(["globalState"])
+    } finally {
+      Fs.rmSync(programPath, { recursive: true, force: true })
+    }
+  })
+
   it("loadProgram carries the build remediation when the IDL is absent", () => {
     const emptyPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-outpost-noidl-"))
     try {
