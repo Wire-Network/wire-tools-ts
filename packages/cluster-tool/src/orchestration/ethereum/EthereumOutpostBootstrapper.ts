@@ -38,8 +38,7 @@ export interface EthereumOutpostBootstrapperOptions {
   rpcUrl: string
   /**
    * THIS cluster's deploy-artifact dir (`ClusterConfigProvider.ethereumDeploymentsPath`)
-   * — deploy configs + address files land here, and `deployLocal.ts` is pointed
-   * at it via `WIRE_ETH_DEPLOYMENTS_PATH`. Per-cluster so parallel flows never
+   * — deploy configs + address files land here. Per-cluster so parallel flows never
    * clobber each other's deploy state (2026-07-02 pair-1 incident: two deploys
    * sharing `<wire-ethereum>/.local/deployments/` wiped each other mid-run).
    */
@@ -69,7 +68,7 @@ export interface EthereumOutpostBootstrapperConfig extends Required<EthereumOutp
  * never spawns its own anvil; it only deploys against the one it is handed.
  *
  * Test-cluster custody priming (`seedReserveManager`) lives HERE in the
- * harness, never in `wire-ethereum`'s `deployLocal.ts` — it runs after the
+ * harness, never in `wire-ethereum`'s production deploy scripts — it runs after the
  * deploy returns and owns its own nonce counter.
  */
 export class EthereumOutpostBootstrapper {
@@ -139,13 +138,13 @@ export class EthereumOutpostBootstrapper {
   }
 
   /**
-   * Deploy the `wire-ethereum` contracts by invoking Hardhat's `deployLocal.ts`.
-   * Writes deploy configs (pointing at the running anvil, deployer = account 0)
-   * into THIS cluster's `deploymentsPath` — `deployLocal.ts` reads/writes the
-   * same dir via `WIRE_ETH_DEPLOYMENTS_PATH` — clearing any stale address files
-   * first so a previous anvil's addresses can't be picked up by mistake. The
-   * hardhat invocation itself is serialized host-wide: parallel runs share the
-   * repo's compile cache/artifacts, and concurrent compiles corrupt them.
+   * Deploy the `wire-ethereum` contracts by invoking its canonical LiqEth and
+   * Outpost deployment scripts in local mode. Writes deploy configs (pointing at
+   * the running anvil, deployer = account 0) into THIS cluster's
+   * `deploymentsPath`, clearing stale address files first so a previous anvil's
+   * addresses cannot be picked up by mistake. The hardhat invocations are
+   * serialized host-wide: parallel runs share the repo's compile cache/artifacts,
+   * and concurrent compiles corrupt them.
    */
   private async deployContracts(
     ethereumPath: string,
@@ -171,6 +170,7 @@ export class EthereumOutpostBootstrapper {
       key: deployerPrivateKey,
       addressFile: Path.join(localDir, "liqeth-addrs.json"),
       gasLimitFile: Path.join(localDir, "liqeth-gas-limits.json"),
+      local: true,
       entryQueue: 47,
       dailyRateBPS: 283,
       rewardCooldown: 100,
@@ -181,60 +181,74 @@ export class EthereumOutpostBootstrapper {
       key: deployerPrivateKey,
       addressFile: Path.join(localDir, "outpost-addrs.json"),
       gasLimitFile: Path.join(localDir, "outpost-gas-limits.json"),
-      useMockAggregator: true,
+      local: true,
       enableMockYieldEmitter: this.config.enableMockYieldEmitter
     }
     Fs.writeFileSync(
       Path.join(localDir, "liqeth.json"),
       JSON.stringify(liqEthConfig, null, 2)
     )
-    Fs.writeFileSync(
-      Path.join(localDir, "outpost.json"),
-      JSON.stringify(outpostConfig, null, 2)
-    )
-
-    log.info("[ethereum] running deployLocal.ts via hardhat...")
-    StepExtraRecorder.record({
-      client: "process",
-      kind: "exec",
-      command: [
+    const runDeployment = async (
+      scriptPath: string,
+      configPath: string
+    ): Promise<{ stdout: string; stderr: string }> => {
+      StepExtraRecorder.record({
+        client: "process",
+        kind: "exec",
+        command: ["npx", "hardhat", "run", scriptPath, "--network", "localhost"],
+        cwd: ethereumPath
+      })
+      return await execFileAsync(
         "npx",
-        "hardhat",
-        "run",
-        "src/scripts/deployLocal.ts",
-        "--network",
-        "localhost"
-      ],
-      cwd: ethereumPath
-    })
+        ["hardhat", "run", scriptPath, "--network", "localhost"],
+        {
+          cwd: ethereumPath,
+          timeout: scaleTimeoutMs(
+            EthereumOutpostBootstrapper.HardhatDeployTimeoutMs
+          ),
+          maxBuffer: EthereumOutpostBootstrapper.HardhatDeployBufferBytes,
+          env: {
+            ...process.env,
+            HARDHAT_NETWORK: "localhost",
+            DEPLOY_CONFIG: configPath
+          }
+        }
+      )
+    }
+
+    log.info("[ethereum] running canonical local deployment scripts via hardhat...")
     // withFileLock: hardhat compiles into the SHARED repo cache/artifacts on
     // demand — two concurrent compiles corrupt them. The per-run state (configs
     // + address files) is already isolated via deploymentsPath.
     const { stdout, stderr } = await withFileLock(
       EthereumOutpostBootstrapper.HardhatDeployLockPath,
-      () =>
-        execFileAsync(
-          "npx",
-          [
-            "hardhat",
-            "run",
-            "src/scripts/deployLocal.ts",
-            "--network",
-            "localhost"
-          ],
-          {
-            cwd: ethereumPath,
-            timeout: scaleTimeoutMs(
-              EthereumOutpostBootstrapper.HardhatDeployTimeoutMs
-            ),
-            maxBuffer: EthereumOutpostBootstrapper.HardhatDeployBufferBytes,
-            env: {
-              ...process.env,
-              HARDHAT_NETWORK: "localhost",
-              WIRE_ETH_DEPLOYMENTS_PATH: localDir
-            }
-          }
-        ),
+      async () => {
+        const liqEthResult = await runDeployment(
+          "src/scripts/liqEth/deployLiqEth.ts",
+          Path.join(localDir, "liqeth.json")
+        )
+        const liqEthAddresses = JSON.parse(
+          Fs.readFileSync(liqEthConfig.addressFile, "utf-8")
+        ) as Record<string, unknown>
+        const liqEthAddress = liqEthAddresses.LiqEthToken
+        Assert.equal(
+          typeof liqEthAddress,
+          "string",
+          "[ethereum] local LiqEth deployment did not emit LiqEthToken"
+        )
+        Fs.writeFileSync(
+          Path.join(localDir, "outpost.json"),
+          JSON.stringify({ ...outpostConfig, LiqEth: liqEthAddress }, null, 2)
+        )
+        const outpostResult = await runDeployment(
+          "src/scripts/outpost/deployOutpost.ts",
+          Path.join(localDir, "outpost.json")
+        )
+        return {
+          stdout: `[liqeth]\n${liqEthResult.stdout}\n[outpost]\n${outpostResult.stdout}`,
+          stderr: `${liqEthResult.stderr}\n${outpostResult.stderr}`
+        }
+      },
       LongFileLockOptions
     )
     if (stderr)
@@ -294,7 +308,7 @@ export class EthereumOutpostBootstrapper {
       return
     }
 
-    // Bind the deployer (anvil HD index 0) — the same identity deployLocal.ts
+    // Bind the deployer (anvil HD index 0) — the same identity the local scripts
     // used as `owner`, so its minted MockUSDC/USDT balances are available here.
     const provider = new ethers.JsonRpcProvider(rpcUrl)
     const deployer = new ethers.Wallet(

@@ -28,7 +28,7 @@ import { NodeOwnerNftScenarioMintSteps as MintSteps } from "./NodeOwnerNftScenar
  * depositor key (recorded as the account's `sysio.authex` ETH link).
  *
  * The commit ESCROWS the committed unit in BAR (claims draw from BAR's
- * canonical WireNodes contract, wired by deployLocal), so the committer
+ * canonical WireNodes contract, wired by the local outpost deployment), so the committer
  * must first approve BAR as an ERC-1155 operator — the
  * {@link planApproveEscrow} write, one step before the commit.
  */

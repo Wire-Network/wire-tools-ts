@@ -1,6 +1,6 @@
 /**
  * EthYieldEmitterTool — wraps `MockYieldEmitter.sol` (deployed by
- * wire-ethereum's `deployLocal.ts` script under `contracts/test/outpost/`)
+ * wire-ethereum's local-mode outpost deployment under `contracts/test/outpost/`)
  * with an ergonomic helper for the flow-yield-distribution test.
  *
  * The on-chain contract is a permissioned poke-emit fake: an admin

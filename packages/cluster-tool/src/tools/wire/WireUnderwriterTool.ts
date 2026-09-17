@@ -370,7 +370,7 @@ const TokenKindByCodename: ReadonlyMap<number, TokenKind> = new Map([
   [SlugName.from("SOL"), TokenKind.NATIVE],
   [SlugName.from("LIQETH"), TokenKind.LIQ],
   [SlugName.from("LIQSOL"), TokenKind.LIQ],
-  // Mock stablecoins deployed by `deployLocal.ts` (ETH) /
+  // Mock stablecoins deployed by the local outpost deployment (ETH) /
   // `SolanaOutpostBootstrapper` (SOL). The depot's `Token` table assigns each
   // its own slug_name code per the v6 "TWO Token rows per cross-chain pair"
   // decision — same underlying asset on each chain but distinct codes so the
