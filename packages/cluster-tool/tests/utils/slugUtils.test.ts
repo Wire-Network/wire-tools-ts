@@ -1,6 +1,7 @@
 import { SlugName } from "@wireio/sdk-core"
 
 import {
+  packedSlugValue,
   slugValue,
   slugNameToLittleEndianBuffer
 } from "@wireio/cluster-tool/utils"
@@ -39,6 +40,28 @@ describe("slugUtils", () => {
       const maxSlugName = 2 ** 48 - 1
       expect(slugNameToLittleEndianBuffer(maxSlugName).readBigUInt64LE()).toBe(
         BigInt(maxSlugName)
+      )
+    })
+  })
+
+  describe("packedSlugValue", () => {
+    // OperatorAction.chain_code / reserve_code are `uint64` in the proto, so
+    // they render as a number — or as a QUOTED DECIMAL once past 0xffffffff,
+    // which every real chain code is. Routing those through slugValue would
+    // read the decimal as a slug spelling and throw.
+    it("passes a bare number through", () => {
+      expect(packedSlugValue(23373212024832)).toBe(23373212024832)
+    })
+    it("reads the quoted decimal fc::json emits above 0xffffffff", () => {
+      const packed = SlugName.from("ETH")
+      expect(packed).toBeGreaterThan(0xffffffff)
+      expect(packedSlugValue(String(packed))).toBe(packed)
+    })
+    it("rejects anything but a number or an unsigned decimal", () => {
+      expect(() => packedSlugValue("ETH")).toThrow(/unsigned decimal/)
+      expect(() => packedSlugValue("-1")).toThrow(/unsigned decimal/)
+      expect(() => packedSlugValue(null)).toThrow(
+        /unrecognised packed code carrier/
       )
     })
   })

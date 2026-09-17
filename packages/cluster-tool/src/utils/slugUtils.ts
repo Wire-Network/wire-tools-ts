@@ -72,8 +72,11 @@ export function slugNameToLittleEndianBuffer(value: number | bigint): Buffer {
  * - A **`{ value }` wrapper** is the TRANSITIONAL shape a pre-builtin depot
  *   emits, carrying the packed `u64` directly — so its inner value stays
  *   numeric. This arm goes away once no depot emits the wrapper.
- * - A **bare number** is an already-packed value from `SlugName.from` or a
- *   `uint64`-typed code field.
+ * - A **bare number** is an already-packed value from `SlugName.from`.
+ *
+ * A code field DECLARED `uint64` (a proto-derived attestation payload) is a
+ * different carrier and goes through {@link packedSlugValue} — it renders as a
+ * decimal, which this function would misread as a slug spelling.
  *
  * Throws on an unrecognised shape rather than returning `Number.NaN`: `NaN`
  * never equals itself, so a `NaN` slug silently matches zero rows in a filter
@@ -86,6 +89,35 @@ export function slugNameToLittleEndianBuffer(value: number | bigint): Buffer {
  * @example
  *   rows.filter(row => slugValue(row.chain_code) === SlugName.from("ETHEREUM"))
  */
+/**
+ * The numeric value of a code field declared `uint64` rather than `slug_name`.
+ *
+ * Proto-derived payloads carry codes as a packed `uint64` — `OperatorAction`'s
+ * `chain_code` / `reserve_code` (`attestations.proto`), reachable through
+ * `operators.recent_actions`. Those are NOT `slug_name` ABI fields and never
+ * render as a spelling, so they must not go through {@link slugValue}: they
+ * arrive as a JSON number, or as a quoted DECIMAL once the value exceeds
+ * `0xffffffff` — which every real chain code does (`"ETH"` is 23373212024832).
+ *
+ * Splitting the two carriers by field is what removes the ambiguity a single
+ * string-sniffing decoder could not: a decimal spelling and a slug spelling are
+ * indistinguishable by shape, so only the field's declared type can decide.
+ *
+ * @param raw - The code cell as returned by a table query (unknown shape).
+ * @returns The packed numeric value.
+ * @throws If `raw` is neither a number nor an unsigned decimal string.
+ */
+export function packedSlugValue(raw: unknown): number {
+  return match(raw)
+    .with(P.number, identity)
+    .with(P.string, assertPackedDecimal)
+    .otherwise(value => {
+      throw new Error(
+        `packedSlugValue: unrecognised packed code carrier (${typeof value}) — expected a number or an unsigned decimal string`
+      )
+    })
+}
+
 export function slugValue(raw: unknown): number {
   return match(raw)
     .with(P.number, identity)
