@@ -47,24 +47,51 @@ describe("slugUtils", () => {
     it("passes a bare number through", () => {
       expect(slugValue(23373300651341)).toBe(23373300651341)
     })
-    it("parses a numeric string", () => {
-      expect(slugValue("84606581215232")).toBe(84606581215232)
+    it("parses a bare string as a slug, never as a decimal", () => {
+      expect(slugValue("ETHEREUM")).toBe(SlugName.from("ETHEREUM"))
+      expect(slugValue("WIRE")).toBe(SlugName.from("WIRE"))
+    })
+    it("reads a digit-only code as the slug it is", () => {
+      // The slug alphabet contains digits, so these are real codes whose packed
+      // values are nothing like their decimal readings. The previous decoder
+      // preferred the decimal and mis-decoded every one of them.
+      expect(slugValue("7")).toBe(SlugName.from("7"))
+      expect(slugValue("7")).not.toBe(7)
+      expect(slugValue("101")).toBe(SlugName.from("101"))
+      expect(slugValue("101")).not.toBe(101)
+    })
+    it("does not let JS numeric syntax reinterpret a code", () => {
+      expect(slugValue("1E3")).toBe(SlugName.from("1E3"))
+      expect(slugValue("1E3")).not.toBe(1000)
+      expect(slugValue("0X10")).toBe(SlugName.from("0X10"))
+      expect(slugValue("0X10")).not.toBe(16)
+    })
+    it("reads the empty spelling as the zero sentinel", () => {
+      expect(slugValue("")).toBe(0)
+    })
+    it("rejects a bare string that is not a valid slug", () => {
+      // The top-level decimal carrier no longer exists: a slug is at most 8
+      // symbols, so a packed spelling is simply an invalid code.
+      expect(() => slugValue("84606581215232")).toThrow()
+      expect(() => slugValue("eth")).toThrow()
     })
     it("unwraps the generated { value: number } slug wrapper", () => {
       expect(slugValue({ value: 42 })).toBe(42)
     })
-    it("unwraps a { value: string } wrapper", () => {
+    it("reads a { value: string } wrapper as the packed decimal it holds", () => {
+      // The wrapper carries a packed u64; fc::json quotes one above 0xffffffff.
       expect(slugValue({ value: "1234" })).toBe(1234)
+      expect(slugValue({ value: String(SlugName.from("ETH")) })).toBe(
+        SlugName.from("ETH")
+      )
     })
-    it("decodes a slug literal that is not a decimal spelling", () => {
-      expect(slugValue("ETHEREUM")).toBe(SlugName.from("ETHEREUM"))
-      expect(slugValue({ value: "ETH" })).toBe(SlugName.from("ETH"))
-    })
-    it("prefers the decimal reading for an all-digit string", () => {
-      // TRANSITIONAL: no string-sniffing decoder can resolve this, because the
-      // slug alphabet contains digits. Pinned so the compromise is deliberate.
-      expect(slugValue("101")).toBe(101)
-      expect(slugValue("101")).not.toBe(SlugName.from("101"))
+    it("rejects a { value } wrapper holding anything but an unsigned decimal", () => {
+      // Mirrors the depot's checked_packed_value: Number() would coerce these to
+      // NaN or truncate them instead of refusing them.
+      expect(() => slugValue({ value: "ETH" })).toThrow(/unsigned decimal/)
+      expect(() => slugValue({ value: "-1" })).toThrow(/unsigned decimal/)
+      expect(() => slugValue({ value: "1.5" })).toThrow(/unsigned decimal/)
+      expect(() => slugValue({ value: "" })).toThrow(/unsigned decimal/)
     })
     it("throws on unrecognised shapes rather than returning NaN", () => {
       // NaN never equals itself, so a NaN slug silently matches zero rows in a
