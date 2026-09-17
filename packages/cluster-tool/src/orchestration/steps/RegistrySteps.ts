@@ -15,6 +15,7 @@ import {
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
 import type { SolanaFundingTool } from "../../tools/solana/SolanaFundingTool.js"
 import { ReservContractSteps } from "./contracts/sysio/ReservContractSteps.js"
+import { OperatorDaemonArtifactsKey } from "../outputs/OperatorDaemonArtifacts.js"
 
 const {
   SysioContractName,
@@ -101,6 +102,76 @@ export namespace RegistrySteps {
   }
 
   /**
+   * Write each outpost chain's remote contract addresses onto its
+   * `sysio.chains` row.
+   *
+   * Split out from {@link planSeedRegistry} because it needs the daemon
+   * artifacts, which are published in a LATER phase: the SOL program id
+   * resolves from the deployed program (or, in external-outpost mode, from the
+   * external config), not from anything the registry phase can see. Must run
+   * before the operator daemons start — a batch operator skips a chain whose
+   * addresses are unset, and an underwriter's preflight fails closed on one.
+   */
+  export function planSeedOutpostAddresses<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions
+  ): ClusterBuildStep<C, null> {
+    return ClusterBuildStep.create<C, null>(
+      actor,
+      name,
+      description,
+      options,
+      null,
+      runSeedOutpostAddresses
+    )
+  }
+
+  /** Named runner — `sysio.chains::setoutpost` for every outpost chain. */
+  export async function runSeedOutpostAddresses<C extends ClusterBuildContext>(
+    ctx: C,
+    _input: null,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const artifacts = ctx.outputs.assert(OperatorDaemonArtifactsKey),
+      chains = ctx.wire.getSysioContract(SysioContractName.chains),
+      ethAddress = (contractName: string): string => {
+        const address = artifacts.ethereumAddresses[contractName]
+        if (address == null || address.length === 0) {
+          throw new Error(
+            `RegistrySteps: ${contractName} address missing from outpost-addrs.json`
+          )
+        }
+        return address
+      }
+
+    await chains.actions.setoutpost.invoke({
+      code: { value: SlugName.from("ETHEREUM") },
+      outpost: {
+        opp_addr: ethAddress("OPP"),
+        opp_inbound_addr: ethAddress("OPPInbound"),
+        operator_registry_addr: ethAddress("OperatorRegistry"),
+        source_deposit_addr: ethAddress("ReserveManager")
+      }
+    })
+    // One Solana program serves every role, so it goes in `opp_addr` alone —
+    // `sysio.chains` rejects an SVM row that fills the role-specific fields.
+    await chains.actions.setoutpost.invoke({
+      code: { value: SlugName.from("SOLANA") },
+      outpost: {
+        opp_addr: artifacts.solanaProgramId,
+        opp_inbound_addr: "",
+        operator_registry_addr: "",
+        source_deposit_addr: ""
+      }
+    })
+  }
+
+  /**
    * Seed the 8 mock (chain, token) PRIMARY reserves as ONE
    * {@link ClusterBuildPhase} of per-reserve `sysio.reserv::regreserve` steps —
    * every reserve write is its own Report-validated step (the rows are fully
@@ -181,13 +252,26 @@ export namespace RegistrySteps {
           : emptyAddress
 
     // ── chains ──
+    // Remote outpost contract addresses are seeded LATER, by
+    // `runSeedOutpostAddresses`: the SOL program id only resolves once the
+    // daemon artifacts are published, and in external-outpost mode it comes
+    // from the external config rather than the local keypair. `sysio.chains`
+    // supports register-then-configure precisely for this, and both operator
+    // daemons skip a chain whose addresses are not set yet.
+    const emptyOutpost: SysioContracts.SysioChainsOutpostAddrsType = {
+      opp_addr: "",
+      opp_inbound_addr: "",
+      operator_registry_addr: "",
+      source_deposit_addr: ""
+    }
     const chainRegistrations: SysioContracts.SysioChainsRegchainAction[] = [
       {
         kind: SysioChainsChainkind.CHAIN_KIND_WIRE,
         code: { value: SlugName.from("WIRE") },
         external_chain_id: 0,
         name: "Wire (depot)",
-        description: "The WIRE depot chain itself"
+        description: "The WIRE depot chain itself",
+        outpost: emptyOutpost
       },
       {
         kind: SysioChainsChainkind.CHAIN_KIND_EVM,
@@ -198,14 +282,16 @@ export namespace RegistrySteps {
           ctx.config.externalOutposts?.ethereum.chainId ??
           AnvilProcess.DefaultChainId,
         name: "Ethereum (anvil)",
-        description: "Local anvil EVM chain (test cluster)"
+        description: "Local anvil EVM chain (test cluster)",
+        outpost: emptyOutpost
       },
       {
         kind: SysioChainsChainkind.CHAIN_KIND_SVM,
         code: { value: SlugName.from("SOLANA") },
         external_chain_id: 0,
         name: "Solana (test-validator)",
-        description: "Local solana-test-validator (test cluster)"
+        description: "Local solana-test-validator (test cluster)",
+        outpost: emptyOutpost
       }
     ]
     await eachSeries(chainRegistrations, data =>

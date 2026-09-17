@@ -20,6 +20,15 @@ export namespace CollateralLifecycleScenarioConstants {
   /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
   export const EpochDurationSec = 60
 
+  /**
+   * Ad-hoc port pairs this flow reserves: one, for the batch-operator daemon it starts itself.
+   *
+   * Reserved through `adHocCount` rather than picked when the daemon spawns — a pair picked at
+   * spawn time never reaches the port registry, so a parallel resolver can hand the same port to
+   * a planned daemon before this one binds.
+   */
+  export const AdHocDaemonCount = 1
+
   /** Collateral bonded per chain (raw outpost units — wei / lamports). */
   export const BondAmount = 2_000_000n
   /** ETH bond released mid-flow (half — stays above the minimum on the rest). */

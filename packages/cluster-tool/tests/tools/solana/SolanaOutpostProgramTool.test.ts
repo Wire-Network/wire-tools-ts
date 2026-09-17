@@ -1,13 +1,19 @@
 import Fs from "node:fs"
 import Os from "node:os"
 import Path from "node:path"
-import { Keypair } from "@solana/web3.js"
+import { Connection, Keypair } from "@solana/web3.js"
+import { BindConfigProvider } from "@wireio/cluster-tool/config"
 import { SolanaOutpostProgramTool } from "@wireio/cluster-tool/tools/solana"
+import { toURL } from "@wireio/cluster-tool/utils"
 
 describe("SolanaOutpostProgramTool", () => {
   let solanaPath: string
-  beforeAll(() => {
+  let rpcUrl: string
+  beforeAll(async () => {
     solanaPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-outpost-program-"))
+    rpcUrl = toURL(
+      await BindConfigProvider.findAvailable(BindConfigProvider.DefaultSolanaRpc)
+    )
   })
   afterAll(() => {
     Fs.rmSync(solanaPath, { recursive: true, force: true })
@@ -63,6 +69,57 @@ describe("SolanaOutpostProgramTool", () => {
       expect(() => SolanaOutpostProgramTool.readIdl(emptyPath)).toThrow(
         /IDL missing.*patch-idl-errors/s
       )
+    } finally {
+      Fs.rmSync(emptyPath, { recursive: true, force: true })
+    }
+  })
+
+  it("loads ONE Anchor program bound to the connection + signer", () => {
+    // Self-contained: stages its own artifacts in a private path rather than
+    // mutating the shared `solanaPath`, so this case neither depends on the
+    // order of the cases above nor booby-traps any case added after it.
+    const programPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-outpost-load-"))
+    try {
+      const keypair = Keypair.generate()
+      Fs.mkdirSync(Path.join(programPath, ".keys"), { recursive: true })
+      Fs.writeFileSync(
+        SolanaOutpostProgramTool.programKeypairFile(programPath),
+        JSON.stringify([...keypair.secretKey])
+      )
+      Fs.mkdirSync(Path.join(programPath, "target", "idl"), { recursive: true })
+      // The IDL's `address` is what Anchor adopts as the program id.
+      Fs.writeFileSync(
+        SolanaOutpostProgramTool.programIdlFile(programPath),
+        JSON.stringify({
+          address: keypair.publicKey.toBase58(),
+          metadata: { name: "liqsol_core", version: "0.1.0", spec: "0.1.0" },
+          instructions: []
+        })
+      )
+
+      const connection = new Connection(rpcUrl)
+      const program = SolanaOutpostProgramTool.loadProgram(
+        connection,
+        Keypair.generate(),
+        programPath
+      )
+      expect(program.programId.toBase58()).toBe(keypair.publicKey.toBase58())
+      expect(program.provider.connection).toBe(connection)
+    } finally {
+      Fs.rmSync(programPath, { recursive: true, force: true })
+    }
+  })
+
+  it("loadProgram carries the build remediation when the IDL is absent", () => {
+    const emptyPath = Fs.mkdtempSync(Path.join(Os.tmpdir(), "solana-outpost-noidl-"))
+    try {
+      expect(() =>
+        SolanaOutpostProgramTool.loadProgram(
+          new Connection(rpcUrl),
+          Keypair.generate(),
+          emptyPath
+        )
+      ).toThrow(/IDL missing.*patch-idl-errors/s)
     } finally {
       Fs.rmSync(emptyPath, { recursive: true, force: true })
     }

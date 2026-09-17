@@ -15,10 +15,7 @@
 import Assert from "node:assert"
 import Fs from "node:fs"
 import Path from "node:path"
-import {
-  type BindConfigNodeopPorts,
-  type ClusterConfig
-} from "@wireio/cluster-tool-shared"
+import { type ClusterConfig } from "@wireio/cluster-tool-shared"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import { KeyType } from "@wireio/sdk-core"
 import { match } from "ts-pattern"
@@ -26,7 +23,7 @@ import { KeyGenerator } from "../../clients/wire/KeyGenerator.js"
 import { WireClient } from "../../clients/wire/WireClient.js"
 import { BindConfigProvider } from "../../config/BindConfigProvider.js"
 import { ClusterConfigProvider } from "../../config/ClusterConfigProvider.js"
-import { NodeConfig, NodeRole } from "../../config/NodeConfig.js"
+import { NodeConfig } from "../../config/NodeConfig.js"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { NodeopProcess } from "../../cluster/processes/NodeopProcess.js"
 import { ClusterBuildContext } from "../../orchestration/ClusterBuildContext.js"
@@ -97,14 +94,22 @@ export namespace OperatorDaemonTool {
    * attempt for 12 minutes while the ETH leg sat confirmed).
    */
   export const UnderwriterActionTimeoutMs = 30_000
-  /** The single ethereum outpost client id every plugin arg references. */
-  export const EthereumClientId = "eth-default"
-  /** The single solana outpost client id every plugin arg references. */
-  export const SolanaClientId = "sol-default"
-  /** The `sysio.chains` codename keying the ETH outpost wiring specs. */
+  /** The `sysio.chains` codename identifying the ETH outpost. */
   export const EthereumChainCodename = "ETHEREUM"
-  /** The `sysio.chains` codename keying the SOL outpost wiring specs. */
+  /** The `sysio.chains` codename identifying the SOL outpost. */
   export const SolanaChainCodename = "SOLANA"
+  /**
+   * Outpost RPC client ids ARE the chain codes.
+   *
+   * Both operator daemons look a chain's RPC client up under that chain's
+   * `sysio.chains` code, so the id passed to `--outpost-{ethereum,solana}-client`
+   * must be the codename and nothing else. A client registered under any other
+   * id is invisible to them, and a batch operator that cannot reach an active
+   * chain shuts down rather than relaying a partial epoch.
+   */
+  export const EthereumClientId = EthereumChainCodename
+  /** See {@link EthereumClientId} — the SOL client id is likewise the chain code. */
+  export const SolanaClientId = SolanaChainCodename
   /** ETH source-deposit function the underwriter verifies before committing. */
   export const EthereumSourceDepositFunction = "requestSwap"
   /** SOL source-deposit instruction the underwriter verifies before committing. */
@@ -410,7 +415,6 @@ export namespace OperatorDaemonTool {
           keySourceFor(operator.label, KeyType.K1)
         )
       ),
-      ...pair("--batch-enabled", "true"),
       ...pair("--batch-operator-account", operator.account),
       ...pair("--batch-epoch-poll-ms", String(BatchEpochPollMs)),
       ...pair(
@@ -421,25 +425,9 @@ export namespace OperatorDaemonTool {
         ? pair("--ext-debugging-server", network.debuggingServerUrl)
         : []),
       ...outpostClientArgs(operator, artifacts, network, keySourceFor),
-      // Per-chain outpost bindings (repeatable CSV specs; replaced the removed
-      // --batch-eth-{client-id,opp-addr,opp-inbound-addr} / --batch-sol-program-id —
-      // the EVM RPC client is auto-selected by matching the chains row's
-      // external_chain_id against the --outpost-ethereum-client chain ids):
-      //   EVM: <chain_code>,<opp_addr>,<opp_inbound_addr>
-      //   SVM: <chain_code>,<opp_outpost_program_id>
-      ...pair(
-        "--batch-outpost",
-        [
-          EthereumChainCodename,
-          assertAddress(artifacts, "OPP"),
-          assertAddress(artifacts, "OPPInbound")
-        ].join(",")
-      ),
-      ...pair(
-        "--batch-outpost",
-        [SolanaChainCodename, artifacts.solanaProgramId].join(",")
-      ),
-      ...pair("--batch-sol-client-id", SolanaClientId),
+      // No per-chain outpost flags: the remote OPP contract addresses live on
+      // each chain's `sysio.chains` row (seeded by RegistrySteps), and the RPC
+      // client for a chain is the one registered under that chain's code.
       ...pair("--solana-idl-file", artifacts.solanaIdlFile),
       // The outpost interface is hosted in liqsol_core since the clean-room
       // rewrite; nodeop's compiled-in default IDL name is opp_outpost.
@@ -477,7 +465,6 @@ export namespace OperatorDaemonTool {
           keySourceFor(operator.label, KeyType.K1)
         )
       ),
-      ...pair("--underwriter-enabled", "true"),
       ...pair("--underwriter-account", operator.account),
       ...pair(
         "--underwriter-action-timeout-ms",
@@ -487,25 +474,10 @@ export namespace OperatorDaemonTool {
         ? pair("--ext-debugging-server", network.debuggingServerUrl)
         : []),
       ...outpostClientArgs(operator, artifacts, network, keySourceFor),
-      // Per-chain outpost wiring (repeatable CSV specs; replaced the removed
-      // --underwriter-eth-opreg-addr / --underwriter-{eth,sol}-client-id):
-      //   EVM: <chain_code>,<client_id>,<operator_registry_addr>,<source_deposit_contract_addr>
-      //   SVM: <chain_code>,<client_id>,<opp_outpost_program_id>
-      ...pair(
-        "--underwriter-eth-outpost",
-        [
-          EthereumChainCodename,
-          EthereumClientId,
-          assertAddress(artifacts, "OperatorRegistry"),
-          assertAddress(artifacts, "ReserveManager")
-        ].join(",")
-      ),
-      ...pair(
-        "--underwriter-sol-outpost",
-        [SolanaChainCodename, SolanaClientId, artifacts.solanaProgramId].join(
-          ","
-        )
-      ),
+      // No per-chain outpost flags: the underwriter serves every ACTIVE
+      // `sysio.chains` row, reads each one's OperatorRegistry / source-deposit
+      // address off that row, and reaches it through the RPC client registered
+      // under the chain's code.
       ...pair(
         "--underwriter-eth-source-deposit-function",
         EthereumSourceDepositFunction
@@ -524,37 +496,7 @@ export namespace OperatorDaemonTool {
     ]
   }
 
-  /** Assert a deployed ETH outpost address is present in the artifacts. */
-  function assertAddress(
-    artifacts: OperatorDaemonArtifacts,
-    contractName: string
-  ): string {
-    const address = artifacts.ethereumAddresses[contractName]
-    Assert.ok(
-      address != null && address.length > 0,
-      `OperatorDaemonTool: ${contractName} address missing from outpost-addrs.json`
-    )
-    return address
-  }
-
   // ── Step: start an operator's daemon (process spawn — its own Step) ───────
-
-  /** Preferred HTTP port for an ad-hoc (flow-provisioned) operator daemon. */
-  export const PreferredDaemonHttpPort = 8988
-  /** Preferred p2p port for an ad-hoc (flow-provisioned) operator daemon. */
-  export const PreferredDaemonP2pPort = 9976
-
-  /**
-   * The process label + node-dir name for an operator's daemon, keyed by the
-   * operator's durable `label` handle (deterministic + human-navigable; the
-   * `account` is node-owner-generated and not path-safe to rely on).
-   *
-   * @param label - The operator's durable handle (`batchop.a`, …).
-   * @returns The `node_<label>` process label / directory name.
-   */
-  export function daemonNodeName(label: string): string {
-    return `node_${label}`
-  }
 
   /** Input for {@link planDaemonStart}. */
   export interface StartDaemonInput extends StepInput {
@@ -565,8 +507,9 @@ export namespace OperatorDaemonTool {
   /**
    * Start a flow-provisioned operator's daemon: a non-producing nodeop carrying
    * the type-matched OPP daemon args ({@link batchOperatorArgs} /
-   * {@link underwriterArgs}), peered to the producer nodes, on
-   * {@link BindConfigProvider.findAvailable}-resolved ports. Required whenever a
+   * {@link underwriterArgs}), composed by `NodeConfig.createAdHoc` (peered to
+   * the producer nodes, on {@link BindConfigProvider.claimAdHocPorts}-
+   * resolved ports). Required whenever a
    * NON-bootstrapped operator flips ACTIVE — the schedule prefers it over the
    * bootstrapped set, and its group's consensus needs it to relay. Bootstrap
    * operator nodes are planned by `NodeConfig.plan` instead; this Step is for
@@ -598,7 +541,7 @@ export namespace OperatorDaemonTool {
     signal: AbortSignal
   ): Promise<void> {
     signal.throwIfAborted()
-    const nodeName = daemonNodeName(input.label)
+    const nodeName = NodeConfig.adHocNodeName(input.label)
     if (ctx.processManager.get(nodeName) != null) return
 
     const operator = ctx.keyStore.assertOperator(input.label),
@@ -618,51 +561,17 @@ export namespace OperatorDaemonTool {
           )
         })
 
-    const ports: BindConfigNodeopPorts = {
-      http: await BindConfigProvider.findAvailable(PreferredDaemonHttpPort),
-      p2p: await BindConfigProvider.findAvailable(PreferredDaemonP2pPort)
-    }
+    const ports = BindConfigProvider.claimAdHocPorts(ctx.config.bind, input.label)
     // startWithRecovery (not bare create+start): a flow rerun reuses the
     // daemon's data dir, so an unclean prior stop leaves a dirty chainbase
     // this launch must recover from, same as the planned-node paths.
     await NodeopProcess.startWithRecovery(ctx.processManager, {
-      node: daemonNodeConfig(ctx.config, operator, ports),
-      operator,
+      node: NodeConfig.createAdHoc(ctx.config, operator, ports),
+      operators: [operator],
       extraArgs: daemonArgs
     })
     ctx.log.info(
       `[operator-daemon] ${input.label} (${operator.account}) daemon up (${nodeName}, http=${ports.http})`
-    )
-  }
-
-  /** Topology index for ad-hoc daemon nodes (not part of `NodeConfig.plan`). */
-  const AdHocDaemonNodeIndex = -1
-
-  /**
-   * Compose the daemon's {@link NodeConfig}: a non-producing operator node named
-   * for the operator's durable label handle, peered to every producer node, on
-   * the resolved `ports`.
-   */
-  function daemonNodeConfig(
-    config: ClusterConfig,
-    operator: OperatorAccount,
-    ports: BindConfigNodeopPorts
-  ): NodeConfig {
-    const isBatchOperator = operator.type === OperatorType.BATCH,
-      producerPeers = config.bind.nodeop.ports.producers.map(
-        producerPorts =>
-          `${NodeConfig.advertiseAddressFor(config, producerPorts)}:${producerPorts.p2p}`
-      )
-    return new NodeConfig(
-      config,
-      isBatchOperator ? NodeRole.batch_operator : NodeRole.underwriter,
-      AdHocDaemonNodeIndex,
-      daemonNodeName(operator.label),
-      ports,
-      [],
-      producerPeers,
-      isBatchOperator ? operator.label : null,
-      isBatchOperator ? null : operator.label
     )
   }
 }

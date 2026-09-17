@@ -112,7 +112,13 @@ describe("ClusterBuildDefaults — SSM signature-provider key-publication gating
     const cluster = await ClusterBuildDefaults.create(ssmOptions())
     const names = collectPhaseNames(cluster.children)
     const publishIndex = names.indexOf("PublishNodeSignatureProviderKeys")
-    expect(publishIndex).toBe(names.indexOf("WalletAndKeys") + 1)
+    // Directly after `ProducerIdentities`, which itself follows `WalletAndKeys`: the walker
+    // publishes each producer ACCOUNT's keys too, and reads them off the key store — so it has
+    // to run after they are materialized and before any node fetches them.
+    expect(publishIndex).toBe(names.indexOf("ProducerIdentities") + 1)
+    expect(names.indexOf("ProducerIdentities")).toBe(
+      names.indexOf("WalletAndKeys") + 1
+    )
     // The consumers — the SSM-spec'd producer nodes — start strictly after.
     expect(publishIndex).toBeLessThan(names.indexOf("BiosNode"))
     expect(publishIndex).toBeLessThan(names.indexOf("ProducerNodes"))

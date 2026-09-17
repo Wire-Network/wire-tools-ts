@@ -1,6 +1,6 @@
 {
   "name": "@wireio/test-flow-swap-to-wire",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "private": true,
   "type": "commonjs",
   "description": "Flow: Swap TO WIRE (Ethereum → WIRE depot, single-leg underwriting + direct WIRE payout)",
@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@wireio/cluster-tool": "workspace:*",
-    "@wireio/sdk-core": "^1.0.17",
+    "@wireio/sdk-core": "^1.0.88",
     "ethers": "^6.14.0"
   },
   "devDependencies": {

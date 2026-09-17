@@ -1,3 +1,5 @@
+import { SlugName } from "@wireio/sdk-core"
+
 import {
   slugValue,
   slugNameToLittleEndianBuffer
@@ -54,10 +56,22 @@ describe("slugUtils", () => {
     it("unwraps a { value: string } wrapper", () => {
       expect(slugValue({ value: "1234" })).toBe(1234)
     })
-    it("returns NaN for unrecognised shapes", () => {
-      expect(slugValue(null)).toBeNaN()
-      expect(slugValue({ other: 1 })).toBeNaN()
-      expect(slugValue([1])).toBeNaN()
+    it("decodes a slug literal that is not a decimal spelling", () => {
+      expect(slugValue("ETHEREUM")).toBe(SlugName.from("ETHEREUM"))
+      expect(slugValue({ value: "ETH" })).toBe(SlugName.from("ETH"))
+    })
+    it("prefers the decimal reading for an all-digit string", () => {
+      // TRANSITIONAL: no string-sniffing decoder can resolve this, because the
+      // slug alphabet contains digits. Pinned so the compromise is deliberate.
+      expect(slugValue("101")).toBe(101)
+      expect(slugValue("101")).not.toBe(SlugName.from("101"))
+    })
+    it("throws on unrecognised shapes rather than returning NaN", () => {
+      // NaN never equals itself, so a NaN slug silently matches zero rows in a
+      // filter predicate and surfaces minutes later as a poll timeout.
+      expect(() => slugValue(null)).toThrow(/unrecognised slug carrier/)
+      expect(() => slugValue({ other: 1 })).toThrow(/unrecognised slug carrier/)
+      expect(() => slugValue([1])).toThrow(/unrecognised slug carrier/)
     })
   })
 })

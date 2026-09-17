@@ -16,6 +16,7 @@ import {
 } from "@wireio/cluster-tool/cluster/processes"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
 import { fixtureContext } from "../../config/clusterBuildContextFixture.js"
+import { seedProducerOperators } from "../outputs/operatorAccountFixture.js"
 
 const startScript = Steps.startScript,
   validatorSteps = Steps.processes.solanaValidator,
@@ -90,6 +91,9 @@ describe("StartScriptSteps", () => {
           }
         }
       })
+      // Producing nodes now resolve one ACCOUNT per hosted producer (each owning its own
+      // finalizer key), not the node key set — so the accounts have to exist here.
+      seedProducerOperators(ctx)
       NodeConfig.plan(ctx.config)
         .filter(node => NodeConfig.isOperatorRole(node.role))
         .forEach(node => {
