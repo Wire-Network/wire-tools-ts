@@ -25,8 +25,6 @@ export namespace ConsensusSteps {
   const HandoffTimeoutMs = 90_000
   /** The genesis producer that carries the chain until handoff. */
   const GenesisProducer = "sysio"
-  /** Contract assertion proving a producer has not reached admission. */
-  const ProducerAdmissionErrorPattern = /producer operator is not eligible for admission/
 
   /**
    * Activate BLS instant finality (`sysio.bios::setfinalizer`) with a policy built from every
@@ -144,7 +142,7 @@ export namespace ConsensusSteps {
   }
 
   /**
-   * `sysio.system::regproducer` for one GENESIS producer, keyed by its handle.
+   * `sysio.system::regproducer` for one provisioned producer, keyed by its handle.
    *
    * The action data is resolved in the RUNNER, not at plan time: the account's keys are
    * materialized by a step that has not run yet when this one is constructed, so a plan-time
@@ -152,7 +150,9 @@ export namespace ConsensusSteps {
    *
    * Registration is not optional bookkeeping — `update_ranked_producers` schedules only
    * producers with an active `producers` row, so a cluster whose genesis producers never
-   * register has nothing to rank.
+   * register has nothing to rank. It succeeds only after
+   * {@link OpregContractSteps.planRegoperator} has established an ACTIVE, collateral-satisfying
+   * PRODUCER operator (or the explicit bootstrapped exception).
    */
   export function planRegisterProducer<C extends ClusterBuildContext = ClusterBuildContext>(
     actor: Report.Actor,
@@ -194,57 +194,6 @@ export namespace ConsensusSteps {
         }
       },
       signal
-    )
-  }
-
-  /**
-   * Attempt `sysio.system::regproducer` and require the collateral-admission gate to reject it.
-   *
-   * @param actor - The narrative subject.
-   * @param name - Step name.
-   * @param description - Human-readable description.
-   * @param options - Per-step tuning.
-   * @param label - The producer's durable handle.
-   * @returns A step whose successful outcome is the expected contract rejection.
-   */
-  export function planRejectProducerRegistration<C extends ClusterBuildContext = ClusterBuildContext>(
-    actor: Report.Actor,
-    name: string,
-    description: string,
-    options: ClusterBuildStepOptions,
-    label: string
-  ): ClusterBuildStep<C, ProducerRegistrationInput> {
-    return ClusterBuildStep.create<C, ProducerRegistrationInput>(
-      actor,
-      name,
-      description,
-      options,
-      { kind: "ConsensusSteps.ProducerRegistrationInput", label },
-      runRejectProducerRegistration
-    )
-  }
-
-  /**
-   * Named runner — perform one producer-registration write attempt and assert the admission error.
-   *
-   * @param ctx - Active cluster context.
-   * @param input - Durable producer handle.
-   * @param signal - Shared cancellation signal.
-   * @returns When the contract rejects registration for missing admission.
-   */
-  export async function runRejectProducerRegistration<C extends ClusterBuildContext>(
-    ctx: C,
-    input: ProducerRegistrationInput,
-    signal: AbortSignal
-  ): Promise<void> {
-    signal.throwIfAborted()
-    // Keep provisioning failures distinct from the contract rejection this step is intended to
-    // prove. `runRegisterProducer` resolves the same handle again immediately before the write.
-    ctx.keyStore.assertOperator(input.label)
-    await Assert.rejects(
-      () => runRegisterProducer(ctx, input, signal),
-      ProducerAdmissionErrorPattern,
-      `expected ${input.label} producer registration to fail before collateral admission`
     )
   }
 

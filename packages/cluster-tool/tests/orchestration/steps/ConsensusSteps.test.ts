@@ -27,7 +27,6 @@ describe("Steps.consensus", () => {
   describe("the label-keyed registration factories", () => {
     it.each([
       ["planRegisterProducer", "runRegisterProducer"],
-      ["planRejectProducerRegistration", "runRejectProducerRegistration"],
       ["planRegisterFinalizerKey", "runRegisterFinalizerKey"]
     ] as const)("%s carries the handle as its typed input and wires %s", (factoryName, runnerName) => {
       const step = Steps.consensus[factoryName](
@@ -103,42 +102,6 @@ describe("Steps.consensus", () => {
         },
         signal
       )
-    })
-
-    it("the negative registration runner accepts only the admission rejection", async () => {
-      const ctx = fixtureContext(),
-        [producer] = seedProducerOperators(ctx),
-        contract = ctx.wire.getSysioContract(
-          SysioContracts.SysioContractName.system
-        ),
-        invoke = jest.spyOn(contract.actions.regproducer, "invoke")
-      jest.spyOn(ctx.wire, "getSysioContract").mockReturnValue(contract)
-
-      invoke.mockRejectedValueOnce(
-        new Error("producer operator is not eligible for admission")
-      )
-      await expect(
-        Steps.consensus.runRejectProducerRegistration(
-          ctx,
-          {
-            kind: "ConsensusSteps.ProducerRegistrationInput",
-            label: producer.label
-          },
-          signal
-        )
-      ).resolves.toBeUndefined()
-
-      invoke.mockResolvedValueOnce(undefined)
-      await expect(
-        Steps.consensus.runRejectProducerRegistration(
-          ctx,
-          {
-            kind: "ConsensusSteps.ProducerRegistrationInput",
-            label: producer.label
-          },
-          signal
-        )
-      ).rejects.toThrow(/Missing expected rejection/)
     })
 
     it("regfinkey carries the account's OWN BLS key + proof of possession", async () => {
@@ -227,9 +190,6 @@ describe("Steps.consensus", () => {
       ).rejects.toThrow(/has not been provisioned/)
       await expect(
         Steps.consensus.runRegisterFinalizerKey(ctx, input, signal)
-      ).rejects.toThrow(/has not been provisioned/)
-      await expect(
-        Steps.consensus.runRejectProducerRegistration(ctx, input, signal)
       ).rejects.toThrow(/has not been provisioned/)
     })
   })

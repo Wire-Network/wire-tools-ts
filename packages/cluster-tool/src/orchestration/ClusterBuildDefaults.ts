@@ -639,8 +639,8 @@ export namespace ClusterBuildDefaults {
     // Genesis producers have to REGISTER, not merely exist. Registration follows the privileged
     // bootstrapped operator rows above because sysio.system admits creation only for an ACTIVE
     // PRODUCER operator. `regfinkey` then requires the producer row and activates the first key by
-    // itself. Both bounded tables are billed to sysio.system, so producers receive no test-only
-    // RAM grant.
+    // itself. The producer, finalizer-key, and finalizer rows are billed to sysio.system, so
+    // producers receive no test-only RAM grant.
     ClusterBuildPhase.create<C>(
       prerequisites,
       "GenesisProducerRegistration",

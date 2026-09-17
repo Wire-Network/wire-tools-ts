@@ -1,3 +1,4 @@
+import Assert from "node:assert"
 import { SysioContracts } from "@wireio/sdk-core"
 import { OperatorType } from "@wireio/opp-typescript-models"
 import {
@@ -236,12 +237,48 @@ export class ProducerRegistrationScenario extends FlowScenario {
       "NegativeCase",
       "Reject producer registration before collateral admission"
     ).push(
-      Steps.consensus.planRejectProducerRegistration(
+      verifyStep(
         Actor.Producer,
         "reject-unbonded-regproducer",
-        "the UNKNOWN producer operator cannot allocate a producer row",
-        {},
-        Constants.ProducerLabel
+        "registration is rejected, the operator stays UNKNOWN, and no producer row is created",
+        async (ctx, signal) => {
+          await Assert.rejects(
+            () =>
+              Steps.consensus.runRegisterProducer(
+                ctx,
+                {
+                  kind: "ConsensusSteps.ProducerRegistrationInput",
+                  label: Constants.ProducerLabel
+                },
+                signal
+              ),
+            error => {
+              const message = error instanceof Error ? error.message : String(error)
+              ctx.log.debug(`unbonded producer registration rejected: ${message}`)
+              return Constants.ProducerAdmissionErrorPattern.test(message)
+            },
+            "expected producer registration to fail before collateral admission"
+          )
+
+          const operator = await readOperatorRow(ctx)
+          Assert.ok(
+            operator != null,
+            "the provisioned producer operator row is missing"
+          )
+          Assert.ok(
+            matchesProtoEnum(
+              operator.status,
+              SysioOpregOperatorstatus,
+              SysioOpregOperatorstatus.OPERATOR_STATUS_UNKNOWN
+            ),
+            "the unbonded producer operator must remain UNKNOWN after rejected registration"
+          )
+          Assert.ok(
+            (await readProducerRow(ctx)) == null,
+            "rejected registration must not create a producer row"
+          )
+        },
+        {}
       )
     )
 
@@ -343,7 +380,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
         async ctx => {
           // The score is what ranking ORDERS on, and an unscored row sits in the demoted tier
           // where no consumer's walk ever reaches it. Registration reads the already-posted
-          // collateral for the initial score; regfinkey then rescales the row into schedulable
+          // collateral for the initial score; regfinkey then rescores the row into schedulable
           // standing. The tier is read from the key itself.
           await pollUntil(
             "producer rank_score in the healthy tier",
