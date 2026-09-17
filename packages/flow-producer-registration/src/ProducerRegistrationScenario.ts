@@ -16,7 +16,6 @@ import {
   pollUntil,
   producerName,
   producerTier,
-  sleep,
   slugValue,
   verifyStep,
   type ClusterBuild,
@@ -70,17 +69,6 @@ async function readProducerRow(
  */
 async function activeScheduleProducers(ctx: ClusterBuildContext): Promise<string[]> {
   return (await ctx.wire.getProducerSchedule()).active.producers
-}
-
-/**
- * Every producer ANY schedule names — active, pending, or proposed — so a "never scheduled"
- * assertion also covers a change still in flight.
- */
-async function scheduledProducers(ctx: ClusterBuildContext): Promise<string[]> {
-  const { active, pending, proposed } = await ctx.wire.getProducerSchedule()
-  return [active, pending, proposed]
-    .filter(schedule => schedule != null)
-    .flatMap(schedule => schedule.producers)
 }
 
 /** True once the flow producer has actually produced a block. */
@@ -143,23 +131,24 @@ async function verifyProducerLeavesSchedule(ctx: ClusterBuildContext): Promise<v
  * 1. **ProvisionProducer** — the ONE provisioning mechanism creates the account (unique WIRE
  *    key + its own finalizer key, ETH + SOL identities, authex links, `regoperator`). No
  *    `producerNodeIndex`, so it takes the collateral-backed route, not the genesis one.
- * 2. **NegativeCase** — `regproducer` + `regfinkey` BEFORE any collateral. Asserted here rather
- *    than after the deposits so the ordering is unambiguous: registration alone must NOT make a
- *    producer schedulable, so no schedule (active, pending, or proposed) ever names it.
+ * 2. **NegativeCase** — `regproducer` BEFORE collateral must be rejected; no producer row is
+ *    created while the operator is UNKNOWN.
  * 3. **DepositEthereum** / 4. **DepositSolana** — bond on both outposts; the all-chain rule is
- *    met, the operator flips ACTIVE, and its `rank_score` moves into the healthy tier.
- * 5. **StartProducerNode** — its own nodeop, peered into the mesh.
- * 6. **EntersSchedule** — it enters the ranked schedule and PRODUCES A BLOCK. This is also the
+ *    met and the operator flips ACTIVE.
+ * 5. **RegisterProducer** — only now create the producer row and finalizer key; its first score
+ *    lands in the healthy tier.
+ * 6. **StartProducerNode** — its own nodeop, peered into the mesh.
+ * 7. **EntersSchedule** — it enters the ranked schedule and PRODUCES A BLOCK. This is also the
  *    first end-to-end coverage anywhere of the `regfinkey` → `set_proposed_finalizers` path; a
  *    cluster otherwise installs finality directly at genesis.
- * 7. **MissedRounds** — its node is stopped (a controlled stop; the flow owns the process). The
+ * 8. **MissedRounds** — its node is stopped (a controlled stop; the flow owns the process). The
  *    miss counter climbs, demotion fires at exactly the installed threshold, and the ACTIVE
  *    schedule drops it while every genesis producer keeps its slot.
- * 8. **Recover** — the node restarts and `regproducer` clears the DEMOTION, returning eligibility
+ * 9. **Recover** — the node restarts and `regproducer` clears the DEMOTION, returning eligibility
  *    without wiping the record: the miss streak survives, because re-registering costs only a
  *    signature and could otherwise be called on a timer by an operator that never produces. The
  *    producer re-enters the schedule, produces, and THAT is what clears the streak.
- * 9. **Removal** — the whole ETH bond is withdrawn. The operator drops below the per-chain
+ * 10. **Removal** — the whole ETH bond is withdrawn. The operator drops below the per-chain
  *    minimum, leaves ACTIVE, and the active schedule drops it — the collateral-driven exit that
  *    mirrors the collateral-driven entry in phases 3-4. This depends on `opreg::withdraw`
  *    re-evaluating eligibility (WIRE-351, wire-sysio PR #589).
@@ -241,58 +230,18 @@ export class ProducerRegistrationScenario extends FlowScenario {
       ]
     )
 
-    // ── 2. Register + key it, with NO collateral behind it yet ──
+    // ── 2. Prove registration is refused with NO collateral behind it ──
     ClusterBuildPhase.create(
       cluster,
       "NegativeCase",
-      "Register the producer and its finalizer key BEFORE any collateral"
+      "Reject producer registration before collateral admission"
     ).push(
-      Steps.consensus.planGrantProducerRam(
-        Actor.Sysio,
-        "setacctram-flowprod",
-        "grant the flow producer RAM for its producer + finalizer-key rows",
-        {},
-        Constants.ProducerLabel,
-        Steps.consensus.ProducerRamBytes
-      ),
-      Steps.consensus.planRegisterProducer(
+      Steps.consensus.planRejectProducerRegistration(
         Actor.Producer,
-        "regproducer-flowprod",
-        "register the flow producer",
+        "reject-unbonded-regproducer",
+        "the UNKNOWN producer operator cannot allocate a producer row",
         {},
         Constants.ProducerLabel
-      ),
-      Steps.consensus.planRegisterFinalizerKey(
-        Actor.Producer,
-        "regfinkey-flowprod",
-        "register the flow producer's finalizer key",
-        {},
-        Constants.ProducerLabel
-      ),
-      verifyStep(
-        Actor.Sysio,
-        "unbonded-producer-is-never-scheduled",
-        "a registered but unbonded producer stays UNKNOWN and no schedule ever names it",
-        async ctx => {
-          // Held across a full schedule-rebuild window: `update_ranked_producers` fires roughly
-          // once a minute, so a shorter check would pass merely because no rebuild had run.
-          const account = producerAccount(ctx),
-            deadline = Date.now() + Constants.scheduleDeadlineMs(ScheduleSize)
-          while (Date.now() < deadline) {
-            if (await isOperatorActive(ctx)) {
-              throw new Error(
-                "an unbonded producer reached OPERATOR_STATUS_ACTIVE — meets_role_min let an empty bond through"
-              )
-            }
-            if ((await scheduledProducers(ctx)).includes(account)) {
-              throw new Error(
-                "an unbonded producer was scheduled — it holds a rank position without collateral"
-              )
-            }
-            await sleep(Constants.PollIntervalMs)
-          }
-        },
-        scheduleStepOptions
       )
     )
 
@@ -335,11 +284,11 @@ export class ProducerRegistrationScenario extends FlowScenario {
       )
     )
 
-    // ── 4. SOL bond → all-chain rule met → ACTIVE → scored ──
+    // ── 4. SOL bond → all-chain rule met → ACTIVE ──
     ClusterBuildPhase.create(
       cluster,
       "DepositSolana",
-      "Bond SOL collateral; the producer operator flips ACTIVE and is scored"
+      "Bond SOL collateral; the producer operator flips ACTIVE"
     ).push(
       SolanaCollateralTool.planDeposit(
         Actor.User,
@@ -364,17 +313,38 @@ export class ProducerRegistrationScenario extends FlowScenario {
           )
         },
         relayStepOptions
+      )
+    )
+
+    // ── 5. ACTIVE operator → producer row + finalizer key → initial score ──
+    ClusterBuildPhase.create(
+      cluster,
+      "RegisterProducer",
+      "Register the admitted producer and its finalizer key"
+    ).push(
+      Steps.consensus.planRegisterProducer(
+        Actor.Producer,
+        "regproducer-flowprod",
+        "register the admitted flow producer",
+        {},
+        Constants.ProducerLabel
+      ),
+      Steps.consensus.planRegisterFinalizerKey(
+        Actor.Producer,
+        "regfinkey-flowprod",
+        "register the flow producer's finalizer key",
+        {},
+        Constants.ProducerLabel
       ),
       verifyStep(
         Actor.Sysio,
-        "collateral-scores-the-producer",
-        "the bond moves the producer's rank_score into the healthy tier",
+        "registration-scores-the-producer",
+        "registration scores the admitted producer in the healthy tier",
         async ctx => {
           // The score is what ranking ORDERS on, and an unscored row sits in the demoted tier
-          // where no consumer's walk ever reaches it. `processprod` fires on every balance
-          // change precisely so this happens without a governance action — and the TIER is
-          // read off the key itself, because `is_demoted` and `is_active` were already false
-          // and true the moment the producer registered.
+          // where no consumer's walk ever reaches it. Registration reads the already-posted
+          // collateral for the initial score; regfinkey then rescales the row into schedulable
+          // standing. The tier is read from the key itself.
           await pollUntil(
             "producer rank_score in the healthy tier",
             async () => {
@@ -392,7 +362,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
       )
     )
 
-    // ── 5. Its own producing node ──
+    // ── 6. Its own producing node ──
     ClusterBuildPhase.create(
       cluster,
       "StartProducerNode",
@@ -407,7 +377,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
       )
     )
 
-    // ── 6. It enters the ranked schedule and produces ──
+    // ── 7. It enters the ranked schedule and produces ──
     ClusterBuildPhase.create(
       cluster,
       "EntersSchedule",
@@ -433,7 +403,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
       )
     )
 
-    // ── 7. Stop its node; misses accrue; demotion fires; the schedule drops it ──
+    // ── 8. Stop its node; misses accrue; demotion fires; the schedule drops it ──
     ClusterBuildPhase.create(
       cluster,
       "MissedRounds",
@@ -488,7 +458,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
       )
     )
 
-    // ── 8. Restart + regproducer → back in the schedule ──
+    // ── 9. Restart + regproducer → back in the schedule ──
     ClusterBuildPhase.create(
       cluster,
       "Recover",
@@ -582,7 +552,7 @@ export class ProducerRegistrationScenario extends FlowScenario {
       )
     )
 
-    // ── 9. Withdraw the bond → below the minimum → out of the schedule ──
+    // ── 10. Withdraw the bond → below the minimum → out of the schedule ──
     ClusterBuildPhase.create(
       cluster,
       "Removal",
