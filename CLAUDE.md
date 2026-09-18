@@ -89,7 +89,7 @@ pnpm workspaces (no nx/turbo/lerna). All packages under `packages/`:
 |---------|---------|
 | `cluster-tool` (`@wireio/cluster-tool`) | THE core library: orchestration engine (PhaseGroup → Phase → Step → Report), process managers, chain clients, config/bind resolution, Steps palette, flow substrate (`FlowCLI`/`FlowScenario`), CLI |
 | `cluster-tool-shared` (`@wireio/cluster-tool-shared`) | Zod schema-first persisted shapes (`ClusterConfig`, `BindConfig`, `ClusterState`, `SignatureProviderConfig`, `ExternalOutpostConfig`, `ExternalClusterConfig`, `ChainTokenAmount`) behind the generic `SchemaCodec` (validate-both-ends serialize/deserialize) |
-| `flow-*` (13 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, and the six swap variants |
+| `flow-*` (16 packages) | One scenario each — standalone executables built on `FlowCLI.create(<Name>Scenario).run()`; batch-operator lifecycle (slashing/termination), collateral, reserves, emissions soak, node-owner NFT, yield distribution, liq syndication, and the six swap variants |
 | `debugging-shared` / `debugging-server` / `debugging-client-shared` / `debugging-client-tool` / `debugging-client-tool-tui` | OPP debugging surface: shared types + storage paths, ingest server, RPC client, CLI, TUI |
 | `test-app-server` | Fixture app server used by debugging tests |
 
@@ -341,7 +341,12 @@ so `regreserve` can never be called from a flow phase.
   (clients + `outputs` + `keyStore` + typed events), `OutputStore`,
   `ClusterBuildDefaults` (bootstrap phases), `steps/` palette, per-chain
   outpost bootstrappers, `outputs/` (typed cross-step values incl.
-  `OperatorAccount`, `ClusterKeyStore`).
+  `OperatorAccount`, `ClusterKeyStore`). On the Solana side the validator loads
+  ALL FOUR wire-solana programs at genesis and
+  `solana/SolanaLiqsolSurfaceSteps` runs wire-solana's own `anchor run init-*`
+  scripts (one Step each, via `SolanaAnchorScriptTool`) BEFORE the OPP outpost
+  bootstrap — `init-global-config` is what creates the `global_config` every
+  OPP admin op is gated on.
 - **`cluster/`** — slim `ClusterManager` (dirs/launch/destroy) +
   `processes/`: construction-safe `ManagedProcess` base (self-registers,
   graceful stop with cleared escalation timer) and

@@ -9,6 +9,7 @@ import {
   ClusterDeploymentKind,
   ClusterFiles,
   DefaultChainStateDbSizeMb,
+  DefaultSolanaSlotsPerEpoch,
   ExternalOutpostConfigSchemaCodec,
   SignatureProviderType,
   type AWSClusterNodeConfig,
@@ -202,7 +203,9 @@ export namespace ClusterConfigProvider {
       // `create-external-config`'s Rebind re-stamps its merged config `external`.
       deploymentKind: ClusterDeploymentKind.local,
       chainStateDbSizeMb:
-        options.chainStateDbSizeMb ?? DefaultChainStateDbSizeMb
+        options.chainStateDbSizeMb ?? DefaultChainStateDbSizeMb,
+      solanaSlotsPerEpoch:
+        options.solanaSlotsPerEpoch ?? DefaultSolanaSlotsPerEpoch
     }
   }
 

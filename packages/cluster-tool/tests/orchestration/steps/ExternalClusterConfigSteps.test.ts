@@ -117,12 +117,14 @@ const EthereumDeploymentsSubpath = "ethereum-deployments"
  * generated id is a fresh random string inside the Verify stale-port scan's
  * search space).
  */
-function programKeypair(): Keypair {
-  return Keypair.fromSeed(new Uint8Array(SolanaSeedLength).fill(SolanaSeedByte))
+function programKeypair(index = 0): Keypair {
+  return Keypair.fromSeed(
+    new Uint8Array(SolanaSeedLength).fill(SolanaSeedByte + index)
+  )
 }
 /** ed25519 seed length (bytes) for {@link programKeypair}. */
 const SolanaSeedLength = 32
-/** The single byte {@link programKeypair}'s seed repeats. */
+/** The single byte {@link programKeypair}'s seed repeats for the FIRST program. */
 const SolanaSeedByte = 7
 
 /**
@@ -311,9 +313,15 @@ describe("Steps.externalClusterConfig (create-external-config pipeline)", () => 
       ),
       { abi: [] }
     )
-    writeJsonFile(SolanaOutpostProgramTool.programKeypairFile(solanaPath), [
-      ...programKeypair().secretKey
-    ])
+    // The validator loads EVERY wire-solana program at genesis, so the rendered
+    // `start.sh` resolves a keypair per program — stage all of them, not just
+    // the OPP outpost host.
+    SolanaOutpostProgramTool.GenesisAnchorPrograms.forEach((program, index) =>
+      writeJsonFile(
+        SolanaOutpostProgramTool.programKeypairFile(solanaPath, program),
+        [...programKeypair(index).secretKey]
+      )
+    )
     writeJsonFile(
       SolanaOutpostProgramTool.programIdlFile(solanaPath),
       outpostIdl(programKeypair().publicKey.toBase58())

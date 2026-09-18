@@ -421,6 +421,15 @@ export function buildOptionShape(
       OptionLeafType.number,
       "maximum chain state DB size in MiB for every nodeop; omit for the default (1024)"
     ),
+    // ── solana-test-validator tuning ──
+    // optionalLeaf for the same reason as above: omitting the flag has to mean
+    // "resolve the default", not "write 100 here", so the fallback stays in
+    // `ClusterConfigProvider.resolve` — the ONE place that authors the value a
+    // cluster is created with.
+    solanaSlotsPerEpoch: optionalLeaf(
+      OptionLeafType.number,
+      "solana-test-validator --slots-per-epoch; omit for the default (100 — agave's own default leaves the chain at epoch 0, which the liqsol surface cannot initialize against)"
+    ),
     // ── termination tuning ──
     terminateMaxConsecutiveMisses: optionalLeaf(
       OptionLeafType.number,

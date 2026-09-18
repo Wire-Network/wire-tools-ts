@@ -4,6 +4,7 @@ import {
   ClusterConfigSchemaCodec,
   ClusterDeploymentKind,
   DefaultChainStateDbSizeMb,
+  DefaultSolanaSlotsPerEpoch,
   SignatureProviderType,
   type ClusterConfig
 } from "@wireio/cluster-tool-shared"
@@ -88,7 +89,8 @@ describe("ClusterConfig shape", () => {
     debuggingServerEnabled: true,
     enableMockReserves: false,
     deploymentKind: ClusterDeploymentKind.local,
-    chainStateDbSizeMb: DefaultChainStateDbSizeMb
+    chainStateDbSizeMb: DefaultChainStateDbSizeMb,
+    solanaSlotsPerEpoch: DefaultSolanaSlotsPerEpoch
   }
 
   it("persists the report/logging enum fields as their wire spellings", () => {
@@ -156,6 +158,15 @@ describe("ClusterConfig shape", () => {
     expect(rehydrated.deploymentKind).toBe(ClusterDeploymentKind.external)
     expect(rehydrated.chainStateDbSizeMb).toBe(4_096)
     expect(rehydrated).toEqual(external)
+  })
+
+  it("round-trips an overridden solanaSlotsPerEpoch — create's schedule is what run/start.sh get", () => {
+    const tuned: ClusterConfig = { ...config, solanaSlotsPerEpoch: 64 },
+      rehydrated = ClusterConfigSchemaCodec.deserialize(
+        ClusterConfigSchemaCodec.serialize(tuned)
+      )
+    expect(rehydrated.solanaSlotsPerEpoch).toBe(64)
+    expect(rehydrated).toEqual(tuned)
   })
 
   it("persists deploymentKind as its identity-mapped wire spelling", () => {
