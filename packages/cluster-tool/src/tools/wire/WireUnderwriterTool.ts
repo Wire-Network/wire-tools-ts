@@ -122,12 +122,6 @@ export namespace WireUnderwriterTool {
   ] as const
 
   /**
-   * Reserve slug_name that the outpost `depositNonNative` writes pair a non-native
-   * token against. All mock stablecoins register under the PRIMARY reserve.
-   */
-  export const PrimaryReserveCode: bigint = BigInt(SlugName.from("PRIMARY"))
-
-  /**
    * Extra lamports (on top of the deposit amount) an underwriter's SOL keypair is
    * topped up to before a SOL deposit — covers tx fees + PDA/ATA rent headroom.
    * Matches the magnitude flow-batch-operator-termination's batch-op deposit airdrop
@@ -585,7 +579,6 @@ function planEthereumNonNativeSteps<C extends ClusterBuildContext>(
       underwriterLabel,
       chainCode,
       tokenCode,
-      WireUnderwriterTool.PrimaryReserveCode,
       OperatorType.UNDERWRITER,
       amount
     )
@@ -664,7 +657,6 @@ function planSolanaNonNativeSteps<C extends ClusterBuildContext>(
       underwriterLabel,
       chainCode,
       tokenCode,
-      WireUnderwriterTool.PrimaryReserveCode,
       OperatorType.UNDERWRITER,
       amount
     )
