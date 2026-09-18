@@ -26,6 +26,7 @@ import {
   type ClusterBuildStepOptions
 } from "../../orchestration/ClusterBuildStep.js"
 import type { StepInput } from "../../orchestration/StepRunner.js"
+import { swapUserOutputKey } from "../../orchestration/outputs/SwapUserOutput.js"
 import { mkdirs } from "../../utils/fsUtils.js"
 import { solanaKeypair } from "../../utils/keyPairUtils.js"
 import { Report } from "../../report/Report.js"
@@ -404,6 +405,71 @@ export namespace SolanaFundingTool {
       deployer,
       new PublicKey(mint),
       solanaKeypair(operator.solana).publicKey,
+      input.amount
+    )
+  }
+
+  /** Input for one mock-SPL mint into the shared swap user's ATA. */
+  export interface MintSplToSwapUserInput extends StepInput {
+    readonly kind: "SolanaFundingTool.MintSplToSwapUserInput"
+    readonly tokenCode: bigint
+    readonly amount: bigint
+  }
+
+  /**
+   * Plan one mock-SPL mint into the shared swap user's ATA.
+   *
+   * @param actor - Narrative subject.
+   * @param name - Report step name.
+   * @param description - Report step description.
+   * @param options - Step tuning.
+   * @param tokenCode - Packed token slug value.
+   * @param amount - Token base units to mint.
+   * @returns Swap-user SPL mint Step.
+   */
+  export function planSplMintToSwapUser<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    tokenCode: bigint,
+    amount: bigint
+  ): ClusterBuildStep<C, MintSplToSwapUserInput> {
+    return ClusterBuildStep.create<C, MintSplToSwapUserInput>(
+      actor,
+      name,
+      description,
+      options,
+      {
+        kind: "SolanaFundingTool.MintSplToSwapUserInput",
+        tokenCode,
+        amount
+      },
+      runSplMintToSwapUser
+    )
+  }
+
+  /** Named runner for one mock-SPL mint into the shared swap user's ATA. */
+  export async function runSplMintToSwapUser<C extends ClusterBuildContext>(
+    ctx: C,
+    input: MintSplToSwapUserInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    Assert.ok(
+      input.amount > 0n,
+      "SolanaFundingTool.planSplMintToSwapUser: amount must be positive"
+    )
+    const swapUser = ctx.outputs.assert(swapUserOutputKey()),
+      deployer = loadDeployerKeypair(ctx.config.dataPath),
+      mint = new PublicKey(solMintAddress(ctx.config.dataPath, input.tokenCode))
+    await mintMockSplToUser(
+      ctx.solana.connection,
+      deployer,
+      mint,
+      swapUser.solanaKeypair.publicKey,
       input.amount
     )
   }

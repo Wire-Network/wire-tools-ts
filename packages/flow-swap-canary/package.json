@@ -1,0 +1,21 @@
+{
+  "name": "@wireio/test-flow-swap-canary",
+  "version": "0.1.18",
+  "private": true,
+  "type": "commonjs",
+  "description": "Flow: configurable public swap-route canary",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "node lib/index.js",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "@wireio/cluster-tool": "workspace:*",
+    "@wireio/cluster-tool-shared": "workspace:*",
+    "@wireio/sdk-core": "^1.0.88",
+    "yargs": "^18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0"
+  }
+}

@@ -118,8 +118,7 @@ export namespace SwapUserIdentities {
       keyPair: {
         type: "EM",
         address: ethereumWallet.address,
-        publicKey: ethereumWallet.publicKey,
-        privateKey: ethereumWallet.privateKey
+        publicKey: ethereumWallet.publicKey
       }
     })
     StepExtraRecorder.record({
@@ -128,8 +127,7 @@ export namespace SwapUserIdentities {
       purpose: "swap user — solana keypair (ED)",
       keyPair: {
         type: "ED",
-        publicKey: solanaKeypair.publicKey.toBase58(),
-        secretKeyBase64: Buffer.from(solanaKeypair.secretKey).toString("base64")
+        publicKey: solanaKeypair.publicKey.toBase58()
       }
     })
     ctx.outputs.set(swapUserOutputKey(), {

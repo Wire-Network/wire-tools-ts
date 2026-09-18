@@ -21,4 +21,37 @@ describe("EthereumFundingTool step factories", () => {
       expect(step.input.amount).toBe(42n)
     })
   })
+
+  describe("mintErc20ToSwapUser", () => {
+    it("builds a mint Step carrying the token and balance floor", () => {
+      const step = EthereumFundingTool.planErc20MintToSwapUser(
+        Report.Actor.User,
+        "swap-user-usdc-mint",
+        "mint usdc to the swap user",
+        {},
+        "USDC",
+        84n
+      )
+      expect(step.actor).toBe(Report.Actor.User)
+      expect(step.input.kind).toBe(
+        "EthereumFundingTool.MintErc20ToSwapUserInput"
+      )
+      expect(step.input.tokenName).toBe("USDC")
+      expect(step.input.amount).toBe(84n)
+    })
+
+    it("rejects a non-positive balance floor before resolving context", async () => {
+      await expect(
+        EthereumFundingTool.runErc20MintToSwapUser(
+          null as never,
+          {
+            kind: "EthereumFundingTool.MintErc20ToSwapUserInput",
+            tokenName: "USDC",
+            amount: 0n
+          },
+          new AbortController().signal
+        )
+      ).rejects.toThrow(/amount must be positive/)
+    })
+  })
 })
