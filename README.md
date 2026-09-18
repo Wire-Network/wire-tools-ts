@@ -125,6 +125,7 @@ pnpm workspace (no nx/turbo/lerna); everything lives under `packages/`.
 | Package | Name | Purpose |
 |---|---|---|
 | `cluster-tool` | `@wireio/cluster-tool` | Core harness: process managers, chain clients, bootstrap, **`wire-cluster-tool` CLI** |
+| `flow-cluster-readiness` | `@wireio/test-flow-cluster-readiness` | Fresh-cluster read-only identity, liveness, configuration, reserve, collateral, and route preflight |
 | `flow-operator-collateral-deposit` | `@wireio/test-flow-operator-collateral-deposit` | Node-operator collateral deposit + withdraw remit |
 | `flow-swap-with-underwriting` | `@wireio/test-flow-swap-with-underwriting` | Bidirectional SWAP (ETH ↔ SOL) with underwriting |
 | `flow-swap-non-native-tokens` | `@wireio/test-flow-swap-non-native-tokens` | SWAP of non-native tokens (USDC / USDT / LIQ) |
@@ -197,6 +198,16 @@ pnpm --filter @wireio/test-flow-swap-with-underwriting       test
 pnpm test
 ```
 
+### Cluster readiness
+
+`flow-cluster-readiness` is the native fresh-cluster scenario. For an existing
+devbox or sandbox, `wire-cluster-tool readiness` runs the same reusable
+PhaseGroups against explicit Wire, Ethereum, and Solana endpoints and emits the
+normal Markdown/HTML/CSV Report. It is a read-only swap preflight, not a
+transactional canary, SDK-outpost validator, S3 consumer, or Hub integration
+test. See [`docs/cluster-readiness.md`](docs/cluster-readiness.md) for the exact
+proof boundary and command examples.
+
 ### Monitoring a live flow run
 
 Every live run is watched by the canonical six-probe heartbeat monitor,
@@ -235,7 +246,7 @@ Rules of the road (binding for sessions/automation; see
 For interactive work — poking the chains with `clio` or the debugging TUI —
 drive the `wire-cluster-tool` CLI directly (alias: `wtc`). Its commands:
 `create`, `run`, `destroy`, `package`, `create-external-config`, and
-`create-api-node`.
+`create-api-node`, plus connected-cluster `readiness`.
 
 ### Two ways to start a daemon — and how they relate
 

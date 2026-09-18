@@ -1,6 +1,6 @@
 import type { ClusterConfig } from "@wireio/cluster-tool-shared"
 import { Keypair } from "@solana/web3.js"
-import { EventEmitter } from "eventemitter3"
+import type { EventEmitter } from "eventemitter3"
 import { asOption } from "@3fv/prelude-ts"
 import { EthereumClient } from "../clients/ethereum/EthereumClient.js"
 import { SolanaClient } from "../clients/solana/SolanaClient.js"
@@ -9,9 +9,8 @@ import { WireClient } from "../clients/wire/WireClient.js"
 import { ProcessManager } from "../cluster/processes/ProcessManager.js"
 
 import type { Logger } from "../logging/Logger.js"
-import type { Report } from "../report/Report.js"
 import { toDialAddress, toURL } from "../utils/netUtils.js"
-import { OutputStore } from "./OutputStore.js"
+import { OrchestrationContext } from "./OrchestrationContext.js"
 import {
   ClusterKeyStore,
   ClusterKeyStoreKey
@@ -29,31 +28,13 @@ import {
  */
 export class ClusterBuildContext<
   Events extends EventEmitter.ValidEventTypes = string
-> extends EventEmitter<Events> {
-  /** Typed cross-step value store. */
-  readonly outputs = new OutputStore()
-
-  /**
-   * Every {@link Report.Phase} that has FINISHED, in completion order — appended
-   * by `ClusterBuildPhase.run` the moment a phase ends.
-   *
-   * The report TREE only materializes as each top-level child RETURNS, and the
-   * bootstrap's top-level children are large groups, so a run killed mid-group
-   * has an empty tree no matter how many phases actually completed (measured: 106
-   * steps done, 0 nodes in the tree). This flat list is the live narrative the
-   * exit-path writer renders instead — see `ClusterBuild.build`.
-   */
-  readonly completedPhases: Report.Phase[] = []
-
+> extends OrchestrationContext<ClusterConfig, Events> {
   private wireClient: WireClient | null = null
   private ethereumClient: EthereumClient | null = null
   private solanaClient: SolanaClient | null = null
 
-  constructor(
-    readonly config: ClusterConfig,
-    readonly log: Logger
-  ) {
-    super()
+  constructor(config: ClusterConfig, log: Logger) {
+    super(config, log)
   }
 
   /** The WIRE client (clio + RPC), bound to the cluster's nodeop/kiod. */

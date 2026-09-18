@@ -1,4 +1,5 @@
 import type { ClusterBuildContext } from "./ClusterBuildContext.js"
+import type { OrchestrationContext } from "./OrchestrationContext.js"
 import type { StepInput, StepRunner } from "./StepRunner.js"
 import type { Report } from "../report/Report.js"
 
@@ -22,7 +23,7 @@ export interface ClusterBuildStepOptions extends ClusterBuildTaskOptions {}
  * executor); it structurally satisfies `Report.StepLike`.
  */
 export class ClusterBuildStep<
-  C extends ClusterBuildContext = ClusterBuildContext,
+  C extends OrchestrationContext = ClusterBuildContext,
   I extends StepInput | null = null
 > {
   private constructor(
@@ -48,7 +49,7 @@ export class ClusterBuildStep<
    * @param runner - The behavior `(context, input, signal) => Promise<void>`.
    */
   static create<
-    C extends ClusterBuildContext = ClusterBuildContext,
+    C extends OrchestrationContext = ClusterBuildContext,
     I extends StepInput | null = null
   >(
     actor: Report.Actor,
@@ -58,7 +59,14 @@ export class ClusterBuildStep<
     input: I,
     runner: StepRunner<C, I>
   ): ClusterBuildStep<C, I> {
-    return new ClusterBuildStep(actor, name, description, options, input, runner)
+    return new ClusterBuildStep(
+      actor,
+      name,
+      description,
+      options,
+      input,
+      runner
+    )
   }
 }
 
@@ -70,7 +78,8 @@ export namespace ClusterBuildStep {
    * `ClusterBuildStep<C, B>`). The `any` erases `I` for storage ONLY — each
    * step's `runner` + `input` stay correlated WITHIN the step at runtime.
    */
-  export type Any<C extends ClusterBuildContext = ClusterBuildContext> = ClusterBuildStep<C, any>
+  export type Any<C extends OrchestrationContext = ClusterBuildContext> =
+    ClusterBuildStep<C, any>
 
   /**
    * The shape every `Steps.*` factory returns: `(actor, name, description,
@@ -78,7 +87,7 @@ export namespace ClusterBuildStep {
    */
   export type Factory<
     Args extends unknown[] = unknown[],
-    C extends ClusterBuildContext = ClusterBuildContext,
+    C extends OrchestrationContext = ClusterBuildContext,
     I extends StepInput | null = null
   > = (
     actor: Report.Actor,

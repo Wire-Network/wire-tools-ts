@@ -10,6 +10,7 @@ import { getLogger, type Logger } from "../logging/Logger.js"
 import { Report } from "../report/Report.js"
 import { ReportRendererRegistry } from "../report/ReportRendererRegistry.js"
 import { ClusterBuildContext } from "./ClusterBuildContext.js"
+import { OrchestrationContext } from "./OrchestrationContext.js"
 import {
   ClusterBuildPhaseBase,
   type ClusterBuildParent
@@ -71,7 +72,7 @@ function seedGenesisAccounts(
  * registered.
  */
 export class ClusterBuild<
-  C extends ClusterBuildContext = ClusterBuildContext
+  C extends OrchestrationContext = ClusterBuildContext
 > implements ClusterBuildParent<C> {
   private readonly childList: ClusterBuildPhaseBase<C>[] = []
   private readonly reportInternal = new Report()
@@ -84,7 +85,7 @@ export class ClusterBuild<
   }
 
   /** The resolved cluster config (from the context). */
-  get config(): ClusterConfig {
+  get config(): C["config"] {
     return this.context.config
   }
 
@@ -95,7 +96,7 @@ export class ClusterBuild<
    * @param context - The build's context.
    * @param children - Phases / groups to pre-register.
    */
-  static forContext<C extends ClusterBuildContext = ClusterBuildContext>(
+  static forContext<C extends OrchestrationContext = ClusterBuildContext>(
     context: C,
     children: ClusterBuildPhaseBase<C>[] = []
   ): ClusterBuild<C> {
@@ -174,7 +175,9 @@ export class ClusterBuild<
     const controller = new AbortController(),
       registry = ReportRendererRegistry.createDefault(),
       persistOnExit = () =>
-        guard(() => this.interruptedReport().writeSync(this.config.report, registry))
+        guard(() =>
+          this.interruptedReport().writeSync(this.config.report, registry)
+        )
 
     process.once("exit", persistOnExit)
     await eachSeries(this.childList, async child => {
