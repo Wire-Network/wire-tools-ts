@@ -6,7 +6,7 @@ import {
   encodeTaggedEnvelope,
   parseChainTip,
   type TaggedEnvelopeInput
-} from "@wireio/test-flow-batch-operator-slashing/EnvelopeCanonicalCodec.js"
+} from "@wireio/cluster-tool/flow"
 
 /** keccak-timestamp shared by every pinned vector (matches `GOLDEN_TS_MS` in the C++ suite). */
 const GOLDEN_TS_MS = 1_775_612_516_983n

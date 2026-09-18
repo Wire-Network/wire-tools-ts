@@ -2,7 +2,7 @@ import { ethers } from "ethers"
 import { AttestationType, Envelope } from "@wireio/opp-typescript-models"
 
 /**
- * Canonical OPP envelope codec for the slashing flow's synthetic dispute envelopes.
+ * Canonical OPP envelope codec for synthetic dispute envelopes.
  *
  * Since SEC-102 (Wire-Network/wire-sysio#508), `sysio.msgch::apply_consensus` validates the
  * `opp.proto` MessageHeader semantics AND the per-outpost chains before dispatching, so the winning

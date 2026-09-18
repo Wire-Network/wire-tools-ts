@@ -1,12 +1,9 @@
 {
-  "name": "@wireio/test-flow-batch-operator-slashing",
-  "version": "0.1.8",
+  "name": "@wireio/test-flow-batch-operator-terminal-tie",
+  "version": "0.1.0",
   "private": true,
   "type": "commonjs",
-  "exports": {
-    ".": "./lib/index.js"
-  },
-  "description": "Flow: Batch Operator Slashing via OPP envelope dispute vote",
+  "description": "Flow: terminal two-candidate batch-operator dispute via a reduced live group",
   "scripts": {
     "build": "tsc -b tsconfig.json",
     "test": "node lib/index.js",

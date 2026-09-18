@@ -1,15 +1,15 @@
 import { SlugName } from "@wireio/sdk-core"
-import { ProtocolTiming } from "@wireio/cluster-tool"
+import { ProtocolTiming } from "../Constants.js"
 
 /**
- * Constants for the batch-operator-slashing flow. Names, tags, epoch budgets,
+ * Constants for the shared batch-operator-dispute harness. Names, tags, epoch budgets,
  * and envelope fixture values carry over from the previously-validated jest
  * flow (tests/BatchOperatorSlashing.test.ts): three SBP-less dispute operators
  * inject a 3-way divergent split on the contested outpost, three Tier-1 owners
  * vote the canonical checksum, and the non-canonical deliverers are slashed.
  * Every poll deadline derives from the epoch duration so the flow scales with it.
  */
-export namespace SlashingScenarioConstants {
+export namespace BatchOperatorDisputeConstants {
   /** Epoch duration (s) — the `sysio.epoch::setconfig` floor is 60. */
   export const EpochDurationSec = 60
   /** 1 s in ms — multiplies epoch counts into ms deadlines. */
@@ -34,6 +34,8 @@ export namespace SlashingScenarioConstants {
    * and non-bootstrapped, so the flow fully controls their deliveries.
    */
   export const DisputeOperators = ["dispop.a", "dispop.b", "dispop.c"] as const
+  /** Label of an operator provisioned by the shared dispute scenario. */
+  export type DisputeOperator = (typeof DisputeOperators)[number]
   /** Group SIZE the dispute needs — three divergent deliveries, no majority. */
   export const DisputeOperatorCount = DisputeOperators.length
   /**
@@ -49,7 +51,7 @@ export namespace SlashingScenarioConstants {
    * the SBP-less dispute operators ACTIVE it re-materializes the rotation with a
    * fresh `schbatchgps`, which sorts non-bootstrapped first — so the three
    * `dispop.*` fill the sole group and these fall outside it, exactly as the
-   * hand-off in `SlashingScenario.plan` describes. They keep the network
+   * hand-off in `BatchOperatorDisputeScenario.plan` describes. They keep the network
    * relaying until that hand-off.
    *
    * (This was 1 while the shape was DERIVED from the roster — one operator then
@@ -88,8 +90,6 @@ export namespace SlashingScenarioConstants {
    * quorum is Q = floor(4/2)+1 = 3 — voting all 3 of these owners clears it.
    */
   export const Tier1VoterNames = ["voter1", "voter2", "voter3"] as const
-
-
   /** The operator delivering the canonical checksum (NOT slashed). */
   export const CanonicalOperator = DisputeOperators[0]
   /** The operators delivering the non-canonical checksums (slashed). */

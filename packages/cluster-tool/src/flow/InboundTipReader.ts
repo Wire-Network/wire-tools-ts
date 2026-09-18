@@ -1,12 +1,12 @@
+import type { SysioContracts } from "@wireio/sdk-core"
 import { parseChainTip } from "./EnvelopeCanonicalCodec.js"
 import { SingleFlightCache } from "./SingleFlightCache.js"
 
 /**
  * Single-flight reader of an outpost's inbound chain tips off `sysio.msgch::outpcons`.
  *
- * Lives outside the step module (which imports the cluster-tool harness) with the table query
- * injected, so the full composition — query the rows, select the requested chain, parse both
- * tips, cache the result — is unit-testable; see `../tests/InboundTipReader.test.ts`.
+ * The table query is injected so the full composition — query the rows, select the requested
+ * chain, parse both tips, cache the result — is unit-testable.
  */
 
 /** The outpost's inbound chain tips from `sysio.msgch::outpcons` (each empty at genesis). */
@@ -29,26 +29,18 @@ export interface OutpostInboundTips {
   envelopeDigest: Uint8Array
 }
 
-/**
- * The `outpcons` row fields the reader consumes. `message_tip` / `envelope_digest` are new in the
- * deployed ABI (SEC-102) but absent from the pinned SystemContractTypes, so rows arrive as this
- * shape-cast rather than a generated type.
- */
-export interface OutpostConsensusRow {
-  chain_code: number | string
-  message_tip?: string
-  envelope_digest?: string
-}
+/** The generated `sysio.msgch::outpcons` row consumed by the reader. */
+type OutpostConsensusRow = SysioContracts.SysioMsgchOutpostConsensusEntryType
 
 /** Supplies the current `outpcons` rows; injected so the reader stays harness-free. */
-export type OutpostConsensusQuery = () => Promise<OutpostConsensusRow[]>
+type OutpostConsensusQuery = () => Promise<OutpostConsensusRow[]>
 
 /**
  * Caches each outpost's inbound tips per `(chainCode, epochIndex)`, so all deliveries an outpost
  * receives for one contested epoch chain from the SAME pre-delivery tips. The cache is
  * SINGLE-FLIGHT ({@link SingleFlightCache}): the per-operator deliveries run in parallel, so
- * without it each would issue its own read, and once the non-contested outpost's 2/3 majority
- * triggers `apply_consensus` inline and advances the tips, a late read would produce a
+ * without it each would issue its own read, and once the non-contested outpost reaches consensus
+ * and advances the tips, a late read would produce a
  * differently-chained (and so differently-checksummed) envelope — mis-classified as a divergent
  * delivery and wrongly slashed. Registering the in-flight read synchronously collapses the
  * parallel misses onto one read that observes the pre-delivery tips; a rejected read is evicted,

@@ -82,4 +82,49 @@ export namespace OpregContractSteps {
       .getSysioContract(SysioContractName.opreg)
       .actions.regoperator.invoke(input.data)
   }
+
+  /** Input for {@link planTerminate} — a harness operator label and audit reason. */
+  export interface TerminateInput extends StepInput {
+    readonly kind: "OpregContractSteps.TerminateInput"
+    /** Harness label resolved to the generated WIRE account during execution. */
+    readonly label: string
+    /** Human-readable reason stored on the operator row. */
+    readonly reason: string
+  }
+
+  /** `sysio.opreg::terminate` — administratively remove an operator from eligibility. */
+  export function planTerminate<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    label: string,
+    reason: string
+  ): ClusterBuildStep<C, TerminateInput> {
+    return ClusterBuildStep.create<C, TerminateInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "OpregContractSteps.TerminateInput", label, reason },
+      runTerminate
+    )
+  }
+
+  /** Named runner — `sysio.opreg::terminate`. */
+  export async function runTerminate<C extends ClusterBuildContext>(
+    ctx: C,
+    input: TerminateInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await ctx.wire
+      .getSysioContract(SysioContractName.opreg)
+      .actions.terminate.invoke({
+        account: ctx.keyStore.assertOperator(input.label).account,
+        reason: input.reason
+      })
+  }
 }
