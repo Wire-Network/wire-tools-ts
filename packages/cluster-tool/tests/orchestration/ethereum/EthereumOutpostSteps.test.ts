@@ -1,5 +1,6 @@
 import { ethers } from "ethers"
 import { getLogger } from "@wireio/shared"
+import { OperatorType } from "@wireio/opp-typescript-models"
 import { Constants } from "@wireio/cluster-tool"
 import {
   ClusterBuildContext,
@@ -9,6 +10,14 @@ import {
 } from "@wireio/cluster-tool/orchestration"
 import { Report } from "@wireio/cluster-tool/report"
 import { fixtureConfig } from "../../config/clusterConfigFixture.js"
+import { fixtureOperatorAccount } from "../outputs/operatorAccountFixture.js"
+
+/** A batch `OperatorAccount` under an explicit chain account name, with its OWN EM key. */
+const batchOperator = (label: string, account: string, ethereumHdIndex: number) =>
+  fixtureOperatorAccount(label, OperatorType.BATCH, account, ethereumHdIndex)
+
+/** The depot's epoch duration for the seed cases. */
+const SeedEpochDurationSec = 60
 
 /** A context over the persisted fixture, optionally reshaped for a case. */
 const context = (overrides: Parameters<typeof fixtureConfig>[0] = {}) =>
@@ -83,7 +92,9 @@ describe("EthereumOutpostSteps.resolveInitialRoster", () => {
     roster.groups.forEach(group => expect(group).toHaveLength(3))
   })
 
-  it("still grants delivery rights to operators past the first group", async () => {
+  it("seats every scheduled operator across the window's slots, once", async () => {
+    // 9 operators, 3 groups of 3: the whole roster is scheduled, so every
+    // address lands in exactly one slot — slot `k` serving epoch `1 + k`.
     const roster = await EthereumOutpostSteps.resolveInitialRoster(
       context({ batchOperatorCount: 9, operatorsPerEpoch: 3, batchOpGroups: 3 })
     )
@@ -117,13 +128,16 @@ describe("EthereumOutpostSteps.partitionLikeDepot", () => {
     expect(groups[0]).toHaveLength(3)
   })
 
-  it("keeps a trimmed operator authorized, without raising the threshold", () => {
-    // `isActiveOperator` scans every group, so an unscheduled operator still
-    // needs a seat — it just must not land in group 0.
+  it("leaves operators past the scheduled window OUT — the depot leaves them ungrouped too", () => {
+    // Under WNE-27 a slot authorizes its members for the epoch it serves, so a
+    // seat for an unscheduled operator would authorize it for an epoch the
+    // depot never scheduled it for. It stays ACTIVE and ungrouped, as on the
+    // depot, until a rotation schedules it.
     const groups = EthereumOutpostSteps.partitionLikeDepot(pool(5), 3, 1, 3)
+    expect(groups).toHaveLength(1)
     expect(groups[0]).toHaveLength(3)
-    expect(groups.flat()).toHaveLength(5)
-    expect(groups.flat()).toContain("0x4")
+    expect(groups.flat()).not.toContain("0x3")
+    expect(groups.flat()).not.toContain("0x4")
   })
 
   it("emits exactly batch_op_groups groups when the pool fills them", () => {
@@ -138,5 +152,94 @@ describe("EthereumOutpostSteps.partitionLikeDepot", () => {
     const groups = EthereumOutpostSteps.partitionLikeDepot(pool(3), 3, 3, 3)
     expect(groups.every(group => group.length > 0)).toBe(true)
     expect(groups.flat()).toHaveLength(3)
+  })
+})
+
+describe("Steps.ethereumOutpost.oppBootstrap", () => {
+  it("builds an input-less installInitialRoster step with a runner", () => {
+    const step = Steps.ethereumOutpost.planOppBootstrap(
+      Report.Actor.EthereumOutpost,
+      "seed-ethereum-roster",
+      "seed the Ethereum outpost batch-operator roster",
+      {}
+    )
+    expect(step.actor).toBe(Report.Actor.EthereumOutpost)
+    expect(step.input).toBeNull()
+    expect(typeof step.runner).toBe("function")
+  })
+
+  it("maps every window slot, in slot order, to its members' EM addresses", () => {
+    const operators = [
+      batchOperator("batchop.a", "wireno.aaaaa", 1),
+      batchOperator("batchop.b", "wireno.bbbbb", 2),
+      batchOperator("batchop.c", "wireno.ccccc", 3)
+    ]
+    // The depot's window orders by ACCOUNT NAME, which need not follow the
+    // harness's label order — exactly the gap the seed exists to close.
+    const seed = EthereumOutpostSteps.resolveOppBootstrapSeed(
+      operators,
+      [["wireno.ccccc"], ["wireno.aaaaa"], ["wireno.bbbbb"]],
+      0,
+      SeedEpochDurationSec
+    )
+
+    expect(seed.window.groups).toEqual([
+      [operators[2].ethereum.address],
+      [operators[0].ethereum.address],
+      [operators[1].ethereum.address]
+    ])
+    expect(new Set(seed.window.groups.flat()).size).toBe(3)
+    expect(seed.window.epochDurationSec).toBe(SeedEpochDurationSec)
+    expect(seed.activeGroupIndex).toBe(0)
+  })
+
+  it("keeps member order within a multi-member slot and carries the depot's active slot", () => {
+    const operators = [
+      batchOperator("batchop.a", "wireno.aaaaa", 1),
+      batchOperator("batchop.b", "wireno.bbbbb", 2),
+      batchOperator("batchop.c", "wireno.ccccc", 3)
+    ]
+    const seed = EthereumOutpostSteps.resolveOppBootstrapSeed(
+      operators,
+      [["wireno.bbbbb", "wireno.aaaaa", "wireno.ccccc"]],
+      0,
+      SeedEpochDurationSec
+    )
+    expect(seed.window.groups).toEqual([
+      [operators[1].ethereum.address, operators[0].ethereum.address, operators[2].ethereum.address]
+    ])
+    // A rotated depot cursor rides through untouched.
+    expect(
+      EthereumOutpostSteps.resolveOppBootstrapSeed(
+        operators,
+        [["wireno.aaaaa"], ["wireno.bbbbb"]],
+        1,
+        SeedEpochDurationSec
+      ).activeGroupIndex
+    ).toBe(1)
+  })
+
+  it("throws when a scheduled account is not a provisioned batch operator", () => {
+    const operators = [batchOperator("batchop.a", "wireno.aaaaa", 1)]
+    expect(() =>
+      EthereumOutpostSteps.resolveOppBootstrapSeed(
+        operators,
+        [["wireno.aaaaa"], ["wireno.zzzzz"]],
+        0,
+        SeedEpochDurationSec
+      )
+    ).toThrow(/wireno\.zzzzz not found among provisioned batch operators/)
+  })
+
+  it("throws a DISTINCT error when a scheduled operator carries no Ethereum key", () => {
+    const keyless = { ...batchOperator("batchop.a", "wireno.aaaaa", 1), ethereum: undefined }
+    expect(() =>
+      EthereumOutpostSteps.resolveOppBootstrapSeed(
+        [keyless],
+        [["wireno.aaaaa"]],
+        0,
+        SeedEpochDurationSec
+      )
+    ).toThrow(/wireno\.aaaaa has no Ethereum key/)
   })
 })

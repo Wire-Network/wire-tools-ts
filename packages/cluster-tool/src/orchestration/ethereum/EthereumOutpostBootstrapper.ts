@@ -6,6 +6,7 @@ import { promisify } from "node:util"
 import { ethers } from "ethers"
 import { defaults, range } from "lodash"
 import Assert from "node:assert"
+import { ChainKind } from "@wireio/opp-typescript-models"
 import { AnvilProcess } from "../../cluster/processes/AnvilProcess.js"
 import { getLogger } from "../../logging/Logger.js"
 import { StepExtraRecorder } from "../../report/tools/StepExtraRecorder.js"
@@ -15,6 +16,7 @@ import {
   withFileLock
 } from "../../utils/fsUtils.js"
 import { scaleTimeoutMs } from "../../utils/asyncUtils.js"
+import { EvmAddressPattern, loadOutpostContract } from "../../utils/ethereumUtils.js"
 
 const log = getLogger(__filename)
 const execFileAsync = promisify(execFile)
@@ -29,7 +31,10 @@ export interface EthereumAccount {
 }
 
 /**
- * The initial batch-operator roster `OPPInbound.initialize` installs (WNE-41).
+ * A batch-operator roster for `OPPInbound` — what `initialize` installs at
+ * construction (WNE-41) and what `installInitialRoster` replaces it with once
+ * the depot's schedule exists (SOL-376 shape, see
+ * {@link EthereumOutpostBootstrapper.oppBootstrap}).
  *
  * `OPPInbound.isActiveOperator` is FAIL-CLOSED: an uninitialized roster
  * authorizes nobody, and on a WIRE cluster the addresses that send `epochIn`
@@ -38,10 +43,10 @@ export interface EthereumAccount {
  */
 export interface EthereumOutpostInitialRoster {
   /**
-   * Batch-operator ETH addresses, grouped as the depot schedules them.
-   * `groups[0].length` sizes the outpost's consensus threshold, so it must be
-   * the depot's `operators_per_epoch`; membership beyond it only grants
-   * delivery rights.
+   * Batch-operator ETH addresses, one group per depot window slot in slot
+   * order: `groups[k]` serves epoch `1 + k` and its length is that epoch's
+   * consensus threshold (WNE-27). The construction-time roster can only
+   * reproduce the depot's SHAPE; the seeded one IS the depot's window.
    */
   groups: string[][]
   /** The depot's global `epoch_duration_sec`; must be positive. */
@@ -114,9 +119,9 @@ export class EthereumOutpostBootstrapper {
       options.deploymentsPath,
       "EthereumOutpostBootstrapper: deploymentsPath is required"
     )
-    // WNE-41 — fail HERE, before anvil is touched. `OPPInbound.initialize` is
-    // one-shot with no roster setter, so an empty or zero-duration initial
-    // roster produces an outpost nothing can ever deliver to.
+    // WNE-41 — fail HERE, before anvil is touched. An empty or zero-duration
+    // roster is refused by `OPPInbound` itself (`OPP_InvalidInitialRoster`),
+    // and at construction that revert surfaces as a failed deploy mid-run.
     Assert.ok(
       options.initialRoster?.groups?.some(group => group.length > 0),
       "EthereumOutpostBootstrapper: initialRoster needs at least one batch-operator address"
@@ -423,9 +428,220 @@ export class EthereumOutpostBootstrapper {
     }
     log.info("[ethereum] seedReserveManager complete")
   }
+
+  /**
+   * Seed the ETH outpost's batch-operator roster from the depot's REAL schedule
+   * via `OPPInbound.installInitialRoster` — the SOL-376 `opp_bootstrap` shape.
+   *
+   * `initialize` ran in Cluster Prerequisites, before `sysio.epoch::schbatchgps`
+   * existed, so the roster it seated could only reproduce the depot's shape,
+   * not its membership; under WNE-27 epoch 1 is deliverable solely by the
+   * group mapped to it, so that provisional roster leaves the outpost
+   * undeliverable whenever the depot's name-ordered schedule seats a different
+   * operator. This call must therefore land AFTER `schbatchgps` and BEFORE the
+   * depot's first envelope — `installInitialRoster` refuses once an epoch-1
+   * delivery has been counted (`OPP_BootstrapWindowClosed`). The seed is
+   * transient: the depot's first `BATCH_OPERATOR_GROUPS` attestation replaces
+   * it under consensus.
+   *
+   * Routed through `OutpostManager.execute` as the deployer (anvil HD index 0,
+   * the manager's post-handoff admin), exactly like `deployLocal.ts` wires the
+   * other `restricted` setters. Every window slot is installed, so slot `k`
+   * serves epoch `1 + k` as a delivered window would.
+   *
+   * @param seed - the depot's window as EVM addresses + the slot serving epoch 1.
+   */
+  async oppBootstrap(seed: EthereumOutpostBootstrapper.OppBootstrapSeed): Promise<void> {
+    const { ethereumPath, deploymentsPath, rpcUrl } = this.config,
+      initialGroups = EthereumOutpostBootstrapper.initialBatchOperatorGroups(seed),
+      outpostAddressesFile = Path.join(
+        deploymentsPath,
+        EthereumOutpostBootstrapper.OutpostAddressesFile
+      )
+    Assert.ok(
+      Fs.existsSync(outpostAddressesFile),
+      `oppBootstrap: ${outpostAddressesFile} is missing — the Ethereum outpost deploy must precede the roster seed`
+    )
+    const outpostAddresses: Record<string, string> = JSON.parse(
+        Fs.readFileSync(outpostAddressesFile, "utf-8")
+      ),
+      provider = new ethers.JsonRpcProvider(rpcUrl),
+      // The deployer is `deployLocal.ts`'s `owner`: the OutpostManager admin
+      // after handoff, and the ONE signer allowed through `manager.execute`.
+      deployer = new ethers.Wallet(
+        EthereumOutpostBootstrapper.generateAccounts(
+          EthereumOutpostBootstrapper.DeployerAccountIndex + 1
+        )[EthereumOutpostBootstrapper.DeployerAccountIndex].privateKey,
+        provider
+      ),
+      manager = loadOutpostContract<EthereumOutpostBootstrapper.OutpostManagerExecuteView>(
+        ethereumPath,
+        outpostAddresses,
+        EthereumOutpostBootstrapper.OutpostManagerContractName,
+        [...EthereumOutpostBootstrapper.OutpostArtifactSubpath],
+        deployer
+      ),
+      oppInbound = loadOutpostContract<EthereumOutpostBootstrapper.OppInboundRosterView>(
+        ethereumPath,
+        outpostAddresses,
+        EthereumOutpostBootstrapper.OppInboundContractName,
+        [...EthereumOutpostBootstrapper.OutpostArtifactSubpath],
+        deployer
+      ),
+      oppInboundAddress = await oppInbound.getAddress(),
+      activeGroup = seed.window.groups[seed.activeGroupIndex]
+
+    log.info(
+      `[ethereum] installInitialRoster: seeding ${seed.window.groups.length} window slot(s), ` +
+        `epoch-1 slot ${seed.activeGroupIndex} = [${activeGroup.join(", ")}], ` +
+        `epoch_duration=${seed.window.epochDurationSec}s (deployer=${deployer.address})`
+    )
+    try {
+      const transaction = await manager.execute(
+        oppInboundAddress,
+        oppInbound.interface.encodeFunctionData(
+          EthereumOutpostBootstrapper.InstallInitialRosterFunction,
+          [initialGroups]
+        )
+      )
+      await transaction.wait()
+
+      // Read the seat back: the outpost must now authorize the depot's epoch-1
+      // operators and nobody from the provisional roster it replaced.
+      const seated = await Promise.all(
+        activeGroup.map(member => oppInbound.isActiveOperator(member))
+      )
+      Assert.ok(
+        seated.every(Boolean),
+        `oppBootstrap: OPPInbound does not authorize every epoch-1 member after installInitialRoster ` +
+          `([${activeGroup.join(", ")}] → [${seated.join(", ")}])`
+      )
+    } finally {
+      provider.destroy()
+    }
+    log.info("[ethereum] installInitialRoster: ETH outpost roster seeded on the depot's schedule")
+  }
 }
 
 export namespace EthereumOutpostBootstrapper {
+  /**
+   * SOL-376 seed for `OPPInbound.installInitialRoster`: the depot's whole
+   * schedule window as EVM addresses plus the slot the depot serves epoch 1
+   * from (`epochstate.current_batch_op_group`).
+   */
+  export interface OppBootstrapSeed {
+    /** Every window group in slot order, with the depot's epoch duration. */
+    window: EthereumOutpostInitialRoster
+    /** Index of the window group that serves epoch 1. */
+    activeGroupIndex: number
+  }
+
+  /** One `ChainAddress` as `OPPInbound.installInitialRoster` takes it. */
+  export interface InitialChainAddress {
+    kind: ChainKind
+    address_: string
+  }
+
+  /** One `BatchOperatorGroup` of the roster tuple. */
+  export interface InitialBatchOperatorGroup {
+    operators: InitialChainAddress[]
+  }
+
+  /** The `BatchOperatorGroups` tuple `OPPInbound.installInitialRoster` takes. */
+  export interface InitialBatchOperatorGroups {
+    activeGroupIndex: number
+    epochIndex: number
+    groups: InitialBatchOperatorGroup[]
+    epochDurationSec: number
+  }
+
+  /** The `OutpostManager` surface the seed drives — the post-handoff admin path. */
+  export interface OutpostManagerExecuteView {
+    execute(target: string, data: string): Promise<ethers.ContractTransactionResponse>
+  }
+
+  /** The `OPPInbound` surface the seed reads back through. */
+  export interface OppInboundRosterView {
+    isActiveOperator(operator: string): Promise<boolean>
+  }
+
+  /** `deployLocal.ts`'s outpost address map, under the cluster's deployments dir. */
+  export const OutpostAddressesFile = "outpost-addrs.json"
+  /** Artifact dir segments under `<wire-ethereum>/artifacts/contracts` for the OPP contracts. */
+  export const OutpostArtifactSubpath = ["outpost"] as const
+  /** `outpost-addrs.json` key + artifact basename of the manager. */
+  export const OutpostManagerContractName = "OutpostManager"
+  /** `outpost-addrs.json` key + artifact basename of the inbound endpoint. */
+  export const OppInboundContractName = "OPPInbound"
+  /** The roster seed entry point on `OPPInbound`. */
+  export const InstallInitialRosterFunction = "installInitialRoster"
+  /**
+   * `epochIndex` the seeded window is anchored at: the active slot serves
+   * epoch `0 + 1`, the first inbound epoch. The contract pins the anchor
+   * itself; the tuple carries it for shape.
+   */
+  export const InitialRosterAnchorEpochIndex = 0
+
+  /**
+   * Build the `BatchOperatorGroups` tuple for `installInitialRoster`,
+   * validating here what `OPPInbound._installInitialRoster` validates on-chain
+   * so a bad seed fails with a readable message instead of an
+   * `OPP_InvalidInitialRoster` revert: at least one group, no empty group, only
+   * well-formed non-zero EVM addresses, no repeat WITHIN a group (a repeat
+   * inflates that group's consensus threshold past the operators able to
+   * deliver; across groups it is one operator serving consecutive epochs), a
+   * positive epoch duration, and an in-range active slot.
+   *
+   * @param seed - the window + the slot serving epoch 1.
+   * @return the tuple, ready to ABI-encode as the call's one argument.
+   * @throws on any of the rejections above.
+   */
+  export function initialBatchOperatorGroups(seed: OppBootstrapSeed): InitialBatchOperatorGroups {
+    const { window, activeGroupIndex } = seed,
+      { groups, epochDurationSec } = window
+    Assert.ok(groups.length > 0, "initial roster: at least one batch-operator group is required")
+    Assert.ok(
+      Number.isSafeInteger(epochDurationSec) && epochDurationSec > 0,
+      `initial roster: epochDurationSec must be a positive integer (got ${epochDurationSec})`
+    )
+    Assert.ok(
+      Number.isSafeInteger(activeGroupIndex) && activeGroupIndex >= 0 && activeGroupIndex < groups.length,
+      `initial roster: activeGroupIndex ${activeGroupIndex} is out of range for ${groups.length} group(s)`
+    )
+    return {
+      activeGroupIndex,
+      epochIndex: InitialRosterAnchorEpochIndex,
+      groups: groups.map((members, groupIndex) => {
+        Assert.ok(
+          members.length > 0,
+          `initial roster: group ${groupIndex} is empty — an empty active group leaves epoch 1 undeliverable by anyone`
+        )
+        const seen = new Set<string>()
+        return {
+          operators: members.map(member => {
+            Assert.ok(
+              EvmAddressPattern.test(member),
+              `initial roster: group ${groupIndex} member '${member}' is not an EVM address`
+            )
+            const normalized = ethers.getAddress(member)
+            Assert.ok(
+              normalized !== ethers.ZeroAddress,
+              `initial roster: group ${groupIndex} contains the zero address`
+            )
+            Assert.ok(
+              !seen.has(normalized),
+              `initial roster: ${normalized} appears twice in group ${groupIndex} — a duplicate inflates ` +
+                `the consensus threshold beyond the operators able to meet it`
+            )
+            seen.add(normalized)
+            return { kind: ChainKind.EVM, address_: normalized }
+          })
+        }
+      }),
+      epochDurationSec
+    }
+  }
+
   /** Annotated accounts filename written under the anvil data path. */
   export const AccountsFile = "accounts.json"
   /** Anvil's default deterministic mnemonic. */
