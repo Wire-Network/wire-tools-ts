@@ -54,7 +54,7 @@ export namespace YieldDistributionScenarioEmitSteps {
   /**
    * A single `MockYieldEmitter.emitYield(...)` STAKING_REWARD write, signed by
    * the run deployer (anvil #0 — holds the AccessManager role granted by
-   * `deployLocal.ts`). The attestation lands on OPP's outbound queue and the
+   * the local outpost deployment). The attestation lands on OPP's outbound queue and the
    * batch operators ferry it to the depot's `sysio.dclaim::onreward`.
    *
    * @param actor - The narrative subject (the Ethereum outpost emits).
@@ -330,7 +330,7 @@ export namespace YieldDistributionScenarioEmitSteps {
 
   /**
    * Resolve `MockYieldEmitter` from the run's deploy artifacts, bound to the
-   * run deployer signer (anvil #0 — the AccessManager admin `deployLocal.ts`
+   * run deployer signer (anvil #0 — the AccessManager admin local deployment
    * configured). Address from `outpost-addrs.json`; ABI from the hardhat
    * artifact — both via the harness loaders.
    *

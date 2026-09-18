@@ -14,7 +14,7 @@ The OPP message flow spans three chains:
 - **WIRE depot** (`nodeop` + `kiod`) — system contracts `sysio.epoch`, `sysio.msgch`,
   `sysio.opreg`, `sysio.uwrit`, `sysio.reserv`, `sysio.chalg`, …
 - **Ethereum outpost** (`anvil`) — `OPP.sol`, `OPPInbound.sol`, `OperatorRegistry.sol`,
-  `ReserveManager.sol`, `StakingManager.sol` (+ `liqEth`).
+  `ReserveManager.sol`, and `liqEth`.
 - **Solana outpost** (`solana-test-validator`) — the `opp-outpost` Anchor program (+ `liqsol-*`).
 
 ## Where this repo fits in the platform
@@ -25,7 +25,7 @@ nothing on-chain itself, it orchestrates the already-built artifacts of:
 | Sibling repo | Provides | Built with |
 |---|---|---|
 | `wire-sysio` | `nodeop`, `kiod`, `clio`, system-contract `.wasm`/`.abi` | CMake / Ninja |
-| `wire-ethereum` | outpost Solidity contracts + `deployLocal.ts` | Hardhat |
+| `wire-ethereum` | outpost Solidity contracts + canonical local-mode deploy scripts | Hardhat |
 | `wire-solana` | `opp-outpost` program `.so` + IDL | Anchor |
 
 All four are checked out together as a single workspace via Google's `repo` tool.
@@ -346,6 +346,7 @@ command comes first).
 | `--terminate-window-ms` | | — | termination evaluation window in ms |
 | `--bind-all` | | `false` | bind every daemon to `0.0.0.0` instead of loopback |
 | `--enable-mock-reserves` | | `false` | seed the 8 mock (chain, token) PRIMARY reserves at bootstrap |
+| `--enable-mock-yield-emitter` | | `false` | deploy the transport-only synthetic Ethereum yield emitter; only `flow-yield-distribution` opts in |
 | `--bind-*` | | auto | per-daemon address/port pins (`--bind-anvil-port`, `--bind-nodeop-ports-bios-http`, …); unpinned ports are auto-assigned collision-free |
 | `--bind-config` | | — | a `BindConfig` JSON file: a complete config is used verbatim (no port probing — remote addresses stay put), a partial one is merged over the resolved defaults (CLI `--bind-*` > file > defaults) |
 | `--external-outpost-config` | | — | an `ExternalOutpostConfig` JSON file: bootstrap the depot against already-deployed REMOTE ETH+SOL outposts (skips the local anvil/validator + outpost deploys) |
@@ -597,7 +598,7 @@ handled. Keep them in mind when touching any of these areas:
   removed on process exit; `findAvailable` reads the registry but never
   writes it.
 - **Hardhat deploy shares the repo's compile cache.** The Ethereum outpost
-  deploy (`npx hardhat run src/scripts/deployLocal.ts`) compiles-if-stale
+  deploy (the canonical LiqEth and Outpost local-mode scripts) compiles-if-stale
   into `<wire-ethereum>/artifacts/` + `<wire-ethereum>/cache/`, which are
   checkout-wide. Hardhat has no cross-process build lock, and two concurrent
   compiles corrupt those dirs for every later run. The harness serializes the
@@ -608,8 +609,8 @@ handled. Keep them in mind when touching any of these areas:
 - **Ethereum deploy state is per-cluster, never repo-shared.** Deploy configs
   and address files (`outpost-addrs.json`, `liqeth-addrs.json`, …) live under
   `<cluster>/data/ethereum-deployments/`
-  (`ClusterConfigProvider.ethereumDeploymentsPath`), and `deployLocal.ts` is pointed
-  there via `WIRE_ETH_DEPLOYMENTS_PATH`. The pre-rewrite location —
+  (`ClusterConfigProvider.ethereumDeploymentsPath`), and the harness passes those
+  paths as `DEPLOY_CONFIG` to the canonical deployment scripts. The pre-rewrite location —
   `<wire-ethereum>/.local/deployments/`, shared by every run — let one run's
   deploy wipe another's configs and address files mid-deploy (2026-07-02
   pair-1 incident: the "stale artifact" clear of run B deleted the address

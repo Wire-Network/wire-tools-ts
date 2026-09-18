@@ -108,7 +108,7 @@ feature branches:
 | `wire-sysio` | any branch that carries the OPP protos — `feature/protobuf-support-for-opp` or a branch merged from it (e.g. `feature/intrinsic-span-cleanup`) | `libraries/opp/proto/sysio/opp/**/*.proto`, `sysio.{chalg,epoch,msgch,uwrit,opreg}` contracts, `cdt::protoc-gen-zpp` wiring |
 | `wire-cdt` | `feature/kv-secondary-primary-id` (current) | `protoc-gen-zpp` tool + install target |
 | `wire-libraries-ts` | `master` | `@wireio/shared*`, `@wireio/sdk-core`, `protoc-gen-*` + `wire-protobuf-bundler` CLIs |
-| `wire-ethereum` | `feature/protobufs-for-opp` | `src/scripts/deployLocal.ts` (called by harness ETHBootstrapper), `contracts/outpost/*.sol` consuming `@wireio/opp-solidity-models` |
+| `wire-ethereum` | `feature/protobufs-for-opp` | canonical local-mode `deployLiqEth.ts` + `deployOutpost.ts` (called by harness ETHBootstrapper), `contracts/outpost/*.sol` consuming `@wireio/opp-solidity-models` |
 | `wire-solana` | `feature/opp-solana-outpost-integration` | `programs/opp-outpost` Anchor program + `wallets/opp-outpost-keypair.json` |
 | `wire-e2e-tests` | `master` | the harness + flow tests |
 
@@ -468,4 +468,3 @@ The Dockerfile's run instructions suggest
 matched against the full argv (including the pattern string itself), `pkill`
 kills its parent shell — the Bash/zsh invocation exits 144 and `wire-cluster-tool`
 never runs. Use `killall <exact name>` instead.
-

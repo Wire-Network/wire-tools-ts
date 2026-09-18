@@ -153,6 +153,7 @@ export function makeFixtureCluster(): FixtureCluster {
     externalOutposts: null,
     debuggingServerEnabled: true,
     enableMockReserves: false,
+    enableMockYieldEmitter: false,
     deploymentKind: ClusterDeploymentKind.local,
     chainStateDbSizeMb: DefaultChainStateDbSizeMb
   }

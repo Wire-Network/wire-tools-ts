@@ -198,6 +198,7 @@ export namespace ClusterConfigProvider {
       externalOutposts,
       debuggingServerEnabled: true,
       enableMockReserves: options.enableMockReserves ?? false,
+      enableMockYieldEmitter: options.enableMockYieldEmitter ?? false,
       // `resolve` is the CREATE path, so the tree it describes is always local;
       // `create-external-config`'s Rebind re-stamps its merged config `external`.
       deploymentKind: ClusterDeploymentKind.local,
@@ -713,7 +714,7 @@ export namespace ClusterConfigProvider {
    * DESIGN: the pre-rewrite location — `<wire-ethereum>/.local/deployments/`,
    * shared repo state — made parallel flows clobber each other's deploy
    * configs and address files mid-deploy (2026-07-02 pair-1 incident). The
-   * harness points `deployLocal.ts` here via `WIRE_ETH_DEPLOYMENTS_PATH`.
+   * harness passes this directory's config files to the canonical deployment scripts.
    *
    * @param config - The cluster configuration.
    * @returns `<dataPath>/ethereum-deployments`.

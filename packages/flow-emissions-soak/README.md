@@ -22,11 +22,10 @@ end-to-end.
 
 - **`sysio.system::fundclaim` cap semantics from PR 354.** That code path
   fires only on `sysio.dclaim::onreward`, which is driven by
-  STAKING_REWARD attestations arriving from the outposts. As of writing,
-  wire-ethereum `StakingManager.sol` is a rename-only placeholder
-  (`revert()` bodies); outpost reward emission is on a separate
-  developer track. A companion exhaust flow will be added in a follow-up
-  PR once that emission track lands.
+  STAKING_REWARD attestations arriving from the outposts. Production reward
+  emission belongs to a separate future track and is not implemented here.
+  The dedicated yield-distribution flow tests only the OPP transport and depot
+  accounting path with an explicitly enabled synthetic emitter.
 
   `capital_shortfall_total` is asserted to stay at `0` in this soak —
   trivially true today because no `fundclaim` calls occur.

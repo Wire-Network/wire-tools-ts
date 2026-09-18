@@ -535,6 +535,7 @@ describe("ClusterConfigProvider", () => {
       // stamps `external`, and the default must equal nodeop's stock value so
       // the always-emitted flag changes nothing until it is overridden.
       const config = await ClusterConfigProvider.resolve(baseOptions())
+      expect(config.enableMockYieldEmitter).toBe(false)
       expect(config.deploymentKind).toBe(ClusterDeploymentKind.local)
       expect(config.chainStateDbSizeMb).toBe(DefaultChainStateDbSizeMb)
       expect(DefaultChainStateDbSizeMb).toBe(1_024)
