@@ -7,7 +7,7 @@ import {
 } from "../../../ClusterBuildStep.js"
 import type { StepInput } from "../../../StepRunner.js"
 
-const { SysioContractName } = SysioContracts
+const { SysioContractAccount, SysioContractName } = SysioContracts
 
 /** Steps for `sysio.opreg` (operator registry) actions. */
 export namespace OpregContractSteps {
@@ -18,7 +18,9 @@ export namespace OpregContractSteps {
   }
 
   /** `sysio.opreg::setconfig` — availability caps, termination thresholds, collateral minimums. */
-  export function planSetconfig<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planSetconfig<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -54,7 +56,9 @@ export namespace OpregContractSteps {
   }
 
   /** `sysio.opreg::regoperator` — register a batch operator / underwriter / producer. */
-  export function planRegoperator<C extends ClusterBuildContext = ClusterBuildContext>(
+  export function planRegoperator<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
     actor: Report.Actor,
     name: string,
     description: string,
@@ -81,5 +85,53 @@ export namespace OpregContractSteps {
     await ctx.wire
       .getSysioContract(SysioContractName.opreg)
       .actions.regoperator.invoke(input.data)
+  }
+
+  /** Input for {@link planSlash} — the generated `opreg::slash` data. */
+  export interface SlashInput extends StepInput {
+    readonly kind: "OpregContractSteps.SlashInput"
+    readonly data: SysioContracts.SysioOpregSlashAction
+  }
+
+  /**
+   * `sysio.opreg::slash` — mark an operator slashed under the challenge
+   * contract authority required by the on-chain action.
+   */
+  export function planSlash<
+    C extends ClusterBuildContext = ClusterBuildContext
+  >(
+    actor: Report.Actor,
+    name: string,
+    description: string,
+    options: ClusterBuildStepOptions,
+    data: SysioContracts.SysioOpregSlashAction
+  ): ClusterBuildStep<C, SlashInput> {
+    return ClusterBuildStep.create<C, SlashInput>(
+      actor,
+      name,
+      description,
+      options,
+      { kind: "OpregContractSteps.SlashInput", data },
+      runSlash
+    )
+  }
+
+  /** Named runner — `sysio.opreg::slash` authorized by `sysio.chalg`. */
+  export async function runSlash<C extends ClusterBuildContext>(
+    ctx: C,
+    input: SlashInput,
+    signal: AbortSignal
+  ): Promise<void> {
+    signal.throwIfAborted()
+    await ctx.wire
+      .getSysioContract(SysioContractName.opreg)
+      .actions.slash.invoke(input.data, {
+        authorization: [
+          {
+            actor: SysioContractAccount[SysioContractName.chalg],
+            permission: "active"
+          }
+        ]
+      })
   }
 }

@@ -3,7 +3,7 @@
   "version": "0.1.17",
   "private": true,
   "type": "commonjs",
-  "description": "Flow: Batch Operator Termination via Delivery Underperformance",
+  "description": "Flow: Batch Operator Termination, Schedule Freeze, and Recovery",
   "scripts": {
     "build": "tsc -b tsconfig.json",
     "test": "node lib/index.js",
