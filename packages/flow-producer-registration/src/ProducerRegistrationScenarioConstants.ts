@@ -13,6 +13,9 @@ import { Constants, ProtocolTiming } from "@wireio/cluster-tool"
 export namespace ProducerRegistrationScenarioConstants {
   /** The flow's NON-bootstrapped producer's durable harness handle. */
   export const ProducerLabel = "flowprod"
+  /** Contract assertion proving a producer has not reached collateral admission. */
+  export const ProducerAdmissionErrorPattern =
+    /producer operator is not eligible for admission/
   /** Anvil-mnemonic HD index for its ETH wallet (past every bootstrap slot). */
   export const ProducerEthereumHdIndex = 36
   /** Lamports airdropped to its SOL keypair (bond + fees headroom). */

@@ -47,21 +47,19 @@ describe("ClusterBuildDefaults — genesis producer registration", () => {
       .flatMap(node => node.producers)
   }
 
-  it("grants RAM, then regproducer, then regfinkey for every genesis producer, in that order", () => {
+  it("registers the operator, producer, and finalizer key for every genesis producer, in that order", () => {
     const producers = plannedProducers(cluster.context.config),
       steps = collectStepNames(cluster.children)
     expect(producers.length).toBeGreaterThan(0)
     producers.forEach(label => {
-      const ram = steps.indexOf(`setacctram-${label}`),
+      const operator = steps.indexOf(`regoperator-${label}`),
         registered = steps.indexOf(`regproducer-${label}`),
         keyed = steps.indexOf(`regfinkey-${label}`)
-      // RAM first: a genesis producer is created with `newaccount`, not sponsored through
-      // `roa::newuser`, so it holds no allocation — and `regfinkey` bills its rows to the
-      // producer. Without the grant the registration aborts on RAM mid-bootstrap.
-      expect(ram).toBeGreaterThanOrEqual(0)
-      expect(registered).toBeGreaterThan(ram)
+      expect(operator).toBeGreaterThanOrEqual(0)
+      expect(registered).toBeGreaterThan(operator)
       // The contract enforces this one: `regfinkey` requires an existing `producers` row.
       expect(keyed).toBeGreaterThan(registered)
+      expect(steps).not.toContain(`setacctram-${label}`)
     })
   })
 
@@ -77,15 +75,19 @@ describe("ClusterBuildDefaults — genesis producer registration", () => {
     ).toBe(producers.length)
   })
 
-  it("registers the opreg half only AFTER sysio.opreg is deployed and configured", () => {
-    // The split exists because sysio.opreg does not exist until `OPPContracts`; registering
-    // earlier would push an action at an account carrying no code.
+  it("admits genesis operators only after opreg config, then creates producer rows", () => {
+    // sysio.opreg has no code until OPPContracts and no admission configuration until OPPConfig;
+    // pushing regoperator before either phase would target an undeployed or unconfigured contract.
+    // The system contract then requires that ACTIVE operator row before it will create a producer.
     const names = collectPhaseNames(cluster.children)
+    expect(names.indexOf("GenesisProducerOperators")).toBeGreaterThan(
+      names.indexOf("OPPContracts")
+    )
     expect(names.indexOf("GenesisProducerOperators")).toBeGreaterThan(
       names.indexOf("OPPConfig")
     )
-    expect(names.indexOf("GenesisProducerRegistration")).toBeLessThan(
-      names.indexOf("OPPContracts")
+    expect(names.indexOf("GenesisProducerRegistration")).toBeGreaterThan(
+      names.indexOf("GenesisProducerOperators")
     )
   })
 
