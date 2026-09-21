@@ -226,11 +226,13 @@ active-permission delegations (`@sysio.code` weights for `sysio.msgch` on opreg/
 authex) are no longer configured.
 
 `sysio.dclaim` must be deployed before the first `sysio.authex::createlink` or `recordlink`. Both link
-actions inline `sysio.dclaim::linkswept`; if DClaim is not yet deployed and privileged, they deliberately
-commit the link but leave pre-link rewards in `unmapped_tokens` for operator remediation. The **sys** deploy
-above uses `sysio.roa::setsyscode`, which grants privilege as part of deployment, so this ordering—not a
-separate `setpriv` action—is the production precondition. This bootstrap satisfies it: DClaim is deployed in
-Stage 8 before the first node-owner link in Stage 10 and operator `createlink` calls in Stage 12.
+actions inline `sysio.dclaim::linkswept`. User-signed `createlink` checks that DClaim is deployed and
+privileged before inserting the link, and the inline sweep is atomic with that insertion. Trusted bootstrap
+or remediation calls to `recordlink` retain the soft-failure path: when DClaim is unavailable, they commit
+the link and leave pre-link rewards in `unmapped_tokens` for operator remediation. The **sys** deploy above
+uses `sysio.roa::setsyscode`, which grants privilege as part of deployment, so this ordering—not a separate
+`setpriv` action—is the production precondition. This bootstrap satisfies it: DClaim is deployed in Stage 8
+before the first node-owner link in Stage 10 and operator `createlink` calls in Stage 12.
 
 ## Stage 9 — OPP / application configuration (epoch, opreg, emissions, dclaim)
 20. `sysio.epoch::setconfig({epoch_duration_sec:90, operators_per_epoch:1,

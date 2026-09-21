@@ -14,8 +14,7 @@ import {
   verifyStep,
   type ClusterBuild,
   type ClusterBuildContext,
-  type ClusterBuildOptions,
-  type NodeOwnerRegAction
+  type ClusterBuildOptions
 } from "@wireio/cluster-tool"
 import { NodeOwnerNftScenarioConstants as Constants } from "./NodeOwnerNftScenarioConstants.js"
 import { NodeOwnerNftScenarioCommitSteps as CommitSteps } from "./steps/NodeOwnerNftScenarioCommitSteps.js"
@@ -71,7 +70,7 @@ async function assertNodeOwnerRegistrationAborts(
   ethereumPublicKey: string,
   abortPattern: RegExp
 ): Promise<void> {
-  const registration: NodeOwnerRegAction = {
+  const registration: SysioContracts.SysioRoaNodeownregAction = {
     owner: ownerAccount,
     tier,
     eth_pub_key: ethereumPublicKey,

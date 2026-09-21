@@ -13,11 +13,7 @@ import { Constants, ProtocolTiming } from "../Constants.js"
 import { BatchOperatorSchedule } from "../config/BatchOperatorSchedule.js"
 import { DaemonConfig } from "../config/DaemonConfig.js"
 import { NodeConfig, NodeRole, producerName } from "../config/NodeConfig.js"
-import {
-  readNodeOwner,
-  readNodeOwnerReg,
-  type NodeOwnerRegAction
-} from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
+import { readNodeOwner, readNodeOwnerReg } from "../tools/ethereum/EthereumNodeOwnerNftTool.js"
 import { AuthExLinkTool } from "../tools/all/AuthExLinkTool.js"
 import { pollUntil, verifyStep } from "./StepTools.js"
 import type { ClusterBuildOptions } from "../config/ClusterBuildOptions.js"
@@ -200,7 +196,7 @@ export namespace ClusterBuildDefaults {
       // outpost deploys and publish the operator-daemon artifacts from the
       // external config instead (verifying the endpoints are reachable).
       isExternalOutpost = config.externalOutposts != null
-    const bootstrapNodeOwnerRegistration: NodeOwnerRegAction = {
+    const bootstrapNodeOwnerRegistration: SysioContracts.SysioRoaNodeownregAction = {
       owner: Constants.BOOTSTRAP_NODE_OWNER,
       tier: NodeOwnerTier.T1,
       eth_pub_key: bootstrapNodeOwnerEth.publicKey,
