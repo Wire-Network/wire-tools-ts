@@ -22,6 +22,7 @@ import {
   getLogger,
   matchesProtoEnum,
   outputKey,
+  packedSlugValue,
   pollUntil,
   slugValue,
   solanaKeypair,
@@ -190,7 +191,7 @@ async function readWithdrawRemitChainCodes(
       // a JS boolean — compare truthiness to match either form.
       Boolean(entry.success)
   )
-  return new Set(remits.map(entry => slugValue(entry.action.chain_code)))
+  return new Set(remits.map(entry => packedSlugValue(entry.action.chain_code)))
 }
 
 /** One SOL outpost `collateral_by_code` ledger entry as Anchor decodes it (camelCased IDL fields, u64s as BN). */

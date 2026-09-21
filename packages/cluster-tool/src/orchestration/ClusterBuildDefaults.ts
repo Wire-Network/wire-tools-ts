@@ -440,47 +440,6 @@ export namespace ClusterBuildDefaults {
       {},
       producerSpecs
     )
-    // Genesis producers have to REGISTER, not merely exist. `update_ranked_producers` schedules
-    // only producers that pass one predicate — an active `producers` row, an ACTIVE
-    // `OPERATOR_TYPE_PRODUCER` row in sysio.opreg, and an active finalizer key — so without
-    // these writes a cluster has zero schedulable producers, ranking never publishes, and the
-    // schedule stays frozen at whatever `setprodkeys` stamped. The opreg half lands later
-    // (`GenesisProducerOperators`), because sysio.opreg is not deployed until `OPPContracts`.
-    //
-    // `regfinkey` requires an existing `producers` row, so regproducer strictly precedes it —
-    // and it activates a producer's FIRST key by itself, which is why no `actfinkey` follows.
-    ClusterBuildPhase.create<C>(
-      prerequisites,
-      "GenesisProducerRegistration",
-      "Register genesis producers + their finalizer keys"
-    ).push(
-      ...producerNodes.flatMap(node =>
-        node.producers.flatMap(label => [
-          Steps.consensus.planGrantProducerRam<C>(
-            Actor.Sysio,
-            `setacctram-${label}`,
-            `grant ${label} RAM for its producer + finalizer-key rows`,
-            {},
-            label,
-            Steps.consensus.ProducerRamBytes
-          ),
-          Steps.consensus.planRegisterProducer<C>(
-            Actor.Producer,
-            `regproducer-${label}`,
-            `register producer ${label}`,
-            {},
-            label
-          ),
-          Steps.consensus.planRegisterFinalizerKey<C>(
-            Actor.Producer,
-            `regfinkey-${label}`,
-            `register ${label}'s finalizer key`,
-            {},
-            label
-          )
-        ])
-      )
-    )
     ClusterBuildPhase.create<C>(
       prerequisites,
       "RemainingSystemAccounts",
@@ -675,6 +634,35 @@ export namespace ClusterBuildDefaults {
             }
           )
         )
+      )
+    )
+    // Genesis producers have to REGISTER, not merely exist. Registration follows the privileged
+    // bootstrapped operator rows above because sysio.system admits creation only for an ACTIVE
+    // PRODUCER operator. `regfinkey` then requires the producer row and activates the first key by
+    // itself. The producer, finalizer-key, and finalizer rows are billed to sysio.system, so
+    // producers receive no test-only RAM grant.
+    ClusterBuildPhase.create<C>(
+      prerequisites,
+      "GenesisProducerRegistration",
+      "Register genesis producers + their finalizer keys"
+    ).push(
+      ...producerNodes.flatMap(node =>
+        node.producers.flatMap(label => [
+          Steps.consensus.planRegisterProducer<C>(
+            Actor.Producer,
+            `regproducer-${label}`,
+            `register producer ${label}`,
+            {},
+            label
+          ),
+          Steps.consensus.planRegisterFinalizerKey<C>(
+            Actor.Producer,
+            `regfinkey-${label}`,
+            `register ${label}'s finalizer key`,
+            {},
+            label
+          )
+        ])
       )
     )
     ClusterBuildPhase.create<C>(
