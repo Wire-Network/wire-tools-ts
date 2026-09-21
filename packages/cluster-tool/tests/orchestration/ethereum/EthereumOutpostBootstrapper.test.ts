@@ -6,6 +6,7 @@ import { toURL } from "@wireio/cluster-tool/utils"
 const AnvilAccount0Address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 const AnvilAccount0PrivateKey =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+const InitialRoster = [[AnvilAccount0Address]]
 
 describe("EthereumOutpostBootstrapper.generateAccounts", () => {
   it("generates the requested count deterministically from anvil's mnemonic", () => {
@@ -40,7 +41,10 @@ describe("EthereumOutpostBootstrapper constructor", () => {
           ethereumPath: "",
           anvilDataPath: "/tmp/anvil",
           rpcUrl,
-          deploymentsPath
+          deploymentsPath,
+          initialOperatorGroups: InitialRoster,
+          initialActiveGroupIndex: 0,
+          epochDurationSec: 60
         })
     ).toThrow(/ethereumPath is required/)
   })
@@ -52,7 +56,10 @@ describe("EthereumOutpostBootstrapper constructor", () => {
           ethereumPath: "/repo/eth",
           anvilDataPath: "",
           rpcUrl,
-          deploymentsPath
+          deploymentsPath,
+          initialOperatorGroups: InitialRoster,
+          initialActiveGroupIndex: 0,
+          epochDurationSec: 60
         })
     ).toThrow(/anvilDataPath is required/)
   })
@@ -64,7 +71,10 @@ describe("EthereumOutpostBootstrapper constructor", () => {
           ethereumPath: "/repo/eth",
           anvilDataPath: "/tmp/anvil",
           rpcUrl: "",
-          deploymentsPath
+          deploymentsPath,
+          initialOperatorGroups: InitialRoster,
+          initialActiveGroupIndex: 0,
+          epochDurationSec: 60
         })
     ).toThrow(/rpcUrl is required/)
   })
@@ -76,8 +86,26 @@ describe("EthereumOutpostBootstrapper constructor", () => {
           ethereumPath: "/repo/eth",
           anvilDataPath: "/tmp/anvil",
           rpcUrl,
-          deploymentsPath: ""
+          deploymentsPath: "",
+          initialOperatorGroups: InitialRoster,
+          initialActiveGroupIndex: 0,
+          epochDurationSec: 60
         })
     ).toThrow(/deploymentsPath is required/)
+  })
+
+  it("throws when the initial roster is empty", () => {
+    expect(
+      () =>
+        new EthereumOutpostBootstrapper({
+          ethereumPath: "/repo/eth",
+          anvilDataPath: "/tmp/anvil",
+          rpcUrl,
+          deploymentsPath,
+          initialOperatorGroups: [],
+          initialActiveGroupIndex: 0,
+          epochDurationSec: 60
+        })
+    ).toThrow(/initialOperatorGroups must contain non-empty groups/)
   })
 })

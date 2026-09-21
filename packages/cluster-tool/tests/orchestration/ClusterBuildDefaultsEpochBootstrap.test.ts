@@ -8,8 +8,9 @@ import {
 
 import { collectStepNames } from "./clusterBuildFixture.js"
 
-/** The three EpochBootstrap steps, in the order the depot requires them. */
+/** Bootstrap steps whose global order is load-bearing. */
 const ScheduleBatchGroupsStep = "schedule-batch-groups"
+const DeployEthereumStep = "deploy-ethereum"
 const SeedSolanaRosterStep = "seed-solana-roster"
 const BootstrapEpochStep = "bootstrap-epoch"
 
@@ -45,17 +46,19 @@ describe("ClusterBuildDefaults — EpochBootstrap step order", () => {
     }
   }
 
-  it("seeds the Solana roster BETWEEN schbatchgps and msgch::bootstrap", async () => {
-    // Load-bearing order: `opp_bootstrap` reads the schedule `schbatchgps` just
-    // materialized, and the SOL outpost's `epoch_in` refuses to finalize the
-    // first envelope `msgch::bootstrap` delivers until the roster is seeded.
+  it("seeds both local outposts from schbatchgps before msgch::bootstrap", async () => {
+    // Ethereum's initializer and Solana's opp_bootstrap both read the schedule
+    // schbatchgps materialized. Neither may follow the first envelope.
     const cluster = await ClusterBuildDefaults.create(baseOptions())
     const names = collectStepNames(cluster.children)
-    expect(names.indexOf(SeedSolanaRosterStep)).toBe(
-      names.indexOf(ScheduleBatchGroupsStep) + 1
+    expect(names.indexOf(DeployEthereumStep)).toBeGreaterThan(
+      names.indexOf(ScheduleBatchGroupsStep)
     )
-    expect(names.indexOf(BootstrapEpochStep)).toBe(
-      names.indexOf(SeedSolanaRosterStep) + 1
+    expect(names.indexOf(SeedSolanaRosterStep)).toBeGreaterThan(
+      names.indexOf(DeployEthereumStep)
+    )
+    expect(names.indexOf(BootstrapEpochStep)).toBeGreaterThan(
+      names.indexOf(SeedSolanaRosterStep)
     )
   })
 
@@ -70,8 +73,9 @@ describe("ClusterBuildDefaults — EpochBootstrap step order", () => {
     })
     const names = collectStepNames(cluster.children)
     expect(names).not.toContain(SeedSolanaRosterStep)
-    expect(names.indexOf(BootstrapEpochStep)).toBe(
-      names.indexOf(ScheduleBatchGroupsStep) + 1
+    expect(names).not.toContain(DeployEthereumStep)
+    expect(names.indexOf(BootstrapEpochStep)).toBeGreaterThan(
+      names.indexOf(ScheduleBatchGroupsStep)
     )
   })
 })
