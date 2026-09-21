@@ -81,6 +81,32 @@ interface AbsorbedRemovalCheckpoint {
   solanaNextEpoch: number
 }
 
+/** Epoch state returned by the companion WIRE-385 SYSIO schema. */
+interface ScheduleRecoveryEpochState
+  extends SysioContracts.SysioEpochEpochStateType {
+  next_batch_op_groups: string[][]
+}
+
+/**
+ * Read the epoch state through the WIRE-385 schema boundary.
+ *
+ * A clean Tools checkout may still resolve the last published SDK while the
+ * companion Libraries PR is pending. Keep that temporary type lag isolated
+ * here, and verify the deployed contract response before the flow uses it.
+ */
+async function readScheduleRecoveryEpochState(
+  ctx: ClusterBuildContext
+): Promise<ScheduleRecoveryEpochState> {
+  const state = await Steps.contracts.sysio.epoch.readEpochState(ctx)
+  const nextGroups = (state as Partial<ScheduleRecoveryEpochState> | undefined)
+    ?.next_batch_op_groups
+  Assert.ok(
+    Array.isArray(nextGroups),
+    "epoch state does not expose next_batch_op_groups; deploy the WIRE-385 SYSIO schema before running this flow"
+  )
+  return state as ScheduleRecoveryEpochState
+}
+
 const AbsorbedRemovalCheckpointKey = outputKey<AbsorbedRemovalCheckpoint>(
   "TerminationScenario.absorbedRemovalCheckpoint",
   "complete lookahead and outpost cursors after the termination is absorbed"
@@ -365,7 +391,7 @@ async function runStopReplacementPeer(
   signal: AbortSignal
 ): Promise<void> {
   signal.throwIfAborted()
-  const state = await Steps.contracts.sysio.epoch.readEpochState(ctx)
+  const state = await readScheduleRecoveryEpochState(ctx)
   const replacements = Constants.RecoveryOperatorLabels.map(
     label => ctx.keyStore.assertOperator(label).account
   )
@@ -444,7 +470,7 @@ async function runSlashRecoveryTarget(
   signal: AbortSignal
 ): Promise<void> {
   signal.throwIfAborted()
-  const before = await Steps.contracts.sysio.epoch.readEpochState(ctx)
+  const before = await readScheduleRecoveryEpochState(ctx)
   assertCompleteSchedule(before.batch_op_groups)
   assertCompleteSchedule(before.next_batch_op_groups)
   const current = before.batch_op_groups[before.current_batch_op_group] ?? []
@@ -477,7 +503,7 @@ async function runSlashRecoveryTarget(
     },
     signal
   )
-  const after = await Steps.contracts.sysio.epoch.readEpochState(ctx)
+  const after = await readScheduleRecoveryEpochState(ctx)
   const afterCurrent = after.batch_op_groups[after.current_batch_op_group] ?? []
   Assert.equal(
     Number(after.current_epoch_index),
@@ -507,7 +533,7 @@ async function runSlashStandingSpare(
   await pollUntil(
     `standing spare ${input.ordinal + 1} is outside a full active window`,
     async () => {
-      const state = await Steps.contracts.sysio.epoch.readEpochState(ctx)
+      const state = await readScheduleRecoveryEpochState(ctx)
       const active = await readActiveBatchOperatorAccounts(ctx)
       if (
         active.size !== Constants.BatchOperatorCount - input.ordinal ||
@@ -581,7 +607,7 @@ async function runSlashHeldGroupMember(
     )
   })
   Assert.ok(candidate != null, "held group has no eligible slash candidate")
-  const state = await Steps.contracts.sysio.epoch.readEpochState(ctx)
+  const state = await readScheduleRecoveryEpochState(ctx)
   await Steps.contracts.sysio.opreg.runSlash(
     ctx,
     {
@@ -1062,7 +1088,7 @@ export class TerminationScenario extends FlowScenario {
           await pollUntil(
             "both outposts accept the complete post-termination lookahead",
             async () => {
-              const state = await Steps.contracts.sysio.epoch.readEpochState(ctx)
+              const state = await readScheduleRecoveryEpochState(ctx)
               const groups = state.next_batch_op_groups
               const active = await readActiveBatchOperatorAccounts(ctx)
               if (
@@ -1160,7 +1186,7 @@ export class TerminationScenario extends FlowScenario {
           await pollUntil(
             "the complete successor becomes the activated schedule",
             async () => {
-              const state = await Steps.contracts.sysio.epoch.readEpochState(ctx)
+              const state = await readScheduleRecoveryEpochState(ctx)
               const current = state.batch_op_groups[state.current_batch_op_group] ?? []
               if (
                 Number(state.current_epoch_index) <= checkpoint.epochIndex ||
@@ -1366,7 +1392,7 @@ export class TerminationScenario extends FlowScenario {
             "a complete three-by-three window has a fully active current group",
             async () => {
               const state =
-                await Steps.contracts.sysio.epoch.readEpochState(ctx)
+                await readScheduleRecoveryEpochState(ctx)
               const groups = state.batch_op_groups
               const complete =
                 groups.length === Constants.BatchOperatorGroups &&
@@ -1434,7 +1460,7 @@ export class TerminationScenario extends FlowScenario {
             "no next window is published after the target is slashed",
             async () => {
               const state =
-                await Steps.contracts.sysio.epoch.readEpochState(ctx)
+                await readScheduleRecoveryEpochState(ctx)
               const current =
                 state.batch_op_groups[state.current_batch_op_group] ?? []
               assertCompleteSchedule(state.batch_op_groups)
@@ -1496,7 +1522,7 @@ export class TerminationScenario extends FlowScenario {
             "both outposts advance twice while the depot duty remains held",
             async () => {
               const state =
-                await Steps.contracts.sysio.epoch.readEpochState(ctx)
+                await readScheduleRecoveryEpochState(ctx)
               const current =
                 state.batch_op_groups[state.current_batch_op_group] ?? []
               if (
@@ -1564,7 +1590,7 @@ export class TerminationScenario extends FlowScenario {
             "held duty survives a member becoming ineligible",
             async () => {
               const state =
-                await Steps.contracts.sysio.epoch.readEpochState(ctx)
+                await readScheduleRecoveryEpochState(ctx)
               const current =
                 state.batch_op_groups[state.current_batch_op_group] ?? []
               if (!sameGroup(current, withheld.activeGroup)) {
@@ -1652,7 +1678,7 @@ export class TerminationScenario extends FlowScenario {
             "the replacement enables a complete next-window announcement",
             async () => {
               const state =
-                await Steps.contracts.sysio.epoch.readEpochState(ctx)
+                await readScheduleRecoveryEpochState(ctx)
               const groups = state.next_batch_op_groups
               const current =
                 state.batch_op_groups[state.current_batch_op_group] ?? []
@@ -1721,7 +1747,7 @@ export class TerminationScenario extends FlowScenario {
             "the repaired next group serves an epoch accepted by both outposts",
             async () => {
               const state =
-                await Steps.contracts.sysio.epoch.readEpochState(ctx)
+                await readScheduleRecoveryEpochState(ctx)
               const current =
                 state.batch_op_groups[state.current_batch_op_group] ?? []
               const [ethereumNextEpoch, solanaNextEpoch] = await Promise.all([
@@ -1762,7 +1788,7 @@ export class TerminationScenario extends FlowScenario {
             "historical vacancies leave the activated window",
             async () => {
               const state =
-                await Steps.contracts.sysio.epoch.readEpochState(ctx)
+                await readScheduleRecoveryEpochState(ctx)
               const active = await readActiveBatchOperatorAccounts(ctx)
               assertCompleteSchedule(state.batch_op_groups)
               const members = state.batch_op_groups.flat()
@@ -1806,7 +1832,7 @@ export class TerminationScenario extends FlowScenario {
             "each replacement signs an accepted duty epoch on both outposts",
             async () => {
               const state =
-                await Steps.contracts.sysio.epoch.readEpochState(ctx)
+                await readScheduleRecoveryEpochState(ctx)
               const current =
                 state.batch_op_groups[state.current_batch_op_group] ?? []
               const currentEpoch = Number(state.current_epoch_index)
