@@ -9,6 +9,7 @@ import {
   Report,
   Steps,
   type ClusterBuildStepOptions,
+  type EthereumIdentity,
   type StepInput
 } from "@wireio/cluster-tool"
 
@@ -24,12 +25,6 @@ import {
  * `nodeownerreg` audit row that the scenario's verify steps assert.
  */
 export namespace NodeOwnerNftScenarioRegistrationSteps {
-  /** A depositor EM public key and its canonical 20-byte, lowercase-hex EVM address. */
-  export interface EthereumIdentity {
-    readonly publicKey: string
-    readonly nativeAddress: string
-  }
-
   /**
    * A new depositor `PUB_EM_*` public key, derived from the run's Ethereum
    * mnemonic (`Steps.keys.keyGeneratorContext`) at `ethereumHdIndex` —
@@ -146,9 +141,11 @@ export namespace NodeOwnerNftScenarioRegistrationSteps {
    * Claim-payload problems (wrong key / invalid name / missing account /
    * replay) soft-fail into a `nodeownerreg` audit row — the transaction
    * SUCCEEDS — so intentionally-bad claims are normal write steps too, with a
-   * following verify step asserting the audit outcome. Only the depot/system
-   * invariants (tier out of [1,3], non-EM eth key) hard-abort; those are
-   * exercised by the scenario's hard-abort verify probes, not by this factory.
+   * following verify step asserting the audit outcome. The depot/system
+   * invariants (tier out of [1,3], non-EM eth key, malformed ETH address
+   * length) hard-abort. The scenario probes tier and key type; focused C++
+   * coverage exercises address length because this factory derives a valid
+   * Ethereum address.
    *
    * @param actor - The narrative subject.
    * @param name - Step name (report row).

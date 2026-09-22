@@ -237,8 +237,9 @@ export async function pushNewNamedUser(
  * Drive `sysio.roa::nodeownreg` directly, as the depot inline-sends it. The account is expected to
  * already exist (created by pushNewNamedUser). Under create-in-flow this RECORDS the depositor's ETH
  * key (it is not verified against a pre-existing link), so claim-payload problems soft-fail into a
- * `nodeownerreg` audit row (read with `readNodeOwnerReg`) rather than throwing. Only depot/system
- * invariants -- tier out of [1,3] and a non-EM eth key -- hard-abort, which this surfaces as a throw.
+ * `nodeownerreg` audit row (read with `readNodeOwnerReg`) rather than throwing. Depot/system
+ * invariants -- tier out of [1,3], a non-EM eth key, or an address not exactly 20 bytes -- hard-abort,
+ * which this surfaces as a throw.
  *
  * @param ownerAccount  The Wire account to register.
  * @param tier          1 (T1), 2 (T2), or 3 (T3).
@@ -271,7 +272,8 @@ export async function pushNodeOwnerReg(
   } catch (err) {
     // child_process.exec wraps clio failures with `Error("Command failed: <cmd>")` and stuffs clio's
     // `-j` JSON output on `err.stdout`. Surface the underlying sysio_assert_message so callers can
-    // match the actual hard-abort reason (invalid tier / non-EM key) with `rejects.toThrow(/.../)`.
+    // match the actual hard-abort reason (invalid tier / non-EM key / malformed address length) with
+    // `rejects.toThrow(/.../)`.
     const stdout = (err as ClioError)?.stdout ?? ""
     const m = /assertion failure with message: ([^"\n]+)/.exec(stdout)
     if (m) {

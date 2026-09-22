@@ -2,6 +2,7 @@ import { ethers } from "ethers"
 import { Bytes, KeyType, PrivateKey, Signature, SysioContracts } from "@wireio/sdk-core"
 import { ChainKind } from "@wireio/opp-typescript-models"
 import type { WireClient } from "../../clients/wire/WireClient.js"
+import type { EthereumIdentity } from "../../types/KeyPair.js"
 import {
   ethereumKeyPairFromWallet,
   ethereumPublicKeyFromWallet
@@ -23,12 +24,6 @@ export namespace AuthExLinkTool {
     privateKey: PrivateKey
     /** For ETH: the ethers wallet (compressed-pubkey derivation must match). */
     ethereumWallet?: ethers.BaseWallet
-  }
-
-  /** An Ethereum public key and its canonical 20-byte, lowercase-hex EVM address. */
-  export interface EthereumIdentity {
-    readonly publicKey: string
-    readonly nativeAddress: string
   }
 
   /** Build the authex `createlink` message: `<pubkey>|<account>|<chainKind>|<nonce>|createlink auth`. */
